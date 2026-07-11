@@ -1,0 +1,17 @@
+.DS_Store
+.agents/
+.claude/
+.vscode/
+CLAUDE.md
+AGENTS.md
+skills-lock.json
+docs/
+
+node_modules/
+dist/
+out/
+coverage/
+*.log
+.env
+.env.*
+!.env.example
