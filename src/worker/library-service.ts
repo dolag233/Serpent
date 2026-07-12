@@ -264,6 +264,83 @@ const LINKED_FOLDERS_SCHEMA_CHECKSUM = createHash('sha256')
   .update(LINKED_FOLDERS_SCHEMA_SQL)
   .digest('hex');
 
+const ORGANIZATION_SCHEMA_SQL = `
+  CREATE TABLE tags (
+    tag_id TEXT PRIMARY KEY,
+    library_id TEXT NOT NULL REFERENCES library(library_id),
+    name TEXT NOT NULL COLLATE NOCASE,
+    created_at TEXT NOT NULL,
+    UNIQUE (library_id, name COLLATE NOCASE)
+  );
+
+  CREATE TABLE human_asset_tags (
+    asset_id TEXT NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE,
+    tag_id TEXT NOT NULL REFERENCES tags(tag_id) ON DELETE CASCADE,
+    PRIMARY KEY (asset_id, tag_id)
+  );
+
+  -- AI tag relationships are structurally ready but not written until slice 0009.
+  CREATE TABLE ai_asset_tags (
+    asset_id TEXT NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE,
+    tag_id TEXT NOT NULL REFERENCES tags(tag_id) ON DELETE CASCADE,
+    revision_id TEXT REFERENCES revisions(revision_id) ON DELETE SET NULL,
+    model_id TEXT NOT NULL,
+    model_version TEXT NOT NULL,
+    PRIMARY KEY (asset_id, tag_id)
+  );
+
+  CREATE TABLE asset_metadata (
+    asset_id TEXT PRIMARY KEY REFERENCES assets(asset_id) ON DELETE CASCADE,
+    label TEXT,
+    description TEXT,
+    rating INTEGER NOT NULL DEFAULT 0 CHECK (rating >= 0 AND rating <= 5),
+    favorite INTEGER NOT NULL DEFAULT 0 CHECK (favorite IN (0, 1)),
+    palette TEXT,
+    source_page_url TEXT,
+    entity_version INTEGER NOT NULL DEFAULT 1,
+    updated_at TEXT NOT NULL
+  );
+
+  CREATE TABLE collections (
+    collection_id TEXT PRIMARY KEY,
+    library_id TEXT NOT NULL REFERENCES library(library_id),
+    parent_id TEXT REFERENCES collections(collection_id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    description TEXT,
+    cover_asset_id TEXT REFERENCES assets(asset_id) ON DELETE SET NULL,
+    position INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+
+  CREATE TABLE collection_assets (
+    collection_id TEXT NOT NULL REFERENCES collections(collection_id) ON DELETE CASCADE,
+    asset_id TEXT NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE,
+    position INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (collection_id, asset_id)
+  );
+
+  CREATE TABLE smart_collections (
+    smart_collection_id TEXT PRIMARY KEY,
+    library_id TEXT NOT NULL REFERENCES library(library_id),
+    name TEXT NOT NULL,
+    query_definition TEXT NOT NULL,
+    sort_definition TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+
+  CREATE INDEX tags_library_idx ON tags(library_id);
+  CREATE INDEX human_asset_tags_tag_idx ON human_asset_tags(tag_id);
+  CREATE INDEX ai_asset_tags_tag_idx ON ai_asset_tags(tag_id);
+  CREATE INDEX collections_library_parent_idx ON collections(library_id, parent_id);
+  CREATE INDEX collection_assets_asset_idx ON collection_assets(asset_id);
+  CREATE INDEX smart_collections_library_idx ON smart_collections(library_id);
+`;
+const ORGANIZATION_SCHEMA_CHECKSUM = createHash('sha256')
+  .update(ORGANIZATION_SCHEMA_SQL)
+  .digest('hex');
+
 const MIGRATIONS = [
   { version: 1, sql: INITIAL_SCHEMA_SQL, checksum: INITIAL_SCHEMA_CHECKSUM },
   { version: 2, sql: ASSET_SCHEMA_SQL, checksum: ASSET_SCHEMA_CHECKSUM },
@@ -273,6 +350,7 @@ const MIGRATIONS = [
     checksum: PORTABLE_PATH_SCHEMA_CHECKSUM,
   },
   { version: 4, sql: LINKED_FOLDERS_SCHEMA_SQL, checksum: LINKED_FOLDERS_SCHEMA_CHECKSUM },
+  { version: 5, sql: ORGANIZATION_SCHEMA_SQL, checksum: ORGANIZATION_SCHEMA_CHECKSUM },
 ] as const;
 const SUPPORTED_SCHEMA_VERSION = MIGRATIONS.at(-1)!.version;
 
