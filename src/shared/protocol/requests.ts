@@ -270,10 +270,14 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
   z.strictObject({
     type: z.literal('library.export.request'),
     libraryId: identifierSchema,
+    format: z.enum(['folder', 'zip']),
     includeLinkedContent: z.boolean(),
   }),
   z.strictObject({
     type: z.literal('library.import.request'),
+  }),
+  z.strictObject({
+    type: z.literal('library.import-zip.request'),
   }),
   z.strictObject({
     type: z.literal('library.import.copy.request'),
@@ -625,6 +629,11 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
   z.strictObject({
     type: z.literal('library.import-validate'),
     sourceFolderPath: selectedPathSchema,
+  }),
+  z.strictObject({
+    type: z.literal('library.import-zip'),
+    sourceZipPath: selectedPathSchema,
+    destinationParentPath: selectedPathSchema,
   }),
   z.strictObject({
     type: z.literal('asset.analyze'),

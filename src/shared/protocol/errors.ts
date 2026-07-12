@@ -22,6 +22,7 @@ export const PUBLIC_ERROR_MESSAGES = {
   LIBRARY_NOT_OPEN: 'The library is not currently open.',
   ASSET_NOT_FOUND: 'The requested asset could not be found.',
   VERSION_CONFLICT: 'The metadata has been modified by another operation. Please refresh and try again.',
+  ZIP_TOO_LARGE: 'The library is too large for standard ZIP. Export as a folder instead.',
 } as const;
 
 export type PublicErrorCode = keyof typeof PUBLIC_ERROR_MESSAGES;
@@ -41,6 +42,9 @@ export const publicErrorReasonSchema = z.enum([
   'FFMPEG_REQUIRED',
   'OIIO_REQUIRED',
   'UNSUPPORTED_FORMAT',
+  'ZIP_TOO_LARGE',
+  'NOT_A_LIBRARY',
+  'PATH_ESCAPE',
 ]);
 
 export type PublicErrorReason = z.infer<typeof publicErrorReasonSchema>;

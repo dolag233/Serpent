@@ -286,7 +286,23 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
     }
     case 'library.export': {
       if (request.command.format === 'zip') {
-        throw new LibraryServiceError('LIBRARY_NOT_WRITABLE');
+        const exported = await libraryService.exportLibraryToZip({
+          libraryId: request.command.libraryId,
+          destinationPath: request.command.destinationPath,
+          includeLinkedContent: request.command.includeLinkedContent,
+        });
+        return {
+          ok: true,
+          type: 'library.exported',
+          exportId: exported.exportId,
+          libraryId: request.command.libraryId,
+          format: 'zip' as const,
+          fileCount: exported.fileCount,
+          totalBytes: exported.totalBytes,
+          excludedPreviewCount: exported.excludedPreviewCount,
+          includedLinkedContent: exported.includedLinkedContent,
+          durationMs: exported.durationMs,
+        };
       }
       const exported = libraryService.exportLibraryToFolder({
         libraryId: request.command.libraryId,
@@ -313,6 +329,20 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
       const imported = libraryService.importLibraryFromFolder({
         sourceFolderPath: request.command.sourceFolderPath,
         copyToParentPath: request.command.copyToParentPath,
+      });
+      return {
+        ok: true,
+        type: 'library.imported',
+        importId: imported.importId,
+        libraryId: imported.libraryId,
+        displayName: imported.displayName,
+        libraryPath: imported.libraryPath,
+      };
+    }
+    case 'library.import-zip': {
+      const imported = await libraryService.importLibraryFromZip({
+        sourceZipPath: request.command.sourceZipPath,
+        destinationParentPath: request.command.destinationParentPath,
       });
       return {
         ok: true,

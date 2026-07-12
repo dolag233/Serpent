@@ -591,7 +591,24 @@ async function commandFor(request: RendererRequest): Promise<WorkerCommand | und
     case 'library.export.request': {
       let destinationPath: string | undefined;
       if (!app.isPackaged && process.env.SERPENT_E2E === '1') {
-        destinationPath = process.env.SERPENT_E2E_EXPORT_DEST;
+        destinationPath = request.format === 'zip'
+          ? process.env.SERPENT_E2E_EXPORT_DEST_ZIP
+          : process.env.SERPENT_E2E_EXPORT_DEST;
+      } else if (request.format === 'zip') {
+        const result = mainWindow
+          ? await dialog.showSaveDialog(mainWindow, {
+              title: '导出为 ZIP',
+              buttonLabel: '导出 ZIP',
+              defaultPath: 'serpent-library-export.zip',
+              filters: [{ name: 'ZIP 文件', extensions: ['zip'] }],
+            })
+          : await dialog.showSaveDialog({
+              title: '导出为 ZIP',
+              buttonLabel: '导出 ZIP',
+              defaultPath: 'serpent-library-export.zip',
+              filters: [{ name: 'ZIP 文件', extensions: ['zip'] }],
+            });
+        destinationPath = result.canceled ? undefined : result.filePath;
       } else {
         const result = mainWindow
           ? await dialog.showOpenDialog(mainWindow, {
@@ -611,7 +628,7 @@ async function commandFor(request: RendererRequest): Promise<WorkerCommand | und
             type: 'library.export',
             libraryId: request.libraryId,
             destinationPath,
-            format: 'folder' as const,
+            format: request.format,
             includeLinkedContent: request.includeLinkedContent,
           }
         : undefined;
@@ -639,6 +656,47 @@ async function commandFor(request: RendererRequest): Promise<WorkerCommand | und
       const importId = `import-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
       pendingImportSources.set(importId, sourceFolderPath);
       return { type: 'library.import-validate', sourceFolderPath };
+    }
+    case 'library.import-zip.request': {
+      let sourceZipPath: string | undefined;
+      if (!app.isPackaged && process.env.SERPENT_E2E === '1') {
+        sourceZipPath = process.env.SERPENT_E2E_IMPORT_SOURCE_ZIP;
+      } else {
+        const result = mainWindow
+          ? await dialog.showOpenDialog(mainWindow, {
+              title: '选择要导入的 ZIP 文件',
+              buttonLabel: '导入此 ZIP',
+              filters: [{ name: 'ZIP 文件', extensions: ['zip'] }],
+              properties: ['openFile'],
+            })
+          : await dialog.showOpenDialog({
+              title: '选择要导入的 ZIP 文件',
+              buttonLabel: '导入此 ZIP',
+              filters: [{ name: 'ZIP 文件', extensions: ['zip'] }],
+              properties: ['openFile'],
+            });
+        sourceZipPath = result.canceled ? undefined : result.filePaths[0];
+      }
+      if (!sourceZipPath) return undefined;
+      let destinationParentPath: string | undefined;
+      if (!app.isPackaged && process.env.SERPENT_E2E === '1') {
+        destinationParentPath = process.env.SERPENT_E2E_IMPORT_COPY_PARENT;
+      } else {
+        const destResult = mainWindow
+          ? await dialog.showOpenDialog(mainWindow, {
+              title: '选择导入目标位置（资源库将解压到此文件夹内）',
+              buttonLabel: '解压到此处',
+              properties: ['openDirectory', 'createDirectory'],
+            })
+          : await dialog.showOpenDialog({
+              title: '选择导入目标位置（资源库将解压到此文件夹内）',
+              buttonLabel: '解压到此处',
+              properties: ['openDirectory', 'createDirectory'],
+            });
+        destinationParentPath = destResult.canceled ? undefined : destResult.filePaths[0];
+      }
+      if (!destinationParentPath) return undefined;
+      return { type: 'library.import-zip', sourceZipPath, destinationParentPath };
     }
     case 'library.import.copy.request': {
       const importId = request.importId;
@@ -769,7 +827,7 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
     if (!workerClient) throw new Error('Library Worker is unavailable.');
     if (command.type === 'library.create') operation = 'create';
     if (command.type === 'library.open') operation = 'open';
-    if (command.type === 'library.import-folder') operation = 'import';
+    if (command.type === 'library.import-folder' || command.type === 'library.import-zip') operation = 'import';
     if (operation) publishLifecycle({ type: 'library.opening', operation });
 
     const workerResult = await workerClient.request(command);

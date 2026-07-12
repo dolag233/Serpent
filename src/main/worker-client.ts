@@ -33,6 +33,7 @@ const EXPORT_IMPORT_COMMANDS = new Set([
   'library.export',
   'library.export-cancel',
   'library.import-folder',
+  'library.import-zip',
   'library.import-cancel',
 ]);
 

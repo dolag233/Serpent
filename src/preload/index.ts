@@ -429,8 +429,8 @@ const library: SerpentLibraryApi = Object.freeze({
     return () => ipcRenderer.removeListener(ASSET_CHANGE_CHANNEL, subscription);
   },
 
-  async exportLibrary({ libraryId, includeLinkedContent }: { libraryId: string; includeLinkedContent: boolean }) {
-    const result = await request({ type: 'library.export.request', libraryId, includeLinkedContent });
+  async exportLibrary({ libraryId, includeLinkedContent, format }: { libraryId: string; includeLinkedContent: boolean; format: 'folder' | 'zip' }) {
+    const result = await request({ type: 'library.export.request', libraryId, includeLinkedContent, format });
     if (!result.ok) return failure(result);
     if (result.type !== 'library.exported') throw new Error('Unexpected export response.');
     return { ok: true as const, value: result };
@@ -440,6 +440,13 @@ const library: SerpentLibraryApi = Object.freeze({
     const result = await request({ type: 'library.import.request' });
     if (!result.ok) return failure(result);
     if (result.type !== 'library.import-validated') throw new Error('Unexpected import-validate response.');
+    return { ok: true as const, value: result };
+  },
+
+  async importLibraryZip() {
+    const result = await request({ type: 'library.import-zip.request' });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'library.imported') throw new Error('Unexpected import-zip response.');
     return { ok: true as const, value: result };
   },
 

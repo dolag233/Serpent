@@ -4,6 +4,7 @@ import {
   closeSync,
   constants,
   copyFileSync,
+  createWriteStream,
   existsSync,
   fstatSync,
   fsyncSync,
@@ -6947,6 +6948,494 @@ export class LibraryService {
     const state = this.activeImports.get(importId);
     if (!state) throw new LibraryServiceError('IMPORT_NOT_FOUND');
     state.cancelled = true;
+  }
+
+  // ── ZIP export ───────────────────────────────────────────────────────────
+
+  /** Maximum total size for a standard (non-ZIP64) ZIP archive: 4 GiB = 4,294,967,296 bytes. */
+  private static readonly ZIP_MAX_BYTES = 4 * 1024 * 1024 * 1024;
+  /** Maximum entry count for a standard (non-ZIP64) ZIP archive: 65535. */
+  private static readonly ZIP_MAX_ENTRIES = 65534;
+
+  async exportLibraryToZip(input: {
+    libraryId: string;
+    destinationPath: string;
+    includeLinkedContent: boolean;
+  }): Promise<{
+    exportId: string;
+    fileCount: number;
+    totalBytes: number;
+    excludedPreviewCount: number;
+    includedLinkedContent: boolean;
+    durationMs: number;
+  }> {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    const exportId = randomUUID();
+
+    // Ensure the destination file does not exist yet (prevent accidental overwrite).
+    if (existsSync(input.destinationPath)) {
+      throw new LibraryServiceError('LIBRARY_NOT_WRITABLE');
+    }
+
+    // Reject destination inside the library.
+    const libPath = openLibrary.summary.libraryPath;
+    let canonicalLib: string;
+    try {
+      canonicalLib = realpathSync(libPath);
+    } catch {
+      throw new LibraryServiceError('LIBRARY_CORRUPT');
+    }
+    const destDir = path.dirname(input.destinationPath);
+    let canonicalDestDir: string;
+    try {
+      canonicalDestDir = realpathSync(destDir);
+    } catch {
+      canonicalDestDir = destDir;
+    }
+    const rel = path.relative(canonicalLib, canonicalDestDir);
+    if (rel === '' || (!rel.startsWith('..') && rel.length > 0)) {
+      throw new LibraryServiceError('INVALID_LIBRARY_PATH');
+    }
+
+    const cancelState = { cancelled: false };
+    this.activeExports.set(exportId, cancelState);
+    const startedAt = Date.now();
+
+    const tempDir = path.join(path.dirname(input.destinationPath), `.serpent-zip-export-${exportId}`);
+    let tempDbPath: string | undefined;
+    let zipFileCreated = false;
+
+    function countFilesRecursive(dirPath: string): number {
+      let count = 0;
+      try {
+        for (const child of readdirSync(dirPath, { withFileTypes: true })) {
+          if (child.isSymbolicLink()) continue;
+          const childPath = path.join(dirPath, child.name);
+          if (child.isDirectory()) {
+            count += countFilesRecursive(childPath);
+          } else if (child.isFile()) {
+            count += 1;
+          }
+        }
+      } catch {
+        // Best effort.
+      }
+      return count;
+    }
+
+    try {
+      mkdirSync(tempDir, { recursive: true });
+
+      // Phase 1: snapshot-db
+      this.emitProgress({
+        type: 'export.progress', exportId,
+        libraryId: input.libraryId,
+        phase: 'snapshot-db', filesProcessed: 0, totalFiles: 0,
+        bytesProcessed: 0, totalBytes: 0,
+      });
+
+      tempDbPath = path.join(tempDir, `library-${exportId}.db`);
+      try {
+        openLibrary.connection.exec(`VACUUM INTO '${tempDbPath.replace(/'/g, "''")}'`);
+      } catch (error) {
+        throw new LibraryServiceError('LIBRARY_CORRUPT', { cause: error });
+      }
+
+      // Verify the backup.
+      const verifyConn = openConfiguredDatabase(tempDbPath);
+      try {
+        verifyConn.pragma('quick_check(1)');
+      } finally {
+        verifyConn.close();
+      }
+
+      // Phase 2: enumerate
+      this.emitProgress({
+        type: 'export.progress', exportId,
+        libraryId: input.libraryId,
+        phase: 'enumerate', filesProcessed: 0, totalFiles: 0,
+        bytesProcessed: 0, totalBytes: 0,
+      });
+
+      interface ZipEntry {
+        sourcePath: string;
+        relativePath: string;
+        byteSize: number;
+      }
+      const entries: ZipEntry[] = [];
+      let excludedPreviewCount = 0;
+
+      const walkDir = (dirPath: string, relPrefix: string): void => {
+        if (cancelState.cancelled) return;
+        let children;
+        try {
+          children = readdirSync(dirPath, { withFileTypes: true });
+        } catch {
+          return;
+        }
+        for (const child of children) {
+          if (cancelState.cancelled) return;
+          const childPath = path.join(dirPath, child.name);
+          const childRel = relPrefix ? path.posix.join(relPrefix, child.name) : child.name;
+
+          if (child.isSymbolicLink()) continue;
+
+          if (child.isDirectory()) {
+            if (childRel === '.serpent/previews' || childRel === '.serpent/operations') {
+              if (childRel === '.serpent/previews') {
+                try {
+                  excludedPreviewCount += countFilesRecursive(childPath);
+                } catch {
+                  // Best effort.
+                }
+              }
+              continue;
+            }
+            walkDir(childPath, childRel);
+          } else if (child.isFile()) {
+            const lowerName = child.name.toLowerCase();
+            if (lowerName.endsWith('.tmp') || (lowerName.startsWith('.') && (
+              lowerName.includes('temp') || lowerName.includes('cache') ||
+              lowerName.startsWith('.ds_store') || lowerName === 'thumbs.db'
+            ))) {
+              continue;
+            }
+            const stat = lstatSync(childPath);
+            if (stat.isSymbolicLink()) continue;
+            entries.push({
+              sourcePath: childPath,
+              relativePath: childRel,
+              byteSize: stat.size,
+            });
+          }
+        }
+      };
+
+      // Walk Assets/.
+      walkDir(path.join(libPath, 'Assets'), 'Assets');
+
+      // Walk .serpent/revisions/.
+      const revisionsDir = path.join(libPath, '.serpent', 'revisions');
+      if (directoryExists(revisionsDir)) {
+        walkDir(revisionsDir, '.serpent/revisions');
+      }
+
+      // Walk .serpent/trash/.
+      const trashDir = path.join(libPath, '.serpent', 'trash');
+      if (directoryExists(trashDir)) {
+        walkDir(trashDir, '.serpent/trash');
+      }
+
+      // Add .serpent/library.db (snapshot).
+      const snapStat = statSync(tempDbPath);
+      entries.push({
+        sourcePath: tempDbPath,
+        relativePath: '.serpent/library.db',
+        byteSize: snapStat.size,
+      });
+
+      const totalFiles = entries.length;
+      let totalBytes = 0;
+      for (const entry of entries) {
+        totalBytes += entry.byteSize;
+      }
+
+      // ZIP pre-check: reject if total size > 4 GiB or entry count > 65534.
+      if (totalBytes > LibraryService.ZIP_MAX_BYTES || totalFiles > LibraryService.ZIP_MAX_ENTRIES) {
+        throw new LibraryServiceError('ZIP_TOO_LARGE', { reason: 'ZIP_TOO_LARGE' });
+      }
+
+      // Phase 3: compress
+      this.emitProgress({
+        type: 'export.progress', exportId,
+        libraryId: input.libraryId,
+        phase: 'compress', filesProcessed: 0, totalFiles,
+        bytesProcessed: 0, totalBytes,
+      });
+
+      // Dynamically import archiver (CJS module).
+      interface ZipArchiverInstance {
+        pipe(output: ReturnType<typeof createWriteStream>): void;
+        file(path: string, options: { name: string }): void;
+        finalize(): void;
+        abort(): void;
+        on(event: string, listener: (err: Error) => void): void;
+      }
+      // archiver v8 exports named classes; ZipArchive is the ZIP-specific one.
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const archiverModule = require('archiver') as {
+        ZipArchive: new (options?: Record<string, unknown>) => ZipArchiverInstance;
+      };
+
+      const destZipPath = input.destinationPath;
+      // Ensure parent directory exists.
+      mkdirSync(path.dirname(destZipPath), { recursive: true });
+
+      const output = createWriteStream(destZipPath);
+      const archive = new archiverModule.ZipArchive({ zlib: { level: 6 }, forceZip64: false });
+
+      let archiverError: Error | undefined;
+      archive.on('error', (err: Error) => {
+        archiverError = err;
+      });
+
+      // Pipe archive data to the destination file.
+      archive.pipe(output);
+
+      let filesProcessed = 0;
+      let bytesProcessed = 0;
+      let lastEmitTime = Date.now();
+      const BATCH_SIZE = 50;
+      const THROTTLE_MS = 200;
+
+      for (const entry of entries) {
+        if (cancelState.cancelled) break;
+        if (archiverError) throw new LibraryServiceError('LIBRARY_NOT_WRITABLE', { cause: archiverError });
+
+        archive.file(entry.sourcePath, { name: entry.relativePath });
+
+        filesProcessed += 1;
+        bytesProcessed += entry.byteSize;
+
+        if (
+          filesProcessed % BATCH_SIZE === 0 ||
+          Date.now() - lastEmitTime >= THROTTLE_MS
+        ) {
+          this.emitProgress({
+            type: 'export.progress', exportId,
+            libraryId: input.libraryId,
+            phase: 'compress', filesProcessed, totalFiles,
+            bytesProcessed, totalBytes,
+          });
+          lastEmitTime = Date.now();
+        }
+      }
+
+      if (cancelState.cancelled) {
+        // Destroy streams.
+        archive.abort();
+        output.destroy();
+        // Remove the temp db and temp dir.
+        try { rmSync(tempDir, { force: true, recursive: true }); } catch { /* best effort */ }
+        // Remove the destination file.
+        try { rmSync(destZipPath, { force: true }); } catch { /* best effort */ }
+        this.emitProgress({
+          type: 'export.progress', exportId,
+          libraryId: input.libraryId,
+          phase: 'cancelled', filesProcessed, totalFiles,
+          bytesProcessed, totalBytes,
+        });
+        throw new LibraryServiceError('CANCELLED');
+      }
+
+      // Finalize the archive (wait for the output stream to finish).
+      await new Promise<void>((resolve, reject) => {
+        output.on('finish', () => {
+          if (archiverError) {
+            reject(new LibraryServiceError('LIBRARY_NOT_WRITABLE', { cause: archiverError }));
+            return;
+          }
+          resolve();
+        });
+        output.on('error', (err: Error) => {
+          reject(new LibraryServiceError('LIBRARY_NOT_WRITABLE', { cause: err }));
+        });
+        void archive.finalize();
+      });
+
+      zipFileCreated = true;
+
+      // Clean up temp dir.
+      try { rmSync(tempDir, { force: true, recursive: true }); } catch { /* best effort */ }
+
+      // Final progress.
+      this.emitProgress({
+        type: 'export.progress', exportId,
+        libraryId: input.libraryId,
+        phase: 'compress', filesProcessed, totalFiles,
+        bytesProcessed, totalBytes,
+      });
+
+      // Phase 4: complete
+      const durationMs = Date.now() - startedAt;
+      this.emitProgress({
+        type: 'export.progress', exportId,
+        libraryId: input.libraryId,
+        phase: 'complete', filesProcessed, totalFiles,
+        bytesProcessed, totalBytes,
+      });
+
+      return {
+        exportId,
+        fileCount: totalFiles,
+        totalBytes,
+        excludedPreviewCount,
+        includedLinkedContent: false, // ZIP export does not support linked content in MVP.
+        durationMs,
+      };
+    } catch (error) {
+      if (zipFileCreated) {
+        try { rmSync(input.destinationPath, { force: true }); } catch { /* best effort */ }
+      }
+      try { rmSync(tempDir, { force: true, recursive: true }); } catch { /* best effort */ }
+      throw error;
+    } finally {
+      this.activeExports.delete(exportId);
+    }
+  }
+
+  // ── ZIP import ───────────────────────────────────────────────────────────
+
+  async importLibraryFromZip(input: {
+    sourceZipPath: string;
+    destinationParentPath: string;
+  }): Promise<{
+    importId: string;
+    libraryId: string;
+    displayName: string;
+    libraryPath: string;
+  }> {
+    const importId = randomUUID();
+    const cancelState = { cancelled: false };
+    this.activeImports.set(importId, cancelState);
+
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const AdmZip = require('adm-zip') as new (path: string) => {
+      getEntries(): Array<{ entryName: string; isDirectory: boolean; attr?: number }>;
+      extractAllToAsync(path: string, overwrite: boolean, callback: (error?: Error) => void): void;
+    };
+
+    const zip = new AdmZip(input.sourceZipPath);
+
+    try {
+      // Phase 1: validate
+      this.emitProgress({
+        type: 'import.progress', importId,
+        phase: 'validate', filesProcessed: 0, totalFiles: 0,
+        bytesProcessed: 0, totalBytes: 0,
+      });
+
+      // Read entries from the central directory.
+      const zipEntries = zip.getEntries();
+
+      // Check for Assets/ directory (archiver v8 may not add an explicit directory
+      // entry; files with an Assets/ prefix imply the directory structure).
+      const hasAssetFiles = zipEntries.some(
+        (e) => !e.isDirectory && e.entryName.startsWith('Assets/'),
+      );
+      if (!hasAssetFiles) {
+        throw new LibraryServiceError('NOT_A_LIBRARY', { reason: 'NOT_A_LIBRARY' });
+      }
+
+      // Check for .serpent/library.db file entry.
+      const hasDb = zipEntries.some(
+        (e) => !e.isDirectory && e.entryName === '.serpent/library.db',
+      );
+      if (!hasDb) {
+        throw new LibraryServiceError('NOT_A_LIBRARY', { reason: 'NOT_A_LIBRARY' });
+      }
+
+      // Reject path-escape entries.
+      for (const entry of zipEntries) {
+        if (entry.entryName.startsWith('/') || entry.entryName.includes('..')) {
+          throw new LibraryServiceError('NOT_A_LIBRARY', { reason: 'PATH_ESCAPE' });
+        }
+      }
+
+      // Reject symlink entries.
+      for (const entry of zipEntries) {
+        const attr = entry.attr;
+        if (attr !== undefined && (attr >>> 16) !== 0) {
+          const mode = (attr >>> 16) & 0o170000;
+          if (mode === 0o120000) {
+            throw new LibraryServiceError('NOT_A_LIBRARY', { reason: 'SYMBOLIC_LINK_NOT_ALLOWED' });
+          }
+        }
+      }
+
+      // Phase 2: extract
+      const baseName = path.basename(input.sourceZipPath, path.extname(input.sourceZipPath));
+      const extractPath = path.join(input.destinationParentPath, baseName);
+
+      if (cancelState.cancelled) {
+        this.emitProgress({ type: 'import.progress', importId, phase: 'cancelled', filesProcessed: 0, totalFiles: 0, bytesProcessed: 0, totalBytes: 0 });
+        throw new LibraryServiceError('CANCELLED');
+      }
+
+      const totalEntries = zipEntries.length;
+      this.emitProgress({
+        type: 'import.progress', importId,
+        phase: 'extract', filesProcessed: 0, totalFiles: totalEntries,
+        bytesProcessed: 0, totalBytes: 0,
+      });
+
+      try {
+        await new Promise<void>((resolve, reject) => {
+          zip.extractAllToAsync(extractPath, true, (error?: Error) => {
+            if (error) {
+              reject(new LibraryServiceError('NOT_A_LIBRARY', { cause: error }));
+              return;
+            }
+            resolve();
+          });
+        });
+      } catch (error) {
+        try { rmSync(extractPath, { force: true, recursive: true }); } catch { /* best effort */ }
+        throw error;
+      }
+
+      if (cancelState.cancelled) {
+        try { rmSync(extractPath, { force: true, recursive: true }); } catch { /* best effort */ }
+        this.emitProgress({ type: 'import.progress', importId, phase: 'cancelled', filesProcessed: 0, totalFiles: totalEntries, bytesProcessed: 0, totalBytes: 0 });
+        throw new LibraryServiceError('CANCELLED');
+      }
+
+      // Phase 3: verify
+      this.emitProgress({
+        type: 'import.progress', importId,
+        phase: 'verify', filesProcessed: 0, totalFiles: totalEntries,
+        bytesProcessed: 0, totalBytes: 0,
+      });
+
+      // Validate the extracted folder is a valid library.
+      // Canonicalize the extract path so symlink checks compare against
+      // the real path (important on macOS where /var -> /private/var).
+      let canonicalExtractPath: string;
+      try {
+        canonicalExtractPath = realpathSync(extractPath);
+      } catch {
+        canonicalExtractPath = extractPath;
+      }
+      this.validateImportSource(canonicalExtractPath);
+
+      // Phase 4: open
+      this.emitProgress({
+        type: 'import.progress', importId,
+        phase: 'open', filesProcessed: 0, totalFiles: totalEntries,
+        bytesProcessed: 0, totalBytes: 0,
+      });
+
+      const summary = this.openLibrary(canonicalExtractPath);
+
+      // Phase 5: complete
+      this.emitProgress({
+        type: 'import.progress', importId,
+        phase: 'complete', filesProcessed: totalEntries, totalFiles: totalEntries,
+        bytesProcessed: 0, totalBytes: 0,
+      });
+
+      return {
+        importId,
+        libraryId: summary.libraryId,
+        displayName: summary.displayName,
+        libraryPath: summary.libraryPath,
+      };
+    } catch (error) {
+      if (error instanceof LibraryServiceError) throw error;
+      throw new LibraryServiceError('NOT_A_LIBRARY', { cause: error });
+    } finally {
+      this.activeImports.delete(importId);
+    }
   }
 
   validateImportSource(sourceFolderPath: string): {

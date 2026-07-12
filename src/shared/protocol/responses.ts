@@ -82,7 +82,7 @@ export const exportProgressEventSchema = z.strictObject({
   type: z.literal('export.progress'),
   exportId: nonBlankString,
   libraryId: nonBlankString,
-  phase: z.enum(['snapshot-db', 'enumerate', 'copy', 'complete', 'failed', 'cancelled']),
+  phase: z.enum(['snapshot-db', 'enumerate', 'copy', 'compress', 'complete', 'failed', 'cancelled']),
   filesProcessed: z.number().int().nonnegative(),
   totalFiles: z.number().int().nonnegative(),
   bytesProcessed: z.number().int().nonnegative(),
@@ -98,7 +98,7 @@ export function parseExportProgressEvent(input: unknown): ExportProgressEvent {
 export const importProgressEventSchema = z.strictObject({
   type: z.literal('import.progress'),
   importId: nonBlankString,
-  phase: z.enum(['validate', 'copy', 'open', 'complete', 'failed', 'cancelled']),
+  phase: z.enum(['validate', 'copy', 'extract', 'verify', 'open', 'complete', 'failed', 'cancelled']),
   filesProcessed: z.number().int().nonnegative(),
   totalFiles: z.number().int().nonnegative(),
   bytesProcessed: z.number().int().nonnegative(),

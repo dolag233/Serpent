@@ -26,6 +26,10 @@
   "dependencies": {
     "@fontsource-variable/noto-sans-sc": "5.2.10",
     "@fontsource/ibm-plex-mono": "5.2.7",
+    "@types/adm-zip": "^0.5.8",
+    "@types/archiver": "^8.0.0",
+    "adm-zip": "^0.6.0",
+    "archiver": "^8.0.0",
     "better-sqlite3": "12.11.1",
     "react": "19.2.7",
     "react-dom": "19.2.7",
