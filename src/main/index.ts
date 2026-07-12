@@ -31,6 +31,9 @@ let quitAfterShutdown = false;
 let startupComplete = false;
 let logger: AppLogger | undefined;
 
+// Pending relink-batch root paths (libraryId -> rootPath), cleared after apply/abandon.
+const pendingRelinkRoots = new Map<string, string>();
+
 function focusMainWindow(): void {
   if (!mainWindow) return;
   if (mainWindow.isMinimized()) mainWindow.restore();
@@ -367,6 +370,70 @@ async function commandFor(request: RendererRequest): Promise<WorkerCommand | und
         libraryId: request.libraryId,
         collectionId: request.collectionId,
       };
+    case 'asset.trash.request':
+      return { type: 'asset.trash', libraryId: request.libraryId, assetIds: request.assetIds };
+    case 'asset.restore.request':
+      return { type: 'asset.restore', libraryId: request.libraryId, assetIds: request.assetIds, targetFolderId: request.targetFolderId };
+    case 'asset.delete-permanent.request':
+      return { type: 'asset.delete-permanent', libraryId: request.libraryId, assetIds: request.assetIds };
+    case 'trash.list.request':
+      return { type: 'asset.list-trash', libraryId: request.libraryId };
+    case 'trash.purge.request':
+      return { type: 'asset.purge-trash', libraryId: request.libraryId };
+    case 'asset.delete-linked.request':
+      return { type: 'asset.delete-linked', libraryId: request.libraryId, assetIds: request.assetIds, deleteSourceFile: request.deleteSourceFile };
+    case 'asset.relink.request': {
+      let newAbsolutePath: string | undefined;
+      if (!app.isPackaged && process.env.SERPENT_E2E === '1') {
+        newAbsolutePath = process.env.SERPENT_E2E_RELINK_FILE;
+      } else {
+        const result = mainWindow
+          ? await dialog.showOpenDialog(mainWindow, {
+              title: 'Locate Missing Asset',
+              buttonLabel: 'Select File',
+              properties: ['openFile'],
+            })
+          : await dialog.showOpenDialog({
+              title: 'Locate Missing Asset',
+              buttonLabel: 'Select File',
+              properties: ['openFile'],
+            });
+        newAbsolutePath = result.canceled ? undefined : result.filePaths[0];
+      }
+      return newAbsolutePath
+        ? { type: 'asset.relink', libraryId: request.libraryId, assetId: request.assetId, newAbsolutePath }
+        : undefined;
+    }
+    case 'asset.relink-batch.request': {
+      let newRootPath: string | undefined;
+      if (!app.isPackaged && process.env.SERPENT_E2E === '1') {
+        newRootPath = process.env.SERPENT_E2E_RELINK_ROOT;
+      } else {
+        const result = mainWindow
+          ? await dialog.showOpenDialog(mainWindow, {
+              title: 'Select New Root for Relinking',
+              buttonLabel: 'Select Folder',
+              properties: ['openDirectory'],
+            })
+          : await dialog.showOpenDialog({
+              title: 'Select New Root for Relinking',
+              buttonLabel: 'Select Folder',
+              properties: ['openDirectory'],
+            });
+        newRootPath = result.canceled ? undefined : result.filePaths[0];
+      }
+      if (newRootPath) {
+        pendingRelinkRoots.set(request.libraryId, newRootPath);
+        return { type: 'asset.relink-batch.preview', libraryId: request.libraryId, newRootPath };
+      }
+      return undefined;
+    }
+    case 'asset.relink-batch.apply.request': {
+      const newRootPath = pendingRelinkRoots.get(request.libraryId);
+      if (!newRootPath) return undefined;
+      pendingRelinkRoots.delete(request.libraryId);
+      return { type: 'asset.relink-batch.apply', libraryId: request.libraryId, newRootPath, keepMetadata: request.keepMetadata };
+    }
     default:
       return assertNever(request);
   }

@@ -239,6 +239,42 @@ function handleRequest(request: WorkerRequest): WorkerResult {
         offset: result.offset,
       };
     }
+    case 'asset.trash': {
+      const { trashedCount } = libraryService.trashAssets(request.command);
+      return { ok: true, type: 'asset.trashed', trashedCount };
+    }
+    case 'asset.restore': {
+      const { restoredCount, assets } = libraryService.restoreAssets(request.command);
+      return { ok: true, type: 'asset.restored', restoredCount, assets };
+    }
+    case 'asset.delete-permanent': {
+      const { deletedCount, skippedCount, skippedReasons } = libraryService.deleteAssetsPermanent(request.command);
+      return { ok: true, type: 'asset.deleted-permanent', deletedCount, skippedCount, skippedReasons };
+    }
+    case 'asset.delete-linked': {
+      const { deletedCount } = libraryService.deleteLinkedAssets(request.command);
+      return { ok: true, type: 'asset.deleted-linked', deletedCount };
+    }
+    case 'asset.list-trash': {
+      const assets = libraryService.listTrash(request.command.libraryId);
+      return { ok: true, type: 'asset.list-trash', assets };
+    }
+    case 'asset.purge-trash': {
+      const { purgedCount } = libraryService.purgeExpiredTrash(request.command.libraryId);
+      return { ok: true, type: 'asset.purge-trash', purgedCount };
+    }
+    case 'asset.relink': {
+      const { asset } = libraryService.relinkAsset(request.command);
+      return { ok: true, type: 'asset.relinked', asset };
+    }
+    case 'asset.relink-batch.preview': {
+      const preview = libraryService.relinkBatchPreview(request.command);
+      return { ok: true, type: 'asset.relink-batch.preview', ...preview };
+    }
+    case 'asset.relink-batch.apply': {
+      const { restoredCount, unchangedMissingCount, assets } = libraryService.relinkBatchApply(request.command);
+      return { ok: true, type: 'asset.relink-batch.applied', restoredCount, unchangedMissingCount, assets };
+    }
     default:
       return assertNever(request.command);
   }

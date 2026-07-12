@@ -279,6 +279,62 @@ const assetOperationSuccessSchemas = [
       }),
     ).optional(),
   }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('asset.trashed'),
+    trashedCount: z.number().int().nonnegative(),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('asset.restored'),
+    restoredCount: z.number().int().nonnegative(),
+    assets: z.array(assetSummarySchema),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('asset.deleted-permanent'),
+    deletedCount: z.number().int().nonnegative(),
+    skippedCount: z.number().int().nonnegative(),
+    skippedReasons: z.array(nonBlankString),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('asset.deleted-linked'),
+    deletedCount: z.number().int().nonnegative(),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('asset.list-trash'),
+    assets: z.array(assetSummarySchema),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('asset.purge-trash'),
+    purgedCount: z.number().int().nonnegative(),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('asset.relinked'),
+    asset: assetSummarySchema,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('asset.relink-batch.preview'),
+    matchedCount: z.number().int().nonnegative(),
+    unmatchedCount: z.number().int().nonnegative(),
+    totalCount: z.number().int().nonnegative(),
+    examples: z.array(z.strictObject({
+      relativeFilePath: nonBlankString,
+      matched: z.boolean(),
+    })).max(8),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('asset.relink-batch.applied'),
+    restoredCount: z.number().int().nonnegative(),
+    unchangedMissingCount: z.number().int().nonnegative(),
+    assets: z.array(assetSummarySchema),
+  }),
 ] as const;
 
 const workerSuccessResultSchema = z.discriminatedUnion('type', [

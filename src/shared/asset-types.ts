@@ -32,6 +32,9 @@ export const assetSummarySchema = z.strictObject({
   label: nonBlankString.nullable(),
   rating: z.number().int().min(0).max(5),
   favorite: z.boolean(),
+  deletedAt: nonBlankString.nullable(),
+  trashedFromPath: nonBlankString.nullable(),
+  remainingDays: z.number().int().nullable(),
 });
 
 export type AssetSummary = z.infer<typeof assetSummarySchema>;

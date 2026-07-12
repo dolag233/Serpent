@@ -222,6 +222,51 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     libraryId: identifierSchema,
     collectionId: identifierSchema,
   }),
+  z.strictObject({
+    type: z.literal('asset.trash.request'),
+    libraryId: identifierSchema,
+    assetIds: z.array(identifierSchema).min(1),
+  }),
+  z.strictObject({
+    type: z.literal('asset.restore.request'),
+    libraryId: identifierSchema,
+    assetIds: z.array(identifierSchema).min(1),
+    targetFolderId: optionalIdentifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('asset.delete-permanent.request'),
+    libraryId: identifierSchema,
+    assetIds: z.array(identifierSchema).min(1),
+  }),
+  z.strictObject({
+    type: z.literal('trash.list.request'),
+    libraryId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('trash.purge.request'),
+    libraryId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('asset.delete-linked.request'),
+    libraryId: identifierSchema,
+    assetIds: z.array(identifierSchema).min(1),
+    deleteSourceFile: z.boolean(),
+  }),
+  z.strictObject({
+    type: z.literal('asset.relink.request'),
+    libraryId: identifierSchema,
+    assetId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('asset.relink-batch.request'),
+    libraryId: identifierSchema,
+    keepMetadata: z.boolean(),
+  }),
+  z.strictObject({
+    type: z.literal('asset.relink-batch.apply.request'),
+    libraryId: identifierSchema,
+    keepMetadata: z.boolean(),
+  }),
 ]);
 
 export type RendererRequest = z.infer<typeof rendererRequestSchema>;
@@ -437,6 +482,53 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     type: z.literal('smart-collection.execute'),
     libraryId: identifierSchema,
     collectionId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('asset.trash'),
+    libraryId: identifierSchema,
+    assetIds: z.array(identifierSchema).min(1),
+  }),
+  z.strictObject({
+    type: z.literal('asset.restore'),
+    libraryId: identifierSchema,
+    assetIds: z.array(identifierSchema).min(1),
+    targetFolderId: optionalIdentifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('asset.delete-permanent'),
+    libraryId: identifierSchema,
+    assetIds: z.array(identifierSchema).min(1),
+  }),
+  z.strictObject({
+    type: z.literal('asset.delete-linked'),
+    libraryId: identifierSchema,
+    assetIds: z.array(identifierSchema).min(1),
+    deleteSourceFile: z.boolean(),
+  }),
+  z.strictObject({
+    type: z.literal('asset.list-trash'),
+    libraryId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('asset.purge-trash'),
+    libraryId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('asset.relink'),
+    libraryId: identifierSchema,
+    assetId: identifierSchema,
+    newAbsolutePath: selectedPathSchema,
+  }),
+  z.strictObject({
+    type: z.literal('asset.relink-batch.preview'),
+    libraryId: identifierSchema,
+    newRootPath: selectedPathSchema,
+  }),
+  z.strictObject({
+    type: z.literal('asset.relink-batch.apply'),
+    libraryId: identifierSchema,
+    newRootPath: selectedPathSchema,
+    keepMetadata: z.boolean(),
   }),
 ]);
 
