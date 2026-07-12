@@ -11,6 +11,15 @@ export const managedFolderSummarySchema = z.strictObject({
 
 export type ManagedFolderSummary = z.infer<typeof managedFolderSummarySchema>;
 
+export const linkedFolderSummarySchema = z.strictObject({
+  folderId: nonBlankString,
+  displayName: nonBlankString,
+  status: z.enum(['available', 'offline']),
+  assetCount: z.number().int().nonnegative(),
+});
+
+export type LinkedFolderSummary = z.infer<typeof linkedFolderSummarySchema>;
+
 export const assetSummarySchema = z.strictObject({
   assetId: nonBlankString,
   managedFolderId: nonBlankString.nullable(),

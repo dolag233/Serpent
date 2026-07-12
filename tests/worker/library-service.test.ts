@@ -43,6 +43,7 @@ function downgradeLibraryToV1(libraryPath: string, createMigrationBlocker = fals
     DROP TABLE file_operations;
     DROP TABLE revisions;
     DROP TABLE assets;
+    DROP TABLE IF EXISTS linked_folders;
     DROP TABLE managed_folders;
     DELETE FROM schema_migrations WHERE version >= 2;
     PRAGMA user_version = 1;
@@ -54,15 +55,48 @@ function downgradeLibraryToV1(libraryPath: string, createMigrationBlocker = fals
 function downgradeLibraryToV2(libraryPath: string): void {
   const database = new TestDatabase(path.join(libraryPath, '.serpent', 'library.db'));
   database.exec(`
-    DROP TRIGGER managed_folders_path_identity_required_insert;
-    DROP TRIGGER managed_folders_path_identity_required_update;
-    DROP TRIGGER assets_path_identity_required_insert;
-    DROP TRIGGER assets_path_identity_required_update;
-    DROP INDEX managed_folders_path_identity_unique;
-    DROP INDEX assets_path_identity_unique;
+    -- better-sqlite3 defaults foreign_keys = ON (unlike SQLite's default OFF);
+    -- disable during this raw downgrade so DROP TABLE assets does not cascade
+    -- through revisions.asset_id ON DELETE CASCADE and orphan every asset.
+    PRAGMA foreign_keys = OFF;
+    -- Reverse v4: drop linked-related objects and rebuild assets to v2 shape
+    -- (no path_identity, no linked_folder_id, location_kind='managed',
+    -- relative_file_path UNIQUE column constraint).
+    DROP TABLE IF EXISTS linked_folders;
+    DROP INDEX IF EXISTS assets_linked_folder_path_idx;
+    DROP INDEX IF EXISTS assets_managed_relative_unique;
+    DROP INDEX IF EXISTS assets_managed_path_identity_unique;
+    DROP INDEX IF EXISTS assets_linked_relative_unique;
+    DROP INDEX IF EXISTS assets_linked_path_identity_unique;
+    DROP TRIGGER IF EXISTS assets_path_identity_required_insert;
+    DROP TRIGGER IF EXISTS assets_path_identity_required_update;
+    CREATE TABLE assets_v2 (
+      asset_id TEXT PRIMARY KEY,
+      location_kind TEXT NOT NULL CHECK (location_kind = 'managed'),
+      managed_folder_id TEXT REFERENCES managed_folders(folder_id) ON DELETE RESTRICT,
+      relative_file_path TEXT NOT NULL UNIQUE,
+      current_revision_id TEXT,
+      availability TEXT NOT NULL CHECK (availability IN ('available', 'missing')),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    INSERT INTO assets_v2 (
+      asset_id, location_kind, managed_folder_id, relative_file_path,
+      current_revision_id, availability, created_at, updated_at
+    )
+    SELECT
+      asset_id, 'managed', managed_folder_id, relative_file_path,
+      current_revision_id, availability, created_at, updated_at
+    FROM assets;
+    DROP TABLE assets;
+    ALTER TABLE assets_v2 RENAME TO assets;
+    CREATE INDEX assets_folder_path_idx ON assets(managed_folder_id, relative_file_path);
+    -- Reverse v3: drop managed_folders path_identity.
+    DROP TRIGGER IF EXISTS managed_folders_path_identity_required_insert;
+    DROP TRIGGER IF EXISTS managed_folders_path_identity_required_update;
+    DROP INDEX IF EXISTS managed_folders_path_identity_unique;
     ALTER TABLE managed_folders DROP COLUMN path_identity;
-    ALTER TABLE assets DROP COLUMN path_identity;
-    DELETE FROM schema_migrations WHERE version = 3;
+    DELETE FROM schema_migrations WHERE version >= 3;
     PRAGMA user_version = 2;
   `);
   database.close();
@@ -115,7 +149,7 @@ describe('LibraryService lifecycle', () => {
     expect(service.listLibraries()).toEqual([created]);
 
     const database = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
-    expect(database.pragma('user_version')).toEqual([{ user_version: 3 }]);
+    expect(database.pragma('user_version')).toEqual([{ user_version: 4 }]);
     database.close();
 
     expect(service.openLibrary(created.libraryPath)).toEqual(created);
@@ -233,7 +267,7 @@ describe('LibraryService lifecycle', () => {
     service.openLibrary(created.libraryPath);
 
     const database = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
-    expect(database.pragma('user_version')).toEqual([{ user_version: 3 }]);
+    expect(database.pragma('user_version')).toEqual([{ user_version: 4 }]);
     expect(
       database
         .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'assets'")
@@ -261,7 +295,7 @@ describe('LibraryService lifecycle', () => {
     expect(service.listAssets({ libraryId: reopened.libraryId, recursive: true })[0])
       .toMatchObject({ relativeFilePath: 'Café.PNG' });
     const database = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
-    expect(database.pragma('user_version')).toEqual([{ user_version: 3 }]);
+    expect(database.pragma('user_version')).toEqual([{ user_version: 4 }]);
     expect(database.prepare('SELECT path_identity FROM assets').all()).toEqual([
       { path_identity: 'café.png' },
     ]);

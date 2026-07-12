@@ -25,7 +25,7 @@ import path from 'node:path';
 
 import BetterSqlite3 from 'better-sqlite3';
 
-import type { AssetSummary, ManagedFolderSummary } from '../shared/asset-types';
+import type { AssetSummary, LinkedFolderSummary, ManagedFolderSummary } from '../shared/asset-types';
 import type { PublicErrorCode } from '../shared/protocol/errors';
 import { publicReasonFromError, type PublicErrorReason } from '../shared/protocol/errors';
 import type {
@@ -75,6 +75,19 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-
 
 const REQUIRED_DIRECTORIES = ['Assets'] as const;
 const REGENERABLE_DIRECTORIES = ['previews', 'revisions', 'trash'] as const;
+
+// Default ignore rules for linked-folder enumeration. Hardcoded for MVP; the
+// graphical rule editor is a later slice. Names match case-insensitively so a
+// repository checked out on macOS (case-insensitive APFS) and Windows
+// (case-insensitive NTFS) ignores the same entries.
+const DEFAULT_IGNORED_DIRECTORIES = new Set([
+  '.git',
+  'node_modules',
+  '.svn',
+  '.hg',
+  '__pycache__',
+]);
+const DEFAULT_IGNORED_FILES = new Set(['.ds_store', 'thumbs.db', 'desktop.ini']);
 
 const INITIAL_SCHEMA_SQL = `
   CREATE TABLE schema_migrations (
@@ -175,6 +188,82 @@ const PORTABLE_PATH_SCHEMA_CHECKSUM = createHash('sha256')
   .update(PORTABLE_PATH_SCHEMA_AFTER_BACKFILL_SQL)
   .digest('hex');
 
+const LINKED_FOLDERS_SCHEMA_SQL = `
+  CREATE TABLE linked_folders (
+    folder_id TEXT PRIMARY KEY,
+    library_id TEXT NOT NULL REFERENCES library(library_id),
+    display_name TEXT NOT NULL,
+    absolute_root_path TEXT NOT NULL,
+    source_device_hint TEXT,
+    status TEXT NOT NULL CHECK (status IN ('available', 'offline')),
+    path_identity TEXT NOT NULL UNIQUE,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+
+  -- SQLite cannot ALTER a CHECK constraint, so the assets table is rebuilt to
+  -- relax location_kind to 'managed' | 'linked', add linked_folder_id, and
+  -- replace the global UNIQUE on relative_file_path / path_identity with
+  -- location-scoped partial unique indexes: a linked asset's relative path is
+  -- relative to its linked root, not globally unique across the library.
+  CREATE TABLE assets_v4 (
+    asset_id TEXT PRIMARY KEY,
+    location_kind TEXT NOT NULL CHECK (location_kind IN ('managed', 'linked')),
+    managed_folder_id TEXT REFERENCES managed_folders(folder_id) ON DELETE RESTRICT,
+    linked_folder_id TEXT REFERENCES linked_folders(folder_id) ON DELETE RESTRICT,
+    relative_file_path TEXT NOT NULL,
+    current_revision_id TEXT,
+    availability TEXT NOT NULL CHECK (availability IN ('available', 'missing')),
+    path_identity TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    CHECK (
+      (location_kind = 'managed' AND linked_folder_id IS NULL) OR
+      (location_kind = 'linked' AND managed_folder_id IS NULL AND linked_folder_id IS NOT NULL)
+    )
+  );
+
+  INSERT INTO assets_v4 (
+    asset_id, location_kind, managed_folder_id, linked_folder_id,
+    relative_file_path, current_revision_id, availability, path_identity,
+    created_at, updated_at
+  )
+  SELECT
+    asset_id, location_kind, managed_folder_id, NULL,
+    relative_file_path, current_revision_id, availability, path_identity,
+    created_at, updated_at
+  FROM assets;
+
+  DROP INDEX IF EXISTS assets_folder_path_idx;
+  DROP INDEX IF EXISTS assets_path_identity_unique;
+  DROP TRIGGER IF EXISTS assets_path_identity_required_insert;
+  DROP TRIGGER IF EXISTS assets_path_identity_required_update;
+  DROP TABLE assets;
+  ALTER TABLE assets_v4 RENAME TO assets;
+
+  CREATE INDEX assets_folder_path_idx
+    ON assets(managed_folder_id, relative_file_path);
+  CREATE INDEX assets_linked_folder_path_idx
+    ON assets(linked_folder_id, relative_file_path);
+  CREATE UNIQUE INDEX assets_managed_relative_unique
+    ON assets(relative_file_path) WHERE location_kind = 'managed';
+  CREATE UNIQUE INDEX assets_managed_path_identity_unique
+    ON assets(path_identity) WHERE location_kind = 'managed';
+  CREATE UNIQUE INDEX assets_linked_relative_unique
+    ON assets(linked_folder_id, relative_file_path) WHERE location_kind = 'linked';
+  CREATE UNIQUE INDEX assets_linked_path_identity_unique
+    ON assets(linked_folder_id, path_identity) WHERE location_kind = 'linked';
+  CREATE TRIGGER assets_path_identity_required_insert
+    BEFORE INSERT ON assets WHEN NEW.path_identity IS NULL
+    BEGIN SELECT RAISE(ABORT, 'asset path identity is required'); END;
+  CREATE TRIGGER assets_path_identity_required_update
+    BEFORE UPDATE OF path_identity ON assets WHEN NEW.path_identity IS NULL
+    BEGIN SELECT RAISE(ABORT, 'asset path identity is required'); END;
+`;
+const LINKED_FOLDERS_SCHEMA_CHECKSUM = createHash('sha256')
+  .update(LINKED_FOLDERS_SCHEMA_SQL)
+  .digest('hex');
+
 const MIGRATIONS = [
   { version: 1, sql: INITIAL_SCHEMA_SQL, checksum: INITIAL_SCHEMA_CHECKSUM },
   { version: 2, sql: ASSET_SCHEMA_SQL, checksum: ASSET_SCHEMA_CHECKSUM },
@@ -183,6 +272,7 @@ const MIGRATIONS = [
     sql: PORTABLE_PATH_SCHEMA_BEFORE_BACKFILL_SQL,
     checksum: PORTABLE_PATH_SCHEMA_CHECKSUM,
   },
+  { version: 4, sql: LINKED_FOLDERS_SCHEMA_SQL, checksum: LINKED_FOLDERS_SCHEMA_CHECKSUM },
 ] as const;
 const SUPPORTED_SCHEMA_VERSION = MIGRATIONS.at(-1)!.version;
 
@@ -595,6 +685,16 @@ function migrateDatabase(connection: DatabaseConnection, allowFresh: boolean): v
   if (currentVersion > 0) verifyMigrationHistory(connection, currentVersion);
 
   for (const migration of MIGRATIONS.slice(currentVersion)) {
+    // The v4 migration rebuilds the assets table: SQLite cannot relax a CHECK
+    // constraint or replace a column UNIQUE without a table rebuild. DROP TABLE
+    // with foreign_keys = ON performs an implicit DELETE of every row, which
+    // would cascade through revisions.asset_id ON DELETE CASCADE and orphan
+    // every asset. PRAGMA foreign_keys cannot change inside a transaction, so
+    // toggle it around the v4 transaction and run foreign_key_check before
+    // re-enabling. asset_ids are preserved across the rebuild, so the check
+    // passes and revisions remain attached.
+    const rebuildsAssetsTable = migration.version === 4;
+    if (rebuildsAssetsTable) connection.pragma('foreign_keys = OFF');
     try {
       connection.transaction(() => {
         connection.exec(migration.sql);
@@ -610,7 +710,21 @@ function migrateDatabase(connection: DatabaseConnection, allowFresh: boolean): v
         connection.pragma(`user_version = ${migration.version}`);
       })();
     } catch (error) {
+      if (rebuildsAssetsTable) {
+        try {
+          connection.pragma('foreign_keys = ON');
+        } catch {
+          // The primary migration failure remains more useful than a re-enable failure.
+        }
+      }
       throw new LibraryServiceError('LIBRARY_CORRUPT', { cause: error });
+    }
+    if (rebuildsAssetsTable) {
+      const foreignKeyViolations = connection.pragma('foreign_key_check');
+      connection.pragma('foreign_keys = ON');
+      if (Array.isArray(foreignKeyViolations) && foreignKeyViolations.length > 0) {
+        throw new LibraryServiceError('LIBRARY_CORRUPT');
+      }
     }
   }
 
@@ -1044,6 +1158,59 @@ export class LibraryService {
       throw new LibraryServiceError('INVALID_LIBRARY_PATH');
     }
     let cursor = assetsPath;
+    for (const component of relation.split(path.sep)) {
+      cursor = path.join(cursor, component);
+      try {
+        if (lstatSync(cursor).isSymbolicLink()) {
+          throw new LibraryServiceError('INVALID_LIBRARY_PATH');
+        }
+      } catch (error) {
+        if (error instanceof LibraryServiceError) throw error;
+        if (isMissingPathError(error)) break;
+        throw new LibraryServiceError('INVALID_LIBRARY_PATH', { cause: error });
+      }
+    }
+    return targetPath;
+  }
+
+  private linkedRootIsGone(absoluteRootPath: string): boolean {
+    try {
+      const entry = lstatSync(absoluteRootPath);
+      return entry.isSymbolicLink() || !entry.isDirectory();
+    } catch {
+      return true;
+    }
+  }
+
+  private linkedAssetPath(
+    openLibrary: OpenLibrary,
+    linkedFolderId: string | null,
+    relativeFilePath: string,
+  ): string {
+    if (!linkedFolderId) throw new LibraryServiceError('LIBRARY_CORRUPT');
+    const folder = openLibrary.connection
+      .prepare('SELECT absolute_root_path FROM linked_folders WHERE folder_id = ?')
+      .get(linkedFolderId) as { absolute_root_path: string } | undefined;
+    if (!folder) throw new LibraryServiceError('LIBRARY_CORRUPT');
+    // If the root is gone, replaced, or replaced by a symlink, return a path that
+    // will stat as missing so the asset reconciles to 'missing' rather than
+    // aborting the refresh. A later slice flips the whole folder to 'offline'.
+    let rootPath: string;
+    try {
+      const rootEntry = lstatSync(folder.absolute_root_path);
+      if (rootEntry.isSymbolicLink() || !rootEntry.isDirectory()) {
+        return path.join(folder.absolute_root_path, ...relativeFilePath.split('/'));
+      }
+      rootPath = realpathSync(folder.absolute_root_path);
+    } catch {
+      return path.join(folder.absolute_root_path, ...relativeFilePath.split('/'));
+    }
+    const targetPath = path.resolve(rootPath, ...relativeFilePath.split('/'));
+    const relation = path.relative(rootPath, targetPath);
+    if (relation === '' || relation.startsWith(`..${path.sep}`) || path.isAbsolute(relation)) {
+      throw new LibraryServiceError('INVALID_LIBRARY_PATH');
+    }
+    let cursor = rootPath;
     for (const component of relation.split(path.sep)) {
       cursor = path.join(cursor, component);
       try {
@@ -1493,6 +1660,305 @@ export class LibraryService {
         modifiedAt: row.modified_at,
         availability: row.availability,
       }));
+  }
+
+  importFolderAsLinked(input: {
+    libraryId: string;
+    sourceRootPath: string;
+    displayName?: string;
+  }): LinkedFolderSummary {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    let sourceRoot: string;
+    try {
+      sourceRoot = normalizeAbsolutePath(input.sourceRootPath);
+    } catch (error) {
+      throw serviceError(error, 'INVALID_IMPORT_SOURCE');
+    }
+
+    let rootStat: BigIntStats;
+    try {
+      rootStat = lstatSync(sourceRoot, { bigint: true });
+    } catch (error) {
+      throw new LibraryServiceError('INVALID_IMPORT_SOURCE', { cause: error });
+    }
+    if (rootStat.isSymbolicLink()) throw unsupportedSourceEntry('SYMBOLIC_LINK_NOT_ALLOWED');
+    if (!rootStat.isDirectory()) throw unsupportedSourceEntry('UNSUPPORTED_FILE_ENTRY');
+
+    const displayName = input.displayName ?? path.basename(sourceRoot);
+    let normalizedName: string;
+    try {
+      normalizedName = normalizeFolderName(displayName);
+    } catch (error) {
+      throw serviceError(error, 'INVALID_FOLDER_NAME');
+    }
+
+    let canonicalRoot: string;
+    try {
+      canonicalRoot = realpathSync(sourceRoot);
+    } catch (error) {
+      throw new LibraryServiceError('INVALID_IMPORT_SOURCE', { cause: error });
+    }
+    // realpath is the linked-folder identity: it canonicalizes case-insensitive
+    // equivalents on APFS/NTFS and resolves any trailing-slash variants, which
+    // is sufficient to prevent linking the same physical root twice. portable
+    // path identity (NFC + casefold per segment) is not used here because the
+    // helper rejects absolute paths; the linked root is device-specific anyway.
+    const pathIdentity = canonicalRoot;
+
+    const existing = openLibrary.connection
+      .prepare('SELECT folder_id FROM linked_folders WHERE path_identity = ?')
+      .get(pathIdentity);
+    if (existing) throw new LibraryServiceError('FOLDER_ALREADY_EXISTS');
+
+    const entries = this.enumerateLinkedSources(canonicalRoot);
+    const folderId = randomUUID();
+    const now = new Date().toISOString();
+    const sourceDeviceHint = String(rootStat.dev);
+
+    openLibrary.connection.transaction(() => {
+      openLibrary.connection
+        .prepare(
+          `INSERT INTO linked_folders
+             (folder_id, library_id, display_name, absolute_root_path, source_device_hint,
+              status, path_identity, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, 'available', ?, ?, ?)`,
+        )
+        .run(
+          folderId,
+          openLibrary.summary.libraryId,
+          normalizedName,
+          canonicalRoot,
+          sourceDeviceHint,
+          pathIdentity,
+          now,
+          now,
+        );
+      const insertAsset = openLibrary.connection.prepare(
+        `INSERT INTO assets
+           (asset_id, location_kind, managed_folder_id, linked_folder_id, relative_file_path,
+            path_identity, current_revision_id, availability, created_at, updated_at)
+         VALUES (?, 'linked', NULL, ?, ?, ?, NULL, 'available', ?, ?)`,
+      );
+      const insertRevision = openLibrary.connection.prepare(
+        `INSERT INTO revisions
+           (revision_id, asset_id, parent_revision_id, byte_size, modified_at,
+            original_filename, origin, accepted_at)
+         VALUES (?, ?, NULL, ?, ?, ?, 'import', ?)`,
+      );
+      const setCurrentRevision = openLibrary.connection.prepare(
+        'UPDATE assets SET current_revision_id = ?, updated_at = ? WHERE asset_id = ?',
+      );
+      for (const entry of entries) {
+        const assetId = randomUUID();
+        const revisionId = randomUUID();
+        const assetPathIdentity = portablePathIdentity(entry.relativePath);
+        insertAsset.run(assetId, folderId, entry.relativePath, assetPathIdentity, now, now);
+        insertRevision.run(
+          revisionId,
+          assetId,
+          entry.byteSize,
+          entry.modifiedAt,
+          entry.originalFilename,
+          now,
+        );
+        setCurrentRevision.run(revisionId, now, assetId);
+      }
+    })();
+
+    return {
+      folderId,
+      displayName: normalizedName,
+      status: 'available',
+      assetCount: entries.length,
+    };
+  }
+
+  relinkMissingFolder(input: {
+    libraryId: string;
+    folderId: string;
+    newRootPath: string;
+  }): LinkedFolderSummary {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    const folder = openLibrary.connection
+      .prepare(
+        'SELECT folder_id, display_name FROM linked_folders WHERE folder_id = ?',
+      )
+      .get(input.folderId) as { folder_id: string; display_name: string } | undefined;
+    if (!folder) throw new LibraryServiceError('FOLDER_NOT_FOUND');
+
+    let newRoot: string;
+    try {
+      newRoot = normalizeAbsolutePath(input.newRootPath);
+    } catch (error) {
+      throw serviceError(error, 'INVALID_IMPORT_SOURCE');
+    }
+    let rootStat: BigIntStats;
+    try {
+      rootStat = lstatSync(newRoot, { bigint: true });
+    } catch (error) {
+      throw new LibraryServiceError('INVALID_IMPORT_SOURCE', { cause: error });
+    }
+    if (rootStat.isSymbolicLink()) throw unsupportedSourceEntry('SYMBOLIC_LINK_NOT_ALLOWED');
+    if (!rootStat.isDirectory()) throw unsupportedSourceEntry('UNSUPPORTED_FILE_ENTRY');
+
+    let canonicalNewRoot: string;
+    try {
+      canonicalNewRoot = realpathSync(newRoot);
+    } catch (error) {
+      throw new LibraryServiceError('INVALID_IMPORT_SOURCE', { cause: error });
+    }
+    const newPathIdentity = canonicalNewRoot;
+    const conflict = openLibrary.connection
+      .prepare(
+        'SELECT folder_id FROM linked_folders WHERE path_identity = ? AND folder_id != ?',
+      )
+      .get(newPathIdentity, input.folderId);
+    if (conflict) throw new LibraryServiceError('FOLDER_ALREADY_EXISTS');
+
+    const sourceDeviceHint = String(rootStat.dev);
+    const now = new Date().toISOString();
+
+    openLibrary.connection.transaction(() => {
+      openLibrary.connection
+        .prepare(
+          `UPDATE linked_folders
+              SET absolute_root_path = ?, source_device_hint = ?, status = 'available',
+                  path_identity = ?, updated_at = ?
+            WHERE folder_id = ?`,
+        )
+        .run(canonicalNewRoot, sourceDeviceHint, newPathIdentity, now, input.folderId);
+
+      const assets = openLibrary.connection
+        .prepare(
+          'SELECT asset_id, relative_file_path, current_revision_id, availability FROM assets WHERE linked_folder_id = ?',
+        )
+        .all(input.folderId) as Array<{
+          asset_id: string;
+          relative_file_path: string;
+          current_revision_id: string;
+          availability: 'available' | 'missing';
+        }>;
+      for (const asset of assets) {
+        const assetPath = path.join(canonicalNewRoot, ...asset.relative_file_path.split('/'));
+        let fileStat;
+        try {
+          fileStat = lstatSync(assetPath, { bigint: true });
+        } catch (error) {
+          if (!isMissingPathError(error)) {
+            throw new LibraryServiceError('IMPORT_APPLY_FAILED', { cause: error });
+          }
+          fileStat = undefined;
+        }
+        if (!fileStat?.isFile() || fileStat.isSymbolicLink()) {
+          if (asset.availability === 'available') {
+            openLibrary.connection
+              .prepare("UPDATE assets SET availability = 'missing', updated_at = ? WHERE asset_id = ?")
+              .run(now, asset.asset_id);
+          }
+          continue;
+        }
+        const revisionId = randomUUID();
+        openLibrary.connection
+          .prepare(
+            `INSERT INTO revisions
+               (revision_id, asset_id, parent_revision_id, byte_size, modified_at,
+                original_filename, origin, accepted_at)
+             VALUES (?, ?, ?, ?, ?, ?, 'external_change', ?)`,
+          )
+          .run(
+            revisionId,
+            asset.asset_id,
+            asset.current_revision_id,
+            Number(fileStat.size),
+            fileStat.mtime.toISOString(),
+            path.posix.basename(asset.relative_file_path),
+            now,
+          );
+        openLibrary.connection
+          .prepare(
+            "UPDATE assets SET current_revision_id = ?, availability = 'available', updated_at = ? WHERE asset_id = ?",
+          )
+          .run(revisionId, now, asset.asset_id);
+      }
+    })();
+
+    const countRow = openLibrary.connection
+      .prepare('SELECT COUNT(*) AS count FROM assets WHERE linked_folder_id = ?')
+      .get(input.folderId) as { count: number };
+    return {
+      folderId: input.folderId,
+      displayName: folder.display_name,
+      status: 'available',
+      assetCount: countRow.count,
+    };
+  }
+
+  private enumerateLinkedSources(rootPath: string): Array<{
+    relativePath: string;
+    byteSize: number;
+    modifiedAt: string;
+    originalFilename: string;
+  }> {
+    const entries: Array<{
+      relativePath: string;
+      byteSize: number;
+      modifiedAt: string;
+      originalFilename: string;
+    }> = [];
+    const visit = (directoryPath: string, relativeDirectory: string): void => {
+      let children;
+      try {
+        children = readdirSync(directoryPath, { withFileTypes: true }).sort((left, right) =>
+          left.name.localeCompare(right.name),
+        );
+      } catch (error) {
+        throw new LibraryServiceError('INVALID_IMPORT_SOURCE', { cause: error });
+      }
+      for (const child of children) {
+        // Symlinks are neither followed nor registered; this prevents a linked
+        // root from pulling in bytes outside itself via a hostile link.
+        if (child.isSymbolicLink()) continue;
+        const childRelative =
+          relativeDirectory === ''
+            ? child.name
+            : path.posix.join(relativeDirectory, child.name);
+        if (child.isDirectory()) {
+          if (DEFAULT_IGNORED_DIRECTORIES.has(child.name.toLowerCase())) continue;
+          visit(path.join(directoryPath, child.name), childRelative);
+          continue;
+        }
+        if (!child.isFile()) continue;
+        if (DEFAULT_IGNORED_FILES.has(child.name.toLowerCase())) continue;
+        const childPath = path.join(directoryPath, child.name);
+        let stat: BigIntStats;
+        try {
+          stat = lstatSync(childPath, { bigint: true });
+        } catch (error) {
+          throw new LibraryServiceError('INVALID_IMPORT_SOURCE', { cause: error });
+        }
+        if (stat.isSymbolicLink() || !stat.isFile()) continue;
+        let normalized: string;
+        try {
+          normalized = normalizeRelativeAssetPath(childRelative);
+        } catch (error) {
+          throw new LibraryServiceError('INVALID_IMPORT_SOURCE', { cause: error });
+        }
+        const byteSize = Number(stat.size);
+        if (!Number.isSafeInteger(byteSize)) {
+          throw new LibraryServiceError('INVALID_IMPORT_SOURCE', {
+            reason: 'UNSUPPORTED_FILE_ENTRY',
+          });
+        }
+        entries.push({
+          relativePath: normalized,
+          byteSize,
+          modifiedAt: stat.mtime.toISOString(),
+          originalFilename: child.name,
+        });
+      }
+    };
+    visit(rootPath, '');
+    return entries;
   }
 
   prepareImport(input: {
@@ -2118,13 +2584,57 @@ export class LibraryService {
 
   refreshManagedAssets(libraryId: string): AssetRefreshResult {
     const openLibrary = this.requireOpenLibrary(libraryId);
-    const before = this.listAssets({ libraryId, recursive: true });
+    const before = openLibrary.connection
+      .prepare(
+        `SELECT a.asset_id, a.location_kind, a.linked_folder_id, a.relative_file_path,
+                a.current_revision_id, a.availability, r.byte_size, r.modified_at
+           FROM assets a
+           JOIN revisions r ON r.revision_id = a.current_revision_id
+          ORDER BY a.relative_file_path`,
+      )
+      .all() as Array<{
+        asset_id: string;
+        location_kind: 'managed' | 'linked';
+        linked_folder_id: string | null;
+        relative_file_path: string;
+        current_revision_id: string;
+        availability: 'available' | 'missing';
+        byte_size: number;
+        modified_at: string;
+      }>;
     let changedCount = 0;
     let missingCount = 0;
 
     openLibrary.connection.transaction(() => {
+      // Reconcile linked folder statuses: a folder whose root is gone flips to
+      // offline; a folder whose root came back (e.g. a remounted volume) flips
+      // to available. Asset-level reconciliation below handles the file rows.
+      const linkedFolders = openLibrary.connection
+        .prepare('SELECT folder_id, absolute_root_path, status FROM linked_folders')
+        .all() as Array<{
+          folder_id: string;
+          absolute_root_path: string;
+          status: 'available' | 'offline';
+        }>;
+      const folderNow = new Date().toISOString();
+      for (const folder of linkedFolders) {
+        const rootGone = this.linkedRootIsGone(folder.absolute_root_path);
+        if (rootGone && folder.status === 'available') {
+          openLibrary.connection
+            .prepare("UPDATE linked_folders SET status = 'offline', updated_at = ? WHERE folder_id = ?")
+            .run(folderNow, folder.folder_id);
+        } else if (!rootGone && folder.status === 'offline') {
+          openLibrary.connection
+            .prepare("UPDATE linked_folders SET status = 'available', updated_at = ? WHERE folder_id = ?")
+            .run(folderNow, folder.folder_id);
+        }
+      }
+
       for (const asset of before) {
-        const assetPath = this.folderPath(openLibrary, asset.relativeFilePath);
+        const assetPath =
+          asset.location_kind === 'linked'
+            ? this.linkedAssetPath(openLibrary, asset.linked_folder_id, asset.relative_file_path)
+            : this.folderPath(openLibrary, asset.relative_file_path);
         let fileStat;
         try {
           fileStat = (this.options.assetLstat ?? lstatSync)(assetPath);
@@ -2139,7 +2649,7 @@ export class LibraryService {
           if (asset.availability === 'available') {
             openLibrary.connection
               .prepare("UPDATE assets SET availability = 'missing', updated_at = ? WHERE asset_id = ?")
-              .run(new Date().toISOString(), asset.assetId);
+              .run(new Date().toISOString(), asset.asset_id);
             changedCount += 1;
             missingCount += 1;
           }
@@ -2147,7 +2657,7 @@ export class LibraryService {
         }
 
         const modifiedAt = fileStat.mtime.toISOString();
-        const statChanged = fileStat.size !== asset.byteSize || modifiedAt !== asset.modifiedAt;
+        const statChanged = fileStat.size !== asset.byte_size || modifiedAt !== asset.modified_at;
         const now = new Date().toISOString();
         if (statChanged) {
           const revisionId = randomUUID();
@@ -2160,11 +2670,11 @@ export class LibraryService {
             )
             .run(
               revisionId,
-              asset.assetId,
-              asset.currentRevisionId,
+              asset.asset_id,
+              asset.current_revision_id,
               fileStat.size,
               modifiedAt,
-              asset.displayName,
+              path.posix.basename(asset.relative_file_path),
               now,
             );
           openLibrary.connection
@@ -2173,12 +2683,12 @@ export class LibraryService {
                   SET current_revision_id = ?, availability = 'available', updated_at = ?
                 WHERE asset_id = ?`,
             )
-            .run(revisionId, now, asset.assetId);
+            .run(revisionId, now, asset.asset_id);
           changedCount += 1;
         } else if (asset.availability === 'missing') {
           openLibrary.connection
             .prepare("UPDATE assets SET availability = 'available', updated_at = ? WHERE asset_id = ?")
-            .run(now, asset.assetId);
+            .run(now, asset.asset_id);
           changedCount += 1;
         }
       }
