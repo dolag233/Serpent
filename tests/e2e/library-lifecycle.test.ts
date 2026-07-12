@@ -55,9 +55,9 @@ test('creates, closes, and reopens a library through the sandboxed UI', async ()
     );
 
     await window.getByRole('button', { name: '创建资源库' }).click();
-    await window.getByLabel('资源库名称').fill(libraryName);
-    await window.getByRole('button', { name: '选择位置并创建' }).click();
-    await expect(window.getByRole('heading', { name: libraryName })).toBeVisible();
+    await window.getByLabel('名称').fill(libraryName);
+    await window.getByRole('button', { name: '创建', exact: true }).click();
+    await expect(window.getByText(libraryName, { exact: true }).first()).toBeVisible();
 
     await window.getByRole('button', { name: '关闭资源库' }).click();
     await expect(window.getByRole('heading', { name: '从一个本地资源库开始' })).toBeVisible();
@@ -67,7 +67,7 @@ test('creates, closes, and reopens a library through the sandboxed UI', async ()
       'library.closed',
     ]);
     await window.getByRole('button', { name: '打开资源库' }).click();
-    await expect(window.getByRole('heading', { name: libraryName })).toBeVisible();
+    await expect(window.getByText(libraryName, { exact: true }).first()).toBeVisible();
     const screenshotPath = testInfo.outputPath('library-ready.png');
     await window.screenshot({ path: screenshotPath });
     await testInfo.attach('library-ready', {
@@ -103,15 +103,15 @@ test('releases an open library on quit and reopens it after restart', async () =
   try {
     let window = await application.firstWindow();
     await window.getByRole('button', { name: '创建资源库' }).click();
-    await window.getByLabel('资源库名称').fill(libraryName);
-    await window.getByRole('button', { name: '选择位置并创建' }).click();
-    await expect(window.getByRole('heading', { name: libraryName })).toBeVisible();
+    await window.getByLabel('名称').fill(libraryName);
+    await window.getByRole('button', { name: '创建', exact: true }).click();
+    await expect(window.getByText(libraryName, { exact: true }).first()).toBeVisible();
     await application.close();
 
     application = await launch();
     window = await application.firstWindow();
     await window.getByRole('button', { name: '打开资源库' }).click();
-    await expect(window.getByRole('heading', { name: libraryName })).toBeVisible();
+    await expect(window.getByText(libraryName, { exact: true }).first()).toBeVisible();
   } finally {
     await application.close();
     rmSync(temporaryRoot, { force: true, recursive: true });

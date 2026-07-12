@@ -14,7 +14,9 @@ if (!parentPort) {
   throw new Error('Library Worker must be started by the Electron main process.');
 }
 
-const libraryService = new LibraryService();
+const libraryService = new LibraryService({
+  onAssetsChanged: (event) => parentPort.postMessage(event),
+});
 
 function handleRequest(request: WorkerRequest): WorkerResult {
   switch (request.command.type) {
@@ -31,7 +33,51 @@ function handleRequest(request: WorkerRequest): WorkerResult {
     case 'library.close':
       libraryService.closeLibrary(request.command.libraryId);
       return { ok: true, type: 'library.closed', libraryId: request.command.libraryId };
+    case 'folder.create': {
+      const folder = libraryService.createManagedFolder(request.command);
+      return { ok: true, type: 'folder.created', folder };
+    }
+    case 'folder.list':
+      return {
+        ok: true,
+        type: 'folder.list',
+        folders: libraryService.listManagedFolders(request.command.libraryId),
+      };
+    case 'asset.list':
+      return {
+        ok: true,
+        type: 'asset.list',
+        assets: libraryService.listAssets(request.command),
+      };
+    case 'asset.import.prepare': {
+      const prepared = libraryService.prepareOrExecuteImport(request.command);
+      return 'importId' in prepared
+        ? { ok: true, type: 'asset.import.conflicts', plan: prepared }
+        : { ok: true, type: 'asset.import.completed', completion: prepared };
+    }
+    case 'asset.import.resolve':
+      return {
+        ok: true,
+        type: 'asset.import.completed',
+        completion: libraryService.resolveImport(request.command),
+      };
+    case 'asset.import.abandon':
+      return {
+        ok: true,
+        type: 'asset.import.abandoned',
+        importId: libraryService.abandonImport(request.command.importId),
+      };
+    case 'asset.refresh': {
+      const refresh = libraryService.refreshManagedAssets(request.command.libraryId);
+      return { ok: true, type: 'asset.refreshed', ...refresh };
+    }
+    default:
+      return assertNever(request.command);
   }
+}
+
+function assertNever(value: never): never {
+  throw new Error(`Unhandled Worker command: ${String(value)}`);
 }
 
 function requestIdFrom(input: unknown): string | undefined {

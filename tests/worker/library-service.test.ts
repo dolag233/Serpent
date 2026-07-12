@@ -25,13 +25,31 @@ const require = createRequire(import.meta.url);
 
 interface TestDatabaseConnection {
   close(): void;
+  exec(source: string): void;
   pragma(source: string): unknown;
-  prepare(source: string): { run(...parameters: unknown[]): unknown };
+  prepare(source: string): {
+    all(...parameters: unknown[]): unknown[];
+    run(...parameters: unknown[]): unknown;
+  };
 }
 
 const TestDatabase = require('better-sqlite3') as new (
   filename: string,
 ) => TestDatabaseConnection;
+
+function downgradeLibraryToV1(libraryPath: string, createMigrationBlocker = false): void {
+  const database = new TestDatabase(path.join(libraryPath, '.serpent', 'library.db'));
+  database.exec(`
+    DROP TABLE file_operations;
+    DROP TABLE revisions;
+    DROP TABLE assets;
+    DROP TABLE managed_folders;
+    DELETE FROM schema_migrations WHERE version = 2;
+    PRAGMA user_version = 1;
+    ${createMigrationBlocker ? 'CREATE TABLE managed_folders (blocker TEXT);' : ''}
+  `);
+  database.close();
+}
 
 function temporaryRoot(): string {
   const root = mkdtempSync(path.join(tmpdir(), 'serpent-library-test-'));
@@ -78,6 +96,10 @@ describe('LibraryService lifecycle', () => {
       true,
     );
     expect(service.listLibraries()).toEqual([created]);
+
+    const database = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    expect(database.pragma('user_version')).toEqual([{ user_version: 2 }]);
+    database.close();
 
     expect(service.openLibrary(created.libraryPath)).toEqual(created);
     expect(service.listLibraries()).toEqual([created]);
@@ -182,6 +204,43 @@ describe('LibraryService lifecycle', () => {
       () => service.openLibrary(created.libraryPath),
       'LIBRARY_VERSION_TOO_NEW',
     );
+  });
+
+  it('migrates a valid v1 library to v2 when opening', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'Migration', selectedParentPath: root });
+    service.closeAll();
+    downgradeLibraryToV1(created.libraryPath);
+
+    service.openLibrary(created.libraryPath);
+
+    const database = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    expect(database.pragma('user_version')).toEqual([{ user_version: 2 }]);
+    expect(
+      database
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'assets'")
+        .all(),
+    ).toEqual([{ name: 'assets' }]);
+    database.close();
+    service.closeAll();
+  });
+
+  it('rolls back a failed v2 migration and preserves the v1 version', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'Rollback', selectedParentPath: root });
+    service.closeAll();
+    downgradeLibraryToV1(created.libraryPath, true);
+
+    expectServiceError(() => service.openLibrary(created.libraryPath), 'LIBRARY_CORRUPT');
+
+    const database = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    expect(database.pragma('user_version')).toEqual([{ user_version: 1 }]);
+    expect(database.prepare('SELECT version FROM schema_migrations ORDER BY version').all()).toEqual([
+      { version: 1 },
+    ]);
+    database.close();
   });
 
   it('rejects a corrupt database without leaving the library open', () => {

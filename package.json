@@ -19,7 +19,7 @@
     "test": "vitest run",
     "test:unit": "vitest run --config vitest.config.ts tests/unit",
     "test:worker": "vitest run --config vitest.config.ts tests/worker",
-    "test:e2e": "playwright test tests/e2e/library-lifecycle.test.ts tests/e2e/process-lifecycle.test.ts",
+    "test:e2e": "playwright test tests/e2e/library-lifecycle.test.ts tests/e2e/asset-ingestion.test.ts tests/e2e/process-lifecycle.test.ts",
     "test:e2e:packaged": "playwright test tests/e2e/packaged-startup.test.ts",
     "test:watch": "vitest --config vitest.config.ts"
   },

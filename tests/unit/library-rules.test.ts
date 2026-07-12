@@ -4,8 +4,10 @@ import { describe, expect, it } from 'vitest';
 
 import {
   LibraryInputError,
+  copyNameForIndex,
   normalizeAbsolutePath,
   normalizeLibraryName,
+  normalizeRelativeAssetPath,
   targetLibraryPath,
 } from '../../src/worker/library-rules';
 
@@ -52,4 +54,25 @@ describe('library path rules', () => {
       expect(() => normalizeAbsolutePath(selectedPath)).toThrow(LibraryInputError);
     },
   );
+});
+
+describe('managed asset path rules', () => {
+  it('normalizes portable relative paths to database separators', () => {
+    expect(normalizeRelativeAssetPath('UI\\Buttons\\primary.png')).toBe(
+      'UI/Buttons/primary.png',
+    );
+  });
+
+  it.each(['', '.', '..', '../escape.png', 'safe/../../escape.png', '/absolute.png']) (
+    'rejects an unsafe relative asset path %j',
+    (relativePath) => {
+      expect(() => normalizeRelativeAssetPath(relativePath)).toThrow(LibraryInputError);
+    },
+  );
+
+  it('adds a deterministic copy suffix before the final extension', () => {
+    expect(copyNameForIndex('button.png', 2)).toBe('button (2).png');
+    expect(copyNameForIndex('archive.tar.gz', 3)).toBe('archive.tar (3).gz');
+    expect(copyNameForIndex('.gitignore', 2)).toBe('.gitignore (2)');
+  });
 });

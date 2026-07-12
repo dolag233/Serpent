@@ -5,9 +5,11 @@ import { utilityProcess, type UtilityProcess } from 'electron';
 import type { WorkerCommand } from '../shared/protocol/requests';
 import {
   parseWorkerControlMessage,
+  parseAssetChangeEvent,
   parseWorkerReadyMessage,
   parseWorkerResponse,
   type WorkerResult,
+  type AssetChangeEvent,
 } from '../shared/protocol/responses';
 
 interface PendingRequest {
@@ -18,6 +20,7 @@ interface PendingRequest {
 
 const READY_TIMEOUT_MS = 5_000;
 const REQUEST_TIMEOUT_MS = 15_000;
+const FILE_OPERATION_TIMEOUT_MS = 5 * 60_000;
 const SHUTDOWN_TIMEOUT_MS = 2_000;
 
 export class LibraryWorkerClient {
@@ -26,6 +29,7 @@ export class LibraryWorkerClient {
   #ready = false;
   #pending = new Map<string, PendingRequest>();
   #shutdownAck: (() => void) | undefined;
+  #assetChangeListeners = new Set<(event: AssetChangeEvent) => void>();
 
   constructor(modulePath: string) {
     this.#modulePath = modulePath;
@@ -82,14 +86,22 @@ export class LibraryWorkerClient {
 
     const requestId = randomUUID();
     return new Promise<WorkerResult>((resolve, reject) => {
+      const timeout = command.type.startsWith('asset.import.') || command.type === 'asset.refresh'
+        ? FILE_OPERATION_TIMEOUT_MS
+        : REQUEST_TIMEOUT_MS;
       const timer = setTimeout(() => {
         this.#pending.delete(requestId);
         reject(new Error(`Library Worker request timed out (${requestId}).`));
-      }, REQUEST_TIMEOUT_MS);
+      }, timeout);
 
       this.#pending.set(requestId, { resolve, reject, timer });
       child.postMessage({ requestId, command });
     });
+  }
+
+  onAssetsChanged(listener: (event: AssetChangeEvent) => void): () => void {
+    this.#assetChangeListeners.add(listener);
+    return () => this.#assetChangeListeners.delete(listener);
   }
 
   async shutdown(): Promise<void> {
@@ -114,6 +126,14 @@ export class LibraryWorkerClient {
   }
 
   readonly #onMessage = (message: unknown) => {
+    try {
+      const event = parseAssetChangeEvent(message);
+      for (const listener of this.#assetChangeListeners) listener(event);
+      return;
+    } catch {
+      // A response or control message is not an asset event; validate it below.
+    }
+
     try {
       const control = parseWorkerControlMessage(message);
       if (control.type === 'worker.shutdown.ack') {

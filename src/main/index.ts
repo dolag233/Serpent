@@ -3,6 +3,7 @@ import path from 'node:path';
 import { app, BrowserWindow, dialog, ipcMain, type OpenDialogOptions } from 'electron';
 
 import {
+  ASSET_CHANGE_CHANNEL,
   LIBRARY_LIFECYCLE_CHANNEL,
   LIBRARY_REQUEST_CHANNEL,
 } from '../shared/protocol/channels';
@@ -14,6 +15,8 @@ import {
   type RendererLifecycleEvent,
   type RendererResult,
   type WorkerResult,
+  type AssetChangeEvent,
+  parseAssetChangeEvent,
 } from '../shared/protocol/responses';
 import { LibraryWorkerClient } from './worker-client';
 
@@ -76,6 +79,11 @@ function publishLifecycle(event: RendererLifecycleEvent): void {
   );
 }
 
+function publishAssetChange(event: AssetChangeEvent): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.send(ASSET_CHANGE_CHANNEL, parseAssetChangeEvent(event));
+}
+
 function toRendererResult(result: WorkerResult): RendererResult {
   if (!result.ok) return parseRendererResult(result);
   if (result.type === 'library.opened') {
@@ -101,6 +109,31 @@ function toRendererResult(result: WorkerResult): RendererResult {
     });
   }
   return parseRendererResult(result);
+}
+
+async function selectImportSources(sourceKind: 'files' | 'folder'): Promise<string[] | undefined> {
+  if (!app.isPackaged && process.env.SERPENT_E2E === '1') {
+    const value = sourceKind === 'files'
+      ? process.env.SERPENT_E2E_IMPORT_FILES
+      : process.env.SERPENT_E2E_IMPORT_FOLDER;
+    return value ? value.split(path.delimiter).filter(Boolean) : undefined;
+  }
+
+  const options: OpenDialogOptions = sourceKind === 'files'
+    ? {
+        title: 'Import Files',
+        buttonLabel: 'Import',
+        properties: ['openFile', 'multiSelections'],
+      }
+    : {
+        title: 'Import Folder',
+        buttonLabel: 'Import Folder',
+        properties: ['openDirectory'],
+      };
+  const result = mainWindow
+    ? await dialog.showOpenDialog(mainWindow, options)
+    : await dialog.showOpenDialog(options);
+  return result.canceled || result.filePaths.length === 0 ? undefined : result.filePaths;
 }
 
 async function selectDirectory(title: string, buttonLabel: string): Promise<string | undefined> {
@@ -137,7 +170,64 @@ async function commandFor(request: RendererRequest): Promise<WorkerCommand | und
       return { type: 'library.close', libraryId: request.libraryId };
     case 'library.list.request':
       return { type: 'library.list' };
+    case 'folder.create.request':
+      return {
+        type: 'folder.create',
+        libraryId: request.libraryId,
+        parentFolderId: request.parentFolderId,
+        name: request.name,
+      };
+    case 'folder.list.request':
+      return { type: 'folder.list', libraryId: request.libraryId };
+    case 'asset.list.request':
+      return {
+        type: 'asset.list',
+        libraryId: request.libraryId,
+        folderId: request.folderId,
+        recursive: request.recursive,
+      };
+    case 'asset.import-files.request': {
+      const sourcePaths = await selectImportSources('files');
+      return sourcePaths
+        ? {
+            type: 'asset.import.prepare',
+            libraryId: request.libraryId,
+            targetFolderId: request.targetFolderId,
+            sourceKind: 'files',
+            sourcePaths,
+          }
+        : undefined;
+    }
+    case 'asset.import-folder.request': {
+      const sourcePaths = await selectImportSources('folder');
+      return sourcePaths
+        ? {
+            type: 'asset.import.prepare',
+            libraryId: request.libraryId,
+            targetFolderId: request.targetFolderId,
+            sourceKind: 'folder',
+            sourcePaths,
+          }
+        : undefined;
+    }
+    case 'asset.import.resolve':
+      return {
+        type: 'asset.import.resolve',
+        importId: request.importId,
+        suspectedDuplicate: request.suspectedDuplicate,
+        nameConflict: request.nameConflict,
+      };
+    case 'asset.import.abandon':
+      return { type: 'asset.import.abandon', importId: request.importId };
+    case 'asset.refresh.request':
+      return { type: 'asset.refresh', libraryId: request.libraryId };
+    default:
+      return assertNever(request);
   }
+}
+
+function assertNever(value: never): never {
+  throw new Error(`Unhandled Renderer request: ${String(value)}`);
 }
 
 async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
@@ -180,6 +270,7 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
 async function startApplication(): Promise<void> {
   workerClient = new LibraryWorkerClient(path.join(__dirname, 'library_worker.js'));
   await workerClient.start();
+  workerClient.onAssetsChanged(publishAssetChange);
 
   ipcMain.handle(LIBRARY_REQUEST_CHANNEL, (event, input: unknown) => {
     if (!mainWindow || event.sender !== mainWindow.webContents) {

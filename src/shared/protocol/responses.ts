@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { assetSummarySchema, managedFolderSummarySchema } from '../asset-types';
 import { publicErrorSchema } from './errors';
 import {
   WORKER_READY_MESSAGE_TYPE,
@@ -10,6 +11,10 @@ import {
 const nonBlankString = z.string().min(1).refine((value) => value.trim().length > 0, {
   message: 'Value must not be blank.',
 });
+const safeDisplayName = nonBlankString.max(255).refine(
+  (value) => !value.includes('/') && !value.includes('\\'),
+  { message: 'Display names must not contain filesystem paths.' },
+);
 
 export const workerReadyMessageSchema = z.strictObject({
   type: z.literal(WORKER_READY_MESSAGE_TYPE),
@@ -48,6 +53,84 @@ export const rendererLibrarySummarySchema = z.strictObject({
 
 export type RendererLibrarySummary = z.infer<typeof rendererLibrarySummarySchema>;
 
+export const importConflictPlanSchema = z.strictObject({
+  importId: nonBlankString,
+  fileCount: z.number().int().nonnegative(),
+  totalBytes: z.number().int().nonnegative(),
+  suspectedDuplicateCount: z.number().int().nonnegative(),
+  nameConflictCount: z.number().int().nonnegative(),
+  examples: z.array(
+    z.strictObject({
+      displayName: safeDisplayName,
+      kind: z.enum(['suspected-duplicate', 'name-conflict']),
+    }),
+  ).max(8),
+});
+
+export type ImportConflictPlan = z.infer<typeof importConflictPlanSchema>;
+
+export const importCompletionSchema = z.strictObject({
+  importedCount: z.number().int().nonnegative(),
+  skippedCount: z.number().int().nonnegative(),
+  replacedCount: z.number().int().nonnegative(),
+  assets: z.array(assetSummarySchema),
+});
+
+export type ImportCompletion = z.infer<typeof importCompletionSchema>;
+
+export const assetChangeEventSchema = z.strictObject({
+  type: z.literal('asset.changed'),
+  libraryId: nonBlankString,
+  changedCount: z.number().int().positive(),
+  missingCount: z.number().int().nonnegative(),
+});
+
+export type AssetChangeEvent = z.infer<typeof assetChangeEventSchema>;
+
+export function parseAssetChangeEvent(input: unknown): AssetChangeEvent {
+  return assetChangeEventSchema.parse(input);
+}
+
+const assetOperationSuccessSchemas = [
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('folder.created'),
+    folder: managedFolderSummarySchema,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('folder.list'),
+    folders: z.array(managedFolderSummarySchema),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('asset.list'),
+    assets: z.array(assetSummarySchema),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('asset.import.conflicts'),
+    plan: importConflictPlanSchema,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('asset.import.completed'),
+    completion: importCompletionSchema,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('asset.import.abandoned'),
+    importId: nonBlankString,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('asset.refreshed'),
+    changedCount: z.number().int().nonnegative(),
+    missingCount: z.number().int().nonnegative(),
+    assets: z.array(assetSummarySchema),
+  }),
+] as const;
+
 const workerSuccessResultSchema = z.discriminatedUnion('type', [
   z.strictObject({
     ok: z.literal(true),
@@ -64,6 +147,7 @@ const workerSuccessResultSchema = z.discriminatedUnion('type', [
     type: z.literal('library.closed'),
     libraryId: nonBlankString,
   }),
+  ...assetOperationSuccessSchemas,
 ]);
 
 export const workerResultSchema = z.union([
@@ -103,6 +187,7 @@ const rendererSuccessResultSchema = z.discriminatedUnion('type', [
     type: z.literal('library.closed'),
     libraryId: nonBlankString,
   }),
+  ...assetOperationSuccessSchemas,
 ]);
 
 export const rendererResultSchema = z.union([

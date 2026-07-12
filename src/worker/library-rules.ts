@@ -7,7 +7,7 @@ const WINDOWS_FORBIDDEN_CHARACTER = /[<>:"|?*]/u;
 
 export class LibraryInputError extends Error {
   constructor(
-    readonly code: 'INVALID_LIBRARY_NAME' | 'INVALID_LIBRARY_PATH',
+    readonly code: 'INVALID_LIBRARY_NAME' | 'INVALID_LIBRARY_PATH' | 'INVALID_FOLDER_NAME',
     message: string,
   ) {
     super(message);
@@ -15,7 +15,10 @@ export class LibraryInputError extends Error {
   }
 }
 
-export function normalizeLibraryName(input: string): string {
+function normalizePortableName(
+  input: string,
+  errorCode: 'INVALID_LIBRARY_NAME' | 'INVALID_FOLDER_NAME',
+): string {
   const displayName = input.trim();
   const codePointLength = [...displayName].length;
 
@@ -30,10 +33,18 @@ export function normalizeLibraryName(input: string): string {
     WINDOWS_DEVICE_NAME.test(displayName) ||
     /[. ]$/u.test(displayName)
   ) {
-    throw new LibraryInputError('INVALID_LIBRARY_NAME', 'Invalid library name.');
+    throw new LibraryInputError(errorCode, 'Invalid portable file-system name.');
   }
 
   return displayName;
+}
+
+export function normalizeLibraryName(input: string): string {
+  return normalizePortableName(input, 'INVALID_LIBRARY_NAME');
+}
+
+export function normalizeFolderName(input: string): string {
+  return normalizePortableName(input, 'INVALID_FOLDER_NAME');
 }
 
 export function normalizeAbsolutePath(input: string): string {
@@ -54,4 +65,32 @@ export function targetLibraryPath(selectedParentPath: string, displayName: strin
   }
 
   return targetPath;
+}
+
+export function normalizeRelativeAssetPath(input: string): string {
+  if (input.includes('\0') || input.trim() !== input || path.isAbsolute(input)) {
+    throw new LibraryInputError('INVALID_LIBRARY_PATH', 'Invalid relative asset path.');
+  }
+
+  const portableInput = input.replaceAll('\\', '/');
+  const normalized = path.posix.normalize(portableInput);
+  if (
+    normalized === '.' ||
+    normalized === '..' ||
+    normalized.startsWith('../') ||
+    normalized.startsWith('/')
+  ) {
+    throw new LibraryInputError('INVALID_LIBRARY_PATH', 'Invalid relative asset path.');
+  }
+
+  return normalized;
+}
+
+export function copyNameForIndex(fileName: string, index: number): string {
+  if (!Number.isSafeInteger(index) || index < 2) {
+    throw new RangeError('Copy indexes start at 2.');
+  }
+  const extension = path.posix.extname(fileName);
+  const baseName = extension.length === 0 ? fileName : fileName.slice(0, -extension.length);
+  return `${baseName} (${index})${extension}`;
 }

@@ -5,6 +5,13 @@ export const PUBLIC_ERROR_MESSAGES = {
   INTERNAL_ERROR: 'Serpent could not complete the request.',
   INVALID_LIBRARY_NAME: 'Choose a library name that is safe on macOS and Windows.',
   INVALID_LIBRARY_PATH: 'Choose a valid local folder for the library.',
+  INVALID_FOLDER_NAME: 'Choose a folder name that is safe on macOS and Windows.',
+  FOLDER_ALREADY_EXISTS: 'A folder with this name already exists in the selected location.',
+  FOLDER_NOT_FOUND: 'The selected library folder could not be found.',
+  INVALID_IMPORT_SOURCE: 'Choose readable local files or a folder without symbolic links.',
+  INVALID_IMPORT_DECISION: 'Choose a valid import conflict decision.',
+  IMPORT_NOT_FOUND: 'The pending import no longer exists.',
+  IMPORT_APPLY_FAILED: 'Serpent could not apply the import safely.',
   LIBRARY_ALREADY_EXISTS: 'A file or folder with this library name already exists.',
   LIBRARY_NOT_FOUND: 'The selected library folder could not be found.',
   NOT_A_LIBRARY: 'The selected folder is not a Serpent library.',
@@ -33,6 +40,34 @@ export const publicErrorSchema = z.discriminatedUnion('code', [
   z.strictObject({
     code: z.literal('INVALID_LIBRARY_PATH'),
     message: z.literal(PUBLIC_ERROR_MESSAGES.INVALID_LIBRARY_PATH),
+  }),
+  z.strictObject({
+    code: z.literal('INVALID_FOLDER_NAME'),
+    message: z.literal(PUBLIC_ERROR_MESSAGES.INVALID_FOLDER_NAME),
+  }),
+  z.strictObject({
+    code: z.literal('FOLDER_ALREADY_EXISTS'),
+    message: z.literal(PUBLIC_ERROR_MESSAGES.FOLDER_ALREADY_EXISTS),
+  }),
+  z.strictObject({
+    code: z.literal('FOLDER_NOT_FOUND'),
+    message: z.literal(PUBLIC_ERROR_MESSAGES.FOLDER_NOT_FOUND),
+  }),
+  z.strictObject({
+    code: z.literal('INVALID_IMPORT_SOURCE'),
+    message: z.literal(PUBLIC_ERROR_MESSAGES.INVALID_IMPORT_SOURCE),
+  }),
+  z.strictObject({
+    code: z.literal('INVALID_IMPORT_DECISION'),
+    message: z.literal(PUBLIC_ERROR_MESSAGES.INVALID_IMPORT_DECISION),
+  }),
+  z.strictObject({
+    code: z.literal('IMPORT_NOT_FOUND'),
+    message: z.literal(PUBLIC_ERROR_MESSAGES.IMPORT_NOT_FOUND),
+  }),
+  z.strictObject({
+    code: z.literal('IMPORT_APPLY_FAILED'),
+    message: z.literal(PUBLIC_ERROR_MESSAGES.IMPORT_APPLY_FAILED),
   }),
   z.strictObject({
     code: z.literal('LIBRARY_ALREADY_EXISTS'),
