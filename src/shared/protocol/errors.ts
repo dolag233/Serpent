@@ -20,6 +20,8 @@ export const PUBLIC_ERROR_MESSAGES = {
   LIBRARY_NOT_WRITABLE: 'Serpent cannot write to the selected location.',
   LIBRARY_CLEANUP_FAILED: 'Library creation failed and temporary files could not be removed.',
   LIBRARY_NOT_OPEN: 'The library is not currently open.',
+  ASSET_NOT_FOUND: 'The requested asset could not be found.',
+  VERSION_CONFLICT: 'The metadata has been modified by another operation. Please refresh and try again.',
 } as const;
 
 export type PublicErrorCode = keyof typeof PUBLIC_ERROR_MESSAGES;

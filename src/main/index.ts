@@ -274,6 +274,80 @@ async function commandFor(request: RendererRequest): Promise<WorkerCommand | und
         ? { type: 'linked-folder.relink', libraryId: request.libraryId, folderId: request.folderId, newRootPath }
         : undefined;
     }
+    case 'tag.list.request':
+      return { type: 'tag.list', libraryId: request.libraryId };
+    case 'tag.create.request':
+      return { type: 'tag.create', libraryId: request.libraryId, name: request.name };
+    case 'tag.rename.request':
+      return { type: 'tag.rename', libraryId: request.libraryId, tagId: request.tagId, name: request.name };
+    case 'tag.delete.request':
+      return { type: 'tag.delete', libraryId: request.libraryId, tagId: request.tagId };
+    case 'tag.assign.request':
+      return { type: 'tag.assign', libraryId: request.libraryId, assetIds: request.assetIds, tagIds: request.tagIds };
+    case 'tag.remove.request':
+      return { type: 'tag.remove', libraryId: request.libraryId, assetIds: request.assetIds, tagIds: request.tagIds };
+    case 'collection.list.request':
+      return { type: 'collection.list', libraryId: request.libraryId };
+    case 'collection.create.request':
+      return { type: 'collection.create', libraryId: request.libraryId, parentId: request.parentId, name: request.name };
+    case 'collection.update.request':
+      return {
+        type: 'collection.update',
+        libraryId: request.libraryId,
+        collectionId: request.collectionId,
+        name: request.name,
+        description: request.description,
+        coverAssetId: request.coverAssetId,
+        position: request.position,
+      };
+    case 'collection.delete.request':
+      return { type: 'collection.delete', libraryId: request.libraryId, collectionId: request.collectionId };
+    case 'collection.assets.add.request':
+      return { type: 'collection.assets.add', libraryId: request.libraryId, collectionId: request.collectionId, assetIds: request.assetIds };
+    case 'collection.assets.remove.request':
+      return { type: 'collection.assets.remove', libraryId: request.libraryId, collectionId: request.collectionId, assetIds: request.assetIds };
+    case 'collection.assets.reorder.request':
+      return { type: 'collection.assets.reorder', libraryId: request.libraryId, collectionId: request.collectionId, orderedAssetIds: request.orderedAssetIds };
+    case 'collection.assets.list.request':
+      return { type: 'collection.assets.list', libraryId: request.libraryId, collectionId: request.collectionId, recursive: request.recursive };
+    case 'asset.metadata.get.request':
+      return { type: 'asset.metadata.get', libraryId: request.libraryId, assetId: request.assetId };
+    case 'asset.metadata.set.request':
+      return {
+        type: 'asset.metadata.set',
+        libraryId: request.libraryId,
+        assetId: request.assetId,
+        expectedVersion: request.expectedVersion,
+        label: request.label,
+        description: request.description,
+        rating: request.rating,
+        favorite: request.favorite,
+        palette: request.palette,
+        sourcePageUrl: request.sourcePageUrl,
+      };
+    case 'asset.metadata.backfill.request':
+      return { type: 'asset.metadata.backfill', libraryId: request.libraryId };
+    case 'smart-collection.list.request':
+      return { type: 'smart-collection.list', libraryId: request.libraryId };
+    case 'smart-collection.create.request':
+      return {
+        type: 'smart-collection.create',
+        libraryId: request.libraryId,
+        name: request.name,
+        queryDefinition: request.queryDefinition,
+        sortDefinition: request.sortDefinition,
+      };
+    case 'smart-collection.update.request':
+      return {
+        type: 'smart-collection.update',
+        libraryId: request.libraryId,
+        smartCollectionId: request.smartCollectionId,
+        name: request.name,
+        queryDefinition: request.queryDefinition,
+        sortDefinition: request.sortDefinition,
+      };
+    case 'smart-collection.delete.request':
+      return { type: 'smart-collection.delete', libraryId: request.libraryId, smartCollectionId: request.smartCollectionId };
     default:
       return assertNever(request);
   }

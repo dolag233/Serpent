@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { assetSummarySchema, linkedFolderSummarySchema, managedFolderSummarySchema } from '../asset-types';
+import { assetMetadataResultSchema, assetSummarySchema, collectionSummarySchema, linkedFolderSummarySchema, managedFolderSummarySchema, smartCollectionSummarySchema, tagSummarySchema } from '../asset-types';
 import { publicErrorSchema } from './errors';
 import {
   WORKER_READY_MESSAGE_TYPE,
@@ -143,6 +143,111 @@ const assetOperationSuccessSchemas = [
     ok: z.literal(true),
     type: z.literal('linked-folder.relinked'),
     linkedFolder: linkedFolderSummarySchema,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('tag.list'),
+    tags: z.array(tagSummarySchema),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('tag.created'),
+    tag: tagSummarySchema,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('tag.renamed'),
+    tag: tagSummarySchema,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('tag.deleted'),
+    tagId: nonBlankString,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('tag.assigned'),
+    assignedCount: z.number().int().nonnegative(),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('tag.removed'),
+    removedCount: z.number().int().nonnegative(),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('collection.list'),
+    collections: z.array(collectionSummarySchema),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('collection.created'),
+    collection: collectionSummarySchema,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('collection.updated'),
+    collection: collectionSummarySchema,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('collection.deleted'),
+    collectionId: nonBlankString,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('collection.assets.added'),
+    collectionId: nonBlankString,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('collection.assets.removed'),
+    collectionId: nonBlankString,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('collection.assets.reordered'),
+    collectionId: nonBlankString,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('collection.assets.list'),
+    assets: z.array(assetSummarySchema),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('asset.metadata.got'),
+    metadata: assetMetadataResultSchema,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('asset.metadata.updated'),
+    metadata: assetMetadataResultSchema,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('asset.metadata.backfilled'),
+    backfilledCount: z.number().int().nonnegative(),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('smart-collection.list'),
+    smartCollections: z.array(smartCollectionSummarySchema),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('smart-collection.created'),
+    smartCollection: smartCollectionSummarySchema,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('smart-collection.updated'),
+    smartCollection: smartCollectionSummarySchema,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('smart-collection.deleted'),
+    smartCollectionId: nonBlankString,
   }),
 ] as const;
 

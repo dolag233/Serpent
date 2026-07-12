@@ -115,6 +115,102 @@ function handleRequest(request: WorkerRequest): WorkerResult {
       const linkedFolder = libraryService.relinkMissingFolder(request.command);
       return { ok: true, type: 'linked-folder.relinked', linkedFolder };
     }
+    case 'tag.list':
+      return {
+        ok: true,
+        type: 'tag.list',
+        tags: libraryService.listTags(request.command.libraryId),
+      };
+    case 'tag.create': {
+      const tag = libraryService.createTag(request.command);
+      return { ok: true, type: 'tag.created', tag };
+    }
+    case 'tag.rename': {
+      const tag = libraryService.renameTag(request.command);
+      return { ok: true, type: 'tag.renamed', tag };
+    }
+    case 'tag.delete':
+      return {
+        ok: true,
+        type: 'tag.deleted',
+        tagId: libraryService.deleteTag(request.command),
+      };
+    case 'tag.assign': {
+      const { assignedCount } = libraryService.assignTags(request.command);
+      return { ok: true, type: 'tag.assigned', assignedCount };
+    }
+    case 'tag.remove': {
+      const { removedCount } = libraryService.removeTags(request.command);
+      return { ok: true, type: 'tag.removed', removedCount };
+    }
+    case 'collection.list':
+      return {
+        ok: true,
+        type: 'collection.list',
+        collections: libraryService.listCollections(request.command.libraryId),
+      };
+    case 'collection.create': {
+      const collection = libraryService.createCollection(request.command);
+      return { ok: true, type: 'collection.created', collection };
+    }
+    case 'collection.update': {
+      const collection = libraryService.updateCollection(request.command);
+      return { ok: true, type: 'collection.updated', collection };
+    }
+    case 'collection.delete':
+      return {
+        ok: true,
+        type: 'collection.deleted',
+        collectionId: libraryService.deleteCollection(request.command),
+      };
+    case 'collection.assets.add': {
+      const { collectionId } = libraryService.addCollectionAssets(request.command);
+      return { ok: true, type: 'collection.assets.added', collectionId };
+    }
+    case 'collection.assets.remove': {
+      const { collectionId } = libraryService.removeCollectionAssets(request.command);
+      return { ok: true, type: 'collection.assets.removed', collectionId };
+    }
+    case 'collection.assets.reorder': {
+      const { collectionId } = libraryService.reorderCollectionAssets(request.command);
+      return { ok: true, type: 'collection.assets.reordered', collectionId };
+    }
+    case 'collection.assets.list': {
+      const assets = libraryService.listCollectionAssets(request.command);
+      return { ok: true, type: 'collection.assets.list', assets };
+    }
+    case 'asset.metadata.get': {
+      const metadata = libraryService.getAssetMetadata(request.command);
+      return { ok: true, type: 'asset.metadata.got', metadata };
+    }
+    case 'asset.metadata.set': {
+      const metadata = libraryService.setAssetMetadata(request.command);
+      return { ok: true, type: 'asset.metadata.updated', metadata };
+    }
+    case 'asset.metadata.backfill': {
+      const { backfilledCount } = libraryService.backfillAssetMetadata(request.command.libraryId);
+      return { ok: true, type: 'asset.metadata.backfilled', backfilledCount };
+    }
+    case 'smart-collection.list':
+      return {
+        ok: true,
+        type: 'smart-collection.list',
+        smartCollections: libraryService.listSmartCollections(request.command.libraryId),
+      };
+    case 'smart-collection.create': {
+      const sc = libraryService.createSmartCollection(request.command);
+      return { ok: true, type: 'smart-collection.created', smartCollection: sc };
+    }
+    case 'smart-collection.update': {
+      const sc = libraryService.updateSmartCollection(request.command);
+      return { ok: true, type: 'smart-collection.updated', smartCollection: sc };
+    }
+    case 'smart-collection.delete':
+      return {
+        ok: true,
+        type: 'smart-collection.deleted',
+        smartCollectionId: libraryService.deleteSmartCollection(request.command),
+      };
     default:
       return assertNever(request.command);
   }

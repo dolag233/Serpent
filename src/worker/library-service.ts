@@ -25,7 +25,7 @@ import path from 'node:path';
 
 import BetterSqlite3 from 'better-sqlite3';
 
-import type { AssetSummary, LinkedFolderSummary, ManagedFolderSummary } from '../shared/asset-types';
+import type { AssetMetadataResult, AssetSummary, CollectionSummary, LinkedFolderSummary, ManagedFolderSummary, SmartCollectionSummary, TagSummary } from '../shared/asset-types';
 import type { PublicErrorCode } from '../shared/protocol/errors';
 import { publicReasonFromError, type PublicErrorReason } from '../shared/protocol/errors';
 import type {
@@ -385,6 +385,9 @@ interface AssetSummaryRow {
   managed_folder_id: string | null;
   modified_at: string;
   relative_file_path: string;
+  label: string | null;
+  rating: number;
+  favorite: number;
 }
 
 interface ImportSourceEntry {
@@ -1736,9 +1739,11 @@ export class LibraryService {
     const rows = openLibrary.connection
       .prepare(
         `SELECT a.asset_id, a.managed_folder_id, a.relative_file_path,
-                a.current_revision_id, a.availability, r.byte_size, r.modified_at
+                a.current_revision_id, a.availability, r.byte_size, r.modified_at,
+                m.label, COALESCE(m.rating, 0) AS rating, COALESCE(m.favorite, 0) AS favorite
            FROM assets a
            JOIN revisions r ON r.revision_id = a.current_revision_id
+           LEFT JOIN asset_metadata m ON m.asset_id = a.asset_id
           ORDER BY a.relative_file_path`,
       )
       .all() as AssetSummaryRow[];
@@ -1761,6 +1766,9 @@ export class LibraryService {
         byteSize: row.byte_size,
         modifiedAt: row.modified_at,
         availability: row.availability,
+        label: row.label,
+        rating: row.rating,
+        favorite: row.favorite !== 0,
       }));
   }
 
@@ -1993,6 +2001,872 @@ export class LibraryService {
       status: 'available',
       assetCount: countRow.count,
     };
+  }
+
+  // ── Tags ──────────────────────────────────────────────────────────
+
+  createTag(input: { libraryId: string; name: string }): TagSummary {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    const trimmed = input.name.trim();
+    if (trimmed.length === 0) throw new LibraryServiceError('INVALID_FOLDER_NAME');
+
+    const tagId = randomUUID();
+    const now = new Date().toISOString();
+    try {
+      openLibrary.connection
+        .prepare(
+          'INSERT INTO tags (tag_id, library_id, name, created_at) VALUES (?, ?, ?, ?)',
+        )
+        .run(tagId, openLibrary.summary.libraryId, trimmed, now);
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        'code' in error &&
+        error.code === 'SQLITE_CONSTRAINT_UNIQUE'
+      ) {
+        throw new LibraryServiceError('FOLDER_ALREADY_EXISTS');
+      }
+      throw new LibraryServiceError('LIBRARY_NOT_WRITABLE', { cause: error });
+    }
+    return { tagId, name: trimmed, assetCount: 0 };
+  }
+
+  listTags(libraryId: string): TagSummary[] {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    const rows = openLibrary.connection
+      .prepare(
+        `SELECT t.tag_id, t.name,
+                (SELECT COUNT(*) FROM human_asset_tags h WHERE h.tag_id = t.tag_id) AS asset_count
+           FROM tags t
+          WHERE t.library_id = ?
+          ORDER BY t.name`,
+      )
+      .all(openLibrary.summary.libraryId) as Array<{
+        tag_id: string;
+        name: string;
+        asset_count: number;
+      }>;
+    return rows.map((row) => ({
+      tagId: row.tag_id,
+      name: row.name,
+      assetCount: row.asset_count,
+    }));
+  }
+
+  renameTag(input: { libraryId: string; tagId: string; name: string }): TagSummary {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    const trimmed = input.name.trim();
+    if (trimmed.length === 0) throw new LibraryServiceError('INVALID_FOLDER_NAME');
+
+    const existing = openLibrary.connection
+      .prepare('SELECT tag_id FROM tags WHERE tag_id = ? AND library_id = ?')
+      .get(input.tagId, openLibrary.summary.libraryId);
+    if (!existing) throw new LibraryServiceError('FOLDER_NOT_FOUND');
+
+    try {
+      openLibrary.connection
+        .prepare('UPDATE tags SET name = ? WHERE tag_id = ?')
+        .run(trimmed, input.tagId);
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        'code' in error &&
+        error.code === 'SQLITE_CONSTRAINT_UNIQUE'
+      ) {
+        throw new LibraryServiceError('FOLDER_ALREADY_EXISTS');
+      }
+      throw new LibraryServiceError('LIBRARY_NOT_WRITABLE', { cause: error });
+    }
+
+    const countRow = openLibrary.connection
+      .prepare('SELECT COUNT(*) AS count FROM human_asset_tags WHERE tag_id = ?')
+      .get(input.tagId) as { count: number };
+    return { tagId: input.tagId, name: trimmed, assetCount: countRow.count };
+  }
+
+  deleteTag(input: { libraryId: string; tagId: string }): string {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    const existing = openLibrary.connection
+      .prepare('SELECT tag_id FROM tags WHERE tag_id = ? AND library_id = ?')
+      .get(input.tagId, openLibrary.summary.libraryId);
+    if (!existing) throw new LibraryServiceError('FOLDER_NOT_FOUND');
+
+    openLibrary.connection
+      .prepare('DELETE FROM tags WHERE tag_id = ?')
+      .run(input.tagId);
+    return input.tagId;
+  }
+
+  assignTags(input: {
+    libraryId: string;
+    assetIds: string[];
+    tagIds: string[];
+  }): { assignedCount: number } {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+
+    const assetRows = openLibrary.connection
+      .prepare(
+        `SELECT asset_id FROM assets WHERE asset_id IN (${input.assetIds.map(() => '?').join(',')})`,
+      )
+      .all(...input.assetIds) as Array<{ asset_id: string }>;
+    if (assetRows.length !== input.assetIds.length) throw new LibraryServiceError('FOLDER_NOT_FOUND');
+
+    const tagRows = openLibrary.connection
+      .prepare(
+        `SELECT tag_id FROM tags WHERE tag_id IN (${input.tagIds.map(() => '?').join(',')}) AND library_id = ?`,
+      )
+      .all(...input.tagIds, openLibrary.summary.libraryId) as Array<{ tag_id: string }>;
+    if (tagRows.length !== input.tagIds.length) throw new LibraryServiceError('FOLDER_NOT_FOUND');
+
+    let assignedCount = 0;
+    const insertStmt = openLibrary.connection.prepare(
+      'INSERT OR IGNORE INTO human_asset_tags (asset_id, tag_id) VALUES (?, ?)',
+    );
+    openLibrary.connection.transaction(() => {
+      for (const assetId of input.assetIds) {
+        for (const tagId of input.tagIds) {
+          const result = insertStmt.run(assetId, tagId);
+          assignedCount += result.changes;
+        }
+      }
+    })();
+    return { assignedCount };
+  }
+
+  removeTags(input: {
+    libraryId: string;
+    assetIds: string[];
+    tagIds: string[];
+  }): { removedCount: number } {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    const result = openLibrary.connection
+      .prepare(
+        `DELETE FROM human_asset_tags
+           WHERE asset_id IN (${input.assetIds.map(() => '?').join(',')})
+             AND tag_id IN (${input.tagIds.map(() => '?').join(',')})`,
+      )
+      .run(...input.assetIds, ...input.tagIds);
+    return { removedCount: result.changes };
+  }
+
+  // ── Collections ────────────────────────────────────────────────────
+
+  createCollection(input: {
+    libraryId: string;
+    parentId?: string;
+    name: string;
+  }): CollectionSummary {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    const trimmed = input.name.trim();
+    if (trimmed.length === 0) throw new LibraryServiceError('INVALID_FOLDER_NAME');
+
+    if (input.parentId) {
+      const parent = openLibrary.connection
+        .prepare(
+          'SELECT collection_id FROM collections WHERE collection_id = ? AND library_id = ?',
+        )
+        .get(input.parentId, openLibrary.summary.libraryId);
+      if (!parent) throw new LibraryServiceError('FOLDER_NOT_FOUND');
+    }
+
+    const maxPosRow = openLibrary.connection
+      .prepare(
+        input.parentId
+          ? 'SELECT COALESCE(MAX(position), -1) AS max_pos FROM collections WHERE parent_id = ? AND library_id = ?'
+          : 'SELECT COALESCE(MAX(position), -1) AS max_pos FROM collections WHERE parent_id IS NULL AND library_id = ?',
+      )
+      .get(
+        ...(input.parentId
+          ? [input.parentId, openLibrary.summary.libraryId]
+          : [openLibrary.summary.libraryId]),
+      ) as { max_pos: number };
+    const position = maxPosRow.max_pos + 1;
+
+    const collectionId = randomUUID();
+    const now = new Date().toISOString();
+
+    openLibrary.connection
+      .prepare(
+        `INSERT INTO collections
+           (collection_id, library_id, parent_id, name, position, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        collectionId,
+        openLibrary.summary.libraryId,
+        input.parentId ?? null,
+        trimmed,
+        position,
+        now,
+        now,
+      );
+
+    return {
+      collectionId,
+      parentId: input.parentId ?? null,
+      name: trimmed,
+      description: null,
+      coverAssetId: null,
+      position,
+      assetCount: 0,
+      childCollectionCount: 0,
+    };
+  }
+
+  listCollections(libraryId: string): CollectionSummary[] {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    const rows = openLibrary.connection
+      .prepare(
+        `SELECT c.collection_id, c.parent_id, c.name, c.description,
+                c.cover_asset_id, c.position,
+                (SELECT COUNT(*) FROM collection_assets ca WHERE ca.collection_id = c.collection_id) AS asset_count,
+                (SELECT COUNT(*) FROM collections ch WHERE ch.parent_id = c.collection_id) AS child_count
+           FROM collections c
+          WHERE c.library_id = ?
+          ORDER BY c.position, c.name`,
+      )
+      .all(openLibrary.summary.libraryId) as Array<{
+        collection_id: string;
+        parent_id: string | null;
+        name: string;
+        description: string | null;
+        cover_asset_id: string | null;
+        position: number;
+        asset_count: number;
+        child_count: number;
+      }>;
+    return rows.map((row) => ({
+      collectionId: row.collection_id,
+      parentId: row.parent_id,
+      name: row.name,
+      description: row.description,
+      coverAssetId: row.cover_asset_id,
+      position: row.position,
+      assetCount: row.asset_count,
+      childCollectionCount: row.child_count,
+    }));
+  }
+
+  updateCollection(input: {
+    libraryId: string;
+    collectionId: string;
+    name?: string;
+    description?: string;
+    coverAssetId?: string;
+    position?: number;
+  }): CollectionSummary {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    const existing = openLibrary.connection
+      .prepare(
+        'SELECT collection_id, parent_id, name, description, cover_asset_id, position FROM collections WHERE collection_id = ? AND library_id = ?',
+      )
+      .get(input.collectionId, openLibrary.summary.libraryId) as {
+        collection_id: string;
+        parent_id: string | null;
+        name: string;
+        description: string | null;
+        cover_asset_id: string | null;
+        position: number;
+      } | undefined;
+    if (!existing) throw new LibraryServiceError('FOLDER_NOT_FOUND');
+
+    const now = new Date().toISOString();
+    const newName =
+      input.name !== undefined ? input.name.trim() : existing.name;
+    if (newName.length === 0) throw new LibraryServiceError('INVALID_FOLDER_NAME');
+    const newDescription =
+      input.description !== undefined ? input.description : existing.description;
+    const newCoverAssetId =
+      input.coverAssetId !== undefined ? input.coverAssetId : existing.cover_asset_id;
+    const newPosition =
+      input.position !== undefined ? input.position : existing.position;
+
+    openLibrary.connection
+      .prepare(
+        `UPDATE collections
+            SET name = ?, description = ?, cover_asset_id = ?, position = ?, updated_at = ?
+          WHERE collection_id = ?`,
+      )
+      .run(
+        newName,
+        newDescription,
+        newCoverAssetId,
+        newPosition,
+        now,
+        input.collectionId,
+      );
+
+    const countRows = openLibrary.connection
+      .prepare(
+        `SELECT
+           (SELECT COUNT(*) FROM collection_assets WHERE collection_id = ?) AS asset_count,
+           (SELECT COUNT(*) FROM collections WHERE parent_id = ?) AS child_count`,
+      )
+      .get(input.collectionId, input.collectionId) as {
+        asset_count: number;
+        child_count: number;
+      };
+
+    return {
+      collectionId: input.collectionId,
+      parentId: existing.parent_id,
+      name: newName,
+      description: newDescription,
+      coverAssetId: newCoverAssetId,
+      position: newPosition,
+      assetCount: countRows.asset_count,
+      childCollectionCount: countRows.child_count,
+    };
+  }
+
+  deleteCollection(input: { libraryId: string; collectionId: string }): string {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    const existing = openLibrary.connection
+      .prepare(
+        'SELECT collection_id FROM collections WHERE collection_id = ? AND library_id = ?',
+      )
+      .get(input.collectionId, openLibrary.summary.libraryId);
+    if (!existing) throw new LibraryServiceError('FOLDER_NOT_FOUND');
+
+    openLibrary.connection
+      .prepare('DELETE FROM collections WHERE collection_id = ?')
+      .run(input.collectionId);
+    return input.collectionId;
+  }
+
+  addCollectionAssets(input: {
+    libraryId: string;
+    collectionId: string;
+    assetIds: string[];
+  }): { collectionId: string } {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    const col = openLibrary.connection
+      .prepare(
+        'SELECT collection_id FROM collections WHERE collection_id = ? AND library_id = ?',
+      )
+      .get(input.collectionId, openLibrary.summary.libraryId);
+    if (!col) throw new LibraryServiceError('FOLDER_NOT_FOUND');
+
+    const assetRows = openLibrary.connection
+      .prepare(
+        `SELECT asset_id FROM assets WHERE asset_id IN (${input.assetIds.map(() => '?').join(',')})`,
+      )
+      .all(...input.assetIds) as Array<{ asset_id: string }>;
+    if (assetRows.length !== input.assetIds.length) throw new LibraryServiceError('FOLDER_NOT_FOUND');
+
+    const maxPosRow = openLibrary.connection
+      .prepare(
+        'SELECT COALESCE(MAX(position), -1) AS max_pos FROM collection_assets WHERE collection_id = ?',
+      )
+      .get(input.collectionId) as { max_pos: number };
+    let nextPosition = maxPosRow.max_pos + 1;
+
+    const insertStmt = openLibrary.connection.prepare(
+      'INSERT OR IGNORE INTO collection_assets (collection_id, asset_id, position) VALUES (?, ?, ?)',
+    );
+    openLibrary.connection.transaction(() => {
+      for (const assetId of input.assetIds) {
+        insertStmt.run(input.collectionId, assetId, nextPosition);
+        nextPosition += 1;
+      }
+    })();
+    return { collectionId: input.collectionId };
+  }
+
+  removeCollectionAssets(input: {
+    libraryId: string;
+    collectionId: string;
+    assetIds: string[];
+  }): { collectionId: string } {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    openLibrary.connection
+      .prepare(
+        `DELETE FROM collection_assets
+           WHERE collection_id = ?
+             AND asset_id IN (${input.assetIds.map(() => '?').join(',')})`,
+      )
+      .run(input.collectionId, ...input.assetIds);
+    return { collectionId: input.collectionId };
+  }
+
+  reorderCollectionAssets(input: {
+    libraryId: string;
+    collectionId: string;
+    orderedAssetIds: string[];
+  }): { collectionId: string } {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    const col = openLibrary.connection
+      .prepare(
+        'SELECT collection_id FROM collections WHERE collection_id = ? AND library_id = ?',
+      )
+      .get(input.collectionId, openLibrary.summary.libraryId);
+    if (!col) throw new LibraryServiceError('FOLDER_NOT_FOUND');
+
+    openLibrary.connection.transaction(() => {
+      openLibrary.connection
+        .prepare('DELETE FROM collection_assets WHERE collection_id = ?')
+        .run(input.collectionId);
+      const insertStmt = openLibrary.connection.prepare(
+        'INSERT INTO collection_assets (collection_id, asset_id, position) VALUES (?, ?, ?)',
+      );
+      for (let index = 0; index < input.orderedAssetIds.length; index += 1) {
+        insertStmt.run(input.collectionId, input.orderedAssetIds[index]!, index);
+      }
+    })();
+    return { collectionId: input.collectionId };
+  }
+
+  listCollectionAssets(input: {
+    libraryId: string;
+    collectionId: string;
+    recursive: boolean;
+  }): AssetSummary[] {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    const col = openLibrary.connection
+      .prepare(
+        'SELECT collection_id FROM collections WHERE collection_id = ? AND library_id = ?',
+      )
+      .get(input.collectionId, openLibrary.summary.libraryId);
+    if (!col) throw new LibraryServiceError('FOLDER_NOT_FOUND');
+
+    let collectionIds: string[];
+    if (input.recursive) {
+      const descendantRows = openLibrary.connection
+        .prepare(
+          `WITH RECURSIVE descendants AS (
+             SELECT collection_id FROM collections WHERE collection_id = ?
+             UNION ALL
+             SELECT c.collection_id FROM collections c JOIN descendants d ON c.parent_id = d.collection_id
+           )
+           SELECT collection_id FROM descendants`,
+        )
+        .all(input.collectionId) as Array<{ collection_id: string }>;
+      collectionIds = descendantRows.map((row) => row.collection_id);
+    } else {
+      collectionIds = [input.collectionId];
+    }
+
+    const placeholders = collectionIds.map(() => '?').join(',');
+    const rows = openLibrary.connection
+      .prepare(
+        `SELECT DISTINCT a.asset_id, a.managed_folder_id, a.relative_file_path,
+                a.current_revision_id, a.availability, r.byte_size, r.modified_at,
+                m.label, COALESCE(m.rating, 0) AS rating, COALESCE(m.favorite, 0) AS favorite
+           FROM collection_assets ca
+           JOIN assets a ON a.asset_id = ca.asset_id
+           JOIN revisions r ON r.revision_id = a.current_revision_id
+           LEFT JOIN asset_metadata m ON m.asset_id = a.asset_id
+          WHERE ca.collection_id IN (${placeholders})
+          ORDER BY ca.position, a.relative_file_path`,
+      )
+      .all(...collectionIds) as Array<{
+        asset_id: string;
+        availability: 'available' | 'missing';
+        byte_size: number;
+        current_revision_id: string;
+        managed_folder_id: string | null;
+        modified_at: string;
+        relative_file_path: string;
+        label: string | null;
+        rating: number;
+        favorite: number;
+      }>;
+    return rows.map((row) => ({
+      assetId: row.asset_id,
+      managedFolderId: row.managed_folder_id,
+      relativeFilePath: row.relative_file_path,
+      displayName: path.posix.basename(row.relative_file_path),
+      currentRevisionId: row.current_revision_id,
+      byteSize: row.byte_size,
+      modifiedAt: row.modified_at,
+      availability: row.availability,
+      label: row.label,
+      rating: row.rating,
+      favorite: row.favorite !== 0,
+    }));
+  }
+
+  // ── Asset Metadata ──────────────────────────────────────────────────
+
+  getAssetMetadata(input: { libraryId: string; assetId: string }): AssetMetadataResult {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+
+    const assetRow = openLibrary.connection
+      .prepare('SELECT asset_id FROM assets WHERE asset_id = ?')
+      .get(input.assetId) as { asset_id: string } | undefined;
+    if (!assetRow) throw new LibraryServiceError('ASSET_NOT_FOUND');
+
+    const row = openLibrary.connection
+      .prepare(
+        `SELECT asset_id, label, description, rating, favorite, palette,
+                source_page_url, entity_version, updated_at
+           FROM asset_metadata
+          WHERE asset_id = ?`,
+      )
+      .get(input.assetId) as {
+        asset_id: string;
+        label: string | null;
+        description: string | null;
+        rating: number;
+        favorite: number;
+        palette: string | null;
+        source_page_url: string | null;
+        entity_version: number;
+        updated_at: string;
+      } | undefined;
+
+    if (!row) {
+      return {
+        assetId: input.assetId,
+        label: null,
+        description: null,
+        rating: 0,
+        favorite: false,
+        palette: null,
+        sourcePageUrl: null,
+        entityVersion: 0,
+        updatedAt: new Date(0).toISOString(),
+      };
+    }
+
+    return {
+      assetId: row.asset_id,
+      label: row.label,
+      description: row.description,
+      rating: row.rating,
+      favorite: row.favorite !== 0,
+      palette: row.palette,
+      sourcePageUrl: row.source_page_url,
+      entityVersion: row.entity_version,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  setAssetMetadata(input: {
+    libraryId: string;
+    assetId: string;
+    expectedVersion: number;
+    label?: string;
+    description?: string;
+    rating?: number;
+    favorite?: boolean;
+    palette?: string[];
+    sourcePageUrl?: string;
+  }): AssetMetadataResult {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+
+    // Validate the asset exists.
+    const assetRow = openLibrary.connection
+      .prepare('SELECT asset_id FROM assets WHERE asset_id = ?')
+      .get(input.assetId) as { asset_id: string } | undefined;
+    if (!assetRow) throw new LibraryServiceError('ASSET_NOT_FOUND');
+
+    // Validate rating.
+    if (input.rating !== undefined && (input.rating < 0 || input.rating > 5)) {
+      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+    }
+
+    // Validate palette.
+    if (input.palette !== undefined && input.palette.length > 20) {
+      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+    }
+
+    // Validate description length.
+    if (input.description !== undefined && input.description.length > 10000) {
+      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+    }
+
+    const now = new Date().toISOString();
+
+    // Read current state.
+    const existing = openLibrary.connection
+      .prepare(
+        'SELECT entity_version, rating, favorite, label, description, palette, source_page_url FROM asset_metadata WHERE asset_id = ?',
+      )
+      .get(input.assetId) as {
+        entity_version: number;
+        rating: number;
+        favorite: number;
+        label: string | null;
+        description: string | null;
+        palette: string | null;
+        source_page_url: string | null;
+      } | undefined;
+
+    if (existing) {
+      // Row exists: optimistic lock update.
+      const newLabel =
+        input.label !== undefined ? (input.label.trim() === '' ? null : input.label.trim()) : existing.label;
+      const newDescription =
+        input.description !== undefined
+          ? (input.description.trim() === '' ? null : input.description.trim())
+          : existing.description;
+      const newRating = input.rating ?? existing.rating;
+      const newFavorite = input.favorite !== undefined ? (input.favorite ? 1 : 0) : existing.favorite;
+      const newPalette =
+        input.palette !== undefined ? JSON.stringify(input.palette) : existing.palette;
+      const newSourcePageUrl =
+        input.sourcePageUrl !== undefined
+          ? (input.sourcePageUrl.trim() === '' ? null : input.sourcePageUrl.trim())
+          : existing.source_page_url;
+
+      const result = openLibrary.connection
+        .prepare(
+          `UPDATE asset_metadata
+              SET label = ?, description = ?, rating = ?, favorite = ?,
+                  palette = ?, source_page_url = ?,
+                  entity_version = entity_version + 1, updated_at = ?
+            WHERE asset_id = ? AND entity_version = ?`,
+        )
+        .run(
+          newLabel,
+          newDescription,
+          newRating,
+          newFavorite,
+          newPalette,
+          newSourcePageUrl,
+          now,
+          input.assetId,
+          input.expectedVersion,
+        );
+
+      if (result.changes === 0) {
+        // Version mismatch: return conflict with current version.
+        const current = openLibrary.connection
+          .prepare('SELECT entity_version FROM asset_metadata WHERE asset_id = ?')
+          .get(input.assetId) as { entity_version: number };
+        const err = new LibraryServiceError('VERSION_CONFLICT');
+        (err as unknown as Record<string, unknown>).currentEntityVersion = current.entity_version;
+        throw err;
+      }
+
+      // Fetch back the updated row.
+      const updated = openLibrary.connection
+        .prepare(
+          `SELECT asset_id, label, description, rating, favorite, palette,
+                  source_page_url, entity_version, updated_at
+             FROM asset_metadata WHERE asset_id = ?`,
+        )
+        .get(input.assetId) as {
+          asset_id: string;
+          label: string | null;
+          description: string | null;
+          rating: number;
+          favorite: number;
+          palette: string | null;
+          source_page_url: string | null;
+          entity_version: number;
+          updated_at: string;
+        };
+
+      return {
+        assetId: updated.asset_id,
+        label: updated.label,
+        description: updated.description,
+        rating: updated.rating,
+        favorite: updated.favorite !== 0,
+        palette: updated.palette,
+        sourcePageUrl: updated.source_page_url,
+        entityVersion: updated.entity_version,
+        updatedAt: updated.updated_at,
+      };
+    }
+
+    // No existing row: INSERT. expectedVersion must be 0 for a fresh row.
+    if (input.expectedVersion !== 0) {
+      const err = new LibraryServiceError('VERSION_CONFLICT');
+      (err as unknown as Record<string, unknown>).currentEntityVersion = 0;
+      throw err;
+    }
+
+    const newLabel =
+      input.label !== undefined ? (input.label.trim() === '' ? null : input.label.trim()) : null;
+    const newDescription =
+      input.description !== undefined
+        ? (input.description.trim() === '' ? null : input.description.trim())
+        : null;
+    const newRating = input.rating ?? 0;
+    const newFavorite = input.favorite !== undefined && input.favorite ? 1 : 0;
+    const newPalette = input.palette !== undefined ? JSON.stringify(input.palette) : null;
+    const newSourcePageUrl =
+      input.sourcePageUrl !== undefined
+        ? (input.sourcePageUrl.trim() === '' ? null : input.sourcePageUrl.trim())
+        : null;
+    const newEntityVersion = 1;
+
+    openLibrary.connection
+      .prepare(
+        `INSERT INTO asset_metadata
+           (asset_id, label, description, rating, favorite, palette,
+            source_page_url, entity_version, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        input.assetId,
+        newLabel,
+        newDescription,
+        newRating,
+        newFavorite,
+        newPalette,
+        newSourcePageUrl,
+        newEntityVersion,
+        now,
+      );
+
+    return {
+      assetId: input.assetId,
+      label: newLabel,
+      description: newDescription,
+      rating: newRating,
+      favorite: newFavorite !== 0,
+      palette: newPalette,
+      sourcePageUrl: newSourcePageUrl,
+      entityVersion: newEntityVersion,
+      updatedAt: now,
+    };
+  }
+
+  backfillAssetMetadata(libraryId: string): { backfilledCount: number } {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    const now = new Date().toISOString();
+
+    const result = openLibrary.connection
+      .prepare(
+        `INSERT OR IGNORE INTO asset_metadata
+           (asset_id, label, description, rating, favorite, palette,
+            source_page_url, entity_version, updated_at)
+         SELECT asset_id, NULL, NULL, 0, 0, NULL, NULL, 1, ?
+           FROM assets a
+          WHERE NOT EXISTS (
+            SELECT 1 FROM asset_metadata m WHERE m.asset_id = a.asset_id
+          )`,
+      )
+      .run(now);
+
+    return { backfilledCount: result.changes };
+  }
+
+  // ── Smart Collections ────────────────────────────────────────────────
+
+  createSmartCollection(input: {
+    libraryId: string;
+    name: string;
+    queryDefinition: string;
+    sortDefinition: string;
+  }): SmartCollectionSummary {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    const trimmed = input.name.trim();
+    if (trimmed.length === 0) throw new LibraryServiceError('INVALID_FOLDER_NAME');
+
+    const smartCollectionId = randomUUID();
+    const now = new Date().toISOString();
+
+    openLibrary.connection
+      .prepare(
+        `INSERT INTO smart_collections
+           (smart_collection_id, library_id, name, query_definition, sort_definition, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        smartCollectionId,
+        openLibrary.summary.libraryId,
+        trimmed,
+        input.queryDefinition,
+        input.sortDefinition,
+        now,
+        now,
+      );
+
+    return {
+      smartCollectionId,
+      name: trimmed,
+      queryDefinition: input.queryDefinition,
+      sortDefinition: input.sortDefinition,
+    };
+  }
+
+  listSmartCollections(libraryId: string): SmartCollectionSummary[] {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    const rows = openLibrary.connection
+      .prepare(
+        `SELECT smart_collection_id, name, query_definition, sort_definition
+           FROM smart_collections
+          WHERE library_id = ?
+          ORDER BY name`,
+      )
+      .all(openLibrary.summary.libraryId) as Array<{
+        smart_collection_id: string;
+        name: string;
+        query_definition: string;
+        sort_definition: string;
+      }>;
+    return rows.map((row) => ({
+      smartCollectionId: row.smart_collection_id,
+      name: row.name,
+      queryDefinition: row.query_definition,
+      sortDefinition: row.sort_definition,
+    }));
+  }
+
+  updateSmartCollection(input: {
+    libraryId: string;
+    smartCollectionId: string;
+    name?: string;
+    queryDefinition?: string;
+    sortDefinition?: string;
+  }): SmartCollectionSummary {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    const existing = openLibrary.connection
+      .prepare(
+        'SELECT smart_collection_id, name, query_definition, sort_definition FROM smart_collections WHERE smart_collection_id = ? AND library_id = ?',
+      )
+      .get(input.smartCollectionId, openLibrary.summary.libraryId) as {
+        smart_collection_id: string;
+        name: string;
+        query_definition: string;
+        sort_definition: string;
+      } | undefined;
+    if (!existing) throw new LibraryServiceError('FOLDER_NOT_FOUND');
+
+    const now = new Date().toISOString();
+    const newName =
+      input.name !== undefined ? input.name.trim() : existing.name;
+    if (newName.length === 0) throw new LibraryServiceError('INVALID_FOLDER_NAME');
+    const newQueryDefinition = input.queryDefinition ?? existing.query_definition;
+    const newSortDefinition = input.sortDefinition ?? existing.sort_definition;
+
+    openLibrary.connection
+      .prepare(
+        `UPDATE smart_collections
+            SET name = ?, query_definition = ?, sort_definition = ?, updated_at = ?
+          WHERE smart_collection_id = ?`,
+      )
+      .run(newName, newQueryDefinition, newSortDefinition, now, input.smartCollectionId);
+
+    return {
+      smartCollectionId: input.smartCollectionId,
+      name: newName,
+      queryDefinition: newQueryDefinition,
+      sortDefinition: newSortDefinition,
+    };
+  }
+
+  deleteSmartCollection(input: {
+    libraryId: string;
+    smartCollectionId: string;
+  }): string {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    const existing = openLibrary.connection
+      .prepare(
+        'SELECT smart_collection_id FROM smart_collections WHERE smart_collection_id = ? AND library_id = ?',
+      )
+      .get(input.smartCollectionId, openLibrary.summary.libraryId);
+    if (!existing) throw new LibraryServiceError('FOLDER_NOT_FOUND');
+
+    openLibrary.connection
+      .prepare('DELETE FROM smart_collections WHERE smart_collection_id = ?')
+      .run(input.smartCollectionId);
+    return input.smartCollectionId;
   }
 
   private enumerateLinkedSources(rootPath: string): Array<{
