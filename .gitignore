@@ -8,9 +8,12 @@ skills-lock.json
 docs/
 
 node_modules/
+**/.vite/
 dist/
 out/
 coverage/
+playwright-report/
+test-results/
 *.log
 .env
 .env.*

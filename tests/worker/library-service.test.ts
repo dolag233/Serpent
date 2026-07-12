@@ -1,0 +1,244 @@
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
+import { createRequire } from 'node:module';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+
+import { afterEach, describe, expect, it } from 'vitest';
+
+import {
+  LibraryService,
+  LibraryServiceError,
+} from '../../src/worker/library-service';
+
+const temporaryRoots: string[] = [];
+const require = createRequire(import.meta.url);
+
+interface TestDatabaseConnection {
+  close(): void;
+  pragma(source: string): unknown;
+  prepare(source: string): { run(...parameters: unknown[]): unknown };
+}
+
+const TestDatabase = require('better-sqlite3') as new (
+  filename: string,
+) => TestDatabaseConnection;
+
+function temporaryRoot(): string {
+  const root = mkdtempSync(path.join(tmpdir(), 'serpent-library-test-'));
+  temporaryRoots.push(root);
+  return root;
+}
+
+function expectServiceError(operation: () => unknown, code: LibraryServiceError['code']): void {
+  let thrown: unknown;
+  try {
+    operation();
+  } catch (error) {
+    thrown = error;
+  }
+
+  expect(thrown).toBeInstanceOf(LibraryServiceError);
+  expect((thrown as LibraryServiceError).code).toBe(code);
+}
+
+afterEach(() => {
+  for (const root of temporaryRoots.splice(0)) {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+describe('LibraryService lifecycle', () => {
+  it('creates a self-contained library and exposes it exactly once', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+
+    const created = service.createLibrary({
+      displayName: '  概念设计  ',
+      selectedParentPath: root,
+    });
+
+    expect(created.displayName).toBe('概念设计');
+    expect(created.libraryPath).toBe(realpathSync(path.join(root, '概念设计')));
+    expect(created.libraryId).toMatch(/^[0-9a-f-]{36}$/u);
+    expect(statSync(path.join(created.libraryPath, 'Assets')).isDirectory()).toBe(true);
+    expect(statSync(path.join(created.libraryPath, '.serpent', 'library.db')).isFile()).toBe(
+      true,
+    );
+    expect(statSync(path.join(created.libraryPath, '.serpent', 'previews')).isDirectory()).toBe(
+      true,
+    );
+    expect(service.listLibraries()).toEqual([created]);
+
+    expect(service.openLibrary(created.libraryPath)).toEqual(created);
+    expect(service.listLibraries()).toEqual([created]);
+    service.closeAll();
+  });
+
+  it('closes, moves, and reopens a library without changing its identity', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({
+      displayName: 'Reference',
+      selectedParentPath: root,
+    });
+
+    service.closeLibrary(created.libraryId);
+    expect(service.listLibraries()).toEqual([]);
+
+    const movedPath = path.join(root, 'Moved Reference');
+    renameSync(created.libraryPath, movedPath);
+    const reopened = service.openLibrary(movedPath);
+
+    expect(reopened).toEqual({ ...created, libraryPath: realpathSync(movedPath) });
+    service.closeAll();
+  });
+
+  it('recreates regenerable directories when reopening a closed library', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({
+      displayName: 'Textures',
+      selectedParentPath: root,
+    });
+    service.closeLibrary(created.libraryId);
+    rmSync(path.join(created.libraryPath, '.serpent', 'previews'), { recursive: true });
+    rmSync(path.join(created.libraryPath, '.serpent', 'trash'), { recursive: true });
+
+    service.openLibrary(created.libraryPath);
+
+    expect(statSync(path.join(created.libraryPath, '.serpent', 'previews')).isDirectory()).toBe(
+      true,
+    );
+    expect(statSync(path.join(created.libraryPath, '.serpent', 'trash')).isDirectory()).toBe(
+      true,
+    );
+    service.closeAll();
+  });
+
+  it('rejects a conflicting target without leaving a creation partial', () => {
+    const root = temporaryRoot();
+    const first = new LibraryService();
+    const created = first.createLibrary({
+      displayName: 'Existing',
+      selectedParentPath: root,
+    });
+    first.closeAll();
+
+    const second = new LibraryService();
+    expectServiceError(
+      () => second.createLibrary({ displayName: 'Existing', selectedParentPath: root }),
+      'LIBRARY_ALREADY_EXISTS',
+    );
+    expect(readdirSync(root).sort()).toEqual([path.basename(created.libraryPath)]);
+  });
+
+  it('rejects folders that are missing a required library location', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+
+    expectServiceError(() => service.openLibrary(root), 'NOT_A_LIBRARY');
+  });
+
+  it('rejects a missing database as a non-library', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'No Database', selectedParentPath: root });
+    service.closeAll();
+    rmSync(path.join(created.libraryPath, '.serpent', 'library.db'));
+
+    expectServiceError(() => service.openLibrary(created.libraryPath), 'NOT_A_LIBRARY');
+  });
+
+  it('rejects a library whose required Assets directory was removed', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'Missing Assets', selectedParentPath: root });
+    service.closeAll();
+    rmSync(path.join(created.libraryPath, 'Assets'), { recursive: true });
+
+    expectServiceError(() => service.openLibrary(created.libraryPath), 'NOT_A_LIBRARY');
+  });
+
+  it('rejects a database created by a newer schema version', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'Future', selectedParentPath: root });
+    service.closeAll();
+    const database = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    database.pragma('user_version = 999');
+    database.close();
+
+    expectServiceError(
+      () => service.openLibrary(created.libraryPath),
+      'LIBRARY_VERSION_TOO_NEW',
+    );
+  });
+
+  it('rejects a corrupt database without leaving the library open', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'Corrupt', selectedParentPath: root });
+    service.closeAll();
+    writeFileSync(path.join(created.libraryPath, '.serpent', 'library.db'), 'not a sqlite database');
+
+    expectServiceError(() => service.openLibrary(created.libraryPath), 'LIBRARY_CORRUPT');
+    expect(service.listLibraries()).toEqual([]);
+  });
+
+  it('does not repair internal directories before a database passes validation', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'Read First', selectedParentPath: root });
+    service.closeAll();
+    const previewsPath = path.join(created.libraryPath, '.serpent', 'previews');
+    rmSync(previewsPath, { recursive: true });
+    writeFileSync(path.join(created.libraryPath, '.serpent', 'library.db'), 'not sqlite');
+
+    expectServiceError(() => service.openLibrary(created.libraryPath), 'LIBRARY_CORRUPT');
+    expect(existsSync(previewsPath)).toBe(false);
+  });
+
+  it('rejects a tampered migration audit record', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'Tampered', selectedParentPath: root });
+    service.closeAll();
+    const database = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    database.prepare('UPDATE schema_migrations SET checksum = ? WHERE version = 1').run('bad');
+    database.close();
+
+    expectServiceError(() => service.openLibrary(created.libraryPath), 'LIBRARY_CORRUPT');
+  });
+
+  it('does not leave a partial library when the parent is not writable', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    chmodSync(root, 0o500);
+    try {
+      expectServiceError(
+        () => service.createLibrary({ displayName: 'Denied', selectedParentPath: root }),
+        'LIBRARY_NOT_WRITABLE',
+      );
+      expect(readdirSync(root)).toEqual([]);
+    } finally {
+      chmodSync(root, 0o700);
+    }
+  });
+
+  it('reports an unknown close without changing the open set', () => {
+    const service = new LibraryService();
+
+    expectServiceError(() => service.closeLibrary('unknown-library'), 'LIBRARY_NOT_OPEN');
+    expect(service.listLibraries()).toEqual([]);
+  });
+});

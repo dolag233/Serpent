@@ -2,11 +2,29 @@
 
 Serpent is an open-source, cross-platform digital asset manager for game artists, film and post-production teams, and designers.
 
-The project is in its first implementation slice: a secure Electron shell and portable local-library lifecycle.
+The current foundation provides a secure Electron shell and a portable local-library lifecycle. Asset ingestion and browsing are the next active vertical slice.
 
 ## Development
 
-The application is being built with Electron and TypeScript. Build, test, and contributor commands will be added with the initial scaffold.
+Serpent requires Node.js 24 and npm.
+
+```bash
+npm ci
+npm start
+```
+
+Quality gates:
+
+```bash
+npm run lint
+npm run typecheck
+npm run test:unit
+npm run test:worker
+npm run package
+npm run verify:package
+```
+
+Electron lifecycle tests use a production bundle and platform-local staging paths. See `docs/development-process.md` and the current QA report in workspaces that include the separately managed `docs/` directory.
 
 ## License
 
