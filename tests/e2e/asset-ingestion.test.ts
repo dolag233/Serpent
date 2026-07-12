@@ -1,10 +1,12 @@
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
   rmSync,
+  symlinkSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
@@ -12,6 +14,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { _electron as electron, expect, test, type Page } from '@playwright/test';
+
+import { resolveElectronExecutablePath } from './electron-test-helpers';
 
 test.describe.configure({ timeout: 120_000 });
 
@@ -33,12 +37,12 @@ test('imports files and a directory hierarchy, then reconciles external changes'
   writeFileSync(notesSource, 'asset notes');
   writeFileSync(nestedSource, Buffer.from('pose-v1'));
 
-  const executablePath = process.env.SERPENT_E2E_ELECTRON_EXECUTABLE;
+  const executablePath = resolveElectronExecutablePath();
   const applicationDirectory = process.env.SERPENT_E2E_APP_DIRECTORY ?? process.cwd();
   const application = await electron.launch({
     args: [applicationDirectory],
     cwd: applicationDirectory,
-    ...(executablePath ? { executablePath } : {}),
+    executablePath,
     env: {
       ...process.env,
       SERPENT_E2E: '1',
@@ -161,6 +165,99 @@ test('imports files and a directory hierarchy, then reconciles external changes'
     expect(afterReopen.find((asset) => asset.displayName === 'hero.png')?.assetId).toBe(heroBefore?.assetId);
     expect(afterReopen.find((asset) => asset.displayName === 'pose.webp')?.availability).toBe('missing');
   } finally {
+    await application.close();
+    rmSync(temporaryRoot, { force: true, recursive: true });
+  }
+});
+
+test('shows a specific safe import reason and persists the complete Worker error', async () => {
+  const temporaryRoot = mkdtempSync(path.join(tmpdir(), 'serpent-error-log-e2e-'));
+  const sourceDirectory = path.join(temporaryRoot, 'source-with-link');
+  const outsideFile = path.join(temporaryRoot, 'outside.png');
+  const libraryName = '错误日志验收';
+  mkdirSync(sourceDirectory);
+  writeFileSync(outsideFile, 'outside');
+  symlinkSync(outsideFile, path.join(sourceDirectory, 'linked.png'));
+
+  const executablePath = resolveElectronExecutablePath();
+  const applicationDirectory = process.env.SERPENT_E2E_APP_DIRECTORY ?? process.cwd();
+  const application = await electron.launch({
+    args: [applicationDirectory],
+    cwd: applicationDirectory,
+    executablePath,
+    env: {
+      ...process.env,
+      SERPENT_E2E: '1',
+      SERPENT_E2E_CREATE_PARENT_PATH: temporaryRoot,
+      SERPENT_E2E_IMPORT_FOLDER: sourceDirectory,
+    },
+  });
+
+  try {
+    const window = await application.firstWindow();
+    await window.getByRole('button', { name: '创建资源库' }).click();
+    await window.getByLabel('名称').fill(libraryName);
+    await window.getByRole('button', { name: '创建', exact: true }).click();
+    await window.getByRole('button', { name: '导入文件夹', exact: true }).first().click();
+    await expect(window.getByRole('alert')).toContainText(
+      '原因：目录中包含当前切片不支持的符号链接。',
+    );
+
+    const logsPath = await application.evaluate(({ app }) => app.getPath('logs'));
+    const logPath = path.join(logsPath, 'serpent.log');
+    await expect.poll(() => readFileSync(logPath, 'utf8')).toContain('SYMBOLIC_LINK_NOT_ALLOWED');
+    expect(readFileSync(logPath, 'utf8')).toContain('worker.request');
+  } finally {
+    await application.close();
+    rmSync(temporaryRoot, { force: true, recursive: true });
+  }
+});
+
+test('maps a real filesystem permission failure and logs its complete cause chain', async () => {
+  test.skip(process.platform === 'win32', 'POSIX permissions are verified on macOS/Linux.');
+  const temporaryRoot = mkdtempSync(path.join(tmpdir(), 'serpent-permission-log-e2e-'));
+  const sourceDirectory = path.join(temporaryRoot, 'unreadable-source');
+  const libraryName = '权限错误验收';
+  mkdirSync(sourceDirectory);
+  writeFileSync(path.join(sourceDirectory, 'hidden.png'), 'hidden');
+
+  const executablePath = resolveElectronExecutablePath();
+  const applicationDirectory = process.env.SERPENT_E2E_APP_DIRECTORY ?? process.cwd();
+  const application = await electron.launch({
+    args: [applicationDirectory],
+    cwd: applicationDirectory,
+    executablePath,
+    env: {
+      ...process.env,
+      SERPENT_E2E: '1',
+      SERPENT_E2E_CREATE_PARENT_PATH: temporaryRoot,
+      SERPENT_E2E_IMPORT_FOLDER: sourceDirectory,
+    },
+  });
+
+  try {
+    const logsPath = await application.evaluate(({ app }) => app.getPath('logs'));
+    const logPath = path.join(logsPath, 'serpent.log');
+    const logOffset = existsSync(logPath) ? readFileSync(logPath).length : 0;
+    const window = await application.firstWindow();
+    await window.getByRole('button', { name: '创建资源库' }).click();
+    await window.getByLabel('名称').fill(libraryName);
+    await window.getByRole('button', { name: '创建', exact: true }).click();
+    chmodSync(sourceDirectory, 0o000);
+    await window.getByRole('button', { name: '导入文件夹', exact: true }).first().click();
+    await expect(window.getByRole('alert')).toContainText(
+      '原因：当前用户没有读取源文件或写入目标位置的权限。',
+    );
+
+    await expect.poll(() => readFileSync(logPath, 'utf8').slice(logOffset)).toContain('EACCES');
+    const diagnostic = readFileSync(logPath, 'utf8').slice(logOffset);
+    expect(diagnostic).toContain('worker.request');
+    expect(diagnostic).toContain('asset.import.prepare');
+    expect(diagnostic).toContain('LibraryServiceError');
+    expect(diagnostic).toContain('cause');
+    expect(diagnostic).toContain('stack');
+  } finally {
+    chmodSync(sourceDirectory, 0o700);
     await application.close();
     rmSync(temporaryRoot, { force: true, recursive: true });
   }

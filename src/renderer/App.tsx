@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react
 
 import type { AssetSummary, ManagedFolderSummary } from '../shared/asset-types';
 import type { SerpentLibraryApi } from '../shared/library-api';
-import type { PublicError, PublicErrorCode } from '../shared/protocol/errors';
+import type { PublicError, PublicErrorCode, PublicErrorReason } from '../shared/protocol/errors';
 import type { ImportConflictPlan, RendererLibrarySummary } from '../shared/protocol/responses';
 
 type RendererWindow = Window & { serpent?: { library?: SerpentLibraryApi } };
@@ -321,9 +321,36 @@ function extension(name: string) { const value = name.split('.').pop(); return v
 function formatBytes(bytes: number) { if (bytes < 1024) return `${bytes} B`; if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(1)} KB`; if (bytes < 1024 ** 3) return `${(bytes / 1024 ** 2).toFixed(1)} MB`; return `${(bytes / 1024 ** 3).toFixed(1)} GB`; }
 function formatDate(value: string) { const date = new Date(value); return Number.isNaN(date.valueOf()) ? '未知时间' : new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit' }).format(date); }
 function importSummary(value: { importedCount: number; skippedCount: number; replacedCount: number }) { return `导入完成：新增 ${value.importedCount} 项${value.replacedCount ? `，替换 ${value.replacedCount} 项` : ''}${value.skippedCount ? `，跳过 ${value.skippedCount} 项` : ''}。`; }
-function toMessage(error: unknown, fallback: string) { if (error instanceof LibraryOperationError) return PUBLIC_ERROR_MESSAGES_ZH[error.code] ?? fallback; return error instanceof Error && error.message ? error.message : fallback; }
+function toMessage(error: unknown, fallback: string) {
+  if (error instanceof LibraryOperationError) {
+    const message = PUBLIC_ERROR_MESSAGES_ZH[error.code] ?? fallback;
+    const reason = error.reason ? PUBLIC_ERROR_REASONS_ZH[error.reason] : undefined;
+    return reason ? `${message} 原因：${reason}` : message;
+  }
+  return error instanceof Error && error.message ? error.message : fallback;
+}
 
 const PUBLIC_ERROR_MESSAGES_ZH: Partial<Record<PublicErrorCode, string>> = {
-  CANCELLED: '操作已取消。', INTERNAL_ERROR: 'Serpent 无法完成这项操作，请重试。', INVALID_LIBRARY_NAME: '请输入可跨平台安全使用的资源库名称。', INVALID_LIBRARY_PATH: '请选择有效的本地文件夹。', INVALID_FOLDER_NAME: '请输入可跨平台安全使用的文件夹名称。', FOLDER_ALREADY_EXISTS: '当前位置已经存在同名文件夹。', FOLDER_NOT_FOUND: '找不到所选资源库文件夹。', LIBRARY_ALREADY_EXISTS: '该位置已经存在同名文件或文件夹。', LIBRARY_NOT_FOUND: '找不到所选资源库。', NOT_A_LIBRARY: '所选文件夹不是有效的 Serpent 资源库。', LIBRARY_CORRUPT: '资源库数据库或迁移记录已损坏。', LIBRARY_VERSION_TOO_NEW: '该资源库由更新版本的 Serpent 创建。', LIBRARY_NOT_WRITABLE: 'Serpent 无法写入所选位置。', LIBRARY_CLEANUP_FAILED: '创建失败，且临时文件无法自动清理。', LIBRARY_NOT_OPEN: '该资源库当前没有打开。',
+  CANCELLED: '操作已取消。', INTERNAL_ERROR: 'Serpent 无法完成这项操作，请重试。', INVALID_LIBRARY_NAME: '请输入可跨平台安全使用的资源库名称。', INVALID_LIBRARY_PATH: '请选择有效的本地文件夹。', INVALID_FOLDER_NAME: '请输入可跨平台安全使用的文件夹名称。', FOLDER_ALREADY_EXISTS: '当前位置已经存在同名文件夹。', FOLDER_NOT_FOUND: '找不到所选资源库文件夹。', INVALID_IMPORT_SOURCE: '无法读取所选导入内容。', INVALID_IMPORT_DECISION: '导入冲突处理选项无效。', IMPORT_NOT_FOUND: '待处理的导入已失效，请重新选择文件。', IMPORT_APPLY_FAILED: '无法安全完成导入。', LIBRARY_ALREADY_EXISTS: '该位置已经存在同名文件或文件夹。', LIBRARY_NOT_FOUND: '找不到所选资源库。', NOT_A_LIBRARY: '所选文件夹不是有效的 Serpent 资源库。', LIBRARY_CORRUPT: '资源库数据库或迁移记录已损坏。', LIBRARY_VERSION_TOO_NEW: '该资源库由更新版本的 Serpent 创建。', LIBRARY_NOT_WRITABLE: 'Serpent 无法写入所选位置。', LIBRARY_CLEANUP_FAILED: '创建失败，且临时文件无法自动清理。', LIBRARY_NOT_OPEN: '该资源库当前没有打开。',
 };
-class LibraryOperationError extends Error { readonly code: PublicError['code']; constructor(error: PublicError) { super(error.message); this.code = error.code; } }
+const PUBLIC_ERROR_REASONS_ZH: Record<PublicErrorReason, string> = {
+  PERMISSION_DENIED: '当前用户没有读取源文件或写入目标位置的权限。',
+  PATH_LIMIT_EXCEEDED: '目标文件系统拒绝了该路径或名称长度。',
+  DISK_FULL: '目标磁盘空间不足。',
+  READ_ONLY_FILESYSTEM: '目标位置位于只读文件系统。',
+  SOURCE_NOT_FOUND: '源文件在导入过程中消失或无法找到。',
+  SOURCE_CHANGED: '源文件在复制过程中发生了变化。',
+  SYMBOLIC_LINK_NOT_ALLOWED: '目录中包含当前切片不支持的符号链接。',
+  UNSUPPORTED_FILE_ENTRY: '目录中包含普通文件和文件夹之外的项目。',
+  NAME_NOT_SUPPORTED: '当前目标文件系统不接受其中的文件名。',
+  IO_ERROR: '操作系统报告了磁盘读写错误。',
+};
+class LibraryOperationError extends Error {
+  readonly code: PublicError['code'];
+  readonly reason?: PublicErrorReason;
+  constructor(error: PublicError) {
+    super(error.message);
+    this.code = error.code;
+    this.reason = error.reason;
+  }
+}

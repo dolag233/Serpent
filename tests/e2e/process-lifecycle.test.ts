@@ -3,6 +3,8 @@ import { once } from 'node:events';
 
 import { _electron as electron, expect, test } from '@playwright/test';
 
+import { resolveElectronExecutablePath } from './electron-test-helpers';
+
 test.describe.configure({ timeout: 60_000 });
 
 function environment(): Record<string, string> {
@@ -12,8 +14,7 @@ function environment(): Record<string, string> {
 }
 
 test('a second instance restores the existing window', async () => {
-  const executablePath = process.env.SERPENT_E2E_ELECTRON_EXECUTABLE;
-  if (!executablePath) throw new Error('Set SERPENT_E2E_ELECTRON_EXECUTABLE.');
+  const executablePath = resolveElectronExecutablePath();
   const applicationDirectory = process.env.SERPENT_E2E_APP_DIRECTORY ?? process.cwd();
   const application = await electron.launch({
     executablePath,
@@ -60,8 +61,7 @@ test('a second instance restores the existing window', async () => {
 
 test('closing the last macOS window keeps the application process alive', async () => {
   test.skip(process.platform !== 'darwin', 'This lifecycle rule is macOS-specific.');
-  const executablePath = process.env.SERPENT_E2E_ELECTRON_EXECUTABLE;
-  if (!executablePath) throw new Error('Set SERPENT_E2E_ELECTRON_EXECUTABLE.');
+  const executablePath = resolveElectronExecutablePath();
   const applicationDirectory = process.env.SERPENT_E2E_APP_DIRECTORY ?? process.cwd();
   const application = await electron.launch({
     executablePath,

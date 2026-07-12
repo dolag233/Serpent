@@ -1,11 +1,15 @@
 import { randomUUID, createHash } from 'node:crypto';
 import {
   accessSync,
-  copyFileSync,
+  closeSync,
   constants,
   existsSync,
+  fstatSync,
+  fsyncSync,
   lstatSync,
   mkdirSync,
+  openSync,
+  readSync,
   readdirSync,
   realpathSync,
   renameSync,
@@ -13,6 +17,9 @@ import {
   rmSync,
   statSync,
   watch,
+  writeSync,
+  type BigIntStats,
+  type Stats,
 } from 'node:fs';
 import path from 'node:path';
 
@@ -20,6 +27,7 @@ import BetterSqlite3 from 'better-sqlite3';
 
 import type { AssetSummary, ManagedFolderSummary } from '../shared/asset-types';
 import type { PublicErrorCode } from '../shared/protocol/errors';
+import { publicReasonFromError, type PublicErrorReason } from '../shared/protocol/errors';
 import type {
   NameConflictDecision,
   SuspectedDuplicateDecision,
@@ -35,6 +43,8 @@ import {
   normalizeAbsolutePath,
   normalizeFolderName,
   normalizeRelativeAssetPath,
+  portablePathIdentity,
+  portablePathSegmentIdentity,
   targetLibraryPath,
 } from './library-rules';
 
@@ -131,9 +141,48 @@ const ASSET_SCHEMA_SQL = `
 `;
 const ASSET_SCHEMA_CHECKSUM = createHash('sha256').update(ASSET_SCHEMA_SQL).digest('hex');
 
+const PORTABLE_PATH_SCHEMA_BEFORE_BACKFILL_SQL = `
+  ALTER TABLE managed_folders ADD COLUMN path_identity TEXT;
+  ALTER TABLE assets ADD COLUMN path_identity TEXT;
+`;
+const PORTABLE_PATH_SCHEMA_AFTER_BACKFILL_SQL = `
+  CREATE UNIQUE INDEX managed_folders_path_identity_unique
+    ON managed_folders(path_identity);
+  CREATE UNIQUE INDEX assets_path_identity_unique
+    ON assets(path_identity);
+  CREATE TRIGGER managed_folders_path_identity_required_insert
+    BEFORE INSERT ON managed_folders
+    WHEN NEW.path_identity IS NULL
+    BEGIN SELECT RAISE(ABORT, 'managed folder path identity is required'); END;
+  CREATE TRIGGER managed_folders_path_identity_required_update
+    BEFORE UPDATE OF path_identity ON managed_folders
+    WHEN NEW.path_identity IS NULL
+    BEGIN SELECT RAISE(ABORT, 'managed folder path identity is required'); END;
+  CREATE TRIGGER assets_path_identity_required_insert
+    BEFORE INSERT ON assets
+    WHEN NEW.path_identity IS NULL
+    BEGIN SELECT RAISE(ABORT, 'asset path identity is required'); END;
+  CREATE TRIGGER assets_path_identity_required_update
+    BEFORE UPDATE OF path_identity ON assets
+    WHEN NEW.path_identity IS NULL
+    BEGIN SELECT RAISE(ABORT, 'asset path identity is required'); END;
+`;
+const PORTABLE_PATH_BACKFILL_AUDIT_ID =
+  'portable-path-identity:nfc-per-segment:ecmascript-upper-lower-casefold:v1';
+const PORTABLE_PATH_SCHEMA_CHECKSUM = createHash('sha256')
+  .update(PORTABLE_PATH_SCHEMA_BEFORE_BACKFILL_SQL)
+  .update(PORTABLE_PATH_BACKFILL_AUDIT_ID)
+  .update(PORTABLE_PATH_SCHEMA_AFTER_BACKFILL_SQL)
+  .digest('hex');
+
 const MIGRATIONS = [
   { version: 1, sql: INITIAL_SCHEMA_SQL, checksum: INITIAL_SCHEMA_CHECKSUM },
   { version: 2, sql: ASSET_SCHEMA_SQL, checksum: ASSET_SCHEMA_CHECKSUM },
+  {
+    version: 3,
+    sql: PORTABLE_PATH_SCHEMA_BEFORE_BACKFILL_SQL,
+    checksum: PORTABLE_PATH_SCHEMA_CHECKSUM,
+  },
 ] as const;
 const SUPPORTED_SCHEMA_VERSION = MIGRATIONS.at(-1)!.version;
 
@@ -157,6 +206,7 @@ interface ManagedFolderRow {
   name: string;
   parent_folder_id: string | null;
   relative_path: string;
+  path_identity: string;
 }
 
 interface AssetSummaryRow {
@@ -172,7 +222,16 @@ interface AssetSummaryRow {
 interface ImportSourceEntry {
   byteSize: number;
   destinationRelativePath: string;
+  sourceSnapshot: SourceSnapshot;
   sourcePath: string;
+}
+
+interface SourceSnapshot {
+  ctimeNs: bigint;
+  dev: bigint;
+  ino: bigint;
+  mtimeNs: bigint;
+  size: bigint;
 }
 
 interface PendingImport {
@@ -186,6 +245,16 @@ interface PendingImport {
 interface ExistingAssetRow {
   asset_id: string;
   current_revision_id: string;
+}
+
+interface ExistingDestination {
+  actualRelativePath: string;
+  size: number;
+}
+
+interface PortablePathRow {
+  id: string;
+  relative_path: string;
 }
 
 interface ImportAction {
@@ -220,6 +289,8 @@ export type ImportFailurePoint =
   | 'after-first-place'
   | 'after-place'
   | 'before-db-commit'
+  | 'committed-cleanup'
+  | 'committed-result-list'
   | 'crash-after-backup'
   | 'crash-after-place'
   | 'crash-during-prepare-stage'
@@ -227,13 +298,24 @@ export type ImportFailurePoint =
   | 'rollback-restore';
 
 export interface LibraryServiceOptions {
+  afterSourceSnapshotCopy?: (sourcePath: string) => void;
+  assetLstat?: (assetPath: string) => Stats;
+  beforeSourceSnapshotOpen?: (sourcePath: string) => void;
   debounceMs?: number;
+  destinationLstat?: (destinationPath: string) => Stats;
   failAt?: ImportFailurePoint | ImportFailurePoint[];
   importClock?: ImportExpiryClock;
   importTtlMs?: number;
   onAssetsChanged?: (event: AssetsChangedEvent) => void;
+  onDiagnostic?: (diagnostic: LibraryServiceDiagnostic) => void;
   observerFactory?: AssetObserverFactory;
   scheduler?: DebounceScheduler;
+}
+
+export interface LibraryServiceDiagnostic {
+  context?: Record<string, unknown>;
+  error: unknown;
+  scope: string;
 }
 
 export interface AssetsChangedEvent {
@@ -262,6 +344,7 @@ export interface AssetObserver {
 export type AssetObserverFactory = (
   assetsPath: string,
   onEvent: () => void,
+  onError: (error: unknown) => void,
 ) => AssetObserver;
 
 export interface DebounceScheduler {
@@ -289,21 +372,25 @@ const DEFAULT_IMPORT_EXPIRY_CLOCK: ImportExpiryClock = {
   },
 };
 
-const DEFAULT_ASSET_OBSERVER_FACTORY: AssetObserverFactory = (assetsPath, onEvent) => {
+const DEFAULT_ASSET_OBSERVER_FACTORY: AssetObserverFactory = (assetsPath, onEvent, onError) => {
   const observer = watch(assetsPath, { recursive: true }, () => onEvent());
-  observer.on('error', () => {
-    // Native watcher errors are advisory; explicit refresh remains available.
-  });
+  observer.on('error', onError);
   return observer;
 };
 
 class SimulatedCrashError extends Error {}
 
 export class LibraryServiceError extends Error {
-  constructor(readonly code: PublicErrorCode, options?: { cause?: unknown }) {
+  constructor(
+    readonly code: PublicErrorCode,
+    options?: { cause?: unknown; reason?: PublicErrorReason },
+  ) {
     super(code, options);
     this.name = 'LibraryServiceError';
+    this.reason = options?.reason ?? publicReasonFromError(options?.cause);
   }
+
+  readonly reason?: PublicErrorReason;
 }
 
 function serviceError(error: unknown, fallback: PublicErrorCode): LibraryServiceError {
@@ -317,8 +404,32 @@ function isMissingPathError(error: unknown): boolean {
     typeof error === 'object' &&
     error !== null &&
     'code' in error &&
-    error.code === 'ENOENT'
+    (error.code === 'ENOENT' || error.code === 'ENOTDIR')
   );
+}
+
+function hasErrorCode(error: unknown, code: string): boolean {
+  let current = error;
+  const visited = new Set<unknown>();
+  while (typeof current === 'object' && current !== null && !visited.has(current)) {
+    visited.add(current);
+    if ('code' in current && current.code === code) return true;
+    current = 'cause' in current ? current.cause : undefined;
+  }
+  return false;
+}
+
+function copyNameCandidates(fileName: string, index: number): string[] {
+  const extension = path.posix.extname(fileName);
+  const baseName = extension.length === 0 ? fileName : fileName.slice(0, -extension.length);
+  const graphemes = [...new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(baseName)]
+    .map((part) => part.segment);
+  const suffix = ` (${index})`;
+  const candidates = [copyNameForIndex(fileName, index)];
+  for (let length = graphemes.length - 1; length >= 0; length -= 1) {
+    candidates.push(`${graphemes.slice(0, length).join('')}${suffix}${extension}`);
+  }
+  return [...new Set(candidates)];
 }
 
 function directoryExists(directoryPath: string): boolean {
@@ -345,6 +456,37 @@ function realFileExists(filePath: string): boolean {
   } catch {
     return false;
   }
+}
+
+function sourceSnapshot(stat: BigIntStats): SourceSnapshot {
+  return {
+    ctimeNs: stat.ctimeNs,
+    dev: stat.dev,
+    ino: stat.ino,
+    mtimeNs: stat.mtimeNs,
+    size: stat.size,
+  };
+}
+
+function sameSourceSnapshot(left: SourceSnapshot, right: SourceSnapshot): boolean {
+  return (
+    left.dev === right.dev &&
+    left.ino === right.ino &&
+    left.size === right.size &&
+    left.mtimeNs === right.mtimeNs &&
+    left.ctimeNs === right.ctimeNs
+  );
+}
+
+function sourceChanged(cause?: unknown): LibraryServiceError {
+  return new LibraryServiceError('INVALID_IMPORT_SOURCE', {
+    cause,
+    reason: 'SOURCE_CHANGED',
+  });
+}
+
+function unsupportedSourceEntry(reason: PublicErrorReason, cause?: unknown): LibraryServiceError {
+  return new LibraryServiceError('INVALID_IMPORT_SOURCE', { cause, reason });
 }
 
 function databasePath(libraryPath: string): string {
@@ -405,6 +547,43 @@ function verifyMigrationHistory(connection: DatabaseConnection, version: number)
   }
 }
 
+function backfillPortablePathIdentities(connection: DatabaseConnection): void {
+  const folderRows = connection
+    .prepare('SELECT folder_id AS id, relative_path FROM managed_folders ORDER BY folder_id')
+    .all() as PortablePathRow[];
+  const assetRows = connection
+    .prepare('SELECT asset_id AS id, relative_file_path AS relative_path FROM assets ORDER BY asset_id')
+    .all() as PortablePathRow[];
+  const allIdentities = new Map<string, { kind: 'asset' | 'folder'; path: string }>();
+
+  const backfill = (
+    rows: PortablePathRow[],
+    kind: 'asset' | 'folder',
+    statement: Statement,
+  ): void => {
+    for (const row of rows) {
+      const identity = portablePathIdentity(row.relative_path);
+      const existing = allIdentities.get(identity);
+      if (existing && (existing.kind !== kind || existing.path !== row.relative_path)) {
+        throw new Error('Existing paths are not portable-identity unique.');
+      }
+      allIdentities.set(identity, { kind, path: row.relative_path });
+      statement.run(identity, row.id);
+    }
+  };
+
+  backfill(
+    folderRows,
+    'folder',
+    connection.prepare('UPDATE managed_folders SET path_identity = ? WHERE folder_id = ?'),
+  );
+  backfill(
+    assetRows,
+    'asset',
+    connection.prepare('UPDATE assets SET path_identity = ? WHERE asset_id = ?'),
+  );
+}
+
 function migrateDatabase(connection: DatabaseConnection, allowFresh: boolean): void {
   const currentVersion = schemaVersion(connection);
   if (currentVersion > SUPPORTED_SCHEMA_VERSION) {
@@ -419,6 +598,10 @@ function migrateDatabase(connection: DatabaseConnection, allowFresh: boolean): v
     try {
       connection.transaction(() => {
         connection.exec(migration.sql);
+        if (migration.version === 3) {
+          backfillPortablePathIdentities(connection);
+          connection.exec(PORTABLE_PATH_SCHEMA_AFTER_BACKFILL_SQL);
+        }
         connection
           .prepare(
             'INSERT INTO schema_migrations (version, checksum, applied_at) VALUES (?, ?, ?)',
@@ -491,6 +674,14 @@ export class LibraryService {
 
   constructor(private readonly options: LibraryServiceOptions = {}) {}
 
+  private diagnose(scope: string, error: unknown, context?: Record<string, unknown>): void {
+    try {
+      this.options.onDiagnostic?.({ scope, error, context });
+    } catch {
+      // Diagnostics are strictly best effort and must never replace the primary failure.
+    }
+  }
+
   private failAt(point: ImportFailurePoint): void {
     const configured = this.options.failAt;
     if (configured !== point && (!Array.isArray(configured) || !configured.includes(point))) return;
@@ -502,11 +693,18 @@ export class LibraryService {
     const libraryId = openLibrary.summary.libraryId;
     const observerFactory = this.options.observerFactory ?? DEFAULT_ASSET_OBSERVER_FACTORY;
     try {
-      const observer = observerFactory(this.assetsPath(openLibrary), () => {
-        this.scheduleAssetRefresh(libraryId);
-      });
+      const assetsPath = this.assetsPath(openLibrary);
+      const observer = observerFactory(
+        assetsPath,
+        () => this.scheduleAssetRefresh(libraryId),
+        (error) => this.diagnose('asset-watcher.error', error, { libraryId, assetsPath }),
+      );
       this.watchByLibraryId.set(libraryId, { observer });
-    } catch {
+    } catch (error) {
+      this.diagnose('asset-watcher.start', error, {
+        libraryId,
+        assetsPath: this.assetsPath(openLibrary),
+      });
       // Watching is opportunistic; library open and explicit refresh must still work.
     }
   }
@@ -530,12 +728,14 @@ export class LibraryService {
               missingCount: refresh.missingCount,
             });
           }
-        } catch {
+        } catch (error) {
+          this.diagnose('asset-watcher.refresh', error, { libraryId });
           // A watcher-triggered refresh is best effort and must never terminate the Worker.
         }
       }, this.options.debounceMs ?? 250);
-    } catch {
+    } catch (error) {
       libraryWatch.timer = undefined;
+      this.diagnose('asset-watcher.schedule', error, { libraryId });
       // Scheduler failures degrade to explicit refresh without escaping an observer callback.
     }
   }
@@ -547,13 +747,15 @@ export class LibraryService {
     if (libraryWatch.timer !== undefined) {
       try {
         (this.options.scheduler ?? DEFAULT_DEBOUNCE_SCHEDULER).cancel(libraryWatch.timer);
-      } catch {
+      } catch (error) {
+        this.diagnose('asset-watcher.cancel', error, { libraryId });
         // Continue closing the observer and database.
       }
     }
     try {
       libraryWatch.observer.close();
-    } catch {
+    } catch (error) {
+      this.diagnose('asset-watcher.close', error, { libraryId });
       // Closing the database is still required even if the native observer already failed.
     }
   }
@@ -754,6 +956,20 @@ export class LibraryService {
       }
       this.assertSafeOperationPath(operationPath);
       const manifest = this.parseOperationManifest(row.manifest_json);
+      if (
+        row.status === 'preparing' &&
+        (manifest.phase === 'staging' || manifest.phase === 'prepared')
+      ) {
+        // Preparing never owns a destination: only staged copies are safe to remove.
+        // A destination may have been created by another process after planning.
+        this.removeOperation(operationPath);
+        openLibrary.connection
+          .prepare(
+            "UPDATE file_operations SET status = 'rolled_back', error_code = 'PROCESS_INTERRUPTED', updated_at = ? WHERE operation_id = ?",
+          )
+          .run(new Date().toISOString(), row.operation_id);
+        continue;
+      }
       for (const file of [...manifest.files].reverse()) {
         const destinationPath = this.folderPath(openLibrary, file.destinationRelativePath);
         const backupPath = path.join(operationPath, 'backup', file.backupName);
@@ -836,10 +1052,71 @@ export class LibraryService {
         }
       } catch (error) {
         if (error instanceof LibraryServiceError) throw error;
-        break;
+        if (isMissingPathError(error)) break;
+        throw new LibraryServiceError('INVALID_LIBRARY_PATH', { cause: error });
       }
     }
     return targetPath;
+  }
+
+  private portableDiskDestination(
+    openLibrary: OpenLibrary,
+    relativePath: string,
+  ): ExistingDestination | undefined {
+    const normalized = normalizeRelativeAssetPath(relativePath);
+    const segments = normalized.split('/');
+    let cursor = this.assetsPath(openLibrary);
+    const actualSegments: string[] = [];
+
+    for (const [index, segment] of segments.entries()) {
+      const segmentIdentity = portablePathSegmentIdentity(segment);
+      let children;
+      try {
+        children = readdirSync(cursor, { withFileTypes: true });
+      } catch (error) {
+        if (isMissingPathError(error)) return undefined;
+        throw error;
+      }
+      const matches = children.filter(
+        (entry) => portablePathSegmentIdentity(entry.name) === segmentIdentity,
+      );
+      if (matches.length > 1) {
+        throw new LibraryServiceError('IMPORT_APPLY_FAILED', {
+          reason: 'NAME_NOT_SUPPORTED',
+        });
+      }
+      const match = matches[0];
+      if (!match) {
+        // Let the target filesystem, rather than a guessed constant, decide
+        // whether this absent component is a valid candidate name.
+        const candidatePath = path.join(cursor, segment);
+        try {
+          (this.options.destinationLstat ?? lstatSync)(candidatePath);
+        } catch (error) {
+          if (isMissingPathError(error)) return undefined;
+          throw error;
+        }
+        throw new LibraryServiceError('IMPORT_APPLY_FAILED');
+      }
+      if (match.isSymbolicLink()) {
+        throw new LibraryServiceError('INVALID_LIBRARY_PATH');
+      }
+      actualSegments.push(match.name);
+      if (index < segments.length - 1) {
+        if (!match.isDirectory()) {
+          throw new LibraryServiceError('IMPORT_APPLY_FAILED', {
+            reason: 'NAME_NOT_SUPPORTED',
+          });
+        }
+        cursor = path.join(cursor, match.name);
+        continue;
+      }
+      return {
+        actualRelativePath: actualSegments.join('/'),
+        size: match.isFile() ? lstatSync(path.join(cursor, match.name)).size : -1,
+      };
+    }
+    return undefined;
   }
 
   private assetsPath(openLibrary: OpenLibrary): string {
@@ -850,11 +1127,82 @@ export class LibraryService {
     if (!folderId) return undefined;
     const folder = openLibrary.connection
       .prepare(
-        'SELECT folder_id, parent_folder_id, name, relative_path FROM managed_folders WHERE folder_id = ?',
+        'SELECT folder_id, parent_folder_id, name, relative_path, path_identity FROM managed_folders WHERE folder_id = ?',
       )
       .get(folderId) as ManagedFolderRow | undefined;
     if (!folder) throw new LibraryServiceError('FOLDER_NOT_FOUND');
     return folder;
+  }
+
+  private copySourceSnapshot(entry: ImportSourceEntry, stagedPath: string): number {
+    this.options.beforeSourceSnapshotOpen?.(entry.sourcePath);
+    const sourceFlags =
+      constants.O_RDONLY | (process.platform === 'win32' ? 0 : constants.O_NOFOLLOW);
+    let sourceFd: number | undefined;
+    let stageFd: number | undefined;
+    try {
+      try {
+        sourceFd = openSync(entry.sourcePath, sourceFlags);
+      } catch (error) {
+        if (hasErrorCode(error, 'ELOOP')) {
+          throw unsupportedSourceEntry('SYMBOLIC_LINK_NOT_ALLOWED', error);
+        }
+        throw error;
+      }
+
+      const openedStat = fstatSync(sourceFd, { bigint: true });
+      let pathStat: BigIntStats;
+      try {
+        pathStat = lstatSync(entry.sourcePath, { bigint: true });
+      } catch (error) {
+        throw sourceChanged(error);
+      }
+      if (pathStat.isSymbolicLink()) {
+        throw unsupportedSourceEntry('SYMBOLIC_LINK_NOT_ALLOWED');
+      }
+      if (!pathStat.isFile() || !openedStat.isFile()) {
+        throw unsupportedSourceEntry('UNSUPPORTED_FILE_ENTRY');
+      }
+      const openedSnapshot = sourceSnapshot(openedStat);
+      if (
+        !sameSourceSnapshot(entry.sourceSnapshot, openedSnapshot) ||
+        !sameSourceSnapshot(sourceSnapshot(pathStat), openedSnapshot)
+      ) {
+        throw sourceChanged();
+      }
+
+      stageFd = openSync(
+        stagedPath,
+        constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL,
+        Number(openedStat.mode & 0o777n),
+      );
+      const buffer = Buffer.allocUnsafe(1024 * 1024);
+      for (;;) {
+        const bytesRead = readSync(sourceFd, buffer, 0, buffer.length, null);
+        if (bytesRead === 0) break;
+        let written = 0;
+        while (written < bytesRead) {
+          written += writeSync(stageFd, buffer, written, bytesRead - written);
+        }
+      }
+      fsyncSync(stageFd);
+      this.options.afterSourceSnapshotCopy?.(entry.sourcePath);
+
+      const finalSourceStat = fstatSync(sourceFd, { bigint: true });
+      if (!sameSourceSnapshot(openedSnapshot, sourceSnapshot(finalSourceStat))) {
+        throw sourceChanged();
+      }
+      const stagedStat = fstatSync(stageFd, { bigint: true });
+      if (stagedStat.size !== openedSnapshot.size) throw sourceChanged();
+      const byteSize = Number(stagedStat.size);
+      if (!Number.isSafeInteger(byteSize)) {
+        throw unsupportedSourceEntry('UNSUPPORTED_FILE_ENTRY');
+      }
+      return byteSize;
+    } finally {
+      if (stageFd !== undefined) closeSync(stageFd);
+      if (sourceFd !== undefined) closeSync(sourceFd);
+    }
   }
 
   private enumerateImportSources(input: {
@@ -863,48 +1211,89 @@ export class LibraryService {
     targetPrefix: string;
   }): { directories: string[]; entries: ImportSourceEntry[] } {
     const directories = new Set<string>();
+    const pathsByIdentity = new Map<string, { kind: 'directory' | 'file'; path: string }>();
     const entries: ImportSourceEntry[] = [];
+    const assertSupportedSourceSegment = (segment: string): void => {
+      if (path.sep === '/' && segment.includes('\\')) {
+        throw new LibraryServiceError('INVALID_IMPORT_SOURCE', {
+          reason: 'NAME_NOT_SUPPORTED',
+        });
+      }
+    };
+    const registerPortablePath = (
+      relativePath: string,
+      kind: 'directory' | 'file',
+    ): void => {
+      const identity = portablePathIdentity(relativePath);
+      const existing = pathsByIdentity.get(identity);
+      if (
+        existing &&
+        (existing.kind !== kind || (kind === 'directory' && existing.path !== relativePath))
+      ) {
+        throw new LibraryServiceError('INVALID_IMPORT_SOURCE', {
+          reason: 'NAME_NOT_SUPPORTED',
+        });
+      }
+      pathsByIdentity.set(identity, { kind, path: relativePath });
+    };
     const addFile = (sourcePath: string, relativePath: string): void => {
-      let sourceStat;
+      let sourceStat: BigIntStats;
       try {
-        sourceStat = lstatSync(sourcePath);
+        sourceStat = lstatSync(sourcePath, { bigint: true });
       } catch (error) {
         throw new LibraryServiceError('INVALID_IMPORT_SOURCE', { cause: error });
       }
       if (sourceStat.isSymbolicLink() || !sourceStat.isFile()) {
-        throw new LibraryServiceError('INVALID_IMPORT_SOURCE');
+        throw new LibraryServiceError('INVALID_IMPORT_SOURCE', {
+          reason: sourceStat.isSymbolicLink()
+            ? 'SYMBOLIC_LINK_NOT_ALLOWED'
+            : 'UNSUPPORTED_FILE_ENTRY',
+        });
       }
       let normalized: string;
       try {
         normalized = normalizeRelativeAssetPath(relativePath);
-        for (const component of normalized.split('/')) normalizeFolderName(component);
       } catch (error) {
         throw new LibraryServiceError('INVALID_IMPORT_SOURCE', { cause: error });
       }
+      assertSupportedSourceSegment(path.basename(sourcePath));
+      registerPortablePath(normalized, 'file');
+      const byteSize = Number(sourceStat.size);
+      if (!Number.isSafeInteger(byteSize)) {
+        throw new LibraryServiceError('INVALID_IMPORT_SOURCE', {
+          reason: 'UNSUPPORTED_FILE_ENTRY',
+        });
+      }
       entries.push({
-        byteSize: sourceStat.size,
+        byteSize,
         destinationRelativePath: normalized,
+        sourceSnapshot: sourceSnapshot(sourceStat),
         sourcePath,
       });
     };
 
     const visitDirectory = (directoryPath: string, relativeDirectory: string): void => {
-      let directoryStat;
+      let directoryStat: BigIntStats;
       try {
-        directoryStat = lstatSync(directoryPath);
+        directoryStat = lstatSync(directoryPath, { bigint: true });
       } catch (error) {
         throw new LibraryServiceError('INVALID_IMPORT_SOURCE', { cause: error });
       }
       if (directoryStat.isSymbolicLink() || !directoryStat.isDirectory()) {
-        throw new LibraryServiceError('INVALID_IMPORT_SOURCE');
+        throw new LibraryServiceError('INVALID_IMPORT_SOURCE', {
+          reason: directoryStat.isSymbolicLink()
+            ? 'SYMBOLIC_LINK_NOT_ALLOWED'
+            : 'UNSUPPORTED_FILE_ENTRY',
+        });
       }
       let normalizedDirectory: string;
       try {
         normalizedDirectory = normalizeRelativeAssetPath(relativeDirectory);
-        for (const component of normalizedDirectory.split('/')) normalizeFolderName(component);
       } catch (error) {
         throw new LibraryServiceError('INVALID_IMPORT_SOURCE', { cause: error });
       }
+      assertSupportedSourceSegment(path.basename(directoryPath));
+      registerPortablePath(normalizedDirectory, 'directory');
       directories.add(normalizedDirectory);
       let children;
       try {
@@ -914,13 +1303,41 @@ export class LibraryService {
       } catch (error) {
         throw new LibraryServiceError('INVALID_IMPORT_SOURCE', { cause: error });
       }
+      // Node does not expose openat(2)/directory-handle-relative traversal, so a
+      // hostile writer can still replace an ancestor between individual calls.
+      // Revalidate every directory at access time and every child again before
+      // opening it; no imported bytes are accepted from a pathname-only read.
+      let directoryAfterRead: BigIntStats;
+      try {
+        directoryAfterRead = lstatSync(directoryPath, { bigint: true });
+      } catch (error) {
+        throw sourceChanged(error);
+      }
+      if (directoryAfterRead.isSymbolicLink()) {
+        throw unsupportedSourceEntry('SYMBOLIC_LINK_NOT_ALLOWED');
+      }
+      if (
+        !directoryAfterRead.isDirectory() ||
+        !sameSourceSnapshot(sourceSnapshot(directoryStat), sourceSnapshot(directoryAfterRead))
+      ) {
+        throw sourceChanged();
+      }
       for (const child of children) {
+        assertSupportedSourceSegment(child.name);
         const childSourcePath = path.join(directoryPath, child.name);
         const childRelativePath = path.posix.join(relativeDirectory, child.name);
-        if (child.isSymbolicLink()) throw new LibraryServiceError('INVALID_IMPORT_SOURCE');
+        if (child.isSymbolicLink()) {
+          throw new LibraryServiceError('INVALID_IMPORT_SOURCE', {
+            reason: 'SYMBOLIC_LINK_NOT_ALLOWED',
+          });
+        }
         if (child.isDirectory()) visitDirectory(childSourcePath, childRelativePath);
         else if (child.isFile()) addFile(childSourcePath, childRelativePath);
-        else throw new LibraryServiceError('INVALID_IMPORT_SOURCE');
+        else {
+          throw new LibraryServiceError('INVALID_IMPORT_SOURCE', {
+            reason: 'UNSUPPORTED_FILE_ENTRY',
+          });
+        }
       }
     };
 
@@ -971,15 +1388,25 @@ export class LibraryService {
     if (input.parentFolderId) {
       parent = openLibrary.connection
         .prepare(
-          'SELECT folder_id, parent_folder_id, name, relative_path FROM managed_folders WHERE folder_id = ?',
+          'SELECT folder_id, parent_folder_id, name, relative_path, path_identity FROM managed_folders WHERE folder_id = ?',
         )
         .get(input.parentFolderId) as ManagedFolderRow | undefined;
       if (!parent) throw new LibraryServiceError('FOLDER_NOT_FOUND');
     }
 
     const relativePath = parent ? path.posix.join(parent.relative_path, name) : name;
+    const pathIdentity = portablePathIdentity(relativePath);
     const targetPath = this.folderPath(openLibrary, relativePath);
-    if (existsSync(targetPath)) throw new LibraryServiceError('FOLDER_ALREADY_EXISTS');
+    const databaseConflict =
+      openLibrary.connection
+        .prepare('SELECT folder_id FROM managed_folders WHERE path_identity = ?')
+        .get(pathIdentity) ??
+      openLibrary.connection
+        .prepare('SELECT asset_id FROM assets WHERE path_identity = ?')
+        .get(pathIdentity);
+    if (databaseConflict || this.portableDiskDestination(openLibrary, relativePath)) {
+      throw new LibraryServiceError('FOLDER_ALREADY_EXISTS');
+    }
 
     const folder: ManagedFolderSummary = {
       folderId: randomUUID(),
@@ -992,14 +1419,15 @@ export class LibraryService {
       openLibrary.connection
         .prepare(
           `INSERT INTO managed_folders
-             (folder_id, parent_folder_id, name, relative_path, created_at)
-           VALUES (?, ?, ?, ?, ?)`,
+             (folder_id, parent_folder_id, name, relative_path, path_identity, created_at)
+           VALUES (?, ?, ?, ?, ?, ?)`,
         )
         .run(
           folder.folderId,
           folder.parentFolderId,
           folder.name,
           folder.relativePath,
+          pathIdentity,
           new Date().toISOString(),
         );
       return folder;
@@ -1018,7 +1446,7 @@ export class LibraryService {
     const openLibrary = this.requireOpenLibrary(libraryId);
     const rows = openLibrary.connection
       .prepare(
-        'SELECT folder_id, parent_folder_id, name, relative_path FROM managed_folders ORDER BY relative_path',
+        'SELECT folder_id, parent_folder_id, name, relative_path, path_identity FROM managed_folders ORDER BY relative_path',
       )
       .all() as ManagedFolderRow[];
     return rows.map((row) => ({
@@ -1088,20 +1516,26 @@ export class LibraryService {
       importId,
     );
     const stagePath = path.join(operationPath, 'stage');
-    const preparingManifest: OperationManifest = {
-      version: 1,
-      phase: 'staging',
-      files: entries.map((entry, index) => ({
-        backupName: String(index),
-        destinationRelativePath: entry.destinationRelativePath,
-        hadDestination: existsSync(this.folderPath(openLibrary, entry.destinationRelativePath)),
-        stageName: String(index),
-      })),
-      directories: directories.map((relativePath) => ({
-        existed: existsSync(this.folderPath(openLibrary, relativePath)),
-        relativePath,
-      })),
-    };
+    let preparingManifest: OperationManifest;
+    try {
+      preparingManifest = {
+        version: 1,
+        phase: 'staging',
+        files: entries.map((entry, index) => ({
+          backupName: String(index),
+          destinationRelativePath: entry.destinationRelativePath,
+          hadDestination:
+            this.portableDiskDestination(openLibrary, entry.destinationRelativePath) !== undefined,
+          stageName: String(index),
+        })),
+        directories: directories.map((relativePath) => ({
+          existed: this.portableDiskDestination(openLibrary, relativePath) !== undefined,
+          relativePath,
+        })),
+      };
+    } catch (error) {
+      throw serviceError(error, 'INVALID_IMPORT_SOURCE');
+    }
     try {
       const now = new Date().toISOString();
       openLibrary.connection
@@ -1120,12 +1554,8 @@ export class LibraryService {
       stagedEntries = [];
       entries.forEach((entry, index) => {
         const stagedPath = path.join(stagePath, String(index));
-        copyFileSync(entry.sourcePath, stagedPath);
-        const stagedStat = statSync(stagedPath);
-        if (stagedStat.size !== entry.byteSize) {
-          throw new Error('Import source changed while staging.');
-        }
-        stagedEntries.push({ ...entry, byteSize: stagedStat.size, sourcePath: stagedPath });
+        const byteSize = this.copySourceSnapshot(entry, stagedPath);
+        stagedEntries.push({ ...entry, byteSize, sourcePath: stagedPath });
         if (index === 0) this.failAt('crash-during-prepare-stage');
       });
     } catch (error) {
@@ -1145,17 +1575,16 @@ export class LibraryService {
 
     try {
       for (const entry of stagedEntries) {
-      const destinationPath = this.folderPath(openLibrary, entry.destinationRelativePath);
-
-      let existingSize = seenDestinations.get(entry.destinationRelativePath);
-      if (existingSize === undefined && existsSync(destinationPath)) {
-        let destinationStat;
-        try {
-          destinationStat = lstatSync(destinationPath);
-        } catch (error) {
-          throw new LibraryServiceError('INVALID_IMPORT_SOURCE', { cause: error });
+        const identity = portablePathIdentity(entry.destinationRelativePath);
+        let existingSize = seenDestinations.get(identity);
+        if (existingSize === undefined) {
+          const destination = this.portableDiskDestination(
+            openLibrary,
+            entry.destinationRelativePath,
+          );
+          existingSize = destination?.size;
         }
-        if (!destinationStat.isFile() || destinationStat.isSymbolicLink()) {
+        if (existingSize === -1) {
           nameConflictCount += 1;
           if (examples.length < 8) {
             examples.push({
@@ -1165,22 +1594,20 @@ export class LibraryService {
           }
           continue;
         }
-        existingSize = destinationStat.size;
-      }
 
-      if (existingSize !== undefined) {
-        const kind =
-          existingSize === entry.byteSize ? 'suspected-duplicate' : 'name-conflict';
-        if (kind === 'suspected-duplicate') suspectedDuplicateCount += 1;
-        else nameConflictCount += 1;
-        if (examples.length < 8) {
-          examples.push({
-            displayName: path.posix.basename(entry.destinationRelativePath),
-            kind,
-          });
-        }
+        if (existingSize !== undefined) {
+          const kind =
+            existingSize === entry.byteSize ? 'suspected-duplicate' : 'name-conflict';
+          if (kind === 'suspected-duplicate') suspectedDuplicateCount += 1;
+          else nameConflictCount += 1;
+          if (examples.length < 8) {
+            examples.push({
+              displayName: path.posix.basename(entry.destinationRelativePath),
+              kind,
+            });
+          }
         } else {
-          seenDestinations.set(entry.destinationRelativePath, entry.byteSize);
+          seenDestinations.set(identity, entry.byteSize);
         }
       }
     } catch (error) {
@@ -1258,40 +1685,92 @@ export class LibraryService {
     }
 
     const openLibrary = this.requireOpenLibrary(pending.libraryId);
-    const occupied = new Map<string, number>();
+    const directoryByIdentity = new Map<string, string>();
+    let resolvedDirectories: string[];
+    try {
+      resolvedDirectories = [...pending.directories]
+        .sort((left, right) => left.split('/').length - right.split('/').length)
+        .map((relativeDirectory) => {
+        const parent = path.posix.dirname(relativeDirectory);
+        const resolvedParent =
+          parent === '.' ? '.' : (directoryByIdentity.get(portablePathIdentity(parent)) ?? parent);
+        const candidate =
+          resolvedParent === '.'
+            ? path.posix.basename(relativeDirectory)
+            : path.posix.join(resolvedParent, path.posix.basename(relativeDirectory));
+        const existing = this.portableDiskDestination(openLibrary, candidate);
+        if (existing && existing.size !== -1) {
+          throw new LibraryServiceError('IMPORT_APPLY_FAILED', {
+            reason: 'NAME_NOT_SUPPORTED',
+          });
+        }
+        const resolved = existing?.actualRelativePath ?? candidate;
+        directoryByIdentity.set(portablePathIdentity(relativeDirectory), resolved);
+          return resolved;
+        });
+    } catch (error) {
+      this.removeOperation(pending.operationPath);
+      throw serviceError(error, 'IMPORT_APPLY_FAILED');
+    }
+    const occupied = new Map<string, ExistingDestination>();
+    const actionIndexByIdentity = new Map<string, number>();
     const actions: ImportAction[] = [];
     const mergedAssetIds = new Set<string>();
     let skippedCount = 0;
 
-    const diskSize = (relativePath: string): number | undefined => {
-      const plannedSize = occupied.get(relativePath);
-      if (plannedSize !== undefined) return plannedSize;
-      const targetPath = this.folderPath(openLibrary, relativePath);
-      if (!existsSync(targetPath)) return undefined;
-      const targetStat = lstatSync(targetPath);
-      return targetStat.isFile() && !targetStat.isSymbolicLink() ? targetStat.size : -1;
+    const destination = (relativePath: string): ExistingDestination | undefined => {
+      const identity = portablePathIdentity(relativePath);
+      return occupied.get(identity) ?? this.portableDiskDestination(openLibrary, relativePath);
     };
     const copyPath = (relativePath: string): string => {
       const directory = path.posix.dirname(relativePath);
       const fileName = path.posix.basename(relativePath);
       for (let index = 2; index < Number.MAX_SAFE_INTEGER; index += 1) {
-        const candidateName = copyNameForIndex(fileName, index);
-        const candidate = directory === '.' ? candidateName : path.posix.join(directory, candidateName);
-        if (diskSize(candidate) === undefined) return candidate;
+        let allCandidatesExceededNameLimit = true;
+        let finalNameLimitError: unknown;
+        for (const candidateName of copyNameCandidates(fileName, index)) {
+          const candidate =
+            directory === '.' ? candidateName : path.posix.join(directory, candidateName);
+          try {
+            const existing = destination(candidate);
+            allCandidatesExceededNameLimit = false;
+            if (existing === undefined) return candidate;
+            break;
+          } catch (error) {
+            if (hasErrorCode(error, 'ENAMETOOLONG')) {
+              finalNameLimitError = error;
+              continue;
+            }
+            throw error;
+          }
+        }
+        if (allCandidatesExceededNameLimit) throw finalNameLimitError;
       }
       throw new LibraryServiceError('IMPORT_APPLY_FAILED');
     };
 
     try {
       for (const entry of pending.entries) {
-        const existingSize = diskSize(entry.destinationRelativePath);
+        const requestedDirectory = path.posix.dirname(entry.destinationRelativePath);
+        const resolvedDirectory =
+          requestedDirectory === '.'
+            ? '.'
+            : (directoryByIdentity.get(portablePathIdentity(requestedDirectory)) ??
+              requestedDirectory);
+        const requestedDestination =
+          resolvedDirectory === '.'
+            ? path.posix.basename(entry.destinationRelativePath)
+            : path.posix.join(resolvedDirectory, path.posix.basename(entry.destinationRelativePath));
+        const existingDestination = destination(requestedDestination);
+        const existingSize = existingDestination?.size;
         const conflictKind =
           existingSize === undefined
             ? undefined
             : existingSize === entry.byteSize
               ? 'suspected-duplicate'
               : 'name-conflict';
-        let destinationRelativePath = entry.destinationRelativePath;
+        let destinationRelativePath =
+          existingDestination?.actualRelativePath ?? requestedDestination;
         let isReplacement = false;
         if (conflictKind === 'suspected-duplicate') {
           if (input.suspectedDuplicate === 'skip') {
@@ -1299,11 +1778,11 @@ export class LibraryService {
             continue;
           }
           if (input.suspectedDuplicate === 'create-copy') {
-            destinationRelativePath = copyPath(destinationRelativePath);
+            destinationRelativePath = copyPath(requestedDestination);
           } else {
             const retainedAsset = openLibrary.connection
-              .prepare('SELECT asset_id, current_revision_id FROM assets WHERE relative_file_path = ?')
-              .get(destinationRelativePath) as ExistingAssetRow | undefined;
+              .prepare('SELECT asset_id, current_revision_id FROM assets WHERE path_identity = ?')
+              .get(portablePathIdentity(destinationRelativePath)) as ExistingAssetRow | undefined;
             if (retainedAsset) mergedAssetIds.add(retainedAsset.asset_id);
             else skippedCount += 1;
             continue;
@@ -1314,21 +1793,37 @@ export class LibraryService {
             continue;
           }
           if (input.nameConflict === 'keep-both') {
-            destinationRelativePath = copyPath(destinationRelativePath);
+            destinationRelativePath = copyPath(requestedDestination);
           } else {
             if (existingSize === -1) {
               throw new LibraryServiceError('IMPORT_APPLY_FAILED');
             }
             isReplacement = true;
+            const identity = portablePathIdentity(destinationRelativePath);
+            const earlierActionIndex = actionIndexByIdentity.get(identity);
+            if (earlierActionIndex !== undefined) {
+              const earlierAction = actions[earlierActionIndex]!;
+              actions[earlierActionIndex] = { ...earlierAction, entry };
+              occupied.set(identity, {
+                actualRelativePath: destinationRelativePath,
+                size: entry.byteSize,
+              });
+              continue;
+            }
           }
         }
 
+        const pathIdentity = portablePathIdentity(destinationRelativePath);
         const existingAsset = openLibrary.connection
           .prepare(
-            'SELECT asset_id, current_revision_id FROM assets WHERE relative_file_path = ?',
+            'SELECT asset_id, current_revision_id FROM assets WHERE path_identity = ?',
           )
-          .get(destinationRelativePath) as ExistingAssetRow | undefined;
-        occupied.set(destinationRelativePath, entry.byteSize);
+          .get(pathIdentity) as ExistingAssetRow | undefined;
+        occupied.set(pathIdentity, {
+          actualRelativePath: destinationRelativePath,
+          size: entry.byteSize,
+        });
+        actionIndexByIdentity.set(pathIdentity, actions.length);
         actions.push({
           destinationRelativePath,
           entry,
@@ -1348,7 +1843,7 @@ export class LibraryService {
     const placedPaths: string[] = [];
     const backups: Array<{ backupPath: string; destinationPath: string }> = [];
     const createdDirectories: string[] = [];
-    const directoryPaths = new Set(pending.directories);
+    const directoryPaths = new Set(resolvedDirectories);
     for (const action of actions) {
       const directory = path.posix.dirname(action.destinationRelativePath);
       if (directory !== '.') directoryPaths.add(directory);
@@ -1422,6 +1917,10 @@ export class LibraryService {
       return succeeded;
     };
 
+    const affectedAssetIds: string[] = [];
+    let importedCount = 0;
+    let replacedCount = 0;
+    let committed = false;
     try {
       mkdirSync(backupPath, { recursive: true });
       this.failAt('after-stage');
@@ -1455,25 +1954,28 @@ export class LibraryService {
       this.failAt('after-place');
       this.failAt('crash-after-place');
 
-      const affectedAssetIds: string[] = [];
-      let importedCount = 0;
-      let replacedCount = 0;
       openLibrary.connection.transaction(() => {
         const now = new Date().toISOString();
         const folderRows = openLibrary.connection
           .prepare(
-            'SELECT folder_id, parent_folder_id, name, relative_path FROM managed_folders ORDER BY relative_path',
+            'SELECT folder_id, parent_folder_id, name, relative_path, path_identity FROM managed_folders ORDER BY relative_path',
           )
           .all() as ManagedFolderRow[];
-        const foldersByPath = new Map(folderRows.map((folder) => [folder.relative_path, folder]));
+        const foldersByPath = new Map(folderRows.map((folder) => [folder.path_identity, folder]));
         for (const relativeDirectory of sortedDirectories) {
-          if (foldersByPath.has(relativeDirectory)) continue;
+          const directoryIdentity = portablePathIdentity(relativeDirectory);
+          if (foldersByPath.has(directoryIdentity)) continue;
           const parentPath = path.posix.dirname(relativeDirectory);
+          const parentIdentity = parentPath === '.' ? undefined : portablePathIdentity(parentPath);
           const folder: ManagedFolderRow = {
             folder_id: randomUUID(),
-            parent_folder_id: parentPath === '.' ? null : (foldersByPath.get(parentPath)?.folder_id ?? null),
+            parent_folder_id:
+              parentIdentity === undefined
+                ? null
+                : (foldersByPath.get(parentIdentity)?.folder_id ?? null),
             name: path.posix.basename(relativeDirectory),
             relative_path: relativeDirectory,
+            path_identity: directoryIdentity,
           };
           if (parentPath !== '.' && folder.parent_folder_id === null) {
             throw new Error('Imported folder parent is missing.');
@@ -1481,29 +1983,47 @@ export class LibraryService {
           openLibrary.connection
             .prepare(
               `INSERT INTO managed_folders
-                 (folder_id, parent_folder_id, name, relative_path, created_at)
-               VALUES (?, ?, ?, ?, ?)`,
+                 (folder_id, parent_folder_id, name, relative_path, path_identity, created_at)
+               VALUES (?, ?, ?, ?, ?, ?)`,
             )
-            .run(folder.folder_id, folder.parent_folder_id, folder.name, folder.relative_path, now);
-          foldersByPath.set(relativeDirectory, folder);
+            .run(
+              folder.folder_id,
+              folder.parent_folder_id,
+              folder.name,
+              folder.relative_path,
+              folder.path_identity,
+              now,
+            );
+          foldersByPath.set(directoryIdentity, folder);
         }
 
         actions.forEach((action) => {
           const destinationPath = this.folderPath(openLibrary, action.destinationRelativePath);
           const fileStat = statSync(destinationPath);
           const directory = path.posix.dirname(action.destinationRelativePath);
-          const managedFolderId = directory === '.' ? null : (foldersByPath.get(directory)?.folder_id ?? null);
+          const managedFolderId =
+            directory === '.'
+              ? null
+              : (foldersByPath.get(portablePathIdentity(directory))?.folder_id ?? null);
           const assetId = action.existingAsset?.asset_id ?? randomUUID();
           const revisionId = randomUUID();
+          const pathIdentity = portablePathIdentity(action.destinationRelativePath);
           if (!action.existingAsset) {
             openLibrary.connection
               .prepare(
                 `INSERT INTO assets
-                   (asset_id, location_kind, managed_folder_id, relative_file_path,
-                    current_revision_id, availability, created_at, updated_at)
-                 VALUES (?, 'managed', ?, ?, NULL, 'available', ?, ?)`,
+                 (asset_id, location_kind, managed_folder_id, relative_file_path,
+                    path_identity, current_revision_id, availability, created_at, updated_at)
+                 VALUES (?, 'managed', ?, ?, ?, NULL, 'available', ?, ?)`,
               )
-              .run(assetId, managedFolderId, action.destinationRelativePath, now, now);
+              .run(
+                assetId,
+                managedFolderId,
+                action.destinationRelativePath,
+                pathIdentity,
+                now,
+                now,
+              );
             importedCount += 1;
             if (action.isReplacement) replacedCount += 1;
           } else {
@@ -1529,10 +2049,18 @@ export class LibraryService {
           openLibrary.connection
             .prepare(
               `UPDATE assets
-                  SET managed_folder_id = ?, current_revision_id = ?, availability = 'available', updated_at = ?
+                  SET managed_folder_id = ?, relative_file_path = ?, path_identity = ?,
+                      current_revision_id = ?, availability = 'available', updated_at = ?
                 WHERE asset_id = ?`,
             )
-            .run(managedFolderId, revisionId, now, assetId);
+            .run(
+              managedFolderId,
+              action.destinationRelativePath,
+              pathIdentity,
+              revisionId,
+              now,
+              assetId,
+            );
           affectedAssetIds.push(assetId);
         });
         this.failAt('before-db-commit');
@@ -1540,17 +2068,35 @@ export class LibraryService {
           .prepare("UPDATE file_operations SET status = 'committed', updated_at = ? WHERE operation_id = ?")
           .run(new Date().toISOString(), operationId);
       })();
+      committed = true;
 
-      this.removeOperation(operationPath);
-      const allAssets = this.listAssets({ libraryId: pending.libraryId, recursive: true });
       const affected = new Set([...affectedAssetIds, ...mergedAssetIds]);
+      // The SQLite commit is the point of no return. Cleanup is recoverable from the
+      // committed operation row and must never enter the pre-commit rollback path.
+      try {
+        this.failAt('committed-cleanup');
+        this.removeOperation(operationPath);
+      } catch {
+        // recoverFileOperations removes committed operation data on the next open.
+      }
+      let assets: AssetSummary[] = [];
+      try {
+        this.failAt('committed-result-list');
+        const allAssets = this.listAssets({ libraryId: pending.libraryId, recursive: true });
+        assets = allAssets.filter((asset) => affected.has(asset.assetId));
+      } catch {
+        // A committed import is still success. A later list/refresh supplies cards.
+      }
       return {
         importedCount,
         skippedCount,
         replacedCount,
-        assets: allAssets.filter((asset) => affected.has(asset.assetId)),
+        assets,
       };
     } catch (error) {
+      if (committed) {
+        return { importedCount, skippedCount, replacedCount, assets: [] };
+      }
       if (error instanceof SimulatedCrashError) {
         throw new LibraryServiceError('IMPORT_APPLY_FAILED', { cause: error });
       }
@@ -1581,9 +2127,13 @@ export class LibraryService {
         const assetPath = this.folderPath(openLibrary, asset.relativeFilePath);
         let fileStat;
         try {
-          fileStat = lstatSync(assetPath);
-        } catch {
-          fileStat = undefined;
+          fileStat = (this.options.assetLstat ?? lstatSync)(assetPath);
+        } catch (error) {
+          if (isMissingPathError(error)) {
+            fileStat = undefined;
+          } else {
+            throw new LibraryServiceError('IMPORT_APPLY_FAILED', { cause: error });
+          }
         }
         if (!fileStat?.isFile() || fileStat.isSymbolicLink()) {
           if (asset.availability === 'available') {

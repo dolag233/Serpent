@@ -129,4 +129,51 @@ describe('pending import lifecycle', () => {
     expect(existsSync(operationsPath)).toBe(false);
     recovered.closeAll();
   });
+
+  it('does not delete a destination created externally while a preparing import is staged', () => {
+    const root = temporaryRoot();
+    const first = path.join(root, 'first.png');
+    const second = path.join(root, 'second.png');
+    writeFileSync(first, 'first');
+    writeFileSync(second, 'second');
+    const crashing = new LibraryService({ failAt: 'crash-during-prepare-stage' });
+    const library = crashing.createLibrary({ displayName: 'Prepare Concurrent', selectedParentPath: root });
+    expectCode(
+      () => crashing.prepareImport({ libraryId: library.libraryId, sourceKind: 'files', sourcePaths: [first, second] }),
+      'INVALID_IMPORT_SOURCE',
+    );
+
+    const concurrentDestination = path.join(library.libraryPath, 'Assets', 'second.png');
+    writeFileSync(concurrentDestination, 'created by another process');
+    crashing.closeAll();
+
+    const recovered = new LibraryService();
+    recovered.openLibrary(library.libraryPath);
+    expect(existsSync(concurrentDestination)).toBe(true);
+    recovered.closeAll();
+  });
+
+  it('does not claim an external destination while recovering a prepared import', () => {
+    const root = temporaryRoot();
+    const source = path.join(root, 'prepared.png');
+    writeFileSync(source, 'source');
+    const preparing = new LibraryService();
+    const library = preparing.createLibrary({ displayName: 'Prepared Concurrent', selectedParentPath: root });
+    const plan = preparing.prepareImport({
+      libraryId: library.libraryId,
+      sourceKind: 'files',
+      sourcePaths: [source],
+    });
+    const operationPath = path.join(library.libraryPath, '.serpent', 'operations', plan.importId);
+    rmSync(path.join(operationPath, 'stage', '0'));
+    const concurrentDestination = path.join(library.libraryPath, 'Assets', 'prepared.png');
+    writeFileSync(concurrentDestination, 'created by another process');
+
+    const recovered = new LibraryService();
+    recovered.openLibrary(library.libraryPath);
+    expect(existsSync(concurrentDestination)).toBe(true);
+    expect(existsSync(operationPath)).toBe(false);
+    recovered.closeAll();
+    preparing.closeAll();
+  });
 });

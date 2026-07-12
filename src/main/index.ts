@@ -19,6 +19,7 @@ import {
   parseAssetChangeEvent,
 } from '../shared/protocol/responses';
 import { LibraryWorkerClient } from './worker-client';
+import { AppLogger } from './app-logger';
 
 app.enableSandbox();
 
@@ -28,6 +29,7 @@ let mainWindow: BrowserWindow | undefined;
 let workerClient: LibraryWorkerClient | undefined;
 let quitAfterShutdown = false;
 let startupComplete = false;
+let logger: AppLogger | undefined;
 
 function focusMainWindow(): void {
   if (!mainWindow) return;
@@ -259,6 +261,7 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
     }
     return result;
   } catch (error) {
+    logger?.error('main.library-request', error);
     const publicError = toPublicError(error);
     if (operation) {
       publishLifecycle({ type: 'library.open-failed', operation, error: publicError });
@@ -268,7 +271,9 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
 }
 
 async function startApplication(): Promise<void> {
-  workerClient = new LibraryWorkerClient(path.join(__dirname, 'library_worker.js'));
+  app.setAppLogsPath();
+  logger = new AppLogger(path.join(app.getPath('logs'), 'serpent.log'));
+  workerClient = new LibraryWorkerClient(path.join(__dirname, 'library_worker.js'), logger);
   await workerClient.start();
   workerClient.onAssetsChanged(publishAssetChange);
 
@@ -288,6 +293,7 @@ if (!hasSingleInstanceLock) {
   app.on('second-instance', focusMainWindow);
 
   app.whenReady().then(startApplication).catch((error: unknown) => {
+    logger?.error('main.startup', error);
     dialog.showErrorBox('Serpent could not start', toPublicError(error).message);
     app.quit();
   });

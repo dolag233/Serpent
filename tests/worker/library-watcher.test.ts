@@ -50,15 +50,17 @@ class ManualScheduler implements DebounceScheduler {
 
 function observerHarness() {
   const callbacks: Array<() => void> = [];
+  const errorCallbacks: Array<(error: unknown) => void> = [];
   const closed: number[] = [];
   const roots: string[] = [];
-  const factory: AssetObserverFactory = (rootPath, onEvent) => {
+  const factory: AssetObserverFactory = (rootPath, onEvent, onError) => {
     const index = callbacks.length;
     roots.push(rootPath);
     callbacks.push(onEvent);
+    errorCallbacks.push(onError);
     return { close: () => closed.push(index) };
   };
-  return { callbacks, closed, factory, roots };
+  return { callbacks, closed, errorCallbacks, factory, roots };
 }
 
 afterEach(() => {
@@ -154,13 +156,75 @@ describe('managed asset watcher', () => {
         throw new Error('injected refresh failure');
       }
     }
-    const service = new ThrowingRefreshService({ observerFactory: observers.factory, scheduler });
+    const diagnostics: Array<{ scope: string; error: unknown }> = [];
+    const service = new ThrowingRefreshService({
+      observerFactory: observers.factory,
+      scheduler,
+      onDiagnostic: (diagnostic) => diagnostics.push(diagnostic),
+    });
     const library = service.createLibrary({ displayName: 'Errors', selectedParentPath: root });
     observers.callbacks[0]!();
     expect(() => scheduler.flush()).not.toThrow();
+    expect(diagnostics).toMatchObject([
+      { scope: 'asset-watcher.refresh', error: { message: 'injected refresh failure' } },
+    ]);
 
     service.closeLibrary(library.libraryId);
     observers.callbacks[0]!();
     expect(scheduler.pendingCount()).toBe(0);
+  });
+
+  it('reports native observer, startup, scheduler, and close failures without changing library lifecycle', () => {
+    const root = temporaryRoot();
+    const causes = {
+      native: new Error('native watch failure'),
+      schedule: new Error('scheduler failure'),
+      close: new Error('observer close failure'),
+      start: new Error('observer start failure'),
+    };
+    const diagnostics: Array<{ scope: string; error: unknown; context?: Record<string, unknown> }> = [];
+    const observers = observerHarness();
+    const scheduler: DebounceScheduler = {
+      cancel: () => undefined,
+      schedule: () => { throw causes.schedule; },
+    };
+    const service = new LibraryService({
+      observerFactory: (assetsPath, onEvent, onError) => {
+        const observer = observers.factory(assetsPath, onEvent, onError);
+        return { close: () => { observer.close(); throw causes.close; } };
+      },
+      scheduler,
+      onDiagnostic: (diagnostic) => diagnostics.push(diagnostic),
+    });
+    const library = service.createLibrary({ displayName: 'Diagnostics', selectedParentPath: root });
+
+    observers.errorCallbacks[0]!(causes.native);
+    expect(() => observers.callbacks[0]!()).not.toThrow();
+    expect(() => service.closeLibrary(library.libraryId)).not.toThrow();
+
+    const startService = new LibraryService({
+      observerFactory: () => { throw causes.start; },
+      onDiagnostic: (diagnostic) => diagnostics.push(diagnostic),
+    });
+    const unobserved = startService.createLibrary({ displayName: 'Startup', selectedParentPath: root });
+    expect(() => startService.closeLibrary(unobserved.libraryId)).not.toThrow();
+
+    expect(diagnostics.map(({ scope, error }) => ({ scope, error }))).toEqual([
+      { scope: 'asset-watcher.error', error: causes.native },
+      { scope: 'asset-watcher.schedule', error: causes.schedule },
+      { scope: 'asset-watcher.close', error: causes.close },
+      { scope: 'asset-watcher.start', error: causes.start },
+    ]);
+    expect(diagnostics[0]?.context).toMatchObject({ libraryId: library.libraryId });
+  });
+
+  it('ignores diagnostic callback failures', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService({
+      observerFactory: () => { throw new Error('watch failure'); },
+      onDiagnostic: () => { throw new Error('diagnostic failure'); },
+    });
+    expect(() => service.createLibrary({ displayName: 'Best effort', selectedParentPath: root })).not.toThrow();
+    service.closeAll();
   });
 });

@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { utilityProcess, type UtilityProcess } from 'electron';
 
 import type { WorkerCommand } from '../shared/protocol/requests';
+import type { AppLogger } from './app-logger';
 import {
   parseWorkerControlMessage,
   parseAssetChangeEvent,
@@ -29,9 +30,10 @@ export class LibraryWorkerClient {
   #ready = false;
   #pending = new Map<string, PendingRequest>();
   #shutdownAck: (() => void) | undefined;
+  #shuttingDown = false;
   #assetChangeListeners = new Set<(event: AssetChangeEvent) => void>();
 
-  constructor(modulePath: string) {
+  constructor(modulePath: string, private readonly logger: AppLogger) {
     this.#modulePath = modulePath;
   }
 
@@ -40,9 +42,22 @@ export class LibraryWorkerClient {
 
     const child = utilityProcess.fork(this.#modulePath, [], {
       serviceName: 'Serpent Library Worker',
-      stdio: 'ignore',
+      stdio: 'pipe',
     });
     this.#child = child;
+    child.stdout?.on('data', (chunk) => this.logger.worker('stdout', chunk));
+    child.stdout?.on('error', (error) => this.logger.error('worker.stdout', error));
+    child.stderr?.on('data', (chunk) => this.logger.worker('stderr', chunk));
+    child.stderr?.on('error', (error) => this.logger.error('worker.stderr', error));
+    child.on('error', (type, location, report) => {
+      this.logger.error('worker.fatal', new Error(`Library Worker fatal error: ${type}.`), {
+        location,
+        report,
+      });
+    });
+    child.on('spawn', () => {
+      this.logger.info('worker.spawn', 'Library Worker spawned.', { pid: child.pid });
+    });
     child.on('exit', this.#onExit);
 
     await new Promise<void>((resolve, reject) => {
@@ -108,6 +123,7 @@ export class LibraryWorkerClient {
     const child = this.#child;
     if (!child) return;
 
+    this.#shuttingDown = true;
     if (this.#ready) {
       await Promise.race([
         new Promise<void>((resolve) => {
@@ -164,12 +180,22 @@ export class LibraryWorkerClient {
   };
 
   readonly #onExit = (code: number) => {
+    const expected = this.#shuttingDown;
+    if (expected) {
+      this.logger.info('worker.exit', 'Library Worker exited during shutdown.', { code });
+    } else {
+      this.logger.error('worker.exit', new Error(`Library Worker exited unexpectedly (${code}).`), {
+        code,
+      });
+    }
     this.#ready = false;
     this.#child = undefined;
+    this.#shuttingDown = false;
     this.#rejectAll(new Error(`Library Worker exited (${code}).`));
   };
 
   #protocolFailure(error: Error): void {
+    this.logger.error('worker.protocol', error);
     this.#ready = false;
     this.#rejectAll(error);
     this.#child?.kill();

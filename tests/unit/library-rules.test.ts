@@ -8,6 +8,7 @@ import {
   normalizeAbsolutePath,
   normalizeLibraryName,
   normalizeRelativeAssetPath,
+  portablePathIdentity,
   targetLibraryPath,
 } from '../../src/worker/library-rules';
 
@@ -74,5 +75,15 @@ describe('managed asset path rules', () => {
     expect(copyNameForIndex('button.png', 2)).toBe('button (2).png');
     expect(copyNameForIndex('archive.tar.gz', 3)).toBe('archive.tar (3).gz');
     expect(copyNameForIndex('.gitignore', 2)).toBe('.gitignore (2)');
+  });
+
+  it('builds a locale-independent NFC and case-insensitive identity per segment', () => {
+    expect(portablePathIdentity('UI/Café/FOO.PNG')).toBe('ui/café/foo.png');
+    expect(portablePathIdentity('ui/Cafe\u0301/foo.png')).toBe(
+      portablePathIdentity('UI/Café/FOO.PNG'),
+    );
+    expect(portablePathIdentity('Straße/ς.txt')).toBe(
+      portablePathIdentity('STRASSE/Σ.TXT'),
+    );
   });
 });

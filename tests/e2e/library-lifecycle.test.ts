@@ -4,17 +4,19 @@ import path from 'node:path';
 
 import { _electron as electron, expect, test } from '@playwright/test';
 
+import { resolveElectronExecutablePath } from './electron-test-helpers';
+
 test('creates, closes, and reopens a library through the sandboxed UI', async () => {
   const testInfo = test.info();
   const temporaryRoot = mkdtempSync(path.join(tmpdir(), 'serpent-electron-test-'));
   const libraryName = '视觉参考';
   const libraryPath = path.join(temporaryRoot, libraryName);
-  const executablePath = process.env.SERPENT_E2E_ELECTRON_EXECUTABLE;
+  const executablePath = resolveElectronExecutablePath();
   const applicationDirectory = process.env.SERPENT_E2E_APP_DIRECTORY ?? process.cwd();
   const application = await electron.launch({
     args: [applicationDirectory],
     cwd: applicationDirectory,
-    ...(executablePath ? { executablePath } : {}),
+    executablePath,
     env: {
       ...process.env,
       SERPENT_E2E: '1',
@@ -84,13 +86,13 @@ test('releases an open library on quit and reopens it after restart', async () =
   const temporaryRoot = mkdtempSync(path.join(tmpdir(), 'serpent-restart-test-'));
   const libraryName = '重启恢复';
   const libraryPath = path.join(temporaryRoot, libraryName);
-  const executablePath = process.env.SERPENT_E2E_ELECTRON_EXECUTABLE;
+  const executablePath = resolveElectronExecutablePath();
   const applicationDirectory = process.env.SERPENT_E2E_APP_DIRECTORY ?? process.cwd();
   const launch = () =>
     electron.launch({
       args: [applicationDirectory],
       cwd: applicationDirectory,
-      ...(executablePath ? { executablePath } : {}),
+      executablePath,
       env: {
         ...process.env,
         SERPENT_E2E: '1',

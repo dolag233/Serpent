@@ -44,9 +44,26 @@ function downgradeLibraryToV1(libraryPath: string, createMigrationBlocker = fals
     DROP TABLE revisions;
     DROP TABLE assets;
     DROP TABLE managed_folders;
-    DELETE FROM schema_migrations WHERE version = 2;
+    DELETE FROM schema_migrations WHERE version >= 2;
     PRAGMA user_version = 1;
     ${createMigrationBlocker ? 'CREATE TABLE managed_folders (blocker TEXT);' : ''}
+  `);
+  database.close();
+}
+
+function downgradeLibraryToV2(libraryPath: string): void {
+  const database = new TestDatabase(path.join(libraryPath, '.serpent', 'library.db'));
+  database.exec(`
+    DROP TRIGGER managed_folders_path_identity_required_insert;
+    DROP TRIGGER managed_folders_path_identity_required_update;
+    DROP TRIGGER assets_path_identity_required_insert;
+    DROP TRIGGER assets_path_identity_required_update;
+    DROP INDEX managed_folders_path_identity_unique;
+    DROP INDEX assets_path_identity_unique;
+    ALTER TABLE managed_folders DROP COLUMN path_identity;
+    ALTER TABLE assets DROP COLUMN path_identity;
+    DELETE FROM schema_migrations WHERE version = 3;
+    PRAGMA user_version = 2;
   `);
   database.close();
 }
@@ -98,7 +115,7 @@ describe('LibraryService lifecycle', () => {
     expect(service.listLibraries()).toEqual([created]);
 
     const database = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
-    expect(database.pragma('user_version')).toEqual([{ user_version: 2 }]);
+    expect(database.pragma('user_version')).toEqual([{ user_version: 3 }]);
     database.close();
 
     expect(service.openLibrary(created.libraryPath)).toEqual(created);
@@ -206,7 +223,7 @@ describe('LibraryService lifecycle', () => {
     );
   });
 
-  it('migrates a valid v1 library to v2 when opening', () => {
+  it('migrates a valid v1 library through v2 to v3 when opening', () => {
     const root = temporaryRoot();
     const service = new LibraryService();
     const created = service.createLibrary({ displayName: 'Migration', selectedParentPath: root });
@@ -216,12 +233,38 @@ describe('LibraryService lifecycle', () => {
     service.openLibrary(created.libraryPath);
 
     const database = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
-    expect(database.pragma('user_version')).toEqual([{ user_version: 2 }]);
+    expect(database.pragma('user_version')).toEqual([{ user_version: 3 }]);
     expect(
       database
         .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'assets'")
         .all(),
     ).toEqual([{ name: 'assets' }]);
+    database.close();
+    service.closeAll();
+  });
+
+  it('migrates a populated v2 library to portable path identities', () => {
+    const root = temporaryRoot();
+    const source = path.join(root, 'Café.PNG');
+    writeFileSync(source, 'asset');
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'Portable Migration', selectedParentPath: root });
+    service.prepareOrExecuteImport({
+      libraryId: created.libraryId,
+      sourceKind: 'files',
+      sourcePaths: [source],
+    });
+    service.closeAll();
+    downgradeLibraryToV2(created.libraryPath);
+
+    const reopened = service.openLibrary(created.libraryPath);
+    expect(service.listAssets({ libraryId: reopened.libraryId, recursive: true })[0])
+      .toMatchObject({ relativeFilePath: 'Café.PNG' });
+    const database = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    expect(database.pragma('user_version')).toEqual([{ user_version: 3 }]);
+    expect(database.prepare('SELECT path_identity FROM assets').all()).toEqual([
+      { path_identity: 'café.png' },
+    ]);
     database.close();
     service.closeAll();
   });

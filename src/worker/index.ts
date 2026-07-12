@@ -16,7 +16,37 @@ if (!parentPort) {
 
 const libraryService = new LibraryService({
   onAssetsChanged: (event) => parentPort.postMessage(event),
+  onDiagnostic: ({ scope, error, context }) => {
+    try {
+      console.error(JSON.stringify({
+        timestamp: new Date().toISOString(),
+        scope: `worker.${scope}`,
+        context,
+        error: errorForLog(error),
+      }));
+    } catch {
+      // A serialization or stderr failure must not change the background operation.
+    }
+  },
 });
+
+// Electron's ParentPort delivers IPC messages but does not provide a documented
+// event-loop ref. Development builds happen to have other active handles; a
+// packaged utility process can otherwise exit cleanly immediately after ready.
+const processLifetime = setInterval(() => {}, 60 * 60_000);
+
+function errorForLog(error: unknown, depth = 0): unknown {
+  if (depth > 5) return { truncated: true };
+  if (!(error instanceof Error)) return { value: String(error) };
+  return {
+    name: error.name,
+    message: error.message,
+    code: 'code' in error && typeof error.code === 'string' ? error.code : undefined,
+    reason: 'reason' in error && typeof error.reason === 'string' ? error.reason : undefined,
+    stack: error.stack,
+    cause: error.cause === undefined ? undefined : errorForLog(error.cause, depth + 1),
+  };
+}
 
 function handleRequest(request: WorkerRequest): WorkerResult {
   switch (request.command.type) {
@@ -96,6 +126,7 @@ parentPort.on('message', (event) => {
     if (control.type === 'worker.shutdown') {
       libraryService.closeAll();
       parentPort.postMessage({ type: 'worker.shutdown.ack' });
+      clearInterval(processLifetime);
       return;
     }
   } catch {
@@ -110,13 +141,24 @@ parentPort.on('message', (event) => {
     const request = parseWorkerRequest(input);
     response = { requestId: request.requestId, result: handleRequest(request) };
   } catch (error) {
+    console.error(JSON.stringify({
+      timestamp: new Date().toISOString(),
+      scope: 'worker.request',
+      requestId,
+      commandType:
+        typeof input === 'object' && input !== null && 'command' in input &&
+        typeof input.command === 'object' && input.command !== null && 'type' in input.command
+          ? String(input.command.type)
+          : 'malformed',
+      error: errorForLog(error),
+    }));
     response = {
       requestId,
       result: {
         ok: false,
         error:
           error instanceof LibraryServiceError
-            ? createPublicError(error.code)
+            ? createPublicError(error.code, error.reason)
             : toPublicError(error),
       },
     };

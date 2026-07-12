@@ -4,7 +4,7 @@ import {
   parseRendererRequest,
   parseWorkerRequest,
 } from '../../src/shared/protocol/requests';
-import { toPublicError } from '../../src/shared/protocol/errors';
+import { createPublicError, toPublicError } from '../../src/shared/protocol/errors';
 import {
   importConflictPlanSchema,
   parseAssetChangeEvent,
@@ -131,6 +131,14 @@ describe('public errors', () => {
     });
     expect(JSON.stringify(publicError)).not.toContain('/Users/private');
     expect(JSON.stringify(publicError)).not.toContain('SQLITE');
+  });
+
+  it('carries only a stable renderer-safe failure reason', () => {
+    expect(createPublicError('IMPORT_APPLY_FAILED', 'PATH_LIMIT_EXCEEDED')).toEqual({
+      code: 'IMPORT_APPLY_FAILED',
+      message: 'Serpent could not apply the import safely.',
+      reason: 'PATH_LIMIT_EXCEEDED',
+    });
   });
 });
 
