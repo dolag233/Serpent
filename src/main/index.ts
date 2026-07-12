@@ -1,6 +1,7 @@
 import path from 'node:path';
+import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 
-import { app, BrowserWindow, dialog, ipcMain, type OpenDialogOptions } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, safeStorage, type OpenDialogOptions } from 'electron';
 
 import {
   ASSET_CHANGE_CHANNEL,
@@ -45,6 +46,82 @@ const pendingRelinkRoots = new Map<string, string>();
 
 // Pending import source path (importId -> sourceFolderPath), remembered after validation.
 const pendingImportSources = new Map<string, string>();
+
+// ── AI Config ────────────────────────────────────────────────────────────
+
+interface AiConfig {
+  provider: 'openai' | 'gemini' | 'anthropic';
+  model: string;
+  labelEnabled: boolean;
+  descriptionEnabled: boolean;
+  tagEnabled: boolean;
+  structuredMetadataEnabled: boolean;
+  language: string;
+  autoAnalyzeEnabled: boolean;
+  disclaimerAccepted: boolean;
+}
+
+const DEFAULT_AI_CONFIG: AiConfig = {
+  provider: 'openai',
+  model: 'gpt-4o-mini',
+  labelEnabled: true,
+  descriptionEnabled: true,
+  tagEnabled: true,
+  structuredMetadataEnabled: false,
+  language: 'auto',
+  autoAnalyzeEnabled: false,
+  disclaimerAccepted: false,
+};
+
+function aiConfigPath(): string {
+  return path.join(app.getPath('userData'), 'ai-config.json');
+}
+
+function aiKeyPath(): string {
+  return path.join(app.getPath('userData'), 'ai-key.enc');
+}
+
+function loadAiConfig(): AiConfig & { hasKey: boolean } {
+  try {
+    const raw = readFileSync(aiConfigPath(), 'utf-8');
+    const parsed = JSON.parse(raw) as Partial<AiConfig>;
+    const merged = { ...DEFAULT_AI_CONFIG, ...parsed };
+    // Ensure provider is never null (default to 'openai')
+    if (!merged.provider) merged.provider = DEFAULT_AI_CONFIG.provider;
+    const hasKey = existsSync(aiKeyPath());
+    return { ...merged, hasKey };
+  } catch {
+    const hasKey = existsSync(aiKeyPath());
+    return { ...DEFAULT_AI_CONFIG, hasKey };
+  }
+}
+
+function saveAiConfig(config: Omit<AiConfig, 'disclaimerAccepted'>): void {
+  const toSave: Record<string, unknown> = {};
+  toSave.provider = config.provider;
+  toSave.model = config.model;
+  toSave.labelEnabled = config.labelEnabled;
+  toSave.descriptionEnabled = config.descriptionEnabled;
+  toSave.tagEnabled = config.tagEnabled;
+  toSave.structuredMetadataEnabled = config.structuredMetadataEnabled;
+  toSave.language = config.language;
+  toSave.autoAnalyzeEnabled = config.autoAnalyzeEnabled;
+  writeFileSync(aiConfigPath(), JSON.stringify(toSave, null, 2), 'utf-8');
+}
+
+function getDecryptedApiKey(): string {
+  try {
+    const encrypted = readFileSync(aiKeyPath());
+    return safeStorage.decryptString(encrypted);
+  } catch {
+    throw new Error('AI API key not configured or could not be decrypted.');
+  }
+}
+
+function saveEncryptedApiKey(apiKey: string): void {
+  const encrypted = safeStorage.encryptString(apiKey);
+  writeFileSync(aiKeyPath(), encrypted);
+}
 
 function focusMainWindow(): void {
   if (!mainWindow) return;
@@ -594,6 +671,36 @@ async function commandFor(request: RendererRequest): Promise<WorkerCommand | und
       pendingImportSources.delete(importId);
       return { type: 'library.import-folder', sourceFolderPath: sourcePath };
     }
+    case 'ai.config.get.request':
+    case 'ai.config.set.request':
+      // Handled directly in handleLibraryRequest — should never reach here.
+      return undefined;
+    case 'asset.analyze.request': {
+      const config = loadAiConfig();
+      if (!config.hasKey) return undefined; // Will be handled as error downstream.
+      if (!config.provider) return undefined;
+      let apiKey: string;
+      try {
+        apiKey = getDecryptedApiKey();
+      } catch {
+        return undefined;
+      }
+      return {
+        type: 'asset.analyze',
+        libraryId: request.libraryId,
+        assetId: request.assetId,
+        provider: config.provider,
+        model: config.model,
+        apiKey,
+        enabledFields: {
+          label: config.labelEnabled,
+          description: config.descriptionEnabled,
+          tags: config.tagEnabled,
+          structuredMetadata: config.structuredMetadataEnabled,
+        },
+        language: config.language,
+      };
+    }
     default:
       return assertNever(request);
   }
@@ -607,6 +714,41 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
   let operation: 'create' | 'open' | 'import' | undefined;
   try {
     const request = parseRendererRequest(input);
+
+    // Handle AI config requests entirely in the main process — no Worker involved.
+    if (request.type === 'ai.config.get.request') {
+      const config = loadAiConfig();
+      return {
+        ok: true,
+        type: 'ai.config.got',
+        provider: config.provider,
+        model: config.model,
+        hasKey: config.hasKey,
+        enabledFields: {
+          label: config.labelEnabled,
+          description: config.descriptionEnabled,
+          tags: config.tagEnabled,
+          structuredMetadata: config.structuredMetadataEnabled,
+        },
+        language: config.language,
+      } satisfies RendererResult;
+    }
+
+    if (request.type === 'ai.config.set.request') {
+      saveAiConfig({
+        provider: request.provider,
+        model: request.model,
+        labelEnabled: request.enabledFields?.label ?? true,
+        descriptionEnabled: request.enabledFields?.description ?? true,
+        tagEnabled: request.enabledFields?.tags ?? true,
+        structuredMetadataEnabled: request.enabledFields?.structuredMetadata ?? false,
+        language: request.language ?? 'auto',
+        autoAnalyzeEnabled: false,
+      });
+      saveEncryptedApiKey(request.apiKey);
+      return { ok: true, type: 'ai.config.saved' } satisfies RendererResult;
+    }
+
     const command = await commandFor(request);
     if (!command) return cancelled();
     if (!workerClient) throw new Error('Library Worker is unavailable.');

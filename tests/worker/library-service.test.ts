@@ -52,6 +52,9 @@ function downgradeLibraryToV1(libraryPath: string, createMigrationBlocker = fals
     DROP TABLE IF EXISTS smart_collections;
     DROP TABLE IF EXISTS human_asset_tags;
     DROP TABLE IF EXISTS ai_asset_tags;
+    -- Reverse v8: drop ai_content.
+    DROP TABLE IF EXISTS ai_content;
+    DROP INDEX IF EXISTS ai_content_asset_field;
     DROP TABLE IF EXISTS asset_metadata;
     DROP TABLE IF EXISTS tags;
     DROP TABLE file_operations;
@@ -86,6 +89,9 @@ function downgradeLibraryToV2(libraryPath: string): void {
     DROP TABLE IF EXISTS smart_collections;
     DROP TABLE IF EXISTS human_asset_tags;
     DROP TABLE IF EXISTS ai_asset_tags;
+    -- Reverse v8: drop ai_content.
+    DROP TABLE IF EXISTS ai_content;
+    DROP INDEX IF EXISTS ai_content_asset_field;
     DROP TABLE IF EXISTS asset_metadata;
     DROP TABLE IF EXISTS tags;
     -- Reverse v4: drop linked-related objects and rebuild assets to v2 shape
@@ -178,7 +184,7 @@ describe('LibraryService lifecycle', () => {
     expect(service.listLibraries()).toEqual([created]);
 
     const database = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
-    expect(database.pragma('user_version')).toEqual([{ user_version: 7 }]);
+    expect(database.pragma('user_version')).toEqual([{ user_version: 8 }]);
     database.close();
 
     expect(service.openLibrary(created.libraryPath)).toEqual(created);
@@ -296,7 +302,7 @@ describe('LibraryService lifecycle', () => {
     service.openLibrary(created.libraryPath);
 
     const database = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
-    expect(database.pragma('user_version')).toEqual([{ user_version: 7 }]);
+    expect(database.pragma('user_version')).toEqual([{ user_version: 8 }]);
     expect(
       database
         .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'assets'")
@@ -324,7 +330,7 @@ describe('LibraryService lifecycle', () => {
     expect(service.listAssets({ libraryId: reopened.libraryId, recursive: true })[0])
       .toMatchObject({ relativeFilePath: 'Café.PNG' });
     const database = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
-    expect(database.pragma('user_version')).toEqual([{ user_version: 7 }]);
+    expect(database.pragma('user_version')).toEqual([{ user_version: 8 }]);
     expect(database.prepare('SELECT path_identity FROM assets').all()).toEqual([
       { path_identity: 'café.png' },
     ]);

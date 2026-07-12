@@ -7,6 +7,10 @@ import {
 } from '../shared/protocol/responses';
 import type { ParentPort } from 'electron';
 import { LibraryService, LibraryServiceError } from './library-service';
+import { OpenAIVendorAdapter } from './ai/openai-adapter';
+import { VendorAdapterError } from './ai/vendor-adapter';
+import type { AiAnalysisRequest } from './ai/protocol';
+import { readFileSync } from 'node:fs';
 
 const parentPort: ParentPort | undefined = process.parentPort;
 
@@ -330,6 +334,115 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
         importId: '',
         libraryId: validated.libraryId,
         displayName: validated.displayName,
+      };
+    }
+    case 'asset.analyze': {
+      const { libraryId, assetId, provider, model, apiKey, enabledFields, language } =
+        request.command;
+
+      // Resolve asset file path + mime.
+      const { filePath, mime, isVideo } = libraryService.resolveAssetFilePath(
+        libraryId,
+        assetId,
+      );
+
+      if (isVideo) {
+        return {
+          ok: true,
+          type: 'asset.analyze-unsupported' as const,
+          assetId,
+          reason: 'video analysis requires slice 0006 contact sheet',
+        };
+      }
+
+      if (!mime.startsWith('image/')) {
+        return {
+          ok: true,
+          type: 'asset.analyze-unsupported' as const,
+          assetId,
+          reason: `unsupported mime type: ${mime}`,
+        };
+      }
+
+      // Read image bytes and encode as base64.
+      let fileBytes: Buffer;
+      try {
+        fileBytes = readFileSync(filePath);
+      } catch (error) {
+        throw new LibraryServiceError('ASSET_NOT_FOUND', { cause: error });
+      }
+      const imageBase64 = fileBytes.toString('base64');
+      const filename = filePath.split(/[/\\]/).pop() ?? 'asset';
+
+      // Collect existing tag names for reuse hinting.
+      const existingTagNames = libraryService.listTagNames(libraryId);
+
+      // Build the vendor-agnostic request.
+      const aiRequest: AiAnalysisRequest = {
+        filename,
+        mime,
+        imageBase64,
+        language,
+        enabledFields,
+        existingTagNames,
+      };
+
+      // Create adapter (OpenAI only this slice).
+      if (provider !== 'openai') {
+        return {
+          ok: true,
+          type: 'asset.analyze-unsupported' as const,
+          assetId,
+          reason: `provider ${provider} not implemented in this slice (image AI: OpenAI only)`,
+        };
+      }
+
+      const adapter = new OpenAIVendorAdapter(apiKey, model);
+
+      let analysisResult;
+      try {
+        analysisResult = await adapter.analyze(aiRequest);
+      } catch (error) {
+        if (error instanceof VendorAdapterError) {
+          throw new LibraryServiceError('INVALID_IMPORT_DECISION', { cause: error });
+        }
+        throw error;
+      }
+
+      // Write results atomically.
+      const { tagsWritten, fieldsWritten } = libraryService.writeAiAnalysisResult({
+        libraryId,
+        assetId,
+        label: analysisResult.label,
+        description: analysisResult.description,
+        tags: analysisResult.tags,
+        structuredMetadata: analysisResult.structured_metadata as
+          | Record<string, unknown>
+          | undefined,
+        modelId: model,
+        modelVersion: analysisResult.modelVersion,
+        enabledFields,
+      });
+
+      const generatedFields: Record<string, unknown> = {};
+      if (tagsWritten.length > 0) generatedFields.tags = tagsWritten;
+      if (fieldsWritten.includes('label')) generatedFields.label = analysisResult.label;
+      if (fieldsWritten.includes('description'))
+        generatedFields.description = analysisResult.description;
+      if (fieldsWritten.includes('structured_metadata'))
+        generatedFields.structuredMetadata = analysisResult.structured_metadata;
+
+      return {
+        ok: true,
+        type: 'asset.analyzed' as const,
+        assetId,
+        generatedFields: generatedFields as {
+          label?: string;
+          description?: string;
+          tags?: string[];
+          structuredMetadata?: Record<string, unknown>;
+        },
+        modelVersion: analysisResult.modelVersion,
       };
     }
     default:

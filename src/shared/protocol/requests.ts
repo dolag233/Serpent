@@ -283,6 +283,27 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     type: z.literal('library.import.open-in-place.request'),
     importId: identifierSchema,
   }),
+  z.strictObject({
+    type: z.literal('ai.config.get.request'),
+  }),
+  z.strictObject({
+    type: z.literal('ai.config.set.request'),
+    provider: z.enum(['openai', 'gemini', 'anthropic']),
+    model: nonBlankString,
+    apiKey: nonBlankString,
+    enabledFields: z.strictObject({
+      label: z.boolean(),
+      description: z.boolean(),
+      tags: z.boolean(),
+      structuredMetadata: z.boolean(),
+    }).optional(),
+    language: nonBlankString.optional(),
+  }),
+  z.strictObject({
+    type: z.literal('asset.analyze.request'),
+    libraryId: identifierSchema,
+    assetId: identifierSchema,
+  }),
 ]);
 
 export type RendererRequest = z.infer<typeof rendererRequestSchema>;
@@ -577,6 +598,21 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
   z.strictObject({
     type: z.literal('library.import-validate'),
     sourceFolderPath: selectedPathSchema,
+  }),
+  z.strictObject({
+    type: z.literal('asset.analyze'),
+    libraryId: identifierSchema,
+    assetId: identifierSchema,
+    provider: z.enum(['openai', 'gemini', 'anthropic']),
+    model: nonBlankString,
+    apiKey: nonBlankString,
+    enabledFields: z.strictObject({
+      label: z.boolean(),
+      description: z.boolean(),
+      tags: z.boolean(),
+      structuredMetadata: z.boolean(),
+    }),
+    language: nonBlankString,
   }),
 ]);
 

@@ -531,6 +531,24 @@ const TRASH_SCHEMA_CHECKSUM = createHash('sha256')
   .update(TRASH_SCHEMA_SQL)
   .digest('hex');
 
+const AI_CONTENT_SCHEMA_SQL = `
+  CREATE TABLE ai_content (
+    ai_content_id TEXT PRIMARY KEY,
+    asset_id TEXT NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE,
+    revision_id TEXT REFERENCES revisions(revision_id) ON DELETE SET NULL,
+    field_name TEXT NOT NULL CHECK (field_name IN ('label', 'description', 'structured_metadata')),
+    value TEXT NOT NULL,
+    model_id TEXT NOT NULL,
+    model_version TEXT NOT NULL,
+    generated_at TEXT NOT NULL
+  );
+
+  CREATE INDEX ai_content_asset_field ON ai_content(asset_id, field_name);
+`;
+const AI_CONTENT_SCHEMA_CHECKSUM = createHash('sha256')
+  .update(AI_CONTENT_SCHEMA_SQL)
+  .digest('hex');
+
 const MIGRATIONS = [
   { version: 1, sql: INITIAL_SCHEMA_SQL, checksum: INITIAL_SCHEMA_CHECKSUM },
   { version: 2, sql: ASSET_SCHEMA_SQL, checksum: ASSET_SCHEMA_CHECKSUM },
@@ -543,6 +561,7 @@ const MIGRATIONS = [
   { version: 5, sql: ORGANIZATION_SCHEMA_SQL, checksum: ORGANIZATION_SCHEMA_CHECKSUM },
   { version: 6, sql: SEARCH_SCHEMA_SQL, checksum: SEARCH_SCHEMA_CHECKSUM },
   { version: 7, sql: TRASH_SCHEMA_SQL, checksum: TRASH_SCHEMA_CHECKSUM },
+  { version: 8, sql: AI_CONTENT_SCHEMA_SQL, checksum: AI_CONTENT_SCHEMA_CHECKSUM },
 ] as const;
 const SUPPORTED_SCHEMA_VERSION = MIGRATIONS.at(-1)!.version;
 
@@ -3085,12 +3104,20 @@ export class LibraryService {
 
     const tagRow = connection
       .prepare(
-        `SELECT GROUP_CONCAT(t.name, ' ') AS tags
-           FROM human_asset_tags hat
-           JOIN tags t ON t.tag_id = hat.tag_id
-          WHERE hat.asset_id = ?`,
+        `SELECT GROUP_CONCAT(all_tags.tag_name, ' ') AS tags
+           FROM (
+             SELECT t.name AS tag_name
+               FROM human_asset_tags hat
+               JOIN tags t ON t.tag_id = hat.tag_id
+              WHERE hat.asset_id = ?
+              UNION
+             SELECT t.name AS tag_name
+               FROM ai_asset_tags aat
+               JOIN tags t ON t.tag_id = aat.tag_id
+              WHERE aat.asset_id = ?
+           ) AS all_tags`,
       )
-      .get(assetId) as { tags: string | null } | undefined;
+      .get(assetId, assetId) as { tags: string | null } | undefined;
 
     connection
       .prepare(
@@ -3122,6 +3149,231 @@ export class LibraryService {
           }),
         ),
       );
+  }
+
+  // ── AI Analysis ────────────────────────────────────────────────────
+
+  /** Return the absolute filesystem path, MIME type, and whether this is a video asset. */
+  resolveAssetFilePath(libraryId: string, assetId: string): {
+    filePath: string;
+    mime: string;
+    isVideo: boolean;
+  } {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+
+    const asset = openLibrary.connection
+      .prepare(
+        `SELECT a.asset_id, a.location_kind, a.linked_folder_id,
+                a.managed_folder_id, a.relative_file_path
+           FROM assets a
+          WHERE a.asset_id = ?`,
+      )
+      .get(assetId) as {
+        asset_id: string;
+        location_kind: 'managed' | 'linked';
+        linked_folder_id: string | null;
+        managed_folder_id: string | null;
+        relative_file_path: string;
+      } | undefined;
+    if (!asset) throw new LibraryServiceError('ASSET_NOT_FOUND');
+
+    let filePath: string;
+    if (asset.location_kind === 'managed') {
+      filePath = this.folderPath(openLibrary, asset.relative_file_path);
+    } else {
+      filePath = this.linkedAssetPath(
+        openLibrary,
+        asset.linked_folder_id,
+        asset.relative_file_path,
+      );
+    }
+
+    const ext = path.extname(asset.relative_file_path).toLowerCase();
+    const mimeMap: Record<string, string> = {
+      '.png': 'image/png',
+      '.jpg': 'image/jpeg',
+      '.jpeg': 'image/jpeg',
+      '.gif': 'image/gif',
+      '.tiff': 'image/tiff',
+      '.tif': 'image/tiff',
+      '.webp': 'image/webp',
+      '.bmp': 'image/bmp',
+      '.svg': 'image/svg+xml',
+      '.mp4': 'video/mp4',
+      '.webm': 'video/webm',
+      '.mov': 'video/quicktime',
+      '.avi': 'video/x-msvideo',
+      '.wmv': 'video/x-ms-wmv',
+    };
+    const mime = mimeMap[ext] ?? 'application/octet-stream';
+    const isVideo = mime.startsWith('video/');
+
+    return { filePath, mime, isVideo };
+  }
+
+  /** List all tag names in a library for AI tag-reuse hinting. */
+  listTagNames(libraryId: string): string[] {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    const rows = openLibrary.connection
+      .prepare('SELECT name FROM tags WHERE library_id = ? ORDER BY name')
+      .all(openLibrary.summary.libraryId) as Array<{ name: string }>;
+    return rows.map((r) => r.name);
+  }
+
+  /**
+   * Atomically write AI-generated content for an asset.
+   * For tags: find-or-create by NOCASE name, then INSERT OR IGNORE into ai_asset_tags.
+   * For label/description: DELETE old row(s) + INSERT new row in ai_content
+   *   (one row per (asset_id, field_name)).
+   * After writing, sync the asset's FTS search content.
+   */
+  writeAiAnalysisResult(input: {
+    libraryId: string;
+    assetId: string;
+    label?: string;
+    description?: string;
+    tags?: string[];
+    structuredMetadata?: Record<string, unknown>;
+    modelId: string;
+    modelVersion: string;
+    enabledFields: {
+      label: boolean;
+      description: boolean;
+      tags: boolean;
+      structuredMetadata: boolean;
+    };
+  }): { tagsWritten: string[]; fieldsWritten: string[] } {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    const now = new Date().toISOString();
+    const tagsWritten: string[] = [];
+    const fieldsWritten: string[] = [];
+
+    const revisionRow = openLibrary.connection
+      .prepare('SELECT current_revision_id FROM assets WHERE asset_id = ?')
+      .get(input.assetId) as { current_revision_id: string | null } | undefined;
+    const revisionId = revisionRow?.current_revision_id ?? null;
+
+    openLibrary.connection.transaction(() => {
+      // Tags: find-or-create, then INSERT OR IGNORE into ai_asset_tags.
+      if (input.enabledFields.tags && input.tags && input.tags.length > 0) {
+        const findTag = openLibrary.connection.prepare(
+          'SELECT tag_id, name FROM tags WHERE library_id = ? AND name = ? COLLATE NOCASE',
+        );
+        const insertTag = openLibrary.connection.prepare(
+          'INSERT OR IGNORE INTO tags (tag_id, library_id, name, created_at) VALUES (?, ?, ?, ?)',
+        );
+        const insertAiTag = openLibrary.connection.prepare(
+          `INSERT OR IGNORE INTO ai_asset_tags
+             (asset_id, tag_id, revision_id, model_id, model_version)
+           VALUES (?, ?, ?, ?, ?)`,
+        );
+
+        for (const tagName of input.tags) {
+          const trimmed = tagName.trim();
+          if (trimmed.length === 0) continue;
+
+          let tag = findTag.get(openLibrary.summary.libraryId, trimmed) as
+            | { tag_id: string; name: string }
+            | undefined;
+          if (!tag) {
+            const tagId = randomUUID();
+            insertTag.run(tagId, openLibrary.summary.libraryId, trimmed, now);
+            tag = { tag_id: tagId, name: trimmed };
+          }
+
+          insertAiTag.run(
+            input.assetId,
+            tag.tag_id,
+            revisionId,
+            input.modelId,
+            input.modelVersion,
+          );
+          tagsWritten.push(trimmed);
+        }
+      }
+
+      // Label / description / structured_metadata: DELETE old row(s) + INSERT.
+      const deleteOld = openLibrary.connection.prepare(
+        'DELETE FROM ai_content WHERE asset_id = ? AND field_name = ?',
+      );
+      const insertContent = openLibrary.connection.prepare(
+        `INSERT INTO ai_content
+           (ai_content_id, asset_id, revision_id, field_name, value,
+            model_id, model_version, generated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      );
+
+      const writeField = (fieldName: string, value: string): void => {
+        deleteOld.run(input.assetId, fieldName);
+        insertContent.run(
+          randomUUID(),
+          input.assetId,
+          revisionId,
+          fieldName,
+          value,
+          input.modelId,
+          input.modelVersion,
+          now,
+        );
+        fieldsWritten.push(fieldName);
+      };
+
+      if (input.enabledFields.label && input.label !== undefined && input.label.trim().length > 0) {
+        writeField('label', input.label.trim());
+      }
+
+      if (
+        input.enabledFields.description &&
+        input.description !== undefined &&
+        input.description.trim().length > 0
+      ) {
+        writeField('description', input.description.trim());
+      }
+
+      if (
+        input.enabledFields.structuredMetadata &&
+        input.structuredMetadata !== undefined &&
+        Object.keys(input.structuredMetadata).length > 0
+      ) {
+        writeField('structured_metadata', JSON.stringify(input.structuredMetadata));
+      }
+    })();
+
+    this.syncAssetSearchContent(openLibrary.connection, input.assetId);
+
+    return { tagsWritten, fieldsWritten };
+  }
+
+  /** Retrieve current AI content for an asset. */
+  getAiContent(libraryId: string, assetId: string): Array<{
+    fieldName: string;
+    value: string;
+    modelId: string;
+    modelVersion: string;
+    generatedAt: string;
+  }> {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    const rows = openLibrary.connection
+      .prepare(
+        `SELECT field_name, value, model_id, model_version, generated_at
+           FROM ai_content
+          WHERE asset_id = ?
+          ORDER BY field_name`,
+      )
+      .all(assetId) as Array<{
+        field_name: string;
+        value: string;
+        model_id: string;
+        model_version: string;
+        generated_at: string;
+      }>;
+    return rows.map((r) => ({
+      fieldName: r.field_name,
+      value: r.value,
+      modelId: r.model_id,
+      modelVersion: r.model_version,
+      generatedAt: r.generated_at,
+    }));
   }
 
   // ── Search ──────────────────────────────────────────────────────────

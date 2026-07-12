@@ -384,6 +384,24 @@ const assetOperationSuccessSchemas = [
     type: z.literal('extension.asset-saved'),
     asset: assetSummarySchema,
   }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('asset.analyzed'),
+    assetId: nonBlankString,
+    generatedFields: z.strictObject({
+      label: nonBlankString.optional(),
+      description: nonBlankString.optional(),
+      tags: z.array(nonBlankString).optional(),
+      structuredMetadata: z.record(z.string(), z.unknown()).optional(),
+    }),
+    modelVersion: nonBlankString,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('asset.analyze-unsupported'),
+    assetId: nonBlankString,
+    reason: nonBlankString,
+  }),
 ] as const;
 
 const workerSuccessResultSchema = z.discriminatedUnion('type', [
@@ -494,6 +512,24 @@ const rendererSuccessResultSchema = z.discriminatedUnion('type', [
     importId: nonBlankString,
     libraryId: nonBlankString,
     displayName: nonBlankString,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('ai.config.got'),
+    provider: z.enum(['openai', 'gemini', 'anthropic']).nullable(),
+    model: nonBlankString.nullable(),
+    hasKey: z.boolean(),
+    enabledFields: z.strictObject({
+      label: z.boolean(),
+      description: z.boolean(),
+      tags: z.boolean(),
+      structuredMetadata: z.boolean(),
+    }),
+    language: nonBlankString,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('ai.config.saved'),
   }),
   ...assetOperationSuccessSchemas,
 ]);

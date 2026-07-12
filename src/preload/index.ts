@@ -472,6 +472,46 @@ const library: SerpentLibraryApi = Object.freeze({
     ipcRenderer.on(PROGRESS_CHANNEL, subscription);
     return () => ipcRenderer.removeListener(PROGRESS_CHANNEL, subscription);
   },
+
+  async getAiConfig(): Promise<LibraryApiResult<{
+    provider: 'openai' | 'gemini' | 'anthropic' | null;
+    model: string | null;
+    hasKey: boolean;
+    enabledFields: { label: boolean; description: boolean; tags: boolean; structuredMetadata: boolean };
+    language: string;
+  }>> {
+    const result = await request({ type: 'ai.config.get.request' });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'ai.config.got') throw new Error('Unexpected ai-config response.');
+    return { ok: true, value: result };
+  },
+
+  async setAiConfig(input: {
+    provider: 'openai' | 'gemini' | 'anthropic';
+    model: string;
+    apiKey: string;
+    enabledFields?: { label: boolean; description: boolean; tags: boolean; structuredMetadata: boolean };
+    language?: string;
+  }): Promise<LibraryApiResult<void>> {
+    const result = await request({ type: 'ai.config.set.request', ...input });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'ai.config.saved') throw new Error('Unexpected ai-config-save response.');
+    return { ok: true, value: undefined };
+  },
+
+  async analyzeAsset(input: {
+    libraryId: string;
+    assetId: string;
+  }): Promise<LibraryApiResult<{
+    assetId: string;
+    generatedFields: { label?: string; description?: string; tags?: string[]; structuredMetadata?: Record<string, unknown> };
+    modelVersion: string;
+  } | { assetId: string; reason: string }>> {
+    const result = await request({ type: 'asset.analyze.request', libraryId: input.libraryId, assetId: input.assetId });
+    if (!result.ok) return failure(result);
+    if (result.type === 'asset.analyzed' || result.type === 'asset.analyze-unsupported') return { ok: true, value: result };
+    throw new Error('Unexpected analyze response.');
+  },
 });
 
 async function importRequest(

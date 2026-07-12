@@ -98,6 +98,26 @@ export function App() {
   // Export / Import state
   const [exportProgress, setExportProgress] = useState<ExportProgressEvent | null>(null);
   const [importProgress, setImportProgress] = useState<ImportProgressEvent | null>(null);
+
+  // AI analysis state
+  const [aiConfigOpen, setAiConfigOpen] = useState(false);
+  const [aiProvider, setAiProvider] = useState<'openai' | 'gemini' | 'anthropic'>('openai');
+  const [aiModel, setAiModel] = useState('gpt-4o-mini');
+  const [aiApiKey, setAiApiKey] = useState('');
+  const [aiHasKey, setAiHasKey] = useState(false);
+  const [aiLabelEnabled, setAiLabelEnabled] = useState(true);
+  const [aiDescriptionEnabled, setAiDescriptionEnabled] = useState(true);
+  const [aiTagsEnabled, setAiTagsEnabled] = useState(true);
+  const [aiStructuredEnabled, setAiStructuredEnabled] = useState(false);
+  const [aiLanguage, setAiLanguage] = useState('auto');
+  const [aiAnalyzing, setAiAnalyzing] = useState(false);
+  const [aiContent, setAiContent] = useState<{
+    label?: string;
+    description?: string;
+    tags?: string[];
+    structuredMetadata?: Record<string, unknown>;
+    modelVersion?: string;
+  } | null>(null);
   const [importValidated, setImportValidated] = useState<ImportValidatedResult | null>(null);
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
   const [includeLinkedContent, setIncludeLinkedContent] = useState(false);
@@ -1033,6 +1053,78 @@ export function App() {
     void saveMetadata({ sourcePageUrl: editSourceUrl || undefined });
   }
 
+  // ── AI Analysis ────────────────────────────────────────────────────
+
+  async function loadAiConfig() {
+    if (!api) return;
+    const result = await api.getAiConfig();
+    if (!result.ok) return;
+    setAiProvider((result.value.provider as 'openai' | 'gemini' | 'anthropic') ?? 'openai');
+    setAiModel(result.value.model ?? 'gpt-4o-mini');
+    setAiHasKey(result.value.hasKey);
+    setAiLabelEnabled(result.value.enabledFields.label);
+    setAiDescriptionEnabled(result.value.enabledFields.description);
+    setAiTagsEnabled(result.value.enabledFields.tags);
+    setAiStructuredEnabled(result.value.enabledFields.structuredMetadata);
+    setAiLanguage(result.value.language);
+  }
+
+  async function saveAiConfig() {
+    if (!api || !aiApiKey.trim()) return;
+    const result = await api.setAiConfig({
+      provider: aiProvider,
+      model: aiModel,
+      apiKey: aiApiKey.trim(),
+      enabledFields: {
+        label: aiLabelEnabled,
+        description: aiDescriptionEnabled,
+        tags: aiTagsEnabled,
+        structuredMetadata: aiStructuredEnabled,
+      },
+      language: aiLanguage,
+    });
+    if (!result.ok) {
+      setError(toMessage(result.error, 'AI 配置保存失败。'));
+      return;
+    }
+    setAiHasKey(true);
+    setAiApiKey('');
+    setAiConfigOpen(false);
+    setNotice('AI 配置已保存。');
+  }
+
+  async function handleAnalyzeClick() {
+    if (!api || !library || !selectedAssetId) return;
+    setAiAnalyzing(true);
+    setAiContent(null);
+    try {
+      const result = await api.analyzeAsset({
+        libraryId: library.libraryId,
+        assetId: selectedAssetId,
+      });
+      if (!result.ok) {
+        setError(toMessage(result.error, 'AI 分析失败。'));
+        return;
+      }
+      if ('reason' in result.value) {
+        setNotice(`AI 分析暂不可用：${result.value.reason}`);
+        return;
+      }
+      setAiContent({
+        label: result.value.generatedFields.label,
+        description: result.value.generatedFields.description,
+        tags: result.value.generatedFields.tags,
+        structuredMetadata: result.value.generatedFields.structuredMetadata,
+        modelVersion: result.value.modelVersion,
+      });
+      setNotice('AI 分析完成。');
+      // Refresh metadata to show updated tags
+      if (selectedAssetId) void loadMetadata();
+    } finally {
+      setAiAnalyzing(false);
+    }
+  }
+
   // Handle inline input keydown for tag/collection creation
   function handleTagInputKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
     if (e.key === 'Enter') {
@@ -1095,6 +1187,8 @@ export function App() {
         {library && !showTrash && visibleAssets.some((a) => a.availability === 'missing' && !a.deletedAt) && <><span className="tool-separator" /><button className="compact-action" disabled={busy} onClick={() => void startBatchRelink()} type="button"><Icon name="folder" size={14} />批量重新定位</button></>}
       </>}
       <span className="tool-separator" /><button className="compact-action" disabled={!library || busy} onClick={() => void importAssets('files')} type="button"><Icon name="upload" size={14} />导入文件</button><button className="compact-action" disabled={!library || busy} onClick={() => void importAssets('folder')} type="button"><Icon name="folder" size={14} />导入文件夹</button><button className="compact-action" disabled={!library || busy} onClick={() => void importFolderAsLinked()} type="button"><Icon name="link" size={14} />导入链接文件夹</button><span className="tool-separator" /><button className="compact-action" disabled={!library || busy} onClick={() => setExportDialogOpen(true)} type="button"><Icon name="archive" size={14} />导出资源库</button><button className="compact-action" disabled={busy} onClick={() => void startImport()} type="button"><Icon name="folder" size={14} />导入资源库</button><ToolButton disabled={!library || busy} icon="refresh" label="刷新磁盘变化" onClick={() => void refreshAssets()} /><span className="tool-separator" /><ToolButton icon="grid" label="网格视图" pressed />
+      {library && selectedAsset && !showTrash && !selectedAsset.deletedAt && <><span className="tool-separator" /><button className="compact-action" disabled={aiAnalyzing || !aiHasKey} onClick={() => void handleAnalyzeClick()} type="button"><Icon name="smart" size={14} />{aiAnalyzing ? '分析中…' : 'AI 分析'}</button></>}
+      {library && <><span className="tool-separator" /><button className="compact-action" onClick={() => { void loadAiConfig(); setAiConfigOpen(true); }} type="button"><Icon name="info" size={14} />AI 设置</button></>}
     </div></div><div className="workspace-canvas">
       {busy && <div className="activity-strip" role="status"><span className="activity-pulse" />{uiState === 'importing' ? '正在安全复制与登记资产…' : '正在同步资源库…'}</div>}
       {exportProgress && exportProgress.phase !== 'complete' && (
@@ -1190,6 +1284,13 @@ export function App() {
         </> : <p className="nav-empty" style={{ margin: '4px 0 0' }}>选择资产以查看元数据</p>}
       </section>
       <section className="inspector-section"><h2>资源库路径</h2><p className="path-block">{selectedAsset.relativeFilePath}</p></section>
+      {/* --- AI Content --- */}
+      {aiContent && <section className="inspector-section"><h2 style={{ display: 'flex', alignItems: 'center', gap: 6 }}><span style={{ display: 'inline-block', padding: '1px 6px', borderRadius: 3, background: 'var(--accent, #6c8ee0)', color: '#fff', fontSize: 9, fontWeight: 700, lineHeight: '16px' }}>AI</span>AI 生成内容</h2>
+        {aiContent.label && <div className="editor-field" style={{ marginTop: 8 }}><label className="micro-label">标签 (Label) · AI</label><p className="path-block" style={{ color: 'var(--secondary)', fontSize: 11, margin: '2px 0 0' }}>{aiContent.label}</p></div>}
+        {aiContent.description && <div className="editor-field" style={{ marginTop: 8 }}><label className="micro-label">描述 · AI</label><p className="path-block" style={{ color: 'var(--secondary)', fontSize: 11, margin: '2px 0 0' }}>{aiContent.description}</p></div>}
+        {aiContent.tags && aiContent.tags.length > 0 && <div className="editor-field" style={{ marginTop: 8 }}><label className="micro-label">标签 · AI</label><div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 3 }}>{aiContent.tags.map((tag) => <span className="tag-chip" key={tag}>{tag}</span>)}</div></div>}
+        {aiContent.modelVersion && <div style={{ marginTop: 8, color: 'var(--tertiary)', fontSize: 9, fontFamily: "'IBM Plex Mono', monospace" }}>{aiContent.modelVersion}</div>}
+      </section>}
     </div> : library ? <div className="inspector-content"><div className="inspector-identity"><div className="inspector-badge">{initials(library.displayName)}</div><div><span className="micro-label">当前资源库</span><strong>{library.displayName}</strong></div></div><dl className="metadata-list"><div><dt>状态</dt><dd><span className="status-dot" data-active="true" />已打开</dd></div><div><dt>资产</dt><dd className="mono">{allAssetCount}</dd></div><div><dt>文件夹</dt><dd className="mono">{folders.length}</dd></div></dl><section className="inspector-section"><h2>位置</h2><p className="path-block">{library.displayPath}</p></section><button className="secondary-button inspector-close-library" onClick={() => void closeLibrary()} type="button">关闭资源库</button></div> : <div className="inspector-empty"><Icon name="info" size={18} /><strong>没有活动资源库</strong><p>打开资源库后查看当前范围与资产详情。</p></div>}</aside>
     {!leftOpen && <button className="pane-reveal pane-reveal-left" onClick={() => setLeftOpen(true)} type="button"><Icon name="collapse-left" size={15} /></button>}{!rightOpen && <button className="pane-reveal pane-reveal-right" onClick={() => setRightOpen(true)} type="button"><Icon name="collapse-right" size={15} /></button>}
     {dialog && <div className="dialog-backdrop" role="presentation"><form aria-labelledby="create-dialog-title" aria-modal="true" className="create-dialog" onSubmit={(event) => { event.preventDefault(); if (!dialogValue.trim()) return; if (dialog === 'library') { setDialog(null); void runLibraryOperation('create'); } else void createFolder(); }} role="dialog"><div className="dialog-heading"><div><span className="eyebrow">{dialog === 'library' ? 'NEW LOCAL LIBRARY' : 'MANAGED FOLDER'}</span><h2 id="create-dialog-title">{dialog === 'library' ? '创建资源库' : '新建文件夹'}</h2></div><button aria-label="取消" className="dialog-close" onClick={() => setDialog(null)} type="button"><Icon name="close" size={16} /></button></div><label className="field-label" htmlFor="dialog-name">名称</label><input autoFocus className="text-field" id="dialog-name" maxLength={255} onChange={(event) => setDialogValue(event.target.value)} value={dialogValue} /><p className="field-help">{dialog === 'library' ? '下一步由系统选择本地保存位置。' : `将在“${selectedFolder?.name ?? '资源库根目录'}”内创建真实目录。`}</p><div className="dialog-actions"><button className="secondary-button" onClick={() => setDialog(null)} type="button">取消</button><button className="primary-button" disabled={!dialogValue.trim()} type="submit">创建</button></div></form></div>}
@@ -1199,6 +1300,45 @@ export function App() {
     {permanentDeleteDialog && <div className="dialog-backdrop" role="presentation"><div aria-modal="true" className="create-dialog" role="dialog"><div className="dialog-heading"><div><span className="eyebrow">PERMANENT DELETE</span><h2>永久删除确认</h2></div><button aria-label="取消" className="dialog-close" onClick={() => setPermanentDeleteDialog(null)} type="button"><Icon name="close" size={16} /></button></div><p style={{ color: 'var(--secondary)', fontSize: 12, lineHeight: 1.6 }}>确定要永久删除此资产吗？文件将从回收站彻底移除，此操作不可撤销。</p><div className="dialog-actions"><button className="secondary-button" onClick={() => setPermanentDeleteDialog(null)} type="button">取消</button><button className="primary-button" onClick={() => void deletePermanentFromTrash()} type="button">永久删除</button></div></div></div>}
     {deleteLinkedDialog && <div className="dialog-backdrop" role="presentation"><div aria-modal="true" className="create-dialog" role="dialog"><div className="dialog-heading"><div><span className="eyebrow">DELETE LINKED ASSET</span><h2>删除链接资产</h2></div><button aria-label="取消" className="dialog-close" onClick={() => setDeleteLinkedDialog(null)} type="button"><Icon name="close" size={16} /></button></div><p style={{ color: 'var(--secondary)', fontSize: 12, lineHeight: 1.6 }}>确定要删除链接资产"{deleteLinkedDialog.displayNames}"吗？这只会移除 Serpent 中的记录，不会影响磁盘源文件。</p><label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 14, color: '#c7cac7', fontSize: 12, cursor: 'pointer' }}><input checked={deleteLinkedDialog.deleteSourceFile} onChange={(e) => setDeleteLinkedDialog({ ...deleteLinkedDialog, deleteSourceFile: e.target.checked })} type="checkbox" />同步删除磁盘源文件（移入系统回收站）</label><div className="dialog-actions"><button className="secondary-button" onClick={() => setDeleteLinkedDialog(null)} type="button">取消</button><button className="primary-button" onClick={() => void executeDeleteLinked()} type="button">删除</button></div></div></div>}
     {batchRelinkPreview && <div className="dialog-backdrop" role="presentation"><div aria-modal="true" className="conflict-dialog" role="dialog"><div className="dialog-heading"><div><span className="eyebrow">BATCH RELINK</span><h2>批量重新定位预览</h2></div><button aria-label="取消" className="dialog-close" onClick={() => setBatchRelinkPreview(null)} type="button"><Icon name="close" size={16} /></button></div><div className="conflict-summary" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}><div><strong>{batchRelinkPreview.totalCount}</strong><span>总计丢失</span></div><div><strong>{batchRelinkPreview.matchedCount}</strong><span>新位置匹配</span></div><div><strong>{batchRelinkPreview.unmatchedCount}</strong><span>未找到</span></div></div>{batchRelinkPreview.examples.length > 0 && <div className="conflict-examples">{batchRelinkPreview.examples.map((item, index) => <span key={`${item.relativeFilePath}-${index}`} style={{ color: item.matched ? 'var(--accent)' : 'var(--warning)' }}><Icon name={item.matched ? 'file' : 'warning'} size={13} />{item.relativeFilePath}</span>)}</div>}<label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 14, color: '#c7cac7', fontSize: 12, cursor: 'pointer' }}><input checked={batchRelinkKeepMetadata} onChange={(e) => setBatchRelinkKeepMetadata(e.target.checked)} type="checkbox" />沿用原资产信息（保留标签、描述、评分、合集等人工元数据）</label><div className="dialog-actions"><button className="secondary-button" onClick={() => setBatchRelinkPreview(null)} type="button">取消</button><button className="primary-button" disabled={batchRelinkPreview.matchedCount === 0} onClick={() => void applyBatchRelink()} type="button">应用批量重新定位</button></div></div></div>}
+    {aiConfigOpen && <div className="dialog-backdrop" role="presentation"><div aria-modal="true" className="create-dialog" role="dialog"><div className="dialog-heading"><div><span className="eyebrow">AI CONFIGURATION</span><h2>AI 配置 (BYOK)</h2></div><button aria-label="取消" className="dialog-close" onClick={() => { setAiConfigOpen(false); setAiApiKey(''); }} type="button"><Icon name="close" size={16} /></button></div><p style={{ color: 'var(--secondary)', fontSize: 12, lineHeight: 1.6 }}>配置第三方云端视觉模型 API Key。Key 将加密存储于本地操作系统安全凭据中，Serpent 不代理、不计费、不追踪额度。</p>
+      <div className="editor-field" style={{ marginTop: 12 }}>
+        <label className="micro-label">供应商</label>
+        <select className="text-field" onChange={(e) => setAiProvider(e.target.value as 'openai' | 'gemini' | 'anthropic')} style={{ height: 30, fontSize: 12, marginTop: 3 }} value={aiProvider}>
+          <option value="openai">OpenAI (GPT-4o / GPT-4o-mini)</option>
+          <option disabled value="gemini">Gemini（切片 0009 后续实现）</option>
+          <option disabled value="anthropic">Anthropic（切片 0009 后续实现）</option>
+        </select>
+      </div>
+      <div className="editor-field" style={{ marginTop: 10 }}>
+        <label className="micro-label">模型</label>
+        <input className="text-field" maxLength={255} onChange={(e) => setAiModel(e.target.value)} placeholder="gpt-4o-mini" style={{ height: 28, fontSize: 11, marginTop: 3 }} value={aiModel} />
+      </div>
+      <div className="editor-field" style={{ marginTop: 10 }}>
+        <label className="micro-label">API Key</label>
+        <input className="text-field" maxLength={512} onChange={(e) => setAiApiKey(e.target.value)} placeholder={aiHasKey ? '（已配置，重新输入可覆盖）' : 'sk-…'} style={{ height: 28, fontSize: 11, marginTop: 3 }} type="password" value={aiApiKey} />
+      </div>
+      <div className="editor-field" style={{ marginTop: 10 }}>
+        <label className="micro-label">语言</label>
+        <input className="text-field" maxLength={35} onChange={(e) => setAiLanguage(e.target.value)} placeholder="auto (跟随系统)" style={{ height: 28, fontSize: 11, marginTop: 3 }} value={aiLanguage} />
+      </div>
+      <div style={{ marginTop: 14 }}>
+        <label className="micro-label" style={{ marginBottom: 5, display: 'block' }}>AI 写入开关（按字段）</label>
+        {([
+          { key: 'label', label: '标签 (Label)', state: aiLabelEnabled, setter: setAiLabelEnabled },
+          { key: 'description', label: '描述', state: aiDescriptionEnabled, setter: setAiDescriptionEnabled },
+          { key: 'tags', label: '标签 (Tags)', state: aiTagsEnabled, setter: setAiTagsEnabled },
+          { key: 'structured', label: '结构化元信息', state: aiStructuredEnabled, setter: setAiStructuredEnabled },
+        ] as const).map((field) => (
+          <label key={field.key} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '3px 0', color: '#c7cac7', fontSize: 12, cursor: 'pointer' }}>
+            <input checked={field.state} onChange={(e) => field.setter(e.target.checked)} type="checkbox" />
+            {field.label}
+          </label>
+        ))}
+      </div>
+      <div className="dialog-actions" style={{ marginTop: 14 }}>
+        <button className="secondary-button" onClick={() => { setAiConfigOpen(false); setAiApiKey(''); }} type="button">取消</button>
+        <button className="primary-button" disabled={!aiApiKey.trim() && !aiHasKey} onClick={() => void saveAiConfig()} type="button">保存配置</button>
+      </div></div></div>}
   </main>;
 }
 

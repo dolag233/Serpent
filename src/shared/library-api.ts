@@ -158,4 +158,26 @@ export interface SerpentLibraryApi {
   importLibraryCopy(input: { importId: string }): Promise<LibraryApiResult<ImportCompletedResult>>;
   importLibraryOpenInPlace(input: { importId: string }): Promise<LibraryApiResult<ImportCompletedResult>>;
   onProgress(listener: (event: ExportProgressEvent | ImportProgressEvent) => void): () => void;
+  // AI
+  getAiConfig(): Promise<LibraryApiResult<{
+    provider: 'openai' | 'gemini' | 'anthropic' | null;
+    model: string | null;
+    hasKey: boolean;
+    enabledFields: { label: boolean; description: boolean; tags: boolean; structuredMetadata: boolean };
+    language: string;
+  }>>;
+  setAiConfig(input: {
+    provider: 'openai' | 'gemini' | 'anthropic';
+    model: string;
+    apiKey: string;
+    enabledFields?: { label: boolean; description: boolean; tags: boolean; structuredMetadata: boolean };
+    language?: string;
+  }): Promise<LibraryApiResult<void>>;
+  analyzeAsset(input: {
+    libraryId: string;
+    assetId: string;
+  }): Promise<LibraryApiResult<
+    | { assetId: string; generatedFields: { label?: string; description?: string; tags?: string[]; structuredMetadata?: Record<string, unknown> }; modelVersion: string }
+    | { assetId: string; reason: string }
+  >>;
 }

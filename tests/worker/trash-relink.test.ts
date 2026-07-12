@@ -68,17 +68,17 @@ afterEach(() => {
   }
 });
 
-describe('schema v6->v7 migration', () => {
-  it('creates a new library at schema v7', () => {
+describe('schema v7->v8 migration', () => {
+  it('creates a new library at schema v8', () => {
     const root = temporaryRoot();
     const service = new LibraryService();
     const created = service.createLibrary({
-      displayName: 'V7 Test',
+      displayName: 'V8 Test',
       selectedParentPath: root,
     });
 
     const database = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
-    expect(database.pragma('user_version')).toEqual([{ user_version: 7 }]);
+    expect(database.pragma('user_version')).toEqual([{ user_version: 8 }]);
 
     const columns = database.prepare("PRAGMA table_info('assets')").all() as Array<{
       cid: number; name: string; type: string;
@@ -95,15 +95,21 @@ describe('schema v6->v7 migration', () => {
     expect(indexNames).toContain('assets_deleted_at_idx');
     expect(indexNames).toContain('assets_deleted_folder_idx');
 
+    // Verify ai_content table exists.
+    const aiContentCols = database.prepare("PRAGMA table_info('ai_content')").all() as Array<{ name: string }>;
+    expect(aiContentCols.map((c) => c.name)).toEqual(
+      expect.arrayContaining(['ai_content_id', 'asset_id', 'field_name', 'value', 'model_id', 'model_version', 'generated_at']),
+    );
+
     database.close();
     service.closeAll();
   });
 
-  it('migrates a v6 library to v7 when opening', () => {
+  it('migrates a v7 library to v8 when opening', () => {
     const root = temporaryRoot();
     const service = new LibraryService();
     const created = service.createLibrary({
-      displayName: 'V6 to V7',
+      displayName: 'V7 to V8',
       selectedParentPath: root,
     });
 
@@ -113,54 +119,37 @@ describe('schema v6->v7 migration', () => {
     service.closeAll();
 
     const db = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    // Downgrade from v8 to v7 by removing v8 migration metadata + ai_content objects.
     db.exec(`
-      DROP INDEX IF EXISTS assets_deleted_at_idx;
-      DROP INDEX IF EXISTS assets_deleted_folder_idx;
-      ALTER TABLE assets DROP COLUMN deleted_at;
-      ALTER TABLE assets DROP COLUMN trashed_from_relative_path;
-      ALTER TABLE assets DROP COLUMN trashed_from_folder_id;
-      CREATE TABLE revisions_v6 (
-        revision_id TEXT PRIMARY KEY,
-        asset_id TEXT NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE,
-        parent_revision_id TEXT REFERENCES revisions_v6(revision_id) ON DELETE SET NULL,
-        byte_size INTEGER NOT NULL CHECK (byte_size >= 0),
-        modified_at TEXT NOT NULL,
-        original_filename TEXT NOT NULL,
-        origin TEXT NOT NULL CHECK (origin IN ('import', 'external_change', 'replace')),
-        accepted_at TEXT NOT NULL
-      );
-      INSERT INTO revisions_v6 SELECT * FROM revisions;
-      DROP TABLE revisions;
-      ALTER TABLE revisions_v6 RENAME TO revisions;
-      DROP INDEX IF EXISTS revisions_asset_accepted_idx;
-      CREATE INDEX revisions_asset_accepted_idx ON revisions(asset_id, accepted_at);
-      DELETE FROM schema_migrations WHERE version = 7;
-      PRAGMA user_version = 6;
+      DROP TABLE IF EXISTS ai_content;
+      DROP INDEX IF EXISTS ai_content_asset_field;
+      DELETE FROM schema_migrations WHERE version = 8;
+      PRAGMA user_version = 7;
     `);
     db.close();
 
     service.openLibrary(created.libraryPath);
 
     const db2 = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
-    expect(db2.pragma('user_version')).toEqual([{ user_version: 7 }]);
+    expect(db2.pragma('user_version')).toEqual([{ user_version: 8 }]);
     const migrationRows = db2.prepare('SELECT version FROM schema_migrations ORDER BY version').all() as Array<{ version: number }>;
-    expect(migrationRows.map((r) => r.version)).toContain(7);
+    expect(migrationRows.map((r) => r.version)).toContain(8);
     db2.close();
     service.closeAll();
   });
 
-  it('is idempotent when reopening a v7 database', () => {
+  it('is idempotent when reopening a v8 database', () => {
     const root = temporaryRoot();
     const service = new LibraryService();
-    const created = service.createLibrary({ displayName: 'Idemp V7', selectedParentPath: root });
+    const created = service.createLibrary({ displayName: 'Idemp V8', selectedParentPath: root });
     service.closeAll();
     service.openLibrary(created.libraryPath);
     const db = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
-    expect(db.pragma('user_version')).toEqual([{ user_version: 7 }]);
+    expect(db.pragma('user_version')).toEqual([{ user_version: 8 }]);
     service.closeAll();
     service.openLibrary(created.libraryPath);
     const migrationCount = db.prepare(
-      'SELECT COUNT(*) AS count FROM schema_migrations WHERE version = 7',
+      'SELECT COUNT(*) AS count FROM schema_migrations WHERE version = 8',
     ).all() as Array<{ count: number }>;
     expect(migrationCount[0]!.count).toBe(1);
     db.close();
@@ -168,8 +157,8 @@ describe('schema v6->v7 migration', () => {
   });
 });
 
-describe('downgrade helpers still work with v7', () => {
-  it('downgrade to v1 then re-migrate through v7', () => {
+describe('downgrade helpers still work with v8', () => {
+  it('downgrade to v1 then re-migrate through v8', () => {
     const root = temporaryRoot();
     const service = new LibraryService();
     const created = service.createLibrary({ displayName: 'Downgrade', selectedParentPath: root });
@@ -191,6 +180,8 @@ describe('downgrade helpers still work with v7', () => {
       DROP TABLE IF EXISTS smart_collections;
       DROP TABLE IF EXISTS human_asset_tags;
       DROP TABLE IF EXISTS ai_asset_tags;
+      DROP TABLE IF EXISTS ai_content;
+      DROP INDEX IF EXISTS ai_content_asset_field;
       DROP TABLE IF EXISTS asset_metadata;
       DROP TABLE IF EXISTS tags;
       DROP TABLE file_operations;
@@ -205,7 +196,7 @@ describe('downgrade helpers still work with v7', () => {
 
     service.openLibrary(created.libraryPath);
     const db = new TestDatabase(dbPath);
-    expect(db.pragma('user_version')).toEqual([{ user_version: 7 }]);
+    expect(db.pragma('user_version')).toEqual([{ user_version: 8 }]);
     db.close();
     service.closeAll();
   });
