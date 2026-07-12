@@ -40,6 +40,13 @@ const TestDatabase = require('better-sqlite3') as new (
 function downgradeLibraryToV1(libraryPath: string, createMigrationBlocker = false): void {
   const database = new TestDatabase(path.join(libraryPath, '.serpent', 'library.db'));
   database.exec(`
+    -- Reverse v6: drop FTS5 tables and triggers.
+    DROP TABLE IF EXISTS asset_search;
+    DROP TABLE IF EXISTS asset_search_index;
+    DROP TRIGGER IF EXISTS asset_search_index_ai;
+    DROP TRIGGER IF EXISTS asset_search_index_ad;
+    DROP TRIGGER IF EXISTS asset_search_index_au;
+    DROP INDEX IF EXISTS smart_collections_library_name_unique;
     DROP TABLE IF EXISTS collection_assets;
     DROP TABLE IF EXISTS collections;
     DROP TABLE IF EXISTS smart_collections;
@@ -66,6 +73,13 @@ function downgradeLibraryToV2(libraryPath: string): void {
     -- disable during this raw downgrade so DROP TABLE assets does not cascade
     -- through revisions.asset_id ON DELETE CASCADE and orphan every asset.
     PRAGMA foreign_keys = OFF;
+    -- Reverse v6: drop FTS5 tables and triggers.
+    DROP TABLE IF EXISTS asset_search;
+    DROP TABLE IF EXISTS asset_search_index;
+    DROP TRIGGER IF EXISTS asset_search_index_ai;
+    DROP TRIGGER IF EXISTS asset_search_index_ad;
+    DROP TRIGGER IF EXISTS asset_search_index_au;
+    DROP INDEX IF EXISTS smart_collections_library_name_unique;
     -- Reverse v5: drop organization tables (tags, collections, metadata).
     DROP TABLE IF EXISTS collection_assets;
     DROP TABLE IF EXISTS collections;
@@ -164,7 +178,7 @@ describe('LibraryService lifecycle', () => {
     expect(service.listLibraries()).toEqual([created]);
 
     const database = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
-    expect(database.pragma('user_version')).toEqual([{ user_version: 5 }]);
+    expect(database.pragma('user_version')).toEqual([{ user_version: 6 }]);
     database.close();
 
     expect(service.openLibrary(created.libraryPath)).toEqual(created);
@@ -282,7 +296,7 @@ describe('LibraryService lifecycle', () => {
     service.openLibrary(created.libraryPath);
 
     const database = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
-    expect(database.pragma('user_version')).toEqual([{ user_version: 5 }]);
+    expect(database.pragma('user_version')).toEqual([{ user_version: 6 }]);
     expect(
       database
         .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'assets'")
@@ -310,7 +324,7 @@ describe('LibraryService lifecycle', () => {
     expect(service.listAssets({ libraryId: reopened.libraryId, recursive: true })[0])
       .toMatchObject({ relativeFilePath: 'Café.PNG' });
     const database = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
-    expect(database.pragma('user_version')).toEqual([{ user_version: 5 }]);
+    expect(database.pragma('user_version')).toEqual([{ user_version: 6 }]);
     expect(database.prepare('SELECT path_identity FROM assets').all()).toEqual([
       { path_identity: 'café.png' },
     ]);

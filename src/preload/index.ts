@@ -300,28 +300,42 @@ const library: SerpentLibraryApi = Object.freeze({
     const result = await request({ type: 'smart-collection.list.request', libraryId });
     if (!result.ok) return failure(result);
     if (result.type !== 'smart-collection.list') throw new Error('Unexpected list-smart-collections response.');
-    return { ok: true, value: result.smartCollections };
+    return { ok: true, value: result.collections };
   },
 
-  async createSmartCollection({ libraryId, name, queryDefinition, sortDefinition }: { libraryId: string; name: string; queryDefinition: string; sortDefinition: string }): Promise<LibraryApiResult<SmartCollectionSummary>> {
-    const result = await request({ type: 'smart-collection.create.request', libraryId, name, queryDefinition, sortDefinition });
+  async createSmartCollection({ libraryId, name, queryDefinitionJson }: { libraryId: string; name: string; queryDefinitionJson: string }): Promise<LibraryApiResult<SmartCollectionSummary>> {
+    const result = await request({ type: 'smart-collection.create.request', libraryId, name, queryDefinitionJson });
     if (!result.ok) return failure(result);
     if (result.type !== 'smart-collection.created') throw new Error('Unexpected create-smart-collection response.');
-    return { ok: true, value: result.smartCollection };
+    return { ok: true, value: result.collection };
   },
 
-  async updateSmartCollection({ libraryId, smartCollectionId, name, queryDefinition, sortDefinition }: { libraryId: string; smartCollectionId: string; name?: string; queryDefinition?: string; sortDefinition?: string }): Promise<LibraryApiResult<SmartCollectionSummary>> {
-    const result = await request({ type: 'smart-collection.update.request', libraryId, smartCollectionId, name, queryDefinition, sortDefinition });
+  async updateSmartCollection({ libraryId, collectionId, name, queryDefinitionJson, position }: { libraryId: string; collectionId: string; name?: string; queryDefinitionJson?: string; position?: number }): Promise<LibraryApiResult<SmartCollectionSummary>> {
+    const result = await request({ type: 'smart-collection.update.request', libraryId, collectionId, name, queryDefinitionJson, position });
     if (!result.ok) return failure(result);
     if (result.type !== 'smart-collection.updated') throw new Error('Unexpected update-smart-collection response.');
-    return { ok: true, value: result.smartCollection };
+    return { ok: true, value: result.collection };
   },
 
-  async deleteSmartCollection({ libraryId, smartCollectionId }: { libraryId: string; smartCollectionId: string }): Promise<LibraryApiResult<{ smartCollectionId: string }>> {
-    const result = await request({ type: 'smart-collection.delete.request', libraryId, smartCollectionId });
+  async deleteSmartCollection({ libraryId, collectionId }: { libraryId: string; collectionId: string }): Promise<LibraryApiResult<{ collectionId: string }>> {
+    const result = await request({ type: 'smart-collection.delete.request', libraryId, collectionId });
     if (!result.ok) return failure(result);
     if (result.type !== 'smart-collection.deleted') throw new Error('Unexpected delete-smart-collection response.');
-    return { ok: true, value: { smartCollectionId: result.smartCollectionId } };
+    return { ok: true, value: { collectionId: result.collectionId } };
+  },
+
+  async executeSmartCollection({ libraryId, collectionId }: { libraryId: string; collectionId: string }): Promise<LibraryApiResult<{ items: AssetSummary[]; total: number; offset: number }>> {
+    const result = await request({ type: 'smart-collection.execute.request', libraryId, collectionId });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'smart-collection.executed') throw new Error('Unexpected execute-smart-collection response.');
+    return { ok: true, value: { items: result.items, total: result.total, offset: result.offset } };
+  },
+
+  async searchAssets({ libraryId, query, filters, sort, limit, offset }: { libraryId: string; query?: { clauses: { field: string | null; values: string[]; exclude: boolean }[] } | null; filters?: { field: 'format' | 'tag' | 'rating' | 'favorite' | 'source_url' | 'availability'; values: string[]; exclude: boolean }[]; sort?: { field: 'name' | 'modified_at' | 'created_at' | 'byte_size' | 'duration' | 'rating'; order: 'asc' | 'desc' }; limit?: number; offset?: number }): Promise<LibraryApiResult<{ items: AssetSummary[]; total: number; offset: number; snippets?: { assetId: string; text: string }[] }>> {
+    const result = await request({ type: 'asset.search.request', libraryId, query: query ?? null, filters, sort, limit, offset });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'asset.search.result') throw new Error('Unexpected search-assets response.');
+    return { ok: true, value: { items: result.items, total: result.total, offset: result.offset, snippets: result.snippets } };
   },
 
   onLifecycle(listener: (event: RendererLifecycleEvent) => void) {

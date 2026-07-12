@@ -25,7 +25,7 @@ import path from 'node:path';
 
 import BetterSqlite3 from 'better-sqlite3';
 
-import type { AssetMetadataResult, AssetSummary, CollectionSummary, LinkedFolderSummary, ManagedFolderSummary, SmartCollectionSummary, TagSummary } from '../shared/asset-types';
+import type { AssetMetadataResult, AssetSummary, CollectionSummary, LinkedFolderSummary, ManagedFolderSummary, TagSummary } from '../shared/asset-types';
 import type { PublicErrorCode } from '../shared/protocol/errors';
 import { publicReasonFromError, type PublicErrorReason } from '../shared/protocol/errors';
 import type {
@@ -47,6 +47,11 @@ import {
   portablePathSegmentIdentity,
   targetLibraryPath,
 } from './library-rules';
+import {
+  buildFts5Query,
+  tokenizeForFts,
+  type SearchClause,
+} from './search-query';
 
 interface RunResult {
   changes: number;
@@ -341,6 +346,83 @@ const ORGANIZATION_SCHEMA_CHECKSUM = createHash('sha256')
   .update(ORGANIZATION_SCHEMA_SQL)
   .digest('hex');
 
+const SEARCH_SCHEMA_SQL = `
+  CREATE TABLE asset_search_index (
+    asset_id TEXT UNIQUE NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE,
+    label TEXT NOT NULL DEFAULT '',
+    filename TEXT NOT NULL DEFAULT '',
+    tags TEXT NOT NULL DEFAULT '',
+    description TEXT NOT NULL DEFAULT '',
+    source_url TEXT NOT NULL DEFAULT '',
+    folder_path TEXT NOT NULL DEFAULT '',
+    metadata_text TEXT NOT NULL DEFAULT ''
+  );
+
+  CREATE VIRTUAL TABLE asset_search USING fts5(
+    label,
+    filename,
+    tags,
+    description,
+    source_url,
+    folder_path,
+    metadata_text,
+    content='asset_search_index'
+  );
+
+  CREATE TRIGGER asset_search_index_ai AFTER INSERT ON asset_search_index BEGIN
+    INSERT INTO asset_search(rowid, label, filename, tags, description, source_url, folder_path, metadata_text)
+    VALUES (new.rowid, new.label, new.filename, new.tags, new.description,
+            new.source_url, new.folder_path, new.metadata_text);
+  END;
+
+  CREATE TRIGGER asset_search_index_ad AFTER DELETE ON asset_search_index BEGIN
+    INSERT INTO asset_search(asset_search, rowid, label, filename, tags, description, source_url, folder_path, metadata_text)
+    VALUES ('delete', old.rowid, old.label, old.filename, old.tags, old.description,
+            old.source_url, old.folder_path, old.metadata_text);
+  END;
+
+  CREATE TRIGGER asset_search_index_au AFTER UPDATE ON asset_search_index BEGIN
+    INSERT INTO asset_search(asset_search, rowid, label, filename, tags, description, source_url, folder_path, metadata_text)
+    VALUES ('delete', old.rowid, old.label, old.filename, old.tags, old.description,
+            old.source_url, old.folder_path, old.metadata_text);
+    INSERT INTO asset_search(rowid, label, filename, tags, description, source_url, folder_path, metadata_text)
+    VALUES (new.rowid, new.label, new.filename, new.tags, new.description,
+            new.source_url, new.folder_path, new.metadata_text);
+  END;
+
+  -- Rebuild smart_collections for v6 shape (collection_id pk, query_definition_json,
+  -- position, UNIQUE(library_id, name)). Requires FK disable as DROP TABLE cascades.
+  CREATE TABLE smart_collections_v6 (
+    collection_id TEXT PRIMARY KEY,
+    library_id TEXT NOT NULL REFERENCES library(library_id),
+    name TEXT NOT NULL,
+    query_definition_json TEXT NOT NULL,
+    position INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+
+  INSERT INTO smart_collections_v6 (collection_id, library_id, name, query_definition_json, position, created_at, updated_at)
+  SELECT
+    smart_collection_id,
+    library_id,
+    name,
+    '{"query":' || json_quote(query_definition) || ',"sort":' || json_quote(sort_definition) || '}',
+    0,
+    created_at,
+    updated_at
+  FROM smart_collections;
+
+  DROP TABLE smart_collections;
+  ALTER TABLE smart_collections_v6 RENAME TO smart_collections;
+
+  CREATE UNIQUE INDEX smart_collections_library_name_unique
+    ON smart_collections(library_id, name);
+`;
+const SEARCH_SCHEMA_CHECKSUM = createHash('sha256')
+  .update(SEARCH_SCHEMA_SQL)
+  .digest('hex');
+
 const MIGRATIONS = [
   { version: 1, sql: INITIAL_SCHEMA_SQL, checksum: INITIAL_SCHEMA_CHECKSUM },
   { version: 2, sql: ASSET_SCHEMA_SQL, checksum: ASSET_SCHEMA_CHECKSUM },
@@ -351,6 +433,7 @@ const MIGRATIONS = [
   },
   { version: 4, sql: LINKED_FOLDERS_SCHEMA_SQL, checksum: LINKED_FOLDERS_SCHEMA_CHECKSUM },
   { version: 5, sql: ORGANIZATION_SCHEMA_SQL, checksum: ORGANIZATION_SCHEMA_CHECKSUM },
+  { version: 6, sql: SEARCH_SCHEMA_SQL, checksum: SEARCH_SCHEMA_CHECKSUM },
 ] as const;
 const SUPPORTED_SCHEMA_VERSION = MIGRATIONS.at(-1)!.version;
 
@@ -668,6 +751,7 @@ export function openConfiguredDatabase(filename: string): DatabaseConnection {
   const connection = new Database(filename);
   try {
     connection.pragma('foreign_keys = ON');
+    connection.pragma('trusted_schema = ON');
     const journalMode = connection.pragma('journal_mode = WAL', { simple: true });
     connection.pragma('synchronous = FULL');
     if (
@@ -755,6 +839,93 @@ function backfillPortablePathIdentities(connection: DatabaseConnection): void {
   );
 }
 
+function buildFileName(relativeFilePath: string): string {
+  return path.posix.basename(relativeFilePath);
+}
+
+function buildFolderPath(relativeFilePath: string): string {
+  return path.posix.dirname(relativeFilePath) === '.' ? '' : path.posix.dirname(relativeFilePath);
+}
+
+function byteSizeLabel(byteSize: number): string {
+  if (byteSize < 1_000_000) return 'small';
+  if (byteSize < 10_000_000) return 'medium';
+  if (byteSize < 100_000_000) return 'large';
+  return 'xlarge';
+}
+
+function buildMetadataText(input: {
+  availability: string;
+  byteSize: number;
+  relativeFilePath: string;
+}): string {
+  const extension = path.posix.extname(input.relativeFilePath).toLowerCase();
+  const parts: string[] = [];
+  if (extension.length > 0) parts.push(extension);
+  parts.push(byteSizeLabel(input.byteSize));
+  parts.push(input.availability);
+  return parts.join(' ');
+}
+
+function backfillAssetSearchContent(connection: DatabaseConnection): void {
+  const assets = connection
+    .prepare(
+      `SELECT a.asset_id, a.relative_file_path, a.availability,
+              r.byte_size, m.label, m.description, m.source_page_url
+         FROM assets a
+         JOIN revisions r ON r.revision_id = a.current_revision_id
+         LEFT JOIN asset_metadata m ON m.asset_id = a.asset_id
+        ORDER BY a.asset_id`,
+    )
+    .all() as Array<{
+      asset_id: string;
+      relative_file_path: string;
+      availability: string;
+      byte_size: number;
+      label: string | null;
+      description: string | null;
+      source_page_url: string | null;
+    }>;
+
+  const tagRows = connection
+    .prepare(
+      `SELECT hat.asset_id, GROUP_CONCAT(t.name, ' ') AS tags
+         FROM human_asset_tags hat
+         JOIN tags t ON t.tag_id = hat.tag_id
+        GROUP BY hat.asset_id`,
+    )
+    .all() as Array<{ asset_id: string; tags: string | null }>;
+  const tagsByAsset = new Map<string, string>();
+  for (const row of tagRows) {
+    tagsByAsset.set(row.asset_id, row.tags ?? '');
+  }
+
+  const insert = connection.prepare(
+    `INSERT OR IGNORE INTO asset_search_index
+       (asset_id, label, filename, tags, description, source_url, folder_path, metadata_text)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+  );
+
+  for (const asset of assets) {
+    insert.run(
+      asset.asset_id,
+      tokenizeForFts(asset.label ?? ''),
+      tokenizeForFts(buildFileName(asset.relative_file_path)),
+      tokenizeForFts(tagsByAsset.get(asset.asset_id) ?? ''),
+      tokenizeForFts(asset.description ?? ''),
+      tokenizeForFts(asset.source_page_url ?? ''),
+      tokenizeForFts(buildFolderPath(asset.relative_file_path)),
+      tokenizeForFts(
+        buildMetadataText({
+          availability: asset.availability,
+          byteSize: asset.byte_size,
+          relativeFilePath: asset.relative_file_path,
+        }),
+      ),
+    );
+  }
+}
+
 function migrateDatabase(connection: DatabaseConnection, allowFresh: boolean): void {
   const currentVersion = schemaVersion(connection);
   if (currentVersion > SUPPORTED_SCHEMA_VERSION) {
@@ -774,14 +945,23 @@ function migrateDatabase(connection: DatabaseConnection, allowFresh: boolean): v
     // toggle it around the v4 transaction and run foreign_key_check before
     // re-enabling. asset_ids are preserved across the rebuild, so the check
     // passes and revisions remain attached.
-    const rebuildsAssetsTable = migration.version === 4;
-    if (rebuildsAssetsTable) connection.pragma('foreign_keys = OFF');
+    //
+    // The v6 migration rebuilds the smart_collections table. While no other
+    // table references smart_collections via FK, the table itself has an
+    // outgoing FK to library(library_id). Disabling FK prevents DROP TABLE
+    // from blocking and guarantees the rebuild is clean.
+    const rebuildsTable = migration.version === 4 || migration.version === 6;
+    if (rebuildsTable) connection.pragma('foreign_keys = OFF');
     try {
       connection.transaction(() => {
         connection.exec(migration.sql);
         if (migration.version === 3) {
           backfillPortablePathIdentities(connection);
           connection.exec(PORTABLE_PATH_SCHEMA_AFTER_BACKFILL_SQL);
+        }
+        if (migration.version === 6) {
+          backfillAssetSearchContent(connection);
+          connection.exec("INSERT INTO asset_search(asset_search) VALUES('rebuild')");
         }
         connection
           .prepare(
@@ -791,7 +971,7 @@ function migrateDatabase(connection: DatabaseConnection, allowFresh: boolean): v
         connection.pragma(`user_version = ${migration.version}`);
       })();
     } catch (error) {
-      if (rebuildsAssetsTable) {
+      if (rebuildsTable) {
         try {
           connection.pragma('foreign_keys = ON');
         } catch {
@@ -800,7 +980,7 @@ function migrateDatabase(connection: DatabaseConnection, allowFresh: boolean): v
       }
       throw new LibraryServiceError('LIBRARY_CORRUPT', { cause: error });
     }
-    if (rebuildsAssetsTable) {
+    if (rebuildsTable) {
       const foreignKeyViolations = connection.pragma('foreign_key_check');
       connection.pragma('foreign_keys = ON');
       if (Array.isArray(foreignKeyViolations) && foreignKeyViolations.length > 0) {
@@ -1872,6 +2052,7 @@ export class LibraryService {
           now,
         );
         setCurrentRevision.run(revisionId, now, assetId);
+        this.syncAssetSearchContent(openLibrary.connection, assetId);
       }
     })();
 
@@ -2130,6 +2311,9 @@ export class LibraryService {
         }
       }
     })();
+    for (const assetId of input.assetIds) {
+      this.syncAssetSearchContent(openLibrary.connection, assetId);
+    }
     return { assignedCount };
   }
 
@@ -2146,6 +2330,9 @@ export class LibraryService {
              AND tag_id IN (${input.tagIds.map(() => '?').join(',')})`,
       )
       .run(...input.assetIds, ...input.tagIds);
+    for (const assetId of input.assetIds) {
+      if (result.changes > 0) this.syncAssetSearchContent(openLibrary.connection, assetId);
+    }
     return { removedCount: result.changes };
   }
 
@@ -2659,6 +2846,8 @@ export class LibraryService {
           updated_at: string;
         };
 
+      this.syncAssetSearchContent(openLibrary.connection, input.assetId);
+
       return {
         assetId: updated.asset_id,
         label: updated.label,
@@ -2712,6 +2901,7 @@ export class LibraryService {
         newEntityVersion,
         now,
       );
+    this.syncAssetSearchContent(openLibrary.connection, input.assetId);
 
     return {
       assetId: input.assetId,
@@ -2748,83 +2938,422 @@ export class LibraryService {
 
   // ── Smart Collections ────────────────────────────────────────────────
 
+  // ── FTS5 Search Content Sync ───────────────────────────────────────
+
+  private syncAssetSearchContent(
+    connection: DatabaseConnection,
+    assetId: string,
+  ): void {
+    const asset = connection
+      .prepare(
+        `SELECT a.relative_file_path, a.availability, r.byte_size,
+                m.label, m.description, m.source_page_url
+           FROM assets a
+           JOIN revisions r ON r.revision_id = a.current_revision_id
+           LEFT JOIN asset_metadata m ON m.asset_id = a.asset_id
+          WHERE a.asset_id = ?`,
+      )
+      .get(assetId) as {
+        relative_file_path: string;
+        availability: string;
+        byte_size: number;
+        label: string | null;
+        description: string | null;
+        source_page_url: string | null;
+      } | undefined;
+    if (!asset) return;
+
+    const tagRow = connection
+      .prepare(
+        `SELECT GROUP_CONCAT(t.name, ' ') AS tags
+           FROM human_asset_tags hat
+           JOIN tags t ON t.tag_id = hat.tag_id
+          WHERE hat.asset_id = ?`,
+      )
+      .get(assetId) as { tags: string | null } | undefined;
+
+    connection
+      .prepare(
+        `INSERT INTO asset_search_index
+           (asset_id, label, filename, tags, description, source_url, folder_path, metadata_text)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(asset_id) DO UPDATE SET
+           label = excluded.label,
+           filename = excluded.filename,
+           tags = excluded.tags,
+           description = excluded.description,
+           source_url = excluded.source_url,
+           folder_path = excluded.folder_path,
+           metadata_text = excluded.metadata_text`,
+      )
+      .run(
+        assetId,
+        tokenizeForFts(asset.label ?? ''),
+        tokenizeForFts(buildFileName(asset.relative_file_path)),
+        tokenizeForFts(tagRow?.tags ?? ''),
+        tokenizeForFts(asset.description ?? ''),
+        tokenizeForFts(asset.source_page_url ?? ''),
+        tokenizeForFts(buildFolderPath(asset.relative_file_path)),
+        tokenizeForFts(
+          buildMetadataText({
+            availability: asset.availability,
+            byteSize: asset.byte_size,
+            relativeFilePath: asset.relative_file_path,
+          }),
+        ),
+      );
+  }
+
+  // ── Search ──────────────────────────────────────────────────────────
+
+  private buildFilterWhere(
+    filters: Array<{
+      field: 'availability' | 'favorite' | 'format' | 'rating' | 'source_url' | 'tag';
+      values: string[];
+      exclude: boolean;
+    }>,
+  ): { sql: string; params: unknown[] } {
+    const conditions: string[] = [];
+    const params: unknown[] = [];
+
+    for (const filter of filters) {
+      // favorite + source_url are existence/boolean filters: they take no
+      // values (the presence/absence IS the filter). Handle before the
+      // empty-values skip so `values: []` does not silently drop them.
+      if (filter.field === 'favorite') {
+        conditions.push(
+          filter.exclude ? `(COALESCE(m.favorite, 0) != 1)` : `(COALESCE(m.favorite, 0) = 1)`,
+        );
+        continue;
+      }
+      if (filter.field === 'source_url') {
+        const hasUrl = `(m.source_page_url IS NOT NULL AND m.source_page_url != '')`;
+        conditions.push(filter.exclude ? `(NOT ${hasUrl})` : `(${hasUrl})`);
+        continue;
+      }
+      if (filter.values.length === 0) continue;
+
+      switch (filter.field) {
+        case 'format': {
+          const likes = filter.values.map(() => `LOWER(a.relative_file_path) LIKE ?`);
+          const clause = filter.exclude
+            ? `NOT (${likes.join(' OR ')})`
+            : `(${likes.join(' OR ')})`;
+          conditions.push(clause);
+          for (const v of filter.values) {
+            params.push(`%.${v.toLowerCase()}`);
+          }
+          break;
+        }
+        case 'tag': {
+          const phs = filter.values.map(() => '?').join(',');
+          const clause = filter.exclude
+            ? `a.asset_id NOT IN (SELECT hat.asset_id FROM human_asset_tags hat JOIN tags t ON t.tag_id = hat.tag_id WHERE t.name = ? COLLATE NOCASE)`
+            : `a.asset_id IN (SELECT hat.asset_id FROM human_asset_tags hat JOIN tags t ON t.tag_id = hat.tag_id WHERE t.name IN (${phs}) COLLATE NOCASE)`;
+          // For exclude with multiple values, build separate clauses
+          if (filter.exclude && filter.values.length > 1) {
+            const notClauses = filter.values.map(() =>
+              `a.asset_id NOT IN (SELECT hat.asset_id FROM human_asset_tags hat JOIN tags t ON t.tag_id = hat.tag_id WHERE t.name = ? COLLATE NOCASE)`,
+            );
+            conditions.push(`(${notClauses.join(' AND ')})`);
+          } else if (filter.exclude) {
+            conditions.push(`(${clause})`);
+            params.push(filter.values[0]!);
+          } else {
+            conditions.push(`(${clause})`);
+            params.push(...filter.values);
+          }
+          break;
+        }
+        case 'rating': {
+          const phs = filter.values.map(() => '?').join(',');
+          const clause = filter.exclude
+            ? `COALESCE(m.rating, 0) NOT IN (${phs})`
+            : `COALESCE(m.rating, 0) IN (${phs})`;
+          conditions.push(`(${clause})`);
+          for (const v of filter.values) {
+            params.push(Number(v));
+          }
+          break;
+        }
+        case 'availability': {
+          const phs = filter.values.map(() => '?').join(',');
+          const clause = filter.exclude
+            ? `a.availability NOT IN (${phs})`
+            : `a.availability IN (${phs})`;
+          conditions.push(`(${clause})`);
+          params.push(...filter.values);
+          break;
+        }
+        default:
+          // Unknown field: force no results.
+          conditions.push('1 = 0');
+      }
+    }
+
+    return { sql: conditions.length > 0 ? conditions.join(' AND ') : '', params };
+  }
+
+  searchAssets(input: {
+    libraryId: string;
+    query?: { clauses: SearchClause[] } | null;
+    filters?: Array<{
+      field: 'availability' | 'favorite' | 'format' | 'rating' | 'source_url' | 'tag';
+      values: string[];
+      exclude: boolean;
+    }> | null;
+    sort?: { field: string; order: 'asc' | 'desc' } | null;
+    limit?: number | null;
+    offset?: number | null;
+  }): {
+    items: AssetSummary[];
+    total: number;
+    offset: number;
+    snippets?: Array<{ assetId: string; text: string }>;
+  } {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    const connection = openLibrary.connection;
+    const limit = input.limit ?? 50;
+    const offset = input.offset ?? 0;
+
+    const hasQuery =
+      input.query !== null &&
+      input.query !== undefined &&
+      input.query.clauses.length > 0;
+    const fts5Query = hasQuery ? buildFts5Query(input.query!.clauses) : null;
+    const { sql: filterWhere, params: filterParams } = this.buildFilterWhere(
+      input.filters ?? [],
+    );
+
+    // Build ORDER BY clause.
+    let orderBy: string;
+    if (hasQuery) {
+      // When searching, order by BM25 relevance with per-column weights
+      // (label 12, filename 10, tags 8, description 5, source_url 3,
+      // folder_path 2, metadata_text 1) per ADR-0009. The FTS5 `rank` hidden
+      // column uses default weights (all 1.0); explicit bm25() is required to
+      // apply the weighted ranking. This sacrifices the rank-column snippet
+      // lazy-evaluation optimization (restorable later via a custom rank fn).
+      orderBy = `bm25(asset_search, 12.0, 10.0, 8.0, 5.0, 3.0, 2.0, 1.0) ASC`;
+    } else if (input.sort) {
+      const sortField = input.sort.field;
+      const dir = input.sort.order === 'desc' ? 'DESC' : 'ASC';
+      switch (sortField) {
+        case 'name':
+          orderBy = `a.relative_file_path ${dir}`;
+          break;
+        case 'modified_at':
+          orderBy = `r.modified_at ${dir}`;
+          break;
+        case 'created_at':
+          orderBy = `a.created_at ${dir}`;
+          break;
+        case 'byte_size':
+          orderBy = `r.byte_size ${dir}`;
+          break;
+        case 'duration':
+          // duration not extracted in this slice; fall back to name.
+          orderBy = `a.relative_file_path ${dir}`;
+          break;
+        case 'rating':
+          orderBy = `COALESCE(m.rating, 0) ${dir}`;
+          break;
+        default:
+          orderBy = `a.relative_file_path ASC`;
+      }
+    } else {
+      orderBy = `a.relative_file_path ASC`;
+    }
+
+    // Build the base FROM + JOIN clauses.
+    const baseFrom = hasQuery
+      ? `FROM assets a
+           JOIN revisions r ON r.revision_id = a.current_revision_id
+           LEFT JOIN asset_metadata m ON m.asset_id = a.asset_id
+           JOIN asset_search_index sc ON a.asset_id = sc.asset_id
+           JOIN asset_search s ON sc.rowid = s.rowid`
+      : `FROM assets a
+           JOIN revisions r ON r.revision_id = a.current_revision_id
+           LEFT JOIN asset_metadata m ON m.asset_id = a.asset_id`;
+
+    // WHERE clause.
+    const whereParts: string[] = [];
+    const allParams: unknown[] = [];
+
+    if (hasQuery) {
+      whereParts.push(
+        `asset_search MATCH ? AND rank MATCH 'bm25(12.0, 10.0, 8.0, 5.0, 3.0, 2.0, 1.0)'`,
+      );
+      allParams.push(fts5Query);
+    }
+
+    if (filterWhere.length > 0) {
+      whereParts.push(filterWhere);
+      allParams.push(...filterParams);
+    }
+
+    const whereClause =
+      whereParts.length > 0 ? `WHERE ${whereParts.join(' AND ')}` : '';
+
+    // Columns for data query.
+    const dataColumns = hasQuery
+      ? `a.asset_id, a.managed_folder_id, a.relative_file_path, a.current_revision_id,
+         a.availability, r.byte_size, r.modified_at,
+         m.label, COALESCE(m.rating, 0) AS rating, COALESCE(m.favorite, 0) AS favorite,
+         snippet(asset_search, 0, '<b>', '</b>', '...', 32) AS snippet_text`
+      : `a.asset_id, a.managed_folder_id, a.relative_file_path, a.current_revision_id,
+         a.availability, r.byte_size, r.modified_at,
+         m.label, COALESCE(m.rating, 0) AS rating, COALESCE(m.favorite, 0) AS favorite`;
+
+    // Total count query.
+    const countSql = `SELECT COUNT(*) AS total ${baseFrom} ${whereClause}`;
+    const countRow = connection.prepare(countSql).get(...allParams) as {
+      total: number;
+    };
+    const total = countRow.total;
+
+    // Data query.
+    const dataSql = `SELECT ${dataColumns} ${baseFrom} ${whereClause} ORDER BY ${orderBy} LIMIT ? OFFSET ?`;
+    const rows = connection
+      .prepare(dataSql)
+      .all(...allParams, limit, offset) as Array<{
+        asset_id: string;
+        managed_folder_id: string | null;
+        relative_file_path: string;
+        current_revision_id: string;
+        availability: 'available' | 'missing';
+        byte_size: number;
+        modified_at: string;
+        label: string | null;
+        rating: number;
+        favorite: number;
+        snippet_text?: string;
+      }>;
+
+    const items: AssetSummary[] = rows.map((row) => ({
+      assetId: row.asset_id,
+      managedFolderId: row.managed_folder_id,
+      relativeFilePath: row.relative_file_path,
+      displayName: path.posix.basename(row.relative_file_path),
+      currentRevisionId: row.current_revision_id,
+      byteSize: row.byte_size,
+      modifiedAt: row.modified_at,
+      availability: row.availability,
+      label: row.label,
+      rating: row.rating,
+      favorite: row.favorite !== 0,
+    }));
+
+    const snippets: Array<{ assetId: string; text: string }> | undefined =
+      hasQuery
+        ? rows
+            .filter((r) => r.snippet_text && r.snippet_text.length > 0)
+            .map((r) => ({ assetId: r.asset_id, text: r.snippet_text! }))
+        : undefined;
+
+    return { items, total, offset, snippets };
+  }
+
+  // ── Smart Collections (v6) ──────────────────────────────────────────
+
   createSmartCollection(input: {
     libraryId: string;
     name: string;
-    queryDefinition: string;
-    sortDefinition: string;
-  }): SmartCollectionSummary {
+    queryDefinitionJson: string;
+  }): { collectionId: string; name: string; queryDefinition: string; position: number } {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     const trimmed = input.name.trim();
     if (trimmed.length === 0) throw new LibraryServiceError('INVALID_FOLDER_NAME');
 
-    const smartCollectionId = randomUUID();
+    // Validate queryDefinitionJson is parseable JSON.
+    try {
+      JSON.parse(input.queryDefinitionJson);
+    } catch {
+      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+    }
+
+    const collectionId = randomUUID();
     const now = new Date().toISOString();
 
-    openLibrary.connection
-      .prepare(
-        `INSERT INTO smart_collections
-           (smart_collection_id, library_id, name, query_definition, sort_definition, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        smartCollectionId,
-        openLibrary.summary.libraryId,
-        trimmed,
-        input.queryDefinition,
-        input.sortDefinition,
-        now,
-        now,
-      );
+    try {
+      openLibrary.connection
+        .prepare(
+          `INSERT INTO smart_collections
+             (collection_id, library_id, name, query_definition_json, position, created_at, updated_at)
+           VALUES (?, ?, ?, ?, 0, ?, ?)`,
+        )
+        .run(
+          collectionId,
+          openLibrary.summary.libraryId,
+          trimmed,
+          input.queryDefinitionJson,
+          now,
+          now,
+        );
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        'code' in error &&
+        error.code === 'SQLITE_CONSTRAINT_UNIQUE'
+      ) {
+        throw new LibraryServiceError('FOLDER_ALREADY_EXISTS');
+      }
+      throw new LibraryServiceError('LIBRARY_NOT_WRITABLE', { cause: error });
+    }
 
     return {
-      smartCollectionId,
+      collectionId,
       name: trimmed,
-      queryDefinition: input.queryDefinition,
-      sortDefinition: input.sortDefinition,
+      queryDefinition: input.queryDefinitionJson,
+      position: 0,
     };
   }
 
-  listSmartCollections(libraryId: string): SmartCollectionSummary[] {
+  listSmartCollections(libraryId: string): Array<{
+    collectionId: string;
+    name: string;
+    queryDefinition: string;
+    position: number;
+  }> {
     const openLibrary = this.requireOpenLibrary(libraryId);
     const rows = openLibrary.connection
       .prepare(
-        `SELECT smart_collection_id, name, query_definition, sort_definition
+        `SELECT collection_id, name, query_definition_json, position
            FROM smart_collections
           WHERE library_id = ?
-          ORDER BY name`,
+          ORDER BY position, name`,
       )
       .all(openLibrary.summary.libraryId) as Array<{
-        smart_collection_id: string;
+        collection_id: string;
         name: string;
-        query_definition: string;
-        sort_definition: string;
+        query_definition_json: string;
+        position: number;
       }>;
     return rows.map((row) => ({
-      smartCollectionId: row.smart_collection_id,
+      collectionId: row.collection_id,
       name: row.name,
-      queryDefinition: row.query_definition,
-      sortDefinition: row.sort_definition,
+      queryDefinition: row.query_definition_json,
+      position: row.position,
     }));
   }
 
   updateSmartCollection(input: {
     libraryId: string;
-    smartCollectionId: string;
+    collectionId: string;
     name?: string;
-    queryDefinition?: string;
-    sortDefinition?: string;
-  }): SmartCollectionSummary {
+    queryDefinitionJson?: string;
+    position?: number;
+  }): { collectionId: string; name: string; queryDefinition: string; position: number } {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     const existing = openLibrary.connection
       .prepare(
-        'SELECT smart_collection_id, name, query_definition, sort_definition FROM smart_collections WHERE smart_collection_id = ? AND library_id = ?',
+        'SELECT collection_id, name, query_definition_json, position FROM smart_collections WHERE collection_id = ? AND library_id = ?',
       )
-      .get(input.smartCollectionId, openLibrary.summary.libraryId) as {
-        smart_collection_id: string;
+      .get(input.collectionId, openLibrary.summary.libraryId) as {
+        collection_id: string;
         name: string;
-        query_definition: string;
-        sort_definition: string;
+        query_definition_json: string;
+        position: number;
       } | undefined;
     if (!existing) throw new LibraryServiceError('FOLDER_NOT_FOUND');
 
@@ -2832,41 +3361,102 @@ export class LibraryService {
     const newName =
       input.name !== undefined ? input.name.trim() : existing.name;
     if (newName.length === 0) throw new LibraryServiceError('INVALID_FOLDER_NAME');
-    const newQueryDefinition = input.queryDefinition ?? existing.query_definition;
-    const newSortDefinition = input.sortDefinition ?? existing.sort_definition;
+    const newQueryDefinitionJson =
+      input.queryDefinitionJson ?? existing.query_definition_json;
+    const newPosition = input.position ?? existing.position;
 
-    openLibrary.connection
-      .prepare(
-        `UPDATE smart_collections
-            SET name = ?, query_definition = ?, sort_definition = ?, updated_at = ?
-          WHERE smart_collection_id = ?`,
-      )
-      .run(newName, newQueryDefinition, newSortDefinition, now, input.smartCollectionId);
+    // Validate queryDefinitionJson if provided.
+    if (input.queryDefinitionJson !== undefined) {
+      try {
+        JSON.parse(input.queryDefinitionJson);
+      } catch {
+        throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+      }
+    }
+
+    try {
+      openLibrary.connection
+        .prepare(
+          `UPDATE smart_collections
+              SET name = ?, query_definition_json = ?, position = ?, updated_at = ?
+            WHERE collection_id = ?`,
+        )
+        .run(newName, newQueryDefinitionJson, newPosition, now, input.collectionId);
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        'code' in error &&
+        error.code === 'SQLITE_CONSTRAINT_UNIQUE'
+      ) {
+        throw new LibraryServiceError('FOLDER_ALREADY_EXISTS');
+      }
+      throw new LibraryServiceError('LIBRARY_NOT_WRITABLE', { cause: error });
+    }
 
     return {
-      smartCollectionId: input.smartCollectionId,
+      collectionId: input.collectionId,
       name: newName,
-      queryDefinition: newQueryDefinition,
-      sortDefinition: newSortDefinition,
+      queryDefinition: newQueryDefinitionJson,
+      position: newPosition,
     };
   }
 
   deleteSmartCollection(input: {
     libraryId: string;
-    smartCollectionId: string;
+    collectionId: string;
   }): string {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     const existing = openLibrary.connection
       .prepare(
-        'SELECT smart_collection_id FROM smart_collections WHERE smart_collection_id = ? AND library_id = ?',
+        'SELECT collection_id FROM smart_collections WHERE collection_id = ? AND library_id = ?',
       )
-      .get(input.smartCollectionId, openLibrary.summary.libraryId);
+      .get(input.collectionId, openLibrary.summary.libraryId);
     if (!existing) throw new LibraryServiceError('FOLDER_NOT_FOUND');
 
     openLibrary.connection
-      .prepare('DELETE FROM smart_collections WHERE smart_collection_id = ?')
-      .run(input.smartCollectionId);
-    return input.smartCollectionId;
+      .prepare('DELETE FROM smart_collections WHERE collection_id = ?')
+      .run(input.collectionId);
+    return input.collectionId;
+  }
+
+  executeSmartCollection(input: {
+    libraryId: string;
+    collectionId: string;
+  }): { items: AssetSummary[]; total: number; offset: number } {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    const sc = openLibrary.connection
+      .prepare(
+        'SELECT collection_id, query_definition_json FROM smart_collections WHERE collection_id = ? AND library_id = ?',
+      )
+      .get(input.collectionId, openLibrary.summary.libraryId) as {
+        collection_id: string;
+        query_definition_json: string;
+      } | undefined;
+    if (!sc) throw new LibraryServiceError('FOLDER_NOT_FOUND');
+
+    let definition: {
+      search?: { clauses: SearchClause[] };
+      filters?: Array<{
+        field: 'availability' | 'favorite' | 'format' | 'rating' | 'source_url' | 'tag';
+        values: string[];
+        exclude: boolean;
+      }>;
+      sort?: { field: string; order: 'asc' | 'desc' };
+    };
+    try {
+      definition = JSON.parse(sc.query_definition_json);
+    } catch {
+      throw new LibraryServiceError('LIBRARY_CORRUPT');
+    }
+
+    return this.searchAssets({
+      libraryId: input.libraryId,
+      query: definition.search ?? null,
+      filters: definition.filters ?? null,
+      sort: definition.sort ?? null,
+      limit: 50,
+      offset: 0,
+    });
   }
 
   private enumerateLinkedSources(rootPath: string): Array<{
@@ -3504,6 +4094,7 @@ export class LibraryService {
               assetId,
             );
           affectedAssetIds.push(assetId);
+          this.syncAssetSearchContent(openLibrary.connection, assetId);
         });
         this.failAt('before-db-commit');
         openLibrary.connection
@@ -3661,11 +4252,13 @@ export class LibraryService {
             )
             .run(revisionId, now, asset.asset_id);
           changedCount += 1;
+          this.syncAssetSearchContent(openLibrary.connection, asset.asset_id);
         } else if (asset.availability === 'missing') {
           openLibrary.connection
             .prepare("UPDATE assets SET availability = 'available', updated_at = ? WHERE asset_id = ?")
             .run(now, asset.asset_id);
           changedCount += 1;
+          this.syncAssetSearchContent(openLibrary.connection, asset.asset_id);
         }
       }
     })();

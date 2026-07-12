@@ -71,11 +71,38 @@ export const assetMetadataResultSchema = z.strictObject({
 
 export type AssetMetadataResult = z.infer<typeof assetMetadataResultSchema>;
 
+export const sortDefinitionSchema = z.strictObject({
+  field: z.enum(['name', 'modified_at', 'created_at', 'byte_size', 'duration', 'rating']),
+  order: z.enum(['asc', 'desc']),
+});
+
+export type SortDefinition = z.infer<typeof sortDefinitionSchema>;
+
+export const filterClauseSchema = z.strictObject({
+  field: z.enum(['format', 'tag', 'rating', 'favorite', 'source_url', 'availability']),
+  values: z.array(nonBlankString),
+  exclude: z.boolean(),
+});
+
+export type FilterClause = z.infer<typeof filterClauseSchema>;
+
+export const searchClauseSchema = z.strictObject({
+  field: nonBlankString.nullable(),
+  values: z.array(nonBlankString).min(1),
+  exclude: z.boolean(),
+});
+
+export type SearchClause = z.infer<typeof searchClauseSchema>;
+
+export const searchQuerySchema = z.strictObject({
+  clauses: z.array(searchClauseSchema),
+}).nullable();
+
 export const smartCollectionSummarySchema = z.strictObject({
-  smartCollectionId: nonBlankString,
+  collectionId: nonBlankString,
   name: nonBlankString,
   queryDefinition: nonBlankString,
-  sortDefinition: nonBlankString,
+  position: z.number().int().nonnegative(),
 });
 
 export type SmartCollectionSummary = z.infer<typeof smartCollectionSummarySchema>;

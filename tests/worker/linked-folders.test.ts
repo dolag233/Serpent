@@ -44,7 +44,7 @@ describe('Linked folders schema migration', () => {
 
     const database = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
     try {
-      expect(database.pragma('user_version')).toEqual([{ user_version: 5 }]);
+      expect(database.pragma('user_version')).toEqual([{ user_version: 6 }]);
 
       const linkedFoldersTable = database
         .prepare(

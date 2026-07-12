@@ -191,26 +191,54 @@ function handleRequest(request: WorkerRequest): WorkerResult {
       const { backfilledCount } = libraryService.backfillAssetMetadata(request.command.libraryId);
       return { ok: true, type: 'asset.metadata.backfilled', backfilledCount };
     }
+    case 'asset.search': {
+      const result = libraryService.searchAssets({
+        libraryId: request.command.libraryId,
+        query: request.command.query,
+        filters: request.command.filters ?? null,
+        sort: request.command.sort ?? null,
+        limit: request.command.limit ?? 50,
+        offset: request.command.offset ?? 0,
+      });
+      return {
+        ok: true,
+        type: 'asset.search.result',
+        items: result.items,
+        total: result.total,
+        offset: result.offset,
+        snippets: result.snippets,
+      };
+    }
     case 'smart-collection.list':
       return {
         ok: true,
         type: 'smart-collection.list',
-        smartCollections: libraryService.listSmartCollections(request.command.libraryId),
+        collections: libraryService.listSmartCollections(request.command.libraryId),
       };
     case 'smart-collection.create': {
       const sc = libraryService.createSmartCollection(request.command);
-      return { ok: true, type: 'smart-collection.created', smartCollection: sc };
+      return { ok: true, type: 'smart-collection.created', collection: sc };
     }
     case 'smart-collection.update': {
       const sc = libraryService.updateSmartCollection(request.command);
-      return { ok: true, type: 'smart-collection.updated', smartCollection: sc };
+      return { ok: true, type: 'smart-collection.updated', collection: sc };
     }
     case 'smart-collection.delete':
       return {
         ok: true,
         type: 'smart-collection.deleted',
-        smartCollectionId: libraryService.deleteSmartCollection(request.command),
+        collectionId: libraryService.deleteSmartCollection(request.command),
       };
+    case 'smart-collection.execute': {
+      const result = libraryService.executeSmartCollection(request.command);
+      return {
+        ok: true,
+        type: 'smart-collection.executed',
+        items: result.items,
+        total: result.total,
+        offset: result.offset,
+      };
+    }
     default:
       return assertNever(request.command);
   }

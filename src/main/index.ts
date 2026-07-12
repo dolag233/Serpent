@@ -327,6 +327,16 @@ async function commandFor(request: RendererRequest): Promise<WorkerCommand | und
       };
     case 'asset.metadata.backfill.request':
       return { type: 'asset.metadata.backfill', libraryId: request.libraryId };
+    case 'asset.search.request':
+      return {
+        type: 'asset.search',
+        libraryId: request.libraryId,
+        query: request.query,
+        filters: request.filters,
+        sort: request.sort,
+        limit: request.limit,
+        offset: request.offset,
+      };
     case 'smart-collection.list.request':
       return { type: 'smart-collection.list', libraryId: request.libraryId };
     case 'smart-collection.create.request':
@@ -334,20 +344,29 @@ async function commandFor(request: RendererRequest): Promise<WorkerCommand | und
         type: 'smart-collection.create',
         libraryId: request.libraryId,
         name: request.name,
-        queryDefinition: request.queryDefinition,
-        sortDefinition: request.sortDefinition,
+        queryDefinitionJson: request.queryDefinitionJson,
       };
     case 'smart-collection.update.request':
       return {
         type: 'smart-collection.update',
         libraryId: request.libraryId,
-        smartCollectionId: request.smartCollectionId,
+        collectionId: request.collectionId,
         name: request.name,
-        queryDefinition: request.queryDefinition,
-        sortDefinition: request.sortDefinition,
+        queryDefinitionJson: request.queryDefinitionJson,
+        position: request.position,
       };
     case 'smart-collection.delete.request':
-      return { type: 'smart-collection.delete', libraryId: request.libraryId, smartCollectionId: request.smartCollectionId };
+      return {
+        type: 'smart-collection.delete',
+        libraryId: request.libraryId,
+        collectionId: request.collectionId,
+      };
+    case 'smart-collection.execute.request':
+      return {
+        type: 'smart-collection.execute',
+        libraryId: request.libraryId,
+        collectionId: request.collectionId,
+      };
     default:
       return assertNever(request);
   }

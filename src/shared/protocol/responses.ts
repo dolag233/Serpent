@@ -232,22 +232,52 @@ const assetOperationSuccessSchemas = [
   z.strictObject({
     ok: z.literal(true),
     type: z.literal('smart-collection.list'),
-    smartCollections: z.array(smartCollectionSummarySchema),
+    collections: z.array(smartCollectionSummarySchema),
   }),
   z.strictObject({
     ok: z.literal(true),
     type: z.literal('smart-collection.created'),
-    smartCollection: smartCollectionSummarySchema,
+    collection: z.strictObject({
+      collectionId: nonBlankString,
+      name: nonBlankString,
+      queryDefinition: nonBlankString,
+      position: z.number().int().nonnegative(),
+    }),
   }),
   z.strictObject({
     ok: z.literal(true),
     type: z.literal('smart-collection.updated'),
-    smartCollection: smartCollectionSummarySchema,
+    collection: z.strictObject({
+      collectionId: nonBlankString,
+      name: nonBlankString,
+      queryDefinition: nonBlankString,
+      position: z.number().int().nonnegative(),
+    }),
   }),
   z.strictObject({
     ok: z.literal(true),
     type: z.literal('smart-collection.deleted'),
-    smartCollectionId: nonBlankString,
+    collectionId: nonBlankString,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('smart-collection.executed'),
+    items: z.array(assetSummarySchema),
+    total: z.number().int().nonnegative(),
+    offset: z.number().int().nonnegative(),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('asset.search.result'),
+    items: z.array(assetSummarySchema),
+    total: z.number().int().nonnegative(),
+    offset: z.number().int().nonnegative(),
+    snippets: z.array(
+      z.strictObject({
+        assetId: nonBlankString,
+        text: nonBlankString,
+      }),
+    ).optional(),
   }),
 ] as const;
 

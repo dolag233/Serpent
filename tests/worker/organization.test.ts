@@ -867,15 +867,14 @@ describe('smart collections', () => {
     const sc = service.createSmartCollection({
       libraryId,
       name: '  High Rated  ',
-      queryDefinition: '{"rating": {"$gte": 4}}',
-      sortDefinition: '{"rating": "desc"}',
+      queryDefinitionJson: '{"query":"{\\"rating\\":{\\"$gte\\":4}}","sort":"{\\"rating\\":\\"desc\\"}"}',
     });
     expect(sc).toMatchObject({
       name: 'High Rated',
-      queryDefinition: '{"rating": {"$gte": 4}}',
-      sortDefinition: '{"rating": "desc"}',
+      queryDefinition: '{"query":"{\\"rating\\":{\\"$gte\\":4}}","sort":"{\\"rating\\":\\"desc\\"}"}',
+      position: 0,
     });
-    expect(sc.smartCollectionId).toBeTruthy();
+    expect(sc.collectionId).toBeTruthy();
 
     const list = service.listSmartCollections(libraryId);
     expect(list).toEqual([sc]);
@@ -889,31 +888,30 @@ describe('smart collections', () => {
     const sc = service.createSmartCollection({
       libraryId,
       name: 'Original',
-      queryDefinition: '{}',
-      sortDefinition: '{}',
+      queryDefinitionJson: '{"query":"{}","sort":"{}"}',
     });
 
     const updated = service.updateSmartCollection({
       libraryId,
-      smartCollectionId: sc.smartCollectionId,
+      collectionId: sc.collectionId,
       name: '  Updated  ',
-      queryDefinition: '{"favorite": true}',
+      queryDefinitionJson: '{"query":"{\\"favorite\\":true}","sort":"{}"}',
     });
     expect(updated).toMatchObject({
-      smartCollectionId: sc.smartCollectionId,
+      collectionId: sc.collectionId,
       name: 'Updated',
-      queryDefinition: '{"favorite": true}',
-      sortDefinition: '{}', // unchanged
+      queryDefinition: '{"query":"{\\"favorite\\":true}","sort":"{}"}',
+      position: 0,
     });
 
-    // Partial: only update sort.
+    // Partial: only update position.
     const updated2 = service.updateSmartCollection({
       libraryId,
-      smartCollectionId: sc.smartCollectionId,
-      sortDefinition: '{"rating": "asc"}',
+      collectionId: sc.collectionId,
+      position: 5,
     });
     expect(updated2.name).toBe('Updated');
-    expect(updated2.sortDefinition).toBe('{"rating": "asc"}');
+    expect(updated2.position).toBe(5);
 
     service.closeAll();
   });
@@ -924,7 +922,7 @@ describe('smart collections', () => {
       () =>
         service.updateSmartCollection({
           libraryId,
-          smartCollectionId: 'nonexistent',
+          collectionId: 'nonexistent',
           name: 'Nope',
         }),
       'FOLDER_NOT_FOUND',
@@ -938,15 +936,14 @@ describe('smart collections', () => {
     const sc = service.createSmartCollection({
       libraryId,
       name: 'ToDelete',
-      queryDefinition: '{}',
-      sortDefinition: '{}',
+      queryDefinitionJson: '{"query":"{}","sort":"{}"}',
     });
 
     const deletedId = service.deleteSmartCollection({
       libraryId,
-      smartCollectionId: sc.smartCollectionId,
+      collectionId: sc.collectionId,
     });
-    expect(deletedId).toBe(sc.smartCollectionId);
+    expect(deletedId).toBe(sc.collectionId);
 
     const list = service.listSmartCollections(libraryId);
     expect(list).toEqual([]);
@@ -960,10 +957,67 @@ describe('smart collections', () => {
       () =>
         service.deleteSmartCollection({
           libraryId,
-          smartCollectionId: 'nonexistent',
+          collectionId: 'nonexistent',
         }),
       'FOLDER_NOT_FOUND',
     );
+    service.closeAll();
+  });
+
+  it('enforces unique name per library', () => {
+    const { service, libraryId } = createLibraryWithAsset();
+    service.createSmartCollection({
+      libraryId,
+      name: 'Unique',
+      queryDefinitionJson: '{}',
+    });
+    expectServiceCode(
+      () =>
+        service.createSmartCollection({
+          libraryId,
+          name: 'Unique',
+          queryDefinitionJson: '{}',
+        }),
+      'FOLDER_ALREADY_EXISTS',
+    );
+    service.closeAll();
+  });
+
+  it('rejects invalid JSON in queryDefinitionJson', () => {
+    const { service, libraryId } = createLibraryWithAsset();
+    expectServiceCode(
+      () =>
+        service.createSmartCollection({ libraryId, name: 'Bad', queryDefinitionJson: 'not json' }),
+      'INVALID_IMPORT_DECISION',
+    );
+    service.closeAll();
+  });
+
+  it('executes a smart collection and returns results', () => {
+    const { service, libraryId, assetId, libraryPath } = createLibraryWithAsset();
+    const managedFolder = service.listManagedFolders(libraryId)[0]!;
+    const assetId2 = createSecondAsset(libraryPath, managedFolder.relativePath, managedFolder.folderId);
+
+    // Set distinct ratings so we can filter.
+    service.setAssetMetadata({ libraryId, assetId, expectedVersion: 0, rating: 5, label: 'Masterpiece' });
+    service.setAssetMetadata({ libraryId, assetId: assetId2, expectedVersion: 0, rating: 1, label: 'Sketch' });
+
+    // Create smart collection for rating >= 4.
+    const sc = service.createSmartCollection({
+      libraryId,
+      name: 'High Rated',
+      queryDefinitionJson: JSON.stringify({
+        filters: [{ field: 'rating', values: ['4', '5'], exclude: false }],
+        sort: { field: 'rating', order: 'desc' },
+      }),
+    });
+
+    const result = service.executeSmartCollection({ libraryId, collectionId: sc.collectionId });
+    expect(result.total).toBe(1);
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0]!.assetId).toBe(assetId);
+    expect(result.items[0]!.label).toBe('Masterpiece');
+
     service.closeAll();
   });
 });

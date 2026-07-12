@@ -753,7 +753,7 @@ export function App() {
         </> : <p className="nav-empty">打开资源库后显示合集</p>}
       </Section>
       <Section title="智能合集">
-        {library ? (smartCollections.length ? smartCollections.map((sc) => <NavRow active={false} icon="smart" key={sc.smartCollectionId} label={sc.name} disabled />) : <p className="nav-empty">尚无智能合集（切片 0005 启用查询）</p>) : <p className="nav-empty">打开资源库后显示智能合集</p>}
+        {library ? (smartCollections.length ? smartCollections.map((sc) => <NavRow active={false} icon="smart" key={sc.collectionId} label={sc.name} disabled />) : <p className="nav-empty">尚无智能合集（切片 0005 启用查询）</p>) : <p className="nav-empty">打开资源库后显示智能合集</p>}
       </Section>
       <Section title="链接文件夹" action={library ? () => void importFolderAsLinked() : undefined}>
         {library ? (linkedFolders.length ? linkedFolders.map((lf) => <NavRow active={assetScope === lf.folderId && !activeTagId && !activeCollectionId} icon={lf.status === 'offline' ? 'warning' : 'link'} key={lf.folderId} label={lf.displayName} count={lf.assetCount} onClick={lf.status === 'offline' ? () => void relinkFolder(lf.folderId) : () => void chooseFolder(lf.folderId)} />) : <p className="nav-empty">链接外部文件夹作为资产来源</p>) : <p className="nav-empty">打开资源库后显示链接文件夹</p>}
