@@ -4209,6 +4209,49 @@ export class LibraryService {
       : null;
   }
 
+  /**
+   * Return the current (invalidated_at IS NULL) artifact of a given kind
+   * for an asset's current revision. Returns null if none exists.
+   * Unlike getThumbnailArtifact, this also returns the raw status so
+   * callers can distinguish ready vs failed artifacts.
+   */
+  getCurrentArtifact(
+    libraryId: string,
+    assetId: string,
+    kind: string,
+  ): { artifactId: string; filePath: string; mimeType: string; status: string } | null {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    const assetRow = openLibrary.connection
+      .prepare('SELECT current_revision_id FROM assets WHERE asset_id = ?')
+      .get(assetId) as { current_revision_id: string | null } | undefined;
+    if (!assetRow?.current_revision_id) return null;
+
+    const row = openLibrary.connection
+      .prepare(
+        `SELECT artifact_id, file_path, mime_type, status
+           FROM revision_artifacts
+          WHERE revision_id = ?
+            AND kind = ?
+            AND invalidated_at IS NULL
+          LIMIT 1`,
+      )
+      .get(assetRow.current_revision_id, kind) as {
+        artifact_id: string;
+        file_path: string;
+        mime_type: string;
+        status: string;
+      } | undefined;
+
+    return row
+      ? {
+          artifactId: row.artifact_id,
+          filePath: row.file_path,
+          mimeType: row.mime_type,
+          status: row.status,
+        }
+      : null;
+  }
+
   /** Get the absolute filesystem path for an artifact. */
   getArtifactAbsolutePath(libraryId: string, artifactId: string): string {
     const openLibrary = this.requireOpenLibrary(libraryId);
