@@ -8,7 +8,7 @@ export default defineConfig({
       fileName: () => 'library_worker.js',
     },
     rollupOptions: {
-      external: ['better-sqlite3'],
+      external: ['better-sqlite3', 'sharp'],
     },
   },
 });
