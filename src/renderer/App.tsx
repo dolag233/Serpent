@@ -224,6 +224,7 @@ export function App() {
       setAssetScope('all');
       setActiveTagId(null);
       setActiveCollectionId(null);
+      api?.setActiveContext(result.value.libraryId);
       await loadContent(result.value, 'all');
     } catch (caught) {
       setError(toMessage(caught, '资源库操作失败。'));
@@ -239,6 +240,8 @@ export function App() {
     setSelectedAssetId(undefined);
     setActiveTagId(null);
     setActiveCollectionId(null);
+    const folderId = (scope === 'all' || scope === 'root') ? undefined : scope;
+    api?.setActiveContext(library.libraryId, folderId);
     setUiState('loading');
     try {
       await loadContent(library, scope);
@@ -256,6 +259,7 @@ export function App() {
     setActiveCollectionId(null);
     setSelectedAssetId(undefined);
     setAssetScope('all');
+    api?.setActiveContext(library.libraryId);
     setUiState('loading');
     try {
       await loadContent(library, 'all', { trashMode: true });
@@ -312,6 +316,7 @@ export function App() {
     setActiveCollectionId(null);
     setAssetScope('all');
     setSelectedAssetId(undefined);
+    api?.setActiveContext(library.libraryId);
     setUiState('loading');
     try {
       // Load all assets for client-side tag filter
@@ -368,6 +373,7 @@ export function App() {
     setActiveTagId(null);
     setAssetScope('all');
     setSelectedAssetId(undefined);
+    api?.setActiveContext(library.libraryId);
     setUiState('loading');
     try {
       const result = await api.listCollectionAssets({ libraryId: library.libraryId, collectionId, recursive: collectionRecursive });
@@ -621,6 +627,7 @@ export function App() {
       setActiveTagId(null);
       setActiveCollectionId(null);
       setTagMembership(new Map());
+      api?.setActiveContext(null);
     } catch (caught) {
       setError(toMessage(caught, '关闭失败。'));
     } finally {

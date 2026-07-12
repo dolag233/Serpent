@@ -48,7 +48,7 @@ function errorForLog(error: unknown, depth = 0): unknown {
   };
 }
 
-function handleRequest(request: WorkerRequest): WorkerResult {
+async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
   switch (request.command.type) {
     case 'library.list':
       return { ok: true, type: 'library.list', libraries: libraryService.listLibraries() };
@@ -275,6 +275,10 @@ function handleRequest(request: WorkerRequest): WorkerResult {
       const { restoredCount, unchangedMissingCount, assets } = libraryService.relinkBatchApply(request.command);
       return { ok: true, type: 'asset.relink-batch.applied', restoredCount, unchangedMissingCount, assets };
     }
+    case 'extension.save-from-url': {
+      const { asset } = await libraryService.saveAssetFromUrl(request.command);
+      return { ok: true, type: 'extension.asset-saved', asset };
+    }
     default:
       return assertNever(request.command);
   }
@@ -292,7 +296,7 @@ function requestIdFrom(input: unknown): string | undefined {
     : undefined;
 }
 
-parentPort.on('message', (event) => {
+parentPort.on('message', async (event) => {
   const input: unknown = event.data;
 
   try {
@@ -313,7 +317,7 @@ parentPort.on('message', (event) => {
   let response: WorkerResponse;
   try {
     const request = parseWorkerRequest(input);
-    response = { requestId: request.requestId, result: handleRequest(request) };
+    response = { requestId: request.requestId, result: await handleRequest(request) };
   } catch (error) {
     console.error(JSON.stringify({
       timestamp: new Date().toISOString(),

@@ -4,6 +4,7 @@ import type { LibraryApiResult, SerpentLibraryApi } from '../shared/library-api'
 import type { AssetSummary, AssetMetadataResult, CollectionSummary, LinkedFolderSummary, ManagedFolderSummary, SmartCollectionSummary, TagSummary } from '../shared/asset-types';
 import {
   ASSET_CHANGE_CHANNEL,
+  ACTIVE_CONTEXT_CHANNEL,
   LIBRARY_LIFECYCLE_CHANNEL,
   LIBRARY_REQUEST_CHANNEL,
 } from '../shared/protocol/channels';
@@ -399,6 +400,10 @@ const library: SerpentLibraryApi = Object.freeze({
     if (!result.ok) return failure(result);
     if (result.type !== 'asset.relink-batch.applied') throw new Error('Unexpected relink-batch-apply response.');
     return { ok: true as const, value: { restoredCount: result.restoredCount, unchangedMissingCount: result.unchangedMissingCount, assets: result.assets } };
+  },
+
+  setActiveContext(libraryId: string | null, selectedFolderId?: string): void {
+    ipcRenderer.send(ACTIVE_CONTEXT_CHANNEL, { libraryId, selectedFolderId });
   },
 
   onLifecycle(listener: (event: RendererLifecycleEvent) => void) {

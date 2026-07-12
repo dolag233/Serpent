@@ -17,6 +17,7 @@ import {
   rmSync,
   statSync,
   watch,
+  writeFileSync,
   writeSync,
   type BigIntStats,
   type Stats,
@@ -80,6 +81,66 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-
 
 const REQUIRED_DIRECTORIES = ['Assets'] as const;
 const REGENERABLE_DIRECTORIES = ['previews', 'revisions', 'trash'] as const;
+
+const MAX_DOWNLOAD_BYTES = 500 * 1024 * 1024;
+const DOWNLOAD_TIMEOUT_MS = 30_000;
+
+const CONTENT_TYPE_WHITELIST = new Set([
+  'image/png', 'image/jpeg', 'image/gif', 'image/webp',
+  'image/tiff', 'image/bmp', 'image/svg+xml',
+  'video/mp4', 'video/webm', 'video/quicktime',
+  'video/x-msvideo', 'video/x-ms-wmv',
+]);
+
+function extensionForContentType(contentType: string): string | undefined {
+  const lower = contentType.toLowerCase();
+  if (lower === 'image/png') return '.png';
+  if (lower === 'image/jpeg') return '.jpg';
+  if (lower === 'image/gif') return '.gif';
+  if (lower === 'image/webp') return '.webp';
+  if (lower === 'image/tiff') return '.tiff';
+  if (lower === 'image/bmp') return '.bmp';
+  if (lower === 'image/svg+xml') return '.svg';
+  if (lower === 'video/mp4') return '.mp4';
+  if (lower === 'video/webm') return '.webm';
+  if (lower === 'video/quicktime') return '.mov';
+  if (lower === 'video/x-msvideo') return '.avi';
+  if (lower === 'video/x-ms-wmv') return '.wmv';
+  return undefined;
+}
+
+function cleanFilename(name: string): string {
+  // eslint-disable-next-line no-control-regex
+  return name.replace(/[\x00-\x1f<>:"/\\|?*\x7f]+/g, '_')
+    .replace(/^\.+/, '')
+    .replace(/\.+$/, '')
+    .trim()
+    .slice(0, 255) || 'download';
+}
+
+function parseContentDispositionFilename(header: string): string | undefined {
+  const utf8Match = header.match(/filename\*=(?:UTF-8'')?([^;]+)/i);
+  if (utf8Match?.[1]) {
+    return decodeURIComponent(utf8Match[1].trim());
+  }
+  const match = header.match(/filename="?([^";\n]+)"?/i);
+  if (match?.[1]) {
+    return match[1].trim();
+  }
+  return undefined;
+}
+
+function filenameFromUrl(urlString: string, contentType?: string): string {
+  try {
+    const url = new URL(urlString);
+    const name = path.posix.basename(url.pathname);
+    if (name && name !== '/') return cleanFilename(name);
+  } catch {
+    // Invalid URL; fall through to default.
+  }
+  const ext = contentType ? (extensionForContentType(contentType) ?? '') : '';
+  return `download${ext}`;
+}
 
 // Default ignore rules for linked-folder enumeration. Hardcoded for MVP; the
 // graphical rule editor is a later slice. Names match case-insensitively so a
@@ -5401,6 +5462,238 @@ export class LibraryService {
     } catch (error) {
       closeIgnoringFailure(connection);
       throw serviceError(error, 'LIBRARY_CORRUPT');
+    }
+  }
+
+  async saveAssetFromUrl(input: {
+    libraryId: string;
+    targetFolderId?: string;
+    sourcePageUrl: string;
+    mediaUrl: string;
+    mediaType?: string;
+  }): Promise<{ asset: AssetSummary }> {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    const targetFolder = this.targetFolder(openLibrary, input.targetFolderId);
+
+    // Validate HTTP scheme on mediaUrl (already Zod-validated but defense in depth).
+    let parsedUrl: URL;
+    try {
+      parsedUrl = new URL(input.mediaUrl);
+    } catch {
+      throw new LibraryServiceError('INVALID_IMPORT_SOURCE', { reason: 'IO_ERROR' });
+    }
+    if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
+      throw new LibraryServiceError('INVALID_IMPORT_SOURCE', { reason: 'IO_ERROR' });
+    }
+
+    const operationId = randomUUID();
+    const operationPath = path.join(
+      openLibrary.summary.libraryPath,
+      '.serpent',
+      'operations',
+      operationId,
+    );
+    const stagePath = path.join(operationPath, 'stage');
+    const backupPath = path.join(operationPath, 'backup');
+
+    // Create file_operations row.
+    const now = new Date().toISOString();
+    try {
+      openLibrary.connection
+        .prepare(
+          `INSERT INTO file_operations
+             (operation_id, kind, status, manifest_json, error_code, created_at, updated_at)
+           VALUES (?, 'import', 'preparing', ?, NULL, ?, ?)`,
+        )
+        .run(operationId, JSON.stringify({ version: 1, phase: 'staging', files: [], directories: [] }), now, now);
+    } catch (error) {
+      throw serviceError(error, 'IMPORT_APPLY_FAILED');
+    }
+
+    let downloaded = false;
+    try {
+      mkdirSync(operationPath, { recursive: true });
+      mkdirSync(stagePath);
+      mkdirSync(backupPath);
+
+      // Download the media URL.
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(new Error('Download timed out.')), DOWNLOAD_TIMEOUT_MS);
+
+      let response: Response;
+      try {
+        response = await fetch(input.mediaUrl, {
+          signal: controller.signal,
+          headers: { 'User-Agent': 'Serpent/1.0' },
+        });
+      } catch (error) {
+        clearTimeout(timer);
+        if (error instanceof DOMException && error.name === 'AbortError') {
+          throw new LibraryServiceError('INVALID_IMPORT_SOURCE', { reason: 'IO_ERROR' });
+        }
+        throw new LibraryServiceError('INVALID_IMPORT_SOURCE', { reason: 'IO_ERROR', cause: error });
+      }
+      clearTimeout(timer);
+
+      // Validate HTTP status.
+      if (!response.ok) {
+        throw new LibraryServiceError('INVALID_IMPORT_SOURCE', {
+          reason: 'IO_ERROR',
+          cause: new Error(`HTTP ${response.status}`),
+        });
+      }
+
+      // Validate Content-Type.
+      const contentType = response.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase() ?? '';
+      if (contentType && !CONTENT_TYPE_WHITELIST.has(contentType)) {
+        throw new LibraryServiceError('INVALID_IMPORT_SOURCE', {
+          reason: 'UNSUPPORTED_FILE_ENTRY',
+          cause: new Error(`Unsupported Content-Type: ${contentType}`),
+        });
+      }
+
+      // Determine filename.
+      let filename: string;
+      const contentDisposition = response.headers.get('content-disposition');
+      if (contentDisposition) {
+        const cdFilename = parseContentDispositionFilename(contentDisposition);
+        if (cdFilename) {
+          filename = cleanFilename(cdFilename);
+        } else {
+          filename = filenameFromUrl(input.mediaUrl, contentType);
+        }
+      } else {
+        filename = filenameFromUrl(input.mediaUrl, contentType);
+      }
+
+      // Ensure filename has a reasonable extension that matches content-type.
+      const fileExt = path.posix.extname(filename).toLowerCase();
+      if (fileExt === '' || fileExt === '.') {
+        const ctExt = extensionForContentType(contentType);
+        if (ctExt) filename = `${filename}${ctExt}`;
+      }
+
+      // Stream download with size limit.
+      const stageFilePath = path.join(stagePath, 'stage-file');
+      const reader = response.body!.getReader();
+      const chunks: Uint8Array[] = [];
+      let totalBytes = 0;
+      try {
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          totalBytes += value.byteLength;
+          if (totalBytes > MAX_DOWNLOAD_BYTES) {
+            reader.cancel();
+            throw new LibraryServiceError('INVALID_IMPORT_SOURCE', {
+              reason: 'UNSUPPORTED_FILE_ENTRY',
+              cause: new Error('File exceeds 500 MB limit.'),
+            });
+          }
+          chunks.push(value);
+        }
+      } finally {
+        try { reader.cancel(); } catch { /* Already released. */ }
+      }
+
+      const allBytes = Buffer.concat(chunks.map((c) => Buffer.from(c)));
+      writeFileSync(stageFilePath, allBytes);
+      downloaded = true;
+
+      // Build destination path.
+      const targetPrefix = targetFolder?.relative_path ?? '';
+      const destinationRelativePath = targetPrefix
+        ? path.posix.join(targetPrefix, filename)
+        : filename;
+      const normalizedDestination = normalizeRelativeAssetPath(destinationRelativePath);
+
+      // Stat the stage file.
+      const stageStat = statSync(stageFilePath);
+      const byteSize = stageStat.size;
+
+      // Build ImportSourceEntry for the staged file.
+      const entry: ImportSourceEntry = {
+        byteSize,
+        destinationRelativePath: normalizedDestination,
+        sourcePath: stageFilePath,
+        sourceSnapshot: sourceSnapshot(
+          lstatSync(stageFilePath, { bigint: true }) as BigIntStats,
+        ),
+      };
+
+      // Create PendingImport and register.
+      const pending: PendingImport = {
+        directories: [],
+        entries: [entry],
+        libraryId: input.libraryId,
+        operationPath,
+      };
+
+      // Update manifest to include the file.
+      const manifest: OperationManifest = {
+        version: 1,
+        phase: 'prepared',
+        files: [{
+          backupName: '0',
+          destinationRelativePath: normalizedDestination,
+          hadDestination:
+            this.portableDiskDestination(openLibrary, normalizedDestination) !== undefined,
+          stageName: 'stage-file',
+        }],
+        directories: [],
+      };
+      openLibrary.connection
+        .prepare('UPDATE file_operations SET manifest_json = ?, updated_at = ? WHERE operation_id = ?')
+        .run(JSON.stringify(manifest), new Date().toISOString(), operationId);
+
+      this.pendingImports.set(operationId, pending);
+      this.scheduleImportExpiry(operationId, pending);
+
+      // Resolve import: always create-copy for suspected duplicates, keep-both for name conflicts.
+      const completion = this.resolveImport({
+        importId: operationId,
+        suspectedDuplicate: 'create-copy',
+        nameConflict: 'keep-both',
+      });
+
+      // Set source_page_url metadata on the imported asset.
+      const importedAsset = completion.assets[0];
+      if (importedAsset) {
+        try {
+          this.setAssetMetadata({
+            libraryId: input.libraryId,
+            assetId: importedAsset.assetId,
+            expectedVersion: 0,
+            sourcePageUrl: input.sourcePageUrl,
+          });
+        } catch (error) {
+          this.diagnose('extension-save.metadata', error, {
+            libraryId: input.libraryId,
+            assetId: importedAsset.assetId,
+            sourcePageUrl: input.sourcePageUrl,
+          });
+          // Metadata failure is non-fatal; the asset is already imported.
+        }
+      }
+
+      return { asset: importedAsset ?? completion.assets[0]! };
+    } catch (error) {
+      // Clean up on failure.
+      if (this.pendingImports.has(operationId)) {
+        this.pendingImports.delete(operationId);
+        this.cancelImportExpiry({ operationPath, libraryId: input.libraryId, directories: [], entries: [] } as PendingImport);
+      }
+      if (!downloaded) {
+        try {
+          openLibrary.connection
+            .prepare("UPDATE file_operations SET status = 'failed', error_code = ?, updated_at = ? WHERE operation_id = ?")
+            .run('PREPARE_FAILED', new Date().toISOString(), operationId);
+        } catch {
+          // Best effort.
+        }
+      }
+      this.removeOperation(operationPath);
+      throw serviceError(error, 'INVALID_IMPORT_SOURCE');
     }
   }
 

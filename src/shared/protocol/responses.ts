@@ -335,6 +335,11 @@ const assetOperationSuccessSchemas = [
     unchangedMissingCount: z.number().int().nonnegative(),
     assets: z.array(assetSummarySchema),
   }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('extension.asset-saved'),
+    asset: assetSummarySchema,
+  }),
 ] as const;
 
 const workerSuccessResultSchema = z.discriminatedUnion('type', [

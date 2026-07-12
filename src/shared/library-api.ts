@@ -125,4 +125,6 @@ export interface SerpentLibraryApi {
   relinkAsset(input: { libraryId: string; assetId: string }): Promise<LibraryApiResult<AssetSummary>>;
   relinkBatchPreview(input: { libraryId: string; keepMetadata: boolean }): Promise<LibraryApiResult<RelinkBatchPreviewResult>>;
   relinkBatchApply(input: { libraryId: string; keepMetadata: boolean }): Promise<LibraryApiResult<RelinkBatchAppliedResult>>;
+  // Extension active context
+  setActiveContext(libraryId: string | null, selectedFolderId?: string): void;
 }

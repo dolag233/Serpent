@@ -530,6 +530,14 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     newRootPath: selectedPathSchema,
     keepMetadata: z.boolean(),
   }),
+  z.strictObject({
+    type: z.literal('extension.save-from-url'),
+    libraryId: identifierSchema,
+    targetFolderId: optionalIdentifierSchema,
+    sourcePageUrl: nonBlankString,
+    mediaUrl: nonBlankString,
+    mediaType: z.string().optional(),
+  }),
 ]);
 
 export type WorkerCommand = z.infer<typeof workerCommandSchema>;
@@ -545,4 +553,15 @@ export type WorkerRequest = z.infer<typeof workerRequestSchema>;
 
 export function parseWorkerRequest(input: unknown): WorkerRequest {
   return workerRequestSchema.parse(input);
+}
+
+export const activeContextSchema = z.strictObject({
+  libraryId: z.string().nullable(),
+  selectedFolderId: optionalIdentifierSchema,
+});
+
+export type ActiveContext = z.infer<typeof activeContextSchema>;
+
+export function parseActiveContext(input: unknown): ActiveContext {
+  return activeContextSchema.parse(input);
 }

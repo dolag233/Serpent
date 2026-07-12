@@ -4,11 +4,12 @@ import { app, BrowserWindow, dialog, ipcMain, type OpenDialogOptions } from 'ele
 
 import {
   ASSET_CHANGE_CHANNEL,
+  ACTIVE_CONTEXT_CHANNEL,
   LIBRARY_LIFECYCLE_CHANNEL,
   LIBRARY_REQUEST_CHANNEL,
 } from '../shared/protocol/channels';
 import { createPublicError, toPublicError } from '../shared/protocol/errors';
-import { parseRendererRequest, type RendererRequest, type WorkerCommand } from '../shared/protocol/requests';
+import { parseRendererRequest, parseActiveContext, type RendererRequest, type WorkerCommand } from '../shared/protocol/requests';
 import {
   parseRendererResult,
   parseRendererLifecycleEvent,
@@ -20,6 +21,7 @@ import {
 } from '../shared/protocol/responses';
 import { LibraryWorkerClient } from './worker-client';
 import { AppLogger } from './app-logger';
+import { createExtensionServer, type ExtensionServer, type SaveIntent } from './extension-server';
 
 app.enableSandbox();
 
@@ -30,6 +32,11 @@ let workerClient: LibraryWorkerClient | undefined;
 let quitAfterShutdown = false;
 let startupComplete = false;
 let logger: AppLogger | undefined;
+
+let extensionServer: ExtensionServer | undefined;
+
+// Maps BrowserWindow.id to the active library/folder context for extension save.
+const focusedContexts = new Map<number, { libraryId: string | null; selectedFolderId?: string }>();
 
 // Pending relink-batch root paths (libraryId -> rootPath), cleared after apply/abandon.
 const pendingRelinkRoots = new Map<string, string>();
@@ -60,7 +67,10 @@ async function createMainWindow(): Promise<void> {
   mainWindow = window;
   window.on('ready-to-show', () => window.show());
   window.on('closed', () => {
-    if (mainWindow === window) mainWindow = undefined;
+    if (mainWindow === window) {
+      focusedContexts.delete(window.id);
+      mainWindow = undefined;
+    }
   });
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   window.webContents.on('will-navigate', (event) => event.preventDefault());
@@ -74,6 +84,50 @@ async function createMainWindow(): Promise<void> {
 
 function cancelled(): RendererResult {
   return { ok: false, error: createPublicError('CANCELLED') };
+}
+
+function handleSaveIntent(intent: SaveIntent): void {
+  if (!workerClient) return;
+
+  const focusedWindow = BrowserWindow.getFocusedWindow();
+  if (!focusedWindow) {
+    logger?.info('extension-server.save', 'No focused window; dropping save intent.');
+    return;
+  }
+
+  const context = focusedContexts.get(focusedWindow.id);
+  const libraryId = context?.libraryId;
+  if (!libraryId) {
+    logger?.info('extension-server.save', 'No active library in focused window; dropping save intent.');
+    return;
+  }
+
+  const command: WorkerCommand = {
+    type: 'extension.save-from-url',
+    libraryId,
+    targetFolderId: context.selectedFolderId,
+    sourcePageUrl: intent.sourcePageUrl,
+    mediaUrl: intent.mediaUrl,
+    mediaType: intent.mediaType,
+  };
+
+  workerClient.request(command).then(
+    (result) => {
+      if (!result.ok) {
+        logger?.error('extension-server.save', new Error(`Save failed: ${result.error.message}`), {
+          code: result.error.code,
+          reason: result.error.reason,
+        });
+      } else {
+        logger?.info('extension-server.save', 'Asset saved successfully.', {
+          type: result.type,
+        });
+      }
+    },
+    (error) => {
+      logger?.error('extension-server.save', error);
+    },
+  );
 }
 
 function publishLifecycle(event: RendererLifecycleEvent): void {
@@ -494,7 +548,35 @@ async function startApplication(): Promise<void> {
     }
     return handleLibraryRequest(input);
   });
+
+  ipcMain.on(ACTIVE_CONTEXT_CHANNEL, (event, input: unknown) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents) return;
+    try {
+      const context = parseActiveContext(input);
+      const windowId = BrowserWindow.fromWebContents(event.sender)?.id;
+      if (windowId !== undefined) {
+        focusedContexts.set(windowId, context);
+      }
+    } catch {
+      // Malformed input is silently dropped.
+    }
+  });
+
   await createMainWindow();
+
+  // Start the browser-extension HTTP server on 127.0.0.1.
+  try {
+    extensionServer = await createExtensionServer({
+      port: 19876,
+      onSaveIntent: (intent) => handleSaveIntent(intent),
+      onError: (err) => logger?.error('extension-server', err),
+    });
+    logger?.info('extension-server', `Browser extension server started on port ${extensionServer.port}.`);
+  } catch (error) {
+    logger?.error('extension-server', error);
+    // Extension server failure is non-fatal; the app continues without it.
+  }
+
   startupComplete = true;
 }
 
@@ -522,6 +604,15 @@ if (!hasSingleInstanceLock) {
   app.on('before-quit', (event) => {
     if (quitAfterShutdown || !workerClient) return;
     event.preventDefault();
+
+    // Close the extension server early; stop accepting new save intents.
+    try {
+      extensionServer?.server.close();
+      extensionServer = undefined;
+    } catch {
+      // Best effort.
+    }
+
     void workerClient.shutdown().finally(() => {
       quitAfterShutdown = true;
       app.quit();
