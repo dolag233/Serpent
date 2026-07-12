@@ -338,6 +338,69 @@ const library: SerpentLibraryApi = Object.freeze({
     return { ok: true, value: { items: result.items, total: result.total, offset: result.offset, snippets: result.snippets } };
   },
 
+  async trashAssets({ libraryId, assetIds }: { libraryId: string; assetIds: string[] }): Promise<LibraryApiResult<{ trashedCount: number }>> {
+    const result = await request({ type: 'asset.trash.request', libraryId, assetIds });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'asset.trashed') throw new Error('Unexpected trash response.');
+    return { ok: true, value: { trashedCount: result.trashedCount } };
+  },
+
+  async restoreAssets({ libraryId, assetIds, targetFolderId }: { libraryId: string; assetIds: string[]; targetFolderId?: string }): Promise<LibraryApiResult<{ restoredCount: number; assets: AssetSummary[] }>> {
+    const result = await request({ type: 'asset.restore.request', libraryId, assetIds, targetFolderId });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'asset.restored') throw new Error('Unexpected restore response.');
+    return { ok: true, value: { restoredCount: result.restoredCount, assets: result.assets } };
+  },
+
+  async deleteAssetsPermanent({ libraryId, assetIds }: { libraryId: string; assetIds: string[] }): Promise<LibraryApiResult<{ deletedCount: number; skippedCount: number; skippedReasons: string[] }>> {
+    const result = await request({ type: 'asset.delete-permanent.request', libraryId, assetIds });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'asset.deleted-permanent') throw new Error('Unexpected delete-permanent response.');
+    return { ok: true, value: { deletedCount: result.deletedCount, skippedCount: result.skippedCount, skippedReasons: result.skippedReasons } };
+  },
+
+  async listTrash({ libraryId }: { libraryId: string }): Promise<LibraryApiResult<AssetSummary[]>> {
+    const result = await request({ type: 'trash.list.request', libraryId });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'asset.list-trash') throw new Error('Unexpected list-trash response.');
+    return { ok: true, value: result.assets };
+  },
+
+  async purgeTrash({ libraryId }: { libraryId: string }): Promise<LibraryApiResult<{ purgedCount: number }>> {
+    const result = await request({ type: 'trash.purge.request', libraryId });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'asset.purge-trash') throw new Error('Unexpected purge-trash response.');
+    return { ok: true, value: { purgedCount: result.purgedCount } };
+  },
+
+  async deleteLinkedAssets({ libraryId, assetIds, deleteSourceFile }: { libraryId: string; assetIds: string[]; deleteSourceFile: boolean }): Promise<LibraryApiResult<{ deletedCount: number }>> {
+    const result = await request({ type: 'asset.delete-linked.request', libraryId, assetIds, deleteSourceFile });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'asset.deleted-linked') throw new Error('Unexpected delete-linked response.');
+    return { ok: true, value: { deletedCount: result.deletedCount } };
+  },
+
+  async relinkAsset({ libraryId, assetId }: { libraryId: string; assetId: string }): Promise<LibraryApiResult<AssetSummary>> {
+    const result = await request({ type: 'asset.relink.request', libraryId, assetId });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'asset.relinked') throw new Error('Unexpected relink response.');
+    return { ok: true, value: result.asset };
+  },
+
+  async relinkBatchPreview({ libraryId, keepMetadata }: { libraryId: string; keepMetadata: boolean }) {
+    const result = await request({ type: 'asset.relink-batch.request', libraryId, keepMetadata });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'asset.relink-batch.preview') throw new Error('Unexpected relink-batch-preview response.');
+    return { ok: true as const, value: { matchedCount: result.matchedCount, unmatchedCount: result.unmatchedCount, totalCount: result.totalCount, examples: result.examples } };
+  },
+
+  async relinkBatchApply({ libraryId, keepMetadata }: { libraryId: string; keepMetadata: boolean }) {
+    const result = await request({ type: 'asset.relink-batch.apply.request', libraryId, keepMetadata });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'asset.relink-batch.applied') throw new Error('Unexpected relink-batch-apply response.');
+    return { ok: true as const, value: { restoredCount: result.restoredCount, unchangedMissingCount: result.unchangedMissingCount, assets: result.assets } };
+  },
+
   onLifecycle(listener: (event: RendererLifecycleEvent) => void) {
     const subscription = (_event: Electron.IpcRendererEvent, input: unknown) => {
       listener(parseRendererLifecycleEvent(input));

@@ -24,6 +24,19 @@ export type LibraryApiResult<T> =
   | { ok: true; value: T }
   | { ok: false; error: PublicError };
 
+export interface RelinkBatchPreviewResult {
+  matchedCount: number;
+  unmatchedCount: number;
+  totalCount: number;
+  examples: { relativeFilePath: string; matched: boolean }[];
+}
+
+export interface RelinkBatchAppliedResult {
+  restoredCount: number;
+  unchangedMissingCount: number;
+  assets: AssetSummary[];
+}
+
 export interface SerpentLibraryApi {
   create(input: { displayName: string }): Promise<LibraryApiResult<RendererLibrarySummary>>;
   open(): Promise<LibraryApiResult<RendererLibrarySummary>>;
@@ -100,4 +113,16 @@ export interface SerpentLibraryApi {
   executeSmartCollection(input: { libraryId: string; collectionId: string }): Promise<LibraryApiResult<{ items: AssetSummary[]; total: number; offset: number }>>;
   // Search
   searchAssets(input: { libraryId: string; query?: { clauses: { field: string | null; values: string[]; exclude: boolean }[] } | null; filters?: { field: 'format' | 'tag' | 'rating' | 'favorite' | 'source_url' | 'availability'; values: string[]; exclude: boolean }[]; sort?: { field: 'name' | 'modified_at' | 'created_at' | 'byte_size' | 'duration' | 'rating'; order: 'asc' | 'desc' }; limit?: number; offset?: number }): Promise<LibraryApiResult<{ items: AssetSummary[]; total: number; offset: number; snippets?: { assetId: string; text: string }[] }>>;
+  // Trash / Delete
+  trashAssets(input: { libraryId: string; assetIds: string[] }): Promise<LibraryApiResult<{ trashedCount: number }>>;
+  restoreAssets(input: { libraryId: string; assetIds: string[]; targetFolderId?: string }): Promise<LibraryApiResult<{ restoredCount: number; assets: AssetSummary[] }>>;
+  deleteAssetsPermanent(input: { libraryId: string; assetIds: string[] }): Promise<LibraryApiResult<{ deletedCount: number; skippedCount: number; skippedReasons: string[] }>>;
+  listTrash(input: { libraryId: string }): Promise<LibraryApiResult<AssetSummary[]>>;
+  purgeTrash(input: { libraryId: string }): Promise<LibraryApiResult<{ purgedCount: number }>>;
+  // Linked delete
+  deleteLinkedAssets(input: { libraryId: string; assetIds: string[]; deleteSourceFile: boolean }): Promise<LibraryApiResult<{ deletedCount: number }>>;
+  // Relink
+  relinkAsset(input: { libraryId: string; assetId: string }): Promise<LibraryApiResult<AssetSummary>>;
+  relinkBatchPreview(input: { libraryId: string; keepMetadata: boolean }): Promise<LibraryApiResult<RelinkBatchPreviewResult>>;
+  relinkBatchApply(input: { libraryId: string; keepMetadata: boolean }): Promise<LibraryApiResult<RelinkBatchAppliedResult>>;
 }
