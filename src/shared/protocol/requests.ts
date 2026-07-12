@@ -67,6 +67,20 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     type: z.literal('asset.refresh.request'),
     libraryId: identifierSchema,
   }),
+  z.strictObject({
+    type: z.literal('asset.import-linked.request'),
+    libraryId: identifierSchema,
+    displayName: optionalIdentifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('linked-folder.list.request'),
+    libraryId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('linked-folder.relink.request'),
+    libraryId: identifierSchema,
+    folderId: identifierSchema,
+  }),
 ]);
 
 export type RendererRequest = z.infer<typeof rendererRequestSchema>;
@@ -128,6 +142,22 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
   z.strictObject({
     type: z.literal('asset.refresh'),
     libraryId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('asset.import-linked'),
+    libraryId: identifierSchema,
+    displayName: optionalIdentifierSchema,
+    sourceRootPath: selectedPathSchema,
+  }),
+  z.strictObject({
+    type: z.literal('linked-folder.list'),
+    libraryId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('linked-folder.relink'),
+    libraryId: identifierSchema,
+    folderId: identifierSchema,
+    newRootPath: selectedPathSchema,
   }),
 ]);
 

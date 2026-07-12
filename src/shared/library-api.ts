@@ -1,5 +1,5 @@
 import type { PublicError } from './protocol/errors';
-import type { AssetSummary, ManagedFolderSummary } from './asset-types';
+import type { AssetSummary, LinkedFolderSummary, ManagedFolderSummary } from './asset-types';
 import type {
   ImportCompletion,
   ImportConflictPlan,
@@ -53,6 +53,15 @@ export interface SerpentLibraryApi {
       assets: AssetSummary[];
     }>
   >;
+  listLinkedFolders(input: { libraryId: string }): Promise<LibraryApiResult<LinkedFolderSummary[]>>;
+  importFolderAsLinked(input: {
+    libraryId: string;
+    displayName?: string;
+  }): Promise<LibraryApiResult<LinkedFolderSummary>>;
+  relinkMissingFolder(input: {
+    libraryId: string;
+    folderId: string;
+  }): Promise<LibraryApiResult<LinkedFolderSummary>>;
   onLifecycle(listener: (event: RendererLifecycleEvent) => void): () => void;
   onAssetsChanged(listener: (event: AssetChangeEvent) => void): () => void;
 }

@@ -223,6 +223,57 @@ async function commandFor(request: RendererRequest): Promise<WorkerCommand | und
       return { type: 'asset.import.abandon', importId: request.importId };
     case 'asset.refresh.request':
       return { type: 'asset.refresh', libraryId: request.libraryId };
+    case 'asset.import-linked.request': {
+      let sourceRootPath: string | undefined;
+      if (!app.isPackaged && process.env.SERPENT_E2E === '1') {
+        sourceRootPath = process.env.SERPENT_E2E_LINKED_SOURCE;
+      } else {
+        const result = mainWindow
+          ? await dialog.showOpenDialog(mainWindow, {
+              title: 'Link Folder to Library',
+              buttonLabel: 'Link Folder',
+              properties: ['openDirectory'],
+            })
+          : await dialog.showOpenDialog({
+              title: 'Link Folder to Library',
+              buttonLabel: 'Link Folder',
+              properties: ['openDirectory'],
+            });
+        sourceRootPath = result.canceled ? undefined : result.filePaths[0];
+      }
+      return sourceRootPath
+        ? {
+            type: 'asset.import-linked',
+            libraryId: request.libraryId,
+            displayName: request.displayName,
+            sourceRootPath,
+          }
+        : undefined;
+    }
+    case 'linked-folder.list.request':
+      return { type: 'linked-folder.list', libraryId: request.libraryId };
+    case 'linked-folder.relink.request': {
+      let newRootPath: string | undefined;
+      if (!app.isPackaged && process.env.SERPENT_E2E === '1') {
+        newRootPath = process.env.SERPENT_E2E_LINKED_NEW_ROOT;
+      } else {
+        const result = mainWindow
+          ? await dialog.showOpenDialog(mainWindow, {
+              title: 'Relink Folder',
+              buttonLabel: 'Select New Location',
+              properties: ['openDirectory'],
+            })
+          : await dialog.showOpenDialog({
+              title: 'Relink Folder',
+              buttonLabel: 'Select New Location',
+              properties: ['openDirectory'],
+            });
+        newRootPath = result.canceled ? undefined : result.filePaths[0];
+      }
+      return newRootPath
+        ? { type: 'linked-folder.relink', libraryId: request.libraryId, folderId: request.folderId, newRootPath }
+        : undefined;
+    }
     default:
       return assertNever(request);
   }

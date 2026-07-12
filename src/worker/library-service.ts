@@ -1624,6 +1624,30 @@ export class LibraryService {
     }));
   }
 
+  listLinkedFolders(libraryId: string): LinkedFolderSummary[] {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    const rows = openLibrary.connection
+      .prepare(
+        'SELECT folder_id, display_name, status FROM linked_folders WHERE library_id = ? ORDER BY display_name',
+      )
+      .all(libraryId) as Array<{
+        folder_id: string;
+        display_name: string;
+        status: 'available' | 'offline';
+      }>;
+    return rows.map((row) => {
+      const countRow = openLibrary.connection
+        .prepare('SELECT COUNT(*) AS count FROM assets WHERE linked_folder_id = ?')
+        .get(row.folder_id) as { count: number };
+      return {
+        folderId: row.folder_id,
+        displayName: row.display_name,
+        status: row.status,
+        assetCount: countRow.count,
+      };
+    });
+  }
+
   listAssets(input: {
     libraryId: string;
     folderId?: string;

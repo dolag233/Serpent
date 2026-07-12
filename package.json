@@ -19,7 +19,7 @@
     "test": "node scripts/run-vitest-with-electron.mjs run",
     "test:unit": "vitest run --config vitest.config.ts tests/unit",
     "test:worker": "node scripts/run-vitest-with-electron.mjs run --config vitest.config.ts tests/worker",
-    "test:e2e": "playwright test tests/e2e/library-lifecycle.test.ts tests/e2e/asset-ingestion.test.ts tests/e2e/process-lifecycle.test.ts",
+    "test:e2e": "playwright test tests/e2e/library-lifecycle.test.ts tests/e2e/asset-ingestion.test.ts tests/e2e/process-lifecycle.test.ts tests/e2e/linked-folders.test.ts",
     "test:e2e:packaged": "playwright test tests/e2e/packaged-startup.test.ts",
     "test:watch": "node scripts/run-vitest-with-electron.mjs --config vitest.config.ts"
   },

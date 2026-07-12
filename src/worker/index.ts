@@ -101,6 +101,20 @@ function handleRequest(request: WorkerRequest): WorkerResult {
       const refresh = libraryService.refreshManagedAssets(request.command.libraryId);
       return { ok: true, type: 'asset.refreshed', ...refresh };
     }
+    case 'asset.import-linked': {
+      const linkedFolder = libraryService.importFolderAsLinked(request.command);
+      return { ok: true, type: 'asset.import-linked.completed', linkedFolder };
+    }
+    case 'linked-folder.list':
+      return {
+        ok: true,
+        type: 'linked-folder.list',
+        folders: libraryService.listLinkedFolders(request.command.libraryId),
+      };
+    case 'linked-folder.relink': {
+      const linkedFolder = libraryService.relinkMissingFolder(request.command);
+      return { ok: true, type: 'linked-folder.relinked', linkedFolder };
+    }
     default:
       return assertNever(request.command);
   }

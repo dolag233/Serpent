@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { assetSummarySchema, managedFolderSummarySchema } from '../asset-types';
+import { assetSummarySchema, linkedFolderSummarySchema, managedFolderSummarySchema } from '../asset-types';
 import { publicErrorSchema } from './errors';
 import {
   WORKER_READY_MESSAGE_TYPE,
@@ -128,6 +128,21 @@ const assetOperationSuccessSchemas = [
     changedCount: z.number().int().nonnegative(),
     missingCount: z.number().int().nonnegative(),
     assets: z.array(assetSummarySchema),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('asset.import-linked.completed'),
+    linkedFolder: linkedFolderSummarySchema,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('linked-folder.list'),
+    folders: z.array(linkedFolderSummarySchema),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('linked-folder.relinked'),
+    linkedFolder: linkedFolderSummarySchema,
   }),
 ] as const;
 

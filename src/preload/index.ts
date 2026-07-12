@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
 import type { LibraryApiResult, SerpentLibraryApi } from '../shared/library-api';
-import type { AssetSummary, ManagedFolderSummary } from '../shared/asset-types';
+import type { AssetSummary, LinkedFolderSummary, ManagedFolderSummary } from '../shared/asset-types';
 import {
   ASSET_CHANGE_CHANNEL,
   LIBRARY_LIFECYCLE_CHANNEL,
@@ -142,6 +142,39 @@ const library: SerpentLibraryApi = Object.freeze({
         assets: result.assets,
       },
     };
+  },
+
+  async listLinkedFolders({ libraryId }: { libraryId: string }): Promise<LibraryApiResult<LinkedFolderSummary[]>> {
+    const result = await request({ type: 'linked-folder.list.request', libraryId });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'linked-folder.list') throw new Error('Unexpected list-linked-folders response.');
+    return { ok: true, value: result.folders };
+  },
+
+  async importFolderAsLinked({
+    libraryId,
+    displayName,
+  }: {
+    libraryId: string;
+    displayName?: string;
+  }): Promise<LibraryApiResult<LinkedFolderSummary>> {
+    const result = await request({ type: 'asset.import-linked.request', libraryId, displayName });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'asset.import-linked.completed') throw new Error('Unexpected import-linked-folder response.');
+    return { ok: true, value: result.linkedFolder };
+  },
+
+  async relinkMissingFolder({
+    libraryId,
+    folderId,
+  }: {
+    libraryId: string;
+    folderId: string;
+  }): Promise<LibraryApiResult<LinkedFolderSummary>> {
+    const result = await request({ type: 'linked-folder.relink.request', libraryId, folderId });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'linked-folder.relinked') throw new Error('Unexpected relink-folder response.');
+    return { ok: true, value: result.linkedFolder };
   },
 
   onLifecycle(listener: (event: RendererLifecycleEvent) => void) {

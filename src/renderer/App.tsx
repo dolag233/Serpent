@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 
-import type { AssetSummary, ManagedFolderSummary } from '../shared/asset-types';
+import type { AssetSummary, LinkedFolderSummary, ManagedFolderSummary } from '../shared/asset-types';
 import type { SerpentLibraryApi } from '../shared/library-api';
 import type { PublicError, PublicErrorCode, PublicErrorReason } from '../shared/protocol/errors';
 import type { ImportConflictPlan, RendererLibrarySummary } from '../shared/protocol/responses';
@@ -32,6 +32,7 @@ export function App() {
   const api = (window as RendererWindow).serpent?.library;
   const [library, setLibrary] = useState<RendererLibrarySummary | null>(null);
   const [folders, setFolders] = useState<ManagedFolderSummary[]>([]);
+  const [linkedFolders, setLinkedFolders] = useState<LinkedFolderSummary[]>([]);
   const [assets, setAssets] = useState<AssetSummary[]>([]);
   const [assetScope, setAssetScope] = useState<AssetScope>('all');
   const [allAssetCount, setAllAssetCount] = useState(0);
@@ -59,19 +60,22 @@ export function App() {
       : scope === 'root'
         ? { libraryId: activeLibrary.libraryId, recursive: false }
         : { libraryId: activeLibrary.libraryId, folderId: scope, recursive: false };
-    const [folderResult, assetResult, allResult] = await Promise.all([
+    const [folderResult, assetResult, allResult, linkedResult] = await Promise.all([
       api.listFolders({ libraryId: activeLibrary.libraryId }),
       api.listAssets(scopedRequest),
       scope === 'all'
         ? Promise.resolve(undefined)
         : api.listAssets({ libraryId: activeLibrary.libraryId, recursive: true }),
+      api.listLinkedFolders({ libraryId: activeLibrary.libraryId }),
     ]);
     if (!folderResult.ok) throw new LibraryOperationError(folderResult.error);
     if (!assetResult.ok) throw new LibraryOperationError(assetResult.error);
     if (allResult && !allResult.ok) throw new LibraryOperationError(allResult.error);
+    if (!linkedResult.ok) throw new LibraryOperationError(linkedResult.error);
     setFolders(folderResult.value);
     setAssets(assetResult.value);
     setAllAssetCount(allResult?.value.length ?? assetResult.value.length);
+    setLinkedFolders(linkedResult.value);
   }, [api]);
 
   const restore = useCallback(async () => {
@@ -209,6 +213,42 @@ export function App() {
     }
   }
 
+  async function importFolderAsLinked() {
+    if (!api || !library) return;
+    setUiState('importing'); setError(null); setNotice(null);
+    try {
+      const result = await api.importFolderAsLinked({ libraryId: library.libraryId, displayName: undefined });
+      if (!result.ok) {
+        if (result.error.code === 'CANCELLED') return;
+        throw new LibraryOperationError(result.error);
+      }
+      setNotice(`已链接文件夹“${result.value.displayName}”。`);
+      await loadContent(library, assetScope);
+    } catch (caught) {
+      setError(toMessage(caught, '链接文件夹失败。'));
+    } finally {
+      setUiState('ready');
+    }
+  }
+
+  async function relinkFolder(folderId: string) {
+    if (!api || !library) return;
+    setUiState('loading');
+    try {
+      const result = await api.relinkMissingFolder({ libraryId: library.libraryId, folderId });
+      if (!result.ok) {
+        if (result.error.code === 'CANCELLED') return;
+        throw new LibraryOperationError(result.error);
+      }
+      setNotice(`已重新定位链接文件夹“${result.value.displayName}”。`);
+      await loadContent(library, assetScope);
+    } catch (caught) {
+      setError(toMessage(caught, '重新定位失败。'));
+    } finally {
+      setUiState('ready');
+    }
+  }
+
   async function closeLibrary() {
     if (!api || !library) return;
     setUiState('closing');
@@ -219,6 +259,7 @@ export function App() {
       closed = true;
       setLibrary(null);
       setFolders([]);
+      setLinkedFolders([]);
       setAssets([]);
       setAllAssetCount(0);
       setAssetScope('all');
@@ -300,10 +341,13 @@ export function App() {
       <Section title="文件夹" action={library ? () => { setDialogValue('新建文件夹'); setDialog('folder'); } : undefined}>
         {library ? <><NavRow active={assetScope === 'root'} icon="folder" label="资源库根目录" onClick={() => void chooseFolder('root')} />{folders.map((folder) => <NavRow active={assetScope === folder.folderId} depth={folder.relativePath.split('/').length} icon="folder" key={folder.folderId} label={folder.name} onClick={() => void chooseFolder(folder.folderId)} />)}</> : <p className="nav-empty">打开资源库后显示目录</p>}
       </Section>
-      <Section title="合集"><p className="nav-empty">跨文件夹分类将在后续切片提供</p></Section><Section title="其他"><NavRow disabled icon="tag" label="标签" /><NavRow disabled icon="link" label="链接文件夹" /></Section>
+      <Section title="合集"><p className="nav-empty">跨文件夹分类将在后续切片提供</p></Section>
+      <Section title="链接文件夹" action={library ? () => void importFolderAsLinked() : undefined}>
+        {library ? (linkedFolders.length ? linkedFolders.map((lf) => <NavRow active={assetScope === lf.folderId} icon={lf.status === 'offline' ? 'warning' : 'link'} key={lf.folderId} label={lf.displayName} count={lf.assetCount} onClick={lf.status === 'offline' ? () => void relinkFolder(lf.folderId) : () => void chooseFolder(lf.folderId)} />) : <p className="nav-empty">链接外部文件夹作为资产来源</p>) : <p className="nav-empty">打开资源库后显示链接文件夹</p>}
+      </Section>
     </nav><div className="pane-footer"><span className="storage-pulse" /><span>{library ? '本地资源库 · 已连接' : '本地优先 · 未连接'}</span></div></aside>
     <section className="workspace"><div className="workspace-bar"><div className="workspace-title"><span>{library ? assetScope === 'all' ? '所有资产' : assetScope === 'root' ? '资源库根目录' : selectedFolder?.name : '工作区'}</span><span className="item-count">{library ? `${visibleAssets.length} 项` : '未载入'}</span></div><div className="workspace-tools">
-      <button className="compact-action" disabled={!library || busy} onClick={() => void importAssets('files')} type="button"><Icon name="upload" size={14} />导入文件</button><button className="compact-action" disabled={!library || busy} onClick={() => void importAssets('folder')} type="button"><Icon name="folder" size={14} />导入文件夹</button><ToolButton disabled={!library || busy} icon="refresh" label="刷新磁盘变化" onClick={() => void refreshAssets()} /><span className="tool-separator" /><ToolButton icon="grid" label="网格视图" pressed />
+      <button className="compact-action" disabled={!library || busy} onClick={() => void importAssets('files')} type="button"><Icon name="upload" size={14} />导入文件</button><button className="compact-action" disabled={!library || busy} onClick={() => void importAssets('folder')} type="button"><Icon name="folder" size={14} />导入文件夹</button><button className="compact-action" disabled={!library || busy} onClick={() => void importFolderAsLinked()} type="button"><Icon name="link" size={14} />导入链接文件夹</button><ToolButton disabled={!library || busy} icon="refresh" label="刷新磁盘变化" onClick={() => void refreshAssets()} /><span className="tool-separator" /><ToolButton icon="grid" label="网格视图" pressed />
     </div></div><div className="workspace-canvas">
       {busy && <div className="activity-strip" role="status"><span className="activity-pulse" />{uiState === 'importing' ? '正在安全复制与登记资产…' : '正在同步资源库…'}</div>}
       {library ? visibleAssets.length ? <div className="asset-grid">{visibleAssets.map((asset) => <button className={`asset-card${selectedAssetId === asset.assetId ? ' is-selected' : ''}${asset.availability === 'missing' ? ' is-missing' : ''}`} key={asset.assetId} onClick={() => setSelectedAssetId(asset.assetId)} type="button"><div className="asset-preview"><span className="asset-extension">{extension(asset.displayName)}</span>{asset.availability === 'missing' && <span className="missing-banner"><Icon name="warning" size={12} />文件丢失</span>}<Icon name="file" size={28} /></div><div className="asset-caption"><strong title={asset.displayName}>{asset.displayName}</strong><span>{formatBytes(asset.byteSize)} · {formatDate(asset.modifiedAt)}</span></div></button>)}</div> : <div className="empty-library"><div className="empty-orbit"><Icon name="upload" size={24} /></div><span className="eyebrow">MANAGED ASSETS</span><h1>{selectedFolder ? '这个文件夹还是空的' : '把第一批素材放进来'}</h1><p>文件将复制到清晰可读的 Assets 目录，同时建立稳定的资产身份。</p><div className="empty-actions"><button className="primary-button" onClick={() => void importAssets('files')} type="button">导入文件</button><button className="secondary-button" onClick={() => void importAssets('folder')} type="button">导入文件夹</button></div></div> : <div className="empty-state"><div className="empty-index">01</div><div className="empty-copy"><span className="eyebrow">LOCAL ASSET WORKSPACE</span><h1>从一个本地资源库开始</h1><p>文件、目录与元数据都保留在你掌控的位置。</p><div className="empty-actions"><button className="primary-button" onClick={() => { setDialogValue('我的资源库'); setDialog('library'); }} type="button"><Icon name="plus" size={15} />创建资源库</button><button className="secondary-button" onClick={() => void runLibraryOperation('open')} type="button"><Icon name="folder" size={15} />打开资源库</button></div></div></div>}
