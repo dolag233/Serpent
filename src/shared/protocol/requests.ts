@@ -267,6 +267,22 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     libraryId: identifierSchema,
     keepMetadata: z.boolean(),
   }),
+  z.strictObject({
+    type: z.literal('library.export.request'),
+    libraryId: identifierSchema,
+    includeLinkedContent: z.boolean(),
+  }),
+  z.strictObject({
+    type: z.literal('library.import.request'),
+  }),
+  z.strictObject({
+    type: z.literal('library.import.copy.request'),
+    importId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('library.import.open-in-place.request'),
+    importId: identifierSchema,
+  }),
 ]);
 
 export type RendererRequest = z.infer<typeof rendererRequestSchema>;
@@ -537,6 +553,30 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     sourcePageUrl: nonBlankString,
     mediaUrl: nonBlankString,
     mediaType: z.string().optional(),
+  }),
+  z.strictObject({
+    type: z.literal('library.export'),
+    libraryId: identifierSchema,
+    destinationPath: selectedPathSchema,
+    format: z.enum(['folder', 'zip']),
+    includeLinkedContent: z.boolean(),
+  }),
+  z.strictObject({
+    type: z.literal('library.export-cancel'),
+    exportId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('library.import-folder'),
+    sourceFolderPath: selectedPathSchema,
+    copyToParentPath: selectedPathSchema.optional(),
+  }),
+  z.strictObject({
+    type: z.literal('library.import-cancel'),
+    importId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('library.import-validate'),
+    sourceFolderPath: selectedPathSchema,
   }),
 ]);
 

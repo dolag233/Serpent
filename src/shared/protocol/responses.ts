@@ -78,6 +78,50 @@ export const importCompletionSchema = z.strictObject({
 
 export type ImportCompletion = z.infer<typeof importCompletionSchema>;
 
+export const exportProgressEventSchema = z.strictObject({
+  type: z.literal('export.progress'),
+  exportId: nonBlankString,
+  libraryId: nonBlankString,
+  phase: z.enum(['snapshot-db', 'enumerate', 'copy', 'complete', 'failed', 'cancelled']),
+  filesProcessed: z.number().int().nonnegative(),
+  totalFiles: z.number().int().nonnegative(),
+  bytesProcessed: z.number().int().nonnegative(),
+  totalBytes: z.number().int().nonnegative(),
+});
+
+export type ExportProgressEvent = z.infer<typeof exportProgressEventSchema>;
+
+export function parseExportProgressEvent(input: unknown): ExportProgressEvent {
+  return exportProgressEventSchema.parse(input);
+}
+
+export const importProgressEventSchema = z.strictObject({
+  type: z.literal('import.progress'),
+  importId: nonBlankString,
+  phase: z.enum(['validate', 'copy', 'open', 'complete', 'failed', 'cancelled']),
+  filesProcessed: z.number().int().nonnegative(),
+  totalFiles: z.number().int().nonnegative(),
+  bytesProcessed: z.number().int().nonnegative(),
+  totalBytes: z.number().int().nonnegative(),
+});
+
+export type ImportProgressEvent = z.infer<typeof importProgressEventSchema>;
+
+export function parseImportProgressEvent(input: unknown): ImportProgressEvent {
+  return importProgressEventSchema.parse(input);
+}
+
+export const progressEventSchema = z.union([
+  exportProgressEventSchema,
+  importProgressEventSchema,
+]);
+
+export type ProgressEvent = z.infer<typeof progressEventSchema>;
+
+export function parseProgressEvent(input: unknown): ProgressEvent {
+  return progressEventSchema.parse(input);
+}
+
 export const assetChangeEventSchema = z.strictObject({
   type: z.literal('asset.changed'),
   libraryId: nonBlankString,
@@ -358,6 +402,33 @@ const workerSuccessResultSchema = z.discriminatedUnion('type', [
     type: z.literal('library.closed'),
     libraryId: nonBlankString,
   }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('library.exported'),
+    exportId: nonBlankString,
+    libraryId: nonBlankString,
+    format: z.enum(['folder', 'zip']),
+    fileCount: z.number().int().nonnegative(),
+    totalBytes: z.number().int().nonnegative(),
+    excludedPreviewCount: z.number().int().nonnegative(),
+    includedLinkedContent: z.boolean(),
+    durationMs: z.number().int().nonnegative(),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('library.imported'),
+    importId: nonBlankString,
+    libraryId: nonBlankString,
+    displayName: nonBlankString,
+    libraryPath: nonBlankString,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('library.import-validated'),
+    importId: nonBlankString,
+    libraryId: nonBlankString,
+    displayName: nonBlankString,
+  }),
   ...assetOperationSuccessSchemas,
 ]);
 
@@ -398,6 +469,32 @@ const rendererSuccessResultSchema = z.discriminatedUnion('type', [
     type: z.literal('library.closed'),
     libraryId: nonBlankString,
   }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('library.import-validated'),
+    importId: nonBlankString,
+    libraryId: nonBlankString,
+    displayName: nonBlankString,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('library.exported'),
+    exportId: nonBlankString,
+    libraryId: nonBlankString,
+    format: z.enum(['folder', 'zip']),
+    fileCount: z.number().int().nonnegative(),
+    totalBytes: z.number().int().nonnegative(),
+    excludedPreviewCount: z.number().int().nonnegative(),
+    includedLinkedContent: z.boolean(),
+    durationMs: z.number().int().nonnegative(),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('library.imported'),
+    importId: nonBlankString,
+    libraryId: nonBlankString,
+    displayName: nonBlankString,
+  }),
   ...assetOperationSuccessSchemas,
 ]);
 
@@ -418,7 +515,7 @@ export function parseRendererResult(input: unknown): RendererResult {
 export const rendererLifecycleEventSchema = z.discriminatedUnion('type', [
   z.strictObject({
     type: z.literal('library.opening'),
-    operation: z.enum(['create', 'open']),
+    operation: z.enum(['create', 'open', 'import']),
   }),
   z.strictObject({
     type: z.literal('library.opened'),
@@ -426,7 +523,7 @@ export const rendererLifecycleEventSchema = z.discriminatedUnion('type', [
   }),
   z.strictObject({
     type: z.literal('library.open-failed'),
-    operation: z.enum(['create', 'open']),
+    operation: z.enum(['create', 'open', 'import']),
     error: publicErrorSchema,
   }),
   z.strictObject({

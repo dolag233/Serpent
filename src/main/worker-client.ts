@@ -9,8 +9,10 @@ import {
   parseAssetChangeEvent,
   parseWorkerReadyMessage,
   parseWorkerResponse,
+  parseProgressEvent,
   type WorkerResult,
   type AssetChangeEvent,
+  type ProgressEvent,
 } from '../shared/protocol/responses';
 
 interface PendingRequest {
@@ -22,7 +24,15 @@ interface PendingRequest {
 const READY_TIMEOUT_MS = 5_000;
 const REQUEST_TIMEOUT_MS = 15_000;
 const FILE_OPERATION_TIMEOUT_MS = 5 * 60_000;
+const EXPORT_IMPORT_TIMEOUT_MS = 30 * 60_000;
 const SHUTDOWN_TIMEOUT_MS = 2_000;
+
+const EXPORT_IMPORT_COMMANDS = new Set([
+  'library.export',
+  'library.export-cancel',
+  'library.import-folder',
+  'library.import-cancel',
+]);
 
 export class LibraryWorkerClient {
   readonly #modulePath: string;
@@ -32,6 +42,7 @@ export class LibraryWorkerClient {
   #shutdownAck: (() => void) | undefined;
   #shuttingDown = false;
   #assetChangeListeners = new Set<(event: AssetChangeEvent) => void>();
+  #progressListeners = new Set<(event: ProgressEvent) => void>();
 
   constructor(modulePath: string, private readonly logger: AppLogger) {
     this.#modulePath = modulePath;
@@ -101,9 +112,11 @@ export class LibraryWorkerClient {
 
     const requestId = randomUUID();
     return new Promise<WorkerResult>((resolve, reject) => {
-      const timeout = command.type.startsWith('asset.import.') || command.type === 'asset.refresh'
-        ? FILE_OPERATION_TIMEOUT_MS
-        : REQUEST_TIMEOUT_MS;
+      const timeout = EXPORT_IMPORT_COMMANDS.has(command.type)
+        ? EXPORT_IMPORT_TIMEOUT_MS
+        : command.type.startsWith('asset.import.') || command.type === 'asset.refresh'
+          ? FILE_OPERATION_TIMEOUT_MS
+          : REQUEST_TIMEOUT_MS;
       const timer = setTimeout(() => {
         this.#pending.delete(requestId);
         reject(new Error(`Library Worker request timed out (${requestId}).`));
@@ -117,6 +130,11 @@ export class LibraryWorkerClient {
   onAssetsChanged(listener: (event: AssetChangeEvent) => void): () => void {
     this.#assetChangeListeners.add(listener);
     return () => this.#assetChangeListeners.delete(listener);
+  }
+
+  onProgress(listener: (event: ProgressEvent) => void): () => void {
+    this.#progressListeners.add(listener);
+    return () => this.#progressListeners.delete(listener);
   }
 
   async shutdown(): Promise<void> {
@@ -142,6 +160,15 @@ export class LibraryWorkerClient {
   }
 
   readonly #onMessage = (message: unknown) => {
+    // Progress events take priority over asset-change events.
+    try {
+      const progress = parseProgressEvent(message);
+      for (const listener of this.#progressListeners) listener(progress);
+      return;
+    } catch {
+      // Not a progress event; try asset-change next.
+    }
+
     try {
       const event = parseAssetChangeEvent(message);
       for (const listener of this.#assetChangeListeners) listener(event);

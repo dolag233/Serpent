@@ -7,6 +7,7 @@ import {
   ACTIVE_CONTEXT_CHANNEL,
   LIBRARY_LIFECYCLE_CHANNEL,
   LIBRARY_REQUEST_CHANNEL,
+  PROGRESS_CHANNEL,
 } from '../shared/protocol/channels';
 import type { RendererRequest } from '../shared/protocol/requests';
 import {
@@ -19,6 +20,10 @@ import {
   type ImportConflictPlan,
   type AssetChangeEvent,
   parseAssetChangeEvent,
+  type ExportProgressEvent,
+  parseExportProgressEvent,
+  type ImportProgressEvent,
+  parseImportProgressEvent,
 } from '../shared/protocol/responses';
 import type {
   NameConflictDecision,
@@ -420,6 +425,52 @@ const library: SerpentLibraryApi = Object.freeze({
     };
     ipcRenderer.on(ASSET_CHANGE_CHANNEL, subscription);
     return () => ipcRenderer.removeListener(ASSET_CHANGE_CHANNEL, subscription);
+  },
+
+  async exportLibrary({ libraryId, includeLinkedContent }: { libraryId: string; includeLinkedContent: boolean }) {
+    const result = await request({ type: 'library.export.request', libraryId, includeLinkedContent });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'library.exported') throw new Error('Unexpected export response.');
+    return { ok: true as const, value: result };
+  },
+
+  async importLibrary() {
+    const result = await request({ type: 'library.import.request' });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'library.import-validated') throw new Error('Unexpected import-validate response.');
+    return { ok: true as const, value: result };
+  },
+
+  async importLibraryCopy({ importId }: { importId: string }) {
+    const result = await request({ type: 'library.import.copy.request', importId });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'library.imported') throw new Error('Unexpected import response.');
+    return { ok: true as const, value: result };
+  },
+
+  async importLibraryOpenInPlace({ importId }: { importId: string }) {
+    const result = await request({ type: 'library.import.open-in-place.request', importId });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'library.imported') throw new Error('Unexpected import response.');
+    return { ok: true as const, value: result };
+  },
+
+  onProgress(listener: (event: ExportProgressEvent | ImportProgressEvent) => void) {
+    const subscription = (_event: Electron.IpcRendererEvent, input: unknown) => {
+      try {
+        listener(parseExportProgressEvent(input));
+        return;
+      } catch {
+        // Try import progress.
+      }
+      try {
+        listener(parseImportProgressEvent(input));
+      } catch {
+        // Not a progress event.
+      }
+    };
+    ipcRenderer.on(PROGRESS_CHANNEL, subscription);
+    return () => ipcRenderer.removeListener(PROGRESS_CHANNEL, subscription);
   },
 });
 

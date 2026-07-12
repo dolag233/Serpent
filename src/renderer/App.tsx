@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
 
 import type { AssetSummary, AssetMetadataResult, CollectionSummary, LinkedFolderSummary, ManagedFolderSummary, SmartCollectionSummary, TagSummary } from '../shared/asset-types';
-import type { SerpentLibraryApi, RelinkBatchPreviewResult } from '../shared/library-api';
+import type { SerpentLibraryApi, RelinkBatchPreviewResult, ImportValidatedResult } from '../shared/library-api';
 import type { PublicError, PublicErrorCode, PublicErrorReason } from '../shared/protocol/errors';
-import type { ImportConflictPlan, RendererLibrarySummary } from '../shared/protocol/responses';
+import type { ImportConflictPlan, RendererLibrarySummary, ExportProgressEvent, ImportProgressEvent } from '../shared/protocol/responses';
 
 type RendererWindow = Window & { serpent?: { library?: SerpentLibraryApi } };
 type UiState = 'booting' | 'idle' | 'creating' | 'opening' | 'closing' | 'loading' | 'importing' | 'ready';
@@ -94,6 +94,13 @@ export function App() {
   const [permanentDeleteDialog, setPermanentDeleteDialog] = useState<string | null>(null);
   const [batchRelinkPreview, setBatchRelinkPreview] = useState<RelinkBatchPreviewResult | null>(null);
   const [batchRelinkKeepMetadata, setBatchRelinkKeepMetadata] = useState(true);
+
+  // Export / Import state
+  const [exportProgress, setExportProgress] = useState<ExportProgressEvent | null>(null);
+  const [importProgress, setImportProgress] = useState<ImportProgressEvent | null>(null);
+  const [importValidated, setImportValidated] = useState<ImportValidatedResult | null>(null);
+  const [exportDialogOpen, setExportDialogOpen] = useState(false);
+  const [includeLinkedContent, setIncludeLinkedContent] = useState(false);
 
   const selectedFolderId = assetScope === 'all' || assetScope === 'root' ? undefined : assetScope;
   const selectedFolder = folders.find((folder) => folder.folderId === selectedFolderId);
@@ -780,6 +787,107 @@ export function App() {
     }
   }
 
+  // --- Export / Import operations ---
+
+  async function exportLibrary() {
+    if (!api || !library) return;
+    setExportDialogOpen(false);
+    setExportProgress({
+      type: 'export.progress', exportId: '', libraryId: library.libraryId,
+      phase: 'snapshot-db', filesProcessed: 0, totalFiles: 0,
+      bytesProcessed: 0, totalBytes: 0,
+    });
+    try {
+      const result = await api.exportLibrary({ libraryId: library.libraryId, includeLinkedContent });
+      if (!result.ok) {
+        if (result.error.code === 'CANCELLED') {
+          setNotice('导出已取消。');
+        } else {
+          throw new LibraryOperationError(result.error);
+        }
+      }
+    } catch (caught) {
+      setError(toMessage(caught, '导出失败。'));
+    } finally {
+      setTimeout(() => {
+        setExportProgress((prev) => {
+          if (prev?.phase === 'complete' || prev?.phase === 'cancelled') return null;
+          return prev;
+        });
+      }, 4000);
+    }
+  }
+
+  async function startImport() {
+    if (!api) return;
+    setImportProgress({
+      type: 'import.progress', importId: '',
+      phase: 'validate', filesProcessed: 0, totalFiles: 0,
+      bytesProcessed: 0, totalBytes: 0,
+    });
+    try {
+      const result = await api.importLibrary();
+      if (!result.ok) {
+        if (result.error.code === 'CANCELLED') {
+          setImportProgress(null);
+          return;
+        }
+        throw new LibraryOperationError(result.error);
+      }
+      setImportValidated(result.value);
+      setImportProgress(null);
+    } catch (caught) {
+      setError(toMessage(caught, '导入验证失败。'));
+      setImportProgress(null);
+    }
+  }
+
+  async function completeImportCopy() {
+    if (!api || !importValidated) return;
+    setImportProgress({
+      type: 'import.progress', importId: importValidated.importId,
+      phase: 'copy', filesProcessed: 0, totalFiles: 0,
+      bytesProcessed: 0, totalBytes: 0,
+    });
+    try {
+      const result = await api.importLibraryCopy({ importId: importValidated.importId });
+      if (!result.ok) {
+        if (result.error.code === 'CANCELLED') {
+          setNotice('导入已取消。');
+        } else {
+          throw new LibraryOperationError(result.error);
+        }
+      }
+      setImportValidated(null);
+    } catch (caught) {
+      setError(toMessage(caught, '导入失败。'));
+      setImportProgress(null);
+    }
+  }
+
+  async function completeImportInPlace() {
+    if (!api || !importValidated) return;
+    setImportProgress({
+      type: 'import.progress', importId: importValidated.importId,
+      phase: 'open', filesProcessed: 0, totalFiles: 0,
+      bytesProcessed: 0, totalBytes: 0,
+    });
+    try {
+      const result = await api.importLibraryOpenInPlace({ importId: importValidated.importId });
+      if (!result.ok) {
+        if (result.error.code === 'CANCELLED') {
+          setNotice('导入已取消。');
+        } else {
+          throw new LibraryOperationError(result.error);
+        }
+      }
+      setImportValidated(null);
+    } catch (caught) {
+      setError(toMessage(caught, '导入失败。'));
+      setImportProgress(null);
+    }
+  }
+
   useEffect(() => {
     if (!api || !library) return;
     return api.onAssetsChanged((event) => {
@@ -795,6 +903,23 @@ export function App() {
       });
     });
   }, [api, assetScope, library, loadContent]);
+
+  useEffect(() => {
+    if (!api || !library) return;
+    return api.onProgress((event) => {
+      if (event.type === 'export.progress') {
+        setExportProgress(event);
+        if (event.phase === 'complete') {
+          setNotice(`导出完成：${event.totalFiles} 文件，${formatBytes(event.totalBytes)}。`);
+        }
+      } else if (event.type === 'import.progress') {
+        setImportProgress(event);
+        if (event.phase === 'complete') {
+          setImportProgress(null);
+        }
+      }
+    });
+  }, [api, library]);
 
   useEffect(() => {
     if (!dialog && !conflicts && !permanentDeleteDialog && !deleteLinkedDialog && !batchRelinkPreview) return;
@@ -969,9 +1094,21 @@ export function App() {
         {library && selectedAsset && selectedAsset.availability === 'available' && !selectedAsset.deletedAt && isLinkedScope && <><span className="tool-separator" /><button className="compact-action" disabled={busy} onClick={() => { setDeleteLinkedDialog({ assetIds: [selectedAssetId!], displayNames: selectedAsset.displayName, deleteSourceFile: false }); }} type="button"><Icon name="link" size={14} />删除（链接）</button></>}
         {library && !showTrash && visibleAssets.some((a) => a.availability === 'missing' && !a.deletedAt) && <><span className="tool-separator" /><button className="compact-action" disabled={busy} onClick={() => void startBatchRelink()} type="button"><Icon name="folder" size={14} />批量重新定位</button></>}
       </>}
-      <span className="tool-separator" /><button className="compact-action" disabled={!library || busy} onClick={() => void importAssets('files')} type="button"><Icon name="upload" size={14} />导入文件</button><button className="compact-action" disabled={!library || busy} onClick={() => void importAssets('folder')} type="button"><Icon name="folder" size={14} />导入文件夹</button><button className="compact-action" disabled={!library || busy} onClick={() => void importFolderAsLinked()} type="button"><Icon name="link" size={14} />导入链接文件夹</button><ToolButton disabled={!library || busy} icon="refresh" label="刷新磁盘变化" onClick={() => void refreshAssets()} /><span className="tool-separator" /><ToolButton icon="grid" label="网格视图" pressed />
+      <span className="tool-separator" /><button className="compact-action" disabled={!library || busy} onClick={() => void importAssets('files')} type="button"><Icon name="upload" size={14} />导入文件</button><button className="compact-action" disabled={!library || busy} onClick={() => void importAssets('folder')} type="button"><Icon name="folder" size={14} />导入文件夹</button><button className="compact-action" disabled={!library || busy} onClick={() => void importFolderAsLinked()} type="button"><Icon name="link" size={14} />导入链接文件夹</button><span className="tool-separator" /><button className="compact-action" disabled={!library || busy} onClick={() => setExportDialogOpen(true)} type="button"><Icon name="archive" size={14} />导出资源库</button><button className="compact-action" disabled={busy} onClick={() => void startImport()} type="button"><Icon name="folder" size={14} />导入资源库</button><ToolButton disabled={!library || busy} icon="refresh" label="刷新磁盘变化" onClick={() => void refreshAssets()} /><span className="tool-separator" /><ToolButton icon="grid" label="网格视图" pressed />
     </div></div><div className="workspace-canvas">
       {busy && <div className="activity-strip" role="status"><span className="activity-pulse" />{uiState === 'importing' ? '正在安全复制与登记资产…' : '正在同步资源库…'}</div>}
+      {exportProgress && exportProgress.phase !== 'complete' && (
+        <div className="activity-strip" role="status">
+          <span className="activity-pulse" />
+          正在导出资源库：{exportProgress.phase === 'snapshot-db' ? '快照数据库…' : exportProgress.phase === 'enumerate' ? '枚举文件…' : `复制中 ${exportProgress.filesProcessed}/${exportProgress.totalFiles} · ${formatBytes(exportProgress.bytesProcessed)}/${formatBytes(exportProgress.totalBytes)}`}
+        </div>
+      )}
+      {importProgress && importProgress.phase !== 'complete' && (
+        <div className="activity-strip" role="status">
+          <span className="activity-pulse" />
+          导入资源库：{importProgress.phase === 'validate' ? '验证中…' : importProgress.phase === 'copy' ? '复制中…' : '打开中…'}
+        </div>
+      )}
       {library ? visibleAssets.length ? <div className="asset-grid">{visibleAssets.map((asset) => <button className={`asset-card${selectedAssetId === asset.assetId ? ' is-selected' : ''}${asset.availability === 'missing' ? ' is-missing' : ''}${asset.deletedAt ? ' is-trashed' : ''}`} key={asset.assetId} onClick={() => setSelectedAssetId(asset.assetId)} type="button"><div className="asset-preview"><span className="asset-extension">{extension(asset.displayName)}</span>{asset.availability === 'missing' && <span className="missing-banner"><Icon name="warning" size={12} />文件丢失</span>}{asset.deletedAt && <span className="missing-banner" style={{ background: 'var(--raised-2)', color: 'var(--secondary)', bottom: 6, right: 6 }}><Icon name="trash" size={12} />回收站{asset.remainingDays !== null && ` · ${asset.remainingDays}天`}</span>}<Icon name="file" size={28} /></div><div className="asset-caption"><strong title={asset.displayName}>{asset.displayName}</strong>{asset.deletedAt && asset.trashedFromPath ? <span style={{ color: 'var(--tertiary)', fontSize: 8, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={asset.trashedFromPath}>{asset.trashedFromPath}</span> : <span>{formatBytes(asset.byteSize)} · {formatDate(asset.modifiedAt)}</span>}</div></button>)}</div> : <div className="empty-library"><div className="empty-orbit"><Icon name="upload" size={24} /></div><span className="eyebrow">MANAGED ASSETS</span><h1>{selectedFolder ? '这个文件夹还是空的' : '把第一批素材放进来'}</h1><p>文件将复制到清晰可读的 Assets 目录，同时建立稳定的资产身份。</p><div className="empty-actions"><button className="primary-button" onClick={() => void importAssets('files')} type="button">导入文件</button><button className="secondary-button" onClick={() => void importAssets('folder')} type="button">导入文件夹</button></div></div> : <div className="empty-state"><div className="empty-index">01</div><div className="empty-copy"><span className="eyebrow">LOCAL ASSET WORKSPACE</span><h1>从一个本地资源库开始</h1><p>文件、目录与元数据都保留在你掌控的位置。</p><div className="empty-actions"><button className="primary-button" onClick={() => { setDialogValue('我的资源库'); setDialog('library'); }} type="button"><Icon name="plus" size={15} />创建资源库</button><button className="secondary-button" onClick={() => void runLibraryOperation('open')} type="button"><Icon name="folder" size={15} />打开资源库</button></div></div></div>}
       {(error || notice) && <div className={`toast${error ? ' is-error' : ''}`} role={error ? 'alert' : 'status'}><Icon name={error ? 'warning' : 'info'} size={15} /><span>{error ?? notice}</span><button aria-label="关闭提示" onClick={() => { setError(null); setNotice(null); }} type="button"><Icon name="close" size={13} /></button></div>}
     </div></section>
@@ -1057,6 +1194,8 @@ export function App() {
     {!leftOpen && <button className="pane-reveal pane-reveal-left" onClick={() => setLeftOpen(true)} type="button"><Icon name="collapse-left" size={15} /></button>}{!rightOpen && <button className="pane-reveal pane-reveal-right" onClick={() => setRightOpen(true)} type="button"><Icon name="collapse-right" size={15} /></button>}
     {dialog && <div className="dialog-backdrop" role="presentation"><form aria-labelledby="create-dialog-title" aria-modal="true" className="create-dialog" onSubmit={(event) => { event.preventDefault(); if (!dialogValue.trim()) return; if (dialog === 'library') { setDialog(null); void runLibraryOperation('create'); } else void createFolder(); }} role="dialog"><div className="dialog-heading"><div><span className="eyebrow">{dialog === 'library' ? 'NEW LOCAL LIBRARY' : 'MANAGED FOLDER'}</span><h2 id="create-dialog-title">{dialog === 'library' ? '创建资源库' : '新建文件夹'}</h2></div><button aria-label="取消" className="dialog-close" onClick={() => setDialog(null)} type="button"><Icon name="close" size={16} /></button></div><label className="field-label" htmlFor="dialog-name">名称</label><input autoFocus className="text-field" id="dialog-name" maxLength={255} onChange={(event) => setDialogValue(event.target.value)} value={dialogValue} /><p className="field-help">{dialog === 'library' ? '下一步由系统选择本地保存位置。' : `将在“${selectedFolder?.name ?? '资源库根目录'}”内创建真实目录。`}</p><div className="dialog-actions"><button className="secondary-button" onClick={() => setDialog(null)} type="button">取消</button><button className="primary-button" disabled={!dialogValue.trim()} type="submit">创建</button></div></form></div>}
     {conflicts && <div className="dialog-backdrop" role="presentation"><div aria-labelledby="conflict-dialog-title" aria-modal="true" className="conflict-dialog" role="dialog"><div className="dialog-heading"><div><span className="eyebrow">IMPORT REVIEW</span><h2 id="conflict-dialog-title">处理导入冲突</h2></div></div><div className="conflict-summary"><div><strong>{conflicts.fileCount}</strong><span>待导入文件</span></div><div><strong>{conflicts.suspectedDuplicateCount}</strong><span>疑似重复</span></div><div><strong>{conflicts.nameConflictCount}</strong><span>同名冲突</span></div></div><label className="decision-field"><span>疑似重复</span><select autoFocus value={duplicateDecision} onChange={(event) => setDuplicateDecision(event.target.value as typeof duplicateDecision)}><option value="skip">跳过</option><option value="merge">合并到已有资产</option><option value="create-copy">创建副本</option></select></label><label className="decision-field"><span>同名冲突</span><select value={nameDecision} onChange={(event) => setNameDecision(event.target.value as typeof nameDecision)}><option value="keep-both">保留两者</option><option value="replace">替换现有资产</option><option value="skip">跳过</option></select></label>{conflicts.examples.length > 0 && <div className="conflict-examples">{conflicts.examples.map((item, index) => <span key={`${item.displayName}-${index}`}><Icon name="file" size={13} />{item.displayName}</span>)}</div>}<div className="dialog-actions"><button className="secondary-button" onClick={() => void abandonConflicts()} type="button">取消</button><button className="primary-button" onClick={() => void resolveConflicts()} type="button">应用并导入</button></div></div></div>}
+    {exportDialogOpen && <div className="dialog-backdrop" role="presentation"><div aria-modal="true" className="create-dialog" role="dialog"><div className="dialog-heading"><div><span className="eyebrow">EXPORT LIBRARY</span><h2>导出资源库</h2></div><button aria-label="取消" className="dialog-close" onClick={() => setExportDialogOpen(false)} type="button"><Icon name="close" size={16} /></button></div><p style={{ color: 'var(--secondary)', fontSize: 12, lineHeight: 1.6 }}>将资源库导出到指定文件夹。导出内容包括所有托管资产、数据库、修订记录和回收站文件。</p><label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 14, color: '#c7cac7', fontSize: 12, cursor: 'pointer' }}><input checked={includeLinkedContent} onChange={(e) => setIncludeLinkedContent(e.target.checked)} type="checkbox" />包含链接文件夹源内容</label><div className="dialog-actions"><button className="secondary-button" onClick={() => setExportDialogOpen(false)} type="button">取消</button><button className="primary-button" onClick={() => void exportLibrary()} type="button">选择目标文件夹并导出</button></div></div></div>}
+    {importValidated && <div className="dialog-backdrop" role="presentation"><div aria-modal="true" className="create-dialog" role="dialog"><div className="dialog-heading"><div><span className="eyebrow">IMPORT LIBRARY</span><h2>导入资源库</h2></div><button aria-label="取消" className="dialog-close" onClick={() => setImportValidated(null)} type="button"><Icon name="close" size={16} /></button></div><p style={{ color: 'var(--secondary)', fontSize: 12, lineHeight: 1.6 }}>资源库 <strong>{importValidated.displayName}</strong> 验证通过。请选择导入方式：</p><div className="dialog-actions"><button className="secondary-button" onClick={() => setImportValidated(null)} type="button">取消</button><button className="secondary-button" onClick={() => void completeImportInPlace()} type="button">原地打开（不复制）</button><button className="primary-button" onClick={() => void completeImportCopy()} type="button">复制到新位置</button></div></div></div>}
     {permanentDeleteDialog && <div className="dialog-backdrop" role="presentation"><div aria-modal="true" className="create-dialog" role="dialog"><div className="dialog-heading"><div><span className="eyebrow">PERMANENT DELETE</span><h2>永久删除确认</h2></div><button aria-label="取消" className="dialog-close" onClick={() => setPermanentDeleteDialog(null)} type="button"><Icon name="close" size={16} /></button></div><p style={{ color: 'var(--secondary)', fontSize: 12, lineHeight: 1.6 }}>确定要永久删除此资产吗？文件将从回收站彻底移除，此操作不可撤销。</p><div className="dialog-actions"><button className="secondary-button" onClick={() => setPermanentDeleteDialog(null)} type="button">取消</button><button className="primary-button" onClick={() => void deletePermanentFromTrash()} type="button">永久删除</button></div></div></div>}
     {deleteLinkedDialog && <div className="dialog-backdrop" role="presentation"><div aria-modal="true" className="create-dialog" role="dialog"><div className="dialog-heading"><div><span className="eyebrow">DELETE LINKED ASSET</span><h2>删除链接资产</h2></div><button aria-label="取消" className="dialog-close" onClick={() => setDeleteLinkedDialog(null)} type="button"><Icon name="close" size={16} /></button></div><p style={{ color: 'var(--secondary)', fontSize: 12, lineHeight: 1.6 }}>确定要删除链接资产"{deleteLinkedDialog.displayNames}"吗？这只会移除 Serpent 中的记录，不会影响磁盘源文件。</p><label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 14, color: '#c7cac7', fontSize: 12, cursor: 'pointer' }}><input checked={deleteLinkedDialog.deleteSourceFile} onChange={(e) => setDeleteLinkedDialog({ ...deleteLinkedDialog, deleteSourceFile: e.target.checked })} type="checkbox" />同步删除磁盘源文件（移入系统回收站）</label><div className="dialog-actions"><button className="secondary-button" onClick={() => setDeleteLinkedDialog(null)} type="button">取消</button><button className="primary-button" onClick={() => void executeDeleteLinked()} type="button">删除</button></div></div></div>}
     {batchRelinkPreview && <div className="dialog-backdrop" role="presentation"><div aria-modal="true" className="conflict-dialog" role="dialog"><div className="dialog-heading"><div><span className="eyebrow">BATCH RELINK</span><h2>批量重新定位预览</h2></div><button aria-label="取消" className="dialog-close" onClick={() => setBatchRelinkPreview(null)} type="button"><Icon name="close" size={16} /></button></div><div className="conflict-summary" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}><div><strong>{batchRelinkPreview.totalCount}</strong><span>总计丢失</span></div><div><strong>{batchRelinkPreview.matchedCount}</strong><span>新位置匹配</span></div><div><strong>{batchRelinkPreview.unmatchedCount}</strong><span>未找到</span></div></div>{batchRelinkPreview.examples.length > 0 && <div className="conflict-examples">{batchRelinkPreview.examples.map((item, index) => <span key={`${item.relativeFilePath}-${index}`} style={{ color: item.matched ? 'var(--accent)' : 'var(--warning)' }}><Icon name={item.matched ? 'file' : 'warning'} size={13} />{item.relativeFilePath}</span>)}</div>}<label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 14, color: '#c7cac7', fontSize: 12, cursor: 'pointer' }}><input checked={batchRelinkKeepMetadata} onChange={(e) => setBatchRelinkKeepMetadata(e.target.checked)} type="checkbox" />沿用原资产信息（保留标签、描述、评分、合集等人工元数据）</label><div className="dialog-actions"><button className="secondary-button" onClick={() => setBatchRelinkPreview(null)} type="button">取消</button><button className="primary-button" disabled={batchRelinkPreview.matchedCount === 0} onClick={() => void applyBatchRelink()} type="button">应用批量重新定位</button></div></div></div>}

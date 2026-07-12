@@ -3,6 +3,7 @@ import {
   accessSync,
   closeSync,
   constants,
+  copyFileSync,
   existsSync,
   fstatSync,
   fsyncSync,
@@ -37,6 +38,8 @@ import type {
   ImportCompletion,
   ImportConflictPlan,
   InternalLibrarySummary,
+  ExportProgressEvent,
+  ImportProgressEvent,
 } from '../shared/protocol/responses';
 import {
   copyNameForIndex,
@@ -668,6 +671,7 @@ export interface LibraryServiceOptions {
   importTtlMs?: number;
   onAssetsChanged?: (event: AssetsChangedEvent) => void;
   onDiagnostic?: (diagnostic: LibraryServiceDiagnostic) => void;
+  onProgress?: (event: ExportProgressEvent | ImportProgressEvent) => void;
   observerFactory?: AssetObserverFactory;
   scheduler?: DebounceScheduler;
 }
@@ -815,6 +819,31 @@ function realFileExists(filePath: string): boolean {
     return entry.isFile() && !entry.isSymbolicLink();
   } catch {
     return false;
+  }
+}
+
+function copyDirRecursive(
+  sourcePath: string,
+  destPath: string,
+  cancelState: { cancelled: boolean },
+): void {
+  mkdirSync(destPath, { recursive: true });
+  let children;
+  try {
+    children = readdirSync(sourcePath, { withFileTypes: true });
+  } catch (error) {
+    throw new LibraryServiceError('NOT_A_LIBRARY', { cause: error });
+  }
+  for (const child of children) {
+    if (cancelState.cancelled) return;
+    const childSource = path.join(sourcePath, child.name);
+    const childDest = path.join(destPath, child.name);
+    if (child.isSymbolicLink()) continue; // Never follow symlinks.
+    if (child.isDirectory()) {
+      copyDirRecursive(childSource, childDest, cancelState);
+    } else if (child.isFile()) {
+      copyFileSync(childSource, childDest);
+    }
   }
 }
 
@@ -1152,6 +1181,8 @@ export class LibraryService {
   private readonly openIdByPath = new Map<string, string>();
   private readonly pendingImports = new Map<string, PendingImport>();
   private readonly watchByLibraryId = new Map<string, LibraryWatch>();
+  private readonly activeExports = new Map<string, { cancelled: boolean }>();
+  private readonly activeImports = new Map<string, { cancelled: boolean }>();
 
   constructor(private readonly options: LibraryServiceOptions = {}) {}
 
@@ -5694,6 +5725,525 @@ export class LibraryService {
       }
       this.removeOperation(operationPath);
       throw serviceError(error, 'INVALID_IMPORT_SOURCE');
+    }
+  }
+
+  // ── Library Export / Import ────────────────────────────────────────
+
+  private emitProgress(event: ExportProgressEvent | ImportProgressEvent): void {
+    try {
+      this.options.onProgress?.(event);
+    } catch {
+      // Progress is best effort and must never throw back into an operation.
+    }
+  }
+
+  exportLibraryToFolder(input: {
+    libraryId: string;
+    destinationPath: string;
+    includeLinkedContent: boolean;
+  }): {
+    exportId: string;
+    fileCount: number;
+    totalBytes: number;
+    excludedPreviewCount: number;
+    includedLinkedContent: boolean;
+    durationMs: number;
+  } {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    const exportId = randomUUID();
+
+    // Reject destination inside the library.
+    let canonicalDest: string;
+    let canonicalLib: string;
+    try {
+      canonicalDest = realpathSync(input.destinationPath);
+    } catch {
+      canonicalDest = input.destinationPath;
+    }
+    try {
+      canonicalLib = realpathSync(openLibrary.summary.libraryPath);
+    } catch {
+      throw new LibraryServiceError('LIBRARY_CORRUPT');
+    }
+    const rel = path.relative(canonicalLib, canonicalDest);
+    if (rel === '' || (!rel.startsWith('..') && rel.length > 0)) {
+      throw new LibraryServiceError('INVALID_LIBRARY_PATH');
+    }
+
+    const cancelState = { cancelled: false };
+    this.activeExports.set(exportId, cancelState);
+    const startedAt = Date.now();
+
+    try {
+      // Ensure destination directory exists.
+      mkdirSync(canonicalDest, { recursive: true });
+
+      const libPath = openLibrary.summary.libraryPath;
+
+      // Phase 1: snapshot-db
+      this.emitProgress({
+        type: 'export.progress', exportId,
+        libraryId: input.libraryId,
+        phase: 'snapshot-db', filesProcessed: 0, totalFiles: 0,
+        bytesProcessed: 0, totalBytes: 0,
+      });
+
+      const tempDbPath = path.join(canonicalDest, `.serpent-export-${exportId}.db`);
+      try {
+        // Use SQLite VACUUM INTO for a consistent synchronous snapshot.
+        // This writes a standalone database file without blocking the live library's reads/writes.
+        openLibrary.connection.exec(`VACUUM INTO '${tempDbPath.replace(/'/g, "''")}'`);
+      } catch (error) {
+        try { rmSync(tempDbPath, { force: true }); } catch { /* best effort */ }
+        throw new LibraryServiceError('LIBRARY_CORRUPT', { cause: error });
+      }
+
+      // Verify the backup.
+      const verifyConn = openConfiguredDatabase(tempDbPath);
+      try {
+        verifyConn.pragma('quick_check(1)');
+      } finally {
+        verifyConn.close();
+      }
+
+      // Phase 2: enumerate
+      this.emitProgress({
+        type: 'export.progress', exportId,
+        libraryId: input.libraryId,
+        phase: 'enumerate', filesProcessed: 0, totalFiles: 0,
+        bytesProcessed: 0, totalBytes: 0,
+      });
+
+      interface ExportEntry {
+        sourcePath: string;
+        relativePath: string;
+        byteSize: number;
+      }
+      const entries: ExportEntry[] = [];
+      let excludedPreviewCount = 0;
+
+      const walkDir = (dirPath: string, relPrefix: string): void => {
+        if (cancelState.cancelled) return;
+        let children;
+        try {
+          children = readdirSync(dirPath, { withFileTypes: true });
+        } catch {
+          return; // Skip unreadable entries.
+        }
+        for (const child of children) {
+          if (cancelState.cancelled) return;
+          const childPath = path.join(dirPath, child.name);
+          const childRel = relPrefix ? path.posix.join(relPrefix, child.name) : child.name;
+
+          if (child.isSymbolicLink()) continue; // Never follow symlinks in export.
+
+          if (child.isDirectory()) {
+            // Exclude .serpent/previews and .serpent/operations.
+            if (childRel === '.serpent/previews' || childRel === '.serpent/operations') {
+              if (childRel === '.serpent/previews') {
+                // Count preview files for excludedPreviewCount.
+                try {
+                  excludedPreviewCount = countFilesRecursive(childPath);
+                } catch {
+                  // Best effort count.
+                }
+              }
+              continue;
+            }
+            walkDir(childPath, childRel);
+          } else if (child.isFile()) {
+            // Exclude AI temp files.
+            const lowerName = child.name.toLowerCase();
+            if (lowerName.endsWith('.tmp') || lowerName.startsWith('.') && (
+              lowerName.includes('temp') || lowerName.includes('cache') ||
+              lowerName.startsWith('.ds_store') || lowerName === 'thumbs.db'
+            )) {
+              continue;
+            }
+            // Exclude WAL/SHM files for the temp backup (just in case).
+            if (childPath === `${tempDbPath}-wal` || childPath === `${tempDbPath}-shm`) continue;
+
+            const stat = lstatSync(childPath);
+            if (stat.isSymbolicLink()) continue;
+            entries.push({
+              sourcePath: childPath,
+              relativePath: childRel,
+              byteSize: stat.size,
+            });
+          }
+        }
+      };
+
+      function countFilesRecursive(dirPath: string): number {
+        let count = 0;
+        try {
+          for (const child of readdirSync(dirPath, { withFileTypes: true })) {
+            if (child.isSymbolicLink()) continue;
+            const childPath = path.join(dirPath, child.name);
+            if (child.isDirectory()) {
+              count += countFilesRecursive(childPath);
+            } else if (child.isFile()) {
+              count += 1;
+            }
+          }
+        } catch {
+          // Best effort.
+        }
+        return count;
+      }
+
+      // Walk Assets/.
+      walkDir(path.join(libPath, 'Assets'), 'Assets');
+
+      // Walk .serpent/revisions/.
+      const revisionsDir = path.join(libPath, '.serpent', 'revisions');
+      if (directoryExists(revisionsDir)) {
+        walkDir(revisionsDir, '.serpent/revisions');
+      }
+
+      // Walk .serpent/trash/.
+      const trashDir = path.join(libPath, '.serpent', 'trash');
+      if (directoryExists(trashDir)) {
+        walkDir(trashDir, '.serpent/trash');
+      }
+
+      // Include .serpent/library.db (snapshot).
+      const snapStat = statSync(tempDbPath);
+      entries.push({
+        sourcePath: tempDbPath,
+        relativePath: '.serpent/library.db',
+        byteSize: snapStat.size,
+      });
+
+      // Optionally include linked folder source content.
+      let includedLinkedContent = false;
+      let linkedContentDir: string | null = null;
+      if (input.includeLinkedContent) {
+        const linkedFolders = openLibrary.connection
+          .prepare('SELECT folder_id, display_name, absolute_root_path, status FROM linked_folders WHERE library_id = ?')
+          .all(openLibrary.summary.libraryId) as Array<{
+            folder_id: string;
+            display_name: string;
+            absolute_root_path: string;
+            status: 'available' | 'offline';
+          }>;
+        if (linkedFolders.length > 0) {
+          linkedContentDir = path.join(canonicalDest, '_linked');
+          mkdirSync(linkedContentDir, { recursive: true });
+          includedLinkedContent = true;
+          for (const lf of linkedFolders) {
+            if (cancelState.cancelled) break;
+            if (!directoryExists(lf.absolute_root_path)) continue;
+            const linkedDest = path.join(linkedContentDir, lf.display_name);
+            try {
+              copyDirRecursive(lf.absolute_root_path, linkedDest, cancelState);
+            } catch (error) {
+              this.diagnose('export.copy-linked', error, { folderId: lf.folder_id });
+              // Linked content copy failure is non-fatal.
+            }
+          }
+        }
+      }
+
+      const totalFiles = entries.length;
+      let totalBytes = 0;
+      for (const entry of entries) {
+        totalBytes += entry.byteSize;
+      }
+
+      // Phase 3: copy
+      this.emitProgress({
+        type: 'export.progress', exportId,
+        libraryId: input.libraryId,
+        phase: 'copy', filesProcessed: 0, totalFiles,
+        bytesProcessed: 0, totalBytes,
+      });
+
+      let filesProcessed = 0;
+      let bytesProcessed = 0;
+      let lastEmitTime = Date.now();
+      const BATCH_SIZE = 50;
+      const THROTTLE_MS = 200;
+
+      for (const entry of entries) {
+        if (cancelState.cancelled) break;
+        const destPath = path.join(canonicalDest, ...entry.relativePath.split('/'));
+        mkdirSync(path.dirname(destPath), { recursive: true });
+        copyFileSync(entry.sourcePath, destPath);
+        filesProcessed += 1;
+        bytesProcessed += entry.byteSize;
+
+        if (
+          filesProcessed % BATCH_SIZE === 0 ||
+          Date.now() - lastEmitTime >= THROTTLE_MS
+        ) {
+          this.emitProgress({
+            type: 'export.progress', exportId,
+            libraryId: input.libraryId,
+            phase: 'copy', filesProcessed, totalFiles,
+            bytesProcessed, totalBytes,
+          });
+          lastEmitTime = Date.now();
+        }
+      }
+
+      // Remove the temp DB snapshot.
+      rmSync(tempDbPath, { force: true });
+
+      if (cancelState.cancelled) {
+        this.emitProgress({
+          type: 'export.progress', exportId,
+          libraryId: input.libraryId,
+          phase: 'cancelled', filesProcessed, totalFiles,
+          bytesProcessed, totalBytes,
+        });
+        // Clean up linked content dir if we created it.
+        if (linkedContentDir) {
+          try { rmSync(linkedContentDir, { force: true, recursive: true }); } catch { /* best effort */ }
+        }
+        // Clean up the destination.
+        try { rmSync(canonicalDest, { force: true, recursive: true }); } catch { /* best effort */ }
+        throw new LibraryServiceError('CANCELLED');
+      }
+
+      // Phase 4: complete
+      const durationMs = Date.now() - startedAt;
+      this.emitProgress({
+        type: 'export.progress', exportId,
+        libraryId: input.libraryId,
+        phase: 'complete', filesProcessed, totalFiles,
+        bytesProcessed, totalBytes,
+      });
+
+      return {
+        exportId,
+        fileCount: totalFiles,
+        totalBytes,
+        excludedPreviewCount,
+        includedLinkedContent,
+        durationMs,
+      };
+    } finally {
+      this.activeExports.delete(exportId);
+    }
+  }
+
+  cancelExport(exportId: string): void {
+    const state = this.activeExports.get(exportId);
+    if (!state) throw new LibraryServiceError('IMPORT_NOT_FOUND');
+    state.cancelled = true;
+  }
+
+  importLibraryFromFolder(input: {
+    sourceFolderPath: string;
+    copyToParentPath?: string;
+  }): {
+    importId: string;
+    libraryId: string;
+    displayName: string;
+    libraryPath: string;
+  } {
+    const importId = randomUUID();
+    const cancelState = { cancelled: false };
+    this.activeImports.set(importId, cancelState);
+
+    try {
+      // Phase 1: validate source.
+      this.emitProgress({
+        type: 'import.progress', importId,
+        phase: 'validate', filesProcessed: 0, totalFiles: 0,
+        bytesProcessed: 0, totalBytes: 0,
+      });
+
+      // Validate sourceFolderPath is a readable directory (not a symlink).
+      let sourceStat;
+      try {
+        sourceStat = lstatSync(input.sourceFolderPath);
+      } catch (error) {
+        throw new LibraryServiceError('NOT_A_LIBRARY', { cause: error });
+      }
+      if (sourceStat.isSymbolicLink() || !sourceStat.isDirectory()) {
+        throw new LibraryServiceError('NOT_A_LIBRARY');
+      }
+
+      // Validate Assets/ exists (real directory, not symlink).
+      const assetsPath = path.join(input.sourceFolderPath, 'Assets');
+      if (!realDirectoryExists(assetsPath)) {
+        throw new LibraryServiceError('NOT_A_LIBRARY');
+      }
+
+      // Validate .serpent/library.db exists (real file, not symlink).
+      const dbPath = path.join(input.sourceFolderPath, '.serpent', 'library.db');
+      if (!realFileExists(dbPath)) {
+        throw new LibraryServiceError('NOT_A_LIBRARY');
+      }
+
+      // Reject symlink escapes in the directory tree (quick scan of root-level children).
+      try {
+        for (const child of readdirSync(input.sourceFolderPath, { withFileTypes: true })) {
+          if (child.isSymbolicLink()) {
+            throw new LibraryServiceError('NOT_A_LIBRARY');
+          }
+          const childPath = path.join(input.sourceFolderPath, child.name);
+          // Verify realpath resolves within the source.
+          let realPath: string;
+          try {
+            realPath = realpathSync(childPath);
+          } catch {
+            continue; // Missing entries are fine.
+          }
+          const rel = path.relative(input.sourceFolderPath, realPath);
+          if (rel.startsWith('..') || path.isAbsolute(rel)) {
+            throw new LibraryServiceError('NOT_A_LIBRARY');
+          }
+        }
+      } catch (error) {
+        if (error instanceof LibraryServiceError) throw error;
+        throw new LibraryServiceError('NOT_A_LIBRARY', { cause: error });
+      }
+
+      let libraryPath: string;
+
+      if (input.copyToParentPath) {
+        // Phase 2: copy.
+        this.emitProgress({
+          type: 'import.progress', importId,
+          phase: 'copy', filesProcessed: 0, totalFiles: 0,
+          bytesProcessed: 0, totalBytes: 0,
+        });
+
+        const baseName = path.basename(input.sourceFolderPath);
+        libraryPath = path.join(input.copyToParentPath, baseName);
+
+        if (cancelState.cancelled) {
+          this.emitProgress({ type: 'import.progress', importId, phase: 'cancelled', filesProcessed: 0, totalFiles: 0, bytesProcessed: 0, totalBytes: 0 });
+          throw new LibraryServiceError('CANCELLED');
+        }
+
+        try {
+          copyDirRecursive(input.sourceFolderPath, libraryPath, cancelState);
+        } catch (error) {
+          // Clean up incomplete copy.
+          try { rmSync(libraryPath, { force: true, recursive: true }); } catch { /* best effort */ }
+          if (error instanceof LibraryServiceError && error.code === 'CANCELLED') {
+            this.emitProgress({ type: 'import.progress', importId, phase: 'cancelled', filesProcessed: 0, totalFiles: 0, bytesProcessed: 0, totalBytes: 0 });
+          }
+          throw error;
+        }
+
+        if (cancelState.cancelled) {
+          try { rmSync(libraryPath, { force: true, recursive: true }); } catch { /* best effort */ }
+          this.emitProgress({ type: 'import.progress', importId, phase: 'cancelled', filesProcessed: 0, totalFiles: 0, bytesProcessed: 0, totalBytes: 0 });
+          throw new LibraryServiceError('CANCELLED');
+        }
+      } else {
+        // Open in place.
+        libraryPath = input.sourceFolderPath;
+      }
+
+      // Phase 3: open.
+      this.emitProgress({
+        type: 'import.progress', importId,
+        phase: 'open', filesProcessed: 0, totalFiles: 0,
+        bytesProcessed: 0, totalBytes: 0,
+      });
+
+      const summary = this.openLibrary(libraryPath);
+
+      // Phase 4: complete.
+      this.emitProgress({
+        type: 'import.progress', importId,
+        phase: 'complete', filesProcessed: 0, totalFiles: 0,
+        bytesProcessed: 0, totalBytes: 0,
+      });
+
+      return {
+        importId,
+        libraryId: summary.libraryId,
+        displayName: summary.displayName,
+        libraryPath: summary.libraryPath,
+      };
+    } catch (error) {
+      if (error instanceof LibraryServiceError) throw error;
+      throw new LibraryServiceError('NOT_A_LIBRARY', { cause: error });
+    } finally {
+      this.activeImports.delete(importId);
+    }
+  }
+
+  cancelImport(importId: string): void {
+    const state = this.activeImports.get(importId);
+    if (!state) throw new LibraryServiceError('IMPORT_NOT_FOUND');
+    state.cancelled = true;
+  }
+
+  validateImportSource(sourceFolderPath: string): {
+    libraryId: string;
+    displayName: string;
+  } {
+    // Validate sourceFolderPath is a readable directory (not a symlink).
+    let sourceStat;
+    try {
+      sourceStat = lstatSync(sourceFolderPath);
+    } catch (error) {
+      throw new LibraryServiceError('NOT_A_LIBRARY', { cause: error });
+    }
+    if (sourceStat.isSymbolicLink() || !sourceStat.isDirectory()) {
+      throw new LibraryServiceError('NOT_A_LIBRARY');
+    }
+
+    // Validate Assets/ exists (real directory, not symlink).
+    const assetsPath = path.join(sourceFolderPath, 'Assets');
+    if (!realDirectoryExists(assetsPath)) {
+      throw new LibraryServiceError('NOT_A_LIBRARY');
+    }
+
+    // Validate .serpent/library.db exists (real file, not symlink).
+    const dbPath = path.join(sourceFolderPath, '.serpent', 'library.db');
+    if (!realFileExists(dbPath)) {
+      throw new LibraryServiceError('NOT_A_LIBRARY');
+    }
+
+    // Reject symlink escapes in the directory tree.
+    try {
+      for (const child of readdirSync(sourceFolderPath, { withFileTypes: true })) {
+        if (child.isSymbolicLink()) {
+          throw new LibraryServiceError('NOT_A_LIBRARY');
+        }
+        const childPath = path.join(sourceFolderPath, child.name);
+        let realPath: string;
+        try {
+          realPath = realpathSync(childPath);
+        } catch {
+          continue;
+        }
+        const rel = path.relative(sourceFolderPath, realPath);
+        if (rel.startsWith('..') || path.isAbsolute(rel)) {
+          throw new LibraryServiceError('NOT_A_LIBRARY');
+        }
+      }
+    } catch (error) {
+      if (error instanceof LibraryServiceError) throw error;
+      throw new LibraryServiceError('NOT_A_LIBRARY', { cause: error });
+    }
+
+    // Open a read-only connection to read the library identity.
+    let connection: DatabaseConnection | undefined;
+    try {
+      connection = openConfiguredDatabase(dbPath);
+      const library = connection
+        .prepare('SELECT library_id, display_name FROM library ORDER BY library_id LIMIT 2')
+        .all() as Array<{ library_id: string; display_name: string }>;
+      if (library.length !== 1 || !library[0]?.library_id || !library[0]?.display_name) {
+        throw new LibraryServiceError('LIBRARY_CORRUPT');
+      }
+      return {
+        libraryId: library[0].library_id,
+        displayName: library[0].display_name,
+      };
+    } finally {
+      closeIgnoringFailure(connection);
     }
   }
 

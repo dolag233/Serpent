@@ -16,6 +16,7 @@ if (!parentPort) {
 
 const libraryService = new LibraryService({
   onAssetsChanged: (event) => parentPort.postMessage(event),
+  onProgress: (event) => parentPort.postMessage(event),
   onDiagnostic: ({ scope, error, context }) => {
     try {
       console.error(JSON.stringify({
@@ -278,6 +279,58 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
     case 'extension.save-from-url': {
       const { asset } = await libraryService.saveAssetFromUrl(request.command);
       return { ok: true, type: 'extension.asset-saved', asset };
+    }
+    case 'library.export': {
+      if (request.command.format === 'zip') {
+        throw new LibraryServiceError('LIBRARY_NOT_WRITABLE');
+      }
+      const exported = libraryService.exportLibraryToFolder({
+        libraryId: request.command.libraryId,
+        destinationPath: request.command.destinationPath,
+        includeLinkedContent: request.command.includeLinkedContent,
+      });
+      return {
+        ok: true,
+        type: 'library.exported',
+        exportId: exported.exportId,
+        libraryId: request.command.libraryId,
+        format: 'folder' as const,
+        fileCount: exported.fileCount,
+        totalBytes: exported.totalBytes,
+        excludedPreviewCount: exported.excludedPreviewCount,
+        includedLinkedContent: exported.includedLinkedContent,
+        durationMs: exported.durationMs,
+      };
+    }
+    case 'library.export-cancel':
+      libraryService.cancelExport(request.command.exportId);
+      return { ok: true, type: 'library.closed', libraryId: request.command.exportId };
+    case 'library.import-folder': {
+      const imported = libraryService.importLibraryFromFolder({
+        sourceFolderPath: request.command.sourceFolderPath,
+        copyToParentPath: request.command.copyToParentPath,
+      });
+      return {
+        ok: true,
+        type: 'library.imported',
+        importId: imported.importId,
+        libraryId: imported.libraryId,
+        displayName: imported.displayName,
+        libraryPath: imported.libraryPath,
+      };
+    }
+    case 'library.import-cancel':
+      libraryService.cancelImport(request.command.importId);
+      return { ok: true, type: 'library.closed', libraryId: request.command.importId };
+    case 'library.import-validate': {
+      const validated = libraryService.validateImportSource(request.command.sourceFolderPath);
+      return {
+        ok: true,
+        type: 'library.import-validated',
+        importId: '',
+        libraryId: validated.libraryId,
+        displayName: validated.displayName,
+      };
     }
     default:
       return assertNever(request.command);

@@ -14,6 +14,8 @@ import type {
   AssetChangeEvent,
   RendererLibrarySummary,
   RendererLifecycleEvent,
+  ExportProgressEvent,
+  ImportProgressEvent,
 } from './protocol/responses';
 import type {
   NameConflictDecision,
@@ -35,6 +37,29 @@ export interface RelinkBatchAppliedResult {
   restoredCount: number;
   unchangedMissingCount: number;
   assets: AssetSummary[];
+}
+
+export interface ExportCompletedResult {
+  exportId: string;
+  libraryId: string;
+  format: 'folder' | 'zip';
+  fileCount: number;
+  totalBytes: number;
+  excludedPreviewCount: number;
+  includedLinkedContent: boolean;
+  durationMs: number;
+}
+
+export interface ImportCompletedResult {
+  importId: string;
+  libraryId: string;
+  displayName: string;
+}
+
+export interface ImportValidatedResult {
+  importId: string;
+  libraryId: string;
+  displayName: string;
 }
 
 export interface SerpentLibraryApi {
@@ -127,4 +152,10 @@ export interface SerpentLibraryApi {
   relinkBatchApply(input: { libraryId: string; keepMetadata: boolean }): Promise<LibraryApiResult<RelinkBatchAppliedResult>>;
   // Extension active context
   setActiveContext(libraryId: string | null, selectedFolderId?: string): void;
+  // Export / Import
+  exportLibrary(input: { libraryId: string; includeLinkedContent: boolean }): Promise<LibraryApiResult<ExportCompletedResult>>;
+  importLibrary(): Promise<LibraryApiResult<ImportValidatedResult>>;
+  importLibraryCopy(input: { importId: string }): Promise<LibraryApiResult<ImportCompletedResult>>;
+  importLibraryOpenInPlace(input: { importId: string }): Promise<LibraryApiResult<ImportCompletedResult>>;
+  onProgress(listener: (event: ExportProgressEvent | ImportProgressEvent) => void): () => void;
 }

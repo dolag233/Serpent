@@ -7,6 +7,7 @@ import {
   ACTIVE_CONTEXT_CHANNEL,
   LIBRARY_LIFECYCLE_CHANNEL,
   LIBRARY_REQUEST_CHANNEL,
+  PROGRESS_CHANNEL,
 } from '../shared/protocol/channels';
 import { createPublicError, toPublicError } from '../shared/protocol/errors';
 import { parseRendererRequest, parseActiveContext, type RendererRequest, type WorkerCommand } from '../shared/protocol/requests';
@@ -18,6 +19,7 @@ import {
   type WorkerResult,
   type AssetChangeEvent,
   parseAssetChangeEvent,
+  type ProgressEvent,
 } from '../shared/protocol/responses';
 import { LibraryWorkerClient } from './worker-client';
 import { AppLogger } from './app-logger';
@@ -40,6 +42,9 @@ const focusedContexts = new Map<number, { libraryId: string | null; selectedFold
 
 // Pending relink-batch root paths (libraryId -> rootPath), cleared after apply/abandon.
 const pendingRelinkRoots = new Map<string, string>();
+
+// Pending import source path (importId -> sourceFolderPath), remembered after validation.
+const pendingImportSources = new Map<string, string>();
 
 function focusMainWindow(): void {
   if (!mainWindow) return;
@@ -143,6 +148,11 @@ function publishAssetChange(event: AssetChangeEvent): void {
   mainWindow.webContents.send(ASSET_CHANGE_CHANNEL, parseAssetChangeEvent(event));
 }
 
+function publishProgress(event: ProgressEvent): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.send(PROGRESS_CHANNEL, event);
+}
+
 function toRendererResult(result: WorkerResult): RendererResult {
   if (!result.ok) return parseRendererResult(result);
   if (result.type === 'library.opened') {
@@ -165,6 +175,18 @@ function toRendererResult(result: WorkerResult): RendererResult {
         displayName: library.displayName,
         displayPath: library.libraryPath,
       })),
+    });
+  }
+  // library.imported includes libraryPath but the renderer schema strips it.
+  if (result.type === 'library.imported') {
+    // Use libraryPath for lifecycle but strip from renderer result.
+    // The lifecycle is published in handleLibraryRequest above.
+    return parseRendererResult({
+      ok: true,
+      type: 'library.imported',
+      importId: result.importId,
+      libraryId: result.libraryId,
+      displayName: result.displayName,
     });
   }
   return parseRendererResult(result);
@@ -488,6 +510,90 @@ async function commandFor(request: RendererRequest): Promise<WorkerCommand | und
       pendingRelinkRoots.delete(request.libraryId);
       return { type: 'asset.relink-batch.apply', libraryId: request.libraryId, newRootPath, keepMetadata: request.keepMetadata };
     }
+    case 'library.export.request': {
+      let destinationPath: string | undefined;
+      if (!app.isPackaged && process.env.SERPENT_E2E === '1') {
+        destinationPath = process.env.SERPENT_E2E_EXPORT_DEST;
+      } else {
+        const result = mainWindow
+          ? await dialog.showOpenDialog(mainWindow, {
+              title: '选择导出目标文件夹',
+              buttonLabel: '导出到此处',
+              properties: ['openDirectory', 'createDirectory'],
+            })
+          : await dialog.showOpenDialog({
+              title: '选择导出目标文件夹',
+              buttonLabel: '导出到此处',
+              properties: ['openDirectory', 'createDirectory'],
+            });
+        destinationPath = result.canceled ? undefined : result.filePaths[0];
+      }
+      return destinationPath
+        ? {
+            type: 'library.export',
+            libraryId: request.libraryId,
+            destinationPath,
+            format: 'folder' as const,
+            includeLinkedContent: request.includeLinkedContent,
+          }
+        : undefined;
+    }
+    case 'library.import.request': {
+      let sourceFolderPath: string | undefined;
+      if (!app.isPackaged && process.env.SERPENT_E2E === '1') {
+        sourceFolderPath = process.env.SERPENT_E2E_IMPORT_SOURCE;
+      } else {
+        const result = mainWindow
+          ? await dialog.showOpenDialog(mainWindow, {
+              title: '选择要导入的资源库文件夹',
+              buttonLabel: '导入此资源库',
+              properties: ['openDirectory'],
+            })
+          : await dialog.showOpenDialog({
+              title: '选择要导入的资源库文件夹',
+              buttonLabel: '导入此资源库',
+              properties: ['openDirectory'],
+            });
+        sourceFolderPath = result.canceled ? undefined : result.filePaths[0];
+      }
+      if (!sourceFolderPath) return undefined;
+      // Store source path for later use in copy/in-place decision.
+      const importId = `import-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+      pendingImportSources.set(importId, sourceFolderPath);
+      return { type: 'library.import-validate', sourceFolderPath };
+    }
+    case 'library.import.copy.request': {
+      const importId = request.importId;
+      const sourcePath = pendingImportSources.get(importId);
+      if (!sourcePath) return undefined;
+      let copyToParentPath: string | undefined;
+      if (!app.isPackaged && process.env.SERPENT_E2E === '1') {
+        copyToParentPath = process.env.SERPENT_E2E_IMPORT_COPY_PARENT;
+      } else {
+        const result = mainWindow
+          ? await dialog.showOpenDialog(mainWindow, {
+              title: '选择导入目标位置（资源库将复制到此文件夹内）',
+              buttonLabel: '复制到此处',
+              properties: ['openDirectory', 'createDirectory'],
+            })
+          : await dialog.showOpenDialog({
+              title: '选择导入目标位置（资源库将复制到此文件夹内）',
+              buttonLabel: '复制到此处',
+              properties: ['openDirectory', 'createDirectory'],
+            });
+        copyToParentPath = result.canceled ? undefined : result.filePaths[0];
+      }
+      pendingImportSources.delete(importId);
+      if (!copyToParentPath) return undefined;
+      return { type: 'library.import-folder', sourceFolderPath: sourcePath, copyToParentPath };
+    }
+    case 'library.import.open-in-place.request': {
+      const importId = request.importId;
+      const sourcePath = pendingImportSources.get(importId);
+      if (!sourcePath) return undefined;
+      pendingImportSources.delete(importId);
+      return { type: 'library.import-folder', sourceFolderPath: sourcePath };
+    }
     default:
       return assertNever(request);
   }
@@ -498,7 +604,7 @@ function assertNever(value: never): never {
 }
 
 async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
-  let operation: 'create' | 'open' | undefined;
+  let operation: 'create' | 'open' | 'import' | undefined;
   try {
     const request = parseRendererRequest(input);
     const command = await commandFor(request);
@@ -506,9 +612,11 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
     if (!workerClient) throw new Error('Library Worker is unavailable.');
     if (command.type === 'library.create') operation = 'create';
     if (command.type === 'library.open') operation = 'open';
+    if (command.type === 'library.import-folder') operation = 'import';
     if (operation) publishLifecycle({ type: 'library.opening', operation });
 
-    const result = toRendererResult(await workerClient.request(command));
+    const workerResult = await workerClient.request(command);
+    const result = toRendererResult(workerResult);
     if (!result.ok) {
       if (operation) {
         publishLifecycle({
@@ -521,6 +629,15 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
     }
     if (result.type === 'library.opened') {
       publishLifecycle({ type: 'library.opened', library: result.library });
+    } else if (workerResult.ok && workerResult.type === 'library.imported') {
+      publishLifecycle({
+        type: 'library.opened',
+        library: {
+          libraryId: workerResult.libraryId,
+          displayName: workerResult.displayName,
+          displayPath: workerResult.libraryPath,
+        },
+      });
     } else if (result.type === 'library.closed') {
       publishLifecycle({ type: 'library.closed', libraryId: result.libraryId });
     }
@@ -541,6 +658,7 @@ async function startApplication(): Promise<void> {
   workerClient = new LibraryWorkerClient(path.join(__dirname, 'library_worker.js'), logger);
   await workerClient.start();
   workerClient.onAssetsChanged(publishAssetChange);
+  workerClient.onProgress(publishProgress);
 
   ipcMain.handle(LIBRARY_REQUEST_CHANNEL, (event, input: unknown) => {
     if (!mainWindow || event.sender !== mainWindow.webContents) {

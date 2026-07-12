@@ -1,6 +1,7 @@
 export const LIBRARY_REQUEST_CHANNEL = 'serpent:library:request' as const;
 export const LIBRARY_LIFECYCLE_CHANNEL = 'serpent:library:lifecycle' as const;
 export const ASSET_CHANGE_CHANNEL = 'serpent:asset:changed' as const;
+export const PROGRESS_CHANNEL = 'serpent:progress' as const;
 
 export const ACTIVE_CONTEXT_CHANNEL = 'serpent:active-context' as const;
 
