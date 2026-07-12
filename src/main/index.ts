@@ -48,6 +48,9 @@ const pendingRelinkRoots = new Map<string, string>();
 // Pending import source path (importId -> sourceFolderPath), remembered after validation.
 const pendingImportSources = new Map<string, string>();
 
+// Pending import libraryId (importId -> libraryId), for auto-analyze after import.
+const pendingImportLibraries = new Map<string, string>();
+
 // ── AI Config ────────────────────────────────────────────────────────────
 
 interface AiConfig {
@@ -229,6 +232,29 @@ function publishAssetChange(event: AssetChangeEvent): void {
 function publishProgress(event: ProgressEvent): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   mainWindow.webContents.send(PROGRESS_CHANNEL, event);
+}
+
+async function enqueueAutoAnalyzeAfterImport(
+  libraryId: string,
+  importedAssetIds: string[],
+): Promise<void> {
+  const config = loadAiConfig();
+  if (!config.autoAnalyzeEnabled || !config.hasKey || !config.provider) return;
+  if (importedAssetIds.length === 0 || !workerClient) return;
+
+  try {
+    const result = await workerClient.request({
+      type: 'ai.enqueue-analysis',
+      libraryId,
+      assetIds: importedAssetIds,
+    });
+    if (result.ok && result.type === 'media.jobs.enqueued') {
+      logger?.info('auto-analyze', `Enqueued ${result.enqueued} AI analysis jobs after import.`);
+    }
+  } catch (error) {
+    logger?.error('auto-analyze', error);
+    // Non-blocking: import succeeded regardless of AI enqueue failure.
+  }
 }
 
 function toRendererResult(result: WorkerResult): RendererResult {
@@ -734,6 +760,49 @@ async function commandFor(request: RendererRequest): Promise<WorkerCommand | und
     case 'ai.config.set.request':
       // Handled directly in handleLibraryRequest — should never reach here.
       return undefined;
+    case 'ai.test-connection.request': {
+      // Main decrypts the key, sends encrypted payload to Worker.
+      // The Worker will decrypt via safeStorage for the test.
+      const encrypted = safeStorage.encryptString(request.apiKey);
+      const encryptedBase64 = encrypted.toString('base64');
+      return {
+        type: 'ai.test-connection',
+        provider: request.provider,
+        model: request.model,
+        encryptedApiKeyBase64: encryptedBase64,
+      };
+    }
+    case 'ai.clear-content.request':
+      return {
+        type: 'ai.clear-content',
+        libraryId: request.libraryId,
+        scope: request.scope,
+        confirm: request.confirm,
+      };
+    case 'ai.pause-jobs.request':
+      return {
+        type: 'ai.pause-jobs',
+        libraryId: request.libraryId,
+        jobIds: request.jobIds,
+      };
+    case 'ai.resume-jobs.request':
+      return {
+        type: 'ai.resume-jobs',
+        libraryId: request.libraryId,
+        jobIds: request.jobIds,
+      };
+    case 'ai.cancel-jobs.request':
+      return {
+        type: 'ai.cancel-jobs',
+        libraryId: request.libraryId,
+        jobIds: request.jobIds,
+      };
+    case 'ai.retry-jobs.request':
+      return {
+        type: 'ai.retry-jobs',
+        libraryId: request.libraryId,
+        jobIds: request.jobIds,
+      };
     case 'asset.analyze.request': {
       const config = loadAiConfig();
       if (!config.hasKey) return undefined; // Will be handled as error downstream.
@@ -851,6 +920,53 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
     }
     if (workerResult.ok && (request.type === 'asset.thumbnail.request' || request.type === 'asset.retry-artifact.request') && workerResult.type === 'media.thumbnail.generated') {
       return { ok: true, type: 'asset.thumbnail.generated', assetId: workerResult.assetId, artifactId: workerResult.artifactId } satisfies RendererResult;
+    }
+
+    // Auto-analyze on import: after a successful import (resolveImport or
+    // importFolderAsLinked), enqueue AI analysis for imported images.
+    //
+    // Track importId -> libraryId mapping for resolve flows where libraryId
+    // is not carried in the resolve request itself.
+    if (
+      workerResult.ok &&
+      workerResult.type === 'asset.import.conflicts'
+    ) {
+      pendingImportLibraries.set(
+        workerResult.plan.importId,
+        (request as { libraryId?: string }).libraryId ?? '',
+      );
+    }
+
+    if (
+      workerResult.ok &&
+      (workerResult.type === 'asset.import.completed' ||
+        workerResult.type === 'asset.import-linked.completed')
+    ) {
+      let assetIds: string[] = [];
+      let libId: string | undefined;
+
+      if (workerResult.type === 'asset.import.completed') {
+        assetIds = workerResult.completion.assets.map((a) => a.assetId);
+        // libId from original request or from pending import tracker
+        if (
+          request.type === 'asset.import-files.request' ||
+          request.type === 'asset.import-folder.request'
+        ) {
+          libId = request.libraryId;
+        } else if (request.type === 'asset.import.resolve') {
+          libId = pendingImportLibraries.get(request.importId);
+          pendingImportLibraries.delete(request.importId);
+        }
+      } else {
+        // import-linked has libraryId in the request
+        if (request.type === 'asset.import-linked.request') {
+          libId = request.libraryId;
+        }
+      }
+
+      if (assetIds.length > 0 && libId) {
+        void enqueueAutoAnalyzeAfterImport(libId, assetIds);
+      }
     }
 
     const result = toRendererResult(workerResult);

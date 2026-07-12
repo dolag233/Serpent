@@ -157,6 +157,47 @@ export function parseThumbnailEvent(input: unknown): ThumbnailEvent {
   return thumbnailEventSchema.parse(input);
 }
 
+export const aiProgressEventSchema = z.strictObject({
+  type: z.literal('ai.progress'),
+  libraryId: nonBlankString,
+  queued: z.number().int().nonnegative(),
+  running: z.number().int().nonnegative(),
+  succeeded: z.number().int().nonnegative(),
+  failed: z.number().int().nonnegative(),
+});
+
+export type AiProgressEvent = z.infer<typeof aiProgressEventSchema>;
+
+export function parseAiProgressEvent(input: unknown): AiProgressEvent {
+  return aiProgressEventSchema.parse(input);
+}
+
+export const aiAnalysisCompletedEventSchema = z.strictObject({
+  type: z.literal('ai.analysis.completed'),
+  libraryId: nonBlankString,
+  assetId: nonBlankString,
+  fieldCount: z.number().int().nonnegative(),
+  tagCount: z.number().int().nonnegative(),
+});
+
+export type AiAnalysisCompletedEvent = z.infer<typeof aiAnalysisCompletedEventSchema>;
+
+export function parseAiAnalysisCompletedEvent(input: unknown): AiAnalysisCompletedEvent {
+  return aiAnalysisCompletedEventSchema.parse(input);
+}
+
+export const aiContentClearedEventSchema = z.strictObject({
+  type: z.literal('ai.content.cleared'),
+  libraryId: nonBlankString,
+  affectedAssetCount: z.number().int().nonnegative(),
+});
+
+export type AiContentClearedEvent = z.infer<typeof aiContentClearedEventSchema>;
+
+export function parseAiContentClearedEvent(input: unknown): AiContentClearedEvent {
+  return aiContentClearedEventSchema.parse(input);
+}
+
 const assetOperationSuccessSchemas = [
   z.strictObject({
     ok: z.literal(true),
@@ -447,6 +488,40 @@ const assetOperationSuccessSchemas = [
     assetId: nonBlankString,
     kind: nonBlankString,
   }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('ai.content.cleared'),
+    libraryId: nonBlankString,
+    clearedCount: z.number().int().nonnegative(),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('ai.jobs.paused'),
+    libraryId: nonBlankString,
+    pausedCount: z.number().int().nonnegative(),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('ai.jobs.resumed'),
+    libraryId: nonBlankString,
+    resumedCount: z.number().int().nonnegative(),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('ai.jobs.cancelled'),
+    libraryId: nonBlankString,
+    cancelledCount: z.number().int().nonnegative(),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('ai.jobs.retried'),
+    libraryId: nonBlankString,
+    retriedCount: z.number().int().nonnegative(),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('ai.config.saved'),
+  }),
 ] as const;
 
 const workerSuccessResultSchema = z.discriminatedUnion('type', [
@@ -530,6 +605,13 @@ const workerSuccessResultSchema = z.discriminatedUnion('type', [
     libraryId: nonBlankString,
     processed: z.number().int().nonnegative(),
   }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('ai.test-connection.result'),
+    success: z.boolean(),
+    errorKind: nonBlankString.optional(),
+    reason: nonBlankString.optional(),
+  }),
   ...assetOperationSuccessSchemas,
 ]);
 
@@ -612,7 +694,10 @@ const rendererSuccessResultSchema = z.discriminatedUnion('type', [
   }),
   z.strictObject({
     ok: z.literal(true),
-    type: z.literal('ai.config.saved'),
+    type: z.literal('ai.test-connection.result'),
+    success: z.boolean(),
+    errorKind: nonBlankString.optional(),
+    reason: nonBlankString.optional(),
   }),
   ...assetOperationSuccessSchemas,
 ]);

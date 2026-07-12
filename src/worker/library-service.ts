@@ -647,6 +647,43 @@ const THUMBNAIL_SCHEMA_CHECKSUM = createHash('sha256')
   .update(THUMBNAIL_SCHEMA_SQL)
   .digest('hex');
 
+// Migration v10: add AI analysis job kinds to the jobs table CHECK constraint.
+// SQLite cannot ALTER a CHECK constraint; we recreate the table in-place.
+const AI_JOBS_SCHEMA_SQL = `
+  CREATE TABLE jobs_new (
+    job_id TEXT PRIMARY KEY,
+    library_id TEXT NOT NULL,
+    asset_id TEXT REFERENCES assets(asset_id) ON DELETE CASCADE,
+    revision_id TEXT REFERENCES revisions(revision_id) ON DELETE SET NULL,
+    kind TEXT NOT NULL CHECK (
+      kind IN ('generate_thumbnail', 'generate_video_poster',
+               'generate_contact_sheet', 'generate_webm_proxy',
+               'extract_metadata', 'extract_palette',
+               'ai.image.analysis', 'ai.video.analysis')
+    ),
+    status TEXT NOT NULL CHECK (
+      status IN ('queued', 'running', 'paused', 'succeeded', 'failed', 'cancelled')
+    ),
+    priority INTEGER NOT NULL DEFAULT 0,
+    progress REAL DEFAULT 0.0,
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    error_code TEXT,
+    error_detail TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+
+  INSERT INTO jobs_new SELECT * FROM jobs;
+  DROP TABLE jobs;
+  ALTER TABLE jobs_new RENAME TO jobs;
+
+  CREATE INDEX jobs_library_status_priority
+    ON jobs(library_id, status, priority DESC, created_at);
+`;
+const AI_JOBS_SCHEMA_CHECKSUM = createHash('sha256')
+  .update(AI_JOBS_SCHEMA_SQL)
+  .digest('hex');
+
 const MIGRATIONS = [
   { version: 1, sql: INITIAL_SCHEMA_SQL, checksum: INITIAL_SCHEMA_CHECKSUM },
   { version: 2, sql: ASSET_SCHEMA_SQL, checksum: ASSET_SCHEMA_CHECKSUM },
@@ -661,6 +698,7 @@ const MIGRATIONS = [
   { version: 7, sql: TRASH_SCHEMA_SQL, checksum: TRASH_SCHEMA_CHECKSUM },
   { version: 8, sql: AI_CONTENT_SCHEMA_SQL, checksum: AI_CONTENT_SCHEMA_CHECKSUM },
   { version: 9, sql: THUMBNAIL_SCHEMA_SQL, checksum: THUMBNAIL_SCHEMA_CHECKSUM },
+  { version: 10, sql: AI_JOBS_SCHEMA_SQL, checksum: AI_JOBS_SCHEMA_CHECKSUM },
 ] as const;
 const SUPPORTED_SCHEMA_VERSION = MIGRATIONS.at(-1)!.version;
 
@@ -3584,6 +3622,400 @@ export class LibraryService {
       modelVersion: r.model_version,
       generatedAt: r.generated_at,
     }));
+  }
+
+  /**
+   * Clear AI content for a scope of assets. Only deletes rows from
+   * `ai_content` and `ai_asset_tags`; never touches human content,
+   * human_asset_tags, or Tag entities. After clearing, re-syncs FTS.
+   */
+  clearAiContent(input: {
+    libraryId: string;
+    scope: {
+      kind: 'asset' | 'selection' | 'folder' | 'library';
+      assetIds?: string[];
+      folderId?: string;
+    };
+    confirm: boolean;
+  }): { clearedCount: number } {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+
+    // Batch operations require confirmation.
+    if (
+      (input.scope.kind === 'library' || input.scope.kind === 'folder') &&
+      !input.confirm
+    ) {
+      throw new LibraryServiceError('INVALID_IMPORT_DECISION', {
+        reason: 'PERMISSION_DENIED',
+      });
+    }
+
+    const conn = openLibrary.connection;
+
+    // Gather target asset IDs based on scope.
+    let targetAssetIds: string[];
+    switch (input.scope.kind) {
+      case 'asset':
+      case 'selection':
+        targetAssetIds = input.scope.assetIds ?? [];
+        break;
+      case 'folder': {
+        if (!input.scope.folderId) {
+          throw new LibraryServiceError('INVALID_IMPORT_DECISION', {
+            reason: 'SOURCE_NOT_FOUND',
+          });
+        }
+        // Recursive: get all assets under this folder (assets.managed_folder_id).
+        const folderRows = conn
+          .prepare(
+            `WITH RECURSIVE subfolders AS (
+               SELECT folder_id FROM managed_folders WHERE folder_id = ?
+               UNION ALL
+               SELECT mf.folder_id
+                 FROM managed_folders mf
+                 JOIN subfolders sf ON mf.parent_folder_id = sf.folder_id
+             )
+             SELECT a.asset_id
+               FROM assets a
+              WHERE a.managed_folder_id IN (SELECT folder_id FROM subfolders)`,
+          )
+          .all(input.scope.folderId) as Array<{ asset_id: string }>;
+        targetAssetIds = folderRows.map((r) => r.asset_id);
+        break;
+      }
+      case 'library': {
+        const allRows = conn
+          .prepare('SELECT asset_id FROM assets')
+          .all() as Array<{ asset_id: string }>;
+        targetAssetIds = allRows.map((r) => r.asset_id);
+        break;
+      }
+      default:
+        throw new LibraryServiceError('INTERNAL_ERROR');
+    }
+
+    if (targetAssetIds.length === 0) {
+      return { clearedCount: 0 };
+    }
+
+    const deleteAiContent = conn.prepare(
+      'DELETE FROM ai_content WHERE asset_id = ?',
+    );
+    const deleteAiTags = conn.prepare(
+      'DELETE FROM ai_asset_tags WHERE asset_id = ?',
+    );
+
+    conn.transaction(() => {
+      for (const assetId of targetAssetIds) {
+        deleteAiContent.run(assetId);
+        deleteAiTags.run(assetId);
+        // Re-sync FTS (AI tags removed).
+        this.syncAssetSearchContent(conn, assetId);
+      }
+    })();
+
+    return { clearedCount: targetAssetIds.length };
+  }
+
+  /**
+   * Enqueue AI analysis jobs for assets in the given scope.
+   * Only images are enqueued (video needs contact sheet from slice 0006
+   * which generates async).
+   */
+  enqueueAiAnalysisJobs(input: {
+    libraryId: string;
+    assetIds?: string[];
+    folderId?: string;
+  }): { enqueued: number } {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    const conn = openLibrary.connection;
+    const now = new Date().toISOString();
+    const libId = openLibrary.summary.libraryId;
+
+    // Determine target asset IDs.
+    let targetAssetIds: string[];
+    if (input.assetIds && input.assetIds.length > 0) {
+      targetAssetIds = input.assetIds;
+    } else if (input.folderId) {
+      const folderRows = conn
+        .prepare(
+          `WITH RECURSIVE subfolders AS (
+             SELECT folder_id FROM managed_folders WHERE folder_id = ?
+             UNION ALL
+             SELECT mf.folder_id
+               FROM managed_folders mf
+               JOIN subfolders sf ON mf.parent_folder_id = sf.folder_id
+           )
+           SELECT a.asset_id
+             FROM assets a
+            WHERE a.managed_folder_id IN (SELECT folder_id FROM subfolders)`,
+        )
+        .all(input.folderId) as Array<{ asset_id: string }>;
+      targetAssetIds = folderRows.map((r) => r.asset_id);
+    } else {
+      // All library assets (single-library database, so no library_id filter needed).
+      const allRows = conn
+        .prepare('SELECT asset_id FROM assets')
+        .all() as Array<{ asset_id: string }>;
+      targetAssetIds = allRows.map((r) => r.asset_id);
+    }
+
+    const insertJob = conn.prepare(
+      `INSERT INTO jobs
+         (job_id, library_id, asset_id, revision_id, kind, status,
+          priority, progress, attempt_count, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, 'queued', 0, 0.0, 0, ?, ?)`,
+    );
+    const getRevision = conn.prepare(
+      'SELECT current_revision_id FROM assets WHERE asset_id = ?',
+    );
+
+    // Image extensions for filtering.
+    const imageExts = new Set([
+      '.png', '.jpg', '.jpeg', '.gif', '.tiff', '.tif',
+      '.webp', '.bmp', '.svg',
+    ]);
+
+    let enqueued = 0;
+    conn.transaction(() => {
+      for (const assetId of targetAssetIds) {
+        const row = conn
+          .prepare(
+            `SELECT relative_file_path, location_kind FROM assets
+             WHERE asset_id = ?`,
+          )
+          .get(assetId) as {
+            relative_file_path: string;
+            location_kind: string;
+          } | undefined;
+        if (!row) continue;
+
+        const ext = path.extname(row.relative_file_path).toLowerCase();
+        if (!imageExts.has(ext)) continue;
+
+        // Check if there's already a pending/running AI job for this asset.
+        const existingJob = conn
+          .prepare(
+            "SELECT job_id FROM jobs WHERE asset_id = ? AND kind IN ('ai.image.analysis', 'ai.video.analysis') AND status IN ('queued', 'running', 'paused') LIMIT 1",
+          )
+          .get(assetId) as { job_id: string } | undefined;
+        if (existingJob) continue;
+
+        const jobId = randomUUID();
+        const revisionRow = getRevision.get(assetId) as
+          | { current_revision_id: string | null }
+          | undefined;
+        const revisionId = revisionRow?.current_revision_id ?? null;
+
+        insertJob.run(
+          jobId,
+          libId,
+          assetId,
+          revisionId,
+          'ai.image.analysis',
+          now,
+          now,
+        );
+        enqueued++;
+      }
+    })();
+
+    return { enqueued };
+  }
+
+  // ── AI Job Queue Management ──────────────────────────────────────
+
+  /**
+   * Pause AI analysis jobs. If no jobIds provided, pauses all
+   * queued/running AI jobs for the library.
+   */
+  pauseJobs(
+    libraryId: string,
+    jobIds?: string[],
+  ): { pausedCount: number } {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    const result = this.#updateJobStatus(
+      openLibrary.connection,
+      openLibrary.summary.libraryId,
+      ['queued', 'running'],
+      'paused',
+      jobIds,
+    );
+    return { pausedCount: result.count };
+  }
+
+  /**
+   * Resume paused AI jobs.
+   */
+  resumeJobs(
+    libraryId: string,
+    jobIds?: string[],
+  ): { resumedCount: number } {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    const result = this.#updateJobStatus(
+      openLibrary.connection,
+      openLibrary.summary.libraryId,
+      ['paused'],
+      'queued',
+      jobIds,
+    );
+    return { resumedCount: result.count };
+  }
+
+  /**
+   * Cancel AI analysis jobs. If no jobIds provided, cancels all
+   * queued/paused/running AI jobs for the library.
+   */
+  cancelJobs(
+    libraryId: string,
+    jobIds?: string[],
+  ): { cancelledCount: number } {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    const result = this.#updateJobStatus(
+      openLibrary.connection,
+      openLibrary.summary.libraryId,
+      ['queued', 'paused', 'running'],
+      'cancelled',
+      jobIds,
+    );
+    return { cancelledCount: result.count };
+  }
+
+  /**
+   * Retry failed AI analysis jobs. Resets attempt_count and re-enqueues.
+   */
+  retryJobs(
+    libraryId: string,
+    jobIds: string[],
+  ): { retriedCount: number } {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    const libId = openLibrary.summary.libraryId;
+
+    const result = openLibrary.connection
+      .prepare(
+        `UPDATE jobs
+           SET status = 'queued',
+               attempt_count = 0,
+               error_code = NULL,
+               error_detail = NULL,
+               updated_at = ?
+         WHERE library_id = ?
+           AND kind IN ('ai.image.analysis', 'ai.video.analysis')
+           AND status = 'failed'
+           AND job_id IN (${jobIds.map(() => '?').join(',')})`,
+      )
+      .run(new Date().toISOString(), libId, ...jobIds);
+
+    return { retriedCount: result.changes as number };
+  }
+
+  /** List all AI jobs for a library with counts by status. */
+  getAiJobStatus(libraryId: string): {
+    queued: number;
+    running: number;
+    succeeded: number;
+    failed: number;
+    paused: number;
+    cancelled: number;
+    jobs: Array<{
+      jobId: string;
+      assetId: string;
+      kind: string;
+      status: string;
+      errorCode: string | null;
+      errorDetail: string | null;
+      updatedAt: string;
+    }>;
+  } {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    const conn = openLibrary.connection;
+    const libId = openLibrary.summary.libraryId;
+
+    const counts = conn
+      .prepare(
+        `SELECT status, COUNT(*) as cnt
+           FROM jobs
+          WHERE library_id = ?
+            AND kind IN ('ai.image.analysis', 'ai.video.analysis')
+          GROUP BY status`,
+      )
+      .all(libId) as Array<{ status: string; cnt: number }>;
+
+    const jobs = conn
+      .prepare(
+        `SELECT job_id, asset_id, kind, status, error_code, error_detail, updated_at
+           FROM jobs
+          WHERE library_id = ?
+            AND kind IN ('ai.image.analysis', 'ai.video.analysis')
+          ORDER BY created_at DESC
+          LIMIT 200`,
+      )
+      .all(libId) as Array<{
+        job_id: string;
+        asset_id: string;
+        kind: string;
+        status: string;
+        error_code: string | null;
+        error_detail: string | null;
+        updated_at: string;
+      }>;
+
+    const statusMap: Record<string, number> = {};
+    for (const c of counts) statusMap[c.status] = c.cnt;
+
+    return {
+      queued: statusMap['queued'] ?? 0,
+      running: statusMap['running'] ?? 0,
+      succeeded: statusMap['succeeded'] ?? 0,
+      failed: statusMap['failed'] ?? 0,
+      paused: statusMap['paused'] ?? 0,
+      cancelled: statusMap['cancelled'] ?? 0,
+      jobs: jobs.map((j) => ({
+        jobId: j.job_id,
+        assetId: j.asset_id,
+        kind: j.kind,
+        status: j.status,
+        errorCode: j.error_code,
+        errorDetail: j.error_detail,
+        updatedAt: j.updated_at,
+      })),
+    };
+  }
+
+  #updateJobStatus(
+    conn: { prepare(sql: string): { run(...params: unknown[]): { changes: number }; get(...params: unknown[]): unknown; all(...params: unknown[]): unknown[] } },
+    libId: string,
+    fromStatuses: string[],
+    toStatus: string,
+    jobIds?: string[],
+  ): { count: number } {
+    const statusPlaceholders = fromStatuses.map(() => '?').join(',');
+    const aiKinds = ['ai.image.analysis', 'ai.video.analysis'];
+    const now = new Date().toISOString();
+
+    let query: string;
+    let params: unknown[];
+
+    if (jobIds && jobIds.length > 0) {
+      const jobPlaceholders = jobIds.map(() => '?').join(',');
+      query = `UPDATE jobs
+                 SET status = ?, updated_at = ?
+               WHERE library_id = ?
+                 AND kind IN (?, ?)
+                 AND status IN (${statusPlaceholders})
+                 AND job_id IN (${jobPlaceholders})`;
+      params = [toStatus, now, libId, ...aiKinds, ...fromStatuses, ...jobIds];
+    } else {
+      query = `UPDATE jobs
+                 SET status = ?, updated_at = ?
+               WHERE library_id = ?
+                 AND kind IN (?, ?)
+                 AND status IN (${statusPlaceholders})`;
+      params = [toStatus, now, libId, ...aiKinds, ...fromStatuses];
+    }
+
+    const result = conn.prepare(query).run(...params);
+    return { count: result.changes as number };
   }
 
   // ── Thumbnails & Artifacts ─────────────────────────────────────────

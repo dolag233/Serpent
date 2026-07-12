@@ -335,6 +335,42 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     assetId: identifierSchema,
     kind: z.enum(['thumbnail']),
   }),
+  z.strictObject({
+    type: z.literal('ai.test-connection.request'),
+    provider: z.enum(['openai', 'gemini', 'anthropic']),
+    model: nonBlankString,
+    apiKey: nonBlankString,
+  }),
+  z.strictObject({
+    type: z.literal('ai.clear-content.request'),
+    libraryId: identifierSchema,
+    scope: z.strictObject({
+      kind: z.enum(['asset', 'selection', 'folder', 'library']),
+      assetIds: z.array(identifierSchema).min(1).optional(),
+      folderId: identifierSchema.optional(),
+    }),
+    confirm: z.boolean(),
+  }),
+  z.strictObject({
+    type: z.literal('ai.pause-jobs.request'),
+    libraryId: identifierSchema,
+    jobIds: z.array(identifierSchema).min(1).optional(),
+  }),
+  z.strictObject({
+    type: z.literal('ai.resume-jobs.request'),
+    libraryId: identifierSchema,
+    jobIds: z.array(identifierSchema).min(1).optional(),
+  }),
+  z.strictObject({
+    type: z.literal('ai.cancel-jobs.request'),
+    libraryId: identifierSchema,
+    jobIds: z.array(identifierSchema).min(1).optional(),
+  }),
+  z.strictObject({
+    type: z.literal('ai.retry-jobs.request'),
+    libraryId: identifierSchema,
+    jobIds: z.array(identifierSchema).min(1),
+  }),
 ]);
 
 export type RendererRequest = z.infer<typeof rendererRequestSchema>;
@@ -677,6 +713,60 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     type: z.literal('media.get-thumbnail-artifact'),
     libraryId: identifierSchema,
     assetId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('ai.configure'),
+    provider: z.enum(['openai', 'gemini', 'anthropic']),
+    encryptedApiKeyBase64: nonBlankString,
+    model: nonBlankString,
+    labelEnabled: z.boolean().optional(),
+    descriptionEnabled: z.boolean().optional(),
+    tagEnabled: z.boolean().optional(),
+    structuredMetadataEnabled: z.boolean().optional(),
+    language: nonBlankString.optional(),
+    autoAnalyzeEnabled: z.boolean(),
+  }),
+  z.strictObject({
+    type: z.literal('ai.test-connection'),
+    provider: z.enum(['openai', 'gemini', 'anthropic']),
+    encryptedApiKeyBase64: nonBlankString,
+    model: nonBlankString,
+  }),
+  z.strictObject({
+    type: z.literal('ai.enqueue-analysis'),
+    libraryId: identifierSchema,
+    assetIds: z.array(identifierSchema).min(1).optional(),
+    folderId: identifierSchema.optional(),
+  }),
+  z.strictObject({
+    type: z.literal('ai.clear-content'),
+    libraryId: identifierSchema,
+    scope: z.strictObject({
+      kind: z.enum(['asset', 'selection', 'folder', 'library']),
+      assetIds: z.array(identifierSchema).min(1).optional(),
+      folderId: identifierSchema.optional(),
+    }),
+    confirm: z.boolean(),
+  }),
+  z.strictObject({
+    type: z.literal('ai.pause-jobs'),
+    libraryId: identifierSchema,
+    jobIds: z.array(identifierSchema).min(1).optional(),
+  }),
+  z.strictObject({
+    type: z.literal('ai.resume-jobs'),
+    libraryId: identifierSchema,
+    jobIds: z.array(identifierSchema).min(1).optional(),
+  }),
+  z.strictObject({
+    type: z.literal('ai.cancel-jobs'),
+    libraryId: identifierSchema,
+    jobIds: z.array(identifierSchema).min(1).optional(),
+  }),
+  z.strictObject({
+    type: z.literal('ai.retry-jobs'),
+    libraryId: identifierSchema,
+    jobIds: z.array(identifierSchema).min(1),
   }),
 ]);
 

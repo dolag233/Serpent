@@ -9,12 +9,18 @@ import {
   LIBRARY_LIFECYCLE_CHANNEL,
   LIBRARY_REQUEST_CHANNEL,
   PROGRESS_CHANNEL,
+  AI_PROGRESS_CHANNEL,
+  AI_COMPLETED_CHANNEL,
+  AI_CLEARED_CHANNEL,
 } from '../shared/protocol/channels';
 import type { RendererRequest } from '../shared/protocol/requests';
 import {
   parseRendererResult,
   parseRendererLifecycleEvent,
   parseThumbnailEvent,
+  parseAiProgressEvent,
+  parseAiAnalysisCompletedEvent,
+  parseAiContentClearedEvent,
   type RendererLibrarySummary,
   type RendererLifecycleEvent,
   type RendererResult,
@@ -553,6 +559,88 @@ const library: SerpentLibraryApi = Object.freeze({
     if (!result.ok) return failure(result);
     if (result.type !== 'asset.retry-artifact.started') throw new Error('Unexpected retry-artifact response.');
     return { ok: true, value: { assetId: result.assetId, kind: result.kind } };
+  },
+
+  // AI test-connection
+  async testAiConnection({ provider, model, apiKey }: { provider: 'openai' | 'gemini' | 'anthropic'; model: string; apiKey: string }): Promise<LibraryApiResult<{ success: boolean; errorKind?: string; reason?: string }>> {
+    const result = await request({ type: 'ai.test-connection.request', provider, model, apiKey });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'ai.test-connection.result') throw new Error('Unexpected test-connection response.');
+    return { ok: true, value: { success: result.success, errorKind: result.errorKind, reason: result.reason } };
+  },
+
+  // AI clear-content
+  async clearAiContent({ libraryId, scope, confirm }: { libraryId: string; scope: { kind: 'asset' | 'selection' | 'folder' | 'library'; assetIds?: string[]; folderId?: string }; confirm: boolean }): Promise<LibraryApiResult<{ clearedCount: number }>> {
+    const result = await request({ type: 'ai.clear-content.request', libraryId, scope, confirm });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'ai.content.cleared') throw new Error('Unexpected clear-content response.');
+    return { ok: true, value: { clearedCount: result.clearedCount } };
+  },
+
+  // AI job queue
+  async pauseAiJobs({ libraryId, jobIds }: { libraryId: string; jobIds?: string[] }): Promise<LibraryApiResult<{ pausedCount: number }>> {
+    const result = await request({ type: 'ai.pause-jobs.request', libraryId, jobIds });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'ai.jobs.paused') throw new Error('Unexpected pause-jobs response.');
+    return { ok: true, value: { pausedCount: result.pausedCount } };
+  },
+
+  async resumeAiJobs({ libraryId, jobIds }: { libraryId: string; jobIds?: string[] }): Promise<LibraryApiResult<{ resumedCount: number }>> {
+    const result = await request({ type: 'ai.resume-jobs.request', libraryId, jobIds });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'ai.jobs.resumed') throw new Error('Unexpected resume-jobs response.');
+    return { ok: true, value: { resumedCount: result.resumedCount } };
+  },
+
+  async cancelAiJobs({ libraryId, jobIds }: { libraryId: string; jobIds?: string[] }): Promise<LibraryApiResult<{ cancelledCount: number }>> {
+    const result = await request({ type: 'ai.cancel-jobs.request', libraryId, jobIds });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'ai.jobs.cancelled') throw new Error('Unexpected cancel-jobs response.');
+    return { ok: true, value: { cancelledCount: result.cancelledCount } };
+  },
+
+  async retryAiJobs({ libraryId, jobIds }: { libraryId: string; jobIds: string[] }): Promise<LibraryApiResult<{ retriedCount: number }>> {
+    const result = await request({ type: 'ai.retry-jobs.request', libraryId, jobIds });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'ai.jobs.retried') throw new Error('Unexpected retry-jobs response.');
+    return { ok: true, value: { retriedCount: result.retriedCount } };
+  },
+
+  // AI events
+  onAiProgress(listener: (event: { type: 'ai.progress'; libraryId: string; queued: number; running: number; succeeded: number; failed: number }) => void) {
+    const subscription = (_event: Electron.IpcRendererEvent, input: unknown) => {
+      try {
+        listener(parseAiProgressEvent(input));
+      } catch {
+        // Ignore malformed events.
+      }
+    };
+    ipcRenderer.on(AI_PROGRESS_CHANNEL, subscription);
+    return () => ipcRenderer.removeListener(AI_PROGRESS_CHANNEL, subscription);
+  },
+
+  onAiCompleted(listener: (event: { type: 'ai.analysis.completed'; libraryId: string; assetId: string; fieldCount: number; tagCount: number }) => void) {
+    const subscription = (_event: Electron.IpcRendererEvent, input: unknown) => {
+      try {
+        listener(parseAiAnalysisCompletedEvent(input));
+      } catch {
+        // Ignore malformed events.
+      }
+    };
+    ipcRenderer.on(AI_COMPLETED_CHANNEL, subscription);
+    return () => ipcRenderer.removeListener(AI_COMPLETED_CHANNEL, subscription);
+  },
+
+  onAiCleared(listener: (event: { type: 'ai.content.cleared'; libraryId: string; affectedAssetCount: number }) => void) {
+    const subscription = (_event: Electron.IpcRendererEvent, input: unknown) => {
+      try {
+        listener(parseAiContentClearedEvent(input));
+      } catch {
+        // Ignore malformed events.
+      }
+    };
+    ipcRenderer.on(AI_CLEARED_CHANNEL, subscription);
+    return () => ipcRenderer.removeListener(AI_CLEARED_CHANNEL, subscription);
   },
 
   onThumbnailEvent(listener: (event: { type: 'asset.thumbnail.ready' | 'asset.thumbnail.failed'; libraryId: string; assetId: string; artifactId?: string; errorCode?: string; reason?: string }) => void) {

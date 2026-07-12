@@ -80,7 +80,7 @@ describe('schema v9 migration', () => {
     const created = service.createLibrary({ displayName: 'V9', selectedParentPath: root });
 
     const db = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
-    expect(db.pragma('user_version', { simple: true })).toBe(9);
+    expect(db.pragma('user_version', { simple: true })).toBe(10);
 
     const revArtifactCols = (db.prepare("PRAGMA table_info('revision_artifacts')").all() as Array<{ name: string }>).map((c) => c.name);
     expect(revArtifactCols).toContain('artifact_id');

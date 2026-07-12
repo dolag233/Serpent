@@ -78,7 +78,7 @@ describe('schema v8->v9 migration', () => {
     });
 
     const database = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
-    expect(database.pragma('user_version')).toEqual([{ user_version: 9 }]);
+    expect(database.pragma('user_version')).toEqual([{ user_version: 10 }]);
 
     const columns = database.prepare("PRAGMA table_info('assets')").all() as Array<{
       cid: number; name: string; type: string;
@@ -119,11 +119,11 @@ describe('schema v8->v9 migration', () => {
     service.closeAll();
 
     const db = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
-    // Downgrade from v9 to v8 by removing v9 migration metadata + objects.
+    // Downgrade from v10 to v8 by removing v9+v10 migration metadata + objects.
     db.exec(`
       DROP TABLE IF EXISTS revision_artifacts;
       DROP TABLE IF EXISTS jobs;
-      DELETE FROM schema_migrations WHERE version = 9;
+      DELETE FROM schema_migrations WHERE version >= 9;
       PRAGMA user_version = 8;
     `);
     db.close();
@@ -131,7 +131,7 @@ describe('schema v8->v9 migration', () => {
     service.openLibrary(created.libraryPath);
 
     const db2 = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
-    expect(db2.pragma('user_version')).toEqual([{ user_version: 9 }]);
+    expect(db2.pragma('user_version')).toEqual([{ user_version: 10 }]);
     const migrationRows = db2.prepare('SELECT version FROM schema_migrations ORDER BY version').all() as Array<{ version: number }>;
     expect(migrationRows.map((r) => r.version)).toContain(9);
     db2.close();
@@ -145,7 +145,7 @@ describe('schema v8->v9 migration', () => {
     service.closeAll();
     service.openLibrary(created.libraryPath);
     const db = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
-    expect(db.pragma('user_version')).toEqual([{ user_version: 9 }]);
+    expect(db.pragma('user_version')).toEqual([{ user_version: 10 }]);
     service.closeAll();
     service.openLibrary(created.libraryPath);
     const migrationCount = db.prepare(
@@ -198,7 +198,7 @@ describe('downgrade helpers still work with v9', () => {
 
     service.openLibrary(created.libraryPath);
     const db = new TestDatabase(dbPath);
-    expect(db.pragma('user_version')).toEqual([{ user_version: 9 }]);
+    expect(db.pragma('user_version')).toEqual([{ user_version: 10 }]);
     db.close();
     service.closeAll();
   });

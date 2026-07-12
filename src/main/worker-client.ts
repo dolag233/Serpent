@@ -11,10 +11,16 @@ import {
   parseWorkerResponse,
   parseProgressEvent,
   parseThumbnailEvent,
+  parseAiProgressEvent,
+  parseAiAnalysisCompletedEvent,
+  parseAiContentClearedEvent,
   type WorkerResult,
   type AssetChangeEvent,
   type ProgressEvent,
   type ThumbnailEvent,
+  type AiProgressEvent,
+  type AiAnalysisCompletedEvent,
+  type AiContentClearedEvent,
 } from '../shared/protocol/responses';
 
 interface PendingRequest {
@@ -47,6 +53,9 @@ export class LibraryWorkerClient {
   #assetChangeListeners = new Set<(event: AssetChangeEvent) => void>();
   #progressListeners = new Set<(event: ProgressEvent) => void>();
   #thumbnailListeners = new Set<(event: ThumbnailEvent) => void>();
+  #aiProgressListeners = new Set<(event: AiProgressEvent) => void>();
+  #aiCompletedListeners = new Set<(event: AiAnalysisCompletedEvent) => void>();
+  #aiClearedListeners = new Set<(event: AiContentClearedEvent) => void>();
 
   constructor(modulePath: string, private readonly logger: AppLogger) {
     this.#modulePath = modulePath;
@@ -146,6 +155,21 @@ export class LibraryWorkerClient {
     return () => this.#thumbnailListeners.delete(listener);
   }
 
+  onAiProgress(listener: (event: AiProgressEvent) => void): () => void {
+    this.#aiProgressListeners.add(listener);
+    return () => this.#aiProgressListeners.delete(listener);
+  }
+
+  onAiAnalysisCompleted(listener: (event: AiAnalysisCompletedEvent) => void): () => void {
+    this.#aiCompletedListeners.add(listener);
+    return () => this.#aiCompletedListeners.delete(listener);
+  }
+
+  onAiContentCleared(listener: (event: AiContentClearedEvent) => void): () => void {
+    this.#aiClearedListeners.add(listener);
+    return () => this.#aiClearedListeners.delete(listener);
+  }
+
   async shutdown(): Promise<void> {
     const child = this.#child;
     if (!child) return;
@@ -183,7 +207,31 @@ export class LibraryWorkerClient {
       for (const listener of this.#thumbnailListeners) listener(thumbnail);
       return;
     } catch {
-      // Not a thumbnail event; try asset-change next.
+      // Not a thumbnail event; try AI events next.
+    }
+
+    try {
+      const aiProgress = parseAiProgressEvent(message);
+      for (const listener of this.#aiProgressListeners) listener(aiProgress);
+      return;
+    } catch {
+      // Not an AI progress event.
+    }
+
+    try {
+      const aiCompleted = parseAiAnalysisCompletedEvent(message);
+      for (const listener of this.#aiCompletedListeners) listener(aiCompleted);
+      return;
+    } catch {
+      // Not an AI completed event.
+    }
+
+    try {
+      const aiCleared = parseAiContentClearedEvent(message);
+      for (const listener of this.#aiClearedListeners) listener(aiCleared);
+      return;
+    } catch {
+      // Not an AI cleared event.
     }
 
     try {

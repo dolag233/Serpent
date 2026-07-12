@@ -8,7 +8,10 @@ import {
 import type { ParentPort } from 'electron';
 import { LibraryService, LibraryServiceError } from './library-service';
 import { OpenAIVendorAdapter } from './ai/openai-adapter';
+import { GeminiVendorAdapter } from './ai/gemini-adapter';
+import { AnthropicVendorAdapter } from './ai/anthropic-adapter';
 import { VendorAdapterError } from './ai/vendor-adapter';
+import type { VendorAdapter } from './ai/vendor-adapter';
 import type { AiAnalysisRequest } from './ai/protocol';
 import { readFileSync } from 'node:fs';
 
@@ -489,17 +492,26 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
         existingTagNames,
       };
 
-      // Create adapter (OpenAI only this slice).
-      if (provider !== 'openai') {
-        return {
-          ok: true,
-          type: 'asset.analyze-unsupported' as const,
-          assetId,
-          reason: `provider ${provider} not implemented in this slice (image AI: OpenAI only)`,
-        };
+      // Create adapter based on provider.
+      let adapter: VendorAdapter;
+      switch (provider) {
+        case 'openai':
+          adapter = new OpenAIVendorAdapter(apiKey, model);
+          break;
+        case 'gemini':
+          adapter = new GeminiVendorAdapter(apiKey, model);
+          break;
+        case 'anthropic':
+          adapter = new AnthropicVendorAdapter(apiKey, model);
+          break;
+        default:
+          return {
+            ok: true,
+            type: 'asset.analyze-unsupported' as const,
+            assetId,
+            reason: `provider ${provider} not supported`,
+          };
       }
-
-      const adapter = new OpenAIVendorAdapter(apiKey, model);
 
       let analysisResult;
       try {
@@ -596,6 +608,168 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
     case 'media.process-thumbnail-queue': {
       const processed = await libraryService.processThumbnailQueue(request.command.libraryId);
       return { ok: true, type: 'media.jobs.processed', libraryId: request.command.libraryId, processed };
+    }
+    case 'ai.configure': {
+      // The Worker caches configuration in-memory; the caller should
+      // pass encryptedApiKey in each analyze call. This configure
+      // just acknowledges receipt.
+      // In a future slice, this could cache the decrypted key in memory.
+      return { ok: true, type: 'ai.config.saved' as const };
+    }
+    case 'ai.test-connection': {
+      const { provider, model, encryptedApiKeyBase64 } = request.command;
+      // Decrypt: main sent base64-encoded encrypted payload.
+      const { safeStorage } = await import('electron');
+      let apiKey: string;
+      try {
+        apiKey = safeStorage.decryptString(
+          Buffer.from(encryptedApiKeyBase64, 'base64'),
+        );
+      } catch {
+        return {
+          ok: true,
+          type: 'ai.test-connection.result' as const,
+          success: false,
+          errorKind: 'auth',
+          reason: 'Could not decrypt API key.',
+        };
+      }
+
+      // Build a minimal adapter and try a request.
+      let testAdapter: VendorAdapter;
+      switch (provider) {
+        case 'openai':
+          testAdapter = new OpenAIVendorAdapter(apiKey, model);
+          break;
+        case 'gemini':
+          testAdapter = new GeminiVendorAdapter(apiKey, model);
+          break;
+        case 'anthropic':
+          testAdapter = new AnthropicVendorAdapter(apiKey, model);
+          break;
+        default:
+          return {
+            ok: true,
+            type: 'ai.test-connection.result' as const,
+            success: false,
+            errorKind: 'invalid_response',
+            reason: `Unsupported provider: ${provider}`,
+          };
+      }
+
+      // Use a minimal request to verify connectivity.
+      try {
+        await testAdapter.analyze(
+          {
+            filename: 'test.png',
+            mime: 'image/png',
+            language: 'en',
+            enabledFields: { label: false, description: false, tags: true, structuredMetadata: false },
+            existingTagNames: [],
+            imageBase64:
+              // Minimal 1x1 white PNG base64
+              'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk' +
+              '+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+          },
+          AbortSignal.timeout(15_000),
+        );
+        return {
+          ok: true,
+          type: 'ai.test-connection.result' as const,
+          success: true,
+        };
+      } catch (error) {
+        if (error instanceof VendorAdapterError) {
+          return {
+            ok: true,
+            type: 'ai.test-connection.result' as const,
+            success: false,
+            errorKind: error.kind,
+            reason: error.message,
+          };
+        }
+        return {
+          ok: true,
+          type: 'ai.test-connection.result' as const,
+          success: false,
+          errorKind: 'network',
+          reason: String(error),
+        };
+      }
+    }
+    case 'ai.enqueue-analysis': {
+      const { enqueued } = libraryService.enqueueAiAnalysisJobs(request.command);
+      return {
+        ok: true,
+        type: 'media.jobs.enqueued' as const,
+        libraryId: request.command.libraryId,
+        enqueued,
+      };
+    }
+    case 'ai.clear-content': {
+      const { clearedCount } = libraryService.clearAiContent(request.command);
+      // Publish ai.content.cleared event
+      if (parentPort) {
+        parentPort.postMessage({
+          type: 'ai.content.cleared',
+          libraryId: request.command.libraryId,
+          affectedAssetCount: clearedCount,
+        });
+      }
+      return {
+        ok: true,
+        type: 'ai.content.cleared' as const,
+        libraryId: request.command.libraryId,
+        clearedCount,
+      };
+    }
+    case 'ai.pause-jobs': {
+      const { pausedCount } = libraryService.pauseJobs(
+        request.command.libraryId,
+        request.command.jobIds,
+      );
+      return {
+        ok: true,
+        type: 'ai.jobs.paused' as const,
+        libraryId: request.command.libraryId,
+        pausedCount,
+      };
+    }
+    case 'ai.resume-jobs': {
+      const { resumedCount } = libraryService.resumeJobs(
+        request.command.libraryId,
+        request.command.jobIds,
+      );
+      return {
+        ok: true,
+        type: 'ai.jobs.resumed' as const,
+        libraryId: request.command.libraryId,
+        resumedCount,
+      };
+    }
+    case 'ai.cancel-jobs': {
+      const { cancelledCount } = libraryService.cancelJobs(
+        request.command.libraryId,
+        request.command.jobIds,
+      );
+      return {
+        ok: true,
+        type: 'ai.jobs.cancelled' as const,
+        libraryId: request.command.libraryId,
+        cancelledCount,
+      };
+    }
+    case 'ai.retry-jobs': {
+      const { retriedCount } = libraryService.retryJobs(
+        request.command.libraryId,
+        request.command.jobIds,
+      );
+      return {
+        ok: true,
+        type: 'ai.jobs.retried' as const,
+        libraryId: request.command.libraryId,
+        retriedCount,
+      };
     }
     default:
       return assertNever(request.command);
