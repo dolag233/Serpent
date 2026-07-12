@@ -234,7 +234,7 @@ describe('generateThumbnail (sharp)', () => {
     service.closeAll();
   });
 
-  it('rejects video assets (FFmpeg deferred)', async () => {
+  it('handles video assets gracefully when FFmpeg is missing', async () => {
     const root = temporaryRoot();
     const service = new LibraryService();
     const created = service.createLibrary({ displayName: 'Video', selectedParentPath: root });
@@ -244,14 +244,21 @@ describe('generateThumbnail (sharp)', () => {
     importNoConflict(service, created.libraryId, sourcePath);
 
     const assets = service.listAssets({ libraryId: created.libraryId, recursive: true });
-    await expect(
-      service.generateThumbnail({ libraryId: created.libraryId, assetId: assets[0]!.assetId }),
-    ).rejects.toThrow();
+    const result = await service.generateThumbnail({ libraryId: created.libraryId, assetId: assets[0]!.assetId });
+    // Video is now dispatched to ffmpeg path; without ffmpeg, failed
+    // artifacts are created but the method resolves (partial failures tolerated).
+    expect(result.artifactId).toBe('');
+
+    // Verify failed artifacts were created
+    const db = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    const failedCount = db.prepare("SELECT COUNT(*) AS count FROM revision_artifacts WHERE revision_id = ? AND status = 'failed'").get(assets[0]!.currentRevisionId) as { count: number };
+    expect(failedCount.count).toBeGreaterThan(0);
+    db.close();
 
     service.closeAll();
   });
 
-  it('rejects EXR assets (OIIO deferred)', async () => {
+  it('rejects EXR assets when oiiotool is missing and writes failed artifact', async () => {
     const root = temporaryRoot();
     const service = new LibraryService();
     const created = service.createLibrary({ displayName: 'EXR', selectedParentPath: root });

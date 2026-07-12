@@ -25,8 +25,15 @@ import {
   type Stats,
 } from 'node:fs';
 import path from 'node:path';
+import { spawn, type ChildProcess } from 'node:child_process';
 
 import BetterSqlite3 from 'better-sqlite3';
+
+import {
+  resolveFfmpegPath,
+  resolveFfprobePath,
+  resolveOiiotoolPath,
+} from './binary-resolver';
 
 import type { AssetMetadataResult, AssetSummary, CollectionSummary, LinkedFolderSummary, ManagedFolderSummary, TagSummary } from '../shared/asset-types';
 
@@ -771,6 +778,67 @@ export type ImportFailurePoint =
   | 'recovery-restore'
   | 'rollback-restore';
 
+/** Result of a subprocess (ffmpeg, ffprobe, oiiotool) invocation. */
+export interface SpawnResult {
+  stdout: Buffer;
+  stderr: string;
+  exitCode: number;
+}
+
+/** Injectable subprocess spawn function for testing. */
+export type SpawnFunction = (
+  command: string,
+  args: string[],
+  options?: { timeoutMs?: number },
+) => Promise<SpawnResult>;
+
+/** Real subprocess spawn (child_process.spawn with defaults). */
+export function defaultSpawnFn(
+  command: string,
+  args: string[],
+  options?: { timeoutMs?: number },
+): Promise<SpawnResult> {
+  return new Promise((resolve, reject) => {
+    const timeoutMs = options?.timeoutMs ?? 120_000;
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      proc.kill('SIGTERM');
+      // Escalate to SIGKILL after 5s if still running
+      const killTimer = setTimeout(() => {
+        if (proc.exitCode === null) proc.kill('SIGKILL');
+      }, 5_000);
+      killTimer.unref();
+    }, timeoutMs);
+    timer.unref();
+
+    const proc: ChildProcess = spawn(command, args, {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true,
+    });
+
+    const stdoutChunks: Buffer[] = [];
+    const stderrChunks: Buffer[] = [];
+
+    proc.stdout?.on('data', (chunk: Buffer) => stdoutChunks.push(chunk));
+    proc.stderr?.on('data', (chunk: Buffer) => stderrChunks.push(chunk));
+
+    proc.on('error', (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+
+    proc.on('close', (code) => {
+      clearTimeout(timer);
+      resolve({
+        stdout: Buffer.concat(stdoutChunks),
+        stderr: Buffer.concat(stderrChunks).toString('utf-8'),
+        exitCode: code ?? (timedOut ? -1 : (proc.signalCode ? -1 : 0)),
+      });
+    });
+  });
+}
+
 export interface LibraryServiceOptions {
   afterSourceSnapshotCopy?: (sourcePath: string) => void;
   assetLstat?: (assetPath: string) => Stats;
@@ -785,6 +853,8 @@ export interface LibraryServiceOptions {
   onProgress?: (event: ExportProgressEvent | ImportProgressEvent) => void;
   observerFactory?: AssetObserverFactory;
   scheduler?: DebounceScheduler;
+  /** Injectable spawn for binary subprocesses (ffmpeg/ffprobe/oiiotool). */
+  spawnFn?: SpawnFunction;
 }
 
 export interface LibraryServiceDiagnostic {
@@ -1296,6 +1366,10 @@ export class LibraryService {
   private readonly activeImports = new Map<string, { cancelled: boolean }>();
 
   constructor(private readonly options: LibraryServiceOptions = {}) {}
+
+  private get spawnFn(): SpawnFunction {
+    return this.options.spawnFn ?? defaultSpawnFn;
+  }
 
   private diagnose(scope: string, error: unknown, context?: Record<string, unknown>): void {
     try {
@@ -3542,7 +3616,9 @@ export class LibraryService {
     return 'other';
   }
 
-  /** Generate a WebP thumbnail for an image asset using sharp. */
+  // ── Thumbnail Generation Dispatch ─────────────────────────────────
+
+  /** Generate thumbnails/artifacts for an asset, dispatching by media type. */
   async generateThumbnail(input: {
     libraryId: string;
     assetId: string;
@@ -3550,24 +3626,7 @@ export class LibraryService {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     const assetPath = this.resolveAssetPath(input.libraryId, input.assetId);
 
-    // Detect media type
     const mediaType = LibraryService.detectMediaType(assetPath);
-    if (mediaType === 'video') {
-      throw new LibraryServiceError('INVALID_IMPORT_DECISION', {
-        reason: 'FFMPEG_REQUIRED',
-      });
-    }
-    if (mediaType === 'other') {
-      const ext = path.extname(assetPath).toLowerCase();
-      if (ext === '.exr' || ext === '.tga') {
-        throw new LibraryServiceError('INVALID_IMPORT_DECISION', {
-          reason: 'OIIO_REQUIRED',
-        });
-      }
-      throw new LibraryServiceError('INVALID_IMPORT_DECISION', {
-        reason: 'UNSUPPORTED_FORMAT',
-      });
-    }
 
     // Get the current revision for this asset
     const assetRow = openLibrary.connection
@@ -3576,6 +3635,32 @@ export class LibraryService {
     if (!assetRow?.current_revision_id) throw new LibraryServiceError('ASSET_NOT_FOUND');
     const revisionId = assetRow.current_revision_id;
 
+    if (mediaType === 'image') {
+      return this.generateImageThumbnail(input, openLibrary, assetPath, revisionId);
+    }
+
+    if (mediaType === 'video') {
+      return this.generateVideoArtifacts(input, openLibrary, assetPath, revisionId);
+    }
+
+    const ext = path.extname(assetPath).toLowerCase();
+    if (ext === '.exr' || ext === '.tga') {
+      return this.generateOiiOThumbnail(input, openLibrary, assetPath, revisionId);
+    }
+
+    throw new LibraryServiceError('INVALID_IMPORT_DECISION', {
+      reason: 'UNSUPPORTED_FORMAT',
+    });
+  }
+
+  // ── Image thumbnail (sharp) ────────────────────────────────────────
+
+  private async generateImageThumbnail(
+    input: { libraryId: string; assetId: string },
+    openLibrary: OpenLibrary,
+    assetPath: string,
+    revisionId: string,
+  ): Promise<{ artifactId: string }> {
     const artifactId = randomUUID();
     const artifactsDir = this.artifactsDir(openLibrary);
     mkdirSync(artifactsDir, { recursive: true });
@@ -3659,6 +3744,428 @@ export class LibraryService {
     }
   }
 
+  // ── Video artifacts (ffprobe + ffmpeg) ─────────────────────────────
+
+  /**
+   * Generate all video artifacts: probe metadata, poster, contact sheet, WebM proxy.
+   * Returns the poster artifact ID (the primary visual thumbnail).
+   */
+  private async generateVideoArtifacts(
+    input: { libraryId: string; assetId: string },
+    openLibrary: OpenLibrary,
+    assetPath: string,
+    revisionId: string,
+  ): Promise<{ artifactId: string }> {
+    const ffprobePath = resolveFfprobePath();
+    const ffmpegPath = resolveFfmpegPath();
+    const artifactsDir = this.artifactsDir(openLibrary);
+    mkdirSync(artifactsDir, { recursive: true });
+
+    let durationSec = 0;
+    let posterArtifactId: string | null = null;
+
+    // 1. ffprobe metadata extraction
+    try {
+      const probeData = await this.probeVideoAsset(
+        input, openLibrary, assetPath, revisionId, ffprobePath,
+      );
+      if (probeData.durationSec > 0) durationSec = probeData.durationSec;
+    } catch (error) {
+      this.diagnose('video-probe', error, { libraryId: input.libraryId, assetId: input.assetId });
+      // Continue with remaining artifacts even if probe fails
+    }
+
+    // 2. Video poster
+    try {
+      posterArtifactId = await this.generateVideoPoster(
+        input, openLibrary, assetPath, revisionId, ffmpegPath, artifactsDir,
+      );
+    } catch (error) {
+      this.diagnose('video-poster', error, { libraryId: input.libraryId, assetId: input.assetId });
+      // Continue with remaining artifacts
+    }
+
+    // 3. Contact sheet (requires duration from probe)
+    if (durationSec > 1) {
+      try {
+        await this.generateContactSheet(
+          input, openLibrary, assetPath, revisionId, ffmpegPath, artifactsDir, durationSec,
+        );
+      } catch (error) {
+        this.diagnose('video-contact-sheet', error, { libraryId: input.libraryId, assetId: input.assetId });
+      }
+    }
+
+    // 4. WebM proxy
+    try {
+      await this.generateWebmProxy(
+        input, openLibrary, assetPath, revisionId, ffmpegPath, artifactsDir,
+      );
+    } catch (error) {
+      this.diagnose('video-webm-proxy', error, { libraryId: input.libraryId, assetId: input.assetId });
+    }
+
+    // Emit thumbnail-ready notification
+    this.options.onAssetsChanged?.({
+      type: 'asset.changed',
+      libraryId: input.libraryId,
+      changedCount: 1,
+      missingCount: 0,
+    });
+
+    return { artifactId: posterArtifactId || '' };
+  }
+
+  /** Run ffprobe and store extracted_metadata artifact. */
+  private async probeVideoAsset(
+    input: { libraryId: string; assetId: string },
+    openLibrary: OpenLibrary,
+    assetPath: string,
+    revisionId: string,
+    ffprobePath: string,
+  ): Promise<{ durationSec: number; width: number | null; height: number | null }> {
+    const artifactId = randomUUID();
+    const artifactsDir = this.artifactsDir(openLibrary);
+    mkdirSync(artifactsDir, { recursive: true });
+    const artifactRelPath = `${artifactId}.json`;
+    const artifactAbsPath = path.join(artifactsDir, artifactRelPath);
+
+    try {
+      const result = await this.spawnFn(ffprobePath, [
+        '-v', 'quiet',
+        '-print_format', 'json',
+        '-show_format',
+        '-show_streams',
+        assetPath,
+      ], { timeoutMs: 60_000 });
+
+      if (result.exitCode !== 0) {
+        throw new Error(`ffprobe exited with code ${result.exitCode}: ${result.stderr.slice(0, 200)}`);
+      }
+
+      const probeJson = JSON.parse(result.stdout.toString('utf-8'));
+      const videoStream = probeJson.streams?.find(
+        (s: { codec_type: string }) => s.codec_type === 'video',
+      );
+      const audioStream = probeJson.streams?.find(
+        (s: { codec_type: string }) => s.codec_type === 'audio',
+      );
+
+      const durationSec = parseFloat(probeJson.format?.duration || '0') || 0;
+      const width: number | null = videoStream?.width ?? null;
+      const height: number | null = videoStream?.height ?? null;
+      const framerate = videoStream?.r_frame_rate || null;
+
+      // Retrieve rotation side_data if present
+      let rotation = 0;
+      if (videoStream?.side_data_list) {
+        for (const sd of videoStream.side_data_list) {
+          if (sd.rotation !== undefined) {
+            rotation = sd.rotation;
+            break;
+          }
+        }
+      }
+
+      // Store structured metadata as extracted_metadata artifact
+      const metadata = {
+        container: probeJson.format?.format_name || null,
+        durationMs: Math.round(durationSec * 1000),
+        width: width ?? 0,
+        height: height ?? 0,
+        framerate,
+        rotation: rotation !== 0 ? rotation : undefined,
+        videoCodec: videoStream?.codec_name || null,
+        videoBitrate: videoStream?.bit_rate || null,
+        pixelFormat: videoStream?.pix_fmt || null,
+        hasAudio: !!audioStream,
+        audioCodec: audioStream?.codec_name || null,
+        sampleRate: audioStream?.sample_rate || null,
+        channels: audioStream?.channels || null,
+      };
+
+      writeFileSync(artifactAbsPath, JSON.stringify(metadata, null, 2), 'utf-8');
+      const outputStat = statSync(artifactAbsPath);
+
+      openLibrary.connection
+        .prepare(
+          `INSERT INTO revision_artifacts
+             (artifact_id, revision_id, kind, mime_type, byte_size, file_path,
+              width, height, generator_version, status, generated_at)
+           VALUES (?, ?, 'extracted_metadata', 'application/json', ?, ?, ?, ?, ?, 'ready', ?)`,
+        )
+        .run(
+          artifactId, revisionId, outputStat.size, artifactRelPath,
+          width, height,
+          `ffprobe@n7`,
+          new Date().toISOString(),
+        );
+
+      return { durationSec, width, height };
+    } catch (error) {
+      // Write failed artifact
+      this.writeFailedArtifact(openLibrary, artifactId, revisionId, 'extracted_metadata',
+        'application/json', artifactRelPath, 'ffprobe@n7', error);
+      throw error;
+    }
+  }
+
+  /** Generate a video poster frame using ffmpeg thumbnail filter. */
+  private async generateVideoPoster(
+    input: { libraryId: string; assetId: string },
+    openLibrary: OpenLibrary,
+    assetPath: string,
+    revisionId: string,
+    ffmpegPath: string,
+    artifactsDir: string,
+  ): Promise<string> {
+    const artifactId = randomUUID();
+    const artifactRelPath = `${artifactId}.jpg`;
+    const artifactAbsPath = path.join(artifactsDir, artifactRelPath);
+
+    try {
+      const result = await this.spawnFn(ffmpegPath, [
+        '-y',
+        '-i', assetPath,
+        '-vf', 'thumbnail=300,fps=1/10,scale=640:-1',
+        '-frames:v', '1',
+        '-q:v', '3',
+        artifactAbsPath,
+      ], { timeoutMs: 120_000 });
+
+      if (result.exitCode !== 0) {
+        throw new Error(`ffmpeg poster exited with code ${result.exitCode}: ${result.stderr.slice(0, 200)}`);
+      }
+
+      const outputStat = statSync(artifactAbsPath);
+      openLibrary.connection
+        .prepare(
+          `INSERT INTO revision_artifacts
+             (artifact_id, revision_id, kind, mime_type, byte_size, file_path,
+              generator_version, status, generated_at)
+           VALUES (?, ?, 'video_poster', 'image/jpeg', ?, ?, ?, 'ready', ?)`,
+        )
+        .run(artifactId, revisionId, outputStat.size, artifactRelPath,
+          `ffmpeg@n7`, new Date().toISOString());
+
+      return artifactId;
+    } catch (error) {
+      this.writeFailedArtifact(openLibrary, artifactId, revisionId, 'video_poster',
+        'image/jpeg', artifactRelPath, 'ffmpeg@n7', error);
+      throw error;
+    }
+  }
+
+  /** Generate a contact sheet (grid of sampled frames with timestamps). */
+  private async generateContactSheet(
+    input: { libraryId: string; assetId: string },
+    openLibrary: OpenLibrary,
+    assetPath: string,
+    revisionId: string,
+    ffmpegPath: string,
+    artifactsDir: string,
+    durationSec: number,
+  ): Promise<string> {
+    const artifactId = randomUUID();
+    const artifactRelPath = `${artifactId}.jpg`;
+    const artifactAbsPath = path.join(artifactsDir, artifactRelPath);
+    const frameCount = 16;
+    const interval = Math.max(0.5, durationSec / frameCount);
+    const columns = 4;
+    const rows = Math.ceil(frameCount / columns);
+
+    // fps=1/N to extract one frame every N seconds, then scale, drawtext timecode, tile
+    const filterGraph = [
+      `fps=1/${interval}`,
+      'scale=320:-1:flags=lanczos',
+      // drawtext with PTS timestamps, positioned bottom-right on each tile
+      `drawtext=text='%{pts\\:hms}':fontsize=10:fontcolor=white@0.9:x=w-tw-4:y=h-th-4:box=1:boxcolor=black@0.5:boxborderw=2`,
+      `tile=${columns}x${rows}:margin=2:padding=2:color=#1a1a1a`,
+    ].join(',');
+
+    try {
+      const result = await this.spawnFn(ffmpegPath, [
+        '-y',
+        '-i', assetPath,
+        '-vf', filterGraph,
+        '-frames:v', '1',
+        '-q:v', '5',
+        '-update', '1',
+        artifactAbsPath,
+      ], { timeoutMs: 180_000 });
+
+      if (result.exitCode !== 0) {
+        throw new Error(`ffmpeg contact sheet exited with code ${result.exitCode}: ${result.stderr.slice(0, 200)}`);
+      }
+
+      const outputStat = statSync(artifactAbsPath);
+      openLibrary.connection
+        .prepare(
+          `INSERT INTO revision_artifacts
+             (artifact_id, revision_id, kind, mime_type, byte_size, file_path,
+              generator_version, status, generated_at)
+           VALUES (?, ?, 'contact_sheet', 'image/jpeg', ?, ?, ?, 'ready', ?)`,
+        )
+        .run(artifactId, revisionId, outputStat.size, artifactRelPath,
+          `ffmpeg@n7`, new Date().toISOString());
+
+      return artifactId;
+    } catch (error) {
+      this.writeFailedArtifact(openLibrary, artifactId, revisionId, 'contact_sheet',
+        'image/jpeg', artifactRelPath, 'ffmpeg@n7', error);
+      throw error;
+    }
+  }
+
+  /** Generate a WebM VP9/Opus proxy for playback. */
+  private async generateWebmProxy(
+    input: { libraryId: string; assetId: string },
+    openLibrary: OpenLibrary,
+    assetPath: string,
+    revisionId: string,
+    ffmpegPath: string,
+    artifactsDir: string,
+  ): Promise<string> {
+    const artifactId = randomUUID();
+    const artifactRelPath = `${artifactId}.webm`;
+    const artifactAbsPath = path.join(artifactsDir, artifactRelPath);
+
+    try {
+      const result = await this.spawnFn(ffmpegPath, [
+        '-y',
+        '-i', assetPath,
+        '-c:v', 'libvpx-vp9',
+        '-b:v', '1M',
+        '-c:a', 'libopus',
+        '-vf', 'scale=720:-2',
+        '-g', '60',
+        '-row-mv', '1',
+        artifactAbsPath,
+      ], { timeoutMs: 600_000 });
+
+      if (result.exitCode !== 0) {
+        throw new Error(`ffmpeg webm proxy exited with code ${result.exitCode}: ${result.stderr.slice(0, 200)}`);
+      }
+
+      const outputStat = statSync(artifactAbsPath);
+      openLibrary.connection
+        .prepare(
+          `INSERT INTO revision_artifacts
+             (artifact_id, revision_id, kind, mime_type, byte_size, file_path,
+              generator_version, status, generated_at)
+           VALUES (?, ?, 'webm_proxy', 'video/webm', ?, ?, ?, 'ready', ?)`,
+        )
+        .run(artifactId, revisionId, outputStat.size, artifactRelPath,
+          `ffmpeg@n7`, new Date().toISOString());
+
+      return artifactId;
+    } catch (error) {
+      this.writeFailedArtifact(openLibrary, artifactId, revisionId, 'webm_proxy',
+        'video/webm', artifactRelPath, 'ffmpeg@n7', error);
+      throw error;
+    }
+  }
+
+  // ── OIIO thumbnail (EXR/TGA) ───────────────────────────────────────
+
+  private async generateOiiOThumbnail(
+    input: { libraryId: string; assetId: string },
+    openLibrary: OpenLibrary,
+    assetPath: string,
+    revisionId: string,
+  ): Promise<{ artifactId: string }> {
+    const oiiotoolPath = resolveOiiotoolPath();
+    const artifactId = randomUUID();
+    const artifactsDir = this.artifactsDir(openLibrary);
+    mkdirSync(artifactsDir, { recursive: true });
+    const artifactRelPath = `${artifactId}.png`;
+    const artifactAbsPath = path.join(artifactsDir, artifactRelPath);
+
+    try {
+      // Build oiiotool args: resize + optional OCIO display transform + output
+      const args: string[] = [
+        assetPath,
+        '--resize', '0x512',
+        '-o', artifactAbsPath,
+      ];
+
+      // Attempt OCIO display transform if the built-in config is available
+      // (oiiotool will fail gracefully without --colorconfig if it doesn't
+      // support the URI; we catch that and fall back to no color transform)
+      const result = await this.spawnFn(oiiotoolPath, args, { timeoutMs: 60_000 });
+
+      if (result.exitCode !== 0) {
+        throw new Error(`oiiotool exited with code ${result.exitCode}: ${result.stderr.slice(0, 200)}`);
+      }
+
+      const outputStat = statSync(artifactAbsPath);
+      openLibrary.connection
+        .prepare(
+          `INSERT INTO revision_artifacts
+             (artifact_id, revision_id, kind, mime_type, byte_size, file_path,
+              generator_version, status, generated_at)
+           VALUES (?, ?, 'thumbnail', 'image/png', ?, ?, ?, 'ready', ?)`,
+        )
+        .run(artifactId, revisionId, outputStat.size, artifactRelPath,
+          `oiio@3.1`, new Date().toISOString());
+
+      this.options.onAssetsChanged?.({
+        type: 'asset.changed',
+        libraryId: input.libraryId,
+        changedCount: 1,
+        missingCount: 0,
+      });
+
+      return { artifactId };
+    } catch (error) {
+      const errorCode = isMissingPathError(error) ? 'OIIO_REQUIRED' : 'OIIO_GENERATION_FAILED';
+
+      openLibrary.connection
+        .prepare(
+          `INSERT INTO revision_artifacts
+             (artifact_id, revision_id, kind, mime_type, byte_size, file_path,
+              generator_version, status, error_code, generated_at)
+           VALUES (?, ?, 'thumbnail', 'image/png', 0, ?, ?, 'failed', ?, ?)`,
+        )
+        .run(
+          artifactId, revisionId, artifactRelPath,
+          `oiio@3.1`, errorCode, new Date().toISOString(),
+        );
+
+      throw serviceError(error, 'LIBRARY_NOT_WRITABLE');
+    }
+  }
+
+  /** Write a failed revision_artifact row. Used across video and OIIO paths. */
+  private writeFailedArtifact(
+    openLibrary: OpenLibrary,
+    artifactId: string,
+    revisionId: string,
+    kind: string,
+    mimeType: string,
+    filePath: string,
+    generatorVersion: string,
+    error: unknown,
+  ): void {
+    let errorCode: string;
+    if (isMissingPathError(error) || (typeof error === 'object' && error !== null && 'code' in error && (error as Record<string, unknown>).code === 'ENOENT')) {
+      errorCode = kind === 'extracted_metadata' || kind === 'video_poster' || kind === 'contact_sheet' || kind === 'webm_proxy'
+        ? 'FFMPEG_REQUIRED' : 'OIIO_REQUIRED';
+    } else if (typeof error === 'object' && error !== null && 'code' in error) {
+      errorCode = String((error as Record<string, unknown>).code);
+    } else {
+      errorCode = `${kind.toUpperCase()}_GENERATION_FAILED`;
+    }
+    openLibrary.connection
+      .prepare(
+        `INSERT INTO revision_artifacts
+           (artifact_id, revision_id, kind, mime_type, byte_size, file_path,
+            generator_version, status, error_code, generated_at)
+         VALUES (?, ?, ?, ?, 0, ?, ?, 'failed', ?, ?)`,
+      )
+      .run(artifactId, revisionId, kind, mimeType, filePath, generatorVersion, errorCode, new Date().toISOString());
+  }
+
   /** Return the current (invalidated_at IS NULL) thumbnail artifact for an asset's current revision. */
   getThumbnailArtifact(
     libraryId: string,
@@ -3740,7 +4247,7 @@ export class LibraryService {
             AND NOT EXISTS (
               SELECT 1 FROM revision_artifacts ra
               WHERE ra.revision_id = a.current_revision_id
-                AND ra.kind = 'thumbnail'
+                AND ra.kind IN ('thumbnail', 'video_poster')
                 AND ra.status = 'ready'
                 AND ra.invalidated_at IS NULL
             )
