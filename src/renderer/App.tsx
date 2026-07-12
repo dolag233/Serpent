@@ -1,35 +1,40 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
 
-import type { AssetSummary, LinkedFolderSummary, ManagedFolderSummary } from '../shared/asset-types';
+import type { AssetSummary, AssetMetadataResult, CollectionSummary, LinkedFolderSummary, ManagedFolderSummary, SmartCollectionSummary, TagSummary } from '../shared/asset-types';
 import type { SerpentLibraryApi } from '../shared/library-api';
 import type { PublicError, PublicErrorCode, PublicErrorReason } from '../shared/protocol/errors';
 import type { ImportConflictPlan, RendererLibrarySummary } from '../shared/protocol/responses';
 
 type RendererWindow = Window & { serpent?: { library?: SerpentLibraryApi } };
 type UiState = 'booting' | 'idle' | 'creating' | 'opening' | 'closing' | 'loading' | 'importing' | 'ready';
-type DialogKind = 'library' | 'folder' | null;
+type DialogKind = 'library' | 'folder' | 'tag' | 'collection' | null;
 type AssetScope = 'all' | 'root' | string;
-type IconName = 'archive' | 'chevron' | 'close' | 'collection' | 'collapse-left' | 'collapse-right' | 'file' | 'folder' | 'grid' | 'info' | 'link' | 'menu' | 'plus' | 'refresh' | 'search' | 'smart' | 'tag' | 'upload' | 'warning';
+type IconName = 'archive' | 'chevron' | 'close' | 'collection' | 'collapse-left' | 'collapse-right' | 'file' | 'folder' | 'grid' | 'heart' | 'info' | 'link' | 'menu' | 'plus' | 'refresh' | 'search' | 'smart' | 'star' | 'tag' | 'upload' | 'warning';
 
 const iconPaths: Record<IconName, ReactNode> = {
   archive: <><path d="M4 7h16v12H4z" /><path d="M3 4h18v3H3zM9 11h6" /></>, chevron: <path d="m9 18 6-6-6-6" />,
   close: <path d="m7 7 10 10M17 7 7 17" />, collection: <><rect x="4" y="5" width="16" height="14" rx="1.5" /><path d="m8 14 3-3 5 5 2-2 2 2" /></>,
   'collapse-left': <><path d="M5 4h14v16H5zM10 4v16" /><path d="m15 9-3 3 3 3" /></>, 'collapse-right': <><path d="M5 4h14v16H5zM14 4v16" /><path d="m9 9 3 3-3 3" /></>,
   file: <><path d="M6 3h8l4 4v14H6z" /><path d="M14 3v5h5" /></>, folder: <path d="M3 6.5h7l2 2h9v10H3z" />,
-  grid: <><rect x="4" y="4" width="6" height="6" /><rect x="14" y="4" width="6" height="6" /><rect x="4" y="14" width="6" height="6" /><rect x="14" y="14" width="6" height="6" /></>, info: <><circle cx="12" cy="12" r="9" /><path d="M12 11v6M12 7h.01" /></>,
+  grid: <><rect x="4" y="4" width="6" height="6" /><rect x="14" y="4" width="6" height="6" /><rect x="4" y="14" width="6" height="6" /><rect x="14" y="14" width="6" height="6" /></>,
+  heart: <path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1.1-1.1a5.5 5.5 0 0 0-7.8 7.8l1.1 1.1L12 21l7.8-7.8 1.1-1.1a5.5 5.5 0 0 0 0-7.8Z" />,
+  info: <><circle cx="12" cy="12" r="9" /><path d="M12 11v6M12 7h.01" /></>,
   link: <><path d="M10 13a5 5 0 0 0 7.5.5l2-2a5 5 0 0 0-7-7l-1.2 1.2" /><path d="M14 11a5 5 0 0 0-7.5-.5l-2 2a5 5 0 0 0 7 7l1.2-1.2" /></>, menu: <path d="M4 7h16M4 12h16M4 17h16" />,
   plus: <path d="M12 5v14M5 12h14" />, refresh: <><path d="M20 7v5h-5" /><path d="M18.4 16a8 8 0 1 1 1.3-8.5L20 12" /></>, search: <><circle cx="10.5" cy="10.5" r="6.5" /><path d="m16 16 4 4" /></>,
-  smart: <path d="m12 3 1.7 5.3H19l-4.3 3.2 1.6 5.2-4.3-3.2-4.3 3.2 1.6-5.2L5 8.3h5.3z" />, tag: <path d="M4 5h7l9 9-6 6-9-9zM8 8h.01" />,
+  smart: <path d="m12 3 1.7 5.3H19l-4.3 3.2 1.6 5.2-4.3-3.2-4.3 3.2 1.6-5.2L5 8.3h5.3z" />,
+  star: <path d="m12 2 3.1 6.3 6.9 1-5 4.9 1.2 6.9-6.2-3.3-6.2 3.3 1.2-6.9-5-4.9 6.9-1z" />,
+  tag: <path d="M4 5h7l9 9-6 6-9-9zM8 8h.01" />,
   upload: <><path d="M12 16V4m0 0L7 9m5-5 5 5" /><path d="M4 14v6h16v-6" /></>, warning: <><path d="M12 3 2.8 20h18.4z" /><path d="M12 9v5m0 3h.01" /></>,
 };
 
 function Icon({ name, size = 16 }: { name: IconName; size?: number }) { return <svg aria-hidden="true" className="icon" viewBox="0 0 24 24" width={size} height={size}>{iconPaths[name]}</svg>; }
 function ToolButton({ label, icon, onClick, pressed, disabled }: { label: string; icon: IconName; onClick?: () => void; pressed?: boolean; disabled?: boolean }) { return <button aria-label={label} aria-pressed={pressed} className="tool-button" disabled={disabled} onClick={onClick} title={label} type="button"><Icon name={icon} /></button>; }
-function NavRow({ icon, label, count, active, onClick, depth = 0, disabled }: { icon: IconName; label: string; count?: number; active?: boolean; onClick?: () => void; depth?: number; disabled?: boolean }) { return <button className={`nav-row${active ? ' is-active' : ''}`} disabled={disabled} onClick={onClick} style={{ paddingLeft: 7 + depth * 14 }} type="button"><Icon name={icon} size={15} /><span>{label}</span>{count !== undefined && <span className="nav-count">{count}</span>}</button>; }
+function NavRow({ icon, label, count, active, onClick, onContextMenu, depth = 0, disabled }: { icon: IconName; label: string; count?: number; active?: boolean; onClick?: () => void; onContextMenu?: (e: React.MouseEvent) => void; depth?: number; disabled?: boolean }) { return <button className={`nav-row${active ? ' is-active' : ''}`} disabled={disabled} onClick={onClick} onContextMenu={onContextMenu} style={{ paddingLeft: 7 + depth * 14 }} type="button"><Icon name={icon} size={15} /><span>{label}</span>{count !== undefined && <span className="nav-count">{count}</span>}</button>; }
 function Section({ title, action, children }: { title: string; action?: () => void; children: ReactNode }) { return <section className="nav-section"><div className="nav-section-heading"><span>{title}</span>{action && <button aria-label={`添加${title}`} className="tiny-action" onClick={action} type="button"><Icon name="plus" size={13} /></button>}</div>{children}</section>; }
 
 export function App() {
   const api = (window as RendererWindow).serpent?.library;
+  // Library / folder / assets (existing)
   const [library, setLibrary] = useState<RendererLibrarySummary | null>(null);
   const [folders, setFolders] = useState<ManagedFolderSummary[]>([]);
   const [linkedFolders, setLinkedFolders] = useState<LinkedFolderSummary[]>([]);
@@ -48,10 +53,83 @@ export function App() {
   const [leftOpen, setLeftOpen] = useState(() => window.innerWidth > 800);
   const [rightOpen, setRightOpen] = useState(() => window.innerWidth > 1020);
 
+  // Tags
+  const [tags, setTags] = useState<TagSummary[]>([]);
+  const [activeTagId, setActiveTagId] = useState<string | null>(null);
+  // Per-tag asset membership cache (local-session only; reset on close).
+  // NOTE: client-side tag filter is limited to assets tagged in the current session.
+  // Full tag filtering requires the search API (slice 0005).
+  const [tagMembership, setTagMembership] = useState<Map<string, Set<string>>>(new Map());
+
+  // Collections
+  const [collections, setCollections] = useState<CollectionSummary[]>([]);
+  const [activeCollectionId, setActiveCollectionId] = useState<string | null>(null);
+  const [collectionRecursive, setCollectionRecursive] = useState(true);
+
+  // Smart collections
+  const [smartCollections, setSmartCollections] = useState<SmartCollectionSummary[]>([]);
+
+  // Metadata editor
+  const [assetMetadata, setAssetMetadata] = useState<AssetMetadataResult | null>(null);
+  const [metadataLoading, setMetadataLoading] = useState(false);
+  const [versionConflict, setVersionConflict] = useState(false);
+  // Pending edit values
+  const [editLabel, setEditLabel] = useState('');
+  const [editDescription, setEditDescription] = useState('');
+  const [editRating, setEditRating] = useState(0);
+  const [editFavorite, setEditFavorite] = useState(false);
+  const [editSourceUrl, setEditSourceUrl] = useState('');
+
+  // Inline tag/collection editors
+  const [showTagInput, setShowTagInput] = useState(false);
+  const [tagInputValue, setTagInputValue] = useState('');
+  const [showCollectionInput, setShowCollectionInput] = useState(false);
+  const [collectionInputValue, setCollectionInputValue] = useState('');
+
   const selectedFolderId = assetScope === 'all' || assetScope === 'root' ? undefined : assetScope;
   const selectedFolder = folders.find((folder) => folder.folderId === selectedFolderId);
   const selectedAsset = assets.find((asset) => asset.assetId === selectedAssetId);
-  const visibleAssets = useMemo(() => assets, [assets]);
+
+  // Tag-filtered asset set
+  const tagFilteredAssetIds = useMemo(() => {
+    if (!activeTagId) return null;
+    return tagMembership.get(activeTagId) ?? new Set<string>();
+  }, [activeTagId, tagMembership]);
+
+  const visibleAssets = useMemo(() => {
+    if (activeTagId && tagFilteredAssetIds) {
+      return assets.filter((a) => tagFilteredAssetIds.has(a.assetId));
+    }
+    return assets;
+  }, [assets, activeTagId, tagFilteredAssetIds]);
+
+  // Collection tree helper
+  const collectionTree = useMemo(() => {
+    const byParent = new Map<string | null, CollectionSummary[]>();
+    for (const c of collections) {
+      const key = c.parentId;
+      if (!byParent.has(key)) byParent.set(key, []);
+      byParent.get(key)!.push(c);
+    }
+    for (const children of byParent.values()) children.sort((a, b) => a.position - b.position);
+    return byParent;
+  }, [collections]);
+
+  function renderCollectionNodes(parentId: string | null, depth: number): ReactNode {
+    const children = collectionTree.get(parentId) ?? [];
+    return children.map((c) => (
+      <NavRow
+        key={c.collectionId}
+        icon="collection"
+        label={c.name}
+        count={c.assetCount}
+        active={activeCollectionId === c.collectionId && !activeTagId}
+        depth={depth}
+        onContextMenu={(e) => { e.preventDefault(); if (confirm(`删除合集"${c.name}"？\n（仅删除合集结构，不删除资产）`)) void deleteCollection(c.collectionId); }}
+        onClick={() => void chooseCollection(c.collectionId)}
+      />
+    ));
+  }
 
   const loadContent = useCallback(async (activeLibrary: RendererLibrarySummary, scope: AssetScope) => {
     if (!api) return;
@@ -60,22 +138,35 @@ export function App() {
       : scope === 'root'
         ? { libraryId: activeLibrary.libraryId, recursive: false }
         : { libraryId: activeLibrary.libraryId, folderId: scope, recursive: false };
-    const [folderResult, assetResult, allResult, linkedResult] = await Promise.all([
-      api.listFolders({ libraryId: activeLibrary.libraryId }),
+    const libId = { libraryId: activeLibrary.libraryId };
+    const [
+      folderResult, assetResult, allResult, linkedResult,
+      tagResult, collectionResult, smartResult,
+    ] = await Promise.all([
+      api.listFolders(libId),
       api.listAssets(scopedRequest),
       scope === 'all'
         ? Promise.resolve(undefined)
         : api.listAssets({ libraryId: activeLibrary.libraryId, recursive: true }),
-      api.listLinkedFolders({ libraryId: activeLibrary.libraryId }),
+      api.listLinkedFolders(libId),
+      api.listTags(libId),
+      api.listCollections(libId),
+      api.listSmartCollections(libId),
     ]);
     if (!folderResult.ok) throw new LibraryOperationError(folderResult.error);
     if (!assetResult.ok) throw new LibraryOperationError(assetResult.error);
     if (allResult && !allResult.ok) throw new LibraryOperationError(allResult.error);
     if (!linkedResult.ok) throw new LibraryOperationError(linkedResult.error);
+    if (!tagResult.ok) throw new LibraryOperationError(tagResult.error);
+    if (!collectionResult.ok) throw new LibraryOperationError(collectionResult.error);
+    if (!smartResult.ok) throw new LibraryOperationError(smartResult.error);
     setFolders(folderResult.value);
     setAssets(assetResult.value);
     setAllAssetCount(allResult?.value.length ?? assetResult.value.length);
     setLinkedFolders(linkedResult.value);
+    setTags(tagResult.value);
+    setCollections(collectionResult.value);
+    setSmartCollections(smartResult.value);
   }, [api]);
 
   const restore = useCallback(async () => {
@@ -108,6 +199,8 @@ export function App() {
       opened = true;
       setLibrary(result.value);
       setAssetScope('all');
+      setActiveTagId(null);
+      setActiveCollectionId(null);
       await loadContent(result.value, 'all');
     } catch (caught) {
       setError(toMessage(caught, '资源库操作失败。'));
@@ -120,6 +213,8 @@ export function App() {
     if (!library) return;
     setAssetScope(scope);
     setSelectedAssetId(undefined);
+    setActiveTagId(null);
+    setActiveCollectionId(null);
     setUiState('loading');
     try {
       await loadContent(library, scope);
@@ -129,6 +224,218 @@ export function App() {
       setUiState('ready');
     }
   }
+
+  // --- Tag CRUD ---
+
+  async function createTag() {
+    if (!api || !library || !tagInputValue.trim()) return;
+    setUiState('loading');
+    try {
+      const result = await api.createTag({ libraryId: library.libraryId, name: tagInputValue.trim() });
+      if (!result.ok) throw new LibraryOperationError(result.error);
+      setShowTagInput(false);
+      setTagInputValue('');
+      await loadContent(library, assetScope);
+    } catch (caught) {
+      setError(toMessage(caught, '创建标签失败。'));
+    } finally {
+      setUiState('ready');
+    }
+  }
+
+  async function deleteTag(tagId: string) {
+    if (!api || !library) return;
+    setUiState('loading');
+    try {
+      const result = await api.deleteTag({ libraryId: library.libraryId, tagId });
+      if (!result.ok) throw new LibraryOperationError(result.error);
+      if (activeTagId === tagId) {
+        setActiveTagId(null);
+        await loadContent(library, assetScope);
+      } else {
+        // Refresh tag list only
+        const tagResult = await api.listTags({ libraryId: library.libraryId });
+        if (tagResult.ok) setTags(tagResult.value);
+      }
+    } catch (caught) {
+      setError(toMessage(caught, '删除标签失败。'));
+    } finally {
+      setUiState('ready');
+    }
+  }
+
+  async function chooseTag(tagId: string) {
+    if (!library) return;
+    setActiveTagId(tagId);
+    setActiveCollectionId(null);
+    setAssetScope('all');
+    setSelectedAssetId(undefined);
+    setUiState('loading');
+    try {
+      // Load all assets for client-side tag filter
+      await loadContent(library, 'all');
+    } catch (caught) {
+      setError(toMessage(caught, '无法读取标签资产。'));
+    } finally {
+      setUiState('ready');
+    }
+  }
+
+  // --- Collection CRUD ---
+
+  async function createCollection() {
+    if (!api || !library || !collectionInputValue.trim()) return;
+    setUiState('loading');
+    try {
+      const result = await api.createCollection({ libraryId: library.libraryId, name: collectionInputValue.trim() });
+      if (!result.ok) throw new LibraryOperationError(result.error);
+      setShowCollectionInput(false);
+      setCollectionInputValue('');
+      await loadContent(library, assetScope);
+    } catch (caught) {
+      setError(toMessage(caught, '创建合集失败。'));
+    } finally {
+      setUiState('ready');
+    }
+  }
+
+  async function deleteCollection(collectionId: string) {
+    if (!api || !library) return;
+    setUiState('loading');
+    try {
+      const result = await api.deleteCollection({ libraryId: library.libraryId, collectionId });
+      if (!result.ok) throw new LibraryOperationError(result.error);
+      if (activeCollectionId === collectionId) {
+        setActiveCollectionId(null);
+        await loadContent(library, assetScope);
+      } else {
+        const colResult = await api.listCollections({ libraryId: library.libraryId });
+        if (colResult.ok) setCollections(colResult.value);
+      }
+    } catch (caught) {
+      setError(toMessage(caught, '删除合集失败。'));
+    } finally {
+      setUiState('ready');
+    }
+  }
+
+  async function chooseCollection(collectionId: string) {
+    if (!api || !library) return;
+    setActiveCollectionId(collectionId);
+    setActiveTagId(null);
+    setAssetScope('all');
+    setSelectedAssetId(undefined);
+    setUiState('loading');
+    try {
+      const result = await api.listCollectionAssets({ libraryId: library.libraryId, collectionId, recursive: collectionRecursive });
+      if (!result.ok) throw new LibraryOperationError(result.error);
+      setAssets(result.value);
+      setAllAssetCount(result.value.length);
+      // Also refresh sidebar metadata
+      const [tagResult, collectionResult, smartResult] = await Promise.all([
+        api.listTags({ libraryId: library.libraryId }),
+        api.listCollections({ libraryId: library.libraryId }),
+        api.listSmartCollections({ libraryId: library.libraryId }),
+      ]);
+      if (tagResult.ok) setTags(tagResult.value);
+      if (collectionResult.ok) setCollections(collectionResult.value);
+      if (smartResult.ok) setSmartCollections(smartResult.value);
+    } catch (caught) {
+      setError(toMessage(caught, '无法读取合集内容。'));
+    } finally {
+      setUiState('ready');
+    }
+  }
+
+  // --- Asset metadata ---
+
+  async function loadMetadata() {
+    if (!api || !library || !selectedAssetId) return;
+    setMetadataLoading(true);
+    setVersionConflict(false);
+    try {
+      const result = await api.getAssetMetadata({ libraryId: library.libraryId, assetId: selectedAssetId });
+      if (!result.ok) throw new LibraryOperationError(result.error);
+      setAssetMetadata(result.value);
+      setEditLabel(result.value.label ?? '');
+      setEditDescription(result.value.description ?? '');
+      setEditRating(result.value.rating);
+      setEditFavorite(result.value.favorite);
+      setEditSourceUrl(result.value.sourcePageUrl ?? '');
+    } catch (caught) {
+      setError(toMessage(caught, '无法读取元数据。'));
+    } finally {
+      setMetadataLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    let cancelled = false;
+    if (selectedAssetId) {
+      void Promise.resolve().then(async () => {
+        if (!api || !library) return;
+        setMetadataLoading(true);
+        setVersionConflict(false);
+        try {
+          const result = await api.getAssetMetadata({ libraryId: library.libraryId, assetId: selectedAssetId });
+          if (!cancelled && result.ok) {
+            setAssetMetadata(result.value);
+            setEditLabel(result.value.label ?? '');
+            setEditDescription(result.value.description ?? '');
+            setEditRating(result.value.rating);
+            setEditFavorite(result.value.favorite);
+            setEditSourceUrl(result.value.sourcePageUrl ?? '');
+          } else if (!cancelled && !result.ok) {
+            throw new LibraryOperationError(result.error);
+          }
+        } catch (caught) {
+          if (!cancelled) setError(toMessage(caught, '无法读取元数据。'));
+        } finally {
+          if (!cancelled) setMetadataLoading(false);
+        }
+      });
+    } else {
+      queueMicrotask(() => {
+        setAssetMetadata(null);
+        setVersionConflict(false);
+      });
+    }
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedAssetId]);
+
+  async function saveMetadata(fields: {
+    label?: string;
+    description?: string;
+    rating?: number;
+    favorite?: boolean;
+    sourcePageUrl?: string;
+  }) {
+    if (!api || !library || !selectedAssetId || !assetMetadata) return;
+    setVersionConflict(false);
+    try {
+      const result = await api.setAssetMetadata({
+        libraryId: library.libraryId,
+        assetId: selectedAssetId,
+        expectedVersion: assetMetadata.entityVersion,
+        ...fields,
+      });
+      if (!result.ok) {
+        if (result.error.code === 'VERSION_CONFLICT') {
+          setVersionConflict(true);
+          setNotice('元数据版本冲突——另一个操作已修改了这些字段。请刷新后重新编辑。');
+          return;
+        }
+        throw new LibraryOperationError(result.error);
+      }
+      setAssetMetadata(result.value);
+      setNotice('元数据已保存。');
+    } catch (caught) {
+      setError(toMessage(caught, '保存元数据失败。'));
+    }
+  }
+
+  // --- Existing operations ---
 
   async function createFolder() {
     if (!api || !library) return;
@@ -263,6 +570,12 @@ export function App() {
       setAssets([]);
       setAllAssetCount(0);
       setAssetScope('all');
+      setTags([]);
+      setCollections([]);
+      setSmartCollections([]);
+      setActiveTagId(null);
+      setActiveCollectionId(null);
+      setTagMembership(new Map());
     } catch (caught) {
       setError(toMessage(caught, '关闭失败。'));
     } finally {
@@ -310,6 +623,8 @@ export function App() {
       event.preventDefault();
       if (dialog) {
         setDialog(null);
+        setShowTagInput(false);
+        setShowCollectionInput(false);
         return;
       }
       if (!api || !conflicts) return;
@@ -328,32 +643,206 @@ export function App() {
     return () => document.removeEventListener('keydown', onKeyDown);
   }, [api, conflicts, dialog]);
 
+  function workspaceTitle() {
+    if (!library) return '工作区';
+    if (activeTagId) { const t = tags.find((x) => x.tagId === activeTagId); return t ? `标签：${t.name}` : '标签筛选'; }
+    if (activeCollectionId) { const c = collections.find((x) => x.collectionId === activeCollectionId); return c ? `合集：${c.name}` : '合集视图'; }
+    if (assetScope === 'all') return '所有资产';
+    if (assetScope === 'root') return '资源库根目录';
+    return selectedFolder?.name ?? '工作区';
+  }
+
+  function scopeChipLabel() {
+    if (activeTagId) { const t = tags.find((x) => x.tagId === activeTagId); return t ? `标签 · ${t.name}` : '标签'; }
+    if (activeCollectionId) { const c = collections.find((x) => x.collectionId === activeCollectionId); return c ? `合集 · ${c.name}` : '合集'; }
+    if (assetScope === 'all') return '所有资产';
+    if (assetScope === 'root') return '资源库根目录';
+    return selectedFolder?.name;
+  }
+
   const busy = ['booting', 'creating', 'opening', 'closing', 'loading', 'importing'].includes(uiState);
+
+  // --- Metadata editor helpers ---
+  function handleMetadataLabelInput(event: FormEvent<HTMLInputElement>) {
+    const value = (event.target as HTMLInputElement).value;
+    setEditLabel(value);
+  }
+
+  function handleMetadataLabelSave() {
+    if (!assetMetadata || editLabel === (assetMetadata.label ?? '')) return;
+    void saveMetadata({ label: editLabel || undefined });
+  }
+
+  function handleMetadataDescriptionInput(event: FormEvent<HTMLTextAreaElement>) {
+    const value = (event.target as HTMLTextAreaElement).value;
+    setEditDescription(value);
+  }
+
+  function handleMetadataDescriptionSave() {
+    if (!assetMetadata || editDescription === (assetMetadata.description ?? '')) return;
+    void saveMetadata({ description: editDescription || undefined });
+  }
+
+  function handleRatingClick(rating: number) {
+    if (!assetMetadata) return;
+    setEditRating(rating);
+    void saveMetadata({ rating });
+  }
+
+  function handleFavoriteToggle() {
+    if (!assetMetadata) return;
+    const next = !editFavorite;
+    setEditFavorite(next);
+    void saveMetadata({ favorite: next });
+  }
+
+  function handleSourceUrlInput(event: FormEvent<HTMLInputElement>) {
+    const value = (event.target as HTMLInputElement).value;
+    setEditSourceUrl(value);
+  }
+
+  function handleSourceUrlSave() {
+    if (!assetMetadata || editSourceUrl === (assetMetadata.sourcePageUrl ?? '')) return;
+    void saveMetadata({ sourcePageUrl: editSourceUrl || undefined });
+  }
+
+  // Handle inline input keydown for tag/collection creation
+  function handleTagInputKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      void createTag();
+    } else if (e.key === 'Escape') {
+      setShowTagInput(false);
+      setTagInputValue('');
+    }
+  }
+
+  function handleCollectionInputKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      void createCollection();
+    } else if (e.key === 'Escape') {
+      setShowCollectionInput(false);
+      setCollectionInputValue('');
+    }
+  }
+
   return <main className={`app-shell${leftOpen ? '' : ' left-collapsed'}${rightOpen ? '' : ' right-collapsed'}`}>
     <header className="app-toolbar">
       <div className="toolbar-cluster toolbar-leading"><ToolButton icon="menu" label={leftOpen ? '收起导航' : '展开导航'} onClick={() => setLeftOpen((v) => !v)} pressed={leftOpen} /><div className="brand-mark"><span className="brand-glyph">S</span><span>Serpent</span></div></div>
-      <div className="scope-trace"><span className="scope-root">资源库</span><Icon name="chevron" size={12} /><span className="scope-chip">{library?.displayName ?? '尚未打开'}</span>{library && <span className="scope-chip scope-chip-muted">{assetScope === 'all' ? '所有资产' : assetScope === 'root' ? '资源库根目录' : selectedFolder?.name}</span>}</div>
+      <div className="scope-trace"><span className="scope-root">资源库</span><Icon name="chevron" size={12} /><span className="scope-chip">{library?.displayName ?? '尚未打开'}</span>{library && <span className="scope-chip scope-chip-muted">{scopeChipLabel()}</span>}</div>
       <div className="toolbar-cluster toolbar-actions"><button className="search-control" disabled><Icon name="search" size={15} /><span>搜索资源库</span><kbd>⌘ K</kbd></button><ToolButton icon="collapse-right" label={rightOpen ? '收起检查器' : '展开检查器'} onClick={() => setRightOpen((v) => !v)} pressed={rightOpen} /></div>
     </header>
     <aside className="navigation-pane"><div className="pane-header"><span>资源导航</span><span className="status-dot" data-active={Boolean(library)} /></div><nav className="navigation-scroll">
-      <NavRow active={library ? assetScope === 'all' : true} count={library ? allAssetCount : undefined} icon="grid" label="所有资产" onClick={() => void chooseFolder('all')} disabled={!library} />
+      <NavRow active={library ? assetScope === 'all' && !activeTagId && !activeCollectionId : true} count={library ? allAssetCount : undefined} icon="grid" label="所有资产" onClick={() => void chooseFolder('all')} disabled={!library} />
       <NavRow icon="archive" label="最近使用" disabled />
       <Section title="文件夹" action={library ? () => { setDialogValue('新建文件夹'); setDialog('folder'); } : undefined}>
-        {library ? <><NavRow active={assetScope === 'root'} icon="folder" label="资源库根目录" onClick={() => void chooseFolder('root')} />{folders.map((folder) => <NavRow active={assetScope === folder.folderId} depth={folder.relativePath.split('/').length} icon="folder" key={folder.folderId} label={folder.name} onClick={() => void chooseFolder(folder.folderId)} />)}</> : <p className="nav-empty">打开资源库后显示目录</p>}
+        {library ? <><NavRow active={assetScope === 'root' && !activeTagId && !activeCollectionId} icon="folder" label="资源库根目录" onClick={() => void chooseFolder('root')} />{folders.map((folder) => <NavRow active={assetScope === folder.folderId && !activeTagId && !activeCollectionId} depth={folder.relativePath.split('/').length} icon="folder" key={folder.folderId} label={folder.name} onClick={() => void chooseFolder(folder.folderId)} />)}</> : <p className="nav-empty">打开资源库后显示目录</p>}
       </Section>
-      <Section title="合集"><p className="nav-empty">跨文件夹分类将在后续切片提供</p></Section>
+      <Section title="标签" action={library ? () => { setShowTagInput(true); setTagInputValue(''); } : undefined}>
+        {library ? <>
+          {showTagInput && <div className="nav-section"><input autoFocus className="text-field" maxLength={255} onBlur={() => { setShowTagInput(false); setTagInputValue(''); }} onChange={(e) => setTagInputValue(e.target.value)} onKeyDown={handleTagInputKeyDown} placeholder="输入标签名称，回车创建" style={{ height: 27, margin: '2px 0 4px 0', fontSize: 11 }} value={tagInputValue} /></div>}
+          {tags.length ? tags.map((tag) => <NavRow active={activeTagId === tag.tagId} icon="tag" key={tag.tagId} label={tag.name} count={tag.assetCount} onContextMenu={(e) => { e.preventDefault(); if (confirm(`删除标签"${tag.name}"？`)) void deleteTag(tag.tagId); }} onClick={() => void chooseTag(tag.tagId)} />) : <p className="nav-empty">尚无标签</p>}
+        </> : <p className="nav-empty">打开资源库后显示标签</p>}
+      </Section>
+      <Section title="合集" action={library ? () => { setShowCollectionInput(true); setCollectionInputValue(''); } : undefined}>
+        {library ? <>
+          {showCollectionInput && <div className="nav-section"><input autoFocus className="text-field" maxLength={255} onBlur={() => { setShowCollectionInput(false); setCollectionInputValue(''); }} onChange={(e) => setCollectionInputValue(e.target.value)} onKeyDown={handleCollectionInputKeyDown} placeholder="输入合集名称，回车创建" style={{ height: 27, margin: '2px 0 4px 0', fontSize: 11 }} value={collectionInputValue} /></div>}
+          {activeCollectionId && <div style={{ padding: '0 5px 2px' }}><label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 10, color: 'var(--tertiary)', cursor: 'pointer' }}><input checked={collectionRecursive} onChange={(e) => { setCollectionRecursive(e.target.checked); if (activeCollectionId) void chooseCollection(activeCollectionId); }} type="checkbox" />包含子合集</label></div>}
+          {collections.length ? renderCollectionNodes(null, 0) : <p className="nav-empty">尚无合集</p>}
+        </> : <p className="nav-empty">打开资源库后显示合集</p>}
+      </Section>
+      <Section title="智能合集">
+        {library ? (smartCollections.length ? smartCollections.map((sc) => <NavRow active={false} icon="smart" key={sc.smartCollectionId} label={sc.name} disabled />) : <p className="nav-empty">尚无智能合集（切片 0005 启用查询）</p>) : <p className="nav-empty">打开资源库后显示智能合集</p>}
+      </Section>
       <Section title="链接文件夹" action={library ? () => void importFolderAsLinked() : undefined}>
-        {library ? (linkedFolders.length ? linkedFolders.map((lf) => <NavRow active={assetScope === lf.folderId} icon={lf.status === 'offline' ? 'warning' : 'link'} key={lf.folderId} label={lf.displayName} count={lf.assetCount} onClick={lf.status === 'offline' ? () => void relinkFolder(lf.folderId) : () => void chooseFolder(lf.folderId)} />) : <p className="nav-empty">链接外部文件夹作为资产来源</p>) : <p className="nav-empty">打开资源库后显示链接文件夹</p>}
+        {library ? (linkedFolders.length ? linkedFolders.map((lf) => <NavRow active={assetScope === lf.folderId && !activeTagId && !activeCollectionId} icon={lf.status === 'offline' ? 'warning' : 'link'} key={lf.folderId} label={lf.displayName} count={lf.assetCount} onClick={lf.status === 'offline' ? () => void relinkFolder(lf.folderId) : () => void chooseFolder(lf.folderId)} />) : <p className="nav-empty">链接外部文件夹作为资产来源</p>) : <p className="nav-empty">打开资源库后显示链接文件夹</p>}
       </Section>
     </nav><div className="pane-footer"><span className="storage-pulse" /><span>{library ? '本地资源库 · 已连接' : '本地优先 · 未连接'}</span></div></aside>
-    <section className="workspace"><div className="workspace-bar"><div className="workspace-title"><span>{library ? assetScope === 'all' ? '所有资产' : assetScope === 'root' ? '资源库根目录' : selectedFolder?.name : '工作区'}</span><span className="item-count">{library ? `${visibleAssets.length} 项` : '未载入'}</span></div><div className="workspace-tools">
+    <section className="workspace"><div className="workspace-bar"><div className="workspace-title"><span>{workspaceTitle()}</span><span className="item-count">{library ? `${visibleAssets.length} 项` : '未载入'}</span></div><div className="workspace-tools">
       <button className="compact-action" disabled={!library || busy} onClick={() => void importAssets('files')} type="button"><Icon name="upload" size={14} />导入文件</button><button className="compact-action" disabled={!library || busy} onClick={() => void importAssets('folder')} type="button"><Icon name="folder" size={14} />导入文件夹</button><button className="compact-action" disabled={!library || busy} onClick={() => void importFolderAsLinked()} type="button"><Icon name="link" size={14} />导入链接文件夹</button><ToolButton disabled={!library || busy} icon="refresh" label="刷新磁盘变化" onClick={() => void refreshAssets()} /><span className="tool-separator" /><ToolButton icon="grid" label="网格视图" pressed />
     </div></div><div className="workspace-canvas">
       {busy && <div className="activity-strip" role="status"><span className="activity-pulse" />{uiState === 'importing' ? '正在安全复制与登记资产…' : '正在同步资源库…'}</div>}
       {library ? visibleAssets.length ? <div className="asset-grid">{visibleAssets.map((asset) => <button className={`asset-card${selectedAssetId === asset.assetId ? ' is-selected' : ''}${asset.availability === 'missing' ? ' is-missing' : ''}`} key={asset.assetId} onClick={() => setSelectedAssetId(asset.assetId)} type="button"><div className="asset-preview"><span className="asset-extension">{extension(asset.displayName)}</span>{asset.availability === 'missing' && <span className="missing-banner"><Icon name="warning" size={12} />文件丢失</span>}<Icon name="file" size={28} /></div><div className="asset-caption"><strong title={asset.displayName}>{asset.displayName}</strong><span>{formatBytes(asset.byteSize)} · {formatDate(asset.modifiedAt)}</span></div></button>)}</div> : <div className="empty-library"><div className="empty-orbit"><Icon name="upload" size={24} /></div><span className="eyebrow">MANAGED ASSETS</span><h1>{selectedFolder ? '这个文件夹还是空的' : '把第一批素材放进来'}</h1><p>文件将复制到清晰可读的 Assets 目录，同时建立稳定的资产身份。</p><div className="empty-actions"><button className="primary-button" onClick={() => void importAssets('files')} type="button">导入文件</button><button className="secondary-button" onClick={() => void importAssets('folder')} type="button">导入文件夹</button></div></div> : <div className="empty-state"><div className="empty-index">01</div><div className="empty-copy"><span className="eyebrow">LOCAL ASSET WORKSPACE</span><h1>从一个本地资源库开始</h1><p>文件、目录与元数据都保留在你掌控的位置。</p><div className="empty-actions"><button className="primary-button" onClick={() => { setDialogValue('我的资源库'); setDialog('library'); }} type="button"><Icon name="plus" size={15} />创建资源库</button><button className="secondary-button" onClick={() => void runLibraryOperation('open')} type="button"><Icon name="folder" size={15} />打开资源库</button></div></div></div>}
       {(error || notice) && <div className={`toast${error ? ' is-error' : ''}`} role={error ? 'alert' : 'status'}><Icon name={error ? 'warning' : 'info'} size={15} /><span>{error ?? notice}</span><button aria-label="关闭提示" onClick={() => { setError(null); setNotice(null); }} type="button"><Icon name="close" size={13} /></button></div>}
     </div></section>
-    <aside className="inspector-pane"><div className="pane-header"><span>检查器</span><ToolButton icon="info" label="检查器信息" /></div>{selectedAsset ? <div className="inspector-content"><div className="selected-file-hero"><Icon name="file" size={36} /><span>{extension(selectedAsset.displayName)}</span></div><div className="inspector-identity"><div><span className="micro-label">当前选择</span><strong>{selectedAsset.displayName}</strong></div></div><dl className="metadata-list"><div><dt>状态</dt><dd>{selectedAsset.availability === 'available' ? '可用' : '文件丢失'}</dd></div><div><dt>大小</dt><dd className="mono">{formatBytes(selectedAsset.byteSize)}</dd></div><div><dt>修改</dt><dd>{formatDate(selectedAsset.modifiedAt)}</dd></div></dl><section className="inspector-section"><h2>资源库路径</h2><p className="path-block">{selectedAsset.relativeFilePath}</p></section></div> : library ? <div className="inspector-content"><div className="inspector-identity"><div className="inspector-badge">{initials(library.displayName)}</div><div><span className="micro-label">当前资源库</span><strong>{library.displayName}</strong></div></div><dl className="metadata-list"><div><dt>状态</dt><dd><span className="status-dot" data-active="true" />已打开</dd></div><div><dt>资产</dt><dd className="mono">{allAssetCount}</dd></div><div><dt>文件夹</dt><dd className="mono">{folders.length}</dd></div></dl><section className="inspector-section"><h2>位置</h2><p className="path-block">{library.displayPath}</p></section><button className="secondary-button inspector-close-library" onClick={() => void closeLibrary()} type="button">关闭资源库</button></div> : <div className="inspector-empty"><Icon name="info" size={18} /><strong>没有活动资源库</strong><p>打开资源库后查看当前范围与资产详情。</p></div>}</aside>
+    <aside className="inspector-pane"><div className="pane-header"><span>检查器</span><ToolButton icon="info" label="检查器信息" /></div>{selectedAsset ? <div className="inspector-content">
+      <div className="selected-file-hero"><Icon name="file" size={36} /><span>{extension(selectedAsset.displayName)}</span></div>
+      <div className="inspector-identity"><div><span className="micro-label">当前选择</span><strong>{selectedAsset.displayName}</strong></div></div>
+      <dl className="metadata-list">
+        <div><dt>状态</dt><dd>{selectedAsset.availability === 'available' ? '可用' : '文件丢失'}</dd></div>
+        <div><dt>大小</dt><dd className="mono">{formatBytes(selectedAsset.byteSize)}</dd></div>
+        <div><dt>修改</dt><dd>{formatDate(selectedAsset.modifiedAt)}</dd></div>
+      </dl>
+      {/* --- Asset metadata editor --- */}
+      <section className="inspector-section">
+        <h2>元数据</h2>
+        {metadataLoading ? <span className="micro-label">加载中…</span> : assetMetadata ? <>
+          {versionConflict && <div className="inline-error"><Icon name="warning" size={14} /><div><strong>版本冲突</strong><p>元数据已被其他操作修改。请刷新以获取最新版本。</p><button onClick={() => void loadMetadata()} type="button">刷新元数据</button></div></div>}
+          <div className="editor-field">
+            <label className="micro-label" htmlFor="meta-label">标签 (Label)</label>
+            <input className="text-field" id="meta-label" maxLength={255} onBlur={handleMetadataLabelSave} onChange={handleMetadataLabelInput} onKeyDown={(e) => { if (e.key === 'Enter') handleMetadataLabelSave(); }} style={{ height: 28, fontSize: 11 }} value={editLabel} />
+          </div>
+          <div className="editor-field" style={{ marginTop: 10 }}>
+            <label className="micro-label" htmlFor="meta-desc">描述</label>
+            <textarea className="text-field" id="meta-desc" maxLength={10000} onBlur={handleMetadataDescriptionSave} onChange={handleMetadataDescriptionInput} rows={3} style={{ height: 'auto', resize: 'vertical', fontSize: 11, paddingTop: 6 }} value={editDescription} />
+          </div>
+          <div className="editor-field" style={{ marginTop: 10 }}>
+            <label className="micro-label">评分</label>
+            <div style={{ display: 'flex', gap: 2, marginTop: 3 }}>
+              {[1, 2, 3, 4, 5].map((star) => (
+                <button
+                  key={star}
+                  aria-label={`${star} 星`}
+                  onClick={() => handleRatingClick(star)}
+                  style={{ padding: 0, border: 0, background: 'transparent', cursor: 'pointer', color: star <= editRating ? '#d99a3e' : 'var(--tertiary)' }}
+                  type="button"
+                >
+                  <Icon name="star" size={16} />
+                </button>
+              ))}
+              {editRating > 0 && (
+                <button
+                  aria-label="清除评分"
+                  onClick={() => handleRatingClick(0)}
+                  style={{ padding: '0 0 0 4px', border: 0, background: 'transparent', color: 'var(--tertiary)', cursor: 'pointer', fontSize: 10 }}
+                  type="button"
+                >
+                  清除
+                </button>
+              )}
+            </div>
+          </div>
+          <div className="editor-field" style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 8 }}>
+            <label className="micro-label" style={{ flex: 1 }}>喜欢</label>
+            <button
+              aria-label={editFavorite ? '取消喜欢' : '标记喜欢'}
+              onClick={handleFavoriteToggle}
+              style={{ padding: 2, border: 0, background: 'transparent', cursor: 'pointer', color: editFavorite ? '#e76b7a' : 'var(--tertiary)' }}
+              type="button"
+            >
+              <Icon name="heart" size={18} />
+            </button>
+          </div>
+          <div className="editor-field" style={{ marginTop: 10 }}>
+            <label className="micro-label" htmlFor="meta-url">源链接 (URL)</label>
+            <input className="text-field" id="meta-url" maxLength={255} onBlur={handleSourceUrlSave} onChange={handleSourceUrlInput} onKeyDown={(e) => { if (e.key === 'Enter') handleSourceUrlSave(); }} placeholder="https://…" style={{ height: 28, fontSize: 11 }} value={editSourceUrl} />
+          </div>
+          <div className="editor-field" style={{ marginTop: 10 }}>
+            <label className="micro-label">色卡 (Palette)</label>
+            {assetMetadata.palette ? (
+              <div className="path-block" style={{ marginTop: 3, fontSize: 10 }}>{assetMetadata.palette}</div>
+            ) : (
+              <p style={{ margin: '3px 0 0', color: 'var(--tertiary)', fontSize: 10 }}>无人工色卡（切片 0006 提供编辑）</p>
+            )}
+          </div>
+          <div style={{ marginTop: 8, color: 'var(--tertiary)', fontSize: 9, fontFamily: "'IBM Plex Mono', monospace" }}>
+            版本 {assetMetadata.entityVersion} · {formatDate(assetMetadata.updatedAt)}
+          </div>
+        </> : <p className="nav-empty" style={{ margin: '4px 0 0' }}>选择资产以查看元数据</p>}
+      </section>
+      <section className="inspector-section"><h2>资源库路径</h2><p className="path-block">{selectedAsset.relativeFilePath}</p></section>
+    </div> : library ? <div className="inspector-content"><div className="inspector-identity"><div className="inspector-badge">{initials(library.displayName)}</div><div><span className="micro-label">当前资源库</span><strong>{library.displayName}</strong></div></div><dl className="metadata-list"><div><dt>状态</dt><dd><span className="status-dot" data-active="true" />已打开</dd></div><div><dt>资产</dt><dd className="mono">{allAssetCount}</dd></div><div><dt>文件夹</dt><dd className="mono">{folders.length}</dd></div></dl><section className="inspector-section"><h2>位置</h2><p className="path-block">{library.displayPath}</p></section><button className="secondary-button inspector-close-library" onClick={() => void closeLibrary()} type="button">关闭资源库</button></div> : <div className="inspector-empty"><Icon name="info" size={18} /><strong>没有活动资源库</strong><p>打开资源库后查看当前范围与资产详情。</p></div>}</aside>
     {!leftOpen && <button className="pane-reveal pane-reveal-left" onClick={() => setLeftOpen(true)} type="button"><Icon name="collapse-left" size={15} /></button>}{!rightOpen && <button className="pane-reveal pane-reveal-right" onClick={() => setRightOpen(true)} type="button"><Icon name="collapse-right" size={15} /></button>}
     {dialog && <div className="dialog-backdrop" role="presentation"><form aria-labelledby="create-dialog-title" aria-modal="true" className="create-dialog" onSubmit={(event) => { event.preventDefault(); if (!dialogValue.trim()) return; if (dialog === 'library') { setDialog(null); void runLibraryOperation('create'); } else void createFolder(); }} role="dialog"><div className="dialog-heading"><div><span className="eyebrow">{dialog === 'library' ? 'NEW LOCAL LIBRARY' : 'MANAGED FOLDER'}</span><h2 id="create-dialog-title">{dialog === 'library' ? '创建资源库' : '新建文件夹'}</h2></div><button aria-label="取消" className="dialog-close" onClick={() => setDialog(null)} type="button"><Icon name="close" size={16} /></button></div><label className="field-label" htmlFor="dialog-name">名称</label><input autoFocus className="text-field" id="dialog-name" maxLength={255} onChange={(event) => setDialogValue(event.target.value)} value={dialogValue} /><p className="field-help">{dialog === 'library' ? '下一步由系统选择本地保存位置。' : `将在“${selectedFolder?.name ?? '资源库根目录'}”内创建真实目录。`}</p><div className="dialog-actions"><button className="secondary-button" onClick={() => setDialog(null)} type="button">取消</button><button className="primary-button" disabled={!dialogValue.trim()} type="submit">创建</button></div></form></div>}
     {conflicts && <div className="dialog-backdrop" role="presentation"><div aria-labelledby="conflict-dialog-title" aria-modal="true" className="conflict-dialog" role="dialog"><div className="dialog-heading"><div><span className="eyebrow">IMPORT REVIEW</span><h2 id="conflict-dialog-title">处理导入冲突</h2></div></div><div className="conflict-summary"><div><strong>{conflicts.fileCount}</strong><span>待导入文件</span></div><div><strong>{conflicts.suspectedDuplicateCount}</strong><span>疑似重复</span></div><div><strong>{conflicts.nameConflictCount}</strong><span>同名冲突</span></div></div><label className="decision-field"><span>疑似重复</span><select autoFocus value={duplicateDecision} onChange={(event) => setDuplicateDecision(event.target.value as typeof duplicateDecision)}><option value="skip">跳过</option><option value="merge">合并到已有资产</option><option value="create-copy">创建副本</option></select></label><label className="decision-field"><span>同名冲突</span><select value={nameDecision} onChange={(event) => setNameDecision(event.target.value as typeof nameDecision)}><option value="keep-both">保留两者</option><option value="replace">替换现有资产</option><option value="skip">跳过</option></select></label>{conflicts.examples.length > 0 && <div className="conflict-examples">{conflicts.examples.map((item, index) => <span key={`${item.displayName}-${index}`}><Icon name="file" size={13} />{item.displayName}</span>)}</div>}<div className="dialog-actions"><button className="secondary-button" onClick={() => void abandonConflicts()} type="button">取消</button><button className="primary-button" onClick={() => void resolveConflicts()} type="button">应用并导入</button></div></div></div>}
@@ -375,7 +864,7 @@ function toMessage(error: unknown, fallback: string) {
 }
 
 const PUBLIC_ERROR_MESSAGES_ZH: Partial<Record<PublicErrorCode, string>> = {
-  CANCELLED: '操作已取消。', INTERNAL_ERROR: 'Serpent 无法完成这项操作，请重试。', INVALID_LIBRARY_NAME: '请输入可跨平台安全使用的资源库名称。', INVALID_LIBRARY_PATH: '请选择有效的本地文件夹。', INVALID_FOLDER_NAME: '请输入可跨平台安全使用的文件夹名称。', FOLDER_ALREADY_EXISTS: '当前位置已经存在同名文件夹。', FOLDER_NOT_FOUND: '找不到所选资源库文件夹。', INVALID_IMPORT_SOURCE: '无法读取所选导入内容。', INVALID_IMPORT_DECISION: '导入冲突处理选项无效。', IMPORT_NOT_FOUND: '待处理的导入已失效，请重新选择文件。', IMPORT_APPLY_FAILED: '无法安全完成导入。', LIBRARY_ALREADY_EXISTS: '该位置已经存在同名文件或文件夹。', LIBRARY_NOT_FOUND: '找不到所选资源库。', NOT_A_LIBRARY: '所选文件夹不是有效的 Serpent 资源库。', LIBRARY_CORRUPT: '资源库数据库或迁移记录已损坏。', LIBRARY_VERSION_TOO_NEW: '该资源库由更新版本的 Serpent 创建。', LIBRARY_NOT_WRITABLE: 'Serpent 无法写入所选位置。', LIBRARY_CLEANUP_FAILED: '创建失败，且临时文件无法自动清理。', LIBRARY_NOT_OPEN: '该资源库当前没有打开。',
+  CANCELLED: '操作已取消。', INTERNAL_ERROR: 'Serpent 无法完成这项操作，请重试。', INVALID_LIBRARY_NAME: '请输入可跨平台安全使用的资源库名称。', INVALID_LIBRARY_PATH: '请选择有效的本地文件夹。', INVALID_FOLDER_NAME: '请输入可跨平台安全使用的文件夹名称。', FOLDER_ALREADY_EXISTS: '当前位置已经存在同名文件夹。', FOLDER_NOT_FOUND: '找不到所选资源库文件夹。', INVALID_IMPORT_SOURCE: '无法读取所选导入内容。', INVALID_IMPORT_DECISION: '导入冲突处理选项无效。', IMPORT_NOT_FOUND: '待处理的导入已失效，请重新选择文件。', IMPORT_APPLY_FAILED: '无法安全完成导入。', LIBRARY_ALREADY_EXISTS: '该位置已经存在同名文件或文件夹。', LIBRARY_NOT_FOUND: '找不到所选资源库。', NOT_A_LIBRARY: '所选文件夹不是有效的 Serpent 资源库。', LIBRARY_CORRUPT: '资源库数据库或迁移记录已损坏。', LIBRARY_VERSION_TOO_NEW: '该资源库由更新版本的 Serpent 创建。', LIBRARY_NOT_WRITABLE: 'Serpent 无法写入所选位置。', LIBRARY_CLEANUP_FAILED: '创建失败，且临时文件无法自动清理。', LIBRARY_NOT_OPEN: '该资源库当前没有打开。', ASSET_NOT_FOUND: '找不到所选资产。', VERSION_CONFLICT: '元数据已被其他操作修改。请刷新后重新编辑。',
 };
 const PUBLIC_ERROR_REASONS_ZH: Record<PublicErrorReason, string> = {
   PERMISSION_DENIED: '当前用户没有读取源文件或写入目标位置的权限。',
