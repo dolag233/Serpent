@@ -180,4 +180,11 @@ export interface SerpentLibraryApi {
     | { assetId: string; generatedFields: { label?: string; description?: string; tags?: string[]; structuredMetadata?: Record<string, unknown> }; modelVersion: string }
     | { assetId: string; reason: string }
   >>;
+  // Thumbnail & Preview
+  requestThumbnail(input: { libraryId: string; assetId: string }): Promise<LibraryApiResult<{ assetId: string; artifactId: string }>>;
+  requestPreview(input: { libraryId: string; assetId: string; mode: 'client' | 'fullscreen' }): Promise<LibraryApiResult<{ assetId: string; url: string }>>;
+  closePreview(input: { libraryId: string; assetId: string }): Promise<LibraryApiResult<void>>;
+  openExternal(input: { libraryId: string; assetId: string }): Promise<LibraryApiResult<void>>;
+  retryArtifact(input: { libraryId: string; assetId: string; kind: 'thumbnail' }): Promise<LibraryApiResult<{ assetId: string; kind: string }>>;
+  onThumbnailEvent(listener: (event: { type: 'asset.thumbnail.ready' | 'asset.thumbnail.failed'; libraryId: string; assetId: string; artifactId?: string; errorCode?: string; reason?: string }) => void): () => void;
 }

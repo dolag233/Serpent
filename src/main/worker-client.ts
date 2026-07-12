@@ -10,9 +10,11 @@ import {
   parseWorkerReadyMessage,
   parseWorkerResponse,
   parseProgressEvent,
+  parseThumbnailEvent,
   type WorkerResult,
   type AssetChangeEvent,
   type ProgressEvent,
+  type ThumbnailEvent,
 } from '../shared/protocol/responses';
 
 interface PendingRequest {
@@ -43,6 +45,7 @@ export class LibraryWorkerClient {
   #shuttingDown = false;
   #assetChangeListeners = new Set<(event: AssetChangeEvent) => void>();
   #progressListeners = new Set<(event: ProgressEvent) => void>();
+  #thumbnailListeners = new Set<(event: ThumbnailEvent) => void>();
 
   constructor(modulePath: string, private readonly logger: AppLogger) {
     this.#modulePath = modulePath;
@@ -137,6 +140,11 @@ export class LibraryWorkerClient {
     return () => this.#progressListeners.delete(listener);
   }
 
+  onThumbnailEvent(listener: (event: ThumbnailEvent) => void): () => void {
+    this.#thumbnailListeners.add(listener);
+    return () => this.#thumbnailListeners.delete(listener);
+  }
+
   async shutdown(): Promise<void> {
     const child = this.#child;
     if (!child) return;
@@ -166,7 +174,15 @@ export class LibraryWorkerClient {
       for (const listener of this.#progressListeners) listener(progress);
       return;
     } catch {
-      // Not a progress event; try asset-change next.
+      // Not a progress event; try thumbnail next.
+    }
+
+    try {
+      const thumbnail = parseThumbnailEvent(message);
+      for (const listener of this.#thumbnailListeners) listener(thumbnail);
+      return;
+    } catch {
+      // Not a thumbnail event; try asset-change next.
     }
 
     try {

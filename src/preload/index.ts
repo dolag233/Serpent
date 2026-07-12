@@ -4,6 +4,7 @@ import type { LibraryApiResult, SerpentLibraryApi } from '../shared/library-api'
 import type { AssetSummary, AssetMetadataResult, CollectionSummary, LinkedFolderSummary, ManagedFolderSummary, SmartCollectionSummary, TagSummary } from '../shared/asset-types';
 import {
   ASSET_CHANGE_CHANNEL,
+  THUMBNAIL_CHANNEL,
   ACTIVE_CONTEXT_CHANNEL,
   LIBRARY_LIFECYCLE_CHANNEL,
   LIBRARY_REQUEST_CHANNEL,
@@ -13,6 +14,7 @@ import type { RendererRequest } from '../shared/protocol/requests';
 import {
   parseRendererResult,
   parseRendererLifecycleEvent,
+  parseThumbnailEvent,
   type RendererLibrarySummary,
   type RendererLifecycleEvent,
   type RendererResult,
@@ -511,6 +513,51 @@ const library: SerpentLibraryApi = Object.freeze({
     if (!result.ok) return failure(result);
     if (result.type === 'asset.analyzed' || result.type === 'asset.analyze-unsupported') return { ok: true, value: result };
     throw new Error('Unexpected analyze response.');
+  },
+
+  async requestThumbnail({ libraryId, assetId }: { libraryId: string; assetId: string }): Promise<LibraryApiResult<{ assetId: string; artifactId: string }>> {
+    const result = await request({ type: 'asset.thumbnail.request', libraryId, assetId });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'asset.thumbnail.generated') throw new Error('Unexpected thumbnail response.');
+    return { ok: true, value: { assetId: result.assetId, artifactId: result.artifactId } };
+  },
+
+  async requestPreview({ libraryId, assetId, mode }: { libraryId: string; assetId: string; mode: 'client' | 'fullscreen' }): Promise<LibraryApiResult<{ assetId: string; url: string }>> {
+    const result = await request({ type: 'asset.preview.request', libraryId, assetId, mode });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'asset.preview.url') throw new Error('Unexpected preview response.');
+    return { ok: true, value: { assetId: result.assetId, url: result.url } };
+  },
+
+  async closePreview({ libraryId, assetId }: { libraryId: string; assetId: string }): Promise<LibraryApiResult<void>> {
+    const result = await request({ type: 'asset.close-preview.request', libraryId, assetId });
+    if (!result.ok) return failure(result);
+    return { ok: true, value: undefined };
+  },
+
+  async openExternal({ libraryId, assetId }: { libraryId: string; assetId: string }): Promise<LibraryApiResult<void>> {
+    const result = await request({ type: 'asset.open-external.request', libraryId, assetId });
+    if (!result.ok) return failure(result);
+    return { ok: true, value: undefined };
+  },
+
+  async retryArtifact({ libraryId, assetId, kind }: { libraryId: string; assetId: string; kind: 'thumbnail' }): Promise<LibraryApiResult<{ assetId: string; kind: string }>> {
+    const result = await request({ type: 'asset.retry-artifact.request', libraryId, assetId, kind });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'asset.retry-artifact.started') throw new Error('Unexpected retry-artifact response.');
+    return { ok: true, value: { assetId: result.assetId, kind: result.kind } };
+  },
+
+  onThumbnailEvent(listener: (event: { type: 'asset.thumbnail.ready' | 'asset.thumbnail.failed'; libraryId: string; assetId: string; artifactId?: string; errorCode?: string; reason?: string }) => void) {
+    const subscription = (_event: Electron.IpcRendererEvent, input: unknown) => {
+      try {
+        listener(parseThumbnailEvent(input));
+      } catch {
+        // Ignore malformed thumbnail events.
+      }
+    };
+    ipcRenderer.on(THUMBNAIL_CHANNEL, subscription);
+    return () => ipcRenderer.removeListener(THUMBNAIL_CHANNEL, subscription);
   },
 });
 

@@ -35,6 +35,11 @@ export const assetSummarySchema = z.strictObject({
   deletedAt: nonBlankString.nullable(),
   trashedFromPath: nonBlankString.nullable(),
   remainingDays: z.number().int().nullable(),
+  thumbnailStatus: z.enum(['ready', 'pending', 'failed']).nullable(),
+  thumbnailArtifactId: nonBlankString.nullable(),
+  mediaType: z.enum(['image', 'video', 'other']),
+  width: z.number().int().positive().nullable(),
+  height: z.number().int().positive().nullable(),
 });
 
 export type AssetSummary = z.infer<typeof assetSummarySchema>;

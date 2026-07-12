@@ -304,6 +304,33 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     libraryId: identifierSchema,
     assetId: identifierSchema,
   }),
+  z.strictObject({
+    type: z.literal('asset.thumbnail.request'),
+    libraryId: identifierSchema,
+    assetId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('asset.preview.request'),
+    libraryId: identifierSchema,
+    assetId: identifierSchema,
+    mode: z.enum(['client', 'fullscreen']),
+  }),
+  z.strictObject({
+    type: z.literal('asset.close-preview.request'),
+    libraryId: identifierSchema,
+    assetId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('asset.open-external.request'),
+    libraryId: identifierSchema,
+    assetId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('asset.retry-artifact.request'),
+    libraryId: identifierSchema,
+    assetId: identifierSchema,
+    kind: z.enum(['thumbnail']),
+  }),
 ]);
 
 export type RendererRequest = z.infer<typeof rendererRequestSchema>;
@@ -613,6 +640,34 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
       structuredMetadata: z.boolean(),
     }),
     language: nonBlankString,
+  }),
+  z.strictObject({
+    type: z.literal('media.generate-thumbnail'),
+    libraryId: identifierSchema,
+    assetId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('media.get-artifact-path'),
+    libraryId: identifierSchema,
+    artifactId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('media.enqueue-thumbnail-jobs'),
+    libraryId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('media.process-thumbnail-queue'),
+    libraryId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('media.get-asset-path'),
+    libraryId: identifierSchema,
+    assetId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('media.get-thumbnail-artifact'),
+    libraryId: identifierSchema,
+    assetId: identifierSchema,
   }),
 ]);
 

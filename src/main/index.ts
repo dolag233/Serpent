@@ -1,10 +1,11 @@
 import path from 'node:path';
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, statSync } from 'node:fs';
 
-import { app, BrowserWindow, dialog, ipcMain, safeStorage, type OpenDialogOptions } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, protocol, safeStorage, shell, type OpenDialogOptions } from 'electron';
 
 import {
   ASSET_CHANGE_CHANNEL,
+  THUMBNAIL_CHANNEL,
   ACTIVE_CONTEXT_CHANNEL,
   LIBRARY_LIFECYCLE_CHANNEL,
   LIBRARY_REQUEST_CHANNEL,
@@ -701,6 +702,20 @@ async function commandFor(request: RendererRequest): Promise<WorkerCommand | und
         language: config.language,
       };
     }
+    case 'asset.thumbnail.request':
+      return { type: 'media.generate-thumbnail', libraryId: request.libraryId, assetId: request.assetId };
+    case 'asset.preview.request':
+      // Handled directly in handleLibraryRequest because it requires constructing
+      // a serpent:// URL after the Worker lookup.
+      return { type: 'media.get-thumbnail-artifact', libraryId: request.libraryId, assetId: request.assetId };
+    case 'asset.close-preview.request':
+      // Preview close is a no-op on the Main side; renderer handles UI state.
+      return undefined;
+    case 'asset.open-external.request':
+      // Handled directly in handleLibraryRequest because it requires shell.openPath.
+      return { type: 'media.get-asset-path', libraryId: request.libraryId, assetId: request.assetId };
+    case 'asset.retry-artifact.request':
+      return { type: 'media.generate-thumbnail', libraryId: request.libraryId, assetId: request.assetId };
     default:
       return assertNever(request);
   }
@@ -758,6 +773,28 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
     if (operation) publishLifecycle({ type: 'library.opening', operation });
 
     const workerResult = await workerClient.request(command);
+
+    // Post-process preview and open-external requests
+    if (workerResult.ok && request.type === 'asset.preview.request' && workerResult.type === 'media.thumbnail-artifact') {
+      const url = `serpent://preview/${request.libraryId}/${workerResult.artifactId}`;
+      return { ok: true, type: 'asset.preview.url', assetId: workerResult.artifactId, url } satisfies RendererResult;
+    }
+    if (workerResult.ok && request.type === 'asset.open-external.request' && workerResult.type === 'media.asset-path') {
+      try {
+        const openError = await shell.openPath(workerResult.absolutePath);
+        if (openError) {
+          return { ok: false, error: createPublicError('INTERNAL_ERROR') } satisfies RendererResult;
+        }
+        return { ok: true, type: 'asset.open-external.requested', assetId: request.assetId } satisfies RendererResult;
+      } catch (error) {
+        logger?.error('main.open-external', error);
+        return { ok: false, error: createPublicError('INTERNAL_ERROR') } satisfies RendererResult;
+      }
+    }
+    if (workerResult.ok && (request.type === 'asset.thumbnail.request' || request.type === 'asset.retry-artifact.request') && workerResult.type === 'media.thumbnail.generated') {
+      return { ok: true, type: 'asset.thumbnail.generated', assetId: workerResult.assetId, artifactId: workerResult.artifactId } satisfies RendererResult;
+    }
+
     const result = toRendererResult(workerResult);
     if (!result.ok) {
       if (operation) {
@@ -801,6 +838,86 @@ async function startApplication(): Promise<void> {
   await workerClient.start();
   workerClient.onAssetsChanged(publishAssetChange);
   workerClient.onProgress(publishProgress);
+
+  // Forward thumbnail events to the renderer
+  workerClient.onThumbnailEvent((event) => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    mainWindow.webContents.send(THUMBNAIL_CHANNEL, event);
+  });
+
+  // Register serpent:// custom protocol for serving thumbnail/preview artifacts.
+  // The renderer uses serpent://preview/<libraryId>/<artifactId> URLs in <img> tags.
+  // Main resolves the artifact path via Worker, reads the file, and returns bytes.
+  protocol.handle('serpent', async (request) => {
+    try {
+      const url = new URL(request.url);
+      if (url.hostname !== 'preview') {
+        return new Response('Invalid serpent:// path', { status: 400 });
+      }
+      const parts = url.pathname.replace(/^\/+/, '').split('/');
+      if (parts.length !== 2) {
+        return new Response('Invalid URL format', { status: 400 });
+      }
+      const libraryId = parts[0]!;
+      const artifactId = parts[1]!;
+      if (!libraryId || !artifactId || libraryId.includes('..') || artifactId.includes('..')) {
+        return new Response('Invalid identifiers', { status: 400 });
+      }
+
+      if (!workerClient) {
+        return new Response('Worker unavailable', { status: 503 });
+      }
+
+      const pathResult = await workerClient.request({
+        type: 'media.get-artifact-path',
+        libraryId,
+        artifactId,
+      });
+
+      if (!pathResult.ok || pathResult.type !== 'media.artifact-path') {
+        return new Response('Artifact not found', { status: 404 });
+      }
+
+      let fileBytes: Buffer;
+      try {
+        fileBytes = readFileSync(pathResult.absolutePath);
+      } catch {
+        return new Response('Artifact file missing', { status: 404 });
+      }
+
+      let fileStat;
+      try {
+        fileStat = statSync(pathResult.absolutePath);
+      } catch {
+        // Stat failure is non-fatal; serve without content-length.
+      }
+
+      const ext = path.extname(pathResult.absolutePath).toLowerCase();
+      const mimeMap: Record<string, string> = {
+        '.webp': 'image/webp',
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.png': 'image/png',
+        '.gif': 'image/gif',
+        '.webm': 'video/webm',
+        '.json': 'application/json',
+      };
+      const mimeType = mimeMap[ext] ?? 'application/octet-stream';
+
+      const headers: Record<string, string> = {
+        'Content-Type': mimeType,
+        'Cache-Control': 'public, max-age=31536000, immutable',
+      };
+      if (fileStat) {
+        headers['Content-Length'] = String(fileStat.size);
+      }
+
+      return new Response(new Uint8Array(fileBytes), { status: 200, headers });
+    } catch (error) {
+      logger?.error('serpent-protocol', error);
+      return new Response('Internal error', { status: 500 });
+    }
+  });
 
   ipcMain.handle(LIBRARY_REQUEST_CHANNEL, (event, input: unknown) => {
     if (!mainWindow || event.sender !== mainWindow.webContents) {

@@ -28,6 +28,41 @@ import path from 'node:path';
 import BetterSqlite3 from 'better-sqlite3';
 
 import type { AssetMetadataResult, AssetSummary, CollectionSummary, LinkedFolderSummary, ManagedFolderSummary, TagSummary } from '../shared/asset-types';
+
+// sharp is an optional N-API dependency (no rebuild needed for Electron).
+// The Worker loads it lazily so it can still start if sharp is missing.
+interface SharpModule {
+  (input: string): SharpInstance;
+}
+interface SharpInstance {
+  metadata(): Promise<{ width?: number; height?: number; format?: string }>;
+  resize(options: {
+    width?: number;
+    height?: number;
+    fit?: 'inside' | 'cover' | 'fill' | 'outside';
+    withoutEnlargement?: boolean;
+  }): SharpInstance;
+  webp(options: { quality?: number }): SharpInstance;
+  toFile(output: string): Promise<unknown>;
+}
+
+let sharpModule: SharpModule | undefined;
+function requireSharp(): SharpModule {
+  if (!sharpModule) {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      sharpModule = require('sharp') as SharpModule;
+    } catch (error) {
+      throw new LibraryServiceError('INTERNAL_ERROR', {
+        reason: 'SHARP_UNAVAILABLE',
+        cause: error,
+      });
+    }
+  }
+  return sharpModule;
+}
+
+const SHARP_VERSION = '0.35.3';
 import type { PublicErrorCode } from '../shared/protocol/errors';
 import { publicReasonFromError, type PublicErrorReason } from '../shared/protocol/errors';
 import type {
@@ -83,7 +118,7 @@ const Database = BetterSqlite3 as DatabaseConstructor;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 
 const REQUIRED_DIRECTORIES = ['Assets'] as const;
-const REGENERABLE_DIRECTORIES = ['previews', 'revisions', 'trash'] as const;
+const REGENERABLE_DIRECTORIES = ['previews', 'revisions', 'trash', 'artifacts'] as const;
 
 const MAX_DOWNLOAD_BYTES = 500 * 1024 * 1024;
 const DOWNLOAD_TIMEOUT_MS = 30_000;
@@ -549,6 +584,61 @@ const AI_CONTENT_SCHEMA_CHECKSUM = createHash('sha256')
   .update(AI_CONTENT_SCHEMA_SQL)
   .digest('hex');
 
+const THUMBNAIL_SCHEMA_SQL = `
+  CREATE TABLE revision_artifacts (
+    artifact_id TEXT PRIMARY KEY,
+    revision_id TEXT NOT NULL REFERENCES revisions(revision_id) ON DELETE CASCADE,
+    kind TEXT NOT NULL CHECK (
+      kind IN ('thumbnail', 'video_poster', 'contact_sheet', 'webm_proxy',
+               'extracted_metadata', 'extracted_palette')
+    ),
+    mime_type TEXT NOT NULL,
+    byte_size INTEGER NOT NULL CHECK (byte_size >= 0),
+    file_path TEXT NOT NULL,
+    width INTEGER,
+    height INTEGER,
+    generator_version TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (
+      status IN ('pending', 'generating', 'ready', 'failed')
+    ),
+    error_code TEXT,
+    generated_at TEXT,
+    invalidated_at TEXT
+  );
+
+  CREATE UNIQUE INDEX revision_artifacts_current
+    ON revision_artifacts(revision_id, kind)
+    WHERE invalidated_at IS NULL;
+
+  CREATE TABLE jobs (
+    job_id TEXT PRIMARY KEY,
+    library_id TEXT NOT NULL,
+    asset_id TEXT REFERENCES assets(asset_id) ON DELETE CASCADE,
+    revision_id TEXT REFERENCES revisions(revision_id) ON DELETE SET NULL,
+    kind TEXT NOT NULL CHECK (
+      kind IN ('generate_thumbnail', 'generate_video_poster',
+               'generate_contact_sheet', 'generate_webm_proxy',
+               'extract_metadata', 'extract_palette')
+    ),
+    status TEXT NOT NULL CHECK (
+      status IN ('queued', 'running', 'paused', 'succeeded', 'failed', 'cancelled')
+    ),
+    priority INTEGER NOT NULL DEFAULT 0,
+    progress REAL DEFAULT 0.0,
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    error_code TEXT,
+    error_detail TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+
+  CREATE INDEX jobs_library_status_priority
+    ON jobs(library_id, status, priority DESC, created_at);
+`;
+const THUMBNAIL_SCHEMA_CHECKSUM = createHash('sha256')
+  .update(THUMBNAIL_SCHEMA_SQL)
+  .digest('hex');
+
 const MIGRATIONS = [
   { version: 1, sql: INITIAL_SCHEMA_SQL, checksum: INITIAL_SCHEMA_CHECKSUM },
   { version: 2, sql: ASSET_SCHEMA_SQL, checksum: ASSET_SCHEMA_CHECKSUM },
@@ -562,6 +652,7 @@ const MIGRATIONS = [
   { version: 6, sql: SEARCH_SCHEMA_SQL, checksum: SEARCH_SCHEMA_CHECKSUM },
   { version: 7, sql: TRASH_SCHEMA_SQL, checksum: TRASH_SCHEMA_CHECKSUM },
   { version: 8, sql: AI_CONTENT_SCHEMA_SQL, checksum: AI_CONTENT_SCHEMA_CHECKSUM },
+  { version: 9, sql: THUMBNAIL_SCHEMA_SQL, checksum: THUMBNAIL_SCHEMA_CHECKSUM },
 ] as const;
 const SUPPORTED_SCHEMA_VERSION = MIGRATIONS.at(-1)!.version;
 
@@ -2077,15 +2168,26 @@ export class LibraryService {
         `SELECT a.asset_id, a.managed_folder_id, a.relative_file_path,
                 a.current_revision_id, a.availability, r.byte_size, r.modified_at,
                 m.label, COALESCE(m.rating, 0) AS rating, COALESCE(m.favorite, 0) AS favorite,
-                a.deleted_at, a.trashed_from_relative_path
+                a.deleted_at, a.trashed_from_relative_path,
+                ra.status AS thumbnail_status,
+                ra.artifact_id AS thumbnail_artifact_id,
+                ra.width AS artifact_width, ra.height AS artifact_height
            FROM assets a
            JOIN revisions r ON r.revision_id = a.current_revision_id
            LEFT JOIN asset_metadata m ON m.asset_id = a.asset_id
+           LEFT JOIN revision_artifacts ra
+             ON ra.revision_id = a.current_revision_id
+            AND ra.kind = 'thumbnail'
+            AND ra.invalidated_at IS NULL
           ORDER BY a.relative_file_path`,
       )
       .all() as Array<AssetSummaryRow & {
         deleted_at: string | null;
         trashed_from_relative_path: string | null;
+        thumbnail_status: 'ready' | 'pending' | 'generating' | 'failed' | null;
+        thumbnail_artifact_id: string | null;
+        artifact_width: number | null;
+        artifact_height: number | null;
       }>;
 
     return rows
@@ -2097,7 +2199,17 @@ export class LibraryService {
           row.managed_folder_id === folder.folder_id
         );
       })
-      .map((row) => this.assetSummaryFromRow(row));
+      .map((row) => this.assetSummaryFromRow({
+        ...row,
+        thumbnail_status: row.thumbnail_status === 'ready' ? 'ready'
+          : row.thumbnail_status === 'failed' ? 'failed'
+          : row.thumbnail_status === 'pending' || row.thumbnail_status === 'generating' ? 'pending'
+          : null,
+        thumbnail_artifact_id: row.thumbnail_status === 'ready' ? row.thumbnail_artifact_id : null,
+        media_type: LibraryService.detectMediaType(row.relative_file_path) === 'image' ? 'image'
+          : LibraryService.detectMediaType(row.relative_file_path) === 'video' ? 'video'
+          : 'other',
+      }));
   }
 
   importFolderAsLinked(input: {
@@ -3376,6 +3488,385 @@ export class LibraryService {
     }));
   }
 
+  // ── Thumbnails & Artifacts ─────────────────────────────────────────
+
+  /**
+   * Resolve the absolute filesystem path for an asset (no MIME lookup).
+   */
+  resolveAssetPath(libraryId: string, assetId: string): string {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    const asset = openLibrary.connection
+      .prepare(
+        `SELECT a.asset_id, a.location_kind, a.linked_folder_id, a.managed_folder_id,
+                a.relative_file_path
+           FROM assets a WHERE a.asset_id = ?`,
+      )
+      .get(assetId) as {
+        asset_id: string;
+        location_kind: 'managed' | 'linked';
+        linked_folder_id: string | null;
+        managed_folder_id: string | null;
+        relative_file_path: string;
+      } | undefined;
+    if (!asset) throw new LibraryServiceError('ASSET_NOT_FOUND');
+    if (asset.location_kind === 'managed') {
+      return this.folderPath(openLibrary, asset.relative_file_path);
+    }
+    return this.linkedAssetPath(openLibrary, asset.linked_folder_id, asset.relative_file_path);
+  }
+
+  /**
+   * Return the .serpent/artifacts directory for an open library.
+   */
+  private artifactsDir(openLibrary: OpenLibrary): string {
+    return path.join(openLibrary.summary.libraryPath, '.serpent', 'artifacts');
+  }
+
+  /**
+   * Detect media type from a file extension.
+   * Returns 'image' for PNG/JPEG/GIF/TIFF/WebP/BMP, 'video' for MP4/MOV/AVI/WMV/WebM,
+   * and 'other' for everything else (including EXR/TGA which would need OIIO).
+   */
+  static detectMediaType(filenameOrMime: string): 'image' | 'video' | 'other' {
+    const lower = filenameOrMime.toLowerCase();
+    if (lower.endsWith('.png') || lower.endsWith('.jpg') || lower.endsWith('.jpeg') ||
+        lower.endsWith('.gif') || lower.endsWith('.tiff') || lower.endsWith('.tif') ||
+        lower.endsWith('.webp') || lower.endsWith('.bmp')) {
+      return 'image';
+    }
+    if (lower.endsWith('.mp4') || lower.endsWith('.webm') ||
+        lower.endsWith('.mov') || lower.endsWith('.avi') || lower.endsWith('.wmv')) {
+      return 'video';
+    }
+    return 'other';
+  }
+
+  /** Generate a WebP thumbnail for an image asset using sharp. */
+  async generateThumbnail(input: {
+    libraryId: string;
+    assetId: string;
+  }): Promise<{ artifactId: string }> {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    const assetPath = this.resolveAssetPath(input.libraryId, input.assetId);
+
+    // Detect media type
+    const mediaType = LibraryService.detectMediaType(assetPath);
+    if (mediaType === 'video') {
+      throw new LibraryServiceError('INVALID_IMPORT_DECISION', {
+        reason: 'FFMPEG_REQUIRED',
+      });
+    }
+    if (mediaType === 'other') {
+      const ext = path.extname(assetPath).toLowerCase();
+      if (ext === '.exr' || ext === '.tga') {
+        throw new LibraryServiceError('INVALID_IMPORT_DECISION', {
+          reason: 'OIIO_REQUIRED',
+        });
+      }
+      throw new LibraryServiceError('INVALID_IMPORT_DECISION', {
+        reason: 'UNSUPPORTED_FORMAT',
+      });
+    }
+
+    // Get the current revision for this asset
+    const assetRow = openLibrary.connection
+      .prepare('SELECT current_revision_id FROM assets WHERE asset_id = ?')
+      .get(input.assetId) as { current_revision_id: string | null } | undefined;
+    if (!assetRow?.current_revision_id) throw new LibraryServiceError('ASSET_NOT_FOUND');
+    const revisionId = assetRow.current_revision_id;
+
+    const artifactId = randomUUID();
+    const artifactsDir = this.artifactsDir(openLibrary);
+    mkdirSync(artifactsDir, { recursive: true });
+    const artifactRelPath = `${artifactId}.webp`;
+    const artifactAbsPath = path.join(artifactsDir, artifactRelPath);
+
+    const s = requireSharp();
+    try {
+      const pipeline = s(assetPath);
+      const metadata = await pipeline.metadata();
+      const inputWidth = metadata.width ?? 0;
+      const inputHeight = metadata.height ?? 0;
+
+      await pipeline
+        .resize({
+          width: 512,
+          height: 512,
+          fit: 'inside',
+          withoutEnlargement: true,
+        })
+        .webp({ quality: 80 })
+        .toFile(artifactAbsPath);
+
+      const outputStat = statSync(artifactAbsPath);
+      let outputWidth = inputWidth;
+      let outputHeight = inputHeight;
+      if (inputWidth > 512 || inputHeight > 512) {
+        const ratio = Math.min(512 / inputWidth, 512 / inputHeight);
+        outputWidth = Math.round(inputWidth * ratio);
+        outputHeight = Math.round(inputHeight * ratio);
+      }
+
+      openLibrary.connection
+        .prepare(
+          `INSERT INTO revision_artifacts
+             (artifact_id, revision_id, kind, mime_type, byte_size, file_path,
+              width, height, generator_version, status, generated_at)
+           VALUES (?, ?, 'thumbnail', 'image/webp', ?, ?, ?, ?, ?, 'ready', ?)`,
+        )
+        .run(
+          artifactId,
+          revisionId,
+          outputStat.size,
+          artifactRelPath,
+          outputWidth || null,
+          outputHeight || null,
+          `sharp@${SHARP_VERSION}`,
+          new Date().toISOString(),
+        );
+
+      // Emit thumbnail-ready notification
+      this.options.onAssetsChanged?.({
+        type: 'asset.changed',
+        libraryId: input.libraryId,
+        changedCount: 1,
+        missingCount: 0,
+      });
+
+      return { artifactId };
+    } catch (error) {
+      // Write failed status
+      openLibrary.connection
+        .prepare(
+          `INSERT INTO revision_artifacts
+             (artifact_id, revision_id, kind, mime_type, byte_size, file_path,
+              generator_version, status, error_code, generated_at)
+           VALUES (?, ?, 'thumbnail', 'image/webp', 0, ?, ?, 'failed', ?, ?)`,
+        )
+        .run(
+          artifactId,
+          revisionId,
+          artifactRelPath,
+          `sharp@${SHARP_VERSION}`,
+          typeof error === 'object' && error !== null && 'code' in error
+            ? String(error.code)
+            : 'THUMBNAIL_GENERATION_FAILED',
+          new Date().toISOString(),
+        );
+
+      throw serviceError(error, 'LIBRARY_NOT_WRITABLE');
+    }
+  }
+
+  /** Return the current (invalidated_at IS NULL) thumbnail artifact for an asset's current revision. */
+  getThumbnailArtifact(
+    libraryId: string,
+    assetId: string,
+  ): {
+    artifactId: string;
+    filePath: string;
+    width: number | null;
+    height: number | null;
+  } | null {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    const assetRow = openLibrary.connection
+      .prepare('SELECT current_revision_id FROM assets WHERE asset_id = ?')
+      .get(assetId) as { current_revision_id: string | null } | undefined;
+    if (!assetRow?.current_revision_id) return null;
+
+    const row = openLibrary.connection
+      .prepare(
+        `SELECT artifact_id, file_path, width, height
+           FROM revision_artifacts
+          WHERE revision_id = ?
+            AND kind = 'thumbnail'
+            AND status = 'ready'
+            AND invalidated_at IS NULL
+          LIMIT 1`,
+      )
+      .get(assetRow.current_revision_id) as {
+        artifact_id: string;
+        file_path: string;
+        width: number | null;
+        height: number | null;
+      } | undefined;
+
+    return row
+      ? {
+          artifactId: row.artifact_id,
+          filePath: row.file_path,
+          width: row.width,
+          height: row.height,
+        }
+      : null;
+  }
+
+  /** Get the absolute filesystem path for an artifact. */
+  getArtifactAbsolutePath(libraryId: string, artifactId: string): string {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    const row = openLibrary.connection
+      .prepare(
+        `SELECT artifact_id, file_path
+           FROM revision_artifacts
+          WHERE artifact_id = ?`,
+      )
+      .get(artifactId) as { artifact_id: string; file_path: string } | undefined;
+    if (!row) throw new LibraryServiceError('ASSET_NOT_FOUND');
+
+    const artifactsDir = this.artifactsDir(openLibrary);
+    const targetPath = path.resolve(artifactsDir, ...row.file_path.split('/'));
+    const relation = path.relative(artifactsDir, targetPath);
+    if (
+      relation === '' ||
+      relation.startsWith(`..${path.sep}`) ||
+      path.isAbsolute(relation)
+    ) {
+      throw new LibraryServiceError('INVALID_LIBRARY_PATH');
+    }
+    return targetPath;
+  }
+
+  /** Enqueue thumbnail jobs for all assets whose current revision lacks a ready thumbnail. */
+  enqueueThumbnailJobs(libraryId: string): number {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    const rows = openLibrary.connection
+      .prepare(
+        `SELECT a.asset_id, a.current_revision_id
+           FROM assets a
+          WHERE a.deleted_at IS NULL
+            AND a.current_revision_id IS NOT NULL
+            AND a.availability = 'available'
+            AND NOT EXISTS (
+              SELECT 1 FROM revision_artifacts ra
+              WHERE ra.revision_id = a.current_revision_id
+                AND ra.kind = 'thumbnail'
+                AND ra.status = 'ready'
+                AND ra.invalidated_at IS NULL
+            )
+            AND NOT EXISTS (
+              SELECT 1 FROM jobs j
+              WHERE j.asset_id = a.asset_id
+                AND j.kind = 'generate_thumbnail'
+                AND j.status IN ('queued', 'running')
+            )
+          ORDER BY a.relative_file_path`,
+      )
+      .all() as Array<{ asset_id: string; current_revision_id: string }>;
+
+    const now = new Date().toISOString();
+    let enqueued = 0;
+    const insert = openLibrary.connection.prepare(
+      `INSERT OR IGNORE INTO jobs
+         (job_id, library_id, asset_id, revision_id, kind, status, priority, progress,
+          attempt_count, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'generate_thumbnail', 'queued', 0, 0.0, 0, ?, ?)`,
+    );
+
+    for (const row of rows) {
+      insert.run(
+        randomUUID(), libraryId, row.asset_id, row.current_revision_id, now, now,
+      );
+      enqueued += 1;
+    }
+
+    return enqueued;
+  }
+
+  /**
+   * Process queued thumbnail jobs one at a time. Returns the number of jobs
+   * processed (success + failure). Pause/resume/cancel/retry are deferred to
+   * a future slice; currently this is a simple drain.
+   */
+  async processThumbnailQueue(libraryId: string): Promise<number> {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    const queued = openLibrary.connection
+      .prepare(
+        `SELECT job_id, asset_id, revision_id, attempt_count
+           FROM jobs
+          WHERE library_id = ?
+            AND kind = 'generate_thumbnail'
+            AND status = 'queued'
+          ORDER BY priority DESC, created_at
+          LIMIT 20`,
+      )
+      .all(libraryId) as Array<{
+        job_id: string;
+        asset_id: string;
+        revision_id: string;
+        attempt_count: number;
+      }>;
+
+    let processed = 0;
+    for (const job of queued) {
+      const now = new Date().toISOString();
+      openLibrary.connection
+        .prepare(
+          "UPDATE jobs SET status = 'running', attempt_count = ?, updated_at = ? WHERE job_id = ?",
+        )
+        .run(job.attempt_count + 1, now, job.job_id);
+
+      try {
+        await this.generateThumbnail({ libraryId, assetId: job.asset_id });
+        openLibrary.connection
+          .prepare("UPDATE jobs SET status = 'succeeded', progress = 1.0, updated_at = ? WHERE job_id = ?")
+          .run(new Date().toISOString(), job.job_id);
+      } catch (error) {
+        openLibrary.connection
+          .prepare(
+            `UPDATE jobs
+                SET status = 'failed', error_code = ?, error_detail = ?, updated_at = ?
+              WHERE job_id = ?`,
+          )
+          .run(
+            'THUMBNAIL_GENERATION_FAILED',
+            error instanceof Error ? error.message.slice(0, 500) : String(error).slice(0, 500),
+            new Date().toISOString(),
+            job.job_id,
+          );
+        this.diagnose('thumbnail-queue', error, { libraryId, assetId: job.asset_id });
+      }
+      processed += 1;
+    }
+
+    return processed;
+  }
+
+  /** Return the thumbnail status for a list of assets (used to extend AssetSummary). */
+  private thumbnailStatusMap(
+    libraryId: string,
+    assetIds: string[],
+  ): Map<string, 'ready' | 'pending' | 'failed' | null> {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    if (assetIds.length === 0) return new Map();
+
+    const placeholders = assetIds.map(() => '?').join(',');
+    const rows = openLibrary.connection
+      .prepare(
+        `SELECT a.asset_id,
+                (SELECT ra.status FROM revision_artifacts ra
+                  WHERE ra.revision_id = a.current_revision_id
+                    AND ra.kind = 'thumbnail'
+                    AND ra.invalidated_at IS NULL
+                  LIMIT 1) AS thumbnail_status
+           FROM assets a
+          WHERE a.asset_id IN (${placeholders})`,
+      )
+      .all(...assetIds) as Array<{
+        asset_id: string;
+        thumbnail_status: 'ready' | 'pending' | 'generating' | 'failed' | null;
+      }>;
+
+    const map = new Map<string, 'ready' | 'pending' | 'failed' | null>();
+    for (const row of rows) {
+      if (row.thumbnail_status === 'ready') map.set(row.asset_id, 'ready');
+      else if (row.thumbnail_status === 'failed') map.set(row.asset_id, 'failed');
+      else if (row.thumbnail_status === 'generating' || row.thumbnail_status === 'pending') {
+        map.set(row.asset_id, 'pending');
+      } else map.set(row.asset_id, null);
+    }
+    return map;
+  }
+
   // ── Search ──────────────────────────────────────────────────────────
 
   private buildFilterWhere(
@@ -3893,6 +4384,11 @@ export class LibraryService {
       favorite: number;
       deleted_at?: string | null;
       trashed_from_relative_path?: string | null;
+      thumbnail_status?: 'ready' | 'pending' | 'failed' | null;
+      thumbnail_artifact_id?: string | null;
+      media_type?: 'image' | 'video' | 'other' | null;
+      artifact_width?: number | null;
+      artifact_height?: number | null;
     },
   ): AssetSummary {
     let remainingDays: number | null = null;
@@ -3916,6 +4412,11 @@ export class LibraryService {
       deletedAt: row.deleted_at ?? null,
       trashedFromPath: row.trashed_from_relative_path ?? null,
       remainingDays,
+      thumbnailStatus: row.thumbnail_status ?? null,
+      thumbnailArtifactId: row.thumbnail_artifact_id ?? null,
+      mediaType: row.media_type ?? 'other',
+      width: row.artifact_width ?? null,
+      height: row.artifact_height ?? null,
     };
   }
 
@@ -5596,6 +6097,24 @@ export class LibraryService {
                 WHERE asset_id = ?`,
             )
             .run(revisionId, now, asset.asset_id);
+          // Invalidate old revision artifacts
+          openLibrary.connection
+            .prepare(
+              `UPDATE revision_artifacts
+                  SET invalidated_at = ?
+                WHERE revision_id = ?
+                  AND invalidated_at IS NULL`,
+            )
+            .run(now, asset.current_revision_id);
+          // Enqueue a new thumbnail job
+          openLibrary.connection
+            .prepare(
+              `INSERT OR IGNORE INTO jobs
+                 (job_id, library_id, asset_id, revision_id, kind, status, priority,
+                  progress, attempt_count, created_at, updated_at)
+               VALUES (?, ?, ?, ?, 'generate_thumbnail', 'queued', 0, 0.0, 0, ?, ?)`,
+            )
+            .run(randomUUID(), libraryId, asset.asset_id, revisionId, now, now);
           changedCount += 1;
           this.syncAssetSearchContent(openLibrary.connection, asset.asset_id);
         } else if (asset.availability === 'missing') {

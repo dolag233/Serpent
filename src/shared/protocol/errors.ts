@@ -37,6 +37,10 @@ export const publicErrorReasonSchema = z.enum([
   'UNSUPPORTED_FILE_ENTRY',
   'NAME_NOT_SUPPORTED',
   'IO_ERROR',
+  'SHARP_UNAVAILABLE',
+  'FFMPEG_REQUIRED',
+  'OIIO_REQUIRED',
+  'UNSUPPORTED_FORMAT',
 ]);
 
 export type PublicErrorReason = z.infer<typeof publicErrorReasonSchema>;

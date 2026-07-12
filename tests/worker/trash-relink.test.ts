@@ -68,17 +68,17 @@ afterEach(() => {
   }
 });
 
-describe('schema v7->v8 migration', () => {
-  it('creates a new library at schema v8', () => {
+describe('schema v8->v9 migration', () => {
+  it('creates a new library at schema v9', () => {
     const root = temporaryRoot();
     const service = new LibraryService();
     const created = service.createLibrary({
-      displayName: 'V8 Test',
+      displayName: 'V9 Test',
       selectedParentPath: root,
     });
 
     const database = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
-    expect(database.pragma('user_version')).toEqual([{ user_version: 8 }]);
+    expect(database.pragma('user_version')).toEqual([{ user_version: 9 }]);
 
     const columns = database.prepare("PRAGMA table_info('assets')").all() as Array<{
       cid: number; name: string; type: string;
@@ -105,11 +105,11 @@ describe('schema v7->v8 migration', () => {
     service.closeAll();
   });
 
-  it('migrates a v7 library to v8 when opening', () => {
+  it('migrates a v8 library to v9 when opening', () => {
     const root = temporaryRoot();
     const service = new LibraryService();
     const created = service.createLibrary({
-      displayName: 'V7 to V8',
+      displayName: 'V8 to V9',
       selectedParentPath: root,
     });
 
@@ -119,37 +119,37 @@ describe('schema v7->v8 migration', () => {
     service.closeAll();
 
     const db = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
-    // Downgrade from v8 to v7 by removing v8 migration metadata + ai_content objects.
+    // Downgrade from v9 to v8 by removing v9 migration metadata + objects.
     db.exec(`
-      DROP TABLE IF EXISTS ai_content;
-      DROP INDEX IF EXISTS ai_content_asset_field;
-      DELETE FROM schema_migrations WHERE version = 8;
-      PRAGMA user_version = 7;
+      DROP TABLE IF EXISTS revision_artifacts;
+      DROP TABLE IF EXISTS jobs;
+      DELETE FROM schema_migrations WHERE version = 9;
+      PRAGMA user_version = 8;
     `);
     db.close();
 
     service.openLibrary(created.libraryPath);
 
     const db2 = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
-    expect(db2.pragma('user_version')).toEqual([{ user_version: 8 }]);
+    expect(db2.pragma('user_version')).toEqual([{ user_version: 9 }]);
     const migrationRows = db2.prepare('SELECT version FROM schema_migrations ORDER BY version').all() as Array<{ version: number }>;
-    expect(migrationRows.map((r) => r.version)).toContain(8);
+    expect(migrationRows.map((r) => r.version)).toContain(9);
     db2.close();
     service.closeAll();
   });
 
-  it('is idempotent when reopening a v8 database', () => {
+  it('is idempotent when reopening a v9 database', () => {
     const root = temporaryRoot();
     const service = new LibraryService();
-    const created = service.createLibrary({ displayName: 'Idemp V8', selectedParentPath: root });
+    const created = service.createLibrary({ displayName: 'Idemp V9', selectedParentPath: root });
     service.closeAll();
     service.openLibrary(created.libraryPath);
     const db = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
-    expect(db.pragma('user_version')).toEqual([{ user_version: 8 }]);
+    expect(db.pragma('user_version')).toEqual([{ user_version: 9 }]);
     service.closeAll();
     service.openLibrary(created.libraryPath);
     const migrationCount = db.prepare(
-      'SELECT COUNT(*) AS count FROM schema_migrations WHERE version = 8',
+      'SELECT COUNT(*) AS count FROM schema_migrations WHERE version = 9',
     ).all() as Array<{ count: number }>;
     expect(migrationCount[0]!.count).toBe(1);
     db.close();
@@ -157,8 +157,8 @@ describe('schema v7->v8 migration', () => {
   });
 });
 
-describe('downgrade helpers still work with v8', () => {
-  it('downgrade to v1 then re-migrate through v8', () => {
+describe('downgrade helpers still work with v9', () => {
+  it('downgrade to v1 then re-migrate through v9', () => {
     const root = temporaryRoot();
     const service = new LibraryService();
     const created = service.createLibrary({ displayName: 'Downgrade', selectedParentPath: root });
@@ -182,6 +182,8 @@ describe('downgrade helpers still work with v8', () => {
       DROP TABLE IF EXISTS ai_asset_tags;
       DROP TABLE IF EXISTS ai_content;
       DROP INDEX IF EXISTS ai_content_asset_field;
+      DROP TABLE IF EXISTS revision_artifacts;
+      DROP TABLE IF EXISTS jobs;
       DROP TABLE IF EXISTS asset_metadata;
       DROP TABLE IF EXISTS tags;
       DROP TABLE file_operations;
@@ -196,7 +198,7 @@ describe('downgrade helpers still work with v8', () => {
 
     service.openLibrary(created.libraryPath);
     const db = new TestDatabase(dbPath);
-    expect(db.pragma('user_version')).toEqual([{ user_version: 8 }]);
+    expect(db.pragma('user_version')).toEqual([{ user_version: 9 }]);
     db.close();
     service.closeAll();
   });

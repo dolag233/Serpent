@@ -445,6 +445,56 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
         modelVersion: analysisResult.modelVersion,
       };
     }
+    case 'media.generate-thumbnail': {
+      const { artifactId } = await libraryService.generateThumbnail(request.command);
+      // Publish the thumbnail-ready event to the renderer
+      if (parentPort) {
+        parentPort.postMessage({
+          type: 'asset.thumbnail.ready',
+          libraryId: request.command.libraryId,
+          assetId: request.command.assetId,
+          artifactId,
+        });
+      }
+      return { ok: true, type: 'media.thumbnail.generated', assetId: request.command.assetId, artifactId };
+    }
+    case 'media.get-artifact-path': {
+      const absolutePath = libraryService.getArtifactAbsolutePath(
+        request.command.libraryId,
+        request.command.artifactId,
+      );
+      return { ok: true, type: 'media.artifact-path', artifactId: request.command.artifactId, absolutePath };
+    }
+    case 'media.get-thumbnail-artifact': {
+      const info = libraryService.getThumbnailArtifact(
+        request.command.libraryId,
+        request.command.assetId,
+      );
+      if (!info) throw new LibraryServiceError('ASSET_NOT_FOUND');
+      return {
+        ok: true,
+        type: 'media.thumbnail-artifact',
+        artifactId: info.artifactId,
+        filePath: info.filePath,
+        width: info.width,
+        height: info.height,
+      };
+    }
+    case 'media.get-asset-path': {
+      const absolutePath = libraryService.resolveAssetPath(
+        request.command.libraryId,
+        request.command.assetId,
+      );
+      return { ok: true, type: 'media.asset-path', assetId: request.command.assetId, absolutePath };
+    }
+    case 'media.enqueue-thumbnail-jobs': {
+      const enqueued = libraryService.enqueueThumbnailJobs(request.command.libraryId);
+      return { ok: true, type: 'media.jobs.enqueued', libraryId: request.command.libraryId, enqueued };
+    }
+    case 'media.process-thumbnail-queue': {
+      const processed = await libraryService.processThumbnailQueue(request.command.libraryId);
+      return { ok: true, type: 'media.jobs.processed', libraryId: request.command.libraryId, processed };
+    }
     default:
       return assertNever(request.command);
   }

@@ -135,6 +135,28 @@ export function parseAssetChangeEvent(input: unknown): AssetChangeEvent {
   return assetChangeEventSchema.parse(input);
 }
 
+export const thumbnailEventSchema = z.discriminatedUnion('type', [
+  z.strictObject({
+    type: z.literal('asset.thumbnail.ready'),
+    libraryId: nonBlankString,
+    assetId: nonBlankString,
+    artifactId: nonBlankString,
+  }),
+  z.strictObject({
+    type: z.literal('asset.thumbnail.failed'),
+    libraryId: nonBlankString,
+    assetId: nonBlankString,
+    errorCode: nonBlankString,
+    reason: nonBlankString,
+  }),
+]);
+
+export type ThumbnailEvent = z.infer<typeof thumbnailEventSchema>;
+
+export function parseThumbnailEvent(input: unknown): ThumbnailEvent {
+  return thumbnailEventSchema.parse(input);
+}
+
 const assetOperationSuccessSchemas = [
   z.strictObject({
     ok: z.literal(true),
@@ -402,6 +424,29 @@ const assetOperationSuccessSchemas = [
     assetId: nonBlankString,
     reason: nonBlankString,
   }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('asset.thumbnail.generated'),
+    assetId: nonBlankString,
+    artifactId: nonBlankString,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('asset.preview.url'),
+    assetId: nonBlankString,
+    url: nonBlankString,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('asset.open-external.requested'),
+    assetId: nonBlankString,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('asset.retry-artifact.started'),
+    assetId: nonBlankString,
+    kind: nonBlankString,
+  }),
 ] as const;
 
 const workerSuccessResultSchema = z.discriminatedUnion('type', [
@@ -446,6 +491,44 @@ const workerSuccessResultSchema = z.discriminatedUnion('type', [
     importId: nonBlankString,
     libraryId: nonBlankString,
     displayName: nonBlankString,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('media.thumbnail.generated'),
+    assetId: nonBlankString,
+    artifactId: nonBlankString,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('media.artifact-path'),
+    artifactId: nonBlankString,
+    absolutePath: nonBlankString,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('media.thumbnail-artifact'),
+    artifactId: nonBlankString,
+    filePath: nonBlankString,
+    width: z.number().int().positive().nullable(),
+    height: z.number().int().positive().nullable(),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('media.asset-path'),
+    assetId: nonBlankString,
+    absolutePath: nonBlankString,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('media.jobs.enqueued'),
+    libraryId: nonBlankString,
+    enqueued: z.number().int().nonnegative(),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('media.jobs.processed'),
+    libraryId: nonBlankString,
+    processed: z.number().int().nonnegative(),
   }),
   ...assetOperationSuccessSchemas,
 ]);

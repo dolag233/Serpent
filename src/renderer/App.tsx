@@ -122,6 +122,10 @@ export function App() {
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
   const [includeLinkedContent, setIncludeLinkedContent] = useState(false);
 
+  // Thumbnail / Preview state
+  const [previewAsset, setPreviewAsset] = useState<AssetSummary | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; assetId: string; displayName: string } | null>(null);
+
   const selectedFolderId = assetScope === 'all' || assetScope === 'root' ? undefined : assetScope;
   const selectedFolder = folders.find((folder) => folder.folderId === selectedFolderId);
   const selectedAsset = showTrash
@@ -508,6 +512,18 @@ export function App() {
       setNotice('元数据已保存。');
     } catch (caught) {
       setError(toMessage(caught, '保存元数据失败。'));
+    }
+  }
+
+  async function handleOpenExternal(assetId: string) {
+    if (!api || !library) return;
+    try {
+      const result = await api.openExternal({ libraryId: library.libraryId, assetId });
+      if (!result.ok) {
+        setError(toMessage(result.error, '无法打开外部应用。'));
+      }
+    } catch (caught) {
+      setError(toMessage(caught, '打开外部应用失败。'));
     }
   }
 
@@ -1203,7 +1219,7 @@ export function App() {
           导入资源库：{importProgress.phase === 'validate' ? '验证中…' : importProgress.phase === 'copy' ? '复制中…' : '打开中…'}
         </div>
       )}
-      {library ? visibleAssets.length ? <div className="asset-grid">{visibleAssets.map((asset) => <button className={`asset-card${selectedAssetId === asset.assetId ? ' is-selected' : ''}${asset.availability === 'missing' ? ' is-missing' : ''}${asset.deletedAt ? ' is-trashed' : ''}`} key={asset.assetId} onClick={() => setSelectedAssetId(asset.assetId)} type="button"><div className="asset-preview"><span className="asset-extension">{extension(asset.displayName)}</span>{asset.availability === 'missing' && <span className="missing-banner"><Icon name="warning" size={12} />文件丢失</span>}{asset.deletedAt && <span className="missing-banner" style={{ background: 'var(--raised-2)', color: 'var(--secondary)', bottom: 6, right: 6 }}><Icon name="trash" size={12} />回收站{asset.remainingDays !== null && ` · ${asset.remainingDays}天`}</span>}<Icon name="file" size={28} /></div><div className="asset-caption"><strong title={asset.displayName}>{asset.displayName}</strong>{asset.deletedAt && asset.trashedFromPath ? <span style={{ color: 'var(--tertiary)', fontSize: 8, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={asset.trashedFromPath}>{asset.trashedFromPath}</span> : <span>{formatBytes(asset.byteSize)} · {formatDate(asset.modifiedAt)}</span>}</div></button>)}</div> : <div className="empty-library"><div className="empty-orbit"><Icon name="upload" size={24} /></div><span className="eyebrow">MANAGED ASSETS</span><h1>{selectedFolder ? '这个文件夹还是空的' : '把第一批素材放进来'}</h1><p>文件将复制到清晰可读的 Assets 目录，同时建立稳定的资产身份。</p><div className="empty-actions"><button className="primary-button" onClick={() => void importAssets('files')} type="button">导入文件</button><button className="secondary-button" onClick={() => void importAssets('folder')} type="button">导入文件夹</button></div></div> : <div className="empty-state"><div className="empty-index">01</div><div className="empty-copy"><span className="eyebrow">LOCAL ASSET WORKSPACE</span><h1>从一个本地资源库开始</h1><p>文件、目录与元数据都保留在你掌控的位置。</p><div className="empty-actions"><button className="primary-button" onClick={() => { setDialogValue('我的资源库'); setDialog('library'); }} type="button"><Icon name="plus" size={15} />创建资源库</button><button className="secondary-button" onClick={() => void runLibraryOperation('open')} type="button"><Icon name="folder" size={15} />打开资源库</button></div></div></div>}
+      {library ? visibleAssets.length ? <div className="asset-grid">{visibleAssets.map((asset) => <button className={`asset-card${selectedAssetId === asset.assetId ? ' is-selected' : ''}${asset.availability === 'missing' ? ' is-missing' : ''}${asset.deletedAt ? ' is-trashed' : ''}`} key={asset.assetId} onClick={() => setSelectedAssetId(asset.assetId)} onDoubleClick={() => { if (library && asset.thumbnailStatus === 'ready' && asset.thumbnailArtifactId) setPreviewAsset(asset); }} onContextMenu={(e) => { e.preventDefault(); if (library && !asset.deletedAt) setContextMenu({ x: e.clientX, y: e.clientY, assetId: asset.assetId, displayName: asset.displayName }); }} type="button"><div className="asset-preview">{asset.thumbnailStatus === 'ready' && asset.thumbnailArtifactId && library ? <img alt={asset.displayName} className="asset-thumbnail" loading="lazy" src={`serpent://preview/${library.libraryId}/${asset.thumbnailArtifactId}`} /> : <><span className="asset-extension">{extension(asset.displayName)}</span><Icon name="file" size={28} /></>}{asset.availability === 'missing' && <span className="missing-banner"><Icon name="warning" size={12} />文件丢失</span>}{asset.deletedAt && <span className="missing-banner" style={{ background: 'var(--raised-2)', color: 'var(--secondary)', bottom: 6, right: 6 }}><Icon name="trash" size={12} />回收站{asset.remainingDays !== null && ` · ${asset.remainingDays}天`}</span>}</div><div className="asset-caption"><strong title={asset.displayName}>{asset.displayName}</strong>{asset.deletedAt && asset.trashedFromPath ? <span style={{ color: 'var(--tertiary)', fontSize: 8, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={asset.trashedFromPath}>{asset.trashedFromPath}</span> : <span>{formatBytes(asset.byteSize)} · {formatDate(asset.modifiedAt)}</span>}</div></button>)}</div> : <div className="empty-library"><div className="empty-orbit"><Icon name="upload" size={24} /></div><span className="eyebrow">MANAGED ASSETS</span><h1>{selectedFolder ? '这个文件夹还是空的' : '把第一批素材放进来'}</h1><p>文件将复制到清晰可读的 Assets 目录，同时建立稳定的资产身份。</p><div className="empty-actions"><button className="primary-button" onClick={() => void importAssets('files')} type="button">导入文件</button><button className="secondary-button" onClick={() => void importAssets('folder')} type="button">导入文件夹</button></div></div> : <div className="empty-state"><div className="empty-index">01</div><div className="empty-copy"><span className="eyebrow">LOCAL ASSET WORKSPACE</span><h1>从一个本地资源库开始</h1><p>文件、目录与元数据都保留在你掌控的位置。</p><div className="empty-actions"><button className="primary-button" onClick={() => { setDialogValue('我的资源库'); setDialog('library'); }} type="button"><Icon name="plus" size={15} />创建资源库</button><button className="secondary-button" onClick={() => void runLibraryOperation('open')} type="button"><Icon name="folder" size={15} />打开资源库</button></div></div></div>}
       {(error || notice) && <div className={`toast${error ? ' is-error' : ''}`} role={error ? 'alert' : 'status'}><Icon name={error ? 'warning' : 'info'} size={15} /><span>{error ?? notice}</span><button aria-label="关闭提示" onClick={() => { setError(null); setNotice(null); }} type="button"><Icon name="close" size={13} /></button></div>}
     </div></section>
     <aside className="inspector-pane"><div className="pane-header"><span>检查器</span><ToolButton icon="info" label="检查器信息" /></div>{selectedAsset ? <div className="inspector-content">
@@ -1339,6 +1355,10 @@ export function App() {
         <button className="secondary-button" onClick={() => { setAiConfigOpen(false); setAiApiKey(''); }} type="button">取消</button>
         <button className="primary-button" disabled={!aiApiKey.trim() && !aiHasKey} onClick={() => void saveAiConfig()} type="button">保存配置</button>
       </div></div></div>}
+    {/* Preview modal */}
+    {previewAsset && library && <div className="dialog-backdrop" onClick={() => setPreviewAsset(null)} role="presentation"><div aria-label="预览" aria-modal="true" className="preview-modal" onClick={(e) => e.stopPropagation()} role="dialog"><div className="preview-toolbar"><span>{previewAsset.displayName}</span><button aria-label="关闭预览" onClick={() => setPreviewAsset(null)} type="button"><Icon name="close" size={18} /></button></div><div className="preview-content">{previewAsset.thumbnailArtifactId ? <img alt={previewAsset.displayName} src={`serpent://preview/${library.libraryId}/${previewAsset.thumbnailArtifactId}`} style={{ maxWidth: '100%', maxHeight: 'calc(90vh - 60px)', objectFit: 'contain' }} /> : <div style={{ padding: 40, textAlign: 'center', color: 'var(--tertiary)' }}><Icon name="file" size={48} /><p style={{ marginTop: 16 }}>无可用预览</p></div>}</div></div></div>}
+    {/* Context menu */}
+    {contextMenu && <div className="context-menu-backdrop" onClick={() => setContextMenu(null)} onKeyDown={(e) => { if (e.key === 'Escape') setContextMenu(null); }} role="presentation"><div className="context-menu" role="menu" style={{ position: 'fixed', left: contextMenu.x, top: contextMenu.y }}><button onClick={() => { void handleOpenExternal(contextMenu.assetId); setContextMenu(null); }} role="menuitem" type="button"><Icon name="upload" size={14} />使用外部应用打开</button></div></div>}
   </main>;
 }
 
@@ -1370,6 +1390,10 @@ const PUBLIC_ERROR_REASONS_ZH: Record<PublicErrorReason, string> = {
   UNSUPPORTED_FILE_ENTRY: '目录中包含普通文件和文件夹之外的项目。',
   NAME_NOT_SUPPORTED: '当前目标文件系统不接受其中的文件名。',
   IO_ERROR: '操作系统报告了磁盘读写错误。',
+  SHARP_UNAVAILABLE: '图像处理引擎 Sharp 不可用。',
+  FFMPEG_REQUIRED: '视频缩略图需要 FFmpeg（切片 0006 已推迟）。',
+  OIIO_REQUIRED: 'EXR/TGA 解码需要 OpenImageIO（切片 0006 已推迟）。',
+  UNSUPPORTED_FORMAT: '当前切片不支持此文件格式。',
 };
 class LibraryOperationError extends Error {
   readonly code: PublicError['code'];
