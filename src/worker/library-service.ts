@@ -693,6 +693,8 @@ interface AssetSummaryRow {
   byte_size: number;
   current_revision_id: string;
   managed_folder_id: string | null;
+  linked_folder_id: string | null;
+  location_kind: 'managed' | 'linked';
   modified_at: string;
   relative_file_path: string;
   label: string | null;
@@ -2237,10 +2239,24 @@ export class LibraryService {
     recursive: boolean;
   }): AssetSummary[] {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
-    const folder = this.targetFolder(openLibrary, input.folderId);
+    const managedFolder = input.folderId
+      ? openLibrary.connection
+          .prepare(
+            'SELECT folder_id, parent_folder_id, name, relative_path, path_identity FROM managed_folders WHERE folder_id = ?',
+          )
+          .get(input.folderId) as ManagedFolderRow | undefined
+      : undefined;
+    const linkedFolderId = input.folderId && !managedFolder
+      ? (openLibrary.connection
+          .prepare('SELECT folder_id FROM linked_folders WHERE folder_id = ?')
+          .get(input.folderId) as { folder_id: string } | undefined)?.folder_id
+      : undefined;
+    if (input.folderId && !managedFolder && !linkedFolderId) {
+      throw new LibraryServiceError('FOLDER_NOT_FOUND');
+    }
     const rows = openLibrary.connection
       .prepare(
-        `SELECT a.asset_id, a.managed_folder_id, a.relative_file_path,
+        `SELECT a.asset_id, a.managed_folder_id, a.linked_folder_id, a.location_kind, a.relative_file_path,
                 a.current_revision_id, a.availability, r.byte_size, r.modified_at,
                 m.label, COALESCE(m.rating, 0) AS rating, COALESCE(m.favorite, 0) AS favorite,
                 a.deleted_at, a.trashed_from_relative_path,
@@ -2267,12 +2283,19 @@ export class LibraryService {
 
     return rows
       .filter((row) => {
-        if (!folder) return input.recursive || row.managed_folder_id === null;
-        if (!input.recursive) return row.managed_folder_id === folder.folder_id;
-        return (
-          row.relative_file_path.startsWith(`${folder.relative_path}/`) ||
-          row.managed_folder_id === folder.folder_id
-        );
+        if (managedFolder) {
+          if (!input.recursive) return row.managed_folder_id === managedFolder.folder_id;
+          return (
+            row.relative_file_path.startsWith(`${managedFolder.relative_path}/`) ||
+            row.managed_folder_id === managedFolder.folder_id
+          );
+        }
+        if (linkedFolderId) {
+          // Linked-folder scope: all assets in the linked folder (relative
+          // paths already encode subdirectory structure; recursive is implied).
+          return row.linked_folder_id === linkedFolderId;
+        }
+        return input.recursive || row.managed_folder_id === null;
       })
       .map((row) => this.assetSummaryFromRow({
         ...row,
@@ -5256,7 +5279,7 @@ export class LibraryService {
       for (const entry of restoredEntries) {
         const assetRow = openLibrary.connection
           .prepare(
-            `SELECT a.asset_id, a.managed_folder_id, a.relative_file_path,
+            `SELECT a.asset_id, a.managed_folder_id, a.linked_folder_id, a.location_kind, a.relative_file_path,
                     a.current_revision_id, a.availability, r.byte_size, r.modified_at,
                     m.label, COALESCE(m.rating, 0) AS rating, COALESCE(m.favorite, 0) AS favorite,
                     a.deleted_at, a.trashed_from_relative_path
@@ -5399,7 +5422,7 @@ export class LibraryService {
 
     const rows = openLibrary.connection
       .prepare(
-        `SELECT a.asset_id, a.managed_folder_id, a.relative_file_path,
+        `SELECT a.asset_id, a.managed_folder_id, a.linked_folder_id, a.location_kind, a.relative_file_path,
                 a.current_revision_id, a.availability, r.byte_size, r.modified_at,
                 m.label, COALESCE(m.rating, 0) AS rating, COALESCE(m.favorite, 0) AS favorite,
                 a.deleted_at, a.trashed_from_relative_path
@@ -5573,7 +5596,7 @@ export class LibraryService {
     // Fetch the updated asset
     const updated = openLibrary.connection
       .prepare(
-        `SELECT a.asset_id, a.managed_folder_id, a.relative_file_path,
+        `SELECT a.asset_id, a.managed_folder_id, a.linked_folder_id, a.location_kind, a.relative_file_path,
                 a.current_revision_id, a.availability, r.byte_size, r.modified_at,
                 m.label, COALESCE(m.rating, 0) AS rating, COALESCE(m.favorite, 0) AS favorite,
                 a.deleted_at, a.trashed_from_relative_path
@@ -5823,7 +5846,7 @@ export class LibraryService {
       for (const assetId of restoredAssetIds) {
         const updated = openLibrary.connection
           .prepare(
-            `SELECT a.asset_id, a.managed_folder_id, a.relative_file_path,
+            `SELECT a.asset_id, a.managed_folder_id, a.linked_folder_id, a.location_kind, a.relative_file_path,
                     a.current_revision_id, a.availability, r.byte_size, r.modified_at,
                     m.label, COALESCE(m.rating, 0) AS rating, COALESCE(m.favorite, 0) AS favorite,
                     a.deleted_at, a.trashed_from_relative_path

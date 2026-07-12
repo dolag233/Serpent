@@ -52,10 +52,8 @@ test('imports a linked folder, reconciles external changes, and relinks after th
     await window.getByLabel('名称').fill(libraryName);
     await window.getByRole('button', { name: '创建', exact: true }).click();
     await expect(window.getByRole('heading', { name: '把第一批素材放进来' })).toBeVisible();
-    await window.screenshot({ path: testInfo.outputPath('debug-1-after-create.png') });
 
     await window.getByRole('button', { name: '导入链接文件夹' }).click();
-    await window.screenshot({ path: testInfo.outputPath('debug-2-after-import-click.png') });
     await expect(window.getByRole('button', { name: 'source' })).toBeVisible();
 
     await window.getByRole('button', { name: 'source' }).click();
