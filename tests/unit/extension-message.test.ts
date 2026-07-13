@@ -3,12 +3,23 @@ import { describe, expect, it, afterEach } from 'vitest';
 
 import {
   saveIntentSchema,
-  createExtensionServer,
+  createExtensionServer as createAuthenticatedExtensionServer,
   type SaveIntent,
   type ExtensionServer,
+  type ExtensionServerOptions,
 } from '../../src/main/extension-server';
 
 const TEST_PORT = 30_000 + (process.pid % 10_000);
+const PAIRING_TOKEN = 'a'.repeat(43);
+
+function createExtensionServer(
+  options: Omit<ExtensionServerOptions, 'getPairingToken'> & Pick<Partial<ExtensionServerOptions>, 'getPairingToken'>,
+): Promise<ExtensionServer> {
+  return createAuthenticatedExtensionServer({
+    getPairingToken: () => PAIRING_TOKEN,
+    ...options,
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -17,7 +28,7 @@ const TEST_PORT = 30_000 + (process.pid % 10_000);
 function post(
   port: number,
   body: unknown,
-  opts?: { remoteAddr?: string; contentType?: string; origin?: string },
+  opts?: { remoteAddr?: string; contentType?: string; origin?: string; pairingToken?: string | null },
 ): Promise<{ status: number; body: unknown }> {
   return new Promise((resolve, reject) => {
     const payload = JSON.stringify(body);
@@ -31,6 +42,9 @@ function post(
           'Content-Type': opts?.contentType ?? 'application/json',
           'Content-Length': Buffer.byteLength(payload),
           ...(opts?.origin ? { Origin: opts.origin } : {}),
+          ...(opts?.pairingToken === null
+            ? {}
+            : { Authorization: `Bearer ${opts?.pairingToken ?? PAIRING_TOKEN}` }),
         },
         // Simulate a non-loopback remote address for security tests.
         ...(opts?.remoteAddr ? { localAddress: opts.remoteAddr } : {}),
@@ -65,7 +79,11 @@ function postRaw(
   return new Promise((resolve, reject) => {
     const req = http.request({
       hostname: '127.0.0.1', port, path: '/save', method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Content-Length': payload.length },
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': payload.length,
+        Authorization: `Bearer ${PAIRING_TOKEN}`,
+      },
     }, (res) => {
       const chunks: Buffer[] = [];
       res.on('data', (chunk: Buffer) => chunks.push(chunk));
@@ -318,6 +336,46 @@ describe('createExtensionServer', () => {
     });
   });
 
+  it('returns the same 401 response for missing and incorrect pairing tokens', async () => {
+    const errors: Error[] = [];
+    const secret = 's'.repeat(43);
+    server = await createExtensionServer({
+      port: TEST_PORT,
+      getPairingToken: () => secret,
+      onSaveIntent: () => {},
+      onError: (error) => errors.push(error),
+    });
+    const body = {
+      kind: 'image', sourcePageUrl: 'https://example.com', mediaUrl: 'https://example.com/a.png',
+    };
+
+    const missing = await post(server.port, body, { pairingToken: null });
+    const incorrect = await post(server.port, body, { pairingToken: 'wrong' });
+    expect(missing).toEqual({
+      status: 401,
+      body: { status: 'rejected', reason: 'authentication required' },
+    });
+    expect(incorrect).toEqual(missing);
+    expect(JSON.stringify([missing, incorrect, errors])).not.toContain(secret);
+    expect(errors).toHaveLength(0);
+  });
+
+  it('invalidates the old token immediately after rotation', async () => {
+    let currentToken = PAIRING_TOKEN;
+    server = await createExtensionServer({
+      port: TEST_PORT,
+      getPairingToken: () => currentToken,
+      onSaveIntent: () => {},
+    });
+    const body = {
+      kind: 'image', sourcePageUrl: 'https://example.com', mediaUrl: 'https://example.com/a.png',
+    };
+    expect((await post(server.port, body, { pairingToken: currentToken })).status).toBe(202);
+    currentToken = 'b'.repeat(43);
+    expect((await post(server.port, body, { pairingToken: PAIRING_TOKEN })).status).toBe(401);
+    expect((await post(server.port, body, { pairingToken: currentToken })).status).toBe(202);
+  });
+
   it('waits for async acceptance before returning 202', async () => {
     let completed = false;
     server = await createExtensionServer({
@@ -479,6 +537,7 @@ describe('createExtensionServer', () => {
           headers: {
             'Content-Type': 'application/json',
             'Content-Length': Buffer.byteLength(payload),
+            Authorization: `Bearer ${PAIRING_TOKEN}`,
           },
         },
         (res) => {

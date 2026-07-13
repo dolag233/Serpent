@@ -452,6 +452,15 @@ describe('collections', () => {
     expect(moved.name).toBe('Renamed');
     expect(moved.description).toBe('A description');
 
+    const cleared = service.updateCollection({
+      libraryId,
+      collectionId: col.collectionId,
+      description: null,
+      coverAssetId: null,
+    });
+    expect(cleared.description).toBeNull();
+    expect(cleared.coverAssetId).toBeNull();
+
     service.closeAll();
   });
 
@@ -461,6 +470,37 @@ describe('collections', () => {
       () => service.updateCollection({ libraryId, collectionId: 'nonexistent', name: 'Nope' }),
       'FOLDER_NOT_FOUND',
     );
+    service.closeAll();
+  });
+
+  it('reorders a complete sibling set atomically and rejects partial or mixed-parent sets', () => {
+    const { service, libraryId } = createLibraryWithAsset();
+    const first = service.createCollection({ libraryId, name: 'First' });
+    const second = service.createCollection({ libraryId, name: 'Second' });
+    const third = service.createCollection({ libraryId, name: 'Third' });
+    const child = service.createCollection({ libraryId, parentId: first.collectionId, name: 'Child' });
+
+    expect(service.reorderCollections({
+      libraryId,
+      orderedCollectionIds: [third.collectionId, first.collectionId, second.collectionId],
+    })).toEqual([third.collectionId, first.collectionId, second.collectionId]);
+    expect(service.listCollections(libraryId).filter((item) => item.parentId === null).map((item) => item.collectionId))
+      .toEqual([third.collectionId, first.collectionId, second.collectionId]);
+
+    expectServiceCode(() => service.reorderCollections({
+      libraryId,
+      orderedCollectionIds: [first.collectionId, second.collectionId],
+    }), 'FOLDER_NOT_FOUND');
+    expectServiceCode(() => service.reorderCollections({
+      libraryId,
+      orderedCollectionIds: [first.collectionId, second.collectionId, child.collectionId],
+    }), 'FOLDER_NOT_FOUND');
+    expectServiceCode(() => service.reorderCollections({
+      libraryId,
+      orderedCollectionIds: [first.collectionId, first.collectionId, third.collectionId],
+    }), 'FOLDER_NOT_FOUND');
+    expect(service.listCollections(libraryId).filter((item) => item.parentId === null).map((item) => item.collectionId))
+      .toEqual([third.collectionId, first.collectionId, second.collectionId]);
     service.closeAll();
   });
 });

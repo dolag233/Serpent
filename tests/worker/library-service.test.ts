@@ -57,6 +57,8 @@ function downgradeLibraryToV1(libraryPath: string, createMigrationBlocker = fals
     DROP TABLE IF EXISTS ai_content;
     DROP INDEX IF EXISTS ai_content_asset_field;
     -- Reverse v9: drop revision_artifacts + jobs.
+    DROP TABLE IF EXISTS linked_ignored_assets;
+    DROP TABLE IF EXISTS linked_folder_rules;
     DROP TABLE IF EXISTS revision_artifacts;
     DROP TABLE IF EXISTS jobs;
     DROP TABLE IF EXISTS asset_metadata;
@@ -97,6 +99,8 @@ function downgradeLibraryToV2(libraryPath: string): void {
     DROP TABLE IF EXISTS ai_content;
     DROP INDEX IF EXISTS ai_content_asset_field;
     -- Reverse v9: drop revision_artifacts + jobs.
+    DROP TABLE IF EXISTS linked_ignored_assets;
+    DROP TABLE IF EXISTS linked_folder_rules;
     DROP TABLE IF EXISTS revision_artifacts;
     DROP TABLE IF EXISTS jobs;
     DROP TABLE IF EXISTS asset_metadata;
@@ -191,7 +195,7 @@ describe('LibraryService lifecycle', () => {
     expect(service.listLibraries()).toEqual([created]);
 
     const database = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
-    expect(database.pragma('user_version')).toEqual([{ user_version: 10 }]);
+    expect(database.pragma('user_version')).toEqual([{ user_version: 13 }]);
     database.close();
 
     expect(service.openLibrary(created.libraryPath)).toEqual(created);
@@ -309,7 +313,7 @@ describe('LibraryService lifecycle', () => {
     service.openLibrary(created.libraryPath);
 
     const database = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
-    expect(database.pragma('user_version')).toEqual([{ user_version: 10 }]);
+    expect(database.pragma('user_version')).toEqual([{ user_version: 13 }]);
     expect(
       database
         .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'assets'")
@@ -337,7 +341,7 @@ describe('LibraryService lifecycle', () => {
     expect(service.listAssets({ libraryId: reopened.libraryId, recursive: true })[0])
       .toMatchObject({ relativeFilePath: 'Café.PNG' });
     const database = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
-    expect(database.pragma('user_version')).toEqual([{ user_version: 10 }]);
+    expect(database.pragma('user_version')).toEqual([{ user_version: 13 }]);
     expect(database.prepare('SELECT path_identity FROM assets').all()).toEqual([
       { path_identity: 'café.png' },
     ]);

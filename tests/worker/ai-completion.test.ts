@@ -952,11 +952,30 @@ describe('AI job queue management', () => {
     service.closeAll();
   });
 
-  it('recovers interrupted running jobs as queued when the library reopens', () => {
+  it('persists deliberate library-close jobs as cancelled instead of resuming uploads on reopen', () => {
     const { service, libraryId, libraryPath } = setupWithJob('queued');
-    const claimed = service.claimNextAiJob(libraryId);
-    expect(claimed).not.toBeNull();
+    expect(service.claimNextAiJob(libraryId)).not.toBeNull();
+
+    service.closeLibrary(libraryId);
+
+    const reopened = new LibraryService();
+    reopened.openLibrary(libraryPath);
+    const status = reopened.getAiJobStatus(libraryId);
+    expect(status.running).toBe(0);
+    expect(status.queued).toBe(0);
+    expect(status.cancelled).toBe(1);
+    reopened.closeAll();
+  });
+
+  it('recovers interrupted running jobs as queued when the library reopens', () => {
+    const { service, libraryId, libraryPath, jobId } = setupWithJob('queued');
     service.closeAll();
+
+    // Simulate an ungraceful Worker exit: persist a running row without
+    // passing through closeLibrary's deliberate cancellation path.
+    const db = new Database(path.join(libraryPath, '.serpent', 'library.db'));
+    db.prepare("UPDATE jobs SET status = 'running' WHERE job_id = ?").run(jobId);
+    db.close();
 
     const reopened = new LibraryService();
     const summary = reopened.openLibrary(libraryPath);

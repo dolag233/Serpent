@@ -21,6 +21,16 @@ export const linkedFolderSummarySchema = z.strictObject({
 
 export type LinkedFolderSummary = z.infer<typeof linkedFolderSummarySchema>;
 
+export const linkedFolderRuleSchema = z.strictObject({
+  ruleId: nonBlankString,
+  action: z.enum(['include', 'exclude']),
+  target: z.enum(['path', 'filename', 'extension', 'folder']),
+  pattern: nonBlankString.max(512),
+  enabled: z.boolean(),
+});
+
+export type LinkedFolderRule = z.infer<typeof linkedFolderRuleSchema>;
+
 export const assetSummarySchema = z.strictObject({
   assetId: nonBlankString,
   locationKind: z.enum(['managed', 'linked']),
@@ -42,6 +52,7 @@ export const assetSummarySchema = z.strictObject({
   mediaType: z.enum(['image', 'video', 'other']),
   width: z.number().int().positive().nullable(),
   height: z.number().int().positive().nullable(),
+  durationMs: z.number().int().nonnegative().nullable().optional().default(null),
 });
 
 export type AssetSummary = z.infer<typeof assetSummarySchema>;
@@ -74,6 +85,12 @@ export const assetMetadataResultSchema = z.strictObject({
   rating: z.number().int().min(0).max(5),
   favorite: z.boolean(),
   palette: nonBlankString.nullable(),
+  automaticPalette: z.array(z.strictObject({
+    hex: z.string().regex(/^#[0-9A-F]{6}$/u),
+    ratio: z.number().min(0).max(1),
+  })).max(12).optional().default([]),
+  effectivePalette: z.array(nonBlankString).max(20).optional().default([]),
+  paletteSource: z.enum(['manual', 'automatic']).nullable().optional().default(null),
   sourcePageUrl: nonBlankString.nullable(),
   // Assets created before metadata is first written use version 0 as the
   // optimistic-lock token; the first successful set creates version 1.
@@ -84,17 +101,68 @@ export const assetMetadataResultSchema = z.strictObject({
 export type AssetMetadataResult = z.infer<typeof assetMetadataResultSchema>;
 
 export const sortDefinitionSchema = z.strictObject({
-  field: z.enum(['name', 'modified_at', 'created_at', 'byte_size', 'duration', 'rating']),
+  field: z.enum(['name', 'modified_at', 'created_at', 'byte_size', 'duration', 'rating', 'color']),
   order: z.enum(['asc', 'desc']),
 });
 
 export type SortDefinition = z.infer<typeof sortDefinitionSchema>;
 
-export const filterClauseSchema = z.strictObject({
+const categoricalFilterClauseSchema = z.strictObject({
   field: z.enum(['format', 'tag', 'rating', 'favorite', 'source_url', 'availability']),
   values: z.array(boundedSearchValue).max(32),
   exclude: z.boolean(),
 });
+
+const numericRangeSchema = z.strictObject({
+  min: z.number().finite().nonnegative().optional(),
+  max: z.number().finite().nonnegative().optional(),
+}).superRefine((range, context) => {
+  if (range.min === undefined && range.max === undefined) {
+    context.addIssue({ code: 'custom', message: 'A numeric range requires min or max.' });
+  }
+  if (range.min !== undefined && range.max !== undefined && range.min > range.max) {
+    context.addIssue({ code: 'custom', message: 'Numeric range min cannot exceed max.' });
+  }
+});
+
+const numericFilterClauseSchema = z.strictObject({
+  field: z.enum(['width', 'height', 'aspect_ratio', 'duration_ms']),
+  ranges: z.array(numericRangeSchema).min(1).max(32),
+  exclude: z.boolean(),
+}).superRefine((filter, context) => {
+  if (filter.field === 'aspect_ratio') {
+    filter.ranges.forEach((range, index) => {
+      if (range.min === 0 || range.max === 0) {
+        context.addIssue({
+          code: 'custom',
+          message: 'Aspect ratio bounds must be greater than zero.',
+          path: ['ranges', index],
+        });
+      }
+    });
+    return;
+  }
+  filter.ranges.forEach((range, index) => {
+    if ((range.min !== undefined && !Number.isInteger(range.min))
+      || (range.max !== undefined && !Number.isInteger(range.max))) {
+      context.addIssue({
+        code: 'custom',
+        message: 'Pixel and duration bounds must be integers.',
+        path: ['ranges', index],
+      });
+    }
+  });
+});
+
+/**
+ * Categorical filters retain the v0.1 `values` shape. Technical metadata uses
+ * explicit numeric ranges so callers never encode comparison operators in
+ * strings. Multiple ranges in one clause are ORed; separate clauses are ANDed.
+ */
+export const filterClauseSchema = z.union([
+  categoricalFilterClauseSchema,
+  numericFilterClauseSchema,
+]);
 
 export type FilterClause = z.infer<typeof filterClauseSchema>;
 
@@ -108,6 +176,9 @@ export const searchScopeSchema = z.discriminatedUnion('kind', [
     kind: z.literal('collection'),
     collectionId: nonBlankString,
     recursive: z.boolean(),
+  }),
+  z.strictObject({
+    kind: z.literal('trash'),
   }),
 ]);
 
@@ -132,6 +203,32 @@ export const smartCollectionQueryDefinitionSchema = z.strictObject({
 });
 
 export type SmartCollectionQueryDefinition = z.infer<typeof smartCollectionQueryDefinitionSchema>;
+
+/**
+ * A provider-generated search plan is intentionally limited to values already
+ * understood by Serpent's ordinary search engine. It cannot carry SQL,
+ * filesystem paths, arbitrary operators, or executable expressions.
+ */
+export const aiSearchPlanSchema = z.strictObject({
+  keywords: z.array(boundedSearchValue).max(16),
+  synonyms: z.array(boundedSearchValue).max(16),
+  exclusions: z.array(boundedSearchValue).max(16),
+  filters: z.array(filterClauseSchema).max(16),
+  sort: sortDefinitionSchema.optional(),
+}).superRefine((plan, context) => {
+  if (plan.keywords.length === 0
+    && plan.synonyms.length === 0
+    && plan.exclusions.length === 0
+    && plan.filters.length === 0
+    && plan.sort === undefined) {
+    context.addIssue({
+      code: 'custom',
+      message: 'An AI search plan requires a positive term, filter, or sort.',
+    });
+  }
+});
+
+export type AiSearchPlan = z.infer<typeof aiSearchPlanSchema>;
 
 export const smartCollectionSummarySchema = z.strictObject({
   collectionId: nonBlankString,

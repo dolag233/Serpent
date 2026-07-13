@@ -16,10 +16,17 @@ import type { AiAnalysisRequest } from './ai/protocol';
 import { findVendorError, safeAiDiagnostic, vendorFailure } from './ai/error-mapping';
 import { AiJobAbortRegistry } from './ai/job-abort-registry';
 import { readFileSync } from 'node:fs';
+import { loadAiImageInput } from './ai/image-input';
+import { ProviderConcurrencyLimiter } from './ai/provider-concurrency-limiter';
+import { AiProgressThrottler } from './ai/progress-throttler';
 
 const parentPort: ParentPort | undefined = process.parentPort;
 const aiJobAbortRegistry = new AiJobAbortRegistry();
+const providerConcurrencyLimiter = new ProviderConcurrencyLimiter(2);
+const aiProgressThrottler = new AiProgressThrottler((event) => parentPort?.postMessage(event));
 const analysisControls = new Map<string, { jobId: string; signal: AbortSignal; canWrite: () => boolean }>();
+const activeThumbnailQueues = new Set<string>();
+const rescheduledThumbnailQueues = new Set<string>();
 
 if (!parentPort) {
   throw new Error('Library Worker must be started by the Electron main process.');
@@ -47,6 +54,116 @@ const libraryService = new LibraryService({
 // packaged utility process can otherwise exit cleanly immediately after ready.
 const processLifetime = setInterval(() => {}, 60 * 60_000);
 
+function scheduleThumbnailQueue(
+  libraryId: string,
+  options: { assetIds?: string[]; limit?: number; priority?: number } = {},
+): number {
+  let enqueued: number;
+  try {
+    enqueued = libraryService.enqueueThumbnailJobs(libraryId, options);
+  } catch (error) {
+    libraryService.reportDiagnostic('thumbnail-schedule.enqueue', error, { libraryId });
+    throw error;
+  }
+
+  if (activeThumbnailQueues.has(libraryId)) {
+    rescheduledThumbnailQueues.add(libraryId);
+    return enqueued;
+  }
+  activeThumbnailQueues.add(libraryId);
+
+  const runBatch = async (): Promise<void> => {
+    let continueImmediately = false;
+    try {
+      const onResult = (result: {
+        assetId: string;
+        artifactId?: string;
+        errorCode?: string;
+      }) => {
+        if (result.artifactId) {
+          parentPort?.postMessage({
+            type: 'asset.thumbnail.ready',
+            libraryId,
+            assetId: result.assetId,
+            artifactId: result.artifactId,
+          });
+        } else {
+          const errorCode = result.errorCode ?? 'THUMBNAIL_GENERATION_FAILED';
+          parentPort?.postMessage({
+            type: 'asset.thumbnail.failed',
+            libraryId,
+            assetId: result.assetId,
+            errorCode,
+            reason: thumbnailFailureReason(errorCode),
+          });
+        }
+      };
+      // Two consumers make the existing Sharp(2) semaphore effective for a
+      // normal single-library session. FFmpeg remains serialized by its own
+      // semaphore, and atomic job claims prevent duplicate processing.
+      const processed = (await Promise.all([0, 1].map(() =>
+        libraryService.processThumbnailQueue(libraryId, {
+          maxJobs: 2,
+          onResult,
+        })))).reduce((total, count) => total + count, 0);
+      continueImmediately = processed === 4;
+    } catch (error) {
+      libraryService.reportDiagnostic('thumbnail-schedule.process', error, { libraryId });
+    }
+    if (continueImmediately) {
+      setTimeout(() => void runBatch(), 0);
+      return;
+    }
+    activeThumbnailQueues.delete(libraryId);
+    if (rescheduledThumbnailQueues.delete(libraryId)) {
+      activeThumbnailQueues.add(libraryId);
+      setTimeout(() => void runBatch(), 0);
+    }
+  };
+
+  setTimeout(() => void runBatch(), 0);
+  return enqueued;
+}
+
+type ThumbnailScheduleScene = 'startup' | 'refresh' | 'visible' | 'linked' | 'restore' | 'mutation';
+
+/** Best-effort scheduling for normal product flows; explicit media commands use the throwing primitive. */
+function scheduleThumbnailScene(
+  libraryId: string,
+  scene: ThumbnailScheduleScene,
+  assetIds?: string[],
+): void {
+  const configs: Record<ThumbnailScheduleScene, { limit?: number; priority: number; maxIds?: number }> = {
+    startup: { limit: 50, priority: 100 },
+    refresh: { limit: 50, priority: 150 },
+    visible: { limit: 50, priority: 200, maxIds: 50 },
+    linked: { limit: 50, priority: 250, maxIds: 50 },
+    restore: { priority: 250, maxIds: 500 },
+    mutation: { priority: 300, maxIds: 500 },
+  };
+  const config = configs[scene];
+  try {
+    scheduleThumbnailQueue(libraryId, {
+      ...(assetIds ? { assetIds: assetIds.slice(0, config.maxIds ?? 500) } : {}),
+      ...(config.limit === undefined ? {} : { limit: config.limit }),
+      priority: config.priority,
+    });
+  } catch {
+    // scheduleThumbnailQueue already wrote the complete diagnostic. Automatic
+    // media work must never turn a successful import/list/relink into failure.
+  }
+}
+
+function thumbnailFailureReason(errorCode: string): string {
+  switch (errorCode) {
+    case 'FFMPEG_REQUIRED': return '缺少 FFmpeg，无法生成视频缩略图。请安装媒体组件后重试。';
+    case 'OIIO_REQUIRED': return '缺少 OpenImageIO，无法解码此图片。请安装图像组件后重试。';
+    case 'SHARP_UNAVAILABLE': return '图片解码组件不可用。请重新安装或更新 Serpent 后重试。';
+    case 'SOURCE_NOT_FOUND': return '源文件不存在或当前不可访问。请恢复文件后重试。';
+    default: return '缩略图生成失败，文件可能损坏或格式不受支持。请检查源文件后重试。';
+  }
+}
+
 function errorForLog(error: unknown, depth = 0): unknown {
   if (depth > 5) return { truncated: true };
   if (!(error instanceof Error)) return { value: String(error) };
@@ -67,7 +184,7 @@ function aiQueueFailure(error: unknown): { errorCode: string; retryable: boolean
     return { errorCode: failure.errorCode, retryable: failure.retryable };
   }
   if (error instanceof LibraryServiceError) {
-    if (error.code === 'AI_ANALYSIS_FAILED' && error.reason?.startsWith('AI_')) {
+    if (error.code === 'AI_ANALYSIS_FAILED' && error.reason) {
       return {
         errorCode: error.reason,
         retryable: error.reason === 'AI_NETWORK'
@@ -80,19 +197,49 @@ function aiQueueFailure(error: unknown): { errorCode: string; retryable: boolean
   return { errorCode: 'AI_INTERNAL_ERROR', retryable: false };
 }
 
+function safeAiJobState(libraryId: string, jobId: string): string | null {
+  try {
+    return libraryService.getAiJobState(libraryId, jobId);
+  } catch (error) {
+    if (error instanceof LibraryServiceError && error.code === 'LIBRARY_NOT_OPEN') return null;
+    throw error;
+  }
+}
+
+function publishAiProgress(libraryId: string): void {
+  try {
+    const status = libraryService.getAiJobStatus(libraryId);
+    aiProgressThrottler.publish({
+      type: 'ai.progress',
+      libraryId,
+      queued: status.queued,
+      running: status.running,
+      succeeded: status.succeeded,
+      failed: status.failed,
+    });
+  } catch (error) {
+    if (!(error instanceof LibraryServiceError && error.code === 'LIBRARY_NOT_OPEN')) throw error;
+  }
+}
+
 async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
   switch (request.command.type) {
     case 'library.list':
       return { ok: true, type: 'library.list', libraries: libraryService.listLibraries() };
     case 'library.create': {
       const library = libraryService.createLibrary(request.command);
+      scheduleThumbnailScene(library.libraryId, 'startup');
       return { ok: true, type: 'library.opened', library };
     }
     case 'library.open': {
       const library = libraryService.openLibrary(request.command.selectedLibraryPath);
+      scheduleThumbnailScene(library.libraryId, 'startup');
       return { ok: true, type: 'library.opened', library };
     }
     case 'library.close':
+      libraryService.cancelJobs(request.command.libraryId);
+      publishAiProgress(request.command.libraryId);
+      aiJobAbortRegistry.abort(request.command.libraryId);
       libraryService.closeLibrary(request.command.libraryId);
       return { ok: true, type: 'library.closed', libraryId: request.command.libraryId };
     case 'folder.create': {
@@ -106,23 +253,39 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
         folders: libraryService.listManagedFolders(request.command.libraryId),
       };
     case 'asset.list':
-      return {
+      {
+        const assets = libraryService.listAssets(request.command);
+        scheduleThumbnailScene(request.command.libraryId, 'visible', assets.map((asset) => asset.assetId));
+        return {
         ok: true,
         type: 'asset.list',
-        assets: libraryService.listAssets(request.command),
-      };
+          assets,
+        };
+      }
     case 'asset.import.prepare': {
       const prepared = libraryService.prepareOrExecuteImport(request.command);
+      if (!('importId' in prepared)) {
+        scheduleThumbnailScene(request.command.libraryId, 'mutation', prepared.assets.map((asset) => asset.assetId));
+      }
       return 'importId' in prepared
         ? { ok: true, type: 'asset.import.conflicts', plan: prepared }
         : { ok: true, type: 'asset.import.completed', completion: prepared };
     }
-    case 'asset.import.resolve':
+    case 'asset.import.resolve': {
+      const completion = libraryService.resolveImport(request.command);
+      if (completion.assets.length > 0) {
+        // The matching library already owns these opaque asset ids; schedule
+        // through each open library without exposing paths to Main/Renderer.
+        for (const library of libraryService.listLibraries()) {
+          scheduleThumbnailScene(library.libraryId, 'mutation', completion.assets.map((asset) => asset.assetId));
+        }
+      }
       return {
         ok: true,
         type: 'asset.import.completed',
-        completion: libraryService.resolveImport(request.command),
+        completion,
       };
+    }
     case 'asset.import.abandon':
       return {
         ok: true,
@@ -131,10 +294,17 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
       };
     case 'asset.refresh': {
       const refresh = libraryService.refreshManagedAssets(request.command.libraryId);
+      scheduleThumbnailScene(request.command.libraryId, 'refresh');
       return { ok: true, type: 'asset.refreshed', ...refresh };
     }
     case 'asset.import-linked': {
       const linkedFolder = libraryService.importFolderAsLinked(request.command);
+      const assets = libraryService.listAssets({
+        libraryId: request.command.libraryId,
+        folderId: linkedFolder.folderId,
+        recursive: true,
+      });
+      scheduleThumbnailScene(request.command.libraryId, 'linked', assets.map((asset) => asset.assetId));
       return { ok: true, type: 'asset.import-linked.completed', linkedFolder };
     }
     case 'linked-folder.list':
@@ -145,7 +315,30 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
       };
     case 'linked-folder.relink': {
       const linkedFolder = libraryService.relinkMissingFolder(request.command);
+      const assets = libraryService.listAssets({
+        libraryId: request.command.libraryId,
+        folderId: request.command.folderId,
+        recursive: true,
+      });
+      scheduleThumbnailScene(request.command.libraryId, 'linked', assets.map((asset) => asset.assetId));
       return { ok: true, type: 'linked-folder.relinked', linkedFolder };
+    }
+    case 'linked-folder.rules.get':
+      return { ok: true, type: 'linked-folder.rules', rules: libraryService.getLinkedFolderRules(request.command) };
+    case 'linked-folder.rules.set': {
+      const result = libraryService.setLinkedFolderRules(request.command);
+      scheduleThumbnailScene(request.command.libraryId, 'linked');
+      return { ok: true, type: 'linked-folder.rules.updated', ...result };
+    }
+    case 'linked-folder.assets.copy': {
+      const result = libraryService.copyAssetsToLinkedFolder(request.command);
+      scheduleThumbnailScene(request.command.libraryId, 'linked', result.assets.map((asset) => asset.assetId));
+      return { ok: true, type: 'linked-folder.assets.copied', ...result };
+    }
+    case 'linked-folder.convert': {
+      const result = libraryService.convertLinkedFolderToManaged(request.command);
+      scheduleThumbnailScene(request.command.libraryId, 'mutation', result.assets.map((asset) => asset.assetId));
+      return { ok: true, type: 'linked-folder.converted', ...result };
     }
     case 'tag.list':
       return {
@@ -189,6 +382,10 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
       const collection = libraryService.updateCollection(request.command);
       return { ok: true, type: 'collection.updated', collection };
     }
+    case 'collection.reorder': {
+      const orderedCollectionIds = libraryService.reorderCollections(request.command);
+      return { ok: true, type: 'collection.reordered', orderedCollectionIds };
+    }
     case 'collection.delete':
       return {
         ok: true,
@@ -209,6 +406,7 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
     }
     case 'collection.assets.list': {
       const assets = libraryService.listCollectionAssets(request.command);
+      scheduleThumbnailScene(request.command.libraryId, 'visible', assets.map((asset) => asset.assetId));
       return { ok: true, type: 'collection.assets.list', assets };
     }
     case 'asset.metadata.get': {
@@ -233,6 +431,7 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
         limit: request.command.limit ?? 50,
         offset: request.command.offset ?? 0,
       });
+      scheduleThumbnailScene(request.command.libraryId, 'visible', result.items.map((asset) => asset.assetId));
       return {
         ok: true,
         type: 'asset.search.result',
@@ -264,6 +463,7 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
       };
     case 'smart-collection.execute': {
       const result = libraryService.executeSmartCollection(request.command);
+      scheduleThumbnailScene(request.command.libraryId, 'visible', result.items.map((asset) => asset.assetId));
       return {
         ok: true,
         type: 'smart-collection.executed',
@@ -278,7 +478,18 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
     }
     case 'asset.restore': {
       const { restoredCount, assets } = libraryService.restoreAssets(request.command);
+      scheduleThumbnailScene(request.command.libraryId, 'restore', assets.map((asset) => asset.assetId));
       return { ok: true, type: 'asset.restored', restoredCount, assets };
+    }
+    case 'asset.move': {
+      const { movedCount, skippedCount, operationId, assets } = libraryService.moveAssets(request.command);
+      scheduleThumbnailScene(request.command.libraryId, 'visible', assets.map((asset) => asset.assetId));
+      return { ok: true, type: 'asset.moved', movedCount, skippedCount, operationId, assets };
+    }
+    case 'asset.move-undo': {
+      const { undoneCount, skippedCount, assets } = libraryService.undoMoveAssets(request.command);
+      scheduleThumbnailScene(request.command.libraryId, 'visible', assets.map((asset) => asset.assetId));
+      return { ok: true, type: 'asset.move-undone', undoneCount, skippedCount, assets };
     }
     case 'asset.delete-permanent': {
       const { deletedCount, skippedCount, skippedReasons } = libraryService.deleteAssetsPermanent(request.command);
@@ -298,6 +509,7 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
     }
     case 'asset.relink': {
       const { asset } = libraryService.relinkAsset(request.command);
+      scheduleThumbnailScene(request.command.libraryId, 'mutation', [asset.assetId]);
       return { ok: true, type: 'asset.relinked', asset };
     }
     case 'asset.relink-batch.preview': {
@@ -306,10 +518,12 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
     }
     case 'asset.relink-batch.apply': {
       const { restoredCount, unchangedMissingCount, assets } = libraryService.relinkBatchApply(request.command);
+      scheduleThumbnailScene(request.command.libraryId, 'mutation', assets.map((asset) => asset.assetId));
       return { ok: true, type: 'asset.relink-batch.applied', restoredCount, unchangedMissingCount, assets };
     }
     case 'extension.save-from-url': {
       const { asset } = await libraryService.saveAssetFromUrl(request.command);
+      scheduleThumbnailScene(request.command.libraryId, 'mutation', [asset.assetId]);
       return { ok: true, type: 'extension.asset-saved', asset };
     }
     case 'library.export': {
@@ -482,15 +696,20 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
           }
         }
       } else if (mime.startsWith('image/')) {
-        // Image: read the source file bytes.
-        let fileBytes: Buffer;
+        // Cloud analysis is restricted to Serpent's bounded 512px derivative.
+        // Never upload the original image (especially TIFF/EXR sources).
         try {
-          fileBytes = readFileSync(filePath);
+          const imageInput = await loadAiImageInput(libraryService, libraryId, assetId);
+          imageBase64 = imageInput.imageBase64;
+          requestMime = imageInput.mime;
         } catch (error) {
-          throw new LibraryServiceError('ASSET_NOT_FOUND', { cause: error });
+          throw new LibraryServiceError('AI_ANALYSIS_FAILED', {
+            cause: error,
+            reason: error instanceof LibraryServiceError
+              ? (error.reason ?? 'THUMBNAIL_REQUIRED')
+              : 'THUMBNAIL_REQUIRED',
+          });
         }
-        imageBase64 = fileBytes.toString('base64');
-        requestMime = mime;
       } else {
         // Non-image, non-video assets (e.g., .txt, .pdf).
         return {
@@ -541,7 +760,11 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
 
       let analysisResult;
       try {
-        analysisResult = await adapter.analyze(aiRequest, controls?.signal);
+        analysisResult = await providerConcurrencyLimiter.run(
+          provider,
+          controls?.signal,
+          () => adapter.analyze(aiRequest, controls?.signal),
+        );
       } catch (error) {
         if (error instanceof VendorAdapterError) {
           const failure = vendorFailure(error);
@@ -595,6 +818,14 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
       if (fieldsWritten.includes('structured_metadata'))
         generatedFields.structuredMetadata = analysisResult.structured_metadata;
 
+      parentPort?.postMessage({
+        type: 'ai.analysis.completed',
+        libraryId,
+        assetId,
+        fieldCount: fieldsWritten.length,
+        tagCount: tagsWritten.length,
+      });
+
       return {
         ok: true,
         type: 'asset.analyzed' as const,
@@ -624,38 +855,9 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
     case 'media.retry-artifact': {
       const { libraryId, assetId, kind } = request.command;
       libraryService.enqueueArtifactRetry({ libraryId, assetId, kind });
-      // Respond first; media generation can take minutes and must not occupy a
-      // normal 15-second Main↔Worker request or create a fatal late response.
-      setTimeout(() => {
-        void libraryService.processThumbnailQueue(libraryId)
-          .then(() => {
-            const preview = libraryService.getPreviewArtifact(libraryId, assetId);
-            if (preview.status === 'ready' && preview.artifactId) {
-              parentPort?.postMessage({
-                type: 'asset.thumbnail.ready',
-                libraryId,
-                assetId,
-                artifactId: preview.artifactId,
-              });
-            } else if (preview.status === 'failed') {
-              const errorCode = preview.errorCode ?? 'MEDIA_PROCESSING_FAILED';
-              parentPort?.postMessage({
-                type: 'asset.thumbnail.failed',
-                libraryId,
-                assetId,
-                errorCode,
-                reason: errorCode,
-              });
-            }
-          })
-          .catch((error: unknown) => {
-            libraryService.reportDiagnostic('media.retry.queue', error, {
-              libraryId,
-              assetId,
-              kind,
-            });
-          });
-      }, 0);
+      // The idempotent queue scheduler owns all FFmpeg work; normal IPC returns
+      // before poster/proxy generation and never starts a second drain.
+      scheduleThumbnailScene(libraryId, 'mutation', [assetId]);
       return {
         ok: true,
         type: 'media.retry-artifact.queued',
@@ -670,6 +872,20 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
         request.command.usage,
       );
       return { ok: true, type: 'media.artifact-path', artifactId: request.command.artifactId, absolutePath };
+    }
+    case 'media.get-source-path': {
+      const source = libraryService.getCurrentMediaSource(
+        request.command.libraryId,
+        request.command.assetId,
+        request.command.revisionId,
+      );
+      return {
+        ok: true,
+        type: 'media.source-path',
+        assetId: request.command.assetId,
+        revisionId: request.command.revisionId,
+        ...source,
+      };
     }
     case 'media.get-thumbnail-artifact': {
       const info = libraryService.getThumbnailArtifact(
@@ -687,6 +903,13 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
       };
     }
     case 'media.get-preview-artifact': {
+      // Opening a preview is also an idempotent, high-priority generation hint.
+      // The original source remains independently viewable for native formats.
+      scheduleThumbnailScene(
+        request.command.libraryId,
+        'mutation',
+        [request.command.assetId],
+      );
       const preview = libraryService.getPreviewArtifact(
         request.command.libraryId,
         request.command.assetId,
@@ -706,12 +929,71 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
       return { ok: true, type: 'media.asset-path', assetId: request.command.assetId, absolutePath };
     }
     case 'media.enqueue-thumbnail-jobs': {
-      const enqueued = libraryService.enqueueThumbnailJobs(request.command.libraryId);
+      const enqueued = scheduleThumbnailQueue(request.command.libraryId, { limit: 50 });
       return { ok: true, type: 'media.jobs.enqueued', libraryId: request.command.libraryId, enqueued };
     }
     case 'media.process-thumbnail-queue': {
       const processed = await libraryService.processThumbnailQueue(request.command.libraryId);
       return { ok: true, type: 'media.jobs.processed', libraryId: request.command.libraryId, processed };
+    }
+    case 'media.list-jobs': {
+      const status = libraryService.listMediaJobs(request.command.libraryId);
+      return {
+        ok: true,
+        type: 'media.jobs.listed',
+        libraryId: request.command.libraryId,
+        ...status,
+      };
+    }
+    case 'media.pause-jobs': {
+      const result = libraryService.pauseMediaJobs(
+        request.command.libraryId,
+        request.command.jobIds,
+      );
+      return {
+        ok: true,
+        type: 'media.jobs.paused',
+        libraryId: request.command.libraryId,
+        ...result,
+      };
+    }
+    case 'media.resume-jobs': {
+      const result = libraryService.resumeMediaJobs(
+        request.command.libraryId,
+        request.command.jobIds,
+      );
+      scheduleThumbnailQueue(request.command.libraryId);
+      return {
+        ok: true,
+        type: 'media.jobs.resumed',
+        libraryId: request.command.libraryId,
+        ...result,
+      };
+    }
+    case 'media.cancel-jobs': {
+      const result = libraryService.cancelMediaJobs(
+        request.command.libraryId,
+        request.command.jobIds,
+      );
+      return {
+        ok: true,
+        type: 'media.jobs.cancelled',
+        libraryId: request.command.libraryId,
+        ...result,
+      };
+    }
+    case 'media.retry-jobs': {
+      const result = libraryService.retryMediaJobs(
+        request.command.libraryId,
+        request.command.jobIds,
+      );
+      scheduleThumbnailQueue(request.command.libraryId);
+      return {
+        ok: true,
+        type: 'media.jobs.retried',
+        libraryId: request.command.libraryId,
+        ...result,
+      };
     }
     case 'ai.configure': {
       // The Worker caches configuration in-memory; the caller should
@@ -803,6 +1085,7 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
     }
     case 'ai.enqueue-analysis': {
       const { enqueued } = libraryService.enqueueAiAnalysisJobs(request.command);
+      publishAiProgress(request.command.libraryId);
       return {
         ok: true,
         type: 'media.jobs.enqueued' as const,
@@ -818,68 +1101,80 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
       let requeued = 0;
       const attemptedJobIds: string[] = [];
 
-      while (processed < maxJobs) {
-        const job = libraryService.claimNextAiJob(libraryId, attemptedJobIds);
-        if (!job) break;
-        attemptedJobIds.push(job.jobId);
-        processed++;
-        const controller = aiJobAbortRegistry.register(libraryId, job.jobId);
-        const nestedRequestId = `${request.requestId}:${job.jobId}`;
-        analysisControls.set(nestedRequestId, {
-          jobId: job.jobId,
-          signal: controller.signal,
-          canWrite: () => libraryService.getAiJobState(libraryId, job.jobId) === 'running',
-        });
-        try {
-          const result = await handleRequest({
-            requestId: nestedRequestId,
-            command: {
-              type: 'asset.analyze',
-              libraryId,
-              assetId: job.assetId,
-              provider: analysisConfig.provider,
-              model: analysisConfig.model,
-              apiKey: analysisConfig.apiKey,
-              enabledFields: analysisConfig.enabledFields,
-              language: analysisConfig.language,
-            },
+      const processLane = async (): Promise<void> => {
+        while (processed < maxJobs) {
+          const job = libraryService.claimNextAiJob(libraryId, attemptedJobIds);
+          if (!job) break;
+          attemptedJobIds.push(job.jobId);
+          processed++;
+          publishAiProgress(libraryId);
+          const controller = aiJobAbortRegistry.register(libraryId, job.jobId);
+          const nestedRequestId = `${request.requestId}:${job.jobId}`;
+          analysisControls.set(nestedRequestId, {
+            jobId: job.jobId,
+            signal: controller.signal,
+            canWrite: () => safeAiJobState(libraryId, job.jobId) === 'running',
           });
-          if (controller.signal.aborted || libraryService.getAiJobState(libraryId, job.jobId) !== 'running') {
-            continue;
-          }
-          if (!result.ok || result.type === 'asset.analyze-unsupported') {
-            const errorCode = result.ok ? result.reason : result.error.code;
-            libraryService.failAiJob(libraryId, job.jobId, {
-              errorCode,
-              retryable: false,
+          try {
+            const result = await handleRequest({
+              requestId: nestedRequestId,
+              command: {
+                type: 'asset.analyze',
+                libraryId,
+                assetId: job.assetId,
+                provider: analysisConfig.provider,
+                model: analysisConfig.model,
+                apiKey: analysisConfig.apiKey,
+                enabledFields: analysisConfig.enabledFields,
+                language: analysisConfig.language,
+              },
             });
-            failed++;
-            continue;
+            if (controller.signal.aborted || safeAiJobState(libraryId, job.jobId) !== 'running') {
+              continue;
+            }
+            if (!result.ok || result.type !== 'asset.analyzed') {
+              const errorCode = !result.ok
+                ? result.error.code
+                : result.type === 'asset.analyze-unsupported'
+                  ? result.reason
+                  : 'AI_INTERNAL_ERROR';
+              libraryService.failAiJob(libraryId, job.jobId, {
+                errorCode,
+                retryable: false,
+              });
+              failed++;
+              publishAiProgress(libraryId);
+              continue;
+            }
+            libraryService.completeAiJob(libraryId, job.jobId);
+            succeeded++;
+            publishAiProgress(libraryId);
+          } catch (error) {
+            if (controller.signal.aborted || safeAiJobState(libraryId, job.jobId) !== 'running') {
+              continue;
+            }
+            const classification = aiQueueFailure(error);
+            libraryService.reportDiagnostic(
+              'ai.queue.analysis',
+              safeAiDiagnostic(classification.errorCode, error),
+              { libraryId, jobId: job.jobId, assetId: job.assetId, errorCode: classification.errorCode },
+            );
+            const failure = libraryService.failAiJob(
+              libraryId,
+              job.jobId,
+              classification,
+            );
+            if (failure.status === 'queued') requeued++;
+            else failed++;
+            publishAiProgress(libraryId);
+          } finally {
+            analysisControls.delete(nestedRequestId);
+            aiJobAbortRegistry.unregister(job.jobId);
           }
-          libraryService.completeAiJob(libraryId, job.jobId);
-          succeeded++;
-        } catch (error) {
-          if (controller.signal.aborted || libraryService.getAiJobState(libraryId, job.jobId) !== 'running') {
-            continue;
-          }
-          const classification = aiQueueFailure(error);
-          libraryService.reportDiagnostic(
-            'ai.queue.analysis',
-            safeAiDiagnostic(classification.errorCode, error),
-            { libraryId, jobId: job.jobId, assetId: job.assetId, errorCode: classification.errorCode },
-          );
-          const failure = libraryService.failAiJob(
-            libraryId,
-            job.jobId,
-            classification,
-          );
-          if (failure.status === 'queued') requeued++;
-          else failed++;
-        } finally {
-          analysisControls.delete(nestedRequestId);
-          aiJobAbortRegistry.unregister(job.jobId);
         }
-      }
+      };
+
+      await Promise.all([processLane(), processLane()]);
       return {
         ok: true,
         type: 'ai.jobs.processed' as const,
@@ -913,6 +1208,7 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
         request.command.jobIds,
       );
       aiJobAbortRegistry.abort(request.command.libraryId, request.command.jobIds);
+      publishAiProgress(request.command.libraryId);
       return {
         ok: true,
         type: 'ai.jobs.paused' as const,
@@ -925,6 +1221,7 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
         request.command.libraryId,
         request.command.jobIds,
       );
+      publishAiProgress(request.command.libraryId);
       return {
         ok: true,
         type: 'ai.jobs.resumed' as const,
@@ -938,6 +1235,7 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
         request.command.jobIds,
       );
       aiJobAbortRegistry.abort(request.command.libraryId, request.command.jobIds);
+      publishAiProgress(request.command.libraryId);
       return {
         ok: true,
         type: 'ai.jobs.cancelled' as const,
@@ -950,11 +1248,21 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
         request.command.libraryId,
         request.command.jobIds,
       );
+      publishAiProgress(request.command.libraryId);
       return {
         ok: true,
         type: 'ai.jobs.retried' as const,
         libraryId: request.command.libraryId,
         retriedCount,
+      };
+    }
+    case 'ai.status': {
+      const status = libraryService.getAiJobStatus(request.command.libraryId);
+      return {
+        ok: true,
+        type: 'ai.jobs.status' as const,
+        libraryId: request.command.libraryId,
+        ...status,
       };
     }
     default:
@@ -981,6 +1289,7 @@ parentPort.on('message', async (event) => {
     const control = parseWorkerControlMessage(input);
     if (control.type === 'worker.shutdown') {
       aiJobAbortRegistry.abortAll();
+      aiProgressThrottler.clearAll();
       libraryService.closeAll();
       parentPort.postMessage({ type: 'worker.shutdown.ack' });
       clearInterval(processLifetime);

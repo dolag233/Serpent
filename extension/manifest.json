@@ -3,21 +3,21 @@
   "name": "Serpent",
   "version": "0.1.0",
   "description": "Save images and videos from the web to Serpent digital asset manager.",
-  "permissions": ["activeTab", "contextMenus"],
+  "permissions": ["contextMenus", "notifications", "storage"],
   "host_permissions": [
     "http://127.0.0.1:19876/*",
     "http://127.0.0.1:19877/*",
     "http://127.0.0.1:19878/*"
   ],
   "background": {
-    "service_worker": "background.js"
+    "service_worker": "background.js",
+    "type": "module"
   },
-  "content_scripts": [
-    {
-      "matches": ["<all_urls>"],
-      "js": ["content.js"],
-      "run_at": "document_end"
-    }
-  ],
-  "icons": {}
+  "options_page": "options.html",
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  }
 }

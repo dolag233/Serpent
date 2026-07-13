@@ -10,9 +10,45 @@ import {
   parseAssetChangeEvent,
   parseRendererResult,
   parseRendererLifecycleEvent,
+  parseAiProgressEvent,
+  parseAiAnalysisCompletedEvent,
 } from '../../src/shared/protocol/responses';
 
 describe('renderer request protocol', () => {
+  it('round-trips persisted linked-folder rule identifiers without requiring UUIDs', () => {
+    const rule = { ruleId: 'folder-id:default:0', action: 'exclude' as const, target: 'folder' as const, pattern: '.git', enabled: true };
+    expect(parseWorkerRequest({
+      requestId: 'rules-request',
+      command: { type: 'linked-folder.rules.set', libraryId: 'library', folderId: 'folder', rules: [rule] },
+    }).command).toMatchObject({ rules: [rule] });
+    expect(parseRendererResult({ ok: true, type: 'linked-folder.rules', rules: [rule] }))
+      .toEqual({ ok: true, type: 'linked-folder.rules', rules: [rule] });
+  });
+  it('validates typed technical metadata filter ranges', () => {
+    expect(parseRendererRequest({
+      type: 'asset.search.request',
+      libraryId: 'library-01',
+      query: null,
+      filters: [
+        { field: 'width', ranges: [{ min: 1920 }], exclude: false },
+        { field: 'aspect_ratio', ranges: [{ min: 1.7, max: 1.8 }], exclude: false },
+        { field: 'duration_ms', ranges: [{ max: 30_000 }], exclude: true },
+      ],
+    })).toMatchObject({ type: 'asset.search.request' });
+    expect(() => parseRendererRequest({
+      type: 'asset.search.request',
+      libraryId: 'library-01',
+      query: null,
+      filters: [{ field: 'width', ranges: [{ min: 2000, max: 1000 }], exclude: false }],
+    })).toThrow();
+    expect(() => parseRendererRequest({
+      type: 'asset.search.request',
+      libraryId: 'library-01',
+      query: null,
+      filters: [{ field: 'aspect_ratio', ranges: [{}], exclude: false }],
+    })).toThrow();
+  });
+
   it('accepts semantic video preview and proxy retry requests without paths', () => {
     expect(parseRendererRequest({
       type: 'asset.preview.request',
@@ -84,6 +120,108 @@ describe('renderer request protocol', () => {
       .toEqual({ type: 'asset.import.abandon', importId: 'import-01' });
   });
 
+  it('accepts path-free managed move and one-shot undo requests', () => {
+    expect(parseRendererRequest({
+      type: 'asset.move.request',
+      libraryId: 'library-01',
+      assetIds: ['asset-01', 'asset-02'],
+      targetFolderId: null,
+      conflictStrategy: 'keep-both',
+    })).toMatchObject({ type: 'asset.move.request', targetFolderId: null });
+    expect(parseRendererRequest({
+      type: 'asset.move-undo.request',
+      libraryId: 'library-01',
+      operationId: 'operation-01',
+      conflictStrategy: 'error',
+    })).toMatchObject({ type: 'asset.move-undo.request', conflictStrategy: 'error' });
+    expect(() => parseRendererRequest({
+      type: 'asset.move.request',
+      libraryId: 'library-01',
+      assetIds: ['asset-01', 'asset-01'],
+      targetFolderId: 'folder-01',
+    })).toThrow();
+    expect(() => parseRendererRequest({
+      type: 'asset.move.request',
+      libraryId: 'library-01',
+      assetIds: ['asset-01'],
+      targetFolderId: 'folder-01',
+      destinationPath: '/forged/path',
+    })).toThrow();
+  });
+
+  it('accepts preload-resolved drops and path-free clipboard requests', () => {
+    expect(parseRendererRequest({
+      type: 'asset.import-drop.request',
+      libraryId: 'library-01',
+      targetFolderId: 'folder-01',
+      targetCollectionId: 'collection-01',
+      sourcePaths: ['/private/preload-resolved/asset.png'],
+    })).toMatchObject({ type: 'asset.import-drop.request', sourcePaths: ['/private/preload-resolved/asset.png'] });
+    expect(parseRendererRequest({
+      type: 'asset.import-clipboard.request',
+      libraryId: 'library-01',
+      targetFolderId: 'folder-01',
+    })).toEqual({
+      type: 'asset.import-clipboard.request',
+      libraryId: 'library-01',
+      targetFolderId: 'folder-01',
+    });
+    expect(() => parseRendererRequest({
+      type: 'asset.import-clipboard.request',
+      libraryId: 'library-01',
+      sourcePath: '/private/forged/clipboard.png',
+    })).toThrow();
+    expect(parseRendererRequest({
+      type: 'asset.import-drop-invalid.report',
+      libraryId: 'library-01',
+    })).toEqual({ type: 'asset.import-drop-invalid.report', libraryId: 'library-01' });
+    expect(parseRendererRequest({
+      type: 'asset.import-web.request',
+      libraryId: 'library-01',
+      targetFolderId: 'folder-01',
+      targetCollectionId: 'collection-01',
+      mediaUrl: 'https://cdn.example.com/image.png',
+      mediaType: 'image',
+    })).toMatchObject({ type: 'asset.import-web.request', mediaUrl: 'https://cdn.example.com/image.png' });
+    expect(parseRendererRequest({
+      type: 'asset.import-web-invalid.report',
+      libraryId: 'library-01',
+      failure: 'WEB_MEDIA_URL_INVALID',
+    })).toMatchObject({ failure: 'WEB_MEDIA_URL_INVALID' });
+    expect(() => parseRendererRequest({
+      type: 'asset.import-web.request',
+      libraryId: 'library-01',
+      mediaUrl: 'file:///private/forged.png',
+    })).toThrow();
+    expect(() => parseRendererRequest({
+      type: 'asset.import-web.request',
+      libraryId: 'library-01',
+      mediaUrl: 'https://user:secret@example.com/forged.png',
+    })).toThrow();
+    expect(() => parseRendererRequest({
+      type: 'asset.import-web.request',
+      libraryId: 'library-01',
+      mediaUrl: 'https://cdn.example.com/image.png',
+      sourcePageUrl: 'https://example.com/forged-source-page',
+    })).toThrow();
+  });
+
+  it('accepts explicit restore destinations and conflict strategies', () => {
+    expect(parseRendererRequest({
+      type: 'asset.restore.request',
+      libraryId: 'library-01',
+      assetIds: ['asset-01'],
+      targetFolderId: null,
+      conflictStrategy: 'replace',
+    })).toMatchObject({ targetFolderId: null, conflictStrategy: 'replace' });
+    expect(() => parseRendererRequest({
+      type: 'asset.restore.request',
+      libraryId: 'library-01',
+      assetIds: ['asset-01'],
+      conflictStrategy: 'overwrite',
+    })).toThrow();
+  });
+
   it('accepts transfer cancellation by opaque operation id only', () => {
     expect(parseRendererRequest({
       type: 'library.export.cancel.request',
@@ -97,6 +235,36 @@ describe('renderer request protocol', () => {
       type: 'library.export.cancel.request',
       exportId: 'export-01',
       destinationPath: '/private/forged/path',
+    })).toThrow();
+  });
+
+  it('accepts media job controls by opaque IDs and rejects empty selections', () => {
+    expect(parseRendererRequest({
+      type: 'media.list-jobs.request',
+      libraryId: 'library-01',
+    })).toMatchObject({ type: 'media.list-jobs.request' });
+    expect(parseRendererRequest({
+      type: 'media.cancel-jobs.request',
+      libraryId: 'library-01',
+      jobIds: ['job-01'],
+    })).toMatchObject({ jobIds: ['job-01'] });
+    expect(() => parseRendererRequest({
+      type: 'media.retry-jobs.request',
+      libraryId: 'library-01',
+      jobIds: [],
+    })).toThrow();
+  });
+
+  it('accepts one atomic collection sibling order and rejects duplicates only at the domain layer', () => {
+    expect(parseRendererRequest({
+      type: 'collection.reorder.request',
+      libraryId: 'library-01',
+      orderedCollectionIds: ['collection-03', 'collection-01', 'collection-02'],
+    })).toMatchObject({ orderedCollectionIds: ['collection-03', 'collection-01', 'collection-02'] });
+    expect(() => parseRendererRequest({
+      type: 'collection.reorder.request',
+      libraryId: 'library-01',
+      orderedCollectionIds: [],
     })).toThrow();
   });
 
@@ -122,6 +290,59 @@ describe('preview response protocol', () => {
     });
     expect(result).toMatchObject({ status: 'failed', errorCode: 'FFMPEG_REQUIRED' });
     expect(JSON.stringify(result)).not.toContain('/Users/');
+  });
+
+  it('validates the renderer-safe media job listing', () => {
+    expect(parseRendererResult({
+      ok: true,
+      type: 'media.jobs.listed',
+      libraryId: 'library-01',
+      queued: 1,
+      running: 0,
+      succeeded: 0,
+      failed: 0,
+      paused: 0,
+      cancelled: 0,
+      jobs: [{
+        jobId: 'job-01',
+        assetId: 'asset-01',
+        revisionId: 'revision-01',
+        kind: 'extract_palette',
+        status: 'queued',
+        progress: 0,
+        attemptCount: 0,
+        errorCode: null,
+        errorDetail: null,
+        createdAt: '2026-07-13T00:00:00.000Z',
+        updatedAt: '2026-07-13T00:00:00.000Z',
+      }],
+    })).toMatchObject({ type: 'media.jobs.listed', queued: 1 });
+  });
+
+  it('validates automatic palette provenance without exposing artifact paths', () => {
+    const result = parseRendererResult({
+      ok: true,
+      type: 'asset.metadata.got',
+      metadata: {
+        assetId: 'asset-01',
+        label: null,
+        description: null,
+        rating: 0,
+        favorite: false,
+        palette: null,
+        automaticPalette: [{ hex: '#FF0000', ratio: 0.75 }, { hex: '#0000FF', ratio: 0.25 }],
+        effectivePalette: ['#FF0000', '#0000FF'],
+        paletteSource: 'automatic',
+        sourcePageUrl: null,
+        entityVersion: 0,
+        updatedAt: '1970-01-01T00:00:00.000Z',
+      },
+    });
+    expect(result).toMatchObject({
+      type: 'asset.metadata.got',
+      metadata: { paletteSource: 'automatic', effectivePalette: ['#FF0000', '#0000FF'] },
+    });
+    expect(JSON.stringify(result)).not.toContain('.serpent');
   });
 });
 
@@ -164,6 +385,26 @@ describe('linked asset delete response protocol', () => {
 });
 
 describe('worker request protocol', () => {
+  it('accepts a path-free remote media command and rejects non-HTTP addresses', () => {
+    expect(parseWorkerRequest({
+      requestId: 'request-web-drop',
+      command: {
+        type: 'extension.save-from-url',
+        libraryId: 'library-1',
+        targetFolderId: 'folder-1',
+        mediaUrl: 'https://cdn.example.com/image.png',
+      },
+    })).toMatchObject({ command: { type: 'extension.save-from-url' } });
+    expect(() => parseWorkerRequest({
+      requestId: 'request-web-drop-invalid',
+      command: {
+        type: 'extension.save-from-url',
+        libraryId: 'library-1',
+        mediaUrl: 'http://user:secret@example.com/image.png',
+      },
+    })).toThrow();
+  });
+
   it('bounds linked source deletion and rejects duplicate asset IDs', () => {
     const request = {
       requestId: 'request-linked-delete',
@@ -207,6 +448,72 @@ describe('worker request protocol', () => {
       requestId: 'request-ai-2',
       command: { ...parsed.command, maxJobs: 101 },
     })).toThrow();
+  });
+
+  it('accepts AI job status commands and complete status results', () => {
+    expect(parseRendererRequest({
+      type: 'ai.status.request',
+      libraryId: 'library-1',
+    })).toMatchObject({ type: 'ai.status.request', libraryId: 'library-1' });
+
+    expect(parseWorkerRequest({
+      requestId: 'request-ai-status',
+      command: { type: 'ai.status', libraryId: 'library-1' },
+    })).toMatchObject({ command: { type: 'ai.status' } });
+
+    expect(parseRendererResult({
+      ok: true,
+      type: 'ai.jobs.status',
+      libraryId: 'library-1',
+      queued: 1,
+      running: 0,
+      succeeded: 2,
+      failed: 1,
+      paused: 0,
+      cancelled: 3,
+      jobs: [{
+        jobId: 'job-1',
+        assetId: 'asset-1',
+        kind: 'ai.image.analysis',
+        status: 'queued',
+        errorCode: null,
+        errorDetail: null,
+        updatedAt: '2026-07-13T00:00:00.000Z',
+      }],
+    })).toMatchObject({ type: 'ai.jobs.status', queued: 1, cancelled: 3 });
+  });
+
+  it('validates AI progress and completion events before Main forwards them', () => {
+    expect(parseAiProgressEvent({
+      type: 'ai.progress',
+      libraryId: 'library-1',
+      queued: 2,
+      running: 1,
+      succeeded: 4,
+      failed: 1,
+    })).toMatchObject({ running: 1, succeeded: 4 });
+    expect(parseAiAnalysisCompletedEvent({
+      type: 'ai.analysis.completed',
+      libraryId: 'library-1',
+      assetId: 'asset-1',
+      fieldCount: 2,
+      tagCount: 3,
+    })).toMatchObject({ assetId: 'asset-1', tagCount: 3 });
+    expect(() => parseAiProgressEvent({
+      type: 'ai.progress', libraryId: 'library-1', queued: -1,
+      running: 0, succeeded: 0, failed: 0,
+    })).toThrow();
+  });
+
+  it('keeps media and AI job commands as distinct protocol variants', () => {
+    expect(parseWorkerRequest({
+      requestId: 'request-media-1',
+      command: {
+        type: 'media.pause-jobs',
+        libraryId: 'library-1',
+        jobIds: ['media-job-1'],
+      },
+    }).command.type).toBe('media.pause-jobs');
   });
 
   it('round-trips the Main-owned import id for library validation', () => {

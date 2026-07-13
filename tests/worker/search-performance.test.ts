@@ -173,6 +173,26 @@ afterAll(() => {
 });
 
 describe('100k asset search performance gate', () => {
+  it('bounds the ordinary library first page to 50 summaries', () => {
+    let result: ReturnType<LibraryService['searchAssets']> | undefined;
+    const elapsedMs = benchmark(() => {
+      result = fixture.service.searchAssets({
+        libraryId: fixture.libraryId,
+        limit: FIRST_PAGE_SIZE,
+        offset: 0,
+      });
+    });
+
+    expect(result?.total).toBe(ASSET_COUNT);
+    expect(result?.items).toHaveLength(FIRST_PAGE_SIZE);
+    expect(result?.offset).toBe(0);
+    console.info(`[search-perf] browse-first-page median=${elapsedMs.toFixed(1)}ms assets=${ASSET_COUNT} transferred=${result?.items.length ?? 0}`);
+    // The MVP contract is a usable first screen within three seconds for a
+    // 100k-asset library. This Worker page is the dominant data read on that
+    // path; renderer startup is covered separately by Electron smoke tests.
+    expect(elapsedMs).toBeLessThan(3_000);
+  });
+
   it('keeps keyword search first-page latency below one second', () => {
     let result: ReturnType<LibraryService['searchAssets']> | undefined;
     const elapsedMs = benchmark(() => {

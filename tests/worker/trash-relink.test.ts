@@ -82,7 +82,7 @@ describe('schema v8->v9 migration', () => {
     });
 
     const database = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
-    expect(database.pragma('user_version')).toEqual([{ user_version: 10 }]);
+    expect(database.pragma('user_version')).toEqual([{ user_version: 13 }]);
 
     const columns = database.prepare("PRAGMA table_info('assets')").all() as Array<{
       cid: number; name: string; type: string;
@@ -125,6 +125,8 @@ describe('schema v8->v9 migration', () => {
     const db = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
     // Downgrade from v10 to v8 by removing v9+v10 migration metadata + objects.
     db.exec(`
+    DROP TABLE IF EXISTS linked_ignored_assets;
+    DROP TABLE IF EXISTS linked_folder_rules;
       DROP TABLE IF EXISTS revision_artifacts;
       DROP TABLE IF EXISTS jobs;
       DELETE FROM schema_migrations WHERE version >= 9;
@@ -135,7 +137,7 @@ describe('schema v8->v9 migration', () => {
     service.openLibrary(created.libraryPath);
 
     const db2 = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
-    expect(db2.pragma('user_version')).toEqual([{ user_version: 10 }]);
+    expect(db2.pragma('user_version')).toEqual([{ user_version: 13 }]);
     const migrationRows = db2.prepare('SELECT version FROM schema_migrations ORDER BY version').all() as Array<{ version: number }>;
     expect(migrationRows.map((r) => r.version)).toContain(9);
     db2.close();
@@ -149,7 +151,7 @@ describe('schema v8->v9 migration', () => {
     service.closeAll();
     service.openLibrary(created.libraryPath);
     const db = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
-    expect(db.pragma('user_version')).toEqual([{ user_version: 10 }]);
+    expect(db.pragma('user_version')).toEqual([{ user_version: 13 }]);
     service.closeAll();
     service.openLibrary(created.libraryPath);
     const migrationCount = db.prepare(
@@ -186,6 +188,8 @@ describe('downgrade helpers still work with v9', () => {
       DROP TABLE IF EXISTS ai_asset_tags;
       DROP TABLE IF EXISTS ai_content;
       DROP INDEX IF EXISTS ai_content_asset_field;
+    DROP TABLE IF EXISTS linked_ignored_assets;
+    DROP TABLE IF EXISTS linked_folder_rules;
       DROP TABLE IF EXISTS revision_artifacts;
       DROP TABLE IF EXISTS jobs;
       DROP TABLE IF EXISTS asset_metadata;
@@ -202,7 +206,7 @@ describe('downgrade helpers still work with v9', () => {
 
     service.openLibrary(created.libraryPath);
     const db = new TestDatabase(dbPath);
-    expect(db.pragma('user_version')).toEqual([{ user_version: 10 }]);
+    expect(db.pragma('user_version')).toEqual([{ user_version: 13 }]);
     db.close();
     service.closeAll();
   });
@@ -423,6 +427,178 @@ describe('restoreAssets', () => {
     service.closeAll();
   });
 
+  it('skips a conflicting restore without removing the trashed asset', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'Skip Restore', selectedParentPath: root });
+
+    writeFileSync(path.join(root, 'clash.png'), 'first');
+    const first = importNoConflict(service, created.libraryId, path.join(root, 'clash.png')).assets[0]!;
+    service.trashAssets({ libraryId: created.libraryId, assetIds: [first.assetId] });
+    writeFileSync(path.join(created.libraryPath, 'Assets', 'clash.png'), 'replacement');
+
+    const restored = service.restoreAssets({
+      libraryId: created.libraryId,
+      assetIds: [first.assetId],
+      conflictStrategy: 'skip',
+    });
+
+    expect(restored.restoredCount).toBe(0);
+    expect(service.listTrash(created.libraryId).map((asset) => asset.assetId)).toContain(first.assetId);
+    expect(readFileSync(path.join(created.libraryPath, 'Assets', 'clash.png'), 'utf8')).toBe('replacement');
+    const database = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    expect(database.prepare("SELECT status FROM file_operations WHERE kind = 'restore' ORDER BY created_at DESC LIMIT 1").get()).toEqual({ status: 'committed' });
+    database.close();
+    service.closeAll();
+  });
+
+  it('replaces a conflicting active asset while preserving the restored identity', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'Replace Restore', selectedParentPath: root });
+
+    writeFileSync(path.join(root, 'clash.png'), 'restored-content');
+    const restoredIdentity = importNoConflict(service, created.libraryId, path.join(root, 'clash.png')).assets[0]!;
+    service.trashAssets({ libraryId: created.libraryId, assetIds: [restoredIdentity.assetId] });
+    writeFileSync(path.join(root, 'clash.png'), 'active-content');
+    const active = importNoConflict(service, created.libraryId, path.join(root, 'clash.png')).assets[0]!;
+
+    const result = service.restoreAssets({
+      libraryId: created.libraryId,
+      assetIds: [restoredIdentity.assetId],
+      conflictStrategy: 'replace',
+    });
+
+    expect(result.assets[0]?.assetId).toBe(restoredIdentity.assetId);
+    expect(service.listAssets({ libraryId: created.libraryId, recursive: true }).some((asset) => asset.assetId === active.assetId)).toBe(false);
+    expect(readFileSync(path.join(created.libraryPath, 'Assets', 'clash.png'), 'utf8')).toBe('restored-content');
+    service.closeAll();
+  });
+
+  it.each([
+    'crash-restore-before-filesystem',
+    'crash-restore-after-filesystem',
+    'crash-restore-before-db-commit',
+  ] as const)('rolls back keep-both restore journal on reopen after %s without orphaning its destination', (failAt) => {
+    const root = temporaryRoot();
+    const setup = new LibraryService();
+    const created = setup.createLibrary({ displayName: `Restore Journal ${failAt}`, selectedParentPath: root });
+
+    writeFileSync(path.join(root, 'clash.png'), 'trashed-content');
+    const trashed = importNoConflict(setup, created.libraryId, path.join(root, 'clash.png')).assets[0]!;
+    setup.trashAssets({ libraryId: created.libraryId, assetIds: [trashed.assetId] });
+    writeFileSync(path.join(created.libraryPath, 'Assets', 'clash.png'), 'untracked-active-content');
+    setup.closeAll();
+
+    const crashing = new LibraryService({ failAt });
+    const opened = crashing.openLibrary(created.libraryPath);
+    expectServiceError(
+      () => crashing.restoreAssets({
+        libraryId: opened.libraryId,
+        assetIds: [trashed.assetId],
+        conflictStrategy: 'keep-both',
+      }),
+      'LIBRARY_NOT_WRITABLE',
+    );
+    crashing.closeAll();
+
+    const recovered = new LibraryService();
+    const reopened = recovered.openLibrary(created.libraryPath);
+    expect(readFileSync(path.join(reopened.libraryPath, 'Assets', 'clash.png'), 'utf8')).toBe('untracked-active-content');
+    expect(existsSync(path.join(reopened.libraryPath, 'Assets', 'clash (2).png'))).toBe(false);
+    expect(recovered.listTrash(reopened.libraryId).map((asset) => asset.assetId)).toContain(trashed.assetId);
+    const database = new TestDatabase(path.join(reopened.libraryPath, '.serpent', 'library.db'));
+    expect(database.prepare("SELECT status FROM file_operations WHERE kind = 'restore' ORDER BY created_at DESC LIMIT 1").get()).toEqual({ status: 'rolled_back' });
+    database.close();
+    recovered.closeAll();
+  });
+
+  it.each([
+    'crash-restore-after-backup',
+    'crash-restore-after-filesystem',
+    'crash-restore-before-db-commit',
+  ] as const)('restores the replaced active asset on reopen after %s', (failAt) => {
+    const root = temporaryRoot();
+    const setup = new LibraryService();
+    const created = setup.createLibrary({ displayName: `Replace Journal ${failAt}`, selectedParentPath: root });
+
+    writeFileSync(path.join(root, 'clash.png'), 'restored-content');
+    const restoredIdentity = importNoConflict(setup, created.libraryId, path.join(root, 'clash.png')).assets[0]!;
+    setup.trashAssets({ libraryId: created.libraryId, assetIds: [restoredIdentity.assetId] });
+    writeFileSync(path.join(root, 'clash.png'), 'active-content');
+    const active = importNoConflict(setup, created.libraryId, path.join(root, 'clash.png')).assets[0]!;
+    setup.closeAll();
+
+    const crashing = new LibraryService({ failAt });
+    const opened = crashing.openLibrary(created.libraryPath);
+    expectServiceError(
+      () => crashing.restoreAssets({
+        libraryId: opened.libraryId,
+        assetIds: [restoredIdentity.assetId],
+        conflictStrategy: 'replace',
+      }),
+      'LIBRARY_NOT_WRITABLE',
+    );
+    crashing.closeAll();
+
+    const recovered = new LibraryService();
+    const reopened = recovered.openLibrary(created.libraryPath);
+    expect(readFileSync(path.join(reopened.libraryPath, 'Assets', 'clash.png'), 'utf8')).toBe('active-content');
+    expect(recovered.listAssets({ libraryId: reopened.libraryId, recursive: true }).map((asset) => asset.assetId)).toContain(active.assetId);
+    expect(recovered.listTrash(reopened.libraryId).map((asset) => asset.assetId)).toContain(restoredIdentity.assetId);
+    recovered.closeAll();
+  });
+
+  it('keeps the committed restored identity after a crash immediately following the database commit', () => {
+    const root = temporaryRoot();
+    const setup = new LibraryService();
+    const created = setup.createLibrary({ displayName: 'Committed Restore Journal', selectedParentPath: root });
+
+    writeFileSync(path.join(root, 'clash.png'), 'restored-content');
+    const restoredIdentity = importNoConflict(setup, created.libraryId, path.join(root, 'clash.png')).assets[0]!;
+    setup.trashAssets({ libraryId: created.libraryId, assetIds: [restoredIdentity.assetId] });
+    writeFileSync(path.join(root, 'clash.png'), 'active-content');
+    const active = importNoConflict(setup, created.libraryId, path.join(root, 'clash.png')).assets[0]!;
+    setup.closeAll();
+
+    const crashing = new LibraryService({ failAt: 'crash-restore-after-db-commit' });
+    const opened = crashing.openLibrary(created.libraryPath);
+    expectServiceError(
+      () => crashing.restoreAssets({
+        libraryId: opened.libraryId,
+        assetIds: [restoredIdentity.assetId],
+        conflictStrategy: 'replace',
+      }),
+      'LIBRARY_NOT_WRITABLE',
+    );
+    crashing.closeAll();
+
+    const recovered = new LibraryService();
+    const reopened = recovered.openLibrary(created.libraryPath);
+    expect(readFileSync(path.join(reopened.libraryPath, 'Assets', 'clash.png'), 'utf8')).toBe('restored-content');
+    expect(recovered.listAssets({ libraryId: reopened.libraryId, recursive: true }).map((asset) => asset.assetId)).toContain(restoredIdentity.assetId);
+    expect(recovered.listAssets({ libraryId: reopened.libraryId, recursive: true }).map((asset) => asset.assetId)).not.toContain(active.assetId);
+    expect(recovered.listTrash(reopened.libraryId)).toEqual([]);
+    recovered.closeAll();
+  });
+
+  it('restores explicitly to the library root instead of the original folder', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'Explicit Root Restore', selectedParentPath: root });
+    const folder = service.createManagedFolder({ libraryId: created.libraryId, name: 'Original' });
+
+    writeFileSync(path.join(root, 'root-target.jpg'), 'data');
+    const asset = importNoConflict(service, created.libraryId, path.join(root, 'root-target.jpg'), folder.folderId).assets[0]!;
+    service.trashAssets({ libraryId: created.libraryId, assetIds: [asset.assetId] });
+
+    const result = service.restoreAssets({ libraryId: created.libraryId, assetIds: [asset.assetId], targetFolderId: null });
+
+    expect(result.assets[0]?.relativeFilePath).toBe('root-target.jpg');
+    expect(existsSync(path.join(created.libraryPath, 'Assets', 'root-target.jpg'))).toBe(true);
+    service.closeAll();
+  });
+
   it('falls back to root when original folder is gone', () => {
     const root = temporaryRoot();
     const service = new LibraryService();
@@ -457,6 +633,24 @@ describe('restoreAssets', () => {
       () => service.restoreAssets({ libraryId: created.libraryId, assetIds: [r.assets[0]!.assetId] }),
       'INVALID_IMPORT_DECISION',
     );
+    service.closeAll();
+  });
+
+  it('rejects duplicate asset ids before creating a restore journal', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'Duplicate Restore', selectedParentPath: root });
+    writeFileSync(path.join(root, 'duplicate.jpg'), 'data');
+    const asset = importNoConflict(service, created.libraryId, path.join(root, 'duplicate.jpg')).assets[0]!;
+    service.trashAssets({ libraryId: created.libraryId, assetIds: [asset.assetId] });
+
+    expectServiceError(
+      () => service.restoreAssets({ libraryId: created.libraryId, assetIds: [asset.assetId, asset.assetId] }),
+      'INVALID_IMPORT_DECISION',
+    );
+    const database = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    expect((database.prepare("SELECT COUNT(*) AS count FROM file_operations WHERE kind = 'restore'").get() as { count: number }).count).toBe(0);
+    database.close();
     service.closeAll();
   });
 });
@@ -1313,7 +1507,7 @@ describe('relinkBatchApply', () => {
     service.closeAll();
   });
 
-  it('keepMetadata=true preserves labels, rating, tags, collections', () => {
+  it('keepMetadata=true preserves human and AI metadata, tags, and collections', () => {
     const root = temporaryRoot();
     const service = new LibraryService();
     const created = service.createLibrary({ displayName: 'Keep Meta', selectedParentPath: root });
@@ -1325,6 +1519,15 @@ describe('relinkBatchApply', () => {
     service.setAssetMetadata({ libraryId: created.libraryId, assetId, expectedVersion: 0, label: 'Important', rating: 5, favorite: true, sourcePageUrl: 'https://example.com' });
     const tag = service.createTag({ libraryId: created.libraryId, name: 'keep-tag' });
     service.assignTags({ libraryId: created.libraryId, assetIds: [assetId], tagIds: [tag.tagId] });
+    service.writeAiAnalysisResult({
+      libraryId: created.libraryId,
+      assetId,
+      label: 'AI label',
+      tags: ['ai-keep-tag'],
+      modelId: 'test-model',
+      modelVersion: 'v1',
+      enabledFields: { label: true, description: false, tags: true, structuredMetadata: false },
+    });
 
     rmSync(path.join(created.libraryPath, 'Assets', 'keepmeta.jpg'));
     service.refreshManagedAssets(created.libraryId);
@@ -1343,10 +1546,14 @@ describe('relinkBatchApply', () => {
 
     const tags = service.listTags(created.libraryId);
     expect(tags.find((t) => t.name === 'keep-tag')!.assetCount).toBeGreaterThan(0);
+    expect(service.getAiContent(created.libraryId, assetId).some((content) => content.fieldName === 'label')).toBe(true);
+    const keepDb = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    expect((keepDb.prepare('SELECT COUNT(*) AS count FROM ai_asset_tags WHERE asset_id = ?').get(assetId) as { count: number }).count).toBe(1);
+    keepDb.close();
     service.closeAll();
   });
 
-  it('keepMetadata=false clears labels, rating, tags, and collections', () => {
+  it('keepMetadata=false clears human and AI metadata, tags, and collections', () => {
     const root = temporaryRoot();
     const service = new LibraryService();
     const created = service.createLibrary({ displayName: 'Clear Meta', selectedParentPath: root });
@@ -1358,6 +1565,15 @@ describe('relinkBatchApply', () => {
     service.setAssetMetadata({ libraryId: created.libraryId, assetId, expectedVersion: 0, label: 'Will Clear', rating: 4, favorite: true, sourcePageUrl: 'https://gone.com' });
     const tag = service.createTag({ libraryId: created.libraryId, name: 'clear-tag' });
     service.assignTags({ libraryId: created.libraryId, assetIds: [assetId], tagIds: [tag.tagId] });
+    service.writeAiAnalysisResult({
+      libraryId: created.libraryId,
+      assetId,
+      description: 'AI description to clear',
+      tags: ['ai-clear-tag'],
+      modelId: 'test-model',
+      modelVersion: 'v1',
+      enabledFields: { label: false, description: true, tags: true, structuredMetadata: false },
+    });
 
     const col = service.createCollection({ libraryId: created.libraryId, name: 'Clear Col' });
     service.addCollectionAssets({ libraryId: created.libraryId, collectionId: col.collectionId, assetIds: [assetId] });
@@ -1379,6 +1595,10 @@ describe('relinkBatchApply', () => {
 
     expect(service.listTags(created.libraryId).find((t) => t.name === 'clear-tag')!.assetCount).toBe(0);
     expect(service.listCollectionAssets({ libraryId: created.libraryId, collectionId: col.collectionId, recursive: false })).toHaveLength(0);
+    expect(service.getAiContent(created.libraryId, assetId)).toHaveLength(0);
+    const clearDb = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    expect((clearDb.prepare('SELECT COUNT(*) AS count FROM ai_asset_tags WHERE asset_id = ?').get(assetId) as { count: number }).count).toBe(0);
+    clearDb.close();
     service.closeAll();
   });
 

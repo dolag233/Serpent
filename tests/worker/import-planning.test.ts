@@ -110,6 +110,33 @@ describe('pending import plans', () => {
     expect(existsSync(path.join(library.libraryPath, '.serpent', 'operations'))).toBe(false);
   });
 
+  it('omits operating-system metadata and common dependency/cache trees', () => {
+    const root = temporaryRoot();
+    const source = path.join(root, 'Reference');
+    mkdirSync(path.join(source, '.git'), { recursive: true });
+    mkdirSync(path.join(source, 'node_modules', 'package'), { recursive: true });
+    mkdirSync(path.join(source, 'shots'), { recursive: true });
+    writeFileSync(path.join(source, '.DS_Store'), 'finder metadata');
+    writeFileSync(path.join(source, 'Thumbs.db'), 'windows thumbnails');
+    writeFileSync(path.join(source, '._sidecar.png'), 'resource fork');
+    writeFileSync(path.join(source, '.git', 'config'), 'git data');
+    writeFileSync(path.join(source, 'node_modules', 'package', 'index.js'), 'dependency');
+    writeFileSync(path.join(source, 'shots', 'hero.png'), 'hero');
+    const service = new LibraryService();
+    const library = service.createLibrary({ displayName: 'IgnoredMetadata', selectedParentPath: root });
+
+    const completion = service.prepareOrExecuteImport({
+      libraryId: library.libraryId,
+      sourceKind: 'folder',
+      sourcePaths: [source],
+    });
+
+    expect(completion).toMatchObject({ importedCount: 1, skippedCount: 0 });
+    expect(service.listAssets({ libraryId: library.libraryId, recursive: true })
+      .map((asset) => asset.displayName)).toEqual(['hero.png']);
+    service.closeAll();
+  });
+
   it('imports existing names longer than the managed-folder display-name limit', () => {
     const root = temporaryRoot();
     const source = path.join(root, 'Reference');

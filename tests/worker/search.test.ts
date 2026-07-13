@@ -167,7 +167,7 @@ describe('schema v5->v6 migration', () => {
 
     const db = new TestDatabase(path.join(libraryPath, '.serpent', 'library.db'));
     try {
-      expect(db.pragma('user_version')).toEqual([{ user_version: 10 }]);
+      expect(db.pragma('user_version')).toEqual([{ user_version: 13 }]);
 
       // Verify FTS tables exist.
       const searchIndex = db.prepare(
@@ -633,6 +633,54 @@ describe('FTS5 query builder', () => {
 // ── Search Filters ──────────────────────────────────────────────────
 
 describe('search filters', () => {
+  it('scopes ordinary browsing to managed folders with optional descendants', () => {
+    const { service, libraryId, libraryPath, assetId } = createLibraryWithAssetAndTags();
+    const parent = service.listManagedFolders(libraryId)[0]!;
+    const child = service.createManagedFolder({
+      libraryId,
+      parentFolderId: parent.folderId,
+      name: 'Child',
+    });
+    const childAssetId = randomUUID();
+    const childRevisionId = randomUUID();
+    const childName = 'nested.png';
+    const childRelativePath = `${child.relativePath}/${childName}`;
+    const now = new Date().toISOString();
+    writeFileSync(path.join(libraryPath, 'Assets', childRelativePath), 'nested asset');
+    const db = new TestDatabase(path.join(libraryPath, '.serpent', 'library.db'));
+    try {
+      db.prepare(
+        `INSERT INTO assets (asset_id, location_kind, managed_folder_id, linked_folder_id,
+          relative_file_path, current_revision_id, availability, path_identity, created_at, updated_at)
+         VALUES (?, 'managed', ?, NULL, ?, NULL, 'available', ?, ?, ?)`,
+      ).run(childAssetId, child.folderId, childRelativePath, childRelativePath, now, now);
+      db.prepare(
+        `INSERT INTO revisions (revision_id, asset_id, parent_revision_id, byte_size,
+          modified_at, original_filename, origin, accepted_at)
+         VALUES (?, ?, NULL, 12, ?, ?, 'import', ?)`,
+      ).run(childRevisionId, childAssetId, now, childName, now);
+      db.prepare('UPDATE assets SET current_revision_id = ? WHERE asset_id = ?')
+        .run(childRevisionId, childAssetId);
+    } finally {
+      db.close();
+    }
+
+    const direct = service.searchAssets({
+      libraryId,
+      scope: { kind: 'folder', folderId: parent.folderId, recursive: false },
+    });
+    const recursive = service.searchAssets({
+      libraryId,
+      scope: { kind: 'folder', folderId: parent.folderId, recursive: true },
+    });
+
+    expect(direct.items.map((asset) => asset.assetId)).toEqual([assetId]);
+    expect(recursive.items.map((asset) => asset.assetId).sort()).toEqual(
+      [assetId, childAssetId].sort(),
+    );
+    service.closeAll();
+  });
+
   it('intersects search results with the current collection scope', () => {
     const { service, libraryId, libraryPath, assetId } = createLibraryWithAssetAndTags();
     const otherAssetId = createSecondAsset(service, libraryId, libraryPath, 'Other Hero');
@@ -846,6 +894,70 @@ describe('search filters', () => {
 
     service.closeAll();
   });
+
+  it('filters technical metadata with typed ranges, OR semantics, and explicit NULL behavior', () => {
+    const { service, libraryId, assetId, libraryPath } = createLibraryWithAssetAndTags();
+    const portraitId = createSecondAsset(service, libraryId, libraryPath, 'Portrait');
+    const unknownId = createSecondAsset(service, libraryId, libraryPath, 'Unknown');
+    const db = new TestDatabase(path.join(libraryPath, '.serpent', 'library.db'));
+    const revisions = db.prepare(
+      'SELECT asset_id, current_revision_id FROM assets WHERE asset_id IN (?, ?)',
+    ).all(assetId, portraitId) as Array<{ asset_id: string; current_revision_id: string }>;
+    const insert = db.prepare(
+      `INSERT INTO revision_artifacts
+         (artifact_id, revision_id, kind, mime_type, byte_size, file_path,
+          width, height, duration_ms, generator_version, status, generated_at)
+       VALUES (?, ?, 'extracted_metadata', 'application/json', 1, ?, ?, ?, ?, 'test', 'ready', ?)`,
+    );
+    const now = new Date().toISOString();
+    for (const row of revisions) {
+      const isLandscape = row.asset_id === assetId;
+      insert.run(
+        randomUUID(),
+        row.current_revision_id,
+        `${row.asset_id}.json`,
+        isLandscape ? 1920 : 1080,
+        isLandscape ? 1080 : 1920,
+        isLandscape ? 20_000 : 5_000,
+        now,
+      );
+    }
+    db.close();
+
+    const landscape = service.searchAssets({
+      libraryId,
+      filters: [
+        { field: 'width', ranges: [{ min: 1900 }], exclude: false },
+        { field: 'height', ranges: [{ max: 1100 }], exclude: false },
+        { field: 'aspect_ratio', ranges: [{ min: 1.7, max: 1.8 }], exclude: false },
+        { field: 'duration_ms', ranges: [{ min: 10_000, max: 30_000 }], exclude: false },
+      ],
+    });
+    expect(landscape.items.map((asset) => asset.assetId)).toEqual([assetId]);
+
+    const eitherDuration = service.searchAssets({
+      libraryId,
+      filters: [{
+        field: 'duration_ms',
+        ranges: [{ max: 5_000 }, { min: 20_000 }],
+        exclude: false,
+      }],
+      sort: { field: 'duration', order: 'asc' },
+      limit: 1,
+      offset: 1,
+    });
+    expect(eitherDuration.total).toBe(2);
+    expect(eitherDuration.items).toHaveLength(1);
+    expect(eitherDuration.items[0]!.assetId).toBe(assetId);
+
+    const excludeLandscape = service.searchAssets({
+      libraryId,
+      filters: [{ field: 'aspect_ratio', ranges: [{ min: 1.7 }], exclude: true }],
+    });
+    expect(excludeLandscape.items.map((asset) => asset.assetId).sort())
+      .toEqual([portraitId, unknownId].sort());
+    service.closeAll();
+  });
 });
 
 // ── Sort ────────────────────────────────────────────────────────────
@@ -902,6 +1014,71 @@ describe('sort', () => {
     service.closeAll();
   });
 
+  it('sorts by extracted video duration with nulls last and projects durationMs', () => {
+    const { service, libraryId, assetId, libraryPath } = createLibraryWithAssetAndTags();
+    const assetId2 = createSecondAsset(service, libraryId, libraryPath, 'Short');
+    const db = new TestDatabase(path.join(libraryPath, '.serpent', 'library.db'));
+    const revisions = db.prepare(
+      'SELECT asset_id, current_revision_id FROM assets WHERE asset_id IN (?, ?)',
+    ).all(assetId, assetId2) as Array<{ asset_id: string; current_revision_id: string }>;
+    const insert = db.prepare(
+      `INSERT INTO revision_artifacts
+         (artifact_id, revision_id, kind, mime_type, byte_size, file_path,
+          width, height, duration_ms, generator_version, status, generated_at)
+       VALUES (?, ?, 'extracted_metadata', 'application/json', 1, ?, 1920, 1080, ?, 'test', 'ready', ?)`,
+    );
+    const now = new Date().toISOString();
+    for (const row of revisions) {
+      const durationMs = row.asset_id === assetId ? 20_000 : 5_000;
+      insert.run(randomUUID(), row.current_revision_id, `${row.asset_id}.json`, durationMs, now);
+    }
+    db.close();
+
+    const ascending = service.searchAssets({
+      libraryId,
+      sort: { field: 'duration', order: 'asc' },
+    });
+    expect(ascending.items.map((asset) => asset.assetId)).toEqual([assetId2, assetId]);
+    expect(ascending.items.map((asset) => asset.durationMs)).toEqual([5_000, 20_000]);
+    const descending = service.searchAssets({
+      libraryId,
+      sort: { field: 'duration', order: 'desc' },
+    });
+    expect(descending.items.map((asset) => asset.assetId)).toEqual([assetId, assetId2]);
+    service.closeAll();
+  });
+
+  it('sorts by indexed dominant colour with nulls last and an asset-id tie break', () => {
+    const { service, libraryId, assetId, libraryPath } = createLibraryWithAssetAndTags();
+    const sameHueAssetId = createSecondAsset(service, libraryId, libraryPath, 'Same red');
+    const unknownAssetId = createSecondAsset(service, libraryId, libraryPath, 'No palette');
+    const db = new TestDatabase(path.join(libraryPath, '.serpent', 'library.db'));
+    const revisions = db.prepare(
+      'SELECT asset_id, current_revision_id FROM assets WHERE asset_id IN (?, ?)',
+    ).all(assetId, sameHueAssetId) as Array<{ asset_id: string; current_revision_id: string }>;
+    const insert = db.prepare(
+      `INSERT INTO revision_artifacts
+         (artifact_id, revision_id, kind, mime_type, byte_size, file_path,
+          generator_version, status, generated_at, dominant_hue, dominant_lightness)
+       VALUES (?, ?, 'extracted_palette', 'application/json', 1, ?, 'test', 'ready', ?, 0, 0.5)`,
+    );
+    const now = new Date().toISOString();
+    for (const row of revisions) {
+      insert.run(randomUUID(), row.current_revision_id, `${row.asset_id}-palette.json`, now);
+    }
+    db.close();
+
+    const result = service.searchAssets({
+      libraryId,
+      sort: { field: 'color', order: 'asc' },
+    });
+    expect(result.items.map((asset) => asset.assetId)).toEqual([
+      ...[assetId, sameHueAssetId].sort(),
+      unknownAssetId,
+    ]);
+    service.closeAll();
+  });
+
   it('sorts by name', () => {
     const { service, libraryId } = createLibraryWithAssetAndTags();
 
@@ -938,6 +1115,34 @@ describe('pagination', () => {
     service.closeAll();
   });
 
+  it('preserves manual collection order across pages', () => {
+    const { service, libraryId, libraryPath, assetId } = createLibraryWithAssetAndTags();
+    const secondAssetId = createSecondAsset(service, libraryId, libraryPath, 'Second');
+    const collection = service.createCollection({ libraryId, name: 'Ordered' });
+    service.addCollectionAssets({
+      libraryId,
+      collectionId: collection.collectionId,
+      assetIds: [secondAssetId, assetId],
+    });
+
+    const first = service.searchAssets({
+      libraryId,
+      scope: { kind: 'collection', collectionId: collection.collectionId, recursive: false },
+      limit: 1,
+      offset: 0,
+    });
+    const second = service.searchAssets({
+      libraryId,
+      scope: { kind: 'collection', collectionId: collection.collectionId, recursive: false },
+      limit: 1,
+      offset: 1,
+    });
+
+    expect(first.items[0]?.assetId).toBe(secondAssetId);
+    expect(second.items[0]?.assetId).toBe(assetId);
+    service.closeAll();
+  });
+
   it('returns empty items when offset exceeds total', () => {
     const { service, libraryId } = createLibraryWithAssetAndTags();
 
@@ -946,6 +1151,43 @@ describe('pagination', () => {
     expect(result.total).toBeGreaterThanOrEqual(1);
     expect(result.offset).toBe(999);
 
+    service.closeAll();
+  });
+
+  it('paginates the explicit trash scope with a stable asset-id tie breaker', () => {
+    const { service, libraryId, libraryPath, assetId } = createLibraryWithAssetAndTags();
+    const secondAssetId = createSecondAsset(service, libraryId, libraryPath, 'Second');
+    service.trashAssets({ libraryId, assetIds: [assetId, secondAssetId] });
+
+    // Force an identical primary sort value so the test exercises the stable
+    // asset_id suffix rather than relying on clock resolution.
+    const database = new TestDatabase(path.join(libraryPath, '.serpent', 'library.db'));
+    try {
+      database.prepare('UPDATE assets SET deleted_at = ? WHERE asset_id IN (?, ?)')
+        .run('2026-07-13T00:00:00.000Z', assetId, secondAssetId);
+    } finally {
+      database.close();
+    }
+
+    const first = service.searchAssets({
+      libraryId,
+      scope: { kind: 'trash' },
+      limit: 1,
+      offset: 0,
+    });
+    const second = service.searchAssets({
+      libraryId,
+      scope: { kind: 'trash' },
+      limit: 1,
+      offset: 1,
+    });
+
+    expect(first.total).toBe(2);
+    expect(second.total).toBe(2);
+    expect([first.items[0]!.assetId, second.items[0]!.assetId])
+      .toEqual([assetId, secondAssetId].sort());
+    expect(first.items[0]!.deletedAt).not.toBeNull();
+    expect(service.searchAssets({ libraryId }).total).toBe(0);
     service.closeAll();
   });
 

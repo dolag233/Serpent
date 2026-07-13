@@ -5,7 +5,15 @@ import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
   {
-    ignores: ['.vite/**', 'dist/**', 'out/**', 'coverage/**', 'node_modules/**'],
+    ignores: [
+      '.vite/**',
+      '.media-build/**',
+      'artifacts/**',
+      'dist/**',
+      'out/**',
+      'coverage/**',
+      'node_modules/**',
+    ],
   },
   js.configs.recommended,
   {

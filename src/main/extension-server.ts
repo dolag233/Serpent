@@ -1,4 +1,5 @@
 import * as http from 'node:http';
+import { timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 
 // ---------------------------------------------------------------------------
@@ -30,6 +31,8 @@ export interface ExtensionServerOptions {
   onSaveIntent: (
     intent: SaveIntent,
   ) => void | SaveIntentDisposition | Promise<void | SaveIntentDisposition>;
+  /** Returns the current high-entropy pairing token. Called per request so rotation is immediate. */
+  getPairingToken: () => string;
   /** Optional error callback for server-level errors (e.g. bind failure). */
   onError?: (error: Error) => void;
 }
@@ -52,9 +55,20 @@ function isLoopback(addr: string | undefined): boolean {
 }
 
 function isAllowedOrigin(origin: string | string[] | undefined): boolean {
+  // Chromium MV3 service-worker fetches may omit Origin. In that controlled
+  // case the Bearer token is the caller identity. Any explicit browser Origin
+  // must be a real unpacked/store-installed Chromium extension origin.
   if (origin === undefined) return true;
   if (Array.isArray(origin)) return false;
   return /^chrome-extension:\/\/[a-p]{32}$/u.test(origin);
+}
+
+function hasValidPairingToken(authorization: string | undefined, expectedToken: string): boolean {
+  if (!authorization?.startsWith('Bearer ') || expectedToken.length === 0) return false;
+  const suppliedToken = authorization.slice('Bearer '.length);
+  const supplied = Buffer.from(suppliedToken, 'utf8');
+  const expected = Buffer.from(expectedToken, 'utf8');
+  return supplied.length === expected.length && timingSafeEqual(supplied, expected);
 }
 
 const MAX_SAVE_BODY_BYTES = 16 * 1024;
@@ -117,6 +131,12 @@ export async function createExtensionServer(
     if (req.method === 'POST' && req.url === '/save') {
       if (!isAllowedOrigin(req.headers.origin)) {
         jsonResponse(res, 403, { status: 'rejected', reason: 'forbidden origin' });
+        req.resume();
+        return;
+      }
+      if (!hasValidPairingToken(req.headers.authorization, options.getPairingToken())) {
+        res.setHeader('WWW-Authenticate', 'Bearer realm="Serpent"');
+        jsonResponse(res, 401, { status: 'rejected', reason: 'authentication required' });
         req.resume();
         return;
       }

@@ -1,0 +1,33 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "serpent-media-runtime",
+  "version-string": "1",
+  "builtin-baseline": "56bb2411609227288b70117ead2c47585ba07713",
+  "dependencies": [
+    {
+      "name": "ffmpeg",
+      "default-features": false,
+      "features": [
+        "avcodec",
+        "avfilter",
+        "avformat",
+        "drawtext",
+        "ffmpeg",
+        "ffprobe",
+        "freetype",
+        "opus",
+        "swresample",
+        "swscale",
+        "vpx"
+      ]
+    },
+    {
+      "name": "openimageio",
+      "default-features": false,
+      "features": [
+        "opencolorio",
+        "tools"
+      ]
+    }
+  ]
+}

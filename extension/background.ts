@@ -1,84 +1,83 @@
-// MV3 Service Worker for Serpent browser extension.
-// Creates a context menu item "Save to Serpent", receives media capture
-// messages from the content script, and POSTs save intents to the
-// Serpent desktop app via localhost HTTP (fire-and-forget).
+// Manifest V3 service worker for the Serpent browser extension.
 
-const SERPENT_PORTS = [19876, 19877, 19878];
-const SERPENT_HOST = 'http://127.0.0.1';
+import {
+  deliverSaveIntent,
+  notificationForOutcome,
+  saveIntentFromContextMenu,
+  type UserNotification,
+} from './save-client';
 
-interface SaveIntent {
-  kind: 'image' | 'video';
-  sourcePageUrl: string;
-  mediaUrl: string;
-  mediaType?: string;
+const MENU_ID = 'save-to-serpent';
+let notificationSequence = 0;
+
+function createContextMenu(): void {
+  chrome.contextMenus.create({
+    id: MENU_ID,
+    title: '保存到 Serpent',
+    contexts: ['image', 'video'],
+  }, () => {
+    // Reading lastError prevents Chrome from reporting an unchecked callback
+    // error if policy blocks context-menu creation.
+    void chrome.runtime.lastError;
+  });
 }
 
-// Per-tab storage for the last captured media element info.
-// Keyed by tab ID; cleared after the context menu click is processed.
-const capturedMedia = new Map<number, SaveIntent>();
-
 chrome.runtime.onInstalled.addListener(() => {
-  chrome.contextMenus.create({
-    id: 'save-to-serpent',
-    title: 'Save to Serpent',
-    contexts: ['image', 'video'],
+  chrome.contextMenus.removeAll(() => {
+    void chrome.runtime.lastError;
+    createContextMenu();
   });
 });
 
-chrome.runtime.onMessage.addListener((message, sender) => {
-  if (
-    message &&
-    typeof message === 'object' &&
-    'type' in message &&
-    message.type === 'capture-media' &&
-    sender.tab?.id !== undefined
-  ) {
-    capturedMedia.set(sender.tab.id, {
-      kind: message.kind as 'image' | 'video',
-      sourcePageUrl: message.sourcePageUrl as string,
-      mediaUrl: message.mediaUrl as string,
-      mediaType: message.mediaType as string | undefined,
-    });
-  }
-});
-
-chrome.contextMenus.onClicked.addListener((info, tab) => {
-  if (info.menuItemId !== 'save-to-serpent' || tab?.id === undefined) {
-    return;
-  }
-
-  const intent = capturedMedia.get(tab.id);
-  if (!intent) {
-    return;
-  }
-
-  capturedMedia.delete(tab.id);
-
-  sendToSerpent(intent);
-});
-
-async function sendToSerpent(intent: SaveIntent): Promise<void> {
-  for (const port of SERPENT_PORTS) {
-    try {
-      const response = await fetch(`${SERPENT_HOST}:${port}/save`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(intent),
-      });
-
-      if (response.status === 202) {
-        // Fire-and-forget success — stop scanning.
-        return;
-      }
-
-      // Server responded but rejected the intent — do not try other ports.
-      return;
-    } catch {
-      // Connection failed (ECONNREFUSED, etc.) — try next port.
-      continue;
-    }
-  }
-
-  // All ports unreachable. Silently ignore; the user will see no feedback
-  // but the extension does not assume Serpent is running.
+function showNotification(notification: UserNotification): void {
+  notificationSequence += 1;
+  chrome.notifications.create(
+    `serpent-save-${Date.now()}-${notificationSequence}`,
+    {
+      type: 'basic',
+      iconUrl: 'icons/icon-128.png',
+      title: notification.title,
+      message: notification.message,
+    },
+    () => {
+      void chrome.runtime.lastError;
+    },
+  );
 }
+
+async function handleContextMenuClick(info: SerpentContextMenuClickData): Promise<void> {
+  if (info.menuItemId !== MENU_ID) return;
+
+  // srcUrl and pageUrl are supplied with the contextMenus click itself. They
+  // survive MV3 service-worker suspension, unlike an in-memory capture Map.
+  const intent = saveIntentFromContextMenu(info);
+  if (!intent) {
+    showNotification({
+      title: '无法保存到 Serpent',
+      message: '这个媒体或页面不是可下载的 HTTP(S) 地址。',
+    });
+    return;
+  }
+
+  const pairingToken = await new Promise<string | undefined>((resolve) => {
+    chrome.storage.local.get('pairingToken', (values) => {
+      void chrome.runtime.lastError;
+      const value = values.pairingToken;
+      resolve(typeof value === 'string' && value.length > 0 ? value : undefined);
+    });
+  });
+  if (!pairingToken) {
+    showNotification({
+      title: '需要与 Serpent 配对',
+      message: '请打开扩展选项，粘贴桌面应用中的浏览器扩展配对码。',
+    });
+    return;
+  }
+
+  const outcome = await deliverSaveIntent(intent, pairingToken);
+  showNotification(notificationForOutcome(outcome));
+}
+
+chrome.contextMenus.onClicked.addListener((info) => {
+  void handleContextMenuClick(info);
+});

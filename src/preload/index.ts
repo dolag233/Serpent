@@ -1,7 +1,8 @@
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
 
-import type { LibraryApiResult, LinkedAssetDeleteResult, PreviewResolution, SerpentLibraryApi } from '../shared/library-api';
-import type { AssetSummary, AssetMetadataResult, CollectionSummary, LinkedFolderSummary, ManagedFolderSummary, SearchScope, SmartCollectionSummary, TagSummary } from '../shared/asset-types';
+import type { AiJobStatus, LibraryApiResult, LinkedAssetDeleteResult, MediaJobStatus, PreviewResolution, SerpentLibraryApi } from '../shared/library-api';
+import { parseExtensionPairingResult, type SerpentExtensionPairingApi } from '../shared/extension-pairing';
+import type { AiSearchPlan, AssetSummary, AssetMetadataResult, CollectionSummary, FilterClause, LinkedFolderRule, LinkedFolderSummary, ManagedFolderSummary, SearchScope, SmartCollectionSummary, TagSummary } from '../shared/asset-types';
 import {
   ASSET_CHANGE_CHANNEL,
   THUMBNAIL_CHANNEL,
@@ -12,6 +13,7 @@ import {
   AI_PROGRESS_CHANNEL,
   AI_COMPLETED_CHANNEL,
   AI_CLEARED_CHANNEL,
+  EXTENSION_PAIRING_CHANNEL,
 } from '../shared/protocol/channels';
 import type { RendererRequest } from '../shared/protocol/requests';
 import {
@@ -37,6 +39,9 @@ import type {
   NameConflictDecision,
   SuspectedDuplicateDecision,
 } from '../shared/protocol/requests';
+import { createPublicError } from '../shared/protocol/errors';
+import { resolveDroppedFilePaths } from './dropped-files';
+import { extractWebMediaDrop } from './web-media-drop';
 
 async function request(command: RendererRequest): Promise<RendererResult> {
   return parseRendererResult(await ipcRenderer.invoke(LIBRARY_REQUEST_CHANNEL, command));
@@ -126,6 +131,72 @@ const library: SerpentLibraryApi = Object.freeze({
     return importRequest({ type: 'asset.import-folder.request', ...input });
   },
 
+  async importDropped(input: {
+    libraryId: string;
+    targetFolderId?: string;
+    targetCollectionId?: string;
+    files: File[];
+    html?: string;
+    uriList?: string;
+  }): Promise<LibraryApiResult<ImportCompletion | ImportConflictPlan>> {
+    // Native File handles always win. Browser drags can include text/html
+    // beside Files; the secondary metadata must never turn a local import into
+    // a network request.
+    if (input.files.length === 0) {
+      try {
+        const extracted = extractWebMediaDrop({
+          html: input.html ?? '',
+          uriList: input.uriList ?? '',
+        });
+        return importRequest({
+          type: 'asset.import-web.request',
+          libraryId: input.libraryId,
+          targetFolderId: input.targetFolderId,
+          targetCollectionId: input.targetCollectionId,
+          ...extracted,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : '';
+        const parserFailure = message === 'WEB_MEDIA_URL_INVALID' || message === 'WEB_MEDIA_DROP_TOO_LARGE'
+          ? message
+          : 'WEB_MEDIA_NOT_FOUND';
+        const result = await request({
+          type: 'asset.import-web-invalid.report',
+          libraryId: input.libraryId,
+          failure: parserFailure,
+        });
+        return result.ok
+          ? { ok: false, error: createPublicError(parserFailure) }
+          : failure(result);
+      }
+    }
+    try {
+      const sourcePaths = resolveDroppedFilePaths(input.files, (file) => webUtils.getPathForFile(file));
+      return importRequest({
+        type: 'asset.import-drop.request',
+        libraryId: input.libraryId,
+        targetFolderId: input.targetFolderId,
+        targetCollectionId: input.targetCollectionId,
+        sourcePaths,
+      });
+    } catch {
+      // Main owns persistent diagnostics. Report only the semantic failure;
+      // no File object or attempted path crosses back to Renderer.
+      const result = await request({ type: 'asset.import-drop-invalid.report', libraryId: input.libraryId });
+      return result.ok
+        ? { ok: false, error: createPublicError('INVALID_DROP_SELECTION') }
+        : failure(result);
+    }
+  },
+
+  async pasteClipboardImage(input: {
+    libraryId: string;
+    targetFolderId?: string;
+    targetCollectionId?: string;
+  }): Promise<LibraryApiResult<ImportCompletion | ImportConflictPlan>> {
+    return importRequest({ type: 'asset.import-clipboard.request', ...input });
+  },
+
   async resolveImport(input: {
     importId: string;
     suspectedDuplicate: SuspectedDuplicateDecision;
@@ -191,6 +262,34 @@ const library: SerpentLibraryApi = Object.freeze({
     return { ok: true, value: result.linkedFolder };
   },
 
+  async getLinkedFolderRules({ libraryId, folderId }: { libraryId: string; folderId: string }) {
+    const result = await request({ type: 'linked-folder.rules.get.request', libraryId, folderId });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'linked-folder.rules') throw new Error('Unexpected linked-folder-rules response.');
+    return { ok: true as const, value: result.rules };
+  },
+
+  async setLinkedFolderRules({ libraryId, folderId, rules }: { libraryId: string; folderId: string; rules: LinkedFolderRule[] }) {
+    const result = await request({ type: 'linked-folder.rules.set.request', libraryId, folderId, rules });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'linked-folder.rules.updated') throw new Error('Unexpected linked-folder-rules-updated response.');
+    return { ok: true as const, value: { rules: result.rules, hiddenCount: result.hiddenCount, restoredCount: result.restoredCount } };
+  },
+
+  async copyAssetsToLinkedFolder({ libraryId, folderId, assetIds, conflictStrategy }: { libraryId: string; folderId: string; assetIds: string[]; conflictStrategy: 'keep-both' | 'replace' | 'skip' }) {
+    const result = await request({ type: 'linked-folder.assets.copy.request', libraryId, folderId, assetIds, conflictStrategy });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'linked-folder.assets.copied') throw new Error('Unexpected linked-folder-assets-copied response.');
+    return { ok: true as const, value: { copiedCount: result.copiedCount, skippedCount: result.skippedCount, assets: result.assets } };
+  },
+
+  async convertLinkedFolderToManaged({ libraryId, folderId, targetFolderId }: { libraryId: string; folderId: string; targetFolderId?: string }) {
+    const result = await request({ type: 'linked-folder.convert.request', libraryId, folderId, targetFolderId });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'linked-folder.converted') throw new Error('Unexpected linked-folder-converted response.');
+    return { ok: true as const, value: { managedFolderId: result.managedFolderId, convertedCount: result.convertedCount, assets: result.assets } };
+  },
+
   async listTags({ libraryId }: { libraryId: string }): Promise<LibraryApiResult<TagSummary[]>> {
     const result = await request({ type: 'tag.list.request', libraryId });
     if (!result.ok) return failure(result);
@@ -247,11 +346,18 @@ const library: SerpentLibraryApi = Object.freeze({
     return { ok: true, value: result.collection };
   },
 
-  async updateCollection({ libraryId, collectionId, name, description, coverAssetId, position }: { libraryId: string; collectionId: string; name?: string; description?: string; coverAssetId?: string; position?: number }): Promise<LibraryApiResult<CollectionSummary>> {
+  async updateCollection({ libraryId, collectionId, name, description, coverAssetId, position }: { libraryId: string; collectionId: string; name?: string; description?: string | null; coverAssetId?: string | null; position?: number }): Promise<LibraryApiResult<CollectionSummary>> {
     const result = await request({ type: 'collection.update.request', libraryId, collectionId, name, description, coverAssetId, position });
     if (!result.ok) return failure(result);
     if (result.type !== 'collection.updated') throw new Error('Unexpected update-collection response.');
     return { ok: true, value: result.collection };
+  },
+
+  async reorderCollections({ libraryId, orderedCollectionIds }: { libraryId: string; orderedCollectionIds: string[] }): Promise<LibraryApiResult<{ orderedCollectionIds: string[] }>> {
+    const result = await request({ type: 'collection.reorder.request', libraryId, orderedCollectionIds });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'collection.reordered') throw new Error('Unexpected reorder-collections response.');
+    return { ok: true, value: { orderedCollectionIds: result.orderedCollectionIds } };
   },
 
   async deleteCollection({ libraryId, collectionId }: { libraryId: string; collectionId: string }): Promise<LibraryApiResult<{ collectionId: string }>> {
@@ -345,11 +451,18 @@ const library: SerpentLibraryApi = Object.freeze({
     return { ok: true, value: { items: result.items, total: result.total, offset: result.offset } };
   },
 
-  async searchAssets({ libraryId, query, filters, scope, sort, limit, offset }: { libraryId: string; query?: { clauses: { field: string | null; values: string[]; exclude: boolean }[] } | null; filters?: { field: 'format' | 'tag' | 'rating' | 'favorite' | 'source_url' | 'availability'; values: string[]; exclude: boolean }[]; scope?: SearchScope; sort?: { field: 'name' | 'modified_at' | 'created_at' | 'byte_size' | 'duration' | 'rating'; order: 'asc' | 'desc' }; limit?: number; offset?: number }): Promise<LibraryApiResult<{ items: AssetSummary[]; total: number; offset: number; snippets?: { assetId: string; text: string }[] }>> {
+  async searchAssets({ libraryId, query, filters, scope, sort, limit, offset }: { libraryId: string; query?: { clauses: { field: string | null; values: string[]; exclude: boolean }[] } | null; filters?: FilterClause[]; scope?: SearchScope; sort?: { field: 'name' | 'modified_at' | 'created_at' | 'byte_size' | 'duration' | 'rating' | 'color'; order: 'asc' | 'desc' }; limit?: number; offset?: number }): Promise<LibraryApiResult<{ items: AssetSummary[]; total: number; offset: number; snippets?: { assetId: string; text: string }[] }>> {
     const result = await request({ type: 'asset.search.request', libraryId, query: query ?? null, filters, scope, sort, limit, offset });
     if (!result.ok) return failure(result);
     if (result.type !== 'asset.search.result') throw new Error('Unexpected search-assets response.');
     return { ok: true, value: { items: result.items, total: result.total, offset: result.offset, snippets: result.snippets } };
+  },
+
+  async planAiSearch({ naturalQuery }: { naturalQuery: string }): Promise<LibraryApiResult<{ plan: AiSearchPlan; provider: 'openai' | 'gemini' | 'anthropic'; model: string }>> {
+    const result = await request({ type: 'ai.search-plan.request', naturalQuery });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'ai.search-plan.result') throw new Error('Unexpected AI search-plan response.');
+    return { ok: true, value: { plan: result.plan, provider: result.provider, model: result.model } };
   },
 
   async trashAssets({ libraryId, assetIds }: { libraryId: string; assetIds: string[] }): Promise<LibraryApiResult<{ trashedCount: number }>> {
@@ -359,11 +472,23 @@ const library: SerpentLibraryApi = Object.freeze({
     return { ok: true, value: { trashedCount: result.trashedCount } };
   },
 
-  async restoreAssets({ libraryId, assetIds, targetFolderId }: { libraryId: string; assetIds: string[]; targetFolderId?: string }): Promise<LibraryApiResult<{ restoredCount: number; assets: AssetSummary[] }>> {
-    const result = await request({ type: 'asset.restore.request', libraryId, assetIds, targetFolderId });
+  async restoreAssets({ libraryId, assetIds, targetFolderId, conflictStrategy }: { libraryId: string; assetIds: string[]; targetFolderId?: string | null; conflictStrategy?: 'keep-both' | 'replace' | 'skip' }): Promise<LibraryApiResult<{ restoredCount: number; assets: AssetSummary[] }>> {
+    const result = await request({ type: 'asset.restore.request', libraryId, assetIds, targetFolderId, conflictStrategy });
     if (!result.ok) return failure(result);
     if (result.type !== 'asset.restored') throw new Error('Unexpected restore response.');
     return { ok: true, value: { restoredCount: result.restoredCount, assets: result.assets } };
+  },
+  async moveAssets({ libraryId, assetIds, targetFolderId, conflictStrategy }: { libraryId: string; assetIds: string[]; targetFolderId: string | null; conflictStrategy?: 'keep-both' | 'replace' | 'skip' }): Promise<LibraryApiResult<{ movedCount: number; skippedCount: number; operationId: string | null; assets: AssetSummary[] }>> {
+    const result = await request({ type: 'asset.move.request', libraryId, assetIds, targetFolderId, conflictStrategy });
+    if (!result.ok) return result;
+    if (result.type !== 'asset.moved') throw new Error('Unexpected move-assets response.');
+    return { ok: true, value: { movedCount: result.movedCount, skippedCount: result.skippedCount, operationId: result.operationId, assets: result.assets } };
+  },
+  async undoMoveAssets({ libraryId, operationId, conflictStrategy }: { libraryId: string; operationId: string; conflictStrategy?: 'error' | 'keep-both' | 'replace' | 'skip' }): Promise<LibraryApiResult<{ undoneCount: number; skippedCount: number; assets: AssetSummary[] }>> {
+    const result = await request({ type: 'asset.move-undo.request', libraryId, operationId, conflictStrategy });
+    if (!result.ok) return result;
+    if (result.type !== 'asset.move-undone') throw new Error('Unexpected undo-move response.');
+    return { ok: true, value: { undoneCount: result.undoneCount, skippedCount: result.skippedCount, assets: result.assets } };
   },
 
   async deleteAssetsPermanent({ libraryId, assetIds }: { libraryId: string; assetIds: string[] }): Promise<LibraryApiResult<{ deletedCount: number; skippedCount: number; skippedReasons: string[] }>> {
@@ -574,6 +699,11 @@ const library: SerpentLibraryApi = Object.freeze({
         ...(result.url ? { url: result.url } : {}),
         ...(result.posterUrl ? { posterUrl: result.posterUrl } : {}),
         ...(result.errorCode ? { errorCode: result.errorCode } : {}),
+        ...(result.playbackMode ? { playbackMode: result.playbackMode } : {}),
+        ...(result.sourceMimeType ? { sourceMimeType: result.sourceMimeType } : {}),
+        ...(result.sourceContainer ? { sourceContainer: result.sourceContainer } : {}),
+        ...(result.sourceCodecs ? { sourceCodecs: result.sourceCodecs } : {}),
+        ...(result.playbackToken ? { playbackToken: result.playbackToken } : {}),
       },
     };
   },
@@ -602,6 +732,42 @@ const library: SerpentLibraryApi = Object.freeze({
     if (!result.ok) return failure(result);
     if (result.type !== 'asset.retry-artifact.started') throw new Error('Unexpected retry-artifact response.');
     return { ok: true, value: { assetId: result.assetId, kind: result.kind } };
+  },
+
+  async listMediaJobs({ libraryId }: { libraryId: string }): Promise<LibraryApiResult<MediaJobStatus>> {
+    const result = await request({ type: 'media.list-jobs.request', libraryId });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'media.jobs.listed') throw new Error('Unexpected media list-jobs response.');
+    const { queued, running, succeeded, failed, paused, cancelled, jobs } = result;
+    return { ok: true, value: { queued, running, succeeded, failed, paused, cancelled, jobs } };
+  },
+
+  async pauseMediaJobs({ libraryId, jobIds }: { libraryId: string; jobIds?: string[] }): Promise<LibraryApiResult<{ pausedCount: number }>> {
+    const result = await request({ type: 'media.pause-jobs.request', libraryId, jobIds });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'media.jobs.paused') throw new Error('Unexpected media pause-jobs response.');
+    return { ok: true, value: { pausedCount: result.pausedCount } };
+  },
+
+  async resumeMediaJobs({ libraryId, jobIds }: { libraryId: string; jobIds?: string[] }): Promise<LibraryApiResult<{ resumedCount: number }>> {
+    const result = await request({ type: 'media.resume-jobs.request', libraryId, jobIds });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'media.jobs.resumed') throw new Error('Unexpected media resume-jobs response.');
+    return { ok: true, value: { resumedCount: result.resumedCount } };
+  },
+
+  async cancelMediaJobs({ libraryId, jobIds }: { libraryId: string; jobIds?: string[] }): Promise<LibraryApiResult<{ cancelledCount: number }>> {
+    const result = await request({ type: 'media.cancel-jobs.request', libraryId, jobIds });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'media.jobs.cancelled') throw new Error('Unexpected media cancel-jobs response.');
+    return { ok: true, value: { cancelledCount: result.cancelledCount } };
+  },
+
+  async retryMediaJobs({ libraryId, jobIds }: { libraryId: string; jobIds: string[] }): Promise<LibraryApiResult<{ retriedCount: number }>> {
+    const result = await request({ type: 'media.retry-jobs.request', libraryId, jobIds });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'media.jobs.retried') throw new Error('Unexpected media retry-jobs response.');
+    return { ok: true, value: { retriedCount: result.retriedCount } };
   },
 
   // AI test-connection
@@ -647,6 +813,14 @@ const library: SerpentLibraryApi = Object.freeze({
     if (!result.ok) return failure(result);
     if (result.type !== 'ai.jobs.retried') throw new Error('Unexpected retry-jobs response.');
     return { ok: true, value: { retriedCount: result.retriedCount } };
+  },
+
+  async getAiJobStatus({ libraryId }: { libraryId: string }): Promise<LibraryApiResult<AiJobStatus>> {
+    const result = await request({ type: 'ai.status.request', libraryId });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'ai.jobs.status') throw new Error('Unexpected AI status response.');
+    const { queued, running, succeeded, failed, paused, cancelled, jobs } = result;
+    return { ok: true, value: { queued, running, succeeded, failed, paused, cancelled, jobs } };
   },
 
   // AI events
@@ -699,14 +873,37 @@ const library: SerpentLibraryApi = Object.freeze({
   },
 });
 
+const extensionPairing: SerpentExtensionPairingApi = Object.freeze({
+  async getToken() {
+    return parseExtensionPairingResult(await ipcRenderer.invoke(
+      EXTENSION_PAIRING_CHANNEL,
+      { type: 'extension-pairing.get' },
+    ));
+  },
+  async rotateToken() {
+    return parseExtensionPairingResult(await ipcRenderer.invoke(
+      EXTENSION_PAIRING_CHANNEL,
+      { type: 'extension-pairing.rotate' },
+    ));
+  },
+});
+
 async function importRequest(
-  command: Extract<RendererRequest, { type: 'asset.import-files.request' | 'asset.import-folder.request' }>,
+  command: Extract<RendererRequest, {
+    type: 'asset.import-files.request' | 'asset.import-folder.request' | 'asset.import-drop.request' | 'asset.import-web.request' | 'asset.import-clipboard.request';
+  }>,
 ): Promise<LibraryApiResult<ImportCompletion | ImportConflictPlan>> {
   const result = await request(command);
   if (!result.ok) return failure(result);
   if (result.type === 'asset.import.completed') return { ok: true, value: result.completion };
   if (result.type === 'asset.import.conflicts') return { ok: true, value: result.plan };
+  if (result.type === 'extension.asset-saved') {
+    return {
+      ok: true,
+      value: { importedCount: 1, skippedCount: 0, replacedCount: 0, assets: [result.asset] },
+    };
+  }
   throw new Error('Unexpected prepare-import response.');
 }
 
-contextBridge.exposeInMainWorld('serpent', Object.freeze({ library }));
+contextBridge.exposeInMainWorld('serpent', Object.freeze({ library, extensionPairing }));

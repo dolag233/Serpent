@@ -11,6 +11,7 @@ import {
   lstatSync,
   mkdirSync,
   openSync,
+  readFileSync,
   readSync,
   readdirSync,
   realpathSync,
@@ -36,16 +37,23 @@ import {
   resolveFfprobePath,
   resolveOiiotoolPath,
 } from './binary-resolver';
+import {
+  dominantColorMetrics,
+  extractRepresentativePalette,
+  type RepresentativeColor,
+} from './palette-extractor';
 
-import { smartCollectionQueryDefinitionSchema, type AssetMetadataResult, type AssetSummary, type CollectionSummary, type LinkedFolderSummary, type ManagedFolderSummary, type SearchScope, type SmartCollectionQueryDefinition, type TagSummary } from '../shared/asset-types';
+import { smartCollectionQueryDefinitionSchema, type AssetMetadataResult, type AssetSummary, type CollectionSummary, type FilterClause, type LinkedFolderRule, type LinkedFolderSummary, type ManagedFolderSummary, type SearchScope, type SmartCollectionQueryDefinition, type TagSummary } from '../shared/asset-types';
 
 // sharp is an optional N-API dependency (no rebuild needed for Electron).
 // The Worker loads it lazily so it can still start if sharp is missing.
-interface SharpModule {
+export interface SharpModule {
   (input: string): SharpInstance;
 }
-interface SharpInstance {
-  metadata(): Promise<{ width?: number; height?: number; format?: string }>;
+export interface SharpInstance {
+  metadata(): Promise<{ width?: number; height?: number; format?: string; orientation?: number }>;
+  rotate(): SharpInstance;
+  toColourspace(colourspace: 'srgb'): SharpInstance;
   resize(options: {
     width?: number;
     height?: number;
@@ -54,6 +62,27 @@ interface SharpInstance {
   }): SharpInstance;
   webp(options: { quality?: number }): SharpInstance;
   toFile(output: string): Promise<unknown>;
+}
+
+interface PaletteSharpInstance {
+  rotate(): PaletteSharpInstance;
+  toColourspace(colourspace: 'srgb'): PaletteSharpInstance;
+  resize(options: {
+    width?: number;
+    height?: number;
+    fit?: 'inside' | 'cover' | 'fill' | 'outside';
+    withoutEnlargement?: boolean;
+  }): PaletteSharpInstance;
+  ensureAlpha(): PaletteSharpInstance;
+  raw(): PaletteSharpInstance;
+  toBuffer(options: { resolveWithObject: true }): Promise<{
+    data: Uint8Array;
+    info: { channels: number };
+  }>;
+}
+
+interface PaletteSharpModule {
+  (input: string): PaletteSharpInstance;
 }
 
 let sharpModule: SharpModule | undefined;
@@ -73,6 +102,52 @@ function requireSharp(): SharpModule {
 }
 
 const SHARP_VERSION = '0.35.3';
+const OIIO_VERSION = '3.1.12.0';
+const FFMPEG_VERSION = '8.1';
+const MAX_WEBM_PROXY_BYTES = 512 * 1024 * 1024;
+const SERPENT_OCIO_CONFIG = 'ocio://studio-config-v4.0.0_aces-v2.0_ocio-v2.5';
+const DEFAULT_OIIO_INPUT_COLOR_SPACE = 'scene_linear';
+const MEDIA_JOB_KINDS = [
+  'generate_thumbnail',
+  'generate_video_poster',
+  'generate_contact_sheet',
+  'generate_webm_proxy',
+  'extract_palette',
+] as const;
+type MediaJobKind = (typeof MEDIA_JOB_KINDS)[number];
+type MediaJobStatus = 'queued' | 'running' | 'paused' | 'succeeded' | 'failed' | 'cancelled';
+
+function safeMediaJobErrorDetail(errorCode: string): string {
+  switch (errorCode) {
+    case 'FFMPEG_REQUIRED':
+      return 'The FFmpeg media component is unavailable. Reinstall or repair Serpent.';
+    case 'OIIO_REQUIRED':
+      return 'The OpenImageIO component is unavailable. Reinstall or repair Serpent.';
+    case 'STALE_REVISION':
+      return 'The source changed before media processing finished. Retry the current revision.';
+    case 'PALETTE_SOURCE_NOT_READY':
+      return 'The current preview image is not ready. Regenerate the thumbnail or video poster first.';
+    case 'PALETTE_EXTRACTION_FAILED':
+      return 'Local palette extraction failed. See the local Serpent log for diagnostic details.';
+    default:
+      return 'Media processing failed. See the local Serpent log for diagnostic details.';
+  }
+}
+
+type OiioArtifactErrorCode =
+  | 'OIIO_REQUIRED'
+  | 'OIIO_COLOR_TRANSFORM_FAILED'
+  | 'OIIO_GENERATION_FAILED';
+
+class OiioInvocationError extends Error {
+  constructor(
+    readonly artifactErrorCode: OiioArtifactErrorCode,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'OiioInvocationError';
+  }
+}
 import type { PublicErrorCode } from '../shared/protocol/errors';
 import { publicReasonFromError, type PublicErrorReason } from '../shared/protocol/errors';
 import type {
@@ -101,6 +176,24 @@ import {
   tokenizeForFts,
   type SearchClause,
 } from './search-query';
+import {
+  extractZipStream,
+  ZipImportStreamError,
+  type ZipArchiveManifest,
+} from './zip-import-stream';
+import {
+  defaultPinnedHttpTransport,
+  type DnsLookup,
+  type PinnedHttpTransport,
+  type ResolvedAddress,
+} from './secure-http-download';
+import {
+  extensionForRemoteContentType,
+  filenameMatchesRemoteContentType,
+  normalizeRemoteContentType,
+  remoteMediaValidationFailure,
+  RemoteMediaMagicProbe,
+} from './remote-media-validation';
 
 interface RunResult {
   changes: number;
@@ -113,6 +206,9 @@ interface Statement {
 }
 
 interface DatabaseConnection {
+  backup(filename: string, options?: {
+    progress?: (progress: { remainingPages: number; totalPages: number }) => number | void;
+  }): Promise<{ remainingPages: number; totalPages: number }>;
   close(): void;
   exec(sql: string): void;
   pragma(source: string, options?: { simple?: boolean }): unknown;
@@ -134,28 +230,8 @@ const MAX_DOWNLOAD_BYTES = 500 * 1024 * 1024;
 const DOWNLOAD_TIMEOUT_MS = 30_000;
 const MAX_DOWNLOAD_REDIRECTS = 30;
 
-const CONTENT_TYPE_WHITELIST = new Set([
-  'image/png', 'image/jpeg', 'image/gif', 'image/webp',
-  'image/tiff', 'image/bmp', 'image/svg+xml',
-  'video/mp4', 'video/webm', 'video/quicktime',
-  'video/x-msvideo', 'video/x-ms-wmv',
-]);
-
 function extensionForContentType(contentType: string): string | undefined {
-  const lower = contentType.toLowerCase();
-  if (lower === 'image/png') return '.png';
-  if (lower === 'image/jpeg') return '.jpg';
-  if (lower === 'image/gif') return '.gif';
-  if (lower === 'image/webp') return '.webp';
-  if (lower === 'image/tiff') return '.tiff';
-  if (lower === 'image/bmp') return '.bmp';
-  if (lower === 'image/svg+xml') return '.svg';
-  if (lower === 'video/mp4') return '.mp4';
-  if (lower === 'video/webm') return '.webm';
-  if (lower === 'video/quicktime') return '.mov';
-  if (lower === 'video/x-msvideo') return '.avi';
-  if (lower === 'video/x-ms-wmv') return '.wmv';
-  return undefined;
+  return extensionForRemoteContentType(contentType.toLowerCase());
 }
 
 function cleanFilename(name: string): string {
@@ -166,20 +242,20 @@ function cleanFilename(name: string): string {
     .trim() || 'download';
 }
 
-export type DnsLookup = (
-  hostname: string,
-) => Promise<Array<{ address: string; family: number }>>;
-
 function prohibitedIpv4(address: string): boolean {
   const parts = address.split('.').map(Number);
   if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return true;
-  const [a, b] = parts as [number, number, number, number];
+  const [a, b, c] = parts as [number, number, number, number];
   return a === 0 || a === 10 || a === 127 ||
     (a === 100 && b >= 64 && b <= 127) ||
     (a === 169 && b === 254) ||
     (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 0 && (c === 0 || c === 2)) ||
+    (a === 192 && b === 88 && c === 99) ||
     (a === 192 && b === 168) ||
     (a === 198 && (b === 18 || b === 19)) ||
+    (a === 198 && b === 51 && c === 100) ||
+    (a === 203 && b === 0 && c === 113) ||
     a >= 224;
 }
 
@@ -206,7 +282,11 @@ function prohibitedIpAddress(rawAddress: string): boolean {
   if (groups.every((group) => group === 0)) return true;
   if (groups.slice(0, 7).every((group) => group === 0) && groups[7] === 1) return true;
   const first = groups[0]!;
-  if ((first & 0xfe00) === 0xfc00 || (first & 0xffc0) === 0xfe80 || (first & 0xff00) === 0xff00) return true;
+  if ((first & 0xfe00) === 0xfc00 ||
+      (first & 0xffc0) === 0xfe80 ||
+      (first & 0xffc0) === 0xfec0 ||
+      (first & 0xff00) === 0xff00 ||
+      (first === 0x2001 && groups[1] === 0x0db8)) return true;
   const embeddedV4 = groups.slice(0, 5).every((group) => group === 0) &&
     (groups[5] === 0 || groups[5] === 0xffff);
   if (embeddedV4) {
@@ -240,18 +320,77 @@ function filenameFromUrl(urlString: string, contentType?: string): string {
   return `download${ext}`;
 }
 
-// Default ignore rules for linked-folder enumeration. Hardcoded for MVP; the
-// graphical rule editor is a later slice. Names match case-insensitively so a
-// repository checked out on macOS (case-insensitive APFS) and Windows
-// (case-insensitive NTFS) ignores the same entries.
-const DEFAULT_IGNORED_DIRECTORIES = new Set([
+function sanitizedUrlForDiagnostic(urlString: string): string {
+  try {
+    const url = new URL(urlString);
+    return `${url.origin}${url.pathname}`;
+  } catch {
+    return '[invalid-url]';
+  }
+}
+
+function sanitizedUrlDiagnosticText(value: string): string {
+  return value.replace(/https?:\/\/[^\s"'<>]+/giu, (candidate) =>
+    sanitizedUrlForDiagnostic(candidate));
+}
+
+function sanitizedUrlDiagnosticError(error: unknown, depth = 0): Error {
+  if (depth > 5) return new Error('URL import error chain truncated.');
+  if (!(error instanceof Error)) {
+    return new Error(sanitizedUrlDiagnosticText(String(error)));
+  }
+  const sanitized = new Error(sanitizedUrlDiagnosticText(error.message));
+  sanitized.name = error.name;
+  if (error.stack) sanitized.stack = sanitizedUrlDiagnosticText(error.stack);
+  const original = error as Error & { code?: unknown; reason?: unknown };
+  const copy = sanitized as Error & { code?: string; reason?: string; cause?: unknown };
+  if (typeof original.code === 'string') copy.code = original.code;
+  if (typeof original.reason === 'string') copy.reason = original.reason;
+  if (error.cause !== undefined) {
+    copy.cause = sanitizedUrlDiagnosticError(error.cause, depth + 1);
+  }
+  return sanitized;
+}
+
+const DEFAULT_LINKED_FOLDER_RULES: ReadonlyArray<Omit<LinkedFolderRule, 'ruleId'>> = [
+  ...['.git', 'node_modules', '.svn', '.hg', '__pycache__'].map((pattern) => ({
+    action: 'exclude' as const, target: 'folder' as const, pattern, enabled: true,
+  })),
+  ...['.DS_Store', 'Thumbs.db', 'desktop.ini'].map((pattern) => ({
+    action: 'exclude' as const, target: 'filename' as const, pattern, enabled: true,
+  })),
+];
+
+const DEFAULT_IGNORED_ASSET_DIRECTORIES = new Set([
   '.git',
-  'node_modules',
-  '.svn',
   '.hg',
+  '.svn',
   '__pycache__',
+  'node_modules',
 ]);
-const DEFAULT_IGNORED_FILES = new Set(['.ds_store', 'thumbs.db', 'desktop.ini']);
+const DEFAULT_IGNORED_ASSET_FILES = new Set([
+  '.ds_store',
+  'desktop.ini',
+  'thumbs.db',
+]);
+const ALWAYS_IGNORED_ASSET_FILES = new Set([
+  '.ds_store',
+  'desktop.ini',
+  'thumbs.db',
+]);
+
+function isDefaultIgnoredAssetEntry(name: string, kind: 'directory' | 'file'): boolean {
+  const normalized = name.toLocaleLowerCase('en-US');
+  if (kind === 'directory') return DEFAULT_IGNORED_ASSET_DIRECTORIES.has(normalized);
+  return DEFAULT_IGNORED_ASSET_FILES.has(normalized) || normalized.startsWith('._');
+}
+
+function isAlwaysIgnoredAssetPath(relativePath: string): boolean {
+  const filename = relativePath.replaceAll('\\', '/').split('/').filter(Boolean).at(-1);
+  if (!filename) return false;
+  const normalized = filename.toLocaleLowerCase('en-US');
+  return ALWAYS_IGNORED_ASSET_FILES.has(normalized) || normalized.startsWith('._');
+}
 
 const INITIAL_SCHEMA_SQL = `
   CREATE TABLE schema_migrations (
@@ -736,6 +875,62 @@ const AI_JOBS_SCHEMA_CHECKSUM = createHash('sha256')
   .update(AI_JOBS_SCHEMA_SQL)
   .digest('hex');
 
+const MEDIA_DURATION_SCHEMA_SQL = `
+  ALTER TABLE revision_artifacts ADD COLUMN duration_ms INTEGER
+    CHECK (duration_ms IS NULL OR duration_ms >= 0);
+  CREATE INDEX revision_artifacts_duration_idx
+    ON revision_artifacts(duration_ms)
+    WHERE kind = 'extracted_metadata' AND status = 'ready' AND invalidated_at IS NULL;
+`;
+const MEDIA_DURATION_SCHEMA_CHECKSUM = createHash('sha256')
+  .update(MEDIA_DURATION_SCHEMA_SQL)
+  .digest('hex');
+
+const PALETTE_SORT_SCHEMA_SQL = `
+  ALTER TABLE revision_artifacts ADD COLUMN dominant_hue REAL
+    CHECK (dominant_hue IS NULL OR (dominant_hue >= 0 AND dominant_hue < 360));
+  ALTER TABLE revision_artifacts ADD COLUMN dominant_lightness REAL
+    CHECK (dominant_lightness IS NULL OR (dominant_lightness >= 0 AND dominant_lightness <= 1));
+  CREATE INDEX revision_artifacts_palette_sort_idx
+    ON revision_artifacts(dominant_hue, dominant_lightness)
+    WHERE kind = 'extracted_palette' AND status = 'ready' AND invalidated_at IS NULL;
+`;
+const PALETTE_SORT_SCHEMA_CHECKSUM = createHash('sha256')
+  .update(PALETTE_SORT_SCHEMA_SQL)
+  .digest('hex');
+
+const LINKED_FOLDER_RULES_SCHEMA_SQL = `
+  CREATE TABLE linked_folder_rules (
+    rule_id TEXT PRIMARY KEY,
+    folder_id TEXT NOT NULL REFERENCES linked_folders(folder_id) ON DELETE CASCADE,
+    position INTEGER NOT NULL CHECK (position >= 0),
+    action TEXT NOT NULL CHECK (action IN ('include', 'exclude')),
+    target TEXT NOT NULL CHECK (target IN ('path', 'filename', 'extension', 'folder')),
+    pattern TEXT NOT NULL,
+    enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+    UNIQUE(folder_id, position)
+  );
+  CREATE INDEX linked_folder_rules_folder ON linked_folder_rules(folder_id, position);
+
+  CREATE TABLE linked_ignored_assets (
+    asset_id TEXT PRIMARY KEY REFERENCES assets(asset_id) ON DELETE CASCADE,
+    ignored_at TEXT NOT NULL
+  );
+
+  INSERT INTO linked_folder_rules(rule_id, folder_id, position, action, target, pattern, enabled)
+    SELECT folder_id || ':default:0', folder_id, 0, 'exclude', 'folder', '.git', 1 FROM linked_folders;
+  INSERT INTO linked_folder_rules SELECT folder_id || ':default:1', folder_id, 1, 'exclude', 'folder', 'node_modules', 1 FROM linked_folders;
+  INSERT INTO linked_folder_rules SELECT folder_id || ':default:2', folder_id, 2, 'exclude', 'folder', '.svn', 1 FROM linked_folders;
+  INSERT INTO linked_folder_rules SELECT folder_id || ':default:3', folder_id, 3, 'exclude', 'folder', '.hg', 1 FROM linked_folders;
+  INSERT INTO linked_folder_rules SELECT folder_id || ':default:4', folder_id, 4, 'exclude', 'folder', '__pycache__', 1 FROM linked_folders;
+  INSERT INTO linked_folder_rules SELECT folder_id || ':default:5', folder_id, 5, 'exclude', 'filename', '.DS_Store', 1 FROM linked_folders;
+  INSERT INTO linked_folder_rules SELECT folder_id || ':default:6', folder_id, 6, 'exclude', 'filename', 'Thumbs.db', 1 FROM linked_folders;
+  INSERT INTO linked_folder_rules SELECT folder_id || ':default:7', folder_id, 7, 'exclude', 'filename', 'desktop.ini', 1 FROM linked_folders;
+`;
+const LINKED_FOLDER_RULES_SCHEMA_CHECKSUM = createHash('sha256')
+  .update(LINKED_FOLDER_RULES_SCHEMA_SQL)
+  .digest('hex');
+
 const MIGRATIONS = [
   { version: 1, sql: INITIAL_SCHEMA_SQL, checksum: INITIAL_SCHEMA_CHECKSUM },
   { version: 2, sql: ASSET_SCHEMA_SQL, checksum: ASSET_SCHEMA_CHECKSUM },
@@ -751,6 +946,9 @@ const MIGRATIONS = [
   { version: 8, sql: AI_CONTENT_SCHEMA_SQL, checksum: AI_CONTENT_SCHEMA_CHECKSUM },
   { version: 9, sql: THUMBNAIL_SCHEMA_SQL, checksum: THUMBNAIL_SCHEMA_CHECKSUM },
   { version: 10, sql: AI_JOBS_SCHEMA_SQL, checksum: AI_JOBS_SCHEMA_CHECKSUM },
+  { version: 11, sql: MEDIA_DURATION_SCHEMA_SQL, checksum: MEDIA_DURATION_SCHEMA_CHECKSUM },
+  { version: 12, sql: PALETTE_SORT_SCHEMA_SQL, checksum: PALETTE_SORT_SCHEMA_CHECKSUM },
+  { version: 13, sql: LINKED_FOLDER_RULES_SCHEMA_SQL, checksum: LINKED_FOLDER_RULES_SCHEMA_CHECKSUM },
 ] as const;
 const SUPPORTED_SCHEMA_VERSION = MIGRATIONS.at(-1)!.version;
 
@@ -795,6 +993,8 @@ interface AssetSummaryRow {
 interface ImportSourceEntry {
   byteSize: number;
   destinationRelativePath: string;
+  /** Optional metadata intent committed atomically with this imported asset. */
+  sourcePageUrl?: string;
   sourceSnapshot: SourceSnapshot;
   sourcePath: string;
 }
@@ -857,7 +1057,50 @@ interface LinkedTrashOperationManifest {
   version: 2;
 }
 
-type PersistedOperationManifest = OperationManifest | LinkedTrashOperationManifest;
+interface RestoreOperationManifest {
+  files: Array<{
+    assetId: string;
+    backupDestinationRelativePath: string | null;
+    backupName: string;
+    conflictingAssetId: string | null;
+    destinationRelativePath: string;
+    hadDestination: boolean;
+    trashFilename: string;
+  }>;
+  kind: 'restore';
+  version: 3;
+}
+
+interface ManagedMoveConflict {
+  assetId: string | null;
+  backupName: string;
+  kind: 'managed' | 'untracked';
+  managedFolderId: string | null;
+  operationId: string;
+  relativePath: string;
+  trashFilename: string | null;
+}
+
+interface ManagedMoveOperationManifest {
+  files: Array<{
+    assetId: string;
+    destinationConflict: ManagedMoveConflict | null;
+    destinationFolderId: string | null;
+    destinationRelativePath: string;
+    restoreConflict: ManagedMoveConflict | null;
+    sourceFolderId: string | null;
+    sourceRelativePath: string;
+  }>;
+  kind: 'managed-move' | 'managed-move-undo';
+  originalOperationId: string | null;
+  version: 4;
+}
+
+type PersistedOperationManifest =
+  | OperationManifest
+  | LinkedTrashOperationManifest
+  | RestoreOperationManifest
+  | ManagedMoveOperationManifest;
 
 interface OperationRow {
   error_code: string | null;
@@ -871,12 +1114,24 @@ export type ImportFailurePoint =
   | 'after-backup'
   | 'after-first-place'
   | 'after-place'
+  | 'after-import-metadata'
   | 'before-db-commit'
   | 'committed-cleanup'
   | 'committed-result-list'
   | 'crash-after-backup'
   | 'crash-after-place'
   | 'crash-during-prepare-stage'
+  | 'crash-restore-before-filesystem'
+  | 'crash-restore-after-backup'
+  | 'crash-restore-after-filesystem'
+  | 'crash-restore-before-db-commit'
+  | 'crash-restore-after-db-commit'
+  | 'crash-move-before-filesystem'
+  | 'crash-move-after-conflict'
+  | 'crash-move-after-filesystem'
+  | 'crash-move-before-db-commit'
+  | 'crash-move-after-db-commit'
+  | 'crash-linked-convert-after-filesystem'
   | 'recovery-restore'
   | 'rollback-restore';
 
@@ -891,7 +1146,7 @@ export interface SpawnResult {
 export type SpawnFunction = (
   command: string,
   args: string[],
-  options?: { timeoutMs?: number },
+  options?: { timeoutMs?: number; signal?: AbortSignal },
 ) => Promise<SpawnResult>;
 
 const SPAWN_STDOUT_LIMIT_BYTES = 8 * 1024 * 1024;
@@ -934,16 +1189,23 @@ class TailBuffer {
 export function defaultSpawnFn(
   command: string,
   args: string[],
-  options?: { timeoutMs?: number },
+  options?: { timeoutMs?: number; signal?: AbortSignal },
 ): Promise<SpawnResult> {
   return new Promise((resolve, reject) => {
+    if (options?.signal?.aborted) {
+      reject(new DOMException('Media job was cancelled before the subprocess started.', 'AbortError'));
+      return;
+    }
     const timeoutMs = options?.timeoutMs ?? 120_000;
     let timedOut = false;
+    let aborted = false;
+    let settled = false;
+    let killTimer: ReturnType<typeof setTimeout> | undefined;
     const timer = setTimeout(() => {
       timedOut = true;
       proc.kill('SIGTERM');
       // Escalate to SIGKILL after 5s if still running
-      const killTimer = setTimeout(() => {
+      killTimer = setTimeout(() => {
         if (proc.exitCode === null) proc.kill('SIGKILL');
       }, 5_000);
       killTimer.unref();
@@ -955,6 +1217,17 @@ export function defaultSpawnFn(
       windowsHide: true,
     });
 
+    const abort = (): void => {
+      if (settled || aborted) return;
+      aborted = true;
+      proc.kill('SIGTERM');
+      killTimer = setTimeout(() => {
+        if (proc.exitCode === null) proc.kill('SIGKILL');
+      }, 5_000);
+      killTimer.unref();
+    };
+    options?.signal?.addEventListener('abort', abort, { once: true });
+
     const stdoutTail = new TailBuffer(SPAWN_STDOUT_LIMIT_BYTES);
     const stderrTail = new TailBuffer(SPAWN_STDERR_LIMIT_BYTES);
 
@@ -963,11 +1236,21 @@ export function defaultSpawnFn(
 
     proc.on('error', (err) => {
       clearTimeout(timer);
+      if (killTimer) clearTimeout(killTimer);
+      options?.signal?.removeEventListener('abort', abort);
+      settled = true;
       reject(err);
     });
 
     proc.on('close', (code) => {
       clearTimeout(timer);
+      if (killTimer) clearTimeout(killTimer);
+      options?.signal?.removeEventListener('abort', abort);
+      settled = true;
+      if (aborted) {
+        reject(new DOMException('Media job cancelled; subprocess terminated.', 'AbortError'));
+        return;
+      }
       resolve({
         stdout: stdoutTail.toBuffer(),
         stderr: stderrTail.toBuffer().toString('utf-8'),
@@ -977,6 +1260,82 @@ export function defaultSpawnFn(
   });
 }
 
+class AsyncSemaphore {
+  private active = 0;
+  private readonly waiting: Array<{
+    resolve: (release: () => void) => void;
+    reject: (error: unknown) => void;
+    signal?: AbortSignal;
+    abort?: () => void;
+  }> = [];
+
+  constructor(private readonly limit: number) {}
+
+  async run<T>(signal: AbortSignal | undefined, task: () => Promise<T>): Promise<T> {
+    const release = await this.acquire(signal);
+    try {
+      if (signal?.aborted) throw new DOMException('Media job cancelled.', 'AbortError');
+      return await task();
+    } finally {
+      release();
+    }
+  }
+
+  private acquire(signal?: AbortSignal): Promise<() => void> {
+    if (signal?.aborted) {
+      return Promise.reject(new DOMException('Media job cancelled.', 'AbortError'));
+    }
+    if (this.active < this.limit) {
+      this.active += 1;
+      return Promise.resolve(this.releaseFactory());
+    }
+    return new Promise((resolve, reject) => {
+      const waiter: {
+        resolve: (release: () => void) => void;
+        reject: (error: unknown) => void;
+        signal?: AbortSignal;
+        abort?: () => void;
+      } = { resolve, reject, signal };
+      if (signal) {
+        waiter.abort = () => {
+          const index = this.waiting.indexOf(waiter);
+          if (index >= 0) this.waiting.splice(index, 1);
+          reject(new DOMException('Media job cancelled while waiting for a decoder.', 'AbortError'));
+        };
+        signal.addEventListener('abort', waiter.abort, { once: true });
+      }
+      this.waiting.push(waiter);
+    });
+  }
+
+  private releaseFactory(): () => void {
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      while (this.waiting.length > 0) {
+        const waiter = this.waiting.shift()!;
+        waiter.signal?.removeEventListener('abort', waiter.abort!);
+        if (waiter.signal?.aborted) continue;
+        waiter.resolve(this.releaseFactory());
+        return;
+      }
+      this.active -= 1;
+    };
+  }
+}
+
+// A Library Worker may own several open libraries. These module-level gates
+// therefore cap decoder pressure across all LibraryService instances and all
+// libraries in the process, not merely within one queue drain.
+const sharpDecoderSemaphore = new AsyncSemaphore(2);
+const ffmpegDecoderSemaphore = new AsyncSemaphore(1);
+const oiioDecoderSemaphore = new AsyncSemaphore(1);
+
+interface MediaExecutionContext {
+  signal?: AbortSignal;
+}
+
 export interface LibraryServiceOptions {
   afterSourceSnapshotCopy?: (sourcePath: string) => void;
   assetLstat?: (assetPath: string) => Stats;
@@ -984,6 +1343,8 @@ export interface LibraryServiceOptions {
   debounceMs?: number;
   /** DNS resolver used to reject non-public URL download targets on every hop. */
   dnsLookup?: DnsLookup;
+  /** HTTP(S) transport receives an already validated, pinned address per hop. */
+  pinnedHttpTransport?: PinnedHttpTransport;
   destinationLstat?: (destinationPath: string) => Stats;
   failAt?: ImportFailurePoint | ImportFailurePoint[];
   importClock?: ImportExpiryClock;
@@ -993,6 +1354,10 @@ export interface LibraryServiceOptions {
   onProgress?: (event: ExportProgressEvent | ImportProgressEvent) => void;
   observerFactory?: AssetObserverFactory;
   scheduler?: DebounceScheduler;
+  /** Injectable Sharp-compatible decoder for deterministic concurrency tests. */
+  sharpFn?: SharpModule;
+  /** Injectable raw-pixel decoder used only by local palette extraction. */
+  paletteSharpFn?: PaletteSharpModule;
   /** Injectable spawn for binary subprocesses (ffmpeg/ffprobe/oiiotool). */
   spawnFn?: SpawnFunction;
   /** Moves one absolute source path to the OS system trash. */
@@ -1187,6 +1552,12 @@ interface TransferCancelState {
   onCancel?: () => void;
 }
 
+interface ActiveImportTransfer {
+  importId: string;
+  sourceKey: string;
+  destinationKey: string;
+}
+
 /**
  * Give the UtilityProcess message loop a chance to receive a cancellation
  * command.  Transfer code uses this at file/entry boundaries, matching the
@@ -1249,34 +1620,6 @@ function assertTreeContainsNoSymlinks(rootPath: string): void {
     }
   };
   visit(rootPath);
-}
-
-function validatePortableZipEntryName(entryName: string): string {
-  if (entryName.length === 0 || entryName.includes('\0')) {
-    throw new LibraryServiceError('NOT_A_LIBRARY', { reason: 'PATH_ESCAPE' });
-  }
-  const portableName = entryName.replace(/\\/g, '/');
-  if (
-    portableName.startsWith('/') ||
-    portableName.startsWith('//') ||
-    /^[A-Za-z]:/.test(portableName)
-  ) {
-    throw new LibraryServiceError('NOT_A_LIBRARY', { reason: 'PATH_ESCAPE' });
-  }
-  const directoryEntry = portableName.endsWith('/');
-  const withoutTrailingSlash = directoryEntry ? portableName.slice(0, -1) : portableName;
-  const segments = withoutTrailingSlash.split('/');
-  if (
-    withoutTrailingSlash.length === 0 ||
-    segments.some((segment) => segment === '' || segment === '.' || segment === '..')
-  ) {
-    throw new LibraryServiceError('NOT_A_LIBRARY', { reason: 'PATH_ESCAPE' });
-  }
-  const normalized = path.posix.normalize(withoutTrailingSlash);
-  if (normalized !== withoutTrailingSlash || path.posix.isAbsolute(normalized)) {
-    throw new LibraryServiceError('NOT_A_LIBRARY', { reason: 'PATH_ESCAPE' });
-  }
-  return directoryEntry ? `${normalized}/` : normalized;
 }
 
 function sourceSnapshot(stat: BigIntStats): SourceSnapshot {
@@ -1618,11 +1961,72 @@ export class LibraryService {
   private readonly linkedWatchByKey = new Map<string, LinkedFolderWatch>();
   private readonly activeExports = new Map<string, TransferCancelState>();
   private readonly activeImports = new Map<string, TransferCancelState>();
+  private readonly activeExportByLibraryId = new Map<string, string>();
+  private readonly activeImportBySource = new Map<string, string>();
+  private readonly activeImportByDestination = new Map<string, string>();
+  private readonly activeMediaJobs = new Map<string, {
+    controller: AbortController;
+    libraryId: string;
+  }>();
 
   constructor(private readonly options: LibraryServiceOptions = {}) {}
 
+  private async createConsistentDatabaseSnapshot(
+    connection: DatabaseConnection,
+    destinationPath: string,
+    cancelState: TransferCancelState,
+  ): Promise<void> {
+    try {
+      await connection.backup(destinationPath, {
+        progress: () => {
+          if (cancelState.cancelled) throw new LibraryServiceError('CANCELLED');
+          return 100;
+        },
+      });
+    } catch (error) {
+      try { rmSync(destinationPath, { force: true }); } catch { /* best effort */ }
+      if (error instanceof LibraryServiceError) throw error;
+      throw new LibraryServiceError('LIBRARY_CORRUPT', { cause: error });
+    }
+
+    let verifyConnection: DatabaseConnection | undefined;
+    try {
+      verifyConnection = openConfiguredDatabase(destinationPath);
+      const result = verifyConnection.pragma('quick_check(1)', { simple: true });
+      if (result !== 'ok') throw new LibraryServiceError('LIBRARY_CORRUPT');
+    } catch (error) {
+      try { rmSync(destinationPath, { force: true }); } catch { /* best effort */ }
+      if (error instanceof LibraryServiceError) throw error;
+      throw new LibraryServiceError('LIBRARY_CORRUPT', { cause: error });
+    } finally {
+      closeIgnoringFailure(verifyConnection);
+    }
+  }
+
   private get spawnFn(): SpawnFunction {
     return this.options.spawnFn ?? defaultSpawnFn;
+  }
+
+  private runFfmpeg(
+    command: string,
+    args: string[],
+    options: { timeoutMs?: number; signal?: AbortSignal } = {},
+  ): Promise<SpawnResult> {
+    return ffmpegDecoderSemaphore.run(
+      options.signal,
+      () => this.spawnFn(command, args, options),
+    );
+  }
+
+  private runOiio(
+    command: string,
+    args: string[],
+    options: { timeoutMs?: number; signal?: AbortSignal } = {},
+  ): Promise<SpawnResult> {
+    return oiioDecoderSemaphore.run(
+      options.signal,
+      () => this.spawnFn(command, args, options),
+    );
   }
 
   private diagnose(scope: string, error: unknown, context?: Record<string, unknown>): void {
@@ -1990,6 +2394,120 @@ export class LibraryService {
       }
       return value as unknown as LinkedTrashOperationManifest;
     }
+    if (value.version === 3) {
+      const candidate = value as Record<string, unknown>;
+      if (candidate.kind !== 'restore' || !Array.isArray(candidate.files)) {
+        throw new LibraryServiceError('LIBRARY_CORRUPT');
+      }
+      const assetIds = new Set<string>();
+      const backupNames = new Set<string>();
+      const destinationIdentities = new Set<string>();
+      for (const file of candidate.files) {
+        if (typeof file !== 'object' || file === null) {
+          throw new LibraryServiceError('LIBRARY_CORRUPT');
+        }
+        const entry = file as Record<string, unknown>;
+        const relativePaths = [entry.destinationRelativePath];
+        if (entry.backupDestinationRelativePath !== null) {
+          relativePaths.push(entry.backupDestinationRelativePath);
+        }
+        if (
+          typeof entry.assetId !== 'string' || !UUID.test(entry.assetId) ||
+          assetIds.has(entry.assetId) ||
+          typeof entry.destinationRelativePath !== 'string' ||
+          typeof entry.backupName !== 'string' ||
+          entry.backupName.length === 0 ||
+          backupNames.has(entry.backupName) ||
+          path.posix.basename(entry.backupName) !== entry.backupName ||
+          path.win32.basename(entry.backupName) !== entry.backupName ||
+          typeof entry.trashFilename !== 'string' ||
+          entry.trashFilename.length === 0 ||
+          path.posix.basename(entry.trashFilename) !== entry.trashFilename ||
+          path.win32.basename(entry.trashFilename) !== entry.trashFilename ||
+          typeof entry.hadDestination !== 'boolean' ||
+          (entry.backupDestinationRelativePath !== null &&
+            typeof entry.backupDestinationRelativePath !== 'string') ||
+          entry.hadDestination !== (entry.backupDestinationRelativePath !== null) ||
+          (entry.conflictingAssetId !== null &&
+            (typeof entry.conflictingAssetId !== 'string' || !UUID.test(entry.conflictingAssetId))) ||
+          relativePaths.some((relativePath) =>
+            typeof relativePath !== 'string' ||
+            relativePath.length === 0 ||
+            relativePath.includes('\\') ||
+            path.posix.isAbsolute(relativePath) ||
+            path.posix.normalize(relativePath) !== relativePath ||
+            relativePath.split('/').some((segment) => segment === '.' || segment === '..')
+          )
+        ) {
+          throw new LibraryServiceError('LIBRARY_CORRUPT');
+        }
+        const destinationIdentity = portablePathIdentity(entry.destinationRelativePath);
+        if (destinationIdentities.has(destinationIdentity)) {
+          throw new LibraryServiceError('LIBRARY_CORRUPT');
+        }
+        assetIds.add(entry.assetId);
+        backupNames.add(entry.backupName);
+        destinationIdentities.add(destinationIdentity);
+      }
+      return value as unknown as RestoreOperationManifest;
+    }
+    if (value.version === 4) {
+      const candidate = value as Record<string, unknown>;
+      if (
+        (candidate.kind !== 'managed-move' && candidate.kind !== 'managed-move-undo') ||
+        !Array.isArray(candidate.files) ||
+        (candidate.originalOperationId !== null &&
+          (typeof candidate.originalOperationId !== 'string' || !UUID.test(candidate.originalOperationId))) ||
+        (candidate.kind === 'managed-move' && candidate.originalOperationId !== null) ||
+        (candidate.kind === 'managed-move-undo' && candidate.originalOperationId === null)
+      ) {
+        throw new LibraryServiceError('LIBRARY_CORRUPT');
+      }
+      const assetIds = new Set<string>();
+      const destinationIdentities = new Set<string>();
+      const validRelativePath = (relativePath: unknown): relativePath is string =>
+        typeof relativePath === 'string' && relativePath.length > 0 &&
+        !relativePath.includes('\\') && !path.posix.isAbsolute(relativePath) &&
+        path.posix.normalize(relativePath) === relativePath &&
+        !relativePath.split('/').some((segment) => segment === '.' || segment === '..');
+      const validConflict = (conflict: unknown): boolean => {
+        if (conflict === null) return true;
+        if (typeof conflict !== 'object') return false;
+        const entry = conflict as Record<string, unknown>;
+        return (entry.kind === 'managed' || entry.kind === 'untracked') &&
+          validRelativePath(entry.relativePath) &&
+          typeof entry.backupName === 'string' && entry.backupName.length > 0 &&
+          path.posix.basename(entry.backupName) === entry.backupName &&
+          path.win32.basename(entry.backupName) === entry.backupName &&
+          (entry.assetId === null || (typeof entry.assetId === 'string' && UUID.test(entry.assetId))) &&
+          (entry.managedFolderId === null || (typeof entry.managedFolderId === 'string' && UUID.test(entry.managedFolderId))) &&
+          typeof entry.operationId === 'string' && UUID.test(entry.operationId) &&
+          (entry.trashFilename === null || (
+            typeof entry.trashFilename === 'string' && entry.trashFilename.length > 0 &&
+            path.posix.basename(entry.trashFilename) === entry.trashFilename &&
+            path.win32.basename(entry.trashFilename) === entry.trashFilename
+          )) &&
+          (entry.kind !== 'managed' || (entry.assetId !== null && entry.trashFilename !== null));
+      };
+      for (const file of candidate.files) {
+        if (typeof file !== 'object' || file === null) throw new LibraryServiceError('LIBRARY_CORRUPT');
+        const entry = file as Record<string, unknown>;
+        if (
+          typeof entry.assetId !== 'string' || !UUID.test(entry.assetId) || assetIds.has(entry.assetId) ||
+          !validRelativePath(entry.sourceRelativePath) || !validRelativePath(entry.destinationRelativePath) ||
+          (entry.sourceFolderId !== null && (typeof entry.sourceFolderId !== 'string' || !UUID.test(entry.sourceFolderId))) ||
+          (entry.destinationFolderId !== null && (typeof entry.destinationFolderId !== 'string' || !UUID.test(entry.destinationFolderId))) ||
+          !validConflict(entry.destinationConflict) || !validConflict(entry.restoreConflict)
+        ) {
+          throw new LibraryServiceError('LIBRARY_CORRUPT');
+        }
+        const destinationIdentity = portablePathIdentity(entry.destinationRelativePath);
+        if (destinationIdentities.has(destinationIdentity)) throw new LibraryServiceError('LIBRARY_CORRUPT');
+        assetIds.add(entry.assetId);
+        destinationIdentities.add(destinationIdentity);
+      }
+      return value as unknown as ManagedMoveOperationManifest;
+    }
     if (
       value.version !== 1 ||
       !('files' in value) ||
@@ -2125,6 +2643,151 @@ export class LibraryService {
     }
   }
 
+  private recoverRestoreOperation(
+    openLibrary: OpenLibrary,
+    row: OperationRow,
+    manifest: RestoreOperationManifest,
+    operationPath: string,
+  ): void {
+    if (row.status === 'preparing') {
+      this.removeOperation(operationPath);
+      openLibrary.connection
+        .prepare(
+          "UPDATE file_operations SET status = 'rolled_back', error_code = 'PROCESS_INTERRUPTED', updated_at = ? WHERE operation_id = ?",
+        )
+        .run(new Date().toISOString(), row.operation_id);
+      return;
+    }
+
+    const regularFileExists = (filePath: string): boolean => {
+      try {
+        const entry = lstatSync(filePath);
+        if (!entry.isFile() || entry.isSymbolicLink()) {
+          throw new LibraryServiceError('LIBRARY_CORRUPT');
+        }
+        return true;
+      } catch (error) {
+        if (error instanceof LibraryServiceError) throw error;
+        if (isMissingPathError(error)) return false;
+        throw new LibraryServiceError('LIBRARY_CORRUPT', { cause: error });
+      }
+    };
+
+    for (const file of [...manifest.files].reverse()) {
+      const sourcePath = this.trashPath(openLibrary, file.assetId, file.trashFilename);
+      const destinationPath = this.folderPath(openLibrary, file.destinationRelativePath);
+      const backupPath = path.join(operationPath, 'backup', file.backupName);
+      const backupDestinationPath = file.backupDestinationRelativePath === null
+        ? null
+        : this.folderPath(openLibrary, file.backupDestinationRelativePath);
+      const sourceExists = regularFileExists(sourcePath);
+      const destinationExists = regularFileExists(destinationPath);
+      const backupExists = regularFileExists(backupPath);
+
+      if (!sourceExists) {
+        if (!destinationExists) {
+          throw new LibraryServiceError('LIBRARY_CORRUPT');
+        }
+        mkdirSync(path.dirname(sourcePath), { recursive: true });
+        renameSync(destinationPath, sourcePath);
+      }
+
+      if (backupExists) {
+        if (backupDestinationPath === null || regularFileExists(backupDestinationPath)) {
+          throw new LibraryServiceError('LIBRARY_CORRUPT');
+        }
+        mkdirSync(path.dirname(backupDestinationPath), { recursive: true });
+        renameSync(backupPath, backupDestinationPath);
+      } else if (file.hadDestination && (!sourceExists || !destinationExists)) {
+        // The destination was moved out of the way but its durable backup has
+        // disappeared. Do not claim recovery or discard the restored source.
+        throw new LibraryServiceError('LIBRARY_CORRUPT');
+      }
+    }
+
+    this.removeOperation(operationPath);
+    openLibrary.connection
+      .prepare(
+        "UPDATE file_operations SET status = 'rolled_back', error_code = 'PROCESS_INTERRUPTED', updated_at = ? WHERE operation_id = ?",
+      )
+      .run(new Date().toISOString(), row.operation_id);
+  }
+
+  private moveConflictHoldingPath(
+    openLibrary: OpenLibrary,
+    conflict: ManagedMoveConflict,
+  ): string {
+    if (conflict.kind === 'managed') {
+      if (!conflict.assetId || !conflict.trashFilename) throw new LibraryServiceError('LIBRARY_CORRUPT');
+      return this.trashPath(openLibrary, conflict.assetId, conflict.trashFilename);
+    }
+    const operationsRoot = this.assertSafeOperationsRoot(openLibrary.summary.libraryPath);
+    const operationPath = path.join(operationsRoot, conflict.operationId);
+    this.assertSafeOperationPath(operationPath);
+    return path.join(operationPath, 'backup', conflict.backupName);
+  }
+
+  private recoverManagedMoveOperation(
+    openLibrary: OpenLibrary,
+    row: OperationRow,
+    manifest: ManagedMoveOperationManifest,
+    operationPath: string,
+  ): void {
+    if (row.status === 'preparing') {
+      this.removeOperation(operationPath);
+      openLibrary.connection.prepare(
+        "UPDATE file_operations SET status = 'rolled_back', error_code = 'PROCESS_INTERRUPTED', updated_at = ? WHERE operation_id = ?",
+      ).run(new Date().toISOString(), row.operation_id);
+      return;
+    }
+
+    for (const file of [...manifest.files].reverse()) {
+      const sourcePath = this.folderPath(openLibrary, file.sourceRelativePath);
+      const destinationPath = this.folderPath(openLibrary, file.destinationRelativePath);
+      const sourceExists = realFileExists(sourcePath);
+      const destinationExists = realFileExists(destinationPath);
+      const restoreHoldingPath = file.restoreConflict
+        ? this.moveConflictHoldingPath(openLibrary, file.restoreConflict)
+        : null;
+      const restoreHoldingExists = restoreHoldingPath ? realFileExists(restoreHoldingPath) : false;
+      const assetWasMoved = destinationExists && (
+        !sourceExists || (file.restoreConflict !== null && !restoreHoldingExists)
+      );
+
+      // A reverse/undo operation may have restored the asset that the original
+      // replace displaced. Put it back in its durable holding location before
+      // returning the moved asset to its source.
+      if (assetWasMoved && file.restoreConflict) {
+        const holdingPath = restoreHoldingPath!;
+        if (realFileExists(sourcePath)) {
+          if (realFileExists(holdingPath)) throw new LibraryServiceError('LIBRARY_CORRUPT');
+          mkdirSync(path.dirname(holdingPath), { recursive: true });
+          renameSync(sourcePath, holdingPath);
+        }
+      }
+
+      if (assetWasMoved) {
+        if (realFileExists(sourcePath)) throw new LibraryServiceError('LIBRARY_CORRUPT');
+        mkdirSync(path.dirname(sourcePath), { recursive: true });
+        renameSync(destinationPath, sourcePath);
+      }
+
+      if (file.destinationConflict) {
+        const holdingPath = this.moveConflictHoldingPath(openLibrary, file.destinationConflict);
+        if (realFileExists(holdingPath)) {
+          if (realFileExists(destinationPath)) throw new LibraryServiceError('LIBRARY_CORRUPT');
+          mkdirSync(path.dirname(destinationPath), { recursive: true });
+          renameSync(holdingPath, destinationPath);
+        }
+      }
+    }
+
+    this.removeOperation(operationPath);
+    openLibrary.connection.prepare(
+      "UPDATE file_operations SET status = 'rolled_back', error_code = 'PROCESS_INTERRUPTED', updated_at = ? WHERE operation_id = ?",
+    ).run(new Date().toISOString(), row.operation_id);
+  }
+
   private recoverFileOperations(openLibrary: OpenLibrary): void {
     const rows = openLibrary.connection
       .prepare(
@@ -2135,6 +2798,7 @@ export class LibraryService {
       .all() as OperationRow[];
     const operationsPath = this.assertSafeOperationsRoot(openLibrary.summary.libraryPath);
 
+    const retainedOperationIds = new Set<string>();
     for (const row of rows) {
       if (!UUID.test(row.operation_id) || path.basename(row.operation_id) !== row.operation_id) {
         throw new LibraryServiceError('LIBRARY_CORRUPT');
@@ -2148,11 +2812,27 @@ export class LibraryService {
       ) {
         throw new LibraryServiceError('LIBRARY_CORRUPT');
       }
-      if (row.status === 'committed' || row.status === 'rolled_back') {
+      if (row.status === 'committed') {
+        const manifest = this.parseOperationManifest(row.manifest_json);
+        if (manifest.version === 4 && manifest.kind === 'managed-move' && row.error_code !== 'UNDONE') {
+          // The committed move's backup is the durable source for its one-shot
+          // undo. Keep it until an undo consumes it.
+          retainedOperationIds.add(row.operation_id);
+          continue;
+        }
         this.removeOperation(operationPath);
         continue;
       }
-      if (row.status === 'failed' && row.error_code !== 'IMPORT_APPLY_FAILED') {
+      if (row.status === 'rolled_back') {
+        this.removeOperation(operationPath);
+        continue;
+      }
+      if (
+        row.status === 'failed' &&
+        row.error_code !== 'IMPORT_APPLY_FAILED' &&
+        row.error_code !== 'RESTORE_APPLY_FAILED' &&
+        row.error_code !== 'MOVE_APPLY_FAILED'
+      ) {
         this.removeOperation(operationPath);
         continue;
       }
@@ -2160,6 +2840,14 @@ export class LibraryService {
       const manifest = this.parseOperationManifest(row.manifest_json);
       if (manifest.version === 2) {
         this.recoverLinkedTrashOperation(openLibrary, row, manifest);
+        continue;
+      }
+      if (manifest.version === 3) {
+        this.recoverRestoreOperation(openLibrary, row, manifest, operationPath);
+        continue;
+      }
+      if (manifest.version === 4) {
+        this.recoverManagedMoveOperation(openLibrary, row, manifest, operationPath);
         continue;
       }
       if (
@@ -2220,6 +2908,7 @@ export class LibraryService {
 
     if (directoryExists(operationsPath)) {
       for (const child of readdirSync(operationsPath)) {
+        if (retainedOperationIds.has(child)) continue;
         const orphanPath = path.join(operationsPath, child);
         this.assertSafeOperationPath(orphanPath);
         rmSync(orphanPath, { force: true, recursive: true });
@@ -2496,6 +3185,7 @@ export class LibraryService {
       pathsByIdentity.set(identity, { kind, path: relativePath });
     };
     const addFile = (sourcePath: string, relativePath: string): void => {
+      if (isDefaultIgnoredAssetEntry(path.basename(sourcePath), 'file')) return;
       let sourceStat: BigIntStats;
       try {
         sourceStat = lstatSync(sourcePath, { bigint: true });
@@ -2582,6 +3272,8 @@ export class LibraryService {
         throw sourceChanged();
       }
       for (const child of children) {
+        const childKind = child.isDirectory() ? 'directory' : 'file';
+        if (isDefaultIgnoredAssetEntry(child.name, childKind)) continue;
         assertSupportedSourceSegment(child.name);
         const childSourcePath = path.join(directoryPath, child.name);
         const childRelativePath = path.posix.join(relativeDirectory, child.name);
@@ -2729,7 +3421,9 @@ export class LibraryService {
       }>;
     return rows.map((row) => {
       const countRow = openLibrary.connection
-        .prepare('SELECT COUNT(*) AS count FROM assets WHERE linked_folder_id = ?')
+        .prepare(`SELECT COUNT(*) AS count FROM assets a
+                   WHERE a.linked_folder_id = ?
+                     AND NOT EXISTS (SELECT 1 FROM linked_ignored_assets ignored WHERE ignored.asset_id = a.asset_id)`)
         .get(row.folder_id) as { count: number };
       return {
         folderId: row.folder_id,
@@ -2738,6 +3432,318 @@ export class LibraryService {
         assetCount: countRow.count,
       };
     });
+  }
+
+  getLinkedFolderRules(input: { libraryId: string; folderId: string }): LinkedFolderRule[] {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    const folder = openLibrary.connection
+      .prepare('SELECT folder_id FROM linked_folders WHERE folder_id = ? AND library_id = ?')
+      .get(input.folderId, input.libraryId);
+    if (!folder) throw new LibraryServiceError('FOLDER_NOT_FOUND');
+    return (openLibrary.connection.prepare(
+      `SELECT rule_id, action, target, pattern, enabled
+         FROM linked_folder_rules WHERE folder_id = ? ORDER BY position`,
+    ).all(input.folderId) as Array<{
+      rule_id: string; action: 'include' | 'exclude'; target: LinkedFolderRule['target']; pattern: string; enabled: number;
+    }>).map((row) => ({
+      ruleId: row.rule_id,
+      action: row.action,
+      target: row.target,
+      pattern: row.pattern,
+      enabled: row.enabled === 1,
+    }));
+  }
+
+  setLinkedFolderRules(input: {
+    libraryId: string;
+    folderId: string;
+    rules: LinkedFolderRule[];
+  }): { rules: LinkedFolderRule[]; hiddenCount: number; restoredCount: number } {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    const folder = openLibrary.connection.prepare(
+      'SELECT folder_id FROM linked_folders WHERE folder_id = ? AND library_id = ?',
+    ).get(input.folderId, input.libraryId);
+    if (!folder) throw new LibraryServiceError('FOLDER_NOT_FOUND');
+    if (input.rules.length > 200 || new Set(input.rules.map((rule) => rule.ruleId)).size !== input.rules.length) {
+      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+    }
+    const rules = input.rules.map((rule) => this.normalizeLinkedFolderRule(rule));
+    let hiddenCount = 0;
+    let restoredCount = 0;
+    const now = new Date().toISOString();
+    openLibrary.connection.transaction(() => {
+      openLibrary.connection.prepare('DELETE FROM linked_folder_rules WHERE folder_id = ?').run(input.folderId);
+      const insertRule = openLibrary.connection.prepare(
+        `INSERT INTO linked_folder_rules(rule_id, folder_id, position, action, target, pattern, enabled)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      );
+      rules.forEach((rule, position) => insertRule.run(
+        rule.ruleId, input.folderId, position, rule.action, rule.target, rule.pattern, rule.enabled ? 1 : 0,
+      ));
+      const assets = openLibrary.connection.prepare(
+        `SELECT a.asset_id, a.relative_file_path,
+                EXISTS(SELECT 1 FROM linked_ignored_assets ignored WHERE ignored.asset_id = a.asset_id) AS ignored
+           FROM assets a WHERE a.linked_folder_id = ?`,
+      ).all(input.folderId) as Array<{ asset_id: string; relative_file_path: string; ignored: number }>;
+      for (const asset of assets) {
+        const ignored = this.linkedPathIsIgnored(asset.relative_file_path, rules);
+        if (ignored && asset.ignored === 0) {
+          openLibrary.connection.prepare(
+            'INSERT OR REPLACE INTO linked_ignored_assets(asset_id, ignored_at) VALUES (?, ?)',
+          ).run(asset.asset_id, now);
+          hiddenCount += 1;
+        } else if (!ignored && asset.ignored === 1) {
+          openLibrary.connection.prepare('DELETE FROM linked_ignored_assets WHERE asset_id = ?').run(asset.asset_id);
+          restoredCount += 1;
+        }
+      }
+    })();
+    this.refreshManagedAssets(input.libraryId);
+    return { rules: this.getLinkedFolderRules(input), hiddenCount, restoredCount };
+  }
+
+  copyAssetsToLinkedFolder(input: {
+    libraryId: string;
+    folderId: string;
+    assetIds: string[];
+    conflictStrategy: 'keep-both' | 'replace' | 'skip';
+  }): { copiedCount: number; skippedCount: number; assets: AssetSummary[] } {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    const folder = openLibrary.connection.prepare(
+      `SELECT absolute_root_path, status FROM linked_folders
+        WHERE folder_id = ? AND library_id = ?`,
+    ).get(input.folderId, input.libraryId) as { absolute_root_path: string; status: string } | undefined;
+    if (!folder) throw new LibraryServiceError('FOLDER_NOT_FOUND');
+    if (folder.status !== 'available' || !realDirectoryExists(folder.absolute_root_path)) {
+      throw new LibraryServiceError('INVALID_IMPORT_SOURCE', { reason: 'SOURCE_NOT_FOUND' });
+    }
+    const rows = openLibrary.connection.prepare(
+      `SELECT a.asset_id, a.relative_file_path
+         FROM assets a
+        WHERE a.asset_id IN (${input.assetIds.map(() => '?').join(',')})
+          AND a.location_kind = 'managed' AND a.deleted_at IS NULL AND a.availability = 'available'`,
+    ).all(...input.assetIds) as Array<{ asset_id: string; relative_file_path: string }>;
+    if (rows.length !== input.assetIds.length) throw new LibraryServiceError('ASSET_NOT_FOUND');
+    const copiedPaths: string[] = [];
+    const backups: Array<{ destination: string; backup: string }> = [];
+    const operationId = randomUUID();
+    const operationPath = path.join(this.assertSafeOperationsRoot(openLibrary.summary.libraryPath), operationId);
+    const backupPath = path.join(operationPath, 'backup');
+    let skippedCount = 0;
+    try {
+      mkdirSync(backupPath, { recursive: true });
+      const occupied = new Set<string>();
+      for (const [index, row] of rows.entries()) {
+        const sourcePath = this.folderPath(openLibrary, row.relative_file_path);
+        const sourceEntry = lstatSync(sourcePath);
+        if (!sourceEntry.isFile() || sourceEntry.isSymbolicLink()) {
+          throw new LibraryServiceError('INVALID_IMPORT_SOURCE', { reason: 'UNSUPPORTED_FILE_ENTRY' });
+        }
+        const originalName = path.posix.basename(row.relative_file_path);
+        let relativeDestination = normalizeRelativeAssetPath(originalName);
+        let destination = path.join(folder.absolute_root_path, relativeDestination);
+        const destinationExists = (): boolean => occupied.has(portablePathIdentity(relativeDestination)) || existsSync(destination);
+        if (destinationExists()) {
+          if (input.conflictStrategy === 'skip') {
+            skippedCount += 1;
+            continue;
+          }
+          if (input.conflictStrategy === 'keep-both') {
+            let found = false;
+            for (let suffix = 2; suffix < 10_000 && !found; suffix += 1) {
+              for (const candidate of copyNameCandidates(originalName, suffix)) {
+                relativeDestination = normalizeRelativeAssetPath(candidate);
+                destination = path.join(folder.absolute_root_path, relativeDestination);
+                if (!destinationExists()) { found = true; break; }
+              }
+            }
+            if (!found) throw new LibraryServiceError('IMPORT_APPLY_FAILED', { reason: 'NAME_NOT_SUPPORTED' });
+          } else {
+            const destinationEntry = lstatSync(destination);
+            if (!destinationEntry.isFile() || destinationEntry.isSymbolicLink()) {
+              throw new LibraryServiceError('IMPORT_APPLY_FAILED', { reason: 'UNSUPPORTED_FILE_ENTRY' });
+            }
+            const backup = path.join(backupPath, String(index));
+            renameSync(destination, backup);
+            backups.push({ destination, backup });
+          }
+        }
+        copyFileSync(sourcePath, destination, constants.COPYFILE_EXCL);
+        copiedPaths.push(relativeDestination);
+        occupied.add(portablePathIdentity(relativeDestination));
+      }
+      rmSync(operationPath, { recursive: true, force: true });
+    } catch (error) {
+      for (const relativePath of copiedPaths.reverse()) {
+        rmSync(path.join(folder.absolute_root_path, ...relativePath.split('/')), { force: true });
+      }
+      for (const backup of backups.reverse()) {
+        if (existsSync(backup.backup)) renameSync(backup.backup, backup.destination);
+      }
+      rmSync(operationPath, { recursive: true, force: true });
+      this.diagnose('linked-folder.copy-assets', error, {
+        libraryId: input.libraryId, linkedFolderId: input.folderId, requestedCount: input.assetIds.length,
+      });
+      throw serviceError(error, 'IMPORT_APPLY_FAILED');
+    }
+    this.refreshManagedAssets(input.libraryId);
+    const copiedIdentities = new Set(copiedPaths.map(portablePathIdentity));
+    const assets = this.listAssets({ libraryId: input.libraryId, folderId: input.folderId, recursive: true })
+      .filter((asset) => copiedIdentities.has(portablePathIdentity(asset.relativeFilePath)));
+    return { copiedCount: copiedPaths.length, skippedCount, assets };
+  }
+
+  convertLinkedFolderToManaged(input: {
+    libraryId: string;
+    folderId: string;
+    targetFolderId?: string;
+  }): { managedFolderId: string; convertedCount: number; assets: AssetSummary[] } {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    const linked = openLibrary.connection.prepare(
+      `SELECT display_name, absolute_root_path, status FROM linked_folders
+        WHERE folder_id = ? AND library_id = ?`,
+    ).get(input.folderId, input.libraryId) as {
+      display_name: string; absolute_root_path: string; status: 'available' | 'offline';
+    } | undefined;
+    if (!linked) throw new LibraryServiceError('FOLDER_NOT_FOUND');
+    if (linked.status !== 'available' || !realDirectoryExists(linked.absolute_root_path)) {
+      throw new LibraryServiceError('INVALID_IMPORT_SOURCE', { reason: 'SOURCE_NOT_FOUND' });
+    }
+    const parent = input.targetFolderId
+      ? openLibrary.connection.prepare(
+          'SELECT folder_id, relative_path FROM managed_folders WHERE folder_id = ?',
+        ).get(input.targetFolderId) as { folder_id: string; relative_path: string } | undefined
+      : undefined;
+    if (input.targetFolderId && !parent) throw new LibraryServiceError('FOLDER_NOT_FOUND');
+
+    let folderName = normalizeFolderName(linked.display_name);
+    let targetPrefix = parent ? path.posix.join(parent.relative_path, folderName) : folderName;
+    for (let suffix = 2; this.portableDiskDestination(openLibrary, targetPrefix) || openLibrary.connection.prepare(
+      'SELECT 1 FROM managed_folders WHERE path_identity = ?',
+    ).get(portablePathIdentity(targetPrefix)); suffix += 1) {
+      folderName = normalizeFolderName(copyNameCandidates(linked.display_name, suffix)[0]!);
+      targetPrefix = parent ? path.posix.join(parent.relative_path, folderName) : folderName;
+      if (suffix > 9_999) throw new LibraryServiceError('FOLDER_ALREADY_EXISTS');
+    }
+
+    const rules = this.getLinkedFolderRules({ libraryId: input.libraryId, folderId: input.folderId });
+    const entries = this.enumerateLinkedSources(linked.absolute_root_path, input.folderId, rules);
+    const linkedAssets = openLibrary.connection.prepare(
+      `SELECT a.asset_id, a.relative_file_path,
+              EXISTS(SELECT 1 FROM linked_ignored_assets ignored WHERE ignored.asset_id = a.asset_id) AS ignored
+         FROM assets a WHERE a.linked_folder_id = ?`,
+    ).all(input.folderId) as Array<{ asset_id: string; relative_file_path: string; ignored: number }>;
+    const operationId = randomUUID();
+    const operationsRoot = this.assertSafeOperationsRoot(openLibrary.summary.libraryPath);
+    const operationPath = path.join(operationsRoot, operationId);
+    const stagePath = path.join(operationPath, 'stage');
+    const directorySet = new Set<string>([targetPrefix]);
+    for (const entry of entries) {
+      let cursor = path.posix.dirname(path.posix.join(targetPrefix, entry.relativePath));
+      while (cursor !== '.' && cursor !== path.posix.dirname(cursor)) {
+        directorySet.add(cursor);
+        if (cursor === targetPrefix) break;
+        cursor = path.posix.dirname(cursor);
+      }
+    }
+    const directories = [...directorySet].sort((a, b) => a.split('/').length - b.split('/').length);
+    const manifest: OperationManifest = {
+      version: 1,
+      phase: 'prepared',
+      directories: directories.map((relativePath) => ({ relativePath, existed: false })),
+      files: entries.map((entry, index) => ({
+        stageName: String(index), backupName: String(index), hadDestination: false,
+        destinationRelativePath: path.posix.join(targetPrefix, entry.relativePath),
+      })),
+    };
+    const now = new Date().toISOString();
+    try {
+      openLibrary.connection.prepare(
+        `INSERT INTO file_operations(operation_id, kind, status, manifest_json, error_code, created_at, updated_at)
+         VALUES (?, 'import', 'preparing', ?, NULL, ?, ?)`,
+      ).run(operationId, JSON.stringify(manifest), now, now);
+      mkdirSync(stagePath, { recursive: true });
+      entries.forEach((entry, index) => {
+        const sourcePath = this.linkedAssetPath(openLibrary, input.folderId, entry.relativePath);
+        copyFileSync(sourcePath, path.join(stagePath, String(index)), constants.COPYFILE_EXCL);
+      });
+      openLibrary.connection.prepare(
+        "UPDATE file_operations SET status = 'applying', updated_at = ? WHERE operation_id = ?",
+      ).run(new Date().toISOString(), operationId);
+      for (const directory of directories) mkdirSync(this.folderPath(openLibrary, directory));
+      entries.forEach((entry, index) => {
+        renameSync(
+          path.join(stagePath, String(index)),
+          this.folderPath(openLibrary, path.posix.join(targetPrefix, entry.relativePath)),
+        );
+      });
+      this.failAt('crash-linked-convert-after-filesystem');
+      const managedFolderId = randomUUID();
+      const convertedAt = new Date().toISOString();
+      openLibrary.connection.transaction(() => {
+        openLibrary.connection.prepare(
+          `INSERT INTO managed_folders(folder_id, parent_folder_id, name, relative_path, path_identity, created_at)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+        ).run(
+          managedFolderId, parent?.folder_id ?? null, folderName, targetPrefix,
+          portablePathIdentity(targetPrefix), convertedAt,
+        );
+        const updateAsset = openLibrary.connection.prepare(
+          `UPDATE assets SET location_kind = 'managed', managed_folder_id = ?, linked_folder_id = NULL,
+                  relative_file_path = ?, path_identity = ?, availability = ?, updated_at = ?
+            WHERE asset_id = ?`,
+        );
+        for (const asset of linkedAssets) {
+          const managedPath = path.posix.join(targetPrefix, asset.relative_file_path);
+          const copied = !asset.ignored && entries.some((entry) =>
+            portablePathIdentity(entry.relativePath) === portablePathIdentity(asset.relative_file_path));
+          updateAsset.run(
+            managedFolderId, managedPath, portablePathIdentity(managedPath), copied ? 'available' : 'missing',
+            convertedAt, asset.asset_id,
+          );
+          openLibrary.connection.prepare('DELETE FROM linked_ignored_assets WHERE asset_id = ?').run(asset.asset_id);
+          this.syncAssetSearchContent(openLibrary.connection, asset.asset_id);
+        }
+        openLibrary.connection.prepare('DELETE FROM linked_folders WHERE folder_id = ?').run(input.folderId);
+        openLibrary.connection.prepare(
+          "UPDATE file_operations SET status = 'committed', updated_at = ? WHERE operation_id = ?",
+        ).run(convertedAt, operationId);
+      })();
+      this.stopLinkedWatcher(input.libraryId, input.folderId);
+      try {
+        this.removeOperation(operationPath);
+      } catch (cleanupError) {
+        // The database and destination bytes committed atomically. A committed
+        // operation directory is safe to retain; normal reopen recovery removes it.
+        this.diagnose('linked-folder.convert.committed-cleanup', cleanupError, {
+          libraryId: input.libraryId, folderId: input.folderId, operationId,
+        });
+      }
+      const assetIds = new Set(linkedAssets.map((asset) => asset.asset_id));
+      const assets = this.listAssets({ libraryId: input.libraryId, folderId: managedFolderId, recursive: true })
+        .filter((asset) => assetIds.has(asset.assetId));
+      return { managedFolderId, convertedCount: entries.length, assets };
+    } catch (error) {
+      if (error instanceof SimulatedCrashError) {
+        throw new LibraryServiceError('IMPORT_APPLY_FAILED', { cause: error });
+      }
+      try {
+        for (const entry of [...entries].reverse()) {
+          rmSync(this.folderPath(openLibrary, path.posix.join(targetPrefix, entry.relativePath)), { force: true });
+        }
+        for (const directory of [...directories].reverse()) {
+          try { rmdirSync(this.folderPath(openLibrary, directory)); } catch { /* external writer or non-empty */ }
+        }
+        this.removeOperation(operationPath);
+        openLibrary.connection.prepare(
+          "UPDATE file_operations SET status = 'rolled_back', error_code = 'IMPORT_APPLY_FAILED', updated_at = ? WHERE operation_id = ?",
+        ).run(new Date().toISOString(), operationId);
+      } catch (rollbackError) {
+        this.diagnose('linked-folder.convert.rollback', rollbackError, { libraryId: input.libraryId, folderId: input.folderId });
+      }
+      this.diagnose('linked-folder.convert', error, { libraryId: input.libraryId, folderId: input.folderId });
+      throw serviceError(error, 'IMPORT_APPLY_FAILED');
+    }
   }
 
   listAssets(input: {
@@ -2769,14 +3775,30 @@ export class LibraryService {
                 a.deleted_at, a.trashed_from_relative_path,
                 ra.status AS thumbnail_status,
                 ra.artifact_id AS thumbnail_artifact_id,
-                ra.width AS artifact_width, ra.height AS artifact_height
+                COALESCE(ra.width, video_meta.width) AS artifact_width,
+                COALESCE(ra.height, video_meta.height) AS artifact_height,
+                video_meta.duration_ms AS artifact_duration_ms
            FROM assets a
            JOIN revisions r ON r.revision_id = a.current_revision_id
            LEFT JOIN asset_metadata m ON m.asset_id = a.asset_id
            LEFT JOIN revision_artifacts ra
              ON ra.revision_id = a.current_revision_id
-            AND ra.kind = 'thumbnail'
+            AND ra.kind = CASE
+              WHEN LOWER(a.relative_file_path) LIKE '%.mp4'
+                OR LOWER(a.relative_file_path) LIKE '%.webm'
+                OR LOWER(a.relative_file_path) LIKE '%.mov'
+                OR LOWER(a.relative_file_path) LIKE '%.avi'
+                OR LOWER(a.relative_file_path) LIKE '%.wmv'
+              THEN 'video_poster'
+              ELSE 'thumbnail'
+            END
             AND ra.invalidated_at IS NULL
+           LEFT JOIN revision_artifacts video_meta
+             ON video_meta.revision_id = a.current_revision_id
+            AND video_meta.kind = 'extracted_metadata'
+            AND video_meta.status = 'ready'
+            AND video_meta.invalidated_at IS NULL
+          WHERE NOT EXISTS (SELECT 1 FROM linked_ignored_assets ignored WHERE ignored.asset_id = a.asset_id)
           ORDER BY a.relative_file_path`,
       )
       .all() as Array<AssetSummaryRow & {
@@ -2786,6 +3808,7 @@ export class LibraryService {
         thumbnail_artifact_id: string | null;
         artifact_width: number | null;
         artifact_height: number | null;
+        artifact_duration_ms: number | null;
       }>;
 
     return rows
@@ -2866,7 +3889,8 @@ export class LibraryService {
     if (existing) throw new LibraryServiceError('FOLDER_ALREADY_EXISTS');
 
     const folderId = randomUUID();
-    const entries = this.enumerateLinkedSources(canonicalRoot, folderId);
+    const defaultRules = DEFAULT_LINKED_FOLDER_RULES.map((rule) => ({ ...rule, ruleId: randomUUID() }));
+    const entries = this.enumerateLinkedSources(canonicalRoot, folderId, defaultRules);
     const now = new Date().toISOString();
     const sourceDeviceHint = String(rootStat.dev);
 
@@ -2888,6 +3912,13 @@ export class LibraryService {
           now,
           now,
         );
+      const insertRule = openLibrary.connection.prepare(
+        `INSERT INTO linked_folder_rules(rule_id, folder_id, position, action, target, pattern, enabled)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      );
+      defaultRules.forEach((rule, position) => insertRule.run(
+        rule.ruleId, folderId, position, rule.action, rule.target, rule.pattern, 1,
+      ));
       const insertAsset = openLibrary.connection.prepare(
         `INSERT INTO assets
            (asset_id, location_kind, managed_folder_id, linked_folder_id, relative_file_path,
@@ -3331,8 +4362,8 @@ export class LibraryService {
     libraryId: string;
     collectionId: string;
     name?: string;
-    description?: string;
-    coverAssetId?: string;
+    description?: string | null;
+    coverAssetId?: string | null;
     position?: number;
   }): CollectionSummary {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
@@ -3397,6 +4428,53 @@ export class LibraryService {
       assetCount: countRows.asset_count,
       childCollectionCount: countRows.child_count,
     };
+  }
+
+  reorderCollections(input: {
+    libraryId: string;
+    orderedCollectionIds: string[];
+  }): string[] {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    const uniqueIds = new Set(input.orderedCollectionIds);
+    if (uniqueIds.size !== input.orderedCollectionIds.length) {
+      throw new LibraryServiceError('FOLDER_NOT_FOUND');
+    }
+    const placeholders = input.orderedCollectionIds.map(() => '?').join(',');
+    const rows = openLibrary.connection.prepare(
+      `SELECT collection_id, parent_id
+         FROM collections
+        WHERE library_id = ? AND collection_id IN (${placeholders})`,
+    ).all(openLibrary.summary.libraryId, ...input.orderedCollectionIds) as Array<{
+      collection_id: string;
+      parent_id: string | null;
+    }>;
+    if (rows.length !== input.orderedCollectionIds.length) {
+      throw new LibraryServiceError('FOLDER_NOT_FOUND');
+    }
+    const parentId = rows[0]!.parent_id;
+    if (rows.some((row) => row.parent_id !== parentId)) {
+      throw new LibraryServiceError('FOLDER_NOT_FOUND');
+    }
+    const siblingCount = openLibrary.connection.prepare(
+      `SELECT COUNT(*) AS count
+         FROM collections
+        WHERE library_id = ? AND parent_id IS ?`,
+    ).get(openLibrary.summary.libraryId, parentId) as { count: number };
+    if (siblingCount.count !== input.orderedCollectionIds.length) {
+      throw new LibraryServiceError('FOLDER_NOT_FOUND');
+    }
+
+    const now = new Date().toISOString();
+    const update = openLibrary.connection.prepare(
+      'UPDATE collections SET position = ?, updated_at = ? WHERE collection_id = ? AND library_id = ?',
+    );
+    openLibrary.connection.transaction(() => {
+      input.orderedCollectionIds.forEach((collectionId, position) => {
+        const result = update.run(position, now, collectionId, openLibrary.summary.libraryId);
+        if (result.changes !== 1) throw new LibraryServiceError('FOLDER_NOT_FOUND');
+      });
+    })();
+    return [...input.orderedCollectionIds];
   }
 
   deleteCollection(input: { libraryId: string; collectionId: string }): string {
@@ -3561,6 +4639,81 @@ export class LibraryService {
 
   // ── Asset Metadata ──────────────────────────────────────────────────
 
+  private resolvedPaletteFields(
+    openLibrary: OpenLibrary,
+    assetId: string,
+    storedManualPalette: string | null,
+  ): Pick<AssetMetadataResult, 'automaticPalette' | 'effectivePalette' | 'paletteSource'> {
+    let manualPalette: string[] = [];
+    if (storedManualPalette) {
+      try {
+        const parsed = JSON.parse(storedManualPalette) as unknown;
+        if (Array.isArray(parsed)) {
+          manualPalette = parsed.filter((color): color is string =>
+            typeof color === 'string' && color.trim().length > 0);
+        }
+      } catch (error) {
+        this.diagnose('palette.manual-cache', error, { assetId });
+      }
+    }
+
+    let automaticPalette: RepresentativeColor[] = [];
+    const artifact = openLibrary.connection.prepare(
+      `SELECT ra.artifact_id
+         FROM assets a
+         JOIN revision_artifacts ra ON ra.revision_id = a.current_revision_id
+        WHERE a.asset_id = ?
+          AND ra.kind = 'extracted_palette'
+          AND ra.status = 'ready'
+          AND ra.invalidated_at IS NULL
+        LIMIT 1`,
+    ).get(assetId) as { artifact_id: string } | undefined;
+    if (artifact) {
+      try {
+        const parsed = JSON.parse(
+          readFileSync(
+            this.getArtifactAbsolutePath(openLibrary.summary.libraryId, artifact.artifact_id),
+            'utf-8',
+          ),
+        ) as unknown;
+        if (!Array.isArray(parsed)) throw new Error('Palette artifact must contain an array.');
+        automaticPalette = parsed.map((entry) => {
+          if (
+            typeof entry !== 'object' || entry === null ||
+            !('hex' in entry) || typeof entry.hex !== 'string' ||
+            !/^#[0-9A-F]{6}$/u.test(entry.hex) ||
+            !('ratio' in entry) || typeof entry.ratio !== 'number' ||
+            !Number.isFinite(entry.ratio) || entry.ratio < 0 || entry.ratio > 1
+          ) {
+            throw new Error('Palette artifact contains an invalid colour entry.');
+          }
+          return { hex: entry.hex, ratio: entry.ratio };
+        });
+      } catch (error) {
+        this.diagnose('palette.artifact-read', error, {
+          assetId,
+          artifactId: artifact.artifact_id,
+        });
+      }
+    }
+
+    if (manualPalette.length > 0) {
+      return {
+        automaticPalette,
+        effectivePalette: manualPalette,
+        paletteSource: 'manual',
+      };
+    }
+    if (automaticPalette.length > 0) {
+      return {
+        automaticPalette,
+        effectivePalette: automaticPalette.map((color) => color.hex),
+        paletteSource: 'automatic',
+      };
+    }
+    return { automaticPalette: [], effectivePalette: [], paletteSource: null };
+  }
+
   getAssetMetadata(input: { libraryId: string; assetId: string }): AssetMetadataResult {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
 
@@ -3596,6 +4749,7 @@ export class LibraryService {
         rating: 0,
         favorite: false,
         palette: null,
+        ...this.resolvedPaletteFields(openLibrary, input.assetId, null),
         sourcePageUrl: null,
         entityVersion: 0,
         updatedAt: new Date(0).toISOString(),
@@ -3609,6 +4763,7 @@ export class LibraryService {
       rating: row.rating,
       favorite: row.favorite !== 0,
       palette: row.palette,
+      ...this.resolvedPaletteFields(openLibrary, input.assetId, row.palette),
       sourcePageUrl: row.source_page_url,
       entityVersion: row.entity_version,
       updatedAt: row.updated_at,
@@ -3741,6 +4896,7 @@ export class LibraryService {
         rating: updated.rating,
         favorite: updated.favorite !== 0,
         palette: updated.palette,
+        ...this.resolvedPaletteFields(openLibrary, input.assetId, updated.palette),
         sourcePageUrl: updated.source_page_url,
         entityVersion: updated.entity_version,
         updatedAt: updated.updated_at,
@@ -3796,6 +4952,7 @@ export class LibraryService {
       rating: newRating,
       favorite: newFavorite !== 0,
       palette: newPalette,
+      ...this.resolvedPaletteFields(openLibrary, input.assetId, newPalette),
       sourcePageUrl: newSourcePageUrl,
       entityVersion: newEntityVersion,
       updatedAt: now,
@@ -3946,6 +5103,8 @@ export class LibraryService {
       '.webp': 'image/webp',
       '.bmp': 'image/bmp',
       '.svg': 'image/svg+xml',
+      '.exr': 'image/x-exr',
+      '.tga': 'image/x-tga',
       '.mp4': 'video/mp4',
       '.webm': 'video/webm',
       '.mov': 'video/quicktime',
@@ -4289,7 +5448,7 @@ export class LibraryService {
     // Image extensions for filtering.
     const imageExts = new Set([
       '.png', '.jpg', '.jpeg', '.gif', '.tiff', '.tif',
-      '.webp', '.bmp', '.svg',
+      '.webp', '.bmp', '.svg', '.exr', '.tga',
     ]);
     const videoExts = new Set([
       '.mp4', '.mov', '.avi', '.wmv', '.webm', '.mkv', '.m4v',
@@ -4437,6 +5596,17 @@ export class LibraryService {
     ).run(new Date().toISOString(), openLibrary.summary.libraryId);
   }
 
+  private recoverInterruptedThumbnailJobs(openLibrary: OpenLibrary): void {
+    openLibrary.connection.prepare(
+      `UPDATE jobs SET status = 'queued', progress = 0.0,
+        error_code = 'PROCESS_INTERRUPTED', error_detail = NULL, updated_at = ?
+        WHERE library_id = ? AND status = 'running'
+          AND kind IN ('generate_thumbnail', 'generate_video_poster',
+                       'generate_contact_sheet', 'generate_webm_proxy',
+                       'extract_palette')`,
+    ).run(new Date().toISOString(), openLibrary.summary.libraryId);
+  }
+
   // ── AI Job Queue Management ──────────────────────────────────────
 
   /**
@@ -4534,8 +5704,8 @@ export class LibraryService {
     jobs: Array<{
       jobId: string;
       assetId: string;
-      kind: string;
-      status: string;
+      kind: 'ai.image.analysis' | 'ai.video.analysis';
+      status: 'queued' | 'running' | 'paused' | 'succeeded' | 'failed' | 'cancelled';
       errorCode: string | null;
       errorDetail: string | null;
       updatedAt: string;
@@ -4567,8 +5737,8 @@ export class LibraryService {
       .all(libId) as Array<{
         job_id: string;
         asset_id: string;
-        kind: string;
-        status: string;
+        kind: 'ai.image.analysis' | 'ai.video.analysis';
+        status: 'queued' | 'running' | 'paused' | 'succeeded' | 'failed' | 'cancelled';
         error_code: string | null;
         error_detail: string | null;
         updated_at: string;
@@ -4632,6 +5802,208 @@ export class LibraryService {
     return { count: result.changes as number };
   }
 
+  // ── Media Job Queue Management ────────────────────────────────────
+
+  listMediaJobs(libraryId: string): {
+    queued: number;
+    running: number;
+    succeeded: number;
+    failed: number;
+    paused: number;
+    cancelled: number;
+    jobs: Array<{
+      jobId: string;
+      assetId: string;
+      revisionId: string | null;
+      kind: MediaJobKind;
+      status: MediaJobStatus;
+      progress: number;
+      attemptCount: number;
+      errorCode: string | null;
+      errorDetail: string | null;
+      createdAt: string;
+      updatedAt: string;
+    }>;
+  } {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    const kindPlaceholders = MEDIA_JOB_KINDS.map(() => '?').join(',');
+    const counts = openLibrary.connection.prepare(
+      `SELECT status, COUNT(*) AS count FROM jobs
+        WHERE library_id = ? AND kind IN (${kindPlaceholders})
+        GROUP BY status`,
+    ).all(openLibrary.summary.libraryId, ...MEDIA_JOB_KINDS) as Array<{
+      status: string;
+      count: number;
+    }>;
+    const rows = openLibrary.connection.prepare(
+      `SELECT job_id, asset_id, revision_id, kind, status, progress,
+              attempt_count, error_code, error_detail, created_at, updated_at
+         FROM jobs
+        WHERE library_id = ? AND kind IN (${kindPlaceholders})
+        ORDER BY created_at DESC, job_id DESC
+        LIMIT 500`,
+    ).all(openLibrary.summary.libraryId, ...MEDIA_JOB_KINDS) as Array<{
+      job_id: string;
+      asset_id: string;
+      revision_id: string | null;
+      kind: MediaJobKind;
+      status: MediaJobStatus;
+      progress: number;
+      attempt_count: number;
+      error_code: string | null;
+      error_detail: string | null;
+      created_at: string;
+      updated_at: string;
+    }>;
+    const statusCounts = new Map(counts.map((row) => [row.status, row.count]));
+    return {
+      queued: statusCounts.get('queued') ?? 0,
+      running: statusCounts.get('running') ?? 0,
+      succeeded: statusCounts.get('succeeded') ?? 0,
+      failed: statusCounts.get('failed') ?? 0,
+      paused: statusCounts.get('paused') ?? 0,
+      cancelled: statusCounts.get('cancelled') ?? 0,
+      jobs: rows.map((row) => ({
+        jobId: row.job_id,
+        assetId: row.asset_id,
+        revisionId: row.revision_id,
+        kind: row.kind,
+        status: row.status,
+        progress: row.progress,
+        attemptCount: row.attempt_count,
+        errorCode: row.error_code,
+        errorDetail: row.error_detail,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      })),
+    };
+  }
+
+  pauseMediaJobs(libraryId: string, jobIds?: string[]): { pausedCount: number } {
+    const count = this.updateMediaJobStatus(libraryId, ['queued', 'running'], 'paused', jobIds);
+    this.abortActiveMediaJobs(libraryId, jobIds);
+    return { pausedCount: count };
+  }
+
+  resumeMediaJobs(libraryId: string, jobIds?: string[]): { resumedCount: number } {
+    return {
+      resumedCount: this.updateMediaJobStatus(libraryId, ['paused'], 'queued', jobIds),
+    };
+  }
+
+  cancelMediaJobs(libraryId: string, jobIds?: string[]): { cancelledCount: number } {
+    const count = this.updateMediaJobStatus(
+      libraryId,
+      ['queued', 'paused', 'running'],
+      'cancelled',
+      jobIds,
+    );
+    this.abortActiveMediaJobs(libraryId, jobIds);
+    return { cancelledCount: count };
+  }
+
+  retryMediaJobs(libraryId: string, jobIds: string[]): { retriedCount: number } {
+    if (jobIds.length === 0) return { retriedCount: 0 };
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    const result = openLibrary.connection.prepare(
+      `UPDATE jobs SET status = 'queued', progress = 0.0, attempt_count = 0,
+              error_code = NULL, error_detail = NULL, updated_at = ?
+        WHERE library_id = ?
+          AND kind IN (${MEDIA_JOB_KINDS.map(() => '?').join(',')})
+          AND status = 'failed'
+          AND job_id IN (${jobIds.map(() => '?').join(',')})`,
+    ).run(
+      new Date().toISOString(),
+      openLibrary.summary.libraryId,
+      ...MEDIA_JOB_KINDS,
+      ...jobIds,
+    );
+    return { retriedCount: result.changes };
+  }
+
+  private updateMediaJobStatus(
+    libraryId: string,
+    fromStatuses: string[],
+    toStatus: 'paused' | 'queued' | 'cancelled',
+    jobIds?: string[],
+  ): number {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    const selectedIds = jobIds && jobIds.length > 0 ? [...new Set(jobIds)] : undefined;
+    const idClause = selectedIds
+      ? `AND job_id IN (${selectedIds.map(() => '?').join(',')})`
+      : '';
+    const result = openLibrary.connection.prepare(
+      `UPDATE jobs SET status = ?, progress = 0.0, updated_at = ?
+        WHERE library_id = ?
+          AND kind IN (${MEDIA_JOB_KINDS.map(() => '?').join(',')})
+          AND status IN (${fromStatuses.map(() => '?').join(',')})
+          ${idClause}`,
+    ).run(
+      toStatus,
+      new Date().toISOString(),
+      openLibrary.summary.libraryId,
+      ...MEDIA_JOB_KINDS,
+      ...fromStatuses,
+      ...(selectedIds ?? []),
+    );
+    return result.changes;
+  }
+
+  private abortActiveMediaJobs(libraryId: string, jobIds?: string[]): void {
+    const selected = jobIds ? new Set(jobIds) : undefined;
+    for (const [jobId, active] of this.activeMediaJobs) {
+      if (active.libraryId !== libraryId || (selected && !selected.has(jobId))) continue;
+      active.controller.abort();
+    }
+  }
+
+  private mediaJobState(libraryId: string, jobId: string): string | null {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    const row = openLibrary.connection.prepare(
+      `SELECT status FROM jobs WHERE library_id = ? AND job_id = ?
+        AND kind IN (${MEDIA_JOB_KINDS.map(() => '?').join(',')})`,
+    ).get(openLibrary.summary.libraryId, jobId, ...MEDIA_JOB_KINDS) as {
+      status: string;
+    } | undefined;
+    return row?.status ?? null;
+  }
+
+  private mediaArtifactSnapshot(openLibrary: OpenLibrary, revisionId: string): Set<string> {
+    const rows = openLibrary.connection.prepare(
+      'SELECT artifact_id FROM revision_artifacts WHERE revision_id = ?',
+    ).all(revisionId) as Array<{ artifact_id: string }>;
+    return new Set(rows.map((row) => row.artifact_id));
+  }
+
+  private discardLateMediaArtifacts(
+    openLibrary: OpenLibrary,
+    revisionId: string,
+    previousArtifactIds: Set<string>,
+    context: { libraryId: string; jobId: string; assetId: string },
+  ): void {
+    const rows = openLibrary.connection.prepare(
+      'SELECT artifact_id, file_path FROM revision_artifacts WHERE revision_id = ?',
+    ).all(revisionId) as Array<{ artifact_id: string; file_path: string }>;
+    const lateRows = rows.filter((row) => !previousArtifactIds.has(row.artifact_id));
+    if (lateRows.length === 0) return;
+    openLibrary.connection.transaction(() => {
+      const remove = openLibrary.connection.prepare(
+        'DELETE FROM revision_artifacts WHERE artifact_id = ?',
+      );
+      for (const row of lateRows) remove.run(row.artifact_id);
+    })();
+    for (const row of lateRows) {
+      try {
+        rmSync(path.join(this.artifactsDir(openLibrary), row.file_path), { force: true });
+      } catch (error) {
+        this.diagnose('media-job.cancel-cleanup', error, {
+          ...context,
+          artifactId: row.artifact_id,
+        });
+      }
+    }
+  }
+
   // ── Thumbnails & Artifacts ─────────────────────────────────────────
 
   /**
@@ -4685,13 +6057,22 @@ export class LibraryService {
     return 'other';
   }
 
+  static supportsThumbnail(filename: string): boolean {
+    const mediaType = LibraryService.detectMediaType(filename);
+    const extension = path.extname(filename).toLowerCase();
+    return mediaType !== 'other' || extension === '.exr' || extension === '.tga';
+  }
+
   // ── Thumbnail Generation Dispatch ─────────────────────────────────
 
   /** Generate thumbnails/artifacts for an asset, dispatching by media type. */
   async generateThumbnail(input: {
     libraryId: string;
     assetId: string;
-  }): Promise<{ artifactId: string }> {
+  }, execution: MediaExecutionContext = {}): Promise<{ artifactId: string }> {
+    if (execution.signal?.aborted) {
+      throw new DOMException('Media job cancelled before thumbnail generation.', 'AbortError');
+    }
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     const assetPath = this.resolveAssetPath(input.libraryId, input.assetId);
 
@@ -4712,7 +6093,7 @@ export class LibraryService {
     }
 
     const artifactKinds = mediaType === 'video'
-      ? ['extracted_metadata', 'video_poster', 'contact_sheet', 'webm_proxy']
+      ? ['extracted_metadata', 'video_poster']
       : ['thumbnail'];
     openLibrary.connection
       .prepare(
@@ -4725,15 +6106,15 @@ export class LibraryService {
       .run(new Date().toISOString(), revisionId, ...artifactKinds);
 
     if (mediaType === 'image') {
-      return this.generateImageThumbnail(input, openLibrary, assetPath, revisionId);
+      return this.generateImageThumbnail(input, openLibrary, assetPath, revisionId, execution);
     }
 
     if (mediaType === 'video') {
-      return this.generateVideoArtifacts(input, openLibrary, assetPath, revisionId);
+      return this.generateVideoArtifacts(input, openLibrary, assetPath, revisionId, execution);
     }
 
     if (isOiioImage) {
-      return this.generateOiiOThumbnail(input, openLibrary, assetPath, revisionId);
+      return this.generateOiiOThumbnail(input, openLibrary, assetPath, revisionId, {}, execution);
     }
 
     throw new LibraryServiceError('INTERNAL_ERROR');
@@ -4746,29 +6127,45 @@ export class LibraryService {
     openLibrary: OpenLibrary,
     assetPath: string,
     revisionId: string,
+    execution: MediaExecutionContext,
   ): Promise<{ artifactId: string }> {
     const artifactId = randomUUID();
     const artifactsDir = this.artifactsDir(openLibrary);
     mkdirSync(artifactsDir, { recursive: true });
     const artifactRelPath = `${artifactId}.webp`;
     const artifactAbsPath = path.join(artifactsDir, artifactRelPath);
+    let imageProcessed = false;
 
     try {
-      const s = requireSharp();
-      const pipeline = s(assetPath);
-      const metadata = await pipeline.metadata();
-      const inputWidth = metadata.width ?? 0;
-      const inputHeight = metadata.height ?? 0;
+      const { inputWidth, inputHeight } = await sharpDecoderSemaphore.run(
+        execution.signal,
+        async () => {
+          const s = this.options.sharpFn ?? requireSharp();
+          const pipeline = s(assetPath);
+          const metadata = await pipeline.metadata();
+          const swapsDimensions = metadata.orientation !== undefined
+            && metadata.orientation >= 5
+            && metadata.orientation <= 8;
+          const inputWidth = swapsDimensions ? (metadata.height ?? 0) : (metadata.width ?? 0);
+          const inputHeight = swapsDimensions ? (metadata.width ?? 0) : (metadata.height ?? 0);
 
-      await pipeline
-        .resize({
-          width: 512,
-          height: 512,
-          fit: 'inside',
-          withoutEnlargement: true,
-        })
-        .webp({ quality: 80 })
-        .toFile(artifactAbsPath);
+          await pipeline
+            .rotate()
+            .toColourspace('srgb')
+            .resize({
+              width: 512,
+              height: 512,
+              fit: 'inside',
+              withoutEnlargement: true,
+            })
+            .webp({ quality: 80 })
+            .toFile(artifactAbsPath);
+          if (execution.signal?.aborted) {
+            throw new DOMException('Media job cancelled after image decoding.', 'AbortError');
+          }
+          return { inputWidth, inputHeight };
+        },
+      );
 
       const outputStat = statSync(artifactAbsPath);
       let outputWidth = inputWidth;
@@ -4778,6 +6175,7 @@ export class LibraryService {
         outputWidth = Math.round(inputWidth * ratio);
         outputHeight = Math.round(inputHeight * ratio);
       }
+      imageProcessed = true;
 
       openLibrary.connection
         .prepare(
@@ -4807,6 +6205,28 @@ export class LibraryService {
 
       return { artifactId };
     } catch (error) {
+      const extension = path.extname(assetPath).toLowerCase();
+      if (!imageProcessed && (extension === '.tif' || extension === '.tiff')) {
+        // libvips handles ordinary TIFFs efficiently. Complex/multi-part TIFFs
+        // that it cannot decode fall back to the same OIIO + OCIO path as EXR
+        // and TGA, without leaving a terminal sharp failure that would conflict
+        // with the replacement thumbnail artifact.
+        try {
+          rmSync(artifactAbsPath, { force: true });
+        } catch (cleanupError) {
+          this.diagnose('thumbnail.tiff-sharp-cleanup', cleanupError, {
+            libraryId: input.libraryId,
+            assetId: input.assetId,
+          });
+        }
+        this.diagnose('thumbnail.tiff-sharp-fallback', error, {
+          libraryId: input.libraryId,
+          assetId: input.assetId,
+          extension,
+        });
+        return this.generateOiiOThumbnail(input, openLibrary, assetPath, revisionId, {}, execution);
+      }
+
       // Write failed status
       openLibrary.connection
         .prepare(
@@ -4833,7 +6253,8 @@ export class LibraryService {
   // ── Video artifacts (ffprobe + ffmpeg) ─────────────────────────────
 
   /**
-   * Generate all video artifacts: probe metadata, poster, contact sheet, WebM proxy.
+   * Generate only latency-sensitive metadata and poster. Long derivatives run
+   * as independent persistent jobs after the poster-ready event.
    * Returns the poster artifact ID (the primary visual thumbnail).
    */
   private async generateVideoArtifacts(
@@ -4841,21 +6262,20 @@ export class LibraryService {
     openLibrary: OpenLibrary,
     assetPath: string,
     revisionId: string,
+    execution: MediaExecutionContext,
   ): Promise<{ artifactId: string }> {
     const ffprobePath = resolveFfprobePath();
     const ffmpegPath = resolveFfmpegPath();
     const artifactsDir = this.artifactsDir(openLibrary);
     mkdirSync(artifactsDir, { recursive: true });
 
-    let durationSec = 0;
     let posterArtifactId: string | null = null;
 
     // 1. ffprobe metadata extraction
     try {
-      const probeData = await this.probeVideoAsset(
-        input, openLibrary, assetPath, revisionId, ffprobePath,
+      await this.probeVideoAsset(
+        input, openLibrary, assetPath, revisionId, ffprobePath, execution,
       );
-      if (probeData.durationSec > 0) durationSec = probeData.durationSec;
     } catch (error) {
       this.diagnose('video-probe', error, { libraryId: input.libraryId, assetId: input.assetId });
       // Continue with remaining artifacts even if probe fails
@@ -4864,31 +6284,11 @@ export class LibraryService {
     // 2. Video poster
     try {
       posterArtifactId = await this.generateVideoPoster(
-        input, openLibrary, assetPath, revisionId, ffmpegPath, artifactsDir,
+        input, openLibrary, assetPath, revisionId, ffmpegPath, artifactsDir, execution,
       );
     } catch (error) {
       this.diagnose('video-poster', error, { libraryId: input.libraryId, assetId: input.assetId });
       // Continue with remaining artifacts
-    }
-
-    // 3. Contact sheet (requires duration from probe)
-    if (durationSec > 1) {
-      try {
-        await this.generateContactSheet(
-          input, openLibrary, assetPath, revisionId, ffmpegPath, artifactsDir, durationSec,
-        );
-      } catch (error) {
-        this.diagnose('video-contact-sheet', error, { libraryId: input.libraryId, assetId: input.assetId });
-      }
-    }
-
-    // 4. WebM proxy
-    try {
-      await this.generateWebmProxy(
-        input, openLibrary, assetPath, revisionId, ffmpegPath, artifactsDir,
-      );
-    } catch (error) {
-      this.diagnose('video-webm-proxy', error, { libraryId: input.libraryId, assetId: input.assetId });
     }
 
     if (!posterArtifactId) {
@@ -4908,6 +6308,215 @@ export class LibraryService {
     return { artifactId: posterArtifactId };
   }
 
+  private enqueueVideoDerivativeJob(
+    openLibrary: OpenLibrary,
+    assetId: string,
+    revisionId: string,
+    kind: 'generate_contact_sheet' | 'generate_webm_proxy',
+    priority: number,
+  ): void {
+    const artifactKind = kind === 'generate_contact_sheet' ? 'contact_sheet' : 'webm_proxy';
+    const terminalArtifact = openLibrary.connection.prepare(
+      `SELECT artifact_id FROM revision_artifacts WHERE revision_id = ? AND kind = ?
+        AND status IN ('ready', 'failed') AND invalidated_at IS NULL LIMIT 1`,
+    ).get(revisionId, artifactKind);
+    if (terminalArtifact) return;
+    const now = new Date().toISOString();
+    const active = openLibrary.connection.prepare(
+      `SELECT job_id FROM jobs WHERE asset_id = ? AND revision_id = ? AND kind = ?
+        AND status IN ('queued', 'running', 'paused') LIMIT 1`,
+    ).get(assetId, revisionId, kind);
+    if (active) return;
+    openLibrary.connection.prepare(
+      `INSERT INTO jobs
+         (job_id, library_id, asset_id, revision_id, kind, status, priority, progress,
+          attempt_count, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, 'queued', ?, 0.0, 0, ?, ?)`,
+    ).run(randomUUID(), openLibrary.summary.libraryId, assetId, revisionId, kind, priority, now, now);
+  }
+
+  private enqueuePaletteJob(
+    openLibrary: OpenLibrary,
+    assetId: string,
+    revisionId: string,
+    priority: number,
+  ): boolean {
+    const source = openLibrary.connection.prepare(
+      `SELECT artifact_id FROM revision_artifacts
+        WHERE revision_id = ?
+          AND kind IN ('thumbnail', 'video_poster')
+          AND status = 'ready'
+          AND invalidated_at IS NULL
+        LIMIT 1`,
+    ).get(revisionId);
+    if (!source) return false;
+    const terminal = openLibrary.connection.prepare(
+      `SELECT artifact_id FROM revision_artifacts
+        WHERE revision_id = ? AND kind = 'extracted_palette'
+          AND status IN ('ready', 'failed') AND invalidated_at IS NULL LIMIT 1`,
+    ).get(revisionId);
+    if (terminal) return false;
+    const active = openLibrary.connection.prepare(
+      `SELECT job_id FROM jobs WHERE asset_id = ? AND revision_id = ?
+        AND kind = 'extract_palette' AND status IN ('queued', 'running', 'paused') LIMIT 1`,
+    ).get(assetId, revisionId);
+    if (active) return false;
+    const now = new Date().toISOString();
+    const result = openLibrary.connection.prepare(
+      `INSERT INTO jobs
+         (job_id, library_id, asset_id, revision_id, kind, status, priority, progress,
+          attempt_count, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'extract_palette', 'queued', ?, 0.0, 0, ?, ?)`,
+    ).run(randomUUID(), openLibrary.summary.libraryId, assetId, revisionId, priority, now, now);
+    return result.changes > 0;
+  }
+
+  private async generateQueuedPaletteArtifact(
+    libraryId: string,
+    assetId: string,
+    queuedRevisionId: string,
+    execution: MediaExecutionContext,
+  ): Promise<boolean> {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    const asset = openLibrary.connection.prepare(
+      'SELECT current_revision_id FROM assets WHERE asset_id = ?',
+    ).get(assetId) as { current_revision_id: string | null } | undefined;
+    if (!asset?.current_revision_id) throw new LibraryServiceError('ASSET_NOT_FOUND');
+    if (asset.current_revision_id !== queuedRevisionId) return false;
+
+    const source = openLibrary.connection.prepare(
+      `SELECT artifact_id FROM revision_artifacts
+        WHERE revision_id = ?
+          AND kind IN ('thumbnail', 'video_poster')
+          AND status = 'ready'
+          AND invalidated_at IS NULL
+        ORDER BY CASE kind WHEN 'thumbnail' THEN 0 ELSE 1 END
+        LIMIT 1`,
+    ).get(queuedRevisionId) as { artifact_id: string } | undefined;
+    if (!source) {
+      throw new LibraryServiceError('INTERNAL_ERROR', { reason: 'PALETTE_SOURCE_NOT_READY' });
+    }
+    const sourcePath = this.getArtifactAbsolutePath(libraryId, source.artifact_id);
+    const artifactId = randomUUID();
+    const artifactRelPath = `${artifactId}.json`;
+    const artifactAbsPath = path.join(this.artifactsDir(openLibrary), artifactRelPath);
+
+    openLibrary.connection.prepare(
+      `UPDATE revision_artifacts SET invalidated_at = ?
+        WHERE revision_id = ? AND kind = 'extracted_palette' AND invalidated_at IS NULL`,
+    ).run(new Date().toISOString(), queuedRevisionId);
+
+    try {
+      const palette = await sharpDecoderSemaphore.run(execution.signal, async () => {
+        const sharp = this.options.paletteSharpFn
+          ?? (requireSharp() as unknown as PaletteSharpModule);
+        const decoded = await sharp(sourcePath)
+          .rotate()
+          .toColourspace('srgb')
+          .resize({ width: 64, height: 64, fit: 'inside', withoutEnlargement: true })
+          .ensureAlpha()
+          .raw()
+          .toBuffer({ resolveWithObject: true });
+        if (execution.signal?.aborted) {
+          throw new DOMException('Media job cancelled after palette decoding.', 'AbortError');
+        }
+        return extractRepresentativePalette(decoded.data, decoded.info.channels, 6);
+      });
+      if (palette.length === 0) {
+        throw new Error('The decoded preview contains no visible pixels.');
+      }
+      const dominant = dominantColorMetrics(palette[0]!.hex);
+      writeFileSync(artifactAbsPath, JSON.stringify(palette), 'utf-8');
+      if (execution.signal?.aborted) {
+        throw new DOMException('Media job cancelled after palette serialization.', 'AbortError');
+      }
+      const outputStat = statSync(artifactAbsPath);
+      openLibrary.connection.prepare(
+        `INSERT INTO revision_artifacts
+           (artifact_id, revision_id, kind, mime_type, byte_size, file_path,
+            generator_version, status, generated_at, dominant_hue, dominant_lightness)
+         VALUES (?, ?, 'extracted_palette', 'application/json', ?, ?, ?, 'ready', ?, ?, ?)`,
+      ).run(
+        artifactId,
+        queuedRevisionId,
+        outputStat.size,
+        artifactRelPath,
+        `serpent-palette@1;sharp@${SHARP_VERSION}`,
+        new Date().toISOString(),
+        dominant.hue,
+        dominant.lightness,
+      );
+      this.options.onAssetsChanged?.({
+        type: 'asset.changed',
+        libraryId,
+        changedCount: 1,
+        missingCount: 0,
+      });
+      return true;
+    } catch (error) {
+      rmSync(artifactAbsPath, { force: true });
+      if (execution.signal?.aborted || (error instanceof DOMException && error.name === 'AbortError')) {
+        throw error;
+      }
+      openLibrary.connection.prepare(
+        `INSERT INTO revision_artifacts
+           (artifact_id, revision_id, kind, mime_type, byte_size, file_path,
+            generator_version, status, error_code, generated_at)
+         VALUES (?, ?, 'extracted_palette', 'application/json', 0, ?, ?, 'failed',
+                 'PALETTE_EXTRACTION_FAILED', ?)`,
+      ).run(
+        artifactId,
+        queuedRevisionId,
+        artifactRelPath,
+        `serpent-palette@1;sharp@${SHARP_VERSION}`,
+        new Date().toISOString(),
+      );
+      throw error;
+    }
+  }
+
+  private async generateQueuedVideoArtifact(
+    libraryId: string,
+    assetId: string,
+    queuedRevisionId: string,
+    kind: 'generate_contact_sheet' | 'generate_webm_proxy',
+    execution: MediaExecutionContext,
+  ): Promise<boolean> {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    const assetPath = this.resolveAssetPath(libraryId, assetId);
+    const asset = openLibrary.connection.prepare(
+      'SELECT current_revision_id FROM assets WHERE asset_id = ?',
+    ).get(assetId) as { current_revision_id: string | null } | undefined;
+    if (!asset?.current_revision_id) throw new LibraryServiceError('ASSET_NOT_FOUND');
+    if (asset.current_revision_id !== queuedRevisionId) return false;
+    const revisionId = queuedRevisionId;
+    const ffmpegPath = resolveFfmpegPath();
+    const artifactsDir = this.artifactsDir(openLibrary);
+    mkdirSync(artifactsDir, { recursive: true });
+    if (kind === 'generate_webm_proxy') {
+      await this.generateWebmProxy({ libraryId, assetId }, openLibrary, assetPath, revisionId, ffmpegPath, artifactsDir, execution);
+      return true;
+    }
+    let durationSec = 0;
+    const metadata = this.getCurrentArtifact(libraryId, assetId, 'extracted_metadata');
+    if (metadata?.status === 'ready') {
+      try {
+        const parsed = JSON.parse(
+          readFileSync(path.join(artifactsDir, metadata.filePath), 'utf-8'),
+        ) as { durationMs?: number };
+        durationSec = (parsed.durationMs ?? 0) / 1000;
+      } catch {
+        // Optional contact sheets can be skipped when metadata cache vanished.
+      }
+    }
+    if (durationSec > 1) {
+      await this.generateContactSheet(
+        { libraryId, assetId }, openLibrary, assetPath, revisionId, ffmpegPath, artifactsDir, durationSec, execution,
+      );
+    }
+    return true;
+  }
+
   /** Run ffprobe and store extracted_metadata artifact. */
   private async probeVideoAsset(
     input: { libraryId: string; assetId: string },
@@ -4915,6 +6524,7 @@ export class LibraryService {
     assetPath: string,
     revisionId: string,
     ffprobePath: string,
+    execution: MediaExecutionContext,
   ): Promise<{ durationSec: number; width: number | null; height: number | null }> {
     const artifactId = randomUUID();
     const artifactsDir = this.artifactsDir(openLibrary);
@@ -4923,13 +6533,13 @@ export class LibraryService {
     const artifactAbsPath = path.join(artifactsDir, artifactRelPath);
 
     try {
-      const result = await this.spawnFn(ffprobePath, [
+      const result = await this.runFfmpeg(ffprobePath, [
         '-v', 'quiet',
         '-print_format', 'json',
         '-show_format',
         '-show_streams',
         assetPath,
-      ], { timeoutMs: 60_000 });
+      ], { timeoutMs: 60_000, signal: execution.signal });
 
       if (result.exitCode !== 0) {
         throw new Error(`ffprobe exited with code ${result.exitCode}: ${result.stderr.slice(-200)}`);
@@ -4981,15 +6591,15 @@ export class LibraryService {
 
       openLibrary.connection
         .prepare(
-          `INSERT INTO revision_artifacts
-             (artifact_id, revision_id, kind, mime_type, byte_size, file_path,
-              width, height, generator_version, status, generated_at)
-           VALUES (?, ?, 'extracted_metadata', 'application/json', ?, ?, ?, ?, ?, 'ready', ?)`,
+        `INSERT INTO revision_artifacts
+           (artifact_id, revision_id, kind, mime_type, byte_size, file_path,
+              width, height, duration_ms, generator_version, status, generated_at)
+           VALUES (?, ?, 'extracted_metadata', 'application/json', ?, ?, ?, ?, ?, ?, 'ready', ?)`,
         )
         .run(
           artifactId, revisionId, outputStat.size, artifactRelPath,
-          width, height,
-          `ffprobe@n7`,
+          width, height, metadata.durationMs,
+          `ffprobe@${FFMPEG_VERSION}`,
           new Date().toISOString(),
         );
 
@@ -4997,7 +6607,7 @@ export class LibraryService {
     } catch (error) {
       // Write failed artifact
       this.writeFailedArtifact(openLibrary, artifactId, revisionId, 'extracted_metadata',
-        'application/json', artifactRelPath, 'ffprobe@n7', error);
+        'application/json', artifactRelPath, `ffprobe@${FFMPEG_VERSION}`, error);
       throw error;
     }
   }
@@ -5010,20 +6620,23 @@ export class LibraryService {
     revisionId: string,
     ffmpegPath: string,
     artifactsDir: string,
+    execution: MediaExecutionContext,
   ): Promise<string> {
     const artifactId = randomUUID();
     const artifactRelPath = `${artifactId}.jpg`;
     const artifactAbsPath = path.join(artifactsDir, artifactRelPath);
 
     try {
-      const result = await this.spawnFn(ffmpegPath, [
+      const result = await this.runFfmpeg(ffmpegPath, [
         '-y',
         '-i', assetPath,
-        '-vf', 'thumbnail=300,fps=1/10,scale=640:-1',
+        // A low fps stage makes short clips yield no filtered frames while
+        // FFmpeg still exits 0. thumbnail+scale always emits the selected frame.
+        '-vf', 'thumbnail=300,scale=640:-1',
         '-frames:v', '1',
         '-q:v', '3',
         artifactAbsPath,
-      ], { timeoutMs: 120_000 });
+      ], { timeoutMs: 120_000, signal: execution.signal });
 
       if (result.exitCode !== 0) {
         throw new Error(`ffmpeg poster exited with code ${result.exitCode}: ${result.stderr.slice(-200)}`);
@@ -5038,17 +6651,17 @@ export class LibraryService {
            VALUES (?, ?, 'video_poster', 'image/jpeg', ?, ?, ?, 'ready', ?)`,
         )
         .run(artifactId, revisionId, outputStat.size, artifactRelPath,
-          `ffmpeg@n7`, new Date().toISOString());
+          `ffmpeg@${FFMPEG_VERSION}`, new Date().toISOString());
 
       return artifactId;
     } catch (error) {
       this.writeFailedArtifact(openLibrary, artifactId, revisionId, 'video_poster',
-        'image/jpeg', artifactRelPath, 'ffmpeg@n7', error);
+        'image/jpeg', artifactRelPath, `ffmpeg@${FFMPEG_VERSION}`, error);
       throw error;
     }
   }
 
-  /** Generate a contact sheet (grid of sampled frames with timestamps). */
+  /** Generate a contact sheet (grid of sampled frames). */
   private async generateContactSheet(
     input: { libraryId: string; assetId: string },
     openLibrary: OpenLibrary,
@@ -5057,6 +6670,7 @@ export class LibraryService {
     ffmpegPath: string,
     artifactsDir: string,
     durationSec: number,
+    execution: MediaExecutionContext,
   ): Promise<string> {
     const artifactId = randomUUID();
     const artifactRelPath = `${artifactId}.jpg`;
@@ -5066,17 +6680,16 @@ export class LibraryService {
     const columns = 4;
     const rows = Math.ceil(frameCount / columns);
 
-    // fps=1/N to extract one frame every N seconds, then scale, drawtext timecode, tile
+    // The LGPL bundle disables fontconfig. Until Serpent ships a licensed font,
+    // avoid drawtext rather than depending on a platform-specific system font.
     const filterGraph = [
       `fps=1/${interval}`,
       'scale=320:-1:flags=lanczos',
-      // drawtext with PTS timestamps, positioned bottom-right on each tile
-      `drawtext=text='%{pts\\:hms}':fontsize=10:fontcolor=white@0.9:x=w-tw-4:y=h-th-4:box=1:boxcolor=black@0.5:boxborderw=2`,
       `tile=${columns}x${rows}:margin=2:padding=2:color=#1a1a1a`,
     ].join(',');
 
     try {
-      const result = await this.spawnFn(ffmpegPath, [
+      const result = await this.runFfmpeg(ffmpegPath, [
         '-y',
         '-i', assetPath,
         '-vf', filterGraph,
@@ -5084,7 +6697,7 @@ export class LibraryService {
         '-q:v', '5',
         '-update', '1',
         artifactAbsPath,
-      ], { timeoutMs: 180_000 });
+      ], { timeoutMs: 180_000, signal: execution.signal });
 
       if (result.exitCode !== 0) {
         throw new Error(`ffmpeg contact sheet exited with code ${result.exitCode}: ${result.stderr.slice(-200)}`);
@@ -5099,12 +6712,12 @@ export class LibraryService {
            VALUES (?, ?, 'contact_sheet', 'image/jpeg', ?, ?, ?, 'ready', ?)`,
         )
         .run(artifactId, revisionId, outputStat.size, artifactRelPath,
-          `ffmpeg@n7`, new Date().toISOString());
+          `ffmpeg@${FFMPEG_VERSION}`, new Date().toISOString());
 
       return artifactId;
     } catch (error) {
       this.writeFailedArtifact(openLibrary, artifactId, revisionId, 'contact_sheet',
-        'image/jpeg', artifactRelPath, 'ffmpeg@n7', error);
+        'image/jpeg', artifactRelPath, `ffmpeg@${FFMPEG_VERSION}`, error);
       throw error;
     }
   }
@@ -5117,29 +6730,38 @@ export class LibraryService {
     revisionId: string,
     ffmpegPath: string,
     artifactsDir: string,
+    execution: MediaExecutionContext,
   ): Promise<string> {
     const artifactId = randomUUID();
     const artifactRelPath = `${artifactId}.webm`;
     const artifactAbsPath = path.join(artifactsDir, artifactRelPath);
 
     try {
-      const result = await this.spawnFn(ffmpegPath, [
+      const result = await this.runFfmpeg(ffmpegPath, [
         '-y',
         '-i', assetPath,
         '-c:v', 'libvpx-vp9',
         '-b:v', '1M',
         '-c:a', 'libopus',
-        '-vf', 'scale=720:-2',
+        '-vf', 'scale=w=min(720\\,iw):h=min(720\\,ih):force_original_aspect_ratio=decrease:force_divisible_by=2',
         '-g', '60',
-        '-row-mv', '1',
+        '-row-mt', '1',
         artifactAbsPath,
-      ], { timeoutMs: 600_000 });
+      ], { timeoutMs: 600_000, signal: execution.signal });
 
       if (result.exitCode !== 0) {
         throw new Error(`ffmpeg webm proxy exited with code ${result.exitCode}: ${result.stderr.slice(-200)}`);
       }
 
       const outputStat = statSync(artifactAbsPath);
+      if (outputStat.size > MAX_WEBM_PROXY_BYTES) {
+        rmSync(artifactAbsPath, { force: true });
+        const error = new Error(
+          `Generated WebM proxy exceeds the 512 MiB safety limit (${outputStat.size} bytes).`,
+        ) as Error & { code: string };
+        error.code = 'MEDIA_PROCESSING_FAILED';
+        throw error;
+      }
       openLibrary.connection
         .prepare(
           `INSERT INTO revision_artifacts
@@ -5148,23 +6770,25 @@ export class LibraryService {
            VALUES (?, ?, 'webm_proxy', 'video/webm', ?, ?, ?, 'ready', ?)`,
         )
         .run(artifactId, revisionId, outputStat.size, artifactRelPath,
-          `ffmpeg@n7`, new Date().toISOString());
+          `ffmpeg@${FFMPEG_VERSION}`, new Date().toISOString());
 
       return artifactId;
     } catch (error) {
       this.writeFailedArtifact(openLibrary, artifactId, revisionId, 'webm_proxy',
-        'video/webm', artifactRelPath, 'ffmpeg@n7', error);
+        'video/webm', artifactRelPath, `ffmpeg@${FFMPEG_VERSION}`, error);
       throw error;
     }
   }
 
-  // ── OIIO thumbnail (EXR/TGA) ───────────────────────────────────────
+  // ── OIIO thumbnail (EXR/TGA and complex TIFF fallback) ─────────────
 
   private async generateOiiOThumbnail(
     input: { libraryId: string; assetId: string },
     openLibrary: OpenLibrary,
     assetPath: string,
     revisionId: string,
+    options: { exposureStops?: number; inputColorSpace?: string } = {},
+    execution: MediaExecutionContext = {},
   ): Promise<{ artifactId: string }> {
     const oiiotoolPath = resolveOiiotoolPath();
     const artifactId = randomUUID();
@@ -5174,20 +6798,47 @@ export class LibraryService {
     const artifactAbsPath = path.join(artifactsDir, artifactRelPath);
 
     try {
-      // Build oiiotool args: resize + optional OCIO display transform + output
+      const exposureStops = Number.isFinite(options.exposureStops)
+        ? Math.max(-10, Math.min(10, options.exposureStops ?? 0))
+        : 0;
+      const exposureMultiplier = 2 ** exposureStops;
+      const inputColorSpace = options.inputColorSpace?.trim()
+        || DEFAULT_OIIO_INPUT_COLOR_SPACE;
+      const exposureValues = [
+        exposureMultiplier,
+        exposureMultiplier,
+        exposureMultiplier,
+        1,
+      ].join(',');
+
+      // OpenImageIO 3.1's ociodisplay action accepts OCIO built-in config URIs,
+      // explicit input roles, and "default" display/view selectors. Keep the
+      // exposure multiplier in the command even at zero stops so a future
+      // preview control can regenerate a deterministic variant through this
+      // existing parameter seam.
       const args: string[] = [
+        '--colorconfig', SERPENT_OCIO_CONFIG,
         assetPath,
+        '--iscolorspace', inputColorSpace,
+        // Preserve alpha while applying exposure to RGB color channels.
+        '--mulc', exposureValues,
+        // Empty display/view select the OCIO config defaults. Literal "default"
+        // would instead request names that the selected config may not define.
+        `--ociodisplay:from=${inputColorSpace}:unpremult=1`, '', '',
         '--resize', '0x512',
         '-o', artifactAbsPath,
       ];
 
-      // Attempt OCIO display transform if the built-in config is available
-      // (oiiotool will fail gracefully without --colorconfig if it doesn't
-      // support the URI; we catch that and fall back to no color transform)
-      const result = await this.spawnFn(oiiotoolPath, args, { timeoutMs: 60_000 });
+      const result = await this.runOiio(oiiotoolPath, args, {
+        timeoutMs: 60_000,
+        signal: execution.signal,
+      });
 
       if (result.exitCode !== 0) {
-        throw new Error(`oiiotool exited with code ${result.exitCode}: ${result.stderr.slice(-200)}`);
+        throw new OiioInvocationError(
+          'OIIO_COLOR_TRANSFORM_FAILED',
+          `oiiotool OCIO display transform exited with code ${result.exitCode}: ${result.stderr.slice(-8192)}`,
+        );
       }
 
       const outputStat = statSync(artifactAbsPath);
@@ -5199,7 +6850,8 @@ export class LibraryService {
            VALUES (?, ?, 'thumbnail', 'image/png', ?, ?, ?, 'ready', ?)`,
         )
         .run(artifactId, revisionId, outputStat.size, artifactRelPath,
-          `oiio@3.1`, new Date().toISOString());
+          `oiio@${OIIO_VERSION};ocio=studio-v4-aces2;exposure=${exposureStops}`,
+          new Date().toISOString());
 
       this.options.onAssetsChanged?.({
         type: 'asset.changed',
@@ -5210,7 +6862,19 @@ export class LibraryService {
 
       return { artifactId };
     } catch (error) {
-      const errorCode = isMissingPathError(error) ? 'OIIO_REQUIRED' : 'OIIO_GENERATION_FAILED';
+      const errorCode: OiioArtifactErrorCode = isMissingPathError(error)
+        ? 'OIIO_REQUIRED'
+        : error instanceof OiioInvocationError
+          ? error.artifactErrorCode
+          : 'OIIO_GENERATION_FAILED';
+
+      this.diagnose('oiio.thumbnail', error, {
+        libraryId: input.libraryId,
+        assetId: input.assetId,
+        extension: path.extname(assetPath).toLowerCase(),
+        errorCode,
+        ocioConfig: SERPENT_OCIO_CONFIG,
+      });
 
       openLibrary.connection
         .prepare(
@@ -5221,10 +6885,14 @@ export class LibraryService {
         )
         .run(
           artifactId, revisionId, artifactRelPath,
-          `oiio@3.1`, errorCode, new Date().toISOString(),
+          `oiio@${OIIO_VERSION};ocio=studio-v4-aces2`, errorCode,
+          new Date().toISOString(),
         );
 
-      throw serviceError(error, 'LIBRARY_NOT_WRITABLE');
+      throw new LibraryServiceError('INTERNAL_ERROR', {
+        cause: error,
+        reason: errorCode === 'OIIO_REQUIRED' ? 'OIIO_REQUIRED' : 'MEDIA_PROCESSING_FAILED',
+      });
     }
   }
 
@@ -5362,15 +7030,20 @@ export class LibraryService {
     mimeType: string;
     errorCode?: string;
     posterArtifactId?: string;
+    playbackMode?: 'source' | 'proxy';
+    sourceRevisionId?: string;
+    sourceMimeType?: string;
+    sourceContainer?: 'mp4' | 'mov' | 'webm';
+    sourceCodecs?: string[];
   } {
     const openLibrary = this.requireOpenLibrary(libraryId);
     const asset = openLibrary.connection
       .prepare(
-        `SELECT relative_file_path, availability
+        `SELECT relative_file_path, current_revision_id, availability
            FROM assets
           WHERE asset_id = ? AND deleted_at IS NULL`,
       )
-      .get(assetId) as { relative_file_path: string; availability: 'available' | 'missing' } | undefined;
+      .get(assetId) as { relative_file_path: string; current_revision_id: string; availability: 'available' | 'missing' } | undefined;
     if (!asset) throw new LibraryServiceError('ASSET_NOT_FOUND');
     if (asset.availability === 'missing') {
       throw new LibraryServiceError('ASSET_NOT_FOUND', { reason: 'SOURCE_NOT_FOUND' });
@@ -5379,16 +7052,116 @@ export class LibraryService {
     const mediaType = LibraryService.detectMediaType(asset.relative_file_path);
     const kind = mediaType === 'video' ? 'webm_proxy' : 'thumbnail';
     const mimeType = mediaType === 'video' ? 'video/webm' : 'image/webp';
+    if (mediaType === 'other') {
+      return {
+        mediaType,
+        status: 'missing',
+        kind,
+        mimeType,
+        errorCode: 'UNSUPPORTED_FORMAT',
+      };
+    }
+
+    const extension = path.extname(asset.relative_file_path).toLowerCase();
+    const nativeMimeTypes: Record<string, string> = {
+      '.png': 'image/png',
+      '.jpg': 'image/jpeg',
+      '.jpeg': 'image/jpeg',
+      '.gif': 'image/gif',
+      '.webp': 'image/webp',
+      '.bmp': 'image/bmp',
+      '.mp4': 'video/mp4',
+      '.mov': 'video/quicktime',
+      '.webm': 'video/webm',
+    };
+    const nativeMimeType = nativeMimeTypes[extension];
     const poster = mediaType === 'video'
       ? this.getCurrentArtifact(libraryId, assetId, 'video_poster')
       : null;
     const posterArtifactId = poster?.status === 'ready' ? poster.artifactId : undefined;
+    const artifact = this.getCurrentArtifact(libraryId, assetId, kind);
+    if (artifact && !(mediaType === 'image' && nativeMimeType)) {
+      const status = artifact.status === 'generating' ? 'pending' : artifact.status;
+      if (status === 'ready') {
+        return {
+          mediaType,
+          status,
+          kind,
+          artifactId: artifact.artifactId,
+          mimeType: artifact.mimeType,
+          ...(mediaType === 'video' ? { playbackMode: 'proxy' as const } : {}),
+          ...(posterArtifactId ? { posterArtifactId } : {}),
+        };
+      }
+      if (status === 'failed' && (mediaType === 'video' || !nativeMimeType)) {
+        return {
+          mediaType,
+          status,
+          kind,
+          artifactId: artifact.artifactId,
+          mimeType: artifact.mimeType,
+          errorCode: artifact.errorCode ?? 'MEDIA_PROCESSING_FAILED',
+          ...(posterArtifactId ? { posterArtifactId } : {}),
+        };
+      }
+      if (status !== 'failed') return {
+        mediaType,
+        status: 'pending',
+        kind,
+        artifactId: artifact.artifactId,
+        mimeType: artifact.mimeType,
+        ...(posterArtifactId ? { posterArtifactId } : {}),
+      };
+    }
+
+    // Browsing the original and generating derivatives are independent. Native
+    // Chromium formats remain immediately viewable while thumbnail/proxy work
+    // is queued, running, paused, or has failed.
+    if (nativeMimeType && asset.current_revision_id) {
+        let sourceCodecs: string[] = [];
+        const metadataArtifact = mediaType === 'video'
+          ? this.getCurrentArtifact(libraryId, assetId, 'extracted_metadata')
+          : null;
+        if (mediaType === 'video' && metadataArtifact?.status === 'ready') {
+          try {
+            const descriptor = JSON.parse(
+              readFileSync(path.join(this.artifactsDir(openLibrary), metadataArtifact.filePath), 'utf-8'),
+            ) as { videoCodec?: string | null; audioCodec?: string | null };
+            const videoCodec = descriptor.videoCodec === 'h264' ? 'avc1.42E01E'
+              : descriptor.videoCodec === 'vp9' ? 'vp09.00.10.08'
+              : descriptor.videoCodec ?? undefined;
+            const audioCodec = descriptor.audioCodec === 'aac' ? 'mp4a.40.2'
+              : descriptor.audioCodec === 'opus' ? 'opus'
+              : descriptor.audioCodec ?? undefined;
+            sourceCodecs = [videoCodec, audioCodec].filter((codec): codec is string => Boolean(codec));
+          } catch {
+            // The base container MIME remains a valid conservative descriptor.
+          }
+        }
+        return {
+          mediaType,
+          status: 'ready',
+          kind,
+          mimeType: nativeMimeType,
+          ...(posterArtifactId ? { posterArtifactId } : {}),
+          playbackMode: 'source',
+          sourceRevisionId: asset.current_revision_id,
+          sourceMimeType: nativeMimeType,
+          ...(mediaType === 'video'
+            ? {
+                sourceContainer: extension.slice(1) as 'mp4' | 'mov' | 'webm',
+                ...(sourceCodecs.length > 0 ? { sourceCodecs } : {}),
+              }
+            : {}),
+        };
+    }
+
     const activeJob = openLibrary.connection
       .prepare(
         `SELECT status
            FROM jobs
           WHERE asset_id = ?
-            AND kind = 'generate_thumbnail'
+            AND kind IN ('generate_thumbnail', 'generate_webm_proxy')
             AND status IN ('queued', 'running', 'paused')
           ORDER BY updated_at DESC
           LIMIT 1`,
@@ -5403,38 +7176,13 @@ export class LibraryService {
         ...(posterArtifactId ? { posterArtifactId } : {}),
       };
     }
-
-    const artifact = this.getCurrentArtifact(libraryId, assetId, kind);
-    if (artifact) {
-      const status = artifact.status === 'generating' ? 'pending' : artifact.status;
-      if (status === 'ready') {
-        return {
-          mediaType,
-          status,
-          kind,
-          artifactId: artifact.artifactId,
-          mimeType: artifact.mimeType,
-          ...(posterArtifactId ? { posterArtifactId } : {}),
-        };
-      }
-      if (status === 'failed') {
-        return {
-          mediaType,
-          status,
-          kind,
-          artifactId: artifact.artifactId,
-          mimeType: artifact.mimeType,
-          errorCode: artifact.errorCode ?? 'MEDIA_PROCESSING_FAILED',
-          ...(posterArtifactId ? { posterArtifactId } : {}),
-        };
-      }
+    if (mediaType === 'video' && poster?.status === 'failed') {
       return {
         mediaType,
-        status: 'pending',
+        status: 'failed',
         kind,
-        artifactId: artifact.artifactId,
-        mimeType: artifact.mimeType,
-        ...(posterArtifactId ? { posterArtifactId } : {}),
+        mimeType,
+        errorCode: poster.errorCode ?? 'MEDIA_PROCESSING_FAILED',
       };
     }
 
@@ -5475,6 +7223,7 @@ export class LibraryService {
     if (input.kind !== expectedKind) {
       throw new LibraryServiceError('INVALID_IMPORT_DECISION', { reason: 'UNSUPPORTED_FORMAT' });
     }
+    const jobKind = input.kind === 'webm_proxy' ? 'generate_webm_proxy' : 'generate_thumbnail';
 
     return openLibrary.connection.transaction(() => {
       const active = openLibrary.connection
@@ -5482,13 +7231,25 @@ export class LibraryService {
           `SELECT job_id
              FROM jobs
             WHERE asset_id = ?
-              AND kind = 'generate_thumbnail'
+              AND kind = ?
               AND status IN ('queued', 'running', 'paused')
             ORDER BY updated_at DESC
             LIMIT 1`,
         )
-        .get(input.assetId) as { job_id: string } | undefined;
-      if (active) return active.job_id;
+        .get(input.assetId, jobKind) as { job_id: string } | undefined;
+      if (active) {
+        openLibrary.connection.prepare(
+          'UPDATE jobs SET priority = MAX(priority, 300), updated_at = ? WHERE job_id = ?',
+        ).run(new Date().toISOString(), active.job_id);
+        return active.job_id;
+      }
+
+      if (input.kind === 'webm_proxy') {
+        openLibrary.connection.prepare(
+          `UPDATE revision_artifacts SET invalidated_at = ?
+            WHERE revision_id = ? AND kind = 'webm_proxy' AND invalidated_at IS NULL`,
+        ).run(new Date().toISOString(), asset.current_revision_id);
+      }
 
       const jobId = randomUUID();
       const now = new Date().toISOString();
@@ -5497,9 +7258,9 @@ export class LibraryService {
           `INSERT INTO jobs
              (job_id, library_id, asset_id, revision_id, kind, status, priority, progress,
               attempt_count, created_at, updated_at)
-           VALUES (?, ?, ?, ?, 'generate_thumbnail', 'queued', 100, 0.0, 0, ?, ?)`,
+           VALUES (?, ?, ?, ?, ?, 'queued', 300, 0.0, 0, ?, ?)`,
         )
-        .run(jobId, input.libraryId, input.assetId, asset.current_revision_id, now, now);
+        .run(jobId, input.libraryId, input.assetId, asset.current_revision_id, jobKind, now, now);
       return jobId;
     })();
   }
@@ -5572,9 +7333,141 @@ export class LibraryService {
     }
   }
 
-  /** Enqueue thumbnail jobs for all assets whose current revision lacks a ready thumbnail. */
-  enqueueThumbnailJobs(libraryId: string): number {
+  getCurrentMediaSource(
+    libraryId: string,
+    assetId: string,
+    revisionId: string,
+  ): { absolutePath: string; mimeType: string } {
     const openLibrary = this.requireOpenLibrary(libraryId);
+    const asset = openLibrary.connection.prepare(
+      `SELECT relative_file_path, current_revision_id, availability, deleted_at
+         FROM assets WHERE asset_id = ?`,
+    ).get(assetId) as {
+      relative_file_path: string;
+      current_revision_id: string | null;
+      availability: 'available' | 'missing';
+      deleted_at: string | null;
+    } | undefined;
+    if (!asset || asset.deleted_at || asset.availability !== 'available') {
+      throw new LibraryServiceError('ASSET_NOT_FOUND');
+    }
+    if (asset.current_revision_id !== revisionId) {
+      throw new LibraryServiceError('ASSET_NOT_FOUND');
+    }
+    const extension = path.extname(asset.relative_file_path).toLowerCase();
+    const mimeTypes: Record<string, string> = {
+      '.png': 'image/png',
+      '.jpg': 'image/jpeg',
+      '.jpeg': 'image/jpeg',
+      '.gif': 'image/gif',
+      '.webp': 'image/webp',
+      '.bmp': 'image/bmp',
+      '.mp4': 'video/mp4',
+      '.mov': 'video/quicktime',
+      '.webm': 'video/webm',
+      '.avi': 'video/x-msvideo',
+      '.wmv': 'video/x-ms-wmv',
+    };
+    const mimeType = mimeTypes[extension];
+    if (!mimeType) throw new LibraryServiceError('INVALID_IMPORT_DECISION', { reason: 'UNSUPPORTED_FORMAT' });
+    return { absolutePath: this.resolveAssetPath(libraryId, assetId), mimeType };
+  }
+
+  /** @deprecated Use getCurrentMediaSource; kept for protocol and test compatibility. */
+  getCurrentVideoSource(
+    libraryId: string,
+    assetId: string,
+    revisionId: string,
+  ): { absolutePath: string; mimeType: string } {
+    return this.getCurrentMediaSource(libraryId, assetId, revisionId);
+  }
+
+  private enqueueReadyPaletteJobs(
+    openLibrary: OpenLibrary,
+    options: { assetIds?: string[]; limit?: number; priority?: number },
+  ): number {
+    const selectedIds = [...new Set(options.assetIds ?? [])].slice(0, 500);
+    if (options.assetIds && selectedIds.length === 0) return 0;
+    const selectedSql = selectedIds.length > 0
+      ? `AND a.asset_id IN (${selectedIds.map(() => '?').join(',')})`
+      : '';
+    const limit = options.limit === undefined
+      ? 500
+      : Math.max(0, Math.min(500, Math.trunc(options.limit)));
+    if (limit === 0) return 0;
+    const rows = openLibrary.connection.prepare(
+      `SELECT a.asset_id, a.current_revision_id
+         FROM assets a
+        WHERE a.deleted_at IS NULL
+          AND a.availability = 'available'
+          AND a.current_revision_id IS NOT NULL
+          ${selectedSql}
+          AND EXISTS (
+            SELECT 1 FROM revision_artifacts source
+             WHERE source.revision_id = a.current_revision_id
+               AND source.kind IN ('thumbnail', 'video_poster')
+               AND source.status = 'ready'
+               AND source.invalidated_at IS NULL
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM revision_artifacts palette
+             WHERE palette.revision_id = a.current_revision_id
+               AND palette.kind = 'extracted_palette'
+               AND palette.status IN ('ready', 'failed')
+               AND palette.invalidated_at IS NULL
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM jobs job
+             WHERE job.asset_id = a.asset_id
+               AND job.revision_id = a.current_revision_id
+               AND job.kind = 'extract_palette'
+               AND job.status IN ('queued', 'running', 'paused')
+          )
+        ORDER BY a.relative_file_path
+        LIMIT ?`,
+    ).all(...selectedIds, limit) as Array<{
+      asset_id: string;
+      current_revision_id: string;
+    }>;
+    let enqueued = 0;
+    for (const row of rows) {
+      if (this.enqueuePaletteJob(
+        openLibrary,
+        row.asset_id,
+        row.current_revision_id,
+        options.priority ?? -10,
+      )) enqueued += 1;
+    }
+    return enqueued;
+  }
+
+  /**
+   * Enqueue thumbnail jobs for supported assets whose current revision has no
+   * terminal artifact. Callers may pass the currently visible asset ids and a
+   * limit so opening a large library never materializes or queues the whole
+   * catalogue at once.
+   */
+  enqueueThumbnailJobs(
+    libraryId: string,
+    options: { assetIds?: string[]; limit?: number; priority?: number } = {},
+  ): number {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    const selectedIds = [...new Set(options.assetIds ?? [])].slice(0, 500);
+    const limit = options.limit === undefined
+      ? undefined
+      : Math.max(0, Math.min(500, Math.trunc(options.limit)));
+    if (limit === 0 || (options.assetIds && selectedIds.length === 0)) return 0;
+    const supportedExtensions = [
+      'png', 'jpg', 'jpeg', 'gif', 'tiff', 'tif', 'webp', 'bmp',
+      'mp4', 'webm', 'mov', 'avi', 'wmv', 'exr', 'tga',
+    ];
+    const selectedSql = selectedIds.length > 0
+      ? `AND a.asset_id IN (${selectedIds.map(() => '?').join(',')})`
+      : '';
+    const extensionSql = supportedExtensions
+      .map(() => 'LOWER(a.relative_file_path) LIKE ?')
+      .join(' OR ');
+    const queryLimit = limit === undefined ? '' : 'LIMIT ?';
     const rows = openLibrary.connection
       .prepare(
         `SELECT a.asset_id, a.current_revision_id
@@ -5582,22 +7475,29 @@ export class LibraryService {
           WHERE a.deleted_at IS NULL
             AND a.current_revision_id IS NOT NULL
             AND a.availability = 'available'
+            ${selectedSql}
+            AND (${extensionSql})
             AND NOT EXISTS (
               SELECT 1 FROM revision_artifacts ra
               WHERE ra.revision_id = a.current_revision_id
                 AND ra.kind IN ('thumbnail', 'video_poster')
-                AND ra.status = 'ready'
+                AND ra.status IN ('ready', 'failed')
                 AND ra.invalidated_at IS NULL
             )
             AND NOT EXISTS (
               SELECT 1 FROM jobs j
               WHERE j.asset_id = a.asset_id
                 AND j.kind = 'generate_thumbnail'
-                AND j.status IN ('queued', 'running')
+                AND j.status IN ('queued', 'running', 'paused')
             )
-          ORDER BY a.relative_file_path`,
+          ORDER BY a.relative_file_path
+          ${queryLimit}`,
       )
-      .all() as Array<{ asset_id: string; current_revision_id: string }>;
+      .all(
+        ...selectedIds,
+        ...supportedExtensions.map((extension) => `%.${extension}`),
+        ...(limit === undefined ? [] : [limit]),
+      ) as Array<{ asset_id: string; current_revision_id: string }>;
 
     const now = new Date().toISOString();
     let enqueued = 0;
@@ -5605,42 +7505,60 @@ export class LibraryService {
       `INSERT OR IGNORE INTO jobs
          (job_id, library_id, asset_id, revision_id, kind, status, priority, progress,
           attempt_count, created_at, updated_at)
-       VALUES (?, ?, ?, ?, 'generate_thumbnail', 'queued', 0, 0.0, 0, ?, ?)`,
+       VALUES (?, ?, ?, ?, 'generate_thumbnail', 'queued', ?, 0.0, 0, ?, ?)`,
     );
 
     for (const row of rows) {
-      insert.run(
-        randomUUID(), libraryId, row.asset_id, row.current_revision_id, now, now,
+      const inserted = insert.run(
+        randomUUID(), libraryId, row.asset_id, row.current_revision_id,
+        options.priority ?? 0, now, now,
       );
-      enqueued += 1;
+      enqueued += inserted.changes;
     }
+
+    // Existing ready thumbnails/posters (for example after reopening a library
+    // created by an older build) receive their missing local palettes too.
+    this.enqueueReadyPaletteJobs(openLibrary, options);
 
     return enqueued;
   }
 
   /**
    * Process queued thumbnail jobs one at a time. Returns the number of jobs
-   * processed (success + failure). Pause/resume/cancel/retry are deferred to
-   * a future slice; currently this is a simple drain.
+   * processed (success + failure + an in-flight pause/cancel).
    */
-  async processThumbnailQueue(libraryId: string): Promise<number> {
+  async processThumbnailQueue(
+    libraryId: string,
+    options: {
+      maxJobs?: number;
+      onResult?: (result: {
+        assetId: string;
+        artifactId?: string;
+        errorCode?: string;
+      }) => void;
+    } = {},
+  ): Promise<number> {
     const openLibrary = this.requireOpenLibrary(libraryId);
     const nextJob = openLibrary.connection.prepare(
-      `SELECT job_id, asset_id, revision_id, attempt_count
+      `SELECT job_id, asset_id, revision_id, kind, attempt_count
          FROM jobs
         WHERE library_id = ?
-          AND kind = 'generate_thumbnail'
+          AND kind IN ('generate_thumbnail', 'generate_video_poster',
+                       'generate_contact_sheet', 'generate_webm_proxy',
+                       'extract_palette')
           AND status = 'queued'
         ORDER BY priority DESC, created_at
         LIMIT 1`,
     );
 
     let processed = 0;
-    while (processed < 20) {
+    const maxJobs = Math.max(1, Math.min(20, options.maxJobs ?? 20));
+    while (processed < maxJobs) {
       const job = nextJob.get(libraryId) as {
         job_id: string;
         asset_id: string;
         revision_id: string;
+        kind: MediaJobKind;
         attempt_count: number;
       } | undefined;
       if (!job) break;
@@ -5652,25 +7570,143 @@ export class LibraryService {
         .run(job.attempt_count + 1, now, job.job_id);
       if (claimed.changes === 0) continue;
 
+      const controller = new AbortController();
+      this.activeMediaJobs.set(job.job_id, { controller, libraryId });
+      const previousArtifacts = this.mediaArtifactSnapshot(openLibrary, job.revision_id);
+
       try {
-        await this.generateThumbnail({ libraryId, assetId: job.asset_id });
+        if (job.kind === 'generate_thumbnail' || job.kind === 'generate_video_poster') {
+          const generated = await this.generateThumbnail(
+            { libraryId, assetId: job.asset_id },
+            { signal: controller.signal },
+          );
+          if (controller.signal.aborted || this.mediaJobState(libraryId, job.job_id) !== 'running') {
+            this.discardLateMediaArtifacts(openLibrary, job.revision_id, previousArtifacts, {
+              libraryId,
+              jobId: job.job_id,
+              assetId: job.asset_id,
+            });
+            processed += 1;
+            continue;
+          }
+          const asset = openLibrary.connection.prepare(
+            'SELECT relative_file_path FROM assets WHERE asset_id = ?',
+          ).get(job.asset_id) as { relative_file_path: string } | undefined;
+          if (asset && LibraryService.detectMediaType(asset.relative_file_path) === 'video') {
+            this.enqueueVideoDerivativeJob(openLibrary, job.asset_id, job.revision_id, 'generate_contact_sheet', -100);
+            const extension = path.extname(asset.relative_file_path).toLowerCase();
+            if (extension === '.avi' || extension === '.wmv') {
+              this.enqueueVideoDerivativeJob(openLibrary, job.asset_id, job.revision_id, 'generate_webm_proxy', 100);
+            }
+          }
+          this.enqueuePaletteJob(openLibrary, job.asset_id, job.revision_id, -10);
+          options.onResult?.({ assetId: job.asset_id, artifactId: generated.artifactId });
+        } else if (job.kind === 'extract_palette') {
+          const current = await this.generateQueuedPaletteArtifact(
+            libraryId,
+            job.asset_id,
+            job.revision_id,
+            { signal: controller.signal },
+          );
+          if (!current) {
+            openLibrary.connection.prepare(
+              "UPDATE jobs SET status = 'cancelled', error_code = 'STALE_REVISION', updated_at = ? WHERE job_id = ?",
+            ).run(new Date().toISOString(), job.job_id);
+            processed += 1;
+            continue;
+          }
+        } else {
+          const current = await this.generateQueuedVideoArtifact(
+            libraryId, job.asset_id, job.revision_id, job.kind,
+            { signal: controller.signal },
+          );
+          if (!current) {
+            openLibrary.connection.prepare(
+              "UPDATE jobs SET status = 'cancelled', error_code = 'STALE_REVISION', updated_at = ? WHERE job_id = ?",
+            ).run(new Date().toISOString(), job.job_id);
+            processed += 1;
+            continue;
+          }
+        }
+        if (controller.signal.aborted || this.mediaJobState(libraryId, job.job_id) !== 'running') {
+          this.discardLateMediaArtifacts(openLibrary, job.revision_id, previousArtifacts, {
+            libraryId,
+            jobId: job.job_id,
+            assetId: job.asset_id,
+          });
+          processed += 1;
+          continue;
+        }
         openLibrary.connection
-          .prepare("UPDATE jobs SET status = 'succeeded', progress = 1.0, updated_at = ? WHERE job_id = ?")
+          .prepare("UPDATE jobs SET status = 'succeeded', progress = 1.0, error_code = NULL, error_detail = NULL, updated_at = ? WHERE job_id = ? AND status = 'running'")
           .run(new Date().toISOString(), job.job_id);
       } catch (error) {
+        const state = this.mediaJobState(libraryId, job.job_id);
+        if (controller.signal.aborted || state === 'paused' || state === 'cancelled') {
+          this.discardLateMediaArtifacts(openLibrary, job.revision_id, previousArtifacts, {
+            libraryId,
+            jobId: job.job_id,
+            assetId: job.asset_id,
+          });
+          this.diagnose('media-job.interrupted', error, {
+            libraryId,
+            jobId: job.job_id,
+            assetId: job.asset_id,
+            kind: job.kind,
+            status: state,
+          });
+          processed += 1;
+          continue;
+        }
+        const failedKind = job.kind === 'extract_palette'
+          ? 'extracted_palette'
+          : job.kind === 'generate_contact_sheet'
+            ? 'contact_sheet'
+            : job.kind === 'generate_webm_proxy'
+              ? 'webm_proxy'
+              : null;
+        const failedArtifact = openLibrary.connection
+          .prepare(
+            `SELECT error_code FROM revision_artifacts
+              WHERE revision_id = ? AND invalidated_at IS NULL AND status = 'failed'
+                AND (? IS NULL OR kind = ?)
+              ORDER BY generated_at DESC LIMIT 1`,
+          )
+          .get(job.revision_id, failedKind, failedKind) as { error_code: string | null } | undefined;
+        const errorCode = failedArtifact?.error_code
+          ?? (job.kind === 'generate_thumbnail'
+            ? 'THUMBNAIL_GENERATION_FAILED'
+            : job.kind === 'extract_palette'
+              ? 'PALETTE_EXTRACTION_FAILED'
+              : 'MEDIA_PROCESSING_FAILED');
         openLibrary.connection
           .prepare(
             `UPDATE jobs
                 SET status = 'failed', error_code = ?, error_detail = ?, updated_at = ?
-              WHERE job_id = ?`,
+              WHERE job_id = ? AND status = 'running'`,
           )
           .run(
-            'THUMBNAIL_GENERATION_FAILED',
-            error instanceof Error ? error.message.slice(0, 500) : String(error).slice(0, 500),
+            errorCode,
+            safeMediaJobErrorDetail(errorCode),
             new Date().toISOString(),
             job.job_id,
           );
-        this.diagnose('thumbnail-queue', error, { libraryId, assetId: job.asset_id });
+        this.diagnose('media-job.failed', error, {
+          libraryId,
+          jobId: job.job_id,
+          assetId: job.asset_id,
+          kind: job.kind,
+          attemptCount: job.attempt_count + 1,
+          errorCode,
+        });
+        if (job.kind === 'generate_thumbnail' || job.kind === 'generate_video_poster') {
+          options.onResult?.({
+            assetId: job.asset_id,
+            errorCode,
+          });
+        }
+      } finally {
+        this.activeMediaJobs.delete(job.job_id);
       }
       processed += 1;
     }
@@ -5678,55 +7714,132 @@ export class LibraryService {
     return processed;
   }
 
-  /** Return the thumbnail status for a list of assets (used to extend AssetSummary). */
-  private thumbnailStatusMap(
+  /** Return current image-thumbnail or video-poster state for asset summaries. */
+  private thumbnailArtifactMap(
     libraryId: string,
     assetIds: string[],
-  ): Map<string, 'ready' | 'pending' | 'failed' | null> {
+  ): Map<string, {
+    status: 'ready' | 'pending' | 'failed' | null;
+    artifactId: string | null;
+    width: number | null;
+    height: number | null;
+    durationMs: number | null;
+  }> {
     const openLibrary = this.requireOpenLibrary(libraryId);
     if (assetIds.length === 0) return new Map();
 
     const placeholders = assetIds.map(() => '?').join(',');
     const rows = openLibrary.connection
       .prepare(
-        `SELECT a.asset_id,
-                (SELECT ra.status FROM revision_artifacts ra
-                  WHERE ra.revision_id = a.current_revision_id
-                    AND ra.kind = 'thumbnail'
-                    AND ra.invalidated_at IS NULL
-                  LIMIT 1) AS thumbnail_status
+        `SELECT a.asset_id, ra.status AS thumbnail_status,
+                ra.artifact_id AS thumbnail_artifact_id,
+                COALESCE(ra.width, video_meta.width) AS artifact_width,
+                COALESCE(ra.height, video_meta.height) AS artifact_height,
+                video_meta.duration_ms AS artifact_duration_ms
            FROM assets a
+           LEFT JOIN revision_artifacts ra
+             ON ra.revision_id = a.current_revision_id
+            AND ra.kind = CASE
+              WHEN LOWER(a.relative_file_path) LIKE '%.mp4'
+                OR LOWER(a.relative_file_path) LIKE '%.webm'
+                OR LOWER(a.relative_file_path) LIKE '%.mov'
+                OR LOWER(a.relative_file_path) LIKE '%.avi'
+                OR LOWER(a.relative_file_path) LIKE '%.wmv'
+              THEN 'video_poster'
+              ELSE 'thumbnail'
+            END
+            AND ra.invalidated_at IS NULL
+           LEFT JOIN revision_artifacts video_meta
+             ON video_meta.revision_id = a.current_revision_id
+            AND video_meta.kind = 'extracted_metadata'
+            AND video_meta.status = 'ready'
+            AND video_meta.invalidated_at IS NULL
           WHERE a.asset_id IN (${placeholders})`,
       )
       .all(...assetIds) as Array<{
         asset_id: string;
         thumbnail_status: 'ready' | 'pending' | 'generating' | 'failed' | null;
+        thumbnail_artifact_id: string | null;
+        artifact_width: number | null;
+        artifact_height: number | null;
+        artifact_duration_ms: number | null;
       }>;
 
-    const map = new Map<string, 'ready' | 'pending' | 'failed' | null>();
+    const map = new Map<string, {
+      status: 'ready' | 'pending' | 'failed' | null;
+      artifactId: string | null;
+      width: number | null;
+      height: number | null;
+      durationMs: number | null;
+    }>();
     for (const row of rows) {
-      if (row.thumbnail_status === 'ready') map.set(row.asset_id, 'ready');
-      else if (row.thumbnail_status === 'failed') map.set(row.asset_id, 'failed');
-      else if (row.thumbnail_status === 'generating' || row.thumbnail_status === 'pending') {
-        map.set(row.asset_id, 'pending');
-      } else map.set(row.asset_id, null);
+      const status = row.thumbnail_status === 'ready' ? 'ready'
+        : row.thumbnail_status === 'failed' ? 'failed'
+        : row.thumbnail_status === 'generating' || row.thumbnail_status === 'pending' ? 'pending'
+        : null;
+      map.set(row.asset_id, {
+        status,
+        artifactId: status === 'ready' ? row.thumbnail_artifact_id : null,
+        width: row.artifact_width,
+        height: row.artifact_height,
+        durationMs: row.artifact_duration_ms,
+      });
     }
     return map;
+  }
+
+  /** Return only statuses for callers that do not need artifact ids. */
+  private thumbnailStatusMap(
+    libraryId: string,
+    assetIds: string[],
+  ): Map<string, 'ready' | 'pending' | 'failed' | null> {
+    return new Map(
+      [...this.thumbnailArtifactMap(libraryId, assetIds)]
+        .map(([assetId, artifact]) => [assetId, artifact.status]),
+    );
   }
 
   // ── Search ──────────────────────────────────────────────────────────
 
   private buildFilterWhere(
-    filters: Array<{
-      field: 'availability' | 'favorite' | 'format' | 'rating' | 'source_url' | 'tag';
-      values: string[];
-      exclude: boolean;
-    }>,
+    filters: FilterClause[],
   ): { sql: string; params: unknown[] } {
     const conditions: string[] = [];
     const params: unknown[] = [];
 
     for (const filter of filters) {
+      if ('ranges' in filter) {
+        const width = 'COALESCE(duration_meta.width, technical_thumbnail.width)';
+        const height = 'COALESCE(duration_meta.height, technical_thumbnail.height)';
+        const column = filter.field === 'width'
+          ? width
+          : filter.field === 'height'
+            ? height
+            : filter.field === 'duration_ms'
+              ? 'duration_meta.duration_ms'
+              : `(CAST(${width} AS REAL) / NULLIF(${height}, 0))`;
+        const rangeClauses = filter.ranges.map((range) => {
+          const bounds: string[] = [];
+          if (range.min !== undefined) {
+            bounds.push(`${column} >= ?`);
+            params.push(range.min);
+          }
+          if (range.max !== undefined) {
+            bounds.push(`${column} <= ?`);
+            params.push(range.max);
+          }
+          return `(${bounds.join(' AND ')})`;
+        });
+        const matchesAnyRange = `(${rangeClauses.join(' OR ')})`;
+        // SQL comparisons with NULL evaluate to UNKNOWN. A positive technical
+        // filter intentionally omits assets whose metadata has not been
+        // extracted; an exclusion filter retains them because they do not
+        // belong to the excluded numeric range.
+        conditions.push(filter.exclude
+          ? `(${column} IS NULL OR NOT ${matchesAnyRange})`
+          : matchesAnyRange);
+        continue;
+      }
       // favorite + source_url are existence/boolean filters: they take no
       // values (the presence/absence IS the filter). Handle before the
       // empty-values skip so `values: []` does not silently drop them.
@@ -5807,11 +7920,7 @@ export class LibraryService {
   searchAssets(input: {
     libraryId: string;
     query?: { clauses: SearchClause[] } | null;
-    filters?: Array<{
-      field: 'availability' | 'favorite' | 'format' | 'rating' | 'source_url' | 'tag';
-      values: string[];
-      exclude: boolean;
-    }> | null;
+    filters?: FilterClause[] | null;
     scope?: SearchScope | null;
     sort?: { field: string; order: 'asc' | 'desc' } | null;
     limit?: number | null;
@@ -5842,8 +7951,10 @@ export class LibraryService {
       input.filters ?? [],
     );
 
-    // Build ORDER BY clause.
+    // Build ORDER BY clause. Parameters used by a correlated ordering
+    // expression appear after WHERE parameters in the final data query.
     let orderBy: string;
+    const orderParams: unknown[] = [];
     if (hasPositiveQuery && !input.sort) {
       // When searching, order by BM25 relevance with per-column weights
       // (label 12, filename 10, tags 8, description 5, source_url 3,
@@ -5851,35 +7962,69 @@ export class LibraryService {
       // column uses default weights (all 1.0); explicit bm25() is required to
       // apply the weighted ranking. This sacrifices the rank-column snippet
       // lazy-evaluation optimization (restorable later via a custom rank fn).
-      orderBy = `bm25(asset_search, 12.0, 10.0, 8.0, 5.0, 3.0, 2.0, 1.0) ASC`;
+      orderBy = `bm25(asset_search, 12.0, 10.0, 8.0, 5.0, 3.0, 2.0, 1.0) ASC, a.asset_id ASC`;
     } else if (input.sort) {
       const sortField = input.sort.field;
       const dir = input.sort.order === 'desc' ? 'DESC' : 'ASC';
       switch (sortField) {
         case 'name':
-          orderBy = `a.relative_file_path ${dir}`;
+          orderBy = `a.relative_file_path ${dir}, a.asset_id ASC`;
           break;
         case 'modified_at':
-          orderBy = `r.modified_at ${dir}`;
+          orderBy = `r.modified_at ${dir}, a.asset_id ASC`;
           break;
         case 'created_at':
-          orderBy = `a.created_at ${dir}`;
+          orderBy = `a.created_at ${dir}, a.asset_id ASC`;
           break;
         case 'byte_size':
-          orderBy = `r.byte_size ${dir}`;
+          orderBy = `r.byte_size ${dir}, a.asset_id ASC`;
           break;
         case 'duration':
-          // duration not extracted in this slice; fall back to name.
-          orderBy = `a.relative_file_path ${dir}`;
+          orderBy = `duration_meta.duration_ms IS NULL ASC, duration_meta.duration_ms ${dir}, a.asset_id ASC`;
           break;
         case 'rating':
-          orderBy = `COALESCE(m.rating, 0) ${dir}`;
+          orderBy = `COALESCE(m.rating, 0) ${dir}, a.asset_id ASC`;
+          break;
+        case 'color':
+          orderBy = `palette_meta.dominant_hue IS NULL ASC,
+                     palette_meta.dominant_hue ${dir},
+                     palette_meta.dominant_lightness ${dir},
+                     a.asset_id ASC`;
           break;
         default:
-          orderBy = `a.relative_file_path ASC`;
+          orderBy = `a.relative_file_path ASC, a.asset_id ASC`;
       }
+    } else if (input.scope?.kind === 'collection') {
+      if (input.scope.recursive) {
+        orderBy = `(SELECT MIN(ca.position)
+                      FROM collection_assets ca
+                     WHERE ca.asset_id = a.asset_id
+                       AND ca.collection_id IN (
+                         WITH RECURSIVE descendants(collection_id) AS (
+                           SELECT collection_id FROM collections WHERE collection_id = ? AND library_id = ?
+                           UNION ALL
+                           SELECT child.collection_id FROM collections child
+                             JOIN descendants parent ON child.parent_id = parent.collection_id
+                            WHERE child.library_id = ?
+                         )
+                         SELECT collection_id FROM descendants
+                       )) ASC, a.relative_file_path ASC, a.asset_id ASC`;
+        orderParams.push(
+          input.scope.collectionId,
+          openLibrary.summary.libraryId,
+          openLibrary.summary.libraryId,
+        );
+      } else {
+        orderBy = `(SELECT ca.position
+                      FROM collection_assets ca
+                     WHERE ca.asset_id = a.asset_id
+                       AND ca.collection_id = ?) ASC, a.relative_file_path ASC, a.asset_id ASC`;
+        orderParams.push(input.scope.collectionId);
+      }
+    } else if (input.scope?.kind === 'trash') {
+      orderBy = `a.deleted_at DESC, a.asset_id ASC`;
     } else {
-      orderBy = `a.relative_file_path ASC`;
+      orderBy = `a.relative_file_path ASC, a.asset_id ASC`;
     }
 
     // Build the base FROM + JOIN clauses.
@@ -5887,11 +8032,57 @@ export class LibraryService {
       ? `FROM assets a
            JOIN revisions r ON r.revision_id = a.current_revision_id
            LEFT JOIN asset_metadata m ON m.asset_id = a.asset_id
+           LEFT JOIN revision_artifacts duration_meta
+             ON duration_meta.revision_id = a.current_revision_id
+            AND duration_meta.kind = 'extracted_metadata'
+            AND duration_meta.status = 'ready'
+            AND duration_meta.invalidated_at IS NULL
+           LEFT JOIN revision_artifacts palette_meta
+             ON palette_meta.revision_id = a.current_revision_id
+            AND palette_meta.kind = 'extracted_palette'
+            AND palette_meta.status = 'ready'
+            AND palette_meta.invalidated_at IS NULL
+           LEFT JOIN revision_artifacts technical_thumbnail
+             ON technical_thumbnail.revision_id = a.current_revision_id
+            AND technical_thumbnail.kind = CASE
+              WHEN LOWER(a.relative_file_path) LIKE '%.mp4'
+                OR LOWER(a.relative_file_path) LIKE '%.webm'
+                OR LOWER(a.relative_file_path) LIKE '%.mov'
+                OR LOWER(a.relative_file_path) LIKE '%.avi'
+                OR LOWER(a.relative_file_path) LIKE '%.wmv'
+              THEN 'video_poster'
+              ELSE 'thumbnail'
+            END
+            AND technical_thumbnail.status = 'ready'
+            AND technical_thumbnail.invalidated_at IS NULL
            JOIN asset_search_index sc ON a.asset_id = sc.asset_id
            JOIN asset_search s ON sc.rowid = s.rowid`
       : `FROM assets a
            JOIN revisions r ON r.revision_id = a.current_revision_id
-           LEFT JOIN asset_metadata m ON m.asset_id = a.asset_id`;
+           LEFT JOIN asset_metadata m ON m.asset_id = a.asset_id
+           LEFT JOIN revision_artifacts duration_meta
+             ON duration_meta.revision_id = a.current_revision_id
+            AND duration_meta.kind = 'extracted_metadata'
+            AND duration_meta.status = 'ready'
+            AND duration_meta.invalidated_at IS NULL
+           LEFT JOIN revision_artifacts palette_meta
+             ON palette_meta.revision_id = a.current_revision_id
+            AND palette_meta.kind = 'extracted_palette'
+            AND palette_meta.status = 'ready'
+            AND palette_meta.invalidated_at IS NULL
+           LEFT JOIN revision_artifacts technical_thumbnail
+             ON technical_thumbnail.revision_id = a.current_revision_id
+            AND technical_thumbnail.kind = CASE
+              WHEN LOWER(a.relative_file_path) LIKE '%.mp4'
+                OR LOWER(a.relative_file_path) LIKE '%.webm'
+                OR LOWER(a.relative_file_path) LIKE '%.mov'
+                OR LOWER(a.relative_file_path) LIKE '%.avi'
+                OR LOWER(a.relative_file_path) LIKE '%.wmv'
+              THEN 'video_poster'
+              ELSE 'thumbnail'
+            END
+            AND technical_thumbnail.status = 'ready'
+            AND technical_thumbnail.invalidated_at IS NULL`;
 
     // WHERE clause.
     const whereParts: string[] = [];
@@ -5914,9 +8105,13 @@ export class LibraryService {
       allParams.push(fts5Query);
     }
 
-    // Soft-deleted assets retain their organization relationships for restore,
-    // but never appear in normal discovery results.
-    whereParts.push('a.deleted_at IS NULL');
+    // Soft-deleted assets retain their organization relationships for restore.
+    // They are only exposed through the explicit trash scope; every other
+    // discovery query excludes them.
+    whereParts.push(input.scope?.kind === 'trash'
+      ? 'a.deleted_at IS NOT NULL'
+      : 'a.deleted_at IS NULL');
+    whereParts.push('NOT EXISTS (SELECT 1 FROM linked_ignored_assets ignored WHERE ignored.asset_id = a.asset_id)');
 
     if (filterWhere.length > 0) {
       whereParts.push(filterWhere);
@@ -5929,8 +8124,10 @@ export class LibraryService {
       } else {
         const folderId = input.scope.folderId;
         const managed = connection
-          .prepare('SELECT folder_id FROM managed_folders WHERE folder_id = ? AND library_id = ?')
-          .get(folderId, openLibrary.summary.libraryId);
+          // A library database owns exactly one library, so managed_folders
+          // intentionally has no library_id column. linked_folders does.
+          .prepare('SELECT folder_id FROM managed_folders WHERE folder_id = ?')
+          .get(folderId);
         const linked = connection
           .prepare('SELECT folder_id FROM linked_folders WHERE folder_id = ? AND library_id = ?')
           .get(folderId, openLibrary.summary.libraryId);
@@ -5938,15 +8135,14 @@ export class LibraryService {
           if (input.scope.recursive) {
             whereParts.push(`a.managed_folder_id IN (
               WITH RECURSIVE descendants(folder_id) AS (
-                SELECT folder_id FROM managed_folders WHERE folder_id = ? AND library_id = ?
+                SELECT folder_id FROM managed_folders WHERE folder_id = ?
                 UNION ALL
                 SELECT child.folder_id FROM managed_folders child
                   JOIN descendants parent ON child.parent_folder_id = parent.folder_id
-                 WHERE child.library_id = ?
               )
               SELECT folder_id FROM descendants
             )`);
-            allParams.push(folderId, openLibrary.summary.libraryId, openLibrary.summary.libraryId);
+            allParams.push(folderId);
           } else {
             whereParts.push('a.managed_folder_id = ?');
             allParams.push(folderId);
@@ -6008,7 +8204,7 @@ export class LibraryService {
     const dataSql = `SELECT ${dataColumns} ${baseFrom} ${whereClause} ORDER BY ${orderBy} LIMIT ? OFFSET ?`;
     const rows = connection
       .prepare(dataSql)
-      .all(...allParams, limit, offset) as Array<{
+      .all(...allParams, ...orderParams, limit, offset) as Array<{
         asset_id: string;
         location_kind: 'managed' | 'linked';
         managed_folder_id: string | null;
@@ -6025,7 +8221,25 @@ export class LibraryService {
         snippet_text?: string;
       }>;
 
-    const items: AssetSummary[] = rows.map((row) => this.assetSummaryFromRow(row));
+    const artifactMap = this.thumbnailArtifactMap(
+      input.libraryId,
+      rows.map((row) => row.asset_id),
+    );
+    const items: AssetSummary[] = rows.map((row) => {
+      const artifact = artifactMap.get(row.asset_id);
+      const detectedMediaType = LibraryService.detectMediaType(row.relative_file_path);
+      return this.assetSummaryFromRow({
+        ...row,
+        thumbnail_status: artifact?.status ?? null,
+        thumbnail_artifact_id: artifact?.artifactId ?? null,
+        artifact_width: artifact?.width ?? null,
+        artifact_height: artifact?.height ?? null,
+        artifact_duration_ms: artifact?.durationMs ?? null,
+        media_type: detectedMediaType === 'image' ? 'image'
+          : detectedMediaType === 'video' ? 'video'
+          : 'other',
+      });
+    });
 
     const snippets: Array<{ assetId: string; text: string }> | undefined =
       hasPositiveQuery
@@ -6405,6 +8619,7 @@ export class LibraryService {
       media_type?: 'image' | 'video' | 'other' | null;
       artifact_width?: number | null;
       artifact_height?: number | null;
+      artifact_duration_ms?: number | null;
     },
   ): AssetSummary {
     let remainingDays: number | null = null;
@@ -6434,7 +8649,377 @@ export class LibraryService {
       mediaType: row.media_type ?? 'other',
       width: row.artifact_width ?? null,
       height: row.artifact_height ?? null,
+      durationMs: row.artifact_duration_ms ?? null,
     };
+  }
+
+  private managedMoveSummaries(openLibrary: OpenLibrary, assetIds: string[]): AssetSummary[] {
+    return assetIds.flatMap((assetId) => {
+      const row = openLibrary.connection.prepare(
+        `SELECT a.asset_id, a.managed_folder_id, a.linked_folder_id, a.location_kind,
+                a.relative_file_path, a.current_revision_id, a.availability,
+                r.byte_size, r.modified_at, m.label,
+                COALESCE(m.rating, 0) AS rating, COALESCE(m.favorite, 0) AS favorite,
+                a.deleted_at, a.trashed_from_relative_path
+           FROM assets a
+           JOIN revisions r ON r.revision_id = a.current_revision_id
+           LEFT JOIN asset_metadata m ON m.asset_id = a.asset_id
+          WHERE a.asset_id = ?`,
+      ).get(assetId) as Parameters<LibraryService['assetSummaryFromRow']>[0] | undefined;
+      return row ? [this.assetSummaryFromRow(row)] : [];
+    });
+  }
+
+  private applyManagedMoveOperation(
+    openLibrary: OpenLibrary,
+    operationId: string,
+    manifest: ManagedMoveOperationManifest,
+  ): void {
+    const operationsRoot = this.assertSafeOperationsRoot(openLibrary.summary.libraryPath);
+    const operationPath = path.join(operationsRoot, operationId);
+    mkdirSync(path.join(operationPath, 'backup'), { recursive: true });
+    this.assertSafeOperationPath(operationPath);
+    const now = new Date().toISOString();
+    openLibrary.connection.prepare(
+      `INSERT INTO file_operations
+         (operation_id, kind, status, manifest_json, error_code, created_at, updated_at)
+       VALUES (?, ?, 'preparing', ?, NULL, ?, ?)`,
+    ).run(operationId, manifest.kind, JSON.stringify(manifest), now, now);
+
+    try {
+      this.failAt('crash-move-before-filesystem');
+      const applying = openLibrary.connection.prepare(
+        "UPDATE file_operations SET status = 'applying', updated_at = ? WHERE operation_id = ? AND status = 'preparing'",
+      ).run(new Date().toISOString(), operationId);
+      if (applying.changes !== 1) throw new LibraryServiceError('LIBRARY_CORRUPT');
+
+      for (const file of manifest.files) {
+        if (!file.destinationConflict) continue;
+        const destinationPath = this.folderPath(openLibrary, file.destinationConflict.relativePath);
+        const holdingPath = this.moveConflictHoldingPath(openLibrary, file.destinationConflict);
+        mkdirSync(path.dirname(holdingPath), { recursive: true });
+        renameSync(destinationPath, holdingPath);
+      }
+      this.failAt('crash-move-after-conflict');
+
+      for (const file of manifest.files) {
+        const sourcePath = this.folderPath(openLibrary, file.sourceRelativePath);
+        const destinationPath = this.folderPath(openLibrary, file.destinationRelativePath);
+        mkdirSync(path.dirname(destinationPath), { recursive: true });
+        renameSync(sourcePath, destinationPath);
+      }
+      for (const file of manifest.files) {
+        if (!file.restoreConflict) continue;
+        const holdingPath = this.moveConflictHoldingPath(openLibrary, file.restoreConflict);
+        const restorePath = this.folderPath(openLibrary, file.sourceRelativePath);
+        mkdirSync(path.dirname(restorePath), { recursive: true });
+        renameSync(holdingPath, restorePath);
+      }
+      this.failAt('crash-move-after-filesystem');
+
+      openLibrary.connection.transaction(() => {
+        for (const file of manifest.files) {
+          const conflict = file.destinationConflict;
+          if (!conflict || conflict.kind !== 'managed' || !conflict.assetId || !conflict.trashFilename) continue;
+          const trashRelativePath = `__trash__/${conflict.assetId}/${conflict.trashFilename}`;
+          const changed = openLibrary.connection.prepare(
+            `UPDATE assets SET relative_file_path = ?, managed_folder_id = NULL, path_identity = ?,
+                    deleted_at = ?, trashed_from_relative_path = ?, trashed_from_folder_id = ?, updated_at = ?
+              WHERE asset_id = ? AND deleted_at IS NULL`,
+          ).run(trashRelativePath, portablePathIdentity(trashRelativePath), now,
+            conflict.relativePath, conflict.managedFolderId, now, conflict.assetId);
+          if (changed.changes !== 1) throw new LibraryServiceError('ASSET_MOVE_CONFLICT', { reason: 'SOURCE_CHANGED' });
+          this.syncAssetSearchContent(openLibrary.connection, conflict.assetId);
+        }
+        for (const file of manifest.files) {
+          const changed = openLibrary.connection.prepare(
+            `UPDATE assets SET relative_file_path = ?, managed_folder_id = ?, path_identity = ?, updated_at = ?
+              WHERE asset_id = ? AND location_kind = 'managed' AND deleted_at IS NULL`,
+          ).run(file.destinationRelativePath, file.destinationFolderId,
+            portablePathIdentity(file.destinationRelativePath), now, file.assetId);
+          if (changed.changes !== 1) throw new LibraryServiceError('ASSET_MOVE_CONFLICT', { reason: 'SOURCE_CHANGED' });
+          this.syncAssetSearchContent(openLibrary.connection, file.assetId);
+        }
+        for (const file of manifest.files) {
+          const conflict = file.restoreConflict;
+          if (!conflict || conflict.kind !== 'managed' || !conflict.assetId) continue;
+          const changed = openLibrary.connection.prepare(
+            `UPDATE assets SET relative_file_path = ?, managed_folder_id = ?, path_identity = ?,
+                    deleted_at = NULL, trashed_from_relative_path = NULL,
+                    trashed_from_folder_id = NULL, updated_at = ?
+              WHERE asset_id = ? AND deleted_at IS NOT NULL`,
+          ).run(conflict.relativePath, conflict.managedFolderId,
+            portablePathIdentity(conflict.relativePath), now, conflict.assetId);
+          if (changed.changes !== 1) throw new LibraryServiceError('ASSET_MOVE_CONFLICT', { reason: 'SOURCE_CHANGED' });
+          this.syncAssetSearchContent(openLibrary.connection, conflict.assetId);
+        }
+        if (manifest.originalOperationId) {
+          const consumed = openLibrary.connection.prepare(
+            `UPDATE file_operations SET error_code = 'UNDONE', updated_at = ?
+              WHERE operation_id = ? AND kind = 'managed-move' AND status = 'committed' AND error_code IS NULL`,
+          ).run(now, manifest.originalOperationId);
+          if (consumed.changes !== 1) throw new LibraryServiceError('ASSET_MOVE_CONFLICT', { reason: 'SOURCE_CHANGED' });
+        }
+        this.failAt('crash-move-before-db-commit');
+        openLibrary.connection.prepare(
+          "UPDATE file_operations SET status = 'committed', updated_at = ? WHERE operation_id = ?",
+        ).run(new Date().toISOString(), operationId);
+      })();
+      this.failAt('crash-move-after-db-commit');
+
+      if (manifest.kind === 'managed-move-undo') {
+        this.removeOperation(operationPath);
+        if (manifest.originalOperationId) this.removeOperation(path.join(operationsRoot, manifest.originalOperationId));
+      }
+    } catch (error) {
+      if (error instanceof SimulatedCrashError) throw new LibraryServiceError('LIBRARY_NOT_WRITABLE', { cause: error });
+      const row = openLibrary.connection.prepare(
+        'SELECT status, manifest_json, error_code, operation_id FROM file_operations WHERE operation_id = ?',
+      ).get(operationId) as OperationRow | undefined;
+      if (row?.status === 'committed') {
+        this.diagnose('asset.move.post-commit', error, { operationId, libraryId: openLibrary.summary.libraryId });
+        return;
+      }
+      if (row) {
+        try {
+          this.recoverManagedMoveOperation(openLibrary, row, manifest, operationPath);
+        } catch (recoveryError) {
+          openLibrary.connection.prepare(
+            "UPDATE file_operations SET status = 'failed', error_code = 'MOVE_APPLY_FAILED', updated_at = ? WHERE operation_id = ?",
+          ).run(new Date().toISOString(), operationId);
+          this.diagnose('asset.move.rollback', recoveryError, { operationId, libraryId: openLibrary.summary.libraryId });
+        }
+      }
+      throw serviceError(error, 'LIBRARY_NOT_WRITABLE');
+    }
+  }
+
+  private managedMoveConflict(
+    openLibrary: OpenLibrary,
+    operationId: string,
+    backupName: string,
+    relativePath: string,
+    excludedAssetId: string,
+  ): ManagedMoveConflict | null {
+    const identity = portablePathIdentity(relativePath);
+    const active = openLibrary.connection.prepare(
+      `SELECT asset_id, managed_folder_id, relative_file_path FROM assets
+        WHERE path_identity = ? AND location_kind = 'managed' AND deleted_at IS NULL AND asset_id != ?`,
+    ).get(identity, excludedAssetId) as {
+      asset_id: string;
+      managed_folder_id: string | null;
+      relative_file_path: string;
+    } | undefined;
+    const disk = this.portableDiskDestination(openLibrary, relativePath);
+    if (!active && !disk) return null;
+    if (active && !disk) throw new LibraryServiceError('ASSET_MOVE_CONFLICT', { reason: 'SOURCE_NOT_FOUND' });
+    if (disk && disk.size < 0) throw new LibraryServiceError('ASSET_MOVE_CONFLICT', { reason: 'UNSUPPORTED_FILE_ENTRY' });
+    if (active) {
+      return {
+        assetId: active.asset_id,
+        backupName,
+        kind: 'managed',
+        managedFolderId: active.managed_folder_id,
+        operationId,
+        relativePath: disk!.actualRelativePath,
+        trashFilename: path.posix.basename(active.relative_file_path),
+      };
+    }
+    return {
+      assetId: null,
+      backupName,
+      kind: 'untracked',
+      managedFolderId: null,
+      operationId,
+      relativePath: disk!.actualRelativePath,
+      trashFilename: null,
+    };
+  }
+
+  private availableMoveDestination(
+    openLibrary: OpenLibrary,
+    relativePath: string,
+    planned: Set<string>,
+  ): string {
+    const parent = path.posix.dirname(relativePath) === '.' ? '' : path.posix.dirname(relativePath);
+    const filename = path.posix.basename(relativePath);
+    const extension = path.posix.extname(filename);
+    const base = extension ? filename.slice(0, -extension.length) : filename;
+    for (let index = 2; index < Number.MAX_SAFE_INTEGER; index += 1) {
+      const name = `${base} (${index})${extension}`;
+      const candidate = parent ? path.posix.join(parent, name) : name;
+      const identity = portablePathIdentity(candidate);
+      if (planned.has(identity)) continue;
+      const dbConflict = openLibrary.connection.prepare(
+        "SELECT asset_id FROM assets WHERE path_identity = ? AND location_kind = 'managed' AND deleted_at IS NULL",
+      ).get(identity);
+      if (!dbConflict && !this.portableDiskDestination(openLibrary, candidate)) return candidate;
+    }
+    throw new LibraryServiceError('LIBRARY_NOT_WRITABLE');
+  }
+
+  moveAssets(input: {
+    libraryId: string;
+    assetIds: string[];
+    targetFolderId: string | null;
+    conflictStrategy?: 'keep-both' | 'replace' | 'skip';
+  }): { movedCount: number; skippedCount: number; operationId: string | null; assets: AssetSummary[] } {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    if (input.assetIds.length === 0 || new Set(input.assetIds).size !== input.assetIds.length) {
+      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+    }
+    const targetFolder = input.targetFolderId === null ? undefined : this.targetFolder(openLibrary, input.targetFolderId);
+    const rows = openLibrary.connection.prepare(
+      `SELECT asset_id, relative_file_path, managed_folder_id, availability FROM assets
+        WHERE asset_id IN (${input.assetIds.map(() => '?').join(',')})
+          AND location_kind = 'managed' AND deleted_at IS NULL`,
+    ).all(...input.assetIds) as Array<{
+      asset_id: string;
+      relative_file_path: string;
+      managed_folder_id: string | null;
+      availability: 'available' | 'missing';
+    }>;
+    const byId = new Map(rows.map((row) => [row.asset_id, row]));
+    for (const assetId of input.assetIds) {
+      const row = byId.get(assetId);
+      if (!row) throw new LibraryServiceError('ASSET_NOT_FOUND');
+      if (row.availability !== 'available') throw new LibraryServiceError('ASSET_NOT_FOUND', { reason: 'SOURCE_NOT_FOUND' });
+    }
+
+    const operationId = randomUUID();
+    const selectedIds = new Set(input.assetIds);
+    const planned = new Set<string>();
+    const strategy = input.conflictStrategy ?? 'keep-both';
+    const files: ManagedMoveOperationManifest['files'] = [];
+    let skippedCount = 0;
+    const targetPrefix = targetFolder?.relative_path ?? '';
+
+    for (const assetId of input.assetIds) {
+      const row = byId.get(assetId)!;
+      if (!realFileExists(this.folderPath(openLibrary, row.relative_file_path))) {
+        throw new LibraryServiceError('ASSET_NOT_FOUND', { reason: 'SOURCE_NOT_FOUND' });
+      }
+      const filename = path.posix.basename(row.relative_file_path);
+      let destinationRelativePath = targetPrefix ? path.posix.join(targetPrefix, filename) : filename;
+      let identity = portablePathIdentity(destinationRelativePath);
+      if (identity === portablePathIdentity(row.relative_file_path)) {
+        skippedCount += 1;
+        planned.add(identity);
+        continue;
+      }
+      let conflict = this.managedMoveConflict(openLibrary, operationId, String(files.length), destinationRelativePath, assetId);
+      const selectedConflict = conflict?.assetId ? selectedIds.has(conflict.assetId) : false;
+      const batchConflict = planned.has(identity) || selectedConflict;
+      if (batchConflict || conflict) {
+        if (strategy === 'skip') {
+          skippedCount += 1;
+          continue;
+        }
+        if (strategy === 'keep-both' || batchConflict) {
+          destinationRelativePath = this.availableMoveDestination(openLibrary, destinationRelativePath, planned);
+          identity = portablePathIdentity(destinationRelativePath);
+          conflict = null;
+        }
+      }
+      planned.add(identity);
+      files.push({
+        assetId,
+        destinationConflict: strategy === 'replace' ? conflict : null,
+        destinationFolderId: targetFolder?.folder_id ?? null,
+        destinationRelativePath,
+        restoreConflict: null,
+        sourceFolderId: row.managed_folder_id,
+        sourceRelativePath: row.relative_file_path,
+      });
+    }
+
+    if (files.length === 0) return { movedCount: 0, skippedCount, operationId: null, assets: [] };
+    const manifest: ManagedMoveOperationManifest = {
+      files,
+      kind: 'managed-move',
+      originalOperationId: null,
+      version: 4,
+    };
+    this.applyManagedMoveOperation(openLibrary, operationId, manifest);
+    return { movedCount: files.length, skippedCount, operationId,
+      assets: this.managedMoveSummaries(openLibrary, files.map((file) => file.assetId)) };
+  }
+
+  undoMoveAssets(input: {
+    libraryId: string;
+    operationId: string;
+    conflictStrategy?: 'error' | 'keep-both' | 'replace' | 'skip';
+  }): { undoneCount: number; skippedCount: number; assets: AssetSummary[] } {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    const operation = openLibrary.connection.prepare(
+      `SELECT operation_id, status, manifest_json, error_code FROM file_operations
+        WHERE operation_id = ? AND kind = 'managed-move'`,
+    ).get(input.operationId) as OperationRow | undefined;
+    if (!operation || operation.status !== 'committed' || operation.error_code !== null) {
+      throw new LibraryServiceError('ASSET_MOVE_CONFLICT', { reason: 'SOURCE_CHANGED' });
+    }
+    const original = this.parseOperationManifest(operation.manifest_json);
+    if (original.version !== 4 || original.kind !== 'managed-move') throw new LibraryServiceError('LIBRARY_CORRUPT');
+    const undoOperationId = randomUUID();
+    const strategy = input.conflictStrategy ?? 'error';
+    const planned = new Set<string>();
+    const files: ManagedMoveOperationManifest['files'] = [];
+    let skippedCount = 0;
+
+    for (const originalFile of original.files) {
+      const current = openLibrary.connection.prepare(
+        `SELECT relative_file_path, managed_folder_id, availability FROM assets
+          WHERE asset_id = ? AND location_kind = 'managed' AND deleted_at IS NULL`,
+      ).get(originalFile.assetId) as {
+        relative_file_path: string;
+        managed_folder_id: string | null;
+        availability: 'available' | 'missing';
+      } | undefined;
+      if (!current || current.availability !== 'available' ||
+        portablePathIdentity(current.relative_file_path) !== portablePathIdentity(originalFile.destinationRelativePath) ||
+        !realFileExists(this.folderPath(openLibrary, current.relative_file_path))) {
+        throw new LibraryServiceError('ASSET_MOVE_CONFLICT', { reason: 'SOURCE_CHANGED' });
+      }
+      if (originalFile.destinationConflict &&
+        !realFileExists(this.moveConflictHoldingPath(openLibrary, originalFile.destinationConflict))) {
+        throw new LibraryServiceError('ASSET_MOVE_CONFLICT', { reason: 'SOURCE_CHANGED' });
+      }
+
+      let destinationRelativePath = originalFile.sourceRelativePath;
+      let identity = portablePathIdentity(destinationRelativePath);
+      let conflict = this.managedMoveConflict(openLibrary, undoOperationId, String(files.length), destinationRelativePath, originalFile.assetId);
+      const hasConflict = planned.has(identity) || conflict !== null;
+      if (hasConflict && strategy === 'error') throw new LibraryServiceError('ASSET_MOVE_CONFLICT');
+      if (hasConflict && strategy === 'skip') {
+        skippedCount += 1;
+        continue;
+      }
+      if (hasConflict && strategy === 'keep-both') {
+        destinationRelativePath = this.availableMoveDestination(openLibrary, destinationRelativePath, planned);
+        identity = portablePathIdentity(destinationRelativePath);
+        conflict = null;
+      }
+      planned.add(identity);
+      files.push({
+        assetId: originalFile.assetId,
+        destinationConflict: strategy === 'replace' ? conflict : null,
+        destinationFolderId: originalFile.sourceFolderId,
+        destinationRelativePath,
+        restoreConflict: originalFile.destinationConflict,
+        sourceFolderId: current.managed_folder_id,
+        sourceRelativePath: originalFile.destinationRelativePath,
+      });
+    }
+
+    const manifest: ManagedMoveOperationManifest = {
+      files,
+      kind: 'managed-move-undo',
+      originalOperationId: input.operationId,
+      version: 4,
+    };
+    this.applyManagedMoveOperation(openLibrary, undoOperationId, manifest);
+    return { undoneCount: files.length, skippedCount,
+      assets: this.managedMoveSummaries(openLibrary, files.map((file) => file.assetId)) };
   }
 
   trashAssets(input: {
@@ -6567,10 +9152,14 @@ export class LibraryService {
   restoreAssets(input: {
     libraryId: string;
     assetIds: string[];
-    targetFolderId?: string;
+    targetFolderId?: string | null;
+    conflictStrategy?: 'keep-both' | 'replace' | 'skip';
   }): { restoredCount: number; assets: AssetSummary[] } {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     const assetIds = input.assetIds;
+    if (assetIds.length === 0 || new Set(assetIds).size !== assetIds.length) {
+      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+    }
 
     // Validate all assets are trashed (deleted_at IS NOT NULL).
     const rows = openLibrary.connection
@@ -6605,31 +9194,44 @@ export class LibraryService {
       }
     }
 
+    const rowById = new Map(rows.map((row) => [row.asset_id, row]));
+    const orderedRows = assetIds.map((assetId) => rowById.get(assetId)!);
+
     // Resolve target folder
+    const hasExplicitTarget = input.targetFolderId !== undefined;
     let targetFolder: ManagedFolderRow | undefined;
-    if (input.targetFolderId) {
+    if (typeof input.targetFolderId === 'string') {
       targetFolder = this.targetFolder(openLibrary, input.targetFolderId);
     }
+    const conflictStrategy = input.conflictStrategy ?? 'keep-both';
 
-    const restoredAssets: AssetSummary[] = [];
-    type RestoredEntry = {
+    type RestorePlan = {
       assetId: string;
-      trashFilePath: string;
-      originalFilePath: string;
+      backupDestinationRelativePath: string | null;
+      backupName: string;
+      conflictingAssetId: string | null;
       destinationRelativePath: string;
       managedFolderId: string | null;
+      trashFilename: string;
     };
-    const restoredEntries: RestoredEntry[] = [];
+    const plans: RestorePlan[] = [];
+    const plannedDestinations = new Set<string>();
 
     try {
-      // Phase 1: resolve destinations and move files
-
-      for (const row of rows) {
+      // Planning is side-effect free. The complete plan is persisted before the
+      // first source or conflicting destination is moved.
+      for (const row of orderedRows) {
         const filename = path.posix.basename(row.trashed_from_relative_path);
-        const trashDir = this.trashPath(openLibrary, row.asset_id, '');
-        const trashFilePath = path.join(trashDir, filename);
-        if (!existsSync(trashFilePath)) {
+        const trashFilePath = this.trashPath(openLibrary, row.asset_id, filename);
+        let trashEntry: Stats;
+        try {
+          trashEntry = lstatSync(trashFilePath);
+        } catch (error) {
+          if (!isMissingPathError(error)) throw error;
           throw new LibraryServiceError('ASSET_NOT_FOUND');
+        }
+        if (!trashEntry.isFile() || trashEntry.isSymbolicLink()) {
+          throw new LibraryServiceError('LIBRARY_CORRUPT');
         }
 
         // Determine target folder path
@@ -6638,7 +9240,7 @@ export class LibraryService {
         if (targetFolder) {
           targetFolderPath = targetFolder.relative_path;
           resolvedFolderId = targetFolder.folder_id;
-        } else if (row.trashed_from_folder_id) {
+        } else if (!hasExplicitTarget && row.trashed_from_folder_id) {
           const origFolder = openLibrary.connection
             .prepare('SELECT folder_id, relative_path FROM managed_folders WHERE folder_id = ?')
             .get(row.trashed_from_folder_id) as { folder_id: string; relative_path: string } | undefined;
@@ -6654,14 +9256,40 @@ export class LibraryService {
 
         // Handle name conflicts
         const destIdentity = portablePathIdentity(destRelativePath);
-        const activeConflict = openLibrary.connection
+        let activeConflict = openLibrary.connection
           .prepare(
-            `SELECT asset_id FROM assets WHERE path_identity = ? AND deleted_at IS NULL AND asset_id != ?`,
+            `SELECT asset_id FROM assets
+              WHERE path_identity = ? AND location_kind = 'managed'
+                AND deleted_at IS NULL AND asset_id != ?`,
           )
           .get(destIdentity, row.asset_id) as { asset_id: string } | undefined;
 
-        if (activeConflict || this.portableDiskDestination(openLibrary, destRelativePath) !== undefined) {
-          // Default keep-both with numbered suffix
+        let diskConflict = this.portableDiskDestination(openLibrary, destRelativePath);
+        const conflictsWithRestoreBatch = plannedDestinations.has(destIdentity);
+        if ((activeConflict || diskConflict || conflictsWithRestoreBatch) && conflictStrategy === 'skip') {
+          continue;
+        }
+
+        let backupDestinationRelativePath: string | null = null;
+        let conflictingAssetId: string | null = null;
+        if (
+          (activeConflict || diskConflict)
+          && !conflictsWithRestoreBatch
+          && conflictStrategy === 'replace'
+          && (!diskConflict || diskConflict.size >= 0)
+        ) {
+          const actualRelativePath = diskConflict?.actualRelativePath ?? destRelativePath;
+          if (diskConflict) {
+            backupDestinationRelativePath = actualRelativePath;
+          }
+          conflictingAssetId = activeConflict?.asset_id ?? null;
+          activeConflict = undefined;
+          diskConflict = undefined;
+        }
+
+        if (activeConflict || diskConflict || conflictsWithRestoreBatch) {
+          // Keep both is the default. A duplicate destination inside the same
+          // restore batch also receives a suffix so the batch remains atomic.
           const extension = path.posix.extname(filename);
           const baseName = extension.length === 0 ? filename : filename.slice(0, -extension.length);
           for (let index = 2; index < Number.MAX_SAFE_INTEGER; index += 1) {
@@ -6672,54 +9300,162 @@ export class LibraryService {
             const candidateIdentity = portablePathIdentity(destRelativePath);
             const candidateConflict = openLibrary.connection
               .prepare(
-                `SELECT asset_id FROM assets WHERE path_identity = ? AND deleted_at IS NULL AND asset_id != ?`,
+                `SELECT asset_id FROM assets
+                  WHERE path_identity = ? AND location_kind = 'managed'
+                    AND deleted_at IS NULL AND asset_id != ?`,
               )
               .get(candidateIdentity, row.asset_id);
-            if (!candidateConflict && this.portableDiskDestination(openLibrary, destRelativePath) === undefined) {
+            if (
+              !candidateConflict &&
+              !plannedDestinations.has(candidateIdentity) &&
+              this.portableDiskDestination(openLibrary, destRelativePath) === undefined
+            ) {
               break;
             }
           }
         }
 
-        const destPath = this.folderPath(openLibrary, destRelativePath);
-        mkdirSync(path.dirname(destPath), { recursive: true });
-        renameSync(trashFilePath, destPath);
-        restoredEntries.push({
+        plannedDestinations.add(portablePathIdentity(destRelativePath));
+        plans.push({
           assetId: row.asset_id,
-          trashFilePath,
-          originalFilePath: destPath,
+          backupDestinationRelativePath,
+          backupName: String(plans.length),
+          conflictingAssetId,
           destinationRelativePath: destRelativePath,
           managedFolderId: resolvedFolderId,
+          trashFilename: filename,
         });
       }
 
-      // Phase 2: DB transaction
-      const now = new Date().toISOString();
-      openLibrary.connection.transaction(() => {
-        for (const entry of restoredEntries) {
-          const pathIdentity = portablePathIdentity(entry.destinationRelativePath);
-          openLibrary.connection
-            .prepare(
-              `UPDATE assets
-                  SET relative_file_path = ?, managed_folder_id = ?,
-                      path_identity = ?, deleted_at = NULL,
-                      trashed_from_relative_path = NULL, trashed_from_folder_id = NULL,
-                      updated_at = ?
-                WHERE asset_id = ?`,
-            )
-            .run(
-              entry.destinationRelativePath,
-              entry.managedFolderId,
-              pathIdentity,
-              now,
-              entry.assetId,
-            );
-          this.syncAssetSearchContent(openLibrary.connection, entry.assetId);
-        }
-      })();
+      const operationId = randomUUID();
+      const operationsPath = this.assertSafeOperationsRoot(openLibrary.summary.libraryPath);
+      const operationPath = path.join(operationsPath, operationId);
+      const backupPath = path.join(operationPath, 'backup');
+      const manifest: RestoreOperationManifest = {
+        version: 3,
+        kind: 'restore',
+        files: plans.map((plan) => ({
+          assetId: plan.assetId,
+          backupDestinationRelativePath: plan.backupDestinationRelativePath,
+          backupName: plan.backupName,
+          conflictingAssetId: plan.conflictingAssetId,
+          destinationRelativePath: plan.destinationRelativePath,
+          hadDestination: plan.backupDestinationRelativePath !== null,
+          trashFilename: plan.trashFilename,
+        })),
+      };
 
-      // Return restored asset summaries
-      for (const entry of restoredEntries) {
+      mkdirSync(backupPath, { recursive: true });
+      this.assertSafeOperationPath(operationPath);
+      const now = new Date().toISOString();
+      openLibrary.connection
+        .prepare(
+          `INSERT INTO file_operations
+             (operation_id, kind, status, manifest_json, error_code, created_at, updated_at)
+           VALUES (?, 'restore', 'preparing', ?, NULL, ?, ?)`,
+        )
+        .run(operationId, JSON.stringify(manifest), now, now);
+
+      try {
+        this.failAt('crash-restore-before-filesystem');
+        const applying = openLibrary.connection
+          .prepare(
+            "UPDATE file_operations SET status = 'applying', updated_at = ? WHERE operation_id = ? AND status = 'preparing'",
+          )
+          .run(new Date().toISOString(), operationId);
+        if (applying.changes !== 1) throw new Error('Restore operation is not preparing.');
+
+        for (const plan of plans) {
+          if (plan.backupDestinationRelativePath === null) continue;
+          const destinationPath = this.folderPath(openLibrary, plan.backupDestinationRelativePath);
+          renameSync(destinationPath, path.join(backupPath, plan.backupName));
+        }
+        this.failAt('crash-restore-after-backup');
+
+        for (const plan of plans) {
+          const sourcePath = this.trashPath(openLibrary, plan.assetId, plan.trashFilename);
+          const destinationPath = this.folderPath(openLibrary, plan.destinationRelativePath);
+          mkdirSync(path.dirname(destinationPath), { recursive: true });
+          renameSync(sourcePath, destinationPath);
+        }
+        this.failAt('crash-restore-after-filesystem');
+
+        // The database mutation and committed marker share one SQLite commit.
+        // Startup recovery therefore never has to guess whether DB state won.
+        openLibrary.connection.transaction(() => {
+          for (const plan of plans) {
+            if (plan.conflictingAssetId) {
+              openLibrary.connection.prepare('DELETE FROM assets WHERE asset_id = ?').run(plan.conflictingAssetId);
+            }
+          }
+          for (const plan of plans) {
+            const pathIdentity = portablePathIdentity(plan.destinationRelativePath);
+            openLibrary.connection
+              .prepare(
+                `UPDATE assets
+                    SET relative_file_path = ?, managed_folder_id = ?,
+                        path_identity = ?, deleted_at = NULL,
+                        trashed_from_relative_path = NULL, trashed_from_folder_id = NULL,
+                        updated_at = ?
+                  WHERE asset_id = ?`,
+              )
+              .run(
+                plan.destinationRelativePath,
+                plan.managedFolderId,
+                pathIdentity,
+                now,
+                plan.assetId,
+              );
+            this.syncAssetSearchContent(openLibrary.connection, plan.assetId);
+          }
+          this.failAt('crash-restore-before-db-commit');
+          openLibrary.connection
+            .prepare("UPDATE file_operations SET status = 'committed', updated_at = ? WHERE operation_id = ?")
+            .run(new Date().toISOString(), operationId);
+        })();
+        this.failAt('crash-restore-after-db-commit');
+
+        try {
+          this.removeOperation(operationPath);
+        } catch (error) {
+          // The committed row makes cleanup retryable on the next open.
+          this.diagnose('asset.restore.cleanup-operation', error, {
+            libraryId: input.libraryId,
+            operationId,
+          });
+        }
+      } catch (error) {
+        if (error instanceof SimulatedCrashError) {
+          throw new LibraryServiceError('LIBRARY_NOT_WRITABLE', { cause: error });
+        }
+
+        const operation = openLibrary.connection
+          .prepare('SELECT status, manifest_json, error_code, operation_id FROM file_operations WHERE operation_id = ?')
+          .get(operationId) as OperationRow | undefined;
+        if (operation?.status === 'committed') {
+          this.diagnose('asset.restore.post-commit', error, { libraryId: input.libraryId, operationId });
+        } else if (operation) {
+          try {
+            this.recoverRestoreOperation(openLibrary, operation, manifest, operationPath);
+          } catch (recoveryError) {
+            openLibrary.connection
+              .prepare(
+                "UPDATE file_operations SET status = 'failed', error_code = 'RESTORE_APPLY_FAILED', updated_at = ? WHERE operation_id = ?",
+              )
+              .run(new Date().toISOString(), operationId);
+            this.diagnose('asset.restore.rollback', recoveryError, {
+              libraryId: input.libraryId,
+              operationId,
+            });
+          }
+          throw serviceError(error, 'LIBRARY_NOT_WRITABLE');
+        } else {
+          throw serviceError(error, 'LIBRARY_NOT_WRITABLE');
+        }
+      }
+
+      const restoredAssets: AssetSummary[] = [];
+      for (const plan of plans) {
         const assetRow = openLibrary.connection
           .prepare(
             `SELECT a.asset_id, a.managed_folder_id, a.linked_folder_id, a.location_kind, a.relative_file_path,
@@ -6731,28 +9467,15 @@ export class LibraryService {
                LEFT JOIN asset_metadata m ON m.asset_id = a.asset_id
               WHERE a.asset_id = ?`,
           )
-          .get(entry.assetId) as AssetSummaryRow & {
+          .get(plan.assetId) as AssetSummaryRow & {
             deleted_at: string | null;
             trashed_from_relative_path: string | null;
           } | undefined;
-        if (assetRow) {
-          restoredAssets.push(this.assetSummaryFromRow(assetRow));
-        }
+        if (assetRow) restoredAssets.push(this.assetSummaryFromRow(assetRow));
       }
 
-      return { restoredCount: restoredEntries.length, assets: restoredAssets };
+      return { restoredCount: plans.length, assets: restoredAssets };
     } catch (error) {
-      // Rollback filesystem moves
-      for (const entry of [...restoredEntries].reverse()) {
-        try {
-          if (existsSync(entry.originalFilePath)) {
-            mkdirSync(path.dirname(entry.trashFilePath), { recursive: true });
-            renameSync(entry.originalFilePath, entry.trashFilePath);
-          }
-        } catch {
-          // Best-effort rollback
-        }
-      }
       throw serviceError(error, 'LIBRARY_NOT_WRITABLE');
     }
   }
@@ -7506,6 +10229,12 @@ export class LibraryService {
             openLibrary.connection
               .prepare('DELETE FROM collection_assets WHERE asset_id = ?')
               .run(asset.asset_id);
+            openLibrary.connection
+              .prepare('DELETE FROM ai_asset_tags WHERE asset_id = ?')
+              .run(asset.asset_id);
+            openLibrary.connection
+              .prepare('DELETE FROM ai_content WHERE asset_id = ?')
+              .run(asset.asset_id);
           }
 
           this.syncAssetSearchContent(openLibrary.connection, asset.asset_id);
@@ -7571,7 +10300,54 @@ export class LibraryService {
     return { restoredCount, unchangedMissingCount, assets: restoredAssets };
   }
 
-  private enumerateLinkedSources(rootPath: string, linkedFolderId?: string): Array<{
+  private normalizeLinkedFolderRule(rule: LinkedFolderRule): LinkedFolderRule {
+    const pattern = rule.pattern.trim().normalize('NFC');
+    if (pattern.length === 0 || pattern.length > 512 || pattern.includes('\0')) {
+      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+    }
+    if (rule.target === 'path') {
+      try {
+        return { ...rule, pattern: normalizeRelativeAssetPath(pattern) };
+      } catch (error) {
+        throw new LibraryServiceError('INVALID_IMPORT_DECISION', { cause: error });
+      }
+    }
+    if (pattern.includes('/') || pattern.includes('\\') || pattern === '.' || pattern === '..') {
+      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+    }
+    const normalizedPattern = rule.target === 'extension'
+      ? pattern.replace(/^\.+/u, '').toLowerCase()
+      : pattern;
+    if (normalizedPattern.length === 0) throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+    return { ...rule, pattern: normalizedPattern };
+  }
+
+  private linkedPathIsIgnored(relativePath: string, rules: LinkedFolderRule[]): boolean {
+    const normalizedPath = normalizeRelativeAssetPath(relativePath);
+    if (isAlwaysIgnoredAssetPath(normalizedPath)) return true;
+    const segments = normalizedPath.split('/');
+    const filename = segments.at(-1)!;
+    const folders = segments.slice(0, -1);
+    const extension = path.posix.extname(filename).replace(/^\./u, '');
+    const fold = (value: string): string => value.normalize('NFC').toLocaleLowerCase('en-US');
+    let ignored = false;
+    for (const rawRule of rules) {
+      if (!rawRule.enabled) continue;
+      const rule = this.normalizeLinkedFolderRule(rawRule);
+      const pattern = fold(rule.pattern);
+      const matches = rule.target === 'path'
+        ? fold(normalizedPath) === pattern || fold(normalizedPath).startsWith(`${pattern}/`)
+        : rule.target === 'filename'
+          ? fold(filename) === pattern
+          : rule.target === 'extension'
+            ? fold(extension) === pattern
+            : folders.some((folder) => fold(folder) === pattern);
+      if (matches) ignored = rule.action === 'exclude';
+    }
+    return ignored;
+  }
+
+  private enumerateLinkedSources(rootPath: string, linkedFolderId?: string, suppliedRules?: LinkedFolderRule[]): Array<{
     relativePath: string;
     byteSize: number;
     modifiedAt: string;
@@ -7583,6 +10359,14 @@ export class LibraryService {
       modifiedAt: string;
       originalFilename: string;
     }> = [];
+    const rules = suppliedRules ?? (linkedFolderId
+      ? this.getLinkedFolderRules({
+          libraryId: [...this.openById.values()].find((open) => open.connection.prepare(
+            'SELECT folder_id FROM linked_folders WHERE folder_id = ?',
+          ).get(linkedFolderId))?.summary.libraryId ?? '',
+          folderId: linkedFolderId,
+        })
+      : []);
     const visit = (directoryPath: string, relativeDirectory: string): void => {
       let children;
       try {
@@ -7610,12 +10394,13 @@ export class LibraryService {
           continue;
         }
         if (child.isDirectory()) {
-          if (DEFAULT_IGNORED_DIRECTORIES.has(child.name.toLowerCase())) continue;
+          const canPrune = !rules.some((rule) => rule.enabled && rule.action === 'include')
+            && this.linkedPathIsIgnored(path.posix.join(childRelative, '__serpent_probe__'), rules);
+          if (canPrune) continue;
           visit(path.join(directoryPath, child.name), childRelative);
           continue;
         }
         if (!child.isFile()) continue;
-        if (DEFAULT_IGNORED_FILES.has(child.name.toLowerCase())) continue;
         const childPath = path.join(directoryPath, child.name);
         let stat: BigIntStats;
         try {
@@ -7640,6 +10425,7 @@ export class LibraryService {
         } catch (error) {
           throw new LibraryServiceError('INVALID_IMPORT_SOURCE', { cause: error });
         }
+        if (this.linkedPathIsIgnored(normalized, rules)) continue;
         const byteSize = Number(stat.size);
         if (!Number.isSafeInteger(byteSize)) {
           throw new LibraryServiceError('INVALID_IMPORT_SOURCE', {
@@ -8162,7 +10948,18 @@ export class LibraryService {
 
         actions.forEach((action) => {
           const destinationPath = this.folderPath(openLibrary, action.destinationRelativePath);
-          const fileStat = statSync(destinationPath);
+          // Persist the exact same millisecond representation used by watcher
+          // refreshes. Mixing Stats.mtime (Date) with BigIntStats.mtimeMs can
+          // manufacture a phantom external revision for freshly imported files
+          // on filesystems that retain sub-millisecond timestamps.
+          const fileStat = lstatSync(destinationPath, { bigint: true });
+          const fileByteSize = Number(fileStat.size);
+          if (!Number.isSafeInteger(fileByteSize)) {
+            throw new LibraryServiceError('IMPORT_APPLY_FAILED', {
+              reason: 'UNSUPPORTED_FILE_ENTRY',
+            });
+          }
+          const fileModifiedAt = new Date(Number(fileStat.mtimeMs)).toISOString();
           const directory = path.posix.dirname(action.destinationRelativePath);
           const managedFolderId =
             directory === '.'
@@ -8203,8 +11000,8 @@ export class LibraryService {
               revisionId,
               assetId,
               action.existingAsset?.current_revision_id ?? null,
-              fileStat.size,
-              fileStat.mtime.toISOString(),
+              fileByteSize,
+              fileModifiedAt,
               path.posix.basename(action.entry.destinationRelativePath),
               action.existingAsset ? 'replace' : 'import',
               now,
@@ -8224,6 +11021,25 @@ export class LibraryService {
               now,
               assetId,
             );
+          if (action.entry.sourcePageUrl !== undefined) {
+            const sourcePageUrl = action.entry.sourcePageUrl.trim();
+            if (sourcePageUrl === '') {
+              throw new LibraryServiceError('IMPORT_APPLY_FAILED');
+            }
+            openLibrary.connection
+              .prepare(
+                `INSERT INTO asset_metadata
+                   (asset_id, label, description, rating, favorite, palette,
+                    source_page_url, entity_version, updated_at)
+                 VALUES (?, NULL, NULL, 0, 0, NULL, ?, 1, ?)
+                 ON CONFLICT(asset_id) DO UPDATE SET
+                   source_page_url = excluded.source_page_url,
+                   entity_version = asset_metadata.entity_version + 1,
+                   updated_at = excluded.updated_at`,
+              )
+              .run(assetId, sourcePageUrl, now);
+            this.failAt('after-import-metadata');
+          }
           affectedAssetIds.push(assetId);
           this.syncAssetSearchContent(openLibrary.connection, assetId);
         });
@@ -8289,6 +11105,7 @@ export class LibraryService {
            FROM assets a
            JOIN revisions r ON r.revision_id = a.current_revision_id
           WHERE a.deleted_at IS NULL
+            AND NOT EXISTS (SELECT 1 FROM linked_ignored_assets ignored WHERE ignored.asset_id = a.asset_id)
           ORDER BY a.relative_file_path`,
       )
       .all() as Array<{
@@ -8460,15 +11277,18 @@ export class LibraryService {
                   AND invalidated_at IS NULL`,
             )
             .run(now, asset.current_revision_id);
-          // Enqueue a new thumbnail job
-          openLibrary.connection
-            .prepare(
-              `INSERT OR IGNORE INTO jobs
-                 (job_id, library_id, asset_id, revision_id, kind, status, priority,
-                  progress, attempt_count, created_at, updated_at)
-               VALUES (?, ?, ?, ?, 'generate_thumbnail', 'queued', 0, 0.0, 0, ?, ?)`,
-            )
-            .run(randomUUID(), libraryId, asset.asset_id, revisionId, now, now);
+          // Enqueue only decodable media; unsupported assets keep their normal
+          // file icon and never churn through a permanently failing queue.
+          if (LibraryService.supportsThumbnail(asset.relative_file_path)) {
+            openLibrary.connection
+              .prepare(
+                `INSERT OR IGNORE INTO jobs
+                   (job_id, library_id, asset_id, revision_id, kind, status, priority,
+                    progress, attempt_count, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, 'generate_thumbnail', 'queued', 0, 0.0, 0, ?, ?)`,
+              )
+              .run(randomUUID(), libraryId, asset.asset_id, revisionId, now, now);
+          }
           changedCount += 1;
           this.syncAssetSearchContent(openLibrary.connection, asset.asset_id);
         } else if (asset.availability === 'missing') {
@@ -8551,6 +11371,20 @@ export class LibraryService {
     }
   }
 
+  private reconcileDefaultIgnoredAssets(openLibrary: OpenLibrary): void {
+    const rows = openLibrary.connection.prepare(
+      'SELECT asset_id, relative_file_path FROM assets WHERE deleted_at IS NULL',
+    ).all() as Array<{ asset_id: string; relative_file_path: string }>;
+    const ignoredIds = rows
+      .filter((row) => isAlwaysIgnoredAssetPath(row.relative_file_path))
+      .map((row) => row.asset_id);
+    if (ignoredIds.length === 0) return;
+    openLibrary.connection.transaction(() => {
+      const remove = openLibrary.connection.prepare('DELETE FROM assets WHERE asset_id = ?');
+      for (const assetId of ignoredIds) remove.run(assetId);
+    })();
+  }
+
   openLibrary(selectedLibraryPath: string): InternalLibrarySummary {
     let selectedPath: string;
     try {
@@ -8609,6 +11443,8 @@ export class LibraryService {
       this.openIdByPath.set(canonicalPath, summary.libraryId);
       this.recoverFileOperations(openLibrary);
       this.recoverInterruptedAiJobs(openLibrary);
+      this.recoverInterruptedThumbnailJobs(openLibrary);
+      this.reconcileDefaultIgnoredAssets(openLibrary);
       // Purge expired trash on open (best-effort, single busy file does not abort)
       try {
         this.purgeExpiredTrash(summary.libraryId);
@@ -8617,6 +11453,10 @@ export class LibraryService {
       }
       this.startAssetWatcher(openLibrary);
       this.reconcileLinkedWatchers(openLibrary);
+      // Persist only the first visible batch. The Worker runtime drains these
+      // asynchronously and later list/search requests raise the priority of
+      // whatever the user is actually looking at.
+      this.enqueueThumbnailJobs(summary.libraryId, { limit: 50, priority: 100 });
       return summary;
     } catch (error) {
       closeIgnoringFailure(connection);
@@ -8624,7 +11464,7 @@ export class LibraryService {
     }
   }
 
-  private async assertPublicDownloadTarget(url: URL): Promise<void> {
+  private async resolvePublicDownloadTarget(url: URL): Promise<ResolvedAddress> {
     const hostname = url.hostname.replace(/^\[|\]$/g, '');
     let addresses: Array<{ address: string; family: number }>;
     if (isIP(hostname) !== 0) {
@@ -8638,15 +11478,17 @@ export class LibraryService {
         throw new LibraryServiceError('INVALID_IMPORT_SOURCE', { reason: 'IO_ERROR', cause: error });
       }
     }
-    if (addresses.length === 0 || addresses.some(({ address }) => prohibitedIpAddress(address))) {
+    if (addresses.length === 0 || addresses.some(({ address, family }) =>
+      prohibitedIpAddress(address) || isIP(address) !== family)) {
       throw new LibraryServiceError('INVALID_IMPORT_SOURCE', { reason: 'PERMISSION_DENIED' });
     }
+    return addresses[0]!;
   }
 
   async saveAssetFromUrl(input: {
     libraryId: string;
     targetFolderId?: string;
-    sourcePageUrl: string;
+    sourcePageUrl?: string;
     mediaUrl: string;
     mediaType?: string;
   }): Promise<{ asset: AssetSummary }> {
@@ -8693,6 +11535,7 @@ export class LibraryService {
 
     let downloaded = false;
     let downloadTimer: ReturnType<typeof setTimeout> | undefined;
+    let response: Awaited<ReturnType<PinnedHttpTransport>> | undefined;
     try {
       mkdirSync(operationPath, { recursive: true });
       mkdirSync(stagePath);
@@ -8703,17 +11546,19 @@ export class LibraryService {
       const controller = new AbortController();
       downloadTimer = setTimeout(() => controller.abort(new Error('Download timed out.')), DOWNLOAD_TIMEOUT_MS);
 
-      let response!: Response;
       let finalUrl = parsedUrl;
       try {
         for (let redirectCount = 0; ; redirectCount += 1) {
-          await this.assertPublicDownloadTarget(finalUrl);
-          response = await fetch(finalUrl, {
+          const resolvedAddress = await this.resolvePublicDownloadTarget(finalUrl);
+          response = await (this.options.pinnedHttpTransport ?? defaultPinnedHttpTransport)({
+            address: resolvedAddress.address,
+            family: resolvedAddress.family,
+            url: finalUrl,
             signal: controller.signal,
-            redirect: 'manual',
             headers: { 'User-Agent': 'Serpent/1.0' },
           });
           if (![301, 302, 303, 307, 308].includes(response.status)) break;
+          response.cancel();
           if (redirectCount >= MAX_DOWNLOAD_REDIRECTS) {
             throw new LibraryServiceError('INVALID_IMPORT_SOURCE', { reason: 'IO_ERROR' });
           }
@@ -8735,8 +11580,12 @@ export class LibraryService {
         throw new LibraryServiceError('INVALID_IMPORT_SOURCE', { reason: 'IO_ERROR', cause: error });
       }
 
+      if (!response) {
+        throw new LibraryServiceError('INVALID_IMPORT_SOURCE', { reason: 'IO_ERROR' });
+      }
+
       // Validate HTTP status.
-      if (!response.ok) {
+      if (response.status < 200 || response.status >= 300) {
         throw new LibraryServiceError('INVALID_IMPORT_SOURCE', {
           reason: 'IO_ERROR',
           cause: new Error(`HTTP ${response.status}`),
@@ -8744,11 +11593,14 @@ export class LibraryService {
       }
 
       // Validate Content-Type.
-      const contentType = response.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase() ?? '';
-      if (!CONTENT_TYPE_WHITELIST.has(contentType)) {
+      const contentType = normalizeRemoteContentType(response.headers.get('content-type'));
+      const contentTypeFailure = remoteMediaValidationFailure(contentType);
+      if (contentTypeFailure) {
         throw new LibraryServiceError('INVALID_IMPORT_SOURCE', {
-          reason: 'UNSUPPORTED_FILE_ENTRY',
-          cause: new Error(`Unsupported Content-Type: ${contentType}`),
+          reason: contentTypeFailure,
+          cause: new Error(contentTypeFailure === 'MIME_TYPE_MISSING'
+            ? 'The response did not declare Content-Type.'
+            : `Unsupported Content-Type: ${contentType}`),
         });
       }
 
@@ -8782,6 +11634,11 @@ export class LibraryService {
       if (fileExt === '' || fileExt === '.') {
         const ctExt = extensionForContentType(contentType);
         if (ctExt) filename = `${filename}${ctExt}`;
+      } else if (!filenameMatchesRemoteContentType(filename, contentType)) {
+        throw new LibraryServiceError('INVALID_IMPORT_SOURCE', {
+          reason: 'MIME_EXTENSION_MISMATCH',
+          cause: new Error(`Filename extension ${fileExt} does not match ${contentType}.`),
+        });
       }
 
       // Stream directly to the stage file with a running size limit.
@@ -8789,7 +11646,6 @@ export class LibraryService {
       if (!response.body) {
         throw new LibraryServiceError('INVALID_IMPORT_SOURCE', { reason: 'IO_ERROR' });
       }
-      const reader = response.body.getReader();
       const writer = createWriteStream(stageFilePath, { flags: 'wx' });
       let writerFailure: Error | undefined;
       writer.on('error', (error) => { writerFailure = error; });
@@ -8805,29 +11661,46 @@ export class LibraryService {
           writer.once('error', onError);
         });
       let totalBytes = 0;
+      const magicProbe = new RemoteMediaMagicProbe();
+      let magicValidated = false;
       try {
-        for (;;) {
+        for await (const value of response.body) {
           if (writerFailure) throw writerFailure;
-          const { done, value } = await reader.read();
-          if (done) break;
           totalBytes += value.byteLength;
           if (totalBytes > MAX_DOWNLOAD_BYTES) {
-            reader.cancel();
+            response.cancel();
             throw new LibraryServiceError('INVALID_IMPORT_SOURCE', {
               reason: 'UNSUPPORTED_FILE_ENTRY',
               cause: new Error('File exceeds 500 MB limit.'),
             });
           }
+          magicProbe.add(value);
+          if (!magicValidated && magicProbe.canValidate(contentType)) {
+            if (!magicProbe.matches(contentType)) {
+              response.cancel();
+              throw new LibraryServiceError('INVALID_IMPORT_SOURCE', {
+                reason: 'MAGIC_BYTES_MISMATCH',
+                cause: new Error(`File signature does not match ${contentType}.`),
+              });
+            }
+            magicValidated = true;
+          }
           if (!writer.write(Buffer.from(value))) {
             await waitForWriter('drain');
           }
+        }
+        if (!magicValidated && !magicProbe.matches(contentType)) {
+          throw new LibraryServiceError('INVALID_IMPORT_SOURCE', {
+            reason: 'MAGIC_BYTES_MISMATCH',
+            cause: new Error(`File signature does not match ${contentType}.`),
+          });
         }
         writer.end();
         if (writerFailure) throw writerFailure;
         await waitForWriter('finish');
         if (writerFailure) throw writerFailure;
       } finally {
-        try { reader.cancel(); } catch { /* Already released. */ }
+        try { response.cancel(); } catch { /* Already released. */ }
         if (!writer.closed) writer.destroy();
         if (downloadTimer) clearTimeout(downloadTimer);
         downloadTimer = undefined;
@@ -8849,6 +11722,7 @@ export class LibraryService {
       const entry: ImportSourceEntry = {
         byteSize,
         destinationRelativePath: normalizedDestination,
+        ...(input.sourcePageUrl ? { sourcePageUrl: input.sourcePageUrl } : {}),
         sourcePath: stageFilePath,
         sourceSnapshot: sourceSnapshot(
           lstatSync(stageFilePath, { bigint: true }) as BigIntStats,
@@ -8889,33 +11763,17 @@ export class LibraryService {
         suspectedDuplicate: 'create-copy',
         nameConflict: 'keep-both',
       });
-
-      // Set source_page_url metadata on the imported asset.
-      const importedAsset = completion.assets[0];
-      if (importedAsset) {
-        try {
-          this.setAssetMetadata({
-            libraryId: input.libraryId,
-            assetId: importedAsset.assetId,
-            expectedVersion: 0,
-            sourcePageUrl: input.sourcePageUrl,
-          });
-        } catch (error) {
-          this.diagnose('extension-save.metadata', error, {
-            libraryId: input.libraryId,
-            assetId: importedAsset.assetId,
-            sourcePageUrl: input.sourcePageUrl,
-          });
-          // Metadata failure is non-fatal; the asset is already imported.
-        }
-      }
-
-      return { asset: importedAsset ?? completion.assets[0]! };
+      return { asset: completion.assets[0]! };
     } catch (error) {
       if (downloadTimer) clearTimeout(downloadTimer);
-      this.diagnose('extension-save.download', error, {
+      try { response?.cancel(); } catch { /* Best effort socket cleanup. */ }
+      this.diagnose('extension-save.failed', sanitizedUrlDiagnosticError(error), {
         libraryId: input.libraryId,
         targetHost: parsedUrl.hostname,
+        ...(input.sourcePageUrl
+          ? { sourcePageUrl: sanitizedUrlForDiagnostic(input.sourcePageUrl) }
+          : {}),
+        mediaUrl: sanitizedUrlForDiagnostic(input.mediaUrl),
       });
       // Clean up on failure.
       if (this.pendingImports.has(operationId)) {
@@ -8931,7 +11789,19 @@ export class LibraryService {
           // Best effort.
         }
       }
-      this.removeOperation(operationPath);
+      let preserveOperationForRecovery: boolean;
+      try {
+        const operation = openLibrary.connection
+          .prepare('SELECT status FROM file_operations WHERE operation_id = ?')
+          .get(operationId) as { status: string } | undefined;
+        preserveOperationForRecovery = operation?.status === 'applying' ||
+          (downloaded && operation?.status === 'failed');
+      } catch {
+        // If the operation state cannot be read, keep the durable manifest. The
+        // next library open can then recover it instead of risking an orphan.
+        preserveOperationForRecovery = existsSync(operationPath);
+      }
+      if (!preserveOperationForRecovery) this.removeOperation(operationPath);
       throw serviceError(error, 'INVALID_IMPORT_SOURCE');
     }
   }
@@ -8943,6 +11813,124 @@ export class LibraryService {
       this.options.onProgress?.(event);
     } catch {
       // Progress is best effort and must never throw back into an operation.
+    }
+  }
+
+  private transferPathKey(candidatePath: string): string {
+    let existingAncestor = path.resolve(candidatePath);
+    const missingSegments: string[] = [];
+    while (true) {
+      try {
+        existingAncestor = path.join(realpathSync(existingAncestor), ...missingSegments.reverse());
+        break;
+      } catch {
+        const parentPath = path.dirname(existingAncestor);
+        if (parentPath === existingAncestor) {
+          existingAncestor = path.resolve(candidatePath);
+          break;
+        }
+        missingSegments.push(path.basename(existingAncestor));
+        existingAncestor = parentPath;
+      }
+    }
+    const normalized = path.normalize(existingAncestor).normalize('NFC');
+    return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
+  }
+
+  private transferInProgress(
+    scope: string,
+    context: Record<string, unknown>,
+  ): never {
+    const error = new LibraryServiceError('TRANSFER_IN_PROGRESS', {
+      reason: 'TRANSFER_IN_PROGRESS',
+    });
+    this.diagnose(scope, error, context);
+    throw error;
+  }
+
+  private acquireExportTransfer(
+    libraryId: string,
+    exportId: string,
+    cancelState: TransferCancelState,
+  ): void {
+    const activeExportId = this.activeExportByLibraryId.get(libraryId);
+    if (activeExportId) {
+      this.transferInProgress('transfer.export.in-progress', {
+        libraryId,
+        activeExportId,
+        requestedExportId: exportId,
+      });
+    }
+    this.activeExportByLibraryId.set(libraryId, exportId);
+    this.activeExports.set(exportId, cancelState);
+  }
+
+  private releaseExportTransfer(libraryId: string, exportId: string): void {
+    this.activeExports.delete(exportId);
+    if (this.activeExportByLibraryId.get(libraryId) === exportId) {
+      this.activeExportByLibraryId.delete(libraryId);
+    }
+  }
+
+  private acquireImportTransfer(
+    importId: string,
+    sourcePath: string,
+    destinationPath: string,
+    cancelState: TransferCancelState,
+  ): ActiveImportTransfer {
+    const sourceKey = this.transferPathKey(sourcePath);
+    const destinationKey = this.transferPathKey(destinationPath);
+    const activeSourceImportId = this.activeImportBySource.get(sourceKey);
+    const activeDestinationImportId = this.activeImportByDestination.get(destinationKey);
+    if (activeSourceImportId || activeDestinationImportId) {
+      this.transferInProgress('transfer.import.in-progress', {
+        requestedImportId: importId,
+        activeImportId: activeSourceImportId ?? activeDestinationImportId,
+        sourcePath,
+        destinationPath,
+        sourceConflict: Boolean(activeSourceImportId),
+        destinationConflict: Boolean(activeDestinationImportId),
+      });
+    }
+    this.activeImportBySource.set(sourceKey, importId);
+    this.activeImportByDestination.set(destinationKey, importId);
+    this.activeImports.set(importId, cancelState);
+    return { importId, sourceKey, destinationKey };
+  }
+
+  private releaseImportTransfer(transfer: ActiveImportTransfer): void {
+    this.activeImports.delete(transfer.importId);
+    if (this.activeImportBySource.get(transfer.sourceKey) === transfer.importId) {
+      this.activeImportBySource.delete(transfer.sourceKey);
+    }
+    if (this.activeImportByDestination.get(transfer.destinationKey) === transfer.importId) {
+      this.activeImportByDestination.delete(transfer.destinationKey);
+    }
+  }
+
+  private mapZipImportError(error: ZipImportStreamError): LibraryServiceError {
+    switch (error.code) {
+      case 'CANCELLED':
+        return new LibraryServiceError('CANCELLED', { cause: error });
+      case 'ZIP_TOO_LARGE':
+        return new LibraryServiceError('ZIP_TOO_LARGE', {
+          cause: error,
+          reason: 'ZIP_TOO_LARGE',
+        });
+      case 'PATH_ESCAPE':
+        return new LibraryServiceError('NOT_A_LIBRARY', {
+          cause: error,
+          reason: 'PATH_ESCAPE',
+        });
+      case 'SYMBOLIC_LINK_NOT_ALLOWED':
+        return new LibraryServiceError('NOT_A_LIBRARY', {
+          cause: error,
+          reason: 'SYMBOLIC_LINK_NOT_ALLOWED',
+        });
+      case 'DESTINATION_EXISTS':
+      case 'INVALID_ZIP':
+      case 'IO_ERROR':
+        return new LibraryServiceError('NOT_A_LIBRARY', { cause: error });
     }
   }
 
@@ -8997,7 +11985,7 @@ export class LibraryService {
     }
 
     const cancelState: TransferCancelState = { cancelled: false };
-    this.activeExports.set(exportId, cancelState);
+    this.acquireExportTransfer(input.libraryId, exportId, cancelState);
     const startedAt = Date.now();
     let destinationOwned = false;
 
@@ -9018,22 +12006,10 @@ export class LibraryService {
       if (cancelState.cancelled) throw new LibraryServiceError('CANCELLED');
 
       const tempDbPath = path.join(canonicalDest, `.serpent-export-${exportId}.db`);
-      try {
-        // Use SQLite VACUUM INTO for a consistent synchronous snapshot.
-        // This writes a standalone database file without blocking the live library's reads/writes.
-        openLibrary.connection.exec(`VACUUM INTO '${tempDbPath.replace(/'/g, "''")}'`);
-      } catch (error) {
-        try { rmSync(tempDbPath, { force: true }); } catch { /* best effort */ }
-        throw new LibraryServiceError('LIBRARY_CORRUPT', { cause: error });
-      }
-
-      // Verify the backup.
-      const verifyConn = openConfiguredDatabase(tempDbPath);
-      try {
-        verifyConn.pragma('quick_check(1)');
-      } finally {
-        verifyConn.close();
-      }
+      // Online Backup yields between page batches, allowing the live library to
+      // continue serving reads and writes while SQLite maintains a consistent
+      // snapshot for the exported database.
+      await this.createConsistentDatabaseSnapshot(openLibrary.connection, tempDbPath, cancelState);
 
       // Phase 2: enumerate
       this.emitProgress({
@@ -9145,9 +12121,11 @@ export class LibraryService {
         byteSize: snapStat.size,
       });
 
-      // Optionally include linked folder source content.
+      // Optionally include linked folder source content in the same manifest as
+      // managed files so progress, cancellation, and summaries stay accurate.
+      // A short stable id suffix prevents two equally named linked roots from
+      // being merged in the exported backup.
       let includedLinkedContent = false;
-      let linkedContentDir: string | null = null;
       if (input.includeLinkedContent) {
         const linkedFolders = openLibrary.connection
           .prepare('SELECT folder_id, display_name, absolute_root_path, status FROM linked_folders WHERE library_id = ?')
@@ -9158,23 +12136,16 @@ export class LibraryService {
             status: 'available' | 'offline';
           }>;
         if (linkedFolders.length > 0) {
-          linkedContentDir = path.join(canonicalDest, '_linked');
-          mkdirSync(linkedContentDir, { recursive: true });
           includedLinkedContent = true;
           for (const lf of linkedFolders) {
             if (cancelState.cancelled) break;
-            if (lf.status !== 'available' || !directoryExists(lf.absolute_root_path)) {
+            if (lf.status !== 'available' || !realDirectoryExists(lf.absolute_root_path)) {
               throw new LibraryServiceError('INVALID_IMPORT_SOURCE', {
                 reason: 'SOURCE_NOT_FOUND',
               });
             }
-            const linkedDest = path.join(linkedContentDir, lf.display_name);
-            try {
-              await copyDirRecursiveCancellable(lf.absolute_root_path, linkedDest, cancelState);
-            } catch (error) {
-              this.diagnose('export.copy-linked', error, { folderId: lf.folder_id });
-              throw new LibraryServiceError('INVALID_IMPORT_SOURCE', { cause: error });
-            }
+            const exportName = `${cleanFilename(lf.display_name)}-${lf.folder_id.slice(0, 8)}`;
+            await walkDir(lf.absolute_root_path, `_linked/${exportName}`);
           }
         }
       }
@@ -9232,8 +12203,6 @@ export class LibraryService {
           phase: 'cancelled', filesProcessed, totalFiles,
           bytesProcessed, totalBytes,
         });
-        // Clean up linked content dir if we created it.
-        if (linkedContentDir) this.removeOwnedTransferPath('export.cancel.cleanup-linked', linkedContentDir, true);
         // Clean up the destination.
         this.removeOwnedTransferPath('export.cancel.cleanup-destination', canonicalDest, true);
         throw new LibraryServiceError('CANCELLED');
@@ -9270,7 +12239,7 @@ export class LibraryService {
       }
       throw error;
     } finally {
-      this.activeExports.delete(exportId);
+      this.releaseExportTransfer(input.libraryId, exportId);
     }
   }
 
@@ -9292,7 +12261,15 @@ export class LibraryService {
   }> {
     const importId = randomUUID();
     const cancelState: TransferCancelState = { cancelled: false };
-    this.activeImports.set(importId, cancelState);
+    const importDestinationPath = input.copyToParentPath
+      ? path.join(input.copyToParentPath, path.basename(input.sourceFolderPath))
+      : input.sourceFolderPath;
+    const importTransfer = this.acquireImportTransfer(
+      importId,
+      input.sourceFolderPath,
+      importDestinationPath,
+      cancelState,
+    );
     let ownedDestinationPath: string | undefined;
     let completed = false;
 
@@ -9420,7 +12397,7 @@ export class LibraryService {
       if (ownedDestinationPath && !completed) {
         this.removeOwnedTransferPath('import.failure.cleanup-destination', ownedDestinationPath, true);
       }
-      this.activeImports.delete(importId);
+      this.releaseImportTransfer(importTransfer);
     }
   }
 
@@ -9484,7 +12461,7 @@ export class LibraryService {
     }
 
     const cancelState: TransferCancelState = { cancelled: false };
-    this.activeExports.set(exportId, cancelState);
+    this.acquireExportTransfer(input.libraryId, exportId, cancelState);
     const startedAt = Date.now();
 
     const tempDir = path.join(path.dirname(input.destinationPath), `.serpent-zip-export-${exportId}`);
@@ -9525,19 +12502,7 @@ export class LibraryService {
       if (cancelState.cancelled) throw new LibraryServiceError('CANCELLED');
 
       tempDbPath = path.join(tempDir, `library-${exportId}.db`);
-      try {
-        openLibrary.connection.exec(`VACUUM INTO '${tempDbPath.replace(/'/g, "''")}'`);
-      } catch (error) {
-        throw new LibraryServiceError('LIBRARY_CORRUPT', { cause: error });
-      }
-
-      // Verify the backup.
-      const verifyConn = openConfiguredDatabase(tempDbPath);
-      try {
-        verifyConn.pragma('quick_check(1)');
-      } finally {
-        verifyConn.close();
-      }
+      await this.createConsistentDatabaseSnapshot(openLibrary.connection, tempDbPath, cancelState);
 
       // Phase 2: enumerate
       this.emitProgress({
@@ -9624,6 +12589,32 @@ export class LibraryService {
         relativePath: '.serpent/library.db',
         byteSize: snapStat.size,
       });
+
+      // ZIP exports follow the same linked-content contract as folder exports.
+      // Linked sources remain supplemental backup material under _linked/; the
+      // database retains its original roots so unavailable roots reopen offline.
+      let includedLinkedContent = false;
+      if (input.includeLinkedContent) {
+        const linkedFolders = openLibrary.connection
+          .prepare('SELECT folder_id, display_name, absolute_root_path, status FROM linked_folders WHERE library_id = ?')
+          .all(openLibrary.summary.libraryId) as Array<{
+            folder_id: string;
+            display_name: string;
+            absolute_root_path: string;
+            status: 'available' | 'offline';
+          }>;
+        if (linkedFolders.length > 0) {
+          includedLinkedContent = true;
+          for (const linkedFolder of linkedFolders) {
+            if (cancelState.cancelled) break;
+            if (linkedFolder.status !== 'available' || !realDirectoryExists(linkedFolder.absolute_root_path)) {
+              throw new LibraryServiceError('INVALID_IMPORT_SOURCE', { reason: 'SOURCE_NOT_FOUND' });
+            }
+            const exportName = `${cleanFilename(linkedFolder.display_name)}-${linkedFolder.folder_id.slice(0, 8)}`;
+            await walkDir(linkedFolder.absolute_root_path, `_linked/${exportName}`);
+          }
+        }
+      }
 
       const totalFiles = entries.length;
       let totalBytes = 0;
@@ -9797,7 +12788,7 @@ export class LibraryService {
         fileCount: totalFiles,
         totalBytes,
         excludedPreviewCount,
-        includedLinkedContent: false, // ZIP export does not support linked content in MVP.
+        includedLinkedContent,
         durationMs,
       };
     } catch (error) {
@@ -9817,7 +12808,7 @@ export class LibraryService {
       }
       throw error;
     } finally {
-      this.activeExports.delete(exportId);
+      this.releaseExportTransfer(input.libraryId, exportId);
     }
   }
 
@@ -9834,28 +12825,25 @@ export class LibraryService {
   }> {
     const importId = randomUUID();
     const cancelState: TransferCancelState = { cancelled: false };
-    this.activeImports.set(importId, cancelState);
+    const baseName = path.basename(input.sourceZipPath, path.extname(input.sourceZipPath));
+    const extractPath = path.join(input.destinationParentPath, baseName);
+    const importTransfer = this.acquireImportTransfer(
+      importId,
+      input.sourceZipPath,
+      extractPath,
+      cancelState,
+    );
     let ownedExtractPath: string | undefined;
     let completed = false;
-
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const AdmZip = require('adm-zip') as new (path: string) => {
-      getEntries(): Array<{
-        entryName: string;
-        isDirectory: boolean;
-        attr?: number;
-        header: { size: number; compressedSize: number };
-        getDataAsync(callback: (data: Buffer, error?: string) => void): void;
-      }>;
-    };
+    let totalEntries = 0;
+    let totalUncompressedBytes = 0;
+    let extractedBytes = 0;
+    let manifestValidationError: LibraryServiceError | undefined;
 
     try {
-      const baseName = path.basename(input.sourceZipPath, path.extname(input.sourceZipPath));
-      const extractPath = path.join(input.destinationParentPath, baseName);
       if (existsSync(extractPath)) {
         throw new LibraryServiceError('LIBRARY_ALREADY_EXISTS');
       }
-      const zip = new AdmZip(input.sourceZipPath);
       // Phase 1: validate
       this.emitProgress({
         type: 'import.progress', importId,
@@ -9864,71 +12852,6 @@ export class LibraryService {
       });
       await transferCheckpoint();
       if (cancelState.cancelled) throw new LibraryServiceError('CANCELLED');
-
-      // Read entries from the central directory.
-      const zipEntries = zip.getEntries();
-      if (zipEntries.length > LibraryService.ZIP_MAX_ENTRIES) {
-        throw new LibraryServiceError('ZIP_TOO_LARGE', { reason: 'ZIP_TOO_LARGE' });
-      }
-
-      let totalUncompressedBytes = 0;
-      const validatedNames = new Map<(typeof zipEntries)[number], string>();
-      for (const entry of zipEntries) {
-        const validatedName = validatePortableZipEntryName(entry.entryName);
-        validatedNames.set(entry, validatedName);
-        const uncompressedSize = entry.header.size;
-        const compressedSize = entry.header.compressedSize;
-        if (
-          !Number.isSafeInteger(uncompressedSize) ||
-          !Number.isSafeInteger(compressedSize) ||
-          uncompressedSize < 0 ||
-          compressedSize < 0
-        ) {
-          throw new LibraryServiceError('ZIP_TOO_LARGE', { reason: 'ZIP_TOO_LARGE' });
-        }
-        totalUncompressedBytes += uncompressedSize;
-        if (
-          !Number.isSafeInteger(totalUncompressedBytes) ||
-          totalUncompressedBytes > LibraryService.ZIP_IMPORT_MAX_UNCOMPRESSED_BYTES
-        ) {
-          throw new LibraryServiceError('ZIP_TOO_LARGE', { reason: 'ZIP_TOO_LARGE' });
-        }
-        if (
-          !entry.isDirectory &&
-          uncompressedSize >= LibraryService.ZIP_COMPRESSION_RATIO_MIN_SIZE &&
-          uncompressedSize / Math.max(compressedSize, 1) >
-            LibraryService.ZIP_IMPORT_MAX_COMPRESSION_RATIO
-        ) {
-          throw new LibraryServiceError('ZIP_TOO_LARGE', { reason: 'ZIP_TOO_LARGE' });
-        }
-
-        const attr = entry.attr;
-        if (attr !== undefined) {
-          const mode = (attr >>> 16) & 0o170000;
-          if (mode === 0o120000) {
-            throw new LibraryServiceError('NOT_A_LIBRARY', {
-              reason: 'SYMBOLIC_LINK_NOT_ALLOWED',
-            });
-          }
-        }
-      }
-
-      // Check for Assets/ directory (archiver v8 may not add an explicit directory
-      // entry; files with an Assets/ prefix imply the directory structure).
-      const hasAssetFiles = zipEntries.some(
-        (e) => !e.isDirectory && validatedNames.get(e)?.startsWith('Assets/'),
-      );
-      if (!hasAssetFiles) {
-        throw new LibraryServiceError('NOT_A_LIBRARY', { reason: 'NOT_A_LIBRARY' });
-      }
-
-      // Check for .serpent/library.db file entry.
-      const hasDb = zipEntries.some(
-        (e) => !e.isDirectory && validatedNames.get(e) === '.serpent/library.db',
-      );
-      if (!hasDb) {
-        throw new LibraryServiceError('NOT_A_LIBRARY', { reason: 'NOT_A_LIBRARY' });
-      }
 
       // Phase 2: extract
       try {
@@ -9946,48 +12869,55 @@ export class LibraryService {
         throw new LibraryServiceError('CANCELLED');
       }
 
-      const totalEntries = zipEntries.length;
       this.emitProgress({
         type: 'import.progress', importId,
         phase: 'extract', filesProcessed: 0, totalFiles: totalEntries,
         bytesProcessed: 0, totalBytes: 0,
       });
 
-      let extractedEntries = 0;
-      let extractedBytes = 0;
-      for (const entry of zipEntries) {
-        await transferCheckpoint();
-        if (cancelState.cancelled) break;
-        const validatedName = validatedNames.get(entry);
-        if (!validatedName) throw new LibraryServiceError('NOT_A_LIBRARY');
-        const destinationPath = path.join(extractPath, ...validatedName.split('/'));
-        if (entry.isDirectory) {
-          mkdirSync(destinationPath, { recursive: true });
-        } else {
-          const data = await new Promise<Buffer>((resolve, reject) => {
-            entry.getDataAsync((entryData, error) => {
-              if (error) {
-                reject(new LibraryServiceError('NOT_A_LIBRARY', { cause: new Error(error) }));
-                return;
-              }
-              resolve(entryData);
+      const abortController = new AbortController();
+      cancelState.onCancel = () => abortController.abort();
+      try {
+        await extractZipStream({
+          sourceZipPath: input.sourceZipPath,
+          destinationRoot: extractPath,
+          signal: abortController.signal,
+          limits: {
+            maxEntries: LibraryService.ZIP_MAX_ENTRIES,
+            maxUncompressedBytes: LibraryService.ZIP_IMPORT_MAX_UNCOMPRESSED_BYTES,
+            maxEntryUncompressedBytes: LibraryService.ZIP_IMPORT_MAX_UNCOMPRESSED_BYTES,
+            maxCompressionRatio: LibraryService.ZIP_IMPORT_MAX_COMPRESSION_RATIO,
+            compressionRatioMinSize: LibraryService.ZIP_COMPRESSION_RATIO_MIN_SIZE,
+          },
+          validateManifest: (manifest: ZipArchiveManifest) => {
+            const hasAssetFiles = manifest.entries.some(
+              (entry) => !entry.isDirectory && entry.name.startsWith('Assets/'),
+            );
+            const hasDatabase = manifest.entries.some(
+              (entry) => !entry.isDirectory && entry.name === '.serpent/library.db',
+            );
+            if (!hasAssetFiles || !hasDatabase) {
+              manifestValidationError = new LibraryServiceError('NOT_A_LIBRARY', {
+                reason: 'NOT_A_LIBRARY',
+              });
+              throw new ZipImportStreamError('INVALID_ZIP');
+            }
+          },
+          onProgress: (progress) => {
+            totalEntries = progress.totalEntries;
+            totalUncompressedBytes = progress.totalBytes;
+            extractedBytes = progress.bytesProcessed;
+            this.emitProgress({
+              type: 'import.progress', importId,
+              phase: 'extract', filesProcessed: progress.entriesProcessed,
+              totalFiles: progress.totalEntries,
+              bytesProcessed: progress.bytesProcessed,
+              totalBytes: progress.totalBytes,
             });
-          });
-          if (cancelState.cancelled) break;
-          mkdirSync(path.dirname(destinationPath), { recursive: true });
-          try {
-            writeFileSync(destinationPath, data, { flag: 'wx' });
-          } catch (error) {
-            throw new LibraryServiceError('NOT_A_LIBRARY', { cause: error });
-          }
-          extractedBytes += data.byteLength;
-        }
-        extractedEntries += 1;
-        this.emitProgress({
-          type: 'import.progress', importId,
-          phase: 'extract', filesProcessed: extractedEntries, totalFiles: totalEntries,
-          bytesProcessed: extractedBytes, totalBytes: totalUncompressedBytes,
+          },
         });
+      } finally {
+        cancelState.onCancel = undefined;
       }
 
       if (cancelState.cancelled) {
@@ -10028,7 +12958,7 @@ export class LibraryService {
       this.emitProgress({
         type: 'import.progress', importId,
         phase: 'complete', filesProcessed: totalEntries, totalFiles: totalEntries,
-        bytesProcessed: 0, totalBytes: 0,
+        bytesProcessed: extractedBytes, totalBytes: totalUncompressedBytes,
       });
 
       completed = true;
@@ -10050,9 +12980,12 @@ export class LibraryService {
         this.removeOwnedTransferPath('import.zip.failure.cleanup-destination', ownedExtractPath, true);
       }
       if (error instanceof LibraryServiceError) throw error;
+      if (manifestValidationError) throw manifestValidationError;
+      if (error instanceof ZipImportStreamError) throw this.mapZipImportError(error);
       throw new LibraryServiceError('NOT_A_LIBRARY', { cause: error });
     } finally {
-      this.activeImports.delete(importId);
+      cancelState.onCancel = undefined;
+      this.releaseImportTransfer(importTransfer);
     }
   }
 
@@ -10108,6 +13041,11 @@ export class LibraryService {
     const openLibrary = this.openById.get(libraryId);
     if (!openLibrary) throw new LibraryServiceError('LIBRARY_NOT_OPEN');
 
+    // A deliberate close is not a crash recovery boundary. Persist queued,
+    // paused, and running AI work as cancelled before the connection closes so
+    // reopening the library cannot silently resume uploads the user stopped.
+    this.cancelJobs(libraryId);
+    this.abortActiveMediaJobs(libraryId);
     this.stopAssetWatcher(libraryId);
     this.stopLinkedWatchers(libraryId);
     for (const [importId, pending] of this.pendingImports) {

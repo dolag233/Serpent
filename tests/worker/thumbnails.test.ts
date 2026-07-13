@@ -80,7 +80,7 @@ describe('schema v9 migration', () => {
     const created = service.createLibrary({ displayName: 'V9', selectedParentPath: root });
 
     const db = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
-    expect(db.pragma('user_version', { simple: true })).toBe(10);
+    expect(db.pragma('user_version', { simple: true })).toBe(13);
 
     const revArtifactCols = (db.prepare("PRAGMA table_info('revision_artifacts')").all() as Array<{ name: string }>).map((c) => c.name);
     expect(revArtifactCols).toContain('artifact_id');
@@ -90,6 +90,9 @@ describe('schema v9 migration', () => {
     expect(revArtifactCols).toContain('file_path');
     expect(revArtifactCols).toContain('generator_version');
     expect(revArtifactCols).toContain('invalidated_at');
+    expect(revArtifactCols).toContain('duration_ms');
+    expect(revArtifactCols).toContain('dominant_hue');
+    expect(revArtifactCols).toContain('dominant_lightness');
 
     const jobsCols = (db.prepare("PRAGMA table_info('jobs')").all() as Array<{ name: string }>).map((c) => c.name);
     expect(jobsCols).toContain('job_id');
@@ -187,6 +190,46 @@ describe('generateThumbnail (sharp)', () => {
     expect(row.mime_type).toBe('image/webp');
     expect(row.generator_version).toContain('sharp@');
     db.close();
+
+    service.closeAll();
+  });
+
+  it('auto-orients EXIF orientation 6 and writes an sRGB thumbnail', async () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'Orientation', selectedParentPath: root });
+    const sourcePath = path.join(root, 'portrait.jpg');
+    const sharp = require('sharp') as (input: unknown) => {
+      jpeg(): { withMetadata(metadata: { orientation: number }): { toFile(path: string): Promise<unknown> } };
+    };
+    await sharp({
+      create: {
+        width: 40,
+        height: 20,
+        channels: 3,
+        background: { r: 200, g: 40, b: 20 },
+      },
+    }).jpeg().withMetadata({ orientation: 6 }).toFile(sourcePath);
+    importNoConflict(service, created.libraryId, sourcePath);
+    const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
+
+    const result = await service.generateThumbnail({
+      libraryId: created.libraryId,
+      assetId: asset.assetId,
+    });
+    const artifactPath = path.join(
+      created.libraryPath,
+      '.serpent',
+      'artifacts',
+      `${result.artifactId}.webp`,
+    );
+    const metadata = await (require('sharp') as (input: string) => {
+      metadata(): Promise<{ width?: number; height?: number; orientation?: number; space?: string }>;
+    })(artifactPath).metadata();
+    expect(metadata.width).toBe(20);
+    expect(metadata.height).toBe(40);
+    expect(metadata.orientation).toBeUndefined();
+    expect(metadata.space).toBe('srgb');
 
     service.closeAll();
   });
@@ -360,6 +403,52 @@ describe('getThumbnailArtifact', () => {
   });
 });
 
+describe('preview availability while derivatives are generated', () => {
+  it('serves a native image source immediately while its thumbnail job is queued', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'ImmediateImagePreview', selectedParentPath: root });
+    const sourcePath = path.join(root, 'portrait.png');
+    createTestImage(sourcePath);
+    importNoConflict(service, created.libraryId, sourcePath);
+    const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
+
+    expect(service.enqueueThumbnailJobs(created.libraryId)).toBe(1);
+    expect(service.getPreviewArtifact(created.libraryId, asset.assetId)).toMatchObject({
+      mediaType: 'image',
+      status: 'ready',
+      playbackMode: 'source',
+      sourceRevisionId: asset.currentRevisionId,
+      sourceMimeType: 'image/png',
+    });
+    expect(service.getCurrentMediaSource(
+      created.libraryId,
+      asset.assetId,
+      asset.currentRevisionId,
+    )).toMatchObject({ mimeType: 'image/png' });
+
+    service.closeAll();
+  });
+
+  it('marks an unsupported asset without offering a generatable preview', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'UnsupportedPreview', selectedParentPath: root });
+    const sourcePath = path.join(root, 'notes.txt');
+    writeFileSync(sourcePath, 'plain text');
+    importNoConflict(service, created.libraryId, sourcePath);
+    const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
+
+    expect(service.getPreviewArtifact(created.libraryId, asset.assetId)).toMatchObject({
+      mediaType: 'other',
+      status: 'missing',
+      errorCode: 'UNSUPPORTED_FORMAT',
+    });
+    expect(service.enqueueThumbnailJobs(created.libraryId)).toBe(0);
+    service.closeAll();
+  });
+});
+
 describe('enqueueThumbnailJobs', () => {
   it('enqueues jobs for assets missing thumbnails', async () => {
     const root = temporaryRoot();
@@ -396,6 +485,60 @@ describe('enqueueThumbnailJobs', () => {
 
     service.closeAll();
   });
+
+  it('limits startup work, skips unsupported assets, and prioritizes an explicit visible range', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'VisibleFirst', selectedParentPath: root });
+
+    const assetIds: string[] = [];
+    for (let index = 0; index < 6; index += 1) {
+      const source = path.join(root, `image-${index}.png`);
+      createTestImage(source);
+      importNoConflict(service, created.libraryId, source);
+    }
+    const unsupported = path.join(root, 'notes.txt');
+    writeFileSync(unsupported, 'not media');
+    importNoConflict(service, created.libraryId, unsupported);
+    assetIds.push(...service.listAssets({ libraryId: created.libraryId, recursive: true })
+      .filter((asset) => asset.displayName.endsWith('.png'))
+      .map((asset) => asset.assetId));
+
+    expect(service.enqueueThumbnailJobs(created.libraryId, { limit: 2 })).toBe(2);
+    expect(service.enqueueThumbnailJobs(created.libraryId, {
+      assetIds: [assetIds[5]!],
+      limit: 1,
+      priority: 200,
+    })).toBe(1);
+
+    const db = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    const jobs = db.prepare(
+      "SELECT asset_id, priority FROM jobs WHERE kind = 'generate_thumbnail' ORDER BY priority DESC, created_at",
+    ).all() as Array<{ asset_id: string; priority: number }>;
+    expect(jobs).toHaveLength(3);
+    expect(jobs[0]).toEqual({ asset_id: assetIds[5], priority: 200 });
+    db.close();
+    service.closeAll();
+  });
+
+  it('queues a missing startup thumbnail when a library is reopened', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'ReopenQueue', selectedParentPath: root });
+    const source = path.join(root, 'reopen.png');
+    createTestImage(source);
+    importNoConflict(service, created.libraryId, source);
+    service.closeAll();
+
+    const reopened = service.openLibrary(created.libraryPath);
+    const db = new TestDatabase(path.join(reopened.libraryPath, '.serpent', 'library.db'));
+    const queued = db.prepare(
+      "SELECT COUNT(*) AS count FROM jobs WHERE kind = 'generate_thumbnail' AND status = 'queued'",
+    ).get() as { count: number };
+    expect(queued.count).toBe(1);
+    db.close();
+    service.closeAll();
+  });
 });
 
 describe('processThumbnailQueue', () => {
@@ -410,7 +553,7 @@ describe('processThumbnailQueue', () => {
 
     service.enqueueThumbnailJobs(created.libraryId);
     const processed = await service.processThumbnailQueue(created.libraryId);
-    expect(processed).toBe(1);
+    expect(processed).toBe(2);
 
     // Verify job is succeeded
     const db = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
@@ -420,6 +563,197 @@ describe('processThumbnailQueue', () => {
     db.close();
 
     service.closeAll();
+  });
+
+  it('keeps decoder paths in diagnostics and out of Renderer-visible job details', async () => {
+    const root = temporaryRoot();
+    const privatePath = path.join(root, 'private-source.png');
+    const diagnostics: unknown[] = [];
+    const service = new LibraryService({
+      onDiagnostic: (diagnostic) => diagnostics.push(diagnostic),
+      sharpFn: () => ({
+        async metadata() { throw new Error(`decoder failed at ${privatePath}`); },
+        rotate() { return this; },
+        toColourspace() { return this; },
+        resize() { return this; },
+        webp() { return this; },
+        async toFile() { throw new Error('unreachable'); },
+      }),
+    });
+    const created = service.createLibrary({ displayName: 'SafeMediaFailure', selectedParentPath: root });
+    createTestImage(privatePath);
+    importNoConflict(service, created.libraryId, privatePath);
+
+    service.enqueueThumbnailJobs(created.libraryId);
+    await service.processThumbnailQueue(created.libraryId);
+
+    const failed = service.listMediaJobs(created.libraryId).jobs[0]!;
+    expect(failed.status).toBe('failed');
+    expect(failed.errorDetail).toContain('local Serpent log');
+    expect(failed.errorDetail).not.toContain(root);
+    const diagnosticError = (diagnostics[0] as { error?: Error } | undefined)?.error;
+    expect(diagnosticError).toBeInstanceOf(Error);
+    expect((diagnosticError?.cause as Error | undefined)?.message).toContain(privatePath);
+    service.closeAll();
+  });
+
+  it('lists and controls media jobs without touching AI jobs', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'MediaControls', selectedParentPath: root });
+    const png = path.join(root, 'controls.png');
+    createTestImage(png);
+    importNoConflict(service, created.libraryId, png);
+    expect(service.enqueueThumbnailJobs(created.libraryId)).toBe(1);
+
+    let status = service.listMediaJobs(created.libraryId);
+    expect(status.queued).toBe(1);
+    expect(status.jobs[0]).toMatchObject({
+      kind: 'generate_thumbnail',
+      status: 'queued',
+      attemptCount: 0,
+    });
+    const jobId = status.jobs[0]!.jobId;
+
+    expect(service.pauseMediaJobs(created.libraryId, [jobId])).toEqual({ pausedCount: 1 });
+    expect(service.resumeMediaJobs(created.libraryId, [jobId])).toEqual({ resumedCount: 1 });
+    expect(service.cancelMediaJobs(created.libraryId, [jobId])).toEqual({ cancelledCount: 1 });
+    expect(service.listMediaJobs(created.libraryId).cancelled).toBe(1);
+
+    const db = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    db.prepare(
+      "UPDATE jobs SET status = 'failed', attempt_count = 2, error_code = 'TEST_FAILURE' WHERE job_id = ?",
+    ).run(jobId);
+    db.close();
+    expect(service.retryMediaJobs(created.libraryId, [jobId])).toEqual({ retriedCount: 1 });
+    status = service.listMediaJobs(created.libraryId);
+    expect(status.jobs[0]).toMatchObject({
+      status: 'queued',
+      attemptCount: 0,
+      errorCode: null,
+    });
+
+    service.closeAll();
+  });
+
+  it('recovers running media jobs as queued without resetting attempt_count', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'MediaRecovery', selectedParentPath: root });
+    const png = path.join(root, 'recover.png');
+    createTestImage(png);
+    importNoConflict(service, created.libraryId, png);
+    service.enqueueThumbnailJobs(created.libraryId);
+    const jobId = service.listMediaJobs(created.libraryId).jobs[0]!.jobId;
+    const db = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    db.prepare("UPDATE jobs SET status = 'running', attempt_count = 2 WHERE job_id = ?").run(jobId);
+    db.close();
+    service.closeAll();
+
+    const reopened = new LibraryService();
+    reopened.openLibrary(created.libraryPath);
+    expect(reopened.listMediaJobs(created.libraryId).jobs.find((job) => job.jobId === jobId)).toMatchObject({
+      status: 'queued',
+      attemptCount: 2,
+      errorCode: 'PROCESS_INTERRUPTED',
+    });
+    reopened.closeAll();
+  });
+
+  it('does not retain artifacts completed after an in-flight cancellation', async () => {
+    const root = temporaryRoot();
+    let releaseDecode!: () => void;
+    let decodeStarted!: () => void;
+    const started = new Promise<void>((resolve) => { decodeStarted = resolve; });
+    const blocked = new Promise<void>((resolve) => { releaseDecode = resolve; });
+    const pipeline = {
+      metadata: async () => ({ width: 1, height: 1, format: 'png' }),
+      rotate() { return this; },
+      toColourspace() { return this; },
+      resize() { return this; },
+      webp() { return this; },
+      async toFile(outputPath: string) {
+        decodeStarted();
+        await blocked;
+        writeFileSync(outputPath, VALID_1X1_PNG);
+      },
+    };
+    const service = new LibraryService({ sharpFn: () => pipeline });
+    const created = service.createLibrary({ displayName: 'MediaCancel', selectedParentPath: root });
+    const png = path.join(root, 'late.png');
+    createTestImage(png);
+    importNoConflict(service, created.libraryId, png);
+    service.enqueueThumbnailJobs(created.libraryId);
+    const jobId = service.listMediaJobs(created.libraryId).jobs[0]!.jobId;
+
+    const processing = service.processThumbnailQueue(created.libraryId, { maxJobs: 1 });
+    await started;
+    expect(service.cancelMediaJobs(created.libraryId, [jobId])).toEqual({ cancelledCount: 1 });
+    releaseDecode();
+    await processing;
+
+    expect(service.listMediaJobs(created.libraryId).jobs[0]!.status).toBe('cancelled');
+    const db = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    expect(db.prepare('SELECT COUNT(*) AS count FROM revision_artifacts').get()).toMatchObject({ count: 0 });
+    db.close();
+    service.closeAll();
+  });
+
+  it('limits Sharp work to two concurrent decodes across assets', async () => {
+    const root = temporaryRoot();
+    let active = 0;
+    let maximum = 0;
+    const releases: Array<() => void> = [];
+    const waiters: Array<() => void> = [];
+    const changed = (): void => { for (const notify of waiters.splice(0)) notify(); };
+    const waitFor = async (predicate: () => boolean): Promise<void> => {
+      while (!predicate()) await new Promise<void>((resolve) => waiters.push(resolve));
+    };
+    const sharpFn = () => {
+      const pipeline = {
+        metadata: async () => ({ width: 1, height: 1, format: 'png' }),
+        rotate() { return this; },
+        toColourspace() { return this; },
+        resize() { return this; },
+        webp() { return this; },
+        async toFile(outputPath: string) {
+          active += 1;
+          maximum = Math.max(maximum, active);
+          changed();
+          await new Promise<void>((resolve) => releases.push(resolve));
+          writeFileSync(outputPath, VALID_1X1_PNG);
+          active -= 1;
+          changed();
+        },
+      };
+      return pipeline;
+    };
+    const targets: Array<{ service: LibraryService; libraryId: string; assetId: string }> = [];
+    for (let index = 0; index < 3; index += 1) {
+      const service = new LibraryService({ sharpFn });
+      const created = service.createLibrary({ displayName: `SharpLimit-${index}`, selectedParentPath: root });
+      const source = path.join(root, `limit-${index}.png`);
+      createTestImage(source);
+      importNoConflict(service, created.libraryId, source);
+      targets.push({
+        service,
+        libraryId: created.libraryId,
+        assetId: service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!.assetId,
+      });
+    }
+    const operations = targets.map((target) => target.service.generateThumbnail({
+      libraryId: target.libraryId,
+      assetId: target.assetId,
+    }));
+
+    await waitFor(() => active === 2);
+    expect(maximum).toBe(2);
+    releases.splice(0).forEach((release) => release());
+    await waitFor(() => releases.length === 1);
+    releases.shift()!();
+    await Promise.all(operations);
+    expect(maximum).toBe(2);
+    for (const target of targets) target.service.closeAll();
   });
 });
 

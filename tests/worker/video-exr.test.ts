@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, truncateSync, writeFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -7,7 +8,6 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import {
   LibraryService,
-  LibraryServiceError,
   defaultSpawnFn,
   type LibraryServiceDiagnostic,
   type SpawnFunction,
@@ -202,10 +202,8 @@ describe('video (ffprobe + ffmpeg)', () => {
     });
     expect(assets).toHaveLength(1);
 
-    await service.generateThumbnail({
-      libraryId: created.libraryId,
-      assetId: assets[0]!.assetId,
-    });
+    service.enqueueThumbnailJobs(created.libraryId);
+    await service.processThumbnailQueue(created.libraryId);
 
     // Verify extracted_metadata artifact
     const db = assertDb(created.libraryPath);
@@ -245,6 +243,8 @@ describe('video (ffprobe + ffmpeg)', () => {
     );
     expect(metadata.durationMs).toBe(30050);
     expect(metadata.width).toBe(1920);
+    expect(service.listAssets({ libraryId: created.libraryId, recursive: true })[0])
+      .toMatchObject({ width: 1920, height: 1080, durationMs: 30050 });
     expect(metadata.height).toBe(1080);
     expect(metadata.rotation).toBe(-90);
     expect(metadata.videoCodec).toBe('h264');
@@ -278,18 +278,12 @@ describe('video (ffprobe + ffmpeg)', () => {
       selectedParentPath: root,
     });
 
-    const sourcePath = path.join(root, 'video.mp4');
+    const sourcePath = path.join(root, 'video.avi');
     writeFileSync(sourcePath, Buffer.alloc(4096, 0));
     importNoConflict(service, created.libraryId, sourcePath);
 
-    const assets = service.listAssets({
-      libraryId: created.libraryId,
-      recursive: true,
-    });
-    await service.generateThumbnail({
-      libraryId: created.libraryId,
-      assetId: assets[0]!.assetId,
-    });
+    service.enqueueThumbnailJobs(created.libraryId);
+    await service.processThumbnailQueue(created.libraryId);
 
     // Verify video_poster artifact exists
     const db = assertDb(created.libraryPath);
@@ -314,6 +308,7 @@ describe('video (ffprobe + ffmpeg)', () => {
     const vfValue = posterCall!.args[vfIdx + 1] as string;
     expect(vfValue).toContain('thumbnail');
     expect(vfValue).toContain('scale=640:-1');
+    expect(vfValue).not.toContain('fps=');
     expect(posterCall!.args).toContain('-frames:v');
     expect(posterCall!.args).toContain('1');
 
@@ -321,7 +316,7 @@ describe('video (ffprobe + ffmpeg)', () => {
     service.closeAll();
   });
 
-  it('generates contact_sheet artifact with well-formed drawtext/tile args', async () => {
+  it('generates a font-independent contact_sheet with fps/scale/tile args', async () => {
     process.env['SERPENT_FFMPEG_PATH'] = '/fake/ffmpeg';
     const root = temporaryRoot();
     const capturedSpawnArgs: Array<{ command: string; args: string[] }> = [];
@@ -350,14 +345,8 @@ describe('video (ffprobe + ffmpeg)', () => {
     writeFileSync(sourcePath, Buffer.alloc(4096, 0));
     importNoConflict(service, created.libraryId, sourcePath);
 
-    const assets = service.listAssets({
-      libraryId: created.libraryId,
-      recursive: true,
-    });
-    await service.generateThumbnail({
-      libraryId: created.libraryId,
-      assetId: assets[0]!.assetId,
-    });
+    service.enqueueThumbnailJobs(created.libraryId);
+    await service.processThumbnailQueue(created.libraryId);
 
     // Verify contact_sheet artifact exists
     const db = assertDb(created.libraryPath);
@@ -382,8 +371,7 @@ describe('video (ffprobe + ffmpeg)', () => {
     const vfValue2 = sheetCall!.args[vfIdx2 + 1] as string;
     expect(vfValue2).toContain('fps=');
     expect(vfValue2).toContain('scale=');
-    expect(vfValue2).toContain('drawtext=');
-    expect(vfValue2).toContain('pts');
+    expect(vfValue2).not.toContain('drawtext=');
     expect(vfValue2).toContain('tile=');
 
     db.close();
@@ -413,7 +401,7 @@ describe('video (ffprobe + ffmpeg)', () => {
       selectedParentPath: root,
     });
 
-    const sourcePath = path.join(root, 'video.mp4');
+    const sourcePath = path.join(root, 'video.avi');
     writeFileSync(sourcePath, Buffer.alloc(4096, 0));
     importNoConflict(service, created.libraryId, sourcePath);
 
@@ -421,10 +409,8 @@ describe('video (ffprobe + ffmpeg)', () => {
       libraryId: created.libraryId,
       recursive: true,
     });
-    await service.generateThumbnail({
-      libraryId: created.libraryId,
-      assetId: assets[0]!.assetId,
-    });
+    service.enqueueThumbnailJobs(created.libraryId);
+    await service.processThumbnailQueue(created.libraryId);
 
     // Verify webm_proxy artifact
     const db = assertDb(created.libraryPath);
@@ -456,8 +442,58 @@ describe('video (ffprobe + ffmpeg)', () => {
     expect(proxyCall!.args).toContain('libopus');
     expect(proxyCall!.args).toContain('-g');
     expect(proxyCall!.args).toContain('60');
+    expect(proxyCall!.args).toContain('-row-mt');
+    expect(proxyCall!.args).not.toContain('-row-mv');
+    const proxyFilterIndex = proxyCall!.args.indexOf('-vf');
+    expect(proxyCall!.args[proxyFilterIndex + 1]).toBe(
+      'scale=w=min(720\\,iw):h=min(720\\,ih):force_original_aspect_ratio=decrease:force_divisible_by=2',
+    );
 
     db.close();
+    service.closeAll();
+  });
+
+  it('rejects and removes a WebM proxy above the 512 MiB safety limit', async () => {
+    process.env['SERPENT_FFMPEG_PATH'] = '/fake/ffmpeg';
+    const root = temporaryRoot();
+    const diagnostics: LibraryServiceDiagnostic[] = [];
+    const service = new LibraryService({
+      onDiagnostic: (diagnostic) => diagnostics.push(diagnostic),
+      spawnFn: async (_command, args) => {
+        const outputPath = args[args.length - 1]!;
+        mkdirSync(path.dirname(outputPath), { recursive: true });
+        writeFileSync(outputPath, Buffer.from('oversized-proxy'));
+        truncateSync(outputPath, 512 * 1024 * 1024 + 1);
+        return { stdout: Buffer.alloc(0), stderr: '', exitCode: 0 };
+      },
+    });
+    const created = service.createLibrary({
+      displayName: 'OversizedWebmProxy',
+      selectedParentPath: root,
+    });
+    const sourcePath = path.join(root, 'oversized.avi');
+    writeFileSync(sourcePath, Buffer.alloc(4096, 0));
+    importNoConflict(service, created.libraryId, sourcePath);
+    const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
+
+    const jobId = service.enqueueArtifactRetry({
+      libraryId: created.libraryId,
+      assetId: asset.assetId,
+      kind: 'webm_proxy',
+    });
+    await service.processThumbnailQueue(created.libraryId, { maxJobs: 1 });
+
+    expect(service.listMediaJobs(created.libraryId).jobs.find((job) => job.jobId === jobId))
+      .toMatchObject({ status: 'failed', errorCode: 'MEDIA_PROCESSING_FAILED' });
+    const artifact = service.getCurrentArtifact(created.libraryId, asset.assetId, 'webm_proxy');
+    expect(artifact).toMatchObject({ status: 'failed', errorCode: 'MEDIA_PROCESSING_FAILED' });
+    expect(existsSync(path.join(created.libraryPath, '.serpent', 'artifacts', artifact!.filePath)))
+      .toBe(false);
+    expect(diagnostics).toContainEqual(expect.objectContaining({
+      scope: 'media-job.failed',
+      context: expect.objectContaining({ errorCode: 'MEDIA_PROCESSING_FAILED' }),
+      error: expect.objectContaining({ message: expect.stringContaining('512 MiB') }),
+    }));
     service.closeAll();
   });
 
@@ -503,13 +539,12 @@ describe('video (ffprobe + ffmpeg)', () => {
     const posterFailed = failedRows.find((r) => r.kind === 'video_poster');
     expect(posterFailed).toBeDefined();
 
-    expect(service.getPreviewArtifact(created.libraryId, assets[0]!.assetId)).toEqual({
+    expect(service.getPreviewArtifact(created.libraryId, assets[0]!.assetId)).toMatchObject({
       mediaType: 'video',
-      status: 'failed',
+      status: 'ready',
       kind: 'webm_proxy',
-      artifactId: expect.any(String),
-      mimeType: 'video/webm',
-      errorCode: 'FFMPEG_REQUIRED',
+      mimeType: 'video/mp4',
+      playbackMode: 'source',
     });
 
     db.close();
@@ -614,6 +649,138 @@ describe('video (ffprobe + ffmpeg)', () => {
   });
 });
 
+describe('media execution cancellation and global decoder limits', () => {
+  it('terminates the default subprocess runner through AbortSignal', async () => {
+    const controller = new AbortController();
+    const running = defaultSpawnFn(
+      process.execPath,
+      ['-e', 'setInterval(() => {}, 1000)'],
+      { timeoutMs: 30_000, signal: controller.signal },
+    );
+    controller.abort();
+    await expect(running).rejects.toMatchObject({ name: 'AbortError' });
+  });
+
+  it('aborts an in-flight FFmpeg job and discards every late failure artifact', async () => {
+    process.env['SERPENT_FFMPEG_PATH'] = '/fake/ffmpeg';
+    const root = temporaryRoot();
+    let started!: () => void;
+    const spawnStarted = new Promise<void>((resolve) => { started = resolve; });
+    let observedSignal: AbortSignal | undefined;
+    const service = new LibraryService({
+      spawnFn: async (_command, _args, options) => {
+        observedSignal = options?.signal;
+        started();
+        return await new Promise<SpawnResult>((_resolve, reject) => {
+          options?.signal?.addEventListener(
+            'abort',
+            () => reject(new DOMException('cancelled', 'AbortError')),
+            { once: true },
+          );
+        });
+      },
+    });
+    const created = service.createLibrary({ displayName: 'AbortVideo', selectedParentPath: root });
+    const source = path.join(root, 'abort.mp4');
+    writeFileSync(source, Buffer.alloc(1024));
+    importNoConflict(service, created.libraryId, source);
+    service.enqueueThumbnailJobs(created.libraryId);
+    const jobId = service.listMediaJobs(created.libraryId).jobs[0]!.jobId;
+
+    const processing = service.processThumbnailQueue(created.libraryId, { maxJobs: 1 });
+    await spawnStarted;
+    expect(service.cancelMediaJobs(created.libraryId, [jobId])).toEqual({ cancelledCount: 1 });
+    await processing;
+
+    expect(observedSignal?.aborted).toBe(true);
+    expect(service.listMediaJobs(created.libraryId).jobs[0]!.status).toBe('cancelled');
+    const db = assertDb(created.libraryPath);
+    expect(db.prepare('SELECT COUNT(*) AS count FROM revision_artifacts').get()).toMatchObject({ count: 0 });
+    db.close();
+    service.closeAll();
+  });
+
+  it('limits FFmpeg and ffprobe to one subprocess across concurrent libraries', async () => {
+    process.env['SERPENT_FFMPEG_PATH'] = '/fake/ffmpeg';
+    const root = temporaryRoot();
+    let active = 0;
+    let maximum = 0;
+    const spawnFn: SpawnFunction = async (command, args) => {
+      active += 1;
+      maximum = Math.max(maximum, active);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      const output = args[args.length - 1]!;
+      if (!command.includes('ffprobe')) {
+        mkdirSync(path.dirname(output), { recursive: true });
+        writeFileSync(output, Buffer.from('video-artifact'));
+      }
+      active -= 1;
+      return {
+        stdout: command.includes('ffprobe')
+          ? Buffer.from(CANNED_FFPROBE_JSON)
+          : Buffer.alloc(0),
+        stderr: '',
+        exitCode: 0,
+      };
+    };
+    const targets: Array<{ service: LibraryService; libraryId: string; assetId: string }> = [];
+    for (const [index, name] of ['one.mp4', 'two.mp4'].entries()) {
+      const service = new LibraryService({ spawnFn });
+      const created = service.createLibrary({ displayName: `FfmpegLimit-${index}`, selectedParentPath: root });
+      const source = path.join(root, name);
+      writeFileSync(source, Buffer.alloc(1024));
+      importNoConflict(service, created.libraryId, source);
+      targets.push({
+        service,
+        libraryId: created.libraryId,
+        assetId: service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!.assetId,
+      });
+    }
+    await Promise.all(targets.map((target) => target.service.generateThumbnail({
+      libraryId: target.libraryId,
+      assetId: target.assetId,
+    })));
+    expect(maximum).toBe(1);
+    for (const target of targets) target.service.closeAll();
+  });
+
+  it('limits OpenImageIO to one subprocess across concurrent libraries', async () => {
+    process.env['SERPENT_OIIO_PATH'] = '/fake/oiiotool';
+    const root = temporaryRoot();
+    let active = 0;
+    let maximum = 0;
+    const spawnFn: SpawnFunction = async (_command, args) => {
+      active += 1;
+      maximum = Math.max(maximum, active);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      const output = args[args.length - 1]!;
+      mkdirSync(path.dirname(output), { recursive: true });
+      writeFileSync(output, VALID_1X1_PNG);
+      active -= 1;
+      return { stdout: Buffer.alloc(0), stderr: '', exitCode: 0 };
+    };
+    const targets: Array<{ service: LibraryService; libraryId: string; assetId: string }> = [];
+    for (const [index, name] of ['one.exr', 'two.exr'].entries()) {
+      const service = new LibraryService({ spawnFn });
+      const created = service.createLibrary({ displayName: `OiioLimit-${index}`, selectedParentPath: root });
+      const source = path.join(root, name);
+      writeFileSync(source, Buffer.from('fake-exr'));
+      importNoConflict(service, created.libraryId, source);
+      targets.push({
+        service,
+        libraryId: created.libraryId,
+        assetId: service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!.assetId,
+      });
+    }
+    await Promise.all(targets.map((target) => target.service.generateThumbnail({
+      libraryId: target.libraryId,
+      assetId: target.assetId,
+    })));
+    expect(maximum).toBe(1);
+    for (const target of targets) target.service.closeAll();
+  });
+});
+
 describe('subprocess diagnostics', () => {
   it('caps stdout and stderr while preserving their tails', async () => {
     const nodePath = process.env['npm_node_execpath'] ?? 'node';
@@ -687,17 +854,159 @@ describe('EXR/TGA (oiiotool)', () => {
     expect(thumbRow!.generator_version).toContain('oiio@');
 
     // Verify oiiotool args
+    const assetPath = service.resolveAssetPath(created.libraryId, assets[0]!.assetId);
     const oiioCall = capturedSpawnArgs.find(
-      (c) => c.command === '/fake/oiiotool',
+      (c) => c.command === '/fake/oiiotool' && c.args.includes(assetPath),
     );
     expect(oiioCall).toBeDefined();
+    expect(oiioCall!.args).toContain('--colorconfig');
+    expect(oiioCall!.args).toContain('ocio://studio-config-v4.0.0_aces-v2.0_ocio-v2.5');
+    expect(oiioCall!.args).toContain('--iscolorspace');
+    expect(oiioCall!.args).toContain('scene_linear');
+    expect(oiioCall!.args).toContain('--mulc');
+    expect(oiioCall!.args).toContain('1,1,1,1');
+    expect(oiioCall!.args).toContain('--ociodisplay:from=scene_linear:unpremult=1');
+    const displayIndex = oiioCall!.args.indexOf('--ociodisplay:from=scene_linear:unpremult=1');
+    expect(oiioCall!.args.slice(displayIndex + 1, displayIndex + 3)).toEqual(['', '']);
     expect(oiioCall!.args).toContain('--resize');
     expect(oiioCall!.args).toContain('0x512');
     expect(oiioCall!.args).toContain('-o');
     // Check that the input path is the resolved asset path (inside the library)
-    const assetPath = service.resolveAssetPath(created.libraryId, assets[0]!.assetId);
-    expect(oiioCall!.args[0]).toBe(assetPath);
+    expect(oiioCall!.args).toContain(assetPath);
 
+    db.close();
+    service.closeAll();
+  });
+
+  it('uses the OCIO display-transform path for TGA assets', async () => {
+    process.env['SERPENT_OIIO_PATH'] = '/fake/oiiotool';
+    const root = temporaryRoot();
+    const capturedSpawnArgs: string[][] = [];
+    const service = new LibraryService({
+      spawnFn: async (_command, args) => {
+        capturedSpawnArgs.push(args);
+        const outputPath = args[args.length - 1];
+        if (outputPath?.endsWith('.png')) {
+          mkdirSync(path.dirname(outputPath), { recursive: true });
+          writeFileSync(outputPath, Buffer.from('fake-png-data'));
+        }
+        return { stdout: Buffer.alloc(0), stderr: '', exitCode: 0 };
+      },
+    });
+    const created = service.createLibrary({
+      displayName: 'TGAThumb',
+      selectedParentPath: root,
+    });
+    const sourcePath = path.join(root, 'paint.tga');
+    writeFileSync(sourcePath, Buffer.alloc(4096, 0));
+    importNoConflict(service, created.libraryId, sourcePath);
+    const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
+
+    await service.generateThumbnail({ libraryId: created.libraryId, assetId: asset.assetId });
+
+    const invocation = capturedSpawnArgs.find((args) => args.includes(
+      service.resolveAssetPath(created.libraryId, asset.assetId),
+    ));
+    expect(invocation).toEqual(expect.arrayContaining([
+      '--colorconfig',
+      'ocio://studio-config-v4.0.0_aces-v2.0_ocio-v2.5',
+      '--ociodisplay:from=scene_linear:unpremult=1',
+      '',
+      '1,1,1,1',
+    ]));
+    service.closeAll();
+  });
+
+  it('falls back from sharp to OIIO for a TIFF that sharp cannot decode', async () => {
+    process.env['SERPENT_OIIO_PATH'] = '/fake/oiiotool';
+    const root = temporaryRoot();
+    const invocations: Array<{ command: string; args: string[] }> = [];
+    const diagnostics: LibraryServiceDiagnostic[] = [];
+    const service = new LibraryService({
+      onDiagnostic: (diagnostic) => diagnostics.push(diagnostic),
+      spawnFn: async (command, args) => {
+        invocations.push({ command, args });
+        const outputPath = args[args.length - 1];
+        if (outputPath?.endsWith('.png')) {
+          mkdirSync(path.dirname(outputPath), { recursive: true });
+          writeFileSync(outputPath, Buffer.from('fake-png-data'));
+        }
+        return { stdout: Buffer.alloc(0), stderr: '', exitCode: 0 };
+      },
+    });
+    const created = service.createLibrary({
+      displayName: 'ComplexTIFF',
+      selectedParentPath: root,
+    });
+    const sourcePath = path.join(root, 'multi-part.tiff');
+    writeFileSync(sourcePath, Buffer.from('unsupported-complex-tiff'));
+    importNoConflict(service, created.libraryId, sourcePath);
+    const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
+
+    const result = await service.generateThumbnail({
+      libraryId: created.libraryId,
+      assetId: asset.assetId,
+    });
+
+    expect(invocations.some(({ command }) => command === '/fake/oiiotool')).toBe(true);
+    expect(diagnostics.some(({ scope }) => scope === 'thumbnail.tiff-sharp-fallback')).toBe(true);
+    const db = assertDb(created.libraryPath);
+    const row = db.prepare(
+      'SELECT status, mime_type, generator_version, error_code FROM revision_artifacts WHERE artifact_id = ?',
+    ).get(result.artifactId) as {
+      status: string;
+      mime_type: string;
+      generator_version: string;
+      error_code: string | null;
+    };
+    expect(row).toMatchObject({ status: 'ready', mime_type: 'image/png', error_code: null });
+    expect(row.generator_version).toContain('oiio@3.1.12.0');
+    expect(db.prepare(
+      "SELECT COUNT(*) AS count FROM revision_artifacts WHERE status = 'failed'",
+    ).get()).toMatchObject({ count: 0 });
+    db.close();
+    service.closeAll();
+  });
+
+  it('records a safe transform error code and a full diagnostic', async () => {
+    process.env['SERPENT_OIIO_PATH'] = '/fake/oiiotool';
+    const root = temporaryRoot();
+    const diagnostics: LibraryServiceDiagnostic[] = [];
+    const service = new LibraryService({
+      onDiagnostic: (diagnostic) => diagnostics.push(diagnostic),
+      spawnFn: async () => ({
+        stdout: Buffer.alloc(0),
+        stderr: 'OCIO display/view transform rejected the selected config',
+        exitCode: 7,
+      }),
+    });
+    const created = service.createLibrary({
+      displayName: 'TransformFailure',
+      selectedParentPath: root,
+    });
+    const sourcePath = path.join(root, 'render.exr');
+    writeFileSync(sourcePath, Buffer.alloc(4096, 0));
+    importNoConflict(service, created.libraryId, sourcePath);
+    const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
+
+    await expect(service.generateThumbnail({
+      libraryId: created.libraryId,
+      assetId: asset.assetId,
+    })).rejects.toMatchObject({ reason: 'MEDIA_PROCESSING_FAILED' });
+
+    const db = assertDb(created.libraryPath);
+    expect(db.prepare(
+      "SELECT status, error_code FROM revision_artifacts WHERE kind = 'thumbnail'",
+    ).get()).toMatchObject({ status: 'failed', error_code: 'OIIO_COLOR_TRANSFORM_FAILED' });
+    const diagnostic = diagnostics.find(({ scope }) => scope === 'oiio.thumbnail');
+    expect(diagnostic?.context).toMatchObject({
+      assetId: asset.assetId,
+      errorCode: 'OIIO_COLOR_TRANSFORM_FAILED',
+      ocioConfig: 'ocio://studio-config-v4.0.0_aces-v2.0_ocio-v2.5',
+    });
+    expect(diagnostic?.error).toMatchObject({
+      message: expect.stringContaining('display/view transform rejected'),
+    });
     db.close();
     service.closeAll();
   });
@@ -705,7 +1014,9 @@ describe('EXR/TGA (oiiotool)', () => {
   it('writes failed artifact when oiiotool binary is missing (ENOENT)', async () => {
     process.env['SERPENT_OIIO_PATH'] = '/fake/oiiotool-missing';
     const root = temporaryRoot();
+    const diagnostics: LibraryServiceDiagnostic[] = [];
     const service = new LibraryService({
+      onDiagnostic: (diagnostic) => diagnostics.push(diagnostic),
       spawnFn: createMockSpawn({
         oiiotoolExitCode: 0,
         enoentCommand: '/fake/oiiotool-missing',
@@ -730,7 +1041,7 @@ describe('EXR/TGA (oiiotool)', () => {
         libraryId: created.libraryId,
         assetId: assets[0]!.assetId,
       }),
-    ).rejects.toBeInstanceOf(LibraryServiceError);
+    ).rejects.toMatchObject({ reason: 'OIIO_REQUIRED' });
 
     // Verify failed artifact with OIIO_REQUIRED
     const db = assertDb(created.libraryPath);
@@ -742,6 +1053,10 @@ describe('EXR/TGA (oiiotool)', () => {
     expect(failedRow).toBeDefined();
     expect(failedRow!.status).toBe('failed');
     expect(failedRow!.error_code).toBe('OIIO_REQUIRED');
+    expect(diagnostics.some((diagnostic) => (
+      diagnostic.scope === 'oiio.thumbnail'
+      && diagnostic.context?.['errorCode'] === 'OIIO_REQUIRED'
+    ))).toBe(true);
 
     db.close();
     service.closeAll();
@@ -829,6 +1144,36 @@ describe('generateThumbnail dispatch by media type', () => {
     db.close();
 
     service.closeAll();
+
+    const reopenedService = new LibraryService({
+      spawnFn: createMockSpawn({ ffprobeStdout: CANNED_FFPROBE_JSON }),
+    });
+    const reopened = reopenedService.openLibrary(created.libraryPath);
+    const listed = reopenedService.listAssets({
+      libraryId: reopened.libraryId,
+      recursive: true,
+    });
+    expect(listed[0]).toMatchObject({
+      mediaType: 'video',
+      thumbnailStatus: 'ready',
+      thumbnailArtifactId: result.artifactId,
+    });
+    const searched = reopenedService.searchAssets({
+      libraryId: reopened.libraryId,
+      filters: [],
+    });
+    expect(searched.items[0]).toMatchObject({
+      mediaType: 'video',
+      thumbnailStatus: 'ready',
+      thumbnailArtifactId: result.artifactId,
+    });
+    const reopenedDb = assertDb(created.libraryPath);
+    const queued = reopenedDb.prepare(
+      "SELECT COUNT(*) AS count FROM jobs WHERE kind = 'generate_thumbnail' AND status = 'queued'",
+    ).get() as { count: number };
+    expect(queued.count).toBe(0);
+    reopenedDb.close();
+    reopenedService.closeAll();
   });
 
   it('dispatches EXR assets to oiiotool (mocked)', async () => {
@@ -970,5 +1315,152 @@ describe('enqueueThumbnailJobs handles all media types', () => {
     expect(enqueued).toBe(1);
 
     service.closeAll();
+  });
+});
+
+describe('independent video derivative jobs', () => {
+  it('serves only the current revision through the opaque source token', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'CurrentSourceOnly', selectedParentPath: root });
+    const source = path.join(root, 'current.mp4');
+    writeFileSync(source, Buffer.alloc(1024));
+    importNoConflict(service, created.libraryId, source);
+    const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
+
+    expect(service.getCurrentVideoSource(
+      created.libraryId,
+      asset.assetId,
+      asset.currentRevisionId,
+    )).toMatchObject({ mimeType: 'video/mp4' });
+
+    const replacementRevision = randomUUID();
+    const db = assertDb(created.libraryPath);
+    db.prepare(
+      `INSERT INTO revisions
+         (revision_id, asset_id, parent_revision_id, byte_size, modified_at, original_filename, origin, accepted_at)
+       VALUES (?, ?, ?, 2048, ?, 'current.mp4', 'external_change', ?)`,
+    ).run(replacementRevision, asset.assetId, asset.currentRevisionId, new Date().toISOString(), new Date().toISOString());
+    db.prepare('UPDATE assets SET current_revision_id = ? WHERE asset_id = ?')
+      .run(replacementRevision, asset.assetId);
+    db.close();
+
+    expect(() => service.getCurrentVideoSource(
+      created.libraryId,
+      asset.assetId,
+      asset.currentRevisionId,
+    )).toThrow('ASSET_NOT_FOUND');
+    service.closeAll();
+  });
+
+  it('publishes the poster before a slow proxy job resolves', async () => {
+    process.env['SERPENT_FFMPEG_PATH'] = '/fake/ffmpeg';
+    const root = temporaryRoot();
+    let finishProxy!: () => void;
+    const proxyGate = new Promise<SpawnResult>((resolve) => {
+      finishProxy = () => resolve({ stdout: Buffer.alloc(0), stderr: '', exitCode: 0 });
+    });
+    const service = new LibraryService({
+      spawnFn: async (command, args) => {
+        if (command.includes('ffprobe')) {
+          return { stdout: Buffer.from(CANNED_FFPROBE_JSON), stderr: '', exitCode: 0 };
+        }
+        const output = args[args.length - 1]!;
+        if (output.endsWith('.webm')) {
+          mkdirSync(path.dirname(output), { recursive: true });
+          writeFileSync(output, Buffer.from('proxy'));
+          return proxyGate;
+        }
+        mkdirSync(path.dirname(output), { recursive: true });
+        writeFileSync(output, Buffer.from('poster'));
+        return { stdout: Buffer.alloc(0), stderr: '', exitCode: 0 };
+      },
+    });
+    const created = service.createLibrary({ displayName: 'PosterFirst', selectedParentPath: root });
+    const source = path.join(root, 'slow.avi');
+    writeFileSync(source, Buffer.alloc(1024));
+    importNoConflict(service, created.libraryId, source);
+    const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
+    service.enqueueThumbnailJobs(created.libraryId);
+    let posterReady!: () => void;
+    const ready = new Promise<void>((resolve) => { posterReady = resolve; });
+    const processing = service.processThumbnailQueue(created.libraryId, {
+      maxJobs: 4,
+      onResult: ({ assetId, artifactId }) => {
+        if (assetId === asset.assetId && artifactId) posterReady();
+      },
+    });
+
+    await ready;
+    expect(service.listAssets({ libraryId: created.libraryId, recursive: true })[0])
+      .toMatchObject({ thumbnailStatus: 'ready' });
+    const db = assertDb(created.libraryPath);
+    expect(db.prepare(
+      "SELECT status FROM jobs WHERE kind = 'generate_thumbnail'",
+    ).get()).toMatchObject({ status: 'succeeded' });
+    db.close();
+    finishProxy();
+    await processing;
+    service.closeAll();
+  });
+
+  it('cancels a derivative job whose queued revision is no longer current', async () => {
+    process.env['SERPENT_FFMPEG_PATH'] = '/fake/ffmpeg';
+    const root = temporaryRoot();
+    const service = new LibraryService({ spawnFn: createMockSpawn({ ffprobeStdout: CANNED_FFPROBE_JSON }) });
+    const created = service.createLibrary({ displayName: 'StaleDerivative', selectedParentPath: root });
+    const source = path.join(root, 'stale.avi');
+    writeFileSync(source, Buffer.alloc(1024));
+    importNoConflict(service, created.libraryId, source);
+    const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
+    service.enqueueThumbnailJobs(created.libraryId);
+    await service.processThumbnailQueue(created.libraryId, { maxJobs: 1 });
+
+    const db = assertDb(created.libraryPath);
+    const replacementRevision = randomUUID();
+    db.prepare(
+      `INSERT INTO revisions
+         (revision_id, asset_id, parent_revision_id, byte_size, modified_at, original_filename, origin, accepted_at)
+       VALUES (?, ?, ?, 2048, ?, 'stale.avi', 'external_change', ?)`,
+    ).run(replacementRevision, asset.assetId, asset.currentRevisionId, new Date().toISOString(), new Date().toISOString());
+    db.prepare('UPDATE assets SET current_revision_id = ? WHERE asset_id = ?')
+      .run(replacementRevision, asset.assetId);
+    db.close();
+
+    await service.processThumbnailQueue(created.libraryId, { maxJobs: 1 });
+    const verified = assertDb(created.libraryPath);
+    expect(verified.prepare(
+      "SELECT status, error_code FROM jobs WHERE kind = 'generate_webm_proxy'",
+    ).get()).toMatchObject({ status: 'cancelled', error_code: 'STALE_REVISION' });
+    expect(verified.prepare(
+      "SELECT COUNT(*) AS count FROM revision_artifacts WHERE kind = 'webm_proxy' AND revision_id = ?",
+    ).get(asset.currentRevisionId)).toMatchObject({ count: 0 });
+    verified.close();
+    service.closeAll();
+  });
+
+  it('recovers interrupted derivative jobs when reopening a library', async () => {
+    process.env['SERPENT_FFMPEG_PATH'] = '/fake/ffmpeg';
+    const root = temporaryRoot();
+    const service = new LibraryService({ spawnFn: createMockSpawn({ ffprobeStdout: CANNED_FFPROBE_JSON }) });
+    const created = service.createLibrary({ displayName: 'RecoverDerivative', selectedParentPath: root });
+    const source = path.join(root, 'recover.avi');
+    writeFileSync(source, Buffer.alloc(1024));
+    importNoConflict(service, created.libraryId, source);
+    service.enqueueThumbnailJobs(created.libraryId);
+    await service.processThumbnailQueue(created.libraryId, { maxJobs: 1 });
+    const db = assertDb(created.libraryPath);
+    db.prepare("UPDATE jobs SET status = 'running' WHERE kind = 'generate_webm_proxy'").run();
+    db.close();
+    service.closeAll();
+
+    const reopened = new LibraryService({ spawnFn: createMockSpawn({ ffprobeStdout: CANNED_FFPROBE_JSON }) });
+    reopened.openLibrary(created.libraryPath);
+    const recoveredDb = assertDb(created.libraryPath);
+    expect(recoveredDb.prepare(
+      "SELECT status, error_code FROM jobs WHERE kind = 'generate_webm_proxy'",
+    ).get()).toMatchObject({ status: 'queued', error_code: 'PROCESS_INTERRUPTED' });
+    recoveredDb.close();
+    reopened.closeAll();
   });
 });

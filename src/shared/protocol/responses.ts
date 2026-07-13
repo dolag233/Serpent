@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { assetMetadataResultSchema, assetSummarySchema, collectionSummarySchema, linkedFolderSummarySchema, managedFolderSummarySchema, smartCollectionSummarySchema, tagSummarySchema } from '../asset-types';
+import { aiSearchPlanSchema, assetMetadataResultSchema, assetSummarySchema, collectionSummarySchema, linkedFolderRuleSchema, linkedFolderSummarySchema, managedFolderSummarySchema, smartCollectionSummarySchema, tagSummarySchema } from '../asset-types';
 import { publicErrorReasonSchema, publicErrorSchema } from './errors';
 import {
   WORKER_READY_MESSAGE_TYPE,
@@ -198,7 +198,81 @@ export function parseAiContentClearedEvent(input: unknown): AiContentClearedEven
   return aiContentClearedEventSchema.parse(input);
 }
 
+export const mediaJobSchema = z.strictObject({
+  jobId: nonBlankString,
+  assetId: nonBlankString,
+  revisionId: nonBlankString.nullable(),
+  kind: z.enum([
+    'generate_thumbnail',
+    'generate_video_poster',
+    'generate_contact_sheet',
+    'generate_webm_proxy',
+    'extract_palette',
+  ]),
+  status: z.enum(['queued', 'running', 'paused', 'succeeded', 'failed', 'cancelled']),
+  progress: z.number().min(0).max(1),
+  attemptCount: z.number().int().nonnegative(),
+  errorCode: z.string().nullable(),
+  errorDetail: z.string().nullable(),
+  createdAt: nonBlankString,
+  updatedAt: nonBlankString,
+});
+
+export type MediaJob = z.infer<typeof mediaJobSchema>;
+
+export const aiJobSchema = z.strictObject({
+  jobId: nonBlankString,
+  assetId: nonBlankString,
+  kind: z.enum(['ai.image.analysis', 'ai.video.analysis']),
+  status: z.enum(['queued', 'running', 'paused', 'succeeded', 'failed', 'cancelled']),
+  errorCode: z.string().nullable(),
+  errorDetail: z.string().nullable(),
+  updatedAt: nonBlankString,
+});
+
+export type AiJob = z.infer<typeof aiJobSchema>;
+
+const mediaJobCountsShape = {
+  queued: z.number().int().nonnegative(),
+  running: z.number().int().nonnegative(),
+  succeeded: z.number().int().nonnegative(),
+  failed: z.number().int().nonnegative(),
+  paused: z.number().int().nonnegative(),
+  cancelled: z.number().int().nonnegative(),
+};
+
 const assetOperationSuccessSchemas = [
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('media.jobs.listed'),
+    libraryId: nonBlankString,
+    ...mediaJobCountsShape,
+    jobs: z.array(mediaJobSchema),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('media.jobs.paused'),
+    libraryId: nonBlankString,
+    pausedCount: z.number().int().nonnegative(),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('media.jobs.resumed'),
+    libraryId: nonBlankString,
+    resumedCount: z.number().int().nonnegative(),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('media.jobs.cancelled'),
+    libraryId: nonBlankString,
+    cancelledCount: z.number().int().nonnegative(),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('media.jobs.retried'),
+    libraryId: nonBlankString,
+    retriedCount: z.number().int().nonnegative(),
+  }),
   z.strictObject({
     ok: z.literal(true),
     type: z.literal('folder.created'),
@@ -253,6 +327,32 @@ const assetOperationSuccessSchemas = [
   }),
   z.strictObject({
     ok: z.literal(true),
+    type: z.literal('linked-folder.rules'),
+    rules: z.array(linkedFolderRuleSchema),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('linked-folder.rules.updated'),
+    rules: z.array(linkedFolderRuleSchema),
+    hiddenCount: z.number().int().nonnegative(),
+    restoredCount: z.number().int().nonnegative(),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('linked-folder.assets.copied'),
+    copiedCount: z.number().int().nonnegative(),
+    skippedCount: z.number().int().nonnegative(),
+    assets: z.array(assetSummarySchema),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('linked-folder.converted'),
+    managedFolderId: nonBlankString,
+    convertedCount: z.number().int().nonnegative(),
+    assets: z.array(assetSummarySchema),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
     type: z.literal('tag.list'),
     tags: z.array(tagSummarySchema),
   }),
@@ -295,6 +395,11 @@ const assetOperationSuccessSchemas = [
     ok: z.literal(true),
     type: z.literal('collection.updated'),
     collection: collectionSummarySchema,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('collection.reordered'),
+    orderedCollectionIds: z.array(nonBlankString),
   }),
   z.strictObject({
     ok: z.literal(true),
@@ -399,6 +504,21 @@ const assetOperationSuccessSchemas = [
   }),
   z.strictObject({
     ok: z.literal(true),
+    type: z.literal('asset.moved'),
+    movedCount: z.number().int().nonnegative(),
+    skippedCount: z.number().int().nonnegative(),
+    operationId: nonBlankString.nullable(),
+    assets: z.array(assetSummarySchema),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('asset.move-undone'),
+    undoneCount: z.number().int().nonnegative(),
+    skippedCount: z.number().int().nonnegative(),
+    assets: z.array(assetSummarySchema),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
     type: z.literal('asset.deleted-permanent'),
     deletedCount: z.number().int().nonnegative(),
     skippedCount: z.number().int().nonnegative(),
@@ -489,6 +609,11 @@ const assetOperationSuccessSchemas = [
     url: nonBlankString.optional(),
     posterUrl: nonBlankString.optional(),
     errorCode: nonBlankString.optional(),
+    playbackMode: z.enum(['source', 'proxy']).optional(),
+    sourceMimeType: nonBlankString.optional(),
+    sourceContainer: z.enum(['mp4', 'mov', 'webm']).optional(),
+    sourceCodecs: z.array(nonBlankString).optional(),
+    playbackToken: nonBlankString.optional(),
   }),
   z.strictObject({
     ok: z.literal(true),
@@ -540,6 +665,13 @@ const assetOperationSuccessSchemas = [
     type: z.literal('ai.jobs.retried'),
     libraryId: nonBlankString,
     retriedCount: z.number().int().nonnegative(),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('ai.jobs.status'),
+    libraryId: nonBlankString,
+    ...mediaJobCountsShape,
+    jobs: z.array(aiJobSchema),
   }),
   z.strictObject({
     ok: z.literal(true),
@@ -610,6 +742,14 @@ const workerSuccessResultSchema = z.discriminatedUnion('type', [
   }),
   z.strictObject({
     ok: z.literal(true),
+    type: z.literal('media.source-path'),
+    assetId: nonBlankString,
+    revisionId: nonBlankString,
+    absolutePath: nonBlankString,
+    mimeType: nonBlankString,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
     type: z.literal('media.thumbnail-artifact'),
     artifactId: nonBlankString,
     filePath: nonBlankString,
@@ -627,6 +767,11 @@ const workerSuccessResultSchema = z.discriminatedUnion('type', [
     posterArtifactId: nonBlankString.optional(),
     mimeType: nonBlankString,
     errorCode: nonBlankString.optional(),
+    playbackMode: z.enum(['source', 'proxy']).optional(),
+    sourceRevisionId: nonBlankString.optional(),
+    sourceMimeType: nonBlankString.optional(),
+    sourceContainer: z.enum(['mp4', 'mov', 'webm']).optional(),
+    sourceCodecs: z.array(nonBlankString).optional(),
   }),
   z.strictObject({
     ok: z.literal(true),
@@ -750,6 +895,13 @@ const rendererSuccessResultSchema = z.discriminatedUnion('type', [
     success: z.boolean(),
     errorKind: nonBlankString.optional(),
     reason: nonBlankString.optional(),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('ai.search-plan.result'),
+    plan: aiSearchPlanSchema,
+    provider: z.enum(['openai', 'gemini', 'anthropic']),
+    model: nonBlankString,
   }),
   ...assetOperationSuccessSchemas,
 ]);

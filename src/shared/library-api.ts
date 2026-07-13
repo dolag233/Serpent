@@ -1,8 +1,11 @@
 import type { PublicError, PublicErrorReason } from './protocol/errors';
 import type {
   AssetSummary,
+  AiSearchPlan,
   AssetMetadataResult,
   CollectionSummary,
+  FilterClause,
+  LinkedFolderRule,
   LinkedFolderSummary,
   ManagedFolderSummary,
   SearchScope,
@@ -17,6 +20,8 @@ import type {
   RendererLifecycleEvent,
   ExportProgressEvent,
   ImportProgressEvent,
+  MediaJob,
+  AiJob,
 } from './protocol/responses';
 import type {
   NameConflictDecision,
@@ -77,6 +82,31 @@ export interface PreviewResolution {
   url?: string;
   posterUrl?: string;
   errorCode?: string;
+  playbackMode?: 'source' | 'proxy';
+  sourceMimeType?: string;
+  sourceContainer?: 'mp4' | 'mov' | 'webm';
+  sourceCodecs?: string[];
+  playbackToken?: string;
+}
+
+export interface MediaJobStatus {
+  queued: number;
+  running: number;
+  succeeded: number;
+  failed: number;
+  paused: number;
+  cancelled: number;
+  jobs: MediaJob[];
+}
+
+export interface AiJobStatus {
+  queued: number;
+  running: number;
+  succeeded: number;
+  failed: number;
+  paused: number;
+  cancelled: number;
+  jobs: AiJob[];
 }
 
 export interface SerpentLibraryApi {
@@ -103,6 +133,19 @@ export interface SerpentLibraryApi {
     libraryId: string;
     targetFolderId?: string;
   }): Promise<LibraryApiResult<ImportCompletion | ImportConflictPlan>>;
+  importDropped(input: {
+    libraryId: string;
+    targetFolderId?: string;
+    targetCollectionId?: string;
+    files: File[];
+    html?: string;
+    uriList?: string;
+  }): Promise<LibraryApiResult<ImportCompletion | ImportConflictPlan>>;
+  pasteClipboardImage(input: {
+    libraryId: string;
+    targetFolderId?: string;
+    targetCollectionId?: string;
+  }): Promise<LibraryApiResult<ImportCompletion | ImportConflictPlan>>;
   resolveImport(input: {
     importId: string;
     suspectedDuplicate: SuspectedDuplicateDecision;
@@ -125,6 +168,10 @@ export interface SerpentLibraryApi {
     libraryId: string;
     folderId: string;
   }): Promise<LibraryApiResult<LinkedFolderSummary>>;
+  getLinkedFolderRules(input: { libraryId: string; folderId: string }): Promise<LibraryApiResult<LinkedFolderRule[]>>;
+  setLinkedFolderRules(input: { libraryId: string; folderId: string; rules: LinkedFolderRule[] }): Promise<LibraryApiResult<{ rules: LinkedFolderRule[]; hiddenCount: number; restoredCount: number }>>;
+  copyAssetsToLinkedFolder(input: { libraryId: string; folderId: string; assetIds: string[]; conflictStrategy: 'keep-both' | 'replace' | 'skip' }): Promise<LibraryApiResult<{ copiedCount: number; skippedCount: number; assets: AssetSummary[] }>>;
+  convertLinkedFolderToManaged(input: { libraryId: string; folderId: string; targetFolderId?: string }): Promise<LibraryApiResult<{ managedFolderId: string; convertedCount: number; assets: AssetSummary[] }>>;
   onLifecycle(listener: (event: RendererLifecycleEvent) => void): () => void;
   onAssetsChanged(listener: (event: AssetChangeEvent) => void): () => void;
   // Tags
@@ -137,7 +184,8 @@ export interface SerpentLibraryApi {
   // Collections
   listCollections(input: { libraryId: string }): Promise<LibraryApiResult<CollectionSummary[]>>;
   createCollection(input: { libraryId: string; parentId?: string; name: string }): Promise<LibraryApiResult<CollectionSummary>>;
-  updateCollection(input: { libraryId: string; collectionId: string; name?: string; description?: string; coverAssetId?: string; position?: number }): Promise<LibraryApiResult<CollectionSummary>>;
+  updateCollection(input: { libraryId: string; collectionId: string; name?: string; description?: string | null; coverAssetId?: string | null; position?: number }): Promise<LibraryApiResult<CollectionSummary>>;
+  reorderCollections(input: { libraryId: string; orderedCollectionIds: string[] }): Promise<LibraryApiResult<{ orderedCollectionIds: string[] }>>;
   deleteCollection(input: { libraryId: string; collectionId: string }): Promise<LibraryApiResult<{ collectionId: string }>>;
   addCollectionAssets(input: { libraryId: string; collectionId: string; assetIds: string[] }): Promise<LibraryApiResult<{ collectionId: string }>>;
   removeCollectionAssets(input: { libraryId: string; collectionId: string; assetIds: string[] }): Promise<LibraryApiResult<{ collectionId: string }>>;
@@ -154,10 +202,13 @@ export interface SerpentLibraryApi {
   deleteSmartCollection(input: { libraryId: string; collectionId: string }): Promise<LibraryApiResult<{ collectionId: string }>>;
   executeSmartCollection(input: { libraryId: string; collectionId: string; limit?: number; offset?: number }): Promise<LibraryApiResult<{ items: AssetSummary[]; total: number; offset: number }>>;
   // Search
-  searchAssets(input: { libraryId: string; query?: { clauses: { field: string | null; values: string[]; exclude: boolean }[] } | null; filters?: { field: 'format' | 'tag' | 'rating' | 'favorite' | 'source_url' | 'availability'; values: string[]; exclude: boolean }[]; scope?: SearchScope; sort?: { field: 'name' | 'modified_at' | 'created_at' | 'byte_size' | 'duration' | 'rating'; order: 'asc' | 'desc' }; limit?: number; offset?: number }): Promise<LibraryApiResult<{ items: AssetSummary[]; total: number; offset: number; snippets?: { assetId: string; text: string }[] }>>;
+  searchAssets(input: { libraryId: string; query?: { clauses: { field: string | null; values: string[]; exclude: boolean }[] } | null; filters?: FilterClause[]; scope?: SearchScope; sort?: { field: 'name' | 'modified_at' | 'created_at' | 'byte_size' | 'duration' | 'rating' | 'color'; order: 'asc' | 'desc' }; limit?: number; offset?: number }): Promise<LibraryApiResult<{ items: AssetSummary[]; total: number; offset: number; snippets?: { assetId: string; text: string }[] }>>;
+  planAiSearch(input: { naturalQuery: string }): Promise<LibraryApiResult<{ plan: AiSearchPlan; provider: 'openai' | 'gemini' | 'anthropic'; model: string }>>;
   // Trash / Delete
   trashAssets(input: { libraryId: string; assetIds: string[] }): Promise<LibraryApiResult<{ trashedCount: number }>>;
-  restoreAssets(input: { libraryId: string; assetIds: string[]; targetFolderId?: string }): Promise<LibraryApiResult<{ restoredCount: number; assets: AssetSummary[] }>>;
+  restoreAssets(input: { libraryId: string; assetIds: string[]; targetFolderId?: string | null; conflictStrategy?: 'keep-both' | 'replace' | 'skip' }): Promise<LibraryApiResult<{ restoredCount: number; assets: AssetSummary[] }>>;
+  moveAssets(input: { libraryId: string; assetIds: string[]; targetFolderId: string | null; conflictStrategy?: 'keep-both' | 'replace' | 'skip' }): Promise<LibraryApiResult<{ movedCount: number; skippedCount: number; operationId: string | null; assets: AssetSummary[] }>>;
+  undoMoveAssets(input: { libraryId: string; operationId: string; conflictStrategy?: 'error' | 'keep-both' | 'replace' | 'skip' }): Promise<LibraryApiResult<{ undoneCount: number; skippedCount: number; assets: AssetSummary[] }>>;
   deleteAssetsPermanent(input: { libraryId: string; assetIds: string[] }): Promise<LibraryApiResult<{ deletedCount: number; skippedCount: number; skippedReasons: string[] }>>;
   listTrash(input: { libraryId: string }): Promise<LibraryApiResult<AssetSummary[]>>;
   purgeTrash(input: { libraryId: string }): Promise<LibraryApiResult<{ purgedCount: number }>>;
@@ -211,6 +262,11 @@ export interface SerpentLibraryApi {
   reportPreviewError(input: { libraryId: string; assetId: string; errorCode: string; detail?: string }): Promise<LibraryApiResult<void>>;
   openExternal(input: { libraryId: string; assetId: string }): Promise<LibraryApiResult<void>>;
   retryArtifact(input: { libraryId: string; assetId: string; kind: 'thumbnail' | 'webm_proxy' }): Promise<LibraryApiResult<{ assetId: string; kind: string }>>;
+  listMediaJobs(input: { libraryId: string }): Promise<LibraryApiResult<MediaJobStatus>>;
+  pauseMediaJobs(input: { libraryId: string; jobIds?: string[] }): Promise<LibraryApiResult<{ pausedCount: number }>>;
+  resumeMediaJobs(input: { libraryId: string; jobIds?: string[] }): Promise<LibraryApiResult<{ resumedCount: number }>>;
+  cancelMediaJobs(input: { libraryId: string; jobIds?: string[] }): Promise<LibraryApiResult<{ cancelledCount: number }>>;
+  retryMediaJobs(input: { libraryId: string; jobIds: string[] }): Promise<LibraryApiResult<{ retriedCount: number }>>;
   onThumbnailEvent(listener: (event: { type: 'asset.thumbnail.ready' | 'asset.thumbnail.failed'; libraryId: string; assetId: string; artifactId?: string; errorCode?: string; reason?: string }) => void): () => void;
   // AI extended
   testAiConnection(input: { provider: 'openai' | 'gemini' | 'anthropic'; model: string; apiKey: string }): Promise<LibraryApiResult<{ success: boolean; errorKind?: string; reason?: string }>>;
@@ -219,6 +275,7 @@ export interface SerpentLibraryApi {
   resumeAiJobs(input: { libraryId: string; jobIds?: string[] }): Promise<LibraryApiResult<{ resumedCount: number }>>;
   cancelAiJobs(input: { libraryId: string; jobIds?: string[] }): Promise<LibraryApiResult<{ cancelledCount: number }>>;
   retryAiJobs(input: { libraryId: string; jobIds: string[] }): Promise<LibraryApiResult<{ retriedCount: number }>>;
+  getAiJobStatus(input: { libraryId: string }): Promise<LibraryApiResult<AiJobStatus>>;
   onAiProgress(listener: (event: { type: 'ai.progress'; libraryId: string; queued: number; running: number; succeeded: number; failed: number }) => void): () => void;
   onAiCompleted(listener: (event: { type: 'ai.analysis.completed'; libraryId: string; assetId: string; fieldCount: number; tagCount: number }) => void): () => void;
   onAiCleared(listener: (event: { type: 'ai.content.cleared'; libraryId: string; affectedAssetCount: number }) => void): () => void;

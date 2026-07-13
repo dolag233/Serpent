@@ -1,6 +1,12 @@
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 
+import {
+  currentPlatformKey,
+  verifyBundle,
+  verifyReleaseProvenance,
+} from './media-binaries-lib.mjs';
+
 const platformDirectory = `Serpent-${process.platform}-${process.arch}`;
 const packageRoot = process.env.SERPENT_PACKAGE_ROOT ?? path.resolve('out', platformDirectory);
 const resourcesPath =
@@ -44,5 +50,10 @@ const missingPaths = requiredPaths.filter((requiredPath) => !existsSync(required
 if (missingPaths.length > 0) {
   throw new Error(`Package is missing required runtime files:\n${missingPaths.join('\n')}`);
 }
+
+const mediaResourcesPath = path.join(resourcesPath, 'resources');
+const mediaPlatform = currentPlatformKey();
+verifyBundle({ root: mediaResourcesPath, platform: mediaPlatform });
+verifyReleaseProvenance({ root: mediaResourcesPath, platform: mediaPlatform });
 
 console.log(`Verified packaged runtime files in ${resourcesPath}`);

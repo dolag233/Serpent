@@ -236,6 +236,33 @@ describe('LibraryService export', () => {
     expect(existsSync(destinationPath)).toBe(false);
     service.closeAll();
   });
+
+  it('includes linked files in folder progress and uses collision-safe backup paths', async () => {
+    const root = temporaryRoot();
+    const firstRoot = path.join(root, 'linked-a');
+    const secondRoot = path.join(root, 'linked-b');
+    mkdirSync(firstRoot);
+    mkdirSync(secondRoot);
+    writeFileSync(path.join(firstRoot, 'first.png'), 'first');
+    writeFileSync(path.join(secondRoot, 'second.png'), 'second');
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'Linked Backup', selectedParentPath: root });
+    const first = service.importFolderAsLinked({ libraryId: created.libraryId, sourceRootPath: firstRoot, displayName: 'References' });
+    const second = service.importFolderAsLinked({ libraryId: created.libraryId, sourceRootPath: secondRoot, displayName: 'References' });
+    const destinationPath = path.join(root, 'linked-export');
+
+    const result = await service.exportLibraryToFolder({
+      libraryId: created.libraryId,
+      destinationPath,
+      includeLinkedContent: true,
+    });
+
+    expect(result.includedLinkedContent).toBe(true);
+    expect(existsSync(path.join(destinationPath, '_linked', `References-${first.folderId.slice(0, 8)}`, 'first.png'))).toBe(true);
+    expect(existsSync(path.join(destinationPath, '_linked', `References-${second.folderId.slice(0, 8)}`, 'second.png'))).toBe(true);
+    expect(result.fileCount).toBeGreaterThanOrEqual(3); // two linked files + database
+    service.closeAll();
+  });
 });
 
 describe('LibraryService import folder', () => {

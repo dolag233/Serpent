@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { filterClauseSchema, searchQuerySchema, searchScopeSchema, sortDefinitionSchema } from '../asset-types';
+import { filterClauseSchema, linkedFolderRuleSchema, searchQuerySchema, searchScopeSchema, sortDefinitionSchema } from '../asset-types';
 
 const nonBlankString = z.string().min(1).refine((value) => value.trim().length > 0, {
   message: 'Value must not be blank.',
@@ -12,6 +12,14 @@ const selectedPathSchema = nonBlankString;
 const optionalIdentifierSchema = identifierSchema.optional();
 const optionalDescriptionSchema = nonBlankString.max(10000).optional();
 const queryDefinitionJsonSchema = nonBlankString.max(65_536);
+const httpUrlSchema = nonBlankString.max(8_192).refine((value) => {
+  try {
+    const parsed = new URL(value);
+    return (parsed.protocol === 'http:' || parsed.protocol === 'https:') && !parsed.username && !parsed.password;
+  } catch {
+    return false;
+  }
+}, { message: 'Expected an HTTP(S) URL without embedded credentials.' });
 
 export const suspectedDuplicateDecisionSchema = z.enum(['skip', 'merge', 'create-copy']);
 export const nameConflictDecisionSchema = z.enum(['keep-both', 'replace', 'skip']);
@@ -57,6 +65,39 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     libraryId: identifierSchema,
     targetFolderId: optionalIdentifierSchema,
   }),
+  // This request is created only inside the preload bridge after Electron's
+  // webUtils has resolved genuine renderer File objects. Renderer code never
+  // accepts or constructs these paths directly.
+  z.strictObject({
+    type: z.literal('asset.import-drop.request'),
+    libraryId: identifierSchema,
+    targetFolderId: optionalIdentifierSchema,
+    targetCollectionId: optionalIdentifierSchema,
+    sourcePaths: z.array(selectedPathSchema).min(1).max(1_000),
+  }),
+  z.strictObject({
+    type: z.literal('asset.import-drop-invalid.report'),
+    libraryId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('asset.import-web.request'),
+    libraryId: identifierSchema,
+    targetFolderId: optionalIdentifierSchema,
+    targetCollectionId: optionalIdentifierSchema,
+    mediaUrl: httpUrlSchema,
+    mediaType: z.enum(['image', 'video']).optional(),
+  }),
+  z.strictObject({
+    type: z.literal('asset.import-web-invalid.report'),
+    libraryId: identifierSchema,
+    failure: z.enum(['WEB_MEDIA_NOT_FOUND', 'WEB_MEDIA_URL_INVALID', 'WEB_MEDIA_DROP_TOO_LARGE']),
+  }),
+  z.strictObject({
+    type: z.literal('asset.import-clipboard.request'),
+    libraryId: identifierSchema,
+    targetFolderId: optionalIdentifierSchema,
+    targetCollectionId: optionalIdentifierSchema,
+  }),
   z.strictObject({
     type: z.literal('asset.import.resolve'),
     importId: identifierSchema,
@@ -84,6 +125,30 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     type: z.literal('linked-folder.relink.request'),
     libraryId: identifierSchema,
     folderId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('linked-folder.rules.get.request'),
+    libraryId: identifierSchema,
+    folderId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('linked-folder.rules.set.request'),
+    libraryId: identifierSchema,
+    folderId: identifierSchema,
+    rules: z.array(linkedFolderRuleSchema).max(200),
+  }),
+  z.strictObject({
+    type: z.literal('linked-folder.assets.copy.request'),
+    libraryId: identifierSchema,
+    folderId: identifierSchema,
+    assetIds: z.array(identifierSchema).min(1).max(1_000).refine((ids) => new Set(ids).size === ids.length),
+    conflictStrategy: nameConflictDecisionSchema,
+  }),
+  z.strictObject({
+    type: z.literal('linked-folder.convert.request'),
+    libraryId: identifierSchema,
+    folderId: identifierSchema,
+    targetFolderId: optionalIdentifierSchema,
   }),
   z.strictObject({
     type: z.literal('tag.list.request'),
@@ -132,9 +197,14 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     libraryId: identifierSchema,
     collectionId: identifierSchema,
     name: optionalIdentifierSchema,
-    description: optionalIdentifierSchema,
-    coverAssetId: optionalIdentifierSchema,
+    description: nonBlankString.max(10_000).nullable().optional(),
+    coverAssetId: identifierSchema.nullable().optional(),
     position: z.number().int().nonnegative().optional(),
+  }),
+  z.strictObject({
+    type: z.literal('collection.reorder.request'),
+    libraryId: identifierSchema,
+    orderedCollectionIds: z.array(identifierSchema).min(1).max(10_000),
   }),
   z.strictObject({
     type: z.literal('collection.delete.request'),
@@ -198,6 +268,10 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     offset: z.number().int().nonnegative().optional(),
   }),
   z.strictObject({
+    type: z.literal('ai.search-plan.request'),
+    naturalQuery: nonBlankString.max(2_000),
+  }),
+  z.strictObject({
     type: z.literal('smart-collection.list.request'),
     libraryId: identifierSchema,
   }),
@@ -236,7 +310,24 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     type: z.literal('asset.restore.request'),
     libraryId: identifierSchema,
     assetIds: z.array(identifierSchema).min(1),
-    targetFolderId: optionalIdentifierSchema,
+    targetFolderId: identifierSchema.nullable().optional(),
+    conflictStrategy: z.enum(['keep-both', 'replace', 'skip']).optional(),
+  }),
+  z.strictObject({
+    type: z.literal('asset.move.request'),
+    libraryId: identifierSchema,
+    assetIds: z.array(identifierSchema).min(1).max(10_000).refine(
+      (assetIds) => new Set(assetIds).size === assetIds.length,
+      { message: 'assetIds must not contain duplicates.' },
+    ),
+    targetFolderId: identifierSchema.nullable(),
+    conflictStrategy: nameConflictDecisionSchema.optional(),
+  }),
+  z.strictObject({
+    type: z.literal('asset.move-undo.request'),
+    libraryId: identifierSchema,
+    operationId: identifierSchema,
+    conflictStrategy: z.enum(['error', 'keep-both', 'replace', 'skip']).optional(),
   }),
   z.strictObject({
     type: z.literal('asset.delete-permanent.request'),
@@ -361,6 +452,30 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     kind: z.enum(['thumbnail', 'webm_proxy']),
   }),
   z.strictObject({
+    type: z.literal('media.list-jobs.request'),
+    libraryId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('media.pause-jobs.request'),
+    libraryId: identifierSchema,
+    jobIds: z.array(identifierSchema).min(1).optional(),
+  }),
+  z.strictObject({
+    type: z.literal('media.resume-jobs.request'),
+    libraryId: identifierSchema,
+    jobIds: z.array(identifierSchema).min(1).optional(),
+  }),
+  z.strictObject({
+    type: z.literal('media.cancel-jobs.request'),
+    libraryId: identifierSchema,
+    jobIds: z.array(identifierSchema).min(1).optional(),
+  }),
+  z.strictObject({
+    type: z.literal('media.retry-jobs.request'),
+    libraryId: identifierSchema,
+    jobIds: z.array(identifierSchema).min(1),
+  }),
+  z.strictObject({
     type: z.literal('ai.test-connection.request'),
     provider: z.enum(['openai', 'gemini', 'anthropic']),
     model: nonBlankString,
@@ -395,6 +510,10 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     type: z.literal('ai.retry-jobs.request'),
     libraryId: identifierSchema,
     jobIds: z.array(identifierSchema).min(1),
+  }),
+  z.strictObject({
+    type: z.literal('ai.status.request'),
+    libraryId: identifierSchema,
   }),
 ]);
 
@@ -475,6 +594,30 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     newRootPath: selectedPathSchema,
   }),
   z.strictObject({
+    type: z.literal('linked-folder.rules.get'),
+    libraryId: identifierSchema,
+    folderId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('linked-folder.rules.set'),
+    libraryId: identifierSchema,
+    folderId: identifierSchema,
+    rules: z.array(linkedFolderRuleSchema).max(200),
+  }),
+  z.strictObject({
+    type: z.literal('linked-folder.assets.copy'),
+    libraryId: identifierSchema,
+    folderId: identifierSchema,
+    assetIds: z.array(identifierSchema).min(1).max(1_000),
+    conflictStrategy: nameConflictDecisionSchema,
+  }),
+  z.strictObject({
+    type: z.literal('linked-folder.convert'),
+    libraryId: identifierSchema,
+    folderId: identifierSchema,
+    targetFolderId: optionalIdentifierSchema,
+  }),
+  z.strictObject({
     type: z.literal('tag.list'),
     libraryId: identifierSchema,
   }),
@@ -521,9 +664,14 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     libraryId: identifierSchema,
     collectionId: identifierSchema,
     name: optionalIdentifierSchema,
-    description: optionalIdentifierSchema,
-    coverAssetId: optionalIdentifierSchema,
+    description: nonBlankString.max(10_000).nullable().optional(),
+    coverAssetId: identifierSchema.nullable().optional(),
     position: z.number().int().nonnegative().optional(),
+  }),
+  z.strictObject({
+    type: z.literal('collection.reorder'),
+    libraryId: identifierSchema,
+    orderedCollectionIds: z.array(identifierSchema).min(1).max(10_000),
   }),
   z.strictObject({
     type: z.literal('collection.delete'),
@@ -625,7 +773,24 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     type: z.literal('asset.restore'),
     libraryId: identifierSchema,
     assetIds: z.array(identifierSchema).min(1),
-    targetFolderId: optionalIdentifierSchema,
+    targetFolderId: identifierSchema.nullable().optional(),
+    conflictStrategy: z.enum(['keep-both', 'replace', 'skip']).optional(),
+  }),
+  z.strictObject({
+    type: z.literal('asset.move'),
+    libraryId: identifierSchema,
+    assetIds: z.array(identifierSchema).min(1).max(10_000).refine(
+      (assetIds) => new Set(assetIds).size === assetIds.length,
+      { message: 'assetIds must not contain duplicates.' },
+    ),
+    targetFolderId: identifierSchema.nullable(),
+    conflictStrategy: nameConflictDecisionSchema.optional(),
+  }),
+  z.strictObject({
+    type: z.literal('asset.move-undo'),
+    libraryId: identifierSchema,
+    operationId: identifierSchema,
+    conflictStrategy: z.enum(['error', 'keep-both', 'replace', 'skip']).optional(),
   }),
   z.strictObject({
     type: z.literal('asset.delete-permanent'),
@@ -670,8 +835,8 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     type: z.literal('extension.save-from-url'),
     libraryId: identifierSchema,
     targetFolderId: optionalIdentifierSchema,
-    sourcePageUrl: nonBlankString,
-    mediaUrl: nonBlankString,
+    sourcePageUrl: httpUrlSchema.optional(),
+    mediaUrl: httpUrlSchema,
     mediaType: z.string().optional(),
   }),
   z.strictObject({
@@ -737,12 +902,42 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     usage: z.enum(['preview', 'proxy']),
   }),
   z.strictObject({
+    type: z.literal('media.get-source-path'),
+    libraryId: identifierSchema,
+    assetId: identifierSchema,
+    revisionId: identifierSchema,
+  }),
+  z.strictObject({
     type: z.literal('media.enqueue-thumbnail-jobs'),
     libraryId: identifierSchema,
   }),
   z.strictObject({
     type: z.literal('media.process-thumbnail-queue'),
     libraryId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('media.list-jobs'),
+    libraryId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('media.pause-jobs'),
+    libraryId: identifierSchema,
+    jobIds: z.array(identifierSchema).min(1).optional(),
+  }),
+  z.strictObject({
+    type: z.literal('media.resume-jobs'),
+    libraryId: identifierSchema,
+    jobIds: z.array(identifierSchema).min(1).optional(),
+  }),
+  z.strictObject({
+    type: z.literal('media.cancel-jobs'),
+    libraryId: identifierSchema,
+    jobIds: z.array(identifierSchema).min(1).optional(),
+  }),
+  z.strictObject({
+    type: z.literal('media.retry-jobs'),
+    libraryId: identifierSchema,
+    jobIds: z.array(identifierSchema).min(1),
   }),
   z.strictObject({
     type: z.literal('media.get-asset-path'),
@@ -827,6 +1022,10 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     type: z.literal('ai.retry-jobs'),
     libraryId: identifierSchema,
     jobIds: z.array(identifierSchema).min(1),
+  }),
+  z.strictObject({
+    type: z.literal('ai.status'),
+    libraryId: identifierSchema,
   }),
 ]);
 

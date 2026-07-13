@@ -44,6 +44,17 @@ const EXPORT_IMPORT_COMMANDS = new Set([
   'library.import-cancel',
 ]);
 
+export function requestTimeoutForCommand(commandType: WorkerCommand['type']): number {
+  if (EXPORT_IMPORT_COMMANDS.has(commandType)) return EXPORT_IMPORT_TIMEOUT_MS;
+  if (commandType === 'asset.delete-linked') return LINKED_DELETE_TIMEOUT_MS;
+  if (
+    commandType.startsWith('asset.import.')
+    || commandType === 'asset.refresh'
+    || commandType === 'extension.save-from-url'
+  ) return FILE_OPERATION_TIMEOUT_MS;
+  return REQUEST_TIMEOUT_MS;
+}
+
 export class LibraryWorkerClient {
   readonly #modulePath: string;
   #child: UtilityProcess | undefined;
@@ -127,14 +138,7 @@ export class LibraryWorkerClient {
 
     const requestId = randomUUID();
     return new Promise<WorkerResult>((resolve, reject) => {
-      const timeout = EXPORT_IMPORT_COMMANDS.has(command.type)
-        ? EXPORT_IMPORT_TIMEOUT_MS
-        : command.type === 'asset.delete-linked'
-          ? LINKED_DELETE_TIMEOUT_MS
-        : command.type.startsWith('asset.import.')
-            || command.type === 'asset.refresh'
-          ? FILE_OPERATION_TIMEOUT_MS
-          : REQUEST_TIMEOUT_MS;
+      const timeout = requestTimeoutForCommand(command.type);
       const timer = setTimeout(() => {
         this.#pending.delete(requestId);
         this.#expiredRequestIds.add(requestId);

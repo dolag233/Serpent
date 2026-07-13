@@ -1,4 +1,5 @@
 import {
+  copyFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -7,6 +8,7 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs';
+import { randomBytes } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -77,6 +79,37 @@ afterEach(() => {
 });
 
 describe('LibraryService ZIP export', () => {
+  it('rejects a second export for the same library and records the active operation', async () => {
+    const root = temporaryRoot();
+    const diagnostics: Array<{ scope: string; context?: Record<string, unknown> }> = [];
+    const service = new LibraryService({
+      onDiagnostic: ({ scope, context }) => diagnostics.push({ scope, context }),
+    });
+    const created = service.createLibrary({ displayName: 'Concurrent Export', selectedParentPath: root });
+
+    const firstExport = service.exportLibraryToFolder({
+      libraryId: created.libraryId,
+      destinationPath: path.join(root, 'first-export'),
+      includeLinkedContent: false,
+    });
+    await expectRejectReasonAsync(
+      () => service.exportLibraryToZip({
+        libraryId: created.libraryId,
+        destinationPath: path.join(root, 'second-export.zip'),
+        includeLinkedContent: false,
+      }),
+      'TRANSFER_IN_PROGRESS',
+      'TRANSFER_IN_PROGRESS',
+    );
+    await firstExport;
+
+    expect(diagnostics).toContainEqual(expect.objectContaining({
+      scope: 'transfer.export.in-progress',
+      context: expect.objectContaining({ libraryId: created.libraryId }),
+    }));
+    service.closeAll();
+  });
+
   it('exports a library as a valid ZIP with Assets, revisions, trash, and library.db', async () => {
     const root = temporaryRoot();
     const service = new LibraryService();
@@ -124,6 +157,35 @@ describe('LibraryService ZIP export', () => {
     expect(entryNames.some((n) => n.startsWith('.serpent/previews/'))).toBe(false);
     expect(entryNames.some((n) => n.startsWith('.serpent/operations/'))).toBe(false);
 
+    service.closeAll();
+  });
+
+  it('includes requested linked content in ZIP under a collision-safe path', async () => {
+    const root = temporaryRoot();
+    const linkedRoot = path.join(root, 'linked-source');
+    mkdirSync(linkedRoot);
+    writeFileSync(path.join(linkedRoot, 'reference.png'), 'linked');
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'Linked ZIP', selectedParentPath: root });
+    const linked = service.importFolderAsLinked({
+      libraryId: created.libraryId,
+      sourceRootPath: linkedRoot,
+      displayName: 'References',
+    });
+    const destinationPath = path.join(root, 'linked.zip');
+
+    const result = await service.exportLibraryToZip({
+      libraryId: created.libraryId,
+      destinationPath,
+      includeLinkedContent: true,
+    });
+
+    const AdmZip = require('adm-zip') as new (path: string) => {
+      getEntries(): Array<{ entryName: string }>;
+    };
+    const names = new AdmZip(destinationPath).getEntries().map((entry) => entry.entryName);
+    expect(result.includedLinkedContent).toBe(true);
+    expect(names).toContain(`_linked/References-${linked.folderId.slice(0, 8)}/reference.png`);
     service.closeAll();
   });
 
@@ -299,6 +361,103 @@ describe('LibraryService ZIP export', () => {
 });
 
 describe('LibraryService ZIP import', () => {
+  it('uses the streaming importer for large entries and reports chunk-level byte progress', async () => {
+    const root = temporaryRoot();
+    const sourceService = new LibraryService();
+    const created = sourceService.createLibrary({ displayName: 'Streaming Import', selectedParentPath: root });
+    const payload = randomBytes(2 * 1024 * 1024);
+    writeFileSync(path.join(created.libraryPath, 'Assets', 'large.bin'), payload);
+    const zipPath = path.join(root, 'streaming-import.zip');
+    await sourceService.exportLibraryToZip({
+      libraryId: created.libraryId,
+      destinationPath: zipPath,
+      includeLinkedContent: false,
+    });
+    sourceService.closeAll();
+
+    const extractByteProgress: number[] = [];
+    const service = new LibraryService({
+      onProgress: (event) => {
+        if (event.type === 'import.progress' && event.phase === 'extract' && event.bytesProcessed > 0) {
+          extractByteProgress.push(event.bytesProcessed);
+        }
+      },
+    });
+    const destinationParentPath = path.join(root, 'destination');
+    mkdirSync(destinationParentPath);
+    const imported = await service.importLibraryFromZip({
+      sourceZipPath: zipPath,
+      destinationParentPath,
+    });
+
+    expect(readFileSync(path.join(imported.libraryPath, 'Assets', 'large.bin'))).toEqual(payload);
+    expect(new Set(extractByteProgress).size).toBeGreaterThan(1);
+    service.closeAll();
+  });
+
+  it('rejects overlapping imports that reuse a source or destination and logs the conflict', async () => {
+    const root = temporaryRoot();
+    const sourceService = new LibraryService();
+    const created = sourceService.createLibrary({ displayName: 'Concurrent Import', selectedParentPath: root });
+    writeFileSync(path.join(created.libraryPath, 'Assets', 'asset.bin'), randomBytes(1024));
+    const firstSourceDirectory = path.join(root, 'source-a');
+    const secondSourceDirectory = path.join(root, 'source-b');
+    mkdirSync(firstSourceDirectory);
+    mkdirSync(secondSourceDirectory);
+    const sourceZipPath = path.join(firstSourceDirectory, 'shared.zip');
+    const secondZipPath = path.join(secondSourceDirectory, 'shared.zip');
+    await sourceService.exportLibraryToZip({
+      libraryId: created.libraryId,
+      destinationPath: sourceZipPath,
+      includeLinkedContent: false,
+    });
+    copyFileSync(sourceZipPath, secondZipPath);
+    sourceService.closeAll();
+
+    const diagnostics: Array<{ scope: string; context?: Record<string, unknown> }> = [];
+    const service = new LibraryService({
+      onDiagnostic: ({ scope, context }) => diagnostics.push({ scope, context }),
+    });
+    const firstDestination = path.join(root, 'destination-a');
+    const secondDestination = path.join(root, 'destination-b');
+    mkdirSync(firstDestination);
+    mkdirSync(secondDestination);
+    const firstImport = service.importLibraryFromZip({
+      sourceZipPath,
+      destinationParentPath: firstDestination,
+    });
+    await expectRejectReasonAsync(
+      () => service.importLibraryFromZip({
+        sourceZipPath,
+        destinationParentPath: secondDestination,
+      }),
+      'TRANSFER_IN_PROGRESS',
+      'TRANSFER_IN_PROGRESS',
+    );
+    const imported = await firstImport;
+    service.closeLibrary(imported.libraryId);
+
+    const sharedDestination = path.join(root, 'destination-shared');
+    mkdirSync(sharedDestination);
+    const destinationImport = service.importLibraryFromZip({
+      sourceZipPath,
+      destinationParentPath: sharedDestination,
+    });
+    await expectRejectReasonAsync(
+      () => service.importLibraryFromZip({
+        sourceZipPath: secondZipPath,
+        destinationParentPath: sharedDestination,
+      }),
+      'TRANSFER_IN_PROGRESS',
+      'TRANSFER_IN_PROGRESS',
+    );
+    const secondImported = await destinationImport;
+    service.closeLibrary(secondImported.libraryId);
+
+    expect(diagnostics.filter(({ scope }) => scope === 'transfer.import.in-progress'))
+      .toHaveLength(2);
+  });
+
   it('imports a library from a valid ZIP', async () => {
     const root = temporaryRoot();
     const service = new LibraryService();
