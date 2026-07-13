@@ -793,6 +793,22 @@ describe('search filters', () => {
 // ── Sort ────────────────────────────────────────────────────────────
 
 describe('sort', () => {
+  it('preserves a linked asset location kind in search results', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const library = service.createLibrary({ displayName: 'Linked Search', selectedParentPath: root });
+    const linkedRoot = path.join(root, 'linked-search-source');
+    mkdirSync(linkedRoot);
+    writeFileSync(path.join(linkedRoot, 'linked.png'), 'linked');
+    service.importFolderAsLinked({ libraryId: library.libraryId, sourceRootPath: linkedRoot });
+
+    const result = service.searchAssets({ libraryId: library.libraryId });
+    expect(result.items).toEqual([
+      expect.objectContaining({ locationKind: 'linked', displayName: 'linked.png' }),
+    ]);
+    service.closeAll();
+  });
+
   it('sorts by rating descending', () => {
     const { service, libraryId, assetId, libraryPath } = createLibraryWithAssetAndTags();
     const assetId2 = createSecondAsset(service, libraryId, libraryPath, 'Other');
@@ -1180,6 +1196,29 @@ describe('search after asset operations', () => {
     });
     expect(after.total).toBe(0);
 
+    service.closeAll();
+  });
+
+  it('updates search index after tag rename and tag deletion', () => {
+    const { service, libraryId, assetId } = createLibraryWithAssetAndTags('Hero');
+    const tag = service.createTag({ libraryId, name: 'OldTagName' });
+    service.assignTags({ libraryId, assetIds: [assetId], tagIds: [tag.tagId] });
+
+    service.renameTag({ libraryId, tagId: tag.tagId, name: 'NewTagName' });
+    expect(service.searchAssets({
+      libraryId,
+      query: { clauses: [{ field: 'tags', values: ['OldTagName'], exclude: false }] },
+    }).total).toBe(0);
+    expect(service.searchAssets({
+      libraryId,
+      query: { clauses: [{ field: 'tags', values: ['NewTagName'], exclude: false }] },
+    }).total).toBe(1);
+
+    service.deleteTag({ libraryId, tagId: tag.tagId });
+    expect(service.searchAssets({
+      libraryId,
+      query: { clauses: [{ field: 'tags', values: ['NewTagName'], exclude: false }] },
+    }).total).toBe(0);
     service.closeAll();
   });
 

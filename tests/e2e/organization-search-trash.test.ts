@@ -40,6 +40,10 @@ test('organizes, finds, trashes, and restores an imported asset through the UI',
     await window.getByPlaceholder('输入标签名称，回车创建').fill('角色');
     await window.getByPlaceholder('输入标签名称，回车创建').press('Enter');
     await expect(window.getByRole('button', { name: /角色/ })).toBeVisible();
+    await window.getByRole('button', { name: '添加标签' }).click();
+    await window.getByPlaceholder('输入标签名称，回车创建').fill('临时');
+    await window.getByPlaceholder('输入标签名称，回车创建').press('Enter');
+    await expect(window.getByRole('button', { name: /临时/ })).toBeVisible();
 
     await window.getByRole('button', { name: '添加合集' }).click();
     await window.getByPlaceholder('输入合集名称，回车创建').fill('精选');
@@ -57,6 +61,44 @@ test('organizes, finds, trashes, and restores an imported asset through the UI',
     await window.getByRole('menuitem', { name: '加入合集：精选' }).click();
     await expect(window.locator('.toast')).toContainText('资产已加入合集');
     await window.getByRole('button', { name: /精选/ }).click();
+    await expect(window.getByRole('button', { name: /hero\.png/i })).toBeVisible();
+
+    await window.getByRole('button', { name: /角色/ }).click({ button: 'right' });
+    await window.getByRole('menuitem', { name: '重命名标签' }).click();
+    await expect(window.getByRole('heading', { name: '重命名标签' })).toBeVisible();
+    await window.getByLabel('标签名称').fill('临时');
+    await window.getByRole('button', { name: '保存名称' }).click();
+    await expect(window.getByRole('alert')).toContainText('重命名标签失败。原因：资源库中已存在同名标签。');
+    await expect(window.getByRole('heading', { name: '重命名标签' })).toBeVisible();
+    await window.getByLabel('标签名称').fill('人物');
+    await window.getByRole('button', { name: '保存名称' }).click();
+    await expect(window.getByRole('button', { name: /人物/ })).toBeVisible();
+    await expect(window.locator('.toast')).toContainText('标签已重命名');
+
+    await window.getByRole('button', { name: /精选/ }).click({ button: 'right' });
+    await window.getByRole('menuitem', { name: '重命名合集' }).click();
+    await expect(window.getByRole('heading', { name: '重命名合集' })).toBeVisible();
+    await window.getByLabel('合集名称').fill('收藏');
+    await window.getByRole('button', { name: '保存名称' }).click();
+    await expect(window.getByRole('button', { name: /收藏/ })).toBeVisible();
+    await expect(window.locator('.toast')).toContainText('合集已重命名');
+
+    await window.getByRole('button', { name: /hero\.png/i }).click({ button: 'right' });
+    await window.getByRole('menuitem', { name: '从当前合集移除' }).click();
+    await expect(window.locator('.toast')).toContainText('资产已从合集移除');
+    await expect(window.getByRole('button', { name: /hero\.png/i })).toHaveCount(0);
+
+    window.once('dialog', (dialog) => dialog.accept());
+    await window.getByRole('button', { name: /人物/ }).click({ button: 'right' });
+    await window.getByRole('menuitem', { name: '删除标签' }).click();
+    await expect(window.getByRole('button', { name: /人物/ })).toHaveCount(0);
+    await expect(window.locator('.toast')).toContainText('标签已删除');
+
+    window.once('dialog', (dialog) => dialog.accept());
+    await window.getByRole('button', { name: /收藏/ }).click({ button: 'right' });
+    await window.getByRole('menuitem', { name: '删除合集' }).click();
+    await expect(window.getByRole('button', { name: /收藏/ })).toHaveCount(0);
+    await expect(window.locator('.toast')).toContainText('合集已删除');
     await expect(window.getByRole('button', { name: /hero\.png/i })).toBeVisible();
 
     await window.getByRole('button', { name: /hero\.png/i }).click();

@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 import { assetMetadataResultSchema, assetSummarySchema, collectionSummarySchema, linkedFolderSummarySchema, managedFolderSummarySchema, smartCollectionSummarySchema, tagSummarySchema } from '../asset-types';
-import { publicErrorSchema } from './errors';
+import { publicErrorReasonSchema, publicErrorSchema } from './errors';
 import {
   WORKER_READY_MESSAGE_TYPE,
   WORKER_SHUTDOWN_ACK_MESSAGE_TYPE,
@@ -408,6 +408,14 @@ const assetOperationSuccessSchemas = [
     ok: z.literal(true),
     type: z.literal('asset.deleted-linked'),
     deletedCount: z.number().int().nonnegative(),
+    failedCount: z.number().int().nonnegative(),
+    failures: z.array(z.strictObject({
+      assetId: nonBlankString,
+      reason: publicErrorReasonSchema,
+    })),
+  }).refine((result) => result.failedCount === result.failures.length, {
+    message: 'failedCount must match failures length.',
+    path: ['failedCount'],
   }),
   z.strictObject({
     ok: z.literal(true),

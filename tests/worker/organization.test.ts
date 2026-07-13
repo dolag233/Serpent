@@ -468,6 +468,33 @@ describe('collections', () => {
 // ── Collection assets ─────────────────────────────────────────────────
 
 describe('collection assets', () => {
+  it('preserves a linked asset location kind when listing a collection', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const library = service.createLibrary({ displayName: 'Linked Collection', selectedParentPath: root });
+    const linkedRoot = path.join(root, 'linked-collection-source');
+    mkdirSync(linkedRoot);
+    writeFileSync(path.join(linkedRoot, 'linked.png'), 'linked');
+    service.importFolderAsLinked({ libraryId: library.libraryId, sourceRootPath: linkedRoot });
+    const [linkedAsset] = service.listAssets({ libraryId: library.libraryId, recursive: true });
+    const collection = service.createCollection({ libraryId: library.libraryId, name: 'Linked Assets' });
+    service.addCollectionAssets({
+      libraryId: library.libraryId,
+      collectionId: collection.collectionId,
+      assetIds: [linkedAsset!.assetId],
+    });
+
+    expect(service.listCollectionAssets({
+      libraryId: library.libraryId,
+      collectionId: collection.collectionId,
+      recursive: false,
+    })).toEqual([expect.objectContaining({
+      assetId: linkedAsset!.assetId,
+      locationKind: 'linked',
+    })]);
+    service.closeAll();
+  });
+
   it('adds assets to a collection and lists them', () => {
     const { service, libraryId, assetId, libraryPath } = createLibraryWithAsset();
     const managedFolder = service.listManagedFolders(libraryId)[0]!;

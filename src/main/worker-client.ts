@@ -32,6 +32,7 @@ interface PendingRequest {
 const READY_TIMEOUT_MS = 5_000;
 const REQUEST_TIMEOUT_MS = 15_000;
 const FILE_OPERATION_TIMEOUT_MS = 5 * 60_000;
+const LINKED_DELETE_TIMEOUT_MS = 6 * 60_000;
 const EXPORT_IMPORT_TIMEOUT_MS = 30 * 60_000;
 const SHUTDOWN_TIMEOUT_MS = 2_000;
 
@@ -48,6 +49,7 @@ export class LibraryWorkerClient {
   #child: UtilityProcess | undefined;
   #ready = false;
   #pending = new Map<string, PendingRequest>();
+  #expiredRequestIds = new Set<string>();
   #shutdownAck: (() => void) | undefined;
   #shuttingDown = false;
   #assetChangeListeners = new Set<(event: AssetChangeEvent) => void>();
@@ -127,11 +129,20 @@ export class LibraryWorkerClient {
     return new Promise<WorkerResult>((resolve, reject) => {
       const timeout = EXPORT_IMPORT_COMMANDS.has(command.type)
         ? EXPORT_IMPORT_TIMEOUT_MS
-        : command.type.startsWith('asset.import.') || command.type === 'asset.refresh'
+        : command.type === 'asset.delete-linked'
+          ? LINKED_DELETE_TIMEOUT_MS
+        : command.type.startsWith('asset.import.')
+            || command.type === 'asset.refresh'
           ? FILE_OPERATION_TIMEOUT_MS
           : REQUEST_TIMEOUT_MS;
       const timer = setTimeout(() => {
         this.#pending.delete(requestId);
+        this.#expiredRequestIds.add(requestId);
+        const cleanupTimer = setTimeout(
+          () => this.#expiredRequestIds.delete(requestId),
+          10 * 60_000,
+        );
+        cleanupTimer.unref();
         reject(new Error(`Library Worker request timed out (${requestId}).`));
       }, timeout);
 
@@ -262,6 +273,14 @@ export class LibraryWorkerClient {
 
     const pending = this.#pending.get(response.requestId);
     if (!pending) {
+      if (this.#expiredRequestIds.delete(response.requestId)) {
+        this.logger.info(
+          'worker.response.late',
+          'Ignored a valid response for a timed-out request.',
+          { requestId: response.requestId },
+        );
+        return;
+      }
       this.#protocolFailure(new Error('Library Worker response has no matching request.'));
       return;
     }

@@ -25,7 +25,7 @@ import {
   type Stats,
 } from 'node:fs';
 import path from 'node:path';
-import { spawn, type ChildProcess } from 'node:child_process';
+import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import { lookup as dnsLookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
 
@@ -849,6 +849,16 @@ interface OperationManifest {
   version: 1;
 }
 
+interface LinkedTrashOperationManifest {
+  assetIds: string[];
+  inFlightAssetId: string | null;
+  kind: 'linked-trash';
+  trashedAssetIds: string[];
+  version: 2;
+}
+
+type PersistedOperationManifest = OperationManifest | LinkedTrashOperationManifest;
+
 interface OperationRow {
   error_code: string | null;
   manifest_json: string;
@@ -985,6 +995,8 @@ export interface LibraryServiceOptions {
   scheduler?: DebounceScheduler;
   /** Injectable spawn for binary subprocesses (ffmpeg/ffprobe/oiiotool). */
   spawnFn?: SpawnFunction;
+  /** Moves one absolute source path to the OS system trash. */
+  trashItem?: (sourcePath: string) => Promise<void>;
 }
 
 export interface LibraryServiceDiagnostic {
@@ -1058,6 +1070,37 @@ const DEFAULT_ASSET_OBSERVER_FACTORY: AssetObserverFactory = (assetsPath, onEven
   observer.on('error', onError);
   return observer;
 };
+
+async function defaultTrashItem(sourcePath: string): Promise<void> {
+  const binaryName = process.platform === 'darwin'
+    ? 'macos-trash'
+    : process.platform === 'win32'
+      ? 'windows-trash.exe'
+      : undefined;
+  if (!binaryName) throw new Error(`System trash is unsupported on ${process.platform}.`);
+
+  // trash@10.1.1 vendors maintained native helpers for macOS and Windows.
+  // Resolve the pinned package without loading its ESM entry, then redirect the
+  // helper to app.asar.unpacked because executable files cannot run from ASAR.
+  const packageEntry = require.resolve('trash');
+  const asarSegment = `${path.sep}app.asar${path.sep}`;
+  let binaryPath = path.join(path.dirname(packageEntry), 'lib', binaryName);
+  if (binaryPath.includes(asarSegment)) {
+    binaryPath = binaryPath.replace(
+      asarSegment,
+      `${path.sep}app.asar.unpacked${path.sep}`,
+    );
+  }
+
+  await new Promise<void>((resolve, reject) => {
+    execFile(
+      binaryPath,
+      [sourcePath],
+      { timeout: 15_000, windowsHide: true },
+      (error) => error ? reject(error) : resolve(),
+    );
+  });
+}
 
 class SimulatedCrashError extends Error {}
 
@@ -1910,7 +1953,7 @@ export class LibraryService {
     }, Math.max(0, expiresAt - clock.now()));
   }
 
-  private parseOperationManifest(serialized: string): OperationManifest {
+  private parseOperationManifest(serialized: string): PersistedOperationManifest {
     let value: unknown;
     try {
       value = JSON.parse(serialized);
@@ -1920,7 +1963,34 @@ export class LibraryService {
     if (
       typeof value !== 'object' ||
       value === null ||
-      !('version' in value) ||
+      !('version' in value)
+    ) {
+      throw new LibraryServiceError('LIBRARY_CORRUPT');
+    }
+    if (value.version === 2) {
+      const candidate = value as Record<string, unknown>;
+      const assetIds = candidate.assetIds;
+      const trashedAssetIds = candidate.trashedAssetIds;
+      if (
+        candidate.kind !== 'linked-trash' ||
+        !Array.isArray(assetIds) ||
+        !assetIds.every((assetId) => typeof assetId === 'string' && UUID.test(assetId)) ||
+        new Set(assetIds).size !== assetIds.length ||
+        !Array.isArray(trashedAssetIds) ||
+        !trashedAssetIds.every((assetId) => typeof assetId === 'string' && UUID.test(assetId)) ||
+        new Set(trashedAssetIds).size !== trashedAssetIds.length ||
+        trashedAssetIds.some((assetId) => !assetIds.includes(assetId)) ||
+        !('inFlightAssetId' in candidate) ||
+        (candidate.inFlightAssetId !== null && (
+          typeof candidate.inFlightAssetId !== 'string' ||
+          !assetIds.includes(candidate.inFlightAssetId)
+        ))
+      ) {
+        throw new LibraryServiceError('LIBRARY_CORRUPT');
+      }
+      return value as unknown as LinkedTrashOperationManifest;
+    }
+    if (
       value.version !== 1 ||
       !('files' in value) ||
       !Array.isArray(value.files) ||
@@ -1959,7 +2029,100 @@ export class LibraryService {
         throw new LibraryServiceError('LIBRARY_CORRUPT');
       }
     }
-    return value as OperationManifest;
+    return value as unknown as OperationManifest;
+  }
+
+  private recoverLinkedTrashOperation(
+    openLibrary: OpenLibrary,
+    row: OperationRow,
+    manifest: LinkedTrashOperationManifest,
+  ): void {
+    const assetIdsToDelete: string[] = [];
+    let recoveryPending = false;
+    const explicitlyTrashed = new Set(manifest.trashedAssetIds);
+    for (const assetId of manifest.assetIds) {
+      const asset = openLibrary.connection
+        .prepare(
+          `SELECT asset_id, linked_folder_id, relative_file_path
+             FROM assets
+            WHERE asset_id = ? AND location_kind = 'linked'`,
+        )
+        .get(assetId) as {
+          asset_id: string;
+          linked_folder_id: string;
+          relative_file_path: string;
+        } | undefined;
+      if (!asset) continue;
+      if (explicitlyTrashed.has(assetId)) {
+        assetIdsToDelete.push(assetId);
+        continue;
+      }
+      if (manifest.inFlightAssetId === assetId) {
+        const linkedFolder = openLibrary.connection
+          .prepare('SELECT absolute_root_path, status FROM linked_folders WHERE folder_id = ?')
+          .get(asset.linked_folder_id) as {
+            absolute_root_path: string;
+            status: 'available' | 'offline';
+          } | undefined;
+        const linkedRootOnline = linkedFolder?.status === 'available' &&
+          !this.linkedRootIsGone(linkedFolder.absolute_root_path);
+        if (linkedRootOnline) {
+          try {
+            const sourcePath = this.linkedAssetPath(
+              openLibrary,
+              asset.linked_folder_id,
+              asset.relative_file_path,
+            );
+            if (!existsSync(sourcePath)) assetIdsToDelete.push(assetId);
+          } catch (error) {
+            recoveryPending = true;
+            this.diagnose('asset.delete-linked.recovery-inspect-source', error, {
+              operationId: row.operation_id,
+              libraryId: openLibrary.summary.libraryId,
+              assetId,
+            });
+          }
+        } else {
+          recoveryPending = true;
+        }
+      }
+    }
+
+    openLibrary.connection.transaction(() => {
+      for (const assetId of assetIdsToDelete) {
+        openLibrary.connection.prepare('DELETE FROM assets WHERE asset_id = ?').run(assetId);
+      }
+      openLibrary.connection
+        .prepare(
+          `UPDATE file_operations
+              SET status = ?, error_code = ?, updated_at = ?
+            WHERE operation_id = ?`,
+        )
+        .run(
+          recoveryPending ? 'applying' : 'committed',
+          recoveryPending ? 'SOURCE_TRASH_RECONCILIATION_REQUIRED' : 'PROCESS_INTERRUPTED_RECOVERED',
+          new Date().toISOString(),
+          row.operation_id,
+        );
+    })();
+
+    if (recoveryPending) {
+      this.diagnose(
+        'asset.delete-linked.recovery-pending',
+        new LibraryServiceError('ASSET_SOURCE_TRASH_FAILED', {
+          reason: 'SOURCE_TRASH_RECONCILIATION_REQUIRED',
+        }),
+        {
+          operationId: row.operation_id,
+          libraryId: openLibrary.summary.libraryId,
+          inFlightAssetId: manifest.inFlightAssetId,
+        },
+      );
+    } else if (manifest.assetIds.length > assetIdsToDelete.length) {
+      openLibrary.connection
+        .prepare('UPDATE file_operations SET error_code = ? WHERE operation_id = ?')
+        .run('PROCESS_INTERRUPTED_PARTIAL', row.operation_id);
+    }
   }
 
   private recoverFileOperations(openLibrary: OpenLibrary): void {
@@ -1995,6 +2158,10 @@ export class LibraryService {
       }
       this.assertSafeOperationPath(operationPath);
       const manifest = this.parseOperationManifest(row.manifest_json);
+      if (manifest.version === 2) {
+        this.recoverLinkedTrashOperation(openLibrary, row, manifest);
+        continue;
+      }
       if (
         row.status === 'preparing' &&
         (manifest.phase === 'staging' || manifest.phase === 'prepared')
@@ -2944,10 +3111,23 @@ export class LibraryService {
       .get(input.tagId, openLibrary.summary.libraryId);
     if (!existing) throw new LibraryServiceError('FOLDER_NOT_FOUND');
 
+    const affectedAssets = openLibrary.connection
+      .prepare(
+        `SELECT asset_id FROM human_asset_tags WHERE tag_id = ?
+         UNION
+         SELECT asset_id FROM ai_asset_tags WHERE tag_id = ?`,
+      )
+      .all(input.tagId, input.tagId) as Array<{ asset_id: string }>;
+
     try {
-      openLibrary.connection
-        .prepare('UPDATE tags SET name = ? WHERE tag_id = ?')
-        .run(trimmed, input.tagId);
+      openLibrary.connection.transaction(() => {
+        openLibrary.connection
+          .prepare('UPDATE tags SET name = ? WHERE tag_id = ?')
+          .run(trimmed, input.tagId);
+        for (const { asset_id: assetId } of affectedAssets) {
+          this.syncAssetSearchContent(openLibrary.connection, assetId);
+        }
+      })();
     } catch (error) {
       if (
         error instanceof Error &&
@@ -2972,9 +3152,22 @@ export class LibraryService {
       .get(input.tagId, openLibrary.summary.libraryId);
     if (!existing) throw new LibraryServiceError('FOLDER_NOT_FOUND');
 
-    openLibrary.connection
-      .prepare('DELETE FROM tags WHERE tag_id = ?')
-      .run(input.tagId);
+    const affectedAssets = openLibrary.connection
+      .prepare(
+        `SELECT asset_id FROM human_asset_tags WHERE tag_id = ?
+         UNION
+         SELECT asset_id FROM ai_asset_tags WHERE tag_id = ?`,
+      )
+      .all(input.tagId, input.tagId) as Array<{ asset_id: string }>;
+
+    openLibrary.connection.transaction(() => {
+      openLibrary.connection
+        .prepare('DELETE FROM tags WHERE tag_id = ?')
+        .run(input.tagId);
+      for (const { asset_id: assetId } of affectedAssets) {
+        this.syncAssetSearchContent(openLibrary.connection, assetId);
+      }
+    })();
     return input.tagId;
   }
 
@@ -3336,7 +3529,7 @@ export class LibraryService {
     const placeholders = collectionIds.map(() => '?').join(',');
     const rows = openLibrary.connection
       .prepare(
-        `SELECT DISTINCT a.asset_id, a.managed_folder_id, a.relative_file_path,
+        `SELECT DISTINCT a.asset_id, a.location_kind, a.managed_folder_id, a.relative_file_path,
                 a.current_revision_id, a.availability, r.byte_size, r.modified_at,
                 m.label, COALESCE(m.rating, 0) AS rating, COALESCE(m.favorite, 0) AS favorite,
                 a.deleted_at, a.trashed_from_relative_path
@@ -3349,6 +3542,7 @@ export class LibraryService {
       )
       .all(...collectionIds) as Array<{
         asset_id: string;
+        location_kind: 'managed' | 'linked';
         availability: 'available' | 'missing';
         byte_size: number;
         current_revision_id: string;
@@ -5712,12 +5906,12 @@ export class LibraryService {
 
     // Columns for data query.
     const dataColumns = hasQuery
-      ? `a.asset_id, a.managed_folder_id, a.relative_file_path, a.current_revision_id,
+      ? `a.asset_id, a.location_kind, a.managed_folder_id, a.relative_file_path, a.current_revision_id,
          a.availability, r.byte_size, r.modified_at,
          m.label, COALESCE(m.rating, 0) AS rating, COALESCE(m.favorite, 0) AS favorite,
          a.deleted_at, a.trashed_from_relative_path,
          snippet(asset_search, 0, '<b>', '</b>', '...', 32) AS snippet_text`
-      : `a.asset_id, a.managed_folder_id, a.relative_file_path, a.current_revision_id,
+      : `a.asset_id, a.location_kind, a.managed_folder_id, a.relative_file_path, a.current_revision_id,
          a.availability, r.byte_size, r.modified_at,
          m.label, COALESCE(m.rating, 0) AS rating, COALESCE(m.favorite, 0) AS favorite,
          a.deleted_at, a.trashed_from_relative_path`;
@@ -5735,6 +5929,7 @@ export class LibraryService {
       .prepare(dataSql)
       .all(...allParams, limit, offset) as Array<{
         asset_id: string;
+        location_kind: 'managed' | 'linked';
         managed_folder_id: string | null;
         relative_file_path: string;
         current_revision_id: string;
@@ -6025,6 +6220,7 @@ export class LibraryService {
   private assetSummaryFromRow(
     row: {
       asset_id: string;
+      location_kind: 'managed' | 'linked';
       managed_folder_id: string | null;
       relative_file_path: string;
       current_revision_id: string;
@@ -6051,6 +6247,7 @@ export class LibraryService {
     }
     return {
       assetId: row.asset_id,
+      locationKind: row.location_kind,
       managedFolderId: row.managed_folder_id,
       relativeFilePath: row.relative_file_path,
       displayName: path.posix.basename(row.relative_file_path),
@@ -6518,12 +6715,22 @@ export class LibraryService {
     return rows.map((row) => this.assetSummaryFromRow(row));
   }
 
-  deleteLinkedAssets(input: {
+  async deleteLinkedAssets(input: {
     libraryId: string;
     assetIds: string[];
     deleteSourceFile: boolean;
-  }): { deletedCount: number } {
+  }): Promise<{
+    deletedCount: number;
+    failedCount: number;
+    failures: Array<{ assetId: string; reason: PublicErrorReason }>;
+  }> {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
+    if (input.assetIds.length === 0 || input.assetIds.length > 20) {
+      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+    }
+    if (new Set(input.assetIds).size !== input.assetIds.length) {
+      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+    }
 
     const rows = openLibrary.connection
       .prepare(
@@ -6550,23 +6757,178 @@ export class LibraryService {
       }
     }
 
-    if (input.deleteSourceFile) {
-      // MVP: system trash is not supported in Worker (no Electron shell APIs).
-      // The `trash` npm package is not in package.json to keep deps minimal.
-      // Main process should move files to system trash before calling this.
-      // For now, throw NOT_SUPPORTED to signal the caller.
-      throw new LibraryServiceError('LIBRARY_NOT_WRITABLE');
+    const rowById = new Map(rows.map((row) => [row.asset_id, row]));
+    const orderedRows = input.assetIds.map((assetId) => rowById.get(assetId)!);
+
+    if (!input.deleteSourceFile) {
+      openLibrary.connection.transaction(() => {
+        for (const row of orderedRows) {
+          openLibrary.connection
+            .prepare('DELETE FROM assets WHERE asset_id = ?')
+            .run(row.asset_id);
+        }
+      })();
+      return { deletedCount: orderedRows.length, failedCount: 0, failures: [] };
     }
 
-    openLibrary.connection.transaction(() => {
-      for (const row of rows) {
-        openLibrary.connection
-          .prepare('DELETE FROM assets WHERE asset_id = ?')
-          .run(row.asset_id);
-      }
-    })();
+    const trashItem = this.options.trashItem ?? defaultTrashItem;
+    const operationId = randomUUID();
+    const now = new Date().toISOString();
+    const manifest: LinkedTrashOperationManifest = {
+      version: 2,
+      kind: 'linked-trash',
+      assetIds: orderedRows.map((row) => row.asset_id),
+      inFlightAssetId: null,
+      trashedAssetIds: [],
+    };
+    const trashedRows: typeof orderedRows = [];
+    const failures: Array<{ assetId: string; reason: PublicErrorReason }> = [];
 
-    return { deletedCount: rows.length };
+    openLibrary.connection
+      .prepare(
+        `INSERT INTO file_operations
+           (operation_id, kind, status, manifest_json, error_code, created_at, updated_at)
+         VALUES (?, 'delete-linked-source', 'applying', ?, NULL, ?, ?)`,
+      )
+      .run(operationId, JSON.stringify(manifest), now, now);
+
+    for (const row of orderedRows) {
+      let sourcePath: string | undefined;
+      let trashAttempted = false;
+      try {
+        manifest.inFlightAssetId = row.asset_id;
+        openLibrary.connection
+          .prepare('UPDATE file_operations SET manifest_json = ?, updated_at = ? WHERE operation_id = ?')
+          .run(JSON.stringify(manifest), new Date().toISOString(), operationId);
+        sourcePath = this.linkedAssetPath(
+          openLibrary,
+          row.linked_folder_id,
+          row.relative_file_path,
+        );
+        const sourceEntry = lstatSync(sourcePath);
+        if (sourceEntry.isSymbolicLink() || !sourceEntry.isFile()) {
+          throw new LibraryServiceError('ASSET_SOURCE_TRASH_FAILED', {
+            reason: 'UNSUPPORTED_FILE_ENTRY',
+          });
+        }
+        trashAttempted = true;
+        await trashItem(sourcePath);
+        if (existsSync(sourcePath)) {
+          throw new LibraryServiceError('ASSET_SOURCE_TRASH_FAILED', {
+            reason: 'SOURCE_TRASH_FAILED',
+          });
+        }
+        manifest.trashedAssetIds.push(row.asset_id);
+        manifest.inFlightAssetId = null;
+        openLibrary.connection
+          .prepare('UPDATE file_operations SET manifest_json = ?, updated_at = ? WHERE operation_id = ?')
+          .run(JSON.stringify(manifest), new Date().toISOString(), operationId);
+      } catch (error) {
+        const linkedFolder = openLibrary.connection
+          .prepare('SELECT absolute_root_path, status FROM linked_folders WHERE folder_id = ?')
+          .get(row.linked_folder_id) as {
+            absolute_root_path: string;
+            status: 'available' | 'offline';
+          } | undefined;
+        const linkedRootOnline = linkedFolder?.status === 'available' &&
+          !this.linkedRootIsGone(linkedFolder.absolute_root_path);
+        const sourceMissing = trashAttempted && sourcePath !== undefined && !existsSync(sourcePath);
+        const sourceWasTrashed = manifest.trashedAssetIds.includes(row.asset_id) ||
+          (sourceMissing && linkedRootOnline);
+        const sourceStateUncertain = sourceMissing && !linkedRootOnline;
+        if (sourceWasTrashed && !manifest.trashedAssetIds.includes(row.asset_id)) {
+          manifest.trashedAssetIds.push(row.asset_id);
+        }
+        manifest.inFlightAssetId = sourceStateUncertain ? row.asset_id : null;
+        try {
+          openLibrary.connection
+            .prepare('UPDATE file_operations SET manifest_json = ?, updated_at = ? WHERE operation_id = ?')
+            .run(JSON.stringify(manifest), new Date().toISOString(), operationId);
+        } catch {
+          // The applying journal remains authoritative. Recovery only infers a
+          // trashed in-flight item while its linked root is confirmed online.
+        }
+        if (sourceWasTrashed || sourceStateUncertain) {
+          const failure = new LibraryServiceError('ASSET_SOURCE_TRASH_FAILED', {
+            cause: error,
+            reason: 'SOURCE_TRASH_RECONCILIATION_REQUIRED',
+          });
+          this.diagnose('asset.delete-linked.persist-trash-progress', failure, {
+            operationId,
+            libraryId: input.libraryId,
+            assetId: row.asset_id,
+          });
+          throw failure;
+        }
+        const failure = error instanceof LibraryServiceError
+          && error.code === 'ASSET_SOURCE_TRASH_FAILED'
+          ? error
+          : new LibraryServiceError('ASSET_SOURCE_TRASH_FAILED', {
+              cause: error,
+              reason: publicReasonFromError(error) ?? 'SOURCE_TRASH_FAILED',
+            });
+        const reason = failure.reason ?? 'SOURCE_TRASH_FAILED';
+        failures.push({ assetId: row.asset_id, reason });
+        this.diagnose('asset.delete-linked.trash-source', failure, {
+          operationId,
+          libraryId: input.libraryId,
+          assetId: row.asset_id,
+        });
+        continue;
+      }
+      trashedRows.push(row);
+    }
+
+    try {
+      openLibrary.connection.transaction(() => {
+        for (const row of trashedRows) {
+          openLibrary.connection
+            .prepare('DELETE FROM assets WHERE asset_id = ?')
+            .run(row.asset_id);
+        }
+        openLibrary.connection
+          .prepare(
+            `UPDATE file_operations
+                SET status = 'committed', manifest_json = ?, error_code = NULL, updated_at = ?
+              WHERE operation_id = ?`,
+          )
+          .run(JSON.stringify(manifest), new Date().toISOString(), operationId);
+      })();
+    } catch (error) {
+      const failure = new LibraryServiceError('ASSET_SOURCE_TRASH_FAILED', {
+        cause: error,
+        reason: 'SOURCE_TRASH_RECONCILIATION_REQUIRED',
+      });
+      this.diagnose('asset.delete-linked.delete-records', failure, {
+        operationId,
+        libraryId: input.libraryId,
+        sourceTrashedAssetIds: trashedRows.map((row) => row.asset_id),
+      });
+      throw failure;
+    }
+
+    const deletedAssetIds = trashedRows.map((row) => row.asset_id);
+
+    if (failures.length > 0) {
+      this.diagnose(
+        'asset.delete-linked.partial-failure',
+        new LibraryServiceError('ASSET_SOURCE_TRASH_FAILED', {
+          reason: failures[0]!.reason,
+        }),
+        {
+          operationId,
+          libraryId: input.libraryId,
+          succeededAssetIds: deletedAssetIds,
+          failedAssetIds: failures.map(({ assetId }) => assetId),
+        },
+      );
+    }
+
+    return {
+      deletedCount: deletedAssetIds.length,
+      failedCount: failures.length,
+      failures,
+    };
   }
 
   relinkAsset(input: {

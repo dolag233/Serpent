@@ -125,7 +125,69 @@ describe('preview response protocol', () => {
   });
 });
 
+describe('linked asset delete response protocol', () => {
+  it('reports partial failures with stable IDs and safe reasons only', () => {
+    expect(parseRendererResult({
+      ok: true,
+      type: 'asset.deleted-linked',
+      deletedCount: 1,
+      failedCount: 1,
+      failures: [{ assetId: 'asset-02', reason: 'SOURCE_TRASH_FAILED' }],
+    })).toEqual({
+      ok: true,
+      type: 'asset.deleted-linked',
+      deletedCount: 1,
+      failedCount: 1,
+      failures: [{ assetId: 'asset-02', reason: 'SOURCE_TRASH_FAILED' }],
+    });
+
+    expect(() => parseRendererResult({
+      ok: true,
+      type: 'asset.deleted-linked',
+      deletedCount: 0,
+      failedCount: 1,
+      failures: [{
+        assetId: 'asset-02',
+        reason: 'SOURCE_TRASH_FAILED',
+        sourcePath: '/private/linked/asset.png',
+      }],
+    })).toThrow();
+
+    expect(() => parseRendererResult({
+      ok: true,
+      type: 'asset.deleted-linked',
+      deletedCount: 0,
+      failedCount: 0,
+      failures: [{ assetId: 'asset-02', reason: 'SOURCE_TRASH_FAILED' }],
+    })).toThrow();
+  });
+});
+
 describe('worker request protocol', () => {
+  it('bounds linked source deletion and rejects duplicate asset IDs', () => {
+    const request = {
+      requestId: 'request-linked-delete',
+      command: {
+        type: 'asset.delete-linked',
+        libraryId: 'library-1',
+        assetIds: ['asset-1'],
+        deleteSourceFile: true,
+      },
+    } as const;
+    expect(parseWorkerRequest(request).command).toEqual(request.command);
+    expect(() => parseWorkerRequest({
+      ...request,
+      command: { ...request.command, assetIds: ['asset-1', 'asset-1'] },
+    })).toThrow();
+    expect(() => parseWorkerRequest({
+      ...request,
+      command: {
+        ...request.command,
+        assetIds: Array.from({ length: 21 }, (_, index) => `asset-${index}`),
+      },
+    })).toThrow();
+  });
+
   it('accepts a bounded AI queue-processing command with ephemeral credentials', () => {
     const parsed = parseWorkerRequest({
       requestId: 'request-ai-1',

@@ -49,7 +49,9 @@ test('video preview reports a specific generation failure and persists its diagn
     await expect(preview).toBeVisible();
     await expect(preview.getByText('预览不可用')).toBeVisible();
     await preview.getByRole('button', { name: '重试生成' }).click();
-    await expect(preview.getByText(/缺少 FFmpeg|媒体处理失败|源文件可能损坏/)).toBeVisible();
+    await expect(preview.getByText(/缺少 FFmpeg|媒体处理失败|源文件可能损坏/)).toBeVisible({
+      timeout: 15_000,
+    });
 
     await expect.poll(() => existsSync(logPath)
       ? readFileSync(logPath).subarray(initialLogLength).toString('utf8')

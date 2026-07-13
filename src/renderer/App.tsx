@@ -10,6 +10,9 @@ type RendererWindow = Window & { serpent?: { library?: SerpentLibraryApi } };
 type UiState = 'booting' | 'idle' | 'creating' | 'opening' | 'closing' | 'loading' | 'importing' | 'ready';
 type DialogKind = 'library' | 'folder' | 'tag' | 'collection' | null;
 type AssetScope = 'all' | 'root' | string;
+type OrganizationKind = 'tag' | 'collection';
+type OrganizationContextMenu = { kind: OrganizationKind; id: string; name: string; x: number; y: number };
+type OrganizationRenameTarget = { kind: OrganizationKind; id: string; name: string };
 type IconName = 'archive' | 'chevron' | 'close' | 'collection' | 'collapse-left' | 'collapse-right' | 'file' | 'folder' | 'grid' | 'heart' | 'info' | 'link' | 'menu' | 'plus' | 'refresh' | 'search' | 'smart' | 'star' | 'tag' | 'trash' | 'upload' | 'warning';
 
 const iconPaths: Record<IconName, ReactNode> = {
@@ -91,11 +94,13 @@ export function App() {
   const [tagInputValue, setTagInputValue] = useState('');
   const [showCollectionInput, setShowCollectionInput] = useState(false);
   const [collectionInputValue, setCollectionInputValue] = useState('');
+  const [organizationMenu, setOrganizationMenu] = useState<OrganizationContextMenu | null>(null);
+  const [renameTarget, setRenameTarget] = useState<OrganizationRenameTarget | null>(null);
 
   // Trash / Delete / Relink state
   const [showTrash, setShowTrash] = useState(false);
   const [trashedAssets, setTrashedAssets] = useState<AssetSummary[]>([]);
-  const [deleteLinkedDialog, setDeleteLinkedDialog] = useState<{ assetIds: string[]; displayNames: string; deleteSourceFile: boolean } | null>(null);
+  const [deleteLinkedDialog, setDeleteLinkedDialog] = useState<{ assetIds: string[]; displayNames: string; deleteSourceFile: boolean; canDeleteSourceFile: boolean } | null>(null);
   const [permanentDeleteDialog, setPermanentDeleteDialog] = useState<string | null>(null);
   const [batchRelinkPreview, setBatchRelinkPreview] = useState<RelinkBatchPreviewResult | null>(null);
   const [batchRelinkKeepMetadata, setBatchRelinkKeepMetadata] = useState(true);
@@ -140,8 +145,6 @@ export function App() {
     ? trashedAssets.find((a) => a.assetId === selectedAssetId)
     : assets.find((asset) => asset.assetId === selectedAssetId);
 
-  const isLinkedScope = assetScope !== 'all' && assetScope !== 'root' && linkedFolders.some((lf) => lf.folderId === assetScope);
-
   // Tag-filtered asset set
   const tagFilteredAssetIds = useMemo(() => {
     if (!activeTagId) return null;
@@ -178,7 +181,11 @@ export function App() {
         count={c.assetCount}
         active={activeCollectionId === c.collectionId && !activeTagId}
         depth={depth}
-        onContextMenu={(e) => { e.preventDefault(); if (confirm(`删除合集"${c.name}"？\n（仅删除合集结构，不删除资产）`)) void deleteCollection(c.collectionId); }}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          setContextMenu(null);
+          setOrganizationMenu({ kind: 'collection', id: c.collectionId, name: c.name, x: e.clientX, y: e.clientY });
+        }}
         onClick={() => void chooseCollection(c.collectionId)}
       />
     ));
@@ -263,6 +270,7 @@ export function App() {
       setAssetScope('all');
       setActiveTagId(null);
       setActiveCollectionId(null);
+      setActiveSmartCollectionId(null);
       api?.setActiveContext(result.value.libraryId);
       await loadContent(result.value, 'all');
     } catch (caught) {
@@ -279,6 +287,7 @@ export function App() {
     setSelectedAssetId(undefined);
     setActiveTagId(null);
     setActiveCollectionId(null);
+    setActiveSmartCollectionId(null);
     const folderId = (scope === 'all' || scope === 'root') ? undefined : scope;
     api?.setActiveContext(library.libraryId, folderId);
     setUiState('loading');
@@ -296,6 +305,7 @@ export function App() {
     setShowTrash(true);
     setActiveTagId(null);
     setActiveCollectionId(null);
+    setActiveSmartCollectionId(null);
     setSelectedAssetId(undefined);
     setAssetScope('all');
     api?.setActiveContext(library.libraryId);
@@ -321,7 +331,7 @@ export function App() {
       setTagInputValue('');
       await loadContent(library, assetScope);
     } catch (caught) {
-      setError(toMessage(caught, '创建标签失败。'));
+      setError(toOrganizationMessage(caught, 'tag', '创建'));
     } finally {
       setUiState('ready');
     }
@@ -339,10 +349,30 @@ export function App() {
       } else {
         // Refresh tag list only
         const tagResult = await api.listTags({ libraryId: library.libraryId });
-        if (tagResult.ok) setTags(tagResult.value);
+        if (!tagResult.ok) throw new LibraryOperationError(tagResult.error);
+        setTags(tagResult.value);
       }
+      setError(null);
+      setNotice('标签已删除。');
     } catch (caught) {
-      setError(toMessage(caught, '删除标签失败。'));
+      setError(toOrganizationMessage(caught, 'tag', '删除'));
+    } finally {
+      setUiState('ready');
+    }
+  }
+
+  async function renameTag() {
+    if (!api || !library || !renameTarget || renameTarget.kind !== 'tag' || !renameTarget.name.trim()) return;
+    setUiState('loading');
+    try {
+      const result = await api.renameTag({ libraryId: library.libraryId, tagId: renameTarget.id, name: renameTarget.name.trim() });
+      if (!result.ok) throw new LibraryOperationError(result.error);
+      setTags((current) => current.map((tag) => tag.tagId === result.value.tagId ? result.value : tag));
+      setRenameTarget(null);
+      setError(null);
+      setNotice('标签已重命名。');
+    } catch (caught) {
+      setError(toOrganizationMessage(caught, 'tag', '重命名'));
     } finally {
       setUiState('ready');
     }
@@ -353,6 +383,7 @@ export function App() {
     setShowTrash(false);
     setActiveTagId(tagId);
     setActiveCollectionId(null);
+    setActiveSmartCollectionId(null);
     setAssetScope('all');
     setSelectedAssetId(undefined);
     api?.setActiveContext(library.libraryId);
@@ -399,7 +430,7 @@ export function App() {
       setCollectionInputValue('');
       await loadContent(library, assetScope);
     } catch (caught) {
-      setError(toMessage(caught, '创建合集失败。'));
+      setError(toOrganizationMessage(caught, 'collection', '创建'));
     } finally {
       setUiState('ready');
     }
@@ -407,19 +438,54 @@ export function App() {
 
   async function deleteCollection(collectionId: string) {
     if (!api || !library) return;
+    const deletedCollectionIds = new Set([collectionId]);
+    let foundDescendant = true;
+    while (foundDescendant) {
+      foundDescendant = false;
+      for (const collection of collections) {
+        if (
+          collection.parentId &&
+          deletedCollectionIds.has(collection.parentId) &&
+          !deletedCollectionIds.has(collection.collectionId)
+        ) {
+          deletedCollectionIds.add(collection.collectionId);
+          foundDescendant = true;
+        }
+      }
+    }
     setUiState('loading');
     try {
       const result = await api.deleteCollection({ libraryId: library.libraryId, collectionId });
       if (!result.ok) throw new LibraryOperationError(result.error);
-      if (activeCollectionId === collectionId) {
+      if (activeCollectionId && deletedCollectionIds.has(activeCollectionId)) {
         setActiveCollectionId(null);
         await loadContent(library, assetScope);
       } else {
         const colResult = await api.listCollections({ libraryId: library.libraryId });
-        if (colResult.ok) setCollections(colResult.value);
+        if (!colResult.ok) throw new LibraryOperationError(colResult.error);
+        setCollections(colResult.value);
       }
+      setError(null);
+      setNotice('合集已删除。');
     } catch (caught) {
-      setError(toMessage(caught, '删除合集失败。'));
+      setError(toOrganizationMessage(caught, 'collection', '删除'));
+    } finally {
+      setUiState('ready');
+    }
+  }
+
+  async function renameCollection() {
+    if (!api || !library || !renameTarget || renameTarget.kind !== 'collection' || !renameTarget.name.trim()) return;
+    setUiState('loading');
+    try {
+      const result = await api.updateCollection({ libraryId: library.libraryId, collectionId: renameTarget.id, name: renameTarget.name.trim() });
+      if (!result.ok) throw new LibraryOperationError(result.error);
+      setCollections((current) => current.map((collection) => collection.collectionId === result.value.collectionId ? result.value : collection));
+      setRenameTarget(null);
+      setError(null);
+      setNotice('合集已重命名。');
+    } catch (caught) {
+      setError(toOrganizationMessage(caught, 'collection', '重命名'));
     } finally {
       setUiState('ready');
     }
@@ -430,6 +496,7 @@ export function App() {
     setShowTrash(false);
     setActiveCollectionId(collectionId);
     setActiveTagId(null);
+    setActiveSmartCollectionId(null);
     setAssetScope('all');
     setSelectedAssetId(undefined);
     api?.setActiveContext(library.libraryId);
@@ -469,6 +536,45 @@ export function App() {
       setNotice('资产已加入合集。');
     } catch (caught) {
       setError(toMessage(caught, '加入合集失败。'));
+    }
+  }
+
+  async function removeAssetFromCollection(assetId: string, collectionId: string) {
+    if (!api || !library) return;
+    setUiState('loading');
+    try {
+      const directMembers = await api.listCollectionAssets({
+        libraryId: library.libraryId,
+        collectionId,
+        recursive: false,
+      });
+      if (!directMembers.ok) throw new LibraryOperationError(directMembers.error);
+      if (!directMembers.value.some((asset) => asset.assetId === assetId)) {
+        setError('无法从当前合集移除：该资产属于子合集，请进入对应子合集后再移除。');
+        return;
+      }
+      const result = await api.removeCollectionAssets({
+        libraryId: library.libraryId,
+        collectionId,
+        assetIds: [assetId],
+      });
+      if (!result.ok) throw new LibraryOperationError(result.error);
+      const [assetResult, collectionResult] = await Promise.all([
+        api.listCollectionAssets({ libraryId: library.libraryId, collectionId, recursive: collectionRecursive }),
+        api.listCollections({ libraryId: library.libraryId }),
+      ]);
+      if (!assetResult.ok) throw new LibraryOperationError(assetResult.error);
+      if (!collectionResult.ok) throw new LibraryOperationError(collectionResult.error);
+      setAssets(assetResult.value);
+      setAllAssetCount(assetResult.value.length);
+      setCollections(collectionResult.value);
+      setSelectedAssetId(undefined);
+      setError(null);
+      setNotice('资产已从合集移除。');
+    } catch (caught) {
+      setError(toOrganizationMessage(caught, 'collection', '移除资产'));
+    } finally {
+      setUiState('ready');
     }
   }
 
@@ -790,6 +896,7 @@ export function App() {
       setSmartCollections([]);
       setActiveTagId(null);
       setActiveCollectionId(null);
+      setActiveSmartCollectionId(null);
       setTagMembership(new Map());
       api?.setActiveContext(null);
     } catch (caught) {
@@ -880,9 +987,26 @@ export function App() {
     try {
       const result = await api.deleteLinkedAssets({ libraryId: library.libraryId, assetIds, deleteSourceFile });
       if (!result.ok) throw new LibraryOperationError(result.error);
-      setNotice(`已删除 ${result.value.deletedCount} 项链接资产。`);
-      setSelectedAssetId(undefined);
-      await loadContent(library, assetScope);
+      let outcomeError: string | null = null;
+      if (result.value.failedCount > 0) {
+        const reasons = [...new Set(result.value.failures.map(({ reason }) => PUBLIC_ERROR_REASONS_ZH[reason]))];
+        outcomeError = `删除链接资产未全部完成：已删除 ${result.value.deletedCount} 项，另有 ${result.value.failedCount} 项保留。原因：${reasons.join('；')}`;
+        setError(outcomeError);
+      } else {
+        setError(null);
+        setNotice(deleteSourceFile
+          ? `已将 ${result.value.deletedCount} 个源文件移入系统回收站，并移除链接资产记录。`
+          : `已移除 ${result.value.deletedCount} 项链接资产记录，磁盘源文件保持不变。`);
+      }
+      if (result.value.deletedCount > 0) setSelectedAssetId(undefined);
+      try {
+        await loadContent(library, assetScope);
+      } catch (refreshError) {
+        const refreshReason = toMessage(refreshError, '请手动刷新资产列表。');
+        setError(outcomeError
+          ? `${outcomeError} 另外，界面刷新失败：${refreshReason}`
+          : `删除已完成，但界面刷新失败：${refreshReason}`);
+      }
     } catch (caught) {
       setError(toMessage(caught, '删除链接资产失败。'));
     } finally {
@@ -1357,7 +1481,7 @@ export function App() {
       <Section title="标签" action={library ? () => { setShowTagInput(true); setTagInputValue(''); } : undefined}>
         {library ? <>
           {showTagInput && <div className="nav-section"><input autoFocus className="text-field" maxLength={255} onBlur={() => { setShowTagInput(false); setTagInputValue(''); }} onChange={(e) => setTagInputValue(e.target.value)} onKeyDown={handleTagInputKeyDown} placeholder="输入标签名称，回车创建" style={{ height: 27, margin: '2px 0 4px 0', fontSize: 11 }} value={tagInputValue} /></div>}
-          {tags.length ? tags.map((tag) => <NavRow active={activeTagId === tag.tagId} icon="tag" key={tag.tagId} label={tag.name} count={tag.assetCount} onContextMenu={(e) => { e.preventDefault(); if (confirm(`删除标签"${tag.name}"？`)) void deleteTag(tag.tagId); }} onClick={() => void chooseTag(tag.tagId)} />) : <p className="nav-empty">尚无标签</p>}
+          {tags.length ? tags.map((tag) => <NavRow active={activeTagId === tag.tagId} icon="tag" key={tag.tagId} label={tag.name} count={tag.assetCount} onContextMenu={(e) => { e.preventDefault(); setContextMenu(null); setOrganizationMenu({ kind: 'tag', id: tag.tagId, name: tag.name, x: e.clientX, y: e.clientY }); }} onClick={() => void chooseTag(tag.tagId)} />) : <p className="nav-empty">尚无标签</p>}
         </> : <p className="nav-empty">打开资源库后显示标签</p>}
       </Section>
       <Section title="合集" action={library ? () => { setShowCollectionInput(true); setCollectionInputValue(''); } : undefined}>
@@ -1377,8 +1501,8 @@ export function App() {
     <section className="workspace"><div className="workspace-bar"><div className="workspace-title"><span>{workspaceTitle()}</span><span className="item-count">{library ? `${visibleAssets.length} 项` : '未载入'}</span></div><div className="workspace-tools">
       {library && showTrash ? <><button className="compact-action" disabled={busy} onClick={() => { if (confirm('确定要清空回收站吗？这将永久删除所有超过 30 天的已删除资产。')) void purgeTrash(); }} type="button"><Icon name="trash" size={14} />清空回收站</button>{selectedAsset && <><span className="tool-separator" /><button className="compact-action" disabled={busy} onClick={() => void restoreTrashedAssets([selectedAssetId!])} type="button"><Icon name="upload" size={14} />恢复到原位置</button><button className="compact-action" disabled={busy} onClick={() => { setPermanentDeleteDialog(selectedAsset.assetId); }} type="button"><Icon name="close" size={14} />永久删除</button></>}</> : <>
         {library && selectedAsset && selectedAsset.availability === 'missing' && !selectedAsset.deletedAt && <><button className="compact-action" disabled={busy} onClick={() => void relinkMissingAsset()} type="button"><Icon name="search" size={14} />找回</button><span className="tool-separator" /></>}
-        {library && !showTrash && selectedAsset && !selectedAsset.deletedAt && !isLinkedScope && <><button className="compact-action" disabled={busy} onClick={() => { void trashManagedAssets([selectedAssetId!]); }} type="button"><Icon name="trash" size={14} />删除</button></>}
-        {library && selectedAsset && selectedAsset.availability === 'available' && !selectedAsset.deletedAt && isLinkedScope && <><span className="tool-separator" /><button className="compact-action" disabled={busy} onClick={() => { setDeleteLinkedDialog({ assetIds: [selectedAssetId!], displayNames: selectedAsset.displayName, deleteSourceFile: false }); }} type="button"><Icon name="link" size={14} />删除（链接）</button></>}
+        {library && !showTrash && selectedAsset && !selectedAsset.deletedAt && selectedAsset.locationKind === 'managed' && <><button className="compact-action" disabled={busy} onClick={() => { void trashManagedAssets([selectedAssetId!]); }} type="button"><Icon name="trash" size={14} />删除</button></>}
+        {library && !showTrash && selectedAsset && !selectedAsset.deletedAt && selectedAsset.locationKind === 'linked' && <><span className="tool-separator" /><button className="compact-action" disabled={busy} onClick={() => { setDeleteLinkedDialog({ assetIds: [selectedAssetId!], displayNames: selectedAsset.displayName, deleteSourceFile: false, canDeleteSourceFile: selectedAsset.availability === 'available' }); }} type="button"><Icon name="link" size={14} />删除（链接）</button></>}
         {library && !showTrash && visibleAssets.some((a) => a.availability === 'missing' && !a.deletedAt) && <><span className="tool-separator" /><button className="compact-action" disabled={busy} onClick={() => void startBatchRelink()} type="button"><Icon name="folder" size={14} />批量重新定位</button></>}
       </>}
       <span className="tool-separator" /><button className="compact-action" disabled={!library || busy} onClick={() => void importAssets('files')} type="button"><Icon name="upload" size={14} />导入文件</button><button className="compact-action" disabled={!library || busy} onClick={() => void importAssets('folder')} type="button"><Icon name="folder" size={14} />导入文件夹</button><button className="compact-action" disabled={!library || busy} onClick={() => void importFolderAsLinked()} type="button"><Icon name="link" size={14} />导入链接文件夹</button><span className="tool-separator" /><button className="compact-action" disabled={!library || busy} onClick={() => setExportDialogOpen(true)} type="button"><Icon name="archive" size={14} />导出资源库</button><button className="compact-action" disabled={busy} onClick={() => void startImport()} type="button"><Icon name="folder" size={14} />导入资源库</button><button className="compact-action" disabled={busy} onClick={() => void startImportZip()} type="button"><Icon name="archive" size={14} />导入 ZIP</button><ToolButton disabled={!library || busy} icon="refresh" label="刷新磁盘变化" onClick={() => void refreshAssets()} /><span className="tool-separator" /><ToolButton icon="grid" label="网格视图" pressed />
@@ -1490,12 +1614,13 @@ export function App() {
       </section>}
     </div> : library ? <div className="inspector-content"><div className="inspector-identity"><div className="inspector-badge">{initials(library.displayName)}</div><div><span className="micro-label">当前资源库</span><strong>{library.displayName}</strong></div></div><dl className="metadata-list"><div><dt>状态</dt><dd><span className="status-dot" data-active="true" />已打开</dd></div><div><dt>资产</dt><dd className="mono">{allAssetCount}</dd></div><div><dt>文件夹</dt><dd className="mono">{folders.length}</dd></div></dl><section className="inspector-section"><h2>位置</h2><p className="path-block">{library.displayPath}</p></section><button className="secondary-button inspector-close-library" onClick={() => void closeLibrary()} type="button">关闭资源库</button></div> : <div className="inspector-empty"><Icon name="info" size={18} /><strong>没有活动资源库</strong><p>打开资源库后查看当前范围与资产详情。</p></div>}</aside>
     {!leftOpen && <button className="pane-reveal pane-reveal-left" onClick={() => setLeftOpen(true)} type="button"><Icon name="collapse-left" size={15} /></button>}{!rightOpen && <button className="pane-reveal pane-reveal-right" onClick={() => setRightOpen(true)} type="button"><Icon name="collapse-right" size={15} /></button>}
+    {renameTarget && <div className="dialog-backdrop" role="presentation"><form aria-labelledby="rename-organization-title" aria-modal="true" className="create-dialog" onSubmit={(event) => { event.preventDefault(); if (renameTarget.kind === 'tag') void renameTag(); else void renameCollection(); }} role="dialog"><div className="dialog-heading"><div><span className="eyebrow">ORGANIZE LIBRARY</span><h2 id="rename-organization-title">重命名{renameTarget.kind === 'tag' ? '标签' : '合集'}</h2></div><button aria-label="取消" className="dialog-close" onClick={() => setRenameTarget(null)} type="button"><Icon name="close" size={16} /></button></div><label className="field-label" htmlFor="rename-organization-name">{renameTarget.kind === 'tag' ? '标签' : '合集'}名称</label><input autoFocus className="text-field" id="rename-organization-name" onChange={(event) => setRenameTarget((current) => current ? { ...current, name: event.target.value } : current)} value={renameTarget.name} /><p className="field-help">名称仅影响资源库中的组织方式，不会修改资产文件。</p><div className="dialog-actions"><button className="secondary-button" onClick={() => setRenameTarget(null)} type="button">取消</button><button className="primary-button" disabled={!renameTarget.name.trim()} type="submit">保存名称</button></div></form></div>}
     {dialog && <div className="dialog-backdrop" role="presentation"><form aria-labelledby="create-dialog-title" aria-modal="true" className="create-dialog" onSubmit={(event) => { event.preventDefault(); if (!dialogValue.trim()) return; if (dialog === 'library') { setDialog(null); void runLibraryOperation('create'); } else void createFolder(); }} role="dialog"><div className="dialog-heading"><div><span className="eyebrow">{dialog === 'library' ? 'NEW LOCAL LIBRARY' : 'MANAGED FOLDER'}</span><h2 id="create-dialog-title">{dialog === 'library' ? '创建资源库' : '新建文件夹'}</h2></div><button aria-label="取消" className="dialog-close" onClick={() => setDialog(null)} type="button"><Icon name="close" size={16} /></button></div><label className="field-label" htmlFor="dialog-name">名称</label><input autoFocus className="text-field" id="dialog-name" maxLength={255} onChange={(event) => setDialogValue(event.target.value)} value={dialogValue} /><p className="field-help">{dialog === 'library' ? '下一步由系统选择本地保存位置。' : `将在“${selectedFolder?.name ?? '资源库根目录'}”内创建真实目录。`}</p><div className="dialog-actions"><button className="secondary-button" onClick={() => setDialog(null)} type="button">取消</button><button className="primary-button" disabled={!dialogValue.trim()} type="submit">创建</button></div></form></div>}
     {conflicts && <div className="dialog-backdrop" role="presentation"><div aria-labelledby="conflict-dialog-title" aria-modal="true" className="conflict-dialog" role="dialog"><div className="dialog-heading"><div><span className="eyebrow">IMPORT REVIEW</span><h2 id="conflict-dialog-title">处理导入冲突</h2></div></div><div className="conflict-summary"><div><strong>{conflicts.fileCount}</strong><span>待导入文件</span></div><div><strong>{conflicts.suspectedDuplicateCount}</strong><span>疑似重复</span></div><div><strong>{conflicts.nameConflictCount}</strong><span>同名冲突</span></div></div><label className="decision-field"><span>疑似重复</span><select autoFocus value={duplicateDecision} onChange={(event) => setDuplicateDecision(event.target.value as typeof duplicateDecision)}><option value="skip">跳过</option><option value="merge">合并到已有资产</option><option value="create-copy">创建副本</option></select></label><label className="decision-field"><span>同名冲突</span><select value={nameDecision} onChange={(event) => setNameDecision(event.target.value as typeof nameDecision)}><option value="keep-both">保留两者</option><option value="replace">替换现有资产</option><option value="skip">跳过</option></select></label>{conflicts.examples.length > 0 && <div className="conflict-examples">{conflicts.examples.map((item, index) => <span key={`${item.displayName}-${index}`}><Icon name="file" size={13} />{item.displayName}</span>)}</div>}<div className="dialog-actions"><button className="secondary-button" onClick={() => void abandonConflicts()} type="button">取消</button><button className="primary-button" onClick={() => void resolveConflicts()} type="button">应用并导入</button></div></div></div>}
     {exportDialogOpen && <div className="dialog-backdrop" role="presentation"><div aria-modal="true" className="create-dialog" role="dialog"><div className="dialog-heading"><div><span className="eyebrow">EXPORT LIBRARY</span><h2>导出资源库</h2></div><button aria-label="取消" className="dialog-close" onClick={() => setExportDialogOpen(false)} type="button"><Icon name="close" size={16} /></button></div><p style={{ color: 'var(--secondary)', fontSize: 12, lineHeight: 1.6 }}>将资源库导出为完整文件夹或标准 ZIP。导出内容包括所有托管资产、数据库、修订记录和回收站文件。</p><fieldset style={{ border: 'none', padding: 0, marginTop: 14, display: 'flex', gap: 16 }}><legend style={{ fontSize: 11, color: '#6c6f6c', marginBottom: 6 }}>导出格式</legend><label style={{ display: 'flex', alignItems: 'center', gap: 5, color: '#c7cac7', fontSize: 12, cursor: 'pointer' }}><input checked={exportFormat === 'folder'} onChange={() => setExportFormat('folder')} type="radio" name="export-format" />文件夹</label><label style={{ display: 'flex', alignItems: 'center', gap: 5, color: '#c7cac7', fontSize: 12, cursor: 'pointer' }}><input checked={exportFormat === 'zip'} onChange={() => setExportFormat('zip')} type="radio" name="export-format" />标准 ZIP{exportFormat === 'zip' && <span style={{ fontSize: 10, color: '#6c6f6c' }}>（4&nbsp;GiB / 65534 条目以内）</span>}</label></fieldset>{exportFormat === 'folder' && <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10, color: '#c7cac7', fontSize: 12, cursor: 'pointer' }}><input checked={includeLinkedContent} onChange={(e) => setIncludeLinkedContent(e.target.checked)} type="checkbox" />包含链接文件夹源内容</label>}<div className="dialog-actions"><button className="secondary-button" onClick={() => setExportDialogOpen(false)} type="button">取消</button><button className="primary-button" onClick={() => void exportLibrary()} type="button">{exportFormat === 'zip' ? '选择保存位置并导出 ZIP' : '选择目标文件夹并导出'}</button></div></div></div>}
     {importValidated && <div className="dialog-backdrop" role="presentation"><div aria-modal="true" className="create-dialog" role="dialog"><div className="dialog-heading"><div><span className="eyebrow">IMPORT LIBRARY</span><h2>导入资源库</h2></div><button aria-label="取消" className="dialog-close" onClick={() => setImportValidated(null)} type="button"><Icon name="close" size={16} /></button></div><p style={{ color: 'var(--secondary)', fontSize: 12, lineHeight: 1.6 }}>资源库 <strong>{importValidated.displayName}</strong> 验证通过。请选择导入方式：</p><div className="dialog-actions"><button className="secondary-button" onClick={() => setImportValidated(null)} type="button">取消</button><button className="secondary-button" onClick={() => void completeImportInPlace()} type="button">原地打开（不复制）</button><button className="primary-button" onClick={() => void completeImportCopy()} type="button">复制到新位置</button></div></div></div>}
     {permanentDeleteDialog && <div className="dialog-backdrop" role="presentation"><div aria-modal="true" className="create-dialog" role="dialog"><div className="dialog-heading"><div><span className="eyebrow">PERMANENT DELETE</span><h2>永久删除确认</h2></div><button aria-label="取消" className="dialog-close" onClick={() => setPermanentDeleteDialog(null)} type="button"><Icon name="close" size={16} /></button></div><p style={{ color: 'var(--secondary)', fontSize: 12, lineHeight: 1.6 }}>确定要永久删除此资产吗？文件将从回收站彻底移除，此操作不可撤销。</p><div className="dialog-actions"><button className="secondary-button" onClick={() => setPermanentDeleteDialog(null)} type="button">取消</button><button className="primary-button" onClick={() => void deletePermanentFromTrash()} type="button">永久删除</button></div></div></div>}
-    {deleteLinkedDialog && <div className="dialog-backdrop" role="presentation"><div aria-modal="true" className="create-dialog" role="dialog"><div className="dialog-heading"><div><span className="eyebrow">DELETE LINKED ASSET</span><h2>删除链接资产</h2></div><button aria-label="取消" className="dialog-close" onClick={() => setDeleteLinkedDialog(null)} type="button"><Icon name="close" size={16} /></button></div><p style={{ color: 'var(--secondary)', fontSize: 12, lineHeight: 1.6 }}>确定要删除链接资产"{deleteLinkedDialog.displayNames}"吗？这只会移除 Serpent 中的记录，不会影响磁盘源文件。同步移入系统回收站尚未实现，因此本版本不会删除源文件。</p><div className="dialog-actions"><button className="secondary-button" onClick={() => setDeleteLinkedDialog(null)} type="button">取消</button><button className="primary-button" onClick={() => void executeDeleteLinked()} type="button">仅移除记录</button></div></div></div>}
+    {deleteLinkedDialog && <div className="dialog-backdrop" role="presentation"><div aria-modal="true" className="create-dialog" role="dialog"><div className="dialog-heading"><div><span className="eyebrow">DELETE LINKED ASSET</span><h2>删除链接资产</h2></div><button aria-label="取消" className="dialog-close" onClick={() => setDeleteLinkedDialog(null)} type="button"><Icon name="close" size={16} /></button></div><p style={{ color: 'var(--secondary)', fontSize: 12, lineHeight: 1.6 }}>确定要从 Serpent 中移除链接资产“{deleteLinkedDialog.displayNames}”吗？默认只移除索引记录，磁盘源文件保持不变。</p><label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginTop: 12, color: '#c7cac7', fontSize: 12, cursor: deleteLinkedDialog.canDeleteSourceFile ? 'pointer' : 'not-allowed', lineHeight: 1.5 }}><input aria-label="同时删除磁盘源文件" checked={deleteLinkedDialog.deleteSourceFile} disabled={!deleteLinkedDialog.canDeleteSourceFile} onChange={(event) => setDeleteLinkedDialog((current) => current ? { ...current, deleteSourceFile: event.target.checked } : current)} type="checkbox" /><span>{deleteLinkedDialog.canDeleteSourceFile ? '同时将磁盘源文件移入系统回收站。系统拒绝操作时，该项源文件和 Serpent 记录都会保留，并显示具体原因。' : '源文件当前不可用，只能移除 Serpent 中的链接记录。'}</span></label><div className="dialog-actions"><button className="secondary-button" onClick={() => setDeleteLinkedDialog(null)} type="button">取消</button><button className="primary-button" onClick={() => void executeDeleteLinked()} type="button">{deleteLinkedDialog.deleteSourceFile ? '移入系统回收站并移除' : '仅移除记录'}</button></div></div></div>}
     {batchRelinkPreview && <div className="dialog-backdrop" role="presentation"><div aria-modal="true" className="conflict-dialog" role="dialog"><div className="dialog-heading"><div><span className="eyebrow">BATCH RELINK</span><h2>批量重新定位预览</h2></div><button aria-label="取消" className="dialog-close" onClick={() => setBatchRelinkPreview(null)} type="button"><Icon name="close" size={16} /></button></div><div className="conflict-summary" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}><div><strong>{batchRelinkPreview.totalCount}</strong><span>总计丢失</span></div><div><strong>{batchRelinkPreview.matchedCount}</strong><span>新位置匹配</span></div><div><strong>{batchRelinkPreview.unmatchedCount}</strong><span>未找到</span></div></div>{batchRelinkPreview.examples.length > 0 && <div className="conflict-examples">{batchRelinkPreview.examples.map((item, index) => <span key={`${item.relativeFilePath}-${index}`} style={{ color: item.matched ? 'var(--accent)' : 'var(--warning)' }}><Icon name={item.matched ? 'file' : 'warning'} size={13} />{item.relativeFilePath}</span>)}</div>}<label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 14, color: '#c7cac7', fontSize: 12, cursor: 'pointer' }}><input checked={batchRelinkKeepMetadata} onChange={(e) => setBatchRelinkKeepMetadata(e.target.checked)} type="checkbox" />沿用原资产信息（保留标签、描述、评分、合集等人工元数据）</label><div className="dialog-actions"><button className="secondary-button" onClick={() => setBatchRelinkPreview(null)} type="button">取消</button><button className="primary-button" disabled={batchRelinkPreview.matchedCount === 0} onClick={() => void applyBatchRelink()} type="button">应用批量重新定位</button></div></div></div>}
     {aiConfigOpen && <div className="dialog-backdrop" role="presentation"><div aria-modal="true" className="create-dialog" role="dialog"><div className="dialog-heading"><div><span className="eyebrow">AI CONFIGURATION</span><h2>AI 配置 (BYOK)</h2></div><button aria-label="取消" className="dialog-close" onClick={() => { setAiConfigOpen(false); setAiApiKey(''); }} type="button"><Icon name="close" size={16} /></button></div><p style={{ color: 'var(--secondary)', fontSize: 12, lineHeight: 1.6 }}>配置第三方云端视觉模型 API Key。Key 将加密存储于本地操作系统安全凭据中，Serpent 不代理、不计费、不追踪额度。</p>
       <div className="editor-field" style={{ marginTop: 12 }}>
@@ -1548,8 +1673,10 @@ export function App() {
       </div></div></div>}
     {/* Preview modal */}
     {previewAsset && library && api && <AssetPreviewModal api={api} asset={previewAsset} libraryId={library.libraryId} onClose={() => setPreviewAsset(null)} />}
+    {/* Tag / collection context menu */}
+    {organizationMenu && <div className="context-menu-backdrop" onClick={() => setOrganizationMenu(null)} onKeyDown={(e) => { if (e.key === 'Escape') setOrganizationMenu(null); }} role="presentation"><div className="context-menu" onClick={(event) => event.stopPropagation()} role="menu" style={{ position: 'fixed', left: organizationMenu.x, top: organizationMenu.y }}><button onClick={() => { setRenameTarget({ kind: organizationMenu.kind, id: organizationMenu.id, name: organizationMenu.name }); setOrganizationMenu(null); }} role="menuitem" type="button"><Icon name={organizationMenu.kind === 'tag' ? 'tag' : 'collection'} size={14} />重命名{organizationMenu.kind === 'tag' ? '标签' : '合集'}</button><button onClick={() => { const target = organizationMenu; setOrganizationMenu(null); const confirmed = confirm(target.kind === 'tag' ? `删除标签"${target.name}"？` : `删除合集"${target.name}"？\n（仅删除合集结构，不删除资产）`); if (confirmed) { if (target.kind === 'tag') void deleteTag(target.id); else void deleteCollection(target.id); } }} role="menuitem" type="button"><Icon name="trash" size={14} />删除{organizationMenu.kind === 'tag' ? '标签' : '合集'}</button></div></div>}
     {/* Context menu */}
-    {contextMenu && <div className="context-menu-backdrop" onClick={() => setContextMenu(null)} onKeyDown={(e) => { if (e.key === 'Escape') setContextMenu(null); }} role="presentation"><div className="context-menu" onClick={(event) => event.stopPropagation()} role="menu" style={{ position: 'fixed', left: contextMenu.x, top: contextMenu.y }}><button onClick={() => { void handleOpenExternal(contextMenu.assetId); setContextMenu(null); }} role="menuitem" type="button"><Icon name="upload" size={14} />使用外部应用打开</button>{tags.map((tag) => <button key={`tag-${tag.tagId}`} onClick={() => { void assignAssetToTag(contextMenu.assetId, tag.tagId); setContextMenu(null); }} role="menuitem" type="button"><Icon name="tag" size={14} />添加标签：{tag.name}</button>)}{collections.map((collection) => <button key={`collection-${collection.collectionId}`} onClick={() => { void addAssetToCollection(contextMenu.assetId, collection.collectionId); setContextMenu(null); }} role="menuitem" type="button"><Icon name="collection" size={14} />加入合集：{collection.name}</button>)}</div></div>}
+    {contextMenu && <div className="context-menu-backdrop" onClick={() => setContextMenu(null)} onKeyDown={(e) => { if (e.key === 'Escape') setContextMenu(null); }} role="presentation"><div className="context-menu" onClick={(event) => event.stopPropagation()} role="menu" style={{ position: 'fixed', left: contextMenu.x, top: contextMenu.y }}><button onClick={() => { void handleOpenExternal(contextMenu.assetId); setContextMenu(null); }} role="menuitem" type="button"><Icon name="upload" size={14} />使用外部应用打开</button>{activeCollectionId && <button onClick={() => { void removeAssetFromCollection(contextMenu.assetId, activeCollectionId); setContextMenu(null); }} role="menuitem" type="button"><Icon name="close" size={14} />从当前合集移除</button>}{tags.map((tag) => <button key={`tag-${tag.tagId}`} onClick={() => { void assignAssetToTag(contextMenu.assetId, tag.tagId); setContextMenu(null); }} role="menuitem" type="button"><Icon name="tag" size={14} />添加标签：{tag.name}</button>)}{collections.map((collection) => <button key={`collection-${collection.collectionId}`} onClick={() => { void addAssetToCollection(contextMenu.assetId, collection.collectionId); setContextMenu(null); }} role="menuitem" type="button"><Icon name="collection" size={14} />加入合集：{collection.name}</button>)}</div></div>}
   </main>;
 }
 
@@ -1558,6 +1685,25 @@ function extension(name: string) { const value = name.split('.').pop(); return v
 function formatBytes(bytes: number) { if (bytes < 1024) return `${bytes} B`; if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(1)} KB`; if (bytes < 1024 ** 3) return `${(bytes / 1024 ** 2).toFixed(1)} MB`; return `${(bytes / 1024 ** 3).toFixed(1)} GB`; }
 function formatDate(value: string) { const date = new Date(value); return Number.isNaN(date.valueOf()) ? '未知时间' : new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit' }).format(date); }
 function importSummary(value: { importedCount: number; skippedCount: number; replacedCount: number }) { return `导入完成：新增 ${value.importedCount} 项${value.replacedCount ? `，替换 ${value.replacedCount} 项` : ''}${value.skippedCount ? `，跳过 ${value.skippedCount} 项` : ''}。`; }
+function toOrganizationMessage(error: unknown, kind: OrganizationKind, operation: '创建' | '重命名' | '删除' | '移除资产') {
+  const noun = kind === 'tag' ? '标签' : '合集';
+  const action = operation === '移除资产' ? '从合集移除资产' : `${operation}${noun}`;
+  if (error instanceof LibraryOperationError) {
+    const reason = error.reason ? PUBLIC_ERROR_REASONS_ZH[error.reason] : undefined;
+    const detail = (() => {
+      switch (error.code) {
+        case 'INVALID_FOLDER_NAME': return `${noun}名称为空，或名称不受当前平台支持。`;
+        case 'FOLDER_ALREADY_EXISTS': return `资源库中已存在同名${noun}。`;
+        case 'FOLDER_NOT_FOUND': return `目标${noun}已不存在，请刷新后重试。`;
+        case 'ASSET_NOT_FOUND': return '目标资产已不存在，请刷新后重试。';
+        default: return reason ?? PUBLIC_ERROR_MESSAGES_ZH[error.code] ?? 'Serpent 无法完成这项操作，请查看日志了解详细原因。';
+      }
+    })();
+    return `${action}失败。原因：${detail}${reason && detail !== reason ? ` ${reason}` : ''}`;
+  }
+  const detail = error instanceof Error && error.message ? error.message : '发生未知错误，请查看日志了解详细原因。';
+  return `${action}失败。原因：${detail}`;
+}
 function toMessage(error: unknown, fallback: string) {
   if (error instanceof LibraryOperationError) {
     const message = PUBLIC_ERROR_MESSAGES_ZH[error.code] ?? fallback;
@@ -1568,7 +1714,7 @@ function toMessage(error: unknown, fallback: string) {
 }
 
 const PUBLIC_ERROR_MESSAGES_ZH: Partial<Record<PublicErrorCode, string>> = {
-  CANCELLED: '操作已取消。', INTERNAL_ERROR: 'Serpent 无法完成这项操作，请重试。', INVALID_LIBRARY_NAME: '请输入可跨平台安全使用的资源库名称。', INVALID_LIBRARY_PATH: '请选择有效的本地文件夹。', INVALID_FOLDER_NAME: '请输入可跨平台安全使用的文件夹名称。', FOLDER_ALREADY_EXISTS: '当前位置已经存在同名文件夹。', FOLDER_NOT_FOUND: '找不到所选资源库文件夹。', INVALID_IMPORT_SOURCE: '无法读取所选导入内容。', INVALID_IMPORT_DECISION: '导入冲突处理选项无效。', IMPORT_NOT_FOUND: '待处理的导入已失效，请重新选择文件。', IMPORT_APPLY_FAILED: '无法安全完成导入。', LIBRARY_ALREADY_EXISTS: '该位置已经存在同名文件或文件夹。', LIBRARY_NOT_FOUND: '找不到所选资源库。', NOT_A_LIBRARY: '所选文件夹不是有效的 Serpent 资源库。', LIBRARY_CORRUPT: '资源库数据库或迁移记录已损坏。', LIBRARY_VERSION_TOO_NEW: '该资源库由更新版本的 Serpent 创建。', LIBRARY_NOT_WRITABLE: 'Serpent 无法写入所选位置。', LIBRARY_CLEANUP_FAILED: '创建失败，且临时文件无法自动清理。', LIBRARY_NOT_OPEN: '该资源库当前没有打开。', ASSET_NOT_FOUND: '找不到所选资产。', AI_ANALYSIS_FAILED: 'AI 服务未能完成资产分析。', VERSION_CONFLICT: '元数据已被其他操作修改。请刷新后重新编辑。', ZIP_TOO_LARGE: '资源库大小超出标准 ZIP 限制（4 GiB / 65534 条目）。请改为导出文件夹。',
+  CANCELLED: '操作已取消。', INTERNAL_ERROR: 'Serpent 无法完成这项操作，请重试。', INVALID_LIBRARY_NAME: '请输入可跨平台安全使用的资源库名称。', INVALID_LIBRARY_PATH: '请选择有效的本地文件夹。', INVALID_FOLDER_NAME: '请输入可跨平台安全使用的文件夹名称。', FOLDER_ALREADY_EXISTS: '当前位置已经存在同名文件夹。', FOLDER_NOT_FOUND: '找不到所选资源库文件夹。', INVALID_IMPORT_SOURCE: '无法读取所选导入内容。', INVALID_IMPORT_DECISION: '导入冲突处理选项无效。', IMPORT_NOT_FOUND: '待处理的导入已失效，请重新选择文件。', IMPORT_APPLY_FAILED: '无法安全完成导入。', LIBRARY_ALREADY_EXISTS: '该位置已经存在同名文件或文件夹。', LIBRARY_NOT_FOUND: '找不到所选资源库。', NOT_A_LIBRARY: '所选文件夹不是有效的 Serpent 资源库。', LIBRARY_CORRUPT: '资源库数据库或迁移记录已损坏。', LIBRARY_VERSION_TOO_NEW: '该资源库由更新版本的 Serpent 创建。', LIBRARY_NOT_WRITABLE: 'Serpent 无法写入所选位置。', LIBRARY_CLEANUP_FAILED: '创建失败，且临时文件无法自动清理。', LIBRARY_NOT_OPEN: '该资源库当前没有打开。', ASSET_NOT_FOUND: '找不到所选资产。', ASSET_SOURCE_TRASH_FAILED: '无法将源文件移入系统回收站，请查看日志了解具体原因。', AI_ANALYSIS_FAILED: 'AI 服务未能完成资产分析。', VERSION_CONFLICT: '元数据已被其他操作修改。请刷新后重新编辑。', ZIP_TOO_LARGE: '资源库大小超出标准 ZIP 限制（4 GiB / 65534 条目）。请改为导出文件夹。',
 };
 const PUBLIC_ERROR_REASONS_ZH: Record<PublicErrorReason, string> = {
   PERMISSION_DENIED: '当前用户没有读取源文件或写入目标位置的权限。',
@@ -1577,6 +1723,8 @@ const PUBLIC_ERROR_REASONS_ZH: Record<PublicErrorReason, string> = {
   READ_ONLY_FILESYSTEM: '目标位置位于只读文件系统。',
   SOURCE_NOT_FOUND: '源文件在导入过程中消失或无法找到。',
   SOURCE_CHANGED: '源文件在复制过程中发生了变化。',
+  SOURCE_TRASH_FAILED: '操作系统拒绝将源文件移入系统回收站；源文件与 Serpent 记录均已保留。',
+  SOURCE_TRASH_RECONCILIATION_REQUIRED: '源文件可能已进入系统回收站，但记录尚未完成清理；请重新打开资源库以自动对账，并查看日志。',
   SYMBOLIC_LINK_NOT_ALLOWED: '目录中包含当前切片不支持的符号链接。',
   UNSUPPORTED_FILE_ENTRY: '目录中包含普通文件和文件夹之外的项目。',
   NAME_NOT_SUPPORTED: '当前目标文件系统不接受其中的文件名。',

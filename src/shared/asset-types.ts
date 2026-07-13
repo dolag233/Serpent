@@ -22,6 +22,7 @@ export type LinkedFolderSummary = z.infer<typeof linkedFolderSummarySchema>;
 
 export const assetSummarySchema = z.strictObject({
   assetId: nonBlankString,
+  locationKind: z.enum(['managed', 'linked']),
   managedFolderId: nonBlankString.nullable(),
   relativeFilePath: nonBlankString,
   displayName: nonBlankString,

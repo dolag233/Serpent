@@ -1,4 +1,4 @@
-import type { PublicError } from './protocol/errors';
+import type { PublicError, PublicErrorReason } from './protocol/errors';
 import type {
   AssetSummary,
   AssetMetadataResult,
@@ -37,6 +37,12 @@ export interface RelinkBatchAppliedResult {
   restoredCount: number;
   unchangedMissingCount: number;
   assets: AssetSummary[];
+}
+
+export interface LinkedAssetDeleteResult {
+  deletedCount: number;
+  failedCount: number;
+  failures: Array<{ assetId: string; reason: PublicErrorReason }>;
 }
 
 export interface ExportCompletedResult {
@@ -155,7 +161,7 @@ export interface SerpentLibraryApi {
   listTrash(input: { libraryId: string }): Promise<LibraryApiResult<AssetSummary[]>>;
   purgeTrash(input: { libraryId: string }): Promise<LibraryApiResult<{ purgedCount: number }>>;
   // Linked delete
-  deleteLinkedAssets(input: { libraryId: string; assetIds: string[]; deleteSourceFile: boolean }): Promise<LibraryApiResult<{ deletedCount: number }>>;
+  deleteLinkedAssets(input: { libraryId: string; assetIds: string[]; deleteSourceFile: boolean }): Promise<LibraryApiResult<LinkedAssetDeleteResult>>;
   // Relink
   relinkAsset(input: { libraryId: string; assetId: string }): Promise<LibraryApiResult<AssetSummary>>;
   relinkBatchPreview(input: { libraryId: string; keepMetadata: boolean }): Promise<LibraryApiResult<RelinkBatchPreviewResult>>;

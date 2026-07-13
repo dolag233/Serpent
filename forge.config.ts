@@ -7,7 +7,9 @@ import { VitePlugin } from '@electron-forge/plugin-vite';
 
 const config: ForgeConfig = {
   packagerConfig: {
-    asar: true,
+    asar: {
+      unpack: '**/node_modules/trash/lib/{macos-trash,windows-trash.exe}',
+    },
     // Forge's Vite plugin otherwise excludes all node_modules. Keep them in the
     // copy set so Packager can prune to production dependencies and the native
     // module plugin can unpack better-sqlite3.

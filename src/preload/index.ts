@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
-import type { LibraryApiResult, PreviewResolution, SerpentLibraryApi } from '../shared/library-api';
+import type { LibraryApiResult, LinkedAssetDeleteResult, PreviewResolution, SerpentLibraryApi } from '../shared/library-api';
 import type { AssetSummary, AssetMetadataResult, CollectionSummary, LinkedFolderSummary, ManagedFolderSummary, SmartCollectionSummary, TagSummary } from '../shared/asset-types';
 import {
   ASSET_CHANGE_CHANNEL,
@@ -387,11 +387,18 @@ const library: SerpentLibraryApi = Object.freeze({
     return { ok: true, value: { purgedCount: result.purgedCount } };
   },
 
-  async deleteLinkedAssets({ libraryId, assetIds, deleteSourceFile }: { libraryId: string; assetIds: string[]; deleteSourceFile: boolean }): Promise<LibraryApiResult<{ deletedCount: number }>> {
+  async deleteLinkedAssets({ libraryId, assetIds, deleteSourceFile }: { libraryId: string; assetIds: string[]; deleteSourceFile: boolean }): Promise<LibraryApiResult<LinkedAssetDeleteResult>> {
     const result = await request({ type: 'asset.delete-linked.request', libraryId, assetIds, deleteSourceFile });
     if (!result.ok) return failure(result);
     if (result.type !== 'asset.deleted-linked') throw new Error('Unexpected delete-linked response.');
-    return { ok: true, value: { deletedCount: result.deletedCount } };
+    return {
+      ok: true,
+      value: {
+        deletedCount: result.deletedCount,
+        failedCount: result.failedCount,
+        failures: result.failures,
+      },
+    };
   },
 
   async relinkAsset({ libraryId, assetId }: { libraryId: string; assetId: string }): Promise<LibraryApiResult<AssetSummary>> {

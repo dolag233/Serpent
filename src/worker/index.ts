@@ -284,8 +284,8 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
       return { ok: true, type: 'asset.deleted-permanent', deletedCount, skippedCount, skippedReasons };
     }
     case 'asset.delete-linked': {
-      const { deletedCount } = libraryService.deleteLinkedAssets(request.command);
-      return { ok: true, type: 'asset.deleted-linked', deletedCount };
+      const { deletedCount, failedCount, failures } = await libraryService.deleteLinkedAssets(request.command);
+      return { ok: true, type: 'asset.deleted-linked', deletedCount, failedCount, failures };
     }
     case 'asset.list-trash': {
       const assets = libraryService.listTrash(request.command.libraryId);

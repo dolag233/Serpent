@@ -250,7 +250,10 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
   z.strictObject({
     type: z.literal('asset.delete-linked.request'),
     libraryId: identifierSchema,
-    assetIds: z.array(identifierSchema).min(1),
+    assetIds: z.array(identifierSchema).min(1).max(20).refine(
+      (assetIds) => new Set(assetIds).size === assetIds.length,
+      { message: 'assetIds must not contain duplicates.' },
+    ),
     deleteSourceFile: z.boolean(),
   }),
   z.strictObject({
@@ -625,7 +628,10 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
   z.strictObject({
     type: z.literal('asset.delete-linked'),
     libraryId: identifierSchema,
-    assetIds: z.array(identifierSchema).min(1),
+    assetIds: z.array(identifierSchema).min(1).max(20).refine(
+      (assetIds) => new Set(assetIds).size === assetIds.length,
+      { message: 'assetIds must not contain duplicates.' },
+    ),
     deleteSourceFile: z.boolean(),
   }),
   z.strictObject({
