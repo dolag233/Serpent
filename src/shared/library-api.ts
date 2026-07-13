@@ -62,6 +62,16 @@ export interface ImportValidatedResult {
   displayName: string;
 }
 
+export interface PreviewResolution {
+  assetId: string;
+  mediaType: 'image' | 'video' | 'other';
+  status: 'ready' | 'pending' | 'failed' | 'missing';
+  kind: 'thumbnail' | 'webm_proxy';
+  url?: string;
+  posterUrl?: string;
+  errorCode?: string;
+}
+
 export interface SerpentLibraryApi {
   create(input: { displayName: string }): Promise<LibraryApiResult<RendererLibrarySummary>>;
   open(): Promise<LibraryApiResult<RendererLibrarySummary>>;
@@ -154,8 +164,10 @@ export interface SerpentLibraryApi {
   setActiveContext(libraryId: string | null, selectedFolderId?: string): void;
   // Export / Import
   exportLibrary(input: { libraryId: string; includeLinkedContent: boolean; format: 'folder' | 'zip' }): Promise<LibraryApiResult<ExportCompletedResult>>;
+  cancelLibraryExport(input: { exportId: string }): Promise<LibraryApiResult<{ exportId: string }>>;
   importLibrary(): Promise<LibraryApiResult<ImportValidatedResult>>;
   importLibraryZip(): Promise<LibraryApiResult<ImportCompletedResult>>;
+  cancelLibraryImport(input: { importId: string }): Promise<LibraryApiResult<{ importId: string }>>;
   importLibraryCopy(input: { importId: string }): Promise<LibraryApiResult<ImportCompletedResult>>;
   importLibraryOpenInPlace(input: { importId: string }): Promise<LibraryApiResult<ImportCompletedResult>>;
   onProgress(listener: (event: ExportProgressEvent | ImportProgressEvent) => void): () => void;
@@ -166,13 +178,17 @@ export interface SerpentLibraryApi {
     hasKey: boolean;
     enabledFields: { label: boolean; description: boolean; tags: boolean; structuredMetadata: boolean };
     language: string;
+    autoAnalyzeEnabled: boolean;
+    disclaimerAccepted: boolean;
   }>>;
   setAiConfig(input: {
     provider: 'openai' | 'gemini' | 'anthropic';
     model: string;
-    apiKey: string;
+    apiKey?: string;
     enabledFields?: { label: boolean; description: boolean; tags: boolean; structuredMetadata: boolean };
     language?: string;
+    autoAnalyzeEnabled: boolean;
+    disclaimerAccepted: boolean;
   }): Promise<LibraryApiResult<void>>;
   analyzeAsset(input: {
     libraryId: string;
@@ -183,10 +199,11 @@ export interface SerpentLibraryApi {
   >>;
   // Thumbnail & Preview
   requestThumbnail(input: { libraryId: string; assetId: string }): Promise<LibraryApiResult<{ assetId: string; artifactId: string }>>;
-  requestPreview(input: { libraryId: string; assetId: string; mode: 'client' | 'fullscreen' }): Promise<LibraryApiResult<{ assetId: string; url: string }>>;
+  requestPreview(input: { libraryId: string; assetId: string; mode: 'client' | 'fullscreen' }): Promise<LibraryApiResult<PreviewResolution>>;
   closePreview(input: { libraryId: string; assetId: string }): Promise<LibraryApiResult<void>>;
+  reportPreviewError(input: { libraryId: string; assetId: string; errorCode: string; detail?: string }): Promise<LibraryApiResult<void>>;
   openExternal(input: { libraryId: string; assetId: string }): Promise<LibraryApiResult<void>>;
-  retryArtifact(input: { libraryId: string; assetId: string; kind: 'thumbnail' }): Promise<LibraryApiResult<{ assetId: string; kind: string }>>;
+  retryArtifact(input: { libraryId: string; assetId: string; kind: 'thumbnail' | 'webm_proxy' }): Promise<LibraryApiResult<{ assetId: string; kind: string }>>;
   onThumbnailEvent(listener: (event: { type: 'asset.thumbnail.ready' | 'asset.thumbnail.failed'; libraryId: string; assetId: string; artifactId?: string; errorCode?: string; reason?: string }) => void): () => void;
   // AI extended
   testAiConnection(input: { provider: 'openai' | 'gemini' | 'anthropic'; model: string; apiKey: string }): Promise<LibraryApiResult<{ success: boolean; errorKind?: string; reason?: string }>>;

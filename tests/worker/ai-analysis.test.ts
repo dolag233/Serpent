@@ -242,6 +242,44 @@ describe('writeAiAnalysisResult', () => {
     service.closeAll();
   });
 
+  it('replaces enabled AI fields and tags even when the new result omits them', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'AI Complete Replace', selectedParentPath: root });
+    writeFileSync(path.join(root, 'test.png'), 'image-data');
+    const result = importNoConflict(service, created.libraryId, path.join(root, 'test.png'));
+    const assetId = result.assets[0]!.assetId;
+
+    service.writeAiAnalysisResult({
+      libraryId: created.libraryId, assetId,
+      label: 'Stale Label', tags: ['StaleTag'],
+      modelId: 'openai', modelVersion: 'v1',
+      enabledFields: { label: true, description: false, tags: true, structuredMetadata: false },
+    });
+    service.writeAiAnalysisResult({
+      libraryId: created.libraryId, assetId,
+      tags: ['FreshTag'],
+      modelId: 'openai', modelVersion: 'v2',
+      enabledFields: { label: true, description: false, tags: true, structuredMetadata: false },
+    });
+
+    expect(service.getAiContent(created.libraryId, assetId)).toEqual([]);
+    expect(service.searchAssets({
+      libraryId: created.libraryId,
+      query: { clauses: [{ field: null, values: ['StaleTag'], exclude: false }] },
+      limit: 20,
+      offset: 0,
+    }).items).toHaveLength(0);
+    expect(service.searchAssets({
+      libraryId: created.libraryId,
+      query: { clauses: [{ field: null, values: ['FreshTag'], exclude: false }] },
+      limit: 20,
+      offset: 0,
+    }).items.map((item) => item.assetId)).toEqual([assetId]);
+
+    service.closeAll();
+  });
+
   it('does not store label when label toggle is disabled', () => {
     const root = temporaryRoot();
     const service = new LibraryService();

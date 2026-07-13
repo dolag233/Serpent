@@ -21,6 +21,7 @@ export const PUBLIC_ERROR_MESSAGES = {
   LIBRARY_CLEANUP_FAILED: 'Library creation failed and temporary files could not be removed.',
   LIBRARY_NOT_OPEN: 'The library is not currently open.',
   ASSET_NOT_FOUND: 'The requested asset could not be found.',
+  AI_ANALYSIS_FAILED: 'The AI service could not analyze this asset.',
   VERSION_CONFLICT: 'The metadata has been modified by another operation. Please refresh and try again.',
   ZIP_TOO_LARGE: 'The library is too large for standard ZIP. Export as a folder instead.',
 } as const;
@@ -41,10 +42,18 @@ export const publicErrorReasonSchema = z.enum([
   'SHARP_UNAVAILABLE',
   'FFMPEG_REQUIRED',
   'OIIO_REQUIRED',
+  'MEDIA_PROCESSING_FAILED',
   'UNSUPPORTED_FORMAT',
   'ZIP_TOO_LARGE',
   'NOT_A_LIBRARY',
   'PATH_ESCAPE',
+  'AI_AUTH',
+  'AI_PERMISSION',
+  'AI_QUOTA',
+  'AI_RATE_LIMIT',
+  'AI_NETWORK',
+  'AI_TIMEOUT',
+  'AI_INVALID_RESPONSE',
 ]);
 
 export type PublicErrorReason = z.infer<typeof publicErrorReasonSchema>;

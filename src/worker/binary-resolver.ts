@@ -1,3 +1,4 @@
+import { accessSync, constants } from 'node:fs';
 import path from 'node:path';
 
 /**
@@ -34,7 +35,13 @@ function resolveBundledBinary(
       subdir,
       platformBinaryName(binaryName),
     );
-    return bundled;
+    try {
+      accessSync(bundled, constants.F_OK | constants.X_OK);
+      return bundled;
+    } catch {
+      // A resources directory can exist even when optional media binaries were
+      // not packaged. Fall through to PATH instead of returning a dead path.
+    }
   }
   return undefined;
 }

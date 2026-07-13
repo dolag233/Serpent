@@ -95,6 +95,24 @@ describe('GeminiVendorAdapter', () => {
     modelVersion: 'gemini-2.5-flash',
   };
 
+  it('sends propertyOrdering in the Gemini API array shape', async () => {
+    let requestBody: Record<string, unknown> | undefined;
+    const mockFetch: typeof fetch = async (_input, init) => {
+      requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return new Response(JSON.stringify(geminiSuccessBody), { status: 200 });
+    };
+    const adapter = new GeminiVendorAdapter('test-key', 'gemini-2.5-flash', mockFetch);
+    await adapter.analyze({
+      filename: 'test.png', mime: 'image/png', language: 'en',
+      enabledFields: { label: true, description: true, tags: true, structuredMetadata: false },
+      existingTagNames: [], imageBase64: 'fakebase64',
+    });
+
+    const config = requestBody?.generationConfig as Record<string, unknown>;
+    const schema = config.responseSchema as Record<string, unknown>;
+    expect(schema.propertyOrdering).toEqual(['label', 'description', 'tags', 'structured_metadata']);
+  });
+
   it('parses a valid Gemini response', async () => {
     const mockFetch = async () => {
       return new Response(JSON.stringify(geminiSuccessBody), { status: 200 });
@@ -712,6 +730,26 @@ describe('enqueueAiAnalysisJobs', () => {
 
     service.closeAll();
   });
+
+  it('enqueues linked image assets when scoped to the linked folder', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'AI Linked', selectedParentPath: root });
+    const linkedRoot = path.join(root, 'linked');
+    mkdirSync(linkedRoot);
+    createPngFile(linkedRoot, 'linked.png');
+    const linked = service.importFolderAsLinked({
+      libraryId: created.libraryId,
+      sourceRootPath: linkedRoot,
+    });
+
+    expect(service.enqueueAiAnalysisJobs({
+      libraryId: created.libraryId,
+      folderId: linked.folderId,
+    }).enqueued).toBe(1);
+    expect(service.getAiJobStatus(created.libraryId).queued).toBe(1);
+    service.closeAll();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -721,7 +759,7 @@ describe('enqueueAiAnalysisJobs', () => {
 describe('AI job queue management', () => {
   function setupWithJob(
     initialStatus: 'queued' | 'running' | 'paused' | 'failed' = 'queued',
-  ): { service: LibraryService; libraryId: string; jobId: string; root: string } {
+  ): { service: LibraryService; libraryId: string; jobId: string; assetId: string; root: string; libraryPath: string } {
     const root = temporaryRoot();
     const service = new LibraryService();
     const created = service.createLibrary({ displayName: 'AI Queue', selectedParentPath: root });
@@ -750,7 +788,7 @@ describe('AI job queue management', () => {
     ).run(jobId, libRow.library_id, assetId, initialStatus, now, now);
     db.close();
 
-    return { service, libraryId, jobId, root };
+    return { service, libraryId, jobId, assetId, root, libraryPath: created.libraryPath };
   }
 
   it('pause queued jobs', () => {
@@ -836,5 +874,97 @@ describe('AI job queue management', () => {
     expect(result.jobs.length).toBeGreaterThanOrEqual(1);
 
     service.closeAll();
+  });
+
+  it('atomically claims and completes the oldest queued AI job', () => {
+    const { service, libraryId, jobId } = setupWithJob('queued');
+
+    const claimed = service.claimNextAiJob(libraryId);
+    expect(claimed).toMatchObject({ jobId, kind: 'ai.image.analysis', attemptCount: 1 });
+    expect(service.claimNextAiJob(libraryId)).toBeNull();
+    expect(service.getAiJobStatus(libraryId).running).toBe(1);
+
+    service.completeAiJob(libraryId, jobId);
+    const status = service.getAiJobStatus(libraryId);
+    expect(status.running).toBe(0);
+    expect(status.succeeded).toBe(1);
+    expect(status.jobs[0]?.errorCode).toBeNull();
+
+    service.closeAll();
+  });
+
+  it('requeues retryable failures up to the attempt limit without storing vendor details', () => {
+    const { service, libraryId, jobId } = setupWithJob('queued');
+
+    expect(service.claimNextAiJob(libraryId)?.attemptCount).toBe(1);
+    service.failAiJob(libraryId, jobId, { errorCode: 'AI_NETWORK', retryable: true });
+    expect(service.getAiJobStatus(libraryId).queued).toBe(1);
+
+    expect(service.claimNextAiJob(libraryId)?.attemptCount).toBe(2);
+    service.failAiJob(libraryId, jobId, { errorCode: 'AI_NETWORK', retryable: true });
+    expect(service.getAiJobStatus(libraryId).queued).toBe(1);
+
+    expect(service.claimNextAiJob(libraryId)?.attemptCount).toBe(3);
+    service.failAiJob(libraryId, jobId, { errorCode: 'AI_NETWORK', retryable: true });
+    const status = service.getAiJobStatus(libraryId);
+    expect(status.failed).toBe(1);
+    expect(status.jobs[0]?.errorCode).toBe('AI_NETWORK');
+    expect(status.jobs[0]?.errorDetail).toBeNull();
+
+    service.closeAll();
+  });
+
+  it('marks permanent failures failed immediately', () => {
+    const { service, libraryId, jobId } = setupWithJob('queued');
+    service.claimNextAiJob(libraryId);
+
+    service.failAiJob(libraryId, jobId, {
+      errorCode: 'AI_AUTH',
+      retryable: false,
+    });
+
+    const status = service.getAiJobStatus(libraryId);
+    expect(status.failed).toBe(1);
+    expect(status.jobs[0]?.errorCode).toBe('AI_AUTH');
+    service.closeAll();
+  });
+
+  it.each(['paused', 'cancelled'] as const)('does not commit AI content after a running job is %s', (terminalStatus) => {
+    const { service, libraryId, jobId, assetId } = setupWithJob('queued');
+    service.claimNextAiJob(libraryId);
+    if (terminalStatus === 'paused') service.pauseJobs(libraryId, [jobId]);
+    else service.cancelJobs(libraryId, [jobId]);
+
+    const result = service.writeAiAnalysisResult({
+      libraryId,
+      assetId,
+      guardJobId: jobId,
+      label: 'must-not-be-written',
+      tags: ['must-not-be-written'],
+      modelId: 'test-model',
+      modelVersion: 'test-version',
+      enabledFields: { label: true, description: false, tags: true, structuredMetadata: false },
+    });
+
+    expect(result.committed).toBe(false);
+    expect(service.getAiContent(libraryId, assetId)).toEqual([]);
+    expect(service.getAiJobState(libraryId, jobId)).toBe(terminalStatus);
+    service.closeAll();
+  });
+
+  it('recovers interrupted running jobs as queued when the library reopens', () => {
+    const { service, libraryId, libraryPath } = setupWithJob('queued');
+    const claimed = service.claimNextAiJob(libraryId);
+    expect(claimed).not.toBeNull();
+    service.closeAll();
+
+    const reopened = new LibraryService();
+    const summary = reopened.openLibrary(libraryPath);
+    expect(summary.libraryId).toBe(libraryId);
+    const status = reopened.getAiJobStatus(libraryId);
+    expect(status.running).toBe(0);
+    expect(status.queued).toBe(1);
+    expect(status.jobs[0]?.errorCode).toBe('PROCESS_INTERRUPTED');
+    reopened.closeAll();
   });
 });

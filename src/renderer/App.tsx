@@ -4,6 +4,7 @@ import type { AssetSummary, AssetMetadataResult, CollectionSummary, LinkedFolder
 import type { SerpentLibraryApi, RelinkBatchPreviewResult, ImportValidatedResult } from '../shared/library-api';
 import type { PublicError, PublicErrorCode, PublicErrorReason } from '../shared/protocol/errors';
 import type { ImportConflictPlan, RendererLibrarySummary, ExportProgressEvent, ImportProgressEvent } from '../shared/protocol/responses';
+import { AssetPreviewModal } from './AssetPreviewModal';
 
 type RendererWindow = Window & { serpent?: { library?: SerpentLibraryApi } };
 type UiState = 'booting' | 'idle' | 'creating' | 'opening' | 'closing' | 'loading' | 'importing' | 'ready';
@@ -69,6 +70,10 @@ export function App() {
 
   // Smart collections
   const [smartCollections, setSmartCollections] = useState<SmartCollectionSummary[]>([]);
+  const [activeSmartCollectionId, setActiveSmartCollectionId] = useState<string | null>(null);
+  const [searchValue, setSearchValue] = useState('');
+  const [favoriteFilter, setFavoriteFilter] = useState(false);
+  const [smartCollectionName, setSmartCollectionName] = useState('');
 
   // Metadata editor
   const [assetMetadata, setAssetMetadata] = useState<AssetMetadataResult | null>(null);
@@ -110,6 +115,8 @@ export function App() {
   const [aiTagsEnabled, setAiTagsEnabled] = useState(true);
   const [aiStructuredEnabled, setAiStructuredEnabled] = useState(false);
   const [aiLanguage, setAiLanguage] = useState('auto');
+  const [aiAutoAnalyzeEnabled, setAiAutoAnalyzeEnabled] = useState(false);
+  const [aiDisclaimerAccepted, setAiDisclaimerAccepted] = useState(false);
   const [aiAnalyzing, setAiAnalyzing] = useState(false);
   const [aiContent, setAiContent] = useState<{
     label?: string;
@@ -360,6 +367,26 @@ export function App() {
     }
   }
 
+  async function assignAssetToTag(assetId: string, tagId: string) {
+    if (!api || !library) return;
+    try {
+      const result = await api.assignTags({ libraryId: library.libraryId, assetIds: [assetId], tagIds: [tagId] });
+      if (!result.ok) throw new LibraryOperationError(result.error);
+      setTagMembership((current) => {
+        const next = new Map(current);
+        const members = new Set(next.get(tagId) ?? []);
+        members.add(assetId);
+        next.set(tagId, members);
+        return next;
+      });
+      const tagResult = await api.listTags({ libraryId: library.libraryId });
+      if (tagResult.ok) setTags(tagResult.value);
+      setNotice('标签已添加。');
+    } catch (caught) {
+      setError(toMessage(caught, '添加标签失败。'));
+    }
+  }
+
   // --- Collection CRUD ---
 
   async function createCollection() {
@@ -425,6 +452,99 @@ export function App() {
       setError(toMessage(caught, '无法读取合集内容。'));
     } finally {
       setUiState('ready');
+    }
+  }
+
+  async function addAssetToCollection(assetId: string, collectionId: string) {
+    if (!api || !library) return;
+    try {
+      const result = await api.addCollectionAssets({
+        libraryId: library.libraryId,
+        collectionId,
+        assetIds: [assetId],
+      });
+      if (!result.ok) throw new LibraryOperationError(result.error);
+      const collectionResult = await api.listCollections({ libraryId: library.libraryId });
+      if (collectionResult.ok) setCollections(collectionResult.value);
+      setNotice('资产已加入合集。');
+    } catch (caught) {
+      setError(toMessage(caught, '加入合集失败。'));
+    }
+  }
+
+  function currentQueryDefinition(): {
+    search?: { clauses: Array<{ field: string | null; values: string[]; exclude: boolean }> };
+    filters?: Array<{ field: 'favorite'; values: string[]; exclude: boolean }>;
+    sort: { field: 'name'; order: 'asc' };
+  } {
+    return {
+      ...(searchValue.trim() ? {
+        search: { clauses: [{ field: null, values: [searchValue.trim()], exclude: false }] },
+      } : {}),
+      ...(favoriteFilter ? {
+        filters: [{ field: 'favorite' as const, values: [], exclude: false }],
+      } : {}),
+      sort: { field: 'name', order: 'asc' as const },
+    };
+  }
+
+  async function runSearch(event?: FormEvent) {
+    event?.preventDefault();
+    if (!api || !library) return;
+    try {
+      const definition = currentQueryDefinition();
+      const result = await api.searchAssets({
+        libraryId: library.libraryId,
+        query: definition.search ?? null,
+        filters: definition.filters,
+        sort: definition.sort,
+      });
+      if (!result.ok) throw new LibraryOperationError(result.error);
+      setShowTrash(false);
+      setActiveTagId(null);
+      setActiveCollectionId(null);
+      setActiveSmartCollectionId(null);
+      setSelectedAssetId(undefined);
+      setAssets(result.value.items);
+      setAllAssetCount(result.value.total);
+      setNotice(`搜索完成：找到 ${result.value.total} 项。`);
+    } catch (caught) {
+      setError(toMessage(caught, '搜索失败。'));
+    }
+  }
+
+  async function saveSmartCollection() {
+    if (!api || !library || !smartCollectionName.trim()) return;
+    try {
+      const result = await api.createSmartCollection({
+        libraryId: library.libraryId,
+        name: smartCollectionName.trim(),
+        queryDefinitionJson: JSON.stringify(currentQueryDefinition()),
+      });
+      if (!result.ok) throw new LibraryOperationError(result.error);
+      const listResult = await api.listSmartCollections({ libraryId: library.libraryId });
+      if (listResult.ok) setSmartCollections(listResult.value);
+      setSmartCollectionName('');
+      setNotice('智能合集已保存。');
+    } catch (caught) {
+      setError(toMessage(caught, '保存智能合集失败。'));
+    }
+  }
+
+  async function chooseSmartCollection(collectionId: string) {
+    if (!api || !library) return;
+    try {
+      const result = await api.executeSmartCollection({ libraryId: library.libraryId, collectionId });
+      if (!result.ok) throw new LibraryOperationError(result.error);
+      setShowTrash(false);
+      setActiveTagId(null);
+      setActiveCollectionId(null);
+      setActiveSmartCollectionId(collectionId);
+      setSelectedAssetId(undefined);
+      setAssets(result.value.items);
+      setAllAssetCount(result.value.total);
+    } catch (caught) {
+      setError(toMessage(caught, '执行智能合集失败。'));
     }
   }
 
@@ -855,6 +975,28 @@ export function App() {
     }
   }
 
+  async function cancelExport() {
+    if (!api || !exportProgress?.exportId) return;
+    try {
+      const result = await api.cancelLibraryExport({ exportId: exportProgress.exportId });
+      if (!result.ok) throw new LibraryOperationError(result.error);
+      setNotice('正在取消导出并清理本次导出内容…');
+    } catch (caught) {
+      setError(toMessage(caught, '无法取消导出。'));
+    }
+  }
+
+  async function cancelImport() {
+    if (!api || !importProgress?.importId) return;
+    try {
+      const result = await api.cancelLibraryImport({ importId: importProgress.importId });
+      if (!result.ok) throw new LibraryOperationError(result.error);
+      setNotice('正在取消导入并清理本次导入内容…');
+    } catch (caught) {
+      setError(toMessage(caught, '无法取消导入。'));
+    }
+  }
+
   async function startImport() {
     if (!api) return;
     setImportProgress({
@@ -966,7 +1108,7 @@ export function App() {
   }, [api, assetScope, library, loadContent]);
 
   useEffect(() => {
-    if (!api || !library) return;
+    if (!api) return;
     return api.onProgress((event) => {
       if (event.type === 'export.progress') {
         setExportProgress(event);
@@ -980,7 +1122,7 @@ export function App() {
         }
       }
     });
-  }, [api, library]);
+  }, [api]);
 
   useEffect(() => {
     if (!dialog && !conflicts && !permanentDeleteDialog && !deleteLinkedDialog && !batchRelinkPreview) return;
@@ -1043,6 +1185,7 @@ export function App() {
     if (showTrash) return '回收站';
     if (activeTagId) { const t = tags.find((x) => x.tagId === activeTagId); return t ? `标签 · ${t.name}` : '标签'; }
     if (activeCollectionId) { const c = collections.find((x) => x.collectionId === activeCollectionId); return c ? `合集 · ${c.name}` : '合集'; }
+    if (activeSmartCollectionId) { const c = smartCollections.find((x) => x.collectionId === activeSmartCollectionId); return c ? `智能合集 · ${c.name}` : '智能合集'; }
     if (assetScope === 'all') return '所有资产';
     if (assetScope === 'root') return '资源库根目录';
     return selectedFolder?.name;
@@ -1108,14 +1251,16 @@ export function App() {
     setAiTagsEnabled(result.value.enabledFields.tags);
     setAiStructuredEnabled(result.value.enabledFields.structuredMetadata);
     setAiLanguage(result.value.language);
+    setAiAutoAnalyzeEnabled(result.value.autoAnalyzeEnabled);
+    setAiDisclaimerAccepted(result.value.disclaimerAccepted);
   }
 
   async function saveAiConfig() {
-    if (!api || !aiApiKey.trim()) return;
+    if (!api || (!aiApiKey.trim() && !aiHasKey)) return;
     const result = await api.setAiConfig({
       provider: aiProvider,
       model: aiModel,
-      apiKey: aiApiKey.trim(),
+      ...(aiApiKey.trim() ? { apiKey: aiApiKey.trim() } : {}),
       enabledFields: {
         label: aiLabelEnabled,
         description: aiDescriptionEnabled,
@@ -1123,12 +1268,14 @@ export function App() {
         structuredMetadata: aiStructuredEnabled,
       },
       language: aiLanguage,
+      autoAnalyzeEnabled: aiAutoAnalyzeEnabled,
+      disclaimerAccepted: aiDisclaimerAccepted,
     });
     if (!result.ok) {
       setError(toMessage(result.error, 'AI 配置保存失败。'));
       return;
     }
-    setAiHasKey(true);
+    setAiHasKey(aiHasKey || Boolean(aiApiKey.trim()));
     setAiApiKey('');
     setAiConfigOpen(false);
     setNotice('AI 配置已保存。');
@@ -1191,7 +1338,14 @@ export function App() {
     <header className="app-toolbar">
       <div className="toolbar-cluster toolbar-leading"><ToolButton icon="menu" label={leftOpen ? '收起导航' : '展开导航'} onClick={() => setLeftOpen((v) => !v)} pressed={leftOpen} /><div className="brand-mark"><span className="brand-glyph">S</span><span>Serpent</span></div></div>
       <div className="scope-trace"><span className="scope-root">资源库</span><Icon name="chevron" size={12} /><span className="scope-chip">{library?.displayName ?? '尚未打开'}</span>{library && <span className="scope-chip scope-chip-muted">{scopeChipLabel()}</span>}</div>
-      <div className="toolbar-cluster toolbar-actions"><button className="search-control" disabled><Icon name="search" size={15} /><span>搜索资源库</span><kbd>⌘ K</kbd></button><ToolButton icon="collapse-right" label={rightOpen ? '收起检查器' : '展开检查器'} onClick={() => setRightOpen((v) => !v)} pressed={rightOpen} /></div>
+      <form className="toolbar-cluster toolbar-actions" onSubmit={(event) => void runSearch(event)}>
+        <input aria-label="搜索资源库" className="search-control" disabled={!library} onChange={(event) => setSearchValue(event.target.value)} placeholder="搜索资源库" value={searchValue} />
+        <label style={{ alignItems: 'center', display: 'flex', fontSize: 10, gap: 4, whiteSpace: 'nowrap' }}><input checked={favoriteFilter} disabled={!library} onChange={(event) => setFavoriteFilter(event.target.checked)} type="checkbox" />仅喜欢</label>
+        <button className="compact-action" disabled={!library} type="submit"><Icon name="search" size={14} />搜索</button>
+        <input aria-label="智能合集标题" className="text-field" disabled={!library} onChange={(event) => setSmartCollectionName(event.target.value)} placeholder="智能合集名称" style={{ height: 28, width: 110 }} value={smartCollectionName} />
+        <button className="compact-action" disabled={!library || !smartCollectionName.trim()} onClick={() => void saveSmartCollection()} type="button"><Icon name="smart" size={14} />保存</button>
+        <ToolButton icon="collapse-right" label={rightOpen ? '收起检查器' : '展开检查器'} onClick={() => setRightOpen((v) => !v)} pressed={rightOpen} />
+      </form>
     </header>
     <aside className="navigation-pane"><div className="pane-header"><span>资源导航</span><span className="status-dot" data-active={Boolean(library)} /></div><nav className="navigation-scroll">
       <NavRow active={library ? assetScope === 'all' && !activeTagId && !activeCollectionId && !showTrash : true} count={library ? allAssetCount : undefined} icon="grid" label="所有资产" onClick={() => void chooseFolder('all')} disabled={!library} />
@@ -1214,7 +1368,7 @@ export function App() {
         </> : <p className="nav-empty">打开资源库后显示合集</p>}
       </Section>
       <Section title="智能合集">
-        {library ? (smartCollections.length ? smartCollections.map((sc) => <NavRow active={false} icon="smart" key={sc.collectionId} label={sc.name} disabled />) : <p className="nav-empty">尚无智能合集（切片 0005 启用查询）</p>) : <p className="nav-empty">打开资源库后显示智能合集</p>}
+        {library ? (smartCollections.length ? smartCollections.map((sc) => <NavRow active={activeSmartCollectionId === sc.collectionId} icon="smart" key={sc.collectionId} label={sc.name} onClick={() => void chooseSmartCollection(sc.collectionId)} />) : <p className="nav-empty">尚无智能合集</p>) : <p className="nav-empty">打开资源库后显示智能合集</p>}
       </Section>
       <Section title="链接文件夹" action={library ? () => void importFolderAsLinked() : undefined}>
         {library ? (linkedFolders.length ? linkedFolders.map((lf) => <NavRow active={assetScope === lf.folderId && !activeTagId && !activeCollectionId} icon={lf.status === 'offline' ? 'warning' : 'link'} key={lf.folderId} label={lf.displayName} count={lf.assetCount} onClick={lf.status === 'offline' ? () => void relinkFolder(lf.folderId) : () => void chooseFolder(lf.folderId)} />) : <p className="nav-empty">链接外部文件夹作为资产来源</p>) : <p className="nav-empty">打开资源库后显示链接文件夹</p>}
@@ -1232,19 +1386,21 @@ export function App() {
       {library && <><span className="tool-separator" /><button className="compact-action" onClick={() => { void loadAiConfig(); setAiConfigOpen(true); }} type="button"><Icon name="info" size={14} />AI 设置</button></>}
     </div></div><div className="workspace-canvas">
       {busy && <div className="activity-strip" role="status"><span className="activity-pulse" />{uiState === 'importing' ? '正在安全复制与登记资产…' : '正在同步资源库…'}</div>}
-      {exportProgress && exportProgress.phase !== 'complete' && (
+      {exportProgress && !['complete', 'cancelled', 'failed'].includes(exportProgress.phase) && (
         <div className="activity-strip" role="status">
           <span className="activity-pulse" />
           正在导出资源库：{exportProgress.phase === 'snapshot-db' ? '快照数据库…' : exportProgress.phase === 'enumerate' ? '枚举文件…' : exportProgress.phase === 'compress' ? '压缩中' : `复制中 ${exportProgress.filesProcessed}/${exportProgress.totalFiles} · ${formatBytes(exportProgress.bytesProcessed)}/${formatBytes(exportProgress.totalBytes)}`}
+          <button className="secondary-button" disabled={!exportProgress.exportId} onClick={() => void cancelExport()} type="button">取消导出</button>
         </div>
       )}
-      {importProgress && importProgress.phase !== 'complete' && (
+      {importProgress && !['complete', 'cancelled', 'failed'].includes(importProgress.phase) && (
         <div className="activity-strip" role="status">
           <span className="activity-pulse" />
           导入资源库：{importProgress.phase === 'validate' ? '验证中…' : importProgress.phase === 'copy' ? '复制中…' : '打开中…'}
+          <button className="secondary-button" disabled={!importProgress.importId} onClick={() => void cancelImport()} type="button">取消导入</button>
         </div>
       )}
-      {library ? visibleAssets.length ? <div className="asset-grid">{visibleAssets.map((asset) => <button className={`asset-card${selectedAssetId === asset.assetId ? ' is-selected' : ''}${asset.availability === 'missing' ? ' is-missing' : ''}${asset.deletedAt ? ' is-trashed' : ''}`} key={asset.assetId} onClick={() => setSelectedAssetId(asset.assetId)} onDoubleClick={() => { if (library && asset.thumbnailStatus === 'ready' && asset.thumbnailArtifactId) setPreviewAsset(asset); }} onContextMenu={(e) => { e.preventDefault(); if (library && !asset.deletedAt) setContextMenu({ x: e.clientX, y: e.clientY, assetId: asset.assetId, displayName: asset.displayName }); }} type="button"><div className="asset-preview">{asset.thumbnailStatus === 'ready' && asset.thumbnailArtifactId && library ? <img alt={asset.displayName} className="asset-thumbnail" loading="lazy" src={`serpent://preview/${library.libraryId}/${asset.thumbnailArtifactId}`} /> : <><span className="asset-extension">{extension(asset.displayName)}</span><Icon name="file" size={28} /></>}{asset.availability === 'missing' && <span className="missing-banner"><Icon name="warning" size={12} />文件丢失</span>}{asset.deletedAt && <span className="missing-banner" style={{ background: 'var(--raised-2)', color: 'var(--secondary)', bottom: 6, right: 6 }}><Icon name="trash" size={12} />回收站{asset.remainingDays !== null && ` · ${asset.remainingDays}天`}</span>}</div><div className="asset-caption"><strong title={asset.displayName}>{asset.displayName}</strong>{asset.deletedAt && asset.trashedFromPath ? <span style={{ color: 'var(--tertiary)', fontSize: 8, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={asset.trashedFromPath}>{asset.trashedFromPath}</span> : <span>{formatBytes(asset.byteSize)} · {formatDate(asset.modifiedAt)}</span>}</div></button>)}</div> : <div className="empty-library"><div className="empty-orbit"><Icon name="upload" size={24} /></div><span className="eyebrow">MANAGED ASSETS</span><h1>{selectedFolder ? '这个文件夹还是空的' : '把第一批素材放进来'}</h1><p>文件将复制到清晰可读的 Assets 目录，同时建立稳定的资产身份。</p><div className="empty-actions"><button className="primary-button" onClick={() => void importAssets('files')} type="button">导入文件</button><button className="secondary-button" onClick={() => void importAssets('folder')} type="button">导入文件夹</button></div></div> : <div className="empty-state"><div className="empty-index">01</div><div className="empty-copy"><span className="eyebrow">LOCAL ASSET WORKSPACE</span><h1>从一个本地资源库开始</h1><p>文件、目录与元数据都保留在你掌控的位置。</p><div className="empty-actions"><button className="primary-button" onClick={() => { setDialogValue('我的资源库'); setDialog('library'); }} type="button"><Icon name="plus" size={15} />创建资源库</button><button className="secondary-button" onClick={() => void runLibraryOperation('open')} type="button"><Icon name="folder" size={15} />打开资源库</button></div></div></div>}
+      {library ? visibleAssets.length ? <div className="asset-grid">{visibleAssets.map((asset) => <button className={`asset-card${selectedAssetId === asset.assetId ? ' is-selected' : ''}${asset.availability === 'missing' ? ' is-missing' : ''}${asset.deletedAt ? ' is-trashed' : ''}`} key={asset.assetId} onClick={() => setSelectedAssetId(asset.assetId)} onDoubleClick={() => { if (asset.availability === 'available' && !asset.deletedAt) setPreviewAsset(asset); }} onContextMenu={(e) => { e.preventDefault(); if (library && !asset.deletedAt) setContextMenu({ x: e.clientX, y: e.clientY, assetId: asset.assetId, displayName: asset.displayName }); }} type="button"><div className="asset-preview">{asset.thumbnailStatus === 'ready' && asset.thumbnailArtifactId && library ? <img alt={asset.displayName} className="asset-thumbnail" loading="lazy" src={`serpent://preview/${library.libraryId}/${asset.thumbnailArtifactId}`} /> : <><span className="asset-extension">{extension(asset.displayName)}</span><Icon name="file" size={28} /></>}{asset.availability === 'missing' && <span className="missing-banner"><Icon name="warning" size={12} />文件丢失</span>}{asset.deletedAt && <span className="missing-banner" style={{ background: 'var(--raised-2)', color: 'var(--secondary)', bottom: 6, right: 6 }}><Icon name="trash" size={12} />回收站{asset.remainingDays !== null && ` · ${asset.remainingDays}天`}</span>}</div><div className="asset-caption"><strong title={asset.displayName}>{asset.displayName}</strong>{asset.deletedAt && asset.trashedFromPath ? <span style={{ color: 'var(--tertiary)', fontSize: 8, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={asset.trashedFromPath}>{asset.trashedFromPath}</span> : <span>{formatBytes(asset.byteSize)} · {formatDate(asset.modifiedAt)}</span>}</div></button>)}</div> : <div className="empty-library"><div className="empty-orbit"><Icon name="upload" size={24} /></div><span className="eyebrow">MANAGED ASSETS</span><h1>{selectedFolder ? '这个文件夹还是空的' : '把第一批素材放进来'}</h1><p>文件将复制到清晰可读的 Assets 目录，同时建立稳定的资产身份。</p><div className="empty-actions"><button className="primary-button" onClick={() => void importAssets('files')} type="button">导入文件</button><button className="secondary-button" onClick={() => void importAssets('folder')} type="button">导入文件夹</button></div></div> : <div className="empty-state"><div className="empty-index">01</div><div className="empty-copy"><span className="eyebrow">LOCAL ASSET WORKSPACE</span><h1>从一个本地资源库开始</h1><p>文件、目录与元数据都保留在你掌控的位置。</p><div className="empty-actions"><button className="primary-button" onClick={() => { setDialogValue('我的资源库'); setDialog('library'); }} type="button"><Icon name="plus" size={15} />创建资源库</button><button className="secondary-button" onClick={() => void runLibraryOperation('open')} type="button"><Icon name="folder" size={15} />打开资源库</button></div></div></div>}
       {(error || notice) && <div className={`toast${error ? ' is-error' : ''}`} role={error ? 'alert' : 'status'}><Icon name={error ? 'warning' : 'info'} size={15} /><span>{error ?? notice}</span><button aria-label="关闭提示" onClick={() => { setError(null); setNotice(null); }} type="button"><Icon name="close" size={13} /></button></div>}
     </div></section>
     <aside className="inspector-pane"><div className="pane-header"><span>检查器</span><ToolButton icon="info" label="检查器信息" /></div>{selectedAsset ? <div className="inspector-content">
@@ -1339,15 +1495,15 @@ export function App() {
     {exportDialogOpen && <div className="dialog-backdrop" role="presentation"><div aria-modal="true" className="create-dialog" role="dialog"><div className="dialog-heading"><div><span className="eyebrow">EXPORT LIBRARY</span><h2>导出资源库</h2></div><button aria-label="取消" className="dialog-close" onClick={() => setExportDialogOpen(false)} type="button"><Icon name="close" size={16} /></button></div><p style={{ color: 'var(--secondary)', fontSize: 12, lineHeight: 1.6 }}>将资源库导出为完整文件夹或标准 ZIP。导出内容包括所有托管资产、数据库、修订记录和回收站文件。</p><fieldset style={{ border: 'none', padding: 0, marginTop: 14, display: 'flex', gap: 16 }}><legend style={{ fontSize: 11, color: '#6c6f6c', marginBottom: 6 }}>导出格式</legend><label style={{ display: 'flex', alignItems: 'center', gap: 5, color: '#c7cac7', fontSize: 12, cursor: 'pointer' }}><input checked={exportFormat === 'folder'} onChange={() => setExportFormat('folder')} type="radio" name="export-format" />文件夹</label><label style={{ display: 'flex', alignItems: 'center', gap: 5, color: '#c7cac7', fontSize: 12, cursor: 'pointer' }}><input checked={exportFormat === 'zip'} onChange={() => setExportFormat('zip')} type="radio" name="export-format" />标准 ZIP{exportFormat === 'zip' && <span style={{ fontSize: 10, color: '#6c6f6c' }}>（4&nbsp;GiB / 65534 条目以内）</span>}</label></fieldset>{exportFormat === 'folder' && <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10, color: '#c7cac7', fontSize: 12, cursor: 'pointer' }}><input checked={includeLinkedContent} onChange={(e) => setIncludeLinkedContent(e.target.checked)} type="checkbox" />包含链接文件夹源内容</label>}<div className="dialog-actions"><button className="secondary-button" onClick={() => setExportDialogOpen(false)} type="button">取消</button><button className="primary-button" onClick={() => void exportLibrary()} type="button">{exportFormat === 'zip' ? '选择保存位置并导出 ZIP' : '选择目标文件夹并导出'}</button></div></div></div>}
     {importValidated && <div className="dialog-backdrop" role="presentation"><div aria-modal="true" className="create-dialog" role="dialog"><div className="dialog-heading"><div><span className="eyebrow">IMPORT LIBRARY</span><h2>导入资源库</h2></div><button aria-label="取消" className="dialog-close" onClick={() => setImportValidated(null)} type="button"><Icon name="close" size={16} /></button></div><p style={{ color: 'var(--secondary)', fontSize: 12, lineHeight: 1.6 }}>资源库 <strong>{importValidated.displayName}</strong> 验证通过。请选择导入方式：</p><div className="dialog-actions"><button className="secondary-button" onClick={() => setImportValidated(null)} type="button">取消</button><button className="secondary-button" onClick={() => void completeImportInPlace()} type="button">原地打开（不复制）</button><button className="primary-button" onClick={() => void completeImportCopy()} type="button">复制到新位置</button></div></div></div>}
     {permanentDeleteDialog && <div className="dialog-backdrop" role="presentation"><div aria-modal="true" className="create-dialog" role="dialog"><div className="dialog-heading"><div><span className="eyebrow">PERMANENT DELETE</span><h2>永久删除确认</h2></div><button aria-label="取消" className="dialog-close" onClick={() => setPermanentDeleteDialog(null)} type="button"><Icon name="close" size={16} /></button></div><p style={{ color: 'var(--secondary)', fontSize: 12, lineHeight: 1.6 }}>确定要永久删除此资产吗？文件将从回收站彻底移除，此操作不可撤销。</p><div className="dialog-actions"><button className="secondary-button" onClick={() => setPermanentDeleteDialog(null)} type="button">取消</button><button className="primary-button" onClick={() => void deletePermanentFromTrash()} type="button">永久删除</button></div></div></div>}
-    {deleteLinkedDialog && <div className="dialog-backdrop" role="presentation"><div aria-modal="true" className="create-dialog" role="dialog"><div className="dialog-heading"><div><span className="eyebrow">DELETE LINKED ASSET</span><h2>删除链接资产</h2></div><button aria-label="取消" className="dialog-close" onClick={() => setDeleteLinkedDialog(null)} type="button"><Icon name="close" size={16} /></button></div><p style={{ color: 'var(--secondary)', fontSize: 12, lineHeight: 1.6 }}>确定要删除链接资产"{deleteLinkedDialog.displayNames}"吗？这只会移除 Serpent 中的记录，不会影响磁盘源文件。</p><label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 14, color: '#c7cac7', fontSize: 12, cursor: 'pointer' }}><input checked={deleteLinkedDialog.deleteSourceFile} onChange={(e) => setDeleteLinkedDialog({ ...deleteLinkedDialog, deleteSourceFile: e.target.checked })} type="checkbox" />同步删除磁盘源文件（移入系统回收站）</label><div className="dialog-actions"><button className="secondary-button" onClick={() => setDeleteLinkedDialog(null)} type="button">取消</button><button className="primary-button" onClick={() => void executeDeleteLinked()} type="button">删除</button></div></div></div>}
+    {deleteLinkedDialog && <div className="dialog-backdrop" role="presentation"><div aria-modal="true" className="create-dialog" role="dialog"><div className="dialog-heading"><div><span className="eyebrow">DELETE LINKED ASSET</span><h2>删除链接资产</h2></div><button aria-label="取消" className="dialog-close" onClick={() => setDeleteLinkedDialog(null)} type="button"><Icon name="close" size={16} /></button></div><p style={{ color: 'var(--secondary)', fontSize: 12, lineHeight: 1.6 }}>确定要删除链接资产"{deleteLinkedDialog.displayNames}"吗？这只会移除 Serpent 中的记录，不会影响磁盘源文件。同步移入系统回收站尚未实现，因此本版本不会删除源文件。</p><div className="dialog-actions"><button className="secondary-button" onClick={() => setDeleteLinkedDialog(null)} type="button">取消</button><button className="primary-button" onClick={() => void executeDeleteLinked()} type="button">仅移除记录</button></div></div></div>}
     {batchRelinkPreview && <div className="dialog-backdrop" role="presentation"><div aria-modal="true" className="conflict-dialog" role="dialog"><div className="dialog-heading"><div><span className="eyebrow">BATCH RELINK</span><h2>批量重新定位预览</h2></div><button aria-label="取消" className="dialog-close" onClick={() => setBatchRelinkPreview(null)} type="button"><Icon name="close" size={16} /></button></div><div className="conflict-summary" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}><div><strong>{batchRelinkPreview.totalCount}</strong><span>总计丢失</span></div><div><strong>{batchRelinkPreview.matchedCount}</strong><span>新位置匹配</span></div><div><strong>{batchRelinkPreview.unmatchedCount}</strong><span>未找到</span></div></div>{batchRelinkPreview.examples.length > 0 && <div className="conflict-examples">{batchRelinkPreview.examples.map((item, index) => <span key={`${item.relativeFilePath}-${index}`} style={{ color: item.matched ? 'var(--accent)' : 'var(--warning)' }}><Icon name={item.matched ? 'file' : 'warning'} size={13} />{item.relativeFilePath}</span>)}</div>}<label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 14, color: '#c7cac7', fontSize: 12, cursor: 'pointer' }}><input checked={batchRelinkKeepMetadata} onChange={(e) => setBatchRelinkKeepMetadata(e.target.checked)} type="checkbox" />沿用原资产信息（保留标签、描述、评分、合集等人工元数据）</label><div className="dialog-actions"><button className="secondary-button" onClick={() => setBatchRelinkPreview(null)} type="button">取消</button><button className="primary-button" disabled={batchRelinkPreview.matchedCount === 0} onClick={() => void applyBatchRelink()} type="button">应用批量重新定位</button></div></div></div>}
     {aiConfigOpen && <div className="dialog-backdrop" role="presentation"><div aria-modal="true" className="create-dialog" role="dialog"><div className="dialog-heading"><div><span className="eyebrow">AI CONFIGURATION</span><h2>AI 配置 (BYOK)</h2></div><button aria-label="取消" className="dialog-close" onClick={() => { setAiConfigOpen(false); setAiApiKey(''); }} type="button"><Icon name="close" size={16} /></button></div><p style={{ color: 'var(--secondary)', fontSize: 12, lineHeight: 1.6 }}>配置第三方云端视觉模型 API Key。Key 将加密存储于本地操作系统安全凭据中，Serpent 不代理、不计费、不追踪额度。</p>
       <div className="editor-field" style={{ marginTop: 12 }}>
         <label className="micro-label">供应商</label>
         <select className="text-field" onChange={(e) => setAiProvider(e.target.value as 'openai' | 'gemini' | 'anthropic')} style={{ height: 30, fontSize: 12, marginTop: 3 }} value={aiProvider}>
           <option value="openai">OpenAI (GPT-4o / GPT-4o-mini)</option>
-          <option disabled value="gemini">Gemini（切片 0009 后续实现）</option>
-          <option disabled value="anthropic">Anthropic（切片 0009 后续实现）</option>
+          <option value="gemini">Google Gemini</option>
+          <option value="anthropic">Anthropic Claude</option>
         </select>
       </div>
       <div className="editor-field" style={{ marginTop: 10 }}>
@@ -1376,14 +1532,24 @@ export function App() {
           </label>
         ))}
       </div>
+      <div style={{ marginTop: 14, borderTop: '1px solid var(--border)', paddingTop: 12 }}>
+        <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, color: '#c7cac7', fontSize: 12, cursor: 'pointer', lineHeight: 1.5 }}>
+          <input checked={aiDisclaimerAccepted} onChange={(e) => { setAiDisclaimerAccepted(e.target.checked); if (!e.target.checked) setAiAutoAnalyzeEnabled(false); }} type="checkbox" />
+          <span>我了解启用 AI 分析会将选中资产的图像或视频联系表上传给所选第三方供应商，并可能产生费用。</span>
+        </label>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 9, color: aiDisclaimerAccepted ? '#c7cac7' : 'var(--tertiary)', fontSize: 12, cursor: aiDisclaimerAccepted ? 'pointer' : 'not-allowed' }}>
+          <input checked={aiAutoAnalyzeEnabled} disabled={!aiDisclaimerAccepted} onChange={(e) => setAiAutoAnalyzeEnabled(e.target.checked)} type="checkbox" />
+          导入后自动上传并分析支持的资产
+        </label>
+      </div>
       <div className="dialog-actions" style={{ marginTop: 14 }}>
         <button className="secondary-button" onClick={() => { setAiConfigOpen(false); setAiApiKey(''); }} type="button">取消</button>
         <button className="primary-button" disabled={!aiApiKey.trim() && !aiHasKey} onClick={() => void saveAiConfig()} type="button">保存配置</button>
       </div></div></div>}
     {/* Preview modal */}
-    {previewAsset && library && <div className="dialog-backdrop" onClick={() => setPreviewAsset(null)} role="presentation"><div aria-label="预览" aria-modal="true" className="preview-modal" onClick={(e) => e.stopPropagation()} role="dialog"><div className="preview-toolbar"><span>{previewAsset.displayName}</span><button aria-label="关闭预览" onClick={() => setPreviewAsset(null)} type="button"><Icon name="close" size={18} /></button></div><div className="preview-content">{previewAsset.thumbnailArtifactId ? <img alt={previewAsset.displayName} src={`serpent://preview/${library.libraryId}/${previewAsset.thumbnailArtifactId}`} style={{ maxWidth: '100%', maxHeight: 'calc(90vh - 60px)', objectFit: 'contain' }} /> : <div style={{ padding: 40, textAlign: 'center', color: 'var(--tertiary)' }}><Icon name="file" size={48} /><p style={{ marginTop: 16 }}>无可用预览</p></div>}</div></div></div>}
+    {previewAsset && library && api && <AssetPreviewModal api={api} asset={previewAsset} libraryId={library.libraryId} onClose={() => setPreviewAsset(null)} />}
     {/* Context menu */}
-    {contextMenu && <div className="context-menu-backdrop" onClick={() => setContextMenu(null)} onKeyDown={(e) => { if (e.key === 'Escape') setContextMenu(null); }} role="presentation"><div className="context-menu" role="menu" style={{ position: 'fixed', left: contextMenu.x, top: contextMenu.y }}><button onClick={() => { void handleOpenExternal(contextMenu.assetId); setContextMenu(null); }} role="menuitem" type="button"><Icon name="upload" size={14} />使用外部应用打开</button></div></div>}
+    {contextMenu && <div className="context-menu-backdrop" onClick={() => setContextMenu(null)} onKeyDown={(e) => { if (e.key === 'Escape') setContextMenu(null); }} role="presentation"><div className="context-menu" onClick={(event) => event.stopPropagation()} role="menu" style={{ position: 'fixed', left: contextMenu.x, top: contextMenu.y }}><button onClick={() => { void handleOpenExternal(contextMenu.assetId); setContextMenu(null); }} role="menuitem" type="button"><Icon name="upload" size={14} />使用外部应用打开</button>{tags.map((tag) => <button key={`tag-${tag.tagId}`} onClick={() => { void assignAssetToTag(contextMenu.assetId, tag.tagId); setContextMenu(null); }} role="menuitem" type="button"><Icon name="tag" size={14} />添加标签：{tag.name}</button>)}{collections.map((collection) => <button key={`collection-${collection.collectionId}`} onClick={() => { void addAssetToCollection(contextMenu.assetId, collection.collectionId); setContextMenu(null); }} role="menuitem" type="button"><Icon name="collection" size={14} />加入合集：{collection.name}</button>)}</div></div>}
   </main>;
 }
 
@@ -1402,7 +1568,7 @@ function toMessage(error: unknown, fallback: string) {
 }
 
 const PUBLIC_ERROR_MESSAGES_ZH: Partial<Record<PublicErrorCode, string>> = {
-  CANCELLED: '操作已取消。', INTERNAL_ERROR: 'Serpent 无法完成这项操作，请重试。', INVALID_LIBRARY_NAME: '请输入可跨平台安全使用的资源库名称。', INVALID_LIBRARY_PATH: '请选择有效的本地文件夹。', INVALID_FOLDER_NAME: '请输入可跨平台安全使用的文件夹名称。', FOLDER_ALREADY_EXISTS: '当前位置已经存在同名文件夹。', FOLDER_NOT_FOUND: '找不到所选资源库文件夹。', INVALID_IMPORT_SOURCE: '无法读取所选导入内容。', INVALID_IMPORT_DECISION: '导入冲突处理选项无效。', IMPORT_NOT_FOUND: '待处理的导入已失效，请重新选择文件。', IMPORT_APPLY_FAILED: '无法安全完成导入。', LIBRARY_ALREADY_EXISTS: '该位置已经存在同名文件或文件夹。', LIBRARY_NOT_FOUND: '找不到所选资源库。', NOT_A_LIBRARY: '所选文件夹不是有效的 Serpent 资源库。', LIBRARY_CORRUPT: '资源库数据库或迁移记录已损坏。', LIBRARY_VERSION_TOO_NEW: '该资源库由更新版本的 Serpent 创建。', LIBRARY_NOT_WRITABLE: 'Serpent 无法写入所选位置。', LIBRARY_CLEANUP_FAILED: '创建失败，且临时文件无法自动清理。', LIBRARY_NOT_OPEN: '该资源库当前没有打开。', ASSET_NOT_FOUND: '找不到所选资产。', VERSION_CONFLICT: '元数据已被其他操作修改。请刷新后重新编辑。', ZIP_TOO_LARGE: '资源库大小超出标准 ZIP 限制（4 GiB / 65534 条目）。请改为导出文件夹。',
+  CANCELLED: '操作已取消。', INTERNAL_ERROR: 'Serpent 无法完成这项操作，请重试。', INVALID_LIBRARY_NAME: '请输入可跨平台安全使用的资源库名称。', INVALID_LIBRARY_PATH: '请选择有效的本地文件夹。', INVALID_FOLDER_NAME: '请输入可跨平台安全使用的文件夹名称。', FOLDER_ALREADY_EXISTS: '当前位置已经存在同名文件夹。', FOLDER_NOT_FOUND: '找不到所选资源库文件夹。', INVALID_IMPORT_SOURCE: '无法读取所选导入内容。', INVALID_IMPORT_DECISION: '导入冲突处理选项无效。', IMPORT_NOT_FOUND: '待处理的导入已失效，请重新选择文件。', IMPORT_APPLY_FAILED: '无法安全完成导入。', LIBRARY_ALREADY_EXISTS: '该位置已经存在同名文件或文件夹。', LIBRARY_NOT_FOUND: '找不到所选资源库。', NOT_A_LIBRARY: '所选文件夹不是有效的 Serpent 资源库。', LIBRARY_CORRUPT: '资源库数据库或迁移记录已损坏。', LIBRARY_VERSION_TOO_NEW: '该资源库由更新版本的 Serpent 创建。', LIBRARY_NOT_WRITABLE: 'Serpent 无法写入所选位置。', LIBRARY_CLEANUP_FAILED: '创建失败，且临时文件无法自动清理。', LIBRARY_NOT_OPEN: '该资源库当前没有打开。', ASSET_NOT_FOUND: '找不到所选资产。', AI_ANALYSIS_FAILED: 'AI 服务未能完成资产分析。', VERSION_CONFLICT: '元数据已被其他操作修改。请刷新后重新编辑。', ZIP_TOO_LARGE: '资源库大小超出标准 ZIP 限制（4 GiB / 65534 条目）。请改为导出文件夹。',
 };
 const PUBLIC_ERROR_REASONS_ZH: Record<PublicErrorReason, string> = {
   PERMISSION_DENIED: '当前用户没有读取源文件或写入目标位置的权限。',
@@ -1416,12 +1582,20 @@ const PUBLIC_ERROR_REASONS_ZH: Record<PublicErrorReason, string> = {
   NAME_NOT_SUPPORTED: '当前目标文件系统不接受其中的文件名。',
   IO_ERROR: '操作系统报告了磁盘读写错误。',
   SHARP_UNAVAILABLE: '图像处理引擎 Sharp 不可用。',
-  FFMPEG_REQUIRED: '视频缩略图需要 FFmpeg（切片 0006 已推迟）。',
-  OIIO_REQUIRED: 'EXR/TGA 解码需要 OpenImageIO（切片 0006 已推迟）。',
+  FFMPEG_REQUIRED: '当前安装中未找到 FFmpeg，暂时无法生成视频预览。',
+  OIIO_REQUIRED: '当前安装中未找到 OpenImageIO，暂时无法解码 EXR/TGA。',
+  MEDIA_PROCESSING_FAILED: '媒体处理失败。请检查源文件是否损坏，并查看应用日志了解详细原因。',
   UNSUPPORTED_FORMAT: '当前切片不支持此文件格式。',
   ZIP_TOO_LARGE: '资源库大小超出标准 ZIP 限制（4 GiB / 65534 条目）。',
   NOT_A_LIBRARY: '所选目标不是有效的 Serpent 资源库。',
   PATH_ESCAPE: 'ZIP 中包含路径逃逸条目，可能造成安全风险。',
+  AI_AUTH: 'API Key 无效或已失效，请更新凭据。',
+  AI_PERMISSION: '当前 API Key 没有访问所选模型的权限。',
+  AI_QUOTA: '供应商账户额度已用尽，请检查计费与额度。',
+  AI_RATE_LIMIT: '请求过于频繁，Serpent 将稍后重试。',
+  AI_NETWORK: '无法连接 AI 供应商，请检查网络。',
+  AI_TIMEOUT: 'AI 请求超时，Serpent 将稍后重试。',
+  AI_INVALID_RESPONSE: 'AI 供应商返回了无法解析的结果。',
 };
 class LibraryOperationError extends Error {
   readonly code: PublicError['code'];

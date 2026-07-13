@@ -8,6 +8,8 @@ import {
   type ExtensionServer,
 } from '../../src/main/extension-server';
 
+const TEST_PORT = 30_000 + (process.pid % 10_000);
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -15,7 +17,7 @@ import {
 function post(
   port: number,
   body: unknown,
-  opts?: { remoteAddr?: string; contentType?: string },
+  opts?: { remoteAddr?: string; contentType?: string; origin?: string },
 ): Promise<{ status: number; body: unknown }> {
   return new Promise((resolve, reject) => {
     const payload = JSON.stringify(body);
@@ -28,6 +30,7 @@ function post(
         headers: {
           'Content-Type': opts?.contentType ?? 'application/json',
           'Content-Length': Buffer.byteLength(payload),
+          ...(opts?.origin ? { Origin: opts.origin } : {}),
         },
         // Simulate a non-loopback remote address for security tests.
         ...(opts?.remoteAddr ? { localAddress: opts.remoteAddr } : {}),
@@ -52,6 +55,27 @@ function post(
     req.on('error', reject);
     req.write(payload);
     req.end();
+  });
+}
+
+function postRaw(
+  port: number,
+  payload: Buffer,
+): Promise<{ status: number; body: unknown }> {
+  return new Promise((resolve, reject) => {
+    const req = http.request({
+      hostname: '127.0.0.1', port, path: '/save', method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Content-Length': payload.length },
+    }, (res) => {
+      const chunks: Buffer[] = [];
+      res.on('data', (chunk: Buffer) => chunks.push(chunk));
+      res.on('end', () => {
+        const text = Buffer.concat(chunks).toString('utf-8');
+        resolve({ status: res.statusCode ?? 0, body: JSON.parse(text) });
+      });
+    });
+    req.on('error', reject);
+    req.end(payload);
   });
 }
 
@@ -216,7 +240,7 @@ describe('createExtensionServer', () => {
 
   it('starts on the requested port and responds to GET /ping', async () => {
     server = await createExtensionServer({
-      port: 19876,
+      port: TEST_PORT,
       onSaveIntent: () => {},
     });
 
@@ -226,21 +250,21 @@ describe('createExtensionServer', () => {
   });
 
   it('falls back to the next port when the first is occupied', async () => {
-    // Occupy port 19876 first.
+    // Occupy port TEST_PORT first.
     const occupant = http.createServer((_req, res) => {
       res.writeHead(200);
       res.end('occupied');
     });
-    await new Promise<void>((resolve) => occupant.listen(19876, '127.0.0.1', resolve));
+    await new Promise<void>((resolve) => occupant.listen(TEST_PORT, '127.0.0.1', resolve));
 
     try {
       server = await createExtensionServer({
-        port: 19876,
+        port: TEST_PORT,
         onSaveIntent: () => {},
       });
 
-      // Should have bound to 19877 (the fallback).
-      expect(server.port).toBe(19877);
+      // Should have bound to TEST_PORT + 1 (the fallback).
+      expect(server.port).toBe(TEST_PORT + 1);
 
       const ping = await getPing(server.port);
       expect(ping.status).toBe(200);
@@ -252,16 +276,16 @@ describe('createExtensionServer', () => {
   it('falls back to port+2 when first two are occupied', async () => {
     const occupant1 = http.createServer((_req, res) => { res.writeHead(200); res.end('1'); });
     const occupant2 = http.createServer((_req, res) => { res.writeHead(200); res.end('2'); });
-    await new Promise<void>((r) => occupant1.listen(19876, '127.0.0.1', r));
-    await new Promise<void>((r) => occupant2.listen(19877, '127.0.0.1', r));
+    await new Promise<void>((r) => occupant1.listen(TEST_PORT, '127.0.0.1', r));
+    await new Promise<void>((r) => occupant2.listen(TEST_PORT + 1, '127.0.0.1', r));
 
     try {
       server = await createExtensionServer({
-        port: 19876,
+        port: TEST_PORT,
         onSaveIntent: () => {},
       });
 
-      expect(server.port).toBe(19878);
+      expect(server.port).toBe(TEST_PORT + 2);
 
       const ping = await getPing(server.port);
       expect(ping.status).toBe(200);
@@ -274,8 +298,8 @@ describe('createExtensionServer', () => {
   it('returns 202 for a valid save intent', async () => {
     const intents: SaveIntent[] = [];
     server = await createExtensionServer({
-      port: 19876,
-      onSaveIntent: (i) => intents.push(i),
+      port: TEST_PORT,
+      onSaveIntent: (i) => { intents.push(i); },
     });
 
     const res = await post(server.port, {
@@ -294,11 +318,84 @@ describe('createExtensionServer', () => {
     });
   });
 
+  it('waits for async acceptance before returning 202', async () => {
+    let completed = false;
+    server = await createExtensionServer({
+      port: TEST_PORT,
+      onSaveIntent: async () => {
+        await Promise.resolve();
+        completed = true;
+        return { accepted: true };
+      },
+    });
+
+    const res = await post(server.port, {
+      kind: 'image', sourcePageUrl: 'https://example.com', mediaUrl: 'https://example.com/a.png',
+    });
+    expect(res.status).toBe(202);
+    expect(completed).toBe(true);
+  });
+
+  it('returns the downstream rejection instead of a false 202', async () => {
+    server = await createExtensionServer({
+      port: TEST_PORT,
+      onSaveIntent: async () => ({ accepted: false, status: 503, reason: 'no active library' }),
+    });
+
+    const res = await post(server.port, {
+      kind: 'image', sourcePageUrl: 'https://example.com', mediaUrl: 'https://example.com/a.png',
+    });
+    expect(res.status).toBe(503);
+    expect(res.body).toEqual({ status: 'rejected', reason: 'no active library' });
+  });
+
+  it('returns 500 and reports a downstream exception', async () => {
+    const errors: Error[] = [];
+    server = await createExtensionServer({
+      port: TEST_PORT,
+      onSaveIntent: async () => { throw new Error('downstream failed'); },
+      onError: (error) => errors.push(error),
+    });
+
+    const res = await post(server.port, {
+      kind: 'image', sourcePageUrl: 'https://example.com', mediaUrl: 'https://example.com/a.png',
+    });
+    expect(res.status).toBe(500);
+    expect(res.body).toEqual({ status: 'rejected', reason: 'internal error' });
+    expect(errors[0]?.message).toBe('downstream failed');
+  });
+
+  it('returns 413 before buffering an oversized JSON body', async () => {
+    server = await createExtensionServer({ port: TEST_PORT, onSaveIntent: () => {} });
+    const res = await postRaw(server.port, Buffer.alloc(20 * 1024, 0x20));
+    expect(res.status).toBe(413);
+    expect(res.body).toEqual({ status: 'rejected', reason: 'payload too large' });
+  });
+
+  it('accepts a valid Chrome extension Origin', async () => {
+    server = await createExtensionServer({ port: TEST_PORT, onSaveIntent: () => {} });
+    const res = await post(server.port, {
+      kind: 'image', sourcePageUrl: 'https://example.com', mediaUrl: 'https://example.com/a.png',
+    }, { origin: `chrome-extension://${'a'.repeat(32)}` });
+    expect(res.status).toBe(202);
+  });
+
+  it.each(['https://evil.example', 'http://127.0.0.1:9999', 'null', 'chrome-extension://short'])(
+    'rejects untrusted POST Origin %s', async (origin) => {
+    server = await createExtensionServer({ port: TEST_PORT, onSaveIntent: () => {} });
+    const res = await post(server.port, {
+      kind: 'image', sourcePageUrl: 'https://example.com', mediaUrl: 'https://example.com/a.png',
+    }, { origin });
+    expect(res.status).toBe(403);
+    expect(res.body).toEqual({ status: 'rejected', reason: 'forbidden origin' });
+    },
+  );
+
   it('calls onSaveIntent with a valid video intent including mediaType', async () => {
     const intents: SaveIntent[] = [];
     server = await createExtensionServer({
-      port: 19876,
-      onSaveIntent: (i) => intents.push(i),
+      port: TEST_PORT,
+      onSaveIntent: (i) => { intents.push(i); },
     });
 
     const res = await post(server.port, {
@@ -319,7 +416,7 @@ describe('createExtensionServer', () => {
 
   it('returns 400 for an invalid JSON body (non-http scheme)', async () => {
     server = await createExtensionServer({
-      port: 19876,
+      port: TEST_PORT,
       onSaveIntent: () => {},
     });
 
@@ -335,7 +432,7 @@ describe('createExtensionServer', () => {
 
   it('returns 400 for missing required fields', async () => {
     server = await createExtensionServer({
-      port: 19876,
+      port: TEST_PORT,
       onSaveIntent: () => {},
     });
 
@@ -350,7 +447,7 @@ describe('createExtensionServer', () => {
 
   it('returns 400 for non-JSON Content-Type', async () => {
     server = await createExtensionServer({
-      port: 19876,
+      port: TEST_PORT,
       onSaveIntent: () => {},
     });
 
@@ -366,7 +463,7 @@ describe('createExtensionServer', () => {
 
   it('returns 400 for unparseable JSON', async () => {
     server = await createExtensionServer({
-      port: 19876,
+      port: TEST_PORT,
       onSaveIntent: () => {},
     });
 
@@ -404,7 +501,7 @@ describe('createExtensionServer', () => {
 
   it('returns 404 for unknown endpoints', async () => {
     server = await createExtensionServer({
-      port: 19876,
+      port: TEST_PORT,
       onSaveIntent: () => {},
     });
 
@@ -419,7 +516,7 @@ describe('createExtensionServer', () => {
 
   it('ignores non-POST requests to /save', async () => {
     server = await createExtensionServer({
-      port: 19876,
+      port: TEST_PORT,
       onSaveIntent: () => {},
     });
 
@@ -435,7 +532,7 @@ describe('createExtensionServer', () => {
 
   it('stops accepting connections after server.close()', async () => {
     server = await createExtensionServer({
-      port: 19876,
+      port: TEST_PORT,
       onSaveIntent: () => {},
     });
 
@@ -450,7 +547,7 @@ describe('createExtensionServer', () => {
 
   it('reports errors via onError when all ports are occupied', async () => {
     const occupants: http.Server[] = [];
-    for (const port of [19876, 19877, 19878]) {
+    for (const port of [TEST_PORT, TEST_PORT + 1, TEST_PORT + 2]) {
       const s = http.createServer((_req, res) => { res.writeHead(200); res.end(); });
       await new Promise<void>((r) => s.listen(port, '127.0.0.1', r));
       occupants.push(s);
@@ -459,7 +556,7 @@ describe('createExtensionServer', () => {
     const errors: Error[] = [];
     try {
       await createExtensionServer({
-        port: 19876,
+        port: TEST_PORT,
         onSaveIntent: () => {},
         onError: (e) => errors.push(e),
       });

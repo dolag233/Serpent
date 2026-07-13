@@ -29,9 +29,7 @@ const GEMINI_RESPONSE_SCHEMA = {
     },
   },
   required: ['tags'],
-  propertyOrdering: {
-    order: ['label', 'description', 'tags', 'structured_metadata'],
-  },
+  propertyOrdering: ['label', 'description', 'tags', 'structured_metadata'],
 };
 
 /**

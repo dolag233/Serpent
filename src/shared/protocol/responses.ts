@@ -473,13 +473,28 @@ const assetOperationSuccessSchemas = [
   }),
   z.strictObject({
     ok: z.literal(true),
-    type: z.literal('asset.preview.url'),
+    type: z.literal('asset.preview.resolved'),
     assetId: nonBlankString,
-    url: nonBlankString,
+    mediaType: z.enum(['image', 'video', 'other']),
+    status: z.enum(['ready', 'pending', 'failed', 'missing']),
+    kind: z.enum(['thumbnail', 'webm_proxy']),
+    url: nonBlankString.optional(),
+    posterUrl: nonBlankString.optional(),
+    errorCode: nonBlankString.optional(),
   }),
   z.strictObject({
     ok: z.literal(true),
     type: z.literal('asset.open-external.requested'),
+    assetId: nonBlankString,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('asset.preview.closed'),
+    assetId: nonBlankString,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('asset.preview-error.recorded'),
     assetId: nonBlankString,
   }),
   z.strictObject({
@@ -575,6 +590,12 @@ const workerSuccessResultSchema = z.discriminatedUnion('type', [
   }),
   z.strictObject({
     ok: z.literal(true),
+    type: z.literal('media.retry-artifact.queued'),
+    assetId: nonBlankString,
+    kind: z.enum(['thumbnail', 'webm_proxy']),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
     type: z.literal('media.artifact-path'),
     artifactId: nonBlankString,
     absolutePath: nonBlankString,
@@ -586,6 +607,18 @@ const workerSuccessResultSchema = z.discriminatedUnion('type', [
     filePath: nonBlankString,
     width: z.number().int().positive().nullable(),
     height: z.number().int().positive().nullable(),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('media.preview-artifact'),
+    assetId: nonBlankString,
+    mediaType: z.enum(['image', 'video', 'other']),
+    status: z.enum(['ready', 'pending', 'failed', 'missing']),
+    kind: z.enum(['thumbnail', 'webm_proxy']),
+    artifactId: nonBlankString.optional(),
+    posterArtifactId: nonBlankString.optional(),
+    mimeType: nonBlankString,
+    errorCode: nonBlankString.optional(),
   }),
   z.strictObject({
     ok: z.literal(true),
@@ -604,6 +637,15 @@ const workerSuccessResultSchema = z.discriminatedUnion('type', [
     type: z.literal('media.jobs.processed'),
     libraryId: nonBlankString,
     processed: z.number().int().nonnegative(),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('ai.jobs.processed'),
+    libraryId: nonBlankString,
+    processed: z.number().int().nonnegative(),
+    succeeded: z.number().int().nonnegative(),
+    failed: z.number().int().nonnegative(),
+    requeued: z.number().int().nonnegative(),
   }),
   z.strictObject({
     ok: z.literal(true),
@@ -691,6 +733,8 @@ const rendererSuccessResultSchema = z.discriminatedUnion('type', [
       structuredMetadata: z.boolean(),
     }),
     language: nonBlankString,
+    autoAnalyzeEnabled: z.boolean(),
+    disclaimerAccepted: z.boolean(),
   }),
   z.strictObject({
     ok: z.literal(true),

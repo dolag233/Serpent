@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -234,7 +234,7 @@ describe('generateThumbnail (sharp)', () => {
     service.closeAll();
   });
 
-  it('handles video assets gracefully when FFmpeg is missing', async () => {
+  it('rejects video generation when FFmpeg is missing without returning an empty artifact ID', async () => {
     const root = temporaryRoot();
     const service = new LibraryService();
     const created = service.createLibrary({ displayName: 'Video', selectedParentPath: root });
@@ -244,10 +244,10 @@ describe('generateThumbnail (sharp)', () => {
     importNoConflict(service, created.libraryId, sourcePath);
 
     const assets = service.listAssets({ libraryId: created.libraryId, recursive: true });
-    const result = await service.generateThumbnail({ libraryId: created.libraryId, assetId: assets[0]!.assetId });
-    // Video is now dispatched to ffmpeg path; without ffmpeg, failed
-    // artifacts are created but the method resolves (partial failures tolerated).
-    expect(result.artifactId).toBe('');
+    await expect(service.generateThumbnail({
+      libraryId: created.libraryId,
+      assetId: assets[0]!.assetId,
+    })).rejects.toMatchObject({ reason: 'MEDIA_PROCESSING_FAILED' });
 
     // Verify failed artifacts were created
     const db = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
@@ -480,7 +480,37 @@ describe('getArtifactAbsolutePath', () => {
     const absPath = service.getArtifactAbsolutePath(created.libraryId, result.artifactId);
     expect(absPath).toContain('.serpent');
     expect(absPath).toContain('artifacts');
+    expect(() => service.getArtifactAbsolutePath(
+      created.libraryId,
+      result.artifactId,
+      'proxy',
+    )).toThrow(LibraryServiceError);
     expect(existsSync(absPath)).toBe(true);
+
+    service.closeAll();
+  });
+
+  it('rejects an artifact file replaced by a symlink', async () => {
+    if (process.platform === 'win32') return;
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'SymlinkArtifact', selectedParentPath: root });
+    const sourcePath = path.join(root, 'source.png');
+    createTestImage(sourcePath);
+    importNoConflict(service, created.libraryId, sourcePath);
+    const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
+    const result = await service.generateThumbnail({ libraryId: created.libraryId, assetId: asset.assetId });
+    const artifactPath = service.getArtifactAbsolutePath(created.libraryId, result.artifactId, 'preview');
+    const outsidePath = path.join(root, 'outside-secret.txt');
+    writeFileSync(outsidePath, 'must-not-be-served');
+    unlinkSync(artifactPath);
+    symlinkSync(outsidePath, artifactPath);
+
+    expect(() => service.getArtifactAbsolutePath(
+      created.libraryId,
+      result.artifactId,
+      'preview',
+    )).toThrow(LibraryServiceError);
 
     service.closeAll();
   });

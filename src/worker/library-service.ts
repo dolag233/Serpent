@@ -26,6 +26,8 @@ import {
 } from 'node:fs';
 import path from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
+import { lookup as dnsLookup } from 'node:dns/promises';
+import { isIP } from 'node:net';
 
 import BetterSqlite3 from 'better-sqlite3';
 
@@ -130,6 +132,7 @@ const REGENERABLE_DIRECTORIES = ['previews', 'revisions', 'trash', 'artifacts'] 
 
 const MAX_DOWNLOAD_BYTES = 500 * 1024 * 1024;
 const DOWNLOAD_TIMEOUT_MS = 30_000;
+const MAX_DOWNLOAD_REDIRECTS = 30;
 
 const CONTENT_TYPE_WHITELIST = new Set([
   'image/png', 'image/jpeg', 'image/gif', 'image/webp',
@@ -160,8 +163,57 @@ function cleanFilename(name: string): string {
   return name.replace(/[\x00-\x1f<>:"/\\|?*\x7f]+/g, '_')
     .replace(/^\.+/, '')
     .replace(/\.+$/, '')
-    .trim()
-    .slice(0, 255) || 'download';
+    .trim() || 'download';
+}
+
+export type DnsLookup = (
+  hostname: string,
+) => Promise<Array<{ address: string; family: number }>>;
+
+function prohibitedIpv4(address: string): boolean {
+  const parts = address.split('.').map(Number);
+  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return true;
+  const [a, b] = parts as [number, number, number, number];
+  return a === 0 || a === 10 || a === 127 ||
+    (a === 100 && b >= 64 && b <= 127) ||
+    (a === 169 && b === 254) ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 168) ||
+    (a === 198 && (b === 18 || b === 19)) ||
+    a >= 224;
+}
+
+function prohibitedIpAddress(rawAddress: string): boolean {
+  const address = rawAddress.toLowerCase().replace(/^\[|\]$/g, '').split('%')[0]!;
+  const family = isIP(address);
+  if (family === 4) return prohibitedIpv4(address);
+  if (family !== 6) return true;
+
+  let normalized = address;
+  const dottedTail = normalized.match(/(\d+\.\d+\.\d+\.\d+)$/u)?.[1];
+  if (dottedTail) {
+    const octets = dottedTail.split('.').map(Number);
+    normalized = normalized.slice(0, -dottedTail.length) +
+      `${((octets[0]! << 8) | octets[1]!).toString(16)}:${((octets[2]! << 8) | octets[3]!).toString(16)}`;
+  }
+  const [leftText, rightText = ''] = normalized.split('::');
+  const left = leftText ? leftText.split(':') : [];
+  const right = rightText ? rightText.split(':') : [];
+  const missing = 8 - left.length - right.length;
+  const groups = [...left, ...Array(Math.max(0, missing)).fill('0'), ...right]
+    .map((group) => Number.parseInt(group || '0', 16));
+  if (groups.length !== 8 || groups.some((group) => !Number.isInteger(group))) return true;
+  if (groups.every((group) => group === 0)) return true;
+  if (groups.slice(0, 7).every((group) => group === 0) && groups[7] === 1) return true;
+  const first = groups[0]!;
+  if ((first & 0xfe00) === 0xfc00 || (first & 0xffc0) === 0xfe80 || (first & 0xff00) === 0xff00) return true;
+  const embeddedV4 = groups.slice(0, 5).every((group) => group === 0) &&
+    (groups[5] === 0 || groups[5] === 0xffff);
+  if (embeddedV4) {
+    const ipv4 = `${groups[6]! >> 8}.${groups[6]! & 0xff}.${groups[7]! >> 8}.${groups[7]! & 0xff}`;
+    return prohibitedIpv4(ipv4);
+  }
+  return false;
 }
 
 function parseContentDispositionFilename(header: string): string | undefined {
@@ -832,6 +884,42 @@ export type SpawnFunction = (
   options?: { timeoutMs?: number },
 ) => Promise<SpawnResult>;
 
+const SPAWN_STDOUT_LIMIT_BYTES = 8 * 1024 * 1024;
+const SPAWN_STDERR_LIMIT_BYTES = 512 * 1024;
+
+class TailBuffer {
+  private chunks: Buffer[] = [];
+  private length = 0;
+
+  constructor(private readonly limitBytes: number) {}
+
+  append(chunk: Buffer): void {
+    if (chunk.length >= this.limitBytes) {
+      this.chunks = [chunk.subarray(chunk.length - this.limitBytes)];
+      this.length = this.limitBytes;
+      return;
+    }
+
+    this.chunks.push(chunk);
+    this.length += chunk.length;
+    while (this.length > this.limitBytes) {
+      const first = this.chunks[0]!;
+      const excess = this.length - this.limitBytes;
+      if (first.length <= excess) {
+        this.chunks.shift();
+        this.length -= first.length;
+      } else {
+        this.chunks[0] = first.subarray(excess);
+        this.length -= excess;
+      }
+    }
+  }
+
+  toBuffer(): Buffer {
+    return Buffer.concat(this.chunks, this.length);
+  }
+}
+
 /** Real subprocess spawn (child_process.spawn with defaults). */
 export function defaultSpawnFn(
   command: string,
@@ -857,11 +945,11 @@ export function defaultSpawnFn(
       windowsHide: true,
     });
 
-    const stdoutChunks: Buffer[] = [];
-    const stderrChunks: Buffer[] = [];
+    const stdoutTail = new TailBuffer(SPAWN_STDOUT_LIMIT_BYTES);
+    const stderrTail = new TailBuffer(SPAWN_STDERR_LIMIT_BYTES);
 
-    proc.stdout?.on('data', (chunk: Buffer) => stdoutChunks.push(chunk));
-    proc.stderr?.on('data', (chunk: Buffer) => stderrChunks.push(chunk));
+    proc.stdout?.on('data', (chunk: Buffer) => stdoutTail.append(chunk));
+    proc.stderr?.on('data', (chunk: Buffer) => stderrTail.append(chunk));
 
     proc.on('error', (err) => {
       clearTimeout(timer);
@@ -871,8 +959,8 @@ export function defaultSpawnFn(
     proc.on('close', (code) => {
       clearTimeout(timer);
       resolve({
-        stdout: Buffer.concat(stdoutChunks),
-        stderr: Buffer.concat(stderrChunks).toString('utf-8'),
+        stdout: stdoutTail.toBuffer(),
+        stderr: stderrTail.toBuffer().toString('utf-8'),
         exitCode: code ?? (timedOut ? -1 : (proc.signalCode ? -1 : 0)),
       });
     });
@@ -884,6 +972,8 @@ export interface LibraryServiceOptions {
   assetLstat?: (assetPath: string) => Stats;
   beforeSourceSnapshotOpen?: (sourcePath: string) => void;
   debounceMs?: number;
+  /** DNS resolver used to reject non-public URL download targets on every hop. */
+  dnsLookup?: DnsLookup;
   destinationLstat?: (destinationPath: string) => Stats;
   failAt?: ImportFailurePoint | ImportFailurePoint[];
   importClock?: ImportExpiryClock;
@@ -940,6 +1030,12 @@ export interface DebounceScheduler {
 interface LibraryWatch {
   observer: AssetObserver;
   timer?: unknown;
+}
+
+interface LinkedFolderWatch extends LibraryWatch {
+  folderId: string;
+  libraryId: string;
+  rootPath: string;
 }
 
 const DEFAULT_DEBOUNCE_SCHEDULER: DebounceScheduler = {
@@ -1043,11 +1139,25 @@ function realFileExists(filePath: string): boolean {
   }
 }
 
-function copyDirRecursive(
+interface TransferCancelState {
+  cancelled: boolean;
+  onCancel?: () => void;
+}
+
+/**
+ * Give the UtilityProcess message loop a chance to receive a cancellation
+ * command.  Transfer code uses this at file/entry boundaries, matching the
+ * cancellation granularity promised by the protocol.
+ */
+function transferCheckpoint(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
+async function copyDirRecursiveCancellable(
   sourcePath: string,
   destPath: string,
-  cancelState: { cancelled: boolean },
-): void {
+  cancelState: TransferCancelState,
+): Promise<void> {
   mkdirSync(destPath, { recursive: true });
   let children;
   try {
@@ -1056,16 +1166,74 @@ function copyDirRecursive(
     throw new LibraryServiceError('NOT_A_LIBRARY', { cause: error });
   }
   for (const child of children) {
+    await transferCheckpoint();
     if (cancelState.cancelled) return;
     const childSource = path.join(sourcePath, child.name);
     const childDest = path.join(destPath, child.name);
-    if (child.isSymbolicLink()) continue; // Never follow symlinks.
+    if (child.isSymbolicLink()) {
+      throw new LibraryServiceError('NOT_A_LIBRARY', { reason: 'SYMBOLIC_LINK_NOT_ALLOWED' });
+    }
     if (child.isDirectory()) {
-      copyDirRecursive(childSource, childDest, cancelState);
+      await copyDirRecursiveCancellable(childSource, childDest, cancelState);
     } else if (child.isFile()) {
       copyFileSync(childSource, childDest);
     }
   }
+}
+
+function assertTreeContainsNoSymlinks(rootPath: string): void {
+  const visit = (directoryPath: string): void => {
+    let children;
+    try {
+      children = readdirSync(directoryPath, { withFileTypes: true });
+    } catch (error) {
+      throw new LibraryServiceError('NOT_A_LIBRARY', { cause: error });
+    }
+    for (const child of children) {
+      const childPath = path.join(directoryPath, child.name);
+      let entry;
+      try {
+        entry = lstatSync(childPath);
+      } catch (error) {
+        throw new LibraryServiceError('NOT_A_LIBRARY', { cause: error });
+      }
+      if (entry.isSymbolicLink()) {
+        throw new LibraryServiceError('NOT_A_LIBRARY', {
+          reason: 'SYMBOLIC_LINK_NOT_ALLOWED',
+        });
+      }
+      if (entry.isDirectory()) visit(childPath);
+    }
+  };
+  visit(rootPath);
+}
+
+function validatePortableZipEntryName(entryName: string): string {
+  if (entryName.length === 0 || entryName.includes('\0')) {
+    throw new LibraryServiceError('NOT_A_LIBRARY', { reason: 'PATH_ESCAPE' });
+  }
+  const portableName = entryName.replace(/\\/g, '/');
+  if (
+    portableName.startsWith('/') ||
+    portableName.startsWith('//') ||
+    /^[A-Za-z]:/.test(portableName)
+  ) {
+    throw new LibraryServiceError('NOT_A_LIBRARY', { reason: 'PATH_ESCAPE' });
+  }
+  const directoryEntry = portableName.endsWith('/');
+  const withoutTrailingSlash = directoryEntry ? portableName.slice(0, -1) : portableName;
+  const segments = withoutTrailingSlash.split('/');
+  if (
+    withoutTrailingSlash.length === 0 ||
+    segments.some((segment) => segment === '' || segment === '.' || segment === '..')
+  ) {
+    throw new LibraryServiceError('NOT_A_LIBRARY', { reason: 'PATH_ESCAPE' });
+  }
+  const normalized = path.posix.normalize(withoutTrailingSlash);
+  if (normalized !== withoutTrailingSlash || path.posix.isAbsolute(normalized)) {
+    throw new LibraryServiceError('NOT_A_LIBRARY', { reason: 'PATH_ESCAPE' });
+  }
+  return directoryEntry ? `${normalized}/` : normalized;
 }
 
 function sourceSnapshot(stat: BigIntStats): SourceSnapshot {
@@ -1319,6 +1487,14 @@ function migrateDatabase(connection: DatabaseConnection, allowFresh: boolean): v
           backfillAssetSearchContent(connection);
           connection.exec("INSERT INTO asset_search(asset_search) VALUES('rebuild')");
         }
+        if (rebuildsTable) {
+          const foreignKeyViolations = connection.pragma('foreign_key_check');
+          if (Array.isArray(foreignKeyViolations) && foreignKeyViolations.length > 0) {
+            throw new Error(
+              `Migration ${migration.version} would leave ${foreignKeyViolations.length} foreign-key violation(s).`,
+            );
+          }
+        }
         connection
           .prepare(
             'INSERT INTO schema_migrations (version, checksum, applied_at) VALUES (?, ?, ?)',
@@ -1336,13 +1512,7 @@ function migrateDatabase(connection: DatabaseConnection, allowFresh: boolean): v
       }
       throw new LibraryServiceError('LIBRARY_CORRUPT', { cause: error });
     }
-    if (rebuildsTable) {
-      const foreignKeyViolations = connection.pragma('foreign_key_check');
-      connection.pragma('foreign_keys = ON');
-      if (Array.isArray(foreignKeyViolations) && foreignKeyViolations.length > 0) {
-        throw new LibraryServiceError('LIBRARY_CORRUPT');
-      }
-    }
+    if (rebuildsTable) connection.pragma('foreign_keys = ON');
   }
 
   verifyMigrationHistory(connection, SUPPORTED_SCHEMA_VERSION);
@@ -1402,8 +1572,9 @@ export class LibraryService {
   private readonly openIdByPath = new Map<string, string>();
   private readonly pendingImports = new Map<string, PendingImport>();
   private readonly watchByLibraryId = new Map<string, LibraryWatch>();
-  private readonly activeExports = new Map<string, { cancelled: boolean }>();
-  private readonly activeImports = new Map<string, { cancelled: boolean }>();
+  private readonly linkedWatchByKey = new Map<string, LinkedFolderWatch>();
+  private readonly activeExports = new Map<string, TransferCancelState>();
+  private readonly activeImports = new Map<string, TransferCancelState>();
 
   constructor(private readonly options: LibraryServiceOptions = {}) {}
 
@@ -1417,6 +1588,10 @@ export class LibraryService {
     } catch {
       // Diagnostics are strictly best effort and must never replace the primary failure.
     }
+  }
+
+  reportDiagnostic(scope: string, error: unknown, context?: Record<string, unknown>): void {
+    this.diagnose(scope, error, context);
   }
 
   private failAt(point: ImportFailurePoint): void {
@@ -1494,6 +1669,133 @@ export class LibraryService {
     } catch (error) {
       this.diagnose('asset-watcher.close', error, { libraryId });
       // Closing the database is still required even if the native observer already failed.
+    }
+  }
+
+  private linkedWatchKey(libraryId: string, folderId: string): string {
+    return `${libraryId}:${folderId}`;
+  }
+
+  private startLinkedWatcher(
+    openLibrary: OpenLibrary,
+    folder: { folder_id: string; absolute_root_path: string },
+  ): void {
+    const libraryId = openLibrary.summary.libraryId;
+    const key = this.linkedWatchKey(libraryId, folder.folder_id);
+    const existing = this.linkedWatchByKey.get(key);
+    if (existing?.rootPath === folder.absolute_root_path) return;
+    if (existing) this.stopLinkedWatcher(libraryId, folder.folder_id);
+    if (this.linkedRootIsGone(folder.absolute_root_path)) return;
+
+    const observerFactory = this.options.observerFactory ?? DEFAULT_ASSET_OBSERVER_FACTORY;
+    try {
+      const observer = observerFactory(
+        folder.absolute_root_path,
+        () => this.scheduleLinkedRefresh(libraryId, folder.folder_id),
+        (error) => this.diagnose('linked-watcher.error', error, {
+          libraryId,
+          linkedFolderId: folder.folder_id,
+          rootPath: folder.absolute_root_path,
+        }),
+      );
+      this.linkedWatchByKey.set(key, {
+        folderId: folder.folder_id,
+        libraryId,
+        observer,
+        rootPath: folder.absolute_root_path,
+      });
+    } catch (error) {
+      this.diagnose('linked-watcher.start', error, {
+        libraryId,
+        linkedFolderId: folder.folder_id,
+        rootPath: folder.absolute_root_path,
+      });
+    }
+  }
+
+  private scheduleLinkedRefresh(libraryId: string, folderId: string): void {
+    const key = this.linkedWatchKey(libraryId, folderId);
+    const linkedWatch = this.linkedWatchByKey.get(key);
+    if (!linkedWatch || !this.openById.has(libraryId)) return;
+    const scheduler = this.options.scheduler ?? DEFAULT_DEBOUNCE_SCHEDULER;
+    try {
+      if (linkedWatch.timer !== undefined) scheduler.cancel(linkedWatch.timer);
+      linkedWatch.timer = scheduler.schedule(() => {
+        linkedWatch.timer = undefined;
+        if (!this.linkedWatchByKey.has(key) || !this.openById.has(libraryId)) return;
+        try {
+          const refresh = this.refreshManagedAssets(libraryId);
+          if (refresh.changedCount > 0) {
+            this.options.onAssetsChanged?.({
+              type: 'asset.changed',
+              libraryId,
+              changedCount: refresh.changedCount,
+              missingCount: refresh.missingCount,
+            });
+          }
+        } catch (error) {
+          this.diagnose('linked-watcher.refresh', error, { libraryId, linkedFolderId: folderId });
+        }
+      }, this.options.debounceMs ?? 250);
+    } catch (error) {
+      linkedWatch.timer = undefined;
+      this.diagnose('linked-watcher.schedule', error, { libraryId, linkedFolderId: folderId });
+    }
+  }
+
+  private stopLinkedWatcher(libraryId: string, folderId: string): void {
+    const key = this.linkedWatchKey(libraryId, folderId);
+    const linkedWatch = this.linkedWatchByKey.get(key);
+    if (!linkedWatch) return;
+    this.linkedWatchByKey.delete(key);
+    if (linkedWatch.timer !== undefined) {
+      try {
+        (this.options.scheduler ?? DEFAULT_DEBOUNCE_SCHEDULER).cancel(linkedWatch.timer);
+      } catch (error) {
+        this.diagnose('linked-watcher.cancel', error, { libraryId, linkedFolderId: folderId });
+      }
+    }
+    try {
+      linkedWatch.observer.close();
+    } catch (error) {
+      this.diagnose('linked-watcher.close', error, { libraryId, linkedFolderId: folderId });
+    }
+  }
+
+  private reconcileLinkedWatchers(openLibrary: OpenLibrary): void {
+    const libraryId = openLibrary.summary.libraryId;
+    const folders = openLibrary.connection
+      .prepare(
+        `SELECT folder_id, absolute_root_path, status
+           FROM linked_folders
+          WHERE library_id = ?`,
+      )
+      .all(libraryId) as Array<{
+        folder_id: string;
+        absolute_root_path: string;
+        status: 'available' | 'offline';
+      }>;
+    const desired = new Map(
+      folders
+        .filter((folder) => folder.status === 'available' && !this.linkedRootIsGone(folder.absolute_root_path))
+        .map((folder) => [this.linkedWatchKey(libraryId, folder.folder_id), folder]),
+    );
+
+    for (const [key, linkedWatch] of this.linkedWatchByKey) {
+      if (linkedWatch.libraryId !== libraryId) continue;
+      const folder = desired.get(key);
+      if (!folder || folder.absolute_root_path !== linkedWatch.rootPath) {
+        this.stopLinkedWatcher(libraryId, linkedWatch.folderId);
+      }
+    }
+    for (const folder of desired.values()) this.startLinkedWatcher(openLibrary, folder);
+  }
+
+  private stopLinkedWatchers(libraryId: string): void {
+    for (const linkedWatch of [...this.linkedWatchByKey.values()]) {
+      if (linkedWatch.libraryId === libraryId) {
+        this.stopLinkedWatcher(libraryId, linkedWatch.folderId);
+      }
     }
   }
 
@@ -2396,8 +2698,8 @@ export class LibraryService {
       .get(pathIdentity);
     if (existing) throw new LibraryServiceError('FOLDER_ALREADY_EXISTS');
 
-    const entries = this.enumerateLinkedSources(canonicalRoot);
     const folderId = randomUUID();
+    const entries = this.enumerateLinkedSources(canonicalRoot, folderId);
     const now = new Date().toISOString();
     const sourceDeviceHint = String(rootStat.dev);
 
@@ -2451,6 +2753,7 @@ export class LibraryService {
         this.syncAssetSearchContent(openLibrary.connection, assetId);
       }
     })();
+    this.reconcileLinkedWatchers(openLibrary);
 
     return {
       folderId,
@@ -2568,6 +2871,7 @@ export class LibraryService {
           .run(revisionId, now, asset.asset_id);
       }
     })();
+    this.reconcileLinkedWatchers(openLibrary);
 
     const countRow = openLibrary.connection
       .prepare('SELECT COUNT(*) AS count FROM assets WHERE linked_folder_id = ?')
@@ -3484,13 +3788,14 @@ export class LibraryService {
     structuredMetadata?: Record<string, unknown>;
     modelId: string;
     modelVersion: string;
+    guardJobId?: string;
     enabledFields: {
       label: boolean;
       description: boolean;
       tags: boolean;
       structuredMetadata: boolean;
     };
-  }): { tagsWritten: string[]; fieldsWritten: string[] } {
+  }): { tagsWritten: string[]; fieldsWritten: string[]; committed: boolean } {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     const now = new Date().toISOString();
     const tagsWritten: string[] = [];
@@ -3501,8 +3806,21 @@ export class LibraryService {
       .get(input.assetId) as { current_revision_id: string | null } | undefined;
     const revisionId = revisionRow?.current_revision_id ?? null;
 
-    openLibrary.connection.transaction(() => {
-      // Tags: find-or-create, then INSERT OR IGNORE into ai_asset_tags.
+    const committed = openLibrary.connection.transaction(() => {
+      if (input.guardJobId) {
+        const job = openLibrary.connection.prepare(
+          "SELECT status FROM jobs WHERE library_id = ? AND job_id = ? AND status = 'running'",
+        ).get(openLibrary.summary.libraryId, input.guardJobId);
+        if (!job) return false;
+      }
+      // A successful analysis replaces the complete enabled AI layer. Clear
+      // old tags even when the provider returns an empty list so stale model
+      // output cannot survive a re-analysis.
+      if (input.enabledFields.tags) {
+        openLibrary.connection
+          .prepare('DELETE FROM ai_asset_tags WHERE asset_id = ?')
+          .run(input.assetId);
+      }
       if (input.enabledFields.tags && input.tags && input.tags.length > 0) {
         const findTag = openLibrary.connection.prepare(
           'SELECT tag_id, name FROM tags WHERE library_id = ? AND name = ? COLLATE NOCASE',
@@ -3552,7 +3870,6 @@ export class LibraryService {
       );
 
       const writeField = (fieldName: string, value: string): void => {
-        deleteOld.run(input.assetId, fieldName);
         insertContent.run(
           randomUUID(),
           input.assetId,
@@ -3565,6 +3882,12 @@ export class LibraryService {
         );
         fieldsWritten.push(fieldName);
       };
+
+      if (input.enabledFields.label) deleteOld.run(input.assetId, 'label');
+      if (input.enabledFields.description) deleteOld.run(input.assetId, 'description');
+      if (input.enabledFields.structuredMetadata) {
+        deleteOld.run(input.assetId, 'structured_metadata');
+      }
 
       if (input.enabledFields.label && input.label !== undefined && input.label.trim().length > 0) {
         writeField('label', input.label.trim());
@@ -3585,11 +3908,12 @@ export class LibraryService {
       ) {
         writeField('structured_metadata', JSON.stringify(input.structuredMetadata));
       }
+      return true;
     })();
 
-    this.syncAssetSearchContent(openLibrary.connection, input.assetId);
+    if (committed) this.syncAssetSearchContent(openLibrary.connection, input.assetId);
 
-    return { tagsWritten, fieldsWritten };
+    return { tagsWritten, fieldsWritten, committed };
   }
 
   /** Retrieve current AI content for an asset. */
@@ -3717,11 +4041,7 @@ export class LibraryService {
     return { clearedCount: targetAssetIds.length };
   }
 
-  /**
-   * Enqueue AI analysis jobs for assets in the given scope.
-   * Only images are enqueued (video needs contact sheet from slice 0006
-   * which generates async).
-   */
+  /** Enqueue image jobs and video jobs whose poster/contact sheet are ready. */
   enqueueAiAnalysisJobs(input: {
     libraryId: string;
     assetIds?: string[];
@@ -3748,9 +4068,10 @@ export class LibraryService {
            )
            SELECT a.asset_id
              FROM assets a
-            WHERE a.managed_folder_id IN (SELECT folder_id FROM subfolders)`,
+            WHERE a.managed_folder_id IN (SELECT folder_id FROM subfolders)
+               OR a.linked_folder_id = ?`,
         )
-        .all(input.folderId) as Array<{ asset_id: string }>;
+        .all(input.folderId, input.folderId) as Array<{ asset_id: string }>;
       targetAssetIds = folderRows.map((r) => r.asset_id);
     } else {
       // All library assets (single-library database, so no library_id filter needed).
@@ -3775,6 +4096,18 @@ export class LibraryService {
       '.png', '.jpg', '.jpeg', '.gif', '.tiff', '.tif',
       '.webp', '.bmp', '.svg',
     ]);
+    const videoExts = new Set([
+      '.mp4', '.mov', '.avi', '.wmv', '.webm', '.mkv', '.m4v',
+    ]);
+    const videoArtifactsReady = conn.prepare(
+      `SELECT COUNT(DISTINCT ra.kind) AS ready_count
+         FROM assets a
+         JOIN revision_artifacts ra ON ra.revision_id = a.current_revision_id
+        WHERE a.asset_id = ?
+          AND ra.kind IN ('contact_sheet', 'video_poster')
+          AND ra.status = 'ready'
+          AND ra.invalidated_at IS NULL`,
+    );
 
     let enqueued = 0;
     conn.transaction(() => {
@@ -3791,7 +4124,13 @@ export class LibraryService {
         if (!row) continue;
 
         const ext = path.extname(row.relative_file_path).toLowerCase();
-        if (!imageExts.has(ext)) continue;
+        const isImage = imageExts.has(ext);
+        const isVideo = videoExts.has(ext);
+        if (!isImage && !isVideo) continue;
+        if (isVideo) {
+          const artifacts = videoArtifactsReady.get(assetId) as { ready_count: number };
+          if (artifacts.ready_count !== 2) continue;
+        }
 
         // Check if there's already a pending/running AI job for this asset.
         const existingJob = conn
@@ -3812,7 +4151,7 @@ export class LibraryService {
           libId,
           assetId,
           revisionId,
-          'ai.image.analysis',
+          isVideo ? 'ai.video.analysis' : 'ai.image.analysis',
           now,
           now,
         );
@@ -3821,6 +4160,86 @@ export class LibraryService {
     })();
 
     return { enqueued };
+  }
+
+  claimNextAiJob(libraryId: string, excludedJobIds: string[] = []): {
+    jobId: string;
+    assetId: string;
+    kind: 'ai.image.analysis' | 'ai.video.analysis';
+    attemptCount: number;
+  } | null {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    const conn = openLibrary.connection;
+    const libId = openLibrary.summary.libraryId;
+    return conn.transaction(() => {
+      const exclusionSql = excludedJobIds.length > 0
+        ? ` AND job_id NOT IN (${excludedJobIds.map(() => '?').join(',')})`
+        : '';
+      const row = conn.prepare(
+        `SELECT job_id, asset_id, kind, attempt_count FROM jobs
+          WHERE library_id = ? AND kind IN ('ai.image.analysis', 'ai.video.analysis')
+            AND status = 'queued'${exclusionSql}
+          ORDER BY priority DESC, created_at ASC, job_id ASC LIMIT 1`,
+      ).get(libId, ...excludedJobIds) as { job_id: string; asset_id: string; kind: 'ai.image.analysis' | 'ai.video.analysis'; attempt_count: number } | undefined;
+      if (!row) return null;
+      const attemptCount = row.attempt_count + 1;
+      const result = conn.prepare(
+        `UPDATE jobs SET status = 'running', attempt_count = ?, progress = 0.0,
+          error_code = NULL, error_detail = NULL, updated_at = ?
+          WHERE job_id = ? AND library_id = ? AND status = 'queued'`,
+      ).run(attemptCount, new Date().toISOString(), row.job_id, libId);
+      if (result.changes !== 1) return null;
+      return { jobId: row.job_id, assetId: row.asset_id, kind: row.kind, attemptCount };
+    })();
+  }
+
+  completeAiJob(libraryId: string, jobId: string): void {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    openLibrary.connection.prepare(
+      `UPDATE jobs SET status = 'succeeded', progress = 1.0, error_code = NULL,
+        error_detail = NULL, updated_at = ?
+        WHERE library_id = ? AND job_id = ? AND status = 'running'
+          AND kind IN ('ai.image.analysis', 'ai.video.analysis')`,
+    ).run(new Date().toISOString(), openLibrary.summary.libraryId, jobId);
+  }
+
+  getAiJobState(libraryId: string, jobId: string): string | null {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    const row = openLibrary.connection.prepare(
+      `SELECT status FROM jobs WHERE library_id = ? AND job_id = ?
+        AND kind IN ('ai.image.analysis', 'ai.video.analysis')`,
+    ).get(openLibrary.summary.libraryId, jobId) as { status: string } | undefined;
+    return row?.status ?? null;
+  }
+
+  failAiJob(
+    libraryId: string,
+    jobId: string,
+    failure: { errorCode: string; retryable: boolean; maxAttempts?: number },
+  ): { status: 'queued' | 'failed' } {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    const conn = openLibrary.connection;
+    const libId = openLibrary.summary.libraryId;
+    const row = conn.prepare(
+      `SELECT attempt_count FROM jobs WHERE library_id = ? AND job_id = ?
+        AND status = 'running' AND kind IN ('ai.image.analysis', 'ai.video.analysis')`,
+    ).get(libId, jobId) as { attempt_count: number } | undefined;
+    if (!row) return { status: 'failed' };
+    const status = failure.retryable && row.attempt_count < (failure.maxAttempts ?? 3) ? 'queued' : 'failed';
+    conn.prepare(
+      `UPDATE jobs SET status = ?, progress = 0.0, error_code = ?, error_detail = NULL,
+        updated_at = ? WHERE library_id = ? AND job_id = ? AND status = 'running'`,
+    ).run(status, failure.errorCode, new Date().toISOString(), libId, jobId);
+    return { status };
+  }
+
+  private recoverInterruptedAiJobs(openLibrary: OpenLibrary): void {
+    openLibrary.connection.prepare(
+      `UPDATE jobs SET status = 'queued', progress = 0.0,
+        error_code = 'PROCESS_INTERRUPTED', error_detail = NULL, updated_at = ?
+        WHERE library_id = ? AND status = 'running'
+          AND kind IN ('ai.image.analysis', 'ai.video.analysis')`,
+    ).run(new Date().toISOString(), openLibrary.summary.libraryId);
   }
 
   // ── AI Job Queue Management ──────────────────────────────────────
@@ -4089,6 +4508,26 @@ export class LibraryService {
       .get(input.assetId) as { current_revision_id: string | null } | undefined;
     if (!assetRow?.current_revision_id) throw new LibraryServiceError('ASSET_NOT_FOUND');
     const revisionId = assetRow.current_revision_id;
+    const ext = path.extname(assetPath).toLowerCase();
+    const isOiioImage = ext === '.exr' || ext === '.tga';
+    if (mediaType === 'other' && !isOiioImage) {
+      throw new LibraryServiceError('INVALID_IMPORT_DECISION', {
+        reason: 'UNSUPPORTED_FORMAT',
+      });
+    }
+
+    const artifactKinds = mediaType === 'video'
+      ? ['extracted_metadata', 'video_poster', 'contact_sheet', 'webm_proxy']
+      : ['thumbnail'];
+    openLibrary.connection
+      .prepare(
+        `UPDATE revision_artifacts
+            SET invalidated_at = ?
+          WHERE revision_id = ?
+            AND kind IN (${artifactKinds.map(() => '?').join(', ')})
+            AND invalidated_at IS NULL`,
+      )
+      .run(new Date().toISOString(), revisionId, ...artifactKinds);
 
     if (mediaType === 'image') {
       return this.generateImageThumbnail(input, openLibrary, assetPath, revisionId);
@@ -4098,14 +4537,11 @@ export class LibraryService {
       return this.generateVideoArtifacts(input, openLibrary, assetPath, revisionId);
     }
 
-    const ext = path.extname(assetPath).toLowerCase();
-    if (ext === '.exr' || ext === '.tga') {
+    if (isOiioImage) {
       return this.generateOiiOThumbnail(input, openLibrary, assetPath, revisionId);
     }
 
-    throw new LibraryServiceError('INVALID_IMPORT_DECISION', {
-      reason: 'UNSUPPORTED_FORMAT',
-    });
+    throw new LibraryServiceError('INTERNAL_ERROR');
   }
 
   // ── Image thumbnail (sharp) ────────────────────────────────────────
@@ -4122,8 +4558,8 @@ export class LibraryService {
     const artifactRelPath = `${artifactId}.webp`;
     const artifactAbsPath = path.join(artifactsDir, artifactRelPath);
 
-    const s = requireSharp();
     try {
+      const s = requireSharp();
       const pipeline = s(assetPath);
       const metadata = await pipeline.metadata();
       const inputWidth = metadata.width ?? 0;
@@ -4260,7 +4696,13 @@ export class LibraryService {
       this.diagnose('video-webm-proxy', error, { libraryId: input.libraryId, assetId: input.assetId });
     }
 
-    // Emit thumbnail-ready notification
+    if (!posterArtifactId) {
+      throw new LibraryServiceError('INTERNAL_ERROR', {
+        reason: 'MEDIA_PROCESSING_FAILED',
+      });
+    }
+
+    // Emit thumbnail-ready notification only after the primary poster exists.
     this.options.onAssetsChanged?.({
       type: 'asset.changed',
       libraryId: input.libraryId,
@@ -4268,7 +4710,7 @@ export class LibraryService {
       missingCount: 0,
     });
 
-    return { artifactId: posterArtifactId || '' };
+    return { artifactId: posterArtifactId };
   }
 
   /** Run ffprobe and store extracted_metadata artifact. */
@@ -4295,7 +4737,7 @@ export class LibraryService {
       ], { timeoutMs: 60_000 });
 
       if (result.exitCode !== 0) {
-        throw new Error(`ffprobe exited with code ${result.exitCode}: ${result.stderr.slice(0, 200)}`);
+        throw new Error(`ffprobe exited with code ${result.exitCode}: ${result.stderr.slice(-200)}`);
       }
 
       const probeJson = JSON.parse(result.stdout.toString('utf-8'));
@@ -4389,7 +4831,7 @@ export class LibraryService {
       ], { timeoutMs: 120_000 });
 
       if (result.exitCode !== 0) {
-        throw new Error(`ffmpeg poster exited with code ${result.exitCode}: ${result.stderr.slice(0, 200)}`);
+        throw new Error(`ffmpeg poster exited with code ${result.exitCode}: ${result.stderr.slice(-200)}`);
       }
 
       const outputStat = statSync(artifactAbsPath);
@@ -4450,7 +4892,7 @@ export class LibraryService {
       ], { timeoutMs: 180_000 });
 
       if (result.exitCode !== 0) {
-        throw new Error(`ffmpeg contact sheet exited with code ${result.exitCode}: ${result.stderr.slice(0, 200)}`);
+        throw new Error(`ffmpeg contact sheet exited with code ${result.exitCode}: ${result.stderr.slice(-200)}`);
       }
 
       const outputStat = statSync(artifactAbsPath);
@@ -4499,7 +4941,7 @@ export class LibraryService {
       ], { timeoutMs: 600_000 });
 
       if (result.exitCode !== 0) {
-        throw new Error(`ffmpeg webm proxy exited with code ${result.exitCode}: ${result.stderr.slice(0, 200)}`);
+        throw new Error(`ffmpeg webm proxy exited with code ${result.exitCode}: ${result.stderr.slice(-200)}`);
       }
 
       const outputStat = statSync(artifactAbsPath);
@@ -4550,7 +4992,7 @@ export class LibraryService {
       const result = await this.spawnFn(oiiotoolPath, args, { timeoutMs: 60_000 });
 
       if (result.exitCode !== 0) {
-        throw new Error(`oiiotool exited with code ${result.exitCode}: ${result.stderr.slice(0, 200)}`);
+        throw new Error(`oiiotool exited with code ${result.exitCode}: ${result.stderr.slice(-200)}`);
       }
 
       const outputStat = statSync(artifactAbsPath);
@@ -4674,7 +5116,7 @@ export class LibraryService {
     libraryId: string,
     assetId: string,
     kind: string,
-  ): { artifactId: string; filePath: string; mimeType: string; status: string } | null {
+  ): { artifactId: string; filePath: string; mimeType: string; status: string; errorCode: string | null } | null {
     const openLibrary = this.requireOpenLibrary(libraryId);
     const assetRow = openLibrary.connection
       .prepare('SELECT current_revision_id FROM assets WHERE asset_id = ?')
@@ -4683,7 +5125,7 @@ export class LibraryService {
 
     const row = openLibrary.connection
       .prepare(
-        `SELECT artifact_id, file_path, mime_type, status
+        `SELECT artifact_id, file_path, mime_type, status, error_code
            FROM revision_artifacts
           WHERE revision_id = ?
             AND kind = ?
@@ -4695,6 +5137,7 @@ export class LibraryService {
         file_path: string;
         mime_type: string;
         status: string;
+        error_code: string | null;
       } | undefined;
 
     return row
@@ -4703,25 +5146,209 @@ export class LibraryService {
           filePath: row.file_path,
           mimeType: row.mime_type,
           status: row.status,
+          errorCode: row.error_code,
         }
       : null;
   }
 
+  /**
+   * Resolve the renderer-safe preview state for an asset. The renderer receives
+   * only an opaque artifact id; absolute and library-relative paths stay in the
+   * Worker/Main boundary.
+   */
+  getPreviewArtifact(
+    libraryId: string,
+    assetId: string,
+  ): {
+    mediaType: 'image' | 'video' | 'other';
+    status: 'ready' | 'pending' | 'failed' | 'missing';
+    kind: 'thumbnail' | 'webm_proxy';
+    artifactId?: string;
+    mimeType: string;
+    errorCode?: string;
+    posterArtifactId?: string;
+  } {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    const asset = openLibrary.connection
+      .prepare(
+        `SELECT relative_file_path, availability
+           FROM assets
+          WHERE asset_id = ? AND deleted_at IS NULL`,
+      )
+      .get(assetId) as { relative_file_path: string; availability: 'available' | 'missing' } | undefined;
+    if (!asset) throw new LibraryServiceError('ASSET_NOT_FOUND');
+    if (asset.availability === 'missing') {
+      throw new LibraryServiceError('ASSET_NOT_FOUND', { reason: 'SOURCE_NOT_FOUND' });
+    }
+
+    const mediaType = LibraryService.detectMediaType(asset.relative_file_path);
+    const kind = mediaType === 'video' ? 'webm_proxy' : 'thumbnail';
+    const mimeType = mediaType === 'video' ? 'video/webm' : 'image/webp';
+    const poster = mediaType === 'video'
+      ? this.getCurrentArtifact(libraryId, assetId, 'video_poster')
+      : null;
+    const posterArtifactId = poster?.status === 'ready' ? poster.artifactId : undefined;
+    const activeJob = openLibrary.connection
+      .prepare(
+        `SELECT status
+           FROM jobs
+          WHERE asset_id = ?
+            AND kind = 'generate_thumbnail'
+            AND status IN ('queued', 'running', 'paused')
+          ORDER BY updated_at DESC
+          LIMIT 1`,
+      )
+      .get(assetId) as { status: 'queued' | 'running' | 'paused' } | undefined;
+    if (activeJob) {
+      return {
+        mediaType,
+        status: 'pending',
+        kind,
+        mimeType,
+        ...(posterArtifactId ? { posterArtifactId } : {}),
+      };
+    }
+
+    const artifact = this.getCurrentArtifact(libraryId, assetId, kind);
+    if (artifact) {
+      const status = artifact.status === 'generating' ? 'pending' : artifact.status;
+      if (status === 'ready') {
+        return {
+          mediaType,
+          status,
+          kind,
+          artifactId: artifact.artifactId,
+          mimeType: artifact.mimeType,
+          ...(posterArtifactId ? { posterArtifactId } : {}),
+        };
+      }
+      if (status === 'failed') {
+        return {
+          mediaType,
+          status,
+          kind,
+          artifactId: artifact.artifactId,
+          mimeType: artifact.mimeType,
+          errorCode: artifact.errorCode ?? 'MEDIA_PROCESSING_FAILED',
+          ...(posterArtifactId ? { posterArtifactId } : {}),
+        };
+      }
+      return {
+        mediaType,
+        status: 'pending',
+        kind,
+        artifactId: artifact.artifactId,
+        mimeType: artifact.mimeType,
+        ...(posterArtifactId ? { posterArtifactId } : {}),
+      };
+    }
+
+    return {
+      mediaType,
+      status: 'missing',
+      kind,
+      mimeType,
+      ...(posterArtifactId ? { posterArtifactId } : {}),
+    };
+  }
+
+  /** Queue an artifact retry and return before any decoder subprocess starts. */
+  enqueueArtifactRetry(input: {
+    libraryId: string;
+    assetId: string;
+    kind: 'thumbnail' | 'webm_proxy';
+  }): string {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    const asset = openLibrary.connection
+      .prepare(
+        `SELECT relative_file_path, current_revision_id, availability
+           FROM assets
+          WHERE asset_id = ? AND deleted_at IS NULL`,
+      )
+      .get(input.assetId) as {
+        relative_file_path: string;
+        current_revision_id: string | null;
+        availability: 'available' | 'missing';
+      } | undefined;
+    if (!asset?.current_revision_id) throw new LibraryServiceError('ASSET_NOT_FOUND');
+    if (asset.availability !== 'available') {
+      throw new LibraryServiceError('ASSET_NOT_FOUND', { reason: 'SOURCE_NOT_FOUND' });
+    }
+    const expectedKind = LibraryService.detectMediaType(asset.relative_file_path) === 'video'
+      ? 'webm_proxy'
+      : 'thumbnail';
+    if (input.kind !== expectedKind) {
+      throw new LibraryServiceError('INVALID_IMPORT_DECISION', { reason: 'UNSUPPORTED_FORMAT' });
+    }
+
+    return openLibrary.connection.transaction(() => {
+      const active = openLibrary.connection
+        .prepare(
+          `SELECT job_id
+             FROM jobs
+            WHERE asset_id = ?
+              AND kind = 'generate_thumbnail'
+              AND status IN ('queued', 'running', 'paused')
+            ORDER BY updated_at DESC
+            LIMIT 1`,
+        )
+        .get(input.assetId) as { job_id: string } | undefined;
+      if (active) return active.job_id;
+
+      const jobId = randomUUID();
+      const now = new Date().toISOString();
+      openLibrary.connection
+        .prepare(
+          `INSERT INTO jobs
+             (job_id, library_id, asset_id, revision_id, kind, status, priority, progress,
+              attempt_count, created_at, updated_at)
+           VALUES (?, ?, ?, ?, 'generate_thumbnail', 'queued', 100, 0.0, 0, ?, ?)`,
+        )
+        .run(jobId, input.libraryId, input.assetId, asset.current_revision_id, now, now);
+      return jobId;
+    })();
+  }
+
   /** Get the absolute filesystem path for an artifact. */
-  getArtifactAbsolutePath(libraryId: string, artifactId: string): string {
+  getArtifactAbsolutePath(
+    libraryId: string,
+    artifactId: string,
+    usage?: 'preview' | 'proxy',
+  ): string {
     const openLibrary = this.requireOpenLibrary(libraryId);
     const row = openLibrary.connection
       .prepare(
-        `SELECT artifact_id, file_path
-           FROM revision_artifacts
-          WHERE artifact_id = ?`,
+        `SELECT ra.artifact_id, ra.file_path, ra.kind
+           FROM revision_artifacts ra
+           JOIN assets a ON a.current_revision_id = ra.revision_id
+          WHERE ra.artifact_id = ?
+            AND ra.status = 'ready'
+            AND ra.invalidated_at IS NULL
+            AND a.deleted_at IS NULL`,
       )
-      .get(artifactId) as { artifact_id: string; file_path: string } | undefined;
+      .get(artifactId) as { artifact_id: string; file_path: string; kind: string } | undefined;
     if (!row) throw new LibraryServiceError('ASSET_NOT_FOUND');
+    if (usage) {
+      const allowedKinds = usage === 'proxy'
+        ? new Set(['webm_proxy'])
+        : new Set(['thumbnail', 'video_poster']);
+      if (!allowedKinds.has(row.kind)) throw new LibraryServiceError('ASSET_NOT_FOUND');
+    }
 
     const artifactsDir = this.artifactsDir(openLibrary);
-    const targetPath = path.resolve(artifactsDir, ...row.file_path.split('/'));
-    const relation = path.relative(artifactsDir, targetPath);
+    let artifactsRoot: string;
+    try {
+      const rootEntry = lstatSync(artifactsDir);
+      if (!rootEntry.isDirectory() || rootEntry.isSymbolicLink()) {
+        throw new LibraryServiceError('INVALID_LIBRARY_PATH');
+      }
+      artifactsRoot = realpathSync(artifactsDir);
+    } catch (error) {
+      if (error instanceof LibraryServiceError) throw error;
+      throw new LibraryServiceError('INVALID_LIBRARY_PATH', { cause: error });
+    }
+    const targetPath = path.resolve(artifactsRoot, ...row.file_path.split('/'));
+    const relation = path.relative(artifactsRoot, targetPath);
     if (
       relation === '' ||
       relation.startsWith(`..${path.sep}`) ||
@@ -4729,7 +5356,25 @@ export class LibraryService {
     ) {
       throw new LibraryServiceError('INVALID_LIBRARY_PATH');
     }
-    return targetPath;
+    try {
+      const targetEntry = lstatSync(targetPath);
+      if (!targetEntry.isFile() || targetEntry.isSymbolicLink()) {
+        throw new LibraryServiceError('INVALID_LIBRARY_PATH');
+      }
+      const realTarget = realpathSync(targetPath);
+      const realRelation = path.relative(artifactsRoot, realTarget);
+      if (
+        realRelation === '' ||
+        realRelation.startsWith(`..${path.sep}`) ||
+        path.isAbsolute(realRelation)
+      ) {
+        throw new LibraryServiceError('INVALID_LIBRARY_PATH');
+      }
+      return realTarget;
+    } catch (error) {
+      if (error instanceof LibraryServiceError) throw error;
+      throw new LibraryServiceError('ASSET_NOT_FOUND', { cause: error });
+    }
   }
 
   /** Enqueue thumbnail jobs for all assets whose current revision lacks a ready thumbnail. */
@@ -4785,31 +5430,32 @@ export class LibraryService {
    */
   async processThumbnailQueue(libraryId: string): Promise<number> {
     const openLibrary = this.requireOpenLibrary(libraryId);
-    const queued = openLibrary.connection
-      .prepare(
-        `SELECT job_id, asset_id, revision_id, attempt_count
-           FROM jobs
-          WHERE library_id = ?
-            AND kind = 'generate_thumbnail'
-            AND status = 'queued'
-          ORDER BY priority DESC, created_at
-          LIMIT 20`,
-      )
-      .all(libraryId) as Array<{
+    const nextJob = openLibrary.connection.prepare(
+      `SELECT job_id, asset_id, revision_id, attempt_count
+         FROM jobs
+        WHERE library_id = ?
+          AND kind = 'generate_thumbnail'
+          AND status = 'queued'
+        ORDER BY priority DESC, created_at
+        LIMIT 1`,
+    );
+
+    let processed = 0;
+    while (processed < 20) {
+      const job = nextJob.get(libraryId) as {
         job_id: string;
         asset_id: string;
         revision_id: string;
         attempt_count: number;
-      }>;
-
-    let processed = 0;
-    for (const job of queued) {
+      } | undefined;
+      if (!job) break;
       const now = new Date().toISOString();
-      openLibrary.connection
+      const claimed = openLibrary.connection
         .prepare(
-          "UPDATE jobs SET status = 'running', attempt_count = ?, updated_at = ? WHERE job_id = ?",
+          "UPDATE jobs SET status = 'running', attempt_count = ?, updated_at = ? WHERE job_id = ? AND status = 'queued'",
         )
         .run(job.attempt_count + 1, now, job.job_id);
+      if (claimed.changes === 0) continue;
 
       try {
         await this.generateThumbnail({ libraryId, assetId: job.asset_id });
@@ -6310,7 +6956,7 @@ export class LibraryService {
     return { restoredCount, unchangedMissingCount, assets: restoredAssets };
   }
 
-  private enumerateLinkedSources(rootPath: string): Array<{
+  private enumerateLinkedSources(rootPath: string, linkedFolderId?: string): Array<{
     relativePath: string;
     byteSize: number;
     modifiedAt: string;
@@ -6332,13 +6978,22 @@ export class LibraryService {
         throw new LibraryServiceError('INVALID_IMPORT_SOURCE', { cause: error });
       }
       for (const child of children) {
-        // Symlinks are neither followed nor registered; this prevents a linked
-        // root from pulling in bytes outside itself via a hostile link.
-        if (child.isSymbolicLink()) continue;
         const childRelative =
           relativeDirectory === ''
             ? child.name
             : path.posix.join(relativeDirectory, child.name);
+        // Symlinks are neither followed nor registered; this prevents a linked
+        // root from pulling in bytes outside itself via a hostile link.
+        if (child.isSymbolicLink()) {
+          this.diagnose(
+            'linked-folder.symlink-skipped',
+            new LibraryServiceError('INVALID_IMPORT_SOURCE', {
+              reason: 'SYMBOLIC_LINK_NOT_ALLOWED',
+            }),
+            { linkedFolderId, rootPath, relativePath: childRelative },
+          );
+          continue;
+        }
         if (child.isDirectory()) {
           if (DEFAULT_IGNORED_DIRECTORIES.has(child.name.toLowerCase())) continue;
           visit(path.join(directoryPath, child.name), childRelative);
@@ -6353,7 +7008,17 @@ export class LibraryService {
         } catch (error) {
           throw new LibraryServiceError('INVALID_IMPORT_SOURCE', { cause: error });
         }
-        if (stat.isSymbolicLink() || !stat.isFile()) continue;
+        if (stat.isSymbolicLink()) {
+          this.diagnose(
+            'linked-folder.symlink-skipped',
+            new LibraryServiceError('INVALID_IMPORT_SOURCE', {
+              reason: 'SYMBOLIC_LINK_NOT_ALLOWED',
+            }),
+            { linkedFolderId, rootPath, relativePath: childRelative },
+          );
+          continue;
+        }
+        if (!stat.isFile()) continue;
         let normalized: string;
         try {
           normalized = normalizeRelativeAssetPath(childRelative);
@@ -7047,6 +7712,55 @@ export class LibraryService {
             .prepare("UPDATE linked_folders SET status = 'available', updated_at = ? WHERE folder_id = ?")
             .run(folderNow, folder.folder_id);
         }
+        if (rootGone) continue;
+
+        const existingIdentities = new Set(
+          (openLibrary.connection
+            .prepare('SELECT path_identity FROM assets WHERE linked_folder_id = ?')
+            .all(folder.folder_id) as Array<{ path_identity: string }> )
+            .map((row) => row.path_identity),
+        );
+        const insertAsset = openLibrary.connection.prepare(
+          `INSERT INTO assets
+             (asset_id, location_kind, managed_folder_id, linked_folder_id, relative_file_path,
+              path_identity, current_revision_id, availability, created_at, updated_at)
+           VALUES (?, 'linked', NULL, ?, ?, ?, NULL, 'available', ?, ?)`,
+        );
+        const insertRevision = openLibrary.connection.prepare(
+          `INSERT INTO revisions
+             (revision_id, asset_id, parent_revision_id, byte_size, modified_at,
+              original_filename, origin, accepted_at)
+           VALUES (?, ?, NULL, ?, ?, ?, 'external_change', ?)`,
+        );
+        const setCurrentRevision = openLibrary.connection.prepare(
+          'UPDATE assets SET current_revision_id = ?, updated_at = ? WHERE asset_id = ?',
+        );
+        for (const entry of this.enumerateLinkedSources(folder.absolute_root_path, folder.folder_id)) {
+          const pathIdentity = portablePathIdentity(entry.relativePath);
+          if (existingIdentities.has(pathIdentity)) continue;
+          const assetId = randomUUID();
+          const revisionId = randomUUID();
+          insertAsset.run(
+            assetId,
+            folder.folder_id,
+            entry.relativePath,
+            pathIdentity,
+            folderNow,
+            folderNow,
+          );
+          insertRevision.run(
+            revisionId,
+            assetId,
+            entry.byteSize,
+            entry.modifiedAt,
+            entry.originalFilename,
+            folderNow,
+          );
+          setCurrentRevision.run(revisionId, folderNow, assetId);
+          existingIdentities.add(pathIdentity);
+          this.syncAssetSearchContent(openLibrary.connection, assetId);
+          changedCount += 1;
+        }
       }
 
       for (const asset of before) {
@@ -7054,9 +7768,11 @@ export class LibraryService {
           asset.location_kind === 'linked'
             ? this.linkedAssetPath(openLibrary, asset.linked_folder_id, asset.relative_file_path)
             : this.folderPath(openLibrary, asset.relative_file_path);
-        let fileStat;
+        let fileStat: BigIntStats | Stats | undefined;
         try {
-          fileStat = (this.options.assetLstat ?? lstatSync)(assetPath);
+          fileStat = this.options.assetLstat
+            ? this.options.assetLstat(assetPath)
+            : lstatSync(assetPath, { bigint: true });
         } catch (error) {
           if (isMissingPathError(error)) {
             fileStat = undefined;
@@ -7075,8 +7791,25 @@ export class LibraryService {
           continue;
         }
 
-        const modifiedAt = fileStat.mtime.toISOString();
-        const statChanged = fileStat.size !== asset.byte_size || modifiedAt !== asset.modified_at;
+        const byteSize = Number(fileStat.size);
+        if (!Number.isSafeInteger(byteSize)) {
+          throw new LibraryServiceError('IMPORT_APPLY_FAILED', {
+            reason: 'UNSUPPORTED_FILE_ENTRY',
+          });
+        }
+        // BigIntStats exposes integer mtimeMs while Stats may retain a fractional
+        // value whose prebuilt Date rounds differently. Normalize both to the
+        // filesystem millisecond used when linked/import revisions are created.
+        const modifiedAt = new Date(Number(fileStat.mtimeMs)).toISOString();
+        // On APFS, fs.utimes() can restore an ISO millisecond as one microsecond
+        // less (for example .178000 -> .177999), which crosses the Date floor and
+        // used to create a phantom revision when a missing file reappeared. Only
+        // tolerate that one-millisecond representation edge while restoring a
+        // missing asset; available-file refreshes retain exact change detection.
+        const reappearanceTimestampEquivalent = asset.availability === 'missing'
+          && Math.abs(Date.parse(modifiedAt) - Date.parse(asset.modified_at)) <= 1;
+        const statChanged = byteSize !== asset.byte_size
+          || (modifiedAt !== asset.modified_at && !reappearanceTimestampEquivalent);
         const now = new Date().toISOString();
         if (statChanged) {
           const revisionId = randomUUID();
@@ -7091,7 +7824,7 @@ export class LibraryService {
               revisionId,
               asset.asset_id,
               asset.current_revision_id,
-              fileStat.size,
+              byteSize,
               modifiedAt,
               path.posix.basename(asset.relative_file_path),
               now,
@@ -7132,6 +7865,7 @@ export class LibraryService {
         }
       }
     })();
+    this.reconcileLinkedWatchers(openLibrary);
 
     return {
       changedCount,
@@ -7259,6 +7993,7 @@ export class LibraryService {
       this.openById.set(summary.libraryId, openLibrary);
       this.openIdByPath.set(canonicalPath, summary.libraryId);
       this.recoverFileOperations(openLibrary);
+      this.recoverInterruptedAiJobs(openLibrary);
       // Purge expired trash on open (best-effort, single busy file does not abort)
       try {
         this.purgeExpiredTrash(summary.libraryId);
@@ -7266,10 +8001,30 @@ export class LibraryService {
         this.diagnose('trash.purge-on-open', error, { libraryId: summary.libraryId });
       }
       this.startAssetWatcher(openLibrary);
+      this.reconcileLinkedWatchers(openLibrary);
       return summary;
     } catch (error) {
       closeIgnoringFailure(connection);
       throw serviceError(error, 'LIBRARY_CORRUPT');
+    }
+  }
+
+  private async assertPublicDownloadTarget(url: URL): Promise<void> {
+    const hostname = url.hostname.replace(/^\[|\]$/g, '');
+    let addresses: Array<{ address: string; family: number }>;
+    if (isIP(hostname) !== 0) {
+      addresses = [{ address: hostname, family: isIP(hostname) }];
+    } else {
+      const resolver = this.options.dnsLookup ?? (async (name: string) =>
+        dnsLookup(name, { all: true, verbatim: true }));
+      try {
+        addresses = await resolver(hostname);
+      } catch (error) {
+        throw new LibraryServiceError('INVALID_IMPORT_SOURCE', { reason: 'IO_ERROR', cause: error });
+      }
+    }
+    if (addresses.length === 0 || addresses.some(({ address }) => prohibitedIpAddress(address))) {
+      throw new LibraryServiceError('INVALID_IMPORT_SOURCE', { reason: 'PERMISSION_DENIED' });
     }
   }
 
@@ -7292,6 +8047,9 @@ export class LibraryService {
     }
     if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
       throw new LibraryServiceError('INVALID_IMPORT_SOURCE', { reason: 'IO_ERROR' });
+    }
+    if (parsedUrl.username || parsedUrl.password) {
+      throw new LibraryServiceError('INVALID_IMPORT_SOURCE', { reason: 'PERMISSION_DENIED' });
     }
 
     const operationId = randomUUID();
@@ -7319,29 +8077,48 @@ export class LibraryService {
     }
 
     let downloaded = false;
+    let downloadTimer: ReturnType<typeof setTimeout> | undefined;
     try {
       mkdirSync(operationPath, { recursive: true });
       mkdirSync(stagePath);
       mkdirSync(backupPath);
 
-      // Download the media URL.
+      // Download the media URL. The deadline covers DNS, redirects, headers,
+      // and the complete response body rather than only the initial fetch.
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(new Error('Download timed out.')), DOWNLOAD_TIMEOUT_MS);
+      downloadTimer = setTimeout(() => controller.abort(new Error('Download timed out.')), DOWNLOAD_TIMEOUT_MS);
 
-      let response: Response;
+      let response!: Response;
+      let finalUrl = parsedUrl;
       try {
-        response = await fetch(input.mediaUrl, {
-          signal: controller.signal,
-          headers: { 'User-Agent': 'Serpent/1.0' },
-        });
+        for (let redirectCount = 0; ; redirectCount += 1) {
+          await this.assertPublicDownloadTarget(finalUrl);
+          response = await fetch(finalUrl, {
+            signal: controller.signal,
+            redirect: 'manual',
+            headers: { 'User-Agent': 'Serpent/1.0' },
+          });
+          if (![301, 302, 303, 307, 308].includes(response.status)) break;
+          if (redirectCount >= MAX_DOWNLOAD_REDIRECTS) {
+            throw new LibraryServiceError('INVALID_IMPORT_SOURCE', { reason: 'IO_ERROR' });
+          }
+          const location = response.headers.get('location');
+          if (!location) {
+            throw new LibraryServiceError('INVALID_IMPORT_SOURCE', { reason: 'IO_ERROR' });
+          }
+          finalUrl = new URL(location, finalUrl);
+          if ((finalUrl.protocol !== 'http:' && finalUrl.protocol !== 'https:') ||
+              finalUrl.username || finalUrl.password) {
+            throw new LibraryServiceError('INVALID_IMPORT_SOURCE', { reason: 'PERMISSION_DENIED' });
+          }
+        }
       } catch (error) {
-        clearTimeout(timer);
         if (error instanceof DOMException && error.name === 'AbortError') {
           throw new LibraryServiceError('INVALID_IMPORT_SOURCE', { reason: 'IO_ERROR' });
         }
+        if (error instanceof LibraryServiceError) throw error;
         throw new LibraryServiceError('INVALID_IMPORT_SOURCE', { reason: 'IO_ERROR', cause: error });
       }
-      clearTimeout(timer);
 
       // Validate HTTP status.
       if (!response.ok) {
@@ -7353,11 +8130,22 @@ export class LibraryService {
 
       // Validate Content-Type.
       const contentType = response.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase() ?? '';
-      if (contentType && !CONTENT_TYPE_WHITELIST.has(contentType)) {
+      if (!CONTENT_TYPE_WHITELIST.has(contentType)) {
         throw new LibraryServiceError('INVALID_IMPORT_SOURCE', {
           reason: 'UNSUPPORTED_FILE_ENTRY',
           cause: new Error(`Unsupported Content-Type: ${contentType}`),
         });
+      }
+
+      const declaredLengthText = response.headers.get('content-length');
+      if (declaredLengthText !== null) {
+        const declaredLength = Number(declaredLengthText);
+        if (!Number.isSafeInteger(declaredLength) || declaredLength < 0 || declaredLength > MAX_DOWNLOAD_BYTES) {
+          throw new LibraryServiceError('INVALID_IMPORT_SOURCE', {
+            reason: 'UNSUPPORTED_FILE_ENTRY',
+            cause: new Error('Invalid or oversized Content-Length.'),
+          });
+        }
       }
 
       // Determine filename.
@@ -7368,10 +8156,10 @@ export class LibraryService {
         if (cdFilename) {
           filename = cleanFilename(cdFilename);
         } else {
-          filename = filenameFromUrl(input.mediaUrl, contentType);
+          filename = filenameFromUrl(finalUrl.href, contentType);
         }
       } else {
-        filename = filenameFromUrl(input.mediaUrl, contentType);
+        filename = filenameFromUrl(finalUrl.href, contentType);
       }
 
       // Ensure filename has a reasonable extension that matches content-type.
@@ -7381,13 +8169,30 @@ export class LibraryService {
         if (ctExt) filename = `${filename}${ctExt}`;
       }
 
-      // Stream download with size limit.
+      // Stream directly to the stage file with a running size limit.
       const stageFilePath = path.join(stagePath, 'stage-file');
-      const reader = response.body!.getReader();
-      const chunks: Uint8Array[] = [];
+      if (!response.body) {
+        throw new LibraryServiceError('INVALID_IMPORT_SOURCE', { reason: 'IO_ERROR' });
+      }
+      const reader = response.body.getReader();
+      const writer = createWriteStream(stageFilePath, { flags: 'wx' });
+      let writerFailure: Error | undefined;
+      writer.on('error', (error) => { writerFailure = error; });
+      const waitForWriter = (event: 'drain' | 'finish'): Promise<void> =>
+        new Promise((resolve, reject) => {
+          const onReady = () => { cleanup(); resolve(); };
+          const onError = (error: Error) => { cleanup(); reject(error); };
+          const cleanup = () => {
+            writer.removeListener(event, onReady);
+            writer.removeListener('error', onError);
+          };
+          writer.once(event, onReady);
+          writer.once('error', onError);
+        });
       let totalBytes = 0;
       try {
         for (;;) {
+          if (writerFailure) throw writerFailure;
           const { done, value } = await reader.read();
           if (done) break;
           totalBytes += value.byteLength;
@@ -7398,14 +8203,20 @@ export class LibraryService {
               cause: new Error('File exceeds 500 MB limit.'),
             });
           }
-          chunks.push(value);
+          if (!writer.write(Buffer.from(value))) {
+            await waitForWriter('drain');
+          }
         }
+        writer.end();
+        if (writerFailure) throw writerFailure;
+        await waitForWriter('finish');
+        if (writerFailure) throw writerFailure;
       } finally {
         try { reader.cancel(); } catch { /* Already released. */ }
+        if (!writer.closed) writer.destroy();
+        if (downloadTimer) clearTimeout(downloadTimer);
+        downloadTimer = undefined;
       }
-
-      const allBytes = Buffer.concat(chunks.map((c) => Buffer.from(c)));
-      writeFileSync(stageFilePath, allBytes);
       downloaded = true;
 
       // Build destination path.
@@ -7486,6 +8297,11 @@ export class LibraryService {
 
       return { asset: importedAsset ?? completion.assets[0]! };
     } catch (error) {
+      if (downloadTimer) clearTimeout(downloadTimer);
+      this.diagnose('extension-save.download', error, {
+        libraryId: input.libraryId,
+        targetHost: parsedUrl.hostname,
+      });
       // Clean up on failure.
       if (this.pendingImports.has(operationId)) {
         this.pendingImports.delete(operationId);
@@ -7515,46 +8331,64 @@ export class LibraryService {
     }
   }
 
-  exportLibraryToFolder(input: {
+  private removeOwnedTransferPath(
+    scope: string,
+    targetPath: string,
+    recursive: boolean,
+  ): void {
+    try {
+      rmSync(targetPath, { force: true, recursive });
+    } catch (error) {
+      this.diagnose(scope, error, { targetPath });
+      throw new LibraryServiceError('LIBRARY_NOT_WRITABLE', {
+        reason: publicReasonFromError(error),
+        cause: error,
+      });
+    }
+  }
+
+  async exportLibraryToFolder(input: {
     libraryId: string;
     destinationPath: string;
     includeLinkedContent: boolean;
-  }): {
+  }): Promise<{
     exportId: string;
     fileCount: number;
     totalBytes: number;
     excludedPreviewCount: number;
     includedLinkedContent: boolean;
     durationMs: number;
-  } {
+  }> {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     const exportId = randomUUID();
 
-    // Reject destination inside the library.
+    // The destination is owned by this operation only if it did not exist and
+    // this call created it. Never merge into a user-owned directory.
+    if (existsSync(input.destinationPath)) {
+      throw new LibraryServiceError('LIBRARY_ALREADY_EXISTS');
+    }
     let canonicalDest: string;
     let canonicalLib: string;
     try {
-      canonicalDest = realpathSync(input.destinationPath);
-    } catch {
-      canonicalDest = input.destinationPath;
-    }
-    try {
+      const canonicalParent = realpathSync(path.dirname(input.destinationPath));
+      canonicalDest = path.join(canonicalParent, path.basename(input.destinationPath));
       canonicalLib = realpathSync(openLibrary.summary.libraryPath);
-    } catch {
-      throw new LibraryServiceError('LIBRARY_CORRUPT');
+    } catch (error) {
+      throw new LibraryServiceError('INVALID_LIBRARY_PATH', { cause: error });
     }
     const rel = path.relative(canonicalLib, canonicalDest);
     if (rel === '' || (!rel.startsWith('..') && rel.length > 0)) {
       throw new LibraryServiceError('INVALID_LIBRARY_PATH');
     }
 
-    const cancelState = { cancelled: false };
+    const cancelState: TransferCancelState = { cancelled: false };
     this.activeExports.set(exportId, cancelState);
     const startedAt = Date.now();
+    let destinationOwned = false;
 
     try {
-      // Ensure destination directory exists.
-      mkdirSync(canonicalDest, { recursive: true });
+      mkdirSync(canonicalDest);
+      destinationOwned = true;
 
       const libPath = openLibrary.summary.libraryPath;
 
@@ -7565,6 +8399,8 @@ export class LibraryService {
         phase: 'snapshot-db', filesProcessed: 0, totalFiles: 0,
         bytesProcessed: 0, totalBytes: 0,
       });
+      await transferCheckpoint();
+      if (cancelState.cancelled) throw new LibraryServiceError('CANCELLED');
 
       const tempDbPath = path.join(canonicalDest, `.serpent-export-${exportId}.db`);
       try {
@@ -7600,15 +8436,16 @@ export class LibraryService {
       const entries: ExportEntry[] = [];
       let excludedPreviewCount = 0;
 
-      const walkDir = (dirPath: string, relPrefix: string): void => {
+      const walkDir = async (dirPath: string, relPrefix: string): Promise<void> => {
         if (cancelState.cancelled) return;
         let children;
         try {
           children = readdirSync(dirPath, { withFileTypes: true });
-        } catch {
-          return; // Skip unreadable entries.
+        } catch (error) {
+          throw new LibraryServiceError('INVALID_IMPORT_SOURCE', { cause: error });
         }
         for (const child of children) {
+          await transferCheckpoint();
           if (cancelState.cancelled) return;
           const childPath = path.join(dirPath, child.name);
           const childRel = relPrefix ? path.posix.join(relPrefix, child.name) : child.name;
@@ -7628,7 +8465,7 @@ export class LibraryService {
               }
               continue;
             }
-            walkDir(childPath, childRel);
+            await walkDir(childPath, childRel);
           } else if (child.isFile()) {
             // Exclude AI temp files.
             const lowerName = child.name.toLowerCase();
@@ -7671,18 +8508,18 @@ export class LibraryService {
       }
 
       // Walk Assets/.
-      walkDir(path.join(libPath, 'Assets'), 'Assets');
+      await walkDir(path.join(libPath, 'Assets'), 'Assets');
 
       // Walk .serpent/revisions/.
       const revisionsDir = path.join(libPath, '.serpent', 'revisions');
       if (directoryExists(revisionsDir)) {
-        walkDir(revisionsDir, '.serpent/revisions');
+        await walkDir(revisionsDir, '.serpent/revisions');
       }
 
       // Walk .serpent/trash/.
       const trashDir = path.join(libPath, '.serpent', 'trash');
       if (directoryExists(trashDir)) {
-        walkDir(trashDir, '.serpent/trash');
+        await walkDir(trashDir, '.serpent/trash');
       }
 
       // Include .serpent/library.db (snapshot).
@@ -7711,13 +8548,17 @@ export class LibraryService {
           includedLinkedContent = true;
           for (const lf of linkedFolders) {
             if (cancelState.cancelled) break;
-            if (!directoryExists(lf.absolute_root_path)) continue;
+            if (lf.status !== 'available' || !directoryExists(lf.absolute_root_path)) {
+              throw new LibraryServiceError('INVALID_IMPORT_SOURCE', {
+                reason: 'SOURCE_NOT_FOUND',
+              });
+            }
             const linkedDest = path.join(linkedContentDir, lf.display_name);
             try {
-              copyDirRecursive(lf.absolute_root_path, linkedDest, cancelState);
+              await copyDirRecursiveCancellable(lf.absolute_root_path, linkedDest, cancelState);
             } catch (error) {
               this.diagnose('export.copy-linked', error, { folderId: lf.folder_id });
-              // Linked content copy failure is non-fatal.
+              throw new LibraryServiceError('INVALID_IMPORT_SOURCE', { cause: error });
             }
           }
         }
@@ -7744,6 +8585,7 @@ export class LibraryService {
       const THROTTLE_MS = 200;
 
       for (const entry of entries) {
+        await transferCheckpoint();
         if (cancelState.cancelled) break;
         const destPath = path.join(canonicalDest, ...entry.relativePath.split('/'));
         mkdirSync(path.dirname(destPath), { recursive: true });
@@ -7776,11 +8618,9 @@ export class LibraryService {
           bytesProcessed, totalBytes,
         });
         // Clean up linked content dir if we created it.
-        if (linkedContentDir) {
-          try { rmSync(linkedContentDir, { force: true, recursive: true }); } catch { /* best effort */ }
-        }
+        if (linkedContentDir) this.removeOwnedTransferPath('export.cancel.cleanup-linked', linkedContentDir, true);
         // Clean up the destination.
-        try { rmSync(canonicalDest, { force: true, recursive: true }); } catch { /* best effort */ }
+        this.removeOwnedTransferPath('export.cancel.cleanup-destination', canonicalDest, true);
         throw new LibraryServiceError('CANCELLED');
       }
 
@@ -7801,6 +8641,19 @@ export class LibraryService {
         includedLinkedContent,
         durationMs,
       };
+    } catch (error) {
+      if (cancelState.cancelled) {
+        this.emitProgress({
+          type: 'export.progress', exportId,
+          libraryId: input.libraryId,
+          phase: 'cancelled', filesProcessed: 0, totalFiles: 0,
+          bytesProcessed: 0, totalBytes: 0,
+        });
+      }
+      if (destinationOwned) {
+        this.removeOwnedTransferPath('export.failure.cleanup-destination', canonicalDest, true);
+      }
+      throw error;
     } finally {
       this.activeExports.delete(exportId);
     }
@@ -7810,20 +8663,23 @@ export class LibraryService {
     const state = this.activeExports.get(exportId);
     if (!state) throw new LibraryServiceError('IMPORT_NOT_FOUND');
     state.cancelled = true;
+    state.onCancel?.();
   }
 
-  importLibraryFromFolder(input: {
+  async importLibraryFromFolder(input: {
     sourceFolderPath: string;
     copyToParentPath?: string;
-  }): {
+  }): Promise<{
     importId: string;
     libraryId: string;
     displayName: string;
     libraryPath: string;
-  } {
+  }> {
     const importId = randomUUID();
-    const cancelState = { cancelled: false };
+    const cancelState: TransferCancelState = { cancelled: false };
     this.activeImports.set(importId, cancelState);
+    let ownedDestinationPath: string | undefined;
+    let completed = false;
 
     try {
       // Phase 1: validate source.
@@ -7832,6 +8688,8 @@ export class LibraryService {
         phase: 'validate', filesProcessed: 0, totalFiles: 0,
         bytesProcessed: 0, totalBytes: 0,
       });
+      await transferCheckpoint();
+      if (cancelState.cancelled) throw new LibraryServiceError('CANCELLED');
 
       // Validate sourceFolderPath is a readable directory (not a symlink).
       let sourceStat;
@@ -7856,29 +8714,7 @@ export class LibraryService {
         throw new LibraryServiceError('NOT_A_LIBRARY');
       }
 
-      // Reject symlink escapes in the directory tree (quick scan of root-level children).
-      try {
-        for (const child of readdirSync(input.sourceFolderPath, { withFileTypes: true })) {
-          if (child.isSymbolicLink()) {
-            throw new LibraryServiceError('NOT_A_LIBRARY');
-          }
-          const childPath = path.join(input.sourceFolderPath, child.name);
-          // Verify realpath resolves within the source.
-          let realPath: string;
-          try {
-            realPath = realpathSync(childPath);
-          } catch {
-            continue; // Missing entries are fine.
-          }
-          const rel = path.relative(input.sourceFolderPath, realPath);
-          if (rel.startsWith('..') || path.isAbsolute(rel)) {
-            throw new LibraryServiceError('NOT_A_LIBRARY');
-          }
-        }
-      } catch (error) {
-        if (error instanceof LibraryServiceError) throw error;
-        throw new LibraryServiceError('NOT_A_LIBRARY', { cause: error });
-      }
+      assertTreeContainsNoSymlinks(input.sourceFolderPath);
 
       let libraryPath: string;
 
@@ -7893,16 +8729,29 @@ export class LibraryService {
         const baseName = path.basename(input.sourceFolderPath);
         libraryPath = path.join(input.copyToParentPath, baseName);
 
+        if (existsSync(libraryPath)) {
+          throw new LibraryServiceError('LIBRARY_ALREADY_EXISTS');
+        }
+        try {
+          mkdirSync(libraryPath);
+          ownedDestinationPath = libraryPath;
+        } catch (error) {
+          if (hasErrorCode(error, 'EEXIST')) {
+            throw new LibraryServiceError('LIBRARY_ALREADY_EXISTS', { cause: error });
+          }
+          throw new LibraryServiceError('LIBRARY_NOT_WRITABLE', { cause: error });
+        }
+
         if (cancelState.cancelled) {
           this.emitProgress({ type: 'import.progress', importId, phase: 'cancelled', filesProcessed: 0, totalFiles: 0, bytesProcessed: 0, totalBytes: 0 });
           throw new LibraryServiceError('CANCELLED');
         }
 
         try {
-          copyDirRecursive(input.sourceFolderPath, libraryPath, cancelState);
+          await copyDirRecursiveCancellable(input.sourceFolderPath, libraryPath, cancelState);
         } catch (error) {
           // Clean up incomplete copy.
-          try { rmSync(libraryPath, { force: true, recursive: true }); } catch { /* best effort */ }
+          this.removeOwnedTransferPath('import.copy.failure.cleanup', libraryPath, true);
           if (error instanceof LibraryServiceError && error.code === 'CANCELLED') {
             this.emitProgress({ type: 'import.progress', importId, phase: 'cancelled', filesProcessed: 0, totalFiles: 0, bytesProcessed: 0, totalBytes: 0 });
           }
@@ -7910,7 +8759,7 @@ export class LibraryService {
         }
 
         if (cancelState.cancelled) {
-          try { rmSync(libraryPath, { force: true, recursive: true }); } catch { /* best effort */ }
+          this.removeOwnedTransferPath('import.copy.cancel.cleanup', libraryPath, true);
           this.emitProgress({ type: 'import.progress', importId, phase: 'cancelled', filesProcessed: 0, totalFiles: 0, bytesProcessed: 0, totalBytes: 0 });
           throw new LibraryServiceError('CANCELLED');
         }
@@ -7935,6 +8784,7 @@ export class LibraryService {
         bytesProcessed: 0, totalBytes: 0,
       });
 
+      completed = true;
       return {
         importId,
         libraryId: summary.libraryId,
@@ -7942,9 +8792,19 @@ export class LibraryService {
         libraryPath: summary.libraryPath,
       };
     } catch (error) {
+      if (cancelState.cancelled) {
+        this.emitProgress({
+          type: 'import.progress', importId,
+          phase: 'cancelled', filesProcessed: 0, totalFiles: 0,
+          bytesProcessed: 0, totalBytes: 0,
+        });
+      }
       if (error instanceof LibraryServiceError) throw error;
       throw new LibraryServiceError('NOT_A_LIBRARY', { cause: error });
     } finally {
+      if (ownedDestinationPath && !completed) {
+        this.removeOwnedTransferPath('import.failure.cleanup-destination', ownedDestinationPath, true);
+      }
       this.activeImports.delete(importId);
     }
   }
@@ -7953,6 +8813,7 @@ export class LibraryService {
     const state = this.activeImports.get(importId);
     if (!state) throw new LibraryServiceError('IMPORT_NOT_FOUND');
     state.cancelled = true;
+    state.onCancel?.();
   }
 
   // ── ZIP export ───────────────────────────────────────────────────────────
@@ -7961,6 +8822,11 @@ export class LibraryService {
   private static readonly ZIP_MAX_BYTES = 4 * 1024 * 1024 * 1024;
   /** Maximum entry count for a standard (non-ZIP64) ZIP archive: 65535. */
   private static readonly ZIP_MAX_ENTRIES = 65534;
+  /** Import budget for uncompressed standard-ZIP content. */
+  private static readonly ZIP_IMPORT_MAX_UNCOMPRESSED_BYTES = 4 * 1024 * 1024 * 1024;
+  /** Reject highly compressible payloads commonly used as decompression bombs. */
+  private static readonly ZIP_IMPORT_MAX_COMPRESSION_RATIO = 100;
+  private static readonly ZIP_COMPRESSION_RATIO_MIN_SIZE = 1024 * 1024;
 
   async exportLibraryToZip(input: {
     libraryId: string;
@@ -7979,7 +8845,7 @@ export class LibraryService {
 
     // Ensure the destination file does not exist yet (prevent accidental overwrite).
     if (existsSync(input.destinationPath)) {
-      throw new LibraryServiceError('LIBRARY_NOT_WRITABLE');
+      throw new LibraryServiceError('LIBRARY_ALREADY_EXISTS');
     }
 
     // Reject destination inside the library.
@@ -8002,13 +8868,14 @@ export class LibraryService {
       throw new LibraryServiceError('INVALID_LIBRARY_PATH');
     }
 
-    const cancelState = { cancelled: false };
+    const cancelState: TransferCancelState = { cancelled: false };
     this.activeExports.set(exportId, cancelState);
     const startedAt = Date.now();
 
     const tempDir = path.join(path.dirname(input.destinationPath), `.serpent-zip-export-${exportId}`);
     let tempDbPath: string | undefined;
-    let zipFileCreated = false;
+    let tempDirOwned = false;
+    let destinationOwned = false;
 
     function countFilesRecursive(dirPath: string): number {
       let count = 0;
@@ -8029,7 +8896,8 @@ export class LibraryService {
     }
 
     try {
-      mkdirSync(tempDir, { recursive: true });
+      mkdirSync(tempDir);
+      tempDirOwned = true;
 
       // Phase 1: snapshot-db
       this.emitProgress({
@@ -8038,6 +8906,8 @@ export class LibraryService {
         phase: 'snapshot-db', filesProcessed: 0, totalFiles: 0,
         bytesProcessed: 0, totalBytes: 0,
       });
+      await transferCheckpoint();
+      if (cancelState.cancelled) throw new LibraryServiceError('CANCELLED');
 
       tempDbPath = path.join(tempDir, `library-${exportId}.db`);
       try {
@@ -8070,15 +8940,16 @@ export class LibraryService {
       const entries: ZipEntry[] = [];
       let excludedPreviewCount = 0;
 
-      const walkDir = (dirPath: string, relPrefix: string): void => {
+      const walkDir = async (dirPath: string, relPrefix: string): Promise<void> => {
         if (cancelState.cancelled) return;
         let children;
         try {
           children = readdirSync(dirPath, { withFileTypes: true });
-        } catch {
-          return;
+        } catch (error) {
+          throw new LibraryServiceError('INVALID_IMPORT_SOURCE', { cause: error });
         }
         for (const child of children) {
+          await transferCheckpoint();
           if (cancelState.cancelled) return;
           const childPath = path.join(dirPath, child.name);
           const childRel = relPrefix ? path.posix.join(relPrefix, child.name) : child.name;
@@ -8096,7 +8967,7 @@ export class LibraryService {
               }
               continue;
             }
-            walkDir(childPath, childRel);
+            await walkDir(childPath, childRel);
           } else if (child.isFile()) {
             const lowerName = child.name.toLowerCase();
             if (lowerName.endsWith('.tmp') || (lowerName.startsWith('.') && (
@@ -8117,18 +8988,18 @@ export class LibraryService {
       };
 
       // Walk Assets/.
-      walkDir(path.join(libPath, 'Assets'), 'Assets');
+      await walkDir(path.join(libPath, 'Assets'), 'Assets');
 
       // Walk .serpent/revisions/.
       const revisionsDir = path.join(libPath, '.serpent', 'revisions');
       if (directoryExists(revisionsDir)) {
-        walkDir(revisionsDir, '.serpent/revisions');
+        await walkDir(revisionsDir, '.serpent/revisions');
       }
 
       // Walk .serpent/trash/.
       const trashDir = path.join(libPath, '.serpent', 'trash');
       if (directoryExists(trashDir)) {
-        walkDir(trashDir, '.serpent/trash');
+        await walkDir(trashDir, '.serpent/trash');
       }
 
       // Add .serpent/library.db (snapshot).
@@ -8176,11 +9047,29 @@ export class LibraryService {
       // Ensure parent directory exists.
       mkdirSync(path.dirname(destZipPath), { recursive: true });
 
+      // Reserve the final path atomically. From this point onward cleanup may
+      // remove it because this operation demonstrably owns it.
+      try {
+        const destinationHandle = openSync(destZipPath, 'wx');
+        closeSync(destinationHandle);
+        destinationOwned = true;
+      } catch (error) {
+        if (hasErrorCode(error, 'EEXIST')) {
+          throw new LibraryServiceError('LIBRARY_ALREADY_EXISTS', { cause: error });
+        }
+        throw new LibraryServiceError('LIBRARY_NOT_WRITABLE', { cause: error });
+      }
+
       const output = createWriteStream(destZipPath);
       const archive = new archiverModule.ZipArchive({ zlib: { level: 6 }, forceZip64: false });
 
       let archiverError: Error | undefined;
       archive.on('error', (err: Error) => {
+        archiverError = err;
+      });
+      archive.on('warning', (err: Error) => {
+        // Missing or unreadable source entries make the export incomplete and
+        // therefore must fail rather than producing a silently truncated ZIP.
         archiverError = err;
       });
 
@@ -8194,6 +9083,7 @@ export class LibraryService {
       const THROTTLE_MS = 200;
 
       for (const entry of entries) {
+        await transferCheckpoint();
         if (cancelState.cancelled) break;
         if (archiverError) throw new LibraryServiceError('LIBRARY_NOT_WRITABLE', { cause: archiverError });
 
@@ -8221,9 +9111,9 @@ export class LibraryService {
         archive.abort();
         output.destroy();
         // Remove the temp db and temp dir.
-        try { rmSync(tempDir, { force: true, recursive: true }); } catch { /* best effort */ }
+        this.removeOwnedTransferPath('export.zip.cancel.cleanup-temp', tempDir, true);
         // Remove the destination file.
-        try { rmSync(destZipPath, { force: true }); } catch { /* best effort */ }
+        this.removeOwnedTransferPath('export.zip.cancel.cleanup-destination', destZipPath, false);
         this.emitProgress({
           type: 'export.progress', exportId,
           libraryId: input.libraryId,
@@ -8235,23 +9125,40 @@ export class LibraryService {
 
       // Finalize the archive (wait for the output stream to finish).
       await new Promise<void>((resolve, reject) => {
+        let settled = false;
+        const settle = (operation: () => void): void => {
+          if (settled) return;
+          settled = true;
+          cancelState.onCancel = undefined;
+          operation();
+        };
+        cancelState.onCancel = () => {
+          archive.abort();
+          output.destroy();
+        };
+        output.on('close', () => {
+          if (cancelState.cancelled) settle(() => reject(new LibraryServiceError('CANCELLED')));
+        });
         output.on('finish', () => {
           if (archiverError) {
-            reject(new LibraryServiceError('LIBRARY_NOT_WRITABLE', { cause: archiverError }));
+            settle(() => reject(new LibraryServiceError('LIBRARY_NOT_WRITABLE', { cause: archiverError })));
             return;
           }
-          resolve();
+          settle(resolve);
         });
         output.on('error', (err: Error) => {
-          reject(new LibraryServiceError('LIBRARY_NOT_WRITABLE', { cause: err }));
+          if (cancelState.cancelled) {
+            settle(() => reject(new LibraryServiceError('CANCELLED', { cause: err })));
+            return;
+          }
+          settle(() => reject(new LibraryServiceError('LIBRARY_NOT_WRITABLE', { cause: err })));
         });
         void archive.finalize();
       });
 
-      zipFileCreated = true;
-
       // Clean up temp dir.
-      try { rmSync(tempDir, { force: true, recursive: true }); } catch { /* best effort */ }
+      this.removeOwnedTransferPath('export.zip.complete.cleanup-temp', tempDir, true);
+      tempDirOwned = false;
 
       // Final progress.
       this.emitProgress({
@@ -8279,10 +9186,20 @@ export class LibraryService {
         durationMs,
       };
     } catch (error) {
-      if (zipFileCreated) {
-        try { rmSync(input.destinationPath, { force: true }); } catch { /* best effort */ }
+      if (cancelState.cancelled) {
+        this.emitProgress({
+          type: 'export.progress', exportId,
+          libraryId: input.libraryId,
+          phase: 'cancelled', filesProcessed: 0, totalFiles: 0,
+          bytesProcessed: 0, totalBytes: 0,
+        });
       }
-      try { rmSync(tempDir, { force: true, recursive: true }); } catch { /* best effort */ }
+      if (destinationOwned) {
+        this.removeOwnedTransferPath('export.zip.failure.cleanup-destination', input.destinationPath, false);
+      }
+      if (tempDirOwned) {
+        this.removeOwnedTransferPath('export.zip.failure.cleanup-temp', tempDir, true);
+      }
       throw error;
     } finally {
       this.activeExports.delete(exportId);
@@ -8301,32 +9218,90 @@ export class LibraryService {
     libraryPath: string;
   }> {
     const importId = randomUUID();
-    const cancelState = { cancelled: false };
+    const cancelState: TransferCancelState = { cancelled: false };
     this.activeImports.set(importId, cancelState);
+    let ownedExtractPath: string | undefined;
+    let completed = false;
 
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const AdmZip = require('adm-zip') as new (path: string) => {
-      getEntries(): Array<{ entryName: string; isDirectory: boolean; attr?: number }>;
-      extractAllToAsync(path: string, overwrite: boolean, callback: (error?: Error) => void): void;
+      getEntries(): Array<{
+        entryName: string;
+        isDirectory: boolean;
+        attr?: number;
+        header: { size: number; compressedSize: number };
+        getDataAsync(callback: (data: Buffer, error?: string) => void): void;
+      }>;
     };
 
-    const zip = new AdmZip(input.sourceZipPath);
-
     try {
+      const baseName = path.basename(input.sourceZipPath, path.extname(input.sourceZipPath));
+      const extractPath = path.join(input.destinationParentPath, baseName);
+      if (existsSync(extractPath)) {
+        throw new LibraryServiceError('LIBRARY_ALREADY_EXISTS');
+      }
+      const zip = new AdmZip(input.sourceZipPath);
       // Phase 1: validate
       this.emitProgress({
         type: 'import.progress', importId,
         phase: 'validate', filesProcessed: 0, totalFiles: 0,
         bytesProcessed: 0, totalBytes: 0,
       });
+      await transferCheckpoint();
+      if (cancelState.cancelled) throw new LibraryServiceError('CANCELLED');
 
       // Read entries from the central directory.
       const zipEntries = zip.getEntries();
+      if (zipEntries.length > LibraryService.ZIP_MAX_ENTRIES) {
+        throw new LibraryServiceError('ZIP_TOO_LARGE', { reason: 'ZIP_TOO_LARGE' });
+      }
+
+      let totalUncompressedBytes = 0;
+      const validatedNames = new Map<(typeof zipEntries)[number], string>();
+      for (const entry of zipEntries) {
+        const validatedName = validatePortableZipEntryName(entry.entryName);
+        validatedNames.set(entry, validatedName);
+        const uncompressedSize = entry.header.size;
+        const compressedSize = entry.header.compressedSize;
+        if (
+          !Number.isSafeInteger(uncompressedSize) ||
+          !Number.isSafeInteger(compressedSize) ||
+          uncompressedSize < 0 ||
+          compressedSize < 0
+        ) {
+          throw new LibraryServiceError('ZIP_TOO_LARGE', { reason: 'ZIP_TOO_LARGE' });
+        }
+        totalUncompressedBytes += uncompressedSize;
+        if (
+          !Number.isSafeInteger(totalUncompressedBytes) ||
+          totalUncompressedBytes > LibraryService.ZIP_IMPORT_MAX_UNCOMPRESSED_BYTES
+        ) {
+          throw new LibraryServiceError('ZIP_TOO_LARGE', { reason: 'ZIP_TOO_LARGE' });
+        }
+        if (
+          !entry.isDirectory &&
+          uncompressedSize >= LibraryService.ZIP_COMPRESSION_RATIO_MIN_SIZE &&
+          uncompressedSize / Math.max(compressedSize, 1) >
+            LibraryService.ZIP_IMPORT_MAX_COMPRESSION_RATIO
+        ) {
+          throw new LibraryServiceError('ZIP_TOO_LARGE', { reason: 'ZIP_TOO_LARGE' });
+        }
+
+        const attr = entry.attr;
+        if (attr !== undefined) {
+          const mode = (attr >>> 16) & 0o170000;
+          if (mode === 0o120000) {
+            throw new LibraryServiceError('NOT_A_LIBRARY', {
+              reason: 'SYMBOLIC_LINK_NOT_ALLOWED',
+            });
+          }
+        }
+      }
 
       // Check for Assets/ directory (archiver v8 may not add an explicit directory
       // entry; files with an Assets/ prefix imply the directory structure).
       const hasAssetFiles = zipEntries.some(
-        (e) => !e.isDirectory && e.entryName.startsWith('Assets/'),
+        (e) => !e.isDirectory && validatedNames.get(e)?.startsWith('Assets/'),
       );
       if (!hasAssetFiles) {
         throw new LibraryServiceError('NOT_A_LIBRARY', { reason: 'NOT_A_LIBRARY' });
@@ -8334,33 +9309,22 @@ export class LibraryService {
 
       // Check for .serpent/library.db file entry.
       const hasDb = zipEntries.some(
-        (e) => !e.isDirectory && e.entryName === '.serpent/library.db',
+        (e) => !e.isDirectory && validatedNames.get(e) === '.serpent/library.db',
       );
       if (!hasDb) {
         throw new LibraryServiceError('NOT_A_LIBRARY', { reason: 'NOT_A_LIBRARY' });
       }
 
-      // Reject path-escape entries.
-      for (const entry of zipEntries) {
-        if (entry.entryName.startsWith('/') || entry.entryName.includes('..')) {
-          throw new LibraryServiceError('NOT_A_LIBRARY', { reason: 'PATH_ESCAPE' });
-        }
-      }
-
-      // Reject symlink entries.
-      for (const entry of zipEntries) {
-        const attr = entry.attr;
-        if (attr !== undefined && (attr >>> 16) !== 0) {
-          const mode = (attr >>> 16) & 0o170000;
-          if (mode === 0o120000) {
-            throw new LibraryServiceError('NOT_A_LIBRARY', { reason: 'SYMBOLIC_LINK_NOT_ALLOWED' });
-          }
-        }
-      }
-
       // Phase 2: extract
-      const baseName = path.basename(input.sourceZipPath, path.extname(input.sourceZipPath));
-      const extractPath = path.join(input.destinationParentPath, baseName);
+      try {
+        mkdirSync(extractPath);
+        ownedExtractPath = extractPath;
+      } catch (error) {
+        if (hasErrorCode(error, 'EEXIST')) {
+          throw new LibraryServiceError('LIBRARY_ALREADY_EXISTS', { cause: error });
+        }
+        throw new LibraryServiceError('LIBRARY_NOT_WRITABLE', { cause: error });
+      }
 
       if (cancelState.cancelled) {
         this.emitProgress({ type: 'import.progress', importId, phase: 'cancelled', filesProcessed: 0, totalFiles: 0, bytesProcessed: 0, totalBytes: 0 });
@@ -8374,23 +9338,45 @@ export class LibraryService {
         bytesProcessed: 0, totalBytes: 0,
       });
 
-      try {
-        await new Promise<void>((resolve, reject) => {
-          zip.extractAllToAsync(extractPath, true, (error?: Error) => {
-            if (error) {
-              reject(new LibraryServiceError('NOT_A_LIBRARY', { cause: error }));
-              return;
-            }
-            resolve();
+      let extractedEntries = 0;
+      let extractedBytes = 0;
+      for (const entry of zipEntries) {
+        await transferCheckpoint();
+        if (cancelState.cancelled) break;
+        const validatedName = validatedNames.get(entry);
+        if (!validatedName) throw new LibraryServiceError('NOT_A_LIBRARY');
+        const destinationPath = path.join(extractPath, ...validatedName.split('/'));
+        if (entry.isDirectory) {
+          mkdirSync(destinationPath, { recursive: true });
+        } else {
+          const data = await new Promise<Buffer>((resolve, reject) => {
+            entry.getDataAsync((entryData, error) => {
+              if (error) {
+                reject(new LibraryServiceError('NOT_A_LIBRARY', { cause: new Error(error) }));
+                return;
+              }
+              resolve(entryData);
+            });
           });
+          if (cancelState.cancelled) break;
+          mkdirSync(path.dirname(destinationPath), { recursive: true });
+          try {
+            writeFileSync(destinationPath, data, { flag: 'wx' });
+          } catch (error) {
+            throw new LibraryServiceError('NOT_A_LIBRARY', { cause: error });
+          }
+          extractedBytes += data.byteLength;
+        }
+        extractedEntries += 1;
+        this.emitProgress({
+          type: 'import.progress', importId,
+          phase: 'extract', filesProcessed: extractedEntries, totalFiles: totalEntries,
+          bytesProcessed: extractedBytes, totalBytes: totalUncompressedBytes,
         });
-      } catch (error) {
-        try { rmSync(extractPath, { force: true, recursive: true }); } catch { /* best effort */ }
-        throw error;
       }
 
       if (cancelState.cancelled) {
-        try { rmSync(extractPath, { force: true, recursive: true }); } catch { /* best effort */ }
+        this.removeOwnedTransferPath('import.zip.cancel.cleanup-destination', extractPath, true);
         this.emitProgress({ type: 'import.progress', importId, phase: 'cancelled', filesProcessed: 0, totalFiles: totalEntries, bytesProcessed: 0, totalBytes: 0 });
         throw new LibraryServiceError('CANCELLED');
       }
@@ -8411,6 +9397,7 @@ export class LibraryService {
       } catch {
         canonicalExtractPath = extractPath;
       }
+      assertTreeContainsNoSymlinks(canonicalExtractPath);
       this.validateImportSource(canonicalExtractPath);
 
       // Phase 4: open
@@ -8429,6 +9416,7 @@ export class LibraryService {
         bytesProcessed: 0, totalBytes: 0,
       });
 
+      completed = true;
       return {
         importId,
         libraryId: summary.libraryId,
@@ -8436,6 +9424,16 @@ export class LibraryService {
         libraryPath: summary.libraryPath,
       };
     } catch (error) {
+      if (cancelState.cancelled) {
+        this.emitProgress({
+          type: 'import.progress', importId,
+          phase: 'cancelled', filesProcessed: 0, totalFiles: 0,
+          bytesProcessed: 0, totalBytes: 0,
+        });
+      }
+      if (ownedExtractPath && !completed) {
+        this.removeOwnedTransferPath('import.zip.failure.cleanup-destination', ownedExtractPath, true);
+      }
       if (error instanceof LibraryServiceError) throw error;
       throw new LibraryServiceError('NOT_A_LIBRARY', { cause: error });
     } finally {
@@ -8470,28 +9468,7 @@ export class LibraryService {
       throw new LibraryServiceError('NOT_A_LIBRARY');
     }
 
-    // Reject symlink escapes in the directory tree.
-    try {
-      for (const child of readdirSync(sourceFolderPath, { withFileTypes: true })) {
-        if (child.isSymbolicLink()) {
-          throw new LibraryServiceError('NOT_A_LIBRARY');
-        }
-        const childPath = path.join(sourceFolderPath, child.name);
-        let realPath: string;
-        try {
-          realPath = realpathSync(childPath);
-        } catch {
-          continue;
-        }
-        const rel = path.relative(sourceFolderPath, realPath);
-        if (rel.startsWith('..') || path.isAbsolute(rel)) {
-          throw new LibraryServiceError('NOT_A_LIBRARY');
-        }
-      }
-    } catch (error) {
-      if (error instanceof LibraryServiceError) throw error;
-      throw new LibraryServiceError('NOT_A_LIBRARY', { cause: error });
-    }
+    assertTreeContainsNoSymlinks(sourceFolderPath);
 
     // Open a read-only connection to read the library identity.
     let connection: DatabaseConnection | undefined;
@@ -8517,6 +9494,7 @@ export class LibraryService {
     if (!openLibrary) throw new LibraryServiceError('LIBRARY_NOT_OPEN');
 
     this.stopAssetWatcher(libraryId);
+    this.stopLinkedWatchers(libraryId);
     for (const [importId, pending] of this.pendingImports) {
       if (pending.libraryId === libraryId) {
         this.pendingImports.delete(importId);

@@ -9,6 +9,7 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -359,6 +360,36 @@ describe('LibraryService lifecycle', () => {
       { version: 1 },
     ]);
     database.close();
+  });
+
+  it('does not commit a table-rebuild migration when foreign keys are corrupt', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'Foreign Key Rollback', selectedParentPath: root });
+    service.closeAll();
+    downgradeLibraryToV2(created.libraryPath);
+
+    const before = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    before.pragma('foreign_keys = OFF');
+    before.prepare(
+      `INSERT INTO revisions
+         (revision_id, asset_id, parent_revision_id, byte_size, modified_at,
+          original_filename, origin, accepted_at)
+       VALUES (?, ?, NULL, 1, ?, 'orphan.png', 'import', ?)`,
+    ).run(randomUUID(), randomUUID(), new Date().toISOString(), new Date().toISOString());
+    before.close();
+
+    expectServiceError(() => service.openLibrary(created.libraryPath), 'LIBRARY_CORRUPT');
+
+    const after = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    expect(after.pragma('user_version')).toEqual([{ user_version: 3 }]);
+    expect(after.prepare('SELECT version FROM schema_migrations ORDER BY version').all()).toEqual([
+      { version: 1 },
+      { version: 2 },
+      { version: 3 },
+    ]);
+    expect(after.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'linked_folders'").all()).toEqual([]);
+    after.close();
   });
 
   it('rejects a corrupt database without leaving the library open', () => {

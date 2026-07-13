@@ -27,10 +27,16 @@ export interface ExtensionServerOptions {
   /** Starting port (default 19876). Falls back to port+1, port+2 on EADDRINUSE. */
   port?: number;
   /** Called with the validated save intent on POST /save. */
-  onSaveIntent: (intent: SaveIntent) => void;
+  onSaveIntent: (
+    intent: SaveIntent,
+  ) => void | SaveIntentDisposition | Promise<void | SaveIntentDisposition>;
   /** Optional error callback for server-level errors (e.g. bind failure). */
   onError?: (error: Error) => void;
 }
+
+export type SaveIntentDisposition =
+  | { accepted: true }
+  | { accepted: false; status: number; reason: string };
 
 export interface ExtensionServer {
   server: http.Server;
@@ -43,6 +49,23 @@ export interface ExtensionServer {
 
 function isLoopback(addr: string | undefined): boolean {
   return addr === '127.0.0.1' || addr === '::1';
+}
+
+function isAllowedOrigin(origin: string | string[] | undefined): boolean {
+  if (origin === undefined) return true;
+  if (Array.isArray(origin)) return false;
+  return /^chrome-extension:\/\/[a-p]{32}$/u.test(origin);
+}
+
+const MAX_SAVE_BODY_BYTES = 16 * 1024;
+
+function jsonResponse(
+  res: http.ServerResponse,
+  status: number,
+  body: Record<string, unknown>,
+): void {
+  res.writeHead(status, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify(body));
 }
 
 // ---------------------------------------------------------------------------
@@ -92,6 +115,11 @@ export async function createExtensionServer(
 
     // -------- POST /save --------
     if (req.method === 'POST' && req.url === '/save') {
+      if (!isAllowedOrigin(req.headers.origin)) {
+        jsonResponse(res, 403, { status: 'rejected', reason: 'forbidden origin' });
+        req.resume();
+        return;
+      }
       const contentType = req.headers['content-type'] ?? '';
       if (!contentType.includes('application/json')) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -99,9 +127,29 @@ export async function createExtensionServer(
         return;
       }
 
+      const declaredLength = Number(req.headers['content-length']);
+      if (Number.isFinite(declaredLength) && declaredLength > MAX_SAVE_BODY_BYTES) {
+        jsonResponse(res, 413, { status: 'rejected', reason: 'payload too large' });
+        req.resume();
+        return;
+      }
+
       const chunks: Buffer[] = [];
-      req.on('data', (chunk: Buffer) => chunks.push(chunk));
-      req.on('end', () => {
+      let receivedBytes = 0;
+      let rejectedForSize = false;
+      req.on('data', (chunk: Buffer) => {
+        if (rejectedForSize) return;
+        receivedBytes += chunk.length;
+        if (receivedBytes > MAX_SAVE_BODY_BYTES) {
+          rejectedForSize = true;
+          chunks.length = 0;
+          jsonResponse(res, 413, { status: 'rejected', reason: 'payload too large' });
+          return;
+        }
+        chunks.push(chunk);
+      });
+      req.on('end', async () => {
+        if (rejectedForSize) return;
         const raw = Buffer.concat(chunks).toString('utf-8');
 
         let parsed: unknown;
@@ -120,16 +168,28 @@ export async function createExtensionServer(
           return;
         }
 
-        // Fire-and-forget: call onSaveIntent synchronously, then respond 202.
         try {
-          options.onSaveIntent(result.data);
-        } catch {
-          // Swallow — the intent was validated; downstream errors are
-          // handled by the caller's onError path.
+          const disposition = await options.onSaveIntent(result.data);
+          if (
+            disposition &&
+            typeof disposition === 'object' &&
+            'accepted' in disposition &&
+            !disposition.accepted
+          ) {
+            jsonResponse(res, disposition.status, {
+              status: 'rejected',
+              reason: disposition.reason,
+            });
+            return;
+          }
+        } catch (error) {
+          const normalized = error instanceof Error ? error : new Error(String(error));
+          options.onError?.(normalized);
+          jsonResponse(res, 500, { status: 'rejected', reason: 'internal error' });
+          return;
         }
 
-        res.writeHead(202, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ status: 'accepted' }));
+        jsonResponse(res, 202, { status: 'accepted' });
       });
       return;
     }

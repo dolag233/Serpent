@@ -15,12 +15,12 @@ const OPENAI_RESPONSE_JSON_SCHEMA = {
     type: 'object',
     properties: {
       label: {
-        type: 'string',
+        type: ['string', 'null'],
         description:
           'A concise title or label for the asset. Omit if not applicable.',
       },
       description: {
-        type: 'string',
+        type: ['string', 'null'],
         description:
           'A detailed description of the asset content. Omit if not applicable.',
       },
@@ -31,12 +31,14 @@ const OPENAI_RESPONSE_JSON_SCHEMA = {
           'Relevant keyword tags. Prefer existing library tags when suitable.',
       },
       structured_metadata: {
-        type: 'object',
+        type: ['object', 'null'],
+        properties: {},
+        additionalProperties: false,
         description:
           'Additional structured metadata as key-value pairs. Omit if not applicable.',
       },
     },
-    required: ['tags'],
+    required: ['label', 'description', 'tags', 'structured_metadata'],
     additionalProperties: false,
   },
 };
@@ -323,8 +325,12 @@ export class OpenAIVendorAdapter implements VendorAdapter {
         : this.model;
 
     try {
+      const normalized = Object.fromEntries(
+        Object.entries(parsed as Record<string, unknown>)
+          .filter(([, value]) => value !== null),
+      );
       return parseAiAnalysisResult({
-        ...(parsed as Record<string, unknown>),
+        ...normalized,
         modelVersion,
       });
     } catch (error: unknown) {

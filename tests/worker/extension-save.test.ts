@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
@@ -15,9 +15,9 @@ function tempDir(): string {
   return dir;
 }
 
-function createTestLibrary(): { service: LibraryService; libraryId: string } {
+function createTestLibrary(options?: ConstructorParameters<typeof LibraryService>[0]): { service: LibraryService; libraryId: string } {
   const libraryPath = tempDir();
-  const service = new LibraryService();
+  const service = new LibraryService(options);
   const library = service.createLibrary({
     displayName: `test-${randomUUID()}`,
     selectedParentPath: libraryPath,
@@ -37,6 +37,9 @@ function stubFetch(
     body?: Uint8Array;
     error?: Error;
     contentDisposition?: string;
+    contentLength?: string;
+    location?: string;
+    chunks?: Uint8Array[];
   } = {},
 ): void {
   const {
@@ -45,6 +48,9 @@ function stubFetch(
     body,
     error,
     contentDisposition,
+    contentLength,
+    location,
+    chunks,
   } = options;
 
   if (error) {
@@ -66,15 +72,17 @@ function stubFetch(
       headers: new Headers({
         'content-type': contentType,
         ...(contentDisposition ? { 'content-disposition': contentDisposition } : {}),
+        ...(contentLength ? { 'content-length': contentLength } : {}),
+        ...(location ? { location } : {}),
       }),
       body: {
         getReader() {
-          let done = false;
+          const values = chunks ?? [body ?? defaultBody];
+          let index = 0;
           return {
             read() {
-              if (done) return Promise.resolve({ done: true, value: undefined });
-              done = true;
-              return Promise.resolve({ done: false, value: body ?? defaultBody });
+              if (index >= values.length) return Promise.resolve({ done: true, value: undefined });
+              return Promise.resolve({ done: false, value: values[index++] });
             },
             cancel: vi.fn(),
           };
@@ -93,7 +101,9 @@ describe('saveAssetFromUrl', () => {
   let libraryId = '';
 
   beforeEach(() => {
-    const lib = createTestLibrary();
+    const lib = createTestLibrary({
+      dnsLookup: async () => [{ address: '203.0.113.10', family: 4 }],
+    });
     service = lib.service;
     libraryId = lib.libraryId;
   });
@@ -105,6 +115,7 @@ describe('saveAssetFromUrl', () => {
       // Best effort.
     }
     unstubFetch();
+    vi.useRealTimers();
     for (const root of temporaryRoots.splice(0)) {
       try { rmSync(root, { recursive: true, force: true }); } catch { /* ok */ }
     }
@@ -320,5 +331,142 @@ describe('saveAssetFromUrl', () => {
 
     const assets = service.listAssets({ libraryId, recursive: true });
     expect(assets).toHaveLength(0);
+  });
+
+  it('rejects a URL whose DNS result is private before fetch', async () => {
+    service.closeAll();
+    const lib = createTestLibrary({
+      dnsLookup: async () => [{ address: '127.0.0.1', family: 4 }],
+    });
+    service = lib.service;
+    libraryId = lib.libraryId;
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+
+    await expect(service.saveAssetFromUrl({
+      libraryId,
+      sourcePageUrl: 'https://example.com/page',
+      mediaUrl: 'https://attacker.example/photo.png',
+    })).rejects.toThrow();
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    'http://127.0.0.1/a.png',
+    'http://10.0.0.1/a.png',
+    'http://169.254.169.254/a.png',
+    'http://0.0.0.0/a.png',
+    'http://224.0.0.1/a.png',
+    'http://[::1]/a.png',
+    'http://[fe80::1]/a.png',
+    'http://[fc00::1]/a.png',
+    'http://[ff02::1]/a.png',
+  ])('rejects prohibited literal network target %s', async (mediaUrl) => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+    await expect(service.saveAssetFromUrl({
+      libraryId,
+      sourcePageUrl: 'https://example.com/page',
+      mediaUrl,
+    })).rejects.toThrow();
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('revalidates every redirect target and blocks a redirect to private DNS', async () => {
+    service.closeAll();
+    const dnsLookup = vi.fn(async (hostname: string) => hostname === 'public.example'
+      ? [{ address: '203.0.113.10', family: 4 as const }]
+      : [{ address: '169.254.169.254', family: 4 as const }]);
+    const lib = createTestLibrary({ dnsLookup });
+    service = lib.service;
+    libraryId = lib.libraryId;
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce({
+      ok: false,
+      status: 302,
+      headers: new Headers({ location: 'http://metadata.example/latest' }),
+      body: null,
+    }));
+
+    await expect(service.saveAssetFromUrl({
+      libraryId,
+      sourcePageUrl: 'https://example.com/page',
+      mediaUrl: 'https://public.example/photo.png',
+    })).rejects.toThrow();
+    expect(dnsLookup).toHaveBeenCalledTimes(2);
+  });
+
+  it('rejects an oversized Content-Length before reading the body', async () => {
+    const read = vi.fn();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: new Headers({
+        'content-type': 'image/png',
+        'content-length': String(500 * 1024 * 1024 + 1),
+      }),
+      body: { getReader: () => ({ read, cancel: vi.fn() }) },
+    }));
+
+    await expect(service.saveAssetFromUrl({
+      libraryId,
+      sourcePageUrl: 'https://example.com/page',
+      mediaUrl: 'https://example.com/photo.png',
+    })).rejects.toThrow();
+    expect(read).not.toHaveBeenCalled();
+  });
+
+  it('keeps the 30 second deadline active while reading the response body', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('fetch', vi.fn(async (_url: URL, init?: RequestInit) => ({
+      ok: true,
+      status: 200,
+      headers: new Headers({ 'content-type': 'image/png' }),
+      body: {
+        getReader: () => ({
+          read: () => new Promise((_resolve, reject) => {
+            init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
+          }),
+          cancel: vi.fn(),
+        }),
+      },
+    })));
+
+    const pending = service.saveAssetFromUrl({
+      libraryId,
+      sourcePageUrl: 'https://example.com/page',
+      mediaUrl: 'https://example.com/photo.png',
+    });
+    const rejection = expect(pending).rejects.toThrow();
+    await vi.advanceTimersByTimeAsync(30_001);
+    await rejection;
+    expect(service.listAssets({ libraryId, recursive: true })).toHaveLength(0);
+  });
+
+  it('streams multiple response chunks to the imported file intact', async () => {
+    const chunks = [new Uint8Array([1, 2, 3]), new Uint8Array([4, 5, 6])];
+    stubFetch({ contentType: 'image/png', chunks });
+    const result = await service.saveAssetFromUrl({
+      libraryId,
+      sourcePageUrl: 'https://example.com/page',
+      mediaUrl: 'https://example.com/photo.png',
+    });
+    const library = service.listLibraries().find((item) => item.libraryId === libraryId)!;
+    expect(readFileSync(path.join(library.libraryPath, 'Assets', result.asset.displayName)))
+      .toEqual(Buffer.from([1, 2, 3, 4, 5, 6]));
+  });
+
+  it('does not truncate an over-limit server filename and reports the filesystem path limit', async () => {
+    const oversizedName = `${'a'.repeat(300)}.png`;
+    stubFetch({
+      contentType: 'image/png',
+      contentDisposition: `attachment; filename="${oversizedName}"`,
+    });
+
+    await expect(service.saveAssetFromUrl({
+      libraryId,
+      sourcePageUrl: 'https://example.com/page',
+      mediaUrl: 'https://example.com/download',
+    })).rejects.toMatchObject({ reason: 'PATH_LIMIT_EXCEEDED' });
+    expect(service.listAssets({ libraryId, recursive: true })).toHaveLength(0);
   });
 });

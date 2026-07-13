@@ -8,6 +8,7 @@ import {
 import type { AiAnalysisRequest } from '../../src/worker/ai/protocol';
 import { OpenAIVendorAdapter } from '../../src/worker/ai/openai-adapter';
 import { VendorAdapterError } from '../../src/worker/ai/vendor-adapter';
+import { safeAiDiagnostic, vendorFailure } from '../../src/worker/ai/error-mapping';
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -135,6 +136,44 @@ describe('aiStructuredOutputSchema', () => {
   });
 });
 
+describe('vendorFailure', () => {
+  it.each([
+    ['auth', 'AI_AUTH', false],
+    ['permission', 'AI_PERMISSION', false],
+    ['quota', 'AI_QUOTA', false],
+    ['rate_limit', 'AI_RATE_LIMIT', true],
+    ['network', 'AI_NETWORK', true],
+    ['timeout', 'AI_TIMEOUT', true],
+    ['invalid_response', 'AI_INVALID_RESPONSE', false],
+  ] as const)('maps %s to an actionable safe reason', (kind, reason, retryable) => {
+    expect(vendorFailure(new VendorAdapterError(kind, 'secret vendor detail'))).toEqual({
+      errorCode: `AI_${kind.toUpperCase()}`,
+      reason,
+      retryable,
+    });
+  });
+
+  it('creates a cause-bearing diagnostic with safe provider and system details', () => {
+    const systemError = Object.assign(
+      new Error('fetch https://example.test/path?key=AIza-secret failed with Bearer top-secret'),
+      { code: 'ECONNRESET' },
+    );
+    const diagnostic = safeAiDiagnostic(
+      'AI_AUTH',
+      new VendorAdapterError('auth', 'AI service returned HTTP 401', { cause: systemError }),
+    );
+    expect(diagnostic.message).toBe('AI queue analysis failed.');
+    expect(diagnostic.cause).toBeInstanceOf(Error);
+    expect(String(diagnostic.cause)).toContain('kind=auth; httpStatus=401');
+    const nested = (diagnostic.cause as Error).cause;
+    expect(String(nested)).toContain('ECONNRESET');
+    expect(String(nested)).toContain('key=[redacted]');
+    expect(String(nested)).toContain('Bearer [redacted]');
+    expect(String(nested)).not.toContain('AIza-secret');
+    expect(String(nested)).not.toContain('top-secret');
+  });
+});
+
 describe('aiAnalysisResultSchema', () => {
   it('accepts a valid result with modelVersion', () => {
     const result = aiAnalysisResultSchema.parse({
@@ -187,6 +226,28 @@ describe('parseAiAnalysisResult', () => {
 // ---------------------------------------------------------------------------
 
 describe('OpenAIVendorAdapter', () => {
+  it('sends an OpenAI strict schema whose fields are all required and nullable when optional', async () => {
+    let requestBody: Record<string, unknown> | undefined;
+    const fetchStub: typeof fetch = async (_input, init) => {
+      requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return new Response(JSON.stringify(openAiChatResponse({
+        label: null,
+        description: null,
+        tags: ['asset'],
+        structured_metadata: null,
+      })), { status: 200, headers: { 'content-type': 'application/json' } });
+    };
+    const adapter = new OpenAIVendorAdapter('test-api-key', 'gpt-4o', fetchStub);
+
+    const result = await adapter.analyze(TEST_IMAGE_REQUEST);
+
+    const responseFormat = requestBody?.response_format as Record<string, unknown>;
+    const jsonSchema = responseFormat.json_schema as Record<string, unknown>;
+    const schema = jsonSchema.schema as Record<string, unknown>;
+    expect(schema.required).toEqual(['label', 'description', 'tags', 'structured_metadata']);
+    expect(result).toEqual({ tags: ['asset'], modelVersion: 'gpt-4o-2024-05-13' });
+  });
+
   it('returns a parsed AiAnalysisResult on successful analysis', async () => {
     const adapter = new OpenAIVendorAdapter(
       'test-api-key',

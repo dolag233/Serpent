@@ -8,6 +8,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   LibraryService,
   LibraryServiceError,
+  defaultSpawnFn,
+  type LibraryServiceDiagnostic,
   type SpawnFunction,
   type SpawnResult,
 } from '../../src/worker/library-service';
@@ -436,6 +438,13 @@ describe('video (ffprobe + ffmpeg)', () => {
     expect(proxyRow!.status).toBe('ready');
     expect(proxyRow!.mime_type).toBe('video/webm');
 
+    expect(service.getPreviewArtifact(created.libraryId, assets[0]!.assetId)).toMatchObject({
+      mediaType: 'video',
+      status: 'ready',
+      kind: 'webm_proxy',
+      mimeType: 'video/webm',
+    });
+
     // Verify webm proxy args are well-formed
     const proxyCall = capturedSpawnArgs.find(
       (c) => c.command === '/fake/ffmpeg' && c.args.includes('libvpx-vp9'),
@@ -478,11 +487,10 @@ describe('video (ffprobe + ffmpeg)', () => {
       recursive: true,
     });
 
-    // generateThumbnail should not throw (individual artifacts fail, not the whole call)
-    await service.generateThumbnail({
+    await expect(service.generateThumbnail({
       libraryId: created.libraryId,
       assetId: assets[0]!.assetId,
-    });
+    })).rejects.toMatchObject({ reason: 'MEDIA_PROCESSING_FAILED' });
 
     // Verify failed video_poster artifact with FFMPEG_REQUIRED
     const db = assertDb(created.libraryPath);
@@ -495,8 +503,131 @@ describe('video (ffprobe + ffmpeg)', () => {
     const posterFailed = failedRows.find((r) => r.kind === 'video_poster');
     expect(posterFailed).toBeDefined();
 
+    expect(service.getPreviewArtifact(created.libraryId, assets[0]!.assetId)).toEqual({
+      mediaType: 'video',
+      status: 'failed',
+      kind: 'webm_proxy',
+      artifactId: expect.any(String),
+      mimeType: 'video/webm',
+      errorCode: 'FFMPEG_REQUIRED',
+    });
+
     db.close();
     service.closeAll();
+  });
+
+  it('invalidates the prior current artifacts before a successful retry', async () => {
+    process.env['SERPENT_FFMPEG_PATH'] = '/fake/ffmpeg';
+    const root = temporaryRoot();
+    const service = new LibraryService({ spawnFn: createMockSpawn({}) });
+    const created = service.createLibrary({ displayName: 'VideoRetry', selectedParentPath: root });
+    const sourcePath = path.join(root, 'video.mp4');
+    writeFileSync(sourcePath, Buffer.alloc(4096, 0));
+    importNoConflict(service, created.libraryId, sourcePath);
+    const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
+
+    const first = await service.generateThumbnail({ libraryId: created.libraryId, assetId: asset.assetId });
+    const second = await service.generateThumbnail({ libraryId: created.libraryId, assetId: asset.assetId });
+
+    expect(second.artifactId).not.toBe(first.artifactId);
+    const db = assertDb(created.libraryPath);
+    const posters = db.prepare(
+      `SELECT artifact_id, status, invalidated_at
+         FROM revision_artifacts
+        WHERE revision_id = ? AND kind = 'video_poster'
+        ORDER BY generated_at`,
+    ).all(asset.currentRevisionId) as Array<{
+      artifact_id: string;
+      status: string;
+      invalidated_at: string | null;
+    }>;
+    expect(posters).toHaveLength(2);
+    expect(posters.filter((row) => row.invalidated_at === null)).toEqual([
+      expect.objectContaining({ artifact_id: second.artifactId, status: 'ready' }),
+    ]);
+    expect(posters.find((row) => row.artifact_id === first.artifactId)?.invalidated_at).not.toBeNull();
+
+    db.close();
+    service.closeAll();
+  });
+
+  it('rejects a failed poster retry and leaves one current failed artifact', async () => {
+    process.env['SERPENT_FFMPEG_PATH'] = '/fake/ffmpeg';
+    const root = temporaryRoot();
+    let failPoster = false;
+    let assetChangeEvents = 0;
+    const diagnostics: LibraryServiceDiagnostic[] = [];
+    const service = new LibraryService({
+      onAssetsChanged: () => { assetChangeEvents += 1; },
+      onDiagnostic: (diagnostic) => { diagnostics.push(diagnostic); },
+      spawnFn: async (command, args) => {
+        const outputPath = args[args.length - 1];
+        if (outputPath && /\.(?:jpg|webm)$/u.test(outputPath)) {
+          mkdirSync(path.dirname(outputPath), { recursive: true });
+          writeFileSync(outputPath, 'output');
+        }
+        if (command.includes('ffprobe')) {
+          return { stdout: Buffer.from(CANNED_FFPROBE_JSON), stderr: '', exitCode: 0 };
+        }
+        const isPoster = args.includes('-frames:v') && args.includes('1');
+        return {
+          stdout: Buffer.alloc(0),
+          stderr: isPoster && failPoster ? `${'discarded '.repeat(40)}POSTER_FAILURE_TAIL` : '',
+          exitCode: isPoster && failPoster ? 1 : 0,
+        };
+      },
+    });
+    const created = service.createLibrary({ displayName: 'VideoRetryFailure', selectedParentPath: root });
+    const sourcePath = path.join(root, 'video.mp4');
+    writeFileSync(sourcePath, Buffer.alloc(4096, 0));
+    importNoConflict(service, created.libraryId, sourcePath);
+    const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
+    await service.generateThumbnail({ libraryId: created.libraryId, assetId: asset.assetId });
+
+    assetChangeEvents = 0;
+    failPoster = true;
+    await expect(service.generateThumbnail({
+      libraryId: created.libraryId,
+      assetId: asset.assetId,
+    })).rejects.toMatchObject({ reason: 'MEDIA_PROCESSING_FAILED' });
+    expect(assetChangeEvents).toBe(0);
+    const posterDiagnostic = diagnostics.find((diagnostic) => diagnostic.scope === 'video-poster');
+    expect(posterDiagnostic?.error).toBeInstanceOf(Error);
+    expect((posterDiagnostic?.error as Error).message.endsWith('POSTER_FAILURE_TAIL')).toBe(true);
+
+    const db = assertDb(created.libraryPath);
+    const currentPoster = db.prepare(
+      `SELECT artifact_id, status, error_code
+         FROM revision_artifacts
+        WHERE revision_id = ? AND kind = 'video_poster' AND invalidated_at IS NULL`,
+    ).get(asset.currentRevisionId) as {
+      artifact_id: string;
+      status: string;
+      error_code: string;
+    };
+    expect(currentPoster.artifact_id).toBeTruthy();
+    expect(currentPoster.status).toBe('failed');
+    expect(currentPoster.error_code).toBe('VIDEO_POSTER_GENERATION_FAILED');
+
+    db.close();
+    service.closeAll();
+  });
+});
+
+describe('subprocess diagnostics', () => {
+  it('caps stdout and stderr while preserving their tails', async () => {
+    const nodePath = process.env['npm_node_execpath'] ?? 'node';
+    const result = await defaultSpawnFn(nodePath, [
+      '-e',
+      `process.stdout.write('A'.repeat(9 * 1024 * 1024) + 'STDOUT_TAIL');` +
+        `process.stderr.write('B'.repeat(600 * 1024) + 'STDERR_TAIL');`,
+    ]);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.byteLength).toBe(8 * 1024 * 1024);
+    expect(result.stdout.toString('utf-8').endsWith('STDOUT_TAIL')).toBe(true);
+    expect(Buffer.byteLength(result.stderr)).toBe(512 * 1024);
+    expect(result.stderr.endsWith('STDERR_TAIL')).toBe(true);
   });
 });
 

@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { readFileSync, writeFileSync, existsSync, statSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 
 import { app, BrowserWindow, dialog, ipcMain, protocol, safeStorage, shell, type OpenDialogOptions } from 'electron';
 
@@ -25,7 +25,9 @@ import {
 } from '../shared/protocol/responses';
 import { LibraryWorkerClient } from './worker-client';
 import { AppLogger } from './app-logger';
-import { createExtensionServer, type ExtensionServer, type SaveIntent } from './extension-server';
+import { AiQueueScheduler } from './ai-queue-scheduler';
+import { createArtifactResponse } from './artifact-response';
+import { createExtensionServer, type ExtensionServer, type SaveIntent, type SaveIntentDisposition } from './extension-server';
 
 app.enableSandbox();
 
@@ -38,6 +40,11 @@ let startupComplete = false;
 let logger: AppLogger | undefined;
 
 let extensionServer: ExtensionServer | undefined;
+const aiQueueScheduler = new AiQueueScheduler(processAiQueueBatch, {
+  batchSize: 20,
+  baseRetryDelayMs: 1_000,
+  maxRetryDelayMs: 30_000,
+});
 
 // Maps BrowserWindow.id to the active library/folder context for extension save.
 const focusedContexts = new Map<number, { libraryId: string | null; selectedFolderId?: string }>();
@@ -100,7 +107,7 @@ function loadAiConfig(): AiConfig & { hasKey: boolean } {
   }
 }
 
-function saveAiConfig(config: Omit<AiConfig, 'disclaimerAccepted'>): void {
+function saveAiConfig(config: AiConfig): void {
   const toSave: Record<string, unknown> = {};
   toSave.provider = config.provider;
   toSave.model = config.model;
@@ -110,6 +117,7 @@ function saveAiConfig(config: Omit<AiConfig, 'disclaimerAccepted'>): void {
   toSave.structuredMetadataEnabled = config.structuredMetadataEnabled;
   toSave.language = config.language;
   toSave.autoAnalyzeEnabled = config.autoAnalyzeEnabled;
+  toSave.disclaimerAccepted = config.disclaimerAccepted;
   writeFileSync(aiConfigPath(), JSON.stringify(toSave, null, 2), 'utf-8');
 }
 
@@ -172,20 +180,22 @@ function cancelled(): RendererResult {
   return { ok: false, error: createPublicError('CANCELLED') };
 }
 
-function handleSaveIntent(intent: SaveIntent): void {
-  if (!workerClient) return;
+async function handleSaveIntent(intent: SaveIntent): Promise<SaveIntentDisposition> {
+  if (!workerClient) {
+    return { accepted: false, status: 503, reason: 'worker unavailable' };
+  }
 
   const focusedWindow = BrowserWindow.getFocusedWindow();
   if (!focusedWindow) {
     logger?.info('extension-server.save', 'No focused window; dropping save intent.');
-    return;
+    return { accepted: false, status: 503, reason: 'no active library' };
   }
 
   const context = focusedContexts.get(focusedWindow.id);
   const libraryId = context?.libraryId;
   if (!libraryId) {
     logger?.info('extension-server.save', 'No active library in focused window; dropping save intent.');
-    return;
+    return { accepted: false, status: 503, reason: 'no active library' };
   }
 
   const command: WorkerCommand = {
@@ -197,23 +207,25 @@ function handleSaveIntent(intent: SaveIntent): void {
     mediaType: intent.mediaType,
   };
 
-  workerClient.request(command).then(
-    (result) => {
-      if (!result.ok) {
-        logger?.error('extension-server.save', new Error(`Save failed: ${result.error.message}`), {
-          code: result.error.code,
-          reason: result.error.reason,
-        });
-      } else {
-        logger?.info('extension-server.save', 'Asset saved successfully.', {
-          type: result.type,
-        });
-      }
-    },
-    (error) => {
-      logger?.error('extension-server.save', error);
-    },
-  );
+  try {
+    const result = await workerClient.request(command);
+    if (!result.ok) {
+      logger?.error('extension-server.save', new Error(`Save failed: ${result.error.message}`), {
+        code: result.error.code,
+        reason: result.error.reason,
+      });
+      return {
+        accepted: false,
+        status: result.error.code === 'LIBRARY_NOT_OPEN' ? 503 : 422,
+        reason: result.error.reason ?? result.error.code,
+      };
+    }
+    logger?.info('extension-server.save', 'Asset saved successfully.', { type: result.type });
+    return { accepted: true };
+  } catch (error) {
+    logger?.error('extension-server.save', error);
+    throw error;
+  }
 }
 
 function publishLifecycle(event: RendererLifecycleEvent): void {
@@ -237,23 +249,68 @@ function publishProgress(event: ProgressEvent): void {
 async function enqueueAutoAnalyzeAfterImport(
   libraryId: string,
   importedAssetIds: string[],
+  folderId?: string,
 ): Promise<void> {
   const config = loadAiConfig();
   if (!config.autoAnalyzeEnabled || !config.hasKey || !config.provider) return;
-  if (importedAssetIds.length === 0 || !workerClient) return;
+  if ((importedAssetIds.length === 0 && !folderId) || !workerClient) return;
 
   try {
     const result = await workerClient.request({
       type: 'ai.enqueue-analysis',
       libraryId,
-      assetIds: importedAssetIds,
+      ...(importedAssetIds.length > 0 ? { assetIds: importedAssetIds } : {}),
+      ...(folderId ? { folderId } : {}),
     });
     if (result.ok && result.type === 'media.jobs.enqueued') {
       logger?.info('auto-analyze', `Enqueued ${result.enqueued} AI analysis jobs after import.`);
+      await processAiQueue(libraryId);
     }
   } catch (error) {
     logger?.error('auto-analyze', error);
     // Non-blocking: import succeeded regardless of AI enqueue failure.
+  }
+}
+
+async function processAiQueue(libraryId: string): Promise<void> {
+  await aiQueueScheduler.trigger(libraryId);
+}
+
+async function processAiQueueBatch(
+  libraryId: string,
+  maxJobs: number,
+): Promise<{ processed: number; requeued: number }> {
+  const config = loadAiConfig();
+  if (!config.hasKey || !workerClient) return { processed: 0, requeued: 0 };
+  try {
+    const apiKey = getDecryptedApiKey();
+    const result = await workerClient.request({
+      type: 'ai.process-queue',
+      libraryId,
+      provider: config.provider,
+      model: config.model,
+      apiKey,
+      enabledFields: {
+        label: config.labelEnabled,
+        description: config.descriptionEnabled,
+        tags: config.tagEnabled,
+        structuredMetadata: config.structuredMetadataEnabled,
+      },
+      language: config.language,
+      maxJobs,
+    });
+    if (!result.ok) {
+      logger?.error('ai.queue.process', new Error(`Worker rejected AI queue batch: ${result.error.code}`));
+      return { processed: 0, requeued: 0 };
+    }
+    if (result.type !== 'ai.jobs.processed') {
+      logger?.error('ai.queue.process', new Error(`Unexpected AI queue result: ${result.type}`));
+      return { processed: 0, requeued: 0 };
+    }
+    return { processed: result.processed, requeued: result.requeued };
+  } catch (error) {
+    logger?.error('ai.queue.process', error);
+    return { processed: 0, requeued: 0 };
   }
 }
 
@@ -637,17 +694,17 @@ async function commandFor(request: RendererRequest): Promise<WorkerCommand | und
         destinationPath = result.canceled ? undefined : result.filePath;
       } else {
         const result = mainWindow
-          ? await dialog.showOpenDialog(mainWindow, {
-              title: '选择导出目标文件夹',
-              buttonLabel: '导出到此处',
-              properties: ['openDirectory', 'createDirectory'],
+          ? await dialog.showSaveDialog(mainWindow, {
+              title: '导出为文件夹',
+              buttonLabel: '创建导出文件夹',
+              defaultPath: 'serpent-library-export',
             })
-          : await dialog.showOpenDialog({
-              title: '选择导出目标文件夹',
-              buttonLabel: '导出到此处',
-              properties: ['openDirectory', 'createDirectory'],
+          : await dialog.showSaveDialog({
+              title: '导出为文件夹',
+              buttonLabel: '创建导出文件夹',
+              defaultPath: 'serpent-library-export',
             });
-        destinationPath = result.canceled ? undefined : result.filePaths[0];
+        destinationPath = result.canceled ? undefined : result.filePath;
       }
       return destinationPath
         ? {
@@ -659,6 +716,8 @@ async function commandFor(request: RendererRequest): Promise<WorkerCommand | und
           }
         : undefined;
     }
+    case 'library.export.cancel.request':
+      return { type: 'library.export-cancel', exportId: request.exportId };
     case 'library.import.request': {
       let sourceFolderPath: string | undefined;
       if (!app.isPackaged && process.env.SERPENT_E2E === '1') {
@@ -681,7 +740,7 @@ async function commandFor(request: RendererRequest): Promise<WorkerCommand | und
       // Store source path for later use in copy/in-place decision.
       const importId = `import-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
       pendingImportSources.set(importId, sourceFolderPath);
-      return { type: 'library.import-validate', sourceFolderPath };
+      return { type: 'library.import-validate', importId, sourceFolderPath };
     }
     case 'library.import-zip.request': {
       let sourceZipPath: string | undefined;
@@ -724,6 +783,8 @@ async function commandFor(request: RendererRequest): Promise<WorkerCommand | und
       if (!destinationParentPath) return undefined;
       return { type: 'library.import-zip', sourceZipPath, destinationParentPath };
     }
+    case 'library.import.cancel.request':
+      return { type: 'library.import-cancel', importId: request.importId };
     case 'library.import.copy.request': {
       const importId = request.importId;
       const sourcePath = pendingImportSources.get(importId);
@@ -834,15 +895,23 @@ async function commandFor(request: RendererRequest): Promise<WorkerCommand | und
     case 'asset.preview.request':
       // Handled directly in handleLibraryRequest because it requires constructing
       // a serpent:// URL after the Worker lookup.
-      return { type: 'media.get-thumbnail-artifact', libraryId: request.libraryId, assetId: request.assetId };
+      return { type: 'media.get-preview-artifact', libraryId: request.libraryId, assetId: request.assetId };
     case 'asset.close-preview.request':
       // Preview close is a no-op on the Main side; renderer handles UI state.
+      return undefined;
+    case 'asset.preview-error.report':
+      // Main records this before command dispatch.
       return undefined;
     case 'asset.open-external.request':
       // Handled directly in handleLibraryRequest because it requires shell.openPath.
       return { type: 'media.get-asset-path', libraryId: request.libraryId, assetId: request.assetId };
     case 'asset.retry-artifact.request':
-      return { type: 'media.generate-thumbnail', libraryId: request.libraryId, assetId: request.assetId };
+      return {
+        type: 'media.retry-artifact',
+        libraryId: request.libraryId,
+        assetId: request.assetId,
+        kind: request.kind,
+      };
     default:
       return assertNever(request);
   }
@@ -873,10 +942,18 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
           structuredMetadata: config.structuredMetadataEnabled,
         },
         language: config.language,
+        autoAnalyzeEnabled: config.autoAnalyzeEnabled,
+        disclaimerAccepted: config.disclaimerAccepted,
       } satisfies RendererResult;
     }
 
     if (request.type === 'ai.config.set.request') {
+      if (request.autoAnalyzeEnabled && !request.disclaimerAccepted) {
+        return { ok: false, error: createPublicError('INVALID_IMPORT_DECISION') } satisfies RendererResult;
+      }
+      if (!request.apiKey && !loadAiConfig().hasKey) {
+        return { ok: false, error: createPublicError('INVALID_IMPORT_DECISION') } satisfies RendererResult;
+      }
       saveAiConfig({
         provider: request.provider,
         model: request.model,
@@ -885,10 +962,29 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
         tagEnabled: request.enabledFields?.tags ?? true,
         structuredMetadataEnabled: request.enabledFields?.structuredMetadata ?? false,
         language: request.language ?? 'auto',
-        autoAnalyzeEnabled: false,
+        autoAnalyzeEnabled: request.autoAnalyzeEnabled,
+        disclaimerAccepted: request.disclaimerAccepted,
       });
-      saveEncryptedApiKey(request.apiKey);
+      if (request.apiKey) saveEncryptedApiKey(request.apiKey);
       return { ok: true, type: 'ai.config.saved' } satisfies RendererResult;
+    }
+
+    if (request.type === 'asset.close-preview.request') {
+      return { ok: true, type: 'asset.preview.closed', assetId: request.assetId } satisfies RendererResult;
+    }
+
+    if (request.type === 'asset.preview-error.report') {
+      logger?.error(
+        'media.preview.renderer',
+        new Error(`Renderer media element reported ${request.errorCode}.`),
+        {
+          libraryId: request.libraryId,
+          assetId: request.assetId,
+          errorCode: request.errorCode,
+          detail: request.detail,
+        },
+      );
+      return { ok: true, type: 'asset.preview-error.recorded', assetId: request.assetId } satisfies RendererResult;
     }
 
     const command = await commandFor(request);
@@ -901,10 +997,48 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
 
     const workerResult = await workerClient.request(command);
 
+    if (
+      workerResult.ok
+      && (request.type === 'ai.resume-jobs.request' || request.type === 'ai.retry-jobs.request')
+    ) {
+      void processAiQueue(request.libraryId);
+    }
+    if (
+      workerResult.ok
+      && (workerResult.type === 'library.opened' || workerResult.type === 'library.imported')
+    ) {
+      const openedLibraryId = workerResult.type === 'library.opened'
+        ? workerResult.library.libraryId
+        : workerResult.libraryId;
+      void processAiQueue(openedLibraryId);
+    }
+
     // Post-process preview and open-external requests
-    if (workerResult.ok && request.type === 'asset.preview.request' && workerResult.type === 'media.thumbnail-artifact') {
-      const url = `serpent://preview/${request.libraryId}/${workerResult.artifactId}`;
-      return { ok: true, type: 'asset.preview.url', assetId: workerResult.artifactId, url } satisfies RendererResult;
+    if (workerResult.ok && request.type === 'asset.preview.request' && workerResult.type === 'media.preview-artifact') {
+      const url = workerResult.status === 'ready' && workerResult.artifactId
+        ? `serpent://${workerResult.mediaType === 'video' ? 'proxy' : 'preview'}/${request.libraryId}/${workerResult.artifactId}`
+        : undefined;
+      const posterUrl = workerResult.posterArtifactId
+        ? `serpent://preview/${request.libraryId}/${workerResult.posterArtifactId}`
+        : undefined;
+      if (workerResult.status === 'failed' || workerResult.status === 'missing') {
+        logger?.info('media.preview.unavailable', 'Preview is not available.', {
+          assetId: request.assetId,
+          status: workerResult.status,
+          errorCode: workerResult.errorCode,
+        });
+      }
+      return {
+        ok: true,
+        type: 'asset.preview.resolved',
+        assetId: request.assetId,
+        mediaType: workerResult.mediaType,
+        status: workerResult.status,
+        kind: workerResult.kind,
+        ...(url ? { url } : {}),
+        ...(posterUrl ? { posterUrl } : {}),
+        ...(workerResult.errorCode ? { errorCode: workerResult.errorCode } : {}),
+      } satisfies RendererResult;
     }
     if (workerResult.ok && request.type === 'asset.open-external.request' && workerResult.type === 'media.asset-path') {
       try {
@@ -918,7 +1052,15 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
         return { ok: false, error: createPublicError('INTERNAL_ERROR') } satisfies RendererResult;
       }
     }
-    if (workerResult.ok && (request.type === 'asset.thumbnail.request' || request.type === 'asset.retry-artifact.request') && workerResult.type === 'media.thumbnail.generated') {
+    if (workerResult.ok && request.type === 'asset.retry-artifact.request' && workerResult.type === 'media.retry-artifact.queued') {
+      return {
+        ok: true,
+        type: 'asset.retry-artifact.started',
+        assetId: workerResult.assetId,
+        kind: request.kind,
+      } satisfies RendererResult;
+    }
+    if (workerResult.ok && request.type === 'asset.thumbnail.request' && workerResult.type === 'media.thumbnail.generated') {
       return { ok: true, type: 'asset.thumbnail.generated', assetId: workerResult.assetId, artifactId: workerResult.artifactId } satisfies RendererResult;
     }
 
@@ -944,6 +1086,7 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
     ) {
       let assetIds: string[] = [];
       let libId: string | undefined;
+      let importedFolderId: string | undefined;
 
       if (workerResult.type === 'asset.import.completed') {
         assetIds = workerResult.completion.assets.map((a) => a.assetId);
@@ -961,11 +1104,12 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
         // import-linked has libraryId in the request
         if (request.type === 'asset.import-linked.request') {
           libId = request.libraryId;
+          importedFolderId = workerResult.linkedFolder.folderId;
         }
       }
 
-      if (assetIds.length > 0 && libId) {
-        void enqueueAutoAnalyzeAfterImport(libId, assetIds);
+      if (libId && (assetIds.length > 0 || importedFolderId)) {
+        void enqueueAutoAnalyzeAfterImport(libId, assetIds, importedFolderId);
       }
     }
 
@@ -1025,20 +1169,24 @@ async function startApplication(): Promise<void> {
   protocol.handle('serpent', async (request) => {
     try {
       const url = new URL(request.url);
-      if (url.hostname !== 'preview') {
+      if (url.hostname !== 'preview' && url.hostname !== 'proxy') {
+        logger?.info('serpent-protocol.invalid-host', 'Rejected unsupported artifact protocol host.');
         return new Response('Invalid serpent:// path', { status: 400 });
       }
       const parts = url.pathname.replace(/^\/+/, '').split('/');
       if (parts.length !== 2) {
+        logger?.info('serpent-protocol.invalid-path', 'Rejected malformed artifact protocol URL.');
         return new Response('Invalid URL format', { status: 400 });
       }
       const libraryId = parts[0]!;
       const artifactId = parts[1]!;
       if (!libraryId || !artifactId || libraryId.includes('..') || artifactId.includes('..')) {
+        logger?.info('serpent-protocol.invalid-identifiers', 'Rejected malformed artifact identifiers.');
         return new Response('Invalid identifiers', { status: 400 });
       }
 
       if (!workerClient) {
+        logger?.error('serpent-protocol.worker-unavailable', new Error('Library Worker is unavailable.'));
         return new Response('Worker unavailable', { status: 503 });
       }
 
@@ -1046,24 +1194,16 @@ async function startApplication(): Promise<void> {
         type: 'media.get-artifact-path',
         libraryId,
         artifactId,
+        usage: url.hostname,
       });
 
       if (!pathResult.ok || pathResult.type !== 'media.artifact-path') {
+        logger?.error('serpent-protocol.resolve', new Error('Artifact lookup failed.'), {
+          libraryId,
+          artifactId,
+          resultType: pathResult.ok ? pathResult.type : pathResult.error.code,
+        });
         return new Response('Artifact not found', { status: 404 });
-      }
-
-      let fileBytes: Buffer;
-      try {
-        fileBytes = readFileSync(pathResult.absolutePath);
-      } catch {
-        return new Response('Artifact file missing', { status: 404 });
-      }
-
-      let fileStat;
-      try {
-        fileStat = statSync(pathResult.absolutePath);
-      } catch {
-        // Stat failure is non-fatal; serve without content-length.
       }
 
       const ext = path.extname(pathResult.absolutePath).toLowerCase();
@@ -1078,15 +1218,17 @@ async function startApplication(): Promise<void> {
       };
       const mimeType = mimeMap[ext] ?? 'application/octet-stream';
 
-      const headers: Record<string, string> = {
-        'Content-Type': mimeType,
-        'Cache-Control': 'public, max-age=31536000, immutable',
-      };
-      if (fileStat) {
-        headers['Content-Length'] = String(fileStat.size);
+      try {
+        return createArtifactResponse(
+          pathResult.absolutePath,
+          mimeType,
+          request.headers.get('range'),
+          (error) => logger?.error('serpent-protocol.stream', error, { libraryId, artifactId }),
+        );
+      } catch (error) {
+        logger?.error('serpent-protocol.read', error, { libraryId, artifactId });
+        return new Response('Artifact file missing', { status: 404 });
       }
-
-      return new Response(new Uint8Array(fileBytes), { status: 200, headers });
     } catch (error) {
       logger?.error('serpent-protocol', error);
       return new Response('Internal error', { status: 500 });
@@ -1119,7 +1261,7 @@ async function startApplication(): Promise<void> {
   try {
     extensionServer = await createExtensionServer({
       port: 19876,
-      onSaveIntent: (intent) => handleSaveIntent(intent),
+      onSaveIntent: handleSaveIntent,
       onError: (err) => logger?.error('extension-server', err),
     });
     logger?.info('extension-server', `Browser extension server started on port ${extensionServer.port}.`);
@@ -1153,6 +1295,7 @@ if (!hasSingleInstanceLock) {
   });
 
   app.on('before-quit', (event) => {
+    aiQueueScheduler.clearAll();
     if (quitAfterShutdown || !workerClient) return;
     event.preventDefault();
 

@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -225,6 +225,140 @@ describe('managed asset watcher', () => {
       onDiagnostic: () => { throw new Error('diagnostic failure'); },
     });
     expect(() => service.createLibrary({ displayName: 'Best effort', selectedParentPath: root })).not.toThrow();
+    service.closeAll();
+  });
+});
+
+describe('linked folder watcher', () => {
+  it('starts one observer per available root and discovers new files after a debounced event', () => {
+    const root = temporaryRoot();
+    const linkedRoot = path.join(root, 'linked');
+    mkdirSync(linkedRoot);
+    writeFileSync(path.join(linkedRoot, 'existing.png'), 'existing');
+    const observers = observerHarness();
+    const scheduler = new ManualScheduler();
+    const events: unknown[] = [];
+    const service = new LibraryService({
+      observerFactory: observers.factory,
+      scheduler,
+      onAssetsChanged: (event) => events.push(event),
+    });
+    const library = service.createLibrary({ displayName: 'Linked watch', selectedParentPath: root });
+    const linked = service.importFolderAsLinked({
+      libraryId: library.libraryId,
+      sourceRootPath: linkedRoot,
+    });
+    expect(service.refreshManagedAssets(library.libraryId).changedCount).toBe(0);
+
+    expect(observers.roots).toEqual([
+      path.join(library.libraryPath, 'Assets'),
+      realpathSync(linkedRoot),
+    ]);
+
+    mkdirSync(path.join(linkedRoot, 'new'));
+    writeFileSync(path.join(linkedRoot, 'new', 'added.png'), 'added');
+    observers.callbacks[1]!();
+    observers.callbacks[1]!();
+    expect(scheduler.pendingCount()).toBe(1);
+    scheduler.flush();
+
+    expect(service.listAssets({
+      libraryId: library.libraryId,
+      folderId: linked.folderId,
+      recursive: true,
+    }).map((asset) => asset.relativeFilePath).sort()).toEqual([
+      'existing.png',
+      'new/added.png',
+    ]);
+    expect(events).toEqual([
+      { type: 'asset.changed', libraryId: library.libraryId, changedCount: 1, missingCount: 0 },
+    ]);
+    service.closeAll();
+    expect(observers.closed.sort()).toEqual([0, 1]);
+
+    service.openLibrary(library.libraryPath);
+    expect(observers.roots.slice(2)).toEqual([
+      path.join(library.libraryPath, 'Assets'),
+      realpathSync(linkedRoot),
+    ]);
+    service.closeAll();
+    expect(observers.closed.sort()).toEqual([0, 1, 2, 3]);
+  });
+
+  it('stops offline roots, restarts returned roots, and rebuilds an observer on relink', () => {
+    const root = temporaryRoot();
+    const linkedRoot = path.join(root, 'linked');
+    mkdirSync(linkedRoot);
+    writeFileSync(path.join(linkedRoot, 'a.png'), 'a');
+    const observers = observerHarness();
+    const service = new LibraryService({ observerFactory: observers.factory });
+    const library = service.createLibrary({ displayName: 'Lifecycle', selectedParentPath: root });
+    const linked = service.importFolderAsLinked({
+      libraryId: library.libraryId,
+      sourceRootPath: linkedRoot,
+    });
+
+    rmSync(linkedRoot, { force: true, recursive: true });
+    service.refreshManagedAssets(library.libraryId);
+    expect(observers.closed).toContain(1);
+
+    mkdirSync(linkedRoot);
+    writeFileSync(path.join(linkedRoot, 'a.png'), 'returned');
+    service.refreshManagedAssets(library.libraryId);
+    expect(observers.roots).toEqual([
+      path.join(library.libraryPath, 'Assets'),
+      realpathSync(linkedRoot),
+      realpathSync(linkedRoot),
+    ]);
+
+    rmSync(linkedRoot, { force: true, recursive: true });
+    service.refreshManagedAssets(library.libraryId);
+    const relocated = path.join(root, 'relocated');
+    mkdirSync(relocated);
+    writeFileSync(path.join(relocated, 'a.png'), 'relocated');
+    service.relinkMissingFolder({
+      libraryId: library.libraryId,
+      folderId: linked.folderId,
+      newRootPath: relocated,
+    });
+    expect(observers.roots.at(-1)).toBe(realpathSync(relocated));
+    service.closeAll();
+    expect(observers.closed).toContain(observers.roots.length - 1);
+  });
+
+  it('ignores default entries and symlinks discovered after import and emits a diagnostic', () => {
+    const root = temporaryRoot();
+    const linkedRoot = path.join(root, 'linked');
+    mkdirSync(linkedRoot);
+    writeFileSync(path.join(linkedRoot, 'existing.png'), 'existing');
+    const observers = observerHarness();
+    const scheduler = new ManualScheduler();
+    const diagnostics: Array<{ scope: string; context?: Record<string, unknown> }> = [];
+    const service = new LibraryService({
+      observerFactory: observers.factory,
+      scheduler,
+      onDiagnostic: (diagnostic) => diagnostics.push(diagnostic),
+    });
+    const library = service.createLibrary({ displayName: 'Ignore', selectedParentPath: root });
+    const linked = service.importFolderAsLinked({ libraryId: library.libraryId, sourceRootPath: linkedRoot });
+
+    mkdirSync(path.join(linkedRoot, '.git'));
+    writeFileSync(path.join(linkedRoot, '.git', 'config'), 'ignored');
+    writeFileSync(path.join(linkedRoot, '.DS_Store'), 'ignored');
+    writeFileSync(path.join(root, 'outside.png'), 'outside');
+    symlinkSync(path.join(root, 'outside.png'), path.join(linkedRoot, 'link.png'));
+    observers.callbacks[1]!();
+    scheduler.flush();
+
+    expect(service.listAssets({
+      libraryId: library.libraryId,
+      folderId: linked.folderId,
+      recursive: true,
+    }).map((asset) => asset.relativeFilePath)).toEqual(['existing.png']);
+    expect(diagnostics).toContainEqual(expect.objectContaining({
+      scope: 'linked-folder.symlink-skipped',
+      context: expect.objectContaining({ linkedFolderId: linked.folderId }),
+    }));
     service.closeAll();
   });
 });

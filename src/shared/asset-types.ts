@@ -73,7 +73,9 @@ export const assetMetadataResultSchema = z.strictObject({
   favorite: z.boolean(),
   palette: nonBlankString.nullable(),
   sourcePageUrl: nonBlankString.nullable(),
-  entityVersion: z.number().int().min(1),
+  // Assets created before metadata is first written use version 0 as the
+  // optimistic-lock token; the first successful set creates version 1.
+  entityVersion: z.number().int().min(0),
   updatedAt: nonBlankString,
 });
 

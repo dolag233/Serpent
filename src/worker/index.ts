@@ -13,9 +13,13 @@ import { AnthropicVendorAdapter } from './ai/anthropic-adapter';
 import { VendorAdapterError } from './ai/vendor-adapter';
 import type { VendorAdapter } from './ai/vendor-adapter';
 import type { AiAnalysisRequest } from './ai/protocol';
+import { findVendorError, safeAiDiagnostic, vendorFailure } from './ai/error-mapping';
+import { AiJobAbortRegistry } from './ai/job-abort-registry';
 import { readFileSync } from 'node:fs';
 
 const parentPort: ParentPort | undefined = process.parentPort;
+const aiJobAbortRegistry = new AiJobAbortRegistry();
+const analysisControls = new Map<string, { jobId: string; signal: AbortSignal; canWrite: () => boolean }>();
 
 if (!parentPort) {
   throw new Error('Library Worker must be started by the Electron main process.');
@@ -54,6 +58,26 @@ function errorForLog(error: unknown, depth = 0): unknown {
     stack: error.stack,
     cause: error.cause === undefined ? undefined : errorForLog(error.cause, depth + 1),
   };
+}
+
+function aiQueueFailure(error: unknown): { errorCode: string; retryable: boolean } {
+  const vendorError = findVendorError(error);
+  if (vendorError) {
+    const failure = vendorFailure(vendorError);
+    return { errorCode: failure.errorCode, retryable: failure.retryable };
+  }
+  if (error instanceof LibraryServiceError) {
+    if (error.code === 'AI_ANALYSIS_FAILED' && error.reason?.startsWith('AI_')) {
+      return {
+        errorCode: error.reason,
+        retryable: error.reason === 'AI_NETWORK'
+          || error.reason === 'AI_TIMEOUT'
+          || error.reason === 'AI_RATE_LIMIT',
+      };
+    }
+    return { errorCode: error.code, retryable: false };
+  }
+  return { errorCode: 'AI_INTERNAL_ERROR', retryable: false };
 }
 
 async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
@@ -307,7 +331,7 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
           durationMs: exported.durationMs,
         };
       }
-      const exported = libraryService.exportLibraryToFolder({
+      const exported = await libraryService.exportLibraryToFolder({
         libraryId: request.command.libraryId,
         destinationPath: request.command.destinationPath,
         includeLinkedContent: request.command.includeLinkedContent,
@@ -329,7 +353,7 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
       libraryService.cancelExport(request.command.exportId);
       return { ok: true, type: 'library.closed', libraryId: request.command.exportId };
     case 'library.import-folder': {
-      const imported = libraryService.importLibraryFromFolder({
+      const imported = await libraryService.importLibraryFromFolder({
         sourceFolderPath: request.command.sourceFolderPath,
         copyToParentPath: request.command.copyToParentPath,
       });
@@ -364,7 +388,7 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
       return {
         ok: true,
         type: 'library.import-validated',
-        importId: '',
+        importId: request.command.importId,
         libraryId: validated.libraryId,
         displayName: validated.displayName,
       };
@@ -372,6 +396,7 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
     case 'asset.analyze': {
       const { libraryId, assetId, provider, model, apiKey, enabledFields, language } =
         request.command;
+      const controls = analysisControls.get(request.requestId);
 
       // Resolve asset file path + mime.
       const { filePath, mime, isVideo } = libraryService.resolveAssetFilePath(
@@ -515,16 +540,29 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
 
       let analysisResult;
       try {
-        analysisResult = await adapter.analyze(aiRequest);
+        analysisResult = await adapter.analyze(aiRequest, controls?.signal);
       } catch (error) {
         if (error instanceof VendorAdapterError) {
-          throw new LibraryServiceError('INVALID_IMPORT_DECISION', { cause: error });
+          const failure = vendorFailure(error);
+          throw new LibraryServiceError('AI_ANALYSIS_FAILED', {
+            cause: safeAiDiagnostic(failure.errorCode, error),
+            reason: failure.reason,
+          });
         }
         throw error;
       }
 
+      if (controls && (controls.signal.aborted || !controls.canWrite())) {
+        return {
+          ok: true,
+          type: 'asset.analyze-unsupported' as const,
+          assetId,
+          reason: 'AI_JOB_INTERRUPTED',
+        };
+      }
+
       // Write results atomically.
-      const { tagsWritten, fieldsWritten } = libraryService.writeAiAnalysisResult({
+      const { tagsWritten, fieldsWritten, committed } = libraryService.writeAiAnalysisResult({
         libraryId,
         assetId,
         label: analysisResult.label,
@@ -535,8 +573,18 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
           | undefined,
         modelId: model,
         modelVersion: analysisResult.modelVersion,
+        guardJobId: controls?.jobId,
         enabledFields,
       });
+
+      if (!committed || (controls && (controls.signal.aborted || !controls.canWrite()))) {
+        return {
+          ok: true,
+          type: 'asset.analyze-unsupported' as const,
+          assetId,
+          reason: 'AI_JOB_INTERRUPTED',
+        };
+      }
 
       const generatedFields: Record<string, unknown> = {};
       if (tagsWritten.length > 0) generatedFields.tags = tagsWritten;
@@ -572,10 +620,53 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
       }
       return { ok: true, type: 'media.thumbnail.generated', assetId: request.command.assetId, artifactId };
     }
+    case 'media.retry-artifact': {
+      const { libraryId, assetId, kind } = request.command;
+      libraryService.enqueueArtifactRetry({ libraryId, assetId, kind });
+      // Respond first; media generation can take minutes and must not occupy a
+      // normal 15-second Main↔Worker request or create a fatal late response.
+      setTimeout(() => {
+        void libraryService.processThumbnailQueue(libraryId)
+          .then(() => {
+            const preview = libraryService.getPreviewArtifact(libraryId, assetId);
+            if (preview.status === 'ready' && preview.artifactId) {
+              parentPort?.postMessage({
+                type: 'asset.thumbnail.ready',
+                libraryId,
+                assetId,
+                artifactId: preview.artifactId,
+              });
+            } else if (preview.status === 'failed') {
+              const errorCode = preview.errorCode ?? 'MEDIA_PROCESSING_FAILED';
+              parentPort?.postMessage({
+                type: 'asset.thumbnail.failed',
+                libraryId,
+                assetId,
+                errorCode,
+                reason: errorCode,
+              });
+            }
+          })
+          .catch((error: unknown) => {
+            libraryService.reportDiagnostic('media.retry.queue', error, {
+              libraryId,
+              assetId,
+              kind,
+            });
+          });
+      }, 0);
+      return {
+        ok: true,
+        type: 'media.retry-artifact.queued',
+        assetId,
+        kind,
+      };
+    }
     case 'media.get-artifact-path': {
       const absolutePath = libraryService.getArtifactAbsolutePath(
         request.command.libraryId,
         request.command.artifactId,
+        request.command.usage,
       );
       return { ok: true, type: 'media.artifact-path', artifactId: request.command.artifactId, absolutePath };
     }
@@ -592,6 +683,18 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
         filePath: info.filePath,
         width: info.width,
         height: info.height,
+      };
+    }
+    case 'media.get-preview-artifact': {
+      const preview = libraryService.getPreviewArtifact(
+        request.command.libraryId,
+        request.command.assetId,
+      );
+      return {
+        ok: true,
+        type: 'media.preview-artifact',
+        assetId: request.command.assetId,
+        ...preview,
       };
     }
     case 'media.get-asset-path': {
@@ -706,6 +809,86 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
         enqueued,
       };
     }
+    case 'ai.process-queue': {
+      const { libraryId, maxJobs, ...analysisConfig } = request.command;
+      let processed = 0;
+      let succeeded = 0;
+      let failed = 0;
+      let requeued = 0;
+      const attemptedJobIds: string[] = [];
+
+      while (processed < maxJobs) {
+        const job = libraryService.claimNextAiJob(libraryId, attemptedJobIds);
+        if (!job) break;
+        attemptedJobIds.push(job.jobId);
+        processed++;
+        const controller = aiJobAbortRegistry.register(libraryId, job.jobId);
+        const nestedRequestId = `${request.requestId}:${job.jobId}`;
+        analysisControls.set(nestedRequestId, {
+          jobId: job.jobId,
+          signal: controller.signal,
+          canWrite: () => libraryService.getAiJobState(libraryId, job.jobId) === 'running',
+        });
+        try {
+          const result = await handleRequest({
+            requestId: nestedRequestId,
+            command: {
+              type: 'asset.analyze',
+              libraryId,
+              assetId: job.assetId,
+              provider: analysisConfig.provider,
+              model: analysisConfig.model,
+              apiKey: analysisConfig.apiKey,
+              enabledFields: analysisConfig.enabledFields,
+              language: analysisConfig.language,
+            },
+          });
+          if (controller.signal.aborted || libraryService.getAiJobState(libraryId, job.jobId) !== 'running') {
+            continue;
+          }
+          if (!result.ok || result.type === 'asset.analyze-unsupported') {
+            const errorCode = result.ok ? result.reason : result.error.code;
+            libraryService.failAiJob(libraryId, job.jobId, {
+              errorCode,
+              retryable: false,
+            });
+            failed++;
+            continue;
+          }
+          libraryService.completeAiJob(libraryId, job.jobId);
+          succeeded++;
+        } catch (error) {
+          if (controller.signal.aborted || libraryService.getAiJobState(libraryId, job.jobId) !== 'running') {
+            continue;
+          }
+          const classification = aiQueueFailure(error);
+          libraryService.reportDiagnostic(
+            'ai.queue.analysis',
+            safeAiDiagnostic(classification.errorCode, error),
+            { libraryId, jobId: job.jobId, assetId: job.assetId, errorCode: classification.errorCode },
+          );
+          const failure = libraryService.failAiJob(
+            libraryId,
+            job.jobId,
+            classification,
+          );
+          if (failure.status === 'queued') requeued++;
+          else failed++;
+        } finally {
+          analysisControls.delete(nestedRequestId);
+          aiJobAbortRegistry.unregister(job.jobId);
+        }
+      }
+      return {
+        ok: true,
+        type: 'ai.jobs.processed' as const,
+        libraryId,
+        processed,
+        succeeded,
+        failed,
+        requeued,
+      };
+    }
     case 'ai.clear-content': {
       const { clearedCount } = libraryService.clearAiContent(request.command);
       // Publish ai.content.cleared event
@@ -728,6 +911,7 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
         request.command.libraryId,
         request.command.jobIds,
       );
+      aiJobAbortRegistry.abort(request.command.libraryId, request.command.jobIds);
       return {
         ok: true,
         type: 'ai.jobs.paused' as const,
@@ -752,6 +936,7 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
         request.command.libraryId,
         request.command.jobIds,
       );
+      aiJobAbortRegistry.abort(request.command.libraryId, request.command.jobIds);
       return {
         ok: true,
         type: 'ai.jobs.cancelled' as const,
@@ -794,6 +979,7 @@ parentPort.on('message', async (event) => {
   try {
     const control = parseWorkerControlMessage(input);
     if (control.type === 'worker.shutdown') {
+      aiJobAbortRegistry.abortAll();
       libraryService.closeAll();
       parentPort.postMessage({ type: 'worker.shutdown.ack' });
       clearInterval(processLifetime);

@@ -173,7 +173,8 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     type: z.literal('asset.metadata.set.request'),
     libraryId: identifierSchema,
     assetId: identifierSchema,
-    expectedVersion: z.number().int().min(1),
+    // A metadata row is created with expectedVersion 0, then increments on updates.
+    expectedVersion: z.number().int().min(0),
     label: optionalIdentifierSchema,
     description: optionalDescriptionSchema,
     rating: z.number().int().min(0).max(5).optional(),
@@ -274,10 +275,18 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     includeLinkedContent: z.boolean(),
   }),
   z.strictObject({
+    type: z.literal('library.export.cancel.request'),
+    exportId: identifierSchema,
+  }),
+  z.strictObject({
     type: z.literal('library.import.request'),
   }),
   z.strictObject({
     type: z.literal('library.import-zip.request'),
+  }),
+  z.strictObject({
+    type: z.literal('library.import.cancel.request'),
+    importId: identifierSchema,
   }),
   z.strictObject({
     type: z.literal('library.import.copy.request'),
@@ -294,7 +303,7 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     type: z.literal('ai.config.set.request'),
     provider: z.enum(['openai', 'gemini', 'anthropic']),
     model: nonBlankString,
-    apiKey: nonBlankString,
+    apiKey: nonBlankString.optional(),
     enabledFields: z.strictObject({
       label: z.boolean(),
       description: z.boolean(),
@@ -302,6 +311,8 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
       structuredMetadata: z.boolean(),
     }).optional(),
     language: nonBlankString.optional(),
+    autoAnalyzeEnabled: z.boolean(),
+    disclaimerAccepted: z.boolean(),
   }),
   z.strictObject({
     type: z.literal('asset.analyze.request'),
@@ -325,6 +336,13 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     assetId: identifierSchema,
   }),
   z.strictObject({
+    type: z.literal('asset.preview-error.report'),
+    libraryId: identifierSchema,
+    assetId: identifierSchema,
+    errorCode: nonBlankString.max(120),
+    detail: z.string().max(500).optional(),
+  }),
+  z.strictObject({
     type: z.literal('asset.open-external.request'),
     libraryId: identifierSchema,
     assetId: identifierSchema,
@@ -333,7 +351,7 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     type: z.literal('asset.retry-artifact.request'),
     libraryId: identifierSchema,
     assetId: identifierSchema,
-    kind: z.enum(['thumbnail']),
+    kind: z.enum(['thumbnail', 'webm_proxy']),
   }),
   z.strictObject({
     type: z.literal('ai.test-connection.request'),
@@ -538,7 +556,8 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     type: z.literal('asset.metadata.set'),
     libraryId: identifierSchema,
     assetId: identifierSchema,
-    expectedVersion: z.number().int().min(1),
+    // A metadata row is created with expectedVersion 0, then increments on updates.
+    expectedVersion: z.number().int().min(0),
     label: optionalIdentifierSchema,
     description: optionalDescriptionSchema,
     rating: z.number().int().min(0).max(5).optional(),
@@ -664,6 +683,7 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
   }),
   z.strictObject({
     type: z.literal('library.import-validate'),
+    importId: identifierSchema,
     sourceFolderPath: selectedPathSchema,
   }),
   z.strictObject({
@@ -692,9 +712,16 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     assetId: identifierSchema,
   }),
   z.strictObject({
+    type: z.literal('media.retry-artifact'),
+    libraryId: identifierSchema,
+    assetId: identifierSchema,
+    kind: z.enum(['thumbnail', 'webm_proxy']),
+  }),
+  z.strictObject({
     type: z.literal('media.get-artifact-path'),
     libraryId: identifierSchema,
     artifactId: identifierSchema,
+    usage: z.enum(['preview', 'proxy']),
   }),
   z.strictObject({
     type: z.literal('media.enqueue-thumbnail-jobs'),
@@ -711,6 +738,11 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
   }),
   z.strictObject({
     type: z.literal('media.get-thumbnail-artifact'),
+    libraryId: identifierSchema,
+    assetId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('media.get-preview-artifact'),
     libraryId: identifierSchema,
     assetId: identifierSchema,
   }),
@@ -737,6 +769,21 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     libraryId: identifierSchema,
     assetIds: z.array(identifierSchema).min(1).optional(),
     folderId: identifierSchema.optional(),
+  }),
+  z.strictObject({
+    type: z.literal('ai.process-queue'),
+    libraryId: identifierSchema,
+    provider: z.enum(['openai', 'gemini', 'anthropic']),
+    model: nonBlankString,
+    apiKey: nonBlankString,
+    enabledFields: z.strictObject({
+      label: z.boolean(),
+      description: z.boolean(),
+      tags: z.boolean(),
+      structuredMetadata: z.boolean(),
+    }),
+    language: nonBlankString,
+    maxJobs: z.number().int().min(1).max(100).default(20),
   }),
   z.strictObject({
     type: z.literal('ai.clear-content'),

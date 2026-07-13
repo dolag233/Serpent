@@ -8,10 +8,26 @@ import { createPublicError, toPublicError } from '../../src/shared/protocol/erro
 import {
   importConflictPlanSchema,
   parseAssetChangeEvent,
+  parseRendererResult,
   parseRendererLifecycleEvent,
 } from '../../src/shared/protocol/responses';
 
 describe('renderer request protocol', () => {
+  it('accepts semantic video preview and proxy retry requests without paths', () => {
+    expect(parseRendererRequest({
+      type: 'asset.preview.request',
+      libraryId: 'library-01',
+      assetId: 'asset-01',
+      mode: 'fullscreen',
+    })).toMatchObject({ type: 'asset.preview.request', mode: 'fullscreen' });
+    expect(parseRendererRequest({
+      type: 'asset.retry-artifact.request',
+      libraryId: 'library-01',
+      assetId: 'asset-01',
+      kind: 'webm_proxy',
+    })).toMatchObject({ kind: 'webm_proxy' });
+  });
+
   it('accepts the semantic create-library request', () => {
     expect(
       parseRendererRequest({
@@ -68,6 +84,22 @@ describe('renderer request protocol', () => {
       .toEqual({ type: 'asset.import.abandon', importId: 'import-01' });
   });
 
+  it('accepts transfer cancellation by opaque operation id only', () => {
+    expect(parseRendererRequest({
+      type: 'library.export.cancel.request',
+      exportId: 'export-01',
+    })).toEqual({ type: 'library.export.cancel.request', exportId: 'export-01' });
+    expect(parseRendererRequest({
+      type: 'library.import.cancel.request',
+      importId: 'import-01',
+    })).toEqual({ type: 'library.import.cancel.request', importId: 'import-01' });
+    expect(() => parseRendererRequest({
+      type: 'library.export.cancel.request',
+      exportId: 'export-01',
+      destinationPath: '/private/forged/path',
+    })).toThrow();
+  });
+
   it('rejects unknown channels and malformed values', () => {
     expect(() => parseRendererRequest({ type: 'ipc.send', channel: '*' })).toThrow();
     expect(() =>
@@ -76,7 +108,60 @@ describe('renderer request protocol', () => {
   });
 });
 
+describe('preview response protocol', () => {
+  it('carries only opaque URLs and actionable artifact state', () => {
+    const result = parseRendererResult({
+      ok: true,
+      type: 'asset.preview.resolved',
+      assetId: 'asset-01',
+      mediaType: 'video',
+      status: 'failed',
+      kind: 'webm_proxy',
+      posterUrl: 'serpent://preview/library-01/poster-01',
+      errorCode: 'FFMPEG_REQUIRED',
+    });
+    expect(result).toMatchObject({ status: 'failed', errorCode: 'FFMPEG_REQUIRED' });
+    expect(JSON.stringify(result)).not.toContain('/Users/');
+  });
+});
+
 describe('worker request protocol', () => {
+  it('accepts a bounded AI queue-processing command with ephemeral credentials', () => {
+    const parsed = parseWorkerRequest({
+      requestId: 'request-ai-1',
+      command: {
+        type: 'ai.process-queue',
+        libraryId: 'library-1',
+        provider: 'openai',
+        model: 'gpt-4o-mini',
+        apiKey: 'ephemeral-key',
+        enabledFields: { label: true, description: true, tags: true, structuredMetadata: false },
+        language: 'zh-CN',
+        maxJobs: 10,
+      },
+    });
+    expect(parsed.command.type).toBe('ai.process-queue');
+    expect(() => parseWorkerRequest({
+      requestId: 'request-ai-2',
+      command: { ...parsed.command, maxJobs: 101 },
+    })).toThrow();
+  });
+
+  it('round-trips the Main-owned import id for library validation', () => {
+    expect(parseWorkerRequest({
+      requestId: 'request-1',
+      command: {
+        type: 'library.import-validate',
+        importId: 'import-1',
+        sourceFolderPath: '/tmp/library',
+      },
+    }).command).toEqual({
+      type: 'library.import-validate',
+      importId: 'import-1',
+      sourceFolderPath: '/tmp/library',
+    });
+  });
+
   it('requires an internal request id and a selected path', () => {
     expect(
       parseWorkerRequest({
@@ -120,6 +205,21 @@ describe('worker request protocol', () => {
 });
 
 describe('public errors', () => {
+  it.each([
+    'AI_AUTH',
+    'AI_PERMISSION',
+    'AI_QUOTA',
+    'AI_RATE_LIMIT',
+    'AI_NETWORK',
+    'AI_TIMEOUT',
+    'AI_INVALID_RESPONSE',
+  ] as const)('accepts safe actionable AI reason %s', (reason) => {
+    expect(createPublicError('AI_ANALYSIS_FAILED', reason)).toMatchObject({
+      code: 'AI_ANALYSIS_FAILED',
+      reason,
+    });
+  });
+
   it('does not expose internal errors or paths', () => {
     const publicError = toPublicError(
       new Error('SQLITE_CANTOPEN at /Users/private/secret/library.db'),

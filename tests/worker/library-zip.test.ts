@@ -3,6 +3,7 @@ import {
   mkdirSync,
   mkdtempSync,
   createWriteStream,
+  readFileSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
@@ -26,6 +27,20 @@ function temporaryRoot(): string {
   return root;
 }
 
+function replaceZipEntryName(zipPath: string, originalName: string, replacementName: string): void {
+  const original = Buffer.from(originalName);
+  const replacement = Buffer.from(replacementName);
+  expect(replacement.length).toBe(original.length);
+  const archive = readFileSync(zipPath);
+  let replacements = 0;
+  for (let offset = archive.indexOf(original); offset >= 0; offset = archive.indexOf(original, offset + replacement.length)) {
+    replacement.copy(archive, offset);
+    replacements += 1;
+  }
+  expect(replacements).toBeGreaterThanOrEqual(2); // local header + central directory
+  writeFileSync(zipPath, archive);
+}
+
 async function expectRejectAsync(operation: () => Promise<unknown>, code: LibraryServiceError['code']): Promise<void> {
   let thrown: unknown;
   try {
@@ -36,6 +51,23 @@ async function expectRejectAsync(operation: () => Promise<unknown>, code: Librar
 
   expect(thrown).toBeInstanceOf(LibraryServiceError);
   expect((thrown as LibraryServiceError).code).toBe(code);
+}
+
+async function expectRejectReasonAsync(
+  operation: () => Promise<unknown>,
+  code: LibraryServiceError['code'],
+  reason: string,
+): Promise<void> {
+  let thrown: unknown;
+  try {
+    await operation();
+  } catch (error) {
+    thrown = error;
+  }
+
+  expect(thrown).toBeInstanceOf(LibraryServiceError);
+  expect((thrown as LibraryServiceError).code).toBe(code);
+  expect((thrown as LibraryServiceError).reason).toBe(reason);
 }
 
 afterEach(() => {
@@ -177,6 +209,92 @@ describe('LibraryService ZIP export', () => {
       }),
       'LIBRARY_NOT_OPEN',
     );
+  });
+
+  it('never overwrites or removes a pre-existing ZIP destination', async () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'Existing ZIP', selectedParentPath: root });
+    const destZipPath = path.join(root, 'existing.zip');
+    writeFileSync(destZipPath, 'user data');
+
+    await expectRejectAsync(
+      () => service.exportLibraryToZip({
+        libraryId: created.libraryId,
+        destinationPath: destZipPath,
+        includeLinkedContent: false,
+      }),
+      'LIBRARY_ALREADY_EXISTS',
+    );
+    expect(existsSync(destZipPath)).toBe(true);
+    service.closeAll();
+  });
+
+  it('removes a partially-written ZIP after an archive failure', async () => {
+    const root = temporaryRoot();
+    let sourceToRemove: string | undefined;
+    const service = new LibraryService({
+      onProgress: (event) => {
+        if (event.type === 'export.progress' && event.phase === 'compress' && sourceToRemove) {
+          rmSync(sourceToRemove, { force: true });
+          sourceToRemove = undefined;
+        }
+      },
+    });
+    const created = service.createLibrary({ displayName: 'Failed ZIP', selectedParentPath: root });
+    const source = path.join(root, 'source.txt');
+    writeFileSync(source, 'asset');
+    service.prepareOrExecuteImport({
+      libraryId: created.libraryId,
+      sourceKind: 'files',
+      sourcePaths: [source],
+    });
+    sourceToRemove = path.join(created.libraryPath, 'Assets', 'source.txt');
+    const destinationPath = path.join(root, 'failed.zip');
+
+    await expect(service.exportLibraryToZip({
+      libraryId: created.libraryId,
+      destinationPath,
+      includeLinkedContent: false,
+    })).rejects.toThrow();
+    expect(existsSync(destinationPath)).toBe(false);
+    service.closeAll();
+  });
+
+  it('can cancel after announcing the export id and removes only its owned ZIP', async () => {
+    const root = temporaryRoot();
+    let cancellationRequested = false;
+    const phases: string[] = [];
+    const service = new LibraryService({
+      onProgress: (event) => {
+        if (event.type !== 'export.progress') return;
+        phases.push(event.phase);
+        if (event.phase === 'compress' && !cancellationRequested) {
+          cancellationRequested = true;
+          setImmediate(() => service.cancelExport(event.exportId));
+        }
+      },
+    });
+    const created = service.createLibrary({ displayName: 'Cancel ZIP', selectedParentPath: root });
+    for (let index = 0; index < 20; index += 1) {
+      writeFileSync(path.join(created.libraryPath, 'Assets', `asset-${index}.bin`), Buffer.alloc(4096));
+    }
+    const destinationPath = path.join(root, 'cancelled.zip');
+    const siblingSentinel = path.join(root, 'keep-me.txt');
+    writeFileSync(siblingSentinel, 'user data');
+
+    await expect(service.exportLibraryToZip({
+      libraryId: created.libraryId,
+      destinationPath,
+      includeLinkedContent: false,
+    })).rejects.toMatchObject({ code: 'CANCELLED' });
+
+    expect(cancellationRequested).toBe(true);
+    expect(phases).toContain('cancelled');
+    expect(phases).not.toContain('complete');
+    expect(existsSync(destinationPath)).toBe(false);
+    expect(existsSync(siblingSentinel)).toBe(true);
+    service.closeAll();
   });
 });
 
@@ -346,6 +464,151 @@ describe('LibraryService ZIP import', () => {
       sourceZipPath: escapeZipPath,
       destinationParentPath: destDir,
     })).rejects.toThrow();
+  });
+
+  it.each([
+    '..\\escape.txt',
+    'Assets\\..\\escape.txt',
+    'C:\\escape.txt',
+    '\\\\server\\share\\escape.txt',
+    '/absolute/escape.txt',
+    'Assets/./escape.txt',
+  ])('rejects cross-platform unsafe ZIP entry %s', async (unsafeName) => {
+    const root = temporaryRoot();
+    const AdmZip = require('adm-zip') as new () => {
+      addFile(name: string, data: Buffer): void;
+      writeZip(target: string): void;
+    };
+    const zipPath = path.join(root, 'unsafe.zip');
+    const zip = new AdmZip();
+    zip.addFile('Assets/valid.txt', Buffer.from('asset'));
+    zip.addFile('.serpent/library.db', Buffer.from('db'));
+    const placeholderName = 'q'.repeat(Buffer.byteLength(unsafeName));
+    zip.addFile(placeholderName, Buffer.from('escape'));
+    zip.writeZip(zipPath);
+    replaceZipEntryName(zipPath, placeholderName, unsafeName);
+    const destinationParentPath = path.join(root, 'destination');
+    mkdirSync(destinationParentPath);
+
+    await expectRejectReasonAsync(
+      () => new LibraryService().importLibraryFromZip({ sourceZipPath: zipPath, destinationParentPath }),
+      'NOT_A_LIBRARY',
+      'PATH_ESCAPE',
+    );
+  });
+
+  it('rejects a nested symbolic-link ZIP entry before extraction', async () => {
+    const root = temporaryRoot();
+    const AdmZip = require('adm-zip') as new () => {
+      addFile(name: string, data: Buffer): { attr: number };
+      writeZip(target: string): void;
+    };
+    const zipPath = path.join(root, 'symlink.zip');
+    const zip = new AdmZip();
+    zip.addFile('Assets/valid.txt', Buffer.from('asset'));
+    zip.addFile('.serpent/library.db', Buffer.from('db'));
+    const link = zip.addFile('Assets/nested/link', Buffer.from('../../outside'));
+    link.attr = (0o120777 << 16) >>> 0;
+    zip.writeZip(zipPath);
+    const destinationParentPath = path.join(root, 'destination');
+    mkdirSync(destinationParentPath);
+
+    await expectRejectReasonAsync(
+      () => new LibraryService().importLibraryFromZip({ sourceZipPath: zipPath, destinationParentPath }),
+      'NOT_A_LIBRARY',
+      'SYMBOLIC_LINK_NOT_ALLOWED',
+    );
+    expect(existsSync(path.join(destinationParentPath, 'symlink'))).toBe(false);
+  });
+
+  it('rejects a high-compression-ratio ZIP before extraction', async () => {
+    const root = temporaryRoot();
+    const AdmZip = require('adm-zip') as new () => {
+      addFile(name: string, data: Buffer): void;
+      writeZip(target: string): void;
+    };
+    const zipPath = path.join(root, 'compression-bomb.zip');
+    const zip = new AdmZip();
+    zip.addFile('Assets/bomb.bin', Buffer.alloc(2 * 1024 * 1024));
+    zip.addFile('.serpent/library.db', Buffer.from('db'));
+    zip.writeZip(zipPath);
+    const destinationParentPath = path.join(root, 'destination');
+    mkdirSync(destinationParentPath);
+
+    await expectRejectAsync(
+      () => new LibraryService().importLibraryFromZip({ sourceZipPath: zipPath, destinationParentPath }),
+      'ZIP_TOO_LARGE',
+    );
+    expect(existsSync(path.join(destinationParentPath, 'compression-bomb'))).toBe(false);
+  });
+
+  it('never overwrites or deletes a pre-existing extraction destination', async () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'ZIP Ownership', selectedParentPath: root });
+    const zipPath = path.join(root, 'owned.zip');
+    await service.exportLibraryToZip({
+      libraryId: created.libraryId,
+      destinationPath: zipPath,
+      includeLinkedContent: false,
+    });
+    service.closeAll();
+    const destinationParentPath = path.join(root, 'destination');
+    const existingDestination = path.join(destinationParentPath, 'owned');
+    const sentinelPath = path.join(existingDestination, 'keep-me.txt');
+    mkdirSync(existingDestination, { recursive: true });
+    writeFileSync(sentinelPath, 'user data');
+
+    await expectRejectAsync(
+      () => service.importLibraryFromZip({ sourceZipPath: zipPath, destinationParentPath }),
+      'LIBRARY_ALREADY_EXISTS',
+    );
+    expect(existsSync(sentinelPath)).toBe(true);
+  });
+
+  it('can cancel after announcing the import id and removes only its owned extraction', async () => {
+    const root = temporaryRoot();
+    const sourceService = new LibraryService();
+    const created = sourceService.createLibrary({ displayName: 'Cancel ZIP Import', selectedParentPath: root });
+    for (let index = 0; index < 20; index += 1) {
+      writeFileSync(path.join(created.libraryPath, 'Assets', `asset-${index}.bin`), Buffer.alloc(4096));
+    }
+    const zipPath = path.join(root, 'cancel-import.zip');
+    await sourceService.exportLibraryToZip({
+      libraryId: created.libraryId,
+      destinationPath: zipPath,
+      includeLinkedContent: false,
+    });
+    sourceService.closeAll();
+
+    let cancellationRequested = false;
+    const phases: string[] = [];
+    const service = new LibraryService({
+      onProgress: (event) => {
+        if (event.type !== 'import.progress') return;
+        phases.push(event.phase);
+        if (event.phase === 'extract' && !cancellationRequested) {
+          cancellationRequested = true;
+          setImmediate(() => service.cancelImport(event.importId));
+        }
+      },
+    });
+    const destinationParentPath = path.join(root, 'destination');
+    mkdirSync(destinationParentPath);
+    const ownedDestination = path.join(destinationParentPath, 'cancel-import');
+    const siblingSentinel = path.join(destinationParentPath, 'keep-me.txt');
+    writeFileSync(siblingSentinel, 'user data');
+
+    await expect(service.importLibraryFromZip({
+      sourceZipPath: zipPath,
+      destinationParentPath,
+    })).rejects.toMatchObject({ code: 'CANCELLED' });
+
+    expect(cancellationRequested).toBe(true);
+    expect(phases).toContain('cancelled');
+    expect(phases).not.toContain('complete');
+    expect(existsSync(ownedDestination)).toBe(false);
+    expect(existsSync(siblingSentinel)).toBe(true);
   });
 });
 
