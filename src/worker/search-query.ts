@@ -44,9 +44,17 @@ const FTS5_SPECIAL_RE = /["'()*^]/g;
  * intentionally matches nothing (`"__IMPOSSIBLE__"`).
  */
 export function buildFts5Query(clauses: SearchClause[]): string {
-  const parts: string[] = [];
+  const positiveParts: string[] = [];
+  const negativeParts: string[] = [];
 
-  for (const clause of clauses) {
+  // FTS5 NOT is a binary operator and cannot lead an expression. Normalize
+  // caller order so mixed queries always emit positive terms before exclusions.
+  const normalizedClauses = [
+    ...clauses.filter((clause) => !clause.exclude),
+    ...clauses.filter((clause) => clause.exclude),
+  ];
+
+  for (const clause of normalizedClauses) {
     if (clause.values.length === 0) continue;
 
     // Validate field name if specified.
@@ -74,15 +82,18 @@ export function buildFts5Query(clauses: SearchClause[]): string {
         ? `(${sanitizedValues.join(' OR ')})`
         : sanitizedValues[0]!;
 
-    parts.push(clause.exclude ? `NOT ${valueExpr}` : valueExpr);
+    if (clause.exclude) negativeParts.push(valueExpr);
+    else positiveParts.push(valueExpr);
   }
 
-  if (parts.length === 0) {
-    // No valid clauses -- return an expression that finds nothing.
+  if (positiveParts.length === 0) {
+    // FTS5 has no unary NOT or universal-match term. Callers that intentionally
+    // support a pure exclusion must invert a positive subquery outside MATCH.
+    // Invalid/empty positive input therefore safely matches nothing.
     return '"__IMPOSSIBLE__"';
   }
 
-  return parts.join(' ');
+  return [...positiveParts, ...negativeParts.map((part) => `NOT ${part}`)].join(' ');
 }
 
 /**

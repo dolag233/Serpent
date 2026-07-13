@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 const nonBlankString = z.string().min(1).refine((value) => value.trim().length > 0);
+const boundedSearchValue = nonBlankString.max(512);
 
 export const managedFolderSummarySchema = z.strictObject({
   folderId: nonBlankString,
@@ -91,23 +92,46 @@ export type SortDefinition = z.infer<typeof sortDefinitionSchema>;
 
 export const filterClauseSchema = z.strictObject({
   field: z.enum(['format', 'tag', 'rating', 'favorite', 'source_url', 'availability']),
-  values: z.array(nonBlankString),
+  values: z.array(boundedSearchValue).max(32),
   exclude: z.boolean(),
 });
 
 export type FilterClause = z.infer<typeof filterClauseSchema>;
 
+export const searchScopeSchema = z.discriminatedUnion('kind', [
+  z.strictObject({
+    kind: z.literal('folder'),
+    folderId: nonBlankString.nullable(),
+    recursive: z.boolean(),
+  }),
+  z.strictObject({
+    kind: z.literal('collection'),
+    collectionId: nonBlankString,
+    recursive: z.boolean(),
+  }),
+]);
+
+export type SearchScope = z.infer<typeof searchScopeSchema>;
+
 export const searchClauseSchema = z.strictObject({
-  field: nonBlankString.nullable(),
-  values: z.array(nonBlankString).min(1),
+  field: boundedSearchValue.nullable(),
+  values: z.array(boundedSearchValue).min(1).max(32),
   exclude: z.boolean(),
 });
 
 export type SearchClause = z.infer<typeof searchClauseSchema>;
 
 export const searchQuerySchema = z.strictObject({
-  clauses: z.array(searchClauseSchema),
+  clauses: z.array(searchClauseSchema).max(32),
 }).nullable();
+
+export const smartCollectionQueryDefinitionSchema = z.strictObject({
+  search: z.strictObject({ clauses: z.array(searchClauseSchema).max(32) }).optional(),
+  filters: z.array(filterClauseSchema).max(16).optional(),
+  sort: sortDefinitionSchema.optional(),
+});
+
+export type SmartCollectionQueryDefinition = z.infer<typeof smartCollectionQueryDefinitionSchema>;
 
 export const smartCollectionSummarySchema = z.strictObject({
   collectionId: nonBlankString,

@@ -94,7 +94,7 @@ test('imports a linked folder, reconciles external changes, and relinks after th
     // Source root removed: folder flips to offline, all linked assets missing.
     rmSync(sourceRoot, { recursive: true, force: true });
     await window.getByRole('button', { name: '刷新磁盘变化' }).click();
-    await expect(window.getByText('文件丢失', { exact: true }).first()).toBeVisible();
+    await expect(window.locator('.missing-banner', { hasText: '文件丢失' }).first()).toBeVisible();
     const afterOffline = await listAllAssets(window);
     expect(afterOffline.every((asset) => asset.availability === 'missing')).toBe(true);
 

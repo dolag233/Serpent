@@ -53,6 +53,9 @@ test('organizes, finds, trashes, and restores an imported asset through the UI',
     await assetCard.click({ button: 'right' });
     await window.getByRole('menuitem', { name: '添加标签：角色' }).click();
     await expect(window.locator('.toast')).toContainText('标签已添加');
+    await assetCard.click({ button: 'right' });
+    await window.getByRole('menuitem', { name: '添加标签：临时' }).click();
+    await expect(window.locator('.toast')).toContainText('标签已添加');
     await window.getByRole('button', { name: /角色/ }).click();
     await expect(window.getByRole('button', { name: /hero\.png/i })).toBeVisible();
 
@@ -111,18 +114,36 @@ test('organizes, finds, trashes, and restores an imported asset through the UI',
     await expect(window.getByText(/版本 2/)).toBeVisible();
     await window.getByRole('button', { name: '标记喜欢' }).click();
     await expect(window.getByText(/版本 3/)).toBeVisible();
+    await window.getByLabel('人工色卡').fill('#112233, #AABBCC');
+    await window.getByLabel('人工色卡').press('Enter');
+    await expect(window.getByText(/版本 4/)).toBeVisible();
+    await expect(window.getByLabel('色卡预览').locator('span')).toHaveCount(2);
 
     await window.getByLabel('搜索资源库').fill('英雄资产');
-    await window.getByText('仅喜欢', { exact: true }).click();
+    await window.getByText('筛选与排序', { exact: true }).click();
+    await window.getByLabel('喜欢过滤').selectOption('yes');
+    await window.getByLabel('标签过滤').fill('临时');
     await window.getByRole('button', { name: '搜索', exact: true }).click();
     await expect(window.locator('.toast')).toContainText('找到 1 项');
     await expect(window.getByRole('button', { name: /hero\.png/i })).toBeVisible();
+    await expect(window.locator('.search-snippet')).toBeVisible();
+    await expect(window.locator('.search-snippet mark').first()).toBeVisible();
 
     await window.getByLabel('智能合集标题').fill('英雄精选');
     await window.getByRole('button', { name: '保存', exact: true }).click();
     await expect(window.getByRole('button', { name: '英雄精选', exact: true })).toBeVisible();
     await window.getByRole('button', { name: '英雄精选', exact: true }).click();
     await expect(window.getByRole('button', { name: /hero\.png/i })).toBeVisible();
+
+    await window.getByRole('button', { name: '英雄精选', exact: true }).click({ button: 'right' });
+    await window.getByRole('menuitem', { name: '用当前条件更新' }).click();
+    await expect(window.locator('.toast')).toContainText('智能合集条件已更新');
+
+    await window.getByRole('button', { name: '英雄精选', exact: true }).click({ button: 'right' });
+    await window.getByRole('menuitem', { name: '重命名智能合集' }).click();
+    await window.getByRole('dialog').getByLabel('智能合集名称').fill('英雄筛选');
+    await window.getByRole('dialog').getByRole('button', { name: '保存名称' }).click();
+    await expect(window.getByRole('button', { name: '英雄筛选', exact: true })).toBeVisible();
 
     await window.getByRole('button', { name: /所有资产/ }).click();
     await window.getByRole('button', { name: /hero\.png/i }).click();

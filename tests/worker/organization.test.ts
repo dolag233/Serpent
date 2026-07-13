@@ -894,11 +894,11 @@ describe('smart collections', () => {
     const sc = service.createSmartCollection({
       libraryId,
       name: '  High Rated  ',
-      queryDefinitionJson: '{"query":"{\\"rating\\":{\\"$gte\\":4}}","sort":"{\\"rating\\":\\"desc\\"}"}',
+      queryDefinitionJson: '{"filters":[{"field":"rating","values":["4","5"],"exclude":false}],"sort":{"field":"rating","order":"desc"}}',
     });
     expect(sc).toMatchObject({
       name: 'High Rated',
-      queryDefinition: '{"query":"{\\"rating\\":{\\"$gte\\":4}}","sort":"{\\"rating\\":\\"desc\\"}"}',
+      queryDefinition: '{"filters":[{"field":"rating","values":["4","5"],"exclude":false}],"sort":{"field":"rating","order":"desc"}}',
       position: 0,
     });
     expect(sc.collectionId).toBeTruthy();
@@ -915,19 +915,19 @@ describe('smart collections', () => {
     const sc = service.createSmartCollection({
       libraryId,
       name: 'Original',
-      queryDefinitionJson: '{"query":"{}","sort":"{}"}',
+      queryDefinitionJson: '{}',
     });
 
     const updated = service.updateSmartCollection({
       libraryId,
       collectionId: sc.collectionId,
       name: '  Updated  ',
-      queryDefinitionJson: '{"query":"{\\"favorite\\":true}","sort":"{}"}',
+      queryDefinitionJson: '{"filters":[{"field":"favorite","values":[],"exclude":false}]}',
     });
     expect(updated).toMatchObject({
       collectionId: sc.collectionId,
       name: 'Updated',
-      queryDefinition: '{"query":"{\\"favorite\\":true}","sort":"{}"}',
+      queryDefinition: '{"filters":[{"field":"favorite","values":[],"exclude":false}]}',
       position: 0,
     });
 
@@ -963,7 +963,7 @@ describe('smart collections', () => {
     const sc = service.createSmartCollection({
       libraryId,
       name: 'ToDelete',
-      queryDefinitionJson: '{"query":"{}","sort":"{}"}',
+      queryDefinitionJson: '{}',
     });
 
     const deletedId = service.deleteSmartCollection({

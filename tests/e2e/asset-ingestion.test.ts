@@ -128,7 +128,7 @@ test('imports files and a directory hierarchy, then reconciles external changes'
     writeFileSync(path.join(libraryPath, 'Assets', '项目', 'hero.png'), Buffer.from('image-v2-longer'));
     unlinkSync(importedNestedPath);
     await window.getByRole('button', { name: '刷新磁盘变化' }).click();
-    await expect(window.getByText('文件丢失', { exact: true })).toBeVisible();
+    await expect(window.locator('.missing-banner', { hasText: '文件丢失' }).first()).toBeVisible();
     const missingScreenshot = testInfo.outputPath('external-missing.png');
     await window.screenshot({ path: missingScreenshot });
     await testInfo.attach('external-missing', { path: missingScreenshot, contentType: 'image/png' });

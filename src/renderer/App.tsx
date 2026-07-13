@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 
-import type { AssetSummary, AssetMetadataResult, CollectionSummary, LinkedFolderSummary, ManagedFolderSummary, SmartCollectionSummary, TagSummary } from '../shared/asset-types';
+import type { AssetSummary, AssetMetadataResult, CollectionSummary, FilterClause, LinkedFolderSummary, ManagedFolderSummary, SearchScope, SmartCollectionSummary, SortDefinition, TagSummary } from '../shared/asset-types';
 import type { SerpentLibraryApi, RelinkBatchPreviewResult, ImportValidatedResult } from '../shared/library-api';
 import type { PublicError, PublicErrorCode, PublicErrorReason } from '../shared/protocol/errors';
 import type { ImportConflictPlan, RendererLibrarySummary, ExportProgressEvent, ImportProgressEvent } from '../shared/protocol/responses';
@@ -10,9 +10,14 @@ type RendererWindow = Window & { serpent?: { library?: SerpentLibraryApi } };
 type UiState = 'booting' | 'idle' | 'creating' | 'opening' | 'closing' | 'loading' | 'importing' | 'ready';
 type DialogKind = 'library' | 'folder' | 'tag' | 'collection' | null;
 type AssetScope = 'all' | 'root' | string;
-type OrganizationKind = 'tag' | 'collection';
-type OrganizationContextMenu = { kind: OrganizationKind; id: string; name: string; x: number; y: number };
+type OrganizationKind = 'tag' | 'collection' | 'smart';
+type OrganizationContextMenu = { kind: Exclude<OrganizationKind, 'smart'>; id: string; name: string; x: number; y: number };
 type OrganizationRenameTarget = { kind: OrganizationKind; id: string; name: string };
+type SearchDefinition = {
+  search?: { clauses: Array<{ field: string | null; values: string[]; exclude: boolean }> };
+  filters?: FilterClause[];
+  sort?: SortDefinition;
+};
 type IconName = 'archive' | 'chevron' | 'close' | 'collection' | 'collapse-left' | 'collapse-right' | 'file' | 'folder' | 'grid' | 'heart' | 'info' | 'link' | 'menu' | 'plus' | 'refresh' | 'search' | 'smart' | 'star' | 'tag' | 'trash' | 'upload' | 'warning';
 
 const iconPaths: Record<IconName, ReactNode> = {
@@ -61,10 +66,6 @@ export function App() {
   // Tags
   const [tags, setTags] = useState<TagSummary[]>([]);
   const [activeTagId, setActiveTagId] = useState<string | null>(null);
-  // Per-tag asset membership cache (local-session only; reset on close).
-  // NOTE: client-side tag filter is limited to assets tagged in the current session.
-  // Full tag filtering requires the search API (slice 0005).
-  const [tagMembership, setTagMembership] = useState<Map<string, Set<string>>>(new Map());
 
   // Collections
   const [collections, setCollections] = useState<CollectionSummary[]>([]);
@@ -75,8 +76,24 @@ export function App() {
   const [smartCollections, setSmartCollections] = useState<SmartCollectionSummary[]>([]);
   const [activeSmartCollectionId, setActiveSmartCollectionId] = useState<string | null>(null);
   const [searchValue, setSearchValue] = useState('');
-  const [favoriteFilter, setFavoriteFilter] = useState(false);
+  const [formatFilter, setFormatFilter] = useState('');
+  const [excludeFormatFilter, setExcludeFormatFilter] = useState(false);
+  const [tagFilter, setTagFilter] = useState('');
+  const [excludeTagFilter, setExcludeTagFilter] = useState(false);
+  const [ratingFilter, setRatingFilter] = useState('');
+  const [excludeRatingFilter, setExcludeRatingFilter] = useState(false);
+  const [favoriteFilter, setFavoriteFilter] = useState<'any' | 'yes' | 'no'>('any');
+  const [sourceUrlFilter, setSourceUrlFilter] = useState<'any' | 'yes' | 'no'>('any');
+  const [availabilityFilter, setAvailabilityFilter] = useState<'any' | 'available' | 'missing'>('any');
+  const [excludeAvailabilityFilter, setExcludeAvailabilityFilter] = useState(false);
+  const [sortField, setSortField] = useState<'relevance' | SortDefinition['field']>('relevance');
+  const [sortOrder, setSortOrder] = useState<SortDefinition['order']>('asc');
+  const [searchOffset, setSearchOffset] = useState(0);
+  const [searchTotal, setSearchTotal] = useState<number | null>(null);
+  const [searchSnippets, setSearchSnippets] = useState<Map<string, string>>(new Map());
   const [smartCollectionName, setSmartCollectionName] = useState('');
+  const [smartCollectionMenu, setSmartCollectionMenu] = useState<{ id: string; name: string; x: number; y: number } | null>(null);
+  const hadDiscoveryInput = useRef(false);
 
   // Metadata editor
   const [assetMetadata, setAssetMetadata] = useState<AssetMetadataResult | null>(null);
@@ -88,12 +105,14 @@ export function App() {
   const [editRating, setEditRating] = useState(0);
   const [editFavorite, setEditFavorite] = useState(false);
   const [editSourceUrl, setEditSourceUrl] = useState('');
+  const [editPalette, setEditPalette] = useState('');
 
   // Inline tag/collection editors
   const [showTagInput, setShowTagInput] = useState(false);
   const [tagInputValue, setTagInputValue] = useState('');
   const [showCollectionInput, setShowCollectionInput] = useState(false);
   const [collectionInputValue, setCollectionInputValue] = useState('');
+  const [newCollectionParentId, setNewCollectionParentId] = useState<string | null>(null);
   const [organizationMenu, setOrganizationMenu] = useState<OrganizationContextMenu | null>(null);
   const [renameTarget, setRenameTarget] = useState<OrganizationRenameTarget | null>(null);
 
@@ -145,19 +164,10 @@ export function App() {
     ? trashedAssets.find((a) => a.assetId === selectedAssetId)
     : assets.find((asset) => asset.assetId === selectedAssetId);
 
-  // Tag-filtered asset set
-  const tagFilteredAssetIds = useMemo(() => {
-    if (!activeTagId) return null;
-    return tagMembership.get(activeTagId) ?? new Set<string>();
-  }, [activeTagId, tagMembership]);
-
   const visibleAssets = useMemo(() => {
     if (showTrash) return trashedAssets;
-    if (activeTagId && tagFilteredAssetIds) {
-      return assets.filter((a) => tagFilteredAssetIds.has(a.assetId));
-    }
     return assets;
-  }, [assets, trashedAssets, showTrash, activeTagId, tagFilteredAssetIds]);
+  }, [assets, trashedAssets, showTrash]);
 
   // Collection tree helper
   const collectionTree = useMemo(() => {
@@ -173,22 +183,10 @@ export function App() {
 
   function renderCollectionNodes(parentId: string | null, depth: number): ReactNode {
     const children = collectionTree.get(parentId) ?? [];
-    return children.map((c) => (
-      <NavRow
-        key={c.collectionId}
-        icon="collection"
-        label={c.name}
-        count={c.assetCount}
-        active={activeCollectionId === c.collectionId && !activeTagId}
-        depth={depth}
-        onContextMenu={(e) => {
-          e.preventDefault();
-          setContextMenu(null);
-          setOrganizationMenu({ kind: 'collection', id: c.collectionId, name: c.name, x: e.clientX, y: e.clientY });
-        }}
-        onClick={() => void chooseCollection(c.collectionId)}
-      />
-    ));
+    return children.map((c) => <div key={c.collectionId}>
+      <NavRow icon="collection" label={c.name} count={c.assetCount} active={activeCollectionId === c.collectionId && !activeTagId} depth={depth} onContextMenu={(e) => { e.preventDefault(); setContextMenu(null); setOrganizationMenu({ kind: 'collection', id: c.collectionId, name: c.name, x: e.clientX, y: e.clientY }); }} onClick={() => void chooseCollection(c.collectionId)} />
+      {renderCollectionNodes(c.collectionId, depth + 1)}
+    </div>);
   }
 
   const loadContent = useCallback(async (activeLibrary: RendererLibrarySummary, scope: AssetScope, opts?: { trashMode?: boolean }) => {
@@ -288,6 +286,9 @@ export function App() {
     setActiveTagId(null);
     setActiveCollectionId(null);
     setActiveSmartCollectionId(null);
+    setTagFilter('');
+    setSearchTotal(null);
+    setSearchSnippets(new Map());
     const folderId = (scope === 'all' || scope === 'root') ? undefined : scope;
     api?.setActiveContext(library.libraryId, folderId);
     setUiState('loading');
@@ -306,6 +307,8 @@ export function App() {
     setActiveTagId(null);
     setActiveCollectionId(null);
     setActiveSmartCollectionId(null);
+    setSearchTotal(null);
+    setSearchSnippets(new Map());
     setSelectedAssetId(undefined);
     setAssetScope('all');
     api?.setActiveContext(library.libraryId);
@@ -379,18 +382,31 @@ export function App() {
   }
 
   async function chooseTag(tagId: string) {
-    if (!library) return;
+    if (!api || !library) return;
+    const tag = tags.find((candidate) => candidate.tagId === tagId);
+    if (!tag) return;
     setShowTrash(false);
     setActiveTagId(tagId);
     setActiveCollectionId(null);
     setActiveSmartCollectionId(null);
     setAssetScope('all');
     setSelectedAssetId(undefined);
-    api?.setActiveContext(library.libraryId);
+    setTagFilter(tag.name);
+    setSearchOffset(0);
+    api.setActiveContext(library.libraryId);
     setUiState('loading');
     try {
-      // Load all assets for client-side tag filter
-      await loadContent(library, 'all');
+      const definition = currentQueryDefinition({ tagFilter: tag.name });
+      const result = await api.searchAssets({
+        libraryId: library.libraryId,
+        query: definition.search ?? null,
+        filters: definition.filters,
+        sort: definition.sort,
+        limit: 50,
+        offset: 0,
+      });
+      if (!result.ok) throw new LibraryOperationError(result.error);
+      applySearchResult(result.value);
     } catch (caught) {
       setError(toMessage(caught, '无法读取标签资产。'));
     } finally {
@@ -403,13 +419,6 @@ export function App() {
     try {
       const result = await api.assignTags({ libraryId: library.libraryId, assetIds: [assetId], tagIds: [tagId] });
       if (!result.ok) throw new LibraryOperationError(result.error);
-      setTagMembership((current) => {
-        const next = new Map(current);
-        const members = new Set(next.get(tagId) ?? []);
-        members.add(assetId);
-        next.set(tagId, members);
-        return next;
-      });
       const tagResult = await api.listTags({ libraryId: library.libraryId });
       if (tagResult.ok) setTags(tagResult.value);
       setNotice('标签已添加。');
@@ -424,10 +433,11 @@ export function App() {
     if (!api || !library || !collectionInputValue.trim()) return;
     setUiState('loading');
     try {
-      const result = await api.createCollection({ libraryId: library.libraryId, name: collectionInputValue.trim() });
+      const result = await api.createCollection({ libraryId: library.libraryId, parentId: newCollectionParentId ?? undefined, name: collectionInputValue.trim() });
       if (!result.ok) throw new LibraryOperationError(result.error);
       setShowCollectionInput(false);
       setCollectionInputValue('');
+      setNewCollectionParentId(null);
       await loadContent(library, assetScope);
     } catch (caught) {
       setError(toOrganizationMessage(caught, 'collection', '创建'));
@@ -578,23 +588,41 @@ export function App() {
     }
   }
 
-  function currentQueryDefinition(): {
-    search?: { clauses: Array<{ field: string | null; values: string[]; exclude: boolean }> };
-    filters?: Array<{ field: 'favorite'; values: string[]; exclude: boolean }>;
-    sort: { field: 'name'; order: 'asc' };
-  } {
+  function currentQueryDefinition(overrides: { tagFilter?: string } = {}): SearchDefinition {
+    const filters: FilterClause[] = [];
+    const formats = formatFilter.split(',').map((value) => value.trim().replace(/^\./, '')).filter(Boolean);
+    const selectedTags = (overrides.tagFilter ?? tagFilter).split(',').map((value) => value.trim()).filter(Boolean);
+    const ratings = ratingFilter.split(',').map((value) => value.trim()).filter((value) => /^[0-5]$/.test(value));
+    if (formats.length > 0) filters.push({ field: 'format', values: formats, exclude: excludeFormatFilter });
+    if (selectedTags.length > 0) filters.push({ field: 'tag', values: selectedTags, exclude: excludeTagFilter });
+    if (ratings.length > 0) filters.push({ field: 'rating', values: ratings, exclude: excludeRatingFilter });
+    if (favoriteFilter !== 'any') filters.push({ field: 'favorite', values: [], exclude: favoriteFilter === 'no' });
+    if (sourceUrlFilter !== 'any') filters.push({ field: 'source_url', values: [], exclude: sourceUrlFilter === 'no' });
+    if (availabilityFilter !== 'any') filters.push({ field: 'availability', values: [availabilityFilter], exclude: excludeAvailabilityFilter });
     return {
       ...(searchValue.trim() ? {
-        search: { clauses: [{ field: null, values: [searchValue.trim()], exclude: false }] },
+        search: { clauses: parseSearchExpression(searchValue) },
       } : {}),
-      ...(favoriteFilter ? {
-        filters: [{ field: 'favorite' as const, values: [], exclude: false }],
-      } : {}),
-      sort: { field: 'name', order: 'asc' as const },
+      ...(filters.length > 0 ? { filters } : {}),
+      ...(sortField !== 'relevance' ? { sort: { field: sortField, order: sortOrder } } : {}),
     };
   }
 
-  async function runSearch(event?: FormEvent) {
+  function applySearchResult(result: { items: AssetSummary[]; total: number; offset: number; snippets?: Array<{ assetId: string; text: string }> }) {
+    setAssets(result.items);
+    setSearchTotal(result.total);
+    setSearchOffset(result.offset);
+    setSearchSnippets(new Map((result.snippets ?? []).map((snippet) => [snippet.assetId, snippet.text])));
+  }
+
+  function currentSearchScope(): SearchScope | undefined {
+    if (activeCollectionId) return { kind: 'collection', collectionId: activeCollectionId, recursive: collectionRecursive };
+    if (assetScope === 'root') return { kind: 'folder', folderId: null, recursive: false };
+    if (assetScope !== 'all') return { kind: 'folder', folderId: assetScope, recursive: true };
+    return undefined;
+  }
+
+  async function runSearch(event?: FormEvent, offset = 0) {
     event?.preventDefault();
     if (!api || !library) return;
     try {
@@ -603,21 +631,38 @@ export function App() {
         libraryId: library.libraryId,
         query: definition.search ?? null,
         filters: definition.filters,
+        scope: currentSearchScope(),
         sort: definition.sort,
+        limit: 50,
+        offset,
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
       setShowTrash(false);
-      setActiveTagId(null);
-      setActiveCollectionId(null);
+      if (!tagFilter.trim()) setActiveTagId(null);
       setActiveSmartCollectionId(null);
       setSelectedAssetId(undefined);
-      setAssets(result.value.items);
-      setAllAssetCount(result.value.total);
+      applySearchResult(result.value);
       setNotice(`搜索完成：找到 ${result.value.total} 项。`);
     } catch (caught) {
       setError(toMessage(caught, '搜索失败。'));
     }
   }
+
+  useEffect(() => {
+    const hasDiscoveryInput = Boolean(
+      searchValue.trim() || formatFilter.trim() || tagFilter.trim() || ratingFilter.trim() ||
+      favoriteFilter !== 'any' || sourceUrlFilter !== 'any' || availabilityFilter !== 'any' ||
+      sortField !== 'relevance' || sortOrder !== 'asc',
+    );
+    const shouldClearPreviousResults = hadDiscoveryInput.current && !hasDiscoveryInput;
+    hadDiscoveryInput.current = hasDiscoveryInput;
+    if (!library || showTrash || (!hasDiscoveryInput && !shouldClearPreviousResults)) return;
+    const timer = window.setTimeout(() => { void runSearch(undefined, 0); }, 250);
+    return () => window.clearTimeout(timer);
+    // Search execution reads the current scope and API from the same render;
+    // only discovery controls should restart the debounce timer.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [library, showTrash, searchValue, formatFilter, excludeFormatFilter, tagFilter, excludeTagFilter, ratingFilter, excludeRatingFilter, favoriteFilter, sourceUrlFilter, availabilityFilter, excludeAvailabilityFilter, sortField, sortOrder]);
 
   async function saveSmartCollection() {
     if (!api || !library || !smartCollectionName.trim()) return;
@@ -637,20 +682,68 @@ export function App() {
     }
   }
 
-  async function chooseSmartCollection(collectionId: string) {
+  async function chooseSmartCollection(collectionId: string, offset = 0) {
     if (!api || !library) return;
     try {
-      const result = await api.executeSmartCollection({ libraryId: library.libraryId, collectionId });
+      const result = await api.executeSmartCollection({ libraryId: library.libraryId, collectionId, limit: 50, offset });
       if (!result.ok) throw new LibraryOperationError(result.error);
       setShowTrash(false);
       setActiveTagId(null);
       setActiveCollectionId(null);
       setActiveSmartCollectionId(collectionId);
       setSelectedAssetId(undefined);
-      setAssets(result.value.items);
-      setAllAssetCount(result.value.total);
+      applySearchResult(result.value);
     } catch (caught) {
       setError(toMessage(caught, '执行智能合集失败。'));
+    }
+  }
+
+  function loadDiscoveryPage(offset: number) {
+    if (activeSmartCollectionId) void chooseSmartCollection(activeSmartCollectionId, offset);
+    else void runSearch(undefined, offset);
+  }
+
+  async function renameSmartCollection(collectionId: string, name: string) {
+    if (!api || !library || !name.trim()) return;
+    try {
+      const result = await api.updateSmartCollection({ libraryId: library.libraryId, collectionId, name: name.trim() });
+      if (!result.ok) throw new LibraryOperationError(result.error);
+      setSmartCollections((current) => current.map((collection) => collection.collectionId === collectionId ? result.value : collection));
+      setNotice('智能合集已重命名。');
+    } catch (caught) {
+      setError(toMessage(caught, '重命名智能合集失败。'));
+    }
+  }
+
+  async function updateSmartCollectionQuery(collectionId: string) {
+    if (!api || !library) return;
+    try {
+      const result = await api.updateSmartCollection({
+        libraryId: library.libraryId,
+        collectionId,
+        queryDefinitionJson: JSON.stringify(currentQueryDefinition()),
+      });
+      if (!result.ok) throw new LibraryOperationError(result.error);
+      setSmartCollections((current) => current.map((collection) => collection.collectionId === collectionId ? result.value : collection));
+      setNotice('智能合集条件已更新。');
+    } catch (caught) {
+      setError(toMessage(caught, '更新智能合集失败。'));
+    }
+  }
+
+  async function deleteSmartCollection(collectionId: string) {
+    if (!api || !library) return;
+    try {
+      const result = await api.deleteSmartCollection({ libraryId: library.libraryId, collectionId });
+      if (!result.ok) throw new LibraryOperationError(result.error);
+      setSmartCollections((current) => current.filter((collection) => collection.collectionId !== collectionId));
+      if (activeSmartCollectionId === collectionId) {
+        setActiveSmartCollectionId(null);
+        await loadContent(library, 'all');
+      }
+      setNotice('智能合集已删除。');
+    } catch (caught) {
+      setError(toMessage(caught, '删除智能合集失败。'));
     }
   }
 
@@ -669,6 +762,7 @@ export function App() {
       setEditRating(result.value.rating);
       setEditFavorite(result.value.favorite);
       setEditSourceUrl(result.value.sourcePageUrl ?? '');
+      setEditPalette(parseStoredPalette(result.value.palette).join(', '));
     } catch (caught) {
       setError(toMessage(caught, '无法读取元数据。'));
     } finally {
@@ -692,6 +786,7 @@ export function App() {
             setEditRating(result.value.rating);
             setEditFavorite(result.value.favorite);
             setEditSourceUrl(result.value.sourcePageUrl ?? '');
+            setEditPalette(parseStoredPalette(result.value.palette).join(', '));
           } else if (!cancelled && !result.ok) {
             throw new LibraryOperationError(result.error);
           }
@@ -716,6 +811,7 @@ export function App() {
     description?: string;
     rating?: number;
     favorite?: boolean;
+    palette?: string[];
     sourcePageUrl?: string;
   }) {
     if (!api || !library || !selectedAssetId || !assetMetadata) return;
@@ -897,7 +993,8 @@ export function App() {
       setActiveTagId(null);
       setActiveCollectionId(null);
       setActiveSmartCollectionId(null);
-      setTagMembership(new Map());
+      setSearchTotal(null);
+      setSearchSnippets(new Map());
       api?.setActiveContext(null);
     } catch (caught) {
       setError(toMessage(caught, '关闭失败。'));
@@ -1338,6 +1435,18 @@ export function App() {
     void saveMetadata({ description: editDescription || undefined });
   }
 
+  function handlePaletteSave() {
+    if (!assetMetadata) return;
+    const values = editPalette.split(',').map((value) => value.trim()).filter(Boolean);
+    if (values.length > 20) {
+      setError('保存色卡失败。原因：人工色卡最多包含 20 个颜色值。');
+      return;
+    }
+    const current = parseStoredPalette(assetMetadata.palette);
+    if (JSON.stringify(values) === JSON.stringify(current)) return;
+    void saveMetadata({ palette: values });
+  }
+
   function handleRatingClick(rating: number) {
     if (!assetMetadata) return;
     setEditRating(rating);
@@ -1463,8 +1572,20 @@ export function App() {
       <div className="toolbar-cluster toolbar-leading"><ToolButton icon="menu" label={leftOpen ? '收起导航' : '展开导航'} onClick={() => setLeftOpen((v) => !v)} pressed={leftOpen} /><div className="brand-mark"><span className="brand-glyph">S</span><span>Serpent</span></div></div>
       <div className="scope-trace"><span className="scope-root">资源库</span><Icon name="chevron" size={12} /><span className="scope-chip">{library?.displayName ?? '尚未打开'}</span>{library && <span className="scope-chip scope-chip-muted">{scopeChipLabel()}</span>}</div>
       <form className="toolbar-cluster toolbar-actions" onSubmit={(event) => void runSearch(event)}>
-        <input aria-label="搜索资源库" className="search-control" disabled={!library} onChange={(event) => setSearchValue(event.target.value)} placeholder="搜索资源库" value={searchValue} />
-        <label style={{ alignItems: 'center', display: 'flex', fontSize: 10, gap: 4, whiteSpace: 'nowrap' }}><input checked={favoriteFilter} disabled={!library} onChange={(event) => setFavoriteFilter(event.target.checked)} type="checkbox" />仅喜欢</label>
+        <input aria-label="搜索资源库" className="search-control" disabled={!library} onChange={(event) => setSearchValue(event.target.value)} placeholder={'搜索；支持 label:"短语"、NOT tags:草图、OR'} title={'示例：label:"hero concept" NOT tags:草图'} value={searchValue} />
+        <details className="discovery-filters">
+          <summary>筛选与排序</summary>
+          <div className="discovery-filter-panel">
+            <label>格式<input aria-label="格式过滤" className="text-field" disabled={!library} onChange={(event) => setFormatFilter(event.target.value)} placeholder="png, jpg" value={formatFilter} /><span><input aria-label="排除这些格式" checked={excludeFormatFilter} onChange={(event) => setExcludeFormatFilter(event.target.checked)} type="checkbox" />排除</span></label>
+            <label>标签<input aria-label="标签过滤" className="text-field" disabled={!library} list="tag-filter-options" onChange={(event) => { setTagFilter(event.target.value); setActiveTagId(tags.find((tag) => tag.name === event.target.value)?.tagId ?? null); }} placeholder="角色, 道具" value={tagFilter} /><datalist id="tag-filter-options">{tags.map((tag) => <option key={tag.tagId} value={tag.name} />)}</datalist><span><input aria-label="排除这些标签" checked={excludeTagFilter} onChange={(event) => setExcludeTagFilter(event.target.checked)} type="checkbox" />排除</span></label>
+            <label>评分<input aria-label="评分过滤" className="text-field" disabled={!library} inputMode="numeric" onChange={(event) => setRatingFilter(event.target.value)} placeholder="4, 5" value={ratingFilter} /><span><input aria-label="排除这些评分" checked={excludeRatingFilter} onChange={(event) => setExcludeRatingFilter(event.target.checked)} type="checkbox" />排除</span></label>
+            <label>喜欢<select aria-label="喜欢过滤" className="text-field" disabled={!library} onChange={(event) => setFavoriteFilter(event.target.value as typeof favoriteFilter)} value={favoriteFilter}><option value="any">不限</option><option value="yes">仅喜欢</option><option value="no">未喜欢</option></select></label>
+            <label>源链接<select aria-label="源链接过滤" className="text-field" disabled={!library} onChange={(event) => setSourceUrlFilter(event.target.value as typeof sourceUrlFilter)} value={sourceUrlFilter}><option value="any">不限</option><option value="yes">有源链接</option><option value="no">无源链接</option></select></label>
+            <label>可用性<select aria-label="可用性过滤" className="text-field" disabled={!library} onChange={(event) => setAvailabilityFilter(event.target.value as typeof availabilityFilter)} value={availabilityFilter}><option value="any">全部</option><option value="available">可用</option><option value="missing">文件丢失</option></select><span><input aria-label="排除该可用性" checked={excludeAvailabilityFilter} disabled={availabilityFilter === 'any'} onChange={(event) => setExcludeAvailabilityFilter(event.target.checked)} type="checkbox" />排除</span></label>
+            <label>排序字段<select aria-label="排序字段" className="text-field" disabled={!library} onChange={(event) => setSortField(event.target.value as typeof sortField)} value={sortField}><option value="relevance">相关性（默认）</option><option value="name">名称</option><option value="modified_at">修改时间</option><option value="created_at">创建时间</option><option value="byte_size">文件大小</option><option value="duration">时长</option><option value="rating">评分</option></select></label>
+            <label>排序方向<select aria-label="排序方向" className="text-field" disabled={!library} onChange={(event) => setSortOrder(event.target.value as SortDefinition['order'])} value={sortOrder}><option value="asc">升序</option><option value="desc">降序</option></select></label>
+          </div>
+        </details>
         <button className="compact-action" disabled={!library} type="submit"><Icon name="search" size={14} />搜索</button>
         <input aria-label="智能合集标题" className="text-field" disabled={!library} onChange={(event) => setSmartCollectionName(event.target.value)} placeholder="智能合集名称" style={{ height: 28, width: 110 }} value={smartCollectionName} />
         <button className="compact-action" disabled={!library || !smartCollectionName.trim()} onClick={() => void saveSmartCollection()} type="button"><Icon name="smart" size={14} />保存</button>
@@ -1484,15 +1605,15 @@ export function App() {
           {tags.length ? tags.map((tag) => <NavRow active={activeTagId === tag.tagId} icon="tag" key={tag.tagId} label={tag.name} count={tag.assetCount} onContextMenu={(e) => { e.preventDefault(); setContextMenu(null); setOrganizationMenu({ kind: 'tag', id: tag.tagId, name: tag.name, x: e.clientX, y: e.clientY }); }} onClick={() => void chooseTag(tag.tagId)} />) : <p className="nav-empty">尚无标签</p>}
         </> : <p className="nav-empty">打开资源库后显示标签</p>}
       </Section>
-      <Section title="合集" action={library ? () => { setShowCollectionInput(true); setCollectionInputValue(''); } : undefined}>
+      <Section title="合集" action={library ? () => { setShowCollectionInput(true); setCollectionInputValue(''); setNewCollectionParentId(activeCollectionId); } : undefined}>
         {library ? <>
-          {showCollectionInput && <div className="nav-section"><input autoFocus className="text-field" maxLength={255} onBlur={() => { setShowCollectionInput(false); setCollectionInputValue(''); }} onChange={(e) => setCollectionInputValue(e.target.value)} onKeyDown={handleCollectionInputKeyDown} placeholder="输入合集名称，回车创建" style={{ height: 27, margin: '2px 0 4px 0', fontSize: 11 }} value={collectionInputValue} /></div>}
+          {showCollectionInput && <div className="nav-section"><input autoFocus className="text-field" maxLength={255} onBlur={() => { setShowCollectionInput(false); setCollectionInputValue(''); setNewCollectionParentId(null); }} onChange={(e) => setCollectionInputValue(e.target.value)} onKeyDown={handleCollectionInputKeyDown} placeholder={newCollectionParentId ? '输入子合集名称，回车创建' : '输入合集名称，回车创建'} style={{ height: 27, margin: '2px 0 4px 0', fontSize: 11 }} value={collectionInputValue} /></div>}
           {activeCollectionId && <div style={{ padding: '0 5px 2px' }}><label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 10, color: 'var(--tertiary)', cursor: 'pointer' }}><input checked={collectionRecursive} onChange={(e) => { setCollectionRecursive(e.target.checked); if (activeCollectionId) void chooseCollection(activeCollectionId); }} type="checkbox" />包含子合集</label></div>}
           {collections.length ? renderCollectionNodes(null, 0) : <p className="nav-empty">尚无合集</p>}
         </> : <p className="nav-empty">打开资源库后显示合集</p>}
       </Section>
       <Section title="智能合集">
-        {library ? (smartCollections.length ? smartCollections.map((sc) => <NavRow active={activeSmartCollectionId === sc.collectionId} icon="smart" key={sc.collectionId} label={sc.name} onClick={() => void chooseSmartCollection(sc.collectionId)} />) : <p className="nav-empty">尚无智能合集</p>) : <p className="nav-empty">打开资源库后显示智能合集</p>}
+        {library ? (smartCollections.length ? smartCollections.map((sc) => <NavRow active={activeSmartCollectionId === sc.collectionId} icon="smart" key={sc.collectionId} label={sc.name} onClick={() => void chooseSmartCollection(sc.collectionId)} onContextMenu={(event) => { event.preventDefault(); setSmartCollectionMenu({ id: sc.collectionId, name: sc.name, x: event.clientX, y: event.clientY }); }} />) : <p className="nav-empty">尚无智能合集</p>) : <p className="nav-empty">打开资源库后显示智能合集</p>}
       </Section>
       <Section title="链接文件夹" action={library ? () => void importFolderAsLinked() : undefined}>
         {library ? (linkedFolders.length ? linkedFolders.map((lf) => <NavRow active={assetScope === lf.folderId && !activeTagId && !activeCollectionId} icon={lf.status === 'offline' ? 'warning' : 'link'} key={lf.folderId} label={lf.displayName} count={lf.assetCount} onClick={lf.status === 'offline' ? () => void relinkFolder(lf.folderId) : () => void chooseFolder(lf.folderId)} />) : <p className="nav-empty">链接外部文件夹作为资产来源</p>) : <p className="nav-empty">打开资源库后显示链接文件夹</p>}
@@ -1524,7 +1645,7 @@ export function App() {
           <button className="secondary-button" disabled={!importProgress.importId} onClick={() => void cancelImport()} type="button">取消导入</button>
         </div>
       )}
-      {library ? visibleAssets.length ? <div className="asset-grid">{visibleAssets.map((asset) => <button className={`asset-card${selectedAssetId === asset.assetId ? ' is-selected' : ''}${asset.availability === 'missing' ? ' is-missing' : ''}${asset.deletedAt ? ' is-trashed' : ''}`} key={asset.assetId} onClick={() => setSelectedAssetId(asset.assetId)} onDoubleClick={() => { if (asset.availability === 'available' && !asset.deletedAt) setPreviewAsset(asset); }} onContextMenu={(e) => { e.preventDefault(); if (library && !asset.deletedAt) setContextMenu({ x: e.clientX, y: e.clientY, assetId: asset.assetId, displayName: asset.displayName }); }} type="button"><div className="asset-preview">{asset.thumbnailStatus === 'ready' && asset.thumbnailArtifactId && library ? <img alt={asset.displayName} className="asset-thumbnail" loading="lazy" src={`serpent://preview/${library.libraryId}/${asset.thumbnailArtifactId}`} /> : <><span className="asset-extension">{extension(asset.displayName)}</span><Icon name="file" size={28} /></>}{asset.availability === 'missing' && <span className="missing-banner"><Icon name="warning" size={12} />文件丢失</span>}{asset.deletedAt && <span className="missing-banner" style={{ background: 'var(--raised-2)', color: 'var(--secondary)', bottom: 6, right: 6 }}><Icon name="trash" size={12} />回收站{asset.remainingDays !== null && ` · ${asset.remainingDays}天`}</span>}</div><div className="asset-caption"><strong title={asset.displayName}>{asset.displayName}</strong>{asset.deletedAt && asset.trashedFromPath ? <span style={{ color: 'var(--tertiary)', fontSize: 8, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={asset.trashedFromPath}>{asset.trashedFromPath}</span> : <span>{formatBytes(asset.byteSize)} · {formatDate(asset.modifiedAt)}</span>}</div></button>)}</div> : <div className="empty-library"><div className="empty-orbit"><Icon name="upload" size={24} /></div><span className="eyebrow">MANAGED ASSETS</span><h1>{selectedFolder ? '这个文件夹还是空的' : '把第一批素材放进来'}</h1><p>文件将复制到清晰可读的 Assets 目录，同时建立稳定的资产身份。</p><div className="empty-actions"><button className="primary-button" onClick={() => void importAssets('files')} type="button">导入文件</button><button className="secondary-button" onClick={() => void importAssets('folder')} type="button">导入文件夹</button></div></div> : <div className="empty-state"><div className="empty-index">01</div><div className="empty-copy"><span className="eyebrow">LOCAL ASSET WORKSPACE</span><h1>从一个本地资源库开始</h1><p>文件、目录与元数据都保留在你掌控的位置。</p><div className="empty-actions"><button className="primary-button" onClick={() => { setDialogValue('我的资源库'); setDialog('library'); }} type="button"><Icon name="plus" size={15} />创建资源库</button><button className="secondary-button" onClick={() => void runLibraryOperation('open')} type="button"><Icon name="folder" size={15} />打开资源库</button></div></div></div>}
+      {library ? visibleAssets.length ? <><div className="asset-grid">{visibleAssets.map((asset) => <button className={`asset-card${selectedAssetId === asset.assetId ? ' is-selected' : ''}${asset.availability === 'missing' ? ' is-missing' : ''}${asset.deletedAt ? ' is-trashed' : ''}`} key={asset.assetId} onClick={() => setSelectedAssetId(asset.assetId)} onDoubleClick={() => { if (asset.availability === 'available' && !asset.deletedAt) setPreviewAsset(asset); }} onContextMenu={(e) => { e.preventDefault(); if (library && !asset.deletedAt) setContextMenu({ x: e.clientX, y: e.clientY, assetId: asset.assetId, displayName: asset.displayName }); }} type="button"><div className="asset-preview">{asset.thumbnailStatus === 'ready' && asset.thumbnailArtifactId && library ? <img alt={asset.displayName} className="asset-thumbnail" loading="lazy" src={`serpent://preview/${library.libraryId}/${asset.thumbnailArtifactId}`} /> : <><span className="asset-extension">{extension(asset.displayName)}</span><Icon name="file" size={28} /></>}{asset.availability === 'missing' && <span className="missing-banner"><Icon name="warning" size={12} />文件丢失</span>}{asset.deletedAt && <span className="missing-banner" style={{ background: 'var(--raised-2)', color: 'var(--secondary)', bottom: 6, right: 6 }}><Icon name="trash" size={12} />回收站{asset.remainingDays !== null && ` · ${asset.remainingDays}天`}</span>}</div><div className="asset-caption"><strong title={asset.label ?? asset.displayName}>{asset.label ?? asset.displayName}</strong>{asset.label && <span title={asset.displayName}>{asset.displayName}</span>}{searchSnippets.has(asset.assetId) ? <span className="search-snippet">{highlightSnippet(searchSnippets.get(asset.assetId)!)}</span> : asset.deletedAt && asset.trashedFromPath ? <span style={{ color: 'var(--tertiary)', fontSize: 8, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={asset.trashedFromPath}>{asset.trashedFromPath}</span> : <span>{formatBytes(asset.byteSize)} · {formatDate(asset.modifiedAt)}</span>}</div></button>)}</div>{searchTotal !== null && <div className="search-pagination" aria-label="搜索分页"><button className="secondary-button" disabled={searchOffset === 0} onClick={() => loadDiscoveryPage(Math.max(0, searchOffset - 50))} type="button">上一页</button><span>{searchTotal === 0 ? 0 : searchOffset + 1}–{Math.min(searchOffset + visibleAssets.length, searchTotal)} / {searchTotal}</span><button className="secondary-button" disabled={searchOffset + visibleAssets.length >= searchTotal} onClick={() => loadDiscoveryPage(searchOffset + 50)} type="button">下一页</button></div>}</> : <div className="empty-library"><div className="empty-orbit"><Icon name="upload" size={24} /></div><span className="eyebrow">MANAGED ASSETS</span><h1>{selectedFolder ? '这个文件夹还是空的' : '把第一批素材放进来'}</h1><p>文件将复制到清晰可读的 Assets 目录，同时建立稳定的资产身份。</p><div className="empty-actions"><button className="primary-button" onClick={() => void importAssets('files')} type="button">导入文件</button><button className="secondary-button" onClick={() => void importAssets('folder')} type="button">导入文件夹</button></div></div> : <div className="empty-state"><div className="empty-index">01</div><div className="empty-copy"><span className="eyebrow">LOCAL ASSET WORKSPACE</span><h1>从一个本地资源库开始</h1><p>文件、目录与元数据都保留在你掌控的位置。</p><div className="empty-actions"><button className="primary-button" onClick={() => { setDialogValue('我的资源库'); setDialog('library'); }} type="button"><Icon name="plus" size={15} />创建资源库</button><button className="secondary-button" onClick={() => void runLibraryOperation('open')} type="button"><Icon name="folder" size={15} />打开资源库</button></div></div></div>}
       {(error || notice) && <div className={`toast${error ? ' is-error' : ''}`} role={error ? 'alert' : 'status'}><Icon name={error ? 'warning' : 'info'} size={15} /><span>{error ?? notice}</span><button aria-label="关闭提示" onClick={() => { setError(null); setNotice(null); }} type="button"><Icon name="close" size={13} /></button></div>}
     </div></section>
     <aside className="inspector-pane"><div className="pane-header"><span>检查器</span><ToolButton icon="info" label="检查器信息" /></div>{selectedAsset ? <div className="inspector-content">
@@ -1593,11 +1714,8 @@ export function App() {
           </div>
           <div className="editor-field" style={{ marginTop: 10 }}>
             <label className="micro-label">色卡 (Palette)</label>
-            {assetMetadata.palette ? (
-              <div className="path-block" style={{ marginTop: 3, fontSize: 10 }}>{assetMetadata.palette}</div>
-            ) : (
-              <p style={{ margin: '3px 0 0', color: 'var(--tertiary)', fontSize: 10 }}>无人工色卡（切片 0006 提供编辑）</p>
-            )}
+            <input aria-label="人工色卡" className="text-field" maxLength={1024} onBlur={handlePaletteSave} onChange={(event) => setEditPalette(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') handlePaletteSave(); }} placeholder="#C84C4C, #203040（最多 20 色）" style={{ height: 28, fontSize: 10, marginTop: 3 }} value={editPalette} />
+            {parseStoredPalette(assetMetadata.palette).length > 0 && <div className="palette-preview" aria-label="色卡预览">{parseStoredPalette(assetMetadata.palette).map((color, index) => <span key={`${color}-${index}`} style={{ background: isCssColor(color) ? color : 'transparent' }} title={color} />)}</div>}
           </div>
           <div style={{ marginTop: 8, color: 'var(--tertiary)', fontSize: 9, fontFamily: "'IBM Plex Mono', monospace" }}>
             版本 {assetMetadata.entityVersion} · {formatDate(assetMetadata.updatedAt)}
@@ -1614,7 +1732,7 @@ export function App() {
       </section>}
     </div> : library ? <div className="inspector-content"><div className="inspector-identity"><div className="inspector-badge">{initials(library.displayName)}</div><div><span className="micro-label">当前资源库</span><strong>{library.displayName}</strong></div></div><dl className="metadata-list"><div><dt>状态</dt><dd><span className="status-dot" data-active="true" />已打开</dd></div><div><dt>资产</dt><dd className="mono">{allAssetCount}</dd></div><div><dt>文件夹</dt><dd className="mono">{folders.length}</dd></div></dl><section className="inspector-section"><h2>位置</h2><p className="path-block">{library.displayPath}</p></section><button className="secondary-button inspector-close-library" onClick={() => void closeLibrary()} type="button">关闭资源库</button></div> : <div className="inspector-empty"><Icon name="info" size={18} /><strong>没有活动资源库</strong><p>打开资源库后查看当前范围与资产详情。</p></div>}</aside>
     {!leftOpen && <button className="pane-reveal pane-reveal-left" onClick={() => setLeftOpen(true)} type="button"><Icon name="collapse-left" size={15} /></button>}{!rightOpen && <button className="pane-reveal pane-reveal-right" onClick={() => setRightOpen(true)} type="button"><Icon name="collapse-right" size={15} /></button>}
-    {renameTarget && <div className="dialog-backdrop" role="presentation"><form aria-labelledby="rename-organization-title" aria-modal="true" className="create-dialog" onSubmit={(event) => { event.preventDefault(); if (renameTarget.kind === 'tag') void renameTag(); else void renameCollection(); }} role="dialog"><div className="dialog-heading"><div><span className="eyebrow">ORGANIZE LIBRARY</span><h2 id="rename-organization-title">重命名{renameTarget.kind === 'tag' ? '标签' : '合集'}</h2></div><button aria-label="取消" className="dialog-close" onClick={() => setRenameTarget(null)} type="button"><Icon name="close" size={16} /></button></div><label className="field-label" htmlFor="rename-organization-name">{renameTarget.kind === 'tag' ? '标签' : '合集'}名称</label><input autoFocus className="text-field" id="rename-organization-name" onChange={(event) => setRenameTarget((current) => current ? { ...current, name: event.target.value } : current)} value={renameTarget.name} /><p className="field-help">名称仅影响资源库中的组织方式，不会修改资产文件。</p><div className="dialog-actions"><button className="secondary-button" onClick={() => setRenameTarget(null)} type="button">取消</button><button className="primary-button" disabled={!renameTarget.name.trim()} type="submit">保存名称</button></div></form></div>}
+    {renameTarget && <div className="dialog-backdrop" role="presentation"><form aria-labelledby="rename-organization-title" aria-modal="true" className="create-dialog" onSubmit={(event) => { event.preventDefault(); if (renameTarget.kind === 'tag') void renameTag(); else if (renameTarget.kind === 'collection') void renameCollection(); else { const target = renameTarget; setRenameTarget(null); void renameSmartCollection(target.id, target.name); } }} role="dialog"><div className="dialog-heading"><div><span className="eyebrow">ORGANIZE LIBRARY</span><h2 id="rename-organization-title">重命名{organizationNoun(renameTarget.kind)}</h2></div><button aria-label="取消" className="dialog-close" onClick={() => setRenameTarget(null)} type="button"><Icon name="close" size={16} /></button></div><label className="field-label" htmlFor="rename-organization-name">{organizationNoun(renameTarget.kind)}名称</label><input autoFocus className="text-field" id="rename-organization-name" onChange={(event) => setRenameTarget((current) => current ? { ...current, name: event.target.value } : current)} value={renameTarget.name} /><p className="field-help">名称仅影响资源库中的组织方式，不会修改资产文件。</p><div className="dialog-actions"><button className="secondary-button" onClick={() => setRenameTarget(null)} type="button">取消</button><button className="primary-button" disabled={!renameTarget.name.trim()} type="submit">保存名称</button></div></form></div>}
     {dialog && <div className="dialog-backdrop" role="presentation"><form aria-labelledby="create-dialog-title" aria-modal="true" className="create-dialog" onSubmit={(event) => { event.preventDefault(); if (!dialogValue.trim()) return; if (dialog === 'library') { setDialog(null); void runLibraryOperation('create'); } else void createFolder(); }} role="dialog"><div className="dialog-heading"><div><span className="eyebrow">{dialog === 'library' ? 'NEW LOCAL LIBRARY' : 'MANAGED FOLDER'}</span><h2 id="create-dialog-title">{dialog === 'library' ? '创建资源库' : '新建文件夹'}</h2></div><button aria-label="取消" className="dialog-close" onClick={() => setDialog(null)} type="button"><Icon name="close" size={16} /></button></div><label className="field-label" htmlFor="dialog-name">名称</label><input autoFocus className="text-field" id="dialog-name" maxLength={255} onChange={(event) => setDialogValue(event.target.value)} value={dialogValue} /><p className="field-help">{dialog === 'library' ? '下一步由系统选择本地保存位置。' : `将在“${selectedFolder?.name ?? '资源库根目录'}”内创建真实目录。`}</p><div className="dialog-actions"><button className="secondary-button" onClick={() => setDialog(null)} type="button">取消</button><button className="primary-button" disabled={!dialogValue.trim()} type="submit">创建</button></div></form></div>}
     {conflicts && <div className="dialog-backdrop" role="presentation"><div aria-labelledby="conflict-dialog-title" aria-modal="true" className="conflict-dialog" role="dialog"><div className="dialog-heading"><div><span className="eyebrow">IMPORT REVIEW</span><h2 id="conflict-dialog-title">处理导入冲突</h2></div></div><div className="conflict-summary"><div><strong>{conflicts.fileCount}</strong><span>待导入文件</span></div><div><strong>{conflicts.suspectedDuplicateCount}</strong><span>疑似重复</span></div><div><strong>{conflicts.nameConflictCount}</strong><span>同名冲突</span></div></div><label className="decision-field"><span>疑似重复</span><select autoFocus value={duplicateDecision} onChange={(event) => setDuplicateDecision(event.target.value as typeof duplicateDecision)}><option value="skip">跳过</option><option value="merge">合并到已有资产</option><option value="create-copy">创建副本</option></select></label><label className="decision-field"><span>同名冲突</span><select value={nameDecision} onChange={(event) => setNameDecision(event.target.value as typeof nameDecision)}><option value="keep-both">保留两者</option><option value="replace">替换现有资产</option><option value="skip">跳过</option></select></label>{conflicts.examples.length > 0 && <div className="conflict-examples">{conflicts.examples.map((item, index) => <span key={`${item.displayName}-${index}`}><Icon name="file" size={13} />{item.displayName}</span>)}</div>}<div className="dialog-actions"><button className="secondary-button" onClick={() => void abandonConflicts()} type="button">取消</button><button className="primary-button" onClick={() => void resolveConflicts()} type="button">应用并导入</button></div></div></div>}
     {exportDialogOpen && <div className="dialog-backdrop" role="presentation"><div aria-modal="true" className="create-dialog" role="dialog"><div className="dialog-heading"><div><span className="eyebrow">EXPORT LIBRARY</span><h2>导出资源库</h2></div><button aria-label="取消" className="dialog-close" onClick={() => setExportDialogOpen(false)} type="button"><Icon name="close" size={16} /></button></div><p style={{ color: 'var(--secondary)', fontSize: 12, lineHeight: 1.6 }}>将资源库导出为完整文件夹或标准 ZIP。导出内容包括所有托管资产、数据库、修订记录和回收站文件。</p><fieldset style={{ border: 'none', padding: 0, marginTop: 14, display: 'flex', gap: 16 }}><legend style={{ fontSize: 11, color: '#6c6f6c', marginBottom: 6 }}>导出格式</legend><label style={{ display: 'flex', alignItems: 'center', gap: 5, color: '#c7cac7', fontSize: 12, cursor: 'pointer' }}><input checked={exportFormat === 'folder'} onChange={() => setExportFormat('folder')} type="radio" name="export-format" />文件夹</label><label style={{ display: 'flex', alignItems: 'center', gap: 5, color: '#c7cac7', fontSize: 12, cursor: 'pointer' }}><input checked={exportFormat === 'zip'} onChange={() => setExportFormat('zip')} type="radio" name="export-format" />标准 ZIP{exportFormat === 'zip' && <span style={{ fontSize: 10, color: '#6c6f6c' }}>（4&nbsp;GiB / 65534 条目以内）</span>}</label></fieldset>{exportFormat === 'folder' && <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10, color: '#c7cac7', fontSize: 12, cursor: 'pointer' }}><input checked={includeLinkedContent} onChange={(e) => setIncludeLinkedContent(e.target.checked)} type="checkbox" />包含链接文件夹源内容</label>}<div className="dialog-actions"><button className="secondary-button" onClick={() => setExportDialogOpen(false)} type="button">取消</button><button className="primary-button" onClick={() => void exportLibrary()} type="button">{exportFormat === 'zip' ? '选择保存位置并导出 ZIP' : '选择目标文件夹并导出'}</button></div></div></div>}
@@ -1673,6 +1791,8 @@ export function App() {
       </div></div></div>}
     {/* Preview modal */}
     {previewAsset && library && api && <AssetPreviewModal api={api} asset={previewAsset} libraryId={library.libraryId} onClose={() => setPreviewAsset(null)} />}
+    {/* Smart collection context menu */}
+    {smartCollectionMenu && <div className="context-menu-backdrop" onClick={() => setSmartCollectionMenu(null)} onKeyDown={(event) => { if (event.key === 'Escape') setSmartCollectionMenu(null); }} role="presentation"><div className="context-menu" onClick={(event) => event.stopPropagation()} role="menu" style={{ position: 'fixed', left: smartCollectionMenu.x, top: smartCollectionMenu.y }}><button onClick={() => { const target = smartCollectionMenu; setSmartCollectionMenu(null); setRenameTarget({ kind: 'smart', id: target.id, name: target.name }); }} role="menuitem" type="button"><Icon name="smart" size={14} />重命名智能合集</button><button onClick={() => { const target = smartCollectionMenu; setSmartCollectionMenu(null); void updateSmartCollectionQuery(target.id); }} role="menuitem" type="button"><Icon name="refresh" size={14} />用当前条件更新</button><button onClick={() => { const target = smartCollectionMenu; setSmartCollectionMenu(null); if (confirm(`删除智能合集“${target.name}”？`)) void deleteSmartCollection(target.id); }} role="menuitem" type="button"><Icon name="trash" size={14} />删除智能合集</button></div></div>}
     {/* Tag / collection context menu */}
     {organizationMenu && <div className="context-menu-backdrop" onClick={() => setOrganizationMenu(null)} onKeyDown={(e) => { if (e.key === 'Escape') setOrganizationMenu(null); }} role="presentation"><div className="context-menu" onClick={(event) => event.stopPropagation()} role="menu" style={{ position: 'fixed', left: organizationMenu.x, top: organizationMenu.y }}><button onClick={() => { setRenameTarget({ kind: organizationMenu.kind, id: organizationMenu.id, name: organizationMenu.name }); setOrganizationMenu(null); }} role="menuitem" type="button"><Icon name={organizationMenu.kind === 'tag' ? 'tag' : 'collection'} size={14} />重命名{organizationMenu.kind === 'tag' ? '标签' : '合集'}</button><button onClick={() => { const target = organizationMenu; setOrganizationMenu(null); const confirmed = confirm(target.kind === 'tag' ? `删除标签"${target.name}"？` : `删除合集"${target.name}"？\n（仅删除合集结构，不删除资产）`); if (confirmed) { if (target.kind === 'tag') void deleteTag(target.id); else void deleteCollection(target.id); } }} role="menuitem" type="button"><Icon name="trash" size={14} />删除{organizationMenu.kind === 'tag' ? '标签' : '合集'}</button></div></div>}
     {/* Context menu */}
@@ -1681,12 +1801,61 @@ export function App() {
 }
 
 function initials(value: string) { return value.trim().slice(0, 2).toUpperCase() || 'SP'; }
+function organizationNoun(kind: OrganizationKind) { return kind === 'tag' ? '标签' : kind === 'collection' ? '合集' : '智能合集'; }
+function parseStoredPalette(value: string | null): string[] {
+  if (!value) return [];
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+function isCssColor(value: string) { return /^#[0-9a-f]{3,8}$/i.test(value) || /^(rgb|hsl)a?\(/i.test(value); }
+export function parseSearchExpression(value: string): Array<{ field: string | null; values: string[]; exclude: boolean }> {
+  const allowedFields = new Set(['label', 'filename', 'tags', 'description', 'source_url', 'folder_path', 'metadata_text']);
+  const tokens = value.match(/-?[a-z_]+:"[^"]*"|"[^"]*"|\S+/gi) ?? [];
+  const clauses: Array<{ field: string | null; values: string[]; exclude: boolean }> = [];
+  let excludeNext = false;
+  let mergeWithPrevious = false;
+  for (const rawToken of tokens) {
+    if (rawToken.toUpperCase() === 'NOT') { excludeNext = true; continue; }
+    if (rawToken.toUpperCase() === 'OR') { mergeWithPrevious = true; continue; }
+    let token = rawToken;
+    const exclude = excludeNext || token.startsWith('-');
+    excludeNext = false;
+    if (token.startsWith('-')) token = token.slice(1);
+    const separator = token.indexOf(':');
+    const candidateField = separator > 0 ? token.slice(0, separator) : null;
+    const field = candidateField && allowedFields.has(candidateField) ? candidateField : null;
+    const rawValues = (field ? token.slice(separator + 1) : token).replace(/^"|"$/g, '');
+    const values = rawValues.split(',').map((item) => item.trim()).filter(Boolean);
+    if (values.length === 0) continue;
+    const previous = clauses.at(-1);
+    if (mergeWithPrevious && previous && previous.field === field && previous.exclude === exclude) {
+      previous.values.push(...values);
+    } else {
+      clauses.push({ field, values, exclude });
+    }
+    mergeWithPrevious = false;
+  }
+  return clauses;
+}
 function extension(name: string) { const value = name.split('.').pop(); return value && value !== name ? value.slice(0, 5).toUpperCase() : 'FILE'; }
 function formatBytes(bytes: number) { if (bytes < 1024) return `${bytes} B`; if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(1)} KB`; if (bytes < 1024 ** 3) return `${(bytes / 1024 ** 2).toFixed(1)} MB`; return `${(bytes / 1024 ** 3).toFixed(1)} GB`; }
 function formatDate(value: string) { const date = new Date(value); return Number.isNaN(date.valueOf()) ? '未知时间' : new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit' }).format(date); }
+function highlightSnippet(value: string): ReactNode {
+  const segments = value.split(/(<\/?b>)/i);
+  let highlighted = false;
+  return segments.map((segment, index) => {
+    if (/^<b>$/i.test(segment)) { highlighted = true; return null; }
+    if (/^<\/b>$/i.test(segment)) { highlighted = false; return null; }
+    return highlighted ? <mark key={index}>{segment}</mark> : <span key={index}>{segment}</span>;
+  });
+}
 function importSummary(value: { importedCount: number; skippedCount: number; replacedCount: number }) { return `导入完成：新增 ${value.importedCount} 项${value.replacedCount ? `，替换 ${value.replacedCount} 项` : ''}${value.skippedCount ? `，跳过 ${value.skippedCount} 项` : ''}。`; }
 function toOrganizationMessage(error: unknown, kind: OrganizationKind, operation: '创建' | '重命名' | '删除' | '移除资产') {
-  const noun = kind === 'tag' ? '标签' : '合集';
+  const noun = organizationNoun(kind);
   const action = operation === '移除资产' ? '从合集移除资产' : `${operation}${noun}`;
   if (error instanceof LibraryOperationError) {
     const reason = error.reason ? PUBLIC_ERROR_REASONS_ZH[error.reason] : undefined;

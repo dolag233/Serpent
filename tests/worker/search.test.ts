@@ -536,6 +536,21 @@ describe('bm25 weighting', () => {
 
     service.closeAll();
   });
+
+  it('supports a query containing only exclusions without invalid FTS syntax', () => {
+    const { service, libraryId, libraryPath, assetId } = createLibraryWithAssetAndTags('Hero Draft');
+    const keptAssetId = createSecondAsset(service, libraryId, libraryPath, 'Published Prop');
+
+    const result = service.searchAssets({
+      libraryId,
+      query: { clauses: [{ field: null, values: ['draft'], exclude: true }] },
+      sort: { field: 'name', order: 'asc' },
+    });
+
+    expect(result.items.some((asset) => asset.assetId === assetId)).toBe(false);
+    expect(result.items.some((asset) => asset.assetId === keptAssetId)).toBe(true);
+    service.closeAll();
+  });
 });
 
 // ── FTS5 Query Builder ──────────────────────────────────────────────
@@ -558,7 +573,7 @@ describe('FTS5 query builder', () => {
 
   it('builds exclude query', () => {
     const query = buildFts5Query([{ field: null, values: ['draft'], exclude: true }]);
-    expect(query).toBe('NOT "draft"');
+    expect(query).toBe('"__IMPOSSIBLE__"');
   });
 
   it('builds combined AND + OR + exclude query', () => {
@@ -568,6 +583,22 @@ describe('FTS5 query builder', () => {
       { field: 'folder_path', values: ['archive'], exclude: true },
     ]);
     expect(query).toBe('label:"PBR" (tags:"character" OR tags:"prop") NOT folder_path:"archive"');
+  });
+
+  it('normalizes an exclusion that arrives before positive clauses', () => {
+    const query = buildFts5Query([
+      { field: null, values: ['draft'], exclude: true },
+      { field: null, values: ['hero'], exclude: false },
+    ]);
+    expect(query).toBe('"hero" NOT "draft"');
+  });
+
+  it('never emits a leading NOT when positive input sanitizes to empty', () => {
+    const query = buildFts5Query([
+      { field: null, values: ['*'], exclude: false },
+      { field: null, values: ['draft'], exclude: true },
+    ]);
+    expect(query).toBe('"__IMPOSSIBLE__"');
   });
 
   it('rejects unknown field names', () => {
@@ -602,6 +633,33 @@ describe('FTS5 query builder', () => {
 // ── Search Filters ──────────────────────────────────────────────────
 
 describe('search filters', () => {
+  it('intersects search results with the current collection scope', () => {
+    const { service, libraryId, libraryPath, assetId } = createLibraryWithAssetAndTags();
+    const otherAssetId = createSecondAsset(service, libraryId, libraryPath, 'Other Hero');
+    const collection = service.createCollection({ libraryId, name: 'Scoped' });
+    service.addCollectionAssets({ libraryId, collectionId: collection.collectionId, assetIds: [assetId] });
+
+    const result = service.searchAssets({
+      libraryId,
+      query: { clauses: [{ field: null, values: ['hero'], exclude: false }] },
+      scope: { kind: 'collection', collectionId: collection.collectionId, recursive: false },
+    });
+
+    expect(result.items.map((asset) => asset.assetId)).toEqual([assetId]);
+    expect(result.items.some((asset) => asset.assetId === otherAssetId)).toBe(false);
+    service.closeAll();
+  });
+
+  it('keeps soft-deleted assets out of normal search results', () => {
+    const { service, libraryId, assetId } = createLibraryWithAssetAndTags();
+    service.trashAssets({ libraryId, assetIds: [assetId] });
+
+    const result = service.searchAssets({ libraryId, filters: [] });
+
+    expect(result.items.some((asset) => asset.assetId === assetId)).toBe(false);
+    service.closeAll();
+  });
+
   it('filters by format with OR', () => {
     const root = temporaryRoot();
     const service = new LibraryService();
@@ -684,7 +742,7 @@ describe('search filters', () => {
 
     const withTag = service.searchAssets({
       libraryId,
-      filters: [{ field: 'tag', values: ['Character'], exclude: false }],
+      filters: [{ field: 'tag', values: ['character'], exclude: false }],
     });
     expect(withTag.total).toBe(1);
     expect(withTag.items[0]!.assetId).toBe(assetId);
@@ -953,6 +1011,21 @@ describe('smart collections v6', () => {
     service.closeAll();
   });
 
+  it('rejects valid JSON that does not match the strict query definition schema', () => {
+    const { service, libraryId } = createLibraryWithAssetAndTags();
+
+    expectServiceCode(
+      () => service.createSmartCollection({
+        libraryId,
+        name: 'Bad shape',
+        queryDefinitionJson: '{"search":"hero","absolutePath":"/private/tmp/secret"}',
+      }),
+      'INVALID_IMPORT_DECISION',
+    );
+
+    service.closeAll();
+  });
+
   it('executes a smart collection and returns filtered results', () => {
     const { service, libraryId, assetId, libraryPath } = createLibraryWithAssetAndTags();
     const assetId2 = createSecondAsset(service, libraryId, libraryPath, 'Sketch');
@@ -976,6 +1049,26 @@ describe('smart collections v6', () => {
     expect(result.items[0]!.assetId).toBe(assetId);
     expect(result.offset).toBe(0);
 
+    service.closeAll();
+  });
+
+  it('paginates a smart collection without switching query definitions', () => {
+    const { service, libraryId, libraryPath } = createLibraryWithAssetAndTags();
+    createSecondAsset(service, libraryId, libraryPath, 'Second');
+    const smart = service.createSmartCollection({
+      libraryId,
+      name: 'All paged',
+      queryDefinitionJson: JSON.stringify({ sort: { field: 'name', order: 'asc' } }),
+    });
+
+    const first = service.executeSmartCollection({ libraryId, collectionId: smart.collectionId, limit: 1, offset: 0 });
+    const second = service.executeSmartCollection({ libraryId, collectionId: smart.collectionId, limit: 1, offset: 1 });
+
+    expect(first.total).toBe(2);
+    expect(first.items).toHaveLength(1);
+    expect(second.offset).toBe(1);
+    expect(second.items).toHaveLength(1);
+    expect(second.items[0]!.assetId).not.toBe(first.items[0]!.assetId);
     service.closeAll();
   });
 

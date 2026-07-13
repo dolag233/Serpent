@@ -2,6 +2,7 @@ import {
   existsSync,
   mkdtempSync,
   mkdirSync,
+  readFileSync,
   readdirSync,
   renameSync,
   rmSync,
@@ -1021,6 +1022,46 @@ describe('relinkAsset (single missing asset)', () => {
     service.closeAll();
   });
 
+  it('copies replacement bytes back to the managed path across refresh and reopen', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'Managed Relink Persistence', selectedParentPath: root });
+
+    const sourcePath = path.join(root, 'managed-persistence.jpg');
+    writeFileSync(sourcePath, 'old-managed-bytes');
+    const imported = importNoConflict(service, created.libraryId, sourcePath);
+    const assetId = imported.assets[0]!.assetId;
+    const managedPath = path.join(created.libraryPath, 'Assets', 'managed-persistence.jpg');
+
+    rmSync(managedPath);
+    service.refreshManagedAssets(created.libraryId);
+
+    const replacementPath = path.join(root, 'replacement.jpg');
+    writeFileSync(replacementPath, 'replacement-bytes');
+    const { asset } = service.relinkAsset({
+      libraryId: created.libraryId,
+      assetId,
+      newAbsolutePath: replacementPath,
+    });
+
+    expect(asset.locationKind).toBe('managed');
+    expect(asset.relativeFilePath).toBe('managed-persistence.jpg');
+    expect(service.resolveAssetPath(created.libraryId, assetId)).toBe(managedPath);
+    expect(readFileSync(managedPath, 'utf8')).toBe('replacement-bytes');
+    expect(readFileSync(replacementPath, 'utf8')).toBe('replacement-bytes');
+
+    service.refreshManagedAssets(created.libraryId);
+    expect(service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!.availability).toBe('available');
+
+    service.closeAll();
+    const reopened = service.openLibrary(created.libraryPath);
+    expect(reopened.libraryId).toBe(created.libraryId);
+    expect(service.resolveAssetPath(created.libraryId, assetId)).toBe(managedPath);
+    expect(readFileSync(service.resolveAssetPath(created.libraryId, assetId), 'utf8')).toBe('replacement-bytes');
+    expect(service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!.availability).toBe('available');
+    service.closeAll();
+  });
+
   it('preserves metadata and tags after relink', () => {
     const root = temporaryRoot();
     const service = new LibraryService();
@@ -1217,6 +1258,58 @@ describe('relinkBatchApply', () => {
     const allAssets = service.listAssets({ libraryId: created.libraryId, recursive: true });
     expect(allAssets.filter((a) => a.availability === 'available')).toHaveLength(1);
     expect(allAssets.filter((a) => a.availability === 'missing')).toHaveLength(1);
+    service.closeAll();
+  });
+
+  it('copies matched bytes to each managed path across refresh and reopen', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'Batch Managed Persistence', selectedParentPath: root });
+
+    writeFileSync(path.join(root, 'root-file.jpg'), 'old-root');
+    const rootImport = importNoConflict(service, created.libraryId, path.join(root, 'root-file.jpg'));
+    const folder = service.createManagedFolder({ libraryId: created.libraryId, name: 'nested' });
+    writeFileSync(path.join(root, 'nested-file.jpg'), 'old-nested');
+    const nestedImport = importNoConflict(
+      service,
+      created.libraryId,
+      path.join(root, 'nested-file.jpg'),
+      folder.folderId,
+    );
+
+    const rootManagedPath = path.join(created.libraryPath, 'Assets', 'root-file.jpg');
+    const nestedManagedPath = path.join(created.libraryPath, 'Assets', 'nested', 'nested-file.jpg');
+    rmSync(rootManagedPath);
+    rmSync(path.dirname(nestedManagedPath), { recursive: true });
+    service.refreshManagedAssets(created.libraryId);
+
+    const replacementRoot = path.join(root, 'batch-replacements');
+    mkdirSync(path.join(replacementRoot, 'nested'), { recursive: true });
+    writeFileSync(path.join(replacementRoot, 'root-file.jpg'), 'new-root');
+    writeFileSync(path.join(replacementRoot, 'nested', 'nested-file.jpg'), 'new-nested');
+
+    const result = service.relinkBatchApply({
+      libraryId: created.libraryId,
+      newRootPath: replacementRoot,
+      keepMetadata: true,
+    });
+
+    expect(result.restoredCount).toBe(2);
+    expect(readFileSync(rootManagedPath, 'utf8')).toBe('new-root');
+    expect(readFileSync(nestedManagedPath, 'utf8')).toBe('new-nested');
+    expect(service.resolveAssetPath(created.libraryId, rootImport.assets[0]!.assetId)).toBe(rootManagedPath);
+    expect(service.resolveAssetPath(created.libraryId, nestedImport.assets[0]!.assetId)).toBe(nestedManagedPath);
+
+    service.refreshManagedAssets(created.libraryId);
+    expect(service.listAssets({ libraryId: created.libraryId, recursive: true }))
+      .toSatisfy((assets: Array<{ availability: string }>) => assets.every((asset) => asset.availability === 'available'));
+
+    service.closeAll();
+    service.openLibrary(created.libraryPath);
+    expect(readFileSync(service.resolveAssetPath(created.libraryId, rootImport.assets[0]!.assetId), 'utf8')).toBe('new-root');
+    expect(readFileSync(service.resolveAssetPath(created.libraryId, nestedImport.assets[0]!.assetId), 'utf8')).toBe('new-nested');
+    expect(service.listAssets({ libraryId: created.libraryId, recursive: true }))
+      .toSatisfy((assets: Array<{ availability: string }>) => assets.every((asset) => asset.availability === 'available'));
     service.closeAll();
   });
 

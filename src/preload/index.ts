@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
 import type { LibraryApiResult, LinkedAssetDeleteResult, PreviewResolution, SerpentLibraryApi } from '../shared/library-api';
-import type { AssetSummary, AssetMetadataResult, CollectionSummary, LinkedFolderSummary, ManagedFolderSummary, SmartCollectionSummary, TagSummary } from '../shared/asset-types';
+import type { AssetSummary, AssetMetadataResult, CollectionSummary, LinkedFolderSummary, ManagedFolderSummary, SearchScope, SmartCollectionSummary, TagSummary } from '../shared/asset-types';
 import {
   ASSET_CHANGE_CHANNEL,
   THUMBNAIL_CHANNEL,
@@ -338,15 +338,15 @@ const library: SerpentLibraryApi = Object.freeze({
     return { ok: true, value: { collectionId: result.collectionId } };
   },
 
-  async executeSmartCollection({ libraryId, collectionId }: { libraryId: string; collectionId: string }): Promise<LibraryApiResult<{ items: AssetSummary[]; total: number; offset: number }>> {
-    const result = await request({ type: 'smart-collection.execute.request', libraryId, collectionId });
+  async executeSmartCollection({ libraryId, collectionId, limit, offset }: { libraryId: string; collectionId: string; limit?: number; offset?: number }): Promise<LibraryApiResult<{ items: AssetSummary[]; total: number; offset: number }>> {
+    const result = await request({ type: 'smart-collection.execute.request', libraryId, collectionId, limit, offset });
     if (!result.ok) return failure(result);
     if (result.type !== 'smart-collection.executed') throw new Error('Unexpected execute-smart-collection response.');
     return { ok: true, value: { items: result.items, total: result.total, offset: result.offset } };
   },
 
-  async searchAssets({ libraryId, query, filters, sort, limit, offset }: { libraryId: string; query?: { clauses: { field: string | null; values: string[]; exclude: boolean }[] } | null; filters?: { field: 'format' | 'tag' | 'rating' | 'favorite' | 'source_url' | 'availability'; values: string[]; exclude: boolean }[]; sort?: { field: 'name' | 'modified_at' | 'created_at' | 'byte_size' | 'duration' | 'rating'; order: 'asc' | 'desc' }; limit?: number; offset?: number }): Promise<LibraryApiResult<{ items: AssetSummary[]; total: number; offset: number; snippets?: { assetId: string; text: string }[] }>> {
-    const result = await request({ type: 'asset.search.request', libraryId, query: query ?? null, filters, sort, limit, offset });
+  async searchAssets({ libraryId, query, filters, scope, sort, limit, offset }: { libraryId: string; query?: { clauses: { field: string | null; values: string[]; exclude: boolean }[] } | null; filters?: { field: 'format' | 'tag' | 'rating' | 'favorite' | 'source_url' | 'availability'; values: string[]; exclude: boolean }[]; scope?: SearchScope; sort?: { field: 'name' | 'modified_at' | 'created_at' | 'byte_size' | 'duration' | 'rating'; order: 'asc' | 'desc' }; limit?: number; offset?: number }): Promise<LibraryApiResult<{ items: AssetSummary[]; total: number; offset: number; snippets?: { assetId: string; text: string }[] }>> {
+    const result = await request({ type: 'asset.search.request', libraryId, query: query ?? null, filters, scope, sort, limit, offset });
     if (!result.ok) return failure(result);
     if (result.type !== 'asset.search.result') throw new Error('Unexpected search-assets response.');
     return { ok: true, value: { items: result.items, total: result.total, offset: result.offset, snippets: result.snippets } };

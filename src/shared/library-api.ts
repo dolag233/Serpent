@@ -5,6 +5,7 @@ import type {
   CollectionSummary,
   LinkedFolderSummary,
   ManagedFolderSummary,
+  SearchScope,
   SmartCollectionSummary,
   TagSummary,
 } from './asset-types';
@@ -151,9 +152,9 @@ export interface SerpentLibraryApi {
   createSmartCollection(input: { libraryId: string; name: string; queryDefinitionJson: string }): Promise<LibraryApiResult<SmartCollectionSummary>>;
   updateSmartCollection(input: { libraryId: string; collectionId: string; name?: string; queryDefinitionJson?: string; position?: number }): Promise<LibraryApiResult<SmartCollectionSummary>>;
   deleteSmartCollection(input: { libraryId: string; collectionId: string }): Promise<LibraryApiResult<{ collectionId: string }>>;
-  executeSmartCollection(input: { libraryId: string; collectionId: string }): Promise<LibraryApiResult<{ items: AssetSummary[]; total: number; offset: number }>>;
+  executeSmartCollection(input: { libraryId: string; collectionId: string; limit?: number; offset?: number }): Promise<LibraryApiResult<{ items: AssetSummary[]; total: number; offset: number }>>;
   // Search
-  searchAssets(input: { libraryId: string; query?: { clauses: { field: string | null; values: string[]; exclude: boolean }[] } | null; filters?: { field: 'format' | 'tag' | 'rating' | 'favorite' | 'source_url' | 'availability'; values: string[]; exclude: boolean }[]; sort?: { field: 'name' | 'modified_at' | 'created_at' | 'byte_size' | 'duration' | 'rating'; order: 'asc' | 'desc' }; limit?: number; offset?: number }): Promise<LibraryApiResult<{ items: AssetSummary[]; total: number; offset: number; snippets?: { assetId: string; text: string }[] }>>;
+  searchAssets(input: { libraryId: string; query?: { clauses: { field: string | null; values: string[]; exclude: boolean }[] } | null; filters?: { field: 'format' | 'tag' | 'rating' | 'favorite' | 'source_url' | 'availability'; values: string[]; exclude: boolean }[]; scope?: SearchScope; sort?: { field: 'name' | 'modified_at' | 'created_at' | 'byte_size' | 'duration' | 'rating'; order: 'asc' | 'desc' }; limit?: number; offset?: number }): Promise<LibraryApiResult<{ items: AssetSummary[]; total: number; offset: number; snippets?: { assetId: string; text: string }[] }>>;
   // Trash / Delete
   trashAssets(input: { libraryId: string; assetIds: string[] }): Promise<LibraryApiResult<{ trashedCount: number }>>;
   restoreAssets(input: { libraryId: string; assetIds: string[]; targetFolderId?: string }): Promise<LibraryApiResult<{ restoredCount: number; assets: AssetSummary[] }>>;

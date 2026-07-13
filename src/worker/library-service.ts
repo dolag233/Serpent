@@ -37,7 +37,7 @@ import {
   resolveOiiotoolPath,
 } from './binary-resolver';
 
-import type { AssetMetadataResult, AssetSummary, CollectionSummary, LinkedFolderSummary, ManagedFolderSummary, TagSummary } from '../shared/asset-types';
+import { smartCollectionQueryDefinitionSchema, type AssetMetadataResult, type AssetSummary, type CollectionSummary, type LinkedFolderSummary, type ManagedFolderSummary, type SearchScope, type SmartCollectionQueryDefinition, type TagSummary } from '../shared/asset-types';
 
 // sharp is an optional N-API dependency (no rebuild needed for Electron).
 // The Worker loads it lazily so it can still start if sharp is missing.
@@ -3538,6 +3538,7 @@ export class LibraryService {
            JOIN revisions r ON r.revision_id = a.current_revision_id
            LEFT JOIN asset_metadata m ON m.asset_id = a.asset_id
           WHERE ca.collection_id IN (${placeholders})
+            AND a.deleted_at IS NULL
           ORDER BY ca.position, a.relative_file_path`,
       )
       .all(...collectionIds) as Array<{
@@ -5758,7 +5759,7 @@ export class LibraryService {
           const phs = filter.values.map(() => '?').join(',');
           const clause = filter.exclude
             ? `a.asset_id NOT IN (SELECT hat.asset_id FROM human_asset_tags hat JOIN tags t ON t.tag_id = hat.tag_id WHERE t.name = ? COLLATE NOCASE)`
-            : `a.asset_id IN (SELECT hat.asset_id FROM human_asset_tags hat JOIN tags t ON t.tag_id = hat.tag_id WHERE t.name IN (${phs}) COLLATE NOCASE)`;
+            : `a.asset_id IN (SELECT hat.asset_id FROM human_asset_tags hat JOIN tags t ON t.tag_id = hat.tag_id WHERE t.name COLLATE NOCASE IN (${phs}))`;
           // For exclude with multiple values, build separate clauses
           if (filter.exclude && filter.values.length > 1) {
             const notClauses = filter.values.map(() =>
@@ -5811,6 +5812,7 @@ export class LibraryService {
       values: string[];
       exclude: boolean;
     }> | null;
+    scope?: SearchScope | null;
     sort?: { field: string; order: 'asc' | 'desc' } | null;
     limit?: number | null;
     offset?: number | null;
@@ -5829,14 +5831,20 @@ export class LibraryService {
       input.query !== null &&
       input.query !== undefined &&
       input.query.clauses.length > 0;
-    const fts5Query = hasQuery ? buildFts5Query(input.query!.clauses) : null;
+    const hasPositiveQuery = hasQuery && input.query!.clauses.some((clause) => !clause.exclude);
+    const isExcludeOnlyQuery = hasQuery && !hasPositiveQuery;
+    const fts5Query = hasQuery
+      ? buildFts5Query(isExcludeOnlyQuery
+        ? input.query!.clauses.map((clause) => ({ ...clause, exclude: false }))
+        : input.query!.clauses)
+      : null;
     const { sql: filterWhere, params: filterParams } = this.buildFilterWhere(
       input.filters ?? [],
     );
 
     // Build ORDER BY clause.
     let orderBy: string;
-    if (hasQuery) {
+    if (hasPositiveQuery && !input.sort) {
       // When searching, order by BM25 relevance with per-column weights
       // (label 12, filename 10, tags 8, description 5, source_url 3,
       // folder_path 2, metadata_text 1) per ADR-0009. The FTS5 `rank` hidden
@@ -5875,7 +5883,7 @@ export class LibraryService {
     }
 
     // Build the base FROM + JOIN clauses.
-    const baseFrom = hasQuery
+    const baseFrom = hasPositiveQuery
       ? `FROM assets a
            JOIN revisions r ON r.revision_id = a.current_revision_id
            LEFT JOIN asset_metadata m ON m.asset_id = a.asset_id
@@ -5889,28 +5897,101 @@ export class LibraryService {
     const whereParts: string[] = [];
     const allParams: unknown[] = [];
 
-    if (hasQuery) {
+    if (hasPositiveQuery) {
       whereParts.push(
         `asset_search MATCH ? AND rank MATCH 'bm25(12.0, 10.0, 8.0, 5.0, 3.0, 2.0, 1.0)'`,
       );
       allParams.push(fts5Query);
+    } else if (isExcludeOnlyQuery) {
+      whereParts.push(
+        `a.asset_id NOT IN (
+           SELECT excluded.asset_id
+             FROM asset_search_index excluded
+             JOIN asset_search ON excluded.rowid = asset_search.rowid
+            WHERE asset_search MATCH ?
+         )`,
+      );
+      allParams.push(fts5Query);
     }
+
+    // Soft-deleted assets retain their organization relationships for restore,
+    // but never appear in normal discovery results.
+    whereParts.push('a.deleted_at IS NULL');
 
     if (filterWhere.length > 0) {
       whereParts.push(filterWhere);
       allParams.push(...filterParams);
     }
 
+    if (input.scope?.kind === 'folder') {
+      if (input.scope.folderId === null) {
+        whereParts.push(`a.location_kind = 'managed' AND a.managed_folder_id IS NULL`);
+      } else {
+        const folderId = input.scope.folderId;
+        const managed = connection
+          .prepare('SELECT folder_id FROM managed_folders WHERE folder_id = ? AND library_id = ?')
+          .get(folderId, openLibrary.summary.libraryId);
+        const linked = connection
+          .prepare('SELECT folder_id FROM linked_folders WHERE folder_id = ? AND library_id = ?')
+          .get(folderId, openLibrary.summary.libraryId);
+        if (managed) {
+          if (input.scope.recursive) {
+            whereParts.push(`a.managed_folder_id IN (
+              WITH RECURSIVE descendants(folder_id) AS (
+                SELECT folder_id FROM managed_folders WHERE folder_id = ? AND library_id = ?
+                UNION ALL
+                SELECT child.folder_id FROM managed_folders child
+                  JOIN descendants parent ON child.parent_folder_id = parent.folder_id
+                 WHERE child.library_id = ?
+              )
+              SELECT folder_id FROM descendants
+            )`);
+            allParams.push(folderId, openLibrary.summary.libraryId, openLibrary.summary.libraryId);
+          } else {
+            whereParts.push('a.managed_folder_id = ?');
+            allParams.push(folderId);
+          }
+        } else if (linked) {
+          whereParts.push('a.linked_folder_id = ?');
+          allParams.push(folderId);
+        } else {
+          throw new LibraryServiceError('FOLDER_NOT_FOUND');
+        }
+      }
+    } else if (input.scope?.kind === 'collection') {
+      const collection = connection
+        .prepare('SELECT collection_id FROM collections WHERE collection_id = ? AND library_id = ?')
+        .get(input.scope.collectionId, openLibrary.summary.libraryId);
+      if (!collection) throw new LibraryServiceError('FOLDER_NOT_FOUND');
+      if (input.scope.recursive) {
+        whereParts.push(`a.asset_id IN (
+          WITH RECURSIVE descendants(collection_id) AS (
+            SELECT collection_id FROM collections WHERE collection_id = ? AND library_id = ?
+            UNION ALL
+            SELECT child.collection_id FROM collections child
+              JOIN descendants parent ON child.parent_id = parent.collection_id
+             WHERE child.library_id = ?
+          )
+          SELECT ca.asset_id FROM collection_assets ca
+            JOIN descendants d ON d.collection_id = ca.collection_id
+        )`);
+        allParams.push(input.scope.collectionId, openLibrary.summary.libraryId, openLibrary.summary.libraryId);
+      } else {
+        whereParts.push('a.asset_id IN (SELECT asset_id FROM collection_assets WHERE collection_id = ?)');
+        allParams.push(input.scope.collectionId);
+      }
+    }
+
     const whereClause =
       whereParts.length > 0 ? `WHERE ${whereParts.join(' AND ')}` : '';
 
     // Columns for data query.
-    const dataColumns = hasQuery
+    const dataColumns = hasPositiveQuery
       ? `a.asset_id, a.location_kind, a.managed_folder_id, a.relative_file_path, a.current_revision_id,
          a.availability, r.byte_size, r.modified_at,
          m.label, COALESCE(m.rating, 0) AS rating, COALESCE(m.favorite, 0) AS favorite,
          a.deleted_at, a.trashed_from_relative_path,
-         snippet(asset_search, 0, '<b>', '</b>', '...', 32) AS snippet_text`
+         snippet(asset_search, -1, '<b>', '</b>', '...', 32) AS snippet_text`
       : `a.asset_id, a.location_kind, a.managed_folder_id, a.relative_file_path, a.current_revision_id,
          a.availability, r.byte_size, r.modified_at,
          m.label, COALESCE(m.rating, 0) AS rating, COALESCE(m.favorite, 0) AS favorite,
@@ -5947,7 +6028,7 @@ export class LibraryService {
     const items: AssetSummary[] = rows.map((row) => this.assetSummaryFromRow(row));
 
     const snippets: Array<{ assetId: string; text: string }> | undefined =
-      hasQuery
+      hasPositiveQuery
         ? rows
             .filter((r) => r.snippet_text && r.snippet_text.length > 0)
             .map((r) => ({ assetId: r.asset_id, text: r.snippet_text! }))
@@ -5967,12 +6048,7 @@ export class LibraryService {
     const trimmed = input.name.trim();
     if (trimmed.length === 0) throw new LibraryServiceError('INVALID_FOLDER_NAME');
 
-    // Validate queryDefinitionJson is parseable JSON.
-    try {
-      JSON.parse(input.queryDefinitionJson);
-    } catch {
-      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
-    }
+    this.parseSmartCollectionDefinition(input.queryDefinitionJson, 'INVALID_IMPORT_DECISION');
 
     const collectionId = randomUUID();
     const now = new Date().toISOString();
@@ -6069,11 +6145,7 @@ export class LibraryService {
 
     // Validate queryDefinitionJson if provided.
     if (input.queryDefinitionJson !== undefined) {
-      try {
-        JSON.parse(input.queryDefinitionJson);
-      } catch {
-        throw new LibraryServiceError('INVALID_IMPORT_DECISION');
-      }
+      this.parseSmartCollectionDefinition(input.queryDefinitionJson, 'INVALID_IMPORT_DECISION');
     }
 
     try {
@@ -6124,6 +6196,8 @@ export class LibraryService {
   executeSmartCollection(input: {
     libraryId: string;
     collectionId: string;
+    limit?: number;
+    offset?: number;
   }): { items: AssetSummary[]; total: number; offset: number } {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     const sc = openLibrary.connection
@@ -6136,29 +6210,28 @@ export class LibraryService {
       } | undefined;
     if (!sc) throw new LibraryServiceError('FOLDER_NOT_FOUND');
 
-    let definition: {
-      search?: { clauses: SearchClause[] };
-      filters?: Array<{
-        field: 'availability' | 'favorite' | 'format' | 'rating' | 'source_url' | 'tag';
-        values: string[];
-        exclude: boolean;
-      }>;
-      sort?: { field: string; order: 'asc' | 'desc' };
-    };
-    try {
-      definition = JSON.parse(sc.query_definition_json);
-    } catch {
-      throw new LibraryServiceError('LIBRARY_CORRUPT');
-    }
+    const definition = this.parseSmartCollectionDefinition(sc.query_definition_json, 'LIBRARY_CORRUPT');
 
     return this.searchAssets({
       libraryId: input.libraryId,
       query: definition.search ?? null,
       filters: definition.filters ?? null,
       sort: definition.sort ?? null,
-      limit: 50,
-      offset: 0,
+      limit: input.limit ?? 50,
+      offset: input.offset ?? 0,
     });
+  }
+
+  private parseSmartCollectionDefinition(
+    value: string,
+    errorCode: 'INVALID_IMPORT_DECISION' | 'LIBRARY_CORRUPT',
+  ): SmartCollectionQueryDefinition {
+    if (value.length > 65_536) throw new LibraryServiceError(errorCode);
+    try {
+      return smartCollectionQueryDefinitionSchema.parse(JSON.parse(value));
+    } catch {
+      throw new LibraryServiceError(errorCode);
+    }
   }
 
   // ── Trash & Relink (v7) ───────────────────────────────────────────
@@ -6214,6 +6287,101 @@ export class LibraryService {
     } catch (error) {
       if (error instanceof LibraryServiceError) throw error;
       throw new LibraryServiceError('INVALID_IMPORT_SOURCE', { cause: error });
+    }
+  }
+
+  private placeManagedRelinkFile(
+    openLibrary: OpenLibrary,
+    sourcePath: string,
+    destinationRelativePath: string,
+  ): { destinationPath: string; operationPath: string; stat: Stats } {
+    const destinationPath = this.folderPath(openLibrary, destinationRelativePath);
+    if (existsSync(destinationPath)) {
+      throw new LibraryServiceError('INVALID_IMPORT_DECISION', {
+        reason: 'SOURCE_CHANGED',
+      });
+    }
+
+    let sourceStat: BigIntStats;
+    try {
+      sourceStat = lstatSync(sourcePath, { bigint: true });
+    } catch (error) {
+      throw serviceError(error, 'INVALID_IMPORT_SOURCE');
+    }
+    if (!sourceStat.isFile() || sourceStat.isSymbolicLink()) {
+      throw new LibraryServiceError('INVALID_IMPORT_SOURCE', {
+        reason: sourceStat.isSymbolicLink()
+          ? 'SYMBOLIC_LINK_NOT_ALLOWED'
+          : 'UNSUPPORTED_FILE_ENTRY',
+      });
+    }
+
+    const operationPath = path.join(
+      openLibrary.summary.libraryPath,
+      '.serpent',
+      'operations',
+      `relink-${randomUUID()}`,
+    );
+    const stagedPath = path.join(operationPath, 'replacement');
+    try {
+      mkdirSync(operationPath, { recursive: true });
+      this.copySourceSnapshot({
+        byteSize: Number(sourceStat.size),
+        destinationRelativePath,
+        sourcePath,
+        sourceSnapshot: sourceSnapshot(sourceStat),
+      }, stagedPath);
+    } catch (error) {
+      rmSync(operationPath, { force: true, recursive: true });
+      throw serviceError(error, 'INVALID_IMPORT_SOURCE');
+    }
+
+    let placed = false;
+    try {
+      mkdirSync(path.dirname(destinationPath), { recursive: true });
+      // Re-validate after creating a missing original directory hierarchy so a
+      // symlink introduced between validation and placement cannot escape Assets/.
+      if (this.folderPath(openLibrary, destinationRelativePath) !== destinationPath) {
+        throw new LibraryServiceError('INVALID_LIBRARY_PATH');
+      }
+      if (existsSync(destinationPath)) {
+        throw new LibraryServiceError('INVALID_IMPORT_DECISION', {
+          reason: 'SOURCE_CHANGED',
+        });
+      }
+      renameSync(stagedPath, destinationPath);
+      placed = true;
+      return {
+        destinationPath,
+        operationPath,
+        stat: statSync(destinationPath),
+      };
+    } catch (error) {
+      if (placed) rmSync(destinationPath, { force: true });
+      rmSync(operationPath, { force: true, recursive: true });
+      throw serviceError(error, 'LIBRARY_NOT_WRITABLE');
+    }
+  }
+
+  private cleanupManagedRelinkPlacement(
+    placement: { destinationPath: string; operationPath: string },
+    removeDestination: boolean,
+  ): void {
+    if (removeDestination) {
+      try {
+        rmSync(placement.destinationPath, { force: true });
+      } catch (error) {
+        this.diagnose('asset.relink.rollback-file', error, {
+          destinationPath: placement.destinationPath,
+        });
+      }
+    }
+    try {
+      rmSync(placement.operationPath, { force: true, recursive: true });
+    } catch (error) {
+      this.diagnose('asset.relink.cleanup-operation', error, {
+        operationPath: placement.operationPath,
+      });
     }
   }
 
@@ -6977,9 +7145,18 @@ export class LibraryService {
     this.assertNotInManagedSpace(openLibrary, newPath);
     this.assertNoSymlinkEscape(newPath);
 
-    const fileStat = statSync(newPath);
+    let managedPlacement:
+      | { destinationPath: string; operationPath: string; stat: Stats }
+      | undefined;
+    const fileStat = assetRow.location_kind === 'managed'
+      ? (managedPlacement = this.placeManagedRelinkFile(
+          openLibrary,
+          newPath,
+          assetRow.relative_file_path,
+        )).stat
+      : statSync(newPath);
     const now = new Date().toISOString();
-    const originalFilename = path.posix.basename(assetRow.relative_file_path);
+    let resolvedRelativePath = assetRow.relative_file_path;
 
     // For linked assets, verify the file is within the linked root
     if (assetRow.location_kind === 'linked' && assetRow.linked_folder_id) {
@@ -6996,42 +7173,75 @@ export class LibraryService {
               reason: 'NAME_NOT_SUPPORTED',
             });
           }
+          resolvedRelativePath = normalizeRelativeAssetPath(relation.split(path.sep).join('/'));
         } catch (error) {
           if (error instanceof LibraryServiceError) throw error;
           // If realpath fails, the file is likely not within the root
         }
       }
     }
+    const originalFilename = path.posix.basename(resolvedRelativePath);
 
-    openLibrary.connection.transaction(() => {
-      const revisionId = randomUUID();
-      openLibrary.connection
-        .prepare(
-          `INSERT INTO revisions
-             (revision_id, asset_id, parent_revision_id, byte_size, modified_at,
-              original_filename, origin, accepted_at)
-           VALUES (?, ?, ?, ?, ?, ?, 'relink', ?)`,
-        )
-        .run(
-          revisionId,
-          input.assetId,
-          assetRow.current_revision_id ?? null,
-          fileStat.size,
-          fileStat.mtime.toISOString(),
-          originalFilename,
-          now,
-        );
+    try {
+      openLibrary.connection.transaction(() => {
+        const revisionId = randomUUID();
+        openLibrary.connection
+          .prepare(
+            `INSERT INTO revisions
+               (revision_id, asset_id, parent_revision_id, byte_size, modified_at,
+                original_filename, origin, accepted_at)
+             VALUES (?, ?, ?, ?, ?, ?, 'relink', ?)`,
+          )
+          .run(
+            revisionId,
+            input.assetId,
+            assetRow.current_revision_id ?? null,
+            fileStat.size,
+            fileStat.mtime.toISOString(),
+            originalFilename,
+            now,
+          );
 
-      openLibrary.connection
-        .prepare(
-          `UPDATE assets
-              SET current_revision_id = ?, availability = 'available', updated_at = ?
-            WHERE asset_id = ?`,
-        )
-        .run(revisionId, now, input.assetId);
+        openLibrary.connection
+          .prepare(
+            `UPDATE assets
+                SET current_revision_id = ?, availability = 'available',
+                    relative_file_path = ?, path_identity = ?, updated_at = ?
+              WHERE asset_id = ?`,
+          )
+          .run(
+            revisionId,
+            resolvedRelativePath,
+            portablePathIdentity(resolvedRelativePath),
+            now,
+            input.assetId,
+          );
 
-      this.syncAssetSearchContent(openLibrary.connection, input.assetId);
-    })();
+        if (assetRow.current_revision_id) {
+          openLibrary.connection
+            .prepare(
+              `UPDATE revision_artifacts
+                  SET invalidated_at = ?
+                WHERE revision_id = ? AND invalidated_at IS NULL`,
+            )
+            .run(now, assetRow.current_revision_id);
+        }
+        openLibrary.connection
+          .prepare(
+            `INSERT OR IGNORE INTO jobs
+               (job_id, library_id, asset_id, revision_id, kind, status, priority,
+                progress, attempt_count, created_at, updated_at)
+             VALUES (?, ?, ?, ?, 'generate_thumbnail', 'queued', 0, 0.0, 0, ?, ?)`,
+          )
+          .run(randomUUID(), input.libraryId, input.assetId, revisionId, now, now);
+
+        this.syncAssetSearchContent(openLibrary.connection, input.assetId);
+      })();
+    } catch (error) {
+      if (managedPlacement) this.cleanupManagedRelinkPlacement(managedPlacement, true);
+      throw serviceError(error, 'LIBRARY_NOT_WRITABLE');
+    }
+    if (managedPlacement) this.cleanupManagedRelinkPlacement(managedPlacement, false);
 
     // Fetch the updated asset
     const updated = openLibrary.connection
@@ -7165,109 +7375,152 @@ export class LibraryService {
     const operationId = randomUUID();
     let restoredCount = 0;
     const restoredAssets: AssetSummary[] = [];
+    const managedPlacements: Array<{
+      destinationPath: string;
+      operationPath: string;
+      stat: Stats;
+    }> = [];
 
-    openLibrary.connection.transaction(() => {
-      const manifest: OperationManifest = {
-        version: 1,
-        files: [],
-        directories: [],
-      };
-      openLibrary.connection
-        .prepare(
-          `INSERT INTO file_operations
-             (operation_id, kind, status, manifest_json, error_code, created_at, updated_at)
-           VALUES (?, 'relink-batch', 'committed', ?, NULL, ?, ?)`,
-        )
-        .run(operationId, JSON.stringify(manifest), now, now);
+    try {
+      openLibrary.connection.transaction(() => {
+        const manifest: OperationManifest = {
+          version: 1,
+          files: [],
+          directories: [],
+        };
+        openLibrary.connection
+          .prepare(
+            `INSERT INTO file_operations
+               (operation_id, kind, status, manifest_json, error_code, created_at, updated_at)
+             VALUES (?, 'relink-batch', 'committed', ?, NULL, ?, ?)`,
+          )
+          .run(operationId, JSON.stringify(manifest), now, now);
 
-      for (const asset of rows) {
-        const segments = asset.relative_file_path.split('/');
-        let matchedPath: string | undefined;
-        for (let n = Math.min(segments.length, 5); n >= 1; n -= 1) {
-          const candidateSegments = segments.slice(-n);
-          const candidatePath = path.join(newRoot, ...candidateSegments);
-          try {
-            const entry = lstatSync(candidatePath);
-            if (entry.isFile() && !entry.isSymbolicLink()) {
-              matchedPath = candidatePath;
-              break;
-            }
-          } catch {
-            // Continue
-          }
-        }
-
-        if (!matchedPath) continue;
-
-        // For linked assets, verify within linked root
-        if (asset.location_kind === 'linked' && asset.linked_folder_id) {
-          const linkedFolder = openLibrary.connection
-            .prepare('SELECT absolute_root_path FROM linked_folders WHERE folder_id = ?')
-            .get(asset.linked_folder_id) as { absolute_root_path: string } | undefined;
-          if (linkedFolder) {
+        for (const asset of rows) {
+          const segments = asset.relative_file_path.split('/');
+          let matchedPath: string | undefined;
+          for (let n = Math.min(segments.length, 5); n >= 1; n -= 1) {
+            const candidateSegments = segments.slice(-n);
+            const candidatePath = path.join(newRoot, ...candidateSegments);
             try {
-              const canonicalRoot = realpathSync(linkedFolder.absolute_root_path);
-              const canonicalNew = realpathSync(matchedPath);
-              const relation = path.relative(canonicalRoot, canonicalNew);
-              if (relation === '' || relation.startsWith(`..${path.sep}`) || path.isAbsolute(relation)) {
-                continue;
+              const entry = lstatSync(candidatePath);
+              if (entry.isFile() && !entry.isSymbolicLink()) {
+                matchedPath = candidatePath;
+                break;
               }
             } catch {
-              continue;
+              // Continue
             }
           }
-        }
 
-        const fileStat = statSync(matchedPath);
-        const revisionId = randomUUID();
-        openLibrary.connection
-          .prepare(
-            `INSERT INTO revisions
-               (revision_id, asset_id, parent_revision_id, byte_size, modified_at,
-                original_filename, origin, accepted_at)
-             VALUES (?, ?, ?, ?, ?, ?, 'relink', ?)`,
-          )
-          .run(
-            revisionId,
-            asset.asset_id,
-            asset.current_revision_id ?? null,
-            fileStat.size,
-            fileStat.mtime.toISOString(),
-            path.posix.basename(asset.relative_file_path),
-            now,
-          );
+          if (!matchedPath) continue;
 
-        openLibrary.connection
-          .prepare(
-            `UPDATE assets
-                SET current_revision_id = ?, availability = 'available', updated_at = ?
-              WHERE asset_id = ?`,
-          )
-          .run(revisionId, now, asset.asset_id);
+          // For linked assets, verify within linked root
+          if (asset.location_kind === 'linked' && asset.linked_folder_id) {
+            const linkedFolder = openLibrary.connection
+              .prepare('SELECT absolute_root_path FROM linked_folders WHERE folder_id = ?')
+              .get(asset.linked_folder_id) as { absolute_root_path: string } | undefined;
+            if (linkedFolder) {
+              try {
+                const canonicalRoot = realpathSync(linkedFolder.absolute_root_path);
+                const canonicalNew = realpathSync(matchedPath);
+                const relation = path.relative(canonicalRoot, canonicalNew);
+                if (relation === '' || relation.startsWith(`..${path.sep}`) || path.isAbsolute(relation)) {
+                  continue;
+                }
+              } catch {
+                continue;
+              }
+            }
+          }
 
-        if (!input.keepMetadata) {
-          // Clear human metadata
+          const fileStat = asset.location_kind === 'managed'
+            ? (() => {
+                const placement = this.placeManagedRelinkFile(
+                  openLibrary,
+                  matchedPath,
+                  asset.relative_file_path,
+                );
+                managedPlacements.push(placement);
+                return placement.stat;
+              })()
+            : statSync(matchedPath);
+          const revisionId = randomUUID();
           openLibrary.connection
             .prepare(
-              `UPDATE asset_metadata
-                  SET label = NULL, description = NULL, rating = 0, favorite = 0,
-                      palette = NULL, source_page_url = NULL,
-                      entity_version = entity_version + 1, updated_at = ?
+              `INSERT INTO revisions
+                 (revision_id, asset_id, parent_revision_id, byte_size, modified_at,
+                  original_filename, origin, accepted_at)
+               VALUES (?, ?, ?, ?, ?, ?, 'relink', ?)`,
+            )
+            .run(
+              revisionId,
+              asset.asset_id,
+              asset.current_revision_id ?? null,
+              fileStat.size,
+              fileStat.mtime.toISOString(),
+              path.posix.basename(asset.relative_file_path),
+              now,
+            );
+
+          openLibrary.connection
+            .prepare(
+              `UPDATE assets
+                  SET current_revision_id = ?, availability = 'available', updated_at = ?
                 WHERE asset_id = ?`,
             )
-            .run(now, asset.asset_id);
-          openLibrary.connection
-            .prepare('DELETE FROM human_asset_tags WHERE asset_id = ?')
-            .run(asset.asset_id);
-          openLibrary.connection
-            .prepare('DELETE FROM collection_assets WHERE asset_id = ?')
-            .run(asset.asset_id);
-        }
+            .run(revisionId, now, asset.asset_id);
 
-        this.syncAssetSearchContent(openLibrary.connection, asset.asset_id);
-        restoredCount += 1;
+          if (asset.current_revision_id) {
+            openLibrary.connection
+              .prepare(
+                `UPDATE revision_artifacts
+                    SET invalidated_at = ?
+                  WHERE revision_id = ? AND invalidated_at IS NULL`,
+              )
+              .run(now, asset.current_revision_id);
+          }
+          openLibrary.connection
+            .prepare(
+              `INSERT OR IGNORE INTO jobs
+                 (job_id, library_id, asset_id, revision_id, kind, status, priority,
+                  progress, attempt_count, created_at, updated_at)
+               VALUES (?, ?, ?, ?, 'generate_thumbnail', 'queued', 0, 0.0, 0, ?, ?)`,
+            )
+            .run(randomUUID(), input.libraryId, asset.asset_id, revisionId, now, now);
+
+          if (!input.keepMetadata) {
+            // Clear human metadata
+            openLibrary.connection
+              .prepare(
+                `UPDATE asset_metadata
+                    SET label = NULL, description = NULL, rating = 0, favorite = 0,
+                        palette = NULL, source_page_url = NULL,
+                        entity_version = entity_version + 1, updated_at = ?
+                  WHERE asset_id = ?`,
+              )
+              .run(now, asset.asset_id);
+            openLibrary.connection
+              .prepare('DELETE FROM human_asset_tags WHERE asset_id = ?')
+              .run(asset.asset_id);
+            openLibrary.connection
+              .prepare('DELETE FROM collection_assets WHERE asset_id = ?')
+              .run(asset.asset_id);
+          }
+
+          this.syncAssetSearchContent(openLibrary.connection, asset.asset_id);
+          restoredCount += 1;
+        }
+      })();
+    } catch (error) {
+      for (const placement of managedPlacements) {
+        this.cleanupManagedRelinkPlacement(placement, true);
       }
-    })();
+      throw serviceError(error, 'LIBRARY_NOT_WRITABLE');
+    }
+    for (const placement of managedPlacements) {
+      this.cleanupManagedRelinkPlacement(placement, false);
+    }
 
     // Fetch restored assets
     if (restoredCount > 0) {

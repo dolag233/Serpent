@@ -573,6 +573,7 @@ async function commandFor(request: RendererRequest): Promise<WorkerCommand | und
         libraryId: request.libraryId,
         query: request.query,
         filters: request.filters,
+        scope: request.scope,
         sort: request.sort,
         limit: request.limit,
         offset: request.offset,
@@ -606,6 +607,8 @@ async function commandFor(request: RendererRequest): Promise<WorkerCommand | und
         type: 'smart-collection.execute',
         libraryId: request.libraryId,
         collectionId: request.collectionId,
+        limit: request.limit,
+        offset: request.offset,
       };
     case 'asset.trash.request':
       return { type: 'asset.trash', libraryId: request.libraryId, assetIds: request.assetIds };

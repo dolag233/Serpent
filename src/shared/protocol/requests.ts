@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { filterClauseSchema, searchQuerySchema, sortDefinitionSchema } from '../asset-types';
+import { filterClauseSchema, searchQuerySchema, searchScopeSchema, sortDefinitionSchema } from '../asset-types';
 
 const nonBlankString = z.string().min(1).refine((value) => value.trim().length > 0, {
   message: 'Value must not be blank.',
@@ -11,6 +11,7 @@ const identifierSchema = nonBlankString.max(255);
 const selectedPathSchema = nonBlankString;
 const optionalIdentifierSchema = identifierSchema.optional();
 const optionalDescriptionSchema = nonBlankString.max(10000).optional();
+const queryDefinitionJsonSchema = nonBlankString.max(65_536);
 
 export const suspectedDuplicateDecisionSchema = z.enum(['skip', 'merge', 'create-copy']);
 export const nameConflictDecisionSchema = z.enum(['keep-both', 'replace', 'skip']);
@@ -190,7 +191,8 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     type: z.literal('asset.search.request'),
     libraryId: identifierSchema,
     query: searchQuerySchema,
-    filters: z.array(filterClauseSchema).optional(),
+    filters: z.array(filterClauseSchema).max(16).optional(),
+    scope: searchScopeSchema.optional(),
     sort: sortDefinitionSchema.optional(),
     limit: z.number().int().positive().max(200).optional(),
     offset: z.number().int().nonnegative().optional(),
@@ -203,14 +205,14 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     type: z.literal('smart-collection.create.request'),
     libraryId: identifierSchema,
     name: displayNameSchema,
-    queryDefinitionJson: nonBlankString,
+    queryDefinitionJson: queryDefinitionJsonSchema,
   }),
   z.strictObject({
     type: z.literal('smart-collection.update.request'),
     libraryId: identifierSchema,
     collectionId: identifierSchema,
     name: optionalIdentifierSchema,
-    queryDefinitionJson: optionalIdentifierSchema,
+    queryDefinitionJson: queryDefinitionJsonSchema.optional(),
     position: z.number().int().nonnegative().optional(),
   }),
   z.strictObject({
@@ -222,6 +224,8 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     type: z.literal('smart-collection.execute.request'),
     libraryId: identifierSchema,
     collectionId: identifierSchema,
+    limit: z.number().int().positive().max(200).optional(),
+    offset: z.number().int().nonnegative().optional(),
   }),
   z.strictObject({
     type: z.literal('asset.trash.request'),
@@ -576,7 +580,8 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     type: z.literal('asset.search'),
     libraryId: identifierSchema,
     query: searchQuerySchema,
-    filters: z.array(filterClauseSchema).optional(),
+    filters: z.array(filterClauseSchema).max(16).optional(),
+    scope: searchScopeSchema.optional(),
     sort: sortDefinitionSchema.optional(),
     limit: z.number().int().positive().max(200).optional(),
     offset: z.number().int().nonnegative().optional(),
@@ -589,14 +594,14 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     type: z.literal('smart-collection.create'),
     libraryId: identifierSchema,
     name: displayNameSchema,
-    queryDefinitionJson: nonBlankString,
+    queryDefinitionJson: queryDefinitionJsonSchema,
   }),
   z.strictObject({
     type: z.literal('smart-collection.update'),
     libraryId: identifierSchema,
     collectionId: identifierSchema,
     name: optionalIdentifierSchema,
-    queryDefinitionJson: optionalIdentifierSchema,
+    queryDefinitionJson: queryDefinitionJsonSchema.optional(),
     position: z.number().int().nonnegative().optional(),
   }),
   z.strictObject({
@@ -608,6 +613,8 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     type: z.literal('smart-collection.execute'),
     libraryId: identifierSchema,
     collectionId: identifierSchema,
+    limit: z.number().int().positive().max(200).optional(),
+    offset: z.number().int().nonnegative().optional(),
   }),
   z.strictObject({
     type: z.literal('asset.trash'),

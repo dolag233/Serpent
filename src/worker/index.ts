@@ -228,6 +228,7 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
         libraryId: request.command.libraryId,
         query: request.command.query,
         filters: request.command.filters ?? null,
+        scope: request.command.scope ?? null,
         sort: request.command.sort ?? null,
         limit: request.command.limit ?? 50,
         offset: request.command.offset ?? 0,
