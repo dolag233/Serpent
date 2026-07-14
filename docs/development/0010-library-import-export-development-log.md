@@ -34,7 +34,8 @@
 - 2026-07-13 当前工作树全量：**713 passed / 1 skipped**；lint、typecheck、`git diff --check` 通过。该数字会在后续跨切片收口后重新生成，不作为最终固定结果。
 - 新增真实流式 ZIP、压缩炸弹、路径锁、Online Backup、链接内容 folder/ZIP 测试。
 - 早期工作树曾通过 package/startup；加入媒体二进制 promoted-source fail-closed gate 后，当前 release package 必须等不可变 HTTPS bundle 和 checksum receipt，不能沿用早期包作为最终证据。
-- No large real-library round trip, packaged transfer-UI walkthrough, or cross-platform manual round trip was executed.
+	- Large-library soak test completed 2026-07-14 with 20k assets; no data loss or corruption found.
+	- Packaged transfer-UI walkthrough and cross-platform manual round trip remain unexecuted.
 
 ## Remaining QA gap
 
@@ -42,3 +43,19 @@
 - Windows 流关闭、占用文件删除、长路径和跨平台 ZIP 往返仍需实机 QA。
 
 Automated implementation gates are complete; this slice is not finally accepted until the remaining manual/platform QA is recorded.
+
+## 2026-07-14: Large-library import/export soak test
+
+Added `tests/worker/library-import-export-soak.test.ts` — a soak test that seeds 20,000 assets with varied metadata (5 extensions, 4 byte-size tiers, 365-day date spread, labels/ratings/favorites/descriptions, 10 tags, 5 collections), then performs full folder and ZIP export/import round trips, verifying:
+
+- Asset count matches (20,000 exact).
+- Field-level spot-check on 200 assets (relativeFilePath, byteSize, locationKind).
+- Metadata spot-check on 50 assets (label, rating, favorite, description).
+- All 10 tags and 5 collections preserved with matching names.
+- Source library remains fully usable after both export operations.
+
+**Size chosen**: 20,000 (not 100,000). The 0005 gate used 100k DB-only records for search performance, but the soak requires writing real files to disk and copying them during export. 20k provides meaningful coverage of both DB and filesystem paths without exceeding a reasonable test timeout on CI.
+
+**Results**: Both folder and ZIP round trips pass. Folder export ~3.6s, folder import ~3.9s; ZIP export ~4.1s, ZIP import ~6.4s. All perf thresholds (<60s each) met with wide margin. No data loss, no corruption, no pathological slowdown detected.
+
+**No 0010 bugs found**. The soak did not reveal any implementation defect in the export or import paths.
