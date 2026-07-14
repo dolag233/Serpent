@@ -16,6 +16,71 @@ import {
 } from '../../src/shared/protocol/responses';
 
 describe('renderer request protocol', () => {
+  it('requires an opaque preview token to apply or cancel batch relinking', () => {
+    expect(parseRendererRequest({
+      type: 'asset.relink-batch.apply.request',
+      libraryId: 'library-01',
+      previewId: 'preview-01',
+      keepMetadata: true,
+    })).toMatchObject({ previewId: 'preview-01' });
+    expect(parseRendererRequest({
+      type: 'asset.relink-batch.cancel.request',
+      libraryId: 'library-01',
+      previewId: 'preview-01',
+    })).toMatchObject({ previewId: 'preview-01' });
+
+    expect(() => parseRendererRequest({
+      type: 'asset.relink-batch.apply.request',
+      libraryId: 'library-01',
+      keepMetadata: true,
+    })).toThrow();
+    expect(() => parseRendererRequest({
+      type: 'asset.relink-batch.apply.request',
+      libraryId: 'library-01',
+      previewId: 'preview-01',
+      keepMetadata: true,
+      newRootPath: '/must-not-cross-the-renderer-boundary',
+    })).toThrow();
+  });
+
+  it('exposes the relink preview token only on the renderer response', () => {
+    const preview = {
+      ok: true as const,
+      type: 'asset.relink-batch.preview' as const,
+      matchedCount: 1,
+      unmatchedCount: 1,
+      totalCount: 2,
+      examples: [{ relativeFilePath: 'image.png', matched: true }],
+    };
+    expect(parseWorkerResponse({
+      requestId: 'relink-preview-01',
+      result: preview,
+    }).result).not.toHaveProperty('previewId');
+    expect(parseRendererResult({ ...preview, previewId: 'preview-01' }))
+      .toMatchObject({ previewId: 'preview-01' });
+    expect(() => parseRendererResult(preview)).toThrow();
+    expect(parseRendererResult({
+      ok: true,
+      type: 'asset.relink-batch.cancelled',
+      previewId: 'preview-01',
+    })).toMatchObject({ previewId: 'preview-01' });
+
+    for (const unsafePath of ['/tmp/private.png', 'C:\\private.png', '\\\\server\\share\\private.png']) {
+      expect(() => parseWorkerResponse({
+        requestId: 'unsafe-worker-preview',
+        result: {
+          ...preview,
+          examples: [{ relativeFilePath: unsafePath, matched: true }],
+        },
+      })).toThrow();
+      expect(() => parseRendererResult({
+        ...preview,
+        previewId: 'preview-unsafe',
+        examples: [{ relativeFilePath: unsafePath, matched: true }],
+      })).toThrow();
+    }
+  });
+
   it('round-trips persisted linked-folder rule identifiers without requiring UUIDs', () => {
     const rule = { ruleId: 'folder-id:default:0', action: 'exclude' as const, target: 'folder' as const, pattern: '.git', enabled: true };
     expect(parseWorkerRequest({

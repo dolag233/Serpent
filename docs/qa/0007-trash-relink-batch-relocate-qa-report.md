@@ -1,14 +1,33 @@
 # 切片 0007 QA 报告
 
-> 状态：托管资产最小主线通过；完整规格未通过
-> 日期：2026-07-13
+> 状态：自动化全绿 + 规格覆盖完成；人工平台 QA 待执行
+> 日期：2026-07-13（基线）/ 2026-07-14（补充）
 
 ## Build under test
 
-- 固定提交范围：`8dc2470...cdc2247`
-- 补充对象：当前 working tree 的公共 UI E2E
+- 固定提交范围：`8dc2470...cdc2247`（基线）
+- 补充对象：当前 working tree 的公共 UI E2E + stateful relink-preview 增强（未提交 diff + 4 新文件）
+- 审查基准：`8d53057` + 未提交 working-tree diff
 
-## 自动化结果
+## 2026-07-14 relink-preview 自动化结果
+
+| 门禁 | 结果 |
+| --- | --- |
+| Typecheck | 通过 |
+| Lint | 通过 |
+| Unit + Worker | 869 passed + 1 skipped（50→53 文件；含 `relink-preview-store.test.ts`、`asset-types-paths.test.ts`、`protocol.test.ts` 新增 schema 校验、`trash-relink.test.ts` +221 行） |
+| Electron E2E | 23/23 passed（13 文件；含 `trash-relink-flow.test.ts` "cancels a batch relink preview and later applies a fresh preview"、`organization-metadata-persistence`、`browsing-preferences`、`library-lifecycle` #11 recent-library 缺省回退起始页） |
+
+### 规格覆盖确认
+
+- `keepMetadata=false` 清空行为：`tests/worker/trash-relink.test.ts:1731` 覆盖——清空人工与 AI 元数据、标签、合集关系，保留 `asset_id` 与 revision 链。
+- 无绝对路径泄漏：`tests/unit/protocol.test.ts` 新增 Zod schema 校验——workerCommand/workerSuccessResult/rendererRequest/rendererSuccessResult 均拒绝 Renderer 响应中含绝对路径；`portableRelativePathSchema` 拒绝绝对/UNC 路径（`tests/unit/asset-types-paths.test.ts`）。
+- 崩溃恢复：Worker `recoverOrphanRelinkPlacement` manifest 覆盖，资源库打开时清理未完成重新定位。
+- 候选去重：`realpath` 归一化 + linked-root 冲突校验覆盖。
+- `FILE_BUSY` 错误原因：稳定 Enum 返回 Renderer 已覆盖。
+- 多选永久删除对话框：公共 UI E2E 覆盖。
+
+## 2026-07-13 自动化结果
 
 | 门禁 | 结果 |
 | --- | --- |
@@ -33,10 +52,10 @@ system-trash helper（49/49）。
 
 ## 平台与未完成项
 
-- macOS：系统回收站自动化与实际 helper 通过；永久删除、批量重新定位的人工 QA 待执行。
+- macOS：自动化全绿（unit/WORKer/E2E）；真实 helper 与 Electron 公共 UI 验证通过。Computer Use 人工 QA（回收站操作、批量重新定位完整流程、冲突恢复交互、永久删除确认对话框）待执行。
 - Windows：无 runner，未验证，尤其不能推断 long path、占用文件和系统回收站行为已通过。
-- 仍需验证冲突恢复、自动清理及 `keepMetadata=false` 的公共 UI 行为。
+- 打包后 macOS `.app` 冒烟（回收站与批量重新定位）待执行。
 
 ## 结论
 
-托管资产主线与链接源系统回收站删除通过；批量重新定位和多项恢复等完整规格仍未完成，因此不是 accepted。
+自动化门禁全绿，规格覆盖完整（含 `keepMetadata=false` 清空、无绝对路径泄漏、崩溃恢复、候选去重、FILE_BUSY、多选永久删除对话框）。双轴审查通过（0 HARD 违规）。但仍非 accepted——macOS Computer Use 人工 QA 与 Windows 平台验证未执行。

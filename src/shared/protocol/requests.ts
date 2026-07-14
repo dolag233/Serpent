@@ -375,7 +375,13 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
   z.strictObject({
     type: z.literal('asset.relink-batch.apply.request'),
     libraryId: identifierSchema,
+    previewId: identifierSchema,
     keepMetadata: z.boolean(),
+  }),
+  z.strictObject({
+    type: z.literal('asset.relink-batch.cancel.request'),
+    libraryId: identifierSchema,
+    previewId: identifierSchema,
   }),
   z.strictObject({
     type: z.literal('library.export.request'),

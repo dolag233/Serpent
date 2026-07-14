@@ -33,6 +33,7 @@ export type LibraryApiResult<T> =
   | { ok: false; error: PublicError };
 
 export interface RelinkBatchPreviewResult {
+  previewId: string;
   matchedCount: number;
   unmatchedCount: number;
   totalCount: number;
@@ -209,15 +210,16 @@ export interface SerpentLibraryApi {
   restoreAssets(input: { libraryId: string; assetIds: string[]; targetFolderId?: string | null; conflictStrategy?: 'keep-both' | 'replace' | 'skip' }): Promise<LibraryApiResult<{ restoredCount: number; assets: AssetSummary[] }>>;
   moveAssets(input: { libraryId: string; assetIds: string[]; targetFolderId: string | null; conflictStrategy?: 'keep-both' | 'replace' | 'skip' }): Promise<LibraryApiResult<{ movedCount: number; skippedCount: number; operationId: string | null; assets: AssetSummary[] }>>;
   undoMoveAssets(input: { libraryId: string; operationId: string; conflictStrategy?: 'error' | 'keep-both' | 'replace' | 'skip' }): Promise<LibraryApiResult<{ undoneCount: number; skippedCount: number; assets: AssetSummary[] }>>;
-  deleteAssetsPermanent(input: { libraryId: string; assetIds: string[] }): Promise<LibraryApiResult<{ deletedCount: number; skippedCount: number; skippedReasons: string[] }>>;
+  deleteAssetsPermanent(input: { libraryId: string; assetIds: string[] }): Promise<LibraryApiResult<{ deletedCount: number; skippedCount: number; skippedReasons: Array<{ assetId: string; reason: PublicErrorReason }> }>>;
   listTrash(input: { libraryId: string }): Promise<LibraryApiResult<AssetSummary[]>>;
-  purgeTrash(input: { libraryId: string }): Promise<LibraryApiResult<{ purgedCount: number }>>;
+  purgeTrash(input: { libraryId: string }): Promise<LibraryApiResult<{ purgedCount: number; skippedCount: number; failures: Array<{ assetId: string; reason: PublicErrorReason }> }>>;
   // Linked delete
   deleteLinkedAssets(input: { libraryId: string; assetIds: string[]; deleteSourceFile: boolean }): Promise<LibraryApiResult<LinkedAssetDeleteResult>>;
   // Relink
   relinkAsset(input: { libraryId: string; assetId: string }): Promise<LibraryApiResult<AssetSummary>>;
   relinkBatchPreview(input: { libraryId: string; keepMetadata: boolean }): Promise<LibraryApiResult<RelinkBatchPreviewResult>>;
-  relinkBatchApply(input: { libraryId: string; keepMetadata: boolean }): Promise<LibraryApiResult<RelinkBatchAppliedResult>>;
+  relinkBatchApply(input: { libraryId: string; previewId: string; keepMetadata: boolean }): Promise<LibraryApiResult<RelinkBatchAppliedResult>>;
+  cancelRelinkBatch(input: { libraryId: string; previewId: string }): Promise<LibraryApiResult<{ previewId: string }>>;
   // Extension active context
   setActiveContext(libraryId: string | null, selectedFolderId?: string): void;
   // Export / Import

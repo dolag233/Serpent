@@ -4,6 +4,7 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   renameSync,
   rmSync,
   symlinkSync,
@@ -716,6 +717,72 @@ describe('deleteAssetsPermanent', () => {
     );
     service.closeAll();
   });
+
+  it('rejects a mixed or duplicate batch before deleting any trash entry', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'Permanent Batch Validation', selectedParentPath: root });
+    writeFileSync(path.join(root, 'trashed.jpg'), 'trashed');
+    const trashed = importNoConflict(service, created.libraryId, path.join(root, 'trashed.jpg')).assets[0]!;
+    writeFileSync(path.join(root, 'active.jpg'), 'active');
+    const active = importNoConflict(service, created.libraryId, path.join(root, 'active.jpg')).assets[0]!;
+    service.trashAssets({ libraryId: created.libraryId, assetIds: [trashed.assetId] });
+    const trashPath = path.join(created.libraryPath, '.serpent', 'trash', trashed.assetId);
+
+    expectServiceError(
+      () => service.deleteAssetsPermanent({
+        libraryId: created.libraryId,
+        assetIds: [trashed.assetId, active.assetId],
+      }),
+      'INVALID_IMPORT_DECISION',
+    );
+    expectServiceError(
+      () => service.deleteAssetsPermanent({
+        libraryId: created.libraryId,
+        assetIds: [trashed.assetId, trashed.assetId],
+      }),
+      'INVALID_IMPORT_DECISION',
+    );
+    expect(existsSync(trashPath)).toBe(true);
+    expect(service.listTrash(created.libraryId).map((asset) => asset.assetId)).toContain(trashed.assetId);
+    service.closeAll();
+  });
+
+  it('continues a permanent-delete batch and returns structured skip reasons', () => {
+    const root = temporaryRoot();
+    let busyAssetId = '';
+    const diagnostics: string[] = [];
+    const service = new LibraryService({
+      removeTrashPath: (trashPath) => {
+        if (path.basename(trashPath) === busyAssetId) {
+          throw Object.assign(new Error('file is busy'), { code: 'EBUSY' });
+        }
+        rmSync(trashPath, { force: true, recursive: true });
+      },
+      onDiagnostic: ({ scope }) => diagnostics.push(scope),
+    });
+    const created = service.createLibrary({ displayName: 'Permanent Partial Result', selectedParentPath: root });
+    writeFileSync(path.join(root, 'busy.jpg'), 'busy');
+    const busy = importNoConflict(service, created.libraryId, path.join(root, 'busy.jpg')).assets[0]!;
+    writeFileSync(path.join(root, 'deletable.jpg'), 'deletable');
+    const deletable = importNoConflict(service, created.libraryId, path.join(root, 'deletable.jpg')).assets[0]!;
+    service.trashAssets({ libraryId: created.libraryId, assetIds: [busy.assetId, deletable.assetId] });
+    busyAssetId = busy.assetId;
+
+    const result = service.deleteAssetsPermanent({
+      libraryId: created.libraryId,
+      assetIds: [busy.assetId, deletable.assetId],
+    });
+
+    expect(result).toEqual({
+      deletedCount: 1,
+      skippedCount: 1,
+      skippedReasons: [{ assetId: busy.assetId, reason: 'FILE_BUSY' }],
+    });
+    expect(service.listTrash(created.libraryId).map((asset) => asset.assetId)).toEqual([busy.assetId]);
+    expect(diagnostics).toContain('asset.delete-permanent.skip');
+    service.closeAll();
+  });
 });
 
 describe('purgeExpiredTrash', () => {
@@ -765,6 +832,41 @@ describe('purgeExpiredTrash', () => {
     service.closeAll();
     service.openLibrary(created.libraryPath);
     expect(service.listTrash(created.libraryId)).toEqual([]);
+    service.closeAll();
+  });
+
+  it('continues after a busy item and reports the skipped expiry', () => {
+    const root = temporaryRoot();
+    let busyAssetId = '';
+    const service = new LibraryService({
+      removeTrashPath: (trashPath) => {
+        if (path.basename(trashPath) === busyAssetId) {
+          throw Object.assign(new Error('busy'), { code: 'EBUSY' });
+        }
+        rmSync(trashPath, { force: true, recursive: true });
+      },
+    });
+    const created = service.createLibrary({ displayName: 'Purge Partial', selectedParentPath: root });
+    writeFileSync(path.join(root, 'old-busy.jpg'), 'busy');
+    const busy = importNoConflict(service, created.libraryId, path.join(root, 'old-busy.jpg')).assets[0]!;
+    writeFileSync(path.join(root, 'old-delete.jpg'), 'delete');
+    const deletable = importNoConflict(service, created.libraryId, path.join(root, 'old-delete.jpg')).assets[0]!;
+    service.trashAssets({ libraryId: created.libraryId, assetIds: [busy.assetId, deletable.assetId] });
+    busyAssetId = busy.assetId;
+    const database = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    database.prepare('UPDATE assets SET deleted_at = ? WHERE asset_id IN (?, ?)').run(
+      new Date(Date.now() - 31 * 24 * 60 * 60 * 1000).toISOString(),
+      busy.assetId,
+      deletable.assetId,
+    );
+    database.close();
+
+    expect(service.purgeExpiredTrash(created.libraryId)).toEqual({
+      purgedCount: 1,
+      skippedCount: 1,
+      failures: [{ assetId: busy.assetId, reason: 'FILE_BUSY' }],
+    });
+    expect(service.listTrash(created.libraryId).map((asset) => asset.assetId)).toEqual([busy.assetId]);
     service.closeAll();
   });
 });
@@ -1352,6 +1454,38 @@ describe('relinkAsset (single missing asset)', () => {
     );
     service.closeAll();
   });
+
+  it('does not mark a linked asset available when its linked root is offline', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'Offline Linked Relink', selectedParentPath: root });
+    const linkedRoot = path.join(root, 'offline-linked-root');
+    mkdirSync(linkedRoot, { recursive: true });
+    writeFileSync(path.join(linkedRoot, 'linked.jpg'), 'linked');
+    service.importFolderAsLinked({
+      libraryId: created.libraryId,
+      sourceRootPath: linkedRoot,
+    });
+    const assetId = service.listAssets({ libraryId: created.libraryId, recursive: true })
+      .find((asset) => asset.locationKind === 'linked')!.assetId;
+
+    rmSync(linkedRoot, { recursive: true });
+    service.refreshManagedAssets(created.libraryId);
+    const replacement = path.join(root, 'outside-linked-root.jpg');
+    writeFileSync(replacement, 'replacement');
+
+    expectServiceError(
+      () => service.relinkAsset({
+        libraryId: created.libraryId,
+        assetId,
+        newAbsolutePath: replacement,
+      }),
+      'INVALID_IMPORT_SOURCE',
+    );
+    expect(service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!.availability)
+      .toBe('missing');
+    service.closeAll();
+  });
 });
 
 describe('relinkBatchPreview', () => {
@@ -1419,6 +1553,47 @@ describe('relinkBatchPreview', () => {
       () => service.relinkBatchPreview({ libraryId: created.libraryId, newRootPath: path.join(root, 'nonexistent') }),
       'INVALID_IMPORT_SOURCE',
     );
+    service.closeAll();
+  });
+
+  it('treats one basename candidate for two assets as ambiguous', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'Ambiguous Batch Preview', selectedParentPath: root });
+    const firstFolder = service.createManagedFolder({ libraryId: created.libraryId, name: 'first' });
+    const secondFolder = service.createManagedFolder({ libraryId: created.libraryId, name: 'second' });
+    const source = path.join(root, 'shared.jpg');
+    writeFileSync(source, 'first-bytes');
+    const first = importNoConflict(service, created.libraryId, source, firstFolder.folderId);
+    writeFileSync(source, 'second-bytes');
+    const second = importNoConflict(service, created.libraryId, source, secondFolder.folderId);
+    rmSync(path.join(created.libraryPath, 'Assets', 'first', 'shared.jpg'));
+    rmSync(path.join(created.libraryPath, 'Assets', 'second', 'shared.jpg'));
+    service.refreshManagedAssets(created.libraryId);
+
+    const replacementRoot = path.join(root, 'ambiguous-root');
+    mkdirSync(replacementRoot, { recursive: true });
+    writeFileSync(path.join(replacementRoot, 'shared.jpg'), 'ambiguous-bytes');
+
+    const preview = service.relinkBatchPreview({
+      libraryId: created.libraryId,
+      newRootPath: replacementRoot,
+    });
+    expect(preview).toMatchObject({ matchedCount: 0, unmatchedCount: 2, totalCount: 2 });
+
+    const result = service.relinkBatchApply({
+      libraryId: created.libraryId,
+      newRootPath: replacementRoot,
+      keepMetadata: true,
+    });
+    expect(result).toMatchObject({ restoredCount: 0, unchangedMissingCount: 2 });
+    const missingIds = service.listAssets({ libraryId: created.libraryId, recursive: true })
+      .filter((asset) => asset.availability === 'missing')
+      .map((asset) => asset.assetId);
+    expect(missingIds).toEqual(expect.arrayContaining([
+      first.assets[0]!.assetId,
+      second.assets[0]!.assetId,
+    ]));
     service.closeAll();
   });
 });
@@ -1629,6 +1804,52 @@ describe('relinkBatchApply', () => {
     expect(relinkRows).toHaveLength(1);
     expect(relinkRows[0]!.kind).toBe('relink-batch');
     db.close();
+    service.closeAll();
+  });
+
+  it('updates a moved linked asset path and remains available after refresh', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'Batch Linked Move', selectedParentPath: root });
+    const linkedRoot = path.join(root, 'batch-linked-root');
+    const oldFolder = path.join(linkedRoot, 'old');
+    const newFolder = path.join(linkedRoot, 'new');
+    mkdirSync(oldFolder, { recursive: true });
+    writeFileSync(path.join(oldFolder, 'moved.jpg'), 'linked-moved');
+    service.importFolderAsLinked({
+      libraryId: created.libraryId,
+      sourceRootPath: linkedRoot,
+    });
+    const assetId = service.listAssets({ libraryId: created.libraryId, recursive: true })
+      .find((asset) => asset.locationKind === 'linked')!.assetId;
+
+    rmSync(path.join(oldFolder, 'moved.jpg'));
+    service.refreshManagedAssets(created.libraryId);
+    expect(service.listAssets({ libraryId: created.libraryId, recursive: true })
+      .find((asset) => asset.assetId === assetId)!.availability)
+      .toBe('missing');
+    mkdirSync(newFolder, { recursive: true });
+    writeFileSync(path.join(newFolder, 'moved.jpg'), 'linked-moved');
+
+    const result = service.relinkBatchApply({
+      libraryId: created.libraryId,
+      newRootPath: newFolder,
+      keepMetadata: true,
+    });
+
+    expect(result.restoredCount).toBe(1);
+    expect(result.assets[0]!.relativeFilePath).toBe('new/moved.jpg');
+    expect(service.resolveAssetPath(created.libraryId, assetId)).toBe(realpathSync(path.join(newFolder, 'moved.jpg')));
+    service.refreshManagedAssets(created.libraryId);
+    expect(service.listAssets({ libraryId: created.libraryId, recursive: true })
+      .find((asset) => asset.assetId === assetId)!.availability)
+      .toBe('available');
+    service.closeAll();
+    service.openLibrary(created.libraryPath);
+    expect(service.resolveAssetPath(created.libraryId, assetId)).toBe(realpathSync(path.join(newFolder, 'moved.jpg')));
+    expect(service.listAssets({ libraryId: created.libraryId, recursive: true })
+      .find((asset) => asset.assetId === assetId)!.availability)
+      .toBe('available');
     service.closeAll();
   });
 });

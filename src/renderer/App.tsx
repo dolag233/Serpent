@@ -629,7 +629,7 @@ export function App() {
     canDeleteSourceFile: boolean;
   } | null>(null);
   const [permanentDeleteDialog, setPermanentDeleteDialog] = useState<
-    string | null
+    string[] | null
   >(null);
   const [restoreDialog, setRestoreDialog] = useState<{
     assetIds: string[];
@@ -3308,7 +3308,7 @@ export function App() {
 
   async function deletePermanentFromTrash() {
     if (!api || !library || !permanentDeleteDialog) return;
-    const assetIds = [permanentDeleteDialog];
+    const assetIds = permanentDeleteDialog;
     setPermanentDeleteDialog(null);
     setUiState("loading");
     try {
@@ -3319,7 +3319,15 @@ export function App() {
       if (!result.ok) throw new LibraryOperationError(result.error);
       let msg = `已永久删除 ${result.value.deletedCount} 项。`;
       if (result.value.skippedCount > 0) {
-        msg += ` ${result.value.skippedCount} 项因文件占用跳过：${result.value.skippedReasons.join("；")}`;
+        const skippedNames = new Map(
+          trashedAssets.map((asset) => [asset.assetId, asset.displayName]),
+        );
+        msg += ` ${result.value.skippedCount} 项未删除：${result.value.skippedReasons
+          .map(
+            ({ assetId, reason }) =>
+              `${skippedNames.get(assetId) ?? "所选资产"}（${PUBLIC_ERROR_REASONS_ZH[reason]}）`,
+          )
+          .join("；")}`;
       }
       setNotice(msg);
       clearAssetSelection();
@@ -3337,7 +3345,16 @@ export function App() {
     try {
       const result = await api.purgeTrash({ libraryId: library.libraryId });
       if (!result.ok) throw new LibraryOperationError(result.error);
-      setNotice(`已清理 ${result.value.purgedCount} 项过期资产。`);
+      const failureReasons = [
+        ...new Set(
+          result.value.failures.map(({ reason }) => PUBLIC_ERROR_REASONS_ZH[reason]),
+        ),
+      ];
+      setNotice(
+        `已清理 ${result.value.purgedCount} 项到期资产${result.value.skippedCount > 0
+          ? `，${result.value.skippedCount} 项未清理：${failureReasons.join("；")}`
+          : ""}。`,
+      );
       await loadContent(library, "all", { trashMode: true });
     } catch (caught) {
       setError(toMessage(caught, "清空回收站失败。"));
@@ -3446,6 +3463,7 @@ export function App() {
     try {
       const result = await api.relinkBatchApply({
         libraryId: library.libraryId,
+        previewId: batchRelinkPreview.previewId,
         keepMetadata: batchRelinkKeepMetadata,
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
@@ -3461,6 +3479,23 @@ export function App() {
       setUiState("ready");
     }
   }
+
+  const cancelBatchRelink = useCallback(async () => {
+    if (!api || !library || !batchRelinkPreview) return;
+    const previewId = batchRelinkPreview.previewId;
+    setBatchRelinkPreview(null);
+    try {
+      const result = await api.cancelRelinkBatch({
+        libraryId: library.libraryId,
+        previewId,
+      });
+      if (!result.ok && result.error.code !== "CANCELLED") {
+        throw new LibraryOperationError(result.error);
+      }
+    } catch (caught) {
+      setError(toMessage(caught, "取消批量重新定位失败。"));
+    }
+  }, [api, batchRelinkPreview, library]);
 
   // --- Export / Import operations ---
 
@@ -3736,7 +3771,7 @@ export function App() {
         return;
       }
       if (batchRelinkPreview) {
-        setBatchRelinkPreview(null);
+        void cancelBatchRelink();
         return;
       }
       if (restoreDialog) {
@@ -3782,6 +3817,7 @@ export function App() {
     permanentDeleteDialog,
     deleteLinkedDialog,
     batchRelinkPreview,
+    cancelBatchRelink,
     restoreDialog,
     moveDialog,
     undoMoveDialog,
@@ -4987,7 +5023,7 @@ export function App() {
                   onClick={() => {
                     if (
                       confirm(
-                        "确定要清空回收站吗？这将永久删除所有超过 30 天的已删除资产。",
+                        "确定要清理所有到期项吗？这将永久删除所有超过 30 天的资产。",
                       )
                     )
                       void purgeTrash();
@@ -4995,7 +5031,7 @@ export function App() {
                   type="button"
                 >
                   <Icon name="trash" size={14} />
-                  清空回收站
+                  清理到期项目
                 </button>
                 {selectedAssetIds.length > 0 && (
                   <>
@@ -5022,7 +5058,11 @@ export function App() {
                     className="compact-action"
                     disabled={busy}
                     onClick={() => {
-                      setPermanentDeleteDialog(selectedAsset.assetId);
+                      setPermanentDeleteDialog(
+                        selectedAssetIds.length > 0
+                          ? selectedAssetIds
+                          : [selectedAsset.assetId],
+                      );
                     }}
                     type="button"
                   >
@@ -7356,7 +7396,7 @@ export function App() {
                 lineHeight: 1.6,
               }}
             >
-              确定要永久删除此资产吗？文件将从回收站彻底移除，此操作不可撤销。
+              确定要永久删除所选 {permanentDeleteDialog.length} 项资产吗？文件将从回收站彻底移除，此操作不可撤销。
             </p>
             <div className="dialog-actions">
               <button
@@ -7371,7 +7411,7 @@ export function App() {
                 onClick={() => void deletePermanentFromTrash()}
                 type="button"
               >
-                永久删除
+                永久删除 {permanentDeleteDialog.length} 项
               </button>
             </div>
           </div>
@@ -7460,16 +7500,21 @@ export function App() {
       )}
       {batchRelinkPreview && (
         <div className="dialog-backdrop" role="presentation">
-          <div aria-modal="true" className="conflict-dialog" role="dialog">
+          <div
+            aria-labelledby="batch-relink-dialog-title"
+            aria-modal="true"
+            className="conflict-dialog"
+            role="dialog"
+          >
             <div className="dialog-heading">
               <div>
                 <span className="eyebrow">BATCH RELINK</span>
-                <h2>批量重新定位预览</h2>
+                <h2 id="batch-relink-dialog-title">批量重新定位预览</h2>
               </div>
               <button
                 aria-label="取消"
                 className="dialog-close"
-                onClick={() => setBatchRelinkPreview(null)}
+                onClick={() => void cancelBatchRelink()}
                 type="button"
               >
                 <Icon name="close" size={16} />
@@ -7528,7 +7573,7 @@ export function App() {
             <div className="dialog-actions">
               <button
                 className="secondary-button"
-                onClick={() => setBatchRelinkPreview(null)}
+                onClick={() => void cancelBatchRelink()}
                 type="button"
               >
                 取消
@@ -8612,6 +8657,7 @@ const PUBLIC_ERROR_MESSAGES_ZH: Partial<Record<PublicErrorCode, string>> = {
 };
 const PUBLIC_ERROR_REASONS_ZH: Record<PublicErrorReason, string> = {
   PERMISSION_DENIED: "当前用户没有读取源文件或写入目标位置的权限。",
+  FILE_BUSY: "文件正被其他应用使用，请关闭后重试。",
   PATH_LIMIT_EXCEEDED: "目标文件系统拒绝了该路径或名称长度。",
   DISK_FULL: "目标磁盘空间不足。",
   READ_ONLY_FILESYSTEM: "目标位置位于只读文件系统。",

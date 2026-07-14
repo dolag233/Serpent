@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { aiSearchPlanSchema, assetMetadataResultSchema, assetSummarySchema, collectionSummarySchema, linkedFolderRuleSchema, linkedFolderSummarySchema, managedFolderSummarySchema, smartCollectionSummarySchema, tagSummarySchema } from '../asset-types';
+import { aiSearchPlanSchema, assetMetadataResultSchema, assetSummarySchema, collectionSummarySchema, linkedFolderRuleSchema, linkedFolderSummarySchema, managedFolderSummarySchema, portableRelativePathSchema, smartCollectionSummarySchema, tagSummarySchema } from '../asset-types';
 import { publicErrorReasonSchema, publicErrorSchema } from './errors';
 import {
   WORKER_READY_MESSAGE_TYPE,
@@ -522,7 +522,10 @@ const assetOperationSuccessSchemas = [
     type: z.literal('asset.deleted-permanent'),
     deletedCount: z.number().int().nonnegative(),
     skippedCount: z.number().int().nonnegative(),
-    skippedReasons: z.array(nonBlankString),
+    skippedReasons: z.array(z.strictObject({
+      assetId: nonBlankString,
+      reason: publicErrorReasonSchema,
+    })),
   }),
   z.strictObject({
     ok: z.literal(true),
@@ -546,22 +549,16 @@ const assetOperationSuccessSchemas = [
     ok: z.literal(true),
     type: z.literal('asset.purge-trash'),
     purgedCount: z.number().int().nonnegative(),
+    skippedCount: z.number().int().nonnegative(),
+    failures: z.array(z.strictObject({
+      assetId: nonBlankString,
+      reason: publicErrorReasonSchema,
+    })),
   }),
   z.strictObject({
     ok: z.literal(true),
     type: z.literal('asset.relinked'),
     asset: assetSummarySchema,
-  }),
-  z.strictObject({
-    ok: z.literal(true),
-    type: z.literal('asset.relink-batch.preview'),
-    matchedCount: z.number().int().nonnegative(),
-    unmatchedCount: z.number().int().nonnegative(),
-    totalCount: z.number().int().nonnegative(),
-    examples: z.array(z.strictObject({
-      relativeFilePath: nonBlankString,
-      matched: z.boolean(),
-    })).max(8),
   }),
   z.strictObject({
     ok: z.literal(true),
@@ -680,6 +677,17 @@ const assetOperationSuccessSchemas = [
 ] as const;
 
 const workerSuccessResultSchema = z.discriminatedUnion('type', [
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('asset.relink-batch.preview'),
+    matchedCount: z.number().int().nonnegative(),
+    unmatchedCount: z.number().int().nonnegative(),
+    totalCount: z.number().int().nonnegative(),
+    examples: z.array(z.strictObject({
+      relativeFilePath: portableRelativePathSchema,
+      matched: z.boolean(),
+    })).max(8),
+  }),
   z.strictObject({
     ok: z.literal(true),
     type: z.literal('library.list'),
@@ -832,6 +840,23 @@ export function parseWorkerResponse(input: unknown): WorkerResponse {
 }
 
 const rendererSuccessResultSchema = z.discriminatedUnion('type', [
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('asset.relink-batch.preview'),
+    previewId: nonBlankString,
+    matchedCount: z.number().int().nonnegative(),
+    unmatchedCount: z.number().int().nonnegative(),
+    totalCount: z.number().int().nonnegative(),
+    examples: z.array(z.strictObject({
+      relativeFilePath: portableRelativePathSchema,
+      matched: z.boolean(),
+    })).max(8),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('asset.relink-batch.cancelled'),
+    previewId: nonBlankString,
+  }),
   z.strictObject({
     ok: z.literal(true),
     type: z.literal('library.list'),

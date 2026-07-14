@@ -77,6 +77,7 @@ import {
   type SaveIntentDisposition,
 } from "./extension-server";
 import { ExtensionPairingStore } from "./extension-pairing-store";
+import { RelinkPreviewStore } from "./relink-preview-store";
 import {
   classifyDroppedSourcePaths,
   cleanupClipboardImage,
@@ -203,8 +204,8 @@ const focusedContexts = new Map<
   { libraryId: string | null; selectedFolderId?: string }
 >();
 
-// Pending relink-batch root paths (libraryId -> rootPath), cleared after apply/abandon.
-const pendingRelinkRoots = new Map<string, string>();
+// Keeps selected roots in Main. Renderer receives only an opaque, one-shot token.
+const pendingRelinkPreviews = new RelinkPreviewStore();
 
 // Pending import source path (importId -> sourceFolderPath), remembered after validation.
 const pendingImportSources = new Map<string, string>();
@@ -521,7 +522,10 @@ async function processAiQueueBatch(
   }
 }
 
-function toRendererResult(result: WorkerResult): RendererResult {
+function toRendererResult(
+  result: WorkerResult,
+  relinkPreviewId?: string,
+): RendererResult {
   if (!result.ok) return parseRendererResult(result);
   if (result.type === "library.opened") {
     return parseRendererResult({
@@ -555,6 +559,15 @@ function toRendererResult(result: WorkerResult): RendererResult {
       importId: result.importId,
       libraryId: result.libraryId,
       displayName: result.displayName,
+    });
+  }
+  if (result.type === "asset.relink-batch.preview") {
+    if (!relinkPreviewId) {
+      throw new Error("Batch relink preview is missing its Main-process token.");
+    }
+    return parseRendererResult({
+      ...result,
+      previewId: relinkPreviewId,
     });
   }
   return parseRendererResult(result);
@@ -1042,7 +1055,6 @@ async function commandFor(
         newRootPath = result.canceled ? undefined : result.filePaths[0];
       }
       if (newRootPath) {
-        pendingRelinkRoots.set(request.libraryId, newRootPath);
         return {
           type: "asset.relink-batch.preview",
           libraryId: request.libraryId,
@@ -1052,9 +1064,11 @@ async function commandFor(
       return undefined;
     }
     case "asset.relink-batch.apply.request": {
-      const newRootPath = pendingRelinkRoots.get(request.libraryId);
+      const newRootPath = pendingRelinkPreviews.consume(
+        request.libraryId,
+        request.previewId,
+      );
       if (!newRootPath) return undefined;
-      pendingRelinkRoots.delete(request.libraryId);
       return {
         type: "asset.relink-batch.apply",
         libraryId: request.libraryId,
@@ -1062,6 +1076,9 @@ async function commandFor(
         keepMetadata: request.keepMetadata,
       };
     }
+    case "asset.relink-batch.cancel.request":
+      // Handled directly in handleLibraryRequest; no root path crosses to Worker.
+      return undefined;
     case "library.export.request": {
       let destinationPath: string | undefined;
       if (!app.isPackaged && process.env.SERPENT_E2E === "1") {
@@ -1366,6 +1383,9 @@ function assertNever(value: never): never {
 async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
   let operation: "create" | "open" | "import" | undefined;
   let clipboardStageDirectory: string | undefined;
+  let relinkPreviewContext:
+    | { libraryId: string; previewId: string }
+    | undefined;
   try {
     const request = parseRendererRequest(input);
 
@@ -1536,6 +1556,15 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
       } satisfies RendererResult;
     }
 
+    if (request.type === "asset.relink-batch.cancel.request") {
+      pendingRelinkPreviews.cancel(request.libraryId, request.previewId);
+      return {
+        ok: true,
+        type: "asset.relink-batch.cancelled",
+        previewId: request.previewId,
+      } satisfies RendererResult;
+    }
+
     let command: WorkerCommand | undefined;
     if (request.type === "asset.import-drop.request") {
       let sourceKind: "files" | "folder";
@@ -1615,6 +1644,16 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
       command = await commandFor(request);
     }
     if (!command) return cancelled();
+    if (
+      request.type === "asset.relink-batch.request" &&
+      command.type === "asset.relink-batch.preview"
+    ) {
+      const previewId = pendingRelinkPreviews.create(
+        request.libraryId,
+        command.newRootPath,
+      );
+      relinkPreviewContext = { libraryId: request.libraryId, previewId };
+    }
     if (!workerClient) throw new Error("Library Worker is unavailable.");
     if (command.type === "library.create") operation = "create";
     if (command.type === "library.open") operation = "open";
@@ -1626,6 +1665,13 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
     if (operation) publishLifecycle({ type: "library.opening", operation });
 
     const workerResult = await workerClient.request(command);
+
+    if (!workerResult.ok && relinkPreviewContext) {
+      pendingRelinkPreviews.cancel(
+        relinkPreviewContext.libraryId,
+        relinkPreviewContext.previewId,
+      );
+    }
 
     if (workerResult.ok && workerResult.type === "library.opened") {
       rememberRecentLibrary(workerResult.library.libraryPath);
@@ -1654,6 +1700,7 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
       pendingImportCollections.delete(request.importId);
     }
     if (workerResult.ok && request.type === "library.close.request") {
+      pendingRelinkPreviews.clearLibrary(request.libraryId);
       for (const [importId, libraryId] of pendingImportLibraries) {
         if (libraryId !== request.libraryId) continue;
         pendingImportLibraries.delete(importId);
@@ -1969,7 +2016,10 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
       ]);
     }
 
-    const result = toRendererResult(workerResult);
+    const result = toRendererResult(
+      workerResult,
+      relinkPreviewContext?.previewId,
+    );
     if (!result.ok) {
       if (operation) {
         publishLifecycle({
@@ -1997,6 +2047,12 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
     }
     return result;
   } catch (error) {
+    if (relinkPreviewContext) {
+      pendingRelinkPreviews.cancel(
+        relinkPreviewContext.libraryId,
+        relinkPreviewContext.previewId,
+      );
+    }
     logger?.error("main.library-request", error);
     const publicError = toPublicError(error);
     if (operation) {

@@ -991,6 +991,20 @@ interface AssetSummaryRow {
   favorite: number;
 }
 
+interface BatchRelinkAssetRow {
+  asset_id: string;
+  location_kind: 'managed' | 'linked';
+  linked_folder_id: string | null;
+  managed_folder_id: string | null;
+  relative_file_path: string;
+  current_revision_id: string | null;
+}
+
+interface BatchRelinkMatch {
+  matchedPath: string;
+  resolvedRelativePath: string;
+}
+
 interface ImportSourceEntry {
   byteSize: number;
   destinationRelativePath: string;
@@ -1133,6 +1147,8 @@ export type ImportFailurePoint =
   | 'crash-move-before-db-commit'
   | 'crash-move-after-db-commit'
   | 'crash-linked-convert-after-filesystem'
+  | 'crash-relink-after-filesystem'
+  | 'crash-relink-batch-after-first-place'
   | 'recovery-restore'
   | 'rollback-restore';
 
@@ -1363,6 +1379,8 @@ export interface LibraryServiceOptions {
   spawnFn?: SpawnFunction;
   /** Moves one absolute source path to the OS system trash. */
   trashItem?: (sourcePath: string) => Promise<void>;
+  /** Removes one Serpent trash directory; injectable for platform-error tests. */
+  removeTrashPath?: (trashPath: string) => void;
 }
 
 export interface LibraryServiceDiagnostic {
@@ -2918,6 +2936,9 @@ export class LibraryService {
         if (retainedOperationIds.has(child)) continue;
         const orphanPath = path.join(operationsPath, child);
         this.assertSafeOperationPath(orphanPath);
+        if (child.startsWith('relink-') && this.recoverOrphanRelinkPlacement(openLibrary, orphanPath)) {
+          continue;
+        }
         rmSync(orphanPath, { force: true, recursive: true });
       }
       try {
@@ -8554,6 +8575,11 @@ export class LibraryService {
     const stagedPath = path.join(operationPath, 'replacement');
     try {
       mkdirSync(operationPath, { recursive: true });
+      writeFileSync(
+        path.join(operationPath, 'manifest.json'),
+        JSON.stringify({ version: 1, destinationRelativePath }),
+        { encoding: 'utf8', flag: 'wx' },
+      );
       this.copySourceSnapshot({
         byteSize: Number(sourceStat.size),
         destinationRelativePath,
@@ -8612,6 +8638,45 @@ export class LibraryService {
         operationPath: placement.operationPath,
       });
     }
+  }
+
+  private recoverOrphanRelinkPlacement(openLibrary: OpenLibrary, operationPath: string): boolean {
+    const manifestPath = path.join(operationPath, 'manifest.json');
+    if (!existsSync(manifestPath)) return false;
+    let destinationRelativePath: string;
+    try {
+      const parsed = JSON.parse(readFileSync(manifestPath, 'utf8')) as unknown;
+      if (
+        typeof parsed !== 'object' || parsed === null ||
+        (parsed as { version?: unknown }).version !== 1 ||
+        typeof (parsed as { destinationRelativePath?: unknown }).destinationRelativePath !== 'string'
+      ) {
+        throw new LibraryServiceError('LIBRARY_CORRUPT');
+      }
+      const rawPath = (parsed as { destinationRelativePath: string }).destinationRelativePath;
+      destinationRelativePath = normalizeRelativeAssetPath(rawPath);
+      if (destinationRelativePath !== rawPath) throw new LibraryServiceError('LIBRARY_CORRUPT');
+    } catch (error) {
+      if (error instanceof LibraryServiceError) throw error;
+      throw new LibraryServiceError('LIBRARY_CORRUPT', { cause: error });
+    }
+
+    const asset = openLibrary.connection
+      .prepare(
+        `SELECT availability FROM assets
+          WHERE location_kind = 'managed' AND path_identity = ? AND deleted_at IS NULL`,
+      )
+      .get(portablePathIdentity(destinationRelativePath)) as { availability: 'available' | 'missing' } | undefined;
+    if (!asset || asset.availability === 'missing') {
+      rmSync(this.folderPath(openLibrary, destinationRelativePath), { force: true });
+    }
+    rmSync(operationPath, { force: true, recursive: true });
+    this.diagnose(
+      'asset.relink.recovered-orphan-placement',
+      new LibraryServiceError('LIBRARY_NOT_WRITABLE', { reason: 'IO_ERROR' }),
+      { libraryId: openLibrary.summary.libraryId, destinationRelativePath },
+    );
+    return true;
   }
 
   private assetSummaryFromRow(
@@ -9043,6 +9108,9 @@ export class LibraryService {
   }): { trashedCount: number } {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     const assetIds = input.assetIds;
+    if (assetIds.length === 0 || new Set(assetIds).size !== assetIds.length) {
+      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+    }
 
     // Validate all assets are managed, active, and exist.
     const rows = openLibrary.connection
@@ -9498,9 +9566,12 @@ export class LibraryService {
   deleteAssetsPermanent(input: {
     libraryId: string;
     assetIds: string[];
-  }): { deletedCount: number; skippedCount: number; skippedReasons: string[] } {
+  }): { deletedCount: number; skippedCount: number; skippedReasons: Array<{ assetId: string; reason: PublicErrorReason }> } {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     const assetIds = input.assetIds;
+    if (assetIds.length === 0 || new Set(assetIds).size !== assetIds.length) {
+      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+    }
 
     const rows = openLibrary.connection
       .prepare(
@@ -9514,35 +9585,41 @@ export class LibraryService {
         relative_file_path: string;
       }>;
 
-    if (rows.length === 0 && assetIds.length > 0) {
-      // Check if assets exist but not trashed
+    if (rows.length !== assetIds.length) {
+      // Validate the complete batch before touching the filesystem. A mixed
+      // active/trashed or unknown batch must never partially delete the valid
+      // subset while silently ignoring the rest.
       for (const id of assetIds) {
         const exists = openLibrary.connection
           .prepare('SELECT asset_id, deleted_at FROM assets WHERE asset_id = ?')
-          .get(id);
+          .get(id) as { asset_id: string; deleted_at: string | null } | undefined;
         if (!exists) throw new LibraryServiceError('ASSET_NOT_FOUND');
+        if (exists.deleted_at === null) throw new LibraryServiceError('INVALID_IMPORT_DECISION');
       }
-      // All exist but none are trashed
       throw new LibraryServiceError('INVALID_IMPORT_DECISION');
     }
 
     let deletedCount = 0;
-    const skippedReasons: string[] = [];
+    const skippedReasons: Array<{ assetId: string; reason: PublicErrorReason }> = [];
     const deletedAssetIds: string[] = [];
 
     for (const row of rows) {
       // Remove trash directory
       const trashDir = path.join(openLibrary.summary.libraryPath, '.serpent', 'trash', row.asset_id);
-      let skipReason: string | undefined;
+      let skipReason: PublicErrorReason | undefined;
       try {
-        rmSync(trashDir, { force: true, recursive: true });
+        (this.options.removeTrashPath ?? ((trashPath: string) => {
+          rmSync(trashPath, { force: true, recursive: true });
+        }))(trashDir);
       } catch (error) {
         if (isMissingPathError(error)) {
           // Already gone, proceed with DB delete
         } else {
           const code = (error as NodeJS.ErrnoException).code;
-          if (code === 'EBUSY' || code === 'EPERM' || code === 'EACCES') {
-            skipReason = `${row.asset_id}: ${code}`;
+          if (code === 'EBUSY') {
+            skipReason = 'FILE_BUSY';
+          } else if (code === 'EPERM' || code === 'EACCES') {
+            skipReason = 'PERMISSION_DENIED';
           } else {
             throw error;
           }
@@ -9550,7 +9627,12 @@ export class LibraryService {
       }
 
       if (skipReason) {
-        skippedReasons.push(skipReason);
+        skippedReasons.push({ assetId: row.asset_id, reason: skipReason });
+        this.diagnose(
+          'asset.delete-permanent.skip',
+          new LibraryServiceError('LIBRARY_NOT_WRITABLE', { reason: skipReason }),
+          { libraryId: input.libraryId, assetId: row.asset_id },
+        );
       } else {
         deletedAssetIds.push(row.asset_id);
       }
@@ -9575,7 +9657,11 @@ export class LibraryService {
     };
   }
 
-  purgeExpiredTrash(libraryId: string): { purgedCount: number } {
+  purgeExpiredTrash(libraryId: string): {
+    purgedCount: number;
+    skippedCount: number;
+    failures: Array<{ assetId: string; reason: PublicErrorReason }>;
+  } {
     const openLibrary = this.requireOpenLibrary(libraryId);
 
     const expiryDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
@@ -9585,17 +9671,21 @@ export class LibraryService {
       )
       .all(expiryDate) as Array<{ asset_id: string }>;
 
-    if (rows.length === 0) return { purgedCount: 0 };
+    if (rows.length === 0) return { purgedCount: 0, skippedCount: 0, failures: [] };
 
     const assetIds = rows.map((r) => r.asset_id);
     let purgedCount = 0;
+    let skippedCount = 0;
+    const failures: Array<{ assetId: string; reason: PublicErrorReason }> = [];
 
     for (const assetId of assetIds) {
       const result = this.deleteAssetsPermanent({ libraryId, assetIds: [assetId] });
-      if (result.deletedCount === 1) purgedCount += 1;
+      purgedCount += result.deletedCount;
+      skippedCount += result.skippedCount;
+      failures.push(...result.skippedReasons);
     }
 
-    return { purgedCount };
+    return { purgedCount, skippedCount, failures };
   }
 
   listTrash(libraryId: string): AssetSummary[] {
@@ -9897,26 +9987,30 @@ export class LibraryService {
     let resolvedRelativePath = assetRow.relative_file_path;
 
     // For linked assets, verify the file is within the linked root
-    if (assetRow.location_kind === 'linked' && assetRow.linked_folder_id) {
+    if (assetRow.location_kind === 'linked') {
+      if (!assetRow.linked_folder_id) throw new LibraryServiceError('LIBRARY_CORRUPT');
       const linkedFolder = openLibrary.connection
         .prepare('SELECT absolute_root_path FROM linked_folders WHERE folder_id = ?')
         .get(assetRow.linked_folder_id) as { absolute_root_path: string } | undefined;
-      if (linkedFolder) {
-        try {
-          const canonicalRoot = realpathSync(linkedFolder.absolute_root_path);
-          const canonicalNew = realpathSync(newPath);
-          const relation = path.relative(canonicalRoot, canonicalNew);
-          if (relation === '' || relation.startsWith(`..${path.sep}`) || path.isAbsolute(relation)) {
-            throw new LibraryServiceError('INVALID_IMPORT_SOURCE', {
-              reason: 'NAME_NOT_SUPPORTED',
-            });
-          }
-          resolvedRelativePath = normalizeRelativeAssetPath(relation.split(path.sep).join('/'));
-        } catch (error) {
-          if (error instanceof LibraryServiceError) throw error;
-          // If realpath fails, the file is likely not within the root
-        }
+      if (!linkedFolder) throw new LibraryServiceError('LIBRARY_CORRUPT');
+      let canonicalRoot: string;
+      let canonicalNew: string;
+      try {
+        canonicalRoot = realpathSync(linkedFolder.absolute_root_path);
+        canonicalNew = realpathSync(newPath);
+      } catch (error) {
+        throw new LibraryServiceError('INVALID_IMPORT_SOURCE', {
+          cause: error,
+          reason: 'SOURCE_NOT_FOUND',
+        });
       }
+      const relation = path.relative(canonicalRoot, canonicalNew);
+      if (relation === '' || relation.startsWith(`..${path.sep}`) || path.isAbsolute(relation)) {
+        throw new LibraryServiceError('INVALID_IMPORT_SOURCE', {
+          reason: 'NAME_NOT_SUPPORTED',
+        });
+      }
+      resolvedRelativePath = normalizeRelativeAssetPath(relation.split(path.sep).join('/'));
     }
     const originalFilename = path.posix.basename(resolvedRelativePath);
 
@@ -10002,6 +10096,92 @@ export class LibraryService {
     return { asset: this.assetSummaryFromRow(updated) };
   }
 
+  private batchRelinkRows(openLibrary: OpenLibrary): BatchRelinkAssetRow[] {
+    return openLibrary.connection
+      .prepare(
+        `SELECT asset_id, location_kind, linked_folder_id, managed_folder_id,
+                relative_file_path, current_revision_id
+           FROM assets
+          WHERE availability = 'missing' AND deleted_at IS NULL
+          ORDER BY relative_file_path`,
+      )
+      .all() as BatchRelinkAssetRow[];
+  }
+
+  private batchRelinkMatches(
+    openLibrary: OpenLibrary,
+    newRoot: string,
+    rows: BatchRelinkAssetRow[],
+  ): Map<string, BatchRelinkMatch> {
+    const proposed = new Map<string, BatchRelinkMatch & { candidateIdentity: string }>();
+    const candidateUseCount = new Map<string, number>();
+
+    for (const asset of rows) {
+      const segments = asset.relative_file_path.split('/');
+      let matchedPath: string | undefined;
+      for (let n = Math.min(segments.length, 5); n >= 1; n -= 1) {
+        const candidatePath = path.join(newRoot, ...segments.slice(-n));
+        try {
+          const entry = lstatSync(candidatePath);
+          if (entry.isFile() && !entry.isSymbolicLink()) {
+            matchedPath = realpathSync(candidatePath);
+            break;
+          }
+        } catch {
+          // Continue trying a shorter suffix.
+        }
+      }
+      if (!matchedPath) continue;
+
+      let resolvedRelativePath = asset.relative_file_path;
+      if (asset.location_kind === 'linked') {
+        if (!asset.linked_folder_id) continue;
+        const linkedFolder = openLibrary.connection
+          .prepare('SELECT absolute_root_path FROM linked_folders WHERE folder_id = ?')
+          .get(asset.linked_folder_id) as { absolute_root_path: string } | undefined;
+        if (!linkedFolder) continue;
+        try {
+          const canonicalRoot = realpathSync(linkedFolder.absolute_root_path);
+          const relation = path.relative(canonicalRoot, matchedPath);
+          if (relation === '' || relation.startsWith(`..${path.sep}`) || path.isAbsolute(relation)) {
+            continue;
+          }
+          resolvedRelativePath = normalizeRelativeAssetPath(relation.split(path.sep).join('/'));
+        } catch {
+          continue;
+        }
+        const identityConflict = openLibrary.connection
+          .prepare(
+            `SELECT asset_id FROM assets
+              WHERE linked_folder_id = ? AND path_identity = ?
+                AND deleted_at IS NULL AND asset_id != ?`,
+          )
+          .get(
+            asset.linked_folder_id,
+            portablePathIdentity(resolvedRelativePath),
+            asset.asset_id,
+          );
+        if (identityConflict) continue;
+      }
+
+      const candidateIdentity = matchedPath.normalize('NFC');
+      proposed.set(asset.asset_id, { matchedPath, resolvedRelativePath, candidateIdentity });
+      candidateUseCount.set(candidateIdentity, (candidateUseCount.get(candidateIdentity) ?? 0) + 1);
+    }
+
+    const matches = new Map<string, BatchRelinkMatch>();
+    for (const [assetId, match] of proposed) {
+      // One physical candidate must never be rebound to multiple asset
+      // identities merely because their final basenames are equal.
+      if (candidateUseCount.get(match.candidateIdentity) !== 1) continue;
+      matches.set(assetId, {
+        matchedPath: match.matchedPath,
+        resolvedRelativePath: match.resolvedRelativePath,
+      });
+    }
+    return matches;
+  }
+
   relinkBatchPreview(input: {
     libraryId: string;
     newRootPath: string;
@@ -10020,39 +10200,15 @@ export class LibraryService {
     }
     this.assertNoSymlinkEscape(newRoot);
 
-    const rows = openLibrary.connection
-      .prepare(
-        `SELECT asset_id, relative_file_path
-           FROM assets
-          WHERE availability = 'missing' AND deleted_at IS NULL
-          ORDER BY relative_file_path`,
-      )
-      .all() as Array<{
-        asset_id: string;
-        relative_file_path: string;
-      }>;
+    const rows = this.batchRelinkRows(openLibrary);
+    const matches = this.batchRelinkMatches(openLibrary, newRoot, rows);
 
     let matchedCount = 0;
     let unmatchedCount = 0;
     const examples: Array<{ relativeFilePath: string; matched: boolean }> = [];
 
     for (const row of rows) {
-      const segments = row.relative_file_path.split('/');
-      // Try last N components as the candidate path under newRoot
-      let matched = false;
-      for (let n = Math.min(segments.length, 5); n >= 1; n -= 1) {
-        const candidateSegments = segments.slice(-n);
-        const candidatePath = path.join(newRoot, ...candidateSegments);
-        try {
-          const entry = lstatSync(candidatePath);
-          if (entry.isFile() && !entry.isSymbolicLink()) {
-            matched = true;
-            break;
-          }
-        } catch {
-          // Continue trying shorter prefixes
-        }
-      }
+      const matched = matches.has(row.asset_id);
 
       if (matched) matchedCount += 1;
       else unmatchedCount += 1;
@@ -10092,22 +10248,8 @@ export class LibraryService {
     }
     this.assertNoSymlinkEscape(newRoot);
 
-    const rows = openLibrary.connection
-      .prepare(
-        `SELECT asset_id, location_kind, linked_folder_id, managed_folder_id,
-                relative_file_path, current_revision_id
-           FROM assets
-          WHERE availability = 'missing' AND deleted_at IS NULL
-          ORDER BY relative_file_path`,
-      )
-      .all() as Array<{
-        asset_id: string;
-        location_kind: 'managed' | 'linked';
-        linked_folder_id: string | null;
-        managed_folder_id: string | null;
-        relative_file_path: string;
-        current_revision_id: string | null;
-      }>;
+    const rows = this.batchRelinkRows(openLibrary);
+    const matches = this.batchRelinkMatches(openLibrary, newRoot, rows);
 
     const now = new Date().toISOString();
     const operationId = randomUUID();
@@ -10135,42 +10277,9 @@ export class LibraryService {
           .run(operationId, JSON.stringify(manifest), now, now);
 
         for (const asset of rows) {
-          const segments = asset.relative_file_path.split('/');
-          let matchedPath: string | undefined;
-          for (let n = Math.min(segments.length, 5); n >= 1; n -= 1) {
-            const candidateSegments = segments.slice(-n);
-            const candidatePath = path.join(newRoot, ...candidateSegments);
-            try {
-              const entry = lstatSync(candidatePath);
-              if (entry.isFile() && !entry.isSymbolicLink()) {
-                matchedPath = candidatePath;
-                break;
-              }
-            } catch {
-              // Continue
-            }
-          }
-
-          if (!matchedPath) continue;
-
-          // For linked assets, verify within linked root
-          if (asset.location_kind === 'linked' && asset.linked_folder_id) {
-            const linkedFolder = openLibrary.connection
-              .prepare('SELECT absolute_root_path FROM linked_folders WHERE folder_id = ?')
-              .get(asset.linked_folder_id) as { absolute_root_path: string } | undefined;
-            if (linkedFolder) {
-              try {
-                const canonicalRoot = realpathSync(linkedFolder.absolute_root_path);
-                const canonicalNew = realpathSync(matchedPath);
-                const relation = path.relative(canonicalRoot, canonicalNew);
-                if (relation === '' || relation.startsWith(`..${path.sep}`) || path.isAbsolute(relation)) {
-                  continue;
-                }
-              } catch {
-                continue;
-              }
-            }
-          }
+          const match = matches.get(asset.asset_id);
+          if (!match) continue;
+          const { matchedPath, resolvedRelativePath } = match;
 
           const fileStat = asset.location_kind === 'managed'
             ? (() => {
@@ -10197,17 +10306,24 @@ export class LibraryService {
               asset.current_revision_id ?? null,
               fileStat.size,
               fileStat.mtime.toISOString(),
-              path.posix.basename(asset.relative_file_path),
+              path.posix.basename(resolvedRelativePath),
               now,
             );
 
           openLibrary.connection
             .prepare(
               `UPDATE assets
-                  SET current_revision_id = ?, availability = 'available', updated_at = ?
+                  SET current_revision_id = ?, availability = 'available',
+                      relative_file_path = ?, path_identity = ?, updated_at = ?
                 WHERE asset_id = ?`,
             )
-            .run(revisionId, now, asset.asset_id);
+            .run(
+              revisionId,
+              resolvedRelativePath,
+              portablePathIdentity(resolvedRelativePath),
+              now,
+              asset.asset_id,
+            );
 
           if (asset.current_revision_id) {
             openLibrary.connection

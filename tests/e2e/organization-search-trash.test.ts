@@ -211,6 +211,7 @@ test('organizes, finds, trashes, and restores an imported asset through the UI',
     await expect(window.getByRole('button', { name: '英雄精选', exact: true })).toBeVisible();
     await window.getByRole('button', { name: '英雄精选', exact: true }).click();
     await expect(window.getByRole('button', { name: /hero\.png/i })).toBeVisible();
+    await expect(window.locator('.toast')).toContainText('找到 1 项');
 
     await window.getByRole('button', { name: '英雄精选', exact: true }).click({ button: 'right' });
     await window.getByRole('menuitem', { name: '用当前条件更新' }).click();
@@ -241,7 +242,7 @@ test('organizes, finds, trashes, and restores an imported asset through the UI',
   }
 });
 
-test('multi-select performs batch organization, trash, and explicit restore', async () => {
+test('multi-select performs batch organization, trash, restore, and permanent delete', async () => {
   const temporaryRoot = mkdtempSync(path.join(tmpdir(), 'serpent-batch-organization-e2e-'));
   const firstSource = path.join(temporaryRoot, 'first.txt');
   const secondSource = path.join(temporaryRoot, 'second.txt');
@@ -360,6 +361,20 @@ test('multi-select performs batch organization, trash, and explicit restore', as
     await expect(window.locator('.toast')).toContainText('已恢复 2 项资产');
     await window.getByRole('button', { name: /所有资产/ }).click();
     await expect(window.locator('.asset-card')).toHaveCount(2);
+
+    await window.locator('.asset-card').first().click();
+    await window.locator('.asset-card').last().click({ modifiers: [additiveModifier] });
+    await window.getByRole('button', { name: '移入回收站' }).click();
+    await expect(window.locator('.toast')).toContainText('2 项资产已移入回收站');
+    await window.getByRole('button', { name: '回收站', exact: true }).click();
+    await expect(window.locator('.asset-card')).toHaveCount(2);
+    await window.locator('.asset-card').first().click();
+    await window.locator('.asset-card').last().click({ modifiers: [additiveModifier] });
+    await window.getByRole('button', { name: '永久删除', exact: true }).click();
+    await expect(window.getByRole('dialog')).toContainText('所选 2 项资产');
+    await window.getByRole('dialog').getByRole('button', { name: '永久删除 2 项' }).click();
+    await expect(window.locator('.toast')).toContainText('已永久删除 2 项');
+    await expect(window.locator('.asset-card')).toHaveCount(0);
   } finally {
     await application.close();
     rmSync(temporaryRoot, { force: true, recursive: true });

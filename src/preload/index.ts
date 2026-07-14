@@ -16,6 +16,7 @@ import {
   EXTENSION_PAIRING_CHANNEL,
 } from '../shared/protocol/channels';
 import type { RendererRequest } from '../shared/protocol/requests';
+import type { PublicErrorReason } from '../shared/protocol/errors';
 import {
   parseRendererResult,
   parseRendererLifecycleEvent,
@@ -497,7 +498,7 @@ const library: SerpentLibraryApi = Object.freeze({
     return { ok: true, value: { undoneCount: result.undoneCount, skippedCount: result.skippedCount, assets: result.assets } };
   },
 
-  async deleteAssetsPermanent({ libraryId, assetIds }: { libraryId: string; assetIds: string[] }): Promise<LibraryApiResult<{ deletedCount: number; skippedCount: number; skippedReasons: string[] }>> {
+  async deleteAssetsPermanent({ libraryId, assetIds }: { libraryId: string; assetIds: string[] }): Promise<LibraryApiResult<{ deletedCount: number; skippedCount: number; skippedReasons: Array<{ assetId: string; reason: PublicErrorReason }> }>> {
     const result = await request({ type: 'asset.delete-permanent.request', libraryId, assetIds });
     if (!result.ok) return failure(result);
     if (result.type !== 'asset.deleted-permanent') throw new Error('Unexpected delete-permanent response.');
@@ -511,11 +512,11 @@ const library: SerpentLibraryApi = Object.freeze({
     return { ok: true, value: result.assets };
   },
 
-  async purgeTrash({ libraryId }: { libraryId: string }): Promise<LibraryApiResult<{ purgedCount: number }>> {
+  async purgeTrash({ libraryId }: { libraryId: string }): Promise<LibraryApiResult<{ purgedCount: number; skippedCount: number; failures: Array<{ assetId: string; reason: PublicErrorReason }> }>> {
     const result = await request({ type: 'trash.purge.request', libraryId });
     if (!result.ok) return failure(result);
     if (result.type !== 'asset.purge-trash') throw new Error('Unexpected purge-trash response.');
-    return { ok: true, value: { purgedCount: result.purgedCount } };
+    return { ok: true, value: { purgedCount: result.purgedCount, skippedCount: result.skippedCount, failures: result.failures } };
   },
 
   async deleteLinkedAssets({ libraryId, assetIds, deleteSourceFile }: { libraryId: string; assetIds: string[]; deleteSourceFile: boolean }): Promise<LibraryApiResult<LinkedAssetDeleteResult>> {
@@ -543,14 +544,21 @@ const library: SerpentLibraryApi = Object.freeze({
     const result = await request({ type: 'asset.relink-batch.request', libraryId, keepMetadata });
     if (!result.ok) return failure(result);
     if (result.type !== 'asset.relink-batch.preview') throw new Error('Unexpected relink-batch-preview response.');
-    return { ok: true as const, value: { matchedCount: result.matchedCount, unmatchedCount: result.unmatchedCount, totalCount: result.totalCount, examples: result.examples } };
+    return { ok: true as const, value: { previewId: result.previewId, matchedCount: result.matchedCount, unmatchedCount: result.unmatchedCount, totalCount: result.totalCount, examples: result.examples } };
   },
 
-  async relinkBatchApply({ libraryId, keepMetadata }: { libraryId: string; keepMetadata: boolean }) {
-    const result = await request({ type: 'asset.relink-batch.apply.request', libraryId, keepMetadata });
+  async relinkBatchApply({ libraryId, previewId, keepMetadata }: { libraryId: string; previewId: string; keepMetadata: boolean }) {
+    const result = await request({ type: 'asset.relink-batch.apply.request', libraryId, previewId, keepMetadata });
     if (!result.ok) return failure(result);
     if (result.type !== 'asset.relink-batch.applied') throw new Error('Unexpected relink-batch-apply response.');
     return { ok: true as const, value: { restoredCount: result.restoredCount, unchangedMissingCount: result.unchangedMissingCount, assets: result.assets } };
+  },
+
+  async cancelRelinkBatch({ libraryId, previewId }: { libraryId: string; previewId: string }) {
+    const result = await request({ type: 'asset.relink-batch.cancel.request', libraryId, previewId });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'asset.relink-batch.cancelled') throw new Error('Unexpected relink-batch-cancel response.');
+    return { ok: true as const, value: { previewId: result.previewId } };
   },
 
   setActiveContext(libraryId: string | null, selectedFolderId?: string): void {

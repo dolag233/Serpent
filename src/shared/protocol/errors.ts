@@ -41,6 +41,7 @@ export type PublicErrorCode = keyof typeof PUBLIC_ERROR_MESSAGES;
 
 export const publicErrorReasonSchema = z.enum([
   'PERMISSION_DENIED',
+  'FILE_BUSY',
   'PATH_LIMIT_EXCEEDED',
   'DISK_FULL',
   'READ_ONLY_FILESYSTEM',

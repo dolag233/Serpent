@@ -3,11 +3,31 @@ import { z } from 'zod';
 const nonBlankString = z.string().min(1).refine((value) => value.trim().length > 0);
 const boundedSearchValue = nonBlankString.max(512);
 
+/**
+ * Canonical path form that is safe to expose across the Renderer boundary.
+ *
+ * Serpent persists relative paths with POSIX separators on every platform.
+ * Rejecting absolute, drive-qualified, backslash-separated, empty, and dot
+ * segments keeps a parsed value relative without relying on the host OS path
+ * implementation.
+ */
+export const portableRelativePathSchema = nonBlankString.superRefine((value, context) => {
+  if (value.startsWith('/') || /^[A-Za-z]:/u.test(value)) {
+    context.addIssue({ code: 'custom', message: 'Path must be relative.' });
+  }
+  if (value.includes('\\')) {
+    context.addIssue({ code: 'custom', message: 'Path must use POSIX separators.' });
+  }
+  if (value.split('/').some((segment) => segment === '' || segment === '.' || segment === '..')) {
+    context.addIssue({ code: 'custom', message: 'Path must contain only canonical relative segments.' });
+  }
+});
+
 export const managedFolderSummarySchema = z.strictObject({
   folderId: nonBlankString,
   parentFolderId: nonBlankString.nullable(),
   name: nonBlankString,
-  relativePath: nonBlankString,
+  relativePath: portableRelativePathSchema,
 });
 
 export type ManagedFolderSummary = z.infer<typeof managedFolderSummarySchema>;
@@ -35,7 +55,7 @@ export const assetSummarySchema = z.strictObject({
   assetId: nonBlankString,
   locationKind: z.enum(['managed', 'linked']),
   managedFolderId: nonBlankString.nullable(),
-  relativeFilePath: nonBlankString,
+  relativeFilePath: portableRelativePathSchema,
   displayName: nonBlankString,
   currentRevisionId: nonBlankString,
   byteSize: z.number().int().nonnegative(),
@@ -45,7 +65,7 @@ export const assetSummarySchema = z.strictObject({
   rating: z.number().int().min(0).max(5),
   favorite: z.boolean(),
   deletedAt: nonBlankString.nullable(),
-  trashedFromPath: nonBlankString.nullable(),
+  trashedFromPath: portableRelativePathSchema.nullable(),
   remainingDays: z.number().int().nullable(),
   thumbnailStatus: z.enum(['ready', 'pending', 'failed']).nullable(),
   thumbnailArtifactId: nonBlankString.nullable(),
