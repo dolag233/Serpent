@@ -6,7 +6,7 @@
 
 Serpent 是一款开源（MIT）、跨平台（Windows + macOS）的数字资产管理软件，对标 Eagle/Billfish。首发用户为游戏美术、影视后期、平面/UI/品牌设计师。技术栈：Electron + TypeScript + SQLite + Vite + React。
 
-完整产品定义、领域模型、术语、开发流程都在版本控制内的 `docs/` 下。开始工作前先读 `docs/product-brief.md`、`docs/development-process.md`、`docs/domain-model.md` 和 `docs/project-status.md`。
+完整产品定义、领域模型、术语、开发流程都在版本控制内的 `docs/` 下。开始工作前先读 `docs/product-brief.md`、`docs/development-process.md`、`docs/domain-model.md`、`docs/project-status.md` 和 `docs/qa/human-acceptance-checklist.md`。
 
 ## 环境约束（必读）
 
@@ -95,8 +95,17 @@ Library Worker (UtilityProcess; filesystem + SQLite owner)
 - `docs/development/NNNN-*.md` — 切片开发日志
 - `docs/reviews/NNNN-*.md` — 双轴代码审查
 - `docs/qa/NNNN-*.md` — QA 报告
+- `docs/qa/human-acceptance-checklist.md` — 面向产品负责人的持续人类验收队列
 - `docs/ui/0001-studio-contact-sheet-direction.md` — UI 视觉方向
 - `docs/research/` — 技术调研
+
+## 人类功能验收清单（强制）
+
+- `docs/qa/human-acceptance-checklist.md` 是唯一的跨 agent 人类功能验收队列。所有 agent 在开始开发前必须读取，开发过程中持续更新，不能只在会话结束时补写。
+- 清单按可由人类独立操作的最小功能拆分，不按提交、代码模块或大切片笼统记录。只有功能路径已实现、当前合流状态的相关自动化通过、没有该条目范围内的已知阻断，并且能够写出确定的操作步骤与预期结果时，才能加入“待人类验收”。
+- 自动化通过、代码审查通过、Computer Use 通过或 agent 自测通过，都不能把状态改为“人类验收通过”。只有用户本人明确确认后才能设置该状态；用户报告问题时，必须在当前开发回合立即改为“人类验收不通过”或“已撤回”，记录反馈并链接后续修复证据。
+- 每完成一个新的可验收增量，必须在同一提交中更新清单，并在阶段性汇报和最终回复中列出新增或变化的验收项 ID、用户可以怎样验收，以及尚未进入清单的相关未完成范围。
+- 不允许为展示进度而把部分实现、旧构建结果、未执行的平台项目或仅有内部 API/数据结构的工作写成可验收功能。详细自动化、平台和截图证据仍写入对应开发日志/QA 报告，清单只保留稳定链接和面向人的步骤。
 
 ## 核心体验回归门禁
 

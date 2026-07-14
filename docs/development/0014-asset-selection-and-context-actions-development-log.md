@@ -1,6 +1,6 @@
 # 切片 0014 开发日志：资产选择与上下文操作（P0 右键菜单热修 + P1 选择模型）
 
-> 状态：P0 热修 + P1 选择模型完成（自动化 + 双轴审查通过）；剩余 P1 移除批量条 / 批量菜单 / 视觉打磨待实施
+> 状态：步骤完成,切片未完成,不可 accepted — P0 热修 + P1 选择模型步骤完成（marquee/组合键/Esc/re-click-tested-via-Ctrl-toggle）；切片 0014 未完成 — P1 剩余移除顶部批量条 / 统一批量右键菜单 / 视觉打磨 未实施; Computer Use + Windows 验收未执行
 > 日期：2026-07-14
 
 ## 依据
@@ -63,7 +63,7 @@
 | --- | --- |
 | Typecheck | 通过 |
 | Lint | 通过 |
-| Unit + Worker 测试 | 320 passed（回归，上下文菜单不影响后端） |
+| Unit 测试 | 320 passed（回归，上下文菜单不影响后端） |
 | Electron E2E `context-menu` | 7/7 通过（含 blur/四角 clamp/scope-change 3 项新增） |
 | Electron E2E 回归 `organization-search-trash` | 3/3 通过 |
 | Electron E2E 回归 `media-preview` | 2/2 通过 |
@@ -72,7 +72,7 @@
 ## 双轴审查结论
 
 - **Standards**：0 HARD 违规。unified context 与单一 `useContextMenu` hook 统一了此前分散的 3 套菜单实现；5 套独立但语义清晰的 `useEffect` 监听块确保无 listener 泄漏（cleanup 对称）；外部点击通过 document-level capture 监听 + `querySelector(".context-menu")` 实现，backdrop 以 `pointer-events:none` 避免拦截正常交互。死代码 `useSingleContextMenu` export 别名已移除。
-- **Spec**：P0 功能全部满足（可靠关闭、viewport clamp/flip、单菜单 mutex、键盘导航、可访问名称）。测试缺口（blur/四角/scope-change）已关闭。P1 架构安全——统一组件基础设施为后续批量菜单提供基础，无范围蔓延。
+- **Spec**：P0 右键菜单功能满足（可靠关闭、viewport clamp/flip、单菜单 mutex、键盘导航、可访问名称）。测试缺口（blur/四角/scope-change）已关闭。P1 架构安全——统一组件基础设施为后续批量菜单提供基础，无范围蔓延。
 - **非阻断气味（记录为后续项）**：5 套重复的 `useEffect` 监听块可抽取共享 helper；backdrop 的 `querySelector(".context-menu")` 属于 Feature Envy（应由 ContextMenu 组件管理自己的 ref，而非 backdrop 查询 DOM）；App.tsx 的引号风格变更产生大范围 diff 噪声；资产菜单使用 inline IIFE。均为判断/改进项，不阻断合并。
 
 ## 实现摘要（P1 选择模型，2026-07-14）
@@ -128,7 +128,7 @@
 | --- | --- |
 | Typecheck | 通过 |
 | Lint | 通过 |
-| Unit + Worker 测试 | 320 passed（回归） |
+| Unit 测试 | 320 passed（回归） |
 | Electron E2E `selection-marquee` | 10/10 通过（5 原有 + 5 新增） |
 | Electron E2E 回归 `context-menu` | 7/7 通过（含适配：1 处双 Escape 清选后 sidebar 交互） |
 | Electron E2E 回归 `organization-search-trash` | 3/3 通过 |
@@ -138,12 +138,12 @@
 ### 双轴审查结论（P1）
 
 - **Standards**：0 HARD 违规。medium 项全部修复（stale-anchor 已设 selectionAnchorRef、dead-code autoScrollRaf 已移除、intersection-dedup 已用 ref 共享）。non-blocking follow-up：Primitive Obsession（框选 rect 裸对象）、Long Method（140 行 useEffect）、Windows Ctrl 真实验证。
-- **Spec**：选择模型完成（框选、组合键、Esc）。**re-click-deselect 已移除**——原为对验收条件 #2（"再次点击取消"）的误读，该条件指 Ctrl/Cmd+click toggle 取消选择（规格第 17 行），现已由 Ctrl/Cmd+click toggle 满足。测试缺口已关闭：line 21（视图切换/缩放生存）、line 16（Ctrl/Cmd 增减往返）、line 20（瀑布流自动滚动）。Windows Ctrl 已确认为明确缺口。
+- **Spec**：选择模型步骤完成（框选、组合键、Esc）。**re-click-deselect 已移除**——原为对验收条件 #2（"再次点击取消"）的误读，该条件指 Ctrl/Cmd+click toggle 取消选择（规格第 17 行），现已由 Ctrl/Cmd+click toggle 满足。测试缺口已关闭：line 21（视图切换/缩放生存）、line 16（Ctrl/Cmd 增减往返）、line 20（瀑布流自动滚动）。Windows Ctrl 已确认为明确缺口。
 - **非阻断 follow-up（记录为后续项）**：Primitive Obsession、Long Method、Windows Ctrl real QA。
 
 ## 状态
 
-P0 热修 + P1 选择模型完成（自动化绿 + 双轴审查通过）。剩余 P1 移除顶部批量条 / 批量右键菜单连线 / 视觉打磨仍待实施。**未被 accepted**——macOS Computer Use 人工视觉 QA 与 Windows 平台验证未执行。
+P0 热修 + P1 选择模型步骤完成（自动化绿 + 双轴审查通过）。切片 0014 未完成 — P1 剩余移除顶部批量条 / 统一批量右键菜单 / 视觉打磨 未实施。**未被 accepted**——macOS Computer Use 人工视觉 QA 与 Windows 平台验证未执行。
 
 ## 遗留风险
 

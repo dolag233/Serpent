@@ -18,8 +18,10 @@
 - 通过：查询 schema 对 clause/value/filter 数量、值长度和智能合集 JSON 总长度设置上限；
   智能合集 create/update/execute 共用 strict definition schema。
 - packaged FTS5 搜索冒烟（2026-07-14）：新增 `tests/e2e/packaged-startup.test.ts` 搜索测试，
-  在 packaged .app（ASAR + better-sqlite3 native module）中通过 `getByLabel('搜索资源库')`
-  导入 real PNG 后搜索命中/排除，确认 FTS5 在打包上下文中端到端工作。
+  对 7月13日旧 packaged build 验证 2/2 (非当前 HEAD — `npm run package` 被 0006 media:verify 阻断, 无法基于当前提交重新打包);
+  按验收纪律#4(当前 HEAD 必须当前构建),对当前 HEAD 的 packaged 搜索冒烟 = 未执行。
+  测试在旧 packaged .app（ASAR + better-sqlite3 native module）中通过 `getByLabel('搜索资源库')`
+  导入 real PNG 后搜索命中/排除，确认 FTS5 在打包上下文中端到端工作（基于旧包，非当前 HEAD 重新打包验证）。
 
 ## Spec 轴
 
@@ -34,5 +36,4 @@
 
 本轮报告的相关性排序、混合/纯排除、清空条件、智能合集分页、NOCASE、计数污染和输入上限
 问题均已修复并回归。snippet 使用 FTS5 最佳命中列，仍未拆成独立二次查询，但性能门禁满足
-目标，记为非阻断实现差异。packaged FTS5 搜索冒烟（2026-07-14）通过，确认 ASAR + native
-module 上下文中 FTS5 端到端工作。结论为自动化层有条件通过；macOS 人工视觉 QA 与 Windows 待补。
+目标，记为非阻断实现差异。packaged FTS5 搜索冒烟对旧 build 验证 2/2（非当前 HEAD）; 按验收纪律#4,对当前 HEAD 的 packaged 搜索冒烟 = 未执行。结论为自动化层有条件通过；macOS 人工视觉 QA 与 Windows 待补。

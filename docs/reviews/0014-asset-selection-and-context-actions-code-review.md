@@ -1,6 +1,6 @@
 # 切片 0014 双轴代码审查：资产选择与上下文操作（P0 右键菜单热修 + P1 选择模型）
 
-> 状态：双轴通过（0 HARD 违规）；P0 规格满足，P1 选择模型完成
+> 状态：步骤完成,切片未完成,不可 accepted — 双轴通过（0 HARD 违规）；P0 规格满足，P1 选择模型步骤完成; 切片 0014 未完成 — P1 剩余移除顶部批量条 / 统一批量右键菜单 / 视觉打磨 未实施; Computer Use + Windows 验收未执行
 > 日期：2026-07-14
 
 ## 审查范围
@@ -69,7 +69,7 @@
 
 #### Spec 轴（P1）
 
-- **选择模型完成**（规格行 13–22）：
+- **选择模型步骤完成**（规格行 13–22）：
   - 框选（行 19–20）：3 阶段 document-level mousedown/mousemove/mouseup + AABB box-overlap intersection + 40px edge auto-scroll，grid/masonry 一致。
   - 普通点击单选、Shift 连续选择、Ctrl/Cmd 增减、Ctrl/Cmd+Shift 范围追加（行 15–18）。
   - **Re-click 取消选择已移除**：原 re-click-deselect guard（普通点击已选单卡时取消）为对验收条件 #2（"再次点击取消"）的误读。该条件指 Ctrl/Cmd+click toggle 取消选择（规格第 17 行"Ctrl/Command + 点击:逐项加入或取消选择"），非普通点击 re-click。规格第 16 行明文规定普通点击 = "只选择目标资产"。该 guard 已移除，普通点击始终替换为单选；"再次点击取消"由 Ctrl/Cmd+click toggle 正确满足。
@@ -97,7 +97,7 @@ P0 范围严格限定于右键菜单可靠性。P1 选择模型按规格实施�
 
 ## 结论
 
-双轴通过：Standards 轴 0 HARD 违规（medium 项全部修复，non-blocking follow-up 已记录），Spec 轴 P0 完整满足 + P1 选择模型完成（剩余批量条/菜单/视觉打磨待实施）。代码未提交（working tree uncommitted）。macOS Computer Use 人工视觉 QA 与 Windows 平台行为仍未验证，切片整体尚未 accepted。
+双轴通过：Standards 轴 0 HARD 违规（medium 项全部修复，non-blocking follow-up 已记录），Spec 轴 P0 满足 + P1 选择模型步骤完成（切片 0014 未完成 — 剩余批量条/菜单/视觉打磨 未实施）。按验收纪律#3(增量完成≠切片完成),切片不可 accepted。macOS Computer Use 人工视觉 QA 与 Windows 平台行为仍未验证。
 
 **非阻断 follow-up 列表（不阻断合并）**：
 1. 抽取 `useCloseOnEvent` 共享 helper 减少 5 套重复监听块（P0）

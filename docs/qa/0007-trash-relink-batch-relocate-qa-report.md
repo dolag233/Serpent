@@ -1,13 +1,13 @@
 # 切片 0007 QA 报告
 
-> 状态：自动化全绿 + 规格覆盖完成；人工平台 QA 待执行
+> 状态：fixing；主用户流自动化通过，崩溃恢复覆盖缺失，人工平台 QA 待执行
 > 日期：2026-07-13（基线）/ 2026-07-14（补充）
 
 ## Build under test
 
 - 固定提交范围：`8dc2470...cdc2247`（基线）
-- 补充对象：当前 working tree 的公共 UI E2E + stateful relink-preview 增强（未提交 diff + 4 新文件）
-- 审查基准：`8d53057` + 未提交 working-tree diff
+- stateful relink-preview 实现提交：`7bc78f47e2522f7a2dd60ba35a2c2a62d14bd21a`
+- 当前合流复核基线：`2f7bd0903f3b80257d3c4d90e4125c6068a73810`；不再以未提交 working tree 作为证据
 
 ## 2026-07-14 relink-preview 自动化结果
 
@@ -22,7 +22,7 @@
 
 - `keepMetadata=false` 清空行为：`tests/worker/trash-relink.test.ts:1731` 覆盖——清空人工与 AI 元数据、标签、合集关系，保留 `asset_id` 与 revision 链。
 - 无绝对路径泄漏：`tests/unit/protocol.test.ts` 新增 Zod schema 校验——workerCommand/workerSuccessResult/rendererRequest/rendererSuccessResult 均拒绝 Renderer 响应中含绝对路径；`portableRelativePathSchema` 拒绝绝对/UNC 路径（`tests/unit/asset-types-paths.test.ts`）。
-- 崩溃恢复：Worker `recoverOrphanRelinkPlacement` manifest 覆盖，资源库打开时清理未完成重新定位。
+- 崩溃恢复：**未覆盖**。`recoverOrphanRelinkPlacement` 代码存在，但 `crash-relink-*` failpoint 未接入执行路径，测试没有制造中断并完整重启资源库。按验收纪律#2(代码存在≠覆盖),崩溃恢复 = 未验证。
 - 候选去重：`realpath` 归一化 + linked-root 冲突校验覆盖。
 - `FILE_BUSY` 错误原因：稳定 Enum 返回 Renderer 已覆盖。
 - 多选永久删除对话框：公共 UI E2E 覆盖。
@@ -58,4 +58,4 @@ system-trash helper（49/49）。
 
 ## 结论
 
-自动化门禁全绿，规格覆盖完整（含 `keepMetadata=false` 清空、无绝对路径泄漏、崩溃恢复、候选去重、FILE_BUSY、多选永久删除对话框）。双轴审查通过（0 HARD 违规）。但仍非 accepted——macOS Computer Use 人工 QA 与 Windows 平台验证未执行。
+preview/apply、取消、`keepMetadata=false`、路径隐私、候选去重、FILE_BUSY 和多选永久删除对话框具备自动化证据；重新定位崩溃恢复没有证据，原”规格覆盖完整/0 HARD”结论撤回——按验收纪律#2(代码存在≠覆盖),failpoint 存在但未触发+重启+对账 = 未验证。切片保持 fixing，另待 macOS Computer Use、打包后冒烟与 Windows 平台验证。

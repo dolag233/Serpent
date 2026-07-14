@@ -17,7 +17,7 @@
 | Worker（当前集成工作树） | 含 10 万资产性能门禁 4/4；普通浏览首屏固定返回 50 项 |
 | Electron `asset-pagination` | 1/1 通过；73 项资源库分两页渲染 50 + 23 张卡片 |
 | 全量 Electron E2E | 10/10 通过 |
-| Package/verify/packaged smoke | 通过（packaged 2/2；含 FTS5 搜索冒烟） |
+| Package/verify/packaged smoke | verify 通过; packaged 搜索冒烟对当前 HEAD 未执行 — 对 7月13日旧 packaged build 验证 2/2 (非当前 HEAD — `npm run package` 被 0006 media:verify 阻断, 无法基于当前提交重新打包); 按验收纪律#4(当前 HEAD 必须当前构建),对当前 HEAD 的 packaged 搜索冒烟 = 未执行 |
 | Lint | 通过 |
 | Typecheck | 通过 |
 
@@ -73,5 +73,5 @@ Electron 43.1.0；基线提交 `0e5d44d` 加当前未提交的 0005 收口改动
 ## 结论
 
 搜索/过滤/排序/分页/snippet/智能合集的自动门禁与 10 万资产热查询性能门禁通过；
-packaged 搜索冒烟（FTS5 在 ASAR + native module 上下文中端到端验证）通过（2/2）；
+packaged FTS5 搜索冒烟: 对 7月13日旧 packaged build 验证 2/2 (非当前 HEAD — `npm run package` 被 0006 media:verify 阻断, 无法基于当前提交重新打包); 按验收纪律#4(当前 HEAD 必须当前构建),对当前 HEAD 的 packaged 搜索冒烟 = 未执行;
 macOS 人工视觉 QA 和 Windows 验证尚未完成，因此维持有条件通过，不写成最终 accepted。

@@ -6,7 +6,7 @@
 
 Serpent 是一款开源（MIT）、跨平台（Windows + macOS）的数字资产管理软件，对标 Eagle/Billfish。首发用户为游戏美术、影视后期、平面/UI/品牌设计师。技术栈：Electron + TypeScript + SQLite + Vite + React。
 
-开始工作前必须读取 `AGENTS.md`、`docs/product-brief.md`、`docs/development-process.md`、`docs/domain-model.md` 和 `docs/project-status.md`。
+开始工作前必须读取 `AGENTS.md`、`docs/product-brief.md`、`docs/development-process.md`、`docs/domain-model.md`、`docs/project-status.md` 和 `docs/qa/human-acceptance-checklist.md`。
 
 ## 环境约束（必读）
 
@@ -88,6 +88,20 @@ Library Worker (UtilityProcess; filesystem + SQLite owner)
 - **共享知识进入仓库**：事故复盘、质量门禁和切片状态不得只留在 Claude memory、聊天或本机忽略文件中。
 - **TypeScript pinned 6.0.3**：typescript-eslint@8.63.0 不支持 TS 7.x，等生态适配后再升。
 
+## 验收纪律（2026-07-14 复盘新增，强制生效）
+
+> 触发：autonomous loop 出现"部分实现 + 局部测试通过"被写成"规格覆盖完整"的系统性偏差（详见 `docs/development/2026-07-14-acceptance-discipline-retrospective.md`）。下列规则覆盖"完成定义"的判定口径，Claude Code 每会话强制遵守。
+
+1. **四列可追溯**：每项规格验收维护四列——需求条目 | 实现位置(file:line) | 自动化测试(test:line) | 人工/平台证据。任一列缺失只能写"部分完成/未验证"，不得写"覆盖完整/已验证"。
+2. **代码存在 ≠ 覆盖**：failpoint/恢复路径的存在不构成覆盖证据；必须证明 failpoint 实际触发 + 进程重启 + 磁盘/DB 对账。未触发即"未验证"。
+3. **增量完成 ≠ 切片完成**：增量步骤（P0/P1）完成只在"步骤"粒度标记；切片完成需规格全部条目四列齐。步骤完成 ≠ 切片 `accepted`。
+4. **当前 HEAD 必须当前构建**：packaged/打包验收必须基于当前提交重新构建；构建被门禁（如 `media:verify`）阻断时只能记"未执行"，不得用旧包/旧产物证明当前 HEAD。
+5. **独立最终验收**：实现者可写开发日志；最终 Spec 审查、Computer Use、`accepted` 结论由独立角色（另一 agent / 主 agent）签署。实现者不得自签 `accepted`。
+6. **测试竞态先复现**：flaky/超时-重跑通过不构成关闭；必须建立稳定复现 + 定位时序耦合（全局 busy/锁/共享状态）后才能关闭。重跑通过只记"疑似 flaky，未关闭"。
+7. **packaged/独立进程 E2E 必须隔离 userData**：用 temp `SERPENT_E2E_USER_DATA_PATH`，不得用默认（避免读/污染真实配置）。
+8. **抑制巨型文件膨胀**：新交互（选择/菜单/批量动作）抽独立模块（controller/hook/descriptor builder），不得继续内联进 `App.tsx` 等巨型文件；新增内联 > ~60 行先拆分。
+9. **文档证据实时**："通过/已验证"必须附当次命令+结果摘要；被 kill/部分执行的运行不得写成"确认绿"。
+
 ## 文档入口
 
 - `docs/product-brief.md` — 产品愿景与 MVP 边界
@@ -98,6 +112,7 @@ Library Worker (UtilityProcess; filesystem + SQLite owner)
 - `docs/development/NNNN-*.md` — 切片开发日志
 - `docs/reviews/NNNN-*.md` — 双轴代码审查
 - `docs/qa/NNNN-*.md` — QA 报告
+- `docs/qa/human-acceptance-checklist.md` — 持续更新的人类功能验收队列；只有用户本人可以标记“人类验收通过”
 - `docs/ui/0001-studio-contact-sheet-direction.md` — UI 视觉方向
 - `docs/research/` — 技术调研
 

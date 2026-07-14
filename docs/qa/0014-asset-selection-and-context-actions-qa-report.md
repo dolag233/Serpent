@@ -1,14 +1,14 @@
 # 切片 0014 QA 报告：资产选择与上下文操作（P0 右键菜单热修 + P1 选择模型）
 
-> 状态：自动化全绿 + 规格覆盖完成 + 审查修复验证通过；人工平台 QA 待执行
+> 状态：步骤完成,切片未完成,不可 accepted — P0 菜单热修 + P1 选择模型步骤完成; 切片 0014 未完成 — 剩余 P1 移除批量条/批量菜单/视觉打磨 未实施; Computer Use + Windows 验收未执行
 > 日期：2026-07-14
 
 ## Build under test
 
-- 审查基准：`7bc78f4`（HEAD），即 0014 P0 变更的父提交
-- 测试对象：当前 working tree 的未提交 diff
-  - 新文件：`src/renderer/context-menu.tsx`、`tests/e2e/context-menu.test.ts`
-  - 修改文件：`src/renderer/App.tsx`、`src/renderer/styles.css`、`package.json`
+- P0 菜单实现提交：`b2d9ba9a77b0d2b459bd58b3854b7aa806f35ee9`
+- P1 选择实现提交：`d04f1de40d60d63bc2a18ef19bc89eb04677f051`
+- 规格纠偏提交：`2f7bd0903f3b80257d3c4d90e4125c6068a73810`
+- 当前测试对象为上述固定提交合流结果，不再以未提交 working tree 作为证据
 
 ## 自动化结果（2026-07-14）
 
@@ -16,7 +16,7 @@
 | --- | --- |
 | Typecheck | 通过 |
 | Lint | 通过 |
-| Unit + Worker 测试 | 320 passed（回归，上下文菜单不影响后端） |
+| Unit 测试 | 320 passed（回归，上下文菜单不影响后端） |
 | Electron E2E `context-menu` | 7/7 通过 |
 | Electron E2E 回归 `organization-search-trash` | 3/3 通过 |
 | Electron E2E 回归 `media-preview` | 2/2 通过 |
@@ -45,7 +45,7 @@
 ## 双轴审查结论
 
 - **Standards**：0 HARD 违规。死代码 `useSingleContextMenu` export 已移除。5 套独立 `useEffect` 监听块无 listener 泄漏（cleanup 对称）。
-- **Spec**：P0 功能全部满足。P1 架构安全——统一组件为批量菜单提供基础。
+- **Spec**：P0 右键菜单功能满足。P1 架构安全——统一组件为批量菜单提供基础。
 - **非阻断气味（记录为后续项）**：5 套重复的 `useEffect` 监听块（可抽取共享 helper）；backdrop 的 `querySelector(".context-menu")` Feature Envy；App.tsx 引号风格大范围 diff 噪声；inline IIFE。
 - **状态**：conditional — 非阻断项已记录为 follow-up。
 
@@ -63,7 +63,7 @@
 | --- | --- |
 | Typecheck | 通过 |
 | Lint | 通过 |
-| Unit + Worker 测试 | 320 passed（回归） |
+| Unit 测试 | 320 passed（回归） |
 | Electron E2E `selection-marquee` | 10/10 通过（5 原有 + 5 新增） |
 | Electron E2E 回归 `context-menu` | 7/7 通过 |
 | Electron E2E 回归 `organization-search-trash` | 3/3 通过 |
@@ -99,9 +99,9 @@
 ### 双轴审查结论（P1）
 
 - **Standards**：0 HARD 违规。medium 项全部修复。non-blocking：Primitive Obsession、Long Method、Windows Ctrl。
-- **Spec**：选择模型完成。测试缺口 line 21/16/20 已关闭。Windows Ctrl 已确认缺口。
+- **Spec**：macOS P1 选择模型已有自动化覆盖；测试缺口 line 21/16/20 已关闭。Windows Ctrl 和完整批量上下文操作仍是明确缺口，因此切片规格未完成。
 - **状态**：conditional — non-blocking 项已记录为 follow-up。
 
 ## 结论
 
-自动化门禁全绿：typecheck/lint/unit 320 passed、E2E 24/24（selection-marquee 10/10 + context-menu 7/7 + organization-search-trash 3/3 + media-preview 2/2 + browsing-preferences 2/2）。双轴审查通过（0 HARD 违规，medium 项全部修复，non-blocking follow-up 已记录）。P0 热修 + P1 选择模型完成，但切片整体**未被 accepted**——剩余 P1 移除顶部批量条 / 批量右键菜单连线 / 视觉打磨待实施；macOS Computer Use 人工视觉 QA 与 Windows 平台验证未执行。
+自动化门禁全绿：typecheck/lint/unit 320 passed、E2E 24/24（selection-marquee 10/10 + context-menu 7/7 + organization-search-trash 3/3 + media-preview 2/2 + browsing-preferences 2/2）。双轴审查通过（0 HARD 违规，medium 项全部修复，non-blocking follow-up 已记录）。P0 热修 + P1 选择模型步骤完成，但切片 0014 未完成（剩余 P1 移除顶部批量条 / 批量右键菜单连线 / 视觉打磨 未实施）且**未被 accepted**——macOS Computer Use 人工视觉 QA 与 Windows 平台验证未执行。

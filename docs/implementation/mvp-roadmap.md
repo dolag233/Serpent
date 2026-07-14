@@ -15,14 +15,14 @@
 | 0004 | 标签、合集与资产元数据编辑 | ✅ macOS 开发态自动化、复审与 Computer Use 通过；待 packaged 与 Windows QA |
 | 0005 | 搜索、过滤、排序与智能合集 | ✅ 自动化与 10 万热查询门禁通过；待 packaged/macOS 视觉与 Windows QA |
 | 0006 | 缩略图、预览与格式解码 | ⛔ 本地真实媒体主线通过；不可变二进制发布来源、packaged playback 与 Windows 阻断发布 |
-| 0007 | 回收站、手动找回与批量重新定位 | 🔍 自动化全绿 + 双轴审查通过 + 公共 E2E 完成；剩余 Windows 与 macOS Computer Use 平台 QA |
+| 0007 | 回收站、手动找回与批量重新定位 | 🔧 主用户流自动化通过；重新定位崩溃恢复未接入/未测试，另待 Windows 与 macOS Computer Use |
 | 0008 | 浏览器扩展采集 | 🔍 安全与自动化主线通过；待真实 Chrome/Edge 往返、packaged 与 Windows QA |
 | 0009 | 云端 AI 自动分类（BYOK） | 🔧 队列/并发/输入/任务 UI 已存在；待范围分析/清空 UI、密钥边界决定及真实供应商 QA |
 | 0010 | 资源库导入导出 | 🔍 自动化数据安全主线通过；待大库 soak、packaged UI 与跨平台往返 |
 | 0011 | 一等命令行客户端与 Agent 原生操作面 | 📌 v0.2.0（需求已确认；待 v0.1.0 领域语义稳定后实施） |
 | 0012 | 资产画布视图与卡片信息配置 | ✅ macOS 自动化、双轴审查与 Computer Use 截图验收通过；待 10 万帧率与 Windows QA |
 | 0013 | 资产查看页面导航与手势体验 | 📝 v0.1.0 backlog（需求已记录，暂不实施；0006 稳定后原型与排期） |
-| 0014 | 资产选择与上下文操作 | 🔍 P0 热修完成（右键菜单统一组件+可靠关闭+viewport clamp+单菜单）；P1 选择模型（框选+组合键+Esc+re-click）完成；剩余 P1 移除顶部批量条 / 批量菜单 / 视觉打磨待实施；Computer Use + Windows QA 待执行 |
+| 0014 | 资产选择与上下文操作 | 🔍 P0 热修完成（右键菜单统一组件+可靠关闭+viewport clamp+单菜单）；P1 选择模型（框选+组合键+Esc）完成；剩余 P1 移除顶部批量条 / 批量菜单 / 视觉打磨待实施；Computer Use + Windows QA 待执行 |
 
 ## 2026-07-13 独立复审结论
 
@@ -41,7 +41,7 @@ walking implementation 已存在，但不能等同于切片验收：0003–0010 
    media playback；建立真实 Windows runner 并执行平台矩阵。
 2. **下一本地实施**：0012 已完成版本化偏好、字段开关、跨重启/全范围、真实 no-requery、
    Computer Use 与截图验收；10 万帧率和 Windows 证据保留到平台/性能矩阵。
-3. **核心旅程收口**：按当前树复审结论修复 0004 的真实行为缺陷并补重启、冲突、packaged 与人工证据；0007 已完成 relink-preview 增强 + 双轴审查 + 公共 E2E，剩余 macOS Computer Use 与 Windows 平台 QA；
+3. **核心旅程收口**：按当前树复审结论修复 0004 的真实行为缺陷并补重启、冲突、packaged 与人工证据；0007 的 relink-preview 主流已有公共 E2E，下一步补真正的崩溃恢复，再做 macOS Computer Use 与 Windows 平台 QA；
    随后修复 0013 滚动深处进入查看器错位与 0014 右键菜单无法可靠关闭两个 P0 缺陷，再完成 0005 的最终 packaged 搜索冒烟。
 4. **外部与后台旅程**：补 0009 的范围分析/清空 UI 与架构决定，再做 0008 真实扩展往返、
    0010 大库/跨平台往返。

@@ -1,16 +1,16 @@
 # 切片 0007 双轴代码审查
 
-> 状态：双轴通过（0 HARD 违规，2 非阻断气味）；完整规格满足
+> 状态：独立复核后不通过；重新定位崩溃恢复证据缺失，原完整规格结论撤回
 > 日期：2026-07-13（基线）/ 2026-07-14（补充）
 
 ## 审查范围
 
 - 固定范围：`8dc2470...cdc2247`（基线）
-- 补充审查：`8d53057` + 未提交 working-tree diff，含 4 个新文件
+- stateful relink-preview 实现提交：`7bc78f47e2522f7a2dd60ba35a2c2a62d14bd21a`
+- 独立复核基线：`2f7bd0903f3b80257d3c4d90e4125c6068a73810`；不再以未提交 working tree 作为审查对象
 - 规格：`docs/implementation/0007-trash-relink-batch-relocate-vertical-slice.md`
-- 未提交 diff 范围（`git diff HEAD --`）：`src/main/index.ts`、`src/main/relink-preview-store.ts`（新）、`src/preload/index.ts`、`src/renderer/App.tsx`、`src/shared/asset-types.ts`、`src/shared/library-api.ts`、`src/shared/protocol/errors.ts`、`src/shared/protocol/requests.ts`、`src/shared/protocol/responses.ts`、`src/worker/index.ts`、`src/worker/library-service.ts`
-- 新文件：`tests/e2e/trash-relink-flow.test.ts`、`tests/unit/asset-types-paths.test.ts`、`tests/unit/relink-preview-store.test.ts`
-- 补充修改：`tests/e2e/organization-search-trash.test.ts`、`tests/unit/protocol.test.ts`、`tests/worker/trash-relink.test.ts`
+- 实现范围：`src/main/index.ts`、`src/main/relink-preview-store.ts`、`src/preload/index.ts`、`src/renderer/App.tsx`、`src/shared/asset-types.ts`、`src/shared/library-api.ts`、`src/shared/protocol/errors.ts`、`src/shared/protocol/requests.ts`、`src/shared/protocol/responses.ts`、`src/worker/index.ts`、`src/worker/library-service.ts`
+- 测试范围：`tests/e2e/trash-relink-flow.test.ts`、`tests/unit/asset-types-paths.test.ts`、`tests/unit/relink-preview-store.test.ts`、`tests/e2e/organization-search-trash.test.ts`、`tests/unit/protocol.test.ts`、`tests/worker/trash-relink.test.ts`
 
 ## Standards 轴
 
@@ -45,7 +45,7 @@
 - 通过：`keepMetadata=false` 清空行为已覆盖（`tests/worker/trash-relink.test.ts:1731`）——清空人工与 AI 元数据、标签、合集关系；`keepMetadata=true` 保留行为同样在基线已覆盖。
 - 通过：无绝对路径到达 Renderer——规格第 220 行不变量通过 `tests/unit/protocol.test.ts` Zod schema 校验与 `portableRelativePathSchema` 断言维持。
 - 判定：stateful store + cancel 是**有理增强**（将原有隐式 `pendingRelinkRoots` 状态显式化到 `RelinkPreviewStore`，防止过期重放）——非不当偏离规格。
-- 范围新增均为良性加固：崩溃恢复 manifest（`recoverOrphanRelinkPlacement`）、候选去重（`realpath` + linked-root 冲突校验）、`FILE_BUSY` 错误枚举、Renderer 多选永久删除对话框——均不与规格矛盾。
+- 候选去重、`FILE_BUSY` 与多选永久删除对话框属于有效加固。`recoverOrphanRelinkPlacement` 虽存在，但两个 `crash-relink-*` failpoint 只声明未调用，测试没有制造中断并完整重开资源库；不得列为已验证的崩溃恢复。按验收纪律#2(代码存在≠覆盖),崩溃恢复 = 未验证。
 
 ### 2026-07-13 基线
 
@@ -59,4 +59,4 @@
 
 ## 结论
 
-双轴通过：Standards 轴 0 HARD 违规（2 非阻断气味），Spec 轴完整满足（含 `keepMetadata=false` 覆盖、无绝对路径泄漏、stateful store 为有理增强、范围新增为良性加固）。代码未提交（working tree uncommitted）。macOS Computer Use 人工视觉 QA 与 Windows 平台行为仍未验证，切片整体尚未 accepted。
+独立复核结论为不通过：stateful preview、取消、路径隐私、候选去重和 `keepMetadata=false` 等增量成立，但崩溃恢复覆盖声明失实，Standards 与 Spec 各有 1 个 HARD 缺口。按验收纪律#2(代码存在≠覆盖),failpoint 存在但未触发+重启+对账 = 未验证。修复并增加真实中断/完整重启回归后需要重新双轴审查；macOS Computer Use 与 Windows 仍未验证。

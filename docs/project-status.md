@@ -11,7 +11,7 @@ v0.1.0 先收口 0001–0010 的桌面 MVP 主线。0011 CLI 需求已确认并�
 
 1. **P0 发布阻断**：0006 不可变媒体二进制发布来源与 receipt、packaged media playback；
    建立真实 Windows runner 并执行跨平台矩阵。
-2. **P1 验证收口**：0012 已完成 macOS Computer Use 与截图验收；0007 已完成 relink-preview 增强 + 双轴审查 + 公共 E2E，剩余 macOS Computer Use 平台 QA 与 Windows；0004 待按当前树复审修复真实行为缺陷，并补打包后与 Windows 证据；
+2. **P1 验证收口**：0012 已完成 macOS Computer Use 与截图验收；0007 的 relink-preview 主流已完成，但崩溃恢复回到 fixing，另剩 macOS Computer Use 与 Windows；0004 待按当前树复审修复真实行为缺陷，并补打包后与 Windows 证据；
    再完成 0005 packaged 搜索冒烟。
 4. **P2 外部旅程**：补 0009 范围分析/清空 UI 与密钥边界决定；完成 0008 真实浏览器扩展
    往返和 0010 大库/跨平台往返。
@@ -36,7 +36,7 @@ v0.1.0 先收口 0001–0010 的桌面 MVP 主线。0011 CLI 需求已确认并�
 - 0005 自动化与 10 万资产热查询性能门禁已通过，剩余以 packaged/人工/Windows 证据为主。
 - 0006 的本地真实队列、source/proxy 播放、Computer Use 和最终 mainline 已通过；发布仍被
   二进制来源、packaged playback 与 Windows 阻断。
-- 0007 已完成 stateful relink-preview 增强（RelinkPreviewStore create/apply/cancel + 崩溃恢复 + 候选去重 + FILE_BUSY + 多选永久删除对话框），自动化全绿（869+1 skip / E2E 23/23 含 `trash-relink-flow`），双轴审查通过（0 HARD 违规）；剩余 macOS Computer Use 平台 QA 与 Windows 验证。
+- 0007 已完成 stateful relink-preview 增强（RelinkPreviewStore create/apply/cancel + 候选去重 + FILE_BUSY + 多选永久删除对话框）；独立验收确认 `crash-relink-*` failpoint 只声明未调用，重新定位崩溃恢复没有测试覆盖，旧“规格完整/0 HARD”结论已撤回。另待 macOS Computer Use 与 Windows 验证。
 - 0009 已存在有界缩略图输入、并发限制、进度事件和任务控制 UI；真实功能缺口集中在按范围
   分析/清空入口与密钥边界决定。
 
@@ -52,7 +52,7 @@ v0.1.0 先收口 0001–0010 的桌面 MVP 主线。0011 CLI 需求已确认并�
 ## 2026-07-14 0014 P1 选择模型
 
 - 框选（marquee drag-select）：3 阶段 document-level mousedown/mousemove/mouseup + AABB box-overlap intersection（grid/masonry 一致）+ 40px 边缘自动滚动。
-- 组合键模型：普通点击单选；Ctrl/Cmd+click 增减；Shift+click 范围扩展（基于 selectionAnchorRef）；Ctrl/Cmd+Shift+click 范围追加；re-click 已选单卡取消选择。
+- 组合键模型：普通点击始终只选择目标；Ctrl/Cmd+click 增减；Shift+click 范围扩展（基于 selectionAnchorRef）；Ctrl/Cmd+Shift+click 范围追加。
 - Esc 清除选择：非捕获 handler 在 `selectedAssetIds.length > 0` 且无 preview 且无 modal dialog 时清选；捕获阶段 guard（`stopPropagation`）在上下文菜单打开时阻止清选，确保第一 Esc 只关闭菜单、第二 Esc 才清选。
 - 选择锚点修复：框选 mouseup 结束时设置 `selectionAnchorRef` 为第一个命中资产 ID，使后续 Shift+click 可从框选结果正确扩展。
 - 死代码清理：移除未使用的 `autoScrollRaf` 变量及其 `cancelAnimationFrame` 清理分支。
