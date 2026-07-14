@@ -38,6 +38,9 @@
 - 公共 UI E2E `organization-search-trash`：1/1 通过，覆盖 Label 关键词、喜欢过滤、智能合集
   保存与重新执行。
 - 最终全局自动门禁：unit 139/139、Worker 408/408、Electron E2E 10/10；lint、typecheck、package/verify 与 packaged smoke 通过。
+- packaged 搜索冒烟（2026-07-14）：新增 `tests/e2e/packaged-startup.test.ts` 第二个测试用例，在 packaged .app 中
+  导入 real PNG、使用 `getByLabel('搜索资源库')` 填充关键词，确认 FTS5 命中后资产卡片可见；再用不匹配关键词确认卡片消失。
+  证实 FTS5 search 在 ASAR + better-sqlite3 native-module 打包上下文中端到端工作。
 - 10 万资产性能门禁 4/4 通过：普通浏览首屏中位数 103.2 ms、仅返回 50/100,000 条；
   热关键词搜索中位数 51.7 ms，组合过滤+排序中位数 114.4 ms，均执行 total count 与
   首屏 50 项；独立 WAL 写连接保持未提交模拟导入
