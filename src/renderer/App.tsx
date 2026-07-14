@@ -10,6 +10,14 @@ import {
   type SetStateAction,
 } from "react";
 
+import {
+  ContextMenu,
+  ContextMenuBackdrop,
+  ContextMenuItem,
+  ContextMenuProvider,
+  useContextMenu,
+} from "./context-menu";
+
 import type {
   AiSearchPlan,
   AssetSummary,
@@ -70,13 +78,6 @@ type UiState =
 type DialogKind = "library" | "folder" | "tag" | "collection" | null;
 type AssetScope = "all" | "root" | string;
 type OrganizationKind = "tag" | "collection" | "smart";
-type OrganizationContextMenu = {
-  kind: Exclude<OrganizationKind, "smart">;
-  id: string;
-  name: string;
-  x: number;
-  y: number;
-};
 type OrganizationRenameTarget = {
   kind: OrganizationKind;
   id: string;
@@ -439,7 +440,7 @@ function TechnicalRangeFilter({
   );
 }
 
-export function App() {
+function AppInner() {
   const api = (window as RendererWindow).serpent?.library;
   const extensionPairingApi = (window as RendererWindow).serpent
     ?.extensionPairing;
@@ -575,12 +576,8 @@ export function App() {
     null,
   );
   const [smartCollectionName, setSmartCollectionName] = useState("");
-  const [smartCollectionMenu, setSmartCollectionMenu] = useState<{
-    id: string;
-    name: string;
-    x: number;
-    y: number;
-  } | null>(null);
+  const { open: openContextMenu, close: closeContextMenu, active: activeContextMenu } =
+    useContextMenu();
   const hadDiscoveryInput = useRef(false);
   const reloadCurrentContentRef = useRef<() => Promise<void>>(
     async () => undefined,
@@ -614,8 +611,6 @@ export function App() {
   const [newCollectionParentId, setNewCollectionParentId] = useState<
     string | null
   >(null);
-  const [organizationMenu, setOrganizationMenu] =
-    useState<OrganizationContextMenu | null>(null);
   const [renameTarget, setRenameTarget] =
     useState<OrganizationRenameTarget | null>(null);
 
@@ -709,12 +704,6 @@ export function App() {
   const [thumbnailFailures, setThumbnailFailures] = useState<
     Map<string, string>
   >(new Map());
-  const [contextMenu, setContextMenu] = useState<{
-    x: number;
-    y: number;
-    assetId: string;
-    displayName: string;
-  } | null>(null);
   const [mediaJobsOpen, setMediaJobsOpen] = useState(false);
   const [mediaJobs, setMediaJobs] = useState<MediaJobStatus | null>(null);
   const [aiJobs, setAiJobs] = useState<AiJobStatus | null>(null);
@@ -1003,14 +992,10 @@ export function App() {
           depth={depth}
           onContextMenu={(e) => {
             e.preventDefault();
-            setContextMenu(null);
-            setOrganizationMenu({
-              kind: "collection",
-              id: c.collectionId,
-              name: c.name,
-              x: e.clientX,
-              y: e.clientY,
-            });
+            openContextMenu(
+              { type: "organization", orgKind: "collection", id: c.collectionId, name: c.name },
+              { x: e.clientX, y: e.clientY },
+            );
           }}
           onClick={() => void chooseCollection(c.collectionId)}
         />
@@ -1472,6 +1457,7 @@ export function App() {
 
   async function chooseFolder(scope: AssetScope) {
     if (!library) return;
+    closeContextMenu();
     workspaceCanvasRef.current?.scrollTo({ top: 0, left: 0 });
     setShowTrash(false);
     setAssetScope(scope);
@@ -1604,6 +1590,7 @@ export function App() {
 
   async function chooseTag(tagId: string) {
     if (!api || !library) return;
+    closeContextMenu();
     const tag = tags.find((candidate) => candidate.tagId === tagId);
     if (!tag) return;
     workspaceCanvasRef.current?.scrollTo({ top: 0, left: 0 });
@@ -1929,6 +1916,7 @@ export function App() {
     recursive = collectionRecursive,
   ) {
     if (!api || !library) return;
+    closeContextMenu();
     workspaceCanvasRef.current?.scrollTo({ top: 0, left: 0 });
     setShowTrash(false);
     setActiveCollectionId(collectionId);
@@ -2439,6 +2427,7 @@ export function App() {
 
   async function chooseSmartCollection(collectionId: string, offset = 0) {
     if (!api || !library) return;
+    closeContextMenu();
     if (offset === 0) workspaceCanvasRef.current?.scrollTo({ top: 0, left: 0 });
     try {
       const result = await api.executeSmartCollection({
@@ -2764,7 +2753,7 @@ export function App() {
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
       setDialog(null);
-      setNotice(`已创建文件夹“${result.value.name}”。`);
+      setNotice(`已创建文件夹"${result.value.name}"。`);
       await reloadCurrentContent();
     } catch (caught) {
       setError(toMessage(caught, "创建文件夹失败。"));
@@ -3031,7 +3020,7 @@ export function App() {
         if (result.error.code === "CANCELLED") return;
         throw new LibraryOperationError(result.error);
       }
-      setNotice(`已链接文件夹“${result.value.displayName}”。`);
+      setNotice(`已链接文件夹"${result.value.displayName}"。`);
       await reloadCurrentContent();
     } catch (caught) {
       setError(toMessage(caught, "链接文件夹失败。"));
@@ -3052,7 +3041,7 @@ export function App() {
         if (result.error.code === "CANCELLED") return;
         throw new LibraryOperationError(result.error);
       }
-      setNotice(`已重新定位链接文件夹“${result.value.displayName}”。`);
+      setNotice(`已重新定位链接文件夹"${result.value.displayName}"。`);
       await reloadCurrentContent();
     } catch (caught) {
       setError(toMessage(caught, "重新定位失败。"));
@@ -3108,7 +3097,7 @@ export function App() {
     if (!api || !library || assetIds.length === 0) return;
     if (
       !confirm(
-        `将 ${assetIds.length} 项托管资产复制到外部目录“${folder.displayName}”？源托管文件不会移动。`,
+        `将 ${assetIds.length} 项托管资产复制到外部目录"${folder.displayName}"？源托管文件不会移动。`,
       )
     )
       return;
@@ -3137,7 +3126,7 @@ export function App() {
     const dialogState = convertLinkedDialog;
     if (
       !confirm(
-        `将“${dialogState.name}”复制进资源库并移除链接关系？外部源目录不会被删除。`,
+        `将"${dialogState.name}"复制进资源库并移除链接关系？外部源目录不会被删除。`,
       )
     )
       return;
@@ -4805,14 +4794,10 @@ export function App() {
                       count={tag.assetCount}
                       onContextMenu={(e) => {
                         e.preventDefault();
-                        setContextMenu(null);
-                        setOrganizationMenu({
-                          kind: "tag",
-                          id: tag.tagId,
-                          name: tag.name,
-                          x: e.clientX,
-                          y: e.clientY,
-                        });
+                        openContextMenu(
+                          { type: "organization", orgKind: "tag", id: tag.tagId, name: tag.name },
+                          { x: e.clientX, y: e.clientY },
+                        );
                       }}
                       onClick={() => void chooseTag(tag.tagId)}
                     />
@@ -4915,12 +4900,10 @@ export function App() {
                     onClick={() => void chooseSmartCollection(sc.collectionId)}
                     onContextMenu={(event) => {
                       event.preventDefault();
-                      setSmartCollectionMenu({
-                        id: sc.collectionId,
-                        name: sc.name,
-                        x: event.clientX,
-                        y: event.clientY,
-                      });
+                      openContextMenu(
+                        { type: "smart-collection", id: sc.collectionId, name: sc.name },
+                        { x: event.clientX, y: event.clientY },
+                      );
                     }}
                   />
                 ))
@@ -5668,12 +5651,14 @@ export function App() {
                           setSelectedAssetId(asset.assetId);
                         }
                         if (library && !asset.deletedAt)
-                          setContextMenu({
-                            x: e.clientX,
-                            y: e.clientY,
-                            assetId: asset.assetId,
-                            displayName: asset.displayName,
-                          });
+                          openContextMenu(
+                            {
+                              type: "asset",
+                              assetId: asset.assetId,
+                              displayName: asset.displayName,
+                            },
+                            { x: e.clientX, y: e.clientY },
+                          );
                       }}
                       type="button"
                     >
@@ -6540,7 +6525,7 @@ export function App() {
             <div className="dialog-heading">
               <div>
                 <span className="eyebrow">CONVERT LINKED FOLDER</span>
-                <h2>转换“{convertLinkedDialog.name}”</h2>
+                <h2>转换"{convertLinkedDialog.name}"</h2>
               </div>
               <button
                 aria-label="取消转换"
@@ -7090,7 +7075,7 @@ export function App() {
             <p className="field-help">
               {dialog === "library"
                 ? "下一步由系统选择本地保存位置。"
-                : `将在“${selectedFolder?.name ?? "资源库根目录"}”内创建真实目录。`}
+                : `将在"${selectedFolder?.name ?? "资源库根目录"}"内创建真实目录。`}
             </p>
             <div className="dialog-actions">
               <button
@@ -7441,8 +7426,8 @@ export function App() {
                 lineHeight: 1.6,
               }}
             >
-              确定要从 Serpent 中移除链接资产“{deleteLinkedDialog.displayNames}
-              ”吗？默认只移除索引记录，磁盘源文件保持不变。
+              确定要从 Serpent 中移除链接资产"{deleteLinkedDialog.displayNames}
+              "吗？默认只移除索引记录，磁盘源文件保持不变。
             </p>
             <label
               style={{
@@ -8099,235 +8084,163 @@ export function App() {
           </div>
         </div>
       )}
-      {/* Smart collection context menu */}
-      {smartCollectionMenu && (
-        <div
-          className="context-menu-backdrop"
-          onClick={() => setSmartCollectionMenu(null)}
-          onKeyDown={(event) => {
-            if (event.key === "Escape") setSmartCollectionMenu(null);
-          }}
-          role="presentation"
-        >
-          <div
-            className="context-menu"
-            onClick={(event) => event.stopPropagation()}
-            role="menu"
-            style={{
-              position: "fixed",
-              left: smartCollectionMenu.x,
-              top: smartCollectionMenu.y,
-            }}
+      {/* Unified context menu */}
+      {activeContextMenu && (
+        <ContextMenuBackdrop>
+          <ContextMenu
+            ariaLabel={
+              activeContextMenu.descriptor.type === "asset"
+                ? `资产操作：${activeContextMenu.descriptor.displayName}`
+                : activeContextMenu.descriptor.type === "organization"
+                  ? `${activeContextMenu.descriptor.orgKind === "tag" ? "标签" : "合集"}操作：${activeContextMenu.descriptor.name}`
+                  : `智能合集操作：${activeContextMenu.descriptor.name}`
+            }
+            position={activeContextMenu.position}
           >
-            <button
-              onClick={() => {
-                const target = smartCollectionMenu;
-                setSmartCollectionMenu(null);
-                setRenameTarget({
-                  kind: "smart",
-                  id: target.id,
-                  name: target.name,
-                });
-              }}
-              role="menuitem"
-              type="button"
-            >
-              <Icon name="smart" size={14} />
-              重命名智能合集
-            </button>
-            <button
-              onClick={() => {
-                const target = smartCollectionMenu;
-                setSmartCollectionMenu(null);
-                void updateSmartCollectionQuery(target.id);
-              }}
-              role="menuitem"
-              type="button"
-            >
-              <Icon name="refresh" size={14} />
-              用当前条件更新
-            </button>
-            <button
-              onClick={() => {
-                const target = smartCollectionMenu;
-                setSmartCollectionMenu(null);
-                if (confirm(`删除智能合集“${target.name}”？`))
-                  void deleteSmartCollection(target.id);
-              }}
-              role="menuitem"
-              type="button"
-            >
-              <Icon name="trash" size={14} />
-              删除智能合集
-            </button>
-          </div>
-        </div>
-      )}
-      {/* Tag / collection context menu */}
-      {organizationMenu && (
-        <div
-          className="context-menu-backdrop"
-          onClick={() => setOrganizationMenu(null)}
-          onKeyDown={(e) => {
-            if (e.key === "Escape") setOrganizationMenu(null);
-          }}
-          role="presentation"
-        >
-          <div
-            className="context-menu"
-            onClick={(event) => event.stopPropagation()}
-            role="menu"
-            style={{
-              position: "fixed",
-              left: organizationMenu.x,
-              top: organizationMenu.y,
-            }}
-          >
-            <button
-              onClick={() => {
-                setRenameTarget({
-                  kind: organizationMenu.kind,
-                  id: organizationMenu.id,
-                  name: organizationMenu.name,
-                });
-                setOrganizationMenu(null);
-              }}
-              role="menuitem"
-              type="button"
-            >
-              <Icon
-                name={organizationMenu.kind === "tag" ? "tag" : "collection"}
-                size={14}
-              />
-              重命名{organizationMenu.kind === "tag" ? "标签" : "合集"}
-            </button>
-            {organizationMenu.kind === "collection" && (
-              <button
-                onClick={() => {
-                  const collection = collections.find(
-                    (candidate) =>
-                      candidate.collectionId === organizationMenu.id,
-                  );
-                  setOrganizationMenu(null);
-                  if (collection)
-                    setCollectionEditor({
-                      collectionId: collection.collectionId,
-                      description: collection.description ?? "",
-                      coverAssetId: collection.coverAssetId ?? "",
-                    });
-                }}
-                role="menuitem"
-                type="button"
-              >
-                <Icon name="info" size={14} />
-                编辑合集详情
-              </button>
+            {activeContextMenu.descriptor.type === "smart-collection" && (
+              <>
+                <ContextMenuItem
+                  icon={<Icon name="smart" size={14} />}
+                  label="重命名智能合集"
+                  onAction={() => {
+                    const desc = activeContextMenu.descriptor;
+                    if (desc.type !== "smart-collection") return;
+                    setRenameTarget({ kind: "smart", id: desc.id, name: desc.name });
+                  }}
+                />
+                <ContextMenuItem
+                  icon={<Icon name="refresh" size={14} />}
+                  label="用当前条件更新"
+                  onAction={() => {
+                    const desc = activeContextMenu.descriptor;
+                    if (desc.type !== "smart-collection") return;
+                    void updateSmartCollectionQuery(desc.id);
+                  }}
+                />
+                <ContextMenuItem
+                  icon={<Icon name="trash" size={14} />}
+                  label="删除智能合集"
+                  danger
+                  onAction={() => {
+                    const desc = activeContextMenu.descriptor;
+                    if (desc.type !== "smart-collection") return;
+                    if (confirm(`删除智能合集"${desc.name}"？`))
+                      void deleteSmartCollection(desc.id);
+                  }}
+                />
+              </>
             )}
-            <button
-              onClick={() => {
-                const target = organizationMenu;
-                setOrganizationMenu(null);
-                const confirmed = confirm(
-                  target.kind === "tag"
-                    ? `删除标签"${target.name}"？`
-                    : `删除合集"${target.name}"？\n（仅删除合集结构，不删除资产）`,
+            {activeContextMenu.descriptor.type === "organization" && (
+              <>
+                <ContextMenuItem
+                  icon={
+                    <Icon
+                      name={activeContextMenu.descriptor.orgKind === "tag" ? "tag" : "collection"}
+                      size={14}
+                    />
+                  }
+                  label={`重命名${activeContextMenu.descriptor.orgKind === "tag" ? "标签" : "合集"}`}
+                  onAction={() => {
+                    const desc = activeContextMenu.descriptor;
+                    if (desc.type !== "organization") return;
+                    setRenameTarget({ kind: desc.orgKind, id: desc.id, name: desc.name });
+                  }}
+                />
+                {activeContextMenu.descriptor.orgKind === "collection" && (
+                  <ContextMenuItem
+                    icon={<Icon name="info" size={14} />}
+                    label="编辑合集详情"
+                    onAction={() => {
+                      const desc = activeContextMenu.descriptor;
+                      if (desc.type !== "organization") return;
+                      const collection = collections.find(
+                        (candidate) => candidate.collectionId === desc.id,
+                      );
+                      if (collection)
+                        setCollectionEditor({
+                          collectionId: collection.collectionId,
+                          description: collection.description ?? "",
+                          coverAssetId: collection.coverAssetId ?? "",
+                        });
+                    }}
+                  />
+                )}
+                <ContextMenuItem
+                  icon={<Icon name="trash" size={14} />}
+                  label={`删除${activeContextMenu.descriptor.orgKind === "tag" ? "标签" : "合集"}`}
+                  danger
+                  onAction={() => {
+                    const desc = activeContextMenu.descriptor;
+                    if (desc.type !== "organization") return;
+                    const confirmed = confirm(
+                      desc.orgKind === "tag"
+                        ? `删除标签"${desc.name}"？`
+                        : `删除合集"${desc.name}"？\n（仅删除合集结构，不删除资产）`,
+                    );
+                    if (confirmed) {
+                      if (desc.orgKind === "tag") void deleteTag(desc.id);
+                      else void deleteCollection(desc.id);
+                    }
+                  }}
+                />
+              </>
+            )}
+            {activeContextMenu.descriptor.type === "asset" &&
+              (() => {
+                const { assetId } = activeContextMenu.descriptor;
+                return (
+                  <>
+                    <ContextMenuItem
+                      icon={<Icon name="upload" size={14} />}
+                      label="使用外部应用打开"
+                      onAction={() => {
+                        void handleOpenExternal(assetId);
+                      }}
+                    />
+                    {activeCollectionId && (
+                      <ContextMenuItem
+                        icon={<Icon name="close" size={14} />}
+                        label="从当前合集移除"
+                        onAction={() => {
+                          void removeAssetFromCollection(assetId, activeCollectionId);
+                        }}
+                      />
+                    )}
+                    {tags.map((tag) => (
+                      <ContextMenuItem
+                        key={`tag-${tag.tagId}`}
+                        icon={<Icon name="tag" size={14} />}
+                        label={`添加标签：${tag.name}`}
+                        onAction={() => {
+                          void assignAssetToTag(assetId, tag.tagId);
+                        }}
+                      />
+                    ))}
+                    {collections.map((collection) => (
+                      <ContextMenuItem
+                        key={`collection-${collection.collectionId}`}
+                        icon={<Icon name="collection" size={14} />}
+                        label={`加入合集：${collection.name}`}
+                        onAction={() => {
+                          void addAssetToCollection(assetId, collection.collectionId);
+                        }}
+                      />
+                    ))}
+                  </>
                 );
-                if (confirmed) {
-                  if (target.kind === "tag") void deleteTag(target.id);
-                  else void deleteCollection(target.id);
-                }
-              }}
-              role="menuitem"
-              type="button"
-            >
-              <Icon name="trash" size={14} />
-              删除{organizationMenu.kind === "tag" ? "标签" : "合集"}
-            </button>
-          </div>
-        </div>
-      )}
-      {/* Context menu */}
-      {contextMenu && (
-        <div
-          className="context-menu-backdrop"
-          onClick={() => setContextMenu(null)}
-          onKeyDown={(e) => {
-            if (e.key === "Escape") setContextMenu(null);
-          }}
-          role="presentation"
-        >
-          <div
-            className="context-menu"
-            onClick={(event) => event.stopPropagation()}
-            role="menu"
-            style={{
-              position: "fixed",
-              left: contextMenu.x,
-              top: contextMenu.y,
-            }}
-          >
-            <button
-              onClick={() => {
-                void handleOpenExternal(contextMenu.assetId);
-                setContextMenu(null);
-              }}
-              role="menuitem"
-              type="button"
-            >
-              <Icon name="upload" size={14} />
-              使用外部应用打开
-            </button>
-            {activeCollectionId && (
-              <button
-                onClick={() => {
-                  void removeAssetFromCollection(
-                    contextMenu.assetId,
-                    activeCollectionId,
-                  );
-                  setContextMenu(null);
-                }}
-                role="menuitem"
-                type="button"
-              >
-                <Icon name="close" size={14} />
-                从当前合集移除
-              </button>
-            )}
-            {tags.map((tag) => (
-              <button
-                key={`tag-${tag.tagId}`}
-                onClick={() => {
-                  void assignAssetToTag(contextMenu.assetId, tag.tagId);
-                  setContextMenu(null);
-                }}
-                role="menuitem"
-                type="button"
-              >
-                <Icon name="tag" size={14} />
-                添加标签：{tag.name}
-              </button>
-            ))}
-            {collections.map((collection) => (
-              <button
-                key={`collection-${collection.collectionId}`}
-                onClick={() => {
-                  void addAssetToCollection(
-                    contextMenu.assetId,
-                    collection.collectionId,
-                  );
-                  setContextMenu(null);
-                }}
-                role="menuitem"
-                type="button"
-              >
-                <Icon name="collection" size={14} />
-                加入合集：{collection.name}
-              </button>
-            ))}
-          </div>
-        </div>
+              })()}
+          </ContextMenu>
+        </ContextMenuBackdrop>
       )}
     </main>
+  );
+}
+
+export function App() {
+  return (
+    <ContextMenuProvider>
+      <AppInner />
+    </ContextMenuProvider>
   );
 }
 
