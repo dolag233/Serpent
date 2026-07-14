@@ -297,47 +297,45 @@ test("Esc clears selection", async () => {
 });
 
 // ---------------------------------------------------------------------------
-// Test 5 — Re-click deselects a single selected card
+// Test 5 — Ctrl/Cmd+click toggle deselects a single selected card
 // ---------------------------------------------------------------------------
 
-test("re-click deselects a single selected card", async () => {
-  const { temporaryRoot, application, window } = await setupLibrary(2);
+test("Ctrl/Cmd+click toggle deselects and re-selects a card", async () => {
+  const { temporaryRoot, application, window } = await setupLibrary(3);
   try {
-    await createAndImport(window, "再点取消验收", 2);
-    const additiveModifier =
-      process.platform === "darwin" ? "Meta" : "Control";
+    await createAndImport(window, "切换取消验收", 3);
+    const mod = process.platform === "darwin" ? "Meta" : "Control";
 
     const cards = window.locator(".asset-card");
 
-    // Select first card
-    await cards.first().click();
+    // Select card 0 with plain click
+    await cards.nth(0).click();
     await expect(window.getByText("已选择 1 项")).toBeVisible();
 
-    // Re-click same card → deselect
-    await cards.first().click();
+    // Ctrl/Cmd+click card 0 — toggle DESELECT
+    await cards.nth(0).click({ modifiers: [mod] });
     await expect(window.getByText("已选择 1 项")).toHaveCount(0);
 
-    // Select both via Ctrl/Cmd+click
-    await cards.first().click();
-    await cards.last().click({ modifiers: [additiveModifier] });
+    // Ctrl/Cmd+click card 0 again — toggle re-add
+    await cards.nth(0).click({ modifiers: [mod] });
+    await expect(window.getByText("已选择 1 项")).toBeVisible();
+
+    // Plain click on already-selected sole card keeps it selected (no deselect)
+    await cards.nth(0).click();
+    await expect(window.getByText("已选择 1 项")).toBeVisible();
+
+    // Ctrl/Cmd+click card 1 — add to multi-selection
+    await cards.nth(1).click({ modifiers: [mod] });
     await expect(window.getByText("已选择 2 项")).toBeVisible();
 
-    // Ctrl/Cmd+click the first card → deselect it, keep second
-    await cards.first().click({ modifiers: [additiveModifier] });
+    // Ctrl/Cmd+click card 1 — toggle remove from multi-selection
+    await cards.nth(1).click({ modifiers: [mod] });
     await expect(window.getByText("已选择 1 项")).toBeVisible();
-    // Only second card should remain selected
-    await expect(cards.last()).toHaveClass(/is-selected/);
 
-    // Plain click on the sole remaining card → already selected, should deselect
-    await cards.last().click();
-    await expect(window.getByText("已选择 1 项")).toHaveCount(0);
-
-    // Re-click on a multi-selection with plain click → replace to single, not deselect
-    await cards.first().click();
-    await cards.last().click({ modifiers: [additiveModifier] });
-    await expect(window.getByText("已选择 2 项")).toBeVisible();
-    await cards.first().click();
+    // Plain click card 2 — replace single selection
+    await cards.nth(2).click();
     await expect(window.getByText("已选择 1 项")).toBeVisible();
+    await expect(cards.nth(2)).toHaveClass(/is-selected/);
   } finally {
     await application.close();
     rmSync(temporaryRoot, { force: true, recursive: true });

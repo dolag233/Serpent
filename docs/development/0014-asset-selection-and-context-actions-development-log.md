@@ -86,11 +86,11 @@
 - 自动滚动（mousemove `:979`）：当指针距画布上/下边缘 ≤40px 时同步修改 `canvas.scrollTop`，速度 1–8px/frame。
 - `marqueeHitIdsRef`（`:518`）：在 mousemove 中存储命中 ID 列表，mouseup 复用避免重复 DOM AABB 遍历。
 
-### 组合键与 re-click 模型
+### 组合键模型（无 re-click deselect）
 
 - `selectAsset`（`:856`）：普通点击单选；Shift+点击基于 `selectionAnchorRef` 做连续范围；Ctrl/Cmd+点击逐项增减；Ctrl/Cmd+Shift+点击范围追加。
-- Re-click 取消选择（`:889`）：当且仅当已选集合恰有一项且再次点击该项时取消选择；多选集合中普通点击非已选项则替换为单选。
-- 右键 mousedown 追踪（`:518` `lastMousedownButtonRef` + `:5820`）：在资产卡片 `onMouseDown` 中记录 `event.button`；`selectAsset` 入口检查 `lastMousedownButtonRef.current !== 0` 则直接返回，防止 Playwright 右击合成的 click 事件触发 re-click-deselect（真实浏览器右击不派发 click，仅派发 contextmenu）。
+- **已移除 re-click 取消选择**：原实现（`:889`–`:893`）在普通点击时若已选集合恰有一项且再次点击该项则取消选择。此为对规格验收条件 #2（"再次点击取消"）的误读——"再次点击取消"指 Ctrl/Cmd+点击 toggle 取消选择（规格第 17 行），而非普通点击 re-click。规格第 16 行明确规定普通点击 = "只选择目标资产"（select only the target）。该 guard 已移除，普通点击始终替换为单选。
+- 右键 mousedown 追踪（`:518` `lastMousedownButtonRef` + `:5820`）：在资产卡片 `onMouseDown` 中记录 `event.button`；`selectAsset` 入口检查 `lastMousedownButtonRef.current !== 0` 则直接返回，防止 Playwright 右击合成的 click 事件触发选择（真实浏览器右击不派发 click，仅派发 contextmenu）。
 
 ### Esc 清除选择（上下文菜单感知）
 
@@ -115,7 +115,7 @@
 | 2 | 框选多选（masonry） | 瀑布流框选 + 命中数与范围 |
 | 3 | Ctrl/Cmd+Shift+click 范围追加 | 组合键范围追加到已有选择 |
 | 4 | Esc 清除选择 | 单选/范围选择清选 + 右击打开菜单后 Esc |
-| 5 | re-click 取消选择 | 单卡取消 + Ctrl 增减 + 多选后普通点击替换 |
+| 5 | Ctrl/Cmd+click toggle 取消 | Ctrl/Cmd 增减往返 + 普通点击保持选择 + 多选切换 |
 | 6 | 框选后 Shift+click 扩展 | **新增**：框选后通过 `selectionAnchorRef` 范围扩展正确 |
 | 7 | 选择生存视图切换/缩放 | **新增**：grid↔masonry 切换 + Ctrl+wheel 缩放后选择不丢失 |
 | 8 | Ctrl/Cmd 增减往返 | **新增**：add→remove→empty→fresh 完整往返 |
@@ -138,7 +138,7 @@
 ### 双轴审查结论（P1）
 
 - **Standards**：0 HARD 违规。medium 项全部修复（stale-anchor 已设 selectionAnchorRef、dead-code autoScrollRaf 已移除、intersection-dedup 已用 ref 共享）。non-blocking follow-up：Primitive Obsession（框选 rect 裸对象）、Long Method（140 行 useEffect）、Windows Ctrl 真实验证。
-- **Spec**：选择模型完成（框选、组合键、Esc、re-click）。测试缺口已关闭：line 21（视图切换/缩放生存）、line 16（Ctrl/Cmd 增减往返）、line 20（瀑布流自动滚动）。Windows Ctrl 已确认为明确缺口。
+- **Spec**：选择模型完成（框选、组合键、Esc）。**re-click-deselect 已移除**——原为对验收条件 #2（"再次点击取消"）的误读，该条件指 Ctrl/Cmd+click toggle 取消选择（规格第 17 行），现已由 Ctrl/Cmd+click toggle 满足。测试缺口已关闭：line 21（视图切换/缩放生存）、line 16（Ctrl/Cmd 增减往返）、line 20（瀑布流自动滚动）。Windows Ctrl 已确认为明确缺口。
 - **非阻断 follow-up（记录为后续项）**：Primitive Obsession、Long Method、Windows Ctrl real QA。
 
 ## 状态

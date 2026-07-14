@@ -893,11 +893,6 @@ function AppInner() {
       selectionAnchorRef.current = assetId;
       return;
     }
-    // Re-click an already-selected sole card deselects it
-    if (selectedIdSet.has(assetId) && selectedIdSet.size === 1) {
-      clearAssetSelection();
-      return;
-    }
     setSelectedAssetIds([assetId]);
     setSelectedAssetId(assetId);
     selectionAnchorRef.current = assetId;

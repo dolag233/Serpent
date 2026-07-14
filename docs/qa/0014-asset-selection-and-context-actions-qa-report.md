@@ -92,7 +92,7 @@
 ### 规格覆盖确认（P1）
 
 - **验收条件 #1（框选+自动滚动）**：测试 1/2/9 覆盖 grid/masonry 框选 + 自动滚动。
-- **验收条件 #2（点击/Shift/Ctrl/Cmd/取消/Esc 模型）**：测试 3–5/7/8/10 全覆盖。
+- **验收条件 #2（点击/Shift/Ctrl/Cmd/取消/Esc 模型）**：测试 3–5/7/8/10 全覆盖。**注意**：验收条件 #2 的"再次点击取消"指 Ctrl/Cmd+click toggle 取消选择（规格第 17 行），非普通点击 re-click。普通点击 = "只选择目标资产"（规格第 16 行）。原 re-click-deselect guard 已移除（为规格误读），Ctrl/Cmd+click toggle 已满足该条件。
 - **验收条件 #6（E2E 覆盖两种视图+框选+组合键+菜单关闭）**：10 项 selection-marquee + 7 项 context-menu 全部通过。
 - **验收条件 #6（Windows Ctrl）**：已确认为明确缺口，需真实 Windows QA。
 

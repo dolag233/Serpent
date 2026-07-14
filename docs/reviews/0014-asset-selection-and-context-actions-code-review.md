@@ -72,7 +72,7 @@
 - **选择模型完成**（规格行 13–22）：
   - 框选（行 19–20）：3 阶段 document-level mousedown/mousemove/mouseup + AABB box-overlap intersection + 40px edge auto-scroll，grid/masonry 一致。
   - 普通点击单选、Shift 连续选择、Ctrl/Cmd 增减、Ctrl/Cmd+Shift 范围追加（行 15–18）。
-  - Re-click 取消选择（行 15）：单卡 re-click 取消。
+  - **Re-click 取消选择已移除**：原 re-click-deselect guard（普通点击已选单卡时取消）为对验收条件 #2（"再次点击取消"）的误读。该条件指 Ctrl/Cmd+click toggle 取消选择（规格第 17 行"Ctrl/Command + 点击:逐项加入或取消选择"），非普通点击 re-click。规格第 16 行明文规定普通点击 = "只选择目标资产"。该 guard 已移除，普通点击始终替换为单选；"再次点击取消"由 Ctrl/Cmd+click toggle 正确满足。
   - Esc 清除选择（行 21）：非捕获 handler 在无 context-menu/dialog 时清选；捕获 phase guard 确保上下文菜单打开时第一 Esc 仅关闭菜单。
 - **测试缺口已关闭**：
   - Line 21（选择生存视图切换/缩放）：E2E 测试 7 验证。
