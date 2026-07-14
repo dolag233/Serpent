@@ -29,7 +29,7 @@ function temporaryRoot(): string {
   return root;
 }
 
-function expectServiceCode(operation: () => unknown, code: LibraryServiceError['code']): void {
+function expectServiceCode(operation: () => unknown, code: LibraryServiceError['code']): LibraryServiceError {
   let thrown: unknown;
   try {
     operation();
@@ -38,6 +38,7 @@ function expectServiceCode(operation: () => unknown, code: LibraryServiceError['
   }
   expect(thrown).toBeInstanceOf(LibraryServiceError);
   expect((thrown as LibraryServiceError).code).toBe(code);
+  return thrown as LibraryServiceError;
 }
 
 afterEach(() => {
@@ -781,7 +782,7 @@ describe('asset metadata', () => {
     });
 
     // Attempt with stale expectedVersion=0.
-    expectServiceCode(
+    const staleConflict = expectServiceCode(
       () =>
         service.setAssetMetadata({
           libraryId,
@@ -791,9 +792,10 @@ describe('asset metadata', () => {
         }),
       'VERSION_CONFLICT',
     );
+    expect(staleConflict.currentEntityVersion).toBe(1);
 
     // Attempt with wrong expectedVersion (should be 1).
-    expectServiceCode(
+    const futureConflict = expectServiceCode(
       () =>
         service.setAssetMetadata({
           libraryId,
@@ -803,13 +805,14 @@ describe('asset metadata', () => {
         }),
       'VERSION_CONFLICT',
     );
+    expect(futureConflict.currentEntityVersion).toBe(1);
 
     service.closeAll();
   });
 
   it('throws VERSION_CONFLICT when inserting with expectedVersion != 0 and no row exists', () => {
     const { service, libraryId, assetId } = createLibraryWithAsset();
-    expectServiceCode(
+    const conflict = expectServiceCode(
       () =>
         service.setAssetMetadata({
           libraryId,
@@ -819,6 +822,7 @@ describe('asset metadata', () => {
         }),
       'VERSION_CONFLICT',
     );
+    expect(conflict.currentEntityVersion).toBe(0);
     service.closeAll();
   });
 
@@ -832,11 +836,40 @@ describe('asset metadata', () => {
     // Out of bounds rejected at service level.
     expectServiceCode(
       () => service.setAssetMetadata({ libraryId, assetId, expectedVersion: 2, rating: -1 }),
-      'INVALID_IMPORT_DECISION',
+      'INVALID_ASSET_METADATA',
     );
     expectServiceCode(
       () => service.setAssetMetadata({ libraryId, assetId, expectedVersion: 2, rating: 6 }),
-      'INVALID_IMPORT_DECISION',
+      'INVALID_ASSET_METADATA',
+    );
+    expectServiceCode(
+      () => service.setAssetMetadata({ libraryId, assetId, expectedVersion: 2, rating: 1.5 }),
+      'INVALID_ASSET_METADATA',
+    );
+
+    service.closeAll();
+  });
+
+  it('enforces label and description lengths at the service boundary', () => {
+    const { service, libraryId, assetId } = createLibraryWithAsset();
+
+    expectServiceCode(
+      () => service.setAssetMetadata({
+        libraryId,
+        assetId,
+        expectedVersion: 0,
+        label: 'a'.repeat(256),
+      }),
+      'INVALID_ASSET_METADATA',
+    );
+    expectServiceCode(
+      () => service.setAssetMetadata({
+        libraryId,
+        assetId,
+        expectedVersion: 0,
+        description: 'a'.repeat(10_001),
+      }),
+      'INVALID_ASSET_METADATA',
     );
 
     service.closeAll();
@@ -859,8 +892,65 @@ describe('asset metadata', () => {
           expectedVersion: 1,
           palette: palette21,
         }),
-      'INVALID_IMPORT_DECISION',
+      'INVALID_ASSET_METADATA',
     );
+
+    service.closeAll();
+  });
+
+  it('rejects manual palette entries that are not six-digit hex colors', () => {
+    const { service, libraryId, assetId } = createLibraryWithAsset();
+
+    for (const invalidColor of ['red', '#FFF', '#12345G', 'rgb(1, 2, 3)', ' #112233']) {
+      expectServiceCode(
+        () => service.setAssetMetadata({
+          libraryId,
+          assetId,
+          expectedVersion: 0,
+          palette: [invalidColor],
+        }),
+        'INVALID_ASSET_METADATA',
+      );
+    }
+
+    service.closeAll();
+  });
+
+  it('accepts only empty or HTTP(S) source-page URLs at the service boundary', () => {
+    const { service, libraryId, assetId } = createLibraryWithAsset();
+
+    for (const invalidUrl of [
+      'ftp://example.com/source',
+      '/relative/source',
+      'https://user:secret@example.com/source',
+      ' https://example.com/source ',
+      '   ',
+      `https://example.com/${'a'.repeat(8_193)}`,
+    ]) {
+      expectServiceCode(
+        () => service.setAssetMetadata({
+          libraryId,
+          assetId,
+          expectedVersion: 0,
+          sourcePageUrl: invalidUrl,
+        }),
+        'INVALID_ASSET_METADATA',
+      );
+    }
+
+    const longValidUrl = `https://example.com/${'a'.repeat(300)}`;
+    expect(service.setAssetMetadata({
+      libraryId,
+      assetId,
+      expectedVersion: 0,
+      sourcePageUrl: longValidUrl,
+    }).sourcePageUrl).toBe(longValidUrl);
+    expect(service.setAssetMetadata({
+      libraryId,
+      assetId,
+      expectedVersion: 1,
+      sourcePageUrl: '',
+    }).sourcePageUrl).toBeNull();
 
     service.closeAll();
   });

@@ -130,14 +130,71 @@ test('organizes, finds, trashes, and restores an imported asset through the UI',
     await labelInput.fill('英雄资产');
     await labelInput.press('Enter');
     await expect(window.getByText(/版本 1/)).toBeVisible();
+    const visibleCardTitle = window.locator('.asset-card .asset-caption strong');
+    await expect(visibleCardTitle).toHaveText('英雄资产');
     await window.getByRole('button', { name: '4 星' }).click();
     await expect(window.getByText(/版本 2/)).toBeVisible();
     await window.getByRole('button', { name: '标记喜欢' }).click();
+    await expect(window.getByText(/版本 3/)).toBeVisible();
+    await window.getByLabel('人工色卡').fill('red');
+    await window.getByLabel('人工色卡').press('Enter');
+    await expect(window.getByText('保存色卡失败。原因：颜色必须使用 #RRGGBB 格式。')).toBeVisible();
     await expect(window.getByText(/版本 3/)).toBeVisible();
     await window.getByLabel('人工色卡').fill('#112233, #AABBCC');
     await window.getByLabel('人工色卡').press('Enter');
     await expect(window.getByText(/版本 4/)).toBeVisible();
     await expect(window.getByLabel('色卡预览').locator('span')).toHaveCount(2);
+
+    const descriptionInput = window.getByLabel('描述');
+    const sourceUrlInput = window.getByLabel('源链接 (URL)');
+    await descriptionInput.fill('待清空描述');
+    await descriptionInput.blur();
+    await expect(window.getByText(/版本 5/)).toBeVisible();
+    await sourceUrlInput.fill('javascript:alert(1)');
+    await sourceUrlInput.press('Enter');
+    await expect(window.getByText('保存源链接失败。原因：请输入不含账号密码的 HTTP(S) 完整链接。')).toBeVisible();
+    await expect(window.getByText(/版本 5/)).toBeVisible();
+    await sourceUrlInput.fill('https://example.com/source');
+    await sourceUrlInput.press('Enter');
+    await expect(window.getByText(/版本 6/)).toBeVisible();
+
+    await labelInput.fill('');
+    await labelInput.press('Enter');
+    await expect(window.getByText(/版本 7/)).toBeVisible();
+    await expect(visibleCardTitle).toHaveText('hero.png');
+    await descriptionInput.fill('');
+    await descriptionInput.blur();
+    await expect(window.getByText(/版本 8/)).toBeVisible();
+    await sourceUrlInput.fill('');
+    await sourceUrlInput.press('Enter');
+    await expect(window.getByText(/版本 9/)).toBeVisible();
+    const clearedMetadata = await window.evaluate(async () => {
+      const api = (globalThis as typeof globalThis & { serpent: { library: {
+        listOpen(): Promise<{ ok: boolean; value?: Array<{ libraryId: string }> }>;
+        listAssets(input: { libraryId: string; folderId?: string; recursive: boolean }): Promise<{ ok: boolean; value?: Array<{ assetId: string }> }>;
+        getAssetMetadata(input: { libraryId: string; assetId: string }): Promise<{ ok: boolean; value?: { label: string | null; description: string | null; sourcePageUrl: string | null } }>;
+      } } }).serpent.library;
+      const open = await api.listOpen();
+      const libraryId = open.value?.[0]?.libraryId;
+      if (!libraryId) throw new Error('No open library');
+      const assets = await api.listAssets({ libraryId, recursive: true });
+      const assetId = assets.value?.[0]?.assetId;
+      if (!assetId) throw new Error('No imported asset');
+      const metadata = await api.getAssetMetadata({ libraryId, assetId });
+      return metadata.value;
+    });
+    expect(clearedMetadata).toMatchObject({ label: null, description: null, sourcePageUrl: null });
+    await labelInput.fill('英雄资产');
+    await labelInput.press('Enter');
+    await expect(window.getByText(/版本 10/)).toBeVisible();
+    await expect(visibleCardTitle).toHaveText('英雄资产');
+
+    // Leaving the description field and clicking a rating are one user gesture.
+    // Both saves must be serialized locally instead of racing with the same version.
+    await descriptionInput.fill('快速连续修改的描述');
+    await window.getByRole('button', { name: '5 星' }).click();
+    await expect(window.getByText(/版本 12/)).toBeVisible();
+    await expect(window.getByText('版本冲突', { exact: true })).toHaveCount(0);
 
     await window.getByLabel('搜索资源库').fill('英雄资产');
     await window.getByText('筛选与排序', { exact: true }).click();
@@ -247,6 +304,22 @@ test('multi-select performs batch organization, trash, and explicit restore', as
     });
     expect(counts).toEqual({ tag: 2, collection: 2 });
 
+    const searchRequestCount = () => window.evaluate(() => (
+      globalThis as typeof globalThis & {
+        serpent: { e2e: { getRequestCount(type: 'asset.search.request'): number } };
+      }
+    ).serpent.e2e.getRequestCount('asset.search.request'));
+    const tagSearchCount = await searchRequestCount();
+    await window.getByRole('button', { name: /批量标签/ }).first().click();
+    await expect.poll(searchRequestCount).toBeGreaterThan(tagSearchCount);
+    await expect(window.getByText('正在同步资源库…')).toHaveCount(0);
+    await window.getByRole('button', { name: /first\.txt/i }).click();
+    await window.getByRole('button', { name: /second\.txt/i }).click({ modifiers: [additiveModifier] });
+    await window.getByLabel('批量标签').selectOption({ label: '批量标签' });
+    await window.getByRole('button', { name: '移除标签', exact: true }).click();
+    await expect(window.locator('.toast')).toContainText('已为 2 项资产移除标签');
+    await expect(window.locator('.asset-card')).toHaveCount(0);
+
     await window.getByRole('button', { name: /批量合集/ }).first().click();
     await window.getByLabel('包含子合集').uncheck();
     const firstMember = window.getByRole('button', { name: /first\.txt/i });
@@ -287,6 +360,109 @@ test('multi-select performs batch organization, trash, and explicit restore', as
     await expect(window.locator('.toast')).toContainText('已恢复 2 项资产');
     await window.getByRole('button', { name: /所有资产/ }).click();
     await expect(window.locator('.asset-card')).toHaveCount(2);
+  } finally {
+    await application.close();
+    rmSync(temporaryRoot, { force: true, recursive: true });
+  }
+});
+
+test('collection recursion toggle immediately refreshes the visible collection scope', async () => {
+  const temporaryRoot = mkdtempSync(path.join(tmpdir(), 'serpent-collection-recursion-e2e-'));
+  const childSourcePath = path.join(temporaryRoot, 'child-only.txt');
+  const directSourcePath = path.join(temporaryRoot, 'direct-only.txt');
+  writeFileSync(childSourcePath, 'child member');
+  writeFileSync(directSourcePath, 'direct member');
+
+  const applicationDirectory = process.env.SERPENT_E2E_APP_DIRECTORY ?? process.cwd();
+  const application = await electron.launch({
+    args: [applicationDirectory],
+    cwd: applicationDirectory,
+    executablePath: resolveElectronExecutablePath(),
+    env: {
+      ...process.env,
+      SERPENT_E2E: '1',
+      SERPENT_E2E_CREATE_PARENT_PATH: temporaryRoot,
+      SERPENT_E2E_IMPORT_FILES: [childSourcePath, directSourcePath].join(path.delimiter),
+    },
+  });
+
+  try {
+    const window = await application.firstWindow();
+    await window.getByRole('button', { name: '创建资源库' }).click();
+    await window.getByLabel('名称').fill('合集递归验收');
+    await window.getByRole('button', { name: '创建', exact: true }).click();
+    await window.getByRole('button', { name: '导入文件', exact: true }).first().click();
+    await expect(window.getByRole('button', { name: /child-only\.txt/i })).toBeVisible();
+    await expect(window.getByRole('button', { name: /direct-only\.txt/i })).toBeVisible();
+
+    await window.getByRole('button', { name: '添加合集' }).click();
+    await window.getByPlaceholder('输入合集名称，回车创建').fill('父合集');
+    await window.getByPlaceholder('输入合集名称，回车创建').press('Enter');
+    await window.getByRole('button', { name: /父合集/ }).click();
+    await window.getByRole('button', { name: '添加合集' }).click();
+    await window.getByPlaceholder('输入子合集名称，回车创建').fill('子合集');
+    await window.getByPlaceholder('输入子合集名称，回车创建').press('Enter');
+
+    await window.getByRole('button', { name: /所有资产/ }).click();
+    await window.getByRole('button', { name: '添加合集' }).click();
+    await window.getByPlaceholder('输入合集名称，回车创建').fill('空合集');
+    await window.getByPlaceholder('输入合集名称，回车创建').press('Enter');
+    await window.getByRole('button', { name: /child-only\.txt/i }).click({ button: 'right' });
+    await window.getByRole('menuitem', { name: '加入合集：子合集' }).click();
+    await window.getByRole('button', { name: /direct-only\.txt/i }).click({ button: 'right' });
+    await window.getByRole('menuitem', { name: '加入合集：父合集' }).click();
+    const collectionState = await window.evaluate(async () => {
+      const api = (globalThis as typeof globalThis & { serpent: { library: {
+        listOpen(): Promise<{ ok: boolean; value?: Array<{ libraryId: string }> }>;
+        listCollections(input: { libraryId: string }): Promise<{ ok: boolean; value?: Array<{ collectionId: string; parentId: string | null; name: string }> }>;
+        listCollectionAssets(input: { libraryId: string; collectionId: string; recursive: boolean }): Promise<{ ok: boolean; value?: Array<{ displayName: string }> }>;
+      } } }).serpent.library;
+      const open = await api.listOpen();
+      const libraryId = open.value?.[0]?.libraryId;
+      if (!libraryId) throw new Error('No open library');
+      const collections = await api.listCollections({ libraryId });
+      const parent = collections.value?.find((collection) => collection.name === '父合集');
+      const child = collections.value?.find((collection) => collection.name === '子合集');
+      if (!parent || !child) throw new Error('Missing collection hierarchy');
+      const direct = await api.listCollectionAssets({
+        libraryId,
+        collectionId: parent.collectionId,
+        recursive: false,
+      });
+      return { childParentId: child.parentId, directNames: direct.value?.map((asset) => asset.displayName), parentId: parent.collectionId };
+    });
+    expect(collectionState.childParentId).toBe(collectionState.parentId);
+    expect(collectionState.directNames).toEqual(['direct-only.txt']);
+    await window.getByRole('button', { name: /父合集/ }).click();
+    await expect(window.getByRole('button', { name: /child-only\.txt/i })).toBeVisible();
+    await expect(window.getByRole('button', { name: /direct-only\.txt/i })).toBeVisible();
+
+    const additiveModifier = process.platform === 'darwin' ? 'Meta' : 'Control';
+    await window.getByRole('button', { name: /child-only\.txt/i }).click();
+    await window.getByRole('button', { name: /direct-only\.txt/i }).click({ modifiers: [additiveModifier] });
+    await window.getByLabel('批量合集').selectOption({ label: '父合集' });
+    await window.getByRole('button', { name: '移出合集', exact: true }).click();
+    await expect(window.locator('.toast')).toContainText('已将 1 项直接成员移出合集；1 项不是该合集的直接成员，未改动');
+    await expect(window.getByRole('button', { name: /child-only\.txt/i })).toBeVisible();
+    await expect(window.getByRole('button', { name: /direct-only\.txt/i })).toHaveCount(0);
+
+    await window.getByRole('button', { name: /child-only\.txt/i }).click();
+    await window.getByLabel('批量合集').selectOption({ label: '父合集' });
+    await window.getByRole('button', { name: '移出合集', exact: true }).click();
+    await expect(window.getByText('无需从目标合集移除：所选资产都不是该合集的直接成员。')).toBeVisible();
+    await expect(window.getByRole('button', { name: /child-only\.txt/i })).toBeVisible();
+
+    await window.getByRole('button', { name: /所有资产/ }).click();
+    await window.getByRole('button', { name: /direct-only\.txt/i }).click();
+    await window.getByLabel('批量合集').selectOption({ label: '空合集' });
+    await window.getByRole('button', { name: '移出合集', exact: true }).click();
+    await expect(window.getByText('无需从目标合集移除：所选资产都不是该合集的直接成员。')).toBeVisible();
+    await expect(window.getByRole('button', { name: /direct-only\.txt/i })).toBeVisible();
+
+    await window.getByRole('button', { name: /父合集/ }).click();
+
+    await window.getByLabel('包含子合集').uncheck();
+    await expect(window.getByRole('button', { name: /child-only\.txt/i })).toHaveCount(0);
   } finally {
     await application.close();
     rmSync(temporaryRoot, { force: true, recursive: true });

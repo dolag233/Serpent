@@ -27,6 +27,7 @@ export const PUBLIC_ERROR_MESSAGES = {
   LIBRARY_CLEANUP_FAILED: 'Library creation failed and temporary files could not be removed.',
   LIBRARY_NOT_OPEN: 'The library is not currently open.',
   ASSET_NOT_FOUND: 'The requested asset could not be found.',
+  INVALID_ASSET_METADATA: 'Choose valid asset metadata values, including six-digit hex colors and an HTTP(S) source page URL.',
   ASSET_MOVE_CONFLICT: 'The asset move could not be completed because a source or destination changed.',
   ASSET_SOURCE_TRASH_FAILED: 'Serpent could not move the asset source to the system trash.',
   AI_ANALYSIS_FAILED: 'The AI service could not analyze this asset.',
@@ -88,9 +89,24 @@ export const publicErrorSchema = z.strictObject({
   code: publicErrorCodeSchema,
   message: z.string(),
   reason: publicErrorReasonSchema.optional(),
+  currentEntityVersion: z.number().int().nonnegative().optional(),
 }).superRefine((error, context) => {
   if (error.message !== PUBLIC_ERROR_MESSAGES[error.code]) {
     context.addIssue({ code: 'custom', message: 'Public error message does not match its code.' });
+  }
+  if (error.code === 'VERSION_CONFLICT' && error.currentEntityVersion === undefined) {
+    context.addIssue({
+      code: 'custom',
+      path: ['currentEntityVersion'],
+      message: 'Version conflicts must include the current entity version.',
+    });
+  }
+  if (error.code !== 'VERSION_CONFLICT' && error.currentEntityVersion !== undefined) {
+    context.addIssue({
+      code: 'custom',
+      path: ['currentEntityVersion'],
+      message: 'Only version conflicts may include the current entity version.',
+    });
   }
 });
 
@@ -99,8 +115,14 @@ export type PublicError = z.infer<typeof publicErrorSchema>;
 export function createPublicError(
   code: PublicErrorCode,
   reason?: PublicErrorReason,
+  currentEntityVersion?: number,
 ): PublicError {
-  return publicErrorSchema.parse({ code, message: PUBLIC_ERROR_MESSAGES[code], reason });
+  return publicErrorSchema.parse({
+    code,
+    message: PUBLIC_ERROR_MESSAGES[code],
+    ...(reason === undefined ? {} : { reason }),
+    ...(currentEntityVersion === undefined ? {} : { currentEntityVersion }),
+  });
 }
 
 export function publicReasonFromError(error: unknown): PublicErrorReason | undefined {

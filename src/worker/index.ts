@@ -1,4 +1,3 @@
-import { createPublicError, toPublicError } from '../shared/protocol/errors';
 import { parseWorkerRequest, type WorkerRequest } from '../shared/protocol/requests';
 import {
   parseWorkerControlMessage,
@@ -7,6 +6,7 @@ import {
 } from '../shared/protocol/responses';
 import type { ParentPort } from 'electron';
 import { LibraryService, LibraryServiceError } from './library-service';
+import { publicErrorForWorkerFailure } from './public-error';
 import { OpenAIVendorAdapter } from './ai/openai-adapter';
 import { GeminiVendorAdapter } from './ai/gemini-adapter';
 import { AnthropicVendorAdapter } from './ai/anthropic-adapter';
@@ -1322,10 +1322,7 @@ parentPort.on('message', async (event) => {
       requestId,
       result: {
         ok: false,
-        error:
-          error instanceof LibraryServiceError
-            ? createPublicError(error.code, error.reason)
-            : toPublicError(error),
+        error: publicErrorForWorkerFailure(error),
       },
     };
   }

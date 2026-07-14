@@ -9,6 +9,7 @@ import {
   importConflictPlanSchema,
   parseAssetChangeEvent,
   parseRendererResult,
+  parseWorkerResponse,
   parseRendererLifecycleEvent,
   parseAiProgressEvent,
   parseAiAnalysisCompletedEvent,
@@ -47,6 +48,150 @@ describe('renderer request protocol', () => {
       query: null,
       filters: [{ field: 'aspect_ratio', ranges: [{}], exclude: false }],
     })).toThrow();
+  });
+
+  it('accepts only explicit six-digit hex colors for manual palettes', () => {
+    const validPalette = ['#000000', '#a1B2c3', '#FFFFFF'];
+    expect(parseRendererRequest({
+      type: 'asset.metadata.set.request',
+      libraryId: 'library-01',
+      assetId: 'asset-01',
+      expectedVersion: 0,
+      palette: validPalette,
+    })).toMatchObject({ palette: validPalette });
+    expect(parseWorkerRequest({
+      requestId: 'palette-01',
+      command: {
+        type: 'asset.metadata.set',
+        libraryId: 'library-01',
+        assetId: 'asset-01',
+        expectedVersion: 0,
+        palette: validPalette,
+      },
+    })).toMatchObject({ command: { palette: validPalette } });
+
+    for (const invalidColor of ['red', '#FFF', '#12345G', 'rgb(1, 2, 3)', ' #112233']) {
+      expect(() => parseRendererRequest({
+        type: 'asset.metadata.set.request',
+        libraryId: 'library-01',
+        assetId: 'asset-01',
+        expectedVersion: 0,
+        palette: [invalidColor],
+      })).toThrow();
+      expect(() => parseWorkerRequest({
+        requestId: 'palette-invalid',
+        command: {
+          type: 'asset.metadata.set',
+          libraryId: 'library-01',
+          assetId: 'asset-01',
+          expectedVersion: 0,
+          palette: [invalidColor],
+        },
+      })).toThrow();
+    }
+
+    const twentyColors = Array.from({ length: 20 }, (_, index) =>
+      `#${index.toString(16).padStart(6, '0')}`);
+    expect(parseRendererRequest({
+      type: 'asset.metadata.set.request',
+      libraryId: 'library-01',
+      assetId: 'asset-01',
+      expectedVersion: 0,
+      palette: twentyColors,
+    })).toMatchObject({ palette: twentyColors });
+    expect(() => parseWorkerRequest({
+      requestId: 'palette-too-large',
+      command: {
+        type: 'asset.metadata.set',
+        libraryId: 'library-01',
+        assetId: 'asset-01',
+        expectedVersion: 0,
+        palette: [...twentyColors, '#FFFFFF'],
+      },
+    })).toThrow();
+  });
+
+  it('accepts empty metadata text fields as explicit clear operations', () => {
+    const rendererRequest = parseRendererRequest({
+      type: 'asset.metadata.set.request',
+      libraryId: 'library-01',
+      assetId: 'asset-01',
+      expectedVersion: 3,
+      label: '',
+      description: '',
+      sourcePageUrl: '',
+    });
+    expect(rendererRequest).toMatchObject({
+      label: '',
+      description: '',
+      sourcePageUrl: '',
+    });
+
+    const workerRequest = parseWorkerRequest({
+      requestId: 'metadata-clear',
+      command: {
+        type: 'asset.metadata.set',
+        libraryId: 'library-01',
+        assetId: 'asset-01',
+        expectedVersion: 3,
+        label: '',
+        description: '',
+        sourcePageUrl: '',
+      },
+    });
+    expect(workerRequest.command).toMatchObject({
+      label: '',
+      description: '',
+      sourcePageUrl: '',
+    });
+  });
+
+  it('accepts only empty or HTTP(S) source-page URLs up to the URL limit', () => {
+    const longValidUrl = `https://example.com/${'a'.repeat(300)}`;
+    expect(parseRendererRequest({
+      type: 'asset.metadata.set.request',
+      libraryId: 'library-01',
+      assetId: 'asset-01',
+      expectedVersion: 0,
+      sourcePageUrl: longValidUrl,
+    })).toMatchObject({ sourcePageUrl: longValidUrl });
+    expect(parseWorkerRequest({
+      requestId: 'metadata-source-url',
+      command: {
+        type: 'asset.metadata.set',
+        libraryId: 'library-01',
+        assetId: 'asset-01',
+        expectedVersion: 0,
+        sourcePageUrl: 'http://example.com/source',
+      },
+    })).toMatchObject({ command: { sourcePageUrl: 'http://example.com/source' } });
+
+    for (const invalidUrl of [
+      'ftp://example.com/source',
+      '/relative/source',
+      'https://user:secret@example.com/source',
+      ' https://example.com/source ',
+      '   ',
+      `https://example.com/${'a'.repeat(8_193)}`,
+    ]) {
+      expect(() => parseRendererRequest({
+        type: 'asset.metadata.set.request',
+        libraryId: 'library-01',
+        assetId: 'asset-01',
+        expectedVersion: 0,
+        sourcePageUrl: invalidUrl,
+      })).toThrow();
+      expect(() => parseWorkerRequest({
+        requestId: 'metadata-source-url-invalid',
+        command: {
+          type: 'asset.metadata.set',
+          libraryId: 'library-01',
+          assetId: 'asset-01',
+          expectedVersion: 0,
+          sourcePageUrl: invalidUrl,
+        },
+      })).toThrow();
+    }
   });
 
   it('accepts semantic video preview and proxy retry requests without paths', () => {
@@ -608,6 +753,46 @@ describe('public errors', () => {
       message: 'Serpent could not apply the import safely.',
       reason: 'PATH_LIMIT_EXCEEDED',
     });
+  });
+
+  it('exposes a specific safe error for invalid asset metadata', () => {
+    expect(createPublicError('INVALID_ASSET_METADATA')).toEqual({
+      code: 'INVALID_ASSET_METADATA',
+      message: 'Choose valid asset metadata values, including six-digit hex colors and an HTTP(S) source page URL.',
+    });
+  });
+
+  it('preserves the current metadata version through Worker and Preload validation', () => {
+    const conflict = createPublicError('VERSION_CONFLICT', undefined, 7);
+    const workerResponse = parseWorkerResponse({
+      requestId: 'metadata-conflict',
+      result: { ok: false, error: conflict },
+    });
+    const rendererResult = parseRendererResult(workerResponse.result);
+
+    expect(rendererResult).toEqual({
+      ok: false,
+      error: {
+        code: 'VERSION_CONFLICT',
+        message: 'The metadata has been modified by another operation. Please refresh and try again.',
+        currentEntityVersion: 7,
+      },
+    });
+    expect(() => parseRendererResult({
+      ok: false,
+      error: {
+        code: 'VERSION_CONFLICT',
+        message: 'The metadata has been modified by another operation. Please refresh and try again.',
+      },
+    })).toThrow();
+    expect(() => parseRendererResult({
+      ok: false,
+      error: {
+        code: 'ASSET_NOT_FOUND',
+        message: 'The requested asset could not be found.',
+        currentEntityVersion: 7,
+      },
+    })).toThrow();
   });
 });
 

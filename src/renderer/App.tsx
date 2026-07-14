@@ -500,6 +500,7 @@ export function App() {
     null,
   );
   const [collectionRecursive, setCollectionRecursive] = useState(true);
+  const collectionRecursiveRef = useRef(collectionRecursive);
   const [collectionEditor, setCollectionEditor] = useState<{
     collectionId: string;
     description: string;
@@ -590,6 +591,13 @@ export function App() {
     useState<AssetMetadataResult | null>(null);
   const [metadataLoading, setMetadataLoading] = useState(false);
   const [versionConflict, setVersionConflict] = useState(false);
+  const selectedAssetIdRef = useRef(selectedAssetId);
+  useEffect(() => {
+    selectedAssetIdRef.current = selectedAssetId;
+  }, [selectedAssetId]);
+  const metadataByAssetRef = useRef(new Map<string, AssetMetadataResult>());
+  const metadataConflictAssetIdsRef = useRef(new Set<string>());
+  const metadataSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
   // Pending edit values
   const [editLabel, setEditLabel] = useState("");
   const [editDescription, setEditDescription] = useState("");
@@ -1157,7 +1165,7 @@ export function App() {
               searchScope = {
                 kind: "collection",
                 collectionId: session.scope.id,
-                recursive: collectionRecursive,
+                recursive: collectionRecursiveRef.current,
               };
               const result = await api.searchAssets({
                 libraryId: activeLibrary.libraryId,
@@ -1275,7 +1283,7 @@ export function App() {
       setError(toMessage(caught, "无法恢复工作区。"));
       setUiState(activeLibrary ? "ready" : "idle");
     }
-  }, [api, collectionRecursive, loadContent, setError]);
+  }, [api, loadContent, setError]);
   useEffect(() => {
     void Promise.resolve().then(restore);
   }, [restore]);
@@ -1673,6 +1681,9 @@ export function App() {
       if (!result.ok) throw new LibraryOperationError(result.error);
       const tagResult = await api.listTags({ libraryId: library.libraryId });
       if (tagResult.ok) setTags(tagResult.value);
+      if (remove && activeTagId === batchTagId) {
+        await chooseTag(batchTagId);
+      }
       setNotice(
         `已为 ${selectedAssetIds.length} 项资产${remove ? "移除" : "添加"}标签。`,
       );
@@ -1913,7 +1924,10 @@ export function App() {
     }
   }
 
-  async function chooseCollection(collectionId: string) {
+  async function chooseCollection(
+    collectionId: string,
+    recursive = collectionRecursive,
+  ) {
     if (!api || !library) return;
     workspaceCanvasRef.current?.scrollTo({ top: 0, left: 0 });
     setShowTrash(false);
@@ -1932,7 +1946,7 @@ export function App() {
         scope: {
           kind: "collection",
           collectionId,
-          recursive: collectionRecursive,
+          recursive,
         },
         limit: ASSET_PAGE_SIZE,
         offset: 0,
@@ -1979,16 +1993,38 @@ export function App() {
       return;
     setUiState("loading");
     try {
+      let affectedAssetIds = selectedAssetIds;
+      if (remove) {
+        const directMembers = await api.listCollectionAssets({
+          libraryId: library.libraryId,
+          collectionId: batchCollectionId,
+          recursive: false,
+        });
+        if (!directMembers.ok)
+          throw new LibraryOperationError(directMembers.error);
+        const directMemberIds = new Set(
+          directMembers.value.map((asset) => asset.assetId),
+        );
+        affectedAssetIds = selectedAssetIds.filter((assetId) =>
+          directMemberIds.has(assetId),
+        );
+        if (affectedAssetIds.length === 0) {
+          setError(
+            "无需从目标合集移除：所选资产都不是该合集的直接成员。",
+          );
+          return;
+        }
+      }
       const result = remove
         ? await api.removeCollectionAssets({
             libraryId: library.libraryId,
             collectionId: batchCollectionId,
-            assetIds: selectedAssetIds,
+            assetIds: affectedAssetIds,
           })
         : await api.addCollectionAssets({
             libraryId: library.libraryId,
             collectionId: batchCollectionId,
-            assetIds: selectedAssetIds,
+            assetIds: affectedAssetIds,
           });
       if (!result.ok) throw new LibraryOperationError(result.error);
       const collectionResult = await api.listCollections({
@@ -1996,9 +2032,15 @@ export function App() {
       });
       if (collectionResult.ok) setCollections(collectionResult.value);
       if (remove && activeCollectionId === batchCollectionId)
-        await chooseCollection(batchCollectionId);
+        await chooseCollection(
+          batchCollectionId,
+          collectionRecursiveRef.current,
+        );
+      const skippedCount = selectedAssetIds.length - affectedAssetIds.length;
       setNotice(
-        `已将 ${selectedAssetIds.length} 项资产${remove ? "移出" : "加入"}合集。`,
+        remove && skippedCount > 0
+          ? `已将 ${affectedAssetIds.length} 项直接成员移出合集；${skippedCount} 项不是该合集的直接成员，未改动。`
+          : `已将 ${affectedAssetIds.length} 项资产${remove ? "移出" : "加入"}合集。`,
       );
     } catch (caught) {
       setError(
@@ -2555,14 +2597,18 @@ export function App() {
 
   async function loadMetadata() {
     if (!api || !library || !selectedAssetId) return;
+    const targetAssetId = selectedAssetId;
     setMetadataLoading(true);
     setVersionConflict(false);
     try {
       const result = await api.getAssetMetadata({
         libraryId: library.libraryId,
-        assetId: selectedAssetId,
+        assetId: targetAssetId,
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
+      metadataByAssetRef.current.set(targetAssetId, result.value);
+      metadataConflictAssetIdsRef.current.delete(targetAssetId);
+      if (selectedAssetIdRef.current !== targetAssetId) return;
       setAssetMetadata(result.value);
       setEditLabel(result.value.label ?? "");
       setEditDescription(result.value.description ?? "");
@@ -2590,6 +2636,8 @@ export function App() {
             assetId: selectedAssetId,
           });
           if (!cancelled && result.ok) {
+            metadataByAssetRef.current.set(selectedAssetId, result.value);
+            metadataConflictAssetIdsRef.current.delete(selectedAssetId);
             setAssetMetadata(result.value);
             setEditLabel(result.value.label ?? "");
             setEditDescription(result.value.description ?? "");
@@ -2618,38 +2666,74 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedAssetId]);
 
-  async function saveMetadata(fields: {
+  function saveMetadata(fields: {
     label?: string;
     description?: string;
     rating?: number;
     favorite?: boolean;
     palette?: string[];
     sourcePageUrl?: string;
-  }) {
-    if (!api || !library || !selectedAssetId || !assetMetadata) return;
-    setVersionConflict(false);
-    try {
-      const result = await api.setAssetMetadata({
-        libraryId: library.libraryId,
-        assetId: selectedAssetId,
-        expectedVersion: assetMetadata.entityVersion,
-        ...fields,
-      });
-      if (!result.ok) {
-        if (result.error.code === "VERSION_CONFLICT") {
-          setVersionConflict(true);
-          setNotice(
-            "元数据版本冲突——另一个操作已修改了这些字段。请刷新后重新编辑。",
-          );
-          return;
-        }
-        throw new LibraryOperationError(result.error);
-      }
-      setAssetMetadata(result.value);
-      setNotice("元数据已保存。");
-    } catch (caught) {
-      setError(toMessage(caught, "保存元数据失败。"));
+  }): Promise<void> {
+    if (!api || !library || !selectedAssetId || !assetMetadata)
+      return Promise.resolve();
+    const targetApi = api;
+    const targetLibraryId = library.libraryId;
+    const targetAssetId = selectedAssetId;
+    if (metadataConflictAssetIdsRef.current.has(targetAssetId))
+      return Promise.resolve();
+    if (!metadataByAssetRef.current.has(targetAssetId)) {
+      metadataByAssetRef.current.set(targetAssetId, assetMetadata);
     }
+    setVersionConflict(false);
+    setError(null);
+
+    const operation = metadataSaveQueueRef.current.then(async () => {
+      if (metadataConflictAssetIdsRef.current.has(targetAssetId)) return;
+      const currentMetadata = metadataByAssetRef.current.get(targetAssetId);
+      if (!currentMetadata) return;
+      try {
+        const result = await targetApi.setAssetMetadata({
+          libraryId: targetLibraryId,
+          assetId: targetAssetId,
+          expectedVersion: currentMetadata.entityVersion,
+          ...fields,
+        });
+        if (!result.ok) {
+          if (result.error.code === "VERSION_CONFLICT") {
+            metadataConflictAssetIdsRef.current.add(targetAssetId);
+            if (selectedAssetIdRef.current === targetAssetId) {
+              setVersionConflict(true);
+            }
+            setNotice(
+              "元数据版本冲突——另一个操作已修改了这些字段。请刷新后重新编辑。",
+            );
+            return;
+          }
+          throw new LibraryOperationError(result.error);
+        }
+
+        metadataByAssetRef.current.set(targetAssetId, result.value);
+        const updateSummary = (asset: AssetSummary): AssetSummary =>
+          asset.assetId === targetAssetId
+            ? {
+                ...asset,
+                label: result.value.label,
+                rating: result.value.rating,
+                favorite: result.value.favorite,
+              }
+            : asset;
+        setAssets((current) => current.map(updateSummary));
+        setTrashedAssets((current) => current.map(updateSummary));
+        if (selectedAssetIdRef.current === targetAssetId) {
+          setAssetMetadata(result.value);
+        }
+        setNotice("元数据已保存。");
+      } catch (caught) {
+        setError(toMessage(caught, "保存元数据失败。"));
+      }
+    });
+    metadataSaveQueueRef.current = operation;
+    return operation;
   }
 
   async function handleOpenExternal(assetId: string) {
@@ -3571,7 +3655,12 @@ export function App() {
               libraryId: library.libraryId,
               assetId: selectedAssetId,
             });
-            if (metadata.ok) setAssetMetadata(metadata.value);
+            if (metadata.ok) {
+              metadataByAssetRef.current.set(selectedAssetId, metadata.value);
+              metadataConflictAssetIdsRef.current.delete(selectedAssetId);
+              if (selectedAssetIdRef.current === selectedAssetId)
+                setAssetMetadata(metadata.value);
+            }
           }
           const missing = event.missingCount
             ? `，其中 ${event.missingCount} 项丢失`
@@ -3885,7 +3974,7 @@ export function App() {
 
   function handleMetadataLabelSave() {
     if (!assetMetadata || editLabel === (assetMetadata.label ?? "")) return;
-    void saveMetadata({ label: editLabel || undefined });
+    void saveMetadata({ label: editLabel });
   }
 
   function handleMetadataDescriptionInput(
@@ -3898,7 +3987,7 @@ export function App() {
   function handleMetadataDescriptionSave() {
     if (!assetMetadata || editDescription === (assetMetadata.description ?? ""))
       return;
-    void saveMetadata({ description: editDescription || undefined });
+    void saveMetadata({ description: editDescription });
   }
 
   function handlePaletteSave() {
@@ -3909,6 +3998,10 @@ export function App() {
       .filter(Boolean);
     if (values.length > 20) {
       setError("保存色卡失败。原因：人工色卡最多包含 20 个颜色值。");
+      return;
+    }
+    if (values.some((value) => !/^#[0-9A-Fa-f]{6}$/u.test(value))) {
+      setError("保存色卡失败。原因：颜色必须使用 #RRGGBB 格式。");
       return;
     }
     const current = parseStoredPalette(assetMetadata.palette);
@@ -3937,7 +4030,25 @@ export function App() {
   function handleSourceUrlSave() {
     if (!assetMetadata || editSourceUrl === (assetMetadata.sourcePageUrl ?? ""))
       return;
-    void saveMetadata({ sourcePageUrl: editSourceUrl || undefined });
+    if (editSourceUrl !== "") {
+      try {
+        const parsed = new URL(editSourceUrl);
+        if (
+          editSourceUrl !== editSourceUrl.trim() ||
+          (parsed.protocol !== "http:" && parsed.protocol !== "https:") ||
+          parsed.username !== "" ||
+          parsed.password !== ""
+        ) {
+          throw new Error("invalid source URL");
+        }
+      } catch {
+        setError(
+          "保存源链接失败。原因：请输入不含账号密码的 HTTP(S) 完整链接。",
+        );
+        return;
+      }
+    }
+    void saveMetadata({ sourcePageUrl: editSourceUrl });
   }
 
   // ── AI Analysis ────────────────────────────────────────────────────
@@ -4734,9 +4845,11 @@ export function App() {
                       <input
                         checked={collectionRecursive}
                         onChange={(e) => {
-                          setCollectionRecursive(e.target.checked);
+                          const recursive = e.target.checked;
+                          collectionRecursiveRef.current = recursive;
+                          setCollectionRecursive(recursive);
                           if (activeCollectionId)
-                            void chooseCollection(activeCollectionId);
+                            void chooseCollection(activeCollectionId, recursive);
                         }}
                         type="checkbox"
                       />
@@ -8473,6 +8586,8 @@ const PUBLIC_ERROR_MESSAGES_ZH: Partial<Record<PublicErrorCode, string>> = {
   IMPORT_COLLECTION_ASSIGN_FAILED:
     "资产已经导入目标文件夹，但未能加入所选合集；资产不会丢失，请查看日志后重试合集操作。",
   INVALID_IMPORT_DECISION: "导入冲突处理选项无效。",
+  INVALID_ASSET_METADATA:
+    "资产元数据无效，请使用六位十六进制色值，并填写有效的 HTTP(S) 源链接。",
   IMPORT_NOT_FOUND: "待处理的导入已失效，请重新选择文件。",
   IMPORT_APPLY_FAILED: "无法安全完成导入。",
   LIBRARY_ALREADY_EXISTS: "该位置已经存在同名文件或文件夹。",

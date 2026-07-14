@@ -10,8 +10,13 @@ const displayNameSchema = nonBlankString.max(255);
 const identifierSchema = nonBlankString.max(255);
 const selectedPathSchema = nonBlankString;
 const optionalIdentifierSchema = identifierSchema.optional();
-const optionalDescriptionSchema = nonBlankString.max(10000).optional();
+const optionalClearableIdentifierSchema = z.string().max(255).optional();
+const optionalClearableDescriptionSchema = z.string().max(10000).optional();
 const queryDefinitionJsonSchema = nonBlankString.max(65_536);
+export const manualPaletteColorSchema = z.string().regex(/^#[0-9A-Fa-f]{6}$/u, {
+  message: 'Expected a six-digit hexadecimal color such as #A1B2C3.',
+});
+export const manualPaletteSchema = z.array(manualPaletteColorSchema).max(20);
 const httpUrlSchema = nonBlankString.max(8_192).refine((value) => {
   try {
     const parsed = new URL(value);
@@ -20,6 +25,12 @@ const httpUrlSchema = nonBlankString.max(8_192).refine((value) => {
     return false;
   }
 }, { message: 'Expected an HTTP(S) URL without embedded credentials.' });
+export const sourcePageUrlSchema = z.union([
+  z.literal(''),
+  httpUrlSchema.refine((value) => value === value.trim(), {
+    message: 'Source-page URLs must not include surrounding whitespace.',
+  }),
+]);
 
 export const suspectedDuplicateDecisionSchema = z.enum(['skip', 'merge', 'create-copy']);
 export const nameConflictDecisionSchema = z.enum(['keep-both', 'replace', 'skip']);
@@ -246,12 +257,12 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     assetId: identifierSchema,
     // A metadata row is created with expectedVersion 0, then increments on updates.
     expectedVersion: z.number().int().min(0),
-    label: optionalIdentifierSchema,
-    description: optionalDescriptionSchema,
+    label: optionalClearableIdentifierSchema,
+    description: optionalClearableDescriptionSchema,
     rating: z.number().int().min(0).max(5).optional(),
     favorite: z.boolean().optional(),
-    palette: z.array(nonBlankString).max(20).optional(),
-    sourcePageUrl: optionalIdentifierSchema,
+    palette: manualPaletteSchema.optional(),
+    sourcePageUrl: sourcePageUrlSchema.optional(),
   }),
   z.strictObject({
     type: z.literal('asset.metadata.backfill.request'),
@@ -713,12 +724,12 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     assetId: identifierSchema,
     // A metadata row is created with expectedVersion 0, then increments on updates.
     expectedVersion: z.number().int().min(0),
-    label: optionalIdentifierSchema,
-    description: optionalDescriptionSchema,
+    label: optionalClearableIdentifierSchema,
+    description: optionalClearableDescriptionSchema,
     rating: z.number().int().min(0).max(5).optional(),
     favorite: z.boolean().optional(),
-    palette: z.array(nonBlankString).max(20).optional(),
-    sourcePageUrl: optionalIdentifierSchema,
+    palette: manualPaletteSchema.optional(),
+    sourcePageUrl: sourcePageUrlSchema.optional(),
   }),
   z.strictObject({
     type: z.literal('asset.metadata.backfill'),

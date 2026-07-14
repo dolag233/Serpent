@@ -27,7 +27,7 @@
     "test:unit": "vitest run --config vitest.config.ts tests/unit",
     "test:worker": "node scripts/run-vitest-with-electron.mjs run --config vitest.config.ts tests/worker",
     "test:perf:search": "node scripts/run-vitest-with-electron.mjs run --config vitest.config.ts tests/worker/search-performance.test.ts",
-    "test:e2e": "node scripts/run-e2e.mjs tests/e2e/library-lifecycle.test.ts tests/e2e/asset-ingestion.test.ts tests/e2e/process-lifecycle.test.ts tests/e2e/linked-folders.test.ts tests/e2e/organization-search-trash.test.ts tests/e2e/media-preview.test.ts tests/e2e/media-video-playback.test.ts tests/e2e/asset-pagination.test.ts tests/e2e/desktop-ingestion.test.ts tests/e2e/managed-move.test.ts tests/e2e/browsing-preferences.test.ts",
+    "test:e2e": "node scripts/run-e2e.mjs tests/e2e/library-lifecycle.test.ts tests/e2e/asset-ingestion.test.ts tests/e2e/process-lifecycle.test.ts tests/e2e/linked-folders.test.ts tests/e2e/organization-search-trash.test.ts tests/e2e/organization-metadata-persistence.test.ts tests/e2e/media-preview.test.ts tests/e2e/media-video-playback.test.ts tests/e2e/asset-pagination.test.ts tests/e2e/desktop-ingestion.test.ts tests/e2e/managed-move.test.ts tests/e2e/browsing-preferences.test.ts",
     "test:e2e:packaged": "playwright test tests/e2e/packaged-startup.test.ts",
     "verify:mainline": "node scripts/verify-mainline.mjs",
     "test:watch": "node scripts/run-vitest-with-electron.mjs --config vitest.config.ts"

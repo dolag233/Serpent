@@ -1,4 +1,5 @@
 import path from "node:path";
+import { tmpdir } from "node:os";
 import {
   chmodSync,
   readFileSync,
@@ -87,12 +88,14 @@ import {
   createWebImportCommand,
 } from "./web-ingestion";
 
-if (
-  process.env.SERPENT_E2E === "1" &&
-  process.env.SERPENT_E2E_USER_DATA_PATH &&
-  path.isAbsolute(process.env.SERPENT_E2E_USER_DATA_PATH)
-) {
-  app.setPath("userData", process.env.SERPENT_E2E_USER_DATA_PATH);
+if (process.env.SERPENT_E2E === "1") {
+  const explicitUserDataPath = process.env.SERPENT_E2E_USER_DATA_PATH;
+  app.setPath(
+    "userData",
+    explicitUserDataPath && path.isAbsolute(explicitUserDataPath)
+      ? explicitUserDataPath
+      : path.join(tmpdir(), "serpent-e2e-user-data", String(process.pid)),
+  );
 }
 
 app.enableSandbox();

@@ -154,6 +154,7 @@ import type {
   NameConflictDecision,
   SuspectedDuplicateDecision,
 } from '../shared/protocol/requests';
+import { manualPaletteSchema, sourcePageUrlSchema } from '../shared/protocol/requests';
 import type {
   ImportCompletion,
   ImportConflictPlan,
@@ -1472,14 +1473,20 @@ class SimulatedCrashError extends Error {}
 export class LibraryServiceError extends Error {
   constructor(
     readonly code: PublicErrorCode,
-    options?: { cause?: unknown; reason?: PublicErrorReason },
+    options?: {
+      cause?: unknown;
+      reason?: PublicErrorReason;
+      currentEntityVersion?: number;
+    },
   ) {
     super(code, options);
     this.name = 'LibraryServiceError';
     this.reason = options?.reason ?? publicReasonFromError(options?.cause);
+    this.currentEntityVersion = options?.currentEntityVersion;
   }
 
   readonly reason?: PublicErrorReason;
+  readonly currentEntityVersion?: number;
 }
 
 function serviceError(error: unknown, fallback: PublicErrorCode): LibraryServiceError {
@@ -4789,19 +4796,29 @@ export class LibraryService {
       .get(input.assetId) as { asset_id: string } | undefined;
     if (!assetRow) throw new LibraryServiceError('ASSET_NOT_FOUND');
 
-    // Validate rating.
-    if (input.rating !== undefined && (input.rating < 0 || input.rating > 5)) {
-      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+    // Renderer validation is not a trust boundary. Direct Worker clients must
+    // obey the same metadata contract and receive a metadata-specific error.
+    if (
+      input.label !== undefined && input.label.length > 255 ||
+      input.description !== undefined && input.description.length > 10_000 ||
+      input.rating !== undefined &&
+        (!Number.isInteger(input.rating) || input.rating < 0 || input.rating > 5)
+    ) {
+      throw new LibraryServiceError('INVALID_ASSET_METADATA');
     }
 
     // Validate palette.
-    if (input.palette !== undefined && input.palette.length > 20) {
-      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+    if (input.palette !== undefined && !manualPaletteSchema.safeParse(input.palette).success) {
+      throw new LibraryServiceError('INVALID_ASSET_METADATA');
     }
 
-    // Validate description length.
-    if (input.description !== undefined && input.description.length > 10000) {
-      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+    // Source-page URLs are either the exact empty-string clear operation or a
+    // credential-free HTTP(S) URL.
+    if (
+      input.sourcePageUrl !== undefined &&
+      !sourcePageUrlSchema.safeParse(input.sourcePageUrl).success
+    ) {
+      throw new LibraryServiceError('INVALID_ASSET_METADATA');
     }
 
     const now = new Date().toISOString();
@@ -4863,9 +4880,9 @@ export class LibraryService {
         const current = openLibrary.connection
           .prepare('SELECT entity_version FROM asset_metadata WHERE asset_id = ?')
           .get(input.assetId) as { entity_version: number };
-        const err = new LibraryServiceError('VERSION_CONFLICT');
-        (err as unknown as Record<string, unknown>).currentEntityVersion = current.entity_version;
-        throw err;
+        throw new LibraryServiceError('VERSION_CONFLICT', {
+          currentEntityVersion: current.entity_version,
+        });
       }
 
       // Fetch back the updated row.
@@ -4905,9 +4922,7 @@ export class LibraryService {
 
     // No existing row: INSERT. expectedVersion must be 0 for a fresh row.
     if (input.expectedVersion !== 0) {
-      const err = new LibraryServiceError('VERSION_CONFLICT');
-      (err as unknown as Record<string, unknown>).currentEntityVersion = 0;
-      throw err;
+      throw new LibraryServiceError('VERSION_CONFLICT', { currentEntityVersion: 0 });
     }
 
     const newLabel =
