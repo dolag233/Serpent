@@ -156,7 +156,7 @@ test("context menu clamps at viewport edges", async () => {
     // First Escape: close context menu (selection preserved — correct behavior)
     await window.keyboard.press("Escape");
     // Second Escape: clear the selection so the sidebar "添加标签" button
-    // is unambiguous (batch-action-strip hides when selection is empty)
+    // is unambiguous (no multi-select context menu when selection is empty)
     await window.keyboard.press("Escape");
     await window.getByRole("button", { name: "添加标签" }).click();
     await window.getByPlaceholder("输入标签名称，回车创建").fill("Clamp Tag");

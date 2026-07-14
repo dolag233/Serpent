@@ -1,4 +1,5 @@
 import {
+  Fragment,
   useCallback,
   useEffect,
   useMemo,
@@ -15,6 +16,7 @@ import {
   ContextMenuBackdrop,
   ContextMenuItem,
   ContextMenuProvider,
+  ContextMenuSection,
   useContextMenu,
 } from "./context-menu";
 
@@ -448,7 +450,6 @@ function AppInner() {
   const [library, setLibrary] = useState<RendererLibrarySummary | null>(null);
   const [folders, setFolders] = useState<ManagedFolderSummary[]>([]);
   const [linkedFolders, setLinkedFolders] = useState<LinkedFolderSummary[]>([]);
-  const [copyLinkedTargetId, setCopyLinkedTargetId] = useState("");
   const [linkedRulesEditor, setLinkedRulesEditor] = useState<{
     folderId: string;
     name: string;
@@ -517,8 +518,6 @@ function AppInner() {
   const marqueeStartRef = useRef({ x: 0, y: 0 });
   const marqueeHitIdsRef = useRef<string[]>([]);
   const lastMousedownButtonRef = useRef(0);
-  const [batchTagId, setBatchTagId] = useState("");
-  const [batchCollectionId, setBatchCollectionId] = useState("");
 
   // Smart collections
   const [smartCollections, setSmartCollections] = useState<
@@ -750,6 +749,16 @@ function AppInner() {
     () => visibleAssets.filter((asset) => selectedIdSet.has(asset.assetId)),
     [selectedIdSet, visibleAssets],
   );
+  const selectedManagedCount = useMemo(
+    () => selectedAssets.filter((a) => a.locationKind === "managed").length,
+    [selectedAssets],
+  );
+  const selectedAvailableManaged = useMemo(
+    () => selectedAssets.filter(
+      (a) => a.locationKind === "managed" && a.availability === "available",
+    ),
+    [selectedAssets],
+  );
 
   const resizeAssetCards = useCallback(
     (requestedSize: number, clientX?: number, clientY?: number) => {
@@ -908,7 +917,7 @@ function AppInner() {
   const handleCanvasMouseDown = useCallback(
     (e: React.MouseEvent<HTMLDivElement>) => {
       const target = e.target as HTMLElement;
-      if (target.closest(".asset-card, .batch-action-strip, .external-drop-overlay, .asset-loading-more"))
+      if (target.closest(".asset-card, .external-drop-overlay, .asset-loading-more"))
         return;
       if (previewAsset) return;
       if (draggedMemberId || draggedCollectionId) return;
@@ -1841,40 +1850,6 @@ function AppInner() {
     }
   }
 
-  async function updateSelectionTags(remove: boolean) {
-    if (!api || !library || !batchTagId || selectedAssetIds.length === 0)
-      return;
-    setUiState("loading");
-    try {
-      const result = remove
-        ? await api.removeTags({
-            libraryId: library.libraryId,
-            assetIds: selectedAssetIds,
-            tagIds: [batchTagId],
-          })
-        : await api.assignTags({
-            libraryId: library.libraryId,
-            assetIds: selectedAssetIds,
-            tagIds: [batchTagId],
-          });
-      if (!result.ok) throw new LibraryOperationError(result.error);
-      const tagResult = await api.listTags({ libraryId: library.libraryId });
-      if (tagResult.ok) setTags(tagResult.value);
-      if (remove && activeTagId === batchTagId) {
-        await chooseTag(batchTagId);
-      }
-      setNotice(
-        `已为 ${selectedAssetIds.length} 项资产${remove ? "移除" : "添加"}标签。`,
-      );
-    } catch (caught) {
-      setError(
-        toMessage(caught, remove ? "批量移除标签失败。" : "批量添加标签失败。"),
-      );
-    } finally {
-      setUiState("ready");
-    }
-  }
-
   // --- Collection CRUD ---
 
   async function createCollection() {
@@ -2168,69 +2143,6 @@ function AppInner() {
     }
   }
 
-  async function updateSelectionCollection(remove: boolean) {
-    if (!api || !library || !batchCollectionId || selectedAssetIds.length === 0)
-      return;
-    setUiState("loading");
-    try {
-      let affectedAssetIds = selectedAssetIds;
-      if (remove) {
-        const directMembers = await api.listCollectionAssets({
-          libraryId: library.libraryId,
-          collectionId: batchCollectionId,
-          recursive: false,
-        });
-        if (!directMembers.ok)
-          throw new LibraryOperationError(directMembers.error);
-        const directMemberIds = new Set(
-          directMembers.value.map((asset) => asset.assetId),
-        );
-        affectedAssetIds = selectedAssetIds.filter((assetId) =>
-          directMemberIds.has(assetId),
-        );
-        if (affectedAssetIds.length === 0) {
-          setError(
-            "无需从目标合集移除：所选资产都不是该合集的直接成员。",
-          );
-          return;
-        }
-      }
-      const result = remove
-        ? await api.removeCollectionAssets({
-            libraryId: library.libraryId,
-            collectionId: batchCollectionId,
-            assetIds: affectedAssetIds,
-          })
-        : await api.addCollectionAssets({
-            libraryId: library.libraryId,
-            collectionId: batchCollectionId,
-            assetIds: affectedAssetIds,
-          });
-      if (!result.ok) throw new LibraryOperationError(result.error);
-      const collectionResult = await api.listCollections({
-        libraryId: library.libraryId,
-      });
-      if (collectionResult.ok) setCollections(collectionResult.value);
-      if (remove && activeCollectionId === batchCollectionId)
-        await chooseCollection(
-          batchCollectionId,
-          collectionRecursiveRef.current,
-        );
-      const skippedCount = selectedAssetIds.length - affectedAssetIds.length;
-      setNotice(
-        remove && skippedCount > 0
-          ? `已将 ${affectedAssetIds.length} 项直接成员移出合集；${skippedCount} 项不是该合集的直接成员，未改动。`
-          : `已将 ${affectedAssetIds.length} 项资产${remove ? "移出" : "加入"}合集。`,
-      );
-    } catch (caught) {
-      setError(
-        toMessage(caught, remove ? "批量移出合集失败。" : "批量加入合集失败。"),
-      );
-    } finally {
-      setUiState("ready");
-    }
-  }
-
   async function removeAssetFromCollection(
     assetId: string,
     collectionId: string,
@@ -2281,6 +2193,122 @@ function AppInner() {
       setNotice("资产已从合集移除。");
     } catch (caught) {
       setError(toOrganizationMessage(caught, "collection", "移除资产"));
+    } finally {
+      setUiState("ready");
+    }
+  }
+
+  async function batchAssignTagToSelection(tagId: string) {
+    if (!api || !library || selectedAssetIds.length === 0) return;
+    setUiState("loading");
+    try {
+      const result = await api.assignTags({
+        libraryId: library.libraryId,
+        assetIds: selectedAssetIds,
+        tagIds: [tagId],
+      });
+      if (!result.ok) throw new LibraryOperationError(result.error);
+      const tagResult = await api.listTags({ libraryId: library.libraryId });
+      if (tagResult.ok) setTags(tagResult.value);
+      setNotice(`已为 ${selectedAssetIds.length} 项资产添加标签。`);
+    } catch (caught) {
+      setError(toMessage(caught, "批量添加标签失败。"));
+    } finally {
+      setUiState("ready");
+    }
+  }
+
+  async function batchRemoveTagFromSelection(tagId: string) {
+    if (!api || !library || selectedAssetIds.length === 0) return;
+    setUiState("loading");
+    try {
+      const result = await api.removeTags({
+        libraryId: library.libraryId,
+        assetIds: selectedAssetIds,
+        tagIds: [tagId],
+      });
+      if (!result.ok) throw new LibraryOperationError(result.error);
+      const tagResult = await api.listTags({ libraryId: library.libraryId });
+      if (tagResult.ok) setTags(tagResult.value);
+      if (activeTagId === tagId) {
+        await chooseTag(tagId);
+      }
+      setNotice(`已为 ${selectedAssetIds.length} 项资产移除标签。`);
+    } catch (caught) {
+      setError(toMessage(caught, "批量移除标签失败。"));
+    } finally {
+      setUiState("ready");
+    }
+  }
+
+  async function batchAddSelectionToCollection(collectionId: string) {
+    if (!api || !library || selectedAssetIds.length === 0) return;
+    setUiState("loading");
+    try {
+      const result = await api.addCollectionAssets({
+        libraryId: library.libraryId,
+        collectionId,
+        assetIds: selectedAssetIds,
+      });
+      if (!result.ok) throw new LibraryOperationError(result.error);
+      const collectionResult = await api.listCollections({
+        libraryId: library.libraryId,
+      });
+      if (collectionResult.ok) setCollections(collectionResult.value);
+      setNotice(`已将 ${selectedAssetIds.length} 项资产加入合集。`);
+    } catch (caught) {
+      setError(toMessage(caught, "批量加入合集失败。"));
+    } finally {
+      setUiState("ready");
+    }
+  }
+
+  async function batchRemoveSelectionFromCollection(collectionId: string) {
+    if (!api || !library || selectedAssetIds.length === 0) return;
+    setUiState("loading");
+    try {
+      const directMembers = await api.listCollectionAssets({
+        libraryId: library.libraryId,
+        collectionId,
+        recursive: false,
+      });
+      if (!directMembers.ok)
+        throw new LibraryOperationError(directMembers.error);
+      const directMemberIds = new Set(
+        directMembers.value.map((asset) => asset.assetId),
+      );
+      const affectedAssetIds = selectedAssetIds.filter((assetId) =>
+        directMemberIds.has(assetId),
+      );
+      if (affectedAssetIds.length === 0) {
+        setError(
+          "无需从目标合集移除：所选资产都不是该合集的直接成员。",
+        );
+        return;
+      }
+      const result = await api.removeCollectionAssets({
+        libraryId: library.libraryId,
+        collectionId,
+        assetIds: affectedAssetIds,
+      });
+      if (!result.ok) throw new LibraryOperationError(result.error);
+      const collectionResult = await api.listCollections({
+        libraryId: library.libraryId,
+      });
+      if (collectionResult.ok) setCollections(collectionResult.value);
+      if (activeCollectionId === collectionId)
+        await chooseCollection(
+          collectionId,
+          collectionRecursiveRef.current,
+        );
+      const skippedCount = selectedAssetIds.length - affectedAssetIds.length;
+      setNotice(
+        skippedCount > 0
+          ? `已将 ${affectedAssetIds.length} 项直接成员移出合集；${skippedCount} 项不是该合集的直接成员，未改动。`
+          : `已将 ${affectedAssetIds.length} 项资产移出合集。`,
+      );
+    } catch (caught) {
+      setError(toMessage(caught, "批量移出合集失败。"));
     } finally {
       setUiState("ready");
     }
@@ -5576,174 +5604,6 @@ function AppInner() {
               }}
             />
           )}
-          {library && selectedAssetIds.length > 0 && !showTrash && (
-            <div
-              className="batch-action-strip"
-              role="region"
-              aria-label="批量资产操作"
-            >
-              <strong>已选择 {selectedAssetIds.length} 项</strong>
-              <select
-                aria-label="批量标签"
-                onChange={(event) => setBatchTagId(event.target.value)}
-                value={batchTagId}
-              >
-                <option value="">选择标签…</option>
-                {tags.map((tag) => (
-                  <option key={tag.tagId} value={tag.tagId}>
-                    {tag.name}
-                  </option>
-                ))}
-              </select>
-              <button
-                disabled={busy || !batchTagId}
-                onClick={() => void updateSelectionTags(false)}
-                type="button"
-              >
-                添加标签
-              </button>
-              <button
-                disabled={busy || !batchTagId}
-                onClick={() => void updateSelectionTags(true)}
-                type="button"
-              >
-                移除标签
-              </button>
-              <select
-                aria-label="批量合集"
-                onChange={(event) => setBatchCollectionId(event.target.value)}
-                value={batchCollectionId}
-              >
-                <option value="">选择合集…</option>
-                {collections.map((collection) => (
-                  <option
-                    key={collection.collectionId}
-                    value={collection.collectionId}
-                  >
-                    {collection.name}
-                  </option>
-                ))}
-              </select>
-              <button
-                disabled={busy || !batchCollectionId}
-                onClick={() => void updateSelectionCollection(false)}
-                type="button"
-              >
-                加入合集
-              </button>
-              <button
-                disabled={busy || !batchCollectionId}
-                onClick={() => void updateSelectionCollection(true)}
-                type="button"
-              >
-                移出合集
-              </button>
-              <button
-                disabled={
-                  busy ||
-                  !selectedAssets.some(
-                    (asset) =>
-                      asset.locationKind === "managed" &&
-                      asset.availability === "available",
-                  )
-                }
-                onClick={() =>
-                  setMoveDialog({
-                    assetIds: selectedAssets
-                      .filter(
-                        (asset) =>
-                          asset.locationKind === "managed" &&
-                          asset.availability === "available",
-                      )
-                      .map((asset) => asset.assetId),
-                    targetFolderId: null,
-                    conflictStrategy: "keep-both",
-                  })
-                }
-                type="button"
-              >
-                <Icon name="folder" size={13} />
-                移动到文件夹
-              </button>
-              <button
-                disabled={
-                  busy ||
-                  !selectedAssets.some(
-                    (asset) => asset.locationKind === "managed",
-                  )
-                }
-                onClick={() =>
-                  void trashManagedAssets(
-                    selectedAssets
-                      .filter((asset) => asset.locationKind === "managed")
-                      .map((asset) => asset.assetId),
-                  )
-                }
-                type="button"
-              >
-                <Icon name="trash" size={13} />
-                移入回收站
-              </button>
-              {linkedFolders.length > 0 && (
-                <>
-                  <select
-                    aria-label="复制到链接文件夹"
-                    onChange={(event) =>
-                      setCopyLinkedTargetId(event.target.value)
-                    }
-                    value={copyLinkedTargetId}
-                  >
-                    <option value="">选择链接文件夹…</option>
-                    {linkedFolders
-                      .filter((folder) => folder.status === "available")
-                      .map((folder) => (
-                        <option key={folder.folderId} value={folder.folderId}>
-                          {folder.displayName}
-                        </option>
-                      ))}
-                  </select>
-                  <button
-                    disabled={
-                      busy ||
-                      !copyLinkedTargetId ||
-                      !selectedAssets.some(
-                        (asset) =>
-                          asset.locationKind === "managed" &&
-                          asset.availability === "available",
-                      )
-                    }
-                    onClick={() => {
-                      const folder = linkedFolders.find(
-                        (item) => item.folderId === copyLinkedTargetId,
-                      );
-                      if (folder)
-                        void copyManagedSelectionToLinked(
-                          folder,
-                          selectedAssets
-                            .filter(
-                              (asset) =>
-                                asset.locationKind === "managed" &&
-                                asset.availability === "available",
-                            )
-                            .map((asset) => asset.assetId),
-                        );
-                    }}
-                    type="button"
-                  >
-                    <Icon name="link" size={13} />
-                    复制到外部目录
-                  </button>
-                </>
-              )}
-              <button
-                aria-label="清除选择"
-                onClick={clearAssetSelection}
-                type="button"
-              >
-                <Icon name="close" size={13} />
-              </button>
-            </div>
-          )}
           {busy && (
             <div className="activity-strip" role="status">
               <span className="activity-pulse" />
@@ -5848,19 +5708,29 @@ function AppInner() {
                       }}
                       onContextMenu={(e) => {
                         e.preventDefault();
-                        if (!selectedIdSet.has(asset.assetId)) {
+                        const inSelection = selectedIdSet.has(asset.assetId);
+                        const multiSelected = selectedIdSet.size >= 2 && inSelection;
+                        if (!inSelection) {
                           setSelectedAssetIds([asset.assetId]);
                           setSelectedAssetId(asset.assetId);
                         }
-                        if (library && !asset.deletedAt)
-                          openContextMenu(
-                            {
-                              type: "asset",
-                              assetId: asset.assetId,
-                              displayName: asset.displayName,
-                            },
-                            { x: e.clientX, y: e.clientY },
-                          );
+                        if (library && !asset.deletedAt) {
+                          if (multiSelected) {
+                            openContextMenu(
+                              { type: "multi-asset", assetIds: selectedAssetIds, count: selectedAssetIds.length },
+                              { x: e.clientX, y: e.clientY },
+                            );
+                          } else {
+                            openContextMenu(
+                              {
+                                type: "asset",
+                                assetId: asset.assetId,
+                                displayName: asset.displayName,
+                              },
+                              { x: e.clientX, y: e.clientY },
+                            );
+                          }
+                        }
                       }}
                       type="button"
                     >
@@ -8310,11 +8180,13 @@ function AppInner() {
         <ContextMenuBackdrop>
           <ContextMenu
             ariaLabel={
-              activeContextMenu.descriptor.type === "asset"
-                ? `资产操作：${activeContextMenu.descriptor.displayName}`
-                : activeContextMenu.descriptor.type === "organization"
-                  ? `${activeContextMenu.descriptor.orgKind === "tag" ? "标签" : "合集"}操作：${activeContextMenu.descriptor.name}`
-                  : `智能合集操作：${activeContextMenu.descriptor.name}`
+              activeContextMenu.descriptor.type === "multi-asset"
+                ? `批量资产操作：${activeContextMenu.descriptor.count} 项`
+                : activeContextMenu.descriptor.type === "asset"
+                  ? `资产操作：${activeContextMenu.descriptor.displayName}`
+                  : activeContextMenu.descriptor.type === "organization"
+                    ? `${activeContextMenu.descriptor.orgKind === "tag" ? "标签" : "合集"}操作：${activeContextMenu.descriptor.name}`
+                    : `智能合集操作：${activeContextMenu.descriptor.name}`
             }
             position={activeContextMenu.position}
           >
@@ -8406,6 +8278,97 @@ function AppInner() {
                 />
               </>
             )}
+            {activeContextMenu.descriptor.type === "multi-asset" && (
+              <>
+                {tags.length > 0 && (
+                  <ContextMenuSection label="批量标签">
+                    {tags.map((tag) => (
+                      <Fragment key={`batch-tag-${tag.tagId}`}>
+                        <ContextMenuItem
+                          icon={<Icon name="tag" size={14} />}
+                          label={`添加标签：${tag.name}`}
+                          onAction={() => { void batchAssignTagToSelection(tag.tagId); }}
+                        />
+                        <ContextMenuItem
+                          icon={<Icon name="close" size={14} />}
+                          label={`移除标签：${tag.name}`}
+                          onAction={() => { void batchRemoveTagFromSelection(tag.tagId); }}
+                        />
+                      </Fragment>
+                    ))}
+                  </ContextMenuSection>
+                )}
+                {collections.length > 0 && (
+                  <ContextMenuSection label="批量合集">
+                    {collections.map((collection) => (
+                      <Fragment key={`batch-col-${collection.collectionId}`}>
+                        <ContextMenuItem
+                          icon={<Icon name="collection" size={14} />}
+                          label={`加入合集：${collection.name}`}
+                          onAction={() => { void batchAddSelectionToCollection(collection.collectionId); }}
+                        />
+                        <ContextMenuItem
+                          icon={<Icon name="close" size={14} />}
+                          label={`移出合集：${collection.name}`}
+                          onAction={() => { void batchRemoveSelectionFromCollection(collection.collectionId); }}
+                        />
+                      </Fragment>
+                    ))}
+                  </ContextMenuSection>
+                )}
+                <ContextMenuSection label="批量文件操作">
+                  <ContextMenuItem
+                    icon={<Icon name="folder" size={14} />}
+                    label={`移动到文件夹…（${selectedAvailableManaged.length} 项）`}
+                    disabled={selectedAvailableManaged.length === 0}
+                    disabledReason="所选资产中没有可移动的托管资产"
+                    onAction={() =>
+                      setMoveDialog({
+                        assetIds: selectedAvailableManaged.map((a) => a.assetId),
+                        targetFolderId: null,
+                        conflictStrategy: "keep-both",
+                      })
+                    }
+                  />
+                  <ContextMenuItem
+                    icon={<Icon name="trash" size={14} />}
+                    label={`移入回收站（${selectedManagedCount} 项）`}
+                    danger
+                    disabled={selectedManagedCount === 0}
+                    disabledReason="所选资产中没有托管资产"
+                    onAction={() =>
+                      void trashManagedAssets(
+                        selectedAssets
+                          .filter((a) => a.locationKind === "managed")
+                          .map((a) => a.assetId),
+                      )
+                    }
+                  />
+                  {linkedFolders
+                    .filter((f) => f.status === "available")
+                    .map((folder) => (
+                      <ContextMenuItem
+                        key={`batch-link-${folder.folderId}`}
+                        icon={<Icon name="link" size={14} />}
+                        label={`复制到外部目录：${folder.displayName}`}
+                        disabled={selectedAvailableManaged.length === 0}
+                        disabledReason="所选资产中没有可复制的托管资产"
+                        onAction={() =>
+                          void copyManagedSelectionToLinked(
+                            folder,
+                            selectedAvailableManaged.map((a) => a.assetId),
+                          )
+                        }
+                      />
+                    ))}
+                </ContextMenuSection>
+                <ContextMenuItem
+                  icon={<Icon name="close" size={14} />}
+                  label={`清除选择（${activeContextMenu.descriptor.count} 项）`}
+                  onAction={clearAssetSelection}
+                />
+              </>
+            )}
             {activeContextMenu.descriptor.type === "asset" &&
               (() => {
                 const { assetId } = activeContextMenu.descriptor;
@@ -8427,6 +8390,16 @@ function AppInner() {
                         }}
                       />
                     )}
+                    {collections.map((collection) => (
+                      <ContextMenuItem
+                        key={`remove-collection-${collection.collectionId}`}
+                        icon={<Icon name="close" size={14} />}
+                        label={`移出合集：${collection.name}`}
+                        onAction={() => {
+                          void removeAssetFromCollection(assetId, collection.collectionId);
+                        }}
+                      />
+                    ))}
                     {tags.map((tag) => (
                       <ContextMenuItem
                         key={`tag-${tag.tagId}`}

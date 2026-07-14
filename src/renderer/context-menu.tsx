@@ -32,6 +32,11 @@ export type ContextMenuDescriptor =
       type: "smart-collection";
       id: string;
       name: string;
+    }
+  | {
+      type: "multi-asset";
+      assetIds: string[];
+      count: number;
     };
 
 interface ContextMenuContextValue {

@@ -1471,55 +1471,6 @@ input[type="range"] {
   }
 }
 
-.batch-action-strip {
-  position: absolute;
-  z-index: 5;
-  top: 10px;
-  left: 50%;
-  display: flex;
-  max-width: calc(100% - 28px);
-  align-items: center;
-  gap: 6px;
-  padding: 7px 9px;
-  border: 1px solid #505654;
-  border-radius: 5px;
-  background: rgb(40 44 45 / 96%);
-  box-shadow: 0 8px 26px rgb(0 0 0 / 32%);
-  transform: translateX(-50%);
-}
-.batch-action-strip strong {
-  flex: 0 0 auto;
-  color: #dce0dc;
-  font-size: 10px;
-}
-.batch-action-strip select {
-  width: 118px;
-  min-width: 0;
-  height: 25px;
-  border: 1px solid #4b504f;
-  border-radius: 3px;
-  background: #303435;
-  color: #d4d8d4;
-  font-size: 10px;
-}
-.batch-action-strip button {
-  display: inline-flex;
-  height: 25px;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 4px;
-  padding: 0 7px;
-  border: 1px solid #4b504f;
-  border-radius: 3px;
-  background: #35393a;
-  color: #d4d8d4;
-  font-size: 9px;
-  cursor: pointer;
-}
-.batch-action-strip button:disabled {
-  opacity: 0.42;
-  cursor: default;
-}
 .collection-drop-target[draggable="true"] > .nav-row {
   cursor: grab;
 }

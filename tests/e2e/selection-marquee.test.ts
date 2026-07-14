@@ -78,6 +78,16 @@ async function createAndImport(
   });
 }
 
+/** Count selected asset cards via .is-selected CSS class. */
+async function selectedCount(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  page: any,
+): Promise<number> {
+  return page.evaluate(
+    () => document.querySelectorAll(".asset-card.is-selected").length,
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Test 1 — Marquee drag-select in grid mode
 // ---------------------------------------------------------------------------
@@ -120,17 +130,17 @@ test("marquee-selects multiple cards in grid mode", async () => {
     await window.mouse.up();
 
     // All 4 cards should be selected
-    await expect(window.getByText("已选择 4 项")).toBeVisible();
+    await expect.poll(() => selectedCount(window)).toBe(4);
 
     // Click empty canvas to clear (checks marquee-to-empty behavior)
     await window.mouse.click(canvas.x + 5, canvas.y + 5);
-    await expect(window.getByText("已选择 4 项")).toHaveCount(0);
+    await expect.poll(() => selectedCount(window)).toBe(0);
 
     // Ctrl/Cmd-marquee: select first 2 via normal click, then shift-marquee
     // First, click card 0 then Ctrl+click card 1
     await cards.nth(0).click();
     await cards.nth(1).click({ modifiers: [additiveModifier] });
-    await expect(window.getByText("已选择 2 项")).toBeVisible();
+    await expect.poll(() => selectedCount(window)).toBe(2);
 
     // Shift-marquee to add remaining 2 cards
     // Start marquee from slightly above card 2
@@ -150,7 +160,7 @@ test("marquee-selects multiple cards in grid mode", async () => {
     await window.mouse.up();
     await window.keyboard.up("Shift");
 
-    await expect(window.getByText("已选择 4 项")).toBeVisible();
+    await expect.poll(() => selectedCount(window)).toBe(4);
   } finally {
     await application.close();
     rmSync(temporaryRoot, { force: true, recursive: true });
@@ -229,7 +239,7 @@ test("Ctrl/Cmd+Shift+click appends range to existing selection", async () => {
 
     // Step 1: Click first card normally (single selection)
     await cards.nth(0).click();
-    await expect(window.getByText("已选择 1 项")).toBeVisible();
+    await expect.poll(() => selectedCount(window)).toBe(1);
 
     // Step 2: Ctrl/Cmd+Shift+click last card — should append range
     await cards.last().click({
@@ -237,7 +247,7 @@ test("Ctrl/Cmd+Shift+click appends range to existing selection", async () => {
     });
 
     // All 4 cards should now be selected (range from 0 to 3 appended to existing [0])
-    await expect(window.getByText("已选择 4 项")).toBeVisible();
+    await expect.poll(() => selectedCount(window)).toBe(4);
   } finally {
     await application.close();
     rmSync(temporaryRoot, { force: true, recursive: true });
@@ -257,28 +267,28 @@ test("Esc clears selection", async () => {
 
     // Plain click selects one
     await cards.first().click();
-    await expect(window.getByText("已选择 1 项")).toBeVisible();
+    await expect.poll(() => selectedCount(window)).toBe(1);
 
     // Escape clears
     await window.keyboard.press("Escape");
-    await expect(window.getByText("已选择 1 项")).toHaveCount(0);
+    await expect.poll(() => selectedCount(window)).toBe(0);
 
     // Range-select both via Shift+click
     await cards.first().click();
     await cards.last().click({ modifiers: ["Shift"] });
-    await expect(window.getByText("已选择 2 项")).toBeVisible();
+    await expect.poll(() => selectedCount(window)).toBe(2);
 
     // Escape clears again
     await window.keyboard.press("Escape");
-    await expect(window.getByText("已选择 2 项")).toHaveCount(0);
+    await expect.poll(() => selectedCount(window)).toBe(0);
 
     // Verify selection is empty — clicking a card selects anew
     await cards.first().click();
-    await expect(window.getByText("已选择 1 项")).toBeVisible();
+    await expect.poll(() => selectedCount(window)).toBe(1);
 
     // Right-clicking an unselected card selects it
     await window.keyboard.press("Escape");
-    await expect(window.getByText("已选择 1 项")).toHaveCount(0);
+    await expect.poll(() => selectedCount(window)).toBe(0);
     await cards.first().click({ button: "right" });
     // The right-click handler selects the card before opening context menu
     // Verify the context menu appears (implies selection was set)
@@ -310,31 +320,31 @@ test("Ctrl/Cmd+click toggle deselects and re-selects a card", async () => {
 
     // Select card 0 with plain click
     await cards.nth(0).click();
-    await expect(window.getByText("已选择 1 项")).toBeVisible();
+    await expect.poll(() => selectedCount(window)).toBe(1);
 
     // Ctrl/Cmd+click card 0 — toggle DESELECT
     await cards.nth(0).click({ modifiers: [mod] });
-    await expect(window.getByText("已选择 1 项")).toHaveCount(0);
+    await expect.poll(() => selectedCount(window)).toBe(0);
 
     // Ctrl/Cmd+click card 0 again — toggle re-add
     await cards.nth(0).click({ modifiers: [mod] });
-    await expect(window.getByText("已选择 1 项")).toBeVisible();
+    await expect.poll(() => selectedCount(window)).toBe(1);
 
     // Plain click on already-selected sole card keeps it selected (no deselect)
     await cards.nth(0).click();
-    await expect(window.getByText("已选择 1 项")).toBeVisible();
+    await expect.poll(() => selectedCount(window)).toBe(1);
 
     // Ctrl/Cmd+click card 1 — add to multi-selection
     await cards.nth(1).click({ modifiers: [mod] });
-    await expect(window.getByText("已选择 2 项")).toBeVisible();
+    await expect.poll(() => selectedCount(window)).toBe(2);
 
     // Ctrl/Cmd+click card 1 — toggle remove from multi-selection
     await cards.nth(1).click({ modifiers: [mod] });
-    await expect(window.getByText("已选择 1 项")).toBeVisible();
+    await expect.poll(() => selectedCount(window)).toBe(1);
 
     // Plain click card 2 — replace single selection
     await cards.nth(2).click();
-    await expect(window.getByText("已选择 1 项")).toBeVisible();
+    await expect.poll(() => selectedCount(window)).toBe(1);
     await expect(cards.nth(2)).toHaveClass(/is-selected/);
   } finally {
     await application.close();
@@ -369,17 +379,17 @@ test("marquee then Shift+click extends correctly", async () => {
     await window.mouse.move(mqEndX, mqEndY, { steps: 15 });
     await window.mouse.up();
 
-    await expect(window.getByText("已选择 3 项")).toBeVisible();
+    await expect.poll(() => selectedCount(window)).toBe(3);
 
     // Shift+click card 5 — should extend range from marquee anchor (card 2) through card 5
     await cards.nth(5).click({ modifiers: ["Shift"] });
 
     // Range from card 2 to card 5 = 4 cards
-    await expect(window.getByText("已选择 4 项")).toBeVisible();
+    await expect.poll(() => selectedCount(window)).toBe(4);
 
     // Clear and verify: click empty canvas
     await window.mouse.click(canvas.x + 5, canvas.y + 5);
-    await expect(window.getByText("已选择 4 项")).toHaveCount(0);
+    await expect.poll(() => selectedCount(window)).toBe(0);
   } finally {
     await application.close();
     rmSync(temporaryRoot, { force: true, recursive: true });
@@ -406,19 +416,19 @@ test("selection survives view-switch and card-size zoom", async () => {
     await cards.nth(1).click({
       modifiers: [process.platform === "darwin" ? "Meta" : "Control"],
     });
-    await expect(window.getByText("已选择 2 项")).toBeVisible();
+    await expect.poll(() => selectedCount(window)).toBe(2);
 
     // Switch to masonry — selection must survive
     await masonryButton.click();
     await expect(masonryButton).toHaveAttribute("aria-pressed", "true");
     await window.waitForTimeout(500);
-    await expect(window.getByText("已选择 2 项")).toBeVisible();
+    await expect.poll(() => selectedCount(window)).toBe(2);
 
     // Switch back to grid — selection must survive
     await gridButton.click();
     await expect(gridButton).toHaveAttribute("aria-pressed", "true");
     await window.waitForTimeout(500);
-    await expect(window.getByText("已选择 2 项")).toBeVisible();
+    await expect.poll(() => selectedCount(window)).toBe(2);
 
     // Card-size zoom via Ctrl+wheel — selection must survive
     const canvas = await canvasBox(window);
@@ -427,10 +437,10 @@ test("selection survives view-switch and card-size zoom", async () => {
     await window.mouse.move(cx, cy);
     await window.mouse.wheel(0, -100); // zoom in
     await window.waitForTimeout(200);
-    await expect(window.getByText("已选择 2 项")).toBeVisible();
+    await expect.poll(() => selectedCount(window)).toBe(2);
     await window.mouse.wheel(0, 100); // zoom out
     await window.waitForTimeout(200);
-    await expect(window.getByText("已选择 2 项")).toBeVisible();
+    await expect.poll(() => selectedCount(window)).toBe(2);
   } finally {
     await application.close();
     rmSync(temporaryRoot, { force: true, recursive: true });
@@ -451,26 +461,26 @@ test("Ctrl/Cmd toggle adds then removes the same card", async () => {
 
     // Start with card 0 selected
     await cards.nth(0).click();
-    await expect(window.getByText("已选择 1 项")).toBeVisible();
+    await expect.poll(() => selectedCount(window)).toBe(1);
 
     // Ctrl+click card 1 — add to selection
     await cards.nth(1).click({ modifiers: [mod] });
-    await expect(window.getByText("已选择 2 项")).toBeVisible();
+    await expect.poll(() => selectedCount(window)).toBe(2);
 
     // Ctrl+click card 1 again — remove from selection, keep card 0
     await cards.nth(1).click({ modifiers: [mod] });
-    await expect(window.getByText("已选择 1 项")).toBeVisible();
+    await expect.poll(() => selectedCount(window)).toBe(1);
 
     // Verify card 0 is still selected (the sole selected card)
     await expect(cards.nth(0)).toHaveClass(/is-selected/);
 
     // Ctrl+click card 0 — remove it, selection should be empty
     await cards.nth(0).click({ modifiers: [mod] });
-    await expect(window.getByText("已选择 1 项")).toHaveCount(0);
+    await expect.poll(() => selectedCount(window)).toBe(0);
 
     // Plain click card 2 — fresh selection
     await cards.nth(2).click();
-    await expect(window.getByText("已选择 1 项")).toBeVisible();
+    await expect.poll(() => selectedCount(window)).toBe(1);
   } finally {
     await application.close();
     rmSync(temporaryRoot, { force: true, recursive: true });
@@ -556,7 +566,7 @@ test("context-menu Escape dismisses menu then second Escape clears selection", a
 
     // Select a card
     await cards.nth(0).click();
-    await expect(window.getByText("已选择 1 项")).toBeVisible();
+    await expect.poll(() => selectedCount(window)).toBe(1);
 
     // Right-click opens context menu (selects the card)
     await cards.nth(0).click({ button: "right" });
@@ -569,11 +579,11 @@ test("context-menu Escape dismisses menu then second Escape clears selection", a
     await expect(
       window.getByRole("menuitem", { name: "打开" }),
     ).toHaveCount(0, { timeout: 3000 });
-    await expect(window.getByText("已选择 1 项")).toBeVisible();
+    await expect.poll(() => selectedCount(window)).toBe(1);
 
     // Second Escape: now clears the selection
     await window.keyboard.press("Escape");
-    await expect(window.getByText("已选择 1 项")).toHaveCount(0);
+    await expect.poll(() => selectedCount(window)).toBe(0);
   } finally {
     await application.close();
     rmSync(temporaryRoot, { force: true, recursive: true });
