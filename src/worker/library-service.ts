@@ -1486,7 +1486,7 @@ async function defaultTrashItem(sourcePath: string): Promise<void> {
   });
 }
 
-class SimulatedCrashError extends Error {}
+export class SimulatedCrashError extends Error {}
 
 export class LibraryServiceError extends Error {
   constructor(
@@ -2295,9 +2295,11 @@ export class LibraryService {
       path.dirname(path.dirname(path.dirname(operationPath))),
     );
     const relation = path.relative(operationsPath, operationPath);
+    const basename = path.basename(operationPath);
+    const uuidCandidate = basename;
     if (
-      !UUID.test(path.basename(operationPath)) ||
-      relation !== path.basename(operationPath) ||
+      !UUID.test(uuidCandidate) ||
+      relation !== basename ||
       path.isAbsolute(relation)
     ) {
       throw new LibraryServiceError('LIBRARY_CORRUPT');
@@ -2935,10 +2937,37 @@ export class LibraryService {
       for (const child of readdirSync(operationsPath)) {
         if (retainedOperationIds.has(child)) continue;
         const orphanPath = path.join(operationsPath, child);
-        this.assertSafeOperationPath(orphanPath);
-        if (child.startsWith('relink-') && this.recoverOrphanRelinkPlacement(openLibrary, orphanPath)) {
+        if (child.startsWith('relink-')) {
+          // Validate relink orphan paths separately — they use a relink-<uuid>
+          // naming convention and carry a manifest.json, not stage/backup dirs.
+          if (!UUID.test(child.slice('relink-'.length))) {
+            throw new LibraryServiceError('LIBRARY_CORRUPT');
+          }
+          // Re-validate that the directory is a real directory (not a symlink)
+          // directly under operations/ — same safety check as assertSafeOperationPath.
+          try {
+            const entry = lstatSync(orphanPath);
+            if (!entry.isDirectory() || entry.isSymbolicLink()) {
+              throw new LibraryServiceError('LIBRARY_CORRUPT');
+            }
+          } catch (error) {
+            if (isMissingPathError(error)) continue;
+            throw new LibraryServiceError('LIBRARY_CORRUPT', { cause: error });
+          }
+          const realRelation = path.relative(
+            realpathSync(operationsPath),
+            realpathSync(orphanPath),
+          );
+          if (realRelation !== path.basename(orphanPath)) {
+            throw new LibraryServiceError('LIBRARY_CORRUPT');
+          }
+          if (this.recoverOrphanRelinkPlacement(openLibrary, orphanPath)) {
+            continue;
+          }
+          rmSync(orphanPath, { force: true, recursive: true });
           continue;
         }
+        this.assertSafeOperationPath(orphanPath);
         rmSync(orphanPath, { force: true, recursive: true });
       }
       try {
@@ -9987,6 +10016,7 @@ export class LibraryService {
           assetRow.relative_file_path,
         )).stat
       : statSync(newPath);
+
     const now = new Date().toISOString();
     let resolvedRelativePath = assetRow.relative_file_path;
 
@@ -10020,6 +10050,7 @@ export class LibraryService {
 
     try {
       openLibrary.connection.transaction(() => {
+        this.failAt('crash-relink-after-filesystem');
         const revisionId = randomUUID();
         openLibrary.connection
           .prepare(
@@ -10074,7 +10105,9 @@ export class LibraryService {
         this.syncAssetSearchContent(openLibrary.connection, input.assetId);
       })();
     } catch (error) {
-      if (managedPlacement) this.cleanupManagedRelinkPlacement(managedPlacement, true);
+      if (managedPlacement && !(error instanceof SimulatedCrashError)) {
+        this.cleanupManagedRelinkPlacement(managedPlacement, true);
+      }
       throw serviceError(error, 'LIBRARY_NOT_WRITABLE');
     }
     if (managedPlacement) this.cleanupManagedRelinkPlacement(managedPlacement, false);
@@ -10296,6 +10329,7 @@ export class LibraryService {
                 return placement.stat;
               })()
             : statSync(matchedPath);
+          if (restoredCount === 0) this.failAt('crash-relink-batch-after-first-place');
           const revisionId = randomUUID();
           openLibrary.connection
             .prepare(
@@ -10377,8 +10411,10 @@ export class LibraryService {
         }
       })();
     } catch (error) {
-      for (const placement of managedPlacements) {
-        this.cleanupManagedRelinkPlacement(placement, true);
+      if (!(error instanceof SimulatedCrashError)) {
+        for (const placement of managedPlacements) {
+          this.cleanupManagedRelinkPlacement(placement, true);
+        }
       }
       throw serviceError(error, 'LIBRARY_NOT_WRITABLE');
     }
