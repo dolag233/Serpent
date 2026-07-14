@@ -101,6 +101,8 @@ Library Worker (UtilityProcess; filesystem + SQLite owner)
 7. **packaged/独立进程 E2E 必须隔离 userData**：用 temp `SERPENT_E2E_USER_DATA_PATH`，不得用默认（避免读/污染真实配置）。
 8. **抑制巨型文件膨胀**：新交互（选择/菜单/批量动作）抽独立模块（controller/hook/descriptor builder），不得继续内联进 `App.tsx` 等巨型文件；新增内联 > ~60 行先拆分。
 9. **文档证据实时**："通过/已验证"必须附当次命令+结果摘要；被 kill/部分执行的运行不得写成"确认绿"。
+10. **禁止补丁式修复**：修复问题或编写需求时必须发掘深层原因，把整个问题和相关所有代码都纳入考量，不得直接打一个补丁以绕过问题。遇到 bug 先定位根因→理解全部影响范围→设计完整方案→一次修到位。
+11. **编码后强制交叉审查**：每一次代码变更完成后，必须启动 **2 个 sonnet + 4 个 haiku** agent 进行交叉检查（使用 `/code-review` 技能或等效 workflow）。sonnet 负责 Standards + Spec 双轴深度审查；haiku 负责广度扫查（regression、dead code、accessibility、未用 import、CSS 泄露、security 回归）。
 
 ## 文档入口
 
