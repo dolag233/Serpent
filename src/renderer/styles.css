@@ -1521,6 +1521,14 @@ input[type="range"] {
   cursor: grab;
 }
 
+.marquee-selection-box {
+  position: fixed;
+  z-index: 4;
+  border: 1px dashed var(--accent);
+  background: rgba(66, 184, 164, 0.12);
+  pointer-events: none;
+}
+
 .asset-grid {
   display: grid;
   align-self: start;

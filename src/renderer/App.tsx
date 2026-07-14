@@ -511,6 +511,12 @@ function AppInner() {
     null,
   );
   const [draggedMemberId, setDraggedMemberId] = useState<string | null>(null);
+  const [marqueeBox, setMarqueeBox] = useState<{
+    left: number; top: number; width: number; height: number;
+  } | null>(null);
+  const marqueeStartRef = useRef({ x: 0, y: 0 });
+  const marqueeHitIdsRef = useRef<string[]>([]);
+  const lastMousedownButtonRef = useRef(0);
   const [batchTagId, setBatchTagId] = useState("");
   const [batchCollectionId, setBatchCollectionId] = useState("");
 
@@ -849,6 +855,12 @@ function AppInner() {
   }
 
   function selectAsset(event: React.MouseEvent, assetId: string) {
+    // Suppress clicks triggered by non-left-button interactions (e.g., the
+    // synthetic click dispatched during a right-click in Playwright tests).
+    if (lastMousedownButtonRef.current !== 0) {
+      lastMousedownButtonRef.current = 0;
+      return;
+    }
     const visibleIds = visibleAssets.map((asset) => asset.assetId);
     if (event.shiftKey && selectionAnchorRef.current) {
       const anchorIndex = visibleIds.indexOf(selectionAnchorRef.current);
@@ -881,10 +893,158 @@ function AppInner() {
       selectionAnchorRef.current = assetId;
       return;
     }
+    // Re-click an already-selected sole card deselects it
+    if (selectedIdSet.has(assetId) && selectedIdSet.size === 1) {
+      clearAssetSelection();
+      return;
+    }
     setSelectedAssetIds([assetId]);
     setSelectedAssetId(assetId);
     selectionAnchorRef.current = assetId;
   }
+
+  // Marquee drag-select helpers
+  const marqueeActiveRef = useRef(false);
+
+  const handleCanvasMouseDown = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      const target = e.target as HTMLElement;
+      if (target.closest(".asset-card, .batch-action-strip, .external-drop-overlay, .asset-loading-more"))
+        return;
+      if (previewAsset) return;
+      if (draggedMemberId || draggedCollectionId) return;
+      // Only left-button drags start a marquee
+      if (e.button !== 0) return;
+
+      marqueeStartRef.current = { x: e.clientX, y: e.clientY };
+      setMarqueeBox({
+        left: e.clientX,
+        top: e.clientY,
+        width: 0,
+        height: 0,
+      });
+      marqueeActiveRef.current = true;
+    },
+    [previewAsset, draggedMemberId, draggedCollectionId],
+  );
+
+  // Marquee document-level mousemove + mouseup when active
+  useEffect(() => {
+    const canvas = workspaceCanvasRef.current;
+    if (!canvas) return;
+
+    const AUTO_SCROLL_ZONE = 40; // px from top/bottom edge
+    const MAX_SCROLL_SPEED = 8; // px per frame at edge
+
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!marqueeActiveRef.current) return;
+
+      const start = marqueeStartRef.current;
+      const left = Math.min(start.x, e.clientX);
+      const top = Math.min(start.y, e.clientY);
+      const width = Math.abs(e.clientX - start.x);
+      const height = Math.abs(e.clientY - start.y);
+
+      setMarqueeBox({ left, top, width, height });
+
+      // Intersect marquee box with visible asset cards
+      const canvasRect = canvas.getBoundingClientRect();
+      const cards =
+        canvas.querySelectorAll<HTMLElement>("[data-asset-id]");
+      const marqueeRect = {
+        left,
+        top,
+        right: left + width,
+        bottom: top + height,
+      };
+      const hitIds: string[] = [];
+      for (const card of cards) {
+        const rect = card.getBoundingClientRect();
+        // Box-overlap intersection (works for both grid and masonry)
+        if (
+          rect.left < marqueeRect.right &&
+          rect.right > marqueeRect.left &&
+          rect.top < marqueeRect.bottom &&
+          rect.bottom > marqueeRect.top
+        ) {
+          const id = card.dataset.assetId;
+          if (id) hitIds.push(id);
+        }
+      }
+      marqueeHitIdsRef.current = hitIds;
+
+      if (e.metaKey || e.ctrlKey || e.shiftKey) {
+        setSelectedAssetIds((current) => [
+          ...new Set([...current, ...hitIds]),
+        ]);
+      } else {
+        setSelectedAssetIds(hitIds);
+      }
+      if (hitIds.length > 0) {
+        setSelectedAssetId(hitIds[0]!);
+      }
+
+      // Auto-scroll when pointer is near canvas top/bottom edges
+      if (
+        e.clientY >= canvasRect.top &&
+        e.clientY <= canvasRect.bottom
+      ) {
+        if (e.clientY < canvasRect.top + AUTO_SCROLL_ZONE) {
+          const dist = canvasRect.top + AUTO_SCROLL_ZONE - e.clientY;
+          const speed = Math.round(
+            (dist / AUTO_SCROLL_ZONE) * MAX_SCROLL_SPEED,
+          );
+          if (speed > 0) canvas.scrollTop -= speed;
+        } else if (
+          e.clientY > canvasRect.bottom - AUTO_SCROLL_ZONE
+        ) {
+          const dist =
+            e.clientY - (canvasRect.bottom - AUTO_SCROLL_ZONE);
+          const speed = Math.round(
+            (dist / AUTO_SCROLL_ZONE) * MAX_SCROLL_SPEED,
+          );
+          if (speed > 0) canvas.scrollTop += speed;
+        }
+      }
+    };
+
+    const handleMouseUp = (e: MouseEvent) => {
+      if (!marqueeActiveRef.current) return;
+      marqueeActiveRef.current = false;
+
+      const start = marqueeStartRef.current;
+      const dx = Math.abs(e.clientX - start.x);
+      const dy = Math.abs(e.clientY - start.y);
+
+      // Tiny drag (< 5px) is a click on empty canvas, clear selection
+      if (dx < 5 && dy < 5) {
+        clearAssetSelection();
+        setMarqueeBox(null);
+        return;
+      }
+
+      // Finalize selection — already set during mousemove;
+      // on a no-modifier marquee that hit nothing, clear too
+      if (!(e.metaKey || e.ctrlKey || e.shiftKey)) {
+        if (marqueeHitIdsRef.current.length === 0) clearAssetSelection();
+      }
+
+      // Set anchor for subsequent Shift+click range-extension
+      if (marqueeHitIdsRef.current.length > 0) {
+        selectionAnchorRef.current = marqueeHitIdsRef.current[0]!;
+      }
+
+      setMarqueeBox(null);
+    };
+
+    document.addEventListener("mousemove", handleMouseMove);
+    document.addEventListener("mouseup", handleMouseUp);
+    return () => {
+      document.removeEventListener("mousemove", handleMouseMove);
+      document.removeEventListener("mouseup", handleMouseUp);
+      marqueeActiveRef.current = false;
+    };
+  }, []);
 
   function openAssetPreview(asset: AssetSummary) {
     if (asset.availability !== "available" || asset.deletedAt) return;
@@ -3848,6 +4008,22 @@ function AppInner() {
     return () => document.removeEventListener("keydown", onSelectionKeyDown);
   }, [library, previewAsset, selectedAssetIds.length, visibleAssets]);
 
+  // Capture-phase Escape guard: when context menu is open, stop
+  // propagation so the non-capture handler (which clears selection)
+  // does not fire on the same Escape key press. Uses stopPropagation()
+  // (not stopImmediatePropagation()) to avoid blocking the context-
+  // menu's own native capture listener, which is registered first.
+  useEffect(() => {
+    const onEscapeCapture = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      if (document.querySelector(".context-menu")) {
+        event.stopPropagation();
+      }
+    };
+    document.addEventListener("keydown", onEscapeCapture, true);
+    return () => document.removeEventListener("keydown", onEscapeCapture, true);
+  }, []);
+
   useEffect(() => {
     managedImportTargetFolderIdRef.current = undefined;
   }, [library?.libraryId]);
@@ -5334,6 +5510,7 @@ function AppInner() {
           onDragLeave={handleExternalDragLeave}
           onDragOver={handleExternalDragOver}
           onDrop={handleExternalDrop}
+          onMouseDown={handleCanvasMouseDown}
           onScroll={(event) => {
             const target = event.currentTarget;
             if (
@@ -5355,6 +5532,17 @@ function AppInner() {
                   : "导入本地文件或下载网页图片/视频"}
               </span>
             </div>
+          )}
+          {marqueeBox && (
+            <div
+              className="marquee-selection-box"
+              style={{
+                left: marqueeBox.left,
+                top: marqueeBox.top,
+                width: marqueeBox.width,
+                height: marqueeBox.height,
+              }}
+            />
           )}
           {previewAsset && library && api && (
             <AssetPreviewModal
@@ -5623,6 +5811,9 @@ function AppInner() {
                         activeCollectionId && !collectionRecursive,
                       )}
                       key={asset.assetId}
+                      onMouseDown={(e) => {
+                        lastMousedownButtonRef.current = e.button;
+                      }}
                       onClick={(event) => selectAsset(event, asset.assetId)}
                       onDoubleClick={() => {
                         openAssetPreview(asset);
