@@ -42,3 +42,47 @@
 - Run Windows QA for case-insensitive paths, volume changes, watcher behavior, relink, and packaging.
 - Resolve the symlink “reject vs skip” specification deviation.
 - Do not mark accepted until review/QA documents are complete and the outstanding platform/manual evidence is explicitly dispositioned.
+- **Follow-up**: Watcher-triggered refresh E2E and external-change-conflict E2E (too flaky for E2E; worker-level coverage exists in `tests/worker/library-watcher.test.ts`).
+
+## 2026-07-14: D1/D2 re-review re-verification + E2E coverage
+
+> Re-verification of QA report findings (docs/qa/0003-linked-folders-qa-report.md “2026-07-14 复审发现” section).
+
+### D1 (MEDIUM): Re-verified as re-review misread -- no code change
+
+The re-review claimed `enumerateLinkedSources` `canPrune` would prune all directories when all rules are disabled, causing new external files to never register on refresh.
+
+Code tracing: with all rules `enabled=0`:
+- `!rules.some(r => r.enabled && r.action === 'include')` = `!false` = `true`
+- `linkedPathIsIgnored(probe, rules)` loops over all rules but all are skipped via `if (!rawRule.enabled) continue;` → returns `false` (no rule matches, probe not always-ignored)
+- `canPrune = true && false = false` → directory NOT pruned, traversal continues
+- New files ARE discovered and registered
+
+Added worker test `”D1 re-verify: refresh still registers new external files when all rules are disabled”` in `tests/worker/linked-folders.test.ts`. Test passes, proving the re-review misread.
+
+### D2 (LOW): Fixed -- single-asset non-ENOENT error no longer aborts entire relink
+
+The re-review correctly identified that a non-ENOENT/non-ENOTDIR `lstatSync` error (e.g. EACCES) on any single asset during `relinkMissingFolder` would `throw IMPORT_APPLY_FAILED`, aborting the entire batch.
+
+**Fix** (`src/worker/library-service.ts:4062-4064`): replaced `throw` with `this.diagnose(...)` + continue. The asset is left as `missing` and the relink continues for remaining assets.
+
+Added worker test `”D2: relink continues processing remaining assets when one asset lstat fails with a non-missing-path error (e.g. EACCES)”` in `tests/worker/linked-folders.test.ts`. Uses `chmodSync(dir, 0o000)` to simulate EACCES on one asset, verifies the other asset is properly restored.
+
+### E2E coverage added
+
+1. **Restart-restore** (`tests/e2e/linked-folders.test.ts`): Full Electron restart test using `SERPENT_E2E_USER_DATA_PATH` + `SERPENT_E2E_RESTORE_RECENT`. Links a folder, closes app, relaunches, verifies linked assets survive with stable asset IDs, availability, and folder status.
+2. **Default filter rules** (`tests/e2e/linked-folders.test.ts`): Links a folder with `.git/`, `node_modules/`, and real assets. Verifies only real assets are registered; ignored directory contents do not appear.
+
+### Watcher-triggered E2E
+
+Recorded as follow-up (not blocking). Worker-level watcher debounce + reconciliation coverage exists in `tests/worker/library-watcher.test.ts`. E2E-level watcher event testing is too flaky due to platform-dependent filesystem event timing.
+
+### Verification (2026-07-14)
+
+| Gate | Result |
+| --- | --- |
+| `npm run typecheck` | passed |
+| `npm run lint` | passed |
+| `npm run test:worker` | 551/551 passed (1 skipped) |
+| E2E linked-folders (3 tests incl. restart-restore + filter-rules) | 3/3 passed |
+| Regression E2E (org/search/trash + media-preview, 5 tests) | 5/5 passed |

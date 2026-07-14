@@ -32,3 +32,27 @@
 
 Standards: no current blocking architecture defect; one historical process deviation and one naming debt.
 Spec: core behavior is implemented and automatically verified, but symlink semantics and manual/Windows QA remain open. Slice may proceed through review, not acceptance.
+
+## 2026-07-14: D1/D2 re-review re-verification + fix
+
+> Scope: re-review findings in docs/qa/0003-linked-folders-qa-report.md.
+
+### D1 (MEDIUM): Re-verified as re-review misread -- no code change
+
+The re-review claimed `enumerateLinkedSources` `canPrune` would prune all directories with all rules disabled. Code tracing disproves this: `canPrune = true && false = false` (directory not pruned). Added worker test confirms new files ARE registered after refresh with all rules disabled. **Verdict: re-review misread the `&&` operator; code is correct.**
+
+### D2 (LOW): Fixed -- non-ENOENT lstat errors in relinkMissingFolder
+
+The re-review correctly found that `relinkMissingFolder` would `throw IMPORT_APPLY_FAILED` on any non-ENOENT/non-ENOTDIR `lstatSync` error for a single asset, aborting the entire relink batch. **Fix**: replaced `throw` with `this.diagnose(...)` + continue (skip problematic asset, leave it missing, continue with remaining assets). Worker test with EACCES simulation verifies the fix.
+
+**Verdict: real bug, fixed.**
+
+### Standards review (2026-07-14 additions)
+
+| Finding | Status |
+| --- | --- |
+| D1 relink-abort fix: per-asset error handling in batch operations | resolved -- diagnose + continue, not throw |
+| D1 re-verify test: verifies refresh behavior with all rules disabled | passed |
+| D2 fix test: chmod-based EACCES simulation for per-asset skip | passed |
+| Restart-restore E2E: SERPENT_E2E_USER_DATA_PATH + SERPENT_E2E_RESTORE_RECENT | passed |
+| Filter-rules E2E: .git/node_modules ignored, real assets registered | passed |

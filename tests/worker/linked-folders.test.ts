@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -365,5 +365,102 @@ describe('Linked folder import', () => {
     expect(recovered.listLinkedFolders(library.libraryId)).toMatchObject([{ folderId: linked.folderId }]);
     expect(recovered.listAssets({ libraryId: library.libraryId, folderId: linked.folderId, recursive: true })[0]!.locationKind).toBe('linked');
     recovered.closeAll();
+  });
+
+  it('D1 re-verify: refresh still registers new external files when all rules are disabled (re-review misread)', () => {
+    const root = temporaryRoot();
+    const sourceRoot = path.join(root, 'source');
+    mkdirSync(sourceRoot);
+    writeFileSync(path.join(sourceRoot, 'a.png'), 'aaa');
+    mkdirSync(path.join(sourceRoot, 'sub'));
+    writeFileSync(path.join(sourceRoot, 'sub', 'b.png'), 'bbb');
+
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'D1-Verify', selectedParentPath: root });
+    const linked = service.importFolderAsLinked({
+      libraryId: created.libraryId,
+      sourceRootPath: sourceRoot,
+    });
+    expect(linked.assetCount).toBe(2);
+
+    // Disable ALL rules (enabled = false for every rule).
+    const currentRules = service.getLinkedFolderRules({
+      libraryId: created.libraryId,
+      folderId: linked.folderId,
+    });
+    const disabledRules = currentRules.map((rule) => ({ ...rule, enabled: false }));
+    service.setLinkedFolderRules({
+      libraryId: created.libraryId,
+      folderId: linked.folderId,
+      rules: disabledRules,
+    });
+
+    // Add a new file externally (not through Serpent).
+    writeFileSync(path.join(sourceRoot, 'c.png'), 'ccc');
+
+    // Refresh should discover and register the new file.
+    const refresh = service.refreshManagedAssets(created.libraryId);
+    expect(refresh.changedCount).toBe(1);
+
+    const assets = service.listAssets({ libraryId: created.libraryId, recursive: true });
+    const relativePaths = assets.map((asset) => asset.relativeFilePath).sort();
+    expect(relativePaths).toEqual(['a.png', 'c.png', 'sub/b.png']);
+
+    service.closeAll();
+  });
+
+  it('D2: relink continues processing remaining assets when one asset lstat fails with a non-missing-path error (e.g. EACCES)', () => {
+    const root = temporaryRoot();
+    const sourceRoot = path.join(root, 'source');
+    mkdirSync(sourceRoot);
+    writeFileSync(path.join(sourceRoot, 'a.png'), 'aaa');
+    const lockedDir = path.join(sourceRoot, 'locked');
+    mkdirSync(lockedDir);
+    writeFileSync(path.join(lockedDir, 'b.png'), 'bbb');
+
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'D2-Relink', selectedParentPath: root });
+    const linked = service.importFolderAsLinked({
+      libraryId: created.libraryId,
+      sourceRootPath: sourceRoot,
+    });
+    expect(linked.assetCount).toBe(2);
+
+    // Source root gone; refresh to set all missing.
+    rmSync(sourceRoot, { recursive: true, force: true });
+    service.refreshManagedAssets(created.libraryId);
+
+    // New root: has a.png and a locked/ subdir whose permissions block lstat of locked/b.png.
+    const newRoot = path.join(root, 'relocated');
+    mkdirSync(newRoot);
+    writeFileSync(path.join(newRoot, 'a.png'), 'aaa-restored');
+    mkdirSync(path.join(newRoot, 'locked'));
+    writeFileSync(path.join(newRoot, 'locked', 'b.png'), 'bbb-restored');
+
+    try {
+      // Remove all permissions from locked/ so lstatSync(newRoot/locked/b.png) fails with EACCES.
+      chmodSync(path.join(newRoot, 'locked'), 0o000);
+
+      const result = service.relinkMissingFolder({
+        libraryId: created.libraryId,
+        folderId: linked.folderId,
+        newRootPath: newRoot,
+      });
+
+      // The relink must complete (not abort) — a.png restored, b.png stays missing.
+      expect(result.status).toBe('available');
+
+      const assets = service.listAssets({ libraryId: created.libraryId, recursive: true });
+      const aAsset = assets.find((asset) => asset.relativeFilePath === 'a.png')!;
+      const bAsset = assets.find((asset) => asset.relativeFilePath === 'locked/b.png')!;
+      expect(aAsset.availability).toBe('available');
+      expect(aAsset.byteSize).toBe('aaa-restored'.length);
+      expect(bAsset.availability).toBe('missing');
+    } finally {
+      // Restore permissions so cleanup can remove the directory.
+      try { chmodSync(path.join(newRoot, 'locked'), 0o755); } catch { /* ignore */ }
+    }
+
+    service.closeAll();
   });
 });

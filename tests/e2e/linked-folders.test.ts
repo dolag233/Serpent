@@ -149,3 +149,167 @@ async function listAllAssets(window: Page): Promise<AssetSnapshot[]> {
     return result.value;
   });
 }
+
+test('restores a linked library after a full app restart', async () => {
+  const temporaryRoot = mkdtempSync(path.join(tmpdir(), 'serpent-linked-restart-'));
+  const profilePath = path.join(temporaryRoot, 'profile');
+  const libraryName = '链接重启恢复';
+  const libraryPath = path.join(temporaryRoot, libraryName);
+  const sourceRoot = path.join(temporaryRoot, 'source');
+  mkdirSync(profilePath);
+  mkdirSync(sourceRoot);
+  writeFileSync(path.join(sourceRoot, 'a.png'), Buffer.from('aaa'));
+  writeFileSync(path.join(sourceRoot, 'b.png'), Buffer.from('bbbb'));
+  mkdirSync(path.join(sourceRoot, 'sub'));
+  writeFileSync(path.join(sourceRoot, 'sub', 'c.png'), Buffer.from('ccccc'));
+
+  const executablePath = resolveElectronExecutablePath();
+  const applicationDirectory = process.env.SERPENT_E2E_APP_DIRECTORY ?? process.cwd();
+  const launch = () =>
+    electron.launch({
+      args: [applicationDirectory],
+      cwd: applicationDirectory,
+      executablePath,
+      env: {
+        ...process.env,
+        SERPENT_E2E: '1',
+        SERPENT_E2E_RESTORE_RECENT: '1',
+        SERPENT_E2E_USER_DATA_PATH: profilePath,
+        SERPENT_E2E_CREATE_PARENT_PATH: temporaryRoot,
+        SERPENT_E2E_OPEN_LIBRARY_PATH: libraryPath,
+        SERPENT_E2E_LINKED_SOURCE: sourceRoot,
+      },
+    });
+
+  let application = await launch();
+  let assetIds: string[];
+
+  try {
+    let window = await application.firstWindow();
+    await window.getByRole('button', { name: '创建资源库' }).click();
+    await window.getByLabel('名称').fill(libraryName);
+    await window.getByRole('button', { name: '创建', exact: true }).click();
+    await expect(window.getByRole('heading', { name: '把第一批素材放进来' })).toBeVisible();
+
+    // Link the folder.
+    await window.getByRole('button', { name: '导入链接文件夹' }).click();
+    await expect(window.getByRole('button', { name: 'source' })).toBeVisible();
+    await window.getByRole('button', { name: 'source' }).click();
+
+    // All three assets should be visible.
+    await expect(window.getByText('a.png', { exact: true })).toBeVisible();
+    await expect(window.getByText('b.png', { exact: true })).toBeVisible();
+    await expect(window.getByText('c.png', { exact: true })).toBeVisible();
+
+    // Remember asset IDs for the restart comparison.
+    const beforeRestart = await listAllAssets(window);
+    assetIds = beforeRestart.map((asset) => asset.assetId);
+    expect(assetIds).toHaveLength(3);
+    expect(beforeRestart.every((asset) => asset.availability === 'available')).toBe(true);
+
+    // Close the app.
+    await application.close();
+
+    // Restart the app — the library should auto-open because of SERPENT_E2E_RESTORE_RECENT.
+    application = await launch();
+    window = await application.firstWindow();
+
+    // Wait for the library to be restored and the linked folder to be visible.
+    await expect(window.getByRole('button', { name: 'source' })).toBeVisible({ timeout: 15_000 });
+    await window.getByRole('button', { name: 'source' }).click();
+
+    await expect(window.getByText('a.png', { exact: true })).toBeVisible();
+    await expect(window.getByText('b.png', { exact: true })).toBeVisible();
+    await expect(window.getByText('c.png', { exact: true })).toBeVisible();
+
+    const afterRestart = await listAllAssets(window);
+    expect(afterRestart).toHaveLength(3);
+    expect(afterRestart.every((asset) => asset.availability === 'available')).toBe(true);
+    // Asset IDs must be stable across restart.
+    expect(afterRestart.map((asset) => asset.assetId).sort()).toEqual(assetIds.sort());
+
+    const testInfo = test.info();
+    const screenshot = testInfo.outputPath('linked-restart-restored.png');
+    await window.screenshot({ path: screenshot });
+    await testInfo.attach('linked-restart-restored', { path: screenshot, contentType: 'image/png' });
+  } finally {
+    await application.close();
+    rmSync(temporaryRoot, { force: true, recursive: true });
+  }
+});
+
+test('applies default ignore rules — .git and node_modules are not registered as linked assets', async () => {
+  const temporaryRoot = mkdtempSync(path.join(tmpdir(), 'serpent-linked-filters-'));
+  const sourceRoot = path.join(temporaryRoot, 'source');
+  const libraryName = '默认过滤规则';
+  const libraryPath = path.join(temporaryRoot, libraryName);
+
+  // Real assets.
+  mkdirSync(sourceRoot);
+  writeFileSync(path.join(sourceRoot, 'hero.png'), Buffer.from('hero'));
+  writeFileSync(path.join(sourceRoot, 'notes.txt'), Buffer.from('notes'));
+
+  // .git directory (should be ignored).
+  mkdirSync(path.join(sourceRoot, '.git'));
+  writeFileSync(path.join(sourceRoot, '.git', 'config'), Buffer.from('[core]'));
+  writeFileSync(path.join(sourceRoot, '.git', 'HEAD'), Buffer.from('ref: refs/heads/main'));
+  mkdirSync(path.join(sourceRoot, '.git', 'objects'));
+  writeFileSync(path.join(sourceRoot, '.git', 'objects', 'abc123'), Buffer.from('x'));
+
+  // node_modules directory (should be ignored).
+  mkdirSync(path.join(sourceRoot, 'node_modules'));
+  writeFileSync(path.join(sourceRoot, 'node_modules', 'pkg.json'), Buffer.from('{}'));
+  mkdirSync(path.join(sourceRoot, 'node_modules', 'pkg'));
+  writeFileSync(path.join(sourceRoot, 'node_modules', 'pkg', 'index.js'), Buffer.from('//'));
+
+  const executablePath = resolveElectronExecutablePath();
+  const applicationDirectory = process.env.SERPENT_E2E_APP_DIRECTORY ?? process.cwd();
+  const application = await electron.launch({
+    args: [applicationDirectory],
+    cwd: applicationDirectory,
+    executablePath,
+    env: {
+      ...process.env,
+      SERPENT_E2E: '1',
+      SERPENT_E2E_CREATE_PARENT_PATH: temporaryRoot,
+      SERPENT_E2E_OPEN_LIBRARY_PATH: libraryPath,
+      SERPENT_E2E_LINKED_SOURCE: sourceRoot,
+    },
+  });
+
+  try {
+    const window = await application.firstWindow();
+    await window.getByRole('button', { name: '创建资源库' }).click();
+    await window.getByLabel('名称').fill(libraryName);
+    await window.getByRole('button', { name: '创建', exact: true }).click();
+    await expect(window.getByRole('heading', { name: '把第一批素材放进来' })).toBeVisible();
+
+    await window.getByRole('button', { name: '导入链接文件夹' }).click();
+    await expect(window.getByRole('button', { name: 'source' })).toBeVisible();
+    await window.getByRole('button', { name: 'source' }).click();
+
+    // Only the real assets should be visible.
+    await expect(window.getByText('hero.png', { exact: true })).toBeVisible();
+    await expect(window.getByText('notes.txt', { exact: true })).toBeVisible();
+
+    // .git and node_modules contents must NOT appear as assets.
+    await expect(window.getByText('config', { exact: true })).toHaveCount(0);
+    await expect(window.getByText('HEAD', { exact: true })).toHaveCount(0);
+    await expect(window.getByText('abc123', { exact: true })).toHaveCount(0);
+    await expect(window.getByText('pkg.json', { exact: true })).toHaveCount(0);
+    await expect(window.getByText('index.js', { exact: true })).toHaveCount(0);
+
+    const assets = await listAllAssets(window);
+    const relativePaths = assets.map((asset) => asset.displayName).sort();
+    expect(relativePaths).toEqual(['hero.png', 'notes.txt']);
+    expect(assets.every((asset) => asset.availability === 'available')).toBe(true);
+
+    const testInfo = test.info();
+    const screenshot = testInfo.outputPath('linked-filter-rules.png');
+    await window.screenshot({ path: screenshot });
+    await testInfo.attach('linked-filter-rules', { path: screenshot, contentType: 'image/png' });
+  } finally {
+    await application.close();
+    rmSync(temporaryRoot, { force: true, recursive: true });
+  }
+});

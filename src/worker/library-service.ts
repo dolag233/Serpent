@@ -4061,7 +4061,11 @@ export class LibraryService {
           fileStat = lstatSync(assetPath, { bigint: true });
         } catch (error) {
           if (!isMissingPathError(error)) {
-            throw new LibraryServiceError('IMPORT_APPLY_FAILED', { cause: error });
+            this.diagnose(
+              'linked-folder.relink-skip-asset',
+              new LibraryServiceError('IMPORT_APPLY_FAILED', { cause: error }),
+              { folderId: input.folderId, relativePath: asset.relative_file_path },
+            );
           }
           fileStat = undefined;
         }
