@@ -16,7 +16,7 @@
 | 回归 E2E(media-preview + organization-search-trash) | `node scripts/run-e2e.mjs <两文件>` | 4/4 passed |
 | 新 E2E browsing-preferences | `node scripts/run-e2e.mjs tests/e2e/browsing-preferences.test.ts` | 2/2 passed |
 | 回归+新 E2E 合跑(post-fix) | `node scripts/run-e2e.mjs <三文件>` | 6/6 passed(exit 0) |
-| 全量 E2E(10 文件) | `npm run test:e2e` | 15 passed / 2 failed(process-lifecycle,见下) |
+| 全量 E2E(11 文件,含 browsing-preferences) | `npm run test:e2e` | **19/19 passed**(process-lifecycle 测试隔离修复后;含 media-video-playback) |
 
 ## 新增自动化覆盖(对应验收条件)
 
@@ -29,13 +29,13 @@
 
 ## 失败用例
 
-### process-lifecycle 2/2(`firstWindow()` 30s 超时)
+### process-lifecycle 2/2(`firstWindow()` 30s 超时)— **已修(测试隔离)**
 
-- **复现**:`node scripts/run-e2e.mjs tests/e2e/process-lifecycle.test.ts`(孤立、清 stale 单实例锁 `SingletonLock`/`Socket`/`Cookie` 后仍失败)。
+- **复现**:`node scripts/run-e2e.mjs tests/e2e/process-lifecycle.test.ts`(孤立、清 stale 单实例锁后仍失败)。
 - **根因排查**:`git stash -u` 后在 baseline `60d3515` 上**同样 2/2 失败** → **预存在,非 slice 0012 引入**。
-- **疑似根因**:process-lifecycle 不设 `SERPENT_E2E`(非 e2e 模式),默认 userData(`~/Library/Application Support/Serpent/`)的 `recent-library.json` 指向已删临时库 → 启动自动恢复陈旧库 → 不开窗 → `firstWindow` 超时。
-- **严重程度**:阻断 `verify:mainline` 全绿;不影响 slice 0012 自身行为(renderer-only 改动)。
-- **处置**:**移交单独排查**(非本切片职责;不应清默认 userData 的 `recent-library.json` 因属用户本地状态)。
+- **根因**:process-lifecycle 原在非-e2e 模式跑(无 `SERPENT_E2E=1`)→ app 用开发机默认 userData(`src/main/index.ts:91-95` 仅在 `SERPENT_E2E==="1"` 时采用 `SERPENT_E2E_USER_DATA_PATH`)+ `line 114` 在非-e2e 模式启用 recent-library 自动恢复 → 默认 userData 的 `recent-library.json` 被先前 e2e 污染(指向已删临时库)→ 启动挂起 → `firstWindow` 超时。
+- **修复(commit `5e01640`)**:每测试 fresh temp `SERPENT_E2E_USER_DATA_PATH` + `SERPENT_E2E=1` → 隔离 profile + 禁用自动恢复;单实例/窗口生命周期是 app 级行为不受 `SERPENT_E2E` 影响,测试意图保持。修复后孤立 2/2 + 全量 17/17。
+- **遗留(未修,记录)**:底层 main 鲁棒性 bug —— 非-e2e 模式下 recent-library 不可恢复时应回退起始页而非挂起(影响真实用户:库路径失效时启动挂起)。留单独修。
 
 ## 未执行项目及原因
 
@@ -44,7 +44,7 @@
 - **#4(b) 锚点资产仍可见**:无自动化测试(rAF/视口 flaky);行为预存在(`resizeAssetCards`)。留 Computer Use 视觉验收。
 - **#6 帧率部分**:no-requery(IPC)已覆盖;帧率无可靠自动化,留人工/性能 QA。
 - **Windows 平台**:完全未验证(无 runner)。
-- **`npm run verify:mainline` 整跑**:未整跑;其 e2e 子集确定性地因预存在 process-lifecycle 失败,各组件已分别验证(lint/typecheck/unit/worker+search-perf/回归+新 e2e)。
+- **`npm run verify:mainline` e2e 子集**:全量 E2E(11 文件)**19/19 passed**(process-lifecycle 测试隔离修复后;含 media-video-playback → 真实媒体 bundle 在位);各组件均绿(lint/typecheck/unit 259/worker 536+1skip)。`browsing-preferences`(2 测试)已加入默认 e2e 套件。
 
 ## 错误可观测性
 
@@ -55,7 +55,7 @@
 slice 0012 自身范围:规格内行为已实现(未偷偷加入未确认范围)+ 约定自动化测试通过 + 双轴审查完成且阻断项已修。但:
 
 1. **Computer Use UX 门禁未执行**(环境缺能力)→ 不可标 `accepted`,须移交补验。
-2. **process-lifecycle 预存在失败**阻断 `verify:mainline` 全绿(非本切片引入,移交)。
+2. ~~process-lifecycle 预存在失败~~ → **已修(测试隔离,commit `5e01640`)**;`verify:mainline` e2e 子集 17/17 全绿。底层 main 鲁棒性 bug(陈旧 recent-library 应回退起始页)留单独修。
 3. **Windows 平台**未验证。
 
 状态:`automated-verification` ✓ + `code-review` ✓ → `qa` 待 Computer Use 补验 → **不可 `accepted`**。

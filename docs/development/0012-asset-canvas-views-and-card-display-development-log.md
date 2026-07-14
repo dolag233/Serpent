@@ -53,7 +53,7 @@
 - `npm run lint`:GREEN(初次 3 个 unused-vars 错误——`existsSync`/`cardLocator`/`beforeEach`——已修;现 0 错误)。
 - 回归 E2E(`media-preview` + `organization-search-trash`):4/4 通过(两处回归修复后)。
 - 新 E2E `browsing-preferences`:2/2 通过。
-- 全量 E2E(`npm run test:e2e`):15 passed / 2 failed——2 个失败均在 `process-lifecycle.test.ts`,`firstWindow()` 30s 超时。
+- 全量 E2E(`npm run test:e2e`):**19/19 passed**(11 文件,含 browsing-preferences;process-lifecycle 测试隔离修复后;含 media-video-playback → 真实媒体 bundle 在位)。`browsing-preferences`(2 测试)已加入默认 e2e 套件。
 - `git stash -u` + baseline 跑 `process-lifecycle`:baseline `60d3515` **同样 2/2 失败** → 预存在,非 slice 0012 引入。
 
 ## 遇到的失败、根因和解决方式
@@ -61,7 +61,7 @@
 1. **`getByLabel('名称')` strict mode 冲突(4 个 E2E 失败)**:首版开关 label `显示名称` 含子串 `名称`,与 22 处 `getByLabel('名称')`(资源库/文件夹名输入框)子串匹配命中两元素。根因:子串 getByLabel 脆弱 + 新增含"名称"的可访问名。解决:改用纯字段名 `文件名`/`文件大小`/`修改日期`(零测试改动)。
 2. **media-preview:48 `getByRole button /^automatic\.png\s/` 失败**:首版给卡片 button **始终**设 `aria-label={displayName}`,覆盖文本内容,可访问名从 `filename size · date` 变纯 `filename`。解决:条件化——仅 `fields.name===false` 时设。
 3. **lint 3 个 unused-vars**:agent 写的测试含未用 import/var(`existsSync`/`cardLocator`/`beforeEach`)。解决:移除。
-4. **process-lifecycle 2/2 失败(预存在)**:baseline `60d3515` 同样失败;清 stale 单实例锁文件(`SingletonLock`/`Socket`/`Cookie`)后仍失败 → 非 stale-lock。疑似默认 userData(`~/Library/Application Support/Serpent/`)的 `recent-library.json` 指向已删临时库,而 process-lifecycle 不设 `SERPENT_E2E`(非 e2e 模式)→ 启动自动恢复陈旧库→不开窗→`firstWindow` 超时。**非 slice 0012 引入,移交单独排查**(不阻塞本切片)。
+4. **process-lifecycle 2/2 失败(预存在,已修测试隔离)**:baseline `60d3515` 同样失败 → 非 slice 0012 引入。根因:process-lifecycle 原在非-e2e 模式跑(无 `SERPENT_E2E=1`)→ app 用开发机默认 userData(`src/main/index.ts:91-95` 仅 `SERPENT_E2E==="1"` 时采用 `SERPENT_E2E_USER_DATA_PATH`)+ 非-e2e 模式启用 recent-library 自动恢复(`line 114`)→ 默认 userData 的 `recent-library.json` 被先前 e2e 污染(指向已删临时库)→ 启动挂起 → `firstWindow` 超时。**修复(commit `5e01640`)**:每测试 fresh temp `SERPENT_E2E_USER_DATA_PATH` + `SERPENT_E2E=1` → 隔离 profile + 禁用自动恢复;单实例/窗口生命周期是 app 级行为不受影响。修复后孤立 2/2 + 全量 17/17。**遗留(未修)**:底层 main 鲁棒性 bug(非-e2e 模式 recent-library 不可恢复应回退起始页而非挂起),留单独修。
 
 ## 当前已知问题、技术债和后续工作
 
