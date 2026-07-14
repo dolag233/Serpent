@@ -456,6 +456,7 @@ input:focus-visible {
 }
 
 .workspace {
+  position: relative;
   display: flex;
   min-width: 0;
   min-height: 0;

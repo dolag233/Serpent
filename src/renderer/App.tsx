@@ -706,6 +706,10 @@ function AppInner() {
   const loadMoreAssetsRef = useRef<() => Promise<void>>(async () => undefined);
   const pendingRestoredFocusRef = useRef<string | null>(null);
   const previewFocusReturnRef = useRef<string | null>(null);
+  const previewScrollPositionRef = useRef<{
+    left: number;
+    top: number;
+  } | null>(null);
   const closingPreviewRef = useRef<string | null>(null);
   const [thumbnailFailures, setThumbnailFailures] = useState<
     Map<string, string>
@@ -1044,6 +1048,12 @@ function AppInner() {
   function openAssetPreview(asset: AssetSummary) {
     if (asset.availability !== "available" || asset.deletedAt) return;
     previewFocusReturnRef.current = asset.assetId;
+    previewScrollPositionRef.current = workspaceCanvasRef.current
+      ? {
+          left: workspaceCanvasRef.current.scrollLeft,
+          top: workspaceCanvasRef.current.scrollTop,
+        }
+      : null;
     setSelectedAssetIds([asset.assetId]);
     setSelectedAssetId(asset.assetId);
     selectionAnchorRef.current = asset.assetId;
@@ -1065,9 +1075,13 @@ function AppInner() {
     closingPreviewRef.current = closingAsset.assetId;
     setPreviewAsset(null);
     const assetId = previewFocusReturnRef.current;
+    const scrollPosition = previewScrollPositionRef.current;
     previewFocusReturnRef.current = null;
+    previewScrollPositionRef.current = null;
     window.requestAnimationFrame(() => {
-      workspaceCanvasRef.current
+      const canvas = workspaceCanvasRef.current;
+      if (canvas && scrollPosition) canvas.scrollTo(scrollPosition);
+      canvas
         ?.querySelector<HTMLElement>(`[data-asset-id="${assetId ?? ""}"]`)
         ?.focus({ preventScroll: true });
     });
@@ -5539,27 +5553,6 @@ function AppInner() {
               }}
             />
           )}
-          {previewAsset && library && api && (
-            <AssetPreviewModal
-              api={api}
-              asset={previewAsset}
-              key={previewAsset.assetId}
-              libraryId={library.libraryId}
-              onClose={() => void closeAssetPreview()}
-              onNext={
-                previewIndex >= 0 && previewIndex < visibleAssets.length - 1
-                  ? () =>
-                      navigateAssetPreview(visibleAssets[previewIndex + 1]!)
-                  : undefined
-              }
-              onPrevious={
-                previewIndex > 0
-                  ? () =>
-                      navigateAssetPreview(visibleAssets[previewIndex - 1]!)
-                  : undefined
-              }
-            />
-          )}
           {library && selectedAssetIds.length > 0 && !showTrash && (
             <div
               className="batch-action-strip"
@@ -6064,6 +6057,25 @@ function AppInner() {
             </div>
           )}
         </div>
+        {previewAsset && library && api && (
+          <AssetPreviewModal
+            api={api}
+            asset={previewAsset}
+            key={previewAsset.assetId}
+            libraryId={library.libraryId}
+            onClose={() => void closeAssetPreview()}
+            onNext={
+              previewIndex >= 0 && previewIndex < visibleAssets.length - 1
+                ? () => navigateAssetPreview(visibleAssets[previewIndex + 1]!)
+                : undefined
+            }
+            onPrevious={
+              previewIndex > 0
+                ? () => navigateAssetPreview(visibleAssets[previewIndex - 1]!)
+                : undefined
+            }
+          />
+        )}
       </section>
       <aside className="inspector-pane">
         <div className="pane-header">

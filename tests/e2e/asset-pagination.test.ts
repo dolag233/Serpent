@@ -128,20 +128,128 @@ test("ordinary browsing continuously appends every asset without page controls",
     await window.getByRole("button", { name: "平铺视图" }).click();
     await expect(window.locator(".asset-grid")).toHaveClass(/is-grid/);
 
-    await window.getByText("asset-000.txt", { exact: true }).dblclick();
-    const unsupportedViewer = window.getByRole("region", {
-      name: "asset-000.txt 查看页面",
-    });
-    await expect(unsupportedViewer.getByText("不支持内置预览")).toBeVisible();
-    await expect(
-      unsupportedViewer.getByRole("button", { name: "重试生成" }),
-    ).toHaveCount(0);
-    await expect(
-      unsupportedViewer.getByRole("button", { name: "使用外部应用打开" }),
-    ).toBeVisible();
-    await unsupportedViewer
-      .getByRole("button", { name: "关闭查看页面" })
-      .click();
+    const workspaceCanvas = window.locator(".workspace-canvas");
+    const loadEveryAssetInCurrentScope = async () => {
+      await expect
+        .poll(async () => {
+          await workspaceCanvas.evaluate((element) =>
+            element.scrollTo(0, element.scrollHeight),
+          );
+          return window.locator(".asset-card").count();
+        })
+        .toBe(assetCount);
+    };
+    const viewerMatrix = [
+      { button: "平铺视图", className: "is-grid" },
+      { button: "瀑布流视图", className: "is-masonry" },
+    ] as const;
+    for (const view of viewerMatrix) {
+      await window.getByRole("button", { name: view.button }).click();
+      await expect(window.locator(".asset-grid")).toHaveClass(
+        new RegExp(view.className),
+      );
+      for (const cardSize of [96, 320]) {
+        await sizeControl.fill(String(cardSize));
+        await expect(sizeControl).toHaveValue(String(cardSize));
+        for (const scrollFraction of [0.25, 0.5, 1]) {
+          const requestedScrollTop = await workspaceCanvas.evaluate(
+            async (element, fraction) => {
+              element.scrollTo({
+                top: (element.scrollHeight - element.clientHeight) * fraction,
+              });
+              await new Promise<void>((resolve) =>
+                requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+              );
+              return element.scrollTop;
+            },
+            scrollFraction,
+          );
+          expect(requestedScrollTop).toBeGreaterThan(0);
+
+          const visibleAsset = await window
+            .locator(".asset-card")
+            .evaluateAll((cards) => {
+              const canvas = document.querySelector(".workspace-canvas");
+              if (!canvas) return null;
+              const canvasBox = canvas.getBoundingClientRect();
+              const candidates = cards
+                .map((card) => {
+                  const box = card.getBoundingClientRect();
+                  return {
+                    assetId: card.getAttribute("data-asset-id"),
+                    displayName:
+                      card.querySelector("strong")?.getAttribute("title") ??
+                      card.getAttribute("aria-label"),
+                    distanceFromCenter: Math.abs(
+                      box.top + box.height / 2 -
+                        (canvasBox.top + canvasBox.height / 2),
+                    ),
+                  };
+                })
+                .filter(
+                  (candidate) =>
+                    candidate.assetId && candidate.displayName,
+                )
+                .sort(
+                  (left, right) =>
+                    left.distanceFromCenter - right.distanceFromCenter,
+                );
+              return candidates[0] ?? null;
+            });
+          expect(visibleAsset).not.toBeNull();
+
+          const assetCard = window.locator(
+            `[data-asset-id="${visibleAsset!.assetId}"]`,
+          );
+          await assetCard.scrollIntoViewIfNeeded();
+          const scrollTopBeforeViewer = await workspaceCanvas.evaluate(
+            (element) => element.scrollTop,
+          );
+          expect(scrollTopBeforeViewer).toBeGreaterThan(0);
+          await assetCard.dblclick();
+          const unsupportedViewer = window.getByRole("region", {
+            name: `${visibleAsset!.displayName} 查看页面`,
+          });
+          await expect(
+            unsupportedViewer.getByText("不支持内置预览"),
+          ).toBeVisible();
+          const [viewerBox, viewerCanvasBox] = await Promise.all([
+            unsupportedViewer.boundingBox(),
+            workspaceCanvas.boundingBox(),
+          ]);
+          expect(viewerBox).not.toBeNull();
+          expect(viewerCanvasBox).not.toBeNull();
+          expect(
+            Math.abs(viewerBox!.x - viewerCanvasBox!.x),
+          ).toBeLessThanOrEqual(1);
+          expect(
+            Math.abs(viewerBox!.y - viewerCanvasBox!.y),
+          ).toBeLessThanOrEqual(1);
+          expect(
+            Math.abs(viewerBox!.width - viewerCanvasBox!.width),
+          ).toBeLessThanOrEqual(1);
+          expect(
+            Math.abs(viewerBox!.height - viewerCanvasBox!.height),
+          ).toBeLessThanOrEqual(1);
+          await expect(
+            unsupportedViewer.getByRole("button", { name: "重试生成" }),
+          ).toHaveCount(0);
+          await expect(
+            unsupportedViewer.getByRole("button", {
+              name: "使用外部应用打开",
+            }),
+          ).toBeVisible();
+          await unsupportedViewer
+            .getByRole("button", { name: "关闭查看页面" })
+            .click();
+          await expect(unsupportedViewer).toBeHidden();
+          await expect
+            .poll(() => workspaceCanvas.evaluate((element) => element.scrollTop))
+            .toBe(scrollTopBeforeViewer);
+          await expect(assetCard).toBeInViewport();
+        }
+      }
+    }
 
     // Switching to a browse scope explicitly clears lingering discovery
     // controls, so page 1 and subsequent pages cannot use different queries.
@@ -152,12 +260,12 @@ test("ordinary browsing continuously appends every asset without page controls",
       .getByRole("button", { name: "分页文件夹", exact: true })
       .click();
     await expect(window.getByLabel("格式过滤")).toHaveValue("");
-    await expect(window.locator(".asset-card")).toHaveCount(73);
+    await loadEveryAssetInCurrentScope();
 
     // Every scope uses the same continuous loading model, while the managed
     // root remains distinct rather than leaking folder or linked assets.
     await window.getByRole("button", { name: /所有资产/ }).click();
-    await expect(window.locator(".asset-card")).toHaveCount(73);
+    await loadEveryAssetInCurrentScope();
     await window
       .getByRole("button", { name: "资源库根目录", exact: true })
       .click();
@@ -278,23 +386,15 @@ test("ordinary browsing continuously appends every asset without page controls",
     await expect(window.locator(".asset-card")).toHaveCount(0);
     await window.getByRole("button", { name: /分页合集/ }).click();
     await expect(window.getByLabel("格式过滤")).toHaveValue("");
-    await expect(window.locator(".asset-card")).toHaveCount(73);
+    await loadEveryAssetInCurrentScope();
     await window.getByRole("button", { name: /分页标签/ }).click();
-    await expect(window.locator(".asset-card")).toHaveCount(73);
-    await window
-      .locator(".workspace-canvas")
-      .evaluate((element) => element.scrollTo(0, element.scrollHeight));
-    await expect(window.locator(".asset-card")).toHaveCount(73);
+    await loadEveryAssetInCurrentScope();
     await window.getByRole("button", { name: /分页合集/ }).click();
-    await expect(window.locator(".asset-card")).toHaveCount(73);
-    await window
-      .locator(".workspace-canvas")
-      .evaluate((element) => element.scrollTo(0, element.scrollHeight));
-    await expect(window.locator(".asset-card")).toHaveCount(73);
+    await loadEveryAssetInCurrentScope();
     await window
       .getByRole("button", { name: "分页智能合集", exact: true })
       .click();
-    await expect(window.locator(".asset-card")).toHaveCount(73);
+    await loadEveryAssetInCurrentScope();
 
     const trashed = await window.evaluate(async ({ libraryId, assetIds }) => {
       const serpent = (
@@ -315,7 +415,7 @@ test("ordinary browsing continuously appends every asset without page controls",
     await window.getByRole("button", { name: /所有资产/ }).click();
     await expect(window.locator(".asset-card")).toHaveCount(0);
     await window.getByRole("button", { name: "回收站", exact: true }).click();
-    await expect(window.locator(".asset-card")).toHaveCount(73);
+    await loadEveryAssetInCurrentScope();
     await window
       .locator(".workspace-canvas")
       .evaluate((element) => element.scrollTo(0, element.scrollHeight));

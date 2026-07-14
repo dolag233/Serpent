@@ -111,9 +111,12 @@ test("generates a decoded thumbnail and keeps asset viewer context coherent", as
     });
     await expect(preview).toBeVisible();
     await expect(preview).toBeAttached({ attached: true });
+    await expect(window.locator(".workspace > .workspace-viewer")).toHaveCount(
+      1,
+    );
     await expect(
       window.locator(".workspace-canvas").locator(".workspace-viewer"),
-    ).toHaveCount(1);
+    ).toHaveCount(0);
     await expect(window.locator(".inspector-pane")).toBeVisible();
     await expect(
       window.getByRole("button", { name: "导入文件", exact: true }).first(),
