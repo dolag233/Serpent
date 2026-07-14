@@ -915,6 +915,8 @@ function AppInner() {
       // Only left-button drags start a marquee
       if (e.button !== 0) return;
 
+      e.preventDefault();
+
       marqueeStartRef.current = { x: e.clientX, y: e.clientY };
       setMarqueeBox({
         left: e.clientX,
@@ -939,15 +941,36 @@ function AppInner() {
       if (!marqueeActiveRef.current) return;
 
       const start = marqueeStartRef.current;
-      const left = Math.min(start.x, e.clientX);
-      const top = Math.min(start.y, e.clientY);
-      const width = Math.abs(e.clientX - start.x);
-      const height = Math.abs(e.clientY - start.y);
+      const canvasRect = canvas.getBoundingClientRect();
+
+      // Compute raw marquee rect from pointer movement
+      let left = Math.min(start.x, e.clientX);
+      let top = Math.min(start.y, e.clientY);
+      let width = Math.abs(e.clientX - start.x);
+      let height = Math.abs(e.clientY - start.y);
+
+      // Clip to canvas visible bounds so the box never extends over nav/inspector
+      const boxRight = left + width;
+      const boxBottom = top + height;
+      const clippedLeft = Math.max(left, canvasRect.left);
+      const clippedTop = Math.max(top, canvasRect.top);
+      const clippedRight = Math.min(boxRight, canvasRect.right);
+      const clippedBottom = Math.min(boxBottom, canvasRect.bottom);
+
+      if (clippedRight > clippedLeft && clippedBottom > clippedTop) {
+        left = clippedLeft;
+        top = clippedTop;
+        width = clippedRight - clippedLeft;
+        height = clippedBottom - clippedTop;
+      } else {
+        // Pointer is entirely outside the canvas — hide the box
+        width = 0;
+        height = 0;
+      }
 
       setMarqueeBox({ left, top, width, height });
 
       // Intersect marquee box with visible asset cards
-      const canvasRect = canvas.getBoundingClientRect();
       const cards =
         canvas.querySelectorAll<HTMLElement>("[data-asset-id]");
       const marqueeRect = {

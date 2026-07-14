@@ -540,6 +540,7 @@ input[type="range"] {
   flex: 1;
   overflow: auto;
   place-items: center;
+  user-select: none;
   background:
     linear-gradient(
       90deg,
@@ -1435,6 +1436,7 @@ input[type="range"] {
 
 .workspace-canvas {
   position: relative;
+  user-select: none;
 }
 
 .activity-strip {
@@ -1528,6 +1530,7 @@ input[type="range"] {
   border: 1px dashed var(--accent);
   background: rgba(66, 184, 164, 0.12);
   pointer-events: none;
+  user-select: none;
 }
 
 .asset-grid {
@@ -1542,6 +1545,7 @@ input[type="range"] {
   min-height: 100%;
   overflow: visible;
   padding: 14px 14px 40px;
+  user-select: none;
 }
 
 .asset-grid.is-masonry {
