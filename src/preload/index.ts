@@ -43,7 +43,13 @@ import { createPublicError } from '../shared/protocol/errors';
 import { resolveDroppedFilePaths } from './dropped-files';
 import { extractWebMediaDrop } from './web-media-drop';
 
+const e2eEnabled = process.env.SERPENT_E2E === '1';
+const requestCounts = new Map<RendererRequest['type'], number>();
+
 async function request(command: RendererRequest): Promise<RendererResult> {
+  if (e2eEnabled) {
+    requestCounts.set(command.type, (requestCounts.get(command.type) ?? 0) + 1);
+  }
   return parseRendererResult(await ipcRenderer.invoke(LIBRARY_REQUEST_CHANNEL, command));
 }
 
@@ -906,4 +912,17 @@ async function importRequest(
   throw new Error('Unexpected prepare-import response.');
 }
 
-contextBridge.exposeInMainWorld('serpent', Object.freeze({ library, extensionPairing }));
+const e2eDiagnostics = Object.freeze({
+  getRequestCount(type: RendererRequest['type']): number {
+    return requestCounts.get(type) ?? 0;
+  },
+});
+
+contextBridge.exposeInMainWorld(
+  'serpent',
+  Object.freeze({
+    library,
+    extensionPairing,
+    ...(e2eEnabled ? { e2e: e2eDiagnostics } : {}),
+  }),
+);

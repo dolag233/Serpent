@@ -485,9 +485,11 @@ input:focus-visible {
 }
 
 .workspace-title {
+  flex: 0 0 auto;
   gap: 9px;
   font-size: 13px;
   font-weight: 560;
+  white-space: nowrap;
 }
 
 .item-count,
@@ -503,6 +505,16 @@ input:focus-visible {
   gap: 7px;
   overflow-x: auto;
   scrollbar-width: none;
+}
+.workspace-tools > * {
+  flex: 0 0 auto;
+}
+.canvas-controls {
+  display: flex;
+  flex: 0 0 auto;
+  order: -1;
+  align-items: center;
+  gap: 7px;
 }
 .workspace-tools::-webkit-scrollbar {
   display: none;

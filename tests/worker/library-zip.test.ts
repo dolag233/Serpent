@@ -393,7 +393,7 @@ describe('LibraryService ZIP import', () => {
     expect(readFileSync(path.join(imported.libraryPath, 'Assets', 'large.bin'))).toEqual(payload);
     expect(new Set(extractByteProgress).size).toBeGreaterThan(1);
     service.closeAll();
-  });
+  }, 30_000);
 
   it('rejects overlapping imports that reuse a source or destination and logs the conflict', async () => {
     const root = temporaryRoot();

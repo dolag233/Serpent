@@ -21,6 +21,9 @@ export interface CanvasPreferencesStorage {
   removeItem(key: string): void;
 }
 
+export const CARD_SIZE_MIN = 96;
+export const CARD_SIZE_MAX = 320;
+
 // ---------------------------------------------------------------------------
 // Zod schema
 // ---------------------------------------------------------------------------
@@ -28,7 +31,7 @@ export interface CanvasPreferencesStorage {
 const canvasPreferencesSchema = z.object({
   version: z.literal(1),
   viewMode: z.enum(['grid', 'masonry']),
-  cardSize: z.number().int().min(96).max(320),
+  cardSize: z.number().int().min(CARD_SIZE_MIN).max(CARD_SIZE_MAX),
   fields: z.object({
     name: z.boolean(),
     size: z.boolean(),
@@ -43,9 +46,6 @@ const canvasPreferencesSchema = z.object({
 export const PREF_KEY = 'serpent.canvas-prefs.v1';
 const LEGACY_VIEW_MODE_KEY = 'serpent.asset-view-mode';
 const LEGACY_CARD_SIZE_KEY = 'serpent.asset-card-size';
-
-export const CARD_SIZE_MIN = 96;
-export const CARD_SIZE_MAX = 320;
 
 export const DEFAULT_CANVAS_PREFERENCES: CanvasPreferences = {
   version: 1,
@@ -97,7 +97,7 @@ function migrateLegacy(
   const viewMode = rawViewMode.trim();
   if (viewMode !== 'grid' && viewMode !== 'masonry') return undefined;
 
-  const cardSize = Number.parseInt(rawCardSize, 10);
+  const cardSize = Number(rawCardSize);
   if (!Number.isFinite(cardSize) || cardSize <= 0) return undefined;
 
   const migrated: CanvasPreferences = {
@@ -121,18 +121,19 @@ function migrateLegacy(
 /**
  * Load canvas preferences from storage.
  *
- * - Returns `DEFAULT_CANVAS_PREFERENCES` when the key is absent, the stored
- *   JSON is corrupt / not an object, or the parsed value fails Zod validation
- *   (unknown version, out-of-range cardSize, invalid viewMode, etc.).
- * - When the v1 key is absent but legacy keys exist, attempts migration from
- *   `serpent.asset-view-mode` + `serpent.asset-card-size`.  Legacy keys are
- *   cleared on successful migration.  If migration fails (or legacy keys are
- *   incomplete / unparseable), falls back to defaults.
+ * - Returns a stored v1 value only after it passes Zod validation.
+ * - When v1 is absent, corrupt, or invalid (unknown version, out-of-range
+ *   cardSize, invalid viewMode, etc.), attempts migration from the complete
+ *   legacy pair `serpent.asset-view-mode` + `serpent.asset-card-size`.
+ * - Legacy keys are cleared on successful migration. If migration fails
+ *   because the pair is incomplete or invalid, falls back to defaults.
  */
 export function loadCanvasPreferences(
   storage?: CanvasPreferencesStorage,
 ): CanvasPreferences {
   const s = resolveStorage(storage);
+  const migrateLegacyOrDefault = () =>
+    migrateLegacy(s) ?? DEFAULT_CANVAS_PREFERENCES;
 
   const raw = s.getItem(PREF_KEY);
   if (raw !== null) {
@@ -140,11 +141,11 @@ export function loadCanvasPreferences(
     try {
       parsed = JSON.parse(raw);
     } catch {
-      return DEFAULT_CANVAS_PREFERENCES;
+      return migrateLegacyOrDefault();
     }
 
     if (typeof parsed !== 'object' || parsed === null) {
-      return DEFAULT_CANVAS_PREFERENCES;
+      return migrateLegacyOrDefault();
     }
 
     const result = canvasPreferencesSchema.safeParse(parsed);
@@ -152,15 +153,12 @@ export function loadCanvasPreferences(
       return result.data;
     }
 
-    // Validation failed — fall back to defaults.
-    return DEFAULT_CANVAS_PREFERENCES;
+    // Validation failed — try the complete legacy pair before using defaults.
+    return migrateLegacyOrDefault();
   }
 
   // No v1 key — try legacy migration.
-  const migrated = migrateLegacy(s);
-  if (migrated !== undefined) return migrated;
-
-  return DEFAULT_CANVAS_PREFERENCES;
+  return migrateLegacyOrDefault();
 }
 
 /**

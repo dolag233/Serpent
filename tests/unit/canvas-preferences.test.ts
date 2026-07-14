@@ -44,11 +44,47 @@ describe('loadCanvasPreferences', () => {
   });
 
   it('returns defaults when the stored JSON is corrupt', () => {
-    const storage = createStorageStub({ [PREF_KEY]: '{not valid json' });
+    const storage = createStorageStub({
+      [PREF_KEY]: '{not valid json',
+      [LEGACY_CARD_SIZE_KEY]: '200',
+    });
 
     const prefs = loadCanvasPreferences(storage);
 
     expect(prefs).toEqual(DEFAULT_CANVAS_PREFERENCES);
+  });
+
+  it('migrates complete legacy preferences when the stored v1 JSON is corrupt', () => {
+    const storage = createStorageStub({
+      [PREF_KEY]: '{not valid json',
+      [LEGACY_VIEW_MODE_KEY]: 'masonry',
+      [LEGACY_CARD_SIZE_KEY]: '200',
+    });
+
+    const prefs = loadCanvasPreferences(storage);
+
+    expect(prefs).toEqual({
+      version: 1,
+      viewMode: 'masonry',
+      cardSize: 200,
+      fields: { name: true, size: true, date: true },
+    });
+    expect(storage.getItem(LEGACY_VIEW_MODE_KEY)).toBeNull();
+    expect(storage.getItem(LEGACY_CARD_SIZE_KEY)).toBeNull();
+  });
+
+  it('uses defaults when invalid v1 data has a malformed legacy card size', () => {
+    const storage = createStorageStub({
+      [PREF_KEY]: '{not valid json',
+      [LEGACY_VIEW_MODE_KEY]: 'masonry',
+      [LEGACY_CARD_SIZE_KEY]: '200px',
+    });
+
+    const prefs = loadCanvasPreferences(storage);
+
+    expect(prefs).toEqual(DEFAULT_CANVAS_PREFERENCES);
+    expect(storage.getItem(LEGACY_VIEW_MODE_KEY)).toBe('masonry');
+    expect(storage.getItem(LEGACY_CARD_SIZE_KEY)).toBe('200px');
   });
 
   it('returns defaults when the stored JSON is not an object', () => {
@@ -72,6 +108,30 @@ describe('loadCanvasPreferences', () => {
     const prefs = loadCanvasPreferences(storage);
 
     expect(prefs).toEqual(DEFAULT_CANVAS_PREFERENCES);
+  });
+
+  it('migrates complete legacy preferences when the stored v1 version is unknown', () => {
+    const storage = createStorageStub({
+      [PREF_KEY]: JSON.stringify({
+        version: 99,
+        viewMode: 'grid',
+        cardSize: 160,
+        fields: { name: true, size: true, date: true },
+      }),
+      [LEGACY_VIEW_MODE_KEY]: 'masonry',
+      [LEGACY_CARD_SIZE_KEY]: '240',
+    });
+
+    const prefs = loadCanvasPreferences(storage);
+
+    expect(prefs).toEqual({
+      version: 1,
+      viewMode: 'masonry',
+      cardSize: 240,
+      fields: { name: true, size: true, date: true },
+    });
+    expect(storage.getItem(LEGACY_VIEW_MODE_KEY)).toBeNull();
+    expect(storage.getItem(LEGACY_CARD_SIZE_KEY)).toBeNull();
   });
 
   it('returns defaults when cardSize is out of range', () => {

@@ -5,16 +5,14 @@
 
 ## 当前方向
 
-v0.1.0 先收口 0001–0010 的桌面 MVP 主线。0011 CLI 需求已确认并排入 v0.2.0，不代表桌面客户端优先级更高，只表达领域语义与运行时基础的实施依赖。0012 资产画布与卡片信息配置已实施（自动化 + 双轴审查通过，Computer Use UX 门禁未执行故不可 accepted）、0013 资产查看页面体验属于 v0.1.0 收尾 UX（已记录暂不实施）。
+v0.1.0 先收口 0001–0010 的桌面 MVP 主线。0011 CLI 需求已确认并排入 v0.2.0，不代表桌面客户端优先级更高，只表达领域语义与运行时基础的实施依赖。0012 资产画布与卡片信息配置已在 macOS 完成自动化、双轴审查和 Computer Use 验收（Windows/10 万帧率保留条件），0013 资产查看页面体验属于 v0.1.0 收尾 UX（已记录暂不实施）。
 
 ## 当前前沿
 
 1. **P0 发布阻断**：0006 不可变媒体二进制发布来源与 receipt、packaged media playback；
    建立真实 Windows runner 并执行跨平台矩阵。
-2. **P1 0012 Computer Use 补验**：0012 版本化画布偏好、名称/大小/日期独立开关、重启/全范围/
-   无障碍/10 万规模证据已实现且自动化 + 双轴审查通过；剩余 Computer Use 截图验收（锚点 #4b、
-   视觉/布局、窗口缩放）因环境缺能力未执行，移交补验后方可 accepted。
-3. **P1 验证收口**：按当前树复审 0004/0007，补重启、冲突、公共 E2E、packaged 和人工证据；
+2. **P1 验证收口**：0012 已完成 macOS Computer Use 与截图验收；继续按当前树修复 0004/0007
+   复审发现的真实行为缺陷，并补重启、冲突、公共 E2E、packaged 和人工证据；
    再完成 0005 packaged 搜索冒烟。
 4. **P2 外部旅程**：补 0009 范围分析/清空 UI 与密钥边界决定；完成 0008 真实浏览器扩展
    往返和 0010 大库/跨平台往返。
@@ -25,9 +23,10 @@ v0.1.0 先收口 0001–0010 的桌面 MVP 主线。0011 CLI 需求已确认并�
 ## 2026-07-14 0012 实施与门禁
 
 - 版本化画布偏好模块 `src/renderer/canvas-preferences.ts`（Zod 校验、遗留 key 迁移、存储可注入）+ App.tsx 集成（统一 state、3 字段开关 `文件名`/`文件大小`/`修改日期`、条件化 aria-label、条件化 caption）。
-- 自动化全绿：lint / typecheck / 单元 259 / worker 536+1skip / 回归+新 E2E 6/6。
+- 最终 `verify:mainline` 全绿：lint/typecheck/extension、798 passed + 1 skipped、search perf 4/4、Electron E2E 20/20。
 - 双轴审查完成、阻断项已修（descriptor 数组、PREF_KEY import、实际卡片宽度断言、tag/collection scope）。
-- **不可 accepted**：Computer Use UX 门禁未执行（环境缺能力，移交）；process-lifecycle 2/2 预存在失败（baseline `60d3515` 同样失败）阻断 `verify:mainline` 全绿，移交单独排查。
+- **有条件通过**：macOS Computer Use 与截图门禁完成，发现并修复空 caption、工具栏逐字换行和窄窗设置裁剪；Windows 与 10 万资产帧率未验证。
+- `process-lifecycle` 已用 fresh E2E profile 隔离；不存在 recent 路径的完整重启回归约 0.8 秒回到起始页，未复现交接文档推断的生产挂起。
 - 详见 `docs/development/0012-asset-canvas-views-and-card-display-development-log.md`、`docs/reviews/0012-asset-canvas-views-and-card-display-code-review.md`、`docs/qa/0012-asset-canvas-views-and-card-display-qa-report.md`、`docs/implementation/0012-design-decisions-2026-07-14.md`。
 
 ## 状态校准（2026-07-14）

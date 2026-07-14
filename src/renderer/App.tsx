@@ -44,7 +44,13 @@ import type {
   ImportProgressEvent,
 } from "../shared/protocol/responses";
 import { AssetPreviewModal } from "./AssetPreviewModal";
-import { loadCanvasPreferences, saveCanvasPreferences, type CanvasPreferences } from './canvas-preferences';
+import {
+  CARD_SIZE_MAX,
+  CARD_SIZE_MIN,
+  loadCanvasPreferences,
+  saveCanvasPreferences,
+  type CanvasPreferences,
+} from "./canvas-preferences";
 
 type RendererWindow = Window & {
   serpent?: {
@@ -100,8 +106,6 @@ type StoredBrowserSession = {
   selectedAssetName: string;
 };
 const ASSET_PAGE_SIZE = 50;
-const MIN_ASSET_CARD_SIZE = 96;
-const MAX_ASSET_CARD_SIZE = 320;
 
 function browserSessionKey(libraryId: string): string {
   return `serpent.browser-session.v1.${libraryId}`;
@@ -744,8 +748,8 @@ export function App() {
     (requestedSize: number, clientX?: number, clientY?: number) => {
       const root = workspaceCanvasRef.current;
       const nextSize = Math.min(
-        MAX_ASSET_CARD_SIZE,
-        Math.max(MIN_ASSET_CARD_SIZE, Math.round(requestedSize)),
+        CARD_SIZE_MAX,
+        Math.max(CARD_SIZE_MIN, Math.round(requestedSize)),
       );
       if (!root || nextSize === assetCardSize) return;
 
@@ -5069,53 +5073,74 @@ export function App() {
               label="刷新磁盘变化"
               onClick={() => void refreshAssets()}
             />
-            <span className="tool-separator" />
-            <ToolButton
-              icon="grid"
-              label="平铺视图"
-              onClick={() => setCanvasPrefs((p) => ({ ...p, viewMode: 'grid' }))}
-              pressed={assetViewMode === "grid"}
-            />
-            <ToolButton
-              icon="menu"
-              label="瀑布流视图"
-              onClick={() => setCanvasPrefs((p) => ({ ...p, viewMode: 'masonry' }))}
-              pressed={assetViewMode === "masonry"}
-            />
-            <label className="asset-size-control">
-              <span>缩略图大小</span>
-              <input
-                aria-label="资产缩略图大小"
-                max="320"
-                min="96"
-                onChange={(event) => {
-                  const size = Number(event.target.value);
-                  resizeAssetCards(size);
-                }}
-                step="8"
-                type="range"
-                value={assetCardSize}
-              />
-            </label>
-            <span className="tool-separator" />
-            {([
-              { field: 'name' as const, icon: 'tag' as const, label: '文件名' },
-              { field: 'size' as const, icon: 'info' as const, label: '文件大小' },
-              { field: 'date' as const, icon: 'star' as const, label: '修改日期' },
-            ]).map(({ field, icon, label }) => (
+            <div className="canvas-controls">
+              <span className="tool-separator" />
               <ToolButton
-                key={field}
-                icon={icon}
-                label={label}
+                icon="grid"
+                label="平铺视图"
                 onClick={() =>
-                  setCanvasPrefs((p) => {
-                    const updatedFields = { ...p.fields, [field]: !p.fields[field] as boolean };
-                    return { ...p, fields: updatedFields };
-                  })
+                  setCanvasPrefs((p) => ({ ...p, viewMode: "grid" }))
                 }
-                pressed={canvasPrefs.fields[field]}
+                pressed={assetViewMode === "grid"}
               />
-            ))}
+              <ToolButton
+                icon="menu"
+                label="瀑布流视图"
+                onClick={() =>
+                  setCanvasPrefs((p) => ({ ...p, viewMode: "masonry" }))
+                }
+                pressed={assetViewMode === "masonry"}
+              />
+              <label className="asset-size-control">
+                <span>缩略图大小</span>
+                <input
+                  aria-label="资产缩略图大小"
+                  max={CARD_SIZE_MAX}
+                  min={CARD_SIZE_MIN}
+                  onChange={(event) => {
+                    const size = Number(event.target.value);
+                    resizeAssetCards(size);
+                  }}
+                  step="8"
+                  type="range"
+                  value={assetCardSize}
+                />
+              </label>
+              <span className="tool-separator" />
+              {([
+                {
+                  field: "name" as const,
+                  icon: "tag" as const,
+                  label: "文件名",
+                },
+                {
+                  field: "size" as const,
+                  icon: "info" as const,
+                  label: "文件大小",
+                },
+                {
+                  field: "date" as const,
+                  icon: "star" as const,
+                  label: "修改日期",
+                },
+              ]).map(({ field, icon, label }) => (
+                <ToolButton
+                  key={field}
+                  icon={icon}
+                  label={label}
+                  onClick={() =>
+                    setCanvasPrefs((p) => {
+                      const updatedFields = {
+                        ...p.fields,
+                        [field]: !p.fields[field],
+                      };
+                      return { ...p, fields: updatedFields };
+                    })
+                  }
+                  pressed={canvasPrefs.fields[field]}
+                />
+              ))}
+            </div>
             {library &&
               selectedAsset &&
               !showTrash &&
@@ -5558,46 +5583,57 @@ export function App() {
                           </span>
                         )}
                       </div>
-                      <div className="asset-caption">
-                        {canvasPrefs.fields.name && (
-                          <>
-                            <strong title={asset.label ?? asset.displayName}>
-                              {asset.label ?? asset.displayName}
-                            </strong>
-                            {asset.label && (
-                              <span title={asset.displayName}>
-                                {asset.displayName}
-                              </span>
-                            )}
-                          </>
-                        )}
-                        {searchSnippets.has(asset.assetId) ? (
-                          <span className="search-snippet">
-                            {highlightSnippet(
-                              searchSnippets.get(asset.assetId)!,
-                            )}
-                          </span>
-                        ) : asset.deletedAt && asset.trashedFromPath ? (
-                          <span
-                            style={{
-                              color: "var(--tertiary)",
-                              fontSize: 8,
-                              overflow: "hidden",
-                              textOverflow: "ellipsis",
-                              whiteSpace: "nowrap",
-                            }}
-                            title={asset.trashedFromPath}
-                          >
-                            {asset.trashedFromPath}
-                          </span>
-                        ) : (canvasPrefs.fields.size || canvasPrefs.fields.date) ? (
-                          <span>
-                            {canvasPrefs.fields.size && formatBytes(asset.byteSize)}
-                            {canvasPrefs.fields.size && canvasPrefs.fields.date && " · "}
-                            {canvasPrefs.fields.date && formatDate(asset.modifiedAt)}
-                          </span>
-                        ) : null}
-                      </div>
+                      {(canvasPrefs.fields.name ||
+                        canvasPrefs.fields.size ||
+                        canvasPrefs.fields.date ||
+                        searchSnippets.has(asset.assetId) ||
+                        (asset.deletedAt && asset.trashedFromPath)) && (
+                        <div className="asset-caption">
+                          {canvasPrefs.fields.name && (
+                            <>
+                              <strong title={asset.label ?? asset.displayName}>
+                                {asset.label ?? asset.displayName}
+                              </strong>
+                              {asset.label && (
+                                <span title={asset.displayName}>
+                                  {asset.displayName}
+                                </span>
+                              )}
+                            </>
+                          )}
+                          {searchSnippets.has(asset.assetId) ? (
+                            <span className="search-snippet">
+                              {highlightSnippet(
+                                searchSnippets.get(asset.assetId)!,
+                              )}
+                            </span>
+                          ) : asset.deletedAt && asset.trashedFromPath ? (
+                            <span
+                              style={{
+                                color: "var(--tertiary)",
+                                fontSize: 8,
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                                whiteSpace: "nowrap",
+                              }}
+                              title={asset.trashedFromPath}
+                            >
+                              {asset.trashedFromPath}
+                            </span>
+                          ) : (canvasPrefs.fields.size ||
+                              canvasPrefs.fields.date) ? (
+                            <span>
+                              {canvasPrefs.fields.size &&
+                                formatBytes(asset.byteSize)}
+                              {canvasPrefs.fields.size &&
+                                canvasPrefs.fields.date &&
+                                " · "}
+                              {canvasPrefs.fields.date &&
+                                formatDate(asset.modifiedAt)}
+                            </span>
+                          ) : null}
+                        </div>
+                      )}
                     </button>
                   ))}
                   <div

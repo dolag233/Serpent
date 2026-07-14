@@ -1,10 +1,17 @@
 # 0012 代码审查报告 — 资产画布视图与卡片信息配置
 
-> 审查基点:`HEAD` = `60d3515`(feat: consolidate MVP implementation checkpoint)
-> Diff 范围:工作树未提交改动 —— `git diff HEAD -- src/renderer/App.tsx`(+62/-40)+ 新文件 `src/renderer/canvas-preferences.ts`、`tests/unit/canvas-preferences.test.ts`、`tests/e2e/browsing-preferences.test.ts`
+> 审查基点:`60d3515`(feat: consolidate MVP implementation checkpoint)
+> Diff 范围:`60d3515...75019d9` + 本轮验收修复；最终提交 SHA 见开发日志
 > 双轴:Standards(仓库规范/架构边界/代码异味)+ Spec(规格符合度)
 > Spec 来源:`docs/implementation/0012-asset-canvas-views-and-card-display-vertical-slice.md` + `docs/implementation/0012-design-decisions-2026-07-14.md`
 > 日期:2026-07-14
+
+## 最终复审（覆盖下方首轮审查中的过时结论）
+
+- Standards：共享 `CARD_SIZE_MIN/MAX` 消除 App/schema 常量漂移；遗留卡片尺寸改用严格 `Number()`，拒绝 `200px` 等宽松解析；仅 E2E 模式暴露只读请求计数，不向生产 renderer 增加 Main/Worker/DB 能力。
+- Spec：损坏/未知 v1 会尝试有效遗留对；重启覆盖三个字段；96/160/320 对 grid 与 masonry 均测真实 card bbox；no-requery 直接检查 `asset.search.request` 计数；folder/tag/collection/smart/root/all/trash 均验证真实字段呈现。
+- Computer Use：真实 Electron 创建库并导入 5 张不同比例图片，验证字段开关、平铺/瀑布流、96–320、首尾、锚点及窄窗。捕获并修复空 caption 与工具栏逐字换行/设置被裁掉的问题。
+- 仍未闭合：10 万资产交互帧率没有专门性能证据；Windows 没有 runner。两项属于平台/性能风险，不构成已验证 macOS 行为的代码阻断。
 
 ## Standards 轴
 
@@ -36,18 +43,18 @@
 规格验收#3:"96/160/320 三档及 Ctrl+Wheel/pinch 的**实际卡片宽度**、上下限与方向有自动化验证。" 原测试只断言**滑块值**,未断言实际渲染宽度。
 → **修复**:E2E 加 `getComputedStyle(assetGrid).gridTemplateColumns` 含 `${cardSize}px` 断言(切 grid 模式后,96→含"96px"、320→含"320px")。状态:**已修**。
 
-### P2 — #7 全范围一致性仅 folder+trash(partial → 部分修)
+### P2 — #7 全范围一致性（首轮 partial → 最终已修）
 
 规格#2:"对所有文件夹、标签、合集、智能合集和回收站一致生效。" 原测试仅 folder+trash。
-→ **修复**:扩展 tag scope + collection scope 导航与断言(创建标签/合集、右键分配、侧栏进入、断言开关态不变);smart-collection scope **延迟**(注释:global canvasPrefs 被所有 scope 渲染同读,构造一致;search-then-save setup 重,延迟)。状态:**部分修**(tag/collection 已加;smart 延迟,by-construction)。
+→ **最终修复**:扩展到 tag/collection/smart/root/all/trash，并断言卡片实际字段显隐、可访问名和日期，而非只检查工具栏状态。状态:**已修**。
 
-### P3 — #4(b) 锚点资产仍可见无自动化测试(missing → 记录不修)
+### P3 — #4(b) 锚点资产仍可见（最终以自动化 + Computer Use 补证）
 
-规格#4:"缩放后原视口锚点资产仍可见。" 无自动化测试。rAF/视口断言 flaky;行为是预存在 `resizeAssetCards`(`App.tsx:759-802`,本切片未改,仅 card-size 写入路由经 setCanvasPrefs)。状态:**记录不修**,留 Computer Use / 人工 QA 视觉验收(按 `CLAUDE.md` 不宣称通过)。
+73 资产连续浏览 E2E 已覆盖锚点；本轮 Computer Use 在滚动后以 03-player 为中心从 320 缩到 96，03-player 仍处于可见首行。截图见 QA evidence。状态:**已补证**。
 
 ### P4 — #6 帧率部分(partial → 记录不修)
 
-规格#6:"不显著降低滚动帧率。" no-requery(IPC)已覆盖(切换字段前后 `.asset-card[data-asset-id]` 集合不变);帧率无可靠自动化。状态:**记录**,留人工/性能 QA。
+规格#6:"不显著降低滚动帧率。" no-requery 已由 preload E2E-only 请求计数直接证明；旧的 card-ID 集合断言是假阳性，已删除。10 万资产帧率仍无可靠证据。状态:**部分通过，性能项保留**。
 
 ### P5 — #3 三档(RECORDED 偏离,用户确认,非待办)
 
@@ -66,12 +73,12 @@
 
 - `npm run typecheck`:GREEN。
 - `npm run lint`:GREEN。
-- `npx vitest run tests/unit/canvas-preferences.test.ts`:17 passed。
-- `node scripts/run-e2e.mjs tests/e2e/browsing-preferences.test.ts`:2 passed(含实际宽度断言 + tag/collection scope)。
-- S1/S2/P1 已修;P2 部分修;P3/P4 记录不修(Computer Use/人工 QA);P5 用户确认。
+- `npx vitest run tests/unit/canvas-preferences.test.ts`:20 passed。
+- `node scripts/run-e2e.mjs tests/e2e/browsing-preferences.test.ts`:2 passed(含真实 bbox、请求计数、全 scope 与窄窗布局)。
+- S1/S2/P1/P2 已修；P3 自动化 + Computer Use 补证；P4 的 no-requery 已修、10 万帧率保留；P5 用户确认。
 - 回归 E2E(media-preview + organization-search-trash + browsing-preferences)重跑结果见 QA 报告(确认 App.tsx descriptor 改动无回归)。
 
 ## 待处理(非阻断,记录移交)
 
-- **Computer Use UX 门禁未执行**:当前 agent 环境无 Computer Use,按 `development-process.md`/`CLAUDE.md` 不可标 `accepted`,移交具备能力的主 agent / 人工 QA。
-- **process-lifecycle 2/2 预存在失败**:baseline `60d3515` 同样失败,非本切片引入;疑似默认 userData 陈旧 `recent-library.json` 导致非-e2e 模式启动自动恢复陈旧库→不开窗→`firstWindow` 超时。移交单独排查。
+- **10 万资产帧率**：no-requery 已有直接证据，但需要专门规模/帧率测试。
+- **Windows**：无 runner，未执行真实平台 QA。

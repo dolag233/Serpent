@@ -113,17 +113,29 @@ test("restores canvas preferences after a full restart", async () => {
     await sizeSlider.fill("200");
     await expect(sizeSlider).toHaveValue("200");
 
-    // Toggle "文件名" OFF
+    // Toggle every field independently so restart persistence cannot pass by
+    // exercising only one member of the fields object.
     const nameToggle = window.getByRole("button", { name: "文件名" });
-    await expect(nameToggle).toHaveAttribute("aria-pressed", "true");
-    await nameToggle.click();
-    await expect(nameToggle).toHaveAttribute("aria-pressed", "false");
-
-    // Verify other toggles are still ON
     const sizeToggle = window.getByRole("button", { name: "文件大小" });
     const dateToggle = window.getByRole("button", { name: "修改日期" });
+    await expect(nameToggle).toHaveAttribute("aria-pressed", "true");
     await expect(sizeToggle).toHaveAttribute("aria-pressed", "true");
     await expect(dateToggle).toHaveAttribute("aria-pressed", "true");
+
+    await nameToggle.click();
+    await expect(nameToggle).toHaveAttribute("aria-pressed", "false");
+    await expect(sizeToggle).toHaveAttribute("aria-pressed", "true");
+    await expect(dateToggle).toHaveAttribute("aria-pressed", "true");
+
+    await sizeToggle.click();
+    await expect(nameToggle).toHaveAttribute("aria-pressed", "false");
+    await expect(sizeToggle).toHaveAttribute("aria-pressed", "false");
+    await expect(dateToggle).toHaveAttribute("aria-pressed", "true");
+
+    await dateToggle.click();
+    await expect(nameToggle).toHaveAttribute("aria-pressed", "false");
+    await expect(sizeToggle).toHaveAttribute("aria-pressed", "false");
+    await expect(dateToggle).toHaveAttribute("aria-pressed", "false");
 
     // Close the app
     await application.close();
@@ -158,8 +170,9 @@ test("restores canvas preferences after a full restart", async () => {
     const restoredSizeToggle = window.getByRole("button", { name: "文件大小" });
     const restoredDateToggle = window.getByRole("button", { name: "修改日期" });
     await expect(restoredNameToggle).toHaveAttribute("aria-pressed", "false");
-    await expect(restoredSizeToggle).toHaveAttribute("aria-pressed", "true");
-    await expect(restoredDateToggle).toHaveAttribute("aria-pressed", "true");
+    await expect(restoredSizeToggle).toHaveAttribute("aria-pressed", "false");
+    await expect(restoredDateToggle).toHaveAttribute("aria-pressed", "false");
+    await expect(restoredCard.locator(".asset-caption")).toHaveCount(0);
 
     // Verify localStorage contains the correct persisted object
     const storedPrefs = await window.evaluate(() => {
@@ -170,7 +183,7 @@ test("restores canvas preferences after a full restart", async () => {
       version: 1,
       viewMode: "masonry",
       cardSize: 200,
-      fields: { name: false, size: true, date: true },
+      fields: { name: false, size: false, date: false },
     });
   } finally {
     await application.close();
@@ -191,8 +204,16 @@ test("maintains consistent preferences, accessible names, zoom behavior, and avo
   const libraryPath = path.join(temporaryRoot, libraryName);
   const sourceRoot = path.join(temporaryRoot, "sources");
   mkdirSync(sourceRoot);
-  const sourcePath = path.join(sourceRoot, "automatic.png");
-  writeFileSync(sourcePath, VALID_PNG);
+  const assetCount = 36;
+  const sourcePaths = Array.from({ length: assetCount }, (_, index) => {
+    const sourcePath = path.join(
+      sourceRoot,
+      `automatic-${index.toString().padStart(3, "0")}.png`,
+    );
+    writeFileSync(sourcePath, VALID_PNG);
+    return sourcePath;
+  });
+  const targetName = "automatic-000.png";
 
   const executablePath = resolveElectronExecutablePath();
   const applicationDirectory =
@@ -207,7 +228,7 @@ test("maintains consistent preferences, accessible names, zoom behavior, and avo
       SERPENT_E2E_CREATE_PARENT_PATH: temporaryRoot,
       SERPENT_E2E_OPEN_LIBRARY_PATH: libraryPath,
       SERPENT_E2E_USER_DATA_PATH: path.join(temporaryRoot, "user-data"),
-      SERPENT_E2E_IMPORT_FILES: sourcePath,
+      SERPENT_E2E_IMPORT_FILES: sourcePaths.join(path.delimiter),
     },
   });
 
@@ -229,10 +250,11 @@ test("maintains consistent preferences, accessible names, zoom behavior, and avo
       .click();
 
     // Wait for the asset card (name is ON by default)
-    const assetCard = window
-      .locator(".asset-card")
-      .filter({ hasText: "automatic.png" });
-    await expect(assetCard).toBeVisible({ timeout: 15_000 });
+    await expect(window.locator(".asset-card")).toHaveCount(assetCount, {
+      timeout: 30_000,
+    });
+    const assetCard = window.locator(".asset-card").filter({ hasText: targetName });
+    await expect(assetCard).toBeVisible();
 
     // Capture the card's ID for robust location when name is hidden
     const cardId = await assetCard.getAttribute("data-asset-id");
@@ -261,7 +283,7 @@ test("maintains consistent preferences, accessible names, zoom behavior, and avo
 
     // Card text should include filename + size info
     const visibleText = await cardById.textContent();
-    expect(visibleText).toMatch(/automatic\.png/);
+    expect(visibleText).toContain(targetName);
     expect(visibleText).toMatch(/\d/); // size or date present
 
     // Toggle name OFF
@@ -269,11 +291,11 @@ test("maintains consistent preferences, accessible names, zoom behavior, and avo
     await expect(nameToggle).toHaveAttribute("aria-pressed", "false");
 
     // Now card should have aria-label = displayName
-    await expect(cardById).toHaveAttribute("aria-label", "automatic.png");
+    await expect(cardById).toHaveAttribute("aria-label", targetName);
 
     // Card should still be locatable by accessible name (which is the aria-label)
     const cardByAccessibleName = window.getByRole("button", {
-      name: /^automatic\.png$/,
+      name: new RegExp(`^${targetName.replace(".", "\\.")}$`),
     });
     await expect(cardByAccessibleName).toBeVisible();
 
@@ -326,24 +348,29 @@ test("maintains consistent preferences, accessible names, zoom behavior, and avo
     }
     await expect(sizeSlider).toHaveValue("320");
 
-    // Actual card width assertion (spec #3): verify gridTemplateColumns
-    // tracks cardSize. Switch to grid mode first.
+    // Actual card width assertions at all three reference points. Measure the
+    // rendered card itself rather than inferring layout from a CSS declaration.
     const gridButton = window.getByRole("button", { name: "平铺视图" });
     await gridButton.click();
     await expect(gridButton).toHaveAttribute("aria-pressed", "true");
 
-    const assetGrid = window.locator(".asset-grid");
-    let gridCols = await assetGrid.evaluate((el) =>
-      getComputedStyle(el).gridTemplateColumns,
-    );
-    expect(gridCols).toContain("320px");
+    async function measureCardWidth(size: 96 | 160 | 320): Promise<number> {
+      await sizeSlider.fill(String(size));
+      await expect(sizeSlider).toHaveValue(String(size));
+      await expect
+        .poll(async () => (await cardById.boundingBox())?.width ?? 0)
+        .toBeGreaterThan(0);
+      return (await cardById.boundingBox())!.width;
+    }
 
-    await sizeSlider.fill("96");
-    await expect(sizeSlider).toHaveValue("96");
-    gridCols = await assetGrid.evaluate((el) =>
-      getComputedStyle(el).gridTemplateColumns,
-    );
-    expect(gridCols).toContain("96px");
+    const gridWidths = [];
+    for (const size of [96, 160, 320] as const) {
+      const width = await measureCardWidth(size);
+      expect(Math.abs(width - size)).toBeLessThanOrEqual(1);
+      gridWidths.push(width);
+    }
+    expect(gridWidths[0]).toBeLessThan(gridWidths[1]!);
+    expect(gridWidths[1]).toBeLessThan(gridWidths[2]!);
 
     // Normal wheel (no Ctrl) should NOT change card size — only scrolls
     await sizeSlider.fill("200");
@@ -351,10 +378,6 @@ test("maintains consistent preferences, accessible names, zoom behavior, and avo
     await window.mouse.wheel(0, -400);
     // Slider value should remain unchanged after a non-Ctrl wheel
     await expect(sizeSlider).toHaveValue("200");
-
-    // Reset to a reasonable size
-    await sizeSlider.fill("160");
-    await expect(sizeSlider).toHaveValue("160");
 
     // -------------------------------------------------------------------
     // 2c. Masonry first/last completeness (criterion #5)
@@ -365,6 +388,25 @@ test("maintains consistent preferences, accessible names, zoom behavior, and avo
       await masonryButton.click();
       await expect(masonryButton).toHaveAttribute("aria-pressed", "true");
     }
+
+    const masonryWidths = [];
+    for (const size of [96, 160, 320] as const) {
+      const width = await measureCardWidth(size);
+      expect(width).toBeGreaterThanOrEqual(size - 1);
+      expect(width).toBeLessThanOrEqual(size * 2 + 12);
+      masonryWidths.push(width);
+    }
+    expect(masonryWidths[0]).toBeLessThan(masonryWidths[1]!);
+    expect(masonryWidths[1]).toBeLessThan(masonryWidths[2]!);
+
+    await sizeSlider.fill("160");
+    await expect(sizeSlider).toHaveValue("160");
+    await canvas.evaluate(
+      () =>
+        new Promise<void>((resolve) => {
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+        }),
+    );
 
     // Scroll to top and assert first card is fully visible (not clipped at top)
     await canvas.evaluate((el) => {
@@ -387,6 +429,9 @@ test("maintains consistent preferences, accessible names, zoom behavior, and avo
       scrollHeight: el.scrollHeight,
       clientHeight: el.clientHeight,
     }));
+    expect(scrollDimensions.scrollHeight).toBeGreaterThan(
+      scrollDimensions.clientHeight,
+    );
     const maxScrollTop =
       scrollDimensions.scrollHeight - scrollDimensions.clientHeight;
     await canvas.evaluate(
@@ -411,46 +456,51 @@ test("maintains consistent preferences, accessible names, zoom behavior, and avo
     // -------------------------------------------------------------------
     // 2d. No-requery on field toggle (criterion #6)
     // -------------------------------------------------------------------
-    // NOTE: The bridge API (`globalThis.serpent.library`) is exposed via
-    // contextBridge.exposeInMainWorld which makes the `serpent` property
-    // non-writable and non-configurable. The `serpent` object itself is
-    // frozen via Object.freeze(). Therefore we cannot wrap searchAssets
-    // with a counting proxy. We fall back to a behavioral check: the set
-    // of asset card data-asset-id values must remain identical before and
-    // after a field toggle, proving no new IPC search was triggered.
-
-    // Record current card IDs
-    const cardIdsBefore = await window
-      .locator(".asset-card")
-      .evaluateAll((cards) =>
-        cards.map((c) => (c as HTMLElement).dataset.assetId ?? ""),
+    const assetSearchRequestCount = () =>
+      window.evaluate(() =>
+        (
+          globalThis as typeof globalThis & {
+            serpent: {
+              e2e: {
+                getRequestCount(type: "asset.search.request"): number;
+              };
+            };
+          }
+        ).serpent.e2e.getRequestCount("asset.search.request"),
       );
-    expect(cardIdsBefore.length).toBeGreaterThan(0);
+    const searchRequestsBefore = await assetSearchRequestCount();
 
     // Toggle "文件大小" OFF
     const sizeToggle = window.getByRole("button", { name: "文件大小" });
     await sizeToggle.click();
     await expect(sizeToggle).toHaveAttribute("aria-pressed", "false");
 
-    // Brief wait to allow any potential re-render (though we expect none)
     await window.waitForTimeout(300);
-
-    // Record card IDs after toggle
-    const cardIdsAfter = await window
-      .locator(".asset-card")
-      .evaluateAll((cards) =>
-        cards.map((c) => (c as HTMLElement).dataset.assetId ?? ""),
-      );
-
-    // IDs, order, and count must be identical — no new search triggered
-    expect(cardIdsAfter).toEqual(cardIdsBefore);
-
-    // Toggle back ON
-    await sizeToggle.click();
-    await expect(sizeToggle).toHaveAttribute("aria-pressed", "true");
+    expect(await assetSearchRequestCount()).toBe(searchRequestsBefore);
 
     // -------------------------------------------------------------------
-    // 2e. All-scope consistency (criterion #2)
+    // 2e. Narrow-window layout keeps the canvas controls visible and the
+    //     workspace title on one line (Computer Use regression).
+    // -------------------------------------------------------------------
+    await window.setViewportSize({ width: 1054, height: 720 });
+    const workspaceTitle = window.locator(".workspace-title");
+    const canvasControls = window.locator(".canvas-controls");
+    const workspaceBar = window.locator(".workspace-bar");
+    await expect(workspaceTitle).toHaveCSS("white-space", "nowrap");
+    const [controlsBox, barBox] = await Promise.all([
+      canvasControls.boundingBox(),
+      workspaceBar.boundingBox(),
+    ]);
+    expect(controlsBox).not.toBeNull();
+    expect(barBox).not.toBeNull();
+    expect(controlsBox!.x).toBeGreaterThanOrEqual(barBox!.x);
+    expect(controlsBox!.x + controlsBox!.width).toBeLessThanOrEqual(
+      barBox!.x + barBox!.width + 1,
+    );
+    await window.setViewportSize({ width: 1280, height: 720 });
+
+    // -------------------------------------------------------------------
+    // 2f. All-scope consistency (criterion #2)
     // -------------------------------------------------------------------
     // Set distinctive prefs: masonry + name OFF
     const currentMasonry = await masonryButton.getAttribute("aria-pressed");
@@ -485,24 +535,39 @@ test("maintains consistent preferences, accessible names, zoom behavior, and avo
       ).toHaveAttribute("aria-pressed", datePressed);
     }
 
+    async function assertHiddenFieldPresentation(
+      expectDate: boolean,
+      expectNameHidden = true,
+    ) {
+      const scopedCard = window.locator(
+        `.asset-card[data-asset-id="${cardId!}"]`,
+      );
+      await expect(scopedCard).toBeVisible({ timeout: 10_000 });
+      await expect(scopedCard).toHaveAttribute("aria-label", targetName);
+      await expect(scopedCard).toHaveAttribute("title", targetName);
+      if (expectNameHidden) {
+        await expect(scopedCard).not.toContainText(targetName);
+      }
+      await expect(scopedCard).not.toContainText(`${VALID_PNG.length} B`);
+      if (expectDate) {
+        await expect(scopedCard.locator(".asset-caption")).toContainText(
+          /\d{2}\/\d{2}/,
+        );
+      }
+    }
+
     // Verify initial state on "所有资产" scope
-    await assertToggleStates("true", "false", "true", "true");
+    await assertToggleStates("true", "false", "false", "true");
+    await assertHiddenFieldPresentation(true);
 
     // Navigate to "资源库根目录" folder scope
     await window.getByRole("button", { name: /资源库根目录/ }).click();
-    // Confirm we have content visible (card by accessible name since name is off)
-    await expect(
-      window.getByRole("button", { name: /automatic/ }),
-    ).toBeVisible({ timeout: 10_000 });
-
-    // Assert toggle states unchanged in root folder scope
-    await assertToggleStates("true", "false", "true", "true");
+    await assertToggleStates("true", "false", "false", "true");
+    await assertHiddenFieldPresentation(true);
 
     // Navigate back to 所有资产 before creating org items
     await window.getByRole("button", { name: /所有资产/ }).click();
-    await expect(
-      window.getByRole("button", { name: /automatic/ }),
-    ).toBeVisible({ timeout: 10_000 });
+    await assertHiddenFieldPresentation(true);
 
     // --- Tag scope ---
     // Create a tag and assign it to the asset
@@ -526,16 +591,12 @@ test("maintains consistent preferences, accessible names, zoom behavior, and avo
 
     // Navigate to tag scope through sidebar and verify consistency
     await window.getByRole("button", { name: /偏好测试标签/ }).click();
-    await expect(
-      window.getByRole("button", { name: /automatic/ }),
-    ).toBeVisible({ timeout: 10_000 });
-    await assertToggleStates("true", "false", "true", "true");
+    await assertToggleStates("true", "false", "false", "true");
+    await assertHiddenFieldPresentation(true);
 
     // Return to 所有资产
     await window.getByRole("button", { name: /所有资产/ }).click();
-    await expect(
-      window.getByRole("button", { name: /automatic/ }),
-    ).toBeVisible({ timeout: 10_000 });
+    await assertHiddenFieldPresentation(true);
 
     // --- Collection scope ---
     // Create a collection and add the asset to it
@@ -558,20 +619,12 @@ test("maintains consistent preferences, accessible names, zoom behavior, and avo
 
     // Navigate to collection scope through sidebar and verify consistency
     await window.getByRole("button", { name: /偏好测试合集/ }).click();
-    await expect(
-      window.getByRole("button", { name: /automatic/ }),
-    ).toBeVisible({ timeout: 10_000 });
-    await assertToggleStates("true", "false", "true", "true");
+    await assertToggleStates("true", "false", "false", "true");
+    await assertHiddenFieldPresentation(true);
 
     // Return to 所有资产
     await window.getByRole("button", { name: /所有资产/ }).click();
-    await expect(
-      window.getByRole("button", { name: /automatic/ }),
-    ).toBeVisible({ timeout: 10_000 });
-
-    // Smart-collection scope deferred — same global canvasPrefs state is
-    // read by all scope renders (covered by construction); requires heavy
-    // search-then-save setup that adds minimal additional coverage.
+    await assertHiddenFieldPresentation(true);
 
     // Get the library ID for direct API calls
     const libraryId: string | null = await window.evaluate(async () => {
@@ -592,11 +645,39 @@ test("maintains consistent preferences, accessible names, zoom behavior, and avo
     expect(libraryId).toBeTruthy();
     if (!libraryId) throw new Error("Could not determine library ID");
 
+    const smartCollectionCreated = await window.evaluate(
+      ({ libId }) =>
+        (
+          globalThis as unknown as {
+            serpent: {
+              library: {
+                createSmartCollection(input: {
+                  libraryId: string;
+                  name: string;
+                  queryDefinitionJson: string;
+                }): Promise<{ ok: boolean }>;
+              };
+            };
+          }
+        ).serpent.library.createSmartCollection({
+          libraryId: libId,
+          name: "偏好测试智能合集",
+          queryDefinitionJson: "{}",
+        }),
+      { libId: libraryId },
+    );
+    expect(smartCollectionCreated.ok).toBe(true);
+
+    // Re-entering a normal scope refreshes organization summaries in the sidebar.
+    await window.getByRole("button", { name: /资源库根目录/ }).click();
+    await window.getByRole("button", { name: /所有资产/ }).click();
+    await window
+      .getByRole("button", { name: "偏好测试智能合集", exact: true })
+      .click();
+    await assertToggleStates("true", "false", "false", "true");
+    await assertHiddenFieldPresentation(true);
+
     // Trash an asset so we can navigate to trash scope
-    const firstCardId = await window
-      .locator(".asset-card")
-      .first()
-      .getAttribute("data-asset-id");
     await window.evaluate(
       ({ libId, assetId }) =>
         (
@@ -614,28 +695,27 @@ test("maintains consistent preferences, accessible names, zoom behavior, and avo
           libraryId: libId,
           assetIds: [assetId],
         }),
-      { libId: libraryId, assetId: firstCardId! },
+      { libId: libraryId, assetId: cardId! },
     );
 
     // Navigate to trash
     await window.getByRole("button", { name: /回收站/ }).click();
-    // Wait for trash content to load
-    await expect(
-      window.locator(".asset-card.is-trashed").first(),
-    ).toBeVisible({ timeout: 10_000 });
-
-    // Assert toggle states unchanged in trash scope
-    await assertToggleStates("true", "false", "true", "true");
+    await expect(cardById).toHaveClass(/is-trashed/);
+    await assertToggleStates("true", "false", "false", "true");
+    // Trash cards intentionally show their former path (which includes the
+    // filename) instead of date. Size visibility and accessible naming still
+    // exercise real card presentation rather than toolbar state alone.
+    await assertHiddenFieldPresentation(false, false);
 
     // Navigate back to "所有资产"
     await window.getByRole("button", { name: /所有资产/ }).click();
     // Confirm we're back with content
     await expect(
-      window.getByRole("button", { name: /automatic/ }),
+      window.getByRole("button", { name: "automatic-001.png", exact: true }),
     ).toBeVisible({ timeout: 10_000 });
 
     // Assert toggle states still unchanged
-    await assertToggleStates("true", "false", "true", "true");
+    await assertToggleStates("true", "false", "false", "true");
 
     // Also verify the grid view button is NOT pressed (we're in masonry)
     await expect(

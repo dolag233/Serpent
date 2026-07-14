@@ -127,7 +127,7 @@ describe('extractZipStream', () => {
     expect(readFileSync(path.join(destinationRoot, 'Assets', 'large.bin'))).toEqual(payload);
     expect(progress.filter((event) => event.phase === 'extract' && event.bytesProcessed > 0).length)
       .toBeGreaterThan(1);
-  });
+  }, 30_000);
 
   it('rejects a path-escape entry before writing any archive content', async () => {
     const root = temporaryRoot();

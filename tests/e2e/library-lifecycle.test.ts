@@ -182,3 +182,49 @@ test("restores the recent library and focuses the last browsed asset after a ful
     rmSync(temporaryRoot, { force: true, recursive: true });
   }
 });
+
+test("falls back to the start screen when the recent library no longer exists", async () => {
+  const temporaryRoot = mkdtempSync(
+    path.join(tmpdir(), "serpent-missing-recent-test-"),
+  );
+  const profilePath = path.join(temporaryRoot, "profile");
+  mkdirSync(profilePath);
+  writeFileSync(
+    path.join(profilePath, "recent-library.json"),
+    JSON.stringify({
+      version: 1,
+      libraryPath: path.join(temporaryRoot, "deleted-library"),
+      updatedAt: new Date().toISOString(),
+    }),
+  );
+
+  const executablePath = resolveElectronExecutablePath();
+  const applicationDirectory =
+    process.env.SERPENT_E2E_APP_DIRECTORY ?? process.cwd();
+  const application = await electron.launch({
+    args: [applicationDirectory],
+    cwd: applicationDirectory,
+    executablePath,
+    env: {
+      ...process.env,
+      SERPENT_E2E: "1",
+      SERPENT_E2E_RESTORE_RECENT: "1",
+      SERPENT_E2E_USER_DATA_PATH: profilePath,
+    },
+  });
+
+  try {
+    const window = await application.firstWindow();
+    await expect(
+      window.getByRole("heading", { name: "从一个本地资源库开始" }),
+    ).toBeVisible({ timeout: 10_000 });
+    await expect
+      .poll(() =>
+        window.evaluate(() => document.readyState),
+      )
+      .toBe("complete");
+  } finally {
+    await application.close();
+    rmSync(temporaryRoot, { force: true, recursive: true });
+  }
+});
