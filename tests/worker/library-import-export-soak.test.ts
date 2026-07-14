@@ -30,6 +30,8 @@ interface TestDatabaseConnection {
   close(): void;
   exec(source: string): void;
   prepare(source: string): {
+    all(...parameters: unknown[]): unknown[];
+    get(...parameters: unknown[]): unknown;
     run(...parameters: unknown[]): { changes: number };
   };
   pragma(source: string): unknown;
@@ -94,6 +96,14 @@ interface SoakFixture {
   tagCount: number;
   /** Number of collections created. */
   collectionCount: number;
+  /** Map of assetId → sourcePageUrl. */
+  sourcePageUrls: Map<string, string | null>;
+  /** Map of assetId → tag names assigned to that asset. */
+  tagAssignments: Map<string, string[]>;
+  /** Map of assetId → collection names assigned to that asset. */
+  collectionAssignments: Map<string, string[]>;
+  /** Set of asset IDs that are trashed (deleted_at IS NOT NULL). */
+  trashedAssetIds: Set<string>;
 }
 
 let fixture: SoakFixture;
@@ -278,6 +288,24 @@ function seedAssetsAndFiles(libraryPath: string, folderName: string, folderId: s
     throw error;
   }
 
+  // Trash the first 10 assets for round-trip trash-state verification.
+  // Trash is signalled by deleted_at IS NOT NULL; availability stays 'available'.
+  {
+    const trashTime = new Date().toISOString();
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      for (let idx = 0; idx < 10; idx += 1) {
+        db.prepare(
+          'UPDATE assets SET deleted_at = ?, updated_at = ? WHERE asset_id = ?',
+        ).run(trashTime, trashTime, assetId(idx));
+      }
+      db.exec('COMMIT');
+    } catch (error) {
+      db.exec('ROLLBACK');
+      throw error;
+    }
+  }
+
   db.pragma('foreign_keys = ON');
   db.close();
 }
@@ -307,6 +335,7 @@ beforeAll(() => {
   const ratings = new Map<string, number>();
   const favorites = new Map<string, boolean>();
   const descriptions = new Map<string, string | null>();
+  const sourcePageUrls = new Map<string, string | null>();
 
   // Pre-compute expected values for verification.
   const baseDate = new Date('2025-06-01T00:00:00.000Z');
@@ -335,12 +364,38 @@ beforeAll(() => {
           ? `Soak test asset #${idx} with varied metadata for round-trip integrity check.`
           : null,
       );
+      sourcePageUrls.set(
+        aid,
+        idx % 7 === 0
+          ? `https://example.test/soak/${pad(idx, 5)}`
+          : null,
+      );
     }
   }
 
   service.closeAll();
   seedAssetsAndFiles(library.libraryPath, folderName, folder.folderId);
   const reopened = service.openLibrary(library.libraryPath);
+
+  // Pre-compute tag assignments (mirrors seed logic: every 10th asset gets tag "concept").
+  const tagAssignments = new Map<string, string[]>();
+  for (let idx = 0; idx < ASSET_COUNT; idx += 1) {
+    if (idx % 10 !== 0) continue;
+    tagAssignments.set(assetId(idx), ['concept']);
+  }
+
+  // Pre-compute collection assignments (mirrors seed logic: every 20th asset goes to "Favorites").
+  const collectionAssignments = new Map<string, string[]>();
+  for (let idx = 0; idx < ASSET_COUNT; idx += 1) {
+    if (idx % 20 !== 0) continue;
+    collectionAssignments.set(assetId(idx), ['Favorites']);
+  }
+
+  // First 10 assets are trashed in the seed.
+  const trashedAssetIds = new Set<string>();
+  for (let idx = 0; idx < 10; idx += 1) {
+    trashedAssetIds.add(assetId(idx));
+  }
 
   fixture = {
     libraryId: reopened.libraryId,
@@ -357,6 +412,10 @@ beforeAll(() => {
     ratings,
     favorites,
     descriptions,
+    sourcePageUrls,
+    tagAssignments,
+    collectionAssignments,
+    trashedAssetIds,
     tagCount: 10,
     collectionCount: 5,
   };
@@ -441,6 +500,18 @@ function verifyRoundTripIntegrity(
       importedMeta.description,
       `[${label}] asset ${aid} description mismatch`,
     ).toBe(sourceMeta.description);
+    expect(
+      importedMeta.sourcePageUrl,
+      `[${label}] asset ${aid} sourcePageUrl mismatch`,
+    ).toBe(sourceMeta.sourcePageUrl);
+    expect(
+      importedMeta.palette,
+      `[${label}] asset ${aid} palette mismatch`,
+    ).toBe(sourceMeta.palette);
+    expect(
+      importedMeta.entityVersion,
+      `[${label}] asset ${aid} entityVersion mismatch`,
+    ).toBe(sourceMeta.entityVersion);
 
     metaChecked += 1;
   }
@@ -463,6 +534,106 @@ function verifyRoundTripIntegrity(
   for (const sourceCol of sourceCollections) {
     const importedCol = importedCollections.find((c) => c.name === sourceCol.name);
     expect(importedCol, `[${label}] missing collection "${sourceCol.name}"`).toBeDefined();
+  }
+
+  // 5b. Tags: per-tag asset count preserved across round-trip.
+  for (const sourceTag of sourceTags) {
+    const importedTag = importedTags.find((t) => t.name === sourceTag.name);
+    expect(importedTag, `[${label}] missing tag "${sourceTag.name}" for count check`).toBeDefined();
+    expect(
+      importedTag!.assetCount,
+      `[${label}] tag "${sourceTag.name}" assetCount: src=${sourceTag.assetCount} imp=${importedTag!.assetCount}`,
+    ).toBe(sourceTag.assetCount);
+  }
+
+  // 6b. Collections: per-collection asset count preserved across round-trip.
+  for (const sourceCol of sourceCollections) {
+    const importedCol = importedCollections.find((c) => c.name === sourceCol.name);
+    expect(importedCol, `[${label}] missing collection "${sourceCol.name}" for count check`).toBeDefined();
+    expect(
+      importedCol!.assetCount,
+      `[${label}] collection "${sourceCol.name}" assetCount: src=${sourceCol.assetCount} imp=${importedCol!.assetCount}`,
+    ).toBe(sourceCol.assetCount);
+  }
+
+  // 7. Revisions, trash, and per-asset tag/collection links via direct
+  //    SQLite on the imported library.  WAL mode allows a concurrent reader.
+  {
+    const libs = importedService.listLibraries();
+    const importedPath = libs[0]!.libraryPath;
+    const dbPath = path.join(importedPath, '.serpent', 'library.db');
+    const db = new TestDatabase(dbPath);
+
+    // 7a. Revision count: seed creates exactly 1 revision per asset.
+    const revRow = db
+      .prepare('SELECT COUNT(*) AS cnt FROM revisions')
+      .get() as { cnt: number };
+    expect(
+      revRow.cnt,
+      `[${label}] revision count mismatch: expected ${ASSET_COUNT}, got ${revRow.cnt}`,
+    ).toBe(ASSET_COUNT);
+
+    // 7b. Trash state: verify trashed assets survived the round-trip.
+    // Trash is signalled by deleted_at IS NOT NULL (not by availability).
+    const trashRow = db
+      .prepare(
+        'SELECT COUNT(*) AS cnt FROM assets WHERE deleted_at IS NOT NULL',
+      )
+      .get() as { cnt: number };
+    expect(
+      trashRow.cnt,
+      `[${label}] trash count mismatch: expected ${fixture.trashedAssetIds.size}, got ${trashRow.cnt}`,
+    ).toBe(fixture.trashedAssetIds.size);
+
+    // 7c. Per-asset tag links: spot-check tagged assets still have the
+    //     same tags after import.
+    const getAssetTags = db.prepare(
+      `SELECT t.name FROM human_asset_tags hat
+         JOIN tags t ON t.tag_id = hat.tag_id
+        WHERE hat.asset_id = ?`,
+    );
+    const taggedAssetList = [...fixture.tagAssignments.keys()];
+    const tagSampleSize = 100;
+    const tagStep = Math.max(1, Math.floor(taggedAssetList.length / tagSampleSize));
+    let tagChecked = 0;
+    for (let i = 0; i < taggedAssetList.length && tagChecked < tagSampleSize; i += tagStep) {
+      const aid = taggedAssetList[i]!;
+      const expectedTags = fixture.tagAssignments.get(aid)!.slice().sort();
+      const actualTags = (getAssetTags.all(aid) as Array<{ name: string }>)
+        .map((r) => r.name)
+        .sort();
+      expect(
+        actualTags,
+        `[${label}] tags mismatch for asset ${aid}: expected ${JSON.stringify(expectedTags)}, got ${JSON.stringify(actualTags)}`,
+      ).toEqual(expectedTags);
+      tagChecked += 1;
+    }
+
+    // 7d. Per-asset collection links: spot-check collectioned assets
+    //     still belong to the same collections after import.
+    const getAssetCollections = db.prepare(
+      `SELECT c.name FROM collection_assets ca
+         JOIN collections c ON c.collection_id = ca.collection_id
+        WHERE ca.asset_id = ?`,
+    );
+    const colAssetList = [...fixture.collectionAssignments.keys()];
+    const colSampleSize = 100;
+    const colStep = Math.max(1, Math.floor(colAssetList.length / colSampleSize));
+    let colChecked = 0;
+    for (let i = 0; i < colAssetList.length && colChecked < colSampleSize; i += colStep) {
+      const aid = colAssetList[i]!;
+      const expectedCols = fixture.collectionAssignments.get(aid)!.slice().sort();
+      const actualCols = (getAssetCollections.all(aid) as Array<{ name: string }>)
+        .map((r) => r.name)
+        .sort();
+      expect(
+        actualCols,
+        `[${label}] collections mismatch for asset ${aid}: expected ${JSON.stringify(expectedCols)}, got ${JSON.stringify(actualCols)}`,
+      ).toEqual(expectedCols);
+      colChecked += 1;
+    }
+
+    db.close();
   }
 }
 
