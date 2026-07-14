@@ -44,6 +44,7 @@ import type {
   ImportProgressEvent,
 } from "../shared/protocol/responses";
 import { AssetPreviewModal } from "./AssetPreviewModal";
+import { loadCanvasPreferences, saveCanvasPreferences, type CanvasPreferences } from './canvas-preferences';
 
 type RendererWindow = Window & {
   serpent?: {
@@ -681,19 +682,11 @@ export function App() {
 
   // Thumbnail / Preview state
   const [previewAsset, setPreviewAsset] = useState<AssetSummary | null>(null);
-  const [assetViewMode, setAssetViewMode] = useState<"grid" | "masonry">(() =>
-    window.localStorage.getItem("serpent.asset-view-mode") === "masonry"
-      ? "masonry"
-      : "grid",
+  const [canvasPrefs, setCanvasPrefs] = useState<CanvasPreferences>(() =>
+    loadCanvasPreferences(),
   );
-  const [assetCardSize, setAssetCardSize] = useState(() => {
-    const stored = Number(
-      window.localStorage.getItem("serpent.asset-card-size"),
-    );
-    return Number.isFinite(stored) && stored >= 96 && stored <= 320
-      ? stored
-      : 160;
-  });
+  const assetViewMode = canvasPrefs.viewMode;
+  const assetCardSize = canvasPrefs.cardSize;
   const [loadingMoreAssets, setLoadingMoreAssets] = useState(false);
   const workspaceCanvasRef = useRef<HTMLDivElement>(null);
   const loadMoreSentinelRef = useRef<HTMLDivElement>(null);
@@ -801,7 +794,7 @@ export function App() {
             }
           : null;
 
-      setAssetCardSize(nextSize);
+      setCanvasPrefs((p) => ({ ...p, cardSize: nextSize }));
       window.requestAnimationFrame(() => {
         window.requestAnimationFrame(() => {
           if (!anchorState || !workspaceCanvasRef.current) return;
@@ -823,11 +816,8 @@ export function App() {
   );
 
   useEffect(() => {
-    window.localStorage.setItem(
-      "serpent.asset-card-size",
-      String(assetCardSize),
-    );
-  }, [assetCardSize]);
+    saveCanvasPreferences(canvasPrefs);
+  }, [canvasPrefs]);
 
   useEffect(() => {
     const canvas = workspaceCanvasRef.current;
@@ -5083,22 +5073,13 @@ export function App() {
             <ToolButton
               icon="grid"
               label="平铺视图"
-              onClick={() => {
-                setAssetViewMode("grid");
-                window.localStorage.setItem("serpent.asset-view-mode", "grid");
-              }}
+              onClick={() => setCanvasPrefs((p) => ({ ...p, viewMode: 'grid' }))}
               pressed={assetViewMode === "grid"}
             />
             <ToolButton
               icon="menu"
               label="瀑布流视图"
-              onClick={() => {
-                setAssetViewMode("masonry");
-                window.localStorage.setItem(
-                  "serpent.asset-view-mode",
-                  "masonry",
-                );
-              }}
+              onClick={() => setCanvasPrefs((p) => ({ ...p, viewMode: 'masonry' }))}
               pressed={assetViewMode === "masonry"}
             />
             <label className="asset-size-control">
@@ -5116,6 +5097,25 @@ export function App() {
                 value={assetCardSize}
               />
             </label>
+            <span className="tool-separator" />
+            {([
+              { field: 'name' as const, icon: 'tag' as const, label: '文件名' },
+              { field: 'size' as const, icon: 'info' as const, label: '文件大小' },
+              { field: 'date' as const, icon: 'star' as const, label: '修改日期' },
+            ]).map(({ field, icon, label }) => (
+              <ToolButton
+                key={field}
+                icon={icon}
+                label={label}
+                onClick={() =>
+                  setCanvasPrefs((p) => {
+                    const updatedFields = { ...p.fields, [field]: !p.fields[field] as boolean };
+                    return { ...p, fields: updatedFields };
+                  })
+                }
+                pressed={canvasPrefs.fields[field]}
+              />
+            ))}
             {library &&
               selectedAsset &&
               !showTrash &&
@@ -5453,9 +5453,11 @@ export function App() {
                 >
                   {visibleAssets.map((asset) => (
                     <button
+                      aria-label={canvasPrefs.fields.name ? undefined : asset.displayName}
                       aria-pressed={selectedIdSet.has(asset.assetId)}
                       className={`asset-card${selectedIdSet.has(asset.assetId) ? " is-selected" : ""}${asset.availability === "missing" ? " is-missing" : ""}${asset.deletedAt ? " is-trashed" : ""}`}
                       data-asset-id={asset.assetId}
+                      title={asset.displayName}
                       draggable={Boolean(
                         activeCollectionId && !collectionRecursive,
                       )}
@@ -5557,13 +5559,17 @@ export function App() {
                         )}
                       </div>
                       <div className="asset-caption">
-                        <strong title={asset.label ?? asset.displayName}>
-                          {asset.label ?? asset.displayName}
-                        </strong>
-                        {asset.label && (
-                          <span title={asset.displayName}>
-                            {asset.displayName}
-                          </span>
+                        {canvasPrefs.fields.name && (
+                          <>
+                            <strong title={asset.label ?? asset.displayName}>
+                              {asset.label ?? asset.displayName}
+                            </strong>
+                            {asset.label && (
+                              <span title={asset.displayName}>
+                                {asset.displayName}
+                              </span>
+                            )}
+                          </>
                         )}
                         {searchSnippets.has(asset.assetId) ? (
                           <span className="search-snippet">
@@ -5584,12 +5590,13 @@ export function App() {
                           >
                             {asset.trashedFromPath}
                           </span>
-                        ) : (
+                        ) : (canvasPrefs.fields.size || canvasPrefs.fields.date) ? (
                           <span>
-                            {formatBytes(asset.byteSize)} ·{" "}
-                            {formatDate(asset.modifiedAt)}
+                            {canvasPrefs.fields.size && formatBytes(asset.byteSize)}
+                            {canvasPrefs.fields.size && canvasPrefs.fields.date && " · "}
+                            {canvasPrefs.fields.date && formatDate(asset.modifiedAt)}
                           </span>
-                        )}
+                        ) : null}
                       </div>
                     </button>
                   ))}
