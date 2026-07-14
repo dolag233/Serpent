@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "bundles": {
+    "darwin-arm64": {
+      "status": "build-required",
+      "reason": "The project-controlled vcpkg workflow is defined, but no successful macOS arm64 bundle artifact has been promoted to an immutable HTTPS URL and checksum-pinned yet."
+    },
+    "win32-x64": {
+      "status": "build-required",
+      "reason": "The project-controlled vcpkg workflow is defined, but no successful Windows x64 bundle artifact has been promoted to an immutable HTTPS URL and checksum-pinned yet."
+    }
+  }
+}

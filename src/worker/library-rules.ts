@@ -86,6 +86,25 @@ export function normalizeRelativeAssetPath(input: string): string {
   return normalized;
 }
 
+/**
+ * A conservative, locale-independent identity for paths that may move between
+ * the currently supported macOS and Windows filesystems. The original path is
+ * still persisted for display and disk access; this key is only for identity.
+ *
+ * JavaScript does not expose Unicode's CaseFolding.txt mapping. The
+ * locale-insensitive upper-then-lower conversion is a deterministic practical
+ * case-fold: unlike lowercasing alone it also folds common expansions and the
+ * two lowercase sigma forms. NFC is applied again after those expansions.
+ */
+export function portablePathSegmentIdentity(segment: string): string {
+  return segment.normalize('NFC').toUpperCase().toLowerCase().normalize('NFC');
+}
+
+export function portablePathIdentity(relativePath: string): string {
+  const normalized = normalizeRelativeAssetPath(relativePath);
+  return normalized.split('/').map(portablePathSegmentIdentity).join('/');
+}
+
 export function copyNameForIndex(fileName: string, index: number): string {
   if (!Number.isSafeInteger(index) || index < 2) {
     throw new RangeError('Copy indexes start at 2.');

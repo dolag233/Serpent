@@ -1,0 +1,19 @@
+---
+description: Serpent repository-wide engineering and QA rules
+alwaysApply: true
+---
+
+# Serpent Cursor 入口
+
+开始任何修改前读取并遵循：
+
+1. `AGENTS.md`
+2. `docs/product-brief.md`
+3. `docs/development-process.md`
+4. `docs/domain-model.md`
+5. `docs/project-status.md`
+6. `docs/qa/human-acceptance-checklist.md`
+
+核心媒体、浏览、导入、搜索、删除和持久化必须使用真实 Electron 用户旅程验收。图片/视频要证明实际解码；完整重启恢复要退出整个 Electron 进程；多 agent 合流后运行 `npm run verify:mainline`。聊天或 Cursor memory 不能代替仓库文档。
+
+每完成一个可由人类独立操作的功能增量，必须在同一提交中实时更新 `docs/qa/human-acceptance-checklist.md`，并在回复中列出验收项 ID 与操作步骤。自动化或 agent 自测不能代替用户本人将状态改为“人类验收通过”。

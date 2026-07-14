@@ -1,5 +1,6 @@
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -109,6 +110,199 @@ describe('pending import plans', () => {
     expect(existsSync(path.join(library.libraryPath, '.serpent', 'operations'))).toBe(false);
   });
 
+  it('omits operating-system metadata and common dependency/cache trees', () => {
+    const root = temporaryRoot();
+    const source = path.join(root, 'Reference');
+    mkdirSync(path.join(source, '.git'), { recursive: true });
+    mkdirSync(path.join(source, 'node_modules', 'package'), { recursive: true });
+    mkdirSync(path.join(source, 'shots'), { recursive: true });
+    writeFileSync(path.join(source, '.DS_Store'), 'finder metadata');
+    writeFileSync(path.join(source, 'Thumbs.db'), 'windows thumbnails');
+    writeFileSync(path.join(source, '._sidecar.png'), 'resource fork');
+    writeFileSync(path.join(source, '.git', 'config'), 'git data');
+    writeFileSync(path.join(source, 'node_modules', 'package', 'index.js'), 'dependency');
+    writeFileSync(path.join(source, 'shots', 'hero.png'), 'hero');
+    const service = new LibraryService();
+    const library = service.createLibrary({ displayName: 'IgnoredMetadata', selectedParentPath: root });
+
+    const completion = service.prepareOrExecuteImport({
+      libraryId: library.libraryId,
+      sourceKind: 'folder',
+      sourcePaths: [source],
+    });
+
+    expect(completion).toMatchObject({ importedCount: 1, skippedCount: 0 });
+    expect(service.listAssets({ libraryId: library.libraryId, recursive: true })
+      .map((asset) => asset.displayName)).toEqual(['hero.png']);
+    service.closeAll();
+  });
+
+  it('imports existing names longer than the managed-folder display-name limit', () => {
+    const root = temporaryRoot();
+    const source = path.join(root, 'Reference');
+    const longFileName = `${'long-existing-file-name-'.repeat(4)}reference.jpg`;
+    expect([...longFileName].length).toBeGreaterThan(80);
+    mkdirSync(source);
+    writeFileSync(path.join(source, longFileName), 'reference');
+    const service = new LibraryService();
+    const library = service.createLibrary({ displayName: 'Long names', selectedParentPath: root });
+
+    const completion = service.prepareOrExecuteImport({
+      libraryId: library.libraryId,
+      sourceKind: 'folder',
+      sourcePaths: [source],
+    });
+
+    expect(completion).toMatchObject({ importedCount: 1, skippedCount: 0, replacedCount: 0 });
+    expect(readFileSync(path.join(library.libraryPath, 'Assets', 'Reference', longFileName), 'utf8'))
+      .toBe('reference');
+    service.closeAll();
+  });
+
+  it.each([
+    ['case variants', 'Foo.PNG', 'foo.png'],
+    ['canonical Unicode variants', 'Café.png', 'Cafe\u0301.png'],
+  ])('uses one portable identity for %s and preserves the replaced asset id', (_, firstName, secondName) => {
+    const root = temporaryRoot();
+    const firstDirectory = path.join(root, 'first');
+    const secondDirectory = path.join(root, 'second');
+    mkdirSync(firstDirectory);
+    mkdirSync(secondDirectory);
+    const firstSource = path.join(firstDirectory, firstName);
+    const secondSource = path.join(secondDirectory, secondName);
+    writeFileSync(firstSource, 'old');
+    writeFileSync(secondSource, 'new content');
+    const service = new LibraryService();
+    const library = service.createLibrary({ displayName: `Portable ${firstName}`, selectedParentPath: root });
+    const initial = service.prepareOrExecuteImport({
+      libraryId: library.libraryId,
+      sourceKind: 'files',
+      sourcePaths: [firstSource],
+    });
+    expect('assets' in initial).toBe(true);
+    const initialAsset = 'assets' in initial ? initial.assets[0]! : undefined;
+
+    const plan = service.prepareImport({
+      libraryId: library.libraryId,
+      sourceKind: 'files',
+      sourcePaths: [secondSource],
+    });
+    expect(plan.nameConflictCount).toBe(1);
+    const replaced = service.resolveImport({
+      importId: plan.importId,
+      suspectedDuplicate: 'skip',
+      nameConflict: 'replace',
+    });
+
+    expect(replaced.assets[0]?.assetId).toBe(initialAsset?.assetId);
+    expect(service.listAssets({ libraryId: library.libraryId, recursive: true })).toHaveLength(1);
+    expect(readFileSync(path.join(library.libraryPath, 'Assets', firstName), 'utf8')).toBe('new content');
+    service.closeAll();
+  });
+
+  it('detects portable-identity collisions within one batch', () => {
+    const root = temporaryRoot();
+    const firstDirectory = path.join(root, 'first');
+    const secondDirectory = path.join(root, 'second');
+    mkdirSync(firstDirectory);
+    mkdirSync(secondDirectory);
+    const first = path.join(firstDirectory, 'Foo.png');
+    const second = path.join(secondDirectory, 'foo.PNG');
+    writeFileSync(first, 'one');
+    writeFileSync(second, 'different');
+    const service = new LibraryService();
+    const library = service.createLibrary({ displayName: 'Batch identity', selectedParentPath: root });
+
+    const plan = service.prepareImport({
+      libraryId: library.libraryId,
+      sourceKind: 'files',
+      sourcePaths: [first, second],
+    });
+    expect(plan).toMatchObject({ nameConflictCount: 1, suspectedDuplicateCount: 0 });
+    const completion = service.resolveImport({
+      importId: plan.importId,
+      suspectedDuplicate: 'skip',
+      nameConflict: 'keep-both',
+    });
+    expect(completion.assets.map((asset) => asset.relativeFilePath).sort()).toEqual([
+      'Foo.png',
+      'foo (2).PNG',
+    ]);
+    service.closeAll();
+  });
+
+  it('rejects a POSIX source name containing a backslash without changing its hierarchy', () => {
+    if (path.sep !== '/') return;
+    const root = temporaryRoot();
+    const source = path.join(root, 'literal\\segment.png');
+    writeFileSync(source, 'source');
+    const service = new LibraryService();
+    const library = service.createLibrary({ displayName: 'Backslash', selectedParentPath: root });
+
+    let thrown: unknown;
+    try {
+      service.prepareImport({
+        libraryId: library.libraryId,
+        sourceKind: 'files',
+        sourcePaths: [source],
+      });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toMatchObject({ code: 'INVALID_IMPORT_SOURCE', reason: 'NAME_NOT_SUPPORTED' });
+    expect(readdirSync(path.join(library.libraryPath, 'Assets'))).toEqual([]);
+    service.closeAll();
+  });
+
+  it.each([
+    ['ASCII', `${'long-name-'.repeat(14)}asset.png`, 90],
+    ['multibyte', `${'素材😀'.repeat(18)}.png`, 80],
+  ])('shortens an overlong %s copy name only after the target filesystem rejects it', (_, fileName, byteLimit) => {
+    const root = temporaryRoot();
+    const firstDirectory = path.join(root, 'first');
+    const secondDirectory = path.join(root, 'second');
+    mkdirSync(firstDirectory);
+    mkdirSync(secondDirectory);
+    const first = path.join(firstDirectory, fileName);
+    const second = path.join(secondDirectory, fileName);
+    writeFileSync(first, 'old');
+    writeFileSync(second, 'new content');
+    const setup = new LibraryService();
+    const created = setup.createLibrary({ displayName: `Long copy ${fileName.length}`, selectedParentPath: root });
+    setup.prepareOrExecuteImport({
+      libraryId: created.libraryId,
+      sourceKind: 'files',
+      sourcePaths: [first],
+    });
+    setup.closeAll();
+    const service = new LibraryService({
+      destinationLstat: (candidatePath) => {
+        if (Buffer.byteLength(path.basename(candidatePath), 'utf8') > byteLimit) {
+          throw Object.assign(new Error('simulated target component limit'), {
+            code: 'ENAMETOOLONG',
+          });
+        }
+        return lstatSync(candidatePath);
+      },
+    });
+    const library = service.openLibrary(created.libraryPath);
+    const plan = service.prepareImport({
+      libraryId: library.libraryId,
+      sourceKind: 'files',
+      sourcePaths: [second],
+    });
+    const completion = service.resolveImport({
+      importId: plan.importId,
+      suspectedDuplicate: 'skip',
+      nameConflict: 'keep-both',
+    });
+    const copyPath = completion.assets[0]!.relativeFilePath;
+    expect(Buffer.byteLength(path.basename(copyPath), 'utf8')).toBeLessThanOrEqual(byteLimit);
+    expect(copyPath).toMatch(/ \(2\)\.png$/u);
+    expect(readFileSync(path.join(library.libraryPath, 'Assets', copyPath), 'utf8')).toBe('new content');
+    service.closeAll();
+  });
+
   it('summarizes conflicts using safe display names only', () => {
     const root = temporaryRoot();
     const firstSource = path.join(root, 'first');
@@ -159,6 +353,73 @@ describe('pending import plans', () => {
       () => service.prepareImport({ libraryId: library.libraryId, sourceKind: 'folder', sourcePaths: [source] }),
       'INVALID_IMPORT_SOURCE',
     );
+    try {
+      service.prepareImport({ libraryId: library.libraryId, sourceKind: 'folder', sourcePaths: [source] });
+    } catch (error) {
+      expect(error).toMatchObject({ reason: 'SYMBOLIC_LINK_NOT_ALLOWED' });
+    }
+    expect(existsSync(path.join(library.libraryPath, '.serpent', 'operations'))).toBe(false);
+    service.closeAll();
+  });
+
+  it('rejects a source replaced by a symlink after enumeration but before opening', () => {
+    const root = temporaryRoot();
+    const source = path.join(root, 'source.png');
+    const outside = path.join(root, 'outside.png');
+    writeFileSync(source, 'source');
+    writeFileSync(outside, 'outside');
+    const service = new LibraryService({
+      beforeSourceSnapshotOpen: (sourcePath) => {
+        rmSync(sourcePath);
+        symlinkSync(outside, sourcePath);
+      },
+    });
+    const library = service.createLibrary({ displayName: 'Symlink Swap', selectedParentPath: root });
+
+    let thrown: unknown;
+    try {
+      service.prepareImport({
+        libraryId: library.libraryId,
+        sourceKind: 'files',
+        sourcePaths: [source],
+      });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toMatchObject({
+      code: 'INVALID_IMPORT_SOURCE',
+      reason: 'SYMBOLIC_LINK_NOT_ALLOWED',
+    });
+    expect(existsSync(path.join(library.libraryPath, '.serpent', 'operations'))).toBe(false);
+    service.closeAll();
+  });
+
+  it('rejects same-size source content and timestamp changes after snapshot copying', () => {
+    const root = temporaryRoot();
+    const source = path.join(root, 'changing.png');
+    writeFileSync(source, 'AAAA');
+    const service = new LibraryService({
+      afterSourceSnapshotCopy: (sourcePath) => {
+        writeFileSync(sourcePath, 'BBBB');
+        utimesSync(sourcePath, new Date(1_000), new Date(1_000));
+      },
+    });
+    const library = service.createLibrary({ displayName: 'Changing Source', selectedParentPath: root });
+
+    let thrown: unknown;
+    try {
+      service.prepareImport({
+        libraryId: library.libraryId,
+        sourceKind: 'files',
+        sourcePaths: [source],
+      });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toMatchObject({
+      code: 'INVALID_IMPORT_SOURCE',
+      reason: 'SOURCE_CHANGED',
+    });
     expect(existsSync(path.join(library.libraryPath, '.serpent', 'operations'))).toBe(false);
     service.closeAll();
   });
@@ -452,6 +713,54 @@ describe('pending import plans', () => {
     service.closeAll();
   });
 
+  it('keeps a committed import successful when operation cleanup is deferred', () => {
+    const root = temporaryRoot();
+    const source = path.join(root, 'committed.png');
+    writeFileSync(source, 'committed bytes');
+    const service = new LibraryService({ failAt: 'committed-cleanup' });
+    const library = service.createLibrary({ displayName: 'Committed Cleanup', selectedParentPath: root });
+    const plan = service.prepareImport({ libraryId: library.libraryId, sourceKind: 'files', sourcePaths: [source] });
+
+    const completion = service.resolveImport({
+      importId: plan.importId,
+      suspectedDuplicate: 'skip',
+      nameConflict: 'keep-both',
+    });
+    expect(completion).toMatchObject({ importedCount: 1, skippedCount: 0, replacedCount: 0 });
+    expect(readFileSync(path.join(library.libraryPath, 'Assets', 'committed.png'), 'utf8')).toBe('committed bytes');
+    const operationPath = path.join(library.libraryPath, '.serpent', 'operations', plan.importId);
+    expect(existsSync(operationPath)).toBe(true);
+    service.closeAll();
+
+    const reopened = new LibraryService();
+    const recovered = reopened.openLibrary(library.libraryPath);
+    expect(reopened.listAssets({ libraryId: recovered.libraryId, recursive: true })).toHaveLength(1);
+    expect(readFileSync(path.join(recovered.libraryPath, 'Assets', 'committed.png'), 'utf8')).toBe('committed bytes');
+    expect(existsSync(operationPath)).toBe(false);
+    reopened.closeAll();
+  });
+
+  it('does not report a committed import as retryable when result listing fails', () => {
+    const root = temporaryRoot();
+    const source = path.join(root, 'listed.png');
+    writeFileSync(source, 'listed bytes');
+    const service = new LibraryService({ failAt: 'committed-result-list' });
+    const library = service.createLibrary({ displayName: 'Committed Result', selectedParentPath: root });
+    const plan = service.prepareImport({ libraryId: library.libraryId, sourceKind: 'files', sourcePaths: [source] });
+
+    expect(service.resolveImport({
+      importId: plan.importId,
+      suspectedDuplicate: 'skip',
+      nameConflict: 'keep-both',
+    })).toEqual({ importedCount: 1, skippedCount: 0, replacedCount: 0, assets: [] });
+    expect(service.listAssets({ libraryId: library.libraryId, recursive: true })).toHaveLength(1);
+    expectServiceCode(
+      () => service.resolveImport({ importId: plan.importId, suspectedDuplicate: 'skip', nameConflict: 'keep-both' }),
+      'IMPORT_NOT_FOUND',
+    );
+    service.closeAll();
+  });
+
   it('reverses a partially placed multi-file batch in manifest order', () => {
     const root = temporaryRoot();
     const first = path.join(root, 'first.png');
@@ -584,6 +893,65 @@ describe('managed asset refresh', () => {
     expect(statOnly).toMatchObject({ changedCount: 1, missingCount: 0 });
     expect(statOnly.assets[0]?.assetId).toBe(initial.assetId);
     expect(statOnly.assets[0]?.currentRevisionId).not.toBe(overwriteRevision.currentRevisionId);
+    service.closeAll();
+  });
+
+  it.each([
+    ['EACCES', 'PERMISSION_DENIED'],
+    ['EIO', 'IO_ERROR'],
+  ] as const)('propagates %s stat failures with a safe reason instead of marking missing', (code, reason) => {
+    const root = temporaryRoot();
+    const source = path.join(root, `refresh-${code}.png`);
+    writeFileSync(source, 'first');
+    let rejectStats = false;
+    const service = new LibraryService({
+      assetLstat: (assetPath) => {
+        if (rejectStats) throw Object.assign(new Error(`Injected ${code}`), { code });
+        return lstatSync(assetPath);
+      },
+    });
+    const library = service.createLibrary({ displayName: `Refresh ${code}`, selectedParentPath: root });
+    const plan = service.prepareImport({ libraryId: library.libraryId, sourceKind: 'files', sourcePaths: [source] });
+    const initial = service.resolveImport({ importId: plan.importId, suspectedDuplicate: 'skip', nameConflict: 'keep-both' }).assets[0]!;
+    rejectStats = true;
+
+    let thrown: unknown;
+    try {
+      service.refreshManagedAssets(library.libraryId);
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(LibraryServiceError);
+    expect(thrown).toMatchObject({ code: 'IMPORT_APPLY_FAILED', reason });
+    rejectStats = false;
+    expect(service.listAssets({ libraryId: library.libraryId, recursive: true })[0]).toMatchObject({
+      assetId: initial.assetId,
+      availability: 'available',
+    });
+    service.closeAll();
+  });
+
+  it('treats ENOTDIR from asset stat as missing', () => {
+    const root = temporaryRoot();
+    const source = path.join(root, 'refresh-enotdir.png');
+    writeFileSync(source, 'first');
+    let missing = false;
+    const service = new LibraryService({
+      assetLstat: (assetPath) => {
+        if (missing) throw Object.assign(new Error('Injected ENOTDIR'), { code: 'ENOTDIR' });
+        return lstatSync(assetPath);
+      },
+    });
+    const library = service.createLibrary({ displayName: 'Refresh ENOTDIR', selectedParentPath: root });
+    const plan = service.prepareImport({ libraryId: library.libraryId, sourceKind: 'files', sourcePaths: [source] });
+    service.resolveImport({ importId: plan.importId, suspectedDuplicate: 'skip', nameConflict: 'keep-both' });
+    missing = true;
+
+    expect(service.refreshManagedAssets(library.libraryId)).toMatchObject({
+      changedCount: 1,
+      missingCount: 1,
+      assets: [{ availability: 'missing' }],
+    });
     service.closeAll();
   });
 });

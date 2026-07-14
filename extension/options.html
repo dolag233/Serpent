@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Serpent 扩展配对</title>
+    <link rel="stylesheet" href="options.css">
+  </head>
+  <body>
+    <main>
+      <p class="eyebrow">SERPENT BROWSER EXTENSION</p>
+      <h1>连接桌面应用</h1>
+      <p>在 Serpent 桌面应用中打开“浏览器扩展”，复制配对码并粘贴到这里。配对码只保存在本机浏览器配置中。</p>
+      <form id="pairing-form">
+        <label for="pairing-token">配对码</label>
+        <input id="pairing-token" name="pairing-token" type="password" autocomplete="off" spellcheck="false" required>
+        <button type="submit">保存配对码</button>
+      </form>
+      <p id="status" aria-live="polite"></p>
+    </main>
+    <script type="module" src="options.js"></script>
+  </body>
+</html>

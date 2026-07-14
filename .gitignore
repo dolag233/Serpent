@@ -2,10 +2,7 @@
 .agents/
 .claude/
 .vscode/
-CLAUDE.md
-AGENTS.md
 skills-lock.json
-docs/
 
 node_modules/
 **/.vite/
@@ -18,3 +15,13 @@ test-results/
 .env
 .env.*
 !.env.example
+
+# Large platform media bundles are produced by the trusted build pipeline or
+# acquired from a checksum-pinned release. Never commit local/system binaries.
+resources/ffmpeg/
+resources/oiio/
+resources/media-binaries/*/manifest.json
+resources/media-binaries/*/licenses/
+resources/media-binaries/vcpkg/vcpkg_installed/
+.media-build/
+artifacts/media-binaries/

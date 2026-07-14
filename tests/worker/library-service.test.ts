@@ -9,6 +9,7 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -40,13 +41,109 @@ const TestDatabase = require('better-sqlite3') as new (
 function downgradeLibraryToV1(libraryPath: string, createMigrationBlocker = false): void {
   const database = new TestDatabase(path.join(libraryPath, '.serpent', 'library.db'));
   database.exec(`
+    -- Reverse v6: drop FTS5 tables and triggers.
+    DROP TABLE IF EXISTS asset_search;
+    DROP TABLE IF EXISTS asset_search_index;
+    DROP TRIGGER IF EXISTS asset_search_index_ai;
+    DROP TRIGGER IF EXISTS asset_search_index_ad;
+    DROP TRIGGER IF EXISTS asset_search_index_au;
+    DROP INDEX IF EXISTS smart_collections_library_name_unique;
+    DROP TABLE IF EXISTS collection_assets;
+    DROP TABLE IF EXISTS collections;
+    DROP TABLE IF EXISTS smart_collections;
+    DROP TABLE IF EXISTS human_asset_tags;
+    DROP TABLE IF EXISTS ai_asset_tags;
+    -- Reverse v8: drop ai_content.
+    DROP TABLE IF EXISTS ai_content;
+    DROP INDEX IF EXISTS ai_content_asset_field;
+    -- Reverse v9: drop revision_artifacts + jobs.
+    DROP TABLE IF EXISTS linked_ignored_assets;
+    DROP TABLE IF EXISTS linked_folder_rules;
+    DROP TABLE IF EXISTS revision_artifacts;
+    DROP TABLE IF EXISTS jobs;
+    DROP TABLE IF EXISTS asset_metadata;
+    DROP TABLE IF EXISTS tags;
     DROP TABLE file_operations;
     DROP TABLE revisions;
     DROP TABLE assets;
+    DROP TABLE IF EXISTS linked_folders;
     DROP TABLE managed_folders;
-    DELETE FROM schema_migrations WHERE version = 2;
+    DELETE FROM schema_migrations WHERE version >= 2;
     PRAGMA user_version = 1;
     ${createMigrationBlocker ? 'CREATE TABLE managed_folders (blocker TEXT);' : ''}
+  `);
+  database.close();
+}
+
+function downgradeLibraryToV2(libraryPath: string): void {
+  const database = new TestDatabase(path.join(libraryPath, '.serpent', 'library.db'));
+  database.exec(`
+    -- better-sqlite3 defaults foreign_keys = ON (unlike SQLite's default OFF);
+    -- disable during this raw downgrade so DROP TABLE assets does not cascade
+    -- through revisions.asset_id ON DELETE CASCADE and orphan every asset.
+    PRAGMA foreign_keys = OFF;
+    -- Reverse v6: drop FTS5 tables and triggers.
+    DROP TABLE IF EXISTS asset_search;
+    DROP TABLE IF EXISTS asset_search_index;
+    DROP TRIGGER IF EXISTS asset_search_index_ai;
+    DROP TRIGGER IF EXISTS asset_search_index_ad;
+    DROP TRIGGER IF EXISTS asset_search_index_au;
+    DROP INDEX IF EXISTS smart_collections_library_name_unique;
+    -- Reverse v5: drop organization tables (tags, collections, metadata).
+    DROP TABLE IF EXISTS collection_assets;
+    DROP TABLE IF EXISTS collections;
+    DROP TABLE IF EXISTS smart_collections;
+    DROP TABLE IF EXISTS human_asset_tags;
+    DROP TABLE IF EXISTS ai_asset_tags;
+    -- Reverse v8: drop ai_content.
+    DROP TABLE IF EXISTS ai_content;
+    DROP INDEX IF EXISTS ai_content_asset_field;
+    -- Reverse v9: drop revision_artifacts + jobs.
+    DROP TABLE IF EXISTS linked_ignored_assets;
+    DROP TABLE IF EXISTS linked_folder_rules;
+    DROP TABLE IF EXISTS revision_artifacts;
+    DROP TABLE IF EXISTS jobs;
+    DROP TABLE IF EXISTS asset_metadata;
+    DROP TABLE IF EXISTS tags;
+    -- Reverse v4: drop linked-related objects and rebuild assets to v2 shape
+    -- (no path_identity, no linked_folder_id, location_kind='managed',
+    -- relative_file_path UNIQUE column constraint).
+    DROP TABLE IF EXISTS linked_folders;
+    DROP INDEX IF EXISTS assets_linked_folder_path_idx;
+    DROP INDEX IF EXISTS assets_managed_relative_unique;
+    DROP INDEX IF EXISTS assets_managed_path_identity_unique;
+    DROP INDEX IF EXISTS assets_linked_relative_unique;
+    DROP INDEX IF EXISTS assets_linked_path_identity_unique;
+    DROP TRIGGER IF EXISTS assets_path_identity_required_insert;
+    DROP TRIGGER IF EXISTS assets_path_identity_required_update;
+    CREATE TABLE assets_v2 (
+      asset_id TEXT PRIMARY KEY,
+      location_kind TEXT NOT NULL CHECK (location_kind = 'managed'),
+      managed_folder_id TEXT REFERENCES managed_folders(folder_id) ON DELETE RESTRICT,
+      relative_file_path TEXT NOT NULL UNIQUE,
+      current_revision_id TEXT,
+      availability TEXT NOT NULL CHECK (availability IN ('available', 'missing')),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    INSERT INTO assets_v2 (
+      asset_id, location_kind, managed_folder_id, relative_file_path,
+      current_revision_id, availability, created_at, updated_at
+    )
+    SELECT
+      asset_id, 'managed', managed_folder_id, relative_file_path,
+      current_revision_id, availability, created_at, updated_at
+    FROM assets;
+    DROP TABLE assets;
+    ALTER TABLE assets_v2 RENAME TO assets;
+    CREATE INDEX assets_folder_path_idx ON assets(managed_folder_id, relative_file_path);
+    -- Reverse v3: drop managed_folders path_identity.
+    DROP TRIGGER IF EXISTS managed_folders_path_identity_required_insert;
+    DROP TRIGGER IF EXISTS managed_folders_path_identity_required_update;
+    DROP INDEX IF EXISTS managed_folders_path_identity_unique;
+    ALTER TABLE managed_folders DROP COLUMN path_identity;
+    DELETE FROM schema_migrations WHERE version >= 3;
+    PRAGMA user_version = 2;
   `);
   database.close();
 }
@@ -98,7 +195,7 @@ describe('LibraryService lifecycle', () => {
     expect(service.listLibraries()).toEqual([created]);
 
     const database = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
-    expect(database.pragma('user_version')).toEqual([{ user_version: 2 }]);
+    expect(database.pragma('user_version')).toEqual([{ user_version: 13 }]);
     database.close();
 
     expect(service.openLibrary(created.libraryPath)).toEqual(created);
@@ -206,7 +303,7 @@ describe('LibraryService lifecycle', () => {
     );
   });
 
-  it('migrates a valid v1 library to v2 when opening', () => {
+  it('migrates a valid v1 library through v2 to v3 when opening', () => {
     const root = temporaryRoot();
     const service = new LibraryService();
     const created = service.createLibrary({ displayName: 'Migration', selectedParentPath: root });
@@ -216,12 +313,38 @@ describe('LibraryService lifecycle', () => {
     service.openLibrary(created.libraryPath);
 
     const database = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
-    expect(database.pragma('user_version')).toEqual([{ user_version: 2 }]);
+    expect(database.pragma('user_version')).toEqual([{ user_version: 13 }]);
     expect(
       database
         .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'assets'")
         .all(),
     ).toEqual([{ name: 'assets' }]);
+    database.close();
+    service.closeAll();
+  });
+
+  it('migrates a populated v2 library to portable path identities', () => {
+    const root = temporaryRoot();
+    const source = path.join(root, 'Café.PNG');
+    writeFileSync(source, 'asset');
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'Portable Migration', selectedParentPath: root });
+    service.prepareOrExecuteImport({
+      libraryId: created.libraryId,
+      sourceKind: 'files',
+      sourcePaths: [source],
+    });
+    service.closeAll();
+    downgradeLibraryToV2(created.libraryPath);
+
+    const reopened = service.openLibrary(created.libraryPath);
+    expect(service.listAssets({ libraryId: reopened.libraryId, recursive: true })[0])
+      .toMatchObject({ relativeFilePath: 'Café.PNG' });
+    const database = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    expect(database.pragma('user_version')).toEqual([{ user_version: 13 }]);
+    expect(database.prepare('SELECT path_identity FROM assets').all()).toEqual([
+      { path_identity: 'café.png' },
+    ]);
     database.close();
     service.closeAll();
   });
@@ -241,6 +364,36 @@ describe('LibraryService lifecycle', () => {
       { version: 1 },
     ]);
     database.close();
+  });
+
+  it('does not commit a table-rebuild migration when foreign keys are corrupt', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'Foreign Key Rollback', selectedParentPath: root });
+    service.closeAll();
+    downgradeLibraryToV2(created.libraryPath);
+
+    const before = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    before.pragma('foreign_keys = OFF');
+    before.prepare(
+      `INSERT INTO revisions
+         (revision_id, asset_id, parent_revision_id, byte_size, modified_at,
+          original_filename, origin, accepted_at)
+       VALUES (?, ?, NULL, 1, ?, 'orphan.png', 'import', ?)`,
+    ).run(randomUUID(), randomUUID(), new Date().toISOString(), new Date().toISOString());
+    before.close();
+
+    expectServiceError(() => service.openLibrary(created.libraryPath), 'LIBRARY_CORRUPT');
+
+    const after = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    expect(after.pragma('user_version')).toEqual([{ user_version: 3 }]);
+    expect(after.prepare('SELECT version FROM schema_migrations ORDER BY version').all()).toEqual([
+      { version: 1 },
+      { version: 2 },
+      { version: 3 },
+    ]);
+    expect(after.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'linked_folders'").all()).toEqual([]);
+    after.close();
   });
 
   it('rejects a corrupt database without leaving the library open', () => {

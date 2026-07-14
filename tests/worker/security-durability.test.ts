@@ -64,6 +64,44 @@ describe('database and path hardening', () => {
     expect(readFileSync(sentinel, 'utf8')).toBe('keep');
   });
 
+  it('rejects a restore manifest path escape without moving either file', () => {
+    const root = temporaryRoot();
+    const setup = new LibraryService();
+    const library = setup.createLibrary({ displayName: 'Restore Manifest Escape', selectedParentPath: root });
+    setup.closeAll();
+
+    const operationId = '33333333-3333-4333-8333-333333333333';
+    const assetId = '44444444-4444-4444-8444-444444444444';
+    const operationPath = path.join(library.libraryPath, '.serpent', 'operations', operationId);
+    mkdirSync(path.join(operationPath, 'backup'), { recursive: true });
+    const sentinel = path.join(library.libraryPath, 'sentinel.txt');
+    writeFileSync(sentinel, 'keep');
+    const database = openConfiguredDatabase(path.join(library.libraryPath, '.serpent', 'library.db'));
+    const now = new Date().toISOString();
+    database.prepare(
+      `INSERT INTO file_operations
+         (operation_id, kind, status, manifest_json, error_code, created_at, updated_at)
+       VALUES (?, 'restore', 'applying', ?, NULL, ?, ?)`,
+    ).run(operationId, JSON.stringify({
+      version: 3,
+      kind: 'restore',
+      files: [{
+        assetId,
+        backupDestinationRelativePath: null,
+        backupName: '0',
+        conflictingAssetId: null,
+        destinationRelativePath: '../sentinel.txt',
+        hadDestination: false,
+        trashFilename: 'asset.png',
+      }],
+    }), now, now);
+    database.close();
+
+    expectCode(() => new LibraryService().openLibrary(library.libraryPath), 'LIBRARY_CORRUPT');
+    expect(readFileSync(sentinel, 'utf8')).toBe('keep');
+    expect(existsSync(path.join(operationPath, 'backup'))).toBe(true);
+  });
+
   it('uses WAL, FULL synchronous mode, and foreign key enforcement', () => {
     const root = temporaryRoot();
     const service = new LibraryService();
