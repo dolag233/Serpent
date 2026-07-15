@@ -1103,6 +1103,27 @@ input[type="range"] {
   font-size: 11px;
 }
 
+.context-menu-selection-summary {
+  padding: 7px 10px 6px;
+  color: var(--text, #f1f2ef);
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+}
+
+.context-menu-scope-note {
+  max-width: 310px;
+  margin: 0 6px 5px;
+  padding: 7px 8px;
+  border: 1px solid var(--divider-soft, #393c3f);
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--raised-2, #3a3d40) 72%, transparent);
+  color: var(--secondary, #adb2ae);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: normal;
+}
+
 .context-menu-section {
   padding: 2px 0;
 }

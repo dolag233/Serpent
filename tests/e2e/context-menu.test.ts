@@ -1,6 +1,6 @@
 import { _electron as electron, expect, test, type Page } from "@playwright/test";
 
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -102,6 +102,9 @@ test("context menu closes on outside click, Escape, scroll, and window resize", 
     // Verify menu still works after all close events
     await assetCard.click({ button: "right" });
     await expect(window.getByRole("menu")).toBeVisible({ timeout: 5_000 });
+    await expect(
+      window.getByRole("menu").getByText("已选择 1 项", { exact: true }),
+    ).toBeVisible();
     await expect(window.getByRole("menuitem", { name: "使用外部应用打开" })).toBeVisible();
   } finally {
     await application.close();
@@ -461,6 +464,95 @@ test("scope change closes the context menu", async () => {
     // Click a sidebar nav item (scope change) — should close the menu
     await window.getByRole("button", { name: /所有资产/ }).click();
     await expect(window.getByRole("menu")).not.toBeVisible({ timeout: 5_000 });
+  } finally {
+    await application.close();
+    rmSync(temporaryRoot, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Test 8 — Multi-selection heading and mixed file-operation scope
+// ---------------------------------------------------------------------------
+
+test("multi-asset menu shows a visible count and mixed-selection skip reasons", async () => {
+  const temporaryRoot = mkdtempSync(path.join(tmpdir(), "serpent-cm-mixed-"));
+  const libraryPath = path.join(temporaryRoot, "CM-Mixed");
+  const managedSourcePath = path.join(temporaryRoot, "managed.png");
+  const linkedSourceRoot = path.join(temporaryRoot, "linked-source");
+  writeFileSync(managedSourcePath, VALID_PNG);
+  mkdirSync(linkedSourceRoot);
+  writeFileSync(path.join(linkedSourceRoot, "linked.png"), VALID_PNG);
+
+  const applicationDirectory =
+    process.env.SERPENT_E2E_APP_DIRECTORY ?? process.cwd();
+  const application = await electron.launch({
+    args: [applicationDirectory],
+    cwd: applicationDirectory,
+    executablePath: resolveElectronExecutablePath(),
+    env: {
+      ...process.env,
+      SERPENT_E2E: "1",
+      SERPENT_E2E_CREATE_PARENT_PATH: temporaryRoot,
+      SERPENT_E2E_OPEN_LIBRARY_PATH: libraryPath,
+      SERPENT_E2E_IMPORT_FILES: managedSourcePath,
+      SERPENT_E2E_LINKED_SOURCE: linkedSourceRoot,
+      SERPENT_E2E_USER_DATA_PATH: path.join(temporaryRoot, "user-data"),
+    },
+  });
+
+  try {
+    const window = await application.firstWindow();
+    await window.getByRole("button", { name: "创建资源库" }).click();
+    await window.getByLabel("名称").fill("CM Mixed Test");
+    await window.getByRole("button", { name: "创建", exact: true }).click();
+
+    await window
+      .getByRole("button", { name: "导入文件", exact: true })
+      .first()
+      .click();
+    await expect(
+      window.locator('[data-asset-id][title="managed.png"]'),
+    ).toBeVisible({ timeout: 15_000 });
+
+    await window.getByRole("button", { name: "导入链接文件夹" }).click();
+    await window.getByRole("button", { name: "所有资产" }).click();
+
+    const managedCard = window.locator(
+      '[data-asset-id][title="managed.png"]',
+    );
+    const linkedCard = window.locator('[data-asset-id][title="linked.png"]');
+    await expect(managedCard).toBeVisible({ timeout: 15_000 });
+    await expect(linkedCard).toBeVisible({ timeout: 15_000 });
+
+    const additiveModifier = process.platform === "darwin" ? "Meta" : "Control";
+    await managedCard.click();
+    await linkedCard.click({ modifiers: [additiveModifier] });
+    await expect(
+      window.getByRole("button", { name: "移动到文件夹", exact: true }),
+    ).toHaveCount(0);
+    await expect(
+      window.getByRole("button", { name: "删除", exact: true }),
+    ).toHaveCount(0);
+    await linkedCard.click({ button: "right" });
+
+    const menu = window.getByRole("menu", { name: "批量资产操作：2 项" });
+    await expect(menu).toBeVisible({ timeout: 5_000 });
+    await expect(menu.getByText("已选择 2 项", { exact: true })).toBeVisible();
+    await expect(menu.getByRole("note")).toContainText(
+      "移动/复制处理 1 项可用托管资产",
+    );
+    await expect(menu.getByRole("note")).toContainText(
+      "回收站处理 1 项托管资产",
+    );
+    await expect(menu.getByRole("note")).toContainText(
+      "1 项链接资产不由资源库管理",
+    );
+    await expect(
+      menu.getByRole("menuitem", { name: "移动到文件夹…（1 项）" }),
+    ).toBeVisible();
+    await expect(
+      menu.getByRole("menuitem", { name: "移入回收站（1 项）" }),
+    ).toBeVisible();
   } finally {
     await application.close();
     rmSync(temporaryRoot, { recursive: true, force: true });

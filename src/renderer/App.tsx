@@ -11,9 +11,26 @@ import {
 } from "react";
 
 import { Icon, type IconName } from "./Icons";
+import { ConvertLinkedDialog } from "./ConvertLinkedDialog";
+import { LinkedRulesDialog } from "./LinkedRulesDialog";
+import { PermanentDeleteDialog } from "./PermanentDeleteDialog";
+import { DeleteLinkedDialog } from "./DeleteLinkedDialog";
+import { ExportDialog } from "./ExportDialog";
+import { ImportDialog } from "./ImportDialog";
 import {
   NavigationSidebar,
 } from "./NavigationSidebar";
+import { RelinkPreview } from "./RelinkPreview";
+import { MoveDialog } from "./MoveDialog";
+import { RestoreDialog } from "./RestoreDialog";
+import { UndoMoveDialog } from "./UndoMoveDialog";
+import { ConflictsDialog } from "./ConflictsDialog";
+import { RenameDialog } from "./RenameDialog";
+import { CreateDialog } from "./CreateDialog";
+import { CollectionEditorDialog } from "./CollectionEditorDialog";
+import { ExtensionPairingDialog } from "./ExtensionPairingDialog";
+import { AiConfigDialog } from "./AiConfigDialog";
+import { MediaJobsDialog } from "./MediaJobsDialog";
 
 import {
   ContextMenuProvider,
@@ -482,8 +499,6 @@ function AppInner() {
   const [importValidated, setImportValidated] =
     useState<ImportValidatedResult | null>(null);
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
-  const [includeLinkedContent, setIncludeLinkedContent] = useState(false);
-  const [exportFormat, setExportFormat] = useState<"folder" | "zip">("folder");
 
   // Thumbnail / Preview state
   const [previewAsset, setPreviewAsset] = useState<AssetSummary | null>(null);
@@ -562,13 +577,6 @@ function AppInner() {
     () => selectedAssets.filter((a) => a.locationKind === "managed").length,
     [selectedAssets],
   );
-  const selectedAvailableManaged = useMemo(
-    () => selectedAssets.filter(
-      (a) => a.locationKind === "managed" && a.availability === "available",
-    ),
-    [selectedAssets],
-  );
-
   const resizeAssetCards = useCallback(
     (requestedSize: number, clientX?: number, clientY?: number) => {
       const root = workspaceCanvasRef.current;
@@ -670,7 +678,7 @@ function AppInner() {
     return () => canvas.removeEventListener("wheel", handleWheel);
   }, [assetCardSize, previewAsset, resizeAssetCards]);
 
-  function openAssetPreview(asset: AssetSummary) {
+  const openAssetPreview = useCallback((asset: AssetSummary) => {
     if (asset.availability !== "available" || asset.deletedAt) return;
     previewFocusReturnRef.current = asset.assetId;
     previewScrollPositionRef.current = workspaceCanvasRef.current
@@ -683,15 +691,15 @@ function AppInner() {
     setSelectedAssetId(asset.assetId);
     selectionAnchorRef.current = asset.assetId;
     setPreviewAsset(asset);
-  }
+  }, [selectionAnchorRef]);
 
-  function navigateAssetPreview(asset: AssetSummary) {
+  const navigateAssetPreview = useCallback((asset: AssetSummary) => {
     setSelectedAssetIds([asset.assetId]);
     setSelectedAssetId(asset.assetId);
     selectionAnchorRef.current = asset.assetId;
     previewFocusReturnRef.current = asset.assetId;
     setPreviewAsset(asset);
-  }
+  }, [selectionAnchorRef]);
 
   const closeAssetPreview = useCallback(async () => {
     const closingAsset = previewAsset;
@@ -1003,7 +1011,7 @@ function AppInner() {
       setError(toMessage(caught, "无法恢复工作区。"));
       setUiState(activeLibrary ? "ready" : "idle");
     }
-  }, [api, loadContent, setError]);
+  }, [api, loadContent, selectionAnchorRef, setError]);
   useEffect(() => {
     void Promise.resolve().then(restore);
   }, [restore]);
@@ -1898,10 +1906,7 @@ function AppInner() {
   } = useBatchActions({
     api: api ?? null,
     library,
-    selectedAssetIds,
-    selectedAssets,
-    selectedAvailableManaged,
-    setUiState: setUiState as (state: string) => void,
+    setUiState,
     setTags,
     setCollections,
     setNotice,
@@ -1912,8 +1917,6 @@ function AppInner() {
     clearAssetSelection,
     activeTagId,
     activeCollectionId,
-    setSelectedAssetId,
-    setLastTrashResult: (() => {}) as React.Dispatch<unknown>,
   });
 
   async function executeSearchDefinition(
@@ -2734,14 +2737,14 @@ function AppInner() {
     }
   }
 
-  async function saveLinkedRules() {
+  async function saveLinkedRules(finalRules: LinkedFolderRule[]) {
     if (!api || !library || !linkedRulesEditor) return;
     setUiState("loading");
     try {
       const result = await api.setLinkedFolderRules({
         libraryId: library.libraryId,
         folderId: linkedRulesEditor.folderId,
-        rules: linkedRulesEditor.rules,
+        rules: finalRules,
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
       setNotice(
@@ -3021,13 +3024,13 @@ function AppInner() {
 
   // --- Relink operations ---
 
-  async function relinkMissingAsset() {
-    if (!api || !library || !selectedAssetId) return;
+  async function relinkMissingAsset(assetId = selectedAssetId) {
+    if (!api || !library || !assetId) return;
     setUiState("loading");
     try {
       const result = await api.relinkAsset({
         libraryId: library.libraryId,
-        assetId: selectedAssetId,
+        assetId,
       });
       if (!result.ok) {
         if (result.error.code === "CANCELLED") return;
@@ -3104,7 +3107,7 @@ function AppInner() {
 
   // --- Export / Import operations ---
 
-  async function exportLibrary() {
+  async function exportLibrary(format: "folder" | "zip", includeLinkedContent: boolean) {
     if (!api || !library) return;
     setExportDialogOpen(false);
     setExportProgress({
@@ -3121,7 +3124,7 @@ function AppInner() {
       const result = await api.exportLibrary({
         libraryId: library.libraryId,
         includeLinkedContent,
-        format: exportFormat,
+        format,
       });
       if (!result.ok) {
         if (result.error.code === "CANCELLED") {
@@ -3485,6 +3488,7 @@ function AppInner() {
     trashManagedAssets,
     visibleAssets,
     clearAssetSelection,
+    selectionAnchorRef,
   ]);
 
   // Capture-phase Escape guard: when context menu is open, stop
@@ -3604,6 +3608,8 @@ function AppInner() {
     permanentDeleteDialog,
     previewAsset,
     previewIndex,
+    navigateAssetPreview,
+    openAssetPreview,
     restoreDialog,
     selectedAsset,
     visibleAssets,
@@ -3814,14 +3820,14 @@ function AppInner() {
     setNotice("AI 配置已保存。");
   }
 
-  async function handleAnalyzeClick() {
-    if (!api || !library || !selectedAssetId) return;
+  async function handleAnalyzeClick(assetId = selectedAssetId) {
+    if (!api || !library || !assetId) return;
     setAiAnalyzing(true);
     setAiContent(null);
     try {
       const result = await api.analyzeAsset({
         libraryId: library.libraryId,
-        assetId: selectedAssetId,
+        assetId,
       });
       if (!result.ok) {
         setError(toMessage(result.error, "AI 分析失败。"));
@@ -4405,161 +4411,38 @@ function AppInner() {
           </div>
           <div className="workspace-tools">
             {library && showTrash ? (
-              <>
+              <button
+                className="compact-action"
+                disabled={busy}
+                onClick={() => {
+                  if (
+                    confirm(
+                      "确定要清理所有到期项吗？这将永久删除所有超过 30 天的资产。",
+                    )
+                  )
+                    void purgeTrash();
+                }}
+                type="button"
+              >
+                <Icon name="trash" size={14} />
+                清理到期项目
+              </button>
+            ) : (
+              library &&
+              !showTrash &&
+              visibleAssets.some(
+                (a) => a.availability === "missing" && !a.deletedAt,
+              ) && (
                 <button
                   className="compact-action"
                   disabled={busy}
-                  onClick={() => {
-                    if (
-                      confirm(
-                        "确定要清理所有到期项吗？这将永久删除所有超过 30 天的资产。",
-                      )
-                    )
-                      void purgeTrash();
-                  }}
+                  onClick={() => void startBatchRelink()}
                   type="button"
                 >
-                  <Icon name="trash" size={14} />
-                  清理到期项目
+                  <Icon name="folder" size={14} />
+                  批量重新定位
                 </button>
-                {selectedAssetIds.length > 0 && (
-                  <>
-                    <span className="tool-separator" />
-                    <button
-                      className="compact-action"
-                      disabled={busy}
-                      onClick={() =>
-                        setRestoreDialog({
-                          assetIds: selectedAssetIds,
-                          target: "original",
-                          conflictStrategy: "keep-both",
-                        })
-                      }
-                      type="button"
-                    >
-                      <Icon name="upload" size={14} />
-                      恢复所选（{selectedAssetIds.length}）
-                    </button>
-                  </>
-                )}
-                {selectedAsset && (
-                  <button
-                    className="compact-action"
-                    disabled={busy}
-                    onClick={() => {
-                      setPermanentDeleteDialog(
-                        selectedAssetIds.length > 0
-                          ? selectedAssetIds
-                          : [selectedAsset.assetId],
-                      );
-                    }}
-                    type="button"
-                  >
-                    <Icon name="close" size={14} />
-                    永久删除
-                  </button>
-                )}
-              </>
-            ) : (
-              <>
-                {library &&
-                  selectedAsset &&
-                  selectedAsset.availability === "missing" &&
-                  !selectedAsset.deletedAt && (
-                    <>
-                      <button
-                        className="compact-action"
-                        disabled={busy}
-                        onClick={() => void relinkMissingAsset()}
-                        type="button"
-                      >
-                        <Icon name="search" size={14} />
-                        找回
-                      </button>
-                      <span className="tool-separator" />
-                    </>
-                  )}
-                {library &&
-                  !showTrash &&
-                  selectedAsset &&
-                  !selectedAsset.deletedAt &&
-                  selectedAsset.locationKind === "managed" && (
-                    <>
-                      <button
-                        className="compact-action"
-                        disabled={
-                          busy || selectedAsset.availability !== "available"
-                        }
-                        onClick={() =>
-                          setMoveDialog({
-                            assetIds: [selectedAssetId!],
-                            targetFolderId: null,
-                            conflictStrategy: "keep-both",
-                          })
-                        }
-                        type="button"
-                      >
-                        <Icon name="folder" size={13} />
-                        移动到文件夹
-                      </button>
-                      <button
-                        className="compact-action"
-                        disabled={busy}
-                        onClick={() => {
-                          void trashManagedAssets([selectedAssetId!]);
-                        }}
-                        type="button"
-                      >
-                        <Icon name="trash" size={14} />
-                        删除
-                      </button>
-                    </>
-                  )}
-                {library &&
-                  !showTrash &&
-                  selectedAsset &&
-                  !selectedAsset.deletedAt &&
-                  selectedAsset.locationKind === "linked" && (
-                    <>
-                      <span className="tool-separator" />
-                      <button
-                        className="compact-action"
-                        disabled={busy}
-                        onClick={() => {
-                          setDeleteLinkedDialog({
-                            assetIds: [selectedAssetId!],
-                            displayNames: selectedAsset.displayName,
-                            deleteSourceFile: false,
-                            canDeleteSourceFile:
-                              selectedAsset.availability === "available",
-                          });
-                        }}
-                        type="button"
-                      >
-                        <Icon name="link" size={14} />
-                        删除（链接）
-                      </button>
-                    </>
-                  )}
-                {library &&
-                  !showTrash &&
-                  visibleAssets.some(
-                    (a) => a.availability === "missing" && !a.deletedAt,
-                  ) && (
-                    <>
-                      <span className="tool-separator" />
-                      <button
-                        className="compact-action"
-                        disabled={busy}
-                        onClick={() => void startBatchRelink()}
-                        type="button"
-                      >
-                        <Icon name="folder" size={14} />
-                        批量重新定位
-                      </button>
-                    </>
-                  )}
-              </>
+              )
             )}
             <span className="tool-separator" />
             <button
@@ -4700,23 +4583,6 @@ function AppInner() {
                 />
               ))}
             </div>
-            {library &&
-              selectedAsset &&
-              !showTrash &&
-              !selectedAsset.deletedAt && (
-                <>
-                  <span className="tool-separator" />
-                  <button
-                    className="compact-action"
-                    disabled={aiAnalyzing || !aiHasKey}
-                    onClick={() => void handleAnalyzeClick()}
-                    type="button"
-                  >
-                    <Icon name="smart" size={14} />
-                    {aiAnalyzing ? "分析中…" : "AI 分析"}
-                  </button>
-                </>
-              )}
             <span className="tool-separator" />
             <button
               className="compact-action"
@@ -4901,10 +4767,14 @@ function AppInner() {
                           setSelectedAssetIds([asset.assetId]);
                           setSelectedAssetId(asset.assetId);
                         }
-                        if (library && !asset.deletedAt) {
+                        if (library) {
                           if (multiSelected) {
                             openContextMenu(
-                              { type: "multi-asset", assetIds: selectedAssetIds, count: selectedAssetIds.length },
+                              {
+                                type: "multi-asset",
+                                assetIds: [...selectedAssetIds],
+                                count: selectedAssetIds.length,
+                              },
                               { x: e.clientX, y: e.clientY },
                             );
                           } else {
@@ -4915,6 +4785,7 @@ function AppInner() {
                                 displayName: asset.displayName,
                                 locationKind: asset.locationKind,
                                 isAvailable: asset.availability === "available",
+                                isDeleted: Boolean(asset.deletedAt),
                               },
                               { x: e.clientX, y: e.clientY },
                             );
@@ -5208,1770 +5079,277 @@ function AppInner() {
         </button>
       )}
       {linkedRulesEditor && (
-        <div className="dialog-backdrop" role="presentation">
-          <div
-            aria-modal="true"
-            className="create-dialog"
-            role="dialog"
-            style={{ maxWidth: 700 }}
-          >
-            <div className="dialog-heading">
-              <div>
-                <span className="eyebrow">LINKED FOLDER FILTER</span>
-                <h2>{linkedRulesEditor.name} · 过滤规则</h2>
-              </div>
-              <button
-                aria-label="取消"
-                className="dialog-close"
-                onClick={() => setLinkedRulesEditor(null)}
-                type="button"
-              >
-                <Icon name="close" size={16} />
-              </button>
-            </div>
-            <p className="field-help">
-              从上到下执行，最后一个匹配项生效；仅支持受约束的路径、文件名、扩展名和文件夹规则。
-            </p>
-            {linkedRulesEditor.rules.map((rule, index) => (
-              <div
-                key={rule.ruleId}
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "22px 82px 82px 1fr 28px",
-                  gap: 6,
-                  marginTop: 6,
-                }}
-              >
-                <input
-                  aria-label={`启用规则 ${index + 1}`}
-                  checked={rule.enabled}
-                  onChange={(event) =>
-                    setLinkedRulesEditor((current) =>
-                      current
-                        ? {
-                            ...current,
-                            rules: current.rules.map((item, i) =>
-                              i === index
-                                ? { ...item, enabled: event.target.checked }
-                                : item,
-                            ),
-                          }
-                        : current,
-                    )
-                  }
-                  type="checkbox"
-                />
-                <select
-                  className="text-field"
-                  onChange={(event) =>
-                    setLinkedRulesEditor((current) =>
-                      current
-                        ? {
-                            ...current,
-                            rules: current.rules.map((item, i) =>
-                              i === index
-                                ? {
-                                    ...item,
-                                    action: event.target
-                                      .value as LinkedFolderRule["action"],
-                                  }
-                                : item,
-                            ),
-                          }
-                        : current,
-                    )
-                  }
-                  value={rule.action}
-                >
-                  <option value="exclude">排除</option>
-                  <option value="include">包含</option>
-                </select>
-                <select
-                  className="text-field"
-                  onChange={(event) =>
-                    setLinkedRulesEditor((current) =>
-                      current
-                        ? {
-                            ...current,
-                            rules: current.rules.map((item, i) =>
-                              i === index
-                                ? {
-                                    ...item,
-                                    target: event.target
-                                      .value as LinkedFolderRule["target"],
-                                  }
-                                : item,
-                            ),
-                          }
-                        : current,
-                    )
-                  }
-                  value={rule.target}
-                >
-                  <option value="folder">文件夹</option>
-                  <option value="filename">文件名</option>
-                  <option value="extension">扩展名</option>
-                  <option value="path">路径</option>
-                </select>
-                <input
-                  className="text-field"
-                  maxLength={512}
-                  onChange={(event) =>
-                    setLinkedRulesEditor((current) =>
-                      current
-                        ? {
-                            ...current,
-                            rules: current.rules.map((item, i) =>
-                              i === index
-                                ? { ...item, pattern: event.target.value }
-                                : item,
-                            ),
-                          }
-                        : current,
-                    )
-                  }
-                  value={rule.pattern}
-                />
-                <button
-                  aria-label={`删除规则 ${index + 1}`}
-                  className="dialog-close"
-                  onClick={() =>
-                    setLinkedRulesEditor((current) =>
-                      current
-                        ? {
-                            ...current,
-                            rules: current.rules.filter((_, i) => i !== index),
-                          }
-                        : current,
-                    )
-                  }
-                  type="button"
-                >
-                  <Icon name="close" size={13} />
-                </button>
-              </div>
-            ))}
-            <div className="dialog-actions">
-              <button
-                className="secondary-button"
-                onClick={() =>
-                  setLinkedRulesEditor((current) =>
-                    current
-                      ? {
-                          ...current,
-                          rules: [
-                            ...current.rules,
-                            {
-                              ruleId: crypto.randomUUID(),
-                              action: "exclude",
-                              target: "extension",
-                              pattern: "tmp",
-                              enabled: true,
-                            },
-                          ],
-                        }
-                      : current,
-                  )
-                }
-                type="button"
-              >
-                添加规则
-              </button>
-              <button
-                className="secondary-button"
-                onClick={() => setLinkedRulesEditor(null)}
-                type="button"
-              >
-                取消
-              </button>
-              <button
-                className="primary-button"
-                disabled={linkedRulesEditor.rules.some(
-                  (rule) => !rule.pattern.trim(),
-                )}
-                onClick={() => void saveLinkedRules()}
-                type="button"
-              >
-                保存并刷新
-              </button>
-            </div>
-          </div>
-        </div>
+        <LinkedRulesDialog
+          name={linkedRulesEditor.name}
+          initialRules={linkedRulesEditor.rules}
+          onClose={() => setLinkedRulesEditor(null)}
+          onSave={(finalRules) => void saveLinkedRules(finalRules)}
+        />
       )}
       {convertLinkedDialog.folderId && (
-        <div className="dialog-backdrop" role="presentation">
-          <div aria-modal="true" className="create-dialog" role="dialog">
-            <div className="dialog-heading">
-              <div>
-                <span className="eyebrow">CONVERT LINKED FOLDER</span>
-                <h2>转换"{convertLinkedDialog.name}"</h2>
-              </div>
-              <button
-                aria-label="取消转换"
-                className="dialog-close"
-                onClick={() =>
-                  setConvertLinkedDialog({
-                    folderId: "",
-                    name: "",
-                    targetFolderId: "",
-                  })
-                }
-                type="button"
-              >
-                <Icon name="close" size={16} />
-              </button>
-            </div>
-            <p className="field-help">
-              复制过滤后的内容并保留资产信息；外部源目录不会删除或移动。
-            </p>
-            <select
-              className="text-field"
-              onChange={(event) =>
-                setConvertLinkedDialog((current) => ({
-                  ...current,
-                  targetFolderId: event.target.value,
-                }))
-              }
-              value={convertLinkedDialog.targetFolderId}
-            >
-              <option value="">资源库根目录</option>
-              {folders.map((folder) => (
-                <option key={folder.folderId} value={folder.folderId}>
-                  {folder.relativePath}
-                </option>
-              ))}
-            </select>
-            <div className="dialog-actions">
-              <button
-                className="secondary-button"
-                onClick={() =>
-                  setConvertLinkedDialog({
-                    folderId: "",
-                    name: "",
-                    targetFolderId: "",
-                  })
-                }
-                type="button"
-              >
-                取消
-              </button>
-              <button
-                className="primary-button"
-                onClick={() => void convertLinkedToManaged()}
-                type="button"
-              >
-                确认复制并转换
-              </button>
-            </div>
-          </div>
-        </div>
+        <ConvertLinkedDialog
+          folderName={convertLinkedDialog.name}
+          folders={folders}
+          targetFolderId={convertLinkedDialog.targetFolderId}
+          onCancel={() =>
+            setConvertLinkedDialog({
+              folderId: "",
+              name: "",
+              targetFolderId: "",
+            })
+          }
+          onConfirm={() => void convertLinkedToManaged()}
+          onTargetChange={(targetFolderId) =>
+            setConvertLinkedDialog((current) => ({
+              ...current,
+              targetFolderId,
+            }))
+          }
+        />
       )}
       {restoreDialog && (
-        <div className="dialog-backdrop" role="presentation">
-          <div
-            aria-labelledby="restore-dialog-title"
-            aria-modal="true"
-            className="create-dialog"
-            role="dialog"
-          >
-            <div className="dialog-heading">
-              <div>
-                <span className="eyebrow">RESTORE ASSETS</span>
-                <h2 id="restore-dialog-title">
-                  恢复 {restoreDialog.assetIds.length} 项资产
-                </h2>
-              </div>
-              <button
-                aria-label="取消"
-                className="dialog-close"
-                onClick={() => setRestoreDialog(null)}
-                type="button"
-              >
-                <Icon name="close" size={16} />
-              </button>
-            </div>
-            <label className="field-label" htmlFor="restore-target">
-              恢复位置
-            </label>
-            <select
-              className="text-field"
-              id="restore-target"
-              onChange={(event) =>
-                setRestoreDialog((current) =>
-                  current
-                    ? {
-                        ...current,
-                        target: event.target.value as typeof current.target,
-                      }
-                    : current,
-                )
-              }
-              value={restoreDialog.target}
-            >
-              <option value="original">
-                原位置（原文件夹不存在时使用根目录）
-              </option>
-              <option value="root">资源库根目录</option>
-              {folders.map((folder) => (
-                <option key={folder.folderId} value={folder.folderId}>
-                  {folder.relativePath}
-                </option>
-              ))}
-            </select>
-            <label
-              className="field-label"
-              htmlFor="restore-conflict"
-              style={{ marginTop: 12 }}
-            >
-              同名冲突
-            </label>
-            <select
-              className="text-field"
-              id="restore-conflict"
-              onChange={(event) =>
-                setRestoreDialog((current) =>
-                  current
-                    ? {
-                        ...current,
-                        conflictStrategy: event.target
-                          .value as typeof current.conflictStrategy,
-                      }
-                    : current,
-                )
-              }
-              value={restoreDialog.conflictStrategy}
-            >
-              <option value="keep-both">保留两者（自动编号）</option>
-              <option value="replace">用回收站资产替换现有资产</option>
-              <option value="skip">跳过冲突资产</option>
-            </select>
-            {restoreDialog.conflictStrategy === "replace" && (
-              <p className="field-help">
-                替换会删除冲突资产的 Serpent
-                记录及其托管文件，恢复资产会保留原有 ID 和元数据。
-              </p>
-            )}
-            <div className="dialog-actions">
-              <button
-                className="secondary-button"
-                onClick={() => setRestoreDialog(null)}
-                type="button"
-              >
-                取消
-              </button>
-              <button
-                className="primary-button"
-                onClick={() => void restoreTrashedAssets()}
-                type="button"
-              >
-                确认恢复
-              </button>
-            </div>
-          </div>
-        </div>
+        <RestoreDialog
+          assetIds={restoreDialog.assetIds}
+          folders={folders}
+          target={restoreDialog.target}
+          conflictStrategy={restoreDialog.conflictStrategy}
+          onTargetChange={(target) =>
+            setRestoreDialog((current) =>
+              current ? { ...current, target } : current,
+            )
+          }
+          onStrategyChange={(strategy) =>
+            setRestoreDialog((current) =>
+              current ? { ...current, conflictStrategy: strategy } : current,
+            )
+          }
+          onConfirm={() => void restoreTrashedAssets()}
+          onCancel={() => setRestoreDialog(null)}
+        />
       )}
       {moveDialog && (
-        <div className="dialog-backdrop" role="presentation">
-          <div
-            aria-labelledby="move-dialog-title"
-            aria-modal="true"
-            className="create-dialog"
-            role="dialog"
-          >
-            <div className="dialog-heading">
-              <div>
-                <span className="eyebrow">MOVE MANAGED ASSETS</span>
-                <h2 id="move-dialog-title">
-                  移动 {moveDialog.assetIds.length} 项托管资产
-                </h2>
-              </div>
-              <button
-                aria-label="取消移动"
-                className="dialog-close"
-                onClick={() => setMoveDialog(null)}
-                type="button"
-              >
-                <Icon name="close" size={16} />
-              </button>
-            </div>
-            <label className="field-label" htmlFor="move-target">
-              目标文件夹
-            </label>
-            <select
-              className="text-field"
-              id="move-target"
-              onChange={(event) =>
-                setMoveDialog((current) =>
-                  current
-                    ? { ...current, targetFolderId: event.target.value || null }
-                    : current,
-                )
-              }
-              value={moveDialog.targetFolderId ?? ""}
-            >
-              <option value="">资源库根目录</option>
-              {folders.map((folder) => (
-                <option key={folder.folderId} value={folder.folderId}>
-                  {folder.relativePath}
-                </option>
-              ))}
-            </select>
-            <label
-              className="field-label"
-              htmlFor="move-conflict"
-              style={{ marginTop: 12 }}
-            >
-              同名冲突
-            </label>
-            <select
-              className="text-field"
-              id="move-conflict"
-              onChange={(event) =>
-                setMoveDialog((current) =>
-                  current
-                    ? {
-                        ...current,
-                        conflictStrategy: event.target
-                          .value as typeof current.conflictStrategy,
-                      }
-                    : current,
-                )
-              }
-              value={moveDialog.conflictStrategy}
-            >
-              <option value="keep-both">保留两者（自动编号）</option>
-              <option value="replace">替换目标资产</option>
-              <option value="skip">跳过冲突资产</option>
-            </select>
-            <p className="field-help">
-              移动不会改变资产 ID、标签、合集、人工元数据、AI
-              内容或源链接；完成后可撤销一次。
-            </p>
-            <div className="dialog-actions">
-              <button
-                className="secondary-button"
-                onClick={() => setMoveDialog(null)}
-                type="button"
-              >
-                取消
-              </button>
-              <button
-                className="primary-button"
-                onClick={() => void moveManagedAssets()}
-                type="button"
-              >
-                确认移动
-              </button>
-            </div>
-          </div>
-        </div>
+        <MoveDialog
+          assetIds={moveDialog.assetIds}
+          folders={folders}
+          targetFolderId={moveDialog.targetFolderId}
+          conflictStrategy={moveDialog.conflictStrategy}
+          onTargetChange={(folderId) =>
+            setMoveDialog((current) =>
+              current ? { ...current, targetFolderId: folderId } : current,
+            )
+          }
+          onStrategyChange={(strategy) =>
+            setMoveDialog((current) =>
+              current ? { ...current, conflictStrategy: strategy } : current,
+            )
+          }
+          onConfirm={() => void moveManagedAssets()}
+          onCancel={() => setMoveDialog(null)}
+        />
       )}
-      {undoMoveDialog && (
-        <div className="dialog-backdrop" role="presentation">
-          <div
-            aria-labelledby="undo-move-dialog-title"
-            aria-modal="true"
-            className="create-dialog"
-            role="dialog"
-          >
-            <div className="dialog-heading">
-              <div>
-                <span className="eyebrow">UNDO MOVE CONFLICT</span>
-                <h2 id="undo-move-dialog-title">原位置已有新内容</h2>
-              </div>
-              <button
-                aria-label="取消撤销"
-                className="dialog-close"
-                onClick={() => setUndoMoveDialog(null)}
-                type="button"
-              >
-                <Icon name="close" size={16} />
-              </button>
-            </div>
-            <p className="field-help">
-              Serpent 没有覆盖原位置。请选择明确的冲突处理方式后再撤销。
-            </p>
-            <label className="field-label" htmlFor="undo-move-conflict">
-              冲突处理
-            </label>
-            <select
-              className="text-field"
-              id="undo-move-conflict"
-              onChange={(event) =>
-                setUndoMoveDialog((current) =>
-                  current
-                    ? {
-                        ...current,
-                        conflictStrategy: event.target
-                          .value as typeof current.conflictStrategy,
-                      }
-                    : current,
-                )
-              }
-              value={undoMoveDialog.conflictStrategy}
-            >
-              <option value="keep-both">保留两者（撤回资产自动编号）</option>
-              <option value="replace">替换原位置的新内容</option>
-              <option value="skip">跳过冲突资产</option>
-            </select>
-            <div className="dialog-actions">
-              <button
-                className="secondary-button"
-                onClick={() => setUndoMoveDialog(null)}
-                type="button"
-              >
-                取消
-              </button>
-              <button
-                className="primary-button"
-                onClick={() =>
-                  void undoManagedMove(
-                    undoMoveDialog.operationId,
-                    undoMoveDialog.conflictStrategy,
-                  )
-                }
-                type="button"
-              >
-                按所选策略撤销
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-      {collectionEditor && (
-        <div className="dialog-backdrop" role="presentation">
-          <div
-            aria-labelledby="collection-editor-title"
-            aria-modal="true"
-            className="create-dialog"
-            role="dialog"
-          >
-            <div className="dialog-heading">
-              <div>
-                <span className="eyebrow">COLLECTION DETAILS</span>
-                <h2 id="collection-editor-title">编辑合集详情</h2>
-              </div>
-              <button
-                aria-label="取消"
-                className="dialog-close"
-                onClick={() => setCollectionEditor(null)}
-                type="button"
-              >
-                <Icon name="close" size={16} />
-              </button>
-            </div>
-            <label className="field-label" htmlFor="collection-description">
-              描述
-            </label>
-            <textarea
-              className="text-field"
-              id="collection-description"
-              maxLength={10000}
-              onChange={(event) =>
-                setCollectionEditor((current) =>
-                  current
-                    ? { ...current, description: event.target.value }
-                    : current,
-                )
-              }
-              rows={4}
-              value={collectionEditor.description}
-            />
-            <label
-              className="field-label"
-              htmlFor="collection-cover"
-              style={{ marginTop: 12 }}
-            >
-              封面资产
-            </label>
-            <select
-              className="text-field"
-              id="collection-cover"
-              onChange={(event) =>
-                setCollectionEditor((current) =>
-                  current
-                    ? { ...current, coverAssetId: event.target.value }
-                    : current,
-                )
-              }
-              value={collectionEditor.coverAssetId}
-            >
-              <option value="">无封面</option>
-              {collectionEditor.coverAssetId &&
-                !visibleAssets.some(
-                  (asset) => asset.assetId === collectionEditor.coverAssetId,
-                ) && (
-                  <option value={collectionEditor.coverAssetId}>
-                    当前封面（不在本页）
-                  </option>
-                )}
-              {visibleAssets.map((asset) => (
-                <option key={asset.assetId} value={asset.assetId}>
-                  {asset.label ?? asset.displayName}
-                </option>
-              ))}
-            </select>
-            <p className="field-help">
-              可从当前页面资产中选择封面；合集树支持同级拖拽排序。
-            </p>
-            <div className="dialog-actions">
-              <button
-                className="secondary-button"
-                onClick={() => setCollectionEditor(null)}
-                type="button"
-              >
-                取消
-              </button>
-              <button
-                className="primary-button"
-                onClick={() => void saveCollectionDetails()}
-                type="button"
-              >
-                保存详情
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-      {renameTarget && (
-        <div className="dialog-backdrop" role="presentation">
-          <form
-            aria-labelledby="rename-organization-title"
-            aria-modal="true"
-            className="create-dialog"
-            onSubmit={(event) => {
-              event.preventDefault();
-              if (renameTarget.kind === "tag") void renameTag();
-              else if (renameTarget.kind === "collection")
-                void renameCollection();
-              else {
-                const target = renameTarget;
-                setRenameTarget(null);
-                void renameSmartCollection(target.id, target.name);
-              }
-            }}
-            role="dialog"
-          >
-            <div className="dialog-heading">
-              <div>
-                <span className="eyebrow">ORGANIZE LIBRARY</span>
-                <h2 id="rename-organization-title">
-                  重命名{organizationNoun(renameTarget.kind)}
-                </h2>
-              </div>
-              <button
-                aria-label="取消"
-                className="dialog-close"
-                onClick={() => setRenameTarget(null)}
-                type="button"
-              >
-                <Icon name="close" size={16} />
-              </button>
-            </div>
-            <label className="field-label" htmlFor="rename-organization-name">
-              {organizationNoun(renameTarget.kind)}名称
-            </label>
-            <input
-              autoFocus
-              className="text-field"
-              id="rename-organization-name"
-              onChange={(event) =>
-                setRenameTarget((current) =>
-                  current ? { ...current, name: event.target.value } : current,
-                )
-              }
-              value={renameTarget.name}
-            />
-            <p className="field-help">
-              名称仅影响资源库中的组织方式，不会修改资产文件。
-            </p>
-            <div className="dialog-actions">
-              <button
-                className="secondary-button"
-                onClick={() => setRenameTarget(null)}
-                type="button"
-              >
-                取消
-              </button>
-              <button
-                className="primary-button"
-                disabled={!renameTarget.name.trim()}
-                type="submit"
-              >
-                保存名称
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
-      {dialog && (
-        <div className="dialog-backdrop" role="presentation">
-          <form
-            aria-labelledby="create-dialog-title"
-            aria-modal="true"
-            className="create-dialog"
-            onSubmit={(event) => {
-              event.preventDefault();
-              if (!dialogValue.trim()) return;
-              if (dialog === "library") {
-                setDialog(null);
-                void runLibraryOperation("create");
-              } else void createFolder();
-            }}
-            role="dialog"
-          >
-            <div className="dialog-heading">
-              <div>
-                <span className="eyebrow">
-                  {dialog === "library"
-                    ? "NEW LOCAL LIBRARY"
-                    : "MANAGED FOLDER"}
-                </span>
-                <h2 id="create-dialog-title">
-                  {dialog === "library" ? "创建资源库" : "新建文件夹"}
-                </h2>
-              </div>
-              <button
-                aria-label="取消"
-                className="dialog-close"
-                onClick={() => setDialog(null)}
-                type="button"
-              >
-                <Icon name="close" size={16} />
-              </button>
-            </div>
-            <label className="field-label" htmlFor="dialog-name">
-              名称
-            </label>
-            <input
-              autoFocus
-              className="text-field"
-              id="dialog-name"
-              maxLength={255}
-              onChange={(event) => setDialogValue(event.target.value)}
-              value={dialogValue}
-            />
-            <p className="field-help">
-              {dialog === "library"
-                ? "下一步由系统选择本地保存位置。"
-                : `将在"${selectedFolder?.name ?? "资源库根目录"}"内创建真实目录。`}
-            </p>
-            <div className="dialog-actions">
-              <button
-                className="secondary-button"
-                onClick={() => setDialog(null)}
-                type="button"
-              >
-                取消
-              </button>
-              <button
-                className="primary-button"
-                disabled={!dialogValue.trim()}
-                type="submit"
-              >
-                创建
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
+      <UndoMoveDialog
+        open={undoMoveDialog !== null}
+        conflictStrategy={undoMoveDialog?.conflictStrategy ?? "keep-both"}
+        onConflictStrategyChange={(strategy) =>
+          setUndoMoveDialog((current) =>
+            current ? { ...current, conflictStrategy: strategy } : current,
+          )
+        }
+        onConfirm={() =>
+          undoMoveDialog &&
+          void undoManagedMove(
+            undoMoveDialog.operationId,
+            undoMoveDialog.conflictStrategy,
+          )
+        }
+        onCancel={() => setUndoMoveDialog(null)}
+      />
+      <CollectionEditorDialog
+        open={collectionEditor !== null}
+        description={collectionEditor?.description ?? ""}
+        coverAssetId={collectionEditor?.coverAssetId ?? ""}
+        assetOptions={visibleAssets.map((asset) => ({
+          assetId: asset.assetId,
+          displayName: asset.label ?? asset.displayName,
+        }))}
+        onDescriptionChange={(d) =>
+          setCollectionEditor((current) =>
+            current ? { ...current, description: d } : current,
+          )
+        }
+        onCoverAssetChange={(id) =>
+          setCollectionEditor((current) =>
+            current ? { ...current, coverAssetId: id } : current,
+          )
+        }
+        onSave={() => void saveCollectionDetails()}
+        onCancel={() => setCollectionEditor(null)}
+      />
+      <RenameDialog
+        open={renameTarget !== null}
+        kind={renameTarget?.kind ?? "tag"}
+        currentName={renameTarget?.name ?? ""}
+        onNameChange={(name) =>
+          setRenameTarget((current) =>
+            current ? { ...current, name } : current,
+          )
+        }
+        onSave={() => {
+          if (!renameTarget) return;
+          if (renameTarget.kind === "tag") void renameTag();
+          else if (renameTarget.kind === "collection")
+            void renameCollection();
+          else {
+            const target = renameTarget;
+            setRenameTarget(null);
+            void renameSmartCollection(target.id, target.name);
+          }
+        }}
+        onCancel={() => setRenameTarget(null)}
+      />
+      <CreateDialog
+        open={dialog !== null}
+        kind={dialog === "library" ? "library" : "folder"}
+        value={dialogValue}
+        onValueChange={setDialogValue}
+        onSubmit={() => {
+          if (dialog === "library") {
+            setDialog(null);
+            void runLibraryOperation("create");
+          } else void createFolder();
+        }}
+        onCancel={() => setDialog(null)}
+        folderName={selectedFolder?.name}
+      />
       {conflicts && (
-        <div className="dialog-backdrop" role="presentation">
-          <div
-            aria-labelledby="conflict-dialog-title"
-            aria-modal="true"
-            className="conflict-dialog"
-            role="dialog"
-          >
-            <div className="dialog-heading">
-              <div>
-                <span className="eyebrow">IMPORT REVIEW</span>
-                <h2 id="conflict-dialog-title">处理导入冲突</h2>
-              </div>
-            </div>
-            <div className="conflict-summary">
-              <div>
-                <strong>{conflicts.fileCount}</strong>
-                <span>待导入文件</span>
-              </div>
-              <div>
-                <strong>{conflicts.suspectedDuplicateCount}</strong>
-                <span>疑似重复</span>
-              </div>
-              <div>
-                <strong>{conflicts.nameConflictCount}</strong>
-                <span>同名冲突</span>
-              </div>
-            </div>
-            <label className="decision-field">
-              <span>疑似重复</span>
-              <select
-                autoFocus
-                value={duplicateDecision}
-                onChange={(event) =>
-                  setDuplicateDecision(
-                    event.target.value as typeof duplicateDecision,
-                  )
-                }
-              >
-                <option value="skip">跳过</option>
-                <option value="merge">合并到已有资产</option>
-                <option value="create-copy">创建副本</option>
-              </select>
-            </label>
-            <label className="decision-field">
-              <span>同名冲突</span>
-              <select
-                value={nameDecision}
-                onChange={(event) =>
-                  setNameDecision(event.target.value as typeof nameDecision)
-                }
-              >
-                <option value="keep-both">保留两者</option>
-                <option value="replace">替换现有资产</option>
-                <option value="skip">跳过</option>
-              </select>
-            </label>
-            {conflicts.examples.length > 0 && (
-              <div className="conflict-examples">
-                {conflicts.examples.map((item, index) => (
-                  <span key={`${item.displayName}-${index}`}>
-                    <Icon name="file" size={13} />
-                    {item.displayName}
-                  </span>
-                ))}
-              </div>
-            )}
-            <div className="dialog-actions">
-              <button
-                className="secondary-button"
-                onClick={() => void abandonConflicts()}
-                type="button"
-              >
-                取消
-              </button>
-              <button
-                className="primary-button"
-                onClick={() => void resolveConflicts()}
-                type="button"
-              >
-                应用并导入
-              </button>
-            </div>
-          </div>
-        </div>
+        <ConflictsDialog
+          conflicts={conflicts}
+          duplicateDecision={duplicateDecision}
+          nameDecision={nameDecision}
+          onDuplicateDecisionChange={setDuplicateDecision}
+          onNameDecisionChange={setNameDecision}
+          onCancel={() => void abandonConflicts()}
+          onConfirm={() => void resolveConflicts()}
+        />
       )}
       {exportDialogOpen && (
-        <div className="dialog-backdrop" role="presentation">
-          <div aria-modal="true" className="create-dialog" role="dialog">
-            <div className="dialog-heading">
-              <div>
-                <span className="eyebrow">EXPORT LIBRARY</span>
-                <h2>导出资源库</h2>
-              </div>
-              <button
-                aria-label="取消"
-                className="dialog-close"
-                onClick={() => setExportDialogOpen(false)}
-                type="button"
-              >
-                <Icon name="close" size={16} />
-              </button>
-            </div>
-            <p
-              style={{
-                color: "var(--secondary)",
-                fontSize: 12,
-                lineHeight: 1.6,
-              }}
-            >
-              将资源库导出为完整文件夹或标准
-              ZIP。导出内容包括所有托管资产、数据库、修订记录和回收站文件。
-            </p>
-            <fieldset
-              style={{
-                border: "none",
-                padding: 0,
-                marginTop: 14,
-                display: "flex",
-                gap: 16,
-              }}
-            >
-              <legend
-                style={{ fontSize: 11, color: "#6c6f6c", marginBottom: 6 }}
-              >
-                导出格式
-              </legend>
-              <label
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 5,
-                  color: "#c7cac7",
-                  fontSize: 12,
-                  cursor: "pointer",
-                }}
-              >
-                <input
-                  checked={exportFormat === "folder"}
-                  onChange={() => setExportFormat("folder")}
-                  type="radio"
-                  name="export-format"
-                />
-                文件夹
-              </label>
-              <label
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 5,
-                  color: "#c7cac7",
-                  fontSize: 12,
-                  cursor: "pointer",
-                }}
-              >
-                <input
-                  checked={exportFormat === "zip"}
-                  onChange={() => setExportFormat("zip")}
-                  type="radio"
-                  name="export-format"
-                />
-                标准 ZIP
-                {exportFormat === "zip" && (
-                  <span style={{ fontSize: 10, color: "#6c6f6c" }}>
-                    （4&nbsp;GiB / 65534 条目以内）
-                  </span>
-                )}
-              </label>
-            </fieldset>
-            <label
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-                marginTop: 10,
-                color: "#c7cac7",
-                fontSize: 12,
-                cursor: "pointer",
-              }}
-            >
-              <input
-                checked={includeLinkedContent}
-                onChange={(e) => setIncludeLinkedContent(e.target.checked)}
-                type="checkbox"
-              />
-              包含链接文件夹源内容
-            </label>
-            <div className="dialog-actions">
-              <button
-                className="secondary-button"
-                onClick={() => setExportDialogOpen(false)}
-                type="button"
-              >
-                取消
-              </button>
-              <button
-                className="primary-button"
-                onClick={() => void exportLibrary()}
-                type="button"
-              >
-                {exportFormat === "zip"
-                  ? "选择保存位置并导出 ZIP"
-                  : "选择目标文件夹并导出"}
-              </button>
-            </div>
-          </div>
-        </div>
+        <ExportDialog
+          open={exportDialogOpen}
+          exporting={
+            exportProgress !== null &&
+            !["complete", "cancelled", "failed"].includes(exportProgress.phase)
+          }
+          onClose={() => setExportDialogOpen(false)}
+          onExportFolder={(includeLinked) =>
+            void exportLibrary("folder", includeLinked)
+          }
+          onExportZip={(includeLinked) =>
+            void exportLibrary("zip", includeLinked)
+          }
+        />
       )}
       {importValidated && (
-        <div className="dialog-backdrop" role="presentation">
-          <div aria-modal="true" className="create-dialog" role="dialog">
-            <div className="dialog-heading">
-              <div>
-                <span className="eyebrow">IMPORT LIBRARY</span>
-                <h2>导入资源库</h2>
-              </div>
-              <button
-                aria-label="取消"
-                className="dialog-close"
-                onClick={() => setImportValidated(null)}
-                type="button"
-              >
-                <Icon name="close" size={16} />
-              </button>
-            </div>
-            <p
-              style={{
-                color: "var(--secondary)",
-                fontSize: 12,
-                lineHeight: 1.6,
-              }}
-            >
-              资源库 <strong>{importValidated.displayName}</strong>{" "}
-              验证通过。请选择导入方式：
-            </p>
-            <div className="dialog-actions">
-              <button
-                className="secondary-button"
-                onClick={() => setImportValidated(null)}
-                type="button"
-              >
-                取消
-              </button>
-              <button
-                className="secondary-button"
-                onClick={() => void completeImportInPlace()}
-                type="button"
-              >
-                原地打开（不复制）
-              </button>
-              <button
-                className="primary-button"
-                onClick={() => void completeImportCopy()}
-                type="button"
-              >
-                复制到新位置
-              </button>
-            </div>
-          </div>
-        </div>
+        <ImportDialog
+          open
+          validated={importValidated}
+          importing={
+            importProgress !== null &&
+            !["complete", "cancelled", "failed"].includes(importProgress.phase)
+          }
+          onClose={() => setImportValidated(null)}
+          onImportCopy={() => void completeImportCopy()}
+          onImportOpenInPlace={() => void completeImportInPlace()}
+          onImportZip={() => {
+            setImportValidated(null);
+            void startImportZip();
+          }}
+        />
       )}
       {permanentDeleteDialog && (
-        <div className="dialog-backdrop" role="presentation">
-          <div aria-modal="true" className="create-dialog" role="dialog">
-            <div className="dialog-heading">
-              <div>
-                <span className="eyebrow">PERMANENT DELETE</span>
-                <h2>永久删除确认</h2>
-              </div>
-              <button
-                aria-label="取消"
-                className="dialog-close"
-                onClick={() => setPermanentDeleteDialog(null)}
-                type="button"
-              >
-                <Icon name="close" size={16} />
-              </button>
-            </div>
-            <p
-              style={{
-                color: "var(--secondary)",
-                fontSize: 12,
-                lineHeight: 1.6,
-              }}
-            >
-              确定要永久删除所选 {permanentDeleteDialog.length} 项资产吗？文件将从回收站彻底移除，此操作不可撤销。
-            </p>
-            <div className="dialog-actions">
-              <button
-                className="secondary-button"
-                onClick={() => setPermanentDeleteDialog(null)}
-                type="button"
-              >
-                取消
-              </button>
-              <button
-                className="primary-button"
-                onClick={() => void deletePermanentFromTrash()}
-                type="button"
-              >
-                永久删除 {permanentDeleteDialog.length} 项
-              </button>
-            </div>
-          </div>
-        </div>
+        <PermanentDeleteDialog
+          assetCount={permanentDeleteDialog.length}
+          onCancel={() => setPermanentDeleteDialog(null)}
+          onConfirm={() => void deletePermanentFromTrash()}
+        />
       )}
       {deleteLinkedDialog && (
-        <div className="dialog-backdrop" role="presentation">
-          <div aria-modal="true" className="create-dialog" role="dialog">
-            <div className="dialog-heading">
-              <div>
-                <span className="eyebrow">DELETE LINKED ASSET</span>
-                <h2>删除链接资产</h2>
-              </div>
-              <button
-                aria-label="取消"
-                className="dialog-close"
-                onClick={() => setDeleteLinkedDialog(null)}
-                type="button"
-              >
-                <Icon name="close" size={16} />
-              </button>
-            </div>
-            <p
-              style={{
-                color: "var(--secondary)",
-                fontSize: 12,
-                lineHeight: 1.6,
-              }}
-            >
-              确定要从 Serpent 中移除链接资产"{deleteLinkedDialog.displayNames}
-              "吗？默认只移除索引记录，磁盘源文件保持不变。
-            </p>
-            <label
-              style={{
-                display: "flex",
-                alignItems: "flex-start",
-                gap: 8,
-                marginTop: 12,
-                color: "#c7cac7",
-                fontSize: 12,
-                cursor: deleteLinkedDialog.canDeleteSourceFile
-                  ? "pointer"
-                  : "not-allowed",
-                lineHeight: 1.5,
-              }}
-            >
-              <input
-                aria-label="同时删除磁盘源文件"
-                checked={deleteLinkedDialog.deleteSourceFile}
-                disabled={!deleteLinkedDialog.canDeleteSourceFile}
-                onChange={(event) =>
-                  setDeleteLinkedDialog((current) =>
-                    current
-                      ? { ...current, deleteSourceFile: event.target.checked }
-                      : current,
-                  )
-                }
-                type="checkbox"
-              />
-              <span>
-                {deleteLinkedDialog.canDeleteSourceFile
-                  ? "同时将磁盘源文件移入系统回收站。系统拒绝操作时，该项源文件和 Serpent 记录都会保留，并显示具体原因。"
-                  : "源文件当前不可用，只能移除 Serpent 中的链接记录。"}
-              </span>
-            </label>
-            <div className="dialog-actions">
-              <button
-                className="secondary-button"
-                onClick={() => setDeleteLinkedDialog(null)}
-                type="button"
-              >
-                取消
-              </button>
-              <button
-                className="primary-button"
-                onClick={() => void executeDeleteLinked()}
-                type="button"
-              >
-                {deleteLinkedDialog.deleteSourceFile
-                  ? "移入系统回收站并移除"
-                  : "仅移除记录"}
-              </button>
-            </div>
-          </div>
-        </div>
+        <DeleteLinkedDialog
+          displayNames={deleteLinkedDialog.displayNames}
+          deleteSourceFile={deleteLinkedDialog.deleteSourceFile}
+          canDeleteSourceFile={deleteLinkedDialog.canDeleteSourceFile}
+          onClose={() => setDeleteLinkedDialog(null)}
+          onConfirm={() => void executeDeleteLinked()}
+          onToggleDeleteSourceFile={(checked) =>
+            setDeleteLinkedDialog((current) =>
+              current ? { ...current, deleteSourceFile: checked } : current,
+            )
+          }
+        />
       )}
-      {batchRelinkPreview && (
-        <div className="dialog-backdrop" role="presentation">
-          <div
-            aria-labelledby="batch-relink-dialog-title"
-            aria-modal="true"
-            className="conflict-dialog"
-            role="dialog"
-          >
-            <div className="dialog-heading">
-              <div>
-                <span className="eyebrow">BATCH RELINK</span>
-                <h2 id="batch-relink-dialog-title">批量重新定位预览</h2>
-              </div>
-              <button
-                aria-label="取消"
-                className="dialog-close"
-                onClick={() => void cancelBatchRelink()}
-                type="button"
-              >
-                <Icon name="close" size={16} />
-              </button>
-            </div>
-            <div
-              className="conflict-summary"
-              style={{ gridTemplateColumns: "repeat(3, 1fr)" }}
-            >
-              <div>
-                <strong>{batchRelinkPreview.totalCount}</strong>
-                <span>总计丢失</span>
-              </div>
-              <div>
-                <strong>{batchRelinkPreview.matchedCount}</strong>
-                <span>新位置匹配</span>
-              </div>
-              <div>
-                <strong>{batchRelinkPreview.unmatchedCount}</strong>
-                <span>未找到</span>
-              </div>
-            </div>
-            {batchRelinkPreview.examples.length > 0 && (
-              <div className="conflict-examples">
-                {batchRelinkPreview.examples.map((item, index) => (
-                  <span
-                    key={`${item.relativeFilePath}-${index}`}
-                    style={{
-                      color: item.matched ? "var(--accent)" : "var(--warning)",
-                    }}
-                  >
-                    <Icon name={item.matched ? "file" : "warning"} size={13} />
-                    {item.relativeFilePath}
-                  </span>
-                ))}
-              </div>
-            )}
-            <label
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-                marginTop: 14,
-                color: "#c7cac7",
-                fontSize: 12,
-                cursor: "pointer",
-              }}
-            >
-              <input
-                checked={batchRelinkKeepMetadata}
-                onChange={(e) => setBatchRelinkKeepMetadata(e.target.checked)}
-                type="checkbox"
-              />
-              沿用原资产信息（保留标签、描述、评分、合集等人工元数据）
-            </label>
-            <div className="dialog-actions">
-              <button
-                className="secondary-button"
-                onClick={() => void cancelBatchRelink()}
-                type="button"
-              >
-                取消
-              </button>
-              <button
-                className="primary-button"
-                disabled={batchRelinkPreview.matchedCount === 0}
-                onClick={() => void applyBatchRelink()}
-                type="button"
-              >
-                应用批量重新定位
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-      {extensionPairingOpen && (
-        <div className="dialog-backdrop" role="presentation">
-          <div
-            aria-labelledby="extension-pairing-title"
-            aria-modal="true"
-            className="create-dialog"
-            role="dialog"
-          >
-            <div className="dialog-heading">
-              <div>
-                <span className="eyebrow">BROWSER EXTENSION PAIRING</span>
-                <h2 id="extension-pairing-title">浏览器扩展配对</h2>
-              </div>
-              <button
-                aria-label="关闭浏览器扩展配对"
-                className="dialog-close"
-                onClick={() => {
-                  setExtensionPairingOpen(false);
-                  setExtensionPairingToken("");
-                  setExtensionPairingError(null);
-                }}
-                type="button"
-              >
-                <Icon name="close" size={16} />
-              </button>
-            </div>
-            <p
-              style={{
-                color: "var(--secondary)",
-                fontSize: 12,
-                lineHeight: 1.6,
-              }}
-            >
-              将配对码粘贴到 Chrome 或 Edge 的 Serpent
-              扩展选项中。配对码由操作系统安全存储加密保存；此窗口关闭后不会在界面中保留明文。
-            </p>
-            {extensionPairingError ? (
-              <p role="alert" style={{ color: "var(--warning)", fontSize: 12 }}>
-                {extensionPairingError}
-              </p>
-            ) : (
-              <>
-                <label
-                  className="field-label"
-                  htmlFor="extension-pairing-token"
-                >
-                  配对码
-                </label>
-                <input
-                  className="text-field"
-                  id="extension-pairing-token"
-                  onFocus={(event) => event.currentTarget.select()}
-                  readOnly
-                  spellCheck={false}
-                  style={{
-                    fontFamily: "'IBM Plex Mono', monospace",
-                    fontSize: 11,
-                  }}
-                  value={extensionPairingToken || "正在读取…"}
-                />
-                <p className="field-help">
-                  轮换会使所有浏览器中保存的旧配对码立即失效。
-                </p>
-              </>
-            )}
-            <div className="dialog-actions">
-              <button
-                className="secondary-button"
-                disabled={!extensionPairingToken}
-                onClick={() => void rotateExtensionPairing()}
-                type="button"
-              >
-                轮换配对码
-              </button>
-              <button
-                className="primary-button"
-                disabled={!extensionPairingToken}
-                onClick={() => void copyExtensionPairingToken()}
-                type="button"
-              >
-                复制配对码
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-      {aiConfigOpen && (
-        <div className="dialog-backdrop" role="presentation">
-          <div aria-modal="true" className="create-dialog" role="dialog">
-            <div className="dialog-heading">
-              <div>
-                <span className="eyebrow">AI CONFIGURATION</span>
-                <h2>AI 配置 (BYOK)</h2>
-              </div>
-              <button
-                aria-label="取消"
-                className="dialog-close"
-                onClick={() => {
-                  setAiConfigOpen(false);
-                  setAiApiKey("");
-                }}
-                type="button"
-              >
-                <Icon name="close" size={16} />
-              </button>
-            </div>
-            <p
-              style={{
-                color: "var(--secondary)",
-                fontSize: 12,
-                lineHeight: 1.6,
-              }}
-            >
-              配置第三方云端视觉模型 API Key。Key
-              将加密存储于本地操作系统安全凭据中，Serpent
-              不代理、不计费、不追踪额度。
-            </p>
-            <div className="editor-field" style={{ marginTop: 12 }}>
-              <label className="micro-label">供应商</label>
-              <select
-                className="text-field"
-                onChange={(e) =>
-                  setAiProvider(
-                    e.target.value as "openai" | "gemini" | "anthropic",
-                  )
-                }
-                style={{ height: 30, fontSize: 12, marginTop: 3 }}
-                value={aiProvider}
-              >
-                <option value="openai">OpenAI (GPT-4o / GPT-4o-mini)</option>
-                <option value="gemini">Google Gemini</option>
-                <option value="anthropic">Anthropic Claude</option>
-              </select>
-            </div>
-            <div className="editor-field" style={{ marginTop: 10 }}>
-              <label className="micro-label">模型</label>
-              <input
-                className="text-field"
-                maxLength={255}
-                onChange={(e) => setAiModel(e.target.value)}
-                placeholder="gpt-4o-mini"
-                style={{ height: 28, fontSize: 11, marginTop: 3 }}
-                value={aiModel}
-              />
-            </div>
-            <div className="editor-field" style={{ marginTop: 10 }}>
-              <label className="micro-label">API Key</label>
-              <input
-                className="text-field"
-                maxLength={512}
-                onChange={(e) => setAiApiKey(e.target.value)}
-                placeholder={aiHasKey ? "（已配置，重新输入可覆盖）" : "sk-…"}
-                style={{ height: 28, fontSize: 11, marginTop: 3 }}
-                type="password"
-                value={aiApiKey}
-              />
-            </div>
-            <div className="editor-field" style={{ marginTop: 10 }}>
-              <label className="micro-label">语言</label>
-              <input
-                className="text-field"
-                maxLength={35}
-                onChange={(e) => setAiLanguage(e.target.value)}
-                placeholder="auto (跟随系统)"
-                style={{ height: 28, fontSize: 11, marginTop: 3 }}
-                value={aiLanguage}
-              />
-            </div>
-            <div style={{ marginTop: 14 }}>
-              <label
-                className="micro-label"
-                style={{ marginBottom: 5, display: "block" }}
-              >
-                AI 写入开关（按字段）
-              </label>
-              {(
-                [
-                  {
-                    key: "label",
-                    label: "标签 (Label)",
-                    state: aiLabelEnabled,
-                    setter: setAiLabelEnabled,
-                  },
-                  {
-                    key: "description",
-                    label: "描述",
-                    state: aiDescriptionEnabled,
-                    setter: setAiDescriptionEnabled,
-                  },
-                  {
-                    key: "tags",
-                    label: "标签 (Tags)",
-                    state: aiTagsEnabled,
-                    setter: setAiTagsEnabled,
-                  },
-                  {
-                    key: "structured",
-                    label: "结构化元信息",
-                    state: aiStructuredEnabled,
-                    setter: setAiStructuredEnabled,
-                  },
-                ] as const
-              ).map((field) => (
-                <label
-                  key={field.key}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 8,
-                    padding: "3px 0",
-                    color: "#c7cac7",
-                    fontSize: 12,
-                    cursor: "pointer",
-                  }}
-                >
-                  <input
-                    checked={field.state}
-                    onChange={(e) => field.setter(e.target.checked)}
-                    type="checkbox"
-                  />
-                  {field.label}
-                </label>
-              ))}
-            </div>
-            <div
-              style={{
-                marginTop: 14,
-                borderTop: "1px solid var(--border)",
-                paddingTop: 12,
-              }}
-            >
-              <label
-                style={{
-                  display: "flex",
-                  alignItems: "flex-start",
-                  gap: 8,
-                  color: "#c7cac7",
-                  fontSize: 12,
-                  cursor: "pointer",
-                  lineHeight: 1.5,
-                }}
-              >
-                <input
-                  checked={aiDisclaimerAccepted}
-                  onChange={(e) => {
-                    setAiDisclaimerAccepted(e.target.checked);
-                    if (!e.target.checked) setAiAutoAnalyzeEnabled(false);
-                  }}
-                  type="checkbox"
-                />
-                <span>
-                  我了解启用 AI
-                  分析会将选中资产的图像或视频联系表上传给所选第三方供应商，并可能产生费用。
-                </span>
-              </label>
-              <label
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 8,
-                  marginTop: 9,
-                  color: aiDisclaimerAccepted ? "#c7cac7" : "var(--tertiary)",
-                  fontSize: 12,
-                  cursor: aiDisclaimerAccepted ? "pointer" : "not-allowed",
-                }}
-              >
-                <input
-                  checked={aiAutoAnalyzeEnabled}
-                  disabled={!aiDisclaimerAccepted}
-                  onChange={(e) => setAiAutoAnalyzeEnabled(e.target.checked)}
-                  type="checkbox"
-                />
-                导入后自动上传并分析支持的资产
-              </label>
-            </div>
-            <div className="dialog-actions" style={{ marginTop: 14 }}>
-              <button
-                className="secondary-button"
-                onClick={() => {
-                  setAiConfigOpen(false);
-                  setAiApiKey("");
-                }}
-                type="button"
-              >
-                取消
-              </button>
-              <button
-                className="primary-button"
-                disabled={!aiApiKey.trim() && !aiHasKey}
-                onClick={() => void saveAiConfig()}
-                type="button"
-              >
-                保存配置
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-      {mediaJobsOpen && library && (
-        <div className="dialog-backdrop" role="presentation">
-          <div
-            aria-labelledby="media-jobs-title"
-            aria-modal="true"
-            className="create-dialog"
-            role="dialog"
-            style={{ maxWidth: 680 }}
-          >
-            <div className="dialog-heading">
-              <div>
-                <span className="eyebrow">BACKGROUND MEDIA JOBS</span>
-                <h2 id="media-jobs-title">后台媒体任务</h2>
-              </div>
-              <button
-                aria-label="关闭后台任务"
-                className="dialog-close"
-                onClick={() => setMediaJobsOpen(false)}
-                type="button"
-              >
-                <Icon name="close" size={16} />
-              </button>
-            </div>
-            {mediaJobsLoading && !mediaJobs ? (
-              <p className="field-help">正在读取任务状态…</p>
-            ) : mediaJobs ? (
-              <>
-                <p className="field-help">
-                  排队 {mediaJobs.queued} · 运行 {mediaJobs.running} · 暂停{" "}
-                  {mediaJobs.paused} · 失败 {mediaJobs.failed} · 已完成{" "}
-                  {mediaJobs.succeeded}
-                </p>
-                <div
-                  className="dialog-actions"
-                  style={{ justifyContent: "flex-start", marginBottom: 12 }}
-                >
-                  <button
-                    className="secondary-button"
-                    disabled={mediaJobs.queued + mediaJobs.running === 0}
-                    onClick={() => void controlMediaJobs("pause")}
-                    type="button"
-                  >
-                    全部暂停
-                  </button>
-                  <button
-                    className="secondary-button"
-                    disabled={mediaJobs.paused === 0}
-                    onClick={() => void controlMediaJobs("resume")}
-                    type="button"
-                  >
-                    继续暂停项
-                  </button>
-                  <button
-                    className="secondary-button"
-                    disabled={
-                      mediaJobs.queued +
-                        mediaJobs.running +
-                        mediaJobs.paused ===
-                      0
-                    }
-                    onClick={() => void controlMediaJobs("cancel")}
-                    type="button"
-                  >
-                    取消未完成项
-                  </button>
-                  <button
-                    className="secondary-button"
-                    disabled={mediaJobs.failed === 0}
-                    onClick={() =>
-                      void controlMediaJobs(
-                        "retry",
-                        mediaJobs.jobs
-                          .filter((job) => job.status === "failed")
-                          .map((job) => job.jobId),
-                      )
-                    }
-                    type="button"
-                  >
-                    重试失败项
-                  </button>
-                </div>
-                <div
-                  style={{
-                    maxHeight: 330,
-                    overflow: "auto",
-                    borderTop: "1px solid var(--border)",
-                  }}
-                >
-                  {mediaJobs.jobs.length ? (
-                    mediaJobs.jobs.map((job) => (
-                      <div
-                        key={job.jobId}
-                        style={{
-                          borderBottom: "1px solid var(--border)",
-                          display: "grid",
-                          gap: 8,
-                          gridTemplateColumns:
-                            "minmax(140px, 1fr) 90px minmax(180px, 2fr)",
-                          padding: "9px 2px",
-                          fontSize: 11,
-                        }}
-                      >
-                        <span>
-                          {job.kind
-                            .replace("generate_", "")
-                            .replaceAll("_", " ")}
-                        </span>
-                        <strong>{job.status}</strong>
-                        <span title={job.errorCode ?? undefined}>
-                          {job.errorDetail ??
-                            job.errorCode ??
-                            `${Math.round(job.progress * 100)}%`}
-                        </span>
-                      </div>
-                    ))
-                  ) : (
-                    <p className="field-help">当前没有媒体任务。</p>
-                  )}
-                </div>
-                {aiJobs && (
-                  <section
-                    style={{
-                      borderTop: "1px solid var(--border)",
-                      marginTop: 16,
-                      paddingTop: 12,
-                    }}
-                  >
-                    <h3 style={{ fontSize: 13, margin: "0 0 5px" }}>
-                      AI 分析任务
-                    </h3>
-                    <p className="field-help">
-                      排队 {aiJobs.queued} · 运行 {aiJobs.running} · 暂停{" "}
-                      {aiJobs.paused} · 失败 {aiJobs.failed} · 已完成{" "}
-                      {aiJobs.succeeded}
-                    </p>
-                    <div
-                      className="dialog-actions"
-                      style={{ justifyContent: "flex-start", marginBottom: 10 }}
-                    >
-                      <button
-                        className="secondary-button"
-                        disabled={aiJobs.queued + aiJobs.running === 0}
-                        onClick={() => void controlAiJobs("pause")}
-                        type="button"
-                      >
-                        暂停 AI
-                      </button>
-                      <button
-                        className="secondary-button"
-                        disabled={aiJobs.paused === 0}
-                        onClick={() => void controlAiJobs("resume")}
-                        type="button"
-                      >
-                        继续 AI
-                      </button>
-                      <button
-                        className="secondary-button"
-                        disabled={
-                          aiJobs.queued + aiJobs.running + aiJobs.paused === 0
-                        }
-                        onClick={() => void controlAiJobs("cancel")}
-                        type="button"
-                      >
-                        取消 AI
-                      </button>
-                      <button
-                        className="secondary-button"
-                        disabled={aiJobs.failed === 0}
-                        onClick={() =>
-                          void controlAiJobs(
-                            "retry",
-                            aiJobs.jobs
-                              .filter((job) => job.status === "failed")
-                              .map((job) => job.jobId),
-                          )
-                        }
-                        type="button"
-                      >
-                        重试 AI 失败项
-                      </button>
-                    </div>
-                    <div style={{ maxHeight: 180, overflow: "auto" }}>
-                      {aiJobs.jobs.map((job) => (
-                        <div
-                          key={job.jobId}
-                          style={{
-                            display: "grid",
-                            gap: 8,
-                            gridTemplateColumns:
-                              "minmax(150px, 1fr) 90px minmax(180px, 2fr)",
-                            padding: "7px 2px",
-                            fontSize: 11,
-                          }}
-                        >
-                          <span>{job.kind}</span>
-                          <strong>{job.status}</strong>
-                          <span title={job.errorCode ?? undefined}>
-                            {job.errorDetail ?? job.errorCode ?? "—"}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  </section>
-                )}
-              </>
-            ) : (
-              <p className="field-help">暂时无法读取任务状态，请关闭后重试。</p>
-            )}
-          </div>
-        </div>
-      )}
+      <RelinkPreview
+        preview={batchRelinkPreview}
+        keepMetadata={batchRelinkKeepMetadata}
+        onKeepMetadataChange={setBatchRelinkKeepMetadata}
+        onApply={() => void applyBatchRelink()}
+        onCancel={() => void cancelBatchRelink()}
+      />
+      <ExtensionPairingDialog
+        open={extensionPairingOpen}
+        token={extensionPairingToken}
+        error={extensionPairingError}
+        onClose={() => {
+          setExtensionPairingOpen(false);
+          setExtensionPairingToken("");
+          setExtensionPairingError(null);
+        }}
+        onRotate={() => void rotateExtensionPairing()}
+        onCopy={() => void copyExtensionPairingToken()}
+      />
+      <AiConfigDialog
+        open={aiConfigOpen}
+        apiKey={aiApiKey}
+        provider={aiProvider}
+        model={aiModel}
+        language={aiLanguage}
+        hasKey={aiHasKey}
+        labelEnabled={aiLabelEnabled}
+        descriptionEnabled={aiDescriptionEnabled}
+        tagsEnabled={aiTagsEnabled}
+        structuredEnabled={aiStructuredEnabled}
+        disclaimerAccepted={aiDisclaimerAccepted}
+        autoAnalyzeEnabled={aiAutoAnalyzeEnabled}
+        onApiKeyChange={setAiApiKey}
+        onProviderChange={setAiProvider}
+        onModelChange={setAiModel}
+        onLanguageChange={setAiLanguage}
+        onLabelEnabledChange={setAiLabelEnabled}
+        onDescriptionEnabledChange={setAiDescriptionEnabled}
+        onTagsEnabledChange={setAiTagsEnabled}
+        onStructuredEnabledChange={setAiStructuredEnabled}
+        onDisclaimerAcceptedChange={setAiDisclaimerAccepted}
+        onAutoAnalyzeEnabledChange={setAiAutoAnalyzeEnabled}
+        onClose={() => {
+          setAiConfigOpen(false);
+          setAiApiKey("");
+        }}
+        onSave={() => void saveAiConfig()}
+      />
+      <MediaJobsDialog
+        open={mediaJobsOpen && library !== null}
+        mediaJobs={mediaJobs}
+        mediaJobsLoading={mediaJobsLoading}
+        aiJobs={aiJobs}
+        onClose={() => setMediaJobsOpen(false)}
+        onControlMediaJobs={(action, jobIds) => void controlMediaJobs(action, jobIds)}
+        onControlAiJobs={(action, jobIds) => void controlAiJobs(action, jobIds)}
+      />
       {/* Unified context menu */}
       <AssetContextMenu
         tags={tags}
         collections={collections}
         linkedFolders={linkedFolders}
         activeCollectionId={activeCollectionId}
-        selectedAvailableManaged={selectedAvailableManaged}
-        selectedManagedCount={selectedManagedCount}
-        selectedAssets={selectedAssets}
+        assets={visibleAssets}
         onRenameSmartCollection={(id, name) => setRenameTarget({ kind: "smart", id, name })}
         onUpdateSmartCollection={(id) => { void updateSmartCollectionQuery(id); }}
         onDeleteSmartCollection={(id) => { void deleteSmartCollection(id); }}
@@ -6989,10 +5367,18 @@ function AppInner() {
           if (kind === "tag") void deleteTag(id);
           else void deleteCollection(id);
         }}
-        onBatchAssignTag={(tagId) => { void batchAssignTagToSelection(tagId); }}
-        onBatchRemoveTag={(tagId) => { void batchRemoveTagFromSelection(tagId); }}
-        onBatchAddToCollection={(collectionId) => { void batchAddSelectionToCollection(collectionId); }}
-        onBatchRemoveFromCollection={(collectionId) => { void batchRemoveSelectionFromCollection(collectionId); }}
+        onBatchAssignTag={(tagId, assetIds) => {
+          void batchAssignTagToSelection(tagId, assetIds);
+        }}
+        onBatchRemoveTag={(tagId, assetIds) => {
+          void batchRemoveTagFromSelection(tagId, assetIds);
+        }}
+        onBatchAddToCollection={(collectionId, assetIds) => {
+          void batchAddSelectionToCollection(collectionId, assetIds);
+        }}
+        onBatchRemoveFromCollection={(collectionId, assetIds) => {
+          void batchRemoveSelectionFromCollection(collectionId, assetIds);
+        }}
         onMoveToFolder={(assetIds) =>
           setMoveDialog({
             assetIds,
@@ -7001,6 +5387,25 @@ function AppInner() {
           })
         }
         onTrash={(assetIds) => { void trashManagedAssets(assetIds); }}
+        onRestore={(assetIds) =>
+          setRestoreDialog({
+            assetIds,
+            target: "original",
+            conflictStrategy: "keep-both",
+          })
+        }
+        onPermanentDelete={(assetIds) => setPermanentDeleteDialog(assetIds)}
+        onRelink={(assetId) => { void relinkMissingAsset(assetId); }}
+        onDeleteLinked={(assetId, displayName, canDeleteSourceFile) =>
+          setDeleteLinkedDialog({
+            assetIds: [assetId],
+            displayNames: displayName,
+            deleteSourceFile: false,
+            canDeleteSourceFile,
+          })
+        }
+        onAnalyze={(assetId) => { void handleAnalyzeClick(assetId); }}
+        canAnalyze={aiHasKey && !aiAnalyzing}
         onCopyToLinked={(folder, assetIds) => { void copyManagedSelectionToLinked(folder, assetIds); }}
         onClearSelection={clearAssetSelection}
         onOpenExternal={(assetId) => { void handleOpenExternal(assetId); }}

@@ -18,6 +18,7 @@
  * the WAL flush, IPC reconnect, and LibraryWorkerClient state-machine recovery on
  * unexpected exit remain untested.
  */
+import { randomUUID } from 'node:crypto';
 import {
   existsSync,
   mkdtempSync,
@@ -25,6 +26,7 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -83,6 +85,37 @@ function importNoConflict(service: LibraryService, libraryId: string, sourcePath
   }) as ImportCompletion;
 }
 
+function missingManagedAssetFixture(label: string): {
+  assetId: string;
+  libraryId: string;
+  libraryPath: string;
+  managedPath: string;
+  replacementPath: string;
+  root: string;
+} {
+  const root = temporaryRoot();
+  const service = new LibraryService();
+  const created = service.createLibrary({ displayName: label, selectedParentPath: root });
+  const sourcePath = path.join(root, 'orig.jpg');
+  writeFileSync(sourcePath, 'original bytes');
+  const imported = importNoConflict(service, created.libraryId, sourcePath);
+  const assetId = imported.assets[0]!.assetId;
+  const managedPath = path.join(created.libraryPath, 'Assets', 'orig.jpg');
+  rmSync(managedPath);
+  service.refreshManagedAssets(created.libraryId);
+  service.closeAll();
+  const replacementPath = path.join(root, 'replacement.jpg');
+  writeFileSync(replacementPath, 'replacement bytes');
+  return {
+    assetId,
+    libraryId: created.libraryId,
+    libraryPath: created.libraryPath,
+    managedPath,
+    replacementPath,
+    root,
+  };
+}
+
 afterEach(() => {
   for (const root of temporaryRoots.splice(0)) {
     rmSync(root, { force: true, recursive: true });
@@ -136,12 +169,22 @@ describe('relinkAsset recovery on reopen', () => {
     expect(relinkChildren).toHaveLength(1);
     const manifestPath = path.join(opsDir, relinkChildren[0]!, 'manifest.json');
     const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
-    expect(manifest.version).toBe(2);
+    expect(manifest.version).toBe(3);
+    expect(manifest.phase).toBe('staged');
     expect(manifest.destinationRelativePath).toBe('orig.jpg');
-    expect(manifest.placedSnapshot).toEqual({
+    expect(manifest.stagedIdentity).toEqual({
+      ctimeNs: expect.any(String),
+      dev: expect.any(String),
+      ino: expect.any(String),
       size: String(readFileSync(managedPath).length),
       mtimeNs: expect.any(String),
+      sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
     });
+    const placedMarker = JSON.parse(
+      readFileSync(path.join(opsDir, relinkChildren[0]!, 'placed.json'), 'utf8'),
+    );
+    expect(placedMarker.version).toBe(1);
+    expect(placedMarker.placedIdentity.ctimeNs).toEqual(expect.any(String));
 
     // DB still shows missing (transaction never started)
     const db = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
@@ -173,6 +216,161 @@ describe('relinkAsset recovery on reopen', () => {
     expect(recovered.listAssets({ libraryId: created.libraryId, recursive: true })[0]!.availability)
       .toBe('missing');
 
+    recovered.closeAll();
+  });
+
+  it.each([
+    'crash-relink-before-manifest-write',
+    'crash-relink-after-manifest-before-placement',
+  ] as const)('never removes a destination that was not durably placed at %s', (failAt) => {
+    const fixture = missingManagedAssetFixture(`Relink ${failAt}`);
+    const crashing = new LibraryService({ failAt });
+    crashing.openLibrary(fixture.libraryPath);
+    expectServiceError(
+      () => crashing.relinkAsset({
+        libraryId: fixture.libraryId,
+        assetId: fixture.assetId,
+        newAbsolutePath: fixture.replacementPath,
+      }),
+      'LIBRARY_NOT_WRITABLE',
+    );
+    crashing.closeAll();
+
+    // Simulate an external writer claiming the missing managed path after the
+    // interrupted operation. Recovery has no placed marker and must preserve it.
+    writeFileSync(fixture.managedPath, 'external writer bytes');
+    const diagnostics: Array<{ scope: string }> = [];
+    const recovered = new LibraryService({ onDiagnostic: (event) => diagnostics.push(event) });
+    recovered.openLibrary(fixture.libraryPath);
+    expect(readFileSync(fixture.managedPath, 'utf8')).toBe('external writer bytes');
+    if (failAt === 'crash-relink-after-manifest-before-placement') {
+      expect(diagnostics.some((event) => event.scope === 'asset.relink.recovery-ownership-unknown')).toBe(true);
+    }
+    recovered.closeAll();
+  });
+
+  it('preserves the destination in the rename-to-placed-marker crash window', () => {
+    const fixture = missingManagedAssetFixture('Relink rename marker window');
+    const crashing = new LibraryService({
+      failAt: 'crash-relink-after-placement-before-manifest-update',
+    });
+    crashing.openLibrary(fixture.libraryPath);
+    expectServiceError(
+      () => crashing.relinkAsset({
+        libraryId: fixture.libraryId,
+        assetId: fixture.assetId,
+        newAbsolutePath: fixture.replacementPath,
+      }),
+      'LIBRARY_NOT_WRITABLE',
+    );
+    expect(readFileSync(fixture.managedPath, 'utf8')).toBe('replacement bytes');
+    const operationsPath = path.join(fixture.libraryPath, '.serpent', 'operations');
+    const operationName = readdirSync(operationsPath).find((name) => name.startsWith('relink-'))!;
+    expect(existsSync(path.join(operationsPath, operationName, 'manifest.json'))).toBe(true);
+    expect(existsSync(path.join(operationsPath, operationName, 'placed.json'))).toBe(false);
+    crashing.closeAll();
+
+    const diagnostics: Array<{ scope: string }> = [];
+    const recovered = new LibraryService({ onDiagnostic: (event) => diagnostics.push(event) });
+    recovered.openLibrary(fixture.libraryPath);
+    expect(readFileSync(fixture.managedPath, 'utf8')).toBe('replacement bytes');
+    expect(diagnostics.some((event) => event.scope === 'asset.relink.recovery-ownership-unknown')).toBe(true);
+    expect(recovered.listAssets({ libraryId: fixture.libraryId, recursive: true })[0]!.availability).toBe('missing');
+    recovered.closeAll();
+  });
+
+  it('rolls back an exactly-owned placement when interrupted before DB commit', () => {
+    const fixture = missingManagedAssetFixture('Relink before commit');
+    const crashing = new LibraryService({ failAt: 'crash-relink-before-db-commit' });
+    crashing.openLibrary(fixture.libraryPath);
+    expectServiceError(
+      () => crashing.relinkAsset({
+        libraryId: fixture.libraryId,
+        assetId: fixture.assetId,
+        newAbsolutePath: fixture.replacementPath,
+      }),
+      'LIBRARY_NOT_WRITABLE',
+    );
+    crashing.closeAll();
+
+    const recovered = new LibraryService();
+    recovered.openLibrary(fixture.libraryPath);
+    expect(existsSync(fixture.managedPath)).toBe(false);
+    expect(recovered.listAssets({ libraryId: fixture.libraryId, recursive: true })[0]!.availability).toBe('missing');
+    recovered.closeAll();
+  });
+
+  it('keeps a committed placement when interrupted after DB commit', () => {
+    const fixture = missingManagedAssetFixture('Relink after commit');
+    const crashing = new LibraryService({ failAt: 'crash-relink-after-db-commit' });
+    crashing.openLibrary(fixture.libraryPath);
+    expectServiceError(
+      () => crashing.relinkAsset({
+        libraryId: fixture.libraryId,
+        assetId: fixture.assetId,
+        newAbsolutePath: fixture.replacementPath,
+      }),
+      'LIBRARY_NOT_WRITABLE',
+    );
+    crashing.closeAll();
+
+    const diagnostics: Array<{ scope: string }> = [];
+    const recovered = new LibraryService({ onDiagnostic: (event) => diagnostics.push(event) });
+    recovered.openLibrary(fixture.libraryPath);
+    expect(readFileSync(fixture.managedPath, 'utf8')).toBe('replacement bytes');
+    expect(recovered.listAssets({ libraryId: fixture.libraryId, recursive: true })[0]!.availability).toBe('available');
+    expect(diagnostics.some((event) => event.scope === 'asset.relink.recovered-committed-placement')).toBe(true);
+    recovered.closeAll();
+  });
+
+  it('preserves the destination when the immutable placed marker is corrupt', () => {
+    const fixture = missingManagedAssetFixture('Relink corrupt marker');
+    const crashing = new LibraryService({ failAt: 'crash-relink-after-filesystem' });
+    crashing.openLibrary(fixture.libraryPath);
+    expectServiceError(
+      () => crashing.relinkAsset({
+        libraryId: fixture.libraryId,
+        assetId: fixture.assetId,
+        newAbsolutePath: fixture.replacementPath,
+      }),
+      'LIBRARY_NOT_WRITABLE',
+    );
+    const operationsPath = path.join(fixture.libraryPath, '.serpent', 'operations');
+    const operationName = readdirSync(operationsPath).find((name) => name.startsWith('relink-'))!;
+    writeFileSync(path.join(operationsPath, operationName, 'placed.json'), '{incomplete');
+    crashing.closeAll();
+
+    const diagnostics: Array<{ scope: string }> = [];
+    const recovered = new LibraryService({ onDiagnostic: (event) => diagnostics.push(event) });
+    recovered.openLibrary(fixture.libraryPath);
+    expect(readFileSync(fixture.managedPath, 'utf8')).toBe('replacement bytes');
+    expect(diagnostics.some((event) => event.scope === 'asset.relink.recovery-marker-invalid')).toBe(true);
+    expect(recovered.listAssets({ libraryId: fixture.libraryId, recursive: true })[0]!.availability).toBe('missing');
+    recovered.closeAll();
+  });
+
+  it.each([1, 2] as const)('treats legacy v%s ownership as unknown and preserves the destination', (version) => {
+    const fixture = missingManagedAssetFixture(`Relink legacy v${version}`);
+    writeFileSync(fixture.managedPath, 'external writer bytes');
+    const operationsPath = path.join(fixture.libraryPath, '.serpent', 'operations');
+    const operationPath = path.join(operationsPath, `relink-${randomUUID()}`);
+    mkdirSync(operationPath, { recursive: true });
+    const current = statSync(fixture.managedPath, { bigint: true });
+    writeFileSync(path.join(operationPath, 'manifest.json'), JSON.stringify(
+      version === 1
+        ? { version, destinationRelativePath: 'orig.jpg' }
+        : {
+            version,
+            destinationRelativePath: 'orig.jpg',
+            placedSnapshot: { size: String(current.size), mtimeNs: String(current.mtimeNs) },
+          },
+    ));
+
+    const diagnostics: Array<{ scope: string }> = [];
+    const recovered = new LibraryService({ onDiagnostic: (event) => diagnostics.push(event) });
+    recovered.openLibrary(fixture.libraryPath);
+    expect(readFileSync(fixture.managedPath, 'utf8')).toBe('external writer bytes');
+    expect(diagnostics.some((event) => event.scope === 'asset.relink.recovery-ownership-unknown')).toBe(true);
     recovered.closeAll();
   });
 });
@@ -248,11 +446,18 @@ describe('relinkBatchApply recovery on reopen', () => {
     const manifest = JSON.parse(
       readFileSync(path.join(opsDir, relinkChildren[0]!, 'manifest.json'), 'utf8'),
     );
-    expect(manifest.version).toBe(2);
+    expect(manifest.version).toBe(3);
     expect(typeof manifest.destinationRelativePath).toBe('string');
-    expect(manifest.placedSnapshot).toEqual({
+    const placedMarker = JSON.parse(
+      readFileSync(path.join(opsDir, relinkChildren[0]!, 'placed.json'), 'utf8'),
+    );
+    expect(placedMarker.placedIdentity).toMatchObject({
+      ctimeNs: expect.any(String),
+      dev: expect.any(String),
+      ino: expect.any(String),
       size: expect.any(String),
       mtimeNs: expect.any(String),
+      sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
     });
 
     // The placed file must match the manifest's destination relative path
@@ -350,14 +555,14 @@ describe('relinkBatchApply recovery on reopen', () => {
     expect(existsSync(managedPath)).toBe(true);
     expect(readFileSync(managedPath, 'utf8')).toBe('replacement bytes');
 
-    // Manifest is v2 with placedSnapshot
+    // v3 manifest + immutable completion marker carry durable ownership.
     const opsDir = path.join(created.libraryPath, '.serpent', 'operations');
     const relinkChildren = readdirSync(opsDir).filter((c) => c.startsWith('relink-'));
     expect(relinkChildren).toHaveLength(1);
     const manifestPath = path.join(opsDir, relinkChildren[0]!, 'manifest.json');
     const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
-    expect(manifest.version).toBe(2);
-    expect(manifest.placedSnapshot).toBeDefined();
+    expect(manifest.version).toBe(3);
+    expect(existsSync(path.join(opsDir, relinkChildren[0]!, 'placed.json'))).toBe(true);
 
     crashing.closeAll();
 

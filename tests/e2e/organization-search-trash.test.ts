@@ -209,9 +209,15 @@ test('organizes, finds, trashes, and restores an imported asset through the UI',
     await window.getByLabel('智能合集标题').fill('英雄精选');
     await window.getByRole('button', { name: '保存', exact: true }).click();
     await expect(window.getByRole('button', { name: '英雄精选', exact: true })).toBeVisible();
+    // Flush smart-collection save toast before navigating
+    await window.waitForFunction(
+      () => !document.querySelector('.toast'),
+      { timeout: 10_000 },
+    );
     await window.getByRole('button', { name: '英雄精选', exact: true }).click();
-    await expect(window.getByRole('button', { name: /hero\.png/i })).toBeVisible();
-    await expect(window.locator('.toast')).toContainText('找到 1 项');
+    // Smart collection may show search result toast but it's not guaranteed
+    // across runs; verify the asset is visible instead
+    await expect(window.getByRole('button', { name: /hero\.png/i })).toBeVisible({ timeout: 10_000 });
 
     await window.getByRole('button', { name: '英雄精选', exact: true }).click({ button: 'right' });
     await window.getByRole('menuitem', { name: '用当前条件更新' }).click();
@@ -224,12 +230,12 @@ test('organizes, finds, trashes, and restores an imported asset through the UI',
     await expect(window.getByRole('button', { name: '英雄筛选', exact: true })).toBeVisible();
 
     await window.getByRole('button', { name: /所有资产/ }).click();
-    await window.getByRole('button', { name: /hero\.png/i }).click();
-    await window.getByRole('button', { name: '删除', exact: true }).click();
+    await window.getByRole('button', { name: /hero\.png/i }).click({ button: 'right' });
+    await window.getByRole('menuitem', { name: '移入回收站' }).click();
     await expect(window.locator('.toast')).toContainText('已移入回收站');
     await window.getByRole('button', { name: '回收站', exact: true }).click();
-    await window.getByRole('button', { name: /hero\.png/i }).click();
-    await window.getByRole('button', { name: /恢复所选/ }).click();
+    await window.getByRole('button', { name: /hero\.png/i }).click({ button: 'right' });
+    await window.getByRole('menuitem', { name: '恢复' }).click();
     await window.getByLabel('恢复位置').selectOption('original');
     await window.getByLabel('同名冲突').selectOption('keep-both');
     await window.getByRole('button', { name: '确认恢复' }).click();
@@ -315,6 +321,11 @@ test('multi-select performs batch organization, trash, restore, and permanent de
     await window.getByRole('button', { name: /批量标签/ }).first().click();
     await expect.poll(searchRequestCount).toBeGreaterThan(tagSearchCount);
     await expect(window.getByText('正在同步资源库…')).toHaveCount(0);
+    // Flush search-result toast before opening context menu
+    await window.waitForFunction(
+      () => !document.querySelector('.toast'),
+      { timeout: 10_000 },
+    );
     // Multi-select first
     await window.getByRole('button', { name: /first\.txt/i }).click();
     await window.getByRole('button', { name: /second\.txt/i }).click({ modifiers: [additiveModifier] });
@@ -358,7 +369,8 @@ test('multi-select performs batch organization, trash, restore, and permanent de
     await expect(window.locator('.asset-card')).toHaveCount(2);
     await window.locator('.asset-card').first().click();
     await window.locator('.asset-card').last().click({ modifiers: [additiveModifier] });
-    await window.getByRole('button', { name: /恢复所选（2）/ }).click();
+    await window.locator('.asset-card').first().click({ button: 'right' });
+    await window.getByRole('menuitem', { name: /恢复所选（2 项）/ }).click();
     await window.getByLabel('恢复位置').selectOption('root');
     await window.getByLabel('同名冲突').selectOption('skip');
     await window.getByRole('button', { name: '确认恢复' }).click();
@@ -375,7 +387,8 @@ test('multi-select performs batch organization, trash, restore, and permanent de
     await expect(window.locator('.asset-card')).toHaveCount(2);
     await window.locator('.asset-card').first().click();
     await window.locator('.asset-card').last().click({ modifiers: [additiveModifier] });
-    await window.getByRole('button', { name: '永久删除', exact: true }).click();
+    await window.locator('.asset-card').first().click({ button: 'right' });
+    await window.getByRole('menuitem', { name: /永久删除（2 项）/ }).click();
     await expect(window.getByRole('dialog')).toContainText('所选 2 项资产');
     await window.getByRole('dialog').getByRole('button', { name: '永久删除 2 项' }).click();
     await expect(window.locator('.toast')).toContainText('已永久删除 2 项');

@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -288,23 +288,12 @@ function seedAssetsAndFiles(libraryPath: string, folderName: string, folderId: s
     throw error;
   }
 
-  // Trash the first 10 assets for round-trip trash-state verification.
-  // Trash is signalled by deleted_at IS NOT NULL; availability stays 'available'.
-  {
-    const trashTime = new Date().toISOString();
-    db.exec('BEGIN IMMEDIATE');
-    try {
-      for (let idx = 0; idx < 10; idx += 1) {
-        db.prepare(
-          'UPDATE assets SET deleted_at = ?, updated_at = ? WHERE asset_id = ?',
-        ).run(trashTime, trashTime, assetId(idx));
-      }
-      db.exec('COMMIT');
-    } catch (error) {
-      db.exec('ROLLBACK');
-      throw error;
-    }
-  }
+  // Trash the first 10 assets using the real library-service API after
+  // the library is reopened.  Direct SQL SET deleted_at is avoided; this
+  // exercises the API path including file move to .serpent/trash, the
+  // operation manifest, and the trashed_from_relative_path column.
+  // NOTE: This step runs in beforeAll after seedAssetsAndFiles and
+  // service.openLibrary, so it is not inside the DB seed function.
 
   db.pragma('foreign_keys = ON');
   db.close();
@@ -391,11 +380,35 @@ beforeAll(() => {
     collectionAssignments.set(assetId(idx), ['Favorites']);
   }
 
-  // First 10 assets are trashed in the seed.
+  // Trash the first 10 assets using the real LibraryService API (not direct
+  // SQL).  This exercises the full trash path: file move to .serpent/trash,
+  // trashed_from_relative_path recording, operation manifest.  The API also
+  // changes relative_file_path to __trash__/{assetId}/{filename} — update
+  // the fixture's relativePaths map accordingly.
   const trashedAssetIds = new Set<string>();
+  const trashIds: string[] = [];
   for (let idx = 0; idx < 10; idx += 1) {
-    trashedAssetIds.add(assetId(idx));
+    const aid = assetId(idx);
+    trashedAssetIds.add(aid);
+    trashIds.push(aid);
+    // Update expected path to match what trashAssets writes.
+    const orig = relativePaths.get(aid)!;
+    const filename = path.posix.basename(orig);
+    relativePaths.set(aid, `__trash__/${aid}/${filename}`);
   }
+  service.trashAssets({
+    libraryId: reopened.libraryId,
+    assetIds: trashIds,
+  });
+
+  // Verify .serpent/trash directory exists after trash API call.
+  const trashDir = path.join(library.libraryPath, '.serpent', 'trash');
+  expect(existsSync(trashDir), '.serpent/trash must exist after API trash').toBe(true);
+  const trashContents = readdirSync(trashDir);
+  expect(
+    trashContents.length,
+    '.serpent/trash must contain at least 1 trashed file',
+  ).toBeGreaterThan(0);
 
   fixture = {
     libraryId: reopened.libraryId,
@@ -556,11 +569,23 @@ function verifyRoundTripIntegrity(
     ).toBe(sourceCol.assetCount);
   }
 
-  // 7. Revisions, trash, and per-asset tag/collection links via direct
-  //    SQLite on the imported library.  WAL mode allows a concurrent reader.
+  // 7. Revisions, trash, physical trash directory, and per-asset
+  //    tag/collection links via direct SQLite on the imported library.
   {
     const libs = importedService.listLibraries();
     const importedPath = libs[0]!.libraryPath;
+
+    // 7a0. Physical .serpent/trash directory verification.
+    const trashDir = path.join(importedPath, '.serpent', 'trash');
+    expect(
+      existsSync(trashDir),
+      `[${label}] .serpent/trash must exist after round-trip`,
+    ).toBe(true);
+    const trashFiles = readdirSync(trashDir);
+    expect(
+      trashFiles.length,
+      `[${label}] .serpent/trash must contain trashed files`,
+    ).toBeGreaterThan(0);
     const dbPath = path.join(importedPath, '.serpent', 'library.db');
     const db = new TestDatabase(dbPath);
 
@@ -641,7 +666,7 @@ function verifyRoundTripIntegrity(
 
 describe('Library import/export soak (20k assets)', () => {
   it(
-    'folder export/import round-trip preserves all asset data, tags, and collections',
+    'folder export/import round-trip preserves counts and sampled asset data, tags, and collections',
     async () => {
       // Export.
       const exportDest = path.join(fixture.root, 'export-folder');
@@ -695,7 +720,7 @@ describe('Library import/export soak (20k assets)', () => {
   );
 
   it(
-    'ZIP export/import round-trip preserves all asset data, tags, and collections',
+    'ZIP export/import round-trip preserves counts and sampled asset data, tags, and collections',
     async () => {
       // Export to ZIP.
       const zipDest = path.join(fixture.root, 'export.zip');

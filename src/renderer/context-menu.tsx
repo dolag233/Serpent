@@ -23,6 +23,7 @@ export type ContextMenuDescriptor =
       displayName: string;
       locationKind: "managed" | "linked";
       isAvailable: boolean;
+      isDeleted: boolean;
     }
   | {
       type: "organization";
@@ -294,6 +295,11 @@ export function ContextMenuItem({
       tabIndex={-1}
       type="button"
       aria-disabled={disabled || undefined}
+      aria-label={
+        disabled && disabledReason
+          ? `${label}（不可用：${disabledReason}）`
+          : label
+      }
       title={disabled && disabledReason ? disabledReason : undefined}
       onClick={handleClick}
     >

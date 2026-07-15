@@ -53,6 +53,7 @@ async function setupLibrary(assetCount: number) {
       SERPENT_E2E: "1",
       SERPENT_E2E_CREATE_PARENT_PATH: temporaryRoot,
       SERPENT_E2E_IMPORT_FILES: sourcePaths.join(path.delimiter),
+      SERPENT_E2E_USER_DATA_PATH: path.join(temporaryRoot, "profile"),
     },
   });
 
@@ -491,10 +492,10 @@ test("Ctrl/Cmd toggle adds then removes the same card", async () => {
 // Test 9 — Masonry-mode auto-scroll during marquee
 // ---------------------------------------------------------------------------
 
-test("masonry marquee auto-scrolls when pointer is near bottom edge", async () => {
-  const { temporaryRoot, application, window } = await setupLibrary(20);
+test("masonry marquee auto-scroll preserves first, last, and along-path selections", async () => {
+  const { temporaryRoot, application, window } = await setupLibrary(40);
   try {
-    await createAndImport(window, "自动滚动画布验收", 20);
+    await createAndImport(window, "自动滚动画布验收", 40);
 
     // Switch to masonry mode
     const masonryButton = window.getByRole("button", {
@@ -548,8 +549,25 @@ test("masonry marquee auto-scrolls when pointer is near bottom edge", async () =
     const endY = cvs.y + cvs.height - 5; // inside auto-scroll zone
     await window.mouse.move(endX, endY, { steps: 20 });
 
-    // Wait for RAF-driven auto-scroll to take effect
-    await window.waitForTimeout(1000);
+    // Keep the pointer still at the edge. The RAF loop must continue scrolling
+    // without any additional mousemove events until the bottom is reached.
+    await expect
+      .poll(
+        () =>
+          window.evaluate(() => {
+            const canvas = document.querySelector(".workspace-canvas");
+            if (!canvas) return false;
+            return (
+              canvas.scrollTop >=
+              canvas.scrollHeight - canvas.clientHeight - 2
+            );
+          }),
+        // CI can briefly throttle Electron's RAF loop while other test
+        // processes finish. Keep the assertion on reaching the true bottom,
+        // but allow enough wall time for a throttled renderer.
+        { timeout: 20_000 },
+      )
+      .toBe(true);
 
     const finalScroll = await window.evaluate(
       () => document.querySelector(".workspace-canvas")?.scrollTop ?? 0,
@@ -560,8 +578,12 @@ test("masonry marquee auto-scrolls when pointer is near bottom edge", async () =
 
     await window.mouse.up();
 
-    // Verify that assets were selected.
-    expect(await selectedCount(window)).toBeGreaterThan(0);
+    // The selection must retain the first card encountered before scrolling,
+    // include the final card at the bottom, and include cards along the path.
+    const cards = window.locator(".asset-card");
+    await expect(cards.first()).toHaveClass(/is-selected/);
+    await expect(cards.last()).toHaveClass(/is-selected/);
+    expect(await selectedCount(window)).toBeGreaterThan(2);
 
     // At least one selected asset was NOT visible before the auto-scroll.
     const selectedIds: string[] = await window.evaluate(() => {
@@ -613,6 +635,36 @@ test("context-menu Escape dismisses menu then second Escape clears selection", a
 
     // Second Escape: now clears the selection
     await window.keyboard.press("Escape");
+    await expect.poll(() => selectedCount(window)).toBe(0);
+  } finally {
+    await application.close();
+    rmSync(temporaryRoot, { force: true, recursive: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Test 11 — Delete key trashes selected managed assets via keyboard
+// ---------------------------------------------------------------------------
+
+test("Delete key trashes selected managed assets", async () => {
+  const { temporaryRoot, application, window } = await setupLibrary(3);
+  try {
+    await createAndImport(window, "删除键验收", 3);
+
+    // Select two cards via Cmd+click
+    const cards = window.locator(".asset-card");
+    await cards.nth(0).click();
+    await expect.poll(() => selectedCount(window)).toBe(1);
+    const multiSelectModifier: "Meta" | "Control" =
+      process.platform === "darwin" ? "Meta" : "Control";
+    await cards.nth(1).click({ modifiers: [multiSelectModifier] });
+    await expect.poll(() => selectedCount(window)).toBe(2);
+
+    // Press Delete — should move selected managed assets to trash
+    await window.keyboard.press("Delete");
+    await expect(window.locator(".toast")).toContainText("已移入回收站", {
+      timeout: 10_000,
+    });
     await expect.poll(() => selectedCount(window)).toBe(0);
   } finally {
     await application.close();

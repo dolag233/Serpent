@@ -1022,6 +1022,29 @@ interface SourceSnapshot {
   size: bigint;
 }
 
+interface ManagedRelinkPlacementIdentity {
+  ctimeNs: string;
+  dev: string;
+  ino: string;
+  mtimeNs: string;
+  sha256: string;
+  size: string;
+}
+
+interface ManagedRelinkPlacementManifestV3 {
+  destinationRelativePath: string;
+  kind: 'managed-relink-placement';
+  phase: 'staged';
+  stagedIdentity: ManagedRelinkPlacementIdentity;
+  version: 3;
+}
+
+interface ManagedRelinkPlacedMarkerV1 {
+  kind: 'managed-relink-placement-complete';
+  placedIdentity: ManagedRelinkPlacementIdentity;
+  version: 1;
+}
+
 interface PendingImport {
   directories: string[];
   entries: ImportSourceEntry[];
@@ -1147,7 +1170,12 @@ export type ImportFailurePoint =
   | 'crash-move-before-db-commit'
   | 'crash-move-after-db-commit'
   | 'crash-linked-convert-after-filesystem'
+  | 'crash-relink-before-manifest-write'
+  | 'crash-relink-after-manifest-before-placement'
+  | 'crash-relink-after-placement-before-manifest-update'
   | 'crash-relink-after-filesystem'
+  | 'crash-relink-before-db-commit'
+  | 'crash-relink-after-db-commit'
   | 'crash-relink-batch-after-first-place'
   | 'recovery-restore'
   | 'rollback-restore';
@@ -1665,6 +1693,19 @@ function sameSourceSnapshot(left: SourceSnapshot, right: SourceSnapshot): boolea
     left.mtimeNs === right.mtimeNs &&
     left.ctimeNs === right.ctimeNs
   );
+}
+
+function sha256DescriptorSync(descriptor: number): string {
+  const hash = createHash('sha256');
+  const buffer = Buffer.allocUnsafe(1024 * 1024);
+  let position = 0;
+  for (;;) {
+    const bytesRead = readSync(descriptor, buffer, 0, buffer.length, position);
+    if (bytesRead === 0) break;
+    hash.update(buffer.subarray(0, bytesRead));
+    position += bytesRead;
+  }
+  return hash.digest('hex');
 }
 
 function sourceChanged(cause?: unknown): LibraryServiceError {
@@ -8577,7 +8618,12 @@ export class LibraryService {
     openLibrary: OpenLibrary,
     sourcePath: string,
     destinationRelativePath: string,
-  ): { destinationPath: string; operationPath: string; stat: Stats } {
+  ): {
+    destinationPath: string;
+    operationPath: string;
+    placedIdentity: ManagedRelinkPlacementIdentity;
+    stat: Stats;
+  } {
     const destinationPath = this.folderPath(openLibrary, destinationRelativePath);
     if (existsSync(destinationPath)) {
       throw new LibraryServiceError('INVALID_IMPORT_DECISION', {
@@ -8606,20 +8652,27 @@ export class LibraryService {
       `relink-${randomUUID()}`,
     );
     const stagedPath = path.join(operationPath, 'replacement');
+    let stagedIdentity: ManagedRelinkPlacementIdentity;
     try {
       mkdirSync(operationPath, { recursive: true });
-      writeFileSync(
-        path.join(operationPath, 'manifest.json'),
-        JSON.stringify({ version: 1, destinationRelativePath }),
-        { encoding: 'utf8', flag: 'wx' },
-      );
       this.copySourceSnapshot({
         byteSize: Number(sourceStat.size),
         destinationRelativePath,
         sourcePath,
         sourceSnapshot: sourceSnapshot(sourceStat),
       }, stagedPath);
+      stagedIdentity = this.managedRelinkPlacementIdentity(stagedPath);
+      this.failAt('crash-relink-before-manifest-write');
+      this.writeManagedRelinkPlacementManifest(operationPath, {
+        version: 3,
+        kind: 'managed-relink-placement',
+        phase: 'staged',
+        destinationRelativePath,
+        stagedIdentity,
+      });
+      this.failAt('crash-relink-after-manifest-before-placement');
     } catch (error) {
+      if (error instanceof SimulatedCrashError) throw error;
       rmSync(operationPath, { force: true, recursive: true });
       throw serviceError(error, 'INVALID_IMPORT_SOURCE');
     }
@@ -8639,44 +8692,150 @@ export class LibraryService {
       }
       renameSync(stagedPath, destinationPath);
       placed = true;
-      const placedSnapshot = sourceSnapshot(statSync(destinationPath, { bigint: true }));
-      writeFileSync(
-        path.join(operationPath, 'manifest.json'),
-        JSON.stringify({
-          version: 2,
-          destinationRelativePath,
-          placedSnapshot: {
-            size: String(placedSnapshot.size),
-            mtimeNs: String(placedSnapshot.mtimeNs),
-          },
-        }),
-        { encoding: 'utf8' },
-      );
+      this.failAt('crash-relink-after-placement-before-manifest-update');
+      const placedIdentity = this.managedRelinkPlacementIdentity(destinationPath);
+      this.writeDurableRelinkJournalFile(operationPath, 'placed.json', {
+        version: 1,
+        kind: 'managed-relink-placement-complete',
+        placedIdentity,
+      } satisfies ManagedRelinkPlacedMarkerV1);
       return {
         destinationPath,
         operationPath,
+        placedIdentity,
         stat: statSync(destinationPath),
       };
     } catch (error) {
-      if (placed) rmSync(destinationPath, { force: true });
+      if (error instanceof SimulatedCrashError) throw error;
+      if (placed) {
+        // No durable placed marker means ownership is ambiguous. A concurrent
+        // writer may already have replaced or modified the path, so preserve it.
+        this.diagnose('asset.relink.placement-marker-failed', error, {
+          destinationPath,
+        });
+      }
       rmSync(operationPath, { force: true, recursive: true });
       throw serviceError(error, 'LIBRARY_NOT_WRITABLE');
     }
   }
 
+  private managedRelinkPlacementIdentity(filePath: string): ManagedRelinkPlacementIdentity {
+    const flags = constants.O_RDONLY | (process.platform === 'win32' ? 0 : constants.O_NOFOLLOW);
+    const descriptor = openSync(filePath, flags);
+    try {
+      const before = fstatSync(descriptor, { bigint: true });
+      const pathEntry = lstatSync(filePath, { bigint: true });
+      if (
+        !before.isFile() || !pathEntry.isFile() || pathEntry.isSymbolicLink() ||
+        !sameSourceSnapshot(sourceSnapshot(before), sourceSnapshot(pathEntry))
+      ) {
+        throw new LibraryServiceError('LIBRARY_NOT_WRITABLE', {
+          reason: pathEntry.isSymbolicLink() ? 'SYMBOLIC_LINK_NOT_ALLOWED' : 'SOURCE_CHANGED',
+        });
+      }
+      const sha256 = sha256DescriptorSync(descriptor);
+      const after = fstatSync(descriptor, { bigint: true });
+      if (!sameSourceSnapshot(sourceSnapshot(before), sourceSnapshot(after))) {
+        throw new LibraryServiceError('LIBRARY_NOT_WRITABLE', { reason: 'SOURCE_CHANGED' });
+      }
+      return {
+        ctimeNs: String(after.ctimeNs),
+        dev: String(after.dev),
+        ino: String(after.ino),
+        mtimeNs: String(after.mtimeNs),
+        sha256,
+        size: String(after.size),
+      };
+    } finally {
+      closeSync(descriptor);
+    }
+  }
+
+  private writeManagedRelinkPlacementManifest(
+    operationPath: string,
+    manifest: ManagedRelinkPlacementManifestV3,
+  ): void {
+    this.writeDurableRelinkJournalFile(operationPath, 'manifest.json', manifest);
+  }
+
+  private writeDurableRelinkJournalFile(
+    operationPath: string,
+    filename: 'manifest.json' | 'placed.json',
+    value: ManagedRelinkPlacementManifestV3 | ManagedRelinkPlacedMarkerV1,
+  ): void {
+    const finalPath = path.join(operationPath, filename);
+    const temporaryPath = path.join(operationPath, `${filename}.tmp`);
+    const payload = Buffer.from(JSON.stringify(value), 'utf8');
+    let descriptor: number | undefined;
+    try {
+      descriptor = openSync(
+        temporaryPath,
+        constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL,
+        0o600,
+      );
+      let written = 0;
+      while (written < payload.length) {
+        written += writeSync(descriptor, payload, written, payload.length - written);
+      }
+      fsyncSync(descriptor);
+      closeSync(descriptor);
+      descriptor = undefined;
+      // Both journal records are immutable and created exactly once. Renaming
+      // onto an absent path avoids platform-specific replace semantics.
+      renameSync(temporaryPath, finalPath);
+
+      // Directory fsync makes both the manifest rename and the newly-created
+      // relink operation directory durable on filesystems that support it.
+      // Windows does not provide a portable directory fsync through Node.
+      if (process.platform !== 'win32') {
+        for (const directoryPath of [operationPath, path.dirname(operationPath)]) {
+          let directoryDescriptor: number | undefined;
+          try {
+            directoryDescriptor = openSync(directoryPath, constants.O_RDONLY);
+            fsyncSync(directoryDescriptor);
+          } finally {
+            if (directoryDescriptor !== undefined) closeSync(directoryDescriptor);
+          }
+        }
+      }
+    } catch (error) {
+      if (descriptor !== undefined) closeSync(descriptor);
+      rmSync(temporaryPath, { force: true });
+      throw error;
+    }
+  }
+
   private cleanupManagedRelinkPlacement(
-    placement: { destinationPath: string; operationPath: string },
+    placement: {
+      destinationPath: string;
+      operationPath: string;
+      placedIdentity: ManagedRelinkPlacementIdentity;
+    },
     removeDestination: boolean,
   ): void {
+    let preserveOperation = false;
     if (removeDestination) {
       try {
-        rmSync(placement.destinationPath, { force: true });
+        const removal = this.quarantineManagedRelinkPlacementForRemoval(
+          placement.destinationPath,
+          placement.operationPath,
+          placement.placedIdentity,
+        );
+        preserveOperation = removal.preserveOperation;
+        if (!removal.owned) {
+          this.diagnose(
+            'asset.relink.rollback-file-mismatch',
+            new LibraryServiceError('LIBRARY_NOT_WRITABLE', { reason: 'SOURCE_CHANGED' }),
+            { destinationPath: placement.destinationPath },
+          );
+        }
       } catch (error) {
         this.diagnose('asset.relink.rollback-file', error, {
           destinationPath: placement.destinationPath,
         });
       }
     }
+    if (preserveOperation) return;
     try {
       rmSync(placement.operationPath, { force: true, recursive: true });
     } catch (error) {
@@ -8690,7 +8849,9 @@ export class LibraryService {
     const manifestPath = path.join(operationPath, 'manifest.json');
     if (!existsSync(manifestPath)) return false;
     let destinationRelativePath: string;
-    let placedSnapshot: { size: string; mtimeNs: string } | undefined;
+    let placedIdentity: ManagedRelinkPlacementIdentity | undefined;
+    let manifestVersion: 1 | 2 | 3;
+    let phase: 'legacy' | 'staged' | 'placed' = 'legacy';
     try {
       const parsed = JSON.parse(readFileSync(manifestPath, 'utf8')) as unknown;
       if (
@@ -8700,42 +8861,105 @@ export class LibraryService {
         throw new LibraryServiceError('LIBRARY_CORRUPT');
       }
       const version = (parsed as { version?: unknown }).version;
-      if (version === 1 || version === 2) {
-        // Both versions are supported; v2 adds placedSnapshot for safe recovery.
-      } else {
+      if (version !== 1 && version !== 2 && version !== 3) {
         throw new LibraryServiceError('LIBRARY_CORRUPT');
       }
+      manifestVersion = version;
       const rawPath = (parsed as { destinationRelativePath: string }).destinationRelativePath;
       destinationRelativePath = normalizeRelativeAssetPath(rawPath);
       if (destinationRelativePath !== rawPath) throw new LibraryServiceError('LIBRARY_CORRUPT');
-      if (version === 2) {
-        const snapshot = (parsed as { placedSnapshot?: unknown }).placedSnapshot;
+      if (version === 3) {
+        const candidate = parsed as {
+          kind?: unknown;
+          phase?: unknown;
+          stagedIdentity?: unknown;
+        };
         if (
-          typeof snapshot === 'object' && snapshot !== null &&
-          typeof (snapshot as { size?: unknown }).size === 'string' &&
-          typeof (snapshot as { mtimeNs?: unknown }).mtimeNs === 'string'
+          candidate.kind !== 'managed-relink-placement' ||
+          candidate.phase !== 'staged' ||
+          !this.isManagedRelinkPlacementIdentity(candidate.stagedIdentity)
         ) {
-          placedSnapshot = snapshot as { size: string; mtimeNs: string };
+          throw new LibraryServiceError('LIBRARY_CORRUPT');
         }
+        phase = 'staged';
       }
     } catch (error) {
-      if (error instanceof LibraryServiceError) throw error;
-      throw new LibraryServiceError('LIBRARY_CORRUPT', { cause: error });
+      // A malformed/partially-written relink manifest can never authorize a
+      // destination deletion. Preserve all files and discard only the isolated
+      // operation directory so one bad journal cannot prevent the library opening.
+      this.diagnose('asset.relink.recovery-manifest-invalid', error, {
+        libraryId: openLibrary.summary.libraryId,
+        operationPath,
+      });
+      rmSync(operationPath, { force: true, recursive: true });
+      return true;
+    }
+
+    if (manifestVersion === 3) {
+      const placedMarkerPath = path.join(operationPath, 'placed.json');
+      if (existsSync(placedMarkerPath)) {
+        try {
+          const marker = JSON.parse(readFileSync(placedMarkerPath, 'utf8')) as {
+            kind?: unknown;
+            placedIdentity?: unknown;
+            version?: unknown;
+          };
+          if (
+            marker.version !== 1 ||
+            marker.kind !== 'managed-relink-placement-complete' ||
+            !this.isManagedRelinkPlacementIdentity(marker.placedIdentity)
+          ) {
+            throw new LibraryServiceError('LIBRARY_CORRUPT');
+          }
+          placedIdentity = marker.placedIdentity;
+          phase = 'placed';
+        } catch (error) {
+          // A missing or malformed completion marker means the rename cannot be
+          // proven. Keep phase=staged so the destination is preserved.
+          this.diagnose('asset.relink.recovery-marker-invalid', error, {
+            libraryId: openLibrary.summary.libraryId,
+            destinationRelativePath,
+          });
+        }
+      }
     }
 
     const destinationPath = this.folderPath(openLibrary, destinationRelativePath);
-    if (existsSync(destinationPath) && placedSnapshot) {
-      const currentStat = statSync(destinationPath, { bigint: true });
-      const sizeMatches = String(currentStat.size) === placedSnapshot.size;
-      const mtimeMatches = String(currentStat.mtimeNs) === placedSnapshot.mtimeNs;
-      if (!sizeMatches || !mtimeMatches) {
-        this.diagnose('asset.relink.recovery-file-mismatch', new LibraryServiceError('LIBRARY_NOT_WRITABLE', { reason: 'IO_ERROR' }), {
+    const destinationExists = existsSync(destinationPath);
+    let ownsDestination = false;
+    if (destinationExists && manifestVersion === 3 && phase === 'placed' && placedIdentity) {
+      try {
+        ownsDestination = this.matchesManagedRelinkPlacementIdentity(
+          destinationPath,
+          placedIdentity,
+        );
+      } catch (error) {
+        this.diagnose('asset.relink.recovery-file-mismatch', error, {
           libraryId: openLibrary.summary.libraryId,
           destinationRelativePath,
         });
-        rmSync(operationPath, { force: true, recursive: true });
-        return true;
       }
+      if (!ownsDestination) {
+        this.diagnose(
+          'asset.relink.recovery-file-mismatch',
+          new LibraryServiceError('LIBRARY_NOT_WRITABLE', { reason: 'SOURCE_CHANGED' }),
+          { libraryId: openLibrary.summary.libraryId, destinationRelativePath },
+        );
+      }
+    } else if (destinationExists) {
+      // v1/v2 journals and v3 staged journals do not carry durable post-rename
+      // ownership. They may be leftovers from the historical rename->v2 crash
+      // window, or another writer may have created the path. Preserve the file.
+      this.diagnose(
+        'asset.relink.recovery-ownership-unknown',
+        new LibraryServiceError('LIBRARY_NOT_WRITABLE', { reason: 'SOURCE_CHANGED' }),
+        {
+          libraryId: openLibrary.summary.libraryId,
+          destinationRelativePath,
+          manifestVersion,
+          phase,
+        },
+      );
     }
 
     const asset = openLibrary.connection
@@ -8744,16 +8968,120 @@ export class LibraryService {
           WHERE location_kind = 'managed' AND path_identity = ? AND deleted_at IS NULL`,
       )
       .get(portablePathIdentity(destinationRelativePath)) as { availability: 'available' | 'missing' } | undefined;
-    if (!asset || asset.availability === 'missing') {
-      rmSync(destinationPath, { force: true });
+    const databaseCommitted = asset?.availability === 'available';
+    let preserveOperation = false;
+    if (destinationExists && ownsDestination && !databaseCommitted) {
+      const removal = this.quarantineManagedRelinkPlacementForRemoval(
+        destinationPath,
+        operationPath,
+        placedIdentity!,
+      );
+      ownsDestination = removal.owned;
+      preserveOperation = removal.preserveOperation;
     }
-    rmSync(operationPath, { force: true, recursive: true });
+    if (!preserveOperation) rmSync(operationPath, { force: true, recursive: true });
     this.diagnose(
-      'asset.relink.recovered-orphan-placement',
+      databaseCommitted
+        ? 'asset.relink.recovered-committed-placement'
+        : ownsDestination
+          ? 'asset.relink.recovered-orphan-placement'
+          : 'asset.relink.recovered-preserved-placement',
       new LibraryServiceError('LIBRARY_NOT_WRITABLE', { reason: 'IO_ERROR' }),
       { libraryId: openLibrary.summary.libraryId, destinationRelativePath },
     );
     return true;
+  }
+
+  private isManagedRelinkPlacementIdentity(
+    value: unknown,
+  ): value is ManagedRelinkPlacementIdentity {
+    if (typeof value !== 'object' || value === null) return false;
+    const identity = value as Partial<Record<keyof ManagedRelinkPlacementIdentity, unknown>>;
+    const decimal = /^\d+$/;
+    return (
+      typeof identity.ctimeNs === 'string' && decimal.test(identity.ctimeNs) &&
+      typeof identity.dev === 'string' && decimal.test(identity.dev) &&
+      typeof identity.ino === 'string' && decimal.test(identity.ino) &&
+      typeof identity.mtimeNs === 'string' && decimal.test(identity.mtimeNs) &&
+      typeof identity.size === 'string' && decimal.test(identity.size) &&
+      typeof identity.sha256 === 'string' && /^[a-f0-9]{64}$/.test(identity.sha256)
+    );
+  }
+
+  private matchesManagedRelinkPlacementIdentity(
+    destinationPath: string,
+    expected: ManagedRelinkPlacementIdentity,
+  ): boolean {
+    // Some network/removable filesystems report inode or device as zero. In that
+    // case identity is ambiguous, so recovery must preserve rather than delete.
+    if (expected.dev === '0' || expected.ino === '0') return false;
+    const current = this.managedRelinkPlacementIdentity(destinationPath);
+    return (
+      current.ctimeNs === expected.ctimeNs &&
+      current.dev === expected.dev &&
+      current.ino === expected.ino &&
+      current.mtimeNs === expected.mtimeNs &&
+      current.size === expected.size &&
+      current.sha256 === expected.sha256
+    );
+  }
+
+  private quarantineManagedRelinkPlacementForRemoval(
+    destinationPath: string,
+    operationPath: string,
+    expected: ManagedRelinkPlacementIdentity,
+  ): { owned: boolean; preserveOperation: boolean } {
+    if (!this.matchesManagedRelinkPlacementIdentity(destinationPath, expected)) {
+      return { owned: false, preserveOperation: false };
+    }
+
+    const candidatePath = path.join(operationPath, 'rollback-candidate');
+    try {
+      renameSync(destinationPath, candidatePath);
+    } catch {
+      // The path changed after verification or could not be moved. It remains in
+      // place, so preserving it and cleaning the journal is safe.
+      return { owned: false, preserveOperation: false };
+    }
+
+    const candidateOwned = (() => {
+      try {
+        const candidate = this.managedRelinkPlacementIdentity(candidatePath);
+        // Moving into quarantine changes ctime on several filesystems. The stable
+        // inode/device plus size, mtime and content hash prove this is the same
+        // verified file; any path replacement races produce a different inode.
+        return (
+          candidate.dev === expected.dev &&
+          candidate.ino === expected.ino &&
+          candidate.mtimeNs === expected.mtimeNs &&
+          candidate.size === expected.size &&
+          candidate.sha256 === expected.sha256
+        );
+      } catch {
+        return false;
+      }
+    })();
+    if (candidateOwned) return { owned: true, preserveOperation: false };
+
+    // A writer won the verification->rename race. Restore the moved file when
+    // possible. If the original path was claimed again, retain the entire
+    // operation under .serpent/recovered so neither file is overwritten.
+    if (!existsSync(destinationPath)) {
+      try {
+        renameSync(candidatePath, destinationPath);
+        return { owned: false, preserveOperation: false };
+      } catch {
+        // Fall through to preserving the operation directory.
+      }
+    }
+    const recoveredRoot = path.join(path.dirname(path.dirname(operationPath)), 'recovered');
+    try {
+      mkdirSync(recoveredRoot, { recursive: true });
+      renameSync(operationPath, path.join(recoveredRoot, path.basename(operationPath)));
+    } catch {
+      // Leave the operation directory in place. The caller must not remove it.
+    }
+    return { owned: false, preserveOperation: true };
   }
 
   private assetSummaryFromRow(
@@ -10051,15 +10379,25 @@ export class LibraryService {
     this.assertNoSymlinkEscape(newPath);
 
     let managedPlacement:
-      | { destinationPath: string; operationPath: string; stat: Stats }
+      | {
+          destinationPath: string;
+          operationPath: string;
+          placedIdentity: ManagedRelinkPlacementIdentity;
+          stat: Stats;
+        }
       | undefined;
-    const fileStat = assetRow.location_kind === 'managed'
-      ? (managedPlacement = this.placeManagedRelinkFile(
-          openLibrary,
-          newPath,
-          assetRow.relative_file_path,
-        )).stat
-      : statSync(newPath);
+    let fileStat: Stats;
+    try {
+      fileStat = assetRow.location_kind === 'managed'
+        ? (managedPlacement = this.placeManagedRelinkFile(
+            openLibrary,
+            newPath,
+            assetRow.relative_file_path,
+          )).stat
+        : statSync(newPath);
+    } catch (error) {
+      throw serviceError(error, 'LIBRARY_NOT_WRITABLE');
+    }
 
     const now = new Date().toISOString();
     let resolvedRelativePath = assetRow.relative_file_path;
@@ -10147,7 +10485,9 @@ export class LibraryService {
           .run(randomUUID(), input.libraryId, input.assetId, revisionId, now, now);
 
         this.syncAssetSearchContent(openLibrary.connection, input.assetId);
+        this.failAt('crash-relink-before-db-commit');
       })();
+      this.failAt('crash-relink-after-db-commit');
     } catch (error) {
       if (managedPlacement && !(error instanceof SimulatedCrashError)) {
         this.cleanupManagedRelinkPlacement(managedPlacement, true);
@@ -10339,6 +10679,7 @@ export class LibraryService {
     const managedPlacements: Array<{
       destinationPath: string;
       operationPath: string;
+      placedIdentity: ManagedRelinkPlacementIdentity;
       stat: Stats;
     }> = [];
 
@@ -10453,7 +10794,9 @@ export class LibraryService {
           this.syncAssetSearchContent(openLibrary.connection, asset.asset_id);
           restoredCount += 1;
         }
+        this.failAt('crash-relink-before-db-commit');
       })();
+      this.failAt('crash-relink-after-db-commit');
     } catch (error) {
       if (!(error instanceof SimulatedCrashError)) {
         for (const placement of managedPlacements) {

@@ -62,8 +62,8 @@ test('imports a linked folder, reconciles external changes, and relinks after th
     await expect(window.getByText('b.png', { exact: true })).toBeVisible();
     await expect(window.getByText('c.png', { exact: true })).toBeVisible();
 
-    await window.getByRole('button', { name: /a\.png/i }).click();
-    await window.getByRole('button', { name: '删除（链接）' }).click();
+    await window.getByRole('button', { name: /a\.png/i }).click({ button: 'right' });
+    await window.getByRole('menuitem', { name: '删除链接资产…' }).click();
     await expect(window.getByRole('heading', { name: '删除链接资产' })).toBeVisible();
     const deleteSource = window.getByLabel('同时删除磁盘源文件');
     await expect(deleteSource).not.toBeChecked();
@@ -71,8 +71,8 @@ test('imports a linked folder, reconciles external changes, and relinks after th
     await expect(window.getByRole('button', { name: '移入系统回收站并移除' })).toBeVisible();
     await window.getByRole('dialog').locator('.secondary-button').click();
 
-    await window.getByRole('button', { name: /delete-me\.png/i }).click();
-    await window.getByRole('button', { name: '删除（链接）' }).click();
+    await window.getByRole('button', { name: /delete-me\.png/i }).click({ button: 'right' });
+    await window.getByRole('menuitem', { name: '删除链接资产…' }).click();
     await window.getByLabel('同时删除磁盘源文件').check();
     await window.getByRole('button', { name: '移入系统回收站并移除' }).click();
     await expect(window.getByText('delete-me.png', { exact: true })).toHaveCount(0);
