@@ -1,13 +1,14 @@
 # Slice 0010 QA report: library import/export
 
-> Status: fixing / QA incomplete
-> Date: 2026-07-13
+> Status: candidate fixed / QA incomplete; final merged verification pending
+> Date: 2026-07-13 / calibrated 2026-07-16
 
 ## Build under test
 
 - Original fixed range: `8dc2470...cdc2247`
-- Working-tree re-test: uncommitted shared tree on macOS arm64, Node 24.15.0 / Electron 43.1.0.
+- Candidate: `f1330a7` on macOS arm64, Node 24.15.0 / Electron 43.1.0.
 - Packaged startup/import was tested on macOS arm64; no Windows device or large production library was used.
+- Final merged mainline SHA and gate result remain pending.
 
 ## Automated evidence
 
@@ -47,7 +48,7 @@
 
 ## Final result
 
-**Automated gates passed; manual/platform QA remains.** Archive hardening and live cancellation are now covered without todo tests. Large-library soak (20k assets, both folder and ZIP round-trip) is complete with no data loss detected. Packaged transfer UI, cross-platform portability and Windows behavior remain unverified, so this is not final acceptance.
+Historical automated checkpoints passed; final merged gates, manual QA and platform QA remain. Archive hardening and live cancellation have targeted tests. The 20k folder/ZIP soak found no mismatch within its asserted exact and sampled fields; it does not prove complete row/file equivalence. Packaged transfer UI, cross-platform portability and Windows behavior remain unverified, so this is not final acceptance.
 
 ## Large-library soak test (2026-07-14)
 
@@ -68,7 +69,7 @@ A soak test was added at `tests/worker/library-import-export-soak.test.ts` to va
 | Descriptions | 4% of assets (every 25th) |
 | Tags | 10 tags, assigned to ~10% of assets (every 10th) |
 | Collections | 5 collections, assigned to ~5% of assets (every 20th) |
-| Seeding method | Direct better-sqlite3 single-transaction batch INSERT + filesystem `writeFileSync` |
+| Seeding method | Direct better-sqlite3 single-transaction batch INSERT + filesystem `writeFileSync`; candidate `f1330a7` then trashes 10 assets through `LibraryService.trashAssets` |
 
 ### Results
 
@@ -85,6 +86,20 @@ A soak test was added at `tests/worker/library-import-export-soak.test.ts` to va
 | Collections preserved | 5/5 collection names match | equality | PASS |
 | Source library post-export | 20k assets, 10 tags, 5 collections intact | equality | PASS |
 
-### Findings
+### Evidence boundary and findings
 
-No data loss, no corruption, and no pathological slowdown were detected. The round-trip preserves all asset identities (asset_id is stable because the SQLite backup API snapshots the entire database), file metadata, tags, and collections correctly. Both folder and ZIP formats perform within generous thresholds at 20k asset scale.
+The test does not compare every persisted value. Its current assertions are:
+
+- exact counts for 20,000 assets, revisions, trashed rows, tags, collections, and aggregate tag /
+  collection membership counts;
+- 200 sampled asset path/size/location checks;
+- 50 sampled metadata checks;
+- up to 100 sampled per-asset tag memberships and 100 sampled collection memberships;
+- `.serpent/trash` exists and is non-empty after round-trip.
+
+It does not byte-compare every managed/trash file, inspect every metadata or relationship row, verify
+every revision payload, validate artifacts/jobs, exercise linked content at 20k scale, or cover
+packaged/Windows/non-ASCII/long-path portability. Accordingly, the historical result is: **no
+mismatch or pathological slowdown was detected inside the asserted boundary**. The real-trash API
+strengthening is fixed in `f1330a7`, but its final merged-gate result remains pending; prior timing
+numbers must not be presented as the current final candidate result.

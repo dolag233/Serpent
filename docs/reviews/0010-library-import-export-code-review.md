@@ -1,14 +1,27 @@
 # Slice 0010 code review: library import/export
 
-> Status: fixing
-> Date: 2026-07-13
+> Status: candidate reviewed; final merged re-review pending
+> Date: 2026-07-13 / calibrated 2026-07-16
 
 ## Review ranges
 
 - Original fixed range: `git diff 8dc2470...cdc2247`
 - Relevant original commits: `3aec6c3`, `2ffd226`
-- Re-review: current uncommitted working tree on 2026-07-13.
+- Re-review candidate: `f1330a7` on 2026-07-16.
 - Spec: `docs/implementation/0010-library-import-export-vertical-slice.md`
+- The real-trash soak strengthening is fixed in `f1330a7`; final merged mainline SHA remains pending.
+
+## 2026-07-15 evidence boundary
+
+The current 20k soak improvement uses the real trash API and verifies a physical trash directory,
+but it is not a complete equivalence oracle. Exact assertions cover aggregate counts; paths/sizes,
+metadata, and per-asset relationships are sampled, and physical trash is checked only for existence
+and non-empty contents. Artifacts/jobs, every file byte, every persisted row, 20k linked content,
+packaged UI, non-ASCII/long paths and Windows↔macOS portability are outside this soak.
+
+Accordingly, “no data loss”, “all asset data preserved” and “automated gates pass” are not current
+review conclusions. The accurate status is: historical targeted checkpoints passed within their
+asserted boundary; final merged verification remains pending.
 
 ## Standards
 
@@ -34,4 +47,6 @@
 ## Re-review conclusion
 
 Standards: archive validation, output ownership and live cancellation are materially resolved.
-Spec: automated implementation gates pass; large-library, packaged transfer-UI and Windows/cross-platform QA remain open.
+Spec: the implementation has historical targeted automation and the soak strengthening is fixed in
+`f1330a7`, but the final merged gate remains pending. Packaged transfer UI, complete large-library equivalence, non-ASCII/long
+paths and Windows/cross-platform QA remain open.

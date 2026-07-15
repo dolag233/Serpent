@@ -1,13 +1,22 @@
 # 切片 0007 开发日志：回收站、手动找回与批量重新定位
 
-> 状态：fixing；主用户流自动化通过，重新定位崩溃恢复与平台 QA 未完成
-> 日期：2026-07-13（基线）/ 2026-07-14（补充）
+> 状态：文件归属安全阻断已关闭；真实 UtilityProcess、packaged 与 Windows QA 未完成
+> 日期：2026-07-13（基线）/ 2026-07-14（补充）/ 2026-07-16（安全收口）
 
 ## 依据
 
 - 规格：`docs/implementation/0007-trash-relink-batch-relocate-vertical-slice.md`
 - 实现提交：`cd19485`、`825ebf0`
 - 固定复审范围：`8dc2470...cdc2247`
+
+## 2026-07-16 文件归属安全收口
+
+- `f1330a7` 将 relink 日志升级为 v3：rename 前一次性写入并 fsync `manifest.json`，rename 后一次性写入并 fsync `placed.json`。
+- 文件身份包含 `dev`、`ino`、`size`、`mtimeNs`、`ctimeNs` 与 SHA-256；使用单一 `O_NOFOLLOW` fd 执行 fstat → hash → fstat。
+- 删除前先原子移动到 operation quarantine 再复核 inode 与内容；竞争失败时恢复原路径，或转存 `.serpent/recovered`。
+- v1/v2、损坏 manifest/marker、rename→marker 窗口、零 inode/device 和任何 identity mismatch 都保留文件并写诊断，不能授权删除。
+- 新增 manifest 前、manifest 后 placement 前、placement 后 marker 前、DB commit 前后等精确 failpoint；定向 Worker 11/11 通过。
+- 测试仍是 `closeAll()` + 新 `LibraryService`，不是 UtilityProcess kill/restart；WAL、IPC 重连与 Main 的意外退出状态机仍为明确证据缺口。
 
 ## 实现摘要
 
@@ -82,7 +91,7 @@ QA，属于流程偏差。固定提交审查与当前 working-tree 复审分别�
 
 ### 双轴审查结论（2026-07-14）
 
-- **Standards（独立验收校准）**：不透明 `previewId`、Worker 所有权、Zod 边界和参数化 SQL 保持成立；但未使用的 `crash-relink-*` failure point（代码存在但无测试触发+进程重启+磁盘/DB对账）构成 HARD 证据缺口，原”0 HARD”结论撤回。按验收纪律#2(代码存在≠覆盖),崩溃恢复 = 未验证。
+- **Standards（当日独立验收校准）**：不透明 `previewId`、Worker 所有权、Zod 边界和参数化 SQL 保持成立；当时 `crash-relink-*` failpoint 尚未接入。`a1a6fe3` 接入 failpoint，`f1330a7` 进一步关闭 v1→v2 所有权窗口；真实 UtilityProcess 覆盖仍未完成。
 - **Spec（独立验收校准）**：preview/apply、取消、`keepMetadata=false` 与路径隐私满足对应范围；重新定位崩溃恢复没有执行接缝和重启回归，因此切片不能写成”完全满足”。
 
 ### 当前状态

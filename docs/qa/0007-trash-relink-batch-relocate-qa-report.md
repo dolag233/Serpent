@@ -1,13 +1,27 @@
 # 切片 0007 QA 报告
 
-> 状态：fixing；主用户流自动化通过，崩溃恢复覆盖缺失，人工平台 QA 待执行
-> 日期：2026-07-13（基线）/ 2026-07-14（补充）
+> 状态：文件归属安全已验证；真实进程与平台 QA 待执行
+> 日期：2026-07-13（基线）/ 2026-07-14（补充）/ 2026-07-16（安全收口）
 
 ## Build under test
 
 - 固定提交范围：`8dc2470...cdc2247`（基线）
 - stateful relink-preview 实现提交：`7bc78f47e2522f7a2dd60ba35a2c2a62d14bd21a`
 - 当前合流复核基线：`2f7bd0903f3b80257d3c4d90e4125c6068a73810`；不再以未提交 working tree 作为证据
+
+## 2026-07-16 崩溃恢复证据校准
+
+| 项目 | 当前结论 |
+| --- | --- |
+| failpoint 接入 | 已接入单项与批量重新定位执行路径 |
+| 同进程重新实例化 | 有测试：`closeAll()` 后创建新 `LibraryService` 并重新打开 |
+| v3 immutable journal | rename 前 manifest、rename 后 placed marker 均一次性写入并 fsync |
+| 文件归属证明 | dev/ino/size/mtime/ctime/SHA-256 + quarantine 二次复核 |
+| 归属不明 | v1/v2、marker 缺失或损坏、零 inode/device、identity mismatch 全部保留并诊断 |
+| 真实 UtilityProcess kill/restart | **未执行**；WAL、IPC 重连和意外退出状态机没有证据 |
+| 安全候选 / 定向测试 | `f1330a7`；11/11 通过 |
+
+`tests/worker/relink-crash-recovery.test.ts` 不能称为“真实进程重启测试”。它证明的是保守恢复算法与同进程重新实例化；真实进程级 E2E 仍需单独完成。
 
 ## 2026-07-14 relink-preview 自动化结果
 
@@ -52,10 +66,10 @@ system-trash helper（49/49）。
 
 ## 平台与未完成项
 
-- macOS：自动化全绿（unit/WORKer/E2E）；真实 helper 与 Electron 公共 UI 验证通过。Computer Use 人工 QA（回收站操作、批量重新定位完整流程、冲突恢复交互、永久删除确认对话框）待执行。
+- macOS：2026-07-14 历史检查点的 unit/Worker/E2E 与真实 helper、Electron 公共 UI 曾通过；`f1330a7` 后的最终合流门禁仍待执行。Computer Use 人工 QA（回收站操作、批量重新定位完整流程、冲突恢复交互、永久删除确认对话框）待执行。
 - Windows：无 runner，未验证，尤其不能推断 long path、占用文件和系统回收站行为已通过。
 - 打包后 macOS `.app` 冒烟（回收站与批量重新定位）待执行。
 
 ## 结论
 
-preview/apply、取消、`keepMetadata=false`、路径隐私、候选去重、FILE_BUSY 和多选永久删除对话框具备自动化证据；重新定位崩溃恢复没有证据，原”规格覆盖完整/0 HARD”结论撤回——按验收纪律#2(代码存在≠覆盖),failpoint 存在但未触发+重启+对账 = 未验证。切片保持 fixing，另待 macOS Computer Use、打包后冒烟与 Windows 平台验证。
+preview/apply、取消、`keepMetadata=false`、路径隐私、候选去重、FILE_BUSY 和多选永久删除对话框具备历史自动化证据。`f1330a7` 已关闭 v1→v2 所有权窗口；真实 UtilityProcess kill/restart 仍未完成。切片保持平台条件通过，另待最终集中 `verify:mainline`、打包后冒烟与 Windows 平台验证。

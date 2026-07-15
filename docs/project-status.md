@@ -1,23 +1,33 @@
 # Serpent 项目状态
 
-> 更新时间：2026-07-14
+> 更新时间：2026-07-16
 > 事实来源：`docs/implementation/mvp-roadmap.md` 与各切片开发/审查/QA 文档
 
 ## 当前方向
 
-v0.1.0 先收口 0001–0010 的桌面 MVP 主线。0011 CLI 需求已确认并排入 v0.2.0，不代表桌面客户端优先级更高，只表达领域语义与运行时基础的实施依赖。0012 资产画布与卡片信息配置已在 macOS 完成自动化、双轴审查和 Computer Use 验收（Windows/10 万帧率保留条件）。0013 查看器与 0014 选择/上下文操作属于 v0.1.0 UX 收尾；查看错位与右键菜单无法关闭两个 P0 已完成热修，完整 UX 仍按切片推进。
+v0.1.0 先收口 0001–0010 的桌面 MVP 主线。0011 CLI 需求已确认并排入 v0.2.0，不代表桌面客户端优先级更高，只表达领域语义与运行时基础的实施依赖。0012 资产画布与卡片信息配置已在 macOS 完成自动化、双轴审查和 Computer Use 验收（Windows/10 万帧率保留条件）。0013 查看器仍属 v0.1.0 UX 收尾；0014 选择/上下文操作已形成 macOS 开发候选 `f1330a7`，完成真实应用截图验收，最终合流门禁和 Windows QA 保留条件。
 
 ## 当前前沿
 
 1. **P0 发布阻断**：0006 不可变媒体二进制发布来源与 receipt、packaged media playback；
    建立真实 Windows runner 并执行跨平台矩阵。
-2. **P1 验证收口**：0012 已完成 macOS Computer Use 与截图验收；0007 的 relink-preview 主流已完成，但崩溃恢复回到 fixing，另剩 macOS Computer Use 与 Windows；0004 待按当前树复审修复真实行为缺陷，并补打包后与 Windows 证据；
+2. **P1 验证收口**：0012 已完成 macOS Computer Use 与截图验收；0007 的 relink v3 已关闭已知文件所有权风险，仍需真实 UtilityProcess kill/restart、macOS Computer Use 与 Windows；0004 待按当前树复审修复真实行为缺陷，并补打包后与 Windows 证据；
    再完成 0005 packaged 搜索冒烟。
 4. **P2 外部旅程**：补 0009 范围分析/清空 UI 与密钥边界决定；完成 0008 真实浏览器扩展
    往返和 0010 大库/跨平台往返。
 5. **最终完成审计**：跨资源库复制、视频/GIF 悬停预览、NAS 断线只读、10 万资产冷启动
    3 秒，以及跨切片 packaged/Windows 主线。
-6. 0013/0014 完整 UX 实施前先做竞品研究与交互原型；已报告的查看错位与右键菜单关闭缺陷已经完成 P0 热修。
+6. 0013 完整 UX 实施前先做竞品研究与交互原型；0014 已进入人类功能验收，后续视觉迭代继续遵循统一菜单架构。
+
+## 2026-07-16 0014 功能收口与 0007 文件恢复安全
+
+- 候选提交 `f1330a7` 完成框选、跨视口多选、Windows Ctrl / macOS Command 与 Shift 组合键、统一单项/批量右键菜单，并移除遮挡画布的选择态顶部操作条。
+- 右键菜单显示明确选中数量；混合选择对不适用动作给出跳过说明；动作执行使用打开菜单时的选择快照，避免菜单打开后选择变化导致误操作。
+- Computer Use 在真实 Serpent 中发现并修复顶部选择操作仍残留的问题；入口、缺陷和修复后三张截图已经进入 `docs/qa/evidence/0014-selection-context/`。
+- 0007 relink v3 使用不可变 manifest、放置回执、源身份与 SHA-256 校验；恢复不明确时保留两侧文件并记录诊断，不再凭路径猜测删除。
+- 自动证据：lint、typecheck 通过；relink Worker 11/11；相关 Electron E2E 26/26。最终工具栏迁移后的完整 `verify:mainline` 尚未重跑，避免把历史全量结果误写成当前候选结果。
+- **可供人类验收**：`SELECT-001`–`SELECT-006`、`MENU-001`–`MENU-012`；详见 `docs/qa/human-acceptance-checklist.md`。
+- **保留条件**：真实 UtilityProcess kill/restart、最终合流门禁、packaged/Windows 平台验证。
 
 ## 2026-07-14 0013 P0 查看错位热修
 
@@ -45,7 +55,7 @@ v0.1.0 先收口 0001–0010 的桌面 MVP 主线。0011 CLI 需求已确认并�
 - 0005 自动化与 10 万资产热查询性能门禁已通过，剩余以 packaged/人工/Windows 证据为主。
 - 0006 的本地真实队列、source/proxy 播放、Computer Use 和最终 mainline 已通过；发布仍被
   二进制来源、packaged playback 与 Windows 阻断。
-- 0007 已完成 stateful relink-preview 增强（RelinkPreviewStore create/apply/cancel + 候选去重 + FILE_BUSY + 多选永久删除对话框）；独立验收确认 `crash-relink-*` failpoint 只声明未调用，重新定位崩溃恢复没有测试覆盖，旧“规格完整/0 HARD”结论已撤回。另待 macOS Computer Use 与 Windows 验证。
+- 0007 已完成 stateful relink-preview 与 v3 文件所有权恢复安全（不可变 manifest、放置回执、身份/SHA-256 校验、歧义时保留）；真实 UtilityProcess kill/restart 仍未覆盖，另待 macOS Computer Use 与 Windows 验证。
 - 0009 已存在有界缩略图输入、并发限制、进度事件和任务控制 UI；真实功能缺口集中在按范围
   分析/清空入口与密钥边界决定。
 
@@ -70,7 +80,7 @@ v0.1.0 先收口 0001–0010 的桌面 MVP 主线。0011 CLI 需求已确认并�
 - 新增 E2E 测试 `tests/e2e/selection-marquee.test.ts`：10 项测试（5 原有 + 5 新增：框选后 Shift 扩展、选择生存视图切换/缩放、Ctrl/Cmd 增减往返、瀑布流自动滚动、上下文菜单 Escape 序贯保护）。
 - 修复后验证：typecheck/lint 绿、unit 320 passed、E2E 24/24（selection-marquee 10 + context-menu 7 + organization-search-trash 3 + media-preview 2 + browsing-preferences 2）。
 - 双轴审查：Standards 0 HARD 违规（medium 已修复：stale-anchor、dead-code、intersection-dedup；non-blocking follow-up：Primitive Obsession、Long Method、Windows Ctrl）。Spec 选择模型完成；测试缺口 line 21/16/20 已关闭；Windows Ctrl 已确认缺口。
-- **状态：P1 选择模型完成；剩余 0014 = 移除顶部批量条 / 批量菜单连线 / 视觉打磨。未 accepted — Computer Use 人工视觉 QA 与 Windows 平台验证未执行。**
+- **状态更新（2026-07-16）：`f1330a7` 已移除顶部批量条、完成统一批量菜单连线与 macOS Computer Use 截图验收；现可按清单做人类功能验收。最终合流门禁与 Windows 平台验证未执行。**
 - 详见 `docs/development/0014-asset-selection-and-context-actions-development-log.md`、`docs/reviews/0014-asset-selection-and-context-actions-code-review.md`、`docs/qa/0014-asset-selection-and-context-actions-qa-report.md`。
 
 ## 2026-07-14 0014 P0 右键菜单热修

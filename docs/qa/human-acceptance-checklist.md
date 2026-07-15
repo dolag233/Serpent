@@ -4,9 +4,9 @@
 >
 > 首次建立：2026-07-14
 >
-> 当前功能代码基线：本清单所在提交（清单条目与对应实现同提交；固定提交由 Git 历史确定）
+> 当前功能代码基线：历史条目以各自证据提交为准；0014 功能候选 `f1330a7`
 >
-> 适用平台：macOS 开发态；Windows 与当前 HEAD 的 packaged app 另列为未验证
+> 适用平台：macOS 开发态；Windows 与最终候选 packaged app 另列为未验证
 
 本文件只回答一个问题：**现在有哪些已经具备功能性的能力，可以由产品负责人逐项实际操作并给出通过/不通过结论？**
 
@@ -27,6 +27,10 @@
 条目必须保持为最小可独立判定的用户行为；如果一项中的任一步骤可独立失败并需要单独定位，就拆成不同 ID。证据只表示该路径具备进入人工验收的资格，不替代用户结论。
 
 ## 当前待人类验收队列
+
+> 2026-07-16 校准：0014 新增模块已进入 `f1330a7`；静态检查、相关 Electron E2E 和
+> Computer Use 已完成，因此 H 节恢复为“待人类验收”。最终集中 `verify:mainline`、packaged
+> 与 Windows 仍是发布条件，不冒充已完成。
 
 ### A. 资源库与导入
 
@@ -134,7 +138,7 @@
 | ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
 | --- | --- | --- | --- | --- | --- | --- |
 | SELECT-001 | 平铺视图框选 | 待人类验收 | 从画布空白处拖框跨越多张卡片 | 与选框相交的资产被选中，松开后选择稳定 | [0014 QA](0014-asset-selection-and-context-actions-qa-report.md) / [框选 E2E](../../tests/e2e/selection-marquee.test.ts) | — |
-| SELECT-002 | 瀑布流框选和边缘自动滚动 | 待人类验收 | 在瀑布流中拖框并靠近画布边缘继续拖动 | 相交资产被选中，接近边缘时画布自动滚动 | [0014 QA](0014-asset-selection-and-context-actions-qa-report.md) / [框选 E2E](../../tests/e2e/selection-marquee.test.ts) | — |
+| SELECT-002 | 瀑布流框选和边缘自动滚动 | 待人类验收 | 在瀑布流中拖框并靠近画布边缘继续拖动 | 跨多屏后首项、中间项、末项均保持选中 | [0014 QA](0014-asset-selection-and-context-actions-qa-report.md) / [框选 E2E](../../tests/e2e/selection-marquee.test.ts) | — |
 | SELECT-003 | Shift 连续范围选择 | 待人类验收 | 单击一项，再按住 Shift 单击另一项 | 两项之间的连续范围被选中 | [0014 QA](0014-asset-selection-and-context-actions-qa-report.md) / [框选 E2E](../../tests/e2e/selection-marquee.test.ts) | — |
 | SELECT-004 | macOS Command 增减选择 | 待人类验收 | 按住 Command 依次点击未选和已选资产 | 未选资产加入，已选资产移出；其他选择保持 | [0014 QA](0014-asset-selection-and-context-actions-qa-report.md) / [框选 E2E](../../tests/e2e/selection-marquee.test.ts) | — |
 | SELECT-005 | Command+Shift 向现有选择追加范围 | 待人类验收 | 已有离散选择时，按 Command+Shift 点击另一项 | 新范围追加到现有选择，不清空原选择 | [0014 QA](0014-asset-selection-and-context-actions-qa-report.md) / [框选 E2E](../../tests/e2e/selection-marquee.test.ts) | — |
@@ -149,6 +153,8 @@
 | MENU-008 | 应用失焦时关闭菜单 | 待人类验收 | 打开菜单后切换到其他应用 | 菜单关闭，切回时不残留 | [0014 QA](0014-asset-selection-and-context-actions-qa-report.md) / [菜单 E2E](../../tests/e2e/context-menu.test.ts) | — |
 | MENU-009 | 菜单保持窗口内 | 待人类验收 | 分别在窗口四角打开右键菜单 | 菜单自动调整位置，不越出窗口 | [0014 QA](0014-asset-selection-and-context-actions-qa-report.md) / [菜单 E2E](../../tests/e2e/context-menu.test.ts) | — |
 | MENU-010 | 同时只显示一个右键菜单 | 待人类验收 | 连续对不同对象打开右键菜单 | 新菜单出现时旧菜单关闭，页面上只有一个菜单 | [0014 QA](0014-asset-selection-and-context-actions-qa-report.md) / [菜单 E2E](../../tests/e2e/context-menu.test.ts) | — |
+| MENU-011 | 多选不显示顶部动作 | 待人类验收 | 选择多项资产并观察工作区顶部 | 顶部工具栏不因选择增加移动/删除等动作，不遮挡画布 | [0014 QA](0014-asset-selection-and-context-actions-qa-report.md) / [修复截图](evidence/0014-selection-context/03-all-selected-fixed.png) | — |
+| MENU-012 | 多选菜单数量、混合说明与固定目标 | 待人类验收 | 混选 managed、linked、missing 后打开右键菜单 | 显示已选数量、处理/跳过数量和原因；动作只作用于菜单打开时的对象 | [0014 QA](0014-asset-selection-and-context-actions-qa-report.md) / [菜单 E2E](../../tests/e2e/context-menu.test.ts) | — |
 
 ### I. 资源库导入导出
 
@@ -166,13 +172,13 @@
 - 回收站占用文件的部分成功/跳过：需要稳定制造 `FILE_BUSY` 的平台夹具。
 - 导入/导出的进度与取消：自动化已覆盖，但当前 20,000 资产 soak 夹具只存在于 Worker 测试中，没有可由人类独立生成和打开的固定资源库，因此暂不进入人工队列。
 - 0013 查看页面完整 UX：深滚动错位已作为 `VIEWER-001` 开放验收；首次 fit、平移、缩放灵敏度、返回语义、范围切换退出和视频播放器体验仍待实施/修复。
-- 0014 完整批量上下文操作：顶部批量条已移除（0cce59b），批量标签/合集/移动/回收站/复制到外部已接入多选右键菜单（8281-8370），单选右键菜单已补齐文件操作入口（移动到文件夹、回收站、复制到外部），但视觉打磨、菜单 descriptor 类型完整性（locationKind/isAvailable）和部分集合操作仍待完善。
-- 0007 重新定位崩溃恢复：`crash-relink-*` failpoint 尚未接入执行路径，也没有真实崩溃重启回归；不能按旧 QA 文档宣称已覆盖。
+- 0014 发布级证据：功能候选 `f1330a7` 已开放人类验收；最终集中 `verify:mainline`、macOS packaged 与 Windows 平台验收未执行。
+- 0007 真实进程恢复：v3 已按“归属不明不删除”关闭误删窗口；恢复测试仍为 `closeAll()`+新实例，非真实 UtilityProcess kill/restart。
 - 0005 当前 HEAD packaged 搜索与智能合集：正式媒体二进制 bundle 尚未发布，当前代码无法完成新包验收；新增 packaged 测试也未覆盖智能合集。
 - 0006 发布包媒体能力：不可变 FFmpeg/OIIO 发布来源、receipt、packaged playback 与 Windows 验证仍是发布阻断。
 - 0008 浏览器扩展真实 Chrome/Edge 往返、packaged 和 Windows 行为。
 - 0009 完整 AI 用户旅程：范围分析/清空入口、密钥边界决定和真实供应商验证。
-- 0010 完整迁移一致性：元数据、标签、合集、revision、垃圾箱等全量一致性尚未进入人类清单；macOS packaged、Windows↔macOS、长路径/非 ASCII 也未验证。
+- 0010 完整迁移一致性：元数据、标签、合集、revision、soak 20k 往返自动化通过（现已通过真实 `trashAssets` API + `.serpent/trash` 物理目录验证）；剩余 macOS packaged、Windows↔macOS、长路径/非 ASCII 未验证。
 - 0011 CLI：已排入 v0.2.0，尚未实现。
 - Windows 平台整体：当前没有真实 runner；Windows Ctrl 多选、long path、文件占用、系统回收站和打包都不能用 macOS 结果替代。
 

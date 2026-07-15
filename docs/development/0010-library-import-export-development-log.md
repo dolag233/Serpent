@@ -1,8 +1,8 @@
 # Slice 0010 development log: library import/export
 
-> Status: fixing
+> Status: automated implementation and 20k sampled-consistency strengthening fixed in `f1330a7`; final merged verification and platform QA pending
 > Started: reconstructed 2026-07-13
-> Last updated: 2026-07-13
+> Last updated: 2026-07-16
 > Record provenance: **流程偏差**——实现先于本文完成；记录由 `3aec6c3`/`2ffd226`、当前 diff 与测试重建。
 
 ## References and ranges
@@ -10,7 +10,31 @@
 - Spec: `docs/implementation/0010-library-import-export-vertical-slice.md`
 - Original review range: `8dc2470...cdc2247`
 - Relevant commits: `3aec6c3`（folder）、`2ffd226`（ZIP）
-- Re-review: current uncommitted working tree on 2026-07-13.
+- Re-review candidate: `f1330a7` on 2026-07-16.
+
+## 2026-07-15 consistency evidence calibration
+
+Candidate `f1330a7` now trashes ten assets through the real
+`LibraryService.trashAssets` path and checks that `.serpent/trash` exists after source and
+round-trip operations. This is a useful improvement over directly setting `deleted_at`, but it has
+not yet been rerun as part of the final merged mainline gate.
+
+The 20k round-trip coverage boundary is intentionally explicit:
+
+- exact: total asset count, revision count, trashed-row count, tag/collection counts, and per-tag /
+  per-collection aggregate counts;
+- sampled: 200 asset paths/sizes/location kinds, 50 metadata records, up to 100 tag memberships and
+  up to 100 collection memberships;
+- physical trash: directory existence and non-empty contents, not byte-for-byte verification of
+  every trashed asset;
+- not covered: every asset field, every metadata row, every relationship row, every revision body,
+  artifact/job consistency, linked-content round-trip at 20k scale, cancellation during the soak,
+  non-ASCII/long paths, packaged UI, or Windows↔macOS portability.
+
+Therefore earlier wording such as “preserves all asset data”, “no data loss”, or “no corruption” is
+too broad. The accurate conclusion is that no mismatch was detected **within the asserted exact and
+sampled fields of the historical checkpoint**. The strengthening is fixed in `f1330a7`; its final
+merged-gate rerun remains pending.
 
 ## Reconstructed implementation
 
@@ -34,7 +58,7 @@
 - 2026-07-13 当前工作树全量：**713 passed / 1 skipped**；lint、typecheck、`git diff --check` 通过。该数字会在后续跨切片收口后重新生成，不作为最终固定结果。
 - 新增真实流式 ZIP、压缩炸弹、路径锁、Online Backup、链接内容 folder/ZIP 测试。
 - 早期工作树曾通过 package/startup；加入媒体二进制 promoted-source fail-closed gate 后，当前 release package 必须等不可变 HTTPS bundle 和 checksum receipt，不能沿用早期包作为最终证据。
-	- Large-library soak test completed 2026-07-14 with 20k assets; no data loss or corruption found.
+	- Historical 2026-07-14 20k soak found no mismatch within its asserted exact/sampled fields; it did not prove complete equivalence.
 	- Packaged transfer-UI walkthrough and cross-platform manual round trip remain unexecuted.
 
 ## Remaining QA gap
@@ -42,7 +66,9 @@
 - 单个超大文件或单个超大 ZIP entry 仍只能在该文件/entry 完成后响应取消；这是当前规格的边界粒度，不是字节级中断。
 - Windows 流关闭、占用文件删除、长路径和跨平台 ZIP 往返仍需实机 QA。
 
-Automated implementation gates are complete; this slice is not finally accepted until the remaining manual/platform QA is recorded.
+Historical automated implementation checkpoints exist and the real-trash strengthening is fixed in
+`f1330a7`; the final merged gate remains pending. This slice is not finally accepted until the final
+automation and remaining manual/platform QA are recorded.
 
 ## 2026-07-14: Large-library import/export soak test
 
@@ -56,6 +82,6 @@ Added `tests/worker/library-import-export-soak.test.ts` — a soak test that see
 
 **Size chosen**: 20,000 (not 100,000). The 0005 gate used 100k DB-only records for search performance, but the soak requires writing real files to disk and copying them during export. 20k provides meaningful coverage of both DB and filesystem paths without exceeding a reasonable test timeout on CI.
 
-**Results**: Both folder and ZIP round trips pass. Folder export ~3.6s, folder import ~3.9s; ZIP export ~4.1s, ZIP import ~6.4s. All perf thresholds (<60s each) met with wide margin. No data loss, no corruption, no pathological slowdown detected.
+**Historical checkpoint results**: Both folder and ZIP round trips passed at that checkpoint. Folder export ~3.6s, folder import ~3.9s; ZIP export ~4.1s, ZIP import ~6.4s. All perf thresholds (<60s each) were met. These timings and results must be rerun on the final candidate.
 
-**No 0010 bugs found**. The soak did not reveal any implementation defect in the export or import paths.
+**Finding boundary**: The historical soak did not reveal an implementation defect in the fields it asserted. It does not prove complete data equivalence or cross-platform/package behavior.

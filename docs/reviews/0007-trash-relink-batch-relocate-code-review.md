@@ -1,7 +1,7 @@
 # 切片 0007 双轴代码审查
 
-> 状态：独立复核后不通过；重新定位崩溃恢复证据缺失，原完整规格结论撤回
-> 日期：2026-07-13（基线）/ 2026-07-14（补充）
+> 状态：数据所有权 HARD 已关闭；真实进程覆盖仍有条件保留
+> 日期：2026-07-13（基线）/ 2026-07-14（补充）/ 2026-07-16（安全复审）
 
 ## 审查范围
 
@@ -12,11 +12,19 @@
 - 实现范围：`src/main/index.ts`、`src/main/relink-preview-store.ts`、`src/preload/index.ts`、`src/renderer/App.tsx`、`src/shared/asset-types.ts`、`src/shared/library-api.ts`、`src/shared/protocol/errors.ts`、`src/shared/protocol/requests.ts`、`src/shared/protocol/responses.ts`、`src/worker/index.ts`、`src/worker/library-service.ts`
 - 测试范围：`tests/e2e/trash-relink-flow.test.ts`、`tests/unit/asset-types-paths.test.ts`、`tests/unit/relink-preview-store.test.ts`、`tests/e2e/organization-search-trash.test.ts`、`tests/unit/protocol.test.ts`、`tests/worker/trash-relink.test.ts`
 
+## 2026-07-16 当前复审增量
+
+- 安全收口候选：`f1330a7`。
+- v3 immutable `manifest.json` + `placed.json` 关闭了原 v1→v2 原地改写窗口；归属不明一律保留。
+- 单 fd 身份采集、完整 hash 和 quarantine 二次复核降低路径替换 TOCTOU 风险。
+- 精确 failpoint 与 11 项 Worker 回归覆盖 DB 回滚/提交、marker 损坏、v1/v2 保守恢复、外部替换与批量恢复。
+- 真实 UtilityProcess fork/kill/restart 仍未覆盖；该项是发布级证据缺口，但不再伴随已知的归属不明误删路径。
+
 ## Standards 轴
 
 ### 2026-07-14 relink-preview 增强
 
-- 通过（0 HARD 违规）：不透明 `previewId`（UUID）确保 Renderer 不接触绝对路径——`rootPath` 仅在 Main 的 `RelinkPreviewStore`（`src/main/relink-preview-store.ts`）持有，apply 时 Main 直接转发 Worker，Renderer 始终只有 UUID 句柄。
+- 当日通过项：不透明 `previewId`（UUID）确保 Renderer 不接触绝对路径——`rootPath` 仅在 Main 的 `RelinkPreviewStore`（`src/main/relink-preview-store.ts`）持有，apply 时 Main 直接转发 Worker，Renderer 始终只有 UUID 句柄。该局部通过项不代表当前 “0 HARD”；当前 HARD 见 2026-07-15 增量。
 - 通过：Worker 仍是唯一 DB/文件所有者——`relinkBatchPreview` 与 `relinkBatchApply` 在 `src/worker/library-service.ts` ~L10185/L10232。
 - 通过：所有协议边界 Zod 校验——`workerCommand`、`workerSuccessResult`、`rendererRequest`、`rendererSuccessResult` schema 在 `tests/unit/protocol.test.ts` 中覆盖；`portableRelativePathSchema` 拒绝绝对/UNC 路径（`tests/unit/asset-types-paths.test.ts`）。
 - 通过：SQL 完全 `?` 参数化——`batchRelinkRows`、`batchRelinkMatches`、`batchRelinkApply` 均无字符串拼接。
@@ -59,4 +67,4 @@
 
 ## 结论
 
-独立复核结论为不通过：stateful preview、取消、路径隐私、候选去重和 `keepMetadata=false` 等增量成立，但崩溃恢复覆盖声明失实，Standards 与 Spec 各有 1 个 HARD 缺口。按验收纪律#2(代码存在≠覆盖),failpoint 存在但未触发+重启+对账 = 未验证。修复并增加真实中断/完整重启回归后需要重新双轴审查；macOS Computer Use 与 Windows 仍未验证。
+文件归属与误删风险的 Standards HARD 已关闭。stateful preview、取消、路径隐私、候选去重、`keepMetadata=false` 与 v3 保守恢复满足当前实现范围。真实 UtilityProcess kill/restart、packaged 与 Windows 仍必须在发布前补证，不能由同进程重新实例化替代。
