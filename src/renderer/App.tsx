@@ -913,6 +913,10 @@ function AppInner() {
 
   // Marquee drag-select helpers
   const marqueeActiveRef = useRef(false);
+  const autoScrollRef = useRef<{ direction: number; speed: number }>({ direction: 0, speed: 0 });
+  const autoScrollRafRef = useRef<number | null>(null);
+  const marqueeBoxRef = useRef<{ left: number; top: number; right: number; bottom: number } | null>(null);
+  const marqueeModifiersRef = useRef<{ metaKey: boolean; ctrlKey: boolean; shiftKey: boolean }>({ metaKey: false, ctrlKey: false, shiftKey: false });
 
   const handleCanvasMouseDown = useCallback(
     (e: React.MouseEvent<HTMLDivElement>) => {
@@ -979,6 +983,16 @@ function AppInner() {
 
       setMarqueeBox({ left, top, width, height });
 
+      // Store for RAF-driven auto-scroll hit detection
+      const currentMarqueeRect = {
+        left,
+        top,
+        right: left + width,
+        bottom: top + height,
+      };
+      marqueeBoxRef.current = currentMarqueeRect;
+      marqueeModifiersRef.current = { metaKey: e.metaKey, ctrlKey: e.ctrlKey, shiftKey: e.shiftKey };
+
       // Intersect marquee box with visible asset cards
       const cards =
         canvas.querySelectorAll<HTMLElement>("[data-asset-id]");
@@ -1016,32 +1030,86 @@ function AppInner() {
       }
 
       // Auto-scroll when pointer is near canvas top/bottom edges
+      let scrollDirection = 0;
+      let scrollSpeed = 0;
       if (
         e.clientY >= canvasRect.top &&
         e.clientY <= canvasRect.bottom
       ) {
         if (e.clientY < canvasRect.top + AUTO_SCROLL_ZONE) {
           const dist = canvasRect.top + AUTO_SCROLL_ZONE - e.clientY;
-          const speed = Math.round(
+          scrollSpeed = Math.round(
             (dist / AUTO_SCROLL_ZONE) * MAX_SCROLL_SPEED,
           );
-          if (speed > 0) canvas.scrollTop -= speed;
+          scrollDirection = -1;
         } else if (
           e.clientY > canvasRect.bottom - AUTO_SCROLL_ZONE
         ) {
           const dist =
             e.clientY - (canvasRect.bottom - AUTO_SCROLL_ZONE);
-          const speed = Math.round(
+          scrollSpeed = Math.round(
             (dist / AUTO_SCROLL_ZONE) * MAX_SCROLL_SPEED,
           );
-          if (speed > 0) canvas.scrollTop += speed;
+          scrollDirection = 1;
         }
+      }
+      autoScrollRef.current = { direction: scrollDirection, speed: scrollSpeed };
+
+      if (scrollDirection !== 0 && autoScrollRafRef.current === null) {
+        // RAF-driven continuous auto-scroll
+        const autoScrollLoop = () => {
+          const { direction, speed } = autoScrollRef.current;
+          if (direction === 0 || speed === 0) {
+            autoScrollRafRef.current = null;
+            return;
+          }
+          canvas.scrollTop += direction * speed;
+
+          // Re-run hit detection with current marquee box position
+          const currentBox = marqueeBoxRef.current;
+          if (currentBox) {
+            const cards =
+              canvas.querySelectorAll<HTMLElement>("[data-asset-id]");
+            const hitIds: string[] = [];
+            for (const card of cards) {
+              const rect = card.getBoundingClientRect();
+              if (
+                rect.left < currentBox.right &&
+                rect.right > currentBox.left &&
+                rect.top < currentBox.bottom &&
+                rect.bottom > currentBox.top
+              ) {
+                const id = card.dataset.assetId;
+                if (id) hitIds.push(id);
+              }
+            }
+            marqueeHitIdsRef.current = hitIds;
+
+            if (marqueeModifiersRef.current.metaKey || marqueeModifiersRef.current.ctrlKey || marqueeModifiersRef.current.shiftKey) {
+              setSelectedAssetIds((current) => [
+                ...new Set([...current, ...hitIds]),
+              ]);
+            } else {
+              setSelectedAssetIds(hitIds);
+            }
+            if (hitIds.length > 0) {
+              setSelectedAssetId(hitIds[0]!);
+            }
+          }
+          autoScrollRafRef.current = requestAnimationFrame(autoScrollLoop);
+        };
+        autoScrollRafRef.current = requestAnimationFrame(autoScrollLoop);
       }
     };
 
     const handleMouseUp = (e: MouseEvent) => {
       if (!marqueeActiveRef.current) return;
       marqueeActiveRef.current = false;
+      autoScrollRef.current = { direction: 0, speed: 0 };
+      if (autoScrollRafRef.current !== null) {
+        cancelAnimationFrame(autoScrollRafRef.current);
+        autoScrollRafRef.current = null;
+      }
 
       const start = marqueeStartRef.current;
       const dx = Math.abs(e.clientX - start.x);
@@ -1074,6 +1142,11 @@ function AppInner() {
       document.removeEventListener("mousemove", handleMouseMove);
       document.removeEventListener("mouseup", handleMouseUp);
       marqueeActiveRef.current = false;
+      autoScrollRef.current = { direction: 0, speed: 0 };
+      if (autoScrollRafRef.current !== null) {
+        cancelAnimationFrame(autoScrollRafRef.current);
+        autoScrollRafRef.current = null;
+      }
     };
   }, []);
 
@@ -5317,6 +5390,23 @@ function AppInner() {
                     <>
                       <button
                         className="compact-action"
+                        disabled={
+                          busy || selectedAsset.availability !== "available"
+                        }
+                        onClick={() =>
+                          setMoveDialog({
+                            assetIds: [selectedAssetId!],
+                            targetFolderId: null,
+                            conflictStrategy: "keep-both",
+                          })
+                        }
+                        type="button"
+                      >
+                        <Icon name="folder" size={13} />
+                        移动到文件夹
+                      </button>
+                      <button
+                        className="compact-action"
                         disabled={busy}
                         onClick={() => {
                           void trashManagedAssets([selectedAssetId!]);
@@ -5726,6 +5816,8 @@ function AppInner() {
                                 type: "asset",
                                 assetId: asset.assetId,
                                 displayName: asset.displayName,
+                                locationKind: asset.locationKind,
+                                isAvailable: asset.availability === "available",
                               },
                               { x: e.clientX, y: e.clientY },
                             );
@@ -8371,7 +8463,8 @@ function AppInner() {
             )}
             {activeContextMenu.descriptor.type === "asset" &&
               (() => {
-                const { assetId } = activeContextMenu.descriptor;
+                const { assetId, locationKind, isAvailable } = activeContextMenu.descriptor;
+                const singleManaged = locationKind === "managed";
                 return (
                   <>
                     <ContextMenuItem
@@ -8390,6 +8483,42 @@ function AppInner() {
                         }}
                       />
                     )}
+                    {singleManaged && isAvailable && (
+                      <ContextMenuItem
+                        icon={<Icon name="folder" size={14} />}
+                        label="移动到文件夹…"
+                        onAction={() =>
+                          setMoveDialog({
+                            assetIds: [assetId],
+                            targetFolderId: null,
+                            conflictStrategy: "keep-both",
+                          })
+                        }
+                      />
+                    )}
+                    {singleManaged && (
+                      <ContextMenuItem
+                        icon={<Icon name="trash" size={14} />}
+                        label="移入回收站"
+                        danger
+                        onAction={() => void trashManagedAssets([assetId])}
+                      />
+                    )}
+                    {linkedFolders
+                      .filter((f) => f.status === "available")
+                      .map((folder) => (
+                        <ContextMenuItem
+                          key={`single-link-${folder.folderId}`}
+                          icon={<Icon name="link" size={14} />}
+                          label={`复制到外部目录：${folder.displayName}`}
+                          disabled={!singleManaged || !isAvailable}
+                          disabledReason="资产不可复制到外部目录"
+                          // eslint-disable-next-line react-hooks/refs
+                          onAction={() =>
+                            void copyManagedSelectionToLinked(folder, [assetId])
+                          }
+                        />
+                      ))}
                     {collections.map((collection) => (
                       <ContextMenuItem
                         key={`remove-collection-${collection.collectionId}`}

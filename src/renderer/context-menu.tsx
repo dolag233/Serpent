@@ -21,6 +21,8 @@ export type ContextMenuDescriptor =
       type: "asset";
       assetId: string;
       displayName: string;
+      locationKind: "managed" | "linked";
+      isAvailable: boolean;
     }
   | {
       type: "organization";

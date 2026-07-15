@@ -8639,6 +8639,19 @@ export class LibraryService {
       }
       renameSync(stagedPath, destinationPath);
       placed = true;
+      const placedSnapshot = sourceSnapshot(statSync(destinationPath, { bigint: true }));
+      writeFileSync(
+        path.join(operationPath, 'manifest.json'),
+        JSON.stringify({
+          version: 2,
+          destinationRelativePath,
+          placedSnapshot: {
+            size: String(placedSnapshot.size),
+            mtimeNs: String(placedSnapshot.mtimeNs),
+          },
+        }),
+        { encoding: 'utf8' },
+      );
       return {
         destinationPath,
         operationPath,
@@ -8677,21 +8690,52 @@ export class LibraryService {
     const manifestPath = path.join(operationPath, 'manifest.json');
     if (!existsSync(manifestPath)) return false;
     let destinationRelativePath: string;
+    let placedSnapshot: { size: string; mtimeNs: string } | undefined;
     try {
       const parsed = JSON.parse(readFileSync(manifestPath, 'utf8')) as unknown;
       if (
         typeof parsed !== 'object' || parsed === null ||
-        (parsed as { version?: unknown }).version !== 1 ||
         typeof (parsed as { destinationRelativePath?: unknown }).destinationRelativePath !== 'string'
       ) {
+        throw new LibraryServiceError('LIBRARY_CORRUPT');
+      }
+      const version = (parsed as { version?: unknown }).version;
+      if (version === 1 || version === 2) {
+        // Both versions are supported; v2 adds placedSnapshot for safe recovery.
+      } else {
         throw new LibraryServiceError('LIBRARY_CORRUPT');
       }
       const rawPath = (parsed as { destinationRelativePath: string }).destinationRelativePath;
       destinationRelativePath = normalizeRelativeAssetPath(rawPath);
       if (destinationRelativePath !== rawPath) throw new LibraryServiceError('LIBRARY_CORRUPT');
+      if (version === 2) {
+        const snapshot = (parsed as { placedSnapshot?: unknown }).placedSnapshot;
+        if (
+          typeof snapshot === 'object' && snapshot !== null &&
+          typeof (snapshot as { size?: unknown }).size === 'string' &&
+          typeof (snapshot as { mtimeNs?: unknown }).mtimeNs === 'string'
+        ) {
+          placedSnapshot = snapshot as { size: string; mtimeNs: string };
+        }
+      }
     } catch (error) {
       if (error instanceof LibraryServiceError) throw error;
       throw new LibraryServiceError('LIBRARY_CORRUPT', { cause: error });
+    }
+
+    const destinationPath = this.folderPath(openLibrary, destinationRelativePath);
+    if (existsSync(destinationPath) && placedSnapshot) {
+      const currentStat = statSync(destinationPath, { bigint: true });
+      const sizeMatches = String(currentStat.size) === placedSnapshot.size;
+      const mtimeMatches = String(currentStat.mtimeNs) === placedSnapshot.mtimeNs;
+      if (!sizeMatches || !mtimeMatches) {
+        this.diagnose('asset.relink.recovery-file-mismatch', new LibraryServiceError('LIBRARY_NOT_WRITABLE', { reason: 'IO_ERROR' }), {
+          libraryId: openLibrary.summary.libraryId,
+          destinationRelativePath,
+        });
+        rmSync(operationPath, { force: true, recursive: true });
+        return true;
+      }
     }
 
     const asset = openLibrary.connection
@@ -8701,7 +8745,7 @@ export class LibraryService {
       )
       .get(portablePathIdentity(destinationRelativePath)) as { availability: 'available' | 'missing' } | undefined;
     if (!asset || asset.availability === 'missing') {
-      rmSync(this.folderPath(openLibrary, destinationRelativePath), { force: true });
+      rmSync(destinationPath, { force: true });
     }
     rmSync(operationPath, { force: true, recursive: true });
     this.diagnose(

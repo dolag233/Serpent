@@ -1,3 +1,23 @@
+/**
+ * NOTE: These tests validate recovery logic by creating a new LibraryService instance
+ * after `closeAll()`. This proves in-process recovery works but does NOT exercise a
+ * real UtilityProcess kill/restart with its SQLite WAL/disk flush and IPC lifecycle
+ * boundaries.
+ *
+ * Real process-restart coverage IS feasible but requires new infrastructure:
+ * 1. LibraryWorkerClient must expose the worker PID (trivial: a `pid` getter).
+ * 2. LibraryWorkerClient needs a `restart()` method or the main process must
+ *    auto-restart on unexpected exit (currently neither exists).
+ * 3. The test must be an E2E (Playwright) test, not a vitest worker test, because
+ *    worker tests import LibraryService directly from TS source, while
+ *    utilityProcess.fork() requires a compiled JS bundle.
+ * 4. The worker JS bundle must be pre-built (the e2e runner already does this via
+ *    Vite build; the worker-test runner does not).
+ *
+ * Without these, worker tests cannot spawn/kill/restart a real UtilityProcess, so
+ * the WAL flush, IPC reconnect, and LibraryWorkerClient state-machine recovery on
+ * unexpected exit remain untested.
+ */
 import {
   existsSync,
   mkdtempSync,
@@ -69,8 +89,8 @@ afterEach(() => {
   }
 });
 
-describe('relinkAsset crash recovery', () => {
-  it('preserves orphan placement on crash after filesystem and cleans up on reopen', () => {
+describe('relinkAsset recovery on reopen', () => {
+  it('preserves orphan placement after failpoint and cleans up on reopen', () => {
     // ---- SETUP ----
     const root = temporaryRoot();
     const setup = new LibraryService();
@@ -116,8 +136,12 @@ describe('relinkAsset crash recovery', () => {
     expect(relinkChildren).toHaveLength(1);
     const manifestPath = path.join(opsDir, relinkChildren[0]!, 'manifest.json');
     const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
-    expect(manifest.version).toBe(1);
+    expect(manifest.version).toBe(2);
     expect(manifest.destinationRelativePath).toBe('orig.jpg');
+    expect(manifest.placedSnapshot).toEqual({
+      size: String(readFileSync(managedPath).length),
+      mtimeNs: expect.any(String),
+    });
 
     // DB still shows missing (transaction never started)
     const db = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
@@ -153,8 +177,8 @@ describe('relinkAsset crash recovery', () => {
   });
 });
 
-describe('relinkBatchApply crash recovery', () => {
-  it('preserves orphan placement after first file in batch and cleans up on reopen', () => {
+describe('relinkBatchApply recovery on reopen', () => {
+  it('preserves orphan placement after batch failpoint and cleans up on reopen', () => {
     // ---- SETUP: 3 managed assets with different paths ----
     const root = temporaryRoot();
     const setup = new LibraryService();
@@ -224,8 +248,12 @@ describe('relinkBatchApply crash recovery', () => {
     const manifest = JSON.parse(
       readFileSync(path.join(opsDir, relinkChildren[0]!, 'manifest.json'), 'utf8'),
     );
-    expect(manifest.version).toBe(1);
+    expect(manifest.version).toBe(2);
     expect(typeof manifest.destinationRelativePath).toBe('string');
+    expect(manifest.placedSnapshot).toEqual({
+      size: expect.any(String),
+      mtimeNs: expect.any(String),
+    });
 
     // The placed file must match the manifest's destination relative path
     const manifestDestPath = path.join(created.libraryPath, 'Assets', manifest.destinationRelativePath);
@@ -279,6 +307,89 @@ describe('relinkBatchApply crash recovery', () => {
     const finalAssets = recovered.listAssets({ libraryId: created.libraryId, recursive: true });
     expect(finalAssets).toHaveLength(3);
     expect(finalAssets.every((a) => a.availability === 'missing')).toBe(true);
+
+    recovered.closeAll();
+  });
+
+  it('does not delete destination file when placedSnapshot mismatches after crash', () => {
+    // ---- SETUP ----
+    const root = temporaryRoot();
+    const setup = new LibraryService();
+    const created = setup.createLibrary({ displayName: 'Relink Mismatch', selectedParentPath: root });
+
+    // Import a managed asset
+    writeFileSync(path.join(root, 'orig.jpg'), 'original bytes');
+    const imported = importNoConflict(setup, created.libraryId, path.join(root, 'orig.jpg'));
+    const assetId = imported.assets[0]!.assetId;
+
+    // Make it missing
+    rmSync(path.join(created.libraryPath, 'Assets', 'orig.jpg'));
+    setup.refreshManagedAssets(created.libraryId);
+    expect(setup.listAssets({ libraryId: created.libraryId, recursive: true })[0]!.availability)
+      .toBe('missing');
+    setup.closeAll();
+
+    // Create replacement file
+    const replacementPath = path.join(root, 'replacement.jpg');
+    writeFileSync(replacementPath, 'replacement bytes');
+
+    // ---- CRASH EXECUTION ----
+    const crashing = new LibraryService({ failAt: 'crash-relink-after-filesystem' });
+    const opened = crashing.openLibrary(created.libraryPath);
+    expectServiceError(
+      () => crashing.relinkAsset({
+        libraryId: opened.libraryId,
+        assetId,
+        newAbsolutePath: replacementPath,
+      }),
+      'LIBRARY_NOT_WRITABLE',
+    );
+
+    // ---- VERIFY ORPHAN STATE ----
+    const managedPath = path.join(created.libraryPath, 'Assets', 'orig.jpg');
+    expect(existsSync(managedPath)).toBe(true);
+    expect(readFileSync(managedPath, 'utf8')).toBe('replacement bytes');
+
+    // Manifest is v2 with placedSnapshot
+    const opsDir = path.join(created.libraryPath, '.serpent', 'operations');
+    const relinkChildren = readdirSync(opsDir).filter((c) => c.startsWith('relink-'));
+    expect(relinkChildren).toHaveLength(1);
+    const manifestPath = path.join(opsDir, relinkChildren[0]!, 'manifest.json');
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+    expect(manifest.version).toBe(2);
+    expect(manifest.placedSnapshot).toBeDefined();
+
+    crashing.closeAll();
+
+    // ---- TAMPER: replace the placed file with different content ----
+    writeFileSync(managedPath, 'tampered content by another process');
+
+    // ---- RECOVERY ----
+    const diagnostics: Array<{ scope: string; context?: Record<string, unknown> }> = [];
+    const recovered = new LibraryService({ onDiagnostic: (d) => diagnostics.push(d as { scope: string; context?: Record<string, unknown> }) });
+    recovered.openLibrary(created.libraryPath);
+
+    // File should NOT be deleted because snapshot doesn't match
+    expect(existsSync(managedPath)).toBe(true);
+    expect(readFileSync(managedPath, 'utf8')).toBe('tampered content by another process');
+
+    // Mismatch diagnostic should be emitted
+    const mismatchDiags = diagnostics.filter(
+      (d) => d.scope === 'asset.relink.recovery-file-mismatch',
+    );
+    expect(mismatchDiags).toHaveLength(1);
+    expect(mismatchDiags[0]!.context!.destinationRelativePath).toBe('orig.jpg');
+
+    // No recovered-orphan-placement diagnostic (we didn't delete anything)
+    const orphanDiags = diagnostics.filter(
+      (d) => d.scope === 'asset.relink.recovered-orphan-placement',
+    );
+    expect(orphanDiags).toHaveLength(0);
+
+    // Operation dir still cleaned up
+    let relinkCount = 0;
+    try { relinkCount = readdirSync(opsDir).filter((c) => c.startsWith('relink-')).length; } catch { /* dir removed */ }
+    expect(relinkCount).toBe(0);
 
     recovered.closeAll();
   });

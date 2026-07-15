@@ -492,9 +492,9 @@ test("Ctrl/Cmd toggle adds then removes the same card", async () => {
 // ---------------------------------------------------------------------------
 
 test("masonry marquee auto-scrolls when pointer is near bottom edge", async () => {
-  const { temporaryRoot, application, window } = await setupLibrary(12);
+  const { temporaryRoot, application, window } = await setupLibrary(20);
   try {
-    await createAndImport(window, "自动滚动画布验收", 12);
+    await createAndImport(window, "自动滚动画布验收", 20);
 
     // Switch to masonry mode
     const masonryButton = window.getByRole("button", {
@@ -506,46 +506,76 @@ test("masonry marquee auto-scrolls when pointer is near bottom edge", async () =
 
     const cvs = await canvasBox(window);
 
-    // Ensure the canvas IS scrollable (content taller than viewport)
-    const initialScroll = await window.evaluate(
-      () => document.querySelector(".workspace-canvas")?.scrollTop ?? 0,
-    );
-    const scrollHeight = await window.evaluate(
-      () => document.querySelector(".workspace-canvas")?.scrollHeight ?? 0,
-    );
-    const clientHeight = await window.evaluate(
-      () => document.querySelector(".workspace-canvas")?.clientHeight ?? 0,
-    );
-    // Skip test if content fits without scrolling
-    if (scrollHeight <= clientHeight) {
-      // Not scrollable with 12 assets — try zooming out to fit more
-      await window.mouse.move(cvs.x + cvs.width / 2, cvs.y + cvs.height / 2);
-      await window.mouse.wheel(0, -500); // zoom out to make cards smaller
-      await window.waitForTimeout(500);
-    }
+    // Record which asset IDs are visible before the marquee.
+    const initialVisibleIds: string[] = await window.evaluate(() => {
+      const cards = document.querySelectorAll<HTMLElement>(".asset-card");
+      const canvas = document.querySelector(".workspace-canvas");
+      if (!canvas) return [];
+      const canvasRect = canvas.getBoundingClientRect();
+      const visible: string[] = [];
+      for (const card of cards) {
+        const rect = card.getBoundingClientRect();
+        if (
+          rect.bottom > canvasRect.top &&
+          rect.top < canvasRect.bottom &&
+          rect.left < canvasRect.right &&
+          rect.right > canvasRect.left
+        ) {
+          const id = card.dataset.assetId;
+          if (id) visible.push(id);
+        }
+      }
+      return visible;
+    });
 
-    // Start marquee from within canvas, drag toward bottom edge
-    const startX = cvs.x + 50;
-    const startY = cvs.y + clientHeight - 50;
+    // Start marquee above the topmost visible card.
+    const safeStartY = await window.evaluate((canvasTop: number) => {
+      const cards = document.querySelectorAll<HTMLElement>(".asset-card");
+      let minY = Infinity;
+      for (const card of cards) {
+        const rect = card.getBoundingClientRect();
+        if (rect.top < minY) minY = rect.top;
+      }
+      return Math.max(canvasTop + 5, minY - 15);
+    }, cvs.y);
+    const startX = cvs.x + 30;
+    const startY = safeStartY;
     await window.mouse.move(startX, startY);
     await window.mouse.down();
 
-    // Drag down toward the auto-scroll zone (bottom 40px) and stay there
+    // Drag down into the auto-scroll zone at the bottom edge of the canvas
     const endX = cvs.x + cvs.width - 50;
-    const endY = cvs.y + clientHeight - 5; // inside auto-scroll zone
-    await window.mouse.move(endX, endY, { steps: 30 });
+    const endY = cvs.y + cvs.height - 5; // inside auto-scroll zone
+    await window.mouse.move(endX, endY, { steps: 20 });
 
-    // Brief wait for auto-scroll to take effect
-    await window.waitForTimeout(500);
+    // Wait for RAF-driven auto-scroll to take effect
+    await window.waitForTimeout(1000);
 
     const finalScroll = await window.evaluate(
       () => document.querySelector(".workspace-canvas")?.scrollTop ?? 0,
     );
 
     // Auto-scroll should have moved the scroll position
-    expect(finalScroll).toBeGreaterThan(initialScroll);
+    expect(finalScroll).toBeGreaterThan(0);
 
     await window.mouse.up();
+
+    // Verify that assets were selected.
+    expect(await selectedCount(window)).toBeGreaterThan(0);
+
+    // At least one selected asset was NOT visible before the auto-scroll.
+    const selectedIds: string[] = await window.evaluate(() => {
+      const cards = document.querySelectorAll<HTMLElement>(
+        ".asset-card.is-selected",
+      );
+      return Array.from(cards)
+        .map((c) => c.dataset.assetId ?? "")
+        .filter(Boolean);
+    });
+    const newlyVisibleSelected = selectedIds.filter(
+      (id) => !initialVisibleIds.includes(id),
+    );
+    expect(newlyVisibleSelected.length).toBeGreaterThan(0);
   } finally {
     await application.close();
     rmSync(temporaryRoot, { force: true, recursive: true });
