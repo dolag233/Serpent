@@ -169,6 +169,159 @@ test("marquee-selects multiple cards in grid mode", async () => {
 });
 
 // ---------------------------------------------------------------------------
+// Test 1b — Plain marquee (no modifier) replaces an existing selection
+// ---------------------------------------------------------------------------
+
+test("blank-drag marquee without modifiers replaces the existing selection", async () => {
+  const { temporaryRoot, application, window } = await setupLibrary(4);
+  try {
+    await createAndImport(window, "框选替换验收", 4);
+    const additiveModifier =
+      process.platform === "darwin" ? "Meta" : "Control";
+
+    const gridButton = window.getByRole("button", { name: "平铺视图" });
+    const isGrid = (await gridButton.getAttribute("aria-pressed")) === "true";
+    if (!isGrid) await gridButton.click();
+    await expect(gridButton).toHaveAttribute("aria-pressed", "true");
+
+    const cards = window.locator(".asset-card");
+
+    // Pre-select cards 0 and 1 via click + additive-modifier click.
+    await cards.nth(0).click();
+    await cards.nth(1).click({ modifiers: [additiveModifier] });
+    await expect.poll(() => selectedCount(window)).toBe(2);
+
+    // Marquee-drag over cards 2-3 only, with NO modifier held.
+    const card2Box = await cards.nth(2).boundingBox();
+    const card3Box = await cards.nth(3).boundingBox();
+    if (!card2Box || !card3Box) throw new Error("Cards 2-3 not visible");
+
+    await window.mouse.move(card2Box.x - 10, card2Box.y - 10);
+    await window.mouse.down();
+    await window.mouse.move(
+      card3Box.x + card3Box.width + 10,
+      card3Box.y + card3Box.height + 10,
+      { steps: 15 },
+    );
+    await window.mouse.up();
+
+    // Selection must be REPLACED by the marquee hit set — cards 0/1 are
+    // deselected, only cards 2/3 remain selected.
+    await expect.poll(() => selectedCount(window)).toBe(2);
+    await expect(cards.nth(0)).not.toHaveClass(/is-selected/);
+    await expect(cards.nth(1)).not.toHaveClass(/is-selected/);
+    await expect(cards.nth(2)).toHaveClass(/is-selected/);
+    await expect(cards.nth(3)).toHaveClass(/is-selected/);
+  } finally {
+    await application.close();
+    rmSync(temporaryRoot, { force: true, recursive: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Test 1c — Ctrl/Cmd-held marquee unions the hit set into the existing
+//            selection, without changing the operation if the key is
+//            released mid-drag (modifier snapshot is taken at mousedown).
+// ---------------------------------------------------------------------------
+
+test("Ctrl/Cmd-held marquee unions the hit set into the existing selection", async () => {
+  const { temporaryRoot, application, window } = await setupLibrary(4);
+  try {
+    await createAndImport(window, "框选并集验收", 4);
+    const additiveModifier =
+      process.platform === "darwin" ? "Meta" : "Control";
+
+    const gridButton = window.getByRole("button", { name: "平铺视图" });
+    const isGrid = (await gridButton.getAttribute("aria-pressed")) === "true";
+    if (!isGrid) await gridButton.click();
+    await expect(gridButton).toHaveAttribute("aria-pressed", "true");
+
+    const cards = window.locator(".asset-card");
+
+    // Pre-select card 0 only.
+    await cards.nth(0).click();
+    await expect.poll(() => selectedCount(window)).toBe(1);
+
+    // Ctrl/Cmd-held marquee over cards 2-3 (not touching card 0). Release
+    // the modifier key before mouseup to prove the op was snapshotted at
+    // mousedown and does not flip back to "replace" mid-drag.
+    const card2Box = await cards.nth(2).boundingBox();
+    const card3Box = await cards.nth(3).boundingBox();
+    if (!card2Box || !card3Box) throw new Error("Cards 2-3 not visible");
+
+    await window.keyboard.down(additiveModifier);
+    await window.mouse.move(card2Box.x - 10, card2Box.y - 10);
+    await window.mouse.down();
+    await window.mouse.move(
+      card3Box.x + card3Box.width + 10,
+      card3Box.y + card3Box.height + 10,
+      { steps: 15 },
+    );
+    await window.keyboard.up(additiveModifier);
+    await window.mouse.up();
+
+    // Selection must be the UNION of the initial selection (card 0) and the
+    // hit set (cards 2-3) — card 0 stays selected alongside cards 2-3.
+    await expect.poll(() => selectedCount(window)).toBe(3);
+    await expect(cards.nth(0)).toHaveClass(/is-selected/);
+    await expect(cards.nth(2)).toHaveClass(/is-selected/);
+    await expect(cards.nth(3)).toHaveClass(/is-selected/);
+  } finally {
+    await application.close();
+    rmSync(temporaryRoot, { force: true, recursive: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Test 1d — Shift-held marquee unions the hit set into the existing
+//            selection (same union semantics as Ctrl/Cmd for marquee).
+// ---------------------------------------------------------------------------
+
+test("Shift-held marquee unions the hit set into the existing selection", async () => {
+  const { temporaryRoot, application, window } = await setupLibrary(4);
+  try {
+    await createAndImport(window, "框选Shift并集验收", 4);
+
+    const gridButton = window.getByRole("button", { name: "平铺视图" });
+    const isGrid = (await gridButton.getAttribute("aria-pressed")) === "true";
+    if (!isGrid) await gridButton.click();
+    await expect(gridButton).toHaveAttribute("aria-pressed", "true");
+
+    const cards = window.locator(".asset-card");
+
+    // Pre-select card 0 only.
+    await cards.nth(0).click();
+    await expect.poll(() => selectedCount(window)).toBe(1);
+
+    // Shift-held marquee over cards 2-3 (not touching card 0).
+    const card2Box = await cards.nth(2).boundingBox();
+    const card3Box = await cards.nth(3).boundingBox();
+    if (!card2Box || !card3Box) throw new Error("Cards 2-3 not visible");
+
+    await window.keyboard.down("Shift");
+    await window.mouse.move(card2Box.x - 10, card2Box.y - 10);
+    await window.mouse.down();
+    await window.mouse.move(
+      card3Box.x + card3Box.width + 10,
+      card3Box.y + card3Box.height + 10,
+      { steps: 15 },
+    );
+    await window.mouse.up();
+    await window.keyboard.up("Shift");
+
+    // Selection must be the UNION of the initial selection (card 0) and the
+    // hit set (cards 2-3) — card 0 stays selected alongside cards 2-3.
+    await expect.poll(() => selectedCount(window)).toBe(3);
+    await expect(cards.nth(0)).toHaveClass(/is-selected/);
+    await expect(cards.nth(2)).toHaveClass(/is-selected/);
+    await expect(cards.nth(3)).toHaveClass(/is-selected/);
+  } finally {
+    await application.close();
+    rmSync(temporaryRoot, { force: true, recursive: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // Test 2 — Marquee drag-select in masonry mode
 // ---------------------------------------------------------------------------
 

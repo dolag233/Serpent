@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AssetSummary } from "../shared/asset-types";
+import { computeMarqueeSelection, isMarqueeAdditive } from "./marquee-selection";
 
 export interface UseAssetSelectionParams {
   /** Visible asset summaries, used for Shift+click range computation */
@@ -142,13 +143,17 @@ export function useAssetSelection({
       marqueeStartRef.current = { x: e.clientX, y: e.clientY };
       marqueeHitIdsRef.current = [];
       marqueeAccumulatedHitIdsRef.current = new Set();
-      marqueeInitialSelectionRef.current =
-        e.metaKey || e.ctrlKey || e.shiftKey ? [...selectedAssetIds] : [];
-      marqueeModifiersRef.current = {
+      // Modifier snapshot is taken once here and frozen for the whole drag
+      // (REQ-SELECT-001 rule 5) — it must not be re-derived from later events.
+      const modifierSnapshot = {
         metaKey: e.metaKey,
         ctrlKey: e.ctrlKey,
         shiftKey: e.shiftKey,
       };
+      marqueeModifiersRef.current = modifierSnapshot;
+      marqueeInitialSelectionRef.current = isMarqueeAdditive(modifierSnapshot)
+        ? [...selectedAssetIds]
+        : [];
       setMarqueeBox({
         left: e.clientX,
         top: e.clientY,
@@ -205,11 +210,13 @@ export function useAssetSelection({
       ];
       marqueeHitIdsRef.current = effectiveHitIds;
 
-      const modifiers = marqueeModifiersRef.current;
-      const nextSelection =
-        modifiers.metaKey || modifiers.ctrlKey || modifiers.shiftKey
-          ? [...new Set([...marqueeInitialSelectionRef.current, ...effectiveHitIds])]
-          : effectiveHitIds;
+      // Always read the mousedown-time snapshot, never the live event
+      // modifiers — the operation must not change mid-drag.
+      const nextSelection = computeMarqueeSelection(
+        marqueeInitialSelectionRef.current,
+        effectiveHitIds,
+        marqueeModifiersRef.current,
+      );
       setSelectedAssetIds(nextSelection);
       setSelectedAssetId(nextSelection[0]);
     };
@@ -255,7 +262,6 @@ export function useAssetSelection({
         bottom: top + height,
       };
       marqueeBoxRef.current = currentMarqueeRect;
-      marqueeModifiersRef.current = { metaKey: e.metaKey, ctrlKey: e.ctrlKey, shiftKey: e.shiftKey };
 
       // Intersect marquee box with visible asset cards
       const marqueeRect = {
@@ -335,8 +341,11 @@ export function useAssetSelection({
       }
 
       // Finalize selection — already set during mousemove;
-      // on a no-modifier marquee that hit nothing, clear too
-      if (!(e.metaKey || e.ctrlKey || e.shiftKey)) {
+      // on a no-modifier marquee that hit nothing, clear too.
+      // Use the mousedown-time snapshot, not this mouseup event's live
+      // modifiers, so a key released/pressed mid-drag can't retroactively
+      // change the operation (REQ-SELECT-001 rule 5).
+      if (!isMarqueeAdditive(marqueeModifiersRef.current)) {
         if (marqueeHitIdsRef.current.length === 0) clearAssetSelection();
       }
 
