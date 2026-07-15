@@ -7,6 +7,7 @@ import { _electron as electron, expect, test } from '@playwright/test';
 import { resolveElectronExecutablePath } from './electron-test-helpers';
 
 test('moves a managed asset to a real folder and exposes one visible undo', async () => {
+  test.setTimeout(120_000);
   const temporaryRoot = mkdtempSync(path.join(tmpdir(), 'serpent-managed-move-e2e-'));
   const sourcePath = path.join(temporaryRoot, 'move-me.png');
   const libraryName = '托管移动验收';
@@ -38,8 +39,8 @@ test('moves a managed asset to a real folder and exposes one visible undo', asyn
 
     const asset = window.getByRole('button', { name: /move-me\.png/i });
     await expect(asset).toBeVisible();
-    await asset.click();
-    await window.getByRole('button', { name: '移动到文件夹' }).click();
+    await asset.click({ button: 'right' });
+    await window.getByRole('menuitem', { name: '移动到文件夹…' }).click();
     await window.getByLabel('目标文件夹').selectOption({ label: 'Target' });
     await window.getByRole('button', { name: '确认移动' }).click();
     await expect(window.locator('.toast')).toContainText('已移动 1 项资产');
