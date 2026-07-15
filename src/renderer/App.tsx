@@ -1,5 +1,4 @@
 import {
-  Fragment,
   useCallback,
   useEffect,
   useMemo,
@@ -11,14 +10,23 @@ import {
   type SetStateAction,
 } from "react";
 
+import { Icon, type IconName } from "./Icons";
 import {
-  ContextMenu,
-  ContextMenuBackdrop,
-  ContextMenuItem,
+  NavigationSidebar,
+} from "./NavigationSidebar";
+
+import {
   ContextMenuProvider,
-  ContextMenuSection,
   useContextMenu,
 } from "./context-menu";
+import { useAssetSelection } from "./useAssetSelection";
+import { useBatchActions } from "./useBatchActions";
+import {
+  toMessage,
+  LibraryOperationError,
+  PUBLIC_ERROR_MESSAGES_ZH,
+  PUBLIC_ERROR_REASONS_ZH,
+} from "./error-utils";
 
 import type {
   AiSearchPlan,
@@ -43,17 +51,14 @@ import type {
 } from "../shared/library-api";
 import type { SerpentExtensionPairingApi } from "../shared/extension-pairing";
 import type {
-  PublicError,
-  PublicErrorCode,
-  PublicErrorReason,
-} from "../shared/protocol/errors";
-import type {
   ImportConflictPlan,
   RendererLibrarySummary,
   ExportProgressEvent,
   ImportProgressEvent,
 } from "../shared/protocol/responses";
 import { AssetPreviewModal } from "./AssetPreviewModal";
+import { AssetContextMenu } from "./AssetContextMenu";
+import { InspectorPanel } from "./InspectorPanel";
 import {
   CARD_SIZE_MAX,
   CARD_SIZE_MIN,
@@ -148,143 +153,6 @@ function readBrowserSession(libraryId: string): StoredBrowserSession | null {
     return null;
   }
 }
-type IconName =
-  | "archive"
-  | "chevron"
-  | "close"
-  | "collection"
-  | "collapse-left"
-  | "collapse-right"
-  | "file"
-  | "folder"
-  | "grid"
-  | "heart"
-  | "info"
-  | "link"
-  | "menu"
-  | "plus"
-  | "refresh"
-  | "search"
-  | "smart"
-  | "star"
-  | "tag"
-  | "trash"
-  | "upload"
-  | "warning";
-
-const iconPaths: Record<IconName, ReactNode> = {
-  archive: (
-    <>
-      <path d="M4 7h16v12H4z" />
-      <path d="M3 4h18v3H3zM9 11h6" />
-    </>
-  ),
-  chevron: <path d="m9 18 6-6-6-6" />,
-  close: <path d="m7 7 10 10M17 7 7 17" />,
-  collection: (
-    <>
-      <rect x="4" y="5" width="16" height="14" rx="1.5" />
-      <path d="m8 14 3-3 5 5 2-2 2 2" />
-    </>
-  ),
-  "collapse-left": (
-    <>
-      <path d="M5 4h14v16H5zM10 4v16" />
-      <path d="m15 9-3 3 3 3" />
-    </>
-  ),
-  "collapse-right": (
-    <>
-      <path d="M5 4h14v16H5zM14 4v16" />
-      <path d="m9 9 3 3-3 3" />
-    </>
-  ),
-  file: (
-    <>
-      <path d="M6 3h8l4 4v14H6z" />
-      <path d="M14 3v5h5" />
-    </>
-  ),
-  folder: <path d="M3 6.5h7l2 2h9v10H3z" />,
-  grid: (
-    <>
-      <rect x="4" y="4" width="6" height="6" />
-      <rect x="14" y="4" width="6" height="6" />
-      <rect x="4" y="14" width="6" height="6" />
-      <rect x="14" y="14" width="6" height="6" />
-    </>
-  ),
-  heart: (
-    <path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1.1-1.1a5.5 5.5 0 0 0-7.8 7.8l1.1 1.1L12 21l7.8-7.8 1.1-1.1a5.5 5.5 0 0 0 0-7.8Z" />
-  ),
-  info: (
-    <>
-      <circle cx="12" cy="12" r="9" />
-      <path d="M12 11v6M12 7h.01" />
-    </>
-  ),
-  link: (
-    <>
-      <path d="M10 13a5 5 0 0 0 7.5.5l2-2a5 5 0 0 0-7-7l-1.2 1.2" />
-      <path d="M14 11a5 5 0 0 0-7.5-.5l-2 2a5 5 0 0 0 7 7l1.2-1.2" />
-    </>
-  ),
-  menu: <path d="M4 7h16M4 12h16M4 17h16" />,
-  plus: <path d="M12 5v14M5 12h14" />,
-  refresh: (
-    <>
-      <path d="M20 7v5h-5" />
-      <path d="M18.4 16a8 8 0 1 1 1.3-8.5L20 12" />
-    </>
-  ),
-  search: (
-    <>
-      <circle cx="10.5" cy="10.5" r="6.5" />
-      <path d="m16 16 4 4" />
-    </>
-  ),
-  smart: (
-    <path d="m12 3 1.7 5.3H19l-4.3 3.2 1.6 5.2-4.3-3.2-4.3 3.2 1.6-5.2L5 8.3h5.3z" />
-  ),
-  star: (
-    <path d="m12 2 3.1 6.3 6.9 1-5 4.9 1.2 6.9-6.2-3.3-6.2 3.3 1.2-6.9-5-4.9 6.9-1z" />
-  ),
-  tag: <path d="M4 5h7l9 9-6 6-9-9zM8 8h.01" />,
-  trash: (
-    <>
-      <path d="M3 6h18" />
-      <path d="M8 6V4h8v2" />
-      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
-      <path d="M10 11v6M14 11v6" />
-    </>
-  ),
-  upload: (
-    <>
-      <path d="M12 16V4m0 0L7 9m5-5 5 5" />
-      <path d="M4 14v6h16v-6" />
-    </>
-  ),
-  warning: (
-    <>
-      <path d="M12 3 2.8 20h18.4z" />
-      <path d="M12 9v5m0 3h.01" />
-    </>
-  ),
-};
-
-function Icon({ name, size = 16 }: { name: IconName; size?: number }) {
-  return (
-    <svg
-      aria-hidden="true"
-      className="icon"
-      viewBox="0 0 24 24"
-      width={size}
-      height={size}
-    >
-      {iconPaths[name]}
-    </svg>
-  );
-}
 function ToolButton({
   label,
   icon,
@@ -310,74 +178,6 @@ function ToolButton({
     >
       <Icon name={icon} />
     </button>
-  );
-}
-function NavRow({
-  icon,
-  label,
-  count,
-  active,
-  onClick,
-  onContextMenu,
-  onDragOver,
-  onDrop,
-  depth = 0,
-  disabled,
-}: {
-  icon: IconName;
-  label: string;
-  count?: number;
-  active?: boolean;
-  onClick?: () => void;
-  onContextMenu?: (e: React.MouseEvent) => void;
-  onDragOver?: (e: React.DragEvent<HTMLButtonElement>) => void;
-  onDrop?: (e: React.DragEvent<HTMLButtonElement>) => void;
-  depth?: number;
-  disabled?: boolean;
-}) {
-  return (
-    <button
-      className={`nav-row${active ? " is-active" : ""}`}
-      disabled={disabled}
-      onClick={onClick}
-      onContextMenu={onContextMenu}
-      onDragOver={onDragOver}
-      onDrop={onDrop}
-      style={{ paddingLeft: 7 + depth * 14 }}
-      type="button"
-    >
-      <Icon name={icon} size={15} />
-      <span>{label}</span>
-      {count !== undefined && <span className="nav-count">{count}</span>}
-    </button>
-  );
-}
-function Section({
-  title,
-  action,
-  children,
-}: {
-  title: string;
-  action?: () => void;
-  children: ReactNode;
-}) {
-  return (
-    <section className="nav-section">
-      <div className="nav-section-heading">
-        <span>{title}</span>
-        {action && (
-          <button
-            aria-label={`添加${title}`}
-            className="tiny-action"
-            onClick={action}
-            type="button"
-          >
-            <Icon name="plus" size={13} />
-          </button>
-        )}
-      </div>
-      {children}
-    </section>
   );
 }
 
@@ -466,7 +266,6 @@ function AppInner() {
   const [allAssetCount, setAllAssetCount] = useState(0);
   const [selectedAssetId, setSelectedAssetId] = useState<string | undefined>();
   const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([]);
-  const selectionAnchorRef = useRef<string | null>(null);
   const [uiState, setUiState] = useState<UiState>("booting");
   const busy = [
     "booting",
@@ -512,12 +311,6 @@ function AppInner() {
     null,
   );
   const [draggedMemberId, setDraggedMemberId] = useState<string | null>(null);
-  const [marqueeBox, setMarqueeBox] = useState<{
-    left: number; top: number; width: number; height: number;
-  } | null>(null);
-  const marqueeStartRef = useRef({ x: 0, y: 0 });
-  const marqueeHitIdsRef = useRef<string[]>([]);
-  const lastMousedownButtonRef = useRef(0);
 
   // Smart collections
   const [smartCollections, setSmartCollections] = useState<
@@ -581,7 +374,7 @@ function AppInner() {
     null,
   );
   const [smartCollectionName, setSmartCollectionName] = useState("");
-  const { open: openContextMenu, close: closeContextMenu, active: activeContextMenu } =
+  const { open: openContextMenu, close: closeContextMenu } =
     useContextMenu();
   const hadDiscoveryInput = useRef(false);
   const reloadCurrentContentRef = useRef<() => Promise<void>>(
@@ -738,13 +531,29 @@ function AppInner() {
     if (showTrash) return trashedAssets;
     return assets;
   }, [assets, trashedAssets, showTrash]);
+
+  const {
+    handleCanvasMouseDown,
+    clearAssetSelection,
+    selectionAnchorRef,
+    handleCardClick,
+    cardMouseDownRef,
+    marqueeBox,
+    selectedIdSet,
+  } = useAssetSelection({
+    assets: visibleAssets,
+    selectedAssetIds,
+    setSelectedAssetIds,
+    setSelectedAssetId,
+    previewAsset,
+    draggedMemberId,
+    draggedCollectionId,
+    workspaceCanvasRef,
+  });
+
   const previewIndex = previewAsset
     ? visibleAssets.findIndex((asset) => asset.assetId === previewAsset.assetId)
     : -1;
-  const selectedIdSet = useMemo(
-    () => new Set(selectedAssetIds),
-    [selectedAssetIds],
-  );
   const selectedAssets = useMemo(
     () => visibleAssets.filter((asset) => selectedIdSet.has(asset.assetId)),
     [selectedIdSet, visibleAssets],
@@ -861,295 +670,6 @@ function AppInner() {
     return () => canvas.removeEventListener("wheel", handleWheel);
   }, [assetCardSize, previewAsset, resizeAssetCards]);
 
-  function clearAssetSelection() {
-    setSelectedAssetId(undefined);
-    setSelectedAssetIds([]);
-    selectionAnchorRef.current = null;
-  }
-
-  function selectAsset(event: React.MouseEvent, assetId: string) {
-    // Suppress clicks triggered by non-left-button interactions (e.g., the
-    // synthetic click dispatched during a right-click in Playwright tests).
-    if (lastMousedownButtonRef.current !== 0) {
-      lastMousedownButtonRef.current = 0;
-      return;
-    }
-    const visibleIds = visibleAssets.map((asset) => asset.assetId);
-    if (event.shiftKey && selectionAnchorRef.current) {
-      const anchorIndex = visibleIds.indexOf(selectionAnchorRef.current);
-      const targetIndex = visibleIds.indexOf(assetId);
-      if (anchorIndex >= 0 && targetIndex >= 0) {
-        const range = visibleIds.slice(
-          Math.min(anchorIndex, targetIndex),
-          Math.max(anchorIndex, targetIndex) + 1,
-        );
-        setSelectedAssetIds(
-          event.metaKey || event.ctrlKey
-            ? (current) => [...new Set([...current, ...range])]
-            : range,
-        );
-        setSelectedAssetId(assetId);
-        return;
-      }
-    }
-    if (event.metaKey || event.ctrlKey) {
-      setSelectedAssetIds((current) => {
-        if (current.includes(assetId)) {
-          const next = current.filter((id) => id !== assetId);
-          setSelectedAssetId(next.at(-1));
-          if (next.length === 0) selectionAnchorRef.current = null;
-          return next;
-        }
-        setSelectedAssetId(assetId);
-        return [...current, assetId];
-      });
-      selectionAnchorRef.current = assetId;
-      return;
-    }
-    setSelectedAssetIds([assetId]);
-    setSelectedAssetId(assetId);
-    selectionAnchorRef.current = assetId;
-  }
-
-  // Marquee drag-select helpers
-  const marqueeActiveRef = useRef(false);
-  const autoScrollRef = useRef<{ direction: number; speed: number }>({ direction: 0, speed: 0 });
-  const autoScrollRafRef = useRef<number | null>(null);
-  const marqueeBoxRef = useRef<{ left: number; top: number; right: number; bottom: number } | null>(null);
-  const marqueeModifiersRef = useRef<{ metaKey: boolean; ctrlKey: boolean; shiftKey: boolean }>({ metaKey: false, ctrlKey: false, shiftKey: false });
-
-  const handleCanvasMouseDown = useCallback(
-    (e: React.MouseEvent<HTMLDivElement>) => {
-      const target = e.target as HTMLElement;
-      if (target.closest(".asset-card, .external-drop-overlay, .asset-loading-more"))
-        return;
-      if (previewAsset) return;
-      if (draggedMemberId || draggedCollectionId) return;
-      // Only left-button drags start a marquee
-      if (e.button !== 0) return;
-
-      e.preventDefault();
-
-      marqueeStartRef.current = { x: e.clientX, y: e.clientY };
-      setMarqueeBox({
-        left: e.clientX,
-        top: e.clientY,
-        width: 0,
-        height: 0,
-      });
-      marqueeActiveRef.current = true;
-    },
-    [previewAsset, draggedMemberId, draggedCollectionId],
-  );
-
-  // Marquee document-level mousemove + mouseup when active
-  useEffect(() => {
-    const canvas = workspaceCanvasRef.current;
-    if (!canvas) return;
-
-    const AUTO_SCROLL_ZONE = 40; // px from top/bottom edge
-    const MAX_SCROLL_SPEED = 8; // px per frame at edge
-
-    const handleMouseMove = (e: MouseEvent) => {
-      if (!marqueeActiveRef.current) return;
-
-      const start = marqueeStartRef.current;
-      const canvasRect = canvas.getBoundingClientRect();
-
-      // Compute raw marquee rect from pointer movement
-      let left = Math.min(start.x, e.clientX);
-      let top = Math.min(start.y, e.clientY);
-      let width = Math.abs(e.clientX - start.x);
-      let height = Math.abs(e.clientY - start.y);
-
-      // Clip to canvas visible bounds so the box never extends over nav/inspector
-      const boxRight = left + width;
-      const boxBottom = top + height;
-      const clippedLeft = Math.max(left, canvasRect.left);
-      const clippedTop = Math.max(top, canvasRect.top);
-      const clippedRight = Math.min(boxRight, canvasRect.right);
-      const clippedBottom = Math.min(boxBottom, canvasRect.bottom);
-
-      if (clippedRight > clippedLeft && clippedBottom > clippedTop) {
-        left = clippedLeft;
-        top = clippedTop;
-        width = clippedRight - clippedLeft;
-        height = clippedBottom - clippedTop;
-      } else {
-        // Pointer is entirely outside the canvas — hide the box
-        width = 0;
-        height = 0;
-      }
-
-      setMarqueeBox({ left, top, width, height });
-
-      // Store for RAF-driven auto-scroll hit detection
-      const currentMarqueeRect = {
-        left,
-        top,
-        right: left + width,
-        bottom: top + height,
-      };
-      marqueeBoxRef.current = currentMarqueeRect;
-      marqueeModifiersRef.current = { metaKey: e.metaKey, ctrlKey: e.ctrlKey, shiftKey: e.shiftKey };
-
-      // Intersect marquee box with visible asset cards
-      const cards =
-        canvas.querySelectorAll<HTMLElement>("[data-asset-id]");
-      const marqueeRect = {
-        left,
-        top,
-        right: left + width,
-        bottom: top + height,
-      };
-      const hitIds: string[] = [];
-      for (const card of cards) {
-        const rect = card.getBoundingClientRect();
-        // Box-overlap intersection (works for both grid and masonry)
-        if (
-          rect.left < marqueeRect.right &&
-          rect.right > marqueeRect.left &&
-          rect.top < marqueeRect.bottom &&
-          rect.bottom > marqueeRect.top
-        ) {
-          const id = card.dataset.assetId;
-          if (id) hitIds.push(id);
-        }
-      }
-      marqueeHitIdsRef.current = hitIds;
-
-      if (e.metaKey || e.ctrlKey || e.shiftKey) {
-        setSelectedAssetIds((current) => [
-          ...new Set([...current, ...hitIds]),
-        ]);
-      } else {
-        setSelectedAssetIds(hitIds);
-      }
-      if (hitIds.length > 0) {
-        setSelectedAssetId(hitIds[0]!);
-      }
-
-      // Auto-scroll when pointer is near canvas top/bottom edges
-      let scrollDirection = 0;
-      let scrollSpeed = 0;
-      if (
-        e.clientY >= canvasRect.top &&
-        e.clientY <= canvasRect.bottom
-      ) {
-        if (e.clientY < canvasRect.top + AUTO_SCROLL_ZONE) {
-          const dist = canvasRect.top + AUTO_SCROLL_ZONE - e.clientY;
-          scrollSpeed = Math.round(
-            (dist / AUTO_SCROLL_ZONE) * MAX_SCROLL_SPEED,
-          );
-          scrollDirection = -1;
-        } else if (
-          e.clientY > canvasRect.bottom - AUTO_SCROLL_ZONE
-        ) {
-          const dist =
-            e.clientY - (canvasRect.bottom - AUTO_SCROLL_ZONE);
-          scrollSpeed = Math.round(
-            (dist / AUTO_SCROLL_ZONE) * MAX_SCROLL_SPEED,
-          );
-          scrollDirection = 1;
-        }
-      }
-      autoScrollRef.current = { direction: scrollDirection, speed: scrollSpeed };
-
-      if (scrollDirection !== 0 && autoScrollRafRef.current === null) {
-        // RAF-driven continuous auto-scroll
-        const autoScrollLoop = () => {
-          const { direction, speed } = autoScrollRef.current;
-          if (direction === 0 || speed === 0) {
-            autoScrollRafRef.current = null;
-            return;
-          }
-          canvas.scrollTop += direction * speed;
-
-          // Re-run hit detection with current marquee box position
-          const currentBox = marqueeBoxRef.current;
-          if (currentBox) {
-            const cards =
-              canvas.querySelectorAll<HTMLElement>("[data-asset-id]");
-            const hitIds: string[] = [];
-            for (const card of cards) {
-              const rect = card.getBoundingClientRect();
-              if (
-                rect.left < currentBox.right &&
-                rect.right > currentBox.left &&
-                rect.top < currentBox.bottom &&
-                rect.bottom > currentBox.top
-              ) {
-                const id = card.dataset.assetId;
-                if (id) hitIds.push(id);
-              }
-            }
-            marqueeHitIdsRef.current = hitIds;
-
-            if (marqueeModifiersRef.current.metaKey || marqueeModifiersRef.current.ctrlKey || marqueeModifiersRef.current.shiftKey) {
-              setSelectedAssetIds((current) => [
-                ...new Set([...current, ...hitIds]),
-              ]);
-            } else {
-              setSelectedAssetIds(hitIds);
-            }
-            if (hitIds.length > 0) {
-              setSelectedAssetId(hitIds[0]!);
-            }
-          }
-          autoScrollRafRef.current = requestAnimationFrame(autoScrollLoop);
-        };
-        autoScrollRafRef.current = requestAnimationFrame(autoScrollLoop);
-      }
-    };
-
-    const handleMouseUp = (e: MouseEvent) => {
-      if (!marqueeActiveRef.current) return;
-      marqueeActiveRef.current = false;
-      autoScrollRef.current = { direction: 0, speed: 0 };
-      if (autoScrollRafRef.current !== null) {
-        cancelAnimationFrame(autoScrollRafRef.current);
-        autoScrollRafRef.current = null;
-      }
-
-      const start = marqueeStartRef.current;
-      const dx = Math.abs(e.clientX - start.x);
-      const dy = Math.abs(e.clientY - start.y);
-
-      // Tiny drag (< 5px) is a click on empty canvas, clear selection
-      if (dx < 5 && dy < 5) {
-        clearAssetSelection();
-        setMarqueeBox(null);
-        return;
-      }
-
-      // Finalize selection — already set during mousemove;
-      // on a no-modifier marquee that hit nothing, clear too
-      if (!(e.metaKey || e.ctrlKey || e.shiftKey)) {
-        if (marqueeHitIdsRef.current.length === 0) clearAssetSelection();
-      }
-
-      // Set anchor for subsequent Shift+click range-extension
-      if (marqueeHitIdsRef.current.length > 0) {
-        selectionAnchorRef.current = marqueeHitIdsRef.current[0]!;
-      }
-
-      setMarqueeBox(null);
-    };
-
-    document.addEventListener("mousemove", handleMouseMove);
-    document.addEventListener("mouseup", handleMouseUp);
-    return () => {
-      document.removeEventListener("mousemove", handleMouseMove);
-      document.removeEventListener("mouseup", handleMouseUp);
-      marqueeActiveRef.current = false;
-      autoScrollRef.current = { direction: 0, speed: 0 };
-      if (autoScrollRafRef.current !== null) {
-        cancelAnimationFrame(autoScrollRafRef.current);
-        autoScrollRafRef.current = null;
-      }
-    };
-  }, []);
-
   function openAssetPreview(asset: AssetSummary) {
     if (asset.availability !== "available" || asset.deletedAt) return;
     previewFocusReturnRef.current = asset.assetId;
@@ -1218,65 +738,6 @@ function AppInner() {
       children.sort((a, b) => a.position - b.position);
     return byParent;
   }, [collections]);
-
-  function renderCollectionNodes(
-    parentId: string | null,
-    depth: number,
-  ): ReactNode {
-    const children = collectionTree.get(parentId) ?? [];
-    return children.map((c) => (
-      <div
-        className="collection-drop-target"
-        draggable
-        key={c.collectionId}
-        onDragEnd={() => setDraggedCollectionId(null)}
-        onDragOver={(event) => {
-          if (
-            draggedCollectionId ||
-            supportsExternalImportTransfer(event.dataTransfer)
-          )
-            event.preventDefault();
-        }}
-        onDragStart={(event) => {
-          event.stopPropagation();
-          setDraggedCollectionId(c.collectionId);
-          event.dataTransfer.effectAllowed = "move";
-        }}
-        onDrop={(event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          if (draggedCollectionId) {
-            void reorderCollectionSibling(draggedCollectionId, c.collectionId);
-          } else if (supportsExternalImportTransfer(event.dataTransfer)) {
-            const payload = externalImportPayload(event.dataTransfer);
-            void importDroppedFiles(
-              payload.files,
-              undefined,
-              c.collectionId,
-              payload,
-            );
-          }
-        }}
-      >
-        <NavRow
-          icon="collection"
-          label={c.name}
-          count={c.assetCount}
-          active={activeCollectionId === c.collectionId && !activeTagId}
-          depth={depth}
-          onContextMenu={(e) => {
-            e.preventDefault();
-            openContextMenu(
-              { type: "organization", orgKind: "collection", id: c.collectionId, name: c.name },
-              { x: e.clientX, y: e.clientY },
-            );
-          }}
-          onClick={() => void chooseCollection(c.collectionId)}
-        />
-        {renderCollectionNodes(c.collectionId, depth + 1)}
-      </div>
-    ));
-  }
 
   const loadContent = useCallback(
     async (
@@ -2271,122 +1732,6 @@ function AppInner() {
     }
   }
 
-  async function batchAssignTagToSelection(tagId: string) {
-    if (!api || !library || selectedAssetIds.length === 0) return;
-    setUiState("loading");
-    try {
-      const result = await api.assignTags({
-        libraryId: library.libraryId,
-        assetIds: selectedAssetIds,
-        tagIds: [tagId],
-      });
-      if (!result.ok) throw new LibraryOperationError(result.error);
-      const tagResult = await api.listTags({ libraryId: library.libraryId });
-      if (tagResult.ok) setTags(tagResult.value);
-      setNotice(`已为 ${selectedAssetIds.length} 项资产添加标签。`);
-    } catch (caught) {
-      setError(toMessage(caught, "批量添加标签失败。"));
-    } finally {
-      setUiState("ready");
-    }
-  }
-
-  async function batchRemoveTagFromSelection(tagId: string) {
-    if (!api || !library || selectedAssetIds.length === 0) return;
-    setUiState("loading");
-    try {
-      const result = await api.removeTags({
-        libraryId: library.libraryId,
-        assetIds: selectedAssetIds,
-        tagIds: [tagId],
-      });
-      if (!result.ok) throw new LibraryOperationError(result.error);
-      const tagResult = await api.listTags({ libraryId: library.libraryId });
-      if (tagResult.ok) setTags(tagResult.value);
-      if (activeTagId === tagId) {
-        await chooseTag(tagId);
-      }
-      setNotice(`已为 ${selectedAssetIds.length} 项资产移除标签。`);
-    } catch (caught) {
-      setError(toMessage(caught, "批量移除标签失败。"));
-    } finally {
-      setUiState("ready");
-    }
-  }
-
-  async function batchAddSelectionToCollection(collectionId: string) {
-    if (!api || !library || selectedAssetIds.length === 0) return;
-    setUiState("loading");
-    try {
-      const result = await api.addCollectionAssets({
-        libraryId: library.libraryId,
-        collectionId,
-        assetIds: selectedAssetIds,
-      });
-      if (!result.ok) throw new LibraryOperationError(result.error);
-      const collectionResult = await api.listCollections({
-        libraryId: library.libraryId,
-      });
-      if (collectionResult.ok) setCollections(collectionResult.value);
-      setNotice(`已将 ${selectedAssetIds.length} 项资产加入合集。`);
-    } catch (caught) {
-      setError(toMessage(caught, "批量加入合集失败。"));
-    } finally {
-      setUiState("ready");
-    }
-  }
-
-  async function batchRemoveSelectionFromCollection(collectionId: string) {
-    if (!api || !library || selectedAssetIds.length === 0) return;
-    setUiState("loading");
-    try {
-      const directMembers = await api.listCollectionAssets({
-        libraryId: library.libraryId,
-        collectionId,
-        recursive: false,
-      });
-      if (!directMembers.ok)
-        throw new LibraryOperationError(directMembers.error);
-      const directMemberIds = new Set(
-        directMembers.value.map((asset) => asset.assetId),
-      );
-      const affectedAssetIds = selectedAssetIds.filter((assetId) =>
-        directMemberIds.has(assetId),
-      );
-      if (affectedAssetIds.length === 0) {
-        setError(
-          "无需从目标合集移除：所选资产都不是该合集的直接成员。",
-        );
-        return;
-      }
-      const result = await api.removeCollectionAssets({
-        libraryId: library.libraryId,
-        collectionId,
-        assetIds: affectedAssetIds,
-      });
-      if (!result.ok) throw new LibraryOperationError(result.error);
-      const collectionResult = await api.listCollections({
-        libraryId: library.libraryId,
-      });
-      if (collectionResult.ok) setCollections(collectionResult.value);
-      if (activeCollectionId === collectionId)
-        await chooseCollection(
-          collectionId,
-          collectionRecursiveRef.current,
-        );
-      const skippedCount = selectedAssetIds.length - affectedAssetIds.length;
-      setNotice(
-        skippedCount > 0
-          ? `已将 ${affectedAssetIds.length} 项直接成员移出合集；${skippedCount} 项不是该合集的直接成员，未改动。`
-          : `已将 ${affectedAssetIds.length} 项资产移出合集。`,
-      );
-    } catch (caught) {
-      setError(toMessage(caught, "批量移出合集失败。"));
-    } finally {
-      setUiState("ready");
-    }
-  }
-
   function currentQueryDefinition(
     overrides: { tagFilter?: string; includeTextSearch?: boolean } = {},
   ): SearchDefinition {
@@ -2541,6 +1886,34 @@ function AppInner() {
   }
   useEffect(() => {
     reloadCurrentContentRef.current = reloadCurrentContent;
+  });
+
+  const {
+    batchAssignTagToSelection,
+    batchRemoveTagFromSelection,
+    batchAddSelectionToCollection,
+    batchRemoveSelectionFromCollection,
+    trashManagedAssets,
+    copyManagedSelectionToLinked,
+  } = useBatchActions({
+    api: api ?? null,
+    library,
+    selectedAssetIds,
+    selectedAssets,
+    selectedAvailableManaged,
+    setUiState: setUiState as (state: string) => void,
+    setTags,
+    setCollections,
+    setNotice,
+    setError,
+    reloadCurrentContent,
+    chooseTag,
+    chooseCollection,
+    clearAssetSelection,
+    activeTagId,
+    activeCollectionId,
+    setSelectedAssetId,
+    setLastTrashResult: (() => {}) as React.Dispatch<unknown>,
   });
 
   async function executeSearchDefinition(
@@ -3383,37 +2756,6 @@ function AppInner() {
     }
   }
 
-  async function copyManagedSelectionToLinked(
-    folder: LinkedFolderSummary,
-    assetIds: string[],
-  ) {
-    if (!api || !library || assetIds.length === 0) return;
-    if (
-      !confirm(
-        `将 ${assetIds.length} 项托管资产复制到外部目录"${folder.displayName}"？源托管文件不会移动。`,
-      )
-    )
-      return;
-    setUiState("importing");
-    try {
-      const result = await api.copyAssetsToLinkedFolder({
-        libraryId: library.libraryId,
-        folderId: folder.folderId,
-        assetIds,
-        conflictStrategy: "keep-both",
-      });
-      if (!result.ok) throw new LibraryOperationError(result.error);
-      setNotice(
-        `已复制 ${result.value.copiedCount} 项到链接文件夹，跳过 ${result.value.skippedCount} 项。`,
-      );
-      await reloadCurrentContent();
-    } catch (caught) {
-      setError(toMessage(caught, "复制到链接文件夹失败。"));
-    } finally {
-      setUiState("ready");
-    }
-  }
-
   async function convertLinkedToManaged() {
     if (!api || !library || !convertLinkedDialog.folderId) return;
     const dialogState = convertLinkedDialog;
@@ -3480,25 +2822,6 @@ function AppInner() {
   }
 
   // --- Trash operations ---
-
-  async function trashManagedAssets(assetIds: string[]) {
-    if (!api || !library) return;
-    setUiState("loading");
-    try {
-      const result = await api.trashAssets({
-        libraryId: library.libraryId,
-        assetIds,
-      });
-      if (!result.ok) throw new LibraryOperationError(result.error);
-      setNotice(`${result.value.trashedCount} 项资产已移入回收站。`);
-      clearAssetSelection();
-      await reloadCurrentContent();
-    } catch (caught) {
-      setError(toMessage(caught, "删除失败。"));
-    } finally {
-      setUiState("ready");
-    }
-  }
 
   async function restoreTrashedAssets() {
     if (!api || !library || !restoreDialog) return;
@@ -4128,6 +3451,19 @@ function AppInner() {
         setSelectedAssetId(ids.at(-1));
         selectionAnchorRef.current = ids[0] ?? null;
       } else if (
+        (event.key === "Delete" || event.key === "Backspace") &&
+        !showTrash &&
+        library &&
+        selectedManagedCount > 0 &&
+        !previewAsset &&
+        !document.querySelector('[role="dialog"][aria-modal="true"]')
+      ) {
+        event.preventDefault();
+        const managedIds = selectedAssets
+          .filter((a) => a.locationKind === "managed")
+          .map((a) => a.assetId);
+        void trashManagedAssets(managedIds);
+      } else if (
         event.key === "Escape" &&
         selectedAssetIds.length > 0 &&
         !previewAsset &&
@@ -4139,7 +3475,17 @@ function AppInner() {
     };
     document.addEventListener("keydown", onSelectionKeyDown);
     return () => document.removeEventListener("keydown", onSelectionKeyDown);
-  }, [library, previewAsset, selectedAssetIds.length, visibleAssets]);
+  }, [
+    library,
+    previewAsset,
+    selectedAssetIds.length,
+    showTrash,
+    selectedManagedCount,
+    selectedAssets,
+    trashManagedAssets,
+    visibleAssets,
+    clearAssetSelection,
+  ]);
 
   // Capture-phase Escape guard: when context menu is open, stop
   // propagation so the non-capture handler (which clears selection)
@@ -4972,330 +4318,81 @@ function AppInner() {
           />
         </form>
       </header>
-      <aside className="navigation-pane">
-        <div className="pane-header">
-          <span>资源导航</span>
-          <span className="status-dot" data-active={Boolean(library)} />
-        </div>
-        <nav className="navigation-scroll">
-          <NavRow
-            active={
-              library
-                ? assetScope === "all" &&
-                  !activeTagId &&
-                  !activeCollectionId &&
-                  !showTrash
-                : true
-            }
-            count={library ? allAssetCount : undefined}
-            icon="grid"
-            label="所有资产"
-            onClick={() => void chooseFolder("all")}
-            disabled={!library}
-            onDragOver={handleTargetExternalDragOver}
-            onDrop={(event) => handleTargetExternalDrop(event, null, undefined)}
-          />
-          <NavRow
-            active={Boolean(
-              library && showTrash && !activeTagId && !activeCollectionId,
-            )}
-            count={trashedAssets.length || undefined}
-            disabled={!library}
-            icon="trash"
-            label="回收站"
-            onClick={() => void enterTrash()}
-          />
-          <NavRow icon="archive" label="最近使用" disabled />
-          <Section
-            title="文件夹"
-            action={
-              library
-                ? () => {
-                    setDialogValue("新建文件夹");
-                    setDialog("folder");
-                  }
-                : undefined
-            }
-          >
-            {library ? (
-              <>
-                <NavRow
-                  active={
-                    assetScope === "root" && !activeTagId && !activeCollectionId
-                  }
-                  icon="folder"
-                  label="资源库根目录"
-                  onClick={() => void chooseFolder("root")}
-                  onDragOver={handleTargetExternalDragOver}
-                  onDrop={(event) =>
-                    handleTargetExternalDrop(event, null, undefined)
-                  }
-                />
-                {folders.map((folder) => (
-                  <NavRow
-                    active={
-                      assetScope === folder.folderId &&
-                      !activeTagId &&
-                      !activeCollectionId
-                    }
-                    depth={folder.relativePath.split("/").length}
-                    icon="folder"
-                    key={folder.folderId}
-                    label={folder.name}
-                    onClick={() => void chooseFolder(folder.folderId)}
-                    onDragOver={handleTargetExternalDragOver}
-                    onDrop={(event) =>
-                      handleTargetExternalDrop(
-                        event,
-                        folder.folderId,
-                        undefined,
-                      )
-                    }
-                  />
-                ))}
-              </>
-            ) : (
-              <p className="nav-empty">打开资源库后显示目录</p>
-            )}
-          </Section>
-          <Section
-            title="标签"
-            action={
-              library
-                ? () => {
-                    setShowTagInput(true);
-                    setTagInputValue("");
-                  }
-                : undefined
-            }
-          >
-            {library ? (
-              <>
-                {showTagInput && (
-                  <div className="nav-section">
-                    <input
-                      autoFocus
-                      className="text-field"
-                      maxLength={255}
-                      onBlur={() => {
-                        setShowTagInput(false);
-                        setTagInputValue("");
-                      }}
-                      onChange={(e) => setTagInputValue(e.target.value)}
-                      onKeyDown={handleTagInputKeyDown}
-                      placeholder="输入标签名称，回车创建"
-                      style={{
-                        height: 27,
-                        margin: "2px 0 4px 0",
-                        fontSize: 11,
-                      }}
-                      value={tagInputValue}
-                    />
-                  </div>
-                )}
-                {tags.length ? (
-                  tags.map((tag) => (
-                    <NavRow
-                      active={activeTagId === tag.tagId}
-                      icon="tag"
-                      key={tag.tagId}
-                      label={tag.name}
-                      count={tag.assetCount}
-                      onContextMenu={(e) => {
-                        e.preventDefault();
-                        openContextMenu(
-                          { type: "organization", orgKind: "tag", id: tag.tagId, name: tag.name },
-                          { x: e.clientX, y: e.clientY },
-                        );
-                      }}
-                      onClick={() => void chooseTag(tag.tagId)}
-                    />
-                  ))
-                ) : (
-                  <p className="nav-empty">尚无标签</p>
-                )}
-              </>
-            ) : (
-              <p className="nav-empty">打开资源库后显示标签</p>
-            )}
-          </Section>
-          <Section
-            title="合集"
-            action={
-              library
-                ? () => {
-                    setShowCollectionInput(true);
-                    setCollectionInputValue("");
-                    setNewCollectionParentId(activeCollectionId);
-                  }
-                : undefined
-            }
-          >
-            {library ? (
-              <>
-                {showCollectionInput && (
-                  <div className="nav-section">
-                    <input
-                      autoFocus
-                      className="text-field"
-                      maxLength={255}
-                      onBlur={() => {
-                        setShowCollectionInput(false);
-                        setCollectionInputValue("");
-                        setNewCollectionParentId(null);
-                      }}
-                      onChange={(e) => setCollectionInputValue(e.target.value)}
-                      onKeyDown={handleCollectionInputKeyDown}
-                      placeholder={
-                        newCollectionParentId
-                          ? "输入子合集名称，回车创建"
-                          : "输入合集名称，回车创建"
-                      }
-                      style={{
-                        height: 27,
-                        margin: "2px 0 4px 0",
-                        fontSize: 11,
-                      }}
-                      value={collectionInputValue}
-                    />
-                  </div>
-                )}
-                {activeCollectionId && (
-                  <div style={{ padding: "0 5px 2px" }}>
-                    <label
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 5,
-                        fontSize: 10,
-                        color: "var(--tertiary)",
-                        cursor: "pointer",
-                      }}
-                    >
-                      <input
-                        checked={collectionRecursive}
-                        onChange={(e) => {
-                          const recursive = e.target.checked;
-                          collectionRecursiveRef.current = recursive;
-                          setCollectionRecursive(recursive);
-                          if (activeCollectionId)
-                            void chooseCollection(activeCollectionId, recursive);
-                        }}
-                        type="checkbox"
-                      />
-                      包含子合集
-                    </label>
-                  </div>
-                )}
-                {collections.length ? (
-                  renderCollectionNodes(null, 0)
-                ) : (
-                  <p className="nav-empty">尚无合集</p>
-                )}
-              </>
-            ) : (
-              <p className="nav-empty">打开资源库后显示合集</p>
-            )}
-          </Section>
-          <Section title="智能合集">
-            {library ? (
-              smartCollections.length ? (
-                smartCollections.map((sc) => (
-                  <NavRow
-                    active={activeSmartCollectionId === sc.collectionId}
-                    icon="smart"
-                    key={sc.collectionId}
-                    label={sc.name}
-                    onClick={() => void chooseSmartCollection(sc.collectionId)}
-                    onContextMenu={(event) => {
-                      event.preventDefault();
-                      openContextMenu(
-                        { type: "smart-collection", id: sc.collectionId, name: sc.name },
-                        { x: event.clientX, y: event.clientY },
-                      );
-                    }}
-                  />
-                ))
-              ) : (
-                <p className="nav-empty">尚无智能合集</p>
-              )
-            ) : (
-              <p className="nav-empty">打开资源库后显示智能合集</p>
-            )}
-          </Section>
-          <Section
-            title="链接文件夹"
-            action={library ? () => void importFolderAsLinked() : undefined}
-          >
-            {library ? (
-              linkedFolders.length ? (
-                linkedFolders.map((lf) => (
-                  <NavRow
-                    active={
-                      assetScope === lf.folderId &&
-                      !activeTagId &&
-                      !activeCollectionId
-                    }
-                    icon={lf.status === "offline" ? "warning" : "link"}
-                    key={lf.folderId}
-                    label={lf.displayName}
-                    count={lf.assetCount}
-                    onClick={
-                      lf.status === "offline"
-                        ? () => void relinkFolder(lf.folderId)
-                        : () => void chooseFolder(lf.folderId)
-                    }
-                    onContextMenu={(event) => {
-                      event.preventDefault();
-                      if (event.shiftKey)
-                        setConvertLinkedDialog({
-                          folderId: lf.folderId,
-                          name: lf.displayName,
-                          targetFolderId: "",
-                        });
-                      else void openLinkedRules(lf);
-                    }}
-                    onDragOver={(event) => {
-                      if (
-                        event.dataTransfer.types.includes(
-                          "application/x-serpent-managed-assets",
-                        )
-                      )
-                        event.preventDefault();
-                    }}
-                    onDrop={(event) => {
-                      const serialized = event.dataTransfer.getData(
-                        "application/x-serpent-managed-assets",
-                      );
-                      if (!serialized) return;
-                      event.preventDefault();
-                      try {
-                        const ids = JSON.parse(serialized) as string[];
-                        void copyManagedSelectionToLinked(lf, ids);
-                      } catch {
-                        setError("拖放资产数据无效，未写入外部目录。");
-                      }
-                    }}
-                  />
-                ))
-              ) : (
-                <p className="nav-empty">链接外部文件夹作为资产来源</p>
-              )
-            ) : (
-              <p className="nav-empty">打开资源库后显示链接文件夹</p>
-            )}
-            {library && linkedFolders.length > 0 && (
-              <p className="nav-empty">
-                右键编辑规则；Shift+右键转换为托管。可拖入所选托管资产。
-              </p>
-            )}
-          </Section>
-        </nav>
-        <div className="pane-footer">
-          <span className="storage-pulse" />
-          <span>{library ? "本地资源库 · 已连接" : "本地优先 · 未连接"}</span>
-        </div>
-      </aside>
+      <NavigationSidebar
+        library={library}
+        assetScope={assetScope}
+        showTrash={showTrash}
+        activeTagId={activeTagId}
+        activeCollectionId={activeCollectionId}
+        activeSmartCollectionId={activeSmartCollectionId}
+        allAssetCount={allAssetCount}
+        trashedAssetCount={trashedAssets.length}
+        folders={folders}
+        tags={tags}
+        collections={collections}
+        collectionTree={collectionTree}
+        smartCollections={smartCollections}
+        linkedFolders={linkedFolders}
+        showTagInput={showTagInput}
+        tagInputValue={tagInputValue}
+        showCollectionInput={showCollectionInput}
+        collectionInputValue={collectionInputValue}
+        newCollectionParentId={newCollectionParentId}
+        collectionRecursive={collectionRecursive}
+        collectionRecursiveRef={collectionRecursiveRef}
+        draggedCollectionId={draggedCollectionId}
+        onSetDraggedCollectionId={setDraggedCollectionId}
+        onChooseAllAssets={() => void chooseFolder("all")}
+        onEnterTrash={() => void enterTrash()}
+        onChooseRootFolder={() => void chooseFolder("root")}
+        onChooseFolder={(folderId) => void chooseFolder(folderId)}
+        onChooseTag={(tagId) => void chooseTag(tagId)}
+        onChooseCollection={(collectionId, recursive) =>
+          void chooseCollection(collectionId, recursive)
+        }
+        onChooseSmartCollection={(collectionId) =>
+          void chooseSmartCollection(collectionId)
+        }
+        onExternalDragOver={handleTargetExternalDragOver}
+        onExternalDrop={(event, targetFolderId, targetCollectionId) =>
+          handleTargetExternalDrop(event, targetFolderId, targetCollectionId)
+        }
+        onImportFolderAsLinked={() => void importFolderAsLinked()}
+        onRelinkFolder={(folderId) => void relinkFolder(folderId)}
+        onOpenLinkedRules={(folder) => void openLinkedRules(folder)}
+        onConvertLinkedDialog={setConvertLinkedDialog}
+        onAddTag={() => {
+          setShowTagInput(true);
+          setTagInputValue("");
+        }}
+        onSetShowTagInput={setShowTagInput}
+        onSetTagInputValue={setTagInputValue}
+        onTagInputKeyDown={handleTagInputKeyDown}
+        onAddCollection={(parentId) => {
+          setShowCollectionInput(true);
+          setCollectionInputValue("");
+          setNewCollectionParentId(parentId);
+        }}
+        onSetShowCollectionInput={setShowCollectionInput}
+        onSetCollectionInputValue={setCollectionInputValue}
+        onSetNewCollectionParentId={setNewCollectionParentId}
+        onCollectionInputKeyDown={handleCollectionInputKeyDown}
+        onSetCollectionRecursive={setCollectionRecursive}
+        onAddFolder={() => {
+          setDialogValue("新建文件夹");
+          setDialog("folder");
+        }}
+        onOpenContextMenu={openContextMenu}
+        onReorderCollection={(sourceId, targetId) =>
+          void reorderCollectionSibling(sourceId, targetId)
+        }
+        onImportDroppedFiles={(files, targetFolderId, targetCollectionId, webPayload) =>
+          void importDroppedFiles(files, targetFolderId, targetCollectionId, webPayload)
+        }
+        onCopyManagedToLinked={(folder, assetIds) =>
+          void copyManagedSelectionToLinked(folder, assetIds)
+        }
+      />
       <section className="workspace">
         <div
           className={`workspace-bar${previewAsset ? " is-viewing" : ""}`}
@@ -5773,9 +4870,9 @@ function AppInner() {
                       )}
                       key={asset.assetId}
                       onMouseDown={(e) => {
-                        lastMousedownButtonRef.current = e.button;
+                        cardMouseDownRef.current = e.button;
                       }}
-                      onClick={(event) => selectAsset(event, asset.assetId)}
+                      onClick={(event) => handleCardClick(asset.assetId, event)}
                       onDoubleClick={() => {
                         openAssetPreview(asset);
                       }}
@@ -6062,437 +5159,36 @@ function AppInner() {
           />
         )}
       </section>
-      <aside className="inspector-pane">
-        <div className="pane-header">
-          <span>检查器</span>
-          <ToolButton icon="info" label="检查器信息" />
-        </div>
-        {selectedAsset ? (
-          <div className="inspector-content">
-            <div className="selected-file-hero">
-              <Icon name="file" size={36} />
-              <span>{extension(selectedAsset.displayName)}</span>
-            </div>
-            <div className="inspector-identity">
-              <div>
-                <span className="micro-label">当前选择</span>
-                <strong>{selectedAsset.displayName}</strong>
-              </div>
-            </div>
-            <dl className="metadata-list">
-              <div>
-                <dt>状态</dt>
-                <dd>
-                  {selectedAsset.deletedAt
-                    ? `回收站（${selectedAsset.remainingDays ?? "?"}天后自动清理）`
-                    : selectedAsset.availability === "available"
-                      ? "可用"
-                      : "文件丢失"}
-                </dd>
-              </div>
-              <div>
-                <dt>大小</dt>
-                <dd className="mono">{formatBytes(selectedAsset.byteSize)}</dd>
-              </div>
-              {selectedAsset.width !== null &&
-                selectedAsset.height !== null && (
-                  <div>
-                    <dt>分辨率</dt>
-                    <dd className="mono">
-                      {selectedAsset.width} × {selectedAsset.height}
-                    </dd>
-                  </div>
-                )}
-              {selectedAsset.durationMs !== null && (
-                <div>
-                  <dt>时长</dt>
-                  <dd className="mono">
-                    {formatDuration(selectedAsset.durationMs)}
-                  </dd>
-                </div>
-              )}
-              <div>
-                <dt>修改</dt>
-                <dd>{formatDate(selectedAsset.modifiedAt)}</dd>
-              </div>
-              {selectedAsset.deletedAt && (
-                <div>
-                  <dt>删除时间</dt>
-                  <dd>{formatDate(selectedAsset.deletedAt)}</dd>
-                </div>
-              )}
-              {selectedAsset.trashedFromPath && (
-                <div>
-                  <dt>原始位置</dt>
-                  <dd className="mono" style={{ fontSize: 9 }}>
-                    {selectedAsset.trashedFromPath}
-                  </dd>
-                </div>
-              )}
-            </dl>
-            {/* --- Asset metadata editor --- */}
-            <section className="inspector-section">
-              <h2>元数据</h2>
-              {metadataLoading ? (
-                <span className="micro-label">加载中…</span>
-              ) : assetMetadata ? (
-                <>
-                  {versionConflict && (
-                    <div className="inline-error">
-                      <Icon name="warning" size={14} />
-                      <div>
-                        <strong>版本冲突</strong>
-                        <p>元数据已被其他操作修改。请刷新以获取最新版本。</p>
-                        <button
-                          onClick={() => void loadMetadata()}
-                          type="button"
-                        >
-                          刷新元数据
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                  <div className="editor-field">
-                    <label className="micro-label" htmlFor="meta-label">
-                      标签 (Label)
-                    </label>
-                    <input
-                      className="text-field"
-                      id="meta-label"
-                      maxLength={255}
-                      onBlur={handleMetadataLabelSave}
-                      onChange={handleMetadataLabelInput}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") handleMetadataLabelSave();
-                      }}
-                      style={{ height: 28, fontSize: 11 }}
-                      value={editLabel}
-                    />
-                  </div>
-                  <div className="editor-field" style={{ marginTop: 10 }}>
-                    <label className="micro-label" htmlFor="meta-desc">
-                      描述
-                    </label>
-                    <textarea
-                      className="text-field"
-                      id="meta-desc"
-                      maxLength={10000}
-                      onBlur={handleMetadataDescriptionSave}
-                      onChange={handleMetadataDescriptionInput}
-                      rows={3}
-                      style={{
-                        height: "auto",
-                        resize: "vertical",
-                        fontSize: 11,
-                        paddingTop: 6,
-                      }}
-                      value={editDescription}
-                    />
-                  </div>
-                  <div className="editor-field" style={{ marginTop: 10 }}>
-                    <label className="micro-label">评分</label>
-                    <div style={{ display: "flex", gap: 2, marginTop: 3 }}>
-                      {[1, 2, 3, 4, 5].map((star) => (
-                        <button
-                          key={star}
-                          aria-label={`${star} 星`}
-                          onClick={() => handleRatingClick(star)}
-                          style={{
-                            padding: 0,
-                            border: 0,
-                            background: "transparent",
-                            cursor: "pointer",
-                            color:
-                              star <= editRating
-                                ? "#d99a3e"
-                                : "var(--tertiary)",
-                          }}
-                          type="button"
-                        >
-                          <Icon name="star" size={16} />
-                        </button>
-                      ))}
-                      {editRating > 0 && (
-                        <button
-                          aria-label="清除评分"
-                          onClick={() => handleRatingClick(0)}
-                          style={{
-                            padding: "0 0 0 4px",
-                            border: 0,
-                            background: "transparent",
-                            color: "var(--tertiary)",
-                            cursor: "pointer",
-                            fontSize: 10,
-                          }}
-                          type="button"
-                        >
-                          清除
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                  <div
-                    className="editor-field"
-                    style={{
-                      marginTop: 10,
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 8,
-                    }}
-                  >
-                    <label className="micro-label" style={{ flex: 1 }}>
-                      喜欢
-                    </label>
-                    <button
-                      aria-label={editFavorite ? "取消喜欢" : "标记喜欢"}
-                      onClick={handleFavoriteToggle}
-                      style={{
-                        padding: 2,
-                        border: 0,
-                        background: "transparent",
-                        cursor: "pointer",
-                        color: editFavorite ? "#e76b7a" : "var(--tertiary)",
-                      }}
-                      type="button"
-                    >
-                      <Icon name="heart" size={18} />
-                    </button>
-                  </div>
-                  <div className="editor-field" style={{ marginTop: 10 }}>
-                    <label className="micro-label" htmlFor="meta-url">
-                      源链接 (URL)
-                    </label>
-                    <input
-                      className="text-field"
-                      id="meta-url"
-                      maxLength={255}
-                      onBlur={handleSourceUrlSave}
-                      onChange={handleSourceUrlInput}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") handleSourceUrlSave();
-                      }}
-                      placeholder="https://…"
-                      style={{ height: 28, fontSize: 11 }}
-                      value={editSourceUrl}
-                    />
-                  </div>
-                  <div className="editor-field" style={{ marginTop: 10 }}>
-                    <label className="micro-label">
-                      色卡 (Palette) ·{" "}
-                      {assetMetadata.paletteSource === "manual"
-                        ? "人工"
-                        : assetMetadata.paletteSource === "automatic"
-                          ? "自动"
-                          : "待提取"}
-                    </label>
-                    <input
-                      aria-label="人工色卡"
-                      className="text-field"
-                      maxLength={1024}
-                      onBlur={handlePaletteSave}
-                      onChange={(event) => setEditPalette(event.target.value)}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter") handlePaletteSave();
-                      }}
-                      placeholder="#C84C4C, #203040（最多 20 色）"
-                      style={{ height: 28, fontSize: 10, marginTop: 3 }}
-                      value={editPalette}
-                    />
-                    {displayedPalette.length > 0 && (
-                      <div
-                        className="palette-preview"
-                        aria-label={`${assetMetadata.paletteSource === "manual" ? "人工" : "自动"}色卡预览`}
-                      >
-                        {displayedPalette.map((color, index) => {
-                          const ratio =
-                            assetMetadata.paletteSource === "automatic"
-                              ? automaticPaletteRatios.get(color)
-                              : undefined;
-                          return (
-                            <span
-                              key={`${color}-${index}`}
-                              style={{
-                                background: isCssColor(color)
-                                  ? color
-                                  : "transparent",
-                              }}
-                              title={
-                                ratio === undefined
-                                  ? color
-                                  : `${color} · ${(ratio * 100).toFixed(1)}%`
-                              }
-                            />
-                          );
-                        })}
-                      </div>
-                    )}
-                    {assetMetadata.paletteSource === "automatic" && (
-                      <p className="field-help" style={{ margin: "4px 0 0" }}>
-                        本地算法从当前修订提取；填写上方颜色后将以人工色卡优先。
-                      </p>
-                    )}
-                  </div>
-                  <div
-                    style={{
-                      marginTop: 8,
-                      color: "var(--tertiary)",
-                      fontSize: 9,
-                      fontFamily: "'IBM Plex Mono', monospace",
-                    }}
-                  >
-                    版本 {assetMetadata.entityVersion} ·{" "}
-                    {formatDate(assetMetadata.updatedAt)}
-                  </div>
-                </>
-              ) : (
-                <p className="nav-empty" style={{ margin: "4px 0 0" }}>
-                  选择资产以查看元数据
-                </p>
-              )}
-            </section>
-            <section className="inspector-section">
-              <h2>资源库路径</h2>
-              <p className="path-block">{selectedAsset.relativeFilePath}</p>
-            </section>
-            {/* --- AI Content --- */}
-            {aiContent && (
-              <section className="inspector-section">
-                <h2 style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  <span
-                    style={{
-                      display: "inline-block",
-                      padding: "1px 6px",
-                      borderRadius: 3,
-                      background: "var(--accent, #6c8ee0)",
-                      color: "#fff",
-                      fontSize: 9,
-                      fontWeight: 700,
-                      lineHeight: "16px",
-                    }}
-                  >
-                    AI
-                  </span>
-                  AI 生成内容
-                </h2>
-                {aiContent.label && (
-                  <div className="editor-field" style={{ marginTop: 8 }}>
-                    <label className="micro-label">标签 (Label) · AI</label>
-                    <p
-                      className="path-block"
-                      style={{
-                        color: "var(--secondary)",
-                        fontSize: 11,
-                        margin: "2px 0 0",
-                      }}
-                    >
-                      {aiContent.label}
-                    </p>
-                  </div>
-                )}
-                {aiContent.description && (
-                  <div className="editor-field" style={{ marginTop: 8 }}>
-                    <label className="micro-label">描述 · AI</label>
-                    <p
-                      className="path-block"
-                      style={{
-                        color: "var(--secondary)",
-                        fontSize: 11,
-                        margin: "2px 0 0",
-                      }}
-                    >
-                      {aiContent.description}
-                    </p>
-                  </div>
-                )}
-                {aiContent.tags && aiContent.tags.length > 0 && (
-                  <div className="editor-field" style={{ marginTop: 8 }}>
-                    <label className="micro-label">标签 · AI</label>
-                    <div
-                      style={{
-                        display: "flex",
-                        flexWrap: "wrap",
-                        gap: 4,
-                        marginTop: 3,
-                      }}
-                    >
-                      {aiContent.tags.map((tag) => (
-                        <span className="tag-chip" key={tag}>
-                          {tag}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                {aiContent.modelVersion && (
-                  <div
-                    style={{
-                      marginTop: 8,
-                      color: "var(--tertiary)",
-                      fontSize: 9,
-                      fontFamily: "'IBM Plex Mono', monospace",
-                    }}
-                  >
-                    {aiContent.modelVersion}
-                  </div>
-                )}
-              </section>
-            )}
-            <button
-              className="secondary-button inspector-close-library"
-              onClick={() => void closeLibrary()}
-              type="button"
-            >
-              关闭资源库
-            </button>
-          </div>
-        ) : library ? (
-          <div className="inspector-content">
-            <div className="inspector-identity">
-              <div className="inspector-badge">
-                {initials(library.displayName)}
-              </div>
-              <div>
-                <span className="micro-label">当前资源库</span>
-                <strong>{library.displayName}</strong>
-              </div>
-            </div>
-            <dl className="metadata-list">
-              <div>
-                <dt>状态</dt>
-                <dd>
-                  <span className="status-dot" data-active="true" />
-                  已打开
-                </dd>
-              </div>
-              <div>
-                <dt>资产</dt>
-                <dd className="mono">{allAssetCount}</dd>
-              </div>
-              <div>
-                <dt>文件夹</dt>
-                <dd className="mono">{folders.length}</dd>
-              </div>
-            </dl>
-            <section className="inspector-section">
-              <h2>位置</h2>
-              <p className="path-block">{library.displayPath}</p>
-            </section>
-            <button
-              className="secondary-button inspector-close-library"
-              onClick={() => void closeLibrary()}
-              type="button"
-            >
-              关闭资源库
-            </button>
-          </div>
-        ) : (
-          <div className="inspector-empty">
-            <Icon name="info" size={18} />
-            <strong>没有活动资源库</strong>
-            <p>打开资源库后查看当前范围与资产详情。</p>
-          </div>
-        )}
-      </aside>
+      <InspectorPanel
+        aiContent={aiContent}
+        allAssetCount={allAssetCount}
+        assetMetadata={assetMetadata}
+        automaticPaletteRatios={automaticPaletteRatios}
+        closeLibrary={closeLibrary}
+        displayedPalette={displayedPalette}
+        editDescription={editDescription}
+        editFavorite={editFavorite}
+        editLabel={editLabel}
+        editPalette={editPalette}
+        editRating={editRating}
+        editSourceUrl={editSourceUrl}
+        folderCount={folders.length}
+        handleFavoriteToggle={handleFavoriteToggle}
+        handleMetadataDescriptionInput={handleMetadataDescriptionInput}
+        handleMetadataDescriptionSave={handleMetadataDescriptionSave}
+        handleMetadataLabelInput={handleMetadataLabelInput}
+        handleMetadataLabelSave={handleMetadataLabelSave}
+        handlePaletteSave={handlePaletteSave}
+        handleRatingClick={handleRatingClick}
+        handleSourceUrlInput={handleSourceUrlInput}
+        handleSourceUrlSave={handleSourceUrlSave}
+        library={library}
+        loadMetadata={loadMetadata}
+        metadataLoading={metadataLoading}
+        selectedAsset={selectedAsset}
+        setEditPalette={setEditPalette}
+        versionConflict={versionConflict}
+      />
       {!leftOpen && (
         <button
           className="pane-reveal pane-reveal-left"
@@ -8268,293 +6964,53 @@ function AppInner() {
         </div>
       )}
       {/* Unified context menu */}
-      {activeContextMenu && (
-        <ContextMenuBackdrop>
-          <ContextMenu
-            ariaLabel={
-              activeContextMenu.descriptor.type === "multi-asset"
-                ? `批量资产操作：${activeContextMenu.descriptor.count} 项`
-                : activeContextMenu.descriptor.type === "asset"
-                  ? `资产操作：${activeContextMenu.descriptor.displayName}`
-                  : activeContextMenu.descriptor.type === "organization"
-                    ? `${activeContextMenu.descriptor.orgKind === "tag" ? "标签" : "合集"}操作：${activeContextMenu.descriptor.name}`
-                    : `智能合集操作：${activeContextMenu.descriptor.name}`
-            }
-            position={activeContextMenu.position}
-          >
-            {activeContextMenu.descriptor.type === "smart-collection" && (
-              <>
-                <ContextMenuItem
-                  icon={<Icon name="smart" size={14} />}
-                  label="重命名智能合集"
-                  onAction={() => {
-                    const desc = activeContextMenu.descriptor;
-                    if (desc.type !== "smart-collection") return;
-                    setRenameTarget({ kind: "smart", id: desc.id, name: desc.name });
-                  }}
-                />
-                <ContextMenuItem
-                  icon={<Icon name="refresh" size={14} />}
-                  label="用当前条件更新"
-                  onAction={() => {
-                    const desc = activeContextMenu.descriptor;
-                    if (desc.type !== "smart-collection") return;
-                    void updateSmartCollectionQuery(desc.id);
-                  }}
-                />
-                <ContextMenuItem
-                  icon={<Icon name="trash" size={14} />}
-                  label="删除智能合集"
-                  danger
-                  onAction={() => {
-                    const desc = activeContextMenu.descriptor;
-                    if (desc.type !== "smart-collection") return;
-                    if (confirm(`删除智能合集"${desc.name}"？`))
-                      void deleteSmartCollection(desc.id);
-                  }}
-                />
-              </>
-            )}
-            {activeContextMenu.descriptor.type === "organization" && (
-              <>
-                <ContextMenuItem
-                  icon={
-                    <Icon
-                      name={activeContextMenu.descriptor.orgKind === "tag" ? "tag" : "collection"}
-                      size={14}
-                    />
-                  }
-                  label={`重命名${activeContextMenu.descriptor.orgKind === "tag" ? "标签" : "合集"}`}
-                  onAction={() => {
-                    const desc = activeContextMenu.descriptor;
-                    if (desc.type !== "organization") return;
-                    setRenameTarget({ kind: desc.orgKind, id: desc.id, name: desc.name });
-                  }}
-                />
-                {activeContextMenu.descriptor.orgKind === "collection" && (
-                  <ContextMenuItem
-                    icon={<Icon name="info" size={14} />}
-                    label="编辑合集详情"
-                    onAction={() => {
-                      const desc = activeContextMenu.descriptor;
-                      if (desc.type !== "organization") return;
-                      const collection = collections.find(
-                        (candidate) => candidate.collectionId === desc.id,
-                      );
-                      if (collection)
-                        setCollectionEditor({
-                          collectionId: collection.collectionId,
-                          description: collection.description ?? "",
-                          coverAssetId: collection.coverAssetId ?? "",
-                        });
-                    }}
-                  />
-                )}
-                <ContextMenuItem
-                  icon={<Icon name="trash" size={14} />}
-                  label={`删除${activeContextMenu.descriptor.orgKind === "tag" ? "标签" : "合集"}`}
-                  danger
-                  onAction={() => {
-                    const desc = activeContextMenu.descriptor;
-                    if (desc.type !== "organization") return;
-                    const confirmed = confirm(
-                      desc.orgKind === "tag"
-                        ? `删除标签"${desc.name}"？`
-                        : `删除合集"${desc.name}"？\n（仅删除合集结构，不删除资产）`,
-                    );
-                    if (confirmed) {
-                      if (desc.orgKind === "tag") void deleteTag(desc.id);
-                      else void deleteCollection(desc.id);
-                    }
-                  }}
-                />
-              </>
-            )}
-            {activeContextMenu.descriptor.type === "multi-asset" && (
-              <>
-                {tags.length > 0 && (
-                  <ContextMenuSection label="批量标签">
-                    {tags.map((tag) => (
-                      <Fragment key={`batch-tag-${tag.tagId}`}>
-                        <ContextMenuItem
-                          icon={<Icon name="tag" size={14} />}
-                          label={`添加标签：${tag.name}`}
-                          onAction={() => { void batchAssignTagToSelection(tag.tagId); }}
-                        />
-                        <ContextMenuItem
-                          icon={<Icon name="close" size={14} />}
-                          label={`移除标签：${tag.name}`}
-                          onAction={() => { void batchRemoveTagFromSelection(tag.tagId); }}
-                        />
-                      </Fragment>
-                    ))}
-                  </ContextMenuSection>
-                )}
-                {collections.length > 0 && (
-                  <ContextMenuSection label="批量合集">
-                    {collections.map((collection) => (
-                      <Fragment key={`batch-col-${collection.collectionId}`}>
-                        <ContextMenuItem
-                          icon={<Icon name="collection" size={14} />}
-                          label={`加入合集：${collection.name}`}
-                          onAction={() => { void batchAddSelectionToCollection(collection.collectionId); }}
-                        />
-                        <ContextMenuItem
-                          icon={<Icon name="close" size={14} />}
-                          label={`移出合集：${collection.name}`}
-                          onAction={() => { void batchRemoveSelectionFromCollection(collection.collectionId); }}
-                        />
-                      </Fragment>
-                    ))}
-                  </ContextMenuSection>
-                )}
-                <ContextMenuSection label="批量文件操作">
-                  <ContextMenuItem
-                    icon={<Icon name="folder" size={14} />}
-                    label={`移动到文件夹…（${selectedAvailableManaged.length} 项）`}
-                    disabled={selectedAvailableManaged.length === 0}
-                    disabledReason="所选资产中没有可移动的托管资产"
-                    onAction={() =>
-                      setMoveDialog({
-                        assetIds: selectedAvailableManaged.map((a) => a.assetId),
-                        targetFolderId: null,
-                        conflictStrategy: "keep-both",
-                      })
-                    }
-                  />
-                  <ContextMenuItem
-                    icon={<Icon name="trash" size={14} />}
-                    label={`移入回收站（${selectedManagedCount} 项）`}
-                    danger
-                    disabled={selectedManagedCount === 0}
-                    disabledReason="所选资产中没有托管资产"
-                    onAction={() =>
-                      void trashManagedAssets(
-                        selectedAssets
-                          .filter((a) => a.locationKind === "managed")
-                          .map((a) => a.assetId),
-                      )
-                    }
-                  />
-                  {linkedFolders
-                    .filter((f) => f.status === "available")
-                    .map((folder) => (
-                      <ContextMenuItem
-                        key={`batch-link-${folder.folderId}`}
-                        icon={<Icon name="link" size={14} />}
-                        label={`复制到外部目录：${folder.displayName}`}
-                        disabled={selectedAvailableManaged.length === 0}
-                        disabledReason="所选资产中没有可复制的托管资产"
-                        onAction={() =>
-                          void copyManagedSelectionToLinked(
-                            folder,
-                            selectedAvailableManaged.map((a) => a.assetId),
-                          )
-                        }
-                      />
-                    ))}
-                </ContextMenuSection>
-                <ContextMenuItem
-                  icon={<Icon name="close" size={14} />}
-                  label={`清除选择（${activeContextMenu.descriptor.count} 项）`}
-                  onAction={clearAssetSelection}
-                />
-              </>
-            )}
-            {activeContextMenu.descriptor.type === "asset" &&
-              (() => {
-                const { assetId, locationKind, isAvailable } = activeContextMenu.descriptor;
-                const singleManaged = locationKind === "managed";
-                return (
-                  <>
-                    <ContextMenuItem
-                      icon={<Icon name="upload" size={14} />}
-                      label="使用外部应用打开"
-                      onAction={() => {
-                        void handleOpenExternal(assetId);
-                      }}
-                    />
-                    {activeCollectionId && (
-                      <ContextMenuItem
-                        icon={<Icon name="close" size={14} />}
-                        label="从当前合集移除"
-                        onAction={() => {
-                          void removeAssetFromCollection(assetId, activeCollectionId);
-                        }}
-                      />
-                    )}
-                    {singleManaged && isAvailable && (
-                      <ContextMenuItem
-                        icon={<Icon name="folder" size={14} />}
-                        label="移动到文件夹…"
-                        onAction={() =>
-                          setMoveDialog({
-                            assetIds: [assetId],
-                            targetFolderId: null,
-                            conflictStrategy: "keep-both",
-                          })
-                        }
-                      />
-                    )}
-                    {singleManaged && (
-                      <ContextMenuItem
-                        icon={<Icon name="trash" size={14} />}
-                        label="移入回收站"
-                        danger
-                        onAction={() => void trashManagedAssets([assetId])}
-                      />
-                    )}
-                    {linkedFolders
-                      .filter((f) => f.status === "available")
-                      .map((folder) => (
-                        <ContextMenuItem
-                          key={`single-link-${folder.folderId}`}
-                          icon={<Icon name="link" size={14} />}
-                          label={`复制到外部目录：${folder.displayName}`}
-                          disabled={!singleManaged || !isAvailable}
-                          disabledReason="资产不可复制到外部目录"
-                          // eslint-disable-next-line react-hooks/refs
-                          onAction={() =>
-                            void copyManagedSelectionToLinked(folder, [assetId])
-                          }
-                        />
-                      ))}
-                    {collections.map((collection) => (
-                      <ContextMenuItem
-                        key={`remove-collection-${collection.collectionId}`}
-                        icon={<Icon name="close" size={14} />}
-                        label={`移出合集：${collection.name}`}
-                        onAction={() => {
-                          void removeAssetFromCollection(assetId, collection.collectionId);
-                        }}
-                      />
-                    ))}
-                    {tags.map((tag) => (
-                      <ContextMenuItem
-                        key={`tag-${tag.tagId}`}
-                        icon={<Icon name="tag" size={14} />}
-                        label={`添加标签：${tag.name}`}
-                        onAction={() => {
-                          void assignAssetToTag(assetId, tag.tagId);
-                        }}
-                      />
-                    ))}
-                    {collections.map((collection) => (
-                      <ContextMenuItem
-                        key={`collection-${collection.collectionId}`}
-                        icon={<Icon name="collection" size={14} />}
-                        label={`加入合集：${collection.name}`}
-                        onAction={() => {
-                          void addAssetToCollection(assetId, collection.collectionId);
-                        }}
-                      />
-                    ))}
-                  </>
-                );
-              })()}
-          </ContextMenu>
-        </ContextMenuBackdrop>
-      )}
+      <AssetContextMenu
+        tags={tags}
+        collections={collections}
+        linkedFolders={linkedFolders}
+        activeCollectionId={activeCollectionId}
+        selectedAvailableManaged={selectedAvailableManaged}
+        selectedManagedCount={selectedManagedCount}
+        selectedAssets={selectedAssets}
+        onRenameSmartCollection={(id, name) => setRenameTarget({ kind: "smart", id, name })}
+        onUpdateSmartCollection={(id) => { void updateSmartCollectionQuery(id); }}
+        onDeleteSmartCollection={(id) => { void deleteSmartCollection(id); }}
+        onRenameOrganization={(kind, id, name) => setRenameTarget({ kind, id, name })}
+        onEditCollectionDetails={(collectionId) => {
+          const collection = collections.find((c) => c.collectionId === collectionId);
+          if (collection)
+            setCollectionEditor({
+              collectionId: collection.collectionId,
+              description: collection.description ?? "",
+              coverAssetId: collection.coverAssetId ?? "",
+            });
+        }}
+        onDeleteOrganization={(kind, id) => {
+          if (kind === "tag") void deleteTag(id);
+          else void deleteCollection(id);
+        }}
+        onBatchAssignTag={(tagId) => { void batchAssignTagToSelection(tagId); }}
+        onBatchRemoveTag={(tagId) => { void batchRemoveTagFromSelection(tagId); }}
+        onBatchAddToCollection={(collectionId) => { void batchAddSelectionToCollection(collectionId); }}
+        onBatchRemoveFromCollection={(collectionId) => { void batchRemoveSelectionFromCollection(collectionId); }}
+        onMoveToFolder={(assetIds) =>
+          setMoveDialog({
+            assetIds,
+            targetFolderId: null,
+            conflictStrategy: "keep-both",
+          })
+        }
+        onTrash={(assetIds) => { void trashManagedAssets(assetIds); }}
+        onCopyToLinked={(folder, assetIds) => { void copyManagedSelectionToLinked(folder, assetIds); }}
+        onClearSelection={clearAssetSelection}
+        onOpenExternal={(assetId) => { void handleOpenExternal(assetId); }}
+        onRemoveFromCurrentCollection={(assetId) => {
+          if (activeCollectionId) void removeAssetFromCollection(assetId, activeCollectionId);
+        }}
+        onRemoveFromCollection={(assetId, collectionId) => { void removeAssetFromCollection(assetId, collectionId); }}
+        onAssignTag={(assetId, tagId) => { void assignAssetToTag(assetId, tagId); }}
+        onAddToCollection={(assetId, collectionId) => { void addAssetToCollection(assetId, collectionId); }}
+      />
     </main>
   );
 }
@@ -8567,9 +7023,6 @@ export function App() {
   );
 }
 
-function initials(value: string) {
-  return value.trim().slice(0, 2).toUpperCase() || "SP";
-}
 function organizationNoun(kind: OrganizationKind) {
   return kind === "tag" ? "标签" : kind === "collection" ? "合集" : "智能合集";
 }
@@ -8583,9 +7036,6 @@ function parseStoredPalette(value: string | null): string[] {
   } catch {
     return [];
   }
-}
-function isCssColor(value: string) {
-  return /^#[0-9a-f]{3,8}$/i.test(value) || /^(rgb|hsl)a?\(/i.test(value);
 }
 export function parseSearchExpression(
   value: string,
@@ -8836,112 +7286,4 @@ function toOrganizationMessage(
       ? error.message
       : "发生未知错误，请查看日志了解详细原因。";
   return `${action}失败。原因：${detail}`;
-}
-function toMessage(error: unknown, fallback: string) {
-  if (error instanceof LibraryOperationError) {
-    const message = PUBLIC_ERROR_MESSAGES_ZH[error.code] ?? fallback;
-    const reason = error.reason
-      ? PUBLIC_ERROR_REASONS_ZH[error.reason]
-      : undefined;
-    return reason ? `${message} 原因：${reason}` : message;
-  }
-  return error instanceof Error && error.message ? error.message : fallback;
-}
-
-const PUBLIC_ERROR_MESSAGES_ZH: Partial<Record<PublicErrorCode, string>> = {
-  CANCELLED: "操作已取消。",
-  INTERNAL_ERROR: "Serpent 无法完成这项操作，请重试。",
-  INVALID_LIBRARY_NAME: "请输入可跨平台安全使用的资源库名称。",
-  INVALID_LIBRARY_PATH: "请选择有效的本地文件夹。",
-  INVALID_FOLDER_NAME: "请输入可跨平台安全使用的文件夹名称。",
-  FOLDER_ALREADY_EXISTS: "当前位置已经存在同名文件夹。",
-  FOLDER_NOT_FOUND: "找不到所选资源库文件夹。",
-  INVALID_IMPORT_SOURCE: "无法读取所选导入内容。",
-  INVALID_DROP_SELECTION:
-    "请一次拖入一个本地文件夹，或一个及以上本地文件；不能混合拖入文件与文件夹。",
-  WEB_MEDIA_NOT_FOUND: "拖放内容中没有可下载的网页图片或视频地址。",
-  WEB_MEDIA_URL_INVALID: "拖放内容中的媒体地址不是有效的 HTTP(S) 链接。",
-  WEB_MEDIA_DROP_TOO_LARGE: "网页拖放元数据过大，Serpent 已拒绝解析。",
-  CLIPBOARD_IMAGE_NOT_FOUND:
-    "系统剪贴板中没有可导入的图片，请先复制图片再重试。",
-  IMPORT_COLLECTION_ASSIGN_FAILED:
-    "资产已经导入目标文件夹，但未能加入所选合集；资产不会丢失，请查看日志后重试合集操作。",
-  INVALID_IMPORT_DECISION: "导入冲突处理选项无效。",
-  INVALID_ASSET_METADATA:
-    "资产元数据无效，请使用六位十六进制色值，并填写有效的 HTTP(S) 源链接。",
-  IMPORT_NOT_FOUND: "待处理的导入已失效，请重新选择文件。",
-  IMPORT_APPLY_FAILED: "无法安全完成导入。",
-  LIBRARY_ALREADY_EXISTS: "该位置已经存在同名文件或文件夹。",
-  LIBRARY_NOT_FOUND: "找不到所选资源库。",
-  NOT_A_LIBRARY: "所选文件夹不是有效的 Serpent 资源库。",
-  LIBRARY_CORRUPT: "资源库数据库或迁移记录已损坏。",
-  LIBRARY_VERSION_TOO_NEW: "该资源库由更新版本的 Serpent 创建。",
-  LIBRARY_NOT_WRITABLE: "Serpent 无法写入所选位置。",
-  LIBRARY_CLEANUP_FAILED: "创建失败，且临时文件无法自动清理。",
-  LIBRARY_NOT_OPEN: "该资源库当前没有打开。",
-  ASSET_NOT_FOUND: "找不到所选资产。",
-  ASSET_MOVE_CONFLICT:
-    "资产移动无法完成：源位置或目标位置已经变化，Serpent 未执行静默覆盖。",
-  ASSET_SOURCE_TRASH_FAILED:
-    "无法将源文件移入系统回收站，请查看日志了解具体原因。",
-  AI_ANALYSIS_FAILED: "AI 服务未能完成资产分析。",
-  AI_SEARCH_FAILED: "AI 服务未能转换这次搜索。",
-  VERSION_CONFLICT: "元数据已被其他操作修改。请刷新后重新编辑。",
-  ZIP_TOO_LARGE:
-    "资源库大小超出标准 ZIP 限制（4 GiB / 65534 条目）。请改为导出文件夹。",
-  TRANSFER_IN_PROGRESS: "已有资源库导入或导出正在使用相同资源库或路径。",
-};
-const PUBLIC_ERROR_REASONS_ZH: Record<PublicErrorReason, string> = {
-  PERMISSION_DENIED: "当前用户没有读取源文件或写入目标位置的权限。",
-  FILE_BUSY: "文件正被其他应用使用，请关闭后重试。",
-  PATH_LIMIT_EXCEEDED: "目标文件系统拒绝了该路径或名称长度。",
-  DISK_FULL: "目标磁盘空间不足。",
-  READ_ONLY_FILESYSTEM: "目标位置位于只读文件系统。",
-  SOURCE_NOT_FOUND: "源文件在导入过程中消失或无法找到。",
-  SOURCE_CHANGED: "源文件在复制过程中发生了变化。",
-  SOURCE_TRASH_FAILED:
-    "操作系统拒绝将源文件移入系统回收站；源文件与 Serpent 记录均已保留。",
-  SOURCE_TRASH_RECONCILIATION_REQUIRED:
-    "源文件可能已进入系统回收站，但记录尚未完成清理；请重新打开资源库以自动对账，并查看日志。",
-  SYMBOLIC_LINK_NOT_ALLOWED: "目录中包含当前切片不支持的符号链接。",
-  UNSUPPORTED_FILE_ENTRY: "目录中包含普通文件和文件夹之外的项目。",
-  MIME_TYPE_MISSING: "远程响应未声明媒体类型，为避免保存伪装文件已拒绝导入。",
-  MIME_TYPE_UNSUPPORTED: "远程响应声明的媒体类型不受支持。",
-  MIME_EXTENSION_MISMATCH: "文件扩展名与远程响应声明的媒体类型不一致。",
-  MAGIC_BYTES_MISMATCH:
-    "文件头与远程响应声明的媒体类型不一致，文件可能已损坏或被伪装。",
-  NAME_NOT_SUPPORTED: "当前目标文件系统不接受其中的文件名。",
-  IO_ERROR: "操作系统报告了磁盘读写错误。",
-  SHARP_UNAVAILABLE: "图像处理引擎 Sharp 不可用。",
-  FFMPEG_REQUIRED: "当前安装中未找到 FFmpeg，暂时无法生成视频预览。",
-  OIIO_REQUIRED: "当前安装中未找到 OpenImageIO，暂时无法解码 EXR/TGA。",
-  MEDIA_PROCESSING_FAILED:
-    "媒体处理失败。请检查源文件是否损坏，并查看应用日志了解详细原因。",
-  PALETTE_SOURCE_NOT_READY: "当前修订的缩略图或视频封面尚未就绪。",
-  PALETTE_EXTRACTION_FAILED: "本地色卡提取失败，请查看应用日志了解详细原因。",
-  UNSUPPORTED_FORMAT: "当前切片不支持此文件格式。",
-  ZIP_TOO_LARGE: "资源库大小超出标准 ZIP 限制（4 GiB / 65534 条目）。",
-  NOT_A_LIBRARY: "所选目标不是有效的 Serpent 资源库。",
-  PATH_ESCAPE: "ZIP 中包含路径逃逸条目，可能造成安全风险。",
-  AI_AUTH: "API Key 无效或已失效，请更新凭据。",
-  AI_PERMISSION: "当前 API Key 没有访问所选模型的权限。",
-  AI_QUOTA: "供应商账户额度已用尽，请检查计费与额度。",
-  AI_RATE_LIMIT: "请求过于频繁，Serpent 将稍后重试。",
-  AI_NETWORK: "无法连接 AI 供应商，请检查网络。",
-  AI_TIMEOUT: "AI 请求超时，Serpent 将稍后重试。",
-  AI_INVALID_RESPONSE: "AI 供应商返回了无法解析的结果。",
-  AI_NOT_CONFIGURED:
-    "请先在 AI 设置中保存 API Key、选择模型并接受数据发送说明。",
-  AI_REFUSED: "AI 供应商拒绝了这次查询转换；查询内容未执行。",
-  THUMBNAIL_REQUIRED: "资产缩略图尚未就绪，无法安全发送到 AI 供应商。",
-  TRANSFER_IN_PROGRESS: "已有资源库导入或导出正在使用相同资源库或路径。",
-};
-class LibraryOperationError extends Error {
-  readonly code: PublicError["code"];
-  readonly reason?: PublicErrorReason;
-  constructor(error: PublicError) {
-    super(error.message);
-    this.code = error.code;
-    this.reason = error.reason;
-  }
 }
