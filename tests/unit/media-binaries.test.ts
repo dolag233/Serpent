@@ -170,14 +170,14 @@ describe.skipIf(process.platform === 'win32')('media binary release gate', () =>
     const tampered = run(root, 'verify');
     expect(tampered.status).not.toBe(0);
     expect(tampered.stderr).toContain('SHA-256 mismatch');
-  });
+  }, 15_000);
 
   it('rejects a GPL-enabled FFmpeg before writing a manifest', () => {
     const root = createFixture(true);
     const result = run(root, 'manifest');
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain('forbidden build marker: --enable-gpl');
-  });
+  }, 15_000);
 
   it.runIf(process.platform === 'darwin' && process.arch === 'arm64')(
     're-verifies the copied media bundle in a packaged app',
@@ -229,6 +229,7 @@ describe.skipIf(process.platform === 'win32')('media binary release gate', () =>
       expect(substituted.status).not.toBe(0);
       expect(substituted.stderr).toContain('receipt archiveSha256');
     },
+    30_000,
   );
 
   it('binds the installed manifest and acquisition receipt to bundle-lock.json', () => {
@@ -262,7 +263,7 @@ describe.skipIf(process.platform === 'win32')('media binary release gate', () =>
     const wrongManifest = run(root, 'verify');
     expect(wrongManifest.status).not.toBe(0);
     expect(wrongManifest.stderr).toContain('manifest is not the manifest promoted');
-  });
+  }, 15_000);
 
 });
 

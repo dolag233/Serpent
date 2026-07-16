@@ -14,6 +14,8 @@ import {
 } from "./context-menu";
 import { Icon } from "./Icons";
 
+const isMac = navigator.userAgent.includes("Mac") && !navigator.userAgent.includes("Mobile");
+
 interface AssetContextMenuProps {
   tags: TagSummary[];
   collections: CollectionSummary[];
@@ -345,6 +347,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
               <ContextMenuItem
                 icon={<Icon name="trash" size={14} />}
                 label={`移入回收站（${managedAssetIds.length} 项）`}
+                shortcut={isMac ? "⌘⌫" : "Ctrl+Del"}
                 danger
                 disabled={managedAssetIds.length === 0}
                 disabledReason="所选资产中没有托管资产"
@@ -403,6 +406,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                   <ContextMenuItem
                     icon={<Icon name="upload" size={14} />}
                     label="使用外部应用打开"
+                    shortcut={isMac ? "⌘O" : "Ctrl+O"}
                     disabled={!isAvailable}
                     disabledReason="资产当前不可用"
                     onAction={() => {
@@ -497,6 +501,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                     <ContextMenuItem
                       icon={<Icon name="trash" size={14} />}
                       label="移入回收站"
+                      shortcut={isMac ? "⌘⌫" : "Ctrl+Del"}
                       danger
                       disabled={!isAvailable}
                       disabledReason="托管资产当前不可用，无法移入回收站"
