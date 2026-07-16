@@ -1,7 +1,20 @@
 :root {
   color: #f1f2ef;
   background: #252729;
-  font-family: "Noto Sans SC Variable", sans-serif;
+  /* Latin-first stack: U+2026 (the text-overflow ellipsis glyph) must resolve
+     from a Latin font so the dots sit on the text baseline. CJK fonts such as
+     Noto Sans SC render U+2026 as a full-width, vertically-centered glyph,
+     which made every truncation ellipsis appear mid-height. CJK characters
+     still fall through to the CJK entries below. */
+  font-family:
+    -apple-system,
+    "Segoe UI",
+    "Helvetica Neue",
+    Arial,
+    "Noto Sans SC Variable",
+    "PingFang SC",
+    "Microsoft YaHei",
+    sans-serif;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   --canvas: #252729;
@@ -306,15 +319,19 @@ input:focus-visible {
   gap: 2px;
 }
 
+/* Sized to match .tool-button so the pair aligns with the other controls in
+   .toolbar-leading. */
 .scope-history-button {
   display: grid;
-  width: 24px;
-  height: 24px;
+  width: 28px;
+  height: 28px;
+  padding: 0;
   place-items: center;
   border: 1px solid transparent;
   border-radius: 4px;
   background: transparent;
   color: var(--secondary);
+  cursor: pointer;
 }
 
 .scope-history-button:hover:not(:disabled) {
@@ -443,22 +460,7 @@ input:focus-visible {
   visibility: hidden;
 }
 
-.pane-header {
-  display: flex;
-  min-height: 39px;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 11px 0 12px;
-  border-bottom: 1px solid var(--divider-soft);
-  color: #d6d8d4;
-  font-size: 11px;
-  font-weight: 610;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.status-dot,
-.storage-pulse {
+.status-dot {
   display: inline-block;
   width: 6px;
   height: 6px;
@@ -466,8 +468,7 @@ input:focus-visible {
   background: #626663;
 }
 
-.status-dot[data-active="true"],
-.storage-pulse {
+.status-dot[data-active="true"] {
   background: var(--accent);
   box-shadow: 0 0 0 2px rgb(66 184 164 / 12%);
 }
@@ -561,17 +562,6 @@ input:focus-visible {
   color: #6f7471;
   font-size: 11px;
   line-height: 1.55;
-}
-
-.pane-footer {
-  display: flex;
-  height: 35px;
-  align-items: center;
-  gap: 7px;
-  padding: 0 12px;
-  border-top: 1px solid var(--divider-soft);
-  color: var(--tertiary);
-  font-size: 10px;
 }
 
 .workspace {
