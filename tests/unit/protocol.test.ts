@@ -280,6 +280,48 @@ describe('renderer request protocol', () => {
     })).toMatchObject({ kind: 'webm_proxy' });
   });
 
+  it('accepts path-free reveal-in-folder and copy-file-path requests by asset id only', () => {
+    expect(parseRendererRequest({
+      type: 'asset.reveal-in-folder.request',
+      libraryId: 'library-01',
+      assetId: 'asset-01',
+    })).toEqual({
+      type: 'asset.reveal-in-folder.request',
+      libraryId: 'library-01',
+      assetId: 'asset-01',
+    });
+    expect(parseRendererRequest({
+      type: 'asset.copy-file-path.request',
+      libraryId: 'library-01',
+      assetId: 'asset-01',
+    })).toEqual({
+      type: 'asset.copy-file-path.request',
+      libraryId: 'library-01',
+      assetId: 'asset-01',
+    });
+    // REQ-COMMAND-003: the renderer must never supply filesystem paths.
+    expect(() => parseRendererRequest({
+      type: 'asset.reveal-in-folder.request',
+      libraryId: 'library-01',
+      assetId: 'asset-01',
+      absolutePath: '/private/forged/path',
+    })).toThrow();
+    expect(() => parseRendererRequest({
+      type: 'asset.copy-file-path.request',
+      libraryId: 'library-01',
+      assetId: 'asset-01',
+      absolutePath: '/private/forged/path',
+    })).toThrow();
+    expect(() => parseRendererRequest({
+      type: 'asset.reveal-in-folder.request',
+      libraryId: 'library-01',
+    })).toThrow();
+    expect(() => parseRendererRequest({
+      type: 'asset.copy-file-path.request',
+      libraryId: 'library-01',
+    })).toThrow();
+  });
+
   it('accepts the semantic create-library request', () => {
     expect(
       parseRendererRequest({
@@ -558,6 +600,40 @@ describe('preview response protocol', () => {
       metadata: { paletteSource: 'automatic', effectivePalette: ['#FF0000', '#0000FF'] },
     });
     expect(JSON.stringify(result)).not.toContain('.serpent');
+  });
+
+  it('carries only the asset id for reveal-in-folder and copy-file-path results', () => {
+    expect(parseRendererResult({
+      ok: true,
+      type: 'asset.reveal-in-folder.requested',
+      assetId: 'asset-01',
+    })).toEqual({
+      ok: true,
+      type: 'asset.reveal-in-folder.requested',
+      assetId: 'asset-01',
+    });
+    expect(parseRendererResult({
+      ok: true,
+      type: 'asset.copy-file-path.requested',
+      assetId: 'asset-01',
+    })).toEqual({
+      ok: true,
+      type: 'asset.copy-file-path.requested',
+      assetId: 'asset-01',
+    });
+    // REQ-COMMAND-003: absolute paths never cross back to the renderer.
+    expect(() => parseRendererResult({
+      ok: true,
+      type: 'asset.reveal-in-folder.requested',
+      assetId: 'asset-01',
+      absolutePath: '/private/forged/path',
+    })).toThrow();
+    expect(() => parseRendererResult({
+      ok: true,
+      type: 'asset.copy-file-path.requested',
+      assetId: 'asset-01',
+      absolutePath: '/private/forged/path',
+    })).toThrow();
   });
 });
 

@@ -124,10 +124,21 @@ export function ContextMenuBackdrop({
     return () => document.removeEventListener("keydown", handleKeyDown, { capture: true });
   }, [dismiss]);
 
-  // Scroll (document-level, capture phase — catches canvas, nav, and any other scroll)
+  // Scroll (document-level, capture phase — catches canvas, nav, and any other
+  // scroll). Scrolls that originate INSIDE the menu itself (e.g. the tag
+  // picker's own scrollable option list, including programmatic scrollIntoView
+  // from keyboard navigation) must not dismiss it; only scrolls from outside
+  // regions (canvas, nav, document) signal the user has moved on.
   useEffect(() => {
-    document.addEventListener("scroll", dismiss, { capture: true, passive: true });
-    return () => document.removeEventListener("scroll", dismiss, { capture: true });
+    const handleScroll = (e: Event) => {
+      const menu = document.querySelector(".context-menu");
+      if (menu && e.target instanceof Node && menu.contains(e.target)) {
+        return;
+      }
+      dismiss();
+    };
+    document.addEventListener("scroll", handleScroll, { capture: true, passive: true });
+    return () => document.removeEventListener("scroll", handleScroll, { capture: true });
   }, [dismiss]);
 
   // Window resize

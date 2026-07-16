@@ -86,8 +86,9 @@ test("persists organization and metadata across restart and surfaces optimistic-
     await window.getByRole("button", { name: /所有资产/ }).click();
 
     await assetCard.click({ button: "right" });
+    await window.getByRole("menuitem", { name: "添加标签…" }).click();
     await window
-      .getByRole("menuitem", { name: "添加标签：持久标签" })
+      .getByRole("option", { name: "持久标签" })
       .click();
     await expect(window.locator(".toast")).toContainText("标签已添加");
     await expect(window.locator(".tag-chip-name")).toContainText("持久标签");

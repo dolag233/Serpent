@@ -67,8 +67,8 @@ test("context menu closes on outside click, Escape, scroll, and window resize", 
     // Right-click on the asset card to open context menu
     await assetCard.click({ button: "right" });
     await expect(window.getByRole("menu")).toBeVisible({ timeout: 5_000 });
-    // Click on a safe area — the brand area in the toolbar header is outside the menu
-    await window.locator(".brand-mark").click();
+    // Click on a safe area — the item-count label in the workspace bar is outside the menu
+    await window.locator(".item-count").click();
     await expect(window.getByRole("menu")).not.toBeVisible({ timeout: 5_000 });
 
     // --- Escape closes ---
@@ -625,7 +625,10 @@ test("multi-asset menu shows a visible count and mixed-selection skip reasons", 
       window.locator('[data-asset-id][title="managed.png"]'),
     ).toBeVisible({ timeout: 15_000 });
 
-    await window.getByRole("button", { name: "导入链接文件夹" }).click();
+    await window
+      .locator(".tool-group-import")
+      .getByRole("button", { name: "导入链接文件夹" })
+      .click();
     await window.getByRole("button", { name: "所有资产" }).click();
 
     const managedCard = window.locator(
@@ -664,6 +667,91 @@ test("multi-asset menu shows a visible count and mixed-selection skip reasons", 
     await expect(
       menu.getByRole("menuitem", { name: "移入回收站（1 项）" }),
     ).toBeVisible();
+  } finally {
+    await application.close();
+    rmSync(temporaryRoot, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Test — Tag picker: search filter, in-menu scroll must not dismiss, back
+// restores entry focus, Escape closes (REQ-TAG-004)
+// ---------------------------------------------------------------------------
+
+test("tag picker searches, survives in-menu scroll, restores focus on back, and closes on Escape", async () => {
+  const temporaryRoot = mkdtempSync(path.join(tmpdir(), "serpent-cm-tagpicker-"));
+  const libraryPath = path.join(temporaryRoot, "CM-TagPicker");
+  const sourcePath = path.join(temporaryRoot, "tagpicker-test.png");
+  writeFileSync(sourcePath, VALID_PNG);
+
+  const application = await launchApp(temporaryRoot, libraryPath, sourcePath);
+
+  try {
+    const window = await application.firstWindow();
+
+    // Create library and import one asset
+    await window.getByRole("button", { name: "创建资源库" }).click();
+    await window.getByLabel("名称").fill("CM Tag Picker");
+    await window.getByRole("button", { name: "创建", exact: true }).click();
+    await window.getByRole("button", { name: "导入文件", exact: true }).first().click();
+    const assetCard = window.locator("[data-asset-id]").first();
+    await expect(assetCard).toBeVisible({ timeout: 15_000 });
+
+    // Create two tags via the sidebar so the picker has candidates
+    await window.getByRole("button", { name: "添加标签" }).click();
+    await window.getByPlaceholder("输入标签名称，回车创建").fill("甲标签");
+    await window.getByPlaceholder("输入标签名称，回车创建").press("Enter");
+    await expect(window.getByRole("button", { name: /甲标签/ })).toBeVisible();
+    await window.getByRole("button", { name: "添加标签" }).click();
+    await window.getByPlaceholder("输入标签名称，回车创建").fill("乙标签");
+    await window.getByPlaceholder("输入标签名称，回车创建").press("Enter");
+    await expect(window.getByRole("button", { name: /乙标签/ })).toBeVisible();
+
+    // Enter the tag picker from the asset context menu
+    await assetCard.click({ button: "right" });
+    await window.getByRole("menuitem", { name: "添加标签…" }).click();
+    const pickerMenu = window.getByRole("menu", { name: "添加标签" });
+    await expect(pickerMenu).toBeVisible({ timeout: 5_000 });
+    await expect(
+      window.getByRole("combobox", { name: "搜索要添加的标签" }),
+    ).toBeFocused();
+    await expect(window.getByRole("option", { name: "甲标签" })).toBeVisible();
+    await expect(window.getByRole("option", { name: "乙标签" })).toBeVisible();
+
+    // Scrolling inside the picker's own list must not dismiss the menu
+    // (regression: backdrop scroll-dismiss used to fire on in-menu scrolls,
+    // including keyboard-driven scrollIntoView).
+    await window.locator(".tag-picker-options").evaluate((element) => {
+      element.dispatchEvent(new Event("scroll", { bubbles: false }));
+    });
+    await expect(pickerMenu).toBeVisible();
+
+    // Typing a query filters the candidates
+    await window
+      .getByRole("combobox", { name: "搜索要添加的标签" })
+      .fill("甲");
+    await expect(window.getByRole("option", { name: "甲标签" })).toBeVisible();
+    await expect(window.getByRole("option", { name: "乙标签" })).toHaveCount(0);
+
+    // Back returns to the parent menu and restores focus to the entry item
+    await window.getByRole("button", { name: "返回上一级菜单" }).click();
+    await expect(
+      window.getByRole("menuitem", { name: "添加标签…" }),
+    ).toBeVisible();
+    await expect
+      .poll(() =>
+        window.evaluate(
+          () =>
+            (document.activeElement as HTMLElement | null)?.getAttribute(
+              "aria-label",
+            ) ?? null,
+        ),
+      )
+      .toBe("添加标签…");
+
+    // Escape closes the whole menu
+    await window.keyboard.press("Escape");
+    await expect(window.getByRole("menu")).toHaveCount(0);
   } finally {
     await application.close();
     rmSync(temporaryRoot, { recursive: true, force: true });

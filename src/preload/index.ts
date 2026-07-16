@@ -761,6 +761,18 @@ const library: SerpentLibraryApi = Object.freeze({
     return { ok: true, value: undefined };
   },
 
+  async revealInFolder({ libraryId, assetId }: { libraryId: string; assetId: string }): Promise<LibraryApiResult<void>> {
+    const result = await request({ type: 'asset.reveal-in-folder.request', libraryId, assetId });
+    if (!result.ok) return failure(result);
+    return { ok: true, value: undefined };
+  },
+
+  async copyFilePath({ libraryId, assetId }: { libraryId: string; assetId: string }): Promise<LibraryApiResult<void>> {
+    const result = await request({ type: 'asset.copy-file-path.request', libraryId, assetId });
+    if (!result.ok) return failure(result);
+    return { ok: true, value: undefined };
+  },
+
   async retryArtifact({ libraryId, assetId, kind }: { libraryId: string; assetId: string; kind: 'thumbnail' | 'webm_proxy' }): Promise<LibraryApiResult<{ assetId: string; kind: string }>> {
     const result = await request({ type: 'asset.retry-artifact.request', libraryId, assetId, kind });
     if (!result.ok) return failure(result);

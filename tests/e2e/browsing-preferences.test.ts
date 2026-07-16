@@ -784,8 +784,9 @@ test("maintains consistent preferences, accessible names, zoom behavior, and avo
 
     // Assign the tag via right-click context menu
     await cardById.click({ button: "right" });
+    await window.getByRole("menuitem", { name: "添加标签…" }).click();
     await window
-      .getByRole("menuitem", { name: "添加标签：偏好测试标签" })
+      .getByRole("option", { name: "偏好测试标签" })
       .click();
     await expect(window.locator(".toast")).toContainText("标签已添加");
 

@@ -1302,6 +1302,20 @@ async function commandFor(
         libraryId: request.libraryId,
         assetId: request.assetId,
       };
+    case "asset.reveal-in-folder.request":
+      // Handled directly in handleLibraryRequest because it requires shell.showItemInFolder.
+      return {
+        type: "media.get-asset-path",
+        libraryId: request.libraryId,
+        assetId: request.assetId,
+      };
+    case "asset.copy-file-path.request":
+      // Handled directly in handleLibraryRequest because it requires clipboard.writeText.
+      return {
+        type: "media.get-asset-path",
+        libraryId: request.libraryId,
+        assetId: request.assetId,
+      };
     case "asset.retry-artifact.request":
       return {
         type: "media.retry-artifact",
@@ -1778,6 +1792,46 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
         } satisfies RendererResult;
       } catch (error) {
         logger?.error("main.open-external", error);
+        return {
+          ok: false,
+          error: createPublicError("INTERNAL_ERROR"),
+        } satisfies RendererResult;
+      }
+    }
+    if (
+      workerResult.ok &&
+      request.type === "asset.reveal-in-folder.request" &&
+      workerResult.type === "media.asset-path"
+    ) {
+      try {
+        shell.showItemInFolder(workerResult.absolutePath);
+        return {
+          ok: true,
+          type: "asset.reveal-in-folder.requested",
+          assetId: request.assetId,
+        } satisfies RendererResult;
+      } catch (error) {
+        logger?.error("main.reveal-in-folder", error);
+        return {
+          ok: false,
+          error: createPublicError("INTERNAL_ERROR"),
+        } satisfies RendererResult;
+      }
+    }
+    if (
+      workerResult.ok &&
+      request.type === "asset.copy-file-path.request" &&
+      workerResult.type === "media.asset-path"
+    ) {
+      try {
+        clipboard.writeText(workerResult.absolutePath);
+        return {
+          ok: true,
+          type: "asset.copy-file-path.requested",
+          assetId: request.assetId,
+        } satisfies RendererResult;
+      } catch (error) {
+        logger?.error("main.copy-file-path", error);
         return {
           ok: false,
           error: createPublicError("INTERNAL_ERROR"),

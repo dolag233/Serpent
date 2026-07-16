@@ -1,4 +1,4 @@
-import { Fragment } from "react";
+import { Fragment, useState } from "react";
 import type {
   TagSummary,
   CollectionSummary,
@@ -11,14 +11,38 @@ import {
   ContextMenuItem,
   ContextMenuSection,
   useContextMenu,
+  type ContextMenuDescriptor,
 } from "./context-menu";
 import { Icon } from "./Icons";
+import { TagPickerEntry, TagPickerMenu } from "./TagPickerMenu";
 import {
   assetCommandShortcut,
   isMacPlatform,
 } from "./asset-command-shortcuts";
 
 const isMac = isMacPlatform(navigator.userAgent);
+
+/** Which tag action the in-menu picker is performing, and on which assets. */
+interface TagPickerState {
+  mode: "assign" | "remove";
+  assetIds: string[];
+  /** Single-asset assign routes to onAssignTag; everything else is batch. */
+  single: boolean;
+}
+
+/** Stable identity of the open menu, used to reset picker state on change. */
+function descriptorKey(descriptor: ContextMenuDescriptor): string {
+  switch (descriptor.type) {
+    case "asset":
+      return `asset:${descriptor.assetId}`;
+    case "multi-asset":
+      return `multi-asset:${descriptor.assetIds.join(",")}`;
+    case "organization":
+      return `organization:${descriptor.orgKind}:${descriptor.id}`;
+    case "smart-collection":
+      return `smart-collection:${descriptor.id}`;
+  }
+}
 
 interface AssetContextMenuProps {
   tags: TagSummary[];
@@ -47,6 +71,8 @@ interface AssetContextMenuProps {
   onCopyToLinked: (folder: LinkedFolderSummary, assetIds: string[]) => void;
   onClearSelection: () => void;
   onOpenExternal: (assetId: string) => void;
+  onRevealInFolder: (assetId: string) => void;
+  onCopyFilePath: (assetId: string) => void;
   onRemoveFromCurrentCollection: (assetId: string) => void;
   onRemoveFromCollection: (assetId: string, collectionId: string) => void;
   onAssignTag: (assetId: string, tagId: string) => void;
@@ -81,6 +107,8 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
     onCopyToLinked,
     onClearSelection,
     onOpenExternal,
+    onRevealInFolder,
+    onCopyFilePath,
     onRemoveFromCurrentCollection,
     onRemoveFromCollection,
     onAssignTag,
@@ -88,6 +116,19 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
   } = props;
 
   const { active: activeContextMenu } = useContextMenu();
+  const [tagPicker, setTagPicker] = useState<TagPickerState | null>(null);
+
+  // The picker swaps the menu body in place; never let it leak into the next
+  // menu. Adjust during render (React-sanctioned derived-state pattern):
+  // whenever the open menu changes descriptor or closes, drop the picker.
+  const activeDescriptorKey = activeContextMenu
+    ? descriptorKey(activeContextMenu.descriptor)
+    : null;
+  const [pickerMenuKey, setPickerMenuKey] = useState(activeDescriptorKey);
+  if (pickerMenuKey !== activeDescriptorKey) {
+    setPickerMenuKey(activeDescriptorKey);
+    setTagPicker(null);
+  }
 
   if (!activeContextMenu) return null;
 
@@ -103,9 +144,49 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
   return (
     <ContextMenuBackdrop>
       <ContextMenu
-        ariaLabel={ariaLabel}
+        ariaLabel={
+          tagPicker
+            ? tagPicker.mode === "assign"
+              ? "添加标签"
+              : "移除标签"
+            : ariaLabel
+        }
         position={activeContextMenu.position}
       >
+        {tagPicker ? (
+          <TagPickerMenu
+            mode={tagPicker.mode}
+            onBack={() => {
+              const entryLabel =
+                tagPicker.mode === "assign" ? "添加标签…" : "移除标签…";
+              setTagPicker(null);
+              // The menu's initial-focus effect does not re-run when the body
+              // swaps back; return keyboard focus to the entry that opened
+              // the picker so arrow-key navigation keeps working.
+              requestAnimationFrame(() => {
+                document
+                  .querySelector<HTMLElement>(
+                    `.context-menu [role="menuitem"][aria-label="${entryLabel}"]`,
+                  )
+                  ?.focus();
+              });
+            }}
+            onPick={(tagId) => {
+              if (tagPicker.mode === "assign") {
+                const [singleAssetId] = tagPicker.assetIds;
+                if (tagPicker.single && singleAssetId) {
+                  onAssignTag(singleAssetId, tagId);
+                } else {
+                  onBatchAssignTag(tagId, tagPicker.assetIds);
+                }
+              } else {
+                onBatchRemoveTag(tagId, tagPicker.assetIds);
+              }
+            }}
+            tags={tags}
+          />
+        ) : (
+          <>
         {activeContextMenu.descriptor.type === "smart-collection" && (
           <>
             <ContextMenuItem
@@ -272,24 +353,28 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
             <ContextMenuSection label="组织">
             {tags.length > 0 && (
               <ContextMenuSection label="批量标签">
-                {tags.map((tag) => (
-                  <Fragment key={`batch-tag-${tag.tagId}`}>
-                    <ContextMenuItem
-                      icon={<Icon name="tag" size={14} />}
-                      label={`添加标签：${tag.name}`}
-                      onAction={() => {
-                        onBatchAssignTag(tag.tagId, targetAssetIds);
-                      }}
-                    />
-                    <ContextMenuItem
-                      icon={<Icon name="close" size={14} />}
-                      label={`移除标签：${tag.name}`}
-                      onAction={() => {
-                        onBatchRemoveTag(tag.tagId, targetAssetIds);
-                      }}
-                    />
-                  </Fragment>
-                ))}
+                <TagPickerEntry
+                  icon={<Icon name="tag" size={14} />}
+                  label="添加标签…"
+                  onOpen={() =>
+                    setTagPicker({
+                      mode: "assign",
+                      assetIds: targetAssetIds,
+                      single: false,
+                    })
+                  }
+                />
+                <TagPickerEntry
+                  icon={<Icon name="close" size={14} />}
+                  label="移除标签…"
+                  onOpen={() =>
+                    setTagPicker({
+                      mode: "remove",
+                      assetIds: targetAssetIds,
+                      single: false,
+                    })
+                  }
+                />
               </ContextMenuSection>
             )}
             {collections.length > 0 && (
@@ -417,6 +502,15 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                       onOpenExternal(assetId);
                     }}
                   />
+                  <ContextMenuItem
+                    icon={<Icon name="folder" size={14} />}
+                    label={isMac ? "在 Finder 中显示" : "在文件资源管理器中显示"}
+                    disabled={!isAvailable}
+                    disabledReason="资产当前不可用"
+                    onAction={() => {
+                      onRevealInFolder(assetId);
+                    }}
+                  />
                 </ContextMenuSection>
                 <ContextMenuSection label="组织">
                   {activeCollectionId && (
@@ -444,6 +538,15 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                       }
                     />
                   )}
+                  <ContextMenuItem
+                    icon={<Icon name="file" size={14} />}
+                    label="复制文件路径"
+                    disabled={!isAvailable}
+                    disabledReason="资产当前不可用"
+                    onAction={() => {
+                      onCopyFilePath(assetId);
+                    }}
+                  />
                   {linkedFolders
                     .filter((f) => f.status === "available")
                     .map((folder) => (
@@ -468,16 +571,19 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                       }}
                     />
                   ))}
-                  {tags.map((tag) => (
-                    <ContextMenuItem
-                      key={`tag-${tag.tagId}`}
+                  {tags.length > 0 && (
+                    <TagPickerEntry
                       icon={<Icon name="tag" size={14} />}
-                      label={`添加标签：${tag.name}`}
-                      onAction={() => {
-                        onAssignTag(assetId, tag.tagId);
-                      }}
+                      label="添加标签…"
+                      onOpen={() =>
+                        setTagPicker({
+                          mode: "assign",
+                          assetIds: [assetId],
+                          single: true,
+                        })
+                      }
                     />
-                  ))}
+                  )}
                   {collections.map((collection) => (
                     <ContextMenuItem
                       key={`collection-${collection.collectionId}`}
@@ -528,6 +634,8 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
               </>
             );
           })()}
+          </>
+        )}
       </ContextMenu>
     </ContextMenuBackdrop>
   );

@@ -2688,6 +2688,38 @@ function AppInner() {
     }
   }, [api, library]);
 
+  const handleRevealInFolder = useCallback(async (assetId: string) => {
+    if (!api || !library) return;
+    try {
+      const result = await api.revealInFolder({
+        libraryId: library.libraryId,
+        assetId,
+      });
+      if (!result.ok) {
+        setError(toMessage(result.error, "无法在文件管理器中显示该资产。"));
+      }
+    } catch (caught) {
+      setError(toMessage(caught, "在文件管理器中显示失败。"));
+    }
+  }, [api, library]);
+
+  const handleCopyFilePath = useCallback(async (assetId: string) => {
+    if (!api || !library) return;
+    try {
+      const result = await api.copyFilePath({
+        libraryId: library.libraryId,
+        assetId,
+      });
+      if (!result.ok) {
+        setError(toMessage(result.error, "无法复制文件路径。"));
+        return;
+      }
+      setNotice("文件路径已复制到剪贴板。");
+    } catch (caught) {
+      setError(toMessage(caught, "复制文件路径失败。"));
+    }
+  }, [api, library]);
+
   // --- Existing operations ---
 
   async function createFolder() {
@@ -5709,6 +5741,8 @@ function AppInner() {
         onCopyToLinked={(folder, assetIds) => { void copyManagedSelectionToLinked(folder, assetIds); }}
         onClearSelection={clearAssetSelection}
         onOpenExternal={(assetId) => { void handleOpenExternal(assetId); }}
+        onRevealInFolder={(assetId) => { void handleRevealInFolder(assetId); }}
+        onCopyFilePath={(assetId) => { void handleCopyFilePath(assetId); }}
         onRemoveFromCurrentCollection={(assetId) => {
           if (activeCollectionId) void removeAssetFromCollection(assetId, activeCollectionId);
         }}

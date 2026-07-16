@@ -1,4 +1,5 @@
 import type { TagSummary } from "../shared/asset-types";
+import { buildTagAssignCandidates } from "./tag-picker-candidates";
 
 export type TagSuggestion =
   | {
@@ -27,13 +28,7 @@ export function buildTagSuggestions(
   const normalizedQuery = query.toLocaleLowerCase();
   const resultLimit = query ? 12 : 8;
 
-  const matchingTags = tags
-    .filter((tag) => tag.assetCount > 0 && !assignedTagIds.has(tag.tagId))
-    .filter(
-      (tag) =>
-        !normalizedQuery ||
-        tag.name.toLocaleLowerCase().includes(normalizedQuery),
-    )
+  const matchingTags = buildTagAssignCandidates(tags, query, assignedTagIds)
     .slice(0, resultLimit)
     .map<TagSuggestion>((tag) => ({
       kind: "assign",

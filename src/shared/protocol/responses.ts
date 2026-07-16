@@ -619,6 +619,16 @@ const assetOperationSuccessSchemas = [
   }),
   z.strictObject({
     ok: z.literal(true),
+    type: z.literal('asset.reveal-in-folder.requested'),
+    assetId: nonBlankString,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('asset.copy-file-path.requested'),
+    assetId: nonBlankString,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
     type: z.literal('asset.preview.closed'),
     assetId: nonBlankString,
   }),

@@ -1287,6 +1287,144 @@ input[type="range"] {
   letter-spacing: 0.5px;
 }
 
+/* Tag picker (REQ-TAG-004) — searchable secondary view inside the menu */
+.tag-picker {
+  min-width: 220px;
+}
+
+.tag-picker-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 4px 6px;
+}
+
+.tag-picker-back {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px 6px 3px 4px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--secondary, #adb2ae);
+  font-family: inherit;
+  font-size: 11px;
+  cursor: default;
+}
+
+.tag-picker-back:hover,
+.tag-picker-back:focus-visible {
+  background: var(--raised-2);
+  color: var(--text);
+  outline: none;
+}
+
+.tag-picker-title {
+  color: var(--text, #f1f2ef);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+}
+
+.tag-picker-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 2px 4px;
+  padding: 4px 8px;
+  border: 1px solid var(--divider-soft, #393c3f);
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--raised-2, #3a3d40) 72%, transparent);
+  color: var(--tertiary, #777c79);
+}
+
+.tag-picker-search-input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: var(--text, #f1f2ef);
+  font-family: inherit;
+  font-size: 12px;
+}
+
+.tag-picker-search-input:focus {
+  outline: none;
+}
+
+.tag-picker-search-input::placeholder {
+  color: var(--tertiary, #777c79);
+}
+
+.tag-picker-options {
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+/* Mirrors .context-menu-item layout, but highlight is driven solely by the
+   picker's single is-active option (pointer hover or arrow keys), never by
+   :hover/:focus — the search input keeps DOM focus while navigating. */
+.tag-picker-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text, #f1f2ef);
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.4;
+  cursor: default;
+  text-align: left;
+}
+
+.tag-picker-option:focus {
+  outline: none;
+}
+
+.tag-picker-option.is-active {
+  background: color-mix(in srgb, var(--text) 11%, transparent);
+}
+
+.tag-picker-option-icon {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+}
+
+.tag-picker-option-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.tag-picker-option-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tag-picker-option-count {
+  margin-left: auto;
+  color: var(--tertiary, #777c79);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 10px;
+  flex-shrink: 0;
+}
+
+.tag-picker-empty {
+  padding: 10px 12px;
+  color: var(--tertiary, #777c79);
+  font-size: 12px;
+  text-align: center;
+}
+
 .workspace-viewer {
   position: absolute;
   z-index: 12;

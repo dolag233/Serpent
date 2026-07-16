@@ -51,10 +51,12 @@ test('organizes, finds, trashes, and restores an imported asset through the UI',
     await expect(window.getByRole('button', { name: /精选/ })).toBeVisible();
 
     await assetCard.click({ button: 'right' });
-    await window.getByRole('menuitem', { name: '添加标签：角色' }).click();
+    await window.getByRole('menuitem', { name: '添加标签…' }).click();
+    await window.getByRole('option', { name: '角色' }).click();
     await expect(window.locator('.toast')).toContainText('标签已添加');
     await assetCard.click({ button: 'right' });
-    await window.getByRole('menuitem', { name: '添加标签：临时' }).click();
+    await window.getByRole('menuitem', { name: '添加标签…' }).click();
+    await window.getByRole('option', { name: '临时' }).click();
     await expect(window.locator('.toast')).toContainText('标签已添加');
     await window.getByRole('button', { name: /角色/ }).click();
     await expect(window.getByRole('button', { name: /hero\.png/i })).toBeVisible();
@@ -272,7 +274,8 @@ test('multi-select performs batch organization, trash, restore, and permanent de
     await window.getByRole('button', { name: /second\.txt/i }).click({ modifiers: [additiveModifier] });
     // Right-click on an already-selected asset to open multi-asset context menu
     await window.getByRole('button', { name: /first\.txt/i }).click({ button: 'right' });
-    await window.getByRole('menuitem', { name: '添加标签：批量标签' }).click();
+    await window.getByRole('menuitem', { name: '添加标签…' }).click();
+    await window.getByRole('option', { name: '批量标签' }).click();
     await expect(window.locator('.toast')).toContainText('已为 2 项资产添加标签');
     // Re-right-click for next batch operation (menu auto-closes after action)
     await window.getByRole('button', { name: /first\.txt/i }).click({ button: 'right' });
@@ -315,7 +318,8 @@ test('multi-select performs batch organization, trash, restore, and permanent de
     await window.getByRole('button', { name: /second\.txt/i }).click({ modifiers: [additiveModifier] });
     // Right-click on first asset to open multi-asset menu
     await window.getByRole('button', { name: /first\.txt/i }).click({ button: 'right' });
-    await window.getByRole('menuitem', { name: '移除标签：批量标签' }).click();
+    await window.getByRole('menuitem', { name: '移除标签…' }).click();
+    await window.getByRole('option', { name: '批量标签' }).click();
     await expect(window.locator('.toast')).toContainText('已为 2 项资产移除标签');
     await expect(window.locator('.asset-card')).toHaveCount(0);
 

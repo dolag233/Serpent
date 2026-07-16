@@ -266,6 +266,8 @@ export interface SerpentLibraryApi {
   closePreview(input: { libraryId: string; assetId: string }): Promise<LibraryApiResult<void>>;
   reportPreviewError(input: { libraryId: string; assetId: string; errorCode: string; detail?: string }): Promise<LibraryApiResult<void>>;
   openExternal(input: { libraryId: string; assetId: string }): Promise<LibraryApiResult<void>>;
+  revealInFolder(input: { libraryId: string; assetId: string }): Promise<LibraryApiResult<void>>;
+  copyFilePath(input: { libraryId: string; assetId: string }): Promise<LibraryApiResult<void>>;
   retryArtifact(input: { libraryId: string; assetId: string; kind: 'thumbnail' | 'webm_proxy' }): Promise<LibraryApiResult<{ assetId: string; kind: string }>>;
   listMediaJobs(input: { libraryId: string }): Promise<LibraryApiResult<MediaJobStatus>>;
   pauseMediaJobs(input: { libraryId: string; jobIds?: string[] }): Promise<LibraryApiResult<{ pausedCount: number }>>;

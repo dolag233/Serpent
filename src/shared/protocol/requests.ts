@@ -469,6 +469,16 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     assetId: identifierSchema,
   }),
   z.strictObject({
+    type: z.literal('asset.reveal-in-folder.request'),
+    libraryId: identifierSchema,
+    assetId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('asset.copy-file-path.request'),
+    libraryId: identifierSchema,
+    assetId: identifierSchema,
+  }),
+  z.strictObject({
     type: z.literal('asset.retry-artifact.request'),
     libraryId: identifierSchema,
     assetId: identifierSchema,

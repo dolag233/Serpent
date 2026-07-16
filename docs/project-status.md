@@ -20,6 +20,15 @@ v0.1.0 继续收口 0001–0010 的桌面主线，并纳入真实使用反馈确
 6. **最终完成审计**：跨资源库复制、视频/GIF 悬停预览、NAS 断线只读、10 万资产冷启动
    3 秒，以及跨切片 packaged/Windows 主线。
 
+## 2026-07-17 0017/0018 增量：可搜索标签选择器与文件操作命令
+
+- REQ-TAG-004 落地：资产右键菜单标签操作（单资产添加、批量添加/移除）从平铺枚举改为可搜索选择器；菜单添加包含零使用标签（选择器无创建入口），移除与 Inspector 建议保持 TAG-008 排除；修复审查发现的菜单内滚动误关菜单与返回后焦点丢失。
+- REQ-MENU-002 部分落地：单资产新增「在 Finder/Explorer 中显示」「复制文件路径」，全链路仿 openExternal（Main 进程 shell/clipboard），绝对路径不越界（REQ-COMMAND-003，协议单测双向注入拒绝）。
+- 验证：typecheck/lint、unit 391 passed；E2E 16/17 文件当次全绿（含新选择器交互用例，context-menu 10/10）。双轴审查：Standards 通过、Spec 有条件通过（HARD-1/MEDIUM-1 已本回合修复复验）。
+- **Computer Use 未执行**（当前环境无桌面控制能力）：TAG-004/TAG-005 保持不通过、待补截图证据后重新验收；SHELL-004/005/006 与 NAV-002 的 0016-A 修复已按用户指示重新进入待验收。
+- **known-red 移交**：`tests/e2e/linked-folders.test.ts` 为另一 agent 未提交改动，其 `.empty-actions` 作用域下不存在「导入链接文件夹」按钮（该按钮在 `.tool-group-import` 与侧栏 secondaryAction），3/3 红；本回合未触碰该文件，修正方向已记录在开发日志。
+- 详见 `docs/development/0017-0018-searchable-tag-picker-and-file-commands-development-log.md`。
+
 ## 2026-07-16 新增 MVP UI/UX 与文件管理需求
 
 - 两轮真实使用反馈已形成共享需求池：`docs/implementation/mvp-ui-ux-requirements-backlog.md`；0015–0019 的暂定范围和 12 项集中澄清问题均在该文档。
