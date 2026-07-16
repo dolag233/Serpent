@@ -171,81 +171,6 @@ input:focus-visible {
   text-align: center;
 }
 
-/* Add-dropdown — details-based popover for import/export actions */
-.add-dropdown {
-  position: relative;
-}
-.add-dropdown > summary {
-  display: flex;
-  height: 30px;
-  align-items: center;
-  gap: 5px;
-  padding: 0 9px;
-  border: 1px solid var(--divider);
-  border-radius: 4px;
-  background: #35373a;
-  color: var(--text);
-  cursor: pointer;
-  font-size: 11px;
-  font-weight: 600;
-  list-style: none;
-  letter-spacing: 0.025em;
-  white-space: nowrap;
-}
-.add-dropdown > summary::-webkit-details-marker {
-  display: none;
-}
-.add-dropdown[open] > summary {
-  border-color: var(--accent-dark);
-  color: var(--accent);
-}
-.add-dropdown-panel {
-  position: absolute;
-  z-index: 16;
-  top: calc(100% + 6px);
-  right: 0;
-  display: flex;
-  min-width: 170px;
-  flex-direction: column;
-  gap: 1px;
-  padding: 6px;
-  border: 1px solid var(--divider);
-  border-radius: 6px;
-  background: var(--raised-2);
-  box-shadow: 0 12px 32px rgb(0 0 0 / 35%);
-}
-.add-dropdown-panel button {
-  display: flex;
-  width: 100%;
-  height: 30px;
-  align-items: center;
-  gap: 8px;
-  padding: 0 8px;
-  border: 0;
-  border-radius: 3px;
-  background: transparent;
-  color: var(--text);
-  font-size: 11px;
-  text-align: left;
-  cursor: pointer;
-  white-space: nowrap;
-}
-.add-dropdown-panel button:hover {
-  background: #35373a;
-}
-.add-dropdown-panel .add-dropdown-separator {
-  height: 1px;
-  margin: 3px 6px;
-  background: var(--divider-soft);
-}
-
-/* Nav-history back/forward */
-.nav-history-group {
-  display: flex;
-  align-items: center;
-  gap: 1px;
-}
-
 .tool-button,
 .search-control,
 .tiny-action,
@@ -290,17 +215,36 @@ input:focus-visible {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 620;
-  letter-spacing: 0.015em;
-  white-space: nowrap;
+  letter-spacing: 0.025em;
+}
+
+.brand-glyph {
+  display: grid;
+  width: 21px;
+  height: 21px;
+  place-items: center;
+  border: 1px solid #62c8b7;
+  border-radius: 5px 2px 5px 2px;
+  background: #329b8a;
+  color: #f6fffd;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 11px;
+  font-weight: 500;
 }
 
 .scope-trace {
   gap: 5px;
   overflow: hidden;
   padding: 0 14px;
+  border-right: 1px solid var(--divider-soft);
+  border-left: 1px solid var(--divider-soft);
   font-size: 12px;
+}
+
+.scope-root {
+  color: var(--secondary);
 }
 
 .scope-chip {
@@ -316,12 +260,6 @@ input:focus-visible {
 
 .scope-chip-muted {
   color: var(--secondary);
-}
-
-.scope-sep {
-  color: var(--tertiary);
-  font-size: 11px;
-  user-select: none;
 }
 
 .search-control {
@@ -390,6 +328,20 @@ input:focus-visible {
 .left-collapsed .navigation-pane,
 .right-collapsed .inspector-pane {
   visibility: hidden;
+}
+
+.pane-header {
+  display: flex;
+  min-height: 39px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 11px 0 12px;
+  border-bottom: 1px solid var(--divider-soft);
+  color: #d6d8d4;
+  font-size: 11px;
+  font-weight: 610;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 .status-dot,
@@ -479,19 +431,6 @@ input:focus-visible {
   cursor: default;
 }
 
-.nav-row-link {
-  color: var(--accent);
-}
-.nav-row-link.is-active {
-  color: var(--accent);
-}
-.nav-row-link-off {
-  color: #d96a6a;
-}
-.nav-row-link-off.is-active {
-  color: #d96a6a;
-}
-
 .nav-count {
   font-family: "IBM Plex Mono", monospace;
   font-size: 10px;
@@ -503,6 +442,17 @@ input:focus-visible {
   color: #6f7471;
   font-size: 11px;
   line-height: 1.55;
+}
+
+.pane-footer {
+  display: flex;
+  height: 35px;
+  align-items: center;
+  gap: 7px;
+  padding: 0 12px;
+  border-top: 1px solid var(--divider-soft);
+  color: var(--tertiary);
+  font-size: 10px;
 }
 
 .workspace {
@@ -591,16 +541,41 @@ input[type="range"] {
   overflow: auto;
   place-items: center;
   user-select: none;
-  background: var(--canvas);
+  background:
+    linear-gradient(
+      90deg,
+      transparent 49.92%,
+      rgb(255 255 255 / 1.2%) 50%,
+      transparent 50.08%
+    ),
+    linear-gradient(rgb(255 255 255 / 1.1%) 1px, transparent 1px);
+  background-size:
+    100% 100%,
+    100% 32px;
 }
 
 .workspace-canvas.is-viewing {
   overflow: hidden;
 }
 
+.workspace-canvas.is-viewing::after {
+  display: none;
+}
+
 .workspace-canvas.is-viewing > :not(.workspace-viewer) {
   visibility: hidden;
   pointer-events: none;
+}
+
+.workspace-canvas::after {
+  position: absolute;
+  right: 12px;
+  bottom: 10px;
+  color: #4f5350;
+  content: "SERPENT / LOCAL WORKSPACE";
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 9px;
+  letter-spacing: 0.09em;
 }
 
 .empty-state,
@@ -1964,6 +1939,9 @@ input[type="range"] {
     grid-template-columns: 150px 1fr 170px;
   }
 
+  .brand-mark > span:last-child,
+  .scope-root,
+  .scope-trace > .icon,
   .search-control kbd {
     display: none;
   }

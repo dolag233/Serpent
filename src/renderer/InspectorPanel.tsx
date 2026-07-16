@@ -83,6 +83,30 @@ export interface InspectorPanelProps {
   handlePaletteSave: () => void;
 }
 
+// --- Local ToolButton (not exported from App.tsx) ---
+
+function ToolButton({
+  label,
+  icon,
+  disabled,
+}: {
+  label: string;
+  icon: Parameters<typeof Icon>[0]["name"];
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      aria-label={label}
+      className="tool-button"
+      disabled={disabled}
+      title={label}
+      type="button"
+    >
+      <Icon name={icon} />
+    </button>
+  );
+}
+
 // --- Component ---
 
 export function InspectorPanel(props: InspectorPanelProps) {
@@ -119,6 +143,10 @@ export function InspectorPanel(props: InspectorPanelProps) {
 
   return (
     <aside className="inspector-pane">
+      <div className="pane-header">
+        <span>检查器</span>
+        <ToolButton icon="info" label="检查器信息" />
+      </div>
       {selectedAsset ? (
         <div className="inspector-content">
           <div className="selected-file-hero">

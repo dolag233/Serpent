@@ -57,7 +57,6 @@ function NavRow({
   onDrop,
   depth = 0,
   disabled,
-  className,
 }: {
   icon: IconName;
   label: string;
@@ -69,11 +68,10 @@ function NavRow({
   onDrop?: (e: React.DragEvent<HTMLButtonElement>) => void;
   depth?: number;
   disabled?: boolean;
-  className?: string;
 }) {
   return (
     <button
-      className={`nav-row${active ? " is-active" : ""}${className ? ` ${className}` : ""}`}
+      className={`nav-row${active ? " is-active" : ""}`}
       disabled={disabled}
       onClick={onClick}
       onContextMenu={onContextMenu}
@@ -354,6 +352,10 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
 
   return (
     <aside className="navigation-pane">
+      <div className="pane-header">
+        <span>资源导航</span>
+        <span className="status-dot" data-active={Boolean(library)} />
+      </div>
       <nav className="navigation-scroll">
         <NavRow
           active={
@@ -602,8 +604,7 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
                     !activeTagId &&
                     !activeCollectionId
                   }
-                  className={lf.status === "offline" ? "nav-row-link-off" : "nav-row-link"}
-                  icon={lf.status === "offline" ? "link-off" : "link"}
+                  icon={lf.status === "offline" ? "warning" : "link"}
                   key={lf.folderId}
                   label={lf.displayName}
                   count={lf.assetCount}
@@ -658,6 +659,10 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
           )}
         </Section>
       </nav>
+      <div className="pane-footer">
+        <span className="storage-pulse" />
+        <span>{library ? "本地资源库 · 已连接" : "本地优先 · 未连接"}</span>
+      </div>
     </aside>
   );
 }

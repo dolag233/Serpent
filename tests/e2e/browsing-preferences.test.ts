@@ -366,9 +366,7 @@ test("maintains consistent preferences, accessible names, zoom behavior, and avo
     const gridWidths = [];
     for (const size of [96, 160, 320] as const) {
       const width = await measureCardWidth(size);
-      // Grid columns stretch to fill container via minmax(..., 1fr);
-      // the measured width must be at least the set minimum size.
-      expect(width).toBeGreaterThanOrEqual(size - 1);
+      expect(Math.abs(width - size)).toBeLessThanOrEqual(1);
       gridWidths.push(width);
     }
     expect(gridWidths[0]).toBeLessThan(gridWidths[1]!);
