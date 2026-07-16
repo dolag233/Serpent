@@ -61,7 +61,6 @@ export const assetSummarySchema = z.strictObject({
   byteSize: z.number().int().nonnegative(),
   modifiedAt: nonBlankString,
   availability: z.enum(['available', 'missing']),
-  label: nonBlankString.nullable(),
   rating: z.number().int().min(0).max(5),
   favorite: z.boolean(),
   deletedAt: nonBlankString.nullable(),
@@ -100,7 +99,6 @@ export type CollectionSummary = z.infer<typeof collectionSummarySchema>;
 
 export const assetMetadataResultSchema = z.strictObject({
   assetId: nonBlankString,
-  label: nonBlankString.nullable(),
   description: nonBlankString.nullable(),
   rating: z.number().int().min(0).max(5),
   favorite: z.boolean(),
@@ -210,7 +208,14 @@ export const searchScopeSchema = z.discriminatedUnion('kind', [
 export type SearchScope = z.infer<typeof searchScopeSchema>;
 
 export const searchClauseSchema = z.strictObject({
-  field: boundedSearchValue.nullable(),
+  field: z.enum([
+    'filename',
+    'tags',
+    'description',
+    'source_url',
+    'folder_path',
+    'metadata_text',
+  ]).nullable(),
   values: z.array(boundedSearchValue).min(1).max(32),
   exclude: z.boolean(),
 });

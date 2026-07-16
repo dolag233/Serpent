@@ -30,6 +30,7 @@ interface TestDatabaseConnection {
   pragma(source: string): unknown;
   prepare(source: string): {
     all(...parameters: unknown[]): unknown[];
+    get(...parameters: unknown[]): unknown;
     run(...parameters: unknown[]): unknown;
   };
 }
@@ -195,12 +196,174 @@ describe('LibraryService lifecycle', () => {
     expect(service.listLibraries()).toEqual([created]);
 
     const database = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
-    expect(database.pragma('user_version')).toEqual([{ user_version: 13 }]);
+    expect(database.pragma('user_version')).toEqual([{ user_version: 14 }]);
     database.close();
 
     expect(service.openLibrary(created.libraryPath)).toEqual(created);
     expect(service.listLibraries()).toEqual([created]);
     service.closeAll();
+  });
+
+  it('migrates v13 Label data to v14 without changing unrelated metadata', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'Retire Label', selectedParentPath: root });
+    const sourcePath = path.join(root, 'legacy.png');
+    writeFileSync(sourcePath, 'legacy image');
+    const imported = service.prepareOrExecuteImport({
+      libraryId: created.libraryId,
+      sourceKind: 'files',
+      sourcePaths: [sourcePath],
+    });
+    if ('importId' in imported) throw new Error('Unexpected import conflict.');
+    const assetId = imported.assets[0]!.assetId;
+    service.setAssetMetadata({
+      libraryId: created.libraryId,
+      assetId,
+      expectedVersion: 0,
+      description: 'Description survives',
+      rating: 4,
+      favorite: true,
+    });
+    service.writeAiAnalysisResult({
+      libraryId: created.libraryId,
+      assetId,
+      description: 'AI description survives',
+      tags: ['surviving-tag'],
+      modelId: 'migration-test',
+      modelVersion: 'v1',
+      enabledFields: { description: true, tags: true, structuredMetadata: false },
+    });
+    service.createSmartCollection({
+      libraryId: created.libraryId,
+      name: 'Filename Query',
+      queryDefinitionJson: JSON.stringify({
+        search: { clauses: [{ field: 'filename', values: ['legacy.png'], exclude: false }] },
+      }),
+    });
+    service.closeAll();
+
+    const databasePath = path.join(created.libraryPath, '.serpent', 'library.db');
+    const database = new TestDatabase(databasePath);
+    database.exec(`
+      PRAGMA foreign_keys = OFF;
+
+      CREATE TABLE asset_metadata_v13 (
+        asset_id TEXT PRIMARY KEY REFERENCES assets(asset_id) ON DELETE CASCADE,
+        label TEXT,
+        description TEXT,
+        rating INTEGER NOT NULL DEFAULT 0 CHECK (rating >= 0 AND rating <= 5),
+        favorite INTEGER NOT NULL DEFAULT 0 CHECK (favorite IN (0, 1)),
+        palette TEXT,
+        source_page_url TEXT,
+        entity_version INTEGER NOT NULL DEFAULT 1,
+        updated_at TEXT NOT NULL
+      );
+      INSERT INTO asset_metadata_v13
+        SELECT asset_id, 'Legacy Alias', description, rating, favorite, palette,
+               source_page_url, entity_version, updated_at
+          FROM asset_metadata;
+      DROP TABLE asset_metadata;
+      ALTER TABLE asset_metadata_v13 RENAME TO asset_metadata;
+
+      CREATE TABLE ai_content_v13 (
+        ai_content_id TEXT PRIMARY KEY,
+        asset_id TEXT NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE,
+        revision_id TEXT REFERENCES revisions(revision_id) ON DELETE SET NULL,
+        field_name TEXT NOT NULL CHECK (field_name IN ('label', 'description', 'structured_metadata')),
+        value TEXT NOT NULL,
+        model_id TEXT NOT NULL,
+        model_version TEXT NOT NULL,
+        generated_at TEXT NOT NULL
+      );
+      INSERT INTO ai_content_v13 SELECT * FROM ai_content;
+      DROP TABLE ai_content;
+      ALTER TABLE ai_content_v13 RENAME TO ai_content;
+      CREATE INDEX ai_content_asset_field ON ai_content(asset_id, field_name);
+
+      DROP TRIGGER IF EXISTS asset_search_index_ai;
+      DROP TRIGGER IF EXISTS asset_search_index_ad;
+      DROP TRIGGER IF EXISTS asset_search_index_au;
+      DROP TABLE asset_search;
+      CREATE TABLE asset_search_index_v13 (
+        asset_id TEXT UNIQUE NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE,
+        label TEXT NOT NULL DEFAULT '',
+        filename TEXT NOT NULL DEFAULT '',
+        tags TEXT NOT NULL DEFAULT '',
+        description TEXT NOT NULL DEFAULT '',
+        source_url TEXT NOT NULL DEFAULT '',
+        folder_path TEXT NOT NULL DEFAULT '',
+        metadata_text TEXT NOT NULL DEFAULT ''
+      );
+      INSERT INTO asset_search_index_v13
+        SELECT asset_id, 'Legacy Alias', filename, tags, description, source_url,
+               folder_path, metadata_text
+          FROM asset_search_index;
+      DROP TABLE asset_search_index;
+      ALTER TABLE asset_search_index_v13 RENAME TO asset_search_index;
+      CREATE VIRTUAL TABLE asset_search USING fts5(
+        label, filename, tags, description, source_url, folder_path, metadata_text,
+        content='asset_search_index'
+      );
+      INSERT INTO asset_search(asset_search) VALUES('rebuild');
+
+      DELETE FROM schema_migrations WHERE version = 14;
+      PRAGMA user_version = 13;
+    `);
+    database.prepare(
+      `INSERT INTO ai_content
+         (ai_content_id, asset_id, revision_id, field_name, value,
+          model_id, model_version, generated_at)
+       SELECT ?, asset_id, current_revision_id, 'label', 'AI Legacy Alias',
+              'migration-test', 'v1', ?
+         FROM assets WHERE asset_id = ?`,
+    ).run(randomUUID(), new Date().toISOString(), assetId);
+    database.prepare(
+      `INSERT INTO smart_collections
+         (collection_id, library_id, name, query_definition_json, position,
+          created_at, updated_at)
+       VALUES (?, ?, 'Legacy Label Query', ?, 0, ?, ?)`,
+    ).run(
+      randomUUID(),
+      created.libraryId,
+      JSON.stringify({
+        search: { clauses: [{ field: 'label', values: ['Legacy Alias'], exclude: false }] },
+      }),
+      new Date().toISOString(),
+      new Date().toISOString(),
+    );
+    database.close();
+
+    const migratedService = new LibraryService();
+    migratedService.openLibrary(created.libraryPath);
+    const metadata = migratedService.getAssetMetadata({ libraryId: created.libraryId, assetId });
+    expect(metadata).toMatchObject({
+      description: 'Description survives',
+      rating: 4,
+      favorite: true,
+    });
+    expect(migratedService.getAiContent(created.libraryId, assetId)).toEqual([
+      expect.objectContaining({ fieldName: 'description', value: 'AI description survives' }),
+    ]);
+    expect(migratedService.listSmartCollections(created.libraryId).map((item) => item.name))
+      .toEqual(['Filename Query']);
+    expect(migratedService.searchAssets({
+      libraryId: created.libraryId,
+      query: { clauses: [{ field: null, values: ['Legacy Alias'], exclude: false }] },
+    }).total).toBe(0);
+    expect(migratedService.searchAssets({
+      libraryId: created.libraryId,
+      query: { clauses: [{ field: 'description', values: ['survives'], exclude: false }] },
+    }).items.map((asset) => asset.assetId)).toEqual([assetId]);
+    migratedService.closeAll();
+
+    const migratedDatabase = new TestDatabase(databasePath);
+    expect(migratedDatabase.pragma('user_version')).toEqual([{ user_version: 14 }]);
+    expect(migratedDatabase.prepare("PRAGMA table_info('asset_metadata')").all())
+      .not.toEqual(expect.arrayContaining([expect.objectContaining({ name: 'label' })]));
+    expect(migratedDatabase.prepare("PRAGMA table_info('asset_search_index')").all())
+      .not.toEqual(expect.arrayContaining([expect.objectContaining({ name: 'label' })]));
+    migratedDatabase.close();
   });
 
   it('closes, moves, and reopens a library without changing its identity', () => {
@@ -313,7 +476,7 @@ describe('LibraryService lifecycle', () => {
     service.openLibrary(created.libraryPath);
 
     const database = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
-    expect(database.pragma('user_version')).toEqual([{ user_version: 13 }]);
+    expect(database.pragma('user_version')).toEqual([{ user_version: 14 }]);
     expect(
       database
         .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'assets'")
@@ -341,7 +504,7 @@ describe('LibraryService lifecycle', () => {
     expect(service.listAssets({ libraryId: reopened.libraryId, recursive: true })[0])
       .toMatchObject({ relativeFilePath: 'Café.PNG' });
     const database = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
-    expect(database.pragma('user_version')).toEqual([{ user_version: 13 }]);
+    expect(database.pragma('user_version')).toEqual([{ user_version: 14 }]);
     expect(database.prepare('SELECT path_identity FROM assets').all()).toEqual([
       { path_identity: 'café.png' },
     ]);

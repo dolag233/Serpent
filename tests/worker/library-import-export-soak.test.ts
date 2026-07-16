@@ -84,8 +84,6 @@ interface SoakFixture {
   byteSizes: Map<string, number>;
   /** Map of assetId → modifiedAt. */
   modifiedAts: Map<string, string>;
-  /** Map of assetId → label. */
-  labels: Map<string, string | null>;
   /** Map of assetId → rating. */
   ratings: Map<string, number>;
   /** Map of assetId → favorite. */
@@ -142,15 +140,15 @@ function seedAssetsAndFiles(libraryPath: string, folderName: string, folderId: s
   );
   const insertMetadata = db.prepare(
     `INSERT INTO asset_metadata (
-       asset_id, label, description, rating, favorite, palette,
+       asset_id, description, rating, favorite, palette,
        source_page_url, entity_version, updated_at
-     ) VALUES (?, ?, ?, ?, ?, NULL, ?, 1, ?)`,
+     ) VALUES (?, ?, ?, ?, NULL, ?, 1, ?)`,
   );
   const insertSearchIndex = db.prepare(
     `INSERT INTO asset_search_index (
-       asset_id, label, filename, tags, description, source_url,
+       asset_id, filename, tags, description, source_url,
        folder_path, metadata_text
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+     ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
   );
 
   const baseDate = new Date('2025-06-01T00:00:00.000Z');
@@ -173,11 +171,7 @@ function seedAssetsAndFiles(libraryPath: string, folderName: string, folderId: s
         const modifiedAt = modifiedDate.toISOString();
         const now = modifiedAt; // Use same timestamp for created_at/updated_at for simplicity.
 
-        // Varied labels and metadata.
-        const hasLabel = idx % 10 < 7; // 70% have labels
-        const label = hasLabel
-          ? `Asset ${pad(idx, 5)}`
-          : null;
+        // Varied metadata.
         const description = idx % 25 === 0
           ? `Soak test asset #${idx} with varied metadata for round-trip integrity check.`
           : null;
@@ -206,7 +200,6 @@ function seedAssetsAndFiles(libraryPath: string, folderName: string, folderId: s
         insertRevision.run(rid, aid, byteSize, now, filename, now);
         insertMetadata.run(
           aid,
-          label,
           description,
           rating,
           favorite,
@@ -215,7 +208,6 @@ function seedAssetsAndFiles(libraryPath: string, folderName: string, folderId: s
         );
         insertSearchIndex.run(
           aid,
-          label ?? '',
           filename,
           '', // tags will be populated if applicable; default empty
           description ?? '',
@@ -320,7 +312,6 @@ beforeAll(() => {
   const relativePaths = new Map<string, string>();
   const byteSizes = new Map<string, number>();
   const modifiedAts = new Map<string, string>();
-  const labels = new Map<string, string | null>();
   const ratings = new Map<string, number>();
   const favorites = new Map<string, boolean>();
   const descriptions = new Map<string, string | null>();
@@ -336,7 +327,6 @@ beforeAll(() => {
       const relPath = relativePath(folderName, b, i, ext);
       const byteSize = 100 + (idx % 4) * 231;
       const modifiedDate = new Date(baseDate.getTime() + (idx % 365) * 86_400_000);
-      const hasLabel = idx % 10 < 7;
       const rating = idx % 6;
       const favorite = idx % 13 === 0;
 
@@ -344,7 +334,6 @@ beforeAll(() => {
       relativePaths.set(aid, relPath);
       byteSizes.set(aid, byteSize);
       modifiedAts.set(aid, modifiedDate.toISOString());
-      labels.set(aid, hasLabel ? `Asset ${pad(idx, 5)}` : null);
       ratings.set(aid, rating);
       favorites.set(aid, favorite);
       descriptions.set(
@@ -421,7 +410,6 @@ beforeAll(() => {
     relativePaths,
     byteSizes,
     modifiedAts,
-    labels,
     ratings,
     favorites,
     descriptions,
@@ -506,7 +494,6 @@ function verifyRoundTripIntegrity(
       assetId: aid,
     });
 
-    expect(importedMeta.label, `[${label}] asset ${aid} label mismatch`).toBe(sourceMeta.label);
     expect(importedMeta.rating, `[${label}] asset ${aid} rating mismatch`).toBe(sourceMeta.rating);
     expect(importedMeta.favorite, `[${label}] asset ${aid} favorite mismatch`).toBe(sourceMeta.favorite);
     expect(

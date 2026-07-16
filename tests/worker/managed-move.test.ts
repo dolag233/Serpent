@@ -58,7 +58,7 @@ describe('managed asset move and one-shot undo', () => {
     service.assignTags({ libraryId: library.libraryId, assetIds: [a.assetId], tagIds: [tag.tagId] });
     const collection = service.createCollection({ libraryId: library.libraryId, name: 'Set' });
     service.addCollectionAssets({ libraryId: library.libraryId, collectionId: collection.collectionId, assetIds: [a.assetId] });
-    service.setAssetMetadata({ libraryId: library.libraryId, assetId: a.assetId, expectedVersion: 0, label: 'Hero', sourcePageUrl: 'https://example.com/a' });
+    service.setAssetMetadata({ libraryId: library.libraryId, assetId: a.assetId, expectedVersion: 0, description: 'Hero', sourcePageUrl: 'https://example.com/a' });
 
     const moved = service.moveAssets({
       libraryId: library.libraryId,
@@ -71,7 +71,7 @@ describe('managed asset move and one-shot undo', () => {
     expect(moved.assets.map((asset) => asset.assetId)).toEqual([a.assetId, b.assetId]);
     expect(existsSync(path.join(library.libraryPath, 'Assets', 'Target', 'a.png'))).toBe(true);
     expect(existsSync(path.join(library.libraryPath, 'Assets', 'Source', 'a.png'))).toBe(false);
-    expect(service.getAssetMetadata({ libraryId: library.libraryId, assetId: a.assetId })).toMatchObject({ label: 'Hero', sourcePageUrl: 'https://example.com/a' });
+    expect(service.getAssetMetadata({ libraryId: library.libraryId, assetId: a.assetId })).toMatchObject({ description: 'Hero', sourcePageUrl: 'https://example.com/a' });
     expect(service.listCollectionAssets({ libraryId: library.libraryId, collectionId: collection.collectionId, recursive: false }).map((asset) => asset.assetId)).toContain(a.assetId);
     expect(service.listTags(library.libraryId).find((item) => item.tagId === tag.tagId)?.assetCount).toBe(1);
 

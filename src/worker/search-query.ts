@@ -7,7 +7,7 @@
  *
  * A separate `tokenizeForFts()` helper splits CJK text into space-separated
  * tokens via Intl.Segmenter (word granularity), plus a CJK character-level
- * fallback. Apply this to label/description/tags before writing to
+ * fallback. Apply this to filename/description/tags before writing to
  * asset_search_content so that unicode61 tokenizer can index CJK correctly.
  */
 
@@ -21,7 +21,6 @@ export interface SearchClause {
 }
 
 const FTS5_COLUMNS = new Set([
-  'label',
   'filename',
   'tags',
   'description',

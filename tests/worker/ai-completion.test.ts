@@ -83,7 +83,6 @@ describe('GeminiVendorAdapter', () => {
           parts: [
             {
               text: JSON.stringify({
-                label: 'Test asset',
                 description: 'A test image',
                 tags: ['test', 'image'],
               }),
@@ -104,13 +103,13 @@ describe('GeminiVendorAdapter', () => {
     const adapter = new GeminiVendorAdapter('test-key', 'gemini-2.5-flash', mockFetch);
     await adapter.analyze({
       filename: 'test.png', mime: 'image/png', language: 'en',
-      enabledFields: { label: true, description: true, tags: true, structuredMetadata: false },
+      enabledFields: { description: true, tags: true, structuredMetadata: false },
       existingTagNames: [], imageBase64: 'fakebase64',
     });
 
     const config = requestBody?.generationConfig as Record<string, unknown>;
     const schema = config.responseSchema as Record<string, unknown>;
-    expect(schema.propertyOrdering).toEqual(['label', 'description', 'tags', 'structured_metadata']);
+    expect(schema.propertyOrdering).toEqual(['description', 'tags', 'structured_metadata']);
   });
 
   it('parses a valid Gemini response', async () => {
@@ -122,11 +121,10 @@ describe('GeminiVendorAdapter', () => {
       filename: 'test.png',
       mime: 'image/png',
       language: 'en',
-      enabledFields: { label: true, description: true, tags: true, structuredMetadata: false },
+      enabledFields: { description: true, tags: true, structuredMetadata: false },
       existingTagNames: [],
       imageBase64: 'fakebase64',
     });
-    expect(result.label).toBe('Test asset');
     expect(result.description).toBe('A test image');
     expect(result.tags).toEqual(['test', 'image']);
     expect(result.modelVersion).toBe('gemini-2.5-flash');
@@ -138,14 +136,14 @@ describe('GeminiVendorAdapter', () => {
     await expect(
       adapter.analyze({
         filename: 'test.png', mime: 'image/png', language: 'en',
-        enabledFields: { label: false, description: false, tags: true, structuredMetadata: false },
+        enabledFields: { description: false, tags: true, structuredMetadata: false },
         existingTagNames: [],
       }),
     ).rejects.toThrow(VendorAdapterError);
     try {
       await adapter.analyze({
         filename: 'test.png', mime: 'image/png', language: 'en',
-        enabledFields: { label: false, description: false, tags: true, structuredMetadata: false },
+        enabledFields: { description: false, tags: true, structuredMetadata: false },
         existingTagNames: [],
       });
     } catch (error) {
@@ -160,7 +158,7 @@ describe('GeminiVendorAdapter', () => {
     try {
       await adapter.analyze({
         filename: 'test.png', mime: 'image/png', language: 'en',
-        enabledFields: { label: false, description: false, tags: true, structuredMetadata: false },
+        enabledFields: { description: false, tags: true, structuredMetadata: false },
         existingTagNames: [],
       });
       expect.fail('Should have thrown');
@@ -176,7 +174,7 @@ describe('GeminiVendorAdapter', () => {
     try {
       await adapter.analyze({
         filename: 'test.png', mime: 'image/png', language: 'en',
-        enabledFields: { label: false, description: false, tags: true, structuredMetadata: false },
+        enabledFields: { description: false, tags: true, structuredMetadata: false },
         existingTagNames: [],
       });
       expect.fail('Should have thrown');
@@ -192,7 +190,7 @@ describe('GeminiVendorAdapter', () => {
     try {
       await adapter.analyze({
         filename: 'test.png', mime: 'image/png', language: 'en',
-        enabledFields: { label: false, description: false, tags: true, structuredMetadata: false },
+        enabledFields: { description: false, tags: true, structuredMetadata: false },
         existingTagNames: [],
       });
       expect.fail('Should have thrown');
@@ -212,7 +210,7 @@ describe('GeminiVendorAdapter', () => {
     try {
       await adapter.analyze({
         filename: 'test.png', mime: 'image/png', language: 'en',
-        enabledFields: { label: false, description: false, tags: true, structuredMetadata: false },
+        enabledFields: { description: false, tags: true, structuredMetadata: false },
         existingTagNames: [],
       });
       expect.fail('Should have thrown');
@@ -237,7 +235,7 @@ describe('GeminiVendorAdapter', () => {
     try {
       await adapter.analyze({
         filename: 'test.png', mime: 'image/png', language: 'en',
-        enabledFields: { label: false, description: false, tags: true, structuredMetadata: false },
+        enabledFields: { description: false, tags: true, structuredMetadata: false },
         existingTagNames: [],
       });
       expect.fail('Should have thrown');
@@ -260,7 +258,6 @@ describe('AnthropicVendorAdapter', () => {
         id: 'toolu_01X',
         name: 'serpent_classify_asset',
         input: {
-          label: 'Anthropic test',
           description: 'A test image classified by Claude',
           tags: ['claude', 'test'],
         },
@@ -277,11 +274,10 @@ describe('AnthropicVendorAdapter', () => {
       filename: 'test.png',
       mime: 'image/png',
       language: 'en',
-      enabledFields: { label: true, description: true, tags: true, structuredMetadata: false },
+      enabledFields: { description: true, tags: true, structuredMetadata: false },
       existingTagNames: [],
       imageBase64: 'fakebase64',
     });
-    expect(result.label).toBe('Anthropic test');
     expect(result.description).toBe('A test image classified by Claude');
     expect(result.tags).toEqual(['claude', 'test']);
     expect(result.modelVersion).toBe('claude-sonnet-4-20250514');
@@ -293,7 +289,7 @@ describe('AnthropicVendorAdapter', () => {
     try {
       await adapter.analyze({
         filename: 'test.png', mime: 'image/png', language: 'en',
-        enabledFields: { label: false, description: false, tags: true, structuredMetadata: false },
+        enabledFields: { description: false, tags: true, structuredMetadata: false },
         existingTagNames: [],
       });
       expect.fail('Should have thrown');
@@ -309,7 +305,7 @@ describe('AnthropicVendorAdapter', () => {
     try {
       await adapter.analyze({
         filename: 'test.png', mime: 'image/png', language: 'en',
-        enabledFields: { label: false, description: false, tags: true, structuredMetadata: false },
+        enabledFields: { description: false, tags: true, structuredMetadata: false },
         existingTagNames: [],
       });
       expect.fail('Should have thrown');
@@ -325,7 +321,7 @@ describe('AnthropicVendorAdapter', () => {
     try {
       await adapter.analyze({
         filename: 'test.png', mime: 'image/png', language: 'en',
-        enabledFields: { label: false, description: false, tags: true, structuredMetadata: false },
+        enabledFields: { description: false, tags: true, structuredMetadata: false },
         existingTagNames: [],
       });
       expect.fail('Should have thrown');
@@ -341,7 +337,7 @@ describe('AnthropicVendorAdapter', () => {
     try {
       await adapter.analyze({
         filename: 'test.png', mime: 'image/png', language: 'en',
-        enabledFields: { label: false, description: false, tags: true, structuredMetadata: false },
+        enabledFields: { description: false, tags: true, structuredMetadata: false },
         existingTagNames: [],
       });
       expect.fail('Should have thrown');
@@ -361,7 +357,7 @@ describe('AnthropicVendorAdapter', () => {
     try {
       await adapter.analyze({
         filename: 'test.png', mime: 'image/png', language: 'en',
-        enabledFields: { label: false, description: false, tags: true, structuredMetadata: false },
+        enabledFields: { description: false, tags: true, structuredMetadata: false },
         existingTagNames: [],
       });
       expect.fail('Should have thrown');
@@ -380,7 +376,6 @@ describe('AnthropicVendorAdapter', () => {
           id: 'toolu_02',
           name: 'serpent_classify_asset',
           input: {
-            label: 'Later block',
             description: 'Found in second block',
             tags: ['late'],
           },
@@ -392,10 +387,10 @@ describe('AnthropicVendorAdapter', () => {
     const adapter = new AnthropicVendorAdapter('key', 'claude-haiku-3-5-20250514', mockFetch as typeof fetch);
     const result = await adapter.analyze({
       filename: 'test.png', mime: 'image/png', language: 'en',
-      enabledFields: { label: true, description: true, tags: true, structuredMetadata: false },
+      enabledFields: { description: true, tags: true, structuredMetadata: false },
       existingTagNames: [],
     });
-    expect(result.label).toBe('Later block');
+    expect(result.description).toBe('Found in second block');
     expect(result.tags).toEqual(['late']);
   });
 });
@@ -429,12 +424,11 @@ describe('clearAiContent', () => {
     service.writeAiAnalysisResult({
       libraryId,
       assetId,
-      label: 'AI Label',
       description: 'AI Description',
       tags: ['AI-tag'],
       modelId: 'test-model',
       modelVersion: 'v1',
-      enabledFields: { label: true, description: true, tags: true, structuredMetadata: false },
+      enabledFields: { description: true, tags: true, structuredMetadata: false },
     });
 
     // Write some human content (use expectedVersion: 0 for first write)
@@ -442,7 +436,6 @@ describe('clearAiContent', () => {
       libraryId,
       assetId,
       expectedVersion: 0,
-      label: 'Human Label',
       description: 'Human Description',
     });
 
@@ -466,7 +459,6 @@ describe('clearAiContent', () => {
 
     // Human content should still be intact
     const metadata = service.getAssetMetadata({ libraryId, assetId });
-    expect(metadata.label).toBe('Human Label');
     expect(metadata.description).toBe('Human Description');
 
     service.closeAll();
@@ -485,12 +477,11 @@ describe('clearAiContent', () => {
     service.writeAiAnalysisResult({
       libraryId,
       assetId: assetId2,
-      label: 'AI Label 2',
       description: 'AI Desc 2',
       tags: ['AI-tag-2'],
       modelId: 'test-model',
       modelVersion: 'v1',
-      enabledFields: { label: true, description: true, tags: true, structuredMetadata: false },
+      enabledFields: { description: true, tags: true, structuredMetadata: false },
     });
 
     const result = service.clearAiContent({
@@ -522,7 +513,7 @@ describe('clearAiContent', () => {
 
     // Human content still intact
     const metadata = service.getAssetMetadata({ libraryId, assetId });
-    expect(metadata.label).toBe('Human Label');
+    expect(metadata.description).toBe('Human Description');
 
     service.closeAll();
   });
@@ -541,7 +532,7 @@ describe('clearAiContent', () => {
 
     // Human content still intact
     const metadata = service.getAssetMetadata({ libraryId, assetId });
-    expect(metadata.label).toBe('Human Label');
+    expect(metadata.description).toBe('Human Description');
 
     service.closeAll();
   });
@@ -939,11 +930,11 @@ describe('AI job queue management', () => {
       libraryId,
       assetId,
       guardJobId: jobId,
-      label: 'must-not-be-written',
+      description: 'must-not-be-written',
       tags: ['must-not-be-written'],
       modelId: 'test-model',
       modelVersion: 'test-version',
-      enabledFields: { label: true, description: false, tags: true, structuredMetadata: false },
+      enabledFields: { description: false, tags: true, structuredMetadata: false },
     });
 
     expect(result.committed).toBe(false);

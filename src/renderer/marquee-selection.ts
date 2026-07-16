@@ -5,7 +5,7 @@
  * mirrored from `docs/implementation/0019-product-correctness-vertical-slice.md`:
  *
  * 1. No modifier: selection = current hit set (replace).
- * 2. Ctrl (Windows) / Command (macOS): selection = initial selection ∪ hit set.
+ * 2. Ctrl (Windows) / Command (macOS): toggle every asset in the hit set.
  * 3. Shift: same union-add (marquee has no anchor/range semantics; ranges stay
  *    on the Shift+click path).
  * 4. Ctrl/Command+Shift: same union-add.
@@ -20,9 +20,9 @@ export interface MarqueeModifierSnapshot {
 }
 
 /**
- * Whether a modifier snapshot means "union-add to the initial selection"
- * rather than "replace with the hit set". Mirrors the click handler's
- * `event.metaKey || event.ctrlKey` additive condition, extended with Shift.
+ * Whether a modifier snapshot means "preserve the initial selection" rather
+ * than "replace with the hit set". Ctrl/Command preserves and toggles while
+ * Shift preserves and adds.
  */
 export function isMarqueeAdditive(modifiers: MarqueeModifierSnapshot): boolean {
   return modifiers.metaKey || modifiers.ctrlKey || modifiers.shiftKey;
@@ -40,5 +40,13 @@ export function computeMarqueeSelection(
   modifiers: MarqueeModifierSnapshot,
 ): string[] {
   if (!isMarqueeAdditive(modifiers)) return [...hitIds];
+  if ((modifiers.metaKey || modifiers.ctrlKey) && !modifiers.shiftKey) {
+    const next = new Set(initialSelection);
+    for (const assetId of hitIds) {
+      if (next.has(assetId)) next.delete(assetId);
+      else next.add(assetId);
+    }
+    return [...next];
+  }
   return [...new Set([...initialSelection, ...hitIds])];
 }

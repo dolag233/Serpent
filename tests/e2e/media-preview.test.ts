@@ -14,15 +14,11 @@ import {
   test,
   type Locator,
 } from "@playwright/test";
+import sharp from "sharp";
 
 import { resolveElectronExecutablePath } from "./electron-test-helpers";
 
 test.describe.configure({ timeout: 120_000 });
-
-const VALID_PNG = Buffer.from(
-  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
-  "base64",
-);
 
 async function expectImageDecoded(image: Locator) {
   await expect
@@ -53,8 +49,22 @@ test("generates a decoded thumbnail and keeps asset viewer context coherent", as
   const nextSourcePath = path.join(temporaryRoot, "next-automatic.png");
   const libraryName = "自动缩略图验收";
   const libraryPath = path.join(temporaryRoot, libraryName);
-  writeFileSync(sourcePath, VALID_PNG);
-  writeFileSync(nextSourcePath, VALID_PNG);
+  await sharp({
+    create: {
+      width: 800,
+      height: 200,
+      channels: 4,
+      background: { r: 48, g: 112, b: 160, alpha: 1 },
+    },
+  }).png().toFile(sourcePath);
+  await sharp({
+    create: {
+      width: 200,
+      height: 800,
+      channels: 4,
+      background: { r: 160, g: 84, b: 48, alpha: 1 },
+    },
+  }).png().toFile(nextSourcePath);
 
   const executablePath = resolveElectronExecutablePath();
   const applicationDirectory =
@@ -99,12 +109,47 @@ test("generates a decoded thumbnail and keeps asset viewer context coherent", as
 
     await assetCard.click();
     await expect(assetCard).toHaveAttribute("aria-pressed", "true");
+    const inspectorThumbnail = window.locator(
+      '.inspector-hero-preview img[alt="automatic.png"]',
+    );
+    await expectImageDecoded(inspectorThumbnail);
+    expect(
+      await inspectorThumbnail.evaluate((image) => getComputedStyle(image).objectFit),
+    ).toBe("contain");
+    const inspectorPreviewLayout = await inspectorThumbnail.evaluate((image) => {
+      if (!(image instanceof HTMLImageElement)) {
+        throw new Error("Inspector preview is not an image");
+      }
+      const preview = image.closest<HTMLElement>(".inspector-hero-preview");
+      if (!preview) throw new Error("Missing Inspector preview container");
+      const imageRect = image.getBoundingClientRect();
+      const previewRect = preview.getBoundingClientRect();
+      return {
+        borderStyle: getComputedStyle(preview).borderStyle,
+        imageBorderRadius: getComputedStyle(image).borderRadius,
+        imageAspectRatio: imageRect.width / imageRect.height,
+        naturalAspectRatio: image.naturalWidth / image.naturalHeight,
+        previewAspectRatio: preview.clientWidth / preview.clientHeight,
+        widthDelta: Math.abs(imageRect.width - previewRect.width),
+      };
+    });
+    expect(inspectorPreviewLayout.borderStyle).toBe("none");
+    expect(Number.parseFloat(inspectorPreviewLayout.imageBorderRadius)).toBeGreaterThan(0);
+    expect(inspectorPreviewLayout.widthDelta).toBeLessThanOrEqual(3);
+    expect(inspectorPreviewLayout.imageAspectRatio).toBeCloseTo(
+      inspectorPreviewLayout.naturalAspectRatio,
+      1,
+    );
+    expect(inspectorPreviewLayout.previewAspectRatio).toBeCloseTo(
+      inspectorPreviewLayout.naturalAspectRatio,
+      1,
+    );
     await expect(window.getByText("色卡 (Palette) · 自动")).toBeVisible({
       timeout: 15_000,
     });
-    await expect(window.getByLabel("自动色卡预览").locator("span")).toHaveCount(
-      1,
-    );
+    await expect
+      .poll(() => window.getByLabel("自动色卡预览").locator("span").count())
+      .toBeGreaterThan(0);
     await window.keyboard.press("Space");
     const preview = window.getByRole("region", {
       name: "automatic.png 查看页面",
@@ -153,6 +198,9 @@ test("generates a decoded thumbnail and keeps asset viewer context coherent", as
         .locator(".inspector-hero-compact")
         .getByText("next-automatic.png", { exact: true }),
     ).toBeVisible();
+    await expectImageDecoded(
+      window.locator('.inspector-hero-preview img[alt="next-automatic.png"]'),
+    );
     await window.keyboard.press("Escape");
     await expect(nextPreview).toBeHidden();
     await expect(nextAssetCard).toHaveAttribute("aria-pressed", "true");

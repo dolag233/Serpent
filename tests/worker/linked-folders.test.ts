@@ -44,7 +44,7 @@ describe('Linked folders schema migration', () => {
 
     const database = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
     try {
-      expect(database.pragma('user_version')).toEqual([{ user_version: 13 }]);
+      expect(database.pragma('user_version')).toEqual([{ user_version: 14 }]);
 
       const linkedFoldersTable = database
         .prepare(
@@ -275,7 +275,7 @@ describe('Linked folder import', () => {
     const library = service.createLibrary({ displayName: 'Rules', selectedParentPath: root });
     const linked = service.importFolderAsLinked({ libraryId: library.libraryId, sourceRootPath: sourceRoot });
     const original = service.listAssets({ libraryId: library.libraryId, folderId: linked.folderId, recursive: true })[0]!;
-    service.setAssetMetadata({ libraryId: library.libraryId, assetId: original.assetId, expectedVersion: 0, label: 'Preserved' });
+    service.setAssetMetadata({ libraryId: library.libraryId, assetId: original.assetId, expectedVersion: 0, description: 'Preserved' });
 
     const defaults = service.getLinkedFolderRules({ libraryId: library.libraryId, folderId: linked.folderId });
     const hidden = service.setLinkedFolderRules({
@@ -293,7 +293,7 @@ describe('Linked folder import', () => {
     const visible = service.listAssets({ libraryId: library.libraryId, folderId: linked.folderId, recursive: true });
     expect(visible.map((asset) => asset.relativeFilePath).sort()).toEqual(['keep.png', 'node_modules/later.png']);
     expect(visible.find((asset) => asset.relativeFilePath === 'keep.png')!.assetId).toBe(original.assetId);
-    expect(service.getAssetMetadata({ libraryId: library.libraryId, assetId: original.assetId }).label).toBe('Preserved');
+    expect(service.getAssetMetadata({ libraryId: library.libraryId, assetId: original.assetId }).description).toBe('Preserved');
     service.closeAll();
   });
 
@@ -332,13 +332,13 @@ describe('Linked folder import', () => {
     const library = service.createLibrary({ displayName: 'Convert', selectedParentPath: root });
     const linked = service.importFolderAsLinked({ libraryId: library.libraryId, sourceRootPath: linkedRoot });
     const before = service.listAssets({ libraryId: library.libraryId, folderId: linked.folderId, recursive: true })[0]!;
-    service.setAssetMetadata({ libraryId: library.libraryId, assetId: before.assetId, expectedVersion: 0, label: 'Stable label', favorite: true });
+    service.setAssetMetadata({ libraryId: library.libraryId, assetId: before.assetId, expectedVersion: 0, description: 'Stable description', favorite: true });
 
     const converted = service.convertLinkedFolderToManaged({ libraryId: library.libraryId, folderId: linked.folderId });
     expect(converted.convertedCount).toBe(1);
     expect(converted.assets[0]!.assetId).toBe(before.assetId);
     expect(converted.assets[0]!.locationKind).toBe('managed');
-    expect(service.getAssetMetadata({ libraryId: library.libraryId, assetId: before.assetId })).toMatchObject({ label: 'Stable label', favorite: true });
+    expect(service.getAssetMetadata({ libraryId: library.libraryId, assetId: before.assetId })).toMatchObject({ description: 'Stable description', favorite: true });
     expect(readFileSync(path.join(linkedRoot, 'art.png'), 'utf8')).toBe('art bytes');
     expect(readFileSync(path.join(library.libraryPath, 'Assets', converted.assets[0]!.relativeFilePath), 'utf8')).toBe('art bytes');
     expect(service.listLinkedFolders(library.libraryId)).toEqual([]);

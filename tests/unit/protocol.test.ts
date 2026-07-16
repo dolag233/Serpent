@@ -115,6 +115,16 @@ describe('renderer request protocol', () => {
     })).toThrow();
   });
 
+  it('rejects the retired Label field in search clauses', () => {
+    expect(() => parseRendererRequest({
+      type: 'asset.search.request',
+      libraryId: 'library-01',
+      query: {
+        clauses: [{ field: 'label', values: ['legacy alias'], exclude: false }],
+      },
+    })).toThrow();
+  });
+
   it('accepts only explicit six-digit hex colors for manual palettes', () => {
     const validPalette = ['#000000', '#a1B2c3', '#FFFFFF'];
     expect(parseRendererRequest({
@@ -182,12 +192,10 @@ describe('renderer request protocol', () => {
       libraryId: 'library-01',
       assetId: 'asset-01',
       expectedVersion: 3,
-      label: '',
       description: '',
       sourcePageUrl: '',
     });
     expect(rendererRequest).toMatchObject({
-      label: '',
       description: '',
       sourcePageUrl: '',
     });
@@ -199,13 +207,11 @@ describe('renderer request protocol', () => {
         libraryId: 'library-01',
         assetId: 'asset-01',
         expectedVersion: 3,
-        label: '',
         description: '',
         sourcePageUrl: '',
       },
     });
     expect(workerRequest.command).toMatchObject({
-      label: '',
       description: '',
       sourcePageUrl: '',
     });
@@ -535,7 +541,6 @@ describe('preview response protocol', () => {
       type: 'asset.metadata.got',
       metadata: {
         assetId: 'asset-01',
-        label: null,
         description: null,
         rating: 0,
         favorite: false,
@@ -648,7 +653,7 @@ describe('worker request protocol', () => {
         provider: 'openai',
         model: 'gpt-4o-mini',
         apiKey: 'ephemeral-key',
-        enabledFields: { label: true, description: true, tags: true, structuredMetadata: false },
+        enabledFields: { description: true, tags: true, structuredMetadata: false },
         language: 'zh-CN',
         maxJobs: 10,
       },

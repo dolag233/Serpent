@@ -74,15 +74,15 @@ function seedAssets(libraryPath: string, folderId: string): void {
   );
   const insertMetadata = database.prepare(
     `INSERT INTO asset_metadata (
-       asset_id, label, description, rating, favorite, palette,
+       asset_id, description, rating, favorite, palette,
        source_page_url, entity_version, updated_at
-     ) VALUES (?, ?, ?, ?, ?, NULL, ?, 1, ?)`,
+     ) VALUES (?, ?, ?, ?, NULL, ?, 1, ?)`,
   );
   const insertSearchIndex = database.prepare(
     `INSERT INTO asset_search_index (
-       asset_id, label, filename, tags, description, source_url,
+       asset_id, filename, tags, description, source_url,
        folder_path, metadata_text
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+     ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
   );
 
   database.exec('BEGIN IMMEDIATE');
@@ -94,8 +94,9 @@ function seedAssets(libraryPath: string, folderId: string): void {
       const extension = index % 2 === 0 ? 'png' : 'jpg';
       const filename = `reference-${suffix}.${extension}`;
       const relativePath = `Performance/${filename}`;
-      const label = index % 10 === 0 ? `Needle concept ${suffix}` : `Reference ${suffix}`;
-      const description = `Synthetic performance fixture ${index % 100}`;
+      const description = index % 10 === 0
+        ? `Needle concept ${suffix}`
+        : `Synthetic performance fixture ${index % 100}`;
       const availability = index % 20 === 0 ? 'missing' : 'available';
       const rating = index % 6;
       const favorite = index % 5 === 0 ? 1 : 0;
@@ -115,7 +116,6 @@ function seedAssets(libraryPath: string, folderId: string): void {
       insertRevision.run(revisionId, assetId, byteSize, now, filename, now);
       insertMetadata.run(
         assetId,
-        label,
         description,
         rating,
         favorite,
@@ -124,7 +124,6 @@ function seedAssets(libraryPath: string, folderId: string): void {
       );
       insertSearchIndex.run(
         assetId,
-        label,
         filename,
         favorite ? 'favorite' : '',
         description,
@@ -277,9 +276,9 @@ describe('100k asset search performance gate', () => {
       );
       writer.prepare(
         `INSERT INTO asset_search_index (
-           asset_id, label, filename, tags, description, source_url,
+           asset_id, filename, tags, description, source_url,
            folder_path, metadata_text
-         ) VALUES (?, 'Needle concurrent', 'concurrent.png', '', '', '', 'Performance', '')`,
+         ) VALUES (?, 'concurrent.png', '', 'Needle concurrent', '', 'Performance', '')`,
       ).run('perf-asset-concurrent');
 
       const whileWriting = fixture.service.searchAssets({

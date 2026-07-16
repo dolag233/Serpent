@@ -83,7 +83,7 @@ describe('schema v8->v9 migration', () => {
     });
 
     const database = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
-    expect(database.pragma('user_version')).toEqual([{ user_version: 13 }]);
+    expect(database.pragma('user_version')).toEqual([{ user_version: 14 }]);
 
     const columns = database.prepare("PRAGMA table_info('assets')").all() as Array<{
       cid: number; name: string; type: string;
@@ -138,7 +138,7 @@ describe('schema v8->v9 migration', () => {
     service.openLibrary(created.libraryPath);
 
     const db2 = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
-    expect(db2.pragma('user_version')).toEqual([{ user_version: 13 }]);
+    expect(db2.pragma('user_version')).toEqual([{ user_version: 14 }]);
     const migrationRows = db2.prepare('SELECT version FROM schema_migrations ORDER BY version').all() as Array<{ version: number }>;
     expect(migrationRows.map((r) => r.version)).toContain(9);
     db2.close();
@@ -152,7 +152,7 @@ describe('schema v8->v9 migration', () => {
     service.closeAll();
     service.openLibrary(created.libraryPath);
     const db = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
-    expect(db.pragma('user_version')).toEqual([{ user_version: 13 }]);
+    expect(db.pragma('user_version')).toEqual([{ user_version: 14 }]);
     service.closeAll();
     service.openLibrary(created.libraryPath);
     const migrationCount = db.prepare(
@@ -207,7 +207,7 @@ describe('downgrade helpers still work with v9', () => {
 
     service.openLibrary(created.libraryPath);
     const db = new TestDatabase(dbPath);
-    expect(db.pragma('user_version')).toEqual([{ user_version: 13 }]);
+    expect(db.pragma('user_version')).toEqual([{ user_version: 14 }]);
     db.close();
     service.closeAll();
   });
@@ -1367,7 +1367,7 @@ describe('relinkAsset (single missing asset)', () => {
     const r = importNoConflict(service, created.libraryId, path.join(root, 'with-meta.jpg'));
     const assetId = r.assets[0]!.assetId;
 
-    service.setAssetMetadata({ libraryId: created.libraryId, assetId, expectedVersion: 0, label: 'Test Label', rating: 4, favorite: true });
+    service.setAssetMetadata({ libraryId: created.libraryId, assetId, expectedVersion: 0, description: 'Test Description', rating: 4, favorite: true });
 
     rmSync(path.join(created.libraryPath, 'Assets', 'with-meta.jpg'));
     service.refreshManagedAssets(created.libraryId);
@@ -1376,7 +1376,7 @@ describe('relinkAsset (single missing asset)', () => {
     const { asset } = service.relinkAsset({ libraryId: created.libraryId, assetId, newAbsolutePath: path.join(root, 'relinked-meta.jpg') });
 
     expect(asset.availability).toBe('available');
-    expect(asset.label).toBe('Test Label');
+    expect(service.getAssetMetadata({ libraryId: created.libraryId, assetId }).description).toBe('Test Description');
     expect(asset.rating).toBe(4);
     expect(asset.favorite).toBe(true);
 
@@ -1691,17 +1691,17 @@ describe('relinkBatchApply', () => {
     const r = importNoConflict(service, created.libraryId, path.join(root, 'keepmeta.jpg'));
     const assetId = r.assets[0]!.assetId;
 
-    service.setAssetMetadata({ libraryId: created.libraryId, assetId, expectedVersion: 0, label: 'Important', rating: 5, favorite: true, sourcePageUrl: 'https://example.com' });
+    service.setAssetMetadata({ libraryId: created.libraryId, assetId, expectedVersion: 0, description: 'Important', rating: 5, favorite: true, sourcePageUrl: 'https://example.com' });
     const tag = service.createTag({ libraryId: created.libraryId, name: 'keep-tag' });
     service.assignTags({ libraryId: created.libraryId, assetIds: [assetId], tagIds: [tag.tagId] });
     service.writeAiAnalysisResult({
       libraryId: created.libraryId,
       assetId,
-      label: 'AI label',
+      description: 'AI description',
       tags: ['ai-keep-tag'],
       modelId: 'test-model',
       modelVersion: 'v1',
-      enabledFields: { label: true, description: false, tags: true, structuredMetadata: false },
+      enabledFields: { description: true, tags: true, structuredMetadata: false },
     });
 
     rmSync(path.join(created.libraryPath, 'Assets', 'keepmeta.jpg'));
@@ -1714,14 +1714,14 @@ describe('relinkBatchApply', () => {
     service.relinkBatchApply({ libraryId: created.libraryId, newRootPath: newRoot, keepMetadata: true });
 
     const meta = service.getAssetMetadata({ libraryId: created.libraryId, assetId });
-    expect(meta.label).toBe('Important');
+    expect(meta.description).toBe('Important');
     expect(meta.rating).toBe(5);
     expect(meta.favorite).toBe(true);
     expect(meta.sourcePageUrl).toBe('https://example.com');
 
     const tags = service.listTags(created.libraryId);
     expect(tags.find((t) => t.name === 'keep-tag')!.assetCount).toBeGreaterThan(0);
-    expect(service.getAiContent(created.libraryId, assetId).some((content) => content.fieldName === 'label')).toBe(true);
+    expect(service.getAiContent(created.libraryId, assetId).some((content) => content.fieldName === 'description')).toBe(true);
     const keepDb = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
     expect((keepDb.prepare('SELECT COUNT(*) AS count FROM ai_asset_tags WHERE asset_id = ?').get(assetId) as { count: number }).count).toBe(1);
     keepDb.close();
@@ -1737,7 +1737,7 @@ describe('relinkBatchApply', () => {
     const r = importNoConflict(service, created.libraryId, path.join(root, 'clearmeta.jpg'));
     const assetId = r.assets[0]!.assetId;
 
-    service.setAssetMetadata({ libraryId: created.libraryId, assetId, expectedVersion: 0, label: 'Will Clear', rating: 4, favorite: true, sourcePageUrl: 'https://gone.com' });
+    service.setAssetMetadata({ libraryId: created.libraryId, assetId, expectedVersion: 0, description: 'Will Clear', rating: 4, favorite: true, sourcePageUrl: 'https://gone.com' });
     const tag = service.createTag({ libraryId: created.libraryId, name: 'clear-tag' });
     service.assignTags({ libraryId: created.libraryId, assetIds: [assetId], tagIds: [tag.tagId] });
     service.writeAiAnalysisResult({
@@ -1747,7 +1747,7 @@ describe('relinkBatchApply', () => {
       tags: ['ai-clear-tag'],
       modelId: 'test-model',
       modelVersion: 'v1',
-      enabledFields: { label: false, description: true, tags: true, structuredMetadata: false },
+      enabledFields: { description: true, tags: true, structuredMetadata: false },
     });
 
     const col = service.createCollection({ libraryId: created.libraryId, name: 'Clear Col' });
@@ -1763,7 +1763,7 @@ describe('relinkBatchApply', () => {
     service.relinkBatchApply({ libraryId: created.libraryId, newRootPath: newRoot, keepMetadata: false });
 
     const meta = service.getAssetMetadata({ libraryId: created.libraryId, assetId });
-    expect(meta.label).toBeNull();
+    expect(meta.description).toBeNull();
     expect(meta.rating).toBe(0);
     expect(meta.favorite).toBe(false);
     expect(meta.sourcePageUrl).toBeNull();

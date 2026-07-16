@@ -9,6 +9,12 @@ import {
 
 import { Icon } from "./Icons";
 import { formatDuration } from "./App";
+import { resolveInspectorPreviewSrc } from "./inspector-preview";
+import {
+  buildTagSuggestions,
+  moveTagSuggestionIndex,
+  type TagSuggestion,
+} from "./tag-suggestions";
 
 import type { AssetSummary, AssetMetadataResult, TagSummary } from "../shared/asset-types";
 import type { RendererLibrarySummary } from "../shared/protocol/responses";
@@ -54,7 +60,7 @@ function formatDateShort(value: string) {
 // --- Types ---
 
 export interface AiContent {
-  label?: string;
+  assetId: string;
   description?: string;
   tags?: string[];
   structuredMetadata?: Record<string, unknown>;
@@ -69,10 +75,8 @@ export interface InspectorPanelProps {
   closeLibrary: () => void;
   loadMetadata: () => void;
   // Metadata editor state
-  metadataLoading: boolean;
   assetMetadata: AssetMetadataResult | null;
   versionConflict: boolean;
-  editLabel: string;
   editDescription: string;
   editRating: number;
   editFavorite: boolean;
@@ -83,8 +87,6 @@ export interface InspectorPanelProps {
   automaticPaletteRatios: Map<string, number>;
   aiContent: AiContent | null;
   // Metadata editor handlers
-  handleMetadataLabelSave: () => void;
-  handleMetadataLabelInput: (e: React.ChangeEvent<HTMLInputElement>) => void;
   handleMetadataDescriptionSave: () => void;
   handleMetadataDescriptionInput: (
     e: React.ChangeEvent<HTMLTextAreaElement>,
@@ -99,6 +101,48 @@ export interface InspectorPanelProps {
   onAssignTagToAsset?: (tagId: string) => void;
   onRemoveTagFromAsset?: (tagId: string) => void;
   onCreateAndAssignTag?: (tagName: string) => void;
+}
+
+function InspectorHero({
+  asset,
+  infoLine,
+  library,
+}: {
+  asset: AssetSummary;
+  infoLine: string;
+  library: RendererLibrarySummary | null;
+}) {
+  const previewSrc = resolveInspectorPreviewSrc(asset, library);
+  const [decoded, setDecoded] = useState(false);
+
+  return (
+    <div className="inspector-hero-compact">
+      {previewSrc ? (
+        <div className="inspector-hero-preview">
+          {!decoded && <Icon name="file" size={20} />}
+          <img
+            alt={asset.displayName}
+            className={decoded ? "inspector-hero-image" : "inspector-hero-image is-loading"}
+            onLoad={(event) => {
+              const image = event.currentTarget;
+              if (image.complete && image.naturalWidth > 0) setDecoded(true);
+            }}
+            src={previewSrc}
+          />
+        </div>
+      ) : (
+        <div className="inspector-hero-preview inspector-hero-preview-fallback">
+          <Icon name="file" size={20} />
+        </div>
+      )}
+      <strong className="inspector-hero-title" title={asset.displayName}>
+        {asset.displayName}
+      </strong>
+      <div className="inspector-compact-info">
+        <span className="inspector-compact-meta">{infoLine}</span>
+      </div>
+    </div>
+  );
 }
 
 // --- Tag chip colors ---
@@ -126,10 +170,8 @@ export function InspectorPanel(props: InspectorPanelProps) {
     folderCount,
     closeLibrary,
     loadMetadata,
-    metadataLoading,
-    assetMetadata,
+    assetMetadata: rawAssetMetadata,
     versionConflict,
-    editLabel,
     editDescription,
     editRating,
     editFavorite,
@@ -139,8 +181,6 @@ export function InspectorPanel(props: InspectorPanelProps) {
     displayedPalette,
     automaticPaletteRatios,
     aiContent,
-    handleMetadataLabelSave,
-    handleMetadataLabelInput,
     handleMetadataDescriptionSave,
     handleMetadataDescriptionInput,
     handleRatingClick,
@@ -154,9 +194,17 @@ export function InspectorPanel(props: InspectorPanelProps) {
     onCreateAndAssignTag,
   } = props;
 
+  // Selection identity and metadata may resolve in separate async turns. Never
+  // render the previous asset's fields beside the newly selected asset.
+  const assetMetadata =
+    rawAssetMetadata?.assetId === selectedAsset?.assetId
+      ? rawAssetMetadata
+      : null;
+
   // Tag input state
   const [tagInputValue, setTagInputValue] = useState("");
   const [showTagInput, setShowTagInput] = useState(false);
+  const [activeTagSuggestionIndex, setActiveTagSuggestionIndex] = useState(-1);
   const tagInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -164,34 +212,6 @@ export function InspectorPanel(props: InspectorPanelProps) {
       tagInputRef.current.focus();
     }
   }, [showTagInput]);
-
-  // Filtered tag suggestions for typeahead
-  const filteredTagSuggestions = useMemo(() => {
-    const q = tagInputValue.trim().toLowerCase();
-    if (!q) return allTags.slice(0, 8); // show recent/first 8
-    return allTags
-      .filter((t) => t.name.toLowerCase().includes(q))
-      .slice(0, 12);
-  }, [allTags, tagInputValue]);
-
-  const handleAddTagKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Enter" && tagInputValue.trim()) {
-      const existingTag = allTags.find(
-        (t) => t.name.toLowerCase() === tagInputValue.trim().toLowerCase(),
-      );
-      if (existingTag) {
-        onAssignTagToAsset?.(existingTag.tagId);
-      } else {
-        onCreateAndAssignTag?.(tagInputValue.trim());
-      }
-      setTagInputValue("");
-      setShowTagInput(false);
-    }
-    if (e.key === "Escape") {
-      setTagInputValue("");
-      setShowTagInput(false);
-    }
-  };
 
   // Collect all tags to display from asset metadata (both user and AI)
   const displayedTags = useMemo(() => {
@@ -202,6 +222,75 @@ export function InspectorPanel(props: InspectorPanelProps) {
       source: t.source as "ai" | "user",
     }));
   }, [assetMetadata]);
+
+  const displayedTagIds = useMemo(
+    () => new Set(displayedTags.map((tag) => tag.id)),
+    [displayedTags],
+  );
+
+  const tagSuggestions = useMemo(
+    () => buildTagSuggestions(allTags, tagInputValue, displayedTagIds),
+    [allTags, displayedTagIds, tagInputValue],
+  );
+
+  const closeTagInput = () => {
+    setTagInputValue("");
+    setActiveTagSuggestionIndex(-1);
+    setShowTagInput(false);
+  };
+
+  const submitTagSuggestion = (suggestion: TagSuggestion) => {
+    if (suggestion.kind === "assign") {
+      onAssignTagToAsset?.(suggestion.tagId);
+    } else {
+      onCreateAndAssignTag?.(suggestion.name);
+    }
+    closeTagInput();
+  };
+
+  const handleAddTagKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      setActiveTagSuggestionIndex((current) =>
+        moveTagSuggestionIndex(
+          current,
+          event.key === "ArrowDown" ? 1 : -1,
+          tagSuggestions.length,
+        ),
+      );
+      return;
+    }
+
+    if (event.key === "Enter") {
+      event.preventDefault();
+      const activeSuggestion = tagSuggestions[activeTagSuggestionIndex];
+      if (activeSuggestion) {
+        submitTagSuggestion(activeSuggestion);
+        return;
+      }
+
+      const normalizedInput = tagInputValue.trim().toLocaleLowerCase();
+      const exactTag = allTags.find(
+        (tag) => tag.name.toLocaleLowerCase() === normalizedInput,
+      );
+      if (exactTag && !displayedTagIds.has(exactTag.tagId)) {
+        submitTagSuggestion({
+          kind: "assign",
+          tagId: exactTag.tagId,
+          name: exactTag.name,
+          assetCount: exactTag.assetCount,
+        });
+      } else if (tagInputValue.trim() && !exactTag) {
+        submitTagSuggestion({ kind: "create", name: tagInputValue.trim() });
+      }
+      return;
+    }
+
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeTagInput();
+    }
+  };
 
   // Compact info line builder — memoized to avoid crash when selectedAsset is undefined
   const compactInfoLine = useMemo(() => {
@@ -222,18 +311,12 @@ export function InspectorPanel(props: InspectorPanelProps) {
     <aside className="inspector-pane">
       {selectedAsset ? (
         <div className="inspector-content">
-          {/* Compact hero — filename + icon */}
-          <div className="inspector-hero-compact">
-            <Icon name="file" size={20} />
-            <strong title={selectedAsset.displayName}>
-              {selectedAsset.displayName}
-            </strong>
-          </div>
-
-          {/* Compact info line — size | resolution | date */}
-          <div className="inspector-compact-info">
-            <span className="inspector-compact-meta">{compactInfoLine}</span>
-          </div>
+          <InspectorHero
+            asset={selectedAsset}
+            infoLine={compactInfoLine}
+            key={selectedAsset.assetId}
+            library={library}
+          />
           <div className="inspector-compact-status">
             {selectedAsset.deletedAt
               ? `回收站（${selectedAsset.remainingDays ?? "?"}天后自动清理）`
@@ -252,6 +335,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
                 onClick={() => {
                   setShowTagInput(true);
                   setTagInputValue("");
+                  setActiveTagSuggestionIndex(-1);
                 }}
                 type="button"
               >
@@ -285,70 +369,70 @@ export function InspectorPanel(props: InspectorPanelProps) {
               )}
               {showTagInput && (
                 <div className="tag-input-wrapper">
-                  <input
-                    aria-label="添加标签"
-                    autoFocus
-                    className="tag-add-input"
-                    list="inspector-tag-suggestions"
-                    maxLength={255}
-                    onBlur={() => {
-                      // Delay to allow suggestion click
-                      setTimeout(() => {
-                        setShowTagInput(false);
-                        setTagInputValue("");
-                      }, 150);
-                    }}
-                    onChange={(e) => setTagInputValue(e.target.value)}
-                    onKeyDown={handleAddTagKeyDown}
-                    placeholder="搜索或创建标签…"
-                    ref={tagInputRef}
-                    value={tagInputValue}
-                  />
-                  <datalist id="inspector-tag-suggestions">
-                    {filteredTagSuggestions.map((t) => (
-                      <option key={t.tagId} value={t.name} />
-                    ))}
-                  </datalist>
-                  {tagInputValue.trim() && filteredTagSuggestions.length > 0 && (
-                    <div className="tag-suggestions-dropdown">
-                      {filteredTagSuggestions.map((t) => (
+                  <div className="tag-input-chip">
+                    <Icon name="tag" size={11} />
+                    <input
+                      aria-activedescendant={
+                        activeTagSuggestionIndex >= 0
+                          ? `tag-suggestion-${activeTagSuggestionIndex}`
+                          : undefined
+                      }
+                      aria-autocomplete="list"
+                      aria-controls="inspector-tag-suggestions"
+                      aria-expanded={tagSuggestions.length > 0}
+                      aria-label="添加标签"
+                      autoComplete="off"
+                      autoFocus
+                      className="tag-add-input"
+                      maxLength={255}
+                      onBlur={(event) => {
+                        if (!event.currentTarget.parentElement?.parentElement?.contains(event.relatedTarget)) {
+                          closeTagInput();
+                        }
+                      }}
+                      onChange={(event) => {
+                        setTagInputValue(event.target.value);
+                        setActiveTagSuggestionIndex(-1);
+                      }}
+                      onKeyDown={handleAddTagKeyDown}
+                      placeholder="搜索或创建标签…"
+                      ref={tagInputRef}
+                      role="combobox"
+                      value={tagInputValue}
+                    />
+                  </div>
+                  {tagSuggestions.length > 0 && (
+                    <div
+                      className="tag-suggestions-dropdown"
+                      id="inspector-tag-suggestions"
+                      role="listbox"
+                    >
+                      {tagSuggestions.map((suggestion, index) => (
                         <button
-                          className="tag-suggestion-item"
-                          key={t.tagId}
+                          aria-selected={index === activeTagSuggestionIndex}
+                          className={`tag-suggestion-item${index === activeTagSuggestionIndex ? " is-active" : ""}${suggestion.kind === "create" ? " tag-suggestion-create" : ""}`}
+                          id={`tag-suggestion-${index}`}
+                          key={suggestion.kind === "assign" ? suggestion.tagId : `create-${suggestion.name}`}
                           onMouseDown={(e) => {
                             e.preventDefault();
-                            onAssignTagToAsset?.(t.tagId);
-                            setTagInputValue("");
-                            setShowTagInput(false);
                           }}
+                          onClick={() => submitTagSuggestion(suggestion)}
+                          onMouseEnter={() => setActiveTagSuggestionIndex(index)}
+                          role="option"
                           type="button"
                         >
                           <span className="tag-suggestion-name">
-                            {t.name}
+                            {suggestion.kind === "assign"
+                              ? suggestion.name
+                              : `创建标签 “${suggestion.name}”`}
                           </span>
-                          <span className="tag-suggestion-count">
-                            {t.assetCount}
-                          </span>
+                          {suggestion.kind === "assign" && (
+                            <span className="tag-suggestion-count">
+                              {suggestion.assetCount}
+                            </span>
+                          )}
                         </button>
                       ))}
-                      {!filteredTagSuggestions.some(
-                        (t) =>
-                          t.name.toLowerCase() ===
-                          tagInputValue.trim().toLowerCase(),
-                      ) && (
-                        <button
-                          className="tag-suggestion-item tag-suggestion-create"
-                          onMouseDown={(e) => {
-                            e.preventDefault();
-                            onCreateAndAssignTag?.(tagInputValue.trim());
-                            setTagInputValue("");
-                            setShowTagInput(false);
-                          }}
-                          type="button"
-                        >
-                          创建标签 "{tagInputValue.trim()}"
-                        </button>
-                      )}
                     </div>
                   )}
                 </div>
@@ -359,9 +443,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
           {/* --- Asset metadata editor (compact) --- */}
           <section className="inspector-section">
             <span className="inspector-section-label">元数据</span>
-            {metadataLoading ? (
-              <span className="micro-label">加载中…</span>
-            ) : assetMetadata ? (
+            {assetMetadata ? (
               <>
                 {versionConflict && (
                   <div className="inline-error">
@@ -379,23 +461,6 @@ export function InspectorPanel(props: InspectorPanelProps) {
                   </div>
                 )}
                 <div className="editor-field">
-                  <label className="micro-label" htmlFor="meta-label">
-                    标签
-                  </label>
-                  <input
-                    className="text-field"
-                    id="meta-label"
-                    maxLength={255}
-                    onBlur={handleMetadataLabelSave}
-                    onChange={handleMetadataLabelInput}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") handleMetadataLabelSave();
-                    }}
-                    style={{ height: 28, fontSize: 11 }}
-                    value={editLabel}
-                  />
-                </div>
-                <div className="editor-field" style={{ marginTop: 10 }}>
                   <label className="micro-label" htmlFor="meta-desc">
                     描述
                   </label>
@@ -571,9 +636,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
                 </div>
               </>
             ) : (
-              <p className="nav-empty" style={{ margin: "4px 0 0" }}>
-                选择资产以查看元数据
-              </p>
+              <div className="inspector-metadata-placeholder" aria-hidden="true" />
             )}
           </section>
 
@@ -603,21 +666,6 @@ export function InspectorPanel(props: InspectorPanelProps) {
                 </span>
                 AI 生成内容
               </div>
-              {aiContent.label && (
-                <div className="editor-field" style={{ marginTop: 8 }}>
-                  <label className="micro-label">标签 · AI</label>
-                  <p
-                    className="path-block"
-                    style={{
-                      color: "var(--secondary)",
-                      fontSize: 11,
-                      margin: "2px 0 0",
-                    }}
-                  >
-                    {aiContent.label}
-                  </p>
-                </div>
-              )}
               {aiContent.description && (
                 <div className="editor-field" style={{ marginTop: 8 }}>
                   <label className="micro-label">描述 · AI</label>

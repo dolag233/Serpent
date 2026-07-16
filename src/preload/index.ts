@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron';
 
 import type { AiJobStatus, LibraryApiResult, LinkedAssetDeleteResult, MediaJobStatus, PreviewResolution, SerpentLibraryApi } from '../shared/library-api';
 import { parseExtensionPairingResult, type SerpentExtensionPairingApi } from '../shared/extension-pairing';
+import { searchQuerySchema } from '../shared/asset-types';
 import type { AiSearchPlan, AssetSummary, AssetMetadataResult, CollectionSummary, FilterClause, LinkedFolderRule, LinkedFolderSummary, ManagedFolderSummary, SearchScope, SmartCollectionSummary, TagSummary } from '../shared/asset-types';
 import {
   ASSET_CHANGE_CHANNEL,
@@ -409,8 +410,8 @@ const library: SerpentLibraryApi = Object.freeze({
     return { ok: true, value: result.metadata };
   },
 
-  async setAssetMetadata({ libraryId, assetId, expectedVersion, label, description, rating, favorite, palette, sourcePageUrl }: { libraryId: string; assetId: string; expectedVersion: number; label?: string; description?: string; rating?: number; favorite?: boolean; palette?: string[]; sourcePageUrl?: string }): Promise<LibraryApiResult<AssetMetadataResult>> {
-    const result = await request({ type: 'asset.metadata.set.request', libraryId, assetId, expectedVersion, label, description, rating, favorite, palette, sourcePageUrl });
+  async setAssetMetadata({ libraryId, assetId, expectedVersion, description, rating, favorite, palette, sourcePageUrl }: { libraryId: string; assetId: string; expectedVersion: number; description?: string; rating?: number; favorite?: boolean; palette?: string[]; sourcePageUrl?: string }): Promise<LibraryApiResult<AssetMetadataResult>> {
+    const result = await request({ type: 'asset.metadata.set.request', libraryId, assetId, expectedVersion, description, rating, favorite, palette, sourcePageUrl });
     if (!result.ok) return failure(result);
     if (result.type !== 'asset.metadata.updated') throw new Error('Unexpected set-metadata response.');
     return { ok: true, value: result.metadata };
@@ -459,7 +460,11 @@ const library: SerpentLibraryApi = Object.freeze({
   },
 
   async searchAssets({ libraryId, query, filters, scope, sort, limit, offset }: { libraryId: string; query?: { clauses: { field: string | null; values: string[]; exclude: boolean }[] } | null; filters?: FilterClause[]; scope?: SearchScope; sort?: { field: 'name' | 'modified_at' | 'created_at' | 'byte_size' | 'duration' | 'rating' | 'color'; order: 'asc' | 'desc' }; limit?: number; offset?: number }): Promise<LibraryApiResult<{ items: AssetSummary[]; total: number; offset: number; snippets?: { assetId: string; text: string }[] }>> {
-    const result = await request({ type: 'asset.search.request', libraryId, query: query ?? null, filters, scope, sort, limit, offset });
+    const parsedQuery = searchQuerySchema.safeParse(query ?? null);
+    if (!parsedQuery.success) {
+      return { ok: false, error: createPublicError('INVALID_SEARCH_QUERY') };
+    }
+    const result = await request({ type: 'asset.search.request', libraryId, query: parsedQuery.data, filters, scope, sort, limit, offset });
     if (!result.ok) return failure(result);
     if (result.type !== 'asset.search.result') throw new Error('Unexpected search-assets response.');
     return { ok: true, value: { items: result.items, total: result.total, offset: result.offset, snippets: result.snippets } };
@@ -652,7 +657,7 @@ const library: SerpentLibraryApi = Object.freeze({
     provider: 'openai' | 'gemini' | 'anthropic' | null;
     model: string | null;
     hasKey: boolean;
-    enabledFields: { label: boolean; description: boolean; tags: boolean; structuredMetadata: boolean };
+    enabledFields: { description: boolean; tags: boolean; structuredMetadata: boolean };
     language: string;
     autoAnalyzeEnabled: boolean;
     disclaimerAccepted: boolean;
@@ -667,7 +672,7 @@ const library: SerpentLibraryApi = Object.freeze({
     provider: 'openai' | 'gemini' | 'anthropic';
     model: string;
     apiKey?: string;
-    enabledFields?: { label: boolean; description: boolean; tags: boolean; structuredMetadata: boolean };
+    enabledFields?: { description: boolean; tags: boolean; structuredMetadata: boolean };
     language?: string;
     autoAnalyzeEnabled: boolean;
     disclaimerAccepted: boolean;
@@ -683,7 +688,7 @@ const library: SerpentLibraryApi = Object.freeze({
     assetId: string;
   }): Promise<LibraryApiResult<{
     assetId: string;
-    generatedFields: { label?: string; description?: string; tags?: string[]; structuredMetadata?: Record<string, unknown> };
+    generatedFields: { description?: string; tags?: string[]; structuredMetadata?: Record<string, unknown> };
     modelVersion: string;
   } | { assetId: string; reason: string }>> {
     const result = await request({ type: 'asset.analyze.request', libraryId: input.libraryId, assetId: input.assetId });

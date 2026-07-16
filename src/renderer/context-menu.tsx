@@ -164,6 +164,7 @@ export function ContextMenu({
 }) {
   const { close } = useContextMenu();
   const menuRef = useRef<HTMLDivElement>(null);
+  const [keyboardNavigationActive, setKeyboardNavigationActive] = useState(false);
 
   // Start hidden + off-screen so we can measure before painting
   const [style, setStyle] = useState<CSSProperties>({
@@ -206,17 +207,28 @@ export function ContextMenu({
     setStyle({ position: "fixed", left, top });
   }, [position]);
 
-  // Auto-focus first menuitem on mount
+  // Keep the single focused highlight aligned with the pointer from the
+  // first rendered frame; fall back to the first enabled item for keyboard use.
   useEffect(() => {
     const menu = menuRef.current;
     if (!menu) return;
     // Small delay to ensure DOM is settled after layout adjustment
     const raf = requestAnimationFrame(() => {
-      const first = menu.querySelector<HTMLElement>('[role="menuitem"]:not([aria-disabled="true"])');
-      first?.focus();
+      const items = Array.from(
+        menu.querySelectorAll<HTMLElement>(
+          '[role="menuitem"]:not([aria-disabled="true"])',
+        ),
+      );
+      const first = items[0];
+      if (!first) return;
+      const underPointer = document.elementFromPoint(position.x, position.y);
+      const pointedItem = underPointer?.closest<HTMLElement>(
+        '[role="menuitem"]:not([aria-disabled="true"])',
+      );
+      (pointedItem && menu.contains(pointedItem) ? pointedItem : first).focus();
     });
     return () => cancelAnimationFrame(raf);
-  }, []);
+  }, [position]);
 
   // Arrow-key navigation + Escape within menu
   const handleMenuKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
@@ -227,6 +239,9 @@ export function ContextMenu({
       menu.querySelectorAll<HTMLElement>('[role="menuitem"]'),
     ).filter((el) => el.getAttribute("aria-disabled") !== "true");
     if (items.length === 0) return;
+    if (["ArrowDown", "ArrowUp", "Home", "End"].includes(e.key)) {
+      setKeyboardNavigationActive(true);
+    }
 
     const currentIdx = items.indexOf(document.activeElement as HTMLElement);
 
@@ -248,11 +263,12 @@ export function ContextMenu({
   return (
     <div
       ref={menuRef}
-      className="context-menu"
+      className={`context-menu${keyboardNavigationActive ? " is-keyboard-navigation" : ""}`}
       role="menu"
       aria-label={ariaLabel}
       style={style}
       onKeyDown={handleMenuKeyDown}
+      onPointerMove={() => setKeyboardNavigationActive(false)}
     >
       {children}
     </div>
@@ -281,6 +297,7 @@ export function ContextMenuItem({
   onAction: () => void;
 }) {
   const { close } = useContextMenu();
+  const buttonRef = useRef<HTMLButtonElement>(null);
 
   const handleClick = () => {
     if (disabled) return;
@@ -288,8 +305,13 @@ export function ContextMenuItem({
     close();
   };
 
+  const handleMouseEnter = () => {
+    if (!disabled) buttonRef.current?.focus();
+  };
+
   return (
     <button
+      ref={buttonRef}
       className={`context-menu-item${danger ? " is-danger" : ""}${disabled ? " is-disabled" : ""}`}
       role="menuitem"
       tabIndex={-1}
@@ -302,6 +324,7 @@ export function ContextMenuItem({
       }
       title={disabled && disabledReason ? disabledReason : undefined}
       onClick={handleClick}
+      onMouseEnter={handleMouseEnter}
     >
       {icon && <span className="context-menu-item-icon">{icon}</span>}
       <span className="context-menu-item-label">{label}</span>

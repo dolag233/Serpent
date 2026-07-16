@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { _electron as electron, expect, test } from "@playwright/test";
+import sharp from "sharp";
 
 import { resolveElectronExecutablePath } from "./electron-test-helpers";
 
@@ -17,6 +18,33 @@ const VALID_PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
   "base64",
 );
+
+const MIXED_ASPECT_DIMENSIONS = [
+  { width: 320, height: 180 },
+  { width: 180, height: 320 },
+  { width: 240, height: 240 },
+  { width: 360, height: 240 },
+  { width: 240, height: 360 },
+] as const;
+
+async function writeMixedAspectPng(sourcePath: string, index: number) {
+  const dimensions =
+    MIXED_ASPECT_DIMENSIONS[index % MIXED_ASPECT_DIMENSIONS.length]!;
+  await sharp({
+    create: {
+      ...dimensions,
+      channels: 4,
+      background: {
+        r: (index * 37) % 255,
+        g: (index * 71) % 255,
+        b: (index * 109) % 255,
+        alpha: 1,
+      },
+    },
+  })
+    .png()
+    .toFile(sourcePath);
+}
 
 // ---------------------------------------------------------------------------
 // LOCATOR NOTES:
@@ -191,6 +219,83 @@ test("restores canvas preferences after a full restart", async () => {
   }
 });
 
+test("lays out a sparse masonry folder from left to right", async () => {
+  const temporaryRoot = mkdtempSync(
+    path.join(tmpdir(), "serpent-prefs-sparse-masonry-"),
+  );
+  const libraryName = "稀疏瀑布流";
+  const libraryPath = path.join(temporaryRoot, libraryName);
+  const sourceRoot = path.join(temporaryRoot, "sources");
+  mkdirSync(sourceRoot);
+  const sourcePaths = Array.from({ length: 3 }, (_, index) =>
+    path.join(sourceRoot, `sparse-${index}.png`),
+  );
+  await Promise.all(
+    sourcePaths.map((sourcePath, index) =>
+      writeMixedAspectPng(sourcePath, index),
+    ),
+  );
+
+  const executablePath = resolveElectronExecutablePath();
+  const applicationDirectory =
+    process.env.SERPENT_E2E_APP_DIRECTORY ?? process.cwd();
+  const application = await electron.launch({
+    args: [applicationDirectory],
+    cwd: applicationDirectory,
+    executablePath,
+    env: {
+      ...process.env,
+      SERPENT_E2E: "1",
+      SERPENT_E2E_CREATE_PARENT_PATH: temporaryRoot,
+      SERPENT_E2E_OPEN_LIBRARY_PATH: libraryPath,
+      SERPENT_E2E_USER_DATA_PATH: path.join(temporaryRoot, "user-data"),
+      SERPENT_E2E_IMPORT_FILES: sourcePaths.join(path.delimiter),
+    },
+  });
+
+  try {
+    const window = await application.firstWindow();
+    await window.setViewportSize({ width: 1440, height: 720 });
+    await window.getByRole("button", { name: "创建资源库" }).click();
+    await window.getByLabel("名称").fill(libraryName);
+    await window.getByRole("button", { name: "创建", exact: true }).click();
+    await window
+      .getByRole("button", { name: "导入文件", exact: true })
+      .first()
+      .click();
+    await expect(window.locator(".asset-card")).toHaveCount(3, {
+      timeout: 30_000,
+    });
+
+    await window.getByRole("button", { name: "瀑布流视图" }).click();
+    const sizeSlider = window.getByLabel("资产缩略图大小");
+    await sizeSlider.fill("96");
+    await expect(sizeSlider).toHaveValue("96");
+    await expect
+      .poll(() => window.locator(".masonry-column").count())
+      .toBeGreaterThanOrEqual(3);
+
+    const boxes = await Promise.all(
+      sourcePaths.map(async (_, index) => {
+        const box = await window
+          .getByRole("button", { name: new RegExp(`^sparse-${index}\\.png`) })
+          .boundingBox();
+        if (!box) throw new Error(`Sparse asset ${index} has no layout box`);
+        return box;
+      }),
+    );
+    expect(boxes[0]!.x).toBeLessThan(boxes[1]!.x);
+    expect(boxes[1]!.x).toBeLessThan(boxes[2]!.x);
+    expect(
+      Math.max(...boxes.map((box) => box.y)) -
+        Math.min(...boxes.map((box) => box.y)),
+    ).toBeLessThanOrEqual(1);
+  } finally {
+    await application.close();
+    rmSync(temporaryRoot, { force: true, recursive: true });
+  }
+});
+
 // ---------------------------------------------------------------------------
 // Test 2 — All-scope consistency, accessible names, Ctrl+wheel, masonry,
 //          and no-requery (acceptance criteria #2, #3, #4, #5, #6, #7)
@@ -210,9 +315,13 @@ test("maintains consistent preferences, accessible names, zoom behavior, and avo
       sourceRoot,
       `automatic-${index.toString().padStart(3, "0")}.png`,
     );
-    writeFileSync(sourcePath, VALID_PNG);
     return sourcePath;
   });
+  await Promise.all(
+    sourcePaths.map((sourcePath, index) =>
+      writeMixedAspectPng(sourcePath, index),
+    ),
+  );
   const targetName = "automatic-000.png";
 
   const executablePath = resolveElectronExecutablePath();
@@ -243,13 +352,12 @@ test("maintains consistent preferences, accessible names, zoom behavior, and avo
       window.getByText(libraryName, { exact: true }).first(),
     ).toBeVisible();
 
-    // Import the asset
+    // Import the mixed-aspect assets.
     await window
       .getByRole("button", { name: "导入文件", exact: true })
       .first()
       .click();
 
-    // Wait for the asset card (name is ON by default)
     await expect(window.locator(".asset-card")).toHaveCount(assetCount, {
       timeout: 30_000,
     });
@@ -270,6 +378,22 @@ test("maintains consistent preferences, accessible names, zoom behavior, and avo
 
     const sizeSlider = window.getByLabel("资产缩略图大小");
     const nameToggle = window.getByRole("button", { name: "文件名" });
+
+    async function firstThreeAssetBoxes() {
+      return Promise.all(
+        [0, 1, 2].map(async (index) => {
+          const box = await window
+            .getByRole("button", {
+              name: new RegExp(
+                `^automatic-${index.toString().padStart(3, "0")}\\.png`,
+              ),
+            })
+            .boundingBox();
+          if (!box) throw new Error(`Asset ${index} has no layout box`);
+          return box;
+        }),
+      );
+    }
 
     // -------------------------------------------------------------------
     // 2a. Accessible name when name is hidden, then when name is visible
@@ -366,11 +490,40 @@ test("maintains consistent preferences, accessible names, zoom behavior, and avo
     const gridWidths = [];
     for (const size of [96, 160, 320] as const) {
       const width = await measureCardWidth(size);
-      expect(Math.abs(width - size)).toBeLessThanOrEqual(1);
+      expect(width).toBeGreaterThanOrEqual(size - 1);
+      expect(width).toBeLessThan(size * 2 + 12);
       gridWidths.push(width);
     }
     expect(gridWidths[0]).toBeLessThan(gridWidths[1]!);
     expect(gridWidths[1]).toBeLessThan(gridWidths[2]!);
+
+    // A full first row must consume the available grid width at narrow,
+    // typical, and wide window sizes. This catches the old fixed-width
+    // columns that left a conspicuous blank strip on the right.
+    await sizeSlider.fill("96");
+    for (const viewportWidth of [900, 1200, 1600]) {
+      await window.setViewportSize({ width: viewportWidth, height: 720 });
+      await canvas.evaluate((element) => { element.scrollTop = 0; });
+      await canvas.evaluate(() => new Promise<void>((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+      }));
+      const fill = await window.locator(".asset-grid").evaluate((grid) => {
+        const gridRect = grid.getBoundingClientRect();
+        const paddingRight = Number.parseFloat(getComputedStyle(grid).paddingRight);
+        const cards = Array.from(grid.querySelectorAll<HTMLElement>(".asset-card"))
+          .map((card) => card.getBoundingClientRect());
+        const firstTop = Math.min(...cards.map((card) => card.top));
+        const firstRow = cards.filter((card) => Math.abs(card.top - firstTop) < 2);
+        return {
+          gridRight: gridRect.right - paddingRight,
+          lastRight: Math.max(...firstRow.map((card) => card.right)),
+          firstRowCount: firstRow.length,
+        };
+      });
+      expect(fill.firstRowCount).toBeGreaterThan(1);
+      expect(Math.abs(fill.gridRight - fill.lastRight)).toBeLessThanOrEqual(1.5);
+    }
+    await window.setViewportSize({ width: 1280, height: 720 });
 
     // Normal wheel (no Ctrl) should NOT change card size — only scrolls
     await sizeSlider.fill("200");
@@ -389,15 +542,58 @@ test("maintains consistent preferences, accessible names, zoom behavior, and avo
       await expect(masonryButton).toHaveAttribute("aria-pressed", "true");
     }
 
-    const masonryWidths = [];
-    for (const size of [96, 160, 320] as const) {
-      const width = await measureCardWidth(size);
-      expect(width).toBeGreaterThanOrEqual(size - 1);
-      expect(width).toBeLessThanOrEqual(size * 2 + 12);
-      masonryWidths.push(width);
+    // Explicit masonry columns must remain bounded by the canvas at every
+    // supported size, across a compact and a wide window.  At 96px both
+    // windows have room for at least three columns; the first three imported
+    // assets must seed those columns from left to right instead of forming a
+    // single vertical stack at the left edge.
+    for (const viewportWidth of [1054, 1440]) {
+      await window.setViewportSize({ width: viewportWidth, height: 720 });
+      const masonryWidths = [];
+      for (const size of [96, 160, 320] as const) {
+        const width = await measureCardWidth(size);
+        expect(width).toBeGreaterThanOrEqual(size - 1);
+        expect(width).toBeLessThanOrEqual(size * 2 + 12);
+        masonryWidths.push(width);
+
+        const bounds = await window.locator(".masonry-columns").evaluate(
+          (columns) => {
+            const canvas = columns.closest<HTMLElement>(".workspace-canvas");
+            if (!canvas) throw new Error("Missing workspace canvas");
+            const canvasRect = canvas.getBoundingClientRect();
+            const columnRects = Array.from(
+              columns.querySelectorAll<HTMLElement>(".masonry-column"),
+              (column) => column.getBoundingClientRect(),
+            );
+            return {
+              canvasLeft: canvasRect.left,
+              canvasRight: canvasRect.right,
+              columnCount: columnRects.length,
+              left: Math.min(...columnRects.map((rect) => rect.left)),
+              right: Math.max(...columnRects.map((rect) => rect.right)),
+            };
+          },
+        );
+        expect(bounds.left).toBeGreaterThanOrEqual(bounds.canvasLeft - 1);
+        expect(bounds.right).toBeLessThanOrEqual(bounds.canvasRight + 1);
+
+        if (size === 96) {
+          expect(bounds.columnCount).toBeGreaterThanOrEqual(3);
+          const firstRow = await firstThreeAssetBoxes();
+          expect(firstRow[0]!.x).toBeLessThan(firstRow[1]!.x);
+          expect(firstRow[1]!.x).toBeLessThan(firstRow[2]!.x);
+          expect(Math.abs(firstRow[0]!.y - firstRow[1]!.y)).toBeLessThanOrEqual(
+            1,
+          );
+          expect(Math.abs(firstRow[1]!.y - firstRow[2]!.y)).toBeLessThanOrEqual(
+            1,
+          );
+        }
+      }
+      expect(masonryWidths[0]).toBeLessThan(masonryWidths[1]!);
+      expect(masonryWidths[1]).toBeLessThan(masonryWidths[2]!);
     }
-    expect(masonryWidths[0]).toBeLessThan(masonryWidths[1]!);
-    expect(masonryWidths[1]).toBeLessThan(masonryWidths[2]!);
+    await window.setViewportSize({ width: 1280, height: 720 });
 
     await sizeSlider.fill("160");
     await expect(sizeSlider).toHaveValue("160");
@@ -416,13 +612,15 @@ test("maintains consistent preferences, accessible names, zoom behavior, and avo
       .poll(() => canvas.evaluate((el) => el.scrollTop))
       .toBe(0);
 
-    const firstCard = window.locator(".asset-card").first();
-    const firstCardBox = await firstCard.boundingBox();
     const canvasBox = await canvas.boundingBox();
-    expect(firstCardBox).not.toBeNull();
     expect(canvasBox).not.toBeNull();
-    // First card's top edge should be at or below the canvas top edge
-    expect(firstCardBox!.y).toBeGreaterThanOrEqual(canvasBox!.y - 1);
+    const topmostCardY = await window.locator(".asset-card").evaluateAll(
+      (cards) =>
+        Math.min(
+          ...cards.map((card) => card.getBoundingClientRect().top),
+        ),
+    );
+    expect(topmostCardY).toBeGreaterThanOrEqual(canvasBox!.y - 1);
 
     // Scroll to bottom and assert last card is fully visible (not clipped at bottom)
     const scrollDimensions = await canvas.evaluate((el) => ({
@@ -444,14 +642,16 @@ test("maintains consistent preferences, accessible names, zoom behavior, and avo
       .poll(() => canvas.evaluate((el) => el.scrollTop))
       .toBe(maxScrollTop);
 
-    const lastCard = window.locator(".asset-card").last();
-    const lastCardBox = await lastCard.boundingBox();
-    expect(lastCardBox).not.toBeNull();
-    // Last card's bottom edge should be at or above the canvas bottom edge
-    const canvasBottom = canvasBox!.y + canvasBox!.height;
-    expect(lastCardBox!.y + lastCardBox!.height).toBeLessThanOrEqual(
-      canvasBottom + 1,
+    // The deepest card is not necessarily the last DOM node once assets are
+    // balanced across explicit columns.  Assert the true visual bottom.
+    const deepestCardBottom = await window.locator(".asset-card").evaluateAll(
+      (cards) =>
+        Math.max(
+          ...cards.map((card) => card.getBoundingClientRect().bottom),
+        ),
     );
+    const canvasBottom = canvasBox!.y + canvasBox!.height;
+    expect(deepestCardBottom).toBeLessThanOrEqual(canvasBottom + 1);
 
     // -------------------------------------------------------------------
     // 2d. No-requery on field toggle (criterion #6)

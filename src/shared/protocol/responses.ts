@@ -577,7 +577,6 @@ const assetOperationSuccessSchemas = [
     type: z.literal('asset.analyzed'),
     assetId: nonBlankString,
     generatedFields: z.strictObject({
-      label: nonBlankString.optional(),
       description: nonBlankString.optional(),
       tags: z.array(nonBlankString).optional(),
       structuredMetadata: z.record(z.string(), z.unknown()).optional(),
@@ -905,7 +904,6 @@ const rendererSuccessResultSchema = z.discriminatedUnion('type', [
     model: nonBlankString.nullable(),
     hasKey: z.boolean(),
     enabledFields: z.strictObject({
-      label: z.boolean(),
       description: z.boolean(),
       tags: z.boolean(),
       structuredMetadata: z.boolean(),

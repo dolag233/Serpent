@@ -14,11 +14,6 @@ const OPENAI_RESPONSE_JSON_SCHEMA = {
   schema: {
     type: 'object',
     properties: {
-      label: {
-        type: ['string', 'null'],
-        description:
-          'A concise title or label for the asset. Omit if not applicable.',
-      },
       description: {
         type: ['string', 'null'],
         description:
@@ -38,7 +33,7 @@ const OPENAI_RESPONSE_JSON_SCHEMA = {
           'Additional structured metadata as key-value pairs. Omit if not applicable.',
       },
     },
-    required: ['label', 'description', 'tags', 'structured_metadata'],
+    required: ['description', 'tags', 'structured_metadata'],
     additionalProperties: false,
   },
 };
@@ -166,7 +161,6 @@ export class OpenAIVendorAdapter implements VendorAdapter {
 
   #buildSystemPrompt(request: AiAnalysisRequest): string {
     const fields: string[] = [];
-    if (request.enabledFields.label) fields.push('label');
     if (request.enabledFields.description) fields.push('description');
     if (request.enabledFields.tags) fields.push('tags');
     if (request.enabledFields.structuredMetadata)

@@ -194,7 +194,7 @@ export interface SerpentLibraryApi {
   listCollectionAssets(input: { libraryId: string; collectionId: string; recursive: boolean }): Promise<LibraryApiResult<AssetSummary[]>>;
   // Asset Metadata
   getAssetMetadata(input: { libraryId: string; assetId: string }): Promise<LibraryApiResult<AssetMetadataResult>>;
-  setAssetMetadata(input: { libraryId: string; assetId: string; expectedVersion: number; label?: string; description?: string; rating?: number; favorite?: boolean; palette?: string[]; sourcePageUrl?: string }): Promise<LibraryApiResult<AssetMetadataResult>>;
+  setAssetMetadata(input: { libraryId: string; assetId: string; expectedVersion: number; description?: string; rating?: number; favorite?: boolean; palette?: string[]; sourcePageUrl?: string }): Promise<LibraryApiResult<AssetMetadataResult>>;
   backfillAssetMetadata(input: { libraryId: string }): Promise<LibraryApiResult<{ backfilledCount: number }>>;
   // Smart Collections
   listSmartCollections(input: { libraryId: string }): Promise<LibraryApiResult<SmartCollectionSummary[]>>;
@@ -236,7 +236,7 @@ export interface SerpentLibraryApi {
     provider: 'openai' | 'gemini' | 'anthropic' | null;
     model: string | null;
     hasKey: boolean;
-    enabledFields: { label: boolean; description: boolean; tags: boolean; structuredMetadata: boolean };
+    enabledFields: { description: boolean; tags: boolean; structuredMetadata: boolean };
     language: string;
     autoAnalyzeEnabled: boolean;
     disclaimerAccepted: boolean;
@@ -245,7 +245,7 @@ export interface SerpentLibraryApi {
     provider: 'openai' | 'gemini' | 'anthropic';
     model: string;
     apiKey?: string;
-    enabledFields?: { label: boolean; description: boolean; tags: boolean; structuredMetadata: boolean };
+    enabledFields?: { description: boolean; tags: boolean; structuredMetadata: boolean };
     language?: string;
     autoAnalyzeEnabled: boolean;
     disclaimerAccepted: boolean;
@@ -254,7 +254,7 @@ export interface SerpentLibraryApi {
     libraryId: string;
     assetId: string;
   }): Promise<LibraryApiResult<
-    | { assetId: string; generatedFields: { label?: string; description?: string; tags?: string[]; structuredMetadata?: Record<string, unknown> }; modelVersion: string }
+    | { assetId: string; generatedFields: { description?: string; tags?: string[]; structuredMetadata?: Record<string, unknown> }; modelVersion: string }
     | { assetId: string; reason: string }
   >>;
   // Thumbnail & Preview

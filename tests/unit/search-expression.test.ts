@@ -4,8 +4,8 @@ import { formatDuration, parseNumericRange, parseSearchExpression } from '../../
 
 describe('renderer search expression parser', () => {
   it('keeps a field-qualified quoted phrase together', () => {
-    expect(parseSearchExpression('label:"hero concept"')).toEqual([
-      { field: 'label', values: ['hero concept'], exclude: false },
+    expect(parseSearchExpression('filename:"hero concept"')).toEqual([
+      { field: 'filename', values: ['hero concept'], exclude: false },
     ]);
   });
 

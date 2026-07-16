@@ -125,54 +125,43 @@ test('organizes, finds, trashes, and restores an imported asset through the UI',
     await expect(window.getByRole('button', { name: /hero\.png/i })).toBeVisible();
 
     await window.getByRole('button', { name: /hero\.png/i }).click();
-    const labelInput = window.getByRole('textbox', { name: '标签' });
-    await expect(labelInput).toBeVisible();
-    await labelInput.fill('英雄资产');
-    await labelInput.press('Enter');
-    await expect(window.getByText(/版本 1/)).toBeVisible();
-    const visibleCardTitle = window.locator('.asset-card .asset-caption strong');
-    await expect(visibleCardTitle).toHaveText('英雄资产');
     await window.getByRole('button', { name: '4 星' }).click();
-    await expect(window.getByText(/版本 2/)).toBeVisible();
+    await expect(window.getByText(/版本 1/)).toBeVisible();
     await window.getByRole('button', { name: '标记喜欢' }).click();
-    await expect(window.getByText(/版本 3/)).toBeVisible();
+    await expect(window.getByText(/版本 2/)).toBeVisible();
     await window.getByLabel('人工色卡').fill('red');
     await window.getByLabel('人工色卡').press('Enter');
     await expect(window.getByText('保存色卡失败。原因：颜色必须使用 #RRGGBB 格式。')).toBeVisible();
-    await expect(window.getByText(/版本 3/)).toBeVisible();
+    await expect(window.getByText(/版本 2/)).toBeVisible();
     await window.getByLabel('人工色卡').fill('#112233, #AABBCC');
     await window.getByLabel('人工色卡').press('Enter');
-    await expect(window.getByText(/版本 4/)).toBeVisible();
+    await expect(window.getByText(/版本 3/)).toBeVisible();
     await expect(window.getByLabel('色卡预览').locator('span')).toHaveCount(2);
 
     const descriptionInput = window.getByLabel('描述');
     const sourceUrlInput = window.getByLabel('源链接 (URL)');
     await descriptionInput.fill('待清空描述');
     await descriptionInput.blur();
-    await expect(window.getByText(/版本 5/)).toBeVisible();
+    await expect(window.getByText(/版本 4/)).toBeVisible();
     await sourceUrlInput.fill('javascript:alert(1)');
     await sourceUrlInput.press('Enter');
     await expect(window.getByText('保存源链接失败。原因：请输入不含账号密码的 HTTP(S) 完整链接。')).toBeVisible();
-    await expect(window.getByText(/版本 5/)).toBeVisible();
+    await expect(window.getByText(/版本 4/)).toBeVisible();
     await sourceUrlInput.fill('https://example.com/source');
     await sourceUrlInput.press('Enter');
-    await expect(window.getByText(/版本 6/)).toBeVisible();
+    await expect(window.getByText(/版本 5/)).toBeVisible();
 
-    await labelInput.fill('');
-    await labelInput.press('Enter');
-    await expect(window.getByText(/版本 7/)).toBeVisible();
-    await expect(visibleCardTitle).toHaveText('hero.png');
     await descriptionInput.fill('');
     await descriptionInput.blur();
-    await expect(window.getByText(/版本 8/)).toBeVisible();
+    await expect(window.getByText(/版本 6/)).toBeVisible();
     await sourceUrlInput.fill('');
     await sourceUrlInput.press('Enter');
-    await expect(window.getByText(/版本 9/)).toBeVisible();
+    await expect(window.getByText(/版本 7/)).toBeVisible();
     const clearedMetadata = await window.evaluate(async () => {
       const api = (globalThis as typeof globalThis & { serpent: { library: {
         listOpen(): Promise<{ ok: boolean; value?: Array<{ libraryId: string }> }>;
         listAssets(input: { libraryId: string; folderId?: string; recursive: boolean }): Promise<{ ok: boolean; value?: Array<{ assetId: string }> }>;
-        getAssetMetadata(input: { libraryId: string; assetId: string }): Promise<{ ok: boolean; value?: { label: string | null; description: string | null; sourcePageUrl: string | null } }>;
+        getAssetMetadata(input: { libraryId: string; assetId: string }): Promise<{ ok: boolean; value?: { description: string | null; sourcePageUrl: string | null } }>;
       } } }).serpent.library;
       const open = await api.listOpen();
       const libraryId = open.value?.[0]?.libraryId;
@@ -183,20 +172,15 @@ test('organizes, finds, trashes, and restores an imported asset through the UI',
       const metadata = await api.getAssetMetadata({ libraryId, assetId });
       return metadata.value;
     });
-    expect(clearedMetadata).toMatchObject({ label: null, description: null, sourcePageUrl: null });
-    await labelInput.fill('英雄资产');
-    await labelInput.press('Enter');
-    await expect(window.getByText(/版本 10/)).toBeVisible();
-    await expect(visibleCardTitle).toHaveText('英雄资产');
-
+    expect(clearedMetadata).toMatchObject({ description: null, sourcePageUrl: null });
     // Leaving the description field and clicking a rating are one user gesture.
     // Both saves must be serialized locally instead of racing with the same version.
     await descriptionInput.fill('快速连续修改的描述');
     await window.getByRole('button', { name: '5 星' }).click();
-    await expect(window.getByText(/版本 12/)).toBeVisible();
+    await expect(window.getByText(/版本 9/)).toBeVisible();
     await expect(window.getByText('版本冲突', { exact: true })).toHaveCount(0);
 
-    await window.getByLabel('搜索资源库').fill('英雄资产');
+    await window.getByLabel('搜索资源库').fill('hero.png');
     await window.getByText('筛选与排序', { exact: true }).click();
     await window.getByLabel('喜欢过滤').selectOption('yes');
     await window.getByLabel('标签过滤').fill('临时');

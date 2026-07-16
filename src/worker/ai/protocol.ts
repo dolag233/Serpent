@@ -5,10 +5,6 @@ import { z } from 'zod';
  * This is the JSON shape the vendor API is instructed to return.
  */
 export const aiStructuredOutputSchema = z.strictObject({
-  label: z
-    .string()
-    .optional()
-    .describe('A concise title or label for the asset.'),
   description: z
     .string()
     .optional()
@@ -71,7 +67,6 @@ export interface AiAnalysisRequest {
 
   /** Which fields the AI may populate. */
   enabledFields: {
-    label: boolean;
     description: boolean;
     tags: boolean;
     structuredMetadata: boolean;

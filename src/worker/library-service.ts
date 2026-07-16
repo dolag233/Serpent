@@ -932,6 +932,116 @@ const LINKED_FOLDER_RULES_SCHEMA_CHECKSUM = createHash('sha256')
   .update(LINKED_FOLDER_RULES_SCHEMA_SQL)
   .digest('hex');
 
+// Migration v14: retire the pre-release asset Label concept. Real filenames,
+// descriptions, ratings, favorites, palettes, source URLs, and tag relations
+// remain intact. Label values are intentionally discarded rather than mapped
+// to filenames or tags because neither mapping preserves their semantics.
+const RETIRE_ASSET_LABEL_SCHEMA_SQL = `
+  -- A saved query that explicitly depended on Label cannot be translated to
+  -- filename, tags, or description without changing user intent. Delete these
+  -- pre-release smart collections instead of leaving a silently empty result.
+  DELETE FROM smart_collections
+   WHERE json_valid(query_definition_json)
+     AND EXISTS (
+       SELECT 1
+         FROM json_tree(smart_collections.query_definition_json)
+        WHERE json_tree.key = 'field' AND json_tree.value = 'label'
+     );
+
+  CREATE TABLE asset_metadata_v14 (
+    asset_id TEXT PRIMARY KEY REFERENCES assets(asset_id) ON DELETE CASCADE,
+    description TEXT,
+    rating INTEGER NOT NULL DEFAULT 0 CHECK (rating >= 0 AND rating <= 5),
+    favorite INTEGER NOT NULL DEFAULT 0 CHECK (favorite IN (0, 1)),
+    palette TEXT,
+    source_page_url TEXT,
+    entity_version INTEGER NOT NULL DEFAULT 1,
+    updated_at TEXT NOT NULL
+  );
+  INSERT INTO asset_metadata_v14
+    (asset_id, description, rating, favorite, palette, source_page_url,
+     entity_version, updated_at)
+  SELECT asset_id, description, rating, favorite, palette, source_page_url,
+         entity_version, updated_at
+    FROM asset_metadata;
+  DROP TABLE asset_metadata;
+  ALTER TABLE asset_metadata_v14 RENAME TO asset_metadata;
+
+  CREATE TABLE ai_content_v14 (
+    ai_content_id TEXT PRIMARY KEY,
+    asset_id TEXT NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE,
+    revision_id TEXT REFERENCES revisions(revision_id) ON DELETE SET NULL,
+    field_name TEXT NOT NULL CHECK (field_name IN ('description', 'structured_metadata')),
+    value TEXT NOT NULL,
+    model_id TEXT NOT NULL,
+    model_version TEXT NOT NULL,
+    generated_at TEXT NOT NULL
+  );
+  INSERT INTO ai_content_v14
+    (ai_content_id, asset_id, revision_id, field_name, value,
+     model_id, model_version, generated_at)
+  SELECT ai_content_id, asset_id, revision_id, field_name, value,
+         model_id, model_version, generated_at
+    FROM ai_content
+   WHERE field_name <> 'label';
+  DROP TABLE ai_content;
+  ALTER TABLE ai_content_v14 RENAME TO ai_content;
+  CREATE INDEX ai_content_asset_field ON ai_content(asset_id, field_name);
+
+  DROP TRIGGER IF EXISTS asset_search_index_ai;
+  DROP TRIGGER IF EXISTS asset_search_index_ad;
+  DROP TRIGGER IF EXISTS asset_search_index_au;
+  DROP TABLE asset_search;
+
+  CREATE TABLE asset_search_index_v14 (
+    asset_id TEXT UNIQUE NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE,
+    filename TEXT NOT NULL DEFAULT '',
+    tags TEXT NOT NULL DEFAULT '',
+    description TEXT NOT NULL DEFAULT '',
+    source_url TEXT NOT NULL DEFAULT '',
+    folder_path TEXT NOT NULL DEFAULT '',
+    metadata_text TEXT NOT NULL DEFAULT ''
+  );
+  INSERT INTO asset_search_index_v14
+    (asset_id, filename, tags, description, source_url, folder_path, metadata_text)
+  SELECT asset_id, filename, tags, description, source_url, folder_path, metadata_text
+    FROM asset_search_index;
+  DROP TABLE asset_search_index;
+  ALTER TABLE asset_search_index_v14 RENAME TO asset_search_index;
+
+  CREATE VIRTUAL TABLE asset_search USING fts5(
+    filename,
+    tags,
+    description,
+    source_url,
+    folder_path,
+    metadata_text,
+    content='asset_search_index'
+  );
+  CREATE TRIGGER asset_search_index_ai AFTER INSERT ON asset_search_index BEGIN
+    INSERT INTO asset_search(rowid, filename, tags, description, source_url, folder_path, metadata_text)
+    VALUES (new.rowid, new.filename, new.tags, new.description,
+            new.source_url, new.folder_path, new.metadata_text);
+  END;
+  CREATE TRIGGER asset_search_index_ad AFTER DELETE ON asset_search_index BEGIN
+    INSERT INTO asset_search(asset_search, rowid, filename, tags, description, source_url, folder_path, metadata_text)
+    VALUES ('delete', old.rowid, old.filename, old.tags, old.description,
+            old.source_url, old.folder_path, old.metadata_text);
+  END;
+  CREATE TRIGGER asset_search_index_au AFTER UPDATE ON asset_search_index BEGIN
+    INSERT INTO asset_search(asset_search, rowid, filename, tags, description, source_url, folder_path, metadata_text)
+    VALUES ('delete', old.rowid, old.filename, old.tags, old.description,
+            old.source_url, old.folder_path, old.metadata_text);
+    INSERT INTO asset_search(rowid, filename, tags, description, source_url, folder_path, metadata_text)
+    VALUES (new.rowid, new.filename, new.tags, new.description,
+            new.source_url, new.folder_path, new.metadata_text);
+  END;
+  INSERT INTO asset_search(asset_search) VALUES('rebuild');
+`;
+const RETIRE_ASSET_LABEL_SCHEMA_CHECKSUM = createHash('sha256')
+  .update(RETIRE_ASSET_LABEL_SCHEMA_SQL)
+  .digest('hex');
+
 const MIGRATIONS = [
   { version: 1, sql: INITIAL_SCHEMA_SQL, checksum: INITIAL_SCHEMA_CHECKSUM },
   { version: 2, sql: ASSET_SCHEMA_SQL, checksum: ASSET_SCHEMA_CHECKSUM },
@@ -950,6 +1060,7 @@ const MIGRATIONS = [
   { version: 11, sql: MEDIA_DURATION_SCHEMA_SQL, checksum: MEDIA_DURATION_SCHEMA_CHECKSUM },
   { version: 12, sql: PALETTE_SORT_SCHEMA_SQL, checksum: PALETTE_SORT_SCHEMA_CHECKSUM },
   { version: 13, sql: LINKED_FOLDER_RULES_SCHEMA_SQL, checksum: LINKED_FOLDER_RULES_SCHEMA_CHECKSUM },
+  { version: 14, sql: RETIRE_ASSET_LABEL_SCHEMA_SQL, checksum: RETIRE_ASSET_LABEL_SCHEMA_CHECKSUM },
 ] as const;
 const SUPPORTED_SCHEMA_VERSION = MIGRATIONS.at(-1)!.version;
 
@@ -986,7 +1097,6 @@ interface AssetSummaryRow {
   location_kind: 'managed' | 'linked';
   modified_at: string;
   relative_file_path: string;
-  label: string | null;
   rating: number;
   favorite: number;
 }
@@ -1926,7 +2036,7 @@ function migrateDatabase(connection: DatabaseConnection, allowFresh: boolean): v
     // table references smart_collections via FK, the table itself has an
     // outgoing FK to library(library_id). Disabling FK prevents DROP TABLE
     // from blocking and guarantees the rebuild is clean.
-    const rebuildsTable = migration.version === 4 || migration.version === 6 || migration.version === 7;
+    const rebuildsTable = migration.version === 4 || migration.version === 6 || migration.version === 7 || migration.version === 14;
     if (rebuildsTable) connection.pragma('foreign_keys = OFF');
     try {
       connection.transaction(() => {
@@ -3869,7 +3979,7 @@ export class LibraryService {
       .prepare(
         `SELECT a.asset_id, a.managed_folder_id, a.linked_folder_id, a.location_kind, a.relative_file_path,
                 a.current_revision_id, a.availability, r.byte_size, r.modified_at,
-                m.label, COALESCE(m.rating, 0) AS rating, COALESCE(m.favorite, 0) AS favorite,
+                COALESCE(m.rating, 0) AS rating, COALESCE(m.favorite, 0) AS favorite,
                 a.deleted_at, a.trashed_from_relative_path,
                 ra.status AS thumbnail_status,
                 ra.artifact_id AS thumbnail_artifact_id,
@@ -4217,10 +4327,16 @@ export class LibraryService {
     const rows = openLibrary.connection
       .prepare(
         `SELECT t.tag_id, t.name,
-                (SELECT COUNT(*) FROM human_asset_tags h WHERE h.tag_id = t.tag_id) AS asset_count
+                COUNT(used.asset_id) AS asset_count
            FROM tags t
+           LEFT JOIN (
+             SELECT asset_id, tag_id FROM human_asset_tags
+             UNION
+             SELECT asset_id, tag_id FROM ai_asset_tags
+           ) used ON used.tag_id = t.tag_id
           WHERE t.library_id = ?
-          ORDER BY t.name`,
+          GROUP BY t.tag_id, t.name, t.created_at
+          ORDER BY t.created_at DESC, t.name`,
       )
       .all(openLibrary.summary.libraryId) as Array<{
         tag_id: string;
@@ -4273,8 +4389,15 @@ export class LibraryService {
     }
 
     const countRow = openLibrary.connection
-      .prepare('SELECT COUNT(*) AS count FROM human_asset_tags WHERE tag_id = ?')
-      .get(input.tagId) as { count: number };
+      .prepare(
+        `SELECT COUNT(*) AS count
+           FROM (
+             SELECT asset_id FROM human_asset_tags WHERE tag_id = ?
+             UNION
+             SELECT asset_id FROM ai_asset_tags WHERE tag_id = ?
+           )`,
+      )
+      .get(input.tagId, input.tagId) as { count: number };
     return { tagId: input.tagId, name: trimmed, assetCount: countRow.count };
   }
 
@@ -4711,7 +4834,7 @@ export class LibraryService {
       .prepare(
         `SELECT DISTINCT a.asset_id, a.location_kind, a.managed_folder_id, a.relative_file_path,
                 a.current_revision_id, a.availability, r.byte_size, r.modified_at,
-                m.label, COALESCE(m.rating, 0) AS rating, COALESCE(m.favorite, 0) AS favorite,
+                COALESCE(m.rating, 0) AS rating, COALESCE(m.favorite, 0) AS favorite,
                 a.deleted_at, a.trashed_from_relative_path
            FROM collection_assets ca
            JOIN assets a ON a.asset_id = ca.asset_id
@@ -4730,7 +4853,6 @@ export class LibraryService {
         managed_folder_id: string | null;
         modified_at: string;
         relative_file_path: string;
-        label: string | null;
         rating: number;
         favorite: number;
         deleted_at: string | null;
@@ -4826,14 +4948,13 @@ export class LibraryService {
 
     const row = openLibrary.connection
       .prepare(
-        `SELECT asset_id, label, description, rating, favorite, palette,
+        `SELECT asset_id, description, rating, favorite, palette,
                 source_page_url, entity_version, updated_at
            FROM asset_metadata
           WHERE asset_id = ?`,
       )
       .get(input.assetId) as {
         asset_id: string;
-        label: string | null;
         description: string | null;
         rating: number;
         favorite: number;
@@ -4846,7 +4967,6 @@ export class LibraryService {
     if (!row) {
       return {
         assetId: input.assetId,
-        label: null,
         description: null,
         rating: 0,
         favorite: false,
@@ -4861,7 +4981,6 @@ export class LibraryService {
 
     return {
       assetId: row.asset_id,
-      label: row.label,
       description: row.description,
       rating: row.rating,
       favorite: row.favorite !== 0,
@@ -4881,15 +5000,22 @@ export class LibraryService {
   ): Array<{ id: string; name: string; source: 'user' | 'ai' }> {
     const rows = connection
       .prepare(
-        `SELECT t.tag_id, t.name, 'user' AS source
-           FROM tags t
-           JOIN human_asset_tags hat ON hat.tag_id = t.tag_id
-          WHERE hat.asset_id = ?
-         UNION ALL
-         SELECT t.tag_id, t.name, 'ai' AS source
-           FROM tags t
-           JOIN ai_asset_tags aat ON aat.tag_id = t.tag_id
-          WHERE aat.asset_id = ?`,
+        `WITH assigned_tags AS (
+           SELECT t.tag_id, t.name, 1 AS is_user
+             FROM tags t
+             JOIN human_asset_tags hat ON hat.tag_id = t.tag_id
+            WHERE hat.asset_id = ?
+           UNION ALL
+           SELECT t.tag_id, t.name, 0 AS is_user
+             FROM tags t
+             JOIN ai_asset_tags aat ON aat.tag_id = t.tag_id
+            WHERE aat.asset_id = ?
+         )
+         SELECT tag_id, name,
+                CASE WHEN MAX(is_user) = 1 THEN 'user' ELSE 'ai' END AS source
+           FROM assigned_tags
+          GROUP BY tag_id, name
+          ORDER BY name COLLATE NOCASE`,
       )
       .all(assetId, assetId) as Array<{
         tag_id: string;
@@ -4903,7 +5029,6 @@ export class LibraryService {
     libraryId: string;
     assetId: string;
     expectedVersion: number;
-    label?: string;
     description?: string;
     rating?: number;
     favorite?: boolean;
@@ -4921,7 +5046,6 @@ export class LibraryService {
     // Renderer validation is not a trust boundary. Direct Worker clients must
     // obey the same metadata contract and receive a metadata-specific error.
     if (
-      input.label !== undefined && input.label.length > 255 ||
       input.description !== undefined && input.description.length > 10_000 ||
       input.rating !== undefined &&
         (!Number.isInteger(input.rating) || input.rating < 0 || input.rating > 5)
@@ -4948,13 +5072,12 @@ export class LibraryService {
     // Read current state.
     const existing = openLibrary.connection
       .prepare(
-        'SELECT entity_version, rating, favorite, label, description, palette, source_page_url FROM asset_metadata WHERE asset_id = ?',
+        'SELECT entity_version, rating, favorite, description, palette, source_page_url FROM asset_metadata WHERE asset_id = ?',
       )
       .get(input.assetId) as {
         entity_version: number;
         rating: number;
         favorite: number;
-        label: string | null;
         description: string | null;
         palette: string | null;
         source_page_url: string | null;
@@ -4962,8 +5085,6 @@ export class LibraryService {
 
     if (existing) {
       // Row exists: optimistic lock update.
-      const newLabel =
-        input.label !== undefined ? (input.label.trim() === '' ? null : input.label.trim()) : existing.label;
       const newDescription =
         input.description !== undefined
           ? (input.description.trim() === '' ? null : input.description.trim())
@@ -4980,13 +5101,12 @@ export class LibraryService {
       const result = openLibrary.connection
         .prepare(
           `UPDATE asset_metadata
-              SET label = ?, description = ?, rating = ?, favorite = ?,
+              SET description = ?, rating = ?, favorite = ?,
                   palette = ?, source_page_url = ?,
                   entity_version = entity_version + 1, updated_at = ?
             WHERE asset_id = ? AND entity_version = ?`,
         )
         .run(
-          newLabel,
           newDescription,
           newRating,
           newFavorite,
@@ -5010,13 +5130,12 @@ export class LibraryService {
       // Fetch back the updated row.
       const updated = openLibrary.connection
         .prepare(
-          `SELECT asset_id, label, description, rating, favorite, palette,
+          `SELECT asset_id, description, rating, favorite, palette,
                   source_page_url, entity_version, updated_at
              FROM asset_metadata WHERE asset_id = ?`,
         )
         .get(input.assetId) as {
           asset_id: string;
-          label: string | null;
           description: string | null;
           rating: number;
           favorite: number;
@@ -5030,7 +5149,6 @@ export class LibraryService {
 
       return {
         assetId: updated.asset_id,
-        label: updated.label,
         description: updated.description,
         rating: updated.rating,
         favorite: updated.favorite !== 0,
@@ -5048,8 +5166,6 @@ export class LibraryService {
       throw new LibraryServiceError('VERSION_CONFLICT', { currentEntityVersion: 0 });
     }
 
-    const newLabel =
-      input.label !== undefined ? (input.label.trim() === '' ? null : input.label.trim()) : null;
     const newDescription =
       input.description !== undefined
         ? (input.description.trim() === '' ? null : input.description.trim())
@@ -5066,13 +5182,12 @@ export class LibraryService {
     openLibrary.connection
       .prepare(
         `INSERT INTO asset_metadata
-           (asset_id, label, description, rating, favorite, palette,
+           (asset_id, description, rating, favorite, palette,
             source_page_url, entity_version, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         input.assetId,
-        newLabel,
         newDescription,
         newRating,
         newFavorite,
@@ -5085,7 +5200,6 @@ export class LibraryService {
 
     return {
       assetId: input.assetId,
-      label: newLabel,
       description: newDescription,
       rating: newRating,
       favorite: newFavorite !== 0,
@@ -5105,9 +5219,9 @@ export class LibraryService {
     const result = openLibrary.connection
       .prepare(
         `INSERT OR IGNORE INTO asset_metadata
-           (asset_id, label, description, rating, favorite, palette,
+           (asset_id, description, rating, favorite, palette,
             source_page_url, entity_version, updated_at)
-         SELECT asset_id, NULL, NULL, 0, 0, NULL, NULL, 1, ?
+         SELECT asset_id, NULL, 0, 0, NULL, NULL, 1, ?
            FROM assets a
           WHERE NOT EXISTS (
             SELECT 1 FROM asset_metadata m WHERE m.asset_id = a.asset_id
@@ -5129,7 +5243,7 @@ export class LibraryService {
     const asset = connection
       .prepare(
         `SELECT a.relative_file_path, a.availability, r.byte_size,
-                m.label, m.description, m.source_page_url
+                m.description, m.source_page_url
            FROM assets a
            JOIN revisions r ON r.revision_id = a.current_revision_id
            LEFT JOIN asset_metadata m ON m.asset_id = a.asset_id
@@ -5139,7 +5253,6 @@ export class LibraryService {
         relative_file_path: string;
         availability: string;
         byte_size: number;
-        label: string | null;
         description: string | null;
         source_page_url: string | null;
       } | undefined;
@@ -5165,10 +5278,9 @@ export class LibraryService {
     connection
       .prepare(
         `INSERT INTO asset_search_index
-           (asset_id, label, filename, tags, description, source_url, folder_path, metadata_text)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+           (asset_id, filename, tags, description, source_url, folder_path, metadata_text)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(asset_id) DO UPDATE SET
-           label = excluded.label,
            filename = excluded.filename,
            tags = excluded.tags,
            description = excluded.description,
@@ -5178,7 +5290,6 @@ export class LibraryService {
       )
       .run(
         assetId,
-        tokenizeForFts(asset.label ?? ''),
         tokenizeForFts(buildFileName(asset.relative_file_path)),
         tokenizeForFts(tagRow?.tags ?? ''),
         tokenizeForFts(asset.description ?? ''),
@@ -5268,14 +5379,13 @@ export class LibraryService {
   /**
    * Atomically write AI-generated content for an asset.
    * For tags: find-or-create by NOCASE name, then INSERT OR IGNORE into ai_asset_tags.
-   * For label/description: DELETE old row(s) + INSERT new row in ai_content
+   * For description/structured metadata: DELETE old row(s) + INSERT new row in ai_content
    *   (one row per (asset_id, field_name)).
    * After writing, sync the asset's FTS search content.
    */
   writeAiAnalysisResult(input: {
     libraryId: string;
     assetId: string;
-    label?: string;
     description?: string;
     tags?: string[];
     structuredMetadata?: Record<string, unknown>;
@@ -5283,7 +5393,6 @@ export class LibraryService {
     modelVersion: string;
     guardJobId?: string;
     enabledFields: {
-      label: boolean;
       description: boolean;
       tags: boolean;
       structuredMetadata: boolean;
@@ -5351,7 +5460,7 @@ export class LibraryService {
         }
       }
 
-      // Label / description / structured_metadata: DELETE old row(s) + INSERT.
+      // Description / structured_metadata: DELETE old row(s) + INSERT.
       const deleteOld = openLibrary.connection.prepare(
         'DELETE FROM ai_content WHERE asset_id = ? AND field_name = ?',
       );
@@ -5376,14 +5485,9 @@ export class LibraryService {
         fieldsWritten.push(fieldName);
       };
 
-      if (input.enabledFields.label) deleteOld.run(input.assetId, 'label');
       if (input.enabledFields.description) deleteOld.run(input.assetId, 'description');
       if (input.enabledFields.structuredMetadata) {
         deleteOld.run(input.assetId, 'structured_metadata');
-      }
-
-      if (input.enabledFields.label && input.label !== undefined && input.label.trim().length > 0) {
-        writeField('label', input.label.trim());
       }
 
       if (
@@ -8096,12 +8200,12 @@ export class LibraryService {
     const orderParams: unknown[] = [];
     if (hasPositiveQuery && !input.sort) {
       // When searching, order by BM25 relevance with per-column weights
-      // (label 12, filename 10, tags 8, description 5, source_url 3,
+      // (filename 10, tags 8, description 5, source_url 3,
       // folder_path 2, metadata_text 1) per ADR-0009. The FTS5 `rank` hidden
       // column uses default weights (all 1.0); explicit bm25() is required to
       // apply the weighted ranking. This sacrifices the rank-column snippet
       // lazy-evaluation optimization (restorable later via a custom rank fn).
-      orderBy = `bm25(asset_search, 12.0, 10.0, 8.0, 5.0, 3.0, 2.0, 1.0) ASC, a.asset_id ASC`;
+      orderBy = `bm25(asset_search, 10.0, 8.0, 5.0, 3.0, 2.0, 1.0) ASC, a.asset_id ASC`;
     } else if (input.sort) {
       const sortField = input.sort.field;
       const dir = input.sort.order === 'desc' ? 'DESC' : 'ASC';
@@ -8229,7 +8333,7 @@ export class LibraryService {
 
     if (hasPositiveQuery) {
       whereParts.push(
-        `asset_search MATCH ? AND rank MATCH 'bm25(12.0, 10.0, 8.0, 5.0, 3.0, 2.0, 1.0)'`,
+        `asset_search MATCH ? AND rank MATCH 'bm25(10.0, 8.0, 5.0, 3.0, 2.0, 1.0)'`,
       );
       allParams.push(fts5Query);
     } else if (isExcludeOnlyQuery) {
@@ -8324,12 +8428,12 @@ export class LibraryService {
     const dataColumns = hasPositiveQuery
       ? `a.asset_id, a.location_kind, a.managed_folder_id, a.relative_file_path, a.current_revision_id,
          a.availability, r.byte_size, r.modified_at,
-         m.label, COALESCE(m.rating, 0) AS rating, COALESCE(m.favorite, 0) AS favorite,
+         COALESCE(m.rating, 0) AS rating, COALESCE(m.favorite, 0) AS favorite,
          a.deleted_at, a.trashed_from_relative_path,
          snippet(asset_search, -1, '<b>', '</b>', '...', 32) AS snippet_text`
       : `a.asset_id, a.location_kind, a.managed_folder_id, a.relative_file_path, a.current_revision_id,
          a.availability, r.byte_size, r.modified_at,
-         m.label, COALESCE(m.rating, 0) AS rating, COALESCE(m.favorite, 0) AS favorite,
+         COALESCE(m.rating, 0) AS rating, COALESCE(m.favorite, 0) AS favorite,
          a.deleted_at, a.trashed_from_relative_path`;
 
     // Total count query.
@@ -8352,7 +8456,6 @@ export class LibraryService {
         availability: 'available' | 'missing';
         byte_size: number;
         modified_at: string;
-        label: string | null;
         rating: number;
         favorite: number;
         deleted_at?: string | null;
@@ -9123,7 +9226,6 @@ export class LibraryService {
       availability: 'available' | 'missing';
       byte_size: number;
       modified_at: string;
-      label: string | null;
       rating: number;
       favorite: number;
       deleted_at?: string | null;
@@ -9152,7 +9254,6 @@ export class LibraryService {
       byteSize: row.byte_size,
       modifiedAt: row.modified_at,
       availability: row.availability,
-      label: row.label,
       rating: row.rating,
       favorite: row.favorite !== 0,
       deletedAt: row.deleted_at ?? null,
@@ -9172,7 +9273,7 @@ export class LibraryService {
       const row = openLibrary.connection.prepare(
         `SELECT a.asset_id, a.managed_folder_id, a.linked_folder_id, a.location_kind,
                 a.relative_file_path, a.current_revision_id, a.availability,
-                r.byte_size, r.modified_at, m.label,
+                r.byte_size, r.modified_at,
                 COALESCE(m.rating, 0) AS rating, COALESCE(m.favorite, 0) AS favorite,
                 a.deleted_at, a.trashed_from_relative_path
            FROM assets a
@@ -9977,7 +10078,7 @@ export class LibraryService {
           .prepare(
             `SELECT a.asset_id, a.managed_folder_id, a.linked_folder_id, a.location_kind, a.relative_file_path,
                     a.current_revision_id, a.availability, r.byte_size, r.modified_at,
-                    m.label, COALESCE(m.rating, 0) AS rating, COALESCE(m.favorite, 0) AS favorite,
+                    COALESCE(m.rating, 0) AS rating, COALESCE(m.favorite, 0) AS favorite,
                     a.deleted_at, a.trashed_from_relative_path
                FROM assets a
                JOIN revisions r ON r.revision_id = a.current_revision_id
@@ -10129,7 +10230,7 @@ export class LibraryService {
       .prepare(
         `SELECT a.asset_id, a.managed_folder_id, a.linked_folder_id, a.location_kind, a.relative_file_path,
                 a.current_revision_id, a.availability, r.byte_size, r.modified_at,
-                m.label, COALESCE(m.rating, 0) AS rating, COALESCE(m.favorite, 0) AS favorite,
+                COALESCE(m.rating, 0) AS rating, COALESCE(m.favorite, 0) AS favorite,
                 a.deleted_at, a.trashed_from_relative_path
            FROM assets a
            JOIN revisions r ON r.revision_id = a.current_revision_id
@@ -10530,7 +10631,7 @@ export class LibraryService {
       .prepare(
         `SELECT a.asset_id, a.managed_folder_id, a.linked_folder_id, a.location_kind, a.relative_file_path,
                 a.current_revision_id, a.availability, r.byte_size, r.modified_at,
-                m.label, COALESCE(m.rating, 0) AS rating, COALESCE(m.favorite, 0) AS favorite,
+                COALESCE(m.rating, 0) AS rating, COALESCE(m.favorite, 0) AS favorite,
                 a.deleted_at, a.trashed_from_relative_path
            FROM assets a
            JOIN revisions r ON r.revision_id = a.current_revision_id
@@ -10800,7 +10901,7 @@ export class LibraryService {
             openLibrary.connection
               .prepare(
                 `UPDATE asset_metadata
-                    SET label = NULL, description = NULL, rating = 0, favorite = 0,
+                    SET description = NULL, rating = 0, favorite = 0,
                         palette = NULL, source_page_url = NULL,
                         entity_version = entity_version + 1, updated_at = ?
                   WHERE asset_id = ?`,
@@ -10857,7 +10958,7 @@ export class LibraryService {
           .prepare(
             `SELECT a.asset_id, a.managed_folder_id, a.linked_folder_id, a.location_kind, a.relative_file_path,
                     a.current_revision_id, a.availability, r.byte_size, r.modified_at,
-                    m.label, COALESCE(m.rating, 0) AS rating, COALESCE(m.favorite, 0) AS favorite,
+                    COALESCE(m.rating, 0) AS rating, COALESCE(m.favorite, 0) AS favorite,
                     a.deleted_at, a.trashed_from_relative_path
                FROM assets a
                JOIN revisions r ON r.revision_id = a.current_revision_id
@@ -11616,9 +11717,9 @@ export class LibraryService {
             openLibrary.connection
               .prepare(
                 `INSERT INTO asset_metadata
-                   (asset_id, label, description, rating, favorite, palette,
+                   (asset_id, description, rating, favorite, palette,
                     source_page_url, entity_version, updated_at)
-                 VALUES (?, NULL, NULL, 0, 0, NULL, ?, 1, ?)
+                 VALUES (?, NULL, 0, 0, NULL, ?, 1, ?)
                  ON CONFLICT(asset_id) DO UPDATE SET
                    source_page_url = excluded.source_page_url,
                    entity_version = asset_metadata.entity_version + 1,

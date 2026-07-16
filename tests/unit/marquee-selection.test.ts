@@ -47,14 +47,14 @@ describe('computeMarqueeSelection', () => {
     expect(result).toEqual([]);
   });
 
-  it('unions the initial selection with the hit set for metaKey (Command)', () => {
+  it('toggles the hit set against the initial selection for metaKey (Command)', () => {
     const result = computeMarqueeSelection(['a', 'b'], ['b', 'c'], META);
-    expect(new Set(result)).toEqual(new Set(['a', 'b', 'c']));
+    expect(new Set(result)).toEqual(new Set(['a', 'c']));
   });
 
-  it('unions the initial selection with the hit set for ctrlKey (Windows Ctrl)', () => {
+  it('toggles the hit set against the initial selection for ctrlKey (Windows Ctrl)', () => {
     const result = computeMarqueeSelection(['a', 'b'], ['b', 'c'], CTRL);
-    expect(new Set(result)).toEqual(new Set(['a', 'b', 'c']));
+    expect(new Set(result)).toEqual(new Set(['a', 'c']));
   });
 
   it('unions the initial selection with the hit set for shiftKey', () => {
@@ -62,7 +62,7 @@ describe('computeMarqueeSelection', () => {
     expect(new Set(result)).toEqual(new Set(['a', 'b']));
   });
 
-  it('unions for Ctrl/Command+Shift combinations, matching the click model', () => {
+  it('unions for Ctrl/Command+Shift combinations, with Shift taking precedence', () => {
     expect(new Set(computeMarqueeSelection(['a'], ['b'], META_SHIFT))).toEqual(
       new Set(['a', 'b']),
     );

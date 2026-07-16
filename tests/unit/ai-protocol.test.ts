@@ -20,7 +20,6 @@ const TEST_IMAGE_REQUEST: AiAnalysisRequest = {
   imageBase64: 'aW1hZ2VEYXRh', // "imageData" in base64
   language: 'zh-CN',
   enabledFields: {
-    label: true,
     description: true,
     tags: true,
     structuredMetadata: false,
@@ -83,14 +82,12 @@ function openAiChatResponse(content: unknown, model = 'gpt-4o-2024-05-13') {
 describe('aiStructuredOutputSchema', () => {
   it('accepts a fully populated structured output', () => {
     const result = aiStructuredOutputSchema.parse({
-      label: '未来城市概念图',
       description: '一幅描绘未来城市的数字概念艺术作品',
       tags: ['城市场景', '科幻', '概念艺术'],
       structured_metadata: { resolution: '4K', style: 'cyberpunk' },
     });
 
     expect(result).toEqual({
-      label: '未来城市概念图',
       description: '一幅描绘未来城市的数字概念艺术作品',
       tags: ['城市场景', '科幻', '概念艺术'],
       structured_metadata: { resolution: '4K', style: 'cyberpunk' },
@@ -113,7 +110,7 @@ describe('aiStructuredOutputSchema', () => {
 
   it('rejects output missing the required tags field', () => {
     expect(() =>
-      aiStructuredOutputSchema.parse({ label: 'Only label' }),
+      aiStructuredOutputSchema.parse({ description: 'Only description' }),
     ).toThrow();
   });
 
@@ -177,19 +174,18 @@ describe('vendorFailure', () => {
 describe('aiAnalysisResultSchema', () => {
   it('accepts a valid result with modelVersion', () => {
     const result = aiAnalysisResultSchema.parse({
-      label: 'Test',
       description: 'Desc',
       tags: ['t1'],
       modelVersion: 'gpt-4o-2024-05-13',
     });
 
     expect(result.modelVersion).toBe('gpt-4o-2024-05-13');
-    expect(result.label).toBe('Test');
+    expect(result.description).toBe('Desc');
   });
 
   it('rejects a result without modelVersion', () => {
     expect(() =>
-      aiAnalysisResultSchema.parse({ label: 'Test', tags: [] }),
+      aiAnalysisResultSchema.parse({ description: 'Test', tags: [] }),
     ).toThrow();
   });
 
@@ -231,7 +227,6 @@ describe('OpenAIVendorAdapter', () => {
     const fetchStub: typeof fetch = async (_input, init) => {
       requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
       return new Response(JSON.stringify(openAiChatResponse({
-        label: null,
         description: null,
         tags: ['asset'],
         structured_metadata: null,
@@ -244,7 +239,7 @@ describe('OpenAIVendorAdapter', () => {
     const responseFormat = requestBody?.response_format as Record<string, unknown>;
     const jsonSchema = responseFormat.json_schema as Record<string, unknown>;
     const schema = jsonSchema.schema as Record<string, unknown>;
-    expect(schema.required).toEqual(['label', 'description', 'tags', 'structured_metadata']);
+    expect(schema.required).toEqual(['description', 'tags', 'structured_metadata']);
     expect(result).toEqual({ tags: ['asset'], modelVersion: 'gpt-4o-2024-05-13' });
   });
 
@@ -254,7 +249,6 @@ describe('OpenAIVendorAdapter', () => {
       'gpt-4o',
       okFetch(
         openAiChatResponse({
-          label: '未来城市概念图',
           description: '一幅描绘未来城市的数字概念艺术作品',
           tags: ['城市场景', '科幻', '概念艺术'],
         }),
@@ -264,7 +258,6 @@ describe('OpenAIVendorAdapter', () => {
     const result = await adapter.analyze(TEST_IMAGE_REQUEST);
 
     expect(result).toEqual({
-      label: '未来城市概念图',
       description: '一幅描绘未来城市的数字概念艺术作品',
       tags: ['城市场景', '科幻', '概念艺术'],
       modelVersion: 'gpt-4o-2024-05-13',
@@ -469,7 +462,7 @@ describe('OpenAIVendorAdapter', () => {
       okFetch(
         openAiChatResponse({
           // Missing required 'tags' field
-          label: 'Some label',
+          description: 'Some description',
         }),
       ),
     );

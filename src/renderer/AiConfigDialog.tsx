@@ -7,7 +7,6 @@ export interface AiConfigDialogProps {
   model: string;
   language: string;
   hasKey: boolean;
-  labelEnabled: boolean;
   descriptionEnabled: boolean;
   tagsEnabled: boolean;
   structuredEnabled: boolean;
@@ -17,7 +16,6 @@ export interface AiConfigDialogProps {
   onProviderChange: (value: "openai" | "gemini" | "anthropic") => void;
   onModelChange: (value: string) => void;
   onLanguageChange: (value: string) => void;
-  onLabelEnabledChange: (value: boolean) => void;
   onDescriptionEnabledChange: (value: boolean) => void;
   onTagsEnabledChange: (value: boolean) => void;
   onStructuredEnabledChange: (value: boolean) => void;
@@ -34,7 +32,6 @@ export function AiConfigDialog({
   model,
   language,
   hasKey,
-  labelEnabled,
   descriptionEnabled,
   tagsEnabled,
   structuredEnabled,
@@ -44,7 +41,6 @@ export function AiConfigDialog({
   onProviderChange,
   onModelChange,
   onLanguageChange,
-  onLabelEnabledChange,
   onDescriptionEnabledChange,
   onTagsEnabledChange,
   onStructuredEnabledChange,
@@ -143,12 +139,6 @@ export function AiConfigDialog({
           </label>
           {(
             [
-              {
-                key: "label",
-                label: "标签 (Label)",
-                state: labelEnabled,
-                setter: onLabelEnabledChange,
-              },
               {
                 key: "description",
                 label: "描述",

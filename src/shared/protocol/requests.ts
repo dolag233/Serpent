@@ -10,7 +10,6 @@ const displayNameSchema = nonBlankString.max(255);
 const identifierSchema = nonBlankString.max(255);
 const selectedPathSchema = nonBlankString;
 const optionalIdentifierSchema = identifierSchema.optional();
-const optionalClearableIdentifierSchema = z.string().max(255).optional();
 const optionalClearableDescriptionSchema = z.string().max(10000).optional();
 const queryDefinitionJsonSchema = nonBlankString.max(65_536);
 export const manualPaletteColorSchema = z.string().regex(/^#[0-9A-Fa-f]{6}$/u, {
@@ -257,7 +256,6 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     assetId: identifierSchema,
     // A metadata row is created with expectedVersion 0, then increments on updates.
     expectedVersion: z.number().int().min(0),
-    label: optionalClearableIdentifierSchema,
     description: optionalClearableDescriptionSchema,
     rating: z.number().int().min(0).max(5).optional(),
     favorite: z.boolean().optional(),
@@ -420,7 +418,6 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     model: nonBlankString,
     apiKey: nonBlankString.optional(),
     enabledFields: z.strictObject({
-      label: z.boolean(),
       description: z.boolean(),
       tags: z.boolean(),
       structuredMetadata: z.boolean(),
@@ -730,7 +727,6 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     assetId: identifierSchema,
     // A metadata row is created with expectedVersion 0, then increments on updates.
     expectedVersion: z.number().int().min(0),
-    label: optionalClearableIdentifierSchema,
     description: optionalClearableDescriptionSchema,
     rating: z.number().int().min(0).max(5).optional(),
     favorite: z.boolean().optional(),
@@ -894,7 +890,6 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     model: nonBlankString,
     apiKey: nonBlankString,
     enabledFields: z.strictObject({
-      label: z.boolean(),
       description: z.boolean(),
       tags: z.boolean(),
       structuredMetadata: z.boolean(),
@@ -976,7 +971,6 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     provider: z.enum(['openai', 'gemini', 'anthropic']),
     encryptedApiKeyBase64: nonBlankString,
     model: nonBlankString,
-    labelEnabled: z.boolean().optional(),
     descriptionEnabled: z.boolean().optional(),
     tagEnabled: z.boolean().optional(),
     structuredMetadataEnabled: z.boolean().optional(),
@@ -1002,7 +996,6 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     model: nonBlankString,
     apiKey: nonBlankString,
     enabledFields: z.strictObject({
-      label: z.boolean(),
       description: z.boolean(),
       tags: z.boolean(),
       structuredMetadata: z.boolean(),

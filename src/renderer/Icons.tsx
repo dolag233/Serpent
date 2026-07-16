@@ -3,6 +3,7 @@ import { type ReactNode } from "react";
 export type IconName =
   | "archive"
   | "chevron"
+  | "clock"
   | "close"
   | "collection"
   | "collapse-left"
@@ -33,6 +34,12 @@ const iconPaths: Record<IconName, ReactNode> = {
     </>
   ),
   chevron: <path d="m9 18 6-6-6-6" />,
+  clock: (
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 7v5l3 2" />
+    </>
+  ),
   close: <path d="m7 7 10 10M17 7 7 17" />,
   collection: (
     <>

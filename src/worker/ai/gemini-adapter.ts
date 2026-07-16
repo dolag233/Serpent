@@ -10,10 +10,6 @@ import type { VendorAdapter, VendorId } from './vendor-adapter';
 const GEMINI_RESPONSE_SCHEMA = {
   type: 'object' as const,
   properties: {
-    label: {
-      type: 'string' as const,
-      description: 'A concise title or label for the asset. Omit if not applicable.',
-    },
     description: {
       type: 'string' as const,
       description: 'A detailed description of the asset content. Omit if not applicable.',
@@ -29,7 +25,7 @@ const GEMINI_RESPONSE_SCHEMA = {
     },
   },
   required: ['tags'],
-  propertyOrdering: ['label', 'description', 'tags', 'structured_metadata'],
+  propertyOrdering: ['description', 'tags', 'structured_metadata'],
 };
 
 /**
@@ -147,7 +143,6 @@ export class GeminiVendorAdapter implements VendorAdapter {
 
   #buildSystemPromptText(request: AiAnalysisRequest): string {
     const fields: string[] = [];
-    if (request.enabledFields.label) fields.push('label');
     if (request.enabledFields.description) fields.push('description');
     if (request.enabledFields.tags) fields.push('tags');
     if (request.enabledFields.structuredMetadata)

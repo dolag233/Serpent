@@ -30,7 +30,6 @@ const validAssetSummary = {
   byteSize: 42,
   modifiedAt: '2026-07-14T00:00:00.000Z',
   availability: 'available' as const,
-  label: null,
   rating: 0,
   favorite: false,
   deletedAt: null,

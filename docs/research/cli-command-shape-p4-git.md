@@ -167,7 +167,7 @@ serpent [global-options] <resource> <action> [options] [--] [targets...]
 # Asset
 serpent --library studio asset import --folder-id fld_01 -- /shots/a.exr /shots/b.exr
 serpent --library studio asset list --format json --tag environment
-serpent --library studio asset update ast_01 --label "Hero" --rating 5
+serpent --library studio asset update ast_01 --description "Hero reference" --rating 5
 serpent --library studio asset move ast_01 --folder-id fld_02 --dry-run
 serpent --library studio asset trash --yes -- ast_01 ast_02
 serpent --library studio asset restore ast_01
@@ -215,7 +215,7 @@ serpent [global-options] <action> <resource> [options] [--] [targets...]
 ```text
 serpent --library studio import assets --folder-id fld_01 -- /shots/a.exr
 serpent --library studio list assets --tag environment
-serpent --library studio update asset ast_01 --label "Hero"
+serpent --library studio update asset ast_01 --description "Hero reference"
 serpent --library studio trash assets --yes -- ast_01 ast_02
 
 serpent --library studio create tag "Environment"

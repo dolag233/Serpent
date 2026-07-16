@@ -106,6 +106,9 @@ test("context menu closes on outside click, Escape, scroll, and window resize", 
       window.getByRole("menu").getByText("已选择 1 项", { exact: true }),
     ).toBeVisible();
     await expect(window.getByRole("menuitem", { name: "使用外部应用打开" })).toBeVisible();
+    await expect(
+      window.getByRole("menuitem", { name: "使用外部应用打开" }).locator(".context-menu-item-shortcut"),
+    ).toHaveText(process.platform === "darwin" ? "⌘O" : "Ctrl+O");
   } finally {
     await application.close();
     rmSync(temporaryRoot, { recursive: true, force: true });
@@ -464,6 +467,114 @@ test("scope change closes the context menu", async () => {
     // Click a sidebar nav item (scope change) — should close the menu
     await window.getByRole("button", { name: /所有资产/ }).click();
     await expect(window.getByRole("menu")).not.toBeVisible({ timeout: 5_000 });
+  } finally {
+    await application.close();
+    rmSync(temporaryRoot, { recursive: true, force: true });
+  }
+});
+
+test("pointer hover stays subtle while arrow navigation uses the keyboard focus marker", async () => {
+  const temporaryRoot = mkdtempSync(path.join(tmpdir(), "serpent-cm-highlight-"));
+  const libraryPath = path.join(temporaryRoot, "CM-Highlight");
+  const sourcePath = path.join(temporaryRoot, "highlight-test.png");
+  writeFileSync(sourcePath, VALID_PNG);
+  const application = await launchApp(temporaryRoot, libraryPath, sourcePath);
+
+  try {
+    const window = await application.firstWindow();
+    await window.getByRole("button", { name: "创建资源库" }).click();
+    await window.getByLabel("名称").fill("CM Highlight Test");
+    await window.getByRole("button", { name: "创建", exact: true }).click();
+    await window
+      .getByRole("button", { name: "导入文件", exact: true })
+      .first()
+      .click();
+    const assetCard = window.locator("[data-asset-id]").first();
+    await expect(assetCard).toBeVisible({ timeout: 15_000 });
+    await assetCard.click({ button: "right" });
+
+    const menu = window.getByRole("menu");
+    const items = menu.locator(
+      '[role="menuitem"]:not([aria-disabled="true"])',
+    );
+    await expect(menu).toBeVisible();
+    const itemCount = await items.count();
+    expect(itemCount).toBeGreaterThan(2);
+
+    // Opening by pointer must not opt into the stronger keyboard treatment.
+    await expect(menu).not.toHaveClass(/\bis-keyboard-navigation\b/);
+    const pointerIndex = 2;
+    await items.nth(pointerIndex).hover();
+    await expect
+      .poll(() =>
+        items
+          .nth(pointerIndex)
+          .evaluate((item) => item === document.activeElement),
+      )
+      .toBe(true);
+    await expect(menu).not.toHaveClass(/\bis-keyboard-navigation\b/);
+    const pointerStyle = await items.nth(pointerIndex).evaluate((item) => {
+      const style = getComputedStyle(item);
+      return {
+        backgroundColor: style.backgroundColor,
+        boxShadow: style.boxShadow,
+      };
+    });
+    expect(pointerStyle.backgroundColor).not.toBe("rgba(0, 0, 0, 0)");
+    expect(pointerStyle.boxShadow).toBe("none");
+
+    // Keyboard navigation begins from the pointer-focused item and adds the
+    // keyboard-only marker, rather than leaving a second hover highlight.
+    await window.keyboard.press("ArrowDown");
+    await expect(menu).toHaveClass(/\bis-keyboard-navigation\b/);
+    const keyboardIndex = (pointerIndex + 1) % itemCount;
+    expect(
+      await items
+        .nth(keyboardIndex)
+        .evaluate((item) => item === document.activeElement),
+    ).toBe(true);
+    const keyboardStyle = await items.nth(keyboardIndex).evaluate((item) => {
+      const style = getComputedStyle(item);
+      return {
+        backgroundColor: style.backgroundColor,
+        boxShadow: style.boxShadow,
+      };
+    });
+    expect(keyboardStyle.backgroundColor).not.toBe(pointerStyle.backgroundColor);
+    expect(keyboardStyle.boxShadow).toContain("inset");
+
+    // Moving the pointer exits keyboard modality, focuses the hovered item,
+    // and restores the subtle pointer treatment with no inset marker.
+    const resumedPointerIndex = (keyboardIndex + 1) % itemCount;
+    await items.nth(resumedPointerIndex).hover();
+    await expect(menu).not.toHaveClass(/\bis-keyboard-navigation\b/);
+    await expect
+      .poll(() =>
+        items
+          .nth(resumedPointerIndex)
+          .evaluate((item) => item === document.activeElement),
+      )
+      .toBe(true);
+    const resumedPointerStyle = await items
+      .nth(resumedPointerIndex)
+      .evaluate((item) => {
+        const style = getComputedStyle(item);
+        return {
+          backgroundColor: style.backgroundColor,
+          boxShadow: style.boxShadow,
+        };
+      });
+    expect(resumedPointerStyle).toEqual(pointerStyle);
+
+    // The next arrow continues from the hovered item, rather than from the
+    // stale item that was focused during the previous keyboard interaction.
+    await window.keyboard.press("ArrowDown");
+    await expect(menu).toHaveClass(/\bis-keyboard-navigation\b/);
+    expect(
+      await items
+        .nth((resumedPointerIndex + 1) % itemCount)
+        .evaluate((item) => item === document.activeElement),
+    ).toBe(true);
   } finally {
     await application.close();
     rmSync(temporaryRoot, { recursive: true, force: true });

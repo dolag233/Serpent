@@ -219,12 +219,12 @@ test("blank-drag marquee without modifiers replaces the existing selection", asy
 });
 
 // ---------------------------------------------------------------------------
-// Test 1c — Ctrl/Cmd-held marquee unions the hit set into the existing
+// Test 1c — Ctrl/Cmd-held marquee toggles the hit set against the existing
 //            selection, without changing the operation if the key is
 //            released mid-drag (modifier snapshot is taken at mousedown).
 // ---------------------------------------------------------------------------
 
-test("Ctrl/Cmd-held marquee unions the hit set into the existing selection", async () => {
+test("Ctrl/Cmd-held marquee toggles hit assets and snapshots the modifier", async () => {
   const { temporaryRoot, application, window } = await setupLibrary(4);
   try {
     await createAndImport(window, "框选并集验收", 4);
@@ -242,30 +242,29 @@ test("Ctrl/Cmd-held marquee unions the hit set into the existing selection", asy
     await cards.nth(0).click();
     await expect.poll(() => selectedCount(window)).toBe(1);
 
-    // Ctrl/Cmd-held marquee over cards 2-3 (not touching card 0). Release
+    // Ctrl/Cmd-held marquee over cards 0-2. Card 0 starts selected, so it must
+    // be removed while cards 1-2 are added. Release
     // the modifier key before mouseup to prove the op was snapshotted at
     // mousedown and does not flip back to "replace" mid-drag.
+    const card0Box = await cards.nth(0).boundingBox();
     const card2Box = await cards.nth(2).boundingBox();
-    const card3Box = await cards.nth(3).boundingBox();
-    if (!card2Box || !card3Box) throw new Error("Cards 2-3 not visible");
+    if (!card0Box || !card2Box) throw new Error("Cards 0-2 not visible");
 
     await window.keyboard.down(additiveModifier);
-    await window.mouse.move(card2Box.x - 10, card2Box.y - 10);
+    await window.mouse.move(card0Box.x - 10, card0Box.y - 10);
     await window.mouse.down();
     await window.mouse.move(
-      card3Box.x + card3Box.width + 10,
-      card3Box.y + card3Box.height + 10,
+      card2Box.x + card2Box.width + 10,
+      card2Box.y + card2Box.height + 10,
       { steps: 15 },
     );
     await window.keyboard.up(additiveModifier);
     await window.mouse.up();
 
-    // Selection must be the UNION of the initial selection (card 0) and the
-    // hit set (cards 2-3) — card 0 stays selected alongside cards 2-3.
-    await expect.poll(() => selectedCount(window)).toBe(3);
-    await expect(cards.nth(0)).toHaveClass(/is-selected/);
+    await expect.poll(() => selectedCount(window)).toBe(2);
+    await expect(cards.nth(0)).not.toHaveClass(/is-selected/);
+    await expect(cards.nth(1)).toHaveClass(/is-selected/);
     await expect(cards.nth(2)).toHaveClass(/is-selected/);
-    await expect(cards.nth(3)).toHaveClass(/is-selected/);
   } finally {
     await application.close();
     rmSync(temporaryRoot, { force: true, recursive: true });
@@ -298,9 +297,19 @@ test("Shift-held marquee unions the hit set into the existing selection", async 
     const card3Box = await cards.nth(3).boundingBox();
     if (!card2Box || !card3Box) throw new Error("Cards 2-3 not visible");
 
+    // Reproduce the real navigation-to-canvas journey: the current-folder
+    // button can still own focus when Shift changes Chromium to keyboard focus
+    // modality. Starting the marquee must release that focus so the folder
+    // does not gain an unrelated focus highlight while asset selection is in
+    // progress.
+    const activeFolder = window.locator(".nav-row.is-active").first();
+    await activeFolder.focus();
+    await expect(activeFolder).toBeFocused();
+
     await window.keyboard.down("Shift");
     await window.mouse.move(card2Box.x - 10, card2Box.y - 10);
     await window.mouse.down();
+    await expect(activeFolder).not.toBeFocused();
     await window.mouse.move(
       card3Box.x + card3Box.width + 10,
       card3Box.y + card3Box.height + 10,
@@ -814,7 +823,9 @@ test("Delete key trashes selected managed assets", async () => {
     await expect.poll(() => selectedCount(window)).toBe(2);
 
     // Press Delete — should move selected managed assets to trash
-    await window.keyboard.press("Delete");
+    await window.keyboard.press(
+      process.platform === "darwin" ? "Meta+Backspace" : "Delete",
+    );
     await expect(window.locator(".toast")).toContainText("已移入回收站", {
       timeout: 10_000,
     });

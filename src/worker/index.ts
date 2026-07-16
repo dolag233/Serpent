@@ -789,7 +789,6 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
       const { tagsWritten, fieldsWritten, committed } = libraryService.writeAiAnalysisResult({
         libraryId,
         assetId,
-        label: analysisResult.label,
         description: analysisResult.description,
         tags: analysisResult.tags,
         structuredMetadata: analysisResult.structured_metadata as
@@ -812,7 +811,6 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
 
       const generatedFields: Record<string, unknown> = {};
       if (tagsWritten.length > 0) generatedFields.tags = tagsWritten;
-      if (fieldsWritten.includes('label')) generatedFields.label = analysisResult.label;
       if (fieldsWritten.includes('description'))
         generatedFields.description = analysisResult.description;
       if (fieldsWritten.includes('structured_metadata'))
@@ -831,7 +829,6 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
         type: 'asset.analyzed' as const,
         assetId,
         generatedFields: generatedFields as {
-          label?: string;
           description?: string;
           tags?: string[];
           structuredMetadata?: Record<string, unknown>;
@@ -1050,7 +1047,7 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
             filename: 'test.png',
             mime: 'image/png',
             language: 'en',
-            enabledFields: { label: false, description: false, tags: true, structuredMetadata: false },
+            enabledFields: { description: false, tags: true, structuredMetadata: false },
             existingTagNames: [],
             imageBase64:
               // Minimal 1x1 white PNG base64

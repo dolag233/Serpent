@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -83,6 +84,17 @@ import {
   saveCanvasPreferences,
   type CanvasPreferences,
 } from "./canvas-preferences";
+import {
+  assetGridLayoutStyle,
+  countFittingColumns,
+  distributeMasonryItems,
+} from "./asset-grid-layout";
+import {
+  isMacPlatform,
+  matchesAssetCommandShortcut,
+} from "./asset-command-shortcuts";
+
+const IS_MAC_PLATFORM = isMacPlatform(navigator.userAgent);
 
 type RendererWindow = Window & {
   serpent?: {
@@ -195,6 +207,62 @@ function ToolButton({
     >
       <Icon name={icon} />
     </button>
+  );
+}
+
+function MasonryColumns({
+  assets,
+  cardSize,
+  children,
+  showCaption,
+}: {
+  assets: AssetSummary[];
+  cardSize: number;
+  children: ReactNode[];
+  showCaption: boolean;
+}) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [availableWidth, setAvailableWidth] = useState(0);
+
+  useLayoutEffect(() => {
+    const element = containerRef.current;
+    if (!element) return;
+    const updateWidth = () => setAvailableWidth(element.clientWidth);
+    updateWidth();
+    const observer = new ResizeObserver(updateWidth);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+
+  const columnCount = countFittingColumns(availableWidth, cardSize);
+  const distributed = distributeMasonryItems(
+    assets.map((asset, index) => ({ asset, child: children[index] })),
+    columnCount,
+    ({ asset }) => {
+      const previewHeight =
+        asset.width && asset.height
+          ? cardSize * (asset.height / asset.width)
+          : cardSize * 0.72;
+      return previewHeight + (showCaption ? 42 : 0) + 12;
+    },
+  );
+
+  return (
+    <div
+      className="masonry-columns"
+      ref={containerRef}
+      style={{ gridTemplateColumns: `repeat(${columnCount}, minmax(0, 1fr))` }}
+    >
+      {distributed.map((column, index) => (
+        <div className="masonry-column" key={`masonry-column-${index}`}>
+          {column.items.map(({ asset, child }) => (
+            <div className="masonry-card-slot" key={asset.assetId}>
+              {child}
+            </div>
+          ))}
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -401,7 +469,6 @@ function AppInner() {
   // Metadata editor
   const [assetMetadata, setAssetMetadata] =
     useState<AssetMetadataResult | null>(null);
-  const [metadataLoading, setMetadataLoading] = useState(false);
   const [versionConflict, setVersionConflict] = useState(false);
   const selectedAssetIdRef = useRef(selectedAssetId);
   useEffect(() => {
@@ -411,7 +478,6 @@ function AppInner() {
   const metadataConflictAssetIdsRef = useRef(new Set<string>());
   const metadataSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
   // Pending edit values
-  const [editLabel, setEditLabel] = useState("");
   const [editDescription, setEditDescription] = useState("");
   const [editRating, setEditRating] = useState(0);
   const [editFavorite, setEditFavorite] = useState(false);
@@ -476,7 +542,6 @@ function AppInner() {
   const [aiModel, setAiModel] = useState("gpt-4o-mini");
   const [aiApiKey, setAiApiKey] = useState("");
   const [aiHasKey, setAiHasKey] = useState(false);
-  const [aiLabelEnabled, setAiLabelEnabled] = useState(true);
   const [aiDescriptionEnabled, setAiDescriptionEnabled] = useState(true);
   const [aiTagsEnabled, setAiTagsEnabled] = useState(true);
   const [aiStructuredEnabled, setAiStructuredEnabled] = useState(false);
@@ -490,7 +555,7 @@ function AppInner() {
   >(null);
   const [aiAnalyzing, setAiAnalyzing] = useState(false);
   const [aiContent, setAiContent] = useState<{
-    label?: string;
+    assetId: string;
     description?: string;
     tags?: string[];
     structuredMetadata?: Record<string, unknown>;
@@ -1384,8 +1449,7 @@ function AppInner() {
         tagIds: [tagId],
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
-      const tagResult = await api.listTags({ libraryId: library.libraryId });
-      if (tagResult.ok) setTags(tagResult.value);
+      await refreshTagAndMetadataState(assetId);
       setNotice("标签已添加。");
     } catch (caught) {
       setError(toMessage(caught, "添加标签失败。"));
@@ -1394,15 +1458,15 @@ function AppInner() {
 
   async function handleRemoveTagFromAsset(tagId: string) {
     if (!api || !library || !selectedAssetId) return;
+    const targetAssetId = selectedAssetId;
     try {
       const result = await api.removeTags({
         libraryId: library.libraryId,
-        assetIds: [selectedAssetId],
+        assetIds: [targetAssetId],
         tagIds: [tagId],
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
-      const tagResult = await api.listTags({ libraryId: library.libraryId });
-      if (tagResult.ok) setTags(tagResult.value);
+      await refreshTagAndMetadataState(targetAssetId);
       setNotice("标签已移除。");
     } catch (caught) {
       setError(toMessage(caught, "移除标签失败。"));
@@ -1411,6 +1475,7 @@ function AppInner() {
 
   async function handleCreateAndAssignTag(tagName: string) {
     if (!api || !library || !selectedAssetId || !tagName.trim()) return;
+    const targetAssetId = selectedAssetId;
     try {
       const createResult = await api.createTag({
         libraryId: library.libraryId,
@@ -1419,15 +1484,30 @@ function AppInner() {
       if (!createResult.ok) throw new LibraryOperationError(createResult.error);
       const assignResult = await api.assignTags({
         libraryId: library.libraryId,
-        assetIds: [selectedAssetId],
+        assetIds: [targetAssetId],
         tagIds: [createResult.value.tagId],
       });
       if (!assignResult.ok) throw new LibraryOperationError(assignResult.error);
-      const tagResult = await api.listTags({ libraryId: library.libraryId });
-      if (tagResult.ok) setTags(tagResult.value);
+      await refreshTagAndMetadataState(targetAssetId);
       setNotice(`已创建并添加标签 "${tagName.trim()}"。`);
     } catch (caught) {
       setError(toMessage(caught, "创建标签失败。"));
+    }
+  }
+
+  async function refreshTagAndMetadataState(assetId: string) {
+    if (!api || !library) return;
+    const targetLibraryId = library.libraryId;
+    const [tagResult, metadataResult] = await Promise.all([
+      api.listTags({ libraryId: targetLibraryId }),
+      api.getAssetMetadata({ libraryId: targetLibraryId, assetId }),
+    ]);
+    if (!tagResult.ok) throw new LibraryOperationError(tagResult.error);
+    if (!metadataResult.ok) throw new LibraryOperationError(metadataResult.error);
+    setTags(tagResult.value);
+    metadataByAssetRef.current.set(assetId, metadataResult.value);
+    if (selectedAssetIdRef.current === assetId) {
+      setAssetMetadata(metadataResult.value);
     }
   }
 
@@ -2292,10 +2372,24 @@ function AppInner() {
 
   // --- Asset metadata ---
 
+  function applyLoadedMetadata(
+    targetAssetId: string,
+    metadata: AssetMetadataResult,
+  ) {
+    metadataByAssetRef.current.set(targetAssetId, metadata);
+    metadataConflictAssetIdsRef.current.delete(targetAssetId);
+    if (selectedAssetIdRef.current !== targetAssetId) return;
+    setAssetMetadata(metadata);
+    setEditDescription(metadata.description ?? "");
+    setEditRating(metadata.rating);
+    setEditFavorite(metadata.favorite);
+    setEditSourceUrl(metadata.sourcePageUrl ?? "");
+    setEditPalette(parseStoredPalette(metadata.palette).join(", "));
+  }
+
   async function loadMetadata() {
     if (!api || !library || !selectedAssetId) return;
     const targetAssetId = selectedAssetId;
-    setMetadataLoading(true);
     setVersionConflict(false);
     try {
       const result = await api.getAssetMetadata({
@@ -2303,20 +2397,9 @@ function AppInner() {
         assetId: targetAssetId,
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
-      metadataByAssetRef.current.set(targetAssetId, result.value);
-      metadataConflictAssetIdsRef.current.delete(targetAssetId);
-      if (selectedAssetIdRef.current !== targetAssetId) return;
-      setAssetMetadata(result.value);
-      setEditLabel(result.value.label ?? "");
-      setEditDescription(result.value.description ?? "");
-      setEditRating(result.value.rating);
-      setEditFavorite(result.value.favorite);
-      setEditSourceUrl(result.value.sourcePageUrl ?? "");
-      setEditPalette(parseStoredPalette(result.value.palette).join(", "));
+      applyLoadedMetadata(targetAssetId, result.value);
     } catch (caught) {
       setError(toMessage(caught, "无法读取元数据。"));
-    } finally {
-      setMetadataLoading(false);
     }
   }
 
@@ -2325,7 +2408,6 @@ function AppInner() {
     if (selectedAssetId) {
       void Promise.resolve().then(async () => {
         if (!api || !library) return;
-        setMetadataLoading(true);
         setVersionConflict(false);
         try {
           const result = await api.getAssetMetadata({
@@ -2333,22 +2415,12 @@ function AppInner() {
             assetId: selectedAssetId,
           });
           if (!cancelled && result.ok) {
-            metadataByAssetRef.current.set(selectedAssetId, result.value);
-            metadataConflictAssetIdsRef.current.delete(selectedAssetId);
-            setAssetMetadata(result.value);
-            setEditLabel(result.value.label ?? "");
-            setEditDescription(result.value.description ?? "");
-            setEditRating(result.value.rating);
-            setEditFavorite(result.value.favorite);
-            setEditSourceUrl(result.value.sourcePageUrl ?? "");
-            setEditPalette(parseStoredPalette(result.value.palette).join(", "));
+            applyLoadedMetadata(selectedAssetId, result.value);
           } else if (!cancelled && !result.ok) {
             throw new LibraryOperationError(result.error);
           }
         } catch (caught) {
           if (!cancelled) setError(toMessage(caught, "无法读取元数据。"));
-        } finally {
-          if (!cancelled) setMetadataLoading(false);
         }
       });
     } else {
@@ -2364,7 +2436,6 @@ function AppInner() {
   }, [selectedAssetId]);
 
   function saveMetadata(fields: {
-    label?: string;
     description?: string;
     rating?: number;
     favorite?: boolean;
@@ -2414,7 +2485,6 @@ function AppInner() {
           asset.assetId === targetAssetId
             ? {
                 ...asset,
-                label: result.value.label,
                 rating: result.value.rating,
                 favorite: result.value.favorite,
               }
@@ -2433,7 +2503,7 @@ function AppInner() {
     return operation;
   }
 
-  async function handleOpenExternal(assetId: string) {
+  const handleOpenExternal = useCallback(async (assetId: string) => {
     if (!api || !library) return;
     try {
       const result = await api.openExternal({
@@ -2446,7 +2516,7 @@ function AppInner() {
     } catch (caught) {
       setError(toMessage(caught, "打开外部应用失败。"));
     }
-  }
+  }, [api, library]);
 
   // --- Existing operations ---
 
@@ -3493,7 +3563,16 @@ function AppInner() {
         setSelectedAssetId(ids.at(-1));
         selectionAnchorRef.current = ids[0] ?? null;
       } else if (
-        (event.key === "Delete" || event.key === "Backspace") &&
+        matchesAssetCommandShortcut(event, "open-external", IS_MAC_PLATFORM) &&
+        selectedAsset?.availability === "available" &&
+        !selectedAsset.deletedAt &&
+        !previewAsset &&
+        !document.querySelector('[role="dialog"][aria-modal="true"]')
+      ) {
+        event.preventDefault();
+        void handleOpenExternal(selectedAsset.assetId);
+      } else if (
+        matchesAssetCommandShortcut(event, "move-to-trash", IS_MAC_PLATFORM) &&
         !showTrash &&
         library &&
         selectedManagedCount > 0 &&
@@ -3523,6 +3602,8 @@ function AppInner() {
     selectedAssetIds.length,
     showTrash,
     selectedManagedCount,
+    selectedAsset,
+    handleOpenExternal,
     selectedAssets,
     trashManagedAssets,
     visibleAssets,
@@ -3692,16 +3773,6 @@ function AppInner() {
   }
 
   // --- Metadata editor helpers ---
-  function handleMetadataLabelInput(event: FormEvent<HTMLInputElement>) {
-    const value = (event.target as HTMLInputElement).value;
-    setEditLabel(value);
-  }
-
-  function handleMetadataLabelSave() {
-    if (!assetMetadata || editLabel === (assetMetadata.label ?? "")) return;
-    void saveMetadata({ label: editLabel });
-  }
-
   function handleMetadataDescriptionInput(
     event: FormEvent<HTMLTextAreaElement>,
   ) {
@@ -3824,7 +3895,6 @@ function AppInner() {
     );
     setAiModel(result.value.model ?? "gpt-4o-mini");
     setAiHasKey(result.value.hasKey);
-    setAiLabelEnabled(result.value.enabledFields.label);
     setAiDescriptionEnabled(result.value.enabledFields.description);
     setAiTagsEnabled(result.value.enabledFields.tags);
     setAiStructuredEnabled(result.value.enabledFields.structuredMetadata);
@@ -3840,7 +3910,6 @@ function AppInner() {
       model: aiModel,
       ...(aiApiKey.trim() ? { apiKey: aiApiKey.trim() } : {}),
       enabledFields: {
-        label: aiLabelEnabled,
         description: aiDescriptionEnabled,
         tags: aiTagsEnabled,
         structuredMetadata: aiStructuredEnabled,
@@ -3877,15 +3946,14 @@ function AppInner() {
         return;
       }
       setAiContent({
-        label: result.value.generatedFields.label,
+        assetId,
         description: result.value.generatedFields.description,
         tags: result.value.generatedFields.tags,
         structuredMetadata: result.value.generatedFields.structuredMetadata,
         modelVersion: result.value.modelVersion,
       });
       setNotice("AI 分析完成。");
-      // Refresh metadata to show updated tags
-      if (selectedAssetId) void loadMetadata();
+      await refreshTagAndMetadataState(assetId);
     } finally {
       setAiAnalyzing(false);
     }
@@ -4101,12 +4169,12 @@ function AppInner() {
             placeholder={
               aiSearchEnabled
                 ? "自然语言，例如：横版科幻城市概念图，不要草图"
-                : '搜索；支持 label:"短语"、NOT tags:草图、OR'
+                : '搜索；支持 filename:"短语"、NOT tags:草图、OR'
             }
             title={
               aiSearchEnabled
                 ? "提交后由已配置的云端模型生成受限搜索条件"
-                : '示例：label:"hero concept" NOT tags:草图'
+                : '示例：filename:"hero concept" NOT tags:草图'
             }
             value={searchValue}
           />
@@ -4606,7 +4674,7 @@ function AppInner() {
                   },
                   {
                     field: "date" as const,
-                    icon: "star" as const,
+                    icon: "clock" as const,
                     label: "修改日期",
                   },
                 ]).map(({ field, icon, label }) => (
@@ -4704,12 +4772,10 @@ function AppInner() {
               }}
             />
           )}
-          {busy && (
+          {uiState === "importing" && (
             <div className="activity-strip" role="status">
               <span className="activity-pulse" />
-              {uiState === "importing"
-                ? "正在安全复制与登记资产…"
-                : "正在同步资源库…"}
+              正在安全复制与登记资产…
             </div>
           )}
           {exportProgress &&
@@ -4763,15 +4829,10 @@ function AppInner() {
               <>
                 <div
                   className={`asset-grid is-${assetViewMode}`}
-                  style={
-                    assetViewMode === "masonry"
-                      ? { columnWidth: assetCardSize }
-                      : {
-                          gridTemplateColumns: `repeat(auto-fill, ${assetCardSize}px)`,
-                        }
-                  }
+                  style={assetGridLayoutStyle(assetViewMode, assetCardSize)}
                 >
-                  {visibleAssets.map((asset) => (
+                  {(() => {
+                    const cards = visibleAssets.map((asset) => (
                     <button
                       aria-label={canvasPrefs.fields.name ? undefined : asset.displayName}
                       aria-pressed={selectedIdSet.has(asset.assetId)}
@@ -4908,14 +4969,9 @@ function AppInner() {
                         <div className="asset-caption">
                           {canvasPrefs.fields.name && (
                             <>
-                              <strong title={asset.label ?? asset.displayName}>
-                                {asset.label ?? asset.displayName}
+                              <strong title={asset.displayName}>
+                                {asset.displayName}
                               </strong>
-                              {asset.label && (
-                                <span title={asset.displayName}>
-                                  {asset.displayName}
-                                </span>
-                              )}
                             </>
                           )}
                           {searchSnippets.has(asset.assetId) ? (
@@ -4952,7 +5008,21 @@ function AppInner() {
                         </div>
                       )}
                     </button>
-                  ))}
+                    ));
+                    return assetViewMode === "masonry" ? (
+                      <MasonryColumns
+                        assets={visibleAssets}
+                        cardSize={assetCardSize}
+                        showCaption={
+                          canvasPrefs.fields.name ||
+                          canvasPrefs.fields.size ||
+                          canvasPrefs.fields.date
+                        }
+                      >
+                        {cards}
+                      </MasonryColumns>
+                    ) : cards;
+                  })()}
                   <div
                     className="asset-loading-more"
                     ref={loadMoreSentinelRef}
@@ -5078,7 +5148,9 @@ function AppInner() {
         )}
       </section>
       <InspectorPanel
-        aiContent={aiContent}
+        aiContent={
+          aiContent?.assetId === selectedAsset?.assetId ? aiContent : null
+        }
         allAssetCount={allAssetCount}
         allTags={tags}
         assetMetadata={assetMetadata}
@@ -5087,7 +5159,6 @@ function AppInner() {
         displayedPalette={displayedPalette}
         editDescription={editDescription}
         editFavorite={editFavorite}
-        editLabel={editLabel}
         editPalette={editPalette}
         editRating={editRating}
         editSourceUrl={editSourceUrl}
@@ -5095,15 +5166,12 @@ function AppInner() {
         handleFavoriteToggle={handleFavoriteToggle}
         handleMetadataDescriptionInput={handleMetadataDescriptionInput}
         handleMetadataDescriptionSave={handleMetadataDescriptionSave}
-        handleMetadataLabelInput={handleMetadataLabelInput}
-        handleMetadataLabelSave={handleMetadataLabelSave}
         handlePaletteSave={handlePaletteSave}
         handleRatingClick={handleRatingClick}
         handleSourceUrlInput={handleSourceUrlInput}
         handleSourceUrlSave={handleSourceUrlSave}
         library={library}
         loadMetadata={loadMetadata}
-        metadataLoading={metadataLoading}
         onCreateAndAssignTag={handleCreateAndAssignTag}
         onAssignTagToAsset={(tagId) => { if (selectedAssetId) void assignAssetToTag(selectedAssetId, tagId); }}
         onRemoveTagFromAsset={(tagId) => void handleRemoveTagFromAsset(tagId)}
@@ -5221,7 +5289,7 @@ function AppInner() {
         coverAssetId={collectionEditor?.coverAssetId ?? ""}
         assetOptions={visibleAssets.map((asset) => ({
           assetId: asset.assetId,
-          displayName: asset.label ?? asset.displayName,
+          displayName: asset.displayName,
         }))}
         onDescriptionChange={(d) =>
           setCollectionEditor((current) =>
@@ -5363,7 +5431,6 @@ function AppInner() {
         model={aiModel}
         language={aiLanguage}
         hasKey={aiHasKey}
-        labelEnabled={aiLabelEnabled}
         descriptionEnabled={aiDescriptionEnabled}
         tagsEnabled={aiTagsEnabled}
         structuredEnabled={aiStructuredEnabled}
@@ -5373,7 +5440,6 @@ function AppInner() {
         onProviderChange={setAiProvider}
         onModelChange={setAiModel}
         onLanguageChange={setAiLanguage}
-        onLabelEnabledChange={setAiLabelEnabled}
         onDescriptionEnabledChange={setAiDescriptionEnabled}
         onTagsEnabledChange={setAiTagsEnabled}
         onStructuredEnabledChange={setAiStructuredEnabled}
@@ -5497,7 +5563,6 @@ export function parseSearchExpression(
   value: string,
 ): Array<{ field: string | null; values: string[]; exclude: boolean }> {
   const allowedFields = new Set([
-    "label",
     "filename",
     "tags",
     "description",

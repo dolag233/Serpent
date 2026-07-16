@@ -138,6 +138,16 @@ export function useAssetSelection({
       // Only left-button drags start a marquee
       if (e.button !== 0) return;
 
+      // `preventDefault()` below intentionally prevents the blank canvas from
+      // taking focus.  Without first releasing focus from the navigation
+      // button, pressing Shift to begin an additive marquee switches Chromium
+      // into keyboard focus modality and paints a focus ring around the
+      // current folder for the whole drag.  The folder is still the active
+      // scope; it simply must not remain the focused control once the pointer
+      // starts a canvas interaction.
+      const activeElement = document.activeElement;
+      if (activeElement instanceof HTMLElement) activeElement.blur();
+
       e.preventDefault();
 
       marqueeStartRef.current = { x: e.clientX, y: e.clientY };

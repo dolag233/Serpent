@@ -222,7 +222,6 @@ const pendingImportCollections = new Map<string, string>();
 interface AiConfig {
   provider: "openai" | "gemini" | "anthropic";
   model: string;
-  labelEnabled: boolean;
   descriptionEnabled: boolean;
   tagEnabled: boolean;
   structuredMetadataEnabled: boolean;
@@ -234,7 +233,6 @@ interface AiConfig {
 const DEFAULT_AI_CONFIG: AiConfig = {
   provider: "openai",
   model: "gpt-4o-mini",
-  labelEnabled: true,
   descriptionEnabled: true,
   tagEnabled: true,
   structuredMetadataEnabled: false,
@@ -270,7 +268,6 @@ function saveAiConfig(config: AiConfig): void {
   const toSave: Record<string, unknown> = {};
   toSave.provider = config.provider;
   toSave.model = config.model;
-  toSave.labelEnabled = config.labelEnabled;
   toSave.descriptionEnabled = config.descriptionEnabled;
   toSave.tagEnabled = config.tagEnabled;
   toSave.structuredMetadataEnabled = config.structuredMetadataEnabled;
@@ -493,7 +490,6 @@ async function processAiQueueBatch(
       model: config.model,
       apiKey,
       enabledFields: {
-        label: config.labelEnabled,
         description: config.descriptionEnabled,
         tags: config.tagEnabled,
         structuredMetadata: config.structuredMetadataEnabled,
@@ -907,7 +903,6 @@ async function commandFor(
         libraryId: request.libraryId,
         assetId: request.assetId,
         expectedVersion: request.expectedVersion,
-        label: request.label,
         description: request.description,
         rating: request.rating,
         favorite: request.favorite,
@@ -1329,7 +1324,6 @@ async function commandFor(
         model: config.model,
         apiKey,
         enabledFields: {
-          label: config.labelEnabled,
           description: config.descriptionEnabled,
           tags: config.tagEnabled,
           structuredMetadata: config.structuredMetadataEnabled,
@@ -1425,7 +1419,6 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
         model: config.model,
         hasKey: config.hasKey,
         enabledFields: {
-          label: config.labelEnabled,
           description: config.descriptionEnabled,
           tags: config.tagEnabled,
           structuredMetadata: config.structuredMetadataEnabled,
@@ -1452,7 +1445,6 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
       saveAiConfig({
         provider: request.provider,
         model: request.model,
-        labelEnabled: request.enabledFields?.label ?? true,
         descriptionEnabled: request.enabledFields?.description ?? true,
         tagEnabled: request.enabledFields?.tags ?? true,
         structuredMetadataEnabled:

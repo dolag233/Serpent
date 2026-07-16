@@ -168,6 +168,31 @@ describe('tags', () => {
     service.closeAll();
   });
 
+  it('lists the most recently created tag first', () => {
+    const { service, libraryId, libraryPath } = createLibraryWithAsset();
+    const older = service.createTag({ libraryId, name: 'Older' });
+    const newer = service.createTag({ libraryId, name: 'Newer' });
+    const db = new TestDatabase(path.join(libraryPath, '.serpent', 'library.db'));
+    try {
+      db.prepare('UPDATE tags SET created_at = ? WHERE tag_id = ?').run(
+        '2026-07-15T00:00:00.000Z',
+        older.tagId,
+      );
+      db.prepare('UPDATE tags SET created_at = ? WHERE tag_id = ?').run(
+        '2026-07-16T00:00:00.000Z',
+        newer.tagId,
+      );
+    } finally {
+      db.close();
+    }
+
+    expect(service.listTags(libraryId).map((tag) => tag.tagId)).toEqual([
+      newer.tagId,
+      older.tagId,
+    ]);
+    service.closeAll();
+  });
+
   it('isolates tag names across libraries', () => {
     const { service, libraryId } = createLibraryWithAsset();
     const root2 = temporaryRoot();
@@ -236,6 +261,26 @@ describe('tags', () => {
 // ── Tag assignment ────────────────────────────────────────────────────
 
 describe('tag assignment', () => {
+  it('counts distinct assets across human and AI tag relationships', () => {
+    const { service, libraryId, libraryPath, assetId } = createLibraryWithAsset();
+    const tag = service.createTag({ libraryId, name: 'Shared source' });
+    const db = new TestDatabase(path.join(libraryPath, '.serpent', 'library.db'));
+    try {
+      db.prepare(
+        `INSERT INTO ai_asset_tags
+           (asset_id, tag_id, revision_id, model_id, model_version)
+         VALUES (?, ?, NULL, 'test-model', '1')`,
+      ).run(assetId, tag.tagId);
+    } finally {
+      db.close();
+    }
+
+    expect(service.listTags(libraryId).find((item) => item.tagId === tag.tagId)?.assetCount).toBe(1);
+    service.assignTags({ libraryId, assetIds: [assetId], tagIds: [tag.tagId] });
+    expect(service.listTags(libraryId).find((item) => item.tagId === tag.tagId)?.assetCount).toBe(1);
+    service.closeAll();
+  });
+
   it('assigns tags to assets and counts assignments', () => {
     const { service, libraryId, assetId } = createLibraryWithAsset();
     const alpha = service.createTag({ libraryId, name: 'Alpha' });
@@ -720,7 +765,6 @@ describe('asset metadata', () => {
     const metadata = service.getAssetMetadata({ libraryId, assetId });
     expect(metadata).toMatchObject({
       assetId,
-      label: null,
       description: null,
       rating: 0,
       favorite: false,
@@ -747,12 +791,12 @@ describe('asset metadata', () => {
       libraryId,
       assetId,
       expectedVersion: 0,
-      label: 'Hero',
+      description: 'Hero description',
       rating: 4,
       favorite: true,
     });
     expect(result.entityVersion).toBe(1);
-    expect(result.label).toBe('Hero');
+    expect(result.description).toBe('Hero description');
     expect(result.rating).toBe(4);
     expect(result.favorite).toBe(true);
 
@@ -765,7 +809,7 @@ describe('asset metadata', () => {
     });
     expect(result2.entityVersion).toBe(2);
     expect(result2.rating).toBe(5);
-    expect(result2.label).toBe('Hero'); // unchanged
+    expect(result2.description).toBe('Hero description'); // unchanged
 
     service.closeAll();
   });
@@ -778,7 +822,7 @@ describe('asset metadata', () => {
       libraryId,
       assetId,
       expectedVersion: 0,
-      label: 'First',
+      description: 'First',
     });
 
     // Attempt with stale expectedVersion=0.
@@ -788,7 +832,7 @@ describe('asset metadata', () => {
           libraryId,
           assetId,
           expectedVersion: 0,
-          label: 'Stale',
+          description: 'Stale',
         }),
       'VERSION_CONFLICT',
     );
@@ -801,7 +845,7 @@ describe('asset metadata', () => {
           libraryId,
           assetId,
           expectedVersion: 2,
-          label: 'Wrong',
+          description: 'Wrong',
         }),
       'VERSION_CONFLICT',
     );
@@ -818,7 +862,7 @@ describe('asset metadata', () => {
           libraryId,
           assetId,
           expectedVersion: 1,
-          label: 'Bad',
+          description: 'Bad',
         }),
       'VERSION_CONFLICT',
     );
@@ -850,18 +894,9 @@ describe('asset metadata', () => {
     service.closeAll();
   });
 
-  it('enforces label and description lengths at the service boundary', () => {
+  it('enforces description length at the service boundary', () => {
     const { service, libraryId, assetId } = createLibraryWithAsset();
 
-    expectServiceCode(
-      () => service.setAssetMetadata({
-        libraryId,
-        assetId,
-        expectedVersion: 0,
-        label: 'a'.repeat(256),
-      }),
-      'INVALID_ASSET_METADATA',
-    );
     expectServiceCode(
       () => service.setAssetMetadata({
         libraryId,
@@ -984,13 +1019,12 @@ describe('asset metadata', () => {
     service.closeAll();
   });
 
-  it('AssetSummary reflects label/rating/favorite after metadata.set', () => {
+  it('AssetSummary reflects rating/favorite after metadata.set', () => {
     const { service, libraryId, assetId } = createLibraryWithAsset();
 
     // Before metadata: defaults.
     const assetsBefore = service.listAssets({ libraryId, recursive: true });
     const before = assetsBefore.find((a) => a.assetId === assetId)!;
-    expect(before.label).toBeNull();
     expect(before.rating).toBe(0);
     expect(before.favorite).toBe(false);
 
@@ -999,7 +1033,6 @@ describe('asset metadata', () => {
       libraryId,
       assetId,
       expectedVersion: 0,
-      label: 'Masterpiece',
       rating: 5,
       favorite: true,
     });
@@ -1007,7 +1040,6 @@ describe('asset metadata', () => {
     // After metadata: populated.
     const assetsAfter = service.listAssets({ libraryId, recursive: true });
     const after = assetsAfter.find((a) => a.assetId === assetId)!;
-    expect(after.label).toBe('Masterpiece');
     expect(after.rating).toBe(5);
     expect(after.favorite).toBe(true);
 
@@ -1156,8 +1188,8 @@ describe('smart collections', () => {
     const assetId2 = createSecondAsset(libraryPath, managedFolder.relativePath, managedFolder.folderId);
 
     // Set distinct ratings so we can filter.
-    service.setAssetMetadata({ libraryId, assetId, expectedVersion: 0, rating: 5, label: 'Masterpiece' });
-    service.setAssetMetadata({ libraryId, assetId: assetId2, expectedVersion: 0, rating: 1, label: 'Sketch' });
+    service.setAssetMetadata({ libraryId, assetId, expectedVersion: 0, rating: 5 });
+    service.setAssetMetadata({ libraryId, assetId: assetId2, expectedVersion: 0, rating: 1 });
 
     // Create smart collection for rating >= 4.
     const sc = service.createSmartCollection({
@@ -1173,7 +1205,7 @@ describe('smart collections', () => {
     expect(result.total).toBe(1);
     expect(result.items).toHaveLength(1);
     expect(result.items[0]!.assetId).toBe(assetId);
-    expect(result.items[0]!.label).toBe('Masterpiece');
+    expect(result.items[0]!.rating).toBe(5);
 
     service.closeAll();
   });
