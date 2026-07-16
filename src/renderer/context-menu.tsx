@@ -26,8 +26,9 @@ export type ContextMenuDescriptor =
       isDeleted: boolean;
     }
   | {
+      // Collections only. Tags were removed from the sidebar (REQ-TAG-001),
+      // so the organization menu no longer has a tag branch.
       type: "organization";
-      orgKind: "tag" | "collection";
       id: string;
       name: string;
     }

@@ -387,7 +387,9 @@ test("ordinary browsing continuously appends every asset without page controls",
     await window.getByRole("button", { name: /分页合集/ }).click();
     await expect(window.getByLabel("格式过滤")).toHaveValue("");
     await loadEveryAssetInCurrentScope();
-    await window.getByRole("button", { name: /分页标签/ }).click();
+    // The sidebar no longer enumerates tags (REQ-TAG-001); enter the
+    // tag-filtered view through the retained 标签过滤 entry instead.
+    await window.getByLabel("标签过滤").fill("分页标签");
     await loadEveryAssetInCurrentScope();
     await window.getByRole("button", { name: /分页合集/ }).click();
     await loadEveryAssetInCurrentScope();

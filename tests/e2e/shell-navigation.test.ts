@@ -91,6 +91,17 @@ test("library switcher, breadcrumbs, and workspace history", async () => {
       0,
     );
 
+    // REQ-TAG-001: the sidebar no longer enumerates tags or offers tag
+    // creation; tags live in the Inspector chips and the menu tag picker.
+    await expect(
+      window.locator(".navigation-pane").getByText("标签", { exact: true }),
+    ).toHaveCount(0);
+    await expect(
+      window
+        .locator(".navigation-pane")
+        .getByRole("button", { name: "添加标签" }),
+    ).toHaveCount(0);
+
     await libraryTrigger.click();
     await expect(
       window.getByRole("menuitem", { name: "新建资源库…" }),

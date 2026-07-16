@@ -158,29 +158,30 @@ test("context menu clamps at viewport edges", async () => {
       expect(menuBox.y + menuBox.height).toBeLessThanOrEqual(viewport.height + 2);
     }
 
-    // Create a tag to test organization menu clamping
+    // Create a collection to test organization menu clamping.
+    // (The sidebar no longer enumerates tags — REQ-TAG-001 — so the
+    // collection row is the remaining organization menu entry.)
     // First Escape: close context menu (selection preserved — correct behavior)
     await window.keyboard.press("Escape");
-    // Second Escape: clear the selection so the sidebar "添加标签" button
-    // is unambiguous (no multi-select context menu when selection is empty)
+    // Second Escape: clear the selection so the sidebar is unambiguous
     await window.keyboard.press("Escape");
-    await window.getByRole("button", { name: "添加标签" }).click();
-    await window.getByPlaceholder("输入标签名称，回车创建").fill("Clamp Tag");
-    await window.getByPlaceholder("输入标签名称，回车创建").press("Enter");
-    await expect(window.getByRole("button", { name: /Clamp Tag/ })).toBeVisible();
+    await window.getByRole("button", { name: "添加合集" }).click();
+    await window.getByPlaceholder("输入合集名称，回车创建").fill("Clamp Collection");
+    await window.getByPlaceholder("输入合集名称，回车创建").press("Enter");
+    await expect(window.getByRole("button", { name: /Clamp Collection/ })).toBeVisible();
 
-    // Open organization context menu on the tag
-    await window.getByRole("button", { name: /Clamp Tag/ }).click({ button: "right" });
+    // Open organization context menu on the collection
+    await window.getByRole("button", { name: /Clamp Collection/ }).click({ button: "right" });
     await expect(window.getByRole("menu")).toBeVisible({ timeout: 5_000 });
 
     // Assert organization menu is within viewport
-    const tagMenu = window.getByRole("menu");
-    const tagMenuBox = await tagMenu.boundingBox();
-    if (tagMenuBox && viewport) {
-      expect(tagMenuBox.x).toBeGreaterThanOrEqual(-2);
-      expect(tagMenuBox.y).toBeGreaterThanOrEqual(-2);
-      expect(tagMenuBox.x + tagMenuBox.width).toBeLessThanOrEqual(viewport.width + 2);
-      expect(tagMenuBox.y + tagMenuBox.height).toBeLessThanOrEqual(viewport.height + 2);
+    const orgMenu = window.getByRole("menu");
+    const orgMenuBox = await orgMenu.boundingBox();
+    if (orgMenuBox && viewport) {
+      expect(orgMenuBox.x).toBeGreaterThanOrEqual(-2);
+      expect(orgMenuBox.y).toBeGreaterThanOrEqual(-2);
+      expect(orgMenuBox.x + orgMenuBox.width).toBeLessThanOrEqual(viewport.width + 2);
+      expect(orgMenuBox.y + orgMenuBox.height).toBeLessThanOrEqual(viewport.height + 2);
     }
 
     // Verify menu still works after testing
@@ -219,27 +220,29 @@ test("single-menu enforcement — opening new context menu closes existing one",
     const assetCard = window.locator('[data-asset-id]').first();
     await expect(assetCard).toBeVisible({ timeout: 15_000 });
 
-    // Create a tag for dual-menu testing
-    await window.getByRole("button", { name: "添加标签" }).click();
-    await window.getByPlaceholder("输入标签名称，回车创建").fill("Single Test Tag");
-    await window.getByPlaceholder("输入标签名称，回车创建").press("Enter");
-    await expect(window.getByRole("button", { name: /Single Test Tag/ })).toBeVisible();
+    // Create a collection for dual-menu testing.
+    // (The sidebar no longer enumerates tags — REQ-TAG-001 — so the
+    // collection row is the remaining organization menu entry.)
+    await window.getByRole("button", { name: "添加合集" }).click();
+    await window.getByPlaceholder("输入合集名称，回车创建").fill("Single Test Collection");
+    await window.getByPlaceholder("输入合集名称，回车创建").press("Enter");
+    await expect(window.getByRole("button", { name: /Single Test Collection/ })).toBeVisible();
 
     // Step 1: Open context menu on the asset card
     await assetCard.click({ button: "right" });
     await expect(window.getByRole("menu")).toBeVisible({ timeout: 5_000 });
     await expect(window.getByRole("menuitem", { name: "使用外部应用打开" })).toBeVisible();
 
-    // Step 2: Open context menu on the tag (should close asset menu, single-menu enforced)
+    // Step 2: Open context menu on the collection (should close asset menu, single-menu enforced)
     // The backdrop now has pointer-events:none so right-clicks pass through
-    await window.getByRole("button", { name: /Single Test Tag/ }).click({ button: "right" });
+    await window.getByRole("button", { name: /Single Test Collection/ }).click({ button: "right" });
     await expect(window.getByRole("menu")).toBeVisible({ timeout: 5_000 });
-    await expect(window.getByRole("menuitem", { name: /重命名标签/ })).toBeVisible();
+    await expect(window.getByRole("menuitem", { name: /重命名合集/ })).toBeVisible();
     // Only one menu should exist
     const menus = window.locator('[role="menu"]');
     await expect(menus).toHaveCount(1);
 
-    // Step 3: Open context menu on the asset again (should close tag menu)
+    // Step 3: Open context menu on the asset again (should close collection menu)
     await assetCard.click({ button: "right" });
     await expect(window.getByRole("menuitem", { name: "使用外部应用打开" })).toBeVisible();
     await expect(menus).toHaveCount(1);
@@ -452,12 +455,6 @@ test("scope change closes the context menu", async () => {
     await window.getByRole("button", { name: "导入文件", exact: true }).first().click();
     const assetCard = window.locator('[data-asset-id]').first();
     await expect(assetCard).toBeVisible({ timeout: 15_000 });
-
-    // Create a tag to have a sidebar nav item to click
-    await window.getByRole("button", { name: "添加标签" }).click();
-    await window.getByPlaceholder("输入标签名称，回车创建").fill("Scope Tag");
-    await window.getByPlaceholder("输入标签名称，回车创建").press("Enter");
-    await expect(window.getByRole("button", { name: /Scope Tag/ })).toBeVisible();
 
     // Open context menu on the asset
     await assetCard.click({ button: "right" });
@@ -697,15 +694,35 @@ test("tag picker searches, survives in-menu scroll, restores focus on back, and 
     const assetCard = window.locator("[data-asset-id]").first();
     await expect(assetCard).toBeVisible({ timeout: 15_000 });
 
-    // Create two tags via the sidebar so the picker has candidates
-    await window.getByRole("button", { name: "添加标签" }).click();
-    await window.getByPlaceholder("输入标签名称，回车创建").fill("甲标签");
-    await window.getByPlaceholder("输入标签名称，回车创建").press("Enter");
-    await expect(window.getByRole("button", { name: /甲标签/ })).toBeVisible();
-    await window.getByRole("button", { name: "添加标签" }).click();
-    await window.getByPlaceholder("输入标签名称，回车创建").fill("乙标签");
-    await window.getByPlaceholder("输入标签名称，回车创建").press("Enter");
-    await expect(window.getByRole("button", { name: /乙标签/ })).toBeVisible();
+    // Create two tags through the library API so the picker has candidates.
+    // The sidebar no longer enumerates or creates tags (REQ-TAG-001);
+    // re-entering 所有资产 refreshes the Renderer tag summaries.
+    await window.evaluate(async () => {
+      const api = (
+        globalThis as typeof globalThis & {
+          serpent: {
+            library: {
+              listOpen(): Promise<{
+                ok: boolean;
+                value?: Array<{ libraryId: string }>;
+              }>;
+              createTag(input: {
+                libraryId: string;
+                name: string;
+              }): Promise<{ ok: boolean }>;
+            };
+          };
+        }
+      ).serpent.library;
+      const open = await api.listOpen();
+      const libraryId = open.value?.[0]?.libraryId;
+      if (!libraryId) throw new Error("No open library");
+      for (const name of ["甲标签", "乙标签"]) {
+        const created = await api.createTag({ libraryId, name });
+        if (!created.ok) throw new Error(`Could not create tag ${name}.`);
+      }
+    });
+    await window.getByRole("button", { name: /所有资产/ }).click();
 
     // Enter the tag picker from the asset context menu
     await assetCard.click({ button: "right" });

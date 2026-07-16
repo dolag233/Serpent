@@ -54,14 +54,33 @@ test("persists organization and metadata across restart and surfaces optimistic-
     });
     await expect(assetCard).toBeVisible();
 
-    await window.getByRole("button", { name: "添加标签" }).click();
-    await window
-      .getByPlaceholder("输入标签名称，回车创建")
-      .fill("持久标签");
-    await window
-      .getByPlaceholder("输入标签名称，回车创建")
-      .press("Enter");
-    await expect(window.getByRole("button", { name: /持久标签/ })).toBeVisible();
+    // The sidebar no longer enumerates or creates tags (REQ-TAG-001); seed
+    // the tag through the library API, then re-enter 所有资产 so the
+    // Renderer refreshes its tag summaries for the menu picker.
+    await window.evaluate(async () => {
+      const api = (
+        globalThis as typeof globalThis & {
+          serpent: {
+            library: {
+              listOpen(): Promise<{
+                ok: boolean;
+                value?: Array<{ libraryId: string }>;
+              }>;
+              createTag(input: {
+                libraryId: string;
+                name: string;
+              }): Promise<{ ok: boolean }>;
+            };
+          };
+        }
+      ).serpent.library;
+      const open = await api.listOpen();
+      const libraryId = open.value?.[0]?.libraryId;
+      if (!libraryId) throw new Error("No open library");
+      const created = await api.createTag({ libraryId, name: "持久标签" });
+      if (!created.ok) throw new Error("Could not create tag fixture.");
+    });
+    await window.getByRole("button", { name: /所有资产/ }).click();
 
     await window.getByRole("button", { name: "添加合集" }).click();
     await window
@@ -132,8 +151,11 @@ test("persists organization and metadata across restart and surfaces optimistic-
       window.getByText(libraryName, { exact: true }).first(),
     ).toBeVisible();
 
-    await expect(window.getByRole("button", { name: /持久标签/ })).toBeVisible();
-    await window.getByRole("button", { name: /持久标签/ }).click();
+    // The sidebar no longer enumerates tags (REQ-TAG-001); verify the tag
+    // and its assignment survived the restart through the retained 标签过滤
+    // entry instead.
+    await window.getByText("筛选与排序", { exact: true }).click();
+    await window.getByLabel("标签过滤").fill("持久标签");
     await expect(
       window.getByRole("button", { name: /persistent-asset\.txt/i }),
     ).toBeVisible();

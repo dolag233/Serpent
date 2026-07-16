@@ -38,7 +38,7 @@ function descriptorKey(descriptor: ContextMenuDescriptor): string {
     case "multi-asset":
       return `multi-asset:${descriptor.assetIds.join(",")}`;
     case "organization":
-      return `organization:${descriptor.orgKind}:${descriptor.id}`;
+      return `organization:${descriptor.id}`;
     case "smart-collection":
       return `smart-collection:${descriptor.id}`;
   }
@@ -53,9 +53,9 @@ interface AssetContextMenuProps {
   onRenameSmartCollection: (id: string, name: string) => void;
   onUpdateSmartCollection: (id: string) => void;
   onDeleteSmartCollection: (id: string, name: string) => void;
-  onRenameOrganization: (kind: "tag" | "collection", id: string, name: string) => void;
+  onRenameOrganization: (id: string, name: string) => void;
   onEditCollectionDetails: (collectionId: string) => void;
-  onDeleteOrganization: (kind: "tag" | "collection", id: string, name: string) => void;
+  onDeleteOrganization: (id: string, name: string) => void;
   onBatchAssignTag: (tagId: string, assetIds: string[]) => void;
   onBatchRemoveTag: (tagId: string, assetIds: string[]) => void;
   onBatchAddToCollection: (collectionId: string, assetIds: string[]) => void;
@@ -73,6 +73,7 @@ interface AssetContextMenuProps {
   onOpenExternal: (assetId: string) => void;
   onRevealInFolder: (assetId: string) => void;
   onCopyFilePath: (assetId: string) => void;
+  onRenameAssetFile: (assetId: string) => void;
   onRemoveFromCurrentCollection: (assetId: string) => void;
   onRemoveFromCollection: (assetId: string, collectionId: string) => void;
   onAssignTag: (assetId: string, tagId: string) => void;
@@ -109,6 +110,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
     onOpenExternal,
     onRevealInFolder,
     onCopyFilePath,
+    onRenameAssetFile,
     onRemoveFromCurrentCollection,
     onRemoveFromCollection,
     onAssignTag,
@@ -138,7 +140,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
       : activeContextMenu.descriptor.type === "asset"
         ? `资产操作：${activeContextMenu.descriptor.displayName}`
         : activeContextMenu.descriptor.type === "organization"
-          ? `${activeContextMenu.descriptor.orgKind === "tag" ? "标签" : "合集"}操作：${activeContextMenu.descriptor.name}`
+          ? `合集操作：${activeContextMenu.descriptor.name}`
           : `智能合集操作：${activeContextMenu.descriptor.name}`;
 
   return (
@@ -223,44 +225,35 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
         {activeContextMenu.descriptor.type === "organization" && (
           <>
             <ContextMenuItem
-              icon={
-                <Icon
-                  name={activeContextMenu.descriptor.orgKind === "tag" ? "tag" : "collection"}
-                  size={14}
-                />
-              }
-              label={`重命名${activeContextMenu.descriptor.orgKind === "tag" ? "标签" : "合集"}`}
+              icon={<Icon name="collection" size={14} />}
+              label="重命名合集"
               onAction={() => {
                 const desc = activeContextMenu.descriptor;
                 if (desc.type !== "organization") return;
-                onRenameOrganization(desc.orgKind, desc.id, desc.name);
+                onRenameOrganization(desc.id, desc.name);
               }}
             />
-            {activeContextMenu.descriptor.orgKind === "collection" && (
-              <ContextMenuItem
-                icon={<Icon name="info" size={14} />}
-                label="编辑合集详情"
-                onAction={() => {
-                  const desc = activeContextMenu.descriptor;
-                  if (desc.type !== "organization") return;
-                  onEditCollectionDetails(desc.id);
-                }}
-              />
-            )}
+            <ContextMenuItem
+              icon={<Icon name="info" size={14} />}
+              label="编辑合集详情"
+              onAction={() => {
+                const desc = activeContextMenu.descriptor;
+                if (desc.type !== "organization") return;
+                onEditCollectionDetails(desc.id);
+              }}
+            />
             <ContextMenuItem
               icon={<Icon name="trash" size={14} />}
-              label={`删除${activeContextMenu.descriptor.orgKind === "tag" ? "标签" : "合集"}`}
+              label="删除合集"
               danger
               onAction={() => {
                 const desc = activeContextMenu.descriptor;
                 if (desc.type !== "organization") return;
                 const confirmed = window.confirm(
-                  desc.orgKind === "tag"
-                    ? `删除标签"${desc.name}"？`
-                    : `删除合集"${desc.name}"？\n（仅删除合集结构，不删除资产）`,
+                  `删除合集"${desc.name}"？\n（仅删除合集结构，不删除资产）`,
                 );
                 if (confirmed) {
-                  onDeleteOrganization(desc.orgKind, desc.id, desc.name);
+                  onDeleteOrganization(desc.id, desc.name);
                 }
               }}
             />
@@ -545,6 +538,15 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                     disabledReason="资产当前不可用"
                     onAction={() => {
                       onCopyFilePath(assetId);
+                    }}
+                  />
+                  <ContextMenuItem
+                    icon={<Icon name="edit" size={14} />}
+                    label="重命名…"
+                    disabled={!isAvailable}
+                    disabledReason="资产当前不可用"
+                    onAction={() => {
+                      onRenameAssetFile(assetId);
                     }}
                   />
                   {linkedFolders

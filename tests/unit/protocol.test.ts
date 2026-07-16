@@ -322,6 +322,141 @@ describe('renderer request protocol', () => {
     })).toThrow();
   });
 
+  it('accepts asset file rename by id and extension-less base name only', () => {
+    expect(parseRendererRequest({
+      type: 'asset.rename-file.request',
+      libraryId: 'library-01',
+      assetId: 'asset-01',
+      newBaseName: 'hero concept',
+    })).toEqual({
+      type: 'asset.rename-file.request',
+      libraryId: 'library-01',
+      assetId: 'asset-01',
+      newBaseName: 'hero concept',
+    });
+    expect(parseWorkerRequest({
+      requestId: 'rename-01',
+      command: {
+        type: 'asset.rename-file',
+        libraryId: 'library-01',
+        assetId: 'asset-01',
+        newBaseName: 'hero concept',
+      },
+    }).command).toEqual({
+      type: 'asset.rename-file',
+      libraryId: 'library-01',
+      assetId: 'asset-01',
+      newBaseName: 'hero concept',
+    });
+  });
+
+  it('rejects path-shaped and malformed asset rename base names at the schema layer', () => {
+    const rejectedBaseNames = [
+      '../escape',
+      '..',
+      '.',
+      '/abs/path',
+      'nested/name',
+      'back\\slash',
+      'C:\\Windows\\system32',
+      '',
+    ];
+    for (const newBaseName of rejectedBaseNames) {
+      expect(() => parseRendererRequest({
+        type: 'asset.rename-file.request',
+        libraryId: 'library-01',
+        assetId: 'asset-01',
+        newBaseName,
+      })).toThrow();
+      expect(() => parseWorkerRequest({
+        requestId: 'rename-injection',
+        command: {
+          type: 'asset.rename-file',
+          libraryId: 'library-01',
+          assetId: 'asset-01',
+          newBaseName,
+        },
+      })).toThrow();
+    }
+    // Control characters, blank, and overlong input are rejected on both boundaries.
+    for (const newBaseName of ['line\nbreak', '\tab', '', '   ', 'a'.repeat(256)]) {
+      expect(() => parseRendererRequest({
+        type: 'asset.rename-file.request',
+        libraryId: 'library-01',
+        assetId: 'asset-01',
+        newBaseName,
+      })).toThrow();
+      expect(() => parseWorkerRequest({
+        requestId: 'rename-malformed',
+        command: {
+          type: 'asset.rename-file',
+          libraryId: 'library-01',
+          assetId: 'asset-01',
+          newBaseName,
+        },
+      })).toThrow();
+    }
+    // REQ-COMMAND-003: the renderer must never supply filesystem paths.
+    expect(() => parseRendererRequest({
+      type: 'asset.rename-file.request',
+      libraryId: 'library-01',
+      assetId: 'asset-01',
+      newBaseName: 'hero',
+      absolutePath: '/private/forged/path',
+    })).toThrow();
+    // Semantic name rules (reserved DOS names, trailing dot/space, byte limit)
+    // are service-layer concerns; these shapes still parse so the Worker can
+    // answer with a typed INVALID_ASSET_FILE_NAME error.
+    expect(parseRendererRequest({
+      type: 'asset.rename-file.request',
+      libraryId: 'library-01',
+      assetId: 'asset-01',
+      newBaseName: 'CON',
+    })).toMatchObject({ newBaseName: 'CON' });
+    expect(parseRendererRequest({
+      type: 'asset.rename-file.request',
+      libraryId: 'library-01',
+      assetId: 'asset-01',
+      newBaseName: 'trailing.',
+    })).toMatchObject({ newBaseName: 'trailing.' });
+  });
+
+  it('round-trips the asset file-renamed response on both boundaries', () => {
+    const asset = {
+      assetId: 'asset-01',
+      locationKind: 'managed' as const,
+      managedFolderId: 'folder-01',
+      relativeFilePath: 'Shots/bravo.png',
+      displayName: 'bravo.png',
+      currentRevisionId: 'revision-01',
+      byteSize: 4,
+      modifiedAt: '2026-07-18T00:00:00.000Z',
+      availability: 'available' as const,
+      rating: 0,
+      favorite: false,
+      deletedAt: null,
+      trashedFromPath: null,
+      remainingDays: null,
+      thumbnailStatus: null,
+      thumbnailArtifactId: null,
+      mediaType: 'image' as const,
+      width: null,
+      height: null,
+    };
+    expect(parseRendererResult({ ok: true, type: 'asset.file-renamed', asset }))
+      .toMatchObject({ type: 'asset.file-renamed', asset: { relativeFilePath: 'Shots/bravo.png' } });
+    expect(parseWorkerResponse({
+      requestId: 'rename-response',
+      result: { ok: true, type: 'asset.file-renamed', asset },
+    }).result).toMatchObject({ type: 'asset.file-renamed' });
+    // The response carries no absolute path, and extra fields are stripped by schema.
+    expect(() => parseRendererResult({
+      ok: true,
+      type: 'asset.file-renamed',
+      asset: { ...asset, absolutePath: '/private/leak' },
+    })).toThrow();
+  });
+
   it('accepts the semantic create-library request', () => {
     expect(
       parseRendererRequest({

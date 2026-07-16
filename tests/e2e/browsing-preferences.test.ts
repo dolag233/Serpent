@@ -770,17 +770,37 @@ test("maintains consistent preferences, accessible names, zoom behavior, and avo
     await assertHiddenFieldPresentation(true);
 
     // --- Tag scope ---
-    // Create a tag and assign it to the asset
-    await window.getByRole("button", { name: "添加标签" }).click();
-    await window
-      .getByPlaceholder("输入标签名称，回车创建")
-      .fill("偏好测试标签");
-    await window
-      .getByPlaceholder("输入标签名称，回车创建")
-      .press("Enter");
-    await expect(
-      window.getByRole("button", { name: /偏好测试标签/ }),
-    ).toBeVisible();
+    // The sidebar no longer enumerates or creates tags (REQ-TAG-001).
+    // Seed the tag through the library API, then re-enter 所有资产 so the
+    // Renderer refreshes its tag summaries for the menu picker.
+    await window.evaluate(async () => {
+      const api = (
+        globalThis as typeof globalThis & {
+          serpent: {
+            library: {
+              listOpen(): Promise<{
+                ok: boolean;
+                value?: Array<{ libraryId: string }>;
+              }>;
+              createTag(input: {
+                libraryId: string;
+                name: string;
+              }): Promise<{ ok: boolean }>;
+            };
+          };
+        }
+      ).serpent.library;
+      const open = await api.listOpen();
+      const libraryId = open.value?.[0]?.libraryId;
+      if (!libraryId) throw new Error("No open library");
+      const created = await api.createTag({
+        libraryId,
+        name: "偏好测试标签",
+      });
+      if (!created.ok) throw new Error("Could not create tag fixture.");
+    });
+    await window.getByRole("button", { name: /所有资产/ }).click();
+    await assertHiddenFieldPresentation(true);
 
     // Assign the tag via right-click context menu
     await cardById.click({ button: "right" });
@@ -790,8 +810,10 @@ test("maintains consistent preferences, accessible names, zoom behavior, and avo
       .click();
     await expect(window.locator(".toast")).toContainText("标签已添加");
 
-    // Navigate to tag scope through sidebar and verify consistency
-    await window.getByRole("button", { name: /偏好测试标签/ }).click();
+    // Enter the tag-filtered view through the retained 标签过滤 entry and
+    // verify presentation consistency
+    await window.getByText("筛选与排序", { exact: true }).click();
+    await window.getByLabel("标签过滤").fill("偏好测试标签");
     await assertToggleStates("true", "false", "false", "true");
     await assertHiddenFieldPresentation(true);
 

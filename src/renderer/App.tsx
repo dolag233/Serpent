@@ -50,6 +50,7 @@ import {
 } from "./context-menu";
 import { useAssetSelection } from "./useAssetSelection";
 import { useBatchActions } from "./useBatchActions";
+import { useAssetRename } from "./useAssetRename";
 import {
   toMessage,
   LibraryOperationError,
@@ -125,7 +126,7 @@ type UiState =
   | "ready";
 type DialogKind = "library" | "folder" | "tag" | "collection" | null;
 type AssetScope = "all" | "root" | string;
-type OrganizationKind = "tag" | "collection" | "smart";
+type OrganizationKind = "collection" | "smart";
 type OrganizationRenameTarget = {
   kind: OrganizationKind;
   id: string;
@@ -505,9 +506,7 @@ function AppInner() {
   const [editSourceUrl, setEditSourceUrl] = useState("");
   const [editPalette, setEditPalette] = useState("");
 
-  // Inline tag/collection editors
-  const [showTagInput, setShowTagInput] = useState(false);
-  const [tagInputValue, setTagInputValue] = useState("");
+  // Inline collection editors
   const [showCollectionInput, setShowCollectionInput] = useState(false);
   const [collectionInputValue, setCollectionInputValue] = useState("");
   const [newCollectionParentId, setNewCollectionParentId] = useState<
@@ -1476,87 +1475,6 @@ function AppInner() {
     }
   }
 
-  // --- Tag CRUD ---
-
-  async function createTag() {
-    if (!api || !library || !tagInputValue.trim()) return;
-    setUiState("loading");
-    try {
-      const result = await api.createTag({
-        libraryId: library.libraryId,
-        name: tagInputValue.trim(),
-      });
-      if (!result.ok) throw new LibraryOperationError(result.error);
-      setShowTagInput(false);
-      setTagInputValue("");
-      await reloadCurrentContent();
-    } catch (caught) {
-      setError(toOrganizationMessage(caught, "tag", "创建"));
-    } finally {
-      setUiState("ready");
-    }
-  }
-
-  async function deleteTag(tagId: string) {
-    if (!api || !library) return;
-    setUiState("loading");
-    try {
-      const result = await api.deleteTag({
-        libraryId: library.libraryId,
-        tagId,
-      });
-      if (!result.ok) throw new LibraryOperationError(result.error);
-      if (activeTagId === tagId) {
-        setActiveTagId(null);
-        clearDiscoveryControls();
-        await loadContent(library, assetScope);
-      } else {
-        // Refresh tag list only
-        const tagResult = await api.listTags({ libraryId: library.libraryId });
-        if (!tagResult.ok) throw new LibraryOperationError(tagResult.error);
-        setTags(tagResult.value);
-      }
-      setError(null);
-      setNotice("标签已删除。");
-    } catch (caught) {
-      setError(toOrganizationMessage(caught, "tag", "删除"));
-    } finally {
-      setUiState("ready");
-    }
-  }
-
-  async function renameTag() {
-    if (
-      !api ||
-      !library ||
-      !renameTarget ||
-      renameTarget.kind !== "tag" ||
-      !renameTarget.name.trim()
-    )
-      return;
-    setUiState("loading");
-    try {
-      const result = await api.renameTag({
-        libraryId: library.libraryId,
-        tagId: renameTarget.id,
-        name: renameTarget.name.trim(),
-      });
-      if (!result.ok) throw new LibraryOperationError(result.error);
-      setTags((current) =>
-        current.map((tag) =>
-          tag.tagId === result.value.tagId ? result.value : tag,
-        ),
-      );
-      setRenameTarget(null);
-      setError(null);
-      setNotice("标签已重命名。");
-    } catch (caught) {
-      setError(toOrganizationMessage(caught, "tag", "重命名"));
-    } finally {
-      setUiState("ready");
-    }
-  }
-
   async function chooseTag(tagId: string) {
     if (!api || !library) return;
     closeContextMenu();
@@ -2203,6 +2121,22 @@ function AppInner() {
     clearAssetSelection,
     activeTagId,
     activeCollectionId,
+  });
+
+  const {
+    assetRenameDialog,
+    openAssetRename,
+    changeAssetRenameValue,
+    cancelAssetRename,
+    submitAssetRename,
+  } = useAssetRename({
+    api: api ?? null,
+    library,
+    visibleAssets,
+    reloadCurrentContent,
+    setNotice,
+    setSelectedAssetId,
+    setSelectedAssetIds,
   });
 
   async function executeSearchDefinition(
@@ -3652,6 +3586,7 @@ function AppInner() {
     if (
       !dialog &&
       !conflicts &&
+      !assetRenameDialog &&
       !permanentDeleteDialog &&
       !deleteLinkedDialog &&
       !batchRelinkPreview &&
@@ -3683,6 +3618,10 @@ function AppInner() {
       }
       if (event.key !== "Escape") return;
       event.preventDefault();
+      if (assetRenameDialog) {
+        cancelAssetRename();
+        return;
+      }
       if (permanentDeleteDialog) {
         setPermanentDeleteDialog(null);
         return;
@@ -3713,7 +3652,6 @@ function AppInner() {
       }
       if (dialog) {
         setDialog(null);
-        setShowTagInput(false);
         setShowCollectionInput(false);
         return;
       }
@@ -3735,6 +3673,8 @@ function AppInner() {
     api,
     conflicts,
     dialog,
+    assetRenameDialog,
+    cancelAssetRename,
     permanentDeleteDialog,
     deleteLinkedDialog,
     batchRelinkPreview,
@@ -4265,17 +4205,7 @@ function AppInner() {
     }
   }
 
-  // Handle inline input keydown for tag/collection creation
-  function handleTagInputKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      void createTag();
-    } else if (e.key === "Escape") {
-      setShowTagInput(false);
-      setTagInputValue("");
-    }
-  }
-
+  // Handle inline input keydown for collection creation
   function handleCollectionInputKeyDown(
     e: React.KeyboardEvent<HTMLInputElement>,
   ) {
@@ -4657,13 +4587,10 @@ function AppInner() {
         allAssetCount={allAssetCount}
         trashedAssetCount={trashedAssets.length}
         folders={folders}
-        tags={tags}
         collections={collections}
         collectionTree={collectionTree}
         smartCollections={smartCollections}
         linkedFolders={linkedFolders}
-        showTagInput={showTagInput}
-        tagInputValue={tagInputValue}
         showCollectionInput={showCollectionInput}
         collectionInputValue={collectionInputValue}
         newCollectionParentId={newCollectionParentId}
@@ -4675,7 +4602,6 @@ function AppInner() {
         onEnterTrash={() => void enterTrash()}
         onChooseRootFolder={() => void chooseFolder("root")}
         onChooseFolder={(folderId) => void chooseFolder(folderId)}
-        onChooseTag={(tagId) => void chooseTag(tagId)}
         onChooseCollection={(collectionId, recursive) =>
           void chooseCollection(collectionId, recursive)
         }
@@ -4690,13 +4616,6 @@ function AppInner() {
         onRelinkFolder={(folderId) => void relinkFolder(folderId)}
         onOpenLinkedRules={(folder) => void openLinkedRules(folder)}
         onConvertLinkedDialog={setConvertLinkedDialog}
-        onAddTag={() => {
-          setShowTagInput(true);
-          setTagInputValue("");
-        }}
-        onSetShowTagInput={setShowTagInput}
-        onSetTagInputValue={setTagInputValue}
-        onTagInputKeyDown={handleTagInputKeyDown}
         onAddCollection={(parentId) => {
           setShowCollectionInput(true);
           setCollectionInputValue("");
@@ -5521,7 +5440,7 @@ function AppInner() {
       />
       <RenameDialog
         open={renameTarget !== null}
-        kind={renameTarget?.kind ?? "tag"}
+        kind={renameTarget?.kind ?? "collection"}
         currentName={renameTarget?.name ?? ""}
         onNameChange={(name) =>
           setRenameTarget((current) =>
@@ -5530,8 +5449,7 @@ function AppInner() {
         }
         onSave={() => {
           if (!renameTarget) return;
-          if (renameTarget.kind === "tag") void renameTag();
-          else if (renameTarget.kind === "collection")
+          if (renameTarget.kind === "collection")
             void renameCollection();
           else {
             const target = renameTarget;
@@ -5540,6 +5458,17 @@ function AppInner() {
           }
         }}
         onCancel={() => setRenameTarget(null)}
+      />
+      <RenameDialog
+        open={assetRenameDialog !== null}
+        kind="asset"
+        currentName={assetRenameDialog?.value ?? ""}
+        fileExtension={assetRenameDialog?.extension ?? ""}
+        errorMessage={assetRenameDialog?.error ?? null}
+        submitting={assetRenameDialog?.submitting ?? false}
+        onNameChange={changeAssetRenameValue}
+        onSave={() => void submitAssetRename()}
+        onCancel={cancelAssetRename}
       />
       <CreateDialog
         open={dialog !== null}
@@ -5685,7 +5614,7 @@ function AppInner() {
         onRenameSmartCollection={(id, name) => setRenameTarget({ kind: "smart", id, name })}
         onUpdateSmartCollection={(id) => { void updateSmartCollectionQuery(id); }}
         onDeleteSmartCollection={(id) => { void deleteSmartCollection(id); }}
-        onRenameOrganization={(kind, id, name) => setRenameTarget({ kind, id, name })}
+        onRenameOrganization={(id, name) => setRenameTarget({ kind: "collection", id, name })}
         onEditCollectionDetails={(collectionId) => {
           const collection = collections.find((c) => c.collectionId === collectionId);
           if (collection)
@@ -5695,9 +5624,8 @@ function AppInner() {
               coverAssetId: collection.coverAssetId ?? "",
             });
         }}
-        onDeleteOrganization={(kind, id) => {
-          if (kind === "tag") void deleteTag(id);
-          else void deleteCollection(id);
+        onDeleteOrganization={(id) => {
+          void deleteCollection(id);
         }}
         onBatchAssignTag={(tagId, assetIds) => {
           void batchAssignTagToSelection(tagId, assetIds);
@@ -5743,6 +5671,7 @@ function AppInner() {
         onOpenExternal={(assetId) => { void handleOpenExternal(assetId); }}
         onRevealInFolder={(assetId) => { void handleRevealInFolder(assetId); }}
         onCopyFilePath={(assetId) => { void handleCopyFilePath(assetId); }}
+        onRenameAssetFile={(assetId) => { openAssetRename(assetId); }}
         onRemoveFromCurrentCollection={(assetId) => {
           if (activeCollectionId) void removeAssetFromCollection(assetId, activeCollectionId);
         }}
@@ -5763,7 +5692,7 @@ export function App() {
 }
 
 function organizationNoun(kind: OrganizationKind) {
-  return kind === "tag" ? "标签" : kind === "collection" ? "合集" : "智能合集";
+  return kind === "collection" ? "合集" : "智能合集";
 }
 function parseStoredPalette(value: string | null): string[] {
   if (!value) return [];

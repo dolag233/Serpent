@@ -166,6 +166,7 @@ import {
   copyNameForIndex,
   LibraryInputError,
   normalizeAbsolutePath,
+  normalizeAssetFileBaseName,
   normalizeFolderName,
   normalizeRelativeAssetPath,
   portablePathIdentity,
@@ -9635,6 +9636,184 @@ export class LibraryService {
     this.applyManagedMoveOperation(openLibrary, undoOperationId, manifest);
     return { undoneCount: files.length, skippedCount,
       assets: this.managedMoveSummaries(openLibrary, files.map((file) => file.assetId)) };
+  }
+
+  /**
+   * REQ-MENU-002 / REQ-LABEL-002: renaming an asset's display name IS renaming
+   * its real file, so this goes through file-operation semantics. The
+   * extension always stays as-is (Eagle behavior: a rename must never
+   * reclassify the asset type). Only the base name changes, inside the same
+   * directory, for both managed and online linked assets.
+   *
+   * Crash-safety convention follows trashAssets for single-scope file moves:
+   * rename on disk first, then one DB transaction (path + FTS sync); on DB
+   * failure the disk rename is rolled back best-effort. Content is untouched,
+   * so — exactly like moveAssets/trashAssets — no revision row is recorded.
+   */
+  renameAssetFile(input: {
+    libraryId: string;
+    assetId: string;
+    newBaseName: string;
+  }): { asset: AssetSummary } {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    let baseName: string;
+    try {
+      baseName = normalizeAssetFileBaseName(input.newBaseName);
+    } catch (error) {
+      throw new LibraryServiceError('INVALID_ASSET_FILE_NAME', {
+        reason: 'NAME_NOT_SUPPORTED',
+        cause: error,
+      });
+    }
+
+    const row = openLibrary.connection
+      .prepare(
+        `SELECT asset_id, location_kind, linked_folder_id, relative_file_path,
+                availability, deleted_at
+           FROM assets
+          WHERE asset_id = ?`,
+      )
+      .get(input.assetId) as {
+        asset_id: string;
+        location_kind: 'managed' | 'linked';
+        linked_folder_id: string | null;
+        relative_file_path: string;
+        availability: 'available' | 'missing';
+        deleted_at: string | null;
+      } | undefined;
+    if (!row) throw new LibraryServiceError('ASSET_NOT_FOUND');
+    // Trashed, missing, and otherwise unavailable assets are rejected with the
+    // same typed shape moveAssets uses for non-available sources.
+    if (row.deleted_at !== null || row.availability !== 'available') {
+      throw new LibraryServiceError('ASSET_NOT_FOUND', { reason: 'SOURCE_NOT_FOUND' });
+    }
+    if (row.location_kind === 'linked') {
+      const linkedFolder = openLibrary.connection
+        .prepare('SELECT absolute_root_path, status FROM linked_folders WHERE folder_id = ?')
+        .get(row.linked_folder_id) as {
+          absolute_root_path: string;
+          status: 'available' | 'offline';
+        } | undefined;
+      if (
+        !linkedFolder ||
+        linkedFolder.status !== 'available' ||
+        this.linkedRootIsGone(linkedFolder.absolute_root_path)
+      ) {
+        throw new LibraryServiceError('ASSET_NOT_FOUND', { reason: 'SOURCE_NOT_FOUND' });
+      }
+    }
+
+    const currentFileName = path.posix.basename(row.relative_file_path);
+    const extension = path.posix.extname(currentFileName);
+    const newFileName = `${baseName}${extension}`;
+    // The filesystem limit applies to the whole component, not just the base.
+    if (Buffer.byteLength(newFileName, 'utf8') > 255) {
+      throw new LibraryServiceError('INVALID_ASSET_FILE_NAME', {
+        reason: 'NAME_NOT_SUPPORTED',
+        cause: new LibraryInputError(
+          'INVALID_ASSET_FILE_NAME',
+          'File name with its extension must not exceed 255 bytes.',
+        ),
+      });
+    }
+    const currentDirectory = path.posix.dirname(row.relative_file_path);
+    const newRelativePath =
+      currentDirectory === '.' ? newFileName : path.posix.join(currentDirectory, newFileName);
+
+    // Identical target (same spelling, same case): success no-op, nothing on
+    // disk or in the DB is touched.
+    if (newFileName === currentFileName) {
+      const [asset] = this.managedMoveSummaries(openLibrary, [row.asset_id]);
+      if (!asset) throw new LibraryServiceError('ASSET_NOT_FOUND');
+      return { asset };
+    }
+
+    const sourcePath = row.location_kind === 'managed'
+      ? this.folderPath(openLibrary, row.relative_file_path)
+      : this.linkedAssetPath(openLibrary, row.linked_folder_id, row.relative_file_path);
+    if (!realFileExists(sourcePath)) {
+      throw new LibraryServiceError('ASSET_NOT_FOUND', { reason: 'SOURCE_NOT_FOUND' });
+    }
+
+    // Conflicts are judged by portable (case-folded) identity so a case-only
+    // match against a DIFFERENT file is still a conflict on case-insensitive
+    // volumes; the source file's own directory entry is exempt, which is what
+    // makes a pure case-change rename (a.png -> A.png) possible.
+    const newIdentity = portablePathIdentity(newRelativePath);
+    const dbConflict = row.location_kind === 'managed'
+      ? openLibrary.connection
+          .prepare(
+            `SELECT asset_id FROM assets
+              WHERE path_identity = ? AND location_kind = 'managed'
+                AND deleted_at IS NULL AND asset_id != ?`,
+          )
+          .get(newIdentity, row.asset_id)
+      : openLibrary.connection
+          .prepare(
+            `SELECT asset_id FROM assets
+              WHERE linked_folder_id = ? AND path_identity = ? AND location_kind = 'linked'
+                AND deleted_at IS NULL AND asset_id != ?`,
+          )
+          .get(row.linked_folder_id, newIdentity, row.asset_id);
+    if (dbConflict) throw new LibraryServiceError('ASSET_FILE_NAME_CONFLICT');
+
+    const parentDirectoryPath = path.dirname(sourcePath);
+    const targetSegmentIdentity = portablePathSegmentIdentity(newFileName);
+    let directoryEntries;
+    try {
+      directoryEntries = readdirSync(parentDirectoryPath, { withFileTypes: true });
+    } catch (error) {
+      throw new LibraryServiceError('LIBRARY_NOT_WRITABLE', { cause: error });
+    }
+    for (const entry of directoryEntries) {
+      if (entry.name === currentFileName) continue;
+      if (portablePathSegmentIdentity(entry.name) === targetSegmentIdentity) {
+        throw new LibraryServiceError('ASSET_FILE_NAME_CONFLICT');
+      }
+    }
+
+    const destinationPath = path.join(parentDirectoryPath, newFileName);
+    const now = new Date().toISOString();
+    let renamed = false;
+    try {
+      renameSync(sourcePath, destinationPath);
+      renamed = true;
+      openLibrary.connection.transaction(() => {
+        const changed = openLibrary.connection
+          .prepare(
+            `UPDATE assets
+                SET relative_file_path = ?, path_identity = ?, updated_at = ?
+              WHERE asset_id = ? AND deleted_at IS NULL`,
+          )
+          .run(newRelativePath, newIdentity, now, row.asset_id);
+        if (changed.changes !== 1) {
+          throw new LibraryServiceError('ASSET_NOT_FOUND', { reason: 'SOURCE_CHANGED' });
+        }
+        this.syncAssetSearchContent(openLibrary.connection, row.asset_id);
+      })();
+    } catch (error) {
+      if (renamed) {
+        try {
+          renameSync(destinationPath, sourcePath);
+        } catch (rollbackError) {
+          // The DB transaction did not commit; if the filesystem rollback also
+          // failed the asset reconciles to 'missing' on the next refresh and
+          // can be relinked. Never mask the primary failure.
+          this.diagnose('asset.rename-file.rollback', rollbackError, {
+            libraryId: input.libraryId,
+            assetId: row.asset_id,
+          });
+        }
+      }
+      if (isMissingPathError(error)) {
+        throw new LibraryServiceError('ASSET_NOT_FOUND', { reason: 'SOURCE_NOT_FOUND', cause: error });
+      }
+      throw serviceError(error, 'LIBRARY_NOT_WRITABLE');
+    }
+
+    const [asset] = this.managedMoveSummaries(openLibrary, [row.asset_id]);
+    if (!asset) throw new LibraryServiceError('ASSET_NOT_FOUND');
+    return { asset };
   }
 
   trashAssets(input: {

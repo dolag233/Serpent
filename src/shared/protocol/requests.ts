@@ -8,6 +8,20 @@ const nonBlankString = z.string().min(1).refine((value) => value.trim().length >
 
 const displayNameSchema = nonBlankString.max(255);
 const identifierSchema = nonBlankString.max(255);
+// Schema layer rejects only obvious injection shapes (separators, control
+// characters, dot segments, blank/overlong input). The portable-name semantics
+// (reserved DOS names, trailing space/period, UTF-8 byte limit) are enforced
+// by the Worker service layer.
+const assetFileBaseNameSchema = nonBlankString.max(255)
+  .refine((value) => !/[\\/]/u.test(value), {
+    message: 'File base name must not contain path separators.',
+  })
+  .refine((value) => !/[\p{Cc}]/u.test(value), {
+    message: 'File base name must not contain control characters.',
+  })
+  .refine((value) => value.trim() !== '.' && value.trim() !== '..', {
+    message: "File base name must not be '.' or '..'.",
+  });
 const selectedPathSchema = nonBlankString;
 const optionalIdentifierSchema = identifierSchema.optional();
 const optionalClearableDescriptionSchema = z.string().max(10000).optional();
@@ -346,6 +360,14 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     libraryId: identifierSchema,
     operationId: identifierSchema,
     conflictStrategy: z.enum(['error', 'keep-both', 'replace', 'skip']).optional(),
+  }),
+  // REQ-MENU-002 / REQ-COMMAND-003: rename one asset's real file by id and
+  // extension-less base name only; no filesystem path may cross this boundary.
+  z.strictObject({
+    type: z.literal('asset.rename-file.request'),
+    libraryId: identifierSchema,
+    assetId: identifierSchema,
+    newBaseName: assetFileBaseNameSchema,
   }),
   z.strictObject({
     type: z.literal('asset.delete-permanent.request'),
@@ -823,6 +845,12 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     libraryId: identifierSchema,
     operationId: identifierSchema,
     conflictStrategy: z.enum(['error', 'keep-both', 'replace', 'skip']).optional(),
+  }),
+  z.strictObject({
+    type: z.literal('asset.rename-file'),
+    libraryId: identifierSchema,
+    assetId: identifierSchema,
+    newBaseName: assetFileBaseNameSchema,
   }),
   z.strictObject({
     type: z.literal('asset.delete-permanent'),

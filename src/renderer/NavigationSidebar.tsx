@@ -5,7 +5,6 @@ import type {
   LinkedFolderSummary,
   ManagedFolderSummary,
   SmartCollectionSummary,
-  TagSummary,
 } from "../shared/asset-types";
 import type { ContextMenuDescriptor } from "./context-menu";
 import type { RendererLibrarySummary } from "../shared/protocol/responses";
@@ -163,15 +162,12 @@ export interface NavigationSidebarProps {
   allAssetCount: number;
   trashedAssetCount: number;
   folders: ManagedFolderSummary[];
-  tags: TagSummary[];
   collections: CollectionSummary[];
   collectionTree: Map<string | null, CollectionSummary[]>;
   smartCollections: SmartCollectionSummary[];
   linkedFolders: LinkedFolderSummary[];
 
   // --- Inline input state ---
-  showTagInput: boolean;
-  tagInputValue: string;
   showCollectionInput: boolean;
   collectionInputValue: string;
   newCollectionParentId: string | null;
@@ -187,7 +183,6 @@ export interface NavigationSidebarProps {
   onEnterTrash: () => void;
   onChooseRootFolder: () => void;
   onChooseFolder: (folderId: string) => void;
-  onChooseTag: (tagId: string) => void;
   onChooseCollection: (collectionId: string, recursive?: boolean) => void;
   onChooseSmartCollection: (collectionId: string) => void;
 
@@ -208,12 +203,6 @@ export interface NavigationSidebarProps {
     name: string;
     targetFolderId: string;
   }) => void;
-
-  // --- Tag input ---
-  onAddTag: () => void;
-  onSetShowTagInput: (show: boolean) => void;
-  onSetTagInputValue: (value: string) => void;
-  onTagInputKeyDown: (e: React.KeyboardEvent<HTMLInputElement>) => void;
 
   // --- Collection input ---
   onAddCollection: (parentId: string | null) => void;
@@ -265,13 +254,10 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
     allAssetCount,
     trashedAssetCount,
     folders,
-    tags,
     collections,
     collectionTree,
     smartCollections,
     linkedFolders,
-    showTagInput,
-    tagInputValue,
     showCollectionInput,
     collectionInputValue,
     newCollectionParentId,
@@ -283,7 +269,6 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
     onEnterTrash,
     onChooseRootFolder,
     onChooseFolder,
-    onChooseTag,
     onChooseCollection,
     onChooseSmartCollection,
     onExternalDragOver,
@@ -292,10 +277,6 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
     onRelinkFolder,
     onOpenLinkedRules,
     onConvertLinkedDialog,
-    onAddTag,
-    onSetShowTagInput,
-    onSetTagInputValue,
-    onTagInputKeyDown,
     onAddCollection,
     onSetShowCollectionInput,
     onSetCollectionInputValue,
@@ -454,7 +435,6 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
             onOpenContextMenu(
               {
                 type: "organization",
-                orgKind: "collection",
                 id: c.collectionId,
                 name: c.name,
               },
@@ -526,69 +506,6 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
             </>
           ) : (
             <p className="nav-empty">打开资源库后显示目录</p>
-          )}
-        </Section>
-        <Section
-          title="标签"
-          action={
-            library
-              ? onAddTag
-              : undefined
-          }
-        >
-          {library ? (
-            <>
-              {showTagInput && (
-                <div className="nav-section">
-                  <input
-                    autoFocus
-                    className="text-field"
-                    maxLength={255}
-                    onBlur={() => {
-                      onSetShowTagInput(false);
-                      onSetTagInputValue("");
-                    }}
-                    onChange={(e) => onSetTagInputValue(e.target.value)}
-                    onKeyDown={onTagInputKeyDown}
-                    placeholder="输入标签名称，回车创建"
-                    style={{
-                      height: 27,
-                      margin: "2px 0 4px 0",
-                      fontSize: 11,
-                    }}
-                    value={tagInputValue}
-                  />
-                </div>
-              )}
-              {tags.length ? (
-                tags.map((tag) => (
-                  <NavRow
-                    active={activeTagId === tag.tagId}
-                    icon="tag"
-                    key={tag.tagId}
-                    label={tag.name}
-                    count={tag.assetCount}
-                    onContextMenu={(e) => {
-                      e.preventDefault();
-                      onOpenContextMenu(
-                        {
-                          type: "organization",
-                          orgKind: "tag",
-                          id: tag.tagId,
-                          name: tag.name,
-                        },
-                        { x: e.clientX, y: e.clientY },
-                      );
-                    }}
-                    onClick={() => void onChooseTag(tag.tagId)}
-                  />
-                ))
-              ) : (
-                <p className="nav-empty">尚无标签</p>
-              )}
-            </>
-          ) : (
-            <p className="nav-empty">打开资源库后显示标签</p>
           )}
         </Section>
         <Section

@@ -1700,6 +1700,24 @@ input[type="range"] {
   font-size: 10px;
 }
 
+.rename-file-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.rename-file-field .text-field {
+  flex: 1;
+  min-width: 0;
+}
+
+.rename-file-extension {
+  flex: 0 0 auto;
+  color: var(--tertiary);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 12px;
+}
+
 .dialog-actions {
   display: flex;
   justify-content: flex-end;

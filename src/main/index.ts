@@ -931,6 +931,13 @@ async function commandFor(
         operationId: request.operationId,
         conflictStrategy: request.conflictStrategy,
       };
+    case "asset.rename-file.request":
+      return {
+        type: "asset.rename-file",
+        libraryId: request.libraryId,
+        assetId: request.assetId,
+        newBaseName: request.newBaseName,
+      };
     case "asset.delete-permanent.request":
       return {
         type: "asset.delete-permanent",

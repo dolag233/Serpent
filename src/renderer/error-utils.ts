@@ -46,6 +46,8 @@ export const PUBLIC_ERROR_MESSAGES_ZH: Partial<Record<PublicErrorCode, string>> 
   LIBRARY_CLEANUP_FAILED: "创建失败，且临时文件无法自动清理。",
   LIBRARY_NOT_OPEN: "该资源库当前没有打开。",
   ASSET_NOT_FOUND: "找不到所选资产。",
+  INVALID_ASSET_FILE_NAME: "请输入可跨平台安全使用的文件名。",
+  ASSET_FILE_NAME_CONFLICT: "同一文件夹内已存在同名文件。",
   ASSET_MOVE_CONFLICT:
     "资产移动无法完成：源位置或目标位置已经变化，Serpent 未执行静默覆盖。",
   ASSET_SOURCE_TRASH_FAILED:

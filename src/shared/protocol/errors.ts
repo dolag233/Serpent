@@ -27,6 +27,8 @@ export const PUBLIC_ERROR_MESSAGES = {
   LIBRARY_CLEANUP_FAILED: 'Library creation failed and temporary files could not be removed.',
   LIBRARY_NOT_OPEN: 'The library is not currently open.',
   ASSET_NOT_FOUND: 'The requested asset could not be found.',
+  INVALID_ASSET_FILE_NAME: 'Choose a file name that is safe on macOS and Windows.',
+  ASSET_FILE_NAME_CONFLICT: 'A file with this name already exists in the asset folder.',
   INVALID_ASSET_METADATA: 'Choose valid asset metadata values, including six-digit hex colors and an HTTP(S) source page URL.',
   INVALID_SEARCH_QUERY: 'Use supported search fields: filename, tags, description, source URL, folder path, or metadata.',
   ASSET_MOVE_CONFLICT: 'The asset move could not be completed because a source or destination changed.',

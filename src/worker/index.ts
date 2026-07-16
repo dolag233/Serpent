@@ -491,6 +491,10 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
       scheduleThumbnailScene(request.command.libraryId, 'visible', assets.map((asset) => asset.assetId));
       return { ok: true, type: 'asset.move-undone', undoneCount, skippedCount, assets };
     }
+    case 'asset.rename-file': {
+      const { asset } = libraryService.renameAssetFile(request.command);
+      return { ok: true, type: 'asset.file-renamed', asset };
+    }
     case 'asset.delete-permanent': {
       const { deletedCount, skippedCount, skippedReasons } = libraryService.deleteAssetsPermanent(request.command);
       return { ok: true, type: 'asset.deleted-permanent', deletedCount, skippedCount, skippedReasons };

@@ -10,6 +10,7 @@ export type IconName =
   | "collection"
   | "collapse-left"
   | "collapse-right"
+  | "edit"
   | "file"
   | "folder"
   | "grid"
@@ -62,6 +63,9 @@ const iconPaths: Record<IconName, ReactNode> = {
       <path d="M5 4h14v16H5zM14 4v16" />
       <path d="m9 9 3 3-3 3" />
     </>
+  ),
+  edit: (
+    <path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
   ),
   file: (
     <>

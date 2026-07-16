@@ -520,6 +520,11 @@ const assetOperationSuccessSchemas = [
   }),
   z.strictObject({
     ok: z.literal(true),
+    type: z.literal('asset.file-renamed'),
+    asset: assetSummarySchema,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
     type: z.literal('asset.deleted-permanent'),
     deletedCount: z.number().int().nonnegative(),
     skippedCount: z.number().int().nonnegative(),

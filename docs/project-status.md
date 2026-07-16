@@ -20,6 +20,15 @@ v0.1.0 继续收口 0001–0010 的桌面主线，并纳入真实使用反馈确
 6. **最终完成审计**：跨资源库复制、视频/GIF 悬停预览、NAS 断线只读、10 万资产冷启动
    3 秒，以及跨切片 packaged/Windows 主线。
 
+## 2026-07-17 0017 第二增量：资产文件重命名与侧栏标签枚举移除
+
+- REQ-MENU-002 重命名落地：asset.renameFile 全链路（protocol/preload/main/worker），扩展名保留、非法名（含 Windows 禁用字符 `<>:"|?*`，审查修正）与同名冲突类型化拒绝、missing/trashed/offline 拒绝、同名 no-op、FTS 事务内同步；单资产菜单新增「重命名…」，对话框保留扩展名、内联中文错误、选择保持。
+- REQ-TAG-001 落地：左侧导航不再枚举标签、不再提供侧栏新建标签入口；tag 范围机制保留（发现工具栏「标签过滤」输入框仍是进入标签范围的 UI 入口）；标签重命名/删除暂无 UI 入口，待集中澄清队列 #8 裁决（worker 能力保留）。
+- 验证：typecheck/lint、unit 395 passed；worker rename 8/8；E2E 当次全绿——asset-rename 3/3、context-menu 10/10、organization-search-trash 3/3、metadata-persistence、asset-pagination、browsing-preferences、shell-navigation（含新增 REQ-TAG-001 负向断言）。
+- 交叉审查（2 深审 + 4 广度）：0 HARD；M1（Windows 禁用字符）已修并补测试；M3（缺负向断言）已补；回滚/IO 失败分支按纪律记未验证。
+- **Computer Use 未执行**（当前环境无桌面控制能力）：MENU-015 进入待人类验收，截图证据移交人工 QA。
+- 详见 `docs/development/0017-rename-file-and-tag-nav-removal-development-log.md`。
+
 ## 2026-07-17 0017/0018 增量：可搜索标签选择器与文件操作命令
 
 - REQ-TAG-004 落地：资产右键菜单标签操作（单资产添加、批量添加/移除）从平铺枚举改为可搜索选择器；菜单添加包含零使用标签（选择器无创建入口），移除与 Inspector 建议保持 TAG-008 排除；修复审查发现的菜单内滚动误关菜单与返回后焦点丢失。

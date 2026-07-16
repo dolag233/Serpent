@@ -518,6 +518,13 @@ const library: SerpentLibraryApi = Object.freeze({
     return { ok: true, value: { undoneCount: result.undoneCount, skippedCount: result.skippedCount, assets: result.assets } };
   },
 
+  async renameAssetFile({ libraryId, assetId, newBaseName }: { libraryId: string; assetId: string; newBaseName: string }): Promise<LibraryApiResult<AssetSummary>> {
+    const result = await request({ type: 'asset.rename-file.request', libraryId, assetId, newBaseName });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'asset.file-renamed') throw new Error('Unexpected rename-asset-file response.');
+    return { ok: true, value: result.asset };
+  },
+
   async deleteAssetsPermanent({ libraryId, assetIds }: { libraryId: string; assetIds: string[] }): Promise<LibraryApiResult<{ deletedCount: number; skippedCount: number; skippedReasons: Array<{ assetId: string; reason: PublicErrorReason }> }>> {
     const result = await request({ type: 'asset.delete-permanent.request', libraryId, assetIds });
     if (!result.ok) return failure(result);

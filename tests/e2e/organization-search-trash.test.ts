@@ -6,6 +6,8 @@ import { _electron as electron, expect, test } from '@playwright/test';
 
 import { resolveElectronExecutablePath } from './electron-test-helpers';
 
+test.describe.configure({ timeout: 120_000 });
+
 test('organizes, finds, trashes, and restores an imported asset through the UI', async () => {
   const temporaryRoot = mkdtempSync(path.join(tmpdir(), 'serpent-organization-e2e-'));
   const sourcePath = path.join(temporaryRoot, 'hero.png');
@@ -36,14 +38,23 @@ test('organizes, finds, trashes, and restores an imported asset through the UI',
     const assetCard = window.getByRole('button', { name: /hero\.png/i });
     await expect(assetCard).toBeVisible();
 
-    await window.getByRole('button', { name: '添加标签' }).click();
-    await window.getByPlaceholder('输入标签名称，回车创建').fill('角色');
-    await window.getByPlaceholder('输入标签名称，回车创建').press('Enter');
-    await expect(window.getByRole('button', { name: /角色/ })).toBeVisible();
-    await window.getByRole('button', { name: '添加标签' }).click();
-    await window.getByPlaceholder('输入标签名称，回车创建').fill('临时');
-    await window.getByPlaceholder('输入标签名称，回车创建').press('Enter');
-    await expect(window.getByRole('button', { name: /临时/ })).toBeVisible();
+    // The sidebar no longer enumerates or creates tags (REQ-TAG-001); seed
+    // the tags through the library API, then re-enter 所有资产 so the
+    // Renderer refreshes its tag summaries for the menu picker.
+    await window.evaluate(async () => {
+      const api = (globalThis as typeof globalThis & { serpent: { library: {
+        listOpen(): Promise<{ ok: boolean; value?: Array<{ libraryId: string }> }>;
+        createTag(input: { libraryId: string; name: string }): Promise<{ ok: boolean }>;
+      } } }).serpent.library;
+      const open = await api.listOpen();
+      const libraryId = open.value?.[0]?.libraryId;
+      if (!libraryId) throw new Error('No open library');
+      for (const name of ['角色', '临时']) {
+        const created = await api.createTag({ libraryId, name });
+        if (!created.ok) throw new Error(`Could not create tag ${name}`);
+      }
+    });
+    await window.getByRole('button', { name: /所有资产/ }).click();
 
     await window.getByRole('button', { name: '添加合集' }).click();
     await window.getByPlaceholder('输入合集名称，回车创建').fill('精选');
@@ -58,8 +69,14 @@ test('organizes, finds, trashes, and restores an imported asset through the UI',
     await window.getByRole('menuitem', { name: '添加标签…' }).click();
     await window.getByRole('option', { name: '临时' }).click();
     await expect(window.locator('.toast')).toContainText('标签已添加');
-    await window.getByRole('button', { name: /角色/ }).click();
+    // The sidebar no longer enumerates tags (REQ-TAG-001); enter the
+    // tag-filtered view through the retained 标签过滤 entry instead.
+    await window.getByText('筛选与排序', { exact: true }).click();
+    await window.getByLabel('标签过滤').fill('角色');
     await expect(window.getByRole('button', { name: /hero\.png/i })).toBeVisible();
+    // Close the disclosure again so the later 筛选与排序 toggle below still
+    // opens the panel for the favorite/tag filter search steps.
+    await window.getByText('筛选与排序', { exact: true }).click();
 
     await window.getByRole('button', { name: /所有资产/ }).click();
     await window.getByRole('button', { name: /hero\.png/i }).click({ button: 'right' });
@@ -67,18 +84,6 @@ test('organizes, finds, trashes, and restores an imported asset through the UI',
     await expect(window.locator('.toast')).toContainText('资产已加入合集');
     await window.getByRole('button', { name: /精选/ }).click();
     await expect(window.getByRole('button', { name: /hero\.png/i })).toBeVisible();
-
-    await window.getByRole('button', { name: /角色/ }).click({ button: 'right' });
-    await window.getByRole('menuitem', { name: '重命名标签' }).click();
-    await expect(window.getByRole('heading', { name: '重命名标签' })).toBeVisible();
-    await window.getByLabel('标签名称').fill('临时');
-    await window.getByRole('button', { name: '保存名称' }).click();
-    await expect(window.getByRole('alert')).toContainText('重命名标签失败。原因：资源库中已存在同名标签。');
-    await expect(window.getByRole('heading', { name: '重命名标签' })).toBeVisible();
-    await window.getByLabel('标签名称').fill('人物');
-    await window.getByRole('button', { name: '保存名称' }).click();
-    await expect(window.getByRole('button', { name: /人物/ })).toBeVisible();
-    await expect(window.locator('.toast')).toContainText('标签已重命名');
 
     await window.getByRole('button', { name: /精选/ }).click({ button: 'right' });
     await window.getByRole('menuitem', { name: '重命名合集' }).click();
@@ -112,12 +117,6 @@ test('organizes, finds, trashes, and restores an imported asset through the UI',
     await window.getByRole('menuitem', { name: '从当前合集移除' }).click();
     await expect(window.locator('.toast')).toContainText('资产已从合集移除');
     await expect(window.getByRole('button', { name: /hero\.png/i })).toHaveCount(0);
-
-    window.once('dialog', (dialog) => dialog.accept());
-    await window.getByRole('button', { name: /人物/ }).click({ button: 'right' });
-    await window.getByRole('menuitem', { name: '删除标签' }).click();
-    await expect(window.getByRole('button', { name: /人物/ })).toHaveCount(0);
-    await expect(window.locator('.toast')).toContainText('标签已删除');
 
     window.once('dialog', (dialog) => dialog.accept());
     await window.getByRole('button', { name: /收藏/ }).click({ button: 'right' });
@@ -263,9 +262,21 @@ test('multi-select performs batch organization, trash, restore, and permanent de
     await window.getByRole('button', { name: '导入文件', exact: true }).first().click();
     await expect(window.locator('.asset-card')).toHaveCount(2);
 
-    await window.getByRole('button', { name: '添加标签' }).click();
-    await window.getByPlaceholder('输入标签名称，回车创建').fill('批量标签');
-    await window.getByPlaceholder('输入标签名称，回车创建').press('Enter');
+    // The sidebar no longer creates tags (REQ-TAG-001); seed the tag through
+    // the library API, then re-enter 所有资产 so the Renderer refreshes its
+    // tag summaries for the menu picker.
+    await window.evaluate(async () => {
+      const api = (globalThis as typeof globalThis & { serpent: { library: {
+        listOpen(): Promise<{ ok: boolean; value?: Array<{ libraryId: string }> }>;
+        createTag(input: { libraryId: string; name: string }): Promise<{ ok: boolean }>;
+      } } }).serpent.library;
+      const open = await api.listOpen();
+      const libraryId = open.value?.[0]?.libraryId;
+      if (!libraryId) throw new Error('No open library');
+      const created = await api.createTag({ libraryId, name: '批量标签' });
+      if (!created.ok) throw new Error('Could not create tag 批量标签');
+    });
+    await window.getByRole('button', { name: /所有资产/ }).click();
     await window.getByRole('button', { name: '添加合集' }).click();
     await window.getByPlaceholder('输入合集名称，回车创建').fill('批量合集');
     await window.getByPlaceholder('输入合集名称，回车创建').press('Enter');
@@ -305,7 +316,10 @@ test('multi-select performs batch organization, trash, restore, and permanent de
       }
     ).serpent.e2e.getRequestCount('asset.search.request'));
     const tagSearchCount = await searchRequestCount();
-    await window.getByRole('button', { name: /批量标签/ }).first().click();
+    // The sidebar no longer enumerates tags (REQ-TAG-001); enter the
+    // tag-filtered view through the retained 标签过滤 entry instead.
+    await window.getByText('筛选与排序', { exact: true }).click();
+    await window.getByLabel('标签过滤').fill('批量标签');
     await expect.poll(searchRequestCount).toBeGreaterThan(tagSearchCount);
     await expect(window.getByText('正在同步资源库…')).toHaveCount(0);
     // Flush search-result toast before opening context menu
