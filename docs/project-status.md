@@ -11,7 +11,7 @@ v0.1.0 继续收口 0001–0010 的桌面主线，并纳入真实使用反馈确
 
 1. **P0 发布阻断**：0006 不可变媒体二进制发布来源与 receipt、packaged media playback；
    建立真实 Windows runner 并执行跨平台矩阵。
-2. **P0 产品正确性**：0018 Label 退役及 0019 Inspector、框选、瀑布流、clock 图标和菜单输入模式已合入当前候选工作树；真实 Electron E2E 与 Computer Use 已完成，等待最终主线门禁、双轴审查和提交。用户已验收 Inspector 标签体验与瀑布流横向优先；Inspector 最新等比宽度预览等待复验。
+2. **P0 产品正确性**：0018 Label 退役及 0019 Inspector、框选、瀑布流、clock 图标和菜单输入模式已形成实现提交 `5b8b8fe`；真实 Electron E2E、Computer Use 与双轴审查已完成。用户已验收 Inspector 标签、瀑布流横向优先以及等比无框轻圆角预览；最新资产身份区居中布局待其查看。
 3. **P1 MVP 产品化**：当前增量提交后先做 0016-A 壳层/导航快速收口；随后 0015 建立统一命令注册表、中英文和亮/暗主题；0018 后续补可搜索批量标签入口；0017 完成目录卡片/计数/递归范围与文件操作。
 4. **P1 验证收口**：0012 已完成 macOS Computer Use 与截图验收；0007 的 relink v3 已关闭已知文件所有权风险，仍需真实 UtilityProcess kill/restart、macOS Computer Use 与 Windows；0004 待按当前树复审修复真实行为缺陷，并补打包后与 Windows 证据；
    再完成 0005 packaged 搜索冒烟。
@@ -24,7 +24,7 @@ v0.1.0 继续收口 0001–0010 的桌面主线，并纳入真实使用反馈确
 
 - 两轮真实使用反馈已形成共享需求池：`docs/implementation/mvp-ui-ux-requirements-backlog.md`；0015–0019 的暂定范围和 12 项集中澄清问题均在该文档。
 - 已确认进入 MVP：应用壳与面包屑/历史、文件夹卡片与封面/计数/递归范围、完整资产和文件夹菜单、命令快捷键、中英文、亮/暗主题、标签 chip/过滤入口、Inspector 真实缩略图，以及选择和瀑布流正确性。
-- 已确认产品模型变化：撤销 Label/资产显示别名，资产名称统一为真实文件名；ADR 0022、产品简报、领域模型和术语表已同步。v14 前向迁移直接丢弃预发布 Label/AI Label，并删除显式依赖 Label 的旧智能合集；其余元数据、标签关系和智能合集保留。当前实现待主线 QA。
+- 已确认产品模型变化：撤销 Label/资产显示别名，资产名称统一为真实文件名；ADR 0022、产品简报、领域模型和术语表已同步。v14 前向迁移直接丢弃预发布 Label/AI Label，并删除显式依赖 Label 的旧智能合集；其余元数据、标签关系和智能合集保留。实现与 macOS 开发态 QA 见 `5b8b8fe`。
 - 自定义主题明确推迟到 MVP 后；Eagle 是信息密度和控件分组参考，不是逐像素复制目标。
 - 四张用户截图已保存到 `docs/前端参考/2026-07-16-*.png`，包括 Eagle 布局/过滤参考、Serpent 瀑布流空当和标签 chip 方向。
 - 0015–0018 仍未全部完成；0018 的 Label 退役和 Inspector 标签入口已形成候选，批量标签选择器与标签过滤仍待实施。0019 当前候选已合流此前独立改动并补齐集成测试、真实应用检查和等比预览修复。0016-A 壳层/导航是下一独立增量。
@@ -36,14 +36,13 @@ v0.1.0 继续收口 0001–0010 的桌面主线，并纳入真实使用反馈确
 - 瀑布流改为首行从左到右、后续最短列的显式列布局；稀疏三资产、多比例、多卡片尺寸和窗口宽度均有真实 Electron 断言。用户已明确反馈“瀑布流验收了，还不错”。
 - Shift 框选会释放导航焦点；右键菜单按指针/键盘输入模式显示单一、克制的高亮；修改日期使用时钟图标。
 - schema v14 完成 Label/AI Label/FTS Label 退役；预发布值按产品决定直接丢弃，依赖 Label 的旧智能合集删除，其他元数据与智能合集保留。
-- Computer Use 截图与自动化见 `docs/qa/0018-0019-ui-correctness-qa-report.md`。Windows 与 packaged app 仍未验证。
+- 代码基线为 `5b8b8fe`；Computer Use 截图、双轴审查和自动化见对应开发/审查/QA 文档。Windows 与 packaged app 仍未验证。
 
-## 2026-07-16 0019 产品正确性分支审计
+## 2026-07-16 0019 产品正确性分支审计（已解决）
 
-- 独立分支候选：框选修饰键 `ea4f044`、画布列填充与 clock `36c776c`、菜单单高亮 `19c4a02`、Inspector 缩略图/防闪烁 `8a73132`；`git merge-base --is-ancestor <commit> HEAD` 均为否。
-- 当前分支缺少 `docs/implementation/0019-product-correctness-vertical-slice.md`、`tests/unit/asset-grid-layout.test.ts`、`tests/unit/inspector-preview.test.ts`，此前验收清单链接因此失效。
-- 2026-07-16 审查已撤回 CANVAS-007/008、INSPECT-001/002、MENU-013、SELECT-007；详见 `docs/reviews/0015-0019-ui-productization-code-review.md`。
-- 框选修饰键采用暂定并集语义，等待澄清队列第 10 项。
+- 早期独立候选没有进入当时主线，验收链接一度失效；其功能已由当前集成实现、测试和文档在 `5b8b8fe` 统一落地，不再依赖那些孤立提交。
+- CANVAS-007–009、INSPECT-001–004、MENU-013、SELECT-007 已按当前基线重新建立准确的人类验收条目；其中用户已验收 CANVAS-009 与 INSPECT-003。
+- 框选集合语义现为 Shift 并集、Command/Ctrl 切换、Command/Ctrl+Shift 范围追加；Windows 真实 Ctrl 仍待平台验证。
 
 ## 2026-07-16 0014 功能收口与 0007 文件恢复安全
 

@@ -2,7 +2,7 @@
 
 > 分支：`codex/slice-002-asset-ingestion`
 > 基线 SHA：`3400d2b1dce2b905344988829885fb16576ce2a1`
-> 实现提交：待本批实现提交生成后在后续证据提交回填。
+> 实现提交：`5b8b8fe`；本报告的 SHA/复审证据回填由紧随其后的文档提交完成。
 > 构建环境：macOS 26.5.1 arm64，Node 24.15.0，npm 11.12.1，Electron 43.1.0。
 > 构建产物：Electron + Vite 开发态 `.vite/build` main/preload/worker/renderer；未生成 packaged app 或安装包。
 > 日期：2026-07-16

@@ -9,7 +9,7 @@
 
 - 分支：`codex/slice-002-asset-ingestion`
 - 基线 SHA：`3400d2b1dce2b905344988829885fb16576ce2a1`
-- 实现提交：待本批实现提交生成后在后续证据提交回填。
+- 实现提交：`5b8b8fe`（本日志的证据回填由紧随其后的文档提交完成）。
 - 开始：2026-07-16；最后更新：2026-07-16。
 - 状态：`implementing` → `automated-verification` → `code-review` → `qa`。macOS 开发态自动化与代表性 Computer Use 已完成；用户已验收标签、瀑布流、Inspector 等比预览及图片轻圆角。最新资产身份区居中布局待用户查看；Windows 与 packaged app 未验证，因此结论为有条件通过。
 
