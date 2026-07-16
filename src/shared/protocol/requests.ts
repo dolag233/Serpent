@@ -50,6 +50,15 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     type: z.literal('library.list.request'),
   }),
   z.strictObject({
+    type: z.literal('library.list-recent.request'),
+  }),
+  // The renderer may only name a library path that Main itself recorded in the
+  // recent libraries store; Main re-validates membership before dispatching.
+  z.strictObject({
+    type: z.literal('library.open-recent.request'),
+    libraryPath: selectedPathSchema,
+  }),
+  z.strictObject({
     type: z.literal('folder.create.request'),
     libraryId: identifierSchema,
     parentFolderId: optionalIdentifierSchema,

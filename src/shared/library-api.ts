@@ -27,6 +27,7 @@ import type {
   NameConflictDecision,
   SuspectedDuplicateDecision,
 } from './protocol/requests';
+import type { RecentLibraryEntry } from './recent-libraries';
 
 export type LibraryApiResult<T> =
   | { ok: true; value: T }
@@ -113,6 +114,8 @@ export interface AiJobStatus {
 export interface SerpentLibraryApi {
   create(input: { displayName: string }): Promise<LibraryApiResult<RendererLibrarySummary>>;
   open(): Promise<LibraryApiResult<RendererLibrarySummary>>;
+  listRecent(): Promise<LibraryApiResult<RecentLibraryEntry[]>>;
+  openRecent(input: { path: string }): Promise<LibraryApiResult<RendererLibrarySummary>>;
   close(input: { libraryId: string }): Promise<LibraryApiResult<{ libraryId: string }>>;
   listOpen(): Promise<LibraryApiResult<RendererLibrarySummary[]>>;
   createFolder(input: {

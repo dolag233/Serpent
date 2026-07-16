@@ -1,12 +1,34 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { Icon } from "./Icons";
 
+export type RecentLibraryMenuEntry = {
+  path: string;
+  name: string;
+};
+
+/**
+ * The 其他资源库 menu section lists every known recent library except the one
+ * currently open (identified by absolute path, so same-named libraries still
+ * distinguish correctly). Store order (most recent first) is preserved.
+ */
+export function buildRecentLibraryMenuEntries(
+  entries: RecentLibraryMenuEntry[],
+  currentLibraryPath: string | null,
+): RecentLibraryMenuEntry[] {
+  return entries.filter((entry) => entry.path !== currentLibraryPath);
+}
+
 export type LibrarySwitcherProps = {
   libraryName: string | null;
   disabled?: boolean;
   onCreateLibrary: () => void;
   onOpenLibrary: () => void;
   onCloseLibrary: () => void;
+  /** Recent libraries excluding the open one; the section hides when empty. */
+  recentLibraries?: RecentLibraryMenuEntry[];
+  onOpenRecent?: (path: string) => void;
+  /** Called when the menu opens so the owner can refresh recentLibraries. */
+  onMenuOpen?: () => void;
 };
 
 /**
@@ -19,6 +41,9 @@ export function LibrarySwitcher({
   onCreateLibrary,
   onOpenLibrary,
   onCloseLibrary,
+  recentLibraries = [],
+  onOpenRecent,
+  onMenuOpen,
 }: LibrarySwitcherProps) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -52,7 +77,10 @@ export function LibrarySwitcher({
         aria-label={libraryName ? `当前资源库 ${libraryName}` : "资源库菜单"}
         className="library-switcher-trigger"
         disabled={disabled}
-        onClick={() => setOpen((value) => !value)}
+        onClick={() => {
+          if (!open) onMenuOpen?.();
+          setOpen(!open);
+        }}
         title={libraryName ? `资源库：${libraryName}` : "尚未打开资源库"}
         type="button"
       >
@@ -99,6 +127,35 @@ export function LibrarySwitcher({
           >
             关闭资源库
           </button>
+          {recentLibraries.length > 0 && (
+            <>
+              <div aria-hidden="true" className="library-switcher-divider" />
+              <div
+                aria-label="其他资源库"
+                className="library-switcher-section"
+                role="group"
+              >
+                <div className="library-switcher-section-label">其他资源库</div>
+                {recentLibraries.map((entry) => (
+                  <button
+                    className="library-switcher-item"
+                    key={entry.path}
+                    onClick={() => {
+                      setOpen(false);
+                      onOpenRecent?.(entry.path);
+                    }}
+                    role="menuitem"
+                    title={entry.path}
+                    type="button"
+                  >
+                    <span className="library-switcher-item-label">
+                      {entry.name}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
         </div>
       )}
     </div>

@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 
 import type { AiJobStatus, LibraryApiResult, LinkedAssetDeleteResult, MediaJobStatus, PreviewResolution, SerpentLibraryApi } from '../shared/library-api';
+import type { RecentLibraryEntry } from '../shared/recent-libraries';
 import { parseExtensionPairingResult, type SerpentExtensionPairingApi } from '../shared/extension-pairing';
 import { searchQuerySchema } from '../shared/asset-types';
 import type { AiSearchPlan, AssetSummary, AssetMetadataResult, CollectionSummary, FilterClause, LinkedFolderRule, LinkedFolderSummary, ManagedFolderSummary, SearchScope, SmartCollectionSummary, TagSummary } from '../shared/asset-types';
@@ -75,6 +76,20 @@ const library: SerpentLibraryApi = Object.freeze({
     const result = await request({ type: 'library.open.request' });
     if (!result.ok) return failure(result);
     if (result.type !== 'library.opened') throw new Error('Unexpected open-library response.');
+    return { ok: true as const, value: result.library };
+  },
+
+  async listRecent(): Promise<LibraryApiResult<RecentLibraryEntry[]>> {
+    const result = await request({ type: 'library.list-recent.request' });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'library.recent-list') throw new Error('Unexpected list-recent-libraries response.');
+    return { ok: true as const, value: result.libraries };
+  },
+
+  async openRecent({ path }: { path: string }): Promise<LibraryApiResult<RendererLibrarySummary>> {
+    const result = await request({ type: 'library.open-recent.request', libraryPath: path });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'library.opened') throw new Error('Unexpected open-recent-library response.');
     return { ok: true as const, value: result.library };
   },
 
