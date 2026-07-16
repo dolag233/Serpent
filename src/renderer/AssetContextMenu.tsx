@@ -263,6 +263,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                     。
                   </div>
                 )}
+            <ContextMenuSection label="组织">
             {tags.length > 0 && (
               <ContextMenuSection label="批量标签">
                 {tags.map((tag) => (
@@ -313,7 +314,6 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                 ))}
               </ContextMenuSection>
             )}
-            <ContextMenuSection label="批量文件操作">
               <ContextMenuItem
                 icon={<Icon name="folder" size={14} />}
                 label={`移动到文件夹…（${availableManagedAssetIds.length} 项）`}
@@ -321,16 +321,6 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                 disabledReason="所选资产中没有可移动的托管资产"
                 onAction={() =>
                   onMoveToFolder(availableManagedAssetIds)
-                }
-              />
-              <ContextMenuItem
-                icon={<Icon name="trash" size={14} />}
-                label={`移入回收站（${managedAssetIds.length} 项）`}
-                danger
-                disabled={managedAssetIds.length === 0}
-                disabledReason="所选资产中没有托管资产"
-                onAction={() =>
-                  onTrash(managedAssetIds)
                 }
               />
               {linkedFolders
@@ -350,6 +340,18 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                     }
                   />
                 ))}
+            </ContextMenuSection>
+            <ContextMenuSection label="删除">
+              <ContextMenuItem
+                icon={<Icon name="trash" size={14} />}
+                label={`移入回收站（${managedAssetIds.length} 项）`}
+                danger
+                disabled={managedAssetIds.length === 0}
+                disabledReason="所选资产中没有托管资产"
+                onAction={() =>
+                  onTrash(managedAssetIds)
+                }
+              />
             </ContextMenuSection>
                   </>
                 )}
@@ -397,113 +399,121 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                     此托管资产当前不可用；文件操作将在资产恢复后可用。
                   </div>
                 )}
-                <ContextMenuItem
-                  icon={<Icon name="upload" size={14} />}
-                  label="使用外部应用打开"
-                  disabled={!isAvailable}
-                  disabledReason="资产当前不可用"
-                  onAction={() => {
-                    onOpenExternal(assetId);
-                  }}
-                />
-                {activeCollectionId && (
+                <ContextMenuSection label="打开">
                   <ContextMenuItem
-                    icon={<Icon name="close" size={14} />}
-                    label="从当前合集移除"
+                    icon={<Icon name="upload" size={14} />}
+                    label="使用外部应用打开"
+                    disabled={!isAvailable}
+                    disabledReason="资产当前不可用"
                     onAction={() => {
-                      onRemoveFromCurrentCollection(assetId);
+                      onOpenExternal(assetId);
                     }}
                   />
-                )}
-                {singleManaged && !isAvailable && (
-                  <ContextMenuItem
-                    icon={<Icon name="search" size={14} />}
-                    label="找回资产…"
-                    onAction={() => onRelink(assetId)}
-                  />
-                )}
-                {singleManaged && isAvailable && (
-                  <ContextMenuItem
-                    icon={<Icon name="folder" size={14} />}
-                    label="移动到文件夹…"
-                    onAction={() =>
-                      onMoveToFolder([assetId])
-                    }
-                  />
-                )}
-                {singleManaged && (
-                  <ContextMenuItem
-                    icon={<Icon name="trash" size={14} />}
-                    label="移入回收站"
-                    danger
-                    disabled={!isAvailable}
-                    disabledReason="托管资产当前不可用，无法移入回收站"
-                    onAction={() => onTrash([assetId])}
-                  />
-                )}
-                {locationKind === "linked" && (
-                  <ContextMenuItem
-                    icon={<Icon name="link" size={14} />}
-                    label="删除链接资产…"
-                    danger
-                    onAction={() =>
-                      onDeleteLinked(assetId, displayName, isAvailable)
-                    }
-                  />
-                )}
-                {linkedFolders
-                  .filter((f) => f.status === "available")
-                  .map((folder) => (
+                </ContextMenuSection>
+                <ContextMenuSection label="组织">
+                  {activeCollectionId && (
                     <ContextMenuItem
-                      key={`single-link-${folder.folderId}`}
-                      icon={<Icon name="link" size={14} />}
-                      label={`复制到外部目录：${folder.displayName}`}
-                      disabled={!singleManaged || !isAvailable}
-                      disabledReason="资产不可复制到外部目录"
+                      icon={<Icon name="close" size={14} />}
+                      label="从当前合集移除"
+                      onAction={() => {
+                        onRemoveFromCurrentCollection(assetId);
+                      }}
+                    />
+                  )}
+                  {singleManaged && !isAvailable && (
+                    <ContextMenuItem
+                      icon={<Icon name="search" size={14} />}
+                      label="找回资产…"
+                      onAction={() => onRelink(assetId)}
+                    />
+                  )}
+                  {singleManaged && isAvailable && (
+                    <ContextMenuItem
+                      icon={<Icon name="folder" size={14} />}
+                      label="移动到文件夹…"
                       onAction={() =>
-                        onCopyToLinked(folder, [assetId])
+                        onMoveToFolder([assetId])
                       }
                     />
+                  )}
+                  {linkedFolders
+                    .filter((f) => f.status === "available")
+                    .map((folder) => (
+                      <ContextMenuItem
+                        key={`single-link-${folder.folderId}`}
+                        icon={<Icon name="link" size={14} />}
+                        label={`复制到外部目录：${folder.displayName}`}
+                        disabled={!singleManaged || !isAvailable}
+                        disabledReason="资产不可复制到外部目录"
+                        onAction={() =>
+                          onCopyToLinked(folder, [assetId])
+                        }
+                      />
+                    ))}
+                  {collections.map((collection) => (
+                    <ContextMenuItem
+                      key={`remove-collection-${collection.collectionId}`}
+                      icon={<Icon name="close" size={14} />}
+                      label={`移出合集：${collection.name}`}
+                      onAction={() => {
+                        onRemoveFromCollection(assetId, collection.collectionId);
+                      }}
+                    />
                   ))}
-                {collections.map((collection) => (
+                  {tags.map((tag) => (
+                    <ContextMenuItem
+                      key={`tag-${tag.tagId}`}
+                      icon={<Icon name="tag" size={14} />}
+                      label={`添加标签：${tag.name}`}
+                      onAction={() => {
+                        onAssignTag(assetId, tag.tagId);
+                      }}
+                    />
+                  ))}
+                  {collections.map((collection) => (
+                    <ContextMenuItem
+                      key={`collection-${collection.collectionId}`}
+                      icon={<Icon name="collection" size={14} />}
+                      label={`加入合集：${collection.name}`}
+                      onAction={() => {
+                        onAddToCollection(assetId, collection.collectionId);
+                      }}
+                    />
+                  ))}
+                </ContextMenuSection>
+                <ContextMenuSection label="元数据">
                   <ContextMenuItem
-                    key={`remove-collection-${collection.collectionId}`}
-                    icon={<Icon name="close" size={14} />}
-                    label={`移出合集：${collection.name}`}
-                    onAction={() => {
-                      onRemoveFromCollection(assetId, collection.collectionId);
-                    }}
+                    icon={<Icon name="smart" size={14} />}
+                    label="AI 分析"
+                    disabled={!canAnalyze || !isAvailable}
+                    disabledReason={
+                      !isAvailable ? "资产当前不可用" : "尚未配置 AI API Key"
+                    }
+                    onAction={() => onAnalyze(assetId)}
                   />
-                ))}
-                {tags.map((tag) => (
-                  <ContextMenuItem
-                    key={`tag-${tag.tagId}`}
-                    icon={<Icon name="tag" size={14} />}
-                    label={`添加标签：${tag.name}`}
-                    onAction={() => {
-                      onAssignTag(assetId, tag.tagId);
-                    }}
-                  />
-                ))}
-                {collections.map((collection) => (
-                  <ContextMenuItem
-                    key={`collection-${collection.collectionId}`}
-                    icon={<Icon name="collection" size={14} />}
-                    label={`加入合集：${collection.name}`}
-                    onAction={() => {
-                      onAddToCollection(assetId, collection.collectionId);
-                    }}
-                  />
-                ))}
-                <ContextMenuItem
-                  icon={<Icon name="smart" size={14} />}
-                  label="AI 分析"
-                  disabled={!canAnalyze || !isAvailable}
-                  disabledReason={
-                    !isAvailable ? "资产当前不可用" : "尚未配置 AI API Key"
-                  }
-                  onAction={() => onAnalyze(assetId)}
-                />
+                </ContextMenuSection>
+                <ContextMenuSection label="删除">
+                  {singleManaged && (
+                    <ContextMenuItem
+                      icon={<Icon name="trash" size={14} />}
+                      label="移入回收站"
+                      danger
+                      disabled={!isAvailable}
+                      disabledReason="托管资产当前不可用，无法移入回收站"
+                      onAction={() => onTrash([assetId])}
+                    />
+                  )}
+                  {locationKind === "linked" && (
+                    <ContextMenuItem
+                      icon={<Icon name="link" size={14} />}
+                      label="删除链接资产…"
+                      danger
+                      onAction={() =>
+                        onDeleteLinked(assetId, displayName, isAvailable)
+                      }
+                    />
+                  )}
+                </ContextMenuSection>
                   </>
                 )}
               </>
