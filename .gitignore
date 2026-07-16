@@ -1,6 +1,9 @@
 .DS_Store
 .agents/
 .claude/
+.kimi/
+.daimon/
+.worktrees/
 .vscode/
 skills-lock.json
 
