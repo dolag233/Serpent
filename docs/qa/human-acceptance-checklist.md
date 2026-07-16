@@ -116,10 +116,10 @@
 | CANVAS-004 | macOS 手势缩放卡片并保持视觉锚点 | 待人类验收 | 将鼠标放在某项资产附近，用 Ctrl+滚轮或触控板缩放卡片 | 指针附近的可见资产尽量保持在原视野 | [0012 QA](0012-asset-canvas-views-and-card-display-qa-report.md) / [浏览偏好 E2E](../../tests/e2e/browsing-preferences.test.ts) | — |
 | CANVAS-005 | 控制卡片字段显示 | 待人类验收 | 分别关闭文件名、大小和修改日期 | 对应字段立即隐藏，其他字段不受影响 | [0012 QA](0012-asset-canvas-views-and-card-display-qa-report.md) | — |
 | CANVAS-006 | 画布偏好跨完整重启保存 | 待人类验收 | 修改视图、卡片大小和字段开关，完全退出后重开 | 所有画布偏好恢复 | [0012 QA](0012-asset-canvas-views-and-card-display-qa-report.md) / [浏览偏好 E2E](../../tests/e2e/browsing-preferences.test.ts) | — |
-| CANVAS-007 | 小卡片平铺/瀑布流用满横向宽度 | 待人类验收 | 将缩略图大小滑到偏小（约 96），分别在平铺与瀑布流下观察宽窗口画布 | 右侧不得留下可再容纳一整列卡片的空当；列数随卡片大小变化 | [0019 切片](../implementation/0019-product-correctness-vertical-slice.md) / [布局单测](../../tests/unit/asset-grid-layout.test.ts) | — |
-| CANVAS-008 | 修改日期开关使用时钟图标 | 待人类验收 | 查看画布工具栏“修改日期”字段开关 | 图标为时钟/秒表样式，不是五角星 | [0019 切片](../implementation/0019-product-correctness-vertical-slice.md) | — |
-| INSPECT-001 | Inspector 显示真实缩略图 | 待人类验收 | 选中一项已生成缩略图的图片资产，观察右侧 Inspector 顶部 | 顶部显示该资产缩略图且画面可辨认，不是通用文件图标；视频有封面时同理 | [0019 切片](../implementation/0019-product-correctness-vertical-slice.md) / [预览单测](../../tests/unit/inspector-preview.test.ts) | — |
-| INSPECT-002 | 切换资产时 Inspector 不混态/不空闪 | 待人类验收 | 连续点选至少 5 个不同资产，观察 Inspector 名称、描述和顶部预览 | 每一帧只对应当前选中资产；不出现空白英雄区，也不短暂显示上一资产的编辑字段 | [0019 切片](../implementation/0019-product-correctness-vertical-slice.md) / [预览单测](../../tests/unit/inspector-preview.test.ts) | — |
+| CANVAS-007 | 小卡片平铺/瀑布流用满横向宽度 | 已撤回 | — | — | [2026-07-16 审查](../reviews/0015-0019-ui-productization-code-review.md) | 候选提交 `36c776c` 未合流；当前 HEAD 仍可见明显右侧空当。 |
+| CANVAS-008 | 修改日期开关使用时钟图标 | 已撤回 | — | — | [2026-07-16 审查](../reviews/0015-0019-ui-productization-code-review.md) | 候选提交 `36c776c` 未合流；当前 HEAD 仍使用五角星。 |
+| INSPECT-001 | Inspector 显示真实缩略图 | 已撤回 | — | — | [2026-07-16 审查](../reviews/0015-0019-ui-productization-code-review.md) / [真实应用截图](evidence/0015-0018-ui-productization/01-current-head-overview.jpeg) | 候选提交 `8a73132` 未合流；当前 HEAD 仍显示通用文件图标。 |
+| INSPECT-002 | 切换资产时 Inspector 不混态/不空闪 | 已撤回 | — | — | [2026-07-16 审查](../reviews/0015-0019-ui-productization-code-review.md) | 候选提交 `8a73132` 未合流；当前新增 tag chip 仍可能与上一资产 metadata 混态。 |
 | THUMB-001 | 支持的图片自动生成缩略图 | 待人类验收 | 导入支持的图片，不点击任何“生成预览”操作 | 缩略图自动出现并成功解码 | [0006 QA](0006-thumbnails-preview-format-decoding-qa-report.md) / [媒体预览 E2E](../../tests/e2e/media-preview.test.ts) | — |
 | THUMB-002 | 横图、竖图和方图等比完整显示 | 待人类验收 | 导入横图、竖图和方图并观察资产卡片 | 图片保持比例并完整显示，不裁剪、不拉伸 | [0006 QA](0006-thumbnails-preview-format-decoding-qa-report.md) / [媒体预览 E2E](../../tests/e2e/media-preview.test.ts) | — |
 
@@ -150,7 +150,7 @@
 | SELECT-004 | macOS Command 增减选择 | 待人类验收 | 按住 Command 依次点击未选和已选资产 | 未选资产加入，已选资产移出；其他选择保持 | [0014 QA](0014-asset-selection-and-context-actions-qa-report.md) / [框选 E2E](../../tests/e2e/selection-marquee.test.ts) | — |
 | SELECT-005 | Command+Shift 向现有选择追加范围 | 待人类验收 | 已有离散选择时，按 Command+Shift 点击另一项 | 新范围追加到现有选择，不清空原选择 | [0014 QA](0014-asset-selection-and-context-actions-qa-report.md) / [框选 E2E](../../tests/e2e/selection-marquee.test.ts) | — |
 | SELECT-006 | Esc 按层级关闭菜单再清空选择 | 待人类验收 | 多选并打开右键菜单，连续按两次 Esc | 第一次只关闭菜单，第二次清空选择 | [0014 QA](0014-asset-selection-and-context-actions-qa-report.md) / [菜单 E2E](../../tests/e2e/context-menu.test.ts) | — |
-| SELECT-007 | 框选修饰键并集追加（暂定） | 待人类验收 | 先选中若干资产，再分别用无修饰、Command、Shift 从空白处拖框 | 无修饰替换为框内资产；Command/Shift 将框内资产追加到原选择；拖拽中途松开修饰键不改变本次运算 | [0019 切片](../implementation/0019-product-correctness-vertical-slice.md) / [框选 E2E](../../tests/e2e/selection-marquee.test.ts) | 澄清队列 #10 未定；当前为并集语义 |
+| SELECT-007 | 框选修饰键并集追加（暂定） | 已撤回 | — | — | [2026-07-16 审查](../reviews/0015-0019-ui-productization-code-review.md) | 候选提交 `ea4f044` 未合流，且集合语义尚未确认。 |
 | MENU-001 | 外部点击关闭资产菜单 | 待人类验收 | 打开资产右键菜单后点击菜单外部 | 菜单可靠关闭 | [0014 QA](0014-asset-selection-and-context-actions-qa-report.md) / [菜单 E2E](../../tests/e2e/context-menu.test.ts) | — |
 | MENU-002 | Esc 关闭资产菜单 | 待人类验收 | 打开资产右键菜单后按 Esc | 菜单可靠关闭 | [0014 QA](0014-asset-selection-and-context-actions-qa-report.md) / [菜单 E2E](../../tests/e2e/context-menu.test.ts) | — |
 | MENU-003 | 标签使用统一右键菜单 | 已撤回 | — | — | [MVP UX 需求池](../implementation/mvp-ui-ux-requirements-backlog.md) | 左侧标签列表和独立管理页已取消，此入口不再属于目标产品。 |
@@ -163,7 +163,7 @@
 | MENU-010 | 同时只显示一个右键菜单 | 待人类验收 | 连续对不同对象打开右键菜单 | 新菜单出现时旧菜单关闭，页面上只有一个菜单 | [0014 QA](0014-asset-selection-and-context-actions-qa-report.md) / [菜单 E2E](../../tests/e2e/context-menu.test.ts) | — |
 | MENU-011 | 多选不显示顶部动作 | 待人类验收 | 选择多项资产并观察工作区顶部 | 顶部工具栏不因选择增加移动/删除等动作，不遮挡画布 | [0014 QA](0014-asset-selection-and-context-actions-qa-report.md) / [修复截图](evidence/0014-selection-context/03-all-selected-fixed.png) | — |
 | MENU-012 | 多选菜单数量、混合说明与固定目标 | 待人类验收 | 混选 managed、linked、missing 后打开右键菜单 | 显示已选数量、处理/跳过数量和原因；动作只作用于菜单打开时的对象 | [0014 QA](0014-asset-selection-and-context-actions-qa-report.md) / [菜单 E2E](../../tests/e2e/context-menu.test.ts) | — |
-| MENU-013 | 右键菜单任意时刻只有一套高亮（REQ-MENU-001） | 待人类验收 | 打开资产右键菜单，先用方向键移动焦点，再把指针移到另一项；随后再按方向键 | 任意时刻只有一项显示高亮；指针与键盘切换后高亮跟随当前项，不出现焦点色与另一项 hover 色并存 | [菜单 E2E](../../tests/e2e/context-menu.test.ts)（`hovering a menu item after keyboard navigation shows only one highlight`） | — |
+| MENU-013 | 右键菜单任意时刻只有一套高亮（REQ-MENU-001） | 已撤回 | — | — | [2026-07-16 审查](../reviews/0015-0019-ui-productization-code-review.md) | 候选提交 `19c4a02` 未合流；当前分支也没有对应 E2E。 |
 
 ### I. 资源库导入导出
 
@@ -176,15 +176,15 @@
 
 以下范围已知不满足进入待验收队列的条件；agent 修复并补齐证据后，必须新增独立 ID 或按历史记录重新进入队列：
 
-- 2026-07-16 MVP UI/UX 需求池：0019 核心正确性项已进入待验收（CANVAS-007/008、INSPECT-001/002、MENU-013、SELECT-007）；0015–0018 与 0019 剩余项（对齐、INSPECT-003 等）仍见 `docs/implementation/mvp-ui-ux-requirements-backlog.md`。
+- 2026-07-16 MVP UI/UX 需求池：0015–0018 未完成；0019 四项候选仍在独立分支，CANVAS-007/008、INSPECT-001/002、MENU-013、SELECT-007 已从待验收队列撤回。
 - 文件夹浏览：画布尚不显示子文件夹卡片、内容封面和统一目录计数；“包含子文件夹资产”尚无正式 UI。
 - 文件操作：资产菜单缺默认/其他应用、Finder/Explorer、复制/粘贴、重命名、复制路径等完整命令；文件夹重命名/复制/克隆/移动/删除领域命令尚未实现。
 - 框选集合运算：当前 SELECT-007 为暂定并集；差集/对称差等待澄清队列 #10。
-- 标签新体验：左侧标签列表和独立管理页已取消；Inspector chip、最近标签、搜索/输入创建及过滤 popover 尚未实现。
+- 标签新体验：当前分支新增了 Inspector chip 原型，但增删后不会即时刷新，最近标签并非按最近使用排序，左侧仍枚举所有标签；不可验收。
 - Label 退役：ADR 0022 已确认，但数据库/FTS/AI/协议和旧数据迁移尚未实施；`META-001`、`SEARCH-002` 已撤回。
 - 中英文、亮/暗/跟随系统主题、统一命令注册表和真实平台快捷键尚未实现。
 - 应用壳与发现工具栏：纯色画布、资源库下拉、后退/前进、无边框面包屑、过滤条以及移除冗余标题/水印/连接状态尚未实施。
-- Computer Use：0019 合流后的真实桌面截图验收尚未执行，需具备能力的环境补做。
+- Computer Use：已对当前 `e2d5d60` 执行只读验收并记录截图；确认 Inspector 无真实缩略图、旧 Label 与 tag chip 同名混淆、画布空当及工具栏/导航未按规格收口。0019 候选合流后必须重新执行。
 - 单项读取失败不阻断整批链接恢复：缺少稳定的人类可制造场景与公共 UI 证据。
 - 元数据并发冲突：缺少双客户端并发的人类验收夹具。
 - 回收站占用文件的部分成功/跳过：需要稳定制造 `FILE_BUSY` 的平台夹具。

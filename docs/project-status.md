@@ -11,7 +11,7 @@ v0.1.0 继续收口 0001–0010 的桌面主线，并纳入真实使用反馈确
 
 1. **P0 发布阻断**：0006 不可变媒体二进制发布来源与 receipt、packaged media playback；
    建立真实 Windows runner 并执行跨平台矩阵。
-2. **P0 产品正确性**：0019 核心项已合流（Inspector 缩略图/防闪烁、修饰键框选、画布列填充、clock 图标、菜单单高亮）；待人类验收与 Computer Use；对齐/INSPECT-003 等剩余项继续收口。
+2. **P0 产品正确性**：0019 四项候选仍停留在独立分支，当前主开发分支 `e2d5d60` 未合流；Inspector 缩略图/防闪烁、修饰键框选、画布列填充、clock 图标和菜单单高亮均不可进入人类验收。先完成合流审查、冲突处理、当前树自动化与 Computer Use，再重新开放条目。
 3. **P1 MVP 产品化**：0015 建立中英文、亮/暗主题和命令快捷键；0017 完成目录卡片/计数/递归范围与文件操作；0018 退役 Label 并重做标签入口；0016 最后收口壳层、历史、面包屑和发现工具栏。
 4. **P1 验证收口**：0012 已完成 macOS Computer Use 与截图验收；0007 的 relink v3 已关闭已知文件所有权风险，仍需真实 UtilityProcess kill/restart、macOS Computer Use 与 Windows；0004 待按当前树复审修复真实行为缺陷，并补打包后与 Windows 证据；
    再完成 0005 packaged 搜索冒烟。
@@ -27,13 +27,13 @@ v0.1.0 继续收口 0001–0010 的桌面主线，并纳入真实使用反馈确
 - 已确认产品模型变化：撤销 Label/资产显示别名，资产名称统一为真实文件名；ADR 0022、产品简报、领域模型和术语表已同步。旧数据兼容迁移在 0018 编码前确认。
 - 自定义主题明确推迟到 MVP 后；Eagle 是信息密度和控件分组参考，不是逐像素复制目标。
 - 四张用户截图已保存到 `docs/前端参考/2026-07-16-*.png`，包括 Eagle 布局/过滤参考、Serpent 瀑布流空当和标签 chip 方向。
-- 0015–0018 仍未实现；0019 核心正确性已实现并进入人类待验收（见清单 CANVAS-007/008、INSPECT-001/002、MENU-013、SELECT-007）。
+- 0015–0018 仍未完成。当前分支存在一组未规格化的壳层、Inspector 标签和菜单改动，但审查发现需求偏离与功能回归，不能作为这些切片的完成证据。0019 四项候选只存在于独立分支，尚未合流。
 
-## 2026-07-16 0019 产品正确性合流
+## 2026-07-16 0019 产品正确性分支审计
 
-- 并行 worktree 合流：框选修饰键 `ea4f044`、画布列填充与 clock `36c776c`、菜单单高亮 `19c4a02`、Inspector 缩略图/防闪烁 `8a73132`。
-- 自动化：typecheck 通过；相关 unit（asset-grid-layout / inspector-preview / marquee-selection）通过；context-menu 与 selection-marquee E2E 在各 worktree 已跑通，合流后需在主树复跑。
-- Computer Use / 最终 `verify:mainline`：未在本回合宣称完成。
+- 独立分支候选：框选修饰键 `ea4f044`、画布列填充与 clock `36c776c`、菜单单高亮 `19c4a02`、Inspector 缩略图/防闪烁 `8a73132`；`git merge-base --is-ancestor <commit> HEAD` 均为否。
+- 当前分支缺少 `docs/implementation/0019-product-correctness-vertical-slice.md`、`tests/unit/asset-grid-layout.test.ts`、`tests/unit/inspector-preview.test.ts`，此前验收清单链接因此失效。
+- 2026-07-16 审查已撤回 CANVAS-007/008、INSPECT-001/002、MENU-013、SELECT-007；详见 `docs/reviews/0015-0019-ui-productization-code-review.md`。
 - 框选修饰键采用暂定并集语义，等待澄清队列第 10 项。
 
 ## 2026-07-16 0014 功能收口与 0007 文件恢复安全
