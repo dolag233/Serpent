@@ -518,9 +518,41 @@ input:focus-visible {
 .canvas-controls {
   display: flex;
   flex: 0 0 auto;
-  order: -1;
   align-items: center;
   gap: 7px;
+}
+
+/* CANVAS-002: toolbar grouping with CSS order for visual priority */
+.tool-group-view {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 0;
+  order: -2;
+}
+
+.tool-group-import {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 0;
+  order: -1;
+}
+
+.tool-group-export {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 0;
+  order: 0;
+}
+
+.tool-group-utility {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 0;
+  order: 1;
 }
 .workspace-tools::-webkit-scrollbar {
   display: none;
@@ -860,16 +892,16 @@ input[type="range"] {
 }
 
 .metadata-list {
-  margin: 9px 0 0;
+  margin: 6px 0 0;
 }
 
 .metadata-list div {
   display: grid;
-  min-height: 28px;
-  grid-template-columns: 76px minmax(0, 1fr);
+  min-height: 24px;
+  grid-template-columns: 56px minmax(0, 1fr);
   align-items: center;
   border-bottom: 1px solid #36393b;
-  font-size: 11px;
+  font-size: 10px;
 }
 
 .metadata-list dt {
@@ -885,15 +917,15 @@ input[type="range"] {
 }
 
 .inspector-section {
-  margin-top: 18px;
+  margin-top: 12px;
 }
 
 .inspector-section h2 {
-  margin: 0 0 8px;
+  margin: 0 0 6px;
   color: #9ba09c;
   font-size: 10px;
   font-weight: 650;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
 }
 
@@ -1770,21 +1802,223 @@ input[type="range"] {
   cursor: pointer;
 }
 
-.selected-file-hero {
-  display: grid;
-  height: 132px;
-  place-items: center;
-  border: 1px solid var(--divider-soft);
-  border-radius: 4px;
-  background: linear-gradient(145deg, #34383a, #292c2e);
-  color: #89908c;
+/* Compact hero replacement (INSPECT-003) */
+.inspector-hero-compact {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0 6px;
+  border-bottom: 1px solid var(--divider-soft);
+  min-height: 0;
 }
-.selected-file-hero span {
+
+.inspector-hero-compact strong {
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 560;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Compact info line (INSPECT-003) */
+.inspector-compact-info {
+  padding: 6px 0 2px;
+}
+
+.inspector-compact-meta {
+  color: #aeb2ae;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 10px;
+  line-height: 1.5;
+  word-break: break-all;
+}
+
+/* Compact status badge (INSPECT-003) */
+.inspector-compact-status {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 3px;
+  margin-top: 4px;
+  background: var(--divider-soft);
+  color: var(--tertiary);
+  font-size: 10px;
+  font-weight: 500;
+}
+
+/* Section label — replaces h2 headings (INSPECT-003) */
+.inspector-section-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0 0 6px;
+  color: #9ba09c;
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+/* Tag chips container (REQ-TAG-003) */
+.tag-chips-container {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  align-items: center;
+  min-height: 22px;
+}
+
+/* Tag chip */
+.tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border: 1px solid var(--divider);
+  border-radius: 10px;
+  background: #2a2d2f;
+  color: #c8cbc7;
+  font-size: 10px;
+  line-height: 1.5;
+  white-space: nowrap;
+  cursor: default;
+  transition: background 120ms ease;
+}
+
+.tag-chip:hover {
+  background: #323638;
+}
+
+.tag-chip-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.tag-chip-name {
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tag-chip-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--tertiary);
+  cursor: pointer;
+  font-size: 8px;
+  line-height: 1;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.tag-chip-remove:hover {
+  background: #4a3f3f;
+  color: #d96a6a;
+}
+
+/* Tag chip placeholder */
+.tag-chip-placeholder {
+  color: var(--tertiary);
+  font-size: 10px;
+  font-style: italic;
+}
+
+/* Tag input wrapper */
+.tag-input-wrapper {
+  position: relative;
+  width: 100%;
+}
+
+.tag-add-input {
+  width: 100%;
+  height: 26px;
+  padding: 2px 8px;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  background: #1e2022;
+  color: #f1f2ef;
+  font-size: 11px;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.tag-add-input::placeholder {
+  color: var(--tertiary);
+  font-size: 10px;
+}
+
+/* Tag suggestions dropdown */
+.tag-suggestions-dropdown {
   position: absolute;
-  margin-top: 88px;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 10;
+  max-height: 160px;
+  overflow-y: auto;
+  border: 1px solid var(--divider);
+  border-radius: 4px;
+  background: #2d3032;
+  box-shadow: 0 6px 20px rgb(0 0 0 / 35%);
+}
+
+.tag-suggestion-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 5px 10px;
+  border: 0;
+  background: transparent;
+  color: #c8cbc7;
+  font-size: 11px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.tag-suggestion-item:hover {
+  background: #3a3d40;
+}
+
+.tag-suggestion-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tag-suggestion-count {
   color: var(--tertiary);
   font-family: "IBM Plex Mono", monospace;
-  font-size: 9px;
+  font-size: 10px;
+  flex-shrink: 0;
+  margin-left: 8px;
+}
+
+.tag-suggestion-create {
+  color: var(--accent);
+  font-style: italic;
+  border-top: 1px solid var(--divider-soft);
+}
+
+/* Tags section header with add button */
+.inspector-tags-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.inspector-tags-section {
+  margin-top: 10px;
 }
 .inspector-close-library {
   width: 100%;

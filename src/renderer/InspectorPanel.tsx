@@ -1,9 +1,16 @@
-import { type Dispatch, type SetStateAction } from "react";
+import {
+  useState,
+  useMemo,
+  useRef,
+  useEffect,
+  type Dispatch,
+  type SetStateAction,
+} from "react";
 
 import { Icon } from "./Icons";
 import { formatDuration } from "./App";
 
-import type { AssetSummary, AssetMetadataResult } from "../shared/asset-types";
+import type { AssetSummary, AssetMetadataResult, TagSummary } from "../shared/asset-types";
 import type { RendererLibrarySummary } from "../shared/protocol/responses";
 
 // --- Local utility helpers (extracted from App.tsx) ---
@@ -16,11 +23,6 @@ function isCssColor(value: string) {
   return /^#[0-9a-f]{3,8}$/i.test(value) || /^(rgb|hsl)a?\(/i.test(value);
 }
 
-function extension(name: string) {
-  const val = name.split(".").pop();
-  return val && val !== name ? val.slice(0, 5).toUpperCase() : "FILE";
-}
-
 function formatBytes(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -28,7 +30,18 @@ function formatBytes(bytes: number) {
   return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
 }
 
-function formatDate(value: string) {
+function formatDateFull(value: string) {
+  const date = new Date(value);
+  return Number.isNaN(date.valueOf())
+    ? "未知时间"
+    : new Intl.DateTimeFormat("zh-CN", {
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      }).format(date);
+}
+
+function formatDateShort(value: string) {
   const date = new Date(value);
   return Number.isNaN(date.valueOf())
     ? "未知时间"
@@ -81,30 +94,26 @@ export interface InspectorPanelProps {
   handleSourceUrlSave: () => void;
   handleSourceUrlInput: (e: React.ChangeEvent<HTMLInputElement>) => void;
   handlePaletteSave: () => void;
+  // Tag chip props (REQ-TAG-003)
+  allTags: TagSummary[];
+  onAssignTagToAsset?: (tagId: string) => void;
+  onRemoveTagFromAsset?: (tagId: string) => void;
+  onCreateAndAssignTag?: (tagName: string) => void;
 }
 
-// --- Local ToolButton (not exported from App.tsx) ---
+// --- Tag chip colors ---
 
-function ToolButton({
-  label,
-  icon,
-  disabled,
-}: {
-  label: string;
-  icon: Parameters<typeof Icon>[0]["name"];
-  disabled?: boolean;
-}) {
-  return (
-    <button
-      aria-label={label}
-      className="tool-button"
-      disabled={disabled}
-      title={label}
-      type="button"
-    >
-      <Icon name={icon} />
-    </button>
-  );
+const TAG_CHIP_COLORS = [
+  "#4a9ec9", "#6db85d", "#c9773e", "#b866b8", "#d99a3e",
+  "#5d9b9b", "#c75252", "#7b68b8", "#5aa36b", "#b8734a",
+];
+
+function tagColor(tagId: string) {
+  let hash = 0;
+  for (let i = 0; i < tagId.length; i++) {
+    hash = tagId.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  return TAG_CHIP_COLORS[Math.abs(hash) % TAG_CHIP_COLORS.length];
 }
 
 // --- Component ---
@@ -139,79 +148,217 @@ export function InspectorPanel(props: InspectorPanelProps) {
     handleSourceUrlSave,
     handleSourceUrlInput,
     handlePaletteSave,
+    allTags,
+    onAssignTagToAsset,
+    onRemoveTagFromAsset,
+    onCreateAndAssignTag,
   } = props;
+
+  // Tag input state
+  const [tagInputValue, setTagInputValue] = useState("");
+  const [showTagInput, setShowTagInput] = useState(false);
+  const tagInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (showTagInput && tagInputRef.current) {
+      tagInputRef.current.focus();
+    }
+  }, [showTagInput]);
+
+  // Filtered tag suggestions for typeahead
+  const filteredTagSuggestions = useMemo(() => {
+    const q = tagInputValue.trim().toLowerCase();
+    if (!q) return allTags.slice(0, 8); // show recent/first 8
+    return allTags
+      .filter((t) => t.name.toLowerCase().includes(q))
+      .slice(0, 12);
+  }, [allTags, tagInputValue]);
+
+  const handleAddTagKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter" && tagInputValue.trim()) {
+      const existingTag = allTags.find(
+        (t) => t.name.toLowerCase() === tagInputValue.trim().toLowerCase(),
+      );
+      if (existingTag) {
+        onAssignTagToAsset?.(existingTag.tagId);
+      } else {
+        onCreateAndAssignTag?.(tagInputValue.trim());
+      }
+      setTagInputValue("");
+      setShowTagInput(false);
+    }
+    if (e.key === "Escape") {
+      setTagInputValue("");
+      setShowTagInput(false);
+    }
+  };
+
+  // Collect all tags to display from asset metadata (both user and AI)
+  const displayedTags = useMemo(() => {
+    if (!assetMetadata?.tags) return [];
+    return assetMetadata.tags.map((t) => ({
+      id: t.id,
+      name: t.name,
+      source: t.source as "ai" | "user",
+    }));
+  }, [assetMetadata]);
+
+  // Compact info line builder — memoized to avoid crash when selectedAsset is undefined
+  const compactInfoLine = useMemo(() => {
+    if (!selectedAsset) return "";
+    const parts: string[] = [];
+    parts.push(formatBytes(selectedAsset.byteSize ?? 0));
+    if (selectedAsset.width !== null && selectedAsset.height !== null) {
+      parts.push(`${selectedAsset.width} × ${selectedAsset.height}`);
+    }
+    if (selectedAsset.durationMs !== null) {
+      parts.push(formatDuration(selectedAsset.durationMs));
+    }
+    parts.push(formatDateFull(selectedAsset.modifiedAt ?? ""));
+    return parts.join("  |  ");
+  }, [selectedAsset]);
 
   return (
     <aside className="inspector-pane">
-      <div className="pane-header">
-        <ToolButton icon="info" label="检查器信息" />
-      </div>
       {selectedAsset ? (
         <div className="inspector-content">
-          <div className="selected-file-hero">
-            <Icon name="file" size={36} />
-            <span>{extension(selectedAsset.displayName)}</span>
+          {/* Compact hero — filename + icon */}
+          <div className="inspector-hero-compact">
+            <Icon name="file" size={20} />
+            <strong title={selectedAsset.displayName}>
+              {selectedAsset.displayName}
+            </strong>
           </div>
-          <div className="inspector-identity">
-            <div>
-              <span className="micro-label">当前选择</span>
-              <strong>{selectedAsset.displayName}</strong>
-            </div>
+
+          {/* Compact info line — size | resolution | date */}
+          <div className="inspector-compact-info">
+            <span className="inspector-compact-meta">{compactInfoLine}</span>
           </div>
-          <dl className="metadata-list">
-            <div>
-              <dt>状态</dt>
-              <dd>
-                {selectedAsset.deletedAt
-                  ? `回收站（${selectedAsset.remainingDays ?? "?"}天后自动清理）`
-                  : selectedAsset.availability === "available"
-                    ? "可用"
-                    : "文件丢失"}
-              </dd>
+          <div className="inspector-compact-status">
+            {selectedAsset.deletedAt
+              ? `回收站（${selectedAsset.remainingDays ?? "?"}天后自动清理）`
+              : selectedAsset.availability === "available"
+                ? "可用"
+                : "文件丢失"}
+          </div>
+
+          {/* Tag chips (REQ-TAG-003) */}
+          <section className="inspector-section inspector-tags-section">
+            <div className="inspector-tags-header">
+              <span className="inspector-section-label">标签</span>
+              <button
+                className="tiny-action"
+                aria-label="添加标签"
+                onClick={() => {
+                  setShowTagInput(true);
+                  setTagInputValue("");
+                }}
+                type="button"
+              >
+                <Icon name="plus" size={12} />
+              </button>
             </div>
-            <div>
-              <dt>大小</dt>
-              <dd className="mono">{formatBytes(selectedAsset.byteSize)}</dd>
-            </div>
-            {selectedAsset.width !== null &&
-              selectedAsset.height !== null && (
-                <div>
-                  <dt>分辨率</dt>
-                  <dd className="mono">
-                    {selectedAsset.width} × {selectedAsset.height}
-                  </dd>
+            <div className="tag-chips-container">
+              {displayedTags.map((tag) => (
+                <span
+                  className="tag-chip"
+                  data-source={tag.source}
+                  key={tag.id}
+                  style={{ borderColor: tagColor(tag.id) }}
+                >
+                  <span className="tag-chip-dot" style={{ background: tagColor(tag.id) }} />
+                  <span className="tag-chip-name">{tag.name}</span>
+                  {tag.source === "user" && onRemoveTagFromAsset && (
+                    <button
+                      aria-label="移除此标签"
+                      className="tag-chip-remove"
+                      onClick={() => onRemoveTagFromAsset(tag.id)}
+                      type="button"
+                    >
+                      <Icon name="close" size={9} />
+                    </button>
+                  )}
+                </span>
+              ))}
+              {displayedTags.length === 0 && !showTagInput && (
+                <span className="tag-chip-placeholder">尚未添加标签</span>
+              )}
+              {showTagInput && (
+                <div className="tag-input-wrapper">
+                  <input
+                    aria-label="添加标签"
+                    autoFocus
+                    className="tag-add-input"
+                    list="inspector-tag-suggestions"
+                    maxLength={255}
+                    onBlur={() => {
+                      // Delay to allow suggestion click
+                      setTimeout(() => {
+                        setShowTagInput(false);
+                        setTagInputValue("");
+                      }, 150);
+                    }}
+                    onChange={(e) => setTagInputValue(e.target.value)}
+                    onKeyDown={handleAddTagKeyDown}
+                    placeholder="搜索或创建标签…"
+                    ref={tagInputRef}
+                    value={tagInputValue}
+                  />
+                  <datalist id="inspector-tag-suggestions">
+                    {filteredTagSuggestions.map((t) => (
+                      <option key={t.tagId} value={t.name} />
+                    ))}
+                  </datalist>
+                  {tagInputValue.trim() && filteredTagSuggestions.length > 0 && (
+                    <div className="tag-suggestions-dropdown">
+                      {filteredTagSuggestions.map((t) => (
+                        <button
+                          className="tag-suggestion-item"
+                          key={t.tagId}
+                          onMouseDown={(e) => {
+                            e.preventDefault();
+                            onAssignTagToAsset?.(t.tagId);
+                            setTagInputValue("");
+                            setShowTagInput(false);
+                          }}
+                          type="button"
+                        >
+                          <span className="tag-suggestion-name">
+                            {t.name}
+                          </span>
+                          <span className="tag-suggestion-count">
+                            {t.assetCount}
+                          </span>
+                        </button>
+                      ))}
+                      {!filteredTagSuggestions.some(
+                        (t) =>
+                          t.name.toLowerCase() ===
+                          tagInputValue.trim().toLowerCase(),
+                      ) && (
+                        <button
+                          className="tag-suggestion-item tag-suggestion-create"
+                          onMouseDown={(e) => {
+                            e.preventDefault();
+                            onCreateAndAssignTag?.(tagInputValue.trim());
+                            setTagInputValue("");
+                            setShowTagInput(false);
+                          }}
+                          type="button"
+                        >
+                          创建标签 "{tagInputValue.trim()}"
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
-            {selectedAsset.durationMs !== null && (
-              <div>
-                <dt>时长</dt>
-                <dd className="mono">
-                  {formatDuration(selectedAsset.durationMs)}
-                </dd>
-              </div>
-            )}
-            <div>
-              <dt>修改</dt>
-              <dd>{formatDate(selectedAsset.modifiedAt)}</dd>
             </div>
-            {selectedAsset.deletedAt && (
-              <div>
-                <dt>删除时间</dt>
-                <dd>{formatDate(selectedAsset.deletedAt)}</dd>
-              </div>
-            )}
-            {selectedAsset.trashedFromPath && (
-              <div>
-                <dt>原始位置</dt>
-                <dd className="mono" style={{ fontSize: 9 }}>
-                  {selectedAsset.trashedFromPath}
-                </dd>
-              </div>
-            )}
-          </dl>
-          {/* --- Asset metadata editor --- */}
+          </section>
+
+          {/* --- Asset metadata editor (compact) --- */}
           <section className="inspector-section">
-            <h2>元数据</h2>
+            <span className="inspector-section-label">元数据</span>
             {metadataLoading ? (
               <span className="micro-label">加载中…</span>
             ) : assetMetadata ? (
@@ -233,7 +380,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
                 )}
                 <div className="editor-field">
                   <label className="micro-label" htmlFor="meta-label">
-                    标签 (Label)
+                    标签
                   </label>
                   <input
                     className="text-field"
@@ -420,7 +567,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
                   }}
                 >
                   版本 {assetMetadata.entityVersion} ·{" "}
-                  {formatDate(assetMetadata.updatedAt)}
+                  {formatDateShort(assetMetadata.updatedAt)}
                 </div>
               </>
             ) : (
@@ -429,14 +576,17 @@ export function InspectorPanel(props: InspectorPanelProps) {
               </p>
             )}
           </section>
+
+          {/* Asset path */}
           <section className="inspector-section">
-            <h2>资源库路径</h2>
+            <span className="inspector-section-label">资源库路径</span>
             <p className="path-block">{selectedAsset.relativeFilePath}</p>
           </section>
+
           {/* --- AI Content --- */}
           {aiContent && (
             <section className="inspector-section">
-              <h2 style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <div className="inspector-section-label" style={{ display: "flex", alignItems: "center", gap: 6 }}>
                 <span
                   style={{
                     display: "inline-block",
@@ -452,10 +602,10 @@ export function InspectorPanel(props: InspectorPanelProps) {
                   AI
                 </span>
                 AI 生成内容
-              </h2>
+              </div>
               {aiContent.label && (
                 <div className="editor-field" style={{ marginTop: 8 }}>
-                  <label className="micro-label">标签 (Label) · AI</label>
+                  <label className="micro-label">标签 · AI</label>
                   <p
                     className="path-block"
                     style={{
@@ -516,6 +666,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
               )}
             </section>
           )}
+
           <button
             className="secondary-button inspector-close-library"
             onClick={() => void closeLibrary()}
@@ -553,7 +704,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
             </div>
           </dl>
           <section className="inspector-section">
-            <h2>位置</h2>
+            <span className="inspector-section-label">位置</span>
             <p className="path-block">{library.displayPath}</p>
           </section>
           <button

@@ -150,8 +150,7 @@ test("generates a decoded thumbnail and keeps asset viewer context coherent", as
     await expect(assetCard).toHaveAttribute("aria-pressed", "false");
     await expect(
       window
-        .getByText("当前选择", { exact: true })
-        .locator("..")
+        .locator(".inspector-hero-compact")
         .getByText("next-automatic.png", { exact: true }),
     ).toBeVisible();
     await window.keyboard.press("Escape");

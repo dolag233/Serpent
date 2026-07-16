@@ -125,7 +125,7 @@ test('organizes, finds, trashes, and restores an imported asset through the UI',
     await expect(window.getByRole('button', { name: /hero\.png/i })).toBeVisible();
 
     await window.getByRole('button', { name: /hero\.png/i }).click();
-    const labelInput = window.getByLabel('标签 (Label)');
+    const labelInput = window.getByRole('textbox', { name: '标签' });
     await expect(labelInput).toBeVisible();
     await labelInput.fill('英雄资产');
     await labelInput.press('Enter');

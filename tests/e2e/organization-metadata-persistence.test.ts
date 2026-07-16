@@ -97,7 +97,7 @@ test("persists organization and metadata across restart and surfaces optimistic-
     await expect(window.locator(".toast")).toContainText("资产已加入合集");
 
     await assetCard.click();
-    const labelInput = window.getByLabel("标签 (Label)");
+    const labelInput = window.getByRole("textbox", { name: "标签" });
     const descriptionInput = window.getByLabel("描述");
     const sourceUrlInput = window.getByLabel("源链接 (URL)");
     const paletteInput = window.getByRole("textbox", {
@@ -154,7 +154,7 @@ test("persists organization and metadata across restart and surfaces optimistic-
     await expect(restoredCard).toBeVisible();
     await restoredCard.click();
 
-    const restoredLabelInput = window.getByLabel("标签 (Label)");
+    const restoredLabelInput = window.getByRole("textbox", { name: "标签" });
     const restoredDescriptionInput = window.getByLabel("描述");
     const restoredSourceUrlInput = window.getByLabel("源链接 (URL)");
     const restoredPaletteInput = window.getByRole("textbox", {

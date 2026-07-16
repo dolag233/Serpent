@@ -4853,6 +4853,7 @@ export class LibraryService {
         palette: null,
         ...this.resolvedPaletteFields(openLibrary, input.assetId, null),
         sourcePageUrl: null,
+        tags: this.fetchAssetTags(openLibrary.connection, input.assetId),
         entityVersion: 0,
         updatedAt: new Date(0).toISOString(),
       };
@@ -4869,7 +4870,33 @@ export class LibraryService {
       sourcePageUrl: row.source_page_url,
       entityVersion: row.entity_version,
       updatedAt: row.updated_at,
+      tags: this.fetchAssetTags(openLibrary.connection, input.assetId),
     };
+  }
+
+  /** Return tags assigned to an asset from both human and AI sources. */
+  private fetchAssetTags(
+    connection: DatabaseConnection,
+    assetId: string,
+  ): Array<{ id: string; name: string; source: 'user' | 'ai' }> {
+    const rows = connection
+      .prepare(
+        `SELECT t.tag_id, t.name, 'user' AS source
+           FROM tags t
+           JOIN human_asset_tags hat ON hat.tag_id = t.tag_id
+          WHERE hat.asset_id = ?
+         UNION ALL
+         SELECT t.tag_id, t.name, 'ai' AS source
+           FROM tags t
+           JOIN ai_asset_tags aat ON aat.tag_id = t.tag_id
+          WHERE aat.asset_id = ?`,
+      )
+      .all(assetId, assetId) as Array<{
+        tag_id: string;
+        name: string;
+        source: 'user' | 'ai';
+      }>;
+    return rows.map((r) => ({ id: r.tag_id, name: r.name, source: r.source }));
   }
 
   setAssetMetadata(input: {
@@ -5010,6 +5037,7 @@ export class LibraryService {
         palette: updated.palette,
         ...this.resolvedPaletteFields(openLibrary, input.assetId, updated.palette),
         sourcePageUrl: updated.source_page_url,
+        tags: this.fetchAssetTags(openLibrary.connection, input.assetId),
         entityVersion: updated.entity_version,
         updatedAt: updated.updated_at,
       };
@@ -5064,6 +5092,7 @@ export class LibraryService {
       palette: newPalette,
       ...this.resolvedPaletteFields(openLibrary, input.assetId, newPalette),
       sourcePageUrl: newSourcePageUrl,
+      tags: this.fetchAssetTags(openLibrary.connection, input.assetId),
       entityVersion: newEntityVersion,
       updatedAt: now,
     };

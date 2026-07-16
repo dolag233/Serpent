@@ -1392,6 +1392,45 @@ function AppInner() {
     }
   }
 
+  async function handleRemoveTagFromAsset(tagId: string) {
+    if (!api || !library || !selectedAssetId) return;
+    try {
+      const result = await api.removeTags({
+        libraryId: library.libraryId,
+        assetIds: [selectedAssetId],
+        tagIds: [tagId],
+      });
+      if (!result.ok) throw new LibraryOperationError(result.error);
+      const tagResult = await api.listTags({ libraryId: library.libraryId });
+      if (tagResult.ok) setTags(tagResult.value);
+      setNotice("标签已移除。");
+    } catch (caught) {
+      setError(toMessage(caught, "移除标签失败。"));
+    }
+  }
+
+  async function handleCreateAndAssignTag(tagName: string) {
+    if (!api || !library || !selectedAssetId || !tagName.trim()) return;
+    try {
+      const createResult = await api.createTag({
+        libraryId: library.libraryId,
+        name: tagName.trim(),
+      });
+      if (!createResult.ok) throw new LibraryOperationError(createResult.error);
+      const assignResult = await api.assignTags({
+        libraryId: library.libraryId,
+        assetIds: [selectedAssetId],
+        tagIds: [createResult.value.tagId],
+      });
+      if (!assignResult.ok) throw new LibraryOperationError(assignResult.error);
+      const tagResult = await api.listTags({ libraryId: library.libraryId });
+      if (tagResult.ok) setTags(tagResult.value);
+      setNotice(`已创建并添加标签 "${tagName.trim()}"。`);
+    } catch (caught) {
+      setError(toMessage(caught, "创建标签失败。"));
+    }
+  }
+
   // --- Collection CRUD ---
 
   async function createCollection() {
@@ -4446,175 +4485,183 @@ function AppInner() {
               )
             )}
             <span className="tool-separator" />
-            <button
-              className="compact-action"
-              disabled={!library || busy}
-              onClick={() => void importAssets("files")}
-              type="button"
-            >
-              <Icon name="upload" size={14} />
-              导入文件
-            </button>
-            <button
-              className="compact-action"
-              disabled={!library || busy}
-              onClick={() => void importAssets("folder")}
-              type="button"
-            >
-              <Icon name="folder" size={14} />
-              导入文件夹
-            </button>
-            <button
-              className="compact-action"
-              disabled={!library || busy}
-              onClick={() => void pasteClipboardImage()}
-              type="button"
-            >
-              <Icon name="file" size={14} />
-              粘贴图片
-            </button>
-            <button
-              className="compact-action"
-              disabled={!library || busy}
-              onClick={() => void importFolderAsLinked()}
-              type="button"
-            >
-              <Icon name="link" size={14} />
-              导入链接文件夹
-            </button>
+            <span className="tool-group-import">
+              <button
+                className="compact-action"
+                disabled={!library || busy}
+                onClick={() => void importAssets("files")}
+                type="button"
+              >
+                <Icon name="upload" size={14} />
+                导入文件
+              </button>
+              <button
+                className="compact-action"
+                disabled={!library || busy}
+                onClick={() => void importAssets("folder")}
+                type="button"
+              >
+                <Icon name="folder" size={14} />
+                导入文件夹
+              </button>
+              <button
+                className="compact-action"
+                disabled={!library || busy}
+                onClick={() => void pasteClipboardImage()}
+                type="button"
+              >
+                <Icon name="file" size={14} />
+                粘贴图片
+              </button>
+              <button
+                className="compact-action"
+                disabled={!library || busy}
+                onClick={() => void importFolderAsLinked()}
+                type="button"
+              >
+                <Icon name="link" size={14} />
+                导入链接文件夹
+              </button>
+            </span>
             <span className="tool-separator" />
-            <button
-              className="compact-action"
-              disabled={!library || busy}
-              onClick={() => setExportDialogOpen(true)}
-              type="button"
-            >
-              <Icon name="archive" size={14} />
-              导出资源库
-            </button>
-            <button
-              className="compact-action"
-              disabled={busy}
-              onClick={() => void startImport()}
-              type="button"
-            >
-              <Icon name="folder" size={14} />
-              导入资源库
-            </button>
-            <button
-              className="compact-action"
-              disabled={busy}
-              onClick={() => void startImportZip()}
-              type="button"
-            >
-              <Icon name="archive" size={14} />
-              导入 ZIP
-            </button>
-            <ToolButton
-              disabled={!library || busy}
-              icon="refresh"
-              label="刷新磁盘变化"
-              onClick={() => void refreshAssets()}
-            />
-            <div className="canvas-controls">
-              <span className="tool-separator" />
+            <span className="tool-group-export">
+              <button
+                className="compact-action"
+                disabled={!library || busy}
+                onClick={() => setExportDialogOpen(true)}
+                type="button"
+              >
+                <Icon name="archive" size={14} />
+                导出资源库
+              </button>
+              <button
+                className="compact-action"
+                disabled={busy}
+                onClick={() => void startImport()}
+                type="button"
+              >
+                <Icon name="folder" size={14} />
+                导入资源库
+              </button>
+              <button
+                className="compact-action"
+                disabled={busy}
+                onClick={() => void startImportZip()}
+                type="button"
+              >
+                <Icon name="archive" size={14} />
+                导入 ZIP
+              </button>
               <ToolButton
-                icon="grid"
-                label="平铺视图"
-                onClick={() =>
-                  setCanvasPrefs((p) => ({ ...p, viewMode: "grid" }))
-                }
-                pressed={assetViewMode === "grid"}
+                disabled={!library || busy}
+                icon="refresh"
+                label="刷新磁盘变化"
+                onClick={() => void refreshAssets()}
               />
-              <ToolButton
-                icon="menu"
-                label="瀑布流视图"
-                onClick={() =>
-                  setCanvasPrefs((p) => ({ ...p, viewMode: "masonry" }))
-                }
-                pressed={assetViewMode === "masonry"}
-              />
-              <label className="asset-size-control">
-                <input
-                  aria-label="资产缩略图大小"
-                  max={CARD_SIZE_MAX}
-                  min={CARD_SIZE_MIN}
-                  onChange={(event) => {
-                    const size = Number(event.target.value);
-                    resizeAssetCards(size);
-                  }}
-                  step="8"
-                  type="range"
-                  value={assetCardSize}
-                />
-              </label>
-              <span className="tool-separator" />
-              {([
-                {
-                  field: "name" as const,
-                  icon: "tag" as const,
-                  label: "文件名",
-                },
-                {
-                  field: "size" as const,
-                  icon: "info" as const,
-                  label: "文件大小",
-                },
-                {
-                  field: "date" as const,
-                  icon: "star" as const,
-                  label: "修改日期",
-                },
-              ]).map(({ field, icon, label }) => (
+            </span>
+            <span className="tool-group-view">
+              <div className="canvas-controls">
+                <span className="tool-separator" />
                 <ToolButton
-                  key={field}
-                  icon={icon}
-                  label={label}
+                  icon="grid"
+                  label="平铺视图"
                   onClick={() =>
-                    setCanvasPrefs((p) => {
-                      const updatedFields = {
-                        ...p.fields,
-                        [field]: !p.fields[field],
-                      };
-                      return { ...p, fields: updatedFields };
-                    })
+                    setCanvasPrefs((p) => ({ ...p, viewMode: "grid" }))
                   }
-                  pressed={canvasPrefs.fields[field]}
+                  pressed={assetViewMode === "grid"}
                 />
-              ))}
-            </div>
+                <ToolButton
+                  icon="menu"
+                  label="瀑布流视图"
+                  onClick={() =>
+                    setCanvasPrefs((p) => ({ ...p, viewMode: "masonry" }))
+                  }
+                  pressed={assetViewMode === "masonry"}
+                />
+                <label className="asset-size-control">
+                  <input
+                    aria-label="资产缩略图大小"
+                    max={CARD_SIZE_MAX}
+                    min={CARD_SIZE_MIN}
+                    onChange={(event) => {
+                      const size = Number(event.target.value);
+                      resizeAssetCards(size);
+                    }}
+                    step="8"
+                    type="range"
+                    value={assetCardSize}
+                  />
+                </label>
+                <span className="tool-separator" />
+                {([
+                  {
+                    field: "name" as const,
+                    icon: "tag" as const,
+                    label: "文件名",
+                  },
+                  {
+                    field: "size" as const,
+                    icon: "info" as const,
+                    label: "文件大小",
+                  },
+                  {
+                    field: "date" as const,
+                    icon: "star" as const,
+                    label: "修改日期",
+                  },
+                ]).map(({ field, icon, label }) => (
+                  <ToolButton
+                    key={field}
+                    icon={icon}
+                    label={label}
+                    onClick={() =>
+                      setCanvasPrefs((p) => {
+                        const updatedFields = {
+                          ...p.fields,
+                          [field]: !p.fields[field],
+                        };
+                        return { ...p, fields: updatedFields };
+                      })
+                    }
+                    pressed={canvasPrefs.fields[field]}
+                  />
+                ))}
+              </div>
+            </span>
             <span className="tool-separator" />
-            <button
-              className="compact-action"
-              onClick={() => void openExtensionPairing()}
-              type="button"
-            >
-              <Icon name="link" size={14} />
-              浏览器扩展
-            </button>
-            {library && (
-              <>
-                <button
-                  className="compact-action"
-                  onClick={() => setMediaJobsOpen(true)}
-                  type="button"
-                >
-                  <Icon name="refresh" size={14} />
-                  后台任务
-                </button>
-                <button
-                  className="compact-action"
-                  onClick={() => {
-                    void loadAiConfig();
-                    setAiConfigOpen(true);
-                  }}
-                  type="button"
-                >
-                  <Icon name="info" size={14} />
-                  AI 设置
-                </button>
-              </>
-            )}
+            <span className="tool-group-utility">
+              <button
+                className="compact-action"
+                onClick={() => void openExtensionPairing()}
+                type="button"
+              >
+                <Icon name="link" size={14} />
+                浏览器扩展
+              </button>
+              {library && (
+                <>
+                  <button
+                    className="compact-action"
+                    onClick={() => setMediaJobsOpen(true)}
+                    type="button"
+                  >
+                    <Icon name="refresh" size={14} />
+                    后台任务
+                  </button>
+                  <button
+                    className="compact-action"
+                    onClick={() => {
+                      void loadAiConfig();
+                      setAiConfigOpen(true);
+                    }}
+                    type="button"
+                  >
+                    <Icon name="info" size={14} />
+                    AI 设置
+                  </button>
+                </>
+              )}
+            </span>
           </div>
         </div>
         <div
@@ -5033,6 +5080,7 @@ function AppInner() {
       <InspectorPanel
         aiContent={aiContent}
         allAssetCount={allAssetCount}
+        allTags={tags}
         assetMetadata={assetMetadata}
         automaticPaletteRatios={automaticPaletteRatios}
         closeLibrary={closeLibrary}
@@ -5056,6 +5104,9 @@ function AppInner() {
         library={library}
         loadMetadata={loadMetadata}
         metadataLoading={metadataLoading}
+        onCreateAndAssignTag={handleCreateAndAssignTag}
+        onAssignTagToAsset={(tagId) => { if (selectedAssetId) void assignAssetToTag(selectedAssetId, tagId); }}
+        onRemoveTagFromAsset={(tagId) => void handleRemoveTagFromAsset(tagId)}
         selectedAsset={selectedAsset}
         setEditPalette={setEditPalette}
         versionConflict={versionConflict}
