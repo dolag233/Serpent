@@ -301,6 +301,30 @@ input:focus-visible {
   color: var(--tertiary);
 }
 
+.library-switcher-divider {
+  height: 1px;
+  margin: 4px 2px;
+  background: var(--divider);
+}
+
+.library-switcher-section {
+  display: grid;
+}
+
+.library-switcher-section-label {
+  padding: 4px 9px 2px;
+  color: var(--tertiary);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+}
+
+.library-switcher-item-label {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .scope-trace {
   display: flex;
   min-width: 0;

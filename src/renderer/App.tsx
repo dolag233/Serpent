@@ -21,7 +21,7 @@ import { ImportDialog } from "./ImportDialog";
 import {
   NavigationSidebar,
 } from "./NavigationSidebar";
-import { LibrarySwitcher } from "./LibrarySwitcher";
+import { LibrarySwitcher, buildRecentLibraryMenuEntries, type RecentLibraryMenuEntry } from "./LibrarySwitcher";
 import { ScopeHistoryButtons } from "./ScopeHistoryButtons";
 import {
   ScopeBreadcrumbs,
@@ -73,6 +73,7 @@ import type {
 } from "../shared/asset-types";
 import type {
   SerpentLibraryApi,
+  LibraryApiResult,
   RelinkBatchPreviewResult,
   ImportValidatedResult,
   MediaJobStatus,
@@ -344,6 +345,9 @@ function AppInner() {
     ?.extensionPairing;
   // Library / folder / assets (existing)
   const [library, setLibrary] = useState<RendererLibrarySummary | null>(null);
+  const [recentLibraries, setRecentLibraries] = useState<
+    RecentLibraryMenuEntry[]
+  >([]);
   const [folders, setFolders] = useState<ManagedFolderSummary[]>([]);
   const [linkedFolders, setLinkedFolders] = useState<LinkedFolderSummary[]>([]);
   const [linkedRulesEditor, setLinkedRulesEditor] = useState<{
@@ -1319,16 +1323,55 @@ function AppInner() {
     }
   }
 
+  async function refreshRecentLibraries(currentLibraryPath?: string | null) {
+    if (!api) return;
+    try {
+      const result = await api.listRecent();
+      if (!result.ok) return;
+      setRecentLibraries(
+        buildRecentLibraryMenuEntries(
+          result.value,
+          currentLibraryPath === undefined
+            ? (library?.displayPath ?? null)
+            : currentLibraryPath,
+        ),
+      );
+    } catch {
+      // 最近资源库列表读取失败不影响菜单主功能，保持现有列表。
+    }
+  }
+
   async function runLibraryOperation(kind: "create" | "open") {
     if (!api) return;
+    await runLibraryOpenPipeline(
+      kind === "create" ? "creating" : "opening",
+      () =>
+        kind === "create"
+          ? api.create({ displayName: dialogValue.trim() })
+          : api.open(),
+      "资源库操作失败。",
+    );
+  }
+
+  async function openRecentLibrary(libraryPath: string) {
+    if (!api) return;
+    await runLibraryOpenPipeline(
+      "opening",
+      () => api.openRecent({ path: libraryPath }),
+      "打开最近资源库失败。",
+    );
+  }
+
+  async function runLibraryOpenPipeline(
+    busyState: "creating" | "opening",
+    action: () => Promise<LibraryApiResult<RendererLibrarySummary>>,
+    failureMessage: string,
+  ) {
     setError(null);
-    setUiState(kind === "create" ? "creating" : "opening");
+    setUiState(busyState);
     let opened = false;
     try {
-      const result =
-        kind === "create"
-          ? await api.create({ displayName: dialogValue.trim() })
-          : await api.open();
+      const result = await action();
       if (!result.ok) {
         if (result.error.code === "CANCELLED") return;
         throw new LibraryOperationError(result.error);
@@ -1342,8 +1385,9 @@ function AppInner() {
       resetNavHistory({ kind: "all" });
       api?.setActiveContext(result.value.libraryId);
       await loadContent(result.value, "all");
+      await refreshRecentLibraries(result.value.displayPath);
     } catch (caught) {
-      setError(toMessage(caught, "资源库操作失败。"));
+      setError(toMessage(caught, failureMessage));
     } finally {
       setUiState(opened ? "ready" : "idle");
     }
@@ -3053,6 +3097,7 @@ function AppInner() {
       setLastMoveOperationId(null);
       resetNavHistory({ kind: "all" });
       api?.setActiveContext(null);
+      await refreshRecentLibraries(null);
     } catch (caught) {
       setError(toMessage(caught, "关闭失败。"));
     } finally {
@@ -4237,7 +4282,10 @@ function AppInner() {
               setDialogValue("我的资源库");
               setDialog("library");
             }}
+            onMenuOpen={() => void refreshRecentLibraries()}
             onOpenLibrary={() => void runLibraryOperation("open")}
+            onOpenRecent={(path) => void openRecentLibrary(path)}
+            recentLibraries={recentLibraries}
           />
         </div>
         <ScopeBreadcrumbs

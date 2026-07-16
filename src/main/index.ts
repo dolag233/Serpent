@@ -1,10 +1,7 @@
 import path from "node:path";
 import { tmpdir } from "node:os";
 import {
-  chmodSync,
   readFileSync,
-  renameSync,
-  unlinkSync,
   writeFileSync,
   existsSync,
 } from "node:fs";
@@ -67,6 +64,12 @@ import {
 } from "../shared/protocol/responses";
 import { LibraryWorkerClient } from "./worker-client";
 import { AppLogger } from "./app-logger";
+import {
+  clearActiveRecentLibrary,
+  readActiveLibraryPath,
+  readRecentLibraryEntries,
+  rememberRecentLibrary,
+} from "./recent-libraries";
 import { AiQueueScheduler } from "./ai-queue-scheduler";
 import { aiSearchFailureReason, planAiSearch } from "./ai-search-planner";
 import { createArtifactResponse } from "./artifact-response";
@@ -113,81 +116,16 @@ function recentLibraryPath(): string {
   return path.join(app.getPath("userData"), "recent-library.json");
 }
 
-function recentLibraryPersistenceEnabled(): boolean {
-  return (
-    process.env.SERPENT_E2E !== "1" ||
-    process.env.SERPENT_E2E_RESTORE_RECENT === "1"
+function rememberOpenedLibrary(libraryPath: string, displayName: string): void {
+  rememberRecentLibrary(
+    recentLibraryPath(),
+    { path: libraryPath, name: displayName },
+    {
+      onError: (error) => {
+        logger?.error("recent-library.write", error);
+      },
+    },
   );
-}
-
-function rememberRecentLibrary(libraryPath: string): void {
-  if (!recentLibraryPersistenceEnabled()) return;
-  const destination = recentLibraryPath();
-  const temporary = `${destination}.${process.pid}.tmp`;
-  try {
-    writeFileSync(
-      temporary,
-      JSON.stringify({
-        version: 1,
-        libraryPath,
-        updatedAt: new Date().toISOString(),
-      }),
-      { encoding: "utf8", mode: 0o600, flush: true },
-    );
-    renameSync(temporary, destination);
-    chmodSync(destination, 0o600);
-  } catch (error) {
-    logger?.error("recent-library.write", error);
-    try {
-      unlinkSync(temporary);
-    } catch {
-      // Best-effort cleanup; the original write failure is already logged.
-    }
-  }
-}
-
-function clearActiveRecentLibrary(): void {
-  if (!recentLibraryPersistenceEnabled()) return;
-  try {
-    unlinkSync(recentLibraryPath());
-  } catch (error) {
-    if (!(
-      error instanceof Error &&
-      "code" in error &&
-      error.code === "ENOENT"
-    )) {
-      logger?.error("recent-library.clear", error);
-    }
-  }
-}
-
-function readRecentLibrary(): string | null {
-  if (!recentLibraryPersistenceEnabled()) return null;
-  try {
-    const parsed = JSON.parse(
-      readFileSync(recentLibraryPath(), "utf8"),
-    ) as unknown;
-    if (
-      typeof parsed !== "object" ||
-      parsed === null ||
-      !("version" in parsed) ||
-      parsed.version !== 1 ||
-      !("libraryPath" in parsed) ||
-      typeof parsed.libraryPath !== "string" ||
-      !path.isAbsolute(parsed.libraryPath)
-    )
-      return null;
-    return parsed.libraryPath;
-  } catch (error) {
-    if (!(
-      error instanceof Error &&
-      "code" in error &&
-      error.code === "ENOENT"
-    )) {
-      logger?.error("recent-library.read", error);
-    }
-    return null;
-  }
 }
 
 let extensionServer: ExtensionServer | undefined;
@@ -648,6 +586,12 @@ async function commandFor(
       return { type: "library.close", libraryId: request.libraryId };
     case "library.list.request":
       return { type: "library.list" };
+    case "library.list-recent.request":
+    case "library.open-recent.request":
+      // Both are handled directly in handleLibraryRequest: the list comes from
+      // the Main-owned recent libraries store, and open-recent validates store
+      // membership before building the same library.open command used here.
+      return undefined;
     case "folder.create.request":
       return {
         type: "folder.create",
@@ -1373,7 +1317,6 @@ async function commandFor(
 function assertNever(value: never): never {
   throw new Error(`Unhandled Renderer request: ${String(value)}`);
 }
-
 async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
   let operation: "create" | "open" | "import" | undefined;
   let clipboardStageDirectory: string | undefined;
@@ -1406,6 +1349,17 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
       return {
         ok: false,
         error: createPublicError(request.failure),
+      } satisfies RendererResult;
+    }
+
+    // The recent libraries store is Main-owned; listing never touches the Worker.
+    if (request.type === "library.list-recent.request") {
+      return {
+        ok: true,
+        type: "library.recent-list",
+        libraries: readRecentLibraryEntries(recentLibraryPath(), (error) => {
+          logger?.error("recent-library.read", error);
+        }),
       } satisfies RendererResult;
     }
 
@@ -1558,7 +1512,30 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
     }
 
     let command: WorkerCommand | undefined;
-    if (request.type === "asset.import-drop.request") {
+    if (request.type === "library.open-recent.request") {
+      // The renderer may only reopen a library that Main itself recorded in the
+      // recent libraries store — never an arbitrary path. This keeps the same
+      // open-by-path pipeline the restart restore uses.
+      const recentEntries = readRecentLibraryEntries(
+        recentLibraryPath(),
+        (error) => {
+          logger?.error("recent-library.read", error);
+        },
+      );
+      if (
+        !path.isAbsolute(request.libraryPath) ||
+        !recentEntries.some((entry) => entry.path === request.libraryPath)
+      ) {
+        return {
+          ok: false,
+          error: createPublicError("LIBRARY_NOT_FOUND"),
+        } satisfies RendererResult;
+      }
+      command = {
+        type: "library.open",
+        selectedLibraryPath: request.libraryPath,
+      };
+    } else if (request.type === "asset.import-drop.request") {
       let sourceKind: "files" | "folder";
       try {
         sourceKind = classifyDroppedSourcePaths(request.sourcePaths);
@@ -1666,9 +1643,12 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
     }
 
     if (workerResult.ok && workerResult.type === "library.opened") {
-      rememberRecentLibrary(workerResult.library.libraryPath);
+      rememberOpenedLibrary(
+        workerResult.library.libraryPath,
+        workerResult.library.displayName,
+      );
     } else if (workerResult.ok && workerResult.type === "library.imported") {
-      rememberRecentLibrary(workerResult.libraryPath);
+      rememberOpenedLibrary(workerResult.libraryPath, workerResult.displayName);
     }
 
     if (!workerResult.ok && request.type === "asset.import-web.request") {
@@ -2034,7 +2014,9 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
         },
       });
     } else if (result.type === "library.closed") {
-      clearActiveRecentLibrary();
+      clearActiveRecentLibrary(recentLibraryPath(), (error) => {
+        logger?.error("recent-library.clear", error);
+      });
       publishLifecycle({ type: "library.closed", libraryId: result.libraryId });
     }
     return result;
@@ -2094,7 +2076,9 @@ async function startApplication(): Promise<void> {
   workerClient.onAiAnalysisCompleted(publishAiCompleted);
   workerClient.onAiContentCleared(publishAiCleared);
 
-  const recentPath = readRecentLibrary();
+  const recentPath = readActiveLibraryPath(recentLibraryPath(), (error) => {
+    logger?.error("recent-library.read", error);
+  });
   if (recentPath) {
     const restored = await workerClient.request({
       type: "library.open",

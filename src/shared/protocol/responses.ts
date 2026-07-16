@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { aiSearchPlanSchema, assetMetadataResultSchema, assetSummarySchema, collectionSummarySchema, linkedFolderRuleSchema, linkedFolderSummarySchema, managedFolderSummarySchema, portableRelativePathSchema, smartCollectionSummarySchema, tagSummarySchema } from '../asset-types';
+import { recentLibraryListSchema } from '../recent-libraries';
 import { publicErrorReasonSchema, publicErrorSchema } from './errors';
 import {
   WORKER_READY_MESSAGE_TYPE,
@@ -860,6 +861,11 @@ const rendererSuccessResultSchema = z.discriminatedUnion('type', [
     ok: z.literal(true),
     type: z.literal('library.list'),
     libraries: z.array(rendererLibrarySummarySchema),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('library.recent-list'),
+    libraries: recentLibraryListSchema,
   }),
   z.strictObject({
     ok: z.literal(true),
