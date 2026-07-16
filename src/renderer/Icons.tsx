@@ -3,6 +3,8 @@ import { type ReactNode } from "react";
 export type IconName =
   | "archive"
   | "chevron"
+  | "chevron-left"
+  | "chevron-right"
   | "close"
   | "collection"
   | "collapse-left"
@@ -13,6 +15,7 @@ export type IconName =
   | "heart"
   | "info"
   | "link"
+  | "link-off"
   | "menu"
   | "plus"
   | "refresh"
@@ -32,6 +35,8 @@ const iconPaths: Record<IconName, ReactNode> = {
     </>
   ),
   chevron: <path d="m9 18 6-6-6-6" />,
+  "chevron-left": <path d="m15 18-6-6 6-6" />,
+  "chevron-right": <path d="m9 18 6-6-6-6" />,
   close: <path d="m7 7 10 10M17 7 7 17" />,
   collection: (
     <>
@@ -79,6 +84,13 @@ const iconPaths: Record<IconName, ReactNode> = {
     <>
       <path d="M10 13a5 5 0 0 0 7.5.5l2-2a5 5 0 0 0-7-7l-1.2 1.2" />
       <path d="M14 11a5 5 0 0 0-7.5-.5l-2 2a5 5 0 0 0 7 7l1.2-1.2" />
+    </>
+  ),
+  "link-off": (
+    <>
+      <path d="M10 13a5 5 0 0 0 7.5.5l2-2a5 5 0 0 0-7-7l-1.2 1.2" />
+      <path d="M14 11a5 5 0 0 0-7.5-.5l-2 2a5 5 0 0 0 7 7l1.2-1.2" />
+      <path d="m3 3 18 18" />
     </>
   ),
   menu: <path d="M4 7h16M4 12h16M4 17h16" />,

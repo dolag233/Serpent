@@ -101,6 +101,15 @@ type UiState =
   | "ready";
 type DialogKind = "library" | "folder" | "tag" | "collection" | null;
 type AssetScope = "all" | "root" | string;
+
+type NavEntry = {
+  assetScope: AssetScope;
+  activeTagId: string | null;
+  activeCollectionId: string | null;
+  activeSmartCollectionId: string | null;
+  showTrash: boolean;
+  selectedFolderId: string | null;
+};
 type OrganizationKind = "tag" | "collection" | "smart";
 type OrganizationRenameTarget = {
   kind: OrganizationKind;
@@ -431,6 +440,59 @@ function AppInner() {
 
   // Trash / Delete / Relink state
   const [showTrash, setShowTrash] = useState(false);
+
+  // Navigation history (back/forward)
+  const [navHistory, setNavHistory] = useState<NavEntry[]>([]);
+  const [navHistoryIndex, setNavHistoryIndex] = useState(-1);
+  const recordingNavRef = useRef(true);
+
+  const recordNav = useCallback(() => {
+    if (!recordingNavRef.current) return;
+    setNavHistory((prev) => {
+      const entry: NavEntry = {
+        assetScope,
+        activeTagId,
+        activeCollectionId,
+        activeSmartCollectionId,
+        showTrash,
+        selectedFolderId: assetScope === "all" || assetScope === "root" ? null : assetScope,
+      };
+      const trimmed = prev.slice(0, navHistoryIndex + 1);
+      return [...trimmed, entry];
+    });
+    setNavHistoryIndex((i) => i + 1);
+  }, [assetScope, activeTagId, activeCollectionId, activeSmartCollectionId, showTrash, navHistoryIndex]);
+
+  const goBack = useCallback(() => {
+    if (navHistoryIndex < 0) return;
+    const entry = navHistory[navHistoryIndex];
+    if (!entry) return;
+    recordingNavRef.current = false;
+    setAssetScope(entry.assetScope);
+    setActiveTagId(entry.activeTagId);
+    setActiveCollectionId(entry.activeCollectionId);
+    setActiveSmartCollectionId(entry.activeSmartCollectionId);
+    setShowTrash(entry.showTrash);
+    setNavHistoryIndex((i) => i - 1);
+    setTimeout(() => { recordingNavRef.current = true; }, 0);
+  }, [navHistoryIndex, navHistory, setAssetScope, setActiveTagId, setActiveCollectionId, setActiveSmartCollectionId, setShowTrash]);
+
+  const goForward = useCallback(() => {
+    if (navHistoryIndex >= navHistory.length - 1) return;
+    const entry = navHistory[navHistoryIndex + 1];
+    if (!entry) return;
+    recordingNavRef.current = false;
+    setAssetScope(entry.assetScope);
+    setActiveTagId(entry.activeTagId);
+    setActiveCollectionId(entry.activeCollectionId);
+    setActiveSmartCollectionId(entry.activeSmartCollectionId);
+    setShowTrash(entry.showTrash);
+    setNavHistoryIndex((i) => i + 1);
+    setTimeout(() => { recordingNavRef.current = true; }, 0);
+  }, [navHistoryIndex, navHistory, setAssetScope, setActiveTagId, setActiveCollectionId, setActiveSmartCollectionId, setShowTrash]);
+
+  const canGoBack = navHistoryIndex >= 0;
+  const canGoForward = navHistoryIndex < navHistory.length - 1;
   const [trashedAssets, setTrashedAssets] = useState<AssetSummary[]>([]);
   const [deleteLinkedDialog, setDeleteLinkedDialog] = useState<{
     assetIds: string[];
@@ -1200,6 +1262,7 @@ function AppInner() {
 
   async function chooseFolder(scope: AssetScope) {
     if (!library) return;
+    recordNav();
     closeContextMenu();
     workspaceCanvasRef.current?.scrollTo({ top: 0, left: 0 });
     setShowTrash(false);
@@ -1229,6 +1292,7 @@ function AppInner() {
 
   async function enterTrash() {
     if (!library) return;
+    recordNav();
     workspaceCanvasRef.current?.scrollTo({ top: 0, left: 0 });
     setShowTrash(true);
     setActiveTagId(null);
@@ -1333,6 +1397,7 @@ function AppInner() {
 
   async function chooseTag(tagId: string) {
     if (!api || !library) return;
+    recordNav();
     closeContextMenu();
     const tag = tags.find((candidate) => candidate.tagId === tagId);
     if (!tag) return;
@@ -1625,6 +1690,7 @@ function AppInner() {
     recursive = collectionRecursive,
   ) {
     if (!api || !library) return;
+    recordNav();
     closeContextMenu();
     workspaceCanvasRef.current?.scrollTo({ top: 0, left: 0 });
     setShowTrash(false);
@@ -2096,6 +2162,7 @@ function AppInner() {
 
   async function chooseSmartCollection(collectionId: string, offset = 0) {
     if (!api || !library) return;
+    if (offset === 0) recordNav();
     closeContextMenu();
     if (offset === 0) workspaceCanvasRef.current?.scrollTo({ top: 0, left: 0 });
     try {
@@ -4010,21 +4077,35 @@ function AppInner() {
             onClick={() => setLeftOpen((v) => !v)}
             pressed={leftOpen}
           />
+          <div className="nav-history-group">
+            <ToolButton
+              icon="chevron-left"
+              label="后退"
+              disabled={!canGoBack}
+              onClick={goBack}
+            />
+            <ToolButton
+              icon="chevron-right"
+              label="前进"
+              disabled={!canGoForward}
+              onClick={goForward}
+            />
+          </div>
           <div className="brand-mark">
-            <span className="brand-glyph">S</span>
-            <span>Serpent</span>
+            <span>{library?.displayName ?? "Serpent"}</span>
           </div>
         </div>
         <div className="scope-trace">
-          <span className="scope-root">资源库</span>
-          <Icon name="chevron" size={12} />
           <span className="scope-chip">
             {library?.displayName ?? "尚未打开"}
           </span>
           {library && (
-            <span className="scope-chip scope-chip-muted">
-              {scopeChipLabel()}
-            </span>
+            <>
+              <span className="scope-sep">&gt;</span>
+              <span className="scope-chip scope-chip-muted">
+                {scopeChipLabel()}
+              </span>
+            </>
           )}
         </div>
         <form
@@ -4445,70 +4526,86 @@ function AppInner() {
               )
             )}
             <span className="tool-separator" />
-            <button
-              className="compact-action"
-              disabled={!library || busy}
-              onClick={() => void importAssets("files")}
-              type="button"
-            >
-              <Icon name="upload" size={14} />
-              导入文件
-            </button>
-            <button
-              className="compact-action"
-              disabled={!library || busy}
-              onClick={() => void importAssets("folder")}
-              type="button"
-            >
-              <Icon name="folder" size={14} />
-              导入文件夹
-            </button>
-            <button
-              className="compact-action"
-              disabled={!library || busy}
-              onClick={() => void pasteClipboardImage()}
-              type="button"
-            >
-              <Icon name="file" size={14} />
-              粘贴图片
-            </button>
-            <button
-              className="compact-action"
-              disabled={!library || busy}
-              onClick={() => void importFolderAsLinked()}
-              type="button"
-            >
-              <Icon name="link" size={14} />
-              导入链接文件夹
-            </button>
-            <span className="tool-separator" />
-            <button
-              className="compact-action"
-              disabled={!library || busy}
-              onClick={() => setExportDialogOpen(true)}
-              type="button"
-            >
-              <Icon name="archive" size={14} />
-              导出资源库
-            </button>
-            <button
-              className="compact-action"
-              disabled={busy}
-              onClick={() => void startImport()}
-              type="button"
-            >
-              <Icon name="folder" size={14} />
-              导入资源库
-            </button>
-            <button
-              className="compact-action"
-              disabled={busy}
-              onClick={() => void startImportZip()}
-              type="button"
-            >
-              <Icon name="archive" size={14} />
-              导入 ZIP
-            </button>
+            <details className="add-dropdown">
+              <summary>
+                <Icon name="plus" size={14} />
+                添加
+              </summary>
+              <div
+                className="add-dropdown-panel"
+                onClick={(e) => {
+                  // Close the <details> when an item is clicked
+                  const details = (e.target as HTMLElement).closest("details");
+                  if (details) (details as HTMLDetailsElement).open = false;
+                }}
+                role="menu"
+              >
+                <button
+                  disabled={!library || busy}
+                  onClick={() => void importAssets("files")}
+                  role="menuitem"
+                  type="button"
+                >
+                  <Icon name="upload" size={14} />
+                  导入文件
+                </button>
+                <button
+                  disabled={!library || busy}
+                  onClick={() => void importAssets("folder")}
+                  role="menuitem"
+                  type="button"
+                >
+                  <Icon name="folder" size={14} />
+                  导入文件夹
+                </button>
+                <button
+                  disabled={!library || busy}
+                  onClick={() => void pasteClipboardImage()}
+                  role="menuitem"
+                  type="button"
+                >
+                  <Icon name="file" size={14} />
+                  粘贴图片
+                </button>
+                <button
+                  disabled={!library || busy}
+                  onClick={() => void importFolderAsLinked()}
+                  role="menuitem"
+                  type="button"
+                >
+                  <Icon name="link" size={14} />
+                  导入链接文件夹
+                </button>
+                <div className="add-dropdown-separator" />
+                <button
+                  disabled={!library || busy}
+                  onClick={() => setExportDialogOpen(true)}
+                  role="menuitem"
+                  type="button"
+                >
+                  <Icon name="archive" size={14} />
+                  导出资源库
+                </button>
+                <button
+                  disabled={busy}
+                  onClick={() => void startImport()}
+                  role="menuitem"
+                  type="button"
+                >
+                  <Icon name="folder" size={14} />
+                  导入资源库
+                </button>
+                <button
+                  disabled={busy}
+                  onClick={() => void startImportZip()}
+                  role="menuitem"
+                  type="button"
+                >
+                  <Icon name="archive" size={14} />
+                  导入 ZIP
+                </button>
+              </div>
+            </details>
             <ToolButton
               disabled={!library || busy}
               icon="refresh"
@@ -4534,7 +4631,6 @@ function AppInner() {
                 pressed={assetViewMode === "masonry"}
               />
               <label className="asset-size-control">
-                <span>缩略图大小</span>
                 <input
                   aria-label="资产缩略图大小"
                   max={CARD_SIZE_MAX}
@@ -4720,7 +4816,7 @@ function AppInner() {
                     assetViewMode === "masonry"
                       ? { columnWidth: assetCardSize }
                       : {
-                          gridTemplateColumns: `repeat(auto-fill, ${assetCardSize}px)`,
+                          gridTemplateColumns: `repeat(auto-fill, minmax(${assetCardSize}px, 1fr))`,
                         }
                   }
                 >
