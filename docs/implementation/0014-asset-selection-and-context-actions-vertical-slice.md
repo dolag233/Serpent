@@ -3,6 +3,7 @@
 > 目标版本：v0.1.0
 > 状态：macOS 开发态功能收口；最终全量、packaged 与 Windows 证据待完成
 > 建立日期：2026-07-14；最后校准：2026-07-16；实现候选：`f1330a7`
+> 后续增量：Shift/Ctrl/Command 修饰键框选、单一 hover/focus 高亮和完整资产/文件夹菜单已进入 `mvp-ui-ux-requirements-backlog.md` 的 0017/0019；左侧标签菜单不再是目标产品入口。
 
 ## 背景
 

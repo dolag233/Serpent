@@ -1,7 +1,7 @@
 # Serpent 领域模型
 
-> 状态：访谈草案
-> 日期：2026-07-11
+> 状态：生效，持续演进
+> 日期：2026-07-11；最后校准：2026-07-16
 
 ## 核心关系
 
@@ -71,6 +71,9 @@ ManagedFolder
 - 同一父目录下名称唯一，遵守 Windows 与 macOS 共同路径约束。
 - 移动或重命名文件夹必须协调磁盘操作与数据库状态，并支持崩溃恢复。
 - 复制导入整个文件夹时，在当前 ManagedFolder 下完整保留源目录树；单独导入、拖入或粘贴文件时使用当前 ManagedFolder，未选择时使用 `Assets/` 根目录。
+- 浏览 ManagedFolder 时，直接子文件夹作为 FolderBrowseEntry 与资产并列出现，但它仍是目录实体而不是 Asset。
+- 目录摘要区分直接资产数、递归资产数和子目录数；最终 UI 显示口径由 0017 规格确认。
+- 文件夹内容预览是从其资产缩略图派生的可再生成读模型，不成为文件夹身份或用户元数据。
 
 ### LinkedFolder（链接文件夹）
 
@@ -89,11 +92,13 @@ LinkedFolder
 
 链接过滤规则命中的路径不形成资产，不被显示或操作。根路径失效后，用户可以指定新根目录，并依据相对路径批量找回资产。
 
+LinkedFolder 与 ManagedFolder 在导航中共享“文件夹”呈现语义，但保留不同位置类型和写入规则。链接正常、离线或断链通过状态图标和说明表达，不靠独立导航分区表达。
+
 链接文件夹可以单向转换为资源库文件夹：先复制源内容，全部校验成功后再移除链接关系，源内容保留。
 
 ### Asset（资产）
 
-稳定的逻辑档案卡。文件名、Label、目录位置或内容变化时，`asset_id` 不变。
+稳定的逻辑档案卡。文件名、目录位置或内容变化时，`asset_id` 不变。MVP 不存在独立于真实文件名的 Label/显示别名；用户重命名资产时执行文件重命名领域命令。
 
 ```text
 Asset
@@ -151,7 +156,6 @@ Revision 记录表示“内容发生过切换”，不等于对应旧文件字�
 ```text
 AssetMetadata
   asset_id
-  label?
   description?
   rating = 0..5
   favorite
@@ -175,7 +179,7 @@ AIContent
   generated_at
 ```
 
-每项资产、修订和字段只保留当前 AI 内容；重新分析成功后原子替换旧 AI 内容，MVP 不保留 AI 分析历史。Label、描述等字段存在人工值时优先显示人工值，否则可以显示已启用的 AI 值；主界面为生效的 AI 值显示来源标记，编辑界面分别呈现人工层和 AI 层。
+每项资产、修订和字段只保留当前 AI 内容；重新分析成功后原子替换旧 AI 内容，MVP 不保留 AI 分析历史。描述等字段存在人工值时优先显示人工值，否则可以显示已启用的 AI 值；主界面为生效的 AI 值显示来源标记，编辑界面分别呈现人工层和 AI 层。AI 不生成资产名称，也不重命名文件。
 
 文件提取的技术元信息属于修订衍生物，不与人工或 AI 内容混存。清空 AI 内容支持单项资产、当前选择、文件夹和整个资源库，批量操作需要确认；它只删除 `AIContent` 和 AI 标签关系，不影响人工元信息、人工标签、提取元信息或 Tag 实体。
 
@@ -183,7 +187,7 @@ AIContent
 
 ### Tag（标签）
 
-标签承担检索与筛选维度，一项资产可拥有多个标签。
+标签承担检索与筛选维度，一项资产可拥有多个标签。标签不是资源导航范围，不在左侧导航中完整枚举，也不建立独立标签管理页面；主要入口是发现过滤条和 Inspector 的 tag chip 编辑器。
 
 ```text
 Tag
@@ -204,6 +208,8 @@ AIAssetTag
 ```
 
 AI 优先复用已有标签，但允许按全局设置创建新标签。资产最终显示人工与 AI 标签关系的并集；同一标签同时存在两种关系时，清空 AI 内容只移除 AI 关系，人工关系继续保留。AI 创建的 Tag 即使失去所有资产关系也不自动删除，由用户自行清理。
+
+Inspector 添加标签时可以选择最近使用、搜索现有标签或输入新名称创建后分配。大量标签不得直接全部渲染到导航或右键菜单中；这些入口使用可搜索的选择器。
 
 ### Collection（合集）
 
@@ -288,6 +294,12 @@ OpenLibrary
 ImportFiles
 ImportFolderAsManaged
 ImportFolderAsLinked
+CreateManagedFolder
+RenameManagedFolder
+CopyManagedFolder
+CloneManagedFolder
+MoveManagedFolder
+DeleteManagedFolder
 ConvertLinkedFolderToManaged
 MoveManagedAsset
 RenameManagedFile

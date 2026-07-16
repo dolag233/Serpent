@@ -74,8 +74,10 @@ Library Worker (UtilityProcess; filesystem + SQLite owner)
 
 垂直切片推进，每切片交付代码 + 测试 + 开发日志 + 代码审查 + QA 报告（见 `docs/development-process.md`）。
 
-- **切片 0001（桌面壳与资源库生命周期）**：✅ 有条件通过。macOS arm64 完成；Windows 未验证（无 runner）。提交 `ae1fcf4b5646c46a7334024032c99dfb8549b576`。
-- **切片 0002（托管文件夹、资产导入与外部变化）**：🚧 实施中。schema v1→v2、managed_folders/assets/revisions/file_operations 表、文件夹树、文件/目录导入、冲突计划与解决、外部变化刷新。分支 `codex/slice-002-asset-ingestion`。
+- 0001–0010 已有广泛实现，仍按各切片 QA 文档收口 packaged、Windows、真实外部旅程与发布阻断；不能把历史实现提交视为最终验收。
+- 0012 已完成 macOS 开发态验收；0013 查看体验继续收口；0014 功能候选为 `f1330a7`，最终合流和 Windows 证据待补。
+- 2026-07-16 真实使用反馈新增 0015–0019 MVP 产品化范围：中英文、亮/暗主题、命令快捷键、应用壳与发现工具栏、文件夹卡片/文件操作、标签体验与 Label 退役、Inspector/选择/瀑布流正确性。开始相关工作前必须读取 `docs/implementation/mvp-ui-ux-requirements-backlog.md`。
+- 当前事实、优先级和保留条件以 `docs/project-status.md` 为准，不在本文件复制逐切片细节。
 
 ## 关键约束
 
@@ -90,8 +92,9 @@ Library Worker (UtilityProcess; filesystem + SQLite owner)
 - `docs/product-brief.md` — 产品愿景与 MVP 边界
 - `docs/development-process.md` — 切片开发与质量流程
 - `docs/domain-model.md` / `docs/glossary.md` — 领域模型与术语
-- `docs/adr/0001`–`0020` — 架构决策记录
+- `docs/adr/0001`–`0022` — 架构决策记录
 - `docs/implementation/NNNN-*.md` — 切片实施规格
+- `docs/implementation/mvp-ui-ux-requirements-backlog.md` — 2026-07-16 新增 MVP UI/UX、文件管理需求与集中澄清队列
 - `docs/development/NNNN-*.md` — 切片开发日志
 - `docs/reviews/NNNN-*.md` — 双轴代码审查
 - `docs/qa/NNNN-*.md` — QA 报告

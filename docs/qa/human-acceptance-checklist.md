@@ -4,7 +4,7 @@
 >
 > 首次建立：2026-07-14
 >
-> 当前功能代码基线：历史条目以各自证据提交为准；0014 功能候选 `f1330a7`
+> 当前功能代码基线：历史条目以各自证据提交为准；0014 功能候选 `f1330a7`；文档基线 `909b596`
 >
 > 适用平台：macOS 开发态；Windows 与最终候选 packaged app 另列为未验证
 
@@ -29,8 +29,11 @@
 ## 当前待人类验收队列
 
 > 2026-07-16 校准：0014 新增模块已进入 `f1330a7`；静态检查、相关 Electron E2E 和
-> Computer Use 已完成，因此 H 节恢复为“待人类验收”。最终集中 `verify:mainline`、packaged
-> 与 Windows 仍是发布条件，不冒充已完成。
+> Computer Use 已完成，因此 H 节中仍符合目标产品的项目进入“待人类验收”。随后产品反馈
+> 取消左侧标签菜单并新增完整文件菜单要求，受影响条目已单独撤回。最终集中
+> `verify:mainline`、packaged 与 Windows 仍是发布条件，不冒充已完成。
+
+> 2026-07-16 产品反馈校准：Label/资产显示别名已被产品负责人撤销，左侧标签列表和独立标签管理页也不再是目标交互；相关旧条目已撤回。其余新增 UI/UX 与文件管理需求仍未实现，只记录在 `../implementation/mvp-ui-ux-requirements-backlog.md` 和本文件“暂不可验收”区。
 
 ### A. 资源库与导入
 
@@ -57,18 +60,18 @@
 
 | ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
 | --- | --- | --- | --- | --- | --- | --- |
-| META-001 | 编辑和清空资产名称 | 待人类验收 | 设置资产名称并保存，再清空并保存 | 设置值和空值均正确显示，不回弹为旧值 | [0004 QA](0004-tags-collections-metadata-qa-report.md) / [组织持久化 E2E](../../tests/e2e/organization-metadata-persistence.test.ts) | — |
+| META-001 | 编辑和清空资产名称 | 已撤回 | — | — | [ADR 0022](../adr/0022-retire-asset-label.md) | 2026-07-16 用户明确删除 Label/显示别名设计；未来资产名称只是真实文件名，重命名走文件操作。 |
 | META-002 | 编辑和清空资产描述 | 待人类验收 | 设置资产描述并保存，再清空并保存 | 设置值和空值均正确显示，不回弹为旧值 | [0004 QA](0004-tags-collections-metadata-qa-report.md) / [组织持久化 E2E](../../tests/e2e/organization-metadata-persistence.test.ts) | — |
 | META-003 | 编辑和清空资产评分 | 待人类验收 | 设置非零评分并保存，再清除评分并保存 | 评分可设置为目标值，也可恢复为未评分 | [0004 QA](0004-tags-collections-metadata-qa-report.md) / [组织持久化 E2E](../../tests/e2e/organization-metadata-persistence.test.ts) | — |
 | META-004 | 设置和取消喜欢 | 待人类验收 | 将资产标为喜欢，再取消喜欢 | 两种状态均立即正确显示 | [0004 QA](0004-tags-collections-metadata-qa-report.md) / [组织持久化 E2E](../../tests/e2e/organization-metadata-persistence.test.ts) | — |
 | META-005 | 编辑和清空源链接 | 待人类验收 | 设置有效来源 URL 并保存，再清空并保存 | URL 可保存也可清空，不残留旧值 | [0004 QA](0004-tags-collections-metadata-qa-report.md) / [组织持久化 E2E](../../tests/e2e/organization-metadata-persistence.test.ts) | — |
 | META-006 | 编辑和清空人工色卡 | 待人类验收 | 设置人工色卡并保存，再清空并保存 | 色卡可保存也可清空，不残留旧颜色 | [0004 QA](0004-tags-collections-metadata-qa-report.md) / [组织持久化 E2E](../../tests/e2e/organization-metadata-persistence.test.ts) | — |
 | META-007 | 元数据跨完整重启持久化 | 待人类验收 | 保存一组元数据，完全退出 Serpent 后重新启动 | 重启前保存的每个字段值均恢复 | [0004 QA](0004-tags-collections-metadata-qa-report.md) / [组织持久化 E2E](../../tests/e2e/organization-metadata-persistence.test.ts) | — |
-| TAG-001 | 创建标签 | 待人类验收 | 新建一个名称唯一的标签 | 新标签立即出现在标签列表 | [0004 QA](0004-tags-collections-metadata-qa-report.md) | — |
-| TAG-002 | 重命名标签 | 待人类验收 | 重命名已有标签 | 新名称立即出现，原有资产关联保持 | [0004 QA](0004-tags-collections-metadata-qa-report.md) | — |
-| TAG-003 | 删除标签 | 待人类验收 | 删除一个已分配给资产的标签 | 标签及其关联消失，资产本身不被删除 | [0004 QA](0004-tags-collections-metadata-qa-report.md) | — |
-| TAG-004 | 给多项资产分配标签 | 待人类验收 | 选中多项资产并分配同一标签 | 所有选中资产都获得标签，计数准确更新 | [0004 QA](0004-tags-collections-metadata-qa-report.md) / [组织 E2E](../../tests/e2e/organization-search-trash.test.ts) | — |
-| TAG-005 | 从多项资产移除标签 | 待人类验收 | 选中多项已带同一标签的资产并移除该标签 | 所有选中资产都失去标签，计数准确更新 | [0004 QA](0004-tags-collections-metadata-qa-report.md) / [组织 E2E](../../tests/e2e/organization-search-trash.test.ts) | — |
+| TAG-001 | 创建标签 | 已撤回 | — | — | [MVP UX 需求池](../implementation/mvp-ui-ux-requirements-backlog.md) | 旧入口依赖左侧完整标签列表；新入口改为 Inspector tag chip 的搜索/输入创建，实施后用新步骤重新进入验收。 |
+| TAG-002 | 重命名标签 | 已撤回 | — | — | [MVP UX 需求池](../implementation/mvp-ui-ux-requirements-backlog.md) | 用户确认不设标签管理页；全局重命名入口待集中确认后重新定义。 |
+| TAG-003 | 删除标签 | 已撤回 | — | — | [MVP UX 需求池](../implementation/mvp-ui-ux-requirements-backlog.md) | 用户确认不设标签管理页；全局删除入口待集中确认后重新定义。 |
+| TAG-004 | 给多项资产分配标签 | 人类验收不通过 | — | — | [MVP UX 需求池](../implementation/mvp-ui-ux-requirements-backlog.md) | 批量能力保留，但当前菜单直接枚举全部标签，不适合大量标签；改为可搜索选择器后重新验收。 |
+| TAG-005 | 从多项资产移除标签 | 人类验收不通过 | — | — | [MVP UX 需求池](../implementation/mvp-ui-ux-requirements-backlog.md) | 批量能力保留，但当前入口随标签数量膨胀；改为可搜索选择器后重新验收。 |
 | COLLECTION-001 | 创建父子合集 | 待人类验收 | 创建父合集，再在其中创建子合集 | 侧栏按正确层级显示两个合集 | [0004 QA](0004-tags-collections-metadata-qa-report.md) | — |
 | COLLECTION-002 | 重命名合集 | 待人类验收 | 重命名已有合集 | 新名称立即出现，层级和成员保持 | [0004 QA](0004-tags-collections-metadata-qa-report.md) | — |
 | COLLECTION-003 | 删除合集 | 待人类验收 | 删除一个包含资产的合集 | 合集消失，成员资产本身不被删除 | [0004 QA](0004-tags-collections-metadata-qa-report.md) | — |
@@ -82,17 +85,17 @@
 | ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
 | --- | --- | --- | --- | --- | --- | --- |
 | SEARCH-001 | 按文件名搜索 | 待人类验收 | 输入只存在于目标文件名中的关键词 | 只返回文件名命中的资产；清空后恢复当前范围 | [0005 QA](0005-search-filter-sort-smart-collections-qa-report.md) / [组织搜索 E2E](../../tests/e2e/organization-search-trash.test.ts) | — |
-| SEARCH-002 | 按资产名称搜索 | 待人类验收 | 输入只存在于目标资产名称中的关键词 | 只返回名称命中的资产；清空后恢复当前范围 | [0005 QA](0005-search-filter-sort-smart-collections-qa-report.md) / [组织搜索 E2E](../../tests/e2e/organization-search-trash.test.ts) | — |
+| SEARCH-002 | 按资产名称搜索 | 已撤回 | — | — | [ADR 0022](../adr/0022-retire-asset-label.md) | 该条目验证的是独立 Label/显示别名；产品已撤销此字段，文件名搜索仍由 SEARCH-001 验收。 |
 | SEARCH-003 | 按标签搜索 | 待人类验收 | 输入只存在于目标标签名称中的关键词 | 返回带该标签的资产；清空后恢复当前范围 | [0005 QA](0005-search-filter-sort-smart-collections-qa-report.md) / [组织搜索 E2E](../../tests/e2e/organization-search-trash.test.ts) | — |
-| FILTER-001 | 按文件格式过滤 | 待人类验收 | 选择一种已知同时存在和不存在样本的文件格式 | 只显示该格式资产 | [0005 QA](0005-search-filter-sort-smart-collections-qa-report.md) | — |
-| FILTER-002 | 按标签过滤 | 待人类验收 | 选择一个只分配给部分资产的标签 | 只显示带该标签的资产 | [0005 QA](0005-search-filter-sort-smart-collections-qa-report.md) | — |
-| FILTER-003 | 按评分过滤 | 待人类验收 | 设置一个能排除部分样本的评分条件 | 只显示满足评分条件的资产 | [0005 QA](0005-search-filter-sort-smart-collections-qa-report.md) | — |
-| FILTER-004 | 按喜欢状态过滤 | 待人类验收 | 选择“喜欢”过滤 | 只显示标为喜欢的资产 | [0005 QA](0005-search-filter-sort-smart-collections-qa-report.md) | — |
-| FILTER-005 | 按来源链接存在性过滤 | 待人类验收 | 选择“有来源链接”过滤 | 只显示设置过来源链接的资产 | [0005 QA](0005-search-filter-sort-smart-collections-qa-report.md) | — |
-| FILTER-006 | 按可用性过滤 | 待人类验收 | 准备 available 与 missing 资产后选择其中一种可用性 | 只显示所选可用性状态的资产 | [0005 QA](0005-search-filter-sort-smart-collections-qa-report.md) | — |
-| FILTER-007 | 不同过滤字段使用 AND | 待人类验收 | 同时选择一个格式和一个标签条件 | 只显示同时满足格式与标签的资产 | [0005 QA](0005-search-filter-sort-smart-collections-qa-report.md) | — |
-| FILTER-008 | 同一过滤字段多值使用 OR | 待人类验收 | 在格式字段同时选择两种格式 | 显示属于任一所选格式的资产，不要求同时满足 | [0005 QA](0005-search-filter-sort-smart-collections-qa-report.md) | — |
-| SORT-001 | 按名称排序 | 待人类验收 | 选择名称排序 | 结果按显示名称稳定排列 | [0005 QA](0005-search-filter-sort-smart-collections-qa-report.md) | — |
+| FILTER-001 | 按文件格式过滤 | 人类验收不通过 | — | — | [MVP UX 需求池](../implementation/mvp-ui-ux-requirements-backlog.md) | 2026-07-16 用户确认当前长表单过滤不够美术友好；等待维度式过滤条后重新验收。 |
+| FILTER-002 | 按标签过滤 | 人类验收不通过 | — | — | [MVP UX 需求池](../implementation/mvp-ui-ux-requirements-backlog.md) | 同上；新标签过滤入口需要支持大量标签搜索与计数。 |
+| FILTER-003 | 按评分过滤 | 人类验收不通过 | — | — | [MVP UX 需求池](../implementation/mvp-ui-ux-requirements-backlog.md) | 同上。 |
+| FILTER-004 | 按喜欢状态过滤 | 人类验收不通过 | — | — | [MVP UX 需求池](../implementation/mvp-ui-ux-requirements-backlog.md) | 同上。 |
+| FILTER-005 | 按来源链接存在性过滤 | 人类验收不通过 | — | — | [MVP UX 需求池](../implementation/mvp-ui-ux-requirements-backlog.md) | 同上。 |
+| FILTER-006 | 按可用性过滤 | 人类验收不通过 | — | — | [MVP UX 需求池](../implementation/mvp-ui-ux-requirements-backlog.md) | 同上。 |
+| FILTER-007 | 不同过滤字段使用 AND | 人类验收不通过 | — | — | [MVP UX 需求池](../implementation/mvp-ui-ux-requirements-backlog.md) | 查询语义保留，但当前 UI 入口不通过产品验收。 |
+| FILTER-008 | 同一过滤字段多值使用 OR | 人类验收不通过 | — | — | [MVP UX 需求池](../implementation/mvp-ui-ux-requirements-backlog.md) | 查询语义保留，但当前 UI 入口不通过产品验收。 |
+| SORT-001 | 按名称排序 | 待人类验收 | 选择名称排序 | 结果按真实文件名稳定排列 | [0005 QA](0005-search-filter-sort-smart-collections-qa-report.md) | — |
 | SORT-002 | 按日期排序 | 待人类验收 | 选择日期排序 | 结果按所示日期稳定排列 | [0005 QA](0005-search-filter-sort-smart-collections-qa-report.md) | — |
 | SORT-003 | 按大小排序 | 待人类验收 | 选择文件大小排序 | 结果按文件大小稳定排列 | [0005 QA](0005-search-filter-sort-smart-collections-qa-report.md) | — |
 | SORT-004 | 切换升序和降序 | 待人类验收 | 在同一排序字段下切换升序和降序 | 两次结果顺序互为反向，缺失值位置稳定 | [0005 QA](0005-search-filter-sort-smart-collections-qa-report.md) | — |
@@ -113,6 +116,10 @@
 | CANVAS-004 | macOS 手势缩放卡片并保持视觉锚点 | 待人类验收 | 将鼠标放在某项资产附近，用 Ctrl+滚轮或触控板缩放卡片 | 指针附近的可见资产尽量保持在原视野 | [0012 QA](0012-asset-canvas-views-and-card-display-qa-report.md) / [浏览偏好 E2E](../../tests/e2e/browsing-preferences.test.ts) | — |
 | CANVAS-005 | 控制卡片字段显示 | 待人类验收 | 分别关闭文件名、大小和修改日期 | 对应字段立即隐藏，其他字段不受影响 | [0012 QA](0012-asset-canvas-views-and-card-display-qa-report.md) | — |
 | CANVAS-006 | 画布偏好跨完整重启保存 | 待人类验收 | 修改视图、卡片大小和字段开关，完全退出后重开 | 所有画布偏好恢复 | [0012 QA](0012-asset-canvas-views-and-card-display-qa-report.md) / [浏览偏好 E2E](../../tests/e2e/browsing-preferences.test.ts) | — |
+| CANVAS-007 | 小卡片平铺/瀑布流用满横向宽度 | 待人类验收 | 将缩略图大小滑到偏小（约 96），分别在平铺与瀑布流下观察宽窗口画布 | 右侧不得留下可再容纳一整列卡片的空当；列数随卡片大小变化 | [0019 切片](../implementation/0019-product-correctness-vertical-slice.md) / [布局单测](../../tests/unit/asset-grid-layout.test.ts) | — |
+| CANVAS-008 | 修改日期开关使用时钟图标 | 待人类验收 | 查看画布工具栏“修改日期”字段开关 | 图标为时钟/秒表样式，不是五角星 | [0019 切片](../implementation/0019-product-correctness-vertical-slice.md) | — |
+| INSPECT-001 | Inspector 显示真实缩略图 | 待人类验收 | 选中一项已生成缩略图的图片资产，观察右侧 Inspector 顶部 | 顶部显示该资产缩略图且画面可辨认，不是通用文件图标；视频有封面时同理 | [0019 切片](../implementation/0019-product-correctness-vertical-slice.md) / [预览单测](../../tests/unit/inspector-preview.test.ts) | — |
+| INSPECT-002 | 切换资产时 Inspector 不混态/不空闪 | 待人类验收 | 连续点选至少 5 个不同资产，观察 Inspector 名称、描述和顶部预览 | 每一帧只对应当前选中资产；不出现空白英雄区，也不短暂显示上一资产的编辑字段 | [0019 切片](../implementation/0019-product-correctness-vertical-slice.md) / [预览单测](../../tests/unit/inspector-preview.test.ts) | — |
 | THUMB-001 | 支持的图片自动生成缩略图 | 待人类验收 | 导入支持的图片，不点击任何“生成预览”操作 | 缩略图自动出现并成功解码 | [0006 QA](0006-thumbnails-preview-format-decoding-qa-report.md) / [媒体预览 E2E](../../tests/e2e/media-preview.test.ts) | — |
 | THUMB-002 | 横图、竖图和方图等比完整显示 | 待人类验收 | 导入横图、竖图和方图并观察资产卡片 | 图片保持比例并完整显示，不裁剪、不拉伸 | [0006 QA](0006-thumbnails-preview-format-decoding-qa-report.md) / [媒体预览 E2E](../../tests/e2e/media-preview.test.ts) | — |
 
@@ -143,9 +150,10 @@
 | SELECT-004 | macOS Command 增减选择 | 待人类验收 | 按住 Command 依次点击未选和已选资产 | 未选资产加入，已选资产移出；其他选择保持 | [0014 QA](0014-asset-selection-and-context-actions-qa-report.md) / [框选 E2E](../../tests/e2e/selection-marquee.test.ts) | — |
 | SELECT-005 | Command+Shift 向现有选择追加范围 | 待人类验收 | 已有离散选择时，按 Command+Shift 点击另一项 | 新范围追加到现有选择，不清空原选择 | [0014 QA](0014-asset-selection-and-context-actions-qa-report.md) / [框选 E2E](../../tests/e2e/selection-marquee.test.ts) | — |
 | SELECT-006 | Esc 按层级关闭菜单再清空选择 | 待人类验收 | 多选并打开右键菜单，连续按两次 Esc | 第一次只关闭菜单，第二次清空选择 | [0014 QA](0014-asset-selection-and-context-actions-qa-report.md) / [菜单 E2E](../../tests/e2e/context-menu.test.ts) | — |
+| SELECT-007 | 框选修饰键并集追加（暂定） | 待人类验收 | 先选中若干资产，再分别用无修饰、Command、Shift 从空白处拖框 | 无修饰替换为框内资产；Command/Shift 将框内资产追加到原选择；拖拽中途松开修饰键不改变本次运算 | [0019 切片](../implementation/0019-product-correctness-vertical-slice.md) / [框选 E2E](../../tests/e2e/selection-marquee.test.ts) | 澄清队列 #10 未定；当前为并集语义 |
 | MENU-001 | 外部点击关闭资产菜单 | 待人类验收 | 打开资产右键菜单后点击菜单外部 | 菜单可靠关闭 | [0014 QA](0014-asset-selection-and-context-actions-qa-report.md) / [菜单 E2E](../../tests/e2e/context-menu.test.ts) | — |
 | MENU-002 | Esc 关闭资产菜单 | 待人类验收 | 打开资产右键菜单后按 Esc | 菜单可靠关闭 | [0014 QA](0014-asset-selection-and-context-actions-qa-report.md) / [菜单 E2E](../../tests/e2e/context-menu.test.ts) | — |
-| MENU-003 | 标签使用统一右键菜单 | 待人类验收 | 打开标签右键菜单，将指针移过各菜单项后按 Esc | 菜单项可获得悬停反馈，Esc 能关闭，不出现重复菜单 | [0014 QA](0014-asset-selection-and-context-actions-qa-report.md) / [菜单 E2E](../../tests/e2e/context-menu.test.ts) | — |
+| MENU-003 | 标签使用统一右键菜单 | 已撤回 | — | — | [MVP UX 需求池](../implementation/mvp-ui-ux-requirements-backlog.md) | 左侧标签列表和独立管理页已取消，此入口不再属于目标产品。 |
 | MENU-004 | 合集使用统一右键菜单 | 待人类验收 | 打开合集右键菜单，将指针移过各菜单项后按 Esc | 菜单项可获得悬停反馈，Esc 能关闭，不出现重复菜单 | [0014 QA](0014-asset-selection-and-context-actions-qa-report.md) / [菜单 E2E](../../tests/e2e/context-menu.test.ts) | — |
 | MENU-005 | 智能合集使用统一右键菜单 | 待人类验收 | 打开智能合集右键菜单，将指针移过各菜单项后按 Esc | 菜单项可获得悬停反馈，Esc 能关闭，不出现重复菜单 | [0014 QA](0014-asset-selection-and-context-actions-qa-report.md) / [菜单 E2E](../../tests/e2e/context-menu.test.ts) | — |
 | MENU-006 | 滚动画布时关闭菜单 | 待人类验收 | 打开菜单后滚动画布 | 菜单关闭，不残留悬浮层 | [0014 QA](0014-asset-selection-and-context-actions-qa-report.md) / [菜单 E2E](../../tests/e2e/context-menu.test.ts) | — |
@@ -155,6 +163,7 @@
 | MENU-010 | 同时只显示一个右键菜单 | 待人类验收 | 连续对不同对象打开右键菜单 | 新菜单出现时旧菜单关闭，页面上只有一个菜单 | [0014 QA](0014-asset-selection-and-context-actions-qa-report.md) / [菜单 E2E](../../tests/e2e/context-menu.test.ts) | — |
 | MENU-011 | 多选不显示顶部动作 | 待人类验收 | 选择多项资产并观察工作区顶部 | 顶部工具栏不因选择增加移动/删除等动作，不遮挡画布 | [0014 QA](0014-asset-selection-and-context-actions-qa-report.md) / [修复截图](evidence/0014-selection-context/03-all-selected-fixed.png) | — |
 | MENU-012 | 多选菜单数量、混合说明与固定目标 | 待人类验收 | 混选 managed、linked、missing 后打开右键菜单 | 显示已选数量、处理/跳过数量和原因；动作只作用于菜单打开时的对象 | [0014 QA](0014-asset-selection-and-context-actions-qa-report.md) / [菜单 E2E](../../tests/e2e/context-menu.test.ts) | — |
+| MENU-013 | 右键菜单任意时刻只有一套高亮（REQ-MENU-001） | 待人类验收 | 打开资产右键菜单，先用方向键移动焦点，再把指针移到另一项；随后再按方向键 | 任意时刻只有一项显示高亮；指针与键盘切换后高亮跟随当前项，不出现焦点色与另一项 hover 色并存 | [菜单 E2E](../../tests/e2e/context-menu.test.ts)（`hovering a menu item after keyboard navigation shows only one highlight`） | — |
 
 ### I. 资源库导入导出
 
@@ -167,6 +176,15 @@
 
 以下范围已知不满足进入待验收队列的条件；agent 修复并补齐证据后，必须新增独立 ID 或按历史记录重新进入队列：
 
+- 2026-07-16 MVP UI/UX 需求池：0019 核心正确性项已进入待验收（CANVAS-007/008、INSPECT-001/002、MENU-013、SELECT-007）；0015–0018 与 0019 剩余项（对齐、INSPECT-003 等）仍见 `docs/implementation/mvp-ui-ux-requirements-backlog.md`。
+- 文件夹浏览：画布尚不显示子文件夹卡片、内容封面和统一目录计数；“包含子文件夹资产”尚无正式 UI。
+- 文件操作：资产菜单缺默认/其他应用、Finder/Explorer、复制/粘贴、重命名、复制路径等完整命令；文件夹重命名/复制/克隆/移动/删除领域命令尚未实现。
+- 框选集合运算：当前 SELECT-007 为暂定并集；差集/对称差等待澄清队列 #10。
+- 标签新体验：左侧标签列表和独立管理页已取消；Inspector chip、最近标签、搜索/输入创建及过滤 popover 尚未实现。
+- Label 退役：ADR 0022 已确认，但数据库/FTS/AI/协议和旧数据迁移尚未实施；`META-001`、`SEARCH-002` 已撤回。
+- 中英文、亮/暗/跟随系统主题、统一命令注册表和真实平台快捷键尚未实现。
+- 应用壳与发现工具栏：纯色画布、资源库下拉、后退/前进、无边框面包屑、过滤条以及移除冗余标题/水印/连接状态尚未实施。
+- Computer Use：0019 合流后的真实桌面截图验收尚未执行，需具备能力的环境补做。
 - 单项读取失败不阻断整批链接恢复：缺少稳定的人类可制造场景与公共 UI 证据。
 - 元数据并发冲突：缺少双客户端并发的人类验收夹具。
 - 回收站占用文件的部分成功/跳过：需要稳定制造 `FILE_BUSY` 的平台夹具。
@@ -188,4 +206,6 @@
 
 | 日期 | ID | 结论 | 用户原始反馈摘要 | 后续动作 |
 | --- | --- | --- | --- | --- |
-| — | — | — | — | — |
+| 2026-07-16 | META-001 / SEARCH-002 | 已撤回 | 删除 Label/显示别名设计，资产名称统一使用真实文件名。 | ADR 0022；0018 完成字段退役和兼容迁移。 |
+| 2026-07-16 | TAG-001–005 / MENU-003 | 部分撤回、部分不通过 | 不在左侧展示全部标签，也不设置独立标签管理页；标签用于过滤并在 Inspector 以 chip 编辑，大量标签不能直接铺进菜单。 | 0018 完成新入口和可搜索批量选择器后拆分新的可验收步骤。 |
+| 2026-07-16 | FILTER-001–008 | 人类验收不通过 | 当前过滤工具不是美术友好的工作方式；参考 Eagle 的紧凑维度过滤条重做。 | 0016 保留查询语义、替换交互层，再按字段拆分重新验收。 |

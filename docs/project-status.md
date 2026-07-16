@@ -5,19 +5,36 @@
 
 ## 当前方向
 
-v0.1.0 先收口 0001–0010 的桌面 MVP 主线。0011 CLI 需求已确认并排入 v0.2.0，不代表桌面客户端优先级更高，只表达领域语义与运行时基础的实施依赖。0012 资产画布与卡片信息配置已在 macOS 完成自动化、双轴审查和 Computer Use 验收（Windows/10 万帧率保留条件）。0013 查看器仍属 v0.1.0 UX 收尾；0014 选择/上下文操作已形成 macOS 开发候选 `f1330a7`，完成真实应用截图验收，最终合流门禁和 Windows QA 保留条件。
+v0.1.0 继续收口 0001–0010 的桌面主线，并纳入真实使用反馈确认的 0013–0019 产品化范围。0011 CLI 仍排入 v0.2.0，这只表达领域语义与运行时依赖。0012 已完成 macOS 开发态验收；0014 形成候选 `f1330a7`，但新反馈确认 Inspector、框选修饰键、瀑布流、完整文件菜单、应用壳、目录浏览、标签、双语和主题仍属于 MVP 待办。
 
 ## 当前前沿
 
 1. **P0 发布阻断**：0006 不可变媒体二进制发布来源与 receipt、packaged media playback；
    建立真实 Windows runner 并执行跨平台矩阵。
-2. **P1 验证收口**：0012 已完成 macOS Computer Use 与截图验收；0007 的 relink v3 已关闭已知文件所有权风险，仍需真实 UtilityProcess kill/restart、macOS Computer Use 与 Windows；0004 待按当前树复审修复真实行为缺陷，并补打包后与 Windows 证据；
+2. **P0 产品正确性**：0019 核心项已合流（Inspector 缩略图/防闪烁、修饰键框选、画布列填充、clock 图标、菜单单高亮）；待人类验收与 Computer Use；对齐/INSPECT-003 等剩余项继续收口。
+3. **P1 MVP 产品化**：0015 建立中英文、亮/暗主题和命令快捷键；0017 完成目录卡片/计数/递归范围与文件操作；0018 退役 Label 并重做标签入口；0016 最后收口壳层、历史、面包屑和发现工具栏。
+4. **P1 验证收口**：0012 已完成 macOS Computer Use 与截图验收；0007 的 relink v3 已关闭已知文件所有权风险，仍需真实 UtilityProcess kill/restart、macOS Computer Use 与 Windows；0004 待按当前树复审修复真实行为缺陷，并补打包后与 Windows 证据；
    再完成 0005 packaged 搜索冒烟。
-4. **P2 外部旅程**：补 0009 范围分析/清空 UI 与密钥边界决定；完成 0008 真实浏览器扩展
+5. **P2 外部旅程**：补 0009 范围分析/清空 UI 与密钥边界决定；完成 0008 真实浏览器扩展
    往返和 0010 大库/跨平台往返。
-5. **最终完成审计**：跨资源库复制、视频/GIF 悬停预览、NAS 断线只读、10 万资产冷启动
+6. **最终完成审计**：跨资源库复制、视频/GIF 悬停预览、NAS 断线只读、10 万资产冷启动
    3 秒，以及跨切片 packaged/Windows 主线。
-6. 0013 完整 UX 实施前先做竞品研究与交互原型；0014 已进入人类功能验收，后续视觉迭代继续遵循统一菜单架构。
+
+## 2026-07-16 新增 MVP UI/UX 与文件管理需求
+
+- 两轮真实使用反馈已形成共享需求池：`docs/implementation/mvp-ui-ux-requirements-backlog.md`；0015–0019 的暂定范围和 12 项集中澄清问题均在该文档。
+- 已确认进入 MVP：应用壳与面包屑/历史、文件夹卡片与封面/计数/递归范围、完整资产和文件夹菜单、命令快捷键、中英文、亮/暗主题、标签 chip/过滤入口、Inspector 真实缩略图，以及选择和瀑布流正确性。
+- 已确认产品模型变化：撤销 Label/资产显示别名，资产名称统一为真实文件名；ADR 0022、产品简报、领域模型和术语表已同步。旧数据兼容迁移在 0018 编码前确认。
+- 自定义主题明确推迟到 MVP 后；Eagle 是信息密度和控件分组参考，不是逐像素复制目标。
+- 四张用户截图已保存到 `docs/前端参考/2026-07-16-*.png`，包括 Eagle 布局/过滤参考、Serpent 瀑布流空当和标签 chip 方向。
+- 0015–0018 仍未实现；0019 核心正确性已实现并进入人类待验收（见清单 CANVAS-007/008、INSPECT-001/002、MENU-013、SELECT-007）。
+
+## 2026-07-16 0019 产品正确性合流
+
+- 并行 worktree 合流：框选修饰键 `ea4f044`、画布列填充与 clock `36c776c`、菜单单高亮 `19c4a02`、Inspector 缩略图/防闪烁 `8a73132`。
+- 自动化：typecheck 通过；相关 unit（asset-grid-layout / inspector-preview / marquee-selection）通过；context-menu 与 selection-marquee E2E 在各 worktree 已跑通，合流后需在主树复跑。
+- Computer Use / 最终 `verify:mainline`：未在本回合宣称完成。
+- 框选修饰键采用暂定并集语义，等待澄清队列第 10 项。
 
 ## 2026-07-16 0014 功能收口与 0007 文件恢复安全
 
@@ -26,7 +43,7 @@ v0.1.0 先收口 0001–0010 的桌面 MVP 主线。0011 CLI 需求已确认并�
 - Computer Use 在真实 Serpent 中发现并修复顶部选择操作仍残留的问题；入口、缺陷和修复后三张截图已经进入 `docs/qa/evidence/0014-selection-context/`。
 - 0007 relink v3 使用不可变 manifest、放置回执、源身份与 SHA-256 校验；恢复不明确时保留两侧文件并记录诊断，不再凭路径猜测删除。
 - 自动证据：lint、typecheck 通过；relink Worker 11/11；相关 Electron E2E 26/26。最终工具栏迁移后的完整 `verify:mainline` 尚未重跑，避免把历史全量结果误写成当前候选结果。
-- **可供人类验收**：`SELECT-001`–`SELECT-006`、`MENU-001`–`MENU-012`；详见 `docs/qa/human-acceptance-checklist.md`。
+- **可供人类验收**：0014 中仍符合当前产品方向的选择与菜单基础行为；标签菜单 `MENU-003` 已因新信息架构撤回，准确队列见 `docs/qa/human-acceptance-checklist.md`。
 - **保留条件**：真实 UtilityProcess kill/restart、最终合流门禁、packaged/Windows 平台验证。
 
 ## 2026-07-14 0013 P0 查看错位热修

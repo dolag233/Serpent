@@ -5,6 +5,8 @@
 > Build under test：`f1330a7`
 >
 > 日期：2026-07-16
+>
+> 后续产品反馈：普通框选和点击修饰键证据仍有效，但修饰键框选尚未实现；左侧标签菜单已撤回，资产/文件夹完整文件菜单与单一高亮也待实施。准确待办与人类验收状态分别见 `../implementation/mvp-ui-ux-requirements-backlog.md` 和 `human-acceptance-checklist.md`。
 
 ## 自动化证据
 
