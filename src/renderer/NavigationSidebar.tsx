@@ -353,7 +353,6 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
   return (
     <aside className="navigation-pane">
       <div className="pane-header">
-        <span>资源导航</span>
         <span className="status-dot" data-active={Boolean(library)} />
       </div>
       <nav className="navigation-scroll">
@@ -661,7 +660,6 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
       </nav>
       <div className="pane-footer">
         <span className="storage-pulse" />
-        <span>{library ? "本地资源库 · 已连接" : "本地优先 · 未连接"}</span>
       </div>
     </aside>
   );

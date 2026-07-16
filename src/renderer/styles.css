@@ -541,41 +541,15 @@ input[type="range"] {
   overflow: auto;
   place-items: center;
   user-select: none;
-  background:
-    linear-gradient(
-      90deg,
-      transparent 49.92%,
-      rgb(255 255 255 / 1.2%) 50%,
-      transparent 50.08%
-    ),
-    linear-gradient(rgb(255 255 255 / 1.1%) 1px, transparent 1px);
-  background-size:
-    100% 100%,
-    100% 32px;
 }
 
 .workspace-canvas.is-viewing {
   overflow: hidden;
 }
 
-.workspace-canvas.is-viewing::after {
-  display: none;
-}
-
 .workspace-canvas.is-viewing > :not(.workspace-viewer) {
   visibility: hidden;
   pointer-events: none;
-}
-
-.workspace-canvas::after {
-  position: absolute;
-  right: 12px;
-  bottom: 10px;
-  color: #4f5350;
-  content: "SERPENT / LOCAL WORKSPACE";
-  font-family: "IBM Plex Mono", monospace;
-  font-size: 9px;
-  letter-spacing: 0.09em;
 }
 
 .empty-state,

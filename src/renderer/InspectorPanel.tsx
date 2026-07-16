@@ -144,7 +144,6 @@ export function InspectorPanel(props: InspectorPanelProps) {
   return (
     <aside className="inspector-pane">
       <div className="pane-header">
-        <span>检查器</span>
         <ToolButton icon="info" label="检查器信息" />
       </div>
       {selectedAsset ? (

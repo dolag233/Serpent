@@ -4012,7 +4012,7 @@ function AppInner() {
           />
           <div className="brand-mark">
             <span className="brand-glyph">S</span>
-            <span>Serpent</span>
+            <span>{library?.displayName ?? "Serpent"}</span>
           </div>
         </div>
         <div className="scope-trace">
@@ -4534,7 +4534,6 @@ function AppInner() {
                 pressed={assetViewMode === "masonry"}
               />
               <label className="asset-size-control">
-                <span>缩略图大小</span>
                 <input
                   aria-label="资产缩略图大小"
                   max={CARD_SIZE_MAX}
