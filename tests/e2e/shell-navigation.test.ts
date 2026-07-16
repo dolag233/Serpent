@@ -55,6 +55,42 @@ test("library switcher, breadcrumbs, and workspace history", async () => {
     await expect(window.locator(".brand-glyph")).toHaveCount(0);
     await expect(window.getByText("SERPENT / LOCAL WORKSPACE")).toHaveCount(0);
 
+    // History controls: leftmost in the toolbar, before the nav toggle and
+    // left of the current directory breadcrumbs.
+    const backButton = window.getByRole("button", { name: "后退" });
+    const forwardButton = window.getByRole("button", { name: "前进" });
+    await expect(backButton).toBeVisible();
+    await expect(forwardButton).toBeVisible();
+    await expect(
+      window.locator(".toolbar-leading > .scope-history"),
+    ).toBeVisible();
+    await expect(window.locator(".scope-trace .scope-history")).toHaveCount(0);
+    await expect(backButton.locator("svg")).toBeVisible();
+    await expect(forwardButton.locator("svg")).toBeVisible();
+    const navToggle = window.getByRole("button", {
+      name: /收起导航|展开导航/,
+    });
+    const backBox = await backButton.boundingBox();
+    const toggleBox = await navToggle.boundingBox();
+    const crumbsBox = await window.locator(".scope-breadcrumbs").boundingBox();
+    expect(backBox).not.toBeNull();
+    expect(toggleBox).not.toBeNull();
+    expect(crumbsBox).not.toBeNull();
+    expect(backBox!.x).toBeLessThan(toggleBox!.x);
+    expect(backBox!.x).toBeLessThan(crumbsBox!.x);
+
+    // Left sidebar status dots (top/bottom) were removed as redundant.
+    await expect(window.locator(".navigation-pane .pane-header")).toHaveCount(
+      0,
+    );
+    await expect(window.locator(".navigation-pane .pane-footer")).toHaveCount(
+      0,
+    );
+    await expect(window.locator(".navigation-pane .status-dot")).toHaveCount(0);
+    await expect(window.locator(".navigation-pane .storage-pulse")).toHaveCount(
+      0,
+    );
+
     await libraryTrigger.click();
     await expect(
       window.getByRole("menuitem", { name: "新建资源库…" }),
@@ -88,8 +124,6 @@ test("library switcher, breadcrumbs, and workspace history", async () => {
     ).toHaveText("场景");
     await expect(window.locator(".scope-chip")).toHaveCount(0);
 
-    const backButton = window.getByRole("button", { name: "后退" });
-    const forwardButton = window.getByRole("button", { name: "前进" });
     await expect(backButton).toBeEnabled();
     await expect(forwardButton).toBeDisabled();
 
@@ -108,7 +142,9 @@ test("library switcher, breadcrumbs, and workspace history", async () => {
       0,
     );
     await expect(
-      window.getByRole("button", { name: "导入链接文件夹" }),
+      window
+        .locator(".navigation-pane")
+        .getByRole("button", { name: "导入链接文件夹" }),
     ).toBeVisible();
   } finally {
     await application.close();

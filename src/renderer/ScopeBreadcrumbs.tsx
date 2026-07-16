@@ -1,4 +1,3 @@
-import { Icon } from "./Icons";
 import type { ManagedFolderBreadcrumbEntry } from "./folder-breadcrumb-trail";
 
 export type ScopeBreadcrumbSegment =
@@ -7,10 +6,6 @@ export type ScopeBreadcrumbSegment =
 
 export type ScopeBreadcrumbsProps = {
   segments: ScopeBreadcrumbSegment[];
-  canBack: boolean;
-  canForward: boolean;
-  onBack: () => void;
-  onForward: () => void;
   onNavigateFolder: (folderId: string) => void;
 };
 
@@ -76,41 +71,16 @@ export function buildScopeBreadcrumbSegments(input: {
 }
 
 /**
- * Borderless scope trail with workspace back/forward controls.
- * Does not include a leading "资源库 >" prefix.
+ * Borderless scope trail. Does not include a leading "资源库 >" prefix.
+ * Workspace back/forward controls live in `ScopeHistoryButtons`, rendered
+ * leftmost in the app toolbar.
  */
 export function ScopeBreadcrumbs({
   segments,
-  canBack,
-  canForward,
-  onBack,
-  onForward,
   onNavigateFolder,
 }: ScopeBreadcrumbsProps) {
   return (
     <div className="scope-trace">
-      <div className="scope-history">
-        <button
-          aria-label="后退"
-          className="scope-history-button"
-          disabled={!canBack}
-          onClick={onBack}
-          title="后退"
-          type="button"
-        >
-          <Icon name="collapse-left" size={14} />
-        </button>
-        <button
-          aria-label="前进"
-          className="scope-history-button"
-          disabled={!canForward}
-          onClick={onForward}
-          title="前进"
-          type="button"
-        >
-          <Icon name="collapse-right" size={14} />
-        </button>
-      </div>
       <nav aria-label="当前浏览范围" className="scope-breadcrumbs">
         {segments.map((segment, index) => {
           const isLast = index === segments.length - 1;

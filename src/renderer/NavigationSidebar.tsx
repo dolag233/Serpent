@@ -470,9 +470,6 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
 
   return (
     <aside className="navigation-pane">
-      <div className="pane-header">
-        <span className="status-dot" data-active={Boolean(library)} />
-      </div>
       <nav className="navigation-scroll">
         <NavRow
           active={
@@ -699,9 +696,6 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
           )}
         </Section>
       </nav>
-      <div className="pane-footer">
-        <span className="storage-pulse" />
-      </div>
     </aside>
   );
 }

@@ -22,6 +22,7 @@ import {
   NavigationSidebar,
 } from "./NavigationSidebar";
 import { LibrarySwitcher } from "./LibrarySwitcher";
+import { ScopeHistoryButtons } from "./ScopeHistoryButtons";
 import {
   ScopeBreadcrumbs,
   buildScopeBreadcrumbSegments,
@@ -4216,6 +4217,12 @@ function AppInner() {
     >
       <header className="app-toolbar">
         <div className="toolbar-cluster toolbar-leading">
+          <ScopeHistoryButtons
+            canBack={navHistoryUi.canBack}
+            canForward={navHistoryUi.canForward}
+            onBack={() => void goWorkspaceBack()}
+            onForward={() => void goWorkspaceForward()}
+          />
           <ToolButton
             icon="menu"
             label={leftOpen ? "收起导航" : "展开导航"}
@@ -4234,10 +4241,6 @@ function AppInner() {
           />
         </div>
         <ScopeBreadcrumbs
-          canBack={navHistoryUi.canBack}
-          canForward={navHistoryUi.canForward}
-          onBack={() => void goWorkspaceBack()}
-          onForward={() => void goWorkspaceForward()}
           onNavigateFolder={(folderId) => void chooseFolder(folderId)}
           segments={buildScopeBreadcrumbSegments({
             showTrash,
