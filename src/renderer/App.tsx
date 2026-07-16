@@ -21,6 +21,16 @@ import { ImportDialog } from "./ImportDialog";
 import {
   NavigationSidebar,
 } from "./NavigationSidebar";
+import { LibrarySwitcher } from "./LibrarySwitcher";
+import {
+  ScopeBreadcrumbs,
+  buildScopeBreadcrumbSegments,
+} from "./ScopeBreadcrumbs";
+import { buildManagedFolderBreadcrumbTrail } from "./folder-breadcrumb-trail";
+import {
+  createWorkspaceNavHistory,
+  type WorkspaceNavLocation,
+} from "./workspace-nav-history";
 import { RelinkPreview } from "./RelinkPreview";
 import { MoveDialog } from "./MoveDialog";
 import { RestoreDialog } from "./RestoreDialog";
@@ -375,6 +385,12 @@ function AppInner() {
   const externalDragDepth = useRef(0);
   const [leftOpen, setLeftOpen] = useState(() => window.innerWidth > 800);
   const [rightOpen, setRightOpen] = useState(() => window.innerWidth > 1020);
+  const navHistoryRef = useRef(createWorkspaceNavHistory());
+  const suppressNavHistoryRef = useRef(false);
+  const [navHistoryUi, setNavHistoryUi] = useState({
+    canBack: false,
+    canForward: false,
+  });
 
   // Tags
   const [tags, setTags] = useState<TagSummary[]>([]);
@@ -908,6 +924,7 @@ function AppInner() {
       if (activeLibrary) {
         let restoredItems = (await loadContent(activeLibrary, "all")) ?? [];
         const session = readBrowserSession(activeLibrary.libraryId);
+        let restoredLocation: WorkspaceNavLocation = { kind: "all" };
         if (session) {
           try {
             let searchScope: SearchScope | undefined;
@@ -920,6 +937,7 @@ function AppInner() {
                   trashMode: true,
                 })) ?? [];
               searchScope = { kind: "trash" };
+              restoredLocation = { kind: "trash" };
             } else if (session.scope.kind === "root") {
               setAssetScope("root");
               restoredItems = (await loadContent(activeLibrary, "root")) ?? [];
@@ -928,6 +946,7 @@ function AppInner() {
                 folderId: null,
                 recursive: false,
               };
+              restoredLocation = { kind: "root" };
             } else if (session.scope.kind === "folder") {
               setAssetScope(session.scope.id);
               restoredItems =
@@ -936,6 +955,10 @@ function AppInner() {
                 kind: "folder",
                 folderId: session.scope.id,
                 recursive: false,
+              };
+              restoredLocation = {
+                kind: "folder",
+                folderId: session.scope.id,
               };
             } else if (session.scope.kind === "tag" && session.scope.name) {
               searchFilters = [
@@ -954,6 +977,7 @@ function AppInner() {
               setAssets(result.value.items);
               setSearchTotal(result.value.total);
               restoredItems = result.value.items;
+              restoredLocation = { kind: "tag", tagId: session.scope.id };
             } else if (session.scope.kind === "collection") {
               searchScope = {
                 kind: "collection",
@@ -972,6 +996,11 @@ function AppInner() {
               setAssets(result.value.items);
               setSearchTotal(result.value.total);
               restoredItems = result.value.items;
+              restoredLocation = {
+                kind: "collection",
+                collectionId: session.scope.id,
+                recursive: collectionRecursiveRef.current,
+              };
             } else if (session.scope.kind === "smart") {
               const result = await api.executeSmartCollection({
                 libraryId: activeLibrary.libraryId,
@@ -984,6 +1013,10 @@ function AppInner() {
               setAssets(result.value.items);
               setSearchTotal(result.value.total);
               restoredItems = result.value.items;
+              restoredLocation = {
+                kind: "smart-collection",
+                collectionId: session.scope.id,
+              };
             }
 
             let restoredAsset = restoredItems.find(
@@ -1067,9 +1100,15 @@ function AppInner() {
             setActiveTagId(null);
             setActiveCollectionId(null);
             setActiveSmartCollectionId(null);
+            restoredLocation = { kind: "all" };
             await loadContent(activeLibrary, "all");
           }
         }
+        navHistoryRef.current.clear(restoredLocation);
+        setNavHistoryUi({ canBack: false, canForward: false });
+      } else {
+        navHistoryRef.current.clear({ kind: "all" });
+        setNavHistoryUi({ canBack: false, canForward: false });
       }
       setUiState(activeLibrary ? "ready" : "idle");
     } catch (caught) {
@@ -1211,6 +1250,74 @@ function AppInner() {
     };
   }, [api, library]);
 
+  function syncNavHistoryUi() {
+    setNavHistoryUi({
+      canBack: navHistoryRef.current.canBack,
+      canForward: navHistoryRef.current.canForward,
+    });
+  }
+
+  function resetNavHistory(initial: WorkspaceNavLocation = { kind: "all" }) {
+    navHistoryRef.current.clear(initial);
+    syncNavHistoryUi();
+  }
+
+  function recordNavigation(location: WorkspaceNavLocation) {
+    if (suppressNavHistoryRef.current) return;
+    navHistoryRef.current.push(location);
+    syncNavHistoryUi();
+  }
+
+  async function applyWorkspaceLocation(location: WorkspaceNavLocation) {
+    switch (location.kind) {
+      case "all":
+        await chooseFolder("all");
+        return;
+      case "root":
+        await chooseFolder("root");
+        return;
+      case "folder":
+        await chooseFolder(location.folderId);
+        return;
+      case "tag":
+        await chooseTag(location.tagId);
+        return;
+      case "collection":
+        await chooseCollection(location.collectionId, location.recursive);
+        return;
+      case "smart-collection":
+        await chooseSmartCollection(location.collectionId);
+        return;
+      case "trash":
+        await enterTrash();
+        return;
+    }
+  }
+
+  async function goWorkspaceBack() {
+    const location = navHistoryRef.current.back();
+    if (!location) return;
+    syncNavHistoryUi();
+    suppressNavHistoryRef.current = true;
+    try {
+      await applyWorkspaceLocation(location);
+    } finally {
+      suppressNavHistoryRef.current = false;
+    }
+  }
+
+  async function goWorkspaceForward() {
+    const location = navHistoryRef.current.forward();
+    if (!location) return;
+    syncNavHistoryUi();
+    suppressNavHistoryRef.current = true;
+    try {
+      await applyWorkspaceLocation(location);
+    } finally {
+      suppressNavHistoryRef.current = false;
+    }
+  }
+
   async function runLibraryOperation(kind: "create" | "open") {
     if (!api) return;
     setError(null);
@@ -1231,6 +1338,7 @@ function AppInner() {
       setActiveTagId(null);
       setActiveCollectionId(null);
       setActiveSmartCollectionId(null);
+      resetNavHistory({ kind: "all" });
       api?.setActiveContext(result.value.libraryId);
       await loadContent(result.value, "all");
     } catch (caught) {
@@ -1285,6 +1393,13 @@ function AppInner() {
     setUiState("loading");
     try {
       await loadContent(library, scope);
+      recordNavigation(
+        scope === "all"
+          ? { kind: "all" }
+          : scope === "root"
+            ? { kind: "root" }
+            : { kind: "folder", folderId: scope },
+      );
     } catch (caught) {
       setError(toMessage(caught, "无法读取资产。"));
     } finally {
@@ -1308,6 +1423,7 @@ function AppInner() {
     setUiState("loading");
     try {
       await loadContent(library, "all", { trashMode: true });
+      recordNavigation({ kind: "trash" });
     } catch (caught) {
       setError(toMessage(caught, "无法读取回收站。"));
     } finally {
@@ -1433,6 +1549,7 @@ function AppInner() {
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
       applySearchResult(result.value);
+      recordNavigation({ kind: "tag", tagId });
     } catch (caught) {
       setError(toMessage(caught, "无法读取标签资产。"));
     } finally {
@@ -1778,6 +1895,11 @@ function AppInner() {
       if (tagResult.ok) setTags(tagResult.value);
       if (collectionResult.ok) setCollections(collectionResult.value);
       if (smartResult.ok) setSmartCollections(smartResult.value);
+      recordNavigation({
+        kind: "collection",
+        collectionId,
+        recursive,
+      });
     } catch (caught) {
       setError(toMessage(caught, "无法读取合集内容。"));
     } finally {
@@ -2229,7 +2351,10 @@ function AppInner() {
       setActiveTagId(null);
       setActiveCollectionId(null);
       setActiveSmartCollectionId(collectionId);
-      if (offset === 0) clearAssetSelection();
+      if (offset === 0) {
+        clearAssetSelection();
+        recordNavigation({ kind: "smart-collection", collectionId });
+      }
       applySearchResult(result.value, offset > 0);
     } catch (caught) {
       setError(toMessage(caught, "执行智能合集失败。"));
@@ -2925,6 +3050,7 @@ function AppInner() {
       setMoveDialog(null);
       setUndoMoveDialog(null);
       setLastMoveOperationId(null);
+      resetNavHistory({ kind: "all" });
       api?.setActiveContext(null);
     } catch (caught) {
       setError(toMessage(caught, "关闭失败。"));
@@ -3751,27 +3877,6 @@ function AppInner() {
     return selectedFolder?.name ?? "工作区";
   }
 
-  function scopeChipLabel() {
-    if (showTrash) return "回收站";
-    if (activeTagId) {
-      const t = tags.find((x) => x.tagId === activeTagId);
-      return t ? `标签 · ${t.name}` : "标签";
-    }
-    if (activeCollectionId) {
-      const c = collections.find((x) => x.collectionId === activeCollectionId);
-      return c ? `合集 · ${c.name}` : "合集";
-    }
-    if (activeSmartCollectionId) {
-      const c = smartCollections.find(
-        (x) => x.collectionId === activeSmartCollectionId,
-      );
-      return c ? `智能合集 · ${c.name}` : "智能合集";
-    }
-    if (assetScope === "all") return "所有资产";
-    if (assetScope === "root") return "资源库根目录";
-    return selectedFolder?.name;
-  }
-
   // --- Metadata editor helpers ---
   function handleMetadataDescriptionInput(
     event: FormEvent<HTMLTextAreaElement>,
@@ -4117,24 +4222,51 @@ function AppInner() {
             onClick={() => setLeftOpen((v) => !v)}
             pressed={leftOpen}
           />
-          <div className="brand-mark">
-            <span className="brand-glyph">S</span>
-            <span>{library?.displayName ?? "Serpent"}</span>
-          </div>
+          <LibrarySwitcher
+            disabled={busy}
+            libraryName={library?.displayName ?? null}
+            onCloseLibrary={() => void closeLibrary()}
+            onCreateLibrary={() => {
+              setDialogValue("我的资源库");
+              setDialog("library");
+            }}
+            onOpenLibrary={() => void runLibraryOperation("open")}
+          />
         </div>
-        <div className="scope-trace">
-          <span className="scope-chip">
-            {library?.displayName ?? "尚未打开"}
-          </span>
-          {library && (
-            <>
-              <span className="scope-sep">&gt;</span>
-              <span className="scope-chip scope-chip-muted">
-                {scopeChipLabel()}
-              </span>
-            </>
-          )}
-        </div>
+        <ScopeBreadcrumbs
+          canBack={navHistoryUi.canBack}
+          canForward={navHistoryUi.canForward}
+          onBack={() => void goWorkspaceBack()}
+          onForward={() => void goWorkspaceForward()}
+          onNavigateFolder={(folderId) => void chooseFolder(folderId)}
+          segments={buildScopeBreadcrumbSegments({
+            showTrash,
+            activeTagLabel: activeTagId
+              ? (tags.find((tag) => tag.tagId === activeTagId)?.name ?? null)
+              : null,
+            activeCollectionLabel: activeCollectionId
+              ? (collections.find(
+                  (collection) => collection.collectionId === activeCollectionId,
+                )?.name ?? null)
+              : null,
+            activeSmartCollectionLabel: activeSmartCollectionId
+              ? (smartCollections.find(
+                  (collection) =>
+                    collection.collectionId === activeSmartCollectionId,
+                )?.name ?? null)
+              : null,
+            assetScope,
+            folderTrail:
+              assetScope !== "all" && assetScope !== "root"
+                ? buildManagedFolderBreadcrumbTrail(folders, assetScope)
+                : [],
+            linkedFolderLabel:
+              assetScope !== "all" && assetScope !== "root"
+                ? (linkedFolders.find((folder) => folder.folderId === assetScope)
+                    ?.displayName ?? null)
+                : null,
+          })}
+        />
         <form
           className="toolbar-cluster toolbar-actions"
           onSubmit={(event) => {

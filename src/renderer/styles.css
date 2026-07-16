@@ -212,36 +212,133 @@ input:focus-visible {
   stroke-width: 1.55;
 }
 
-.brand-mark {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  font-weight: 620;
-  letter-spacing: 0.025em;
+.library-switcher {
+  position: relative;
+  min-width: 0;
 }
 
-.brand-glyph {
+.library-switcher-trigger {
+  display: inline-flex;
+  max-width: 220px;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 6px 0 8px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 620;
+  letter-spacing: 0.02em;
+}
+
+.library-switcher-trigger:hover:not(:disabled),
+.library-switcher-trigger[aria-expanded="true"] {
+  border-color: var(--divider);
+  background: var(--raised);
+}
+
+.library-switcher-trigger:disabled {
+  opacity: 0.55;
+}
+
+.library-switcher-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.library-switcher-trigger .icon {
+  transform: rotate(90deg);
+  opacity: 0.7;
+}
+
+.library-switcher-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 40;
   display: grid;
-  width: 21px;
-  height: 21px;
-  place-items: center;
-  border: 1px solid #62c8b7;
-  border-radius: 5px 2px 5px 2px;
-  background: #329b8a;
-  color: #f6fffd;
-  font-family: "IBM Plex Mono", monospace;
-  font-size: 11px;
-  font-weight: 500;
+  min-width: 168px;
+  padding: 4px;
+  border: 1px solid var(--divider);
+  border-radius: 6px;
+  background: var(--panel, #2b2d30);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 28%);
+}
+
+.library-switcher-item {
+  display: block;
+  width: 100%;
+  padding: 7px 9px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  text-align: left;
+}
+
+.library-switcher-item:hover:not(:disabled) {
+  background: var(--raised);
+}
+
+.library-switcher-item:disabled {
+  color: var(--tertiary);
 }
 
 .scope-trace {
-  gap: 5px;
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
   overflow: hidden;
   padding: 0 14px;
   font-size: 11px;
   color: var(--tertiary);
   user-select: none;
+}
+
+.scope-history {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 2px;
+}
+
+.scope-history-button {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--secondary);
+}
+
+.scope-history-button:hover:not(:disabled) {
+  border-color: var(--divider);
+  background: var(--raised);
+  color: var(--text);
+}
+
+.scope-history-button:disabled {
+  opacity: 0.35;
+}
+
+.scope-breadcrumbs {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  overflow: hidden;
+}
+
+.scope-crumb {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 5px;
 }
 
 .scope-sep {
@@ -250,19 +347,32 @@ input:focus-visible {
   user-select: none;
 }
 
-.scope-chip {
+.scope-crumb-button,
+.scope-crumb-label {
   overflow: hidden;
-  max-width: 190px;
-  padding: 3px 7px;
-  border: 1px solid var(--divider);
+  max-width: 160px;
+  padding: 2px 4px;
+  border: 0;
   border-radius: 3px;
-  background: #35373a;
+  background: transparent;
+  color: var(--secondary);
+  font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.scope-chip-muted {
-  color: var(--secondary);
+.scope-crumb-button {
+  cursor: pointer;
+}
+
+.scope-crumb-button:hover {
+  color: var(--text);
+  background: var(--raised);
+}
+
+.scope-crumb-label.is-current {
+  color: var(--text);
+  font-weight: 560;
 }
 
 .search-control {
@@ -383,6 +493,12 @@ input:focus-visible {
   font-weight: 650;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+}
+
+.nav-section-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
 }
 
 .tiny-action {
@@ -2238,7 +2354,7 @@ input[type="range"] {
     grid-template-columns: 150px 1fr 170px;
   }
 
-  .brand-mark > span:last-child,
+  .library-switcher-name,
   .scope-sep,
   .search-control kbd {
     display: none;

@@ -9,6 +9,7 @@ import type {
 } from "../shared/asset-types";
 import type { ContextMenuDescriptor } from "./context-menu";
 import type { RendererLibrarySummary } from "../shared/protocol/responses";
+import { buildUnifiedDirectoryNavEntries } from "./unified-directory-nav";
 
 // ---------------------------------------------------------------------------
 // Small local helpers duplicated from App.tsx to avoid circular imports
@@ -58,6 +59,7 @@ function NavRow({
   depth = 0,
   disabled,
   iconColor,
+  title,
 }: {
   icon: IconName;
   label: string;
@@ -70,6 +72,7 @@ function NavRow({
   depth?: number;
   disabled?: boolean;
   iconColor?: string;
+  title?: string;
 }) {
   return (
     <button
@@ -80,6 +83,7 @@ function NavRow({
       onDragOver={onDragOver}
       onDrop={onDrop}
       style={{ paddingLeft: 7 + depth * 14 }}
+      title={title}
       type="button"
     >
       <Icon name={icon} size={15} color={iconColor} />
@@ -96,25 +100,43 @@ function NavRow({
 function Section({
   title,
   action,
+  secondaryAction,
+  secondaryLabel,
   children,
 }: {
   title: string;
   action?: () => void;
+  secondaryAction?: () => void;
+  secondaryLabel?: string;
   children: ReactNode;
 }) {
   return (
     <section className="nav-section">
       <div className="nav-section-heading">
         <span>{title}</span>
-        {action && (
-          <button
-            aria-label={`添加${title}`}
-            className="tiny-action"
-            onClick={action}
-            type="button"
-          >
-            <Icon name="plus" size={13} />
-          </button>
+        {(action || secondaryAction) && (
+          <span className="nav-section-actions">
+            {action && (
+              <button
+                aria-label={`添加${title}`}
+                className="tiny-action"
+                onClick={action}
+                type="button"
+              >
+                <Icon name="plus" size={13} />
+              </button>
+            )}
+            {secondaryAction && (
+              <button
+                aria-label={secondaryLabel ?? `次要操作${title}`}
+                className="tiny-action"
+                onClick={secondaryAction}
+                type="button"
+              >
+                <Icon name="link" size={13} />
+              </button>
+            )}
+          </span>
         )}
       </div>
       {children}
@@ -287,6 +309,100 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
     onCopyManagedToLinked,
   } = props;
 
+  const directoryEntries = buildUnifiedDirectoryNavEntries(
+    folders,
+    linkedFolders,
+  );
+
+  function renderDirectoryEntries(): ReactNode {
+    if (directoryEntries.length === 0) {
+      return <p className="nav-empty">尚无托管或链接文件夹</p>;
+    }
+
+    return directoryEntries.map((entry) => {
+      if (entry.kind === "managed") {
+        return (
+          <NavRow
+            active={
+              assetScope === entry.folderId &&
+              !activeTagId &&
+              !activeCollectionId
+            }
+            depth={entry.depth}
+            icon="folder"
+            key={entry.folderId}
+            label={entry.name}
+            onClick={() => void onChooseFolder(entry.folderId)}
+            onDragOver={onExternalDragOver}
+            onDrop={(event) =>
+              onExternalDrop(event, entry.folderId, undefined)
+            }
+          />
+        );
+      }
+
+      const lf = linkedFolders.find(
+        (folder) => folder.folderId === entry.folderId,
+      );
+      if (!lf) return null;
+      const offline = entry.status === "offline";
+      return (
+        <NavRow
+          active={
+            assetScope === entry.folderId &&
+            !activeTagId &&
+            !activeCollectionId
+          }
+          depth={entry.depth}
+          icon={offline ? "link-off" : "link"}
+          iconColor={offline ? "#d96a6a" : "var(--accent)"}
+          key={entry.folderId}
+          label={entry.name}
+          count={entry.assetCount}
+          title={
+            offline ? "链接文件夹离线，点击重新指定" : "链接文件夹"
+          }
+          onClick={
+            offline
+              ? () => void onRelinkFolder(entry.folderId)
+              : () => void onChooseFolder(entry.folderId)
+          }
+          onContextMenu={(event) => {
+            event.preventDefault();
+            if (event.shiftKey)
+              onConvertLinkedDialog({
+                folderId: lf.folderId,
+                name: lf.displayName,
+                targetFolderId: "",
+              });
+            else void onOpenLinkedRules(lf);
+          }}
+          onDragOver={(event) => {
+            if (
+              event.dataTransfer.types.includes(
+                "application/x-serpent-managed-assets",
+              )
+            )
+              event.preventDefault();
+          }}
+          onDrop={(event) => {
+            const serialized = event.dataTransfer.getData(
+              "application/x-serpent-managed-assets",
+            );
+            if (!serialized) return;
+            event.preventDefault();
+            try {
+              const ids = JSON.parse(serialized) as string[];
+              void onCopyManagedToLinked(lf, ids);
+            } catch {
+              // drag data invalid — silently ignore
+            }
+          }}
+        />
+      );
+    });
+  }
+
   // Recursive collection node renderer
   function renderCollectionNodes(
     parentId: string | null,
@@ -389,6 +505,8 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
         <Section
           title="文件夹"
           action={library ? onAddFolder : undefined}
+          secondaryAction={library ? onImportFolderAsLinked : undefined}
+          secondaryLabel="导入链接文件夹"
         >
           {library ? (
             <>
@@ -402,24 +520,12 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
                 onDragOver={onExternalDragOver}
                 onDrop={(event) => onExternalDrop(event, null, undefined)}
               />
-              {folders.map((folder) => (
-                <NavRow
-                  active={
-                    assetScope === folder.folderId &&
-                    !activeTagId &&
-                    !activeCollectionId
-                  }
-                  depth={folder.relativePath.split("/").length}
-                  icon="folder"
-                  key={folder.folderId}
-                  label={folder.name}
-                  onClick={() => void onChooseFolder(folder.folderId)}
-                  onDragOver={onExternalDragOver}
-                  onDrop={(event) =>
-                    onExternalDrop(event, folder.folderId, undefined)
-                  }
-                />
-              ))}
+              {renderDirectoryEntries()}
+              {linkedFolders.length > 0 && (
+                <p className="nav-empty">
+                  右键编辑规则；Shift+右键转换为托管。可拖入所选托管资产。
+                </p>
+              )}
             </>
           ) : (
             <p className="nav-empty">打开资源库后显示目录</p>
@@ -590,76 +696,6 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
             )
           ) : (
             <p className="nav-empty">打开资源库后显示智能合集</p>
-          )}
-        </Section>
-        <Section
-          title="链接文件夹"
-          action={library ? onImportFolderAsLinked : undefined}
-        >
-          {library ? (
-            linkedFolders.length ? (
-              linkedFolders.map((lf) => (
-                <NavRow
-                  active={
-                    assetScope === lf.folderId &&
-                    !activeTagId &&
-                    !activeCollectionId
-                  }
-                  icon={lf.status === "offline" ? "link-off" : "link"}
-                  iconColor={
-                    lf.status === "offline" ? "#d96a6a" : "var(--accent)"
-                  }
-                  key={lf.folderId}
-                  label={lf.displayName}
-                  count={lf.assetCount}
-                  onClick={
-                    lf.status === "offline"
-                      ? () => void onRelinkFolder(lf.folderId)
-                      : () => void onChooseFolder(lf.folderId)
-                  }
-                  onContextMenu={(event) => {
-                    event.preventDefault();
-                    if (event.shiftKey)
-                      onConvertLinkedDialog({
-                        folderId: lf.folderId,
-                        name: lf.displayName,
-                        targetFolderId: "",
-                      });
-                    else void onOpenLinkedRules(lf);
-                  }}
-                  onDragOver={(event) => {
-                    if (
-                      event.dataTransfer.types.includes(
-                        "application/x-serpent-managed-assets",
-                      )
-                    )
-                      event.preventDefault();
-                  }}
-                  onDrop={(event) => {
-                    const serialized = event.dataTransfer.getData(
-                      "application/x-serpent-managed-assets",
-                    );
-                    if (!serialized) return;
-                    event.preventDefault();
-                    try {
-                      const ids = JSON.parse(serialized) as string[];
-                      void onCopyManagedToLinked(lf, ids);
-                    } catch {
-                      // drag data invalid — silently ignore
-                    }
-                  }}
-                />
-              ))
-            ) : (
-              <p className="nav-empty">链接外部文件夹作为资产来源</p>
-            )
-          ) : (
-            <p className="nav-empty">打开资源库后显示链接文件夹</p>
-          )}
-          {library && linkedFolders.length > 0 && (
-            <p className="nav-empty">
-              右键编辑规则；Shift+右键转换为托管。可拖入所选托管资产。
-            </p>
           )}
         </Section>
       </nav>
