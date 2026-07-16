@@ -13,6 +13,7 @@ export type IconName =
   | "heart"
   | "info"
   | "link"
+  | "link-off"
   | "menu"
   | "plus"
   | "refresh"
@@ -81,6 +82,13 @@ const iconPaths: Record<IconName, ReactNode> = {
       <path d="M14 11a5 5 0 0 0-7.5-.5l-2 2a5 5 0 0 0 7 7l1.2-1.2" />
     </>
   ),
+  "link-off": (
+    <>
+      <path d="M10 13a5 5 0 0 0 7.5.5l2-2a5 5 0 0 0-7-7l-1.2 1.2" />
+      <path d="M14 11a5 5 0 0 0-7.5-.5l-2 2a5 5 0 0 0 7 7l1.2-1.2" />
+      <line x1="4" y1="4" x2="20" y2="20" />
+    </>
+  ),
   menu: <path d="M4 7h16M4 12h16M4 17h16" />,
   plus: <path d="M12 5v14M5 12h14" />,
   refresh: (
@@ -124,11 +132,12 @@ const iconPaths: Record<IconName, ReactNode> = {
   ),
 };
 
-export function Icon({ name, size = 16 }: { name: IconName; size?: number }) {
+export function Icon({ name, size = 16, color }: { name: IconName; size?: number; color?: string }) {
   return (
     <svg
       aria-hidden="true"
       className="icon"
+      style={color ? { color } : undefined}
       viewBox="0 0 24 24"
       width={size}
       height={size}

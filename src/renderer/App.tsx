@@ -4016,15 +4016,16 @@ function AppInner() {
           </div>
         </div>
         <div className="scope-trace">
-          <span className="scope-root">资源库</span>
-          <Icon name="chevron" size={12} />
           <span className="scope-chip">
             {library?.displayName ?? "尚未打开"}
           </span>
           {library && (
-            <span className="scope-chip scope-chip-muted">
-              {scopeChipLabel()}
-            </span>
+            <>
+              <span className="scope-sep">&gt;</span>
+              <span className="scope-chip scope-chip-muted">
+                {scopeChipLabel()}
+              </span>
+            </>
           )}
         </div>
         <form

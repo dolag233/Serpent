@@ -57,6 +57,7 @@ function NavRow({
   onDrop,
   depth = 0,
   disabled,
+  iconColor,
 }: {
   icon: IconName;
   label: string;
@@ -68,6 +69,7 @@ function NavRow({
   onDrop?: (e: React.DragEvent<HTMLButtonElement>) => void;
   depth?: number;
   disabled?: boolean;
+  iconColor?: string;
 }) {
   return (
     <button
@@ -80,7 +82,7 @@ function NavRow({
       style={{ paddingLeft: 7 + depth * 14 }}
       type="button"
     >
-      <Icon name={icon} size={15} />
+      <Icon name={icon} size={15} color={iconColor} />
       <span>{label}</span>
       {count !== undefined && <span className="nav-count">{count}</span>}
     </button>
@@ -603,7 +605,10 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
                     !activeTagId &&
                     !activeCollectionId
                   }
-                  icon={lf.status === "offline" ? "warning" : "link"}
+                  icon={lf.status === "offline" ? "link-off" : "link"}
+                  iconColor={
+                    lf.status === "offline" ? "#d96a6a" : "var(--accent)"
+                  }
                   key={lf.folderId}
                   label={lf.displayName}
                   count={lf.assetCount}

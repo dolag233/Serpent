@@ -90,6 +90,7 @@ input:focus-visible {
   align-items: center;
   min-width: 0;
   height: 100%;
+  line-height: 1.35;
 }
 
 .toolbar-leading {
@@ -238,13 +239,15 @@ input:focus-visible {
   gap: 5px;
   overflow: hidden;
   padding: 0 14px;
-  border-right: 1px solid var(--divider-soft);
-  border-left: 1px solid var(--divider-soft);
-  font-size: 12px;
+  font-size: 11px;
+  color: var(--tertiary);
+  user-select: none;
 }
 
-.scope-root {
-  color: var(--secondary);
+.scope-sep {
+  color: var(--tertiary);
+  font-size: 11px;
+  user-select: none;
 }
 
 .scope-chip {
@@ -487,9 +490,11 @@ input:focus-visible {
 
 .workspace-title {
   flex: 0 0 auto;
+  align-items: center;
   gap: 9px;
   font-size: 13px;
   font-weight: 560;
+  line-height: 1.35;
   white-space: nowrap;
 }
 
@@ -1914,8 +1919,7 @@ input[type="range"] {
   }
 
   .brand-mark > span:last-child,
-  .scope-root,
-  .scope-trace > .icon,
+  .scope-sep,
   .search-control kbd {
     display: none;
   }
