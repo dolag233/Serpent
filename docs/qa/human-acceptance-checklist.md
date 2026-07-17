@@ -98,6 +98,7 @@
 | COLLECTION-005 | 移除合集成员 | 待人类验收 | 从合集中移除一项或多项资产 | 合集内容和成员计数准确减少，资产本身保留 | [0004 QA](0004-tags-collections-metadata-qa-report.md) / [组织 E2E](../../tests/e2e/organization-search-trash.test.ts) | — |
 | COLLECTION-006 | 手动调整合集成员顺序 | 待人类验收 | 在合集内拖动资产改变顺序 | 松开后顺序保存，重新进入合集仍保持 | [0004 QA](0004-tags-collections-metadata-qa-report.md) | — |
 | COLLECTION-007 | 切换“包含子合集”范围 | 待人类验收 | 在父合集中开关“包含子合集” | 开启时递归显示子合集资产，关闭时只显示直接成员 | [0004 QA](0004-tags-collections-metadata-qa-report.md) | — |
+| MENU-020 | 多选时 Inspector 标签批量操作 | 待人类验收 | 框选 ≥2 项资产，在右侧 Inspector 添加一个标签（搜索现有或新建）；再移除该标签；期间观察标签区底部提示 | 标签区显示「标签操作将应用于 N 项资产」；添加后所有选中资产都带上该标签（可逐项点击核对）；移除后全部消失；通知报告处理数量 | [批次 3 开发日志](../development/0015-0019-ux-feedback-batch3-development-log.md) / [决策单测](../../tests/unit/inspector-tag-target.test.ts) | 2026-07-17 实现（Inspector 路由到既有批量命令，批量后刷新 chip 状态）；Computer Use 未执行，移交人工 QA。 |
 
 ### D. 搜索、排序与智能合集
 
@@ -127,6 +128,8 @@
 | SMART-003 | 更新智能合集条件 | 待人类验收 | 修改一个智能合集的查询或排序条件后保存 | 再次打开时使用新条件 | [0005 QA](0005-search-filter-sort-smart-collections-qa-report.md) | — |
 | SMART-004 | 重命名智能合集 | 待人类验收 | 重命名已有智能合集 | 新名称立即出现，查询条件保持 | [0005 QA](0005-search-filter-sort-smart-collections-qa-report.md) | — |
 | SMART-005 | 删除智能合集 | 待人类验收 | 删除已有智能合集 | 智能合集消失，资产不受影响 | [0005 QA](0005-search-filter-sort-smart-collections-qa-report.md) | — |
+| FOLDER-001 | 文件夹递归显示后代资产 | 待人类验收 | 建「父文件夹」并在其内建子文件夹，把资产导入子文件夹；然后点击父文件夹 | 父文件夹画布直接显示子文件夹中的全部资产，无需进入子文件夹；「资源库根目录」与「所有资产」行为不变 | [批次 3 开发日志](../development/0015-0019-ux-feedback-batch3-development-log.md) / [递归 E2E](../../tests/e2e/folder-recursive-scope.test.ts) | 2026-07-17 实现（folder scope 默认 recursive，worker 递归 CTE 既有）；Computer Use 未执行，移交人工 QA。 |
+| FILTER-012 | 文件夹内搜索递归后代 | 待人类验收 | 在含子文件夹的父文件夹范围内，搜索一个只存在于孙级文件夹资产的关键词 | 孙级文件夹中的资产被搜到；切到回收站或「所有资产」后搜索行为不变 | [批次 3 开发日志](../development/0015-0019-ux-feedback-batch3-development-log.md) / [worker 测试](../../tests/worker/search.test.ts) / [递归 E2E](../../tests/e2e/folder-recursive-scope.test.ts) | 2026-07-17 实现（孙级深度 worker 回归测试）；Computer Use 未执行，移交人工 QA。 |
 
 ### E. 资产画布与缩略图
 
@@ -207,6 +210,8 @@
 | SHELL-009 | 左右侧栏拖拽调宽并持久化 | 待人类验收 | 拖动左侧导航右缘与右侧 Inspector 左缘改变宽度；双击拖拽柄；完全退出 Serpent 后重开 | 两面板宽度随拖动实时变化并有范围限制；双击恢复默认宽度；重启后宽度保持 | [Wave 2 开发日志](../development/0015-0019-ux-feedback-wave2-development-log.md) / [偏好单测](../../tests/unit/shell-preferences.test.ts) | 2026-07-17 Wave 2 T5 实现；Computer Use 未执行，移交人工 QA。 |
 | DND-001 | 拖拽资产到文件夹完成移动 | 待人类验收 | 拖动一项资产（及一个多选）到左侧某个托管文件夹；再拖到当前文件夹；拖到「资源库根目录」 | 目标行悬停有背景高亮；松开后资产移动到目标文件夹并提示移动/跳过数量；拖到当前文件夹提示无需移动 | [Wave 2 开发日志](../development/0015-0019-ux-feedback-wave2-development-log.md) / [拖放单测](../../tests/unit/asset-drag-drop.test.ts) | 2026-07-17 Wave 2 T6 实现；拖到链接文件夹为既有「复制到链接文件夹」行为。Computer Use 未执行，移交人工 QA。 |
 | DND-002 | 拖拽资产到回收站完成删除 | 待人类验收 | 拖动一项资产（及一个多选）到左侧「回收站」 | 回收站行悬停有背景高亮；松开后资产移入回收站并可在回收站看到；链接资产等不适用项会计入跳过提示 | [Wave 2 开发日志](../development/0015-0019-ux-feedback-wave2-development-log.md) / [拖放单测](../../tests/unit/asset-drag-drop.test.ts) | 2026-07-17 Wave 2 T6 实现；Computer Use 未执行，移交人工 QA。 |
+| DND-003 | 拖拽预览小图标 | 待人类验收 | 拖动一项资产观察跟随光标的预览；再框选多项后拖动 | 预览为缩小、圆角、半透明图标（约 96×72、透明度约 0.6、圆角约 9px），不再是不透明的整卡快照；多选时预览带数量徽标 | [批次 3 开发日志](../development/0015-0019-ux-feedback-batch3-development-log.md) / [预览模型单测](../../tests/unit/asset-drag-preview.test.ts) | 2026-07-17 实现（setDragImage 自定义预览节点）；合集内排序拖拽保持原生预览。Computer Use 未执行，移交人工 QA。 |
+| DND-004 | 拖拽悬停文件夹高亮稳定性 | 待人类验收 | 拖动资产在左侧多个文件夹行之间来回移动并逐行停留；也在链接文件夹行上停留 | 每个目标行（含链接文件夹）稳定高亮，不闪烁、不丢失；移开后高亮消失 | [批次 3 开发日志](../development/0015-0019-ux-feedback-batch3-development-log.md) | 2026-07-17 修复（drop-target 特异性压过 hover、行子元素 pointer-events 豁免、dragleave relatedTarget 守卫、链接行补高亮）；Computer Use 未执行，移交人工 QA。 |
 
 ### I. 资源库导入导出
 

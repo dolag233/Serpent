@@ -617,6 +617,15 @@ input:focus-visible {
   background: #34373a;
 }
 
+/* BUG-DND-001: row children (icon, label, count) are passive paint, never
+   drag targets — dragging across them fired dragleave on the row and
+   thrashed the drop highlight. Nothing interactive lives inside a nav row:
+   the inline rename/create field renders in the sibling .nav-inline-edit
+   row, never inside .nav-row. */
+.nav-row > * {
+  pointer-events: none;
+}
+
 /* REQ-NAV-005: hover and active differ only by background shade — no accent
    edge bar, outline, or accent border on directory rows. The base transparent
    border stays so rows don't shift between states. */
@@ -626,8 +635,12 @@ input:focus-visible {
 }
 
 /* REQ-DND-001/002: asset-drag hover target — same background-only language as
-   the active state, one shade stronger and accent-tinted. */
-.nav-row.is-drop-target {
+   the active state, one shade stronger and accent-tinted. BUG-DND-001: the
+   :hover companion keeps the accent tint above the plain hover shade
+   (.nav-row:hover:not(:disabled) is more specific) while the pointer rests
+   on the row mid-drag. */
+.nav-row.is-drop-target,
+.nav-row.is-drop-target:hover:not(:disabled) {
   background: color-mix(in srgb, var(--accent) 22%, #3a3d40);
   color: var(--text);
 }
@@ -2126,6 +2139,57 @@ input[type="range"] {
 }
 .asset-card.is-missing {
   opacity: 0.72;
+}
+
+/* REQ-DND-003: custom drag ghost for asset drags — small, translucent and
+   rounded instead of Chromium's full-size opaque card snapshot. The node is
+   parked offscreen (Chromium only rasterizes attached elements for
+   setDragImage) and removed on dragend, so it never intercepts input. */
+.asset-drag-preview {
+  position: fixed;
+  top: 0;
+  left: -10000px;
+  display: grid;
+  width: 96px;
+  height: 72px;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid #4d5351;
+  border-radius: 9px;
+  background: var(--raised-2);
+  box-shadow: 0 6px 18px rgb(0 0 0 / 45%);
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+.asset-drag-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.asset-drag-preview-name {
+  max-width: 100%;
+  padding: 0 8px;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.asset-drag-preview-count {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  min-width: 16px;
+  padding: 1px 4px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--text);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 9px;
+  text-align: center;
 }
 
 .asset-preview {

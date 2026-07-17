@@ -680,6 +680,83 @@ describe('search filters', () => {
     service.closeAll();
   });
 
+  // REQ-FILTER-012: a folder-scoped search with a real query string recurses
+  // into descendant folders (depth ≥2) when recursive is true, and stays
+  // limited to the folder itself when recursive is false.
+  it('matches grandchild folder assets in folder-scoped search only when recursive', () => {
+    const { service, libraryId, libraryPath } = createLibraryWithAssetAndTags();
+    const parent = service.listManagedFolders(libraryId)[0]!;
+    const child = service.createManagedFolder({
+      libraryId,
+      parentFolderId: parent.folderId,
+      name: 'Child',
+    });
+    const grandchild = service.createManagedFolder({
+      libraryId,
+      parentFolderId: child.folderId,
+      name: 'Grandchild',
+    });
+
+    // Raw-SQL asset fixture in the same style as the folder-scope browse test
+    // above; setAssetMetadata then syncs the asset into the FTS index.
+    const insertAssetIntoFolder = (
+      folder: { folderId: string; relativePath: string },
+      fileName: string,
+    ): string => {
+      const id = randomUUID();
+      const revisionId = randomUUID();
+      const relativePath = `${folder.relativePath}/${fileName}`;
+      const now = new Date().toISOString();
+      writeFileSync(path.join(libraryPath, 'Assets', relativePath), 'needle asset');
+      const db = new TestDatabase(path.join(libraryPath, '.serpent', 'library.db'));
+      try {
+        db.prepare(
+          `INSERT INTO assets (asset_id, location_kind, managed_folder_id, linked_folder_id,
+            relative_file_path, current_revision_id, availability, path_identity, created_at, updated_at)
+           VALUES (?, 'managed', ?, NULL, ?, NULL, 'available', ?, ?, ?)`,
+        ).run(id, folder.folderId, relativePath, relativePath, now, now);
+        db.prepare(
+          `INSERT INTO revisions (revision_id, asset_id, parent_revision_id, byte_size,
+            modified_at, original_filename, origin, accepted_at)
+           VALUES (?, ?, NULL, 12, ?, ?, 'import', ?)`,
+        ).run(revisionId, id, now, fileName, now);
+        db.prepare('UPDATE assets SET current_revision_id = ? WHERE asset_id = ?')
+          .run(revisionId, id);
+      } finally {
+        db.close();
+      }
+      service.setAssetMetadata({ libraryId, assetId: id, expectedVersion: 0 });
+      return id;
+    };
+
+    // Depth 1 (direct child) and depth 2 (grandchild) both carry the query term.
+    const childAssetId = insertAssetIntoFolder(child, 'needle-shallow.png');
+    const grandchildAssetId = insertAssetIntoFolder(grandchild, 'needle-deep.png');
+
+    const query = { clauses: [{ field: null, values: ['needle'], exclude: false }] };
+    const recursive = service.searchAssets({
+      libraryId,
+      query,
+      scope: { kind: 'folder', folderId: parent.folderId, recursive: true },
+    });
+    const direct = service.searchAssets({
+      libraryId,
+      query,
+      scope: { kind: 'folder', folderId: parent.folderId, recursive: false },
+    });
+
+    // Recursive search reaches the grandchild (depth 2), not just direct children.
+    expect(recursive.items.map((asset) => asset.assetId).sort()).toEqual(
+      [childAssetId, grandchildAssetId].sort(),
+    );
+    // Non-recursive search stays inside the parent folder: neither the child
+    // nor the grandchild asset matches.
+    expect(direct.items.some((asset) => asset.assetId === grandchildAssetId)).toBe(false);
+    expect(direct.items.some((asset) => asset.assetId === childAssetId)).toBe(false);
+    expect(direct.items).toHaveLength(0);
+    service.closeAll();
+  });
+
   it('intersects search results with the current collection scope', () => {
     const { service, libraryId, libraryPath, assetId } = createLibraryWithAssetAndTags();
     const otherAssetId = createSecondAsset(service, libraryId, libraryPath, 'Other Hero');

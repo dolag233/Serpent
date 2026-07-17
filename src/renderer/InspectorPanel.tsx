@@ -101,6 +101,8 @@ export interface InspectorPanelProps {
   onAssignTagToAsset?: (tagId: string) => void;
   onRemoveTagFromAsset?: (tagId: string) => void;
   onCreateAndAssignTag?: (tagName: string) => void;
+  // REQ-MENU-007: total selected assets; tag ops apply to all of them when >= 2.
+  selectionCount?: number;
 }
 
 function InspectorHero({
@@ -192,6 +194,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
     onAssignTagToAsset,
     onRemoveTagFromAsset,
     onCreateAndAssignTag,
+    selectionCount,
   } = props;
 
   // Selection identity and metadata may resolve in separate async turns. Never
@@ -438,6 +441,11 @@ export function InspectorPanel(props: InspectorPanelProps) {
                 </div>
               )}
             </div>
+            {selectionCount !== undefined && selectionCount >= 2 && (
+              <span className="tag-chip-placeholder">
+                标签操作将应用于 {selectionCount} 项资产
+              </span>
+            )}
           </section>
 
           {/* --- Asset metadata editor (compact) --- */}

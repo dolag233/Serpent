@@ -418,7 +418,11 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
       onDragEnter: (event: React.DragEvent<HTMLButtonElement>) => {
         if (supportsManagedAssetDrag(event.dataTransfer)) setAssetDropTarget(key);
       },
-      onDragLeave: () => {
+      onDragLeave: (event: React.DragEvent<HTMLButtonElement>) => {
+        // BUG-DND-001: moving onto a row child (icon/label/count) fires
+        // dragleave on the row; only a real exit clears the highlight.
+        if (event.currentTarget.contains(event.relatedTarget as Node | null))
+          return;
         setAssetDropTarget((current) => (current === key ? null : current));
       },
       onDragOver: (event: React.DragEvent<HTMLButtonElement>) => {
@@ -549,6 +553,18 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
               { x: event.clientX, y: event.clientY },
             );
           }}
+          dropActive={assetDropTarget === `linked:${entry.folderId}`}
+          onDragEnter={(event) => {
+            if (supportsManagedAssetDrag(event.dataTransfer))
+              setAssetDropTarget(`linked:${entry.folderId}`);
+          }}
+          onDragLeave={(event) => {
+            if (event.currentTarget.contains(event.relatedTarget as Node | null))
+              return;
+            setAssetDropTarget((current) =>
+              current === `linked:${entry.folderId}` ? null : current,
+            );
+          }}
           onDragOver={(event) => {
             if (
               event.dataTransfer.types.includes(
@@ -563,6 +579,7 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
             );
             if (!serialized) return;
             event.preventDefault();
+            setAssetDropTarget(null);
             try {
               const ids = JSON.parse(serialized) as string[];
               void onCopyManagedToLinked(lf, ids);
@@ -692,7 +709,9 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
             if (supportsManagedAssetDrag(event.dataTransfer))
               setAssetDropTarget("trash");
           }}
-          onDragLeave={() => {
+          onDragLeave={(event) => {
+            if (event.currentTarget.contains(event.relatedTarget as Node | null))
+              return;
             setAssetDropTarget((current) =>
               current === "trash" ? null : current,
             );

@@ -49,6 +49,7 @@ import {
   useContextMenu,
 } from "./context-menu";
 import { useAssetSelection } from "./useAssetSelection";
+import { resolveInspectorTagTarget } from "./inspector-tag-target";
 import { useBatchActions } from "./useBatchActions";
 import { useAssetRename } from "./useAssetRename";
 import { useInlineFolderEdit } from "./use-inline-folder-edit";
@@ -61,6 +62,12 @@ import {
   resolveTrashDrop,
   type DragAssetFact,
 } from "./asset-drag-drop";
+import {
+  ASSET_DRAG_PREVIEW_HEIGHT,
+  ASSET_DRAG_PREVIEW_WIDTH,
+  dismissAssetDragPreview,
+  showAssetDragPreview,
+} from "./asset-drag-preview";
 import { FilterTagPicker } from "./FilterTagPicker";
 import { FilterPresetChips } from "./FilterPresetChips";
 import { trashedFromLabel } from "./trashed-from-label";
@@ -647,6 +654,9 @@ function AppInner() {
     top: number;
   } | null>(null);
   const closingPreviewRef = useRef<string | null>(null);
+  // REQ-DND-003: the custom drag ghost node mounted by showAssetDragPreview,
+  // kept so onDragEnd can remove it from the document.
+  const dragPreviewRef = useRef<HTMLElement | null>(null);
   const [thumbnailFailures, setThumbnailFailures] = useState<
     Map<string, string>
   >(new Map());
@@ -896,7 +906,8 @@ function AppInner() {
             ? undefined
             : scope === "root"
               ? { kind: "folder", folderId: null, recursive: false }
-              : { kind: "folder", folderId: scope, recursive: false });
+              : // REQ-FOLDER-008: browsing a folder includes descendant folders.
+                { kind: "folder", folderId: scope, recursive: true });
       const libId = { libraryId: activeLibrary.libraryId };
       const [
         folderResult,
@@ -1002,7 +1013,8 @@ function AppInner() {
               searchScope = {
                 kind: "folder",
                 folderId: session.scope.id,
-                recursive: false,
+                // REQ-FOLDER-008: restored folder sessions stay recursive.
+                recursive: true,
               };
               restoredLocation = {
                 kind: "folder",
@@ -1610,6 +1622,26 @@ function AppInner() {
     }
   }
 
+  // REQ-MENU-007: multi-selection path — create the tag once, then assign it
+  // to the whole selection via the shared batch helper (which reports its own
+  // "已为 N 项资产添加标签。" notice or a batch error).
+  async function handleCreateAndAssignTagToSelection(
+    tagName: string,
+    assetIds: string[],
+  ) {
+    if (!api || !library || assetIds.length === 0 || !tagName.trim()) return;
+    try {
+      const createResult = await api.createTag({
+        libraryId: library.libraryId,
+        name: tagName.trim(),
+      });
+      if (!createResult.ok) throw new LibraryOperationError(createResult.error);
+      await batchAssignTagToSelection(createResult.value.tagId, assetIds);
+    } catch (caught) {
+      setError(toMessage(caught, "创建标签失败。"));
+    }
+  }
+
   async function refreshTagAndMetadataState(assetId: string) {
     if (!api || !library) return;
     const targetLibraryId = library.libraryId;
@@ -1624,6 +1656,52 @@ function AppInner() {
     if (selectedAssetIdRef.current === assetId) {
       setAssetMetadata(metadataResult.value);
     }
+  }
+
+  // REQ-MENU-007: Inspector tag operations apply to the whole multi-selection.
+  // The shared batch helpers only refresh the tag list, so after a batch op
+  // also refresh the primary asset's metadata to keep the Inspector's tag
+  // chips in sync (single-asset handlers already do this themselves).
+  async function refreshInspectorTagStateAfterBatch() {
+    if (!selectedAssetId) return;
+    try {
+      await refreshTagAndMetadataState(selectedAssetId);
+    } catch (caught) {
+      setError(toMessage(caught, "标签已更新，但刷新显示失败。"));
+    }
+  }
+
+  async function handleInspectorAssignTag(tagId: string) {
+    const target = resolveInspectorTagTarget(selectedAssetIds, selectedAssetId);
+    if (!target) return;
+    if (target.kind === "single") {
+      await assignAssetToTag(target.assetId, tagId);
+      return;
+    }
+    await batchAssignTagToSelection(tagId, target.assetIds);
+    await refreshInspectorTagStateAfterBatch();
+  }
+
+  async function handleInspectorRemoveTag(tagId: string) {
+    const target = resolveInspectorTagTarget(selectedAssetIds, selectedAssetId);
+    if (!target) return;
+    if (target.kind === "single") {
+      await handleRemoveTagFromAsset(tagId);
+      return;
+    }
+    await batchRemoveTagFromSelection(tagId, target.assetIds);
+    await refreshInspectorTagStateAfterBatch();
+  }
+
+  async function handleInspectorCreateAndAssignTag(tagName: string) {
+    const target = resolveInspectorTagTarget(selectedAssetIds, selectedAssetId);
+    if (!target) return;
+    if (target.kind === "single") {
+      await handleCreateAndAssignTag(tagName);
+      return;
+    }
+    await handleCreateAndAssignTagToSelection(tagName, target.assetIds);
+    await refreshInspectorTagStateAfterBatch();
   }
 
   // --- Collection CRUD ---
@@ -2104,7 +2182,8 @@ function AppInner() {
     if (assetScope === "root")
       return { kind: "folder", folderId: null, recursive: false };
     if (assetScope !== "all")
-      return { kind: "folder", folderId: assetScope, recursive: false };
+      // REQ-FILTER-012: search inside a folder recurses into descendants.
+      return { kind: "folder", folderId: assetScope, recursive: true };
     return undefined;
   }
 
@@ -5177,7 +5256,12 @@ function AppInner() {
                       onDoubleClick={() => {
                         openAssetPreview(asset);
                       }}
-                      onDragEnd={() => setDraggedMemberId(null)}
+                      onDragEnd={() => {
+                        setDraggedMemberId(null);
+                        // REQ-DND-003: unmount the custom drag ghost.
+                        dismissAssetDragPreview(dragPreviewRef.current);
+                        dragPreviewRef.current = null;
+                      }}
                       onDragOver={(event) => {
                         if (draggedMemberId) event.preventDefault();
                       }}
@@ -5196,6 +5280,26 @@ function AppInner() {
                           JSON.stringify(ids),
                         );
                         event.dataTransfer.effectAllowed = "move";
+                        // REQ-DND-003: replace Chromium's full-card ghost with
+                        // the small, translucent, rounded preview tile
+                        // (asset-drag-preview.ts); the same serpent:// URL as
+                        // the card's <img>, so it is already cached.
+                        const preview = showAssetDragPreview({
+                          thumbnailUrl:
+                            asset.thumbnailStatus === "ready" &&
+                            asset.thumbnailArtifactId &&
+                            library
+                              ? `serpent://preview/${library.libraryId}/${asset.thumbnailArtifactId}`
+                              : null,
+                          fileName: asset.displayName,
+                          count: ids.length,
+                        });
+                        dragPreviewRef.current = preview;
+                        event.dataTransfer.setDragImage(
+                          preview,
+                          ASSET_DRAG_PREVIEW_WIDTH / 2,
+                          ASSET_DRAG_PREVIEW_HEIGHT / 2,
+                        );
                       }}
                       onDrop={(event) => {
                         if (!draggedMemberId) return;
@@ -5510,10 +5614,11 @@ function AppInner() {
         handleSourceUrlSave={handleSourceUrlSave}
         library={library}
         loadMetadata={loadMetadata}
-        onCreateAndAssignTag={handleCreateAndAssignTag}
-        onAssignTagToAsset={(tagId) => { if (selectedAssetId) void assignAssetToTag(selectedAssetId, tagId); }}
-        onRemoveTagFromAsset={(tagId) => void handleRemoveTagFromAsset(tagId)}
+        onAssignTagToAsset={(tagId) => void handleInspectorAssignTag(tagId)}
+        onCreateAndAssignTag={(tagName) => void handleInspectorCreateAndAssignTag(tagName)}
+        onRemoveTagFromAsset={(tagId) => void handleInspectorRemoveTag(tagId)}
         selectedAsset={selectedAsset}
+        selectionCount={selectedAssetIds.length}
         setEditPalette={setEditPalette}
         versionConflict={versionConflict}
       />
