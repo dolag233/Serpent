@@ -68,6 +68,10 @@ export const zhCN = {
     language: "语言",
     languageZh: "简体中文",
     languageEn: "English",
+    theme: "主题",
+    themeDark: "暗色",
+    themeLight: "亮色",
+    themeSystem: "跟随系统",
     myLibrary: "我的资源库",
     recentLibraries: "最近使用"
   },

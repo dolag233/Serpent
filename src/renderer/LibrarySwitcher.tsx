@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { Icon } from "./Icons";
 import { useLocale, type AppLocale } from "./i18n";
+import { useTheme, type ThemePreference } from "./theme";
 
 export type RecentLibraryMenuEntry = {
   path: string;
@@ -47,6 +48,7 @@ export function LibrarySwitcher({
   onMenuOpen,
 }: LibrarySwitcherProps) {
   const { t, locale, setLocale } = useLocale();
+  const { preference: themePreference, setTheme } = useTheme();
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const menuId = useId();
@@ -73,6 +75,10 @@ export function LibrarySwitcher({
   function chooseLocale(next: AppLocale) {
     setLocale(next);
     setOpen(false);
+  }
+
+  function chooseTheme(next: ThemePreference) {
+    setTheme(next);
   }
 
   return (
@@ -164,6 +170,43 @@ export function LibrarySwitcher({
               type="button"
             >
               {t("shell.languageEn")}
+            </button>
+          </div>
+          <div aria-hidden="true" className="library-switcher-divider" />
+          <div
+            aria-label={t("shell.theme")}
+            className="library-switcher-section"
+            role="group"
+          >
+            <div className="library-switcher-section-label">
+              {t("shell.theme")}
+            </div>
+            <button
+              aria-checked={themePreference === "dark"}
+              className="library-switcher-item"
+              onClick={() => chooseTheme("dark")}
+              role="menuitemradio"
+              type="button"
+            >
+              {t("shell.themeDark")}
+            </button>
+            <button
+              aria-checked={themePreference === "light"}
+              className="library-switcher-item"
+              onClick={() => chooseTheme("light")}
+              role="menuitemradio"
+              type="button"
+            >
+              {t("shell.themeLight")}
+            </button>
+            <button
+              aria-checked={themePreference === "system"}
+              className="library-switcher-item"
+              onClick={() => chooseTheme("system")}
+              role="menuitemradio"
+              type="button"
+            >
+              {t("shell.themeSystem")}
             </button>
           </div>
           {recentLibraries.length > 0 && (

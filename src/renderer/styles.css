@@ -1,4 +1,5 @@
 :root {
+  color-scheme: dark;
   color: #f1f2ef;
   background: #252729;
   /* Latin-first stack: U+2026 (the text-overflow ellipsis glyph) must resolve
@@ -42,6 +43,42 @@
      existed (their borders silently rendered as none). */
   --border: var(--divider);
 }
+/* REQ-THEME-001/002: light semantic token overrides. Prefer changing tokens
+   here over duplicating light-only hardcoded colors in selectors. */
+[data-theme="light"] {
+  color-scheme: light;
+  color: #1c1e1c;
+  background: #e8eae7;
+  --canvas: #e8eae7;
+  --pane: #f3f4f2;
+  --raised: #ffffff;
+  --raised-2: #f7f8f6;
+  --divider: #c9cdc8;
+  --divider-soft: #d8dcd6;
+  --text: #1c1e1c;
+  --secondary: #5a5f5a;
+  --tertiary: #8a8f8a;
+  --accent: #3b82f6;
+  --accent-dark: #2563eb;
+  --warning: #b45309;
+  --hover: rgb(0 0 0 / 4.5%);
+  --active: rgb(0 0 0 / 8%);
+  --accent-soft: color-mix(in srgb, var(--accent) 12%, transparent);
+  --accent-ring: color-mix(in srgb, var(--accent) 38%, transparent);
+  --border: var(--divider);
+  scrollbar-color: rgb(0 0 0 / 22%) transparent;
+}
+
+[data-theme="light"] ::-webkit-scrollbar-thumb {
+  background: rgb(0 0 0 / 16%);
+  background-clip: padding-box;
+}
+
+[data-theme="light"] ::-webkit-scrollbar-thumb:hover {
+  background: rgb(0 0 0 / 28%);
+  background-clip: padding-box;
+}
+
 
 * {
   box-sizing: border-box;

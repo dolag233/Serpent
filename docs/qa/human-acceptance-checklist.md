@@ -207,6 +207,7 @@
 | SELECT-008 | 选中描边完整外扩可见，Shift 悬停无双圈 | 待人类验收 | 选中任意资产观察四边描边；保持选中后按住 Shift 并将指针移上已选资产 | 描边在预览图外侧完整环绕四边，比预览边框略粗；任何修饰键悬停都不再出现第二圈描边 | [Wave 1 开发日志](../development/0015-0019-ux-feedback-wave1-development-log.md) | 2026-07-17 Wave 1 T1 实现（外扩 2px 环 + :focus-visible 叠加根因修复）；Computer Use 未执行，移交人工 QA。 |
 | NAV-004 | 目录树高亮仅背景变化 | 待人类验收 | 在左侧目录树选择不同文件夹并悬停其他行 | 选中/悬停只有背景深浅变化，没有强调色竖条或描边 | [Wave 1 开发日志](../development/0015-0019-ux-feedback-wave1-development-log.md) | 2026-07-17 Wave 1 T1 实现；Computer Use 未执行，移交人工 QA。 |
 | THEME-001 | 默认蓝色强调色与中性小巧滑块 | 待人类验收 | 观察界面强调色（按钮、选中、焦点）；查看浏览工具栏卡片尺寸滑块 | 强调色为蓝色不再是绿色；滑块轨道更细、thumb 更小且为中性灰色 | [Wave 1 开发日志](../development/0015-0019-ux-feedback-wave1-development-log.md) | 2026-07-17 Wave 1 T1 实现（token #3b82f6 + color-mix 派生）；Computer Use 未执行，移交人工 QA。 |
+| THEME-002 | 亮/暗/跟随系统主题切换与持久化 | 待人类验收 | 资源库菜单 → 主题 → 亮色；观察壳层与画布；完全退出后重启；再试暗色与跟随系统 | 亮色下表面为浅色语义 token；重启后仍为所选偏好；跟随系统时随 OS 外观变化 | [主题单测](../../tests/unit/theme-preferences.test.ts) / [开发日志](../development/2026-07-18-theme-foundation-development-log.md) | 2026-07-18 ThemeProvider + light tokens；默认 dark（#11 未裁决）。部分硬编码暗色 hex 未迁完。Computer Use 未执行。 |
 | CANVAS-010 | 资产卡片预览图四角圆角 | 待人类验收 | 查看任意资产卡片预览图的上边与下边 | 预览图上下边均为圆角，下边缘不再是直角 | [Wave 1 开发日志](../development/0015-0019-ux-feedback-wave1-development-log.md) | 2026-07-17 Wave 1 T1 实现；Computer Use 未执行，移交人工 QA。 |
 | CANVAS-011 | AI 搜索按钮与加宽搜索框 | 待人类验收 | 查看浏览工具栏 AI 搜索按钮与关键词输入框；输入若干文字 | 按钮图标为星芒样式且文字不溢出按钮；搜索框明显加宽，窄窗时也不挤压其他控件 | [Wave 1 开发日志](../development/0015-0019-ux-feedback-wave1-development-log.md) | 2026-07-17 Wave 1 T1 实现；Computer Use 未执行，移交人工 QA。 |
 | SHELL-007 | 新建资源库直出表单与冗余文案清理 | 待人类验收 | 在未打开资源库的起始页与「创建资源库」界面观察 | 不再出现「01」步骤侧边栏与英文装饰行（如 LOCAL ASSET WORKSPACE / NEW LOCAL LIBRARY / MANAGED ASSETS）；中文界面只有功能性文字 | [Wave 1 开发日志](../development/0015-0019-ux-feedback-wave1-development-log.md) | 2026-07-17 Wave 1 T1/T4 实现；Computer Use 未执行，移交人工 QA。 |
@@ -234,7 +235,7 @@
 - 框选集合运算：Shift 并集、Command 切换与 Command+Shift 范围追加已有实现；差集/对称差不作为当前额外模式，Windows 真实 Ctrl 仍待平台验证。
 - 标签新体验：Inspector chip 已由用户验收，空输入按创建时间提供最近添加且仍在使用的标签；右键菜单批量可搜索选择器 2026-07-17 已实现（自动化全绿，Computer Use 证据未执行，TAG-004/TAG-005 待补证据后重新验收）；左侧标签枚举移除 2026-07-17 第二增量已实现（含 shell-navigation 负向断言），发现工具栏「标签过滤」输入框是进入标签范围的保留入口；标签重命名/删除暂无 UI 入口，待集中澄清队列 #8 裁决；仍未完成的是基于实际使用行为的最近时间和维度式标签过滤器。
 - Label 退役：ADR 0022 与预发布迁移策略已确认；数据库 v14、FTS、AI 和一等协议退役已有自动化与真实应用 QA；`META-001`、`SEARCH-002` 保持撤回，因为产品概念本身已删除。
-- 中英文：i18n 模块与 zh-CN/en 目录已落地（2026-07-18）；渲染层主要 UI（壳层/命令/对话框/侧栏/Inspector/App toast/查看页/批量与重命名）已迁入翻译键；I18N-001–003 待人类验收。默认语言策略仍待澄清队列 #11；English E2E / Computer Use 未执行。亮/暗/跟随系统主题尚未实现。
+- 中英文：i18n 模块与 zh-CN/en 目录已落地（2026-07-18）；渲染层主要 UI（壳层/命令/对话框/侧栏/Inspector/App toast/查看页/批量与重命名）已迁入翻译键；I18N-001–003 待人类验收。默认语言策略仍待澄清队列 #11；English E2E / Computer Use 未执行。亮/暗/跟随系统主题第一增量已落地（THEME-002 待人类验收）；部分硬编码暗色 hex 仍待迁入 token。
 - 应用壳与发现工具栏：纯色画布与冗余装饰清理已验收；资源库下拉、可点击面包屑、后退/前进、统一目录树已进入 0016-A 待验收；过滤条和导入迁出常驻工具栏仍待后续。
 - Computer Use：已对当前 0018–0019 集成候选执行真实应用检查；Inspector 等比轻圆角预览和标签选择器截图见 `evidence/0018-0019-ui-correctness/`。工具栏/导航未按 0016-A 收口仍是下一增量。
 - 单项读取失败不阻断整批链接恢复：缺少稳定的人类可制造场景与公共 UI 证据。
