@@ -19,8 +19,17 @@ import {
   assetCommandShortcut,
   isMacPlatform,
 } from "./asset-command-shortcuts";
+import { createCommandRegistry } from "./commands/command-registry";
+import {
+  assetCommandDefinitions,
+  type AssetCommandContext,
+} from "./commands/asset-commands";
 
 const isMac = isMacPlatform(navigator.userAgent);
+
+// 0015-B: 单资产右键菜单的静态项由统一命令注册表驱动（REQ-COMMAND-001）；
+// 注册表是纯数据，模块级构建一次即可。多资产菜单后续切片再接入。
+const assetCommandRegistry = createCommandRegistry(assetCommandDefinitions);
 
 /** Which tag action the in-menu picker is performing, and on which assets. */
 interface TagPickerState {
@@ -528,6 +537,65 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
               isDeleted,
             } = activeContextMenu.descriptor;
             const singleManaged = locationKind === "managed";
+            // 0015-B: 静态项的标题/快捷键/可见性/禁用原因由注册表 resolveMenu
+            // 求值；此处把 descriptor 与 props 组装成 AssetCommandContext。
+            // 动态行（外部目录、合集、标签）与汇总/提示块保持内联不变。
+            const commandContext: AssetCommandContext = {
+              surface: "asset-single",
+              platform: isMac ? "mac" : "windows",
+              selectedAssetIds: [assetId],
+              primaryAssetId: assetId,
+              assetScope: "single",
+              trashMode: isDeleted,
+              locationKind,
+              assetAvailable: isAvailable,
+              assetDeleted: isDeleted,
+              activeCollectionId,
+              aiCanAnalyze: canAnalyze,
+              assetDisplayName: displayName,
+              actions: {
+                openExternal: onOpenExternal,
+                revealInFolder: onRevealInFolder,
+                copyFilePath: onCopyFilePath,
+                rename: onRenameAssetFile,
+                aiAnalyze: onAnalyze,
+                moveToTrash: onTrash,
+                moveToFolder: onMoveToFolder,
+                relink: onRelink,
+                restore: onRestore,
+                deletePermanent: onPermanentDelete,
+                deleteLinked: onDeleteLinked,
+                removeFromCurrentCollection: onRemoveFromCurrentCollection,
+              },
+            };
+            const resolvedById = new Map(
+              assetCommandRegistry
+                .resolveMenu(commandContext)
+                .map((item) => [item.id, item]),
+            );
+            const runAssetCommand = (id: string) => {
+              const item = resolvedById.get(id);
+              if (!item || item.disabled) return;
+              void assetCommandRegistry.get(id)?.run(commandContext);
+            };
+            const restoreItem = resolvedById.get("asset.restore");
+            const deletePermanentItem = resolvedById.get(
+              "asset.delete-permanent",
+            );
+            const openExternalItem = resolvedById.get("asset.open-external");
+            const revealInFolderItem = resolvedById.get(
+              "asset.reveal-in-folder",
+            );
+            const removeFromCurrentCollectionItem = resolvedById.get(
+              "asset.remove-from-current-collection",
+            );
+            const relinkItem = resolvedById.get("asset.relink");
+            const moveToFolderItem = resolvedById.get("asset.move-to-folder");
+            const copyFilePathItem = resolvedById.get("asset.copy-file-path");
+            const renameItem = resolvedById.get("asset.rename");
+            const aiAnalyzeItem = resolvedById.get("asset.ai-analyze");
+            const moveToTrashItem = resolvedById.get("asset.move-to-trash");
+            const deleteLinkedItem = resolvedById.get("asset.delete-linked");
             return (
               <>
                 <div className="context-menu-selection-summary">
@@ -535,17 +603,23 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                 </div>
                 {isDeleted ? (
                   <ContextMenuSection label="回收站操作">
-                    <ContextMenuItem
-                      icon={<Icon name="upload" size={14} />}
-                      label="恢复"
-                      onAction={() => onRestore([assetId])}
-                    />
-                    <ContextMenuItem
-                      icon={<Icon name="trash" size={14} />}
-                      label="永久删除"
-                      danger
-                      onAction={() => onPermanentDelete([assetId])}
-                    />
+                    {restoreItem && (
+                      <ContextMenuItem
+                        icon={<Icon name="upload" size={14} />}
+                        label={restoreItem.label}
+                        onAction={() => runAssetCommand("asset.restore")}
+                      />
+                    )}
+                    {deletePermanentItem && (
+                      <ContextMenuItem
+                        icon={<Icon name="trash" size={14} />}
+                        label={deletePermanentItem.label}
+                        danger
+                        onAction={() =>
+                          runAssetCommand("asset.delete-permanent")
+                        }
+                      />
+                    )}
                   </ContextMenuSection>
                 ) : (
                   <>
@@ -555,70 +629,76 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                   </div>
                 )}
                 <ContextMenuSection label="打开">
-                  <ContextMenuItem
-                    icon={<Icon name="upload" size={14} />}
-                    label="使用外部应用打开"
-                    shortcut={assetCommandShortcut("open-external", isMac)}
-                    disabled={!isAvailable}
-                    disabledReason="资产当前不可用"
-                    onAction={() => {
-                      onOpenExternal(assetId);
-                    }}
-                  />
-                  <ContextMenuItem
-                    icon={<Icon name="folder" size={14} />}
-                    label={isMac ? "在 Finder 中显示" : "在文件资源管理器中显示"}
-                    disabled={!isAvailable}
-                    disabledReason="资产当前不可用"
-                    onAction={() => {
-                      onRevealInFolder(assetId);
-                    }}
-                  />
-                </ContextMenuSection>
-                <ContextMenuSection label="组织">
-                  {activeCollectionId && (
+                  {openExternalItem && (
                     <ContextMenuItem
-                      icon={<Icon name="close" size={14} />}
-                      label="从当前合集移除"
-                      onAction={() => {
-                        onRemoveFromCurrentCollection(assetId);
-                      }}
+                      icon={<Icon name="upload" size={14} />}
+                      label={openExternalItem.label}
+                      shortcut={openExternalItem.shortcutLabel ?? undefined}
+                      disabled={openExternalItem.disabled}
+                      disabledReason={
+                        openExternalItem.disabledReason ?? undefined
+                      }
+                      onAction={() => runAssetCommand("asset.open-external")}
                     />
                   )}
-                  {singleManaged && !isAvailable && (
-                    <ContextMenuItem
-                      icon={<Icon name="search" size={14} />}
-                      label="找回资产…"
-                      onAction={() => onRelink(assetId)}
-                    />
-                  )}
-                  {singleManaged && isAvailable && (
+                  {revealInFolderItem && (
                     <ContextMenuItem
                       icon={<Icon name="folder" size={14} />}
-                      label="移动到文件夹…"
+                      label={revealInFolderItem.label}
+                      disabled={revealInFolderItem.disabled}
+                      disabledReason={
+                        revealInFolderItem.disabledReason ?? undefined
+                      }
                       onAction={() =>
-                        onMoveToFolder([assetId])
+                        runAssetCommand("asset.reveal-in-folder")
                       }
                     />
                   )}
-                  <ContextMenuItem
-                    icon={<Icon name="file" size={14} />}
-                    label="复制文件路径"
-                    disabled={!isAvailable}
-                    disabledReason="资产当前不可用"
-                    onAction={() => {
-                      onCopyFilePath(assetId);
-                    }}
-                  />
-                  <ContextMenuItem
-                    icon={<Icon name="edit" size={14} />}
-                    label="重命名…"
-                    disabled={!isAvailable}
-                    disabledReason="资产当前不可用"
-                    onAction={() => {
-                      onRenameAssetFile(assetId);
-                    }}
-                  />
+                </ContextMenuSection>
+                <ContextMenuSection label="组织">
+                  {removeFromCurrentCollectionItem && (
+                    <ContextMenuItem
+                      icon={<Icon name="close" size={14} />}
+                      label={removeFromCurrentCollectionItem.label}
+                      onAction={() =>
+                        runAssetCommand("asset.remove-from-current-collection")
+                      }
+                    />
+                  )}
+                  {relinkItem && (
+                    <ContextMenuItem
+                      icon={<Icon name="search" size={14} />}
+                      label={relinkItem.label}
+                      onAction={() => runAssetCommand("asset.relink")}
+                    />
+                  )}
+                  {moveToFolderItem && (
+                    <ContextMenuItem
+                      icon={<Icon name="folder" size={14} />}
+                      label={moveToFolderItem.label}
+                      onAction={() => runAssetCommand("asset.move-to-folder")}
+                    />
+                  )}
+                  {copyFilePathItem && (
+                    <ContextMenuItem
+                      icon={<Icon name="file" size={14} />}
+                      label={copyFilePathItem.label}
+                      disabled={copyFilePathItem.disabled}
+                      disabledReason={
+                        copyFilePathItem.disabledReason ?? undefined
+                      }
+                      onAction={() => runAssetCommand("asset.copy-file-path")}
+                    />
+                  )}
+                  {renameItem && (
+                    <ContextMenuItem
+                      icon={<Icon name="edit" size={14} />}
+                      label={renameItem.label}
+                      disabled={renameItem.disabled}
+                      disabledReason={renameItem.disabledReason ?? undefined}
+                      onAction={() => runAssetCommand("asset.rename")}
+                    />
+                  )}
                   {linkedFolders
                     .filter((f) => f.status === "available")
                     .map((folder) => (
@@ -668,36 +748,36 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                   ))}
                 </ContextMenuSection>
                 <ContextMenuSection label="元数据">
-                  <ContextMenuItem
-                    icon={<Icon name="smart" size={14} />}
-                    label="AI 分析"
-                    disabled={!canAnalyze || !isAvailable}
-                    disabledReason={
-                      !isAvailable ? "资产当前不可用" : "尚未配置 AI API Key"
-                    }
-                    onAction={() => onAnalyze(assetId)}
-                  />
-                </ContextMenuSection>
-                <ContextMenuSection label="删除">
-                  {singleManaged && (
+                  {aiAnalyzeItem && (
                     <ContextMenuItem
-                      icon={<Icon name="trash" size={14} />}
-                      label="移入回收站"
-                      shortcut={assetCommandShortcut("move-to-trash", isMac)}
-                      danger
-                      disabled={!isAvailable}
-                      disabledReason="托管资产当前不可用，无法移入回收站"
-                      onAction={() => onTrash([assetId])}
+                      icon={<Icon name="smart" size={14} />}
+                      label={aiAnalyzeItem.label}
+                      disabled={aiAnalyzeItem.disabled}
+                      disabledReason={aiAnalyzeItem.disabledReason ?? undefined}
+                      onAction={() => runAssetCommand("asset.ai-analyze")}
                     />
                   )}
-                  {locationKind === "linked" && (
+                </ContextMenuSection>
+                <ContextMenuSection label="删除">
+                  {moveToTrashItem && (
+                    <ContextMenuItem
+                      icon={<Icon name="trash" size={14} />}
+                      label={moveToTrashItem.label}
+                      shortcut={moveToTrashItem.shortcutLabel ?? undefined}
+                      danger
+                      disabled={moveToTrashItem.disabled}
+                      disabledReason={
+                        moveToTrashItem.disabledReason ?? undefined
+                      }
+                      onAction={() => runAssetCommand("asset.move-to-trash")}
+                    />
+                  )}
+                  {deleteLinkedItem && (
                     <ContextMenuItem
                       icon={<Icon name="link" size={14} />}
-                      label="删除链接资产…"
+                      label={deleteLinkedItem.label}
                       danger
-                      onAction={() =>
-                        onDeleteLinked(assetId, displayName, isAvailable)
-                      }
+                      onAction={() => runAssetCommand("asset.delete-linked")}
                     />
                   )}
                 </ContextMenuSection>

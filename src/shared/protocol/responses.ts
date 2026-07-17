@@ -242,6 +242,17 @@ const mediaJobCountsShape = {
   cancelled: z.number().int().nonnegative(),
 };
 
+export const tagOperationSkipReasonSchema = z.enum(['asset_not_found']);
+
+export type TagOperationSkipReason = z.infer<typeof tagOperationSkipReasonSchema>;
+
+export const tagOperationSkipSchema = z.strictObject({
+  assetId: nonBlankString,
+  reason: tagOperationSkipReasonSchema,
+});
+
+export type TagOperationSkip = z.infer<typeof tagOperationSkipSchema>;
+
 const assetOperationSuccessSchemas = [
   z.strictObject({
     ok: z.literal(true),
@@ -381,11 +392,13 @@ const assetOperationSuccessSchemas = [
     ok: z.literal(true),
     type: z.literal('tag.assigned'),
     assignedCount: z.number().int().nonnegative(),
+    skipped: z.array(tagOperationSkipSchema),
   }),
   z.strictObject({
     ok: z.literal(true),
     type: z.literal('tag.removed'),
     removedCount: z.number().int().nonnegative(),
+    skipped: z.array(tagOperationSkipSchema),
   }),
   z.strictObject({
     ok: z.literal(true),

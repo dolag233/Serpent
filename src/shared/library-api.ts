@@ -22,6 +22,7 @@ import type {
   ImportProgressEvent,
   MediaJob,
   AiJob,
+  TagOperationSkip,
 } from './protocol/responses';
 import type {
   NameConflictDecision,
@@ -188,8 +189,8 @@ export interface SerpentLibraryApi {
   createTag(input: { libraryId: string; name: string }): Promise<LibraryApiResult<TagSummary>>;
   renameTag(input: { libraryId: string; tagId: string; name: string }): Promise<LibraryApiResult<TagSummary>>;
   deleteTag(input: { libraryId: string; tagId: string }): Promise<LibraryApiResult<{ tagId: string }>>;
-  assignTags(input: { libraryId: string; assetIds: string[]; tagIds: string[] }): Promise<LibraryApiResult<{ assignedCount: number }>>;
-  removeTags(input: { libraryId: string; assetIds: string[]; tagIds: string[] }): Promise<LibraryApiResult<{ removedCount: number }>>;
+  assignTags(input: { libraryId: string; assetIds: string[]; tagIds: string[] }): Promise<LibraryApiResult<{ assignedCount: number; skipped: TagOperationSkip[] }>>;
+  removeTags(input: { libraryId: string; assetIds: string[]; tagIds: string[] }): Promise<LibraryApiResult<{ removedCount: number; skipped: TagOperationSkip[] }>>;
   // Collections
   listCollections(input: { libraryId: string }): Promise<LibraryApiResult<CollectionSummary[]>>;
   createCollection(input: { libraryId: string; parentId?: string; name: string }): Promise<LibraryApiResult<CollectionSummary>>;

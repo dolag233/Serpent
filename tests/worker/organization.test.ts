@@ -292,6 +292,7 @@ describe('tag assignment', () => {
       tagIds: [alpha.tagId, beta.tagId],
     });
     expect(result.assignedCount).toBe(2);
+    expect(result.skipped).toEqual([]);
 
     // Verify assetCount on listed tags.
     const list = service.listTags(libraryId);
@@ -319,13 +320,40 @@ describe('tag assignment', () => {
     service.closeAll();
   });
 
-  it('rejects assignment with nonexistent asset', () => {
+  it('skips nonexistent assets during assignment and reports them', () => {
+    const { service, libraryId, assetId } = createLibraryWithAsset();
+    const tag = service.createTag({ libraryId, name: 'Ghost' });
+
+    const result = service.assignTags({
+      libraryId,
+      assetIds: [assetId, 'nonexistent'],
+      tagIds: [tag.tagId],
+    });
+    expect(result.assignedCount).toBe(1);
+    expect(result.skipped).toEqual([{ assetId: 'nonexistent', reason: 'asset_not_found' }]);
+
+    // The valid asset still received the tag.
+    const list = service.listTags(libraryId);
+    expect(list.find((t) => t.tagId === tag.tagId)?.assetCount).toBe(1);
+
+    service.closeAll();
+  });
+
+  it('reports every requested asset as skipped when none exist', () => {
     const { service, libraryId } = createLibraryWithAsset();
     const tag = service.createTag({ libraryId, name: 'Ghost' });
-    expectServiceCode(
-      () => service.assignTags({ libraryId, assetIds: ['nonexistent'], tagIds: [tag.tagId] }),
-      'FOLDER_NOT_FOUND',
-    );
+
+    const result = service.assignTags({
+      libraryId,
+      assetIds: ['nonexistent'],
+      tagIds: [tag.tagId],
+    });
+    expect(result.assignedCount).toBe(0);
+    expect(result.skipped).toEqual([{ assetId: 'nonexistent', reason: 'asset_not_found' }]);
+
+    // Nothing was assigned anywhere.
+    expect(service.listTags(libraryId).find((t) => t.tagId === tag.tagId)?.assetCount).toBe(0);
+
     service.closeAll();
   });
 
@@ -350,6 +378,7 @@ describe('tag assignment', () => {
       tagIds: [alpha.tagId],
     });
     expect(result.removedCount).toBe(1);
+    expect(result.skipped).toEqual([]);
 
     const list = service.listTags(libraryId);
     expect(list.find((t) => t.tagId === alpha.tagId)?.assetCount).toBe(0);
@@ -368,6 +397,31 @@ describe('tag assignment', () => {
 
     const second = service.removeTags({ libraryId, assetIds: [assetId], tagIds: [tag.tagId] });
     expect(second.removedCount).toBe(0);
+
+    service.closeAll();
+  });
+
+  it('skips nonexistent assets during removal and reports them', () => {
+    const { service, libraryId, assetId } = createLibraryWithAsset();
+    const tag = service.createTag({ libraryId, name: 'RemoveMe' });
+    service.assignTags({ libraryId, assetIds: [assetId], tagIds: [tag.tagId] });
+
+    const result = service.removeTags({
+      libraryId,
+      assetIds: [assetId, 'nonexistent'],
+      tagIds: [tag.tagId],
+    });
+    expect(result.removedCount).toBe(1);
+    expect(result.skipped).toEqual([{ assetId: 'nonexistent', reason: 'asset_not_found' }]);
+
+    // A removal targeting only unknown assets is a no-op, not an error.
+    const noop = service.removeTags({
+      libraryId,
+      assetIds: ['nonexistent'],
+      tagIds: [tag.tagId],
+    });
+    expect(noop.removedCount).toBe(0);
+    expect(noop.skipped).toEqual([{ assetId: 'nonexistent', reason: 'asset_not_found' }]);
 
     service.closeAll();
   });

@@ -44,6 +44,7 @@ import {
 } from './palette-extractor';
 
 import { smartCollectionQueryDefinitionSchema, type AssetMetadataResult, type AssetSummary, type CollectionSummary, type FilterClause, type LinkedFolderRule, type LinkedFolderSummary, type ManagedFolderSummary, type SearchScope, type SmartCollectionQueryDefinition, type TagSummary } from '../shared/asset-types';
+import type { TagOperationSkip } from '../shared/protocol/responses';
 
 // sharp is an optional N-API dependency (no rebuild needed for Electron).
 // The Worker loads it lazily so it can still start if sharp is missing.
@@ -4619,15 +4620,13 @@ export class LibraryService {
     libraryId: string;
     assetIds: string[];
     tagIds: string[];
-  }): { assignedCount: number } {
+  }): { assignedCount: number; skipped: TagOperationSkip[] } {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
 
-    const assetRows = openLibrary.connection
-      .prepare(
-        `SELECT asset_id FROM assets WHERE asset_id IN (${input.assetIds.map(() => '?').join(',')})`,
-      )
-      .all(...input.assetIds) as Array<{ asset_id: string }>;
-    if (assetRows.length !== input.assetIds.length) throw new LibraryServiceError('FOLDER_NOT_FOUND');
+    const { eligibleAssetIds, skipped } = this.partitionKnownAssetIds(
+      openLibrary.connection,
+      input.assetIds,
+    );
 
     const tagRows = openLibrary.connection
       .prepare(
@@ -4641,36 +4640,71 @@ export class LibraryService {
       'INSERT OR IGNORE INTO human_asset_tags (asset_id, tag_id) VALUES (?, ?)',
     );
     openLibrary.connection.transaction(() => {
-      for (const assetId of input.assetIds) {
+      for (const assetId of eligibleAssetIds) {
         for (const tagId of input.tagIds) {
           const result = insertStmt.run(assetId, tagId);
           assignedCount += result.changes;
         }
       }
     })();
-    for (const assetId of input.assetIds) {
+    for (const assetId of eligibleAssetIds) {
       this.syncAssetSearchContent(openLibrary.connection, assetId);
     }
-    return { assignedCount };
+    return { assignedCount, skipped };
   }
 
   removeTags(input: {
     libraryId: string;
     assetIds: string[];
     tagIds: string[];
-  }): { removedCount: number } {
+  }): { removedCount: number; skipped: TagOperationSkip[] } {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
+
+    const { eligibleAssetIds, skipped } = this.partitionKnownAssetIds(
+      openLibrary.connection,
+      input.assetIds,
+    );
+    if (eligibleAssetIds.length === 0) return { removedCount: 0, skipped };
+
     const result = openLibrary.connection
       .prepare(
         `DELETE FROM human_asset_tags
-           WHERE asset_id IN (${input.assetIds.map(() => '?').join(',')})
+           WHERE asset_id IN (${eligibleAssetIds.map(() => '?').join(',')})
              AND tag_id IN (${input.tagIds.map(() => '?').join(',')})`,
       )
-      .run(...input.assetIds, ...input.tagIds);
-    for (const assetId of input.assetIds) {
+      .run(...eligibleAssetIds, ...input.tagIds);
+    for (const assetId of eligibleAssetIds) {
       if (result.changes > 0) this.syncAssetSearchContent(openLibrary.connection, assetId);
     }
-    return { removedCount: result.changes };
+    return { removedCount: result.changes, skipped };
+  }
+
+  /**
+   * Splits the requested asset ids into the ones that exist in this library
+   * and per-id skip entries for the rest, so batch tag operations can apply
+   * to the eligible subset instead of failing wholesale (REQ-MENU-007).
+   */
+  private partitionKnownAssetIds(
+    connection: DatabaseConnection,
+    assetIds: string[],
+  ): { eligibleAssetIds: string[]; skipped: TagOperationSkip[] } {
+    const requestedAssetIds = [...new Set(assetIds)];
+    const assetRows = connection
+      .prepare(
+        `SELECT asset_id FROM assets WHERE asset_id IN (${requestedAssetIds.map(() => '?').join(',')})`,
+      )
+      .all(...requestedAssetIds) as Array<{ asset_id: string }>;
+    const knownAssetIds = new Set(assetRows.map((row) => row.asset_id));
+    const eligibleAssetIds: string[] = [];
+    const skipped: TagOperationSkip[] = [];
+    for (const assetId of requestedAssetIds) {
+      if (knownAssetIds.has(assetId)) {
+        eligibleAssetIds.push(assetId);
+      } else {
+        skipped.push({ assetId, reason: 'asset_not_found' });
+      }
+    }
+    return { eligibleAssetIds, skipped };
   }
 
   // ── Collections ────────────────────────────────────────────────────

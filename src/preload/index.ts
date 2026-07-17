@@ -37,6 +37,7 @@ import {
   parseExportProgressEvent,
   type ImportProgressEvent,
   parseImportProgressEvent,
+  type TagOperationSkip,
 } from '../shared/protocol/responses';
 import type {
   NameConflictDecision,
@@ -352,18 +353,18 @@ const library: SerpentLibraryApi = Object.freeze({
     return { ok: true, value: { tagId: result.tagId } };
   },
 
-  async assignTags({ libraryId, assetIds, tagIds }: { libraryId: string; assetIds: string[]; tagIds: string[] }): Promise<LibraryApiResult<{ assignedCount: number }>> {
+  async assignTags({ libraryId, assetIds, tagIds }: { libraryId: string; assetIds: string[]; tagIds: string[] }): Promise<LibraryApiResult<{ assignedCount: number; skipped: TagOperationSkip[] }>> {
     const result = await request({ type: 'tag.assign.request', libraryId, assetIds, tagIds });
     if (!result.ok) return failure(result);
     if (result.type !== 'tag.assigned') throw new Error('Unexpected assign-tags response.');
-    return { ok: true, value: { assignedCount: result.assignedCount } };
+    return { ok: true, value: { assignedCount: result.assignedCount, skipped: result.skipped } };
   },
 
-  async removeTags({ libraryId, assetIds, tagIds }: { libraryId: string; assetIds: string[]; tagIds: string[] }): Promise<LibraryApiResult<{ removedCount: number }>> {
+  async removeTags({ libraryId, assetIds, tagIds }: { libraryId: string; assetIds: string[]; tagIds: string[] }): Promise<LibraryApiResult<{ removedCount: number; skipped: TagOperationSkip[] }>> {
     const result = await request({ type: 'tag.remove.request', libraryId, assetIds, tagIds });
     if (!result.ok) return failure(result);
     if (result.type !== 'tag.removed') throw new Error('Unexpected remove-tags response.');
-    return { ok: true, value: { removedCount: result.removedCount } };
+    return { ok: true, value: { removedCount: result.removedCount, skipped: result.skipped } };
   },
 
   async listCollections({ libraryId }: { libraryId: string }): Promise<LibraryApiResult<CollectionSummary[]>> {

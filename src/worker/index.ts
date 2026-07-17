@@ -373,12 +373,12 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
         tagId: libraryService.deleteTag(request.command),
       };
     case 'tag.assign': {
-      const { assignedCount } = libraryService.assignTags(request.command);
-      return { ok: true, type: 'tag.assigned', assignedCount };
+      const { assignedCount, skipped } = libraryService.assignTags(request.command);
+      return { ok: true, type: 'tag.assigned', assignedCount, skipped };
     }
     case 'tag.remove': {
-      const { removedCount } = libraryService.removeTags(request.command);
-      return { ok: true, type: 'tag.removed', removedCount };
+      const { removedCount, skipped } = libraryService.removeTags(request.command);
+      return { ok: true, type: 'tag.removed', removedCount, skipped };
     }
     case 'collection.list':
       return {

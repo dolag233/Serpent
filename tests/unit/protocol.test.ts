@@ -1031,6 +1031,54 @@ describe('linked asset delete response protocol', () => {
   });
 });
 
+describe('tag batch operation response protocol', () => {
+  it('carries per-asset skips with stable reason codes only', () => {
+    expect(parseRendererResult({
+      ok: true,
+      type: 'tag.assigned',
+      assignedCount: 1,
+      skipped: [{ assetId: 'asset-02', reason: 'asset_not_found' }],
+    })).toEqual({
+      ok: true,
+      type: 'tag.assigned',
+      assignedCount: 1,
+      skipped: [{ assetId: 'asset-02', reason: 'asset_not_found' }],
+    });
+
+    expect(parseRendererResult({
+      ok: true,
+      type: 'tag.removed',
+      removedCount: 2,
+      skipped: [],
+    })).toEqual({
+      ok: true,
+      type: 'tag.removed',
+      removedCount: 2,
+      skipped: [],
+    });
+
+    // Extra fields (e.g. leaked paths) are rejected by the strict schema.
+    expect(() => parseRendererResult({
+      ok: true,
+      type: 'tag.assigned',
+      assignedCount: 1,
+      skipped: [{
+        assetId: 'asset-02',
+        reason: 'asset_not_found',
+        sourcePath: '/private/library/asset.png',
+      }],
+    })).toThrow();
+
+    // Reason codes are a closed enum, not free-form strings.
+    expect(() => parseRendererResult({
+      ok: true,
+      type: 'tag.assigned',
+      assignedCount: 1,
+      skipped: [{ assetId: 'asset-02', reason: 'asset_deleted' }],
+    })).toThrow();
+  });
+});
+
 describe('worker request protocol', () => {
   it('accepts a path-free remote media command and rejects non-HTTP addresses', () => {
     expect(parseWorkerRequest({

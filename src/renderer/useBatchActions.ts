@@ -2,6 +2,7 @@ import type { CollectionSummary, LinkedFolderSummary, TagSummary } from "../shar
 import type { SerpentLibraryApi } from "../shared/library-api";
 import type { RendererLibrarySummary } from "../shared/protocol/responses";
 import { LibraryOperationError, toMessage } from "./error-utils";
+import { formatBatchTagNotice } from "./batch-tag-notice";
 
 export interface UseBatchActionsParams {
   api: SerpentLibraryApi | null;
@@ -55,7 +56,13 @@ export function useBatchActions({
       if (!result.ok) throw new LibraryOperationError(result.error);
       const tagResult = await api.listTags({ libraryId: library.libraryId });
       if (tagResult.ok) setTags(tagResult.value);
-      setNotice(`已为 ${assetIds.length} 项资产添加标签。`);
+      setNotice(
+        formatBatchTagNotice(
+          "assign",
+          assetIds.length - result.value.skipped.length,
+          result.value.skipped,
+        ),
+      );
     } catch (caught) {
       setError(toMessage(caught, "批量添加标签失败。"));
     } finally {
@@ -78,7 +85,13 @@ export function useBatchActions({
       if (activeTagId === tagId) {
         await chooseTag(tagId);
       }
-      setNotice(`已为 ${assetIds.length} 项资产移除标签。`);
+      setNotice(
+        formatBatchTagNotice(
+          "remove",
+          assetIds.length - result.value.skipped.length,
+          result.value.skipped,
+        ),
+      );
     } catch (caught) {
       setError(toMessage(caught, "批量移除标签失败。"));
     } finally {
