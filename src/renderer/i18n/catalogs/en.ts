@@ -157,7 +157,7 @@ export const en = {
     dropToImport: "Drop to import",
     dropHintWithCollection: "Import local files or download web media into the current collection",
     dropHint: "Import local files or download web images/videos",
-    emptyExpiredTrash: "Clean expired items",
+    emptyExpiredTrash: "Clean up expired items",
     clearSelection: "Clear selection"
   },
   filter: {
@@ -408,8 +408,7 @@ export const en = {
     permanentDelete: {
       title: "Confirm permanent delete",
       body: "Permanently delete the selected {count} assets? They will be removed from Trash and cannot be undone.",
-      submit: "Delete {count} permanently",
-      emptyTrash: "Empty expired items"
+      submit: "Delete {count} permanently"
     },
     deleteLinked: {
       title: "Delete linked asset",
@@ -442,13 +441,11 @@ export const en = {
       title: "Convert \"{name}\"",
       cancelAria: "Cancel conversion",
       help: "Copy filtered contents and keep asset info; the external source folder is not deleted or moved.",
-      target: "Destination folder",
       submit: "Confirm copy and convert"
     },
     collectionEditor: {
       title: "Edit collection details",
       noCover: "No cover",
-      name: "Name",
       description: "Description",
       cover: "Cover asset",
       save: "Save details",
@@ -891,6 +888,3 @@ export const en = {
   }
 } as CatalogMessages<typeof zhCN>;
 
-// Compile-time key-tree alignment (unused at runtime).
-const _enKeysCheck: CatalogMessages<typeof zhCN> = en;
-void _enKeysCheck;

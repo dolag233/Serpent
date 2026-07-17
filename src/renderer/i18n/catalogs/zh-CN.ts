@@ -148,7 +148,7 @@ export const zhCN = {
     dropToImport: "松开以导入",
     dropHintWithCollection: "导入本地文件或下载网页媒体，并加入当前合集",
     dropHint: "导入本地文件或下载网页图片/视频",
-    emptyExpiredTrash: "清理到期项",
+    emptyExpiredTrash: "清理到期项目",
     clearSelection: "清除选择"
   },
   filter: {
@@ -399,8 +399,7 @@ export const zhCN = {
     permanentDelete: {
       title: "永久删除确认",
       body: "确定要永久删除所选 {count} 项资产吗？文件将从回收站彻底移除，此操作不可撤销。",
-      submit: "永久删除 {count} 项",
-      emptyTrash: "清空到期项"
+      submit: "永久删除 {count} 项"
     },
     deleteLinked: {
       title: "删除链接资产",
@@ -433,13 +432,11 @@ export const zhCN = {
       title: "转换\"{name}\"",
       cancelAria: "取消转换",
       help: "复制过滤后的内容并保留资产信息；外部源目录不会删除或移动。",
-      target: "目标文件夹",
       submit: "确认复制并转换"
     },
     collectionEditor: {
       title: "编辑合集详情",
       noCover: "无封面",
-      name: "名称",
       description: "描述",
       cover: "封面资产",
       save: "保存详情",
