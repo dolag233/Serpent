@@ -3,7 +3,7 @@
 > 工单：`Serpent-bzk`（REQ-THEME-001/002）
 > 分支：`codex/slice-002-asset-ingestion`
 > 日期：2026-07-18
-> 状态：基础设施已落地；默认偏好 interim=`dark`（澄清队列 #11 未裁决）；部分选择器仍有硬编码暗色 hex，亮色下可能局部不一致。
+> 状态：基础设施 + styles.css 语义 token 化已落地；默认偏好 interim=`dark`（澄清队列 #11 未裁决）；Computer Use 未执行。
 
 ## 范围
 
@@ -29,3 +29,11 @@
 | ID | 步骤 | 预期 |
 | --- | --- | --- |
 | THEME-002 | 资源库菜单 → 主题 → 亮色；再切暗色；再切跟随系统 | 壳层/画布/菜单随 token 切换；重启后偏好保持 |
+
+## 第二增量（2026-07-18 loop tick 4）
+
+- `styles.css` 选择器内硬编码 hex 全部迁入语义 token（`--canvas`/`--pane`/`--text`/`--danger`/`--success`/`--warning-fg`/`--ink` 等）；亮色块同步覆盖新增 status token。
+- 少量 TSX 内联色（离线图标、对话框次要文案）改为 `var(--danger)` / `var(--secondary)`。
+- 回归单测：`theme-css-tokens` 断言 token 块外无 raw hex。
+- 验证：`npm run test:unit` → **55 files / 622 tests passed**。
+- 未做：Computer Use 亮/暗截图；澄清队列 #11 默认主题策略。

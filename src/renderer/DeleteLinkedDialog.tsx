@@ -51,7 +51,7 @@ export function DeleteLinkedDialog({
             alignItems: "flex-start",
             gap: 8,
             marginTop: 12,
-            color: "#c7cac7",
+            color: "var(--secondary)",
             fontSize: 12,
             cursor: canDeleteSourceFile
               ? "pointer"

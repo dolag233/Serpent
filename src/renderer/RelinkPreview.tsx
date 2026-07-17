@@ -81,7 +81,7 @@ export function RelinkPreview({
             alignItems: "center",
             gap: 8,
             marginTop: 14,
-            color: "#c7cac7",
+            color: "var(--secondary)",
             fontSize: 12,
             cursor: "pointer",
           }}

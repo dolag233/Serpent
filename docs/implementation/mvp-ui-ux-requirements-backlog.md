@@ -124,7 +124,7 @@
 | REQ-I18N-001 | 首发 UI 至少支持简体中文和英文，界面文字、菜单、对话框及安全错误原因使用统一翻译键。 | 是 | 部分实现（2026-07-18：渲染层主要 UI 已迁入 catalogs；默认 zh-CN 待澄清 #11；English E2E/CU 未执行） |
 | REQ-I18N-002 | 持久日志保留稳定错误码和诊断，不依赖本地化文字做机器判断。 | 是 | 工程约束 |
 | REQ-THEME-001 | 首发支持亮色、暗色和跟随系统，偏好跨完整重启保存。 | 是 | 部分实现（2026-07-18：ThemeProvider + light/dark/system + localStorage；默认 dark 待 #11；见开发日志） |
-| REQ-THEME-002 | 所有核心界面改用语义设计 token，禁止为亮色主题复制一套散落的硬编码颜色。 | 是 | 部分实现（light 仅覆盖语义 token；styles.css 仍有硬编码暗色 hex 待迁） |
+| REQ-THEME-002 | 所有核心界面改用语义设计 token，禁止为亮色主题复制一套散落的硬编码颜色。 | 是 | 部分实现（2026-07-18：styles.css 选择器 hex 已迁入语义 token + light 覆盖；色板内容色与 Computer Use 仍待） |
 | REQ-THEME-003 | 自定义主题推迟到 MVP 后；MVP token 设计需允许后续扩展。 | 否 | 已排期 MVP 后 |
 | REQ-THEME-004 | 默认强调色由绿色改为蓝色（token 一处修改全局生效）；强调色不再用于卡片尺寸滑块等连续控件。 | 是 | 已实现（Wave 1 T1，#3b82f6 + color-mix 派生）；待人类验收（THEME-001） |
 

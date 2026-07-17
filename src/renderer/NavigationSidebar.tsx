@@ -526,7 +526,7 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
           }
           depth={entry.depth}
           icon={offline ? "link-off" : "link"}
-          iconColor={offline ? "#d96a6a" : "var(--accent)"}
+          iconColor={offline ? "var(--danger)" : "var(--accent)"}
           key={entry.folderId}
           label={entry.name}
           count={entry.assetCount}
