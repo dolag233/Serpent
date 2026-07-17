@@ -192,6 +192,11 @@ input:focus-visible {
   gap: 10px;
   padding: 12px;
   border: 1px solid var(--border);
+  /* Keep tall filter sets inside the window: the panel scrolls internally
+     instead of clipping the sort row at the viewport bottom (Wave-3 audit
+     finding F4, evidenced in 09-filter-panel.png). */
+  max-height: calc(100vh - 140px);
+  overflow-y: auto;
   border-radius: 6px;
   background: var(--raised-2);
   box-shadow: 0 12px 32px rgb(0 0 0 / 35%);

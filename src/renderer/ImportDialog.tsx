@@ -27,7 +27,6 @@ export function ImportDialog({
       <div aria-modal="true" className="create-dialog" role="dialog">
         <div className="dialog-heading">
           <div>
-            <span className="eyebrow">IMPORT LIBRARY</span>
             <h2>导入资源库</h2>
           </div>
           <button

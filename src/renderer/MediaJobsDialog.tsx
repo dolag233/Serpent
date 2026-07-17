@@ -39,7 +39,6 @@ export function MediaJobsDialog({
       >
         <div className="dialog-heading">
           <div>
-            <span className="eyebrow">BACKGROUND MEDIA JOBS</span>
             <h2 id="media-jobs-title">后台媒体任务</h2>
           </div>
           <button

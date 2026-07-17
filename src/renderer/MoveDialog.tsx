@@ -35,7 +35,6 @@ export function MoveDialog({
       >
         <div className="dialog-heading">
           <div>
-            <span className="eyebrow">MOVE MANAGED ASSETS</span>
             <h2 id="move-dialog-title">
               移动 {assetIds.length} 项托管资产
             </h2>

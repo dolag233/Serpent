@@ -203,6 +203,8 @@ FolderBrowseEntry
 - 文件夹「新建子文件夹/重命名」对话框的装饰文案（REQ-SHELL-009 范围内）随 T4 移除对话框一并解决，T1 不单独处理文件夹对话框。
 - 每波完成后更新本文件、`docs/project-status.md`、人类验收清单并提交推送；Computer Use 不可用的环境按纪律记「未执行」并移交人工 QA。
 
+**三波状态（2026-07-17 收口）**：Wave 1（T1–T4）与 Wave 2（T5–T7）已全部实现、合流并推送（见 project-status 与两份 Wave 开发日志）；Wave 3 第一步「全面 UI/UX 审查与提案」已完成——报告与 7 项待确认提案见 `docs/reviews/2026-07-17-wave3-ui-ux-audit.md`，截图证据 `docs/qa/evidence/wave3-ux-audit/`。提案待产品负责人拍板后按规则入池；REQ-CANVAS-003（工具栏迁出）建议按审查 P1 证据提前。
+
 ## 集中澄清队列
 
 以下问题尚未由产品负责人确认，后续 agent 不得自行猜测；等本轮反馈结束后一次性提问：

@@ -29,7 +29,6 @@ export function ExtensionPairingDialog({
       >
         <div className="dialog-heading">
           <div>
-            <span className="eyebrow">BROWSER EXTENSION PAIRING</span>
             <h2 id="extension-pairing-title">浏览器扩展配对</h2>
           </div>
           <button

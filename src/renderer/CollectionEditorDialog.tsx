@@ -33,7 +33,6 @@ export function CollectionEditorDialog({
       >
         <div className="dialog-heading">
           <div>
-            <span className="eyebrow">COLLECTION DETAILS</span>
             <h2 id="collection-editor-title">编辑合集详情</h2>
           </div>
           <button

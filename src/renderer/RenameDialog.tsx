@@ -54,7 +54,6 @@ export function RenameDialog({
 
   const noun = organizationNoun(kind);
   const idPrefix = isAsset ? "rename-asset" : "rename-organization";
-  const eyebrow = isAsset ? "RENAME FILE" : "ORGANIZE LIBRARY";
   const title = isAsset ? "重命名文件" : `重命名${noun}`;
   const fieldLabel = isAsset ? "文件名" : `${noun}名称`;
   const submitLabel = isAsset ? "重命名" : "保存名称";
@@ -78,7 +77,6 @@ export function RenameDialog({
       >
         <div className="dialog-heading">
           <div>
-            <span className="eyebrow">{eyebrow}</span>
             <h2 id={`${idPrefix}-title`}>{title}</h2>
           </div>
           <button

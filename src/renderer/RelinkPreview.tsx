@@ -28,7 +28,6 @@ export function RelinkPreview({
       >
         <div className="dialog-heading">
           <div>
-            <span className="eyebrow">BATCH RELINK</span>
             <h2 id="batch-relink-dialog-title">批量重新定位预览</h2>
           </div>
           <button

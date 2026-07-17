@@ -27,7 +27,6 @@ export function ExportDialog({
       <div aria-modal="true" className="create-dialog" role="dialog">
         <div className="dialog-heading">
           <div>
-            <span className="eyebrow">EXPORT LIBRARY</span>
             <h2>导出资源库</h2>
           </div>
           <button
@@ -59,7 +58,7 @@ export function ExportDialog({
           }}
         >
           <legend
-            style={{ fontSize: 11, color: "#6c6f6c", marginBottom: 6 }}
+            style={{ fontSize: 11, color: "var(--tertiary)", marginBottom: 6 }}
           >
             导出格式
           </legend>
@@ -68,7 +67,7 @@ export function ExportDialog({
               display: "flex",
               alignItems: "center",
               gap: 5,
-              color: "#c7cac7",
+              color: "var(--text)",
               fontSize: 12,
               cursor: "pointer",
             }}
@@ -86,7 +85,7 @@ export function ExportDialog({
               display: "flex",
               alignItems: "center",
               gap: 5,
-              color: "#c7cac7",
+              color: "var(--text)",
               fontSize: 12,
               cursor: "pointer",
             }}
@@ -99,7 +98,7 @@ export function ExportDialog({
             />
             标准 ZIP
             {exportFormat === "zip" && (
-              <span style={{ fontSize: 10, color: "#6c6f6c" }}>
+              <span style={{ fontSize: 10, color: "var(--tertiary)" }}>
                 （4&nbsp;GiB / 65534 条目以内）
               </span>
             )}
@@ -111,7 +110,7 @@ export function ExportDialog({
             alignItems: "center",
             gap: 8,
             marginTop: 10,
-            color: "#c7cac7",
+            color: "var(--text)",
             fontSize: 12,
             cursor: "pointer",
           }}

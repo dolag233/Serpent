@@ -56,7 +56,6 @@ export function AiConfigDialog({
       <div aria-modal="true" className="create-dialog" role="dialog">
         <div className="dialog-heading">
           <div>
-            <span className="eyebrow">AI CONFIGURATION</span>
             <h2>AI 配置 (BYOK)</h2>
           </div>
           <button
@@ -166,7 +165,7 @@ export function AiConfigDialog({
                 alignItems: "center",
                 gap: 8,
                 padding: "3px 0",
-                color: "#c7cac7",
+                color: "var(--text)",
                 fontSize: 12,
                 cursor: "pointer",
               }}
@@ -192,7 +191,7 @@ export function AiConfigDialog({
               display: "flex",
               alignItems: "flex-start",
               gap: 8,
-              color: "#c7cac7",
+              color: "var(--text)",
               fontSize: 12,
               cursor: "pointer",
               lineHeight: 1.5,
@@ -217,7 +216,7 @@ export function AiConfigDialog({
               alignItems: "center",
               gap: 8,
               marginTop: 9,
-              color: disclaimerAccepted ? "#c7cac7" : "var(--tertiary)",
+              color: disclaimerAccepted ? "var(--text)" : "var(--tertiary)",
               fontSize: 12,
               cursor: disclaimerAccepted ? "pointer" : "not-allowed",
             }}

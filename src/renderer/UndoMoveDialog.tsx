@@ -29,7 +29,6 @@ export function UndoMoveDialog({
       >
         <div className="dialog-heading">
           <div>
-            <span className="eyebrow">UNDO MOVE CONFLICT</span>
             <h2 id="undo-move-dialog-title">原位置已有新内容</h2>
           </div>
           <button

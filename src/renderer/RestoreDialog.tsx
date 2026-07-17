@@ -34,7 +34,6 @@ export function RestoreDialog({
       >
         <div className="dialog-heading">
           <div>
-            <span className="eyebrow">RESTORE ASSETS</span>
             <h2 id="restore-dialog-title">
               恢复 {assetIds.length} 项资产
             </h2>

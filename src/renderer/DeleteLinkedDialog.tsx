@@ -23,7 +23,6 @@ export function DeleteLinkedDialog({
       <div aria-modal="true" className="create-dialog" role="dialog">
         <div className="dialog-heading">
           <div>
-            <span className="eyebrow">DELETE LINKED ASSET</span>
             <h2>删除链接资产</h2>
           </div>
           <button

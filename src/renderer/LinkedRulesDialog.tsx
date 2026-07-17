@@ -27,7 +27,6 @@ export function LinkedRulesDialog({
       >
         <div className="dialog-heading">
           <div>
-            <span className="eyebrow">LINKED FOLDER FILTER</span>
             <h2>{name} · 过滤规则</h2>
           </div>
           <button

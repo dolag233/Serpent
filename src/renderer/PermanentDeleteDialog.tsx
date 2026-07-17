@@ -17,7 +17,6 @@ export function PermanentDeleteDialog({
       <div aria-modal="true" className="create-dialog" role="dialog">
         <div className="dialog-heading">
           <div>
-            <span className="eyebrow">PERMANENT DELETE</span>
             <h2>永久删除确认</h2>
           </div>
           <button

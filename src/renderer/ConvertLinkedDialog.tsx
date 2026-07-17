@@ -22,7 +22,6 @@ export function ConvertLinkedDialog({
       <div aria-modal="true" className="create-dialog" role="dialog">
         <div className="dialog-heading">
           <div>
-            <span className="eyebrow">CONVERT LINKED FOLDER</span>
             <h2>{`转换"${folderName}"`}</h2>
           </div>
           <button

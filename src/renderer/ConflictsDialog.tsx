@@ -32,7 +32,6 @@ export function ConflictsDialog({
       >
         <div className="dialog-heading">
           <div>
-            <span className="eyebrow">IMPORT REVIEW</span>
             <h2 id="conflict-dialog-title">处理导入冲突</h2>
           </div>
         </div>
