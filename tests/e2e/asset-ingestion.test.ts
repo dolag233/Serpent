@@ -61,14 +61,14 @@ test('imports files and a directory hierarchy, then reconciles external changes'
     await expect(window.getByRole('heading', { name: '把第一批素材放进来' })).toBeVisible();
 
     await window.getByRole('button', { name: '添加文件夹' }).click();
-    await window.getByLabel('名称').fill('项目');
-    await window.getByRole('button', { name: '创建', exact: true }).click();
+    await window.getByLabel("新文件夹名称").fill('项目');
+    await window.keyboard.press("Enter");
     await expect(window.getByRole('button', { name: '项目' })).toBeVisible();
     await window.getByRole('button', { name: '项目' }).click();
 
     await window.getByRole('button', { name: '添加文件夹' }).click();
-    await window.getByLabel('名称').fill('角色');
-    await window.getByRole('button', { name: '创建', exact: true }).click();
+    await window.getByLabel("新文件夹名称").fill('角色');
+    await window.keyboard.press("Enter");
     await expect(window.getByRole('button', { name: '角色' })).toBeVisible();
 
     await window.getByRole('button', { name: '项目' }).click();

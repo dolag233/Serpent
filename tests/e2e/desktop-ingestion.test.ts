@@ -40,8 +40,8 @@ test('pastes a Main-owned clipboard image into the current folder and collection
     await window.getByRole('button', { name: '创建', exact: true }).click();
 
     await window.getByRole('button', { name: '添加文件夹' }).click();
-    await window.getByLabel('名称').fill('项目');
-    await window.getByRole('button', { name: '创建', exact: true }).click();
+    await window.getByLabel("新文件夹名称").fill('项目');
+    await window.keyboard.press("Enter");
     await window.getByRole('button', { name: '项目' }).click();
 
     await window.getByRole('button', { name: '添加合集' }).click();

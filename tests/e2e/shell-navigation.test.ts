@@ -123,8 +123,8 @@ test("library switcher, breadcrumbs, and workspace history", async () => {
     ).toBeVisible({ timeout: 15_000 });
 
     await window.getByRole("button", { name: "添加文件夹" }).click();
-    await window.getByLabel("名称").fill("场景");
-    await window.getByRole("button", { name: "创建", exact: true }).click();
+    await window.getByLabel("新文件夹名称").fill("场景");
+    await window.keyboard.press("Enter");
     await expect(
       window.getByRole("button", { name: "场景", exact: true }),
     ).toBeVisible({ timeout: 10_000 });

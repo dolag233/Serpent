@@ -46,8 +46,8 @@ test("ordinary browsing continuously appends every asset without page controls",
     await window.getByLabel("名称").fill(libraryName);
     await window.getByRole("button", { name: "创建", exact: true }).click();
     await window.getByRole("button", { name: "添加文件夹" }).click();
-    await window.getByLabel("名称").fill("分页文件夹");
-    await window.getByRole("button", { name: "创建", exact: true }).click();
+    await window.getByLabel("新文件夹名称").fill("分页文件夹");
+    await window.keyboard.press("Enter");
     await window
       .getByRole("button", { name: "分页文件夹", exact: true })
       .click();
