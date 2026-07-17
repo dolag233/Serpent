@@ -81,7 +81,7 @@ Library Worker (UtilityProcess; filesystem + SQLite owner)
 - 开始工单：`bd update <id> --status in_progress`；完成后 `bd close <id> --reason "<完成说明与提交哈希>"`。
 - 发现新需求/缺陷随时开单：`bd create "<标题>" -d "<说明>" -p <0-4> -t <feature|bug|task|epic> -l "<标签>"`。优先级语义：P1=用户点名/验收失败修复，P2=本迭代主线，P3=后续打磨。
 - 阻塞关系：`bd dep add <被阻塞 id> <阻塞 id>`；被澄清队列（`Serpent-w3b`）阻塞的工单不得自行猜测实施。
-- 跨设备：先 `git pull` 再用 bd；会话结束提交代码前 `bd sync`。
+- 跨设备：先 `git pull` 再用 bd；会话结束提交代码前 `bd dolt push`。
 - 可运行 `bd prime` 获取完整命令参考。
 
 ## 当前开发状态
