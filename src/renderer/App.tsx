@@ -39,7 +39,6 @@ import { UndoMoveDialog } from "./UndoMoveDialog";
 import { ConflictsDialog } from "./ConflictsDialog";
 import { RenameDialog } from "./RenameDialog";
 import { CreateDialog } from "./CreateDialog";
-import { FolderRenameDialog } from "./FolderRenameDialog";
 import { CollectionEditorDialog } from "./CollectionEditorDialog";
 import { ExtensionPairingDialog } from "./ExtensionPairingDialog";
 import { AiConfigDialog } from "./AiConfigDialog";
@@ -52,7 +51,7 @@ import {
 import { useAssetSelection } from "./useAssetSelection";
 import { useBatchActions } from "./useBatchActions";
 import { useAssetRename } from "./useAssetRename";
-import { useFolderActions } from "./useFolderActions";
+import { useInlineFolderEdit } from "./use-inline-folder-edit";
 import { useToastNotifications } from "./useToastNotifications";
 import {
   toMessage,
@@ -127,7 +126,9 @@ type UiState =
   | "loading"
   | "importing"
   | "ready";
-type DialogKind = "library" | "folder" | "tag" | "collection" | null;
+// REQ-FOLDER-007 removed the "folder" kind: folder create/rename now happens
+// inline in the directory tree (use-inline-folder-edit), not in a dialog.
+type DialogKind = "library" | "tag" | "collection" | null;
 type AssetScope = "all" | "root" | string;
 type OrganizationKind = "collection" | "smart";
 type OrganizationRenameTarget = {
@@ -1253,7 +1254,7 @@ function AppInner() {
       unsubscribeCompleted();
       unsubscribeCleared();
     };
-  }, [api, library]);
+  }, [api, library, setNotice]);
 
   function syncNavHistoryUi() {
     setNavHistoryUi({
@@ -2141,25 +2142,16 @@ function AppInner() {
   });
 
   const {
-    folderDialogParent,
-    folderRenameTarget,
-    openFolderDialog,
-    dismissFolderDialogParent,
-    openFolderRename,
-    cancelFolderRename,
-    createFolder,
-    renameFolder,
-  } = useFolderActions({
+    inlineFolderEdit,
+    openInlineFolderCreate,
+    openInlineFolderRename,
+    changeInlineFolderEdit,
+    cancelInlineFolderEdit,
+    commitInlineFolderEdit,
+  } = useInlineFolderEdit({
     api: api ?? null,
     library,
-    folders,
-    selectedFolderId,
-    dialogValue,
-    setDialogValue,
-    setDialog,
     setNotice,
-    setError,
-    setUiState,
     reloadCurrentContent,
   });
 
@@ -2644,7 +2636,7 @@ function AppInner() {
     } catch (caught) {
       setError(toMessage(caught, "打开外部应用失败。"));
     }
-  }, [api, library]);
+  }, [api, library, setError]);
 
   const handleRevealInFolder = useCallback(async (assetId: string) => {
     if (!api || !library) return;
@@ -2659,7 +2651,7 @@ function AppInner() {
     } catch (caught) {
       setError(toMessage(caught, "在文件管理器中显示失败。"));
     }
-  }, [api, library]);
+  }, [api, library, setError]);
 
   const handleCopyFilePath = useCallback(async (assetId: string) => {
     if (!api || !library) return;
@@ -2676,7 +2668,7 @@ function AppInner() {
     } catch (caught) {
       setError(toMessage(caught, "复制文件路径失败。"));
     }
-  }, [api, library]);
+  }, [api, library, setError, setNotice]);
 
   // REQ-MENU-006: folder shell actions mirror the asset versions above —
   // only the folder id crosses the bridge; the Worker resolves the path.
@@ -2693,7 +2685,7 @@ function AppInner() {
     } catch (caught) {
       setError(toMessage(caught, "在文件管理器中打开文件夹失败。"));
     }
-  }, [api, library]);
+  }, [api, library, setError]);
 
   const handleCopyFolderPath = useCallback(async (folderId: string) => {
     if (!api || !library) return;
@@ -2710,7 +2702,7 @@ function AppInner() {
     } catch (caught) {
       setError(toMessage(caught, "复制文件夹路径失败。"));
     }
-  }, [api, library]);
+  }, [api, library, setError, setNotice]);
 
   // --- Existing operations ---
 
@@ -2827,7 +2819,7 @@ function AppInner() {
     } finally {
       setUiState("ready");
     }
-  }, [activeCollectionId, api, busy, library]);
+  }, [activeCollectionId, api, busy, library, setError, setNotice]);
 
   function handleExternalDragEnter(event: React.DragEvent<HTMLElement>) {
     if (previewAsset) {
@@ -3388,7 +3380,7 @@ function AppInner() {
     } catch (caught) {
       setError(toMessage(caught, "取消批量重新定位失败。"));
     }
-  }, [api, batchRelinkPreview, library]);
+  }, [api, batchRelinkPreview, library, setError]);
 
   // --- Export / Import operations ---
 
@@ -3599,7 +3591,7 @@ function AppInner() {
         }
       });
     });
-  }, [api, library, selectedAssetId]);
+  }, [api, library, selectedAssetId, setError, setNotice]);
 
   useEffect(() => {
     if (!api) return;
@@ -3618,14 +3610,13 @@ function AppInner() {
         }
       }
     });
-  }, [api]);
+  }, [api, setNotice]);
 
   useEffect(() => {
     if (
       !dialog &&
       !conflicts &&
       !assetRenameDialog &&
-      !folderRenameTarget &&
       !permanentDeleteDialog &&
       !deleteLinkedDialog &&
       !batchRelinkPreview &&
@@ -3661,10 +3652,6 @@ function AppInner() {
         cancelAssetRename();
         return;
       }
-      if (folderRenameTarget) {
-        cancelFolderRename();
-        return;
-      }
       if (permanentDeleteDialog) {
         setPermanentDeleteDialog(null);
         return;
@@ -3696,7 +3683,6 @@ function AppInner() {
       if (dialog) {
         setDialog(null);
         setShowCollectionInput(false);
-        dismissFolderDialogParent();
         return;
       }
       if (!api || !conflicts) return;
@@ -3719,9 +3705,6 @@ function AppInner() {
     dialog,
     assetRenameDialog,
     cancelAssetRename,
-    folderRenameTarget,
-    cancelFolderRename,
-    dismissFolderDialogParent,
     permanentDeleteDialog,
     deleteLinkedDialog,
     batchRelinkPreview,
@@ -3730,6 +3713,7 @@ function AppInner() {
     moveDialog,
     undoMoveDialog,
     collectionEditor,
+    setError,
   ]);
 
   useEffect(() => {
@@ -4672,7 +4656,11 @@ function AppInner() {
         onSetNewCollectionParentId={setNewCollectionParentId}
         onCollectionInputKeyDown={handleCollectionInputKeyDown}
         onSetCollectionRecursive={setCollectionRecursive}
-        onAddFolder={() => openFolderDialog(null)}
+        onAddFolder={() => openInlineFolderCreate(selectedFolderId ?? null)}
+        inlineFolderEdit={inlineFolderEdit}
+        onInlineFolderEditChange={changeInlineFolderEdit}
+        onInlineFolderEditCommit={() => void commitInlineFolderEdit()}
+        onInlineFolderEditCancel={cancelInlineFolderEdit}
         onOpenContextMenu={openContextMenu}
         onReorderCollection={(sourceId, targetId) =>
           void reorderCollectionSibling(sourceId, targetId)
@@ -5513,30 +5501,17 @@ function AppInner() {
         onSave={() => void submitAssetRename()}
         onCancel={cancelAssetRename}
       />
-      {folderRenameTarget && (
-        <FolderRenameDialog
-          key={folderRenameTarget.folderId}
-          target={folderRenameTarget}
-          onSubmit={renameFolder}
-          onCancel={cancelFolderRename}
-        />
-      )}
       <CreateDialog
         open={dialog !== null}
-        kind={dialog === "library" ? "library" : "folder"}
         value={dialogValue}
         onValueChange={setDialogValue}
         onSubmit={() => {
-          if (dialog === "library") {
-            setDialog(null);
-            void runLibraryOperation("create");
-          } else void createFolder();
+          setDialog(null);
+          void runLibraryOperation("create");
         }}
         onCancel={() => {
           setDialog(null);
-          dismissFolderDialogParent();
         }}
-        folderName={folderDialogParent?.name ?? selectedFolder?.name}
       />
       {conflicts && (
         <ConflictsDialog
@@ -5681,9 +5656,9 @@ function AppInner() {
         onDeleteOrganization={(id) => {
           void deleteCollection(id);
         }}
-        onCreateSubfolder={(folderId) => openFolderDialog(folderId)}
+        onCreateSubfolder={(folderId) => openInlineFolderCreate(folderId)}
         onRenameFolder={(folderId, currentName) =>
-          openFolderRename({ folderId, name: currentName })
+          openInlineFolderRename(folderId, currentName)
         }
         onOpenFolderInFileManager={(folderId) => {
           void handleOpenFolderInFileManager(folderId);

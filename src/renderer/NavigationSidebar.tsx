@@ -1,4 +1,4 @@
-import { type ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { Icon, type IconName } from "./Icons";
 import type {
   CollectionSummary,
@@ -8,6 +8,11 @@ import type {
 } from "../shared/asset-types";
 import type { ContextMenuDescriptor } from "./context-menu";
 import type { RendererLibrarySummary } from "../shared/protocol/responses";
+import {
+  inlineCreateRowIndex,
+  inlineFolderEditDepth,
+  type InlineFolderEditState,
+} from "./inline-folder-edit";
 import { buildUnifiedDirectoryNavEntries } from "./unified-directory-nav";
 
 // ---------------------------------------------------------------------------
@@ -89,6 +94,76 @@ function NavRow({
       <span>{label}</span>
       {count !== undefined && <span className="nav-count">{count}</span>}
     </button>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// InlineFolderEditRow — REQ-FOLDER-007 in-tree name edit row
+// ---------------------------------------------------------------------------
+
+/**
+ * The single editing surface for 新建子文件夹 / 重命名… / 侧栏「+」: a folder
+ * row whose label is an input. Enter commits, Escape cancels, and blur routes
+ * through the same commit resolution (valid non-empty names submit, anything
+ * else cancels); typed worker failures render inline under the row and keep
+ * it open for correction. While the input is focused the global shortcut
+ * handlers stay inert because they all bail out on editable targets.
+ */
+function InlineFolderEditRow({
+  depth,
+  state,
+  onChange,
+  onCommit,
+  onCancel,
+}: {
+  depth: number;
+  state: InlineFolderEditState;
+  onChange: (value: string) => void;
+  onCommit: () => void;
+  onCancel: () => void;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // Focus with the whole name preselected: typing replaces the current
+  // (rename) or default (create) name immediately, Enter accepts it as-is.
+  useEffect(() => {
+    const input = inputRef.current;
+    if (!input) return;
+    input.focus();
+    input.select();
+  }, []);
+
+  return (
+    <div className="nav-inline-edit" style={{ paddingLeft: 7 + depth * 14 }}>
+      <Icon name="folder" size={15} />
+      <input
+        aria-invalid={state.error ? true : undefined}
+        aria-label={
+          state.kind === "create" ? "新文件夹名称" : "文件夹重命名"
+        }
+        className="text-field"
+        maxLength={80}
+        onBlur={() => onCommit()}
+        onChange={(event) => onChange(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") {
+            event.preventDefault();
+            onCommit();
+          } else if (event.key === "Escape") {
+            event.preventDefault();
+            event.stopPropagation();
+            onCancel();
+          }
+        }}
+        ref={inputRef}
+        value={state.value}
+      />
+      {state.error ? (
+        <p className="nav-inline-edit-error" role="alert">
+          {state.error}
+        </p>
+      ) : null}
+    </div>
   );
 }
 
@@ -213,8 +288,14 @@ export interface NavigationSidebarProps {
   ) => void;
   onSetCollectionRecursive: (recursive: boolean) => void;
 
-  // --- Folder dialog ---
+  // --- Folder creation entry (sidebar 「+」; opens the inline edit row) ---
   onAddFolder: () => void;
+
+  // --- Inline folder edit (REQ-FOLDER-007) ---
+  inlineFolderEdit: InlineFolderEditState | null;
+  onInlineFolderEditChange: (value: string) => void;
+  onInlineFolderEditCommit: () => void;
+  onInlineFolderEditCancel: () => void;
 
   // --- Context menu ---
   onOpenContextMenu: (
@@ -282,6 +363,10 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
     onCollectionInputKeyDown,
     onSetCollectionRecursive,
     onAddFolder,
+    inlineFolderEdit,
+    onInlineFolderEditChange,
+    onInlineFolderEditCommit,
+    onInlineFolderEditCancel,
     onOpenContextMenu,
     onReorderCollection,
     onImportDroppedFiles,
@@ -294,12 +379,28 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
   );
 
   function renderDirectoryEntries(): ReactNode {
-    if (directoryEntries.length === 0) {
+    if (directoryEntries.length === 0 && inlineFolderEdit?.kind !== "create") {
       return <p className="nav-empty">尚无托管或链接文件夹</p>;
     }
 
-    return directoryEntries.map((entry) => {
+    const rows: ReactNode[] = directoryEntries.map((entry) => {
       if (entry.kind === "managed") {
+        // A rename session swaps the folder's own row for the edit row.
+        if (
+          inlineFolderEdit?.kind === "rename" &&
+          inlineFolderEdit.folderId === entry.folderId
+        ) {
+          return (
+            <InlineFolderEditRow
+              depth={entry.depth}
+              key={entry.folderId}
+              onCancel={onInlineFolderEditCancel}
+              onChange={onInlineFolderEditChange}
+              onCommit={onInlineFolderEditCommit}
+              state={inlineFolderEdit}
+            />
+          );
+        }
         return (
           <NavRow
             active={
@@ -406,6 +507,25 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
         />
       );
     });
+
+    // A create session adds a pending name-edit row as the parent's first
+    // child (top of the list when creating at the library root). The tree has
+    // no collapse state, so the row is always visible where it will land.
+    if (inlineFolderEdit?.kind === "create") {
+      rows.splice(
+        inlineCreateRowIndex(directoryEntries, inlineFolderEdit.parentFolderId),
+        0,
+        <InlineFolderEditRow
+          depth={inlineFolderEditDepth(inlineFolderEdit, directoryEntries)}
+          key="inline-folder-create"
+          onCancel={onInlineFolderEditCancel}
+          onChange={onInlineFolderEditChange}
+          onCommit={onInlineFolderEditCommit}
+          state={inlineFolderEdit}
+        />,
+      );
+    }
+    return rows;
   }
 
   // Recursive collection node renderer

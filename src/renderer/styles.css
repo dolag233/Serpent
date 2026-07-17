@@ -2595,3 +2595,42 @@ input[type="range"] {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* ---------------------------------------------------------------------------
+   REQ-FOLDER-007 目录树原地编辑行（wave1 T4）
+   新建子文件夹 / 重命名… / 侧栏「+」共用的行内名称编辑行，取代原文件夹对话
+   框。行高、图标列与缩进对齐 .nav-row，进入/退出编辑时目录树不跳动。
+   --------------------------------------------------------------------------- */
+
+.nav-inline-edit {
+  display: grid;
+  width: 100%;
+  min-height: 29px;
+  grid-template-columns: 17px minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  padding: 2px 7px 2px 0;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  color: #c5c8c4;
+}
+
+.nav-inline-edit > .icon {
+  justify-self: center;
+}
+
+.nav-inline-edit .text-field {
+  height: 23px;
+  padding: 0 6px;
+  font-size: 12px;
+}
+
+/* 类型化失败（非法名/同名冲突）内联呈现在编辑行下方，行保持打开供修正。 */
+.nav-inline-edit-error {
+  grid-column: 1 / -1;
+  margin: 0 0 2px;
+  padding-left: 24px;
+  color: var(--warning);
+  font-size: 10px;
+  line-height: 1.5;
+}
