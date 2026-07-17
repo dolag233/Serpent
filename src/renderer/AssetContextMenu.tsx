@@ -17,6 +17,7 @@ import { Icon } from "./Icons";
 import { TagPickerEntry, TagPickerMenu } from "./TagPickerMenu";
 import { isMacPlatform } from "./commands/command-types";
 import { createCommandRegistry } from "./commands/command-registry";
+import { useLocale } from "./i18n";
 import {
   assetCommandDefinitions,
   type AssetCommandContext,
@@ -107,6 +108,7 @@ interface AssetContextMenuProps {
 }
 
 export function AssetContextMenu(props: AssetContextMenuProps) {
+  const { locale } = useLocale();
   const {
     tags,
     collections,
@@ -229,6 +231,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
           // （window.confirm）保留在命令的 run 内，danger 样式仍在 JSX 声明。
           const commandContext: SidebarCommandContext = {
             surface: "sidebar",
+            locale,
             platform: isMac ? "mac" : "windows",
             selectedAssetIds: [],
             primaryAssetId: null,
@@ -303,6 +306,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
           // 命令的 run 内，danger 样式仍在 JSX 声明。
           const commandContext: SidebarCommandContext = {
             surface: "sidebar",
+            locale,
             platform: isMac ? "mac" : "windows",
             selectedAssetIds: [],
             primaryAssetId: null,
@@ -380,6 +384,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
               : undefined;
           const commandContext: SidebarCommandContext = {
             surface: "sidebar",
+            locale,
             platform: isMac ? "mac" : "windows",
             selectedAssetIds: [],
             primaryAssetId: null,
@@ -535,6 +540,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
             // 跳过原因提示块保持内联不变。
             const commandContext: AssetMultiCommandContext = {
               surface: "asset-multi",
+              locale,
               platform: isMac ? "mac" : "windows",
               selectedAssetIds: targetAssetIds,
               primaryAssetId: null,
@@ -731,6 +737,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
             // 动态行（外部目录、合集、标签）与汇总/提示块保持内联不变。
             const commandContext: AssetCommandContext = {
               surface: "asset-single",
+              locale,
               platform: isMac ? "mac" : "windows",
               selectedAssetIds: [assetId],
               primaryAssetId: assetId,

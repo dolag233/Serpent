@@ -9,6 +9,7 @@
 // 避免循环依赖；node 环境可测。
 // ---------------------------------------------------------------------------
 
+import { translateForLocale } from '../i18n';
 import type { CommandContext, CommandDefinition } from './command-types';
 
 /**
@@ -49,6 +50,14 @@ export interface AssetMultiCommandContext extends CommandContext {
 export type AssetMultiCommandDefinition =
   CommandDefinition<AssetMultiCommandContext>;
 
+function t(
+  ctx: AssetMultiCommandContext,
+  key: string,
+  params?: Readonly<Record<string, string | number>>,
+): string {
+  return translateForLocale(ctx.locale, key, params);
+}
+
 // 注册顺序即组内展示顺序，与历史 JSX 中的条目顺序一致。清除选择始终渲染在
 // 菜单末尾（两个分支都出现），归入 delete 组让 resolveMenu 顺序与视觉位置
 // 一致；它本身不是破坏性操作，只是视觉上位于删除区之后。
@@ -57,14 +66,18 @@ export const assetMultiCommandDefinitions: readonly AssetMultiCommandDefinition[
     // ---- 回收站分支：trashedAll 时仅这两项 + clear-selection 可见 ----
     {
       id: 'assets.restore',
-      title: (ctx) => `恢复所选（${ctx.selectionCount} 项）`,
+      title: (ctx) =>
+        t(ctx, 'command.assets.restore', { count: ctx.selectionCount }),
       group: 'delete',
       visible: (ctx) => ctx.trashedAll,
       run: (ctx) => ctx.actions.restore([...ctx.selectedAssetIds]),
     },
     {
       id: 'assets.delete-permanent',
-      title: (ctx) => `永久删除（${ctx.selectionCount} 项）`,
+      title: (ctx) =>
+        t(ctx, 'command.assets.deletePermanent', {
+          count: ctx.selectionCount,
+        }),
       group: 'delete',
       visible: (ctx) => ctx.trashedAll,
       run: (ctx) => ctx.actions.deletePermanent([...ctx.selectedAssetIds]),
@@ -72,14 +85,14 @@ export const assetMultiCommandDefinitions: readonly AssetMultiCommandDefinition[
     // ---- 批量标签（tags.length > 0 的闸门仍在 JSX；此处只表达分支可见性）----
     {
       id: 'assets.assign-tag',
-      title: '添加标签…',
+      title: (ctx) => t(ctx, 'command.asset.addTags'),
       group: 'metadata',
       visible: (ctx) => !ctx.trashedAll,
       run: (ctx) => ctx.actions.openAssignTagPicker([...ctx.selectedAssetIds]),
     },
     {
       id: 'assets.remove-tag',
-      title: '移除标签…',
+      title: (ctx) => t(ctx, 'command.asset.removeTags'),
       group: 'metadata',
       visible: (ctx) => !ctx.trashedAll,
       run: (ctx) => ctx.actions.openRemoveTagPicker([...ctx.selectedAssetIds]),
@@ -87,19 +100,25 @@ export const assetMultiCommandDefinitions: readonly AssetMultiCommandDefinition[
     // ---- 组织 ----
     {
       id: 'assets.move-to-folder',
-      title: (ctx) => `移动到文件夹…（${ctx.availableManagedCount} 项）`,
+      title: (ctx) =>
+        t(ctx, 'command.assets.moveToFolder', {
+          count: ctx.availableManagedCount,
+        }),
       group: 'organize',
       visible: (ctx) => !ctx.trashedAll,
       disabledReason: (ctx) =>
         ctx.availableManagedCount === 0
-          ? '所选资产中没有可移动的托管资产'
+          ? t(ctx, 'command.reason.noMovableManaged')
           : null,
       run: (ctx) => ctx.actions.moveToFolder([...ctx.availableManagedAssetIds]),
     },
     // ---- 删除 ----
     {
       id: 'assets.move-to-trash',
-      title: (ctx) => `移入回收站（${ctx.managedCount} 项）`,
+      title: (ctx) =>
+        t(ctx, 'command.assets.moveToTrash', {
+          count: ctx.managedCount,
+        }),
       group: 'delete',
       shortcut: {
         mac: { label: '⌘⌫', key: 'Backspace', metaKey: true },
@@ -107,13 +126,16 @@ export const assetMultiCommandDefinitions: readonly AssetMultiCommandDefinition[
       },
       visible: (ctx) => !ctx.trashedAll,
       disabledReason: (ctx) =>
-        ctx.managedCount === 0 ? '所选资产中没有托管资产' : null,
+        ctx.managedCount === 0
+          ? t(ctx, 'command.reason.noManaged')
+          : null,
       run: (ctx) => ctx.actions.moveToTrash([...ctx.managedAssetIds]),
     },
     // ---- 选择管理：两个分支都渲染，视觉上位于菜单末尾 ----
     {
       id: 'assets.clear-selection',
-      title: (ctx) => `清除选择（${ctx.selectionCount} 项）`,
+      title: (ctx) =>
+        t(ctx, 'command.assets.clearSelection', { count: ctx.selectionCount }),
       group: 'delete',
       run: (ctx) => ctx.actions.clearSelection(),
     },

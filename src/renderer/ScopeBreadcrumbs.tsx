@@ -1,4 +1,5 @@
 import type { ManagedFolderBreadcrumbEntry } from "./folder-breadcrumb-trail";
+import { useT, type TranslateFn } from "./i18n";
 
 export type ScopeBreadcrumbSegment =
   | { kind: "static"; id: string; label: string }
@@ -9,21 +10,28 @@ export type ScopeBreadcrumbsProps = {
   onNavigateFolder: (folderId: string) => void;
 };
 
-export function buildScopeBreadcrumbSegments(input: {
-  showTrash: boolean;
-  activeTagLabel: string | null;
-  activeCollectionLabel: string | null;
-  activeSmartCollectionLabel: string | null;
-  assetScope: string;
-  folderTrail: ManagedFolderBreadcrumbEntry[];
-  linkedFolderLabel?: string | null;
-}): ScopeBreadcrumbSegment[] {
+export function buildScopeBreadcrumbSegments(
+  input: {
+    showTrash: boolean;
+    activeTagLabel: string | null;
+    activeCollectionLabel: string | null;
+    activeSmartCollectionLabel: string | null;
+    assetScope: string;
+    folderTrail: ManagedFolderBreadcrumbEntry[];
+    linkedFolderLabel?: string | null;
+  },
+  t: TranslateFn,
+): ScopeBreadcrumbSegment[] {
   if (input.showTrash) {
-    return [{ kind: "static", id: "trash", label: "回收站" }];
+    return [{ kind: "static", id: "trash", label: t("scope.trash") }];
   }
   if (input.activeTagLabel) {
     return [
-      { kind: "static", id: "tag", label: `标签 · ${input.activeTagLabel}` },
+      {
+        kind: "static",
+        id: "tag",
+        label: t("scope.tagScope", { name: input.activeTagLabel }),
+      },
     ];
   }
   if (input.activeCollectionLabel) {
@@ -31,7 +39,9 @@ export function buildScopeBreadcrumbSegments(input: {
       {
         kind: "static",
         id: "collection",
-        label: `合集 · ${input.activeCollectionLabel}`,
+        label: t("scope.collectionScope", {
+          name: input.activeCollectionLabel,
+        }),
       },
     ];
   }
@@ -40,15 +50,17 @@ export function buildScopeBreadcrumbSegments(input: {
       {
         kind: "static",
         id: "smart",
-        label: `智能合集 · ${input.activeSmartCollectionLabel}`,
+        label: t("scope.smartCollectionScope", {
+          name: input.activeSmartCollectionLabel,
+        }),
       },
     ];
   }
   if (input.assetScope === "all") {
-    return [{ kind: "static", id: "all", label: "所有资产" }];
+    return [{ kind: "static", id: "all", label: t("scope.allAssets") }];
   }
   if (input.assetScope === "root") {
-    return [{ kind: "static", id: "root", label: "资源库根目录" }];
+    return [{ kind: "static", id: "root", label: t("scope.rootFolder") }];
   }
   if (input.folderTrail.length > 0) {
     return input.folderTrail.map((entry) => ({
@@ -67,11 +79,11 @@ export function buildScopeBreadcrumbSegments(input: {
       },
     ];
   }
-  return [{ kind: "static", id: "workspace", label: "工作区" }];
+  return [{ kind: "static", id: "workspace", label: t("scope.workspace") }];
 }
 
 /**
- * Borderless scope trail. Does not include a leading "资源库 >" prefix.
+ * Borderless scope trail. Does not include a leading library prefix.
  * Workspace back/forward controls live in `ScopeHistoryButtons`, rendered
  * leftmost in the app toolbar.
  */
@@ -79,9 +91,10 @@ export function ScopeBreadcrumbs({
   segments,
   onNavigateFolder,
 }: ScopeBreadcrumbsProps) {
+  const t = useT();
   return (
     <div className="scope-trace">
-      <nav aria-label="当前浏览范围" className="scope-breadcrumbs">
+      <nav aria-label={t("scope.currentBrowseScope")} className="scope-breadcrumbs">
         {segments.map((segment, index) => {
           const isLast = index === segments.length - 1;
           return (

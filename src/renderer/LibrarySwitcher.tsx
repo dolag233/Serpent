@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { Icon } from "./Icons";
+import { useLocale, type AppLocale } from "./i18n";
 
 export type RecentLibraryMenuEntry = {
   path: string;
@@ -7,8 +8,8 @@ export type RecentLibraryMenuEntry = {
 };
 
 /**
- * The 其他资源库 menu section lists every known recent library except the one
- * currently open (identified by absolute path, so same-named libraries still
+ * The other-libraries menu section lists every known recent library except the
+ * one currently open (identified by absolute path, so same-named libraries still
  * distinguish correctly). Store order (most recent first) is preserved.
  */
 export function buildRecentLibraryMenuEntries(
@@ -45,10 +46,11 @@ export function LibrarySwitcher({
   onOpenRecent,
   onMenuOpen,
 }: LibrarySwitcherProps) {
+  const { t, locale, setLocale } = useLocale();
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const menuId = useId();
-  const label = libraryName ?? "选择资源库";
+  const label = libraryName ?? t("shell.chooseLibrary");
 
   useEffect(() => {
     if (!open) return;
@@ -68,31 +70,40 @@ export function LibrarySwitcher({
     };
   }, [open]);
 
+  function chooseLocale(next: AppLocale) {
+    setLocale(next);
+    setOpen(false);
+  }
+
   return (
     <div className="library-switcher" ref={rootRef}>
       <button
         aria-controls={menuId}
         aria-expanded={open}
         aria-haspopup="menu"
-        aria-label={libraryName ? `当前资源库 ${libraryName}` : "资源库菜单"}
+        aria-label={
+          libraryName
+            ? t("shell.currentLibrary", { name: libraryName })
+            : t("shell.libraryMenu")
+        }
         className="library-switcher-trigger"
         disabled={disabled}
         onClick={() => {
           if (!open) onMenuOpen?.();
           setOpen(!open);
         }}
-        title={libraryName ? `资源库：${libraryName}` : "尚未打开资源库"}
+        title={
+          libraryName
+            ? t("shell.libraryNamed", { name: libraryName })
+            : t("shell.noLibraryOpen")
+        }
         type="button"
       >
         <span className="library-switcher-name">{label}</span>
         <Icon name="chevron" size={13} />
       </button>
       {open && (
-        <div
-          className="library-switcher-menu"
-          id={menuId}
-          role="menu"
-        >
+        <div className="library-switcher-menu" id={menuId} role="menu">
           <button
             className="library-switcher-item"
             onClick={() => {
@@ -102,7 +113,7 @@ export function LibrarySwitcher({
             role="menuitem"
             type="button"
           >
-            新建资源库…
+            {t("shell.createLibraryEllipsis")}
           </button>
           <button
             className="library-switcher-item"
@@ -113,7 +124,7 @@ export function LibrarySwitcher({
             role="menuitem"
             type="button"
           >
-            打开资源库…
+            {t("shell.openLibraryEllipsis")}
           </button>
           <button
             className="library-switcher-item"
@@ -125,17 +136,47 @@ export function LibrarySwitcher({
             role="menuitem"
             type="button"
           >
-            关闭资源库
+            {t("shell.closeLibrary")}
           </button>
+          <div aria-hidden="true" className="library-switcher-divider" />
+          <div
+            aria-label={t("shell.language")}
+            className="library-switcher-section"
+            role="group"
+          >
+            <div className="library-switcher-section-label">
+              {t("shell.language")}
+            </div>
+            <button
+              aria-checked={locale === "zh-CN"}
+              className="library-switcher-item"
+              onClick={() => chooseLocale("zh-CN")}
+              role="menuitemradio"
+              type="button"
+            >
+              {t("shell.languageZh")}
+            </button>
+            <button
+              aria-checked={locale === "en"}
+              className="library-switcher-item"
+              onClick={() => chooseLocale("en")}
+              role="menuitemradio"
+              type="button"
+            >
+              {t("shell.languageEn")}
+            </button>
+          </div>
           {recentLibraries.length > 0 && (
             <>
               <div aria-hidden="true" className="library-switcher-divider" />
               <div
-                aria-label="其他资源库"
+                aria-label={t("shell.otherLibraries")}
                 className="library-switcher-section"
                 role="group"
               >
-                <div className="library-switcher-section-label">其他资源库</div>
+                <div className="library-switcher-section-label">
+                  {t("shell.otherLibraries")}
+                </div>
                 {recentLibraries.map((entry) => (
                   <button
                     className="library-switcher-item"

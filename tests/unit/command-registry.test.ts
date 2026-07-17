@@ -17,6 +17,7 @@ function makeContext(overrides: Partial<CommandContext> = {}): CommandContext {
   return {
     surface: 'asset-single',
     platform: 'mac',
+    locale: 'zh-CN',
     selectedAssetIds: ['asset-1'],
     primaryAssetId: 'asset-1',
     assetScope: 'all',

@@ -47,6 +47,7 @@ function makeCtx(
   const ctx: AssetCommandContext = {
     surface: 'asset-single',
     platform: 'mac',
+    locale: 'zh-CN',
     selectedAssetIds: ['asset-1'],
     primaryAssetId: 'asset-1',
     assetScope: 'single',

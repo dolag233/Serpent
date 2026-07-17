@@ -45,6 +45,7 @@ function makeCtx(
   const ctx: AssetMultiCommandContext = {
     surface: 'asset-multi',
     platform: 'mac',
+    locale: 'zh-CN',
     selectedAssetIds: ['a-1', 'a-2', 'a-3'],
     primaryAssetId: null,
     assetScope: 'multi',

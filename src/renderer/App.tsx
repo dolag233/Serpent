@@ -28,6 +28,7 @@ import {
   buildScopeBreadcrumbSegments,
 } from "./ScopeBreadcrumbs";
 import { buildManagedFolderBreadcrumbTrail } from "./folder-breadcrumb-trail";
+import { useT } from "./i18n";
 import {
   createWorkspaceNavHistory,
   type WorkspaceNavLocation,
@@ -397,6 +398,7 @@ function TechnicalRangeFilter({
 }
 
 function AppInner() {
+  const t = useT();
   const api = (window as RendererWindow).serpent?.library;
   const extensionPairingApi = (window as RendererWindow).serpent
     ?.extensionPairing;
@@ -4600,33 +4602,38 @@ function AppInner() {
         </div>
         <ScopeBreadcrumbs
           onNavigateFolder={(folderId) => void chooseFolder(folderId)}
-          segments={buildScopeBreadcrumbSegments({
-            showTrash,
-            activeTagLabel: activeTagId
-              ? (tags.find((tag) => tag.tagId === activeTagId)?.name ?? null)
-              : null,
-            activeCollectionLabel: activeCollectionId
-              ? (collections.find(
-                  (collection) => collection.collectionId === activeCollectionId,
-                )?.name ?? null)
-              : null,
-            activeSmartCollectionLabel: activeSmartCollectionId
-              ? (smartCollections.find(
-                  (collection) =>
-                    collection.collectionId === activeSmartCollectionId,
-                )?.name ?? null)
-              : null,
-            assetScope,
-            folderTrail:
-              assetScope !== "all" && assetScope !== "root"
-                ? buildManagedFolderBreadcrumbTrail(folders, assetScope)
-                : [],
-            linkedFolderLabel:
-              assetScope !== "all" && assetScope !== "root"
-                ? (linkedFolders.find((folder) => folder.folderId === assetScope)
-                    ?.displayName ?? null)
+          segments={buildScopeBreadcrumbSegments(
+            {
+              showTrash,
+              activeTagLabel: activeTagId
+                ? (tags.find((tag) => tag.tagId === activeTagId)?.name ?? null)
                 : null,
-          })}
+              activeCollectionLabel: activeCollectionId
+                ? (collections.find(
+                    (collection) =>
+                      collection.collectionId === activeCollectionId,
+                  )?.name ?? null)
+                : null,
+              activeSmartCollectionLabel: activeSmartCollectionId
+                ? (smartCollections.find(
+                    (collection) =>
+                      collection.collectionId === activeSmartCollectionId,
+                  )?.name ?? null)
+                : null,
+              assetScope,
+              folderTrail:
+                assetScope !== "all" && assetScope !== "root"
+                  ? buildManagedFolderBreadcrumbTrail(folders, assetScope)
+                  : [],
+              linkedFolderLabel:
+                assetScope !== "all" && assetScope !== "root"
+                  ? (linkedFolders.find(
+                      (folder) => folder.folderId === assetScope,
+                    )?.displayName ?? null)
+                  : null,
+            },
+            t,
+          )}
         />
         <form
           className="toolbar-cluster toolbar-actions"

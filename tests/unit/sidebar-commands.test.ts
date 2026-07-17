@@ -56,6 +56,7 @@ function makeCtx(
   const ctx: SidebarCommandContext = {
     surface: 'sidebar',
     platform: 'mac',
+    locale: 'zh-CN',
     selectedAssetIds: [],
     primaryAssetId: null,
     assetScope: 'none',

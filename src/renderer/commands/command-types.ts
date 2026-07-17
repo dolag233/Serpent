@@ -108,10 +108,18 @@ export type CommandSurface =
   | 'sidebar'
   | 'canvas';
 
+/**
+ * 界面语言。与 i18n AppLocale 对齐，但本模块不 import i18n，避免命令纯函数
+ * 层与 React/catalog 形成环依赖；消费方传入 'zh-CN' | 'en'。
+ */
+export type CommandLocale = 'zh-CN' | 'en';
+
 /** 应用侧填充的只读上下文快照；保持最小集，后续轨道按需扩展字段。 */
 export interface CommandContext {
   readonly surface: CommandSurface;
   readonly platform: CommandPlatform;
+  /** 当前界面语言；title / disabledReason 经 translateForLocale 解析。 */
+  readonly locale: CommandLocale;
   readonly selectedAssetIds: readonly string[];
   readonly primaryAssetId: string | null;
   readonly assetScope: string;

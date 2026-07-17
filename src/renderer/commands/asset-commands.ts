@@ -7,6 +7,7 @@
 // 不 import App.tsx / AssetContextMenu.tsx，避免循环依赖；node 环境可测。
 // ---------------------------------------------------------------------------
 
+import { translateForLocale } from '../i18n';
 import type { CommandContext, CommandDefinition } from './command-types';
 
 /**
@@ -49,7 +50,16 @@ export interface AssetCommandContext extends CommandContext {
 
 export type AssetCommandDefinition = CommandDefinition<AssetCommandContext>;
 
-const UNAVAILABLE_REASON = '资产当前不可用';
+function t(
+  ctx: AssetCommandContext,
+  key: string,
+): string {
+  return translateForLocale(ctx.locale, key);
+}
+
+function unavailableReason(ctx: AssetCommandContext): string | null {
+  return ctx.assetAvailable ? null : t(ctx, 'command.reason.unavailable');
+}
 
 /**
  * run 只服务单资产菜单：primaryAssetId 为空时落空（防御；菜单层保证非空）。
@@ -67,14 +77,14 @@ export const assetCommandDefinitions: readonly AssetCommandDefinition[] = [
   // ---- 回收站分支：assetDeleted 时仅这两项可见（与原 isDeleted 三元分支一致） ----
   {
     id: 'asset.restore',
-    title: '恢复',
+    title: (ctx) => t(ctx, 'command.asset.restore'),
     group: 'delete',
     visible: (ctx) => ctx.assetDeleted,
     run: (ctx) => withPrimaryAsset(ctx, (id) => ctx.actions.restore([id])),
   },
   {
     id: 'asset.delete-permanent',
-    title: '永久删除',
+    title: (ctx) => t(ctx, 'command.asset.deletePermanent'),
     group: 'delete',
     visible: (ctx) => ctx.assetDeleted,
     run: (ctx) =>
@@ -83,29 +93,34 @@ export const assetCommandDefinitions: readonly AssetCommandDefinition[] = [
   // ---- 打开 ----
   {
     id: 'asset.open-external',
-    title: '使用外部应用打开',
+    title: (ctx) => t(ctx, 'command.asset.openExternal'),
     group: 'open',
     shortcut: {
       mac: { label: '⌘O', key: 'o', metaKey: true },
       windows: { label: 'Ctrl+O', key: 'o', ctrlKey: true },
     },
     visible: (ctx) => !ctx.assetDeleted,
-    disabledReason: (ctx) => (ctx.assetAvailable ? null : UNAVAILABLE_REASON),
+    disabledReason: unavailableReason,
     run: (ctx) => withPrimaryAsset(ctx, (id) => ctx.actions.openExternal(id)),
   },
   {
     id: 'asset.reveal-in-folder',
     title: (ctx) =>
-      ctx.platform === 'mac' ? '在 Finder 中显示' : '在文件资源管理器中显示',
+      t(
+        ctx,
+        ctx.platform === 'mac'
+          ? 'command.asset.revealInFolder'
+          : 'command.asset.revealInFolderWindows',
+      ),
     group: 'open',
     visible: (ctx) => !ctx.assetDeleted,
-    disabledReason: (ctx) => (ctx.assetAvailable ? null : UNAVAILABLE_REASON),
+    disabledReason: unavailableReason,
     run: (ctx) => withPrimaryAsset(ctx, (id) => ctx.actions.revealInFolder(id)),
   },
   // ---- 组织 ----
   {
     id: 'asset.remove-from-current-collection',
-    title: '从当前合集移除',
+    title: (ctx) => t(ctx, 'command.asset.removeFromCollection'),
     group: 'organize',
     visible: (ctx) => !ctx.assetDeleted && ctx.activeCollectionId !== null,
     run: (ctx) =>
@@ -115,7 +130,7 @@ export const assetCommandDefinitions: readonly AssetCommandDefinition[] = [
   },
   {
     id: 'asset.relink',
-    title: '找回资产…',
+    title: (ctx) => t(ctx, 'command.asset.relink'),
     group: 'organize',
     visible: (ctx) =>
       !ctx.assetDeleted &&
@@ -125,7 +140,7 @@ export const assetCommandDefinitions: readonly AssetCommandDefinition[] = [
   },
   {
     id: 'asset.move-to-folder',
-    title: '移动到文件夹…',
+    title: (ctx) => t(ctx, 'command.asset.moveToFolder'),
     group: 'organize',
     visible: (ctx) =>
       !ctx.assetDeleted &&
@@ -135,38 +150,38 @@ export const assetCommandDefinitions: readonly AssetCommandDefinition[] = [
   },
   {
     id: 'asset.copy-file-path',
-    title: '复制文件路径',
+    title: (ctx) => t(ctx, 'command.asset.copyFilePath'),
     group: 'organize',
     visible: (ctx) => !ctx.assetDeleted,
-    disabledReason: (ctx) => (ctx.assetAvailable ? null : UNAVAILABLE_REASON),
+    disabledReason: unavailableReason,
     run: (ctx) => withPrimaryAsset(ctx, (id) => ctx.actions.copyFilePath(id)),
   },
   {
     id: 'asset.rename',
-    title: '重命名…',
+    title: (ctx) => t(ctx, 'command.asset.rename'),
     group: 'organize',
     visible: (ctx) => !ctx.assetDeleted,
-    disabledReason: (ctx) => (ctx.assetAvailable ? null : UNAVAILABLE_REASON),
+    disabledReason: unavailableReason,
     run: (ctx) => withPrimaryAsset(ctx, (id) => ctx.actions.rename(id)),
   },
   // ---- 元数据 ----
   {
     id: 'asset.ai-analyze',
-    title: 'AI 分析',
+    title: (ctx) => t(ctx, 'command.asset.aiAnalyze'),
     group: 'metadata',
     visible: (ctx) => !ctx.assetDeleted,
     disabledReason: (ctx) =>
       !ctx.assetAvailable
-        ? UNAVAILABLE_REASON
+        ? t(ctx, 'command.reason.unavailable')
         : ctx.aiCanAnalyze
           ? null
-          : '尚未配置 AI API Key',
+          : t(ctx, 'command.reason.aiNotConfigured'),
     run: (ctx) => withPrimaryAsset(ctx, (id) => ctx.actions.aiAnalyze(id)),
   },
   // ---- 删除 ----
   {
     id: 'asset.move-to-trash',
-    title: '移入回收站',
+    title: (ctx) => t(ctx, 'command.asset.moveToTrash'),
     group: 'delete',
     shortcut: {
       mac: { label: '⌘⌫', key: 'Backspace', metaKey: true },
@@ -174,12 +189,14 @@ export const assetCommandDefinitions: readonly AssetCommandDefinition[] = [
     },
     visible: (ctx) => !ctx.assetDeleted && ctx.locationKind === 'managed',
     disabledReason: (ctx) =>
-      ctx.assetAvailable ? null : '托管资产当前不可用，无法移入回收站',
+      ctx.assetAvailable
+        ? null
+        : t(ctx, 'command.reason.managedUnavailableTrash'),
     run: (ctx) => withPrimaryAsset(ctx, (id) => ctx.actions.moveToTrash([id])),
   },
   {
     id: 'asset.delete-linked',
-    title: '删除链接资产…',
+    title: (ctx) => t(ctx, 'command.asset.deleteLinked'),
     group: 'delete',
     visible: (ctx) => !ctx.assetDeleted && ctx.locationKind === 'linked',
     run: (ctx) =>
