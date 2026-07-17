@@ -814,6 +814,7 @@ test("maintains consistent preferences, accessible names, zoom behavior, and avo
     // verify presentation consistency
     await window.getByText("筛选与排序", { exact: true }).click();
     await window.getByLabel("标签过滤").fill("偏好测试标签");
+    await window.getByRole("option", { name: /偏好测试标签/ }).click();
     await assertToggleStates("true", "false", "false", "true");
     await assertHiddenFieldPresentation(true);
 

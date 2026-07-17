@@ -156,6 +156,7 @@ test("persists organization and metadata across restart and surfaces optimistic-
     // entry instead.
     await window.getByText("筛选与排序", { exact: true }).click();
     await window.getByLabel("标签过滤").fill("持久标签");
+    await window.getByRole("option", { name: /持久标签/ }).click();
     await expect(
       window.getByRole("button", { name: /persistent-asset\.txt/i }),
     ).toBeVisible();

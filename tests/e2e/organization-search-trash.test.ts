@@ -73,6 +73,7 @@ test('organizes, finds, trashes, and restores an imported asset through the UI',
     // tag-filtered view through the retained 标签过滤 entry instead.
     await window.getByText('筛选与排序', { exact: true }).click();
     await window.getByLabel('标签过滤').fill('角色');
+    await window.getByRole("option", { name: /角色/ }).click();
     await expect(window.getByRole('button', { name: /hero\.png/i })).toBeVisible();
     // Close the disclosure again so the later 筛选与排序 toggle below still
     // opens the panel for the favorite/tag filter search steps.
@@ -185,6 +186,7 @@ test('organizes, finds, trashes, and restores an imported asset through the UI',
     await window.getByText('筛选与排序', { exact: true }).click();
     await window.getByLabel('喜欢过滤').selectOption('yes');
     await window.getByLabel('标签过滤').fill('临时');
+    await window.getByRole("option", { name: /临时/ }).click();
     await window.getByRole('button', { name: '搜索', exact: true }).click();
     await expect(window.locator('.toast')).toContainText('找到 1 项');
     await expect(window.getByRole('button', { name: /hero\.png/i })).toBeVisible();
@@ -320,6 +322,7 @@ test('multi-select performs batch organization, trash, restore, and permanent de
     // tag-filtered view through the retained 标签过滤 entry instead.
     await window.getByText('筛选与排序', { exact: true }).click();
     await window.getByLabel('标签过滤').fill('批量标签');
+    await window.getByRole("option", { name: /批量标签/ }).click();
     await expect.poll(searchRequestCount).toBeGreaterThan(tagSearchCount);
     await expect(window.getByText('正在同步资源库…')).toHaveCount(0);
     // Flush search-result toast before opening context menu
