@@ -10,6 +10,7 @@ import {
 import type { TagSummary } from "../shared/asset-types";
 import { useContextMenu } from "./context-menu";
 import { Icon } from "./Icons";
+import { useT } from "./i18n";
 import { moveTagSuggestionIndex } from "./tag-suggestions";
 import {
   buildTagAssignCandidates,
@@ -45,13 +46,15 @@ export function TagPickerMenu({
   onBack,
   onPick,
 }: TagPickerMenuProps) {
+  const t = useT();
   const { close } = useContextMenu();
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(-1);
   const inputRef = useRef<HTMLInputElement>(null);
   const listId = useId();
 
-  const title = mode === "assign" ? "添加标签" : "移除标签";
+  const title =
+    mode === "assign" ? t("batch.assignTag") : t("batch.removeTag");
 
   const candidates = useMemo(
     () =>
@@ -107,13 +110,13 @@ export function TagPickerMenu({
     <div className="tag-picker">
       <div className="tag-picker-header">
         <button
-          aria-label="返回上一级菜单"
+          aria-label={t("tagPicker.backAria")}
           className="tag-picker-back"
           onClick={onBack}
           type="button"
         >
           <Icon name="chevron-left" size={12} />
-          <span>返回</span>
+          <span>{t("tagPicker.back")}</span>
         </button>
         <span className="tag-picker-title">{title}</span>
       </div>
@@ -126,7 +129,11 @@ export function TagPickerMenu({
           aria-autocomplete="list"
           aria-controls={listId}
           aria-expanded={candidates.length > 0}
-          aria-label={`搜索要${mode === "assign" ? "添加" : "移除"}的标签`}
+          aria-label={
+            mode === "assign"
+              ? t("tagPicker.searchAssign")
+              : t("tagPicker.searchRemove")
+          }
           autoComplete="off"
           className="tag-picker-search-input"
           maxLength={255}
@@ -135,7 +142,7 @@ export function TagPickerMenu({
             setActiveIndex(-1);
           }}
           onKeyDown={handleInputKeyDown}
-          placeholder="搜索标签…"
+          placeholder={t("tagPicker.searchPlaceholder")}
           ref={inputRef}
           role="combobox"
           type="text"
@@ -169,7 +176,7 @@ export function TagPickerMenu({
           ))}
         </div>
       ) : (
-        <div className="tag-picker-empty">没有匹配的标签</div>
+        <div className="tag-picker-empty">{t("tagPicker.noMatch")}</div>
       )}
     </div>
   );

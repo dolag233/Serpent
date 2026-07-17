@@ -1,4 +1,5 @@
 import { Icon } from "./Icons";
+import { useT } from "./i18n";
 
 export interface RestoreDialogProps {
   assetIds: string[];
@@ -24,6 +25,7 @@ export function RestoreDialog({
   onConfirm,
   onCancel,
 }: RestoreDialogProps) {
+  const t = useT();
   return (
     <div className="dialog-backdrop" role="presentation">
       <div
@@ -35,11 +37,11 @@ export function RestoreDialog({
         <div className="dialog-heading">
           <div>
             <h2 id="restore-dialog-title">
-              恢复 {assetIds.length} 项资产
+              {t("dialog.restore.title", { count: assetIds.length })}
             </h2>
           </div>
           <button
-            aria-label="取消"
+            aria-label={t("common.cancel")}
             className="dialog-close"
             onClick={onCancel}
             type="button"
@@ -48,7 +50,7 @@ export function RestoreDialog({
           </button>
         </div>
         <label className="field-label" htmlFor="restore-target">
-          恢复位置
+          {t("dialog.restore.location")}
         </label>
         <select
           className="text-field"
@@ -60,10 +62,8 @@ export function RestoreDialog({
           }
           value={target}
         >
-          <option value="original">
-            原位置（原文件夹不存在时使用根目录）
-          </option>
-          <option value="root">资源库根目录</option>
+          <option value="original">{t("dialog.restore.original")}</option>
+          <option value="root">{t("scope.rootFolder")}</option>
           {folders.map((folder) => (
             <option key={folder.folderId} value={folder.folderId}>
               {folder.relativePath}
@@ -75,7 +75,7 @@ export function RestoreDialog({
           htmlFor="restore-conflict"
           style={{ marginTop: 12 }}
         >
-          同名冲突
+          {t("dialog.restore.nameConflict")}
         </label>
         <select
           className="text-field"
@@ -87,15 +87,12 @@ export function RestoreDialog({
           }
           value={conflictStrategy}
         >
-          <option value="keep-both">保留两者（自动编号）</option>
-          <option value="replace">用回收站资产替换现有资产</option>
-          <option value="skip">跳过冲突资产</option>
+          <option value="keep-both">{t("dialog.restore.keepBoth")}</option>
+          <option value="replace">{t("dialog.restore.replace")}</option>
+          <option value="skip">{t("dialog.restore.skip")}</option>
         </select>
         {conflictStrategy === "replace" && (
-          <p className="field-help">
-            替换会删除冲突资产的 Serpent
-            记录及其托管文件，恢复资产会保留原有 ID 和元数据。
-          </p>
+          <p className="field-help">{t("dialog.restore.replaceHelp")}</p>
         )}
         <div className="dialog-actions">
           <button
@@ -103,14 +100,14 @@ export function RestoreDialog({
             onClick={onCancel}
             type="button"
           >
-            取消
+            {t("common.cancel")}
           </button>
           <button
             className="primary-button"
             onClick={onConfirm}
             type="button"
           >
-            确认恢复
+            {t("dialog.restore.submit")}
           </button>
         </div>
       </div>

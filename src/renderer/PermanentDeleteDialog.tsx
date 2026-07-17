@@ -1,5 +1,6 @@
 import React from "react";
 import { Icon } from "./Icons";
+import { useT } from "./i18n";
 
 export interface PermanentDeleteDialogProps {
   assetCount: number;
@@ -12,15 +13,16 @@ export function PermanentDeleteDialog({
   onCancel,
   onConfirm,
 }: PermanentDeleteDialogProps) {
+  const t = useT();
   return (
     <div className="dialog-backdrop" role="presentation">
       <div aria-modal="true" className="create-dialog" role="dialog">
         <div className="dialog-heading">
           <div>
-            <h2>永久删除确认</h2>
+            <h2>{t("dialog.permanentDelete.title")}</h2>
           </div>
           <button
-            aria-label="取消"
+            aria-label={t("common.cancel")}
             className="dialog-close"
             onClick={onCancel}
             type="button"
@@ -35,7 +37,7 @@ export function PermanentDeleteDialog({
             lineHeight: 1.6,
           }}
         >
-          确定要永久删除所选 {assetCount} 项资产吗？文件将从回收站彻底移除，此操作不可撤销。
+          {t("dialog.permanentDelete.body", { count: assetCount })}
         </p>
         <div className="dialog-actions">
           <button
@@ -43,14 +45,14 @@ export function PermanentDeleteDialog({
             onClick={onCancel}
             type="button"
           >
-            取消
+            {t("common.cancel")}
           </button>
           <button
             className="primary-button"
             onClick={onConfirm}
             type="button"
           >
-            永久删除 {assetCount} 项
+            {t("dialog.permanentDelete.submit", { count: assetCount })}
           </button>
         </div>
       </div>

@@ -16,6 +16,7 @@ import {
   moveTagSuggestionIndex,
   type TagSuggestion,
 } from "./tag-suggestions";
+import { useT } from "./i18n";
 
 import type { AssetSummary, AssetMetadataResult, TagSummary } from "../shared/asset-types";
 import type { RendererLibrarySummary } from "../shared/protocol/responses";
@@ -37,10 +38,10 @@ function formatBytes(bytes: number) {
   return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
 }
 
-function formatDateFull(value: string) {
+function formatDateFull(value: string, unknownLabel: string) {
   const date = new Date(value);
   return Number.isNaN(date.valueOf())
-    ? "未知时间"
+    ? unknownLabel
     : new Intl.DateTimeFormat("zh-CN", {
         year: "numeric",
         month: "2-digit",
@@ -48,10 +49,10 @@ function formatDateFull(value: string) {
       }).format(date);
 }
 
-function formatDateShort(value: string) {
+function formatDateShort(value: string, unknownLabel: string) {
   const date = new Date(value);
   return Number.isNaN(date.valueOf())
-    ? "未知时间"
+    ? unknownLabel
     : new Intl.DateTimeFormat("zh-CN", {
         month: "2-digit",
         day: "2-digit",
@@ -211,6 +212,8 @@ export function InspectorPanel(props: InspectorPanelProps) {
     onOpenSourceUrl,
   } = props;
 
+  const t = useT();
+
   // Selection identity and metadata may resolve in separate async turns. Never
   // render the previous asset's fields beside the newly selected asset.
   const assetMetadata =
@@ -333,6 +336,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
   // 不会出现行尾挂一个孤立 "·" 的情况。
   const compactInfoParts = useMemo(() => {
     if (!selectedAsset) return [];
+    const unknownTime = t("common.unknownTime");
     const parts: string[] = [];
     parts.push(formatBytes(selectedAsset.byteSize ?? 0));
     if (selectedAsset.width !== null && selectedAsset.height !== null) {
@@ -341,9 +345,9 @@ export function InspectorPanel(props: InspectorPanelProps) {
     if (selectedAsset.durationMs !== null) {
       parts.push(formatDuration(selectedAsset.durationMs));
     }
-    parts.push(formatDateFull(selectedAsset.modifiedAt ?? ""));
+    parts.push(formatDateFull(selectedAsset.modifiedAt ?? "", unknownTime));
     return parts;
-  }, [selectedAsset]);
+  }, [selectedAsset, t]);
 
   return (
     <aside className="inspector-pane">
@@ -368,20 +372,22 @@ export function InspectorPanel(props: InspectorPanelProps) {
             <span aria-hidden="true" className="inspector-status-dot" />
             <span>
               {selectedAsset.deletedAt
-                ? `回收站（${selectedAsset.remainingDays ?? "?"}天后自动清理）`
+                ? t("inspector.trashedAutoClean", {
+                    days: selectedAsset.remainingDays ?? "?",
+                  })
                 : selectedAsset.availability === "available"
-                  ? "可用"
-                  : "文件丢失"}
+                  ? t("inspector.available")
+                  : t("inspector.missing")}
             </span>
           </div>
 
           {/* Tag chips (REQ-TAG-003) */}
           <section className="inspector-section inspector-tags-section">
             <div className="inspector-tags-header">
-              <span className="inspector-section-label">标签</span>
+              <span className="inspector-section-label">{t("inspector.tags")}</span>
               <button
                 className="tiny-action"
-                aria-label="添加标签"
+                aria-label={t("inspector.addTag")}
                 onClick={() => {
                   setShowTagInput(true);
                   setTagInputValue("");
@@ -404,7 +410,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
                   <span className="tag-chip-name">{tag.name}</span>
                   {tag.source === "user" && onRemoveTagFromAsset && (
                     <button
-                      aria-label="移除此标签"
+                      aria-label={t("inspector.removeTag")}
                       className="tag-chip-remove"
                       onClick={() => onRemoveTagFromAsset(tag.id)}
                       type="button"
@@ -415,7 +421,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
                 </span>
               ))}
               {displayedTags.length === 0 && !showTagInput && (
-                <span className="tag-chip-placeholder">尚未添加标签</span>
+                <span className="tag-chip-placeholder">{t("inspector.noTags")}</span>
               )}
               {showTagInput && (
                 <div className="tag-input-wrapper">
@@ -430,7 +436,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
                       aria-autocomplete="list"
                       aria-controls="inspector-tag-suggestions"
                       aria-expanded={tagSuggestions.length > 0}
-                      aria-label="添加标签"
+                      aria-label={t("inspector.addTag")}
                       autoComplete="off"
                       autoFocus
                       className="tag-add-input"
@@ -445,7 +451,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
                         setActiveTagSuggestionIndex(-1);
                       }}
                       onKeyDown={handleAddTagKeyDown}
-                      placeholder="搜索或创建标签…"
+                      placeholder={t("inspector.searchOrCreateTag")}
                       ref={tagInputRef}
                       role="combobox"
                       value={tagInputValue}
@@ -474,7 +480,9 @@ export function InspectorPanel(props: InspectorPanelProps) {
                           <span className="tag-suggestion-name">
                             {suggestion.kind === "assign"
                               ? suggestion.name
-                              : `创建标签 “${suggestion.name}”`}
+                              : t("inspector.createTagNamed", {
+                                  name: suggestion.name,
+                                })}
                           </span>
                           {suggestion.kind === "assign" && (
                             <span className="tag-suggestion-count">
@@ -490,7 +498,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
             </div>
             {selectionCount !== undefined && selectionCount >= 2 && (
               <span className="tag-chip-placeholder">
-                标签与评分操作将应用于 {selectionCount} 项资产
+                {t("inspector.applyToSelection", { count: selectionCount })}
               </span>
             )}
           </section>
@@ -502,13 +510,13 @@ export function InspectorPanel(props: InspectorPanelProps) {
                 <div className="inline-error inspector-version-conflict">
                   <Icon name="warning" size={14} />
                   <div>
-                    <strong>版本冲突</strong>
-                    <p>元数据已被其他操作修改。请刷新以获取最新版本。</p>
+                    <strong>{t("inspector.versionConflict")}</strong>
+                    <p>{t("inspector.versionConflictBody")}</p>
                     <button
                       onClick={() => void loadMetadata()}
                       type="button"
                     >
-                      刷新元数据
+                      {t("inspector.refreshMetadata")}
                     </button>
                   </div>
                 </div>
@@ -516,10 +524,10 @@ export function InspectorPanel(props: InspectorPanelProps) {
 
               {/* 高频操作聚拢成一行：评分在左、喜欢在右，无需小标题。 */}
               <div className="inspector-quick-row">
-                <div aria-label="评分" className="inspector-rating" role="group">
+                <div aria-label={t("inspector.rating")} className="inspector-rating" role="group">
                   {[1, 2, 3, 4, 5].map((star) => (
                     <button
-                      aria-label={`${star} 星`}
+                      aria-label={t("inspector.starAria", { star })}
                       aria-pressed={star <= editRating || undefined}
                       className="rating-star"
                       data-active={star <= editRating || undefined}
@@ -532,17 +540,21 @@ export function InspectorPanel(props: InspectorPanelProps) {
                   ))}
                   {editRating > 0 && (
                     <button
-                      aria-label="清除评分"
+                      aria-label={t("inspector.clearRating")}
                       className="rating-clear"
                       onClick={() => handleRatingClick(0)}
                       type="button"
                     >
-                      清除
+                      {t("common.clear")}
                     </button>
                   )}
                 </div>
                 <button
-                  aria-label={editFavorite ? "取消喜欢" : "标记喜欢"}
+                  aria-label={
+                    editFavorite
+                      ? t("inspector.unfavorite")
+                      : t("inspector.markFavorite")
+                  }
                   aria-pressed={editFavorite || undefined}
                   className="favorite-toggle"
                   data-active={editFavorite || undefined}
@@ -556,16 +568,23 @@ export function InspectorPanel(props: InspectorPanelProps) {
               {/* 色卡：等宽分段（顺序即提取重要性，左→右），点击复制色值。 */}
               <div className="editor-field">
                 <label className="micro-label">
-                  色卡 (Palette) ·{" "}
-                  {assetMetadata.paletteSource === "manual"
-                    ? "人工"
-                    : assetMetadata.paletteSource === "automatic"
-                      ? "自动"
-                      : "待提取"}
+                  {t("inspector.paletteLabel", {
+                    source:
+                      assetMetadata.paletteSource === "manual"
+                        ? t("inspector.paletteManual")
+                        : assetMetadata.paletteSource === "automatic"
+                          ? t("inspector.paletteAuto")
+                          : t("inspector.palettePending"),
+                  })}
                 </label>
                 {displayedPalette.length > 0 && (
                   <div
-                    aria-label={`${assetMetadata.paletteSource === "manual" ? "人工" : "自动"}色卡预览`}
+                    aria-label={t("inspector.palettePreview", {
+                      source:
+                        assetMetadata.paletteSource === "manual"
+                          ? t("inspector.paletteManual")
+                          : t("inspector.paletteAuto"),
+                    })}
                     className="palette-preview"
                     role="group"
                   >
@@ -576,7 +595,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
                           : undefined;
                       return (
                         <span
-                          aria-label={`复制颜色 ${color}`}
+                          aria-label={t("inspector.copyColor", { color })}
                           key={`${color}-${index}`}
                           onClick={() => copyPaletteColor(color)}
                           onKeyDown={(event) => {
@@ -594,8 +613,11 @@ export function InspectorPanel(props: InspectorPanelProps) {
                           tabIndex={0}
                           title={
                             ratio === undefined
-                              ? `${color} · 点击复制`
-                              : `${color} · ${(ratio * 100).toFixed(1)}% · 点击复制`
+                              ? t("inspector.copyColorTitle", { color })
+                              : t("inspector.copyColorTitleRatio", {
+                                  color,
+                                  ratio: (ratio * 100).toFixed(1),
+                                })
                           }
                         />
                       );
@@ -603,7 +625,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
                   </div>
                 )}
                 <input
-                  aria-label="人工色卡"
+                  aria-label={t("inspector.manualPalette")}
                   className="text-field inspector-input inspector-palette-input"
                   maxLength={1024}
                   onBlur={handlePaletteSave}
@@ -611,19 +633,19 @@ export function InspectorPanel(props: InspectorPanelProps) {
                   onKeyDown={(event) => {
                     if (event.key === "Enter") handlePaletteSave();
                   }}
-                  placeholder="#C84C4C, #203040（最多 20 色）"
+                  placeholder={t("inspector.palettePlaceholder")}
                   value={editPalette}
                 />
                 {assetMetadata.paletteSource === "automatic" && (
                   <p className="field-help">
-                    本地算法从当前修订提取；填写上方颜色后将以人工色卡优先。
+                    {t("inspector.paletteHelp")}
                   </p>
                 )}
               </div>
 
               <div className="editor-field">
                 <label className="micro-label" htmlFor="meta-desc">
-                  描述
+                  {t("inspector.description")}
                 </label>
                 <textarea
                   className="text-field inspector-textarea"
@@ -631,7 +653,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
                   maxLength={10000}
                   onBlur={handleMetadataDescriptionSave}
                   onChange={handleMetadataDescriptionInput}
-                  placeholder="为资产写一句备注…"
+                  placeholder={t("inspector.descriptionPlaceholder")}
                   ref={descriptionRef}
                   rows={2}
                   value={editDescription}
@@ -640,7 +662,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
 
               <div className="editor-field">
                 <label className="micro-label" htmlFor="meta-url">
-                  源链接 (URL)
+                  {t("inspector.sourceUrl")}
                 </label>
                 <div className="source-url-field">
                   <input
@@ -659,8 +681,8 @@ export function InspectorPanel(props: InspectorPanelProps) {
                     aria-disabled={!canOpenSourceUrl || undefined}
                     aria-label={
                       canOpenSourceUrl
-                        ? "在浏览器中打开源链接"
-                        : "源链接无效，输入 HTTP(S) 链接后可打开"
+                        ? t("inspector.openSourceUrl")
+                        : t("inspector.sourceUrlInvalidHint")
                     }
                     className="source-url-open"
                     onClick={() => {
@@ -668,8 +690,8 @@ export function InspectorPanel(props: InspectorPanelProps) {
                     }}
                     title={
                       canOpenSourceUrl
-                        ? "在浏览器中打开"
-                        : "输入有效的 HTTP(S) 链接后可打开"
+                        ? t("inspector.openInBrowser")
+                        : t("inspector.openInBrowserHint")
                     }
                     type="button"
                   >
@@ -680,8 +702,14 @@ export function InspectorPanel(props: InspectorPanelProps) {
 
               {assetMetadata.entityVersion > 0 && (
                 <div className="inspector-version-line">
-                  版本 {assetMetadata.entityVersion} ·{" "}
-                  {formatDateShort(assetMetadata.updatedAt)}
+                  {t("inspector.versionLine", {
+                    version: assetMetadata.entityVersion,
+                  })}{" "}
+                  ·{" "}
+                  {formatDateShort(
+                    assetMetadata.updatedAt,
+                    t("common.unknownTime"),
+                  )}
                 </div>
               )}
             </>
@@ -691,7 +719,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
 
           {/* Asset path */}
           <section className="inspector-section">
-            <span className="inspector-section-label">资源库路径</span>
+            <span className="inspector-section-label">{t("inspector.libraryPath")}</span>
             <p className="path-block">{selectedAsset.relativeFilePath}</p>
           </section>
 
@@ -700,17 +728,17 @@ export function InspectorPanel(props: InspectorPanelProps) {
             <section className="inspector-section">
               <div className="inspector-section-label">
                 <span className="inspector-ai-badge">AI</span>
-                AI 生成内容
+                {t("inspector.aiGenerated")}
               </div>
               {aiContent.description && (
                 <div className="editor-field">
-                  <label className="micro-label">描述 · AI</label>
+                  <label className="micro-label">{t("inspector.descriptionAi")}</label>
                   <p className="inspector-ai-text">{aiContent.description}</p>
                 </div>
               )}
               {aiContent.tags && aiContent.tags.length > 0 && (
                 <div className="editor-field">
-                  <label className="micro-label">标签 · AI</label>
+                  <label className="micro-label">{t("inspector.tagsAi")}</label>
                   <div className="inspector-ai-tags">
                     {aiContent.tags.map((tag) => (
                       <span className="tag-chip" key={tag}>
@@ -733,7 +761,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
             onClick={() => void closeLibrary()}
             type="button"
           >
-            关闭资源库
+            {t("shell.closeLibrary")}
           </button>
         </div>
       ) : library ? (
@@ -743,29 +771,29 @@ export function InspectorPanel(props: InspectorPanelProps) {
               {initials(library.displayName)}
             </div>
             <div>
-              <span className="micro-label">当前资源库</span>
+              <span className="micro-label">{t("inspector.currentLibrary")}</span>
               <strong>{library.displayName}</strong>
             </div>
           </div>
           <dl className="metadata-list">
             <div>
-              <dt>状态</dt>
+              <dt>{t("inspector.status")}</dt>
               <dd>
                 <span className="status-dot" data-active="true" />
-                已打开
+                {t("inspector.statusOpen")}
               </dd>
             </div>
             <div>
-              <dt>资产</dt>
+              <dt>{t("inspector.assets")}</dt>
               <dd className="mono">{allAssetCount}</dd>
             </div>
             <div>
-              <dt>文件夹</dt>
+              <dt>{t("inspector.folders")}</dt>
               <dd className="mono">{folderCount}</dd>
             </div>
           </dl>
           <section className="inspector-section">
-            <span className="inspector-section-label">位置</span>
+            <span className="inspector-section-label">{t("inspector.location")}</span>
             <p className="path-block">{library.displayPath}</p>
           </section>
           <button
@@ -773,14 +801,14 @@ export function InspectorPanel(props: InspectorPanelProps) {
             onClick={() => void closeLibrary()}
             type="button"
           >
-            关闭资源库
+            {t("shell.closeLibrary")}
           </button>
         </div>
       ) : (
         <div className="inspector-empty">
           <Icon name="info" size={18} />
-          <strong>没有活动资源库</strong>
-          <p>打开资源库后查看当前范围与资产详情。</p>
+          <strong>{t("inspector.noActiveLibrary")}</strong>
+          <p>{t("inspector.openLibraryHint")}</p>
         </div>
       )}
     </aside>

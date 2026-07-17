@@ -1,4 +1,5 @@
 import { Icon } from "./Icons";
+import { useT } from "./i18n";
 
 export interface CollectionEditorDialogProps {
   open: boolean;
@@ -21,6 +22,7 @@ export function CollectionEditorDialog({
   onSave,
   onCancel,
 }: CollectionEditorDialogProps) {
+  const t = useT();
   if (!open) return null;
 
   return (
@@ -33,10 +35,12 @@ export function CollectionEditorDialog({
       >
         <div className="dialog-heading">
           <div>
-            <h2 id="collection-editor-title">编辑合集详情</h2>
+            <h2 id="collection-editor-title">
+              {t("dialog.collectionEditor.title")}
+            </h2>
           </div>
           <button
-            aria-label="取消"
+            aria-label={t("common.cancel")}
             className="dialog-close"
             onClick={onCancel}
             type="button"
@@ -45,7 +49,7 @@ export function CollectionEditorDialog({
           </button>
         </div>
         <label className="field-label" htmlFor="collection-description">
-          描述
+          {t("dialog.collectionEditor.description")}
         </label>
         <textarea
           className="text-field"
@@ -60,7 +64,7 @@ export function CollectionEditorDialog({
           htmlFor="collection-cover"
           style={{ marginTop: 12 }}
         >
-          封面资产
+          {t("dialog.collectionEditor.cover")}
         </label>
         <select
           className="text-field"
@@ -68,11 +72,11 @@ export function CollectionEditorDialog({
           onChange={(event) => onCoverAssetChange(event.target.value)}
           value={coverAssetId}
         >
-          <option value="">无封面</option>
+          <option value="">{t("dialog.collectionEditor.noCover")}</option>
           {coverAssetId &&
             !assetOptions.some((a) => a.assetId === coverAssetId) && (
               <option value={coverAssetId}>
-                当前封面（不在本页）
+                {t("dialog.collectionEditor.currentCoverOffPage")}
               </option>
             )}
           {assetOptions.map((asset) => (
@@ -81,23 +85,21 @@ export function CollectionEditorDialog({
             </option>
           ))}
         </select>
-        <p className="field-help">
-          可从当前页面资产中选择封面；合集树支持同级拖拽排序。
-        </p>
+        <p className="field-help">{t("dialog.collectionEditor.help")}</p>
         <div className="dialog-actions">
           <button
             className="secondary-button"
             onClick={onCancel}
             type="button"
           >
-            取消
+            {t("common.cancel")}
           </button>
           <button
             className="primary-button"
             onClick={onSave}
             type="button"
           >
-            保存详情
+            {t("dialog.collectionEditor.save")}
           </button>
         </div>
       </div>

@@ -7,13 +7,23 @@
 // instead; the full path stays available in the row's title tooltip.
 // ---------------------------------------------------------------------------
 
+import {
+  DEFAULT_LOCALE,
+  translateForLocale,
+  type AppLocale,
+} from "./i18n";
+
 /**
  * Human-readable original location for a trashed asset:
- * the parent portion of the stored path, or 资源库根目录 for root-level files.
+ * the parent portion of the stored path, or the library-root label for
+ * root-level files.
  */
-export function trashedFromLabel(trashedFromPath: string): string {
-  const normalized = trashedFromPath.replace(/\\/g, '/');
-  const cut = normalized.lastIndexOf('/');
-  if (cut <= 0) return '资源库根目录';
+export function trashedFromLabel(
+  trashedFromPath: string,
+  locale: AppLocale = DEFAULT_LOCALE,
+): string {
+  const normalized = trashedFromPath.replace(/\\/g, "/");
+  const cut = normalized.lastIndexOf("/");
+  if (cut <= 0) return translateForLocale(locale, "scope.rootFolder");
   return normalized.slice(0, cut);
 }

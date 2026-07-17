@@ -1,5 +1,6 @@
 import React from "react";
 import { Icon } from "./Icons";
+import { useT } from "./i18n";
 
 export interface DeleteLinkedDialogProps {
   displayNames: string;
@@ -18,15 +19,16 @@ export function DeleteLinkedDialog({
   onConfirm,
   onToggleDeleteSourceFile,
 }: DeleteLinkedDialogProps) {
+  const t = useT();
   return (
     <div className="dialog-backdrop" role="presentation">
       <div aria-modal="true" className="create-dialog" role="dialog">
         <div className="dialog-heading">
           <div>
-            <h2>删除链接资产</h2>
+            <h2>{t("dialog.deleteLinked.title")}</h2>
           </div>
           <button
-            aria-label="取消"
+            aria-label={t("common.cancel")}
             className="dialog-close"
             onClick={onClose}
             type="button"
@@ -41,8 +43,7 @@ export function DeleteLinkedDialog({
             lineHeight: 1.6,
           }}
         >
-          确定要从 Serpent 中移除链接资产"{displayNames}
-          "吗？默认只移除索引记录，磁盘源文件保持不变。
+          {t("dialog.deleteLinked.body", { name: displayNames })}
         </p>
         <label
           style={{
@@ -59,7 +60,7 @@ export function DeleteLinkedDialog({
           }}
         >
           <input
-            aria-label="同时删除磁盘源文件"
+            aria-label={t("dialog.deleteLinked.deleteSourceAria")}
             checked={deleteSourceFile}
             disabled={!canDeleteSourceFile}
             onChange={(event) =>
@@ -69,8 +70,8 @@ export function DeleteLinkedDialog({
           />
           <span>
             {canDeleteSourceFile
-              ? "同时将磁盘源文件移入系统回收站。系统拒绝操作时，该项源文件和 Serpent 记录都会保留，并显示具体原因。"
-              : "源文件当前不可用，只能移除 Serpent 中的链接记录。"}
+              ? t("dialog.deleteLinked.deleteSourceHelp")
+              : t("dialog.deleteLinked.sourceUnavailable")}
           </span>
         </label>
         <div className="dialog-actions">
@@ -79,7 +80,7 @@ export function DeleteLinkedDialog({
             onClick={onClose}
             type="button"
           >
-            取消
+            {t("common.cancel")}
           </button>
           <button
             className="primary-button"
@@ -87,8 +88,8 @@ export function DeleteLinkedDialog({
             type="button"
           >
             {deleteSourceFile
-              ? "移入系统回收站并移除"
-              : "仅移除记录"}
+              ? t("dialog.deleteLinked.submitWithTrash")
+              : t("dialog.deleteLinked.submitRecordOnly")}
           </button>
         </div>
       </div>

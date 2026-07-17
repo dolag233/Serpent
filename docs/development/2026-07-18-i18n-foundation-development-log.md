@@ -17,11 +17,13 @@
 - `npm run typecheck`：通过
 - 相关单测：`i18n-translate` + `scope-breadcrumbs` + `asset-commands` + `asset-multi-commands` + `sidebar-commands` + `command-registry` → **136 passed**
 
-## 未完成
+## 第二增量（2026-07-18 loop tick）
 
-- Inspector、NavigationSidebar、各 Dialog、App.tsx toast/错误文案、过滤面板等仍含硬编码中文（约 30+ 文件）。
-- 英文界面下 E2E 仍按中文选择器编写，故默认保持 zh-CN；英文冒烟 E2E 后续补。
-- 独立 agent 交叉审查未在本增量完整执行。
+- 对话框面全部迁入 i18n：Create/Rename/Import/Export/Move/Restore/UndoMove/Conflicts/ConvertLinked/CollectionEditor/LinkedRules/MediaJobs/ExtensionPairing/AiConfig/PermanentDelete/DeleteLinked/RelinkPreview。
+- NavigationSidebar、InspectorPanel、FilterTagPicker、TagPickerMenu、batch-tag-notice、error-utils、trashed-from-label、inline-folder-edit 用户文案迁入。
+- 仍硬编码：`App.tsx`（大量 toast/工具栏）、`AssetPreviewModal`、`AssetContextMenu` 内联块、`useBatchActions` 等。
+- 验证：typecheck / lint 通过；i18n 相关单测通过。
+
 
 ## 人类验收（待条目）
 

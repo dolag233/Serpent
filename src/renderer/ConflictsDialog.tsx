@@ -1,4 +1,5 @@
 import { Icon } from "./Icons";
+import { useT } from "./i18n";
 import type { ImportConflictPlan } from "../shared/protocol/responses";
 
 export interface ConflictsDialogProps {
@@ -22,6 +23,7 @@ export function ConflictsDialog({
   onCancel,
   onConfirm,
 }: ConflictsDialogProps) {
+  const t = useT();
   return (
     <div className="dialog-backdrop" role="presentation">
       <div
@@ -32,25 +34,25 @@ export function ConflictsDialog({
       >
         <div className="dialog-heading">
           <div>
-            <h2 id="conflict-dialog-title">处理导入冲突</h2>
+            <h2 id="conflict-dialog-title">{t("dialog.conflicts.title")}</h2>
           </div>
         </div>
         <div className="conflict-summary">
           <div>
             <strong>{conflicts.fileCount}</strong>
-            <span>待导入文件</span>
+            <span>{t("dialog.conflicts.pendingFiles")}</span>
           </div>
           <div>
             <strong>{conflicts.suspectedDuplicateCount}</strong>
-            <span>疑似重复</span>
+            <span>{t("dialog.conflicts.suspectedDuplicates")}</span>
           </div>
           <div>
             <strong>{conflicts.nameConflictCount}</strong>
-            <span>同名冲突</span>
+            <span>{t("dialog.conflicts.nameConflicts")}</span>
           </div>
         </div>
         <label className="decision-field">
-          <span>疑似重复</span>
+          <span>{t("dialog.conflicts.suspectedDuplicates")}</span>
           <select
             autoFocus
             value={duplicateDecision}
@@ -60,22 +62,22 @@ export function ConflictsDialog({
               )
             }
           >
-            <option value="skip">跳过</option>
-            <option value="merge">合并到已有资产</option>
-            <option value="create-copy">创建副本</option>
+            <option value="skip">{t("dialog.conflicts.skip")}</option>
+            <option value="merge">{t("dialog.conflicts.merge")}</option>
+            <option value="create-copy">{t("dialog.conflicts.createCopy")}</option>
           </select>
         </label>
         <label className="decision-field">
-          <span>同名冲突</span>
+          <span>{t("dialog.conflicts.nameConflicts")}</span>
           <select
             value={nameDecision}
             onChange={(event) =>
               onNameDecisionChange(event.target.value as typeof nameDecision)
             }
           >
-            <option value="keep-both">保留两者</option>
-            <option value="replace">替换现有资产</option>
-            <option value="skip">跳过</option>
+            <option value="keep-both">{t("dialog.conflicts.keepBoth")}</option>
+            <option value="replace">{t("dialog.conflicts.replace")}</option>
+            <option value="skip">{t("dialog.conflicts.skip")}</option>
           </select>
         </label>
         {conflicts.examples.length > 0 && (
@@ -94,14 +96,14 @@ export function ConflictsDialog({
             onClick={onCancel}
             type="button"
           >
-            取消
+            {t("common.cancel")}
           </button>
           <button
             className="primary-button"
             onClick={onConfirm}
             type="button"
           >
-            应用并导入
+            {t("dialog.conflicts.apply")}
           </button>
         </div>
       </div>

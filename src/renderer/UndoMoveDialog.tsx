@@ -1,4 +1,5 @@
 import { Icon } from "./Icons";
+import { useT } from "./i18n";
 
 export interface UndoMoveDialogProps {
   open: boolean;
@@ -17,6 +18,7 @@ export function UndoMoveDialog({
   onConfirm,
   onCancel,
 }: UndoMoveDialogProps) {
+  const t = useT();
   if (!open) return null;
 
   return (
@@ -29,10 +31,10 @@ export function UndoMoveDialog({
       >
         <div className="dialog-heading">
           <div>
-            <h2 id="undo-move-dialog-title">原位置已有新内容</h2>
+            <h2 id="undo-move-dialog-title">{t("dialog.undoMove.title")}</h2>
           </div>
           <button
-            aria-label="取消撤销"
+            aria-label={t("dialog.undoMove.cancelAria")}
             className="dialog-close"
             onClick={onCancel}
             type="button"
@@ -40,11 +42,9 @@ export function UndoMoveDialog({
             <Icon name="close" size={16} />
           </button>
         </div>
-        <p className="field-help">
-          Serpent 没有覆盖原位置。请选择明确的冲突处理方式后再撤销。
-        </p>
+        <p className="field-help">{t("dialog.undoMove.help")}</p>
         <label className="field-label" htmlFor="undo-move-conflict">
-          冲突处理
+          {t("dialog.undoMove.conflictLabel")}
         </label>
         <select
           className="text-field"
@@ -56,9 +56,9 @@ export function UndoMoveDialog({
           }
           value={conflictStrategy}
         >
-          <option value="keep-both">保留两者（撤回资产自动编号）</option>
-          <option value="replace">替换原位置的新内容</option>
-          <option value="skip">跳过冲突资产</option>
+          <option value="keep-both">{t("dialog.undoMove.keepBoth")}</option>
+          <option value="replace">{t("dialog.undoMove.replace")}</option>
+          <option value="skip">{t("dialog.undoMove.skip")}</option>
         </select>
         <div className="dialog-actions">
           <button
@@ -66,14 +66,14 @@ export function UndoMoveDialog({
             onClick={onCancel}
             type="button"
           >
-            取消
+            {t("common.cancel")}
           </button>
           <button
             className="primary-button"
             onClick={onConfirm}
             type="button"
           >
-            按所选策略撤销
+            {t("dialog.undoMove.submit")}
           </button>
         </div>
       </div>

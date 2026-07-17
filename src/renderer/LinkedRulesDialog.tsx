@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Icon } from "./Icons";
+import { useT } from "./i18n";
 import type { LinkedFolderRule } from "../shared/asset-types";
 
 export interface LinkedRulesDialogProps {
@@ -15,6 +16,7 @@ export function LinkedRulesDialog({
   onClose,
   onSave,
 }: LinkedRulesDialogProps) {
+  const t = useT();
   const [rules, setRules] = useState<LinkedFolderRule[]>(initialRules);
 
   return (
@@ -27,10 +29,10 @@ export function LinkedRulesDialog({
       >
         <div className="dialog-heading">
           <div>
-            <h2>{name} · 过滤规则</h2>
+            <h2>{t("dialog.linkedRules.title", { name })}</h2>
           </div>
           <button
-            aria-label="取消"
+            aria-label={t("common.cancel")}
             className="dialog-close"
             onClick={onClose}
             type="button"
@@ -38,9 +40,7 @@ export function LinkedRulesDialog({
             <Icon name="close" size={16} />
           </button>
         </div>
-        <p className="field-help">
-          从上到下执行，最后一个匹配项生效；仅支持受约束的路径、文件名、扩展名和文件夹规则。
-        </p>
+        <p className="field-help">{t("dialog.linkedRules.help")}</p>
         {rules.map((rule, index) => (
           <div
             key={rule.ruleId}
@@ -52,7 +52,9 @@ export function LinkedRulesDialog({
             }}
           >
             <input
-              aria-label={`启用规则 ${index + 1}`}
+              aria-label={t("dialog.linkedRules.enableRule", {
+                index: index + 1,
+              })}
               checked={rule.enabled}
               onChange={(event) =>
                 setRules((current) =>
@@ -81,8 +83,8 @@ export function LinkedRulesDialog({
               }
               value={rule.action}
             >
-              <option value="exclude">排除</option>
-              <option value="include">包含</option>
+              <option value="exclude">{t("dialog.linkedRules.exclude")}</option>
+              <option value="include">{t("dialog.linkedRules.include")}</option>
             </select>
             <select
               className="text-field"
@@ -100,10 +102,10 @@ export function LinkedRulesDialog({
               }
               value={rule.target}
             >
-              <option value="folder">文件夹</option>
-              <option value="filename">文件名</option>
-              <option value="extension">扩展名</option>
-              <option value="path">路径</option>
+              <option value="folder">{t("dialog.linkedRules.folder")}</option>
+              <option value="filename">{t("dialog.linkedRules.filename")}</option>
+              <option value="extension">{t("dialog.linkedRules.extension")}</option>
+              <option value="path">{t("dialog.linkedRules.path")}</option>
             </select>
             <input
               className="text-field"
@@ -120,7 +122,9 @@ export function LinkedRulesDialog({
               value={rule.pattern}
             />
             <button
-              aria-label={`删除规则 ${index + 1}`}
+              aria-label={t("dialog.linkedRules.deleteRule", {
+                index: index + 1,
+              })}
               className="dialog-close"
               onClick={() =>
                 setRules((current) =>
@@ -150,14 +154,14 @@ export function LinkedRulesDialog({
             }
             type="button"
           >
-            添加规则
+            {t("dialog.linkedRules.add")}
           </button>
           <button
             className="secondary-button"
             onClick={onClose}
             type="button"
           >
-            取消
+            {t("common.cancel")}
           </button>
           <button
             className="primary-button"
@@ -165,7 +169,7 @@ export function LinkedRulesDialog({
             onClick={() => onSave(rules)}
             type="button"
           >
-            保存并刷新
+            {t("dialog.linkedRules.save")}
           </button>
         </div>
       </div>

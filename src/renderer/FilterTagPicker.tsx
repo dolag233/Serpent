@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { TagSummary } from "../shared/asset-types";
 import { Icon } from "./Icons";
+import { useT } from "./i18n";
 
 // ---------------------------------------------------------------------------
 // FilterTagPicker (REQ-TAG-002)
@@ -23,6 +24,7 @@ export function FilterTagPicker({
   onChange: (names: string[]) => void;
   disabled?: boolean;
 }) {
+  const t = useT();
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -62,7 +64,7 @@ export function FilterTagPicker({
             <span className="filter-tag-chip" key={name}>
               {name}
               <button
-                aria-label={`移除标签过滤 ${name}`}
+                aria-label={t("filter.removeTagFilter", { name })}
                 onClick={() => remove(name)}
                 type="button"
               >
@@ -73,7 +75,7 @@ export function FilterTagPicker({
         </div>
       )}
       <input
-        aria-label="标签过滤"
+        aria-label={t("filter.tagFilter")}
         className="text-field"
         disabled={disabled}
         onChange={(event) => {
@@ -90,11 +92,15 @@ export function FilterTagPicker({
             setOpen(false);
           }
         }}
-        placeholder="搜索并添加标签"
+        placeholder={t("filter.searchAddTag")}
         value={query}
       />
       {open && !disabled && candidates.length > 0 && (
-        <ul aria-label="可添加的标签" className="filter-tag-options" role="listbox">
+        <ul
+          aria-label={t("filter.addableTags")}
+          className="filter-tag-options"
+          role="listbox"
+        >
           {candidates.map((tag) => (
             <li key={tag.tagId} role="option" aria-selected={false}>
               <button onClick={() => add(tag.name)} type="button">

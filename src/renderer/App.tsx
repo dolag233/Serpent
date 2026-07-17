@@ -28,7 +28,7 @@ import {
   buildScopeBreadcrumbSegments,
 } from "./ScopeBreadcrumbs";
 import { buildManagedFolderBreadcrumbTrail } from "./folder-breadcrumb-trail";
-import { useT } from "./i18n";
+import { useT, useLocale } from "./i18n";
 import {
   createWorkspaceNavHistory,
   type WorkspaceNavLocation,
@@ -348,31 +348,32 @@ function TechnicalRangeFilter({
   setRange: Dispatch<SetStateAction<TechnicalRangeInput>>;
   step?: string;
 }) {
+  const t = useT();
   return (
     <label>
       {label}
       <div className="numeric-filter-range">
         <input
-          aria-label={`${label}最小值`}
+          aria-label={t("filter.rangeMinAria", { label })}
           className="text-field"
           min="0"
           onChange={(event) =>
             setRange((current) => ({ ...current, min: event.target.value }))
           }
-          placeholder="最小"
+          placeholder={t("common.min")}
           step={step}
           type="number"
           value={range.min}
         />
         <span>–</span>
         <input
-          aria-label={`${label}最大值`}
+          aria-label={t("filter.rangeMaxAria", { label })}
           className="text-field"
           min="0"
           onChange={(event) =>
             setRange((current) => ({ ...current, max: event.target.value }))
           }
-          placeholder="最大"
+          placeholder={t("common.max")}
           step={step}
           type="number"
           value={range.max}
@@ -380,7 +381,7 @@ function TechnicalRangeFilter({
       </div>
       <span>
         <input
-          aria-label={`排除${label}范围`}
+          aria-label={t("filter.excludeRange", { label })}
           checked={range.exclude}
           disabled={!range.min && !range.max}
           onChange={(event) =>
@@ -391,7 +392,7 @@ function TechnicalRangeFilter({
           }
           type="checkbox"
         />
-        排除
+        {t("filter.exclude")}
       </span>
     </label>
   );
@@ -399,6 +400,7 @@ function TechnicalRangeFilter({
 
 function AppInner() {
   const t = useT();
+  const { locale } = useLocale();
   const api = (window as RendererWindow).serpent?.library;
   const extensionPairingApi = (window as RendererWindow).serpent
     ?.extensionPairing;
@@ -454,7 +456,7 @@ function AppInner() {
     resetPanel: resetPanelWidth,
   } = usePanelResize();
   const [dialog, setDialog] = useState<DialogKind>(null);
-  const [dialogValue, setDialogValue] = useState("我的资源库");
+  const [dialogValue, setDialogValue] = useState(() => t("shell.myLibrary"));
   const [conflicts, setConflicts] = useState<ImportConflictPlan | null>(null);
   const [duplicateDecision, setDuplicateDecision] = useState<
     "skip" | "merge" | "create-copy"
@@ -4265,6 +4267,7 @@ function AppInner() {
           rating,
           assetIds.length - result.value.skipped.length,
           result.value.skipped,
+          locale,
         ),
       );
     } catch (caught) {
@@ -4682,9 +4685,9 @@ function AppInner() {
             <summary>筛选与排序</summary>
             <div className="discovery-filter-panel">
               <label>
-                格式
+                {t("filter.formatField")}
                 <input
-                  aria-label="格式过滤"
+                  aria-label={t("filter.format")}
                   className="text-field"
                   disabled={!library}
                   onChange={(event) => setFormatFilter(event.target.value)}
@@ -4693,18 +4696,18 @@ function AppInner() {
                 />
                 <span>
                   <input
-                    aria-label="排除这些格式"
+                    aria-label={t("filter.excludeFormats")}
                     checked={excludeFormatFilter}
                     onChange={(event) =>
                       setExcludeFormatFilter(event.target.checked)
                     }
                     type="checkbox"
                   />
-                  排除
+                  {t("filter.exclude")}
                 </span>
               </label>
               <label>
-                标签
+                {t("filter.tagField")}
                 {/* REQ-TAG-002: searchable multi-tag picker (chips + counts);
                     the OR clause assembly in currentQueryDefinition is
                     unchanged — selection syncs back to the comma string. */}
@@ -4727,20 +4730,20 @@ function AppInner() {
                 />
                 <span>
                   <input
-                    aria-label="排除这些标签"
+                    aria-label={t("filter.excludeTags")}
                     checked={excludeTagFilter}
                     onChange={(event) =>
                       setExcludeTagFilter(event.target.checked)
                     }
                     type="checkbox"
                   />
-                  排除
+                  {t("filter.exclude")}
                 </span>
               </label>
               <label>
-                评分
+                {t("filter.ratingField")}
                 <input
-                  aria-label="评分过滤"
+                  aria-label={t("filter.rating")}
                   className="text-field"
                   disabled={!library}
                   inputMode="numeric"
@@ -4750,20 +4753,20 @@ function AppInner() {
                 />
                 <span>
                   <input
-                    aria-label="排除这些评分"
+                    aria-label={t("filter.excludeRatings")}
                     checked={excludeRatingFilter}
                     onChange={(event) =>
                       setExcludeRatingFilter(event.target.checked)
                     }
                     type="checkbox"
                   />
-                  排除
+                  {t("filter.exclude")}
                 </span>
               </label>
               <label>
-                喜欢
+                {t("filter.favoriteField")}
                 <select
-                  aria-label="喜欢过滤"
+                  aria-label={t("filter.favorite")}
                   className="text-field"
                   disabled={!library}
                   onChange={(event) =>
@@ -4773,15 +4776,15 @@ function AppInner() {
                   }
                   value={favoriteFilter}
                 >
-                  <option value="any">不限</option>
-                  <option value="yes">仅喜欢</option>
-                  <option value="no">未喜欢</option>
+                  <option value="any">{t("common.none")}</option>
+                  <option value="yes">{t("filter.favoriteOnly")}</option>
+                  <option value="no">{t("filter.notFavorite")}</option>
                 </select>
               </label>
               <label>
-                源链接
+                {t("filter.sourceUrlField")}
                 <select
-                  aria-label="源链接过滤"
+                  aria-label={t("filter.sourceUrl")}
                   className="text-field"
                   disabled={!library}
                   onChange={(event) =>
@@ -4791,15 +4794,15 @@ function AppInner() {
                   }
                   value={sourceUrlFilter}
                 >
-                  <option value="any">不限</option>
-                  <option value="yes">有源链接</option>
-                  <option value="no">无源链接</option>
+                  <option value="any">{t("common.none")}</option>
+                  <option value="yes">{t("filter.hasSourceUrl")}</option>
+                  <option value="no">{t("filter.noSourceUrl")}</option>
                 </select>
               </label>
               <label>
-                可用性
+                {t("filter.availabilityField")}
                 <select
-                  aria-label="可用性过滤"
+                  aria-label={t("filter.availability")}
                   className="text-field"
                   disabled={!library}
                   onChange={(event) =>
@@ -4809,13 +4812,13 @@ function AppInner() {
                   }
                   value={availabilityFilter}
                 >
-                  <option value="any">全部</option>
-                  <option value="available">可用</option>
-                  <option value="missing">文件丢失</option>
+                  <option value="any">{t("common.all")}</option>
+                  <option value="available">{t("filter.available")}</option>
+                  <option value="missing">{t("filter.missing")}</option>
                 </select>
                 <span>
                   <input
-                    aria-label="排除该可用性"
+                    aria-label={t("filter.excludeAvailability")}
                     checked={excludeAvailabilityFilter}
                     disabled={availabilityFilter === "any"}
                     onChange={(event) =>
@@ -4823,21 +4826,21 @@ function AppInner() {
                     }
                     type="checkbox"
                   />
-                  排除
+                  {t("filter.exclude")}
                 </span>
               </label>
               <TechnicalRangeFilter
-                label="宽度 (px)"
+                label={t("filter.widthPx")}
                 range={widthRange}
                 setRange={setWidthRange}
               />
               <TechnicalRangeFilter
-                label="高度 (px)"
+                label={t("filter.heightPx")}
                 range={heightRange}
                 setRange={setHeightRange}
               />
               <TechnicalRangeFilter
-                label="宽高比"
+                label={t("filter.aspectRatio")}
                 range={aspectRatioRange}
                 setRange={setAspectRatioRange}
                 step="0.01"
@@ -4847,7 +4850,7 @@ function AppInner() {
               <FilterPresetChips
                 current={aspectRatioRange}
                 disabled={!library}
-                label="宽高比预设"
+                label={t("filter.aspectRatioPresets")}
                 onToggle={(range) =>
                   setAspectRatioRange((current) => ({
                     ...current,
@@ -4863,7 +4866,7 @@ function AppInner() {
               <FilterPresetChips
                 current={longEdgeRange}
                 disabled={!library}
-                label="分辨率预设"
+                label={t("filter.resolutionPresets")}
                 onToggle={(range) =>
                   setLongEdgeRange((current) => ({
                     ...current,
@@ -4873,20 +4876,20 @@ function AppInner() {
                 presets={RESOLUTION_PRESETS}
               />
               <TechnicalRangeFilter
-                label="长边 (px)"
+                label={t("filter.longEdgePx")}
                 range={longEdgeRange}
                 setRange={setLongEdgeRange}
               />
               <TechnicalRangeFilter
-                label="时长 (秒)"
+                label={t("filter.durationSec")}
                 range={durationRange}
                 setRange={setDurationRange}
                 step="0.1"
               />
               <label>
-                排序字段
+                {t("filter.sortField")}
                 <select
-                  aria-label="排序字段"
+                  aria-label={t("filter.sortField")}
                   className="text-field"
                   disabled={!library}
                   onChange={(event) =>
@@ -4894,20 +4897,20 @@ function AppInner() {
                   }
                   value={sortField}
                 >
-                  <option value="relevance">相关性（默认）</option>
-                  <option value="name">名称</option>
-                  <option value="modified_at">修改时间</option>
-                  <option value="created_at">创建时间</option>
-                  <option value="byte_size">文件大小</option>
-                  <option value="duration">时长</option>
-                  <option value="rating">评分</option>
-                  <option value="color">颜色</option>
+                  <option value="relevance">{t("filter.sortRelevance")}</option>
+                  <option value="name">{t("filter.sortName")}</option>
+                  <option value="modified_at">{t("filter.sortModified")}</option>
+                  <option value="created_at">{t("filter.sortCreated")}</option>
+                  <option value="byte_size">{t("filter.sortSize")}</option>
+                  <option value="duration">{t("filter.sortDuration")}</option>
+                  <option value="rating">{t("filter.sortRating")}</option>
+                  <option value="color">{t("filter.sortColor")}</option>
                 </select>
               </label>
               <label>
-                排序方向
+                {t("filter.sortDirection")}
                 <select
-                  aria-label="排序方向"
+                  aria-label={t("filter.sortDirection")}
                   className="text-field"
                   disabled={!library}
                   onChange={(event) =>
@@ -4915,8 +4918,8 @@ function AppInner() {
                   }
                   value={sortOrder}
                 >
-                  <option value="asc">升序</option>
-                  <option value="desc">降序</option>
+                  <option value="asc">{t("filter.sortAsc")}</option>
+                  <option value="desc">{t("filter.sortDesc")}</option>
                 </select>
               </label>
             </div>
@@ -4931,7 +4934,7 @@ function AppInner() {
             type="submit"
           >
             <Icon name="search" size={14} />
-            {aiSearchLoading ? "转换中…" : "搜索"}
+            {aiSearchLoading ? t("toolbar.converting") : t("common.search")}
           </button>
           {aiSearchPlanSummary && (
             <span
@@ -4942,11 +4945,11 @@ function AppInner() {
             </span>
           )}
           <input
-            aria-label="智能合集标题"
+            aria-label={t("toolbar.smartCollectionTitle")}
             className="text-field"
             disabled={!library}
             onChange={(event) => setSmartCollectionName(event.target.value)}
-            placeholder="智能合集名称"
+            placeholder={t("toolbar.smartCollectionName")}
             style={{ height: 28, width: 110 }}
             value={smartCollectionName}
           />
@@ -4957,11 +4960,11 @@ function AppInner() {
             type="button"
           >
             <Icon name="smart" size={14} />
-            保存
+            {t("common.save")}
           </button>
           <ToolButton
             icon="collapse-right"
-            label={rightOpen ? "收起检查器" : "展开检查器"}
+            label={rightOpen ? t("shell.collapseInspector") : t("shell.expandInspector")}
             onClick={() => setRightOpen((v) => !v)}
             pressed={rightOpen}
           />
@@ -5044,7 +5047,7 @@ function AppInner() {
           <div className="workspace-title">
             <span>{workspaceTitle()}</span>
             <span className="item-count">
-              {library ? `${visibleAssets.length} 项` : "未载入"}
+              {library ? t("common.itemCount", { count: visibleAssets.length }) : t("common.notLoaded")}
             </span>
           </div>
           <div className="workspace-tools">
@@ -5055,7 +5058,7 @@ function AppInner() {
                 onClick={() => {
                   if (
                     confirm(
-                      "确定要清理所有到期项吗？这将永久删除所有超过 30 天的资产。",
+                      t("toast.emptyTrashConfirm"),
                     )
                   )
                     void purgeTrash();
@@ -5063,7 +5066,7 @@ function AppInner() {
                 type="button"
               >
                 <Icon name="trash" size={14} />
-                清理到期项目
+                {t("toolbar.emptyExpiredTrash")}
               </button>
             ) : (
               library &&
@@ -5078,7 +5081,7 @@ function AppInner() {
                   type="button"
                 >
                   <Icon name="folder" size={14} />
-                  批量重新定位
+                  {t("toolbar.batchRelink")}
                 </button>
               )
             )}
@@ -5087,25 +5090,25 @@ function AppInner() {
               <ToolButton
                 disabled={!library || busy}
                 icon="upload"
-                label="导入文件"
+                label={t("toolbar.importFiles")}
                 onClick={() => void importAssets("files")}
               />
               <ToolButton
                 disabled={!library || busy}
                 icon="folder"
-                label="导入文件夹"
+                label={t("toolbar.importFolder")}
                 onClick={() => void importAssets("folder")}
               />
               <ToolButton
                 disabled={!library || busy}
                 icon="clipboard"
-                label="粘贴图片"
+                label={t("toolbar.pasteImage")}
                 onClick={() => void pasteClipboardImage()}
               />
               <ToolButton
                 disabled={!library || busy}
                 icon="link"
-                label="导入链接文件夹"
+                label={t("toolbar.importLinkedFolder")}
                 onClick={() => void importFolderAsLinked()}
               />
             </span>
@@ -5114,25 +5117,25 @@ function AppInner() {
               <ToolButton
                 disabled={!library || busy}
                 icon="archive"
-                label="导出资源库"
+                label={t("toolbar.exportLibrary")}
                 onClick={() => setExportDialogOpen(true)}
               />
               <ToolButton
                 disabled={busy}
                 icon="download"
-                label="导入资源库"
+                label={t("toolbar.importLibrary")}
                 onClick={() => void startImport()}
               />
               <ToolButton
                 disabled={busy}
                 icon="box"
-                label="导入 ZIP"
+                label={t("toolbar.importZip")}
                 onClick={() => void startImportZip()}
               />
               <ToolButton
                 disabled={!library || busy}
                 icon="refresh"
-                label="刷新磁盘变化"
+                label={t("toolbar.refreshDisk")}
                 onClick={() => void refreshAssets()}
               />
             </span>
@@ -5141,7 +5144,7 @@ function AppInner() {
                 <span className="tool-separator" />
                 <ToolButton
                   icon="grid"
-                  label="平铺视图"
+                  label={t("toolbar.gridView")}
                   onClick={() =>
                     setCanvasPrefs((p) => ({ ...p, viewMode: "grid" }))
                   }
@@ -5149,7 +5152,7 @@ function AppInner() {
                 />
                 <ToolButton
                   icon="menu"
-                  label="瀑布流视图"
+                  label={t("toolbar.masonryView")}
                   onClick={() =>
                     setCanvasPrefs((p) => ({ ...p, viewMode: "masonry" }))
                   }
@@ -5157,7 +5160,7 @@ function AppInner() {
                 />
                 <label className="asset-size-control">
                   <input
-                    aria-label="资产缩略图大小"
+                    aria-label={t("toolbar.thumbnailSize")}
                     max={CARD_SIZE_MAX}
                     min={CARD_SIZE_MIN}
                     onChange={(event) => {
@@ -5174,17 +5177,17 @@ function AppInner() {
                   {
                     field: "name" as const,
                     icon: "tag" as const,
-                    label: "文件名",
+                    label: t("toolbar.showFileName"),
                   },
                   {
                     field: "size" as const,
                     icon: "info" as const,
-                    label: "文件大小",
+                    label: t("toolbar.showFileSize"),
                   },
                   {
                     field: "date" as const,
                     icon: "clock" as const,
-                    label: "修改日期",
+                    label: t("toolbar.showModifiedDate"),
                   },
                 ]).map(({ field, icon, label }) => (
                   <ToolButton
@@ -5209,19 +5212,19 @@ function AppInner() {
             <span className="tool-group-utility">
               <ToolButton
                 icon="globe"
-                label="浏览器扩展"
+                label={t("toolbar.browserExtension")}
                 onClick={() => void openExtensionPairing()}
               />
               {library && (
                 <>
                   <ToolButton
                     icon="activity"
-                    label="后台任务"
+                    label={t("toolbar.backgroundJobs")}
                     onClick={() => setMediaJobsOpen(true)}
                   />
                   <ToolButton
                     icon="sliders"
-                    label="AI 设置"
+                    label={t("toolbar.aiSettings")}
                     onClick={() => {
                       void loadAiConfig();
                       setAiConfigOpen(true);
@@ -5253,11 +5256,11 @@ function AppInner() {
           {externalDropActive && (
             <div className="external-drop-overlay" role="status">
               <Icon name="upload" size={28} />
-              <strong>松开以导入</strong>
+              <strong>{t("toolbar.dropToImport")}</strong>
               <span>
                 {activeCollectionId
-                  ? "导入本地文件或下载网页媒体，并加入当前合集"
-                  : "导入本地文件或下载网页图片/视频"}
+                  ? t("toolbar.dropHintWithCollection")
+                  : t("toolbar.dropHint")}
               </span>
             </div>
           )}
@@ -5275,7 +5278,7 @@ function AppInner() {
           {uiState === "importing" && (
             <div className="activity-strip" role="status">
               <span className="activity-pulse" />
-              正在安全复制与登记资产…
+              {t("toolbar.importingProgress")}
             </div>
           )}
           {exportProgress &&
@@ -5531,7 +5534,7 @@ function AppInner() {
                               }}
                               title={asset.trashedFromPath}
                             >
-                              {trashedFromLabel(asset.trashedFromPath)}
+                              {trashedFromLabel(asset.trashedFromPath, locale)}
                             </span>
                           ) : (canvasPrefs.fields.size ||
                               canvasPrefs.fields.date) ? (
@@ -5583,10 +5586,12 @@ function AppInner() {
                   <Icon name="upload" size={24} />
                 </div>
                 <h1>
-                  {selectedFolder ? "这个文件夹还是空的" : "把第一批素材放进来"}
+                  {selectedFolder
+                    ? t("empty.folderTitle")
+                    : t("empty.folderBody")}
                 </h1>
                 <p>
-                  文件将复制到清晰可读的 Assets 目录，同时建立稳定的资产身份。
+                  {t("empty.folderDetail")}
                 </p>
                 <div className="empty-actions">
                   <button
@@ -5594,14 +5599,14 @@ function AppInner() {
                     onClick={() => void importAssets("files")}
                     type="button"
                   >
-                    导入文件
+                    {t("toolbar.importFiles")}
                   </button>
                   <button
                     className="secondary-button"
                     onClick={() => void importAssets("folder")}
                     type="button"
                   >
-                    导入文件夹
+                    {t("toolbar.importFolder")}
                   </button>
                 </div>
               </div>
@@ -5611,19 +5616,19 @@ function AppInner() {
               <div className="empty-copy">
                 {/* REQ-SHELL-008/009: the «01» step sidebar and the decorative
                     English caption are gone — the form renders directly. */}
-                <h1>从一个本地资源库开始</h1>
-                <p>文件、目录与元数据都保留在你掌控的位置。</p>
+                <h1>{t("empty.noLibraryTitle")}</h1>
+                <p>{t("empty.noLibraryBody")}</p>
                 <div className="empty-actions">
                   <button
                     className="primary-button"
                     onClick={() => {
-                      setDialogValue("我的资源库");
+                      setDialogValue(t("shell.myLibrary"));
                       setDialog("library");
                     }}
                     type="button"
                   >
                     <Icon name="plus" size={15} />
-                    创建资源库
+                    {t("shell.createLibrary")}
                   </button>
                   <button
                     className="secondary-button"
@@ -5631,7 +5636,7 @@ function AppInner() {
                     type="button"
                   >
                     <Icon name="folder" size={15} />
-                    打开资源库
+                    {t("shell.openLibrary")}
                   </button>
                 </div>
               </div>
@@ -5655,7 +5660,7 @@ function AppInner() {
                 </button>
               )}
               <button
-                aria-label="关闭提示"
+                aria-label={t("common.closeHint")}
                 onClick={() => {
                   setError(null);
                   setNotice(null);
@@ -6106,7 +6111,7 @@ function AppInner() {
       {/* REQ-SHELL-007 pane resize handles (fixed over the pane borders). */}
       {leftOpen && (
         <div
-          aria-label="调整导航面板宽度"
+          aria-label={t("shell.resizeNav")}
           aria-orientation="vertical"
           className={`panel-resizer${panelResizing === "nav" ? " is-active" : ""}`}
           onDoubleClick={() => resetPanelWidth("nav")}
@@ -6120,7 +6125,7 @@ function AppInner() {
       )}
       {rightOpen && (
         <div
-          aria-label="调整检查器面板宽度"
+          aria-label={t("shell.resizeInspector")}
           aria-orientation="vertical"
           className={`panel-resizer${panelResizing === "inspector" ? " is-active" : ""}`}
           onDoubleClick={() => resetPanelWidth("inspector")}

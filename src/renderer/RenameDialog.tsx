@@ -1,5 +1,6 @@
 import { type FormEvent, useEffect, useRef } from "react";
 import { Icon } from "./Icons";
+import { useT } from "./i18n";
 
 export interface RenameDialogProps {
   open: boolean;
@@ -22,10 +23,6 @@ export interface RenameDialogProps {
   submitting?: boolean;
 }
 
-function organizationNoun(kind: RenameDialogProps["kind"]) {
-  return kind === "collection" ? "合集" : "智能合集";
-}
-
 export function RenameDialog({
   open,
   kind,
@@ -37,6 +34,7 @@ export function RenameDialog({
   errorMessage = null,
   submitting = false,
 }: RenameDialogProps) {
+  const t = useT();
   const inputRef = useRef<HTMLInputElement>(null);
   const isAsset = kind === "asset";
 
@@ -52,16 +50,25 @@ export function RenameDialog({
 
   if (!open) return null;
 
-  const noun = organizationNoun(kind);
+  const noun =
+    kind === "collection"
+      ? t("dialog.rename.nounCollection")
+      : t("dialog.rename.nounSmartCollection");
   const idPrefix = isAsset ? "rename-asset" : "rename-organization";
-  const title = isAsset ? "重命名文件" : `重命名${noun}`;
-  const fieldLabel = isAsset ? "文件名" : `${noun}名称`;
-  const submitLabel = isAsset ? "重命名" : "保存名称";
+  const title = isAsset
+    ? t("dialog.rename.fileTitle")
+    : t("dialog.rename.title", { noun });
+  const fieldLabel = isAsset
+    ? t("dialog.rename.fileName")
+    : t("dialog.rename.nameField", { noun });
+  const submitLabel = isAsset
+    ? t("dialog.rename.submitFile")
+    : t("dialog.rename.submitName");
   const fieldHelp = isAsset
     ? fileExtension
-      ? `重命名会直接修改磁盘上的文件名，扩展名 ${fileExtension} 将保留不变。`
-      : "重命名会直接修改磁盘上的文件名。"
-    : "名称仅影响资源库中的组织方式，不会修改资产文件。";
+      ? t("dialog.rename.helpWithExt", { ext: fileExtension })
+      : t("dialog.rename.helpFile")
+    : t("dialog.rename.helpOrg");
 
   return (
     <div className="dialog-backdrop" role="presentation">
@@ -80,7 +87,7 @@ export function RenameDialog({
             <h2 id={`${idPrefix}-title`}>{title}</h2>
           </div>
           <button
-            aria-label="取消"
+            aria-label={t("common.cancel")}
             className="dialog-close"
             onClick={onCancel}
             type="button"
@@ -129,7 +136,7 @@ export function RenameDialog({
             onClick={onCancel}
             type="button"
           >
-            取消
+            {t("common.cancel")}
           </button>
           <button
             className="primary-button"

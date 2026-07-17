@@ -2,6 +2,8 @@ import { useCallback, useState } from "react";
 
 import type { SerpentLibraryApi } from "../shared/library-api";
 import type { RendererLibrarySummary } from "../shared/protocol/responses";
+import { lookupMessage, useLocale, useT } from "./i18n";
+import { catalogs } from "./i18n/catalogs";
 import { PUBLIC_ERROR_MESSAGES_ZH, toMessage } from "./error-utils";
 import {
   changeInlineFolderEditValue,
@@ -21,7 +23,7 @@ import {
  * wires menu entries and passes the session down to NavigationSidebar). The
  * state machine itself lives in inline-folder-edit.ts; this hook adds the
  * worker round-trip (command chain unchanged: folder.create / folder.rename),
- * typed error mapping through the shared PUBLIC_ERROR_MESSAGES_ZH table, and
+ * typed error mapping through the shared error catalog, and
  * the notice + refresh convention after a successful operation.
  *
  * Unlike the dialogs, inline editing does not raise the global loading gate:
@@ -30,9 +32,6 @@ import {
  * already guaranteed by the existing global handlers, which all bail out when
  * the event target is an editable element.
  */
-
-const CREATE_FOLDER_FALLBACK = "创建文件夹失败。";
-const RENAME_FOLDER_FALLBACK = "重命名失败，请重试。";
 
 export interface UseInlineFolderEditParams {
   api: SerpentLibraryApi | null;
@@ -58,14 +57,18 @@ export function useInlineFolderEdit({
   setNotice,
   reloadCurrentContent,
 }: UseInlineFolderEditParams): UseInlineFolderEditResult {
+  const t = useT();
+  const { locale } = useLocale();
   const [inlineFolderEdit, setInlineFolderEdit] =
     useState<InlineFolderEditState | null>(null);
 
   const openInlineFolderCreate = useCallback(
     (parentFolderId: string | null) => {
-      setInlineFolderEdit(startInlineFolderCreate(parentFolderId));
+      setInlineFolderEdit(
+        startInlineFolderCreate(parentFolderId, t("folderEdit.newFolder")),
+      );
     },
-    [],
+    [t],
   );
 
   const openInlineFolderRename = useCallback(
@@ -102,8 +105,8 @@ export function useInlineFolderEdit({
     );
     const failureFallback =
       session.kind === "create"
-        ? CREATE_FOLDER_FALLBACK
-        : RENAME_FOLDER_FALLBACK;
+        ? t("folderEdit.createFailed")
+        : t("folderEdit.renameFailed");
     // Settles the session this commit started from; a newer session opened
     // while the request was in flight is left untouched (the tree is
     // non-modal, unlike the former dialogs).
@@ -130,10 +133,12 @@ export function useInlineFolderEdit({
       if (!result.ok) {
         // Typed failures (invalid name, name conflict) surface inline so the
         // user can fix the name and retry; the row deliberately stays open.
-        // The shared table is the single source for the wording.
+        // Prefer the active-locale catalog, then the zh-CN table.
+        const codeMessage =
+          lookupMessage(catalogs[locale], `error.code.${result.error.code}`) ??
+          PUBLIC_ERROR_MESSAGES_ZH[result.error.code];
         settleFailure(
-          PUBLIC_ERROR_MESSAGES_ZH[result.error.code] ??
-            toMessage(result.error, failureFallback),
+          codeMessage ?? toMessage(result.error, failureFallback, locale),
         );
         return;
       }
@@ -144,17 +149,25 @@ export function useInlineFolderEdit({
       );
       setNotice(
         session.kind === "create"
-          ? `已创建文件夹"${result.value.name}"。`
-          : `已将文件夹重命名为“${result.value.name}”。`,
+          ? t("folderEdit.created", { name: result.value.name })
+          : t("folderEdit.renamed", { name: result.value.name }),
       );
       // A rename keeps the folderId, so the current selection survives the
       // refresh; a create lands under the already-selected parent. Neither
       // needs a re-select.
       await reloadCurrentContent();
     } catch (caught) {
-      settleFailure(toMessage(caught, failureFallback));
+      settleFailure(toMessage(caught, failureFallback, locale));
     }
-  }, [api, library, inlineFolderEdit, reloadCurrentContent, setNotice]);
+  }, [
+    api,
+    library,
+    inlineFolderEdit,
+    locale,
+    reloadCurrentContent,
+    setNotice,
+    t,
+  ]);
 
   return {
     inlineFolderEdit,

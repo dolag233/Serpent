@@ -1,4 +1,5 @@
 import { Icon } from "./Icons";
+import { useT } from "./i18n";
 
 export interface ExtensionPairingDialogProps {
   open: boolean;
@@ -17,6 +18,7 @@ export function ExtensionPairingDialog({
   onRotate,
   onCopy,
 }: ExtensionPairingDialogProps) {
+  const t = useT();
   if (!open) return null;
 
   return (
@@ -29,10 +31,12 @@ export function ExtensionPairingDialog({
       >
         <div className="dialog-heading">
           <div>
-            <h2 id="extension-pairing-title">浏览器扩展配对</h2>
+            <h2 id="extension-pairing-title">
+              {t("dialog.extensionPairing.title")}
+            </h2>
           </div>
           <button
-            aria-label="关闭浏览器扩展配对"
+            aria-label={t("dialog.extensionPairing.closeAria")}
             className="dialog-close"
             onClick={onClose}
             type="button"
@@ -47,8 +51,7 @@ export function ExtensionPairingDialog({
             lineHeight: 1.6,
           }}
         >
-          将配对码粘贴到 Chrome 或 Edge 的 Serpent
-          扩展选项中。配对码由操作系统安全存储加密保存；此窗口关闭后不会在界面中保留明文。
+          {t("dialog.extensionPairing.help")}
         </p>
         {error ? (
           <p role="alert" style={{ color: "var(--warning)", fontSize: 12 }}>
@@ -60,7 +63,7 @@ export function ExtensionPairingDialog({
               className="field-label"
               htmlFor="extension-pairing-token"
             >
-              配对码
+              {t("dialog.extensionPairing.tokenLabel")}
             </label>
             <input
               className="text-field"
@@ -72,11 +75,9 @@ export function ExtensionPairingDialog({
                 fontFamily: "'IBM Plex Mono', monospace",
                 fontSize: 11,
               }}
-              value={token || "正在读取…"}
+              value={token || t("dialog.extensionPairing.reading")}
             />
-            <p className="field-help">
-              轮换会使所有浏览器中保存的旧配对码立即失效。
-            </p>
+            <p className="field-help">{t("dialog.extensionPairing.rotateHelp")}</p>
           </>
         )}
         <div className="dialog-actions">
@@ -86,7 +87,7 @@ export function ExtensionPairingDialog({
             onClick={() => void onRotate()}
             type="button"
           >
-            轮换配对码
+            {t("dialog.extensionPairing.rotate")}
           </button>
           <button
             className="primary-button"
@@ -94,7 +95,7 @@ export function ExtensionPairingDialog({
             onClick={() => void onCopy()}
             type="button"
           >
-            复制配对码
+            {t("dialog.extensionPairing.copy")}
           </button>
         </div>
       </div>

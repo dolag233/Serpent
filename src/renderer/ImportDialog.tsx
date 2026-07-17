@@ -1,4 +1,5 @@
 import { Icon } from "./Icons";
+import { useT } from "./i18n";
 import type { ImportValidatedResult } from "../shared/library-api";
 
 export interface ImportDialogProps {
@@ -20,6 +21,7 @@ export function ImportDialog({
   onImportOpenInPlace,
   onImportZip,
 }: ImportDialogProps) {
+  const t = useT();
   if (!open || !validated) return null;
 
   return (
@@ -27,10 +29,10 @@ export function ImportDialog({
       <div aria-modal="true" className="create-dialog" role="dialog">
         <div className="dialog-heading">
           <div>
-            <h2>导入资源库</h2>
+            <h2>{t("dialog.importLibrary.title")}</h2>
           </div>
           <button
-            aria-label="取消"
+            aria-label={t("common.cancel")}
             className="dialog-close"
             onClick={onClose}
             type="button"
@@ -45,8 +47,9 @@ export function ImportDialog({
             lineHeight: 1.6,
           }}
         >
-          资源库 <strong>{validated.displayName}</strong>{" "}
-          验证通过。请选择导入方式：
+          {t("dialog.importLibrary.validated", {
+            name: validated.displayName,
+          })}
         </p>
         <div className="dialog-actions">
           <button
@@ -55,7 +58,7 @@ export function ImportDialog({
             onClick={onClose}
             type="button"
           >
-            取消
+            {t("common.cancel")}
           </button>
           <button
             className="secondary-button"
@@ -63,7 +66,7 @@ export function ImportDialog({
             onClick={onImportOpenInPlace}
             type="button"
           >
-            原地打开（不复制）
+            {t("dialog.importLibrary.openInPlace")}
           </button>
           <button
             className="secondary-button"
@@ -71,7 +74,7 @@ export function ImportDialog({
             onClick={onImportZip}
             type="button"
           >
-            导入 ZIP
+            {t("dialog.importLibrary.importZip")}
           </button>
           <button
             className="primary-button"
@@ -79,7 +82,7 @@ export function ImportDialog({
             onClick={onImportCopy}
             type="button"
           >
-            复制到新位置
+            {t("dialog.importLibrary.copyToNew")}
           </button>
         </div>
       </div>

@@ -1,4 +1,5 @@
 import { Icon } from "./Icons";
+import { useT } from "./i18n";
 import type { RelinkBatchPreviewResult } from "../shared/library-api";
 
 export interface RelinkPreviewProps {
@@ -16,6 +17,7 @@ export function RelinkPreview({
   onApply,
   onCancel,
 }: RelinkPreviewProps) {
+  const t = useT();
   if (!preview) return null;
 
   return (
@@ -28,10 +30,12 @@ export function RelinkPreview({
       >
         <div className="dialog-heading">
           <div>
-            <h2 id="batch-relink-dialog-title">批量重新定位预览</h2>
+            <h2 id="batch-relink-dialog-title">
+              {t("dialog.relinkPreview.title")}
+            </h2>
           </div>
           <button
-            aria-label="取消"
+            aria-label={t("common.cancel")}
             className="dialog-close"
             onClick={onCancel}
             type="button"
@@ -45,15 +49,15 @@ export function RelinkPreview({
         >
           <div>
             <strong>{preview.totalCount}</strong>
-            <span>总计丢失</span>
+            <span>{t("dialog.relinkPreview.totalMissing")}</span>
           </div>
           <div>
             <strong>{preview.matchedCount}</strong>
-            <span>新位置匹配</span>
+            <span>{t("dialog.relinkPreview.matched")}</span>
           </div>
           <div>
             <strong>{preview.unmatchedCount}</strong>
-            <span>未找到</span>
+            <span>{t("dialog.relinkPreview.notFound")}</span>
           </div>
         </div>
         {preview.examples.length > 0 && (
@@ -87,7 +91,7 @@ export function RelinkPreview({
             onChange={(e) => onKeepMetadataChange(e.target.checked)}
             type="checkbox"
           />
-          沿用原资产信息（保留标签、描述、评分、合集等人工元数据）
+          {t("dialog.relinkPreview.keepMetadata")}
         </label>
         <div className="dialog-actions">
           <button
@@ -95,7 +99,7 @@ export function RelinkPreview({
             onClick={onCancel}
             type="button"
           >
-            取消
+            {t("common.cancel")}
           </button>
           <button
             className="primary-button"
@@ -103,7 +107,7 @@ export function RelinkPreview({
             onClick={onApply}
             type="button"
           >
-            应用批量重新定位
+            {t("dialog.relinkPreview.apply")}
           </button>
         </div>
       </div>

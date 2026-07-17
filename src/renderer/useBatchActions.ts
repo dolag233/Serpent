@@ -3,6 +3,7 @@ import type { SerpentLibraryApi } from "../shared/library-api";
 import type { RendererLibrarySummary } from "../shared/protocol/responses";
 import { LibraryOperationError, toMessage } from "./error-utils";
 import { formatBatchTagNotice } from "./batch-tag-notice";
+import { useLocale } from "./i18n";
 
 export interface UseBatchActionsParams {
   api: SerpentLibraryApi | null;
@@ -44,6 +45,8 @@ export function useBatchActions({
   activeTagId,
   activeCollectionId,
 }: UseBatchActionsParams): UseBatchActionsResult {
+  const { locale } = useLocale();
+
   async function batchAssignTagToSelection(tagId: string, assetIds: string[]) {
     if (!api || !library || assetIds.length === 0) return;
     setUiState("loading");
@@ -61,10 +64,11 @@ export function useBatchActions({
           "assign",
           assetIds.length - result.value.skipped.length,
           result.value.skipped,
+          locale,
         ),
       );
     } catch (caught) {
-      setError(toMessage(caught, "批量添加标签失败。"));
+      setError(toMessage(caught, "批量添加标签失败。", locale));
     } finally {
       setUiState("ready");
     }
@@ -90,10 +94,11 @@ export function useBatchActions({
           "remove",
           assetIds.length - result.value.skipped.length,
           result.value.skipped,
+          locale,
         ),
       );
     } catch (caught) {
-      setError(toMessage(caught, "批量移除标签失败。"));
+      setError(toMessage(caught, "批量移除标签失败。", locale));
     } finally {
       setUiState("ready");
     }

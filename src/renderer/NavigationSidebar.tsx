@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Icon, type IconName } from "./Icons";
+import { useT } from "./i18n";
 import type {
   CollectionSummary,
   LinkedFolderSummary,
@@ -135,6 +136,7 @@ function InlineFolderEditRow({
   onCommit: () => void;
   onCancel: () => void;
 }) {
+  const t = useT();
   const inputRef = useRef<HTMLInputElement>(null);
 
   // Focus with the whole name preselected: typing replaces the current
@@ -152,7 +154,9 @@ function InlineFolderEditRow({
       <input
         aria-invalid={state.error ? true : undefined}
         aria-label={
-          state.kind === "create" ? "新文件夹名称" : "文件夹重命名"
+          state.kind === "create"
+            ? t("nav.newFolderName")
+            : t("nav.folderRename")
         }
         className="text-field"
         maxLength={80}
@@ -197,6 +201,7 @@ function Section({
   secondaryLabel?: string;
   children: ReactNode;
 }) {
+  const t = useT();
   return (
     <section className="nav-section">
       <div className="nav-section-heading">
@@ -205,7 +210,7 @@ function Section({
           <span className="nav-section-actions">
             {action && (
               <button
-                aria-label={`添加${title}`}
+                aria-label={t("nav.addSection", { title })}
                 className="tiny-action"
                 onClick={action}
                 type="button"
@@ -215,7 +220,9 @@ function Section({
             )}
             {secondaryAction && (
               <button
-                aria-label={secondaryLabel ?? `次要操作${title}`}
+                aria-label={
+                  secondaryLabel ?? t("nav.secondaryAction", { title })
+                }
                 className="tiny-action"
                 onClick={secondaryAction}
                 type="button"
@@ -341,6 +348,7 @@ export interface NavigationSidebarProps {
 // ---------------------------------------------------------------------------
 
 export function NavigationSidebar(props: NavigationSidebarProps) {
+  const t = useT();
   const {
     library,
     assetScope,
@@ -391,6 +399,7 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
     onImportDroppedFiles,
     onCopyManagedToLinked,
   } = props;
+
 
   // REQ-DND-001/002: which row is the current asset-drag hover target.
   // Cleared on leave/drop, and defensively on window dragend/drop so a drop
@@ -453,7 +462,7 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
 
   function renderDirectoryEntries(): ReactNode {
     if (directoryEntries.length === 0 && inlineFolderEdit?.kind !== "create") {
-      return <p className="nav-empty">尚无托管或链接文件夹</p>;
+      return <p className="nav-empty">{t("nav.emptyManagedOrLinked")}</p>;
     }
 
     const rows: ReactNode[] = directoryEntries.map((entry) => {
@@ -522,7 +531,9 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
           label={entry.name}
           count={entry.assetCount}
           title={
-            offline ? "链接文件夹离线，点击重新指定" : "链接文件夹"
+            offline
+              ? t("nav.linkedFolderOffline")
+              : t("nav.linkedFolder")
           }
           onClick={
             offline
@@ -689,7 +700,7 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
           }
           count={library ? allAssetCount : undefined}
           icon="grid"
-          label="所有资产"
+          label={t("scope.allAssets")}
           onClick={() => void onChooseAllAssets()}
           disabled={!library}
           onDragOver={onExternalDragOver}
@@ -702,7 +713,7 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
           count={trashedAssetCount || undefined}
           disabled={!library}
           icon="trash"
-          label="回收站"
+          label={t("scope.trash")}
           onClick={() => void onEnterTrash()}
           dropActive={assetDropTarget === "trash"}
           onDragEnter={(event) => {
@@ -730,12 +741,12 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
             onAssetsDroppedOnTrash(ids);
           }}
         />
-        <NavRow icon="archive" label="最近使用" disabled />
+        <NavRow icon="archive" label={t("shell.recentLibraries")} disabled />
         <Section
-          title="文件夹"
+          title={t("nav.folders")}
           action={library ? onAddFolder : undefined}
           secondaryAction={library ? onImportFolderAsLinked : undefined}
-          secondaryLabel="导入链接文件夹"
+          secondaryLabel={t("nav.importLinkedFolder")}
         >
           {library ? (
             <>
@@ -744,23 +755,23 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
                   assetScope === "root" && !activeTagId && !activeCollectionId
                 }
                 icon="folder"
-                label="资源库根目录"
+                label={t("scope.rootFolder")}
                 onClick={() => void onChooseRootFolder()}
                 {...assetFolderDropHandlers("root", null)}
               />
               {renderDirectoryEntries()}
               {linkedFolders.length > 0 && (
                 <p className="nav-empty">
-                  右键编辑规则；Shift+右键转换为托管。可拖入所选托管资产。
+                  {t("nav.linkedFolderHint")}
                 </p>
               )}
             </>
           ) : (
-            <p className="nav-empty">打开资源库后显示目录</p>
+            <p className="nav-empty">{t("nav.openLibraryFoldersHint")}</p>
           )}
         </Section>
         <Section
-          title="合集"
+          title={t("nav.collections")}
           action={
             library
               ? () => onAddCollection(activeCollectionId)
@@ -784,8 +795,8 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
                     onKeyDown={onCollectionInputKeyDown}
                     placeholder={
                       newCollectionParentId
-                        ? "输入子合集名称，回车创建"
-                        : "输入合集名称，回车创建"
+                        ? t("nav.subcollectionNamePlaceholder")
+                        : t("nav.collectionNamePlaceholder")
                     }
                     style={{
                       height: 27,
@@ -819,21 +830,21 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
                       }}
                       type="checkbox"
                     />
-                    包含子合集
+                    {t("nav.includeChildCollections")}
                   </label>
                 </div>
               )}
               {collections.length ? (
                 renderCollectionNodes(null, 0)
               ) : (
-                <p className="nav-empty">尚无合集</p>
+                <p className="nav-empty">{t("nav.emptyCollections")}</p>
               )}
             </>
           ) : (
-            <p className="nav-empty">打开资源库后显示合集</p>
+            <p className="nav-empty">{t("nav.openLibraryHint")}</p>
           )}
         </Section>
-        <Section title="智能合集">
+        <Section title={t("nav.smartCollections")}>
           {library ? (
             smartCollections.length ? (
               smartCollections.map((sc) => (
@@ -857,10 +868,10 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
                 />
               ))
             ) : (
-              <p className="nav-empty">尚无智能合集</p>
+              <p className="nav-empty">{t("nav.emptySmartCollections")}</p>
             )
           ) : (
-            <p className="nav-empty">打开资源库后显示智能合集</p>
+            <p className="nav-empty">{t("nav.openLibrarySmartHint")}</p>
           )}
         </Section>
       </nav>

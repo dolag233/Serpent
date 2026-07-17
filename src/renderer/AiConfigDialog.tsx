@@ -1,4 +1,5 @@
 import { Icon } from "./Icons";
+import { useT } from "./i18n";
 
 export interface AiConfigDialogProps {
   open: boolean;
@@ -49,6 +50,7 @@ export function AiConfigDialog({
   onClose,
   onSave,
 }: AiConfigDialogProps) {
+  const t = useT();
   if (!open) return null;
 
   return (
@@ -56,10 +58,10 @@ export function AiConfigDialog({
       <div aria-modal="true" className="create-dialog" role="dialog">
         <div className="dialog-heading">
           <div>
-            <h2>AI 配置 (BYOK)</h2>
+            <h2>{t("aiConfig.title")}</h2>
           </div>
           <button
-            aria-label="取消"
+            aria-label={t("common.cancel")}
             className="dialog-close"
             onClick={onClose}
             type="button"
@@ -67,13 +69,9 @@ export function AiConfigDialog({
             <Icon name="close" size={16} />
           </button>
         </div>
-        <p className="ai-config-note">
-          配置第三方云端视觉模型 API Key。Key
-          将加密存储于本地操作系统安全凭据中，Serpent
-          不代理、不计费、不追踪额度。
-        </p>
+        <p className="ai-config-note">{t("aiConfig.note")}</p>
         <div className="editor-field ai-config-field">
-          <label className="micro-label">供应商</label>
+          <label className="micro-label">{t("aiConfig.provider")}</label>
           <select
             className="text-field ai-config-input"
             onChange={(e) =>
@@ -89,7 +87,7 @@ export function AiConfigDialog({
           </select>
         </div>
         <div className="editor-field ai-config-field">
-          <label className="micro-label">模型</label>
+          <label className="micro-label">{t("aiConfig.model")}</label>
           <input
             className="text-field ai-config-input"
             maxLength={255}
@@ -104,42 +102,44 @@ export function AiConfigDialog({
             className="text-field ai-config-input"
             maxLength={512}
             onChange={(e) => onApiKeyChange(e.target.value)}
-            placeholder={hasKey ? "（已配置，重新输入可覆盖）" : "sk-…"}
+            placeholder={
+              hasKey ? t("aiConfig.apiKeyConfigured") : "sk-…"
+            }
             type="password"
             value={apiKey}
           />
         </div>
         <div className="editor-field ai-config-field">
-          <label className="micro-label">语言</label>
+          <label className="micro-label">{t("aiConfig.language")}</label>
           <input
             className="text-field ai-config-input"
             maxLength={35}
             onChange={(e) => onLanguageChange(e.target.value)}
-            placeholder="auto (跟随系统)"
+            placeholder={t("aiConfig.languagePlaceholder")}
             value={language}
           />
         </div>
         <div className="ai-config-switches">
           <label className="micro-label ai-config-switches-title">
-            AI 写入开关（按字段）
+            {t("aiConfig.fieldSwitches")}
           </label>
           {(
             [
               {
                 key: "description",
-                label: "描述",
+                label: t("aiConfig.description"),
                 state: descriptionEnabled,
                 setter: onDescriptionEnabledChange,
               },
               {
                 key: "tags",
-                label: "标签 (Tags)",
+                label: t("aiConfig.tags"),
                 state: tagsEnabled,
                 setter: onTagsEnabledChange,
               },
               {
                 key: "structured",
-                label: "结构化元信息",
+                label: t("aiConfig.structured"),
                 state: structuredEnabled,
                 setter: onStructuredEnabledChange,
               },
@@ -165,10 +165,7 @@ export function AiConfigDialog({
               }}
               type="checkbox"
             />
-            <span>
-              我了解启用 AI
-              分析会将选中资产的图像或视频联系表上传给所选第三方供应商，并可能产生费用。
-            </span>
+            <span>{t("aiConfig.disclaimer")}</span>
           </label>
           <label
             className="ai-config-check-row ai-config-check-row-indent"
@@ -180,7 +177,7 @@ export function AiConfigDialog({
               onChange={(e) => onAutoAnalyzeEnabledChange(e.target.checked)}
               type="checkbox"
             />
-            导入后自动上传并分析支持的资产
+            {t("aiConfig.autoAnalyze")}
           </label>
         </div>
         <div className="dialog-actions ai-config-actions">
@@ -189,7 +186,7 @@ export function AiConfigDialog({
             onClick={onClose}
             type="button"
           >
-            取消
+            {t("common.cancel")}
           </button>
           <button
             className="primary-button"
@@ -197,7 +194,7 @@ export function AiConfigDialog({
             onClick={() => void onSave()}
             type="button"
           >
-            保存配置
+            {t("aiConfig.save")}
           </button>
         </div>
       </div>

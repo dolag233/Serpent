@@ -1,6 +1,7 @@
 import { useState } from "react";
 
 import { Icon } from "./Icons";
+import { useT } from "./i18n";
 
 export interface ExportDialogProps {
   open: boolean;
@@ -17,6 +18,7 @@ export function ExportDialog({
   onExportFolder,
   onExportZip,
 }: ExportDialogProps) {
+  const t = useT();
   const [exportFormat, setExportFormat] = useState<"folder" | "zip">("folder");
   const [includeLinkedContent, setIncludeLinkedContent] = useState(false);
 
@@ -27,10 +29,10 @@ export function ExportDialog({
       <div aria-modal="true" className="create-dialog" role="dialog">
         <div className="dialog-heading">
           <div>
-            <h2>导出资源库</h2>
+            <h2>{t("toolbar.exportLibrary")}</h2>
           </div>
           <button
-            aria-label="取消"
+            aria-label={t("common.cancel")}
             className="dialog-close"
             onClick={onClose}
             type="button"
@@ -45,8 +47,7 @@ export function ExportDialog({
             lineHeight: 1.6,
           }}
         >
-          将资源库导出为完整文件夹或标准
-          ZIP。导出内容包括所有托管资产、数据库、修订记录和回收站文件。
+          {t("dialog.export.help")}
         </p>
         <fieldset
           style={{
@@ -60,7 +61,7 @@ export function ExportDialog({
           <legend
             style={{ fontSize: 11, color: "var(--tertiary)", marginBottom: 6 }}
           >
-            导出格式
+            {t("dialog.export.format")}
           </legend>
           <label
             style={{
@@ -78,7 +79,7 @@ export function ExportDialog({
               type="radio"
               name="export-format"
             />
-            文件夹
+            {t("dialog.export.formatFolder")}
           </label>
           <label
             style={{
@@ -96,10 +97,10 @@ export function ExportDialog({
               type="radio"
               name="export-format"
             />
-            标准 ZIP
+            {t("dialog.export.formatZip")}
             {exportFormat === "zip" && (
               <span style={{ fontSize: 10, color: "var(--tertiary)" }}>
-                （4&nbsp;GiB / 65534 条目以内）
+                {t("dialog.export.zipLimitHint")}
               </span>
             )}
           </label>
@@ -120,7 +121,7 @@ export function ExportDialog({
             onChange={(e) => setIncludeLinkedContent(e.target.checked)}
             type="checkbox"
           />
-          包含链接文件夹源内容
+          {t("dialog.export.includeLinked")}
         </label>
         <div className="dialog-actions">
           <button
@@ -128,7 +129,7 @@ export function ExportDialog({
             onClick={onClose}
             type="button"
           >
-            取消
+            {t("common.cancel")}
           </button>
           <button
             className="primary-button"
@@ -143,8 +144,8 @@ export function ExportDialog({
             type="button"
           >
             {exportFormat === "zip"
-              ? "选择保存位置并导出 ZIP"
-              : "选择目标文件夹并导出"}
+              ? t("dialog.export.zip")
+              : t("dialog.export.folder")}
           </button>
         </div>
       </div>

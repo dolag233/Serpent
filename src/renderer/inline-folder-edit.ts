@@ -20,6 +20,11 @@ import type { UnifiedDirectoryNavEntry } from "./unified-directory-nav";
  *   reason rendered inline for correction.
  */
 
+/**
+ * Default prefill for a create row. Matches `folderEdit.newFolder` (zh-CN).
+ * Callers that honour the active locale should pass `t('folderEdit.newFolder')`
+ * into `startInlineFolderCreate` instead of relying on this constant.
+ */
 export const DEFAULT_NEW_FOLDER_NAME = "新建文件夹";
 
 export type InlineFolderEditState =
@@ -55,11 +60,12 @@ export type InlineFolderEditResolution =
  */
 export function startInlineFolderCreate(
   parentFolderId: string | null,
+  defaultName: string = DEFAULT_NEW_FOLDER_NAME,
 ): InlineFolderEditState {
   return {
     kind: "create",
     parentFolderId,
-    value: DEFAULT_NEW_FOLDER_NAME,
+    value: defaultName,
     error: null,
     submitting: false,
   };

@@ -1,5 +1,6 @@
 import { type FormEvent } from "react";
 import { Icon } from "./Icons";
+import { useT } from "./i18n";
 
 export interface CreateDialogProps {
   open: boolean;
@@ -11,7 +12,7 @@ export interface CreateDialogProps {
 
 /**
  * Library-creation dialog. Folder creation used to share this dialog until
- * REQ-FOLDER-007 moved 新建文件夹/重命名 to inline editing in the directory
+ * REQ-FOLDER-007 moved folder create/rename to inline editing in the directory
  * tree; what remains here is the local-library name prompt only.
  */
 export function CreateDialog({
@@ -21,6 +22,7 @@ export function CreateDialog({
   onSubmit,
   onCancel,
 }: CreateDialogProps) {
+  const t = useT();
   if (!open) return null;
 
   return (
@@ -40,10 +42,10 @@ export function CreateDialog({
           <div>
             {/* REQ-SHELL-009: no decorative English caption in the Chinese
                 UI — the library-only dialog goes straight to the title. */}
-            <h2 id="create-dialog-title">创建资源库</h2>
+            <h2 id="create-dialog-title">{t("dialog.createLibrary.title")}</h2>
           </div>
           <button
-            aria-label="取消"
+            aria-label={t("common.cancel")}
             className="dialog-close"
             onClick={onCancel}
             type="button"
@@ -52,7 +54,7 @@ export function CreateDialog({
           </button>
         </div>
         <label className="field-label" htmlFor="dialog-name">
-          名称
+          {t("dialog.createLibrary.name")}
         </label>
         <input
           autoFocus
@@ -62,21 +64,21 @@ export function CreateDialog({
           onChange={(event) => onValueChange(event.target.value)}
           value={value}
         />
-        <p className="field-help">下一步由系统选择本地保存位置。</p>
+        <p className="field-help">{t("dialog.createLibrary.help")}</p>
         <div className="dialog-actions">
           <button
             className="secondary-button"
             onClick={onCancel}
             type="button"
           >
-            取消
+            {t("common.cancel")}
           </button>
           <button
             className="primary-button"
             disabled={!value.trim()}
             type="submit"
           >
-            创建
+            {t("dialog.createLibrary.submit")}
           </button>
         </div>
       </form>

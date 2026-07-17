@@ -1,4 +1,5 @@
 import { Icon } from "./Icons";
+import { useT } from "./i18n";
 
 export interface MoveDialogProps {
   assetIds: string[];
@@ -25,6 +26,7 @@ export function MoveDialog({
   onConfirm,
   onCancel,
 }: MoveDialogProps) {
+  const t = useT();
   return (
     <div className="dialog-backdrop" role="presentation">
       <div
@@ -36,11 +38,11 @@ export function MoveDialog({
         <div className="dialog-heading">
           <div>
             <h2 id="move-dialog-title">
-              移动 {assetIds.length} 项托管资产
+              {t("dialog.move.title", { count: assetIds.length })}
             </h2>
           </div>
           <button
-            aria-label="取消移动"
+            aria-label={t("dialog.move.cancelAria")}
             className="dialog-close"
             onClick={onCancel}
             type="button"
@@ -49,7 +51,7 @@ export function MoveDialog({
           </button>
         </div>
         <label className="field-label" htmlFor="move-target">
-          目标文件夹
+          {t("dialog.move.targetFolder")}
         </label>
         <select
           className="text-field"
@@ -59,7 +61,7 @@ export function MoveDialog({
           }
           value={targetFolderId ?? ""}
         >
-          <option value="">资源库根目录</option>
+          <option value="">{t("scope.rootFolder")}</option>
           {folders.map((folder) => (
             <option key={folder.folderId} value={folder.folderId}>
               {folder.relativePath}
@@ -71,7 +73,7 @@ export function MoveDialog({
           htmlFor="move-conflict"
           style={{ marginTop: 12 }}
         >
-          同名冲突
+          {t("dialog.move.nameConflict")}
         </label>
         <select
           className="text-field"
@@ -83,28 +85,25 @@ export function MoveDialog({
           }
           value={conflictStrategy}
         >
-          <option value="keep-both">保留两者（自动编号）</option>
-          <option value="replace">替换目标资产</option>
-          <option value="skip">跳过冲突资产</option>
+          <option value="keep-both">{t("dialog.move.keepBoth")}</option>
+          <option value="replace">{t("dialog.move.replace")}</option>
+          <option value="skip">{t("dialog.move.skip")}</option>
         </select>
-        <p className="field-help">
-          移动不会改变资产 ID、标签、合集、人工元数据、AI
-          内容或源链接；完成后可撤销一次。
-        </p>
+        <p className="field-help">{t("dialog.move.help")}</p>
         <div className="dialog-actions">
           <button
             className="secondary-button"
             onClick={onCancel}
             type="button"
           >
-            取消
+            {t("common.cancel")}
           </button>
           <button
             className="primary-button"
             onClick={onConfirm}
             type="button"
           >
-            确认移动
+            {t("dialog.move.submit")}
           </button>
         </div>
       </div>
