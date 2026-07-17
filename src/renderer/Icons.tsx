@@ -118,8 +118,14 @@ const iconPaths: Record<IconName, ReactNode> = {
       <path d="m16 16 4 4" />
     </>
   ),
+  /* REQ-CANVAS-006: AI entry points use a four-point sparkles glyph drawn in
+     the same stroke style as the rest of the set — the old path was a
+     five-point star that read as "favorites" and duplicated `star`. */
   smart: (
-    <path d="m12 3 1.7 5.3H19l-4.3 3.2 1.6 5.2-4.3-3.2-4.3 3.2 1.6-5.2L5 8.3h5.3z" />
+    <>
+      <path d="M10 4l1.8 4.2L16 10l-4.2 1.8L10 16l-1.8-4.2L4 10l4.2-1.8Z" />
+      <path d="M18 15l.9 2.1 2.1.9-2.1.9-.9 2.1-.9-2.1-2.1-.9 2.1-.9Z" />
+    </>
   ),
   star: (
     <path d="m12 2 3.1 6.3 6.9 1-5 4.9 1.2 6.9-6.2-3.3-6.2 3.3 1.2-6.9-5-4.9 6.9-1z" />

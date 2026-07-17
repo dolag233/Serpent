@@ -37,9 +37,12 @@ export function CreateDialog({
       >
         <div className="dialog-heading">
           <div>
-            <span className="eyebrow">
-              {kind === "library" ? "NEW LOCAL LIBRARY" : "MANAGED FOLDER"}
-            </span>
+            {/* REQ-SHELL-009: no decorative English caption in the Chinese UI.
+                The folder branch keeps its eyebrow — folder dialogs are owned
+                by the REQ-FOLDER-007 track. */}
+            {kind === "folder" && (
+              <span className="eyebrow">MANAGED FOLDER</span>
+            )}
             <h2 id="create-dialog-title">
               {kind === "library" ? "创建资源库" : "新建文件夹"}
             </h2>
