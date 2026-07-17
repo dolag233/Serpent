@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Icon, type IconName } from "./Icons";
 import type {
   CollectionSummary,
@@ -8,6 +8,10 @@ import type {
 } from "../shared/asset-types";
 import type { ContextMenuDescriptor } from "./context-menu";
 import type { RendererLibrarySummary } from "../shared/protocol/responses";
+import {
+  parseManagedAssetDrag,
+  supportsManagedAssetDrag,
+} from "./asset-drag-drop";
 import {
   inlineCreateRowIndex,
   inlineFolderEditDepth,
@@ -60,6 +64,9 @@ function NavRow({
   onContextMenu,
   onDragOver,
   onDrop,
+  onDragEnter,
+  onDragLeave,
+  dropActive,
   depth = 0,
   disabled,
   iconColor,
@@ -73,6 +80,10 @@ function NavRow({
   onContextMenu?: (e: React.MouseEvent) => void;
   onDragOver?: (e: React.DragEvent<HTMLButtonElement>) => void;
   onDrop?: (e: React.DragEvent<HTMLButtonElement>) => void;
+  onDragEnter?: (e: React.DragEvent<HTMLButtonElement>) => void;
+  onDragLeave?: (e: React.DragEvent<HTMLButtonElement>) => void;
+  /** REQ-DND-001/002: asset-drag hover affordance (is-drop-target class). */
+  dropActive?: boolean;
   depth?: number;
   disabled?: boolean;
   iconColor?: string;
@@ -80,12 +91,14 @@ function NavRow({
 }) {
   return (
     <button
-      className={`nav-row${active ? " is-active" : ""}`}
+      className={`nav-row${active ? " is-active" : ""}${dropActive ? " is-drop-target" : ""}`}
       disabled={disabled}
       onClick={onClick}
       onContextMenu={onContextMenu}
       onDragOver={onDragOver}
       onDrop={onDrop}
+      onDragEnter={onDragEnter}
+      onDragLeave={onDragLeave}
       style={{ paddingLeft: 7 + depth * 14 }}
       title={title}
       type="button"
@@ -269,6 +282,10 @@ export interface NavigationSidebarProps {
     targetCollectionId: string | undefined,
   ) => void;
 
+  // --- Internal asset drag/drop (REQ-DND-001/002) ---
+  onAssetsDroppedOnFolder: (folderId: string | null, assetIds: string[]) => void;
+  onAssetsDroppedOnTrash: (assetIds: string[]) => void;
+
   // --- Linked folder actions ---
   onImportFolderAsLinked: () => void;
   onRelinkFolder: (folderId: string) => void;
@@ -353,6 +370,8 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
     onChooseSmartCollection,
     onExternalDragOver,
     onExternalDrop,
+    onAssetsDroppedOnFolder,
+    onAssetsDroppedOnTrash,
     onImportFolderAsLinked,
     onRelinkFolder,
     onConvertLinkedDialog,
@@ -372,6 +391,56 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
     onImportDroppedFiles,
     onCopyManagedToLinked,
   } = props;
+
+  // REQ-DND-001/002: which row is the current asset-drag hover target.
+  // Cleared on leave/drop, and defensively on window dragend/drop so a drop
+  // outside any row never leaves a stale highlight.
+  const [assetDropTarget, setAssetDropTarget] = useState<string | null>(null);
+  useEffect(() => {
+    if (!assetDropTarget) return;
+    const clear = () => setAssetDropTarget(null);
+    window.addEventListener("dragend", clear);
+    window.addEventListener("drop", clear);
+    return () => {
+      window.removeEventListener("dragend", clear);
+      window.removeEventListener("drop", clear);
+    };
+  }, [assetDropTarget]);
+
+  /**
+   * Row wiring shared by the root row and managed folder rows: internal
+   * asset drags resolve here; anything else falls through to the existing
+   * external-import handlers unchanged.
+   */
+  function assetFolderDropHandlers(key: string, folderId: string | null) {
+    return {
+      dropActive: assetDropTarget === key,
+      onDragEnter: (event: React.DragEvent<HTMLButtonElement>) => {
+        if (supportsManagedAssetDrag(event.dataTransfer)) setAssetDropTarget(key);
+      },
+      onDragLeave: () => {
+        setAssetDropTarget((current) => (current === key ? null : current));
+      },
+      onDragOver: (event: React.DragEvent<HTMLButtonElement>) => {
+        if (supportsManagedAssetDrag(event.dataTransfer)) {
+          event.preventDefault();
+          event.dataTransfer.dropEffect = "move";
+          return;
+        }
+        onExternalDragOver(event);
+      },
+      onDrop: (event: React.DragEvent<HTMLButtonElement>) => {
+        const ids = parseManagedAssetDrag(event.dataTransfer);
+        setAssetDropTarget(null);
+        if (ids && ids.length > 0) {
+          event.preventDefault();
+          onAssetsDroppedOnFolder(folderId, ids);
+          return;
+        }
+        onExternalDrop(event, folderId, undefined);
+      },
+    };
+  }
 
   const directoryEntries = buildUnifiedDirectoryNavEntries(
     folders,
@@ -425,10 +494,7 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
                 { x: event.clientX, y: event.clientY },
               );
             }}
-            onDragOver={onExternalDragOver}
-            onDrop={(event) =>
-              onExternalDrop(event, entry.folderId, undefined)
-            }
+            {...assetFolderDropHandlers(`folder:${entry.folderId}`, entry.folderId)}
           />
         );
       }
@@ -621,6 +687,29 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
           icon="trash"
           label="回收站"
           onClick={() => void onEnterTrash()}
+          dropActive={assetDropTarget === "trash"}
+          onDragEnter={(event) => {
+            if (supportsManagedAssetDrag(event.dataTransfer))
+              setAssetDropTarget("trash");
+          }}
+          onDragLeave={() => {
+            setAssetDropTarget((current) =>
+              current === "trash" ? null : current,
+            );
+          }}
+          onDragOver={(event) => {
+            if (supportsManagedAssetDrag(event.dataTransfer)) {
+              event.preventDefault();
+              event.dataTransfer.dropEffect = "move";
+            }
+          }}
+          onDrop={(event) => {
+            const ids = parseManagedAssetDrag(event.dataTransfer);
+            setAssetDropTarget(null);
+            if (!ids || ids.length === 0) return;
+            event.preventDefault();
+            onAssetsDroppedOnTrash(ids);
+          }}
         />
         <NavRow icon="archive" label="最近使用" disabled />
         <Section
@@ -638,8 +727,7 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
                 icon="folder"
                 label="资源库根目录"
                 onClick={() => void onChooseRootFolder()}
-                onDragOver={onExternalDragOver}
-                onDrop={(event) => onExternalDrop(event, null, undefined)}
+                {...assetFolderDropHandlers("root", null)}
               />
               {renderDirectoryEntries()}
               {linkedFolders.length > 0 && (

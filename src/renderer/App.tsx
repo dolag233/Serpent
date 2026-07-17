@@ -55,6 +55,13 @@ import { useInlineFolderEdit } from "./use-inline-folder-edit";
 import { usePanelResize } from "./use-panel-resize";
 import { useToastNotifications } from "./useToastNotifications";
 import {
+  MANAGED_ASSETS_DRAG_TYPE,
+  resolveDraggedAssetIds,
+  resolveFolderDrop,
+  resolveTrashDrop,
+  type DragAssetFact,
+} from "./asset-drag-drop";
+import {
   toMessage,
   LibraryOperationError,
   PUBLIC_ERROR_MESSAGES_ZH,
@@ -2714,6 +2721,91 @@ function AppInner() {
     }
   }, [api, library, setError, setNotice]);
 
+  // REQ-DND-001/002: drop executors — the pure decisions live in
+  // asset-drag-drop.ts; here we only look up asset facts and run commands.
+  const dragAssetFacts = useCallback(
+    (assetIds: string[]): DragAssetFact[] =>
+      assetIds.map((assetId) => {
+        const summary = assets.find((candidate) => candidate.assetId === assetId);
+        return {
+          assetId,
+          // Unknown summaries (paged out) fail closed: treated as ineligible.
+          locationKind: summary?.locationKind ?? "linked",
+          availability: summary?.availability ?? "missing",
+          deletedAt: summary?.deletedAt ?? null,
+        };
+      }),
+    [assets],
+  );
+
+  const handleAssetsDroppedOnFolder = useCallback(
+    (targetFolderId: string | null, assetIds: string[]) => {
+      if (!api || !library) return;
+      const resolution = resolveFolderDrop({
+        targetFolderId,
+        // The root row (targetFolderId null) matches the "root" scope; the
+        // "all" scope is not a folder and never blocks a drop.
+        currentFolderId: assetScope === "root" ? null : assetScope,
+        assets: dragAssetFacts(assetIds),
+      });
+      if (resolution.kind === "reject") {
+        if (resolution.reason === "same-folder") {
+          setNotice("资产已在当前文件夹，无需移动。");
+        } else {
+          setNotice("没有可移动的资产（链接、丢失或回收站资产不参与移动）。");
+        }
+        return;
+      }
+      void (async () => {
+        setUiState("loading");
+        try {
+          const result = await api.moveAssets({
+            libraryId: library.libraryId,
+            assetIds: resolution.assetIds,
+            targetFolderId,
+            conflictStrategy: "keep-both",
+          });
+          if (!result.ok) throw new LibraryOperationError(result.error);
+          setLastMoveOperationId(result.value.operationId);
+          setNotice(
+            `已移动 ${result.value.movedCount} 项资产` +
+              `${result.value.skippedCount ? `，${result.value.skippedCount} 项冲突跳过` : ""}` +
+              `${resolution.skippedCount ? `，跳过 ${resolution.skippedCount} 项不可用资产` : ""}。`,
+          );
+          clearAssetSelection();
+          await reloadCurrentContentRef.current();
+        } catch (caught) {
+          setError(toMessage(caught, "移动资产失败。"));
+        } finally {
+          setUiState("ready");
+        }
+      })();
+    },
+    [api, library, assetScope, dragAssetFacts, setNotice, setError, setUiState, clearAssetSelection],
+  );
+
+  const handleAssetsDroppedOnTrash = useCallback(
+    (assetIds: string[]) => {
+      if (!api || !library) return;
+      const { assetIds: eligible, skippedCount } = resolveTrashDrop(
+        dragAssetFacts(assetIds),
+      );
+      if (eligible.length === 0) {
+        setNotice("没有可移入回收站的资产（链接资产请从菜单删除）。");
+        return;
+      }
+      void (async () => {
+        await trashManagedAssets(eligible);
+        if (skippedCount > 0) {
+          setNotice(
+            `${eligible.length} 项资产已移入回收站，跳过 ${skippedCount} 项不可用资产。`,
+          );
+        }
+      })();
+    },
+    [api, library, dragAssetFacts, trashManagedAssets, setNotice],
+  );
+
   // --- Existing operations ---
 
   async function importAssets(kind: "files" | "folder") {
@@ -4654,6 +4746,12 @@ function AppInner() {
         onExternalDrop={(event, targetFolderId, targetCollectionId) =>
           handleTargetExternalDrop(event, targetFolderId, targetCollectionId)
         }
+        onAssetsDroppedOnFolder={(folderId, assetIds) =>
+          handleAssetsDroppedOnFolder(folderId, assetIds)
+        }
+        onAssetsDroppedOnTrash={(assetIds) =>
+          handleAssetsDroppedOnTrash(assetIds)
+        }
         onImportFolderAsLinked={() => void importFolderAsLinked()}
         onRelinkFolder={(folderId) => void relinkFolder(folderId)}
         onConvertLinkedDialog={setConvertLinkedDialog}
@@ -5015,9 +5113,7 @@ function AppInner() {
                       className={`asset-card${selectedIdSet.has(asset.assetId) ? " is-selected" : ""}${asset.availability === "missing" ? " is-missing" : ""}${asset.deletedAt ? " is-trashed" : ""}`}
                       data-asset-id={asset.assetId}
                       title={asset.displayName}
-                      draggable={Boolean(
-                        activeCollectionId && !collectionRecursive,
-                      )}
+                      draggable={!showTrash}
                       key={asset.assetId}
                       onMouseDown={(e) => {
                         cardMouseDownRef.current = e.button;
@@ -5031,8 +5127,19 @@ function AppInner() {
                         if (draggedMemberId) event.preventDefault();
                       }}
                       onDragStart={(event) => {
-                        if (!activeCollectionId || collectionRecursive) return;
-                        setDraggedMemberId(asset.assetId);
+                        // Collection member reorder keeps its own drag path.
+                        if (activeCollectionId && !collectionRecursive) {
+                          setDraggedMemberId(asset.assetId);
+                          event.dataTransfer.effectAllowed = "move";
+                          return;
+                        }
+                        // REQ-DND-001/002: folder/trash drops resolve this
+                        // selection snapshot at the target (asset-drag-drop.ts).
+                        const ids = resolveDraggedAssetIds(asset.assetId, selectedAssetIds);
+                        event.dataTransfer.setData(
+                          MANAGED_ASSETS_DRAG_TYPE,
+                          JSON.stringify(ids),
+                        );
                         event.dataTransfer.effectAllowed = "move";
                       }}
                       onDrop={(event) => {

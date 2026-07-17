@@ -620,6 +620,13 @@ input:focus-visible {
   color: var(--text);
 }
 
+/* REQ-DND-001/002: asset-drag hover target — same background-only language as
+   the active state, one shade stronger and accent-tinted. */
+.nav-row.is-drop-target {
+  background: color-mix(in srgb, var(--accent) 22%, #3a3d40);
+  color: var(--text);
+}
+
 .nav-row:disabled {
   color: #717572;
   cursor: default;
