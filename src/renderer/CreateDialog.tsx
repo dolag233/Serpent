@@ -3,22 +3,23 @@ import { Icon } from "./Icons";
 
 export interface CreateDialogProps {
   open: boolean;
-  kind: "library" | "folder";
   value: string;
   onValueChange: (val: string) => void;
   onSubmit: () => void;
   onCancel: () => void;
-  folderName?: string;
 }
 
+/**
+ * Library-creation dialog. Folder creation used to share this dialog until
+ * REQ-FOLDER-007 moved 新建文件夹/重命名 to inline editing in the directory
+ * tree; what remains here is the local-library name prompt only.
+ */
 export function CreateDialog({
   open,
-  kind,
   value,
   onValueChange,
   onSubmit,
   onCancel,
-  folderName,
 }: CreateDialogProps) {
   if (!open) return null;
 
@@ -37,12 +38,8 @@ export function CreateDialog({
       >
         <div className="dialog-heading">
           <div>
-            <span className="eyebrow">
-              {kind === "library" ? "NEW LOCAL LIBRARY" : "MANAGED FOLDER"}
-            </span>
-            <h2 id="create-dialog-title">
-              {kind === "library" ? "创建资源库" : "新建文件夹"}
-            </h2>
+            <span className="eyebrow">NEW LOCAL LIBRARY</span>
+            <h2 id="create-dialog-title">创建资源库</h2>
           </div>
           <button
             aria-label="取消"
@@ -64,11 +61,7 @@ export function CreateDialog({
           onChange={(event) => onValueChange(event.target.value)}
           value={value}
         />
-        <p className="field-help">
-          {kind === "library"
-            ? "下一步由系统选择本地保存位置。"
-            : `将在"${folderName ?? "资源库根目录"}"内创建真实目录。`}
-        </p>
+        <p className="field-help">下一步由系统选择本地保存位置。</p>
         <div className="dialog-actions">
           <button
             className="secondary-button"

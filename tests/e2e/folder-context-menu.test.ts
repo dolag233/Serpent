@@ -38,15 +38,27 @@ async function createLibrary(window: Page, libraryName: string) {
 }
 
 /**
+ * Fills the open inline folder edit row and commits with Enter, then waits
+ * for the row to leave edit mode (REQ-FOLDER-007: folder create/rename is
+ * in-tree inline editing; the dialogs no longer exist).
+ */
+async function commitInlineFolderEdit(window: Page, folderName: string) {
+  const input = window.locator(".nav-inline-edit input");
+  await expect(input).toBeVisible({ timeout: 5_000 });
+  await input.fill(folderName);
+  await input.press("Enter");
+  await expect(window.locator(".nav-inline-edit")).toHaveCount(0, {
+    timeout: 10_000,
+  });
+}
+
+/**
  * Creates a root-level managed folder through the sidebar “添加文件夹” entry
  * and waits until its nav row is rendered.
  */
 async function createFolderViaSidebar(window: Page, folderName: string) {
   await window.getByRole("button", { name: "添加文件夹" }).click();
-  const dialog = window.getByRole("dialog");
-  await dialog.getByLabel("名称").fill(folderName);
-  await dialog.getByRole("button", { name: "创建", exact: true }).click();
-  await expect(dialog).toBeHidden({ timeout: 10_000 });
+  await commitInlineFolderEdit(window, folderName);
   await expect(
     window.getByRole("button", { name: folderName, exact: true }),
   ).toBeVisible({ timeout: 10_000 });
@@ -69,24 +81,38 @@ async function openFolderContextMenu(window: Page, folderName: string) {
 }
 
 /**
- * Opens the folder rename dialog from the sidebar context menu, mirroring the
- * asset rename helper in asset-rename.test.ts.
+ * Turns a folder's nav row into the inline rename row from the context menu
+ * and returns the focused input.
  */
-async function openFolderRenameDialog(window: Page, folderName: string) {
+async function openFolderRenameInline(window: Page, folderName: string) {
   const menu = await openFolderContextMenu(window, folderName);
   await menu.getByRole("menuitem", { name: "重命名…" }).click();
-  const dialog = window.getByRole("dialog");
-  await expect(
-    dialog.getByRole("heading", { name: "重命名文件夹" }),
-  ).toBeVisible({ timeout: 5_000 });
-  return dialog;
+  const input = window.locator(".nav-inline-edit input");
+  await expect(input).toBeVisible({ timeout: 5_000 });
+  return input;
+}
+
+/**
+ * Ordered markers of the sidebar folder rows: nav rows by their text, the
+ * inline edit row as "__edit__".
+ */
+async function folderRowOrder(window: Page) {
+  return window.locator(".navigation-pane").evaluate((pane) =>
+    Array.from(
+      pane.querySelectorAll("button.nav-row, div.nav-inline-edit"),
+    ).map((row) =>
+      row.classList.contains("nav-inline-edit")
+        ? "__edit__"
+        : (row.textContent ?? ""),
+    ),
+  );
 }
 
 // ---------------------------------------------------------------------------
-// Test 1 — 新建子文件夹 from the context menu nests a real directory
+// Test 1 — 新建子文件夹 inserts a pending edit row as the first child
 // ---------------------------------------------------------------------------
 
-test("creates a nested subfolder from the folder context menu with the parent hint", async () => {
+test("creates a nested subfolder inline from the folder context menu", async () => {
   const temporaryRoot = mkdtempSync(path.join(tmpdir(), "serpent-folder-sub-"));
   const libraryName = "Folder Menu Sub";
   const libraryPath = path.join(temporaryRoot, libraryName);
@@ -107,49 +133,52 @@ test("creates a nested subfolder from the folder context menu with the parent hi
     ).toBeVisible();
     await menu.getByRole("menuitem", { name: "新建子文件夹" }).click();
 
-    // The create dialog opens in the subfolder flow: empty name field, and the
-    // destination hint line names the right-clicked parent folder.
-    const dialog = window.getByRole("dialog");
-    await expect(
-      dialog.getByRole("heading", { name: "新建文件夹" }),
-    ).toBeVisible({ timeout: 5_000 });
-    await expect(dialog.locator("p.field-help")).toHaveText(
-      '将在"父级"内创建真实目录。',
+    // No dialog opens: the pending name-edit row appears inside the tree,
+    // focused with the default name ready to replace.
+    await expect(window.getByRole("dialog")).toHaveCount(0);
+    const editRow = window.locator(".nav-inline-edit");
+    await expect(editRow).toBeVisible({ timeout: 5_000 });
+    const input = editRow.locator("input");
+    await expect(input).toBeFocused();
+    await expect(input).toHaveValue("新建文件夹");
+
+    // The pending row is the right-clicked folder's first child: rendered
+    // directly after it and indented by exactly one depth step.
+    const parentRow = window.getByRole("button", { name: "父级", exact: true });
+    const parentPadding = await parentRow.evaluate((element) =>
+      parseFloat(getComputedStyle(element).paddingLeft),
     );
-    const input = dialog.locator("input#dialog-name");
-    await expect(input).toHaveValue("");
+    const editPadding = await editRow.evaluate((element) =>
+      parseFloat(getComputedStyle(element).paddingLeft),
+    );
+    expect(editPadding).toBe(parentPadding + 14);
+    const pendingOrder = await folderRowOrder(window);
+    const parentIndex = pendingOrder.findIndex((text) =>
+      text.includes("父级"),
+    );
+    expect(parentIndex).toBeGreaterThanOrEqual(0);
+    expect(pendingOrder[parentIndex + 1]).toBe("__edit__");
 
+    // Enter commits through the unchanged folder.create command chain.
     await input.fill("子级");
-    await dialog.getByRole("button", { name: "创建", exact: true }).click();
-
-    await expect(dialog).toBeHidden({ timeout: 10_000 });
+    await input.press("Enter");
+    await expect(editRow).toHaveCount(0, { timeout: 10_000 });
     await expect(window.locator(".toast")).toContainText("已创建文件夹", {
       timeout: 10_000,
     });
 
-    // The sidebar lists the child nested one level under the right-clicked
-    // parent: rendered after it and indented by exactly one depth step.
-    const parentRow = window.getByRole("button", { name: "父级", exact: true });
+    // The sidebar lists the child nested one level under the parent.
     const childRow = window.getByRole("button", { name: "子级", exact: true });
     await expect(childRow).toBeVisible({ timeout: 10_000 });
-    const parentPadding = await parentRow.evaluate((element) =>
-      parseFloat(getComputedStyle(element).paddingLeft),
-    );
     const childPadding = await childRow.evaluate((element) =>
       parseFloat(getComputedStyle(element).paddingLeft),
     );
     expect(childPadding).toBe(parentPadding + 14);
-    const navOrder = await window
-      .locator(".navigation-pane")
-      .evaluate((pane) =>
-        Array.from(pane.querySelectorAll("button.nav-row")).map(
-          (row) => row.textContent ?? "",
-        ),
-      );
-    const parentIndex = navOrder.findIndex((text) => text.includes("父级"));
+    const navOrder = await folderRowOrder(window);
     const childIndex = navOrder.findIndex((text) => text.includes("子级"));
-    expect(parentIndex).toBeGreaterThanOrEqual(0);
-    expect(childIndex).toBeGreaterThan(parentIndex);
+    expect(childIndex).toBeGreaterThan(
+      navOrder.findIndex((text) => text.includes("父级")),
+    );
 
     // The real nested directory was created on disk.
     expect(existsSync(path.join(libraryPath, "Assets", "父级", "子级"))).toBe(
@@ -162,10 +191,10 @@ test("creates a nested subfolder from the folder context menu with the parent hi
 });
 
 // ---------------------------------------------------------------------------
-// Test 2 — 重命名… renames the folder, the real directory, and keeps content
+// Test 2 — 重命名… edits the row in place and keeps content
 // ---------------------------------------------------------------------------
 
-test("renames a folder from the context menu and keeps its assets visible", async () => {
+test("renames a folder inline from the context menu and keeps its assets visible", async () => {
   const temporaryRoot = mkdtempSync(
     path.join(tmpdir(), "serpent-folder-rename-"),
   );
@@ -194,16 +223,24 @@ test("renames a folder from the context menu and keeps its assets visible", asyn
     const assetCard = window.locator('[data-asset-id][title="portrait.png"]');
     await expect(assetCard).toBeVisible({ timeout: 15_000 });
 
-    const dialog = await openFolderRenameDialog(window, "原画");
-    // The editable field holds the current name, focused and preselected.
-    const input = dialog.locator("input#rename-folder-name");
+    const input = await openFolderRenameInline(window, "原画");
+    // The row becomes an input holding the current name, focused and fully
+    // preselected so typing replaces it.
+    await expect(window.getByRole("dialog")).toHaveCount(0);
     await expect(input).toHaveValue("原画");
     await expect(input).toBeFocused();
+    const selection = await input.evaluate((element: HTMLInputElement) => [
+      element.selectionStart,
+      element.selectionEnd,
+    ]);
+    expect(selection).toEqual([0, "原画".length]);
 
     await input.fill("角色原画");
-    await dialog.getByRole("button", { name: "重命名", exact: true }).click();
+    await input.press("Enter");
 
-    await expect(dialog).toBeHidden({ timeout: 10_000 });
+    await expect(window.locator(".nav-inline-edit")).toHaveCount(0, {
+      timeout: 10_000,
+    });
     await expect(window.locator(".toast")).toContainText(
       "已将文件夹重命名为",
       { timeout: 10_000 },
@@ -238,10 +275,10 @@ test("renames a folder from the context menu and keeps its assets visible", asyn
 });
 
 // ---------------------------------------------------------------------------
-// Test 3 — Sibling-name conflict keeps the dialog open; fixing the name works
+// Test 3 — Sibling-name conflict renders inline under the row; retry works
 // ---------------------------------------------------------------------------
 
-test("keeps the folder rename dialog open with an inline conflict error and allows retry", async () => {
+test("keeps the inline rename row open with an inline conflict error and allows retry", async () => {
   const temporaryRoot = mkdtempSync(
     path.join(tmpdir(), "serpent-folder-conflict-"),
   );
@@ -256,26 +293,25 @@ test("keeps the folder rename dialog open with an inline conflict error and allo
     await createFolderViaSidebar(window, "素材甲");
     await createFolderViaSidebar(window, "素材乙");
 
-    const dialog = await openFolderRenameDialog(window, "素材甲");
-    const input = dialog.locator("input#rename-folder-name");
+    const input = await openFolderRenameInline(window, "素材甲");
     await expect(input).toHaveValue("素材甲");
     await input.fill("素材乙");
-    await dialog.getByRole("button", { name: "重命名", exact: true }).click();
+    await input.press("Enter");
 
-    // Conflict: the typed error is shown inline and the dialog stays open.
-    await expect(dialog.locator(".inline-error")).toContainText(
+    // Conflict: the typed error renders under the row and the row stays open.
+    await expect(window.locator(".nav-inline-edit-error")).toContainText(
       "已存在同名文件夹或文件。",
       { timeout: 10_000 },
     );
-    await expect(
-      dialog.getByRole("heading", { name: "重命名文件夹" }),
-    ).toBeVisible();
+    await expect(input).toBeVisible();
     expect(existsSync(path.join(libraryPath, "Assets", "素材甲"))).toBe(true);
 
-    // Fix the name and retry: succeeds and closes the dialog.
+    // Fix the name and retry: succeeds and closes the edit row.
     await input.fill("素材丙");
-    await dialog.getByRole("button", { name: "重命名", exact: true }).click();
-    await expect(dialog).toBeHidden({ timeout: 10_000 });
+    await input.press("Enter");
+    await expect(window.locator(".nav-inline-edit")).toHaveCount(0, {
+      timeout: 10_000,
+    });
     await expect(
       window.getByRole("button", { name: "素材丙", exact: true }),
     ).toBeVisible({ timeout: 10_000 });
@@ -293,10 +329,10 @@ test("keeps the folder rename dialog open with an inline conflict error and allo
 });
 
 // ---------------------------------------------------------------------------
-// Test 4 — Illegal names show the invalid-name reason inline; 取消 closes
+// Test 4 — Illegal names show the invalid-name reason inline; Esc cancels
 // ---------------------------------------------------------------------------
 
-test("shows an inline invalid-name error for illegal folder names and closes on 取消", async () => {
+test("shows inline invalid-name errors for illegal folder names and cancels with Escape", async () => {
   const temporaryRoot = mkdtempSync(
     path.join(tmpdir(), "serpent-folder-invalid-"),
   );
@@ -310,43 +346,101 @@ test("shows an inline invalid-name error for illegal folder names and closes on 
     await createLibrary(window, libraryName);
     await createFolderViaSidebar(window, "角色");
 
-    const dialog = await openFolderRenameDialog(window, "角色");
-    const input = dialog.locator("input#rename-folder-name");
+    const input = await openFolderRenameInline(window, "角色");
     await expect(input).toHaveValue("角色");
 
-    // A path separator is rejected inline and the dialog stays open.
+    // A path separator is rejected inline and the row stays open.
     await input.fill("a/b");
-    await dialog.getByRole("button", { name: "重命名", exact: true }).click();
-    await expect(dialog.locator(".inline-error")).toContainText(
+    await input.press("Enter");
+    await expect(window.locator(".nav-inline-edit-error")).toContainText(
       "名称包含不支持的字符。",
       { timeout: 10_000 },
     );
-    await expect(
-      dialog.getByRole("heading", { name: "重命名文件夹" }),
-    ).toBeVisible();
+    await expect(input).toBeVisible();
 
     // A Windows-forbidden character is rejected the same way.
     await input.fill("坏?名");
-    await dialog.getByRole("button", { name: "重命名", exact: true }).click();
-    await expect(dialog.locator(".inline-error")).toContainText(
+    await input.press("Enter");
+    await expect(window.locator(".nav-inline-edit-error")).toContainText(
       "名称包含不支持的字符。",
       { timeout: 10_000 },
     );
-    await expect(
-      dialog.getByRole("heading", { name: "重命名文件夹" }),
-    ).toBeVisible();
+    await expect(input).toBeVisible();
 
-    // 取消 closes without renaming anything.
-    await dialog
-      .locator(".dialog-actions")
-      .getByRole("button", { name: "取消" })
-      .click();
-    await expect(dialog).toBeHidden({ timeout: 5_000 });
+    // Escape cancels without renaming anything; the row returns to normal.
+    await input.press("Escape");
+    await expect(window.locator(".nav-inline-edit")).toHaveCount(0, {
+      timeout: 5_000,
+    });
     await expect(
       window.getByRole("button", { name: "角色", exact: true }),
     ).toBeVisible();
     expect(existsSync(path.join(libraryPath, "Assets", "角色"))).toBe(true);
     expect(existsSync(path.join(libraryPath, "Assets", "a"))).toBe(false);
+  } finally {
+    await application.close();
+    rmSync(temporaryRoot, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Test 5 — Sidebar 「+」 lands at the selected folder; Escape cancels; blur
+// commits
+// ---------------------------------------------------------------------------
+
+test("creates under the selected folder from the sidebar plus entry, cancels with Escape, commits on blur", async () => {
+  const temporaryRoot = mkdtempSync(path.join(tmpdir(), "serpent-folder-plus-"));
+  const libraryName = "Folder Plus Inline";
+  const libraryPath = path.join(temporaryRoot, libraryName);
+
+  const application = await launchApp(temporaryRoot, libraryPath);
+
+  try {
+    const window = await application.firstWindow();
+    await createLibrary(window, libraryName);
+    await createFolderViaSidebar(window, "父级");
+
+    // Select 父级: the 「+」 entry targets the currently selected location.
+    await window.getByRole("button", { name: "父级", exact: true }).click();
+    await expect(window.locator(".scope-crumb-label.is-current")).toHaveText(
+      "父级",
+    );
+    await window.getByRole("button", { name: "添加文件夹" }).click();
+
+    // The pending row nests under the selected folder, not at the root.
+    const editRow = window.locator(".nav-inline-edit");
+    await expect(editRow).toBeVisible({ timeout: 5_000 });
+    const parentPadding = await window
+      .getByRole("button", { name: "父级", exact: true })
+      .evaluate((element) => parseFloat(getComputedStyle(element).paddingLeft));
+    const editPadding = await editRow.evaluate((element) =>
+      parseFloat(getComputedStyle(element).paddingLeft),
+    );
+    expect(editPadding).toBe(parentPadding + 14);
+
+    // Escape removes the pending row without creating anything.
+    const input = editRow.locator("input");
+    await input.press("Escape");
+    await expect(editRow).toHaveCount(0, { timeout: 5_000 });
+    expect(existsSync(path.join(libraryPath, "Assets", "父级", "新建文件夹"))).toBe(
+      false,
+    );
+
+    // Blur with a valid name commits: clicking away creates the folder.
+    await window.getByRole("button", { name: "添加文件夹" }).click();
+    await expect(editRow).toBeVisible({ timeout: 5_000 });
+    await input.fill("子级");
+    await window.locator(".workspace").click();
+    await expect(editRow).toHaveCount(0, { timeout: 10_000 });
+    await expect(window.locator(".toast")).toContainText("已创建文件夹", {
+      timeout: 10_000,
+    });
+    await expect(
+      window.getByRole("button", { name: "子级", exact: true }),
+    ).toBeVisible({ timeout: 10_000 });
+    expect(existsSync(path.join(libraryPath, "Assets", "父级", "子级"))).toBe(
+      true,
+    );
   } finally {
     await application.close();
     rmSync(temporaryRoot, { recursive: true, force: true });
