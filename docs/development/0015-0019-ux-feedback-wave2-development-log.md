@@ -31,6 +31,9 @@
 ## Wave 2 合流门禁（当前 HEAD `308e5b0`）
 
 - typecheck 通过、eslint 0 findings（T5/T6 各修掉一处新增 react-hooks 警告后清零）、unit 454 passed、worker search 69 passed。
-- E2E 回归（后台集中）：browsing-preferences、shell-navigation、folder-context-menu、context-menu、organization-search-trash —— 结果见下方追加。
+- E2E 回归（后台集中，当次结果）：
+  - 首轮 21 passed + 1 failed：organization-search-trash 的批量用例仍按旧 datalist 输入驱动标签过滤（fill 不触发搜索）。定性为**测试适配缺口**而非产品回归——新选择器需要先点选候选。
+  - 适配（6 处 / 4 文件补 option 点击）后复跑：organization-search-trash、asset-pagination、browsing-preferences、organization-metadata-persistence **10/10 全绿**；同轮 shell-navigation、folder-context-menu、context-menu 均绿。
+  - 早前 Wave 1 收尾已另行验证：asset-ingestion、desktop-ingestion、media-preview、asset-rename 当次全绿。
 - 审查偏差：纪律 #11 完整交叉审查（2 sonnet + 4 haiku）继续受 API 配额限制未执行；主 agent 对三轨道全部实现深审（架构不变量、纪律 #8/#10、测试真实性）。配额恢复后与 Wave 1 一并补审。
 - 视觉/交互类条目全部移交人工 QA（本环境无 Computer Use）。
