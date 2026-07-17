@@ -142,8 +142,8 @@ test("restores the recent library and focuses the last browsed asset after a ful
       window.getByText(libraryName, { exact: true }).first(),
     ).toBeVisible();
     await window.getByRole("button", { name: "添加文件夹" }).click();
-    await window.getByLabel("名称").fill("恢复文件夹");
-    await window.getByRole("button", { name: "创建", exact: true }).click();
+    await window.getByLabel("新文件夹名称").fill("恢复文件夹");
+    await window.keyboard.press("Enter");
     await window
       .getByRole("button", { name: "恢复文件夹", exact: true })
       .click();

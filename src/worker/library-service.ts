@@ -8357,6 +8357,7 @@ export class LibraryService {
               `a.asset_id NOT IN (SELECT hat.asset_id FROM human_asset_tags hat JOIN tags t ON t.tag_id = hat.tag_id WHERE t.name = ? COLLATE NOCASE)`,
             );
             conditions.push(`(${notClauses.join(' AND ')})`);
+            params.push(...filter.values);
           } else if (filter.exclude) {
             conditions.push(`(${clause})`);
             params.push(filter.values[0]!);

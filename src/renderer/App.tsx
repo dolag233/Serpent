@@ -1444,6 +1444,7 @@ function AppInner() {
     setHeightRange({ min: "", max: "", exclude: false });
     setAspectRatioRange({ min: "", max: "", exclude: false });
     setDurationRange({ min: "", max: "", exclude: false });
+    setLongEdgeRange({ min: "", max: "", exclude: false });
     setSortField("relevance");
     setSortOrder("asc");
     hadDiscoveryInput.current = false;
@@ -2298,6 +2299,8 @@ function AppInner() {
       aspectRatioRange.max ||
       durationRange.min ||
       durationRange.max ||
+      longEdgeRange.min ||
+      longEdgeRange.max ||
       sortField !== "relevance" ||
       sortOrder !== "asc",
     );
@@ -2337,6 +2340,7 @@ function AppInner() {
     heightRange,
     aspectRatioRange,
     durationRange,
+    longEdgeRange,
     sortField,
     sortOrder,
   ]);

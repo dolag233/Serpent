@@ -804,6 +804,29 @@ describe('search filters', () => {
     service.closeAll();
   });
 
+  it('excludes multiple tags with every placeholder bound (regression)', () => {
+    const { service, libraryId, assetId } = createLibraryWithAssetAndTags();
+    const tag = service.createTag({ libraryId, name: 'Character' });
+    service.assignTags({ libraryId, assetIds: [assetId], tagIds: [tag.tagId] });
+
+    // Multi-value exclude previously left placeholders unbound and better-sqlite3
+    // threw "too few parameter values", failing the search closed.
+    const excluded = service.searchAssets({
+      libraryId,
+      filters: [{ field: 'tag', values: ['Character', 'Environment'], exclude: true }],
+    });
+    expect(excluded.total).toBe(0);
+
+    // Assets carrying none of the excluded tags survive the filter.
+    const kept = service.searchAssets({
+      libraryId,
+      filters: [{ field: 'tag', values: ['Environment', 'Props'], exclude: true }],
+    });
+    expect(kept.total).toBe(1);
+
+    service.closeAll();
+  });
+
   it('combines format AND rating filters', () => {
     const { service, libraryId, assetId } = createLibraryWithAssetAndTags();
     service.setAssetMetadata({ libraryId, assetId, expectedVersion: 1, rating: 5 });

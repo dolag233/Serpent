@@ -934,7 +934,6 @@ input[type="range"] {
   justify-content: center;
 }
 
-.eyebrow,
 .micro-label {
   color: var(--accent);
   font-family: "IBM Plex Mono", monospace;

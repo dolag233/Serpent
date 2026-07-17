@@ -33,8 +33,8 @@ test('moves a managed asset to a real folder and exposes one visible undo', asyn
     await window.getByLabel('名称').fill(libraryName);
     await window.getByRole('button', { name: '创建', exact: true }).click();
     await window.getByRole('button', { name: '添加文件夹' }).click();
-    await window.getByLabel('名称').fill('Target');
-    await window.getByRole('button', { name: '创建', exact: true }).click();
+    await window.getByLabel('新文件夹名称').fill('Target');
+    await window.keyboard.press('Enter');
     await window.getByRole('button', { name: '导入文件', exact: true }).first().click();
 
     const asset = window.getByRole('button', { name: /move-me\.png/i });

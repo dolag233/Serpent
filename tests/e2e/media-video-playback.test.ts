@@ -296,7 +296,8 @@ test("plays a direct MP4 and a generated WebM fallback through the asset viewer"
     const directViewer = window.getByRole("region", {
       name: "direct-playback.mp4 查看页面",
     });
-    await expect(directViewer.getByText("视频原文件预览")).toBeVisible();
+    // REQ-VIEW-001 removed the media-type caption (视频原文件预览); the
+    // serpent://source/ scheme below is the proof of direct playback.
     const directVideo = directViewer.locator("video.preview-video");
     await expect
       .poll(() => directVideo.getAttribute("src"), { timeout: 30_000 })
@@ -309,9 +310,8 @@ test("plays a direct MP4 and a generated WebM fallback through the asset viewer"
     const proxyViewer = window.getByRole("region", {
       name: "proxy-fallback.avi 查看页面",
     });
-    await expect(proxyViewer.getByText("视频代理预览")).toBeVisible({
-      timeout: 30_000,
-    });
+    // REQ-VIEW-001 removed the media-type caption (视频代理预览); the
+    // serpent://proxy/ scheme below is the proof of fallback playback.
     const proxyVideo = proxyViewer.locator("video.preview-video");
     await expect
       .poll(() => proxyVideo.getAttribute("src"), { timeout: 30_000 })
