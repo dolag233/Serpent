@@ -24,6 +24,7 @@ v0.1.0 继续收口 0001–0010 的桌面主线，并纳入真实使用反馈确
 
 - 产品负责人第二批直接反馈已按项目规则进入需求池并排期：选中描边外扩加粗与 Shift 悬停双圈消除（REQ-SELECT-003）、目录高亮仅改背景（REQ-NAV-005）、强调色绿改蓝（REQ-THEME-004）、滑块小巧中性色（REQ-CANVAS-007）、预览图四角圆角（REQ-CANVAS-008）、AI 搜索按钮与搜索框加宽（REQ-CANVAS-006）、通知淡出（REQ-SHELL-010）、新建资源库去侧边栏/「01」（REQ-SHELL-008）、冗余装饰文案清理（REQ-SHELL-009）、文件夹复制路径/访达打开（REQ-MENU-006）、文件夹原地编辑（REQ-FOLDER-007）、回收站预览丢失（BUG-TRASH-001）、侧栏拖拽调宽（REQ-SHELL-007）、资产拖拽移动/删除（REQ-DND-001/002）、多标签+宽高比+分辨率过滤（REQ-TAG-002 解冻、REQ-FILTER-009/010）。排期表见 `docs/implementation/mvp-ui-ux-requirements-backlog.md`「2026-07-17 第二批反馈排期」。
 - Wave 1 四轨道并行开发中（workflow + worktree 隔离）：T1 视觉修饰包、T2 文件夹菜单命令、T3 回收站预览修复、T4 文件夹原地编辑。**后续 agent 不要重复开发这些范围**；Wave 2（T5/T6/T7）与 Wave 3（全面 UI/UX 审查与功能提案）在 Wave 1 合流后启动。
+- Wave 2 实施规格已完成：`docs/implementation/0016-0018-wave2-sidebar-dnd-filters-spec.md`。前置核查结论：资产移动命令（`asset.move.request` + move-undo + MoveDialog）与回收站命令已存在，T6 只做 DnD 接线；尺寸列（width/height + orientation 交换）已存在，T7 宽高比/分辨率过滤为查询字段 + UI 装配。
 - AGENTS.md 验收纪律新增 #12：自动化测试一律后台运行，不抢占用户前台；E2E 由主 agent 集中串行执行。
 - 同步校准：NAV-001/NAV-002/MENU-015/016/017 已在需求池标记人类验收通过（用户 2026-07-17 逐项确认）。
 
