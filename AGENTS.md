@@ -105,6 +105,7 @@ Library Worker (UtilityProcess; filesystem + SQLite owner)
 9. **文档证据实时**："通过/已验证"必须附当次命令+结果摘要；被 kill/部分执行的运行不得写成"确认绿"。
 10. **禁止补丁式修复**：修复问题或编写需求时必须发掘深层原因，把整个问题和相关所有代码都纳入考量，不得直接打一个补丁以绕过问题。遇到 bug 先定位根因→理解全部影响范围→设计完整方案→一次修到位。
 11. **编码后强制交叉审查**：每一次代码变更完成后，必须启动 **2 个 sonnet + 4 个 haiku** agent 进行交叉检查（使用 `/code-review` 技能或等效 workflow）。sonnet 负责 Standards + Spec 双轴深度审查；haiku 负责广度扫查（regression、dead code、accessibility、未用 import、CSS 泄露、security 回归）。
+12. **测试后台执行**：自动化测试（尤其会弹出窗口的 Electron E2E）一律以后台任务方式运行，不得抢占用户前台窗口、打断用户正在进行的操作；确需前台观察时先征得用户同意。多个 agent/轨道并行时，由主 agent 集中串行运行 E2E，避免同时弹出多个 Electron 实例。
 
 ## 文档入口
 
