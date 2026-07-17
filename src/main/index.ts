@@ -30,7 +30,12 @@ import {
   AI_COMPLETED_CHANNEL,
   AI_CLEARED_CHANNEL,
   EXTENSION_PAIRING_CHANNEL,
+  OPEN_EXTERNAL_URL_CHANNEL,
 } from "../shared/protocol/channels";
+import {
+  parseOpenExternalUrlRequest,
+  toOpenableExternalUrl,
+} from "../shared/external-url";
 import {
   parseExtensionPairingRequest,
   type ExtensionPairingResult,
@@ -2427,8 +2432,23 @@ async function startApplication(): Promise<void> {
     },
   );
 
-  ipcMain.on(ACTIVE_CONTEXT_CHANNEL, (event, input: unknown) => {
-    if (!mainWindow || event.sender !== mainWindow.webContents) return;
+  // 渲染进程请求在系统浏览器打开外部链接（检查器「源链接」跳转）。
+  // 发送者与 URL 双重校验，仅放行不含凭据的 HTTP(S)。
+  ipcMain.handle(OPEN_EXTERNAL_URL_CHANNEL, async (event, input: unknown) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents) return false;
+    const request = parseOpenExternalUrlRequest(input);
+    const url = request ? toOpenableExternalUrl(request.url) : null;
+    if (!url) return false;
+    try {
+      await shell.openExternal(url);
+      return true;
+    } catch (error) {
+      logger?.error("open-external-url", error);
+      return false;
+    }
+  });
+
+  ipcMain.on(ACTIVE_CONTEXT_CHANNEL, (event, input: unknown) => {    if (!mainWindow || event.sender !== mainWindow.webContents) return;
     try {
       const context = parseActiveContext(input);
       const windowId = BrowserWindow.fromWebContents(event.sender)?.id;

@@ -1,18 +1,23 @@
 import { type ReactNode } from "react";
 
 export type IconName =
+  | "activity"
   | "archive"
+  | "box"
   | "chevron"
   | "chevron-left"
   | "chevron-right"
+  | "clipboard"
   | "clock"
   | "close"
   | "collection"
   | "collapse-left"
   | "collapse-right"
+  | "download"
   | "edit"
   | "file"
   | "folder"
+  | "globe"
   | "grid"
   | "heart"
   | "info"
@@ -22,6 +27,7 @@ export type IconName =
   | "plus"
   | "refresh"
   | "search"
+  | "sliders"
   | "smart"
   | "star"
   | "tag"
@@ -30,10 +36,45 @@ export type IconName =
   | "warning";
 
 const iconPaths: Record<IconName, ReactNode> = {
+  activity: <path d="M22 12h-4l-3 9L9 3l-3 9H2" />,
   archive: (
     <>
       <path d="M4 7h16v12H4z" />
       <path d="M3 4h18v3H3zM9 11h6" />
+    </>
+  ),
+  box: (
+    <>
+      <path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z" />
+      <path d="m3.3 7 8.7 5 8.7-5" />
+      <path d="M12 22V12" />
+    </>
+  ),
+  clipboard: (
+    <>
+      <rect x="8" y="2" width="8" height="4" rx="1" />
+      <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
+    </>
+  ),
+  download: (
+    <>
+      <path d="M12 4v11m0 0 4.5-4.5M12 15l-4.5-4.5" />
+      <path d="M4 16v4h16v-4" />
+    </>
+  ),
+  globe: (
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M3 12h18" />
+      <path d="M12 3c2.4 2.5 3.7 5.6 3.7 9s-1.3 6.5-3.7 9c-2.4-2.5-3.7-5.6-3.7-9S9.6 5.5 12 3Z" />
+    </>
+  ),
+  sliders: (
+    <>
+      <path d="M3 6h9.6M18.4 6H21M3 12h2.6M11.4 12H21M3 18h11.6M19.4 18H21" />
+      <circle cx="16" cy="6" r="2.2" />
+      <circle cx="8" cy="12" r="2.2" />
+      <circle cx="17" cy="18" r="2.2" />
     </>
   ),
   chevron: <path d="m9 18 6-6-6-6" />,

@@ -67,27 +67,20 @@ export function AiConfigDialog({
             <Icon name="close" size={16} />
           </button>
         </div>
-        <p
-          style={{
-            color: "var(--secondary)",
-            fontSize: 12,
-            lineHeight: 1.6,
-          }}
-        >
+        <p className="ai-config-note">
           配置第三方云端视觉模型 API Key。Key
           将加密存储于本地操作系统安全凭据中，Serpent
           不代理、不计费、不追踪额度。
         </p>
-        <div className="editor-field" style={{ marginTop: 12 }}>
+        <div className="editor-field ai-config-field">
           <label className="micro-label">供应商</label>
           <select
-            className="text-field"
+            className="text-field ai-config-input"
             onChange={(e) =>
               onProviderChange(
                 e.target.value as "openai" | "gemini" | "anthropic",
               )
             }
-            style={{ height: 30, fontSize: 12, marginTop: 3 }}
             value={provider}
           >
             <option value="openai">OpenAI (GPT-4o / GPT-4o-mini)</option>
@@ -95,45 +88,39 @@ export function AiConfigDialog({
             <option value="anthropic">Anthropic Claude</option>
           </select>
         </div>
-        <div className="editor-field" style={{ marginTop: 10 }}>
+        <div className="editor-field ai-config-field">
           <label className="micro-label">模型</label>
           <input
-            className="text-field"
+            className="text-field ai-config-input"
             maxLength={255}
             onChange={(e) => onModelChange(e.target.value)}
             placeholder="gpt-4o-mini"
-            style={{ height: 28, fontSize: 11, marginTop: 3 }}
             value={model}
           />
         </div>
-        <div className="editor-field" style={{ marginTop: 10 }}>
+        <div className="editor-field ai-config-field">
           <label className="micro-label">API Key</label>
           <input
-            className="text-field"
+            className="text-field ai-config-input"
             maxLength={512}
             onChange={(e) => onApiKeyChange(e.target.value)}
             placeholder={hasKey ? "（已配置，重新输入可覆盖）" : "sk-…"}
-            style={{ height: 28, fontSize: 11, marginTop: 3 }}
             type="password"
             value={apiKey}
           />
         </div>
-        <div className="editor-field" style={{ marginTop: 10 }}>
+        <div className="editor-field ai-config-field">
           <label className="micro-label">语言</label>
           <input
-            className="text-field"
+            className="text-field ai-config-input"
             maxLength={35}
             onChange={(e) => onLanguageChange(e.target.value)}
             placeholder="auto (跟随系统)"
-            style={{ height: 28, fontSize: 11, marginTop: 3 }}
             value={language}
           />
         </div>
-        <div style={{ marginTop: 14 }}>
-          <label
-            className="micro-label"
-            style={{ marginBottom: 5, display: "block" }}
-          >
+        <div className="ai-config-switches">
+          <label className="micro-label ai-config-switches-title">
             AI 写入开关（按字段）
           </label>
           {(
@@ -158,18 +145,7 @@ export function AiConfigDialog({
               },
             ] as const
           ).map((field) => (
-            <label
-              key={field.key}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-                padding: "3px 0",
-                color: "var(--text)",
-                fontSize: 12,
-                cursor: "pointer",
-              }}
-            >
+            <label className="ai-config-check-row" key={field.key}>
               <input
                 checked={field.state}
                 onChange={(e) => field.setter(e.target.checked)}
@@ -179,24 +155,8 @@ export function AiConfigDialog({
             </label>
           ))}
         </div>
-        <div
-          style={{
-            marginTop: 14,
-            borderTop: "1px solid var(--border)",
-            paddingTop: 12,
-          }}
-        >
-          <label
-            style={{
-              display: "flex",
-              alignItems: "flex-start",
-              gap: 8,
-              color: "var(--text)",
-              fontSize: 12,
-              cursor: "pointer",
-              lineHeight: 1.5,
-            }}
-          >
+        <div className="ai-config-consent">
+          <label className="ai-config-check-row ai-config-check-row-top">
             <input
               checked={disclaimerAccepted}
               onChange={(e) => {
@@ -211,15 +171,8 @@ export function AiConfigDialog({
             </span>
           </label>
           <label
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              marginTop: 9,
-              color: disclaimerAccepted ? "var(--text)" : "var(--tertiary)",
-              fontSize: 12,
-              cursor: disclaimerAccepted ? "pointer" : "not-allowed",
-            }}
+            className="ai-config-check-row ai-config-check-row-indent"
+            data-disabled={!disclaimerAccepted || undefined}
           >
             <input
               checked={autoAnalyzeEnabled}
@@ -230,7 +183,7 @@ export function AiConfigDialog({
             导入后自动上传并分析支持的资产
           </label>
         </div>
-        <div className="dialog-actions" style={{ marginTop: 14 }}>
+        <div className="dialog-actions ai-config-actions">
           <button
             className="secondary-button"
             onClick={onClose}

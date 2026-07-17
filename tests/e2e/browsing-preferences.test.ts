@@ -640,7 +640,10 @@ test("maintains consistent preferences, accessible names, zoom behavior, and avo
     );
     await expect
       .poll(() => canvas.evaluate((el) => el.scrollTop))
-      .toBe(maxScrollTop);
+      // 网格列宽可以是分数像素（如 102.25px），scrollHeight 取整后比真实
+      // 最大滚动位置大 0.5；「到达底部」允许 1px 容差，与下方 deepestCard
+      // 断言的 ±1 口径一致。
+      .toBeGreaterThanOrEqual(maxScrollTop - 1);
 
     // The deepest card is not necessarily the last DOM node once assets are
     // balanced across explicit columns.  Assert the true visual bottom.

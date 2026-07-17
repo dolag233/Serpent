@@ -16,7 +16,9 @@ import {
   AI_COMPLETED_CHANNEL,
   AI_CLEARED_CHANNEL,
   EXTENSION_PAIRING_CHANNEL,
+  OPEN_EXTERNAL_URL_CHANNEL,
 } from '../shared/protocol/channels';
+import type { SerpentShellApi } from '../shared/external-url';
 import type { RendererRequest } from '../shared/protocol/requests';
 import type { PublicErrorReason } from '../shared/protocol/errors';
 import {
@@ -996,11 +998,19 @@ const e2eDiagnostics = Object.freeze({
   },
 });
 
+const shell: SerpentShellApi = Object.freeze({
+  async openExternalUrl(url: string): Promise<boolean> {
+    const result: unknown = await ipcRenderer.invoke(OPEN_EXTERNAL_URL_CHANNEL, { url });
+    return result === true;
+  },
+});
+
 contextBridge.exposeInMainWorld(
   'serpent',
   Object.freeze({
     library,
     extensionPairing,
+    shell,
     ...(e2eEnabled ? { e2e: e2eDiagnostics } : {}),
   }),
 );

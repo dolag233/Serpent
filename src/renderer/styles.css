@@ -32,6 +32,15 @@
   --accent: #3b82f6;
   --accent-dark: #2563eb;
   --warning: #d99a3e;
+  /* Surface state tokens: quiet, content-first hover/active shades shared by
+     nav rows, tool buttons, cards and menus. */
+  --hover: rgb(255 255 255 / 4.5%);
+  --active: rgb(255 255 255 / 8%);
+  --accent-soft: color-mix(in srgb, var(--accent) 14%, transparent);
+  --accent-ring: color-mix(in srgb, var(--accent) 42%, transparent);
+  /* Legacy alias: several components referenced --border before any token
+     existed (their borders silently rendered as none). */
+  --border: var(--divider);
 }
 
 * {
@@ -57,9 +66,71 @@ button {
 }
 
 button:focus-visible,
-input:focus-visible {
-  outline: 1px solid var(--accent);
-  outline-offset: 2px;
+input:focus-visible,
+select:focus-visible,
+summary:focus-visible {
+  outline: 2px solid var(--accent-ring);
+  outline-offset: 1px;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--accent) 34%, transparent);
+}
+
+/* Thin, unobtrusive scrollbars that sit on top of the surface instead of
+   carving out a gutter; the thumb only appears while scrolling content. */
+* {
+  scrollbar-color: rgb(255 255 255 / 18%) transparent;
+  scrollbar-width: thin;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: 8px;
+  background: rgb(255 255 255 / 13%);
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgb(255 255 255 / 24%);
+  background-clip: padding-box;
+}
+
+/* One shared motion language for every quiet control: fast, opacity-neutral
+   background/border fades instead of instant state swaps.
+   注意：瞬态浮层条目（context-menu-item / tag-suggestion-item）刻意不在此列
+   —— 菜单悬停反馈必须即时；给它们加 background 过渡会让 getComputedStyle
+   读到中间帧值（E2E 样式断言因此抖动），且瞬态 UI 的渐隐感知不到美感。 */
+.tool-button,
+.compact-action,
+.nav-row,
+.asset-card,
+.primary-button,
+.secondary-button,
+.library-switcher-trigger,
+.library-switcher-item,
+.scope-history-button,
+.scope-crumb-button,
+.tiny-action,
+.filter-preset-chip,
+.pane-reveal,
+.dialog-close,
+.filter-tag-options button {
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease,
+    box-shadow 120ms ease;
 }
 
 .app-shell {
@@ -134,8 +205,8 @@ input:focus-visible {
     );
   align-items: center;
   min-width: 0;
-  border-bottom: 1px solid var(--divider);
-  background: #303235;
+  border-bottom: 1px solid var(--divider-soft);
+  background: #2b2d30;
   -webkit-app-region: drag;
 }
 
@@ -165,21 +236,34 @@ input:focus-visible {
   flex: 0 0 auto;
 }
 .discovery-filters > summary {
-  padding: 6px 8px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
+  display: inline-flex;
+  height: 28px;
+  align-items: center;
+  gap: 5px;
+  padding: 0 10px;
+  border: 1px solid var(--divider);
+  border-radius: 6px;
   color: var(--secondary);
   cursor: pointer;
-  font-size: 10px;
+  font-size: 12px;
   list-style: none;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease;
   white-space: nowrap;
 }
 .discovery-filters > summary::-webkit-details-marker {
   display: none;
 }
+.discovery-filters > summary:hover {
+  background: var(--hover);
+  color: var(--text);
+}
 .discovery-filters[open] > summary {
-  border-color: var(--accent-dark);
-  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--divider));
+  background: var(--accent-soft);
+  color: color-mix(in srgb, var(--accent) 60%, white);
 }
 .discovery-filter-panel {
   position: absolute;
@@ -190,16 +274,16 @@ input:focus-visible {
   width: 380px;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
-  padding: 12px;
-  border: 1px solid var(--border);
+  padding: 14px;
+  border: 1px solid var(--divider);
   /* Keep tall filter sets inside the window: the panel scrolls internally
      instead of clipping the sort row at the viewport bottom (Wave-3 audit
      finding F4, evidenced in 09-filter-panel.png). */
   max-height: calc(100vh - 140px);
   overflow-y: auto;
-  border-radius: 6px;
+  border-radius: 10px;
   background: var(--raised-2);
-  box-shadow: 0 12px 32px rgb(0 0 0 / 35%);
+  box-shadow: 0 16px 40px rgb(0 0 0 / 42%);
 }
 .discovery-filter-panel label {
   display: flex;
@@ -207,21 +291,21 @@ input:focus-visible {
   flex-direction: column;
   gap: 4px;
   color: var(--tertiary);
-  font-size: 9px;
-  letter-spacing: 0.06em;
+  font-size: 10px;
+  letter-spacing: 0.04em;
 }
 .discovery-filter-panel label > span {
   display: flex;
   align-items: center;
   gap: 4px;
   color: var(--tertiary);
-  font-size: 9px;
+  font-size: 10px;
   letter-spacing: 0;
 }
 .discovery-filter-panel .text-field {
   width: 100%;
   height: 28px;
-  font-size: 10px;
+  font-size: 11px;
 }
 .numeric-filter-range {
   display: grid;
@@ -252,17 +336,22 @@ input:focus-visible {
   padding: 0;
   place-items: center;
   border: 1px solid transparent;
-  border-radius: 4px;
+  border-radius: 6px;
   background: transparent;
   color: var(--secondary);
   cursor: pointer;
 }
 
-.tool-button:hover,
-.tool-button[aria-pressed="true"] {
-  border-color: var(--divider);
-  background: var(--raised);
+.tool-button:hover {
+  background: var(--hover);
   color: var(--text);
+}
+
+/* Toggle state reads as a quiet accent tint, not a raised button — the
+   current mode is identifiable without adding chrome (Eagle convention). */
+.tool-button[aria-pressed="true"] {
+  background: var(--accent-soft);
+  color: color-mix(in srgb, var(--accent) 68%, white);
 }
 
 .icon {
@@ -285,20 +374,19 @@ input:focus-visible {
   align-items: center;
   gap: 4px;
   height: 28px;
-  padding: 0 6px 0 8px;
+  padding: 0 7px 0 9px;
   border: 1px solid transparent;
-  border-radius: 4px;
+  border-radius: 6px;
   background: transparent;
   color: var(--text);
-  font-size: 12px;
+  font-size: 12.5px;
   font-weight: 620;
   letter-spacing: 0.02em;
 }
 
 .library-switcher-trigger:hover:not(:disabled),
 .library-switcher-trigger[aria-expanded="true"] {
-  border-color: var(--divider);
-  background: var(--raised);
+  background: var(--hover);
 }
 
 .library-switcher-trigger:disabled {
@@ -323,11 +411,11 @@ input:focus-visible {
   z-index: 40;
   display: grid;
   min-width: 168px;
-  padding: 4px;
+  padding: 5px;
   border: 1px solid var(--divider);
-  border-radius: 6px;
+  border-radius: 10px;
   background: var(--panel, #2b2d30);
-  box-shadow: 0 8px 24px rgb(0 0 0 / 28%);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 36%);
 }
 
 .library-switcher-item {
@@ -335,7 +423,7 @@ input:focus-visible {
   width: 100%;
   padding: 7px 9px;
   border: 0;
-  border-radius: 4px;
+  border-radius: 6px;
   background: transparent;
   color: var(--text);
   font-size: 12px;
@@ -343,7 +431,7 @@ input:focus-visible {
 }
 
 .library-switcher-item:hover:not(:disabled) {
-  background: var(--raised);
+  background: var(--hover);
 }
 
 .library-switcher-item:disabled {
@@ -401,15 +489,14 @@ input:focus-visible {
   padding: 0;
   place-items: center;
   border: 1px solid transparent;
-  border-radius: 4px;
+  border-radius: 6px;
   background: transparent;
   color: var(--secondary);
   cursor: pointer;
 }
 
 .scope-history-button:hover:not(:disabled) {
-  border-color: var(--divider);
-  background: var(--raised);
+  background: var(--hover);
   color: var(--text);
 }
 
@@ -476,13 +563,26 @@ input:focus-visible {
   max-width: 360px;
   height: 28px;
   gap: 7px;
-  padding: 0 7px;
+  padding: 0 9px;
   border: 1px solid var(--divider);
-  border-radius: 4px;
-  background: #292b2d;
+  border-radius: 6px;
+  background: #232527;
   color: var(--secondary);
   font-size: 12px;
   text-align: left;
+  transition:
+    border-color 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.search-control:hover:not(:disabled) {
+  border-color: #4c5054;
+}
+
+.search-control:focus {
+  border-color: color-mix(in srgb, var(--accent) 62%, var(--divider));
+  box-shadow: 0 0 0 3px var(--accent-soft);
+  outline: none;
 }
 
 .search-control span {
@@ -554,19 +654,19 @@ input:focus-visible {
 .navigation-scroll {
   flex: 1;
   overflow: auto;
-  padding: 8px;
+  padding: 10px 8px 12px;
 }
 
 .nav-section {
-  margin-top: 14px;
+  margin-top: 16px;
 }
 
 .nav-section-heading {
   display: flex;
-  height: 24px;
+  height: 22px;
   align-items: center;
   justify-content: space-between;
-  padding: 0 3px 0 5px;
+  padding: 0 3px 0 6px;
   color: var(--tertiary);
   font-size: 10px;
   font-weight: 650;
@@ -599,13 +699,13 @@ input:focus-visible {
 .nav-row {
   display: grid;
   width: 100%;
-  height: 29px;
+  height: 28px;
   grid-template-columns: 17px minmax(0, 1fr) auto;
   align-items: center;
   gap: 7px;
   padding: 0 7px;
   border: 1px solid transparent;
-  border-radius: 4px;
+  border-radius: 6px;
   background: transparent;
   color: #c5c8c4;
   font-size: 12px;
@@ -614,7 +714,7 @@ input:focus-visible {
 }
 
 .nav-row:hover:not(:disabled) {
-  background: #34373a;
+  background: var(--hover);
 }
 
 /* BUG-DND-001: row children (icon, label, count) are passive paint, never
@@ -630,7 +730,7 @@ input:focus-visible {
    edge bar, outline, or accent border on directory rows. The base transparent
    border stays so rows don't shift between states. */
 .nav-row.is-active {
-  background: #3a3d40;
+  background: var(--active);
   color: var(--text);
 }
 
@@ -641,7 +741,7 @@ input:focus-visible {
    on the row mid-drag. */
 .nav-row.is-drop-target,
 .nav-row.is-drop-target:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--accent) 22%, #3a3d40);
+  background: color-mix(in srgb, var(--accent) 20%, var(--active));
   color: var(--text);
 }
 
@@ -786,13 +886,13 @@ input:focus-visible {
 
 .workspace-bar {
   display: flex;
-  height: 39px;
+  height: 40px;
   flex: 0 0 auto;
   align-items: center;
   justify-content: space-between;
   padding: 0 12px 0 14px;
   border-bottom: 1px solid var(--divider-soft);
-  background: #292b2d;
+  background: transparent;
 }
 
 .workspace-bar.is-viewing {
@@ -810,12 +910,22 @@ input:focus-visible {
   align-items: center;
   gap: 9px;
   font-size: 13px;
-  font-weight: 560;
+  font-weight: 580;
   line-height: 1.35;
   white-space: nowrap;
 }
 
-.item-count,
+/* Scope size reads as a quiet count pill beside the title. */
+.item-count {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--hover);
+  color: var(--secondary);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 10px;
+  font-weight: 400;
+}
+
 .zoom-label {
   color: var(--tertiary);
   font-family: "IBM Plex Mono", monospace;
@@ -914,7 +1024,7 @@ input[type="range"] {
   width: min(720px, calc(100% - 48px));
   min-height: 260px;
   border: 1px solid var(--divider);
-  border-radius: 5px;
+  border-radius: 12px;
   background: #292b2d;
   box-shadow: 0 14px 40px rgb(0 0 0 / 14%);
   animation: state-enter 320ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
@@ -988,8 +1098,8 @@ input[type="range"] {
   align-items: center;
   justify-content: center;
   gap: 7px;
-  padding: 0 13px;
-  border-radius: 4px;
+  padding: 0 14px;
+  border-radius: 6px;
   font-size: 12px;
   font-weight: 560;
   cursor: pointer;
@@ -1025,7 +1135,7 @@ input[type="range"] {
   padding: 10px 11px;
   border: 1px solid rgb(217 154 62 / 38%);
   border-left: 2px solid var(--warning);
-  border-radius: 3px;
+  border-radius: 6px;
   background: rgb(217 154 62 / 6%);
   color: #d8d9d5;
   font-size: 11px;
@@ -1158,12 +1268,12 @@ input[type="range"] {
 
 .inspector-content {
   overflow: auto;
-  padding: 12px;
+  padding: 14px;
 }
 
 .inspector-identity {
   display: grid;
-  grid-template-columns: 50px minmax(0, 1fr);
+  grid-template-columns: 46px minmax(0, 1fr);
   align-items: center;
   gap: 11px;
   padding: 7px 0 14px;
@@ -1172,15 +1282,15 @@ input[type="range"] {
 
 .inspector-badge {
   display: grid;
-  width: 50px;
-  height: 58px;
+  width: 46px;
+  height: 46px;
   place-items: center;
-  border: 1px solid color-mix(in srgb, var(--accent) 55%, var(--divider));
-  border-radius: 4px 2px 4px 2px;
-  background: color-mix(in srgb, var(--accent) 7%, var(--pane));
-  color: color-mix(in srgb, var(--accent) 78%, white);
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--divider));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 9%, var(--pane));
+  color: color-mix(in srgb, var(--accent) 82%, white);
   font-family: "IBM Plex Mono", monospace;
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .inspector-identity strong {
@@ -1194,15 +1304,16 @@ input[type="range"] {
 }
 
 .metadata-list {
-  margin: 6px 0 0;
+  margin: 4px 0 0;
 }
 
+/* Clean label/value rhythm — no per-row hairlines; the column gap and quiet
+   label color carry the grouping on their own. */
 .metadata-list div {
   display: grid;
-  min-height: 24px;
+  min-height: 23px;
   grid-template-columns: 56px minmax(0, 1fr);
   align-items: center;
-  border-bottom: 1px solid #36393b;
   font-size: 10px;
 }
 
@@ -1215,11 +1326,11 @@ input[type="range"] {
   align-items: center;
   gap: 7px;
   margin: 0;
-  color: #c8cbc7;
+  color: #d2d5d1;
 }
 
 .inspector-section {
-  margin-top: 12px;
+  margin-top: 16px;
 }
 
 .inspector-metadata-placeholder {
@@ -1240,7 +1351,7 @@ input[type="range"] {
   margin: 0;
   padding: 9px;
   border: 1px solid var(--divider-soft);
-  border-radius: 3px;
+  border-radius: 6px;
   background: #292b2d;
   color: #aeb2ae;
   font-size: 10px;
@@ -1305,7 +1416,7 @@ input[type="range"] {
   padding: 0;
   place-items: center;
   border: 1px solid var(--divider);
-  border-radius: 4px;
+  border-radius: 6px;
   background: #35383b;
   color: var(--secondary);
   cursor: pointer;
@@ -1346,13 +1457,15 @@ input[type="range"] {
   z-index: 41;
   pointer-events: auto;
   background: var(--raised, #35383b);
-  border: 1px solid var(--divider-soft, #393c3f);
-  border-radius: 8px;
-  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.6);
+  border: 1px solid color-mix(in srgb, var(--divider) 82%, transparent);
+  border-radius: 10px;
+  box-shadow:
+    0 12px 36px rgb(0 0 0 / 48%),
+    0 2px 8px rgb(0 0 0 / 30%);
   min-width: 180px;
   max-height: calc(100vh - 12px);
   overflow-y: auto;
-  padding: 4px;
+  padding: 5px;
 }
 
 .context-menu-item {
@@ -1361,12 +1474,12 @@ input[type="range"] {
   gap: 8px;
   width: 100%;
   padding: 6px 10px;
-  border-radius: 4px;
+  border-radius: 6px;
   border: none;
   background: transparent;
   color: var(--text, #f1f2ef);
   font-family: inherit;
-  font-size: 13px;
+  font-size: 12.5px;
   line-height: 1.4;
   cursor: default;
   text-align: left;
@@ -1629,7 +1742,7 @@ input[type="range"] {
   gap: 16px;
   padding: 0 14px;
   border-bottom: 1px solid var(--divider-soft);
-  background: #292c2e;
+  background: #232527;
 }
 
 .preview-toolbar > div:first-child {
@@ -1741,21 +1854,26 @@ input[type="range"] {
   bottom: 14px;
   left: 50%;
   display: flex;
-  gap: 4px;
-  padding: 5px;
-  border: 1px solid #454a4b;
-  border-radius: 5px;
-  background: rgb(30 33 34 / 88%);
+  gap: 3px;
+  padding: 4px;
+  border: 1px solid color-mix(in srgb, var(--divider) 80%, transparent);
+  border-radius: 999px;
+  background: rgb(24 26 28 / 86%);
+  backdrop-filter: blur(8px);
   transform: translateX(-50%);
 }
 .preview-zoom-controls button {
   min-width: 32px;
-  padding: 5px 8px;
+  padding: 5px 9px;
   border: 0;
-  border-radius: 3px;
-  background: #383c3d;
+  border-radius: 999px;
+  background: transparent;
   color: var(--primary);
   cursor: pointer;
+  transition: background-color 120ms ease;
+}
+.preview-zoom-controls button:hover {
+  background: var(--hover);
 }
 
 .preview-state {
@@ -1803,8 +1921,8 @@ input[type="range"] {
 .create-dialog {
   width: min(420px, calc(100vw - 40px));
   padding: 20px;
-  border: 1px solid #515558;
-  border-radius: 6px;
+  border: 1px solid var(--divider);
+  border-radius: 12px;
   background: #2d3032;
   box-shadow: 0 24px 70px rgb(0 0 0 / 42%);
   animation: state-enter 180ms ease-out both;
@@ -1823,6 +1941,82 @@ input[type="range"] {
   font-weight: 590;
 }
 
+/* 对话框内的小标签一律中性色：强调色留给真正的可点控件（按钮/链接），
+   满屏 accent 标签会稀释真正的行动点。 */
+.create-dialog .micro-label {
+  color: var(--tertiary);
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+}
+
+.ai-config-note {
+  margin: -10px 0 0;
+  color: var(--secondary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.ai-config-field {
+  margin-top: 12px;
+}
+
+.ai-config-field .micro-label {
+  display: inline-block;
+  margin-bottom: 4px;
+}
+
+.ai-config-input {
+  height: 28px;
+  font-size: 12px;
+}
+
+select.ai-config-input {
+  height: 30px;
+}
+
+.ai-config-switches {
+  margin-top: 14px;
+}
+
+.ai-config-switches-title {
+  display: block;
+  margin-bottom: 5px;
+}
+
+.ai-config-check-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.ai-config-check-row-top {
+  align-items: flex-start;
+  line-height: 1.5;
+}
+
+.ai-config-check-row-indent {
+  margin-top: 9px;
+}
+
+.ai-config-check-row-indent[data-disabled] {
+  color: var(--tertiary);
+  cursor: not-allowed;
+}
+
+.ai-config-consent {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--divider);
+}
+
+.ai-config-actions {
+  margin-top: 14px;
+}
+
 .dialog-close {
   display: grid;
   width: 28px;
@@ -1830,15 +2024,14 @@ input[type="range"] {
   padding: 0;
   place-items: center;
   border: 1px solid transparent;
-  border-radius: 4px;
+  border-radius: 6px;
   background: transparent;
   color: var(--secondary);
   cursor: pointer;
 }
 
 .dialog-close:hover {
-  border-color: var(--divider);
-  background: var(--raised);
+  background: var(--hover);
 }
 
 .field-label {
@@ -1853,17 +2046,20 @@ input[type="range"] {
   width: 100%;
   height: 34px;
   padding: 0 10px;
-  border: 1px solid #54585a;
-  border-radius: 4px;
+  border: 1px solid var(--divider);
+  border-radius: 6px;
   background: #242628;
   color: var(--text);
   font-size: 12px;
+  transition:
+    border-color 120ms ease,
+    box-shadow 120ms ease;
 }
 
 .text-field:focus {
-  border-color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 62%, var(--divider));
+  box-shadow: 0 0 0 3px var(--accent-soft);
   outline: 0;
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 14%, transparent);
 }
 
 .field-help {
@@ -1910,26 +2106,41 @@ input[type="range"] {
   /* REQ-CANVAS-006: never shrink below content size or wrap — a squeezed
      flex item let the label spill outside the button's border box. */
   flex: 0 0 auto;
-  height: 27px;
+  height: 28px;
   align-items: center;
   gap: 6px;
-  padding: 0 9px;
+  padding: 0 10px;
   border: 1px solid var(--divider);
-  border-radius: 4px;
-  background: #333638;
+  border-radius: 6px;
+  background: transparent;
   color: #d5d8d4;
-  font-size: 11px;
+  font-size: 12px;
   white-space: nowrap;
   cursor: pointer;
 }
 
 .compact-action:hover:not(:disabled) {
-  border-color: #5b605e;
-  background: #3b3e41;
+  border-color: #585d60;
+  background: var(--hover);
+  color: var(--text);
 }
 .compact-action:disabled {
   opacity: 0.44;
   cursor: default;
+}
+
+/* Primary action of a cluster (e.g. 搜索提交): a quiet accent fill that
+   draws the eye without the weight of a solid accent button. */
+.compact-action.is-accent {
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--divider));
+  background: var(--accent-soft);
+  color: color-mix(in srgb, var(--accent) 55%, white);
+}
+
+.compact-action.is-accent:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent) 60%, var(--divider));
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+  color: color-mix(in srgb, var(--accent) 45%, white);
 }
 
 .workspace-canvas {
@@ -1940,16 +2151,16 @@ input[type="range"] {
 .activity-strip {
   position: absolute;
   z-index: 4;
-  top: 8px;
+  top: 10px;
   left: 50%;
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 7px 11px;
-  border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--raised));
-  border-radius: 4px;
-  background: color-mix(in srgb, var(--accent) 6%, var(--canvas));
-  box-shadow: 0 8px 28px rgb(0 0 0 / 24%);
+  padding: 7px 14px;
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--raised));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 8%, var(--pane));
+  box-shadow: 0 8px 28px rgb(0 0 0 / 30%);
   color: color-mix(in srgb, var(--accent) 28%, white);
   font-size: 11px;
   transform: translateX(-50%);
@@ -1976,8 +2187,8 @@ input[type="range"] {
 .marquee-selection-box {
   position: fixed;
   z-index: 4;
-  border: 1px dashed var(--accent);
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 65%, transparent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
   pointer-events: none;
   user-select: none;
 }
@@ -1989,11 +2200,11 @@ input[type="range"] {
   justify-self: stretch;
   justify-content: start;
   grid-template-columns: repeat(auto-fill, minmax(138px, 1fr));
-  gap: 12px;
+  gap: 14px;
   width: 100%;
   min-height: 100%;
   overflow: visible;
-  padding: 14px 14px 40px;
+  padding: 16px 16px 48px;
   user-select: none;
 }
 
@@ -2012,14 +2223,14 @@ input[type="range"] {
   display: grid;
   width: 100%;
   align-items: start;
-  gap: 12px;
+  gap: 14px;
 }
 
 .masonry-column {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: 12px;
+  gap: 14px;
 }
 
 .masonry-card-slot {
@@ -2080,13 +2291,13 @@ input[type="range"] {
 .external-drop-overlay {
   position: absolute;
   z-index: 20;
-  inset: 12px;
+  inset: 14px;
   display: grid;
   place-content: center;
   justify-items: center;
   gap: 7px;
-  border: 1px dashed var(--accent);
-  border-radius: 6px;
+  border: 1.5px dashed color-mix(in srgb, var(--accent) 70%, transparent);
+  border-radius: 12px;
   background: color-mix(in srgb, var(--accent) 9%, rgb(19 21 22 / 88%));
   color: var(--accent);
   pointer-events: none;
@@ -2105,24 +2316,26 @@ input[type="range"] {
   min-width: 0;
   padding: 0;
   border: 1px solid transparent;
-  border-radius: 5px;
+  border-radius: 8px;
   background: transparent;
   text-align: left;
   cursor: pointer;
 }
 
-.asset-card:hover,
-.asset-card.is-selected {
-  border-color: #4d5351;
-  background: #303335;
+/* Hover only lifts the surface — no border flash, so dense grids stay calm
+   while the pointer scans across cards. */
+.asset-card:hover {
+  background: var(--hover);
 }
 /* REQ-SELECT-003: the selection ring is an outward 2px box-shadow — one px
    thicker than the card's own 1px border and fully outside the preview's
    boundary, so the preview image can no longer cover it (the old inset
    shadow painted underneath the thumbnail). The ring lives on the card, and
    neither .asset-card nor .asset-grid clips overflow, so all four sides
-   stay visible inside the 12px grid gap. */
+   stay visible inside the 14px grid gap. A faint accent fill under the
+   caption keeps multi-selection readable at a glance. */
 .asset-card.is-selected {
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
   box-shadow: 0 0 0 2px var(--accent);
 }
 /* Keyboard modality (e.g. pressing Shift while a card holds focus) makes
@@ -2198,15 +2411,13 @@ input[type="range"] {
   aspect-ratio: 1.3;
   place-items: center;
   overflow: hidden;
-  border-bottom: 1px solid #3f4344;
   /* REQ-CANVAS-008: uniform radius on all four corners, bottom corners too.
      The selection ring lives on the parent .asset-card, so this overflow
      clip only rounds the thumbnail, never the ring. */
-  border-radius: 4px;
-  background:
-    linear-gradient(135deg, rgb(255 255 255 / 2%) 25%, transparent 25%) 0 0 /
-      12px 12px,
-    linear-gradient(315deg, #303335, #3a3d3f);
+  border-radius: 7px;
+  /* Flat, near-canvas stage: letterboxed areas of contain-fit thumbnails
+     read as quiet negative space instead of a patterned placeholder. */
+  background: #282a2d;
   color: #8b918d;
 }
 
@@ -2217,14 +2428,37 @@ input[type="range"] {
   object-fit: contain;
 }
 
+/* Floating badges on the preview use a frosted chip so they stay legible
+   over any media (Eagle-style format/duration chips). */
 .asset-extension {
   position: absolute;
-  top: 8px;
-  right: 8px;
-  color: #737a76;
+  top: 6px;
+  right: 6px;
+  padding: 2px 6px;
+  border-radius: 5px;
+  background: rgb(15 17 18 / 62%);
+  backdrop-filter: blur(6px);
+  color: #b9bdb9;
   font-family: "IBM Plex Mono", monospace;
   font-size: 9px;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.06em;
+}
+
+/* Video duration sits bottom-left so it never collides with the
+   missing/trash banners anchored bottom-right. */
+.asset-duration-badge {
+  position: absolute;
+  bottom: 6px;
+  left: 6px;
+  padding: 2px 6px;
+  border-radius: 5px;
+  background: rgb(15 17 18 / 68%);
+  backdrop-filter: blur(6px);
+  color: #e8eae6;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 9px;
+  line-height: 1.45;
+  pointer-events: none;
 }
 .missing-banner {
   position: absolute;
@@ -2233,8 +2467,8 @@ input[type="range"] {
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 3px 5px;
-  border-radius: 3px;
+  padding: 3px 6px;
+  border-radius: 5px;
   background: #604127;
   color: #efbd77;
   font-size: 9px;
@@ -2243,14 +2477,15 @@ input[type="range"] {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: 4px;
-  padding: 8px;
+  gap: 3px;
+  padding: 7px 8px 8px;
 }
 .asset-caption strong {
   overflow: hidden;
-  color: #d9dcd8;
+  color: #dee1dc;
   font-size: 11px;
-  font-weight: 520;
+  font-weight: 500;
+  letter-spacing: 0.01em;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -2282,28 +2517,29 @@ input[type="range"] {
   font-family: "IBM Plex Mono", monospace;
   font-size: 10px;
 }
+/* Palette as an even strip: segments share width equally and keep the
+   extraction order (importance left → right). Clicking a segment copies its
+   hex value, so each one is a real button with hover/focus feedback. */
 .palette-preview {
   display: flex;
-  flex-wrap: wrap;
-  gap: 3px;
-  margin-top: 5px;
+  height: 22px;
+  margin-top: 2px;
+  overflow: hidden;
+  border-radius: 6px;
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 8%);
 }
 .palette-preview span {
-  width: 17px;
-  height: 17px;
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  background-image:
-    linear-gradient(45deg, #555 25%, transparent 25%),
-    linear-gradient(-45deg, #555 25%, transparent 25%),
-    linear-gradient(45deg, transparent 75%, #555 75%),
-    linear-gradient(-45deg, transparent 75%, #555 75%);
-  background-position:
-    0 0,
-    0 5px,
-    5px -5px,
-    -5px 0;
-  background-size: 10px 10px;
+  flex: 1 1 0;
+  min-width: 5px;
+  cursor: copy;
+  transition: filter 120ms ease;
+}
+.palette-preview span:hover {
+  filter: brightness(1.18);
+}
+.palette-preview span:focus-visible {
+  outline: 2px solid var(--accent-ring);
+  outline-offset: -2px;
 }
 
 .empty-library {
@@ -2353,7 +2589,7 @@ input[type="range"] {
   gap: 8px;
   padding: 9px 9px 9px 11px;
   border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--raised));
-  border-radius: 5px;
+  border-radius: 8px;
   background: color-mix(in srgb, var(--accent) 6%, var(--pane));
   box-shadow: 0 12px 32px rgb(0 0 0 / 28%);
   color: color-mix(in srgb, var(--accent) 26%, white);
@@ -2385,13 +2621,14 @@ input[type="range"] {
   cursor: pointer;
 }
 
-/* Compact hero replacement (INSPECT-003) */
+/* Compact hero replacement (INSPECT-003) — 左对齐排版：预览图 → 文件名 →
+   摘要行，信息沿同一左缘排列，视线不需要在居中/居左之间跳动。 */
 .inspector-hero-compact {
   display: flex;
   align-items: stretch;
   flex-direction: column;
-  gap: 7px;
-  padding: 8px 0 10px;
+  gap: 8px;
+  padding: 4px 0 12px;
   border-bottom: 1px solid var(--divider-soft);
   min-height: 0;
 }
@@ -2399,12 +2636,13 @@ input[type="range"] {
 .inspector-hero-compact strong {
   min-width: 0;
   overflow: hidden;
-  font-size: 12px;
-  font-weight: 560;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  font-size: 12.5px;
+  font-weight: 600;
   line-height: 1.45;
-  text-align: center;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .inspector-hero-preview {
@@ -2423,7 +2661,7 @@ input[type="range"] {
 .inspector-hero-preview-fallback {
   min-height: 112px;
   border: 1px solid var(--divider-soft);
-  border-radius: 7px;
+  border-radius: 8px;
   background: color-mix(in srgb, var(--canvas) 86%, black);
 }
 
@@ -2433,7 +2671,7 @@ input[type="range"] {
   max-width: 100%;
   height: auto;
   max-height: min(360px, 45vh);
-  border-radius: 5px;
+  border-radius: 8px;
   object-fit: contain;
 }
 
@@ -2442,31 +2680,262 @@ input[type="range"] {
   opacity: 0;
 }
 
-/* Compact info line (INSPECT-003) */
+/* Compact info line (INSPECT-003) — 与文件名同一左缘的摘要行。 */
 .inspector-compact-info {
-  padding: 0 0 2px;
-  text-align: center;
+  padding: 0;
 }
 
 .inspector-compact-meta {
-  color: #aeb2ae;
+  display: flex;
+  flex-wrap: wrap;
+  row-gap: 2px;
+  color: var(--tertiary);
   font-family: "IBM Plex Mono", monospace;
   font-size: 10px;
   line-height: 1.5;
-  overflow-wrap: anywhere;
 }
 
-/* Compact status badge (INSPECT-003) */
-.inspector-compact-status {
-  display: inline-flex;
+.inspector-meta-part {
+  white-space: nowrap;
+}
+
+.inspector-meta-sep {
+  padding: 0 6px;
+  opacity: 0.45;
+}
+
+/* 可用性状态：带语义色圆点的安静文本行，而不是抢视线的灰胶囊。 */
+.inspector-status-row {
+  display: flex;
   align-items: center;
-  padding: 2px 8px;
-  border-radius: 3px;
-  margin-top: 4px;
-  background: var(--divider-soft);
+  gap: 7px;
+  margin-top: 10px;
+  color: var(--secondary);
+  font-size: 11px;
+}
+
+.inspector-status-dot {
+  width: 7px;
+  height: 7px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--tertiary);
+}
+
+.inspector-status-row[data-tone="ok"] .inspector-status-dot {
+  background: #6db85d;
+  box-shadow: 0 0 0 3px rgb(109 184 93 / 14%);
+}
+
+.inspector-status-row[data-tone="missing"] {
+  color: #e0a19b;
+}
+
+.inspector-status-row[data-tone="missing"] .inspector-status-dot {
+  background: #c75252;
+  box-shadow: 0 0 0 3px rgb(199 82 82 / 14%);
+}
+
+.inspector-status-row[data-tone="trash"] .inspector-status-dot {
+  background: #d99a3e;
+  box-shadow: 0 0 0 3px rgb(217 154 62 / 14%);
+}
+
+/* 高频元数据操作聚拢行：评分在左、喜欢在右。 */
+.inspector-quick-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 14px;
+}
+
+.inspector-rating {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.rating-star {
+  display: grid;
+  padding: 2px;
+  place-items: center;
+  border: 0;
+  background: transparent;
   color: var(--tertiary);
+  cursor: pointer;
+  transition: color 120ms ease, transform 120ms ease;
+}
+
+.rating-star:hover {
+  color: #d99a3e;
+  transform: scale(1.12);
+}
+
+.rating-star[data-active] {
+  color: #d99a3e;
+}
+
+.rating-star[data-active] .icon {
+  fill: currentColor;
+  stroke-width: 1;
+}
+
+.rating-clear {
+  margin-left: 6px;
+  padding: 1px 0;
+  border: 0;
+  background: transparent;
+  color: var(--tertiary);
+  cursor: pointer;
   font-size: 10px;
-  font-weight: 500;
+  transition: color 120ms ease;
+}
+
+.rating-clear:hover {
+  color: var(--secondary);
+}
+
+.favorite-toggle {
+  display: grid;
+  padding: 3px;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--tertiary);
+  cursor: pointer;
+  transition: color 120ms ease, transform 120ms ease;
+}
+
+.favorite-toggle:hover {
+  color: #e76b7a;
+  transform: scale(1.08);
+}
+
+.favorite-toggle[data-active] {
+  color: #e76b7a;
+}
+
+.favorite-toggle[data-active] .icon {
+  fill: currentColor;
+  stroke-width: 1;
+}
+
+/* Inspector 字段节奏：原来靠内联 margin，现在统一由类承担。 */
+.inspector-content .editor-field {
+  margin-top: 14px;
+}
+
+.inspector-content .editor-field .micro-label {
+  display: inline-block;
+  margin-bottom: 5px;
+}
+
+/* Inspector 内的小标签保持安静的中性色；accent 留给真正可点的控件。 */
+.inspector-content .micro-label {
+  color: var(--tertiary);
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+}
+
+.inspector-textarea {
+  height: auto;
+  min-height: 52px;
+  max-height: 180px;
+  padding-top: 7px;
+  overflow-y: auto;
+  resize: none;
+  font-size: 11.5px;
+  line-height: 1.6;
+}
+
+/* 源链接：单行截断，右侧嵌一个跳转按钮（仅当内容通过 HTTP(S) 校验时可用）。 */
+.source-url-field {
+  position: relative;
+}
+
+.source-url-field .inspector-input {
+  padding-right: 32px;
+}
+
+.source-url-open {
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  display: grid;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--tertiary);
+  cursor: pointer;
+  transform: translateY(-50%);
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.source-url-open:hover:not(:disabled):not([aria-disabled="true"]) {
+  background: var(--hover);
+  color: var(--accent);
+}
+
+.source-url-open:disabled,
+.source-url-open[aria-disabled="true"] {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.inspector-input {
+  height: 28px;
+  font-size: 11.5px;
+}
+
+.inspector-palette-input {
+  margin-top: 7px;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 10.5px;
+}
+
+.inspector-version-line {
+  margin-top: 12px;
+  color: var(--tertiary);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 9px;
+}
+
+.inspector-version-conflict {
+  margin-top: 14px;
+}
+
+.inspector-ai-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 15px;
+}
+
+.inspector-ai-text {
+  overflow-wrap: anywhere;
+  margin: 2px 0 0;
+  padding: 9px;
+  border: 1px solid var(--divider-soft);
+  border-radius: 6px;
+  background: #292b2d;
+  color: var(--secondary);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.inspector-ai-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
 }
 
 /* Section label — replaces h2 headings (INSPECT-003) */
@@ -2496,10 +2965,10 @@ input[type="range"] {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 2px 8px;
-  border: 1px solid var(--divider);
-  border-radius: 10px;
-  background: #2a2d2f;
+  padding: 2px 9px;
+  border: 1px solid var(--divider-soft);
+  border-radius: 999px;
+  background: #313438;
   color: #c8cbc7;
   font-size: 10px;
   line-height: 1.5;
@@ -2509,7 +2978,7 @@ input[type="range"] {
 }
 
 .tag-chip:hover {
-  background: #323638;
+  background: #383b3f;
 }
 
 .tag-chip-dot {
@@ -2669,18 +3138,18 @@ input[type="range"] {
 }
 
 .inspector-tags-section {
-  margin-top: 10px;
+  margin-top: 14px;
 }
 .inspector-close-library {
   width: 100%;
-  margin-top: auto;
+  margin-top: 18px;
 }
 
 .conflict-dialog {
   width: min(520px, calc(100vw - 40px));
   padding: 20px;
-  border: 1px solid #555a5c;
-  border-radius: 6px;
+  border: 1px solid var(--divider);
+  border-radius: 12px;
   background: #2d3032;
   box-shadow: 0 24px 70px rgb(0 0 0 / 42%);
   animation: state-enter 180ms ease-out both;
@@ -2837,7 +3306,7 @@ input[type="range"] {
   gap: 7px;
   padding: 2px 7px 2px 0;
   border: 1px solid transparent;
-  border-radius: 4px;
+  border-radius: 6px;
   color: #c5c8c4;
 }
 

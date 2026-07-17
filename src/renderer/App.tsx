@@ -55,6 +55,7 @@ import { useAssetRename } from "./useAssetRename";
 import { useInlineFolderEdit } from "./use-inline-folder-edit";
 import { usePanelResize } from "./use-panel-resize";
 import { useToastNotifications } from "./useToastNotifications";
+import { useDismissibleDetails } from "./use-dismissible-details";
 import {
   MANAGED_ASSETS_DRAG_TYPE,
   resolveDraggedAssetIds,
@@ -107,6 +108,10 @@ import type {
   AiJobStatus,
 } from "../shared/library-api";
 import type { SerpentExtensionPairingApi } from "../shared/extension-pairing";
+import {
+  toOpenableExternalUrl,
+  type SerpentShellApi,
+} from "../shared/external-url";
 import type {
   ImportConflictPlan,
   RendererLibrarySummary,
@@ -161,6 +166,7 @@ type RendererWindow = Window & {
   serpent?: {
     library?: SerpentLibraryApi;
     extensionPairing?: SerpentExtensionPairingApi;
+    shell?: SerpentShellApi;
   };
 };
 type UiState =
@@ -667,6 +673,8 @@ function AppInner() {
   const assetCardSize = canvasPrefs.cardSize;
   const [loadingMoreAssets, setLoadingMoreAssets] = useState(false);
   const workspaceCanvasRef = useRef<HTMLDivElement>(null);
+  // 筛选与排序面板：外点 / Esc 自动关闭（现代浮层语义），summary 切换不变。
+  const discoveryFiltersRef = useDismissibleDetails<HTMLDetailsElement>();
   const loadMoreSentinelRef = useRef<HTMLDivElement>(null);
   const loadMoreAssetsRef = useRef<() => Promise<void>>(async () => undefined);
   const pendingRestoredFocusRef = useRef<string | null>(null);
@@ -793,19 +801,34 @@ function AppInner() {
           : null;
 
       setCanvasPrefs((p) => ({ ...p, cardSize: nextSize }));
+      // 测量时刻的滚动位置：两帧后的锚点补偿只能覆盖「浏览器钳制」这一种
+      // 位移。若期间出现其它滚动意图（用户拖滚动条、脚本 scrollTo），补偿
+      // 必须作废，否则会把更新的滚动位置强行拉回到旧锚点。
+      const measuredScrollLeft = root.scrollLeft;
+      const measuredScrollTop = root.scrollTop;
       window.requestAnimationFrame(() => {
         window.requestAnimationFrame(() => {
           if (!anchorState || !workspaceCanvasRef.current) return;
+          const canvas = workspaceCanvasRef.current;
+          const clampedTop = Math.min(
+            measuredScrollTop,
+            Math.max(0, canvas.scrollHeight - canvas.clientHeight),
+          );
+          const clampedLeft = Math.min(
+            measuredScrollLeft,
+            Math.max(0, canvas.scrollWidth - canvas.clientWidth),
+          );
+          if (canvas.scrollTop !== clampedTop || canvas.scrollLeft !== clampedLeft) {
+            return;
+          }
           const restored = Array.from(
-            workspaceCanvasRef.current.querySelectorAll<HTMLElement>(
-              "[data-asset-id]",
-            ),
+            canvas.querySelectorAll<HTMLElement>("[data-asset-id]"),
           ).find((card) => card.dataset.assetId === anchorState.assetId);
           if (!restored) return;
           const rect = restored.getBoundingClientRect();
-          workspaceCanvasRef.current.scrollLeft +=
+          canvas.scrollLeft +=
             rect.left + rect.width * anchorState.ratioX - anchorState.clientX;
-          workspaceCanvasRef.current.scrollTop +=
+          canvas.scrollTop +=
             rect.top + rect.height * anchorState.ratioY - anchorState.clientY;
         });
       });
@@ -4283,6 +4306,17 @@ function AppInner() {
     void saveMetadata({ sourcePageUrl: editSourceUrl });
   }
 
+  // 检查器「源链接」跳转：有效性先按共享口径预判（禁用态），主进程仍会
+  // 在 shell.openExternal 前做最终校验，两道防线都不放行非 HTTP(S)。
+  function handleOpenSourceUrl() {
+    const url = toOpenableExternalUrl(editSourceUrl);
+    const shellBridge = (window as RendererWindow).serpent?.shell;
+    if (!url || !shellBridge) return;
+    void shellBridge.openExternalUrl(url).then((opened) => {
+      if (!opened) setError("无法打开源链接：仅支持有效的 HTTP(S) 链接。");
+    });
+  }
+
   // ── AI Analysis ────────────────────────────────────────────────────
 
   async function openExtensionPairing() {
@@ -4637,7 +4671,7 @@ function AppInner() {
             }
             value={searchValue}
           />
-          <details className="discovery-filters">
+          <details className="discovery-filters" ref={discoveryFiltersRef}>
             <summary>筛选与排序</summary>
             <div className="discovery-filter-panel">
               <label>
@@ -4881,7 +4915,7 @@ function AppInner() {
             </div>
           </details>
           <button
-            className="compact-action"
+            className="compact-action is-accent"
             disabled={
               !library ||
               aiSearchLoading ||
@@ -5043,72 +5077,51 @@ function AppInner() {
             )}
             <span className="tool-separator" />
             <span className="tool-group-import">
-              <button
-                className="compact-action"
+              <ToolButton
                 disabled={!library || busy}
+                icon="upload"
+                label="导入文件"
                 onClick={() => void importAssets("files")}
-                type="button"
-              >
-                <Icon name="upload" size={14} />
-                导入文件
-              </button>
-              <button
-                className="compact-action"
+              />
+              <ToolButton
                 disabled={!library || busy}
+                icon="folder"
+                label="导入文件夹"
                 onClick={() => void importAssets("folder")}
-                type="button"
-              >
-                <Icon name="folder" size={14} />
-                导入文件夹
-              </button>
-              <button
-                className="compact-action"
+              />
+              <ToolButton
                 disabled={!library || busy}
+                icon="clipboard"
+                label="粘贴图片"
                 onClick={() => void pasteClipboardImage()}
-                type="button"
-              >
-                <Icon name="file" size={14} />
-                粘贴图片
-              </button>
-              <button
-                className="compact-action"
+              />
+              <ToolButton
                 disabled={!library || busy}
+                icon="link"
+                label="导入链接文件夹"
                 onClick={() => void importFolderAsLinked()}
-                type="button"
-              >
-                <Icon name="link" size={14} />
-                导入链接文件夹
-              </button>
+              />
             </span>
             <span className="tool-separator" />
             <span className="tool-group-export">
-              <button
-                className="compact-action"
+              <ToolButton
                 disabled={!library || busy}
+                icon="archive"
+                label="导出资源库"
                 onClick={() => setExportDialogOpen(true)}
-                type="button"
-              >
-                <Icon name="archive" size={14} />
-                导出资源库
-              </button>
-              <button
-                className="compact-action"
+              />
+              <ToolButton
                 disabled={busy}
+                icon="download"
+                label="导入资源库"
                 onClick={() => void startImport()}
-                type="button"
-              >
-                <Icon name="folder" size={14} />
-                导入资源库
-              </button>
-              <button
-                className="compact-action"
+              />
+              <ToolButton
                 disabled={busy}
+                icon="box"
+                label="导入 ZIP"
                 onClick={() => void startImportZip()}
-                type="button"
-              >
-                <Icon name="archive" size={14} />
-                导入 ZIP
-              </button>
+              />
               <ToolButton
                 disabled={!library || busy}
                 icon="refresh"
@@ -5187,35 +5200,26 @@ function AppInner() {
             </span>
             <span className="tool-separator" />
             <span className="tool-group-utility">
-              <button
-                className="compact-action"
+              <ToolButton
+                icon="globe"
+                label="浏览器扩展"
                 onClick={() => void openExtensionPairing()}
-                type="button"
-              >
-                <Icon name="link" size={14} />
-                浏览器扩展
-              </button>
+              />
               {library && (
                 <>
-                  <button
-                    className="compact-action"
+                  <ToolButton
+                    icon="activity"
+                    label="后台任务"
                     onClick={() => setMediaJobsOpen(true)}
-                    type="button"
-                  >
-                    <Icon name="refresh" size={14} />
-                    后台任务
-                  </button>
-                  <button
-                    className="compact-action"
+                  />
+                  <ToolButton
+                    icon="sliders"
+                    label="AI 设置"
                     onClick={() => {
                       void loadAiConfig();
                       setAiConfigOpen(true);
                     }}
-                    type="button"
-                  >
-                    <Icon name="info" size={14} />
-                    AI 设置
-                  </button>
+                  />
                 </>
               )}
             </span>
@@ -5483,6 +5487,12 @@ function AppInner() {
                               ` · ${asset.remainingDays}天`}
                           </span>
                         )}
+                        {asset.mediaType === "video" &&
+                          asset.durationMs != null && (
+                            <span className="asset-duration-badge">
+                              {formatDuration(asset.durationMs)}
+                            </span>
+                          )}
                       </div>
                       {(canvasPrefs.fields.name ||
                         canvasPrefs.fields.size ||
@@ -5697,6 +5707,14 @@ function AppInner() {
         loadMetadata={loadMetadata}
         onAssignTagToAsset={(tagId) => void handleInspectorAssignTag(tagId)}
         onCreateAndAssignTag={(tagName) => void handleInspectorCreateAndAssignTag(tagName)}
+        onOpenSourceUrl={handleOpenSourceUrl}
+        onPaletteColorCopy={(color, copied) => {
+          if (copied) {
+            setNotice(`已复制颜色 ${color}`);
+          } else {
+            setError("复制颜色失败：剪贴板不可用。");
+          }
+        }}
         onRemoveTagFromAsset={(tagId) => void handleInspectorRemoveTag(tagId)}
         selectedAsset={selectedAsset}
         selectionCount={selectedAssetIds.length}

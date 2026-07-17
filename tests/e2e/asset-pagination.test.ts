@@ -381,7 +381,10 @@ test("ordinary browsing continuously appends every asset without page controls",
     });
 
     // Re-entering a normal scope refreshes sidebar organization data.
+    // 筛选面板现在是外部点击即关的浮层：上一轮的作用域点击已将其关闭，
+    // 填写前先重新展开。
     await window.getByRole("button", { name: /所有资产/ }).click();
+    await window.getByText("筛选与排序", { exact: true }).click();
     await window.getByLabel("格式过滤").fill("png");
     await expect(window.locator(".asset-card")).toHaveCount(0);
     await window.getByRole("button", { name: /分页合集/ }).click();
@@ -389,6 +392,7 @@ test("ordinary browsing continuously appends every asset without page controls",
     await loadEveryAssetInCurrentScope();
     // The sidebar no longer enumerates tags (REQ-TAG-001); enter the
     // tag-filtered view through the retained 标签过滤 entry instead.
+    await window.getByText("筛选与排序", { exact: true }).click();
     await window.getByLabel("标签过滤").fill("分页标签");
     await window.getByRole("option", { name: /分页标签/ }).click();
     await loadEveryAssetInCurrentScope();

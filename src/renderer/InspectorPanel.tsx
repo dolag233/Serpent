@@ -10,6 +10,7 @@ import {
 import { Icon } from "./Icons";
 import { formatDuration } from "./App";
 import { resolveInspectorPreviewSrc } from "./inspector-preview";
+import { toOpenableExternalUrl } from "../shared/external-url";
 import {
   buildTagSuggestions,
   moveTagSuggestionIndex,
@@ -103,15 +104,19 @@ export interface InspectorPanelProps {
   onCreateAndAssignTag?: (tagName: string) => void;
   // REQ-MENU-007: total selected assets; tag and rating ops apply to all of them when >= 2.
   selectionCount?: number;
+  /** 点击色卡分段复制颜色后的反馈（toast 由 App 统一发）。copied=false 表示剪贴板写入失败。 */
+  onPaletteColorCopy?: (color: string, copied: boolean) => void;
+  /** 在系统浏览器中打开当前源链接（URL 有效性由主进程二次校验）。 */
+  onOpenSourceUrl?: () => void;
 }
 
 function InspectorHero({
   asset,
-  infoLine,
+  infoParts,
   library,
 }: {
   asset: AssetSummary;
-  infoLine: string;
+  infoParts: string[];
   library: RendererLibrarySummary | null;
 }) {
   const previewSrc = resolveInspectorPreviewSrc(asset, library);
@@ -141,7 +146,14 @@ function InspectorHero({
         {asset.displayName}
       </strong>
       <div className="inspector-compact-info">
-        <span className="inspector-compact-meta">{infoLine}</span>
+        <span className="inspector-compact-meta">
+          {infoParts.map((part, index) => (
+            <span className="inspector-meta-part" key={part}>
+              {index > 0 && <span className="inspector-meta-sep">·</span>}
+              {part}
+            </span>
+          ))}
+        </span>
       </div>
     </div>
   );
@@ -195,6 +207,8 @@ export function InspectorPanel(props: InspectorPanelProps) {
     onRemoveTagFromAsset,
     onCreateAndAssignTag,
     selectionCount,
+    onPaletteColorCopy,
+    onOpenSourceUrl,
   } = props;
 
   // Selection identity and metadata may resolve in separate async turns. Never
@@ -251,6 +265,25 @@ export function InspectorPanel(props: InspectorPanelProps) {
     closeTagInput();
   };
 
+  const copyPaletteColor = (color: string) => {
+    void navigator.clipboard.writeText(color).then(
+      () => onPaletteColorCopy?.(color, true),
+      () => onPaletteColorCopy?.(color, false),
+    );
+  };
+
+  const canOpenSourceUrl = toOpenableExternalUrl(editSourceUrl) !== null;
+
+  // 描述输入框高度自动包裹内容：受控值变化（输入/切换资产）后重新量高。
+  // CSS 侧 resize:none + max-height 兜底，超出后内部滚动。
+  const descriptionRef = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    const textarea = descriptionRef.current;
+    if (!textarea) return;
+    textarea.style.height = "auto";
+    textarea.style.height = `${textarea.scrollHeight}px`;
+  }, [editDescription, selectedAsset?.assetId]);
+
   const handleAddTagKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault();
@@ -295,9 +328,11 @@ export function InspectorPanel(props: InspectorPanelProps) {
     }
   };
 
-  // Compact info line builder — memoized to avoid crash when selectedAsset is undefined
-  const compactInfoLine = useMemo(() => {
-    if (!selectedAsset) return "";
+  // Compact info parts — memoized to avoid crash when selectedAsset is undefined.
+  // 每个片段独立 nowrap，折行只发生在片段之间，分隔符跟随下一段开头，
+  // 不会出现行尾挂一个孤立 "·" 的情况。
+  const compactInfoParts = useMemo(() => {
+    if (!selectedAsset) return [];
     const parts: string[] = [];
     parts.push(formatBytes(selectedAsset.byteSize ?? 0));
     if (selectedAsset.width !== null && selectedAsset.height !== null) {
@@ -307,7 +342,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
       parts.push(formatDuration(selectedAsset.durationMs));
     }
     parts.push(formatDateFull(selectedAsset.modifiedAt ?? ""));
-    return parts.join("  |  ");
+    return parts;
   }, [selectedAsset]);
 
   return (
@@ -316,16 +351,28 @@ export function InspectorPanel(props: InspectorPanelProps) {
         <div className="inspector-content">
           <InspectorHero
             asset={selectedAsset}
-            infoLine={compactInfoLine}
+            infoParts={compactInfoParts}
             key={selectedAsset.assetId}
             library={library}
           />
-          <div className="inspector-compact-status">
-            {selectedAsset.deletedAt
-              ? `回收站（${selectedAsset.remainingDays ?? "?"}天后自动清理）`
-              : selectedAsset.availability === "available"
-                ? "可用"
-                : "文件丢失"}
+          <div
+            className="inspector-status-row"
+            data-tone={
+              selectedAsset.deletedAt
+                ? "trash"
+                : selectedAsset.availability === "available"
+                  ? "ok"
+                  : "missing"
+            }
+          >
+            <span aria-hidden="true" className="inspector-status-dot" />
+            <span>
+              {selectedAsset.deletedAt
+                ? `回收站（${selectedAsset.remainingDays ?? "?"}天后自动清理）`
+                : selectedAsset.availability === "available"
+                  ? "可用"
+                  : "文件丢失"}
+            </span>
           </div>
 
           {/* Tag chips (REQ-TAG-003) */}
@@ -449,120 +496,155 @@ export function InspectorPanel(props: InspectorPanelProps) {
           </section>
 
           {/* --- Asset metadata editor (compact) --- */}
-          <section className="inspector-section">
-            <span className="inspector-section-label">元数据</span>
-            {assetMetadata ? (
-              <>
-                {versionConflict && (
-                  <div className="inline-error">
-                    <Icon name="warning" size={14} />
-                    <div>
-                      <strong>版本冲突</strong>
-                      <p>元数据已被其他操作修改。请刷新以获取最新版本。</p>
-                      <button
-                        onClick={() => void loadMetadata()}
-                        type="button"
-                      >
-                        刷新元数据
-                      </button>
-                    </div>
+          {assetMetadata ? (
+            <>
+              {versionConflict && (
+                <div className="inline-error inspector-version-conflict">
+                  <Icon name="warning" size={14} />
+                  <div>
+                    <strong>版本冲突</strong>
+                    <p>元数据已被其他操作修改。请刷新以获取最新版本。</p>
+                    <button
+                      onClick={() => void loadMetadata()}
+                      type="button"
+                    >
+                      刷新元数据
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* 高频操作聚拢成一行：评分在左、喜欢在右，无需小标题。 */}
+              <div className="inspector-quick-row">
+                <div aria-label="评分" className="inspector-rating" role="group">
+                  {[1, 2, 3, 4, 5].map((star) => (
+                    <button
+                      aria-label={`${star} 星`}
+                      aria-pressed={star <= editRating || undefined}
+                      className="rating-star"
+                      data-active={star <= editRating || undefined}
+                      key={star}
+                      onClick={() => handleRatingClick(star)}
+                      type="button"
+                    >
+                      <Icon name="star" size={16} />
+                    </button>
+                  ))}
+                  {editRating > 0 && (
+                    <button
+                      aria-label="清除评分"
+                      className="rating-clear"
+                      onClick={() => handleRatingClick(0)}
+                      type="button"
+                    >
+                      清除
+                    </button>
+                  )}
+                </div>
+                <button
+                  aria-label={editFavorite ? "取消喜欢" : "标记喜欢"}
+                  aria-pressed={editFavorite || undefined}
+                  className="favorite-toggle"
+                  data-active={editFavorite || undefined}
+                  onClick={handleFavoriteToggle}
+                  type="button"
+                >
+                  <Icon name="heart" size={17} />
+                </button>
+              </div>
+
+              {/* 色卡：等宽分段（顺序即提取重要性，左→右），点击复制色值。 */}
+              <div className="editor-field">
+                <label className="micro-label">
+                  色卡 (Palette) ·{" "}
+                  {assetMetadata.paletteSource === "manual"
+                    ? "人工"
+                    : assetMetadata.paletteSource === "automatic"
+                      ? "自动"
+                      : "待提取"}
+                </label>
+                {displayedPalette.length > 0 && (
+                  <div
+                    aria-label={`${assetMetadata.paletteSource === "manual" ? "人工" : "自动"}色卡预览`}
+                    className="palette-preview"
+                    role="group"
+                  >
+                    {displayedPalette.map((color, index) => {
+                      const ratio =
+                        assetMetadata.paletteSource === "automatic"
+                          ? automaticPaletteRatios.get(color)
+                          : undefined;
+                      return (
+                        <span
+                          aria-label={`复制颜色 ${color}`}
+                          key={`${color}-${index}`}
+                          onClick={() => copyPaletteColor(color)}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter" || event.key === " ") {
+                              event.preventDefault();
+                              copyPaletteColor(color);
+                            }
+                          }}
+                          role="button"
+                          style={{
+                            background: isCssColor(color)
+                              ? color
+                              : "transparent",
+                          }}
+                          tabIndex={0}
+                          title={
+                            ratio === undefined
+                              ? `${color} · 点击复制`
+                              : `${color} · ${(ratio * 100).toFixed(1)}% · 点击复制`
+                          }
+                        />
+                      );
+                    })}
                   </div>
                 )}
-                <div className="editor-field">
-                  <label className="micro-label" htmlFor="meta-desc">
-                    描述
-                  </label>
-                  <textarea
-                    className="text-field"
-                    id="meta-desc"
-                    maxLength={10000}
-                    onBlur={handleMetadataDescriptionSave}
-                    onChange={handleMetadataDescriptionInput}
-                    rows={3}
-                    style={{
-                      height: "auto",
-                      resize: "vertical",
-                      fontSize: 11,
-                      paddingTop: 6,
-                    }}
-                    value={editDescription}
-                  />
-                </div>
-                <div className="editor-field" style={{ marginTop: 10 }}>
-                  <label className="micro-label">评分</label>
-                  <div style={{ display: "flex", gap: 2, marginTop: 3 }}>
-                    {[1, 2, 3, 4, 5].map((star) => (
-                      <button
-                        key={star}
-                        aria-label={`${star} 星`}
-                        onClick={() => handleRatingClick(star)}
-                        style={{
-                          padding: 0,
-                          border: 0,
-                          background: "transparent",
-                          cursor: "pointer",
-                          color:
-                            star <= editRating
-                              ? "#d99a3e"
-                              : "var(--tertiary)",
-                        }}
-                        type="button"
-                      >
-                        <Icon name="star" size={16} />
-                      </button>
-                    ))}
-                    {editRating > 0 && (
-                      <button
-                        aria-label="清除评分"
-                        onClick={() => handleRatingClick(0)}
-                        style={{
-                          padding: "0 0 0 4px",
-                          border: 0,
-                          background: "transparent",
-                          color: "var(--tertiary)",
-                          cursor: "pointer",
-                          fontSize: 10,
-                        }}
-                        type="button"
-                      >
-                        清除
-                      </button>
-                    )}
-                  </div>
-                </div>
-                <div
-                  className="editor-field"
-                  style={{
-                    marginTop: 10,
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 8,
+                <input
+                  aria-label="人工色卡"
+                  className="text-field inspector-input inspector-palette-input"
+                  maxLength={1024}
+                  onBlur={handlePaletteSave}
+                  onChange={(event) => setEditPalette(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") handlePaletteSave();
                   }}
-                >
-                  <label className="micro-label" style={{ flex: 1 }}>
-                    喜欢
-                  </label>
-                  <button
-                    aria-label={editFavorite ? "取消喜欢" : "标记喜欢"}
-                    onClick={handleFavoriteToggle}
-                    style={{
-                      padding: 2,
-                      border: 0,
-                      background: "transparent",
-                      cursor: "pointer",
-                      color: editFavorite ? "#e76b7a" : "var(--tertiary)",
-                    }}
-                    type="button"
-                  >
-                    <Icon name="heart" size={18} />
-                  </button>
-                </div>
-                <div className="editor-field" style={{ marginTop: 10 }}>
-                  <label className="micro-label" htmlFor="meta-url">
-                    源链接 (URL)
-                  </label>
+                  placeholder="#C84C4C, #203040（最多 20 色）"
+                  value={editPalette}
+                />
+                {assetMetadata.paletteSource === "automatic" && (
+                  <p className="field-help">
+                    本地算法从当前修订提取；填写上方颜色后将以人工色卡优先。
+                  </p>
+                )}
+              </div>
+
+              <div className="editor-field">
+                <label className="micro-label" htmlFor="meta-desc">
+                  描述
+                </label>
+                <textarea
+                  className="text-field inspector-textarea"
+                  id="meta-desc"
+                  maxLength={10000}
+                  onBlur={handleMetadataDescriptionSave}
+                  onChange={handleMetadataDescriptionInput}
+                  placeholder="为资产写一句备注…"
+                  ref={descriptionRef}
+                  rows={2}
+                  value={editDescription}
+                />
+              </div>
+
+              <div className="editor-field">
+                <label className="micro-label" htmlFor="meta-url">
+                  源链接 (URL)
+                </label>
+                <div className="source-url-field">
                   <input
-                    className="text-field"
+                    className="text-field inspector-input"
                     id="meta-url"
                     maxLength={255}
                     onBlur={handleSourceUrlSave}
@@ -571,82 +653,41 @@ export function InspectorPanel(props: InspectorPanelProps) {
                       if (e.key === "Enter") handleSourceUrlSave();
                     }}
                     placeholder="https://…"
-                    style={{ height: 28, fontSize: 11 }}
                     value={editSourceUrl}
                   />
-                </div>
-                <div className="editor-field" style={{ marginTop: 10 }}>
-                  <label className="micro-label">
-                    色卡 (Palette) ·{" "}
-                    {assetMetadata.paletteSource === "manual"
-                      ? "人工"
-                      : assetMetadata.paletteSource === "automatic"
-                        ? "自动"
-                        : "待提取"}
-                  </label>
-                  <input
-                    aria-label="人工色卡"
-                    className="text-field"
-                    maxLength={1024}
-                    onBlur={handlePaletteSave}
-                    onChange={(event) => setEditPalette(event.target.value)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter") handlePaletteSave();
+                  <button
+                    aria-disabled={!canOpenSourceUrl || undefined}
+                    aria-label={
+                      canOpenSourceUrl
+                        ? "在浏览器中打开源链接"
+                        : "源链接无效，输入 HTTP(S) 链接后可打开"
+                    }
+                    className="source-url-open"
+                    onClick={() => {
+                      if (canOpenSourceUrl) onOpenSourceUrl?.();
                     }}
-                    placeholder="#C84C4C, #203040（最多 20 色）"
-                    style={{ height: 28, fontSize: 10, marginTop: 3 }}
-                    value={editPalette}
-                  />
-                  {displayedPalette.length > 0 && (
-                    <div
-                      className="palette-preview"
-                      aria-label={`${assetMetadata.paletteSource === "manual" ? "人工" : "自动"}色卡预览`}
-                    >
-                      {displayedPalette.map((color, index) => {
-                        const ratio =
-                          assetMetadata.paletteSource === "automatic"
-                            ? automaticPaletteRatios.get(color)
-                            : undefined;
-                        return (
-                          <span
-                            key={`${color}-${index}`}
-                            style={{
-                              background: isCssColor(color)
-                                ? color
-                                : "transparent",
-                            }}
-                            title={
-                              ratio === undefined
-                                ? color
-                                : `${color} · ${(ratio * 100).toFixed(1)}%`
-                            }
-                          />
-                        );
-                      })}
-                    </div>
-                  )}
-                  {assetMetadata.paletteSource === "automatic" && (
-                    <p className="field-help" style={{ margin: "4px 0 0" }}>
-                      本地算法从当前修订提取；填写上方颜色后将以人工色卡优先。
-                    </p>
-                  )}
+                    title={
+                      canOpenSourceUrl
+                        ? "在浏览器中打开"
+                        : "输入有效的 HTTP(S) 链接后可打开"
+                    }
+                    type="button"
+                  >
+                    <Icon name="link" size={13} />
+                  </button>
                 </div>
-                <div
-                  style={{
-                    marginTop: 8,
-                    color: "var(--tertiary)",
-                    fontSize: 9,
-                    fontFamily: "'IBM Plex Mono', monospace",
-                  }}
-                >
+              </div>
+
+              {assetMetadata.entityVersion > 0 && (
+                <div className="inspector-version-line">
                   版本 {assetMetadata.entityVersion} ·{" "}
                   {formatDateShort(assetMetadata.updatedAt)}
                 </div>
-              </>
-            ) : (
-              <div className="inspector-metadata-placeholder" aria-hidden="true" />
-            )}
-          </section>
+              )}
+            </>
+          ) : (
+            <div className="inspector-metadata-placeholder" aria-hidden="true" />
+          )}
 
           {/* Asset path */}
           <section className="inspector-section">
@@ -657,49 +698,20 @@ export function InspectorPanel(props: InspectorPanelProps) {
           {/* --- AI Content --- */}
           {aiContent && (
             <section className="inspector-section">
-              <div className="inspector-section-label" style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <span
-                  style={{
-                    display: "inline-block",
-                    padding: "1px 6px",
-                    borderRadius: 3,
-                    background: "var(--accent, #6c8ee0)",
-                    color: "#fff",
-                    fontSize: 9,
-                    fontWeight: 700,
-                    lineHeight: "16px",
-                  }}
-                >
-                  AI
-                </span>
+              <div className="inspector-section-label">
+                <span className="inspector-ai-badge">AI</span>
                 AI 生成内容
               </div>
               {aiContent.description && (
-                <div className="editor-field" style={{ marginTop: 8 }}>
+                <div className="editor-field">
                   <label className="micro-label">描述 · AI</label>
-                  <p
-                    className="path-block"
-                    style={{
-                      color: "var(--secondary)",
-                      fontSize: 11,
-                      margin: "2px 0 0",
-                    }}
-                  >
-                    {aiContent.description}
-                  </p>
+                  <p className="inspector-ai-text">{aiContent.description}</p>
                 </div>
               )}
               {aiContent.tags && aiContent.tags.length > 0 && (
-                <div className="editor-field" style={{ marginTop: 8 }}>
+                <div className="editor-field">
                   <label className="micro-label">标签 · AI</label>
-                  <div
-                    style={{
-                      display: "flex",
-                      flexWrap: "wrap",
-                      gap: 4,
-                      marginTop: 3,
-                    }}
-                  >
+                  <div className="inspector-ai-tags">
                     {aiContent.tags.map((tag) => (
                       <span className="tag-chip" key={tag}>
                         {tag}
@@ -709,14 +721,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
                 </div>
               )}
               {aiContent.modelVersion && (
-                <div
-                  style={{
-                    marginTop: 8,
-                    color: "var(--tertiary)",
-                    fontSize: 9,
-                    fontFamily: "'IBM Plex Mono', monospace",
-                  }}
-                >
+                <div className="inspector-version-line">
                   {aiContent.modelVersion}
                 </div>
               )}
