@@ -16,6 +16,11 @@ import {
   type DirectPlayMediaDescriptor,
 } from "./direct-play-capability";
 import { useT, type TranslateFn } from "./i18n";
+import {
+  nextDirectApprovedState,
+  samePreviewPlayback,
+  shouldContinuePreviewPolling,
+} from "./preview-poll";
 
 interface AssetPreviewModalProps {
   api: SerpentLibraryApi;
@@ -271,6 +276,9 @@ export function AssetPreviewModal({
   const [directApproved, setDirectApproved] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const [playbackRate, setPlaybackRate] = useState(1);
+  const resolutionRef = useRef<PreviewResolution | null>(null);
+  const directApprovedRef = useRef(false);
+  const directGateIdentityRef = useRef<string | null>(null);
 
   const resolvePreview = useCallback(
     async (quiet = false, mode: "client" | "fullscreen" = "client") => {
@@ -288,12 +296,19 @@ export function AssetPreviewModal({
             requestFailureMessage(t("preview.cannotOpen"), result.error, t),
           );
         } else {
-          setResolution(result.value);
-          setDirectApproved(
-            result.value.mediaType !== "video" ||
-              result.value.playbackMode !== "source" ||
-              !result.value.sourceCodecs?.length,
-          );
+          setResolution((previous) => {
+            if (previous && samePreviewPlayback(previous, result.value)) {
+              return previous;
+            }
+            return result.value;
+          });
+          const gated = nextDirectApprovedState({
+            resolution: result.value,
+            previousIdentity: directGateIdentityRef.current,
+            previousApproved: directApprovedRef.current,
+          });
+          directGateIdentityRef.current = gated.identity;
+          setDirectApproved(gated.approved);
           setError(null);
         }
         return result;
@@ -366,11 +381,35 @@ export function AssetPreviewModal({
   );
 
   useEffect(() => {
+    resolutionRef.current = resolution;
+  }, [resolution]);
+
+  useEffect(() => {
+    directApprovedRef.current = directApproved;
+  }, [directApproved]);
+
+  useEffect(() => {
     let cancelled = false;
     let timer = 0;
     const poll = async () => {
+      if (
+        !shouldContinuePreviewPolling(
+          resolutionRef.current,
+          directApprovedRef.current,
+        )
+      ) {
+        return;
+      }
       await resolvePreview(true);
-      if (!cancelled) timer = window.setTimeout(() => void poll(), 1_500);
+      if (
+        !cancelled &&
+        shouldContinuePreviewPolling(
+          resolutionRef.current,
+          directApprovedRef.current,
+        )
+      ) {
+        timer = window.setTimeout(() => void poll(), 1_500);
+      }
     };
     timer = window.setTimeout(() => void poll(), 1_500);
     return () => {

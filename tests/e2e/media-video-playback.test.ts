@@ -205,6 +205,35 @@ async function expectPlayableAndSeekable(video: Locator) {
     })
     .toBeGreaterThan(0.25);
 
+  // BUG-VIEWER-001: ready-state preview polling must not remount <video> and
+  // restart playback every ~1.5s (symptom: ~5s clip "loops" after ~2s).
+  const uninterrupted = await video.evaluate(async (element) => {
+    if (!(element instanceof HTMLVideoElement)) throw new TypeError("not a video");
+    element.muted = true;
+    if (element.paused) await element.play();
+    const samples: number[] = [];
+    const started = performance.now();
+    while (performance.now() - started < 2_400) {
+      samples.push(element.currentTime);
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+    let maxDrop = 0;
+    for (let i = 1; i < samples.length; i += 1) {
+      maxDrop = Math.max(maxDrop, samples[i - 1]! - samples[i]!);
+    }
+    return {
+      maxDrop,
+      last: samples.at(-1) ?? 0,
+      first: samples[0] ?? 0,
+      sampleCount: samples.length,
+    };
+  });
+  expect(
+    uninterrupted.maxDrop,
+    `playback restarted during idle play: ${JSON.stringify(uninterrupted)}`,
+  ).toBeLessThan(0.45);
+  expect(uninterrupted.last).toBeGreaterThan(uninterrupted.first + 1.2);
+
   const seekTarget = await video.evaluate((element) => {
     if (!(element instanceof HTMLVideoElement))
       throw new TypeError("not a video");
