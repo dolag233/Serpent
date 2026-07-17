@@ -2678,6 +2678,40 @@ function AppInner() {
     }
   }, [api, library]);
 
+  // REQ-MENU-006: folder shell actions mirror the asset versions above —
+  // only the folder id crosses the bridge; the Worker resolves the path.
+  const handleOpenFolderInFileManager = useCallback(async (folderId: string) => {
+    if (!api || !library) return;
+    try {
+      const result = await api.openFolderInFileManager({
+        libraryId: library.libraryId,
+        folderId,
+      });
+      if (!result.ok) {
+        setError(toMessage(result.error, "无法在文件管理器中打开该文件夹。"));
+      }
+    } catch (caught) {
+      setError(toMessage(caught, "在文件管理器中打开文件夹失败。"));
+    }
+  }, [api, library]);
+
+  const handleCopyFolderPath = useCallback(async (folderId: string) => {
+    if (!api || !library) return;
+    try {
+      const result = await api.copyFolderPath({
+        libraryId: library.libraryId,
+        folderId,
+      });
+      if (!result.ok) {
+        setError(toMessage(result.error, "无法复制文件夹路径。"));
+        return;
+      }
+      setNotice("文件夹路径已复制到剪贴板。");
+    } catch (caught) {
+      setError(toMessage(caught, "复制文件夹路径失败。"));
+    }
+  }, [api, library]);
+
   // --- Existing operations ---
 
   async function importAssets(kind: "files" | "folder") {
@@ -4627,7 +4661,6 @@ function AppInner() {
         }
         onImportFolderAsLinked={() => void importFolderAsLinked()}
         onRelinkFolder={(folderId) => void relinkFolder(folderId)}
-        onOpenLinkedRules={(folder) => void openLinkedRules(folder)}
         onConvertLinkedDialog={setConvertLinkedDialog}
         onAddCollection={(parentId) => {
           setShowCollectionInput(true);
@@ -5652,6 +5685,13 @@ function AppInner() {
         onRenameFolder={(folderId, currentName) =>
           openFolderRename({ folderId, name: currentName })
         }
+        onOpenFolderInFileManager={(folderId) => {
+          void handleOpenFolderInFileManager(folderId);
+        }}
+        onCopyFolderPath={(folderId) => {
+          void handleCopyFolderPath(folderId);
+        }}
+        onOpenLinkedRules={(folder) => void openLinkedRules(folder)}
         onBatchAssignTag={(tagId, assetIds) => {
           void batchAssignTagToSelection(tagId, assetIds);
         }}

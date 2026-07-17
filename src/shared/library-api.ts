@@ -274,6 +274,10 @@ export interface SerpentLibraryApi {
   openExternal(input: { libraryId: string; assetId: string }): Promise<LibraryApiResult<void>>;
   revealInFolder(input: { libraryId: string; assetId: string }): Promise<LibraryApiResult<void>>;
   copyFilePath(input: { libraryId: string; assetId: string }): Promise<LibraryApiResult<void>>;
+  // Folder shell actions (REQ-MENU-006): folder id only crosses the bridge;
+  // the absolute path is resolved by the Worker and consumed by Main.
+  openFolderInFileManager(input: { libraryId: string; folderId: string }): Promise<LibraryApiResult<void>>;
+  copyFolderPath(input: { libraryId: string; folderId: string }): Promise<LibraryApiResult<void>>;
   retryArtifact(input: { libraryId: string; assetId: string; kind: 'thumbnail' | 'webm_proxy' }): Promise<LibraryApiResult<{ assetId: string; kind: string }>>;
   listMediaJobs(input: { libraryId: string }): Promise<LibraryApiResult<MediaJobStatus>>;
   pauseMediaJobs(input: { libraryId: string; jobIds?: string[] }): Promise<LibraryApiResult<{ pausedCount: number }>>;

@@ -250,6 +250,14 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
       const folder = libraryService.renameManagedFolder(request.command);
       return { ok: true, type: 'folder.renamed', folder };
     }
+    case 'folder.get-path': {
+      // Main-only consumer (shell/clipboard); the path never reaches the Renderer.
+      const absolutePath = libraryService.resolveFolderPath(
+        request.command.libraryId,
+        request.command.folderId,
+      );
+      return { ok: true, type: 'folder.path', folderId: request.command.folderId, absolutePath };
+    }
     case 'folder.list':
       return {
         ok: true,
