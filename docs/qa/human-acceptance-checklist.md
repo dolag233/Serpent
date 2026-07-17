@@ -49,7 +49,7 @@
 | NAV-002 | 工作区后退/前进 | 人类验收通过 | 在文件夹与所有资产间切换后按后退再前进 | 恢复此前浏览范围；与查看页返回无关；按钮 icon 形似 < >，位于资产浏览页上方 bar 最左边、当前目录名称左边 | [0016-A 规格](../implementation/0016-a-shell-navigation-slice.md) / [历史单测](../../tests/unit/workspace-nav-history.test.ts) / [壳层 E2E](../../tests/e2e/shell-navigation.test.ts) | 2026-07-17 用户反馈：前进后退按钮的 icon 不对，需要形似 <>；位置需在 bar 最左边、当前目录名称左边。修复：chevron 图标置于 bar 最左（`171e25e`）。2026-07-17 用户逐项回复“ok”验收通过。 |
 | NAV-003 | 托管与链接文件夹统一目录树 | 待人类验收 | 同时存在托管文件夹和链接文件夹时查看左侧“文件夹” | 无独立“链接文件夹”分区；链接用彩色链接图标，离线红色断链并可悬停说明 | [0016-A 规格](../implementation/0016-a-shell-navigation-slice.md) / [统一树单测](../../tests/unit/unified-directory-nav.test.ts) | 2026-07-17 用户表示目前不会进行手动验收，保持待验收。 |
 | MENU-014 | 资产右键菜单按语义分组 | 人类验收通过 | 选中资产打开右键菜单，检查“打开/组织/元数据/删除” | 同类操作在同一组，不同组之间有分隔，危险操作独立 | [进度同步](../development/0015-0016-progress-sync.md) / [菜单 E2E](../../tests/e2e/context-menu.test.ts) | 2026-07-17 用户手动验收通过；完整文件操作菜单仍在后续条目。 |
-| COMMAND-001 | 菜单显示已实现命令的快捷键 | 人类验收通过 | 打开单资产菜单，查看外部打开和移入回收站条目 | 显示当前平台快捷键，且按对应快捷键执行同一动作 | [进度同步](../development/0015-0016-progress-sync.md) / [快捷键单测](../../tests/unit/asset-command-shortcuts.test.ts) | 2026-07-17 用户手动验收通过；完整命令注册表仍未完成。 |
+| COMMAND-001 | 菜单显示已实现命令的快捷键 | 人类验收通过 | 打开单资产菜单，查看外部打开和移入回收站条目 | 显示当前平台快捷键，且按对应快捷键执行同一动作 | [进度同步](../development/0015-0016-progress-sync.md) / [快捷键单测](../../tests/unit/shortcut-matcher.test.ts) | 2026-07-17 用户手动验收通过；完整命令注册表仍未完成。 |
 
 ### A. 资源库与导入
 
@@ -99,6 +99,7 @@
 | COLLECTION-006 | 手动调整合集成员顺序 | 待人类验收 | 在合集内拖动资产改变顺序 | 松开后顺序保存，重新进入合集仍保持 | [0004 QA](0004-tags-collections-metadata-qa-report.md) | — |
 | COLLECTION-007 | 切换“包含子合集”范围 | 待人类验收 | 在父合集中开关“包含子合集” | 开启时递归显示子合集资产，关闭时只显示直接成员 | [0004 QA](0004-tags-collections-metadata-qa-report.md) | — |
 | MENU-020 | 多选时 Inspector 标签批量操作 | 待人类验收 | 框选 ≥2 项资产，在右侧 Inspector 添加一个标签（搜索现有或新建）；再移除该标签；期间观察标签区底部提示 | 标签区显示「标签操作将应用于 N 项资产」；添加后所有选中资产都带上该标签（可逐项点击核对）；移除后全部消失；通知报告处理数量 | [批次 3 开发日志](../development/0015-0019-ux-feedback-batch3-development-log.md) / [决策单测](../../tests/unit/inspector-tag-target.test.ts) | 2026-07-17 实现（Inspector 路由到既有批量命令，批量后刷新 chip 状态）；Computer Use 未执行，移交人工 QA。 |
+| MENU-021 | 多选时 Inspector 评分批量设置 | 待人类验收 | 框选 ≥2 项资产，在右侧 Inspector 点击星级设置评分；再逐项点击核对 | 提示「标签与评分操作将应用于 N 项资产」；所有选中资产评分一致变化；通知报告处理数量，遇失效资产报告跳过数量 | [0015 菜单接入开发日志](../development/0015-command-registry-menu-adoption-development-log.md) / [worker 测试](../../tests/worker/batch-rating.test.ts) / [通知单测](../../tests/unit/batch-tag-notice.test.ts) | 2026-07-17 实现（asset.rating.set 批量命令，单事务+逐项跳过）；Computer Use 未执行，移交人工 QA。 |
 
 ### D. 搜索、排序与智能合集
 

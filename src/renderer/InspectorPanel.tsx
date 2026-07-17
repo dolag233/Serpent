@@ -101,7 +101,7 @@ export interface InspectorPanelProps {
   onAssignTagToAsset?: (tagId: string) => void;
   onRemoveTagFromAsset?: (tagId: string) => void;
   onCreateAndAssignTag?: (tagName: string) => void;
-  // REQ-MENU-007: total selected assets; tag ops apply to all of them when >= 2.
+  // REQ-MENU-007: total selected assets; tag and rating ops apply to all of them when >= 2.
   selectionCount?: number;
 }
 
@@ -443,7 +443,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
             </div>
             {selectionCount !== undefined && selectionCount >= 2 && (
               <span className="tag-chip-placeholder">
-                标签操作将应用于 {selectionCount} 项资产
+                标签与评分操作将应用于 {selectionCount} 项资产
               </span>
             )}
           </section>

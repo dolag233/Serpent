@@ -204,6 +204,7 @@ export interface SerpentLibraryApi {
   // Asset Metadata
   getAssetMetadata(input: { libraryId: string; assetId: string }): Promise<LibraryApiResult<AssetMetadataResult>>;
   setAssetMetadata(input: { libraryId: string; assetId: string; expectedVersion: number; description?: string; rating?: number; favorite?: boolean; palette?: string[]; sourcePageUrl?: string }): Promise<LibraryApiResult<AssetMetadataResult>>;
+  setAssetsRating(input: { libraryId: string; assetIds: string[]; rating: number }): Promise<LibraryApiResult<{ updatedCount: number; skipped: TagOperationSkip[] }>>;
   backfillAssetMetadata(input: { libraryId: string }): Promise<LibraryApiResult<{ backfilledCount: number }>>;
   // Smart Collections
   listSmartCollections(input: { libraryId: string }): Promise<LibraryApiResult<SmartCollectionSummary[]>>;

@@ -1079,6 +1079,115 @@ describe('tag batch operation response protocol', () => {
   });
 });
 
+describe('batch rating protocol', () => {
+  it('round-trips the renderer request and worker command with integer 0-5 ratings', () => {
+    for (const rating of [0, 5]) {
+      expect(parseRendererRequest({
+        type: 'asset.rating.set.request',
+        libraryId: 'library-01',
+        assetIds: ['asset-01', 'asset-02'],
+        rating,
+      })).toEqual({
+        type: 'asset.rating.set.request',
+        libraryId: 'library-01',
+        assetIds: ['asset-01', 'asset-02'],
+        rating,
+      });
+      expect(parseWorkerRequest({
+        requestId: `rating-${rating}`,
+        command: {
+          type: 'asset.rating.set',
+          libraryId: 'library-01',
+          assetIds: ['asset-01', 'asset-02'],
+          rating,
+        },
+      }).command).toEqual({
+        type: 'asset.rating.set',
+        libraryId: 'library-01',
+        assetIds: ['asset-01', 'asset-02'],
+        rating,
+      });
+    }
+  });
+
+  it('rejects out-of-range ratings, empty id lists, and unexpected fields', () => {
+    for (const rating of [-1, 6, 2.5, '4']) {
+      expect(() => parseRendererRequest({
+        type: 'asset.rating.set.request',
+        libraryId: 'library-01',
+        assetIds: ['asset-01'],
+        rating,
+      })).toThrow();
+      expect(() => parseWorkerRequest({
+        requestId: 'rating-invalid',
+        command: {
+          type: 'asset.rating.set',
+          libraryId: 'library-01',
+          assetIds: ['asset-01'],
+          rating,
+        },
+      })).toThrow();
+    }
+    expect(() => parseRendererRequest({
+      type: 'asset.rating.set.request',
+      libraryId: 'library-01',
+      assetIds: [],
+      rating: 3,
+    })).toThrow();
+    // The batch contract is last-write-wins: an expectedVersion must not
+    // leak in from the single-asset metadata contract.
+    expect(() => parseRendererRequest({
+      type: 'asset.rating.set.request',
+      libraryId: 'library-01',
+      assetIds: ['asset-01'],
+      rating: 3,
+      expectedVersion: 2,
+    })).toThrow();
+  });
+
+  it('round-trips the batch rating result with the shared skip shape', () => {
+    expect(parseRendererResult({
+      ok: true,
+      type: 'asset.rating.updated',
+      updatedCount: 2,
+      skipped: [{ assetId: 'asset-03', reason: 'asset_not_found' }],
+    })).toEqual({
+      ok: true,
+      type: 'asset.rating.updated',
+      updatedCount: 2,
+      skipped: [{ assetId: 'asset-03', reason: 'asset_not_found' }],
+    });
+    expect(parseWorkerResponse({
+      requestId: 'rating-response',
+      result: {
+        ok: true,
+        type: 'asset.rating.updated',
+        updatedCount: 0,
+        skipped: [],
+      },
+    }).result).toEqual({
+      ok: true,
+      type: 'asset.rating.updated',
+      updatedCount: 0,
+      skipped: [],
+    });
+
+    expect(() => parseRendererResult({
+      ok: true,
+      type: 'asset.rating.updated',
+      updatedCount: 1,
+      skipped: [{ assetId: 'asset-03', reason: 'asset_deleted' }],
+    })).toThrow();
+    expect(() => parseRendererResult({
+      ok: true,
+      type: 'asset.rating.updated',
+      updatedCount: 1,
+      skipped: [],
+      sourcePath: '/private/library/asset.png',
+    })).toThrow();
+  });
+});
+
 describe('worker request protocol', () => {
   it('accepts a path-free remote media command and rejects non-HTTP addresses', () => {
     expect(parseWorkerRequest({

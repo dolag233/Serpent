@@ -5454,6 +5454,53 @@ export class LibraryService {
     return { backfilledCount: result.changes };
   }
 
+  /**
+   * Batch rating write (REQ-MENU-007). Rating is last-write-wins: unlike
+   * setAssetMetadata there is no optimistic version check, and only the
+   * rating column is written — description, favorite, palette, source URL,
+   * entity_version, and updated_at of existing rows are left untouched so a
+   * batch rating never invalidates a renderer's cached expectedVersion or
+   * overwrites concurrent field edits. Assets without a metadata row yet get
+   * one with schema defaults plus the requested rating. Unknown asset ids
+   * are skipped per-item, mirroring the batch tag operations.
+   */
+  setAssetsRating(input: {
+    libraryId: string;
+    assetIds: string[];
+    rating: number;
+  }): { updatedCount: number; skipped: TagOperationSkip[] } {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+
+    // Renderer validation is not a trust boundary. Direct Worker clients must
+    // obey the same rating contract and receive a metadata-specific error.
+    if (!Number.isInteger(input.rating) || input.rating < 0 || input.rating > 5) {
+      throw new LibraryServiceError('INVALID_ASSET_METADATA');
+    }
+
+    const { eligibleAssetIds, skipped } = this.partitionKnownAssetIds(
+      openLibrary.connection,
+      input.assetIds,
+    );
+    if (eligibleAssetIds.length === 0) return { updatedCount: 0, skipped };
+
+    const now = new Date().toISOString();
+    const upsertStmt = openLibrary.connection.prepare(
+      `INSERT INTO asset_metadata
+         (asset_id, description, rating, favorite, palette,
+          source_page_url, entity_version, updated_at)
+       VALUES (?, NULL, ?, 0, NULL, NULL, 1, ?)
+       ON CONFLICT(asset_id) DO UPDATE SET rating = excluded.rating`,
+    );
+    openLibrary.connection.transaction(() => {
+      for (const assetId of eligibleAssetIds) {
+        upsertStmt.run(assetId, input.rating, now);
+      }
+    })();
+    // Rating is not part of the FTS content (see syncAssetSearchContent), so
+    // no search-index sync is required here.
+    return { updatedCount: eligibleAssetIds.length, skipped };
+  }
+
   // ── Smart Collections ────────────────────────────────────────────────
 
   // ── FTS5 Search Content Sync ───────────────────────────────────────

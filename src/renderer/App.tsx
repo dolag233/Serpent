@@ -128,12 +128,34 @@ import {
   countFittingColumns,
   distributeMasonryItems,
 } from "./asset-grid-layout";
+import { createCommandRegistry } from "./commands/command-registry";
+import { assetCommandDefinitions } from "./commands/asset-commands";
 import {
   isMacPlatform,
-  matchesAssetCommandShortcut,
-} from "./asset-command-shortcuts";
+  matchesShortcut,
+  type CommandPlatform,
+  type ShortcutSpec,
+} from "./commands/command-types";
+import { formatBatchRatingNotice } from "./batch-tag-notice";
 
 const IS_MAC_PLATFORM = isMacPlatform(navigator.userAgent);
+
+// 键盘快捷键与菜单标签共用注册表中的同一份 ShortcutSpec（REQ-COMMAND-002）：
+// 按键定义改在命令定义里，此处只按命令 id 查表匹配，不再维护第二份映射。
+const SHORTCUT_PLATFORM: CommandPlatform = IS_MAC_PLATFORM ? "mac" : "windows";
+const assetKeyboardCommandRegistry = createCommandRegistry(
+  assetCommandDefinitions,
+);
+const matchAssetCommandShortcut = (
+  commandId: string,
+  event: KeyboardEvent,
+): boolean => {
+  const spec: ShortcutSpec | undefined =
+    assetKeyboardCommandRegistry.get(commandId)?.shortcut;
+  return (
+    spec !== undefined && matchesShortcut(spec, event, SHORTCUT_PLATFORM)
+  );
+};
 
 type RendererWindow = Window & {
   serpent?: {
@@ -3939,7 +3961,7 @@ function AppInner() {
         setSelectedAssetId(ids.at(-1));
         selectionAnchorRef.current = ids[0] ?? null;
       } else if (
-        matchesAssetCommandShortcut(event, "open-external", IS_MAC_PLATFORM) &&
+        matchAssetCommandShortcut("asset.open-external", event) &&
         selectedAsset?.availability === "available" &&
         !selectedAsset.deletedAt &&
         !previewAsset &&
@@ -3948,7 +3970,7 @@ function AppInner() {
         event.preventDefault();
         void handleOpenExternal(selectedAsset.assetId);
       } else if (
-        matchesAssetCommandShortcut(event, "move-to-trash", IS_MAC_PLATFORM) &&
+        matchAssetCommandShortcut("asset.move-to-trash", event) &&
         !showTrash &&
         library &&
         selectedManagedCount > 0 &&
@@ -4160,10 +4182,69 @@ function AppInner() {
     void saveMetadata({ palette: values });
   }
 
+  // REQ-MENU-007: with a multi-selection the Inspector rating stars apply to
+  // every selected asset through the batch rating command (last-write-wins),
+  // exactly like the Inspector tag operations. The primary asset's stars
+  // update optimistically; a single selection keeps the versioned write.
   function handleRatingClick(rating: number) {
     if (!assetMetadata) return;
     setEditRating(rating);
+    const target = resolveInspectorTagTarget(
+      selectedAssetIds,
+      selectedAssetId ?? undefined,
+    );
+    if (target?.kind === "batch") {
+      void batchSetRatingForSelection(rating, target.assetIds);
+      return;
+    }
     void saveMetadata({ rating });
+  }
+
+  async function batchSetRatingForSelection(rating: number, assetIds: string[]) {
+    if (!api || !library || assetIds.length === 0) return;
+    try {
+      const result = await api.setAssetsRating({
+        libraryId: library.libraryId,
+        assetIds,
+        rating,
+      });
+      if (!result.ok) throw new LibraryOperationError(result.error);
+      const skippedIds = new Set(
+        result.value.skipped.map((item) => item.assetId),
+      );
+      const appliedIds = new Set(
+        assetIds.filter((assetId) => !skippedIds.has(assetId)),
+      );
+      const updateSummary = (asset: AssetSummary): AssetSummary =>
+        appliedIds.has(asset.assetId) ? { ...asset, rating } : asset;
+      setAssets((current) => current.map(updateSummary));
+      setTrashedAssets((current) => current.map(updateSummary));
+      // Refresh cached Inspector metadata in place. The batch write touches
+      // only the rating column, so cached entityVersions stay valid for the
+      // single-asset optimistic-lock path.
+      for (const assetId of appliedIds) {
+        const cached = metadataByAssetRef.current.get(assetId);
+        if (cached)
+          metadataByAssetRef.current.set(assetId, { ...cached, rating });
+      }
+      const primaryAssetId = selectedAssetIdRef.current;
+      if (primaryAssetId && appliedIds.has(primaryAssetId)) {
+        setAssetMetadata((current) =>
+          current && current.assetId === primaryAssetId
+            ? { ...current, rating }
+            : current,
+        );
+      }
+      setNotice(
+        formatBatchRatingNotice(
+          rating,
+          assetIds.length - result.value.skipped.length,
+          result.value.skipped,
+        ),
+      );
+    } catch (caught) {
+      setError(toMessage(caught, "批量设置评分失败。"));
+    }
   }
 
   function handleFavoriteToggle() {

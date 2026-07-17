@@ -433,6 +433,10 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
       const { backfilledCount } = libraryService.backfillAssetMetadata(request.command.libraryId);
       return { ok: true, type: 'asset.metadata.backfilled', backfilledCount };
     }
+    case 'asset.rating.set': {
+      const { updatedCount, skipped } = libraryService.setAssetsRating(request.command);
+      return { ok: true, type: 'asset.rating.updated', updatedCount, skipped };
+    }
     case 'asset.search': {
       const result = libraryService.searchAssets({
         libraryId: request.command.libraryId,

@@ -8,6 +8,7 @@ import {
 import type {
   CommandContext,
   CommandDefinition,
+  ShortcutSpec,
 } from '../../src/renderer/commands/command-types';
 
 // REQ-COMMAND-001: 注册表是纯函数模块，node 环境直接测试，不挂载任何 DOM。
@@ -99,12 +100,24 @@ describe('resolveMenu visibility and titles', () => {
 
 describe('shortcut labels', () => {
   it('formats per platform and returns null when the platform has no label', () => {
-    expect(formatShortcut({ mac: '⌘⌫', windows: 'Delete' }, 'mac')).toBe('⌘⌫');
-    expect(formatShortcut({ mac: '⌘⌫', windows: 'Delete' }, 'windows')).toBe(
-      'Delete',
-    );
-    expect(formatShortcut({ mac: '⌘O' }, 'windows')).toBeNull();
-    expect(formatShortcut({ windows: 'Ctrl+O' }, 'mac')).toBeNull();
+    const trash: ShortcutSpec = {
+      mac: { label: '⌘⌫', key: 'Backspace', metaKey: true },
+      windows: { label: 'Delete', key: 'Delete' },
+    };
+    expect(formatShortcut(trash, 'mac')).toBe('⌘⌫');
+    expect(formatShortcut(trash, 'windows')).toBe('Delete');
+    expect(
+      formatShortcut(
+        { mac: { label: '⌘O', key: 'o', metaKey: true } },
+        'windows',
+      ),
+    ).toBeNull();
+    expect(
+      formatShortcut(
+        { windows: { label: 'Ctrl+O', key: 'o', ctrlKey: true } },
+        'mac',
+      ),
+    ).toBeNull();
   });
 
   it('resolves shortcutLabel for the context platform', () => {
@@ -112,9 +125,16 @@ describe('shortcut labels', () => {
       makeCommand({
         id: 'open-external',
         group: 'open',
-        shortcut: { mac: '⌘O', windows: 'Ctrl+O' },
+        shortcut: {
+          mac: { label: '⌘O', key: 'o', metaKey: true },
+          windows: { label: 'Ctrl+O', key: 'o', ctrlKey: true },
+        },
       }),
-      makeCommand({ id: 'mac-only', group: 'open', shortcut: { mac: '⌘⇧O' } }),
+      makeCommand({
+        id: 'mac-only',
+        group: 'open',
+        shortcut: { mac: { label: '⌘⇧O', key: 'o', metaKey: true } },
+      }),
       makeCommand({ id: 'no-shortcut', group: 'open' }),
     ]);
     const mac = registry.resolveMenu(makeContext({ platform: 'mac' }));

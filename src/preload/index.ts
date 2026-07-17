@@ -451,6 +451,13 @@ const library: SerpentLibraryApi = Object.freeze({
     return { ok: true, value: { backfilledCount: result.backfilledCount } };
   },
 
+  async setAssetsRating({ libraryId, assetIds, rating }: { libraryId: string; assetIds: string[]; rating: number }): Promise<LibraryApiResult<{ updatedCount: number; skipped: TagOperationSkip[] }>> {
+    const result = await request({ type: 'asset.rating.set.request', libraryId, assetIds, rating });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'asset.rating.updated') throw new Error('Unexpected set-assets-rating response.');
+    return { ok: true, value: { updatedCount: result.updatedCount, skipped: result.skipped } };
+  },
+
   async listSmartCollections({ libraryId }: { libraryId: string }): Promise<LibraryApiResult<SmartCollectionSummary[]>> {
     const result = await request({ type: 'smart-collection.list.request', libraryId });
     if (!result.ok) return failure(result);

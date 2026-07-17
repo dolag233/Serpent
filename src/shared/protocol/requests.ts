@@ -312,6 +312,14 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     libraryId: identifierSchema,
   }),
   z.strictObject({
+    // Batch rating write (REQ-MENU-007): last-write-wins across the whole
+    // multi-selection, so no expectedVersion participates in this contract.
+    type: z.literal('asset.rating.set.request'),
+    libraryId: identifierSchema,
+    assetIds: z.array(identifierSchema).min(1),
+    rating: z.number().int().min(0).max(5),
+  }),
+  z.strictObject({
     type: z.literal('asset.search.request'),
     libraryId: identifierSchema,
     query: searchQuerySchema,
@@ -812,6 +820,14 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
   z.strictObject({
     type: z.literal('asset.metadata.backfill'),
     libraryId: identifierSchema,
+  }),
+  z.strictObject({
+    // Batch counterpart of the rating field on 'asset.metadata.set'. The
+    // Worker validates the same 0–5 integer contract for direct clients.
+    type: z.literal('asset.rating.set'),
+    libraryId: identifierSchema,
+    assetIds: z.array(identifierSchema).min(1),
+    rating: z.number().int().min(0).max(5),
   }),
   z.strictObject({
     type: z.literal('asset.search'),

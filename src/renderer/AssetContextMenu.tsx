@@ -15,21 +15,31 @@ import {
 } from "./context-menu";
 import { Icon } from "./Icons";
 import { TagPickerEntry, TagPickerMenu } from "./TagPickerMenu";
-import {
-  assetCommandShortcut,
-  isMacPlatform,
-} from "./asset-command-shortcuts";
+import { isMacPlatform } from "./commands/command-types";
 import { createCommandRegistry } from "./commands/command-registry";
 import {
   assetCommandDefinitions,
   type AssetCommandContext,
 } from "./commands/asset-commands";
+import {
+  assetMultiCommandDefinitions,
+  type AssetMultiCommandContext,
+} from "./commands/asset-multi-commands";
+import {
+  sidebarCommandDefinitions,
+  type SidebarCommandContext,
+} from "./commands/sidebar-commands";
 
 const isMac = isMacPlatform(navigator.userAgent);
 
 // 0015-B: 单资产右键菜单的静态项由统一命令注册表驱动（REQ-COMMAND-001）；
-// 注册表是纯数据，模块级构建一次即可。多资产菜单后续切片再接入。
+// 注册表是纯数据，模块级构建一次即可。0015-C: 多资产分支同样接入。
+// 0015-D: 文件夹 / 合集 / 智能合集三个侧边栏分支同样接入。
 const assetCommandRegistry = createCommandRegistry(assetCommandDefinitions);
+const assetMultiCommandRegistry = createCommandRegistry(
+  assetMultiCommandDefinitions,
+);
+const sidebarCommandRegistry = createCommandRegistry(sidebarCommandDefinitions);
 
 /** Which tag action the in-menu picker is performing, and on which assets. */
 interface TagPickerState {
@@ -212,128 +222,259 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
           />
         ) : (
           <>
-        {activeContextMenu.descriptor.type === "smart-collection" && (
-          <>
-            <ContextMenuItem
-              icon={<Icon name="smart" size={14} />}
-              label="重命名智能合集"
-              onAction={() => {
-                const desc = activeContextMenu.descriptor;
-                if (desc.type !== "smart-collection") return;
-                onRenameSmartCollection(desc.id, desc.name);
-              }}
-            />
-            <ContextMenuItem
-              icon={<Icon name="refresh" size={14} />}
-              label="用当前条件更新"
-              onAction={() => {
-                const desc = activeContextMenu.descriptor;
-                if (desc.type !== "smart-collection") return;
-                onUpdateSmartCollection(desc.id);
-              }}
-            />
-            <ContextMenuItem
-              icon={<Icon name="trash" size={14} />}
-              label="删除智能合集"
-              danger
-              onAction={() => {
-                const desc = activeContextMenu.descriptor;
-                if (desc.type !== "smart-collection") return;
-                if (window.confirm(`删除智能合集"${desc.name}"？`))
-                  onDeleteSmartCollection(desc.id, desc.name);
-              }}
-            />
-          </>
-        )}
-        {activeContextMenu.descriptor.type === "organization" && (
-          <>
-            <ContextMenuItem
-              icon={<Icon name="collection" size={14} />}
-              label="重命名合集"
-              onAction={() => {
-                const desc = activeContextMenu.descriptor;
-                if (desc.type !== "organization") return;
-                onRenameOrganization(desc.id, desc.name);
-              }}
-            />
-            <ContextMenuItem
-              icon={<Icon name="info" size={14} />}
-              label="编辑合集详情"
-              onAction={() => {
-                const desc = activeContextMenu.descriptor;
-                if (desc.type !== "organization") return;
-                onEditCollectionDetails(desc.id);
-              }}
-            />
-            <ContextMenuItem
-              icon={<Icon name="trash" size={14} />}
-              label="删除合集"
-              danger
-              onAction={() => {
-                const desc = activeContextMenu.descriptor;
-                if (desc.type !== "organization") return;
-                const confirmed = window.confirm(
-                  `删除合集"${desc.name}"？\n（仅删除合集结构，不删除资产）`,
-                );
-                if (confirmed) {
-                  onDeleteOrganization(desc.id, desc.name);
-                }
-              }}
-            />
-          </>
-        )}
+        {activeContextMenu.descriptor.type === "smart-collection" && (() => {
+          const desc = activeContextMenu.descriptor;
+          if (desc.type !== "smart-collection") return null;
+          // 0015-D: 静态项的标题/可见性由注册表 resolveMenu 求值；删除确认
+          // （window.confirm）保留在命令的 run 内，danger 样式仍在 JSX 声明。
+          const commandContext: SidebarCommandContext = {
+            surface: "sidebar",
+            platform: isMac ? "mac" : "windows",
+            selectedAssetIds: [],
+            primaryAssetId: null,
+            assetScope: "none",
+            trashMode: false,
+            menuKind: "smart-collection",
+            subjectId: desc.id,
+            subjectName: desc.name,
+            linkedFolderResolved: false,
+            actions: {
+              openFolderInFileManager: onOpenFolderInFileManager,
+              createSubfolder: onCreateSubfolder,
+              renameFolder: onRenameFolder,
+              openLinkedRules: onOpenLinkedRules,
+              copyFolderPath: onCopyFolderPath,
+              renameOrganization: onRenameOrganization,
+              editCollectionDetails: onEditCollectionDetails,
+              deleteOrganization: onDeleteOrganization,
+              renameSmartCollection: onRenameSmartCollection,
+              updateSmartCollection: onUpdateSmartCollection,
+              deleteSmartCollection: onDeleteSmartCollection,
+            },
+          };
+          const resolvedById = new Map(
+            sidebarCommandRegistry
+              .resolveMenu(commandContext)
+              .map((item) => [item.id, item]),
+          );
+          const runSidebarCommand = (id: string) => {
+            const item = resolvedById.get(id);
+            if (!item || item.disabled) return;
+            void sidebarCommandRegistry.get(id)?.run(commandContext);
+          };
+          const renameItem = resolvedById.get("smart-collection.rename");
+          const updateQueryItem = resolvedById.get(
+            "smart-collection.update-query",
+          );
+          const deleteItem = resolvedById.get("smart-collection.delete");
+          return (
+            <>
+              {renameItem && (
+                <ContextMenuItem
+                  icon={<Icon name="smart" size={14} />}
+                  label={renameItem.label}
+                  onAction={() => runSidebarCommand("smart-collection.rename")}
+                />
+              )}
+              {updateQueryItem && (
+                <ContextMenuItem
+                  icon={<Icon name="refresh" size={14} />}
+                  label={updateQueryItem.label}
+                  onAction={() =>
+                    runSidebarCommand("smart-collection.update-query")
+                  }
+                />
+              )}
+              {deleteItem && (
+                <ContextMenuItem
+                  icon={<Icon name="trash" size={14} />}
+                  label={deleteItem.label}
+                  danger
+                  onAction={() => runSidebarCommand("smart-collection.delete")}
+                />
+              )}
+            </>
+          );
+        })()}
+        {activeContextMenu.descriptor.type === "organization" && (() => {
+          const desc = activeContextMenu.descriptor;
+          if (desc.type !== "organization") return null;
+          // 0015-D: 合集分支三项恒可见；删除确认（window.confirm）保留在
+          // 命令的 run 内，danger 样式仍在 JSX 声明。
+          const commandContext: SidebarCommandContext = {
+            surface: "sidebar",
+            platform: isMac ? "mac" : "windows",
+            selectedAssetIds: [],
+            primaryAssetId: null,
+            assetScope: "none",
+            trashMode: false,
+            menuKind: "organization",
+            subjectId: desc.id,
+            subjectName: desc.name,
+            linkedFolderResolved: false,
+            actions: {
+              openFolderInFileManager: onOpenFolderInFileManager,
+              createSubfolder: onCreateSubfolder,
+              renameFolder: onRenameFolder,
+              openLinkedRules: onOpenLinkedRules,
+              copyFolderPath: onCopyFolderPath,
+              renameOrganization: onRenameOrganization,
+              editCollectionDetails: onEditCollectionDetails,
+              deleteOrganization: onDeleteOrganization,
+              renameSmartCollection: onRenameSmartCollection,
+              updateSmartCollection: onUpdateSmartCollection,
+              deleteSmartCollection: onDeleteSmartCollection,
+            },
+          };
+          const resolvedById = new Map(
+            sidebarCommandRegistry
+              .resolveMenu(commandContext)
+              .map((item) => [item.id, item]),
+          );
+          const runSidebarCommand = (id: string) => {
+            const item = resolvedById.get(id);
+            if (!item || item.disabled) return;
+            void sidebarCommandRegistry.get(id)?.run(commandContext);
+          };
+          const renameItem = resolvedById.get("collection.rename");
+          const editDetailsItem = resolvedById.get("collection.edit-details");
+          const deleteItem = resolvedById.get("collection.delete");
+          return (
+            <>
+              {renameItem && (
+                <ContextMenuItem
+                  icon={<Icon name="collection" size={14} />}
+                  label={renameItem.label}
+                  onAction={() => runSidebarCommand("collection.rename")}
+                />
+              )}
+              {editDetailsItem && (
+                <ContextMenuItem
+                  icon={<Icon name="info" size={14} />}
+                  label={editDetailsItem.label}
+                  onAction={() => runSidebarCommand("collection.edit-details")}
+                />
+              )}
+              {deleteItem && (
+                <ContextMenuItem
+                  icon={<Icon name="trash" size={14} />}
+                  label={deleteItem.label}
+                  danger
+                  onAction={() => runSidebarCommand("collection.delete")}
+                />
+              )}
+            </>
+          );
+        })()}
         {activeContextMenu.descriptor.type === "folder" && (() => {
           const desc = activeContextMenu.descriptor;
           if (desc.type !== "folder") return null;
           // REQ-MENU-006: open/copy-path apply to managed and linked folders.
           // Offline linked roots disable the path actions, mirroring the
           // unavailable-asset convention (disabled + reason, not an error).
-          const isOfflineLinked =
-            desc.locationKind === "linked" && desc.status === "offline";
+          // 0015-D: 标题/可见性/禁用原因由注册表 resolveMenu 求值；此处把
+          // descriptor 与 linkedFolders 解析结果组装成 SidebarCommandContext。
           const linkedFolder =
             desc.locationKind === "linked"
               ? linkedFolders.find((folder) => folder.folderId === desc.folderId)
               : undefined;
+          const commandContext: SidebarCommandContext = {
+            surface: "sidebar",
+            platform: isMac ? "mac" : "windows",
+            selectedAssetIds: [],
+            primaryAssetId: null,
+            assetScope: "none",
+            trashMode: false,
+            menuKind: "folder",
+            subjectId: desc.folderId,
+            subjectName: desc.name,
+            locationKind: desc.locationKind,
+            status: desc.status,
+            linkedFolderResolved: linkedFolder !== undefined,
+            linkedFolder,
+            actions: {
+              openFolderInFileManager: onOpenFolderInFileManager,
+              createSubfolder: onCreateSubfolder,
+              renameFolder: onRenameFolder,
+              openLinkedRules: onOpenLinkedRules,
+              copyFolderPath: onCopyFolderPath,
+              renameOrganization: onRenameOrganization,
+              editCollectionDetails: onEditCollectionDetails,
+              deleteOrganization: onDeleteOrganization,
+              renameSmartCollection: onRenameSmartCollection,
+              updateSmartCollection: onUpdateSmartCollection,
+              deleteSmartCollection: onDeleteSmartCollection,
+            },
+          };
+          const resolvedById = new Map(
+            sidebarCommandRegistry
+              .resolveMenu(commandContext)
+              .map((item) => [item.id, item]),
+          );
+          const runSidebarCommand = (id: string) => {
+            const item = resolvedById.get(id);
+            if (!item || item.disabled) return;
+            void sidebarCommandRegistry.get(id)?.run(commandContext);
+          };
+          const openInFileManagerItem = resolvedById.get(
+            "folder.open-in-file-manager",
+          );
+          const createSubfolderItem = resolvedById.get(
+            "folder.create-subfolder",
+          );
+          const renameItem = resolvedById.get("folder.rename");
+          const linkedRulesItem = resolvedById.get("folder.linked-rules");
+          const copyPathItem = resolvedById.get("folder.copy-path");
           return (
             <>
               <ContextMenuSection label="打开">
-                <ContextMenuItem
-                  icon={<Icon name="folder" size={14} />}
-                  label={isMac ? "在 Finder 中打开" : "在文件资源管理器中打开"}
-                  disabled={isOfflineLinked}
-                  disabledReason="链接文件夹当前离线"
-                  onAction={() => onOpenFolderInFileManager(desc.folderId)}
-                />
-              </ContextMenuSection>
-              <ContextMenuSection label="文件夹">
-                {desc.locationKind === "managed" && (
-                  <>
-                    <ContextMenuItem
-                      icon={<Icon name="folder" size={14} />}
-                      label="新建子文件夹"
-                      onAction={() => onCreateSubfolder(desc.folderId)}
-                    />
-                    <ContextMenuItem
-                      icon={<Icon name="edit" size={14} />}
-                      label="重命名…"
-                      onAction={() => onRenameFolder(desc.folderId, desc.name)}
-                    />
-                  </>
-                )}
-                {desc.locationKind === "linked" && linkedFolder && (
+                {openInFileManagerItem && (
                   <ContextMenuItem
-                    icon={<Icon name="link" size={14} />}
-                    label="链接规则…"
-                    onAction={() => onOpenLinkedRules(linkedFolder)}
+                    icon={<Icon name="folder" size={14} />}
+                    label={openInFileManagerItem.label}
+                    disabled={openInFileManagerItem.disabled}
+                    disabledReason={
+                      openInFileManagerItem.disabledReason ?? undefined
+                    }
+                    onAction={() =>
+                      runSidebarCommand("folder.open-in-file-manager")
+                    }
                   />
                 )}
-                <ContextMenuItem
-                  icon={<Icon name="file" size={14} />}
-                  label="复制文件夹路径"
-                  disabled={isOfflineLinked}
-                  disabledReason="链接文件夹当前离线"
-                  onAction={() => onCopyFolderPath(desc.folderId)}
-                />
+              </ContextMenuSection>
+              <ContextMenuSection label="文件夹">
+                {createSubfolderItem && (
+                  <ContextMenuItem
+                    icon={<Icon name="folder" size={14} />}
+                    label={createSubfolderItem.label}
+                    onAction={() =>
+                      runSidebarCommand("folder.create-subfolder")
+                    }
+                  />
+                )}
+                {renameItem && (
+                  <ContextMenuItem
+                    icon={<Icon name="edit" size={14} />}
+                    label={renameItem.label}
+                    onAction={() => runSidebarCommand("folder.rename")}
+                  />
+                )}
+                {linkedRulesItem && (
+                  <ContextMenuItem
+                    icon={<Icon name="link" size={14} />}
+                    label={linkedRulesItem.label}
+                    onAction={() => runSidebarCommand("folder.linked-rules")}
+                  />
+                )}
+                {copyPathItem && (
+                  <ContextMenuItem
+                    icon={<Icon name="file" size={14} />}
+                    label={copyPathItem.label}
+                    disabled={copyPathItem.disabled}
+                    disabledReason={copyPathItem.disabledReason ?? undefined}
+                    onAction={() => runSidebarCommand("folder.copy-path")}
+                  />
+                )}
               </ContextMenuSection>
             </>
           );
@@ -388,6 +529,58 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                 : null,
             ].filter((reason): reason is string => reason !== null);
 
+            // 0015-C: 静态项的标题/快捷键/可见性/禁用原因由注册表 resolveMenu
+            // 求值；此处把每次打开时算出的集合与 props 组装成
+            // AssetMultiCommandContext。动态行（批量合集、外部目录）与汇总/
+            // 跳过原因提示块保持内联不变。
+            const commandContext: AssetMultiCommandContext = {
+              surface: "asset-multi",
+              platform: isMac ? "mac" : "windows",
+              selectedAssetIds: targetAssetIds,
+              primaryAssetId: null,
+              assetScope: "multi",
+              trashMode: allTrashed,
+              selectionCount: targetAssetIds.length,
+              managedCount: managedAssetIds.length,
+              availableManagedCount: availableManagedAssetIds.length,
+              linkedCount,
+              trashedAll: allTrashed,
+              managedAssetIds,
+              availableManagedAssetIds,
+              actions: {
+                openAssignTagPicker: (assetIds) =>
+                  setTagPicker({ mode: "assign", assetIds, single: false }),
+                openRemoveTagPicker: (assetIds) =>
+                  setTagPicker({ mode: "remove", assetIds, single: false }),
+                moveToFolder: onMoveToFolder,
+                moveToTrash: onTrash,
+                restore: onRestore,
+                deletePermanent: onPermanentDelete,
+                clearSelection: onClearSelection,
+              },
+            };
+            const resolvedById = new Map(
+              assetMultiCommandRegistry
+                .resolveMenu(commandContext)
+                .map((item) => [item.id, item]),
+            );
+            const runMultiCommand = (id: string) => {
+              const item = resolvedById.get(id);
+              if (!item || item.disabled) return;
+              void assetMultiCommandRegistry.get(id)?.run(commandContext);
+            };
+            const restoreItem = resolvedById.get("assets.restore");
+            const deletePermanentItem = resolvedById.get(
+              "assets.delete-permanent",
+            );
+            const assignTagItem = resolvedById.get("assets.assign-tag");
+            const removeTagItem = resolvedById.get("assets.remove-tag");
+            const moveToFolderItem = resolvedById.get("assets.move-to-folder");
+            const moveToTrashItem = resolvedById.get("assets.move-to-trash");
+            const clearSelectionItem = resolvedById.get(
+              "assets.clear-selection",
+            );
+
             return (
               <>
                 <div className="context-menu-selection-summary">
@@ -395,17 +588,23 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                 </div>
                 {allTrashed ? (
                   <ContextMenuSection label="回收站操作">
-                    <ContextMenuItem
-                      icon={<Icon name="upload" size={14} />}
-                      label={`恢复所选（${targetAssetIds.length} 项）`}
-                      onAction={() => onRestore(targetAssetIds)}
-                    />
-                    <ContextMenuItem
-                      icon={<Icon name="trash" size={14} />}
-                      label={`永久删除（${targetAssetIds.length} 项）`}
-                      danger
-                      onAction={() => onPermanentDelete(targetAssetIds)}
-                    />
+                    {restoreItem && (
+                      <ContextMenuItem
+                        icon={<Icon name="upload" size={14} />}
+                        label={restoreItem.label}
+                        onAction={() => runMultiCommand("assets.restore")}
+                      />
+                    )}
+                    {deletePermanentItem && (
+                      <ContextMenuItem
+                        icon={<Icon name="trash" size={14} />}
+                        label={deletePermanentItem.label}
+                        danger
+                        onAction={() =>
+                          runMultiCommand("assets.delete-permanent")
+                        }
+                      />
+                    )}
                   </ContextMenuSection>
                 ) : (
                   <>
@@ -423,29 +622,17 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                   </div>
                 )}
             <ContextMenuSection label="组织">
-            {tags.length > 0 && (
+            {tags.length > 0 && assignTagItem && removeTagItem && (
               <ContextMenuSection label="批量标签">
                 <TagPickerEntry
                   icon={<Icon name="tag" size={14} />}
-                  label="添加标签…"
-                  onOpen={() =>
-                    setTagPicker({
-                      mode: "assign",
-                      assetIds: targetAssetIds,
-                      single: false,
-                    })
-                  }
+                  label={assignTagItem.label}
+                  onOpen={() => runMultiCommand("assets.assign-tag")}
                 />
                 <TagPickerEntry
                   icon={<Icon name="close" size={14} />}
-                  label="移除标签…"
-                  onOpen={() =>
-                    setTagPicker({
-                      mode: "remove",
-                      assetIds: targetAssetIds,
-                      single: false,
-                    })
-                  }
+                  label={removeTagItem.label}
+                  onOpen={() => runMultiCommand("assets.remove-tag")}
                 />
               </ContextMenuSection>
             )}
@@ -477,15 +664,15 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                 ))}
               </ContextMenuSection>
             )}
-              <ContextMenuItem
-                icon={<Icon name="folder" size={14} />}
-                label={`移动到文件夹…（${availableManagedAssetIds.length} 项）`}
-                disabled={availableManagedAssetIds.length === 0}
-                disabledReason="所选资产中没有可移动的托管资产"
-                onAction={() =>
-                  onMoveToFolder(availableManagedAssetIds)
-                }
-              />
+              {moveToFolderItem && (
+                <ContextMenuItem
+                  icon={<Icon name="folder" size={14} />}
+                  label={moveToFolderItem.label}
+                  disabled={moveToFolderItem.disabled}
+                  disabledReason={moveToFolderItem.disabledReason ?? undefined}
+                  onAction={() => runMultiCommand("assets.move-to-folder")}
+                />
+              )}
               {linkedFolders
                 .filter((f) => f.status === "available")
                 .map((folder) => (
@@ -505,25 +692,27 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                 ))}
             </ContextMenuSection>
             <ContextMenuSection label="删除">
-              <ContextMenuItem
-                icon={<Icon name="trash" size={14} />}
-                label={`移入回收站（${managedAssetIds.length} 项）`}
-                shortcut={assetCommandShortcut("move-to-trash", isMac)}
-                danger
-                disabled={managedAssetIds.length === 0}
-                disabledReason="所选资产中没有托管资产"
-                onAction={() =>
-                  onTrash(managedAssetIds)
-                }
-              />
+              {moveToTrashItem && (
+                <ContextMenuItem
+                  icon={<Icon name="trash" size={14} />}
+                  label={moveToTrashItem.label}
+                  shortcut={moveToTrashItem.shortcutLabel ?? undefined}
+                  danger
+                  disabled={moveToTrashItem.disabled}
+                  disabledReason={moveToTrashItem.disabledReason ?? undefined}
+                  onAction={() => runMultiCommand("assets.move-to-trash")}
+                />
+              )}
             </ContextMenuSection>
                   </>
                 )}
-            <ContextMenuItem
-              icon={<Icon name="close" size={14} />}
-              label={`清除选择（${targetAssetIds.length} 项）`}
-              onAction={onClearSelection}
-            />
+            {clearSelectionItem && (
+              <ContextMenuItem
+                icon={<Icon name="close" size={14} />}
+                label={clearSelectionItem.label}
+                onAction={() => runMultiCommand("assets.clear-selection")}
+              />
+            )}
               </>
             );
           })()}

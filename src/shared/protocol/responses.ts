@@ -461,6 +461,14 @@ const assetOperationSuccessSchemas = [
     backfilledCount: z.number().int().nonnegative(),
   }),
   z.strictObject({
+    // Batch rating result; skips reuse the tag batch operation shape so the
+    // renderer can share the same reason-code wording (REQ-MENU-007).
+    ok: z.literal(true),
+    type: z.literal('asset.rating.updated'),
+    updatedCount: z.number().int().nonnegative(),
+    skipped: z.array(tagOperationSkipSchema),
+  }),
+  z.strictObject({
     ok: z.literal(true),
     type: z.literal('smart-collection.list'),
     collections: z.array(smartCollectionSummarySchema),

@@ -4,11 +4,11 @@ import type {
 } from "../shared/protocol/responses";
 
 /**
- * Notice text for batch tag assign/remove (REQ-MENU-007).
+ * Notice text for batch tag assign/remove and batch rating (REQ-MENU-007).
  *
  * The worker applies the operation to the eligible assets and reports every
  * skipped id with a stable reason code; this module turns that result into
- * the single-line notice shown after a batch assign/remove. Reason codes are
+ * the single-line notice shown after a batch operation. Reason codes are
  * mapped to display phrases in exactly one place (SKIP_REASON_PHRASES) so a
  * future reason only needs one new entry here.
  */
@@ -38,12 +38,11 @@ function summarizeSkipped(skipped: TagOperationSkip[]): string {
     .join("、");
 }
 
-export function formatBatchTagNotice(
-  action: BatchTagAction,
+function formatBatchNotice(
+  actionPhrase: string,
   succeededCount: number,
   skipped: TagOperationSkip[],
 ): string {
-  const actionPhrase = ACTION_PHRASES[action];
   if (skipped.length === 0) {
     return `已为 ${succeededCount} 项资产${actionPhrase}。`;
   }
@@ -52,4 +51,27 @@ export function formatBatchTagNotice(
     return `未能为任何资产${actionPhrase}；跳过 ${skippedSummary}。`;
   }
   return `已为 ${succeededCount} 项资产${actionPhrase}；跳过 ${skippedSummary}。`;
+}
+
+export function formatBatchTagNotice(
+  action: BatchTagAction,
+  succeededCount: number,
+  skipped: TagOperationSkip[],
+): string {
+  return formatBatchNotice(ACTION_PHRASES[action], succeededCount, skipped);
+}
+
+/**
+ * Notice text for the batch rating command (REQ-MENU-007). The tag notice's
+ * static per-action phrases cannot express "set rating to X 分" vs "clear
+ * rating", so rating gets a sibling formatter; sentence scaffolding and skip
+ * reason mapping stay shared with the tag notices.
+ */
+export function formatBatchRatingNotice(
+  rating: number,
+  succeededCount: number,
+  skipped: TagOperationSkip[],
+): string {
+  const actionPhrase = rating > 0 ? `设置评分 ${rating} 分` : "清除评分";
+  return formatBatchNotice(actionPhrase, succeededCount, skipped);
 }

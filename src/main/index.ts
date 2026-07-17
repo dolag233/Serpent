@@ -876,6 +876,13 @@ async function commandFor(
       };
     case "asset.metadata.backfill.request":
       return { type: "asset.metadata.backfill", libraryId: request.libraryId };
+    case "asset.rating.set.request":
+      return {
+        type: "asset.rating.set",
+        libraryId: request.libraryId,
+        assetIds: request.assetIds,
+        rating: request.rating,
+      };
     case "asset.search.request":
       return {
         type: "asset.search",

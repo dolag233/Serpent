@@ -85,7 +85,10 @@ export const assetCommandDefinitions: readonly AssetCommandDefinition[] = [
     id: 'asset.open-external',
     title: '使用外部应用打开',
     group: 'open',
-    shortcut: { mac: '⌘O', windows: 'Ctrl+O' },
+    shortcut: {
+      mac: { label: '⌘O', key: 'o', metaKey: true },
+      windows: { label: 'Ctrl+O', key: 'o', ctrlKey: true },
+    },
     visible: (ctx) => !ctx.assetDeleted,
     disabledReason: (ctx) => (ctx.assetAvailable ? null : UNAVAILABLE_REASON),
     run: (ctx) => withPrimaryAsset(ctx, (id) => ctx.actions.openExternal(id)),
@@ -165,7 +168,10 @@ export const assetCommandDefinitions: readonly AssetCommandDefinition[] = [
     id: 'asset.move-to-trash',
     title: '移入回收站',
     group: 'delete',
-    shortcut: { mac: '⌘⌫', windows: 'Delete' },
+    shortcut: {
+      mac: { label: '⌘⌫', key: 'Backspace', metaKey: true },
+      windows: { label: 'Delete', key: 'Delete' },
+    },
     visible: (ctx) => !ctx.assetDeleted && ctx.locationKind === 'managed',
     disabledReason: (ctx) =>
       ctx.assetAvailable ? null : '托管资产当前不可用，无法移入回收站',
