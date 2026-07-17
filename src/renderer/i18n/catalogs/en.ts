@@ -597,7 +597,12 @@ export const en = {
     copyingFiles: "Copying {processed}/{total} · {bytesProcessed}/{bytesTotal}",
     validating: "Validating…",
     copying: "Copying…",
-    opening: "Opening…"
+    opening: "Opening…",
+    exportingLibrary: "Exporting library:",
+    importingLibrary: "Importing library:",
+    cancelExport: "Cancel export",
+    cancelImport: "Cancel import",
+    loadingMore: "Loading more assets…"
   },
   tagPicker: {
     backAria: "Back to previous menu",
@@ -903,7 +908,8 @@ export const en = {
     create: "Create",
     delete: "Delete",
     rename: "Rename",
-    removeAsset: "Remove asset"
+    removeAsset: "Remove asset",
+    undoMove: "Undo move"
   }
 } as CatalogMessages<typeof zhCN>;
 

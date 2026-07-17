@@ -588,7 +588,12 @@ export const zhCN = {
     copyingFiles: "复制中 {processed}/{total} · {bytesProcessed}/{bytesTotal}",
     validating: "验证中…",
     copying: "复制中…",
-    opening: "打开中…"
+    opening: "打开中…",
+    exportingLibrary: "正在导出资源库：",
+    importingLibrary: "导入资源库：",
+    cancelExport: "取消导出",
+    cancelImport: "取消导入",
+    loadingMore: "继续加载资产…"
   },
   tagPicker: {
     backAria: "返回上一级菜单",
@@ -894,7 +899,8 @@ export const zhCN = {
     create: "创建",
     delete: "删除",
     rename: "重命名",
-    removeAsset: "移除资产"
+    removeAsset: "移除资产",
+    undoMove: "撤销移动"
   }
 } as const satisfies MessageTree;
 

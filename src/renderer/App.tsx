@@ -4161,19 +4161,25 @@ function AppInner() {
   ]);
 
   function workspaceTitle() {
-    if (!library) return "工作区";
-    if (showTrash) return "回收站";
+    if (!library) return t("scope.workspace");
+    if (showTrash) return t("scope.trash");
     if (activeTagId) {
-      const t = tags.find((x) => x.tagId === activeTagId);
-      return t ? `标签：${t.name}` : "标签筛选";
+      const tag = tags.find((x) => x.tagId === activeTagId);
+      return tag
+        ? t("scope.tagNamed", { name: tag.name })
+        : t("scope.tagFilter");
     }
     if (activeCollectionId) {
-      const c = collections.find((x) => x.collectionId === activeCollectionId);
-      return c ? `合集：${c.name}` : "合集视图";
+      const collection = collections.find(
+        (x) => x.collectionId === activeCollectionId,
+      );
+      return collection
+        ? t("scope.collectionNamed", { name: collection.name })
+        : t("scope.collectionView");
     }
-    if (assetScope === "all") return "所有资产";
-    if (assetScope === "root") return "资源库根目录";
-    return selectedFolder?.name ?? "工作区";
+    if (assetScope === "all") return t("scope.allAssets");
+    if (assetScope === "root") return t("scope.rootFolder");
+    return selectedFolder?.name ?? t("scope.workspace");
   }
 
   // --- Metadata editor helpers ---
@@ -4585,7 +4591,7 @@ function AppInner() {
           />
           <ToolButton
             icon="menu"
-            label={leftOpen ? "收起导航" : "展开导航"}
+            label={leftOpen ? t("shell.collapseNav") : t("shell.expandNav")}
             onClick={() => setLeftOpen((v) => !v)}
             pressed={leftOpen}
           />
@@ -4594,7 +4600,7 @@ function AppInner() {
             libraryName={library?.displayName ?? null}
             onCloseLibrary={() => void closeLibrary()}
             onCreateLibrary={() => {
-              setDialogValue("我的资源库");
+              setDialogValue(t("shell.myLibrary"));
               setDialog("library");
             }}
             onMenuOpen={() => void refreshRecentLibraries()}
@@ -4654,14 +4660,14 @@ function AppInner() {
               setActiveAiSearchDefinition(null);
               setAiSearchPlanSummary(null);
             }}
-            title="点亮后仅在提交时调用已配置的 AI，把自然语言转换为普通搜索条件"
+            title={t("toolbar.aiSearchTitle")}
             type="button"
           >
             <Icon name="smart" size={14} />
-            AI 搜索
+            {t("toolbar.aiSearch")}
           </button>
           <input
-            aria-label="搜索资源库"
+            aria-label={t("toolbar.searchLibrary")}
             className="search-control"
             disabled={!library}
             onChange={(event) => {
@@ -4671,18 +4677,18 @@ function AppInner() {
             }}
             placeholder={
               aiSearchEnabled
-                ? "自然语言，例如：横版科幻城市概念图，不要草图"
-                : '搜索；支持 filename:"短语"、NOT tags:草图、OR'
+                ? t("toolbar.aiSearchPlaceholder")
+                : t("toolbar.searchPlaceholder")
             }
             title={
               aiSearchEnabled
-                ? "提交后由已配置的云端模型生成受限搜索条件"
-                : '示例：filename:"hero concept" NOT tags:草图'
+                ? t("toolbar.aiSearchHint")
+                : t("toolbar.searchHint")
             }
             value={searchValue}
           />
           <details className="discovery-filters" ref={discoveryFiltersRef}>
-            <summary>筛选与排序</summary>
+            <summary>{t("toolbar.filterSort")}</summary>
             <div className="discovery-filter-panel">
               <label>
                 {t("filter.formatField")}
@@ -5287,21 +5293,28 @@ function AppInner() {
             ) && (
               <div className="activity-strip" role="status">
                 <span className="activity-pulse" />
-                正在导出资源库：
+                {t("progress.exportingLibrary")}
                 {exportProgress.phase === "snapshot-db"
-                  ? "快照数据库…"
+                  ? t("progress.snapshotDb")
                   : exportProgress.phase === "enumerate"
-                    ? "枚举文件…"
+                    ? t("progress.enumerateFiles")
                     : exportProgress.phase === "compress"
-                      ? "压缩中"
-                      : `复制中 ${exportProgress.filesProcessed}/${exportProgress.totalFiles} · ${formatBytes(exportProgress.bytesProcessed)}/${formatBytes(exportProgress.totalBytes)}`}
+                      ? t("progress.compressing")
+                      : t("progress.copyingFiles", {
+                          processed: exportProgress.filesProcessed,
+                          total: exportProgress.totalFiles,
+                          bytesProcessed: formatBytes(
+                            exportProgress.bytesProcessed,
+                          ),
+                          bytesTotal: formatBytes(exportProgress.totalBytes),
+                        })}
                 <button
                   className="secondary-button"
                   disabled={!exportProgress.exportId}
                   onClick={() => void cancelExport()}
                   type="button"
                 >
-                  取消导出
+                  {t("progress.cancelExport")}
                 </button>
               </div>
             )}
@@ -5311,19 +5324,19 @@ function AppInner() {
             ) && (
               <div className="activity-strip" role="status">
                 <span className="activity-pulse" />
-                导入资源库：
+                {t("progress.importingLibrary")}
                 {importProgress.phase === "validate"
-                  ? "验证中…"
+                  ? t("progress.validating")
                   : importProgress.phase === "copy"
-                    ? "复制中…"
-                    : "打开中…"}
+                    ? t("progress.copying")
+                    : t("progress.opening")}
                 <button
                   className="secondary-button"
                   disabled={!importProgress.importId}
                   onClick={() => void cancelImport()}
                   type="button"
                 >
-                  取消导入
+                  {t("progress.cancelImport")}
                 </button>
               </div>
             )}
@@ -5574,7 +5587,7 @@ function AppInner() {
                     {loadingMoreAssets && (
                       <>
                         <span className="activity-pulse" />
-                        继续加载资产…
+                        {t("progress.loadingMore")}
                       </>
                     )}
                   </div>
@@ -5656,7 +5669,7 @@ function AppInner() {
                   onClick={() => void undoManagedMove(lastMoveOperationId)}
                   type="button"
                 >
-                  撤销移动
+                  {t("action.undoMove")}
                 </button>
               )}
               <button
