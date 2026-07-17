@@ -149,7 +149,7 @@ const numericRangeSchema = z.strictObject({
 });
 
 const numericFilterClauseSchema = z.strictObject({
-  field: z.enum(['width', 'height', 'aspect_ratio', 'duration_ms']),
+  field: z.enum(['width', 'height', 'aspect_ratio', 'duration_ms', 'long_edge']),
   ranges: z.array(numericRangeSchema).min(1).max(32),
   exclude: z.boolean(),
 }).superRefine((filter, context) => {

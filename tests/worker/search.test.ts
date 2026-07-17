@@ -957,6 +957,65 @@ describe('search filters', () => {
       .toEqual([portraitId, unknownId].sort());
     service.closeAll();
   });
+
+  it('filters long_edge buckets for resolution presets, with NULL semantics intact (REQ-FILTER-010)', () => {
+    const { service, libraryId, assetId, libraryPath } = createLibraryWithAssetAndTags();
+    const portraitId = createSecondAsset(service, libraryId, libraryPath, 'Portrait');
+    const unknownId = createSecondAsset(service, libraryId, libraryPath, 'Unknown');
+    const db = new TestDatabase(path.join(libraryPath, '.serpent', 'library.db'));
+    const revisions = db.prepare(
+      'SELECT asset_id, current_revision_id FROM assets WHERE asset_id IN (?, ?)',
+    ).all(assetId, portraitId) as Array<{ asset_id: string; current_revision_id: string }>;
+    const insert = db.prepare(
+      `INSERT INTO revision_artifacts
+         (artifact_id, revision_id, kind, mime_type, byte_size, file_path,
+          width, height, duration_ms, generator_version, status, generated_at)
+       VALUES (?, ?, 'extracted_metadata', 'application/json', 1, ?, ?, ?, ?, 'test', 'ready', ?)`,
+    );
+    const now = new Date().toISOString();
+    for (const row of revisions) {
+      const isLandscape = row.asset_id === assetId;
+      insert.run(
+        randomUUID(),
+        row.current_revision_id,
+        `${row.asset_id}.json`,
+        isLandscape ? 1920 : 1080,
+        isLandscape ? 1080 : 1920,
+        0,
+        now,
+      );
+    }
+    db.close();
+
+    // Both assets have long edge 1920 regardless of orientation; the
+    // metadata-less asset is omitted from positive matches.
+    const atLeast1K = service.searchAssets({
+      libraryId,
+      filters: [{ field: 'long_edge', ranges: [{ min: 1900 }], exclude: false }],
+    });
+    expect(atLeast1K.items.map((asset) => asset.assetId).sort())
+      .toEqual([assetId, portraitId].sort());
+
+    const below1K = service.searchAssets({
+      libraryId,
+      filters: [{ field: 'long_edge', ranges: [{ max: 1900 }], exclude: false }],
+    });
+    expect(below1K.items).toHaveLength(0);
+
+    const bucket2K = service.searchAssets({
+      libraryId,
+      filters: [{ field: 'long_edge', ranges: [{ min: 2240, max: 3199 }], exclude: false }],
+    });
+    expect(bucket2K.items).toHaveLength(0);
+
+    // Exclusion retains metadata-less assets, matching the other numeric fields.
+    const excludeBig = service.searchAssets({
+      libraryId,
+      filters: [{ field: 'long_edge', ranges: [{ min: 1900 }], exclude: true }],
+    });
+    expect(excludeBig.items.map((asset) => asset.assetId)).toEqual([unknownId]);
+    service.closeAll();
+  });
 });
 
 // ── Sort ────────────────────────────────────────────────────────────

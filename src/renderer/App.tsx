@@ -61,6 +61,14 @@ import {
   resolveTrashDrop,
   type DragAssetFact,
 } from "./asset-drag-drop";
+import { FilterTagPicker } from "./FilterTagPicker";
+import { FilterPresetChips } from "./FilterPresetChips";
+import {
+  ASPECT_RATIO_PRESETS,
+  RESOLUTION_PRESETS,
+  aspectRatioPresetRange,
+  togglePresetRange,
+} from "./filter-presets";
 import {
   toMessage,
   LibraryOperationError,
@@ -484,6 +492,12 @@ function AppInner() {
     exclude: false,
   });
   const [aspectRatioRange, setAspectRatioRange] = useState({
+    min: "",
+    max: "",
+    exclude: false,
+  });
+  // REQ-FILTER-010: resolution buckets filter on the longer edge (long_edge).
+  const [longEdgeRange, setLongEdgeRange] = useState({
     min: "",
     max: "",
     exclude: false,
@@ -2016,7 +2030,7 @@ function AppInner() {
         exclude: excludeAvailabilityFilter,
       });
     const technicalRanges: Array<{
-      field: "width" | "height" | "aspect_ratio" | "duration_ms";
+      field: "width" | "height" | "aspect_ratio" | "duration_ms" | "long_edge";
       input: { min: string; max: string; exclude: boolean };
       scale?: number;
       integer?: boolean;
@@ -2024,6 +2038,7 @@ function AppInner() {
       { field: "width", input: widthRange },
       { field: "height", input: heightRange },
       { field: "aspect_ratio", input: aspectRatioRange, integer: false },
+      { field: "long_edge", input: longEdgeRange },
       { field: "duration_ms", input: durationRange, scale: 1_000 },
     ];
     for (const { field, input, scale = 1, integer = true } of technicalRanges) {
@@ -4484,26 +4499,26 @@ function AppInner() {
               </label>
               <label>
                 标签
-                <input
-                  aria-label="标签过滤"
-                  className="text-field"
+                {/* REQ-TAG-002: searchable multi-tag picker (chips + counts);
+                    the OR clause assembly in currentQueryDefinition is
+                    unchanged — selection syncs back to the comma string. */}
+                <FilterTagPicker
                   disabled={!library}
-                  list="tag-filter-options"
-                  onChange={(event) => {
-                    setTagFilter(event.target.value);
+                  onChange={(names) => {
+                    setTagFilter(names.join(", "));
                     setActiveTagId(
-                      tags.find((tag) => tag.name === event.target.value)
-                        ?.tagId ?? null,
+                      names.length === 1
+                        ? (tags.find((tag) => tag.name === names[0])?.tagId ??
+                            null)
+                        : null,
                     );
                   }}
-                  placeholder="角色, 道具"
-                  value={tagFilter}
+                  selectedNames={tagFilter
+                    .split(",")
+                    .map((value) => value.trim())
+                    .filter(Boolean)}
+                  tags={tags}
                 />
-                <datalist id="tag-filter-options">
-                  {tags.map((tag) => (
-                    <option key={tag.tagId} value={tag.name} />
-                  ))}
-                </datalist>
                 <span>
                   <input
                     aria-label="排除这些标签"
@@ -4620,6 +4635,41 @@ function AppInner() {
                 range={aspectRatioRange}
                 setRange={setAspectRatioRange}
                 step="0.01"
+              />
+              {/* REQ-FILTER-009: one-tap ratio presets (±5% tolerance); the
+                  custom min/max inputs above stay available. */}
+              <FilterPresetChips
+                current={aspectRatioRange}
+                disabled={!library}
+                label="宽高比预设"
+                onToggle={(range) =>
+                  setAspectRatioRange((current) => ({
+                    ...current,
+                    ...togglePresetRange(current, range),
+                  }))
+                }
+                presets={ASPECT_RATIO_PRESETS.map((preset) => ({
+                  label: preset.label,
+                  range: aspectRatioPresetRange(preset),
+                }))}
+              />
+              {/* REQ-FILTER-010: resolution buckets on the longer edge. */}
+              <FilterPresetChips
+                current={longEdgeRange}
+                disabled={!library}
+                label="分辨率预设"
+                onToggle={(range) =>
+                  setLongEdgeRange((current) => ({
+                    ...current,
+                    ...togglePresetRange(current, range),
+                  }))
+                }
+                presets={RESOLUTION_PRESETS}
+              />
+              <TechnicalRangeFilter
+                label="长边 (px)"
+                range={longEdgeRange}
+                setRange={setLongEdgeRange}
               />
               <TechnicalRangeFilter
                 label="时长 (秒)"

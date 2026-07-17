@@ -8281,13 +8281,21 @@ export class LibraryService {
       if ('ranges' in filter) {
         const width = 'COALESCE(duration_meta.width, technical_thumbnail.width)';
         const height = 'COALESCE(duration_meta.height, technical_thumbnail.height)';
+        // long_edge (REQ-FILTER-010): resolution buckets are defined on the
+        // longer side so portrait and landscape assets share one definition.
+        // Both dimensions missing -> NULLIF(...,0) -> NULL, so positive
+        // filters omit metadata-less assets like the other numeric fields.
+        const longEdge =
+          `NULLIF(MAX(COALESCE(${width}, 0), COALESCE(${height}, 0)), 0)`;
         const column = filter.field === 'width'
           ? width
           : filter.field === 'height'
             ? height
             : filter.field === 'duration_ms'
               ? 'duration_meta.duration_ms'
-              : `(CAST(${width} AS REAL) / NULLIF(${height}, 0))`;
+              : filter.field === 'long_edge'
+                ? longEdge
+                : `(CAST(${width} AS REAL) / NULLIF(${height}, 0))`;
         const rangeClauses = filter.ranges.map((range) => {
           const bounds: string[] = [];
           if (range.min !== undefined) {
