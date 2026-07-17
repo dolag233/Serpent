@@ -608,6 +608,20 @@ async function commandFor(
       };
     case "folder.list.request":
       return { type: "folder.list", libraryId: request.libraryId };
+    case "folder.open-in-file-manager.request":
+      // Handled directly in handleLibraryRequest because it requires shell.openPath.
+      return {
+        type: "folder.get-path",
+        libraryId: request.libraryId,
+        folderId: request.folderId,
+      };
+    case "folder.copy-path.request":
+      // Handled directly in handleLibraryRequest because it requires clipboard.writeText.
+      return {
+        type: "folder.get-path",
+        libraryId: request.libraryId,
+        folderId: request.folderId,
+      };
     case "asset.list.request":
       return {
         type: "asset.list",
@@ -1846,6 +1860,52 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
         } satisfies RendererResult;
       } catch (error) {
         logger?.error("main.copy-file-path", error);
+        return {
+          ok: false,
+          error: createPublicError("INTERNAL_ERROR"),
+        } satisfies RendererResult;
+      }
+    }
+    if (
+      workerResult.ok &&
+      request.type === "folder.open-in-file-manager.request" &&
+      workerResult.type === "folder.path"
+    ) {
+      try {
+        const openError = await shell.openPath(workerResult.absolutePath);
+        if (openError) {
+          return {
+            ok: false,
+            error: createPublicError("INTERNAL_ERROR"),
+          } satisfies RendererResult;
+        }
+        return {
+          ok: true,
+          type: "folder.open-in-file-manager.requested",
+          folderId: request.folderId,
+        } satisfies RendererResult;
+      } catch (error) {
+        logger?.error("main.open-folder-in-file-manager", error);
+        return {
+          ok: false,
+          error: createPublicError("INTERNAL_ERROR"),
+        } satisfies RendererResult;
+      }
+    }
+    if (
+      workerResult.ok &&
+      request.type === "folder.copy-path.request" &&
+      workerResult.type === "folder.path"
+    ) {
+      try {
+        clipboard.writeText(workerResult.absolutePath);
+        return {
+          ok: true,
+          type: "folder.copy-path.requested",
+          folderId: request.folderId,
+        } satisfies RendererResult;
+      } catch (error) {
+        logger?.error("main.copy-folder-path", error);
         return {
           ok: false,
           error: createPublicError("INTERNAL_ERROR"),

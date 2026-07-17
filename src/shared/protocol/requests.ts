@@ -87,6 +87,19 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     folderId: identifierSchema,
     newName: displayNameSchema,
   }),
+  // Folder shell actions (REQ-MENU-006) are identified by folder id only; no
+  // filesystem path may cross this boundary (REQ-COMMAND-003). The Worker
+  // resolves the absolute path and Main performs the shell/clipboard action.
+  z.strictObject({
+    type: z.literal('folder.open-in-file-manager.request'),
+    libraryId: identifierSchema,
+    folderId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('folder.copy-path.request'),
+    libraryId: identifierSchema,
+    folderId: identifierSchema,
+  }),
   z.strictObject({
     type: z.literal('folder.list.request'),
     libraryId: identifierSchema,
@@ -615,6 +628,13 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     libraryId: identifierSchema,
     folderId: identifierSchema,
     newName: displayNameSchema,
+  }),
+  // Resolves the absolute path of a managed or linked folder. Only Main may
+  // consume the result (shell/clipboard); it never reaches the Renderer.
+  z.strictObject({
+    type: z.literal('folder.get-path'),
+    libraryId: identifierSchema,
+    folderId: identifierSchema,
   }),
   z.strictObject({
     type: z.literal('folder.list'),

@@ -322,6 +322,69 @@ describe('renderer request protocol', () => {
     })).toThrow();
   });
 
+  it('accepts path-free folder open-in-file-manager and copy-path requests by folder id only', () => {
+    expect(parseRendererRequest({
+      type: 'folder.open-in-file-manager.request',
+      libraryId: 'library-01',
+      folderId: 'folder-01',
+    })).toEqual({
+      type: 'folder.open-in-file-manager.request',
+      libraryId: 'library-01',
+      folderId: 'folder-01',
+    });
+    expect(parseRendererRequest({
+      type: 'folder.copy-path.request',
+      libraryId: 'library-01',
+      folderId: 'folder-01',
+    })).toEqual({
+      type: 'folder.copy-path.request',
+      libraryId: 'library-01',
+      folderId: 'folder-01',
+    });
+    expect(parseWorkerRequest({
+      requestId: 'folder-path-01',
+      command: {
+        type: 'folder.get-path',
+        libraryId: 'library-01',
+        folderId: 'folder-01',
+      },
+    }).command).toEqual({
+      type: 'folder.get-path',
+      libraryId: 'library-01',
+      folderId: 'folder-01',
+    });
+    // REQ-COMMAND-003: the renderer must never supply filesystem paths.
+    expect(() => parseRendererRequest({
+      type: 'folder.open-in-file-manager.request',
+      libraryId: 'library-01',
+      folderId: 'folder-01',
+      absolutePath: '/private/forged/path',
+    })).toThrow();
+    expect(() => parseRendererRequest({
+      type: 'folder.copy-path.request',
+      libraryId: 'library-01',
+      folderId: 'folder-01',
+      absolutePath: '/private/forged/path',
+    })).toThrow();
+    expect(() => parseWorkerRequest({
+      requestId: 'folder-path-injection',
+      command: {
+        type: 'folder.get-path',
+        libraryId: 'library-01',
+        folderId: 'folder-01',
+        absolutePath: '/private/forged/path',
+      },
+    })).toThrow();
+    expect(() => parseRendererRequest({
+      type: 'folder.open-in-file-manager.request',
+      libraryId: 'library-01',
+    })).toThrow();
+    expect(() => parseRendererRequest({
+      type: 'folder.copy-path.request',
+      libraryId: 'library-01',
+    })).toThrow();
+  });
+
   it('accepts asset file rename by id and extension-less base name only', () => {
     expect(parseRendererRequest({
       type: 'asset.rename-file.request',
@@ -876,6 +939,56 @@ describe('preview response protocol', () => {
       type: 'asset.copy-file-path.requested',
       assetId: 'asset-01',
       absolutePath: '/private/forged/path',
+    })).toThrow();
+  });
+
+  it('carries only the folder id for folder open-in-file-manager and copy-path results', () => {
+    expect(parseRendererResult({
+      ok: true,
+      type: 'folder.open-in-file-manager.requested',
+      folderId: 'folder-01',
+    })).toEqual({
+      ok: true,
+      type: 'folder.open-in-file-manager.requested',
+      folderId: 'folder-01',
+    });
+    expect(parseRendererResult({
+      ok: true,
+      type: 'folder.copy-path.requested',
+      folderId: 'folder-01',
+    })).toEqual({
+      ok: true,
+      type: 'folder.copy-path.requested',
+      folderId: 'folder-01',
+    });
+    // The resolved path stays on the Worker→Main boundary: the worker result
+    // carries it, the renderer result must never accept it (REQ-COMMAND-003).
+    expect(parseWorkerResponse({
+      requestId: 'folder-path-01',
+      result: {
+        ok: true,
+        type: 'folder.path',
+        folderId: 'folder-01',
+        absolutePath: '/libraries/demo/Assets/concepts',
+      },
+    }).result).toMatchObject({ type: 'folder.path' });
+    expect(() => parseRendererResult({
+      ok: true,
+      type: 'folder.open-in-file-manager.requested',
+      folderId: 'folder-01',
+      absolutePath: '/private/forged/path',
+    })).toThrow();
+    expect(() => parseRendererResult({
+      ok: true,
+      type: 'folder.copy-path.requested',
+      folderId: 'folder-01',
+      absolutePath: '/private/forged/path',
+    })).toThrow();
+    expect(() => parseRendererResult({
+      ok: true,
+      type: 'folder.path',
+      folderId: 'folder-01',
+      absolutePath: '/libraries/demo/Assets/concepts',
     })).toThrow();
   });
 });

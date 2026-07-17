@@ -197,7 +197,6 @@ export interface NavigationSidebarProps {
   // --- Linked folder actions ---
   onImportFolderAsLinked: () => void;
   onRelinkFolder: (folderId: string) => void;
-  onOpenLinkedRules: (folder: LinkedFolderSummary) => void;
   onConvertLinkedDialog: (dialog: {
     folderId: string;
     name: string;
@@ -275,7 +274,6 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
     onExternalDrop,
     onImportFolderAsLinked,
     onRelinkFolder,
-    onOpenLinkedRules,
     onConvertLinkedDialog,
     onAddCollection,
     onSetShowCollectionInput,
@@ -321,6 +319,7 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
                   type: "folder",
                   folderId: entry.folderId,
                   name: entry.name,
+                  locationKind: "managed",
                 },
                 { x: event.clientX, y: event.clientY },
               );
@@ -361,13 +360,27 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
           }
           onContextMenu={(event) => {
             event.preventDefault();
-            if (event.shiftKey)
+            // Shift+right-click keeps the legacy convert-to-managed shortcut;
+            // a plain right-click opens the shared folder menu (REQ-MENU-006),
+            // which also carries the linked-rules entry.
+            if (event.shiftKey) {
               onConvertLinkedDialog({
                 folderId: lf.folderId,
                 name: lf.displayName,
                 targetFolderId: "",
               });
-            else void onOpenLinkedRules(lf);
+              return;
+            }
+            onOpenContextMenu(
+              {
+                type: "folder",
+                folderId: entry.folderId,
+                name: entry.name,
+                locationKind: "linked",
+                status: entry.status,
+              },
+              { x: event.clientX, y: event.clientY },
+            );
           }}
           onDragOver={(event) => {
             if (

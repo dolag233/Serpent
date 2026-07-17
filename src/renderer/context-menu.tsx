@@ -38,11 +38,16 @@ export type ContextMenuDescriptor =
       name: string;
     }
   | {
-      // Managed folders only. Linked folders keep their own rules/convert
-      // interactions in the sidebar and never reach this menu.
+      // Directory-tree folders, managed and linked. Managed folders also
+      // expose create/rename; linked folders reach their rules dialog through
+      // this menu. Offline linked roots disable the path actions, mirroring
+      // the unavailable-asset convention.
       type: "folder";
       folderId: string;
       name: string;
+      locationKind: "managed" | "linked";
+      /** Linked folders only: whether the external root is reachable. */
+      status?: "available" | "offline";
     }
   | {
       type: "multi-asset";

@@ -60,6 +60,9 @@ interface AssetContextMenuProps {
   onDeleteOrganization: (id: string, name: string) => void;
   onCreateSubfolder: (folderId: string) => void;
   onRenameFolder: (folderId: string, currentName: string) => void;
+  onOpenFolderInFileManager: (folderId: string) => void;
+  onCopyFolderPath: (folderId: string) => void;
+  onOpenLinkedRules: (folder: LinkedFolderSummary) => void;
   onBatchAssignTag: (tagId: string, assetIds: string[]) => void;
   onBatchRemoveTag: (tagId: string, assetIds: string[]) => void;
   onBatchAddToCollection: (collectionId: string, assetIds: string[]) => void;
@@ -99,6 +102,9 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
     onDeleteOrganization,
     onCreateSubfolder,
     onRenameFolder,
+    onOpenFolderInFileManager,
+    onCopyFolderPath,
+    onOpenLinkedRules,
     onBatchAssignTag,
     onBatchRemoveTag,
     onBatchAddToCollection,
@@ -270,19 +276,57 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
         {activeContextMenu.descriptor.type === "folder" && (() => {
           const desc = activeContextMenu.descriptor;
           if (desc.type !== "folder") return null;
+          // REQ-MENU-006: open/copy-path apply to managed and linked folders.
+          // Offline linked roots disable the path actions, mirroring the
+          // unavailable-asset convention (disabled + reason, not an error).
+          const isOfflineLinked =
+            desc.locationKind === "linked" && desc.status === "offline";
+          const linkedFolder =
+            desc.locationKind === "linked"
+              ? linkedFolders.find((folder) => folder.folderId === desc.folderId)
+              : undefined;
           return (
-            <ContextMenuSection label="文件夹">
-              <ContextMenuItem
-                icon={<Icon name="folder" size={14} />}
-                label="新建子文件夹"
-                onAction={() => onCreateSubfolder(desc.folderId)}
-              />
-              <ContextMenuItem
-                icon={<Icon name="edit" size={14} />}
-                label="重命名…"
-                onAction={() => onRenameFolder(desc.folderId, desc.name)}
-              />
-            </ContextMenuSection>
+            <>
+              <ContextMenuSection label="打开">
+                <ContextMenuItem
+                  icon={<Icon name="folder" size={14} />}
+                  label={isMac ? "在 Finder 中打开" : "在文件资源管理器中打开"}
+                  disabled={isOfflineLinked}
+                  disabledReason="链接文件夹当前离线"
+                  onAction={() => onOpenFolderInFileManager(desc.folderId)}
+                />
+              </ContextMenuSection>
+              <ContextMenuSection label="文件夹">
+                {desc.locationKind === "managed" && (
+                  <>
+                    <ContextMenuItem
+                      icon={<Icon name="folder" size={14} />}
+                      label="新建子文件夹"
+                      onAction={() => onCreateSubfolder(desc.folderId)}
+                    />
+                    <ContextMenuItem
+                      icon={<Icon name="edit" size={14} />}
+                      label="重命名…"
+                      onAction={() => onRenameFolder(desc.folderId, desc.name)}
+                    />
+                  </>
+                )}
+                {desc.locationKind === "linked" && linkedFolder && (
+                  <ContextMenuItem
+                    icon={<Icon name="link" size={14} />}
+                    label="链接规则…"
+                    onAction={() => onOpenLinkedRules(linkedFolder)}
+                  />
+                )}
+                <ContextMenuItem
+                  icon={<Icon name="file" size={14} />}
+                  label="复制文件夹路径"
+                  disabled={isOfflineLinked}
+                  disabledReason="链接文件夹当前离线"
+                  onAction={() => onCopyFolderPath(desc.folderId)}
+                />
+              </ContextMenuSection>
+            </>
           );
         })()}
         {activeContextMenu.descriptor.type === "multi-asset" &&

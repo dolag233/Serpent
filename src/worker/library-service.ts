@@ -6463,6 +6463,42 @@ export class LibraryService {
   }
 
   /**
+   * Resolve the absolute path of a directory-tree folder (managed or linked)
+   * for Main-process shell/clipboard actions (REQ-MENU-006). The value never
+   * crosses to the Renderer (REQ-COMMAND-003).
+   *
+   * Managed folders resolve to the library Assets root + recorded relative
+   * path; linked folders resolve to their (canonicalized) root. A folder that
+   * is missing on disk — or a linked root that is offline or gone — fails
+   * with a typed FOLDER_NOT_FOUND instead of handing Main a dead path. The
+   * renderer disables these actions for offline linked folders, so the check
+   * here is the defensive boundary for stale state.
+   */
+  resolveFolderPath(libraryId: string, folderId: string): string {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    const managed = openLibrary.connection
+      .prepare('SELECT relative_path FROM managed_folders WHERE folder_id = ?')
+      .get(folderId) as { relative_path: string } | undefined;
+    if (managed) {
+      const targetPath = this.folderPath(openLibrary, managed.relative_path);
+      if (!directoryExists(targetPath)) throw new LibraryServiceError('FOLDER_NOT_FOUND');
+      return targetPath;
+    }
+    const linked = openLibrary.connection
+      .prepare('SELECT absolute_root_path, status FROM linked_folders WHERE folder_id = ?')
+      .get(folderId) as { absolute_root_path: string; status: 'available' | 'offline' } | undefined;
+    if (!linked) throw new LibraryServiceError('FOLDER_NOT_FOUND');
+    if (linked.status === 'offline' || this.linkedRootIsGone(linked.absolute_root_path)) {
+      throw new LibraryServiceError('FOLDER_NOT_FOUND');
+    }
+    try {
+      return realpathSync(linked.absolute_root_path);
+    } catch (error) {
+      throw new LibraryServiceError('FOLDER_NOT_FOUND', { cause: error });
+    }
+  }
+
+  /**
    * Return the .serpent/artifacts directory for an open library.
    */
   private artifactsDir(openLibrary: OpenLibrary): string {

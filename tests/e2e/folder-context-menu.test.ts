@@ -105,6 +105,13 @@ test("creates a nested subfolder from the folder context menu with the parent hi
     await expect(
       menu.getByRole("menuitem", { name: "重命名…" }),
     ).toBeVisible();
+    // REQ-MENU-006: the folder shell actions sit in the same menu.
+    await expect(
+      menu.getByRole("menuitem", { name: "在 Finder 中打开" }),
+    ).toBeVisible();
+    await expect(
+      menu.getByRole("menuitem", { name: "复制文件夹路径" }),
+    ).toBeVisible();
     await menu.getByRole("menuitem", { name: "新建子文件夹" }).click();
 
     // The create dialog opens in the subfolder flow: empty name field, and the
