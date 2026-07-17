@@ -64,7 +64,12 @@ input:focus-visible {
 
 .app-shell {
   display: grid;
-  grid-template-columns: 224px minmax(420px, 1fr) 268px;
+  /* REQ-SHELL-007: pane widths come from CSS variables so usePanelResize can
+     retarget them live; the fallbacks are the historical fixed widths. */
+  grid-template-columns: var(--nav-width, 224px) minmax(420px, 1fr) var(
+      --inspector-width,
+      268px
+    );
   grid-template-rows: 44px minmax(0, 1fr);
   width: 100%;
   height: 100%;
@@ -73,16 +78,50 @@ input:focus-visible {
   transition: grid-template-columns 160ms ease;
 }
 
+/* Live drags must not fight the collapse transition. */
+.app-shell.is-resizing {
+  transition: none;
+}
+
 .app-shell.left-collapsed {
-  grid-template-columns: 0 minmax(420px, 1fr) 268px;
+  grid-template-columns: 0 minmax(420px, 1fr) var(--inspector-width, 268px);
 }
 
 .app-shell.right-collapsed {
-  grid-template-columns: 224px minmax(420px, 1fr) 0;
+  grid-template-columns: var(--nav-width, 224px) minmax(420px, 1fr) 0;
 }
 
 .app-shell.left-collapsed.right-collapsed {
   grid-template-columns: 0 minmax(420px, 1fr) 0;
+}
+
+/* REQ-SHELL-007: 6px resize handles centered on the pane borders. The 44px
+   top offset tracks the app-shell toolbar row (grid-template-rows above). */
+.panel-resizer {
+  position: fixed;
+  top: 44px;
+  bottom: 0;
+  z-index: 6;
+  width: 6px;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.panel-resizer::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 2px;
+  width: 2px;
+  background: transparent;
+  transition: background 120ms ease;
+}
+
+.panel-resizer:hover::after,
+.panel-resizer:focus-visible::after,
+.panel-resizer.is-active::after {
+  background: var(--secondary);
 }
 
 .app-toolbar {

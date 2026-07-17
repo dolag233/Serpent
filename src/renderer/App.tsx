@@ -52,6 +52,7 @@ import { useAssetSelection } from "./useAssetSelection";
 import { useBatchActions } from "./useBatchActions";
 import { useAssetRename } from "./useAssetRename";
 import { useInlineFolderEdit } from "./use-inline-folder-edit";
+import { usePanelResize } from "./use-panel-resize";
 import { useToastNotifications } from "./useToastNotifications";
 import {
   toMessage,
@@ -390,6 +391,15 @@ function AppInner() {
     setNotice,
     handleToastTransitionEnd,
   } = useToastNotifications();
+  // REQ-SHELL-007: draggable nav/inspector pane widths (persisted).
+  const {
+    navPanelWidth,
+    inspectorPanelWidth,
+    resizing: panelResizing,
+    shellStyle: panelResizeShellStyle,
+    beginResize: beginPanelResize,
+    resetPanel: resetPanelWidth,
+  } = usePanelResize();
   const [dialog, setDialog] = useState<DialogKind>(null);
   const [dialogValue, setDialogValue] = useState("我的资源库");
   const [conflicts, setConflicts] = useState<ImportConflictPlan | null>(null);
@@ -4251,7 +4261,8 @@ function AppInner() {
 
   return (
     <main
-      className={`app-shell${leftOpen ? "" : " left-collapsed"}${rightOpen ? "" : " right-collapsed"}`}
+      className={`app-shell${leftOpen ? "" : " left-collapsed"}${rightOpen ? "" : " right-collapsed"}${panelResizing ? " is-resizing" : ""}`}
+      style={panelResizeShellStyle as React.CSSProperties}
     >
       <header className="app-toolbar">
         <div className="toolbar-cluster toolbar-leading">
@@ -5719,6 +5730,35 @@ function AppInner() {
         onAssignTag={(assetId, tagId) => { void assignAssetToTag(assetId, tagId); }}
         onAddToCollection={(assetId, collectionId) => { void addAssetToCollection(assetId, collectionId); }}
       />
+      {/* REQ-SHELL-007 pane resize handles (fixed over the pane borders). */}
+      {leftOpen && (
+        <div
+          aria-label="调整导航面板宽度"
+          aria-orientation="vertical"
+          className={`panel-resizer${panelResizing === "nav" ? " is-active" : ""}`}
+          onDoubleClick={() => resetPanelWidth("nav")}
+          onPointerDown={(event) => {
+            event.preventDefault();
+            beginPanelResize("nav", event.clientX);
+          }}
+          role="separator"
+          style={{ left: navPanelWidth - 3 }}
+        />
+      )}
+      {rightOpen && (
+        <div
+          aria-label="调整检查器面板宽度"
+          aria-orientation="vertical"
+          className={`panel-resizer${panelResizing === "inspector" ? " is-active" : ""}`}
+          onDoubleClick={() => resetPanelWidth("inspector")}
+          onPointerDown={(event) => {
+            event.preventDefault();
+            beginPanelResize("inspector", event.clientX);
+          }}
+          role="separator"
+          style={{ right: inspectorPanelWidth - 3 }}
+        />
+      )}
     </main>
   );
 }
