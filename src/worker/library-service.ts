@@ -7703,6 +7703,10 @@ export class LibraryService {
     usage?: 'preview' | 'proxy',
   ): string {
     const openLibrary = this.requireOpenLibrary(libraryId);
+    // The join against the asset's current revision is the serving boundary:
+    // permanently deleted assets lose their row and stop resolving here, while
+    // trashed assets keep resolving so the trash scope can show a decodable
+    // preview (the derived artifact is not moved or invalidated by trashing).
     const row = openLibrary.connection
       .prepare(
         `SELECT ra.artifact_id, ra.file_path, ra.kind
@@ -7710,8 +7714,7 @@ export class LibraryService {
            JOIN assets a ON a.current_revision_id = ra.revision_id
           WHERE ra.artifact_id = ?
             AND ra.status = 'ready'
-            AND ra.invalidated_at IS NULL
-            AND a.deleted_at IS NULL`,
+            AND ra.invalidated_at IS NULL`,
       )
       .get(artifactId) as { artifact_id: string; file_path: string; kind: string } | undefined;
     if (!row) throw new LibraryServiceError('ASSET_NOT_FOUND');
@@ -10609,7 +10612,27 @@ export class LibraryService {
         trashed_from_relative_path: string | null;
       }>;
 
-    return rows.map((row) => this.assetSummaryFromRow(row));
+    // Expose the same thumbnail state as the trash search scope so every
+    // trash listing path can render a preview for a trashed asset.
+    const artifactMap = this.thumbnailArtifactMap(
+      libraryId,
+      rows.map((row) => row.asset_id),
+    );
+    return rows.map((row) => {
+      const artifact = artifactMap.get(row.asset_id);
+      const detectedMediaType = LibraryService.detectMediaType(row.relative_file_path);
+      return this.assetSummaryFromRow({
+        ...row,
+        thumbnail_status: artifact?.status ?? null,
+        thumbnail_artifact_id: artifact?.artifactId ?? null,
+        artifact_width: artifact?.width ?? null,
+        artifact_height: artifact?.height ?? null,
+        artifact_duration_ms: artifact?.durationMs ?? null,
+        media_type: detectedMediaType === 'image' ? 'image'
+          : detectedMediaType === 'video' ? 'video'
+          : 'other',
+      });
+    });
   }
 
   async deleteLinkedAssets(input: {
