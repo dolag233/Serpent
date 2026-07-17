@@ -123,6 +123,11 @@ export interface SerpentLibraryApi {
     parentFolderId?: string;
     name: string;
   }): Promise<LibraryApiResult<ManagedFolderSummary>>;
+  renameFolder(input: {
+    libraryId: string;
+    folderId: string;
+    newName: string;
+  }): Promise<LibraryApiResult<ManagedFolderSummary>>;
   listFolders(input: { libraryId: string }): Promise<LibraryApiResult<ManagedFolderSummary[]>>;
   listAssets(input: {
     libraryId: string;

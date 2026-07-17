@@ -246,6 +246,10 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
       const folder = libraryService.createManagedFolder(request.command);
       return { ok: true, type: 'folder.created', folder };
     }
+    case 'folder.rename': {
+      const folder = libraryService.renameManagedFolder(request.command);
+      return { ok: true, type: 'folder.renamed', folder };
+    }
     case 'folder.list':
       return {
         ok: true,

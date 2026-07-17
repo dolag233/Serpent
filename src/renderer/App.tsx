@@ -39,6 +39,7 @@ import { UndoMoveDialog } from "./UndoMoveDialog";
 import { ConflictsDialog } from "./ConflictsDialog";
 import { RenameDialog } from "./RenameDialog";
 import { CreateDialog } from "./CreateDialog";
+import { FolderRenameDialog } from "./FolderRenameDialog";
 import { CollectionEditorDialog } from "./CollectionEditorDialog";
 import { ExtensionPairingDialog } from "./ExtensionPairingDialog";
 import { AiConfigDialog } from "./AiConfigDialog";
@@ -51,6 +52,7 @@ import {
 import { useAssetSelection } from "./useAssetSelection";
 import { useBatchActions } from "./useBatchActions";
 import { useAssetRename } from "./useAssetRename";
+import { useFolderActions } from "./useFolderActions";
 import {
   toMessage,
   LibraryOperationError,
@@ -2139,6 +2141,29 @@ function AppInner() {
     setSelectedAssetIds,
   });
 
+  const {
+    folderDialogParent,
+    folderRenameTarget,
+    openFolderDialog,
+    dismissFolderDialogParent,
+    openFolderRename,
+    cancelFolderRename,
+    createFolder,
+    renameFolder,
+  } = useFolderActions({
+    api: api ?? null,
+    library,
+    folders,
+    selectedFolderId,
+    dialogValue,
+    setDialogValue,
+    setDialog,
+    setNotice,
+    setError,
+    setUiState,
+    reloadCurrentContent,
+  });
+
   async function executeSearchDefinition(
     definition: SearchDefinition,
     offset = 0,
@@ -2655,26 +2680,6 @@ function AppInner() {
   }, [api, library]);
 
   // --- Existing operations ---
-
-  async function createFolder() {
-    if (!api || !library) return;
-    setUiState("loading");
-    try {
-      const result = await api.createFolder({
-        libraryId: library.libraryId,
-        parentFolderId: selectedFolderId,
-        name: dialogValue.trim(),
-      });
-      if (!result.ok) throw new LibraryOperationError(result.error);
-      setDialog(null);
-      setNotice(`已创建文件夹"${result.value.name}"。`);
-      await reloadCurrentContent();
-    } catch (caught) {
-      setError(toMessage(caught, "创建文件夹失败。"));
-    } finally {
-      setUiState("ready");
-    }
-  }
 
   async function importAssets(kind: "files" | "folder") {
     if (!api || !library) return;
@@ -3587,6 +3592,7 @@ function AppInner() {
       !dialog &&
       !conflicts &&
       !assetRenameDialog &&
+      !folderRenameTarget &&
       !permanentDeleteDialog &&
       !deleteLinkedDialog &&
       !batchRelinkPreview &&
@@ -3622,6 +3628,10 @@ function AppInner() {
         cancelAssetRename();
         return;
       }
+      if (folderRenameTarget) {
+        cancelFolderRename();
+        return;
+      }
       if (permanentDeleteDialog) {
         setPermanentDeleteDialog(null);
         return;
@@ -3653,6 +3663,7 @@ function AppInner() {
       if (dialog) {
         setDialog(null);
         setShowCollectionInput(false);
+        dismissFolderDialogParent();
         return;
       }
       if (!api || !conflicts) return;
@@ -3675,6 +3686,9 @@ function AppInner() {
     dialog,
     assetRenameDialog,
     cancelAssetRename,
+    folderRenameTarget,
+    cancelFolderRename,
+    dismissFolderDialogParent,
     permanentDeleteDialog,
     deleteLinkedDialog,
     batchRelinkPreview,
@@ -4626,10 +4640,7 @@ function AppInner() {
         onSetNewCollectionParentId={setNewCollectionParentId}
         onCollectionInputKeyDown={handleCollectionInputKeyDown}
         onSetCollectionRecursive={setCollectionRecursive}
-        onAddFolder={() => {
-          setDialogValue("新建文件夹");
-          setDialog("folder");
-        }}
+        onAddFolder={() => openFolderDialog(null)}
         onOpenContextMenu={openContextMenu}
         onReorderCollection={(sourceId, targetId) =>
           void reorderCollectionSibling(sourceId, targetId)
@@ -5470,6 +5481,14 @@ function AppInner() {
         onSave={() => void submitAssetRename()}
         onCancel={cancelAssetRename}
       />
+      {folderRenameTarget && (
+        <FolderRenameDialog
+          key={folderRenameTarget.folderId}
+          target={folderRenameTarget}
+          onSubmit={renameFolder}
+          onCancel={cancelFolderRename}
+        />
+      )}
       <CreateDialog
         open={dialog !== null}
         kind={dialog === "library" ? "library" : "folder"}
@@ -5481,8 +5500,11 @@ function AppInner() {
             void runLibraryOperation("create");
           } else void createFolder();
         }}
-        onCancel={() => setDialog(null)}
-        folderName={selectedFolder?.name}
+        onCancel={() => {
+          setDialog(null);
+          dismissFolderDialogParent();
+        }}
+        folderName={folderDialogParent?.name ?? selectedFolder?.name}
       />
       {conflicts && (
         <ConflictsDialog
@@ -5627,6 +5649,10 @@ function AppInner() {
         onDeleteOrganization={(id) => {
           void deleteCollection(id);
         }}
+        onCreateSubfolder={(folderId) => openFolderDialog(folderId)}
+        onRenameFolder={(folderId, currentName) =>
+          openFolderRename({ folderId, name: currentName })
+        }
         onBatchAssignTag={(tagId, assetIds) => {
           void batchAssignTagToSelection(tagId, assetIds);
         }}

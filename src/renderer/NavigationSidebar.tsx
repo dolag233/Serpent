@@ -314,6 +314,17 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
             key={entry.folderId}
             label={entry.name}
             onClick={() => void onChooseFolder(entry.folderId)}
+            onContextMenu={(event) => {
+              event.preventDefault();
+              onOpenContextMenu(
+                {
+                  type: "folder",
+                  folderId: entry.folderId,
+                  name: entry.name,
+                },
+                { x: event.clientX, y: event.clientY },
+              );
+            }}
             onDragOver={onExternalDragOver}
             onDrop={(event) =>
               onExternalDrop(event, entry.folderId, undefined)

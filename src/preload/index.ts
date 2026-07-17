@@ -122,6 +122,17 @@ const library: SerpentLibraryApi = Object.freeze({
     return { ok: true, value: result.folder };
   },
 
+  async renameFolder(input: {
+    libraryId: string;
+    folderId: string;
+    newName: string;
+  }): Promise<LibraryApiResult<ManagedFolderSummary>> {
+    const result = await request({ type: 'folder.rename.request', ...input });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'folder.renamed') throw new Error('Unexpected rename-folder response.');
+    return { ok: true, value: result.folder };
+  },
+
   async listFolders({ libraryId }: { libraryId: string }): Promise<LibraryApiResult<ManagedFolderSummary[]>> {
     const result = await request({ type: 'folder.list.request', libraryId });
     if (!result.ok) return failure(result);

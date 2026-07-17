@@ -599,6 +599,13 @@ async function commandFor(
         parentFolderId: request.parentFolderId,
         name: request.name,
       };
+    case "folder.rename.request":
+      return {
+        type: "folder.rename",
+        libraryId: request.libraryId,
+        folderId: request.folderId,
+        newName: request.newName,
+      };
     case "folder.list.request":
       return { type: "folder.list", libraryId: request.libraryId };
     case "asset.list.request":

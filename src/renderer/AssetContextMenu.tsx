@@ -41,6 +41,8 @@ function descriptorKey(descriptor: ContextMenuDescriptor): string {
       return `organization:${descriptor.id}`;
     case "smart-collection":
       return `smart-collection:${descriptor.id}`;
+    case "folder":
+      return `folder:${descriptor.folderId}`;
   }
 }
 
@@ -56,6 +58,8 @@ interface AssetContextMenuProps {
   onRenameOrganization: (id: string, name: string) => void;
   onEditCollectionDetails: (collectionId: string) => void;
   onDeleteOrganization: (id: string, name: string) => void;
+  onCreateSubfolder: (folderId: string) => void;
+  onRenameFolder: (folderId: string, currentName: string) => void;
   onBatchAssignTag: (tagId: string, assetIds: string[]) => void;
   onBatchRemoveTag: (tagId: string, assetIds: string[]) => void;
   onBatchAddToCollection: (collectionId: string, assetIds: string[]) => void;
@@ -93,6 +97,8 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
     onRenameOrganization,
     onEditCollectionDetails,
     onDeleteOrganization,
+    onCreateSubfolder,
+    onRenameFolder,
     onBatchAssignTag,
     onBatchRemoveTag,
     onBatchAddToCollection,
@@ -141,7 +147,9 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
         ? `资产操作：${activeContextMenu.descriptor.displayName}`
         : activeContextMenu.descriptor.type === "organization"
           ? `合集操作：${activeContextMenu.descriptor.name}`
-          : `智能合集操作：${activeContextMenu.descriptor.name}`;
+          : activeContextMenu.descriptor.type === "folder"
+            ? `文件夹操作：${activeContextMenu.descriptor.name}`
+            : `智能合集操作：${activeContextMenu.descriptor.name}`;
 
   return (
     <ContextMenuBackdrop>
@@ -259,6 +267,24 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
             />
           </>
         )}
+        {activeContextMenu.descriptor.type === "folder" && (() => {
+          const desc = activeContextMenu.descriptor;
+          if (desc.type !== "folder") return null;
+          return (
+            <ContextMenuSection label="文件夹">
+              <ContextMenuItem
+                icon={<Icon name="folder" size={14} />}
+                label="新建子文件夹"
+                onAction={() => onCreateSubfolder(desc.folderId)}
+              />
+              <ContextMenuItem
+                icon={<Icon name="edit" size={14} />}
+                label="重命名…"
+                onAction={() => onRenameFolder(desc.folderId, desc.name)}
+              />
+            </ContextMenuSection>
+          );
+        })()}
         {activeContextMenu.descriptor.type === "multi-asset" &&
           (() => {
             const descriptor = activeContextMenu.descriptor;

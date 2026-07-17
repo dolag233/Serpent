@@ -20,6 +20,14 @@ v0.1.0 继续收口 0001–0010 的桌面主线，并纳入真实使用反馈确
 6. **最终完成审计**：跨资源库复制、视频/GIF 悬停预览、NAS 断线只读、10 万资产冷启动
    3 秒，以及跨切片 packaged/Windows 主线。
 
+## 2026-07-17 0017 第三增量：托管文件夹右键菜单与真实重命名
+
+- REQ-MENU-005 部分落地：统一目录树中托管文件夹获得共享组件右键菜单——「新建子文件夹」（落在被右键文件夹下）与「重命名…」（folder.rename 全链路：物理目录 rename + 后代文件夹/子树资产路径前缀事务重写 + 未删除资产 FTS 同步 + 失败回滚；冲突 FOLDER_NAME_CONFLICT 与非法名 INVALID_FOLDER_NAME 类型化拒绝，纯大小写改名可行；回收站恢复经 trashed_from_folder_id 落回新目录）。复制/粘贴/克隆/移动/删除待澄清队列 #5/#7 裁决，不在本增量。
+- 验证：typecheck/lint、unit 398 passed；worker folder-rename 10/10 + asset-rename 8/8；E2E 新文件 4/4、修复后复跑 18/18（folder-context-menu/asset-rename/context-menu/shell-navigation）；`test:e2e` 清单补挂 folder-context-menu 与上一增量遗漏的 asset-rename。
+- 交叉审查（1 Standards 深审 + 1 Spec 深审 + 4 广度）：0 HARD 安全项；纪律 #8（App.tsx 内联）已抽 `useFolderActions` hook、文案双真源已并入共享表、父名提示重复已撤销、取消路径陈旧 parentId 已清、maxLength 对齐 80；回滚分支/崩溃窗口按纪律记未验证。
+- **Computer Use 未执行**（当前环境无桌面控制能力）：MENU-016/MENU-017 进入待人类验收，截图证据移交人工 QA。
+- 详见 `docs/development/0017-folder-context-menu-and-rename-development-log.md`。
+
 ## 2026-07-17 0017 第二增量：资产文件重命名与侧栏标签枚举移除
 
 - REQ-MENU-002 重命名落地：asset.renameFile 全链路（protocol/preload/main/worker），扩展名保留、非法名（含 Windows 禁用字符 `<>:"|?*`，审查修正）与同名冲突类型化拒绝、missing/trashed/offline 拒绝、同名 no-op、FTS 事务内同步；单资产菜单新增「重命名…」，对话框保留扩展名、内联中文错误、选择保持。

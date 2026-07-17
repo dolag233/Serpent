@@ -78,6 +78,15 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     parentFolderId: optionalIdentifierSchema,
     name: displayNameSchema,
   }),
+  // Renaming a managed folder is identified by folder id plus the new display
+  // name only; no filesystem path may cross this boundary. The portable-name
+  // semantics are enforced by the Worker service layer.
+  z.strictObject({
+    type: z.literal('folder.rename.request'),
+    libraryId: identifierSchema,
+    folderId: identifierSchema,
+    newName: displayNameSchema,
+  }),
   z.strictObject({
     type: z.literal('folder.list.request'),
     libraryId: identifierSchema,
@@ -600,6 +609,12 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     libraryId: identifierSchema,
     parentFolderId: optionalIdentifierSchema,
     name: displayNameSchema,
+  }),
+  z.strictObject({
+    type: z.literal('folder.rename'),
+    libraryId: identifierSchema,
+    folderId: identifierSchema,
+    newName: displayNameSchema,
   }),
   z.strictObject({
     type: z.literal('folder.list'),

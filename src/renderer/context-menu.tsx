@@ -38,6 +38,13 @@ export type ContextMenuDescriptor =
       name: string;
     }
   | {
+      // Managed folders only. Linked folders keep their own rules/convert
+      // interactions in the sidebar and never reach this menu.
+      type: "folder";
+      folderId: string;
+      name: string;
+    }
+  | {
       type: "multi-asset";
       assetIds: string[];
       count: number;

@@ -19,8 +19,9 @@ export const PUBLIC_ERROR_MESSAGES_ZH: Partial<Record<PublicErrorCode, string>> 
   INTERNAL_ERROR: "Serpent 无法完成这项操作，请重试。",
   INVALID_LIBRARY_NAME: "请输入可跨平台安全使用的资源库名称。",
   INVALID_LIBRARY_PATH: "请选择有效的本地文件夹。",
-  INVALID_FOLDER_NAME: "请输入可跨平台安全使用的文件夹名称。",
+  INVALID_FOLDER_NAME: "名称包含不支持的字符。",
   FOLDER_ALREADY_EXISTS: "当前位置已经存在同名文件夹。",
+  FOLDER_NAME_CONFLICT: "已存在同名文件夹或文件。",
   FOLDER_NOT_FOUND: "找不到所选资源库文件夹。",
   INVALID_IMPORT_SOURCE: "无法读取所选导入内容。",
   INVALID_DROP_SELECTION:

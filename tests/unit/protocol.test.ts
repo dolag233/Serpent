@@ -457,6 +457,114 @@ describe('renderer request protocol', () => {
     })).toThrow();
   });
 
+  it('accepts managed folder rename by id and display name only', () => {
+    expect(parseRendererRequest({
+      type: 'folder.rename.request',
+      libraryId: 'library-01',
+      folderId: 'folder-01',
+      newName: 'References 2026',
+    })).toEqual({
+      type: 'folder.rename.request',
+      libraryId: 'library-01',
+      folderId: 'folder-01',
+      newName: 'References 2026',
+    });
+    expect(parseWorkerRequest({
+      requestId: 'folder-rename-01',
+      command: {
+        type: 'folder.rename',
+        libraryId: 'library-01',
+        folderId: 'folder-01',
+        newName: 'References 2026',
+      },
+    }).command).toEqual({
+      type: 'folder.rename',
+      libraryId: 'library-01',
+      folderId: 'folder-01',
+      newName: 'References 2026',
+    });
+  });
+
+  it('rejects injected and malformed folder rename requests at the schema layer', () => {
+    // REQ-COMMAND-003: the renderer must never supply filesystem paths.
+    expect(() => parseRendererRequest({
+      type: 'folder.rename.request',
+      libraryId: 'library-01',
+      folderId: 'folder-01',
+      newName: 'Renamed',
+      absolutePath: '/private/forged/path',
+    })).toThrow();
+    expect(() => parseWorkerRequest({
+      requestId: 'folder-rename-injection',
+      command: {
+        type: 'folder.rename',
+        libraryId: 'library-01',
+        folderId: 'folder-01',
+        newName: 'Renamed',
+        relativePath: 'forged/path',
+      },
+    })).toThrow();
+    // Blank, missing, and overlong names are rejected on both boundaries.
+    for (const newName of ['', '   ', 'a'.repeat(256)]) {
+      expect(() => parseRendererRequest({
+        type: 'folder.rename.request',
+        libraryId: 'library-01',
+        folderId: 'folder-01',
+        newName,
+      })).toThrow();
+      expect(() => parseWorkerRequest({
+        requestId: 'folder-rename-malformed',
+        command: {
+          type: 'folder.rename',
+          libraryId: 'library-01',
+          folderId: 'folder-01',
+          newName,
+        },
+      })).toThrow();
+    }
+    expect(() => parseRendererRequest({
+      type: 'folder.rename.request',
+      libraryId: 'library-01',
+      newName: 'Renamed',
+    })).toThrow();
+    // Semantic name rules (separators, dot segments, reserved DOS names) are
+    // service-layer concerns; these shapes still parse so the Worker can
+    // answer with a typed INVALID_FOLDER_NAME error.
+    expect(parseRendererRequest({
+      type: 'folder.rename.request',
+      libraryId: 'library-01',
+      folderId: 'folder-01',
+      newName: 'a/b',
+    })).toMatchObject({ newName: 'a/b' });
+    expect(parseRendererRequest({
+      type: 'folder.rename.request',
+      libraryId: 'library-01',
+      folderId: 'folder-01',
+      newName: '..',
+    })).toMatchObject({ newName: '..' });
+  });
+
+  it('round-trips the folder.renamed response on both boundaries', () => {
+    const folder = {
+      folderId: 'folder-01',
+      parentFolderId: null,
+      name: 'Renamed',
+      relativePath: 'Renamed',
+    };
+    expect(parseRendererResult({ ok: true, type: 'folder.renamed', folder }))
+      .toMatchObject({ type: 'folder.renamed', folder: { relativePath: 'Renamed' } });
+    expect(parseWorkerResponse({
+      requestId: 'folder-rename-response',
+      result: { ok: true, type: 'folder.renamed', folder },
+    }).result).toMatchObject({ type: 'folder.renamed' });
+    // The response carries no absolute path, and extra fields are stripped by schema.
+    expect(() => parseRendererResult({
+      ok: true,
+      type: 'folder.renamed',
+      folder: { ...folder, absolutePath: '/private/leak' },
+    })).toThrow();
+  });
+
   it('accepts the semantic create-library request', () => {
     expect(
       parseRendererRequest({

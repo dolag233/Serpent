@@ -3602,6 +3602,193 @@ export class LibraryService {
     }
   }
 
+  /**
+   * Renaming a managed folder renames the real directory and rewrites the
+   * recorded path of every row underneath it: the folder row itself, all
+   * descendant managed_folders rows, and every managed asset whose recorded
+   * path lives in the subtree — including missing and already-trashed rows,
+   * whose recorded paths must still follow the real directory so trash
+   * restore and reconciliation keep working.
+   *
+   * Crash-safety convention follows renameAssetFile: rename on disk first,
+   * then one DB transaction (path + FTS sync); on DB failure the disk rename
+   * is rolled back best-effort. Content is untouched, so no revision row is
+   * recorded.
+   */
+  renameManagedFolder(input: {
+    libraryId: string;
+    folderId: string;
+    newName: string;
+  }): ManagedFolderSummary {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    let name: string;
+    try {
+      name = normalizeFolderName(input.newName);
+    } catch (error) {
+      throw new LibraryServiceError('INVALID_FOLDER_NAME', {
+        reason: 'NAME_NOT_SUPPORTED',
+        cause: error,
+      });
+    }
+
+    const row = openLibrary.connection
+      .prepare(
+        'SELECT folder_id, parent_folder_id, name, relative_path, path_identity FROM managed_folders WHERE folder_id = ?',
+      )
+      .get(input.folderId) as ManagedFolderRow | undefined;
+    if (!row) throw new LibraryServiceError('FOLDER_NOT_FOUND');
+
+    // Identical target (same spelling, same case): success no-op, nothing on
+    // disk or in the DB is touched.
+    if (name === row.name) {
+      return {
+        folderId: row.folder_id,
+        parentFolderId: row.parent_folder_id,
+        name: row.name,
+        relativePath: row.relative_path,
+      };
+    }
+
+    const oldRelativePath = row.relative_path;
+    const parentRelativePath = path.posix.dirname(oldRelativePath);
+    const newRelativePath =
+      parentRelativePath === '.' ? name : path.posix.join(parentRelativePath, name);
+    const newIdentity = portablePathIdentity(newRelativePath);
+
+    const sourcePath = this.folderPath(openLibrary, oldRelativePath);
+    if (!realDirectoryExists(sourcePath)) {
+      throw new LibraryServiceError('FOLDER_NOT_FOUND', { reason: 'SOURCE_NOT_FOUND' });
+    }
+
+    // Conflicts are judged by portable (case-folded) identity so a case-only
+    // match against a DIFFERENT entry is still a conflict on case-insensitive
+    // volumes; the source directory's own entry is exempt, which is what
+    // makes a pure case-change rename (a -> A) possible.
+    const databaseConflict =
+      openLibrary.connection
+        .prepare('SELECT folder_id FROM managed_folders WHERE path_identity = ? AND folder_id != ?')
+        .get(newIdentity, row.folder_id) ??
+      openLibrary.connection
+        .prepare(
+          `SELECT asset_id FROM assets
+            WHERE path_identity = ? AND location_kind = 'managed' AND deleted_at IS NULL`,
+        )
+        .get(newIdentity);
+    if (databaseConflict) throw new LibraryServiceError('FOLDER_NAME_CONFLICT');
+
+    const parentDirectoryPath = path.dirname(sourcePath);
+    const targetSegmentIdentity = portablePathSegmentIdentity(name);
+    let directoryEntries;
+    try {
+      directoryEntries = readdirSync(parentDirectoryPath, { withFileTypes: true });
+    } catch (error) {
+      throw new LibraryServiceError('LIBRARY_NOT_WRITABLE', { cause: error });
+    }
+    for (const entry of directoryEntries) {
+      if (entry.name === row.name) continue;
+      if (portablePathSegmentIdentity(entry.name) === targetSegmentIdentity) {
+        throw new LibraryServiceError('FOLDER_NAME_CONFLICT');
+      }
+    }
+
+    const destinationPath = path.join(parentDirectoryPath, name);
+    const now = new Date().toISOString();
+    let renamed = false;
+    try {
+      renameSync(sourcePath, destinationPath);
+      renamed = true;
+      openLibrary.connection.transaction(() => {
+        const changed = openLibrary.connection
+          .prepare(
+            `UPDATE managed_folders
+                SET name = ?, relative_path = ?, path_identity = ?
+              WHERE folder_id = ?`,
+          )
+          .run(name, newRelativePath, newIdentity, row.folder_id);
+        if (changed.changes !== 1) {
+          throw new LibraryServiceError('FOLDER_NOT_FOUND', { reason: 'SOURCE_CHANGED' });
+        }
+
+        // Descendants are matched by an exact path prefix via substr (never
+        // LIKE, so folder names containing LIKE wildcards stay literal).
+        // SQLite substr counts characters, not UTF-16 code units, hence the
+        // spread length rather than String.length.
+        const prefixLength = [...oldRelativePath].length + 1;
+        const oldPrefix = `${oldRelativePath}/`;
+        const descendantFolders = openLibrary.connection
+          .prepare(
+            `SELECT folder_id, relative_path FROM managed_folders
+              WHERE substr(relative_path, 1, ?) = ?`,
+          )
+          .all(prefixLength, oldPrefix) as Array<{
+            folder_id: string;
+            relative_path: string;
+          }>;
+        const updateDescendant = openLibrary.connection.prepare(
+          `UPDATE managed_folders
+              SET relative_path = ?, path_identity = ?
+            WHERE folder_id = ?`,
+        );
+        for (const descendant of descendantFolders) {
+          const rewritten = newRelativePath + descendant.relative_path.slice(oldRelativePath.length);
+          updateDescendant.run(rewritten, portablePathIdentity(rewritten), descendant.folder_id);
+        }
+
+        // Every managed asset recorded under the subtree follows the real
+        // directory, regardless of availability or trash state; only live
+        // assets need their search content re-tokenized.
+        const subtreeAssets = openLibrary.connection
+          .prepare(
+            `SELECT asset_id, relative_file_path, deleted_at FROM assets
+              WHERE location_kind = 'managed'
+                AND substr(relative_file_path, 1, ?) = ?`,
+          )
+          .all(prefixLength, oldPrefix) as Array<{
+            asset_id: string;
+            relative_file_path: string;
+            deleted_at: string | null;
+          }>;
+        const updateAsset = openLibrary.connection.prepare(
+          `UPDATE assets
+              SET relative_file_path = ?, path_identity = ?, updated_at = ?
+            WHERE asset_id = ?`,
+        );
+        for (const asset of subtreeAssets) {
+          const rewritten = newRelativePath + asset.relative_file_path.slice(oldRelativePath.length);
+          updateAsset.run(rewritten, portablePathIdentity(rewritten), now, asset.asset_id);
+          if (asset.deleted_at === null) {
+            this.syncAssetSearchContent(openLibrary.connection, asset.asset_id);
+          }
+        }
+      })();
+    } catch (error) {
+      if (renamed) {
+        try {
+          renameSync(destinationPath, sourcePath);
+        } catch (rollbackError) {
+          // The DB transaction did not commit; if the filesystem rollback also
+          // failed the next refresh reconciles the moved directory back into
+          // the library. Never mask the primary failure.
+          this.diagnose('folder.rename.rollback', rollbackError, {
+            libraryId: input.libraryId,
+            folderId: row.folder_id,
+          });
+        }
+      }
+      if (isMissingPathError(error)) {
+        throw new LibraryServiceError('FOLDER_NOT_FOUND', { reason: 'SOURCE_NOT_FOUND', cause: error });
+      }
+      throw serviceError(error, 'LIBRARY_NOT_WRITABLE');
+    }
+
+    return {
+      folderId: row.folder_id,
+      parentFolderId: row.parent_folder_id,
+      name,
+      relativePath: newRelativePath,
+    };
+  }
+
   listManagedFolders(libraryId: string): ManagedFolderSummary[] {
     const openLibrary = this.requireOpenLibrary(libraryId);
     const rows = openLibrary.connection

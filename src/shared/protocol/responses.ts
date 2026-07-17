@@ -281,6 +281,11 @@ const assetOperationSuccessSchemas = [
   }),
   z.strictObject({
     ok: z.literal(true),
+    type: z.literal('folder.renamed'),
+    folder: managedFolderSummarySchema,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
     type: z.literal('folder.list'),
     folders: z.array(managedFolderSummarySchema),
   }),
