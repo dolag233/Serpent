@@ -114,6 +114,9 @@
 | FILTER-006 | 按可用性过滤 | 人类验收不通过 | — | — | [MVP UX 需求池](../implementation/mvp-ui-ux-requirements-backlog.md) | 同上。 |
 | FILTER-007 | 不同过滤字段使用 AND | 人类验收不通过 | — | — | [MVP UX 需求池](../implementation/mvp-ui-ux-requirements-backlog.md) | 查询语义保留，但当前 UI 入口不通过产品验收。 |
 | FILTER-008 | 同一过滤字段多值使用 OR | 人类验收不通过 | — | — | [MVP UX 需求池](../implementation/mvp-ui-ux-requirements-backlog.md) | 查询语义保留，但当前 UI 入口不通过产品验收。 |
+| FILTER-009 | 多标签过滤（可搜索多选） | 待人类验收 | 在「筛选与排序」面板的标签区搜索并点击添加两个以上标签；移除其中一个 | 标签以 chip 展示使用计数并可逐个移除；结果命中任一所选标签（同字段 OR）；不铺开全部标签 | [Wave 2 开发日志](../development/0015-0019-ux-feedback-wave2-development-log.md) | 2026-07-17 Wave 2 T7 实现；Computer Use 未执行，移交人工 QA。 |
+| FILTER-010 | 宽高比预设过滤 | 待人类验收 | 在过滤面板点击「16:9」；再点一次取消；改点「3:4」 | 选中预设后只显示对应横/竖比例的资产（±5% 容差）；再次点击清除；自定义 min/max 仍可用 | [Wave 2 开发日志](../development/0015-0019-ux-feedback-wave2-development-log.md) / [预设单测](../../tests/unit/filter-presets.test.ts) | 2026-07-17 Wave 2 T7 实现；Computer Use 未执行，移交人工 QA。 |
+| FILTER-011 | 分辨率预设过滤 | 待人类验收 | 在过滤面板依次点击「1K」「2K」「4K」观察结果变化；用自定义长边范围验证边界 | 按长边分桶（1K<2240≤2K<3200≤4K）显示对应资产；无尺寸数据的资产不进入正向匹配 | [Wave 2 开发日志](../development/0015-0019-ux-feedback-wave2-development-log.md) / [worker 测试](../../tests/worker/search.test.ts) | 2026-07-17 Wave 2 T7 实现；Computer Use 未执行，移交人工 QA。 |
 | SORT-001 | 按名称排序 | 待人类验收 | 选择名称排序 | 结果按真实文件名稳定排列 | [0005 QA](0005-search-filter-sort-smart-collections-qa-report.md) | — |
 | SORT-002 | 按日期排序 | 待人类验收 | 选择日期排序 | 结果按所示日期稳定排列 | [0005 QA](0005-search-filter-sort-smart-collections-qa-report.md) | — |
 | SORT-003 | 按大小排序 | 待人类验收 | 选择文件大小排序 | 结果按文件大小稳定排列 | [0005 QA](0005-search-filter-sort-smart-collections-qa-report.md) | — |
@@ -199,6 +202,9 @@
 | CANVAS-011 | AI 搜索按钮与加宽搜索框 | 待人类验收 | 查看浏览工具栏 AI 搜索按钮与关键词输入框；输入若干文字 | 按钮图标为星芒样式且文字不溢出按钮；搜索框明显加宽，窄窗时也不挤压其他控件 | [Wave 1 开发日志](../development/0015-0019-ux-feedback-wave1-development-log.md) | 2026-07-17 Wave 1 T1 实现；Computer Use 未执行，移交人工 QA。 |
 | SHELL-007 | 新建资源库直出表单与冗余文案清理 | 待人类验收 | 在未打开资源库的起始页与「创建资源库」界面观察 | 不再出现「01」步骤侧边栏与英文装饰行（如 LOCAL ASSET WORKSPACE / NEW LOCAL LIBRARY / MANAGED ASSETS）；中文界面只有功能性文字 | [Wave 1 开发日志](../development/0015-0019-ux-feedback-wave1-development-log.md) | 2026-07-17 Wave 1 T1/T4 实现；Computer Use 未执行，移交人工 QA。 |
 | SHELL-008 | 通知淡出过渡 | 待人类验收 | 触发一条通知（如复制文件夹路径成功）并等待自动关闭 | 通知消失前有短暂淡出下移过渡，不是瞬间消失 | [Wave 1 开发日志](../development/0015-0019-ux-feedback-wave1-development-log.md) / [状态机单测](../../tests/unit/toast-notifications.test.ts) | 2026-07-17 Wave 1 T1 实现；Computer Use 未执行，移交人工 QA。 |
+| SHELL-009 | 左右侧栏拖拽调宽并持久化 | 待人类验收 | 拖动左侧导航右缘与右侧 Inspector 左缘改变宽度；双击拖拽柄；完全退出 Serpent 后重开 | 两面板宽度随拖动实时变化并有范围限制；双击恢复默认宽度；重启后宽度保持 | [Wave 2 开发日志](../development/0015-0019-ux-feedback-wave2-development-log.md) / [偏好单测](../../tests/unit/shell-preferences.test.ts) | 2026-07-17 Wave 2 T5 实现；Computer Use 未执行，移交人工 QA。 |
+| DND-001 | 拖拽资产到文件夹完成移动 | 待人类验收 | 拖动一项资产（及一个多选）到左侧某个托管文件夹；再拖到当前文件夹；拖到「资源库根目录」 | 目标行悬停有背景高亮；松开后资产移动到目标文件夹并提示移动/跳过数量；拖到当前文件夹提示无需移动 | [Wave 2 开发日志](../development/0015-0019-ux-feedback-wave2-development-log.md) / [拖放单测](../../tests/unit/asset-drag-drop.test.ts) | 2026-07-17 Wave 2 T6 实现；拖到链接文件夹为既有「复制到链接文件夹」行为。Computer Use 未执行，移交人工 QA。 |
+| DND-002 | 拖拽资产到回收站完成删除 | 待人类验收 | 拖动一项资产（及一个多选）到左侧「回收站」 | 回收站行悬停有背景高亮；松开后资产移入回收站并可在回收站看到；链接资产等不适用项会计入跳过提示 | [Wave 2 开发日志](../development/0015-0019-ux-feedback-wave2-development-log.md) / [拖放单测](../../tests/unit/asset-drag-drop.test.ts) | 2026-07-17 Wave 2 T6 实现；Computer Use 未执行，移交人工 QA。 |
 
 ### I. 资源库导入导出
 
