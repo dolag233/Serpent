@@ -51,7 +51,8 @@
 | MENU-014 | 资产右键菜单按语义分组 | 人类验收通过 | 选中资产打开右键菜单，检查“打开/组织/元数据/删除” | 同类操作在同一组，不同组之间有分隔，危险操作独立 | [进度同步](../development/0015-0016-progress-sync.md) / [菜单 E2E](../../tests/e2e/context-menu.test.ts) | 2026-07-17 用户手动验收通过；完整文件操作菜单仍在后续条目。 |
 | COMMAND-001 | 菜单显示已实现命令的快捷键 | 人类验收通过 | 打开单资产菜单，查看外部打开和移入回收站条目 | 显示当前平台快捷键，且按对应快捷键执行同一动作 | [进度同步](../development/0015-0016-progress-sync.md) / [快捷键单测](../../tests/unit/shortcut-matcher.test.ts) | 2026-07-17 用户手动验收通过；完整命令注册表仍未完成。 |
 | I18N-001 | 右键命令菜单随界面语言切换 | 待人类验收 | 打开资源库菜单切到 English；右键资产与侧栏文件夹查看菜单标题；再切回简体中文 | English 下菜单为英文（如 Open with external app / Reveal in Finder）；简体中文下恢复原中文文案；默认仍为简体中文 | [命令单测](../../tests/unit/asset-commands.test.ts) / [多选命令单测](../../tests/unit/asset-multi-commands.test.ts) / [侧栏命令单测](../../tests/unit/sidebar-commands.test.ts) / [i18n 单测](../../tests/unit/i18n-translate.test.ts) / [开发日志](../development/2026-07-18-i18n-foundation-development-log.md) | 2026-07-18 命令注册表 title/disabledReason 已接入 i18n；默认 locale=zh-CN。Computer Use 未执行，移交人工 QA。 |
-| I18N-002 | 壳层语言切换与持久化 | 待人类验收 | 资源库菜单 → 语言 → English；观察后退/前进、资源库菜单项；完全退出后重启 | 壳层相关文案为英文；重启后仍为 English；再切回简体中文恢复 | [i18n 单测](../../tests/unit/i18n-translate.test.ts) / [开发日志](../development/2026-07-18-i18n-foundation-development-log.md) | 2026-07-18 LocaleProvider + localStorage 偏好；Inspector/对话框等仍有硬编码中文。 |
+| I18N-002 | 壳层语言切换与持久化 | 待人类验收 | 资源库菜单 → 语言 → English；观察后退/前进、资源库菜单项；完全退出后重启 | 壳层相关文案为英文；重启后仍为 English；再切回简体中文恢复 | [i18n 单测](../../tests/unit/i18n-translate.test.ts) / [开发日志](../development/2026-07-18-i18n-foundation-development-log.md) | 2026-07-18 LocaleProvider + localStorage 偏好；渲染层主要面已迁入翻译键。Computer Use 未执行。 |
+| I18N-003 | 查看页 / toast / 批量操作随语言切换 | 待人类验收 | 切到 English；打开资产查看页；触发导入完成或复制色卡等通知；执行一项批量提示；再切回简体中文 | English 下查看页按钮与通知为英文；简体中文下恢复；默认仍为简体中文 | [开发日志](../development/2026-07-18-i18n-foundation-development-log.md) / [单元 615](../../tests/unit/) | 2026-07-18 App/AssetPreviewModal/AssetContextMenu/useBatchActions/useAssetRename 已迁入 i18n。English E2E 与 Computer Use 未执行。 |
 
 ### A. 资源库与导入
 
@@ -233,7 +234,7 @@
 - 框选集合运算：Shift 并集、Command 切换与 Command+Shift 范围追加已有实现；差集/对称差不作为当前额外模式，Windows 真实 Ctrl 仍待平台验证。
 - 标签新体验：Inspector chip 已由用户验收，空输入按创建时间提供最近添加且仍在使用的标签；右键菜单批量可搜索选择器 2026-07-17 已实现（自动化全绿，Computer Use 证据未执行，TAG-004/TAG-005 待补证据后重新验收）；左侧标签枚举移除 2026-07-17 第二增量已实现（含 shell-navigation 负向断言），发现工具栏「标签过滤」输入框是进入标签范围的保留入口；标签重命名/删除暂无 UI 入口，待集中澄清队列 #8 裁决；仍未完成的是基于实际使用行为的最近时间和维度式标签过滤器。
 - Label 退役：ADR 0022 与预发布迁移策略已确认；数据库 v14、FTS、AI 和一等协议退役已有自动化与真实应用 QA；`META-001`、`SEARCH-002` 保持撤回，因为产品概念本身已删除。
-- 中英文：i18n 模块与 zh-CN/en 目录已落地（2026-07-18）；壳层语言切换（I18N-002）与命令菜单（I18N-001）待人类验收；对话框/侧栏/Inspector 已迁入翻译键；App.tsx toast/工具栏与查看页等仍有硬编码。默认语言策略仍待澄清队列 #11。亮/暗/跟随系统主题尚未实现。
+- 中英文：i18n 模块与 zh-CN/en 目录已落地（2026-07-18）；渲染层主要 UI（壳层/命令/对话框/侧栏/Inspector/App toast/查看页/批量与重命名）已迁入翻译键；I18N-001–003 待人类验收。默认语言策略仍待澄清队列 #11；English E2E / Computer Use 未执行。亮/暗/跟随系统主题尚未实现。
 - 应用壳与发现工具栏：纯色画布与冗余装饰清理已验收；资源库下拉、可点击面包屑、后退/前进、统一目录树已进入 0016-A 待验收；过滤条和导入迁出常驻工具栏仍待后续。
 - Computer Use：已对当前 0018–0019 集成候选执行真实应用检查；Inspector 等比轻圆角预览和标签选择器截图见 `evidence/0018-0019-ui-correctness/`。工具栏/导航未按 0016-A 收口仍是下一增量。
 - 单项读取失败不阻断整批链接恢复：缺少稳定的人类可制造场景与公共 UI 证据。

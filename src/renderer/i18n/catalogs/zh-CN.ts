@@ -44,7 +44,8 @@ export const zhCN = {
     notLoaded: "未载入",
     closeHint: "关闭提示",
     unavailable: "（不可用：{reason}）",
-    unavailableSuffix: "{label}（不可用：{disabledReason}）"
+    unavailableSuffix: "{label}（不可用：{disabledReason}）",
+    sentenceEnd: "。"
   },
   shell: {
     expandNav: "展开导航",
@@ -296,7 +297,8 @@ export const zhCN = {
     trashSummary: "；回收站处理 {count} 项托管资产",
     copyToExternal: "复制到外部目录：{name}",
     managedUnavailableHint: "此托管资产当前不可用；文件操作将在资产恢复后可用。",
-    removeFromCollectionAction: "从合集移除资产"
+    removeFromCollectionAction: "从合集移除资产",
+    scopeNoteEnd: "。"
   },
   inspector: {
     description: "描述",
@@ -572,7 +574,9 @@ export const zhCN = {
     cannotOpenNoResponse: "无法打开预览：桌面服务没有响应，请重试或重新启动应用。",
     proxyFailed: "无法生成兼容代理",
     retryFailed: "重试失败",
-    retryFailedNoResponse: "重试失败：桌面服务没有响应，请重试或重新启动应用。"
+    retryFailedNoResponse: "重试失败：桌面服务没有响应，请重试或重新启动应用。",
+    requestFailed: "{prefix}：{detail}",
+    requestFailedWithReason: "{prefix}：{detail}（{reason}）"
   },
   empty: {
     folderTitle: "这个文件夹还是空的",
@@ -799,6 +803,17 @@ export const zhCN = {
     opFailedReason: "{action}失败。原因：{detail}",
     unknownError: "发生未知错误，请查看日志了解详细原因。",
     skippedSuffix: "，跳过 {count} 项",
+    conflictSkippedSuffix: "，{count} 项冲突跳过",
+    conflictAssetsSkippedSuffix: "，跳过 {count} 项冲突资产",
+    unavailableSkippedSuffix: "，跳过 {count} 项不可用资产",
+    aiSearchFallbackFound: "，找到 {total} 项",
+    permanentDeleteSkipped: " {count} 项未删除：{reasons}",
+    emptyTrashDone: "已清理 {count} 项到期资产",
+    thumbnailFailedBadge: "缩略图失败",
+    orgCreate: "创建{noun}",
+    orgRename: "重命名{noun}",
+    orgDelete: "删除{noun}",
+    orgRemoveAsset: "从合集移除资产",
     batchAssignTagFailed: "批量添加标签失败。",
     batchRemoveTagFailed: "批量移除标签失败。",
     batchAddToCollection: "已将 {count} 项资产加入合集。",

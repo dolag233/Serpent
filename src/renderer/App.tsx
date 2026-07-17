@@ -28,7 +28,7 @@ import {
   buildScopeBreadcrumbSegments,
 } from "./ScopeBreadcrumbs";
 import { buildManagedFolderBreadcrumbTrail } from "./folder-breadcrumb-trail";
-import { useT, useLocale } from "./i18n";
+import { useT, useLocale, translateForLocale, type AppLocale } from "./i18n";
 import {
   createWorkspaceNavHistory,
   type WorkspaceNavLocation,
@@ -79,12 +79,7 @@ import {
   aspectRatioPresetRange,
   togglePresetRange,
 } from "./filter-presets";
-import {
-  toMessage,
-  LibraryOperationError,
-  PUBLIC_ERROR_MESSAGES_ZH,
-  PUBLIC_ERROR_REASONS_ZH,
-} from "./error-utils";
+import { toMessage, LibraryOperationError } from "./error-utils";
 
 import type {
   AiSearchPlan,
@@ -1017,7 +1012,7 @@ function AppInner() {
 
   const restore = useCallback(async () => {
     if (!api) {
-      setError("无法连接到 Serpent 桌面服务。请重新启动应用。");
+      setError(t("toast.bridgeUnavailable"));
       setUiState("idle");
       return;
     }
@@ -1221,7 +1216,7 @@ function AppInner() {
       }
       setUiState(activeLibrary ? "ready" : "idle");
     } catch (caught) {
-      setError(toMessage(caught, "无法恢复工作区。"));
+      setError(toMessage(caught, t("toast.workspaceRestoreFailed"), locale));
       setUiState(activeLibrary ? "ready" : "idle");
     }
   }, [api, loadContent, selectionAnchorRef, setError]);
@@ -1290,7 +1285,7 @@ function AppInner() {
         if (event.type === "asset.thumbnail.failed") {
           next.set(
             event.assetId,
-            event.reason ?? "缩略图生成失败。请检查源文件后重试。",
+            event.reason ?? t("toast.thumbnailFailed"),
           );
         } else next.delete(event.assetId);
         return next;
@@ -1333,13 +1328,16 @@ function AppInner() {
     const unsubscribeCompleted = api.onAiCompleted((event) => {
       if (event.libraryId !== library.libraryId) return;
       setNotice(
-        `AI 分析完成：写入 ${event.fieldCount} 个字段、${event.tagCount} 个标签。`,
+        t("toast.aiAnalyzeDoneFields", {
+          fieldCount: event.fieldCount,
+          tagCount: event.tagCount,
+        }),
       );
       void reloadCurrentContentRef.current();
     });
     const unsubscribeCleared = api.onAiCleared((event) => {
       if (event.libraryId !== library.libraryId) return;
-      setNotice(`已清除 ${event.affectedAssetCount} 项资产的 AI 内容。`);
+      setNotice(t("toast.aiContentCleared", { count: event.affectedAssetCount }));
       void reloadCurrentContentRef.current();
     });
     return () => {
@@ -1443,7 +1441,7 @@ function AppInner() {
         kind === "create"
           ? api.create({ displayName: dialogValue.trim() })
           : api.open(),
-      "资源库操作失败。",
+      t("toast.libraryOpFailed"),
     );
   }
 
@@ -1452,7 +1450,7 @@ function AppInner() {
     await runLibraryOpenPipeline(
       "opening",
       () => api.openRecent({ path: libraryPath }),
-      "打开最近资源库失败。",
+      t("toast.openRecentFailed"),
     );
   }
 
@@ -1541,7 +1539,7 @@ function AppInner() {
             : { kind: "folder", folderId: scope },
       );
     } catch (caught) {
-      setError(toMessage(caught, "无法读取资产。"));
+      setError(toMessage(caught, t("toast.readAssetsFailed"), locale));
     } finally {
       setUiState("ready");
     }
@@ -1565,7 +1563,7 @@ function AppInner() {
       await loadContent(library, "all", { trashMode: true });
       recordNavigation({ kind: "trash" });
     } catch (caught) {
-      setError(toMessage(caught, "无法读取回收站。"));
+      setError(toMessage(caught, t("toast.readTrashFailed"), locale));
     } finally {
       setUiState("ready");
     }
@@ -1610,7 +1608,7 @@ function AppInner() {
       applySearchResult(result.value);
       recordNavigation({ kind: "tag", tagId });
     } catch (caught) {
-      setError(toMessage(caught, "无法读取标签资产。"));
+      setError(toMessage(caught, t("toast.readTagAssetsFailed"), locale));
     } finally {
       setUiState("ready");
     }
@@ -1626,9 +1624,9 @@ function AppInner() {
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
       await refreshTagAndMetadataState(assetId);
-      setNotice("标签已添加。");
+      setNotice(t("toast.tagAdded"));
     } catch (caught) {
-      setError(toMessage(caught, "添加标签失败。"));
+      setError(toMessage(caught, t("toast.addTagFailed"), locale));
     }
   }
 
@@ -1643,9 +1641,9 @@ function AppInner() {
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
       await refreshTagAndMetadataState(targetAssetId);
-      setNotice("标签已移除。");
+      setNotice(t("toast.tagRemoved"));
     } catch (caught) {
-      setError(toMessage(caught, "移除标签失败。"));
+      setError(toMessage(caught, t("toast.removeTagFailed"), locale));
     }
   }
 
@@ -1665,9 +1663,9 @@ function AppInner() {
       });
       if (!assignResult.ok) throw new LibraryOperationError(assignResult.error);
       await refreshTagAndMetadataState(targetAssetId);
-      setNotice(`已创建并添加标签 "${tagName.trim()}"。`);
+      setNotice(t("toast.tagCreatedAssigned", { name: tagName.trim() }));
     } catch (caught) {
-      setError(toMessage(caught, "创建标签失败。"));
+      setError(toMessage(caught, t("toast.createTagFailed"), locale));
     }
   }
 
@@ -1687,7 +1685,7 @@ function AppInner() {
       if (!createResult.ok) throw new LibraryOperationError(createResult.error);
       await batchAssignTagToSelection(createResult.value.tagId, assetIds);
     } catch (caught) {
-      setError(toMessage(caught, "创建标签失败。"));
+      setError(toMessage(caught, t("toast.createTagFailed"), locale));
     }
   }
 
@@ -1716,7 +1714,7 @@ function AppInner() {
     try {
       await refreshTagAndMetadataState(selectedAssetId);
     } catch (caught) {
-      setError(toMessage(caught, "标签已更新，但刷新显示失败。"));
+      setError(toMessage(caught, t("toast.tagUpdatedRefreshFailed"), locale));
     }
   }
 
@@ -1770,7 +1768,7 @@ function AppInner() {
       setNewCollectionParentId(null);
       await reloadCurrentContent();
     } catch (caught) {
-      setError(toOrganizationMessage(caught, "collection", "创建"));
+      setError(toOrganizationMessage(caught, "collection", "create", locale));
     } finally {
       setUiState("ready");
     }
@@ -1811,9 +1809,9 @@ function AppInner() {
         setCollections(colResult.value);
       }
       setError(null);
-      setNotice("合集已删除。");
+      setNotice(t("toast.collectionDeleted"));
     } catch (caught) {
-      setError(toOrganizationMessage(caught, "collection", "删除"));
+      setError(toOrganizationMessage(caught, "collection", "delete", locale));
     } finally {
       setUiState("ready");
     }
@@ -1845,9 +1843,9 @@ function AppInner() {
       );
       setRenameTarget(null);
       setError(null);
-      setNotice("合集已重命名。");
+      setNotice(t("toast.collectionRenamed"));
     } catch (caught) {
-      setError(toOrganizationMessage(caught, "collection", "重命名"));
+      setError(toOrganizationMessage(caught, "collection", "rename", locale));
     } finally {
       setUiState("ready");
     }
@@ -1880,9 +1878,9 @@ function AppInner() {
         ),
       );
       setCollectionEditor(null);
-      setNotice("合集详情已更新。");
+      setNotice(t("toast.collectionDetailsUpdated"));
     } catch (caught) {
-      setError(toOrganizationMessage(caught, "collection", "重命名"));
+      setError(toOrganizationMessage(caught, "collection", "rename", locale));
     } finally {
       setUiState("ready");
     }
@@ -1898,7 +1896,7 @@ function AppInner() {
     );
     setDraggedCollectionId(null);
     if (!source || !target || source.parentId !== target.parentId) {
-      setError("当前版本仅支持在同一层级内拖拽排序合集。");
+      setError(t("toast.collectionReorderSameLevelOnly"));
       return;
     }
     const siblings = [...(collectionTree.get(source.parentId) ?? [])];
@@ -1925,9 +1923,9 @@ function AppInner() {
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
       setCollections(result.value);
-      setNotice("合集顺序已更新。");
+      setNotice(t("toast.collectionOrderUpdated"));
     } catch (caught) {
-      setError(toMessage(caught, "合集排序失败。"));
+      setError(toMessage(caught, t("toast.collectionReorderFailed"), locale));
     } finally {
       setUiState("ready");
     }
@@ -1949,7 +1947,7 @@ function AppInner() {
       const sourceIndex = orderedIds.indexOf(sourceId);
       const targetIndex = orderedIds.indexOf(targetId);
       if (sourceIndex < 0 || targetIndex < 0)
-        throw new Error("只能对当前合集的直接成员排序。");
+        throw new Error(t("toast.collectionMemberDirectOnly"));
       const [moved] = orderedIds.splice(sourceIndex, 1);
       if (!moved) return;
       orderedIds.splice(targetIndex, 0, moved);
@@ -1973,9 +1971,9 @@ function AppInner() {
         next.splice(currentTargetIndex, 0, currentMoved);
         return next;
       });
-      setNotice("合集成员顺序已更新。");
+      setNotice(t("toast.collectionMemberOrderUpdated"));
     } catch (caught) {
-      setError(toMessage(caught, "合集成员排序失败。"));
+      setError(toMessage(caught, t("toast.collectionMemberReorderFailed"), locale));
     } finally {
       setUiState("ready");
     }
@@ -2026,7 +2024,7 @@ function AppInner() {
         recursive,
       });
     } catch (caught) {
-      setError(toMessage(caught, "无法读取合集内容。"));
+      setError(toMessage(caught, t("toast.readCollectionFailed"), locale));
     } finally {
       setUiState("ready");
     }
@@ -2045,9 +2043,9 @@ function AppInner() {
         libraryId: library.libraryId,
       });
       if (collectionResult.ok) setCollections(collectionResult.value);
-      setNotice("资产已加入合集。");
+      setNotice(t("toast.addedToCollection"));
     } catch (caught) {
-      setError(toMessage(caught, "加入合集失败。"));
+      setError(toMessage(caught, t("toast.addToCollectionFailed"), locale));
     }
   }
 
@@ -2066,9 +2064,7 @@ function AppInner() {
       if (!directMembers.ok)
         throw new LibraryOperationError(directMembers.error);
       if (!directMembers.value.some((asset) => asset.assetId === assetId)) {
-        setError(
-          "无法从当前合集移除：该资产属于子合集，请进入对应子合集后再移除。",
-        );
+        setError(t("toast.removeFromChildCollection"));
         return;
       }
       const result = await api.removeCollectionAssets({
@@ -2098,9 +2094,9 @@ function AppInner() {
       setCollections(collectionResult.value);
       clearAssetSelection();
       setError(null);
-      setNotice("资产已从合集移除。");
+      setNotice(t("toast.removedFromCollection"));
     } catch (caught) {
-      setError(toOrganizationMessage(caught, "collection", "移除资产"));
+      setError(toOrganizationMessage(caught, "collection", "removeAsset", locale));
     } finally {
       setUiState("ready");
     }
@@ -2348,9 +2344,9 @@ function AppInner() {
       setActiveAiSearchDefinition(null);
       setAiSearchPlanSummary(null);
       const result = await executeSearchDefinition(definition, offset);
-      if (result) setNotice(`搜索完成：找到 ${result.total} 项。`);
+      if (result) setNotice(t("toast.searchDone", { total: result.total }));
     } catch (caught) {
-      setError(toMessage(caught, "搜索失败。"));
+      setError(toMessage(caught, t("toast.searchFailed"), locale));
     }
   }
 
@@ -2383,12 +2379,12 @@ function AppInner() {
           : {}),
       };
       setActiveAiSearchDefinition(definition);
-      setAiSearchPlanSummary(describeAiSearchPlan(planned.value.plan));
+      setAiSearchPlanSummary(describeAiSearchPlan(planned.value.plan, locale));
       const result = await executeSearchDefinition(definition, offset);
       if (result)
-        setNotice(`AI 已转换为普通搜索条件：找到 ${result.total} 项。`);
+        setNotice(t("toast.aiSearchDone", { total: result.total }));
     } catch (caught) {
-      const explanation = toMessage(caught, "AI 无法转换这次搜索。");
+      const explanation = toMessage(caught, t("toast.aiSearchFailed"), locale);
       setAiSearchEnabled(false);
       setActiveAiSearchDefinition(null);
       setAiSearchPlanSummary(null);
@@ -2398,11 +2394,19 @@ function AppInner() {
           0,
         );
         setError(
-          `${explanation} 已自动改用普通关键词搜索${fallback ? `，找到 ${fallback.total} 项` : ""}。`,
+          t("toast.aiSearchFallback", {
+            explanation,
+            fallback: fallback
+              ? t("toast.aiSearchFallbackFound", { total: fallback.total })
+              : "",
+          }) + t("common.sentenceEnd"),
         );
       } catch (fallbackError) {
         setError(
-          `${explanation} 普通关键词搜索也失败：${toMessage(fallbackError, "桌面服务没有响应。")}`,
+          t("toast.aiSearchFallbackFailed", {
+            explanation,
+            detail: toMessage(fallbackError, t("toast.desktopNoResponse"), locale),
+          }),
         );
       }
     } finally {
@@ -2489,9 +2493,9 @@ function AppInner() {
       });
       if (listResult.ok) setSmartCollections(listResult.value);
       setSmartCollectionName("");
-      setNotice("智能合集已保存。");
+      setNotice(t("toast.smartCollectionSaved"));
     } catch (caught) {
-      setError(toMessage(caught, "保存智能合集失败。"));
+      setError(toMessage(caught, t("toast.smartCollectionSaveFailed"), locale));
     }
   }
 
@@ -2517,7 +2521,7 @@ function AppInner() {
       }
       applySearchResult(result.value, offset > 0);
     } catch (caught) {
-      setError(toMessage(caught, "执行智能合集失败。"));
+      setError(toMessage(caught, t("toast.smartCollectionRunFailed"), locale));
     }
   }
 
@@ -2556,7 +2560,7 @@ function AppInner() {
         await executeSearchDefinition(activeAiSearchDefinition, offset);
       else await runSearch(undefined, offset);
     } catch (caught) {
-      setError(toMessage(caught, "继续加载资产失败。"));
+      setError(toMessage(caught, t("toast.loadMoreFailed"), locale));
     } finally {
       setLoadingMoreAssets(false);
     }
@@ -2604,9 +2608,9 @@ function AppInner() {
           collection.collectionId === collectionId ? result.value : collection,
         ),
       );
-      setNotice("智能合集已重命名。");
+      setNotice(t("toast.smartCollectionRenamed"));
     } catch (caught) {
-      setError(toMessage(caught, "重命名智能合集失败。"));
+      setError(toMessage(caught, t("toast.smartCollectionRenameFailed"), locale));
     }
   }
 
@@ -2626,9 +2630,9 @@ function AppInner() {
           collection.collectionId === collectionId ? result.value : collection,
         ),
       );
-      setNotice("智能合集条件已更新。");
+      setNotice(t("toast.smartCollectionUpdated"));
     } catch (caught) {
-      setError(toMessage(caught, "更新智能合集失败。"));
+      setError(toMessage(caught, t("toast.smartCollectionUpdateFailed"), locale));
     }
   }
 
@@ -2649,9 +2653,9 @@ function AppInner() {
         setActiveSmartCollectionId(null);
         await loadContent(library, "all");
       }
-      setNotice("智能合集已删除。");
+      setNotice(t("toast.smartCollectionDeleted"));
     } catch (caught) {
-      setError(toMessage(caught, "删除智能合集失败。"));
+      setError(toMessage(caught, t("toast.smartCollectionDeleteFailed"), locale));
     }
   }
 
@@ -2684,7 +2688,7 @@ function AppInner() {
       if (!result.ok) throw new LibraryOperationError(result.error);
       applyLoadedMetadata(targetAssetId, result.value);
     } catch (caught) {
-      setError(toMessage(caught, "无法读取元数据。"));
+      setError(toMessage(caught, t("toast.readMetadataFailed"), locale));
     }
   }
 
@@ -2705,7 +2709,7 @@ function AppInner() {
             throw new LibraryOperationError(result.error);
           }
         } catch (caught) {
-          if (!cancelled) setError(toMessage(caught, "无法读取元数据。"));
+          if (!cancelled) setError(toMessage(caught, t("toast.readMetadataFailed"), locale));
         }
       });
     } else {
@@ -2757,9 +2761,7 @@ function AppInner() {
             if (selectedAssetIdRef.current === targetAssetId) {
               setVersionConflict(true);
             }
-            setNotice(
-              "元数据版本冲突——另一个操作已修改了这些字段。请刷新后重新编辑。",
-            );
+            setNotice(t("toast.metadataVersionConflict"));
             return;
           }
           throw new LibraryOperationError(result.error);
@@ -2779,9 +2781,9 @@ function AppInner() {
         if (selectedAssetIdRef.current === targetAssetId) {
           setAssetMetadata(result.value);
         }
-        setNotice("元数据已保存。");
+        setNotice(t("toast.metadataSaved"));
       } catch (caught) {
-        setError(toMessage(caught, "保存元数据失败。"));
+        setError(toMessage(caught, t("toast.metadataSaveFailed"), locale));
       }
     });
     metadataSaveQueueRef.current = operation;
@@ -2796,10 +2798,10 @@ function AppInner() {
         assetId,
       });
       if (!result.ok) {
-        setError(toMessage(result.error, "无法打开外部应用。"));
+        setError(toMessage(result.error, t("toast.openExternalFailed"), locale));
       }
     } catch (caught) {
-      setError(toMessage(caught, "打开外部应用失败。"));
+      setError(toMessage(caught, t("toast.openExternalError"), locale));
     }
   }, [api, library, setError]);
 
@@ -2811,10 +2813,10 @@ function AppInner() {
         assetId,
       });
       if (!result.ok) {
-        setError(toMessage(result.error, "无法在文件管理器中显示该资产。"));
+        setError(toMessage(result.error, t("toast.revealAssetFailed"), locale));
       }
     } catch (caught) {
-      setError(toMessage(caught, "在文件管理器中显示失败。"));
+      setError(toMessage(caught, t("toast.revealAssetError"), locale));
     }
   }, [api, library, setError]);
 
@@ -2826,12 +2828,12 @@ function AppInner() {
         assetId,
       });
       if (!result.ok) {
-        setError(toMessage(result.error, "无法复制文件路径。"));
+        setError(toMessage(result.error, t("toast.copyPathUnavailable"), locale));
         return;
       }
-      setNotice("文件路径已复制到剪贴板。");
+      setNotice(t("toast.copyPathDone"));
     } catch (caught) {
-      setError(toMessage(caught, "复制文件路径失败。"));
+      setError(toMessage(caught, t("toast.copyPathFailed"), locale));
     }
   }, [api, library, setError, setNotice]);
 
@@ -2845,10 +2847,10 @@ function AppInner() {
         folderId,
       });
       if (!result.ok) {
-        setError(toMessage(result.error, "无法在文件管理器中打开该文件夹。"));
+        setError(toMessage(result.error, t("toast.openFolderFailed"), locale));
       }
     } catch (caught) {
-      setError(toMessage(caught, "在文件管理器中打开文件夹失败。"));
+      setError(toMessage(caught, t("toast.openFolderError"), locale));
     }
   }, [api, library, setError]);
 
@@ -2860,12 +2862,12 @@ function AppInner() {
         folderId,
       });
       if (!result.ok) {
-        setError(toMessage(result.error, "无法复制文件夹路径。"));
+        setError(toMessage(result.error, t("toast.copyFolderPathUnavailable"), locale));
         return;
       }
-      setNotice("文件夹路径已复制到剪贴板。");
+      setNotice(t("toast.copyFolderPathDone"));
     } catch (caught) {
-      setError(toMessage(caught, "复制文件夹路径失败。"));
+      setError(toMessage(caught, t("toast.copyFolderPathFailed"), locale));
     }
   }, [api, library, setError, setNotice]);
 
@@ -2898,9 +2900,9 @@ function AppInner() {
       });
       if (resolution.kind === "reject") {
         if (resolution.reason === "same-folder") {
-          setNotice("资产已在当前文件夹，无需移动。");
+          setNotice(t("toast.alreadyInFolder"));
         } else {
-          setNotice("没有可移动的资产（链接、丢失或回收站资产不参与移动）。");
+          setNotice(t("toast.noMovableAssets"));
         }
         return;
       }
@@ -2916,14 +2918,23 @@ function AppInner() {
           if (!result.ok) throw new LibraryOperationError(result.error);
           setLastMoveOperationId(result.value.operationId);
           setNotice(
-            `已移动 ${result.value.movedCount} 项资产` +
-              `${result.value.skippedCount ? `，${result.value.skippedCount} 项冲突跳过` : ""}` +
-              `${resolution.skippedCount ? `，跳过 ${resolution.skippedCount} 项不可用资产` : ""}。`,
+            t("toast.movedCount", { count: result.value.movedCount }) +
+              (result.value.skippedCount
+                ? t("toast.conflictSkippedSuffix", {
+                    count: result.value.skippedCount,
+                  })
+                : "") +
+              (resolution.skippedCount
+                ? t("toast.unavailableSkippedSuffix", {
+                    count: resolution.skippedCount,
+                  })
+                : "") +
+              t("common.sentenceEnd"),
           );
           clearAssetSelection();
           await reloadCurrentContentRef.current();
         } catch (caught) {
-          setError(toMessage(caught, "移动资产失败。"));
+          setError(toMessage(caught, t("toast.moveFailed"), locale));
         } finally {
           setUiState("ready");
         }
@@ -2939,14 +2950,17 @@ function AppInner() {
         dragAssetFacts(assetIds),
       );
       if (eligible.length === 0) {
-        setNotice("没有可移入回收站的资产（链接资产请从菜单删除）。");
+        setNotice(t("toast.noTrashableAssets"));
         return;
       }
       void (async () => {
         await trashManagedAssets(eligible);
         if (skippedCount > 0) {
           setNotice(
-            `${eligible.length} 项资产已移入回收站，跳过 ${skippedCount} 项不可用资产。`,
+            t("toast.trashedWithSkipped", {
+              count: eligible.length,
+              skipped: skippedCount,
+            }),
           );
         }
       })();
@@ -2980,10 +2994,10 @@ function AppInner() {
         setConflicts(result.value);
         return;
       }
-      setNotice(importSummary(result.value));
+      setNotice(importSummary(result.value, locale));
       await reloadCurrentContent();
     } catch (caught) {
-      setError(toMessage(caught, "导入失败。"));
+      setError(toMessage(caught, t("toast.importFailed"), locale));
     } finally {
       setUiState("ready");
     }
@@ -3008,7 +3022,7 @@ function AppInner() {
       setConflicts(result.value);
       return;
     }
-    setNotice(importSummary(result.value));
+    setNotice(importSummary(result.value, locale));
     await reloadCurrentContent();
   }
 
@@ -3033,7 +3047,7 @@ function AppInner() {
       });
       await applyDesktopImportResult(result);
     } catch (caught) {
-      setError(toMessage(caught, "拖放导入失败。"));
+      setError(toMessage(caught, t("toast.dropImportFailed"), locale));
     } finally {
       setUiState("ready");
       setExternalDropActive(false);
@@ -3061,11 +3075,11 @@ function AppInner() {
       if ("importId" in result.value) {
         setConflicts(result.value);
       } else {
-        setNotice(importSummary(result.value));
+        setNotice(importSummary(result.value, locale));
         await reloadCurrentContentRef.current();
       }
     } catch (caught) {
-      setError(toMessage(caught, "从剪贴板导入失败。"));
+      setError(toMessage(caught, t("toast.clipboardImportFailed"), locale));
     } finally {
       setUiState("ready");
     }
@@ -3160,10 +3174,10 @@ function AppInner() {
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
       setConflicts(null);
-      setNotice(importSummary(result.value));
+      setNotice(importSummary(result.value, locale));
       await reloadCurrentContent();
     } catch (caught) {
-      setError(toMessage(caught, "无法继续导入。"));
+      setError(toMessage(caught, t("toast.continueImportFailed"), locale));
     } finally {
       setUiState("ready");
     }
@@ -3177,7 +3191,7 @@ function AppInner() {
       const result = await api.abandonImport({ importId: plan.importId });
       if (!result.ok) throw new LibraryOperationError(result.error);
     } catch (caught) {
-      setError(toMessage(caught, "无法取消待处理导入。"));
+      setError(toMessage(caught, t("toast.cancelPendingImportFailed"), locale));
     }
   }
 
@@ -3190,11 +3204,11 @@ function AppInner() {
       await reloadCurrentContent();
       setNotice(
         result.value.changedCount
-          ? `已同步 ${result.value.changedCount} 项外部变化。`
-          : "磁盘内容已是最新状态。",
+          ? t("toast.diskSynced", { count: result.value.changedCount })
+          : t("toast.diskUpToDate"),
       );
     } catch (caught) {
-      setError(toMessage(caught, "刷新失败。"));
+      setError(toMessage(caught, t("toast.refreshFailed"), locale));
     } finally {
       setUiState("ready");
     }
@@ -3214,10 +3228,10 @@ function AppInner() {
         if (result.error.code === "CANCELLED") return;
         throw new LibraryOperationError(result.error);
       }
-      setNotice(`已链接文件夹"${result.value.displayName}"。`);
+      setNotice(t("toast.linkedFolderCreated", { name: result.value.displayName }));
       await reloadCurrentContent();
     } catch (caught) {
-      setError(toMessage(caught, "链接文件夹失败。"));
+      setError(toMessage(caught, t("toast.linkFolderFailed"), locale));
     } finally {
       setUiState("ready");
     }
@@ -3235,10 +3249,10 @@ function AppInner() {
         if (result.error.code === "CANCELLED") return;
         throw new LibraryOperationError(result.error);
       }
-      setNotice(`已重新定位链接文件夹"${result.value.displayName}"。`);
+      setNotice(t("toast.linkedFolderRelocated", { name: result.value.displayName }));
       await reloadCurrentContent();
     } catch (caught) {
-      setError(toMessage(caught, "重新定位失败。"));
+      setError(toMessage(caught, t("toast.relocateFailed"), locale));
     } finally {
       setUiState("ready");
     }
@@ -3258,7 +3272,7 @@ function AppInner() {
         rules: result.value,
       });
     } catch (caught) {
-      setError(toMessage(caught, "无法读取链接文件夹过滤规则。"));
+      setError(toMessage(caught, t("toast.readLinkedRulesFailed"), locale));
     }
   }
 
@@ -3273,12 +3287,15 @@ function AppInner() {
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
       setNotice(
-        `过滤规则已保存：隐藏 ${result.value.hiddenCount} 项，恢复 ${result.value.restoredCount} 项。`,
+        t("toast.linkedRulesSaved", {
+          hidden: result.value.hiddenCount,
+          restored: result.value.restoredCount,
+        }),
       );
       setLinkedRulesEditor(null);
       await reloadCurrentContent();
     } catch (caught) {
-      setError(toMessage(caught, "保存过滤规则失败。"));
+      setError(toMessage(caught, t("toast.saveLinkedRulesFailed"), locale));
     } finally {
       setUiState("ready");
     }
@@ -3289,7 +3306,7 @@ function AppInner() {
     const dialogState = convertLinkedDialog;
     if (
       !confirm(
-        `将"${dialogState.name}"复制进资源库并移除链接关系？外部源目录不会被删除。`,
+        t("toast.convertLinkedConfirm", { name: dialogState.name }),
       )
     )
       return;
@@ -3303,11 +3320,11 @@ function AppInner() {
       if (!result.ok) throw new LibraryOperationError(result.error);
       setConvertLinkedDialog({ folderId: "", name: "", targetFolderId: "" });
       setNotice(
-        `已转换 ${result.value.convertedCount} 项；外部源目录保持不变。`,
+        t("toast.convertLinkedDone", { count: result.value.convertedCount }),
       );
       await reloadCurrentContent();
     } catch (caught) {
-      setError(toMessage(caught, "转换链接文件夹失败。"));
+      setError(toMessage(caught, t("toast.convertLinkedFailed"), locale));
     } finally {
       setUiState("ready");
     }
@@ -3345,7 +3362,7 @@ function AppInner() {
       api?.setActiveContext(null);
       await refreshRecentLibraries(null);
     } catch (caught) {
-      setError(toMessage(caught, "关闭失败。"));
+      setError(toMessage(caught, t("toast.closeFailed"), locale));
     } finally {
       setUiState(closed ? "idle" : "ready");
     }
@@ -3370,12 +3387,16 @@ function AppInner() {
       if (!result.ok) throw new LibraryOperationError(result.error);
       const skippedCount = assetIds.length - result.value.restoredCount;
       setNotice(
-        `已恢复 ${result.value.restoredCount} 项资产${skippedCount ? `，跳过 ${skippedCount} 项冲突资产` : ""}。`,
+        t("toast.restoredCount", { count: result.value.restoredCount }) +
+          (skippedCount
+            ? t("toast.conflictAssetsSkippedSuffix", { count: skippedCount })
+            : "") +
+          t("common.sentenceEnd"),
       );
       clearAssetSelection();
       await loadContent(library, "all", { trashMode: true });
     } catch (caught) {
-      setError(toMessage(caught, "恢复失败。"));
+      setError(toMessage(caught, t("toast.restoreFailed"), locale));
     } finally {
       setUiState("ready");
     }
@@ -3396,12 +3417,16 @@ function AppInner() {
       if (!result.ok) throw new LibraryOperationError(result.error);
       setLastMoveOperationId(result.value.operationId);
       setNotice(
-        `已移动 ${result.value.movedCount} 项资产${result.value.skippedCount ? `，跳过 ${result.value.skippedCount} 项` : ""}。`,
+        t("toast.movedCountDetail", { count: result.value.movedCount }) +
+          (result.value.skippedCount
+            ? t("toast.skippedSuffix", { count: result.value.skippedCount })
+            : "") +
+          t("common.sentenceEnd"),
       );
       clearAssetSelection();
       await reloadCurrentContent();
     } catch (caught) {
-      setError(toMessage(caught, "移动资产失败。"));
+      setError(toMessage(caught, t("toast.moveFailed"), locale));
     } finally {
       setUiState("ready");
     }
@@ -3431,11 +3456,17 @@ function AppInner() {
       }
       setLastMoveOperationId(null);
       setNotice(
-        `已撤销移动 ${result.value.undoneCount} 项资产${result.value.skippedCount ? `，跳过 ${result.value.skippedCount} 项冲突资产` : ""}。`,
+        t("toast.undoMoveDone", { count: result.value.undoneCount }) +
+          (result.value.skippedCount
+            ? t("toast.conflictAssetsSkippedSuffix", {
+                count: result.value.skippedCount,
+              })
+            : "") +
+          t("common.sentenceEnd"),
       );
       await reloadCurrentContent();
     } catch (caught) {
-      setError(toMessage(caught, "撤销移动失败。"));
+      setError(toMessage(caught, t("toast.undoMoveFailed"), locale));
     } finally {
       setUiState("ready");
     }
@@ -3452,23 +3483,30 @@ function AppInner() {
         assetIds,
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
-      let msg = `已永久删除 ${result.value.deletedCount} 项。`;
+      let msg = t("toast.permanentDeleted", {
+        count: result.value.deletedCount,
+      });
       if (result.value.skippedCount > 0) {
         const skippedNames = new Map(
           trashedAssets.map((asset) => [asset.assetId, asset.displayName]),
         );
-        msg += ` ${result.value.skippedCount} 项未删除：${result.value.skippedReasons
-          .map(
-            ({ assetId, reason }) =>
-              `${skippedNames.get(assetId) ?? "所选资产"}（${PUBLIC_ERROR_REASONS_ZH[reason]}）`,
-          )
-          .join("；")}`;
+        msg += t("toast.permanentDeleteSkipped", {
+          count: result.value.skippedCount,
+          reasons: result.value.skippedReasons
+            .map(({ assetId, reason }) =>
+              t("toast.permanentDeleteItem", {
+                name: skippedNames.get(assetId) ?? t("toast.selectedAsset"),
+                reason: translateForLocale(locale, `error.reason.${reason}`),
+              }),
+            )
+            .join("；"),
+        });
       }
       setNotice(msg);
       clearAssetSelection();
       await loadContent(library, "all", { trashMode: true });
     } catch (caught) {
-      setError(toMessage(caught, "永久删除失败。"));
+      setError(toMessage(caught, t("toast.permanentDeleteFailed"), locale));
     } finally {
       setUiState("ready");
     }
@@ -3482,17 +3520,24 @@ function AppInner() {
       if (!result.ok) throw new LibraryOperationError(result.error);
       const failureReasons = [
         ...new Set(
-          result.value.failures.map(({ reason }) => PUBLIC_ERROR_REASONS_ZH[reason]),
+          result.value.failures.map(({ reason }) =>
+            translateForLocale(locale, `error.reason.${reason}`),
+          ),
         ),
       ];
       setNotice(
-        `已清理 ${result.value.purgedCount} 项到期资产${result.value.skippedCount > 0
-          ? `，${result.value.skippedCount} 项未清理：${failureReasons.join("；")}`
-          : ""}。`,
+        t("toast.emptyTrashDone", { count: result.value.purgedCount }) +
+          (result.value.skippedCount > 0
+            ? t("toast.emptyTrashSkipped", {
+                count: result.value.skippedCount,
+                reasons: failureReasons.join("；"),
+              })
+            : "") +
+          t("common.sentenceEnd"),
       );
       await loadContent(library, "all", { trashMode: true });
     } catch (caught) {
-      setError(toMessage(caught, "清空回收站失败。"));
+      setError(toMessage(caught, t("toast.emptyTrashFailed"), locale));
     } finally {
       setUiState("ready");
     }
@@ -3516,34 +3561,45 @@ function AppInner() {
       if (result.value.failedCount > 0) {
         const reasons = [
           ...new Set(
-            result.value.failures.map(
-              ({ reason }) => PUBLIC_ERROR_REASONS_ZH[reason],
+            result.value.failures.map(({ reason }) =>
+              translateForLocale(locale, `error.reason.${reason}`),
             ),
           ),
         ];
-        outcomeError = `删除链接资产未全部完成：已删除 ${result.value.deletedCount} 项，另有 ${result.value.failedCount} 项保留。原因：${reasons.join("；")}`;
+        outcomeError = t("toast.deleteLinkedPartial", {
+          deleted: result.value.deletedCount,
+          failed: result.value.failedCount,
+          reasons: reasons.join("；"),
+        });
         setError(outcomeError);
       } else {
         setError(null);
         setNotice(
           deleteSourceFile
-            ? `已将 ${result.value.deletedCount} 个源文件移入系统回收站，并移除链接资产记录。`
-            : `已移除 ${result.value.deletedCount} 项链接资产记录，磁盘源文件保持不变。`,
+            ? t("toast.deleteLinkedWithTrash", {
+                count: result.value.deletedCount,
+              })
+            : t("toast.deleteLinkedRecordOnly", {
+                count: result.value.deletedCount,
+              }),
         );
       }
       if (result.value.deletedCount > 0) clearAssetSelection();
       try {
         await reloadCurrentContent();
       } catch (refreshError) {
-        const refreshReason = toMessage(refreshError, "请手动刷新资产列表。");
+        const refreshReason = toMessage(refreshError, t("toast.refreshListManually"), locale);
         setError(
           outcomeError
-            ? `${outcomeError} 另外，界面刷新失败：${refreshReason}`
-            : `删除已完成，但界面刷新失败：${refreshReason}`,
+            ? t("toast.deleteOutcomeRefreshFailed", {
+                outcome: outcomeError,
+                reason: refreshReason,
+              })
+            : t("toast.deleteDoneRefreshFailed", { reason: refreshReason }),
         );
       }
     } catch (caught) {
-      setError(toMessage(caught, "删除链接资产失败。"));
+      setError(toMessage(caught, t("toast.deleteLinkedFailed"), locale));
     } finally {
       setUiState("ready");
     }
@@ -3563,10 +3619,10 @@ function AppInner() {
         if (result.error.code === "CANCELLED") return;
         throw new LibraryOperationError(result.error);
       }
-      setNotice("资产已成功找回。");
+      setNotice(t("toast.relinkSuccess"));
       await reloadCurrentContent();
     } catch (caught) {
-      setError(toMessage(caught, "找回资产失败。"));
+      setError(toMessage(caught, t("toast.relinkFailed"), locale));
     } finally {
       setUiState("ready");
     }
@@ -3586,7 +3642,7 @@ function AppInner() {
       }
       setBatchRelinkPreview(result.value);
     } catch (caught) {
-      setError(toMessage(caught, "批量重新定位预览失败。"));
+      setError(toMessage(caught, t("toast.batchRelinkPreviewFailed"), locale));
     } finally {
       setUiState("ready");
     }
@@ -3604,12 +3660,15 @@ function AppInner() {
       if (!result.ok) throw new LibraryOperationError(result.error);
       setBatchRelinkPreview(null);
       setNotice(
-        `批量重新定位完成：恢复 ${result.value.restoredCount} 项，${result.value.unchangedMissingCount} 项仍丢失。`,
+        t("toast.batchRelinkDone", {
+          restored: result.value.restoredCount,
+          missing: result.value.unchangedMissingCount,
+        }),
       );
       await reloadCurrentContent();
     } catch (caught) {
       setBatchRelinkPreview(null);
-      setError(toMessage(caught, "批量重新定位失败。"));
+      setError(toMessage(caught, t("toast.batchRelinkFailed"), locale));
     } finally {
       setUiState("ready");
     }
@@ -3628,7 +3687,7 @@ function AppInner() {
         throw new LibraryOperationError(result.error);
       }
     } catch (caught) {
-      setError(toMessage(caught, "取消批量重新定位失败。"));
+      setError(toMessage(caught, t("toast.cancelBatchRelinkFailed"), locale));
     }
   }, [api, batchRelinkPreview, library, setError]);
 
@@ -3655,13 +3714,13 @@ function AppInner() {
       });
       if (!result.ok) {
         if (result.error.code === "CANCELLED") {
-          setNotice("导出已取消。");
+          setNotice(t("toast.exportCancelled"));
         } else {
           throw new LibraryOperationError(result.error);
         }
       }
     } catch (caught) {
-      setError(toMessage(caught, "导出失败。"));
+      setError(toMessage(caught, t("toast.exportFailed"), locale));
     } finally {
       setTimeout(() => {
         setExportProgress((prev) => {
@@ -3680,9 +3739,9 @@ function AppInner() {
         exportId: exportProgress.exportId,
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
-      setNotice("正在取消导出并清理本次导出内容…");
+      setNotice(t("toast.cancellingExport"));
     } catch (caught) {
-      setError(toMessage(caught, "无法取消导出。"));
+      setError(toMessage(caught, t("toast.cancelExportFailed"), locale));
     }
   }
 
@@ -3693,9 +3752,9 @@ function AppInner() {
         importId: importProgress.importId,
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
-      setNotice("正在取消导入并清理本次导入内容…");
+      setNotice(t("toast.cancellingImport"));
     } catch (caught) {
-      setError(toMessage(caught, "无法取消导入。"));
+      setError(toMessage(caught, t("toast.cancelImportFailed"), locale));
     }
   }
 
@@ -3722,7 +3781,7 @@ function AppInner() {
       setImportValidated(result.value);
       setImportProgress(null);
     } catch (caught) {
-      setError(toMessage(caught, "导入验证失败。"));
+      setError(toMessage(caught, t("toast.importValidateFailed"), locale));
       setImportProgress(null);
     }
   }
@@ -3743,14 +3802,14 @@ function AppInner() {
       if (!result.ok) {
         if (result.error.code === "CANCELLED") {
           setImportProgress(null);
-          setNotice("导入已取消。");
+          setNotice(t("toast.importCancelled"));
           return;
         }
         throw new LibraryOperationError(result.error);
       }
       setImportProgress(null);
     } catch (caught) {
-      setError(toMessage(caught, "ZIP 导入失败。"));
+      setError(toMessage(caught, t("toast.zipImportFailed"), locale));
       setImportProgress(null);
     }
   }
@@ -3772,14 +3831,14 @@ function AppInner() {
       });
       if (!result.ok) {
         if (result.error.code === "CANCELLED") {
-          setNotice("导入已取消。");
+          setNotice(t("toast.importCancelled"));
         } else {
           throw new LibraryOperationError(result.error);
         }
       }
       setImportValidated(null);
     } catch (caught) {
-      setError(toMessage(caught, "导入失败。"));
+      setError(toMessage(caught, t("toast.importFailed"), locale));
       setImportProgress(null);
     }
   }
@@ -3801,14 +3860,14 @@ function AppInner() {
       });
       if (!result.ok) {
         if (result.error.code === "CANCELLED") {
-          setNotice("导入已取消。");
+          setNotice(t("toast.importCancelled"));
         } else {
           throw new LibraryOperationError(result.error);
         }
       }
       setImportValidated(null);
     } catch (caught) {
-      setError(toMessage(caught, "导入失败。"));
+      setError(toMessage(caught, t("toast.importFailed"), locale));
       setImportProgress(null);
     }
   }
@@ -3833,11 +3892,16 @@ function AppInner() {
             }
           }
           const missing = event.missingCount
-            ? `，其中 ${event.missingCount} 项丢失`
+            ? t("toast.diskSyncedMissing", { count: event.missingCount })
             : "";
-          setNotice(`已自动同步 ${event.changedCount} 项磁盘变化${missing}。`);
+          setNotice(
+            t("toast.diskSyncedAuto", {
+              count: event.changedCount,
+              missing,
+            }),
+          );
         } catch (caught) {
-          setError(toMessage(caught, "磁盘内容已变化，但界面刷新失败。"));
+          setError(toMessage(caught, t("toast.diskChangedRefreshFailed"), locale));
         }
       });
     });
@@ -3850,7 +3914,10 @@ function AppInner() {
         setExportProgress(event);
         if (event.phase === "complete") {
           setNotice(
-            `导出完成：${event.totalFiles} 文件，${formatBytes(event.totalBytes)}。`,
+            t("toast.exportComplete", {
+              files: event.totalFiles,
+              bytes: formatBytes(event.totalBytes),
+            }),
           );
         }
       } else if (event.type === "import.progress") {
@@ -3943,7 +4010,7 @@ function AppInner() {
           const result = await api.abandonImport({ importId });
           if (!result.ok) throw new LibraryOperationError(result.error);
         } catch (caught) {
-          setError(toMessage(caught, "无法取消待处理导入。"));
+          setError(toMessage(caught, t("toast.cancelPendingImportFailed"), locale));
         }
       });
     };
@@ -4203,11 +4270,11 @@ function AppInner() {
       .map((value) => value.trim())
       .filter(Boolean);
     if (values.length > 20) {
-      setError("保存色卡失败。原因：人工色卡最多包含 20 个颜色值。");
+      setError(t("toast.paletteTooMany"));
       return;
     }
     if (values.some((value) => !/^#[0-9A-Fa-f]{6}$/u.test(value))) {
-      setError("保存色卡失败。原因：颜色必须使用 #RRGGBB 格式。");
+      setError(t("toast.paletteBadFormat"));
       return;
     }
     const current = parseStoredPalette(assetMetadata.palette);
@@ -4277,7 +4344,7 @@ function AppInner() {
         ),
       );
     } catch (caught) {
-      setError(toMessage(caught, "批量设置评分失败。"));
+      setError(toMessage(caught, t("toast.batchRatingFailed"), locale));
     }
   }
 
@@ -4308,9 +4375,7 @@ function AppInner() {
           throw new Error("invalid source URL");
         }
       } catch {
-        setError(
-          "保存源链接失败。原因：请输入不含账号密码的 HTTP(S) 完整链接。",
-        );
+        setError(t("toast.sourceUrlSaveFailed"));
         return;
       }
     }
@@ -4324,7 +4389,7 @@ function AppInner() {
     const shellBridge = (window as RendererWindow).serpent?.shell;
     if (!url || !shellBridge) return;
     void shellBridge.openExternalUrl(url).then((opened) => {
-      if (!opened) setError("无法打开源链接：仅支持有效的 HTTP(S) 链接。");
+      if (!opened) setError(t("toast.sourceUrlOpenFailed"));
     });
   }
 
@@ -4335,7 +4400,7 @@ function AppInner() {
     setExtensionPairingToken("");
     setExtensionPairingError(null);
     if (!extensionPairingApi) {
-      setExtensionPairingError("当前桌面桥接不支持浏览器扩展配对。");
+      setExtensionPairingError(t("toast.extensionPairingUnsupported"));
       return;
     }
     const result = await extensionPairingApi.getToken();
@@ -4345,13 +4410,13 @@ function AppInner() {
 
   async function rotateExtensionPairing() {
     if (!extensionPairingApi) return;
-    if (!confirm("轮换后，浏览器扩展中保存的旧配对码会立即失效。确定继续吗？"))
+    if (!confirm(t("toast.extensionRotateConfirm")))
       return;
     const result = await extensionPairingApi.rotateToken();
     if (result.ok) {
       setExtensionPairingToken(result.token);
       setExtensionPairingError(null);
-      setNotice("浏览器扩展配对码已轮换，请在扩展选项中更新。");
+      setNotice(t("toast.extensionRotated"));
     } else {
       setExtensionPairingError(result.message);
     }
@@ -4361,9 +4426,9 @@ function AppInner() {
     if (!extensionPairingToken) return;
     try {
       await navigator.clipboard.writeText(extensionPairingToken);
-      setNotice("浏览器扩展配对码已复制。");
+      setNotice(t("toast.extensionCopied"));
     } catch {
-      setExtensionPairingError("复制失败，请手动选择配对码。");
+      setExtensionPairingError(t("toast.extensionCopyFailed"));
     }
   }
 
@@ -4400,13 +4465,13 @@ function AppInner() {
       disclaimerAccepted: aiDisclaimerAccepted,
     });
     if (!result.ok) {
-      setError(toMessage(result.error, "AI 配置保存失败。"));
+      setError(toMessage(result.error, t("toast.aiConfigSaveFailed"), locale));
       return;
     }
     setAiHasKey(aiHasKey || Boolean(aiApiKey.trim()));
     setAiApiKey("");
     setAiConfigOpen(false);
-    setNotice("AI 配置已保存。");
+    setNotice(t("toast.aiConfigSaved"));
   }
 
   async function handleAnalyzeClick(assetId = selectedAssetId) {
@@ -4419,11 +4484,11 @@ function AppInner() {
         assetId,
       });
       if (!result.ok) {
-        setError(toMessage(result.error, "AI 分析失败。"));
+        setError(toMessage(result.error, t("toast.aiAnalyzeFailed"), locale));
         return;
       }
       if ("reason" in result.value) {
-        setNotice(`AI 分析暂不可用：${result.value.reason}`);
+        setNotice(t("toast.aiAnalyzeUnavailable", { reason: result.value.reason }));
         return;
       }
       setAiContent({
@@ -4433,7 +4498,7 @@ function AppInner() {
         structuredMetadata: result.value.generatedFields.structuredMetadata,
         modelVersion: result.value.modelVersion,
       });
-      setNotice("AI 分析完成。");
+      setNotice(t("toast.aiAnalyzeDone"));
       await refreshTagAndMetadataState(assetId);
     } finally {
       setAiAnalyzing(false);
@@ -4446,12 +4511,12 @@ function AppInner() {
     try {
       const result = await api.listMediaJobs({ libraryId: library.libraryId });
       if (!result.ok) {
-        if (!quiet) setError(toMessage(result.error, "后台媒体任务加载失败。"));
+        if (!quiet) setError(toMessage(result.error, t("toast.mediaJobsLoadFailed"), locale));
         return;
       }
       setMediaJobs(result.value);
     } catch {
-      if (!quiet) setError("后台媒体任务加载失败：桌面服务没有响应。");
+      if (!quiet) setError(t("toast.mediaJobsLoadNoResponse"));
     } finally {
       if (!quiet) setMediaJobsLoading(false);
     }
@@ -4463,12 +4528,12 @@ function AppInner() {
     try {
       const result = await api.getAiJobStatus({ libraryId: library.libraryId });
       if (!result.ok) {
-        if (!quiet) setError(toMessage(result.error, "AI 任务加载失败。"));
+        if (!quiet) setError(toMessage(result.error, t("toast.aiJobsLoadFailed"), locale));
         return;
       }
       setAiJobs(result.value);
     } catch {
-      if (!quiet) setError("AI 任务加载失败：桌面服务没有响应。");
+      if (!quiet) setError(t("toast.aiJobsLoadNoResponse"));
     } finally {
       if (!quiet) setMediaJobsLoading(false);
     }
@@ -4527,12 +4592,12 @@ function AppInner() {
                   jobIds: jobIds ?? [],
                 });
       if (!result.ok) {
-        setError(toMessage(result.error, "后台媒体任务操作失败。"));
+        setError(toMessage(result.error, t("toast.mediaJobsOpFailed"), locale));
         return;
       }
       await loadMediaJobs(true);
     } catch {
-      setError("后台媒体任务操作失败：桌面服务没有响应。");
+      setError(t("toast.mediaJobsOpNoResponse"));
     }
   }
 
@@ -4554,12 +4619,12 @@ function AppInner() {
                   jobIds: jobIds ?? [],
                 });
       if (!result.ok) {
-        setError(toMessage(result.error, "AI 任务操作失败。"));
+        setError(toMessage(result.error, t("toast.aiJobsOpFailed"), locale));
         return;
       }
       await loadAiJobs(true);
     } catch {
-      setError("AI 任务操作失败：桌面服务没有响应。");
+      setError(t("toast.aiJobsOpNoResponse"));
     }
   }
 
@@ -5485,13 +5550,13 @@ function AppInner() {
                         {thumbnailFailures.has(asset.assetId) && (
                           <span className="missing-banner">
                             <Icon name="warning" size={12} />
-                            缩略图失败
+                            {t("toast.thumbnailFailedBadge")}
                           </span>
                         )}
                         {asset.availability === "missing" && (
                           <span className="missing-banner">
                             <Icon name="warning" size={12} />
-                            文件丢失
+                            {t("inspector.missing")}
                           </span>
                         )}
                         {asset.deletedAt && (
@@ -5505,9 +5570,11 @@ function AppInner() {
                             }}
                           >
                             <Icon name="trash" size={12} />
-                            回收站
+                            {t("inspector.trashed")}
                             {asset.remainingDays !== null &&
-                              ` · ${asset.remainingDays}天`}
+                              t("scope.remainingDays", {
+                                days: asset.remainingDays,
+                              })}
                           </span>
                         )}
                         {asset.mediaType === "video" &&
@@ -5558,7 +5625,7 @@ function AppInner() {
                                 canvasPrefs.fields.date &&
                                 " · "}
                               {canvasPrefs.fields.date &&
-                                formatDate(asset.modifiedAt)}
+                                formatDate(asset.modifiedAt, locale, t("common.unknownTime"))}
                             </span>
                           ) : null}
                         </div>
@@ -5735,9 +5802,9 @@ function AppInner() {
         onOpenSourceUrl={handleOpenSourceUrl}
         onPaletteColorCopy={(color, copied) => {
           if (copied) {
-            setNotice(`已复制颜色 ${color}`);
+            setNotice(t("toast.colorCopiedAlt", { color }));
           } else {
-            setError("复制颜色失败：剪贴板不可用。");
+            setError(t("toast.colorCopyUnavailable"));
           }
         }}
         onRemoveTagFromAsset={(tagId) => void handleInspectorRemoveTag(tagId)}
@@ -6162,8 +6229,13 @@ export function App() {
   );
 }
 
-function organizationNoun(kind: OrganizationKind) {
-  return kind === "collection" ? "合集" : "智能合集";
+function organizationNoun(kind: OrganizationKind, locale: AppLocale) {
+  return translateForLocale(
+    locale,
+    kind === "collection"
+      ? "dialog.rename.nounCollection"
+      : "dialog.rename.nounSmartCollection",
+  );
 }
 function parseStoredPalette(value: string | null): string[] {
   if (!value) return [];
@@ -6262,18 +6334,28 @@ export function aiSearchPlanToDefinition(plan: AiSearchPlan): SearchDefinition {
     ...(plan.sort ? { sort: plan.sort } : {}),
   };
 }
-function describeAiSearchPlan(plan: AiSearchPlan): string {
+function describeAiSearchPlan(plan: AiSearchPlan, locale: AppLocale): string {
   const parts = [
     plan.keywords.length + plan.synonyms.length > 0
-      ? `${plan.keywords.length + plan.synonyms.length} 个词`
+      ? translateForLocale(locale, "aiPlan.terms", {
+          count: plan.keywords.length + plan.synonyms.length,
+        })
       : undefined,
     plan.exclusions.length > 0
-      ? `排除 ${plan.exclusions.length} 项`
+      ? translateForLocale(locale, "aiPlan.exclusions", {
+          count: plan.exclusions.length,
+        })
       : undefined,
-    plan.filters.length > 0 ? `${plan.filters.length} 个筛选` : undefined,
-    plan.sort ? "含排序" : undefined,
+    plan.filters.length > 0
+      ? translateForLocale(locale, "aiPlan.filters", {
+          count: plan.filters.length,
+        })
+      : undefined,
+    plan.sort ? translateForLocale(locale, "aiPlan.withSort") : undefined,
   ].filter((part): part is string => Boolean(part));
-  return `AI 计划：${parts.join(" · ")}`;
+  return translateForLocale(locale, "aiPlan.summary", {
+    parts: parts.join(" · "),
+  });
 }
 function extension(name: string) {
   const value = name.split(".").pop();
@@ -6285,11 +6367,11 @@ function formatBytes(bytes: number) {
   if (bytes < 1024 ** 3) return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
   return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
 }
-function formatDate(value: string) {
+function formatDate(value: string, locale: AppLocale, unknownLabel: string) {
   const date = new Date(value);
   return Number.isNaN(date.valueOf())
-    ? "未知时间"
-    : new Intl.DateTimeFormat("zh-CN", {
+    ? unknownLabel
+    : new Intl.DateTimeFormat(locale, {
         month: "2-digit",
         day: "2-digit",
       }).format(date);
@@ -6350,12 +6432,30 @@ function highlightSnippet(value: string): ReactNode {
     );
   });
 }
-function importSummary(value: {
-  importedCount: number;
-  skippedCount: number;
-  replacedCount: number;
-}) {
-  return `导入完成：新增 ${value.importedCount} 项${value.replacedCount ? `，替换 ${value.replacedCount} 项` : ""}${value.skippedCount ? `，跳过 ${value.skippedCount} 项` : ""}。`;
+function importSummary(
+  value: {
+    importedCount: number;
+    skippedCount: number;
+    replacedCount: number;
+  },
+  locale: AppLocale,
+) {
+  return (
+    translateForLocale(locale, "toast.importComplete", {
+      imported: value.importedCount,
+      replaced: value.replacedCount
+        ? translateForLocale(locale, "toast.importReplaced", {
+            count: value.replacedCount,
+          })
+        : "",
+    }) +
+    (value.skippedCount
+      ? translateForLocale(locale, "toast.skippedSuffix", {
+          count: value.skippedCount,
+        })
+      : "") +
+    translateForLocale(locale, "common.sentenceEnd")
+  );
 }
 export function supportsExternalImportTypes(types: readonly string[]): boolean {
   return (
@@ -6387,41 +6487,67 @@ function externalImportPayload(transfer: DataTransfer): {
     uriList: read("text/uri-list"),
   };
 }
+type OrganizationOperation = "create" | "rename" | "delete" | "removeAsset";
+
+function organizationAction(
+  kind: OrganizationKind,
+  operation: OrganizationOperation,
+  locale: AppLocale,
+) {
+  const noun = organizationNoun(kind, locale);
+  switch (operation) {
+    case "create":
+      return translateForLocale(locale, "toast.orgCreate", { noun });
+    case "rename":
+      return translateForLocale(locale, "toast.orgRename", { noun });
+    case "delete":
+      return translateForLocale(locale, "toast.orgDelete", { noun });
+    case "removeAsset":
+      return translateForLocale(locale, "toast.orgRemoveAsset");
+  }
+}
+
 function toOrganizationMessage(
   error: unknown,
   kind: OrganizationKind,
-  operation: "创建" | "重命名" | "删除" | "移除资产",
+  operation: OrganizationOperation,
+  locale: AppLocale,
 ) {
-  const noun = organizationNoun(kind);
-  const action =
-    operation === "移除资产" ? "从合集移除资产" : `${operation}${noun}`;
+  const noun = organizationNoun(kind, locale);
+  const action = organizationAction(kind, operation, locale);
   if (error instanceof LibraryOperationError) {
     const reason = error.reason
-      ? PUBLIC_ERROR_REASONS_ZH[error.reason]
+      ? translateForLocale(locale, `error.reason.${error.reason}`)
       : undefined;
     const detail = (() => {
       switch (error.code) {
         case "INVALID_FOLDER_NAME":
-          return `${noun}名称为空，或名称不受当前平台支持。`;
+          return translateForLocale(locale, "toast.nameEmpty", { noun });
         case "FOLDER_ALREADY_EXISTS":
-          return `资源库中已存在同名${noun}。`;
+          return translateForLocale(locale, "toast.nameConflict", { noun });
         case "FOLDER_NOT_FOUND":
-          return `目标${noun}已不存在，请刷新后重试。`;
+          return translateForLocale(locale, "toast.targetGone", { noun });
         case "ASSET_NOT_FOUND":
-          return "目标资产已不存在，请刷新后重试。";
-        default:
-          return (
-            reason ??
-            PUBLIC_ERROR_MESSAGES_ZH[error.code] ??
-            "Serpent 无法完成这项操作，请查看日志了解详细原因。"
-          );
+          return translateForLocale(locale, "toast.assetGone");
+        default: {
+          if (reason) return reason;
+          const codeKey = `error.code.${error.code}`;
+          const codeMsg = translateForLocale(locale, codeKey);
+          return codeMsg !== codeKey
+            ? codeMsg
+            : translateForLocale(locale, "toast.opFailedSeeLog");
+        }
       }
     })();
-    return `${action}失败。原因：${detail}${reason && detail !== reason ? ` ${reason}` : ""}`;
+    const message = translateForLocale(locale, "toast.opFailedReason", {
+      action,
+      detail,
+    });
+    return reason && detail !== reason ? `${message} ${reason}` : message;
   }
   const detail =
     error instanceof Error && error.message
       ? error.message
-      : "发生未知错误，请查看日志了解详细原因。";
-  return `${action}失败。原因：${detail}`;
+      : translateForLocale(locale, "toast.unknownError");
+  return translateForLocale(locale, "toast.opFailedReason", { action, detail });
 }

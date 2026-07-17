@@ -3,7 +3,7 @@ import type { SerpentLibraryApi } from "../shared/library-api";
 import type { RendererLibrarySummary } from "../shared/protocol/responses";
 import { LibraryOperationError, toMessage } from "./error-utils";
 import { formatBatchTagNotice } from "./batch-tag-notice";
-import { useLocale } from "./i18n";
+import { translateForLocale, useLocale } from "./i18n";
 
 export interface UseBatchActionsParams {
   api: SerpentLibraryApi | null;
@@ -68,7 +68,13 @@ export function useBatchActions({
         ),
       );
     } catch (caught) {
-      setError(toMessage(caught, "批量添加标签失败。", locale));
+      setError(
+        toMessage(
+          caught,
+          translateForLocale(locale, "toast.batchAssignTagFailed"),
+          locale,
+        ),
+      );
     } finally {
       setUiState("ready");
     }
@@ -98,7 +104,13 @@ export function useBatchActions({
         ),
       );
     } catch (caught) {
-      setError(toMessage(caught, "批量移除标签失败。", locale));
+      setError(
+        toMessage(
+          caught,
+          translateForLocale(locale, "toast.batchRemoveTagFailed"),
+          locale,
+        ),
+      );
     } finally {
       setUiState("ready");
     }
@@ -118,9 +130,19 @@ export function useBatchActions({
         libraryId: library.libraryId,
       });
       if (collectionResult.ok) setCollections(collectionResult.value);
-      setNotice(`已将 ${assetIds.length} 项资产加入合集。`);
+      setNotice(
+        translateForLocale(locale, "toast.batchAddToCollection", {
+          count: assetIds.length,
+        }),
+      );
     } catch (caught) {
-      setError(toMessage(caught, "批量加入合集失败。"));
+      setError(
+        toMessage(
+          caught,
+          translateForLocale(locale, "toast.batchAddToCollectionFailed"),
+          locale,
+        ),
+      );
     } finally {
       setUiState("ready");
     }
@@ -144,9 +166,7 @@ export function useBatchActions({
         directMemberIds.has(assetId),
       );
       if (affectedAssetIds.length === 0) {
-        setError(
-          "无需从目标合集移除：所选资产都不是该合集的直接成员。",
-        );
+        setError(translateForLocale(locale, "toast.batchRemoveNotDirect"));
         return;
       }
       const result = await api.removeCollectionAssets({
@@ -164,11 +184,22 @@ export function useBatchActions({
       const skippedCount = assetIds.length - affectedAssetIds.length;
       setNotice(
         skippedCount > 0
-          ? `已将 ${affectedAssetIds.length} 项直接成员移出合集；${skippedCount} 项不是该合集的直接成员，未改动。`
-          : `已将 ${affectedAssetIds.length} 项资产移出合集。`,
+          ? translateForLocale(locale, "toast.batchRemovePartial", {
+              count: affectedAssetIds.length,
+              skipped: skippedCount,
+            })
+          : translateForLocale(locale, "toast.batchRemoveDone", {
+              count: affectedAssetIds.length,
+            }),
       );
     } catch (caught) {
-      setError(toMessage(caught, "批量移出合集失败。"));
+      setError(
+        toMessage(
+          caught,
+          translateForLocale(locale, "toast.batchRemoveFailed"),
+          locale,
+        ),
+      );
     } finally {
       setUiState("ready");
     }
@@ -183,11 +214,21 @@ export function useBatchActions({
         assetIds,
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
-      setNotice(`${result.value.trashedCount} 项资产已移入回收站。`);
+      setNotice(
+        translateForLocale(locale, "toast.batchTrashed", {
+          count: result.value.trashedCount,
+        }),
+      );
       clearAssetSelection();
       await reloadCurrentContent();
     } catch (caught) {
-      setError(toMessage(caught, "删除失败。"));
+      setError(
+        toMessage(
+          caught,
+          translateForLocale(locale, "toast.batchDeleteFailed"),
+          locale,
+        ),
+      );
     } finally {
       setUiState("ready");
     }
@@ -200,7 +241,10 @@ export function useBatchActions({
     if (!api || !library || assetIds.length === 0) return;
     if (
       !confirm(
-        `将 ${assetIds.length} 项托管资产复制到外部目录"${folder.displayName}"？源托管文件不会移动。`,
+        translateForLocale(locale, "toast.copyToExternalConfirm", {
+          count: assetIds.length,
+          name: folder.displayName,
+        }),
       )
     )
       return;
@@ -214,11 +258,20 @@ export function useBatchActions({
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
       setNotice(
-        `已复制 ${result.value.copiedCount} 项到链接文件夹，跳过 ${result.value.skippedCount} 项。`,
+        translateForLocale(locale, "toast.copyToExternalDone", {
+          count: result.value.copiedCount,
+          skipped: result.value.skippedCount,
+        }),
       );
       await reloadCurrentContent();
     } catch (caught) {
-      setError(toMessage(caught, "复制到链接文件夹失败。"));
+      setError(
+        toMessage(
+          caught,
+          translateForLocale(locale, "toast.copyToExternalFailed"),
+          locale,
+        ),
+      );
     } finally {
       setUiState("ready");
     }

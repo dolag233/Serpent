@@ -4,6 +4,14 @@ import type { AssetSummary } from "../shared/asset-types";
 import type { SerpentLibraryApi } from "../shared/library-api";
 import type { RendererLibrarySummary } from "../shared/protocol/responses";
 import { PUBLIC_ERROR_MESSAGES_ZH, toMessage } from "./error-utils";
+import {
+  catalogs,
+  DEFAULT_LOCALE,
+  lookupMessage,
+  translateForLocale,
+  useLocale,
+  type AppLocale,
+} from "./i18n";
 
 /**
  * REQ-MENU-002: state machine for the single-asset "重命名…" dialog.
@@ -43,10 +51,6 @@ export interface UseAssetRenameResult {
   submitAssetRename: () => Promise<void>;
 }
 
-const INVALID_NAME_MESSAGE =
-  PUBLIC_ERROR_MESSAGES_ZH.INVALID_ASSET_FILE_NAME ??
-  "请输入可跨平台安全使用的文件名。";
-
 // These rules mirror the worker's normalizeAssetFileBaseName (library-rules.ts)
 // and its combined base+extension byte check. Client-side validation is a UX
 // fast-path only: the IPC boundary would otherwise flatten the same violations
@@ -69,17 +73,22 @@ function utf8ByteLength(value: string): number {
 export function assetFileBaseNameError(
   baseName: string,
   extension: string,
+  locale: AppLocale = DEFAULT_LOCALE,
 ): string | null {
-  if (baseName.length === 0) return INVALID_NAME_MESSAGE;
-  if (PATH_SEPARATOR.test(baseName)) return INVALID_NAME_MESSAGE;
-  if (WINDOWS_FORBIDDEN_CHARACTER.test(baseName)) return INVALID_NAME_MESSAGE;
-  if (CONTROL_CHARACTER.test(baseName)) return INVALID_NAME_MESSAGE;
-  if (baseName === "." || baseName === "..") return INVALID_NAME_MESSAGE;
-  if (/[. ]$/u.test(baseName)) return INVALID_NAME_MESSAGE;
-  if (WINDOWS_DEVICE_NAME.test(baseName)) return INVALID_NAME_MESSAGE;
+  const invalidNameMessage = translateForLocale(
+    locale,
+    "error.code.INVALID_ASSET_FILE_NAME",
+  );
+  if (baseName.length === 0) return invalidNameMessage;
+  if (PATH_SEPARATOR.test(baseName)) return invalidNameMessage;
+  if (WINDOWS_FORBIDDEN_CHARACTER.test(baseName)) return invalidNameMessage;
+  if (CONTROL_CHARACTER.test(baseName)) return invalidNameMessage;
+  if (baseName === "." || baseName === "..") return invalidNameMessage;
+  if (/[. ]$/u.test(baseName)) return invalidNameMessage;
+  if (WINDOWS_DEVICE_NAME.test(baseName)) return invalidNameMessage;
   // The filesystem limit applies to the whole component, extension included.
   if (utf8ByteLength(`${baseName}${extension}`) > 255)
-    return INVALID_NAME_MESSAGE;
+    return invalidNameMessage;
   return null;
 }
 
@@ -110,6 +119,7 @@ export function useAssetRename({
   setSelectedAssetId,
   setSelectedAssetIds,
 }: UseAssetRenameParams): UseAssetRenameResult {
+  const { locale } = useLocale();
   const [assetRenameDialog, setAssetRenameDialog] =
     useState<AssetRenameDialogState | null>(null);
 
@@ -150,7 +160,11 @@ export function useAssetRename({
     // First-line validation: protocol-schema violations (separators, control
     // characters) never produce a typed error from the worker, so they must be
     // caught here to show the friendly invalid-name reason inline.
-    const validationError = assetFileBaseNameError(newBaseName, extension);
+    const validationError = assetFileBaseNameError(
+      newBaseName,
+      extension,
+      locale,
+    );
     if (validationError) {
       setAssetRenameDialog((current) =>
         current ? { ...current, error: validationError } : current,
@@ -160,6 +174,7 @@ export function useAssetRename({
     setAssetRenameDialog((current) =>
       current ? { ...current, submitting: true, error: null } : current,
     );
+    const failedFallback = translateForLocale(locale, "assetRename.failed");
     try {
       const result = await api.renameAssetFile({
         libraryId: library.libraryId,
@@ -170,9 +185,11 @@ export function useAssetRename({
         // Typed failures (invalid name, name conflict, asset no longer
         // renameable) surface inline so the user can fix the name and retry;
         // the dialog deliberately stays open.
+        const codeMessage =
+          lookupMessage(catalogs[locale], `error.code.${result.error.code}`) ??
+          PUBLIC_ERROR_MESSAGES_ZH[result.error.code];
         const message =
-          PUBLIC_ERROR_MESSAGES_ZH[result.error.code] ??
-          toMessage(result.error, "重命名文件失败。");
+          codeMessage ?? toMessage(result.error, failedFallback, locale);
         setAssetRenameDialog((current) =>
           current && current.assetId === assetId
             ? { ...current, submitting: false, error: message }
@@ -181,7 +198,11 @@ export function useAssetRename({
         return;
       }
       setAssetRenameDialog(null);
-      setNotice(`文件已重命名为"${result.value.displayName}"。`);
+      setNotice(
+        translateForLocale(locale, "assetRename.success", {
+          name: result.value.displayName,
+        }),
+      );
       await reloadCurrentContent();
       // The rename keeps the asset id, so re-assert selection after refresh.
       setSelectedAssetIds([assetId]);
@@ -192,7 +213,7 @@ export function useAssetRename({
           ? {
               ...current,
               submitting: false,
-              error: toMessage(caught, "重命名文件失败。"),
+              error: toMessage(caught, failedFallback, locale),
             }
           : current,
       );
@@ -201,6 +222,7 @@ export function useAssetRename({
     api,
     library,
     assetRenameDialog,
+    locale,
     reloadCurrentContent,
     setNotice,
     setSelectedAssetId,

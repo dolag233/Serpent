@@ -108,7 +108,7 @@ interface AssetContextMenuProps {
 }
 
 export function AssetContextMenu(props: AssetContextMenuProps) {
-  const { locale } = useLocale();
+  const { locale, t } = useLocale();
   const {
     tags,
     collections,
@@ -169,14 +169,24 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
 
   const ariaLabel =
     activeContextMenu.descriptor.type === "multi-asset"
-      ? `批量资产操作：${activeContextMenu.descriptor.assetIds.length} 项`
+      ? t("menu.batchAssetOps", {
+          count: activeContextMenu.descriptor.assetIds.length,
+        })
       : activeContextMenu.descriptor.type === "asset"
-        ? `资产操作：${activeContextMenu.descriptor.displayName}`
+        ? t("menu.assetOps", {
+            name: activeContextMenu.descriptor.displayName,
+          })
         : activeContextMenu.descriptor.type === "organization"
-          ? `合集操作：${activeContextMenu.descriptor.name}`
+          ? t("menu.collectionOps", {
+              name: activeContextMenu.descriptor.name,
+            })
           : activeContextMenu.descriptor.type === "folder"
-            ? `文件夹操作：${activeContextMenu.descriptor.name}`
-            : `智能合集操作：${activeContextMenu.descriptor.name}`;
+            ? t("menu.folderOps", {
+                name: activeContextMenu.descriptor.name,
+              })
+            : t("menu.smartCollectionOps", {
+                name: activeContextMenu.descriptor.name,
+              });
 
   return (
     <ContextMenuBackdrop>
@@ -184,8 +194,8 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
         ariaLabel={
           tagPicker
             ? tagPicker.mode === "assign"
-              ? "添加标签"
-              : "移除标签"
+              ? t("batch.assignTag")
+              : t("batch.removeTag")
             : ariaLabel
         }
         position={activeContextMenu.position}
@@ -195,7 +205,9 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
             mode={tagPicker.mode}
             onBack={() => {
               const entryLabel =
-                tagPicker.mode === "assign" ? "添加标签…" : "移除标签…";
+                tagPicker.mode === "assign"
+                  ? t("command.asset.addTags")
+                  : t("command.asset.removeTags");
               setTagPicker(null);
               // The menu's initial-focus effect does not re-run when the body
               // swaps back; return keyboard focus to the entry that opened
@@ -432,7 +444,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
           const copyPathItem = resolvedById.get("folder.copy-path");
           return (
             <>
-              <ContextMenuSection label="打开">
+              <ContextMenuSection label={t("command.group.open")}>
                 {openInFileManagerItem && (
                   <ContextMenuItem
                     icon={<Icon name="folder" size={14} />}
@@ -447,7 +459,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                   />
                 )}
               </ContextMenuSection>
-              <ContextMenuSection label="文件夹">
+              <ContextMenuSection label={t("command.group.folders")}>
                 {createSubfolderItem && (
                   <ContextMenuItem
                     icon={<Icon name="folder" size={14} />}
@@ -514,23 +526,26 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
             const allTrashed =
               targetAssets.length > 0 &&
               targetAssets.every((asset) => Boolean(asset.deletedAt));
+            const skipJoin = t("batch.skipJoin");
             const moveSkipReasons = [
               linkedCount > 0
-                ? `${linkedCount} 项链接资产不由资源库管理`
+                ? t("menu.skipLinked", { count: linkedCount })
                 : null,
               unavailableManagedCount > 0
-                ? `${unavailableManagedCount} 项托管资产当前不可用`
+                ? t("menu.skipUnavailableManaged", {
+                    count: unavailableManagedCount,
+                  })
                 : null,
               unresolvedCount > 0
-                ? `${unresolvedCount} 项资产已不在当前范围`
+                ? t("menu.skipUnresolved", { count: unresolvedCount })
                 : null,
             ].filter((reason): reason is string => reason !== null);
             const trashSkipReasons = [
               linkedCount > 0
-                ? `${linkedCount} 项链接资产不由资源库管理`
+                ? t("menu.skipLinked", { count: linkedCount })
                 : null,
               unresolvedCount > 0
-                ? `${unresolvedCount} 项资产已不在当前范围`
+                ? t("menu.skipUnresolved", { count: unresolvedCount })
                 : null,
             ].filter((reason): reason is string => reason !== null);
 
@@ -590,10 +605,10 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
             return (
               <>
                 <div className="context-menu-selection-summary">
-                  已选择 {targetAssetIds.length} 项
+                  {t("common.selectedCount", { count: targetAssetIds.length })}
                 </div>
                 {allTrashed ? (
-                  <ContextMenuSection label="回收站操作">
+                  <ContextMenuSection label={t("command.group.trashActions")}>
                     {restoreItem && (
                       <ContextMenuItem
                         icon={<Icon name="upload" size={14} />}
@@ -616,20 +631,26 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                   <>
                 {(moveSkipReasons.length > 0 || trashSkipReasons.length > 0) && (
                   <div className="context-menu-scope-note" role="note">
-                    移动/复制处理 {availableManagedAssetIds.length} 项可用托管资产
+                    {t("menu.moveCopySummary", {
+                      count: availableManagedAssetIds.length,
+                    })}
                     {moveSkipReasons.length > 0
-                      ? `，跳过${moveSkipReasons.join("、")}`
+                      ? t("menu.skipPrefix", {
+                          reasons: moveSkipReasons.join(skipJoin),
+                        })
                       : ""}
-                    ；回收站处理 {managedAssetIds.length} 项托管资产
+                    {t("menu.trashSummary", { count: managedAssetIds.length })}
                     {trashSkipReasons.length > 0
-                      ? `，跳过${trashSkipReasons.join("、")}`
+                      ? t("menu.skipPrefix", {
+                          reasons: trashSkipReasons.join(skipJoin),
+                        })
                       : ""}
-                    。
+                    {t("menu.scopeNoteEnd")}
                   </div>
                 )}
-            <ContextMenuSection label="组织">
+            <ContextMenuSection label={t("command.group.organize")}>
             {tags.length > 0 && assignTagItem && removeTagItem && (
-              <ContextMenuSection label="批量标签">
+              <ContextMenuSection label={t("command.group.batchTags")}>
                 <TagPickerEntry
                   icon={<Icon name="tag" size={14} />}
                   label={assignTagItem.label}
@@ -643,12 +664,14 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
               </ContextMenuSection>
             )}
             {collections.length > 0 && (
-              <ContextMenuSection label="批量合集">
+              <ContextMenuSection label={t("command.group.batchCollections")}>
                 {collections.map((collection) => (
                   <Fragment key={`batch-col-${collection.collectionId}`}>
                     <ContextMenuItem
                       icon={<Icon name="collection" size={14} />}
-                      label={`加入合集：${collection.name}`}
+                      label={t("command.collection.addTo", {
+                        name: collection.name,
+                      })}
                       onAction={() => {
                         onBatchAddToCollection(
                           collection.collectionId,
@@ -658,7 +681,9 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                     />
                     <ContextMenuItem
                       icon={<Icon name="close" size={14} />}
-                      label={`移出合集：${collection.name}`}
+                      label={t("command.collection.removeFrom", {
+                        name: collection.name,
+                      })}
                       onAction={() => {
                         onBatchRemoveFromCollection(
                           collection.collectionId,
@@ -685,9 +710,11 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                   <ContextMenuItem
                     key={`batch-link-${folder.folderId}`}
                     icon={<Icon name="link" size={14} />}
-                    label={`复制到外部目录：${folder.displayName}`}
+                    label={t("menu.copyToExternal", {
+                      name: folder.displayName,
+                    })}
                     disabled={availableManagedAssetIds.length === 0}
-                    disabledReason="所选资产中没有可复制的托管资产"
+                    disabledReason={t("command.reason.noCopyableManaged")}
                     onAction={() =>
                       onCopyToLinked(
                         folder,
@@ -697,7 +724,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                   />
                 ))}
             </ContextMenuSection>
-            <ContextMenuSection label="删除">
+            <ContextMenuSection label={t("command.group.delete")}>
               {moveToTrashItem && (
                 <ContextMenuItem
                   icon={<Icon name="trash" size={14} />}
@@ -795,10 +822,10 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
             return (
               <>
                 <div className="context-menu-selection-summary">
-                  已选择 1 项
+                  {t("common.selectedCount", { count: 1 })}
                 </div>
                 {isDeleted ? (
-                  <ContextMenuSection label="回收站操作">
+                  <ContextMenuSection label={t("command.group.trashActions")}>
                     {restoreItem && (
                       <ContextMenuItem
                         icon={<Icon name="upload" size={14} />}
@@ -821,10 +848,10 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                   <>
                 {singleManaged && !isAvailable && (
                   <div className="context-menu-scope-note" role="note">
-                    此托管资产当前不可用；文件操作将在资产恢复后可用。
+                    {t("menu.managedUnavailableHint")}
                   </div>
                 )}
-                <ContextMenuSection label="打开">
+                <ContextMenuSection label={t("command.group.open")}>
                   {openExternalItem && (
                     <ContextMenuItem
                       icon={<Icon name="upload" size={14} />}
@@ -851,7 +878,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                     />
                   )}
                 </ContextMenuSection>
-                <ContextMenuSection label="组织">
+                <ContextMenuSection label={t("command.group.organize")}>
                   {removeFromCurrentCollectionItem && (
                     <ContextMenuItem
                       icon={<Icon name="close" size={14} />}
@@ -901,9 +928,11 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                       <ContextMenuItem
                         key={`single-link-${folder.folderId}`}
                         icon={<Icon name="link" size={14} />}
-                        label={`复制到外部目录：${folder.displayName}`}
+                        label={t("menu.copyToExternal", {
+                          name: folder.displayName,
+                        })}
                         disabled={!singleManaged || !isAvailable}
-                        disabledReason="资产不可复制到外部目录"
+                        disabledReason={t("command.reason.cannotCopyExternal")}
                         onAction={() =>
                           onCopyToLinked(folder, [assetId])
                         }
@@ -913,7 +942,9 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                     <ContextMenuItem
                       key={`remove-collection-${collection.collectionId}`}
                       icon={<Icon name="close" size={14} />}
-                      label={`移出合集：${collection.name}`}
+                      label={t("command.collection.removeFrom", {
+                        name: collection.name,
+                      })}
                       onAction={() => {
                         onRemoveFromCollection(assetId, collection.collectionId);
                       }}
@@ -922,7 +953,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                   {tags.length > 0 && (
                     <TagPickerEntry
                       icon={<Icon name="tag" size={14} />}
-                      label="添加标签…"
+                      label={t("command.asset.addTags")}
                       onOpen={() =>
                         setTagPicker({
                           mode: "assign",
@@ -936,14 +967,16 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                     <ContextMenuItem
                       key={`collection-${collection.collectionId}`}
                       icon={<Icon name="collection" size={14} />}
-                      label={`加入合集：${collection.name}`}
+                      label={t("command.collection.addTo", {
+                        name: collection.name,
+                      })}
                       onAction={() => {
                         onAddToCollection(assetId, collection.collectionId);
                       }}
                     />
                   ))}
                 </ContextMenuSection>
-                <ContextMenuSection label="元数据">
+                <ContextMenuSection label={t("command.group.metadata")}>
                   {aiAnalyzeItem && (
                     <ContextMenuItem
                       icon={<Icon name="smart" size={14} />}
@@ -954,7 +987,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                     />
                   )}
                 </ContextMenuSection>
-                <ContextMenuSection label="删除">
+                <ContextMenuSection label={t("command.group.delete")}>
                   {moveToTrashItem && (
                     <ContextMenuItem
                       icon={<Icon name="trash" size={14} />}

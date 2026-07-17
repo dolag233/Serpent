@@ -53,7 +53,8 @@ export const en = {
     notLoaded: "Not loaded",
     closeHint: "Dismiss",
     unavailable: " (unavailable: {reason})",
-    unavailableSuffix: "{label} (unavailable: {disabledReason})"
+    unavailableSuffix: "{label} (unavailable: {disabledReason})",
+    sentenceEnd: "."
   },
   shell: {
     expandNav: "Expand navigation",
@@ -305,7 +306,8 @@ export const en = {
     trashSummary: "; Trash applies to {count} managed assets",
     copyToExternal: "Copy to external folder: {name}",
     managedUnavailableHint: "This managed asset is unavailable; file actions will be enabled after it is restored.",
-    removeFromCollectionAction: "Remove asset from collection"
+    removeFromCollectionAction: "Remove asset from collection",
+    scopeNoteEnd: "."
   },
   inspector: {
     description: "Description",
@@ -581,7 +583,9 @@ export const en = {
     cannotOpenNoResponse: "Could not open preview: desktop service did not respond. Retry or restart the app.",
     proxyFailed: "Could not generate a compatible proxy",
     retryFailed: "Retry failed",
-    retryFailedNoResponse: "Retry failed: desktop service did not respond. Retry or restart the app."
+    retryFailedNoResponse: "Retry failed: desktop service did not respond. Retry or restart the app.",
+    requestFailed: "{prefix}: {detail}",
+    requestFailedWithReason: "{prefix}: {detail} ({reason})"
   },
   empty: {
     folderTitle: "This folder is empty",
@@ -808,6 +812,17 @@ export const en = {
     opFailedReason: "{action} failed. Reason: {detail}",
     unknownError: "An unknown error occurred. Check the logs for details.",
     skippedSuffix: ", skipped {count}",
+    conflictSkippedSuffix: ", {count} conflicts skipped",
+    conflictAssetsSkippedSuffix: ", skipped {count} conflicting assets",
+    unavailableSkippedSuffix: ", skipped {count} unavailable assets",
+    aiSearchFallbackFound: ", found {total}",
+    permanentDeleteSkipped: " {count} not deleted: {reasons}",
+    emptyTrashDone: "Cleaned {count} expired assets",
+    thumbnailFailedBadge: "Thumbnail failed",
+    orgCreate: "Create {noun}",
+    orgRename: "Rename {noun}",
+    orgDelete: "Delete {noun}",
+    orgRemoveAsset: "Remove asset from collection",
     batchAssignTagFailed: "Batch add tags failed.",
     batchRemoveTagFailed: "Batch remove tags failed.",
     batchAddToCollection: "Added {count} assets to the collection.",

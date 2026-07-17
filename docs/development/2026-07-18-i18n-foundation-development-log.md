@@ -3,7 +3,7 @@
 > 工单：`Serpent-9cg`（REQ-I18N-001）
 > 分支：`codex/slice-002-asset-ingestion`
 > 日期：2026-07-18
-> 状态：部分实现（基础设施 + 壳层 + 命令注册表）；其余 UI 文案仍硬编码，后续增量继续迁入 catalogs。
+> 状态：渲染层主要 UI 文案已迁入 catalogs；默认语言策略仍待澄清队列 #11；English E2E 与 Computer Use 未执行。
 
 ## 范围
 
@@ -21,9 +21,16 @@
 
 - 对话框面全部迁入 i18n：Create/Rename/Import/Export/Move/Restore/UndoMove/Conflicts/ConvertLinked/CollectionEditor/LinkedRules/MediaJobs/ExtensionPairing/AiConfig/PermanentDelete/DeleteLinked/RelinkPreview。
 - NavigationSidebar、InspectorPanel、FilterTagPicker、TagPickerMenu、batch-tag-notice、error-utils、trashed-from-label、inline-folder-edit 用户文案迁入。
-- 仍硬编码：`App.tsx`（大量 toast/工具栏）、`AssetPreviewModal`、`AssetContextMenu` 内联块、`useBatchActions` 等。
+- 当时仍硬编码：`App.tsx` toast/工具栏、`AssetPreviewModal`、`AssetContextMenu`、`useBatchActions`（见第三增量）。
 - 验证：typecheck / lint 通过；i18n 相关单测通过。
 
+## 第三增量（2026-07-18 loop tick 2）
+
+- `App.tsx` toast / 工具栏 / 画布徽章 / 磁盘同步与导出通知迁入翻译键。
+- `AssetPreviewModal`、`AssetContextMenu`、`context-menu`、`useAssetRename`、`useBatchActions` 用户可见文案迁入。
+- catalogs 增补对应 toast / viewer / rename / batch 键；渲染层除注释与 `DEFAULT_NEW_FOLDER_NAME`（zh-CN 回退，调用方已传 `t('folderEdit.newFolder')`）外无剩余硬编码中文 UI 串。
+- 验证：`npm run typecheck` 通过；`npm run test:unit` → **53 files / 615 tests passed**。
+- 未做：English 路径 E2E、Computer Use、澄清队列 #11 默认语言策略、关闭 `Serpent-9cg`。
 
 ## 人类验收（待条目）
 
@@ -31,3 +38,4 @@
 | --- | --- | --- |
 | I18N-001 | 打开资源库菜单 → 语言 → English | 壳层按钮/面包屑/历史与右键命令标题变为英文；重启后保持 |
 | I18N-002 | 切回简体中文 | 文案恢复中文；E2E 默认路径不受影响 |
+| I18N-003 | English 下打开查看页、触发 toast、批量操作提示 | 查看页/通知/批量提示为英文；切回简体中文恢复 |

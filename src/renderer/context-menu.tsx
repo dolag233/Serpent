@@ -11,6 +11,7 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from "react";
+import { useT } from "./i18n";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -321,6 +322,7 @@ export function ContextMenuItem({
   onAction: () => void;
 }) {
   const { close } = useContextMenu();
+  const t = useT();
   const buttonRef = useRef<HTMLButtonElement>(null);
 
   const handleClick = () => {
@@ -343,7 +345,7 @@ export function ContextMenuItem({
       aria-disabled={disabled || undefined}
       aria-label={
         disabled && disabledReason
-          ? `${label}（不可用：${disabledReason}）`
+          ? t("common.unavailableSuffix", { label, disabledReason })
           : label
       }
       title={disabled && disabledReason ? disabledReason : undefined}

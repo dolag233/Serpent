@@ -15,6 +15,7 @@ import {
   DirectPlayCapabilityService,
   type DirectPlayMediaDescriptor,
 } from "./direct-play-capability";
+import { useT, type TranslateFn } from "./i18n";
 
 interface AssetPreviewModalProps {
   api: SerpentLibraryApi;
@@ -25,14 +26,12 @@ interface AssetPreviewModalProps {
   onPrevious?: () => void;
 }
 
-const PREVIEW_ERROR_MESSAGES: Record<string, string> = {
-  FFMPEG_REQUIRED:
-    "当前安装缺少 FFmpeg，无法生成视频播放代理。请安装或配置 FFmpeg 后重试。",
-  OIIO_REQUIRED:
-    "当前安装缺少 OpenImageIO，无法解码此图像格式。请安装或配置 oiiotool 后重试。",
-  SHARP_UNAVAILABLE: "图像解码组件不可用，无法生成预览。请重新安装应用后重试。",
-  MEDIA_PROCESSING_FAILED: "媒体处理失败，源文件可能损坏或编码暂不受支持。",
-  UNSUPPORTED_FORMAT: "当前格式暂不支持客户端预览。",
+const PREVIEW_ERROR_KEYS: Record<string, string> = {
+  FFMPEG_REQUIRED: "preview.ffmpegRequired",
+  OIIO_REQUIRED: "preview.oiioRequired",
+  SHARP_UNAVAILABLE: "preview.sharpUnavailable",
+  MEDIA_PROCESSING_FAILED: "preview.mediaProcessingFailed",
+  UNSUPPORTED_FORMAT: "preview.unsupportedFormat",
 };
 const directPlaybackCapability = new DirectPlayCapabilityService({
   runtime: {
@@ -70,28 +69,46 @@ const directPlaybackCapability = new DirectPlayCapabilityService({
     }),
 });
 
-function previewFailureMessage(resolution: PreviewResolution): string {
+function previewErrorDetail(
+  errorCode: string | undefined,
+  t: TranslateFn,
+): string | undefined {
+  if (!errorCode) return undefined;
+  const key = PREVIEW_ERROR_KEYS[errorCode];
+  return key ? t(key) : undefined;
+}
+
+function previewFailureMessage(
+  resolution: PreviewResolution,
+  t: TranslateFn,
+): string {
   if (resolution.errorCode) {
     return (
-      PREVIEW_ERROR_MESSAGES[resolution.errorCode] ??
-      `预览生成失败（错误代码：${resolution.errorCode}）。`
+      previewErrorDetail(resolution.errorCode, t) ??
+      t("preview.failedWithCode", { code: resolution.errorCode })
     );
   }
-  if (resolution.status === "pending")
-    return "预览正在后台生成，完成后会自动显示。";
-  return "尚未生成可用预览，可点击重试。";
+  if (resolution.status === "pending") return t("preview.pending");
+  return t("preview.notReady");
 }
 
 function requestFailureMessage(
   prefix: string,
   error: { message: string; reason?: string },
+  t: TranslateFn,
 ): string {
-  const actionableReason = error.reason
-    ? PREVIEW_ERROR_MESSAGES[error.reason]
-    : undefined;
-  return actionableReason
-    ? `${prefix}：${actionableReason}`
-    : `${prefix}：${error.message}${error.reason ? `（${error.reason}）` : ""}`;
+  const actionableReason = previewErrorDetail(error.reason, t);
+  if (actionableReason) {
+    return t("preview.requestFailed", { prefix, detail: actionableReason });
+  }
+  if (error.reason) {
+    return t("preview.requestFailedWithReason", {
+      prefix,
+      detail: error.message,
+      reason: error.reason,
+    });
+  }
+  return t("preview.requestFailed", { prefix, detail: error.message });
 }
 
 function safeRendererDiagnostic(value: string): string {
@@ -109,6 +126,7 @@ function safeRendererDiagnostic(value: string): string {
 }
 
 function ZoomableImage({ alt, src }: { alt: string; src: string }) {
+  const t = useT();
   const viewportRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{
     pointerId: number;
@@ -205,30 +223,30 @@ function ZoomableImage({ alt, src }: { alt: string; src: string }) {
           }}
         />
       </div>
-      <div className="preview-zoom-controls" aria-label="图像缩放">
+      <div className="preview-zoom-controls" aria-label={t("preview.imageZoom")}>
         <button
-          aria-label="缩小"
+          aria-label={t("preview.zoomOut")}
           onClick={() => zoomAtViewportCenter(view.scale / 1.25)}
           type="button"
         >
           −
         </button>
         <button
-          aria-label="实际大小"
+          aria-label={t("preview.actualSize")}
           onClick={() => setView({ scale: 1, x: 0, y: 0 })}
           type="button"
         >
           {Math.round(view.scale * 100)}%
         </button>
         <button
-          aria-label="放大"
+          aria-label={t("preview.zoomIn")}
           onClick={() => zoomAtViewportCenter(view.scale * 1.25)}
           type="button"
         >
           +
         </button>
         <button onClick={() => setView({ scale: 1, x: 0, y: 0 })} type="button">
-          适合窗口
+          {t("preview.fitWindow")}
         </button>
       </div>
     </>
@@ -243,6 +261,7 @@ export function AssetPreviewModal({
   onNext,
   onPrevious,
 }: AssetPreviewModalProps) {
+  const t = useT();
   const modalRef = useRef<HTMLElement>(null);
   const requestSequence = useRef(0);
   const [resolution, setResolution] = useState<PreviewResolution | null>(null);
@@ -265,7 +284,9 @@ export function AssetPreviewModal({
         });
         if (sequence !== requestSequence.current) return result;
         if (!result.ok) {
-          setError(requestFailureMessage("无法打开预览", result.error));
+          setError(
+            requestFailureMessage(t("preview.cannotOpen"), result.error, t),
+          );
         } else {
           setResolution(result.value);
           setDirectApproved(
@@ -278,14 +299,14 @@ export function AssetPreviewModal({
         return result;
       } catch {
         if (sequence === requestSequence.current) {
-          setError("无法打开预览：桌面服务没有响应，请重试或重新启动应用。");
+          setError(t("preview.cannotOpenNoResponse"));
         }
         return undefined;
       } finally {
         if (!quiet && sequence === requestSequence.current) setLoading(false);
       }
     },
-    [api, asset.assetId, libraryId],
+    [api, asset.assetId, libraryId, t],
   );
 
   const ensureProxyFallback = useCallback(
@@ -322,9 +343,11 @@ export function AssetPreviewModal({
         kind: "webm_proxy",
       });
       if (!result.ok)
-        setError(requestFailureMessage("无法生成兼容代理", result.error));
+        setError(
+          requestFailureMessage(t("preview.proxyFailed"), result.error, t),
+        );
     },
-    [api, asset.assetId, libraryId, resolution?.playbackToken],
+    [api, asset.assetId, libraryId, resolution?.playbackToken, t],
   );
 
   useEffect(() => {
@@ -420,12 +443,14 @@ export function AssetPreviewModal({
           (asset.mediaType === "video" ? "webm_proxy" : "thumbnail"),
       });
       if (!result.ok) {
-        setError(requestFailureMessage("重试失败", result.error));
+        setError(
+          requestFailureMessage(t("preview.retryFailed"), result.error, t),
+        );
       } else {
         await resolvePreview(false);
       }
     } catch {
-      setError("重试失败：桌面服务没有响应，请重试或重新启动应用。");
+      setError(t("preview.retryFailedNoResponse"));
     } finally {
       setRetrying(false);
     }
@@ -441,7 +466,7 @@ export function AssetPreviewModal({
         caught instanceof Error && caught.name
           ? `FULLSCREEN_${caught.name}`
           : "FULLSCREEN_FAILED";
-      setError("无法进入全屏模式，请检查系统窗口权限后重试。");
+      setError(t("preview.fullscreenFailed"));
       const detail = safeRendererDiagnostic(
         caught instanceof Error ? caught.message : String(caught),
       );
@@ -465,9 +490,7 @@ export function AssetPreviewModal({
       void ensureProxyFallback(errorCode);
       return;
     }
-    setError(
-      `视频播放失败（错误代码：${errorCode}）。代理文件可能损坏，可重试生成。`,
-    );
+    setError(t("preview.videoFailed", { code: errorCode }));
     const detail = safeRendererDiagnostic(
       mediaError?.message ??
         "HTMLVideoElement emitted an error without MediaError details.",
@@ -496,12 +519,18 @@ export function AssetPreviewModal({
       assetId: asset.assetId,
     });
     if (!result.ok)
-      setError(requestFailureMessage("无法使用外部应用打开", result.error));
+      setError(
+        requestFailureMessage(
+          t("preview.cannotOpenExternal"),
+          result.error,
+          t,
+        ),
+      );
   }
 
   return (
     <section
-      aria-label={`${asset.displayName} 查看页面`}
+      aria-label={t("preview.viewPage", { name: asset.displayName })}
       className="workspace-viewer"
       ref={modalRef}
       role="region"
@@ -516,7 +545,7 @@ export function AssetPreviewModal({
           </div>
           <div className="preview-toolbar-actions">
             <button
-              aria-label="查看上一个资产"
+              aria-label={t("preview.previous")}
               disabled={!onPrevious}
               onClick={onPrevious}
               type="button"
@@ -524,7 +553,7 @@ export function AssetPreviewModal({
               ←
             </button>
             <button
-              aria-label="查看下一个资产"
+              aria-label={t("preview.next")}
               disabled={!onNext}
               onClick={onNext}
               type="button"
@@ -536,14 +565,14 @@ export function AssetPreviewModal({
               onClick={() => void enterFullscreen()}
               type="button"
             >
-              全屏
+              {t("preview.fullscreen")}
             </button>
             <button
-              aria-label="关闭查看页面"
+              aria-label={t("preview.closeViewer")}
               onClick={onClose}
               type="button"
             >
-              关闭
+              {t("common.close")}
             </button>
           </div>
         </div>
@@ -551,7 +580,7 @@ export function AssetPreviewModal({
           {loading ? (
             <div className="preview-state" role="status">
               <span className="activity-pulse" />
-              正在解析安全预览…
+              {t("preview.resolving")}
             </div>
           ) : ready && resolution.mediaType === "video" ? (
             <div className="preview-video-stage">
@@ -570,12 +599,12 @@ export function AssetPreviewModal({
                 ref={videoRef}
                 src={resolution.url}
               >
-                当前环境不支持视频播放。
+                {t("preview.videoUnsupported")}
               </video>
               <label className="preview-speed-control">
-                倍速
+                {t("preview.playbackRate")}
                 <select
-                  aria-label="播放倍速"
+                  aria-label={t("preview.playbackRateAria")}
                   onChange={(event) => {
                     const rate = Number(event.target.value);
                     setPlaybackRate(rate);
@@ -599,13 +628,12 @@ export function AssetPreviewModal({
             />
           ) : unsupported ? (
             <div className="preview-state" role="status">
-              <strong>不支持内置预览</strong>
+              <strong>{t("preview.unsupportedTitle")}</strong>
               <p>
-                {PREVIEW_ERROR_MESSAGES.UNSUPPORTED_FORMAT}{" "}
-                可使用系统默认应用打开源文件。
+                {t("preview.unsupportedFormat")} {t("preview.openWithSystem")}
               </p>
               <button onClick={() => void openExternal()} type="button">
-                使用外部应用打开
+                {t("preview.openExternal")}
               </button>
             </div>
           ) : (
@@ -615,14 +643,14 @@ export function AssetPreviewModal({
             >
               <strong>
                 {resolution?.status === "pending"
-                  ? "正在生成预览"
-                  : "预览不可用"}
+                  ? t("preview.generating")
+                  : t("preview.unavailable")}
               </strong>
               <p>
                 {error ??
                   (resolution
-                    ? previewFailureMessage(resolution)
-                    : "无法读取预览状态。")}
+                    ? previewFailureMessage(resolution, t)
+                    : t("preview.statusReadFailed"))}
               </p>
               {resolution?.status !== "pending" && (
                 <button
@@ -630,7 +658,9 @@ export function AssetPreviewModal({
                   onClick={() => void retry()}
                   type="button"
                 >
-                  {retrying ? "正在重试…" : "重试生成"}
+                  {retrying
+                    ? t("preview.retrying")
+                    : t("preview.retryGenerate")}
                 </button>
               )}
             </div>
@@ -644,7 +674,7 @@ export function AssetPreviewModal({
                   onClick={() => void retry()}
                   type="button"
                 >
-                  重试生成
+                  {t("preview.retryGenerate")}
                 </button>
               )}
             </div>
