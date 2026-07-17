@@ -73,6 +73,17 @@ Library Worker (UtilityProcess; filesystem + SQLite owner)
 
 不变量：Renderer 永远不接收任意路径读写或 SQL 能力；Main 不打开资源库数据库或扫描资产目录；Library Worker 是数据库和文件操作唯一所有者；所有跨进程 I/O 经 Zod 运行时校验。
 
+## 工单管理（beads）
+
+本仓库使用 beads（`bd` CLI）作为唯一工单系统，`.beads/` 进版本控制随 git 同步。`docs/implementation/mvp-ui-ux-requirements-backlog.md` 保留为需求来源、用户原话与验收记录；工单状态以 bd 为准。
+
+- 开工前先跑 `bd ready --json` 取当前无阻塞工单，按优先级（P1 最高）选任务，不凭记忆挑活。
+- 开始工单：`bd update <id> --status in_progress`；完成后 `bd close <id> --reason "<完成说明与提交哈希>"`。
+- 发现新需求/缺陷随时开单：`bd create "<标题>" -d "<说明>" -p <0-4> -t <feature|bug|task|epic> -l "<标签>"`。优先级语义：P1=用户点名/验收失败修复，P2=本迭代主线，P3=后续打磨。
+- 阻塞关系：`bd dep add <被阻塞 id> <阻塞 id>`；被澄清队列（`Serpent-w3b`）阻塞的工单不得自行猜测实施。
+- 跨设备：先 `git pull` 再用 bd；会话结束提交代码前 `bd sync`。
+- 可运行 `bd prime` 获取完整命令参考。
+
 ## 当前开发状态
 
 垂直切片推进，每切片交付代码 + 测试 + 开发日志 + 代码审查 + QA 报告（见 `docs/development-process.md`）。

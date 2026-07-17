@@ -66,3 +66,7 @@
 # - github.token    → use GITHUB_TOKEN env var instead
 
 sync.remote: "git+https://github.com/dolag233/Serpent.git"
+dolt:
+    auto-commit: "on"
+export:
+    auto: true
