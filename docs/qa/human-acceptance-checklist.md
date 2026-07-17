@@ -57,7 +57,7 @@
 | --- | --- | --- | --- | --- | --- | --- |
 | LIB-001 | 创建、关闭并重新打开资源库 | 待人类验收 | 创建临时资源库，关闭后从起始页重新打开 | 名称、目录和资产保持一致；失败时显示具体原因 | [0001 QA](0001-library-shell-qa-report.md) / [生命周期 E2E](../../tests/e2e/library-lifecycle.test.ts) | — |
 | LIB-002 | 完整退出后恢复最近资源库 | 待人类验收 | 打开一个资源库，完全退出 Serpent 后重新启动 | 自动打开刚才使用的资源库 | [生命周期 E2E](../../tests/e2e/library-lifecycle.test.ts) | — |
-| LIB-003 | 完整退出后恢复上次浏览资产 | 待人类验收 | 选中一项资产，完全退出后重新启动 | 恢复到原浏览范围，并将原资产带回视野和焦点 | [生命周期 E2E](../../tests/e2e/library-lifecycle.test.ts) | — |
+| LIB-003 | 完整退出后恢复上次浏览资产 | 人类验收通过 | 选中一项资产，完全退出后重新启动 | 恢复到原浏览范围，并将原资产带回视野和焦点 | [生命周期 E2E](../../tests/e2e/library-lifecycle.test.ts) | 2026-07-17 用户手动验收：“LIB-003通过”。 |
 | IMPORT-001 | 导入单个文件 | 待人类验收 | 在资源库根目录或指定文件夹执行“导入文件”并选择一个文件 | 文件复制到 `Assets/` 对应位置并出现在画布；原文件保留 | [0002 QA](0002-asset-ingestion-qa-report.md) / [导入 E2E](../../tests/e2e/asset-ingestion.test.ts) | — |
 | IMPORT-002 | 一次导入多个文件 | 待人类验收 | 在“导入文件”中一次选择多个文件 | 所有选中文件均导入，且没有重复或遗漏 | [0002 QA](0002-asset-ingestion-qa-report.md) / [导入 E2E](../../tests/e2e/asset-ingestion.test.ts) | — |
 | IMPORT-003 | 导入目录并保留层级 | 待人类验收 | 导入一个包含子目录的素材目录 | `Assets/` 和侧栏保留原目录层级，正常素材全部出现 | [0002 QA](0002-asset-ingestion-qa-report.md) / [桌面导入 E2E](../../tests/e2e/desktop-ingestion.test.ts) | — |
@@ -98,7 +98,7 @@
 | COLLECTION-005 | 移除合集成员 | 待人类验收 | 从合集中移除一项或多项资产 | 合集内容和成员计数准确减少，资产本身保留 | [0004 QA](0004-tags-collections-metadata-qa-report.md) / [组织 E2E](../../tests/e2e/organization-search-trash.test.ts) | — |
 | COLLECTION-006 | 手动调整合集成员顺序 | 待人类验收 | 在合集内拖动资产改变顺序 | 松开后顺序保存，重新进入合集仍保持 | [0004 QA](0004-tags-collections-metadata-qa-report.md) | — |
 | COLLECTION-007 | 切换“包含子合集”范围 | 待人类验收 | 在父合集中开关“包含子合集” | 开启时递归显示子合集资产，关闭时只显示直接成员 | [0004 QA](0004-tags-collections-metadata-qa-report.md) | — |
-| MENU-020 | 多选时 Inspector 标签批量操作 | 待人类验收 | 框选 ≥2 项资产，在右侧 Inspector 添加一个标签（搜索现有或新建）；再移除该标签；期间观察标签区底部提示 | 标签区显示「标签操作将应用于 N 项资产」；添加后所有选中资产都带上该标签（可逐项点击核对）；移除后全部消失；通知报告处理数量 | [批次 3 开发日志](../development/0015-0019-ux-feedback-batch3-development-log.md) / [决策单测](../../tests/unit/inspector-tag-target.test.ts) | 2026-07-17 实现（Inspector 路由到既有批量命令，批量后刷新 chip 状态）；Computer Use 未执行，移交人工 QA。 |
+| MENU-020 | 多选时 Inspector 标签批量操作 | 人类验收通过 | 框选 ≥2 项资产，在右侧 Inspector 添加一个标签（搜索现有或新建）；再移除该标签；期间观察标签区底部提示 | 标签区显示「标签操作将应用于 N 项资产」；添加后所有选中资产都带上该标签（可逐项点击核对）；移除后全部消失；通知报告处理数量 | [批次 3 开发日志](../development/0015-0019-ux-feedback-batch3-development-log.md) / [决策单测](../../tests/unit/inspector-tag-target.test.ts) | 2026-07-17 实现（Inspector 路由到既有批量命令，批量后刷新 chip 状态）；Computer Use 未执行，移交人工 QA。2026-07-17 用户手动验收：“多选菜单接入注册表。标签确实可以应用到选中的所有资产”。用户同时给出多选属性交互新模型（值不同显示“多个值”且不可改、值相同可统一改、标签按共有交集显示并可批量增删），已入需求池 REQ-SELECT-004，后续按新模型迭代。 |
 | MENU-021 | 多选时 Inspector 评分批量设置 | 待人类验收 | 框选 ≥2 项资产，在右侧 Inspector 点击星级设置评分；再逐项点击核对 | 提示「标签与评分操作将应用于 N 项资产」；所有选中资产评分一致变化；通知报告处理数量，遇失效资产报告跳过数量 | [0015 菜单接入开发日志](../development/0015-command-registry-menu-adoption-development-log.md) / [worker 测试](../../tests/worker/batch-rating.test.ts) / [通知单测](../../tests/unit/batch-tag-notice.test.ts) | 2026-07-17 实现（asset.rating.set 批量命令，单事务+逐项跳过）；Computer Use 未执行，移交人工 QA。 |
 
 ### D. 搜索、排序与智能合集
@@ -129,8 +129,8 @@
 | SMART-003 | 更新智能合集条件 | 待人类验收 | 修改一个智能合集的查询或排序条件后保存 | 再次打开时使用新条件 | [0005 QA](0005-search-filter-sort-smart-collections-qa-report.md) | — |
 | SMART-004 | 重命名智能合集 | 待人类验收 | 重命名已有智能合集 | 新名称立即出现，查询条件保持 | [0005 QA](0005-search-filter-sort-smart-collections-qa-report.md) | — |
 | SMART-005 | 删除智能合集 | 待人类验收 | 删除已有智能合集 | 智能合集消失，资产不受影响 | [0005 QA](0005-search-filter-sort-smart-collections-qa-report.md) | — |
-| FOLDER-001 | 文件夹递归显示后代资产 | 待人类验收 | 建「父文件夹」并在其内建子文件夹，把资产导入子文件夹；然后点击父文件夹 | 父文件夹画布直接显示子文件夹中的全部资产，无需进入子文件夹；「资源库根目录」与「所有资产」行为不变 | [批次 3 开发日志](../development/0015-0019-ux-feedback-batch3-development-log.md) / [递归 E2E](../../tests/e2e/folder-recursive-scope.test.ts) | 2026-07-17 实现（folder scope 默认 recursive，worker 递归 CTE 既有）；Computer Use 未执行，移交人工 QA。 |
-| FILTER-012 | 文件夹内搜索递归后代 | 待人类验收 | 在含子文件夹的父文件夹范围内，搜索一个只存在于孙级文件夹资产的关键词 | 孙级文件夹中的资产被搜到；切到回收站或「所有资产」后搜索行为不变 | [批次 3 开发日志](../development/0015-0019-ux-feedback-batch3-development-log.md) / [worker 测试](../../tests/worker/search.test.ts) / [递归 E2E](../../tests/e2e/folder-recursive-scope.test.ts) | 2026-07-17 实现（孙级深度 worker 回归测试）；Computer Use 未执行，移交人工 QA。 |
+| FOLDER-001 | 文件夹递归显示后代资产 | 人类验收不通过 | 建「父文件夹」并在其内建子文件夹，把资产导入子文件夹；然后点击父文件夹 | 父文件夹画布直接显示子文件夹中的全部资产，无需进入子文件夹；「资源库根目录」与「所有资产」行为不变 | [批次 3 开发日志](../development/0015-0019-ux-feedback-batch3-development-log.md) / [递归 E2E](../../tests/e2e/folder-recursive-scope.test.ts) | 2026-07-17 实现（folder scope 默认 recursive，worker 递归 CTE 既有）；Computer Use 未执行，移交人工 QA。2026-07-17 用户验收不通过：“递归显示不通过。需要显式勾选选项才能够显示递归显示内容。”——默认递归不符合预期，改为显式开关（默认不递归，勾选后递归，REQ-FOLDER-009）后重新验收。 |
+| FILTER-012 | 文件夹内搜索递归后代 | 人类验收通过 | 在含子文件夹的父文件夹范围内，搜索一个只存在于孙级文件夹资产的关键词 | 孙级文件夹中的资产被搜到；切到回收站或「所有资产」后搜索行为不变 | [批次 3 开发日志](../development/0015-0019-ux-feedback-batch3-development-log.md) / [worker 测试](../../tests/worker/search.test.ts) / [递归 E2E](../../tests/e2e/folder-recursive-scope.test.ts) | 2026-07-17 实现（孙级深度 worker 回归测试）；Computer Use 未执行，移交人工 QA。2026-07-17 用户手动验收：“递归搜索通过”。 |
 
 ### E. 资产画布与缩略图
 
@@ -208,7 +208,7 @@
 | CANVAS-011 | AI 搜索按钮与加宽搜索框 | 待人类验收 | 查看浏览工具栏 AI 搜索按钮与关键词输入框；输入若干文字 | 按钮图标为星芒样式且文字不溢出按钮；搜索框明显加宽，窄窗时也不挤压其他控件 | [Wave 1 开发日志](../development/0015-0019-ux-feedback-wave1-development-log.md) | 2026-07-17 Wave 1 T1 实现；Computer Use 未执行，移交人工 QA。 |
 | SHELL-007 | 新建资源库直出表单与冗余文案清理 | 待人类验收 | 在未打开资源库的起始页与「创建资源库」界面观察 | 不再出现「01」步骤侧边栏与英文装饰行（如 LOCAL ASSET WORKSPACE / NEW LOCAL LIBRARY / MANAGED ASSETS）；中文界面只有功能性文字 | [Wave 1 开发日志](../development/0015-0019-ux-feedback-wave1-development-log.md) | 2026-07-17 Wave 1 T1/T4 实现；Computer Use 未执行，移交人工 QA。 |
 | SHELL-008 | 通知淡出过渡 | 待人类验收 | 触发一条通知（如复制文件夹路径成功）并等待自动关闭 | 通知消失前有短暂淡出下移过渡，不是瞬间消失 | [Wave 1 开发日志](../development/0015-0019-ux-feedback-wave1-development-log.md) / [状态机单测](../../tests/unit/toast-notifications.test.ts) | 2026-07-17 Wave 1 T1 实现；Computer Use 未执行，移交人工 QA。 |
-| SHELL-009 | 左右侧栏拖拽调宽并持久化 | 待人类验收 | 拖动左侧导航右缘与右侧 Inspector 左缘改变宽度；双击拖拽柄；完全退出 Serpent 后重开 | 两面板宽度随拖动实时变化并有范围限制；双击恢复默认宽度；重启后宽度保持 | [Wave 2 开发日志](../development/0015-0019-ux-feedback-wave2-development-log.md) / [偏好单测](../../tests/unit/shell-preferences.test.ts) | 2026-07-17 Wave 2 T5 实现；Computer Use 未执行，移交人工 QA。 |
+| SHELL-009 | 左右侧栏拖拽调宽并持久化 | 人类验收通过 | 拖动左侧导航右缘与右侧 Inspector 左缘改变宽度；双击拖拽柄；完全退出 Serpent 后重开 | 两面板宽度随拖动实时变化并有范围限制；双击恢复默认宽度；重启后宽度保持 | [Wave 2 开发日志](../development/0015-0019-ux-feedback-wave2-development-log.md) / [偏好单测](../../tests/unit/shell-preferences.test.ts) | 2026-07-17 Wave 2 T5 实现；Computer Use 未执行，移交人工 QA。2026-07-17 用户手动验收：“左右侧边栏可拖动，测试通过”。 |
 | DND-001 | 拖拽资产到文件夹完成移动 | 待人类验收 | 拖动一项资产（及一个多选）到左侧某个托管文件夹；再拖到当前文件夹；拖到「资源库根目录」 | 目标行悬停有背景高亮；松开后资产移动到目标文件夹并提示移动/跳过数量；拖到当前文件夹提示无需移动 | [Wave 2 开发日志](../development/0015-0019-ux-feedback-wave2-development-log.md) / [拖放单测](../../tests/unit/asset-drag-drop.test.ts) | 2026-07-17 Wave 2 T6 实现；拖到链接文件夹为既有「复制到链接文件夹」行为。Computer Use 未执行，移交人工 QA。 |
 | DND-002 | 拖拽资产到回收站完成删除 | 待人类验收 | 拖动一项资产（及一个多选）到左侧「回收站」 | 回收站行悬停有背景高亮；松开后资产移入回收站并可在回收站看到；链接资产等不适用项会计入跳过提示 | [Wave 2 开发日志](../development/0015-0019-ux-feedback-wave2-development-log.md) / [拖放单测](../../tests/unit/asset-drag-drop.test.ts) | 2026-07-17 Wave 2 T6 实现；Computer Use 未执行，移交人工 QA。 |
 | DND-003 | 拖拽预览小图标 | 待人类验收 | 拖动一项资产观察跟随光标的预览；再框选多项后拖动 | 预览为缩小、圆角、半透明图标（约 96×72、透明度约 0.6、圆角约 9px），不再是不透明的整卡快照；多选时预览带数量徽标 | [批次 3 开发日志](../development/0015-0019-ux-feedback-batch3-development-log.md) / [预览模型单测](../../tests/unit/asset-drag-preview.test.ts) | 2026-07-17 实现（setDragImage 自定义预览节点）；合集内排序拖拽保持原生预览。Computer Use 未执行，移交人工 QA。 |
@@ -261,3 +261,6 @@
 | 2026-07-16 | TAG-006–008 / CANVAS-009 | 人类验收通过 | “瀑布流、标签我也验收了，还不错。” | 保持回归测试；继续完成标签过滤/批量入口和其他壳层优化。 |
 | 2026-07-16 | INSPECT-003 | 人类验收通过 | 等比布局正确后，竖图不应显示包住留白的统一边框；图片本身保留些许圆角。 | 用户确认测试通过并明确反馈“这个圆角没问题”；保持真实媒体解码/比例 E2E。 |
 | 2026-07-17 | SHELL-001–003 / MENU-014 / COMMAND-001 | 人类验收通过 | 用户明确确认已手动验收。 | 保持回归；继续 0016-A 资源库菜单/面包屑/历史导航与统一目录树。 |
+| 2026-07-17 | SHELL-009 / LIB-003 / MENU-020 / FILTER-012 | 人类验收通过 | “左右侧边栏可拖动，测试通过”“LIB-003通过”“多选菜单接入注册表。标签确实可以应用到选中的所有资产”“递归搜索通过”。另确认面包屑（NAV-001）早已实现、保持通过。 | 保持回归；多选属性交互新模型入需求池 REQ-SELECT-004。 |
+| 2026-07-17 | FOLDER-001 | 人类验收不通过 | “递归显示不通过。需要显式勾选选项才能够显示递归显示内容。” | REQ-FOLDER-009：递归显示改为显式开关（默认不递归），实现后重新验收。 |
+| 2026-07-17 | 查看页与播放体验反馈 | 记录为需求/缺陷 | 查看不应显示“正在生成预览”阻塞（REQ-VIEW-002）；视频元数据需帧率/码率（REQ-VIEW-003）；查看页应为浏览附属层、后退与切换文件夹可退出（REQ-VIEW-004）；播放器需空格暂停/倍速（REQ-VIEW-005）；5 秒视频只播 2 秒循环（BUG-VIEWER-001）；网格动图/视频预览（REQ-CANVAS-009）；侧栏拖小可隐藏（REQ-SHELL-011）；文件夹删除（CU-M3，用户点名）；创建资源库文案口语化（REQ-SHELL-012）。 | 全部拆解入需求池“2026-07-17 第三批反馈（验收驱动）”。 |
