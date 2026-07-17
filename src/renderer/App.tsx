@@ -53,6 +53,7 @@ import { useAssetSelection } from "./useAssetSelection";
 import { useBatchActions } from "./useBatchActions";
 import { useAssetRename } from "./useAssetRename";
 import { useFolderActions } from "./useFolderActions";
+import { useToastNotifications } from "./useToastNotifications";
 import {
   toMessage,
   LibraryOperationError,
@@ -378,8 +379,16 @@ function AppInner() {
     "loading",
     "importing",
   ].includes(uiState);
-  const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  // Toast notifications (REQ-SHELL-010): the controller owns auto-dismiss
+  // timing and the closing lifecycle; setError/setNotice keep the old setter
+  // shape so call sites are unchanged.
+  const {
+    rendered: renderedToast,
+    closing: toastClosing,
+    setError,
+    setNotice,
+    handleToastTransitionEnd,
+  } = useToastNotifications();
   const [dialog, setDialog] = useState<DialogKind>(null);
   const [dialogValue, setDialogValue] = useState("我的资源库");
   const [conflicts, setConflicts] = useState<ImportConflictPlan | null>(null);
@@ -1178,16 +1187,6 @@ function AppInner() {
     });
     return () => window.cancelAnimationFrame(frame);
   }, [assets, trashedAssets, selectedAssetId]);
-  useEffect(() => {
-    if (!notice) return;
-    const timer = window.setTimeout(() => setNotice(null), 5_000);
-    return () => window.clearTimeout(timer);
-  }, [notice]);
-  useEffect(() => {
-    if (!error) return;
-    const timer = window.setTimeout(() => setError(null), 10_000);
-    return () => window.clearTimeout(timer);
-  }, [error]);
   useEffect(() => {
     if (!api) return;
     return api.onThumbnailEvent((event) => {
@@ -5187,7 +5186,6 @@ function AppInner() {
                 <div className="empty-orbit">
                   <Icon name="upload" size={24} />
                 </div>
-                <span className="eyebrow">MANAGED ASSETS</span>
                 <h1>
                   {selectedFolder ? "这个文件夹还是空的" : "把第一批素材放进来"}
                 </h1>
@@ -5214,9 +5212,9 @@ function AppInner() {
             )
           ) : (
             <div className="empty-state">
-              <div className="empty-index">01</div>
               <div className="empty-copy">
-                <span className="eyebrow">LOCAL ASSET WORKSPACE</span>
+                {/* REQ-SHELL-008/009: the «01» step sidebar and the decorative
+                    English caption are gone — the form renders directly. */}
                 <h1>从一个本地资源库开始</h1>
                 <p>文件、目录与元数据都保留在你掌控的位置。</p>
                 <div className="empty-actions">
@@ -5243,14 +5241,15 @@ function AppInner() {
               </div>
             </div>
           )}
-          {(error || notice) && (
+          {renderedToast && (
             <div
-              className={`toast${error ? " is-error" : ""}`}
-              role={error ? "alert" : "status"}
+              className={`toast${renderedToast.kind === "error" ? " is-error" : ""}${toastClosing ? " is-closing" : ""}`}
+              onTransitionEnd={handleToastTransitionEnd}
+              role={renderedToast.kind === "error" ? "alert" : "status"}
             >
-              <Icon name={error ? "warning" : "info"} size={15} />
-              <span>{error ?? notice}</span>
-              {!error && lastMoveOperationId && (
+              <Icon name={renderedToast.kind === "error" ? "warning" : "info"} size={15} />
+              <span>{renderedToast.text}</span>
+              {renderedToast.kind === "notice" && lastMoveOperationId && (
                 <button
                   className="secondary-button"
                   onClick={() => void undoManagedMove(lastMoveOperationId)}

@@ -26,8 +26,11 @@
   --text: #f1f2ef;
   --secondary: #a9ada9;
   --tertiary: #777c79;
-  --accent: #42b8a4;
-  --accent-dark: #2f8f80;
+  /* REQ-THEME-004: default accent is blue. Accent-tinted surfaces below all
+     derive from these two tokens via color-mix so one token change re-themes
+     every accent usage; do not hardcode per-selector accent colors. */
+  --accent: #3b82f6;
+  --accent-dark: #2563eb;
   --warning: #d99a3e;
 }
 
@@ -119,6 +122,8 @@ input:focus-visible {
 
 .discovery-filters {
   position: relative;
+  /* Keep the summary pill at content size; the search input absorbs slack. */
+  flex: 0 0 auto;
 }
 .discovery-filters > summary {
   padding: 6px 8px;
@@ -419,7 +424,12 @@ input:focus-visible {
 .search-control {
   display: flex;
   align-items: center;
-  width: min(200px, 100%);
+  /* REQ-CANVAS-006: the keyword input takes the toolbar's leftover width
+     (up to 360px) instead of being capped at 200px, and never shrinks below
+     a usable 200px so neighbours keep their natural size. */
+  flex: 1 1 240px;
+  min-width: 200px;
+  max-width: 360px;
   height: 28px;
   gap: 7px;
   padding: 0 7px;
@@ -494,7 +504,7 @@ input:focus-visible {
 
 .status-dot[data-active="true"] {
   background: var(--accent);
-  box-shadow: 0 0 0 2px rgb(66 184 164 / 12%);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 12%, transparent);
 }
 
 .navigation-scroll {
@@ -563,10 +573,11 @@ input:focus-visible {
   background: #34373a;
 }
 
+/* REQ-NAV-005: hover and active differ only by background shade — no accent
+   edge bar, outline, or accent border on directory rows. The base transparent
+   border stays so rows don't shift between states. */
 .nav-row.is-active {
-  border-color: #494d50;
   background: #3a3d40;
-  box-shadow: inset 2px 0 var(--accent);
   color: var(--text);
 }
 
@@ -695,9 +706,9 @@ input:focus-visible {
   background: var(--divider);
 }
 
+/* REQ-CANVAS-007: continuous controls use neutral gray, never the accent. */
 input[type="range"] {
-  width: 76px;
-  accent-color: var(--accent);
+  accent-color: var(--secondary);
 }
 
 .workspace-canvas {
@@ -745,21 +756,19 @@ input[type="range"] {
 }
 
 .empty-state {
-  grid-template-columns: 74px minmax(0, 1fr) 124px;
-}
-
-.empty-index {
-  padding: 24px 0;
-  border-right: 1px solid var(--divider-soft);
-  color: var(--accent);
-  font-family: "IBM Plex Mono", monospace;
-  font-size: 11px;
+  /* REQ-SHELL-008: the step sidebar («01» marker) and specimen column are
+     gone — the create-library content renders directly in a single column. */
+  justify-items: center;
   text-align: center;
 }
 
 .empty-copy {
   align-self: center;
   padding: 34px 38px;
+}
+
+.empty-copy .empty-actions {
+  justify-content: center;
 }
 
 .eyebrow,
@@ -812,14 +821,14 @@ input[type="range"] {
 }
 
 .primary-button {
-  border: 1px solid #56c4b1;
+  border: 1px solid color-mix(in srgb, var(--accent) 92%, white);
   background: var(--accent-dark);
   color: white;
   box-shadow: inset 0 1px rgb(255 255 255 / 12%);
 }
 
 .primary-button:hover {
-  background: #36a793;
+  background: color-mix(in srgb, var(--accent) 55%, var(--accent-dark));
 }
 
 .secondary-button {
@@ -831,18 +840,6 @@ input[type="range"] {
 .secondary-button:hover {
   border-color: #5b605d;
   background: var(--raised-2);
-}
-
-.empty-specimen {
-  display: flex;
-  align-items: center;
-  justify-content: space-around;
-  border-left: 1px solid var(--divider-soft);
-  color: #555a57;
-  font-family: "IBM Plex Mono", monospace;
-  font-size: 8px;
-  letter-spacing: 0.12em;
-  writing-mode: vertical-rl;
 }
 
 .inline-error {
@@ -953,11 +950,11 @@ input[type="range"] {
   height: 92px;
   place-items: end start;
   padding: 10px;
-  border: 1px solid #4a9185;
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, var(--divider));
   border-radius: 6px 2px 6px 2px;
   background:
-    linear-gradient(145deg, rgb(66 184 164 / 17%), transparent 55%), #303335;
-  color: #72d0c0;
+    linear-gradient(145deg, color-mix(in srgb, var(--accent) 17%, transparent), transparent 55%), #303335;
+  color: color-mix(in srgb, var(--accent) 72%, white);
   font-family: "IBM Plex Mono", monospace;
   font-size: 18px;
 }
@@ -1003,10 +1000,10 @@ input[type="range"] {
   width: 50px;
   height: 58px;
   place-items: center;
-  border: 1px solid #4b8178;
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, var(--divider));
   border-radius: 4px 2px 4px 2px;
-  background: #303b39;
-  color: #65c8b7;
+  background: color-mix(in srgb, var(--accent) 7%, var(--pane));
+  color: color-mix(in srgb, var(--accent) 78%, white);
   font-family: "IBM Plex Mono", monospace;
   font-size: 12px;
 }
@@ -1691,7 +1688,7 @@ input[type="range"] {
 .text-field:focus {
   border-color: var(--accent);
   outline: 0;
-  box-shadow: 0 0 0 2px rgb(66 184 164 / 14%);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 14%, transparent);
 }
 
 .field-help {
@@ -1735,6 +1732,9 @@ input[type="range"] {
 
 .compact-action {
   display: inline-flex;
+  /* REQ-CANVAS-006: never shrink below content size or wrap — a squeezed
+     flex item let the label spill outside the button's border box. */
+  flex: 0 0 auto;
   height: 27px;
   align-items: center;
   gap: 6px;
@@ -1744,6 +1744,7 @@ input[type="range"] {
   background: #333638;
   color: #d5d8d4;
   font-size: 11px;
+  white-space: nowrap;
   cursor: pointer;
 }
 
@@ -1770,11 +1771,11 @@ input[type="range"] {
   align-items: center;
   gap: 8px;
   padding: 7px 11px;
-  border: 1px solid #42665f;
+  border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--raised));
   border-radius: 4px;
-  background: rgb(39 54 52 / 94%);
+  background: color-mix(in srgb, var(--accent) 6%, var(--canvas));
   box-shadow: 0 8px 28px rgb(0 0 0 / 24%);
-  color: #c9e7e1;
+  color: color-mix(in srgb, var(--accent) 28%, white);
   font-size: 11px;
   transform: translateX(-50%);
 }
@@ -1801,7 +1802,7 @@ input[type="range"] {
   position: fixed;
   z-index: 4;
   border: 1px dashed var(--accent);
-  background: rgba(66, 184, 164, 0.12);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
   pointer-events: none;
   user-select: none;
 }
@@ -1867,9 +1868,34 @@ input[type="range"] {
   font-size: 9px;
   white-space: nowrap;
 }
-.asset-size-control input {
+/* REQ-CANVAS-007: compact card-size slider — 3px track, 10px thumb, neutral
+   gray tokens instead of the accent. */
+.asset-size-control input[type="range"] {
   width: 82px;
-  accent-color: var(--accent);
+  height: 14px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  appearance: none;
+  cursor: pointer;
+}
+.asset-size-control input[type="range"]::-webkit-slider-runnable-track {
+  height: 3px;
+  border-radius: 2px;
+  background: var(--divider);
+}
+.asset-size-control input[type="range"]::-webkit-slider-thumb {
+  width: 10px;
+  height: 10px;
+  margin-top: -3.5px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--secondary);
+  appearance: none;
+}
+.asset-size-control input[type="range"]:hover::-webkit-slider-thumb,
+.asset-size-control input[type="range"]:focus-visible::-webkit-slider-thumb {
+  background: var(--text);
 }
 
 .workspace-canvas.is-external-drop {
@@ -1886,7 +1912,7 @@ input[type="range"] {
   gap: 7px;
   border: 1px dashed var(--accent);
   border-radius: 6px;
-  background: rgb(23 31 31 / 88%);
+  background: color-mix(in srgb, var(--accent) 9%, rgb(19 21 22 / 88%));
   color: var(--accent);
   pointer-events: none;
   backdrop-filter: blur(4px);
@@ -1915,8 +1941,23 @@ input[type="range"] {
   border-color: #4d5351;
   background: #303335;
 }
+/* REQ-SELECT-003: the selection ring is an outward 2px box-shadow — one px
+   thicker than the card's own 1px border and fully outside the preview's
+   boundary, so the preview image can no longer cover it (the old inset
+   shadow painted underneath the thumbnail). The ring lives on the card, and
+   neither .asset-card nor .asset-grid clips overflow, so all four sides
+   stay visible inside the 12px grid gap. */
 .asset-card.is-selected {
-  box-shadow: inset 0 0 0 1px var(--accent-dark);
+  box-shadow: 0 0 0 2px var(--accent);
+}
+/* Keyboard modality (e.g. pressing Shift while a card holds focus) makes
+   Chromium match :focus-visible, and the global button:focus-visible accent
+   outline then painted a second ring around an already-selected card. Cards
+   use the same outward ring geometry for focus instead, so focus and
+   selection can never stack into two rings. */
+.asset-card:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent);
 }
 .asset-card[draggable="true"] {
   cursor: grab;
@@ -1932,7 +1973,10 @@ input[type="range"] {
   place-items: center;
   overflow: hidden;
   border-bottom: 1px solid #3f4344;
-  border-radius: 4px 4px 0 0;
+  /* REQ-CANVAS-008: uniform radius on all four corners, bottom corners too.
+     The selection ring lives on the parent .asset-card, so this overflow
+     clip only rounds the thumbnail, never the ring. */
+  border-radius: 4px;
   background:
     linear-gradient(135deg, rgb(255 255 255 / 2%) 25%, transparent 25%) 0 0 /
       12px 12px,
@@ -2068,7 +2112,7 @@ input[type="range"] {
   border-radius: 50%;
   background: radial-gradient(circle, #3c4240, #2b2e30 65%);
   color: var(--accent);
-  box-shadow: 0 0 0 8px rgb(66 184 164 / 3%);
+  box-shadow: 0 0 0 8px color-mix(in srgb, var(--accent) 3%, transparent);
 }
 
 .toast {
@@ -2082,12 +2126,21 @@ input[type="range"] {
   align-items: center;
   gap: 8px;
   padding: 9px 9px 9px 11px;
-  border: 1px solid #46635e;
+  border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--raised));
   border-radius: 5px;
-  background: #2c3937;
+  background: color-mix(in srgb, var(--accent) 6%, var(--pane));
   box-shadow: 0 12px 32px rgb(0 0 0 / 28%);
-  color: #cfe6e1;
+  color: color-mix(in srgb, var(--accent) 26%, white);
   font-size: 11px;
+  /* REQ-SHELL-010: dismissal adds .is-closing and unmounts only after this
+     exit transition ends (see toast-notifications.ts). */
+  transition:
+    opacity 180ms ease,
+    transform 180ms ease;
+}
+.toast.is-closing {
+  opacity: 0;
+  transform: translateY(6px);
 }
 .toast.is-error {
   border-color: #76533a;
@@ -2478,14 +2531,6 @@ input[type="range"] {
   .app-toolbar {
     grid-template-columns: 190px 1fr minmax(230px, 0.8fr);
   }
-
-  .empty-specimen {
-    display: none;
-  }
-
-  .empty-state {
-    grid-template-columns: 64px minmax(0, 1fr);
-  }
 }
 
 @media (max-width: 800px) {
@@ -2531,7 +2576,8 @@ input[type="range"] {
   }
 
   .search-control {
-    width: 132px;
+    flex-basis: 132px;
+    min-width: 132px;
   }
 
   .empty-copy {
