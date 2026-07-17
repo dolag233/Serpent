@@ -161,6 +161,7 @@
 | RELINK-001 | 批量重新定位预览 | 待人类验收 | 让托管资产 missing，选择候选新根并发起预览 | 只显示相对路径和匹配/缺失数量，不泄露候选根绝对路径 | [0007 QA](0007-trash-relink-batch-relocate-qa-report.md) / [重新定位 E2E](../../tests/e2e/trash-relink-flow.test.ts) | — |
 | RELINK-002 | 取消批量重新定位不修改资产 | 待人类验收 | 得到预览后取消 | 资产位置和状态不变 | [0007 QA](0007-trash-relink-batch-relocate-qa-report.md) / [重新定位 E2E](../../tests/e2e/trash-relink-flow.test.ts) | — |
 | RELINK-003 | 重新预览后应用批量重新定位 | 待人类验收 | 取消一次预览后，重新选择候选根并应用新预览 | 匹配资产恢复可用，使用的是第二次预览结果 | [0007 QA](0007-trash-relink-batch-relocate-qa-report.md) / [重新定位 E2E](../../tests/e2e/trash-relink-flow.test.ts) | — |
+| TRASH-004 | 回收站中资产保持可解码预览 | 待人类验收 | 将一项有缩略图的托管资产移入回收站并进入回收站查看；再恢复该资产 | 回收站内缩略图正常显示不丢失；恢复后预览保持不变 | [Wave 1 开发日志](../development/0015-0019-ux-feedback-wave1-development-log.md) / [worker 测试](../../tests/worker/trash-relink.test.ts) | 2026-07-17 根因修复（`39f134d`）；Computer Use 未执行（环境无桌面控制能力，移交人工 QA）。 |
 
 ### H. 资产选择与基础右键菜单
 
