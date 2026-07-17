@@ -510,14 +510,9 @@ export function AssetPreviewModal({
       <div className="preview-modal">
         <div className="preview-toolbar">
           <div>
+            {/* REQ-VIEW-001: no redundant media-type caption under the name
+                (the old 图像预览/视频预览 subtitle was pure noise). */}
             <strong>{asset.displayName}</strong>
-            <span>
-              {asset.mediaType === "video"
-                ? resolution?.playbackMode === "source"
-                  ? "视频原文件预览"
-                  : "视频代理预览"
-                : "图像预览"}
-            </span>
           </div>
           <div className="preview-toolbar-actions">
             <button

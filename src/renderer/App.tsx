@@ -63,6 +63,7 @@ import {
 } from "./asset-drag-drop";
 import { FilterTagPicker } from "./FilterTagPicker";
 import { FilterPresetChips } from "./FilterPresetChips";
+import { trashedFromLabel } from "./trashed-from-label";
 import {
   ASPECT_RATIO_PRESETS,
   RESOLUTION_PRESETS,
@@ -5324,7 +5325,7 @@ function AppInner() {
                               }}
                               title={asset.trashedFromPath}
                             >
-                              {asset.trashedFromPath}
+                              {trashedFromLabel(asset.trashedFromPath)}
                             </span>
                           ) : (canvasPrefs.fields.size ||
                               canvasPrefs.fields.date) ? (

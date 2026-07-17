@@ -153,6 +153,7 @@
 | ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
 | --- | --- | --- | --- | --- | --- | --- |
 | VIEWER-001 | 从深滚动位置双击查看且返回原位置 | 待人类验收 | 在含较多资产的范围向下滚动至少数屏，双击当前可见图片；确认内容后点击返回/关闭查看页面 | 查看页面完整覆盖中央工作区且图片成功显示，不向上或向下错位；返回后仍在原滚动位置，原资产保持可见和选中 | [0013 QA](0013-asset-viewer-navigation-and-gestures-qa-report.md) / [连续浏览 E2E](../../tests/e2e/asset-pagination.test.ts) | 原反馈：双击查看有非常大概率显示错位；P0 修复后重新进入待验收 |
+| VIEWER-002 | 查看页不显示媒体类型小字 | 待人类验收 | 双击任意图片或视频进入查看页，观察文件名下方 | 只有文件名，没有「图像预览」等类型标注副标题 | [Wave 3 审查](../reviews/2026-07-17-wave3-ui-ux-audit.md) / [截图](evidence/wave3-ux-audit/11-viewer-page.png) | 2026-07-17 REQ-VIEW-001 实现（AssetPreviewModal 移除类型副标题）；截图确认。 |
 
 ### G. 回收站与重新定位
 
@@ -164,7 +165,8 @@
 | RELINK-001 | 批量重新定位预览 | 待人类验收 | 让托管资产 missing，选择候选新根并发起预览 | 只显示相对路径和匹配/缺失数量，不泄露候选根绝对路径 | [0007 QA](0007-trash-relink-batch-relocate-qa-report.md) / [重新定位 E2E](../../tests/e2e/trash-relink-flow.test.ts) | — |
 | RELINK-002 | 取消批量重新定位不修改资产 | 待人类验收 | 得到预览后取消 | 资产位置和状态不变 | [0007 QA](0007-trash-relink-batch-relocate-qa-report.md) / [重新定位 E2E](../../tests/e2e/trash-relink-flow.test.ts) | — |
 | RELINK-003 | 重新预览后应用批量重新定位 | 待人类验收 | 取消一次预览后，重新选择候选根并应用新预览 | 匹配资产恢复可用，使用的是第二次预览结果 | [0007 QA](0007-trash-relink-batch-relocate-qa-report.md) / [重新定位 E2E](../../tests/e2e/trash-relink-flow.test.ts) | — |
-| TRASH-004 | 回收站中资产保持可解码预览 | 待人类验收 | 将一项有缩略图的托管资产移入回收站并进入回收站查看；再恢复该资产 | 回收站内缩略图正常显示不丢失；恢复后预览保持不变 | [Wave 1 开发日志](../development/0015-0019-ux-feedback-wave1-development-log.md) / [worker 测试](../../tests/worker/trash-relink.test.ts) | 2026-07-17 根因修复（`39f134d`）；Computer Use 未执行（环境无桌面控制能力，移交人工 QA）。 |
+| TRASH-004 | 回收站中资产保持可解码预览 | 待人类验收 | 将一项有缩略图的托管资产移入回收站并进入回收站查看；再恢复该资产 | 回收站内缩略图正常显示不丢失；恢复后预览保持不变 | [Wave 1 开发日志](../development/0015-0019-ux-feedback-wave1-development-log.md) / [worker 测试](../../tests/worker/trash-relink.test.ts) | 2026-07-17 根因修复（`39f134d`）；Computer Use 未执行（环境无桌面控制能力，移交人工 QA）。2026-07-17 Wave 3 截图复查通过（10-trash-view.png）。 |
+| TRASH-005 | 回收站卡片原位置可读显示 | 待人类验收 | 把根目录的一项资产移入回收站查看卡片第二行；再把文件夹内的资产移入回收站对比 | 根目录资产第二行显示「资源库根目录」而非重复文件名；文件夹内资产显示所在目录路径 | [Wave 3 审查](../reviews/2026-07-17-wave3-ui-ux-audit.md) / [截图](evidence/wave3-ux-audit/10-trash-view.png) / [单测](../../tests/unit/trashed-from-label.test.ts) | 2026-07-17 P3 修复；截图确认。 |
 
 ### H. 资产选择与基础右键菜单
 
