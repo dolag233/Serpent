@@ -1,0 +1,1 @@
+{"id":"int-56767f57782572cc630ec10970ef23eb","kind":"field_change","created_at":"2026-07-17T17:41:01.93669Z","actor":"unknown","issue_id":"Serpent-l2y","extra":{"field":"status","new_value":"closed","old_value":"open","reason":"被 Serpent-t4c 取代：用户明确要求直接删除 Inspector 底部资源库路径与关闭资源库按钮，不再只是防误触。"}}
