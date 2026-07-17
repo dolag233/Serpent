@@ -26,6 +26,13 @@ import type { ImportCompletion } from '../../src/shared/protocol/responses';
 const temporaryRoots: string[] = [];
 const require = createRequire(import.meta.url);
 
+// Valid 1x1 white PNG bytes (pre-computed), matching thumbnails.test.ts so
+// trash tests can generate real decodable thumbnails through the media queue.
+const VALID_1X1_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==',
+  'base64',
+);
+
 interface TestDatabaseConnection {
   close(): void;
   exec(source: string): void;
@@ -359,6 +366,136 @@ describe('listTrash', () => {
     const service = new LibraryService();
     const created = service.createLibrary({ displayName: 'Empty Trash', selectedParentPath: root });
     expect(service.listTrash(created.libraryId)).toEqual([]);
+    service.closeAll();
+  });
+});
+
+describe('trash preview artifacts (BUG-TRASH-001)', () => {
+  async function importWithReadyThumbnail(service: LibraryService, libraryId: string, sourcePath: string): Promise<string> {
+    writeFileSync(sourcePath, VALID_1X1_PNG);
+    const assetId = importNoConflict(service, libraryId, sourcePath).assets[0]!.assetId;
+    service.enqueueThumbnailJobs(libraryId);
+    expect(await service.processThumbnailQueue(libraryId)).toBeGreaterThan(0);
+    return assetId;
+  }
+
+  function trashScopeItem(service: LibraryService, libraryId: string, assetId: string) {
+    const result = service.searchAssets({
+      libraryId,
+      query: null,
+      scope: { kind: 'trash' },
+      limit: 50,
+      offset: 0,
+    });
+    return result.items.find((item) => item.assetId === assetId);
+  }
+
+  it('keeps the thumbnail resolvable and decodable after trashing', async () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'Trash Preview', selectedParentPath: root });
+    const assetId = await importWithReadyThumbnail(service, created.libraryId, path.join(root, 'preview.png'));
+
+    // Control: while active, the thumbnail is served through the artifact path.
+    const activeItem = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
+    expect(activeItem.thumbnailStatus).toBe('ready');
+    const artifactId = activeItem.thumbnailArtifactId!;
+    expect(artifactId).toBeTruthy();
+    expect(existsSync(service.getArtifactAbsolutePath(created.libraryId, artifactId, 'preview'))).toBe(true);
+
+    service.trashAssets({ libraryId: created.libraryId, assetIds: [assetId] });
+
+    // Trashing moves only the source file; the artifact row and file stay ready.
+    const db = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    const artifactRow = db.prepare(
+      "SELECT status, invalidated_at FROM revision_artifacts WHERE artifact_id = ?",
+    ).get(artifactId) as { status: string; invalidated_at: string | null };
+    expect(artifactRow).toEqual({ status: 'ready', invalidated_at: null });
+    db.close();
+    expect(existsSync(path.join(created.libraryPath, '.serpent', 'artifacts', `${artifactId}.webp`))).toBe(true);
+
+    // The trash listing (the renderer's trash-scope data source) must keep
+    // exposing the thumbnail artifact so the card can build a preview URL.
+    const trashedItem = trashScopeItem(service, created.libraryId, assetId);
+    expect(trashedItem?.thumbnailStatus).toBe('ready');
+    expect(trashedItem?.thumbnailArtifactId).toBe(artifactId);
+
+    // The media protocol resolution must keep serving the artifact for the
+    // trashed asset, and the served bytes must still decode as an image.
+    const servedPath = service.getArtifactAbsolutePath(created.libraryId, artifactId, 'preview');
+    const sharp = require('sharp') as (input: string) => { metadata(): Promise<{ width?: number; height?: number }> };
+    const metadata = await sharp(servedPath).metadata();
+    expect(metadata.width).toBeGreaterThan(0);
+    expect(metadata.height).toBeGreaterThan(0);
+
+    service.closeAll();
+  });
+
+  it('exposes thumbnail state through listTrash consistently with the trash search scope', async () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'Trash List Preview', selectedParentPath: root });
+    const assetId = await importWithReadyThumbnail(service, created.libraryId, path.join(root, 'listed.png'));
+
+    service.trashAssets({ libraryId: created.libraryId, assetIds: [assetId] });
+
+    const scoped = trashScopeItem(service, created.libraryId, assetId);
+    const listed = service.listTrash(created.libraryId).find((item) => item.assetId === assetId);
+    expect(scoped?.thumbnailArtifactId).toBeTruthy();
+    expect(listed?.thumbnailStatus).toBe(scoped?.thumbnailStatus);
+    expect(listed?.thumbnailArtifactId).toBe(scoped?.thumbnailArtifactId);
+
+    service.closeAll();
+  });
+
+  it('keeps the same preview resolvable through trash and restore', async () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'Restore Preview', selectedParentPath: root });
+    const assetId = await importWithReadyThumbnail(service, created.libraryId, path.join(root, 'roundtrip.png'));
+    const artifactId = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!.thumbnailArtifactId!;
+    const originalBytes = readFileSync(service.getArtifactAbsolutePath(created.libraryId, artifactId, 'preview'));
+
+    service.trashAssets({ libraryId: created.libraryId, assetIds: [assetId] });
+    const trashedBytes = readFileSync(service.getArtifactAbsolutePath(created.libraryId, artifactId, 'preview'));
+
+    service.restoreAssets({ libraryId: created.libraryId, assetIds: [assetId] });
+    const restoredItem = service.searchAssets({
+      libraryId: created.libraryId,
+      query: null,
+      limit: 50,
+      offset: 0,
+    }).items.find((item) => item.assetId === assetId);
+    expect(restoredItem?.deletedAt).toBeNull();
+    expect(restoredItem?.thumbnailStatus).toBe('ready');
+    expect(restoredItem?.thumbnailArtifactId).toBe(artifactId);
+    const restoredBytes = readFileSync(service.getArtifactAbsolutePath(created.libraryId, artifactId, 'preview'));
+
+    expect(trashedBytes.equals(originalBytes)).toBe(true);
+    expect(restoredBytes.equals(originalBytes)).toBe(true);
+
+    service.closeAll();
+  });
+
+  it('stops serving artifacts once the asset is permanently deleted', async () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'Purge Preview', selectedParentPath: root });
+    const assetId = await importWithReadyThumbnail(service, created.libraryId, path.join(root, 'purged.png'));
+    const artifactId = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!.thumbnailArtifactId!;
+
+    service.trashAssets({ libraryId: created.libraryId, assetIds: [assetId] });
+    const result = service.deleteAssetsPermanent({ libraryId: created.libraryId, assetIds: [assetId] });
+    expect(result.deletedCount).toBe(1);
+
+    // The security boundary of artifact serving is the asset row itself: once
+    // the row is gone the artifact must not resolve, even though the derived
+    // file may still sit in .serpent/artifacts awaiting regeneration sweeps.
+    expectServiceError(
+      () => service.getArtifactAbsolutePath(created.libraryId, artifactId, 'preview'),
+      'ASSET_NOT_FOUND',
+    );
+
     service.closeAll();
   });
 });
