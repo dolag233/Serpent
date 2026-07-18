@@ -587,6 +587,13 @@ body.platform-darwin .toolbar-leading {
   background: var(--hover);
 }
 
+.sort-mode-popover.is-keyboard-navigation .sort-mode-option:focus-visible,
+.sort-mode-option:focus-visible {
+  background: var(--hover);
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
 .sort-mode-option.is-active {
   background: var(--accent-soft);
   color: var(--accent-soft-fg);
@@ -810,6 +817,13 @@ body.platform-darwin .toolbar-leading {
 
 .library-switcher-item:hover:not(:disabled) {
   background: var(--hover);
+}
+
+.library-switcher-menu.is-keyboard-navigation .library-switcher-item:focus-visible:not(:disabled),
+.library-switcher-item:focus-visible:not(:disabled) {
+  background: var(--hover);
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 
 .library-switcher-item:disabled {
@@ -2662,6 +2676,11 @@ input[type="range"] {
   opacity: 0;
   pointer-events: none;
 }
+/* Keyboard focus on chrome must remain visible even while idle-faded (Serpent-vvn). */
+.workspace-viewer.is-chrome-idle:has(.preview-chrome-fade:focus-visible) .preview-chrome-fade {
+  opacity: 1;
+  pointer-events: auto;
+}
 .preview-zoom-controls {
   position: absolute;
   z-index: 2;
@@ -2739,6 +2758,9 @@ input[type="range"] {
   opacity: 1;
   outline: none;
 }
+.preview-nav:focus-visible:not(:disabled) {
+  box-shadow: 0 0 0 2px var(--accent);
+}
 .preview-nav:disabled {
   opacity: 0.2;
   cursor: default;
@@ -2793,6 +2815,9 @@ input[type="range"] {
   color: var(--text);
   opacity: 1;
   outline: none;
+}
+.preview-close-chip:focus-visible {
+  box-shadow: 0 0 0 2px var(--accent);
 }
 
 /* REQ-VIEW-004: keep canvas mounted (scroll restore) but out of layout while viewing. */

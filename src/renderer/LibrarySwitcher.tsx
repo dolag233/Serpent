@@ -1,11 +1,23 @@
-import { useEffect, useId, useRef, useState } from "react";
+import {
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from "react";
 import {
   resolveImportMenuCopy,
   type ImportMenuCopy,
 } from "./browse-empty-state";
 import { Icon } from "./Icons";
 import { useLocale, type LocalePreference } from "./i18n";
+import {
+  focusFirstRovingItem,
+  handleRovingListKeyDown,
+} from "./roving-list-keyboard";
 import { useTheme, type ThemePreference } from "./theme";
+
+const MENU_ITEM_SELECTOR = '[role="menuitem"], [role="menuitemradio"]';
 
 export type RecentLibraryMenuEntry = {
   path: string;
@@ -76,7 +88,10 @@ export function LibrarySwitcher({
   const { t, preference: localePreference, setLocale } = useLocale();
   const { preference: themePreference, setTheme } = useTheme();
   const [open, setOpen] = useState(false);
+  const [keyboardNav, setKeyboardNav] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
   const menuId = useId();
   const label = libraryName ?? t("shell.chooseLibrary");
   const libraryScopedDisabled = !libraryOpen || busy;
@@ -90,27 +105,35 @@ export function LibrarySwitcher({
     onImportLibrary != null ||
     onImportZip != null;
 
+  function closeMenu(restoreTriggerFocus: boolean) {
+    setOpen(false);
+    setKeyboardNav(false);
+    if (restoreTriggerFocus) {
+      requestAnimationFrame(() => triggerRef.current?.focus());
+    }
+  }
+
   useEffect(() => {
     if (!open) return;
     function onPointerDown(event: PointerEvent) {
       if (!rootRef.current?.contains(event.target as Node)) {
-        setOpen(false);
+        closeMenu(false);
       }
     }
-    function onKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") setOpen(false);
-    }
     document.addEventListener("pointerdown", onPointerDown);
-    document.addEventListener("keydown", onKeyDown);
+    const raf = requestAnimationFrame(() => {
+      const menu = menuRef.current;
+      if (menu) focusFirstRovingItem(menu, MENU_ITEM_SELECTOR);
+    });
     return () => {
       document.removeEventListener("pointerdown", onPointerDown);
-      document.removeEventListener("keydown", onKeyDown);
+      cancelAnimationFrame(raf);
     };
   }, [open]);
 
   function chooseLocale(next: LocalePreference) {
     setLocale(next);
-    setOpen(false);
+    closeMenu(true);
   }
 
   function chooseTheme(next: ThemePreference) {
@@ -118,8 +141,26 @@ export function LibrarySwitcher({
   }
 
   function runMenuAction(handler: () => void) {
-    setOpen(false);
+    closeMenu(true);
     handler();
+  }
+
+  function onMenuKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
+    const menu = menuRef.current;
+    if (!menu) return;
+    const result = handleRovingListKeyDown({
+      key: event.key,
+      container: menu,
+      itemSelector: MENU_ITEM_SELECTOR,
+    });
+    if (!result.handled) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (result.action === "escape") {
+      closeMenu(true);
+      return;
+    }
+    setKeyboardNav(true);
   }
 
   return (
@@ -136,9 +177,14 @@ export function LibrarySwitcher({
         className="library-switcher-trigger"
         disabled={disabled}
         onClick={() => {
-          if (!open) onMenuOpen?.();
-          setOpen(!open);
+          if (open) {
+            closeMenu(true);
+            return;
+          }
+          onMenuOpen?.();
+          setOpen(true);
         }}
+        ref={triggerRef}
         title={
           libraryName
             ? t("shell.libraryNamed", { name: libraryName })
@@ -150,25 +196,28 @@ export function LibrarySwitcher({
         <Icon name="chevron" size={13} />
       </button>
       {open && (
-        <div className="library-switcher-menu" id={menuId} role="menu">
+        <div
+          className={`library-switcher-menu${keyboardNav ? " is-keyboard-navigation" : ""}`}
+          id={menuId}
+          onKeyDown={onMenuKeyDown}
+          onPointerMove={() => setKeyboardNav(false)}
+          ref={menuRef}
+          role="menu"
+        >
           <button
             className="library-switcher-item"
-            onClick={() => {
-              setOpen(false);
-              onCreateLibrary();
-            }}
+            onClick={() => runMenuAction(onCreateLibrary)}
             role="menuitem"
+            tabIndex={-1}
             type="button"
           >
             {t("shell.createLibraryEllipsis")}
           </button>
           <button
             className="library-switcher-item"
-            onClick={() => {
-              setOpen(false);
-              onOpenLibrary();
-            }}
+            onClick={() => runMenuAction(onOpenLibrary)}
             role="menuitem"
+            tabIndex={-1}
             type="button"
           >
             {t("shell.openLibraryEllipsis")}
@@ -176,11 +225,9 @@ export function LibrarySwitcher({
           <button
             className="library-switcher-item"
             disabled={!libraryName}
-            onClick={() => {
-              setOpen(false);
-              onCloseLibrary();
-            }}
+            onClick={() => runMenuAction(onCloseLibrary)}
             role="menuitem"
+            tabIndex={-1}
             type="button"
           >
             {t("shell.closeLibrary")}
@@ -202,6 +249,7 @@ export function LibrarySwitcher({
                     disabled={libraryScopedDisabled}
                     onClick={() => runMenuAction(onImportFiles)}
                     role="menuitem"
+                    tabIndex={-1}
                     title={t(transferCopy.importFiles.titleKey)}
                     type="button"
                   >
@@ -214,6 +262,7 @@ export function LibrarySwitcher({
                     disabled={libraryScopedDisabled}
                     onClick={() => runMenuAction(onImportFolder)}
                     role="menuitem"
+                    tabIndex={-1}
                     title={t(transferCopy.importFolder.titleKey)}
                     type="button"
                   >
@@ -226,6 +275,7 @@ export function LibrarySwitcher({
                     disabled={libraryScopedDisabled}
                     onClick={() => runMenuAction(onPasteImage)}
                     role="menuitem"
+                    tabIndex={-1}
                     title={t(transferCopy.pasteImage.titleKey)}
                     type="button"
                   >
@@ -238,6 +288,7 @@ export function LibrarySwitcher({
                     disabled={libraryScopedDisabled}
                     onClick={() => runMenuAction(onImportLinkedFolder)}
                     role="menuitem"
+                    tabIndex={-1}
                     title={t(transferCopy.importLinkedFolder.titleKey)}
                     type="button"
                   >
@@ -250,6 +301,7 @@ export function LibrarySwitcher({
                     disabled={libraryScopedDisabled}
                     onClick={() => runMenuAction(onExportLibrary)}
                     role="menuitem"
+                    tabIndex={-1}
                     type="button"
                   >
                     {t("toolbar.exportLibrary")}
@@ -261,6 +313,7 @@ export function LibrarySwitcher({
                     disabled={busy}
                     onClick={() => runMenuAction(onImportLibrary)}
                     role="menuitem"
+                    tabIndex={-1}
                     type="button"
                   >
                     {t("toolbar.importLibrary")}
@@ -272,6 +325,7 @@ export function LibrarySwitcher({
                     disabled={busy}
                     onClick={() => runMenuAction(onImportZip)}
                     role="menuitem"
+                    tabIndex={-1}
                     type="button"
                   >
                     {t("toolbar.importZip")}
@@ -294,6 +348,7 @@ export function LibrarySwitcher({
               className="library-switcher-item"
               onClick={() => chooseLocale("system")}
               role="menuitemradio"
+              tabIndex={-1}
               type="button"
             >
               {t("shell.languageSystem")}
@@ -303,6 +358,7 @@ export function LibrarySwitcher({
               className="library-switcher-item"
               onClick={() => chooseLocale("zh-CN")}
               role="menuitemradio"
+              tabIndex={-1}
               type="button"
             >
               {t("shell.languageZh")}
@@ -312,6 +368,7 @@ export function LibrarySwitcher({
               className="library-switcher-item"
               onClick={() => chooseLocale("en")}
               role="menuitemradio"
+              tabIndex={-1}
               type="button"
             >
               {t("shell.languageEn")}
@@ -331,6 +388,7 @@ export function LibrarySwitcher({
               className="library-switcher-item"
               onClick={() => chooseTheme("dark")}
               role="menuitemradio"
+              tabIndex={-1}
               type="button"
             >
               {t("shell.themeDark")}
@@ -340,6 +398,7 @@ export function LibrarySwitcher({
               className="library-switcher-item"
               onClick={() => chooseTheme("light")}
               role="menuitemradio"
+              tabIndex={-1}
               type="button"
             >
               {t("shell.themeLight")}
@@ -349,6 +408,7 @@ export function LibrarySwitcher({
               className="library-switcher-item"
               onClick={() => chooseTheme("system")}
               role="menuitemradio"
+              tabIndex={-1}
               type="button"
             >
               {t("shell.themeSystem")}
@@ -370,10 +430,11 @@ export function LibrarySwitcher({
                     className="library-switcher-item"
                     key={entry.path}
                     onClick={() => {
-                      setOpen(false);
+                      closeMenu(true);
                       onOpenRecent?.(entry.path);
                     }}
                     role="menuitem"
+                    tabIndex={-1}
                     title={entry.path}
                     type="button"
                   >

@@ -154,6 +154,7 @@ import type {
 } from "../shared/protocol/responses";
 import { AssetPreviewModal } from "./AssetPreviewModal";
 import { useViewerChromeIdle } from "./use-viewer-chrome-idle";
+import { useDialogFocusTrap } from "./use-dialog-focus-trap";
 import { AssetContextMenu } from "./AssetContextMenu";
 import { InspectorPanel } from "./InspectorPanel";
 import {
@@ -4645,29 +4646,17 @@ function AppInner() {
       !restoreDialog &&
       !moveDialog &&
       !undoMoveDialog &&
-      !collectionEditor
+      !collectionEditor &&
+      !exportDialogOpen &&
+      !appSettingsOpen &&
+      !aiConfigOpen &&
+      !extensionPairingOpen &&
+      !(mediaJobsOpen && library !== null) &&
+      !linkedRulesEditor &&
+      !convertLinkedDialog.folderId
     )
       return;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Tab") {
-        const modal = document.querySelector<HTMLElement>(
-          '[role="dialog"][aria-modal="true"]',
-        );
-        const focusable = modal?.querySelectorAll<HTMLElement>(
-          'button:not(:disabled), input:not(:disabled), select:not(:disabled), [tabindex]:not([tabindex="-1"])',
-        );
-        if (!focusable?.length) return;
-        const first = focusable[0];
-        const last = focusable[focusable.length - 1];
-        if (event.shiftKey && document.activeElement === first) {
-          event.preventDefault();
-          last?.focus();
-        } else if (!event.shiftKey && document.activeElement === last) {
-          event.preventDefault();
-          first?.focus();
-        }
-        return;
-      }
       if (event.key !== "Escape") return;
       event.preventDefault();
       if (assetRenameDialog) {
@@ -4700,6 +4689,34 @@ function AppInner() {
       }
       if (collectionEditor) {
         setCollectionEditor(null);
+        return;
+      }
+      if (exportDialogOpen) {
+        setExportDialogOpen(false);
+        return;
+      }
+      if (appSettingsOpen) {
+        setAppSettingsOpen(false);
+        return;
+      }
+      if (aiConfigOpen) {
+        setAiConfigOpen(false);
+        return;
+      }
+      if (extensionPairingOpen) {
+        setExtensionPairingOpen(false);
+        return;
+      }
+      if (mediaJobsOpen) {
+        setMediaJobsOpen(false);
+        return;
+      }
+      if (linkedRulesEditor) {
+        setLinkedRulesEditor(null);
+        return;
+      }
+      if (convertLinkedDialog.folderId) {
+        setConvertLinkedDialog({ folderId: "", name: "", targetFolderId: "" });
         return;
       }
       if (dialog) {
@@ -4735,8 +4752,37 @@ function AppInner() {
     moveDialog,
     undoMoveDialog,
     collectionEditor,
+    exportDialogOpen,
+    appSettingsOpen,
+    aiConfigOpen,
+    extensionPairingOpen,
+    mediaJobsOpen,
+    library,
+    linkedRulesEditor,
+    convertLinkedDialog.folderId,
     setError,
   ]);
+
+  const dialogFocusTrapActive = Boolean(
+    dialog ||
+      conflicts ||
+      assetRenameDialog ||
+      permanentDeleteDialog ||
+      deleteLinkedDialog ||
+      batchRelinkPreview ||
+      restoreDialog ||
+      moveDialog ||
+      undoMoveDialog ||
+      collectionEditor ||
+      exportDialogOpen ||
+      appSettingsOpen ||
+      aiConfigOpen ||
+      extensionPairingOpen ||
+      (mediaJobsOpen && library !== null) ||
+      linkedRulesEditor ||
+      convertLinkedDialog.folderId,
+  );
+  useDialogFocusTrap(dialogFocusTrapActive);
 
   useEffect(() => {
     const onSelectionKeyDown = (event: KeyboardEvent) => {

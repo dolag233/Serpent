@@ -97,6 +97,18 @@ export function TagPickerMenu({
       );
       return;
     }
+    if (event.key === "Home" && candidates.length > 0) {
+      event.preventDefault();
+      event.stopPropagation();
+      setActiveIndex(0);
+      return;
+    }
+    if (event.key === "End" && candidates.length > 0) {
+      event.preventDefault();
+      event.stopPropagation();
+      setActiveIndex(candidates.length - 1);
+      return;
+    }
     if (event.key === "Enter") {
       event.preventDefault();
       event.stopPropagation();
@@ -164,8 +176,13 @@ export function TagPickerMenu({
               id={`${listId}-option-${index}`}
               key={tag.tagId}
               onClick={() => pick(tag.tagId)}
+              onMouseDown={(event) => {
+                // Keep combobox input as the single DOM focus owner.
+                event.preventDefault();
+              }}
               onMouseEnter={() => setActiveIndex(index)}
               role="option"
+              tabIndex={-1}
               type="button"
             >
               <span className="tag-picker-option-icon">

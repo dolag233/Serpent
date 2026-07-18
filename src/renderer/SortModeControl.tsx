@@ -1,8 +1,18 @@
-import { useEffect, useRef, useState } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from "react";
 
 import { Icon } from "./Icons";
 import { useT } from "./i18n";
 import type { SortDefinition } from "../shared/asset-types";
+import {
+  focusFirstRovingItem,
+  handleRovingListKeyDown,
+  ROVING_OPTION_SELECTOR,
+} from "./roving-list-keyboard";
 
 /** Browse/sort fields only — relevance removed from sort UI (REQ-SORT-003). */
 export type SortFieldOption = SortDefinition["field"];
@@ -68,30 +78,72 @@ export function SortModeControl({
 }: SortModeControlProps) {
   const t = useT();
   const [open, setOpen] = useState(false);
+  const [keyboardNav, setKeyboardNav] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
   const nonDefault =
     sortField !== DEFAULT_SORT_FIELD || sortOrder !== DEFAULT_SORT_ORDER;
+
+  function closeList(restoreTriggerFocus: boolean) {
+    setOpen(false);
+    setKeyboardNav(false);
+    if (restoreTriggerFocus) {
+      requestAnimationFrame(() => triggerRef.current?.focus());
+    }
+  }
 
   useEffect(() => {
     if (!open) return;
     const onMouseDown = (event: MouseEvent) => {
       const root = rootRef.current;
       if (!root || !(event.target instanceof Node)) return;
-      if (!root.contains(event.target)) setOpen(false);
-    };
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.stopPropagation();
-        setOpen(false);
-      }
+      if (!root.contains(event.target)) closeList(false);
     };
     document.addEventListener("mousedown", onMouseDown, true);
-    document.addEventListener("keydown", onKeyDown, true);
+    const raf = requestAnimationFrame(() => {
+      const list = listRef.current;
+      if (!list) return;
+      const selected = list.querySelector<HTMLElement>(
+        '[role="option"][aria-selected="true"]',
+      );
+      if (
+        selected &&
+        !(selected instanceof HTMLButtonElement && selected.disabled)
+      ) {
+        selected.focus();
+        return;
+      }
+      focusFirstRovingItem(list, ROVING_OPTION_SELECTOR);
+    });
     return () => {
       document.removeEventListener("mousedown", onMouseDown, true);
-      document.removeEventListener("keydown", onKeyDown, true);
+      cancelAnimationFrame(raf);
     };
   }, [open]);
+
+  function onListKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
+    const list = listRef.current;
+    if (!list) return;
+    const result = handleRovingListKeyDown({
+      key: event.key,
+      container: list,
+      itemSelector: ROVING_OPTION_SELECTOR,
+    });
+    if (!result.handled) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (result.action === "escape") {
+      closeList(true);
+      return;
+    }
+    setKeyboardNav(true);
+  }
+
+  function pickField(field: SortFieldOption) {
+    setSortField(field);
+    closeList(true);
+  }
 
   return (
     <div className="sort-mode-control" ref={rootRef}>
@@ -99,10 +151,15 @@ export function SortModeControl({
       <div className="dimension-filter-dim">
         <button
           aria-expanded={open || undefined}
+          aria-haspopup="listbox"
           aria-label={t("filter.sortMode")}
           className={`dimension-filter-btn${nonDefault ? " is-active" : ""}${open ? " is-open" : ""}`}
           disabled={disabled}
-          onClick={() => setOpen((current) => !current)}
+          onClick={() => {
+            if (open) closeList(true);
+            else setOpen(true);
+          }}
+          ref={triggerRef}
           type="button"
         >
           <Icon name="sliders" size={14} />
@@ -111,7 +168,10 @@ export function SortModeControl({
         {open && (
           <div
             aria-label={t("filter.sortMode")}
-            className="dimension-filter-popover sort-mode-popover"
+            className={`dimension-filter-popover sort-mode-popover${keyboardNav ? " is-keyboard-navigation" : ""}`}
+            onKeyDown={onListKeyDown}
+            onPointerMove={() => setKeyboardNav(false)}
+            ref={listRef}
             role="listbox"
           >
             <div className="sort-mode-section-label">{t("filter.sortPrimary")}</div>
@@ -120,11 +180,9 @@ export function SortModeControl({
                 aria-selected={sortField === field}
                 className={`sort-mode-option${sortField === field ? " is-active" : ""}`}
                 key={field}
-                onClick={() => {
-                  setSortField(field);
-                  setOpen(false);
-                }}
+                onClick={() => pickField(field)}
                 role="option"
+                tabIndex={-1}
                 type="button"
               >
                 {labelForSortField(field, t)}
@@ -136,11 +194,9 @@ export function SortModeControl({
                 aria-selected={sortField === field}
                 className={`sort-mode-option${sortField === field ? " is-active" : ""}`}
                 key={field}
-                onClick={() => {
-                  setSortField(field);
-                  setOpen(false);
-                }}
+                onClick={() => pickField(field)}
                 role="option"
+                tabIndex={-1}
                 type="button"
               >
                 {labelForSortField(field, t)}

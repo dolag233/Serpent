@@ -279,6 +279,12 @@ export function ContextMenu({
       const prev =
         currentIdx <= 0 ? items.length - 1 : (currentIdx - 1 + items.length) % items.length;
       items[prev]?.focus();
+    } else if (e.key === "Home") {
+      e.preventDefault();
+      items[0]?.focus();
+    } else if (e.key === "End") {
+      e.preventDefault();
+      items[items.length - 1]?.focus();
     } else if (e.key === "Escape") {
       e.preventDefault();
       close();

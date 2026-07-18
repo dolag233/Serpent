@@ -352,6 +352,7 @@
 | 2026-07-19 | CANVAS-012 / VIEWER-005（视频） | 待复验 | 亮色角标对比度；视频查看 contain。 | `Serpent-yu8` / `Serpent-q16`。 |
 | 2026-07-19 | FILTER-019–020 / NAV-006 / SORT-006 / INSPECT-009–010 | 待人类验收 | 排除红、颜色黑白、去根行、排序图标、技术栏、堆叠阴影。 |
 | 2026-07-19 | SHELL-021 | 待人类验收 | 源链接打开失败可操作 toast；IPC 结构化错误码与无 URL 日志。 | Serpent-1pd。 |
+| 2026-07-19 | A11Y-001–003 | 待人类验收 | 查看页焦点环；库菜单/排序 roving；TagPicker 单焦点与对话框 trap。 | Serpent-vvn。 |
 | 2026-07-19 | PREF-001 / SMART-007 / MENU-023 | 待人类验收 | 设置面板；智能合集+；资产原地重命名。 | Serpent-str / uu9 / wfj。 |
 | 2026-07-19 | FOLDER-010–013 | 待人类验收 | 文件夹卡片/封面/计数/多选。 | epic Serpent-5ja。 |
 | 2026-07-19 | SORT-005 / SHELL-017 / FILTER-013 | 待复验 | 去掉排序相关性；括注复查；删除文件夹过滤维度。 | `Serpent-96i` / `Serpent-d45` / `Serpent-ckx`；[开发日志](../development/2026-07-19-sort-copy-folder-filter-development-log.md)。 |
@@ -371,5 +372,8 @@
 | INSPECT-009 | 技术元数据底部栏 | 待人类验收 | 选中视频与 GIF，看 Inspector | 体积/分辨率/时间行不含 codec/帧数；底部独立技术栏显示 | 同上 / Serpent-rbx | 2026-07-19；VIEW-007 复验。 |
 | INSPECT-010 | 多选堆叠预览阴影 | 待人类验收 | 多选 2–3 项，看右侧堆叠预览 | 层间有微弱阴影可辨，不糊成一块 | 同上 / Serpent-1tx | 2026-07-19。 |
 | SHELL-021 | 源链接打开失败可操作提示 | 待人类验收 | 选中带有效 HTTP(S) 源链接的资产，点 Inspector 源链接跳转；若系统浏览器打开失败（或临时破坏默认浏览器）观察 toast；正常成功路径仍应打开浏览器 | 失败时 toast 说明「系统浏览器无法打开…请检查默认浏览器」等可操作原因，不再只有笼统失败；成功时仍打开系统浏览器 | [开发日志](../development/2026-07-19-external-url-active-context-ipc-development-log.md) / 单测 `external-url-ipc.test.ts` / Serpent-1pd | 2026-07-19；日志侧失败码不含 URL，需查 `serpent.log` 的 `ipc.open-external-url` / `ipc.active-context`（人工抽查）。 |
+| A11Y-001 | 查看页 nav/close 键盘焦点可见 | 待人类验收 | 打开查看页；Tab 到上一张/下一张/关闭；可先等 chrome 渐隐再 Tab | 焦点控件有 accent 描边；idle 渐隐时聚焦仍可见 | [开发日志](../development/2026-07-19-keyboard-focus-model-development-log.md) / Serpent-vvn | 2026-07-19。 |
+| A11Y-002 | 资源库菜单与排序 listbox 键盘导航 | 待人类验收 | 打开左上角资源库菜单与排序字段弹出层；用 ↑↓ Home/End、Esc | 箭头移动焦点；Esc 关闭并回到触发按钮 | 同上 / `roving-list-keyboard.test.ts` | 2026-07-19。 |
+| A11Y-003 | 标签选择器单一焦点 + 对话框焦点陷阱 | 待人类验收 | 右键→分配标签；箭头高亮选项且输入框保持焦点；打开设置/导出等对话框按 Tab | 选项不可 Tab 抢走焦点；对话框 Tab 不逃到背后 UI | 同上 | 2026-07-19。 |
 
 

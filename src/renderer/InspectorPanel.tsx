@@ -856,6 +856,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
                           onClick={() => submitTagSuggestion(suggestion)}
                           onMouseEnter={() => setActiveTagSuggestionIndex(index)}
                           role="option"
+                          tabIndex={-1}
                           type="button"
                         >
                           <span className="tag-suggestion-name">
