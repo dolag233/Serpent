@@ -623,9 +623,9 @@ test("multi-asset menu shows a visible count and mixed-selection skip reasons", 
     ).toBeVisible({ timeout: 15_000 });
 
     await window
-      .locator(".tool-group-import")
-      .getByRole("button", { name: "导入链接文件夹" })
+      .getByRole("button", { name: /当前资源库/ })
       .click();
+    await window.getByRole("menuitem", { name: "导入链接文件夹" }).click();
     await window.getByRole("button", { name: "所有资产" }).click();
 
     const managedCard = window.locator(

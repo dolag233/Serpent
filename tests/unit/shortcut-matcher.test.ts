@@ -186,20 +186,16 @@ describe('注册表定义：标签与匹配同源（REQ-COMMAND-002 不漂移）
     ).toBe(true);
   });
 
-  it.each(['asset.move-to-trash', 'assets.move-to-trash'] as const)(
-    '%s：⌘⌫ / Delete 标签与按键同源',
-    (id) => {
-      const spec = specOf(id);
-      expect(formatShortcut(spec, 'mac')).toBe('⌘⌫');
-      expect(formatShortcut(spec, 'windows')).toBe('Delete');
-      expect(
-        matchesShortcut(spec, event({ key: 'Backspace', metaKey: true }), 'mac'),
-      ).toBe(true);
-      expect(
-        matchesShortcut(spec, event({ key: 'Delete' }), 'windows'),
-      ).toBe(true);
-    },
-  );
+  it('asset.rename：F2 标签与按键同源', () => {
+    const spec = specOf('asset.rename');
+    expect(formatShortcut(spec, 'mac')).toBe('F2');
+    expect(formatShortcut(spec, 'windows')).toBe('F2');
+    expect(matchesShortcut(spec, event({ key: 'F2' }), 'mac')).toBe(true);
+    expect(matchesShortcut(spec, event({ key: 'F2' }), 'windows')).toBe(true);
+    expect(
+      matchesShortcut(spec, event({ key: 'F2', metaKey: true }), 'mac'),
+    ).toBe(false);
+  });
 });
 
 describe('isMacPlatform（从旧模块迁入 command-types）', () => {

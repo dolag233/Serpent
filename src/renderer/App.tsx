@@ -29,6 +29,7 @@ import {
   NavigationSidebar,
 } from "./NavigationSidebar";
 import { LibrarySwitcher, buildRecentLibraryMenuEntries, type RecentLibraryMenuEntry } from "./LibrarySwitcher";
+import { WorkspaceToolsOverflow } from "./WorkspaceToolsOverflow";
 import { ScopeHistoryButtons } from "./ScopeHistoryButtons";
 import {
   ScopeBreadcrumbs,
@@ -4324,6 +4325,16 @@ function AppInner() {
           .map((a) => a.assetId);
         void trashManagedAssets(managedIds);
       } else if (
+        matchAssetCommandShortcut("asset.rename", event) &&
+        selectedAsset?.availability === "available" &&
+        !selectedAsset.deletedAt &&
+        selectedAsset.locationKind === "managed" &&
+        !previewAsset &&
+        !document.querySelector('[role="dialog"][aria-modal="true"]')
+      ) {
+        event.preventDefault();
+        openAssetRename(selectedAsset.assetId);
+      } else if (
         event.key === "Escape" &&
         selectedAssetIds.length > 0 &&
         !previewAsset &&
@@ -4348,6 +4359,7 @@ function AppInner() {
     visibleAssets,
     clearAssetSelection,
     selectionAnchorRef,
+    openAssetRename,
   ]);
 
   // Capture-phase Escape guard: when context menu is open, stop
@@ -4973,16 +4985,25 @@ function AppInner() {
             onForward={() => void goWorkspaceForward()}
           />
           <LibrarySwitcher
+            busy={busy}
             disabled={busy}
             libraryName={library?.displayName ?? null}
+            libraryOpen={Boolean(library)}
             onCloseLibrary={() => void closeLibrary()}
             onCreateLibrary={() => {
               setDialogValue(t("shell.myLibrary"));
               setDialog("library");
             }}
+            onExportLibrary={() => setExportDialogOpen(true)}
+            onImportFiles={() => void importAssets("files")}
+            onImportFolder={() => void importAssets("folder")}
+            onImportLibrary={() => void startImport()}
+            onImportLinkedFolder={() => void importFolderAsLinked()}
+            onImportZip={() => void startImportZip()}
             onMenuOpen={() => void refreshRecentLibraries()}
             onOpenLibrary={() => void runLibraryOperation("open")}
             onOpenRecent={(path) => void openRecentLibrary(path)}
+            onPasteImage={() => void pasteClipboardImage()}
             recentLibraries={recentLibraries}
           />
         </div>
@@ -5291,61 +5312,14 @@ function AppInner() {
               )
             )}
             <span className="tool-separator" />
-            <span className="tool-group-import">
-              <ToolButton
-                disabled={!library || busy}
-                icon="upload"
-                label={t("toolbar.importFiles")}
-                onClick={() => void importAssets("files")}
-              />
-              <ToolButton
-                disabled={!library || busy}
-                icon="folder"
-                label={t("toolbar.importFolder")}
-                onClick={() => void importAssets("folder")}
-              />
-              <ToolButton
-                disabled={!library || busy}
-                icon="clipboard"
-                label={t("toolbar.pasteImage")}
-                onClick={() => void pasteClipboardImage()}
-              />
-              <ToolButton
-                disabled={!library || busy}
-                icon="link"
-                label={t("toolbar.importLinkedFolder")}
-                onClick={() => void importFolderAsLinked()}
-              />
-            </span>
-            <span className="tool-separator" />
-            <span className="tool-group-export">
-              <ToolButton
-                disabled={!library || busy}
-                icon="archive"
-                label={t("toolbar.exportLibrary")}
-                onClick={() => setExportDialogOpen(true)}
-              />
-              <ToolButton
-                disabled={busy}
-                icon="download"
-                label={t("toolbar.importLibrary")}
-                onClick={() => void startImport()}
-              />
-              <ToolButton
-                disabled={busy}
-                icon="box"
-                label={t("toolbar.importZip")}
-                onClick={() => void startImportZip()}
-              />
-              <ToolButton
-                disabled={!library || busy}
-                icon="refresh"
-                label={t("toolbar.refreshDisk")}
-                onClick={() => void refreshAssets()}
-              />
-            </span>
             <span className="tool-group-view">
               <div className="canvas-controls">
+                <ToolButton
+                  disabled={!library || busy}
+                  icon="refresh"
+                  label={t("toolbar.refreshDisk")}
+                  onClick={() => void refreshAssets()}
+                />
                 <span className="tool-separator" />
                 <ToolButton
                   icon="grid"
@@ -5415,30 +5389,34 @@ function AppInner() {
               </div>
             </span>
             <span className="tool-separator" />
-            <span className="tool-group-utility">
-              <ToolButton
-                icon="globe"
-                label={t("toolbar.browserExtension")}
-                onClick={() => void openExtensionPairing()}
-              />
-              {library && (
-                <>
-                  <ToolButton
-                    icon="activity"
-                    label={t("toolbar.backgroundJobs")}
-                    onClick={() => setMediaJobsOpen(true)}
-                  />
-                  <ToolButton
-                    icon="sliders"
-                    label={t("toolbar.aiSettings")}
-                    onClick={() => {
-                      void loadAiConfig();
-                      setAiConfigOpen(true);
-                    }}
-                  />
-                </>
-              )}
-            </span>
+            <WorkspaceToolsOverflow
+              items={[
+                {
+                  id: "browser-extension",
+                  label: t("toolbar.browserExtension"),
+                  onSelect: () => {
+                    void openExtensionPairing();
+                  },
+                },
+                ...(library
+                  ? [
+                      {
+                        id: "background-jobs",
+                        label: t("toolbar.backgroundJobs"),
+                        onSelect: () => setMediaJobsOpen(true),
+                      },
+                      {
+                        id: "ai-settings",
+                        label: t("toolbar.aiSettings"),
+                        onSelect: () => {
+                          void loadAiConfig();
+                          setAiConfigOpen(true);
+                        },
+                      },
+                    ]
+                  : []),
+              ]}
+            />
           </div>
         </div>
         <div

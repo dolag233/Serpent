@@ -49,7 +49,8 @@ test('pastes a Main-owned clipboard image into the current folder and collection
     await window.getByPlaceholder('输入合集名称，回车创建').press('Enter');
     await window.getByRole('button', { name: '情绪板' }).click();
 
-    await window.getByRole('button', { name: '粘贴图片' }).click();
+    await window.getByRole('button', { name: /当前资源库/ }).click();
+    await window.getByRole('menuitem', { name: '粘贴图片' }).click();
     await expect(window.getByText('Clipboard 2026-07-13T12-34-56Z.png', { exact: true })).toBeVisible();
 
     const projectDirectory = path.join(libraryPath, 'Assets', '项目');
@@ -59,7 +60,8 @@ test('pastes a Main-owned clipboard image into the current folder and collection
 
     // A second paste deterministically enters the existing conflict flow. The
     // pending opaque import keeps its collection destination until resolution.
-    await window.getByRole('button', { name: '粘贴图片' }).click();
+    await window.getByRole('button', { name: /当前资源库/ }).click();
+    await window.getByRole('menuitem', { name: '粘贴图片' }).click();
     const conflictDialog = window.getByRole('dialog');
     await expect(conflictDialog.getByRole('heading', { name: '处理导入冲突' })).toBeVisible();
     await conflictDialog.getByLabel('疑似重复').selectOption('create-copy');
@@ -99,7 +101,8 @@ test('returns specific safe desktop-ingestion errors and records their diagnosti
     await window.getByLabel('名称').fill('桌面导入错误验收');
     await window.getByRole('button', { name: '创建', exact: true }).click();
 
-    await window.getByRole('button', { name: '粘贴图片' }).click();
+    await window.getByRole('button', { name: /当前资源库/ }).click();
+    await window.getByRole('menuitem', { name: '粘贴图片' }).click();
     await expect(window.getByRole('alert')).toContainText('系统剪贴板中没有可导入的图片');
 
     const invalidDrop = await window.evaluate(async () => {

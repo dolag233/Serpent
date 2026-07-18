@@ -52,9 +52,10 @@ test('imports a linked folder, reconciles external changes, and relinks after th
     await window.getByRole('button', { name: '创建资源库' }).click();
     await window.getByLabel('名称').fill(libraryName);
     await window.getByRole('button', { name: '创建', exact: true }).click();
-    await expect(window.getByRole('heading', { name: '把第一批素材放进来' })).toBeVisible();
+    await expect(window.getByRole('heading', { name: '导入资产以开始整理' })).toBeVisible();
 
-    await window.locator('.tool-group-import').getByRole('button', { name: '导入链接文件夹' }).click();
+    await window.getByRole('button', { name: /资源库菜单|当前资源库/ }).click();
+    await window.getByRole('menuitem', { name: '导入链接文件夹' }).click();
     await expect(window.getByRole('button', { name: 'source' })).toBeVisible();
 
     await window.getByRole('button', { name: 'source' }).click();
@@ -189,10 +190,11 @@ test('restores a linked library after a full app restart', async () => {
     await window.getByRole('button', { name: '创建资源库' }).click();
     await window.getByLabel('名称').fill(libraryName);
     await window.getByRole('button', { name: '创建', exact: true }).click();
-    await expect(window.getByRole('heading', { name: '把第一批素材放进来' })).toBeVisible();
+    await expect(window.getByRole('heading', { name: '导入资产以开始整理' })).toBeVisible();
 
     // Link the folder.
-    await window.locator('.tool-group-import').getByRole('button', { name: '导入链接文件夹' }).click();
+    await window.getByRole('button', { name: /资源库菜单|当前资源库/ }).click();
+    await window.getByRole('menuitem', { name: '导入链接文件夹' }).click();
     await expect(window.getByRole('button', { name: 'source' })).toBeVisible();
     await window.getByRole('button', { name: 'source' }).click();
 
@@ -282,9 +284,10 @@ test('applies default ignore rules — .git and node_modules are not registered 
     await window.getByRole('button', { name: '创建资源库' }).click();
     await window.getByLabel('名称').fill(libraryName);
     await window.getByRole('button', { name: '创建', exact: true }).click();
-    await expect(window.getByRole('heading', { name: '把第一批素材放进来' })).toBeVisible();
+    await expect(window.getByRole('heading', { name: '导入资产以开始整理' })).toBeVisible();
 
-    await window.locator('.tool-group-import').getByRole('button', { name: '导入链接文件夹' }).click();
+    await window.getByRole('button', { name: /资源库菜单|当前资源库/ }).click();
+    await window.getByRole('menuitem', { name: '导入链接文件夹' }).click();
     await expect(window.getByRole('button', { name: 'source' })).toBeVisible();
     await window.getByRole('button', { name: 'source' }).click();
 

@@ -173,6 +173,10 @@ export const assetCommandDefinitions: readonly AssetCommandDefinition[] = [
     id: 'asset.rename',
     title: (ctx) => t(ctx, 'command.asset.rename'),
     group: 'organize',
+    shortcut: {
+      mac: { label: 'F2', key: 'F2' },
+      windows: { label: 'F2', key: 'F2' },
+    },
     visible: (ctx) => !ctx.assetDeleted,
     disabledReason: unavailableReason,
     run: (ctx) => withPrimaryAsset(ctx, (id) => ctx.actions.rename(id)),

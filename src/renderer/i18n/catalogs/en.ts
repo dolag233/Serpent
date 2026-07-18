@@ -85,7 +85,9 @@ export const en = {
     themeLight: "Light",
     themeSystem: "System",
     myLibrary: "My library",
-    recentLibraries: "Recent"
+    recentLibraries: "Recent",
+    libraryTransfer: "Add & transfer",
+    moreWorkspaceTools: "More tools"
   },
   scope: {
     workspace: "Workspace",

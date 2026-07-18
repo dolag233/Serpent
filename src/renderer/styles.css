@@ -1437,8 +1437,8 @@ body.platform-darwin .toolbar-leading {
 .workspace-tools {
   min-width: 0;
   gap: 7px;
-  overflow-x: auto;
-  scrollbar-width: none;
+  overflow: visible;
+  flex-shrink: 1;
 }
 .workspace-tools > * {
   flex: 0 0 auto;
@@ -1459,20 +1459,23 @@ body.platform-darwin .toolbar-leading {
   order: -2;
 }
 
-.tool-group-import {
-  display: flex;
+.workspace-tools-overflow {
+  position: relative;
   flex: 0 0 auto;
-  align-items: center;
-  gap: 0;
-  order: -1;
+  order: 1;
 }
 
-.tool-group-export {
-  display: flex;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 0;
-  order: 0;
+.workspace-tools-overflow-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 40;
+  min-width: 180px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--pane);
+  box-shadow: var(--shadow-menu, 0 8px 24px rgb(0 0 0 / 28%));
 }
 
 .tool-group-utility {

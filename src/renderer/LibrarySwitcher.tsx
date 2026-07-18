@@ -31,6 +31,16 @@ export type LibrarySwitcherProps = {
   onOpenRecent?: (path: string) => void;
   /** Called when the menu opens so the owner can refresh recentLibraries. */
   onMenuOpen?: () => void;
+  /** True when a library is open (gates library-scoped transfer actions). */
+  libraryOpen?: boolean;
+  busy?: boolean;
+  onImportFiles?: () => void;
+  onImportFolder?: () => void;
+  onPasteImage?: () => void;
+  onImportLinkedFolder?: () => void;
+  onExportLibrary?: () => void;
+  onImportLibrary?: () => void;
+  onImportZip?: () => void;
 };
 
 /**
@@ -46,6 +56,15 @@ export function LibrarySwitcher({
   recentLibraries = [],
   onOpenRecent,
   onMenuOpen,
+  libraryOpen = false,
+  busy = false,
+  onImportFiles,
+  onImportFolder,
+  onPasteImage,
+  onImportLinkedFolder,
+  onExportLibrary,
+  onImportLibrary,
+  onImportZip,
 }: LibrarySwitcherProps) {
   const { t, preference: localePreference, setLocale } = useLocale();
   const { preference: themePreference, setTheme } = useTheme();
@@ -53,6 +72,15 @@ export function LibrarySwitcher({
   const rootRef = useRef<HTMLDivElement>(null);
   const menuId = useId();
   const label = libraryName ?? t("shell.chooseLibrary");
+  const libraryScopedDisabled = !libraryOpen || busy;
+  const showTransferSection =
+    onImportFiles != null ||
+    onImportFolder != null ||
+    onPasteImage != null ||
+    onImportLinkedFolder != null ||
+    onExportLibrary != null ||
+    onImportLibrary != null ||
+    onImportZip != null;
 
   useEffect(() => {
     if (!open) return;
@@ -79,6 +107,11 @@ export function LibrarySwitcher({
 
   function chooseTheme(next: ThemePreference) {
     setTheme(next);
+  }
+
+  function runMenuAction(handler: () => void) {
+    setOpen(false);
+    handler();
   }
 
   return (
@@ -144,6 +177,97 @@ export function LibrarySwitcher({
           >
             {t("shell.closeLibrary")}
           </button>
+          {showTransferSection && (
+            <>
+              <div aria-hidden="true" className="library-switcher-divider" />
+              <div
+                aria-label={t("shell.libraryTransfer")}
+                className="library-switcher-section"
+                role="group"
+              >
+                <div className="library-switcher-section-label">
+                  {t("shell.libraryTransfer")}
+                </div>
+                {onImportFiles != null && (
+                  <button
+                    className="library-switcher-item"
+                    disabled={libraryScopedDisabled}
+                    onClick={() => runMenuAction(onImportFiles)}
+                    role="menuitem"
+                    type="button"
+                  >
+                    {t("toolbar.importFiles")}
+                  </button>
+                )}
+                {onImportFolder != null && (
+                  <button
+                    className="library-switcher-item"
+                    disabled={libraryScopedDisabled}
+                    onClick={() => runMenuAction(onImportFolder)}
+                    role="menuitem"
+                    type="button"
+                  >
+                    {t("toolbar.importFolder")}
+                  </button>
+                )}
+                {onPasteImage != null && (
+                  <button
+                    className="library-switcher-item"
+                    disabled={libraryScopedDisabled}
+                    onClick={() => runMenuAction(onPasteImage)}
+                    role="menuitem"
+                    type="button"
+                  >
+                    {t("toolbar.pasteImage")}
+                  </button>
+                )}
+                {onImportLinkedFolder != null && (
+                  <button
+                    className="library-switcher-item"
+                    disabled={libraryScopedDisabled}
+                    onClick={() => runMenuAction(onImportLinkedFolder)}
+                    role="menuitem"
+                    type="button"
+                  >
+                    {t("toolbar.importLinkedFolder")}
+                  </button>
+                )}
+                {onExportLibrary != null && (
+                  <button
+                    className="library-switcher-item"
+                    disabled={libraryScopedDisabled}
+                    onClick={() => runMenuAction(onExportLibrary)}
+                    role="menuitem"
+                    type="button"
+                  >
+                    {t("toolbar.exportLibrary")}
+                  </button>
+                )}
+                {onImportLibrary != null && (
+                  <button
+                    className="library-switcher-item"
+                    disabled={busy}
+                    onClick={() => runMenuAction(onImportLibrary)}
+                    role="menuitem"
+                    type="button"
+                  >
+                    {t("toolbar.importLibrary")}
+                  </button>
+                )}
+                {onImportZip != null && (
+                  <button
+                    className="library-switcher-item"
+                    disabled={busy}
+                    onClick={() => runMenuAction(onImportZip)}
+                    role="menuitem"
+                    type="button"
+                  >
+                    {t("toolbar.importZip")}
+                  </button>
+                )}
+              </div>
+            </>
+          )}
           <div aria-hidden="true" className="library-switcher-divider" />
           <div
             aria-label={t("shell.language")}
