@@ -3,8 +3,6 @@ import {
   useMemo,
   useRef,
   useEffect,
-  type Dispatch,
-  type SetStateAction,
 } from "react";
 
 import { Icon } from "./Icons";
@@ -26,8 +24,10 @@ import {
 } from "./tag-suggestions";
 import { useT } from "./i18n";
 
-import type { AssetSummary, AssetMetadataResult, TagSummary } from "../shared/asset-types";
+import type { AssetSummary, AssetMetadataResult, ExtractedVideoMetadata, TagSummary } from "../shared/asset-types";
+import type { SerpentLibraryApi } from "../shared/library-api";
 import type { RendererLibrarySummary } from "../shared/protocol/responses";
+import { formatVideoTechnicalLine } from "./video-metadata-format";
 
 // --- Local utility helpers (extracted from App.tsx) ---
 
@@ -82,6 +82,7 @@ export interface InspectorPanelProps {
   /** Full multi-selection in canvas order; primary is still `selectedAsset`. */
   selectedAssets?: AssetSummary[];
   library: RendererLibrarySummary | null;
+  api?: SerpentLibraryApi | null;
   allAssetCount: number;
   folderCount: number;
   loadMetadata: () => void;
@@ -363,6 +364,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
     selectedAsset,
     selectedAssets = [],
     library,
+    api = null,
     allAssetCount,
     folderCount,
     loadMetadata,
@@ -410,12 +412,80 @@ export function InspectorPanel(props: InspectorPanelProps) {
   const [showTagInput, setShowTagInput] = useState(false);
   const [activeTagSuggestionIndex, setActiveTagSuggestionIndex] = useState(-1);
   const tagInputRef = useRef<HTMLInputElement>(null);
+  const [videoTechCache, setVideoTechCache] = useState<{
+    assetId: string;
+    metadata: ExtractedVideoMetadata;
+  } | null>(null);
 
   useEffect(() => {
     if (showTagInput && tagInputRef.current) {
       tagInputRef.current.focus();
     }
   }, [showTagInput]);
+
+  // REQ-VIEW-003: fetch extracted video metadata for the primary selection only.
+  // Display is derived from cache identity so selection changes do not sync-setState.
+  useEffect(() => {
+    const assetId = selectedAsset?.assetId ?? null;
+    const libraryId = library?.libraryId ?? null;
+    const isVideo = selectedAsset?.mediaType === "video";
+    const shouldFetch =
+      Boolean(api && libraryId && assetId && isVideo && selectionCount < 2);
+
+    if (!shouldFetch || !api || !libraryId || !assetId) {
+      return;
+    }
+
+    let cancelled = false;
+    let pollTimer: ReturnType<typeof setTimeout> | null = null;
+    let attempts = 0;
+    const maxAttempts = 15;
+
+    const load = async () => {
+      try {
+        const result = await api.getExtractedMetadata({ libraryId, assetId });
+        if (cancelled) return;
+        if (!result.ok) return;
+        if (result.value.status === "ready" && result.value.metadata) {
+          setVideoTechCache({
+            assetId,
+            metadata: result.value.metadata,
+          });
+          return;
+        }
+        if (
+          (result.value.status === "pending" || result.value.status === "missing")
+          && attempts < maxAttempts
+        ) {
+          attempts += 1;
+          pollTimer = setTimeout(() => {
+            void load();
+          }, 2000);
+        }
+      } catch {
+        // Best-effort; Inspector stays without the tech line.
+      }
+    };
+
+    void load();
+    return () => {
+      cancelled = true;
+      if (pollTimer) clearTimeout(pollTimer);
+    };
+  }, [
+    api,
+    library?.libraryId,
+    selectedAsset?.assetId,
+    selectedAsset?.mediaType,
+    selectionCount,
+  ]);
+
+  const videoTechMetadata =
+    selectedAsset?.mediaType === "video"
+    && selectionCount < 2
+    && videoTechCache?.assetId === selectedAsset.assetId
+      ? videoTechCache.metadata
+      : null;
 
   // Single-asset: that asset's tags. Multi-select: intersection only (REQ-SELECT-004).
   const displayedTags = useMemo(() => {
@@ -536,9 +606,17 @@ export function InspectorPanel(props: InspectorPanelProps) {
     if (selectedAsset.durationMs !== null) {
       parts.push(formatDuration(selectedAsset.durationMs));
     }
+    if (
+      selectedAsset.mediaType === "video"
+      && selectionCount < 2
+      && videoTechMetadata
+    ) {
+      const techLine = formatVideoTechnicalLine(videoTechMetadata);
+      if (techLine) parts.push(techLine);
+    }
     parts.push(formatDateFull(selectedAsset.modifiedAt ?? "", unknownTime));
     return parts;
-  }, [selectedAsset, t]);
+  }, [selectedAsset, selectionCount, t, videoTechMetadata]);
 
   return (
     <aside className="inspector-pane">

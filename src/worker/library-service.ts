@@ -43,7 +43,7 @@ import {
   type RepresentativeColor,
 } from './palette-extractor';
 
-import { smartCollectionQueryDefinitionSchema, type AssetMetadataResult, type AssetSummary, type CollectionSummary, type FilterClause, type LinkedFolderRule, type LinkedFolderSummary, type ManagedFolderSummary, type SearchScope, type SmartCollectionQueryDefinition, type TagSummary } from '../shared/asset-types';
+import { smartCollectionQueryDefinitionSchema, extractedVideoMetadataSchema, type AssetMetadataResult, type ExtractedMetadataResult, type ExtractedVideoMetadata, type AssetSummary, type CollectionSummary, type FilterClause, type LinkedFolderRule, type LinkedFolderSummary, type ManagedFolderSummary, type SearchScope, type SmartCollectionQueryDefinition, type TagSummary } from '../shared/asset-types';
 import {
   colorFilterSql,
   parseColorFilterIds,
@@ -5219,6 +5219,83 @@ export class LibraryService {
     };
   }
 
+  /**
+   * Read the current `extracted_metadata` artifact JSON for an asset.
+   * Pending / missing / failed return a safe status with null metadata
+   * so Inspector can show an empty tech line without throwing (REQ-VIEW-003).
+   */
+  getExtractedMetadata(input: {
+    libraryId: string;
+    assetId: string;
+  }): ExtractedMetadataResult {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+
+    const assetRow = openLibrary.connection
+      .prepare('SELECT asset_id FROM assets WHERE asset_id = ?')
+      .get(input.assetId) as { asset_id: string } | undefined;
+    if (!assetRow) throw new LibraryServiceError('ASSET_NOT_FOUND');
+
+    const artifact = this.getCurrentArtifact(
+      input.libraryId,
+      input.assetId,
+      'extracted_metadata',
+    );
+    if (!artifact) {
+      return {
+        assetId: input.assetId,
+        status: 'missing',
+        metadata: null,
+        errorCode: null,
+      };
+    }
+
+    const status =
+      artifact.status === 'ready'
+        ? 'ready'
+        : artifact.status === 'failed'
+          ? 'failed'
+          : 'pending';
+
+    if (status !== 'ready') {
+      return {
+        assetId: input.assetId,
+        status,
+        metadata: null,
+        errorCode: artifact.errorCode,
+      };
+    }
+
+    try {
+      const absPath = this.getArtifactAbsolutePath(
+        input.libraryId,
+        artifact.artifactId,
+      );
+      const raw = JSON.parse(readFileSync(absPath, 'utf-8')) as unknown;
+      const parsed = extractedVideoMetadataSchema.safeParse(raw);
+      if (!parsed.success) {
+        return {
+          assetId: input.assetId,
+          status: 'failed',
+          metadata: null,
+          errorCode: 'EXTRACTED_METADATA_INVALID',
+        };
+      }
+      return {
+        assetId: input.assetId,
+        status: 'ready',
+        metadata: parsed.data as ExtractedVideoMetadata,
+        errorCode: null,
+      };
+    } catch {
+      return {
+        assetId: input.assetId,
+        status: 'failed',
+        metadata: null,
+        errorCode: 'EXTRACTED_METADATA_UNREADABLE',
+      };
+    }
+  }
+
   /** Return tags assigned to an asset from both human and AI sources. */
   private fetchAssetTags(
     connection: DatabaseConnection,
@@ -7187,6 +7264,7 @@ export class LibraryService {
         audioCodec: audioStream?.codec_name || null,
         sampleRate: audioStream?.sample_rate || null,
         channels: audioStream?.channels || null,
+        containerBitrate: probeJson.format?.bit_rate || null,
       };
 
       writeFileSync(artifactAbsPath, JSON.stringify(metadata, null, 2), 'utf-8');

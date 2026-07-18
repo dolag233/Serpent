@@ -879,6 +879,12 @@ async function commandFor(
         libraryId: request.libraryId,
         assetId: request.assetId,
       };
+    case "asset.extracted-metadata.get.request":
+      return {
+        type: "asset.extracted-metadata.get",
+        libraryId: request.libraryId,
+        assetId: request.assetId,
+      };
     case "asset.metadata.set.request":
       return {
         type: "asset.metadata.set",

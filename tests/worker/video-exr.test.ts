@@ -250,7 +250,53 @@ describe('video (ffprobe + ffmpeg)', () => {
     expect(metadata.videoCodec).toBe('h264');
     expect(metadata.hasAudio).toBe(true);
 
+    const extracted = service.getExtractedMetadata({
+      libraryId: created.libraryId,
+      assetId: assets[0]!.assetId,
+    });
+    expect(extracted.status).toBe('ready');
+    expect(extracted.metadata).toMatchObject({
+      videoCodec: 'h264',
+      audioCodec: 'aac',
+      framerate: '30000/1001',
+      videoBitrate: '5000000',
+      hasAudio: true,
+      containerBitrate: '5500000',
+    });
+
     db.close();
+    service.closeAll();
+  });
+
+  it('returns missing extracted metadata safely before probe', () => {
+    process.env['SERPENT_FFMPEG_PATH'] = '/fake/ffmpeg';
+    const root = temporaryRoot();
+    const service = new LibraryService({
+      spawnFn: createMockSpawn({ ffprobeStdout: CANNED_FFPROBE_JSON }),
+    });
+    const created = service.createLibrary({
+      displayName: 'VideoMetaMissing',
+      selectedParentPath: root,
+    });
+    const sourcePath = path.join(root, 'video.mp4');
+    writeFileSync(sourcePath, Buffer.alloc(4096, 0));
+    importNoConflict(service, created.libraryId, sourcePath);
+    const assets = service.listAssets({
+      libraryId: created.libraryId,
+      recursive: true,
+    });
+    expect(assets).toHaveLength(1);
+
+    const extracted = service.getExtractedMetadata({
+      libraryId: created.libraryId,
+      assetId: assets[0]!.assetId,
+    });
+    expect(extracted).toMatchObject({
+      assetId: assets[0]!.assetId,
+      status: 'missing',
+      metadata: null,
+    });
+
     service.closeAll();
   });
 

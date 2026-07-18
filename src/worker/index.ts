@@ -425,6 +425,10 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
       const metadata = libraryService.getAssetMetadata(request.command);
       return { ok: true, type: 'asset.metadata.got', metadata };
     }
+    case 'asset.extracted-metadata.get': {
+      const result = libraryService.getExtractedMetadata(request.command);
+      return { ok: true, type: 'asset.extracted-metadata.got', result };
+    }
     case 'asset.metadata.set': {
       const metadata = libraryService.setAssetMetadata(request.command);
       return { ok: true, type: 'asset.metadata.updated', metadata };

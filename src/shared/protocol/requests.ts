@@ -296,6 +296,11 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     assetId: identifierSchema,
   }),
   z.strictObject({
+    type: z.literal('asset.extracted-metadata.get.request'),
+    libraryId: identifierSchema,
+    assetId: identifierSchema,
+  }),
+  z.strictObject({
     type: z.literal('asset.metadata.set.request'),
     libraryId: identifierSchema,
     assetId: identifierSchema,
@@ -802,6 +807,11 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
   }),
   z.strictObject({
     type: z.literal('asset.metadata.get'),
+    libraryId: identifierSchema,
+    assetId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('asset.extracted-metadata.get'),
     libraryId: identifierSchema,
     assetId: identifierSchema,
   }),

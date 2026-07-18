@@ -3,6 +3,7 @@ import type {
   AssetSummary,
   AiSearchPlan,
   AssetMetadataResult,
+  ExtractedMetadataResult,
   CollectionSummary,
   FilterClause,
   LinkedFolderRule,
@@ -203,6 +204,7 @@ export interface SerpentLibraryApi {
   listCollectionAssets(input: { libraryId: string; collectionId: string; recursive: boolean }): Promise<LibraryApiResult<AssetSummary[]>>;
   // Asset Metadata
   getAssetMetadata(input: { libraryId: string; assetId: string }): Promise<LibraryApiResult<AssetMetadataResult>>;
+  getExtractedMetadata(input: { libraryId: string; assetId: string }): Promise<LibraryApiResult<ExtractedMetadataResult>>;
   setAssetMetadata(input: { libraryId: string; assetId: string; expectedVersion: number; description?: string; rating?: number; favorite?: boolean; palette?: string[]; sourcePageUrl?: string }): Promise<LibraryApiResult<AssetMetadataResult>>;
   setAssetsRating(input: { libraryId: string; assetIds: string[]; rating: number }): Promise<LibraryApiResult<{ updatedCount: number; skipped: TagOperationSkip[] }>>;
   backfillAssetMetadata(input: { libraryId: string }): Promise<LibraryApiResult<{ backfilledCount: number }>>;

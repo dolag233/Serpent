@@ -3098,6 +3098,29 @@ select.ai-config-input {
   object-fit: contain;
 }
 
+/* REQ-CANVAS-009: GIF/video in-place hover (or primary selection) preview.
+   Absolute fill; pointer-events none so card click/drag stay on the button. */
+.asset-card-media {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.asset-card-media .asset-thumbnail,
+.asset-card-media-live {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  pointer-events: none;
+}
+
+.asset-card-media-live {
+  z-index: 1;
+}
+
 /* Floating badges on the preview use a frosted chip so they stay legible
    over any media (Eagle-style format/duration chips). */
 .asset-extension {

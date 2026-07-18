@@ -4,7 +4,7 @@ import type { AiJobStatus, LibraryApiResult, LinkedAssetDeleteResult, MediaJobSt
 import type { RecentLibraryEntry } from '../shared/recent-libraries';
 import { parseExtensionPairingResult, type SerpentExtensionPairingApi } from '../shared/extension-pairing';
 import { searchQuerySchema } from '../shared/asset-types';
-import type { AiSearchPlan, AssetSummary, AssetMetadataResult, CollectionSummary, FilterClause, LinkedFolderRule, LinkedFolderSummary, ManagedFolderSummary, SearchScope, SmartCollectionSummary, TagSummary } from '../shared/asset-types';
+import type { AiSearchPlan, AssetSummary, AssetMetadataResult, ExtractedMetadataResult, CollectionSummary, FilterClause, LinkedFolderRule, LinkedFolderSummary, ManagedFolderSummary, SearchScope, SmartCollectionSummary, TagSummary } from '../shared/asset-types';
 import {
   ASSET_CHANGE_CHANNEL,
   THUMBNAIL_CHANNEL,
@@ -444,6 +444,13 @@ const library: SerpentLibraryApi = Object.freeze({
     if (!result.ok) return failure(result);
     if (result.type !== 'asset.metadata.got') throw new Error('Unexpected get-metadata response.');
     return { ok: true, value: result.metadata };
+  },
+
+  async getExtractedMetadata({ libraryId, assetId }: { libraryId: string; assetId: string }): Promise<LibraryApiResult<ExtractedMetadataResult>> {
+    const result = await request({ type: 'asset.extracted-metadata.get.request', libraryId, assetId });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'asset.extracted-metadata.got') throw new Error('Unexpected get-extracted-metadata response.');
+    return { ok: true, value: result.result };
   },
 
   async setAssetMetadata({ libraryId, assetId, expectedVersion, description, rating, favorite, palette, sourcePageUrl }: { libraryId: string; assetId: string; expectedVersion: number; description?: string; rating?: number; favorite?: boolean; palette?: string[]; sourcePageUrl?: string }): Promise<LibraryApiResult<AssetMetadataResult>> {

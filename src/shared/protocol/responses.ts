@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { aiSearchPlanSchema, assetMetadataResultSchema, assetSummarySchema, collectionSummarySchema, linkedFolderRuleSchema, linkedFolderSummarySchema, managedFolderSummarySchema, portableRelativePathSchema, smartCollectionSummarySchema, tagSummarySchema } from '../asset-types';
+import { aiSearchPlanSchema, assetMetadataResultSchema, extractedMetadataResultSchema, assetSummarySchema, collectionSummarySchema, linkedFolderRuleSchema, linkedFolderSummarySchema, managedFolderSummarySchema, portableRelativePathSchema, smartCollectionSummarySchema, tagSummarySchema } from '../asset-types';
 import { recentLibraryListSchema } from '../recent-libraries';
 import { publicErrorReasonSchema, publicErrorSchema } from './errors';
 import {
@@ -449,6 +449,11 @@ const assetOperationSuccessSchemas = [
     ok: z.literal(true),
     type: z.literal('asset.metadata.got'),
     metadata: assetMetadataResultSchema,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('asset.extracted-metadata.got'),
+    result: extractedMetadataResultSchema,
   }),
   z.strictObject({
     ok: z.literal(true),

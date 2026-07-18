@@ -19,6 +19,12 @@ import {
   fileExtensionLabel,
   shouldShowDurationBadge,
 } from "./asset-card-badges";
+import {
+  coverSrc,
+  isCardHoverPreviewable,
+} from "./asset-card-hover-preview";
+import { AssetCardMedia } from "./AssetCardMedia";
+import { useAssetCardHoverPreview } from "./use-asset-card-hover-preview";
 import { ConvertLinkedDialog } from "./ConvertLinkedDialog";
 import { LinkedRulesDialog } from "./LinkedRulesDialog";
 import { PermanentDeleteDialog } from "./PermanentDeleteDialog";
@@ -691,6 +697,34 @@ function AppInner() {
     if (showTrash) return trashedAssets;
     return assets;
   }, [assets, trashedAssets, showTrash]);
+
+  const visibleAssetById = useMemo(() => {
+    const map = new Map<string, (typeof visibleAssets)[number]>();
+    for (const asset of visibleAssets) {
+      map.set(asset.assetId, asset);
+    }
+    return map;
+  }, [visibleAssets]);
+
+  const isHoverPreviewable = useCallback(
+    (assetId: string) => {
+      const asset = visibleAssetById.get(assetId);
+      return asset ? isCardHoverPreviewable(asset) : false;
+    },
+    [visibleAssetById],
+  );
+
+  const {
+    setHoveredAssetId,
+    clearHoveredAssetId,
+    activePreviewAssetId,
+    activeResolution,
+  } = useAssetCardHoverPreview({
+    api,
+    libraryId: library?.libraryId,
+    primarySelectedAssetId: selectedAssetId,
+    isPreviewable: isHoverPreviewable,
+  });
 
   const {
     handleCanvasMouseDown,
@@ -5635,6 +5669,12 @@ function AppInner() {
                       onMouseDown={(e) => {
                         cardMouseDownRef.current = e.button;
                       }}
+                      onMouseEnter={() => {
+                        setHoveredAssetId(asset.assetId);
+                      }}
+                      onMouseLeave={() => {
+                        clearHoveredAssetId(asset.assetId);
+                      }}
                       onClick={(event) => handleCardClick(asset.assetId, event)}
                       onDoubleClick={() => {
                         openAssetPreview(asset);
@@ -5740,23 +5780,53 @@ function AppInner() {
                         }
                         title={thumbnailFailures.get(asset.assetId)}
                       >
-                        {asset.thumbnailStatus === "ready" &&
-                        asset.thumbnailArtifactId &&
-                        library ? (
-                          <img
-                            alt={asset.displayName}
-                            className="asset-thumbnail"
-                            loading="lazy"
-                            src={`serpent://preview/${library.libraryId}/${asset.thumbnailArtifactId}`}
-                          />
-                        ) : (
-                          <>
-                            <span className="asset-extension">
-                              {fileExtensionLabel(asset.displayName)}
-                            </span>
-                            <Icon name="file" size={28} />
-                          </>
-                        )}
+                        {(() => {
+                          const thumbCover =
+                            asset.thumbnailStatus === "ready" &&
+                            asset.thumbnailArtifactId &&
+                            library
+                              ? coverSrc(
+                                  library.libraryId,
+                                  asset.thumbnailArtifactId,
+                                )
+                              : null;
+                          const cardActive =
+                            activePreviewAssetId === asset.assetId;
+                          if (isCardHoverPreviewable(asset)) {
+                            if (
+                              thumbCover ||
+                              (cardActive && activeResolution?.url)
+                            ) {
+                              return (
+                                <AssetCardMedia
+                                  alt={asset.displayName}
+                                  coverUrl={thumbCover}
+                                  isActive={cardActive}
+                                  preview={
+                                    cardActive ? activeResolution : null
+                                  }
+                                />
+                              );
+                            }
+                          } else if (thumbCover) {
+                            return (
+                              <img
+                                alt={asset.displayName}
+                                className="asset-thumbnail"
+                                loading="lazy"
+                                src={thumbCover}
+                              />
+                            );
+                          }
+                          return (
+                            <>
+                              <span className="asset-extension">
+                                {fileExtensionLabel(asset.displayName)}
+                              </span>
+                              <Icon name="file" size={28} />
+                            </>
+                          );
+                        })()}
                         {thumbnailFailures.has(asset.assetId) && (
                           <span className="missing-banner">
                             <Icon name="warning" size={12} />
@@ -6011,6 +6081,7 @@ function AppInner() {
         }
         allAssetCount={allAssetCount}
         allTags={tags}
+        api={api}
         assetMetadata={assetMetadata}
         automaticPaletteRatios={automaticPaletteRatios}
         displayedPalette={displayedPalette}

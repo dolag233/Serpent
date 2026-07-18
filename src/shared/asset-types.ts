@@ -123,6 +123,45 @@ export const assetMetadataResultSchema = z.strictObject({
 
 export type AssetMetadataResult = z.infer<typeof assetMetadataResultSchema>;
 
+/**
+ * Technical fields from the `extracted_metadata` revision artifact (ffprobe JSON).
+ * Kept off AssetSummary so list/search payloads stay lean (REQ-VIEW-003).
+ *
+ * `framerate` is the raw ffprobe ratio string (e.g. "30000/1001").
+ * Bitrate / sampleRate may be numeric or string depending on probe output.
+ * `containerBitrate` / `frameRateFps` are optional forward-compatible fields.
+ */
+const probeNumericSchema = z.union([z.number().finite(), z.string()]).nullable();
+
+export const extractedVideoMetadataSchema = z.strictObject({
+  container: z.string().nullable().optional().default(null),
+  durationMs: z.number().finite().nonnegative().optional(),
+  width: z.number().finite().nonnegative().optional(),
+  height: z.number().finite().nonnegative().optional(),
+  framerate: z.string().nullable().optional().default(null),
+  rotation: z.number().finite().optional(),
+  videoCodec: z.string().nullable().optional().default(null),
+  videoBitrate: probeNumericSchema.optional().default(null),
+  pixelFormat: z.string().nullable().optional().default(null),
+  hasAudio: z.boolean().optional().default(false),
+  audioCodec: z.string().nullable().optional().default(null),
+  sampleRate: probeNumericSchema.optional().default(null),
+  channels: z.number().int().positive().nullable().optional().default(null),
+  containerBitrate: probeNumericSchema.optional(),
+  frameRateFps: z.number().finite().positive().nullable().optional(),
+});
+
+export type ExtractedVideoMetadata = z.infer<typeof extractedVideoMetadataSchema>;
+
+export const extractedMetadataResultSchema = z.strictObject({
+  assetId: nonBlankString,
+  status: z.enum(['ready', 'pending', 'failed', 'missing']),
+  metadata: extractedVideoMetadataSchema.nullable(),
+  errorCode: z.string().nullable().optional().default(null),
+});
+
+export type ExtractedMetadataResult = z.infer<typeof extractedMetadataResultSchema>;
+
 export const sortDefinitionSchema = z.strictObject({
   field: z.enum([
     'name',
