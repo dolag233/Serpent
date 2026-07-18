@@ -12,6 +12,7 @@ import {
 } from "react";
 
 import { Icon, type IconName } from "./Icons";
+import { shouldShowMissingAssetOverlay } from "./availability-affordance";
 import { ConvertLinkedDialog } from "./ConvertLinkedDialog";
 import { LinkedRulesDialog } from "./LinkedRulesDialog";
 import { PermanentDeleteDialog } from "./PermanentDeleteDialog";
@@ -5553,10 +5554,12 @@ function AppInner() {
                             {t("toast.thumbnailFailedBadge")}
                           </span>
                         )}
-                        {asset.availability === "missing" && (
-                          <span className="missing-banner">
-                            <Icon name="warning" size={12} />
-                            {t("inspector.missing")}
+                        {shouldShowMissingAssetOverlay(asset.availability) && (
+                          <span
+                            aria-label={t("inspector.missing")}
+                            className="missing-overlay"
+                          >
+                            <Icon name="link-off" size={28} />
                           </span>
                         )}
                         {asset.deletedAt && (

@@ -2403,7 +2403,24 @@ select.ai-config-input {
   cursor: grab;
 }
 .asset-card.is-missing {
-  opacity: 0.72;
+  opacity: 0.85;
+}
+.asset-card.is-missing .asset-thumbnail {
+  filter: grayscale(1);
+  opacity: 0.55;
+}
+.missing-overlay {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--tertiary);
+  pointer-events: none;
+}
+.missing-overlay .icon,
+.missing-overlay svg {
+  color: var(--tertiary);
+  fill: currentColor;
 }
 
 /* REQ-DND-003: custom drag ghost for asset drags — small, translucent and

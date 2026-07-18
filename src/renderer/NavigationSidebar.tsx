@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Icon, type IconName } from "./Icons";
+import { linkedFolderNavAffordance } from "./availability-affordance";
 import { useT } from "./i18n";
 import type {
   CollectionSummary,
@@ -517,6 +518,7 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
       );
       if (!lf) return null;
       const offline = entry.status === "offline";
+      const linkedAffordance = linkedFolderNavAffordance(entry.status);
       return (
         <NavRow
           active={
@@ -525,8 +527,8 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
             !activeCollectionId
           }
           depth={entry.depth}
-          icon={offline ? "link-off" : "link"}
-          iconColor={offline ? "var(--danger)" : "var(--accent)"}
+          icon={linkedAffordance.icon}
+          iconColor={linkedAffordance.iconColor}
           key={entry.folderId}
           label={entry.name}
           count={entry.assetCount}
