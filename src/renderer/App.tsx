@@ -344,6 +344,10 @@ function AppInner() {
   const api = (window as RendererWindow).serpent?.library;
   const extensionPairingApi = (window as RendererWindow).serpent
     ?.extensionPairing;
+
+  useEffect(() => {
+    document.body.classList.toggle("platform-darwin", IS_MAC_PLATFORM);
+  }, []);
   // Library / folder / assets (existing)
   const [library, setLibrary] = useState<RendererLibrarySummary | null>(null);
   const [recentLibraries, setRecentLibraries] = useState<

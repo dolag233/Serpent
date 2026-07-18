@@ -250,6 +250,12 @@ async function createMainWindow(): Promise<void> {
     minHeight: 680,
     show: false,
     backgroundColor: "#111417",
+    ...(process.platform === "darwin"
+      ? {
+          titleBarStyle: "hiddenInset" as const,
+          trafficLightPosition: { x: 14, y: 14 },
+        }
+      : {}),
     webPreferences: {
       preload: path.join(__dirname, "index.js"),
       sandbox: true,

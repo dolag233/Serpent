@@ -105,6 +105,8 @@ export const zhCN = {
     includeChildFolders: "包含子文件夹",
     emptyFolders: "尚无文件夹",
     emptyManagedOrLinked: "尚无托管或链接文件夹",
+    collapseFolder: "折叠 {name}",
+    expandFolder: "展开 {name}",
     emptyCollections: "尚无合集",
     emptySmartCollections: "尚无智能合集",
     openLibraryHint: "打开资源库后显示合集",

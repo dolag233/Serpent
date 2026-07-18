@@ -114,6 +114,8 @@ export const en = {
     includeChildFolders: "Include subfolders",
     emptyFolders: "No folders yet",
     emptyManagedOrLinked: "No managed or linked folders yet",
+    collapseFolder: "Collapse {name}",
+    expandFolder: "Expand {name}",
     emptyCollections: "No collections yet",
     emptySmartCollections: "No smart collections yet",
     openLibraryHint: "Open a library to see collections",

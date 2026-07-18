@@ -48,3 +48,46 @@ export function buildUnifiedDirectoryNavEntries(
 
   return [...managedEntries, ...linkedEntries];
 }
+
+/** Managed folders that have at least one managed child. */
+export function managedFolderIdsWithChildren(
+  entries: readonly UnifiedDirectoryNavEntry[],
+): Set<string> {
+  const parents = new Set<string>();
+  for (const entry of entries) {
+    if (entry.kind === "managed" && entry.parentFolderId) {
+      parents.add(entry.parentFolderId);
+    }
+  }
+  return parents;
+}
+
+/**
+ * Hide rows whose managed ancestor is collapsed. Linked entries stay visible.
+ * When `collapsedFolderIds` is empty, returns the input unchanged.
+ */
+export function filterCollapsedDirectoryEntries(
+  entries: readonly UnifiedDirectoryNavEntry[],
+  collapsedFolderIds: ReadonlySet<string>,
+): UnifiedDirectoryNavEntry[] {
+  if (collapsedFolderIds.size === 0) return [...entries];
+
+  const byId = new Map<string, UnifiedDirectoryNavEntry>();
+  for (const entry of entries) {
+    if (entry.kind === "managed") byId.set(entry.folderId, entry);
+  }
+
+  const isHidden = (entry: UnifiedDirectoryNavEntry): boolean => {
+    if (entry.kind !== "managed") return false;
+    let parentId = entry.parentFolderId;
+    while (parentId) {
+      if (collapsedFolderIds.has(parentId)) return true;
+      const parent = byId.get(parentId);
+      parentId =
+        parent && parent.kind === "managed" ? parent.parentFolderId : null;
+    }
+    return false;
+  };
+
+  return entries.filter((entry) => !isHidden(entry));
+}

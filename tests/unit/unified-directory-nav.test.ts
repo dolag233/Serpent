@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { buildUnifiedDirectoryNavEntries } from "../../src/renderer/unified-directory-nav";
+import {
+  buildUnifiedDirectoryNavEntries,
+  filterCollapsedDirectoryEntries,
+  managedFolderIdsWithChildren,
+} from "../../src/renderer/unified-directory-nav";
 import type { LinkedFolderSummary, ManagedFolderSummary } from "../../src/shared/asset-types";
 
 const managed = (
@@ -120,5 +124,25 @@ describe("buildUnifiedDirectoryNavEntries", () => {
         assetCount: 1,
       },
     ]);
+  });
+});
+
+describe("filterCollapsedDirectoryEntries", () => {
+  it("hides managed descendants of collapsed folders and keeps linked rows", () => {
+    const folders = [
+      managed({ folderId: "p", name: "Parent", relativePath: "Parent" }),
+      managed({
+        folderId: "c",
+        name: "Child",
+        relativePath: "Parent/Child",
+        parentFolderId: "p",
+      }),
+    ];
+    const entries = buildUnifiedDirectoryNavEntries(folders, [
+      linked({ folderId: "l1", displayName: "Link", assetCount: 2 }),
+    ]);
+    expect(managedFolderIdsWithChildren(entries).has("p")).toBe(true);
+    const visible = filterCollapsedDirectoryEntries(entries, new Set(["p"]));
+    expect(visible.map((entry) => entry.folderId)).toEqual(["p", "l1"]);
   });
 });

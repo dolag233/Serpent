@@ -300,6 +300,11 @@ summary:focus-visible {
   padding-left: 10px;
 }
 
+/* Serpent-4ze: leave room for hiddenInset traffic lights on macOS. */
+body.platform-darwin .toolbar-leading {
+  padding-left: 78px;
+}
+
 .toolbar-actions {
   justify-content: flex-end;
   gap: 7px;
@@ -1122,6 +1127,41 @@ summary:focus-visible {
   font-size: 12px;
   text-align: left;
   cursor: pointer;
+}
+
+.nav-tree-row {
+  display: grid;
+  width: 100%;
+  grid-template-columns: 16px minmax(0, 1fr);
+  align-items: center;
+  gap: 2px;
+}
+
+.nav-disclosure,
+.nav-disclosure-spacer {
+  display: inline-grid;
+  width: 16px;
+  height: 22px;
+  place-items: center;
+  flex-shrink: 0;
+}
+
+.nav-disclosure {
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--tertiary);
+  cursor: pointer;
+}
+
+.nav-disclosure:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.nav-disclosure.is-expanded {
+  transform: rotate(90deg);
 }
 
 .nav-row:hover:not(:disabled) {

@@ -20,7 +20,17 @@ import {
   inlineFolderEditDepth,
   type InlineFolderEditState,
 } from "./inline-folder-edit";
-import { buildUnifiedDirectoryNavEntries } from "./unified-directory-nav";
+import {
+  buildUnifiedDirectoryNavEntries,
+  filterCollapsedDirectoryEntries,
+  managedFolderIdsWithChildren,
+} from "./unified-directory-nav";
+import {
+  loadNavTreePreferences,
+  saveNavTreePreferences,
+  withCollapsedFolderIds,
+  type NavTreePreferences,
+} from "./nav-tree-preferences";
 
 // ---------------------------------------------------------------------------
 // Small local helpers duplicated from App.tsx to avoid circular imports
@@ -74,6 +84,7 @@ function NavRow({
   disabled,
   iconColor,
   title,
+  disclosure,
 }: {
   icon: IconName;
   label: string;
@@ -91,25 +102,30 @@ function NavRow({
   disabled?: boolean;
   iconColor?: string;
   title?: string;
+  /** CU-D2: optional disclosure control rendered beside the row. */
+  disclosure?: ReactNode;
 }) {
   return (
-    <button
-      className={`nav-row${active ? " is-active" : ""}${dropActive ? " is-drop-target" : ""}`}
-      disabled={disabled}
-      onClick={onClick}
-      onContextMenu={onContextMenu}
-      onDragOver={onDragOver}
-      onDrop={onDrop}
-      onDragEnter={onDragEnter}
-      onDragLeave={onDragLeave}
-      style={{ paddingLeft: 7 + depth * 14 }}
-      title={title}
-      type="button"
-    >
-      <Icon name={icon} size={15} color={iconColor} />
-      <span>{label}</span>
-      {count !== undefined && <span className="nav-count">{count}</span>}
-    </button>
+    <div className="nav-tree-row">
+      {disclosure ?? <span className="nav-disclosure-spacer" aria-hidden="true" />}
+      <button
+        className={`nav-row${active ? " is-active" : ""}${dropActive ? " is-drop-target" : ""}`}
+        disabled={disabled}
+        onClick={onClick}
+        onContextMenu={onContextMenu}
+        onDragOver={onDragOver}
+        onDrop={onDrop}
+        onDragEnter={onDragEnter}
+        onDragLeave={onDragLeave}
+        style={{ paddingLeft: 7 + depth * 14 }}
+        title={title}
+        type="button"
+      >
+        <Icon name={icon} size={15} color={iconColor} />
+        <span>{label}</span>
+        {count !== undefined && <span className="nav-count">{count}</span>}
+      </button>
+    </div>
   );
 }
 
@@ -404,6 +420,9 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
   // Cleared on leave/drop, and defensively on window dragend/drop so a drop
   // outside any row never leaves a stale highlight.
   const [assetDropTarget, setAssetDropTarget] = useState<string | null>(null);
+  const [navTreePrefs, setNavTreePrefs] = useState<NavTreePreferences>(() =>
+    loadNavTreePreferences(),
+  );
   useEffect(() => {
     if (!assetDropTarget) return;
     const clear = () => setAssetDropTarget(null);
@@ -414,6 +433,33 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
       window.removeEventListener("drop", clear);
     };
   }, [assetDropTarget]);
+
+  // Creating under a collapsed parent must reveal the inline create row.
+  useEffect(() => {
+    if (inlineFolderEdit?.kind !== "create") return;
+    const parentId = inlineFolderEdit.parentFolderId;
+    if (!parentId) return;
+    setNavTreePrefs((current) => {
+      if (!current.collapsedFolderIds.includes(parentId)) return current;
+      const next = withCollapsedFolderIds(
+        current,
+        current.collapsedFolderIds.filter((id) => id !== parentId),
+      );
+      saveNavTreePreferences(next);
+      return next;
+    });
+  }, [inlineFolderEdit]);
+
+  const collapsedFolderIds = new Set(navTreePrefs.collapsedFolderIds);
+
+  function toggleFolderCollapsed(folderId: string) {
+    const nextIds = collapsedFolderIds.has(folderId)
+      ? navTreePrefs.collapsedFolderIds.filter((id) => id !== folderId)
+      : [...navTreePrefs.collapsedFolderIds, folderId];
+    const next = withCollapsedFolderIds(navTreePrefs, nextIds);
+    setNavTreePrefs(next);
+    saveNavTreePreferences(next);
+  }
 
   /**
    * Row wiring shared by the root row and managed folder rows: internal
@@ -454,9 +500,12 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
     };
   }
 
-  const directoryEntries = buildUnifiedDirectoryNavEntries(
-    folders,
-    linkedFolders,
+  const directoryEntries = filterCollapsedDirectoryEntries(
+    buildUnifiedDirectoryNavEntries(folders, linkedFolders),
+    collapsedFolderIds,
+  );
+  const foldersWithChildren = managedFolderIdsWithChildren(
+    buildUnifiedDirectoryNavEntries(folders, linkedFolders),
   );
 
   function renderDirectoryEntries(): ReactNode {
@@ -482,6 +531,8 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
             />
           );
         }
+        const hasChildren = foldersWithChildren.has(entry.folderId);
+        const expanded = !collapsedFolderIds.has(entry.folderId);
         return (
           <NavRow
             active={
@@ -490,6 +541,26 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
               !activeCollectionId
             }
             depth={entry.depth}
+            disclosure={
+              hasChildren ? (
+                <button
+                  aria-expanded={expanded}
+                  aria-label={
+                    expanded
+                      ? t("nav.collapseFolder", { name: entry.name })
+                      : t("nav.expandFolder", { name: entry.name })
+                  }
+                  className={`nav-disclosure${expanded ? " is-expanded" : ""}`}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    toggleFolderCollapsed(entry.folderId);
+                  }}
+                  type="button"
+                >
+                  <Icon name="chevron-right" size={12} />
+                </button>
+              ) : undefined
+            }
             icon="folder"
             key={entry.folderId}
             label={entry.name}
