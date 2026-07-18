@@ -3,7 +3,7 @@
 > 工单：`Serpent-bzk`（REQ-THEME-001/002）
 > 分支：`codex/slice-002-asset-ingestion`
 > 日期：2026-07-18
-> 状态：基础设施 + styles.css 语义 token 化已落地；默认偏好 interim=`dark`（澄清队列 #11 未裁决）；Computer Use 未执行。
+> 状态：已实现；THEME-002 人类验收通过（2026-07-18）。默认主题偏好仍为 interim=`dark`（澄清队列 #11 主题侧未裁决）。
 
 ## 范围
 

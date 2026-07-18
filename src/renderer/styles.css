@@ -76,7 +76,7 @@
   --accent-soft: color-mix(in srgb, var(--accent) 18%, #ffffff);
   --accent-soft-fg: #1d4ed8;
   --accent-ring: color-mix(in srgb, var(--accent) 38%, transparent);
-  --rating-star: #d9b54b;
+  --rating-star: #ecc83a;
   --success: #16a34a;
   --danger: #dc2626;
   --danger-muted: #fde8e8;
@@ -99,7 +99,6 @@
 }
 
 [data-theme="light"] .toast {
-  border-color: color-mix(in srgb, var(--accent) 28%, var(--divider));
   background: var(--raised);
   box-shadow: 0 8px 20px rgb(0 0 0 / 10%);
   color: var(--text);
@@ -2677,7 +2676,7 @@ select.ai-config-input {
   align-items: center;
   gap: 8px;
   padding: 9px 9px 9px 11px;
-  border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--raised));
+  border: 0;
   border-radius: 8px;
   background: var(--raised);
   box-shadow: 0 12px 32px rgb(0 0 0 / 28%);
@@ -2694,7 +2693,6 @@ select.ai-config-input {
   transform: translateY(6px);
 }
 .toast.is-error {
-  border-color: var(--warning-muted);
   background: var(--warning-muted);
   color: var(--warning-fg);
 }
