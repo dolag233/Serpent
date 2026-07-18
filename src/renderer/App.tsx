@@ -535,9 +535,7 @@ function AppInner() {
     max: "",
     exclude: false,
   });
-  const [sortField, setSortField] = useState<
-    "relevance" | SortDefinition["field"]
-  >("relevance");
+  const [sortField, setSortField] = useState<SortDefinition["field"]>("name");
   const [sortOrder, setSortOrder] = useState<SortDefinition["order"]>("asc");
   const [, setSearchOffset] = useState(0);
   const [searchTotal, setSearchTotal] = useState<number | null>(null);
@@ -1655,7 +1653,7 @@ function AppInner() {
     setAspectRatioRange({ min: "", max: "", exclude: false });
     setDurationRange({ min: "", max: "", exclude: false });
     setLongEdgeRange({ min: "", max: "", exclude: false });
-    setSortField("relevance");
+    setSortField("name");
     setSortOrder("asc");
     hadDiscoveryInput.current = false;
   }
@@ -2447,9 +2445,7 @@ function AppInner() {
           }
         : {}),
       ...(filters.length > 0 ? { filters } : {}),
-      ...(sortField !== "relevance"
-        ? { sort: { field: sortField, order: sortOrder } }
-        : {}),
+      sort: { field: sortField, order: sortOrder },
     };
   }
 
@@ -2709,7 +2705,7 @@ function AppInner() {
       durationRange.max ||
       longEdgeRange.min ||
       longEdgeRange.max ||
-      sortField !== "relevance" ||
+      sortField !== "name" ||
       sortOrder !== "asc",
     );
     const shouldClearPreviousResults =
@@ -5623,9 +5619,6 @@ function AppInner() {
           className={`workspace-discovery${previewAsset ? " is-viewing" : ""}`}
         >
           <DimensionFilterBar
-            activeFolderId={
-              assetScope !== "all" && assetScope !== "root" ? assetScope : null
-            }
             availabilityFilter={availabilityFilter}
             aspectRatioRange={aspectRatioRange}
             colorFilter={colorFilter}
@@ -5637,15 +5630,9 @@ function AppInner() {
             excludeRatingFilter={excludeRatingFilter}
             excludeTagFilter={excludeTagFilter}
             favoriteFilter={favoriteFilter}
-            folders={folders.map((folder) => ({
-              folderId: folder.folderId,
-              name: folder.name,
-            }))}
             formatFilter={formatFilter}
             heightRange={heightRange}
             longEdgeRange={longEdgeRange}
-            onChooseAllAssets={() => void chooseFolder("all")}
-            onChooseFolder={(folderId) => void chooseFolder(folderId)}
             onClearFilter={clearDiscoveryFilter}
             onTagNamesChange={(names) => {
               setTagFilter(names.join(", "));

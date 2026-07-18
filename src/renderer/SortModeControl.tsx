@@ -4,10 +4,10 @@ import { Icon } from "./Icons";
 import { useT } from "./i18n";
 import type { SortDefinition } from "../shared/asset-types";
 
-export type SortFieldOption = "relevance" | SortDefinition["field"];
+/** Browse/sort fields only — relevance removed from sort UI (REQ-SORT-003). */
+export type SortFieldOption = SortDefinition["field"];
 
 export const PRIMARY_SORT_FIELDS: SortFieldOption[] = [
-  "relevance",
   "name",
   "modified_at",
   "byte_size",
@@ -22,6 +22,9 @@ export const SECONDARY_SORT_FIELDS: SortFieldOption[] = [
   "author",
 ];
 
+export const DEFAULT_SORT_FIELD: SortFieldOption = "name";
+export const DEFAULT_SORT_ORDER: SortDefinition["order"] = "asc";
+
 export type SortModeControlProps = {
   disabled?: boolean;
   sortField: SortFieldOption;
@@ -35,8 +38,6 @@ function labelForSortField(
   t: ReturnType<typeof useT>,
 ): string {
   switch (field) {
-    case "relevance":
-      return t("filter.sortRelevance");
     case "name":
       return t("filter.sortName");
     case "modified_at":
@@ -68,7 +69,8 @@ export function SortModeControl({
   const t = useT();
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
-  const nonDefault = sortField !== "relevance" || sortOrder !== "asc";
+  const nonDefault =
+    sortField !== DEFAULT_SORT_FIELD || sortOrder !== DEFAULT_SORT_ORDER;
 
   useEffect(() => {
     if (!open) return;

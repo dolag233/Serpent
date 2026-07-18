@@ -9,5 +9,6 @@ describe("sort mode primary fields", () => {
     expect(PRIMARY_SORT_FIELDS).toContain("byte_size");
     expect(PRIMARY_SORT_FIELDS).toContain("long_edge");
     expect(PRIMARY_SORT_FIELDS).toContain("duration");
+    expect(PRIMARY_SORT_FIELDS).not.toContain("relevance");
   });
 });

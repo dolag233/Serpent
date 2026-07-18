@@ -35,7 +35,6 @@ import type { SortDefinition } from "../shared/asset-types";
 export type DimensionId =
   | "color"
   | "tags"
-  | "folders"
   | "shape"
   | "rating"
   | "format"
@@ -43,18 +42,9 @@ export type DimensionId =
 
 type RangeState = { min: string; max: string; exclude: boolean };
 
-export type FolderDimensionOption = {
-  folderId: string;
-  name: string;
-};
-
 export type DimensionFilterBarProps = {
   disabled?: boolean;
   tags: TagSummary[];
-  folders: FolderDimensionOption[];
-  activeFolderId: string | null;
-  onChooseFolder: (folderId: string) => void;
-  onChooseAllAssets: () => void;
   snapshot: DiscoveryFilterSnapshot;
   colorFilter: string;
   setColorFilter: (value: string) => void;
@@ -133,10 +123,6 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
   const {
     disabled,
     tags,
-    folders,
-    activeFolderId,
-    onChooseFolder,
-    onChooseAllAssets,
     snapshot,
     colorFilter,
     setColorFilter,
@@ -230,7 +216,6 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
   const selectedColors = new Set(parseColorFilterIds(colorFilter));
   const tagActive = selectedTagNames.length > 0;
   const colorActive = selectedColors.size > 0;
-  const folderActive = activeFolderId != null;
   const shapeActive =
     aspectRatioRange.min !== "" || aspectRatioRange.max !== "";
   const ratingActive = selectedRatings.size > 0;
@@ -326,50 +311,6 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
                 />
                 {t("filter.exclude")}
               </label>
-            </div>
-          )}
-        </div>
-
-        <div className="dimension-filter-dim">
-          <DimensionButton
-            active={folderActive}
-            disabled={disabled}
-            icon="folder"
-            label={t("filter.dimFolders")}
-            onClick={() => toggleDimension("folders")}
-            open={openDimension === "folders"}
-          />
-          {openDimension === "folders" && (
-            <div className="dimension-filter-popover">
-              <button
-                className={`dimension-folder-option${activeFolderId == null ? " is-active" : ""}`}
-                disabled={disabled}
-                onClick={() => {
-                  onChooseAllAssets();
-                  setOpenDimension(null);
-                }}
-                type="button"
-              >
-                {t("filter.allFoldersScope")}
-              </button>
-              {folders.length === 0 ? (
-                <p className="dimension-folder-empty">{t("filter.noFoldersYet")}</p>
-              ) : (
-                folders.map((folder) => (
-                  <button
-                    className={`dimension-folder-option${activeFolderId === folder.folderId ? " is-active" : ""}`}
-                    disabled={disabled}
-                    key={folder.folderId}
-                    onClick={() => {
-                      onChooseFolder(folder.folderId);
-                      setOpenDimension(null);
-                    }}
-                    type="button"
-                  >
-                    {folder.name}
-                  </button>
-                ))
-              )}
             </div>
           )}
         </div>
