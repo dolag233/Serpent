@@ -26,6 +26,12 @@ import {
   managedFolderIdsWithChildren,
 } from "./unified-directory-nav";
 import {
+  isAllAssetsNavActive,
+  isManagedFolderNavActive,
+  isRootFolderNavActive,
+  isTrashNavActive,
+} from "./browse-nav-active";
+import {
   loadNavTreePreferences,
   saveNavTreePreferences,
   withCollapsedFolderIds,
@@ -415,6 +421,13 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
     onCopyManagedToLinked,
   } = props;
 
+  const browseNavFlags = {
+    assetScope,
+    showTrash,
+    activeTagId,
+    activeCollectionId,
+    activeSmartCollectionId,
+  };
 
   // REQ-DND-001/002: which row is the current asset-drag hover target.
   // Cleared on leave/drop, and defensively on window dragend/drop so a drop
@@ -535,11 +548,7 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
         const expanded = !collapsedFolderIds.has(entry.folderId);
         return (
           <NavRow
-            active={
-              assetScope === entry.folderId &&
-              !activeTagId &&
-              !activeCollectionId
-            }
+            active={isManagedFolderNavActive(browseNavFlags, entry.folderId)}
             depth={entry.depth}
             disclosure={
               hasChildren ? (
@@ -590,11 +599,7 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
       const linkedAffordance = linkedFolderNavAffordance(entry.status);
       return (
         <NavRow
-          active={
-            assetScope === entry.folderId &&
-            !activeTagId &&
-            !activeCollectionId
-          }
+          active={isManagedFolderNavActive(browseNavFlags, entry.folderId)}
           depth={entry.depth}
           icon={linkedAffordance.icon}
           iconColor={linkedAffordance.iconColor}
@@ -761,14 +766,7 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
     <aside className="navigation-pane">
       <nav className="navigation-scroll">
         <NavRow
-          active={
-            library
-              ? assetScope === "all" &&
-                !activeTagId &&
-                !activeCollectionId &&
-                !showTrash
-              : true
-          }
+          active={library ? isAllAssetsNavActive(browseNavFlags) : true}
           count={library ? allAssetCount : undefined}
           icon="grid"
           label={t("scope.allAssets")}
@@ -778,9 +776,7 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
           onDrop={(event) => onExternalDrop(event, null, undefined)}
         />
         <NavRow
-          active={Boolean(
-            library && showTrash && !activeTagId && !activeCollectionId,
-          )}
+          active={Boolean(library && isTrashNavActive(browseNavFlags))}
           count={trashedAssetCount || undefined}
           disabled={!library}
           icon="trash"
@@ -823,9 +819,7 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
           {library ? (
             <>
               <NavRow
-                active={
-                  assetScope === "root" && !activeTagId && !activeCollectionId
-                }
+                active={isRootFolderNavActive(browseNavFlags)}
                 icon="folder"
                 label={t("scope.rootFolder")}
                 onClick={() => void onChooseRootFolder()}

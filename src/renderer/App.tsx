@@ -395,15 +395,6 @@ function AppInner() {
     setNotice,
     handleToastTransitionEnd,
   } = useToastNotifications();
-  // REQ-SHELL-007: draggable nav/inspector pane widths (persisted).
-  const {
-    navPanelWidth,
-    inspectorPanelWidth,
-    resizing: panelResizing,
-    shellStyle: panelResizeShellStyle,
-    beginResize: beginPanelResize,
-    resetPanel: resetPanelWidth,
-  } = usePanelResize();
   const [dialog, setDialog] = useState<DialogKind>(null);
   const [dialogValue, setDialogValue] = useState(() => t("shell.myLibrary"));
   const [conflicts, setConflicts] = useState<ImportConflictPlan | null>(null);
@@ -417,6 +408,25 @@ function AppInner() {
   const externalDragDepth = useRef(0);
   const [leftOpen, setLeftOpen] = useState(() => window.innerWidth > 800);
   const [rightOpen, setRightOpen] = useState(() => window.innerWidth > 1020);
+  // REQ-SHELL-007 / REQ-SHELL-011: draggable nav/inspector pane widths + auto-hide.
+  const {
+    navPanelWidth,
+    inspectorPanelWidth,
+    resizing: panelResizing,
+    shellStyle: panelResizeShellStyle,
+    beginResize: beginPanelResize,
+    beginEdgeRestore: beginPanelEdgeRestore,
+    resetPanel: resetPanelWidth,
+  } = usePanelResize({
+    onAutoHide: (panel) => {
+      if (panel === "nav") setLeftOpen(false);
+      else setRightOpen(false);
+    },
+    onEdgeRestore: (panel) => {
+      if (panel === "nav") setLeftOpen(true);
+      else setRightOpen(true);
+    },
+  });
   const navHistoryRef = useRef(createWorkspaceNavHistory());
   const suppressNavHistoryRef = useRef(false);
   const [navHistoryUi, setNavHistoryUi] = useState({
@@ -933,9 +943,9 @@ function AppInner() {
           limit: ASSET_PAGE_SIZE,
           offset: 0,
         }),
-        trashMode || scope === "all"
-          ? Promise.resolve(undefined)
-          : api.searchAssets({ ...libId, query: null, limit: 1, offset: 0 }),
+        trashMode || scope !== "all"
+          ? api.searchAssets({ ...libId, query: null, limit: 1, offset: 0 })
+          : Promise.resolve(undefined),
         api.listLinkedFolders(libId),
         api.listTags(libId),
         api.listCollections(libId),
@@ -956,9 +966,8 @@ function AppInner() {
       } else {
         setAssets(assetResult.value.items);
       }
-      if (!trashMode) {
-        setAllAssetCount(allResult?.value.total ?? assetResult.value.total);
-      }
+      // CU-B2: keep library-wide count fresh even while browsing trash.
+      setAllAssetCount(allResult?.value.total ?? assetResult.value.total);
       setSearchTotal(assetResult.value.total);
       setSearchOffset(assetResult.value.offset);
       setSearchSnippets(new Map());
@@ -2150,25 +2159,19 @@ function AppInner() {
         assetIds: [assetId],
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
-      const [assetResult, collectionResult] = await Promise.all([
-        api.searchAssets({
-          libraryId: library.libraryId,
-          query: null,
-          scope: {
-            kind: "collection",
-            collectionId,
-            recursive: collectionRecursive,
-          },
-          limit: ASSET_PAGE_SIZE,
-          offset: 0,
-        }),
-        api.listCollections({ libraryId: library.libraryId }),
-      ]);
-      if (!assetResult.ok) throw new LibraryOperationError(assetResult.error);
+      const collectionResult = await api.listCollections({
+        libraryId: library.libraryId,
+      });
       if (!collectionResult.ok)
         throw new LibraryOperationError(collectionResult.error);
-      applySearchResult(assetResult.value);
       setCollections(collectionResult.value);
+      // CU-B1: refresh the *current* browse scope — do not force a collection search
+      // when the user is still on All assets / a folder (that emptied the grid).
+      if (activeCollectionId === collectionId) {
+        await chooseCollection(collectionId);
+      } else {
+        await reloadCurrentContent();
+      }
       clearAssetSelection();
       setError(null);
       setNotice(t("toast.removedFromCollection"));
@@ -2612,8 +2615,10 @@ function AppInner() {
       setActiveTagId(null);
       setActiveCollectionId(null);
       setActiveSmartCollectionId(collectionId);
+      setAssetScope("all");
       if (offset === 0) {
         clearAssetSelection();
+        clearDiscoveryControls();
         recordNavigation({ kind: "smart-collection", collectionId });
       }
       applySearchResult(result.value, offset > 0);
@@ -4519,6 +4524,14 @@ function AppInner() {
       return collection
         ? t("scope.collectionNamed", { name: collection.name })
         : t("scope.collectionView");
+    }
+    if (activeSmartCollectionId) {
+      const smart = smartCollections.find(
+        (x) => x.collectionId === activeSmartCollectionId,
+      );
+      return smart
+        ? t("scope.smartCollectionScope", { name: smart.name })
+        : t("scope.smartCollections");
     }
     if (assetScope === "all") return t("scope.allAssets");
     if (assetScope === "root") return t("scope.rootFolder");
@@ -6431,8 +6444,8 @@ function AppInner() {
         onAssignTag={(assetId, tagId) => { void assignAssetToTag(assetId, tagId); }}
         onAddToCollection={(assetId, collectionId) => { void addAssetToCollection(assetId, collectionId); }}
       />
-      {/* REQ-SHELL-007 pane resize handles (fixed over the pane borders). */}
-      {leftOpen && (
+      {/* REQ-SHELL-007 / REQ-SHELL-011 pane resize + edge restore handles. */}
+      {leftOpen ? (
         <div
           aria-label={t("shell.resizeNav")}
           aria-orientation="vertical"
@@ -6446,8 +6459,21 @@ function AppInner() {
           role="separator"
           style={{ left: navPanelWidth - 3 }}
         />
+      ) : (
+        <div
+          aria-label={t("shell.restoreNavEdge")}
+          aria-orientation="vertical"
+          className={`panel-resizer panel-resizer-edge${panelResizing === "nav" ? " is-active" : ""}`}
+          data-hover-tip={t("shell.restoreNavEdge")}
+          onPointerDown={(event) => {
+            event.preventDefault();
+            beginPanelEdgeRestore("nav", event.clientX);
+          }}
+          role="separator"
+          style={{ left: 0 }}
+        />
       )}
-      {rightOpen && (
+      {rightOpen ? (
         <div
           aria-label={t("shell.resizeInspector")}
           aria-orientation="vertical"
@@ -6460,6 +6486,19 @@ function AppInner() {
           }}
           role="separator"
           style={{ right: inspectorPanelWidth - 3 }}
+        />
+      ) : (
+        <div
+          aria-label={t("shell.restoreInspectorEdge")}
+          aria-orientation="vertical"
+          className={`panel-resizer panel-resizer-edge${panelResizing === "inspector" ? " is-active" : ""}`}
+          data-hover-tip={t("shell.restoreInspectorEdge")}
+          onPointerDown={(event) => {
+            event.preventDefault();
+            beginPanelEdgeRestore("inspector", event.clientX);
+          }}
+          role="separator"
+          style={{ right: 0 }}
         />
       )}
     </main>

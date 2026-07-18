@@ -63,6 +63,8 @@ export const en = {
     collapseInspector: "Collapse inspector",
     resizeNav: "Resize navigation panel",
     resizeInspector: "Resize inspector panel",
+    restoreNavEdge: "Drag from edge to show navigation",
+    restoreInspectorEdge: "Drag from edge to show inspector",
     libraryMenu: "Library menu",
     chooseLibrary: "Choose library",
     noLibraryOpen: "No library open",

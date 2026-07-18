@@ -54,6 +54,8 @@ export const zhCN = {
     collapseInspector: "收起检查器",
     resizeNav: "调整导航面板宽度",
     resizeInspector: "调整检查器面板宽度",
+    restoreNavEdge: "从边缘拖出导航面板",
+    restoreInspectorEdge: "从边缘拖出检查器",
     libraryMenu: "资源库菜单",
     chooseLibrary: "选择资源库",
     noLibraryOpen: "尚未打开资源库",

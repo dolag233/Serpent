@@ -8,18 +8,14 @@ import {
   saveShellPreferences,
   type ShellPreferencesStorage,
 } from './shell-preferences';
+import {
+  resolvePanelIntentWidth,
+  shouldAutoHidePanel,
+  shouldRestorePanelFromEdge,
+  type ResizablePanel,
+} from './panel-auto-hide';
 
-// ---------------------------------------------------------------------------
-// usePanelResize (REQ-SHELL-007)
-//
-// Drag-resize for the shell's left navigation pane and right Inspector pane.
-// Widths live as CSS custom properties consumed by the .app-shell grid tracks
-// (styles.css), clamp to the shell-preferences ranges, persist on drag end,
-// and reset to the layout defaults on double-click. The drag math is kept in
-// the pure `resolvePanelWidth` helper so unit tests do not need React.
-// ---------------------------------------------------------------------------
-
-export type ResizablePanel = 'nav' | 'inspector';
+export type { ResizablePanel };
 
 /**
  * Width for `panel` after a pointer move of `deltaX` px from drag start.
@@ -36,6 +32,14 @@ export function resolvePanelWidth(
     : clampInspectorPanelWidth(startWidth - deltaX);
 }
 
+export interface UsePanelResizeOptions {
+  storage?: ShellPreferencesStorage;
+  /** REQ-SHELL-011: collapse when the drag intent width falls below threshold. */
+  onAutoHide?: (panel: ResizablePanel) => void;
+  /** REQ-SHELL-011: expand after dragging inward from the screen edge. */
+  onEdgeRestore?: (panel: ResizablePanel) => void;
+}
+
 export interface UsePanelResizeReturn {
   navPanelWidth: number;
   inspectorPanelWidth: number;
@@ -44,15 +48,33 @@ export interface UsePanelResizeReturn {
   /** Inline style for .app-shell: the grid tracks consume these variables. */
   shellStyle: Record<string, string>;
   beginResize: (panel: ResizablePanel, clientX: number) => void;
+  beginEdgeRestore: (panel: ResizablePanel, clientX: number) => void;
   resetPanel: (panel: ResizablePanel) => void;
 }
 
-export function usePanelResize(storage?: ShellPreferencesStorage): UsePanelResizeReturn {
+export function usePanelResize(
+  storageOrOptions?: ShellPreferencesStorage | UsePanelResizeOptions,
+): UsePanelResizeReturn {
+  const options: UsePanelResizeOptions =
+    storageOrOptions && 'getItem' in storageOrOptions
+      ? { storage: storageOrOptions }
+      : (storageOrOptions ?? {});
+  const { storage, onAutoHide, onEdgeRestore } = options;
+  const onAutoHideRef = useRef(onAutoHide);
+  const onEdgeRestoreRef = useRef(onEdgeRestore);
+  useEffect(() => {
+    onAutoHideRef.current = onAutoHide;
+    onEdgeRestoreRef.current = onEdgeRestore;
+  }, [onAutoHide, onEdgeRestore]);
+
   const [widths, setWidths] = useState(() => loadShellPreferences(storage));
   const [resizing, setResizing] = useState<ResizablePanel | null>(null);
-  const dragRef = useRef<{ panel: ResizablePanel; startX: number; startWidth: number } | null>(null);
-  // Always-current widths for the window-level move handler; synced via
-  // effect because refs must not be written during render.
+  const dragRef = useRef<{
+    panel: ResizablePanel;
+    startX: number;
+    startWidth: number;
+    mode: 'resize' | 'edge-restore';
+  } | null>(null);
   const widthsRef = useRef(widths);
   useEffect(() => {
     widthsRef.current = widths;
@@ -70,30 +92,46 @@ export function usePanelResize(storage?: ShellPreferencesStorage): UsePanelResiz
         startX: clientX,
         startWidth:
           panel === 'nav' ? widthsRef.current.navPanelWidth : widthsRef.current.inspectorPanelWidth,
+        mode: 'resize',
       };
       setResizing(panel);
 
       const onMove = (event: PointerEvent) => {
         const drag = dragRef.current;
-        if (!drag) return;
+        if (!drag || drag.mode !== 'resize') return;
         const nextWidth = resolvePanelWidth(drag.panel, drag.startWidth, event.clientX - drag.startX);
         setWidths((prev) =>
           drag.panel === 'nav'
             ? { ...prev, navPanelWidth: nextWidth }
             : { ...prev, inspectorPanelWidth: nextWidth },
         );
-        // Keep the ref current for the drag-end persist (event-handler
-        // writes are fine; the state updater above stays pure).
         widthsRef.current =
           drag.panel === 'nav'
             ? { ...widthsRef.current, navPanelWidth: nextWidth }
             : { ...widthsRef.current, inspectorPanelWidth: nextWidth };
       };
-      const onUp = () => {
+      const onUp = (event: PointerEvent) => {
         window.removeEventListener('pointermove', onMove);
         window.removeEventListener('pointerup', onUp);
+        const drag = dragRef.current;
         dragRef.current = null;
         setResizing(null);
+        if (!drag || drag.mode !== 'resize') return;
+        const intent = resolvePanelIntentWidth(
+          drag.panel,
+          drag.startWidth,
+          event.clientX - drag.startX,
+        );
+        if (shouldAutoHidePanel(drag.panel, intent)) {
+          // Restore the last persisted/clamped width; do not save the tiny intent.
+          widthsRef.current =
+            drag.panel === 'nav'
+              ? { ...widthsRef.current, navPanelWidth: drag.startWidth }
+              : { ...widthsRef.current, inspectorPanelWidth: drag.startWidth };
+          setWidths(widthsRef.current);
+          onAutoHideRef.current?.(drag.panel);
+          return;
+        }
         persist(widthsRef.current);
       };
       window.addEventListener('pointermove', onMove);
@@ -101,6 +139,37 @@ export function usePanelResize(storage?: ShellPreferencesStorage): UsePanelResiz
     },
     [persist],
   );
+
+  const beginEdgeRestore = useCallback((panel: ResizablePanel, clientX: number) => {
+    dragRef.current = {
+      panel,
+      startX: clientX,
+      startWidth:
+        panel === 'nav' ? widthsRef.current.navPanelWidth : widthsRef.current.inspectorPanelWidth,
+      mode: 'edge-restore',
+    };
+    setResizing(panel);
+
+    const onMove = (event: PointerEvent) => {
+      const drag = dragRef.current;
+      if (!drag || drag.mode !== 'edge-restore') return;
+      if (shouldRestorePanelFromEdge(drag.panel, drag.startX, event.clientX)) {
+        window.removeEventListener('pointermove', onMove);
+        window.removeEventListener('pointerup', onUp);
+        dragRef.current = null;
+        setResizing(null);
+        onEdgeRestoreRef.current?.(drag.panel);
+      }
+    };
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      dragRef.current = null;
+      setResizing(null);
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  }, []);
 
   const resetPanel = useCallback(
     (panel: ResizablePanel) => {
@@ -115,8 +184,6 @@ export function usePanelResize(storage?: ShellPreferencesStorage): UsePanelResiz
     [persist],
   );
 
-  // While dragging, force the resize cursor and block text selection
-  // app-wide; restored when the drag ends.
   useEffect(() => {
     if (!resizing) return;
     const { body } = document;
@@ -139,6 +206,7 @@ export function usePanelResize(storage?: ShellPreferencesStorage): UsePanelResiz
       '--inspector-width': `${widths.inspectorPanelWidth}px`,
     },
     beginResize,
+    beginEdgeRestore,
     resetPanel,
   };
 }

@@ -269,6 +269,12 @@ summary:focus-visible {
   background: var(--secondary);
 }
 
+/* Collapsed edge hit target (REQ-SHELL-011): slightly wider, flush to screen edge. */
+.panel-resizer-edge {
+  width: 8px;
+  z-index: 7;
+}
+
 .app-toolbar {
   /* Above workspace content so library/settings menus are never covered by
      the asset viewer (REQ-VIEW-004 stacking isolation). */
