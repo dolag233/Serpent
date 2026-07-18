@@ -5157,6 +5157,38 @@ export class LibraryService {
     return rows.map((row) => this.assetSummaryFromRow(row));
   }
 
+  /**
+   * Direct collection memberships for the given assets (CU-B4 menu filtering).
+   * Scoped to collections that belong to the open library.
+   */
+  listAssetCollectionMemberships(input: {
+    libraryId: string;
+    assetIds: string[];
+  }): Array<{ assetId: string; collectionId: string }> {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    const uniqueIds = [...new Set(input.assetIds)];
+    if (uniqueIds.length === 0) return [];
+
+    const placeholders = uniqueIds.map(() => '?').join(',');
+    const rows = openLibrary.connection
+      .prepare(
+        `SELECT ca.asset_id, ca.collection_id
+           FROM collection_assets ca
+           JOIN collections c ON c.collection_id = ca.collection_id
+          WHERE ca.asset_id IN (${placeholders})
+            AND c.library_id = ?`,
+      )
+      .all(...uniqueIds, openLibrary.summary.libraryId) as Array<{
+        asset_id: string;
+        collection_id: string;
+      }>;
+
+    return rows.map((row) => ({
+      assetId: row.asset_id,
+      collectionId: row.collection_id,
+    }));
+  }
+
   // ── Asset Metadata ──────────────────────────────────────────────────
 
   private resolvedPaletteFields(

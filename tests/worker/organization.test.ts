@@ -662,6 +662,19 @@ describe('collection assets', () => {
     expect(assets).toHaveLength(2);
     expect(assets.map((a) => a.assetId).sort()).toEqual([assetId, assetId2].sort());
 
+    // CU-B4: memberships query returns only direct memberships for the asked assets.
+    const memberships = service.listAssetCollectionMemberships({
+      libraryId,
+      assetIds: [assetId, assetId2, 'missing-asset'],
+    });
+    expect(memberships).toEqual(
+      expect.arrayContaining([
+        { assetId, collectionId: col.collectionId },
+        { assetId: assetId2, collectionId: col.collectionId },
+      ]),
+    );
+    expect(memberships).toHaveLength(2);
+
     service.closeAll();
   });
 

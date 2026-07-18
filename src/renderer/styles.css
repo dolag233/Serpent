@@ -430,16 +430,22 @@ body.platform-darwin .toolbar-leading {
   cursor: pointer;
 }
 
-.dimension-filter-btn:hover {
+.dimension-filter-btn:hover:not(:disabled) {
   background: var(--hover);
   color: var(--text);
 }
 
-.dimension-filter-btn.is-active,
-.dimension-filter-btn.is-open {
+.dimension-filter-btn.is-active:not(:disabled),
+.dimension-filter-btn.is-open:not(:disabled) {
   border-color: color-mix(in srgb, var(--accent) 45%, var(--divider));
   background: var(--accent-soft);
   color: var(--accent-soft-fg);
+}
+
+.dimension-filter-btn:disabled {
+  color: var(--tertiary);
+  opacity: 0.48;
+  cursor: not-allowed;
 }
 
 .dimension-filter-popover {
@@ -495,10 +501,21 @@ body.platform-darwin .toolbar-leading {
   cursor: pointer;
 }
 
-.dimension-rating-chip.is-active {
+.dimension-rating-chip:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.dimension-rating-chip.is-active:not(:disabled) {
   border-color: color-mix(in srgb, var(--accent) 55%, var(--divider));
   background: color-mix(in srgb, var(--accent) 14%, transparent);
   color: var(--text);
+}
+
+.dimension-rating-chip:disabled {
+  color: var(--tertiary);
+  opacity: 0.48;
+  cursor: not-allowed;
 }
 
 .dimension-filter-chips {
@@ -591,8 +608,14 @@ body.platform-darwin .toolbar-leading {
   color: var(--secondary);
 }
 
-.dimension-active-chip:hover {
+.dimension-active-chip:hover:not(:disabled) {
   border-color: var(--secondary);
+}
+
+.dimension-active-chip:disabled {
+  color: var(--tertiary);
+  opacity: 0.48;
+  cursor: not-allowed;
 }
 
 .numeric-filter-range {
@@ -666,16 +689,24 @@ body.platform-darwin .toolbar-leading {
   cursor: pointer;
 }
 
-.tool-button:hover {
+.tool-button:hover:not(:disabled) {
   background: var(--hover);
   color: var(--text);
 }
 
 /* Toggle state reads as a quiet accent tint, not a raised button — the
    current mode is identifiable without adding chrome (Eagle convention). */
-.tool-button[aria-pressed="true"] {
+.tool-button[aria-pressed="true"]:not(:disabled) {
   background: var(--accent-soft);
   color: var(--accent-soft-fg);
+}
+
+/* CU-U4 / Serpent-zlj: disabled chrome must read as unavailable, not merely
+   non-interactive. Opacity + tertiary ink + not-allowed cursor. */
+.tool-button:disabled {
+  color: var(--tertiary);
+  opacity: 0.48;
+  cursor: not-allowed;
 }
 
 .icon {
@@ -709,12 +740,14 @@ body.platform-darwin .toolbar-leading {
 }
 
 .library-switcher-trigger:hover:not(:disabled),
-.library-switcher-trigger[aria-expanded="true"] {
+.library-switcher-trigger[aria-expanded="true"]:not(:disabled) {
   background: var(--hover);
 }
 
 .library-switcher-trigger:disabled {
-  opacity: 0.55;
+  color: var(--tertiary);
+  opacity: 0.48;
+  cursor: not-allowed;
 }
 
 .library-switcher-name {
@@ -760,6 +793,8 @@ body.platform-darwin .toolbar-leading {
 
 .library-switcher-item:disabled {
   color: var(--tertiary);
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .library-switcher-divider {
@@ -825,7 +860,9 @@ body.platform-darwin .toolbar-leading {
 }
 
 .scope-history-button:disabled {
+  color: var(--tertiary);
   opacity: 0.35;
+  cursor: not-allowed;
 }
 
 .scope-breadcrumbs {
@@ -907,9 +944,15 @@ body.platform-darwin .toolbar-leading {
   cursor: pointer;
 }
 
-.search-clear-btn:hover {
+.search-clear-btn:hover:not(:disabled) {
   background: var(--hover);
   color: var(--text);
+}
+
+.search-clear-btn:disabled {
+  color: var(--tertiary);
+  opacity: 0.48;
+  cursor: not-allowed;
 }
 
 .search-active-chip {
@@ -942,8 +985,13 @@ body.platform-darwin .toolbar-leading {
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ink) 25%, transparent);
 }
 
-.dimension-color-swatch.is-active {
+.dimension-color-swatch.is-active:not(:disabled) {
   border-color: var(--text);
+}
+
+.dimension-color-swatch:disabled {
+  opacity: 0.48;
+  cursor: not-allowed;
 }
 
 .dimension-folder-option {
@@ -1018,10 +1066,16 @@ body.platform-darwin .toolbar-leading {
 }
 
 .search-control:disabled {
-  opacity: 0.58;
+  color: var(--tertiary);
+  opacity: 0.48;
+  cursor: not-allowed;
 }
 
-.ai-search-toggle[aria-pressed="true"] {
+.search-control:disabled::placeholder {
+  color: var(--tertiary);
+}
+
+.ai-search-toggle[aria-pressed="true"]:not(:disabled) {
   border-color: rgb(206 153 71 / 70%);
   background: rgb(206 153 71 / 18%);
   color: var(--warning-fg);
@@ -2659,6 +2713,17 @@ select.ai-config-input {
   outline: 0;
 }
 
+/* CU-U4: smart-collection / toolbar text fields when no library is open. */
+.text-field:disabled {
+  color: var(--tertiary);
+  opacity: 0.48;
+  cursor: not-allowed;
+}
+
+.text-field:disabled::placeholder {
+  color: var(--tertiary);
+}
+
 .field-help {
   margin: 7px 0 0;
   color: var(--tertiary);
@@ -2722,8 +2787,9 @@ select.ai-config-input {
   color: var(--text);
 }
 .compact-action:disabled {
-  opacity: 0.44;
-  cursor: default;
+  color: var(--tertiary);
+  opacity: 0.48;
+  cursor: not-allowed;
 }
 
 /* Primary action of a cluster (e.g. 搜索提交): a quiet accent fill that
@@ -2738,6 +2804,12 @@ select.ai-config-input {
   border-color: color-mix(in srgb, var(--accent) 60%, var(--divider));
   background: color-mix(in srgb, var(--accent) 20%, transparent);
   color: color-mix(in srgb, var(--accent) 45%, white);
+}
+
+.compact-action.is-accent:disabled {
+  border-color: var(--divider);
+  background: transparent;
+  color: var(--tertiary);
 }
 
 .workspace-canvas {

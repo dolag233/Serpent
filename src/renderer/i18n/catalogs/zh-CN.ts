@@ -315,7 +315,9 @@ export const zhCN = {
       noMovableManaged: "所选资产中没有可移动的托管资产",
       noManaged: "所选资产中没有托管资产",
       noCopyableManaged: "所选资产中没有可复制的托管资产",
-      cannotCopyExternal: "资产不可复制到外部目录"
+      cannotCopyExternal: "资产不可复制到外部目录",
+      noLibrary: "请先打开资源库",
+      busy: "另有资源库操作进行中"
     },
     group: {
       open: "打开",

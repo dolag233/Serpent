@@ -1,4 +1,4 @@
-import { Fragment, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import type {
   TagSummary,
   CollectionSummary,
@@ -30,6 +30,11 @@ import {
   sidebarCommandDefinitions,
   type SidebarCommandContext,
 } from "./commands/sidebar-commands";
+import {
+  indexMembershipsByCollection,
+  resolveCollectionMenuForSelection,
+  type CollectionMembershipRow,
+} from "./collection-menu-membership";
 
 const isMac = isMacPlatform(navigator.userAgent);
 
@@ -106,6 +111,10 @@ interface AssetContextMenuProps {
   onRemoveFromCollection: (assetId: string, collectionId: string) => void;
   onAssignTag: (assetId: string, tagId: string) => void;
   onAddToCollection: (assetId: string, collectionId: string) => void;
+  /** CU-B4: load direct memberships for the menu selection. */
+  onLoadCollectionMemberships: (
+    assetIds: string[],
+  ) => Promise<CollectionMembershipRow[]>;
 }
 
 export function AssetContextMenu(props: AssetContextMenuProps) {
@@ -150,10 +159,16 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
     onRemoveFromCollection,
     onAssignTag,
     onAddToCollection,
+    onLoadCollectionMemberships,
   } = props;
 
   const { active: activeContextMenu } = useContextMenu();
   const [tagPicker, setTagPicker] = useState<TagPickerState | null>(null);
+  // null = memberships still loading (hide add/remove pairs until known).
+  const [memberIdsByCollection, setMemberIdsByCollection] = useState<Map<
+    string,
+    Set<string>
+  > | null>(null);
 
   // The picker swaps the menu body in place; never let it leak into the next
   // menu. Adjust during render (React-sanctioned derived-state pattern):
@@ -165,7 +180,34 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
   if (pickerMenuKey !== activeDescriptorKey) {
     setPickerMenuKey(activeDescriptorKey);
     setTagPicker(null);
+    setMemberIdsByCollection(null);
   }
+
+  useEffect(() => {
+    const descriptor = activeContextMenu?.descriptor;
+    if (
+      !descriptor ||
+      (descriptor.type !== "asset" && descriptor.type !== "multi-asset")
+    ) {
+      return;
+    }
+    const assetIds =
+      descriptor.type === "asset" ? [descriptor.assetId] : [...descriptor.assetIds];
+    let cancelled = false;
+    void onLoadCollectionMemberships(assetIds)
+      .then((rows) => {
+        if (!cancelled) {
+          setMemberIdsByCollection(indexMembershipsByCollection(rows));
+        }
+      })
+      .catch(() => {
+        // Fail closed: unknown membership → treat as non-members (add only).
+        if (!cancelled) setMemberIdsByCollection(new Map());
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeDescriptorKey, activeContextMenu, onLoadCollectionMemberships]);
 
   if (!activeContextMenu) return null;
 
@@ -665,36 +707,48 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                 />
               </ContextMenuSection>
             )}
-            {collections.length > 0 && (
+            {collections.length > 0 && memberIdsByCollection && (
               <ContextMenuSection label={t("command.group.batchCollections")}>
-                {collections.map((collection) => (
-                  <Fragment key={`batch-col-${collection.collectionId}`}>
-                    <ContextMenuItem
-                      icon={<Icon name="collection" size={14} />}
-                      label={t("command.collection.addTo", {
-                        name: collection.name,
-                      })}
-                      onAction={() => {
-                        onBatchAddToCollection(
-                          collection.collectionId,
-                          targetAssetIds,
-                        );
-                      }}
-                    />
-                    <ContextMenuItem
-                      icon={<Icon name="close" size={14} />}
-                      label={t("command.collection.removeFrom", {
-                        name: collection.name,
-                      })}
-                      onAction={() => {
-                        onBatchRemoveFromCollection(
-                          collection.collectionId,
-                          targetAssetIds,
-                        );
-                      }}
-                    />
-                  </Fragment>
-                ))}
+                {collections.map((collection) => {
+                  const actions = resolveCollectionMenuForSelection(
+                    targetAssetIds,
+                    collection.collectionId,
+                    memberIdsByCollection,
+                  );
+                  if (!actions.showAdd && !actions.showRemove) return null;
+                  return (
+                    <Fragment key={`batch-col-${collection.collectionId}`}>
+                      {actions.showAdd && (
+                        <ContextMenuItem
+                          icon={<Icon name="collection" size={14} />}
+                          label={t("command.collection.addTo", {
+                            name: collection.name,
+                          })}
+                          onAction={() => {
+                            onBatchAddToCollection(
+                              collection.collectionId,
+                              targetAssetIds,
+                            );
+                          }}
+                        />
+                      )}
+                      {actions.showRemove && (
+                        <ContextMenuItem
+                          icon={<Icon name="close" size={14} />}
+                          label={t("command.collection.removeFrom", {
+                            name: collection.name,
+                          })}
+                          onAction={() => {
+                            onBatchRemoveFromCollection(
+                              collection.collectionId,
+                              targetAssetIds,
+                            );
+                          }}
+                        />
+                      )}
+                    </Fragment>
+                  );
+                })}
               </ContextMenuSection>
             )}
               {moveToFolderItem && (
@@ -952,18 +1006,47 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                         }
                       />
                     ))}
-                  {collections.map((collection) => (
-                    <ContextMenuItem
-                      key={`remove-collection-${collection.collectionId}`}
-                      icon={<Icon name="close" size={14} />}
-                      label={t("command.collection.removeFrom", {
-                        name: collection.name,
-                      })}
-                      onAction={() => {
-                        onRemoveFromCollection(assetId, collection.collectionId);
-                      }}
-                    />
-                  ))}
+                  {memberIdsByCollection &&
+                    collections.map((collection) => {
+                      const actions = resolveCollectionMenuForSelection(
+                        [assetId],
+                        collection.collectionId,
+                        memberIdsByCollection,
+                      );
+                      if (!actions.showAdd && !actions.showRemove) return null;
+                      return (
+                        <Fragment key={`collection-${collection.collectionId}`}>
+                          {actions.showRemove && (
+                            <ContextMenuItem
+                              icon={<Icon name="close" size={14} />}
+                              label={t("command.collection.removeFrom", {
+                                name: collection.name,
+                              })}
+                              onAction={() => {
+                                onRemoveFromCollection(
+                                  assetId,
+                                  collection.collectionId,
+                                );
+                              }}
+                            />
+                          )}
+                          {actions.showAdd && (
+                            <ContextMenuItem
+                              icon={<Icon name="collection" size={14} />}
+                              label={t("command.collection.addTo", {
+                                name: collection.name,
+                              })}
+                              onAction={() => {
+                                onAddToCollection(
+                                  assetId,
+                                  collection.collectionId,
+                                );
+                              }}
+                            />
+                          )}
+                        </Fragment>
+                      );
+                    })}
                   {tags.length > 0 && (
                     <TagPickerEntry
                       icon={<Icon name="tag" size={14} />}
@@ -977,18 +1060,6 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                       }
                     />
                   )}
-                  {collections.map((collection) => (
-                    <ContextMenuItem
-                      key={`collection-${collection.collectionId}`}
-                      icon={<Icon name="collection" size={14} />}
-                      label={t("command.collection.addTo", {
-                        name: collection.name,
-                      })}
-                      onAction={() => {
-                        onAddToCollection(assetId, collection.collectionId);
-                      }}
-                    />
-                  ))}
                 </ContextMenuSection>
                 <ContextMenuSection label={t("command.group.metadata")}>
                   {aiAnalyzeItem && (

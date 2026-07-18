@@ -447,6 +447,16 @@ const assetOperationSuccessSchemas = [
   }),
   z.strictObject({
     ok: z.literal(true),
+    type: z.literal('collection.assets.memberships'),
+    memberships: z.array(
+      z.strictObject({
+        assetId: nonBlankString,
+        collectionId: nonBlankString,
+      }),
+    ),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
     type: z.literal('asset.metadata.got'),
     metadata: assetMetadataResultSchema,
   }),

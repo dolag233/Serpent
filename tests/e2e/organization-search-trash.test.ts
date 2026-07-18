@@ -472,23 +472,27 @@ test('collection recursion toggle immediately refreshes the visible collection s
     await window.getByRole('button', { name: /direct-only\.txt/i }).click({ modifiers: [additiveModifier] });
     // Right-click on the first selected asset for multi-asset menu
     await window.getByRole('button', { name: /child-only\.txt/i }).click({ button: 'right' });
+    // Mixed membership: both add and remove stay available (REQ-MENU-007 skip path).
+    await expect(window.getByRole('menuitem', { name: '移出合集：父合集' })).toBeVisible();
+    await expect(window.getByRole('menuitem', { name: '加入合集：父合集' })).toBeVisible();
     await window.getByRole('menuitem', { name: '移出合集：父合集' }).click();
     await expect(window.locator('.toast')).toContainText('已将 1 项直接成员移出合集；1 项不是该合集的直接成员，未改动');
     await expect(window.getByRole('button', { name: /child-only\.txt/i })).toBeVisible();
     await expect(window.getByRole('button', { name: /direct-only\.txt/i })).toHaveCount(0);
 
-    // Single-select + right-click for context menu
+    // CU-B4: non-member of 父合集 must not see remove-from-parent (only add).
     await window.getByRole('button', { name: /child-only\.txt/i }).click({ button: 'right' });
-    await window.getByRole('menuitem', { name: '移出合集：父合集' }).click();
-    await expect(window.getByText('无法从当前合集移除：该资产属于子合集，请进入对应子合集后再移除。')).toBeVisible();
-    await expect(window.getByRole('button', { name: /child-only\.txt/i })).toBeVisible();
+    await expect(window.getByRole('menuitem', { name: '加入合集：父合集' })).toBeVisible();
+    await expect(window.getByRole('menuitem', { name: '移出合集：父合集' })).toHaveCount(0);
+    await expect(window.getByRole('menuitem', { name: '移出合集：子合集' })).toBeVisible();
+    await window.keyboard.press('Escape');
 
     await window.getByRole('button', { name: /所有资产/ }).click();
-    // Right-click on direct-only for single-asset context menu
+    // CU-B4: empty collection → add only; remove hidden for non-members.
     await window.getByRole('button', { name: /direct-only\.txt/i }).click({ button: 'right' });
-    await window.getByRole('menuitem', { name: '移出合集：空合集' }).click();
-    await expect(window.getByText('无法从当前合集移除：该资产属于子合集，请进入对应子合集后再移除。')).toBeVisible();
-    await expect(window.getByRole('button', { name: /direct-only\.txt/i })).toBeVisible();
+    await expect(window.getByRole('menuitem', { name: '加入合集：空合集' })).toBeVisible();
+    await expect(window.getByRole('menuitem', { name: '移出合集：空合集' })).toHaveCount(0);
+    await window.keyboard.press('Escape');
 
     await window.getByRole('button', { name: /父合集/ }).click();
 

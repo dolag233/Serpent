@@ -35,7 +35,7 @@ import {
   NavigationSidebar,
 } from "./NavigationSidebar";
 import { LibrarySwitcher, buildRecentLibraryMenuEntries, type RecentLibraryMenuEntry } from "./LibrarySwitcher";
-import { WorkspaceToolsOverflow } from "./WorkspaceToolsOverflow";
+import { CanvasToolbarControls } from "./CanvasToolbarControls";
 import { ScopeHistoryButtons } from "./ScopeHistoryButtons";
 import {
   ScopeBreadcrumbs,
@@ -2225,6 +2225,19 @@ function AppInner() {
       setError(toMessage(caught, t("toast.addToCollectionFailed"), locale));
     }
   }
+
+  const loadCollectionMemberships = useCallback(
+    async (assetIds: string[]) => {
+      if (!api || !library || assetIds.length === 0) return [];
+      const result = await api.listAssetCollectionMemberships({
+        libraryId: library.libraryId,
+        assetIds,
+      });
+      if (!result.ok) return [];
+      return result.value;
+    },
+    [api, library],
+  );
 
   async function removeAssetFromCollection(
     assetId: string,
@@ -5429,110 +5442,36 @@ function AppInner() {
               )
             )}
             <span className="tool-separator" />
-            <span className="tool-group-view">
-              <div className="canvas-controls">
-                <ToolButton
-                  disabled={!library || busy}
-                  icon="refresh"
-                  label={t("toolbar.refreshDisk")}
-                  onClick={() => void refreshAssets()}
-                />
-                <span className="tool-separator" />
-                <ToolButton
-                  icon="grid"
-                  label={t("toolbar.gridView")}
-                  onClick={() =>
-                    setCanvasPrefs((p) => ({ ...p, viewMode: "grid" }))
-                  }
-                  pressed={assetViewMode === "grid"}
-                />
-                <ToolButton
-                  icon="menu"
-                  label={t("toolbar.masonryView")}
-                  onClick={() =>
-                    setCanvasPrefs((p) => ({ ...p, viewMode: "masonry" }))
-                  }
-                  pressed={assetViewMode === "masonry"}
-                />
-                <label className="asset-size-control">
-                  <input
-                    aria-label={t("toolbar.thumbnailSize")}
-                    data-hover-tip={t("toolbar.thumbnailSize")}
-                    max={CARD_SIZE_MAX}
-                    min={CARD_SIZE_MIN}
-                    onChange={(event) => {
-                      const size = Number(event.target.value);
-                      resizeAssetCards(size);
-                    }}
-                    step="8"
-                    type="range"
-                    value={assetCardSize}
-                  />
-                </label>
-                <span className="tool-separator" />
-                {([
-                  {
-                    field: "name" as const,
-                    icon: "tag" as const,
-                    label: t("toolbar.showFileName"),
-                  },
-                  {
-                    field: "size" as const,
-                    icon: "info" as const,
-                    label: t("toolbar.showFileSize"),
-                  },
-                  {
-                    field: "date" as const,
-                    icon: "clock" as const,
-                    label: t("toolbar.showModifiedDate"),
-                  },
-                ]).map(({ field, icon, label }) => (
-                  <ToolButton
-                    key={field}
-                    icon={icon}
-                    label={label}
-                    onClick={() =>
-                      setCanvasPrefs((p) => {
-                        const updatedFields = {
-                          ...p.fields,
-                          [field]: !p.fields[field],
-                        };
-                        return { ...p, fields: updatedFields };
-                      })
-                    }
-                    pressed={canvasPrefs.fields[field]}
-                  />
-                ))}
-              </div>
-            </span>
-            <span className="tool-separator" />
-            <WorkspaceToolsOverflow
-              items={[
-                {
-                  id: "browser-extension",
-                  label: t("toolbar.browserExtension"),
-                  onSelect: () => {
-                    void openExtensionPairing();
-                  },
+            <CanvasToolbarControls
+              actions={{
+                refresh: () => {
+                  void refreshAssets();
                 },
-                ...(library
-                  ? [
-                      {
-                        id: "background-jobs",
-                        label: t("toolbar.backgroundJobs"),
-                        onSelect: () => setMediaJobsOpen(true),
-                      },
-                      {
-                        id: "ai-settings",
-                        label: t("toolbar.aiSettings"),
-                        onSelect: () => {
-                          void loadAiConfig();
-                          setAiConfigOpen(true);
-                        },
-                      },
-                    ]
-                  : []),
-              ]}
+                setViewMode: (mode) => {
+                  setCanvasPrefs((p) => ({ ...p, viewMode: mode }));
+                },
+                toggleField: (field) => {
+                  setCanvasPrefs((p) => ({
+                    ...p,
+                    fields: { ...p.fields, [field]: !p.fields[field] },
+                  }));
+                },
+                openBrowserExtension: () => {
+                  void openExtensionPairing();
+                },
+                openBackgroundJobs: () => setMediaJobsOpen(true),
+                openAiSettings: () => {
+                  void loadAiConfig();
+                  setAiConfigOpen(true);
+                },
+              }}
+              busy={busy}
+              canvasPrefs={canvasPrefs}
+              cardSize={assetCardSize}
+              libraryOpen={Boolean(library)}
+              locale={locale}
+              onCardSizeChange={resizeAssetCards}
+              platform={SHORTCUT_PLATFORM}
             />
           </div>
         </div>
@@ -6574,6 +6513,7 @@ function AppInner() {
         onRemoveFromCollection={(assetId, collectionId) => { void removeAssetFromCollection(assetId, collectionId); }}
         onAssignTag={(assetId, tagId) => { void assignAssetToTag(assetId, tagId); }}
         onAddToCollection={(assetId, collectionId) => { void addAssetToCollection(assetId, collectionId); }}
+        onLoadCollectionMemberships={loadCollectionMemberships}
       />
       {/* REQ-SHELL-007 / REQ-SHELL-011 pane resize + edge restore handles. */}
       {leftOpen ? (

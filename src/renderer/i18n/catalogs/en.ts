@@ -324,7 +324,9 @@ export const en = {
       noMovableManaged: "No movable managed assets in the selection",
       noManaged: "No managed assets in the selection",
       noCopyableManaged: "No copyable managed assets in the selection",
-      cannotCopyExternal: "Asset cannot be copied to an external folder"
+      cannotCopyExternal: "Asset cannot be copied to an external folder",
+      noLibrary: "Open a library first",
+      busy: "Another library operation is in progress"
     },
     group: {
       open: "Open",

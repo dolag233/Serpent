@@ -873,6 +873,12 @@ async function commandFor(
         collectionId: request.collectionId,
         recursive: request.recursive,
       };
+    case "collection.assets.memberships.request":
+      return {
+        type: "collection.assets.memberships",
+        libraryId: request.libraryId,
+        assetIds: request.assetIds,
+      };
     case "asset.metadata.get.request":
       return {
         type: "asset.metadata.get",

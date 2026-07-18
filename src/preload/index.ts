@@ -439,6 +439,13 @@ const library: SerpentLibraryApi = Object.freeze({
     return { ok: true, value: result.assets };
   },
 
+  async listAssetCollectionMemberships({ libraryId, assetIds }: { libraryId: string; assetIds: string[] }): Promise<LibraryApiResult<Array<{ assetId: string; collectionId: string }>>> {
+    const result = await request({ type: 'collection.assets.memberships.request', libraryId, assetIds });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'collection.assets.memberships') throw new Error('Unexpected list-asset-collection-memberships response.');
+    return { ok: true, value: result.memberships };
+  },
+
   async getAssetMetadata({ libraryId, assetId }: { libraryId: string; assetId: string }): Promise<LibraryApiResult<AssetMetadataResult>> {
     const result = await request({ type: 'asset.metadata.get.request', libraryId, assetId });
     if (!result.ok) return failure(result);

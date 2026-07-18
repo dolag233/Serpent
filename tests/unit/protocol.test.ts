@@ -217,6 +217,32 @@ describe('renderer request protocol', () => {
     });
   });
 
+  it('accepts collection membership list requests (CU-B4)', () => {
+    expect(
+      parseRendererRequest({
+        type: 'collection.assets.memberships.request',
+        libraryId: 'library-01',
+        assetIds: ['asset-01', 'asset-02'],
+      }),
+    ).toMatchObject({
+      type: 'collection.assets.memberships.request',
+      assetIds: ['asset-01', 'asset-02'],
+    });
+    expect(
+      parseWorkerRequest({
+        requestId: 'memberships',
+        command: {
+          type: 'collection.assets.memberships',
+          libraryId: 'library-01',
+          assetIds: ['asset-01'],
+        },
+      }).command,
+    ).toMatchObject({
+      type: 'collection.assets.memberships',
+      assetIds: ['asset-01'],
+    });
+  });
+
   it('accepts only empty or HTTP(S) source-page URLs up to the URL limit', () => {
     const longValidUrl = `https://example.com/${'a'.repeat(300)}`;
     expect(parseRendererRequest({

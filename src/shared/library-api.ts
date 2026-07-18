@@ -202,6 +202,7 @@ export interface SerpentLibraryApi {
   removeCollectionAssets(input: { libraryId: string; collectionId: string; assetIds: string[] }): Promise<LibraryApiResult<{ collectionId: string }>>;
   reorderCollectionAssets(input: { libraryId: string; collectionId: string; orderedAssetIds: string[] }): Promise<LibraryApiResult<{ collectionId: string }>>;
   listCollectionAssets(input: { libraryId: string; collectionId: string; recursive: boolean }): Promise<LibraryApiResult<AssetSummary[]>>;
+  listAssetCollectionMemberships(input: { libraryId: string; assetIds: string[] }): Promise<LibraryApiResult<Array<{ assetId: string; collectionId: string }>>>;
   // Asset Metadata
   getAssetMetadata(input: { libraryId: string; assetId: string }): Promise<LibraryApiResult<AssetMetadataResult>>;
   getExtractedMetadata(input: { libraryId: string; assetId: string }): Promise<LibraryApiResult<ExtractedMetadataResult>>;

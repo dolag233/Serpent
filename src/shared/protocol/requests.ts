@@ -299,6 +299,12 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     recursive: z.boolean(),
   }),
   z.strictObject({
+    // CU-B4: direct memberships for selected assets (context-menu filtering).
+    type: z.literal('collection.assets.memberships.request'),
+    libraryId: identifierSchema,
+    assetIds: z.array(identifierSchema).min(1),
+  }),
+  z.strictObject({
     type: z.literal('asset.metadata.get.request'),
     libraryId: identifierSchema,
     assetId: identifierSchema,
@@ -813,6 +819,11 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     libraryId: identifierSchema,
     collectionId: identifierSchema,
     recursive: z.boolean(),
+  }),
+  z.strictObject({
+    type: z.literal('collection.assets.memberships'),
+    libraryId: identifierSchema,
+    assetIds: z.array(identifierSchema).min(1),
   }),
   z.strictObject({
     type: z.literal('asset.metadata.get'),

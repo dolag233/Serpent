@@ -421,6 +421,12 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
       scheduleThumbnailScene(request.command.libraryId, 'visible', assets.map((asset) => asset.assetId));
       return { ok: true, type: 'collection.assets.list', assets };
     }
+    case 'collection.assets.memberships': {
+      const memberships = libraryService.listAssetCollectionMemberships(
+        request.command,
+      );
+      return { ok: true, type: 'collection.assets.memberships', memberships };
+    }
     case 'asset.metadata.get': {
       const metadata = libraryService.getAssetMetadata(request.command);
       return { ok: true, type: 'asset.metadata.got', metadata };
