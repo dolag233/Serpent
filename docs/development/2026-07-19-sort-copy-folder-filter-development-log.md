@@ -18,3 +18,8 @@
 - FILTER-013（复验：无文件夹维度按钮）
 
 Computer Use 未执行；移交人工 QA。
+
+## 同 tick 追加
+
+- `Serpent-yu8`：亮色主题下 `.asset-*-badge` / extension 改为白底芯片。
+- `Serpent-q16`：`.preview-video` 改为 max-width/max-height contain + stage flex 居中。
