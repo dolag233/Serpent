@@ -10,8 +10,9 @@ describe("asset-card-badges", () => {
     expect(assetTypeBadgeLabel("image", "loop.gif")).toBe("GIF");
     expect(assetTypeBadgeLabel("video", "clip.mp4")).toBe("VIDEO");
     expect(assetTypeBadgeLabel("audio", "tone.wav")).toBe("AUDIO");
+    expect(assetTypeBadgeLabel("text", "notes.txt")).toBe("TEXT");
     expect(assetTypeBadgeLabel("image", "still.jpg")).toBeNull();
-    expect(assetTypeBadgeLabel("other", "notes.txt")).toBeNull();
+    expect(assetTypeBadgeLabel("other", "notes.bin")).toBeNull();
   });
 
   it("shows duration for video, audio, and gif when present", () => {

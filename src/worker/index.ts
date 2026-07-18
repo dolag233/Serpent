@@ -530,6 +530,14 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
       const { asset } = libraryService.renameAssetFile(request.command);
       return { ok: true, type: 'asset.file-renamed', asset };
     }
+    case 'asset.text.read': {
+      const result = libraryService.readTextAsset(request.command);
+      return { ok: true, type: 'asset.text.read', ...result };
+    }
+    case 'asset.text.save': {
+      const result = libraryService.saveTextAsset(request.command);
+      return { ok: true, type: 'asset.text.saved', ...result };
+    }
     case 'asset.delete-permanent': {
       const { deletedCount, skippedCount, skippedReasons } = libraryService.deleteAssetsPermanent(request.command);
       return { ok: true, type: 'asset.deleted-permanent', deletedCount, skippedCount, skippedReasons };

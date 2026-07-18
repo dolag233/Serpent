@@ -425,6 +425,19 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     newBaseName: assetFileBaseNameSchema,
   }),
   z.strictObject({
+    type: z.literal('asset.text.read.request'),
+    libraryId: identifierSchema,
+    assetId: identifierSchema,
+    maxBytes: z.number().int().positive().max(2_097_152).optional(),
+  }),
+  z.strictObject({
+    type: z.literal('asset.text.save.request'),
+    libraryId: identifierSchema,
+    assetId: identifierSchema,
+    content: z.string().max(1_048_576),
+    expectedRevisionId: identifierSchema.optional(),
+  }),
+  z.strictObject({
     type: z.literal('asset.delete-permanent.request'),
     libraryId: identifierSchema,
     assetIds: z.array(identifierSchema).min(1),
@@ -943,6 +956,19 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     libraryId: identifierSchema,
     assetId: identifierSchema,
     newBaseName: assetFileBaseNameSchema,
+  }),
+  z.strictObject({
+    type: z.literal('asset.text.read'),
+    libraryId: identifierSchema,
+    assetId: identifierSchema,
+    maxBytes: z.number().int().positive().max(2_097_152).optional(),
+  }),
+  z.strictObject({
+    type: z.literal('asset.text.save'),
+    libraryId: identifierSchema,
+    assetId: identifierSchema,
+    content: z.string().max(1_048_576),
+    expectedRevisionId: identifierSchema.optional(),
   }),
   z.strictObject({
     type: z.literal('asset.delete-permanent'),

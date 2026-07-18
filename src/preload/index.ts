@@ -587,6 +587,40 @@ const library: SerpentLibraryApi = Object.freeze({
     return { ok: true, value: result.asset };
   },
 
+  async readTextAsset({ libraryId, assetId, maxBytes }: { libraryId: string; assetId: string; maxBytes?: number }) {
+    const result = await request({ type: 'asset.text.read.request', libraryId, assetId, maxBytes });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'asset.text.read') throw new Error('Unexpected text-read response.');
+    return {
+      ok: true as const,
+      value: {
+        assetId: result.assetId,
+        revisionId: result.revisionId,
+        content: result.content,
+        truncated: result.truncated,
+        byteSize: result.byteSize,
+        lineCount: result.lineCount,
+        editable: result.editable,
+        mimeType: result.mimeType,
+      },
+    };
+  },
+
+  async saveTextAsset({ libraryId, assetId, content, expectedRevisionId }: { libraryId: string; assetId: string; content: string; expectedRevisionId?: string }) {
+    const result = await request({ type: 'asset.text.save.request', libraryId, assetId, content, expectedRevisionId });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'asset.text.saved') throw new Error('Unexpected text-save response.');
+    return {
+      ok: true as const,
+      value: {
+        asset: result.asset,
+        revisionId: result.revisionId,
+        byteSize: result.byteSize,
+        lineCount: result.lineCount,
+      },
+    };
+  },
+
   async deleteAssetsPermanent({ libraryId, assetIds }: { libraryId: string; assetIds: string[] }): Promise<LibraryApiResult<{ deletedCount: number; skippedCount: number; skippedReasons: Array<{ assetId: string; reason: PublicErrorReason }> }>> {
     const result = await request({ type: 'asset.delete-permanent.request', libraryId, assetIds });
     if (!result.ok) return failure(result);

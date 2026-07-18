@@ -2495,6 +2495,100 @@ input[type="range"] {
   width: 100%;
   max-width: 560px;
 }
+.preview-text-stage {
+  display: flex;
+  flex-direction: column;
+  width: min(920px, 94%);
+  height: min(80vh, 720px);
+  margin: 0 auto;
+  overflow: hidden;
+  border: 1px solid var(--divider);
+  border-radius: 10px;
+  background: var(--pane);
+}
+.preview-text-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--divider);
+}
+.preview-text-meta {
+  color: var(--secondary);
+  font-size: 12px;
+}
+.preview-text-save {
+  padding: 4px 10px;
+  border: 1px solid var(--divider);
+  border-radius: 6px;
+  background: var(--raised);
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+}
+.preview-text-save:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.preview-text-editor {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+.preview-text-gutter {
+  margin: 0;
+  padding: 12px 8px 12px 12px;
+  overflow: hidden;
+  border-right: 1px solid var(--divider);
+  background: var(--raised);
+  color: var(--tertiary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  text-align: right;
+  user-select: none;
+  white-space: pre;
+}
+.preview-text-input {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 12px;
+  border: 0;
+  resize: none;
+  outline: none;
+  background: transparent;
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre;
+  overflow: auto;
+}
+.inspector-hero-text-preview {
+  align-items: stretch;
+  justify-content: flex-start;
+  width: 100%;
+  max-height: 160px;
+  overflow: hidden;
+  border: 1px solid var(--divider);
+  border-radius: 8px;
+  background: var(--raised);
+}
+.inspector-hero-text-snippet {
+  margin: 0;
+  padding: 8px 10px;
+  overflow: hidden;
+  color: var(--secondary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
 .preview-gif-stage {
   position: relative;
   width: 100%;

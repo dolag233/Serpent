@@ -81,7 +81,7 @@ export interface ImportValidatedResult {
 
 export interface PreviewResolution {
   assetId: string;
-  mediaType: 'image' | 'video' | 'audio' | 'other';
+  mediaType: 'image' | 'video' | 'audio' | 'text' | 'other';
   status: 'ready' | 'pending' | 'failed' | 'missing';
   kind: 'thumbnail' | 'webm_proxy';
   url?: string;
@@ -229,6 +229,22 @@ export interface SerpentLibraryApi {
   moveAssets(input: { libraryId: string; assetIds: string[]; targetFolderId: string | null; conflictStrategy?: 'keep-both' | 'replace' | 'skip' }): Promise<LibraryApiResult<{ movedCount: number; skippedCount: number; operationId: string | null; assets: AssetSummary[] }>>;
   undoMoveAssets(input: { libraryId: string; operationId: string; conflictStrategy?: 'error' | 'keep-both' | 'replace' | 'skip' }): Promise<LibraryApiResult<{ undoneCount: number; skippedCount: number; assets: AssetSummary[] }>>;
   renameAssetFile(input: { libraryId: string; assetId: string; newBaseName: string }): Promise<LibraryApiResult<AssetSummary>>;
+  readTextAsset(input: { libraryId: string; assetId: string; maxBytes?: number }): Promise<LibraryApiResult<{
+    assetId: string;
+    revisionId: string;
+    content: string;
+    truncated: boolean;
+    byteSize: number;
+    lineCount: number;
+    editable: boolean;
+    mimeType: string;
+  }>>;
+  saveTextAsset(input: { libraryId: string; assetId: string; content: string; expectedRevisionId?: string }): Promise<LibraryApiResult<{
+    asset: AssetSummary;
+    revisionId: string;
+    byteSize: number;
+    lineCount: number;
+  }>>;
   deleteAssetsPermanent(input: { libraryId: string; assetIds: string[] }): Promise<LibraryApiResult<{ deletedCount: number; skippedCount: number; skippedReasons: Array<{ assetId: string; reason: PublicErrorReason }> }>>;
   listTrash(input: { libraryId: string }): Promise<LibraryApiResult<AssetSummary[]>>;
   purgeTrash(input: { libraryId: string }): Promise<LibraryApiResult<{ purgedCount: number; skippedCount: number; failures: Array<{ assetId: string; reason: PublicErrorReason }> }>>;

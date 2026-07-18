@@ -1059,6 +1059,21 @@ async function commandFor(
         assetId: request.assetId,
         newBaseName: request.newBaseName,
       };
+    case "asset.text.read.request":
+      return {
+        type: "asset.text.read",
+        libraryId: request.libraryId,
+        assetId: request.assetId,
+        maxBytes: request.maxBytes,
+      };
+    case "asset.text.save.request":
+      return {
+        type: "asset.text.save",
+        libraryId: request.libraryId,
+        assetId: request.assetId,
+        content: request.content,
+        expectedRevisionId: request.expectedRevisionId,
+      };
     case "asset.delete-permanent.request":
       return {
         type: "asset.delete-permanent",

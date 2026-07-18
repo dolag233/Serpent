@@ -26,6 +26,7 @@ import type { ViewerChromeActivitySource } from "./viewer-chrome-idle";
 import { resolveViewerPrimarySurface } from "./viewer-preview-policy";
 import { VideoPlayerControls } from "./VideoPlayerControls";
 import { AudioPlayerControls } from "./AudioPlayerControls";
+import { TextViewerControls } from "./TextViewerControls";
 import { GifPlayerControls } from "./GifPlayerControls";
 import { isGifDisplayName } from "./gif-player-controls";
 import { ZoomableImage } from "./zoomable-preview-image";
@@ -511,6 +512,14 @@ export function AssetPreviewModal({
               onReady={() => setDirectApproved(true)}
               src={resolution.url}
               waveformUrl={resolution.posterUrl}
+            />
+          ) : ready && resolution?.mediaType === "text" ? (
+            <TextViewerControls
+              api={api}
+              assetId={asset.assetId}
+              libraryId={libraryId}
+              onError={(message) => setError(message)}
+              onSaved={() => setDirectApproved(true)}
             />
           ) : ready &&
             resolution?.url &&

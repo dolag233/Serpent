@@ -132,15 +132,54 @@ function InspectorHeroSinglePreview({
   asset,
   library,
   livePreview,
+  api,
 }: {
   asset: AssetSummary;
   library: RendererLibrarySummary | null;
   /** Ready GIF/video resolution to loop-play (Serpent-a9n); null = static only. */
   livePreview?: PreviewResolution | null;
+  api?: SerpentLibraryApi | null;
 }) {
+  const t = useT();
   const previewSrc = resolveInspectorPreviewSrc(asset, library);
   const [decoded, setDecoded] = useState(false);
+  const [textSnippet, setTextSnippet] = useState<string | null>(null);
   const live = resolveLivePreviewMedia(Boolean(livePreview), livePreview);
+
+  useEffect(() => {
+    if (asset.mediaType !== "text" || !api || !library) {
+      setTextSnippet(null);
+      return;
+    }
+    let cancelled = false;
+    void api
+      .readTextAsset({
+        libraryId: library.libraryId,
+        assetId: asset.assetId,
+        maxBytes: 2048,
+      })
+      .then((result) => {
+        if (cancelled) return;
+        if (result.ok) setTextSnippet(result.value.content);
+        else setTextSnippet(null);
+      })
+      .catch(() => {
+        if (!cancelled) setTextSnippet(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [api, asset.assetId, asset.mediaType, library]);
+
+  if (asset.mediaType === "text") {
+    return (
+      <div className="inspector-hero-preview inspector-hero-text-preview">
+        <pre className="inspector-hero-text-snippet">
+          {textSnippet ?? t("preview.textLoading")}
+        </pre>
+      </div>
+    );
+  }
 
   if (!previewSrc && !live.url) {
     return (
@@ -317,6 +356,7 @@ function InspectorHero({
   library,
   selectionCount,
   livePreview,
+  api,
 }: {
   asset: AssetSummary;
   selectedAssets: readonly AssetSummary[];
@@ -325,6 +365,7 @@ function InspectorHero({
   selectionCount: number;
   /** Serpent-a9n: only ever passed/used for single selection. */
   livePreview?: PreviewResolution | null;
+  api?: SerpentLibraryApi | null;
 }) {
   const t = useT();
   const isMulti = selectionCount >= 2;
@@ -356,6 +397,7 @@ function InspectorHero({
         />
       ) : (
         <InspectorHeroSinglePreview
+          api={api}
           asset={asset}
           library={library}
           livePreview={livePreview}
@@ -728,6 +770,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
       {selectedAsset ? (
         <div className="inspector-content">
           <InspectorHero
+            api={api}
             asset={selectedAsset}
             infoParts={compactInfoParts}
             key={`${selectedAsset.assetId}:${selectionCount}`}

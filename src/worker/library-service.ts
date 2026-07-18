@@ -212,6 +212,13 @@ import {
   isAudioFileName,
 } from '../shared/audio-media';
 import {
+  countTextLines,
+  isTextFileName,
+  TEXT_SAVE_MAX_BYTES,
+  TEXT_VIEWER_MAX_BYTES,
+  textMimeForExtension,
+} from '../shared/text-media';
+import {
   extractZipStream,
   ZipImportStreamError,
   type ZipArchiveManifest,
@@ -4497,7 +4504,7 @@ export class LibraryService {
         thumbnail_artifact_id: row.thumbnail_status === 'ready' ? row.thumbnail_artifact_id : null,
         media_type: (() => {
           const detected = LibraryService.detectMediaType(row.relative_file_path);
-          return detected === 'image' || detected === 'video' || detected === 'audio'
+          return detected === 'image' || detected === 'video' || detected === 'audio' || detected === 'text'
             ? detected
             : 'other';
         })(),
@@ -7017,10 +7024,10 @@ export class LibraryService {
   /**
    * Detect media type from a file extension.
    * Returns 'image' for PNG/JPEG/GIF/TIFF/WebP/BMP, 'video' for MP4/MOV/AVI/WMV/WebM,
-   * 'audio' for WAV/MP3/OGG/M4A/AAC/FLAC/Opus, and 'other' for everything else
-   * (including EXR/TGA which would need OIIO).
+   * 'audio' for WAV/MP3/OGG/M4A/AAC/FLAC/Opus, 'text' for common plain-text/code
+   * extensions, and 'other' for everything else (including EXR/TGA which would need OIIO).
    */
-  static detectMediaType(filenameOrMime: string): 'image' | 'video' | 'audio' | 'other' {
+  static detectMediaType(filenameOrMime: string): 'image' | 'video' | 'audio' | 'text' | 'other' {
     const lower = filenameOrMime.toLowerCase();
     if (lower.endsWith('.png') || lower.endsWith('.jpg') || lower.endsWith('.jpeg') ||
         lower.endsWith('.gif') || lower.endsWith('.tiff') || lower.endsWith('.tif') ||
@@ -7034,12 +7041,17 @@ export class LibraryService {
     if (isAudioFileName(lower)) {
       return 'audio';
     }
+    if (isTextFileName(lower)) {
+      return 'text';
+    }
     return 'other';
   }
 
   static supportsThumbnail(filename: string): boolean {
     const mediaType = LibraryService.detectMediaType(filename);
     const extension = path.extname(filename).toLowerCase();
+    // Text has no raster thumbnail job; preview is IPC-capped UTF-8 (Serpent-sh7).
+    if (mediaType === 'text') return false;
     return mediaType !== 'other' || extension === '.exr' || extension === '.tga';
   }
 
@@ -8241,7 +8253,7 @@ export class LibraryService {
     libraryId: string,
     assetId: string,
   ): {
-    mediaType: 'image' | 'video' | 'audio' | 'other';
+    mediaType: 'image' | 'video' | 'audio' | 'text' | 'other';
     status: 'ready' | 'pending' | 'failed' | 'missing';
     kind: 'thumbnail' | 'webm_proxy';
     artifactId?: string;
@@ -8273,6 +8285,8 @@ export class LibraryService {
       ? 'video/webm'
       : mediaType === 'audio'
         ? 'audio/mpeg'
+        : mediaType === 'text'
+          ? 'text/plain'
         : 'image/webp';
     if (mediaType === 'other') {
       return {
@@ -8281,6 +8295,22 @@ export class LibraryService {
         kind,
         mimeType,
         errorCode: 'UNSUPPORTED_FORMAT',
+      };
+    }
+
+    // Text assets are previewed via capped IPC (asset.text.read), not serpent://.
+    // Still mark ready so the viewer can open without a thumbnail job.
+    if (mediaType === 'text' && asset.current_revision_id) {
+      const extension = path.extname(asset.relative_file_path).toLowerCase();
+      const textMime = textMimeForExtension(extension) ?? 'text/plain';
+      return {
+        mediaType,
+        status: 'ready',
+        kind,
+        mimeType: textMime,
+        playbackMode: 'source',
+        sourceRevisionId: asset.current_revision_id,
+        sourceMimeType: textMime,
       };
     }
 
@@ -10388,7 +10418,7 @@ export class LibraryService {
       trashed_from_relative_path?: string | null;
       thumbnail_status?: 'ready' | 'pending' | 'failed' | null;
       thumbnail_artifact_id?: string | null;
-      media_type?: 'image' | 'video' | 'audio' | 'other' | null;
+      media_type?: 'image' | 'video' | 'audio' | 'text' | 'other' | null;
       artifact_width?: number | null;
       artifact_height?: number | null;
       artifact_duration_ms?: number | null;
@@ -10791,6 +10821,202 @@ export class LibraryService {
     this.applyManagedMoveOperation(openLibrary, undoOperationId, manifest);
     return { undoneCount: files.length, skippedCount,
       assets: this.managedMoveSummaries(openLibrary, files.map((file) => file.assetId)) };
+  }
+
+  /**
+   * Read UTF-8 text for a text-classified asset with a hard byte cap (Serpent-sh7).
+   * Linked assets are readable; only managed assets are editable via saveTextAsset.
+   */
+  readTextAsset(input: {
+    libraryId: string;
+    assetId: string;
+    maxBytes?: number;
+  }): {
+    assetId: string;
+    revisionId: string;
+    content: string;
+    truncated: boolean;
+    byteSize: number;
+    lineCount: number;
+    editable: boolean;
+    mimeType: string;
+  } {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    const row = openLibrary.connection
+      .prepare(
+        `SELECT asset_id, location_kind, relative_file_path, current_revision_id,
+                availability, deleted_at
+           FROM assets WHERE asset_id = ?`,
+      )
+      .get(input.assetId) as {
+        asset_id: string;
+        location_kind: 'managed' | 'linked';
+        relative_file_path: string;
+        current_revision_id: string | null;
+        availability: 'available' | 'missing';
+        deleted_at: string | null;
+      } | undefined;
+    if (!row || row.deleted_at || row.availability !== 'available' || !row.current_revision_id) {
+      throw new LibraryServiceError('ASSET_NOT_FOUND', { reason: 'SOURCE_NOT_FOUND' });
+    }
+    if (LibraryService.detectMediaType(row.relative_file_path) !== 'text') {
+      throw new LibraryServiceError('INVALID_IMPORT_DECISION', { reason: 'UNSUPPORTED_FORMAT' });
+    }
+
+    const absolutePath = this.resolveAssetPath(input.libraryId, input.assetId);
+    const maxBytes = Math.min(
+      Math.max(1, input.maxBytes ?? TEXT_VIEWER_MAX_BYTES),
+      TEXT_VIEWER_MAX_BYTES,
+    );
+    let buffer: Buffer;
+    try {
+      const fd = openSync(absolutePath, 'r');
+      try {
+        const stat = fstatSync(fd);
+        const toRead = Math.min(Number(stat.size), maxBytes + 1);
+        buffer = Buffer.alloc(toRead);
+        const bytesRead = readSync(fd, buffer, 0, toRead, 0);
+        buffer = buffer.subarray(0, bytesRead);
+      } finally {
+        closeSync(fd);
+      }
+    } catch (error) {
+      throw new LibraryServiceError('ASSET_NOT_FOUND', {
+        reason: 'SOURCE_NOT_FOUND',
+        cause: error,
+      });
+    }
+
+    if (buffer.includes(0)) {
+      throw new LibraryServiceError('INVALID_IMPORT_DECISION', { reason: 'UNSUPPORTED_FORMAT' });
+    }
+
+    const truncated = buffer.length > maxBytes;
+    const slice = truncated ? buffer.subarray(0, maxBytes) : buffer;
+    const content = slice.toString('utf8');
+    const extension = path.extname(row.relative_file_path).toLowerCase();
+    return {
+      assetId: row.asset_id,
+      revisionId: row.current_revision_id,
+      content,
+      truncated,
+      byteSize: truncated ? maxBytes : buffer.length,
+      lineCount: countTextLines(content),
+      editable: row.location_kind === 'managed',
+      mimeType: textMimeForExtension(extension) ?? 'text/plain',
+    };
+  }
+
+  /**
+   * Save UTF-8 text back to a managed asset source. Linked assets are rejected
+   * with LIBRARY_NOT_WRITABLE so the UI can show a clear read-only reason.
+   */
+  saveTextAsset(input: {
+    libraryId: string;
+    assetId: string;
+    content: string;
+    expectedRevisionId?: string;
+  }): {
+    asset: AssetSummary;
+    revisionId: string;
+    byteSize: number;
+    lineCount: number;
+  } {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    if (Buffer.byteLength(input.content, 'utf8') > TEXT_SAVE_MAX_BYTES) {
+      throw new LibraryServiceError('INVALID_ASSET_METADATA');
+    }
+
+    const row = openLibrary.connection
+      .prepare(
+        `SELECT asset_id, location_kind, relative_file_path, current_revision_id,
+                availability, deleted_at
+           FROM assets WHERE asset_id = ?`,
+      )
+      .get(input.assetId) as {
+        asset_id: string;
+        location_kind: 'managed' | 'linked';
+        relative_file_path: string;
+        current_revision_id: string | null;
+        availability: 'available' | 'missing';
+        deleted_at: string | null;
+      } | undefined;
+    if (!row || row.deleted_at || row.availability !== 'available' || !row.current_revision_id) {
+      throw new LibraryServiceError('ASSET_NOT_FOUND', { reason: 'SOURCE_NOT_FOUND' });
+    }
+    if (row.location_kind !== 'managed') {
+      throw new LibraryServiceError('LIBRARY_NOT_WRITABLE');
+    }
+    if (LibraryService.detectMediaType(row.relative_file_path) !== 'text') {
+      throw new LibraryServiceError('INVALID_IMPORT_DECISION', { reason: 'UNSUPPORTED_FORMAT' });
+    }
+    if (
+      input.expectedRevisionId &&
+      input.expectedRevisionId !== row.current_revision_id
+    ) {
+      throw new LibraryServiceError('VERSION_CONFLICT');
+    }
+
+    const absolutePath = this.resolveAssetPath(input.libraryId, input.assetId);
+    const dir = path.dirname(absolutePath);
+    const tmpPath = path.join(dir, `.serpent-text-edit-${randomUUID()}.tmp`);
+    const payload = Buffer.from(input.content, 'utf8');
+    try {
+      writeFileSync(tmpPath, payload);
+      const fd = openSync(tmpPath, 'r+');
+      try {
+        fsyncSync(fd);
+      } finally {
+        closeSync(fd);
+      }
+      renameSync(tmpPath, absolutePath);
+    } catch (error) {
+      try {
+        rmSync(tmpPath, { force: true });
+      } catch {
+        // Best-effort cleanup.
+      }
+      throw new LibraryServiceError('LIBRARY_NOT_WRITABLE', { cause: error });
+    }
+
+    const now = new Date().toISOString();
+    const revisionId = row.current_revision_id;
+    openLibrary.connection.transaction(() => {
+      openLibrary.connection
+        .prepare(
+          `UPDATE revisions
+              SET byte_size = ?, modified_at = ?
+            WHERE revision_id = ?`,
+        )
+        .run(payload.length, now, revisionId);
+      openLibrary.connection
+        .prepare(`UPDATE assets SET updated_at = ? WHERE asset_id = ?`)
+        .run(now, input.assetId);
+      openLibrary.connection
+        .prepare(
+          `UPDATE revision_artifacts
+              SET invalidated_at = ?
+            WHERE revision_id = ?
+              AND invalidated_at IS NULL`,
+        )
+        .run(now, revisionId);
+      this.syncAssetSearchContent(openLibrary.connection, input.assetId);
+    })();
+
+    const [asset] = this.managedMoveSummaries(openLibrary, [input.assetId]);
+    if (!asset) throw new LibraryServiceError('ASSET_NOT_FOUND');
+    this.options.onAssetsChanged?.({
+      type: 'asset.changed',
+      libraryId: input.libraryId,
+      changedCount: 1,
+      missingCount: 0,
+    });
+    return {
+      asset,
+      revisionId,
+      byteSize: payload.length,
+      lineCount: countTextLines(input.content),
+    };
   }
 
   /**
