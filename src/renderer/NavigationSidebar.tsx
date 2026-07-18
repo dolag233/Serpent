@@ -593,6 +593,7 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
         return (
           <NavRow
             active={isManagedFolderNavActive(browseNavFlags, entry.folderId)}
+            count={entry.directAssetCount}
             depth={entry.depth}
             disclosure={
               hasChildren ? (

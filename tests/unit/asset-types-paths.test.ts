@@ -88,12 +88,16 @@ describe('managed folder paths', () => {
       parentFolderId: null,
       name: 'UI',
       relativePath: 'UI',
+      directAssetCount: 0,
+      childFolderCount: 0,
     }).success).toBe(true);
     expect(managedFolderSummarySchema.safeParse({
       folderId: 'folder-02',
       parentFolderId: 'folder-01',
       name: 'Buttons',
       relativePath: 'UI/Buttons',
+      directAssetCount: 2,
+      childFolderCount: 1,
     }).success).toBe(true);
   });
 
@@ -103,6 +107,8 @@ describe('managed folder paths', () => {
       parentFolderId: null,
       name: 'unsafe',
       relativePath,
+      directAssetCount: 0,
+      childFolderCount: 0,
     }).success).toBe(false);
   });
 });

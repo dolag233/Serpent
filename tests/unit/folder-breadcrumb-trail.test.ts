@@ -7,6 +7,8 @@ const folder = (
   overrides: Partial<ManagedFolderSummary> & Pick<ManagedFolderSummary, "folderId" | "name" | "relativePath">,
 ): ManagedFolderSummary => ({
   parentFolderId: null,
+  directAssetCount: 0,
+  childFolderCount: 0,
   ...overrides,
 });
 

@@ -79,6 +79,8 @@ describe('managed folder rename', () => {
       parentFolderId: top.folderId,
       name: 'bee',
       relativePath: 'a/bee',
+      directAssetCount: 1,
+      childFolderCount: 0,
     });
     expect(existsSync(path.join(assetsRoot, 'a', 'b'))).toBe(false);
     expect(readFileSync(path.join(assetsRoot, 'a', 'bee', 'pic.png'), 'utf8')).toBe('nested-content');
@@ -95,6 +97,8 @@ describe('managed folder rename', () => {
       parentFolderId: null,
       name: 'ex',
       relativePath: 'ex',
+      directAssetCount: 0,
+      childFolderCount: 1,
     });
     expect(existsSync(path.join(assetsRoot, 'a'))).toBe(false);
     expect(readFileSync(path.join(assetsRoot, 'ex', 'bee', 'pic.png'), 'utf8')).toBe('nested-content');
@@ -124,8 +128,8 @@ describe('managed folder rename', () => {
     }
 
     expect(service.listManagedFolders(library.libraryId)).toEqual([
-      { folderId: top.folderId, parentFolderId: null, name: 'ex', relativePath: 'ex' },
-      { folderId: nested.folderId, parentFolderId: top.folderId, name: 'bee', relativePath: 'ex/bee' },
+      { folderId: top.folderId, parentFolderId: null, name: 'ex', relativePath: 'ex', directAssetCount: 0, childFolderCount: 1 },
+      { folderId: nested.folderId, parentFolderId: top.folderId, name: 'bee', relativePath: 'ex/bee', directAssetCount: 1, childFolderCount: 0 },
     ]);
     service.closeAll();
   });
@@ -191,6 +195,8 @@ describe('managed folder rename', () => {
       parentFolderId: null,
       name: 'Same',
       relativePath: 'Same',
+      directAssetCount: 0,
+      childFolderCount: 0,
     });
     expect(existsSync(path.join(library.libraryPath, 'Assets', 'Same'))).toBe(true);
 

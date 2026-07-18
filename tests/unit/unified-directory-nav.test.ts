@@ -11,6 +11,8 @@ const managed = (
   overrides: Partial<ManagedFolderSummary> & Pick<ManagedFolderSummary, "folderId" | "name" | "relativePath">,
 ): ManagedFolderSummary => ({
   parentFolderId: null,
+  directAssetCount: 0,
+  childFolderCount: 0,
   ...overrides,
 });
 
@@ -46,6 +48,7 @@ describe("buildUnifiedDirectoryNavEntries", () => {
         name: "A",
         depth: 1,
         parentFolderId: null,
+        directAssetCount: 0,
       },
       {
         kind: "managed",
@@ -53,6 +56,7 @@ describe("buildUnifiedDirectoryNavEntries", () => {
         name: "Child",
         depth: 2,
         parentFolderId: "root-a",
+        directAssetCount: 0,
       },
       {
         kind: "managed",
@@ -60,6 +64,7 @@ describe("buildUnifiedDirectoryNavEntries", () => {
         name: "B",
         depth: 1,
         parentFolderId: null,
+        directAssetCount: 0,
       },
     ]);
   });
@@ -88,6 +93,7 @@ describe("buildUnifiedDirectoryNavEntries", () => {
         name: "Managed",
         depth: 1,
         parentFolderId: null,
+        directAssetCount: 0,
       },
       {
         kind: "linked",

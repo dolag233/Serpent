@@ -5,6 +5,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type FormEvent,
   type ReactNode,
 } from "react";
@@ -48,6 +49,8 @@ import {
 } from "./ScopeBreadcrumbs";
 import { buildManagedFolderBreadcrumbTrail } from "./folder-breadcrumb-trail";
 import { folderBrowseScope } from "./folder-browse-scope";
+import { resolveFolderBrowseParentId } from "./folder-browse-canvas";
+import { FolderCard } from "./FolderCard";
 import {
   isFolderRecursiveEnabled,
   loadFolderRecursivePreferences,
@@ -119,6 +122,7 @@ import type {
   AssetMetadataResult,
   CollectionSummary,
   FilterClause,
+  FolderBrowseEntry,
   LinkedFolderRule,
   LinkedFolderSummary,
   ManagedFolderSummary,
@@ -393,6 +397,10 @@ function AppInner() {
   }>({ folderId: "", name: "", targetFolderId: "" });
   const [assets, setAssets] = useState<AssetSummary[]>([]);
   const [assetScope, setAssetScope] = useState<AssetScope>("all");
+  // REQ-FOLDER-001/002/003/010: direct child folder cards shown above assets
+  // when the current browse parent is a managed folder or the managed root.
+  const [folderBrowseEntries, setFolderBrowseEntries] = useState<FolderBrowseEntry[]>([]);
+  const [selectedFolderIds, setSelectedFolderIds] = useState<string[]>([]);
   const managedImportTargetFolderIdRef = useRef<string | undefined>(undefined);
   const [allAssetCount, setAllAssetCount] = useState(0);
   const [selectedAssetId, setSelectedAssetId] = useState<string | undefined>();
@@ -827,11 +835,20 @@ function AppInner() {
     isPreviewable: isHoverPreviewable,
   });
 
+  // REQ-FOLDER-010: folder-card ids visible in the current browse view, used
+  // for marquee/Shift-range selection; empty whenever folderBrowseEntries is
+  // empty (trash/collection/smart/search/linked-only scopes, per
+  // resolveFolderBrowseParentId).
+  const visibleFolderIds = useMemo(
+    () => folderBrowseEntries.map((entry) => entry.folderId),
+    [folderBrowseEntries],
+  );
   const {
     handleCanvasMouseDown,
     clearAssetSelection,
     selectionAnchorRef,
     handleCardClick,
+    handleFolderCardClick,
     cardMouseDownRef,
     marqueeBox,
     selectedIdSet,
@@ -844,7 +861,60 @@ function AppInner() {
     draggedMemberId,
     draggedCollectionId,
     workspaceCanvasRef,
+    folderIds: visibleFolderIds,
+    selectedFolderIds,
+    setSelectedFolderIds,
   });
+  const selectedFolderIdSet = useMemo(
+    () => new Set(selectedFolderIds),
+    [selectedFolderIds],
+  );
+
+  // REQ-FOLDER-001/002/003/010: load direct child folder cards whenever the
+  // browse parent is a managed folder or the managed root; cleared for
+  // trash/tag/collection/smart-collection/search/linked-only views.
+  useEffect(() => {
+    let cancelled = false;
+    async function loadFolderBrowseEntries() {
+      const parentFolderId =
+        api && library
+          ? resolveFolderBrowseParentId({
+              assetScope,
+              showTrash,
+              activeTagId,
+              activeCollectionId,
+              activeSmartCollectionId,
+              folders,
+              searchActive:
+                Boolean(searchValue.trim()) || activeAiSearchDefinition !== null,
+            })
+          : undefined;
+      if (!api || !library || parentFolderId === undefined) {
+        if (!cancelled) setFolderBrowseEntries([]);
+        return;
+      }
+      const result = await api.listFolderBrowseEntries({
+        libraryId: library.libraryId,
+        parentFolderId,
+      });
+      if (!cancelled && result.ok) setFolderBrowseEntries(result.value);
+    }
+    void loadFolderBrowseEntries();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    api,
+    library,
+    assetScope,
+    showTrash,
+    activeTagId,
+    activeCollectionId,
+    activeSmartCollectionId,
+    folders,
+    searchValue,
+    activeAiSearchDefinition,
+  ]);
 
   const previewIndex = previewAsset
     ? visibleAssets.findIndex((asset) => asset.assetId === previewAsset.assetId)
@@ -5789,8 +5859,48 @@ function AppInner() {
               </div>
             )}
           {library ? (
-            visibleAssets.length ? (
+            visibleAssets.length || folderBrowseEntries.length ? (
               <>
+                {folderBrowseEntries.length > 0 && (
+                  <div
+                    className="folder-card-row"
+                    style={
+                      { "--folder-card-size": `${assetCardSize}px` } as CSSProperties
+                    }
+                  >
+                    {folderBrowseEntries.map((entry) => (
+                      <FolderCard
+                        entry={entry}
+                        key={entry.folderId}
+                        libraryId={library.libraryId}
+                        onClick={(folderId, event) => {
+                          if (handleFolderCardClick(folderId, event) === "navigate") {
+                            void chooseFolder(folderId);
+                          }
+                        }}
+                        onContextMenu={(clickedEntry, event) => {
+                          event.preventDefault();
+                          setSelectedFolderIds([clickedEntry.folderId]);
+                          setSelectedAssetIds([]);
+                          openContextMenu(
+                            {
+                              type: "folder",
+                              folderId: clickedEntry.folderId,
+                              name: clickedEntry.name,
+                              locationKind: "managed",
+                            },
+                            { x: event.clientX, y: event.clientY },
+                          );
+                        }}
+                        onDoubleClick={(folderId) => void chooseFolder(folderId)}
+                        onMouseDown={(event) => {
+                          cardMouseDownRef.current = event.button;
+                        }}
+                        selected={selectedFolderIdSet.has(entry.folderId)}
+                      />
+                    ))}
+                  </div>
+                )}
                 <div
                   className={`asset-grid is-${assetViewMode}`}
                   style={assetGridLayoutStyle(assetViewMode, assetCardSize)}

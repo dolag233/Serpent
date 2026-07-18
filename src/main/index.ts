@@ -625,6 +625,12 @@ async function commandFor(
       };
     case "folder.list.request":
       return { type: "folder.list", libraryId: request.libraryId };
+    case "folder.browse-entries.request":
+      return {
+        type: "folder.browse-entries",
+        libraryId: request.libraryId,
+        parentFolderId: request.parentFolderId,
+      };
     case "folder.open-in-file-manager.request":
       // Handled directly in handleLibraryRequest because it requires shell.openPath.
       return {

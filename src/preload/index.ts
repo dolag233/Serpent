@@ -4,7 +4,7 @@ import type { AiJobStatus, LibraryApiResult, LinkedAssetDeleteResult, MediaJobSt
 import type { RecentLibraryEntry } from '../shared/recent-libraries';
 import { parseExtensionPairingResult, type SerpentExtensionPairingApi } from '../shared/extension-pairing';
 import { searchQuerySchema } from '../shared/asset-types';
-import type { AiSearchPlan, AssetSummary, AssetMetadataResult, ExtractedMetadataResult, CollectionSummary, FilterClause, LinkedFolderRule, LinkedFolderSummary, ManagedFolderSummary, SearchScope, SmartCollectionSummary, TagSummary } from '../shared/asset-types';
+import type { AiSearchPlan, AssetSummary, AssetMetadataResult, ExtractedMetadataResult, CollectionSummary, FilterClause, FolderBrowseEntry, LinkedFolderRule, LinkedFolderSummary, ManagedFolderSummary, SearchScope, SmartCollectionSummary, TagSummary } from '../shared/asset-types';
 import {
   ASSET_CHANGE_CHANNEL,
   THUMBNAIL_CHANNEL,
@@ -148,6 +148,22 @@ const library: SerpentLibraryApi = Object.freeze({
     if (!result.ok) return failure(result);
     if (result.type !== 'folder.list') throw new Error('Unexpected list-folders response.');
     return { ok: true, value: result.folders };
+  },
+
+  async listFolderBrowseEntries(input: {
+    libraryId: string;
+    parentFolderId: string | null;
+  }): Promise<LibraryApiResult<FolderBrowseEntry[]>> {
+    const result = await request({
+      type: 'folder.browse-entries.request',
+      libraryId: input.libraryId,
+      parentFolderId: input.parentFolderId,
+    });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'folder.browse-entries') {
+      throw new Error('Unexpected list-folder-browse-entries response.');
+    }
+    return { ok: true, value: result.entries };
   },
 
   async listAssets(input: {

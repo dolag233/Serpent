@@ -639,6 +639,8 @@ describe('renderer request protocol', () => {
       parentFolderId: null,
       name: 'Renamed',
       relativePath: 'Renamed',
+      directAssetCount: 0,
+      childFolderCount: 0,
     };
     expect(parseRendererResult({ ok: true, type: 'folder.renamed', folder }))
       .toMatchObject({ type: 'folder.renamed', folder: { relativePath: 'Renamed' } });

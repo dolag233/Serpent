@@ -25,6 +25,7 @@ const managedEntry = (
   name: folderId,
   depth,
   parentFolderId,
+  directAssetCount: 0,
 });
 
 describe("startInlineFolderCreate", () => {

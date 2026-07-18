@@ -43,7 +43,7 @@ import {
   type RepresentativeColor,
 } from './palette-extractor';
 
-import { smartCollectionQueryDefinitionSchema, extractedVideoMetadataSchema, type AssetMetadataResult, type ExtractedMetadataResult, type ExtractedVideoMetadata, type AssetSummary, type CollectionSummary, type FilterClause, type LinkedFolderRule, type LinkedFolderSummary, type ManagedFolderSummary, type SearchScope, type SmartCollectionQueryDefinition, type SmartCollectionSummary, type TagSummary } from '../shared/asset-types';
+import { smartCollectionQueryDefinitionSchema, extractedVideoMetadataSchema, type AssetMetadataResult, type ExtractedMetadataResult, type ExtractedVideoMetadata, type AssetSummary, type CollectionSummary, type FilterClause, type FolderBrowseEntry, type LinkedFolderRule, type LinkedFolderSummary, type ManagedFolderSummary, type SearchScope, type SmartCollectionQueryDefinition, type SmartCollectionSummary, type TagSummary } from '../shared/asset-types';
 import { hasMeaningfulSmartCollectionCondition } from '../shared/smart-collection-query';
 import {
   colorFilterSql,
@@ -3652,6 +3652,8 @@ export class LibraryService {
       parentFolderId: parent?.folder_id ?? null,
       name,
       relativePath,
+      directAssetCount: 0,
+      childFolderCount: 0,
     };
     try {
       mkdirSync(targetPath);
@@ -3720,12 +3722,7 @@ export class LibraryService {
     // Identical target (same spelling, same case): success no-op, nothing on
     // disk or in the DB is touched.
     if (name === row.name) {
-      return {
-        folderId: row.folder_id,
-        parentFolderId: row.parent_folder_id,
-        name: row.name,
-        relativePath: row.relative_path,
-      };
+      return this.summarizeManagedFolderRow(openLibrary, row);
     }
 
     const oldRelativePath = row.relative_path;
@@ -3860,12 +3857,11 @@ export class LibraryService {
       throw serviceError(error, 'LIBRARY_NOT_WRITABLE');
     }
 
-    return {
-      folderId: row.folder_id,
-      parentFolderId: row.parent_folder_id,
+    return this.summarizeManagedFolderRow(openLibrary, {
+      ...row,
       name,
-      relativePath: newRelativePath,
-    };
+      relative_path: newRelativePath,
+    });
   }
 
   listManagedFolders(libraryId: string): ManagedFolderSummary[] {
@@ -3875,12 +3871,198 @@ export class LibraryService {
         'SELECT folder_id, parent_folder_id, name, relative_path, path_identity FROM managed_folders ORDER BY relative_path',
       )
       .all() as ManagedFolderRow[];
-    return rows.map((row) => ({
+    const counts = this.managedFolderCountMaps(openLibrary);
+    return rows.map((row) => this.summarizeManagedFolderRow(openLibrary, row, counts));
+  }
+
+  /**
+   * Direct child folder cards for the browse canvas (REQ-FOLDER-001/002/003).
+   * Counts and covers are batched — never N+1 per card.
+   */
+  listFolderBrowseEntries(input: {
+    libraryId: string;
+    parentFolderId: string | null;
+  }): FolderBrowseEntry[] {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    if (input.parentFolderId !== null) {
+      const parent = openLibrary.connection
+        .prepare('SELECT folder_id FROM managed_folders WHERE folder_id = ?')
+        .get(input.parentFolderId) as { folder_id: string } | undefined;
+      if (!parent) throw new LibraryServiceError('FOLDER_NOT_FOUND');
+    }
+
+    const children = (
+      input.parentFolderId === null
+        ? openLibrary.connection
+            .prepare(
+              `SELECT folder_id, parent_folder_id, name, relative_path, path_identity
+                 FROM managed_folders
+                WHERE parent_folder_id IS NULL
+                ORDER BY name COLLATE NOCASE`,
+            )
+            .all()
+        : openLibrary.connection
+            .prepare(
+              `SELECT folder_id, parent_folder_id, name, relative_path, path_identity
+                 FROM managed_folders
+                WHERE parent_folder_id = ?
+                ORDER BY name COLLATE NOCASE`,
+            )
+            .all(input.parentFolderId)
+    ) as ManagedFolderRow[];
+    if (children.length === 0) return [];
+
+    const counts = this.managedFolderCountMaps(openLibrary, children.map((row) => row.folder_id));
+    const coverMap = this.folderCoverArtifactMap(
+      openLibrary,
+      children.map((row) => row.folder_id),
+    );
+
+    return children.map((row) => {
+      const directAssetCount = counts.directAssetCounts.get(row.folder_id) ?? 0;
+      return {
+        folderId: row.folder_id,
+        parentFolderId: row.parent_folder_id,
+        locationKind: 'managed' as const,
+        name: row.name,
+        relativePath: row.relative_path,
+        status: 'available' as const,
+        directAssetCount,
+        // Interim FOLDER-003/#2: display uses direct; recursive field reserved.
+        recursiveAssetCount: directAssetCount,
+        childFolderCount: counts.childFolderCounts.get(row.folder_id) ?? 0,
+        coverArtifactIds: coverMap.get(row.folder_id) ?? [],
+      };
+    });
+  }
+
+  private managedFolderCountMaps(
+    openLibrary: OpenLibrary,
+    folderIds?: string[],
+  ): {
+    directAssetCounts: Map<string, number>;
+    childFolderCounts: Map<string, number>;
+  } {
+    const directAssetCounts = new Map<string, number>();
+    const childFolderCounts = new Map<string, number>();
+
+    if (folderIds && folderIds.length === 0) {
+      return { directAssetCounts, childFolderCounts };
+    }
+
+    if (folderIds) {
+      const placeholders = folderIds.map(() => '?').join(', ');
+      const assetRows = openLibrary.connection
+        .prepare(
+          `SELECT managed_folder_id AS folder_id, COUNT(*) AS count
+             FROM assets
+            WHERE managed_folder_id IN (${placeholders})
+              AND deleted_at IS NULL
+              AND NOT EXISTS (
+                SELECT 1 FROM linked_ignored_assets ignored WHERE ignored.asset_id = assets.asset_id
+              )
+            GROUP BY managed_folder_id`,
+        )
+        .all(...folderIds) as Array<{ folder_id: string; count: number }>;
+      for (const row of assetRows) directAssetCounts.set(row.folder_id, row.count);
+
+      const childRows = openLibrary.connection
+        .prepare(
+          `SELECT parent_folder_id AS folder_id, COUNT(*) AS count
+             FROM managed_folders
+            WHERE parent_folder_id IN (${placeholders})
+            GROUP BY parent_folder_id`,
+        )
+        .all(...folderIds) as Array<{ folder_id: string; count: number }>;
+      for (const row of childRows) childFolderCounts.set(row.folder_id, row.count);
+      return { directAssetCounts, childFolderCounts };
+    }
+
+    const assetRows = openLibrary.connection
+      .prepare(
+        `SELECT managed_folder_id AS folder_id, COUNT(*) AS count
+           FROM assets
+          WHERE managed_folder_id IS NOT NULL
+            AND deleted_at IS NULL
+            AND NOT EXISTS (
+              SELECT 1 FROM linked_ignored_assets ignored WHERE ignored.asset_id = assets.asset_id
+            )
+          GROUP BY managed_folder_id`,
+      )
+      .all() as Array<{ folder_id: string; count: number }>;
+    for (const row of assetRows) directAssetCounts.set(row.folder_id, row.count);
+
+    const childRows = openLibrary.connection
+      .prepare(
+        `SELECT parent_folder_id AS folder_id, COUNT(*) AS count
+           FROM managed_folders
+          WHERE parent_folder_id IS NOT NULL
+          GROUP BY parent_folder_id`,
+      )
+      .all() as Array<{ folder_id: string; count: number }>;
+    for (const row of childRows) childFolderCounts.set(row.folder_id, row.count);
+    return { directAssetCounts, childFolderCounts };
+  }
+
+  private folderCoverArtifactMap(
+    openLibrary: OpenLibrary,
+    folderIds: string[],
+  ): Map<string, string[]> {
+    const covers = new Map<string, string[]>();
+    if (folderIds.length === 0) return covers;
+    const placeholders = folderIds.map(() => '?').join(', ');
+    const rows = openLibrary.connection
+      .prepare(
+        `SELECT a.managed_folder_id AS folder_id, ra.artifact_id AS artifact_id
+           FROM assets a
+           JOIN revision_artifacts ra
+             ON ra.revision_id = a.current_revision_id
+            AND ra.invalidated_at IS NULL
+            AND ra.status = 'ready'
+            AND ra.kind = CASE
+              WHEN LOWER(a.relative_file_path) LIKE '%.mp4'
+                OR LOWER(a.relative_file_path) LIKE '%.webm'
+                OR LOWER(a.relative_file_path) LIKE '%.mov'
+                OR LOWER(a.relative_file_path) LIKE '%.avi'
+                OR LOWER(a.relative_file_path) LIKE '%.wmv'
+              THEN 'video_poster'
+              ELSE 'thumbnail'
+            END
+          WHERE a.managed_folder_id IN (${placeholders})
+            AND a.deleted_at IS NULL
+            AND NOT EXISTS (
+              SELECT 1 FROM linked_ignored_assets ignored WHERE ignored.asset_id = a.asset_id
+            )
+          ORDER BY a.managed_folder_id, a.relative_file_path`,
+      )
+      .all(...folderIds) as Array<{ folder_id: string; artifact_id: string }>;
+
+    for (const row of rows) {
+      const existing = covers.get(row.folder_id) ?? [];
+      if (existing.length >= 3) continue;
+      existing.push(row.artifact_id);
+      covers.set(row.folder_id, existing);
+    }
+    return covers;
+  }
+
+  private summarizeManagedFolderRow(
+    openLibrary: OpenLibrary,
+    row: ManagedFolderRow,
+    counts?: {
+      directAssetCounts: Map<string, number>;
+      childFolderCounts: Map<string, number>;
+    },
+  ): ManagedFolderSummary {
+    const resolved = counts ?? this.managedFolderCountMaps(openLibrary, [row.folder_id]);
+    return {
       folderId: row.folder_id,
       parentFolderId: row.parent_folder_id,
       name: row.name,
       relativePath: row.relative_path,
-    }));
+      directAssetCount: resolved.directAssetCounts.get(row.folder_id) ?? 0,
+      childFolderCount: resolved.childFolderCounts.get(row.folder_id) ?? 0,
+    };
   }
 
   listLinkedFolders(libraryId: string): LinkedFolderSummary[] {

@@ -7,6 +7,8 @@ export type UnifiedDirectoryNavEntry =
       name: string;
       depth: number;
       parentFolderId: string | null;
+      /** Direct (non-recursive) managed assets, shown as the row count badge. */
+      directAssetCount: number;
     }
   | {
       kind: "linked";
@@ -35,6 +37,7 @@ export function buildUnifiedDirectoryNavEntries(
     name: folder.name,
     depth: relativePathDepth(folder.relativePath),
     parentFolderId: folder.parentFolderId,
+    directAssetCount: folder.directAssetCount,
   }));
 
   const linkedEntries: UnifiedDirectoryNavEntry[] = linked.map((folder) => ({

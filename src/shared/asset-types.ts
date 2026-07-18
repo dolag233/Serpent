@@ -28,9 +28,34 @@ export const managedFolderSummarySchema = z.strictObject({
   parentFolderId: nonBlankString.nullable(),
   name: nonBlankString,
   relativePath: portableRelativePathSchema,
+  /** Direct (non-recursive) managed assets in this folder. Interim FOLDER-003. */
+  directAssetCount: z.number().int().nonnegative(),
+  /** Immediate child managed folders. */
+  childFolderCount: z.number().int().nonnegative(),
 });
 
 export type ManagedFolderSummary = z.infer<typeof managedFolderSummarySchema>;
+
+/**
+ * Mixed browse canvas entry for a direct child folder (REQ-FOLDER-001/002/003).
+ * Covers and counts are batched by the Worker — Renderer never N+1 queries.
+ */
+export const folderBrowseEntrySchema = z.strictObject({
+  folderId: nonBlankString,
+  parentFolderId: nonBlankString.nullable(),
+  locationKind: z.literal('managed'),
+  name: nonBlankString,
+  relativePath: portableRelativePathSchema,
+  status: z.literal('available'),
+  directAssetCount: z.number().int().nonnegative(),
+  /** Interim: same as direct until clarification #2 chooses recursive display. */
+  recursiveAssetCount: z.number().int().nonnegative(),
+  childFolderCount: z.number().int().nonnegative(),
+  /** Up to 3 ready thumbnail/poster artifact ids for Windows-style cover. */
+  coverArtifactIds: z.array(nonBlankString).max(3),
+});
+
+export type FolderBrowseEntry = z.infer<typeof folderBrowseEntrySchema>;
 
 export const linkedFolderSummarySchema = z.strictObject({
   folderId: nonBlankString,

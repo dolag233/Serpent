@@ -19,18 +19,36 @@ export interface UseAssetSelectionParams {
   draggedCollectionId: string | null;
   /** Ref to the scrollable workspace canvas element */
   workspaceCanvasRef: React.RefObject<HTMLDivElement | null>;
+  /** Visible folder-card ids (REQ-FOLDER-010), used for Shift+click range and marquee. */
+  folderIds?: string[];
+  /** Currently selected folder-card IDs */
+  selectedFolderIds?: string[];
+  /** Setter for folder multi-select */
+  setSelectedFolderIds?: React.Dispatch<React.SetStateAction<string[]>>;
 }
 
 export interface UseAssetSelectionReturn {
   /** Attach to the canvas element's onMouseDown */
   handleCanvasMouseDown: (e: React.MouseEvent<HTMLDivElement>) => void;
-  /** Clear all selection state (Esc, empty-canvas click, etc.) */
+  /** Clear all selection state (Esc, empty-canvas click, etc.) — also clears folder selection. */
   clearAssetSelection: () => void;
   /** Ref for the selection anchor used by Shift+click range extension.
    *  External code may also write to this ref (e.g. preview open, select-all). */
   selectionAnchorRef: React.MutableRefObject<string | null>;
+  /** Same as `selectionAnchorRef`, but for folder-card Shift+click ranges. */
+  folderSelectionAnchorRef: React.MutableRefObject<string | null>;
   /** Attach to individual asset cards: onMouseDown sets the button, onClick calls this */
   handleCardClick: (assetId: string, event: React.MouseEvent) => void;
+  /**
+   * Attach to folder cards' onClick. Cmd/Ctrl and Shift apply select/toggle/
+   * range semantics and return "select"; a plain click leaves selection
+   * untouched and returns "navigate" so the caller can enter the folder
+   * (REQ-FOLDER-010's click-to-navigate takes priority over click-to-select).
+   */
+  handleFolderCardClick: (
+    folderId: string,
+    event: React.MouseEvent,
+  ) => "select" | "navigate";
   /** Ref that must be set in the card's onMouseDown: `cardMouseDownRef.current = e.button` */
   cardMouseDownRef: React.MutableRefObject<number>;
   /** Current marquee box (null when not dragging). Render a div with these coordinates. */
@@ -48,6 +66,9 @@ export function useAssetSelection({
   draggedMemberId,
   draggedCollectionId,
   workspaceCanvasRef,
+  folderIds = [],
+  selectedFolderIds = [],
+  setSelectedFolderIds,
 }: UseAssetSelectionParams): UseAssetSelectionReturn {
   // ── Derived ────────────────────────────────────────────────────────────
   const selectedIdSet = useMemo(
@@ -57,6 +78,7 @@ export function useAssetSelection({
 
   // ── Selection anchor (Shift+click range extension) ─────────────────────
   const selectionAnchorRef = useRef<string | null>(null);
+  const folderSelectionAnchorRef = useRef<string | null>(null);
 
   // ── Card click button guard ────────────────────────────────────────────
   const cardMouseDownRef = useRef<number>(0);
@@ -69,6 +91,9 @@ export function useAssetSelection({
   const marqueeHitIdsRef = useRef<string[]>([]);
   const marqueeAccumulatedHitIdsRef = useRef<Set<string>>(new Set());
   const marqueeInitialSelectionRef = useRef<string[]>([]);
+  const marqueeFolderHitIdsRef = useRef<string[]>([]);
+  const marqueeFolderAccumulatedHitIdsRef = useRef<Set<string>>(new Set());
+  const marqueeInitialFolderSelectionRef = useRef<string[]>([]);
   const marqueeActiveRef = useRef(false);
   const autoScrollRef = useRef<{ direction: number; speed: number }>({ direction: 0, speed: 0 });
   const autoScrollRafRef = useRef<number | null>(null);
@@ -76,10 +101,54 @@ export function useAssetSelection({
   const marqueeModifiersRef = useRef<{ metaKey: boolean; ctrlKey: boolean; shiftKey: boolean }>({ metaKey: false, ctrlKey: false, shiftKey: false });
 
   // ── clearAssetSelection ────────────────────────────────────────────────
+  // Also clears folder-card selection (REQ-FOLDER-010): the two selections
+  // are cleared together on Esc / empty-canvas click / scope changes.
   function clearAssetSelection() {
     setSelectedAssetId(undefined);
     setSelectedAssetIds([]);
     selectionAnchorRef.current = null;
+    setSelectedFolderIds?.([]);
+    folderSelectionAnchorRef.current = null;
+  }
+
+  // ── handleFolderCardClick ───────────────────────────────────────────────
+  function handleFolderCardClick(
+    folderId: string,
+    event: React.MouseEvent,
+  ): "select" | "navigate" {
+    if (cardMouseDownRef.current !== 0) {
+      cardMouseDownRef.current = 0;
+      return "select";
+    }
+    if (!setSelectedFolderIds) return "navigate";
+    if (event.shiftKey && folderSelectionAnchorRef.current) {
+      const anchorIndex = folderIds.indexOf(folderSelectionAnchorRef.current);
+      const targetIndex = folderIds.indexOf(folderId);
+      if (anchorIndex >= 0 && targetIndex >= 0) {
+        const range = folderIds.slice(
+          Math.min(anchorIndex, targetIndex),
+          Math.max(anchorIndex, targetIndex) + 1,
+        );
+        setSelectedFolderIds(
+          event.metaKey || event.ctrlKey
+            ? (current) => [...new Set([...current, ...range])]
+            : range,
+        );
+        return "select";
+      }
+    }
+    if (event.metaKey || event.ctrlKey) {
+      setSelectedFolderIds((current) =>
+        current.includes(folderId)
+          ? current.filter((id) => id !== folderId)
+          : [...current, folderId],
+      );
+      folderSelectionAnchorRef.current = folderId;
+      return "select";
+    }
+    // Plain click: selection is left untouched, caller navigates into the
+    // folder (same as the sidebar row) instead of just selecting it.
+    return "navigate";
   }
 
   // ── handleCardClick (was selectAsset) ──────────────────────────────────
@@ -131,7 +200,11 @@ export function useAssetSelection({
   const handleCanvasMouseDown = useCallback(
     (e: React.MouseEvent<HTMLDivElement>) => {
       const target = e.target as HTMLElement;
-      if (target.closest(".asset-card, .external-drop-overlay, .asset-loading-more"))
+      if (
+        target.closest(
+          ".asset-card, .folder-card, .external-drop-overlay, .asset-loading-more",
+        )
+      )
         return;
       if (previewAsset) return;
       if (draggedMemberId || draggedCollectionId) return;
@@ -153,6 +226,8 @@ export function useAssetSelection({
       marqueeStartRef.current = { x: e.clientX, y: e.clientY };
       marqueeHitIdsRef.current = [];
       marqueeAccumulatedHitIdsRef.current = new Set();
+      marqueeFolderHitIdsRef.current = [];
+      marqueeFolderAccumulatedHitIdsRef.current = new Set();
       // Modifier snapshot is taken once here and frozen for the whole drag
       // (REQ-SELECT-001 rule 5) — it must not be re-derived from later events.
       const modifierSnapshot = {
@@ -164,6 +239,9 @@ export function useAssetSelection({
       marqueeInitialSelectionRef.current = isMarqueeAdditive(modifierSnapshot)
         ? [...selectedAssetIds]
         : [];
+      marqueeInitialFolderSelectionRef.current = isMarqueeAdditive(modifierSnapshot)
+        ? [...selectedFolderIds]
+        : [];
       setMarqueeBox({
         left: e.clientX,
         top: e.clientY,
@@ -172,7 +250,7 @@ export function useAssetSelection({
       });
       marqueeActiveRef.current = true;
     },
-    [previewAsset, draggedMemberId, draggedCollectionId, selectedAssetIds],
+    [previewAsset, draggedMemberId, draggedCollectionId, selectedAssetIds, selectedFolderIds],
   );
 
   // ── Marquee document-level mousemove + mouseup when active ─────────────
@@ -183,14 +261,20 @@ export function useAssetSelection({
     const AUTO_SCROLL_ZONE = 40; // px from top/bottom edge
     const MAX_SCROLL_SPEED = 8; // px per frame at edge
 
-    const collectHitIds = (box: {
+    // REQ-FOLDER-010: the marquee scans both asset and folder cards in one
+    // DOM pass and returns their hits separately so each keeps its own
+    // selection array, while sharing the same modifier snapshot/semantics.
+    const collectHits = (box: {
       left: number;
       top: number;
       right: number;
       bottom: number;
     }) => {
-      const hitIds: string[] = [];
-      const cards = canvas.querySelectorAll<HTMLElement>("[data-asset-id]");
+      const assetHitIds: string[] = [];
+      const folderHitIds: string[] = [];
+      const cards = canvas.querySelectorAll<HTMLElement>(
+        "[data-asset-id], [data-folder-id]",
+      );
       for (const card of cards) {
         const rect = card.getBoundingClientRect();
         if (
@@ -199,26 +283,41 @@ export function useAssetSelection({
           rect.top < box.bottom &&
           rect.bottom > box.top
         ) {
-          const id = card.dataset.assetId;
-          if (id) hitIds.push(id);
+          const assetId = card.dataset.assetId;
+          const folderId = card.dataset.folderId;
+          if (assetId) assetHitIds.push(assetId);
+          else if (folderId) folderHitIds.push(folderId);
         }
       }
-      return hitIds;
+      return { assetHitIds, folderHitIds };
     };
 
-    const applyMarqueeHits = (currentHitIds: string[], accumulate: boolean) => {
+    const applyMarqueeHits = (
+      hits: { assetHitIds: string[]; folderHitIds: string[] },
+      accumulate: boolean,
+    ) => {
       if (accumulate) {
-        for (const assetId of currentHitIds) {
+        for (const assetId of hits.assetHitIds) {
           marqueeAccumulatedHitIdsRef.current.add(assetId);
+        }
+        for (const folderId of hits.folderHitIds) {
+          marqueeFolderAccumulatedHitIdsRef.current.add(folderId);
         }
       }
       const effectiveHitIds = [
         ...new Set([
           ...marqueeAccumulatedHitIdsRef.current,
-          ...currentHitIds,
+          ...hits.assetHitIds,
+        ]),
+      ];
+      const effectiveFolderHitIds = [
+        ...new Set([
+          ...marqueeFolderAccumulatedHitIdsRef.current,
+          ...hits.folderHitIds,
         ]),
       ];
       marqueeHitIdsRef.current = effectiveHitIds;
+      marqueeFolderHitIdsRef.current = effectiveFolderHitIds;
 
       // Always read the mousedown-time snapshot, never the live event
       // modifiers — the operation must not change mid-drag.
@@ -229,6 +328,15 @@ export function useAssetSelection({
       );
       setSelectedAssetIds(nextSelection);
       setSelectedAssetId(nextSelection[0]);
+      if (setSelectedFolderIds) {
+        setSelectedFolderIds(
+          computeMarqueeSelection(
+            marqueeInitialFolderSelectionRef.current,
+            effectiveFolderHitIds,
+            marqueeModifiersRef.current,
+          ),
+        );
+      }
     };
 
     const handleMouseMove = (e: MouseEvent) => {
@@ -280,8 +388,7 @@ export function useAssetSelection({
         right: left + width,
         bottom: top + height,
       };
-      const hitIds = collectHitIds(marqueeRect);
-      applyMarqueeHits(hitIds, false);
+      applyMarqueeHits(collectHits(marqueeRect), false);
 
       // Auto-scroll when pointer is near canvas top/bottom edges
       let scrollDirection = 0;
@@ -322,7 +429,7 @@ export function useAssetSelection({
           // Re-run hit detection with current marquee box position
           const currentBox = marqueeBoxRef.current;
           if (currentBox) {
-            applyMarqueeHits(collectHitIds(currentBox), true);
+            applyMarqueeHits(collectHits(currentBox), true);
           }
           autoScrollRafRef.current = requestAnimationFrame(autoScrollLoop);
         };
@@ -351,17 +458,25 @@ export function useAssetSelection({
       }
 
       // Finalize selection — already set during mousemove;
-      // on a no-modifier marquee that hit nothing, clear too.
+      // on a no-modifier marquee that hit nothing (asset or folder), clear.
       // Use the mousedown-time snapshot, not this mouseup event's live
       // modifiers, so a key released/pressed mid-drag can't retroactively
       // change the operation (REQ-SELECT-001 rule 5).
       if (!isMarqueeAdditive(marqueeModifiersRef.current)) {
-        if (marqueeHitIdsRef.current.length === 0) clearAssetSelection();
+        if (
+          marqueeHitIdsRef.current.length === 0 &&
+          marqueeFolderHitIdsRef.current.length === 0
+        ) {
+          clearAssetSelection();
+        }
       }
 
-      // Set anchor for subsequent Shift+click range-extension
+      // Set anchors for subsequent Shift+click range-extension
       if (marqueeHitIdsRef.current.length > 0) {
         selectionAnchorRef.current = marqueeHitIdsRef.current[0]!;
+      }
+      if (marqueeFolderHitIdsRef.current.length > 0) {
+        folderSelectionAnchorRef.current = marqueeFolderHitIdsRef.current[0]!;
       }
 
       setMarqueeBox(null);
@@ -386,7 +501,9 @@ export function useAssetSelection({
     handleCanvasMouseDown,
     clearAssetSelection,
     selectionAnchorRef,
+    folderSelectionAnchorRef,
     handleCardClick,
+    handleFolderCardClick,
     cardMouseDownRef,
     marqueeBox,
     selectedIdSet,

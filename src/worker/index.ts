@@ -264,6 +264,15 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
         type: 'folder.list',
         folders: libraryService.listManagedFolders(request.command.libraryId),
       };
+    case 'folder.browse-entries':
+      return {
+        ok: true,
+        type: 'folder.browse-entries',
+        entries: libraryService.listFolderBrowseEntries({
+          libraryId: request.command.libraryId,
+          parentFolderId: request.command.parentFolderId,
+        }),
+      };
     case 'asset.list':
       {
         const assets = libraryService.listAssets(request.command);

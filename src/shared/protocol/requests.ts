@@ -113,6 +113,11 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     libraryId: identifierSchema,
   }),
   z.strictObject({
+    type: z.literal('folder.browse-entries.request'),
+    libraryId: identifierSchema,
+    parentFolderId: identifierSchema.nullable(),
+  }),
+  z.strictObject({
     type: z.literal('asset.list.request'),
     libraryId: identifierSchema,
     folderId: optionalIdentifierSchema,
@@ -667,6 +672,11 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
   z.strictObject({
     type: z.literal('folder.list'),
     libraryId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('folder.browse-entries'),
+    libraryId: identifierSchema,
+    parentFolderId: identifierSchema.nullable(),
   }),
   z.strictObject({
     type: z.literal('asset.list'),

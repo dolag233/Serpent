@@ -65,7 +65,7 @@ export function MoveDialog({
           <option value="">{t("scope.rootFolder")}</option>
           {folders.map((folder) => (
             <option key={folder.folderId} value={folder.folderId}>
-              {folder.relativePath}
+              {folder.relativePath} ({folder.directAssetCount})
             </option>
           ))}
         </select>

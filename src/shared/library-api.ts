@@ -6,6 +6,7 @@ import type {
   ExtractedMetadataResult,
   CollectionSummary,
   FilterClause,
+  FolderBrowseEntry,
   LinkedFolderRule,
   LinkedFolderSummary,
   ManagedFolderSummary,
@@ -131,6 +132,10 @@ export interface SerpentLibraryApi {
     newName: string;
   }): Promise<LibraryApiResult<ManagedFolderSummary>>;
   listFolders(input: { libraryId: string }): Promise<LibraryApiResult<ManagedFolderSummary[]>>;
+  listFolderBrowseEntries(input: {
+    libraryId: string;
+    parentFolderId: string | null;
+  }): Promise<LibraryApiResult<FolderBrowseEntry[]>>;
   listAssets(input: {
     libraryId: string;
     folderId?: string;

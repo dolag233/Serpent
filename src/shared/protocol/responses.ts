@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { aiSearchPlanSchema, assetMetadataResultSchema, extractedMetadataResultSchema, assetSummarySchema, collectionSummarySchema, linkedFolderRuleSchema, linkedFolderSummarySchema, managedFolderSummarySchema, portableRelativePathSchema, smartCollectionSummarySchema, tagSummarySchema } from '../asset-types';
+import { aiSearchPlanSchema, assetMetadataResultSchema, extractedMetadataResultSchema, assetSummarySchema, collectionSummarySchema, folderBrowseEntrySchema, linkedFolderRuleSchema, linkedFolderSummarySchema, managedFolderSummarySchema, portableRelativePathSchema, smartCollectionSummarySchema, tagSummarySchema } from '../asset-types';
 import { recentLibraryListSchema } from '../recent-libraries';
 import { publicErrorReasonSchema, publicErrorSchema } from './errors';
 import {
@@ -299,6 +299,11 @@ const assetOperationSuccessSchemas = [
     ok: z.literal(true),
     type: z.literal('folder.list'),
     folders: z.array(managedFolderSummarySchema),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('folder.browse-entries'),
+    entries: z.array(folderBrowseEntrySchema),
   }),
   z.strictObject({
     ok: z.literal(true),

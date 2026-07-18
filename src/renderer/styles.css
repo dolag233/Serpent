@@ -3080,6 +3080,122 @@ select.ai-config-input {
 .masonry-card-slot {
   min-width: 0;
 }
+
+/* REQ-FOLDER-001/002/003/010: direct child folder cards, shown as their own
+   row above the asset grid so they never have to fight the justified-row
+   aspect-ratio layout (each folder card is a fixed square regardless of the
+   assets' own aspect ratios). Sized off the same --folder-card-size custom
+   property the canvas toolbar's card-size slider drives, so folders and
+   assets grow/shrink together. */
+.folder-card-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  width: 100%;
+  padding: 16px 16px 0;
+  --folder-card-size: 160px;
+}
+
+.folder-card {
+  display: flex;
+  width: var(--folder-card-size, 160px);
+  flex-direction: column;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.folder-card:hover {
+  background: var(--hover);
+}
+
+.folder-card.is-selected {
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+.folder-card:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+.folder-card-cover {
+  position: relative;
+  display: grid;
+  aspect-ratio: 1;
+  gap: 2px;
+  overflow: hidden;
+  border-radius: 7px;
+  background: var(--pane);
+  color: var(--tertiary);
+}
+
+/* 1 cover: single full tile. 2 covers: side-by-side halves. 3 covers:
+   one large tile on the left, two stacked on the right (Windows-style
+   folder collage). Empty: single centered folder glyph tile. */
+.folder-card-cover-count-0,
+.folder-card-cover-count-1 {
+  grid-template-columns: 1fr;
+  grid-template-rows: 1fr;
+}
+.folder-card-cover-count-2 {
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr;
+}
+.folder-card-cover-count-3 {
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+}
+.folder-card-cover-count-3 .folder-card-cover-tile:first-child {
+  grid-row: 1 / 3;
+}
+
+.folder-card-cover-tile {
+  position: relative;
+  overflow: hidden;
+  background: var(--raised-2);
+}
+
+.folder-card-cover-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.folder-card-cover-empty {
+  display: grid;
+  place-items: center;
+  color: var(--tertiary);
+}
+
+.folder-card-caption {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+  padding: 7px 4px 8px;
+}
+
+.folder-card-name {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.folder-card-count {
+  color: var(--tertiary);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 9px;
+}
+
 .asset-loading-more {
   display: flex;
   min-height: 38px;
