@@ -22,6 +22,7 @@ test('moves a managed asset to a real folder and exposes one visible undo', asyn
     env: {
       ...process.env,
       SERPENT_E2E: '1',
+      SERPENT_E2E_USER_DATA_PATH: path.join(temporaryRoot, 'user-data'),
       SERPENT_E2E_CREATE_PARENT_PATH: temporaryRoot,
       SERPENT_E2E_IMPORT_FILES: sourcePath,
     },

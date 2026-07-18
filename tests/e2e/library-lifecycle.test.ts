@@ -26,6 +26,7 @@ test("creates, closes, and reopens a library through the sandboxed UI", async ()
     env: {
       ...process.env,
       SERPENT_E2E: "1",
+      SERPENT_E2E_USER_DATA_PATH: path.join(temporaryRoot, "user-data"),
       SERPENT_E2E_CREATE_PARENT_PATH: temporaryRoot,
       SERPENT_E2E_OPEN_LIBRARY_PATH: libraryPath,
     },

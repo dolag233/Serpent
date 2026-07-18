@@ -6,8 +6,9 @@
 ## 2026-07-18 MVP 循环前沿
 
 - 当日已合流多批可编码增量（查看页直出/视频控件、作者元数据、空态文案、命令注册表、合集菜单成员过滤、智能合集校验与计数、侧栏省略、搜索 snippet 去重、递归来源角标、壳层对齐、GIF 控件与元数据、Option 拖拽复制光标等）；证据与验收 ID 见 `docs/qa/human-acceptance-checklist.md`。
-- **可编码 ready 队列已清空到阻塞面**：`Serpent-w3b` 澄清队列阻塞文件夹删除（`Serpent-ekj`）、文件夹复制/粘贴/克隆/移动（`Serpent-vgp`）、资产其他应用打开/复制/粘贴（`Serpent-w29`）；文件夹卡片 epic `Serpent-5ja` 待澄清 #2/#3/#4。平台复验 `Serpent-b54`/`Serpent-ber` 需 Computer Use / Windows。分组模式 `Serpent-84m` 为 MVP 后。
-- **人类验收**：清单中「待人类验收」约 137 项（工单 `Serpent-2km`）；状态只能由用户本人改写。托管文件夹「复制一份文件」API 仍缺，Option 拖到托管文件夹目前明确拒绝（`DND-005`）。
+- **2026-07-18 晚验收**：FILTER-013/014、SEARCH-005、NAV-005、SHELL-015/016、META-008、PALETTE-002 人类验收通过；SHELL-017、FILTER-015、VIEW-007 不通过/布局反馈。第五批反馈已入池并开单（`mvp-fifth-batch` 标签）：过滤交互重做、排序去相关性、画布 resize 重排、查看返回保视图等，见 `docs/implementation/mvp-ui-ux-requirements-backlog.md`「2026-07-18 第五批」。
+- **可编码 ready 队列**：第五批过滤/布局工单 + **文件夹卡片 epic `Serpent-5ja`（P1，已提上日程）**及其子项 `.1`–`.4`；缺口补录 `Serpent-str`（设置面板）、`Serpent-uu9`（智能合集加号）、`Serpent-wfj`（资产原地重命名）、`Serpent-hrw`（左上角按钮澄清）。澄清 #4 已裁决（文件夹卡片参与多选）。仍阻塞：#5/#7 → `Serpent-ekj`/`Serpent-vgp`/`Serpent-w29`。
+- **人类验收**：清单中「待人类验收」项以 `docs/qa/human-acceptance-checklist.md` 为准；状态只能由用户本人改写。
 
 ## 当前方向
 
@@ -30,7 +31,7 @@ v0.1.0 继续收口 0001–0010 的桌面主线，并纳入真实使用反馈确
 
 - 产品负责人第二批直接反馈已按项目规则进入需求池并排期：选中描边外扩加粗与 Shift 悬停双圈消除（REQ-SELECT-003）、目录高亮仅改背景（REQ-NAV-005）、强调色绿改蓝（REQ-THEME-004）、滑块小巧中性色（REQ-CANVAS-007）、预览图四角圆角（REQ-CANVAS-008）、AI 搜索按钮与搜索框加宽（REQ-CANVAS-006）、通知淡出（REQ-SHELL-010）、新建资源库去侧边栏/「01」（REQ-SHELL-008）、冗余装饰文案清理（REQ-SHELL-009）、文件夹复制路径/访达打开（REQ-MENU-006）、文件夹原地编辑（REQ-FOLDER-007）、回收站预览丢失（BUG-TRASH-001）、侧栏拖拽调宽（REQ-SHELL-007）、资产拖拽移动/删除（REQ-DND-001/002）、多标签+宽高比+分辨率过滤（REQ-TAG-002 解冻、REQ-FILTER-009/010）。排期表见 `docs/implementation/mvp-ui-ux-requirements-backlog.md`「2026-07-17 第二批反馈排期」。
 - Wave 1 状态（2026-07-17 中午更新）：workflow 因 API 配额 403 中断，**T3 回收站预览修复已完整落地并合流 `d4de957`**（根因：artifact 解析 SQL 误过滤 deleted_at；worker 四列齐，E2E/视觉待补，TRASH-004 已进待人类验收）；T1/T2/T4 实现 agent 留有大量半成品，由主 agent 顺序检视补齐后合流，不再重开 agent 集群。审查偏差如实记录在 `docs/development/0015-0019-ux-feedback-wave1-development-log.md`（广度 3/6 通过 + 主 agent 深审；2 sonnet 深审 + security 广度未执行）。eslint 已忽略 `.claude/**`（agent 工作树不再被 lint 扫描）。
-- Wave 1 全轨道合流完成（2026-07-17 下午）：T1 视觉修饰包 `f93f9f4`（9 REQ：选中外扩环+Shift 双圈根因、目录高亮仅背景、蓝色强调色 color-mix 派生、小巧中性滑块、预览四角圆角、AI 按钮星芒图标+搜索框加宽、toast 淡出状态机、新建资源库去 01 侧栏、冗余英文装饰清理）、T2 文件夹菜单命令 `e257a19`（REQ-MENU-006 全链路，worker 7/7）、T4 文件夹原地编辑 `9f175ad`（REQ-FOLDER-007，删除 FolderRenameDialog/useFolderActions，CreateDialog 收编为纯资源库框）。合流门禁：typecheck/eslint 0 findings/unit 431 passed/worker scoped 88 passed。新增待人类验收 9 项：MENU-018/019、SELECT-008、NAV-004、THEME-001、CANVAS-010/011、SHELL-007/008；MENU-016/017 已注明由 MENU-019 原地流程接替。E2E 由主 agent 后台集中执行中，结果补入开发日志。
+- Wave 1 全轨道合流完成（2026-07-17 下午）：T1 视觉修饰包 `f93f9f4`（9 REQ：选中外扩环+Shift 双圈根因、目录高亮仅背景、蓝色强调色 color-mix 派生、小巧中性滑块、预览四角圆角、AI 按钮星芒图标+搜索框加宽、toast 淡出状态机、新建资源库去 01 侧栏、冗余英文装饰清理）、T2 文件夹菜单命令 `e257a19`（REQ-MENU-006 全链路，worker 7/7）、T4 文件夹原地编辑 `9f175ad`（REQ-FOLDER-007，删除 FolderRenameDialog/useFolderActions，CreateDialog 收编为纯资源库框）。合流门禁：typecheck/eslint 0 findings/unit 431 passed/worker scoped 88 passed。新增待人类验收 9 项：MENU-018/019、SELECT-008、NAV-004、THEME-001、CANVAS-020/011、SHELL-007/008；MENU-016/017 已注明由 MENU-019 原地流程接替。E2E 由主 agent 后台集中执行中，结果补入开发日志。
 - Wave 2 全轨道落地（2026-07-17 傍晚）：T5 侧栏拖拽调宽 `0ae84f5`（REQ-SHELL-007，版本化偏好+拖拽 hook+双击重置）、T6 资产拖拽 `c9d75d1`（REQ-DND-001/002，纯决策模块+复用 move/trash 命令，顺带激活链接行「复制到链接文件夹」拖放）、T7 过滤增强 `308e5b0`（REQ-TAG-002 多标签选择器、REQ-FILTER-009 宽高比预设 ±5%、REQ-FILTER-010 新 long_edge 字段+1K/2K/4K 分桶）。全部为主 agent 顺序实现（配额约束）；门禁：typecheck/eslint 0 findings/unit 454/worker search 69 passed。新增待人类验收 6 项：SHELL-009、DND-001/002、FILTER-009/010/011。E2E 适配：4 处文件夹创建步骤改写为原地流程、6 处标签过滤步骤适配新选择器。多标签过滤冻结正式解除并交付。
 - Wave 3 第一步完成（2026-07-17 晚）：真实应用 11 表面截图审查（`docs/qa/evidence/wave3-ux-audit/`）+ 静态扫查。视觉确认达标：蓝色强调色、选中外扩环、预览圆角、回收站预览保留（BUG-TRASH-001 视觉确认）、原地编辑、过滤预设。本轮修复：16 个对话框装饰英文 eyebrow 全清 + 内联 hex token 化（REQ-SHELL-009 扫尾）、过滤面板超高内部滚动。待办与 7 项提案（工具栏折叠/激活过滤徽标/资产原地重命名/评分可读性/查看页胶片条/回收站打磨/通知历史）见 `docs/reviews/2026-07-17-wave3-ui-ux-audit.md`，待用户拍板后入池。
 - Wave 3 追加收口（2026-07-17 晚，`56685f5`）：REQ-VIEW-001 查看页类型小字移除（截图确认，VIEWER-002 待验收）、P3 回收站卡片原位置可读（资源库根目录/父目录，TRASH-005 待验收）。

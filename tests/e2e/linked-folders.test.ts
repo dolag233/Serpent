@@ -40,6 +40,7 @@ test('imports a linked folder, reconciles external changes, and relinks after th
     env: {
       ...process.env,
       SERPENT_E2E: '1',
+      SERPENT_E2E_USER_DATA_PATH: path.join(temporaryRoot, 'user-data'),
       SERPENT_E2E_CREATE_PARENT_PATH: temporaryRoot,
       SERPENT_E2E_OPEN_LIBRARY_PATH: libraryPath,
       SERPENT_E2E_LINKED_SOURCE: sourceRoot,
@@ -95,7 +96,9 @@ test('imports a linked folder, reconciles external changes, and relinks after th
     // Source root removed: folder flips to offline, all linked assets missing.
     rmSync(sourceRoot, { recursive: true, force: true });
     await window.getByRole('button', { name: '刷新磁盘变化' }).click();
-    await expect(window.locator('.missing-banner', { hasText: '文件丢失' }).first()).toBeVisible();
+    await expect(
+      window.locator('.missing-overlay[aria-label="文件丢失"]').first(),
+    ).toBeVisible();
     const afterOffline = await listAllAssets(window);
     expect(afterOffline.every((asset) => asset.availability === 'missing')).toBe(true);
 
@@ -273,6 +276,7 @@ test('applies default ignore rules — .git and node_modules are not registered 
     env: {
       ...process.env,
       SERPENT_E2E: '1',
+      SERPENT_E2E_USER_DATA_PATH: path.join(temporaryRoot, 'user-data'),
       SERPENT_E2E_CREATE_PARENT_PATH: temporaryRoot,
       SERPENT_E2E_OPEN_LIBRARY_PATH: libraryPath,
       SERPENT_E2E_LINKED_SOURCE: sourceRoot,

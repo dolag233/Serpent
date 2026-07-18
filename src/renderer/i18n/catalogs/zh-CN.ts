@@ -428,7 +428,7 @@ export const zhCN = {
     createLibrary: {
       title: "创建资源库",
       name: "名称",
-      help: "确认后将选择资源库的本地保存位置。",
+      help: "",
       submit: "创建"
     },
     conflicts: {

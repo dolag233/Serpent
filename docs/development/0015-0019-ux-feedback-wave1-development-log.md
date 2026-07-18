@@ -24,7 +24,7 @@
 ### 证据（四列）
 
 | 需求 | 实现 | 自动化 | 人工/平台 |
-| --- | --- | --- | --- |
+| ------------- | -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
 | BUG-TRASH-001 | `src/worker/library-service.ts:7703-7717`、`10612-10634` | `tests/worker/trash-relink.test.ts:393`（trash 后可解析+sharp 可解码，修复前 ASSET_NOT_FOUND）、`:434`（listTrash/search 一致）、`:451`（trash→restore 字节一致）、`:480`（永久删除回归门禁）；worker 相关 111 passed；全量 988 passed + 2 skipped（worktree 内 Electron runtime） | E2E 与 Computer Use **未执行**（合流后由主 agent 后台跑 E2E；视觉移交人工 QA） |
 
 ### 审查状态（如实记录）
@@ -45,13 +45,13 @@
 覆盖 9 个 REQ 条目，全部实现于 `src/renderer/`（styles.css、toast-notifications.ts、useToastNotifications.ts、App.tsx、CreateDialog.tsx、Icons.tsx）。
 
 | 需求 | 实现要点 | 自动化 | 人工/平台 |
-| --- | --- | --- | --- |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ | ------------------------------------------------- |
 | REQ-SELECT-003 选中描边 | 选中环改为卡片外侧 2px box-shadow（比预览 1px 边框粗且完全外扩）；Shift 悬停双圈根因＝Chromium 在 Shift 键按下时匹配 `:focus-visible`，全局 button focus accent outline 与选中环叠加——卡片 focus 改为同一外扩几何，两态不再叠加 | 样式变更无自动断言；视觉项 | Computer Use 未执行，移交人工 QA（SELECT-008） |
 | REQ-NAV-005 目录高亮 | `.nav-row.is-active` 移除 accent 内嵌竖条与边框色，仅背景深浅区分 hover/active | 同上 | 未执行（NAV-004） |
 | REQ-THEME-004 蓝色强调色 | `--accent #42b8a4→#3b82f6`、`--accent-dark→#2563eb`；散落的硬编码 teal 全部改为 `color-mix` 从 token 派生（主按钮、toast、marquee、文本框焦点、上传装饰等） | 同上 | 未执行（THEME-001） |
 | REQ-CANVAS-006 AI 搜索入口 | `smart` 图标五角星→四角星芒（与其他图标同 stroke 风格）；`.compact-action` `flex:0 0 auto`+`white-space:nowrap` 修文字溢出；搜索框 `flex:1 1 240px`（min 200 / max 360） | 同上 | 未执行（CANVAS-011） |
 | REQ-CANVAS-007 滑块 | 3px 轨道 / 10px thumb / 中性 token（`--divider`/`--secondary`），不再使用强调色 | 同上 | 未执行（THEME-001） |
-| REQ-CANVAS-008 预览圆角 | 预览容器 `border-radius:4px` 四角统一；选中环在父卡片上，overflow 裁剪不影响环 | 同上 | 未执行（CANVAS-010） |
+| REQ-CANVAS-008 预览圆角    | 预览容器 `border-radius:4px` 四角统一；选中环在父卡片上，overflow 裁剪不影响环                                                                                                                                                  | 同上                                                                                 | 未执行（CANVAS-020；原重复 ID CANVAS-010 已更正） |
 | REQ-SHELL-008 新建资源库 | 起始页空态去「01」索引列与 specimen 竖栏，单列直出表单 | 同上 | 未执行（SHELL-007） |
 | REQ-SHELL-009 冗余文案 | 移除「MANAGED ASSETS」「LOCAL ASSET WORKSPACE」「NEW LOCAL LIBRARY」装饰行；文件夹对话框文案随 T4 一并移除 | 同上 | 未执行（SHELL-007） |
 | REQ-SHELL-010 通知淡出 | `toast-notifications.ts` 纯状态机（5s/10s 自动关闭→closing→transitionend/fallback 卸载）+ `useToastNotifications` React 绑定；`.toast` 180ms opacity/translate 退出过渡 | `tests/unit/toast-notifications.test.ts`（190 行生命周期测试）；全量 unit 408 passed | 未执行（SHELL-008） |

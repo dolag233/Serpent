@@ -65,7 +65,9 @@ export function CreateDialog({
           onChange={(event) => onValueChange(event.target.value)}
           value={value}
         />
-        <p className="field-help">{t("dialog.createLibrary.help")}</p>
+        {t("dialog.createLibrary.help").trim() ? (
+          <p className="field-help">{t("dialog.createLibrary.help")}</p>
+        ) : null}
         <div className="dialog-actions">
           <button
             className="secondary-button"

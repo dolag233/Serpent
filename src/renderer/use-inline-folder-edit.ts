@@ -47,8 +47,14 @@ export interface UseInlineFolderEditResult {
   openInlineFolderRename: (folderId: string, currentName: string) => void;
   changeInlineFolderEdit: (value: string) => void;
   cancelInlineFolderEdit: () => void;
-  /** Enter and blur both route here; the state machine decides the outcome. */
-  commitInlineFolderEdit: () => Promise<void>;
+  /**
+   * Enter and blur both route here; the state machine decides the outcome.
+   * The optional callback runs only after a create reaches the Worker and
+   * succeeds, before the inline row is removed.
+   */
+  commitInlineFolderEdit: (
+    onCreateSuccess?: (parentFolderId: string | null) => void,
+  ) => Promise<void>;
 }
 
 export function useInlineFolderEdit({
@@ -88,7 +94,9 @@ export function useInlineFolderEdit({
     setInlineFolderEdit(null);
   }, []);
 
-  const commitInlineFolderEdit = useCallback(async () => {
+  const commitInlineFolderEdit = useCallback(async (
+    onCreateSuccess?: (parentFolderId: string | null) => void,
+  ) => {
     const session = inlineFolderEdit;
     if (!session) return;
     const resolution = resolveInlineFolderEditCommit(session);
@@ -141,6 +149,9 @@ export function useInlineFolderEdit({
           codeMessage ?? toMessage(result.error, failureFallback, locale),
         );
         return;
+      }
+      if (session.kind === "create") {
+        onCreateSuccess?.(session.parentFolderId);
       }
       setInlineFolderEdit((current) =>
         current && isSameInlineFolderEditSession(current, session)

@@ -438,7 +438,7 @@ export const en = {
     createLibrary: {
       title: "Create library",
       name: "Name",
-      help: "Next, choose a local save location.",
+      help: "",
       submit: "Create"
     },
     conflicts: {

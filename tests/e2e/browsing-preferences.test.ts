@@ -828,7 +828,7 @@ test("maintains consistent preferences, accessible names, zoom behavior, and avo
 
     // Enter the tag-filtered view through the retained 标签过滤 entry and
     // verify presentation consistency
-    await window.getByText("筛选与排序", { exact: true }).click();
+    await window.getByRole("button", { name: "标签", exact: true }).click();
     await window.getByLabel("标签过滤").fill("偏好测试标签");
     await window.getByRole("option", { name: /偏好测试标签/ }).click();
     await assertToggleStates("true", "false", "false", "true");
@@ -912,7 +912,7 @@ test("maintains consistent preferences, accessible names, zoom behavior, and avo
     await window.getByRole("button", { name: /资源库根目录/ }).click();
     await window.getByRole("button", { name: /所有资产/ }).click();
     await window
-      .getByRole("button", { name: "偏好测试智能合集", exact: true })
+      .getByRole("button", { name: /偏好测试智能合集/ })
       .click();
     await assertToggleStates("true", "false", "false", "true");
     await assertHiddenFieldPresentation(true);

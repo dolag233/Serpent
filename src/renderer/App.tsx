@@ -681,6 +681,15 @@ function AppInner() {
     top: number;
   } | null>(null);
   const closingPreviewRef = useRef<string | null>(null);
+  const previewRestoreFrameRef = useRef<number | null>(null);
+  useEffect(
+    () => () => {
+      if (previewRestoreFrameRef.current !== null) {
+        window.cancelAnimationFrame(previewRestoreFrameRef.current);
+      }
+    },
+    [],
+  );
   // REQ-DND-003: the custom drag ghost node mounted by showAssetDragPreview,
   // kept so onDragEnd can remove it from the document.
   const dragPreviewRef = useRef<HTMLElement | null>(null);
@@ -968,6 +977,10 @@ function AppInner() {
 
   const openAssetPreview = useCallback((asset: AssetSummary) => {
     if (asset.availability !== "available" || asset.deletedAt) return;
+    if (previewRestoreFrameRef.current !== null) {
+      window.cancelAnimationFrame(previewRestoreFrameRef.current);
+      previewRestoreFrameRef.current = null;
+    }
     previewFocusReturnRef.current = asset.assetId;
     previewScrollPositionRef.current = workspaceCanvasRef.current
       ? {
@@ -989,7 +1002,15 @@ function AppInner() {
     setPreviewAsset(asset);
   }, [selectionAnchorRef]);
 
-  const closeAssetPreview = useCallback(async () => {
+  const closeAssetPreview = useCallback(async (restoreBrowsePosition = true) => {
+    // A scope transition can arrive after React has already cleared
+    // `previewAsset` but before the two-frame browse restoration runs. Cancel
+    // that stale restoration even when there is no longer an asset to close,
+    // otherwise the previous scope can scroll/focus the newly selected scope.
+    if (!restoreBrowsePosition && previewRestoreFrameRef.current !== null) {
+      window.cancelAnimationFrame(previewRestoreFrameRef.current);
+      previewRestoreFrameRef.current = null;
+    }
     const closingAsset = previewAsset;
     if (!closingAsset) return;
     if (closingPreviewRef.current === closingAsset.assetId) return;
@@ -999,12 +1020,22 @@ function AppInner() {
     const scrollPosition = previewScrollPositionRef.current;
     previewFocusReturnRef.current = null;
     previewScrollPositionRef.current = null;
-    window.requestAnimationFrame(() => {
-      const canvas = workspaceCanvasRef.current;
-      if (canvas && scrollPosition) canvas.scrollTo(scrollPosition);
-      canvas
-        ?.querySelector<HTMLElement>(`[data-asset-id="${assetId ?? ""}"]`)
-        ?.focus({ preventScroll: true });
+    if (previewRestoreFrameRef.current !== null) {
+      window.cancelAnimationFrame(previewRestoreFrameRef.current);
+      previewRestoreFrameRef.current = null;
+    }
+    if (restoreBrowsePosition) previewRestoreFrameRef.current = window.requestAnimationFrame(() => {
+      // React must first commit removal of `.is-viewing` (display:none). A
+      // second frame restores scroll against the visible canvas; restoring in
+      // the first frame is discarded by layout and jumps back to the top.
+      previewRestoreFrameRef.current = window.requestAnimationFrame(() => {
+        const canvas = workspaceCanvasRef.current;
+        if (canvas && scrollPosition) canvas.scrollTo(scrollPosition);
+        canvas
+          ?.querySelector<HTMLElement>(`[data-asset-id="${assetId ?? ""}"]`)
+          ?.focus({ preventScroll: true });
+        previewRestoreFrameRef.current = null;
+      });
     });
     try {
       if (api && library) {
@@ -1581,6 +1612,11 @@ function AppInner() {
         if (result.error.code === "CANCELLED") return;
         throw new LibraryOperationError(result.error);
       }
+      // Opening/creating can replace the entire browse scope while a
+      // two-frame viewer restoration is still pending. Cancel only after the
+      // picker succeeds so cancelling the picker leaves the current viewer
+      // untouched.
+      await closeAssetPreview(false);
       opened = true;
       setLibrary(result.value);
       setAssetScope("all");
@@ -1697,7 +1733,7 @@ function AppInner() {
   async function chooseFolder(scope: AssetScope) {
     if (!library) return;
     // REQ-VIEW-004: leave the browse affiliate viewer when the browse scope changes.
-    await closeAssetPreview();
+    await closeAssetPreview(false);
     closeContextMenu();
     workspaceCanvasRef.current?.scrollTo({ top: 0, left: 0 });
     setShowTrash(false);
@@ -1746,7 +1782,7 @@ function AppInner() {
 
   async function enterTrash() {
     if (!library) return;
-    await closeAssetPreview();
+    await closeAssetPreview(false);
     workspaceCanvasRef.current?.scrollTo({ top: 0, left: 0 });
     setShowTrash(true);
     setActiveTagId(null);
@@ -1771,7 +1807,7 @@ function AppInner() {
 
   async function chooseTag(tagId: string) {
     if (!api || !library) return;
-    await closeAssetPreview();
+    await closeAssetPreview(false);
     closeContextMenu();
     const tag = tags.find((candidate) => candidate.tagId === tagId);
     if (!tag) return;
@@ -2013,6 +2049,7 @@ function AppInner() {
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
       if (activeCollectionId && deletedCollectionIds.has(activeCollectionId)) {
+        await closeAssetPreview(false);
         setActiveCollectionId(null);
         await loadContent(library, assetScope);
       } else {
@@ -2198,7 +2235,7 @@ function AppInner() {
     recursive = collectionRecursive,
   ) {
     if (!api || !library) return;
-    await closeAssetPreview();
+    await closeAssetPreview(false);
     closeContextMenu();
     workspaceCanvasRef.current?.scrollTo({ top: 0, left: 0 });
     setShowTrash(false);
@@ -2575,7 +2612,7 @@ function AppInner() {
   async function runSearch(event?: FormEvent, offset = 0) {
     event?.preventDefault();
     if (!api || !library) return;
-    if (offset === 0) await closeAssetPreview();
+    if (offset === 0) await closeAssetPreview(false);
     try {
       const definition = currentQueryDefinition();
       setActiveAiSearchDefinition(null);
@@ -2590,7 +2627,7 @@ function AppInner() {
   async function runAiSearch(event?: FormEvent, offset = 0) {
     event?.preventDefault();
     if (!api || !library || !searchValue.trim() || aiSearchLoading) return;
-    if (offset === 0) await closeAssetPreview();
+    if (offset === 0) await closeAssetPreview(false);
     setAiSearchLoading(true);
     setError(null);
     try {
@@ -2745,7 +2782,7 @@ function AppInner() {
 
   async function chooseSmartCollection(collectionId: string, offset = 0) {
     if (!api || !library) return;
-    if (offset === 0) await closeAssetPreview();
+    if (offset === 0) await closeAssetPreview(false);
     closeContextMenu();
     if (offset === 0) workspaceCanvasRef.current?.scrollTo({ top: 0, left: 0 });
     try {
@@ -2908,6 +2945,7 @@ function AppInner() {
         ),
       );
       if (activeSmartCollectionId === collectionId) {
+        await closeAssetPreview(false);
         setActiveSmartCollectionId(null);
         await loadContent(library, "all");
       }
@@ -3790,7 +3828,7 @@ function AppInner() {
     setUiState("closing");
     let closed = false;
     try {
-      if (previewAsset) await closeAssetPreview();
+      await closeAssetPreview(false);
       const result = await api.close({ libraryId: library.libraryId });
       if (!result.ok) throw new LibraryOperationError(result.error);
       closed = true;
@@ -5444,7 +5482,9 @@ function AppInner() {
         onAddFolder={() => openInlineFolderCreate(selectedFolderId ?? null)}
         inlineFolderEdit={inlineFolderEdit}
         onInlineFolderEditChange={changeInlineFolderEdit}
-        onInlineFolderEditCommit={() => void commitInlineFolderEdit()}
+        onInlineFolderEditCommit={(onCreateSuccess) =>
+          void commitInlineFolderEdit(onCreateSuccess)
+        }
         onInlineFolderEditCancel={cancelInlineFolderEdit}
         onOpenContextMenu={openContextMenu}
         onReorderCollection={(sourceId, targetId) =>
@@ -5474,7 +5514,7 @@ function AppInner() {
                   className="workspace-include-subfolders"
                   onClick={() => {
                     // Include-subfolders changes the browse result set (REQ-VIEW-004).
-                    void closeAssetPreview();
+                    void closeAssetPreview(false);
                     const next = !folderRecursiveRef.current;
                     folderRecursiveRef.current = next;
                     setFolderRecursive(next);

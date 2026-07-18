@@ -498,6 +498,7 @@ describe('preview availability while derivatives are generated', () => {
       status: 'ready',
       playbackMode: 'source',
       sourceMimeType: 'video/mp4',
+      errorCode: 'MEDIA_PROCESSING_FAILED',
     });
 
     service.closeAll();

@@ -119,7 +119,10 @@ test("persists organization and metadata across restart and surfaces optimistic-
 
     await assetCard.click();
     const descriptionInput = window.getByLabel("描述");
-    const sourceUrlInput = window.getByLabel("源链接");
+    const sourceUrlInput = window.getByRole("textbox", {
+      name: "源链接",
+      exact: true,
+    });
 
     await descriptionInput.fill("跨重启保存的资产描述");
     await descriptionInput.blur();
@@ -144,7 +147,7 @@ test("persists organization and metadata across restart and surfaces optimistic-
     // The sidebar no longer enumerates tags (REQ-TAG-001); verify the tag
     // and its assignment survived the restart through the retained 标签过滤
     // entry instead.
-    await window.getByText("筛选与排序", { exact: true }).click();
+    await window.getByRole("button", { name: "标签", exact: true }).click();
     await window.getByLabel("标签过滤").fill("持久标签");
     await window.getByRole("option", { name: /持久标签/ }).click();
     await expect(
@@ -166,7 +169,10 @@ test("persists organization and metadata across restart and surfaces optimistic-
     await restoredCard.click();
 
     const restoredDescriptionInput = window.getByLabel("描述");
-    const restoredSourceUrlInput = window.getByLabel("源链接");
+    const restoredSourceUrlInput = window.getByRole("textbox", {
+      name: "源链接",
+      exact: true,
+    });
     await expect(restoredDescriptionInput).toHaveValue("跨重启保存的资产描述");
     await expect(restoredSourceUrlInput).toHaveValue(
       "https://example.com/persistent-asset",

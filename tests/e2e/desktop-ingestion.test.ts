@@ -27,6 +27,7 @@ test('pastes a Main-owned clipboard image into the current folder and collection
     env: {
       ...process.env,
       SERPENT_E2E: '1',
+      SERPENT_E2E_USER_DATA_PATH: path.join(temporaryRoot, 'user-data'),
       SERPENT_E2E_CREATE_PARENT_PATH: temporaryRoot,
       SERPENT_E2E_CLIPBOARD_IMAGE_PATH: clipboardSource,
       SERPENT_E2E_CLIPBOARD_NOW: '2026-07-13T12:34:56.000Z',
@@ -90,6 +91,7 @@ test('returns specific safe desktop-ingestion errors and records their diagnosti
     env: {
       ...process.env,
       SERPENT_E2E: '1',
+      SERPENT_E2E_USER_DATA_PATH: path.join(temporaryRoot, 'user-data'),
       SERPENT_E2E_CREATE_PARENT_PATH: temporaryRoot,
       SERPENT_E2E_CLIPBOARD_IMAGE_PATH: invalidClipboardSource,
     },

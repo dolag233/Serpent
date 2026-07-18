@@ -171,31 +171,23 @@ test("generates a decoded thumbnail and keeps asset viewer context coherent", as
     ).toBeHidden();
     await expectImageDecoded(preview.locator("img.preview-image"));
     await preview.locator(".preview-image-viewport").hover();
+    const fitBox = await preview.locator("img.preview-image").boundingBox();
+    expect(fitBox).not.toBeNull();
     await window.mouse.wheel(0, -200);
-    await expect(preview.locator("img.preview-image")).toHaveAttribute(
-      "style",
-      /scale\(1\)/,
-    );
+    await expect
+      .poll(async () => (await preview.locator("img.preview-image").boundingBox())?.width)
+      .toBeCloseTo(fitBox!.width, 0);
     await window.keyboard.down("Control");
     await window.mouse.wheel(0, -400);
     await window.keyboard.up("Control");
     await expect
-      .poll(() =>
-        preview
-          .locator("img.preview-image")
-          .evaluate((image) => image.style.transform),
-      )
-      .not.toContain("scale(1)");
+      .poll(async () => (await preview.locator("img.preview-image").boundingBox())?.width)
+      .toBeGreaterThan(fitBox!.width);
     await window.keyboard.press("ArrowRight");
     const nextPreview = window.getByRole("region", {
       name: "next-automatic.png 查看页面",
     });
     await expectImageDecoded(nextPreview.locator("img.preview-image"));
-    const nextAssetCard = window
-      .locator(".asset-card")
-      .filter({ hasText: "next-automatic.png" });
-    await expect(nextAssetCard).toHaveAttribute("aria-pressed", "true");
-    await expect(assetCard).toHaveAttribute("aria-pressed", "false");
     await expect(
       window
         .locator(".inspector-hero-compact")
@@ -206,7 +198,11 @@ test("generates a decoded thumbnail and keeps asset viewer context coherent", as
     );
     await window.keyboard.press("Escape");
     await expect(nextPreview).toBeHidden();
+    const nextAssetCard = window
+      .locator(".asset-card")
+      .filter({ hasText: "next-automatic.png" });
     await expect(nextAssetCard).toHaveAttribute("aria-pressed", "true");
+    await expect(assetCard).toHaveAttribute("aria-pressed", "false");
     await expect(nextAssetCard).toBeFocused();
 
     const masonryViewButton = window.locator(
@@ -267,6 +263,7 @@ test("video preview reports a specific generation failure and persists its diagn
       SERPENT_E2E_CREATE_PARENT_PATH: temporaryRoot,
       SERPENT_E2E_OPEN_LIBRARY_PATH: libraryPath,
       SERPENT_E2E_IMPORT_FILES: sourcePath,
+      SERPENT_E2E_USER_DATA_PATH: path.join(temporaryRoot, "user-data"),
       SERPENT_FFMPEG_PATH: missingFfmpegPath,
     },
   });
@@ -305,14 +302,9 @@ test("video preview reports a specific generation failure and persists its diagn
       name: "broken-preview.mp4 查看页面",
     });
     await expect(preview).toBeVisible();
-    await expect(preview.getByText("预览不可用")).toBeVisible();
-    await expect(
-      preview.getByText(/缺少 FFmpeg|媒体处理失败|源文件可能损坏/),
-    ).toBeVisible();
+    await expect(preview.getByText("缺少 FFmpeg")).toBeVisible();
     await preview.getByRole("button", { name: "重试生成" }).click();
-    await expect(
-      preview.getByText(/缺少 FFmpeg|媒体处理失败|源文件可能损坏/),
-    ).toBeVisible({
+    await expect(preview.getByText("缺少 FFmpeg")).toBeVisible({
       timeout: 15_000,
     });
 
@@ -332,7 +324,8 @@ test("video preview reports a specific generation failure and persists its diagn
 
     await preview.getByRole("button", { name: "关闭查看页面" }).click();
     await expect(preview).toBeHidden();
-    await window.getByRole("button", { name: "后台任务" }).click();
+    await window.getByRole("button", { name: "更多工具" }).click();
+    await window.getByRole("menuitem", { name: "后台任务" }).click();
     const jobsDialog = window.getByRole("dialog", { name: "后台媒体任务" });
     await expect(jobsDialog).toBeVisible();
     await expect(jobsDialog.getByText(/失败 [1-9]/)).toBeVisible();
@@ -351,9 +344,7 @@ test("video preview reports a specific generation failure and persists its diagn
     const reopenedPreview = window.getByRole("region", {
       name: "broken-preview.mp4 查看页面",
     });
-    await expect(
-      reopenedPreview.getByText(/缺少 FFmpeg|媒体处理失败|源文件可能损坏/),
-    ).toBeVisible();
+    await expect(reopenedPreview.getByText("缺少 FFmpeg")).toBeVisible();
   } finally {
     await application.close();
     rmSync(temporaryRoot, { force: true, recursive: true });

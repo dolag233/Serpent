@@ -49,6 +49,7 @@ test('imports files and a directory hierarchy, then reconciles external changes'
     env: {
       ...process.env,
       SERPENT_E2E: '1',
+      SERPENT_E2E_USER_DATA_PATH: path.join(temporaryRoot, 'user-data'),
       SERPENT_E2E_CREATE_PARENT_PATH: temporaryRoot,
       SERPENT_E2E_OPEN_LIBRARY_PATH: libraryPath,
       SERPENT_E2E_IMPORT_FILES: [imageSource, notesSource].join(path.delimiter),
@@ -61,21 +62,22 @@ test('imports files and a directory hierarchy, then reconciles external changes'
     await window.getByRole('button', { name: '创建资源库' }).click();
     await window.getByLabel('名称').fill(libraryName);
     await window.getByRole('button', { name: '创建', exact: true }).click();
-    await expect(window.getByRole('heading', { name: '把第一批素材放进来' })).toBeVisible();
+    await expect(window.getByRole('heading', { name: '导入资产以开始整理' })).toBeVisible();
 
     await window.getByRole('button', { name: '添加文件夹' }).click();
     await window.getByLabel("新文件夹名称").fill('项目');
     await window.keyboard.press("Enter");
-    await expect(window.getByRole('button', { name: '项目' })).toBeVisible();
-    await window.getByRole('button', { name: '项目' }).click();
+    await expect(window.getByRole('button', { name: '项目', exact: true })).toBeVisible();
+    await window.getByRole('button', { name: '项目', exact: true }).click();
 
     await window.getByRole('button', { name: '添加文件夹' }).click();
     await window.getByLabel("新文件夹名称").fill('角色');
     await window.keyboard.press("Enter");
     await expect(window.getByRole('button', { name: '角色' })).toBeVisible();
 
-    await window.getByRole('button', { name: '项目' }).click();
-    await window.getByRole('button', { name: '导入文件', exact: true }).first().click();
+    await window.getByRole('button', { name: '项目', exact: true }).click();
+    await window.getByRole('button', { name: /资源库菜单|当前资源库/ }).click();
+    await window.getByRole('menuitem', { name: '导入文件', exact: true }).click();
     await expect(window.getByText('hero.png', { exact: true })).toBeVisible();
     await expect(window.getByText('notes.txt', { exact: true })).toBeVisible();
     expect(readFileSync(path.join(libraryPath, 'Assets', '项目', 'hero.png'), 'utf8')).toBe('image-v1');
@@ -91,7 +93,8 @@ test('imports files and a directory hierarchy, then reconciles external changes'
     const operationsPath = path.join(libraryPath, '.serpent', 'operations');
     expect(existsSync(operationsPath) ? readdirSync(operationsPath, { recursive: true }) : []).toHaveLength(0);
 
-    await window.getByRole('button', { name: '导入文件', exact: true }).first().click();
+    await window.getByRole('button', { name: /资源库菜单|当前资源库/ }).click();
+    await window.getByRole('menuitem', { name: '导入文件', exact: true }).click();
     const conflictDialog = window.getByRole('dialog');
     await expect(conflictDialog).toBeVisible();
     await expect(conflictDialog.getByRole('heading', { name: '处理导入冲突' })).toBeVisible();
@@ -106,7 +109,8 @@ test('imports files and a directory hierarchy, then reconciles external changes'
     expect(assetsAfterCopy.filter((asset) => asset.displayName.startsWith('notes')).length).toBe(2);
 
     await window.getByRole('button', { name: '角色' }).click();
-    await window.getByRole('button', { name: '导入文件夹', exact: true }).first().click();
+    await window.getByRole('button', { name: /资源库菜单|当前资源库/ }).click();
+    await window.getByRole('menuitem', { name: '导入文件夹', exact: true }).click();
     await expect(window.getByRole('button', { name: '正面' })).toBeVisible();
     await window.getByRole('button', { name: '正面' }).click();
     await expect(window.getByText('pose.webp', { exact: true })).toBeVisible();
@@ -131,7 +135,9 @@ test('imports files and a directory hierarchy, then reconciles external changes'
     writeFileSync(path.join(libraryPath, 'Assets', '项目', 'hero.png'), Buffer.from('image-v2-longer'));
     unlinkSync(importedNestedPath);
     await window.getByRole('button', { name: '刷新磁盘变化' }).click();
-    await expect(window.locator('.missing-banner', { hasText: '文件丢失' }).first()).toBeVisible();
+    await expect(
+      window.locator('.missing-overlay[aria-label="文件丢失"]').first(),
+    ).toBeVisible();
     const missingScreenshot = testInfo.outputPath('external-missing.png');
     await window.screenshot({ path: missingScreenshot });
     await testInfo.attach('external-missing', { path: missingScreenshot, contentType: 'image/png' });
@@ -163,7 +169,7 @@ test('imports files and a directory hierarchy, then reconciles external changes'
     expect(existsSync(operationsPath) ? readdirSync(operationsPath, { recursive: true }) : []).toHaveLength(0);
     expect(await resolveImportToken(window, pendingBeforeClose.importId)).toBe(false);
     await window.getByRole('button', { name: '打开资源库' }).click();
-    await expect(window.getByRole('button', { name: '项目' })).toBeVisible();
+    await expect(window.getByRole('button', { name: '项目', exact: true })).toBeVisible();
     const afterReopen = await listAllAssets(window);
     expect(afterReopen.find((asset) => asset.displayName === 'hero.png')?.assetId).toBe(heroBefore?.assetId);
     expect(afterReopen.find((asset) => asset.displayName === 'pose.webp')?.availability).toBe('missing');
@@ -191,6 +197,7 @@ test('shows a specific safe import reason and persists the complete Worker error
     env: {
       ...process.env,
       SERPENT_E2E: '1',
+      SERPENT_E2E_USER_DATA_PATH: path.join(temporaryRoot, 'user-data'),
       SERPENT_E2E_CREATE_PARENT_PATH: temporaryRoot,
       SERPENT_E2E_IMPORT_FOLDER: sourceDirectory,
     },
@@ -233,6 +240,7 @@ test('maps a real filesystem permission failure and logs its complete cause chai
     env: {
       ...process.env,
       SERPENT_E2E: '1',
+      SERPENT_E2E_USER_DATA_PATH: path.join(temporaryRoot, 'user-data'),
       SERPENT_E2E_CREATE_PARENT_PATH: temporaryRoot,
       SERPENT_E2E_IMPORT_FOLDER: sourceDirectory,
     },

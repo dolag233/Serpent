@@ -161,11 +161,11 @@ test("capture primary UI surfaces for the wave-3 UX audit", async () => {
     await window.waitForTimeout(5_600); // let the notice dismiss (5s + fade)
 
     // Filter panel: presets + tag picker.
-    await window.getByText("筛选与排序", { exact: true }).click();
+    await window.getByRole("button", { name: "标签", exact: true }).click();
     await window.getByLabel("标签过滤").focus();
     await window.waitForTimeout(400);
     await shot(window, "09-filter-panel");
-    await window.getByText("筛选与排序", { exact: true }).click();
+    await window.getByRole("button", { name: "标签", exact: true }).click();
 
     // Trash one asset via menu, then open the trash (preview retention).
     await window.locator(".asset-card").first().click({ button: "right" });

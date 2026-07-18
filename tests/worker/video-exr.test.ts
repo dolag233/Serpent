@@ -591,6 +591,7 @@ describe('video (ffprobe + ffmpeg)', () => {
       kind: 'webm_proxy',
       mimeType: 'video/mp4',
       playbackMode: 'source',
+      errorCode: 'FFMPEG_REQUIRED',
     });
 
     db.close();

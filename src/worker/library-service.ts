@@ -5198,7 +5198,6 @@ export class LibraryService {
   private resolvedPaletteFields(
     openLibrary: OpenLibrary,
     assetId: string,
-    _storedManualPalette: string | null,
   ): Pick<AssetMetadataResult, 'automaticPalette' | 'effectivePalette' | 'paletteSource'> {
     let automaticPalette: RepresentativeColor[] = [];
     const artifact = openLibrary.connection.prepare(
@@ -5285,7 +5284,7 @@ export class LibraryService {
         rating: 0,
         favorite: false,
         palette: null,
-        ...this.resolvedPaletteFields(openLibrary, input.assetId, null),
+        ...this.resolvedPaletteFields(openLibrary, input.assetId),
         sourcePageUrl: null,
         author: null,
         tags: this.fetchAssetTags(openLibrary.connection, input.assetId),
@@ -5300,7 +5299,7 @@ export class LibraryService {
       rating: row.rating,
       favorite: row.favorite !== 0,
       palette: row.palette,
-      ...this.resolvedPaletteFields(openLibrary, input.assetId, row.palette),
+      ...this.resolvedPaletteFields(openLibrary, input.assetId),
       sourcePageUrl: row.source_page_url,
       author: row.author,
       entityVersion: row.entity_version,
@@ -5562,7 +5561,7 @@ export class LibraryService {
         rating: updated.rating,
         favorite: updated.favorite !== 0,
         palette: updated.palette,
-        ...this.resolvedPaletteFields(openLibrary, input.assetId, updated.palette),
+        ...this.resolvedPaletteFields(openLibrary, input.assetId),
         sourcePageUrl: updated.source_page_url,
         author: updated.author,
         tags: this.fetchAssetTags(openLibrary.connection, input.assetId),
@@ -5619,7 +5618,7 @@ export class LibraryService {
       rating: newRating,
       favorite: newFavorite !== 0,
       palette: newPalette,
-      ...this.resolvedPaletteFields(openLibrary, input.assetId, newPalette),
+      ...this.resolvedPaletteFields(openLibrary, input.assetId),
       sourcePageUrl: newSourcePageUrl,
       author: newAuthor,
       tags: this.fetchAssetTags(openLibrary.connection, input.assetId),
@@ -8044,6 +8043,15 @@ export class LibraryService {
           status: 'ready',
           kind,
           mimeType: nativeMimeType,
+          ...(mediaType === 'video' &&
+          (artifact?.status === 'failed' || poster?.status === 'failed')
+            ? {
+                errorCode:
+                  (artifact?.status === 'failed'
+                    ? artifact.errorCode
+                    : poster?.errorCode) ?? 'MEDIA_PROCESSING_FAILED',
+              }
+            : {}),
           ...(posterArtifactId ? { posterArtifactId } : {}),
           playbackMode: 'source',
           sourceRevisionId: asset.current_revision_id,

@@ -358,7 +358,9 @@ export interface NavigationSidebarProps {
   // --- Inline folder edit (REQ-FOLDER-007) ---
   inlineFolderEdit: InlineFolderEditState | null;
   onInlineFolderEditChange: (value: string) => void;
-  onInlineFolderEditCommit: () => void;
+  onInlineFolderEditCommit: (
+    onCreateSuccess?: (parentFolderId: string | null) => void,
+  ) => void;
   onInlineFolderEditCancel: () => void;
 
   // --- Context menu ---
@@ -468,10 +470,25 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
     };
   }, [assetDropTarget]);
 
-  // Creating under a collapsed parent must reveal the inline create row.
-  useEffect(() => {
-    if (inlineFolderEdit?.kind !== "create") return;
-    const parentId = inlineFolderEdit.parentFolderId;
+  const persistedCollapsedFolderIds = new Set(navTreePrefs.collapsedFolderIds);
+  const collapsedFolderIds = new Set(persistedCollapsedFolderIds);
+  // Creating under a collapsed parent must reveal the inline create row. Keep
+  // this as derived view state: opening or cancelling an editor must not
+  // mutate the user's persisted navigation preference.
+  if (inlineFolderEdit?.kind === "create" && inlineFolderEdit.parentFolderId) {
+    collapsedFolderIds.delete(inlineFolderEdit.parentFolderId);
+  }
+
+  function toggleFolderCollapsed(folderId: string) {
+    const nextIds = persistedCollapsedFolderIds.has(folderId)
+      ? navTreePrefs.collapsedFolderIds.filter((id) => id !== folderId)
+      : [...navTreePrefs.collapsedFolderIds, folderId];
+    const next = withCollapsedFolderIds(navTreePrefs, nextIds);
+    setNavTreePrefs(next);
+    saveNavTreePreferences(next);
+  }
+
+  function revealCreatedFolderParent(parentId: string | null) {
     if (!parentId) return;
     setNavTreePrefs((current) => {
       if (!current.collapsedFolderIds.includes(parentId)) return current;
@@ -482,17 +499,10 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
       saveNavTreePreferences(next);
       return next;
     });
-  }, [inlineFolderEdit]);
+  }
 
-  const collapsedFolderIds = new Set(navTreePrefs.collapsedFolderIds);
-
-  function toggleFolderCollapsed(folderId: string) {
-    const nextIds = collapsedFolderIds.has(folderId)
-      ? navTreePrefs.collapsedFolderIds.filter((id) => id !== folderId)
-      : [...navTreePrefs.collapsedFolderIds, folderId];
-    const next = withCollapsedFolderIds(navTreePrefs, nextIds);
-    setNavTreePrefs(next);
-    saveNavTreePreferences(next);
+  function commitInlineFolderEditWithVisibleParent() {
+    onInlineFolderEditCommit(revealCreatedFolderParent);
   }
 
   /**
@@ -718,8 +728,9 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
     });
 
     // A create session adds a pending name-edit row as the parent's first
-    // child (top of the list when creating at the library root). The tree has
-    // no collapse state, so the row is always visible where it will land.
+    // child (top of the list when creating at the library root). A collapsed
+    // parent is expanded only as derived view state while the editor exists;
+    // its persisted preference changes only after a successful create.
     if (inlineFolderEdit?.kind === "create") {
       rows.splice(
         inlineCreateRowIndex(directoryEntries, inlineFolderEdit.parentFolderId),
@@ -729,7 +740,7 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
           key="inline-folder-create"
           onCancel={onInlineFolderEditCancel}
           onChange={onInlineFolderEditChange}
-          onCommit={onInlineFolderEditCommit}
+          onCommit={commitInlineFolderEditWithVisibleParent}
           state={inlineFolderEdit}
         />,
       );

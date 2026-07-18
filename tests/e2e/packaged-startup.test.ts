@@ -19,6 +19,11 @@ test('the packaged application starts and completes a real Worker import', async
   const application = await electron.launch({
     executablePath,
     args: [],
+    env: {
+      ...process.env,
+      SERPENT_E2E: '1',
+      SERPENT_E2E_USER_DATA_PATH: path.join(temporaryRoot, 'user-data'),
+    },
   });
 
   try {
@@ -85,6 +90,11 @@ test('the packaged application FTS5 search finds and filters imported assets', a
   const application = await electron.launch({
     executablePath,
     args: [],
+    env: {
+      ...process.env,
+      SERPENT_E2E: '1',
+      SERPENT_E2E_USER_DATA_PATH: path.join(temporaryRoot, 'user-data'),
+    },
   });
 
   try {

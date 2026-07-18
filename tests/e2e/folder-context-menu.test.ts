@@ -412,10 +412,25 @@ test("creates under the selected folder from the sidebar plus entry, cancels wit
     await expect(window.locator(".scope-crumb-label.is-current")).toHaveText(
       "父级",
     );
+    // Give the parent a disclosure control, then collapse it. Starting a
+    // second create must reveal the inline row without losing the persisted
+    // collapse preference when that create is cancelled.
+    await window.getByRole("button", { name: "添加文件夹" }).click();
+    const editRow = window.locator(".nav-inline-edit");
+    await expect(editRow).toBeVisible({ timeout: 5_000 });
+    await editRow.locator("input").fill("已有子级");
+    await window.locator(".workspace").click();
+    await expect(
+      window.getByRole("button", { name: "已有子级", exact: true }),
+    ).toBeVisible({ timeout: 10_000 });
+    await window.getByRole("button", { name: "折叠 父级" }).click();
+    await expect(
+      window.getByRole("button", { name: "已有子级", exact: true }),
+    ).toHaveCount(0);
+
     await window.getByRole("button", { name: "添加文件夹" }).click();
 
     // The pending row nests under the selected folder, not at the root.
-    const editRow = window.locator(".nav-inline-edit");
     await expect(editRow).toBeVisible({ timeout: 5_000 });
     const parentPadding = await window
       .getByRole("button", { name: "父级", exact: true })
@@ -429,9 +444,39 @@ test("creates under the selected folder from the sidebar plus entry, cancels wit
     const input = editRow.locator("input");
     await input.press("Escape");
     await expect(editRow).toHaveCount(0, { timeout: 5_000 });
+    await expect(
+      window.getByRole("button", { name: "已有子级", exact: true }),
+    ).toHaveCount(0);
     expect(existsSync(path.join(libraryPath, "Assets", "父级", "新建文件夹"))).toBe(
       false,
     );
+
+    // Blank blur resolves as cancellation and must not change the original
+    // persisted collapsed preference.
+    await window.getByRole("button", { name: "添加文件夹" }).click();
+    await expect(editRow).toBeVisible({ timeout: 5_000 });
+    await input.fill("");
+    await window.locator(".workspace").click();
+    await expect(editRow).toHaveCount(0, { timeout: 5_000 });
+    await expect(
+      window.getByRole("button", { name: "已有子级", exact: true }),
+    ).toHaveCount(0);
+
+    // A rejected create keeps the editor visible. Cancelling it afterwards
+    // must likewise restore the collapsed view instead of persisting the
+    // temporary reveal used to show the inline row.
+    await window.getByRole("button", { name: "添加文件夹" }).click();
+    await expect(editRow).toBeVisible({ timeout: 5_000 });
+    await input.fill("已有子级");
+    await window.locator(".workspace").click();
+    await expect(editRow.locator(".nav-inline-edit-error")).toBeVisible({
+      timeout: 10_000,
+    });
+    await input.press("Escape");
+    await expect(editRow).toHaveCount(0, { timeout: 5_000 });
+    await expect(
+      window.getByRole("button", { name: "已有子级", exact: true }),
+    ).toHaveCount(0);
 
     // Blur with a valid name commits: clicking away creates the folder.
     await window.getByRole("button", { name: "添加文件夹" }).click();
@@ -445,6 +490,12 @@ test("creates under the selected folder from the sidebar plus entry, cancels wit
     await expect(
       window.getByRole("button", { name: "子级", exact: true }),
     ).toBeVisible({ timeout: 10_000 });
+    await expect(
+      window.getByRole("button", { name: "已有子级", exact: true }),
+    ).toBeVisible({ timeout: 10_000 });
+    await expect(
+      window.getByRole("button", { name: "折叠 父级" }),
+    ).toHaveAttribute("aria-expanded", "true");
     expect(existsSync(path.join(libraryPath, "Assets", "父级", "子级"))).toBe(
       true,
     );

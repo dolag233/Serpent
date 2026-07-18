@@ -23,6 +23,7 @@ test('organizes, finds, trashes, and restores an imported asset through the UI',
     env: {
       ...process.env,
       SERPENT_E2E: '1',
+      SERPENT_E2E_USER_DATA_PATH: path.join(temporaryRoot, 'user-data'),
       SERPENT_E2E_CREATE_PARENT_PATH: temporaryRoot,
       SERPENT_E2E_OPEN_LIBRARY_PATH: libraryPath,
       SERPENT_E2E_IMPORT_FILES: sourcePath,
@@ -71,13 +72,12 @@ test('organizes, finds, trashes, and restores an imported asset through the UI',
     await expect(window.locator('.toast')).toContainText('标签已添加');
     // The sidebar no longer enumerates tags (REQ-TAG-001); enter the
     // tag-filtered view through the retained 标签过滤 entry instead.
-    await window.getByText('筛选与排序', { exact: true }).click();
+    await window.getByRole('button', { name: '标签', exact: true }).click();
     await window.getByLabel('标签过滤').fill('角色');
     await window.getByRole("option", { name: /角色/ }).click();
     await expect(window.getByRole('button', { name: /hero\.png/i })).toBeVisible();
-    // Close the disclosure again so the later 筛选与排序 toggle below still
-    // opens the panel for the favorite/tag filter search steps.
-    await window.getByText('筛选与排序', { exact: true }).click();
+    // Close the tag dimension before continuing with other discovery controls.
+    await window.getByRole('button', { name: '标签', exact: true }).click();
 
     await window.getByRole('button', { name: /所有资产/ }).click();
     await window.getByRole('button', { name: /hero\.png/i }).click({ button: 'right' });
@@ -133,7 +133,10 @@ test('organizes, finds, trashes, and restores an imported asset through the UI',
     await expect(window.getByText(/版本 2/)).toBeVisible();
 
     const descriptionInput = window.getByLabel('描述');
-    const sourceUrlInput = window.getByLabel('源链接');
+    const sourceUrlInput = window.getByRole('textbox', {
+      name: '源链接',
+      exact: true,
+    });
     await descriptionInput.fill('待清空描述');
     await descriptionInput.blur();
     await expect(window.getByText(/版本 3/)).toBeVisible();
@@ -177,8 +180,9 @@ test('organizes, finds, trashes, and restores an imported asset through the UI',
     // Search description text (not the filename) so the snippet line adds
     // context instead of duplicating the primary display name.
     await window.getByLabel('搜索资源库').fill('快速连续');
-    await window.getByText('筛选与排序', { exact: true }).click();
+    await window.getByRole('button', { name: '更多', exact: true }).click();
     await window.getByLabel('喜欢过滤').selectOption('yes');
+    await window.getByRole('button', { name: '标签', exact: true }).click();
     await window.getByLabel('标签过滤').fill('临时');
     await window.getByRole("option", { name: /临时/ }).click();
     await window.getByRole('button', { name: '搜索', exact: true }).click();
@@ -189,26 +193,30 @@ test('organizes, finds, trashes, and restores an imported asset through the UI',
 
     await window.getByLabel('智能合集标题').fill('英雄精选');
     await window.getByRole('button', { name: '保存', exact: true }).click();
-    await expect(window.getByRole('button', { name: '英雄精选', exact: true })).toBeVisible();
+    await expect(window.getByRole('button', { name: /英雄精选/ })).toBeVisible();
     // Flush smart-collection save toast before navigating
     await window.waitForFunction(
       () => !document.querySelector('.toast'),
       { timeout: 10_000 },
     );
-    await window.getByRole('button', { name: '英雄精选', exact: true }).click();
+    await window.getByRole('button', { name: /英雄精选/ }).click();
     // Smart collection may show search result toast but it's not guaranteed
     // across runs; verify the asset is visible instead
     await expect(window.getByRole('button', { name: /hero\.png/i })).toBeVisible({ timeout: 10_000 });
 
-    await window.getByRole('button', { name: '英雄精选', exact: true }).click({ button: 'right' });
+    // Opening a smart collection intentionally clears transient discovery
+    // controls. Set an explicit current condition before exercising update.
+    await window.getByRole('button', { name: '格式', exact: true }).click();
+    await window.getByLabel('格式过滤').fill('png');
+    await window.getByRole('button', { name: /英雄精选/ }).click({ button: 'right' });
     await window.getByRole('menuitem', { name: '用当前条件更新' }).click();
     await expect(window.locator('.toast')).toContainText('智能合集条件已更新');
 
-    await window.getByRole('button', { name: '英雄精选', exact: true }).click({ button: 'right' });
+    await window.getByRole('button', { name: /英雄精选/ }).click({ button: 'right' });
     await window.getByRole('menuitem', { name: '重命名智能合集' }).click();
     await window.getByRole('dialog').getByLabel('智能合集名称').fill('英雄筛选');
     await window.getByRole('dialog').getByRole('button', { name: '保存名称' }).click();
-    await expect(window.getByRole('button', { name: '英雄筛选', exact: true })).toBeVisible();
+    await expect(window.getByRole('button', { name: /英雄筛选/ })).toBeVisible();
 
     await window.getByRole('button', { name: /所有资产/ }).click();
     await window.getByRole('button', { name: /hero\.png/i }).click({ button: 'right' });
@@ -244,6 +252,7 @@ test('multi-select performs batch organization, trash, restore, and permanent de
     env: {
       ...process.env,
       SERPENT_E2E: '1',
+      SERPENT_E2E_USER_DATA_PATH: path.join(temporaryRoot, 'user-data'),
       SERPENT_E2E_CREATE_PARENT_PATH: temporaryRoot,
       SERPENT_E2E_IMPORT_FILES: [firstSource, secondSource].join(path.delimiter),
     },
@@ -314,7 +323,7 @@ test('multi-select performs batch organization, trash, restore, and permanent de
     const tagSearchCount = await searchRequestCount();
     // The sidebar no longer enumerates tags (REQ-TAG-001); enter the
     // tag-filtered view through the retained 标签过滤 entry instead.
-    await window.getByText('筛选与排序', { exact: true }).click();
+    await window.getByRole('button', { name: '标签', exact: true }).click();
     await window.getByLabel('标签过滤').fill('批量标签');
     await window.getByRole("option", { name: /批量标签/ }).click();
     await expect.poll(searchRequestCount).toBeGreaterThan(tagSearchCount);
@@ -413,6 +422,7 @@ test('collection recursion toggle immediately refreshes the visible collection s
     env: {
       ...process.env,
       SERPENT_E2E: '1',
+      SERPENT_E2E_USER_DATA_PATH: path.join(temporaryRoot, 'user-data'),
       SERPENT_E2E_CREATE_PARENT_PATH: temporaryRoot,
       SERPENT_E2E_IMPORT_FILES: [childSourcePath, directSourcePath].join(path.delimiter),
     },

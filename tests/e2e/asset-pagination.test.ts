@@ -35,6 +35,7 @@ test("ordinary browsing continuously appends every asset without page controls",
     env: {
       ...process.env,
       SERPENT_E2E: "1",
+      SERPENT_E2E_USER_DATA_PATH: path.join(temporaryRoot, "user-data"),
       SERPENT_E2E_CREATE_PARENT_PATH: temporaryRoot,
       SERPENT_E2E_IMPORT_FILES: sourcePaths.join(path.delimiter),
     },
@@ -213,23 +214,24 @@ test("ordinary browsing continuously appends every asset without page controls",
           await expect(
             unsupportedViewer.getByText("不支持内置预览"),
           ).toBeVisible();
-          const [viewerBox, viewerCanvasBox] = await Promise.all([
+          const [viewerBox, workspaceBox] = await Promise.all([
             unsupportedViewer.boundingBox(),
-            workspaceCanvas.boundingBox(),
+            window.locator(".workspace").boundingBox(),
           ]);
           expect(viewerBox).not.toBeNull();
-          expect(viewerCanvasBox).not.toBeNull();
+          expect(workspaceBox).not.toBeNull();
+          await expect(workspaceCanvas).toBeHidden();
           expect(
-            Math.abs(viewerBox!.x - viewerCanvasBox!.x),
+            Math.abs(viewerBox!.x - workspaceBox!.x),
           ).toBeLessThanOrEqual(1);
           expect(
-            Math.abs(viewerBox!.y - viewerCanvasBox!.y),
+            Math.abs(viewerBox!.y - workspaceBox!.y),
           ).toBeLessThanOrEqual(1);
           expect(
-            Math.abs(viewerBox!.width - viewerCanvasBox!.width),
+            Math.abs(viewerBox!.width - workspaceBox!.width),
           ).toBeLessThanOrEqual(1);
           expect(
-            Math.abs(viewerBox!.height - viewerCanvasBox!.height),
+            Math.abs(viewerBox!.height - workspaceBox!.height),
           ).toBeLessThanOrEqual(1);
           await expect(
             unsupportedViewer.getByRole("button", { name: "重试生成" }),
@@ -253,13 +255,15 @@ test("ordinary browsing continuously appends every asset without page controls",
 
     // Switching to a browse scope explicitly clears lingering discovery
     // controls, so page 1 and subsequent pages cannot use different queries.
-    await window.getByText("筛选与排序", { exact: true }).click();
+    await window.getByRole("button", { name: "格式", exact: true }).click();
     await window.getByLabel("格式过滤").fill("png");
     await expect(window.locator(".asset-card")).toHaveCount(0);
     await window
       .getByRole("button", { name: "分页文件夹", exact: true })
       .click();
-    await expect(window.getByLabel("格式过滤")).toHaveValue("");
+    await expect(
+      window.getByRole("button", { name: "格式", exact: true }),
+    ).not.toHaveClass(/is-active/);
     await loadEveryAssetInCurrentScope();
 
     // Every scope uses the same continuous loading model, while the managed
@@ -271,7 +275,7 @@ test("ordinary browsing continuously appends every asset without page controls",
       .click();
     await expect(window.locator(".asset-card")).toHaveCount(0);
     await expect(
-      window.getByRole("heading", { name: "把第一批素材放进来" }),
+      window.getByRole("heading", { name: "导入资产以开始整理" }),
     ).toBeVisible();
 
     const setup = await window.evaluate(async () => {
@@ -371,7 +375,7 @@ test("ordinary browsing continuously appends every asset without page controls",
           await serpent.library.createSmartCollection({
             libraryId,
             name: "分页智能合集",
-            queryDefinitionJson: JSON.stringify({ filters: [{ field: "format", values: ["png"], exclude: false }] }),
+            queryDefinitionJson: JSON.stringify({ filters: [{ field: "format", values: ["txt"], exclude: false }] }),
           })
         ).ok
       ) {
@@ -384,22 +388,24 @@ test("ordinary browsing continuously appends every asset without page controls",
     // 筛选面板现在是外部点击即关的浮层：上一轮的作用域点击已将其关闭，
     // 填写前先重新展开。
     await window.getByRole("button", { name: /所有资产/ }).click();
-    await window.getByText("筛选与排序", { exact: true }).click();
+    await window.getByRole("button", { name: "格式", exact: true }).click();
     await window.getByLabel("格式过滤").fill("png");
     await expect(window.locator(".asset-card")).toHaveCount(0);
     await window.getByRole("button", { name: /分页合集/ }).click();
-    await expect(window.getByLabel("格式过滤")).toHaveValue("");
+    await expect(
+      window.getByRole("button", { name: "格式", exact: true }),
+    ).not.toHaveClass(/is-active/);
     await loadEveryAssetInCurrentScope();
     // The sidebar no longer enumerates tags (REQ-TAG-001); enter the
     // tag-filtered view through the retained 标签过滤 entry instead.
-    await window.getByText("筛选与排序", { exact: true }).click();
+    await window.getByRole("button", { name: "标签", exact: true }).click();
     await window.getByLabel("标签过滤").fill("分页标签");
     await window.getByRole("option", { name: /分页标签/ }).click();
     await loadEveryAssetInCurrentScope();
     await window.getByRole("button", { name: /分页合集/ }).click();
     await loadEveryAssetInCurrentScope();
     await window
-      .getByRole("button", { name: "分页智能合集", exact: true })
+      .getByRole("button", { name: /分页智能合集/ })
       .click();
     await loadEveryAssetInCurrentScope();
 

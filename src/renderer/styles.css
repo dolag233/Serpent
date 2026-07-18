@@ -3039,7 +3039,7 @@ select.ai-config-input {
 }
 
 .justified-card-slot .asset-thumbnail {
-  object-fit: cover;
+  object-fit: contain;
 }
 
 .justified-card-slot .asset-caption {
@@ -3314,7 +3314,7 @@ select.ai-config-input {
   display: block;
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
   pointer-events: none;
 }
 

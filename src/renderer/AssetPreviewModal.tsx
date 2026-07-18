@@ -413,7 +413,10 @@ export function AssetPreviewModal({
         "HTMLVideoElement emitted an error without MediaError details.",
     );
     if (resolution?.playbackMode === "source") {
-      setError(t("preview.videoFailed", { code: errorCode }));
+      setError(
+        previewErrorDetail(resolution.errorCode, t) ??
+          t("preview.videoFailed", { code: errorCode }),
+      );
       void ensureProxyFallback(errorCode);
       return;
     }

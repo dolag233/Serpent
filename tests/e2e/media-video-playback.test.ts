@@ -332,6 +332,9 @@ test("plays a direct MP4 and a generated WebM fallback through the asset viewer"
       .poll(() => directVideo.getAttribute("src"), { timeout: 30_000 })
       .toMatch(/^serpent:\/\/source\//);
     await expectPlayableAndSeekable(directVideo);
+    // Viewer chrome intentionally fades while idle. Real pointer movement
+    // wakes it before the close control is clicked.
+    await directVideo.hover();
     await directViewer.getByRole("button", { name: "关闭查看页面" }).click();
 
     await proxyCard.click();

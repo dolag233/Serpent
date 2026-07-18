@@ -24,6 +24,7 @@ test('cancels a batch relink preview and later applies a fresh preview', async (
     env: {
       ...process.env,
       SERPENT_E2E: '1',
+      SERPENT_E2E_USER_DATA_PATH: path.join(temporaryRoot, 'user-data'),
       SERPENT_E2E_CREATE_PARENT_PATH: temporaryRoot,
       SERPENT_E2E_IMPORT_FILES: sourcePath,
       SERPENT_E2E_RELINK_ROOT: replacementRoot,
