@@ -93,6 +93,7 @@ export interface InspectorPanelProps {
   editRating: number;
   editFavorite: boolean;
   editSourceUrl: string;
+  editAuthor: string;
   displayedPalette: string[];
   automaticPaletteRatios: Map<string, number>;
   aiContent: AiContent | null;
@@ -105,6 +106,8 @@ export interface InspectorPanelProps {
   handleFavoriteToggle: () => void;
   handleSourceUrlSave: () => void;
   handleSourceUrlInput: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  handleAuthorSave: () => void;
+  handleAuthorInput: (e: React.ChangeEvent<HTMLInputElement>) => void;
   // Tag chip props (REQ-TAG-003)
   allTags: TagSummary[];
   onAssignTagToAsset?: (tagId: string) => void;
@@ -374,6 +377,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
     editRating,
     editFavorite,
     editSourceUrl,
+    editAuthor,
     displayedPalette,
     automaticPaletteRatios,
     aiContent,
@@ -383,6 +387,8 @@ export function InspectorPanel(props: InspectorPanelProps) {
     handleFavoriteToggle,
     handleSourceUrlSave,
     handleSourceUrlInput,
+    handleAuthorSave,
+    handleAuthorInput,
     allTags,
     onAssignTagToAsset,
     onRemoveTagFromAsset,
@@ -949,6 +955,42 @@ export function InspectorPanel(props: InspectorPanelProps) {
                   ref={descriptionRef}
                   rows={2}
                   value={editDescription}
+                />
+                )}
+              </div>
+                );
+              })()}
+
+              {(() => {
+                const authorEditable =
+                  !isMultiEdit || isEditableScalar(multiEdit?.author);
+                const authorMixed =
+                  isMultiEdit && multiEdit?.author.kind === "mixed";
+                return (
+              <div className="editor-field">
+                <label className="micro-label" htmlFor="meta-author">
+                  {t("inspector.author")}
+                </label>
+                {authorMixed ? (
+                  <div
+                    className="text-field inspector-input inspector-mixed-field"
+                    id="meta-author"
+                  >
+                    {t("inspector.mixedValues")}
+                  </div>
+                ) : (
+                <input
+                  className="text-field inspector-input"
+                  disabled={!authorEditable}
+                  id="meta-author"
+                  maxLength={255}
+                  onBlur={handleAuthorSave}
+                  onChange={handleAuthorInput}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") handleAuthorSave();
+                  }}
+                  placeholder={t("inspector.authorPlaceholder")}
+                  value={editAuthor}
                 />
                 )}
               </div>

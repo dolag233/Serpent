@@ -19,6 +19,7 @@ export const SECONDARY_SORT_FIELDS: SortFieldOption[] = [
   "created_at",
   "rating",
   "color",
+  "author",
 ];
 
 export type SortModeControlProps = {
@@ -52,6 +53,8 @@ function labelForSortField(
       return t("filter.sortRating");
     case "color":
       return t("filter.sortColor");
+    case "author":
+      return t("filter.sortAuthor");
   }
 }
 

@@ -896,6 +896,7 @@ async function commandFor(
         favorite: request.favorite,
         palette: request.palette,
         sourcePageUrl: request.sourcePageUrl,
+        author: request.author,
       };
     case "asset.metadata.backfill.request":
       return { type: "asset.metadata.backfill", libraryId: request.libraryId };

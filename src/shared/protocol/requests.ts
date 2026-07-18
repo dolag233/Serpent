@@ -44,6 +44,14 @@ export const sourcePageUrlSchema = z.union([
     message: 'Source-page URLs must not include surrounding whitespace.',
   }),
 ]);
+// Author/creator (Serpent-7x0) mirrors sourcePageUrl's clear-with-empty-string
+// contract, without the URL-shape constraint.
+export const assetAuthorSchema = z.union([
+  z.literal(''),
+  nonBlankString.max(255).refine((value) => value === value.trim(), {
+    message: 'Author must not include surrounding whitespace.',
+  }),
+]);
 
 export const suspectedDuplicateDecisionSchema = z.enum(['skip', 'merge', 'create-copy']);
 export const nameConflictDecisionSchema = z.enum(['keep-both', 'replace', 'skip']);
@@ -311,6 +319,7 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     favorite: z.boolean().optional(),
     palette: manualPaletteSchema.optional(),
     sourcePageUrl: sourcePageUrlSchema.optional(),
+    author: assetAuthorSchema.optional(),
   }),
   z.strictObject({
     type: z.literal('asset.metadata.backfill.request'),
@@ -826,6 +835,7 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     favorite: z.boolean().optional(),
     palette: manualPaletteSchema.optional(),
     sourcePageUrl: sourcePageUrlSchema.optional(),
+    author: assetAuthorSchema.optional(),
   }),
   z.strictObject({
     type: z.literal('asset.metadata.backfill'),

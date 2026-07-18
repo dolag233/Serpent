@@ -897,6 +897,7 @@ describe('preview response protocol', () => {
         effectivePalette: ['#FF0000', '#0000FF'],
         paletteSource: 'automatic',
         sourcePageUrl: null,
+        author: null,
         entityVersion: 0,
         updatedAt: '1970-01-01T00:00:00.000Z',
       },

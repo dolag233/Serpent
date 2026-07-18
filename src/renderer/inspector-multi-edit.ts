@@ -17,6 +17,7 @@ export type InspectorMultiEditModel = {
   rating: ScalarFieldState<number>;
   favorite: ScalarFieldState<boolean>;
   sourceUrl: ScalarFieldState<string>;
+  author: ScalarFieldState<string>;
   tags: MultiEditTag[];
 };
 
@@ -78,6 +79,7 @@ export type MultiEditMetadataSlice = {
   rating: number;
   favorite: boolean;
   sourcePageUrl: string | null;
+  author: string | null;
   tags: MultiEditTag[];
 };
 
@@ -98,7 +100,10 @@ export function buildInspectorMultiEdit(
   const sourceUrl = resolveScalarField(
     slices.map((slice) => slice.sourcePageUrl ?? ""),
   );
-  if (!description || !rating || !favorite || !sourceUrl) {
+  const author = resolveScalarField(
+    slices.map((slice) => slice.author ?? ""),
+  );
+  if (!description || !rating || !favorite || !sourceUrl || !author) {
     return null;
   }
 
@@ -108,6 +113,7 @@ export function buildInspectorMultiEdit(
     rating,
     favorite,
     sourceUrl,
+    author,
     tags: intersectAssetTags(slices.map((slice) => slice.tags)),
   };
 }
@@ -124,6 +130,7 @@ export function toMultiEditSlice(input: {
   rating: number;
   favorite: boolean;
   sourcePageUrl: string | null;
+  author: string | null;
   tags?: readonly { id: string; name: string; source: "user" | "ai" }[];
 }): MultiEditMetadataSlice {
   return {
@@ -131,6 +138,7 @@ export function toMultiEditSlice(input: {
     rating: input.rating,
     favorite: input.favorite,
     sourcePageUrl: input.sourcePageUrl,
+    author: input.author,
     tags: (input.tags ?? []).map((tag) => ({
       id: tag.id,
       name: tag.name,

@@ -25,6 +25,7 @@ const FTS5_COLUMNS = new Set([
   'tags',
   'description',
   'source_url',
+  'author',
   'folder_path',
   'metadata_text',
 ]);

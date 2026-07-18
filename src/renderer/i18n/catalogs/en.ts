@@ -216,6 +216,7 @@ export const en = {
     sortDuration: "Duration",
     sortRating: "Rating",
     sortColor: "Color",
+    sortAuthor: "Author",
     sortDirection: "Sort direction",
     sortAsc: "Ascending",
     sortDesc: "Descending",
@@ -355,6 +356,8 @@ export const en = {
   },
   inspector: {
     description: "Description",
+    author: "Author",
+    authorPlaceholder: "Enter author…",
     sourceUrl: "Source URL",
     openSourceUrl: "Open source URL in browser",
     sourceUrlInvalid: "Source URL cannot be opened (http/https without credentials required)",
@@ -639,6 +642,10 @@ export const en = {
     folderTitle: "This folder is empty",
     folderBody: "Add your first assets",
     folderDetail: "Files are copied into a readable Assets directory with stable asset identities.",
+    searchTitle: "No matching assets",
+    searchBody: "Try a different query or clear filters.",
+    trashTitle: "Trash is empty",
+    trashBody: "Assets you move to Trash will appear here.",
     noLibraryTitle: "Start with a local library",
     noLibraryBody: "Files, folders, and metadata stay where you control them."
   },

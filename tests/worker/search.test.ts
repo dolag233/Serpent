@@ -166,7 +166,7 @@ describe('schema v5->v6 migration', () => {
 
     const db = new TestDatabase(path.join(libraryPath, '.serpent', 'library.db'));
     try {
-      expect(db.pragma('user_version')).toEqual([{ user_version: 14 }]);
+      expect(db.pragma('user_version')).toEqual([{ user_version: 15 }]);
 
       // Verify FTS tables exist.
       const searchIndex = db.prepare(
@@ -1153,6 +1153,30 @@ describe('sort', () => {
     });
     expect(result.items[0]!.assetId).toBe(assetId);
     expect(result.items[1]!.assetId).toBe(assetId2);
+
+    service.closeAll();
+  });
+
+  it('sorts by author ascending with nulls last and case-insensitive ordering', () => {
+    const { service, libraryId, assetId, libraryPath } = createLibraryWithAssetAndTags();
+    const assetId2 = createSecondAsset(service, libraryId, libraryPath, 'Second asset');
+    const assetId3 = createSecondAsset(service, libraryId, libraryPath, 'Third asset');
+
+    service.setAssetMetadata({ libraryId, assetId, expectedVersion: 1, author: 'zeta' });
+    service.setAssetMetadata({ libraryId, assetId: assetId2, expectedVersion: 1, author: 'Alpha' });
+    // assetId3 is left without an author to exercise the nulls-last ordering.
+
+    const ascending = service.searchAssets({
+      libraryId,
+      sort: { field: 'author', order: 'asc' },
+    });
+    expect(ascending.items.map((asset) => asset.assetId)).toEqual([assetId2, assetId, assetId3]);
+
+    const descending = service.searchAssets({
+      libraryId,
+      sort: { field: 'author', order: 'desc' },
+    });
+    expect(descending.items.map((asset) => asset.assetId)).toEqual([assetId, assetId2, assetId3]);
 
     service.closeAll();
   });

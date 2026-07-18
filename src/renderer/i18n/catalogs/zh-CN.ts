@@ -207,6 +207,7 @@ export const zhCN = {
     sortDuration: "时长",
     sortRating: "评分",
     sortColor: "颜色",
+    sortAuthor: "作者",
     sortDirection: "排序方向",
     sortAsc: "升序",
     sortDesc: "降序",
@@ -346,6 +347,8 @@ export const zhCN = {
   },
   inspector: {
     description: "描述",
+    author: "作者",
+    authorPlaceholder: "输入作者…",
     sourceUrl: "源链接",
     openSourceUrl: "在浏览器中打开源链接",
     sourceUrlInvalid: "源链接不可打开（需要 http/https 且不含凭据）",
@@ -630,6 +633,10 @@ export const zhCN = {
     folderTitle: "此文件夹为空",
     folderBody: "导入资产以开始整理",
     folderDetail: "文件将复制到资源目录，并建立稳定的资产身份。",
+    searchTitle: "未找到匹配的资产",
+    searchBody: "请调整关键词或筛选条件后重试。",
+    trashTitle: "回收站为空",
+    trashBody: "移入回收站的资产会显示在这里。",
     noLibraryTitle: "创建本地资源库",
     noLibraryBody: "资产文件、目录与元数据保存在本地所选位置。"
   },

@@ -110,6 +110,9 @@ export const assetMetadataResultSchema = z.strictObject({
   effectivePalette: z.array(nonBlankString).max(20).optional().default([]),
   paletteSource: z.enum(['manual', 'automatic']).nullable().optional().default(null),
   sourcePageUrl: nonBlankString.nullable(),
+  // Author/creator (Serpent-7x0): user-editable, auto-extracted from
+  // EXIF/IPTC/XMP on first thumbnail generation when left empty.
+  author: nonBlankString.nullable(),
   // Assets created before metadata is first written use version 0 as the
   // optimistic-lock token; the first successful set creates version 1.
   tags: z.array(z.strictObject({
@@ -172,6 +175,7 @@ export const sortDefinitionSchema = z.strictObject({
     'duration',
     'rating',
     'color',
+    'author',
   ]),
   order: z.enum(['asc', 'desc']),
 });
@@ -269,6 +273,7 @@ export const searchClauseSchema = z.strictObject({
     'tags',
     'description',
     'source_url',
+    'author',
     'folder_path',
     'metadata_text',
   ]).nullable(),

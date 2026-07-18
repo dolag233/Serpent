@@ -824,6 +824,7 @@ describe('asset metadata', () => {
       favorite: false,
       palette: null,
       sourcePageUrl: null,
+      author: null,
       entityVersion: 0,
     });
     service.closeAll();
@@ -1056,6 +1057,71 @@ describe('asset metadata', () => {
       expectedVersion: 1,
       sourcePageUrl: '',
     }).sourcePageUrl).toBeNull();
+
+    service.closeAll();
+  });
+
+  it('accepts only non-blank, whitespace-trimmed author values at the service boundary', () => {
+    const { service, libraryId, assetId } = createLibraryWithAsset();
+
+    for (const invalidAuthor of [
+      ' Jane Doe',
+      'Jane Doe ',
+      '   ',
+      'a'.repeat(256),
+    ]) {
+      expectServiceCode(
+        () => service.setAssetMetadata({
+          libraryId,
+          assetId,
+          expectedVersion: 0,
+          author: invalidAuthor,
+        }),
+        'INVALID_ASSET_METADATA',
+      );
+    }
+
+    const validAuthor = 'a'.repeat(255);
+    expect(service.setAssetMetadata({
+      libraryId,
+      assetId,
+      expectedVersion: 0,
+      author: validAuthor,
+    }).author).toBe(validAuthor);
+    expect(service.setAssetMetadata({
+      libraryId,
+      assetId,
+      expectedVersion: 1,
+      author: '',
+    }).author).toBeNull();
+
+    service.closeAll();
+  });
+
+  it('sets and reads back author independently of other metadata fields', () => {
+    const { service, libraryId, assetId } = createLibraryWithAsset();
+
+    const result = service.setAssetMetadata({
+      libraryId,
+      assetId,
+      expectedVersion: 0,
+      author: 'Jane Doe',
+      description: 'Hero description',
+    });
+    expect(result.author).toBe('Jane Doe');
+    expect(result.description).toBe('Hero description');
+
+    const fetched = service.getAssetMetadata({ libraryId, assetId });
+    expect(fetched.author).toBe('Jane Doe');
+
+    // Updating other fields without touching author must leave it unchanged.
+    const untouched = service.setAssetMetadata({
+      libraryId,
+      assetId,
+      expectedVersion: result.entityVersion,
+      rating: 3,
+    });
+    expect(untouched.author).toBe('Jane Doe');
 
     service.closeAll();
   });

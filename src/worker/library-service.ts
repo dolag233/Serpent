@@ -172,7 +172,8 @@ import type {
   NameConflictDecision,
   SuspectedDuplicateDecision,
 } from '../shared/protocol/requests';
-import { sourcePageUrlSchema } from '../shared/protocol/requests';
+import { assetAuthorSchema, sourcePageUrlSchema } from '../shared/protocol/requests';
+import { extractAuthorFromExif } from './author-from-exif';
 import type {
   ImportCompletion,
   ImportConflictPlan,
@@ -1067,6 +1068,55 @@ const RETIRE_ASSET_LABEL_SCHEMA_CHECKSUM = createHash('sha256')
   .update(RETIRE_ASSET_LABEL_SCHEMA_SQL)
   .digest('hex');
 
+// Migration v15 (Serpent-7x0): add an author/creator metadata field, editable
+// by users and auto-populated from EXIF/IPTC/XMP on first thumbnail
+// generation. FTS5 content tables cannot have a column appended in place, so
+// the search index and its triggers are rebuilt with an `author` column
+// alongside the existing `source_url` column, mirroring the v14 rebuild.
+const AUTHOR_METADATA_SCHEMA_SQL = `
+  ALTER TABLE asset_metadata ADD COLUMN author TEXT;
+
+  DROP TRIGGER IF EXISTS asset_search_index_ai;
+  DROP TRIGGER IF EXISTS asset_search_index_ad;
+  DROP TRIGGER IF EXISTS asset_search_index_au;
+  DROP TABLE asset_search;
+
+  ALTER TABLE asset_search_index ADD COLUMN author TEXT NOT NULL DEFAULT '';
+
+  CREATE VIRTUAL TABLE asset_search USING fts5(
+    filename,
+    tags,
+    description,
+    source_url,
+    author,
+    folder_path,
+    metadata_text,
+    content='asset_search_index'
+  );
+  CREATE TRIGGER asset_search_index_ai AFTER INSERT ON asset_search_index BEGIN
+    INSERT INTO asset_search(rowid, filename, tags, description, source_url, author, folder_path, metadata_text)
+    VALUES (new.rowid, new.filename, new.tags, new.description,
+            new.source_url, new.author, new.folder_path, new.metadata_text);
+  END;
+  CREATE TRIGGER asset_search_index_ad AFTER DELETE ON asset_search_index BEGIN
+    INSERT INTO asset_search(asset_search, rowid, filename, tags, description, source_url, author, folder_path, metadata_text)
+    VALUES ('delete', old.rowid, old.filename, old.tags, old.description,
+            old.source_url, old.author, old.folder_path, old.metadata_text);
+  END;
+  CREATE TRIGGER asset_search_index_au AFTER UPDATE ON asset_search_index BEGIN
+    INSERT INTO asset_search(asset_search, rowid, filename, tags, description, source_url, author, folder_path, metadata_text)
+    VALUES ('delete', old.rowid, old.filename, old.tags, old.description,
+            old.source_url, old.author, old.folder_path, old.metadata_text);
+    INSERT INTO asset_search(rowid, filename, tags, description, source_url, author, folder_path, metadata_text)
+    VALUES (new.rowid, new.filename, new.tags, new.description,
+            new.source_url, new.author, new.folder_path, new.metadata_text);
+  END;
+  INSERT INTO asset_search(asset_search) VALUES('rebuild');
+`;
+const AUTHOR_METADATA_SCHEMA_CHECKSUM = createHash('sha256')
+  .update(AUTHOR_METADATA_SCHEMA_SQL)
+  .digest('hex');
+
 const MIGRATIONS = [
   { version: 1, sql: INITIAL_SCHEMA_SQL, checksum: INITIAL_SCHEMA_CHECKSUM },
   { version: 2, sql: ASSET_SCHEMA_SQL, checksum: ASSET_SCHEMA_CHECKSUM },
@@ -1086,6 +1136,7 @@ const MIGRATIONS = [
   { version: 12, sql: PALETTE_SORT_SCHEMA_SQL, checksum: PALETTE_SORT_SCHEMA_CHECKSUM },
   { version: 13, sql: LINKED_FOLDER_RULES_SCHEMA_SQL, checksum: LINKED_FOLDER_RULES_SCHEMA_CHECKSUM },
   { version: 14, sql: RETIRE_ASSET_LABEL_SCHEMA_SQL, checksum: RETIRE_ASSET_LABEL_SCHEMA_CHECKSUM },
+  { version: 15, sql: AUTHOR_METADATA_SCHEMA_SQL, checksum: AUTHOR_METADATA_SCHEMA_CHECKSUM },
 ] as const;
 const SUPPORTED_SCHEMA_VERSION = MIGRATIONS.at(-1)!.version;
 
@@ -5175,7 +5226,7 @@ export class LibraryService {
     const row = openLibrary.connection
       .prepare(
         `SELECT asset_id, description, rating, favorite, palette,
-                source_page_url, entity_version, updated_at
+                source_page_url, author, entity_version, updated_at
            FROM asset_metadata
           WHERE asset_id = ?`,
       )
@@ -5186,6 +5237,7 @@ export class LibraryService {
         favorite: number;
         palette: string | null;
         source_page_url: string | null;
+        author: string | null;
         entity_version: number;
         updated_at: string;
       } | undefined;
@@ -5199,6 +5251,7 @@ export class LibraryService {
         palette: null,
         ...this.resolvedPaletteFields(openLibrary, input.assetId, null),
         sourcePageUrl: null,
+        author: null,
         tags: this.fetchAssetTags(openLibrary.connection, input.assetId),
         entityVersion: 0,
         updatedAt: new Date(0).toISOString(),
@@ -5213,6 +5266,7 @@ export class LibraryService {
       palette: row.palette,
       ...this.resolvedPaletteFields(openLibrary, input.assetId, row.palette),
       sourcePageUrl: row.source_page_url,
+      author: row.author,
       entityVersion: row.entity_version,
       updatedAt: row.updated_at,
       tags: this.fetchAssetTags(openLibrary.connection, input.assetId),
@@ -5337,6 +5391,7 @@ export class LibraryService {
     favorite?: boolean;
     palette?: string[];
     sourcePageUrl?: string;
+    author?: string;
   }): AssetMetadataResult {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
 
@@ -5370,12 +5425,21 @@ export class LibraryService {
       throw new LibraryServiceError('INVALID_ASSET_METADATA');
     }
 
+    // Author mirrors sourcePageUrl's clear-with-empty-string contract, without
+    // the URL-shape constraint (Serpent-7x0).
+    if (
+      input.author !== undefined &&
+      !assetAuthorSchema.safeParse(input.author).success
+    ) {
+      throw new LibraryServiceError('INVALID_ASSET_METADATA');
+    }
+
     const now = new Date().toISOString();
 
     // Read current state.
     const existing = openLibrary.connection
       .prepare(
-        'SELECT entity_version, rating, favorite, description, palette, source_page_url FROM asset_metadata WHERE asset_id = ?',
+        'SELECT entity_version, rating, favorite, description, palette, source_page_url, author FROM asset_metadata WHERE asset_id = ?',
       )
       .get(input.assetId) as {
         entity_version: number;
@@ -5384,6 +5448,7 @@ export class LibraryService {
         description: string | null;
         palette: string | null;
         source_page_url: string | null;
+        author: string | null;
       } | undefined;
 
     if (existing) {
@@ -5399,12 +5464,16 @@ export class LibraryService {
         input.sourcePageUrl !== undefined
           ? (input.sourcePageUrl.trim() === '' ? null : input.sourcePageUrl.trim())
           : existing.source_page_url;
+      const newAuthor =
+        input.author !== undefined
+          ? (input.author.trim() === '' ? null : input.author.trim())
+          : existing.author;
 
       const result = openLibrary.connection
         .prepare(
           `UPDATE asset_metadata
               SET description = ?, rating = ?, favorite = ?,
-                  palette = ?, source_page_url = ?,
+                  palette = ?, source_page_url = ?, author = ?,
                   entity_version = entity_version + 1, updated_at = ?
             WHERE asset_id = ? AND entity_version = ?`,
         )
@@ -5414,6 +5483,7 @@ export class LibraryService {
           newFavorite,
           newPalette,
           newSourcePageUrl,
+          newAuthor,
           now,
           input.assetId,
           input.expectedVersion,
@@ -5433,7 +5503,7 @@ export class LibraryService {
       const updated = openLibrary.connection
         .prepare(
           `SELECT asset_id, description, rating, favorite, palette,
-                  source_page_url, entity_version, updated_at
+                  source_page_url, author, entity_version, updated_at
              FROM asset_metadata WHERE asset_id = ?`,
         )
         .get(input.assetId) as {
@@ -5443,6 +5513,7 @@ export class LibraryService {
           favorite: number;
           palette: string | null;
           source_page_url: string | null;
+          author: string | null;
           entity_version: number;
           updated_at: string;
         };
@@ -5457,6 +5528,7 @@ export class LibraryService {
         palette: updated.palette,
         ...this.resolvedPaletteFields(openLibrary, input.assetId, updated.palette),
         sourcePageUrl: updated.source_page_url,
+        author: updated.author,
         tags: this.fetchAssetTags(openLibrary.connection, input.assetId),
         entityVersion: updated.entity_version,
         updatedAt: updated.updated_at,
@@ -5479,14 +5551,18 @@ export class LibraryService {
       input.sourcePageUrl !== undefined
         ? (input.sourcePageUrl.trim() === '' ? null : input.sourcePageUrl.trim())
         : null;
+    const newAuthor =
+      input.author !== undefined
+        ? (input.author.trim() === '' ? null : input.author.trim())
+        : null;
     const newEntityVersion = 1;
 
     openLibrary.connection
       .prepare(
         `INSERT INTO asset_metadata
            (asset_id, description, rating, favorite, palette,
-            source_page_url, entity_version, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            source_page_url, author, entity_version, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         input.assetId,
@@ -5495,6 +5571,7 @@ export class LibraryService {
         newFavorite,
         newPalette,
         newSourcePageUrl,
+        newAuthor,
         newEntityVersion,
         now,
       );
@@ -5508,6 +5585,7 @@ export class LibraryService {
       palette: newPalette,
       ...this.resolvedPaletteFields(openLibrary, input.assetId, newPalette),
       sourcePageUrl: newSourcePageUrl,
+      author: newAuthor,
       tags: this.fetchAssetTags(openLibrary.connection, input.assetId),
       entityVersion: newEntityVersion,
       updatedAt: now,
@@ -5522,8 +5600,8 @@ export class LibraryService {
       .prepare(
         `INSERT OR IGNORE INTO asset_metadata
            (asset_id, description, rating, favorite, palette,
-            source_page_url, entity_version, updated_at)
-         SELECT asset_id, NULL, 0, 0, NULL, NULL, 1, ?
+            source_page_url, author, entity_version, updated_at)
+         SELECT asset_id, NULL, 0, 0, NULL, NULL, NULL, 1, ?
            FROM assets a
           WHERE NOT EXISTS (
             SELECT 1 FROM asset_metadata m WHERE m.asset_id = a.asset_id
@@ -5532,6 +5610,41 @@ export class LibraryService {
       .run(now);
 
     return { backfilledCount: result.changes };
+  }
+
+  /**
+   * Best-effort EXIF/IPTC/XMP author auto-extract (Serpent-7x0). Runs after
+   * the first successful thumbnail decode for an image asset. Never
+   * overwrites a non-empty author (user edits and prior extractions both
+   * win), and — like {@link setAssetsRating} — does not touch entity_version
+   * so it never invalidates a Renderer's in-flight optimistic-lock token.
+   */
+  private async backfillAuthorFromExif(
+    openLibrary: OpenLibrary,
+    assetId: string,
+    absoluteFilePath: string,
+  ): Promise<void> {
+    let author: string | null;
+    try {
+      author = await extractAuthorFromExif(absoluteFilePath);
+    } catch (error) {
+      this.diagnose('metadata.author-exif-extract', error, { assetId });
+      return;
+    }
+    if (!author) return;
+
+    const now = new Date().toISOString();
+    openLibrary.connection
+      .prepare(
+        `INSERT INTO asset_metadata
+           (asset_id, description, rating, favorite, palette,
+            source_page_url, author, entity_version, updated_at)
+         VALUES (?, NULL, 0, 0, NULL, NULL, ?, 1, ?)
+         ON CONFLICT(asset_id) DO UPDATE SET author = excluded.author
+           WHERE asset_metadata.author IS NULL OR asset_metadata.author = ''`,
+      )
+      .run(assetId, author, now);
+    this.syncAssetSearchContent(openLibrary.connection, assetId);
   }
 
   /**
@@ -5567,8 +5680,8 @@ export class LibraryService {
     const upsertStmt = openLibrary.connection.prepare(
       `INSERT INTO asset_metadata
          (asset_id, description, rating, favorite, palette,
-          source_page_url, entity_version, updated_at)
-       VALUES (?, NULL, ?, 0, NULL, NULL, 1, ?)
+          source_page_url, author, entity_version, updated_at)
+       VALUES (?, NULL, ?, 0, NULL, NULL, NULL, 1, ?)
        ON CONFLICT(asset_id) DO UPDATE SET rating = excluded.rating`,
     );
     openLibrary.connection.transaction(() => {
@@ -5592,7 +5705,7 @@ export class LibraryService {
     const asset = connection
       .prepare(
         `SELECT a.relative_file_path, a.availability, r.byte_size,
-                m.description, m.source_page_url
+                m.description, m.source_page_url, m.author
            FROM assets a
            JOIN revisions r ON r.revision_id = a.current_revision_id
            LEFT JOIN asset_metadata m ON m.asset_id = a.asset_id
@@ -5604,6 +5717,7 @@ export class LibraryService {
         byte_size: number;
         description: string | null;
         source_page_url: string | null;
+        author: string | null;
       } | undefined;
     if (!asset) return;
 
@@ -5627,13 +5741,14 @@ export class LibraryService {
     connection
       .prepare(
         `INSERT INTO asset_search_index
-           (asset_id, filename, tags, description, source_url, folder_path, metadata_text)
-         VALUES (?, ?, ?, ?, ?, ?, ?)
+           (asset_id, filename, tags, description, source_url, author, folder_path, metadata_text)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(asset_id) DO UPDATE SET
            filename = excluded.filename,
            tags = excluded.tags,
            description = excluded.description,
            source_url = excluded.source_url,
+           author = excluded.author,
            folder_path = excluded.folder_path,
            metadata_text = excluded.metadata_text`,
       )
@@ -5643,6 +5758,7 @@ export class LibraryService {
         tokenizeForFts(tagRow?.tags ?? ''),
         tokenizeForFts(asset.description ?? ''),
         tokenizeForFts(asset.source_page_url ?? ''),
+        tokenizeForFts(asset.author ?? ''),
         tokenizeForFts(buildFolderPath(asset.relative_file_path)),
         tokenizeForFts(
           buildMetadataText({
@@ -6874,6 +6990,10 @@ export class LibraryService {
           SHARP_THUMBNAIL_GENERATOR,
           new Date().toISOString(),
         );
+
+      // Serpent-7x0: best-effort EXIF/IPTC/XMP author auto-extract on first
+      // thumbnail. Never blocks or fails thumbnail generation.
+      await this.backfillAuthorFromExif(openLibrary, input.assetId, assetPath);
 
       // Emit thumbnail-ready notification
       this.options.onAssetsChanged?.({
@@ -8689,12 +8809,12 @@ export class LibraryService {
     const orderParams: unknown[] = [];
     if (hasPositiveQuery && !input.sort) {
       // When searching, order by BM25 relevance with per-column weights
-      // (filename 10, tags 8, description 5, source_url 3,
+      // (filename 10, tags 8, description 5, source_url 3, author 3,
       // folder_path 2, metadata_text 1) per ADR-0009. The FTS5 `rank` hidden
       // column uses default weights (all 1.0); explicit bm25() is required to
       // apply the weighted ranking. This sacrifices the rank-column snippet
       // lazy-evaluation optimization (restorable later via a custom rank fn).
-      orderBy = `bm25(asset_search, 10.0, 8.0, 5.0, 3.0, 2.0, 1.0) ASC, a.asset_id ASC`;
+      orderBy = `bm25(asset_search, 10.0, 8.0, 5.0, 3.0, 3.0, 2.0, 1.0) ASC, a.asset_id ASC`;
     } else if (input.sort) {
       const sortField = input.sort.field;
       const dir = input.sort.order === 'desc' ? 'DESC' : 'ASC';
@@ -8727,6 +8847,9 @@ export class LibraryService {
           break;
         case 'rating':
           orderBy = `COALESCE(m.rating, 0) ${dir}, a.asset_id ASC`;
+          break;
+        case 'author':
+          orderBy = `COALESCE(m.author, '') = '' ASC, COALESCE(m.author, '') COLLATE NOCASE ${dir}, a.asset_id ASC`;
           break;
         case 'color':
           orderBy = `palette_meta.dominant_hue IS NULL ASC,
@@ -8833,7 +8956,7 @@ export class LibraryService {
 
     if (hasPositiveQuery) {
       whereParts.push(
-        `asset_search MATCH ? AND rank MATCH 'bm25(10.0, 8.0, 5.0, 3.0, 2.0, 1.0)'`,
+        `asset_search MATCH ? AND rank MATCH 'bm25(10.0, 8.0, 5.0, 3.0, 3.0, 2.0, 1.0)'`,
       );
       allParams.push(fts5Query);
     } else if (isExcludeOnlyQuery) {
@@ -11600,7 +11723,7 @@ export class LibraryService {
               .prepare(
                 `UPDATE asset_metadata
                     SET description = NULL, rating = 0, favorite = 0,
-                        palette = NULL, source_page_url = NULL,
+                        palette = NULL, source_page_url = NULL, author = NULL,
                         entity_version = entity_version + 1, updated_at = ?
                   WHERE asset_id = ?`,
               )

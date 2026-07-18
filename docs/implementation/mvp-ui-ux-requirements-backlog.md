@@ -292,7 +292,7 @@ FolderBrowseEntry
 | 网格动图/视频预览；视频 2 秒循环；侧栏拖小隐藏；文件夹删除；播放器空格/倍速；创建资源库文案口语化；图标 hover 提示；中英括注冗余 | 重复，已在池 | Serpent-05o / ond / 4gk / ekj / 2j9 / rxx / d3c / c1p |
 | 排序提升为一等模式（名称/修改日期/大小/分辨率/时长） | 新开 P2 | Serpent-w4p |
 | 分类（分组）模式：先分类再排序，维度含修改日期/作者/网址/主色调/长宽比 | 新开 P4（MVP 后） | Serpent-84m |
-| 「作者」元数据 | 新开 P2 | Serpent-7x0 |
+| 「作者」元数据 | 已实现（2026-07-18，schema v15 + Inspector 编辑 + EXIF/IPTC/XMP 自动提取，见待验收 META-009） | Serpent-7x0 |
 | 平铺改 justified 行布局（参考图 `docs/前端参考/2026-07-18-tile-layout-reference.png`） | 新开 P2 | Serpent-8nj |
 | 「可用」不显示图标，仅「不可用」显示断联表现 | 已实现（2026-07-18，见 AVAIL-001） | Serpent-6nb |
 | 删除 Inspector 底部资源库路径与「关闭资源库」按钮 | 已实现（2026-07-18，见 INSPECT-006） | Serpent-t4c |

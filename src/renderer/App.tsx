@@ -96,7 +96,11 @@ import {
   showAssetDragPreview,
 } from "./asset-drag-preview";
 import { DimensionFilterBar } from "./DimensionFilterBar";
-import type { ClearableFilterId } from "./active-discovery-filters";
+import {
+  buildActiveFilterChips,
+  type ClearableFilterId,
+} from "./active-discovery-filters";
+import { resolveBrowseEmptyState } from "./browse-empty-state";
 import { trashedFromLabel } from "./trashed-from-label";
 import { toMessage, LibraryOperationError } from "./error-utils";
 
@@ -561,6 +565,7 @@ function AppInner() {
   const [editRating, setEditRating] = useState(0);
   const [editFavorite, setEditFavorite] = useState(false);
   const [editSourceUrl, setEditSourceUrl] = useState("");
+  const [editAuthor, setEditAuthor] = useState("");
   // REQ-SELECT-004: UE-style multi-select Inspector model (null when <2 selected).
   const [multiEdit, setMultiEdit] = useState<InspectorMultiEditModel | null>(null);
   const selectedAssetIdsRef = useRef(selectedAssetIds);
@@ -697,6 +702,57 @@ function AppInner() {
     if (showTrash) return trashedAssets;
     return assets;
   }, [assets, trashedAssets, showTrash]);
+
+  const browseEmptyState = useMemo(() => {
+    const discoverySnapshot = {
+      colorFilter,
+      excludeColorFilter,
+      formatFilter,
+      excludeFormatFilter,
+      tagFilter,
+      excludeTagFilter,
+      ratingFilter,
+      excludeRatingFilter,
+      favoriteFilter,
+      sourceUrlFilter,
+      availabilityFilter,
+      excludeAvailabilityFilter,
+      widthRange,
+      heightRange,
+      aspectRatioRange,
+      longEdgeRange,
+      durationRange,
+    };
+    const hasActiveDiscovery =
+      searchValue.trim() !== "" ||
+      buildActiveFilterChips(discoverySnapshot).length > 0;
+    return resolveBrowseEmptyState({
+      showTrash,
+      hasActiveDiscovery,
+      hasSelectedFolder: Boolean(selectedFolder),
+    });
+  }, [
+    showTrash,
+    searchValue,
+    selectedFolder,
+    colorFilter,
+    excludeColorFilter,
+    formatFilter,
+    excludeFormatFilter,
+    tagFilter,
+    excludeTagFilter,
+    ratingFilter,
+    excludeRatingFilter,
+    favoriteFilter,
+    sourceUrlFilter,
+    availabilityFilter,
+    excludeAvailabilityFilter,
+    widthRange,
+    heightRange,
+    aspectRatioRange,
+    longEdgeRange,
+    durationRange,
+  ]);
 
   const visibleAssetById = useMemo(() => {
     const map = new Map<string, (typeof visibleAssets)[number]>();
@@ -2812,6 +2868,7 @@ function AppInner() {
     setEditRating(metadata.rating);
     setEditFavorite(metadata.favorite);
     setEditSourceUrl(metadata.sourcePageUrl ?? "");
+    setEditAuthor(metadata.author ?? "");
   }
 
   async function loadMetadata() {
@@ -2876,6 +2933,7 @@ function AppInner() {
           rating: metadata.rating,
           favorite: metadata.favorite,
           sourcePageUrl: metadata.sourcePageUrl,
+          author: metadata.author,
           tags: metadata.tags,
         }),
       );
@@ -2894,6 +2952,9 @@ function AppInner() {
     );
     setEditSourceUrl(
       model.sourceUrl.kind === "uniform" ? model.sourceUrl.value : "",
+    );
+    setEditAuthor(
+      model.author.kind === "uniform" ? model.author.value : "",
     );
   }
 
@@ -2941,6 +3002,7 @@ function AppInner() {
     favorite?: boolean;
     palette?: string[];
     sourcePageUrl?: string;
+    author?: string;
   }): Promise<void> {
     if (!api || !library || !selectedAssetId || !assetMetadata)
       return Promise.resolve();
@@ -3008,6 +3070,7 @@ function AppInner() {
       favorite?: boolean;
       palette?: string[];
       sourcePageUrl?: string;
+      author?: string;
     },
   ): Promise<void> {
     if (!api || !library || assetIds.length === 0) return;
@@ -4738,6 +4801,26 @@ function AppInner() {
     void saveMetadata({ sourcePageUrl: editSourceUrl });
   }
 
+  function handleAuthorInput(event: FormEvent<HTMLInputElement>) {
+    const value = (event.target as HTMLInputElement).value;
+    setEditAuthor(value);
+  }
+
+  function handleAuthorSave() {
+    const target = resolveInspectorTagTarget(
+      selectedAssetIds,
+      selectedAssetId ?? undefined,
+    );
+    if (target?.kind === "batch") {
+      if (multiEdit?.author.kind !== "uniform") return;
+      if (editAuthor === multiEdit.author.value) return;
+      void saveMetadataForSelection(target.assetIds, { author: editAuthor });
+      return;
+    }
+    if (!assetMetadata || editAuthor === (assetMetadata.author ?? "")) return;
+    void saveMetadata({ author: editAuthor });
+  }
+
   // 检查器「源链接」跳转：有效性先按共享口径预判（禁用态），主进程仍会
   // 在 shell.openExternal 前做最终校验，两道防线都不放行非 HTTP(S)。
   function handleOpenSourceUrl() {
@@ -5967,32 +6050,28 @@ function AppInner() {
             ) : (
               <div className="empty-library">
                 <div className="empty-orbit">
-                  <Icon name="upload" size={24} />
+                  <Icon name={browseEmptyState.icon} size={24} />
                 </div>
-                <h1>
-                  {selectedFolder
-                    ? t("empty.folderTitle")
-                    : t("empty.folderBody")}
-                </h1>
-                <p>
-                  {t("empty.folderDetail")}
-                </p>
-                <div className="empty-actions">
-                  <button
-                    className="primary-button"
-                    onClick={() => void importAssets("files")}
-                    type="button"
-                  >
-                    {t("toolbar.importFiles")}
-                  </button>
-                  <button
-                    className="secondary-button"
-                    onClick={() => void importAssets("folder")}
-                    type="button"
-                  >
-                    {t("toolbar.importFolder")}
-                  </button>
-                </div>
+                <h1>{t(browseEmptyState.titleKey)}</h1>
+                <p>{t(browseEmptyState.detailKey)}</p>
+                {browseEmptyState.showImportActions ? (
+                  <div className="empty-actions">
+                    <button
+                      className="primary-button"
+                      onClick={() => void importAssets("files")}
+                      type="button"
+                    >
+                      {t("toolbar.importFiles")}
+                    </button>
+                    <button
+                      className="secondary-button"
+                      onClick={() => void importAssets("folder")}
+                      type="button"
+                    >
+                      {t("toolbar.importFolder")}
+                    </button>
+                  </div>
+                ) : null}
               </div>
             )
           ) : (
@@ -6089,6 +6168,7 @@ function AppInner() {
         editFavorite={editFavorite}
         editRating={editRating}
         editSourceUrl={editSourceUrl}
+        editAuthor={editAuthor}
         folderCount={folders.length}
         handleFavoriteToggle={handleFavoriteToggle}
         handleMetadataDescriptionInput={handleMetadataDescriptionInput}
@@ -6096,6 +6176,8 @@ function AppInner() {
         handleRatingClick={handleRatingClick}
         handleSourceUrlInput={handleSourceUrlInput}
         handleSourceUrlSave={handleSourceUrlSave}
+        handleAuthorInput={handleAuthorInput}
+        handleAuthorSave={handleAuthorSave}
         library={library}
         loadMetadata={loadMetadata}
         onAssignTagToAsset={(tagId) => void handleInspectorAssignTag(tagId)}
