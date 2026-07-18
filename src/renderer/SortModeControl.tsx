@@ -162,7 +162,7 @@ export function SortModeControl({
         type="button"
       >
         <span className="sort-order-glyph" aria-hidden="true">
-          {sortOrder === "asc" ? "↑" : "↓"}
+          <Icon name={sortOrder === "asc" ? "sort-asc" : "sort-desc"} size={14} />
         </span>
       </button>
     </div>

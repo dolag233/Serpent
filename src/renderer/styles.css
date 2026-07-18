@@ -1004,18 +1004,42 @@ body.platform-darwin .toolbar-leading {
   gap: 8px;
 }
 
+.dimension-filter-btn.is-excluding:not(:disabled) {
+  border-color: color-mix(in srgb, #e11d48 55%, var(--divider));
+  background: color-mix(in srgb, #e11d48 16%, var(--canvas));
+  color: color-mix(in srgb, #e11d48 72%, var(--text));
+}
+
+.dimension-filter-btn.is-excluding.is-active:not(:disabled) {
+  border-color: #e11d48;
+  background: color-mix(in srgb, #e11d48 22%, var(--canvas));
+  color: #e11d48;
+}
+
 .dimension-color-swatch {
   width: 22px;
   height: 22px;
   padding: 0;
-  border: 2px solid transparent;
+  border: 1px solid color-mix(in srgb, var(--ink) 22%, transparent);
   border-radius: 999px;
   cursor: pointer;
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ink) 25%, transparent);
+  box-shadow: none;
+  transition:
+    transform 100ms ease,
+    box-shadow 100ms ease,
+    outline-color 100ms ease;
+}
+
+.dimension-color-swatch.is-neutral {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ink) 18%, transparent);
 }
 
 .dimension-color-swatch.is-active:not(:disabled) {
-  border-color: var(--text);
+  border-color: transparent;
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  transform: scale(1.08);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--canvas) 80%, transparent);
 }
 
 .dimension-color-swatch:disabled {
@@ -1902,6 +1926,8 @@ input[type="range"] {
 }
 
 .inspector-content {
+  display: flex;
+  flex-direction: column;
   overflow: auto;
   padding: 14px;
 }
@@ -3966,9 +3992,11 @@ select.ai-config-input {
   overflow: hidden;
   border-radius: 8px;
   background: color-mix(in srgb, var(--canvas) 90%, var(--ink));
+  /* REQ-INSPECT-004: soft layered shadows so stacked multi-select previews stay separable. */
   box-shadow:
-    0 1px 2px color-mix(in srgb, var(--ink) 14%, transparent),
-    0 4px 12px color-mix(in srgb, var(--ink) 12%, transparent);
+    0 1px 2px color-mix(in srgb, var(--ink) 18%, transparent),
+    0 6px 14px color-mix(in srgb, var(--ink) 16%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--ink) 8%, transparent);
 }
 
 .inspector-hero-stack-image {
@@ -4004,7 +4032,24 @@ select.ai-config-input {
   transform: translate(-12px, 12px);
 }
 
-.inspector-hero-compact.is-multi .inspector-hero-title {
+.inspector-tech-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  margin-top: auto;
+  padding: 10px 12px;
+  border-top: 1px solid var(--divider-soft);
+  color: var(--secondary);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.inspector-tech-part {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 10px;
+  color: var(--tertiary);
+}
+
   position: relative;
   z-index: 1;
   -webkit-line-clamp: 3;

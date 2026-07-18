@@ -700,6 +700,14 @@ export function InspectorPanel(props: InspectorPanelProps) {
     if (durationMs !== null) {
       parts.push(formatDuration(durationMs));
     }
+    parts.push(formatDateFull(selectedAsset.modifiedAt ?? "", unknownTime));
+    return parts;
+  }, [selectedAsset, t, gifExtractedMetadata]);
+
+  // REQ-INSPECT-005: codec / GIF frame tech sits in a bottom bar, not the compact size row.
+  const technicalInfoParts = useMemo(() => {
+    if (!selectedAsset || selectionCount >= 2) return [];
+    const parts: string[] = [];
     if (
       gifExtractedMetadata?.frameCount != null
       && gifExtractedMetadata.frameCount > 0
@@ -708,15 +716,10 @@ export function InspectorPanel(props: InspectorPanelProps) {
         t("inspector.gifFrameCount", { count: gifExtractedMetadata.frameCount }),
       );
     }
-    if (
-      selectedAsset.mediaType === "video"
-      && selectionCount < 2
-      && videoTechMetadata
-    ) {
+    if (selectedAsset.mediaType === "video" && videoTechMetadata) {
       const techLine = formatVideoTechnicalLine(videoTechMetadata);
       if (techLine) parts.push(techLine);
     }
-    parts.push(formatDateFull(selectedAsset.modifiedAt ?? "", unknownTime));
     return parts;
   }, [selectedAsset, selectionCount, t, videoTechMetadata, gifExtractedMetadata]);
 
@@ -1204,6 +1207,19 @@ export function InspectorPanel(props: InspectorPanelProps) {
                 </div>
               )}
             </section>
+          )}
+
+          {technicalInfoParts.length > 0 && (
+            <div
+              aria-label={t("inspector.technicalMetadata")}
+              className="inspector-tech-bar"
+            >
+              {technicalInfoParts.map((part) => (
+                <span className="inspector-tech-part" key={part}>
+                  {part}
+                </span>
+              ))}
+            </div>
           )}
 
         </div>

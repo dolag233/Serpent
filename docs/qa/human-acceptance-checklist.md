@@ -350,6 +350,7 @@
 | 2026-07-18 | FILTER-013/014、SEARCH-005、NAV-005、SHELL-015/016、META-008、PALETTE-002                       | 人类验收通过         | REQ-FILTER-001/002、CU-D4、CU-D2（目录树折叠）、macOS 红绿灯、REQ-SHELL-012（并删创建库帮助句）、移除自定义色卡、色卡复制 hex 确认提示。                                                                                                                                                                                                                                          | SHELL-016 帮助句本回合删除；FILTER/排序后续交互见第五批。                                        |
 | 2026-07-18 | SHELL-017、FILTER-015                                                                           | 人类验收不通过       | 「相关性（默认）」等括注仍在；颜色过滤缺黑白且选中样式丑。                                                                                                                                                                                                                                                                                                                        | 第五批：`Serpent-d45` / `Serpent-o75`；技术元数据布局仍见 `Serpent-rbx`（VIEW-007 内容已通过）。 |
 | 2026-07-19 | CANVAS-012 / VIEWER-005（视频） | 待复验 | 亮色角标对比度；视频查看 contain。 | `Serpent-yu8` / `Serpent-q16`。 |
+| 2026-07-19 | FILTER-019–020 / NAV-006 / SORT-006 / INSPECT-009–010 | 待人类验收 | 排除红、颜色黑白、去根行、排序图标、技术栏、堆叠阴影。 |
 | 2026-07-19 | PREF-001 / SMART-007 / MENU-023 | 待人类验收 | 设置面板；智能合集+；资产原地重命名。 | Serpent-str / uu9 / wfj。 |
 | 2026-07-19 | FOLDER-010–013 | 待人类验收 | 文件夹卡片/封面/计数/多选。 | epic Serpent-5ja。 |
 | 2026-07-19 | SORT-005 / SHELL-017 / FILTER-013 | 待复验 | 去掉排序相关性；括注复查；删除文件夹过滤维度。 | `Serpent-96i` / `Serpent-d45` / `Serpent-ckx`；[开发日志](../development/2026-07-19-sort-copy-folder-filter-development-log.md)。 |
@@ -360,3 +361,13 @@
 | 2026-07-19 | VIEWER-001（回归修复）/ CANVAS-021（新增） | 待复验 | REQ-VIEW-008：退出查看页改为锚点资产还原滚动位置，修复查看期间画布重排导致的滚动错位回归；REQ-CANVAS-019：拖侧栏/改窗口宽度触发重排后保持锚点资产在视野内。 | `Serpent-cj6` / `Serpent-o3z`；[开发日志](../development/2026-07-19-view-preserve-reflow-development-log.md)；单测 `canvas-scroll-anchor.test.ts` / `view-restore.test.ts`；Computer Use 未执行，移交人工 QA。 |
 | 2026-07-19 | FILTER-018（新增） | 待人类验收 | REQ-FILTER-020：标签过滤面板默认展示「常用」+「最近筛选」两个分组，不再需要先输入才看到候选；修复 `.filter-tag-picker` 的 `flex: 1 1 220px` 布局回归导致的面板中间大块空白。 | `Serpent-1v0`；[开发日志](../development/2026-07-19-tag-filter-layout-development-log.md)；单测 `tag-filter-suggestions.test.ts` / `tag-filter-recency.test.ts`；Computer Use 未执行，移交人工 QA。 |
 | 2026-07-19 | VIEWER-009/010（新增）/ CANVAS-018（新增）/ INSPECT-007/008（新增） | 待人类验收 | 用户反馈驱动的查看页/检查器/画布打磨：缩放面板半透明不要太低不透明度；左右切图不应唤醒已渐隐的 chrome，只有鼠标移动才唤醒；描述输入框默认单行、超一行自动增高换行；卡片大小滑块粒度太粗；Inspector 单选视频/动图应循环预览、多选不播放。 | `Serpent-627` / `Serpent-ayf` / `Serpent-qto` / `Serpent-akz` / `Serpent-a9n`；[开发日志](../development/2026-07-19-viewer-inspector-polish-development-log.md)；单测见各条目；Computer Use 未执行，移交人工 QA。 |
+### 第五批收口（过滤/导航/排序/Inspector）
+
+| FILTER-019 | 排除过滤红色高亮 | 待人类验收 | 启用颜色/标签等过滤后勾选排除 | 对应维度按钮呈红色高亮，与包含态区分 | [开发日志](../development/2026-07-19-filter-nav-inspect-polish-development-log.md) / Serpent-8s8 | 2026-07-19。 |
+| FILTER-020 | 颜色过滤黑白与选中样式 | 待人类验收 | 打开颜色维度；选黑/白；再选彩色 | 有黑白色块；选中为描边缩放而非双环 | 同上 / Serpent-o75 | 2026-07-19；FILTER-015 复验路径。 |
+| NAV-006 | 无独立资源库根目录行 | 待人类验收 | 打开含托管文件夹的库，看侧栏文件夹区 | 无「资源库根目录」行；根级文件夹仍在树中；拖到「所有资产」可落到库根 | 同上 / Serpent-vms | 2026-07-19。 |
+| SORT-006 | 升序/降序专用图标 | 待人类验收 | 看排序方向按钮；切换升/降序 | 图标为升序/降序语义，不再是 ↑↓ 文字箭头 | 同上 / Serpent-1c9 | 2026-07-19。 |
+| INSPECT-009 | 技术元数据底部栏 | 待人类验收 | 选中视频与 GIF，看 Inspector | 体积/分辨率/时间行不含 codec/帧数；底部独立技术栏显示 | 同上 / Serpent-rbx | 2026-07-19；VIEW-007 复验。 |
+| INSPECT-010 | 多选堆叠预览阴影 | 待人类验收 | 多选 2–3 项，看右侧堆叠预览 | 层间有微弱阴影可辨，不糊成一块 | 同上 / Serpent-1tx | 2026-07-19。 |
+
+

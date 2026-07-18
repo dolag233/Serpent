@@ -38,6 +38,8 @@ export type IconName =
   | "settings"
   | "sliders"
   | "smart"
+  | "sort-asc"
+  | "sort-desc"
   | "star"
   | "tag"
   | "trash"
@@ -243,6 +245,20 @@ const iconPaths: Record<IconName, ReactNode> = {
   /* REQ-CANVAS-006: AI entry points use a four-point sparkles glyph drawn in
      the same stroke style as the rest of the set — the old path was a
      five-point star that read as "favorites" and duplicated `star`. */
+  "sort-asc": (
+    <>
+      <path d="M8 20V8" />
+      <path d="m4.5 11.5 3.5-3.5 3.5 3.5" />
+      <path d="M13 7h7M13 12h5M13 17h3" />
+    </>
+  ),
+  "sort-desc": (
+    <>
+      <path d="M8 4v12" />
+      <path d="m4.5 12.5 3.5 3.5 3.5-3.5" />
+      <path d="M13 7h3M13 12h5M13 17h7" />
+    </>
+  ),
   smart: (
     <>
       <path d="M10 4l1.8 4.2L16 10l-4.2 1.8L10 16l-1.8-4.2L4 10l4.2-1.8Z" />

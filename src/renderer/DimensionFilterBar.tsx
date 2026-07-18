@@ -120,6 +120,7 @@ function DimensionButton({
   label,
   active,
   open,
+  excluding,
   disabled,
   onClick,
 }: {
@@ -127,6 +128,8 @@ function DimensionButton({
   label: string;
   active?: boolean;
   open?: boolean;
+  /** REQ-FILTER-024: exclude mode uses red highlight on the dimension chip. */
+  excluding?: boolean;
   disabled?: boolean;
   onClick: () => void;
 }) {
@@ -134,7 +137,7 @@ function DimensionButton({
     <button
       aria-expanded={open || undefined}
       aria-pressed={active || undefined}
-      className={`dimension-filter-btn${active ? " is-active" : ""}${open ? " is-open" : ""}`}
+      className={`dimension-filter-btn${active ? " is-active" : ""}${open ? " is-open" : ""}${excluding ? " is-excluding" : ""}`}
       disabled={disabled}
       onClick={onClick}
       type="button"
@@ -474,6 +477,7 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
           <DimensionButton
             active={colorActive}
             disabled={disabled}
+            excluding={excludeColorFilter && colorActive}
             icon="activity"
             label={t("filter.dimColor")}
             onClick={handleColorDimensionClick}
@@ -486,7 +490,8 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
                   <button
                     aria-label={t(`filter.color.${preset.id}`)}
                     aria-selected={selectedColors.has(preset.id)}
-                    className={`dimension-color-swatch${selectedColors.has(preset.id) ? " is-active" : ""}`}
+                    className={`dimension-color-swatch${selectedColors.has(preset.id) ? " is-active" : ""}${preset.kind === "neutral" ? " is-neutral" : ""}`}
+                    data-color={preset.id}
                     disabled={disabled}
                     key={preset.id}
                     onClick={(event) => toggleColor(preset.id, event.shiftKey)}
@@ -514,6 +519,7 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
           <DimensionButton
             active={tagActive}
             disabled={disabled}
+            excluding={excludeTagFilter && tagActive}
             icon="tag"
             label={t("filter.dimTags")}
             onClick={handleTagsDimensionClick}
@@ -601,6 +607,7 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
           <DimensionButton
             active={ratingActive}
             disabled={disabled}
+            excluding={excludeRatingFilter && ratingActive}
             icon="star"
             label={t("filter.dimRating")}
             onClick={handleRatingDimensionClick}
@@ -641,6 +648,7 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
           <DimensionButton
             active={formatActive}
             disabled={disabled}
+            excluding={excludeFormatFilter && formatActive}
             icon="file"
             label={t("filter.dimFormat")}
             onClick={handleFormatDimensionClick}
@@ -696,6 +704,7 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
           <DimensionButton
             active={moreActive}
             disabled={disabled}
+            excluding={excludeAvailabilityFilter && moreActive}
             icon="menu"
             label={t("filter.dimMore")}
             onClick={handleMoreDimensionClick}

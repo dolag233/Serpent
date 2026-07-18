@@ -31,7 +31,6 @@ import {
 import {
   isAllAssetsNavActive,
   isManagedFolderNavActive,
-  isRootFolderNavActive,
   isTrashNavActive,
 } from "./browse-nav-active";
 import {
@@ -305,7 +304,6 @@ export interface NavigationSidebarProps {
   // --- Navigation callbacks ---
   onChooseAllAssets: () => void;
   onEnterTrash: () => void;
-  onChooseRootFolder: () => void;
   onChooseFolder: (folderId: string) => void;
   onChooseCollection: (collectionId: string, recursive?: boolean) => void;
   onChooseSmartCollection: (collectionId: string) => void;
@@ -416,7 +414,6 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
     onSetDraggedCollectionId,
     onChooseAllAssets,
     onEnterTrash,
-    onChooseRootFolder,
     onChooseFolder,
     onChooseCollection,
     onChooseSmartCollection,
@@ -866,12 +863,17 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
         <NavRow
           active={library ? isAllAssetsNavActive(browseNavFlags) : true}
           count={library ? allAssetCount : undefined}
+          disabled={!library}
           icon="grid"
           label={t("scope.allAssets")}
           onClick={() => void onChooseAllAssets()}
-          disabled={!library}
-          onDragOver={onExternalDragOver}
-          onDrop={(event) => onExternalDrop(event, null, undefined)}
+          {...(library
+            ? assetFolderDropHandlers("root", null)
+            : {
+                onDragOver: onExternalDragOver,
+                onDrop: (event: React.DragEvent<HTMLButtonElement>) =>
+                  onExternalDrop(event, null, undefined),
+              })}
         />
         <NavRow
           active={Boolean(library && isTrashNavActive(browseNavFlags))}
@@ -918,13 +920,6 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
         >
           {library ? (
             <>
-              <NavRow
-                active={isRootFolderNavActive(browseNavFlags)}
-                icon="folder"
-                label={t("scope.rootFolder")}
-                onClick={() => void onChooseRootFolder()}
-                {...assetFolderDropHandlers("root", null)}
-              />
               {renderDirectoryEntries()}
               {linkedFolders.length > 0 && (
                 <p className="nav-empty">

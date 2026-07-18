@@ -5656,7 +5656,6 @@ function AppInner() {
         onSetDraggedCollectionId={setDraggedCollectionId}
         onChooseAllAssets={() => void chooseFolder("all")}
         onEnterTrash={() => void enterTrash()}
-        onChooseRootFolder={() => void chooseFolder("root")}
         onChooseFolder={(folderId) => void chooseFolder(folderId)}
         onChooseCollection={(collectionId, recursive) =>
           void chooseCollection(collectionId, recursive)
