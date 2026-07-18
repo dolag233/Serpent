@@ -8539,6 +8539,17 @@ export class LibraryService {
         case 'byte_size':
           orderBy = `r.byte_size ${dir}, a.asset_id ASC`;
           break;
+        case 'long_edge': {
+          // Same long-edge expression as REQ-FILTER-010 numeric filters.
+          const width =
+            'COALESCE(duration_meta.width, technical_thumbnail.width)';
+          const height =
+            'COALESCE(duration_meta.height, technical_thumbnail.height)';
+          const longEdge =
+            `NULLIF(MAX(COALESCE(${width}, 0), COALESCE(${height}, 0)), 0)`;
+          orderBy = `${longEdge} IS NULL ASC, ${longEdge} ${dir}, a.asset_id ASC`;
+          break;
+        }
         case 'duration':
           orderBy = `duration_meta.duration_ms IS NULL ASC, duration_meta.duration_ms ${dir}, a.asset_id ASC`;
           break;

@@ -22,6 +22,7 @@ import {
   type DiscoveryFilterSnapshot,
 } from "./active-discovery-filters";
 import { TechnicalRangeFilter } from "./TechnicalRangeFilter";
+import { SortModeControl, type SortFieldOption } from "./SortModeControl";
 import { useT } from "./i18n";
 import type { TagSummary } from "../shared/asset-types";
 import type { SortDefinition } from "../shared/asset-types";
@@ -70,26 +71,8 @@ export type DimensionFilterBarProps = {
   setHeightRange: Dispatch<SetStateAction<RangeState>>;
   durationRange: RangeState;
   setDurationRange: Dispatch<SetStateAction<RangeState>>;
-  sortField:
-    | "relevance"
-    | "name"
-    | "modified_at"
-    | "created_at"
-    | "byte_size"
-    | "duration"
-    | "rating"
-    | "color";
-  setSortField: (
-    value:
-      | "relevance"
-      | "name"
-      | "modified_at"
-      | "created_at"
-      | "byte_size"
-      | "duration"
-      | "rating"
-      | "color",
-  ) => void;
+  sortField: SortFieldOption;
+  setSortField: (value: SortFieldOption) => void;
   sortOrder: SortDefinition["order"];
   setSortOrder: (value: SortDefinition["order"]) => void;
   onClearFilter: (id: ClearableFilterId) => void;
@@ -420,7 +403,7 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
           <DimensionButton
             active={moreActive}
             disabled={disabled}
-            icon="sliders"
+            icon="menu"
             label={t("filter.dimMore")}
             onClick={() => toggleDimension("more")}
             open={openDimension === "more"}
@@ -525,47 +508,17 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
                 setRange={setDurationRange}
                 step="0.1"
               />
-              <label>
-                {t("filter.sortField")}
-                <select
-                  aria-label={t("filter.sortField")}
-                  className="text-field"
-                  disabled={disabled}
-                  onChange={(event) =>
-                    setSortField(
-                      event.target.value as DimensionFilterBarProps["sortField"],
-                    )
-                  }
-                  value={sortField}
-                >
-                  <option value="relevance">{t("filter.sortRelevance")}</option>
-                  <option value="name">{t("filter.sortName")}</option>
-                  <option value="modified_at">{t("filter.sortModified")}</option>
-                  <option value="created_at">{t("filter.sortCreated")}</option>
-                  <option value="byte_size">{t("filter.sortSize")}</option>
-                  <option value="duration">{t("filter.sortDuration")}</option>
-                  <option value="rating">{t("filter.sortRating")}</option>
-                  <option value="color">{t("filter.sortColor")}</option>
-                </select>
-              </label>
-              <label>
-                {t("filter.sortDirection")}
-                <select
-                  aria-label={t("filter.sortDirection")}
-                  className="text-field"
-                  disabled={disabled}
-                  onChange={(event) =>
-                    setSortOrder(event.target.value as SortDefinition["order"])
-                  }
-                  value={sortOrder}
-                >
-                  <option value="asc">{t("filter.sortAsc")}</option>
-                  <option value="desc">{t("filter.sortDesc")}</option>
-                </select>
-              </label>
             </div>
           )}
         </div>
+
+        <SortModeControl
+          disabled={disabled}
+          setSortField={setSortField}
+          setSortOrder={setSortOrder}
+          sortField={sortField}
+          sortOrder={sortOrder}
+        />
       </div>
 
       {chips.length > 0 && (

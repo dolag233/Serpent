@@ -494,6 +494,66 @@ summary:focus-visible {
   gap: 4px;
 }
 
+.dimension-filter-dim-sep {
+  width: 1px;
+  height: 18px;
+  margin: 0 4px;
+  background: var(--divider);
+}
+
+.sort-mode-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.sort-mode-popover {
+  width: min(220px, 60vw);
+  gap: 4px;
+  padding: 8px;
+}
+
+.sort-mode-section-label {
+  margin-top: 4px;
+  padding: 4px 8px 2px;
+  color: var(--secondary);
+  font-size: 10px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.sort-mode-option {
+  display: block;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sort-mode-option:hover {
+  background: var(--hover);
+}
+
+.sort-mode-option.is-active {
+  background: var(--accent-soft);
+  color: var(--accent-soft-fg);
+}
+
+.sort-order-btn {
+  min-width: 28px;
+  padding: 0 8px;
+}
+
+.sort-order-glyph {
+  font-size: 13px;
+  line-height: 1;
+}
+
 .dimension-active-chip {
   display: inline-flex;
   max-width: 100%;

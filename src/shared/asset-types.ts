@@ -124,7 +124,16 @@ export const assetMetadataResultSchema = z.strictObject({
 export type AssetMetadataResult = z.infer<typeof assetMetadataResultSchema>;
 
 export const sortDefinitionSchema = z.strictObject({
-  field: z.enum(['name', 'modified_at', 'created_at', 'byte_size', 'duration', 'rating', 'color']),
+  field: z.enum([
+    'name',
+    'modified_at',
+    'created_at',
+    'byte_size',
+    'long_edge',
+    'duration',
+    'rating',
+    'color',
+  ]),
   order: z.enum(['asc', 'desc']),
 });
 

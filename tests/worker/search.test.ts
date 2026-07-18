@@ -1172,6 +1172,43 @@ describe('sort', () => {
     service.closeAll();
   });
 
+  it('sorts by long_edge ascending with nulls last', () => {
+    const { service, libraryId, assetId, libraryPath } = createLibraryWithAssetAndTags();
+    const assetId2 = createSecondAsset(service, libraryId, libraryPath, 'Small');
+    const db = new TestDatabase(path.join(libraryPath, '.serpent', 'library.db'));
+    const revisions = db.prepare(
+      'SELECT asset_id, current_revision_id FROM assets WHERE asset_id IN (?, ?)',
+    ).all(assetId, assetId2) as Array<{ asset_id: string; current_revision_id: string }>;
+    const insert = db.prepare(
+      `INSERT INTO revision_artifacts
+         (artifact_id, revision_id, kind, mime_type, byte_size, file_path,
+          width, height, generator_version, status, generated_at)
+       VALUES (?, ?, 'extracted_metadata', 'application/json', 1, ?, ?, ?, 'test', 'ready', ?)`,
+    );
+    const now = new Date().toISOString();
+    for (const row of revisions) {
+      const width = row.asset_id === assetId ? 3840 : 800;
+      const height = row.asset_id === assetId ? 2160 : 600;
+      insert.run(
+        randomUUID(),
+        row.current_revision_id,
+        `${row.asset_id}.json`,
+        width,
+        height,
+        now,
+      );
+    }
+    db.close();
+
+    const result = service.searchAssets({
+      libraryId,
+      sort: { field: 'long_edge', order: 'asc' },
+    });
+    expect(result.items.map((asset) => asset.assetId)).toEqual([assetId2, assetId]);
+
+    service.closeAll();
+  });
+
   it('sorts by extracted video duration with nulls last and projects durationMs', () => {
     const { service, libraryId, assetId, libraryPath } = createLibraryWithAssetAndTags();
     const assetId2 = createSecondAsset(service, libraryId, libraryPath, 'Short');

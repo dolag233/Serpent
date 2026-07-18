@@ -502,7 +502,7 @@ const library: SerpentLibraryApi = Object.freeze({
     return { ok: true, value: { items: result.items, total: result.total, offset: result.offset } };
   },
 
-  async searchAssets({ libraryId, query, filters, scope, sort, limit, offset }: { libraryId: string; query?: { clauses: { field: string | null; values: string[]; exclude: boolean }[] } | null; filters?: FilterClause[]; scope?: SearchScope; sort?: { field: 'name' | 'modified_at' | 'created_at' | 'byte_size' | 'duration' | 'rating' | 'color'; order: 'asc' | 'desc' }; limit?: number; offset?: number }): Promise<LibraryApiResult<{ items: AssetSummary[]; total: number; offset: number; snippets?: { assetId: string; text: string }[] }>> {
+  async searchAssets({ libraryId, query, filters, scope, sort, limit, offset }: { libraryId: string; query?: { clauses: { field: string | null; values: string[]; exclude: boolean }[] } | null; filters?: FilterClause[]; scope?: SearchScope; sort?: { field: 'name' | 'modified_at' | 'created_at' | 'byte_size' | 'long_edge' | 'duration' | 'rating' | 'color'; order: 'asc' | 'desc' }; limit?: number; offset?: number }): Promise<LibraryApiResult<{ items: AssetSummary[]; total: number; offset: number; snippets?: { assetId: string; text: string }[] }>> {
     const parsedQuery = searchQuerySchema.safeParse(query ?? null);
     if (!parsedQuery.success) {
       return { ok: false, error: createPublicError('INVALID_SEARCH_QUERY') };
