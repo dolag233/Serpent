@@ -445,8 +445,9 @@ summary:focus-visible {
   padding: 12px;
   border: 1px solid var(--divider);
   border-radius: 10px;
-  background: var(--panel);
+  background: var(--pane);
   box-shadow: 0 12px 32px color-mix(in srgb, var(--ink) 22%, transparent);
+  isolation: isolate;
 }
 
 .dimension-filter-popover.is-wide {
@@ -563,7 +564,7 @@ summary:focus-visible {
   padding: 3px 8px;
   border: 1px solid var(--divider);
   border-radius: 999px;
-  background: color-mix(in srgb, var(--canvas) 80%, var(--panel));
+  background: color-mix(in srgb, var(--canvas) 80%, var(--pane));
   color: var(--text);
   font-size: 11px;
   cursor: pointer;
