@@ -32,6 +32,7 @@ export const PUBLIC_ERROR_MESSAGES = {
   ASSET_FILE_NAME_CONFLICT: 'A file with this name already exists in the asset folder.',
   INVALID_ASSET_METADATA: 'Choose valid asset metadata values, including six-digit hex colors and an HTTP(S) source page URL.',
   INVALID_SEARCH_QUERY: 'Use supported search fields: filename, tags, description, source URL, folder path, or metadata.',
+  INVALID_SMART_COLLECTION_QUERY: 'Add a search query or at least one filter before saving a smart collection.',
   ASSET_MOVE_CONFLICT: 'The asset move could not be completed because a source or destination changed.',
   ASSET_SOURCE_TRASH_FAILED: 'Serpent could not move the asset source to the system trash.',
   AI_ANALYSIS_FAILED: 'The AI service could not analyze this asset.',

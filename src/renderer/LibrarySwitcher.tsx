@@ -1,4 +1,8 @@
 import { useEffect, useId, useRef, useState } from "react";
+import {
+  resolveImportMenuCopy,
+  type ImportMenuCopy,
+} from "./browse-empty-state";
 import { Icon } from "./Icons";
 import { useLocale, type LocalePreference } from "./i18n";
 import { useTheme, type ThemePreference } from "./theme";
@@ -34,6 +38,8 @@ export type LibrarySwitcherProps = {
   /** True when a library is open (gates library-scoped transfer actions). */
   libraryOpen?: boolean;
   busy?: boolean;
+  /** Labels/titles for transfer items when browsing a collection scope (CU-U5). */
+  importMenuCopy?: ImportMenuCopy;
   onImportFiles?: () => void;
   onImportFolder?: () => void;
   onPasteImage?: () => void;
@@ -58,6 +64,7 @@ export function LibrarySwitcher({
   onMenuOpen,
   libraryOpen = false,
   busy = false,
+  importMenuCopy,
   onImportFiles,
   onImportFolder,
   onPasteImage,
@@ -73,6 +80,7 @@ export function LibrarySwitcher({
   const menuId = useId();
   const label = libraryName ?? t("shell.chooseLibrary");
   const libraryScopedDisabled = !libraryOpen || busy;
+  const transferCopy = importMenuCopy ?? resolveImportMenuCopy("folder");
   const showTransferSection =
     onImportFiles != null ||
     onImportFolder != null ||
@@ -194,9 +202,10 @@ export function LibrarySwitcher({
                     disabled={libraryScopedDisabled}
                     onClick={() => runMenuAction(onImportFiles)}
                     role="menuitem"
+                    title={t(transferCopy.importFiles.titleKey)}
                     type="button"
                   >
-                    {t("toolbar.importFiles")}
+                    {t(transferCopy.importFiles.labelKey)}
                   </button>
                 )}
                 {onImportFolder != null && (
@@ -205,9 +214,10 @@ export function LibrarySwitcher({
                     disabled={libraryScopedDisabled}
                     onClick={() => runMenuAction(onImportFolder)}
                     role="menuitem"
+                    title={t(transferCopy.importFolder.titleKey)}
                     type="button"
                   >
-                    {t("toolbar.importFolder")}
+                    {t(transferCopy.importFolder.labelKey)}
                   </button>
                 )}
                 {onPasteImage != null && (
@@ -216,9 +226,10 @@ export function LibrarySwitcher({
                     disabled={libraryScopedDisabled}
                     onClick={() => runMenuAction(onPasteImage)}
                     role="menuitem"
+                    title={t(transferCopy.pasteImage.titleKey)}
                     type="button"
                   >
-                    {t("toolbar.pasteImage")}
+                    {t(transferCopy.pasteImage.labelKey)}
                   </button>
                 )}
                 {onImportLinkedFolder != null && (
@@ -227,9 +238,10 @@ export function LibrarySwitcher({
                     disabled={libraryScopedDisabled}
                     onClick={() => runMenuAction(onImportLinkedFolder)}
                     role="menuitem"
+                    title={t(transferCopy.importLinkedFolder.titleKey)}
                     type="button"
                   >
-                    {t("toolbar.importLinkedFolder")}
+                    {t(transferCopy.importLinkedFolder.labelKey)}
                   </button>
                 )}
                 {onExportLibrary != null && (

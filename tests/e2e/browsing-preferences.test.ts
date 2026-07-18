@@ -902,7 +902,7 @@ test("maintains consistent preferences, accessible names, zoom behavior, and avo
         ).serpent.library.createSmartCollection({
           libraryId: libId,
           name: "偏好测试智能合集",
-          queryDefinitionJson: "{}",
+          queryDefinitionJson: JSON.stringify({ filters: [{ field: "format", values: ["png"], exclude: false }] }),
         }),
       { libId: libraryId },
     );

@@ -33,7 +33,7 @@ export interface AssetMultiCommandActions {
  * ctx.selectedAssetIds 即描述符里的完整选中集合（恢复/永久删除/清除选择/
  * 标签入口的操作对象）；managedAssetIds / availableManagedAssetIds 是
  * managedCount / availableManagedCount 对应的 id 明细，供 run 转调。
- * linkedCount 目前只服务 JSX 内联的跳过原因提示，为保持计数齐备一并携带。
+ * linkedCount 供菜单跳过报告与上下文齐备；页脚文案由 menu-skip-report 生成。
  */
 export interface AssetMultiCommandContext extends CommandContext {
   readonly selectionCount: number;

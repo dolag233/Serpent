@@ -649,14 +649,8 @@ test("multi-asset menu shows a visible count and mixed-selection skip reasons", 
     const menu = window.getByRole("menu", { name: "批量资产操作：2 项" });
     await expect(menu).toBeVisible({ timeout: 5_000 });
     await expect(menu.getByText("已选择 2 项", { exact: true })).toBeVisible();
-    await expect(menu.getByRole("note")).toContainText(
-      "移动/复制处理 1 项可用托管资产",
-    );
-    await expect(menu.getByRole("note")).toContainText(
-      "回收站处理 1 项托管资产",
-    );
-    await expect(menu.getByRole("note")).toContainText(
-      "1 项链接资产不由资源库管理",
+    await expect(menu.getByRole("note")).toHaveText(
+      "移动：将处理 1 / 跳过 1（链接资产）；回收站：将处理 1 / 跳过 1（链接资产）",
     );
     await expect(
       menu.getByRole("menuitem", { name: "移动到文件夹…（1 项）" }),

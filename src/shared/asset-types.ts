@@ -326,6 +326,8 @@ export const smartCollectionSummarySchema = z.strictObject({
   name: nonBlankString,
   queryDefinition: nonBlankString,
   position: z.number().int().nonnegative(),
+  /** Live match count for the saved query (CU-M6); computed via search total. */
+  assetCount: z.number().int().nonnegative(),
 });
 
 export type SmartCollectionSummary = z.infer<typeof smartCollectionSummarySchema>;

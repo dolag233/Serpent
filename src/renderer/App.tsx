@@ -100,7 +100,7 @@ import {
   buildActiveFilterChips,
   type ClearableFilterId,
 } from "./active-discovery-filters";
-import { resolveBrowseEmptyState } from "./browse-empty-state";
+import { resolveBrowseEmptyState, resolveImportMenuCopy } from "./browse-empty-state";
 import { trashedFromLabel } from "./trashed-from-label";
 import { toMessage, LibraryOperationError } from "./error-utils";
 
@@ -118,6 +118,7 @@ import type {
   SortDefinition,
   TagSummary,
 } from "../shared/asset-types";
+import { hasMeaningfulSmartCollectionCondition } from "../shared/smart-collection-query";
 import type {
   SerpentLibraryApi,
   LibraryApiResult,
@@ -703,6 +704,13 @@ function AppInner() {
     return assets;
   }, [assets, trashedAssets, showTrash]);
 
+  const organizationBrowseScope = activeSmartCollectionId
+    ? ("smart-collection" as const)
+    : activeCollectionId
+      ? ("collection" as const)
+      : ("folder" as const);
+  const importMenuCopy = resolveImportMenuCopy(organizationBrowseScope);
+
   const browseEmptyState = useMemo(() => {
     const discoverySnapshot = {
       colorFilter,
@@ -730,11 +738,13 @@ function AppInner() {
       showTrash,
       hasActiveDiscovery,
       hasSelectedFolder: Boolean(selectedFolder),
+      organizationScope: organizationBrowseScope,
     });
   }, [
     showTrash,
     searchValue,
     selectedFolder,
+    organizationBrowseScope,
     colorFilter,
     excludeColorFilter,
     formatFilter,
@@ -2682,13 +2692,16 @@ function AppInner() {
 
   async function saveSmartCollection() {
     if (!api || !library || !smartCollectionName.trim()) return;
+    const definition = activeAiSearchDefinition ?? currentQueryDefinition();
+    if (!hasMeaningfulSmartCollectionCondition(definition)) {
+      setError(t("toast.smartCollectionNeedsCondition"));
+      return;
+    }
     try {
       const result = await api.createSmartCollection({
         libraryId: library.libraryId,
         name: smartCollectionName.trim(),
-        queryDefinitionJson: JSON.stringify(
-          activeAiSearchDefinition ?? currentQueryDefinition(),
-        ),
+        queryDefinitionJson: JSON.stringify(definition),
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
       const listResult = await api.listSmartCollections({
@@ -2724,6 +2737,14 @@ function AppInner() {
         clearAssetSelection();
         clearDiscoveryControls();
         recordNavigation({ kind: "smart-collection", collectionId });
+        // Refresh sidebar badge from the live execute total (CU-M6 cache).
+        setSmartCollections((current) =>
+          current.map((collection) =>
+            collection.collectionId === collectionId
+              ? { ...collection, assetCount: result.value.total }
+              : collection,
+          ),
+        );
       }
       applySearchResult(result.value, offset > 0);
     } catch (caught) {
@@ -2822,13 +2843,16 @@ function AppInner() {
 
   async function updateSmartCollectionQuery(collectionId: string) {
     if (!api || !library) return;
+    const definition = activeAiSearchDefinition ?? currentQueryDefinition();
+    if (!hasMeaningfulSmartCollectionCondition(definition)) {
+      setError(t("toast.smartCollectionNeedsCondition"));
+      return;
+    }
     try {
       const result = await api.updateSmartCollection({
         libraryId: library.libraryId,
         collectionId,
-        queryDefinitionJson: JSON.stringify(
-          activeAiSearchDefinition ?? currentQueryDefinition(),
-        ),
+        queryDefinitionJson: JSON.stringify(definition),
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
       setSmartCollections((current) =>
@@ -5117,6 +5141,7 @@ function AppInner() {
           <LibrarySwitcher
             busy={busy}
             disabled={busy}
+            importMenuCopy={importMenuCopy}
             libraryName={library?.displayName ?? null}
             libraryOpen={Boolean(library)}
             onCloseLibrary={() => void closeLibrary()}

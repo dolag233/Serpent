@@ -149,6 +149,17 @@ export const en = {
     importFolder: "Import folder",
     importLinkedFolder: "Import linked folder",
     pasteImage: "Paste image",
+    importFilesToLibrary: "Import files to library",
+    importFolderToLibrary: "Import folder to library",
+    importLinkedFolderToLibrary: "Import linked folder to library",
+    pasteImageToLibrary: "Paste image to library",
+    pasteImageToCollection: "Paste image into this collection",
+    importToLibraryHint:
+      "Imports into the library Assets folder (or current folder). Does not add membership to this collection automatically.",
+    importSmartScopeHint:
+      "Imports into the library Assets folder. Smart collections are saved queries and are not membership targets.",
+    pasteImageToCollectionHint:
+      "Pastes into the library and adds the new asset to this collection.",
     exportLibrary: "Export library",
     importLibrary: "Import library",
     importZip: "Import ZIP",
@@ -345,16 +356,18 @@ export const en = {
     collectionOps: "Collection actions: {name}",
     folderOps: "Folder actions: {name}",
     smartCollectionOps: "Smart collection actions: {name}",
-    skipLinked: "{count} linked assets are not managed by the library",
-    skipUnavailableManaged: "{count} managed assets are currently unavailable",
-    skipUnresolved: "{count} assets are no longer in the current scope",
-    skipPrefix: ", skipped {reasons}",
-    moveCopySummary: "Move/copy applies to {count} available managed assets",
-    trashSummary: "; Trash applies to {count} managed assets",
+    skipReportLine: "{action}: process {process} / skip {skip} ({reasons})",
+    skipReportActionMove: "Move",
+    skipReportActionTrash: "Trash",
+    skipReportJoin: "; ",
+    skipReasonLinked: "linked",
+    skipReasonUnavailable: "unavailable",
+    skipReasonUnresolved: "out of scope",
+    skipReasonTrashed: "in trash",
+    skipReasonJoin: ", ",
     copyToExternal: "Copy to external folder: {name}",
     managedUnavailableHint: "This managed asset is unavailable; file actions will be enabled after it is restored.",
-    removeFromCollectionAction: "Remove asset from collection",
-    scopeNoteEnd: "."
+    removeFromCollectionAction: "Remove asset from collection"
   },
   inspector: {
     description: "Description",
@@ -648,6 +661,12 @@ export const en = {
     searchBody: "Try a different query or clear filters.",
     trashTitle: "Trash is empty",
     trashBody: "Assets you move to Trash will appear here.",
+    collectionTitle: "This collection is empty",
+    collectionBody:
+      "Add assets from the library by drag-and-drop or the context menu. Library-menu import goes to Assets and does not join this collection automatically; paste image does.",
+    smartCollectionTitle: "No assets match this smart collection",
+    smartCollectionBody:
+      "Smart collections show assets that match a saved query. Import from the library menu goes to the library, not into this query.",
     noLibraryTitle: "Start with a local library",
     noLibraryBody: "Files, folders, and metadata stay where you control them."
   },
@@ -745,6 +764,8 @@ export const en = {
     desktopNoResponse: "Desktop service did not respond.",
     smartCollectionSaved: "Smart collection saved.",
     smartCollectionSaveFailed: "Failed to save smart collection.",
+    smartCollectionNeedsCondition:
+      "Add a search query or at least one filter before saving a smart collection.",
     smartCollectionRunFailed: "Failed to run smart collection.",
     loadMoreFailed: "Failed to load more assets.",
     smartCollectionRenamed: "Smart collection renamed.",
@@ -913,6 +934,8 @@ export const en = {
       IMPORT_COLLECTION_ASSIGN_FAILED: "Assets were imported into the target folder but could not be added to the selected collection. They are not lost — check the logs and retry the collection action.",
       INVALID_IMPORT_DECISION: "Import conflict decision is invalid.",
       INVALID_ASSET_METADATA: "Use six-digit hex colors and a valid HTTP(S) source URL.",
+      INVALID_SEARCH_QUERY: "Use supported search fields: filename, tags, description, source URL, folder path, or metadata.",
+      INVALID_SMART_COLLECTION_QUERY: "Add a search query or at least one filter before saving a smart collection.",
       IMPORT_NOT_FOUND: "The pending import is no longer valid. Select the files again.",
       IMPORT_APPLY_FAILED: "Could not complete the import safely.",
       LIBRARY_ALREADY_EXISTS: "A file or folder with this name already exists at that location.",

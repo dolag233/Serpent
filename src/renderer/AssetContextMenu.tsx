@@ -35,6 +35,10 @@ import {
   resolveCollectionMenuForSelection,
   type CollectionMembershipRow,
 } from "./collection-menu-membership";
+import {
+  buildMultiAssetMenuSkipReport,
+  formatMultiAssetMenuSkipFooter,
+} from "./menu-skip-report";
 
 const isMac = isMacPlatform(navigator.userAgent);
 
@@ -548,55 +552,27 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
             const targetAssets = assets.filter((asset) =>
               targetIdSet.has(asset.assetId),
             );
-            const managedAssetIds = targetAssets
-              .filter((asset) => asset.locationKind === "managed")
-              .map((asset) => asset.assetId);
-            const availableManagedAssetIds = targetAssets
-              .filter(
-                (asset) =>
-                  asset.locationKind === "managed" &&
-                  asset.availability === "available",
-              )
-              .map((asset) => asset.assetId);
-            const linkedCount = targetAssets.filter(
-              (asset) => asset.locationKind === "linked",
-            ).length;
-            const unavailableManagedCount = targetAssets.filter(
-              (asset) =>
-                asset.locationKind === "managed" &&
-                asset.availability !== "available",
-            ).length;
-            const unresolvedCount = targetAssetIds.length - targetAssets.length;
-            const allTrashed =
-              targetAssets.length > 0 &&
-              targetAssets.every((asset) => Boolean(asset.deletedAt));
-            const skipJoin = t("batch.skipJoin");
-            const moveSkipReasons = [
-              linkedCount > 0
-                ? t("menu.skipLinked", { count: linkedCount })
-                : null,
-              unavailableManagedCount > 0
-                ? t("menu.skipUnavailableManaged", {
-                    count: unavailableManagedCount,
-                  })
-                : null,
-              unresolvedCount > 0
-                ? t("menu.skipUnresolved", { count: unresolvedCount })
-                : null,
-            ].filter((reason): reason is string => reason !== null);
-            const trashSkipReasons = [
-              linkedCount > 0
-                ? t("menu.skipLinked", { count: linkedCount })
-                : null,
-              unresolvedCount > 0
-                ? t("menu.skipUnresolved", { count: unresolvedCount })
-                : null,
-            ].filter((reason): reason is string => reason !== null);
+            // REQ-MENU-004: process/skip counts + reasons from a pure module
+            // (eligibility aligned with drag-drop: exclude linked / unavailable
+            // / trashed / unresolved as appropriate per action).
+            const skipReport = buildMultiAssetMenuSkipReport(
+              targetAssetIds,
+              targetAssets,
+            );
+            const managedAssetIds = [...skipReport.trash.processAssetIds];
+            const availableManagedAssetIds = [
+              ...skipReport.move.processAssetIds,
+            ];
+            const allTrashed = skipReport.allTrashed;
+            const skipFooter = formatMultiAssetMenuSkipFooter(
+              skipReport,
+              locale,
+            );
 
             // 0015-C: 静态项的标题/快捷键/可见性/禁用原因由注册表 resolveMenu
             // 求值；此处把每次打开时算出的集合与 props 组装成
-            // AssetMultiCommandContext。动态行（批量合集、外部目录）与汇总/
-            // 跳过原因提示块保持内联不变。
+            // AssetMultiCommandContext。动态行（批量合集、外部目录）保持内联；
+            // 跳过报告由 menu-skip-report 生成简洁页脚。
             const commandContext: AssetMultiCommandContext = {
               surface: "asset-multi",
               locale,
@@ -608,7 +584,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
               selectionCount: targetAssetIds.length,
               managedCount: managedAssetIds.length,
               availableManagedCount: availableManagedAssetIds.length,
-              linkedCount,
+              linkedCount: skipReport.linkedCount,
               trashedAll: allTrashed,
               managedAssetIds,
               availableManagedAssetIds,
@@ -673,23 +649,9 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                   </ContextMenuSection>
                 ) : (
                   <>
-                {(moveSkipReasons.length > 0 || trashSkipReasons.length > 0) && (
+                {skipFooter && (
                   <div className="context-menu-scope-note" role="note">
-                    {t("menu.moveCopySummary", {
-                      count: availableManagedAssetIds.length,
-                    })}
-                    {moveSkipReasons.length > 0
-                      ? t("menu.skipPrefix", {
-                          reasons: moveSkipReasons.join(skipJoin),
-                        })
-                      : ""}
-                    {t("menu.trashSummary", { count: managedAssetIds.length })}
-                    {trashSkipReasons.length > 0
-                      ? t("menu.skipPrefix", {
-                          reasons: trashSkipReasons.join(skipJoin),
-                        })
-                      : ""}
-                    {t("menu.scopeNoteEnd")}
+                    {skipFooter}
                   </div>
                 )}
             <ContextMenuSection label={t("command.group.organize")}>

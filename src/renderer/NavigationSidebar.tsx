@@ -916,6 +916,7 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
               smartCollections.map((sc) => (
                 <NavRow
                   active={activeSmartCollectionId === sc.collectionId}
+                  count={sc.assetCount}
                   icon="smart"
                   key={sc.collectionId}
                   label={sc.name}

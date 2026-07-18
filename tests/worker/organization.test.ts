@@ -1199,6 +1199,75 @@ describe('asset metadata', () => {
 // ── Smart Collections ───────────────────────────────────────────────────
 
 describe('smart collections', () => {
+  it('rejects empty and sort-only smart collection definitions (CU-M5)', () => {
+    const { service, libraryId } = createLibraryWithAsset();
+
+    expectServiceCode(
+      () =>
+        service.createSmartCollection({
+          libraryId,
+          name: 'All Assets Trap',
+          queryDefinitionJson: '{}',
+        }),
+      'INVALID_SMART_COLLECTION_QUERY',
+    );
+    expectServiceCode(
+      () =>
+        service.createSmartCollection({
+          libraryId,
+          name: 'Sort Only',
+          queryDefinitionJson: JSON.stringify({
+            sort: { field: 'name', order: 'asc' },
+          }),
+        }),
+      'INVALID_SMART_COLLECTION_QUERY',
+    );
+    expectServiceCode(
+      () => {
+        const sc = service.createSmartCollection({
+          libraryId,
+          name: 'Has Filter',
+          queryDefinitionJson: JSON.stringify({
+            filters: [{ field: 'favorite', values: [], exclude: false }],
+          }),
+        });
+        return service.updateSmartCollection({
+          libraryId,
+          collectionId: sc.collectionId,
+          queryDefinitionJson: '{}',
+        });
+      },
+      'INVALID_SMART_COLLECTION_QUERY',
+    );
+
+    service.closeAll();
+  });
+
+  it('lists smart collections with live asset counts (CU-M6)', () => {
+    const { service, libraryId, assetId } = createLibraryWithAsset();
+    service.setAssetMetadata({
+      libraryId,
+      assetId,
+      expectedVersion: 0,
+      favorite: true,
+    });
+
+    const sc = service.createSmartCollection({
+      libraryId,
+      name: 'Favorites',
+      queryDefinitionJson: JSON.stringify({
+        filters: [{ field: 'favorite', values: [], exclude: false }],
+      }),
+    });
+    expect(sc.assetCount).toBe(1);
+
+    const list = service.listSmartCollections(libraryId);
+    expect(list).toHaveLength(1);
+    expect(list[0]!.assetCount).toBe(1);
+
+    service.closeAll();
+  });
+
   it('creates and lists smart collections', () => {
     const { service, libraryId } = createLibraryWithAsset();
 
@@ -1226,7 +1295,7 @@ describe('smart collections', () => {
     const sc = service.createSmartCollection({
       libraryId,
       name: 'Original',
-      queryDefinitionJson: '{}',
+      queryDefinitionJson: JSON.stringify({ filters: [{ field: 'favorite', values: [], exclude: false }] }),
     });
 
     const updated = service.updateSmartCollection({
@@ -1274,7 +1343,7 @@ describe('smart collections', () => {
     const sc = service.createSmartCollection({
       libraryId,
       name: 'ToDelete',
-      queryDefinitionJson: '{}',
+      queryDefinitionJson: JSON.stringify({ filters: [{ field: 'favorite', values: [], exclude: false }] }),
     });
 
     const deletedId = service.deleteSmartCollection({
@@ -1307,14 +1376,14 @@ describe('smart collections', () => {
     service.createSmartCollection({
       libraryId,
       name: 'Unique',
-      queryDefinitionJson: '{}',
+      queryDefinitionJson: JSON.stringify({ filters: [{ field: 'favorite', values: [], exclude: false }] }),
     });
     expectServiceCode(
       () =>
         service.createSmartCollection({
           libraryId,
           name: 'Unique',
-          queryDefinitionJson: '{}',
+          queryDefinitionJson: JSON.stringify({ filters: [{ field: 'favorite', values: [], exclude: false }] }),
         }),
       'FOLDER_ALREADY_EXISTS',
     );

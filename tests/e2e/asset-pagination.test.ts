@@ -371,7 +371,7 @@ test("ordinary browsing continuously appends every asset without page controls",
           await serpent.library.createSmartCollection({
             libraryId,
             name: "分页智能合集",
-            queryDefinitionJson: "{}",
+            queryDefinitionJson: JSON.stringify({ filters: [{ field: "format", values: ["png"], exclude: false }] }),
           })
         ).ok
       ) {

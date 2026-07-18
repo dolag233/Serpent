@@ -43,7 +43,8 @@ import {
   type RepresentativeColor,
 } from './palette-extractor';
 
-import { smartCollectionQueryDefinitionSchema, extractedVideoMetadataSchema, type AssetMetadataResult, type ExtractedMetadataResult, type ExtractedVideoMetadata, type AssetSummary, type CollectionSummary, type FilterClause, type LinkedFolderRule, type LinkedFolderSummary, type ManagedFolderSummary, type SearchScope, type SmartCollectionQueryDefinition, type TagSummary } from '../shared/asset-types';
+import { smartCollectionQueryDefinitionSchema, extractedVideoMetadataSchema, type AssetMetadataResult, type ExtractedMetadataResult, type ExtractedVideoMetadata, type AssetSummary, type CollectionSummary, type FilterClause, type LinkedFolderRule, type LinkedFolderSummary, type ManagedFolderSummary, type SearchScope, type SmartCollectionQueryDefinition, type SmartCollectionSummary, type TagSummary } from '../shared/asset-types';
+import { hasMeaningfulSmartCollectionCondition } from '../shared/smart-collection-query';
 import {
   colorFilterSql,
   parseColorFilterIds,
@@ -9154,12 +9155,16 @@ export class LibraryService {
     libraryId: string;
     name: string;
     queryDefinitionJson: string;
-  }): { collectionId: string; name: string; queryDefinition: string; position: number } {
+  }): SmartCollectionSummary {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     const trimmed = input.name.trim();
     if (trimmed.length === 0) throw new LibraryServiceError('INVALID_FOLDER_NAME');
 
-    this.parseSmartCollectionDefinition(input.queryDefinitionJson, 'INVALID_IMPORT_DECISION');
+    const definition = this.parseSmartCollectionDefinition(
+      input.queryDefinitionJson,
+      'INVALID_IMPORT_DECISION',
+    );
+    this.assertMeaningfulSmartCollectionDefinition(definition);
 
     const collectionId = randomUUID();
     const now = new Date().toISOString();
@@ -9195,15 +9200,11 @@ export class LibraryService {
       name: trimmed,
       queryDefinition: input.queryDefinitionJson,
       position: 0,
+      assetCount: this.countSmartCollectionMatches(input.libraryId, definition),
     };
   }
 
-  listSmartCollections(libraryId: string): Array<{
-    collectionId: string;
-    name: string;
-    queryDefinition: string;
-    position: number;
-  }> {
+  listSmartCollections(libraryId: string): SmartCollectionSummary[] {
     const openLibrary = this.requireOpenLibrary(libraryId);
     const rows = openLibrary.connection
       .prepare(
@@ -9218,12 +9219,26 @@ export class LibraryService {
         query_definition_json: string;
         position: number;
       }>;
-    return rows.map((row) => ({
-      collectionId: row.collection_id,
-      name: row.name,
-      queryDefinition: row.query_definition_json,
-      position: row.position,
-    }));
+    // Batch counts inside one list call so the renderer avoids N+1 execute RPCs (CU-M6).
+    return rows.map((row) => {
+      let assetCount: number;
+      try {
+        const definition = this.parseSmartCollectionDefinition(
+          row.query_definition_json,
+          'LIBRARY_CORRUPT',
+        );
+        assetCount = this.countSmartCollectionMatches(libraryId, definition);
+      } catch {
+        assetCount = 0;
+      }
+      return {
+        collectionId: row.collection_id,
+        name: row.name,
+        queryDefinition: row.query_definition_json,
+        position: row.position,
+        assetCount,
+      };
+    });
   }
 
   updateSmartCollection(input: {
@@ -9232,7 +9247,7 @@ export class LibraryService {
     name?: string;
     queryDefinitionJson?: string;
     position?: number;
-  }): { collectionId: string; name: string; queryDefinition: string; position: number } {
+  }): SmartCollectionSummary {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     const existing = openLibrary.connection
       .prepare(
@@ -9254,9 +9269,14 @@ export class LibraryService {
       input.queryDefinitionJson ?? existing.query_definition_json;
     const newPosition = input.position ?? existing.position;
 
-    // Validate queryDefinitionJson if provided.
+    // Validate queryDefinitionJson if provided (CU-M5: require search/filter).
+    let definition: SmartCollectionQueryDefinition | null = null;
     if (input.queryDefinitionJson !== undefined) {
-      this.parseSmartCollectionDefinition(input.queryDefinitionJson, 'INVALID_IMPORT_DECISION');
+      definition = this.parseSmartCollectionDefinition(
+        input.queryDefinitionJson,
+        'INVALID_IMPORT_DECISION',
+      );
+      this.assertMeaningfulSmartCollectionDefinition(definition);
     }
 
     try {
@@ -9278,11 +9298,25 @@ export class LibraryService {
       throw new LibraryServiceError('LIBRARY_NOT_WRITABLE', { cause: error });
     }
 
+    let assetCount: number;
+    try {
+      const counted =
+        definition ??
+        this.parseSmartCollectionDefinition(
+          newQueryDefinitionJson,
+          'LIBRARY_CORRUPT',
+        );
+      assetCount = this.countSmartCollectionMatches(input.libraryId, counted);
+    } catch {
+      assetCount = 0;
+    }
+
     return {
       collectionId: input.collectionId,
       name: newName,
       queryDefinition: newQueryDefinitionJson,
       position: newPosition,
+      assetCount,
     };
   }
 
@@ -9343,6 +9377,29 @@ export class LibraryService {
     } catch {
       throw new LibraryServiceError(errorCode);
     }
+  }
+
+  private assertMeaningfulSmartCollectionDefinition(
+    definition: SmartCollectionQueryDefinition,
+  ): void {
+    if (!hasMeaningfulSmartCollectionCondition(definition)) {
+      throw new LibraryServiceError('INVALID_SMART_COLLECTION_QUERY');
+    }
+  }
+
+  /** Count-only search (limit 0) for sidebar badges without fetching rows. */
+  private countSmartCollectionMatches(
+    libraryId: string,
+    definition: SmartCollectionQueryDefinition,
+  ): number {
+    return this.searchAssets({
+      libraryId,
+      query: definition.search ?? null,
+      filters: definition.filters ?? null,
+      sort: null,
+      limit: 0,
+      offset: 0,
+    }).total;
   }
 
   // ── Trash & Relink (v7) ───────────────────────────────────────────

@@ -491,22 +491,12 @@ const assetOperationSuccessSchemas = [
   z.strictObject({
     ok: z.literal(true),
     type: z.literal('smart-collection.created'),
-    collection: z.strictObject({
-      collectionId: nonBlankString,
-      name: nonBlankString,
-      queryDefinition: nonBlankString,
-      position: z.number().int().nonnegative(),
-    }),
+    collection: smartCollectionSummarySchema,
   }),
   z.strictObject({
     ok: z.literal(true),
     type: z.literal('smart-collection.updated'),
-    collection: z.strictObject({
-      collectionId: nonBlankString,
-      name: nonBlankString,
-      queryDefinition: nonBlankString,
-      position: z.number().int().nonnegative(),
-    }),
+    collection: smartCollectionSummarySchema,
   }),
   z.strictObject({
     ok: z.literal(true),

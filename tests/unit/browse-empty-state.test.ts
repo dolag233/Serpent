@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { resolveBrowseEmptyState } from "../../src/renderer/browse-empty-state";
+import {
+  resolveBrowseEmptyState,
+  resolveImportMenuCopy,
+} from "../../src/renderer/browse-empty-state";
 
 describe("resolveBrowseEmptyState", () => {
   it("shows search empty without import CTAs when discovery is active", () => {
@@ -68,5 +71,80 @@ describe("resolveBrowseEmptyState", () => {
         hasSelectedFolder: false,
       }).titleKey,
     ).toBe("empty.folderBody");
+  });
+
+  it("hides import CTAs for an empty collection", () => {
+    expect(
+      resolveBrowseEmptyState({
+        showTrash: false,
+        hasActiveDiscovery: false,
+        hasSelectedFolder: false,
+        organizationScope: "collection",
+      }),
+    ).toEqual({
+      kind: "collection",
+      titleKey: "empty.collectionTitle",
+      detailKey: "empty.collectionBody",
+      showImportActions: false,
+      icon: "collection",
+    });
+  });
+
+  it("hides import CTAs for an empty smart collection", () => {
+    expect(
+      resolveBrowseEmptyState({
+        showTrash: false,
+        hasActiveDiscovery: false,
+        hasSelectedFolder: false,
+        organizationScope: "smart-collection",
+      }),
+    ).toEqual({
+      kind: "smart-collection",
+      titleKey: "empty.smartCollectionTitle",
+      detailKey: "empty.smartCollectionBody",
+      showImportActions: false,
+      icon: "smart",
+    });
+  });
+
+  it("prefers discovery empty over collection scope", () => {
+    expect(
+      resolveBrowseEmptyState({
+        showTrash: false,
+        hasActiveDiscovery: true,
+        hasSelectedFolder: false,
+        organizationScope: "collection",
+      }).kind,
+    ).toBe("search");
+  });
+});
+
+describe("resolveImportMenuCopy", () => {
+  it("keeps default labels in folder scope", () => {
+    expect(resolveImportMenuCopy("folder").importFiles.labelKey).toBe(
+      "toolbar.importFiles",
+    );
+    expect(resolveImportMenuCopy().pasteImage.labelKey).toBe(
+      "toolbar.pasteImage",
+    );
+  });
+
+  it("labels collection-scope dialog import as library destination", () => {
+    const copy = resolveImportMenuCopy("collection");
+    expect(copy.importFiles).toEqual({
+      labelKey: "toolbar.importFilesToLibrary",
+      titleKey: "toolbar.importToLibraryHint",
+    });
+    expect(copy.pasteImage).toEqual({
+      labelKey: "toolbar.pasteImageToCollection",
+      titleKey: "toolbar.pasteImageToCollectionHint",
+    });
+  });
+
+  it("labels smart-collection import as library-only", () => {
+    const copy = resolveImportMenuCopy("smart-collection");
+    expect(copy.importFiles.labelKey).toBe("toolbar.importFilesToLibrary");
+    expect(copy.pasteImage.labelKey).toBe("toolbar.pasteImageToLibrary");
+    expect(copy.importFolder.titleKey).toBe("toolbar.importSmartScopeHint");
   });
 });
