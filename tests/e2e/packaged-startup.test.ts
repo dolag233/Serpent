@@ -36,7 +36,7 @@ test('the packaged application starts and completes a real Worker import', async
     );
 
     const window = await application.firstWindow();
-    await expect(window.getByRole('heading', { name: '从一个本地资源库开始' })).toBeVisible();
+    await expect(window.getByRole('heading', { name: '创建本地资源库' })).toBeVisible();
     expect(
       await window.evaluate(() => ({
         hasNodeProcess: typeof globalThis.process !== 'undefined',
@@ -102,7 +102,7 @@ test('the packaged application FTS5 search finds and filters imported assets', a
     );
 
     const window = await application.firstWindow();
-    await expect(window.getByRole('heading', { name: '从一个本地资源库开始' })).toBeVisible();
+    await expect(window.getByRole('heading', { name: '创建本地资源库' })).toBeVisible();
 
     // Create library
     await window.getByRole('button', { name: '创建资源库' }).click();

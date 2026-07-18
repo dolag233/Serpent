@@ -41,7 +41,7 @@ test("lists other recent libraries in the switcher and opens one directly", asyn
   try {
     let window = await application.firstWindow();
     await expect(
-      window.getByRole("heading", { name: "从一个本地资源库开始" }),
+      window.getByRole("heading", { name: "创建本地资源库" }),
     ).toBeVisible();
     await window.getByRole("button", { name: "创建资源库" }).click();
     await window.getByLabel("名称").fill(firstName);
@@ -59,14 +59,14 @@ test("lists other recent libraries in the switcher and opens one directly", asyn
     await expect(window.getByText("其他资源库")).toHaveCount(0);
     await window.getByRole("menuitem", { name: "关闭资源库" }).click();
     await expect(
-      window.getByRole("heading", { name: "从一个本地资源库开始" }),
+      window.getByRole("heading", { name: "创建本地资源库" }),
     ).toBeVisible();
     await application.close();
 
     application = await launch(secondParentPath);
     window = await application.firstWindow();
     await expect(
-      window.getByRole("heading", { name: "从一个本地资源库开始" }),
+      window.getByRole("heading", { name: "创建本地资源库" }),
     ).toBeVisible();
     await window.getByRole("button", { name: "创建资源库" }).click();
     await window.getByLabel("名称").fill(secondName);

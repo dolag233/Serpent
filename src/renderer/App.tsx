@@ -14,6 +14,11 @@ import { IconActionButton } from "./icon-action-button";
 import { iconActionAttrs } from "./icon-action-attrs";
 import { HoverTipHost } from "./hover-tip";
 import { shouldShowMissingAssetOverlay } from "./availability-affordance";
+import {
+  assetTypeBadgeLabel,
+  fileExtensionLabel,
+  shouldShowDurationBadge,
+} from "./asset-card-badges";
 import { ConvertLinkedDialog } from "./ConvertLinkedDialog";
 import { LinkedRulesDialog } from "./LinkedRulesDialog";
 import { PermanentDeleteDialog } from "./PermanentDeleteDialog";
@@ -5649,7 +5654,21 @@ function AppInner() {
                   style={assetGridLayoutStyle(assetViewMode, assetCardSize)}
                 >
                   {(() => {
-                    const cards = visibleAssets.map((asset) => (
+                    const cards = visibleAssets.map((asset) => {
+                      const typeBadge = assetTypeBadgeLabel(
+                        asset.mediaType,
+                        asset.displayName,
+                      );
+                      const showDuration = shouldShowDurationBadge(
+                        asset.mediaType,
+                        asset.displayName,
+                        asset.durationMs,
+                      );
+                      const showTypeBadge =
+                        Boolean(typeBadge) &&
+                        !asset.deletedAt &&
+                        !shouldShowMissingAssetOverlay(asset.availability);
+                      return (
                     <button
                       aria-label={canvasPrefs.fields.name ? undefined : asset.displayName}
                       aria-pressed={selectedIdSet.has(asset.assetId)}
@@ -5778,7 +5797,7 @@ function AppInner() {
                         ) : (
                           <>
                             <span className="asset-extension">
-                              {extension(asset.displayName)}
+                              {fileExtensionLabel(asset.displayName)}
                             </span>
                             <Icon name="file" size={28} />
                           </>
@@ -5816,12 +5835,14 @@ function AppInner() {
                               })}
                           </span>
                         )}
-                        {asset.mediaType === "video" &&
-                          asset.durationMs != null && (
+                        {showDuration && asset.durationMs != null && (
                             <span className="asset-duration-badge">
                               {formatDuration(asset.durationMs)}
                             </span>
                           )}
+                        {showTypeBadge && typeBadge && (
+                          <span className="asset-type-badge">{typeBadge}</span>
+                        )}
                       </div>
                       {(canvasPrefs.fields.name ||
                         canvasPrefs.fields.size ||
@@ -5880,7 +5901,8 @@ function AppInner() {
                         </div>
                       )}
                     </button>
-                    ));
+                    );
+                    });
                     return assetViewMode === "masonry" ? (
                       <MasonryColumns
                         assets={visibleAssets}
@@ -6619,10 +6641,6 @@ function describeAiSearchPlan(plan: AiSearchPlan, locale: AppLocale): string {
   return translateForLocale(locale, "aiPlan.summary", {
     parts: parts.join(" · "),
   });
-}
-function extension(name: string) {
-  const value = name.split(".").pop();
-  return value && value !== name ? value.slice(0, 5).toUpperCase() : "FILE";
 }
 function formatBytes(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;

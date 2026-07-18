@@ -141,7 +141,7 @@ test('organizes, finds, trashes, and restores an imported asset through the UI',
     await expect(window.getByLabel('色卡预览').locator('span')).toHaveCount(2);
 
     const descriptionInput = window.getByLabel('描述');
-    const sourceUrlInput = window.getByLabel('源链接 (URL)');
+    const sourceUrlInput = window.getByLabel('源链接');
     await descriptionInput.fill('待清空描述');
     await descriptionInput.blur();
     await expect(window.getByText(/版本 4/)).toBeVisible();

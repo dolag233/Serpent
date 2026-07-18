@@ -34,7 +34,7 @@ test("creates, closes, and reopens a library through the sandboxed UI", async ()
   try {
     const window = await application.firstWindow();
     await expect(
-      window.getByRole("heading", { name: "从一个本地资源库开始" }),
+      window.getByRole("heading", { name: "创建本地资源库" }),
     ).toBeVisible();
 
     const rendererCapabilities = await window.evaluate(() => ({
@@ -78,7 +78,7 @@ test("creates, closes, and reopens a library through the sandboxed UI", async ()
 
     await closeLibraryViaSwitcher(window, libraryName);
     await expect(
-      window.getByRole("heading", { name: "从一个本地资源库开始" }),
+      window.getByRole("heading", { name: "创建本地资源库" }),
     ).toBeVisible();
     expect(await lifecycleEvents).toEqual([
       "library.opening",
@@ -219,7 +219,7 @@ test("falls back to the start screen when the recent library no longer exists", 
   try {
     const window = await application.firstWindow();
     await expect(
-      window.getByRole("heading", { name: "从一个本地资源库开始" }),
+      window.getByRole("heading", { name: "创建本地资源库" }),
     ).toBeVisible({ timeout: 10_000 });
     await expect
       .poll(() =>

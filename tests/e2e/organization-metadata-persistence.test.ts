@@ -119,7 +119,7 @@ test("persists organization and metadata across restart and surfaces optimistic-
 
     await assetCard.click();
     const descriptionInput = window.getByLabel("描述");
-    const sourceUrlInput = window.getByLabel("源链接 (URL)");
+    const sourceUrlInput = window.getByLabel("源链接");
     const paletteInput = window.getByRole("textbox", {
       name: "人工色卡",
       exact: true,
@@ -176,7 +176,7 @@ test("persists organization and metadata across restart and surfaces optimistic-
     await restoredCard.click();
 
     const restoredDescriptionInput = window.getByLabel("描述");
-    const restoredSourceUrlInput = window.getByLabel("源链接 (URL)");
+    const restoredSourceUrlInput = window.getByLabel("源链接");
     const restoredPaletteInput = window.getByRole("textbox", {
       name: "人工色卡",
       exact: true,

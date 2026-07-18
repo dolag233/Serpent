@@ -186,13 +186,13 @@ export const zhCN = {
     missing: "文件丢失",
     excludeAvailability: "排除该可用性",
     exclude: "排除",
-    widthPx: "宽度 (px)",
-    heightPx: "高度 (px)",
+    widthPx: "宽度",
+    heightPx: "高度",
     aspectRatio: "宽高比",
     aspectRatioPresets: "宽高比预设",
     resolutionPresets: "分辨率预设",
-    longEdgePx: "长边 (px)",
-    durationSec: "时长 (秒)",
+    longEdgePx: "长边",
+    durationSec: "时长",
     sortField: "排序字段",
     sortRelevance: "相关性（默认）",
     sortName: "名称",
@@ -342,7 +342,7 @@ export const zhCN = {
   },
   inspector: {
     description: "描述",
-    sourceUrl: "源链接 (URL)",
+    sourceUrl: "源链接",
     openSourceUrl: "在浏览器中打开源链接",
     sourceUrlInvalid: "源链接不可打开（需要 http/https 且不含凭据）",
     sourceUrlInvalidHint: "源链接无效，输入 HTTP(S) 链接后可打开",
@@ -362,7 +362,7 @@ export const zhCN = {
     createTagNamed: "创建标签 “{name}”",
     manualPalette: "人工色卡",
     autoPalette: "自动色卡",
-    paletteLabel: "色卡 (Palette) · {source}",
+    paletteLabel: "色卡 · {source}",
     paletteManual: "人工",
     paletteAuto: "自动",
     palettePending: "待提取",
@@ -404,7 +404,7 @@ export const zhCN = {
     createLibrary: {
       title: "创建资源库",
       name: "名称",
-      help: "下一步由系统选择本地保存位置。",
+      help: "确认后将选择资源库的本地保存位置。",
       submit: "创建"
     },
     conflicts: {
@@ -562,16 +562,16 @@ export const zhCN = {
     }
   },
   aiConfig: {
-    title: "AI 配置 (BYOK)",
+    title: "AI 配置",
     note: "配置第三方云端视觉模型 API Key。Key 将加密存储于本地操作系统安全凭据中，Serpent 不代理、不计费、不追踪额度。",
     provider: "供应商",
     model: "模型",
     apiKeyConfigured: "（已配置，重新输入可覆盖）",
     language: "语言",
-    languagePlaceholder: "auto (跟随系统)",
+    languagePlaceholder: "自动（跟随系统）",
     fieldSwitches: "AI 写入开关（按字段）",
     description: "描述",
-    tags: "标签 (Tags)",
+    tags: "标签",
     structured: "结构化元信息",
     disclaimer: "我了解启用 AI 分析会将选中资产的图像或视频联系表上传给所选第三方供应商，并可能产生费用。",
     autoAnalyze: "导入后自动上传并分析支持的资产",
@@ -621,11 +621,11 @@ export const zhCN = {
     requestFailedWithReason: "{prefix}：{detail}（{reason}）"
   },
   empty: {
-    folderTitle: "这个文件夹还是空的",
-    folderBody: "把第一批素材放进来",
-    folderDetail: "文件将复制到清晰可读的 Assets 目录，同时建立稳定的资产身份。",
-    noLibraryTitle: "从一个本地资源库开始",
-    noLibraryBody: "文件、目录与元数据都保留在你掌控的位置。"
+    folderTitle: "此文件夹为空",
+    folderBody: "导入资产以开始整理",
+    folderDetail: "文件将复制到资源目录，并建立稳定的资产身份。",
+    noLibraryTitle: "创建本地资源库",
+    noLibraryBody: "资产文件、目录与元数据保存在本地所选位置。"
   },
   progress: {
     snapshotDb: "快照数据库…",

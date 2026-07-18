@@ -3121,6 +3121,23 @@ select.ai-config-input {
   line-height: 1.45;
   pointer-events: none;
 }
+
+/* Type chip (GIF / VIDEO) bottom-right; hidden when missing/trash banners occupy that corner. */
+.asset-type-badge {
+  position: absolute;
+  bottom: 6px;
+  right: 6px;
+  padding: 2px 6px;
+  border-radius: 5px;
+  background: rgb(15 17 18 / 68%);
+  backdrop-filter: blur(6px);
+  color: var(--text);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  line-height: 1.45;
+  pointer-events: none;
+}
 .missing-banner {
   position: absolute;
   right: 6px;
