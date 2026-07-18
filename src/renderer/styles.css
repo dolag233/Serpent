@@ -2456,6 +2456,45 @@ input[type="range"] {
   min-height: 0;
   overflow: hidden;
 }
+.preview-audio-stage {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  width: min(720px, 92%);
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  margin: 0 auto;
+}
+.preview-audio {
+  position: absolute;
+  width: 0;
+  height: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+.preview-audio-waveform {
+  display: block;
+  width: 100%;
+  max-height: min(240px, 40vh);
+  object-fit: contain;
+  border-radius: 8px;
+  background: var(--raised);
+}
+.preview-audio-waveform.is-placeholder {
+  min-height: 120px;
+  background:
+    linear-gradient(90deg, transparent 0%, var(--hover) 50%, transparent 100%),
+    var(--raised);
+}
+.preview-audio-controls {
+  position: relative;
+  width: 100%;
+  max-width: 560px;
+}
 .preview-gif-stage {
   position: relative;
   width: 100%;

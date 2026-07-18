@@ -208,6 +208,10 @@ import {
 } from './gif-thumbnail-page';
 import { buildGifExtractedMetadata, type GifExtractedMetadata } from './gif-metadata';
 import {
+  audioMimeForExtension,
+  isAudioFileName,
+} from '../shared/audio-media';
+import {
   extractZipStream,
   ZipImportStreamError,
   type ZipArchiveManifest,
@@ -4491,9 +4495,12 @@ export class LibraryService {
           : row.thumbnail_status === 'pending' || row.thumbnail_status === 'generating' ? 'pending'
           : null,
         thumbnail_artifact_id: row.thumbnail_status === 'ready' ? row.thumbnail_artifact_id : null,
-        media_type: LibraryService.detectMediaType(row.relative_file_path) === 'image' ? 'image'
-          : LibraryService.detectMediaType(row.relative_file_path) === 'video' ? 'video'
-          : 'other',
+        media_type: (() => {
+          const detected = LibraryService.detectMediaType(row.relative_file_path);
+          return detected === 'image' || detected === 'video' || detected === 'audio'
+            ? detected
+            : 'other';
+        })(),
       }));
   }
 
@@ -6042,6 +6049,14 @@ export class LibraryService {
       '.mov': 'video/quicktime',
       '.avi': 'video/x-msvideo',
       '.wmv': 'video/x-ms-wmv',
+      '.wav': 'audio/wav',
+      '.mp3': 'audio/mpeg',
+      '.ogg': 'audio/ogg',
+      '.oga': 'audio/ogg',
+      '.m4a': 'audio/mp4',
+      '.aac': 'audio/aac',
+      '.flac': 'audio/flac',
+      '.opus': 'audio/ogg',
     };
     const mime = mimeMap[ext] ?? 'application/octet-stream';
     const isVideo = mime.startsWith('video/');
@@ -7002,9 +7017,10 @@ export class LibraryService {
   /**
    * Detect media type from a file extension.
    * Returns 'image' for PNG/JPEG/GIF/TIFF/WebP/BMP, 'video' for MP4/MOV/AVI/WMV/WebM,
-   * and 'other' for everything else (including EXR/TGA which would need OIIO).
+   * 'audio' for WAV/MP3/OGG/M4A/AAC/FLAC/Opus, and 'other' for everything else
+   * (including EXR/TGA which would need OIIO).
    */
-  static detectMediaType(filenameOrMime: string): 'image' | 'video' | 'other' {
+  static detectMediaType(filenameOrMime: string): 'image' | 'video' | 'audio' | 'other' {
     const lower = filenameOrMime.toLowerCase();
     if (lower.endsWith('.png') || lower.endsWith('.jpg') || lower.endsWith('.jpeg') ||
         lower.endsWith('.gif') || lower.endsWith('.tiff') || lower.endsWith('.tif') ||
@@ -7014,6 +7030,9 @@ export class LibraryService {
     if (lower.endsWith('.mp4') || lower.endsWith('.webm') ||
         lower.endsWith('.mov') || lower.endsWith('.avi') || lower.endsWith('.wmv')) {
       return 'video';
+    }
+    if (isAudioFileName(lower)) {
+      return 'audio';
     }
     return 'other';
   }
@@ -7056,6 +7075,8 @@ export class LibraryService {
     const isGifAsset = assetPath.toLowerCase().endsWith('.gif');
     const artifactKinds = mediaType === 'video'
       ? ['extracted_metadata', 'video_poster']
+      : mediaType === 'audio'
+        ? ['extracted_metadata', 'thumbnail']
       : isGifAsset
         ? ['thumbnail', 'extracted_metadata']
         : ['thumbnail'];
@@ -7075,6 +7096,10 @@ export class LibraryService {
 
     if (mediaType === 'video') {
       return this.generateVideoArtifacts(input, openLibrary, assetPath, revisionId, execution);
+    }
+
+    if (mediaType === 'audio') {
+      return this.generateAudioArtifacts(input, openLibrary, assetPath, revisionId, execution);
     }
 
     if (isOiioImage) {
@@ -7322,6 +7347,123 @@ export class LibraryService {
     } catch (error) {
       rmSync(artifactAbsPath, { force: true });
       this.diagnose('gif.extracted-metadata', error, { revisionId });
+    }
+  }
+
+  // ── Audio artifacts (ffprobe + waveform thumbnail) ─────────────────
+
+  /**
+   * Audio path (Serpent-0x5): extract metadata and render a waveform PNG stored
+   * as the standard `thumbnail` artifact so grid/Inspector reuse existing cover UI.
+   * Playback uses the native source via `serpent://source` — no proxy needed.
+   */
+  private async generateAudioArtifacts(
+    input: { libraryId: string; assetId: string },
+    openLibrary: OpenLibrary,
+    assetPath: string,
+    revisionId: string,
+    execution: MediaExecutionContext,
+  ): Promise<{ artifactId: string }> {
+    const ffprobePath = resolveFfprobePath();
+    const ffmpegPath = resolveFfmpegPath();
+    const artifactsDir = this.artifactsDir(openLibrary);
+    mkdirSync(artifactsDir, { recursive: true });
+
+    try {
+      await this.probeVideoAsset(
+        input, openLibrary, assetPath, revisionId, ffprobePath, execution,
+      );
+    } catch (error) {
+      this.diagnose('audio-probe', error, { libraryId: input.libraryId, assetId: input.assetId });
+    }
+
+    let waveformArtifactId: string | null = null;
+    try {
+      waveformArtifactId = await this.generateAudioWaveformThumbnail(
+        input, openLibrary, assetPath, revisionId, ffmpegPath, artifactsDir, execution,
+      );
+    } catch (error) {
+      this.diagnose('audio-waveform', error, { libraryId: input.libraryId, assetId: input.assetId });
+    }
+
+    if (!waveformArtifactId) {
+      throw new LibraryServiceError('INTERNAL_ERROR', {
+        reason: 'MEDIA_PROCESSING_FAILED',
+      });
+    }
+
+    this.options.onAssetsChanged?.({
+      type: 'asset.changed',
+      libraryId: input.libraryId,
+      changedCount: 1,
+      missingCount: 0,
+    });
+
+    return { artifactId: waveformArtifactId };
+  }
+
+  /** Render a mono waveform overview PNG for card/Inspector cover. */
+  private async generateAudioWaveformThumbnail(
+    input: { libraryId: string; assetId: string },
+    openLibrary: OpenLibrary,
+    assetPath: string,
+    revisionId: string,
+    ffmpegPath: string,
+    artifactsDir: string,
+    execution: MediaExecutionContext,
+  ): Promise<string> {
+    const artifactId = randomUUID();
+    const artifactRelPath = `${artifactId}.png`;
+    const artifactAbsPath = path.join(artifactsDir, artifactRelPath);
+
+    try {
+      const result = await this.runFfmpeg(ffmpegPath, [
+        '-y',
+        '-i', assetPath,
+        '-filter_complex',
+        'aformat=channel_layouts=mono,showwavespic=s=640x160:colors=#7EB6FF',
+        '-frames:v', '1',
+        artifactAbsPath,
+      ], { timeoutMs: 120_000, signal: execution.signal });
+
+      if (result.exitCode !== 0) {
+        throw new Error(
+          `ffmpeg waveform exited with code ${result.exitCode}: ${result.stderr.slice(-200)}`,
+        );
+      }
+
+      const outputStat = statSync(artifactAbsPath);
+      openLibrary.connection
+        .prepare(
+          `INSERT INTO revision_artifacts
+             (artifact_id, revision_id, kind, mime_type, byte_size, file_path,
+              width, height, generator_version, status, generated_at)
+           VALUES (?, ?, 'thumbnail', 'image/png', ?, ?, ?, ?, ?, 'ready', ?)`,
+        )
+        .run(
+          artifactId,
+          revisionId,
+          outputStat.size,
+          artifactRelPath,
+          640,
+          160,
+          `ffmpeg@${FFMPEG_VERSION}`,
+          new Date().toISOString(),
+        );
+
+      return artifactId;
+    } catch (error) {
+      this.writeFailedArtifact(
+        openLibrary,
+        artifactId,
+        revisionId,
+        'thumbnail',
+        'image/png',
+        artifactRelPath,
+        `ffmpeg@${FFMPEG_VERSION}`,
+        error,
+      );
+      throw error;
     }
   }
 
@@ -8099,7 +8241,7 @@ export class LibraryService {
     libraryId: string,
     assetId: string,
   ): {
-    mediaType: 'image' | 'video' | 'other';
+    mediaType: 'image' | 'video' | 'audio' | 'other';
     status: 'ready' | 'pending' | 'failed' | 'missing';
     kind: 'thumbnail' | 'webm_proxy';
     artifactId?: string;
@@ -8127,7 +8269,11 @@ export class LibraryService {
 
     const mediaType = LibraryService.detectMediaType(asset.relative_file_path);
     const kind = mediaType === 'video' ? 'webm_proxy' : 'thumbnail';
-    const mimeType = mediaType === 'video' ? 'video/webm' : 'image/webp';
+    const mimeType = mediaType === 'video'
+      ? 'video/webm'
+      : mediaType === 'audio'
+        ? 'audio/mpeg'
+        : 'image/webp';
     if (mediaType === 'other') {
       return {
         mediaType,
@@ -8149,18 +8295,33 @@ export class LibraryService {
       '.mp4': 'video/mp4',
       '.mov': 'video/quicktime',
       '.webm': 'video/webm',
+      '.wav': 'audio/wav',
+      '.mp3': 'audio/mpeg',
+      '.ogg': 'audio/ogg',
+      '.oga': 'audio/ogg',
+      '.m4a': 'audio/mp4',
+      '.aac': 'audio/aac',
+      '.flac': 'audio/flac',
+      '.opus': 'audio/ogg',
     };
     const nativeMimeType = nativeMimeTypes[extension];
     const poster = mediaType === 'video'
       ? this.getCurrentArtifact(libraryId, assetId, 'video_poster')
+      : mediaType === 'audio'
+        ? this.getCurrentArtifact(libraryId, assetId, 'thumbnail')
       : null;
     const posterArtifactId = poster?.status === 'ready' ? poster.artifactId : undefined;
     const artifact = this.getCurrentArtifact(libraryId, assetId, kind);
     if (artifact) {
       const status = artifact.status === 'generating' ? 'pending' : artifact.status;
       // Prefer a ready derivative, except native images always use the original
-      // (REQ-VIEW-002: uncompressed source in the viewer).
-      if (status === 'ready' && !(mediaType === 'image' && nativeMimeType)) {
+      // (REQ-VIEW-002: uncompressed source in the viewer). Audio always plays
+      // the source; waveform thumbnail is exposed via posterArtifactId.
+      if (
+        status === 'ready' &&
+        !(mediaType === 'image' && nativeMimeType) &&
+        mediaType !== 'audio'
+      ) {
         return {
           mediaType,
           status,
@@ -8461,8 +8622,16 @@ export class LibraryService {
       '.webm': 'video/webm',
       '.avi': 'video/x-msvideo',
       '.wmv': 'video/x-ms-wmv',
+      '.wav': 'audio/wav',
+      '.mp3': 'audio/mpeg',
+      '.ogg': 'audio/ogg',
+      '.oga': 'audio/ogg',
+      '.m4a': 'audio/mp4',
+      '.aac': 'audio/aac',
+      '.flac': 'audio/flac',
+      '.opus': 'audio/ogg',
     };
-    const mimeType = mimeTypes[extension];
+    const mimeType = mimeTypes[extension] ?? audioMimeForExtension(extension) ?? undefined;
     if (!mimeType) throw new LibraryServiceError('INVALID_IMPORT_DECISION', { reason: 'UNSUPPORTED_FORMAT' });
     return { absolutePath: this.resolveAssetPath(libraryId, assetId), mimeType };
   }
@@ -10219,7 +10388,7 @@ export class LibraryService {
       trashed_from_relative_path?: string | null;
       thumbnail_status?: 'ready' | 'pending' | 'failed' | null;
       thumbnail_artifact_id?: string | null;
-      media_type?: 'image' | 'video' | 'other' | null;
+      media_type?: 'image' | 'video' | 'audio' | 'other' | null;
       artifact_width?: number | null;
       artifact_height?: number | null;
       artifact_duration_ms?: number | null;

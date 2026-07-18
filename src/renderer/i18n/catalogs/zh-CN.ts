@@ -627,6 +627,7 @@ export const zhCN = {
     zoomReset: "重置缩放",
     fullscreenFailed: "无法进入全屏模式，请检查系统窗口权限后重试。",
     videoFailed: "视频播放失败（错误代码：{code}）。代理文件可能损坏，可重试生成。",
+    audioFailed: "音频播放失败（错误代码：{code}）。可尝试用系统默认应用打开。",
     cannotOpenExternal: "无法使用外部应用打开",
     viewPage: "{name} 查看页面",
     previous: "查看上一个资产",

@@ -636,6 +636,7 @@ export const en = {
     zoomReset: "Reset zoom",
     fullscreenFailed: "Could not enter fullscreen. Check system window permissions and try again.",
     videoFailed: "Video playback failed (error code: {code}). The proxy may be damaged — retry generation.",
+    audioFailed: "Audio playback failed (error code: {code}). Try opening with the system default app.",
     cannotOpenExternal: "Could not open with an external app",
     viewPage: "{name} viewer",
     previous: "Previous asset",

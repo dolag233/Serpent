@@ -353,6 +353,7 @@
 | 2026-07-19 | FILTER-019–020 / NAV-006 / SORT-006 / INSPECT-009–010 | 待人类验收 | 排除红、颜色黑白、去根行、排序图标、技术栏、堆叠阴影。 |
 | 2026-07-19 | SHELL-021 | 待人类验收 | 源链接打开失败可操作 toast；IPC 结构化错误码与无 URL 日志。 | Serpent-1pd。 |
 | 2026-07-19 | A11Y-001–003 | 待人类验收 | 查看页焦点环；库菜单/排序 roving；TagPicker 单焦点与对话框 trap。 | Serpent-vvn。 |
+| 2026-07-19 | AUDIO-001 | 待人类验收 | 音频波形封面 + 查看页播放/进度。 | Serpent-0x5。 |
 | 2026-07-19 | PREF-001 / SMART-007 / MENU-023 | 待人类验收 | 设置面板；智能合集+；资产原地重命名。 | Serpent-str / uu9 / wfj。 |
 | 2026-07-19 | FOLDER-010–013 | 待人类验收 | 文件夹卡片/封面/计数/多选。 | epic Serpent-5ja。 |
 | 2026-07-19 | SORT-005 / SHELL-017 / FILTER-013 | 待复验 | 去掉排序相关性；括注复查；删除文件夹过滤维度。 | `Serpent-96i` / `Serpent-d45` / `Serpent-ckx`；[开发日志](../development/2026-07-19-sort-copy-folder-filter-development-log.md)。 |
@@ -375,5 +376,6 @@
 | A11Y-001 | 查看页 nav/close 键盘焦点可见 | 待人类验收 | 打开查看页；Tab 到上一张/下一张/关闭；可先等 chrome 渐隐再 Tab | 焦点控件有 accent 描边；idle 渐隐时聚焦仍可见 | [开发日志](../development/2026-07-19-keyboard-focus-model-development-log.md) / Serpent-vvn | 2026-07-19。 |
 | A11Y-002 | 资源库菜单与排序 listbox 键盘导航 | 待人类验收 | 打开左上角资源库菜单与排序字段弹出层；用 ↑↓ Home/End、Esc | 箭头移动焦点；Esc 关闭并回到触发按钮 | 同上 / `roving-list-keyboard.test.ts` | 2026-07-19。 |
 | A11Y-003 | 标签选择器单一焦点 + 对话框焦点陷阱 | 待人类验收 | 右键→分配标签；箭头高亮选项且输入框保持焦点；打开设置/导出等对话框按 Tab | 选项不可 Tab 抢走焦点；对话框 Tab 不逃到背后 UI | 同上 | 2026-07-19。 |
+| AUDIO-001 | 音频波形封面与查看页播放 | 待人类验收 | 导入 `.wav`/`.mp3`；看网格/Inspector 波形封面；双击进入查看页播放、拖动进度条；解码失败时 toast/状态可理解 | 卡片有 AUDIO 角标与波形图；查看页可播且进度前进；失败有明确降级 | [开发日志](../development/2026-07-19-audio-waveform-playback-development-log.md) / Serpent-0x5 / 单测 `audio-media.test.ts` | 2026-07-19；Computer Use 未执行。 |
 
 

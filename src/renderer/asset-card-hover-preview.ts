@@ -3,7 +3,7 @@ import type { PreviewResolution } from "../shared/library-api";
 
 /** GIF or video that can play in-place on the grid card. */
 export function isCardHoverPreviewable(asset: {
-  mediaType: "image" | "video" | "other";
+  mediaType: "image" | "video" | "audio" | "other";
   displayName: string;
   availability?: "available" | "missing";
   deletedAt?: string | null;

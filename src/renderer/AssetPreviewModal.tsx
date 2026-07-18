@@ -25,6 +25,7 @@ import { Icon } from "./Icons";
 import type { ViewerChromeActivitySource } from "./viewer-chrome-idle";
 import { resolveViewerPrimarySurface } from "./viewer-preview-policy";
 import { VideoPlayerControls } from "./VideoPlayerControls";
+import { AudioPlayerControls } from "./AudioPlayerControls";
 import { GifPlayerControls } from "./GifPlayerControls";
 import { isGifDisplayName } from "./gif-player-controls";
 import { ZoomableImage } from "./zoomable-preview-image";
@@ -407,15 +408,33 @@ export function AssetPreviewModal({
     }
   }
 
-  function handlePlaybackError(event: SyntheticEvent<HTMLVideoElement>) {
+  function handlePlaybackError(event: SyntheticEvent<HTMLMediaElement>) {
     const mediaError = event.currentTarget.error;
+    const isAudio = resolution?.mediaType === "audio";
     const errorCode = mediaError
-      ? `VIDEO_MEDIA_ERR_${mediaError.code}`
-      : "VIDEO_PLAYBACK_FAILED";
+      ? `${isAudio ? "AUDIO" : "VIDEO"}_MEDIA_ERR_${mediaError.code}`
+      : isAudio
+        ? "AUDIO_PLAYBACK_FAILED"
+        : "VIDEO_PLAYBACK_FAILED";
     const detail = safeRendererDiagnostic(
       mediaError?.message ??
-        "HTMLVideoElement emitted an error without MediaError details.",
+        "HTMLMediaElement emitted an error without MediaError details.",
     );
+    if (isAudio) {
+      setError(
+        previewErrorDetail(resolution?.errorCode, t) ??
+          t("preview.audioFailed", { code: errorCode }),
+      );
+      void api
+        .reportPreviewError({
+          libraryId,
+          assetId: asset.assetId,
+          errorCode,
+          detail,
+        })
+        .catch(() => undefined);
+      return;
+    }
     if (resolution?.playbackMode === "source") {
       setError(
         previewErrorDetail(resolution.errorCode, t) ??
@@ -485,6 +504,13 @@ export function AssetPreviewModal({
               onReady={() => setDirectApproved(true)}
               posterUrl={resolution.posterUrl}
               src={resolution.url}
+            />
+          ) : ready && resolution?.mediaType === "audio" && resolution.url ? (
+            <AudioPlayerControls
+              onError={handlePlaybackError}
+              onReady={() => setDirectApproved(true)}
+              src={resolution.url}
+              waveformUrl={resolution.posterUrl}
             />
           ) : ready &&
             resolution?.url &&

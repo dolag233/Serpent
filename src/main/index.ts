@@ -2453,6 +2453,14 @@ async function startApplication(): Promise<void> {
         ".gif": "image/gif",
         ".webm": "video/webm",
         ".json": "application/json",
+        ".wav": "audio/wav",
+        ".mp3": "audio/mpeg",
+        ".ogg": "audio/ogg",
+        ".oga": "audio/ogg",
+        ".m4a": "audio/mp4",
+        ".aac": "audio/aac",
+        ".flac": "audio/flac",
+        ".opus": "audio/ogg",
       };
       const mimeType = mimeMap[ext] ?? "application/octet-stream";
 

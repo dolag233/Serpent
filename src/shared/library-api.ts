@@ -81,7 +81,7 @@ export interface ImportValidatedResult {
 
 export interface PreviewResolution {
   assetId: string;
-  mediaType: 'image' | 'video' | 'other';
+  mediaType: 'image' | 'video' | 'audio' | 'other';
   status: 'ready' | 'pending' | 'failed' | 'missing';
   kind: 'thumbnail' | 'webm_proxy';
   url?: string;
