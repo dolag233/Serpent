@@ -62,6 +62,11 @@ import {
 } from "./context-menu";
 import { useAssetSelection } from "./useAssetSelection";
 import { resolveInspectorTagTarget } from "./inspector-tag-target";
+import {
+  buildInspectorMultiEdit,
+  toMultiEditSlice,
+  type InspectorMultiEditModel,
+} from "./inspector-multi-edit";
 import { useBatchActions } from "./useBatchActions";
 import { useAssetRename } from "./useAssetRename";
 import { useInlineFolderEdit } from "./use-inline-folder-edit";
@@ -599,6 +604,12 @@ function AppInner() {
   const [editFavorite, setEditFavorite] = useState(false);
   const [editSourceUrl, setEditSourceUrl] = useState("");
   const [editPalette, setEditPalette] = useState("");
+  // REQ-SELECT-004: UE-style multi-select Inspector model (null when <2 selected).
+  const [multiEdit, setMultiEdit] = useState<InspectorMultiEditModel | null>(null);
+  const selectedAssetIdsRef = useRef(selectedAssetIds);
+  useEffect(() => {
+    selectedAssetIdsRef.current = selectedAssetIds;
+  }, [selectedAssetIds]);
 
   // Inline collection editors
   const [showCollectionInput, setShowCollectionInput] = useState(false);
@@ -1751,9 +1762,22 @@ function AppInner() {
   // also refresh the primary asset's metadata to keep the Inspector's tag
   // chips in sync (single-asset handlers already do this themselves).
   async function refreshInspectorTagStateAfterBatch() {
-    if (!selectedAssetId) return;
+    const ids =
+      selectedAssetIds.length >= 2
+        ? [...new Set(selectedAssetIds)]
+        : selectedAssetId
+          ? [selectedAssetId]
+          : [];
+    if (ids.length === 0) return;
     try {
-      await refreshTagAndMetadataState(selectedAssetId);
+      for (const assetId of ids) {
+        await refreshTagAndMetadataState(assetId);
+      }
+      if (ids.length >= 2) {
+        const model = rebuildMultiEditFromCache(ids);
+        setMultiEdit(model);
+        syncEditorsFromMultiEdit(model);
+      }
     } catch (caught) {
       setError(toMessage(caught, t("toast.tagUpdatedRefreshFailed"), locale));
     }
@@ -2718,6 +2742,8 @@ function AppInner() {
     metadataConflictAssetIdsRef.current.delete(targetAssetId);
     if (selectedAssetIdRef.current !== targetAssetId) return;
     setAssetMetadata(metadata);
+    // Multi-select edit fields are owned by the multi-edit effect (REQ-SELECT-004).
+    if (selectedAssetIdsRef.current.length >= 2) return;
     setEditDescription(metadata.description ?? "");
     setEditRating(metadata.rating);
     setEditFavorite(metadata.favorite);
@@ -2772,6 +2798,83 @@ function AppInner() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedAssetId]);
+
+  function rebuildMultiEditFromCache(
+    assetIds: readonly string[],
+  ): InspectorMultiEditModel | null {
+    if (assetIds.length < 2) return null;
+    const slices = [];
+    for (const assetId of assetIds) {
+      const metadata = metadataByAssetRef.current.get(assetId);
+      if (!metadata) return null;
+      slices.push(
+        toMultiEditSlice({
+          description: metadata.description,
+          rating: metadata.rating,
+          favorite: metadata.favorite,
+          sourcePageUrl: metadata.sourcePageUrl,
+          palette: parseStoredPalette(metadata.palette),
+          tags: metadata.tags,
+        }),
+      );
+    }
+    return buildInspectorMultiEdit(slices);
+  }
+
+  function syncEditorsFromMultiEdit(model: InspectorMultiEditModel | null) {
+    if (!model) return;
+    setEditDescription(
+      model.description.kind === "uniform" ? model.description.value : "",
+    );
+    setEditRating(model.rating.kind === "uniform" ? model.rating.value : 0);
+    setEditFavorite(
+      model.favorite.kind === "uniform" ? model.favorite.value : false,
+    );
+    setEditSourceUrl(
+      model.sourceUrl.kind === "uniform" ? model.sourceUrl.value : "",
+    );
+    setEditPalette(
+      model.palette.kind === "uniform" ? model.palette.value.join(", ") : "",
+    );
+  }
+
+  // REQ-SELECT-004: load metadata for every selected asset and derive mixed/uniform.
+  useEffect(() => {
+    const ids = [...selectedAssetIds];
+    if (ids.length < 2 || !api || !library) {
+      queueMicrotask(() => {
+        setMultiEdit(null);
+      });
+      return;
+    }
+    let cancelled = false;
+    const libraryId = library.libraryId;
+    void (async () => {
+      try {
+        await Promise.all(
+          ids.map(async (assetId) => {
+            if (metadataByAssetRef.current.has(assetId)) return;
+            const result = await api.getAssetMetadata({ libraryId, assetId });
+            if (result.ok) {
+              metadataByAssetRef.current.set(assetId, result.value);
+            }
+          }),
+        );
+        if (cancelled) return;
+        const model = rebuildMultiEditFromCache(ids);
+        setMultiEdit(model);
+        syncEditorsFromMultiEdit(model);
+      } catch (caught) {
+        if (!cancelled) {
+          setError(toMessage(caught, t("toast.readMetadataFailed"), locale));
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedAssetIds.join("\0"), library?.libraryId, api]);
 
   function saveMetadata(fields: {
     description?: string;
@@ -2839,7 +2942,78 @@ function AppInner() {
     return operation;
   }
 
-  const handleOpenExternal = useCallback(async (assetId: string) => {
+  async function saveMetadataForSelection(
+    assetIds: readonly string[],
+    fields: {
+      description?: string;
+      favorite?: boolean;
+      palette?: string[];
+      sourcePageUrl?: string;
+    },
+  ): Promise<void> {
+    if (!api || !library || assetIds.length === 0) return;
+    const targetApi = api;
+    const targetLibraryId = library.libraryId;
+    let updated = 0;
+    let conflicts = 0;
+    for (const assetId of assetIds) {
+      let current = metadataByAssetRef.current.get(assetId);
+      if (!current) {
+        const fetched = await targetApi.getAssetMetadata({
+          libraryId: targetLibraryId,
+          assetId,
+        });
+        if (!fetched.ok) continue;
+        current = fetched.value;
+        metadataByAssetRef.current.set(assetId, current);
+      }
+      if (metadataConflictAssetIdsRef.current.has(assetId)) {
+        conflicts += 1;
+        continue;
+      }
+      try {
+        const result = await targetApi.setAssetMetadata({
+          libraryId: targetLibraryId,
+          assetId,
+          expectedVersion: current.entityVersion,
+          ...fields,
+        });
+        if (!result.ok) {
+          if (result.error.code === "VERSION_CONFLICT") {
+            metadataConflictAssetIdsRef.current.add(assetId);
+            conflicts += 1;
+            continue;
+          }
+          throw new LibraryOperationError(result.error);
+        }
+        metadataByAssetRef.current.set(assetId, result.value);
+        updated += 1;
+        if ("favorite" in fields && fields.favorite !== undefined) {
+          const favorite = fields.favorite;
+          const updateSummary = (asset: AssetSummary): AssetSummary =>
+            asset.assetId === assetId ? { ...asset, favorite } : asset;
+          setAssets((currentAssets) => currentAssets.map(updateSummary));
+          setTrashedAssets((currentAssets) => currentAssets.map(updateSummary));
+        }
+        if (selectedAssetIdRef.current === assetId) {
+          setAssetMetadata(result.value);
+        }
+      } catch (caught) {
+        setError(toMessage(caught, t("toast.metadataSaveFailed"), locale));
+        return;
+      }
+    }
+    const model = rebuildMultiEditFromCache([...assetIds]);
+    setMultiEdit(model);
+    syncEditorsFromMultiEdit(model);
+    if (conflicts > 0) {
+      setNotice(t("toast.metadataVersionConflict"));
+    } else if (updated > 0) {
+      setNotice(t("toast.metadataSaved"));
+    }
+  }
+
+    const handleOpenExternal = useCallback(async (assetId: string) => {
     if (!api || !library) return;
     try {
       const result = await api.openExternal({
@@ -4341,13 +4515,24 @@ function AppInner() {
   }
 
   function handleMetadataDescriptionSave() {
+    const target = resolveInspectorTagTarget(
+      selectedAssetIds,
+      selectedAssetId ?? undefined,
+    );
+    if (target?.kind === "batch") {
+      if (multiEdit?.description.kind !== "uniform") return;
+      if (editDescription === multiEdit.description.value) return;
+      void saveMetadataForSelection(target.assetIds, {
+        description: editDescription,
+      });
+      return;
+    }
     if (!assetMetadata || editDescription === (assetMetadata.description ?? ""))
       return;
     void saveMetadata({ description: editDescription });
   }
 
   function handlePaletteSave() {
-    if (!assetMetadata) return;
     const values = editPalette
       .split(",")
       .map((value) => value.trim())
@@ -4360,6 +4545,18 @@ function AppInner() {
       setError(t("toast.paletteBadFormat"));
       return;
     }
+    const target = resolveInspectorTagTarget(
+      selectedAssetIds,
+      selectedAssetId ?? undefined,
+    );
+    if (target?.kind === "batch") {
+      if (multiEdit?.palette.kind !== "uniform") return;
+      if (JSON.stringify(values) === JSON.stringify(multiEdit.palette.value))
+        return;
+      void saveMetadataForSelection(target.assetIds, { palette: values });
+      return;
+    }
+    if (!assetMetadata) return;
     const current = parseStoredPalette(assetMetadata.palette);
     if (JSON.stringify(values) === JSON.stringify(current)) return;
     void saveMetadata({ palette: values });
@@ -4370,16 +4567,18 @@ function AppInner() {
   // exactly like the Inspector tag operations. The primary asset's stars
   // update optimistically; a single selection keeps the versioned write.
   function handleRatingClick(rating: number) {
-    if (!assetMetadata) return;
-    setEditRating(rating);
     const target = resolveInspectorTagTarget(
       selectedAssetIds,
       selectedAssetId ?? undefined,
     );
     if (target?.kind === "batch") {
+      if (multiEdit?.rating.kind === "mixed") return;
+      setEditRating(rating);
       void batchSetRatingForSelection(rating, target.assetIds);
       return;
     }
+    if (!assetMetadata) return;
+    setEditRating(rating);
     void saveMetadata({ rating });
   }
 
@@ -4418,6 +4617,9 @@ function AppInner() {
             : current,
         );
       }
+      const model = rebuildMultiEditFromCache(assetIds);
+      setMultiEdit(model);
+      syncEditorsFromMultiEdit(model);
       setNotice(
         formatBatchRatingNotice(
           rating,
@@ -4432,6 +4634,17 @@ function AppInner() {
   }
 
   function handleFavoriteToggle() {
+    const target = resolveInspectorTagTarget(
+      selectedAssetIds,
+      selectedAssetId ?? undefined,
+    );
+    if (target?.kind === "batch") {
+      if (multiEdit?.favorite.kind !== "uniform") return;
+      const next = !editFavorite;
+      setEditFavorite(next);
+      void saveMetadataForSelection(target.assetIds, { favorite: next });
+      return;
+    }
     if (!assetMetadata) return;
     const next = !editFavorite;
     setEditFavorite(next);
@@ -4444,8 +4657,10 @@ function AppInner() {
   }
 
   function handleSourceUrlSave() {
-    if (!assetMetadata || editSourceUrl === (assetMetadata.sourcePageUrl ?? ""))
-      return;
+    const target = resolveInspectorTagTarget(
+      selectedAssetIds,
+      selectedAssetId ?? undefined,
+    );
     if (editSourceUrl !== "") {
       try {
         const parsed = new URL(editSourceUrl);
@@ -4462,6 +4677,16 @@ function AppInner() {
         return;
       }
     }
+    if (target?.kind === "batch") {
+      if (multiEdit?.sourceUrl.kind !== "uniform") return;
+      if (editSourceUrl === multiEdit.sourceUrl.value) return;
+      void saveMetadataForSelection(target.assetIds, {
+        sourcePageUrl: editSourceUrl,
+      });
+      return;
+    }
+    if (!assetMetadata || editSourceUrl === (assetMetadata.sourcePageUrl ?? ""))
+      return;
     void saveMetadata({ sourcePageUrl: editSourceUrl });
   }
 
@@ -5939,7 +6164,7 @@ function AppInner() {
         }}
         onRemoveTagFromAsset={(tagId) => void handleInspectorRemoveTag(tagId)}
         selectedAsset={selectedAsset}
-        selectionCount={selectedAssetIds.length}
+        multiEdit={multiEdit}
         setEditPalette={setEditPalette}
         versionConflict={versionConflict}
       />

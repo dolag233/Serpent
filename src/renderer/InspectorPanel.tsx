@@ -12,6 +12,10 @@ import { IconActionButton } from "./icon-action-button";
 import { iconActionAttrs } from "./icon-action-attrs";
 import { formatDuration } from "./App";
 import { resolveInspectorPreviewSrc } from "./inspector-preview";
+import {
+  isEditableScalar,
+  type InspectorMultiEditModel,
+} from "./inspector-multi-edit";
 import { toOpenableExternalUrl } from "../shared/external-url";
 import {
   buildTagSuggestions,
@@ -104,8 +108,8 @@ export interface InspectorPanelProps {
   onAssignTagToAsset?: (tagId: string) => void;
   onRemoveTagFromAsset?: (tagId: string) => void;
   onCreateAndAssignTag?: (tagName: string) => void;
-  // REQ-MENU-007: total selected assets; tag and rating ops apply to all of them when >= 2.
-  selectionCount?: number;
+  // REQ-MENU-007 / REQ-SELECT-004: multi-select UE edit model (null = single-asset path).
+  multiEdit?: InspectorMultiEditModel | null;
   /** 点击色卡分段复制颜色后的反馈（toast 由 App 统一发）。copied=false 表示剪贴板写入失败。 */
   onPaletteColorCopy?: (color: string, copied: boolean) => void;
   /** 在系统浏览器中打开当前源链接（URL 有效性由主进程二次校验）。 */
@@ -207,12 +211,13 @@ export function InspectorPanel(props: InspectorPanelProps) {
     onAssignTagToAsset,
     onRemoveTagFromAsset,
     onCreateAndAssignTag,
-    selectionCount,
+    multiEdit = null,
     onPaletteColorCopy,
     onOpenSourceUrl,
   } = props;
 
   const t = useT();
+  const isMultiEdit = multiEdit !== null && multiEdit.selectionCount >= 2;
 
   // Selection identity and metadata may resolve in separate async turns. Never
   // render the previous asset's fields beside the newly selected asset.
@@ -233,15 +238,22 @@ export function InspectorPanel(props: InspectorPanelProps) {
     }
   }, [showTagInput]);
 
-  // Collect all tags to display from asset metadata (both user and AI)
+  // Single-asset: that asset's tags. Multi-select: intersection only (REQ-SELECT-004).
   const displayedTags = useMemo(() => {
+    if (isMultiEdit && multiEdit) {
+      return multiEdit.tags.map((tag) => ({
+        id: tag.id,
+        name: tag.name,
+        source: tag.source,
+      }));
+    }
     if (!assetMetadata?.tags) return [];
-    return assetMetadata.tags.map((t) => ({
-      id: t.id,
-      name: t.name,
-      source: t.source as "ai" | "user",
+    return assetMetadata.tags.map((tag) => ({
+      id: tag.id,
+      name: tag.name,
+      source: tag.source as "ai" | "user",
     }));
-  }, [assetMetadata]);
+  }, [assetMetadata, isMultiEdit, multiEdit]);
 
   const displayedTagIds = useMemo(
     () => new Set(displayedTags.map((tag) => tag.id)),
@@ -414,7 +426,11 @@ export function InspectorPanel(props: InspectorPanelProps) {
                 </span>
               ))}
               {displayedTags.length === 0 && !showTagInput && (
-                <span className="tag-chip-placeholder">{t("inspector.noTags")}</span>
+                <span className="tag-chip-placeholder">
+                  {isMultiEdit
+                    ? t("inspector.noSharedTags")
+                    : t("inspector.noTags")}
+                </span>
               )}
               {showTagInput && (
                 <div className="tag-input-wrapper">
@@ -490,15 +506,10 @@ export function InspectorPanel(props: InspectorPanelProps) {
                 </div>
               )}
             </div>
-            {selectionCount !== undefined && selectionCount >= 2 && (
-              <span className="tag-chip-placeholder">
-                {t("inspector.applyToSelection", { count: selectionCount })}
-              </span>
-            )}
           </section>
 
           {/* --- Asset metadata editor (compact) --- */}
-          {assetMetadata ? (
+          {assetMetadata || isMultiEdit ? (
             <>
               {versionConflict && (
                 <div className="inline-error inspector-version-conflict">
@@ -516,66 +527,108 @@ export function InspectorPanel(props: InspectorPanelProps) {
                 </div>
               )}
 
-              {/* 高频操作聚拢成一行：评分在左、喜欢在右，无需小标题。 */}
+              {/* 高频操作聚拢成一行：评分在左、喜欢在右。多选时不一致字段显示「多个值」并禁用。 */}
+              {(() => {
+                const ratingEditable =
+                  !isMultiEdit || isEditableScalar(multiEdit?.rating);
+                const favoriteEditable =
+                  !isMultiEdit || isEditableScalar(multiEdit?.favorite);
+                const ratingMixed = isMultiEdit && multiEdit?.rating.kind === "mixed";
+                const favoriteMixed =
+                  isMultiEdit && multiEdit?.favorite.kind === "mixed";
+                return (
               <div className="inspector-quick-row">
-                <div aria-label={t("inspector.rating")} className="inspector-rating" role="group">
-                  {[1, 2, 3, 4, 5].map((star) => (
-                    <button
-                      aria-pressed={star <= editRating || undefined}
-                      className="rating-star"
-                      data-active={star <= editRating || undefined}
-                      key={star}
-                      onClick={() => handleRatingClick(star)}
-                      type="button"
-                      {...iconActionAttrs(t("inspector.starAria", { star }))}
-                    >
-                      <Icon name="star" size={16} />
-                    </button>
-                  ))}
-                  {editRating > 0 && (
-                    <button
-                      className="rating-clear"
-                      onClick={() => handleRatingClick(0)}
-                      type="button"
-                      {...iconActionAttrs(t("inspector.clearRating"))}
-                    >
-                      {t("common.clear")}
-                    </button>
+                <div
+                  aria-label={t("inspector.rating")}
+                  className={`inspector-rating${ratingMixed ? " is-mixed" : ""}`}
+                  role="group"
+                >
+                  {ratingMixed ? (
+                    <span className="inspector-mixed-value">{t("inspector.mixedValues")}</span>
+                  ) : (
+                    <>
+                      {[1, 2, 3, 4, 5].map((star) => (
+                        <button
+                          aria-pressed={star <= editRating || undefined}
+                          className="rating-star"
+                          data-active={star <= editRating || undefined}
+                          disabled={!ratingEditable}
+                          key={star}
+                          onClick={() => handleRatingClick(star)}
+                          type="button"
+                          {...iconActionAttrs(t("inspector.starAria", { star }))}
+                        >
+                          <Icon name="star" size={16} />
+                        </button>
+                      ))}
+                      {editRating > 0 && (
+                        <button
+                          className="rating-clear"
+                          disabled={!ratingEditable}
+                          onClick={() => handleRatingClick(0)}
+                          type="button"
+                          {...iconActionAttrs(t("inspector.clearRating"))}
+                        >
+                          {t("common.clear")}
+                        </button>
+                      )}
+                    </>
                   )}
                 </div>
-                <button
-                  aria-pressed={editFavorite || undefined}
-                  className="favorite-toggle"
-                  data-active={editFavorite || undefined}
-                  onClick={handleFavoriteToggle}
-                  type="button"
-                  {...iconActionAttrs(
-                    editFavorite
-                      ? t("inspector.unfavorite")
-                      : t("inspector.markFavorite"),
-                  )}
-                >
-                  <Icon name="heart" size={17} />
-                </button>
+                {favoriteMixed ? (
+                  <span className="inspector-mixed-value" title={t("inspector.favorite")}>
+                    {t("inspector.mixedValues")}
+                  </span>
+                ) : (
+                  <button
+                    aria-pressed={editFavorite || undefined}
+                    className="favorite-toggle"
+                    data-active={editFavorite || undefined}
+                    disabled={!favoriteEditable}
+                    onClick={handleFavoriteToggle}
+                    type="button"
+                    {...iconActionAttrs(
+                      editFavorite
+                        ? t("inspector.unfavorite")
+                        : t("inspector.markFavorite"),
+                    )}
+                  >
+                    <Icon name="heart" size={17} />
+                  </button>
+                )}
               </div>
+                );
+              })()}
 
-              {/* 色卡：等宽分段（顺序即提取重要性，左→右），点击复制色值。 */}
+              {(() => {
+                const paletteEditable =
+                  !isMultiEdit || isEditableScalar(multiEdit?.palette);
+                const paletteMixed =
+                  isMultiEdit && multiEdit?.palette.kind === "mixed";
+                const paletteSource = assetMetadata?.paletteSource ?? null;
+                return (
               <div className="editor-field">
                 <label className="micro-label">
                   {t("inspector.paletteLabel", {
                     source:
-                      assetMetadata.paletteSource === "manual"
+                      paletteSource === "manual"
                         ? t("inspector.paletteManual")
-                        : assetMetadata.paletteSource === "automatic"
+                        : paletteSource === "automatic"
                           ? t("inspector.paletteAuto")
                           : t("inspector.palettePending"),
                   })}
                 </label>
+                {paletteMixed ? (
+                  <div className="text-field inspector-input inspector-mixed-field" aria-disabled="true">
+                    {t("inspector.mixedValues")}
+                  </div>
+                ) : (
+                  <>
                 {displayedPalette.length > 0 && (
                   <div
                     aria-label={t("inspector.palettePreview", {
                       source:
-                        assetMetadata.paletteSource === "manual"
+                        paletteSource === "manual"
                           ? t("inspector.paletteManual")
                           : t("inspector.paletteAuto"),
                     })}
@@ -584,7 +637,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
                   >
                     {displayedPalette.map((color, index) => {
                       const ratio =
-                        assetMetadata.paletteSource === "automatic"
+                        paletteSource === "automatic"
                           ? automaticPaletteRatios.get(color)
                           : undefined;
                       return (
@@ -622,6 +675,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
                   aria-label={t("inspector.manualPalette")}
                   title={t("inspector.manualPalette")}
                   className="text-field inspector-input inspector-palette-input"
+                  disabled={!paletteEditable}
                   maxLength={1024}
                   onBlur={handlePaletteSave}
                   onChange={(event) => setEditPalette(event.target.value)}
@@ -631,19 +685,38 @@ export function InspectorPanel(props: InspectorPanelProps) {
                   placeholder={t("inspector.palettePlaceholder")}
                   value={editPalette}
                 />
-                {assetMetadata.paletteSource === "automatic" && (
+                {paletteSource === "automatic" && (
                   <p className="field-help">
                     {t("inspector.paletteHelp")}
                   </p>
                 )}
+                  </>
+                )}
               </div>
+                );
+              })()}
 
+              {(() => {
+                const descriptionEditable =
+                  !isMultiEdit || isEditableScalar(multiEdit?.description);
+                const descriptionMixed =
+                  isMultiEdit && multiEdit?.description.kind === "mixed";
+                return (
               <div className="editor-field">
                 <label className="micro-label" htmlFor="meta-desc">
                   {t("inspector.description")}
                 </label>
+                {descriptionMixed ? (
+                  <div
+                    className="text-field inspector-textarea inspector-mixed-field"
+                    id="meta-desc"
+                  >
+                    {t("inspector.mixedValues")}
+                  </div>
+                ) : (
                 <textarea
                   className="text-field inspector-textarea"
+                  disabled={!descriptionEditable}
                   id="meta-desc"
                   maxLength={10000}
                   onBlur={handleMetadataDescriptionSave}
@@ -653,15 +726,33 @@ export function InspectorPanel(props: InspectorPanelProps) {
                   rows={2}
                   value={editDescription}
                 />
+                )}
               </div>
+                );
+              })()}
 
+              {(() => {
+                const sourceEditable =
+                  !isMultiEdit || isEditableScalar(multiEdit?.sourceUrl);
+                const sourceMixed =
+                  isMultiEdit && multiEdit?.sourceUrl.kind === "mixed";
+                return (
               <div className="editor-field">
                 <label className="micro-label" htmlFor="meta-url">
                   {t("inspector.sourceUrl")}
                 </label>
                 <div className="source-url-field">
+                  {sourceMixed ? (
+                    <div
+                      className="text-field inspector-input inspector-mixed-field"
+                      id="meta-url"
+                    >
+                      {t("inspector.mixedValues")}
+                    </div>
+                  ) : (
                   <input
                     className="text-field inspector-input"
+                    disabled={!sourceEditable}
                     id="meta-url"
                     maxLength={255}
                     onBlur={handleSourceUrlSave}
@@ -672,16 +763,18 @@ export function InspectorPanel(props: InspectorPanelProps) {
                     placeholder="https://…"
                     value={editSourceUrl}
                   />
+                  )}
                   <button
-                    aria-disabled={!canOpenSourceUrl || undefined}
+                    aria-disabled={!canOpenSourceUrl || sourceMixed || undefined}
                     aria-label={
                       canOpenSourceUrl
                         ? t("inspector.openSourceUrl")
                         : t("inspector.sourceUrlInvalidHint")
                     }
                     className="source-url-open"
+                    disabled={Boolean(sourceMixed) || !canOpenSourceUrl}
                     onClick={() => {
-                      if (canOpenSourceUrl) onOpenSourceUrl?.();
+                      if (canOpenSourceUrl && !sourceMixed) onOpenSourceUrl?.();
                     }}
                     title={
                       canOpenSourceUrl
@@ -694,8 +787,11 @@ export function InspectorPanel(props: InspectorPanelProps) {
                   </button>
                 </div>
               </div>
+                );
+              })()}
 
-              {assetMetadata.entityVersion > 0 && (
+              {assetMetadata && assetMetadata.entityVersion > 0 && (
+
                 <div className="inspector-version-line">
                   {t("inspector.versionLine", {
                     version: assetMetadata.entityVersion,

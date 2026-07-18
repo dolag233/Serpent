@@ -3006,6 +3006,34 @@ select.ai-config-input {
   gap: 2px;
 }
 
+.inspector-mixed-value,
+.inspector-mixed-field {
+  color: var(--muted);
+  font-size: 12px;
+  font-style: italic;
+  user-select: none;
+}
+
+.inspector-mixed-field {
+  display: flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 6px 10px;
+  opacity: 0.85;
+  pointer-events: none;
+}
+
+.inspector-textarea.inspector-mixed-field {
+  min-height: 48px;
+}
+
+.favorite-toggle:disabled,
+.rating-star:disabled,
+.rating-clear:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
 .rating-star {
   display: grid;
   padding: 2px;

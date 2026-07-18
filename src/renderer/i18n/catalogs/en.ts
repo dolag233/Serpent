@@ -350,6 +350,8 @@ export const en = {
     paletteHelp: "Extracted locally from the current revision; manual colors above take priority when set.",
     descriptionPlaceholder: "Add a short note for this asset…",
     applyToSelection: "Tag and rating actions will apply to {count} assets",
+    mixedValues: "Multiple Values",
+    noSharedTags: "No shared tags",
     available: "Available",
     missing: "Missing file",
     offline: "Offline",
