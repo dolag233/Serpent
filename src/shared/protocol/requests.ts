@@ -1203,3 +1203,22 @@ export type ActiveContext = z.infer<typeof activeContextSchema>;
 export function parseActiveContext(input: unknown): ActiveContext {
   return activeContextSchema.parse(input);
 }
+
+export type ActiveContextParseResult =
+  | { ok: true; context: ActiveContext }
+  | { ok: false; code: 'malformed'; issuePaths: string[] };
+
+/**
+ * safeParse 包装：失败时只暴露 issue path（不含用户/payload 值），供 Main 结构化日志。
+ */
+export function tryParseActiveContext(input: unknown): ActiveContextParseResult {
+  const parsed = activeContextSchema.safeParse(input);
+  if (parsed.success) return { ok: true, context: parsed.data };
+  return {
+    ok: false,
+    code: 'malformed',
+    issuePaths: parsed.error.issues.map((issue) =>
+      issue.path.length === 0 ? '(root)' : issue.path.map(String).join('.'),
+    ),
+  };
+}

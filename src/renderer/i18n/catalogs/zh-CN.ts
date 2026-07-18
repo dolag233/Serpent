@@ -871,6 +871,8 @@ export const zhCN = {
     batchRatingFailed: "批量设置评分失败。",
     sourceUrlSaveFailed: "保存源链接失败。原因：请输入不含账号密码的 HTTP(S) 完整链接。",
     sourceUrlOpenFailed: "无法打开源链接：仅支持有效的 HTTP(S) 链接。",
+    sourceUrlOpenUnauthorized: "无法从此窗口打开源链接。请重新加载 Serpent 后再试。",
+    sourceUrlOpenShellFailed: "系统浏览器无法打开该源链接。请检查默认浏览器设置后重试。",
     extensionPairingUnsupported: "当前桌面桥接不支持浏览器扩展配对。",
     extensionRotateConfirm: "轮换后，浏览器扩展中保存的旧配对码会立即失效。确定继续吗？",
     extensionRotated: "浏览器扩展配对码已轮换，请在扩展选项中更新。",

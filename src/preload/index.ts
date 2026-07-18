@@ -19,7 +19,11 @@ import {
   OPEN_EXTERNAL_URL_CHANNEL,
   SHELL_SWIPE_CHANNEL,
 } from '../shared/protocol/channels';
-import type { SerpentShellApi, ShellSwipeDirection } from '../shared/external-url';
+import {
+  parseOpenExternalUrlResult,
+  type SerpentShellApi,
+  type ShellSwipeDirection,
+} from '../shared/external-url';
 import type { RendererRequest } from '../shared/protocol/requests';
 import type { PublicErrorReason } from '../shared/protocol/errors';
 import {
@@ -1036,9 +1040,9 @@ const e2eDiagnostics = Object.freeze({
 });
 
 const shell: SerpentShellApi = Object.freeze({
-  async openExternalUrl(url: string): Promise<boolean> {
+  async openExternalUrl(url: string) {
     const result: unknown = await ipcRenderer.invoke(OPEN_EXTERNAL_URL_CHANNEL, { url });
-    return result === true;
+    return parseOpenExternalUrlResult(result);
   },
   onSwipe(listener: (direction: ShellSwipeDirection) => void): () => void {
     const handler = (_event: Electron.IpcRendererEvent, direction: unknown) => {

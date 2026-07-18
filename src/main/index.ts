@@ -35,8 +35,8 @@ import {
   SHELL_SWIPE_CHANNEL,
 } from "../shared/protocol/channels";
 import {
-  parseOpenExternalUrlRequest,
-  toOpenableExternalUrl,
+  resolveOpenExternalUrlTarget,
+  type OpenExternalUrlResult,
 } from "../shared/external-url";
 import {
   parseExtensionPairingRequest,
@@ -49,7 +49,7 @@ import {
 } from "../shared/protocol/errors";
 import {
   parseRendererRequest,
-  parseActiveContext,
+  tryParseActiveContext,
   type RendererRequest,
   type WorkerCommand,
 } from "../shared/protocol/requests";
@@ -2521,30 +2521,51 @@ async function startApplication(): Promise<void> {
   );
 
   // 渲染进程请求在系统浏览器打开外部链接（检查器「源链接」跳转）。
-  // 发送者与 URL 双重校验，仅放行不含凭据的 HTTP(S)。
-  ipcMain.handle(OPEN_EXTERNAL_URL_CHANNEL, async (event, input: unknown) => {
-    if (!mainWindow || event.sender !== mainWindow.webContents) return false;
-    const request = parseOpenExternalUrlRequest(input);
-    const url = request ? toOpenableExternalUrl(request.url) : null;
-    if (!url) return false;
-    try {
-      await shell.openExternal(url);
-      return true;
-    } catch (error) {
-      logger?.error("open-external-url", error);
-      return false;
-    }
-  });
-
-  ipcMain.on(ACTIVE_CONTEXT_CHANNEL, (event, input: unknown) => {    if (!mainWindow || event.sender !== mainWindow.webContents) return;
-    try {
-      const context = parseActiveContext(input);
-      const windowId = BrowserWindow.fromWebContents(event.sender)?.id;
-      if (windowId !== undefined) {
-        focusedContexts.set(windowId, context);
+  // 发送者与 URL 双重校验，仅放行不含凭据的 HTTP(S)。失败回传公开错误码；日志不含 URL。
+  ipcMain.handle(
+    OPEN_EXTERNAL_URL_CHANNEL,
+    async (event, input: unknown): Promise<OpenExternalUrlResult> => {
+      if (!mainWindow || event.sender !== mainWindow.webContents) {
+        logger?.info("ipc.open-external-url", "Rejected open-external-url request.", {
+          code: "unauthorized_sender",
+        });
+        return { ok: false, code: "unauthorized_sender" };
       }
-    } catch {
-      // Malformed input is silently dropped.
+      const resolved = resolveOpenExternalUrlTarget(input);
+      if (!resolved.ok) {
+        logger?.info("ipc.open-external-url", "Rejected open-external-url request.", {
+          code: resolved.code,
+        });
+        return resolved;
+      }
+      try {
+        await shell.openExternal(resolved.url);
+        return { ok: true };
+      } catch (error) {
+        logger?.error("ipc.open-external-url", error, { code: "shell_failure" });
+        return { ok: false, code: "shell_failure" };
+      }
+    },
+  );
+
+  ipcMain.on(ACTIVE_CONTEXT_CHANNEL, (event, input: unknown) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents) {
+      logger?.info("ipc.active-context", "Rejected active-context update.", {
+        code: "unauthorized_sender",
+      });
+      return;
+    }
+    const parsed = tryParseActiveContext(input);
+    if (!parsed.ok) {
+      logger?.info("ipc.active-context", "Dropped malformed active-context update.", {
+        code: parsed.code,
+        issuePaths: parsed.issuePaths,
+      });
+      return;
+    }
+    const windowId = BrowserWindow.fromWebContents(event.sender)?.id;
+    if (windowId !== undefined) {
+      focusedContexts.set(windowId, parsed.context);
     }
   });
 

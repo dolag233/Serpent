@@ -881,6 +881,8 @@ export const en = {
     batchRatingFailed: "Failed to set rating in batch.",
     sourceUrlSaveFailed: "Failed to save source URL. Reason: enter a full HTTP(S) URL without credentials.",
     sourceUrlOpenFailed: "Cannot open source URL: only valid HTTP(S) links are supported.",
+    sourceUrlOpenUnauthorized: "Cannot open the source URL from this window. Reload Serpent and try again.",
+    sourceUrlOpenShellFailed: "The system browser could not open this source URL. Check the default browser and try again.",
     extensionPairingUnsupported: "This desktop bridge does not support browser extension pairing.",
     extensionRotateConfirm: "After rotation, the old pairing code saved in the browser extension stops working immediately. Continue?",
     extensionRotated: "Browser extension pairing code rotated. Update it in the extension options.",

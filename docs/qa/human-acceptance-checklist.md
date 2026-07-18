@@ -351,6 +351,7 @@
 | 2026-07-18 | SHELL-017、FILTER-015                                                                           | 人类验收不通过       | 「相关性（默认）」等括注仍在；颜色过滤缺黑白且选中样式丑。                                                                                                                                                                                                                                                                                                                        | 第五批：`Serpent-d45` / `Serpent-o75`；技术元数据布局仍见 `Serpent-rbx`（VIEW-007 内容已通过）。 |
 | 2026-07-19 | CANVAS-012 / VIEWER-005（视频） | 待复验 | 亮色角标对比度；视频查看 contain。 | `Serpent-yu8` / `Serpent-q16`。 |
 | 2026-07-19 | FILTER-019–020 / NAV-006 / SORT-006 / INSPECT-009–010 | 待人类验收 | 排除红、颜色黑白、去根行、排序图标、技术栏、堆叠阴影。 |
+| 2026-07-19 | SHELL-021 | 待人类验收 | 源链接打开失败可操作 toast；IPC 结构化错误码与无 URL 日志。 | Serpent-1pd。 |
 | 2026-07-19 | PREF-001 / SMART-007 / MENU-023 | 待人类验收 | 设置面板；智能合集+；资产原地重命名。 | Serpent-str / uu9 / wfj。 |
 | 2026-07-19 | FOLDER-010–013 | 待人类验收 | 文件夹卡片/封面/计数/多选。 | epic Serpent-5ja。 |
 | 2026-07-19 | SORT-005 / SHELL-017 / FILTER-013 | 待复验 | 去掉排序相关性；括注复查；删除文件夹过滤维度。 | `Serpent-96i` / `Serpent-d45` / `Serpent-ckx`；[开发日志](../development/2026-07-19-sort-copy-folder-filter-development-log.md)。 |
@@ -369,5 +370,6 @@
 | SORT-006 | 升序/降序专用图标 | 待人类验收 | 看排序方向按钮；切换升/降序 | 图标为升序/降序语义，不再是 ↑↓ 文字箭头 | 同上 / Serpent-1c9 | 2026-07-19。 |
 | INSPECT-009 | 技术元数据底部栏 | 待人类验收 | 选中视频与 GIF，看 Inspector | 体积/分辨率/时间行不含 codec/帧数；底部独立技术栏显示 | 同上 / Serpent-rbx | 2026-07-19；VIEW-007 复验。 |
 | INSPECT-010 | 多选堆叠预览阴影 | 待人类验收 | 多选 2–3 项，看右侧堆叠预览 | 层间有微弱阴影可辨，不糊成一块 | 同上 / Serpent-1tx | 2026-07-19。 |
+| SHELL-021 | 源链接打开失败可操作提示 | 待人类验收 | 选中带有效 HTTP(S) 源链接的资产，点 Inspector 源链接跳转；若系统浏览器打开失败（或临时破坏默认浏览器）观察 toast；正常成功路径仍应打开浏览器 | 失败时 toast 说明「系统浏览器无法打开…请检查默认浏览器」等可操作原因，不再只有笼统失败；成功时仍打开系统浏览器 | [开发日志](../development/2026-07-19-external-url-active-context-ipc-development-log.md) / 单测 `external-url-ipc.test.ts` / Serpent-1pd | 2026-07-19；日志侧失败码不含 URL，需查 `serpent.log` 的 `ipc.open-external-url` / `ipc.active-context`（人工抽查）。 |
 
 

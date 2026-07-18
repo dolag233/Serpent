@@ -5183,12 +5183,20 @@ function AppInner() {
 
   // 检查器「源链接」跳转：有效性先按共享口径预判（禁用态），主进程仍会
   // 在 shell.openExternal 前做最终校验，两道防线都不放行非 HTTP(S)。
+  // 失败时按公开错误码给出可操作提示（不含 URL 原文）。
   function handleOpenSourceUrl() {
     const url = toOpenableExternalUrl(editSourceUrl);
     const shellBridge = (window as RendererWindow).serpent?.shell;
     if (!url || !shellBridge) return;
-    void shellBridge.openExternalUrl(url).then((opened) => {
-      if (!opened) setError(t("toast.sourceUrlOpenFailed"));
+    void shellBridge.openExternalUrl(url).then((result) => {
+      if (result.ok) return;
+      const toastKey =
+        result.code === "rejected_url" || result.code === "malformed_request"
+          ? "toast.sourceUrlOpenFailed"
+          : result.code === "unauthorized_sender"
+            ? "toast.sourceUrlOpenUnauthorized"
+            : "toast.sourceUrlOpenShellFailed";
+      setError(t(toastKey));
     });
   }
 
