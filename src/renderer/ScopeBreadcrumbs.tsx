@@ -1,3 +1,5 @@
+import { Icon } from "./Icons";
+import { iconActionAttrs } from "./icon-action-attrs";
 import type { ManagedFolderBreadcrumbEntry } from "./folder-breadcrumb-trail";
 import { useT, type TranslateFn } from "./i18n";
 
@@ -8,6 +10,9 @@ export type ScopeBreadcrumbSegment =
 export type ScopeBreadcrumbsProps = {
   segments: ScopeBreadcrumbSegment[];
   onNavigateFolder: (folderId: string) => void;
+  /** When set, show the include-subfolders toggle beside the current name. */
+  includeSubfolders?: boolean;
+  onToggleIncludeSubfolders?: () => void;
 };
 
 export function buildScopeBreadcrumbSegments(
@@ -90,8 +95,12 @@ export function buildScopeBreadcrumbSegments(
 export function ScopeBreadcrumbs({
   segments,
   onNavigateFolder,
+  includeSubfolders,
+  onToggleIncludeSubfolders,
 }: ScopeBreadcrumbsProps) {
   const t = useT();
+  const showIncludeToggle =
+    typeof includeSubfolders === "boolean" && onToggleIncludeSubfolders;
   return (
     <div className="scope-trace">
       <nav aria-label={t("scope.currentBrowseScope")} className="scope-breadcrumbs">
@@ -114,6 +123,17 @@ export function ScopeBreadcrumbs({
                 >
                   {segment.label}
                 </span>
+              )}
+              {isLast && showIncludeToggle && (
+                <button
+                  aria-pressed={includeSubfolders}
+                  className="scope-include-subfolders"
+                  onClick={onToggleIncludeSubfolders}
+                  type="button"
+                  {...iconActionAttrs(t("nav.includeChildFolders"))}
+                >
+                  <Icon name="folder-tree" size={14} />
+                </button>
               )}
             </span>
           );

@@ -4679,75 +4679,79 @@ function AppInner() {
             recentLibraries={recentLibraries}
           />
         </div>
-        <div className="scope-trace">
-          <ScopeBreadcrumbs
-            onNavigateFolder={(folderId) => void chooseFolder(folderId)}
-            segments={buildScopeBreadcrumbSegments(
-              {
-                showTrash,
-                activeTagLabel: activeTagId
-                  ? (tags.find((tag) => tag.tagId === activeTagId)?.name ?? null)
-                  : null,
-                activeCollectionLabel: activeCollectionId
-                  ? (collections.find(
-                      (collection) =>
-                        collection.collectionId === activeCollectionId,
-                    )?.name ?? null)
-                  : null,
-                activeSmartCollectionLabel: activeSmartCollectionId
-                  ? (smartCollections.find(
-                      (collection) =>
-                        collection.collectionId === activeSmartCollectionId,
-                    )?.name ?? null)
-                  : null,
-                assetScope,
-                folderTrail:
-                  assetScope !== "all" && assetScope !== "root"
-                    ? buildManagedFolderBreadcrumbTrail(folders, assetScope)
-                    : [],
-                linkedFolderLabel:
-                  assetScope !== "all" && assetScope !== "root"
-                    ? (linkedFolders.find(
-                        (folder) => folder.folderId === assetScope,
-                      )?.displayName ?? null)
-                    : null,
-              },
-              t,
-            )}
-          />
-          {library &&
+        <ScopeBreadcrumbs
+          includeSubfolders={
+            library &&
             !showTrash &&
             !activeTagId &&
             !activeCollectionId &&
             !activeSmartCollectionId &&
             assetScope !== "all" &&
-            assetScope !== "root" && (
-              <label className="scope-recursive-toggle">
-                <input
-                  checked={folderRecursive}
-                  onChange={(event) => {
-                    const next = event.target.checked;
-                    folderRecursiveRef.current = next;
-                    setFolderRecursive(next);
-                    void loadContent(library, assetScope, {
-                      discovery: currentQueryDefinition(),
-                      searchScope: {
-                        kind: "folder",
-                        folderId: assetScope,
-                        recursive: next,
-                      },
-                    }).catch((caught) => {
-                      setError(
-                        toMessage(caught, t("toast.readAssetsFailed"), locale),
-                      );
-                    });
-                  }}
-                  type="checkbox"
-                />
-                {t("nav.includeChildFolders")}
-              </label>
-            )}
-        </div>
+            assetScope !== "root"
+              ? folderRecursive
+              : undefined
+          }
+          onNavigateFolder={(folderId) => void chooseFolder(folderId)}
+          onToggleIncludeSubfolders={
+            library &&
+            !showTrash &&
+            !activeTagId &&
+            !activeCollectionId &&
+            !activeSmartCollectionId &&
+            assetScope !== "all" &&
+            assetScope !== "root"
+              ? () => {
+                  const next = !folderRecursiveRef.current;
+                  folderRecursiveRef.current = next;
+                  setFolderRecursive(next);
+                  void loadContent(library, assetScope, {
+                    discovery: currentQueryDefinition(),
+                    searchScope: {
+                      kind: "folder",
+                      folderId: assetScope,
+                      recursive: next,
+                    },
+                  }).catch((caught) => {
+                    setError(
+                      toMessage(caught, t("toast.readAssetsFailed"), locale),
+                    );
+                  });
+                }
+              : undefined
+          }
+          segments={buildScopeBreadcrumbSegments(
+            {
+              showTrash,
+              activeTagLabel: activeTagId
+                ? (tags.find((tag) => tag.tagId === activeTagId)?.name ?? null)
+                : null,
+              activeCollectionLabel: activeCollectionId
+                ? (collections.find(
+                    (collection) =>
+                      collection.collectionId === activeCollectionId,
+                  )?.name ?? null)
+                : null,
+              activeSmartCollectionLabel: activeSmartCollectionId
+                ? (smartCollections.find(
+                    (collection) =>
+                      collection.collectionId === activeSmartCollectionId,
+                  )?.name ?? null)
+                : null,
+              assetScope,
+              folderTrail:
+                assetScope !== "all" && assetScope !== "root"
+                  ? buildManagedFolderBreadcrumbTrail(folders, assetScope)
+                  : [],
+              linkedFolderLabel:
+                assetScope !== "all" && assetScope !== "root"
+                  ? (linkedFolders.find(
+                      (folder) => folder.folderId === assetScope,
+                    )?.displayName ?? null)
+                  : null,
+            },
+            t,
+          )}
+        />
         <form
           className="toolbar-cluster toolbar-actions"
           onSubmit={(event) => {

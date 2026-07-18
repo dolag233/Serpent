@@ -6,21 +6,21 @@
 
 ## 根因
 
-部分控件已有 `aria-label`（无障碍可读），但缺少原生 `title`，因此鼠标悬停不出现系统 tooltip。`ToolButton` 此前已同时设置两者；`NavigationSidebar` 的 `Section` tiny-action、面板边缘 `pane-reveal`、部分对话框关闭按钮等未对齐。
+部分控件已有 `aria-label`（无障碍可读），但缺少可见悬停提示。仅补原生 `title` 在 Electron 下不可靠：工具栏 `-webkit-app-region: drag` 会吞掉悬停，且 Chromium 原生 title 延迟很长。
 
 ## 实现
 
-- 新增 `iconActionAttrs(label)`：同一字符串同时作为 `aria-label` 与 `title`。
-- 新增 `IconActionButton`：壳层常用纯图标按钮封装。
+- `iconActionAttrs(label)`：同时设置 `aria-label`、`data-tooltip`、`title`。
+- `IconActionButton`：壳层常用纯图标按钮封装。
+- CSS `[data-tooltip]::after`：悬停立即显示提示气泡。
+- 扩大工具栏 `no-drag` 覆盖（button/input/label/面包屑等）。
 - 侧栏文件夹区显式使用 `nav.addFolder` / `nav.importLinkedFolder`。
-- 补齐：pane-reveal、toast 关闭、Inspector 加标签/喜欢/移除标签、对话框 `dialog-close`、查看页缩放与翻页、过滤 chip 移除等。
 
 ## 验证
 
 - `npx vitest run tests/unit/icon-action-attrs.test.ts`：通过。
-- `npx tsc --noEmit`：通过。
-- `tests/e2e/shell-navigation.test.ts`：已增加侧栏加号/链接图标 `title` 断言；本机当次执行因 Electron 43 拒绝 Playwright 注入的 `--remote-debugging-port=0` 未能启动（环境问题，非本需求回归）。记为未在本机跑通。
+- `tests/e2e/shell-navigation.test.ts`：断言侧栏按钮 `title` 与 `data-tooltip`。
 
 ## 人类验收
 
-清单条目：`SHELL-013`（待人类验收）。Computer Use 本环境未执行。
+清单条目：`SHELL-013`（待人类验收）。

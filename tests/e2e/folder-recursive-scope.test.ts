@@ -154,14 +154,17 @@ test("folder browse stays direct until include-subfolders is checked", async () 
     await expect(window.locator(".scope-crumb-label.is-current")).toHaveText(
       "父文件夹",
     );
-    const includeSubfolders = window.getByLabel("包含子文件夹");
+    const includeSubfolders = window.getByRole("button", {
+      name: "包含子文件夹",
+    });
     await expect(includeSubfolders).toBeVisible();
-    await expect(includeSubfolders).not.toBeChecked();
+    await expect(includeSubfolders).toHaveAttribute("aria-pressed", "false");
     await expect(parentCard).toHaveCount(0, { timeout: 15_000 });
     await expect(childCard).toHaveCount(0);
 
     // Explicit switch: include descendants for browse + search.
-    await includeSubfolders.check();
+    await includeSubfolders.click();
+    await expect(includeSubfolders).toHaveAttribute("aria-pressed", "true");
     await expect(parentCard).toBeVisible({ timeout: 15_000 });
     await expect(childCard).toBeVisible({ timeout: 15_000 });
 

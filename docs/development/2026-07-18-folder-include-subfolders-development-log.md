@@ -7,15 +7,15 @@ FOLDER-001 人类验收不通过：默认递归不符合预期。用户要求显
 ## 实现
 
 - `folderBrowseScope(scope, recursive)`：统一构造浏览/搜索的 folder scope；`all` 无 scope，`root` 始终非递归。
-- `folderRecursive` 默认 `false`；进入托管/链接文件夹时，范围栏（面包屑旁）显示「包含子文件夹」复选框。
-- 浏览与文件夹内搜索共用同一开关（勾选后 FILTER-012 语义仍成立）。
+- `folderRecursive` 默认 `false`。
+- 进入托管/链接文件夹时，当前文件夹名旁显示 `folder-tree` 图标按钮（展开子孙语义，非向下箭头）；按下后 `aria-pressed` 高亮，浏览与搜索递归。
 - 会话恢复使用当前开关值，不再强制 `recursive: true`。
 
 ## 验证
 
 - `npx vitest run tests/unit/folder-browse-scope.test.ts`：通过。
 - `npx tsc --noEmit`：通过。
-- `tests/e2e/folder-recursive-scope.test.ts`：已按默认不递归 + 勾选后递归重写断言；本机 Electron E2E 若仍受 `--remote-debugging-port=0` 阻断则记未跑通。
+- `tests/e2e/folder-recursive-scope.test.ts`：默认不递归 + 点击图标后递归。
 
 ## 人类验收
 
