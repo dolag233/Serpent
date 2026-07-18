@@ -40,8 +40,16 @@
 - Fit / 全屏改为图标；`<>` 加大
 - 人类验收：`VIEWER-007`
 
+## 人类验收（2026-07-18）
+
+用户确认本批查看页验收项全部通过：`VIEWER-001`、`VIEWER-002`、`VIEWER-004`、`VIEWER-005`、`VIEWER-006`、`VIEWER-007`（`VIEWER-003` 此前已通过）。
+
+功能基线：`34442b0`（`feat(viewer): 浏览附属查看页、Fit/手势与控件打磨`）。
+
+工单：`Serpent-ts2`（REQ-VIEW-004）、`Serpent-3w8`（REQ-VIEW-006）于验收通过后关闭。
+
 ## 未执行
 
-- Computer Use / 真实桌面截图验收
+- Computer Use / 真实桌面截图验收（人类桌面验收已覆盖主要路径）
 - Windows
-- `tests/e2e/media-preview.test.ts`（启动失败，非断言失败）
+- `tests/e2e/media-preview.test.ts`（此前环境 electron.launch 失败，未作为关闭条件）

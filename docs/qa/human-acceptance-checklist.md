@@ -164,13 +164,13 @@
 
 | ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
 | --- | --- | --- | --- | --- | --- | --- |
-| VIEWER-001 | 从深滚动位置双击查看且返回原位置 | 待人类验收 | 在含较多资产的范围向下滚动至少数屏，双击当前可见图片；确认内容后按 Esc 退出查看 | 查看页占据中央工作区画布区域（不挡顶栏菜单）；图片成功显示；返回后仍在原滚动位置，原资产保持可见和选中 | [0013 QA](0013-asset-viewer-navigation-and-gestures-qa-report.md) / [连续浏览 E2E](../../tests/e2e/asset-pagination.test.ts) / [查看页开发日志](../development/2026-07-18-viewer-browse-affiliate-development-log.md) | 原反馈：双击查看有非常大概率显示错位；P0 修复后重新进入待验收 |
-| VIEWER-002 | 查看页无顶栏文件名/工具条 | 待人类验收 | 双击任意图片进入查看页，观察顶部 | 无文件名顶栏、无顶部工具条；仅有边缘上一/下一与底部缩放条 | [开发日志](../development/2026-07-18-viewer-browse-affiliate-development-log.md) | 2026-07-18 REQ-VIEW-006：去掉顶栏；原「无媒体类型小字」并入此项。 |
+| VIEWER-001 | 从深滚动位置双击查看且返回原位置 | 人类验收通过 | 在含较多资产的范围向下滚动至少数屏，双击当前可见图片；确认内容后按 Esc 退出查看 | 查看页占据中央工作区画布区域（不挡顶栏菜单）；图片成功显示；返回后仍在原滚动位置，原资产保持可见和选中 | [0013 QA](0013-asset-viewer-navigation-and-gestures-qa-report.md) / [连续浏览 E2E](../../tests/e2e/asset-pagination.test.ts) / [查看页开发日志](../development/2026-07-18-viewer-browse-affiliate-development-log.md) | 2026-07-18 用户验收通过（查看页批次一并确认）。 |
+| VIEWER-002 | 查看页无顶栏文件名/工具条 | 人类验收通过 | 双击任意图片进入查看页，观察顶部 | 无文件名顶栏、无顶部工具条；仅有边缘上一/下一与底部缩放条 | [开发日志](../development/2026-07-18-viewer-browse-affiliate-development-log.md) | 2026-07-18 用户验收通过。 |
 | VIEWER-003 | 查看页视频完整播放不提前重启 | 人类验收通过 | 打开约 5 秒可直出播放的视频进入查看页，不操作控件观看至少 3 秒 | 连续播放、进度前进，不会在约 2 秒处从头循环；时长显示接近真实时长 | [preview-poll 单测](../../tests/unit/preview-poll.test.ts) / [视频 E2E](../../tests/e2e/media-video-playback.test.ts) / [开发日志](../development/2026-07-18-bug-viewer-001-early-loop-development-log.md) | 2026-07-18 用户验收通过。 |
-| VIEWER-004 | 查看页为浏览附属层（不挡壳层、切范围退出） | 待人类验收 | 双击打开查看；打开左上角资源库菜单；再切到侧栏另一文件夹；查看中按后退 | 资源库菜单不被查看层挡住；切文件夹后查看关闭并显示新范围；后退先退出查看回到原浏览位置，不消耗浏览历史 | [开发日志](../development/2026-07-18-viewer-browse-affiliate-development-log.md) / 工单 Serpent-ts2 | REQ-VIEW-004 |
-| VIEWER-005 | 打开即最长边适应；缩放滑块与 Fit | 待人类验收 | 双击横图与竖图；拖动底部缩放滑块；点 Fit | 打开时整图可见（最长边贴窗）；底部为小条+滑块+「Fit」/「适应」；无加减号 | [fit 单测](../../tests/unit/viewer-fit.test.ts) / [开发日志](../development/2026-07-18-viewer-browse-affiliate-development-log.md) / 工单 Serpent-3w8 | REQ-VIEW-006 |
-| VIEWER-006 | 查看页控件可读、闲置渐隐、主题底色 | 待人类验收 | 亮色主题下双击打开查看；停住鼠标约 2 秒；再移动；核对左右为 `<>` 形 chevron | 底色为亮色（非纯黑）；静止后控件渐隐，移动后恢复；`<>`/`x` 无底板、无阴影，hover 提亮；无焦点黄边 | [闲置单测](../../tests/unit/use-viewer-chrome-idle.test.ts) / [开发日志](../development/2026-07-18-viewer-browse-affiliate-development-log.md) | 2026-07-18：无阴影已确认进入验收 |
-| VIEWER-007 | 查看页回正、拖拽平移与触控板手势 | 待人类验收 | 放大后拖拽/两指平移至边缘应停住；Fit 态两指左右切图，放大后两指左右改为平移；捏合缩放；空格或 F 回正；切图后回正；查看时工作区标题栏隐藏 | Fit 为最长边 contain；平移有边界；Fit/全屏为图标；手势逻辑见左列；浏览 toolbar 在查看时隐藏 | [viewer-fit 单测](../../tests/unit/viewer-fit.test.ts) / [ZoomableImage](../../src/renderer/zoomable-preview-image.tsx) | 2026-07-18 用户确认手势逻辑可接受；无阴影后进入验收 |
+| VIEWER-004 | 查看页为浏览附属层（不挡壳层、切范围退出） | 人类验收通过 | 双击打开查看；打开左上角资源库菜单；再切到侧栏另一文件夹；查看中按后退 | 资源库菜单不被查看层挡住；切文件夹后查看关闭并显示新范围；后退先退出查看回到原浏览位置，不消耗浏览历史 | [开发日志](../development/2026-07-18-viewer-browse-affiliate-development-log.md) / 工单 Serpent-ts2 / 基线 `34442b0` | 2026-07-18 用户验收通过。 |
+| VIEWER-005 | 打开即最长边适应；缩放滑块与 Fit | 人类验收通过 | 双击横图与竖图；拖动底部缩放滑块；点 Fit 图标 | 打开时整图可见（最长边贴窗）；底部为小条+滑块+Fit/全屏图标；无加减号 | [fit 单测](../../tests/unit/viewer-fit.test.ts) / [开发日志](../development/2026-07-18-viewer-browse-affiliate-development-log.md) / 工单 Serpent-3w8 / 基线 `34442b0` | 2026-07-18 用户验收通过。 |
+| VIEWER-006 | 查看页控件可读、闲置渐隐、主题底色 | 人类验收通过 | 亮色主题下双击打开查看；停住鼠标约 2 秒；再移动；核对左右为 `<>` 形 chevron | 底色为亮色（非纯黑）；静止后控件渐隐，移动后恢复；`<>`/`x` 无底板、无阴影，hover 提亮；无焦点黄边 | [闲置单测](../../tests/unit/use-viewer-chrome-idle.test.ts) / [开发日志](../development/2026-07-18-viewer-browse-affiliate-development-log.md) / 基线 `34442b0` | 2026-07-18 用户验收通过。 |
+| VIEWER-007 | 查看页回正、拖拽平移与触控板手势 | 人类验收通过 | 放大后拖拽/两指平移至边缘应停住；Fit 态两指左右切图，放大后两指左右改为平移；捏合缩放；空格或 F 回正；切图后回正；查看时工作区标题栏隐藏 | Fit 为最长边 contain；平移有边界；Fit/全屏为图标；手势逻辑见左列；浏览 toolbar 在查看时隐藏 | [viewer-fit 单测](../../tests/unit/viewer-fit.test.ts) / [ZoomableImage](../../src/renderer/zoomable-preview-image.tsx) / 基线 `34442b0` | 2026-07-18 用户验收通过（手势逻辑按确认保留）。 |
 
 ### G. 回收站与重新定位
 
@@ -252,7 +252,7 @@
 - 元数据并发冲突：缺少双客户端并发的人类验收夹具。
 - 回收站占用文件的部分成功/跳过：需要稳定制造 `FILE_BUSY` 的平台夹具。
 - 导入/导出的进度与取消：自动化已覆盖，但当前 20,000 资产 soak 夹具只存在于 Worker 测试中，没有可由人类独立生成和打开的固定资源库，因此暂不进入人工队列。
-- 0013 查看页面完整 UX：深滚动错位已作为 `VIEWER-001` 开放验收；REQ-VIEW-004/006 已实现并进入 `VIEWER-004`/`VIEWER-005`；视频播放器空格/倍速等仍见需求池。
+- 0013 查看页面完整 UX：`VIEWER-001`–`VIEWER-007` 已于 2026-07-18 人类验收通过（基线 `34442b0`）；视频播放器空格/倍速等仍见需求池。
 - 0020 检查器与壳层打磨：macOS 开发态自动化 63 E2E 全绿、用户已人工验收色卡复制与整体视觉；Windows 平台与 packaged app 未验证；独立 agent 交叉审查因 kimi 配额受限未完整执行，最终 accepted 未独立签署。
 - 0014 发布级证据：功能候选 `f1330a7` 已开放人类验收；最终集中 `verify:mainline`、macOS packaged 与 Windows 平台验收未执行。
 - 0007 真实进程恢复：v3 已按“归属不明不删除”关闭误删窗口；恢复测试仍为 `closeAll()`+新实例，非真实 UtilityProcess kill/restart。
