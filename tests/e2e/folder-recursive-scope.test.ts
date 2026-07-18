@@ -76,11 +76,12 @@ async function openFolderContextMenu(window: Page, folderName: string) {
 }
 
 // ---------------------------------------------------------------------------
-// REQ-FOLDER-008 + REQ-FILTER-012: a folder scope shows descendant assets and
-// folder-scoped search recurses into descendant folders by default.
+// REQ-FOLDER-009: folder browse defaults to direct children only; include
+// subfolders is an explicit scope-bar switch. REQ-FILTER-012: with the switch
+// on, folder-scoped search recurses into descendants.
 // ---------------------------------------------------------------------------
 
-test("folder browse and folder-scoped search both recurse into subfolders", async () => {
+test("folder browse stays direct until include-subfolders is checked", async () => {
   const temporaryRoot = mkdtempSync(
     path.join(tmpdir(), "serpent-folder-recursive-e2e-"),
   );
@@ -148,17 +149,24 @@ test("folder browse and folder-scoped search both recurse into subfolders", asyn
       ),
     ).toBe(true);
 
-    // REQ-FOLDER-008: browsing 父文件夹 shows assets from descendant folders.
-    // Click the sidebar nav row (the breadcrumb crumb has the same name).
+    // REQ-FOLDER-009 default: browsing 父文件夹 shows only direct assets.
     await window.locator("button.nav-row", { hasText: "父文件夹" }).click();
     await expect(window.locator(".scope-crumb-label.is-current")).toHaveText(
       "父文件夹",
     );
+    const includeSubfolders = window.getByLabel("包含子文件夹");
+    await expect(includeSubfolders).toBeVisible();
+    await expect(includeSubfolders).not.toBeChecked();
+    await expect(parentCard).toHaveCount(0, { timeout: 15_000 });
+    await expect(childCard).toHaveCount(0);
+
+    // Explicit switch: include descendants for browse + search.
+    await includeSubfolders.check();
     await expect(parentCard).toBeVisible({ timeout: 15_000 });
     await expect(childCard).toBeVisible({ timeout: 15_000 });
 
-    // REQ-FILTER-012: searching while scoped to 父文件夹 recurses into
-    // descendant folders, so the child-note.txt asset inside 子文件夹 matches.
+    // REQ-FILTER-012: searching while scoped to 父文件夹 with include on
+    // recurses into descendant folders.
     await window.getByLabel("搜索资源库").fill("child-note");
     await window.getByRole("button", { name: "搜索", exact: true }).click();
     await expect(

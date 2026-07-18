@@ -31,6 +31,7 @@ import {
   buildScopeBreadcrumbSegments,
 } from "./ScopeBreadcrumbs";
 import { buildManagedFolderBreadcrumbTrail } from "./folder-breadcrumb-trail";
+import { folderBrowseScope } from "./folder-browse-scope";
 import { useT, useLocale, translateForLocale, type AppLocale } from "./i18n";
 import {
   createWorkspaceNavHistory,
@@ -483,6 +484,9 @@ function AppInner() {
   );
   const [collectionRecursive, setCollectionRecursive] = useState(true);
   const collectionRecursiveRef = useRef(collectionRecursive);
+  // REQ-FOLDER-009: folder browse/search recurse only when explicitly enabled.
+  const [folderRecursive, setFolderRecursive] = useState(false);
+  const folderRecursiveRef = useRef(folderRecursive);
   const [collectionEditor, setCollectionEditor] = useState<{
     collectionId: string;
     description: string;
@@ -948,12 +952,7 @@ function AppInner() {
         opts?.searchScope ??
         (trashMode
           ? { kind: "trash" }
-          : scope === "all"
-            ? undefined
-            : scope === "root"
-              ? { kind: "folder", folderId: null, recursive: false }
-              : // REQ-FOLDER-008: browsing a folder includes descendant folders.
-                { kind: "folder", folderId: scope, recursive: true });
+          : folderBrowseScope(scope, folderRecursiveRef.current));
       const libId = { libraryId: activeLibrary.libraryId };
       const [
         folderResult,
@@ -1059,8 +1058,8 @@ function AppInner() {
               searchScope = {
                 kind: "folder",
                 folderId: session.scope.id,
-                // REQ-FOLDER-008: restored folder sessions stay recursive.
-                recursive: true,
+                // REQ-FOLDER-009: restore uses the current include-subfolders switch.
+                recursive: folderRecursiveRef.current,
               };
               restoredLocation = {
                 kind: "folder",
@@ -2229,8 +2228,12 @@ function AppInner() {
     if (assetScope === "root")
       return { kind: "folder", folderId: null, recursive: false };
     if (assetScope !== "all")
-      // REQ-FILTER-012: search inside a folder recurses into descendants.
-      return { kind: "folder", folderId: assetScope, recursive: true };
+      // REQ-FOLDER-009 / REQ-FILTER-012: folder search follows the same switch.
+      return {
+        kind: "folder",
+        folderId: assetScope,
+        recursive: folderRecursive,
+      };
     return undefined;
   }
 
@@ -4676,41 +4679,75 @@ function AppInner() {
             recentLibraries={recentLibraries}
           />
         </div>
-        <ScopeBreadcrumbs
-          onNavigateFolder={(folderId) => void chooseFolder(folderId)}
-          segments={buildScopeBreadcrumbSegments(
-            {
-              showTrash,
-              activeTagLabel: activeTagId
-                ? (tags.find((tag) => tag.tagId === activeTagId)?.name ?? null)
-                : null,
-              activeCollectionLabel: activeCollectionId
-                ? (collections.find(
-                    (collection) =>
-                      collection.collectionId === activeCollectionId,
-                  )?.name ?? null)
-                : null,
-              activeSmartCollectionLabel: activeSmartCollectionId
-                ? (smartCollections.find(
-                    (collection) =>
-                      collection.collectionId === activeSmartCollectionId,
-                  )?.name ?? null)
-                : null,
-              assetScope,
-              folderTrail:
-                assetScope !== "all" && assetScope !== "root"
-                  ? buildManagedFolderBreadcrumbTrail(folders, assetScope)
-                  : [],
-              linkedFolderLabel:
-                assetScope !== "all" && assetScope !== "root"
-                  ? (linkedFolders.find(
-                      (folder) => folder.folderId === assetScope,
-                    )?.displayName ?? null)
+        <div className="scope-trace">
+          <ScopeBreadcrumbs
+            onNavigateFolder={(folderId) => void chooseFolder(folderId)}
+            segments={buildScopeBreadcrumbSegments(
+              {
+                showTrash,
+                activeTagLabel: activeTagId
+                  ? (tags.find((tag) => tag.tagId === activeTagId)?.name ?? null)
                   : null,
-            },
-            t,
-          )}
-        />
+                activeCollectionLabel: activeCollectionId
+                  ? (collections.find(
+                      (collection) =>
+                        collection.collectionId === activeCollectionId,
+                    )?.name ?? null)
+                  : null,
+                activeSmartCollectionLabel: activeSmartCollectionId
+                  ? (smartCollections.find(
+                      (collection) =>
+                        collection.collectionId === activeSmartCollectionId,
+                    )?.name ?? null)
+                  : null,
+                assetScope,
+                folderTrail:
+                  assetScope !== "all" && assetScope !== "root"
+                    ? buildManagedFolderBreadcrumbTrail(folders, assetScope)
+                    : [],
+                linkedFolderLabel:
+                  assetScope !== "all" && assetScope !== "root"
+                    ? (linkedFolders.find(
+                        (folder) => folder.folderId === assetScope,
+                      )?.displayName ?? null)
+                    : null,
+              },
+              t,
+            )}
+          />
+          {library &&
+            !showTrash &&
+            !activeTagId &&
+            !activeCollectionId &&
+            !activeSmartCollectionId &&
+            assetScope !== "all" &&
+            assetScope !== "root" && (
+              <label className="scope-recursive-toggle">
+                <input
+                  checked={folderRecursive}
+                  onChange={(event) => {
+                    const next = event.target.checked;
+                    folderRecursiveRef.current = next;
+                    setFolderRecursive(next);
+                    void loadContent(library, assetScope, {
+                      discovery: currentQueryDefinition(),
+                      searchScope: {
+                        kind: "folder",
+                        folderId: assetScope,
+                        recursive: next,
+                      },
+                    }).catch((caught) => {
+                      setError(
+                        toMessage(caught, t("toast.readAssetsFailed"), locale),
+                      );
+                    });
+                  }}
+                  type="checkbox"
+                />
+                {t("nav.includeChildFolders")}
+              </label>
+            )}
+        </div>
         <form
           className="toolbar-cluster toolbar-actions"
           onSubmit={(event) => {

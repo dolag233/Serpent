@@ -134,8 +134,9 @@
 | SMART-003 | 更新智能合集条件 | 待人类验收 | 修改一个智能合集的查询或排序条件后保存 | 再次打开时使用新条件 | [0005 QA](0005-search-filter-sort-smart-collections-qa-report.md) | — |
 | SMART-004 | 重命名智能合集 | 待人类验收 | 重命名已有智能合集 | 新名称立即出现，查询条件保持 | [0005 QA](0005-search-filter-sort-smart-collections-qa-report.md) | — |
 | SMART-005 | 删除智能合集 | 待人类验收 | 删除已有智能合集 | 智能合集消失，资产不受影响 | [0005 QA](0005-search-filter-sort-smart-collections-qa-report.md) | — |
-| FOLDER-001 | 文件夹递归显示后代资产 | 人类验收不通过 | 建「父文件夹」并在其内建子文件夹，把资产导入子文件夹；然后点击父文件夹 | 父文件夹画布直接显示子文件夹中的全部资产，无需进入子文件夹；「资源库根目录」与「所有资产」行为不变 | [批次 3 开发日志](../development/0015-0019-ux-feedback-batch3-development-log.md) / [递归 E2E](../../tests/e2e/folder-recursive-scope.test.ts) | 2026-07-17 实现（folder scope 默认 recursive，worker 递归 CTE 既有）；Computer Use 未执行，移交人工 QA。2026-07-17 用户验收不通过：“递归显示不通过。需要显式勾选选项才能够显示递归显示内容。”——默认递归不符合预期，改为显式开关（默认不递归，勾选后递归，REQ-FOLDER-009）后重新验收。 |
-| FILTER-012 | 文件夹内搜索递归后代 | 人类验收通过 | 在含子文件夹的父文件夹范围内，搜索一个只存在于孙级文件夹资产的关键词 | 孙级文件夹中的资产被搜到；切到回收站或「所有资产」后搜索行为不变 | [批次 3 开发日志](../development/0015-0019-ux-feedback-batch3-development-log.md) / [worker 测试](../../tests/worker/search.test.ts) / [递归 E2E](../../tests/e2e/folder-recursive-scope.test.ts) | 2026-07-17 实现（孙级深度 worker 回归测试）；Computer Use 未执行，移交人工 QA。2026-07-17 用户手动验收：“递归搜索通过”。 |
+| FOLDER-001 | 文件夹递归显示后代资产 | 已撤回 | — | — | — | 2026-07-17 人类验收不通过；需求改为 REQ-FOLDER-009 显式开关。由 FOLDER-009 承接验收。 |
+| FOLDER-009 | 包含子文件夹显式开关 | 待人类验收 | 建「父文件夹」→子文件夹并导入资产到子文件夹；点开父文件夹；再勾选范围栏「包含子文件夹」 | 默认父文件夹画布不显示子文件夹资产；勾选后显示后代资产；「资源库根目录」与「所有资产」无此开关且行为不变 | [开发日志](../development/2026-07-18-folder-include-subfolders-development-log.md) / [范围单测](../../tests/unit/folder-browse-scope.test.ts) / [E2E](../../tests/e2e/folder-recursive-scope.test.ts) | — |
+| FILTER-012 | 文件夹内搜索递归后代 | 人类验收通过 | 在含子文件夹的父文件夹范围内，搜索一个只存在于孙级文件夹资产的关键词 | 孙级文件夹中的资产被搜到；切到回收站或「所有资产」后搜索行为不变 | [批次 3 开发日志](../development/0015-0019-ux-feedback-batch3-development-log.md) / [worker 测试](../../tests/worker/search.test.ts) / [递归 E2E](../../tests/e2e/folder-recursive-scope.test.ts) | 2026-07-17 实现（孙级深度 worker 回归测试）；Computer Use 未执行，移交人工 QA。2026-07-17 用户手动验收：“递归搜索通过”。2026-07-18：递归搜索与「包含子文件夹」开关共用；默认关时不递归搜索。 |
 
 ### E. 资产画布与缩略图
 

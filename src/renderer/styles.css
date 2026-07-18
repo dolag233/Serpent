@@ -575,6 +575,23 @@ summary:focus-visible {
   opacity: 0.35;
 }
 
+.scope-recursive-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 10px;
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--secondary);
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.scope-recursive-toggle input {
+  margin: 0;
+}
+
 .scope-breadcrumbs {
   display: flex;
   min-width: 0;
