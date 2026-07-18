@@ -6164,6 +6164,7 @@ function AppInner() {
         }}
         onRemoveTagFromAsset={(tagId) => void handleInspectorRemoveTag(tagId)}
         selectedAsset={selectedAsset}
+        selectedAssets={selectedAssets}
         multiEdit={multiEdit}
         setEditPalette={setEditPalette}
         versionConflict={versionConflict}

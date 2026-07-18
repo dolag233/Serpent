@@ -153,3 +153,17 @@ export function toMultiEditSlice(input: {
     })),
   };
 }
+
+/**
+ * Primary asset first, then other selected assets, capped for the stacked
+ * Inspector hero preview (back layers → front = last drawn / highest z).
+ */
+export function pickInspectorStackAssets<T extends { assetId: string }>(
+  primary: T,
+  selected: readonly T[],
+  maxVisible = 3,
+): T[] {
+  if (maxVisible < 1) return [];
+  const others = selected.filter((asset) => asset.assetId !== primary.assetId);
+  return [primary, ...others].slice(0, maxVisible);
+}

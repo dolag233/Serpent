@@ -4,6 +4,7 @@ import {
   buildInspectorMultiEdit,
   intersectAssetTags,
   isEditableScalar,
+  pickInspectorStackAssets,
   resolveScalarField,
   type MultiEditMetadataSlice,
 } from "../../src/renderer/inspector-multi-edit";
@@ -169,5 +170,27 @@ describe("buildInspectorMultiEdit", () => {
       base({ description: "" }),
     ]);
     expect(model?.description).toEqual({ kind: "uniform", value: "" });
+  });
+});
+
+describe("pickInspectorStackAssets", () => {
+  it("puts the primary asset first and caps visible layers", () => {
+    const primary = { assetId: "a" };
+    const selected = [
+      { assetId: "b" },
+      { assetId: "a" },
+      { assetId: "c" },
+      { assetId: "d" },
+    ];
+    expect(pickInspectorStackAssets(primary, selected, 3)).toEqual([
+      { assetId: "a" },
+      { assetId: "b" },
+      { assetId: "c" },
+    ]);
+  });
+
+  it("returns only the primary when nothing else is selected", () => {
+    const primary = { assetId: "a" };
+    expect(pickInspectorStackAssets(primary, [primary], 3)).toEqual([primary]);
   });
 });

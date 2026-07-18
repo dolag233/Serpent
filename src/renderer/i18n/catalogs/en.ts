@@ -351,6 +351,7 @@ export const en = {
     descriptionPlaceholder: "Add a short note for this asset…",
     mixedValues: "Multiple Values",
     noSharedTags: "No shared tags",
+    multiSelectionTitle: "{name} and {count} files",
     available: "Available",
     missing: "Missing file",
     offline: "Offline",

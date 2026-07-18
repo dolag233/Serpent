@@ -14,6 +14,7 @@ import { formatDuration } from "./App";
 import { resolveInspectorPreviewSrc } from "./inspector-preview";
 import {
   isEditableScalar,
+  pickInspectorStackAssets,
   type InspectorMultiEditModel,
 } from "./inspector-multi-edit";
 import { toOpenableExternalUrl } from "../shared/external-url";
@@ -77,6 +78,8 @@ export interface AiContent {
 
 export interface InspectorPanelProps {
   selectedAsset: AssetSummary | undefined;
+  /** Full multi-selection in canvas order; primary is still `selectedAsset`. */
+  selectedAssets?: AssetSummary[];
   library: RendererLibrarySummary | null;
   allAssetCount: number;
   folderCount: number;
@@ -116,26 +119,72 @@ export interface InspectorPanelProps {
   onOpenSourceUrl?: () => void;
 }
 
-function InspectorHero({
+function InspectorHeroSinglePreview({
   asset,
-  infoParts,
   library,
 }: {
   asset: AssetSummary;
-  infoParts: string[];
   library: RendererLibrarySummary | null;
 }) {
   const previewSrc = resolveInspectorPreviewSrc(asset, library);
   const [decoded, setDecoded] = useState(false);
 
+  if (!previewSrc) {
+    return (
+      <div className="inspector-hero-preview inspector-hero-preview-fallback">
+        <Icon name="file" size={20} />
+      </div>
+    );
+  }
+
   return (
-    <div className="inspector-hero-compact">
+    <div className="inspector-hero-preview">
+      {!decoded && <Icon name="file" size={20} />}
+      <img
+        alt={asset.displayName}
+        className={
+          decoded ? "inspector-hero-image" : "inspector-hero-image is-loading"
+        }
+        onLoad={(event) => {
+          const image = event.currentTarget;
+          if (image.complete && image.naturalWidth > 0) setDecoded(true);
+        }}
+        src={previewSrc}
+      />
+    </div>
+  );
+}
+
+function InspectorHeroStackLayer({
+  asset,
+  library,
+  layerIndex,
+  layerCount,
+}: {
+  asset: AssetSummary;
+  library: RendererLibrarySummary | null;
+  layerIndex: number;
+  layerCount: number;
+}) {
+  const previewSrc = resolveInspectorPreviewSrc(asset, library);
+  const [decoded, setDecoded] = useState(false);
+  const depthFromFront = layerCount - 1 - layerIndex;
+
+  return (
+    <div
+      aria-hidden={depthFromFront > 0 || undefined}
+      className="inspector-hero-stack-layer"
+      data-depth={depthFromFront}
+      style={{ zIndex: layerIndex + 1 }}
+    >
       {previewSrc ? (
         <div className="inspector-hero-preview">
           {!decoded && <Icon name="file" size={20} />}
           <img
-            alt={asset.displayName}
-            className={decoded ? "inspector-hero-image" : "inspector-hero-image is-loading"}
+            alt=""
+            className={
+              decoded ? "inspector-hero-image" : "inspector-hero-image is-loading"
+            }
             onLoad={(event) => {
               const image = event.currentTarget;
               if (image.complete && image.naturalWidth > 0) setDecoded(true);
@@ -148,19 +197,76 @@ function InspectorHero({
           <Icon name="file" size={20} />
         </div>
       )}
-      <strong className="inspector-hero-title" title={asset.displayName}>
-        {asset.displayName}
-      </strong>
-      <div className="inspector-compact-info">
-        <span className="inspector-compact-meta">
-          {infoParts.map((part, index) => (
-            <span className="inspector-meta-part" key={part}>
-              {index > 0 && <span className="inspector-meta-sep">·</span>}
-              {part}
-            </span>
+    </div>
+  );
+}
+
+function InspectorHero({
+  asset,
+  selectedAssets,
+  infoParts,
+  library,
+  selectionCount,
+}: {
+  asset: AssetSummary;
+  selectedAssets: readonly AssetSummary[];
+  infoParts: string[];
+  library: RendererLibrarySummary | null;
+  selectionCount: number;
+}) {
+  const t = useT();
+  const isMulti = selectionCount >= 2;
+  const stackAssets = useMemo(
+    () =>
+      isMulti
+        ? pickInspectorStackAssets(asset, selectedAssets, 3)
+        : [asset],
+    [asset, isMulti, selectedAssets],
+  );
+  const layers = useMemo(() => [...stackAssets].reverse(), [stackAssets]);
+  const title = isMulti
+    ? t("inspector.multiSelectionTitle", {
+        name: asset.displayName,
+        count: selectionCount,
+      })
+    : asset.displayName;
+
+  return (
+    <div className={`inspector-hero-compact${isMulti ? " is-multi" : ""}`}>
+      {isMulti ? (
+        <div
+          aria-label={title}
+          className="inspector-hero-stack"
+          data-layer-count={layers.length}
+        >
+          {layers.map((layerAsset, index) => (
+            <InspectorHeroStackLayer
+              asset={layerAsset}
+              key={layerAsset.assetId}
+              layerCount={layers.length}
+              layerIndex={index}
+              library={library}
+            />
           ))}
-        </span>
-      </div>
+        </div>
+      ) : (
+        <InspectorHeroSinglePreview asset={asset} library={library} />
+      )}
+      <strong className="inspector-hero-title" title={title}>
+        {title}
+      </strong>
+      {!isMulti && (
+        <div className="inspector-compact-info">
+          <span className="inspector-compact-meta">
+            {infoParts.map((part, index) => (
+              <span className="inspector-meta-part" key={part}>
+                {index > 0 && <span className="inspector-meta-sep">·</span>}
+                {part}
+              </span>
+            ))}
+          </span>
+        </div>
+      )}
     </div>
   );
 }
@@ -185,6 +291,7 @@ function tagColor(tagId: string) {
 export function InspectorPanel(props: InspectorPanelProps) {
   const {
     selectedAsset,
+    selectedAssets = [],
     library,
     allAssetCount,
     folderCount,
@@ -218,6 +325,11 @@ export function InspectorPanel(props: InspectorPanelProps) {
 
   const t = useT();
   const isMultiEdit = multiEdit !== null && multiEdit.selectionCount >= 2;
+  const selectionCount = Math.max(
+    multiEdit?.selectionCount ?? 0,
+    selectedAssets.length,
+    selectedAsset ? 1 : 0,
+  );
 
   // Selection identity and metadata may resolve in separate async turns. Never
   // render the previous asset's fields beside the newly selected asset.
@@ -368,11 +480,17 @@ export function InspectorPanel(props: InspectorPanelProps) {
           <InspectorHero
             asset={selectedAsset}
             infoParts={compactInfoParts}
-            key={selectedAsset.assetId}
+            key={`${selectedAsset.assetId}:${selectionCount}`}
             library={library}
+            selectedAssets={
+              selectedAssets.length > 0 ? selectedAssets : [selectedAsset]
+            }
+            selectionCount={selectionCount}
           />
-          {(selectedAsset.deletedAt ||
-            selectedAsset.availability !== "available") && (
+          {!isMultiEdit &&
+            selectionCount < 2 &&
+            (selectedAsset.deletedAt ||
+              selectedAsset.availability !== "available") && (
             <div
               className="inspector-status-row"
               data-tone={selectedAsset.deletedAt ? "trash" : "missing"}
