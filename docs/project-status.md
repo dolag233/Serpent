@@ -1,7 +1,13 @@
 # Serpent 项目状态
 
-> 更新时间：2026-07-16
+> 更新时间：2026-07-18
 > 事实来源：`docs/implementation/mvp-roadmap.md` 与各切片开发/审查/QA 文档
+
+## 2026-07-18 MVP 循环前沿
+
+- 当日已合流多批可编码增量（查看页直出/视频控件、作者元数据、空态文案、命令注册表、合集菜单成员过滤、智能合集校验与计数、侧栏省略、搜索 snippet 去重、递归来源角标、壳层对齐、GIF 控件与元数据、Option 拖拽复制光标等）；证据与验收 ID 见 `docs/qa/human-acceptance-checklist.md`。
+- **可编码 ready 队列已清空到阻塞面**：`Serpent-w3b` 澄清队列阻塞文件夹删除（`Serpent-ekj`）、文件夹复制/粘贴/克隆/移动（`Serpent-vgp`）、资产其他应用打开/复制/粘贴（`Serpent-w29`）；文件夹卡片 epic `Serpent-5ja` 待澄清 #2/#3/#4。平台复验 `Serpent-b54`/`Serpent-ber` 需 Computer Use / Windows。分组模式 `Serpent-84m` 为 MVP 后。
+- **人类验收**：清单中「待人类验收」约 137 项（工单 `Serpent-2km`）；状态只能由用户本人改写。托管文件夹「复制一份文件」API 仍缺，Option 拖到托管文件夹目前明确拒绝（`DND-005`）。
 
 ## 当前方向
 
