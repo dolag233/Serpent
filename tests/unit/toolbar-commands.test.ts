@@ -34,6 +34,7 @@ function makeActions(calls: RecordedCall[]): ToolbarCommandActions {
     openBrowserExtension: record('openBrowserExtension'),
     openBackgroundJobs: record('openBackgroundJobs'),
     openAiSettings: record('openAiSettings'),
+    openAppSettings: record('openAppSettings'),
   };
 }
 
@@ -83,19 +84,21 @@ describe('工具栏命令可见性', () => {
       'workspace.browser-extension',
       'workspace.background-jobs',
       'workspace.ai-settings',
+      'workspace.app-settings',
       'canvas.field.name',
       'canvas.field.size',
       'canvas.field.date',
     ]);
   });
 
-  it('无资源库：后台任务与 AI 设置隐藏，其余保留', () => {
+  it('无资源库：后台任务与 AI 设置隐藏，通用设置（app-settings）仍可见', () => {
     const { ctx } = makeCtx({ libraryOpen: false });
     expect(resolveIds(ctx)).toEqual([
       'canvas.view.grid',
       'canvas.view.masonry',
       'canvas.refresh',
       'workspace.browser-extension',
+      'workspace.app-settings',
       'canvas.field.name',
       'canvas.field.size',
       'canvas.field.date',
@@ -152,6 +155,19 @@ describe('禁用原因', () => {
       expect(findItem(registry.resolveMenu(ctx), id).disabled).toBe(false);
     }
   });
+
+  it('通用设置在无库或 busy 时仍可用（主题/语言/画布显示是全局偏好）', () => {
+    const { ctx: noLibrary } = makeCtx({ libraryOpen: false });
+    expect(
+      findItem(registry.resolveMenu(noLibrary), 'workspace.app-settings')
+        .disabled,
+    ).toBe(false);
+    const { ctx: busyCtx } = makeCtx({ busy: true });
+    expect(
+      findItem(registry.resolveMenu(busyCtx), 'workspace.app-settings')
+        .disabled,
+    ).toBe(false);
+  });
 });
 
 describe('标题与 locale', () => {
@@ -200,6 +216,12 @@ describe('run 委托 actions', () => {
       'openBackgroundJobs',
       'openAiSettings',
     ]);
+  });
+
+  it('通用设置命令委托 openAppSettings', () => {
+    const { ctx, calls } = makeCtx();
+    registry.get('workspace.app-settings')!.run(ctx);
+    expect(calls).toEqual([{ action: 'openAppSettings', args: [] }]);
   });
 
   it('runToolbarCommand 尊重 visible/disabled', () => {

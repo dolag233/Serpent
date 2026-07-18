@@ -116,6 +116,7 @@ export function CanvasToolbarControls({
   const refresh = resolveItem(ctx, "canvas.refresh");
   const grid = resolveItem(ctx, "canvas.view.grid");
   const masonry = resolveItem(ctx, "canvas.view.masonry");
+  const appSettings = resolveItem(ctx, "workspace.app-settings");
 
   const overflowItems = TOOLBAR_OVERFLOW_COMMAND_IDS.flatMap((id) => {
     const def = toolbarCommandRegistry.get(id);
@@ -185,6 +186,12 @@ export function CanvasToolbarControls({
         </div>
       </span>
       <span className="tool-separator" />
+      <ToolButton
+        disabled={appSettings.disabled}
+        icon="settings"
+        label={appSettings.label}
+        onClick={appSettings.run}
+      />
       <WorkspaceToolsOverflow items={overflowItems} />
     </>
   );

@@ -26,6 +26,8 @@ export interface ToolbarCommandActions {
   readonly openBrowserExtension: () => void;
   readonly openBackgroundJobs: () => void;
   readonly openAiSettings: () => void;
+  /** REQ-PREF-001: opens the general settings panel (theme/language/canvas). */
+  readonly openAppSettings: () => void;
 }
 
 export interface ToolbarCommandContext extends CommandContext {
@@ -126,6 +128,15 @@ export const toolbarCommandDefinitions: readonly ToolbarCommandDefinition[] = [
     group: 'organize',
     visible: (ctx) => ctx.libraryOpen,
     run: (ctx) => ctx.actions.openAiSettings(),
+  },
+  {
+    // REQ-PREF-001: theme/language/canvas prefs are app-level (not
+    // library-scoped), so unlike ai-settings/background-jobs this stays
+    // visible and enabled with no library open.
+    id: 'workspace.app-settings',
+    title: (ctx) => t(ctx, 'toolbar.appSettings'),
+    group: 'organize',
+    run: (ctx) => ctx.actions.openAppSettings(),
   },
 ];
 
