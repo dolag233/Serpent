@@ -193,6 +193,8 @@
 | VIEWER-007 | 查看页回正、拖拽平移与触控板手势 | 人类验收通过 | 放大后拖拽/两指平移至边缘应停住；Fit 态两指左右切图，放大后两指左右改为平移；捏合缩放；空格或 F 回正；切图后回正；查看时工作区标题栏隐藏 | Fit 为最长边 contain；平移有边界；Fit/全屏为图标；手势逻辑见左列；浏览 toolbar 在查看时隐藏 | [viewer-fit 单测](../../tests/unit/viewer-fit.test.ts) / [ZoomableImage](../../src/renderer/zoomable-preview-image.tsx) / 基线 `34442b0` | 2026-07-18 用户验收通过（手势逻辑按确认保留）。 |
 | VIEWER-008 | 双击与右键「查看」均可进入查看页 | 待人类验收 | 双击任一可用图片；再右键另一张选「查看」 | 两种入口均打开浏览附属查看页；右键「查看」在「打开」分组顶部，显示 Enter 快捷键提示 | [开发日志](../development/2026-07-18-viewer-discoverable-entry-development-log.md) / [命令单测](../../tests/unit/asset-commands.test.ts) / 工单 Serpent-tid | 2026-07-18 补右键「查看」命令（双击此前已可用）。 |
 | VIEW-007 | Inspector 显示视频技术元数据 | 待人类验收 | 导入或打开含可探测视频的资源库；选中单个视频；查看右侧 Inspector 紧凑信息行 | 在体积/分辨率/时长附近出现紧凑技术行，例如 `29.97 fps · 5 Mbps · h264 · aac 48 kHz`（字段以探针结果为准）；图片选中不出现该行；探测未完成时可不显示，完成后应出现 | [开发日志](../development/2026-07-18-video-extracted-metadata-ui-development-log.md) / [格式单测](../../tests/unit/video-metadata-format.test.ts) / 工单 Serpent-sdc | 2026-07-18 实现 REQ-VIEW-003；查看页 chrome 未加（Inspector 为最小完整路径）。 |
+| VIEW-008 | 查看页打开即直出原图/原视频，不被「正在生成预览」阻塞 | 待人类验收 | 导入 PNG/JPEG/GIF 与 MP4/MOV；在缩略图或 WebM 代理仍在生成时立刻双击打开查看页 | 打开后立即显示源文件（或已有缓存预览），不以「正在生成预览」+ 加载图标作为主画面；后台衍生完成后可安静升级；仅非浏览器原生格式（如 EXR/AVI）在尚无衍生时才可出现等待态 | [开发日志](../development/2026-07-18-viewer-direct-source-development-log.md) / [策略单测](../../tests/unit/viewer-preview-policy.test.ts) / [worker 直出](../../tests/worker/thumbnails.test.ts) / 工单 Serpent-0am | 2026-07-18 实现 REQ-VIEW-002。 |
+| VIEW-009 | 查看页视频空格播放/暂停、倍速与 scrub | 待人类验收 | 打开可播放视频进入查看页；按空格暂停再按空格继续；在倍速菜单选 0.5×/1×/1.5×/2×；拖动原生进度条 | 空格切换播放/暂停；倍速立即生效；进度条可拖拽定位；焦点在搜索框或其他文本输入时按空格不抢占输入 | [开发日志](../development/2026-07-18-video-player-controls-development-log.md) / [单测](../../tests/unit/video-player-controls.test.ts) / 工单 Serpent-2j9 | 2026-07-18 实现 REQ-VIEW-005：原生 controls scrub + 薄自定义倍速/空格层。 |
 
 ### G. 回收站与重新定位
 
@@ -278,7 +280,7 @@
 - 元数据并发冲突：缺少双客户端并发的人类验收夹具。
 - 回收站占用文件的部分成功/跳过：需要稳定制造 `FILE_BUSY` 的平台夹具。
 - 导入/导出的进度与取消：自动化已覆盖，但当前 20,000 资产 soak 夹具只存在于 Worker 测试中，没有可由人类独立生成和打开的固定资源库，因此暂不进入人工队列。
-- 0013 查看页面完整 UX：`VIEWER-001`–`VIEWER-007` 已于 2026-07-18 人类验收通过（基线 `34442b0`）；视频播放器空格/倍速等仍见需求池。
+- 0013 查看页面完整 UX：`VIEWER-001`–`VIEWER-007` 已于 2026-07-18 人类验收通过（基线 `34442b0`）；视频播放器空格/倍速见待验收 `VIEW-009`（Serpent-2j9）。
 - 0020 检查器与壳层打磨：macOS 开发态自动化 63 E2E 全绿、用户已人工验收色卡复制与整体视觉；Windows 平台与 packaged app 未验证；独立 agent 交叉审查因 kimi 配额受限未完整执行，最终 accepted 未独立签署。
 - 0014 发布级证据：功能候选 `f1330a7` 已开放人类验收；最终集中 `verify:mainline`、macOS packaged 与 Windows 平台验收未执行。
 - 0007 真实进程恢复：v3 已按“归属不明不删除”关闭误删窗口；恢复测试仍为 `closeAll()`+新实例，非真实 UtilityProcess kill/restart。

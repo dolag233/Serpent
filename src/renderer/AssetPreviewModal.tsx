@@ -23,6 +23,8 @@ import {
 } from "./preview-poll";
 import { Icon } from "./Icons";
 import { useViewerChromeIdle } from "./use-viewer-chrome-idle";
+import { resolveViewerPrimarySurface } from "./viewer-preview-policy";
+import { VideoPlayerControls } from "./VideoPlayerControls";
 import { ZoomableImage } from "./zoomable-preview-image";
 
 interface AssetPreviewModalProps {
@@ -150,8 +152,6 @@ export function AssetPreviewModal({
   const [error, setError] = useState<string | null>(null);
   const [retrying, setRetrying] = useState(false);
   const [directApproved, setDirectApproved] = useState(false);
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const [playbackRate, setPlaybackRate] = useState(1);
   const resolutionRef = useRef<PreviewResolution | null>(null);
   const directApprovedRef = useRef(false);
   const directGateIdentityRef = useRef<string | null>(null);
@@ -185,7 +185,16 @@ export function AssetPreviewModal({
           });
           directGateIdentityRef.current = gated.identity;
           setDirectApproved(gated.approved);
-          setError(null);
+          // Quiet polls must not clear a source-playback error while proxy is
+          // still generating; clear once we upgrade to a ready proxy URL.
+          if (
+            !quiet ||
+            (result.value.status === "ready" &&
+              result.value.playbackMode === "proxy" &&
+              result.value.url)
+          ) {
+            setError(null);
+          }
         }
         return result;
       } catch {
@@ -209,16 +218,8 @@ export function AssetPreviewModal({
           .shouldRequestProxy
       )
         return;
-      setResolution((current) =>
-        current
-          ? {
-              ...current,
-              status: "pending",
-              kind: "webm_proxy",
-              url: undefined,
-            }
-          : current,
-      );
+      // REQ-VIEW-002: keep the current source/URL mounted. Proxy generation is a
+      // quiet background upgrade — do not wipe into a blocking "generating" gate.
       const detail = `Direct playback unavailable: ${errorCode}`;
       void api
         .reportPreviewError({
@@ -330,8 +331,12 @@ export function AssetPreviewModal({
       .decide(descriptor, resolution.url)
       .then((decision) => {
         if (cancelled) return;
-        if (decision.mode === "direct") setDirectApproved(true);
-        else void ensureProxyFallback(`VIDEO_${decision.reason.toUpperCase()}`);
+        // Always present the source URL immediately (REQ-VIEW-002). Capability is
+        // used to pre-warm proxy when Chromium is unlikely to play the source.
+        setDirectApproved(true);
+        if (decision.mode === "proxy") {
+          void ensureProxyFallback(`VIDEO_${decision.reason.toUpperCase()}`);
+        }
       });
     return () => {
       cancelled = true;
@@ -401,15 +406,16 @@ export function AssetPreviewModal({
     const errorCode = mediaError
       ? `VIDEO_MEDIA_ERR_${mediaError.code}`
       : "VIDEO_PLAYBACK_FAILED";
-    if (resolution?.playbackMode === "source") {
-      void ensureProxyFallback(errorCode);
-      return;
-    }
-    setError(t("preview.videoFailed", { code: errorCode }));
     const detail = safeRendererDiagnostic(
       mediaError?.message ??
         "HTMLVideoElement emitted an error without MediaError details.",
     );
+    if (resolution?.playbackMode === "source") {
+      setError(t("preview.videoFailed", { code: errorCode }));
+      void ensureProxyFallback(errorCode);
+      return;
+    }
+    setError(t("preview.videoFailed", { code: errorCode }));
     void api
       .reportPreviewError({
         libraryId,
@@ -420,13 +426,15 @@ export function AssetPreviewModal({
       .catch(() => undefined);
   }
 
-  const ready =
-    resolution?.status === "ready" &&
-    resolution.url &&
-    (resolution.playbackMode !== "source" || directApproved);
-  const unsupported =
-    resolution?.mediaType === "other" ||
-    resolution?.errorCode === "UNSUPPORTED_FORMAT";
+  const primarySurface = resolveViewerPrimarySurface({
+    loading,
+    resolution,
+    directApproved,
+    // Optimistic: source URL presents without waiting on the capability gate.
+    requireDirectApproval: false,
+  });
+  const ready = primarySurface === "media";
+  const unsupported = primarySurface === "unsupported";
 
   async function openExternal() {
     const result = await api.openExternal({
@@ -456,64 +464,27 @@ export function AssetPreviewModal({
       <div className="preview-modal">
         {/* REQ-VIEW-006: no top filename/toolbar bar; nav sits on the edges. */}
         <div className="preview-content">
-          {loading ? (
+          {primarySurface === "loading" ? (
             <div className="preview-state" role="status">
               <span className="activity-pulse" />
               {t("preview.resolving")}
             </div>
-          ) : ready && resolution.mediaType === "video" ? (
-            <div className="preview-video-stage">
-              <video
-                autoPlay
-                className="preview-video"
-                controls
-                onError={handlePlaybackError}
-                onLoadedMetadata={() => {
-                  setDirectApproved(true);
-                  if (videoRef.current)
-                    videoRef.current.playbackRate = playbackRate;
-                }}
-                poster={resolution.posterUrl}
-                preload="metadata"
-                ref={videoRef}
-                src={resolution.url}
-              >
-                {t("preview.videoUnsupported")}
-              </video>
-              <label className="preview-speed-control preview-chrome-fade">
-                {t("preview.playbackRate")}
-                <select
-                  aria-label={t("preview.playbackRateAria")}
-                  onChange={(event) => {
-                    const rate = Number(event.target.value);
-                    setPlaybackRate(rate);
-                    if (videoRef.current) videoRef.current.playbackRate = rate;
-                  }}
-                  value={playbackRate}
-                >
-                  {[0.5, 0.75, 1, 1.25, 1.5, 2].map((rate) => (
-                    <option key={rate} value={rate}>
-                      {rate}×
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <button
-                className="preview-fullscreen-chip preview-chrome-fade"
-                onClick={() => void enterFullscreen()}
-                type="button"
-              >
-                {t("preview.fullscreen")}
-              </button>
-            </div>
-          ) : ready ? (
+          ) : ready && resolution?.mediaType === "video" && resolution.url ? (
+            <VideoPlayerControls
+              onError={handlePlaybackError}
+              onFullscreen={() => void enterFullscreen()}
+              onReady={() => setDirectApproved(true)}
+              posterUrl={resolution.posterUrl}
+              src={resolution.url}
+            />
+          ) : ready && resolution?.url ? (
             <ZoomableImage
               alt={asset.displayName}
               key={asset.assetId}
               onFullscreen={() => void enterFullscreen()}
               onSwipeNext={onNext}
               onSwipePrevious={onPrevious}
-              src={resolution.url!}
+              src={resolution.url}
             />
           ) : unsupported ? (
             <div className="preview-state" role="status">
@@ -527,11 +498,11 @@ export function AssetPreviewModal({
             </div>
           ) : (
             <div
-              className={`preview-state${resolution?.status === "failed" || error ? " is-error" : ""}`}
+              className={`preview-state${primarySurface === "unavailable" || error ? " is-error" : ""}`}
               role={error ? "alert" : "status"}
             >
               <strong>
-                {resolution?.status === "pending"
+                {primarySurface === "waiting"
                   ? t("preview.generating")
                   : t("preview.unavailable")}
               </strong>
@@ -541,7 +512,7 @@ export function AssetPreviewModal({
                     ? previewFailureMessage(resolution, t)
                     : t("preview.statusReadFailed"))}
               </p>
-              {resolution?.status !== "pending" && (
+              {primarySurface !== "waiting" && (
                 <button
                   disabled={retrying}
                   onClick={() => void retry()}

@@ -605,6 +605,7 @@ export const zhCN = {
     resolving: "正在解析安全预览…",
     videoUnsupported: "当前环境不支持视频播放。",
     playbackRate: "倍速",
+    playbackRateOption: "{rate}×",
     unsupportedTitle: "不支持内置预览",
     openWithSystem: "可使用系统默认应用打开源文件。",
     openExternal: "使用外部应用打开",

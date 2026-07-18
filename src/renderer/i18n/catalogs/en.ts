@@ -614,6 +614,7 @@ export const en = {
     resolving: "Resolving secure preview…",
     videoUnsupported: "This environment does not support video playback.",
     playbackRate: "Speed",
+    playbackRateOption: "{rate}×",
     unsupportedTitle: "In-app preview not supported",
     openWithSystem: "You can open the source file with the system default app.",
     openExternal: "Open with external app",

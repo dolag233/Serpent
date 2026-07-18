@@ -430,6 +430,79 @@ describe('preview availability while derivatives are generated', () => {
     service.closeAll();
   });
 
+  it('serves a native video source while its webm proxy artifact is still generating', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({
+      displayName: 'ImmediateVideoPreview',
+      selectedParentPath: root,
+    });
+    const sourcePath = path.join(root, 'clip.mp4');
+    writeFileSync(sourcePath, Buffer.alloc(4096, 0));
+    importNoConflict(service, created.libraryId, sourcePath);
+    const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
+
+    const db = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    db.prepare(
+      `INSERT INTO revision_artifacts
+         (artifact_id, revision_id, kind, mime_type, byte_size, file_path,
+          generator_version, status, generated_at)
+       VALUES (?, ?, 'webm_proxy', 'video/webm', 0, ?, 'test', 'generating', ?)`,
+    ).run(
+      'art-generating-proxy',
+      asset.currentRevisionId,
+      'artifacts/pending-proxy.webm',
+      new Date().toISOString(),
+    );
+    db.close();
+
+    expect(service.getPreviewArtifact(created.libraryId, asset.assetId)).toMatchObject({
+      mediaType: 'video',
+      status: 'ready',
+      playbackMode: 'source',
+      sourceRevisionId: asset.currentRevisionId,
+      sourceMimeType: 'video/mp4',
+    });
+
+    service.closeAll();
+  });
+
+  it('serves a native video source when its webm proxy artifact has failed', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({
+      displayName: 'FailedProxyFallsToSource',
+      selectedParentPath: root,
+    });
+    const sourcePath = path.join(root, 'clip.mp4');
+    writeFileSync(sourcePath, Buffer.alloc(4096, 0));
+    importNoConflict(service, created.libraryId, sourcePath);
+    const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
+
+    const db = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    db.prepare(
+      `INSERT INTO revision_artifacts
+         (artifact_id, revision_id, kind, mime_type, byte_size, file_path,
+          generator_version, status, error_code, generated_at)
+       VALUES (?, ?, 'webm_proxy', 'video/webm', 0, ?, 'test', 'failed', 'MEDIA_PROCESSING_FAILED', ?)`,
+    ).run(
+      'art-failed-proxy',
+      asset.currentRevisionId,
+      'artifacts/failed-proxy.webm',
+      new Date().toISOString(),
+    );
+    db.close();
+
+    expect(service.getPreviewArtifact(created.libraryId, asset.assetId)).toMatchObject({
+      mediaType: 'video',
+      status: 'ready',
+      playbackMode: 'source',
+      sourceMimeType: 'video/mp4',
+    });
+
+    service.closeAll();
+  });
+
   it('marks an unsupported asset without offering a generatable preview', () => {
     const root = temporaryRoot();
     const service = new LibraryService();

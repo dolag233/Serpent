@@ -7761,9 +7761,11 @@ export class LibraryService {
       : null;
     const posterArtifactId = poster?.status === 'ready' ? poster.artifactId : undefined;
     const artifact = this.getCurrentArtifact(libraryId, assetId, kind);
-    if (artifact && !(mediaType === 'image' && nativeMimeType)) {
+    if (artifact) {
       const status = artifact.status === 'generating' ? 'pending' : artifact.status;
-      if (status === 'ready') {
+      // Prefer a ready derivative, except native images always use the original
+      // (REQ-VIEW-002: uncompressed source in the viewer).
+      if (status === 'ready' && !(mediaType === 'image' && nativeMimeType)) {
         return {
           mediaType,
           status,
@@ -7774,25 +7776,29 @@ export class LibraryService {
           ...(posterArtifactId ? { posterArtifactId } : {}),
         };
       }
-      if (status === 'failed' && (mediaType === 'video' || !nativeMimeType)) {
+      // Non-native formats have no Chromium-playable source: surface derivative
+      // pending/failed. Native formats fall through to source below.
+      if (!nativeMimeType) {
+        if (status === 'failed') {
+          return {
+            mediaType,
+            status,
+            kind,
+            artifactId: artifact.artifactId,
+            mimeType: artifact.mimeType,
+            errorCode: artifact.errorCode ?? 'MEDIA_PROCESSING_FAILED',
+            ...(posterArtifactId ? { posterArtifactId } : {}),
+          };
+        }
         return {
           mediaType,
-          status,
+          status: 'pending',
           kind,
           artifactId: artifact.artifactId,
           mimeType: artifact.mimeType,
-          errorCode: artifact.errorCode ?? 'MEDIA_PROCESSING_FAILED',
           ...(posterArtifactId ? { posterArtifactId } : {}),
         };
       }
-      if (status !== 'failed') return {
-        mediaType,
-        status: 'pending',
-        kind,
-        artifactId: artifact.artifactId,
-        mimeType: artifact.mimeType,
-        ...(posterArtifactId ? { posterArtifactId } : {}),
-      };
     }
 
     // Browsing the original and generating derivatives are independent. Native
