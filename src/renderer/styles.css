@@ -387,9 +387,10 @@ summary:focus-visible {
 /* REQ-FILTER-001: Eagle-style dimension filter bar */
 .dimension-filter-bar {
   display: flex;
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   flex-direction: column;
   gap: 6px;
+  width: 100%;
   min-width: 0;
 }
 
@@ -432,7 +433,7 @@ summary:focus-visible {
 
 .dimension-filter-popover {
   position: absolute;
-  z-index: 20;
+  z-index: 40;
   top: calc(100% + 6px);
   left: 0;
   display: flex;
@@ -1211,6 +1212,20 @@ summary:focus-visible {
   padding: 0 12px 0 14px;
   border-bottom: 1px solid var(--divider-soft);
   background: transparent;
+}
+
+/* Discovery dimensions live in the workspace column — not the 44px app
+   chrome — so chips/popovers cannot overflow into the inspector. */
+.workspace-discovery {
+  flex: 0 0 auto;
+  min-width: 0;
+  padding: 6px 12px 8px 14px;
+  border-bottom: 1px solid var(--divider-soft);
+  background: transparent;
+}
+
+.workspace-discovery.is-viewing {
+  display: none;
 }
 
 /* Browse workspace title bar is hidden while viewing (user request). */

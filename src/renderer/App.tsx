@@ -5055,70 +5055,6 @@ function AppInner() {
             }
             value={searchValue}
           />
-          <DimensionFilterBar
-            availabilityFilter={availabilityFilter}
-            aspectRatioRange={aspectRatioRange}
-            disabled={!library}
-            durationRange={durationRange}
-            excludeAvailabilityFilter={excludeAvailabilityFilter}
-            excludeFormatFilter={excludeFormatFilter}
-            excludeRatingFilter={excludeRatingFilter}
-            excludeTagFilter={excludeTagFilter}
-            favoriteFilter={favoriteFilter}
-            formatFilter={formatFilter}
-            heightRange={heightRange}
-            longEdgeRange={longEdgeRange}
-            onClearFilter={clearDiscoveryFilter}
-            onTagNamesChange={(names) => {
-              setTagFilter(names.join(", "));
-              setActiveTagId(
-                names.length === 1
-                  ? (tags.find((tag) => tag.name === names[0])?.tagId ?? null)
-                  : null,
-              );
-            }}
-            ratingFilter={ratingFilter}
-            setAspectRatioRange={setAspectRatioRange}
-            setAvailabilityFilter={setAvailabilityFilter}
-            setDurationRange={setDurationRange}
-            setExcludeAvailabilityFilter={setExcludeAvailabilityFilter}
-            setExcludeFormatFilter={setExcludeFormatFilter}
-            setExcludeRatingFilter={setExcludeRatingFilter}
-            setExcludeTagFilter={setExcludeTagFilter}
-            setFavoriteFilter={setFavoriteFilter}
-            setFormatFilter={setFormatFilter}
-            setHeightRange={setHeightRange}
-            setLongEdgeRange={setLongEdgeRange}
-            setRatingFilter={setRatingFilter}
-            setSortField={setSortField}
-            setSortOrder={setSortOrder}
-            setSourceUrlFilter={setSourceUrlFilter}
-            setTagFilter={setTagFilter}
-            setWidthRange={setWidthRange}
-            snapshot={{
-              formatFilter,
-              excludeFormatFilter,
-              tagFilter,
-              excludeTagFilter,
-              ratingFilter,
-              excludeRatingFilter,
-              favoriteFilter,
-              sourceUrlFilter,
-              availabilityFilter,
-              excludeAvailabilityFilter,
-              widthRange,
-              heightRange,
-              aspectRatioRange,
-              longEdgeRange,
-              durationRange,
-            }}
-            sortField={sortField}
-            sortOrder={sortOrder}
-            sourceUrlFilter={sourceUrlFilter}
-            tagFilter={tagFilter}
-            tags={tags}
-            widthRange={widthRange}
-          />
           <button
             className="compact-action is-accent"
             disabled={
@@ -5473,6 +5409,74 @@ function AppInner() {
               )}
             </span>
           </div>
+        </div>
+        <div
+          className={`workspace-discovery${previewAsset ? " is-viewing" : ""}`}
+        >
+          <DimensionFilterBar
+            availabilityFilter={availabilityFilter}
+            aspectRatioRange={aspectRatioRange}
+            disabled={!library}
+            durationRange={durationRange}
+            excludeAvailabilityFilter={excludeAvailabilityFilter}
+            excludeFormatFilter={excludeFormatFilter}
+            excludeRatingFilter={excludeRatingFilter}
+            excludeTagFilter={excludeTagFilter}
+            favoriteFilter={favoriteFilter}
+            formatFilter={formatFilter}
+            heightRange={heightRange}
+            longEdgeRange={longEdgeRange}
+            onClearFilter={clearDiscoveryFilter}
+            onTagNamesChange={(names) => {
+              setTagFilter(names.join(", "));
+              setActiveTagId(
+                names.length === 1
+                  ? (tags.find((tag) => tag.name === names[0])?.tagId ?? null)
+                  : null,
+              );
+            }}
+            ratingFilter={ratingFilter}
+            setAspectRatioRange={setAspectRatioRange}
+            setAvailabilityFilter={setAvailabilityFilter}
+            setDurationRange={setDurationRange}
+            setExcludeAvailabilityFilter={setExcludeAvailabilityFilter}
+            setExcludeFormatFilter={setExcludeFormatFilter}
+            setExcludeRatingFilter={setExcludeRatingFilter}
+            setExcludeTagFilter={setExcludeTagFilter}
+            setFavoriteFilter={setFavoriteFilter}
+            setFormatFilter={setFormatFilter}
+            setHeightRange={setHeightRange}
+            setLongEdgeRange={setLongEdgeRange}
+            setRatingFilter={setRatingFilter}
+            setSortField={setSortField}
+            setSortOrder={setSortOrder}
+            setSourceUrlFilter={setSourceUrlFilter}
+            setTagFilter={setTagFilter}
+            setWidthRange={setWidthRange}
+            snapshot={{
+              formatFilter,
+              excludeFormatFilter,
+              tagFilter,
+              excludeTagFilter,
+              ratingFilter,
+              excludeRatingFilter,
+              favoriteFilter,
+              sourceUrlFilter,
+              availabilityFilter,
+              excludeAvailabilityFilter,
+              widthRange,
+              heightRange,
+              aspectRatioRange,
+              longEdgeRange,
+              durationRange,
+            }}
+            sortField={sortField}
+            sortOrder={sortOrder}
+            sourceUrlFilter={sourceUrlFilter}
+            tagFilter={tagFilter}
+            tags={tags}
+            widthRange={widthRange}
+          />
         </div>
         <div
           className={`workspace-canvas${previewAsset ? " is-viewing" : ""}${externalDropActive ? " is-external-drop" : ""}`}
