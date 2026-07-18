@@ -51,6 +51,10 @@
   --ink: #111314;
   /* Viewer stage follows theme (not always near-black --ink). */
   --viewer-stage: #1e2022;
+  /* Serpent-627: viewer bottom chrome (zoom bar / video transport / GIF
+     controls / fullscreen chip) is semi-transparent rather than near-opaque —
+     moderate enough to still read clearly over any media, in both themes. */
+  --viewer-chrome-bg: color-mix(in srgb, var(--raised) 72%, transparent);
   /* Legacy alias: several components referenced --border before any token
      existed (their borders silently rendered as none). */
   --border: var(--divider);
@@ -2429,7 +2433,7 @@ input[type="range"] {
   padding: 4px 8px;
   border: 1px solid var(--divider);
   border-radius: 8px;
-  background: color-mix(in srgb, var(--raised) 94%, transparent);
+  background: var(--viewer-chrome-bg);
   box-shadow: 0 1px 6px rgb(0 0 0 / 10%);
   color: var(--secondary);
   font-size: 11px;
@@ -2482,7 +2486,7 @@ input[type="range"] {
   padding: 5px 8px;
   border: 1px solid var(--divider);
   border-radius: 8px;
-  background: color-mix(in srgb, var(--raised) 94%, transparent);
+  background: var(--viewer-chrome-bg);
   box-shadow: 0 1px 6px rgb(0 0 0 / 10%);
   color: var(--secondary);
   font-size: 10px;
@@ -2509,7 +2513,7 @@ input[type="range"] {
   padding: 6px 12px;
   border: 1px solid var(--divider);
   border-radius: 10px;
-  background: color-mix(in srgb, var(--raised) 94%, transparent);
+  background: var(--viewer-chrome-bg);
   box-shadow: 0 1px 6px rgb(0 0 0 / 10%);
   color: var(--text);
   font-size: 11px;
@@ -2643,7 +2647,7 @@ input[type="range"] {
   padding: 4px 10px;
   border: 1px solid var(--divider);
   border-radius: 8px;
-  background: color-mix(in srgb, var(--raised) 94%, transparent);
+  background: var(--viewer-chrome-bg);
   box-shadow: 0 1px 6px rgb(0 0 0 / 10%);
   backdrop-filter: blur(10px);
   transform: translateX(-50%);
@@ -2729,7 +2733,7 @@ input[type="range"] {
   padding: 5px 9px;
   border: 1px solid var(--divider);
   border-radius: 8px;
-  background: color-mix(in srgb, var(--raised) 94%, transparent);
+  background: var(--viewer-chrome-bg);
   box-shadow: 0 1px 6px rgb(0 0 0 / 10%);
   color: var(--text);
   font-size: 11px;
@@ -4127,11 +4131,14 @@ select.ai-config-input {
   letter-spacing: 0.1em;
 }
 
+/* Serpent-qto: default single-line height (min-height = one line + vertical
+   padding); grows toward max-height only once content wraps past a line. */
 .inspector-textarea {
   height: auto;
-  min-height: 52px;
+  min-height: calc(1.6em + 14px);
   max-height: 180px;
   padding-top: 7px;
+  padding-bottom: 7px;
   overflow-y: auto;
   resize: none;
   font-size: 11.5px;

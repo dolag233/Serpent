@@ -22,7 +22,7 @@ import {
   shouldContinuePreviewPolling,
 } from "./preview-poll";
 import { Icon } from "./Icons";
-import { useViewerChromeIdle } from "./use-viewer-chrome-idle";
+import type { ViewerChromeActivitySource } from "./viewer-chrome-idle";
 import { resolveViewerPrimarySurface } from "./viewer-preview-policy";
 import { VideoPlayerControls } from "./VideoPlayerControls";
 import { GifPlayerControls } from "./GifPlayerControls";
@@ -32,7 +32,10 @@ import { ZoomableImage } from "./zoomable-preview-image";
 interface AssetPreviewModalProps {
   api: SerpentLibraryApi;
   asset: AssetSummary;
+  /** Owned by a parent that survives per-asset remounts (Serpent-ayf). */
+  chromeIdle: boolean;
   libraryId: string;
+  onChromeActivity: (source: ViewerChromeActivitySource) => void;
   onClose(): void;
   onNext?: () => void;
   onPrevious?: () => void;
@@ -140,14 +143,15 @@ function safeRendererDiagnostic(value: string): string {
 export function AssetPreviewModal({
   api,
   asset,
+  chromeIdle,
   libraryId,
+  onChromeActivity,
   onClose,
   onNext,
   onPrevious,
 }: AssetPreviewModalProps) {
   const t = useT();
   const modalRef = useRef<HTMLElement>(null);
-  const { idle: chromeIdle, onPointerActivity } = useViewerChromeIdle();
   const requestSequence = useRef(0);
   const [resolution, setResolution] = useState<PreviewResolution | null>(null);
   const [loading, setLoading] = useState(true);
@@ -460,8 +464,8 @@ export function AssetPreviewModal({
     <section
       aria-label={t("preview.viewPage", { name: asset.displayName })}
       className={`workspace-viewer${chromeIdle ? " is-chrome-idle" : ""}`}
-      onPointerDown={onPointerActivity}
-      onPointerMove={onPointerActivity}
+      onPointerDown={() => onChromeActivity("pointerdownOrClick")}
+      onPointerMove={() => onChromeActivity("pointermove")}
       ref={modalRef}
       role="region"
       tabIndex={-1}

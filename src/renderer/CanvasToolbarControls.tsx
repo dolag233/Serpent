@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import {
   CARD_SIZE_MAX,
   CARD_SIZE_MIN,
+  CARD_SIZE_STEP,
   type CanvasPreferences,
 } from "./canvas-preferences";
 import {
@@ -163,7 +164,7 @@ export function CanvasToolbarControls({
               onChange={(event) => {
                 onCardSizeChange(Number(event.target.value));
               }}
-              step="8"
+              step={CARD_SIZE_STEP}
               type="range"
               value={cardSize}
             />

@@ -23,6 +23,11 @@ export interface CanvasPreferencesStorage {
 
 export const CARD_SIZE_MIN = 96;
 export const CARD_SIZE_MAX = 320;
+// Serpent-akz: the card-size slider previously stepped by 8px (28 stops
+// across the range), which read as coarse/jumpy in the commonly-used band.
+// 2px gives ~4x the stops for a near-continuous feel while keeping the
+// underlying value an integer pixel count (matches `clampCardSize` below).
+export const CARD_SIZE_STEP = 2;
 
 // ---------------------------------------------------------------------------
 // Zod schema
@@ -60,6 +65,20 @@ export const DEFAULT_CANVAS_PREFERENCES: CanvasPreferences = {
 
 function clampCardSize(value: number): number {
   return Math.min(CARD_SIZE_MAX, Math.max(CARD_SIZE_MIN, Math.round(value)));
+}
+
+/**
+ * Number of distinct stops the card-size slider offers across its full
+ * range at a given step (Serpent-akz). Exported so a regression test can
+ * assert the slider actually got finer, not just that the constant changed.
+ */
+export function cardSizeSliderStepCount(
+  min: number = CARD_SIZE_MIN,
+  max: number = CARD_SIZE_MAX,
+  step: number = CARD_SIZE_STEP,
+): number {
+  if (step <= 0) return 0;
+  return Math.round((max - min) / step);
 }
 
 function resolveStorage(storage?: CanvasPreferencesStorage): CanvasPreferencesStorage {

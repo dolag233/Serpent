@@ -10,6 +10,7 @@ import { IconActionButton } from "./icon-action-button";
 import { iconActionAttrs } from "./icon-action-attrs";
 import { formatDuration } from "./App";
 import { resolveInspectorPreviewSrc } from "./inspector-preview";
+import { resolveAutoGrowHeight } from "./inspector-description-autogrow";
 import {
   fitInspectorStackFrame,
   isEditableScalar,
@@ -25,10 +26,15 @@ import {
 import { useT } from "./i18n";
 
 import type { AssetSummary, AssetMetadataResult, ExtractedVideoMetadata, TagSummary } from "../shared/asset-types";
-import type { SerpentLibraryApi } from "../shared/library-api";
+import type { PreviewResolution, SerpentLibraryApi } from "../shared/library-api";
 import type { RendererLibrarySummary } from "../shared/protocol/responses";
 import { formatVideoTechnicalLine } from "./video-metadata-format";
 import { isGifDisplayName } from "./gif-player-controls";
+import {
+  isCardHoverPreviewable,
+  resolveLivePreviewMedia,
+} from "./asset-card-hover-preview";
+import { useAssetCardHoverPreview } from "./use-asset-card-hover-preview";
 
 // --- Local utility helpers (extracted from App.tsx) ---
 
@@ -125,17 +131,38 @@ export interface InspectorPanelProps {
 function InspectorHeroSinglePreview({
   asset,
   library,
+  livePreview,
 }: {
   asset: AssetSummary;
   library: RendererLibrarySummary | null;
+  /** Ready GIF/video resolution to loop-play (Serpent-a9n); null = static only. */
+  livePreview?: PreviewResolution | null;
 }) {
   const previewSrc = resolveInspectorPreviewSrc(asset, library);
   const [decoded, setDecoded] = useState(false);
+  const live = resolveLivePreviewMedia(Boolean(livePreview), livePreview);
 
-  if (!previewSrc) {
+  if (!previewSrc && !live.url) {
     return (
       <div className="inspector-hero-preview inspector-hero-preview-fallback">
         <Icon name="file" size={20} />
+      </div>
+    );
+  }
+
+  if (live.kind === "video" && live.url) {
+    return (
+      <div className="inspector-hero-preview">
+        <video
+          autoPlay
+          className="inspector-hero-image"
+          loop
+          muted
+          playsInline
+          poster={previewSrc ?? undefined}
+          preload="metadata"
+          src={live.url}
+        />
       </div>
     );
   }
@@ -152,7 +179,7 @@ function InspectorHeroSinglePreview({
           const image = event.currentTarget;
           if (image.complete && image.naturalWidth > 0) setDecoded(true);
         }}
-        src={previewSrc}
+        src={live.kind === "gif" && live.url ? live.url : (previewSrc ?? undefined)}
       />
     </div>
   );
@@ -289,12 +316,15 @@ function InspectorHero({
   infoParts,
   library,
   selectionCount,
+  livePreview,
 }: {
   asset: AssetSummary;
   selectedAssets: readonly AssetSummary[];
   infoParts: string[];
   library: RendererLibrarySummary | null;
   selectionCount: number;
+  /** Serpent-a9n: only ever passed/used for single selection. */
+  livePreview?: PreviewResolution | null;
 }) {
   const t = useT();
   const isMulti = selectionCount >= 2;
@@ -325,7 +355,11 @@ function InspectorHero({
           title={title}
         />
       ) : (
-        <InspectorHeroSinglePreview asset={asset} library={library} />
+        <InspectorHeroSinglePreview
+          asset={asset}
+          library={library}
+          livePreview={livePreview}
+        />
       )}
       <strong className="inspector-hero-title" title={title}>
         {title}
@@ -406,6 +440,28 @@ export function InspectorPanel(props: InspectorPanelProps) {
     selectedAssets.length,
     selectedAsset ? 1 : 0,
   );
+
+  // Serpent-a9n: single-selection GIF/video loops in the Inspector hero;
+  // multi-selection never plays (isPreviewable is gated on selectionCount < 2,
+  // independent of the canvas's own hover-preview so hovering an unrelated
+  // card elsewhere never interrupts this asset's Inspector preview).
+  const isSingleSelection = selectionCount < 2;
+  const heroPreviewTargetId =
+    isSingleSelection && selectedAsset ? selectedAsset.assetId : undefined;
+  const isHeroPreviewable = (assetId: string) =>
+    Boolean(
+      isSingleSelection &&
+        selectedAsset &&
+        selectedAsset.assetId === assetId &&
+        isCardHoverPreviewable(selectedAsset),
+    );
+  const { activePreviewAssetId: heroPreviewAssetId, activeResolution: heroPreview } =
+    useAssetCardHoverPreview({
+      api,
+      libraryId: library?.libraryId,
+      primarySelectedAssetId: heroPreviewTargetId,
+      isPreviewable: isHeroPreviewable,
+    });
 
   // Selection identity and metadata may resolve in separate async turns. Never
   // render the previous asset's fields beside the newly selected asset.
@@ -558,14 +614,26 @@ export function InspectorPanel(props: InspectorPanelProps) {
 
   const canOpenSourceUrl = toOpenableExternalUrl(editSourceUrl) !== null;
 
-  // 描述输入框高度自动包裹内容：受控值变化（输入/切换资产）后重新量高。
-  // CSS 侧 resize:none + max-height 兜底，超出后内部滚动。
+  // 描述输入框高度自动包裹内容（Serpent-qto）：默认单行，受控值变化（输入/
+  // 切换资产）后重新量高，超过一行才增高。CSS 侧的 min-height/max-height 是
+  // 同一对边界的可视化兜底（resize:none + 超出后内部滚动）；这里的常量与其
+  // 保持一致，避免两处漂移。
   const descriptionRef = useRef<HTMLTextAreaElement>(null);
   useEffect(() => {
     const textarea = descriptionRef.current;
     if (!textarea) return;
     textarea.style.height = "auto";
-    textarea.style.height = `${textarea.scrollHeight}px`;
+    const minHeight = Number.parseFloat(
+      getComputedStyle(textarea).minHeight || "0",
+    );
+    const maxHeight = Number.parseFloat(
+      getComputedStyle(textarea).maxHeight || "0",
+    );
+    textarea.style.height = `${resolveAutoGrowHeight(
+      textarea.scrollHeight,
+      minHeight || 0,
+      maxHeight || Number.POSITIVE_INFINITY,
+    )}px`;
   }, [editDescription, selectedAsset?.assetId]);
 
   const handleAddTagKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
@@ -661,6 +729,9 @@ export function InspectorPanel(props: InspectorPanelProps) {
             infoParts={compactInfoParts}
             key={`${selectedAsset.assetId}:${selectionCount}`}
             library={library}
+            livePreview={
+              heroPreviewAssetId === selectedAsset.assetId ? heroPreview : null
+            }
             selectedAssets={
               selectedAssets.length > 0 ? selectedAssets : [selectedAsset]
             }
@@ -981,7 +1052,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
                   onChange={handleMetadataDescriptionInput}
                   placeholder={t("inspector.descriptionPlaceholder")}
                   ref={descriptionRef}
-                  rows={2}
+                  rows={1}
                   value={editDescription}
                 />
                 )}

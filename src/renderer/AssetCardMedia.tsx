@@ -1,4 +1,5 @@
 import type { PreviewResolution } from "../shared/library-api";
+import { resolveLivePreviewMedia } from "./asset-card-hover-preview";
 
 interface AssetCardMediaProps {
   alt: string;
@@ -18,10 +19,7 @@ export function AssetCardMedia({
   isActive,
   preview,
 }: AssetCardMediaProps) {
-  const playUrl =
-    isActive && preview?.status === "ready" ? preview.url : undefined;
-  const showGif = Boolean(playUrl) && preview?.mediaType === "image";
-  const showVideo = Boolean(playUrl) && preview?.mediaType === "video";
+  const live = resolveLivePreviewMedia(isActive, preview);
 
   return (
     <div className="asset-card-media">
@@ -33,24 +31,24 @@ export function AssetCardMedia({
           src={coverUrl}
         />
       ) : null}
-      {showGif && playUrl ? (
+      {live.kind === "gif" && live.url ? (
         <img
           alt=""
           className="asset-card-media-live"
           decoding="async"
-          src={playUrl}
+          src={live.url}
         />
       ) : null}
-      {showVideo && playUrl && preview ? (
+      {live.kind === "video" && live.url ? (
         <video
           autoPlay
           className="asset-card-media-live"
           loop
           muted
           playsInline
-          poster={preview.posterUrl}
+          poster={preview?.posterUrl}
           preload="metadata"
-          src={playUrl}
+          src={live.url}
         />
       ) : null}
     </div>

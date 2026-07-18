@@ -3,6 +3,7 @@ import {
   coverSrc,
   isCardHoverPreviewable,
   resolveActivePreviewAssetId,
+  resolveLivePreviewMedia,
 } from "../../src/renderer/asset-card-hover-preview";
 
 describe("isCardHoverPreviewable", () => {
@@ -105,5 +106,69 @@ describe("resolveActivePreviewAssetId", () => {
 describe("coverSrc", () => {
   it("builds the serpent preview URL", () => {
     expect(coverSrc("lib-a", "art-b")).toBe("serpent://preview/lib-a/art-b");
+  });
+});
+
+describe("resolveLivePreviewMedia (Serpent-a9n)", () => {
+  it("plays a ready GIF (image mediaType) as 'gif' when active", () => {
+    expect(
+      resolveLivePreviewMedia(true, {
+        status: "ready",
+        url: "serpent://source/lib/gif-1",
+        mediaType: "image",
+      }),
+    ).toEqual({ url: "serpent://source/lib/gif-1", kind: "gif" });
+  });
+
+  it("plays a ready video as 'video' when active", () => {
+    expect(
+      resolveLivePreviewMedia(true, {
+        status: "ready",
+        url: "serpent://source/lib/vid-1",
+        mediaType: "video",
+        posterUrl: "serpent://preview/lib/poster-1",
+      }),
+    ).toEqual({ url: "serpent://source/lib/vid-1", kind: "video" });
+  });
+
+  it("does not play when inactive — this is how Inspector multi-selection stays static", () => {
+    expect(
+      resolveLivePreviewMedia(false, {
+        status: "ready",
+        url: "serpent://source/lib/vid-1",
+        mediaType: "video",
+      }),
+    ).toEqual({ url: undefined, kind: null });
+  });
+
+  it("does not play when the resolution is not ready yet", () => {
+    expect(
+      resolveLivePreviewMedia(true, {
+        status: "pending",
+        url: undefined,
+        mediaType: "video",
+      }),
+    ).toEqual({ url: undefined, kind: null });
+  });
+
+  it("does not play when there is no preview at all", () => {
+    expect(resolveLivePreviewMedia(true, null)).toEqual({
+      url: undefined,
+      kind: null,
+    });
+    expect(resolveLivePreviewMedia(true, undefined)).toEqual({
+      url: undefined,
+      kind: null,
+    });
+  });
+
+  it("does not play a non-gif/video mediaType even if marked ready", () => {
+    expect(
+      resolveLivePreviewMedia(true, {
+        status: "ready",
+        url: "serpent://source/lib/other-1",
+        mediaType: "other",
+      }),
+    ).toEqual({ url: undefined, kind: null });
   });
 });

@@ -152,6 +152,7 @@ import type {
   ImportProgressEvent,
 } from "../shared/protocol/responses";
 import { AssetPreviewModal } from "./AssetPreviewModal";
+import { useViewerChromeIdle } from "./use-viewer-chrome-idle";
 import { AssetContextMenu } from "./AssetContextMenu";
 import { InspectorPanel } from "./InspectorPanel";
 import {
@@ -740,6 +741,15 @@ function AppInner() {
   useLayoutEffect(() => {
     previewAssetRef.current = previewAsset;
   }, [previewAsset]);
+  // Serpent-ayf: owned here (not inside AssetPreviewModal, which remounts
+  // per-asset via `key`) so switching assets never resets idle-faded chrome
+  // back to visible. `wakeViewerChrome` is called only when the viewer first
+  // opens; left/right navigation never calls it.
+  const {
+    idle: viewerChromeIdle,
+    onActivity: onViewerChromeActivity,
+    wake: wakeViewerChrome,
+  } = useViewerChromeIdle();
   const [canvasPrefs, setCanvasPrefs] = useState<CanvasPreferences>(() =>
     loadCanvasPreferences(),
   );
@@ -1141,6 +1151,10 @@ function AppInner() {
 
   const openAssetPreview = useCallback((asset: AssetSummary) => {
     if (asset.availability !== "available" || asset.deletedAt) return;
+    // Serpent-ayf: entering the viewer always shows chrome, regardless of
+    // whatever idle state accumulated while browsing; only opening (not
+    // navigateAssetPreview) wakes it.
+    wakeViewerChrome();
     if (previewRestoreFrameRef.current !== null) {
       window.cancelAnimationFrame(previewRestoreFrameRef.current);
       previewRestoreFrameRef.current = null;
@@ -1164,7 +1178,7 @@ function AppInner() {
     setSelectedAssetId(asset.assetId);
     selectionAnchorRef.current = asset.assetId;
     setPreviewAsset(asset);
-  }, [selectionAnchorRef]);
+  }, [selectionAnchorRef, wakeViewerChrome]);
 
   const navigateAssetPreview = useCallback((asset: AssetSummary) => {
     setSelectedAssetIds([asset.assetId]);
@@ -6477,8 +6491,10 @@ function AppInner() {
           <AssetPreviewModal
             api={api}
             asset={previewAsset}
+            chromeIdle={viewerChromeIdle}
             key={previewAsset.assetId}
             libraryId={library.libraryId}
+            onChromeActivity={onViewerChromeActivity}
             onClose={() => void closeAssetPreview()}
             onNext={
               previewIndex >= 0 && previewIndex < visibleAssets.length - 1

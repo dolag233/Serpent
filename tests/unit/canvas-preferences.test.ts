@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  CARD_SIZE_MAX,
+  CARD_SIZE_MIN,
+  CARD_SIZE_STEP,
+  cardSizeSliderStepCount,
   DEFAULT_CANVAS_PREFERENCES,
   loadCanvasPreferences,
   PREF_KEY,
@@ -320,5 +324,31 @@ describe('DEFAULT_CANVAS_PREFERENCES', () => {
       cardSize: 160,
       fields: { name: true, size: true, date: true },
     });
+  });
+});
+
+describe('CARD_SIZE_STEP / cardSizeSliderStepCount (Serpent-akz)', () => {
+  it('is finer than the previous 8px step', () => {
+    expect(CARD_SIZE_STEP).toBeLessThan(8);
+    expect(CARD_SIZE_STEP).toBeGreaterThan(0);
+  });
+
+  it('evenly divides the min..max range so the slider always lands on an integer', () => {
+    expect((CARD_SIZE_MAX - CARD_SIZE_MIN) % CARD_SIZE_STEP).toBe(0);
+  });
+
+  it('offers materially more stops than the previous 8px step (28 stops)', () => {
+    expect(cardSizeSliderStepCount()).toBeGreaterThan(28);
+    expect(cardSizeSliderStepCount(CARD_SIZE_MIN, CARD_SIZE_MAX, 8)).toBe(28);
+  });
+
+  it('computes stop count for arbitrary ranges/steps', () => {
+    expect(cardSizeSliderStepCount(96, 320, 2)).toBe(112);
+    expect(cardSizeSliderStepCount(96, 320, 1)).toBe(224);
+  });
+
+  it('returns 0 for a non-positive step instead of dividing by zero', () => {
+    expect(cardSizeSliderStepCount(96, 320, 0)).toBe(0);
+    expect(cardSizeSliderStepCount(96, 320, -2)).toBe(0);
   });
 });
