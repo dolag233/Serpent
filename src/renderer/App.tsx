@@ -14,6 +14,7 @@ import {
 import { Icon, type IconName } from "./Icons";
 import { IconActionButton } from "./icon-action-button";
 import { iconActionAttrs } from "./icon-action-attrs";
+import { HoverTipHost } from "./hover-tip";
 import { shouldShowMissingAssetOverlay } from "./availability-affordance";
 import { ConvertLinkedDialog } from "./ConvertLinkedDialog";
 import { LinkedRulesDialog } from "./LinkedRulesDialog";
@@ -32,6 +33,12 @@ import {
 } from "./ScopeBreadcrumbs";
 import { buildManagedFolderBreadcrumbTrail } from "./folder-breadcrumb-trail";
 import { folderBrowseScope } from "./folder-browse-scope";
+import {
+  isFolderRecursiveEnabled,
+  loadFolderRecursivePreferences,
+  saveFolderRecursivePreferences,
+  withFolderRecursiveEnabled,
+} from "./folder-recursive-preferences";
 import { useT, useLocale, translateForLocale, type AppLocale } from "./i18n";
 import {
   createWorkspaceNavHistory,
@@ -487,6 +494,9 @@ function AppInner() {
   // REQ-FOLDER-009: folder browse/search recurse only when explicitly enabled.
   const [folderRecursive, setFolderRecursive] = useState(false);
   const folderRecursiveRef = useRef(folderRecursive);
+  const [folderRecursivePrefs, setFolderRecursivePrefs] = useState(() =>
+    loadFolderRecursivePreferences(),
+  );
   const [collectionEditor, setCollectionEditor] = useState<{
     collectionId: string;
     description: string;
@@ -1053,13 +1063,19 @@ function AppInner() {
               restoredLocation = { kind: "root" };
             } else if (session.scope.kind === "folder") {
               setAssetScope(session.scope.id);
+              const enabled = isFolderRecursiveEnabled(
+                loadFolderRecursivePreferences(),
+                activeLibrary.libraryId,
+                session.scope.id,
+              );
+              folderRecursiveRef.current = enabled;
+              setFolderRecursive(enabled);
               restoredItems =
                 (await loadContent(activeLibrary, session.scope.id)) ?? [];
               searchScope = {
                 kind: "folder",
                 folderId: session.scope.id,
-                // REQ-FOLDER-009: restore uses the current include-subfolders switch.
-                recursive: folderRecursiveRef.current,
+                recursive: enabled,
               };
               restoredLocation = {
                 kind: "folder",
@@ -1516,6 +1532,18 @@ function AppInner() {
     workspaceCanvasRef.current?.scrollTo({ top: 0, left: 0 });
     setShowTrash(false);
     setAssetScope(scope);
+    if (scope !== "all" && scope !== "root") {
+      const enabled = isFolderRecursiveEnabled(
+        folderRecursivePrefs,
+        library.libraryId,
+        scope,
+      );
+      folderRecursiveRef.current = enabled;
+      setFolderRecursive(enabled);
+    } else {
+      folderRecursiveRef.current = false;
+      setFolderRecursive(false);
+    }
     clearAssetSelection();
     setActiveTagId(null);
     setActiveCollectionId(null);
@@ -4647,6 +4675,8 @@ function AppInner() {
   }
 
   return (
+    <>
+    <HoverTipHost />
     <main
       className={`app-shell${leftOpen ? "" : " left-collapsed"}${rightOpen ? "" : " right-collapsed"}${panelResizing ? " is-resizing" : ""}`}
       style={panelResizeShellStyle as React.CSSProperties}
@@ -4680,45 +4710,7 @@ function AppInner() {
           />
         </div>
         <ScopeBreadcrumbs
-          includeSubfolders={
-            library &&
-            !showTrash &&
-            !activeTagId &&
-            !activeCollectionId &&
-            !activeSmartCollectionId &&
-            assetScope !== "all" &&
-            assetScope !== "root"
-              ? folderRecursive
-              : undefined
-          }
           onNavigateFolder={(folderId) => void chooseFolder(folderId)}
-          onToggleIncludeSubfolders={
-            library &&
-            !showTrash &&
-            !activeTagId &&
-            !activeCollectionId &&
-            !activeSmartCollectionId &&
-            assetScope !== "all" &&
-            assetScope !== "root"
-              ? () => {
-                  const next = !folderRecursiveRef.current;
-                  folderRecursiveRef.current = next;
-                  setFolderRecursive(next);
-                  void loadContent(library, assetScope, {
-                    discovery: currentQueryDefinition(),
-                    searchScope: {
-                      kind: "folder",
-                      folderId: assetScope,
-                      recursive: next,
-                    },
-                  }).catch((caught) => {
-                    setError(
-                      toMessage(caught, t("toast.readAssetsFailed"), locale),
-                    );
-                  });
-                }
-              : undefined
-          }
           segments={buildScopeBreadcrumbSegments(
             {
               showTrash,
@@ -4762,13 +4754,13 @@ function AppInner() {
           <button
             aria-pressed={aiSearchEnabled}
             className="compact-action ai-search-toggle"
+            data-hover-tip={t("toolbar.aiSearchTitle")}
             disabled={!library || aiSearchLoading}
             onClick={() => {
               setAiSearchEnabled((enabled) => !enabled);
               setActiveAiSearchDefinition(null);
               setAiSearchPlanSummary(null);
             }}
-            title={t("toolbar.aiSearchTitle")}
             type="button"
           >
             <Icon name="smart" size={14} />
@@ -5159,6 +5151,47 @@ function AppInner() {
           className={`workspace-bar${previewAsset ? " is-viewing" : ""}`}
         >
           <div className="workspace-title">
+            {library &&
+              !showTrash &&
+              !activeTagId &&
+              !activeCollectionId &&
+              !activeSmartCollectionId &&
+              assetScope !== "all" &&
+              assetScope !== "root" && (
+                <button
+                  aria-pressed={folderRecursive}
+                  className="workspace-include-subfolders"
+                  onClick={() => {
+                    const next = !folderRecursiveRef.current;
+                    folderRecursiveRef.current = next;
+                    setFolderRecursive(next);
+                    const nextPrefs = withFolderRecursiveEnabled(
+                      folderRecursivePrefs,
+                      library.libraryId,
+                      assetScope,
+                      next,
+                    );
+                    setFolderRecursivePrefs(nextPrefs);
+                    saveFolderRecursivePreferences(nextPrefs);
+                    void loadContent(library, assetScope, {
+                      discovery: currentQueryDefinition(),
+                      searchScope: {
+                        kind: "folder",
+                        folderId: assetScope,
+                        recursive: next,
+                      },
+                    }).catch((caught) => {
+                      setError(
+                        toMessage(caught, t("toast.readAssetsFailed"), locale),
+                      );
+                    });
+                  }}
+                  type="button"
+                  {...iconActionAttrs(t("nav.includeChildFolders"))}
+                >
+                  <Icon name="folders" size={14} />
+                </button>
+              )}
             <span>{workspaceTitle()}</span>
             <span className="item-count">
               {library ? t("common.itemCount", { count: visibleAssets.length }) : t("common.notLoaded")}
@@ -5275,6 +5308,7 @@ function AppInner() {
                 <label className="asset-size-control">
                   <input
                     aria-label={t("toolbar.thumbnailSize")}
+                    data-hover-tip={t("toolbar.thumbnailSize")}
                     max={CARD_SIZE_MAX}
                     min={CARD_SIZE_MIN}
                     onChange={(event) => {
@@ -6236,9 +6270,9 @@ function AppInner() {
       {leftOpen && (
         <div
           aria-label={t("shell.resizeNav")}
-          title={t("shell.resizeNav")}
           aria-orientation="vertical"
           className={`panel-resizer${panelResizing === "nav" ? " is-active" : ""}`}
+          data-hover-tip={t("shell.resizeNav")}
           onDoubleClick={() => resetPanelWidth("nav")}
           onPointerDown={(event) => {
             event.preventDefault();
@@ -6251,9 +6285,9 @@ function AppInner() {
       {rightOpen && (
         <div
           aria-label={t("shell.resizeInspector")}
-          title={t("shell.resizeInspector")}
           aria-orientation="vertical"
           className={`panel-resizer${panelResizing === "inspector" ? " is-active" : ""}`}
+          data-hover-tip={t("shell.resizeInspector")}
           onDoubleClick={() => resetPanelWidth("inspector")}
           onPointerDown={(event) => {
             event.preventDefault();
@@ -6264,6 +6298,7 @@ function AppInner() {
         />
       )}
     </main>
+    </>
   );
 }
 

@@ -117,8 +117,15 @@ describe("ScopeHistoryButtons", () => {
       ),
     );
     expect(markup.match(/disabled=""/g)).toHaveLength(1);
-    expect(markup).toMatch(/aria-label="后退"[^>]*disabled=""/);
-    expect(markup).not.toMatch(/aria-label="前进"[^>]*disabled=""/);
+    expect(markup).toMatch(/aria-label="后退"/);
+    expect(markup).toMatch(/disabled=""/);
+    expect(markup).not.toMatch(
+      /aria-label="前进"[^>]*disabled=""|disabled=""[^>]*aria-label="前进"/,
+    );
+    // Back is the only disabled control.
+    expect(markup).toMatch(
+      /<button[^>]*disabled=""[^>]*aria-label="后退"|<button[^>]*aria-label="后退"[^>]*disabled=""/,
+    );
   });
 });
 

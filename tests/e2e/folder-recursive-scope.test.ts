@@ -154,9 +154,10 @@ test("folder browse stays direct until include-subfolders is checked", async () 
     await expect(window.locator(".scope-crumb-label.is-current")).toHaveText(
       "父文件夹",
     );
-    const includeSubfolders = window.getByRole("button", {
-      name: "包含子文件夹",
-    });
+    // REQ-FOLDER-009: include-subfolders lives beside the workspace title.
+    const includeSubfolders = window
+      .locator(".workspace-title")
+      .getByRole("button", { name: "包含子文件夹" });
     await expect(includeSubfolders).toBeVisible();
     await expect(includeSubfolders).toHaveAttribute("aria-pressed", "false");
     await expect(parentCard).toHaveCount(0, { timeout: 15_000 });

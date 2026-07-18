@@ -6,21 +6,15 @@
 
 ## 根因
 
-部分控件已有 `aria-label`（无障碍可读），但缺少可见悬停提示。仅补原生 `title` 在 Electron 下不可靠：工具栏 `-webkit-app-region: drag` 会吞掉悬停，且 Chromium 原生 title 延迟很长。
+部分控件已有 `aria-label`，但缺少可见悬停提示。原生 `title` 在 Electron 拖拽区下不可靠。
 
 ## 实现
 
-- `iconActionAttrs(label)`：同时设置 `aria-label`、`data-tooltip`、`title`。
-- `IconActionButton`：壳层常用纯图标按钮封装。
-- CSS `[data-tooltip]::after`：悬停立即显示提示气泡。
-- 扩大工具栏 `no-drag` 覆盖（button/input/label/面包屑等）。
-- 侧栏文件夹区显式使用 `nav.addFolder` / `nav.importLinkedFolder`。
-
-## 验证
-
-- `npx vitest run tests/unit/icon-action-attrs.test.ts`：通过。
-- `tests/e2e/shell-navigation.test.ts`：断言侧栏按钮 `title` 与 `data-tooltip`。
+- `iconActionAttrs` → `aria-label` + `data-hover-tip`
+- `HoverTipHost`：document 委托，约 420ms 延迟后以 portal 挂到 `document.body`（`z-index: 41`，与右键菜单同层）
+- 样式克制：小字号、次要色、轻边框，无强阴影
+- 工具栏 `ToolButton`、侧栏 tiny-action、前进后退、缩略图滑块等接入
 
 ## 人类验收
 
-清单条目：`SHELL-013`（待人类验收）。
+清单条目：`SHELL-013`。

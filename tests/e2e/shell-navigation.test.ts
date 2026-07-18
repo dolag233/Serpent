@@ -161,17 +161,12 @@ test("library switcher, breadcrumbs, and workspace history", async () => {
       .getByRole("button", { name: "导入链接文件夹" });
     await expect(addFolderButton).toBeVisible();
     await expect(importLinkedButton).toBeVisible();
-    await expect(addFolderButton).toHaveAttribute("title", "添加文件夹");
     await expect(addFolderButton).toHaveAttribute(
-      "data-tooltip",
+      "data-hover-tip",
       "添加文件夹",
     );
     await expect(importLinkedButton).toHaveAttribute(
-      "title",
-      "导入链接文件夹",
-    );
-    await expect(importLinkedButton).toHaveAttribute(
-      "data-tooltip",
+      "data-hover-tip",
       "导入链接文件夹",
     );
   } finally {

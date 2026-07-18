@@ -1,4 +1,5 @@
 import { Icon } from "./Icons";
+import { iconActionAttrs } from "./icon-action-attrs";
 import { useT } from "./i18n";
 
 export type ScopeHistoryButtonsProps = {
@@ -23,22 +24,20 @@ export function ScopeHistoryButtons({
   return (
     <div className="scope-history">
       <button
-        aria-label={t("scope.back")}
         className="scope-history-button"
         disabled={!canBack}
         onClick={onBack}
-        title={t("scope.back")}
         type="button"
+        {...iconActionAttrs(t("scope.back"))}
       >
         <Icon name="chevron-left" size={14} />
       </button>
       <button
-        aria-label={t("scope.forward")}
         className="scope-history-button"
         disabled={!canForward}
         onClick={onForward}
-        title={t("scope.forward")}
         type="button"
+        {...iconActionAttrs(t("scope.forward"))}
       >
         <Icon name="chevron-right" size={14} />
       </button>

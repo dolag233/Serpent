@@ -18,6 +18,7 @@ export type IconName =
   | "file"
   | "folder"
   | "folder-tree"
+  | "folders"
   | "globe"
   | "grid"
   | "heart"
@@ -116,8 +117,14 @@ const iconPaths: Record<IconName, ReactNode> = {
     </>
   ),
   folder: <path d="M3 6.5h7l2 2h9v10H3z" />,
-  // Expand-into-descendants affordance (REQ-FOLDER-009): nested folders with a
-  // connector — not a plain down chevron.
+  // Expand-into-descendants (REQ-FOLDER-009): two stacked folders — reads as
+  // "this folder and the ones inside", not a plain chevron.
+  folders: (
+    <>
+      <path d="M4 9h6.2l1.4 1.4H15v7.1H4z" />
+      <path d="M8 5.5h6.2l1.4 1.4H20v7.6h-4.2" />
+    </>
+  ),
   "folder-tree": (
     <>
       <path d="M3 5.5h6.2l1.6 1.6H15v5.4H3z" />

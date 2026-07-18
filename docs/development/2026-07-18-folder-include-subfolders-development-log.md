@@ -6,17 +6,16 @@ FOLDER-001 人类验收不通过：默认递归不符合预期。用户要求显
 
 ## 实现
 
-- `folderBrowseScope(scope, recursive)`：统一构造浏览/搜索的 folder scope；`all` 无 scope，`root` 始终非递归。
-- `folderRecursive` 默认 `false`。
-- 进入托管/链接文件夹时，当前文件夹名旁显示 `folder-tree` 图标按钮（展开子孙语义，非向下箭头）；按下后 `aria-pressed` 高亮，浏览与搜索递归。
-- 会话恢复使用当前开关值，不再强制 `recursive: true`。
+- `folderBrowseScope(scope, recursive)`：统一构造浏览/搜索的 folder scope。
+- `folderRecursive` 默认 `false`；状态按 **libraryId + folderId** 写入 `serpent.folder-recursive.v1`（仅存开启项）。
+- 控件位置：资产浏览区 `workspace-title` 内、文件夹名**左侧**；图标为双层文件夹 `folders`。
+- 进入文件夹时从偏好恢复开关；会话恢复同样读取偏好。
 
 ## 验证
 
-- `npx vitest run tests/unit/folder-browse-scope.test.ts`：通过。
-- `npx tsc --noEmit`：通过。
-- `tests/e2e/folder-recursive-scope.test.ts`：默认不递归 + 点击图标后递归。
+- `tests/unit/folder-browse-scope.test.ts`、`folder-recursive-preferences.test.ts`
+- `tests/e2e/folder-recursive-scope.test.ts`：断言 `.workspace-title` 内按钮
 
 ## 人类验收
 
-清单条目：`FOLDER-009`（待人类验收）。`FOLDER-001` 已撤回，由本条目承接。
+清单条目：`FOLDER-009`（待人类验收）。
