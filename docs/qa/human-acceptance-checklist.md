@@ -91,8 +91,9 @@
 | META-003 | 编辑和清空资产评分 | 待人类验收 | 设置非零评分并保存，再清除评分并保存 | 评分可设置为目标值，也可恢复为未评分 | [0004 QA](0004-tags-collections-metadata-qa-report.md) / [组织持久化 E2E](../../tests/e2e/organization-metadata-persistence.test.ts) | — |
 | META-004 | 设置和取消喜欢 | 待人类验收 | 将资产标为喜欢，再取消喜欢 | 两种状态均立即正确显示 | [0004 QA](0004-tags-collections-metadata-qa-report.md) / [组织持久化 E2E](../../tests/e2e/organization-metadata-persistence.test.ts) | — |
 | META-005 | 编辑和清空源链接 | 待人类验收 | 设置有效来源 URL 并保存，再清空并保存 | URL 可保存也可清空，不残留旧值 | [0004 QA](0004-tags-collections-metadata-qa-report.md) / [组织持久化 E2E](../../tests/e2e/organization-metadata-persistence.test.ts) | — |
-| META-006 | 编辑和清空人工色卡 | 待人类验收 | 设置人工色卡并保存，再清空并保存 | 色卡可保存也可清空，不残留旧颜色 | [0004 QA](0004-tags-collections-metadata-qa-report.md) / [组织持久化 E2E](../../tests/e2e/organization-metadata-persistence.test.ts) | — |
-| META-007 | 元数据跨完整重启持久化 | 待人类验收 | 保存一组元数据，完全退出 Serpent 后重新启动 | 重启前保存的每个字段值均恢复 | [0004 QA](0004-tags-collections-metadata-qa-report.md) / [组织持久化 E2E](../../tests/e2e/organization-metadata-persistence.test.ts) | — |
+| META-006 | 编辑和清空人工色卡 | 已撤回 | — | — | [0004 QA](0004-tags-collections-metadata-qa-report.md) | 2026-07-18 Serpent-7pg 移除人工/自定义色卡产品面；色卡仅保留自动提取，Inspector 不再提供人工色卡编辑入口。 |
+| META-007 | 元数据跨完整重启持久化 | 待人类验收 | 保存一组元数据（描述/评分/喜欢/源链接），完全退出 Serpent 后重新启动 | 重启前保存的每个字段值均恢复（不含已撤回的人工色卡） | [0004 QA](0004-tags-collections-metadata-qa-report.md) / [组织持久化 E2E](../../tests/e2e/organization-metadata-persistence.test.ts) | — |
+| META-008 | Inspector 仅显示自动色卡 | 待人类验收 | 选中已提取色卡的图片；确认无人工色卡输入；观察「色卡 · 自动」预览与待提取帮助文案 | 无人工色卡编辑框；有自动色卡时显示可复制色块；无色卡时显示待提取说明，不出现人工覆盖入口 | [palette worker](../../tests/worker/palette-artifact.test.ts) / 工单 Serpent-7pg | 2026-07-18 随 Serpent-7pg 进入待验收。 |
 | TAG-001 | 创建标签 | 已撤回 | — | — | [MVP UX 需求池](../implementation/mvp-ui-ux-requirements-backlog.md) | 旧入口依赖左侧完整标签列表；新入口改为 Inspector tag chip 的搜索/输入创建，实施后用新步骤重新进入验收。 |
 | TAG-002 | 重命名标签 | 已撤回 | — | — | [MVP UX 需求池](../implementation/mvp-ui-ux-requirements-backlog.md) | 用户确认不设标签管理页；全局重命名入口待集中确认后重新定义。 |
 | TAG-003 | 删除标签 | 已撤回 | — | — | [MVP UX 需求池](../implementation/mvp-ui-ux-requirements-backlog.md) | 用户确认不设标签管理页；全局删除入口待集中确认后重新定义。 |
@@ -170,6 +171,7 @@
 | INSPECT-006 | Inspector 不再显示资源库路径与关闭按钮 | 人类验收通过 | 打开资源库，不选资产与选中资产时各看一次右侧 Inspector；关闭资源库改走左上角菜单 | Inspector 无资源库绝对路径、无「关闭资源库」按钮；菜单内仍可关闭 | [开发日志](../development/2026-07-18-inspector-remove-library-path-close-development-log.md) | 2026-07-18 用户验收通过。 |
 | THUMB-001 | 支持的图片自动生成缩略图 | 待人类验收 | 导入支持的图片，不点击任何“生成预览”操作 | 缩略图自动出现并成功解码 | [0006 QA](0006-thumbnails-preview-format-decoding-qa-report.md) / [媒体预览 E2E](../../tests/e2e/media-preview.test.ts) | — |
 | THUMB-002 | 横图、竖图和方图等比完整显示 | 待人类验收 | 导入横图、竖图和方图并观察资产卡片 | 图片保持比例并完整显示，不裁剪、不拉伸 | [0006 QA](0006-thumbnails-preview-format-decoding-qa-report.md) / [媒体预览 E2E](../../tests/e2e/media-preview.test.ts) | — |
+| THUMB-003 | 片头黑场 GIF 网格缩略图非纯黑 | 待人类验收 | 导入或打开含片头黑场的多帧 GIF；等待缩略图生成（可重开资源库触发重排队）；对比查看页动画 | 网格卡片显示有内容的帧，非纯黑；查看页仍可播原 GIF | [开发日志](../development/2026-07-18-gif-thumbnail-still-page-development-log.md) / [选帧单测](../../tests/unit/gif-thumbnail-page.test.ts) / 工单 Serpent-1wg | 2026-07-18 实现；旧 GIF 缩略图会在缩略图入队时失效重生成。 |
 
 ### F. 资产查看页面
 
@@ -297,3 +299,4 @@
 | 2026-07-17 | 查看页与播放体验反馈 | 记录为需求/缺陷 | 查看不应显示“正在生成预览”阻塞（REQ-VIEW-002）；视频元数据需帧率/码率（REQ-VIEW-003）；查看页应为浏览附属层、后退与切换文件夹可退出（REQ-VIEW-004）；播放器需空格暂停/倍速（REQ-VIEW-005）；5 秒视频只播 2 秒循环（BUG-VIEWER-001）；网格动图/视频预览（REQ-CANVAS-009）；侧栏拖小可隐藏（REQ-SHELL-011）；文件夹删除（CU-M3，用户点名）；创建资源库文案口语化（REQ-SHELL-012）。 | 全部拆解入需求池“2026-07-17 第三批反馈（验收驱动）”。 |
 | 2026-07-18 | INSPECT-005 / PALETTE-001 / URL-OPEN-001 / AICFG-001 / FILTER-OUTSIDE-DISMISS-001 / TOOLBAR-001 | 人类验收通过 | 「色卡均匀+点击复制我验证过了，可以没问题」；其余打磨项（设计令牌、工具栏图标化、资产卡片、侧栏导航、Inspector 重设计、描述自适应、源链接跳转、AI 配置去强调色、筛选面板外部点击关闭）随色卡一并确认。 | 保持回归 E2E 63 绿；Windows 与 packaged 待后续验证；独立 agent 交叉审查因配额未完整执行。 |
 | 2026-07-18 | SHELL-013 / FOLDER-009 | 人类验收通过 | 用户确认「这俩可以验收」：图标悬停提示与包含子文件夹显式开关（标题左侧、按文件夹持久化）。 | 保持 HoverTipHost 与 folder-recursive 偏好回归。 |
+| 2026-07-18 | META-006 | 已撤回 | Serpent-7pg 移除自定义/人工色卡功能入口。 | 新增 META-008（自动色卡只读展示）；META-007 持久化范围去掉人工色卡。 |

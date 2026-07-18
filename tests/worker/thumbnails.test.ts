@@ -883,3 +883,95 @@ describe('resolveAssetPath', () => {
     service.closeAll();
   });
 });
+
+describe('generateThumbnail (animated GIF still page)', () => {
+  it('avoids pure-black intro frames for multi-page GIFs', async () => {
+    const { execFileSync } = await import('node:child_process');
+    const ffmpeg = process.env['SERPENT_FFMPEG_PATH'] ?? 'ffmpeg';
+    try {
+      execFileSync(ffmpeg, ['-version'], { stdio: 'ignore' });
+    } catch {
+      return;
+    }
+
+    const root = temporaryRoot();
+    const frameDir = path.join(root, 'frames');
+    mkdirSync(frameDir, { recursive: true });
+    const sharp = require('sharp') as (
+      input: unknown,
+      options?: { page?: number },
+    ) => {
+      png(): { toFile(path: string): Promise<unknown> };
+      raw(): {
+        toBuffer(options: { resolveWithObject: true }): Promise<{
+          data: Uint8Array;
+          info: { channels: number };
+        }>;
+      };
+    };
+
+    for (let i = 0; i < 6; i += 1) {
+      const background = i < 3
+        ? { r: 0, g: 0, b: 0 }
+        : { r: 240, g: 80, b: 40 };
+      await sharp({
+        create: { width: 32, height: 32, channels: 3, background },
+      }).png().toFile(path.join(frameDir, `f${i}.png`));
+    }
+
+    const gifPath = path.join(root, 'intro-black.gif');
+    execFileSync(
+      ffmpeg,
+      [
+        '-y',
+        '-framerate', '2',
+        '-i', path.join(frameDir, 'f%d.png'),
+        '-frames:v', '6',
+        gifPath,
+      ],
+      { stdio: 'pipe' },
+    );
+
+    const service = new LibraryService();
+    const created = service.createLibrary({
+      displayName: 'GIF Still',
+      selectedParentPath: root,
+    });
+    importNoConflict(service, created.libraryId, gifPath);
+    const asset = service.listAssets({
+      libraryId: created.libraryId,
+      recursive: true,
+    })[0]!;
+
+    const result = await service.generateThumbnail({
+      libraryId: created.libraryId,
+      assetId: asset.assetId,
+    });
+    const artifactPath = path.join(
+      created.libraryPath,
+      '.serpent',
+      'artifacts',
+      `${result.artifactId}.webp`,
+    );
+    expect(existsSync(artifactPath)).toBe(true);
+
+    const { data, info } = await sharp(artifactPath)
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+    let sum = 0;
+    const pixels = Math.floor(data.length / info.channels);
+    for (let i = 0; i < pixels; i += 1) {
+      const offset = i * info.channels;
+      sum += ((data[offset] ?? 0) + (data[offset + 1] ?? 0) + (data[offset + 2] ?? 0)) / 3;
+    }
+    expect(sum / pixels).toBeGreaterThan(40);
+
+    const db = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    const row = db.prepare(
+      'SELECT generator_version FROM revision_artifacts WHERE artifact_id = ?',
+    ).get(result.artifactId) as { generator_version: string };
+    expect(row.generator_version).toContain('gifstill');
+    db.close();
+    service.closeAll();
+  });
+});

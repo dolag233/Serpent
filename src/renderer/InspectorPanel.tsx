@@ -92,8 +92,6 @@ export interface InspectorPanelProps {
   editRating: number;
   editFavorite: boolean;
   editSourceUrl: string;
-  editPalette: string;
-  setEditPalette: Dispatch<SetStateAction<string>>;
   displayedPalette: string[];
   automaticPaletteRatios: Map<string, number>;
   aiContent: AiContent | null;
@@ -106,7 +104,6 @@ export interface InspectorPanelProps {
   handleFavoriteToggle: () => void;
   handleSourceUrlSave: () => void;
   handleSourceUrlInput: (e: React.ChangeEvent<HTMLInputElement>) => void;
-  handlePaletteSave: () => void;
   // Tag chip props (REQ-TAG-003)
   allTags: TagSummary[];
   onAssignTagToAsset?: (tagId: string) => void;
@@ -375,8 +372,6 @@ export function InspectorPanel(props: InspectorPanelProps) {
     editRating,
     editFavorite,
     editSourceUrl,
-    editPalette,
-    setEditPalette,
     displayedPalette,
     automaticPaletteRatios,
     aiContent,
@@ -386,7 +381,6 @@ export function InspectorPanel(props: InspectorPanelProps) {
     handleFavoriteToggle,
     handleSourceUrlSave,
     handleSourceUrlInput,
-    handlePaletteSave,
     allTags,
     onAssignTagToAsset,
     onRemoveTagFromAsset,
@@ -792,45 +786,25 @@ export function InspectorPanel(props: InspectorPanelProps) {
               })()}
 
               {(() => {
-                const paletteEditable =
-                  !isMultiEdit || isEditableScalar(multiEdit?.palette);
-                const paletteMixed =
-                  isMultiEdit && multiEdit?.palette.kind === "mixed";
                 const paletteSource = assetMetadata?.paletteSource ?? null;
                 return (
               <div className="editor-field">
                 <label className="micro-label">
                   {t("inspector.paletteLabel", {
                     source:
-                      paletteSource === "manual"
-                        ? t("inspector.paletteManual")
-                        : paletteSource === "automatic"
-                          ? t("inspector.paletteAuto")
-                          : t("inspector.palettePending"),
+                      paletteSource === "automatic"
+                        ? t("inspector.paletteAuto")
+                        : t("inspector.palettePending"),
                   })}
                 </label>
-                {paletteMixed ? (
-                  <div className="text-field inspector-input inspector-mixed-field" aria-disabled="true">
-                    {t("inspector.mixedValues")}
-                  </div>
-                ) : (
-                  <>
-                {displayedPalette.length > 0 && (
+                {displayedPalette.length > 0 ? (
                   <div
-                    aria-label={t("inspector.palettePreview", {
-                      source:
-                        paletteSource === "manual"
-                          ? t("inspector.paletteManual")
-                          : t("inspector.paletteAuto"),
-                    })}
+                    aria-label={t("inspector.palettePreviewAuto")}
                     className="palette-preview"
                     role="group"
                   >
                     {displayedPalette.map((color, index) => {
-                      const ratio =
-                        paletteSource === "automatic"
-                          ? automaticPaletteRatios.get(color)
-                          : undefined;
+                      const ratio = automaticPaletteRatios.get(color);
                       return (
                         <span
                           aria-label={t("inspector.copyColor", { color })}
@@ -861,27 +835,8 @@ export function InspectorPanel(props: InspectorPanelProps) {
                       );
                     })}
                   </div>
-                )}
-                <input
-                  aria-label={t("inspector.manualPalette")}
-                  title={t("inspector.manualPalette")}
-                  className="text-field inspector-input inspector-palette-input"
-                  disabled={!paletteEditable}
-                  maxLength={1024}
-                  onBlur={handlePaletteSave}
-                  onChange={(event) => setEditPalette(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") handlePaletteSave();
-                  }}
-                  placeholder={t("inspector.palettePlaceholder")}
-                  value={editPalette}
-                />
-                {paletteSource === "automatic" && (
-                  <p className="field-help">
-                    {t("inspector.paletteHelp")}
-                  </p>
-                )}
-                  </>
+                ) : (
+                  <p className="field-help">{t("inspector.palettePendingHelp")}</p>
                 )}
               </div>
                 );

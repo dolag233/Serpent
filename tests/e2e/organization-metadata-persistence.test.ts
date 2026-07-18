@@ -120,10 +120,6 @@ test("persists organization and metadata across restart and surfaces optimistic-
     await assetCard.click();
     const descriptionInput = window.getByLabel("描述");
     const sourceUrlInput = window.getByLabel("源链接");
-    const paletteInput = window.getByRole("textbox", {
-      name: "人工色卡",
-      exact: true,
-    });
 
     await descriptionInput.fill("跨重启保存的资产描述");
     await descriptionInput.blur();
@@ -131,16 +127,10 @@ test("persists organization and metadata across restart and surfaces optimistic-
     await sourceUrlInput.fill("https://example.com/persistent-asset");
     await sourceUrlInput.press("Enter");
     await expect(window.getByText(/版本 2/)).toBeVisible();
-    await paletteInput.fill("#112233, #AABBCC");
-    await paletteInput.press("Enter");
-    await expect(window.getByText(/版本 3/)).toBeVisible();
-    await expect(window.getByLabel("人工色卡预览").locator("span")).toHaveCount(
-      2,
-    );
     await window.getByRole("button", { name: "4 星" }).click();
-    await expect(window.getByText(/版本 4/)).toBeVisible();
+    await expect(window.getByText(/版本 3/)).toBeVisible();
     await window.getByRole("button", { name: "标记喜欢" }).click();
-    await expect(window.getByText(/版本 5/)).toBeVisible();
+    await expect(window.getByText(/版本 4/)).toBeVisible();
     await expect(window.getByRole("button", { name: "取消喜欢" })).toBeVisible();
 
     await application.close();
@@ -177,19 +167,11 @@ test("persists organization and metadata across restart and surfaces optimistic-
 
     const restoredDescriptionInput = window.getByLabel("描述");
     const restoredSourceUrlInput = window.getByLabel("源链接");
-    const restoredPaletteInput = window.getByRole("textbox", {
-      name: "人工色卡",
-      exact: true,
-    });
     await expect(restoredDescriptionInput).toHaveValue("跨重启保存的资产描述");
     await expect(restoredSourceUrlInput).toHaveValue(
       "https://example.com/persistent-asset",
     );
-    await expect(restoredPaletteInput).toHaveValue("#112233, #AABBCC");
-    await expect(window.getByText(/版本 5/)).toBeVisible();
-    await expect(window.getByLabel("人工色卡预览").locator("span")).toHaveCount(
-      2,
-    );
+    await expect(window.getByText(/版本 4/)).toBeVisible();
     await expect(window.getByRole("button", { name: "取消喜欢" })).toBeVisible();
 
     const assetId = await restoredCard.getAttribute("data-asset-id");
@@ -255,7 +237,7 @@ test("persists organization and metadata across restart and surfaces optimistic-
     );
     expect(restoredOrganization).toMatchObject({
       metadata: {
-        entityVersion: 5,
+        entityVersion: 4,
         favorite: true,
         rating: 4,
       },
@@ -284,14 +266,12 @@ test("persists organization and metadata across restart and surfaces optimistic-
                 expectedVersion: number;
                 description: string;
                 sourcePageUrl: string;
-                palette: string[];
               }): Promise<{
                 ok: boolean;
                 value?: {
                   entityVersion: number;
                   description: string | null;
                   sourcePageUrl: string | null;
-                  palette: string | null;
                 };
                 error?: { code: string; message: string };
               }>;
@@ -315,11 +295,10 @@ test("persists organization and metadata across restart and surfaces optimistic-
         expectedVersion: current.value.entityVersion,
         description: "另一客户端的最新描述",
         sourcePageUrl: "https://example.com/competing-write",
-        palette: ["#010203", "#DDEEFF"],
       });
     }, assetId);
     expect(competingWrite.ok).toBe(true);
-    expect(competingWrite.value?.entityVersion).toBe(6);
+    expect(competingWrite.value?.entityVersion).toBe(5);
 
     await restoredDescriptionInput.fill("界面中的陈旧修改");
     await restoredDescriptionInput.blur();
@@ -359,7 +338,7 @@ test("persists organization and metadata across restart and surfaces optimistic-
     expect(latestBeforeRefresh).toMatchObject({
       ok: true,
       value: {
-        entityVersion: 6,
+        entityVersion: 5,
         description: "另一客户端的最新描述",
       },
     });
@@ -369,8 +348,7 @@ test("persists organization and metadata across restart and surfaces optimistic-
     await expect(restoredSourceUrlInput).toHaveValue(
       "https://example.com/competing-write",
     );
-    await expect(restoredPaletteInput).toHaveValue("#010203, #DDEEFF");
-    await expect(window.getByText(/版本 6/)).toBeVisible();
+    await expect(window.getByText(/版本 5/)).toBeVisible();
     await expect(window.getByText("版本冲突", { exact: true })).toHaveCount(0);
   } finally {
     await application.close();

@@ -544,7 +544,6 @@ function AppInner() {
   const [editRating, setEditRating] = useState(0);
   const [editFavorite, setEditFavorite] = useState(false);
   const [editSourceUrl, setEditSourceUrl] = useState("");
-  const [editPalette, setEditPalette] = useState("");
   // REQ-SELECT-004: UE-style multi-select Inspector model (null when <2 selected).
   const [multiEdit, setMultiEdit] = useState<InspectorMultiEditModel | null>(null);
   const selectedAssetIdsRef = useRef(selectedAssetIds);
@@ -2773,7 +2772,6 @@ function AppInner() {
     setEditRating(metadata.rating);
     setEditFavorite(metadata.favorite);
     setEditSourceUrl(metadata.sourcePageUrl ?? "");
-    setEditPalette(parseStoredPalette(metadata.palette).join(", "));
   }
 
   async function loadMetadata() {
@@ -2838,7 +2836,6 @@ function AppInner() {
           rating: metadata.rating,
           favorite: metadata.favorite,
           sourcePageUrl: metadata.sourcePageUrl,
-          palette: parseStoredPalette(metadata.palette),
           tags: metadata.tags,
         }),
       );
@@ -2857,9 +2854,6 @@ function AppInner() {
     );
     setEditSourceUrl(
       model.sourceUrl.kind === "uniform" ? model.sourceUrl.value : "",
-    );
-    setEditPalette(
-      model.palette.kind === "uniform" ? model.palette.value.join(", ") : "",
     );
   }
 
@@ -4557,36 +4551,6 @@ function AppInner() {
     void saveMetadata({ description: editDescription });
   }
 
-  function handlePaletteSave() {
-    const values = editPalette
-      .split(",")
-      .map((value) => value.trim())
-      .filter(Boolean);
-    if (values.length > 20) {
-      setError(t("toast.paletteTooMany"));
-      return;
-    }
-    if (values.some((value) => !/^#[0-9A-Fa-f]{6}$/u.test(value))) {
-      setError(t("toast.paletteBadFormat"));
-      return;
-    }
-    const target = resolveInspectorTagTarget(
-      selectedAssetIds,
-      selectedAssetId ?? undefined,
-    );
-    if (target?.kind === "batch") {
-      if (multiEdit?.palette.kind !== "uniform") return;
-      if (JSON.stringify(values) === JSON.stringify(multiEdit.palette.value))
-        return;
-      void saveMetadataForSelection(target.assetIds, { palette: values });
-      return;
-    }
-    if (!assetMetadata) return;
-    const current = parseStoredPalette(assetMetadata.palette);
-    if (JSON.stringify(values) === JSON.stringify(current)) return;
-    void saveMetadata({ palette: values });
-  }
-
   // REQ-MENU-007: with a multi-selection the Inspector rating stars apply to
   // every selected asset through the batch rating command (last-write-wins),
   // exactly like the Inspector tag operations. The primary asset's stars
@@ -6061,14 +6025,12 @@ function AppInner() {
         displayedPalette={displayedPalette}
         editDescription={editDescription}
         editFavorite={editFavorite}
-        editPalette={editPalette}
         editRating={editRating}
         editSourceUrl={editSourceUrl}
         folderCount={folders.length}
         handleFavoriteToggle={handleFavoriteToggle}
         handleMetadataDescriptionInput={handleMetadataDescriptionInput}
         handleMetadataDescriptionSave={handleMetadataDescriptionSave}
-        handlePaletteSave={handlePaletteSave}
         handleRatingClick={handleRatingClick}
         handleSourceUrlInput={handleSourceUrlInput}
         handleSourceUrlSave={handleSourceUrlSave}
@@ -6088,7 +6050,6 @@ function AppInner() {
         selectedAsset={selectedAsset}
         selectedAssets={selectedAssets}
         multiEdit={multiEdit}
-        setEditPalette={setEditPalette}
         versionConflict={versionConflict}
       />
       {!leftOpen && (
@@ -6521,17 +6482,6 @@ function organizationNoun(kind: OrganizationKind, locale: AppLocale) {
       ? "dialog.rename.nounCollection"
       : "dialog.rename.nounSmartCollection",
   );
-}
-function parseStoredPalette(value: string | null): string[] {
-  if (!value) return [];
-  try {
-    const parsed: unknown = JSON.parse(value);
-    return Array.isArray(parsed)
-      ? parsed.filter((item): item is string => typeof item === "string")
-      : [];
-  } catch {
-    return [];
-  }
 }
 export function parseSearchExpression(
   value: string,

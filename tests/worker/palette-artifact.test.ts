@@ -43,7 +43,7 @@ afterEach(() => {
 });
 
 describe('local extracted palette artifact', () => {
-  it('persists deterministic hex ratios and lets a manual palette take precedence', async () => {
+  it('persists deterministic hex ratios and ignores manual palette writes', async () => {
     const root = temporaryRoot();
     const service = new LibraryService();
     const library = service.createLibrary({ displayName: 'Palette', selectedParentPath: root });
@@ -68,24 +68,27 @@ describe('local extracted palette artifact', () => {
       effectivePalette: [persisted[0]!.hex],
       paletteSource: 'automatic',
     });
-    const manual = service.setAssetMetadata({
+    // Serpent-7pg: manual palette writes are ignored; effective stays automatic.
+    const manualWrite = service.setAssetMetadata({
       libraryId: library.libraryId,
       assetId,
       expectedVersion: 0,
       palette: ['#112233', '#AABBCC'],
     });
-    expect(manual).toMatchObject({
+    expect(manualWrite).toMatchObject({
+      palette: null,
       automaticPalette: persisted,
-      effectivePalette: ['#112233', '#AABBCC'],
-      paletteSource: 'manual',
+      effectivePalette: [persisted[0]!.hex],
+      paletteSource: 'automatic',
     });
-    const cleared = service.setAssetMetadata({
+    const clearedWrite = service.setAssetMetadata({
       libraryId: library.libraryId,
       assetId,
       expectedVersion: 1,
       palette: [],
     });
-    expect(cleared).toMatchObject({
+    expect(clearedWrite).toMatchObject({
+      palette: null,
       effectivePalette: [persisted[0]!.hex],
       paletteSource: 'automatic',
     });

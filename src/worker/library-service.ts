@@ -53,10 +53,16 @@ import type { TagOperationSkip } from '../shared/protocol/responses';
 // sharp is an optional N-API dependency (no rebuild needed for Electron).
 // The Worker loads it lazily so it can still start if sharp is missing.
 export interface SharpModule {
-  (input: string): SharpInstance;
+  (input: string, options?: { page?: number }): SharpInstance;
 }
 export interface SharpInstance {
-  metadata(): Promise<{ width?: number; height?: number; format?: string; orientation?: number }>;
+  metadata(): Promise<{
+    width?: number;
+    height?: number;
+    format?: string;
+    orientation?: number;
+    pages?: number;
+  }>;
   rotate(): SharpInstance;
   toColourspace(colourspace: 'srgb'): SharpInstance;
   resize(options: {
@@ -65,6 +71,11 @@ export interface SharpInstance {
     fit?: 'inside' | 'cover' | 'fill' | 'outside';
     withoutEnlargement?: boolean;
   }): SharpInstance;
+  raw?(): SharpInstance;
+  toBuffer?(options: { resolveWithObject: true }): Promise<{
+    data: Uint8Array;
+    info: { channels: number };
+  }>;
   webp(options: { quality?: number }): SharpInstance;
   toFile(output: string): Promise<unknown>;
 }
@@ -107,6 +118,8 @@ function requireSharp(): SharpModule {
 }
 
 const SHARP_VERSION = '0.35.3';
+/** Bumped when GIF still-page selection changes so stale black page-0 thumbs requeue. */
+const SHARP_THUMBNAIL_GENERATOR = `sharp@${SHARP_VERSION}-gifstill1`;
 const OIIO_VERSION = '3.1.12.0';
 const FFMPEG_VERSION = '8.1';
 const MAX_WEBM_PROXY_BYTES = 512 * 1024 * 1024;
@@ -159,7 +172,7 @@ import type {
   NameConflictDecision,
   SuspectedDuplicateDecision,
 } from '../shared/protocol/requests';
-import { manualPaletteSchema, sourcePageUrlSchema } from '../shared/protocol/requests';
+import { sourcePageUrlSchema } from '../shared/protocol/requests';
 import type {
   ImportCompletion,
   ImportConflictPlan,
@@ -183,6 +196,12 @@ import {
   tokenizeForFts,
   type SearchClause,
 } from './search-query';
+import {
+  GIF_THUMBNAIL_PROBE_SIZE,
+  pickBestGifPage,
+  sampleGifPageIndices,
+  scoreRawRgbFrame,
+} from './gif-thumbnail-page';
 import {
   extractZipStream,
   ZipImportStreamError,
@@ -5092,21 +5111,8 @@ export class LibraryService {
   private resolvedPaletteFields(
     openLibrary: OpenLibrary,
     assetId: string,
-    storedManualPalette: string | null,
+    _storedManualPalette: string | null,
   ): Pick<AssetMetadataResult, 'automaticPalette' | 'effectivePalette' | 'paletteSource'> {
-    let manualPalette: string[] = [];
-    if (storedManualPalette) {
-      try {
-        const parsed = JSON.parse(storedManualPalette) as unknown;
-        if (Array.isArray(parsed)) {
-          manualPalette = parsed.filter((color): color is string =>
-            typeof color === 'string' && color.trim().length > 0);
-        }
-      } catch (error) {
-        this.diagnose('palette.manual-cache', error, { assetId });
-      }
-    }
-
     let automaticPalette: RepresentativeColor[] = [];
     const artifact = openLibrary.connection.prepare(
       `SELECT ra.artifact_id
@@ -5147,13 +5153,7 @@ export class LibraryService {
       }
     }
 
-    if (manualPalette.length > 0) {
-      return {
-        automaticPalette,
-        effectivePalette: manualPalette,
-        paletteSource: 'manual',
-      };
-    }
+    // Serpent-7pg: stored manual palette is ignored; effective palette is automatic-only.
     if (automaticPalette.length > 0) {
       return {
         automaticPalette,
@@ -5279,9 +5279,9 @@ export class LibraryService {
       throw new LibraryServiceError('INVALID_ASSET_METADATA');
     }
 
-    // Validate palette.
-    if (input.palette !== undefined && !manualPaletteSchema.safeParse(input.palette).success) {
-      throw new LibraryServiceError('INVALID_ASSET_METADATA');
+    // Serpent-7pg: ignore palette writes; column retained for older libraries.
+    if (input.palette !== undefined) {
+      // no-op: manual palette entry removed from product surface
     }
 
     // Source-page URLs are either the exact empty-string clear operation or a
@@ -5317,8 +5317,7 @@ export class LibraryService {
           : existing.description;
       const newRating = input.rating ?? existing.rating;
       const newFavorite = input.favorite !== undefined ? (input.favorite ? 1 : 0) : existing.favorite;
-      const newPalette =
-        input.palette !== undefined ? JSON.stringify(input.palette) : existing.palette;
+      const newPalette = existing.palette;
       const newSourcePageUrl =
         input.sourcePageUrl !== undefined
           ? (input.sourcePageUrl.trim() === '' ? null : input.sourcePageUrl.trim())
@@ -5398,7 +5397,7 @@ export class LibraryService {
         : null;
     const newRating = input.rating ?? 0;
     const newFavorite = input.favorite !== undefined && input.favorite ? 1 : 0;
-    const newPalette = input.palette !== undefined ? JSON.stringify(input.palette) : null;
+    const newPalette = null;
     const newSourcePageUrl =
       input.sourcePageUrl !== undefined
         ? (input.sourcePageUrl.trim() === '' ? null : input.sourcePageUrl.trim())
@@ -6693,13 +6692,65 @@ export class LibraryService {
         execution.signal,
         async () => {
           const s = this.options.sharpFn ?? requireSharp();
-          const pipeline = s(assetPath);
-          const metadata = await pipeline.metadata();
-          const swapsDimensions = metadata.orientation !== undefined
-            && metadata.orientation >= 5
-            && metadata.orientation <= 8;
-          const inputWidth = swapsDimensions ? (metadata.height ?? 0) : (metadata.width ?? 0);
-          const inputHeight = swapsDimensions ? (metadata.width ?? 0) : (metadata.height ?? 0);
+          const probe = s(assetPath);
+          const metadata = await probe.metadata();
+          const pages = metadata.pages ?? 1;
+          const isAnimatedGif =
+            (metadata.format === 'gif' || assetPath.toLowerCase().endsWith('.gif')) &&
+            pages > 1;
+
+          let page = 0;
+          if (isAnimatedGif) {
+            const scored: Array<{ page: number; score: number }> = [];
+            for (const candidate of sampleGifPageIndices(pages)) {
+              if (execution.signal?.aborted) {
+                throw new DOMException('Media job cancelled during GIF page probe.', 'AbortError');
+              }
+              try {
+                const samplePipeline = s(assetPath, { page: candidate })
+                  .rotate()
+                  .toColourspace('srgb')
+                  .resize({
+                    width: GIF_THUMBNAIL_PROBE_SIZE,
+                    height: GIF_THUMBNAIL_PROBE_SIZE,
+                    fit: 'inside',
+                    withoutEnlargement: true,
+                  });
+                const rawFn = samplePipeline.raw;
+                if (!rawFn) {
+                  break;
+                }
+                const rawPipeline = rawFn.call(samplePipeline);
+                const toBufferFn = rawPipeline.toBuffer;
+                if (!toBufferFn) {
+                  break;
+                }
+                const sample = await toBufferFn.call(rawPipeline, {
+                  resolveWithObject: true,
+                });
+                scored.push({
+                  page: candidate,
+                  score: scoreRawRgbFrame(sample.data, sample.info.channels),
+                });
+              } catch (error) {
+                this.diagnose('thumbnail.gif-page-probe', error, {
+                  assetPath,
+                  page: candidate,
+                });
+              }
+            }
+            if (scored.length > 0) {
+              page = pickBestGifPage(scored, pages);
+            }
+          }
+
+          const pipeline = isAnimatedGif ? s(assetPath, { page }) : s(assetPath);
+          const finalMeta = isAnimatedGif ? await pipeline.metadata() : metadata;
+          const swapsDimensions = finalMeta.orientation !== undefined
+            && finalMeta.orientation >= 5
+            && finalMeta.orientation <= 8;
+          const inputWidth = swapsDimensions ? (finalMeta.height ?? 0) : (finalMeta.width ?? 0);
+          const inputHeight = swapsDimensions ? (finalMeta.width ?? 0) : (finalMeta.height ?? 0);
 
           await pipeline
             .rotate()
@@ -6743,7 +6794,7 @@ export class LibraryService {
           artifactRelPath,
           outputWidth || null,
           outputHeight || null,
-          `sharp@${SHARP_VERSION}`,
+          SHARP_THUMBNAIL_GENERATOR,
           new Date().toISOString(),
         );
 
@@ -8016,6 +8067,24 @@ export class LibraryService {
       'png', 'jpg', 'jpeg', 'gif', 'tiff', 'tif', 'webp', 'bmp',
       'mp4', 'webm', 'mov', 'avi', 'wmv', 'exr', 'tga',
     ];
+    // CU-D7: invalidate pre-gifstill GIF thumbs so page-0 black frames requeue.
+    const nowInvalidate = new Date().toISOString();
+    openLibrary.connection
+      .prepare(
+        `UPDATE revision_artifacts
+            SET invalidated_at = ?
+          WHERE kind = 'thumbnail'
+            AND status = 'ready'
+            AND invalidated_at IS NULL
+            AND generator_version NOT LIKE '%gifstill%'
+            AND revision_id IN (
+              SELECT current_revision_id FROM assets
+               WHERE deleted_at IS NULL
+                 AND current_revision_id IS NOT NULL
+                 AND LOWER(relative_file_path) LIKE '%.gif'
+            )`,
+      )
+      .run(nowInvalidate);
     const selectedSql = selectedIds.length > 0
       ? `AND a.asset_id IN (${selectedIds.map(() => '?').join(',')})`
       : '';

@@ -94,7 +94,6 @@ describe("buildInspectorMultiEdit", () => {
     rating: 0,
     favorite: false,
     sourcePageUrl: null,
-    palette: [],
     tags: [],
     ...overrides,
   });
@@ -111,7 +110,6 @@ describe("buildInspectorMultiEdit", () => {
         rating: 4,
         favorite: true,
         sourcePageUrl: "https://example.com",
-        palette: ["#111111"],
         tags: [
           { id: "shared", name: "Shared", source: "user" },
           { id: "a-only", name: "A", source: "user" },
@@ -122,7 +120,6 @@ describe("buildInspectorMultiEdit", () => {
         rating: 4,
         favorite: true,
         sourcePageUrl: "https://example.com",
-        palette: ["#111111"],
         tags: [
           { id: "shared", name: "Shared", source: "user" },
           { id: "b-only", name: "B", source: "user" },
@@ -136,7 +133,6 @@ describe("buildInspectorMultiEdit", () => {
       rating: { kind: "uniform", value: 4 },
       favorite: { kind: "uniform", value: true },
       sourceUrl: { kind: "uniform", value: "https://example.com" },
-      palette: { kind: "uniform", value: ["#111111"] },
       tags: [{ id: "shared", name: "Shared", source: "user" }],
     });
     expect(isEditableScalar(model!.description)).toBe(true);

@@ -17,7 +17,6 @@ export type InspectorMultiEditModel = {
   rating: ScalarFieldState<number>;
   favorite: ScalarFieldState<boolean>;
   sourceUrl: ScalarFieldState<string>;
-  palette: ScalarFieldState<string[]>;
   tags: MultiEditTag[];
 };
 
@@ -37,11 +36,6 @@ export function resolveScalarField<T>(
     if (!equals(values[i]!, first)) return { kind: "mixed" };
   }
   return { kind: "uniform", value: first };
-}
-
-function arraysEqual(a: readonly string[], b: readonly string[]): boolean {
-  if (a.length !== b.length) return false;
-  return a.every((value, index) => value === b[index]);
 }
 
 /**
@@ -84,8 +78,6 @@ export type MultiEditMetadataSlice = {
   rating: number;
   favorite: boolean;
   sourcePageUrl: string | null;
-  /** Normalized manual palette hex list (empty = no manual palette). */
-  palette: string[];
   tags: MultiEditTag[];
 };
 
@@ -106,11 +98,7 @@ export function buildInspectorMultiEdit(
   const sourceUrl = resolveScalarField(
     slices.map((slice) => slice.sourcePageUrl ?? ""),
   );
-  const palette = resolveScalarField(
-    slices.map((slice) => slice.palette),
-    arraysEqual,
-  );
-  if (!description || !rating || !favorite || !sourceUrl || !palette) {
+  if (!description || !rating || !favorite || !sourceUrl) {
     return null;
   }
 
@@ -120,7 +108,6 @@ export function buildInspectorMultiEdit(
     rating,
     favorite,
     sourceUrl,
-    palette,
     tags: intersectAssetTags(slices.map((slice) => slice.tags)),
   };
 }
@@ -137,7 +124,6 @@ export function toMultiEditSlice(input: {
   rating: number;
   favorite: boolean;
   sourcePageUrl: string | null;
-  palette: string[];
   tags?: readonly { id: string; name: string; source: "user" | "ai" }[];
 }): MultiEditMetadataSlice {
   return {
@@ -145,7 +131,6 @@ export function toMultiEditSlice(input: {
     rating: input.rating,
     favorite: input.favorite,
     sourcePageUrl: input.sourcePageUrl,
-    palette: input.palette,
     tags: (input.tags ?? []).map((tag) => ({
       id: tag.id,
       name: tag.name,

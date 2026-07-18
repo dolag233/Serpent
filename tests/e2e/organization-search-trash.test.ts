@@ -131,34 +131,26 @@ test('organizes, finds, trashes, and restores an imported asset through the UI',
     await expect(window.getByText(/版本 1/)).toBeVisible();
     await window.getByRole('button', { name: '标记喜欢' }).click();
     await expect(window.getByText(/版本 2/)).toBeVisible();
-    await window.getByLabel('人工色卡').fill('red');
-    await window.getByLabel('人工色卡').press('Enter');
-    await expect(window.getByText('保存色卡失败。原因：颜色必须使用 #RRGGBB 格式。')).toBeVisible();
-    await expect(window.getByText(/版本 2/)).toBeVisible();
-    await window.getByLabel('人工色卡').fill('#112233, #AABBCC');
-    await window.getByLabel('人工色卡').press('Enter');
-    await expect(window.getByText(/版本 3/)).toBeVisible();
-    await expect(window.getByLabel('色卡预览').locator('span')).toHaveCount(2);
 
     const descriptionInput = window.getByLabel('描述');
     const sourceUrlInput = window.getByLabel('源链接');
     await descriptionInput.fill('待清空描述');
     await descriptionInput.blur();
-    await expect(window.getByText(/版本 4/)).toBeVisible();
+    await expect(window.getByText(/版本 3/)).toBeVisible();
     await sourceUrlInput.fill('javascript:alert(1)');
     await sourceUrlInput.press('Enter');
     await expect(window.getByText('保存源链接失败。原因：请输入不含账号密码的 HTTP(S) 完整链接。')).toBeVisible();
-    await expect(window.getByText(/版本 4/)).toBeVisible();
+    await expect(window.getByText(/版本 3/)).toBeVisible();
     await sourceUrlInput.fill('https://example.com/source');
     await sourceUrlInput.press('Enter');
-    await expect(window.getByText(/版本 5/)).toBeVisible();
+    await expect(window.getByText(/版本 4/)).toBeVisible();
 
     await descriptionInput.fill('');
     await descriptionInput.blur();
-    await expect(window.getByText(/版本 6/)).toBeVisible();
+    await expect(window.getByText(/版本 5/)).toBeVisible();
     await sourceUrlInput.fill('');
     await sourceUrlInput.press('Enter');
-    await expect(window.getByText(/版本 7/)).toBeVisible();
+    await expect(window.getByText(/版本 6/)).toBeVisible();
     const clearedMetadata = await window.evaluate(async () => {
       const api = (globalThis as typeof globalThis & { serpent: { library: {
         listOpen(): Promise<{ ok: boolean; value?: Array<{ libraryId: string }> }>;
@@ -179,7 +171,7 @@ test('organizes, finds, trashes, and restores an imported asset through the UI',
     // Both saves must be serialized locally instead of racing with the same version.
     await descriptionInput.fill('快速连续修改的描述');
     await window.getByRole('button', { name: '5 星' }).click();
-    await expect(window.getByText(/版本 9/)).toBeVisible();
+    await expect(window.getByText(/版本 8/)).toBeVisible();
     await expect(window.getByText('版本冲突', { exact: true })).toHaveCount(0);
 
     await window.getByLabel('搜索资源库').fill('hero.png');

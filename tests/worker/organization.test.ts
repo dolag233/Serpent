@@ -964,42 +964,58 @@ describe('asset metadata', () => {
     service.closeAll();
   });
 
-  it('enforces palette <= 20 entries', () => {
+  it('ignores palette writes and leaves stored palette unchanged', () => {
     const { service, libraryId, assetId } = createLibraryWithAsset();
 
-    // 20 entries should be fine.
+    // Serpent-7pg: any palette payload is a no-op for the column / effective view.
     const palette20 = Array.from({ length: 20 }, (_, i) => `#${String(i).padStart(6, '0')}`);
-    service.setAssetMetadata({ libraryId, assetId, expectedVersion: 0, palette: palette20 });
+    const first = service.setAssetMetadata({
+      libraryId,
+      assetId,
+      expectedVersion: 0,
+      palette: palette20,
+    });
+    expect(first).toMatchObject({
+      palette: null,
+      effectivePalette: [],
+      paletteSource: null,
+      entityVersion: 1,
+    });
 
-    // 21 entries should be rejected at service level.
     const palette21 = Array.from({ length: 21 }, (_, i) => `#${String(i).padStart(6, '0')}`);
-    expectServiceCode(
-      () =>
-        service.setAssetMetadata({
-          libraryId,
-          assetId,
-          expectedVersion: 1,
-          palette: palette21,
-        }),
-      'INVALID_ASSET_METADATA',
-    );
+    const second = service.setAssetMetadata({
+      libraryId,
+      assetId,
+      expectedVersion: 1,
+      palette: palette21,
+    });
+    expect(second).toMatchObject({
+      palette: null,
+      effectivePalette: [],
+      paletteSource: null,
+      entityVersion: 2,
+    });
 
     service.closeAll();
   });
 
-  it('rejects manual palette entries that are not six-digit hex colors', () => {
+  it('ignores invalid manual palette payloads without rejecting the write', () => {
     const { service, libraryId, assetId } = createLibraryWithAsset();
 
+    let expectedVersion = 0;
     for (const invalidColor of ['red', '#FFF', '#12345G', 'rgb(1, 2, 3)', ' #112233']) {
-      expectServiceCode(
-        () => service.setAssetMetadata({
-          libraryId,
-          assetId,
-          expectedVersion: 0,
-          palette: [invalidColor],
-        }),
-        'INVALID_ASSET_METADATA',
-      );
+      const result = service.setAssetMetadata({
+        libraryId,
+        assetId,
+        expectedVersion,
+        palette: [invalidColor],
+      });
+      expect(result).toMatchObject({
+        palette: null,
+        effectivePalette: [],
+        paletteSource: null,
+      });
+      expectedVersion = result.entityVersion;
     }
 
     service.closeAll();
