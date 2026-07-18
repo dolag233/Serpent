@@ -1,9 +1,16 @@
-import { useEffect, useRef, useState, type SyntheticEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type SyntheticEvent } from "react";
 
+import { Icon } from "./Icons";
+import { iconActionAttrs } from "./icon-action-attrs";
 import { useT } from "./i18n";
 import {
+  clampScrubTime,
+  formatVideoClockTime,
   nextPlaybackIntent,
   parsePlaybackRate,
+  scrubRatioFromClientX,
+  scrubRatioFromTime,
+  scrubTimeFromRatio,
   shouldHandleVideoSpaceKey,
   VIDEO_PLAYBACK_RATES,
   type VideoPlaybackRate,
@@ -17,11 +24,16 @@ export interface VideoPlayerControlsProps {
   src: string;
 }
 
+const SCRUB_STEP_SECONDS = 5;
+
 /**
- * Thin custom chrome around native HTMLVideoElement controls:
- * - native transport + scrubber (Chromium scrub is reliable in Electron)
+ * Fully custom chrome around `HTMLVideoElement` (REQ-VIEW-005 / Serpent-60k):
  * - Space play/pause when the viewer is focused (not in text fields)
+ * - scrubbable progress track (mousedown / drag / click / arrow keys)
  * - playback rate select
+ *
+ * See `video-player-controls.ts` for why this replaced native
+ * `<video controls>` rather than layering on top of it.
  */
 export function VideoPlayerControls({
   onError,
@@ -32,40 +44,79 @@ export function VideoPlayerControls({
 }: VideoPlayerControlsProps) {
   const t = useT();
   const videoRef = useRef<HTMLVideoElement>(null);
+  const trackRef = useRef<HTMLDivElement>(null);
+  const scrubbingPointerId = useRef<number | null>(null);
   const [playbackRate, setPlaybackRate] = useState<VideoPlaybackRate>(1);
+  const [paused, setPaused] = useState(true);
+  const [duration, setDuration] = useState(0);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [scrubRatio, setScrubRatio] = useState<number | null>(null);
+
+  const togglePlayback = useCallback(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    if (nextPlaybackIntent(video.paused) === "play") {
+      void video.play().catch(() => undefined);
+    } else {
+      video.pause();
+    }
+  }, []);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (!shouldHandleVideoSpaceKey(event)) return;
-      const video = videoRef.current;
-      if (!video) return;
       event.preventDefault();
       event.stopPropagation();
-      if (nextPlaybackIntent(video.paused) === "play") {
-        void video.play().catch(() => undefined);
-      } else {
-        video.pause();
-      }
+      togglePlayback();
     };
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, []);
+  }, [togglePlayback]);
 
   useEffect(() => {
     const video = videoRef.current;
     if (video) video.playbackRate = playbackRate;
   }, [playbackRate, src]);
 
+  const seekToRatio = useCallback((ratio: number) => {
+    const video = videoRef.current;
+    if (!video) return;
+    video.currentTime = scrubTimeFromRatio(ratio, video.duration);
+  }, []);
+
+  const ratioFromPointer = useCallback((clientX: number): number => {
+    const track = trackRef.current;
+    if (!track) return 0;
+    const rect = track.getBoundingClientRect();
+    return scrubRatioFromClientX(clientX, { left: rect.left, width: rect.width });
+  }, []);
+
+  const displayRatio =
+    scrubRatio ?? scrubRatioFromTime(currentTime, duration);
+  const displayTime =
+    scrubRatio !== null ? scrubTimeFromRatio(scrubRatio, duration) : currentTime;
+
   return (
     <div className="preview-video-stage">
       <video
         autoPlay
         className="preview-video"
-        controls
+        onDurationChange={(event) =>
+          setDuration(event.currentTarget.duration || 0)
+        }
+        onEnded={() => setPaused(true)}
         onError={onError}
-        onLoadedMetadata={() => {
-          if (videoRef.current) videoRef.current.playbackRate = playbackRate;
+        onLoadedMetadata={(event) => {
+          const video = event.currentTarget;
+          video.playbackRate = playbackRate;
+          setDuration(video.duration || 0);
           onReady?.();
+        }}
+        onPause={() => setPaused(true)}
+        onPlay={() => setPaused(false)}
+        onTimeUpdate={(event) => {
+          if (scrubbingPointerId.current !== null) return;
+          setCurrentTime(event.currentTarget.currentTime);
         }}
         poster={posterUrl}
         preload="metadata"
@@ -74,29 +125,126 @@ export function VideoPlayerControls({
       >
         {t("preview.videoUnsupported")}
       </video>
-      <label className="preview-speed-control preview-chrome-fade">
-        {t("preview.playbackRate")}
-        <select
-          aria-label={t("preview.playbackRateAria")}
-          onChange={(event) => {
-            setPlaybackRate(parsePlaybackRate(event.target.value));
-          }}
-          value={playbackRate}
+      <div className="preview-video-controls preview-chrome-fade">
+        <button
+          className="preview-video-playpause"
+          onClick={togglePlayback}
+          type="button"
+          {...iconActionAttrs(
+            paused ? t("preview.videoPlay") : t("preview.videoPause"),
+          )}
         >
-          {VIDEO_PLAYBACK_RATES.map((rate) => (
-            <option key={rate} value={rate}>
-              {t("preview.playbackRateOption", { rate })}
-            </option>
-          ))}
-        </select>
-      </label>
-      <button
-        className="preview-fullscreen-chip preview-chrome-fade"
-        onClick={onFullscreen}
-        type="button"
-      >
-        {t("preview.fullscreen")}
-      </button>
+          <span aria-hidden="true">{paused ? "▶" : "❚❚"}</span>
+        </button>
+        <span aria-hidden="true" className="preview-video-time">
+          {formatVideoClockTime(displayTime)}
+        </span>
+        <div
+          aria-label={t("preview.videoScrubAria")}
+          aria-valuemax={Math.round(duration)}
+          aria-valuemin={0}
+          aria-valuenow={Math.round(displayTime)}
+          className="preview-video-track"
+          onKeyDown={(event) => {
+            const video = videoRef.current;
+            if (!video) return;
+            let nextTime: number | null = null;
+            if (event.key === "ArrowLeft") {
+              nextTime = clampScrubTime(
+                video.currentTime - SCRUB_STEP_SECONDS,
+                duration,
+              );
+            } else if (event.key === "ArrowRight") {
+              nextTime = clampScrubTime(
+                video.currentTime + SCRUB_STEP_SECONDS,
+                duration,
+              );
+            } else if (event.key === "Home") {
+              nextTime = 0;
+            } else if (event.key === "End") {
+              nextTime = clampScrubTime(duration, duration);
+            }
+            if (nextTime === null) return;
+            event.preventDefault();
+            video.currentTime = nextTime;
+            setCurrentTime(nextTime);
+          }}
+          onPointerDown={(event) => {
+            event.preventDefault();
+            // preventDefault suppresses the browser's implicit mousedown
+            // focus, so focus explicitly to keep arrow-key seeking working.
+            event.currentTarget.focus();
+            scrubbingPointerId.current = event.pointerId;
+            event.currentTarget.setPointerCapture(event.pointerId);
+            const ratio = ratioFromPointer(event.clientX);
+            setScrubRatio(ratio);
+            seekToRatio(ratio);
+          }}
+          onPointerMove={(event) => {
+            if (scrubbingPointerId.current !== event.pointerId) return;
+            const ratio = ratioFromPointer(event.clientX);
+            setScrubRatio(ratio);
+            seekToRatio(ratio);
+          }}
+          onPointerUp={(event) => {
+            if (scrubbingPointerId.current !== event.pointerId) return;
+            scrubbingPointerId.current = null;
+            setScrubRatio(null);
+            // Sync display state immediately so the thumb doesn't flicker
+            // back to the pre-drag position while waiting for the next
+            // native `timeupdate` tick.
+            if (videoRef.current) setCurrentTime(videoRef.current.currentTime);
+            if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+              event.currentTarget.releasePointerCapture(event.pointerId);
+            }
+          }}
+          onPointerCancel={(event) => {
+            if (scrubbingPointerId.current !== event.pointerId) return;
+            scrubbingPointerId.current = null;
+            setScrubRatio(null);
+            if (videoRef.current) setCurrentTime(videoRef.current.currentTime);
+          }}
+          ref={trackRef}
+          role="slider"
+          tabIndex={0}
+        >
+          <div
+            className="preview-video-track-fill"
+            style={{ width: `${displayRatio * 100}%` }}
+          />
+          <div
+            className="preview-video-track-thumb"
+            style={{ left: `${displayRatio * 100}%` }}
+          />
+        </div>
+        <span aria-hidden="true" className="preview-video-time">
+          {formatVideoClockTime(duration)}
+        </span>
+        <label className="preview-video-rate">
+          {t("preview.playbackRate")}
+          <select
+            aria-label={t("preview.playbackRateAria")}
+            onChange={(event) => {
+              setPlaybackRate(parsePlaybackRate(event.target.value));
+            }}
+            value={playbackRate}
+          >
+            {VIDEO_PLAYBACK_RATES.map((rate) => (
+              <option key={rate} value={rate}>
+                {t("preview.playbackRateOption", { rate })}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button
+          className="preview-video-fullscreen"
+          onClick={onFullscreen}
+          type="button"
+          {...iconActionAttrs(t("preview.fullscreen"))}
+        >
+          <Icon name="fullscreen" size={14} />
+        </button>
+      </div>
     </div>
   );
 }

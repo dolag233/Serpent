@@ -14,6 +14,7 @@ import {
   ipcMain,
   protocol,
   safeStorage,
+  screen,
   shell,
   nativeImage,
   type OpenDialogOptions,
@@ -70,6 +71,7 @@ import {
 } from "../shared/protocol/responses";
 import { LibraryWorkerClient } from "./worker-client";
 import { AppLogger } from "./app-logger";
+import { pickIsolatedWindowPlacement } from "./e2e-isolated-window";
 import {
   clearActiveRecentLibrary,
   readActiveLibraryPath,
@@ -242,10 +244,65 @@ function focusMainWindow(): void {
   mainWindow.focus();
 }
 
+/**
+ * Isolated-session placement for `SERPENT_E2E_ISOLATED=1`: real E2E must keep
+ * real `show()`/focus semantics (an earlier `showInactive` attempt broke
+ * keyboard/focus tests and was reverted — see
+ * docs/development/2026-07-19-e2e-isolated-session-development-log.md), so
+ * this only changes *where* the window appears, never how it is shown.
+ * When a non-primary display exists, the window is placed fully within it;
+ * on a single-display Mac there is no isolation available yet and the
+ * window falls back to the primary display (logged, not silent).
+ */
+function resolveE2eIsolatedPlacement(
+  defaultSize: { width: number; height: number },
+): { x: number; y: number; width: number; height: number } | undefined {
+  if (process.env.SERPENT_E2E_ISOLATED !== "1") return undefined;
+
+  const displays = screen.getAllDisplays().map((display) => ({
+    id: display.id,
+    bounds: display.bounds,
+  }));
+  const primaryDisplayId = screen.getPrimaryDisplay().id;
+  const placement = pickIsolatedWindowPlacement(
+    displays,
+    primaryDisplayId,
+    defaultSize,
+  );
+
+  if (placement) {
+    logger?.info(
+      "e2e.isolated-window",
+      "Placing the E2E window on a secondary display so it does not steal foreground focus.",
+      { ...placement },
+    );
+    return placement;
+  }
+
+  logger?.info(
+    "e2e.isolated-window",
+    "SERPENT_E2E_ISOLATED=1 was set but no secondary display was detected; " +
+      "falling back to the primary display. The E2E window will steal " +
+      "foreground focus on this machine (documented limitation of Serpent-a1b).",
+    { displayCount: displays.length },
+  );
+  return undefined;
+}
+
 async function createMainWindow(): Promise<void> {
+  const defaultWidth = 1440;
+  const defaultHeight = 900;
+  const isolatedPlacement = resolveE2eIsolatedPlacement({
+    width: defaultWidth,
+    height: defaultHeight,
+  });
+
   const window = new BrowserWindow({
-    width: 1440,
-    height: 900,
+    width: isolatedPlacement?.width ?? defaultWidth,
+    height: isolatedPlacement?.height ?? defaultHeight,
+    ...(isolatedPlacement
+      ? { x: isolatedPlacement.x, y: isolatedPlacement.y }
+      : {}),
     minWidth: 1040,
     minHeight: 680,
     show: false,

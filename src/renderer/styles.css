@@ -2494,6 +2494,109 @@ input[type="range"] {
   background: var(--pane);
   color: var(--text);
 }
+/* Custom video transport (REQ-VIEW-005 / Serpent-60k): one unified bar so
+   auto-hide has a single owner (chrome-idle) instead of fighting the UA's
+   own native-controls hide timer, which caused the prior VIEW-009 failure. */
+.preview-video-controls {
+  position: absolute;
+  z-index: 2;
+  left: 14px;
+  right: 14px;
+  bottom: 14px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  border: 1px solid var(--divider);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--raised) 94%, transparent);
+  box-shadow: 0 1px 6px rgb(0 0 0 / 10%);
+  color: var(--text);
+  font-size: 11px;
+  backdrop-filter: blur(10px);
+}
+.preview-video-playpause,
+.preview-video-fullscreen {
+  display: grid;
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+}
+.preview-video-playpause:hover,
+.preview-video-fullscreen:hover {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+.preview-video-time {
+  flex: 0 0 auto;
+  color: var(--secondary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.preview-video-track {
+  position: relative;
+  flex: 1 1 auto;
+  height: 14px;
+  cursor: pointer;
+  touch-action: none;
+}
+.preview-video-track::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 0;
+  right: 0;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--divider);
+  transform: translateY(-50%);
+}
+.preview-video-track-fill {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--accent);
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+.preview-video-track-thumb {
+  position: absolute;
+  top: 50%;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--accent);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+.preview-video-track:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+.preview-video-rate {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  color: var(--secondary);
+  white-space: nowrap;
+}
+.preview-video-rate select {
+  border: 1px solid var(--divider);
+  border-radius: 3px;
+  background: var(--pane);
+  color: var(--text);
+}
 .preview-image-viewport {
   position: absolute;
   display: grid;

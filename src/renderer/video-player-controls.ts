@@ -1,8 +1,13 @@
 /**
- * Pure helpers for the asset viewer video player (REQ-VIEW-005).
+ * Pure helpers for the asset viewer video player (REQ-VIEW-005 / Serpent-60k).
  *
- * Native HTMLVideoElement `controls` remain the scrubber / transport UI;
- * this module backs Space play/pause and the thin rate chrome.
+ * The transport chrome (play/pause, scrub track, rate) is fully custom —
+ * layering a thin UI on top of `HTMLVideoElement`'s native `controls` was
+ * tried first (Serpent-2j9) and failed human acceptance: the browser's own
+ * control auto-hide timer fights the viewer's chrome-idle fade, and its
+ * shadow-DOM focus/keyboard handling made Space unreliable. This module
+ * backs Space play/pause, the rate list, and the scrub-track position math
+ * so all of it stays unit-testable outside a DOM environment.
  */
 
 export const VIDEO_PLAYBACK_RATES = [0.5, 0.75, 1, 1.25, 1.5, 2] as const;
@@ -75,4 +80,61 @@ export function parsePlaybackRate(value: string): VideoPlaybackRate {
     return parsed as VideoPlaybackRate;
   }
   return 1;
+}
+
+/** Geometry of the scrub track, in the same coordinate space as `clientX`. */
+export interface ScrubTrackGeometry {
+  left: number;
+  width: number;
+}
+
+/**
+ * Convert a pointer's `clientX` into a 0..1 ratio along the scrub track,
+ * clamped to the track bounds. Pure so drag math is testable without a DOM.
+ */
+export function scrubRatioFromClientX(
+  clientX: number,
+  track: ScrubTrackGeometry,
+): number {
+  if (!Number.isFinite(track.width) || track.width <= 0) return 0;
+  const ratio = (clientX - track.left) / track.width;
+  if (!Number.isFinite(ratio)) return 0;
+  return Math.min(1, Math.max(0, ratio));
+}
+
+/** Ratio (0..1) along the track → seconds, clamped to `[0, duration]`. */
+export function scrubTimeFromRatio(ratio: number, duration: number): number {
+  if (!Number.isFinite(duration) || duration <= 0) return 0;
+  const clampedRatio = Math.min(1, Math.max(0, ratio));
+  return clampedRatio * duration;
+}
+
+/** Playback time → 0..1 ratio along the track, for rendering fill/thumb. */
+export function scrubRatioFromTime(
+  currentTime: number,
+  duration: number,
+): number {
+  if (!Number.isFinite(duration) || duration <= 0) return 0;
+  if (!Number.isFinite(currentTime) || currentTime <= 0) return 0;
+  return Math.min(1, currentTime / duration);
+}
+
+/** Clamp a seek target (e.g. from arrow-key stepping) to `[0, duration]`. */
+export function clampScrubTime(time: number, duration: number): number {
+  if (!Number.isFinite(duration) || duration <= 0) return 0;
+  if (!Number.isFinite(time)) return 0;
+  return Math.min(duration, Math.max(0, time));
+}
+
+/** `mm:ss`, growing to `h:mm:ss` past one hour. Non-finite input → `0:00`. */
+export function formatVideoClockTime(totalSeconds: number): string {
+  if (!Number.isFinite(totalSeconds) || totalSeconds < 0) return "0:00";
+  const whole = Math.floor(totalSeconds);
+  const hours = Math.floor(whole / 3600);
+  const minutes = Math.floor((whole % 3600) / 60);
+  const seconds = whole % 60;
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return hours > 0
+    ? `${hours}:${pad(minutes)}:${pad(seconds)}`
+    : `${minutes}:${pad(seconds)}`;
 }
