@@ -5,10 +5,8 @@ import {
   useMemo,
   useRef,
   useState,
-  type Dispatch,
   type FormEvent,
   type ReactNode,
-  type SetStateAction,
 } from "react";
 
 import { Icon, type IconName } from "./Icons";
@@ -72,7 +70,6 @@ import { useAssetRename } from "./useAssetRename";
 import { useInlineFolderEdit } from "./use-inline-folder-edit";
 import { usePanelResize } from "./use-panel-resize";
 import { useToastNotifications } from "./useToastNotifications";
-import { useDismissibleDetails } from "./use-dismissible-details";
 import {
   MANAGED_ASSETS_DRAG_TYPE,
   resolveDraggedAssetIds,
@@ -86,15 +83,9 @@ import {
   dismissAssetDragPreview,
   showAssetDragPreview,
 } from "./asset-drag-preview";
-import { FilterTagPicker } from "./FilterTagPicker";
-import { FilterPresetChips } from "./FilterPresetChips";
+import { DimensionFilterBar } from "./DimensionFilterBar";
+import type { ClearableFilterId } from "./active-discovery-filters";
 import { trashedFromLabel } from "./trashed-from-label";
-import {
-  ASPECT_RATIO_PRESETS,
-  RESOLUTION_PRESETS,
-  aspectRatioPresetRange,
-  togglePresetRange,
-} from "./filter-presets";
 import { toMessage, LibraryOperationError } from "./error-utils";
 
 import type {
@@ -343,68 +334,6 @@ function MasonryColumns({
         </div>
       ))}
     </div>
-  );
-}
-
-type TechnicalRangeInput = { min: string; max: string; exclude: boolean };
-function TechnicalRangeFilter({
-  label,
-  range,
-  setRange,
-  step = "1",
-}: {
-  label: string;
-  range: TechnicalRangeInput;
-  setRange: Dispatch<SetStateAction<TechnicalRangeInput>>;
-  step?: string;
-}) {
-  const t = useT();
-  return (
-    <label>
-      {label}
-      <div className="numeric-filter-range">
-        <input
-          aria-label={t("filter.rangeMinAria", { label })}
-          className="text-field"
-          min="0"
-          onChange={(event) =>
-            setRange((current) => ({ ...current, min: event.target.value }))
-          }
-          placeholder={t("common.min")}
-          step={step}
-          type="number"
-          value={range.min}
-        />
-        <span>–</span>
-        <input
-          aria-label={t("filter.rangeMaxAria", { label })}
-          className="text-field"
-          min="0"
-          onChange={(event) =>
-            setRange((current) => ({ ...current, max: event.target.value }))
-          }
-          placeholder={t("common.max")}
-          step={step}
-          type="number"
-          value={range.max}
-        />
-      </div>
-      <span>
-        <input
-          aria-label={t("filter.excludeRange", { label })}
-          checked={range.exclude}
-          disabled={!range.min && !range.max}
-          onChange={(event) =>
-            setRange((current) => ({
-              ...current,
-              exclude: event.target.checked,
-            }))
-          }
-          type="checkbox"
-        />
-        {t("filter.exclude")}
-      </span>
-    </label>
   );
 }
 
@@ -700,7 +629,6 @@ function AppInner() {
   const [loadingMoreAssets, setLoadingMoreAssets] = useState(false);
   const workspaceCanvasRef = useRef<HTMLDivElement>(null);
   // 筛选与排序面板：外点 / Esc 自动关闭（现代浮层语义），summary 切换不变。
-  const discoveryFiltersRef = useDismissibleDetails<HTMLDetailsElement>();
   const loadMoreSentinelRef = useRef<HTMLDivElement>(null);
   const loadMoreAssetsRef = useRef<() => Promise<void>>(async () => undefined);
   const pendingRestoredFocusRef = useRef<string | null>(null);
@@ -1543,6 +1471,70 @@ function AppInner() {
     setSortField("relevance");
     setSortOrder("asc");
     hadDiscoveryInput.current = false;
+  }
+
+  function clearDiscoveryFiltersOnly() {
+    setFormatFilter("");
+    setExcludeFormatFilter(false);
+    setTagFilter("");
+    setExcludeTagFilter(false);
+    setRatingFilter("");
+    setExcludeRatingFilter(false);
+    setFavoriteFilter("any");
+    setSourceUrlFilter("any");
+    setAvailabilityFilter("any");
+    setExcludeAvailabilityFilter(false);
+    setWidthRange({ min: "", max: "", exclude: false });
+    setHeightRange({ min: "", max: "", exclude: false });
+    setAspectRatioRange({ min: "", max: "", exclude: false });
+    setDurationRange({ min: "", max: "", exclude: false });
+    setLongEdgeRange({ min: "", max: "", exclude: false });
+  }
+
+  function clearDiscoveryFilter(id: ClearableFilterId) {
+    switch (id) {
+      case "all":
+        clearDiscoveryFiltersOnly();
+        return;
+      case "format":
+        setFormatFilter("");
+        setExcludeFormatFilter(false);
+        return;
+      case "tag":
+        setTagFilter("");
+        setExcludeTagFilter(false);
+        setActiveTagId(null);
+        return;
+      case "rating":
+        setRatingFilter("");
+        setExcludeRatingFilter(false);
+        return;
+      case "favorite":
+        setFavoriteFilter("any");
+        return;
+      case "source_url":
+        setSourceUrlFilter("any");
+        return;
+      case "availability":
+        setAvailabilityFilter("any");
+        setExcludeAvailabilityFilter(false);
+        return;
+      case "aspect_ratio":
+        setAspectRatioRange({ min: "", max: "", exclude: false });
+        return;
+      case "long_edge":
+        setLongEdgeRange({ min: "", max: "", exclude: false });
+        return;
+      case "width":
+        setWidthRange({ min: "", max: "", exclude: false });
+        return;
+      case "height":
+        setHeightRange({ min: "", max: "", exclude: false });
+        return;
+      case "duration":
+        setDurationRange({ min: "", max: "", exclude: false });
+        return;
+    }
   }
 
   async function chooseFolder(scope: AssetScope) {
@@ -5062,249 +5054,70 @@ function AppInner() {
             }
             value={searchValue}
           />
-          <details className="discovery-filters" ref={discoveryFiltersRef}>
-            <summary>{t("toolbar.filterSort")}</summary>
-            <div className="discovery-filter-panel">
-              <label>
-                {t("filter.formatField")}
-                <input
-                  aria-label={t("filter.format")}
-                  className="text-field"
-                  disabled={!library}
-                  onChange={(event) => setFormatFilter(event.target.value)}
-                  placeholder="png, jpg"
-                  value={formatFilter}
-                />
-                <span>
-                  <input
-                    aria-label={t("filter.excludeFormats")}
-                    checked={excludeFormatFilter}
-                    onChange={(event) =>
-                      setExcludeFormatFilter(event.target.checked)
-                    }
-                    type="checkbox"
-                  />
-                  {t("filter.exclude")}
-                </span>
-              </label>
-              <label>
-                {t("filter.tagField")}
-                {/* REQ-TAG-002: searchable multi-tag picker (chips + counts);
-                    the OR clause assembly in currentQueryDefinition is
-                    unchanged — selection syncs back to the comma string. */}
-                <FilterTagPicker
-                  disabled={!library}
-                  onChange={(names) => {
-                    setTagFilter(names.join(", "));
-                    setActiveTagId(
-                      names.length === 1
-                        ? (tags.find((tag) => tag.name === names[0])?.tagId ??
-                            null)
-                        : null,
-                    );
-                  }}
-                  selectedNames={tagFilter
-                    .split(",")
-                    .map((value) => value.trim())
-                    .filter(Boolean)}
-                  tags={tags}
-                />
-                <span>
-                  <input
-                    aria-label={t("filter.excludeTags")}
-                    checked={excludeTagFilter}
-                    onChange={(event) =>
-                      setExcludeTagFilter(event.target.checked)
-                    }
-                    type="checkbox"
-                  />
-                  {t("filter.exclude")}
-                </span>
-              </label>
-              <label>
-                {t("filter.ratingField")}
-                <input
-                  aria-label={t("filter.rating")}
-                  className="text-field"
-                  disabled={!library}
-                  inputMode="numeric"
-                  onChange={(event) => setRatingFilter(event.target.value)}
-                  placeholder="4, 5"
-                  value={ratingFilter}
-                />
-                <span>
-                  <input
-                    aria-label={t("filter.excludeRatings")}
-                    checked={excludeRatingFilter}
-                    onChange={(event) =>
-                      setExcludeRatingFilter(event.target.checked)
-                    }
-                    type="checkbox"
-                  />
-                  {t("filter.exclude")}
-                </span>
-              </label>
-              <label>
-                {t("filter.favoriteField")}
-                <select
-                  aria-label={t("filter.favorite")}
-                  className="text-field"
-                  disabled={!library}
-                  onChange={(event) =>
-                    setFavoriteFilter(
-                      event.target.value as typeof favoriteFilter,
-                    )
-                  }
-                  value={favoriteFilter}
-                >
-                  <option value="any">{t("common.none")}</option>
-                  <option value="yes">{t("filter.favoriteOnly")}</option>
-                  <option value="no">{t("filter.notFavorite")}</option>
-                </select>
-              </label>
-              <label>
-                {t("filter.sourceUrlField")}
-                <select
-                  aria-label={t("filter.sourceUrl")}
-                  className="text-field"
-                  disabled={!library}
-                  onChange={(event) =>
-                    setSourceUrlFilter(
-                      event.target.value as typeof sourceUrlFilter,
-                    )
-                  }
-                  value={sourceUrlFilter}
-                >
-                  <option value="any">{t("common.none")}</option>
-                  <option value="yes">{t("filter.hasSourceUrl")}</option>
-                  <option value="no">{t("filter.noSourceUrl")}</option>
-                </select>
-              </label>
-              <label>
-                {t("filter.availabilityField")}
-                <select
-                  aria-label={t("filter.availability")}
-                  className="text-field"
-                  disabled={!library}
-                  onChange={(event) =>
-                    setAvailabilityFilter(
-                      event.target.value as typeof availabilityFilter,
-                    )
-                  }
-                  value={availabilityFilter}
-                >
-                  <option value="any">{t("common.all")}</option>
-                  <option value="available">{t("filter.available")}</option>
-                  <option value="missing">{t("filter.missing")}</option>
-                </select>
-                <span>
-                  <input
-                    aria-label={t("filter.excludeAvailability")}
-                    checked={excludeAvailabilityFilter}
-                    disabled={availabilityFilter === "any"}
-                    onChange={(event) =>
-                      setExcludeAvailabilityFilter(event.target.checked)
-                    }
-                    type="checkbox"
-                  />
-                  {t("filter.exclude")}
-                </span>
-              </label>
-              <TechnicalRangeFilter
-                label={t("filter.widthPx")}
-                range={widthRange}
-                setRange={setWidthRange}
-              />
-              <TechnicalRangeFilter
-                label={t("filter.heightPx")}
-                range={heightRange}
-                setRange={setHeightRange}
-              />
-              <TechnicalRangeFilter
-                label={t("filter.aspectRatio")}
-                range={aspectRatioRange}
-                setRange={setAspectRatioRange}
-                step="0.01"
-              />
-              {/* REQ-FILTER-009: one-tap ratio presets (±5% tolerance); the
-                  custom min/max inputs above stay available. */}
-              <FilterPresetChips
-                current={aspectRatioRange}
-                disabled={!library}
-                label={t("filter.aspectRatioPresets")}
-                onToggle={(range) =>
-                  setAspectRatioRange((current) => ({
-                    ...current,
-                    ...togglePresetRange(current, range),
-                  }))
-                }
-                presets={ASPECT_RATIO_PRESETS.map((preset) => ({
-                  label: preset.label,
-                  range: aspectRatioPresetRange(preset),
-                }))}
-              />
-              {/* REQ-FILTER-010: resolution buckets on the longer edge. */}
-              <FilterPresetChips
-                current={longEdgeRange}
-                disabled={!library}
-                label={t("filter.resolutionPresets")}
-                onToggle={(range) =>
-                  setLongEdgeRange((current) => ({
-                    ...current,
-                    ...togglePresetRange(current, range),
-                  }))
-                }
-                presets={RESOLUTION_PRESETS}
-              />
-              <TechnicalRangeFilter
-                label={t("filter.longEdgePx")}
-                range={longEdgeRange}
-                setRange={setLongEdgeRange}
-              />
-              <TechnicalRangeFilter
-                label={t("filter.durationSec")}
-                range={durationRange}
-                setRange={setDurationRange}
-                step="0.1"
-              />
-              <label>
-                {t("filter.sortField")}
-                <select
-                  aria-label={t("filter.sortField")}
-                  className="text-field"
-                  disabled={!library}
-                  onChange={(event) =>
-                    setSortField(event.target.value as typeof sortField)
-                  }
-                  value={sortField}
-                >
-                  <option value="relevance">{t("filter.sortRelevance")}</option>
-                  <option value="name">{t("filter.sortName")}</option>
-                  <option value="modified_at">{t("filter.sortModified")}</option>
-                  <option value="created_at">{t("filter.sortCreated")}</option>
-                  <option value="byte_size">{t("filter.sortSize")}</option>
-                  <option value="duration">{t("filter.sortDuration")}</option>
-                  <option value="rating">{t("filter.sortRating")}</option>
-                  <option value="color">{t("filter.sortColor")}</option>
-                </select>
-              </label>
-              <label>
-                {t("filter.sortDirection")}
-                <select
-                  aria-label={t("filter.sortDirection")}
-                  className="text-field"
-                  disabled={!library}
-                  onChange={(event) =>
-                    setSortOrder(event.target.value as SortDefinition["order"])
-                  }
-                  value={sortOrder}
-                >
-                  <option value="asc">{t("filter.sortAsc")}</option>
-                  <option value="desc">{t("filter.sortDesc")}</option>
-                </select>
-              </label>
-            </div>
-          </details>
+          <DimensionFilterBar
+            availabilityFilter={availabilityFilter}
+            aspectRatioRange={aspectRatioRange}
+            disabled={!library}
+            durationRange={durationRange}
+            excludeAvailabilityFilter={excludeAvailabilityFilter}
+            excludeFormatFilter={excludeFormatFilter}
+            excludeRatingFilter={excludeRatingFilter}
+            excludeTagFilter={excludeTagFilter}
+            favoriteFilter={favoriteFilter}
+            formatFilter={formatFilter}
+            heightRange={heightRange}
+            longEdgeRange={longEdgeRange}
+            onClearFilter={clearDiscoveryFilter}
+            onTagNamesChange={(names) => {
+              setTagFilter(names.join(", "));
+              setActiveTagId(
+                names.length === 1
+                  ? (tags.find((tag) => tag.name === names[0])?.tagId ?? null)
+                  : null,
+              );
+            }}
+            ratingFilter={ratingFilter}
+            setAspectRatioRange={setAspectRatioRange}
+            setAvailabilityFilter={setAvailabilityFilter}
+            setDurationRange={setDurationRange}
+            setExcludeAvailabilityFilter={setExcludeAvailabilityFilter}
+            setExcludeFormatFilter={setExcludeFormatFilter}
+            setExcludeRatingFilter={setExcludeRatingFilter}
+            setExcludeTagFilter={setExcludeTagFilter}
+            setFavoriteFilter={setFavoriteFilter}
+            setFormatFilter={setFormatFilter}
+            setHeightRange={setHeightRange}
+            setLongEdgeRange={setLongEdgeRange}
+            setRatingFilter={setRatingFilter}
+            setSortField={setSortField}
+            setSortOrder={setSortOrder}
+            setSourceUrlFilter={setSourceUrlFilter}
+            setTagFilter={setTagFilter}
+            setWidthRange={setWidthRange}
+            snapshot={{
+              formatFilter,
+              excludeFormatFilter,
+              tagFilter,
+              excludeTagFilter,
+              ratingFilter,
+              excludeRatingFilter,
+              favoriteFilter,
+              sourceUrlFilter,
+              availabilityFilter,
+              excludeAvailabilityFilter,
+              widthRange,
+              heightRange,
+              aspectRatioRange,
+              longEdgeRange,
+              durationRange,
+            }}
+            sortField={sortField}
+            sortOrder={sortOrder}
+            sourceUrlFilter={sourceUrlFilter}
+            tagFilter={tagFilter}
+            tags={tags}
+            widthRange={widthRange}
+          />
           <button
             className="compact-action is-accent"
             disabled={

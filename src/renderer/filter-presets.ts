@@ -29,6 +29,15 @@ export const ASPECT_RATIO_PRESETS: readonly AspectRatioPreset[] = [
   { label: '9:16', ratio: 9 / 16 },
 ];
 
+/** Orientation chips for the Eagle-style shape popover (横图 / 竖图). */
+export const ORIENTATION_PRESETS: readonly {
+  readonly id: 'landscape' | 'portrait';
+  readonly range: RangeStrings;
+}[] = [
+  { id: 'landscape', range: { min: '1.05', max: '' } },
+  { id: 'portrait', range: { min: '', max: '0.95' } },
+];
+
 /** ±5% relative tolerance around the preset ratio, rounded to 3 decimals. */
 export function aspectRatioPresetRange(preset: AspectRatioPreset): RangeStrings {
   return {
