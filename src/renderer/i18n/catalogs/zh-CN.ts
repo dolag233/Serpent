@@ -258,7 +258,9 @@ export const zhCN = {
     tagField: "标签",
     removeTagFilter: "移除标签过滤 {name}",
     searchAddTag: "搜索并添加标签",
-    addableTags: "可添加的标签"
+    addableTags: "可添加的标签",
+    topTags: "常用标签",
+    recentTags: "最近筛选"
   },
   command: {
     asset: {

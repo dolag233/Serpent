@@ -1,6 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import type { TagSummary } from "../shared/asset-types";
 import { applyDimensionSelectionClick } from "./dimension-filter-selection";
+import {
+  buildTagFilterDefaultSections,
+  buildTagFilterSearchResults,
+} from "./tag-filter-suggestions";
 import { Icon } from "./Icons";
 import { useT } from "./i18n";
 
@@ -16,42 +20,63 @@ import { useT } from "./i18n";
 // REQ-FILTER-025: clicking (or pressing Enter on) a suggestion replaces the
 // tag selection with just that tag by default; Shift+click/Enter
 // OR-accumulates it into the existing selection instead.
+//
+// REQ-FILTER-020: the suggestion area renders inline (not as a floating
+// overlay gated behind focus), so it always shows something as soon as the
+// popover opens — either the empty-query "top used" + "recently filtered"
+// sections, or the live search results once the user types. Rendering
+// inline also removes the old absolutely-positioned dropdown that previously
+// left a large blank gap in the popover (see styles.css history for
+// `.filter-tag-picker`'s `flex: 1 1 220px` regression).
 // ---------------------------------------------------------------------------
+
+function TagOptionList({
+  tags,
+  onSelect,
+}: {
+  tags: readonly TagSummary[];
+  onSelect: (name: string, shiftKey: boolean) => void;
+}) {
+  return (
+    <ul className="filter-tag-options" role="listbox">
+      {tags.map((tag) => (
+        <li key={tag.tagId} role="option" aria-selected={false}>
+          <button onClick={(event) => onSelect(tag.name, event.shiftKey)} type="button">
+            <span>{tag.name}</span>
+            <span className="filter-tag-count">{tag.assetCount}</span>
+          </button>
+        </li>
+      ))}
+    </ul>
+  );
+}
 
 export function FilterTagPicker({
   tags,
   selectedNames,
+  recentNames = [],
   onChange,
   disabled,
 }: {
   tags: TagSummary[];
   selectedNames: string[];
+  /** Tag names recently applied as a filter, most-recent-first. */
+  recentNames?: readonly string[];
   onChange: (names: string[]) => void;
   disabled?: boolean;
 }) {
   const t = useT();
   const [query, setQuery] = useState("");
-  const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement>(null);
 
-  // Close the dropdown on outside pointer down.
-  useEffect(() => {
-    if (!open) return;
-    const onPointerDown = (event: PointerEvent) => {
-      if (rootRef.current && !rootRef.current.contains(event.target as Node)) {
-        setOpen(false);
-      }
-    };
-    document.addEventListener("pointerdown", onPointerDown);
-    return () => document.removeEventListener("pointerdown", onPointerDown);
-  }, [open]);
-
-  const lowered = query.trim().toLowerCase();
-  const candidates = tags
-    .filter((tag) => !selectedNames.includes(tag.name))
-    .filter((tag) => !lowered || tag.name.toLowerCase().includes(lowered))
-    .sort((a, b) => b.assetCount - a.assetCount)
-    .slice(0, 20);
+  const trimmed = query.trim();
+  const isSearching = trimmed.length > 0;
+  const searchResults = isSearching
+    ? buildTagFilterSearchResults(tags, selectedNames, trimmed)
+    : [];
+  const { top, recent } = isSearching
+    ? { top: [], recent: [] }
+    : buildTagFilterDefaultSections(tags, selectedNames, recentNames);
+  const firstCandidate = isSearching ? searchResults[0] : top[0] ?? recent[0];
 
   const add = (name: string, shiftKey: boolean) => {
     onChange(applyDimensionSelectionClick(selectedNames, name, shiftKey));
@@ -61,7 +86,7 @@ export function FilterTagPicker({
     onChange(selectedNames.filter((candidate) => candidate !== name));
 
   return (
-    <div className="filter-tag-picker" ref={rootRef}>
+    <div className="filter-tag-picker">
       {selectedNames.length > 0 && (
         <div className="filter-tag-chips">
           {selectedNames.map((name) => (
@@ -84,41 +109,43 @@ export function FilterTagPicker({
         title={t("filter.tagFilter")}
         className="text-field"
         disabled={disabled}
-        onChange={(event) => {
-          setQuery(event.target.value);
-          setOpen(true);
-        }}
-        onFocus={() => setOpen(true)}
+        onChange={(event) => setQuery(event.target.value)}
         onKeyDown={(event) => {
           if (event.key === "Enter") {
             event.preventDefault();
-            const first = candidates[0];
-            if (first) add(first.name, event.shiftKey);
-          } else if (event.key === "Escape") {
-            setOpen(false);
+            if (firstCandidate) add(firstCandidate.name, event.shiftKey);
           }
         }}
         placeholder={t("filter.searchAddTag")}
         value={query}
       />
-      {open && !disabled && candidates.length > 0 && (
-        <ul
-          aria-label={t("filter.addableTags")}
-          className="filter-tag-options"
-          role="listbox"
-        >
-          {candidates.map((tag) => (
-            <li key={tag.tagId} role="option" aria-selected={false}>
-              <button
-                onClick={(event) => add(tag.name, event.shiftKey)}
-                type="button"
-              >
-                <span>{tag.name}</span>
-                <span className="filter-tag-count">{tag.assetCount}</span>
-              </button>
-            </li>
-          ))}
-        </ul>
+      {!disabled && (
+        <div className="filter-tag-suggestions" aria-label={t("filter.addableTags")}>
+          {isSearching
+            ? searchResults.length > 0 && (
+                <TagOptionList tags={searchResults} onSelect={add} />
+              )
+            : (top.length > 0 || recent.length > 0) && (
+                <>
+                  {top.length > 0 && (
+                    <div className="filter-tag-section">
+                      <div className="filter-tag-section-label">
+                        {t("filter.topTags")}
+                      </div>
+                      <TagOptionList tags={top} onSelect={add} />
+                    </div>
+                  )}
+                  {recent.length > 0 && (
+                    <div className="filter-tag-section">
+                      <div className="filter-tag-section-label">
+                        {t("filter.recentTags")}
+                      </div>
+                      <TagOptionList tags={recent} onSelect={add} />
+                    </div>
+                  )}
+                </>
+              )}
+        </div>
       )}
     </div>
   );

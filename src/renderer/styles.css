@@ -1294,14 +1294,20 @@ body.platform-darwin .toolbar-leading {
   color: var(--text);
 }
 
-/* REQ-TAG-002: multi-tag filter picker (chips + search dropdown with counts). */
+/* REQ-TAG-002: multi-tag filter picker (chips + inline suggestion sections
+   with counts). REQ-FILTER-020: this used to set `flex: 1 1 220px`, which —
+   inside the column-direction `.dimension-filter-popover` flex container —
+   forced the picker to a 220px hypothetical main size (height) regardless of
+   its actual content, leaving a large blank gap between the input and the
+   exclude checkbox below whenever the (then-floating) suggestion dropdown
+   was closed. The picker is a normal block-flow child now that the
+   suggestion list renders inline instead of overlaying, so no flex sizing
+   hint is needed here. */
 .filter-tag-picker {
-  position: relative;
   display: flex;
   min-width: 0;
-  flex: 1 1 220px;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
 }
 
 .filter-tag-chips {
@@ -1338,20 +1344,35 @@ body.platform-darwin .toolbar-leading {
   color: var(--text);
 }
 
+/* REQ-FILTER-020: default-view section wrapper (top-used / recently-filtered
+   tags) and section labels. The suggestion area renders inline within the
+   popover's own scroll region rather than a separate floating dropdown. */
+.filter-tag-suggestions {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.filter-tag-section {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.filter-tag-section-label {
+  padding: 0 4px;
+  color: var(--tertiary);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
 .filter-tag-options {
-  position: absolute;
-  z-index: 7;
-  top: 100%;
-  right: 0;
-  left: 0;
-  max-height: 220px;
-  margin: 2px 0 0;
-  padding: 3px;
-  overflow-y: auto;
-  border: 1px solid var(--divider);
-  border-radius: 5px;
-  background: var(--raised);
-  box-shadow: 0 10px 28px rgb(0 0 0 / 30%);
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
   list-style: none;
 }
 

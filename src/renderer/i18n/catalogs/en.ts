@@ -268,7 +268,9 @@ export const en = {
     tagField: "Tags",
     removeTagFilter: "Remove tag filter {name}",
     searchAddTag: "Search and add tags",
-    addableTags: "Tags you can add"
+    addableTags: "Tags you can add",
+    topTags: "Most used",
+    recentTags: "Recently filtered"
   },
   command: {
     asset: {

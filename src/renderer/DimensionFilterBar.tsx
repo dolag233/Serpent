@@ -23,6 +23,12 @@ import {
 } from "./dimension-filter-selection";
 import { DimensionEnableToggle } from "./dimension-enable-toggle";
 import {
+  loadTagFilterRecency,
+  saveTagFilterRecency,
+  withTagFilterUsed,
+  type TagFilterRecency,
+} from "./tag-filter-recency";
+import {
   buildActiveFilterChips,
   type ClearableFilterId,
   type DiscoveryFilterSnapshot,
@@ -189,6 +195,13 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
   const [openDimension, setOpenDimension] = useState<DimensionId | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
 
+  // REQ-FILTER-020: remembers tag names recently applied through this
+  // picker so its default (empty-query) view can surface a "recent" section
+  // alongside the most-used tags. See tag-filter-recency.ts.
+  const [tagRecency, setTagRecency] = useState<TagFilterRecency>(() =>
+    loadTagFilterRecency(),
+  );
+
   useEffect(() => {
     if (!openDimension) return;
     const onMouseDown = (event: MouseEvent) => {
@@ -354,6 +367,25 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
     );
   };
 
+  // REQ-FILTER-020: record newly-added tag names into the recency store
+  // before forwarding to the caller's onTagNamesChange. Only additions are
+  // recorded — removing a tag from the selection should not affect its
+  // recency (it may still be worth surfacing again next time).
+  const handleTagNamesChange = (names: string[]) => {
+    const added = names.filter((name) => !selectedTagNames.includes(name));
+    if (added.length > 0) {
+      setTagRecency((current) => {
+        const next = added.reduce(
+          (acc, name) => withTagFilterUsed(acc, name),
+          current,
+        );
+        saveTagFilterRecency(next);
+        return next;
+      });
+    }
+    onTagNamesChange(names);
+  };
+
   const handleTagsDimensionClick = () => {
     tagsToggleRef.current.toggle(
       tagActive,
@@ -491,7 +523,8 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
             <div className="dimension-filter-popover">
               <FilterTagPicker
                 disabled={disabled}
-                onChange={onTagNamesChange}
+                onChange={handleTagNamesChange}
+                recentNames={tagRecency.names}
                 selectedNames={selectedTagNames}
                 tags={tags}
               />

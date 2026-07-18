@@ -328,7 +328,7 @@ FolderBrowseEntry
 | --------------- | ------------------------------------------------------------------ | --------------------------------------------------------- | ------ | ------------- |
 | REQ-INSPECT-004 | 多选堆叠预览加微弱阴影                                             | 堆叠层有轻阴影，不糊成一团                                | P3     | `Serpent-1tx` |
 | REQ-SHELL-018   | 筛选/排序文案去掉括注如 Relevance (default)；全局复查漏网括注      | 无「（默认）」/中英叠注；SHELL-017 复验                   | P1     | `Serpent-d45` |
-| REQ-FILTER-020  | 标签过滤默认显示最多使用与最近筛选的 tag；修复中间大空档布局 bug   | 默认列表有 top+recent；popover 无大块空白                 | P1     | `Serpent-1v0` |
+| REQ-FILTER-020  | 标签过滤默认显示最多使用与最近筛选的 tag；修复中间大空档布局 bug   | 默认列表有 top+recent；popover 无大块空白                 | P1     | **已实现** `Serpent-1v0` → FILTER-018；根因是 `.filter-tag-picker` 在纵向 flex popover 内误设 `flex: 1 1 220px` |
 | REQ-FILTER-021  | 点击维度按钮切换启用/关闭；hover 再出设置面板                      | 单击 toggle；悬停打开设置 popover                         | P1     | **已实现** `Serpent-yp7` → FILTER-016 |
 | REQ-SORT-002    | 排序方向用升序/降序专用图标，不用上下箭头                          | 图标语义为 asc/desc                                       | P2     | `Serpent-1c9` |
 | REQ-VIEW-008    | 从浏览进查看再返回，浏览视图前后不变（滚动/选中/布局）             | Esc/返回后滚动位置与选中与进入前一致；回归 VIEWER-001     | P1     | **已实现** `Serpent-cj6` → VIEWER-001 复验 |
