@@ -16,9 +16,11 @@ export type IconName =
   | "download"
   | "edit"
   | "file"
+  | "fit-window"
   | "folder"
   | "folder-tree"
   | "folders"
+  | "fullscreen"
   | "globe"
   | "grid"
   | "heart"
@@ -116,6 +118,15 @@ const iconPaths: Record<IconName, ReactNode> = {
       <path d="M14 3v5h5" />
     </>
   ),
+  // Corners pointing inward — fit content into the frame.
+  "fit-window": (
+    <>
+      <path d="M9 4v5H4" />
+      <path d="M15 4v5h5" />
+      <path d="M4 15h5v5" />
+      <path d="M20 15h-5v5" />
+    </>
+  ),
   folder: <path d="M3 6.5h7l2 2h9v10H3z" />,
   // Expand-into-descendants (REQ-FOLDER-009): two stacked folders — reads as
   // "this folder and the ones inside", not a plain chevron.
@@ -130,6 +141,15 @@ const iconPaths: Record<IconName, ReactNode> = {
       <path d="M3 5.5h6.2l1.6 1.6H15v5.4H3z" />
       <path d="M8 12.5v2.2" />
       <path d="M8 14.7h3.4l1.4 1.3H21v5.5H8z" />
+    </>
+  ),
+  // Corners pointing outward — enter fullscreen.
+  fullscreen: (
+    <>
+      <path d="M4 9V4h5" />
+      <path d="M20 9V4h-5" />
+      <path d="M4 15v5h5" />
+      <path d="M20 15v5h-5" />
     </>
   ),
   grid: (

@@ -49,6 +49,8 @@
   --warning-fg: #f1c87d;
   --warning-muted: #76533a;
   --ink: #111314;
+  /* Viewer stage follows theme (not always near-black --ink). */
+  --viewer-stage: #1e2022;
   /* Legacy alias: several components referenced --border before any token
      existed (their borders silently rendered as none). */
   --border: var(--divider);
@@ -84,6 +86,7 @@
   --warning-fg: #b45309;
   --warning-muted: #c4a484;
   --ink: #0f1010;
+  --viewer-stage: #e8eae7;
   --border: var(--divider);
   scrollbar-color: rgb(0 0 0 / 22%) transparent;
 }
@@ -267,7 +270,9 @@ summary:focus-visible {
 }
 
 .app-toolbar {
-  z-index: 5;
+  /* Above workspace content so library/settings menus are never covered by
+     the asset viewer (REQ-VIEW-004 stacking isolation). */
+  z-index: 30;
   display: grid;
   grid-column: 1 / -1;
   grid-template-columns: minmax(210px, 0.8fr) minmax(280px, 1.4fr) minmax(
@@ -982,13 +987,20 @@ summary:focus-visible {
   line-height: 1.55;
 }
 
+/* REQ-VIEW: hide browse workspace toolbar while the viewer is open. */
+.workspace-bar.is-viewing {
+  display: none;
+}
+
 .workspace {
   position: relative;
+  z-index: 0; /* contain viewer z-index inside this column (REQ-VIEW-004) */
   display: flex;
   min-width: 0;
   min-height: 0;
   flex-direction: column;
   background: var(--canvas);
+  isolation: isolate;
 }
 
 .workspace-bar {
@@ -1002,9 +1014,7 @@ summary:focus-visible {
   background: transparent;
 }
 
-.workspace-bar.is-viewing {
-  display: none;
-}
+/* Browse workspace title bar is hidden while viewing (user request). */
 
 .workspace-title,
 .workspace-tools {
@@ -1139,14 +1149,6 @@ input[type="range"] {
   user-select: none;
 }
 
-.workspace-canvas.is-viewing {
-  overflow: hidden;
-}
-
-.workspace-canvas.is-viewing > :not(.workspace-viewer) {
-  visibility: hidden;
-  pointer-events: none;
-}
 
 .empty-state,
 .library-state {
@@ -1843,21 +1845,30 @@ input[type="range"] {
 }
 
 .workspace-viewer {
-  position: absolute;
-  z-index: 12;
-  inset: 0;
+  position: relative;
+  z-index: 1;
+  display: flex;
   min-width: 0;
   min-height: 0;
-  background: var(--ink);
+  flex: 1;
+  flex-direction: column;
+  background: var(--viewer-stage);
+  outline: none;
+}
+.workspace-viewer:focus,
+.workspace-viewer:focus-visible {
+  outline: none;
 }
 
 .preview-modal {
-  display: grid;
+  display: flex;
   width: 100%;
   height: 100%;
-  grid-template-rows: 50px minmax(0, 1fr);
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
   overflow: hidden;
-  background: var(--ink);
+  background: var(--viewer-stage);
 }
 
 .workspace-viewer:fullscreen .preview-modal {
@@ -1867,43 +1878,6 @@ input[type="range"] {
   border-radius: 0;
 }
 
-.preview-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 0 14px;
-  border-bottom: 1px solid var(--divider-soft);
-  background: var(--canvas);
-}
-
-.preview-toolbar > div:first-child {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: 2px;
-}
-.preview-toolbar strong {
-  overflow: hidden;
-  color: var(--text);
-  font-size: 12px;
-  font-weight: 560;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.preview-toolbar span {
-  color: var(--tertiary);
-  font-family: "IBM Plex Mono", monospace;
-  font-size: 8px;
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
-}
-.preview-toolbar-actions {
-  display: flex;
-  flex: 0 0 auto;
-  gap: 7px;
-}
-.preview-toolbar-actions button,
 .preview-state button,
 .preview-playback-error button {
   padding: 6px 10px;
@@ -1914,7 +1888,6 @@ input[type="range"] {
   font-size: 10px;
   cursor: pointer;
 }
-.preview-toolbar-actions button:disabled,
 .preview-state button:disabled,
 .preview-playback-error button:disabled {
   opacity: 0.45;
@@ -1926,9 +1899,10 @@ input[type="range"] {
   display: grid;
   min-width: 0;
   min-height: 0;
+  flex: 1;
   place-items: center;
   overflow: hidden;
-  background: var(--ink);
+  background: var(--viewer-stage);
 }
 .preview-video-stage {
   position: relative;
@@ -1938,7 +1912,7 @@ input[type="range"] {
 .preview-video {
   width: 100%;
   height: 100%;
-  background: var(--ink);
+  background: var(--viewer-stage);
   object-fit: contain;
 }
 .preview-speed-control {
@@ -1949,17 +1923,20 @@ input[type="range"] {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 5px 7px;
-  border-radius: 4px;
-  background: rgb(20 22 23 / 82%);
+  padding: 5px 8px;
+  border: 1px solid var(--divider);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--raised) 94%, transparent);
+  box-shadow: 0 1px 6px rgb(0 0 0 / 10%);
   color: var(--secondary);
   font-size: 10px;
+  backdrop-filter: blur(10px);
 }
 .preview-speed-control select {
   border: 1px solid var(--divider);
   border-radius: 3px;
   background: var(--pane);
-  color: var(--primary);
+  color: var(--text);
 }
 .preview-image-viewport {
   position: absolute;
@@ -1970,42 +1947,168 @@ input[type="range"] {
   place-items: center;
   touch-action: none;
 }
+.preview-image-viewport.is-pannable {
+  cursor: grab;
+}
+.preview-image-viewport.is-pannable:active {
+  cursor: grabbing;
+}
 .preview-image-viewport:active {
   cursor: grabbing;
 }
 .preview-image {
-  max-width: 100%;
-  max-height: 100%;
-  object-fit: contain;
+  /* Size comes from natural dimensions × viewer scale (REQ-VIEW-006). */
+  max-width: none;
+  max-height: none;
+  pointer-events: none;
   user-select: none;
+  -webkit-user-drag: none;
   will-change: transform;
+}
+.preview-chrome-fade {
+  opacity: 1;
+  transition: opacity 280ms ease;
+}
+.workspace-viewer.is-chrome-idle .preview-chrome-fade {
+  opacity: 0;
+  pointer-events: none;
 }
 .preview-zoom-controls {
   position: absolute;
   z-index: 2;
-  bottom: 14px;
+  bottom: 12px;
   left: 50%;
   display: flex;
-  gap: 3px;
-  padding: 4px;
-  border: 1px solid color-mix(in srgb, var(--divider) 80%, transparent);
-  border-radius: 999px;
-  background: rgb(24 26 28 / 86%);
-  backdrop-filter: blur(8px);
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid var(--divider);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--raised) 94%, transparent);
+  box-shadow: 0 1px 6px rgb(0 0 0 / 10%);
+  backdrop-filter: blur(10px);
   transform: translateX(-50%);
 }
-.preview-zoom-controls button {
-  min-width: 32px;
-  padding: 5px 9px;
-  border: 0;
-  border-radius: 999px;
-  background: transparent;
-  color: var(--primary);
+.preview-zoom-controls input[type="range"] {
+  width: 96px;
+  height: 4px;
+  margin: 0;
+  accent-color: var(--accent);
   cursor: pointer;
-  transition: background-color 120ms ease;
 }
-.preview-zoom-controls button:hover {
+.preview-zoom-controls .preview-zoom-label,
+.preview-zoom-controls button {
+  min-width: 0;
+  padding: 3px 7px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text);
+  font-size: 11px;
+  line-height: 1.2;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.preview-zoom-controls button {
+  display: grid;
+  width: 28px;
+  height: 24px;
+  padding: 0;
+  place-items: center;
+}
+.preview-zoom-controls .preview-zoom-label {
+  color: var(--secondary);
+  font-variant-numeric: tabular-nums;
+}
+.preview-zoom-controls button:hover,
+.preview-zoom-controls button:focus-visible {
   background: var(--hover);
+  color: var(--text);
+}
+.preview-nav {
+  position: absolute;
+  z-index: 2;
+  top: 50%;
+  display: grid;
+  width: 52px;
+  height: 64px;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text);
+  cursor: pointer;
+  opacity: 0.55;
+  transform: translateY(-50%);
+}
+.preview-nav:hover:not(:disabled),
+.preview-nav:focus-visible:not(:disabled) {
+  background: transparent;
+  color: var(--text);
+  opacity: 1;
+  outline: none;
+}
+.preview-nav:disabled {
+  opacity: 0.2;
+  cursor: default;
+}
+.preview-nav.is-prev {
+  left: 4px;
+}
+.preview-nav.is-next {
+  right: 4px;
+}
+.preview-fullscreen-chip {
+  position: absolute;
+  z-index: 2;
+  right: 14px;
+  bottom: 14px;
+  display: grid;
+  place-items: center;
+  padding: 5px 9px;
+  border: 1px solid var(--divider);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--raised) 94%, transparent);
+  box-shadow: 0 1px 6px rgb(0 0 0 / 10%);
+  color: var(--text);
+  font-size: 11px;
+  cursor: pointer;
+  backdrop-filter: blur(10px);
+}
+.preview-fullscreen-chip:hover {
+  background: var(--raised);
+}
+.preview-close-chip {
+  position: absolute;
+  z-index: 2;
+  top: 10px;
+  right: 10px;
+  display: grid;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text);
+  cursor: pointer;
+  opacity: 0.55;
+}
+.preview-close-chip:hover,
+.preview-close-chip:focus-visible {
+  background: transparent;
+  color: var(--text);
+  opacity: 1;
+  outline: none;
+}
+
+/* REQ-VIEW-004: keep canvas mounted (scroll restore) but out of layout while viewing. */
+.workspace-canvas.is-viewing {
+  display: none;
 }
 
 .preview-state {

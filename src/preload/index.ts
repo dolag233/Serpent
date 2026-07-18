@@ -17,8 +17,9 @@ import {
   AI_CLEARED_CHANNEL,
   EXTENSION_PAIRING_CHANNEL,
   OPEN_EXTERNAL_URL_CHANNEL,
+  SHELL_SWIPE_CHANNEL,
 } from '../shared/protocol/channels';
-import type { SerpentShellApi } from '../shared/external-url';
+import type { SerpentShellApi, ShellSwipeDirection } from '../shared/external-url';
 import type { RendererRequest } from '../shared/protocol/requests';
 import type { PublicErrorReason } from '../shared/protocol/errors';
 import {
@@ -1008,6 +1009,22 @@ const shell: SerpentShellApi = Object.freeze({
   async openExternalUrl(url: string): Promise<boolean> {
     const result: unknown = await ipcRenderer.invoke(OPEN_EXTERNAL_URL_CHANNEL, { url });
     return result === true;
+  },
+  onSwipe(listener: (direction: ShellSwipeDirection) => void): () => void {
+    const handler = (_event: Electron.IpcRendererEvent, direction: unknown) => {
+      if (
+        direction === 'left' ||
+        direction === 'right' ||
+        direction === 'up' ||
+        direction === 'down'
+      ) {
+        listener(direction);
+      }
+    };
+    ipcRenderer.on(SHELL_SWIPE_CHANNEL, handler);
+    return () => {
+      ipcRenderer.removeListener(SHELL_SWIPE_CHANNEL, handler);
+    };
   },
 });
 

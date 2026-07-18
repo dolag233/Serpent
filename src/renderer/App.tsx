@@ -1409,6 +1409,10 @@ function AppInner() {
   }
 
   async function goWorkspaceBack() {
+    if (previewAsset) {
+      await closeAssetPreview();
+      return;
+    }
     const location = navHistoryRef.current.back();
     if (!location) return;
     syncNavHistoryUi();
@@ -1421,6 +1425,10 @@ function AppInner() {
   }
 
   async function goWorkspaceForward() {
+    if (previewAsset) {
+      await closeAssetPreview();
+      return;
+    }
     const location = navHistoryRef.current.forward();
     if (!location) return;
     syncNavHistoryUi();
@@ -1528,6 +1536,8 @@ function AppInner() {
 
   async function chooseFolder(scope: AssetScope) {
     if (!library) return;
+    // REQ-VIEW-004: leave the browse affiliate viewer when the browse scope changes.
+    await closeAssetPreview();
     closeContextMenu();
     workspaceCanvasRef.current?.scrollTo({ top: 0, left: 0 });
     setShowTrash(false);
@@ -1576,6 +1586,7 @@ function AppInner() {
 
   async function enterTrash() {
     if (!library) return;
+    await closeAssetPreview();
     workspaceCanvasRef.current?.scrollTo({ top: 0, left: 0 });
     setShowTrash(true);
     setActiveTagId(null);
@@ -1600,6 +1611,7 @@ function AppInner() {
 
   async function chooseTag(tagId: string) {
     if (!api || !library) return;
+    await closeAssetPreview();
     closeContextMenu();
     const tag = tags.find((candidate) => candidate.tagId === tagId);
     if (!tag) return;
@@ -2013,6 +2025,7 @@ function AppInner() {
     recursive = collectionRecursive,
   ) {
     if (!api || !library) return;
+    await closeAssetPreview();
     closeContextMenu();
     workspaceCanvasRef.current?.scrollTo({ top: 0, left: 0 });
     setShowTrash(false);
@@ -2372,6 +2385,7 @@ function AppInner() {
   async function runSearch(event?: FormEvent, offset = 0) {
     event?.preventDefault();
     if (!api || !library) return;
+    if (offset === 0) await closeAssetPreview();
     try {
       const definition = currentQueryDefinition();
       setActiveAiSearchDefinition(null);
@@ -2386,6 +2400,7 @@ function AppInner() {
   async function runAiSearch(event?: FormEvent, offset = 0) {
     event?.preventDefault();
     if (!api || !library || !searchValue.trim() || aiSearchLoading) return;
+    if (offset === 0) await closeAssetPreview();
     setAiSearchLoading(true);
     setError(null);
     try {
@@ -2534,6 +2549,7 @@ function AppInner() {
 
   async function chooseSmartCollection(collectionId: string, offset = 0) {
     if (!api || !library) return;
+    if (offset === 0) await closeAssetPreview();
     closeContextMenu();
     if (offset === 0) workspaceCanvasRef.current?.scrollTo({ top: 0, left: 0 });
     try {
@@ -4195,18 +4211,19 @@ function AppInner() {
       return;
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target;
-      if (
-        target instanceof HTMLInputElement ||
-        target instanceof HTMLTextAreaElement ||
-        target instanceof HTMLSelectElement ||
-        (target instanceof HTMLElement &&
-          (target.isContentEditable || target.closest('[role="dialog"]')))
-      )
-        return;
       if (previewAsset) {
         if (event.key === "Escape" && !document.fullscreenElement) {
           event.preventDefault();
           void closeAssetPreview();
+          return;
+        }
+        if (
+          target instanceof HTMLInputElement ||
+          target instanceof HTMLTextAreaElement ||
+          target instanceof HTMLSelectElement ||
+          (target instanceof HTMLElement &&
+            (target.isContentEditable || target.closest('[role="dialog"]')))
+        ) {
           return;
         }
         if (event.key === "ArrowLeft" && previewIndex > 0) {
@@ -4224,6 +4241,14 @@ function AppInner() {
         }
         return;
       }
+      if (
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target instanceof HTMLSelectElement ||
+        (target instanceof HTMLElement &&
+          (target.isContentEditable || target.closest('[role="dialog"]')))
+      )
+        return;
       if (
         target instanceof HTMLElement &&
         target.closest(
@@ -4257,6 +4282,31 @@ function AppInner() {
     openAssetPreview,
     restoreDialog,
     selectedAsset,
+    visibleAssets,
+  ]);
+
+  // macOS three-finger swipe while viewing → previous/next (same order as arrows).
+  useEffect(() => {
+    if (!previewAsset) return;
+    const shellBridge = (window as RendererWindow).serpent?.shell;
+    if (!shellBridge?.onSwipe) return;
+    return shellBridge.onSwipe((direction) => {
+      if (direction === "left") {
+        if (previewIndex >= 0 && previewIndex < visibleAssets.length - 1) {
+          navigateAssetPreview(visibleAssets[previewIndex + 1]!);
+        }
+        return;
+      }
+      if (direction === "right") {
+        if (previewIndex > 0) {
+          navigateAssetPreview(visibleAssets[previewIndex - 1]!);
+        }
+      }
+    });
+  }, [
+    navigateAssetPreview,
+    previewAsset,
+    previewIndex,
     visibleAssets,
   ]);
 
@@ -5162,6 +5212,8 @@ function AppInner() {
                   aria-pressed={folderRecursive}
                   className="workspace-include-subfolders"
                   onClick={() => {
+                    // Include-subfolders changes the browse result set (REQ-VIEW-004).
+                    void closeAssetPreview();
                     const next = !folderRecursiveRef.current;
                     folderRecursiveRef.current = next;
                     setFolderRecursive(next);

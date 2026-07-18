@@ -31,6 +31,7 @@ import {
   AI_CLEARED_CHANNEL,
   EXTENSION_PAIRING_CHANNEL,
   OPEN_EXTERNAL_URL_CHANNEL,
+  SHELL_SWIPE_CHANNEL,
 } from "../shared/protocol/channels";
 import {
   parseOpenExternalUrlRequest,
@@ -267,6 +268,11 @@ async function createMainWindow(): Promise<void> {
   });
   window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   window.webContents.on("will-navigate", (event) => event.preventDefault());
+  // macOS three-finger swipe (requires Trackpad → Swipe between pages).
+  // Event is on BrowserWindow, not webContents.
+  window.on("swipe", (_event, direction) => {
+    window.webContents.send(SHELL_SWIPE_CHANNEL, direction);
+  });
 
   if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
     await window.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL);

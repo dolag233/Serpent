@@ -31,7 +31,11 @@ export function parseOpenExternalUrlRequest(input: unknown): { url: string } | n
   return parsed.success ? parsed.data : null;
 }
 
+export type ShellSwipeDirection = 'left' | 'right' | 'up' | 'down';
+
 export interface SerpentShellApi {
   /** 打开一个外部 HTTP(S) 链接；返回是否实际交给了系统浏览器。 */
   openExternalUrl(url: string): Promise<boolean>;
+  /** macOS 触控板三指轻扫（Electron webContents swipe）。 */
+  onSwipe(listener: (direction: ShellSwipeDirection) => void): () => void;
 }

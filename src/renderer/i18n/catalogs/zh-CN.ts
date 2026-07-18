@@ -572,7 +572,7 @@ export const zhCN = {
     retrying: "正在重试…",
     retryGenerate: "重试生成",
     actualSize: "实际大小",
-    fitWindow: "适合窗口",
+    fitWindow: "适应",
     closeViewer: "关闭查看页面",
     playbackRateAria: "播放倍速",
     cannotOpen: "无法打开预览",

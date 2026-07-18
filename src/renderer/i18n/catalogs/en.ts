@@ -581,7 +581,7 @@ export const en = {
     retrying: "Retrying…",
     retryGenerate: "Retry generation",
     actualSize: "Actual size",
-    fitWindow: "Fit to window",
+    fitWindow: "Fit",
     closeViewer: "Close viewer",
     playbackRateAria: "Playback speed",
     cannotOpen: "Could not open preview",

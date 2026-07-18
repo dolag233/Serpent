@@ -21,6 +21,9 @@ import {
   samePreviewPlayback,
   shouldContinuePreviewPolling,
 } from "./preview-poll";
+import { Icon } from "./Icons";
+import { useViewerChromeIdle } from "./use-viewer-chrome-idle";
+import { ZoomableImage } from "./zoomable-preview-image";
 
 interface AssetPreviewModalProps {
   api: SerpentLibraryApi;
@@ -130,137 +133,6 @@ function safeRendererDiagnostic(value: string): string {
     .slice(0, 500);
 }
 
-function ZoomableImage({ alt, src }: { alt: string; src: string }) {
-  const t = useT();
-  const viewportRef = useRef<HTMLDivElement>(null);
-  const dragRef = useRef<{
-    pointerId: number;
-    startX: number;
-    startY: number;
-    x: number;
-    y: number;
-  } | null>(null);
-  const [view, setView] = useState({ scale: 1, x: 0, y: 0 });
-
-  const zoomAt = useCallback(
-    (clientX: number, clientY: number, nextScale: number) => {
-      const bounds = viewportRef.current?.getBoundingClientRect();
-      if (!bounds) return;
-      setView((current) => {
-        const scale = Math.min(8, Math.max(0.1, nextScale));
-        const pointerX = clientX - bounds.left - bounds.width / 2;
-        const pointerY = clientY - bounds.top - bounds.height / 2;
-        const ratio = scale / current.scale;
-        return {
-          scale,
-          x: pointerX - (pointerX - current.x) * ratio,
-          y: pointerY - (pointerY - current.y) * ratio,
-        };
-      });
-    },
-    [],
-  );
-  const zoomAtViewportCenter = useCallback(
-    (nextScale: number) => {
-      const bounds = viewportRef.current?.getBoundingClientRect();
-      if (!bounds) return;
-      zoomAt(
-        bounds.left + bounds.width / 2,
-        bounds.top + bounds.height / 2,
-        nextScale,
-      );
-    },
-    [zoomAt],
-  );
-
-  return (
-    <>
-      <div
-        className="preview-image-viewport"
-        onPointerDown={(event) => {
-          if (view.scale <= 1) return;
-          event.currentTarget.setPointerCapture(event.pointerId);
-          dragRef.current = {
-            pointerId: event.pointerId,
-            startX: event.clientX,
-            startY: event.clientY,
-            x: view.x,
-            y: view.y,
-          };
-        }}
-        onPointerMove={(event) => {
-          const drag = dragRef.current;
-          if (!drag || drag.pointerId !== event.pointerId) return;
-          setView((current) => ({
-            ...current,
-            x: drag.x + event.clientX - drag.startX,
-            y: drag.y + event.clientY - drag.startY,
-          }));
-        }}
-        onPointerUp={(event) => {
-          if (dragRef.current?.pointerId === event.pointerId)
-            dragRef.current = null;
-        }}
-        onWheel={(event) => {
-          if (!event.ctrlKey) return;
-          event.preventDefault();
-          const delta =
-            event.deltaMode === WheelEvent.DOM_DELTA_LINE
-              ? event.deltaY * 16
-              : event.deltaMode === WheelEvent.DOM_DELTA_PAGE
-                ? event.deltaY * event.currentTarget.clientHeight
-                : event.deltaY;
-          zoomAt(
-            event.clientX,
-            event.clientY,
-            view.scale * Math.exp(-delta * 0.002),
-          );
-        }}
-        ref={viewportRef}
-      >
-        <img
-          alt={alt}
-          className="preview-image"
-          draggable={false}
-          src={src}
-          style={{
-            transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})`,
-          }}
-        />
-      </div>
-      <div className="preview-zoom-controls" aria-label={t("preview.imageZoom")}>
-        <button
-          aria-label={t("preview.zoomOut")}
-          title={t("preview.zoomOut")}
-          onClick={() => zoomAtViewportCenter(view.scale / 1.25)}
-          type="button"
-        >
-          −
-        </button>
-        <button
-          aria-label={t("preview.actualSize")}
-          title={t("preview.actualSize")}
-          onClick={() => setView({ scale: 1, x: 0, y: 0 })}
-          type="button"
-        >
-          {Math.round(view.scale * 100)}%
-        </button>
-        <button
-          aria-label={t("preview.zoomIn")}
-          title={t("preview.zoomIn")}
-          onClick={() => zoomAtViewportCenter(view.scale * 1.25)}
-          type="button"
-        >
-          +
-        </button>
-        <button onClick={() => setView({ scale: 1, x: 0, y: 0 })} type="button">
-          {t("preview.fitWindow")}
-        </button>
-      </div>
-    </>
-  );
-}
-
 export function AssetPreviewModal({
   api,
   asset,
@@ -271,6 +143,7 @@ export function AssetPreviewModal({
 }: AssetPreviewModalProps) {
   const t = useT();
   const modalRef = useRef<HTMLElement>(null);
+  const { idle: chromeIdle, onPointerActivity } = useViewerChromeIdle();
   const requestSequence = useRef(0);
   const [resolution, setResolution] = useState<PreviewResolution | null>(null);
   const [loading, setLoading] = useState(true);
@@ -573,54 +446,15 @@ export function AssetPreviewModal({
   return (
     <section
       aria-label={t("preview.viewPage", { name: asset.displayName })}
-      className="workspace-viewer"
+      className={`workspace-viewer${chromeIdle ? " is-chrome-idle" : ""}`}
+      onPointerDown={onPointerActivity}
+      onPointerMove={onPointerActivity}
       ref={modalRef}
       role="region"
       tabIndex={-1}
     >
       <div className="preview-modal">
-        <div className="preview-toolbar">
-          <div>
-            {/* REQ-VIEW-001: no redundant media-type caption under the name
-                (the old 图像预览/视频预览 subtitle was pure noise). */}
-            <strong>{asset.displayName}</strong>
-          </div>
-          <div className="preview-toolbar-actions">
-            <button
-              aria-label={t("preview.previous")}
-              title={t("preview.previous")}
-              disabled={!onPrevious}
-              onClick={onPrevious}
-              type="button"
-            >
-              ←
-            </button>
-            <button
-              aria-label={t("preview.next")}
-              title={t("preview.next")}
-              disabled={!onNext}
-              onClick={onNext}
-              type="button"
-            >
-              →
-            </button>
-            <button
-              disabled={!ready}
-              onClick={() => void enterFullscreen()}
-              type="button"
-            >
-              {t("preview.fullscreen")}
-            </button>
-            <button
-              aria-label={t("preview.closeViewer")}
-              title={t("preview.closeViewer")}
-              onClick={onClose}
-              type="button"
-            >
-              {t("common.close")}
-            </button>
-          </div>
-        </div>
+        {/* REQ-VIEW-006: no top filename/toolbar bar; nav sits on the edges. */}
         <div className="preview-content">
           {loading ? (
             <div className="preview-state" role="status">
@@ -646,7 +480,7 @@ export function AssetPreviewModal({
               >
                 {t("preview.videoUnsupported")}
               </video>
-              <label className="preview-speed-control">
+              <label className="preview-speed-control preview-chrome-fade">
                 {t("preview.playbackRate")}
                 <select
                   aria-label={t("preview.playbackRateAria")}
@@ -664,11 +498,21 @@ export function AssetPreviewModal({
                   ))}
                 </select>
               </label>
+              <button
+                className="preview-fullscreen-chip preview-chrome-fade"
+                onClick={() => void enterFullscreen()}
+                type="button"
+              >
+                {t("preview.fullscreen")}
+              </button>
             </div>
           ) : ready ? (
             <ZoomableImage
               alt={asset.displayName}
               key={asset.assetId}
+              onFullscreen={() => void enterFullscreen()}
+              onSwipeNext={onNext}
+              onSwipePrevious={onPrevious}
               src={resolution.url!}
             />
           ) : unsupported ? (
@@ -724,6 +568,32 @@ export function AssetPreviewModal({
               )}
             </div>
           )}
+          <button
+            aria-label={t("preview.previous")}
+            className="preview-nav is-prev preview-chrome-fade"
+            disabled={!onPrevious}
+            onClick={onPrevious}
+            type="button"
+          >
+            <Icon name="chevron-left" size={28} />
+          </button>
+          <button
+            aria-label={t("preview.next")}
+            className="preview-nav is-next preview-chrome-fade"
+            disabled={!onNext}
+            onClick={onNext}
+            type="button"
+          >
+            <Icon name="chevron-right" size={28} />
+          </button>
+          <button
+            aria-label={t("preview.closeViewer")}
+            className="preview-close-chip preview-chrome-fade"
+            onClick={onClose}
+            type="button"
+          >
+            <Icon name="close" size={18} />
+          </button>
         </div>
       </div>
     </section>
