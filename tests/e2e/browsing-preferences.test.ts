@@ -472,30 +472,34 @@ test("maintains consistent preferences, accessible names, zoom behavior, and avo
     }
     await expect(sizeSlider).toHaveValue("320");
 
-    // Actual card width assertions at all three reference points. Measure the
-    // rendered card itself rather than inferring layout from a CSS declaration.
+    // Justified tile rows: the size slider drives target row height (preview
+    // band), not a fixed card width. Assert preview heights track the slider
+    // and that the first row still fills the container width.
     const gridButton = window.getByRole("button", { name: "平铺视图" });
     await gridButton.click();
     await expect(gridButton).toHaveAttribute("aria-pressed", "true");
 
-    async function measureCardWidth(size: 96 | 160 | 320): Promise<number> {
+    async function measurePreviewHeight(size: 96 | 160 | 320): Promise<number> {
       await sizeSlider.fill(String(size));
       await expect(sizeSlider).toHaveValue(String(size));
+      const preview = cardById.locator(".asset-preview");
       await expect
-        .poll(async () => (await cardById.boundingBox())?.width ?? 0)
+        .poll(async () => (await preview.boundingBox())?.height ?? 0)
         .toBeGreaterThan(0);
-      return (await cardById.boundingBox())!.width;
+      return (await preview.boundingBox())!.height;
     }
 
-    const gridWidths = [];
+    const gridHeights = [];
     for (const size of [96, 160, 320] as const) {
-      const width = await measureCardWidth(size);
-      expect(width).toBeGreaterThanOrEqual(size - 1);
-      expect(width).toBeLessThan(size * 2 + 12);
-      gridWidths.push(width);
+      const height = await measurePreviewHeight(size);
+      // Scale can grow above the target when a short row stretches; keep a
+      // loose upper bound while requiring monotonic growth with the slider.
+      expect(height).toBeGreaterThanOrEqual(size * 0.5);
+      expect(height).toBeLessThan(size * 3);
+      gridHeights.push(height);
     }
-    expect(gridWidths[0]).toBeLessThan(gridWidths[1]!);
-    expect(gridWidths[1]).toBeLessThan(gridWidths[2]!);
+    expect(gridHeights[0]).toBeLessThan(gridHeights[1]!);
+    expect(gridHeights[1]).toBeLessThan(gridHeights[2]!);
 
     // A full first row must consume the available grid width at narrow,
     // typical, and wide window sizes. This catches the old fixed-width
@@ -547,6 +551,15 @@ test("maintains consistent preferences, accessible names, zoom behavior, and avo
     // windows have room for at least three columns; the first three imported
     // assets must seed those columns from left to right instead of forming a
     // single vertical stack at the left edge.
+    async function measureCardWidth(size: 96 | 160 | 320): Promise<number> {
+      await sizeSlider.fill(String(size));
+      await expect(sizeSlider).toHaveValue(String(size));
+      await expect
+        .poll(async () => (await cardById.boundingBox())?.width ?? 0)
+        .toBeGreaterThan(0);
+      return (await cardById.boundingBox())!.width;
+    }
+
     for (const viewportWidth of [1054, 1440]) {
       await window.setViewportSize({ width: viewportWidth, height: 720 });
       const masonryWidths = [];

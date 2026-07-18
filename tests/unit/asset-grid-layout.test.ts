@@ -5,25 +5,15 @@ import {
   assetGridLayoutStyle,
   countFittingColumns,
   distributeMasonryItems,
+  layoutJustifiedRows,
   leftoverWidthPx,
 } from "../../src/renderer/asset-grid-layout";
 
 describe("assetGridLayoutStyle", () => {
-  it("lets grid tracks absorb leftover width", () => {
-    expect(assetGridLayoutStyle("grid", 96)).toEqual({
-      gridTemplateColumns: "repeat(auto-fill, minmax(96px, 1fr))",
-    });
-    expect(assetGridLayoutStyle("grid", 160)).toEqual({
-      gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))",
-    });
-    expect(assetGridLayoutStyle("grid", 320)).toEqual({
-      gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))",
-    });
-  });
-
-  it("leaves masonry sizing to the explicit distributed-column renderer", () => {
+  it("defers both modes to explicit layout renderers", () => {
+    expect(assetGridLayoutStyle("grid", 96)).toEqual({});
+    expect(assetGridLayoutStyle("grid", 160)).toEqual({});
     expect(assetGridLayoutStyle("masonry", 96)).toEqual({});
-    expect(assetGridLayoutStyle("masonry", 160)).toEqual({});
     expect(assetGridLayoutStyle("masonry", 320)).toEqual({});
   });
 });
@@ -105,5 +95,56 @@ describe("distributed masonry", () => {
     expect(
       distributeMasonryItems(["a"], Number.POSITIVE_INFINITY, () => 20),
     ).toHaveLength(1);
+  });
+});
+
+describe("layoutJustifiedRows", () => {
+  it("keeps equal height within a row and fills the container width", () => {
+    const rows = layoutJustifiedRows(
+      [
+        { id: "a", aspectRatio: 16 / 9 },
+        { id: "b", aspectRatio: 1 },
+        { id: "c", aspectRatio: 9 / 16 },
+      ],
+      900,
+      120,
+      14,
+    );
+    expect(rows).toHaveLength(1);
+    const row = rows[0]!;
+    const widths = row.items.map((item) => item.width);
+    const gaps = 14 * (row.items.length - 1);
+    expect(widths.reduce((sum, w) => sum + w, 0) + gaps).toBeCloseTo(900, 0);
+    expect(new Set(row.items.map((item) => item.height)).size).toBe(1);
+  });
+
+  it("splits into multiple rows when items overflow the target height packing", () => {
+    const rows = layoutJustifiedRows(
+      [
+        { id: "a", aspectRatio: 2 },
+        { id: "b", aspectRatio: 2 },
+        { id: "c", aspectRatio: 2 },
+        { id: "d", aspectRatio: 2 },
+      ],
+      400,
+      100,
+      10,
+    );
+    expect(rows.length).toBeGreaterThan(1);
+    for (const row of rows) {
+      expect(new Set(row.items.map((item) => item.height)).size).toBe(1);
+    }
+  });
+
+  it("does not stretch a sparse last row across the full width", () => {
+    const rows = layoutJustifiedRows(
+      [{ id: "solo", aspectRatio: 1 }],
+      800,
+      100,
+      14,
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.height).toBe(100);
+    expect(rows[0]!.items[0]!.width).toBe(100);
   });
 });

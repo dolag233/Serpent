@@ -136,6 +136,7 @@ import {
   countFittingColumns,
   distributeMasonryItems,
 } from "./asset-grid-layout";
+import { JustifiedAssetRows } from "./justified-asset-rows";
 import { createCommandRegistry } from "./commands/command-registry";
 import { assetCommandDefinitions } from "./commands/asset-commands";
 import {
@@ -5758,8 +5759,18 @@ function AppInner() {
                         canvasPrefs.fields.size ||
                         canvasPrefs.fields.date ||
                         searchSnippets.has(asset.assetId) ||
-                        (asset.deletedAt && asset.trashedFromPath)) && (
+                        (asset.deletedAt && asset.trashedFromPath) ||
+                        (assetViewMode === "grid" &&
+                          asset.width != null &&
+                          asset.height != null)) && (
                         <div className="asset-caption">
+                          {assetViewMode === "grid" &&
+                            asset.width != null &&
+                            asset.height != null && (
+                              <span className="asset-dimensions">
+                                {asset.width} × {asset.height}
+                              </span>
+                            )}
                           {canvasPrefs.fields.name && (
                             <>
                               <strong title={asset.displayName}>
@@ -5814,7 +5825,15 @@ function AppInner() {
                       >
                         {cards}
                       </MasonryColumns>
-                    ) : cards;
+                    ) : (
+                      <JustifiedAssetRows
+                        assets={visibleAssets}
+                        cardSize={assetCardSize}
+                        showCaptionBand
+                      >
+                        {cards}
+                      </JustifiedAssetRows>
+                    );
                   })()}
                   <div
                     className="asset-loading-more"

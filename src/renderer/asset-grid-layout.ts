@@ -17,11 +17,11 @@ export function assetGridLayoutStyle(
   viewMode: AssetViewMode,
   cardSize: number,
 ): AssetGridLayoutStyle {
-  const size = Math.round(cardSize);
-  if (viewMode === "masonry") return {};
-  return {
-    gridTemplateColumns: `repeat(auto-fill, minmax(${size}px, 1fr))`,
-  };
+  // Grid mode uses justified rows (JustifiedAssetRows); masonry uses
+  // explicit columns. Neither relies on CSS auto-fill tracks anymore.
+  void cardSize;
+  void viewMode;
+  return {};
 }
 
 export function countFittingColumns(
@@ -96,4 +96,99 @@ export function distributeMasonryItems<T>(
   });
 
   return columns;
+}
+
+export type JustifiedLayoutItem = {
+  id: string;
+  /** width / height; missing metadata uses 1. */
+  aspectRatio: number;
+};
+
+export type JustifiedPlacement = {
+  id: string;
+  width: number;
+  height: number;
+};
+
+export type JustifiedRow = {
+  height: number;
+  items: JustifiedPlacement[];
+};
+
+const DEFAULT_ASPECT = 1;
+/** Single leftover card: do not stretch to full width (looks like a banner). */
+const LAST_ROW_MAX_STRETCH = 1.18;
+
+export function aspectRatioForAsset(width: number | null, height: number | null): number {
+  if (
+    typeof width === "number" &&
+    typeof height === "number" &&
+    width > 0 &&
+    height > 0
+  ) {
+    return width / height;
+  }
+  return DEFAULT_ASPECT;
+}
+
+/**
+ * Justified contact-sheet rows: equal height within a row, preserve aspect
+ * ratios, fill the container width (REQ-CANVAS-004 / Serpent-8nj).
+ */
+export function layoutJustifiedRows(
+  items: readonly JustifiedLayoutItem[],
+  containerWidthPx: number,
+  targetRowHeightPx: number,
+  gapPx: number = ASSET_GRID_GAP_PX,
+): JustifiedRow[] {
+  const width = Math.max(0, containerWidthPx);
+  const targetH = Math.max(1, Math.round(targetRowHeightPx));
+  if (width <= 0 || items.length === 0) return [];
+
+  const rows: JustifiedRow[] = [];
+  let pending: JustifiedLayoutItem[] = [];
+  let aspectSum = 0;
+
+  const flush = (isLast: boolean) => {
+    if (pending.length === 0) return;
+    const gaps = Math.max(0, pending.length - 1) * gapPx;
+    const usable = Math.max(1, width - gaps);
+    const naturalWidth = aspectSum * targetH;
+    let scale = usable / naturalWidth;
+    // Only withhold stretch for a lone leftover card; multi-item last rows
+    // still fill the row like the contact-sheet reference.
+    if (isLast && pending.length === 1 && scale > LAST_ROW_MAX_STRETCH) {
+      scale = 1;
+    }
+    const height = Math.max(1, targetH * scale);
+    rows.push({
+      height,
+      items: pending.map((item) => ({
+        id: item.id,
+        width: item.aspectRatio * height,
+        height,
+      })),
+    });
+    pending = [];
+    aspectSum = 0;
+  };
+
+  for (const item of items) {
+    const aspect =
+      Number.isFinite(item.aspectRatio) && item.aspectRatio > 0
+        ? item.aspectRatio
+        : DEFAULT_ASPECT;
+    const next = { id: item.id, aspectRatio: aspect };
+    const nextAspectSum = aspectSum + aspect;
+    const nextGaps = pending.length * gapPx;
+    const nextNatural = nextAspectSum * targetH + nextGaps;
+
+    if (pending.length > 0 && nextNatural > width) {
+      flush(false);
+    }
+    pending.push(next);
+    aspectSum += aspect;
+  }
+  flush(true);
+  return rows;
 }
