@@ -226,6 +226,7 @@ export const zhCN = {
   command: {
     asset: {
       openExternal: "使用外部应用打开",
+      view: "查看",
       openExternalAlt: "用系统默认应用打开",
       revealInFolder: "在 Finder 中显示",
       revealInFolderWindows: "在文件资源管理器中显示",
@@ -244,7 +245,6 @@ export const zhCN = {
       removeFromCollection: "从当前合集移除",
       addTags: "添加标签…",
       removeTags: "移除标签…",
-      view: "查看",
       addTag: "添加标签",
       removeTag: "移除标签"
     },

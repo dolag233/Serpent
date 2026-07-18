@@ -6347,6 +6347,10 @@ function AppInner() {
         onCopyToLinked={(folder, assetIds) => { void copyManagedSelectionToLinked(folder, assetIds); }}
         onClearSelection={clearAssetSelection}
         onOpenExternal={(assetId) => { void handleOpenExternal(assetId); }}
+        onViewAsset={(assetId) => {
+          const asset = visibleAssets.find((item) => item.assetId === assetId);
+          if (asset) openAssetPreview(asset);
+        }}
         onRevealInFolder={(assetId) => { void handleRevealInFolder(assetId); }}
         onCopyFilePath={(assetId) => { void handleCopyFilePath(assetId); }}
         onRenameAssetFile={(assetId) => { openAssetRename(assetId); }}

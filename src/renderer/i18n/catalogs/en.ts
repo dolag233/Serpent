@@ -235,6 +235,7 @@ export const en = {
   command: {
     asset: {
       openExternal: "Open with default app",
+      view: "View",
       openExternalAlt: "Open with system default app",
       revealInFolder: "Reveal in Finder",
       revealInFolderWindows: "Reveal in File Explorer",
@@ -253,7 +254,6 @@ export const en = {
       removeFromCollection: "Remove from current collection",
       addTags: "Add tags…",
       removeTags: "Remove tags…",
-      view: "View",
       addTag: "Add tag",
       removeTag: "Remove tag"
     },

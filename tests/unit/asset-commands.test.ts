@@ -25,6 +25,7 @@ function makeActions(calls: RecordedCall[]): AssetCommandActions {
       calls.push({ action, args });
     };
   return {
+    view: record('view'),
     openExternal: record('openExternal'),
     revealInFolder: record('revealInFolder'),
     copyFilePath: record('copyFilePath'),
@@ -81,6 +82,7 @@ describe('可见性（与历史内联 JSX 条件一致）', () => {
   it('managed + available：常规项全部可见，relink / delete-linked / 回收站项隐藏', () => {
     const { ctx } = makeCtx();
     expect(resolveIds(ctx)).toEqual([
+      'asset.view',
       'asset.open-external',
       'asset.reveal-in-folder',
       'asset.move-to-folder',
@@ -94,6 +96,7 @@ describe('可见性（与历史内联 JSX 条件一致）', () => {
   it('managed + unavailable：relink 可见，move-to-folder 隐藏，其余常规项保留', () => {
     const { ctx } = makeCtx({ assetAvailable: false });
     expect(resolveIds(ctx)).toEqual([
+      'asset.view',
       'asset.open-external',
       'asset.reveal-in-folder',
       'asset.relink',
@@ -107,6 +110,7 @@ describe('可见性（与历史内联 JSX 条件一致）', () => {
   it('linked + available：delete-linked 可见，move-to-folder / move-to-trash / relink 隐藏', () => {
     const { ctx } = makeCtx({ locationKind: 'linked' });
     expect(resolveIds(ctx)).toEqual([
+      'asset.view',
       'asset.open-external',
       'asset.reveal-in-folder',
       'asset.copy-file-path',
@@ -119,6 +123,7 @@ describe('可见性（与历史内联 JSX 条件一致）', () => {
   it('linked + unavailable：delete-linked 仍可见，relink / move-to-folder 隐藏', () => {
     const { ctx } = makeCtx({ locationKind: 'linked', assetAvailable: false });
     expect(resolveIds(ctx)).toEqual([
+      'asset.view',
       'asset.open-external',
       'asset.reveal-in-folder',
       'asset.copy-file-path',
@@ -142,6 +147,7 @@ describe('可见性（与历史内联 JSX 条件一致）', () => {
   it('activeCollectionId 控制 remove-from-current-collection，且排在组织组首位', () => {
     const withCollection = makeCtx({ activeCollectionId: 'col-1' });
     expect(resolveIds(withCollection.ctx)).toEqual([
+      'asset.view',
       'asset.open-external',
       'asset.reveal-in-folder',
       'asset.remove-from-current-collection',
@@ -258,6 +264,7 @@ describe('标题与快捷键标签', () => {
   it.each([
     ['asset.restore', '恢复'],
     ['asset.delete-permanent', '永久删除'],
+    ['asset.view', '查看'],
     ['asset.open-external', '使用外部应用打开'],
     ['asset.remove-from-current-collection', '从当前合集移除'],
     ['asset.relink', '找回资产…'],
@@ -292,6 +299,7 @@ describe('标题与快捷键标签', () => {
 
   it('快捷键标签按平台解析，未声明快捷键的项为 null', () => {
     const mac = registry.resolveMenu(makeCtx({ platform: 'mac' }).ctx);
+    expect(findItem(mac, 'asset.view').shortcutLabel).toBe('↵');
     expect(findItem(mac, 'asset.open-external').shortcutLabel).toBe('⌘O');
     expect(findItem(mac, 'asset.move-to-trash').shortcutLabel).toBe('⌘⌫');
     expect(findItem(mac, 'asset.copy-file-path').shortcutLabel).toBeNull();
@@ -310,6 +318,7 @@ describe('标题与快捷键标签', () => {
 
 describe('run 委托到 actions 回调包', () => {
   it.each([
+    ['asset.view', {}, 'view', ['asset-1']],
     ['asset.open-external', {}, 'openExternal', ['asset-1']],
     ['asset.reveal-in-folder', {}, 'revealInFolder', ['asset-1']],
     ['asset.copy-file-path', {}, 'copyFilePath', ['asset-1']],
@@ -388,6 +397,7 @@ describe('注册表完整性', () => {
     expect(registry.list().map((def) => def.id)).toEqual([
       'asset.restore',
       'asset.delete-permanent',
+      'asset.view',
       'asset.open-external',
       'asset.reveal-in-folder',
       'asset.remove-from-current-collection',
@@ -405,6 +415,7 @@ describe('注册表完整性', () => {
     const { ctx } = makeCtx({ activeCollectionId: 'col-1' });
     const groups = registry.resolveMenu(ctx).map((item) => item.group);
     expect(groups).toEqual([
+      'open',
       'open',
       'open',
       'organize',

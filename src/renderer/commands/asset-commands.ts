@@ -15,6 +15,7 @@ import type { CommandContext, CommandDefinition } from './command-types';
  * 注册表的 run 只负责按 primaryAssetId 转调，不内联任何 App 处理器。
  */
 export interface AssetCommandActions {
+  readonly view: (assetId: string) => void;
   readonly openExternal: (assetId: string) => void;
   readonly revealInFolder: (assetId: string) => void;
   readonly copyFilePath: (assetId: string) => void;
@@ -91,6 +92,18 @@ export const assetCommandDefinitions: readonly AssetCommandDefinition[] = [
       withPrimaryAsset(ctx, (id) => ctx.actions.deletePermanent([id])),
   },
   // ---- 打开 ----
+  {
+    id: 'asset.view',
+    title: (ctx) => t(ctx, 'command.asset.view'),
+    group: 'open',
+    shortcut: {
+      mac: { label: '↵', key: 'Enter' },
+      windows: { label: 'Enter', key: 'Enter' },
+    },
+    visible: (ctx) => !ctx.assetDeleted,
+    disabledReason: unavailableReason,
+    run: (ctx) => withPrimaryAsset(ctx, (id) => ctx.actions.view(id)),
+  },
   {
     id: 'asset.open-external',
     title: (ctx) => t(ctx, 'command.asset.openExternal'),

@@ -98,6 +98,7 @@ interface AssetContextMenuProps {
   onCopyToLinked: (folder: LinkedFolderSummary, assetIds: string[]) => void;
   onClearSelection: () => void;
   onOpenExternal: (assetId: string) => void;
+  onViewAsset: (assetId: string) => void;
   onRevealInFolder: (assetId: string) => void;
   onCopyFilePath: (assetId: string) => void;
   onRenameAssetFile: (assetId: string) => void;
@@ -141,6 +142,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
     onCopyToLinked,
     onClearSelection,
     onOpenExternal,
+    onViewAsset,
     onRevealInFolder,
     onCopyFilePath,
     onRenameAssetFile,
@@ -777,6 +779,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
               aiCanAnalyze: canAnalyze,
               assetDisplayName: displayName,
               actions: {
+                view: onViewAsset,
                 openExternal: onOpenExternal,
                 revealInFolder: onRevealInFolder,
                 copyFilePath: onCopyFilePath,
@@ -806,6 +809,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
               "asset.delete-permanent",
             );
             const openExternalItem = resolvedById.get("asset.open-external");
+            const viewItem = resolvedById.get("asset.view");
             const revealInFolderItem = resolvedById.get(
               "asset.reveal-in-folder",
             );
@@ -852,6 +856,16 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                   </div>
                 )}
                 <ContextMenuSection label={t("command.group.open")}>
+                  {viewItem && (
+                    <ContextMenuItem
+                      icon={<Icon name="file" size={14} />}
+                      label={viewItem.label}
+                      shortcut={viewItem.shortcutLabel ?? undefined}
+                      disabled={viewItem.disabled}
+                      disabledReason={viewItem.disabledReason ?? undefined}
+                      onAction={() => runAssetCommand("asset.view")}
+                    />
+                  )}
                   {openExternalItem && (
                     <ContextMenuItem
                       icon={<Icon name="upload" size={14} />}

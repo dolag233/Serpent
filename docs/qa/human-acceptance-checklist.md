@@ -173,6 +173,7 @@
 | VIEWER-005 | 打开即最长边适应；缩放滑块与 Fit | 人类验收通过 | 双击横图与竖图；拖动底部缩放滑块；点 Fit 图标 | 打开时整图可见（最长边贴窗）；底部为小条+滑块+Fit/全屏图标；无加减号 | [fit 单测](../../tests/unit/viewer-fit.test.ts) / [开发日志](../development/2026-07-18-viewer-browse-affiliate-development-log.md) / 工单 Serpent-3w8 / 基线 `34442b0` | 2026-07-18 用户验收通过。 |
 | VIEWER-006 | 查看页控件可读、闲置渐隐、主题底色 | 人类验收通过 | 亮色主题下双击打开查看；停住鼠标约 2 秒；再移动；核对左右为 `<>` 形 chevron | 底色为亮色（非纯黑）；静止后控件渐隐，移动后恢复；`<>`/`x` 无底板、无阴影，hover 提亮；无焦点黄边 | [闲置单测](../../tests/unit/use-viewer-chrome-idle.test.ts) / [开发日志](../development/2026-07-18-viewer-browse-affiliate-development-log.md) / 基线 `34442b0` | 2026-07-18 用户验收通过。 |
 | VIEWER-007 | 查看页回正、拖拽平移与触控板手势 | 人类验收通过 | 放大后拖拽/两指平移至边缘应停住；Fit 态两指左右切图，放大后两指左右改为平移；捏合缩放；空格或 F 回正；切图后回正；查看时工作区标题栏隐藏 | Fit 为最长边 contain；平移有边界；Fit/全屏为图标；手势逻辑见左列；浏览 toolbar 在查看时隐藏 | [viewer-fit 单测](../../tests/unit/viewer-fit.test.ts) / [ZoomableImage](../../src/renderer/zoomable-preview-image.tsx) / 基线 `34442b0` | 2026-07-18 用户验收通过（手势逻辑按确认保留）。 |
+| VIEWER-008 | 双击与右键「查看」均可进入查看页 | 待人类验收 | 双击任一可用图片；再右键另一张选「查看」 | 两种入口均打开浏览附属查看页；右键「查看」在「打开」分组顶部，显示 Enter 快捷键提示 | [开发日志](../development/2026-07-18-viewer-discoverable-entry-development-log.md) / [命令单测](../../tests/unit/asset-commands.test.ts) / 工单 Serpent-tid | 2026-07-18 补右键「查看」命令（双击此前已可用）。 |
 
 ### G. 回收站与重新定位
 
