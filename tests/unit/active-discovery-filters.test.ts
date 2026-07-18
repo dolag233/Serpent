@@ -6,6 +6,8 @@ import {
 } from "../../src/renderer/active-discovery-filters";
 
 const empty: DiscoveryFilterSnapshot = {
+  colorFilter: "",
+  excludeColorFilter: false,
   formatFilter: "",
   excludeFormatFilter: false,
   tagFilter: "",

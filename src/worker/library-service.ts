@@ -44,6 +44,10 @@ import {
 } from './palette-extractor';
 
 import { smartCollectionQueryDefinitionSchema, type AssetMetadataResult, type AssetSummary, type CollectionSummary, type FilterClause, type LinkedFolderRule, type LinkedFolderSummary, type ManagedFolderSummary, type SearchScope, type SmartCollectionQueryDefinition, type TagSummary } from '../shared/asset-types';
+import {
+  colorFilterSql,
+  parseColorFilterIds,
+} from '../shared/color-filter-presets';
 import type { TagOperationSkip } from '../shared/protocol/responses';
 
 // sharp is an optional N-API dependency (no rebuild needed for Electron).
@@ -8466,6 +8470,21 @@ export class LibraryService {
             : `a.availability IN (${phs})`;
           conditions.push(`(${clause})`);
           params.push(...filter.values);
+          break;
+        }
+        case 'color': {
+          const ids = parseColorFilterIds(filter.values.join(','));
+          const built = colorFilterSql(
+            'palette_meta.dominant_hue',
+            ids,
+            filter.exclude,
+          );
+          if (!built) {
+            conditions.push('1 = 0');
+            break;
+          }
+          conditions.push(built.sql);
+          params.push(...built.params);
           break;
         }
         default:

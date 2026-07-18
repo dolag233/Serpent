@@ -865,6 +865,104 @@ summary:focus-visible {
   font-weight: 560;
 }
 
+.search-control-wrap {
+  position: relative;
+  display: flex;
+  flex: 1 1 240px;
+  min-width: 200px;
+  max-width: 360px;
+  align-items: center;
+}
+
+.search-control-wrap .search-control {
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
+  max-width: none;
+  padding-right: 28px;
+}
+
+.search-clear-btn {
+  position: absolute;
+  right: 4px;
+  display: inline-grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--secondary);
+  cursor: pointer;
+}
+
+.search-clear-btn:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.search-active-chip {
+  display: inline-flex;
+  max-width: 160px;
+  overflow: hidden;
+  padding: 3px 8px;
+  border: 1px solid var(--divider);
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent-soft-fg);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dimension-color-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.dimension-color-swatch {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 999px;
+  cursor: pointer;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ink) 25%, transparent);
+}
+
+.dimension-color-swatch.is-active {
+  border-color: var(--text);
+}
+
+.dimension-folder-option {
+  display: block;
+  width: 100%;
+  padding: 7px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.dimension-folder-option:hover {
+  background: var(--hover);
+}
+
+.dimension-folder-option.is-active {
+  background: var(--accent-soft);
+  color: var(--accent-soft-fg);
+}
+
+.dimension-folder-empty {
+  margin: 0;
+  color: var(--secondary);
+  font-size: 12px;
+}
+
 .search-control {
   display: flex;
   align-items: center;

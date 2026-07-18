@@ -11,6 +11,8 @@ export type ActiveFilterChip = {
 };
 
 export type DiscoveryFilterSnapshot = {
+  colorFilter: string;
+  excludeColorFilter: boolean;
   formatFilter: string;
   excludeFormatFilter: boolean;
   tagFilter: string;
@@ -49,6 +51,18 @@ export function buildActiveFilterChips(
   snapshot: DiscoveryFilterSnapshot,
 ): ActiveFilterChip[] {
   const chips: ActiveFilterChip[] = [];
+
+  const colors = snapshot.colorFilter
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  if (colors.length > 0) {
+    chips.push({
+      id: "color",
+      labelKey: "filter.dimColor",
+      detail: `${snapshot.excludeColorFilter ? "−" : ""}${colors.join(", ")}`,
+    });
+  }
 
   const formats = snapshot.formatFilter
     .split(",")
@@ -153,6 +167,7 @@ export function buildActiveFilterChips(
 }
 
 export type ClearableFilterId =
+  | "color"
   | "format"
   | "tag"
   | "rating"

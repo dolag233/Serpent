@@ -452,6 +452,8 @@ function AppInner() {
   const [searchValue, setSearchValue] = useState("");
   const [formatFilter, setFormatFilter] = useState("");
   const [excludeFormatFilter, setExcludeFormatFilter] = useState(false);
+  const [colorFilter, setColorFilter] = useState("");
+  const [excludeColorFilter, setExcludeColorFilter] = useState(false);
   const [tagFilter, setTagFilter] = useState("");
   const [excludeTagFilter, setExcludeTagFilter] = useState(false);
   const [ratingFilter, setRatingFilter] = useState("");
@@ -1456,6 +1458,8 @@ function AppInner() {
     setAiSearchPlanSummary(null);
     setFormatFilter("");
     setExcludeFormatFilter(false);
+    setColorFilter("");
+    setExcludeColorFilter(false);
     setTagFilter("");
     setExcludeTagFilter(false);
     setRatingFilter("");
@@ -1477,6 +1481,8 @@ function AppInner() {
   function clearDiscoveryFiltersOnly() {
     setFormatFilter("");
     setExcludeFormatFilter(false);
+    setColorFilter("");
+    setExcludeColorFilter(false);
     setTagFilter("");
     setExcludeTagFilter(false);
     setRatingFilter("");
@@ -1496,6 +1502,10 @@ function AppInner() {
     switch (id) {
       case "all":
         clearDiscoveryFiltersOnly();
+        return;
+      case "color":
+        setColorFilter("");
+        setExcludeColorFilter(false);
         return;
       case "format":
         setFormatFilter("");
@@ -2177,6 +2187,16 @@ function AppInner() {
       .split(",")
       .map((value) => value.trim())
       .filter((value) => /^[0-5]$/.test(value));
+    const colors = colorFilter
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean);
+    if (colors.length > 0)
+      filters.push({
+        field: "color",
+        values: colors,
+        exclude: excludeColorFilter,
+      });
     if (formats.length > 0)
       filters.push({
         field: "format",
@@ -2482,6 +2502,7 @@ function AppInner() {
   useEffect(() => {
     const hasDiscoveryInput = Boolean(
       searchValue.trim() ||
+      colorFilter.trim() ||
       formatFilter.trim() ||
       tagFilter.trim() ||
       ratingFilter.trim() ||
@@ -2523,6 +2544,8 @@ function AppInner() {
     showTrash,
     aiSearchEnabled,
     searchValue,
+    colorFilter,
+    excludeColorFilter,
     formatFilter,
     excludeFormatFilter,
     tagFilter,
@@ -5034,27 +5057,49 @@ function AppInner() {
             <Icon name="smart" size={14} />
             {t("toolbar.aiSearch")}
           </button>
-          <input
-            aria-label={t("toolbar.searchLibrary")}
-            className="search-control"
-            disabled={!library}
-            onChange={(event) => {
-              setSearchValue(event.target.value);
-              setActiveAiSearchDefinition(null);
-              setAiSearchPlanSummary(null);
-            }}
-            placeholder={
-              aiSearchEnabled
-                ? t("toolbar.aiSearchPlaceholder")
-                : t("toolbar.searchPlaceholder")
-            }
-            title={
-              aiSearchEnabled
-                ? t("toolbar.aiSearchHint")
-                : t("toolbar.searchHint")
-            }
-            value={searchValue}
-          />
+          <div className="search-control-wrap">
+            <input
+              aria-label={t("toolbar.searchLibrary")}
+              className="search-control"
+              disabled={!library}
+              onChange={(event) => {
+                setSearchValue(event.target.value);
+                setActiveAiSearchDefinition(null);
+                setAiSearchPlanSummary(null);
+              }}
+              placeholder={
+                aiSearchEnabled
+                  ? t("toolbar.aiSearchPlaceholder")
+                  : t("toolbar.searchPlaceholder")
+              }
+              title={
+                aiSearchEnabled
+                  ? t("toolbar.aiSearchHint")
+                  : t("toolbar.searchHint")
+              }
+              value={searchValue}
+            />
+            {searchValue.trim() !== "" && (
+              <button
+                aria-label={t("toolbar.clearSearch")}
+                className="search-clear-btn"
+                disabled={!library}
+                onClick={() => {
+                  setSearchValue("");
+                  setActiveAiSearchDefinition(null);
+                  setAiSearchPlanSummary(null);
+                }}
+                type="button"
+              >
+                <Icon name="close" size={12} />
+              </button>
+            )}
+          </div>
+          {searchValue.trim() !== "" && (
+            <span className="search-active-chip" title={searchValue.trim()}>
+              {t("toolbar.searchingFor", { query: searchValue.trim() })}
+            </span>
+          )}
           <button
             className="compact-action is-accent"
             disabled={
@@ -5414,18 +5459,29 @@ function AppInner() {
           className={`workspace-discovery${previewAsset ? " is-viewing" : ""}`}
         >
           <DimensionFilterBar
+            activeFolderId={
+              assetScope !== "all" && assetScope !== "root" ? assetScope : null
+            }
             availabilityFilter={availabilityFilter}
             aspectRatioRange={aspectRatioRange}
+            colorFilter={colorFilter}
             disabled={!library}
             durationRange={durationRange}
             excludeAvailabilityFilter={excludeAvailabilityFilter}
+            excludeColorFilter={excludeColorFilter}
             excludeFormatFilter={excludeFormatFilter}
             excludeRatingFilter={excludeRatingFilter}
             excludeTagFilter={excludeTagFilter}
             favoriteFilter={favoriteFilter}
+            folders={folders.map((folder) => ({
+              folderId: folder.folderId,
+              name: folder.name,
+            }))}
             formatFilter={formatFilter}
             heightRange={heightRange}
             longEdgeRange={longEdgeRange}
+            onChooseAllAssets={() => void chooseFolder("all")}
+            onChooseFolder={(folderId) => void chooseFolder(folderId)}
             onClearFilter={clearDiscoveryFilter}
             onTagNamesChange={(names) => {
               setTagFilter(names.join(", "));
@@ -5438,8 +5494,10 @@ function AppInner() {
             ratingFilter={ratingFilter}
             setAspectRatioRange={setAspectRatioRange}
             setAvailabilityFilter={setAvailabilityFilter}
+            setColorFilter={setColorFilter}
             setDurationRange={setDurationRange}
             setExcludeAvailabilityFilter={setExcludeAvailabilityFilter}
+            setExcludeColorFilter={setExcludeColorFilter}
             setExcludeFormatFilter={setExcludeFormatFilter}
             setExcludeRatingFilter={setExcludeRatingFilter}
             setExcludeTagFilter={setExcludeTagFilter}
@@ -5454,6 +5512,8 @@ function AppInner() {
             setTagFilter={setTagFilter}
             setWidthRange={setWidthRange}
             snapshot={{
+              colorFilter,
+              excludeColorFilter,
               formatFilter,
               excludeFormatFilter,
               tagFilter,

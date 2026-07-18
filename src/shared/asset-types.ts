@@ -140,7 +140,15 @@ export const sortDefinitionSchema = z.strictObject({
 export type SortDefinition = z.infer<typeof sortDefinitionSchema>;
 
 const categoricalFilterClauseSchema = z.strictObject({
-  field: z.enum(['format', 'tag', 'rating', 'favorite', 'source_url', 'availability']),
+  field: z.enum([
+    'format',
+    'tag',
+    'rating',
+    'favorite',
+    'source_url',
+    'availability',
+    'color',
+  ]),
   values: z.array(boundedSearchValue).max(32),
   exclude: z.boolean(),
 });

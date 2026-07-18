@@ -21,6 +21,11 @@ import {
   type ClearableFilterId,
   type DiscoveryFilterSnapshot,
 } from "./active-discovery-filters";
+import {
+  COLOR_PRESETS,
+  parseColorFilterIds,
+  type ColorPresetId,
+} from "../shared/color-filter-presets";
 import { TechnicalRangeFilter } from "./TechnicalRangeFilter";
 import { SortModeControl, type SortFieldOption } from "./SortModeControl";
 import { useT } from "./i18n";
@@ -28,7 +33,9 @@ import type { TagSummary } from "../shared/asset-types";
 import type { SortDefinition } from "../shared/asset-types";
 
 export type DimensionId =
+  | "color"
   | "tags"
+  | "folders"
   | "shape"
   | "rating"
   | "format"
@@ -36,10 +43,23 @@ export type DimensionId =
 
 type RangeState = { min: string; max: string; exclude: boolean };
 
+export type FolderDimensionOption = {
+  folderId: string;
+  name: string;
+};
+
 export type DimensionFilterBarProps = {
   disabled?: boolean;
   tags: TagSummary[];
+  folders: FolderDimensionOption[];
+  activeFolderId: string | null;
+  onChooseFolder: (folderId: string) => void;
+  onChooseAllAssets: () => void;
   snapshot: DiscoveryFilterSnapshot;
+  colorFilter: string;
+  setColorFilter: (value: string) => void;
+  excludeColorFilter: boolean;
+  setExcludeColorFilter: (value: boolean) => void;
   formatFilter: string;
   setFormatFilter: (value: string) => void;
   excludeFormatFilter: boolean;
@@ -113,7 +133,15 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
   const {
     disabled,
     tags,
+    folders,
+    activeFolderId,
+    onChooseFolder,
+    onChooseAllAssets,
     snapshot,
+    colorFilter,
+    setColorFilter,
+    excludeColorFilter,
+    setExcludeColorFilter,
     formatFilter,
     setFormatFilter,
     excludeFormatFilter,
@@ -199,7 +227,10 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
     setRatingFilter([...next].sort().join(", "));
   };
 
+  const selectedColors = new Set(parseColorFilterIds(colorFilter));
   const tagActive = selectedTagNames.length > 0;
+  const colorActive = selectedColors.size > 0;
+  const folderActive = activeFolderId != null;
   const shapeActive =
     aspectRatioRange.min !== "" || aspectRatioRange.max !== "";
   const ratingActive = selectedRatings.size > 0;
@@ -217,9 +248,56 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
     durationRange.min !== "" ||
     durationRange.max !== "";
 
+  const toggleColor = (id: ColorPresetId) => {
+    const next = new Set(selectedColors);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setColorFilter([...next].join(", "));
+  };
+
   return (
     <div className="dimension-filter-bar" ref={rootRef}>
       <div className="dimension-filter-dims" role="toolbar" aria-label={t("filter.dimensions")}>
+        <div className="dimension-filter-dim">
+          <DimensionButton
+            active={colorActive}
+            disabled={disabled}
+            icon="activity"
+            label={t("filter.dimColor")}
+            onClick={() => toggleDimension("color")}
+            open={openDimension === "color"}
+          />
+          {openDimension === "color" && (
+            <div className="dimension-filter-popover">
+              <div className="dimension-color-row" role="listbox" aria-label={t("filter.dimColor")}>
+                {COLOR_PRESETS.map((preset) => (
+                  <button
+                    aria-label={t(`filter.color.${preset.id}`)}
+                    aria-selected={selectedColors.has(preset.id)}
+                    className={`dimension-color-swatch${selectedColors.has(preset.id) ? " is-active" : ""}`}
+                    disabled={disabled}
+                    key={preset.id}
+                    onClick={() => toggleColor(preset.id)}
+                    style={{ background: preset.swatch }}
+                    type="button"
+                  />
+                ))}
+              </div>
+              <label className="dimension-filter-check">
+                <input
+                  checked={excludeColorFilter}
+                  disabled={disabled || selectedColors.size === 0}
+                  onChange={(event) =>
+                    setExcludeColorFilter(event.target.checked)
+                  }
+                  type="checkbox"
+                />
+                {t("filter.exclude")}
+              </label>
+            </div>
+          )}
+        </div>
+
         <div className="dimension-filter-dim">
           <DimensionButton
             active={tagActive}
@@ -248,6 +326,50 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
                 />
                 {t("filter.exclude")}
               </label>
+            </div>
+          )}
+        </div>
+
+        <div className="dimension-filter-dim">
+          <DimensionButton
+            active={folderActive}
+            disabled={disabled}
+            icon="folder"
+            label={t("filter.dimFolders")}
+            onClick={() => toggleDimension("folders")}
+            open={openDimension === "folders"}
+          />
+          {openDimension === "folders" && (
+            <div className="dimension-filter-popover">
+              <button
+                className={`dimension-folder-option${activeFolderId == null ? " is-active" : ""}`}
+                disabled={disabled}
+                onClick={() => {
+                  onChooseAllAssets();
+                  setOpenDimension(null);
+                }}
+                type="button"
+              >
+                {t("filter.allFoldersScope")}
+              </button>
+              {folders.length === 0 ? (
+                <p className="dimension-folder-empty">{t("filter.noFoldersYet")}</p>
+              ) : (
+                folders.map((folder) => (
+                  <button
+                    className={`dimension-folder-option${activeFolderId === folder.folderId ? " is-active" : ""}`}
+                    disabled={disabled}
+                    key={folder.folderId}
+                    onClick={() => {
+                      onChooseFolder(folder.folderId);
+                      setOpenDimension(null);
+                    }}
+                    type="button"
+                  >
+                    {folder.name}
+                  </button>
+                ))
+              )}
             </div>
           )}
         </div>
@@ -556,6 +678,8 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
 
 function labelForActiveChip(id: string, t: ReturnType<typeof useT>): string {
   switch (id) {
+    case "color":
+      return t("filter.dimColor");
     case "format":
       return t("filter.formatField");
     case "tag":
