@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildInspectorMultiEdit,
+  fitInspectorStackFrame,
   intersectAssetTags,
   isEditableScalar,
   pickInspectorStackAssets,
@@ -192,5 +193,25 @@ describe("pickInspectorStackAssets", () => {
   it("returns only the primary when nothing else is selected", () => {
     const primary = { assetId: "a" };
     expect(pickInspectorStackAssets(primary, [primary], 3)).toEqual([primary]);
+  });
+});
+
+describe("fitInspectorStackFrame", () => {
+  it("preserves aspect ratio within the max box", () => {
+    expect(fitInspectorStackFrame(400, 800, 200, 300)).toEqual({
+      width: 150,
+      height: 300,
+    });
+    expect(fitInspectorStackFrame(800, 400, 200, 300)).toEqual({
+      width: 200,
+      height: 100,
+    });
+  });
+
+  it("does not upscale above natural size", () => {
+    expect(fitInspectorStackFrame(80, 60, 200, 300)).toEqual({
+      width: 80,
+      height: 60,
+    });
   });
 });

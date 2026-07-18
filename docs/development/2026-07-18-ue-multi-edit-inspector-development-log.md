@@ -34,8 +34,8 @@
 
 ## 多选英雄区（2026-07-18 续）
 
-- 预览：主选在上、最多 3 张缩略图错位叠放（`pickInspectorStackAssets`）。
-- 标题：`{name} 等{count}个文件`（`inspector.multiSelectionTitle`，count=选中总数）。
+- 预览：主选在上、最多 3 张缩略图；**同主选框尺寸 cover 裁剪**，仅轻微平移错开（避免盖住标题）。
+- 标题：`{name} 等{count}个文件`（`inspector.multiSelectionTitle`，count=选中总数）；堆叠容器按主选解码尺寸撑高，标题在文档流下方。
 - 多选时隐藏单资产尺寸摘要行与丢失/回收站状态条（避免以主资产冒充整体）。
 
 ## 人类验收

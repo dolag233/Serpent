@@ -13,6 +13,7 @@ import { iconActionAttrs } from "./icon-action-attrs";
 import { formatDuration } from "./App";
 import { resolveInspectorPreviewSrc } from "./inspector-preview";
 import {
+  fitInspectorStackFrame,
   isEditableScalar,
   pickInspectorStackAssets,
   type InspectorMultiEditModel,
@@ -158,45 +159,124 @@ function InspectorHeroSinglePreview({
 function InspectorHeroStackLayer({
   asset,
   library,
-  layerIndex,
-  layerCount,
+  depthFromFront,
+  zIndex,
+  onPrimaryDecoded,
 }: {
   asset: AssetSummary;
   library: RendererLibrarySummary | null;
-  layerIndex: number;
-  layerCount: number;
+  depthFromFront: number;
+  zIndex: number;
+  onPrimaryDecoded?: (size: { width: number; height: number }) => void;
 }) {
   const previewSrc = resolveInspectorPreviewSrc(asset, library);
   const [decoded, setDecoded] = useState(false);
-  const depthFromFront = layerCount - 1 - layerIndex;
 
   return (
     <div
       aria-hidden={depthFromFront > 0 || undefined}
       className="inspector-hero-stack-layer"
       data-depth={depthFromFront}
-      style={{ zIndex: layerIndex + 1 }}
+      style={{ zIndex }}
     >
       {previewSrc ? (
-        <div className="inspector-hero-preview">
-          {!decoded && <Icon name="file" size={20} />}
-          <img
-            alt=""
-            className={
-              decoded ? "inspector-hero-image" : "inspector-hero-image is-loading"
-            }
-            onLoad={(event) => {
-              const image = event.currentTarget;
-              if (image.complete && image.naturalWidth > 0) setDecoded(true);
-            }}
-            src={previewSrc}
-          />
-        </div>
+        <img
+          alt=""
+          className={
+            decoded
+              ? "inspector-hero-stack-image"
+              : "inspector-hero-stack-image is-loading"
+          }
+          onLoad={(event) => {
+            const image = event.currentTarget;
+            if (!(image.complete && image.naturalWidth > 0)) return;
+            setDecoded(true);
+            onPrimaryDecoded?.({
+              width: image.naturalWidth,
+              height: image.naturalHeight,
+            });
+          }}
+          src={previewSrc}
+        />
       ) : (
-        <div className="inspector-hero-preview inspector-hero-preview-fallback">
+        <div className="inspector-hero-stack-fallback">
           <Icon name="file" size={20} />
         </div>
       )}
+    </div>
+  );
+}
+
+function InspectorHeroMultiStack({
+  primary,
+  stackAssets,
+  library,
+  title,
+}: {
+  primary: AssetSummary;
+  stackAssets: readonly AssetSummary[];
+  library: RendererLibrarySummary | null;
+  title: string;
+}) {
+  const stackRef = useRef<HTMLDivElement>(null);
+  const [frame, setFrame] = useState<{ width: number; height: number } | null>(
+    null,
+  );
+  // Back → front so the primary (first in stackAssets) paints on top.
+  const layers = useMemo(() => [...stackAssets].reverse(), [stackAssets]);
+
+  const handlePrimaryDecoded = (natural: {
+    width: number;
+    height: number;
+  }) => {
+    const host = stackRef.current;
+    if (!host) return;
+    const styles = getComputedStyle(host);
+    const padX =
+      (Number.parseFloat(styles.paddingLeft) || 0) +
+      (Number.parseFloat(styles.paddingRight) || 0);
+    const maxWidth = Math.max(48, host.clientWidth - padX);
+    const maxHeight = Math.min(320, Math.round(window.innerHeight * 0.4));
+    setFrame(
+      fitInspectorStackFrame(
+        natural.width,
+        natural.height,
+        maxWidth,
+        maxHeight,
+      ),
+    );
+  };
+
+  return (
+    <div
+      aria-label={title}
+      className="inspector-hero-stack"
+      data-layer-count={layers.length}
+      ref={stackRef}
+    >
+      <div
+        className="inspector-hero-stack-stage"
+        style={
+          frame ? { width: frame.width, height: frame.height } : undefined
+        }
+      >
+        {layers.map((layerAsset, index) => {
+          const depthFromFront = layers.length - 1 - index;
+          const isPrimaryLayer = layerAsset.assetId === primary.assetId;
+          return (
+            <InspectorHeroStackLayer
+              asset={layerAsset}
+              depthFromFront={depthFromFront}
+              key={layerAsset.assetId}
+              library={library}
+              onPrimaryDecoded={
+                isPrimaryLayer ? handlePrimaryDecoded : undefined
+              }
+              zIndex={index + 1}
+            />
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -223,7 +303,6 @@ function InspectorHero({
         : [asset],
     [asset, isMulti, selectedAssets],
   );
-  const layers = useMemo(() => [...stackAssets].reverse(), [stackAssets]);
   const title = isMulti
     ? t("inspector.multiSelectionTitle", {
         name: asset.displayName,
@@ -234,21 +313,15 @@ function InspectorHero({
   return (
     <div className={`inspector-hero-compact${isMulti ? " is-multi" : ""}`}>
       {isMulti ? (
-        <div
-          aria-label={title}
-          className="inspector-hero-stack"
-          data-layer-count={layers.length}
-        >
-          {layers.map((layerAsset, index) => (
-            <InspectorHeroStackLayer
-              asset={layerAsset}
-              key={layerAsset.assetId}
-              layerCount={layers.length}
-              layerIndex={index}
-              library={library}
-            />
-          ))}
-        </div>
+        <InspectorHeroMultiStack
+          key={`${asset.assetId}:${selectionCount}:${stackAssets
+            .map((item) => item.assetId)
+            .join(",")}`}
+          library={library}
+          primary={asset}
+          stackAssets={stackAssets}
+          title={title}
+        />
       ) : (
         <InspectorHeroSinglePreview asset={asset} library={library} />
       )}

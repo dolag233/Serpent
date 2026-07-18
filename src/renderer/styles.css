@@ -2913,54 +2913,67 @@ select.ai-config-input {
   position: relative;
   display: flex;
   width: 100%;
-  min-height: 128px;
-  max-height: min(360px, 45vh);
   align-items: center;
   justify-content: center;
-  padding: 14px 18px 18px;
+  /* Room for slight layer offsets so back cards stay inside the flow box. */
+  padding: 10px 12px 14px;
+  overflow: visible;
 }
 
-.inspector-hero-stack .inspector-hero-stack-layer {
+.inspector-hero-stack-stage {
+  position: relative;
+  width: min(100%, 220px);
+  height: 160px;
+  flex: 0 0 auto;
+}
+
+.inspector-hero-stack-layer {
   position: absolute;
-  inset: 14px 18px 18px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transform-origin: 50% 60%;
-}
-
-.inspector-hero-stack .inspector-hero-stack-layer .inspector-hero-preview {
-  width: 100%;
-  max-height: min(320px, 40vh);
+  inset: 0;
   overflow: hidden;
-  border-radius: 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--canvas) 90%, var(--ink));
   box-shadow:
-    0 1px 2px color-mix(in srgb, var(--ink) 12%, transparent),
-    0 8px 20px color-mix(in srgb, var(--ink) 10%, transparent);
-  background: color-mix(in srgb, var(--canvas) 92%, var(--ink));
+    0 1px 2px color-mix(in srgb, var(--ink) 14%, transparent),
+    0 4px 12px color-mix(in srgb, var(--ink) 12%, transparent);
 }
 
-.inspector-hero-stack .inspector-hero-stack-layer .inspector-hero-image {
-  max-height: min(320px, 40vh);
-  border-radius: 10px;
+.inspector-hero-stack-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
 }
 
-.inspector-hero-stack .inspector-hero-stack-layer[data-depth="1"] {
-  transform: translate(-10px, 6px) rotate(-5deg) scale(0.94);
-  opacity: 0.92;
+.inspector-hero-stack-image.is-loading {
+  opacity: 0;
 }
 
-.inspector-hero-stack .inspector-hero-stack-layer[data-depth="2"] {
-  transform: translate(12px, 10px) rotate(6deg) scale(0.88);
-  opacity: 0.82;
+.inspector-hero-stack-fallback {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  place-items: center;
+  color: var(--tertiary);
 }
 
-.inspector-hero-stack .inspector-hero-stack-layer[data-depth="0"] {
-  transform: translate(0, 0) rotate(0deg) scale(1);
-  opacity: 1;
+/* Slight card-deck offset; no large rotation so title below stays clear. */
+.inspector-hero-stack-layer[data-depth="0"] {
+  transform: translate(0, 0);
+}
+
+.inspector-hero-stack-layer[data-depth="1"] {
+  transform: translate(-6px, 6px);
+}
+
+.inspector-hero-stack-layer[data-depth="2"] {
+  transform: translate(-12px, 12px);
 }
 
 .inspector-hero-compact.is-multi .inspector-hero-title {
+  position: relative;
+  z-index: 1;
   -webkit-line-clamp: 3;
 }
 

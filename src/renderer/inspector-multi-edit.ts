@@ -167,3 +167,29 @@ export function pickInspectorStackAssets<T extends { assetId: string }>(
   const others = selected.filter((asset) => asset.assetId !== primary.assetId);
   return [primary, ...others].slice(0, maxVisible);
 }
+
+/** Fit the primary asset's natural size into the Inspector stack max box. */
+export function fitInspectorStackFrame(
+  naturalWidth: number,
+  naturalHeight: number,
+  maxWidth: number,
+  maxHeight: number,
+): { width: number; height: number } {
+  if (
+    naturalWidth <= 0 ||
+    naturalHeight <= 0 ||
+    maxWidth <= 0 ||
+    maxHeight <= 0
+  ) {
+    return { width: Math.min(160, maxWidth || 160), height: 160 };
+  }
+  const scale = Math.min(
+    maxWidth / naturalWidth,
+    maxHeight / naturalHeight,
+    1,
+  );
+  return {
+    width: Math.max(1, Math.round(naturalWidth * scale)),
+    height: Math.max(1, Math.round(naturalHeight * scale)),
+  };
+}
