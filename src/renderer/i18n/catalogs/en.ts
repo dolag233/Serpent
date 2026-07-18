@@ -349,7 +349,6 @@ export const en = {
     palettePlaceholder: "#C84C4C, #203040 (up to 20 colors)",
     paletteHelp: "Extracted locally from the current revision; manual colors above take priority when set.",
     descriptionPlaceholder: "Add a short note for this asset…",
-    applyToSelection: "Tag and rating actions will apply to {count} assets",
     mixedValues: "Multiple Values",
     noSharedTags: "No shared tags",
     available: "Available",

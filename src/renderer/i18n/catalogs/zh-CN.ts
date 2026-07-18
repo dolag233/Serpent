@@ -340,7 +340,6 @@ export const zhCN = {
     palettePlaceholder: "#C84C4C, #203040（最多 20 色）",
     paletteHelp: "本地算法从当前修订提取；填写上方颜色后将以人工色卡优先。",
     descriptionPlaceholder: "为资产写一句备注…",
-    applyToSelection: "标签与评分操作将应用于 {count} 项资产",
     mixedValues: "多个值",
     noSharedTags: "选中项无共有标签",
     available: "可用",

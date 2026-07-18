@@ -26,6 +26,12 @@
 - `npx vitest run tests/unit/inspector-multi-edit.test.ts tests/unit/inspector-tag-target.test.ts`：18 passed
 - E2E / Computer Use：未执行（本增量以单测 + 类型门禁收口；人类桌面验收覆盖）
 
+## 探索交叉核对（2026-07-18）
+
+只读探索 [Explore Inspector multi-select](6ad7f2c7-0636-435a-8a80-0f04a7cb02ae) 与落地提交 `c1e0c87` 对照：标量聚合、标签交集、去掉 `applyToSelection`、多选元数据加载与批量写回均已覆盖。未采纳项（显式保留）：专用 worker 批量 description/favorite/sourceUrl API（当前按资产循环 `setAssetMetadata` + 冲突跳过）；英雄区仍显示主资产预览。
+
+清单：`MENU-020`/`MENU-021` 步骤与预期已同步为 UE 模型；回归验收以 `SELECT-009`/`SELECT-010` 与更新后的 `MENU-021` 为准。
+
 ## 人类验收
 
-见清单 `SELECT-009` / `SELECT-010`。
+见清单 `SELECT-009` / `SELECT-010` / 更新后的 `MENU-021`。
