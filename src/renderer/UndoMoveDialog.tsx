@@ -1,4 +1,5 @@
 import { Icon } from "./Icons";
+import { iconActionAttrs } from "./icon-action-attrs";
 import { useT } from "./i18n";
 
 export interface UndoMoveDialogProps {
@@ -34,10 +35,10 @@ export function UndoMoveDialog({
             <h2 id="undo-move-dialog-title">{t("dialog.undoMove.title")}</h2>
           </div>
           <button
-            aria-label={t("dialog.undoMove.cancelAria")}
             className="dialog-close"
             onClick={onCancel}
             type="button"
+            {...iconActionAttrs(t("dialog.undoMove.cancelAria"))}
           >
             <Icon name="close" size={16} />
           </button>

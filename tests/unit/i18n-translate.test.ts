@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  DEFAULT_LOCALE,
   DEFAULT_LOCALE_PREFERENCE,
   LOCALE_PREF_KEY,
   createTranslator,

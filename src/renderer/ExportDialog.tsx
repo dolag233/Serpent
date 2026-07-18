@@ -1,6 +1,7 @@
 import { useState } from "react";
 
 import { Icon } from "./Icons";
+import { iconActionAttrs } from "./icon-action-attrs";
 import { useT } from "./i18n";
 
 export interface ExportDialogProps {
@@ -32,10 +33,10 @@ export function ExportDialog({
             <h2>{t("toolbar.exportLibrary")}</h2>
           </div>
           <button
-            aria-label={t("common.cancel")}
             className="dialog-close"
             onClick={onClose}
             type="button"
+            {...iconActionAttrs(t("common.cancel"))}
           >
             <Icon name="close" size={16} />
           </button>

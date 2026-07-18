@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Icon } from "./Icons";
+import { iconActionAttrs } from "./icon-action-attrs";
 import { useT } from "./i18n";
 import type { LinkedFolderRule } from "../shared/asset-types";
 
@@ -32,10 +33,10 @@ export function LinkedRulesDialog({
             <h2>{t("dialog.linkedRules.title", { name })}</h2>
           </div>
           <button
-            aria-label={t("common.cancel")}
             className="dialog-close"
             onClick={onClose}
             type="button"
+            {...iconActionAttrs(t("common.cancel"))}
           >
             <Icon name="close" size={16} />
           </button>
@@ -122,9 +123,6 @@ export function LinkedRulesDialog({
               value={rule.pattern}
             />
             <button
-              aria-label={t("dialog.linkedRules.deleteRule", {
-                index: index + 1,
-              })}
               className="dialog-close"
               onClick={() =>
                 setRules((current) =>
@@ -132,6 +130,11 @@ export function LinkedRulesDialog({
                 )
               }
               type="button"
+              {...iconActionAttrs(
+                t("dialog.linkedRules.deleteRule", {
+                  index: index + 1,
+                }),
+              )}
             >
               <Icon name="close" size={13} />
             </button>

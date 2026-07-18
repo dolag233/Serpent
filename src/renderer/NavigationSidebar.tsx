@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Icon, type IconName } from "./Icons";
+import { IconActionButton } from "./icon-action-button";
 import { linkedFolderNavAffordance } from "./availability-affordance";
 import { useT } from "./i18n";
 import type {
@@ -192,17 +193,22 @@ function InlineFolderEditRow({
 function Section({
   title,
   action,
+  actionLabel,
   secondaryAction,
   secondaryLabel,
   children,
 }: {
   title: string;
   action?: () => void;
+  /** Explicit primary tooltip; defaults to nav.addSection. */
+  actionLabel?: string;
   secondaryAction?: () => void;
   secondaryLabel?: string;
   children: ReactNode;
 }) {
   const t = useT();
+  const primaryLabel = actionLabel ?? t("nav.addSection", { title });
+  const linkLabel = secondaryLabel ?? t("nav.secondaryAction", { title });
   return (
     <section className="nav-section">
       <div className="nav-section-heading">
@@ -210,26 +216,18 @@ function Section({
         {(action || secondaryAction) && (
           <span className="nav-section-actions">
             {action && (
-              <button
-                aria-label={t("nav.addSection", { title })}
-                className="tiny-action"
+              <IconActionButton
+                icon="plus"
+                label={primaryLabel}
                 onClick={action}
-                type="button"
-              >
-                <Icon name="plus" size={13} />
-              </button>
+              />
             )}
             {secondaryAction && (
-              <button
-                aria-label={
-                  secondaryLabel ?? t("nav.secondaryAction", { title })
-                }
-                className="tiny-action"
+              <IconActionButton
+                icon="link"
+                label={linkLabel}
                 onClick={secondaryAction}
-                type="button"
-              >
-                <Icon name="link" size={13} />
-              </button>
+              />
             )}
           </span>
         )}
@@ -747,6 +745,7 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
         <Section
           title={t("nav.folders")}
           action={library ? onAddFolder : undefined}
+          actionLabel={t("nav.addFolder")}
           secondaryAction={library ? onImportFolderAsLinked : undefined}
           secondaryLabel={t("nav.importLinkedFolder")}
         >

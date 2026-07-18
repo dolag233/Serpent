@@ -1,4 +1,5 @@
 import { Icon } from "./Icons";
+import { iconActionAttrs } from "./icon-action-attrs";
 import { useT } from "./i18n";
 
 export interface ConvertLinkedDialogProps {
@@ -27,10 +28,10 @@ export function ConvertLinkedDialog({
             <h2>{t("dialog.convertLinked.title", { name: folderName })}</h2>
           </div>
           <button
-            aria-label={t("dialog.convertLinked.cancelAria")}
             className="dialog-close"
             onClick={onCancel}
             type="button"
+            {...iconActionAttrs(t("dialog.convertLinked.cancelAria"))}
           >
             <Icon name="close" size={16} />
           </button>

@@ -152,11 +152,20 @@ test("library switcher, breadcrumbs, and workspace history", async () => {
     await expect(window.getByText("链接文件夹", { exact: true })).toHaveCount(
       0,
     );
-    await expect(
-      window
-        .locator(".navigation-pane")
-        .getByRole("button", { name: "导入链接文件夹" }),
-    ).toBeVisible();
+    // REQ-SHELL-013: icon-only folder actions expose hover tooltips via title.
+    const addFolderButton = window
+      .locator(".navigation-pane")
+      .getByRole("button", { name: "添加文件夹" });
+    const importLinkedButton = window
+      .locator(".navigation-pane")
+      .getByRole("button", { name: "导入链接文件夹" });
+    await expect(addFolderButton).toBeVisible();
+    await expect(importLinkedButton).toBeVisible();
+    await expect(addFolderButton).toHaveAttribute("title", "添加文件夹");
+    await expect(importLinkedButton).toHaveAttribute(
+      "title",
+      "导入链接文件夹",
+    );
   } finally {
     await application.close();
     rmSync(temporaryRoot, { recursive: true, force: true });

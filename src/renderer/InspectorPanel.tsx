@@ -8,6 +8,8 @@ import {
 } from "react";
 
 import { Icon } from "./Icons";
+import { IconActionButton } from "./icon-action-button";
+import { iconActionAttrs } from "./icon-action-attrs";
 import { formatDuration } from "./App";
 import { resolveInspectorPreviewSrc } from "./inspector-preview";
 import { toOpenableExternalUrl } from "../shared/external-url";
@@ -378,18 +380,16 @@ export function InspectorPanel(props: InspectorPanelProps) {
           <section className="inspector-section inspector-tags-section">
             <div className="inspector-tags-header">
               <span className="inspector-section-label">{t("inspector.tags")}</span>
-              <button
-                className="tiny-action"
-                aria-label={t("inspector.addTag")}
+              <IconActionButton
+                icon="plus"
+                label={t("inspector.addTag")}
                 onClick={() => {
                   setShowTagInput(true);
                   setTagInputValue("");
                   setActiveTagSuggestionIndex(-1);
                 }}
-                type="button"
-              >
-                <Icon name="plus" size={12} />
-              </button>
+                size={12}
+              />
             </div>
             <div className="tag-chips-container">
               {displayedTags.map((tag) => (
@@ -403,10 +403,10 @@ export function InspectorPanel(props: InspectorPanelProps) {
                   <span className="tag-chip-name">{tag.name}</span>
                   {tag.source === "user" && onRemoveTagFromAsset && (
                     <button
-                      aria-label={t("inspector.removeTag")}
                       className="tag-chip-remove"
                       onClick={() => onRemoveTagFromAsset(tag.id)}
                       type="button"
+                      {...iconActionAttrs(t("inspector.removeTag"))}
                     >
                       <Icon name="close" size={9} />
                     </button>
@@ -430,6 +430,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
                       aria-controls="inspector-tag-suggestions"
                       aria-expanded={tagSuggestions.length > 0}
                       aria-label={t("inspector.addTag")}
+                      title={t("inspector.addTag")}
                       autoComplete="off"
                       autoFocus
                       className="tag-add-input"
@@ -520,39 +521,39 @@ export function InspectorPanel(props: InspectorPanelProps) {
                 <div aria-label={t("inspector.rating")} className="inspector-rating" role="group">
                   {[1, 2, 3, 4, 5].map((star) => (
                     <button
-                      aria-label={t("inspector.starAria", { star })}
                       aria-pressed={star <= editRating || undefined}
                       className="rating-star"
                       data-active={star <= editRating || undefined}
                       key={star}
                       onClick={() => handleRatingClick(star)}
                       type="button"
+                      {...iconActionAttrs(t("inspector.starAria", { star }))}
                     >
                       <Icon name="star" size={16} />
                     </button>
                   ))}
                   {editRating > 0 && (
                     <button
-                      aria-label={t("inspector.clearRating")}
                       className="rating-clear"
                       onClick={() => handleRatingClick(0)}
                       type="button"
+                      {...iconActionAttrs(t("inspector.clearRating"))}
                     >
                       {t("common.clear")}
                     </button>
                   )}
                 </div>
                 <button
-                  aria-label={
-                    editFavorite
-                      ? t("inspector.unfavorite")
-                      : t("inspector.markFavorite")
-                  }
                   aria-pressed={editFavorite || undefined}
                   className="favorite-toggle"
                   data-active={editFavorite || undefined}
                   onClick={handleFavoriteToggle}
                   type="button"
+                  {...iconActionAttrs(
+                    editFavorite
+                      ? t("inspector.unfavorite")
+                      : t("inspector.markFavorite"),
+                  )}
                 >
                   <Icon name="heart" size={17} />
                 </button>
@@ -619,6 +620,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
                 )}
                 <input
                   aria-label={t("inspector.manualPalette")}
+                  title={t("inspector.manualPalette")}
                   className="text-field inspector-input inspector-palette-input"
                   maxLength={1024}
                   onBlur={handlePaletteSave}

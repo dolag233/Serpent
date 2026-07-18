@@ -1,4 +1,5 @@
 import { Icon } from "./Icons";
+import { iconActionAttrs } from "./icon-action-attrs";
 import { useT } from "./i18n";
 
 export interface ExtensionPairingDialogProps {
@@ -36,10 +37,10 @@ export function ExtensionPairingDialog({
             </h2>
           </div>
           <button
-            aria-label={t("dialog.extensionPairing.closeAria")}
             className="dialog-close"
             onClick={onClose}
             type="button"
+            {...iconActionAttrs(t("dialog.extensionPairing.closeAria"))}
           >
             <Icon name="close" size={16} />
           </button>

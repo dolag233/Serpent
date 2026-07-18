@@ -111,6 +111,7 @@ export function TagPickerMenu({
       <div className="tag-picker-header">
         <button
           aria-label={t("tagPicker.backAria")}
+          title={t("tagPicker.backAria")}
           className="tag-picker-back"
           onClick={onBack}
           type="button"
@@ -201,6 +202,7 @@ export function TagPickerEntry({ icon, label, onOpen }: TagPickerEntryProps) {
     <button
       aria-haspopup="menu"
       aria-label={label}
+      title={label}
       className="context-menu-item"
       onClick={onOpen}
       onMouseEnter={() => buttonRef.current?.focus()}

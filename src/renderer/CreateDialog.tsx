@@ -1,5 +1,6 @@
 import { type FormEvent } from "react";
 import { Icon } from "./Icons";
+import { iconActionAttrs } from "./icon-action-attrs";
 import { useT } from "./i18n";
 
 export interface CreateDialogProps {
@@ -45,10 +46,10 @@ export function CreateDialog({
             <h2 id="create-dialog-title">{t("dialog.createLibrary.title")}</h2>
           </div>
           <button
-            aria-label={t("common.cancel")}
             className="dialog-close"
             onClick={onCancel}
             type="button"
+            {...iconActionAttrs(t("common.cancel"))}
           >
             <Icon name="close" size={16} />
           </button>

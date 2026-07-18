@@ -12,6 +12,8 @@ import {
 } from "react";
 
 import { Icon, type IconName } from "./Icons";
+import { IconActionButton } from "./icon-action-button";
+import { iconActionAttrs } from "./icon-action-attrs";
 import { shouldShowMissingAssetOverlay } from "./availability-affordance";
 import { ConvertLinkedDialog } from "./ConvertLinkedDialog";
 import { LinkedRulesDialog } from "./LinkedRulesDialog";
@@ -263,13 +265,12 @@ function ToolButton({
 }) {
   return (
     <button
-      aria-label={label}
       aria-pressed={pressed}
       className="tool-button"
       disabled={disabled}
       onClick={onClick}
-      title={label}
       type="button"
+      {...iconActionAttrs(label)}
     >
       <Icon name={icon} />
     </button>
@@ -5557,6 +5558,7 @@ function AppInner() {
                         {shouldShowMissingAssetOverlay(asset.availability) && (
                           <span
                             aria-label={t("inspector.missing")}
+                            title={t("inspector.missing")}
                             className="missing-overlay"
                           >
                             <Icon name="link-off" size={28} />
@@ -5742,16 +5744,15 @@ function AppInner() {
                   {t("action.undoMove")}
                 </button>
               )}
-              <button
-                aria-label={t("common.closeHint")}
+              <IconActionButton
+                omitClassName
+                icon="close"
+                label={t("common.closeHint")}
                 onClick={() => {
                   setError(null);
                   setNotice(null);
                 }}
-                type="button"
-              >
-                <Icon name="close" size={13} />
-              </button>
+              />
             </div>
           )}
         </div>
@@ -5816,22 +5817,22 @@ function AppInner() {
         versionConflict={versionConflict}
       />
       {!leftOpen && (
-        <button
+        <IconActionButton
           className="pane-reveal pane-reveal-left"
+          icon="collapse-left"
+          label={t("shell.expandNav")}
           onClick={() => setLeftOpen(true)}
-          type="button"
-        >
-          <Icon name="collapse-left" size={15} />
-        </button>
+          size={15}
+        />
       )}
       {!rightOpen && (
-        <button
+        <IconActionButton
           className="pane-reveal pane-reveal-right"
+          icon="collapse-right"
+          label={t("shell.expandInspector")}
           onClick={() => setRightOpen(true)}
-          type="button"
-        >
-          <Icon name="collapse-right" size={15} />
-        </button>
+          size={15}
+        />
       )}
       {linkedRulesEditor && (
         <LinkedRulesDialog
@@ -6194,6 +6195,7 @@ function AppInner() {
       {leftOpen && (
         <div
           aria-label={t("shell.resizeNav")}
+          title={t("shell.resizeNav")}
           aria-orientation="vertical"
           className={`panel-resizer${panelResizing === "nav" ? " is-active" : ""}`}
           onDoubleClick={() => resetPanelWidth("nav")}
@@ -6208,6 +6210,7 @@ function AppInner() {
       {rightOpen && (
         <div
           aria-label={t("shell.resizeInspector")}
+          title={t("shell.resizeInspector")}
           aria-orientation="vertical"
           className={`panel-resizer${panelResizing === "inspector" ? " is-active" : ""}`}
           onDoubleClick={() => resetPanelWidth("inspector")}

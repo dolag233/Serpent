@@ -231,6 +231,7 @@ function ZoomableImage({ alt, src }: { alt: string; src: string }) {
       <div className="preview-zoom-controls" aria-label={t("preview.imageZoom")}>
         <button
           aria-label={t("preview.zoomOut")}
+          title={t("preview.zoomOut")}
           onClick={() => zoomAtViewportCenter(view.scale / 1.25)}
           type="button"
         >
@@ -238,6 +239,7 @@ function ZoomableImage({ alt, src }: { alt: string; src: string }) {
         </button>
         <button
           aria-label={t("preview.actualSize")}
+          title={t("preview.actualSize")}
           onClick={() => setView({ scale: 1, x: 0, y: 0 })}
           type="button"
         >
@@ -245,6 +247,7 @@ function ZoomableImage({ alt, src }: { alt: string; src: string }) {
         </button>
         <button
           aria-label={t("preview.zoomIn")}
+          title={t("preview.zoomIn")}
           onClick={() => zoomAtViewportCenter(view.scale * 1.25)}
           type="button"
         >
@@ -585,6 +588,7 @@ export function AssetPreviewModal({
           <div className="preview-toolbar-actions">
             <button
               aria-label={t("preview.previous")}
+              title={t("preview.previous")}
               disabled={!onPrevious}
               onClick={onPrevious}
               type="button"
@@ -593,6 +597,7 @@ export function AssetPreviewModal({
             </button>
             <button
               aria-label={t("preview.next")}
+              title={t("preview.next")}
               disabled={!onNext}
               onClick={onNext}
               type="button"
@@ -608,6 +613,7 @@ export function AssetPreviewModal({
             </button>
             <button
               aria-label={t("preview.closeViewer")}
+              title={t("preview.closeViewer")}
               onClick={onClose}
               type="button"
             >

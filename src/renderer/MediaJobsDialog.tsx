@@ -1,4 +1,5 @@
 import { Icon } from "./Icons";
+import { iconActionAttrs } from "./icon-action-attrs";
 import { useT } from "./i18n";
 import type { MediaJobStatus, AiJobStatus } from "../shared/library-api";
 
@@ -44,10 +45,10 @@ export function MediaJobsDialog({
             <h2 id="media-jobs-title">{t("dialog.mediaJobs.title")}</h2>
           </div>
           <button
-            aria-label={t("dialog.mediaJobs.closeAria")}
             className="dialog-close"
             onClick={onClose}
             type="button"
+            {...iconActionAttrs(t("dialog.mediaJobs.closeAria"))}
           >
             <Icon name="close" size={16} />
           </button>

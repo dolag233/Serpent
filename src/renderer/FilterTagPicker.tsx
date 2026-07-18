@@ -65,6 +65,7 @@ export function FilterTagPicker({
               {name}
               <button
                 aria-label={t("filter.removeTagFilter", { name })}
+                title={t("filter.removeTagFilter", { name })}
                 onClick={() => remove(name)}
                 type="button"
               >
@@ -76,6 +77,7 @@ export function FilterTagPicker({
       )}
       <input
         aria-label={t("filter.tagFilter")}
+        title={t("filter.tagFilter")}
         className="text-field"
         disabled={disabled}
         onChange={(event) => {
