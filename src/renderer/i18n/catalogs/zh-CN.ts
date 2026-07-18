@@ -114,6 +114,7 @@ export const zhCN = {
     expandFolder: "展开 {name}",
     emptyCollections: "尚无合集",
     emptySmartCollections: "尚无智能合集",
+    addSmartCollection: "新建智能合集",
     openLibraryHint: "打开资源库后显示合集",
     openLibraryFoldersHint: "打开资源库后显示目录",
     openLibrarySmartHint: "打开资源库后显示智能合集",
@@ -160,6 +161,7 @@ export const zhCN = {
     mediaJobs: "媒体任务",
     backgroundJobs: "后台任务",
     aiSettings: "AI 设置",
+    appSettings: "设置",
     canvasSettings: "画布显示",
     browserExtension: "浏览器扩展",
     gridView: "平铺视图",
@@ -601,6 +603,11 @@ export const zhCN = {
     disclaimer: "我了解启用 AI 分析会将选中资产的图像或视频联系表上传给所选第三方供应商，并可能产生费用。",
     autoAnalyze: "导入后自动上传并分析支持的资产",
     save: "保存配置"
+  },
+  /** REQ-PREF-001: 浏览区通用设置面板；主题/语言复用 shell.theme 与 shell.language 下的键。 */
+  settings: {
+    title: "通用设置",
+    viewMode: "浏览视图"
   },
   preview: {
     ffmpegRequired: "当前安装缺少 FFmpeg，无法生成视频播放代理。请安装或配置 FFmpeg 后重试。",

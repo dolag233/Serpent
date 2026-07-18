@@ -354,6 +354,8 @@ export interface NavigationSidebarProps {
 
   // --- Folder creation entry (sidebar 「+」; opens the inline edit row) ---
   onAddFolder: () => void;
+  /** REQ-SMART-001: focus discovery-bar smart-collection name field. */
+  onAddSmartCollection: () => void;
 
   // --- Inline folder edit (REQ-FOLDER-007) ---
   inlineFolderEdit: InlineFolderEditState | null;
@@ -434,6 +436,7 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
     onCollectionInputKeyDown,
     onSetCollectionRecursive,
     onAddFolder,
+    onAddSmartCollection,
     inlineFolderEdit,
     onInlineFolderEditChange,
     onInlineFolderEditCommit,
@@ -1007,7 +1010,11 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
             <p className="nav-empty">{t("nav.openLibraryHint")}</p>
           )}
         </Section>
-        <Section title={t("nav.smartCollections")}>
+        <Section
+          action={library ? onAddSmartCollection : undefined}
+          actionLabel={t("nav.addSmartCollection")}
+          title={t("nav.smartCollections")}
+        >
           {library ? (
             smartCollections.length ? (
               smartCollections.map((sc) => (

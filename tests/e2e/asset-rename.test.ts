@@ -12,8 +12,6 @@ const VALID_PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
   "base64",
 );
-// A second, content-distinct valid PNG so the conflict test does not trip the
-// importer's suspected-duplicate detection.
 const VALID_PNG_ALT = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
   "base64",
@@ -52,25 +50,20 @@ async function createLibraryAndImport(window: Page, libraryName: string) {
 
 /**
  * Right-clicks the card whose caption contains fileName and picks 重命名…,
- * returning the open rename dialog.
+ * returning the inline rename input on the card (REQ-MENU-008).
  */
-async function openRenameDialog(window: Page, fileName: string) {
+async function openInlineRename(window: Page, fileName: string) {
   const card = window.locator("[data-asset-id]", { hasText: fileName });
   await expect(card).toBeVisible();
   await card.click({ button: "right" });
   const menu = window.getByRole("menu");
   await expect(menu).toBeVisible({ timeout: 5_000 });
   await menu.getByRole("menuitem", { name: "重命名…" }).click();
-  const dialog = window.getByRole("dialog");
-  await expect(
-    dialog.getByRole("heading", { name: "重命名文件" }),
-  ).toBeVisible({ timeout: 5_000 });
-  return dialog;
+  const input = card.locator(".asset-inline-rename-input");
+  await expect(input).toBeVisible({ timeout: 5_000 });
+  await expect(input).toBeFocused();
+  return { card, input };
 }
-
-// ---------------------------------------------------------------------------
-// Test 1 — Rename from the context menu updates the canvas and the real file
-// ---------------------------------------------------------------------------
 
 test("renames an asset file from the context menu and renames the real file on disk", async () => {
   const temporaryRoot = mkdtempSync(path.join(tmpdir(), "serpent-rename-e2e-"));
@@ -85,18 +78,13 @@ test("renames an asset file from the context menu and renames the real file on d
     const window = await application.firstWindow();
     await createLibraryAndImport(window, libraryName);
 
-    const dialog = await openRenameDialog(window, "hero.png");
-    // The editable field holds the base name, focused and ready; the preserved
-    // extension is static text beside it.
-    const input = dialog.getByLabel("文件名");
+    const { card, input } = await openInlineRename(window, "hero.png");
     await expect(input).toHaveValue("hero");
-    await expect(input).toBeFocused();
-    await expect(dialog.getByText(".png", { exact: true })).toBeVisible();
+    await expect(card.locator(".asset-inline-rename-ext")).toHaveText(".png");
 
     await input.fill("hero-renamed");
-    await dialog.getByRole("button", { name: "重命名", exact: true }).click();
+    await input.press("Enter");
 
-    await expect(dialog).toBeHidden({ timeout: 10_000 });
     const renamedCard = window.locator(
       '[data-asset-id][title="hero-renamed.png"]',
     );
@@ -104,10 +92,8 @@ test("renames an asset file from the context menu and renames the real file on d
     await expect(
       renamedCard.getByText("hero-renamed.png", { exact: true }),
     ).toBeVisible();
-    // The rename keeps the asset selected after the canvas refresh.
     await expect(renamedCard).toHaveAttribute("aria-pressed", "true");
 
-    // The real file inside the library folder was renamed, extension preserved.
     expect(existsSync(path.join(libraryPath, "Assets", "hero-renamed.png"))).toBe(
       true,
     );
@@ -118,11 +104,7 @@ test("renames an asset file from the context menu and renames the real file on d
   }
 });
 
-// ---------------------------------------------------------------------------
-// Test 2 — Name conflict keeps the dialog open; fixing the name retries fine
-// ---------------------------------------------------------------------------
-
-test("keeps the dialog open with an inline conflict error and allows retry after fixing the name", async () => {
+test("keeps the inline rename open with a conflict error and allows retry after fixing the name", async () => {
   const temporaryRoot = mkdtempSync(
     path.join(tmpdir(), "serpent-rename-conflict-"),
   );
@@ -149,32 +131,24 @@ test("keeps the dialog open with an inline conflict error and allows retry after
       window.locator('[data-asset-id][title="beta.png"]'),
     ).toBeVisible({ timeout: 15_000 });
 
-    const dialog = await openRenameDialog(window, "alpha.png");
-    const input = dialog.getByLabel("文件名");
+    const { card, input } = await openInlineRename(window, "alpha.png");
     await input.fill("beta");
-    await dialog.getByRole("button", { name: "重命名", exact: true }).click();
+    await input.press("Enter");
 
-    // Conflict: the typed error is shown inline and the dialog stays open.
-    await expect(dialog.getByRole("alert")).toContainText(
+    await expect(card.locator(".asset-inline-rename-error")).toContainText(
       "同一文件夹内已存在同名文件",
       { timeout: 10_000 },
     );
-    await expect(
-      dialog.getByRole("heading", { name: "重命名文件" }),
-    ).toBeVisible();
     expect(existsSync(path.join(libraryPath, "Assets", "alpha.png"))).toBe(true);
 
-    // Fix the name and retry: succeeds and closes the dialog.
     await input.fill("alpha-renamed");
-    await dialog.getByRole("button", { name: "重命名", exact: true }).click();
-    await expect(dialog).toBeHidden({ timeout: 10_000 });
+    await input.press("Enter");
     await expect(
       window.locator('[data-asset-id][title="alpha-renamed.png"]'),
     ).toBeVisible({ timeout: 10_000 });
     expect(
       existsSync(path.join(libraryPath, "Assets", "alpha-renamed.png")),
     ).toBe(true);
-    // The conflicting sibling file was never touched.
     expect(existsSync(path.join(libraryPath, "Assets", "beta.png"))).toBe(true);
   } finally {
     await application.close();
@@ -182,11 +156,7 @@ test("keeps the dialog open with an inline conflict error and allows retry after
   }
 });
 
-// ---------------------------------------------------------------------------
-// Test 3 — Illegal name shows the invalid-name reason inline; Esc/取消 close
-// ---------------------------------------------------------------------------
-
-test("shows an inline invalid-name error for illegal characters and closes on 取消 / Escape", async () => {
+test("shows an inline invalid-name error for illegal characters and closes on Escape", async () => {
   const temporaryRoot = mkdtempSync(
     path.join(tmpdir(), "serpent-rename-invalid-"),
   );
@@ -201,38 +171,30 @@ test("shows an inline invalid-name error for illegal characters and closes on �
     const window = await application.firstWindow();
     await createLibraryAndImport(window, libraryName);
 
-    const dialog = await openRenameDialog(window, "hero.png");
-    const input = dialog.getByLabel("文件名");
+    const { card, input } = await openInlineRename(window, "hero.png");
     await input.fill("bad/name");
-    await dialog.getByRole("button", { name: "重命名", exact: true }).click();
+    await input.press("Enter");
 
-    // Invalid name: the reason is shown inline and the dialog stays open.
-    await expect(dialog.getByRole("alert")).toContainText(
+    await expect(card.locator(".asset-inline-rename-error")).toContainText(
       "请输入可跨平台安全使用的文件名",
       { timeout: 10_000 },
     );
-    await expect(
-      dialog.getByRole("heading", { name: "重命名文件" }),
-    ).toBeVisible();
 
-    // 取消 closes without renaming anything.
-    await dialog
-      .locator(".dialog-actions")
-      .getByRole("button", { name: "取消" })
-      .click();
-    await expect(dialog).toBeHidden({ timeout: 5_000 });
+    await input.press("Escape");
+    await expect(card.locator(".asset-inline-rename-input")).toHaveCount(0, {
+      timeout: 5_000,
+    });
     await expect(
       window.locator('[data-asset-id][title="hero.png"]'),
     ).toBeVisible();
     expect(existsSync(path.join(libraryPath, "Assets", "hero.png"))).toBe(true);
 
-    // Reopen: Escape closes the dialog too.
-    const dialogAgain = await openRenameDialog(window, "hero.png");
-    await window.keyboard.press("Escape");
-    await expect(dialogAgain).toBeHidden({ timeout: 5_000 });
-    await expect(
-      window.locator('[data-asset-id][title="hero.png"]'),
-    ).toBeVisible();
+    const again = await openInlineRename(window, "hero.png");
+    await again.input.press("Escape");
+    await expect(again.card.locator(".asset-inline-rename-input")).toHaveCount(
+      0,
+      { timeout: 5_000 },
+    );
   } finally {
     await application.close();
     rmSync(temporaryRoot, { recursive: true, force: true });

@@ -72,6 +72,7 @@ import { CreateDialog } from "./CreateDialog";
 import { CollectionEditorDialog } from "./CollectionEditorDialog";
 import { ExtensionPairingDialog } from "./ExtensionPairingDialog";
 import { AiConfigDialog } from "./AiConfigDialog";
+import { AppSettingsDialog } from "./AppSettingsDialog";
 import { MediaJobsDialog } from "./MediaJobsDialog";
 
 import {
@@ -622,6 +623,7 @@ function AppInner() {
     null,
   );
   const [smartCollectionName, setSmartCollectionName] = useState("");
+  const smartCollectionNameInputRef = useRef<HTMLInputElement>(null);
   const { open: openContextMenu, close: closeContextMenu } =
     useContextMenu();
   const hadDiscoveryInput = useRef(false);
@@ -700,6 +702,9 @@ function AppInner() {
     useState<ExportProgressEvent | null>(null);
   const [importProgress, setImportProgress] =
     useState<ImportProgressEvent | null>(null);
+
+  // REQ-PREF-001: browse-area general settings panel (theme/language/canvas).
+  const [appSettingsOpen, setAppSettingsOpen] = useState(false);
 
   // AI analysis state
   const [aiConfigOpen, setAiConfigOpen] = useState(false);
@@ -5604,8 +5609,10 @@ function AppInner() {
             aria-label={t("toolbar.smartCollectionTitle")}
             className="text-field"
             disabled={!library}
+            id="smart-collection-name-input"
             onChange={(event) => setSmartCollectionName(event.target.value)}
             placeholder={t("toolbar.smartCollectionName")}
+            ref={smartCollectionNameInputRef}
             style={{ height: 28, width: 110 }}
             value={smartCollectionName}
           />
@@ -5687,6 +5694,12 @@ function AppInner() {
         onCollectionInputKeyDown={handleCollectionInputKeyDown}
         onSetCollectionRecursive={setCollectionRecursive}
         onAddFolder={() => openInlineFolderCreate(selectedFolderId ?? null)}
+        onAddSmartCollection={() => {
+          const input = smartCollectionNameInputRef.current;
+          input?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+          input?.focus();
+          input?.select();
+        }}
         inlineFolderEdit={inlineFolderEdit}
         onInlineFolderEditChange={changeInlineFolderEdit}
         onInlineFolderEditCommit={(onCreateSuccess) =>
@@ -5815,6 +5828,7 @@ function AppInner() {
                   void loadAiConfig();
                   setAiConfigOpen(true);
                 },
+                openAppSettings: () => setAppSettingsOpen(true),
               }}
               busy={busy}
               canvasPrefs={canvasPrefs}
@@ -6077,15 +6091,21 @@ function AppInner() {
                         searchSnippets.get(asset.assetId),
                         asset.displayName,
                       );
+                      const renamingThisAsset =
+                        assetRenameDialog?.assetId === asset.assetId;
+                      const CardTag = renamingThisAsset ? "div" : "button";
                       return (
-                    <button
+                    <CardTag
                       aria-label={canvasPrefs.fields.name ? undefined : asset.displayName}
                       aria-pressed={selectedIdSet.has(asset.assetId)}
-                      className={`asset-card${selectedIdSet.has(asset.assetId) ? " is-selected" : ""}${asset.availability === "missing" ? " is-missing" : ""}${asset.deletedAt ? " is-trashed" : ""}`}
+                      className={`asset-card${selectedIdSet.has(asset.assetId) ? " is-selected" : ""}${asset.availability === "missing" ? " is-missing" : ""}${asset.deletedAt ? " is-trashed" : ""}${renamingThisAsset ? " is-renaming" : ""}`}
                       data-asset-id={asset.assetId}
                       title={asset.displayName}
-                      draggable={!showTrash}
+                      draggable={!showTrash && !renamingThisAsset}
                       key={asset.assetId}
+                      {...(renamingThisAsset
+                        ? { role: "group" as const }
+                        : { type: "button" as const })}
                       onMouseDown={(e) => {
                         cardMouseDownRef.current = e.button;
                       }}
@@ -6095,8 +6115,12 @@ function AppInner() {
                       onMouseLeave={() => {
                         clearHoveredAssetId(asset.assetId);
                       }}
-                      onClick={(event) => handleCardClick(asset.assetId, event)}
+                      onClick={(event) => {
+                        if (renamingThisAsset) return;
+                        handleCardClick(asset.assetId, event);
+                      }}
                       onDoubleClick={() => {
+                        if (renamingThisAsset) return;
                         openAssetPreview(asset);
                       }}
                       onDragEnd={() => {
@@ -6307,7 +6331,8 @@ function AppInner() {
                           <span className="asset-type-badge">{typeBadge}</span>
                         )}
                       </div>
-                      {(canvasPrefs.fields.name ||
+                      {(renamingThisAsset ||
+                        canvasPrefs.fields.name ||
                         canvasPrefs.fields.size ||
                         canvasPrefs.fields.date ||
                         snippetCaption != null ||
@@ -6318,16 +6343,54 @@ function AppInner() {
                         <div className="asset-caption">
                           {assetViewMode === "grid" &&
                             asset.width != null &&
-                            asset.height != null && (
+                            asset.height != null &&
+                            !renamingThisAsset && (
                               <span className="asset-dimensions">
                                 {asset.width} × {asset.height}
                               </span>
                             )}
-                          {canvasPrefs.fields.name && (
+                          {(canvasPrefs.fields.name || renamingThisAsset) && (
                             <>
-                              <strong title={asset.displayName}>
-                                {asset.displayName}
-                              </strong>
+                              {renamingThisAsset && assetRenameDialog ? (
+                                <span className="asset-inline-rename">
+                                  <input
+                                    aria-label={t("dialog.rename.fileTitle")}
+                                    autoFocus
+                                    className="asset-inline-rename-input"
+                                    disabled={assetRenameDialog.submitting}
+                                    onChange={(event) =>
+                                      changeAssetRenameValue(event.target.value)
+                                    }
+                                    onClick={(event) => event.stopPropagation()}
+                                    onKeyDown={(event) => {
+                                      event.stopPropagation();
+                                      if (event.key === "Enter") {
+                                        event.preventDefault();
+                                        void submitAssetRename();
+                                      } else if (event.key === "Escape") {
+                                        event.preventDefault();
+                                        cancelAssetRename();
+                                      }
+                                    }}
+                                    onMouseDown={(event) => event.stopPropagation()}
+                                    value={assetRenameDialog.value}
+                                  />
+                                  {assetRenameDialog.extension ? (
+                                    <span className="asset-inline-rename-ext">
+                                      {assetRenameDialog.extension}
+                                    </span>
+                                  ) : null}
+                                  {assetRenameDialog.error ? (
+                                    <span className="asset-inline-rename-error">
+                                      {assetRenameDialog.error}
+                                    </span>
+                                  ) : null}
+                                </span>
+                              ) : (
+                                <strong title={asset.displayName}>
+                                  {asset.displayName}
+                                </strong>
+                              )}
                             </>
                           )}
                           {snippetCaption != null ? (
@@ -6361,7 +6424,7 @@ function AppInner() {
                           ) : null}
                         </div>
                       )}
-                    </button>
+                    </CardTag>
                     );
                     });
                     return assetViewMode === "masonry" ? (
@@ -6697,16 +6760,19 @@ function AppInner() {
         }}
         onCancel={() => setRenameTarget(null)}
       />
-      <RenameDialog
-        open={assetRenameDialog !== null}
-        kind="asset"
-        currentName={assetRenameDialog?.value ?? ""}
-        fileExtension={assetRenameDialog?.extension ?? ""}
-        errorMessage={assetRenameDialog?.error ?? null}
-        submitting={assetRenameDialog?.submitting ?? false}
-        onNameChange={changeAssetRenameValue}
-        onSave={() => void submitAssetRename()}
-        onCancel={cancelAssetRename}
+      <AppSettingsDialog
+        canvasPrefs={canvasPrefs}
+        onClose={() => setAppSettingsOpen(false)}
+        onSetViewMode={(mode) => {
+          setCanvasPrefs((p) => ({ ...p, viewMode: mode }));
+        }}
+        onToggleField={(field) => {
+          setCanvasPrefs((p) => ({
+            ...p,
+            fields: { ...p.fields, [field]: !p.fields[field] },
+          }));
+        }}
+        open={appSettingsOpen}
       />
       <CreateDialog
         open={dialog !== null}

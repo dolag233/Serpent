@@ -123,6 +123,7 @@ export const en = {
     expandFolder: "Expand {name}",
     emptyCollections: "No collections yet",
     emptySmartCollections: "No smart collections yet",
+    addSmartCollection: "New smart collection",
     openLibraryHint: "Open a library to see collections",
     openLibraryFoldersHint: "Open a library to see folders",
     openLibrarySmartHint: "Open a library to see smart collections",
@@ -170,6 +171,7 @@ export const en = {
     mediaJobs: "Media jobs",
     backgroundJobs: "Background jobs",
     aiSettings: "AI settings",
+    appSettings: "Settings",
     canvasSettings: "Canvas display",
     browserExtension: "Browser extension",
     gridView: "Grid view",
@@ -611,6 +613,10 @@ export const en = {
     disclaimer: "I understand that enabling AI analysis uploads selected asset images or video contact sheets to the chosen third-party provider and may incur charges.",
     autoAnalyze: "Automatically upload and analyze supported assets after import",
     save: "Save settings"
+  },
+  settings: {
+    title: "Settings",
+    viewMode: "Browse view"
   },
   preview: {
     ffmpegRequired: "This install is missing FFmpeg, so a video playback proxy cannot be generated. Install or configure FFmpeg and try again.",

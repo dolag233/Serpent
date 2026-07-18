@@ -2915,6 +2915,93 @@ select.ai-config-input {
   margin-top: 14px;
 }
 
+/* REQ-PREF-001: general settings panel — theme/language/canvas display
+   grouped as labelled sections of pill-style radio options. */
+.asset-inline-rename {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 4px;
+  width: 100%;
+}
+
+.asset-inline-rename-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: 100%;
+  margin: 0;
+  padding: 1px 4px;
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  background: var(--raised);
+  color: var(--primary);
+  font: inherit;
+  font-size: 11px;
+  line-height: 1.3;
+}
+
+.asset-inline-rename-ext {
+  color: var(--tertiary);
+  font-size: 10px;
+  flex: 0 0 auto;
+}
+
+.asset-inline-rename-error {
+  flex: 1 0 100%;
+  color: var(--danger, #c44);
+  font-size: 10px;
+}
+
+.asset-card.is-renaming {
+  cursor: default;
+}
+
+.app-settings-dialog {
+  width: min(380px, calc(100vw - 40px));
+}
+
+.app-settings-section {
+  margin-top: 16px;
+}
+
+.app-settings-section:first-of-type {
+  margin-top: 0;
+}
+
+.app-settings-option-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.app-settings-option {
+  padding: 6px 12px;
+  border: 1px solid var(--divider);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.app-settings-option:hover:not([aria-checked="true"]) {
+  background: var(--hover);
+}
+
+.app-settings-option[aria-checked="true"] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent-soft-fg);
+}
+
+.app-settings-check-row-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin-top: 10px;
+}
+
 .dialog-close {
   display: grid;
   width: 28px;

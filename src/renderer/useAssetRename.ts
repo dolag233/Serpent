@@ -14,12 +14,12 @@ import {
 } from "./i18n";
 
 /**
- * REQ-MENU-002: state machine for the single-asset "重命名…" dialog.
- * Extracted from App.tsx (acceptance rule 8): App only renders the dialog and
- * wires the context-menu entry. The worker owns the real rename (extension
- * preserved, disk + DB kept in sync); this hook owns dialog state, client-side
- * name validation, typed error mapping, and the refresh/reselect convention
- * after a successful rename.
+ * REQ-MENU-008: state machine for single-asset inline canvas rename.
+ * Extracted from App.tsx (acceptance rule 8): App renders the inline caption
+ * input and wires the context-menu / shortcut entry. The worker owns the real
+ * rename (extension preserved, disk + DB kept in sync); this hook owns session
+ * state, client-side name validation, typed error mapping, and the
+ * refresh/reselect convention after a successful rename.
  */
 export interface AssetRenameDialogState {
   assetId: string;
