@@ -111,6 +111,11 @@ function NavRow({
   /** CU-D2: optional disclosure control rendered beside the row. */
   disclosure?: ReactNode;
 }) {
+  // CU-D9: always expose the full label on hover; when a status title is also
+  // provided (e.g. offline linked folder), append it after the name.
+  const hoverTitle =
+    title && title !== label ? `${label} — ${title}` : label;
+
   return (
     <div className="nav-tree-row">
       {disclosure ?? <span className="nav-disclosure-spacer" aria-hidden="true" />}
@@ -124,11 +129,11 @@ function NavRow({
         onDragEnter={onDragEnter}
         onDragLeave={onDragLeave}
         style={{ paddingLeft: 7 + depth * 14 }}
-        title={title}
+        title={hoverTitle}
         type="button"
       >
         <Icon name={icon} size={15} color={iconColor} />
-        <span>{label}</span>
+        <span className="nav-row-label">{label}</span>
         {count !== undefined && <span className="nav-count">{count}</span>}
       </button>
     </div>

@@ -105,7 +105,8 @@ export const en = {
     tagNamed: "Tag: {name}",
     collectionView: "Collection view",
     collectionNamed: "Collection: {name}",
-    remainingDays: " · {days}d"
+    remainingDays: " · {days}d",
+    containingFolder: "Folder: {name}"
   },
   nav: {
     folders: "Folders",

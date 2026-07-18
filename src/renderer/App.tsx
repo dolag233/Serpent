@@ -20,11 +20,16 @@ import {
   shouldShowDurationBadge,
 } from "./asset-card-badges";
 import {
+  resolveAssetSourceBadgeLabel,
+  shouldShowAssetSourceBadge,
+} from "./asset-source-badge";
+import {
   coverSrc,
   isCardHoverPreviewable,
 } from "./asset-card-hover-preview";
 import { AssetCardMedia } from "./AssetCardMedia";
 import { useAssetCardHoverPreview } from "./use-asset-card-hover-preview";
+import { resolveSearchSnippetCaption } from "./search-snippet-caption";
 import { ConvertLinkedDialog } from "./ConvertLinkedDialog";
 import { LinkedRulesDialog } from "./LinkedRulesDialog";
 import { PermanentDeleteDialog } from "./PermanentDeleteDialog";
@@ -703,6 +708,25 @@ function AppInner() {
     if (showTrash) return trashedAssets;
     return assets;
   }, [assets, trashedAssets, showTrash]);
+
+  // CU-U1: origin chip context for recursive folder / mixed-folder surfaces.
+  const sourceBadgeContext = useMemo(() => {
+    const mixedFolderBrowse =
+      Boolean(searchValue.trim()) ||
+      Boolean(activeTagId) ||
+      Boolean(activeCollectionId) ||
+      Boolean(activeSmartCollectionId);
+    return {
+      assetScope,
+      mixedFolderBrowse,
+    };
+  }, [
+    assetScope,
+    searchValue,
+    activeTagId,
+    activeCollectionId,
+    activeSmartCollectionId,
+  ]);
 
   const organizationBrowseScope = activeSmartCollectionId
     ? ("smart-collection" as const)
@@ -5704,6 +5728,22 @@ function AppInner() {
                         Boolean(typeBadge) &&
                         !asset.deletedAt &&
                         !shouldShowMissingAssetOverlay(asset.availability);
+                      const sourceBadgeLabel =
+                        !showTrash &&
+                        shouldShowAssetSourceBadge(
+                          sourceBadgeContext,
+                          asset.managedFolderId,
+                        )
+                          ? resolveAssetSourceBadgeLabel(
+                              folders,
+                              asset.managedFolderId,
+                              selectedFolderId ?? null,
+                            )
+                          : null;
+                      const snippetCaption = resolveSearchSnippetCaption(
+                        searchSnippets.get(asset.assetId),
+                        asset.displayName,
+                      );
                       return (
                     <button
                       aria-label={canvasPrefs.fields.name ? undefined : asset.displayName}
@@ -5874,6 +5914,19 @@ function AppInner() {
                             </>
                           );
                         })()}
+                        {sourceBadgeLabel && (
+                          <span
+                            aria-label={t("scope.containingFolder", {
+                              name: sourceBadgeLabel,
+                            })}
+                            className="asset-source-badge"
+                            title={t("scope.containingFolder", {
+                              name: sourceBadgeLabel,
+                            })}
+                          >
+                            {sourceBadgeLabel}
+                          </span>
+                        )}
                         {thumbnailFailures.has(asset.assetId) && (
                           <span className="missing-banner">
                             <Icon name="warning" size={12} />
@@ -5919,7 +5972,7 @@ function AppInner() {
                       {(canvasPrefs.fields.name ||
                         canvasPrefs.fields.size ||
                         canvasPrefs.fields.date ||
-                        searchSnippets.has(asset.assetId) ||
+                        snippetCaption != null ||
                         (asset.deletedAt && asset.trashedFromPath) ||
                         (assetViewMode === "grid" &&
                           asset.width != null &&
@@ -5939,11 +5992,9 @@ function AppInner() {
                               </strong>
                             </>
                           )}
-                          {searchSnippets.has(asset.assetId) ? (
+                          {snippetCaption != null ? (
                             <span className="search-snippet">
-                              {highlightSnippet(
-                                searchSnippets.get(asset.assetId)!,
-                              )}
+                              {highlightSnippet(snippetCaption)}
                             </span>
                           ) : asset.deletedAt && asset.trashedFromPath ? (
                             <span

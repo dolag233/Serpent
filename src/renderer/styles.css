@@ -1176,6 +1176,7 @@ body.platform-darwin .toolbar-leading {
   display: grid;
   width: 100%;
   height: 28px;
+  min-width: 0;
   grid-template-columns: 17px minmax(0, 1fr) auto;
   align-items: center;
   gap: 7px;
@@ -1187,6 +1188,17 @@ body.platform-darwin .toolbar-leading {
   font-size: 12px;
   text-align: left;
   cursor: pointer;
+  overflow: hidden;
+}
+
+/* CU-D9: deep/long folder, collection, and smart-collection names ellipsize
+   instead of wrapping and inflating row height. Depth indent stays on the
+   button padding; disclosure stays outside .nav-row. */
+.nav-row-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .nav-tree-row {
@@ -1377,6 +1389,7 @@ body.platform-darwin .toolbar-leading {
   font-family: "IBM Plex Mono", monospace;
   font-size: 10px;
   color: var(--tertiary);
+  white-space: nowrap;
 }
 
 .nav-empty {
@@ -3242,6 +3255,26 @@ select.ai-config-input {
   line-height: 1.45;
   pointer-events: none;
 }
+
+/* CU-U1: containing-folder origin for recursive / mixed-folder grids.
+   Top-left avoids duration (bottom-left), type (bottom-right), and extension (top-right). */
+.asset-source-badge {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  max-width: calc(100% - 28px);
+  padding: 2px 6px;
+  border-radius: 5px;
+  background: rgb(15 17 18 / 62%);
+  backdrop-filter: blur(6px);
+  color: var(--secondary);
+  font-size: 9px;
+  line-height: 1.45;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: none;
+}
 .missing-banner {
   position: absolute;
   right: 6px;
@@ -3279,10 +3312,10 @@ select.ai-config-input {
 .asset-caption .search-snippet {
   display: block;
   overflow: hidden;
-  max-height: 30px;
   color: var(--secondary);
   line-height: 1.45;
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .search-snippet mark {
   border-radius: 2px;

@@ -96,7 +96,8 @@ export const zhCN = {
     tagNamed: "标签：{name}",
     collectionView: "合集视图",
     collectionNamed: "合集：{name}",
-    remainingDays: " · {days}天"
+    remainingDays: " · {days}天",
+    containingFolder: "所在文件夹：{name}"
   },
   nav: {
     folders: "文件夹",

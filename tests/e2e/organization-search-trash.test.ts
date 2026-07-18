@@ -174,7 +174,9 @@ test('organizes, finds, trashes, and restores an imported asset through the UI',
     await expect(window.getByText(/版本 8/)).toBeVisible();
     await expect(window.getByText('版本冲突', { exact: true })).toHaveCount(0);
 
-    await window.getByLabel('搜索资源库').fill('hero.png');
+    // Search description text (not the filename) so the snippet line adds
+    // context instead of duplicating the primary display name.
+    await window.getByLabel('搜索资源库').fill('快速连续');
     await window.getByText('筛选与排序', { exact: true }).click();
     await window.getByLabel('喜欢过滤').selectOption('yes');
     await window.getByLabel('标签过滤').fill('临时');
