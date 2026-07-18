@@ -13,6 +13,10 @@ export type IconName =
   | "collection"
   | "collapse-left"
   | "collapse-right"
+  | "panel-left"
+  | "panel-left-close"
+  | "panel-right"
+  | "panel-right-close"
   | "download"
   | "edit"
   | "file"
@@ -107,6 +111,37 @@ const iconPaths: Record<IconName, ReactNode> = {
     <>
       <path d="M5 4h14v16H5zM14 4v16" />
       <path d="m9 9 3 3-3 3" />
+    </>
+  ),
+  // Lucide-style panel pair: filled rail = open; chevron = close action.
+  "panel-left": (
+    <>
+      <rect x="4" y="4" width="16" height="16" rx="2" />
+      <path d="M9 4v16" />
+      <path d="M4 4h5v16H4z" fill="currentColor" opacity="0.35" stroke="none" />
+    </>
+  ),
+  "panel-left-close": (
+    <>
+      <rect x="4" y="4" width="16" height="16" rx="2" />
+      <path d="M9 4v16" />
+      <path d="M4 4h5v16H4z" fill="currentColor" opacity="0.35" stroke="none" />
+      <path d="m16 9-3 3 3 3" />
+    </>
+  ),
+  "panel-right": (
+    <>
+      <rect x="4" y="4" width="16" height="16" rx="2" />
+      <path d="M15 4v16" />
+      <path d="M15 4h5v16h-5z" fill="currentColor" opacity="0.35" stroke="none" />
+    </>
+  ),
+  "panel-right-close": (
+    <>
+      <rect x="4" y="4" width="16" height="16" rx="2" />
+      <path d="M15 4v16" />
+      <path d="M15 4h5v16h-5z" fill="currentColor" opacity="0.35" stroke="none" />
+      <path d="m8 9 3 3-3 3" />
     </>
   ),
   edit: (

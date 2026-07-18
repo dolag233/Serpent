@@ -76,7 +76,7 @@ test("library switcher, breadcrumbs, and workspace history", async () => {
     expect(backBox).not.toBeNull();
     expect(toggleBox).not.toBeNull();
     expect(crumbsBox).not.toBeNull();
-    expect(backBox!.x).toBeLessThan(toggleBox!.x);
+    expect(toggleBox!.x).toBeLessThan(backBox!.x);
     expect(backBox!.x).toBeLessThan(crumbsBox!.x);
 
     // Left sidebar status dots (top/bottom) were removed as redundant.

@@ -4950,17 +4950,17 @@ function AppInner() {
     >
       <header className="app-toolbar">
         <div className="toolbar-cluster toolbar-leading">
+          <ToolButton
+            icon={leftOpen ? "panel-left-close" : "panel-left"}
+            label={leftOpen ? t("shell.collapseNav") : t("shell.expandNav")}
+            onClick={() => setLeftOpen((v) => !v)}
+            pressed={leftOpen}
+          />
           <ScopeHistoryButtons
             canBack={navHistoryUi.canBack}
             canForward={navHistoryUi.canForward}
             onBack={() => void goWorkspaceBack()}
             onForward={() => void goWorkspaceForward()}
-          />
-          <ToolButton
-            icon="menu"
-            label={leftOpen ? t("shell.collapseNav") : t("shell.expandNav")}
-            onClick={() => setLeftOpen((v) => !v)}
-            pressed={leftOpen}
           />
           <LibrarySwitcher
             disabled={busy}
@@ -5157,7 +5157,7 @@ function AppInner() {
             {t("common.save")}
           </button>
           <ToolButton
-            icon="collapse-right"
+            icon={rightOpen ? "panel-right-close" : "panel-right"}
             label={rightOpen ? t("shell.collapseInspector") : t("shell.expandInspector")}
             onClick={() => setRightOpen((v) => !v)}
             pressed={rightOpen}
@@ -5985,7 +5985,7 @@ function AppInner() {
       {!leftOpen && (
         <IconActionButton
           className="pane-reveal pane-reveal-left"
-          icon="collapse-left"
+          icon="panel-left"
           label={t("shell.expandNav")}
           onClick={() => setLeftOpen(true)}
           size={15}
@@ -5994,7 +5994,7 @@ function AppInner() {
       {!rightOpen && (
         <IconActionButton
           className="pane-reveal pane-reveal-right"
-          icon="collapse-right"
+          icon="panel-right"
           label={t("shell.expandInspector")}
           onClick={() => setRightOpen(true)}
           size={15}
