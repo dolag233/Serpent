@@ -13,7 +13,7 @@ const t = createTranslator(catalogs["zh-CN"]);
 
 function withLocale(node: ReactElement) {
   return createElement(LocaleProvider, {
-    initialLocale: "zh-CN",
+    initialPreference: "zh-CN",
     storage: {
       getItem: () => null,
       setItem: () => undefined,

@@ -20,6 +20,8 @@ describe('theme CSS tokens (REQ-THEME-002)', () => {
       '--success',
       '--warning-fg',
       '--ink',
+      '--accent-soft-fg',
+      '--rating-star',
     ]) {
       expect(css).toContain(token);
     }

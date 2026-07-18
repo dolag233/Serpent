@@ -50,6 +50,12 @@ import { resolveDroppedFilePaths } from './dropped-files';
 import { extractWebMediaDrop } from './web-media-drop';
 
 const e2eEnabled = process.env.SERPENT_E2E === '1';
+if (e2eEnabled) {
+  const e2eLocale = process.env.SERPENT_E2E_LOCALE === 'en' ? 'en' : 'zh-CN';
+  (globalThis as { __SERPENT_E2E_LOCALE__?: string }).__SERPENT_E2E_LOCALE__ =
+    e2eLocale;
+}
+
 const requestCounts = new Map<RendererRequest['type'], number>();
 
 async function request(command: RendererRequest): Promise<RendererResult> {

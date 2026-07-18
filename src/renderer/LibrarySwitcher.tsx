@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { Icon } from "./Icons";
-import { useLocale, type AppLocale } from "./i18n";
+import { useLocale, type LocalePreference } from "./i18n";
 import { useTheme, type ThemePreference } from "./theme";
 
 export type RecentLibraryMenuEntry = {
@@ -47,7 +47,7 @@ export function LibrarySwitcher({
   onOpenRecent,
   onMenuOpen,
 }: LibrarySwitcherProps) {
-  const { t, locale, setLocale } = useLocale();
+  const { t, preference: localePreference, setLocale } = useLocale();
   const { preference: themePreference, setTheme } = useTheme();
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -72,7 +72,7 @@ export function LibrarySwitcher({
     };
   }, [open]);
 
-  function chooseLocale(next: AppLocale) {
+  function chooseLocale(next: LocalePreference) {
     setLocale(next);
     setOpen(false);
   }
@@ -154,7 +154,16 @@ export function LibrarySwitcher({
               {t("shell.language")}
             </div>
             <button
-              aria-checked={locale === "zh-CN"}
+              aria-checked={localePreference === "system"}
+              className="library-switcher-item"
+              onClick={() => chooseLocale("system")}
+              role="menuitemradio"
+              type="button"
+            >
+              {t("shell.languageSystem")}
+            </button>
+            <button
+              aria-checked={localePreference === "zh-CN"}
               className="library-switcher-item"
               onClick={() => chooseLocale("zh-CN")}
               role="menuitemradio"
@@ -163,7 +172,7 @@ export function LibrarySwitcher({
               {t("shell.languageZh")}
             </button>
             <button
-              aria-checked={locale === "en"}
+              aria-checked={localePreference === "en"}
               className="library-switcher-item"
               onClick={() => chooseLocale("en")}
               role="menuitemradio"

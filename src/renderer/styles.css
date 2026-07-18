@@ -38,7 +38,9 @@
   --hover: rgb(255 255 255 / 4.5%);
   --active: rgb(255 255 255 / 8%);
   --accent-soft: color-mix(in srgb, var(--accent) 14%, transparent);
+  --accent-soft-fg: color-mix(in srgb, var(--accent) 55%, white);
   --accent-ring: color-mix(in srgb, var(--accent) 42%, transparent);
+  --rating-star: #d9b54b;
   /* Semantic status / ink tokens for themeable surfaces (REQ-THEME-002). */
   --success: #6db85d;
   --danger: #e76b7a;
@@ -71,8 +73,10 @@
   --warning: #b45309;
   --hover: rgb(0 0 0 / 4.5%);
   --active: rgb(0 0 0 / 8%);
-  --accent-soft: color-mix(in srgb, var(--accent) 12%, transparent);
+  --accent-soft: color-mix(in srgb, var(--accent) 18%, #ffffff);
+  --accent-soft-fg: #1d4ed8;
   --accent-ring: color-mix(in srgb, var(--accent) 38%, transparent);
+  --rating-star: #d9b54b;
   --success: #16a34a;
   --danger: #dc2626;
   --danger-muted: #fde8e8;
@@ -92,6 +96,22 @@
 [data-theme="light"] ::-webkit-scrollbar-thumb:hover {
   background: rgb(0 0 0 / 28%);
   background-clip: padding-box;
+}
+
+[data-theme="light"] .toast {
+  border-color: color-mix(in srgb, var(--accent) 28%, var(--divider));
+  background: var(--raised);
+  box-shadow: 0 8px 20px rgb(0 0 0 / 10%);
+  color: var(--text);
+}
+[data-theme="light"] .toast > :first-child,
+[data-theme="light"] .toast .icon {
+  color: var(--accent-soft-fg);
+}
+[data-theme="light"] .context-menu {
+  box-shadow:
+    0 6px 18px rgb(0 0 0 / 12%),
+    0 1px 3px rgb(0 0 0 / 8%);
 }
 
 
@@ -315,7 +335,7 @@ summary:focus-visible {
 .discovery-filters[open] > summary {
   border-color: color-mix(in srgb, var(--accent) 45%, var(--divider));
   background: var(--accent-soft);
-  color: color-mix(in srgb, var(--accent) 60%, white);
+  color: var(--accent-soft-fg);
 }
 .discovery-filter-panel {
   position: absolute;
@@ -403,7 +423,7 @@ summary:focus-visible {
    current mode is identifiable without adding chrome (Eagle convention). */
 .tool-button[aria-pressed="true"] {
   background: var(--accent-soft);
-  color: color-mix(in srgb, var(--accent) 68%, white);
+  color: var(--accent-soft-fg);
 }
 
 .icon {
@@ -1512,8 +1532,8 @@ input[type="range"] {
   border: 1px solid color-mix(in srgb, var(--divider) 82%, transparent);
   border-radius: 10px;
   box-shadow:
-    0 12px 36px rgb(0 0 0 / 48%),
-    0 2px 8px rgb(0 0 0 / 30%);
+    0 8px 24px rgb(0 0 0 / 28%),
+    0 1px 4px rgb(0 0 0 / 16%);
   min-width: 180px;
   max-height: calc(100vh - 12px);
   overflow-y: auto;
@@ -2659,9 +2679,9 @@ select.ai-config-input {
   padding: 9px 9px 9px 11px;
   border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--raised));
   border-radius: 8px;
-  background: color-mix(in srgb, var(--accent) 6%, var(--pane));
+  background: var(--raised);
   box-shadow: 0 12px 32px rgb(0 0 0 / 28%);
-  color: color-mix(in srgb, var(--accent) 26%, white);
+  color: var(--text);
   font-size: 11px;
   /* REQ-SHELL-010: dismissal adds .is-closing and unmounts only after this
      exit transition ends (see toast-notifications.ts). */
@@ -2836,12 +2856,12 @@ select.ai-config-input {
 }
 
 .rating-star:hover {
-  color: var(--warning);
+  color: var(--rating-star);
   transform: scale(1.12);
 }
 
 .rating-star[data-active] {
-  color: var(--warning);
+  color: var(--rating-star);
 }
 
 .rating-star[data-active] .icon {

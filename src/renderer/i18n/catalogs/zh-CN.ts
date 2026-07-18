@@ -68,6 +68,7 @@ export const zhCN = {
     language: "语言",
     languageZh: "简体中文",
     languageEn: "English",
+    languageSystem: "跟随系统",
     theme: "主题",
     themeDark: "暗色",
     themeLight: "亮色",

@@ -11,9 +11,12 @@ export {
 } from './types';
 export {
   DEFAULT_LOCALE,
+  DEFAULT_LOCALE_PREFERENCE,
   DEFAULT_LOCALE_PREFERENCES,
   LOCALE_PREF_KEY,
   loadLocalePreferences,
+  readSystemLocale,
+  resolveEffectiveLocale,
   saveLocalePreferences,
   setStoredLocale,
   type LocalePreference,

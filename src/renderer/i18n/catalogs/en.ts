@@ -77,6 +77,7 @@ export const en = {
     language: "Language",
     languageZh: "简体中文",
     languageEn: "English",
+    languageSystem: "System",
     theme: "Appearance",
     themeDark: "Dark",
     themeLight: "Light",

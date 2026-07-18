@@ -357,27 +357,22 @@ export function InspectorPanel(props: InspectorPanelProps) {
             key={selectedAsset.assetId}
             library={library}
           />
-          <div
-            className="inspector-status-row"
-            data-tone={
-              selectedAsset.deletedAt
-                ? "trash"
-                : selectedAsset.availability === "available"
-                  ? "ok"
-                  : "missing"
-            }
-          >
-            <span aria-hidden="true" className="inspector-status-dot" />
-            <span>
-              {selectedAsset.deletedAt
-                ? t("inspector.trashedAutoClean", {
-                    days: selectedAsset.remainingDays ?? "?",
-                  })
-                : selectedAsset.availability === "available"
-                  ? t("inspector.available")
+          {(selectedAsset.deletedAt ||
+            selectedAsset.availability !== "available") && (
+            <div
+              className="inspector-status-row"
+              data-tone={selectedAsset.deletedAt ? "trash" : "missing"}
+            >
+              <span aria-hidden="true" className="inspector-status-dot" />
+              <span>
+                {selectedAsset.deletedAt
+                  ? t("inspector.trashedAutoClean", {
+                      days: selectedAsset.remainingDays ?? "?",
+                    })
                   : t("inspector.missing")}
-            </span>
-          </div>
+              </span>
+            </div>
+          )}
 
           {/* Tag chips (REQ-TAG-003) */}
           <section className="inspector-section inspector-tags-section">

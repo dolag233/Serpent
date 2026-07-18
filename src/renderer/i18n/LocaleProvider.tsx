@@ -2,6 +2,7 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useState,
   type ReactNode,
@@ -11,7 +12,10 @@ import { catalogs } from './catalogs';
 import {
   DEFAULT_LOCALE,
   loadLocalePreferences,
+  readSystemLocale,
+  resolveEffectiveLocale,
   setStoredLocale,
+  type LocalePreference,
   type LocalePreferencesStorage,
 } from './locale-preferences';
 import {
@@ -23,8 +27,9 @@ import {
 export type TranslateFn = (key: string, params?: TranslateParams) => string;
 
 type LocaleContextValue = {
+  readonly preference: LocalePreference;
   readonly locale: AppLocale;
-  readonly setLocale: (locale: AppLocale) => void;
+  readonly setLocale: (locale: LocalePreference) => void;
   readonly t: TranslateFn;
 };
 
@@ -32,28 +37,45 @@ const LocaleContext = createContext<LocaleContextValue | null>(null);
 
 export type LocaleProviderProps = {
   readonly children: ReactNode;
-  /** Injected storage for tests; defaults to localStorage. */
   readonly storage?: LocalePreferencesStorage;
-  /** Override initial locale (tests); otherwise load from storage. */
-  readonly initialLocale?: AppLocale;
+  readonly initialPreference?: LocalePreference;
 };
 
 export function LocaleProvider({
   children,
   storage,
-  initialLocale,
+  initialPreference,
 }: LocaleProviderProps) {
-  const [locale, setLocaleState] = useState<AppLocale>(
-    () => initialLocale ?? loadLocalePreferences(storage).locale,
+  const [preference, setPreferenceState] = useState<LocalePreference>(
+    () => initialPreference ?? loadLocalePreferences(storage).locale,
+  );
+  const [systemLocale, setSystemLocale] = useState<AppLocale>(() =>
+    readSystemLocale(),
   );
 
+  const locale = useMemo(
+    () => resolveEffectiveLocale(preference, systemLocale),
+    [preference, systemLocale],
+  );
+
+  useEffect(() => {
+    if (typeof document !== 'undefined') {
+      document.documentElement.lang = locale;
+    }
+  }, [locale]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return;
+    // languagechange is the closest portable signal when OS locale changes.
+    const onLanguageChange = () => setSystemLocale(readSystemLocale());
+    window.addEventListener('languagechange', onLanguageChange);
+    return () => window.removeEventListener('languagechange', onLanguageChange);
+  }, []);
+
   const setLocale = useCallback(
-    (next: AppLocale) => {
+    (next: LocalePreference) => {
       setStoredLocale(next, storage);
-      setLocaleState(next);
-      if (typeof document !== 'undefined') {
-        document.documentElement.lang = next;
-      }
+      setPreferenceState(next);
     },
     [storage],
   );
@@ -65,8 +87,8 @@ export function LocaleProvider({
   }, [locale]);
 
   const value = useMemo(
-    () => ({ locale, setLocale, t }),
-    [locale, setLocale, t],
+    () => ({ preference, locale, setLocale, t }),
+    [preference, locale, setLocale, t],
   );
 
   return (
@@ -82,15 +104,10 @@ export function useLocale(): LocaleContextValue {
   return value;
 }
 
-/** Convenience hook when only translation is needed. */
 export function useT(): TranslateFn {
   return useLocale().t;
 }
 
-/**
- * Non-React lookup for modules that resolve labels outside hooks
- * (command registries, pure helpers). Prefer useT() in components.
- */
 export function translateForLocale(
   locale: AppLocale,
   key: string,

@@ -2,11 +2,14 @@ import { describe, expect, it } from 'vitest';
 
 import {
   DEFAULT_LOCALE,
+  DEFAULT_LOCALE_PREFERENCE,
   LOCALE_PREF_KEY,
   createTranslator,
   interpolate,
   loadLocalePreferences,
   lookupMessage,
+  readSystemLocale,
+  resolveEffectiveLocale,
   setStoredLocale,
   catalogs,
 } from '../../src/renderer/i18n';
@@ -57,9 +60,20 @@ describe('locale preferences', () => {
       },
     };
 
-    expect(loadLocalePreferences(storage).locale).toBe(DEFAULT_LOCALE);
+    expect(loadLocalePreferences(storage).locale).toBe(DEFAULT_LOCALE_PREFERENCE);
+    expect(DEFAULT_LOCALE_PREFERENCE).toBe('system');
     setStoredLocale('en', storage);
     expect(loadLocalePreferences(storage).locale).toBe('en');
     expect(memory.get(LOCALE_PREF_KEY)).toContain('"en"');
+    setStoredLocale('system', storage);
+    expect(loadLocalePreferences(storage).locale).toBe('system');
+  });
+
+  it('resolves system preference from language tags', () => {
+    expect(resolveEffectiveLocale('zh-CN', 'en')).toBe('zh-CN');
+    expect(resolveEffectiveLocale('system', 'en')).toBe('en');
+    expect(resolveEffectiveLocale('system', 'zh-CN')).toBe('zh-CN');
+    expect(readSystemLocale(['en-US', 'en'])).toBe('en');
+    expect(readSystemLocale(['zh-Hans-CN', 'en'])).toBe('zh-CN');
   });
 });
