@@ -1,6 +1,8 @@
 import { createRequire } from 'node:module';
 import path from 'node:path';
 
+import type { Page } from '@playwright/test';
+
 const require = createRequire(path.resolve('package.json'));
 
 export function resolveElectronExecutablePath(): string {
@@ -13,4 +15,15 @@ export function resolveElectronExecutablePath(): string {
   }
 
   return executablePath;
+}
+
+/** Close via top-left library switcher (Inspector no longer exposes close/path). */
+export async function closeLibraryViaSwitcher(
+  window: Page,
+  libraryName: string,
+): Promise<void> {
+  await window
+    .getByRole('button', { name: `当前资源库 ${libraryName}` })
+    .click();
+  await window.getByRole('menuitem', { name: '关闭资源库' }).click();
 }

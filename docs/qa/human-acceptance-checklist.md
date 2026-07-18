@@ -152,6 +152,7 @@
 | INSPECT-002 | 切换资产时 Inspector 不混态/不空闪 | 待人类验收 | 快速在两项具有不同元数据的资产间切换 | 不出现“连接中/加载中”，也不显示前后资产混合内容 | [0018–0019 QA](0018-0019-ui-correctness-qa-report.md) / [切换 E2E](../../tests/e2e/organization-metadata-persistence.test.ts) | — |
 | INSPECT-003 | Inspector 图片等比、宽度优先且无统一外框 | 人类验收通过 | 依次选择横图和竖图观察右侧预览 | 图片完整不拉伸；横图使用可用宽度，竖图受最大高度限制；无包住留白的卡片边框，图片本身有轻微圆角 | [0018–0019 QA](0018-0019-ui-correctness-qa-report.md) / [真实应用截图](evidence/0018-0019-ui-correctness/01-inspector-proportional-preview.png) / [媒体 E2E](../../tests/e2e/media-preview.test.ts) | 2026-07-16 用户先确认预览测试通过，随后明确确认轻圆角没有问题。 |
 | INSPECT-004 | Inspector 资产身份信息在分割线上方居中 | 待人类验收 | 选择任意带预览资产，观察右侧预览下方 | 文件名和大小/分辨率/修改日期均随居中的预览居中；分割线以下的状态、标签和元数据仍左对齐 | [0018–0019 QA](0018-0019-ui-correctness-qa-report.md) | 按 2026-07-16 最新反馈完成；用户要求自行查看，不再启动 Computer Use。 |
+| INSPECT-006 | Inspector 不再显示资源库路径与关闭按钮 | 待人类验收 | 打开资源库，不选资产与选中资产时各看一次右侧 Inspector；关闭资源库改走左上角菜单 | Inspector 无资源库绝对路径、无「关闭资源库」按钮；菜单内仍可关闭 | [开发日志](../development/2026-07-18-inspector-remove-library-path-close-development-log.md) | 2026-07-18 取代 CU-U6；关闭入口仅资源库下拉。Computer Use / E2E 本环境未跑通。 |
 | THUMB-001 | 支持的图片自动生成缩略图 | 待人类验收 | 导入支持的图片，不点击任何“生成预览”操作 | 缩略图自动出现并成功解码 | [0006 QA](0006-thumbnails-preview-format-decoding-qa-report.md) / [媒体预览 E2E](../../tests/e2e/media-preview.test.ts) | — |
 | THUMB-002 | 横图、竖图和方图等比完整显示 | 待人类验收 | 导入横图、竖图和方图并观察资产卡片 | 图片保持比例并完整显示，不裁剪、不拉伸 | [0006 QA](0006-thumbnails-preview-format-decoding-qa-report.md) / [媒体预览 E2E](../../tests/e2e/media-preview.test.ts) | — |
 

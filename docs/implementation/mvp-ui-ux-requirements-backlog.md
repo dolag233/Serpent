@@ -293,7 +293,7 @@ FolderBrowseEntry
 | 「作者」元数据 | 新开 P2 | Serpent-7x0 |
 | 平铺改 justified 行布局（参考图 `docs/前端参考/2026-07-18-tile-layout-reference.png`） | 新开 P2 | Serpent-8nj |
 | 「可用」不显示图标，仅「不可用」显示断联表现 | 新开 P2 | Serpent-6nb |
-| 删除 Inspector 底部资源库路径与「关闭资源库」按钮 | 新开 P2，取代 CU-U6（Serpent-l2y 已关闭） | Serpent-t4c |
+| 删除 Inspector 底部资源库路径与「关闭资源库」按钮 | 已实现（2026-07-18，见 INSPECT-006） | Serpent-t4c |
 | 侧栏展开/折叠成套图标+左折叠图标移到前进/后退之前 | 新开 P2 | Serpent-6ey |
 | macOS 红绿灯内嵌工具行最左（无边框顶栏） | 新开 P2 | Serpent-4ze |
 | 色卡复制 hex 弹确认提示；删除自定义色卡；拖拽复制模式 | 新开 P3 | Serpent-woc / 7pg / aa3 |

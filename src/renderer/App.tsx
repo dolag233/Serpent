@@ -5780,7 +5780,6 @@ function AppInner() {
         allTags={tags}
         assetMetadata={assetMetadata}
         automaticPaletteRatios={automaticPaletteRatios}
-        closeLibrary={closeLibrary}
         displayedPalette={displayedPalette}
         editDescription={editDescription}
         editFavorite={editFavorite}

@@ -3192,10 +3192,6 @@ select.ai-config-input {
 .inspector-tags-section {
   margin-top: 14px;
 }
-.inspector-close-library {
-  width: 100%;
-  margin-top: 18px;
-}
 
 .conflict-dialog {
   width: min(520px, calc(100vw - 40px));

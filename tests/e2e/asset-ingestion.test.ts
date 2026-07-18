@@ -15,7 +15,10 @@ import path from 'node:path';
 
 import { _electron as electron, expect, test, type Page } from '@playwright/test';
 
-import { resolveElectronExecutablePath } from './electron-test-helpers';
+import {
+  closeLibraryViaSwitcher,
+  resolveElectronExecutablePath,
+} from './electron-test-helpers';
 
 test.describe.configure({ timeout: 120_000 });
 
@@ -156,7 +159,7 @@ test('imports files and a directory hierarchy, then reconciles external changes'
 
     const pendingBeforeClose = await preparePendingConflict(window);
     expect(pendingBeforeClose.forgedTokenAccepted).toBe(false);
-    await window.getByRole('button', { name: '关闭资源库' }).click();
+    await closeLibraryViaSwitcher(window, libraryName);
     expect(existsSync(operationsPath) ? readdirSync(operationsPath, { recursive: true }) : []).toHaveLength(0);
     expect(await resolveImportToken(window, pendingBeforeClose.importId)).toBe(false);
     await window.getByRole('button', { name: '打开资源库' }).click();

@@ -16,7 +16,10 @@ import {
 } from "@playwright/test";
 import sharp from "sharp";
 
-import { resolveElectronExecutablePath } from "./electron-test-helpers";
+import {
+  closeLibraryViaSwitcher,
+  resolveElectronExecutablePath,
+} from "./electron-test-helpers";
 
 test.describe.configure({ timeout: 120_000 });
 
@@ -219,7 +222,7 @@ test("generates a decoded thumbnail and keeps asset viewer context coherent", as
     await expect(nextPreview).toBeVisible();
 
     // Reopening exercises the persisted-artifact path used by an existing library.
-    await window.getByRole("button", { name: "关闭资源库" }).click();
+    await closeLibraryViaSwitcher(window, libraryName);
     await expect(nextPreview).toBeHidden();
     await window
       .getByRole("button", { name: "打开资源库", exact: true })
@@ -338,7 +341,7 @@ test("video preview reports a specific generation failure and persists its diagn
     ).toBeVisible();
     await expect(jobsDialog).not.toContainText(temporaryRoot);
     await jobsDialog.getByRole("button", { name: "关闭后台任务" }).click();
-    await window.getByRole("button", { name: "关闭资源库" }).click();
+    await closeLibraryViaSwitcher(window, libraryName);
     await window.getByRole("button", { name: "打开资源库" }).click();
     const reopenedCard = window
       .getByRole("button")

@@ -4,7 +4,10 @@ import path from "node:path";
 
 import { _electron as electron, expect, test } from "@playwright/test";
 
-import { resolveElectronExecutablePath } from "./electron-test-helpers";
+import {
+  closeLibraryViaSwitcher,
+  resolveElectronExecutablePath,
+} from "./electron-test-helpers";
 
 test("creates, closes, and reopens a library through the sandboxed UI", async () => {
   const testInfo = test.info();
@@ -73,7 +76,7 @@ test("creates, closes, and reopens a library through the sandboxed UI", async ()
       window.getByText(libraryName, { exact: true }).first(),
     ).toBeVisible();
 
-    await window.getByRole("button", { name: "关闭资源库" }).click();
+    await closeLibraryViaSwitcher(window, libraryName);
     await expect(
       window.getByRole("heading", { name: "从一个本地资源库开始" }),
     ).toBeVisible();

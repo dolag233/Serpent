@@ -74,7 +74,6 @@ export interface InspectorPanelProps {
   library: RendererLibrarySummary | null;
   allAssetCount: number;
   folderCount: number;
-  closeLibrary: () => void;
   loadMetadata: () => void;
   // Metadata editor state
   assetMetadata: AssetMetadataResult | null;
@@ -183,7 +182,6 @@ export function InspectorPanel(props: InspectorPanelProps) {
     library,
     allAssetCount,
     folderCount,
-    closeLibrary,
     loadMetadata,
     assetMetadata: rawAssetMetadata,
     versionConflict,
@@ -717,12 +715,6 @@ export function InspectorPanel(props: InspectorPanelProps) {
             <div className="inspector-metadata-placeholder" aria-hidden="true" />
           )}
 
-          {/* Asset path */}
-          <section className="inspector-section">
-            <span className="inspector-section-label">{t("inspector.libraryPath")}</span>
-            <p className="path-block">{selectedAsset.relativeFilePath}</p>
-          </section>
-
           {/* --- AI Content --- */}
           {aiContent && (
             <section className="inspector-section">
@@ -756,13 +748,6 @@ export function InspectorPanel(props: InspectorPanelProps) {
             </section>
           )}
 
-          <button
-            className="secondary-button inspector-close-library"
-            onClick={() => void closeLibrary()}
-            type="button"
-          >
-            {t("shell.closeLibrary")}
-          </button>
         </div>
       ) : library ? (
         <div className="inspector-content">
@@ -792,17 +777,6 @@ export function InspectorPanel(props: InspectorPanelProps) {
               <dd className="mono">{folderCount}</dd>
             </div>
           </dl>
-          <section className="inspector-section">
-            <span className="inspector-section-label">{t("inspector.location")}</span>
-            <p className="path-block">{library.displayPath}</p>
-          </section>
-          <button
-            className="secondary-button inspector-close-library"
-            onClick={() => void closeLibrary()}
-            type="button"
-          >
-            {t("shell.closeLibrary")}
-          </button>
         </div>
       ) : (
         <div className="inspector-empty">
