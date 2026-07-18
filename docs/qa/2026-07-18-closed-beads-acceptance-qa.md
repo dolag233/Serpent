@@ -2,7 +2,7 @@
 
 ## 范围
 
-- 基线：当前 `codex/slice-002-asset-ingestion` 工作树；Computer Use 确认 Renderer URL 为 `localhost:5173/`，旧 `out/Serpent-darwin-arm64` 未作为证据。
+- 基线：`ce214df`（`codex/slice-002-asset-ingestion`）；Computer Use 确认 Renderer URL 为 `localhost:5173/`，旧 `out/Serpent-darwin-arm64` 未作为证据。
 - 工单：审计所有关闭理由含“待人类验收/未验证”的 beads，以及人类验收清单仍待验收的对应增量。
 - 约束：Computer Use 只执行浏览、选择、排序、视图切换和查看，不在用户资源库执行删除、移动或元数据写入；验收后恢复原瀑布流、相关性升序和侧栏展开偏好。
 
