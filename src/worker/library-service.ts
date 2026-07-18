@@ -63,6 +63,8 @@ export interface SharpInstance {
     format?: string;
     orientation?: number;
     pages?: number;
+    delay?: number[];
+    loop?: number;
   }>;
   rotate(): SharpInstance;
   toColourspace(colourspace: 'srgb'): SharpInstance;
@@ -204,6 +206,7 @@ import {
   sampleGifPageIndices,
   scoreRawRgbFrame,
 } from './gif-thumbnail-page';
+import { buildGifExtractedMetadata, type GifExtractedMetadata } from './gif-metadata';
 import {
   extractZipStream,
   ZipImportStreamError,
@@ -6869,9 +6872,12 @@ export class LibraryService {
       });
     }
 
+    const isGifAsset = assetPath.toLowerCase().endsWith('.gif');
     const artifactKinds = mediaType === 'video'
       ? ['extracted_metadata', 'video_poster']
-      : ['thumbnail'];
+      : isGifAsset
+        ? ['thumbnail', 'extracted_metadata']
+        : ['thumbnail'];
     openLibrary.connection
       .prepare(
         `UPDATE revision_artifacts
@@ -6914,16 +6920,16 @@ export class LibraryService {
     let imageProcessed = false;
 
     try {
-      const { inputWidth, inputHeight } = await sharpDecoderSemaphore.run(
+      const { inputWidth, inputHeight, gifMetadata } = await sharpDecoderSemaphore.run(
         execution.signal,
         async () => {
           const s = this.options.sharpFn ?? requireSharp();
           const probe = s(assetPath);
           const metadata = await probe.metadata();
           const pages = metadata.pages ?? 1;
-          const isAnimatedGif =
-            (metadata.format === 'gif' || assetPath.toLowerCase().endsWith('.gif')) &&
-            pages > 1;
+          const isGif =
+            metadata.format === 'gif' || assetPath.toLowerCase().endsWith('.gif');
+          const isAnimatedGif = isGif && pages > 1;
 
           let page = 0;
           if (isAnimatedGif) {
@@ -6992,7 +6998,16 @@ export class LibraryService {
           if (execution.signal?.aborted) {
             throw new DOMException('Media job cancelled after image decoding.', 'AbortError');
           }
-          return { inputWidth, inputHeight };
+
+          const gifMeta: GifExtractedMetadata | null = isGif
+            ? buildGifExtractedMetadata({
+                width: inputWidth,
+                height: inputHeight,
+                pages,
+                delay: metadata.delay,
+              })
+            : null;
+          return { inputWidth, inputHeight, gifMetadata: gifMeta };
         },
       );
 
@@ -7023,6 +7038,14 @@ export class LibraryService {
           SHARP_THUMBNAIL_GENERATOR,
           new Date().toISOString(),
         );
+
+      if (gifMetadata) {
+        this.persistGifExtractedMetadata(
+          openLibrary,
+          revisionId,
+          gifMetadata,
+        );
+      }
 
       // Serpent-7x0: best-effort EXIF/IPTC/XMP author auto-extract on first
       // thumbnail. Never blocks or fails thumbnail generation.
@@ -7080,6 +7103,44 @@ export class LibraryService {
         );
 
       throw serviceError(error, 'LIBRARY_NOT_WRITABLE');
+    }
+  }
+
+  /** Persist GIF duration / frame count as extracted_metadata (CU-D8). */
+  private persistGifExtractedMetadata(
+    openLibrary: OpenLibrary,
+    revisionId: string,
+    metadata: GifExtractedMetadata,
+  ): void {
+    const artifactId = randomUUID();
+    const artifactsDir = this.artifactsDir(openLibrary);
+    mkdirSync(artifactsDir, { recursive: true });
+    const artifactRelPath = `${artifactId}.json`;
+    const artifactAbsPath = path.join(artifactsDir, artifactRelPath);
+    try {
+      writeFileSync(artifactAbsPath, JSON.stringify(metadata, null, 2), 'utf-8');
+      const outputStat = statSync(artifactAbsPath);
+      openLibrary.connection
+        .prepare(
+          `INSERT INTO revision_artifacts
+             (artifact_id, revision_id, kind, mime_type, byte_size, file_path,
+              width, height, duration_ms, generator_version, status, generated_at)
+           VALUES (?, ?, 'extracted_metadata', 'application/json', ?, ?, ?, ?, ?, ?, 'ready', ?)`,
+        )
+        .run(
+          artifactId,
+          revisionId,
+          outputStat.size,
+          artifactRelPath,
+          metadata.width || null,
+          metadata.height || null,
+          metadata.durationMs,
+          `sharp-gif-meta@${SHARP_VERSION}`,
+          new Date().toISOString(),
+        );
+    } catch (error) {
+      rmSync(artifactAbsPath, { force: true });
+      this.diagnose('gif.extracted-metadata', error, { revisionId });
     }
   }
 
@@ -8319,6 +8380,30 @@ export class LibraryService {
                WHERE deleted_at IS NULL
                  AND current_revision_id IS NOT NULL
                  AND LOWER(relative_file_path) LIKE '%.gif'
+            )`,
+      )
+      .run(nowInvalidate);
+    // CU-D8: GIFs with a ready thumb but no duration/frame metadata requeue once.
+    openLibrary.connection
+      .prepare(
+        `UPDATE revision_artifacts
+            SET invalidated_at = ?
+          WHERE kind = 'thumbnail'
+            AND status = 'ready'
+            AND invalidated_at IS NULL
+            AND revision_id IN (
+              SELECT a.current_revision_id
+                FROM assets a
+               WHERE a.deleted_at IS NULL
+                 AND a.current_revision_id IS NOT NULL
+                 AND LOWER(a.relative_file_path) LIKE '%.gif'
+                 AND NOT EXISTS (
+                   SELECT 1 FROM revision_artifacts meta
+                    WHERE meta.revision_id = a.current_revision_id
+                      AND meta.kind = 'extracted_metadata'
+                      AND meta.status = 'ready'
+                      AND meta.invalidated_at IS NULL
+                 )
             )`,
       )
       .run(nowInvalidate);

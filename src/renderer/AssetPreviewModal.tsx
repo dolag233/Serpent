@@ -25,6 +25,8 @@ import { Icon } from "./Icons";
 import { useViewerChromeIdle } from "./use-viewer-chrome-idle";
 import { resolveViewerPrimarySurface } from "./viewer-preview-policy";
 import { VideoPlayerControls } from "./VideoPlayerControls";
+import { GifPlayerControls } from "./GifPlayerControls";
+import { isGifDisplayName } from "./gif-player-controls";
 import { ZoomableImage } from "./zoomable-preview-image";
 
 interface AssetPreviewModalProps {
@@ -475,6 +477,17 @@ export function AssetPreviewModal({
               onFullscreen={() => void enterFullscreen()}
               onReady={() => setDirectApproved(true)}
               posterUrl={resolution.posterUrl}
+              src={resolution.url}
+            />
+          ) : ready &&
+            resolution?.url &&
+            isGifDisplayName(asset.displayName) ? (
+            <GifPlayerControls
+              alt={asset.displayName}
+              key={resolution.url}
+              onFullscreen={() => void enterFullscreen()}
+              onSwipeNext={onNext}
+              onSwipePrevious={onPrevious}
               src={resolution.url}
             />
           ) : ready && resolution?.url ? (

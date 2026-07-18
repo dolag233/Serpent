@@ -54,6 +54,12 @@
   /* Legacy alias: several components referenced --border before any token
      existed (their borders silently rendered as none). */
   --border: var(--divider);
+  /* REQ-SHELL-002: shell chrome heights — existing literals promoted to
+     tokens so toolbar / workspace bar / controls / chips share one rhythm. */
+  --shell-toolbar-height: 44px;
+  --shell-workspace-bar-height: 40px;
+  --shell-control-height: 28px;
+  --shell-chip-height: 22px;
 }
 /* REQ-THEME-001/002: light semantic token overrides. Prefer changing tokens
    here over duplicating light-only hardcoded colors in selectors. */
@@ -215,7 +221,7 @@ summary:focus-visible {
       --inspector-width,
       268px
     );
-  grid-template-rows: 44px minmax(0, 1fr);
+  grid-template-rows: var(--shell-toolbar-height) minmax(0, 1fr);
   width: 100%;
   height: 100%;
   min-width: 760px;
@@ -240,11 +246,11 @@ summary:focus-visible {
   grid-template-columns: 0 minmax(420px, 1fr) 0;
 }
 
-/* REQ-SHELL-007: 6px resize handles centered on the pane borders. The 44px
-   top offset tracks the app-shell toolbar row (grid-template-rows above). */
+/* REQ-SHELL-007: 6px resize handles centered on the pane borders. Top offset
+   tracks the app-shell toolbar row (grid-template-rows above). */
 .panel-resizer {
   position: fixed;
-  top: 44px;
+  top: var(--shell-toolbar-height);
   bottom: 0;
   z-index: 6;
   width: 6px;
@@ -286,6 +292,7 @@ summary:focus-visible {
       1fr
     );
   align-items: center;
+  height: var(--shell-toolbar-height);
   min-width: 0;
   border-bottom: 1px solid var(--divider-soft);
   background: var(--pane);
@@ -324,7 +331,7 @@ body.platform-darwin .toolbar-leading {
 }
 .discovery-filters > summary {
   display: inline-flex;
-  height: 28px;
+  height: var(--shell-control-height);
   align-items: center;
   gap: 5px;
   padding: 0 10px;
@@ -391,15 +398,16 @@ body.platform-darwin .toolbar-leading {
 }
 .discovery-filter-panel .text-field {
   width: 100%;
-  height: 28px;
+  height: var(--shell-control-height);
   font-size: 11px;
 }
 
 /* REQ-FILTER-001: Eagle-style dimension filter bar */
 .dimension-filter-bar {
   display: flex;
-  flex: 0 1 auto;
+  flex: 1 1 auto;
   flex-direction: column;
+  justify-content: center;
   gap: 6px;
   width: 100%;
   min-width: 0;
@@ -410,15 +418,18 @@ body.platform-darwin .toolbar-leading {
   flex-wrap: wrap;
   align-items: center;
   gap: 4px;
+  min-height: var(--shell-control-height);
 }
 
 .dimension-filter-dim {
   position: relative;
+  display: flex;
+  align-items: center;
 }
 
 .dimension-filter-btn {
   display: inline-flex;
-  height: 28px;
+  height: var(--shell-control-height);
   align-items: center;
   gap: 5px;
   padding: 0 10px;
@@ -521,13 +532,16 @@ body.platform-darwin .toolbar-leading {
 .dimension-filter-chips {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 4px;
+  min-height: var(--shell-chip-height);
 }
 
 .dimension-filter-dim-sep {
   width: 1px;
   height: 18px;
   margin: 0 4px;
+  align-self: center;
   background: var(--divider);
 }
 
@@ -575,7 +589,7 @@ body.platform-darwin .toolbar-leading {
 }
 
 .sort-order-btn {
-  min-width: 28px;
+  min-width: var(--shell-control-height);
   padding: 0 8px;
 }
 
@@ -587,14 +601,16 @@ body.platform-darwin .toolbar-leading {
 .dimension-active-chip {
   display: inline-flex;
   max-width: 100%;
+  height: var(--shell-chip-height);
   align-items: center;
   gap: 6px;
-  padding: 3px 8px;
+  padding: 0 8px;
   border: 1px solid var(--divider);
   border-radius: 999px;
   background: color-mix(in srgb, var(--canvas) 80%, var(--pane));
   color: var(--text);
   font-size: 11px;
+  line-height: 1;
   cursor: pointer;
 }
 
@@ -678,8 +694,8 @@ body.platform-darwin .toolbar-leading {
 
 .tool-button {
   display: inline-grid;
-  width: 28px;
-  height: 28px;
+  width: var(--shell-control-height);
+  height: var(--shell-control-height);
   padding: 0;
   place-items: center;
   border: 1px solid transparent;
@@ -710,6 +726,7 @@ body.platform-darwin .toolbar-leading {
 }
 
 .icon {
+  display: block;
   flex: 0 0 auto;
   fill: none;
   stroke: currentColor;
@@ -728,7 +745,7 @@ body.platform-darwin .toolbar-leading {
   max-width: 220px;
   align-items: center;
   gap: 4px;
-  height: 28px;
+  height: var(--shell-control-height);
   padding: 0 7px 0 9px;
   border: 1px solid transparent;
   border-radius: 6px;
@@ -843,8 +860,8 @@ body.platform-darwin .toolbar-leading {
    .toolbar-leading. */
 .scope-history-button {
   display: grid;
-  width: 28px;
-  height: 28px;
+  width: var(--shell-control-height);
+  height: var(--shell-control-height);
   padding: 0;
   place-items: center;
   border: 1px solid transparent;
@@ -889,14 +906,17 @@ body.platform-darwin .toolbar-leading {
 .scope-crumb-label {
   overflow: hidden;
   max-width: 160px;
-  padding: 2px 4px;
+  height: var(--shell-control-height);
+  padding: 0 4px;
   border: 0;
   border-radius: 3px;
   background: transparent;
   color: var(--secondary);
   font-size: 11px;
+  line-height: var(--shell-control-height);
   text-overflow: ellipsis;
   white-space: nowrap;
+  vertical-align: middle;
 }
 
 .scope-crumb-button {
@@ -932,6 +952,7 @@ body.platform-darwin .toolbar-leading {
 
 .search-clear-btn {
   position: absolute;
+  top: 50%;
   right: 4px;
   display: inline-grid;
   width: 22px;
@@ -942,6 +963,7 @@ body.platform-darwin .toolbar-leading {
   background: transparent;
   color: var(--secondary);
   cursor: pointer;
+  transform: translateY(-50%);
 }
 
 .search-clear-btn:hover:not(:disabled) {
@@ -958,13 +980,16 @@ body.platform-darwin .toolbar-leading {
 .search-active-chip {
   display: inline-flex;
   max-width: 160px;
+  height: var(--shell-chip-height);
+  align-items: center;
   overflow: hidden;
-  padding: 3px 8px;
+  padding: 0 8px;
   border: 1px solid var(--divider);
   border-radius: 999px;
   background: var(--accent-soft);
   color: var(--accent-soft-fg);
   font-size: 11px;
+  line-height: 1;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1031,7 +1056,7 @@ body.platform-darwin .toolbar-leading {
   flex: 1 1 240px;
   min-width: 200px;
   max-width: 360px;
-  height: 28px;
+  height: var(--shell-control-height);
   gap: 7px;
   padding: 0 9px;
   border: 1px solid var(--divider);
@@ -1039,6 +1064,7 @@ body.platform-darwin .toolbar-leading {
   background: var(--canvas);
   color: var(--secondary);
   font-size: 12px;
+  line-height: 1.2;
   text-align: left;
   transition:
     border-color 120ms ease,
@@ -1175,7 +1201,7 @@ body.platform-darwin .toolbar-leading {
 .nav-row {
   display: grid;
   width: 100%;
-  height: 28px;
+  height: var(--shell-control-height);
   min-width: 0;
   grid-template-columns: 17px minmax(0, 1fr) auto;
   align-items: center;
@@ -1281,18 +1307,21 @@ body.platform-darwin .toolbar-leading {
 .filter-tag-chips {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 4px;
 }
 
 .filter-tag-chip {
   display: inline-flex;
+  height: var(--shell-chip-height);
   align-items: center;
   gap: 4px;
-  padding: 2px 4px 2px 8px;
+  padding: 0 4px 0 8px;
   border: 1px solid var(--divider);
   border-radius: 999px;
   background: var(--raised);
   font-size: 11px;
+  line-height: 1;
 }
 
 .filter-tag-chip button {
@@ -1360,12 +1389,16 @@ body.platform-darwin .toolbar-leading {
 }
 
 .filter-preset-chip {
-  padding: 3px 10px;
+  display: inline-flex;
+  height: var(--shell-chip-height);
+  align-items: center;
+  padding: 0 10px;
   border: 1px solid var(--divider);
   border-radius: 999px;
   background: transparent;
   color: var(--secondary);
   font-size: 11px;
+  line-height: 1;
   cursor: pointer;
 }
 
@@ -1417,7 +1450,7 @@ body.platform-darwin .toolbar-leading {
 
 .workspace-bar {
   display: flex;
-  height: 40px;
+  height: var(--shell-workspace-bar-height);
   flex: 0 0 auto;
   align-items: center;
   justify-content: space-between;
@@ -1426,12 +1459,15 @@ body.platform-darwin .toolbar-leading {
   background: transparent;
 }
 
-/* Discovery dimensions live in the workspace column — not the 44px app
-   chrome — so chips/popovers cannot overflow into the inspector. */
+/* Discovery dimensions live in the workspace column — not the app chrome —
+   so chips/popovers cannot overflow into the inspector. Vertical padding
+   matches the workspace-bar gutters so adjacent bars share one midline. */
 .workspace-discovery {
+  display: flex;
   flex: 0 0 auto;
   min-width: 0;
-  padding: 6px 12px 8px 14px;
+  align-items: center;
+  padding: 6px 12px 6px 14px;
   border-bottom: 1px solid var(--divider-soft);
   background: transparent;
 }
@@ -1454,8 +1490,15 @@ body.platform-darwin .toolbar-leading {
   gap: 9px;
   font-size: 13px;
   font-weight: 580;
-  line-height: 1.35;
   white-space: nowrap;
+}
+
+/* Title label shares the control midline with tools / count badge. */
+.workspace-title > span:not(.item-count) {
+  display: inline-flex;
+  height: var(--shell-control-height);
+  align-items: center;
+  line-height: 1.2;
 }
 
 .workspace-include-subfolders {
@@ -1485,13 +1528,17 @@ body.platform-darwin .toolbar-leading {
 
 /* Scope size reads as a quiet count pill beside the title. */
 .item-count {
-  padding: 2px 8px;
+  display: inline-flex;
+  height: var(--shell-chip-height);
+  align-items: center;
+  padding: 0 8px;
   border-radius: 999px;
   background: var(--hover);
   color: var(--secondary);
   font-family: "IBM Plex Mono", monospace;
   font-size: 10px;
   font-weight: 400;
+  line-height: 1;
 }
 
 .zoom-label {
@@ -1974,8 +2021,8 @@ input[type="range"] {
   z-index: 8;
   bottom: 10px;
   display: grid;
-  width: 28px;
-  height: 28px;
+  width: var(--shell-control-height);
+  height: var(--shell-control-height);
   padding: 0;
   place-items: center;
   border: 1px solid var(--divider);
@@ -1997,7 +2044,7 @@ input[type="range"] {
   z-index: 20;
   display: grid;
   background: rgb(15 16 17 / 62%);
-  inset: 44px 0 0;
+  inset: var(--shell-toolbar-height) 0 0;
   place-items: center;
   backdrop-filter: blur(2px);
 }
@@ -2337,6 +2384,57 @@ input[type="range"] {
   position: relative;
   width: 100%;
   height: 100%;
+}
+.preview-gif-stage {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+.preview-gif-controls {
+  position: absolute;
+  z-index: 2;
+  left: 50%;
+  bottom: 52px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border: 1px solid var(--divider);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--raised) 94%, transparent);
+  box-shadow: 0 1px 6px rgb(0 0 0 / 10%);
+  color: var(--secondary);
+  font-size: 11px;
+  backdrop-filter: blur(10px);
+  transform: translateX(-50%);
+}
+.preview-gif-controls button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  height: 28px;
+  padding: 0 6px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+.preview-gif-controls button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+.preview-gif-controls button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.preview-gif-frame-label {
+  margin-left: 4px;
+  padding: 0 4px;
+  color: var(--secondary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 .preview-video {
   width: 100%;
@@ -2781,7 +2879,7 @@ select.ai-config-input {
   /* REQ-CANVAS-006: never shrink below content size or wrap — a squeezed
      flex item let the label spill outside the button's border box. */
   flex: 0 0 auto;
-  height: 28px;
+  height: var(--shell-control-height);
   align-items: center;
   gap: 6px;
   padding: 0 10px;
@@ -3158,6 +3256,24 @@ select.ai-config-input {
   font-family: "IBM Plex Mono", monospace;
   font-size: 9px;
   text-align: center;
+}
+
+/* Serpent-aa3: Option/Alt copy mode marker (Finder-style "+"). */
+.asset-drag-preview-copy {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  display: grid;
+  width: 16px;
+  height: 16px;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--text);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
 }
 
 .asset-preview {
@@ -4144,7 +4260,7 @@ select.ai-config-input {
   .inspector-pane {
     position: fixed;
     z-index: 7;
-    top: 44px;
+    top: var(--shell-toolbar-height);
     bottom: 0;
     width: 224px;
     visibility: visible;

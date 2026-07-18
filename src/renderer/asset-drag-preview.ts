@@ -21,6 +21,8 @@ export interface AssetDragPreviewOptions {
   readonly fileName: string;
   /** Dragged asset count; anything above 1 adds a badge with the number. */
   readonly count: number;
+  /** Option/Alt copy mode: show a "+" affordance on the ghost (Serpent-aa3). */
+  readonly copyMode?: boolean;
 }
 
 export interface AssetDragPreviewModel {
@@ -28,6 +30,8 @@ export interface AssetDragPreviewModel {
   readonly fileName: string;
   /** Badge label for multi-asset drags; null for a single asset. */
   readonly badgeText: string | null;
+  /** True when Option/Alt copy mode should show the "+" badge. */
+  readonly showCopyBadge: boolean;
 }
 
 /** Pure view model: what the ghost shows for a given drag. */
@@ -38,6 +42,7 @@ export function assetDragPreviewModel(
     thumbnailUrl: options.thumbnailUrl,
     fileName: options.fileName,
     badgeText: options.count > 1 ? String(options.count) : null,
+    showCopyBadge: options.copyMode === true,
   };
 }
 
@@ -69,7 +74,37 @@ export function createAssetDragPreview(
     badge.textContent = model.badgeText;
     node.appendChild(badge);
   }
+  if (model.showCopyBadge) {
+    const copyBadge = document.createElement('span');
+    copyBadge.className = 'asset-drag-preview-copy';
+    copyBadge.textContent = '+';
+    copyBadge.setAttribute('aria-hidden', 'true');
+    node.appendChild(copyBadge);
+  }
   return node;
+}
+
+/**
+ * Toggle the Option/Alt "+" badge on an already-mounted ghost. Dragover can
+ * flip copy mode mid-gesture without rebuilding setDragImage.
+ */
+export function setAssetDragPreviewCopyMode(
+  node: HTMLElement | null,
+  copyMode: boolean,
+): void {
+  if (!node) return;
+  const existing = node.querySelector('.asset-drag-preview-copy');
+  if (copyMode && !existing) {
+    const copyBadge = document.createElement('span');
+    copyBadge.className = 'asset-drag-preview-copy';
+    copyBadge.textContent = '+';
+    copyBadge.setAttribute('aria-hidden', 'true');
+    node.appendChild(copyBadge);
+    return;
+  }
+  if (!copyMode && existing) {
+    existing.remove();
+  }
 }
 
 /**

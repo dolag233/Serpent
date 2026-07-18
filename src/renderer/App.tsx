@@ -89,15 +89,19 @@ import { usePanelResize } from "./use-panel-resize";
 import { useToastNotifications } from "./useToastNotifications";
 import {
   MANAGED_ASSETS_DRAG_TYPE,
+  resolveCollectionDrop,
+  resolveDragDropMode,
   resolveDraggedAssetIds,
   resolveFolderDrop,
   resolveTrashDrop,
   type DragAssetFact,
+  type DragDropMode,
 } from "./asset-drag-drop";
 import {
   ASSET_DRAG_PREVIEW_HEIGHT,
   ASSET_DRAG_PREVIEW_WIDTH,
   dismissAssetDragPreview,
+  setAssetDragPreviewCopyMode,
   showAssetDragPreview,
 } from "./asset-drag-preview";
 import { DimensionFilterBar } from "./DimensionFilterBar";
@@ -3295,7 +3299,7 @@ function AppInner() {
   );
 
   const handleAssetsDroppedOnFolder = useCallback(
-    (targetFolderId: string | null, assetIds: string[]) => {
+    (targetFolderId: string | null, assetIds: string[], mode: DragDropMode) => {
       if (!api || !library) return;
       const resolution = resolveFolderDrop({
         targetFolderId,
@@ -3303,9 +3307,12 @@ function AppInner() {
         // "all" scope is not a folder and never blocks a drop.
         currentFolderId: assetScope === "root" ? null : assetScope,
         assets: dragAssetFacts(assetIds),
+        mode,
       });
       if (resolution.kind === "reject") {
-        if (resolution.reason === "same-folder") {
+        if (resolution.reason === "copy-unsupported") {
+          setNotice(t("toast.folderCopyUnsupported"));
+        } else if (resolution.reason === "same-folder") {
           setNotice(t("toast.alreadyInFolder"));
         } else {
           setNotice(t("toast.noMovableAssets"));
@@ -3347,6 +3354,48 @@ function AppInner() {
       })();
     },
     [api, library, assetScope, dragAssetFacts, setNotice, setError, setUiState, clearAssetSelection],
+  );
+
+  const handleAssetsDroppedOnCollection = useCallback(
+    (collectionId: string, assetIds: string[], mode: DragDropMode) => {
+      if (!api || !library) return;
+      const resolution = resolveCollectionDrop({
+        assets: dragAssetFacts(assetIds),
+        mode,
+      });
+      if (resolution.kind === "reject") {
+        setNotice(t("toast.noCollectionDropAssets"));
+        return;
+      }
+      void (async () => {
+        try {
+          const result = await api.addCollectionAssets({
+            libraryId: library.libraryId,
+            collectionId,
+            assetIds: resolution.assetIds,
+          });
+          if (!result.ok) throw new LibraryOperationError(result.error);
+          const collectionResult = await api.listCollections({
+            libraryId: library.libraryId,
+          });
+          if (collectionResult.ok) setCollections(collectionResult.value);
+          setNotice(
+            t("toast.addedToCollectionCount", {
+              count: resolution.assetIds.length,
+            }) +
+              (resolution.skippedCount
+                ? t("toast.unavailableSkippedSuffix", {
+                    count: resolution.skippedCount,
+                  })
+                : "") +
+              t("common.sentenceEnd"),
+          );
+        } catch (caught) {
+          setError(toMessage(caught, t("toast.addToCollectionFailed"), locale));
+        }
+      })();
+    },
+    [api, library, dragAssetFacts, setNotice, setError],
   );
 
   const handleAssetsDroppedOnTrash = useCallback(
@@ -5367,12 +5416,18 @@ function AppInner() {
         onExternalDrop={(event, targetFolderId, targetCollectionId) =>
           handleTargetExternalDrop(event, targetFolderId, targetCollectionId)
         }
-        onAssetsDroppedOnFolder={(folderId, assetIds) =>
-          handleAssetsDroppedOnFolder(folderId, assetIds)
+        onAssetsDroppedOnFolder={(folderId, assetIds, mode) =>
+          handleAssetsDroppedOnFolder(folderId, assetIds, mode)
         }
         onAssetsDroppedOnTrash={(assetIds) =>
           handleAssetsDroppedOnTrash(assetIds)
         }
+        onAssetsDroppedOnCollection={(collectionId, assetIds, mode) =>
+          handleAssetsDroppedOnCollection(collectionId, assetIds, mode)
+        }
+        onManagedAssetCopyModeChange={(copyMode) => {
+          setAssetDragPreviewCopyMode(dragPreviewRef.current, copyMode);
+        }}
         onImportFolderAsLinked={() => void importFolderAsLinked()}
         onRelinkFolder={(folderId) => void relinkFolder(folderId)}
         onConvertLinkedDialog={setConvertLinkedDialog}
@@ -5789,7 +5844,9 @@ function AppInner() {
                           MANAGED_ASSETS_DRAG_TYPE,
                           JSON.stringify(ids),
                         );
-                        event.dataTransfer.effectAllowed = "move";
+                        // Serpent-aa3: Option/Alt during dragover selects copy
+                        // vs move via dropEffect; both must be allowed here.
+                        event.dataTransfer.effectAllowed = "copyMove";
                         // REQ-DND-003: replace Chromium's full-card ghost with
                         // the small, translucent, rounded preview tile
                         // (asset-drag-preview.ts); the same serpent:// URL as
@@ -5803,6 +5860,9 @@ function AppInner() {
                               : null,
                           fileName: asset.displayName,
                           count: ids.length,
+                          copyMode: resolveDragDropMode({
+                            altKey: event.altKey,
+                          }) === "copy",
                         });
                         dragPreviewRef.current = preview;
                         event.dataTransfer.setDragImage(

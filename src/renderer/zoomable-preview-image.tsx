@@ -35,13 +35,22 @@ export const ZoomableImage = forwardRef<
   ZoomableImageHandle,
   {
     alt: string;
+    /** Space+F fit by default; GIF player uses F-only so Space can pause. */
+    fitKeybinds?: "space-and-f" | "f-only";
     onFullscreen?: () => void;
     onSwipeNext?: () => void;
     onSwipePrevious?: () => void;
     src: string;
   }
 >(function ZoomableImage(
-  { alt, onFullscreen, onSwipeNext, onSwipePrevious, src },
+  {
+    alt,
+    fitKeybinds = "space-and-f",
+    onFullscreen,
+    onSwipeNext,
+    onSwipePrevious,
+    src,
+  },
   ref,
 ) {
   const t = useT();
@@ -224,14 +233,16 @@ export const ZoomableImage = forwardRef<
     const onKeyDown = (event: KeyboardEvent) => {
       if (isTypingTarget(event.target)) return;
       const key = event.key;
-      if (key !== " " && key !== "f" && key !== "F") return;
+      const spaceOk = fitKeybinds === "space-and-f" && key === " ";
+      const fitOk = key === "f" || key === "F" || spaceOk;
+      if (!fitOk) return;
       event.preventDefault();
       event.stopPropagation();
       fitToWindow();
     };
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [fitToWindow]);
+  }, [fitKeybinds, fitToWindow]);
 
   const sliderMax = Math.max((fitScale || 1) * 4, 2);
   const percentLabel = Math.round(view.scale * 100);

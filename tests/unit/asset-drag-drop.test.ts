@@ -3,8 +3,11 @@ import { describe, expect, it } from 'vitest';
 import {
   MANAGED_ASSETS_DRAG_TYPE,
   parseManagedAssetDrag,
+  resolveCollectionDrop,
+  resolveDragDropMode,
   resolveDraggedAssetIds,
   resolveFolderDrop,
+  resolveManagedDropEffect,
   resolveTrashDrop,
   supportsManagedAssetDrag,
   type DragAssetFact,
@@ -53,6 +56,15 @@ describe('drag payload helpers', () => {
   });
 });
 
+describe('resolveDragDropMode / resolveManagedDropEffect (Serpent-aa3)', () => {
+  it('maps Option/Alt to copy and the matching dropEffect', () => {
+    expect(resolveDragDropMode({ altKey: true })).toBe('copy');
+    expect(resolveDragDropMode({ altKey: false })).toBe('move');
+    expect(resolveManagedDropEffect('copy')).toBe('copy');
+    expect(resolveManagedDropEffect('move')).toBe('move');
+  });
+});
+
 describe('resolveFolderDrop (REQ-DND-001)', () => {
   it('rejects dropping onto the current folder (and root onto root scope)', () => {
     expect(
@@ -90,6 +102,49 @@ describe('resolveFolderDrop (REQ-DND-001)', () => {
     expect(
       resolveFolderDrop({ targetFolderId: 'f2', currentFolderId: 'f1', assets }),
     ).toEqual({ kind: 'reject', reason: 'no-eligible-assets', skippedCount: 1 });
+  });
+
+  it('refuses copy mode without silently moving (no managed duplicate API)', () => {
+    expect(
+      resolveFolderDrop({
+        targetFolderId: 'f2',
+        currentFolderId: 'f1',
+        assets: [managed('a')],
+        mode: 'copy',
+      }),
+    ).toEqual({ kind: 'reject', reason: 'copy-unsupported', skippedCount: 0 });
+  });
+});
+
+describe('resolveCollectionDrop (Serpent-aa3)', () => {
+  it('adds membership for both move and copy modes', () => {
+    const assets: DragAssetFact[] = [
+      managed('a'),
+      { assetId: 'b', locationKind: 'linked', availability: 'available', deletedAt: null },
+    ];
+    expect(resolveCollectionDrop({ assets, mode: 'move' })).toEqual({
+      kind: 'add-membership',
+      assetIds: ['a', 'b'],
+      skippedCount: 0,
+      mode: 'move',
+    });
+    expect(resolveCollectionDrop({ assets, mode: 'copy' })).toEqual({
+      kind: 'add-membership',
+      assetIds: ['a', 'b'],
+      skippedCount: 0,
+      mode: 'copy',
+    });
+  });
+
+  it('skips trashed assets and rejects when none remain', () => {
+    const assets: DragAssetFact[] = [
+      { assetId: 'd', locationKind: 'managed', availability: 'available', deletedAt: 'x' },
+    ];
+    expect(resolveCollectionDrop({ assets, mode: 'copy' })).toEqual({
+      kind: 'reject',
+      reason: 'no-eligible-assets',
+      skippedCount: 1,
+    });
   });
 });
 

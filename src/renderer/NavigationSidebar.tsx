@@ -13,7 +13,10 @@ import type { ContextMenuDescriptor } from "./context-menu";
 import type { RendererLibrarySummary } from "../shared/protocol/responses";
 import {
   parseManagedAssetDrag,
+  resolveDragDropMode,
+  resolveManagedDropEffect,
   supportsManagedAssetDrag,
+  type DragDropMode,
 } from "./asset-drag-drop";
 import {
   inlineCreateRowIndex,
@@ -315,9 +318,20 @@ export interface NavigationSidebarProps {
     targetCollectionId: string | undefined,
   ) => void;
 
-  // --- Internal asset drag/drop (REQ-DND-001/002) ---
-  onAssetsDroppedOnFolder: (folderId: string | null, assetIds: string[]) => void;
+  // --- Internal asset drag/drop (REQ-DND-001/002 + Serpent-aa3 copy mode) ---
+  onAssetsDroppedOnFolder: (
+    folderId: string | null,
+    assetIds: string[],
+    mode: DragDropMode,
+  ) => void;
   onAssetsDroppedOnTrash: (assetIds: string[]) => void;
+  onAssetsDroppedOnCollection: (
+    collectionId: string,
+    assetIds: string[],
+    mode: DragDropMode,
+  ) => void;
+  /** Mid-drag Option/Alt flips; used to update the drag-preview "+" badge. */
+  onManagedAssetCopyModeChange?: (copyMode: boolean) => void;
 
   // --- Linked folder actions ---
   onImportFolderAsLinked: () => void;
@@ -406,6 +420,8 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
     onExternalDrop,
     onAssetsDroppedOnFolder,
     onAssetsDroppedOnTrash,
+    onAssetsDroppedOnCollection,
+    onManagedAssetCopyModeChange,
     onImportFolderAsLinked,
     onRelinkFolder,
     onConvertLinkedDialog,
@@ -484,6 +500,16 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
    * asset drags resolve here; anything else falls through to the existing
    * external-import handlers unchanged.
    */
+  function applyManagedAssetDragOver(
+    event: React.DragEvent<HTMLElement>,
+  ): DragDropMode {
+    const mode = resolveDragDropMode({ altKey: event.altKey });
+    event.preventDefault();
+    event.dataTransfer.dropEffect = resolveManagedDropEffect(mode);
+    onManagedAssetCopyModeChange?.(mode === "copy");
+    return mode;
+  }
+
   function assetFolderDropHandlers(key: string, folderId: string | null) {
     return {
       dropActive: assetDropTarget === key,
@@ -499,8 +525,7 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
       },
       onDragOver: (event: React.DragEvent<HTMLButtonElement>) => {
         if (supportsManagedAssetDrag(event.dataTransfer)) {
-          event.preventDefault();
-          event.dataTransfer.dropEffect = "move";
+          applyManagedAssetDragOver(event);
           return;
         }
         onExternalDragOver(event);
@@ -510,7 +535,11 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
         setAssetDropTarget(null);
         if (ids && ids.length > 0) {
           event.preventDefault();
-          onAssetsDroppedOnFolder(folderId, ids);
+          onAssetsDroppedOnFolder(
+            folderId,
+            ids,
+            resolveDragDropMode({ altKey: event.altKey }),
+          );
           return;
         }
         onExternalDrop(event, folderId, undefined);
@@ -662,8 +691,13 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
               event.dataTransfer.types.includes(
                 "application/x-serpent-managed-assets",
               )
-            )
+            ) {
+              // Linked-folder drops always copy files out; Option is a no-op
+              // for effect (still report copy so the cursor matches).
               event.preventDefault();
+              event.dataTransfer.dropEffect = "copy";
+              onManagedAssetCopyModeChange?.(true);
+            }
           }}
           onDrop={(event) => {
             const serialized = event.dataTransfer.getData(
@@ -716,6 +750,10 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
         key={c.collectionId}
         onDragEnd={() => onSetDraggedCollectionId(null)}
         onDragOver={(event) => {
+          if (supportsManagedAssetDrag(event.dataTransfer)) {
+            applyManagedAssetDragOver(event);
+            return;
+          }
           if (
             draggedCollectionId ||
             supportsExternalImportTransfer(event.dataTransfer)
@@ -730,6 +768,16 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
         onDrop={(event) => {
           event.preventDefault();
           event.stopPropagation();
+          setAssetDropTarget(null);
+          const assetIds = parseManagedAssetDrag(event.dataTransfer);
+          if (assetIds && assetIds.length > 0) {
+            onAssetsDroppedOnCollection(
+              c.collectionId,
+              assetIds,
+              resolveDragDropMode({ altKey: event.altKey }),
+            );
+            return;
+          }
           if (draggedCollectionId) {
             void onReorderCollection(draggedCollectionId, c.collectionId);
           } else if (supportsExternalImportTransfer(event.dataTransfer)) {
@@ -749,6 +797,36 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
           count={c.assetCount}
           active={activeCollectionId === c.collectionId && !activeTagId}
           depth={depth}
+          dropActive={assetDropTarget === `collection:${c.collectionId}`}
+          onDragEnter={(event) => {
+            if (supportsManagedAssetDrag(event.dataTransfer)) {
+              setAssetDropTarget(`collection:${c.collectionId}`);
+            }
+          }}
+          onDragLeave={(event) => {
+            if (event.currentTarget.contains(event.relatedTarget as Node | null))
+              return;
+            setAssetDropTarget((current) =>
+              current === `collection:${c.collectionId}` ? null : current,
+            );
+          }}
+          onDragOver={(event) => {
+            if (supportsManagedAssetDrag(event.dataTransfer)) {
+              applyManagedAssetDragOver(event);
+            }
+          }}
+          onDrop={(event) => {
+            const assetIds = parseManagedAssetDrag(event.dataTransfer);
+            if (!assetIds || assetIds.length === 0) return;
+            event.preventDefault();
+            event.stopPropagation();
+            setAssetDropTarget(null);
+            onAssetsDroppedOnCollection(
+              c.collectionId,
+              assetIds,
+              resolveDragDropMode({ altKey: event.altKey }),
+            );
+          }}
           onContextMenu={(e) => {
             e.preventDefault();
             onOpenContextMenu(
@@ -801,8 +879,10 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
           }}
           onDragOver={(event) => {
             if (supportsManagedAssetDrag(event.dataTransfer)) {
+              // Trash is always a move/delete target; Option does not copy.
               event.preventDefault();
               event.dataTransfer.dropEffect = "move";
+              onManagedAssetCopyModeChange?.(false);
             }
           }}
           onDrop={(event) => {

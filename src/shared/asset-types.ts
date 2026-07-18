@@ -152,6 +152,8 @@ export const extractedVideoMetadataSchema = z.strictObject({
   channels: z.number().int().positive().nullable().optional().default(null),
   containerBitrate: probeNumericSchema.optional(),
   frameRateFps: z.number().finite().positive().nullable().optional(),
+  /** Animated GIF / multi-page still count when extracted via sharp. */
+  frameCount: z.number().int().nonnegative().nullable().optional(),
 });
 
 export type ExtractedVideoMetadata = z.infer<typeof extractedVideoMetadataSchema>;

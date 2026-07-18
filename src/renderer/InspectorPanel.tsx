@@ -28,6 +28,7 @@ import type { AssetSummary, AssetMetadataResult, ExtractedVideoMetadata, TagSumm
 import type { SerpentLibraryApi } from "../shared/library-api";
 import type { RendererLibrarySummary } from "../shared/protocol/responses";
 import { formatVideoTechnicalLine } from "./video-metadata-format";
+import { isGifDisplayName } from "./gif-player-controls";
 
 // --- Local utility helpers (extracted from App.tsx) ---
 
@@ -429,14 +430,18 @@ export function InspectorPanel(props: InspectorPanelProps) {
     }
   }, [showTagInput]);
 
-  // REQ-VIEW-003: fetch extracted video metadata for the primary selection only.
+  // REQ-VIEW-003 / CU-D8: fetch extracted metadata for video tech line and GIF frames.
   // Display is derived from cache identity so selection changes do not sync-setState.
   useEffect(() => {
     const assetId = selectedAsset?.assetId ?? null;
     const libraryId = library?.libraryId ?? null;
     const isVideo = selectedAsset?.mediaType === "video";
+    const isGif =
+      selectedAsset != null && isGifDisplayName(selectedAsset.displayName);
     const shouldFetch =
-      Boolean(api && libraryId && assetId && isVideo && selectionCount < 2);
+      Boolean(
+        api && libraryId && assetId && (isVideo || isGif) && selectionCount < 2,
+      );
 
     if (!shouldFetch || !api || !libraryId || !assetId) {
       return;
@@ -483,11 +488,20 @@ export function InspectorPanel(props: InspectorPanelProps) {
     library?.libraryId,
     selectedAsset?.assetId,
     selectedAsset?.mediaType,
+    selectedAsset?.displayName,
     selectionCount,
   ]);
 
   const videoTechMetadata =
     selectedAsset?.mediaType === "video"
+    && selectionCount < 2
+    && videoTechCache?.assetId === selectedAsset.assetId
+      ? videoTechCache.metadata
+      : null;
+
+  const gifExtractedMetadata =
+    selectedAsset != null
+    && isGifDisplayName(selectedAsset.displayName)
     && selectionCount < 2
     && videoTechCache?.assetId === selectedAsset.assetId
       ? videoTechCache.metadata
@@ -609,8 +623,22 @@ export function InspectorPanel(props: InspectorPanelProps) {
     if (selectedAsset.width !== null && selectedAsset.height !== null) {
       parts.push(`${selectedAsset.width} × ${selectedAsset.height}`);
     }
-    if (selectedAsset.durationMs !== null) {
-      parts.push(formatDuration(selectedAsset.durationMs));
+    const durationMs =
+      selectedAsset.durationMs
+      ?? (gifExtractedMetadata?.durationMs != null
+        && gifExtractedMetadata.durationMs > 0
+        ? gifExtractedMetadata.durationMs
+        : null);
+    if (durationMs !== null) {
+      parts.push(formatDuration(durationMs));
+    }
+    if (
+      gifExtractedMetadata?.frameCount != null
+      && gifExtractedMetadata.frameCount > 0
+    ) {
+      parts.push(
+        t("inspector.gifFrameCount", { count: gifExtractedMetadata.frameCount }),
+      );
     }
     if (
       selectedAsset.mediaType === "video"
@@ -622,7 +650,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
     }
     parts.push(formatDateFull(selectedAsset.modifiedAt ?? "", unknownTime));
     return parts;
-  }, [selectedAsset, selectionCount, t, videoTechMetadata]);
+  }, [selectedAsset, selectionCount, t, videoTechMetadata, gifExtractedMetadata]);
 
   return (
     <aside className="inspector-pane">
