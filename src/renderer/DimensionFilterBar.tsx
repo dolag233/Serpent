@@ -17,6 +17,12 @@ import {
   togglePresetRange,
 } from "./filter-presets";
 import {
+  applyDimensionSelectionClick,
+  formatTokensHas,
+  toggleFormatToken,
+} from "./dimension-filter-selection";
+import { DimensionEnableToggle } from "./dimension-enable-toggle";
+import {
   buildActiveFilterChips,
   type ClearableFilterId,
   type DiscoveryFilterSnapshot,
@@ -41,6 +47,21 @@ export type DimensionId =
   | "more";
 
 type RangeState = { min: string; max: string; exclude: boolean };
+
+/** Bundled "more" popover fields toggled together by REQ-FILTER-021. */
+type MoreFilterState = {
+  favoriteFilter: "any" | "yes" | "no";
+  sourceUrlFilter: "any" | "yes" | "no";
+  availabilityFilter: "any" | "available" | "missing";
+  excludeAvailabilityFilter: boolean;
+  longEdgeRange: RangeState;
+  widthRange: RangeState;
+  heightRange: RangeState;
+  durationRange: RangeState;
+};
+
+const HOVER_CLOSE_DELAY_MS = 150;
+const EMPTY_RANGE: RangeState = { min: "", max: "", exclude: false };
 
 export type DimensionFilterBarProps = {
   disabled?: boolean;
@@ -189,6 +210,85 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
     };
   }, [openDimension]);
 
+  // REQ-FILTER-021: hovering (or keyboard-focusing) a dimension opens its
+  // settings popover, independently of the click toggle below. Listening at
+  // the bar root and matching `[data-dimension]` ancestors (rather than
+  // binding per-dimension React handlers that would read a ref during
+  // render) keeps this entirely inside an effect, mirroring the existing
+  // outside-click-close effect above and hover-tip.tsx's document-listener
+  // pattern. A short close delay absorbs the gap between a button and its
+  // popover (rendered a few pixels below it) so moving the pointer from one
+  // into the other doesn't flicker-close.
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root) return;
+
+    let closeTimer: ReturnType<typeof setTimeout> | null = null;
+    const clearCloseTimer = () => {
+      if (closeTimer !== null) {
+        clearTimeout(closeTimer);
+        closeTimer = null;
+      }
+    };
+    const openForDimensionOf = (target: EventTarget | null) => {
+      if (!(target instanceof Element)) return;
+      const dim = target.closest<HTMLElement>("[data-dimension]");
+      const id = dim?.dataset.dimension as DimensionId | undefined;
+      if (!id) return;
+      clearCloseTimer();
+      setOpenDimension(id);
+    };
+    const isWithinDimension = (target: EventTarget | null) =>
+      target instanceof Element && target.closest("[data-dimension]") !== null;
+    const scheduleClose = () => {
+      clearCloseTimer();
+      closeTimer = setTimeout(() => setOpenDimension(null), HOVER_CLOSE_DELAY_MS);
+    };
+
+    const onPointerOver = (event: PointerEvent) =>
+      openForDimensionOf(event.target);
+    const onPointerOut = (event: PointerEvent) => {
+      if (isWithinDimension(event.relatedTarget)) return;
+      scheduleClose();
+    };
+    const onFocusIn = (event: FocusEvent) => openForDimensionOf(event.target);
+    const onFocusOut = (event: FocusEvent) => {
+      if (isWithinDimension(event.relatedTarget)) return;
+      scheduleClose();
+    };
+
+    root.addEventListener("pointerover", onPointerOver);
+    root.addEventListener("pointerout", onPointerOut);
+    root.addEventListener("focusin", onFocusIn);
+    root.addEventListener("focusout", onFocusOut);
+    return () => {
+      clearCloseTimer();
+      root.removeEventListener("pointerover", onPointerOver);
+      root.removeEventListener("pointerout", onPointerOut);
+      root.removeEventListener("focusin", onFocusIn);
+      root.removeEventListener("focusout", onFocusOut);
+    };
+  }, []);
+
+  // REQ-FILTER-021: one remembered-value toggle per dimension. Clicking a
+  // dimension button clears its live filter value (remembering it) when
+  // active, or restores the remembered value when inactive; see
+  // dimension-enable-toggle.ts.
+  const colorToggleRef = useRef(
+    new DimensionEnableToggle<{ colorFilter: string; exclude: boolean }>(),
+  );
+  const tagsToggleRef = useRef(
+    new DimensionEnableToggle<{ names: string[]; exclude: boolean }>(),
+  );
+  const shapeToggleRef = useRef(new DimensionEnableToggle<RangeState>());
+  const ratingToggleRef = useRef(
+    new DimensionEnableToggle<{ ratingFilter: string; exclude: boolean }>(),
+  );
+  const formatToggleRef = useRef(
+    new DimensionEnableToggle<{ formatFilter: string; exclude: boolean }>(),
+  );
+  const moreToggleRef = useRef(new DimensionEnableToggle<MoreFilterState>());
+
   const chips = buildActiveFilterChips(snapshot);
   const selectedTagNames = tagFilter
     .split(",")
@@ -201,16 +301,13 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
       .filter(Boolean),
   );
 
-  const toggleDimension = (id: DimensionId) => {
-    setOpenDimension((current) => (current === id ? null : id));
-  };
-
-  const toggleRating = (star: number) => {
-    const next = new Set(selectedRatings);
+  // REQ-FILTER-025: default click covers the dimension's selection with just
+  // the clicked value; Shift+click OR-accumulates it. See
+  // dimension-filter-selection.ts for the shared resolver.
+  const toggleRating = (star: number, shiftKey: boolean) => {
     const key = String(star);
-    if (next.has(key)) next.delete(key);
-    else next.add(key);
-    setRatingFilter([...next].sort().join(", "));
+    const next = applyDimensionSelectionClick([...selectedRatings], key, shiftKey);
+    setRatingFilter(next.sort().join(", "));
   };
 
   const selectedColors = new Set(parseColorFilterIds(colorFilter));
@@ -233,23 +330,121 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
     durationRange.min !== "" ||
     durationRange.max !== "";
 
-  const toggleColor = (id: ColorPresetId) => {
-    const next = new Set(selectedColors);
-    if (next.has(id)) next.delete(id);
-    else next.add(id);
-    setColorFilter([...next].join(", "));
+  const toggleColor = (id: ColorPresetId, shiftKey: boolean) => {
+    const next = applyDimensionSelectionClick(
+      [...selectedColors],
+      id,
+      shiftKey,
+    );
+    setColorFilter(next.join(", "));
+  };
+
+  // REQ-FILTER-021: click toggles a dimension's filter on/off, remembering
+  // the cleared value so a second click restores it (hover, wired via the
+  // pointer/focus effect above, opens the settings popover instead).
+  const handleColorDimensionClick = () => {
+    colorToggleRef.current.toggle(
+      colorActive,
+      { colorFilter, exclude: excludeColorFilter },
+      { colorFilter: "", exclude: false },
+      (value) => {
+        setColorFilter(value.colorFilter);
+        setExcludeColorFilter(value.exclude);
+      },
+    );
+  };
+
+  const handleTagsDimensionClick = () => {
+    tagsToggleRef.current.toggle(
+      tagActive,
+      { names: selectedTagNames, exclude: excludeTagFilter },
+      { names: [], exclude: false },
+      (value) => {
+        onTagNamesChange(value.names);
+        setExcludeTagFilter(value.exclude);
+      },
+    );
+  };
+
+  const handleShapeDimensionClick = () => {
+    shapeToggleRef.current.toggle(
+      shapeActive,
+      aspectRatioRange,
+      EMPTY_RANGE,
+      setAspectRatioRange,
+    );
+  };
+
+  const handleRatingDimensionClick = () => {
+    ratingToggleRef.current.toggle(
+      ratingActive,
+      { ratingFilter, exclude: excludeRatingFilter },
+      { ratingFilter: "", exclude: false },
+      (value) => {
+        setRatingFilter(value.ratingFilter);
+        setExcludeRatingFilter(value.exclude);
+      },
+    );
+  };
+
+  const handleFormatDimensionClick = () => {
+    formatToggleRef.current.toggle(
+      formatActive,
+      { formatFilter, exclude: excludeFormatFilter },
+      { formatFilter: "", exclude: false },
+      (value) => {
+        setFormatFilter(value.formatFilter);
+        setExcludeFormatFilter(value.exclude);
+      },
+    );
+  };
+
+  const handleMoreDimensionClick = () => {
+    moreToggleRef.current.toggle(
+      moreActive,
+      {
+        favoriteFilter,
+        sourceUrlFilter,
+        availabilityFilter,
+        excludeAvailabilityFilter,
+        longEdgeRange,
+        widthRange,
+        heightRange,
+        durationRange,
+      },
+      {
+        favoriteFilter: "any",
+        sourceUrlFilter: "any",
+        availabilityFilter: "any",
+        excludeAvailabilityFilter: false,
+        longEdgeRange: EMPTY_RANGE,
+        widthRange: EMPTY_RANGE,
+        heightRange: EMPTY_RANGE,
+        durationRange: EMPTY_RANGE,
+      },
+      (value) => {
+        setFavoriteFilter(value.favoriteFilter);
+        setSourceUrlFilter(value.sourceUrlFilter);
+        setAvailabilityFilter(value.availabilityFilter);
+        setExcludeAvailabilityFilter(value.excludeAvailabilityFilter);
+        setLongEdgeRange(value.longEdgeRange);
+        setWidthRange(value.widthRange);
+        setHeightRange(value.heightRange);
+        setDurationRange(value.durationRange);
+      },
+    );
   };
 
   return (
     <div className="dimension-filter-bar" ref={rootRef}>
       <div className="dimension-filter-dims" role="toolbar" aria-label={t("filter.dimensions")}>
-        <div className="dimension-filter-dim">
+        <div className="dimension-filter-dim" data-dimension="color">
           <DimensionButton
             active={colorActive}
             disabled={disabled}
             icon="activity"
             label={t("filter.dimColor")}
-            onClick={() => toggleDimension("color")}
+            onClick={handleColorDimensionClick}
             open={openDimension === "color"}
           />
           {openDimension === "color" && (
@@ -262,7 +457,7 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
                     className={`dimension-color-swatch${selectedColors.has(preset.id) ? " is-active" : ""}`}
                     disabled={disabled}
                     key={preset.id}
-                    onClick={() => toggleColor(preset.id)}
+                    onClick={(event) => toggleColor(preset.id, event.shiftKey)}
                     style={{ background: preset.swatch }}
                     type="button"
                   />
@@ -283,13 +478,13 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
           )}
         </div>
 
-        <div className="dimension-filter-dim">
+        <div className="dimension-filter-dim" data-dimension="tags">
           <DimensionButton
             active={tagActive}
             disabled={disabled}
             icon="tag"
             label={t("filter.dimTags")}
-            onClick={() => toggleDimension("tags")}
+            onClick={handleTagsDimensionClick}
             open={openDimension === "tags"}
           />
           {openDimension === "tags" && (
@@ -315,13 +510,13 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
           )}
         </div>
 
-        <div className="dimension-filter-dim">
+        <div className="dimension-filter-dim" data-dimension="shape">
           <DimensionButton
             active={shapeActive}
             disabled={disabled}
             icon="grid"
             label={t("filter.dimShape")}
-            onClick={() => toggleDimension("shape")}
+            onClick={handleShapeDimensionClick}
             open={openDimension === "shape"}
           />
           {openDimension === "shape" && (
@@ -369,13 +564,13 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
           )}
         </div>
 
-        <div className="dimension-filter-dim">
+        <div className="dimension-filter-dim" data-dimension="rating">
           <DimensionButton
             active={ratingActive}
             disabled={disabled}
             icon="star"
             label={t("filter.dimRating")}
-            onClick={() => toggleDimension("rating")}
+            onClick={handleRatingDimensionClick}
             open={openDimension === "rating"}
           />
           {openDimension === "rating" && (
@@ -387,7 +582,7 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
                     className={`dimension-rating-chip${selectedRatings.has(String(star)) ? " is-active" : ""}`}
                     disabled={disabled}
                     key={star}
-                    onClick={() => toggleRating(star)}
+                    onClick={(event) => toggleRating(star, event.shiftKey)}
                     type="button"
                   >
                     {star === 0 ? t("filter.unrated") : `${star}★`}
@@ -409,13 +604,13 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
           )}
         </div>
 
-        <div className="dimension-filter-dim">
+        <div className="dimension-filter-dim" data-dimension="format">
           <DimensionButton
             active={formatActive}
             disabled={disabled}
             icon="file"
             label={t("filter.dimFormat")}
-            onClick={() => toggleDimension("format")}
+            onClick={handleFormatDimensionClick}
             open={openDimension === "format"}
           />
           {openDimension === "format" && (
@@ -430,15 +625,17 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
               />
               <div className="filter-presets" role="group">
                 {["png", "jpg", "webp", "gif", "mp4", "mov"].map((ext) => {
-                  const active = selectedFormatsHas(formatFilter, ext);
+                  const active = formatTokensHas(formatFilter, ext);
                   return (
                     <button
                       aria-pressed={active}
                       className={`filter-preset-chip${active ? " is-active" : ""}`}
                       disabled={disabled}
                       key={ext}
-                      onClick={() =>
-                        setFormatFilter(toggleFormatToken(formatFilter, ext))
+                      onClick={(event) =>
+                        setFormatFilter(
+                          toggleFormatToken(formatFilter, ext, event.shiftKey),
+                        )
                       }
                       type="button"
                     >
@@ -462,13 +659,13 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
           )}
         </div>
 
-        <div className="dimension-filter-dim">
+        <div className="dimension-filter-dim" data-dimension="more">
           <DimensionButton
             active={moreActive}
             disabled={disabled}
             icon="menu"
             label={t("filter.dimMore")}
-            onClick={() => toggleDimension("more")}
+            onClick={handleMoreDimensionClick}
             open={openDimension === "more"}
           />
           {openDimension === "more" && (
@@ -648,23 +845,3 @@ function labelForActiveChip(id: string, t: ReturnType<typeof useT>): string {
   }
 }
 
-function selectedFormatsHas(formatFilter: string, ext: string): boolean {
-  return formatFilter
-    .split(",")
-    .map((value) => value.trim().replace(/^\./, "").toLowerCase())
-    .filter(Boolean)
-    .includes(ext.toLowerCase());
-}
-
-function toggleFormatToken(formatFilter: string, ext: string): string {
-  const tokens = formatFilter
-    .split(",")
-    .map((value) => value.trim().replace(/^\./, ""))
-    .filter(Boolean);
-  const lower = ext.toLowerCase();
-  const exists = tokens.some((token) => token.toLowerCase() === lower);
-  const next = exists
-    ? tokens.filter((token) => token.toLowerCase() !== lower)
-    : [...tokens, ext];
-  return next.join(", ");
-}

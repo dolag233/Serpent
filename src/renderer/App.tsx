@@ -167,6 +167,19 @@ import {
   distributeMasonryItems,
 } from "./asset-grid-layout";
 import { JustifiedAssetRows } from "./justified-asset-rows";
+import {
+  captureAnchor,
+  clampScrollOffset,
+  computeAnchorScrollDelta,
+  pickNearestCard,
+  type AnchorCard,
+  type CanvasAnchor,
+} from "./canvas-scroll-anchor";
+import {
+  captureBrowseViewSnapshot,
+  resolveBrowseRestoreScroll,
+  type BrowseViewSnapshot,
+} from "./view-restore";
 import { createCommandRegistry } from "./commands/command-registry";
 import { assetCommandDefinitions } from "./commands/asset-commands";
 import {
@@ -366,6 +379,56 @@ function MasonryColumns({
       ))}
     </div>
   );
+}
+
+/**
+ * REQ-CANVAS-019: waits two frames for a card-size/width-driven reflow to
+ * settle, then nudges scroll by the delta needed to keep `anchor` at the
+ * same on-screen point it occupied before the reflow. Two frames (not one)
+ * because the browser may re-clamp scroll against the new content size
+ * before React finishes committing the new layout; the extra frame lets
+ * that settle before we measure the anchor card's rect. Bails out if the
+ * scroll position was already touched by something else in the meantime
+ * (user drag, another scrollTo) so this never fights a newer scroll intent.
+ */
+function scheduleAnchorRestore(
+  canvas: HTMLElement,
+  anchor: CanvasAnchor | null,
+  measuredScrollLeft: number,
+  measuredScrollTop: number,
+  frameRef: { current: number | null },
+): void {
+  if (frameRef.current !== null) {
+    window.cancelAnimationFrame(frameRef.current);
+    frameRef.current = null;
+  }
+  if (!anchor) return;
+  frameRef.current = window.requestAnimationFrame(() => {
+    frameRef.current = window.requestAnimationFrame(() => {
+      frameRef.current = null;
+      const clampedTop = clampScrollOffset(
+        measuredScrollTop,
+        canvas.scrollHeight,
+        canvas.clientHeight,
+      );
+      const clampedLeft = clampScrollOffset(
+        measuredScrollLeft,
+        canvas.scrollWidth,
+        canvas.clientWidth,
+      );
+      if (canvas.scrollTop !== clampedTop || canvas.scrollLeft !== clampedLeft) {
+        return;
+      }
+      const restored = Array.from(
+        canvas.querySelectorAll<HTMLElement>("[data-asset-id]"),
+      ).find((card) => card.dataset.assetId === anchor.assetId);
+      if (!restored) return;
+      const rect = restored.getBoundingClientRect();
+      const delta = computeAnchorScrollDelta(anchor, rect);
+      canvas.scrollLeft += delta.deltaX;
+      canvas.scrollTop += delta.deltaY;
+    });
+  });
 }
 
 function AppInner() {
@@ -670,6 +733,13 @@ function AppInner() {
 
   // Thumbnail / Preview state
   const [previewAsset, setPreviewAsset] = useState<AssetSummary | null>(null);
+  // REQ-CANVAS-019: read synchronously inside the canvas ResizeObserver
+  // callback (which is created once and does not close over fresh state)
+  // to skip the reflow-anchor logic while the viewer hides the canvas.
+  const previewAssetRef = useRef<AssetSummary | null>(null);
+  useLayoutEffect(() => {
+    previewAssetRef.current = previewAsset;
+  }, [previewAsset]);
   const [canvasPrefs, setCanvasPrefs] = useState<CanvasPreferences>(() =>
     loadCanvasPreferences(),
   );
@@ -677,15 +747,33 @@ function AppInner() {
   const assetCardSize = canvasPrefs.cardSize;
   const [loadingMoreAssets, setLoadingMoreAssets] = useState(false);
   const workspaceCanvasRef = useRef<HTMLDivElement>(null);
+  // REQ-CANVAS-019: rAF handle for the card-size-slider anchor restore.
+  const cardSizeRestoreFrameRef = useRef<number | null>(null);
+  // REQ-CANVAS-019: rAF handle for the container-width (sidebar/window
+  // resize) anchor restore; separate from the card-size one above so the
+  // two triggers never cancel each other's in-flight restoration.
+  const reflowRestoreFrameRef = useRef<number | null>(null);
+  useEffect(
+    () => () => {
+      if (cardSizeRestoreFrameRef.current !== null) {
+        window.cancelAnimationFrame(cardSizeRestoreFrameRef.current);
+      }
+      if (reflowRestoreFrameRef.current !== null) {
+        window.cancelAnimationFrame(reflowRestoreFrameRef.current);
+      }
+    },
+    [],
+  );
   // 筛选与排序面板：外点 / Esc 自动关闭（现代浮层语义），summary 切换不变。
   const loadMoreSentinelRef = useRef<HTMLDivElement>(null);
   const loadMoreAssetsRef = useRef<() => Promise<void>>(async () => undefined);
   const pendingRestoredFocusRef = useRef<string | null>(null);
   const previewFocusReturnRef = useRef<string | null>(null);
-  const previewScrollPositionRef = useRef<{
-    left: number;
-    top: number;
-  } | null>(null);
+  // REQ-VIEW-008: snapshot of the browse scroll position + the previewed
+  // card's on-screen anchor, captured when the viewer opens so the close
+  // path can correct for any reflow that happened while viewing (e.g. the
+  // inspector panel toggled and changed the grid's available width).
+  const previewScrollSnapshotRef = useRef<BrowseViewSnapshot | null>(null);
   const closingPreviewRef = useRef<string | null>(null);
   const previewRestoreFrameRef = useRef<number | null>(null);
   useEffect(
@@ -939,83 +1027,91 @@ function AppInner() {
       const rootRect = root.getBoundingClientRect();
       const anchorX = clientX ?? rootRect.left + rootRect.width / 2;
       const anchorY = clientY ?? rootRect.top + rootRect.height / 2;
-      const cards = Array.from(
+      const cardEls = Array.from(
         root.querySelectorAll<HTMLElement>("[data-asset-id]"),
       );
+      const cards: AnchorCard[] = cardEls.map((el) => {
+        const rect = el.getBoundingClientRect();
+        return { assetId: el.dataset.assetId!, ...rect };
+      });
       const pointed = document
         .elementFromPoint(anchorX, anchorY)
         ?.closest<HTMLElement>("[data-asset-id]");
-      const anchor =
-        (pointed && root.contains(pointed) ? pointed : null) ??
-        cards
-          .filter((card) => {
-            const rect = card.getBoundingClientRect();
-            return rect.bottom > rootRect.top && rect.top < rootRect.bottom;
-          })
-          .sort((left, right) => {
-            const a = left.getBoundingClientRect();
-            const b = right.getBoundingClientRect();
-            const ad = Math.hypot(
-              a.left + a.width / 2 - anchorX,
-              a.top + a.height / 2 - anchorY,
-            );
-            const bd = Math.hypot(
-              b.left + b.width / 2 - anchorX,
-              b.top + b.height / 2 - anchorY,
-            );
-            return ad - bd;
-          })[0];
-      const anchorRect = anchor?.getBoundingClientRect();
-      const anchorState =
-        anchor && anchorRect
-          ? {
-              assetId: anchor.dataset.assetId!,
-              ratioX: anchorRect.width
-                ? (anchorX - anchorRect.left) / anchorRect.width
-                : 0.5,
-              ratioY: anchorRect.height
-                ? (anchorY - anchorRect.top) / anchorRect.height
-                : 0.5,
-              clientX: anchorX,
-              clientY: anchorY,
-            }
-          : null;
+      const pointedInRoot = pointed && root.contains(pointed) ? pointed : null;
+      const anchorCard = pointedInRoot
+        ? cards.find((card) => card.assetId === pointedInRoot.dataset.assetId) ?? null
+        : pickNearestCard(cards, rootRect, anchorX, anchorY);
+      const anchorState = anchorCard
+        ? captureAnchor(anchorCard, anchorX, anchorY)
+        : null;
 
       setCanvasPrefs((p) => ({ ...p, cardSize: nextSize }));
       // 测量时刻的滚动位置：两帧后的锚点补偿只能覆盖「浏览器钳制」这一种
       // 位移。若期间出现其它滚动意图（用户拖滚动条、脚本 scrollTo），补偿
       // 必须作废，否则会把更新的滚动位置强行拉回到旧锚点。
-      const measuredScrollLeft = root.scrollLeft;
-      const measuredScrollTop = root.scrollTop;
-      window.requestAnimationFrame(() => {
-        window.requestAnimationFrame(() => {
-          if (!anchorState || !workspaceCanvasRef.current) return;
-          const canvas = workspaceCanvasRef.current;
-          const clampedTop = Math.min(
-            measuredScrollTop,
-            Math.max(0, canvas.scrollHeight - canvas.clientHeight),
-          );
-          const clampedLeft = Math.min(
-            measuredScrollLeft,
-            Math.max(0, canvas.scrollWidth - canvas.clientWidth),
-          );
-          if (canvas.scrollTop !== clampedTop || canvas.scrollLeft !== clampedLeft) {
-            return;
-          }
-          const restored = Array.from(
-            canvas.querySelectorAll<HTMLElement>("[data-asset-id]"),
-          ).find((card) => card.dataset.assetId === anchorState.assetId);
-          if (!restored) return;
-          const rect = restored.getBoundingClientRect();
-          canvas.scrollLeft +=
-            rect.left + rect.width * anchorState.ratioX - anchorState.clientX;
-          canvas.scrollTop +=
-            rect.top + rect.height * anchorState.ratioY - anchorState.clientY;
-        });
-      });
+      scheduleAnchorRestore(
+        root,
+        anchorState,
+        root.scrollLeft,
+        root.scrollTop,
+        cardSizeRestoreFrameRef,
+      );
     },
     [assetCardSize],
   );
+
+  // REQ-CANVAS-019: dragging the sidebar or resizing the window changes the
+  // canvas's available width, which the grid/masonry/justified layouts react
+  // to by reflowing (different column/row placement). Left unhandled, that
+  // reflow leaves the raw scroll offset pointing at a different area of the
+  // grid. Watch the canvas's own box size (not the preview toggle, which
+  // also changes it via `.is-viewing { display: none }`) and re-anchor scroll
+  // the same way the card-size slider does.
+  useEffect(() => {
+    const canvas = workspaceCanvasRef.current;
+    if (!canvas) return;
+    let lastWidth: number | null = null;
+    const observer = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width ?? canvas.clientWidth;
+      // `display:none` while viewing reports width 0; ignore both that
+      // transition and the transition back (view-restore.ts owns scroll
+      // restoration for the viewer close path) by requiring a genuine
+      // non-zero-to-non-zero change.
+      if (width <= 0) {
+        lastWidth = null;
+        return;
+      }
+      if (lastWidth === null) {
+        lastWidth = width;
+        return;
+      }
+      if (width === lastWidth || previewAssetRef.current) {
+        lastWidth = width;
+        return;
+      }
+      lastWidth = width;
+
+      const rootRect = canvas.getBoundingClientRect();
+      const anchorX = rootRect.left + rootRect.width / 2;
+      const anchorY = rootRect.top + rootRect.height / 2;
+      const cards: AnchorCard[] = Array.from(
+        canvas.querySelectorAll<HTMLElement>("[data-asset-id]"),
+      ).map((el) => ({ assetId: el.dataset.assetId!, ...el.getBoundingClientRect() }));
+      const anchorCard = pickNearestCard(cards, rootRect, anchorX, anchorY);
+      const anchorState = anchorCard
+        ? captureAnchor(anchorCard, anchorX, anchorY)
+        : null;
+      scheduleAnchorRestore(
+        canvas,
+        anchorState,
+        canvas.scrollLeft,
+        canvas.scrollTop,
+        reflowRestoreFrameRef,
+      );
+    });
+    observer.observe(canvas);
+    return () => observer.disconnect();
+  }, []);
 
   useEffect(() => {
     saveCanvasPreferences(canvasPrefs);
@@ -1050,12 +1146,20 @@ function AppInner() {
       previewRestoreFrameRef.current = null;
     }
     previewFocusReturnRef.current = asset.assetId;
-    previewScrollPositionRef.current = workspaceCanvasRef.current
-      ? {
-          left: workspaceCanvasRef.current.scrollLeft,
-          top: workspaceCanvasRef.current.scrollTop,
-        }
-      : null;
+    const canvas = workspaceCanvasRef.current;
+    if (canvas) {
+      const card = Array.from(
+        canvas.querySelectorAll<HTMLElement>("[data-asset-id]"),
+      ).find((el) => el.dataset.assetId === asset.assetId);
+      previewScrollSnapshotRef.current = captureBrowseViewSnapshot(
+        asset.assetId,
+        card?.getBoundingClientRect() ?? null,
+        canvas.scrollLeft,
+        canvas.scrollTop,
+      );
+    } else {
+      previewScrollSnapshotRef.current = null;
+    }
     setSelectedAssetIds([asset.assetId]);
     setSelectedAssetId(asset.assetId);
     selectionAnchorRef.current = asset.assetId;
@@ -1085,9 +1189,9 @@ function AppInner() {
     closingPreviewRef.current = closingAsset.assetId;
     setPreviewAsset(null);
     const assetId = previewFocusReturnRef.current;
-    const scrollPosition = previewScrollPositionRef.current;
+    const scrollSnapshot = previewScrollSnapshotRef.current;
     previewFocusReturnRef.current = null;
-    previewScrollPositionRef.current = null;
+    previewScrollSnapshotRef.current = null;
     if (previewRestoreFrameRef.current !== null) {
       window.cancelAnimationFrame(previewRestoreFrameRef.current);
       previewRestoreFrameRef.current = null;
@@ -1098,7 +1202,30 @@ function AppInner() {
       // the first frame is discarded by layout and jumps back to the top.
       previewRestoreFrameRef.current = window.requestAnimationFrame(() => {
         const canvas = workspaceCanvasRef.current;
-        if (canvas && scrollPosition) canvas.scrollTo(scrollPosition);
+        if (canvas && scrollSnapshot) {
+          // REQ-VIEW-008: the grid may have reflowed while the viewer was
+          // open (e.g. inspector panel width changed). Land on the raw
+          // captured position first, measure where the previewed card
+          // actually ended up, then correct the delta so it returns to the
+          // exact spot it occupied before entering the viewer.
+          canvas.scrollTo({ left: scrollSnapshot.scrollLeft, top: scrollSnapshot.scrollTop });
+          const restoredCard = scrollSnapshot.anchor
+            ? Array.from(
+                canvas.querySelectorAll<HTMLElement>("[data-asset-id]"),
+              ).find((el) => el.dataset.assetId === scrollSnapshot.anchor!.assetId)
+            : null;
+          const target = resolveBrowseRestoreScroll(
+            scrollSnapshot,
+            restoredCard?.getBoundingClientRect() ?? null,
+            {
+              scrollWidth: canvas.scrollWidth,
+              scrollHeight: canvas.scrollHeight,
+              clientWidth: canvas.clientWidth,
+              clientHeight: canvas.clientHeight,
+            },
+          );
+          canvas.scrollTo({ left: target.left, top: target.top });
+        }
         canvas
           ?.querySelector<HTMLElement>(`[data-asset-id="${assetId ?? ""}"]`)
           ?.focus({ preventScroll: true });

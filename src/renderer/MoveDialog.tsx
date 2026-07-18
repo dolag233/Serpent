@@ -8,6 +8,7 @@ export interface MoveDialogProps {
     folderId: string;
     name: string;
     relativePath: string;
+    directAssetCount: number;
   }>;
   targetFolderId: string | null;
   conflictStrategy: "keep-both" | "replace" | "skip";

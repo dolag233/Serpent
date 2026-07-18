@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { TagSummary } from "../shared/asset-types";
+import { applyDimensionSelectionClick } from "./dimension-filter-selection";
 import { Icon } from "./Icons";
 import { useT } from "./i18n";
 
@@ -11,6 +12,10 @@ import { useT } from "./i18n";
 // top 20 by count — the full list is never dumped into the UI). Selecting a
 // tag adds it to the same comma-separated tagFilter the query layer already
 // ORs within the tag field, so no protocol change is needed.
+//
+// REQ-FILTER-025: clicking (or pressing Enter on) a suggestion replaces the
+// tag selection with just that tag by default; Shift+click/Enter
+// OR-accumulates it into the existing selection instead.
 // ---------------------------------------------------------------------------
 
 export function FilterTagPicker({
@@ -48,9 +53,8 @@ export function FilterTagPicker({
     .sort((a, b) => b.assetCount - a.assetCount)
     .slice(0, 20);
 
-  const add = (name: string) => {
-    if (selectedNames.includes(name)) return;
-    onChange([...selectedNames, name]);
+  const add = (name: string, shiftKey: boolean) => {
+    onChange(applyDimensionSelectionClick(selectedNames, name, shiftKey));
     setQuery("");
   };
   const remove = (name: string) =>
@@ -89,7 +93,7 @@ export function FilterTagPicker({
           if (event.key === "Enter") {
             event.preventDefault();
             const first = candidates[0];
-            if (first) add(first.name);
+            if (first) add(first.name, event.shiftKey);
           } else if (event.key === "Escape") {
             setOpen(false);
           }
@@ -105,7 +109,10 @@ export function FilterTagPicker({
         >
           {candidates.map((tag) => (
             <li key={tag.tagId} role="option" aria-selected={false}>
-              <button onClick={() => add(tag.name)} type="button">
+              <button
+                onClick={(event) => add(tag.name, event.shiftKey)}
+                type="button"
+              >
                 <span>{tag.name}</span>
                 <span className="filter-tag-count">{tag.assetCount}</span>
               </button>

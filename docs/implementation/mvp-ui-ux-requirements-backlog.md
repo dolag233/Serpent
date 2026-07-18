@@ -82,7 +82,7 @@
 | REQ-FOLDER-005 | 文件夹封面和计数必须批量获得，禁止每文件夹一次 IPC/SQL 的 N+1 实现。                                          | 是  | 工程约束（随 `Serpent-5ja`）                                                                          |
 | REQ-FOLDER-006 | 资产浏览模型显式区分 `folder` 与 `asset`，不能伪造文件夹资产；搜索、合集等非目录范围不得错误混入文件夹卡片。  | 是  | 工程约束（随 `Serpent-5ja`）                                                                          |
 | REQ-FOLDER-007 | 文件夹「新建子文件夹」与「重命名」在目录树内原地编辑完成，不使用弹出对话框；侧栏「+」入口走同一原地编辑流程。 | 是 | 已实现（Wave 1 T4，状态机+单测）；待人类验收（MENU-019） |
-| REQ-FOLDER-010 | 文件夹卡片参与与资产相同的框选/多选（含混合选择菜单跳过语义）。                                               | 是  | **已裁决并开单**（2026-07-18）：`Serpent-5ja.4`                                                       |
+| REQ-FOLDER-010 | 文件夹卡片参与与资产相同的框选/多选（含混合选择菜单跳过语义）。                                               | 是  | **部分实现**（2026-07-19）：`Serpent-5ja.4` 框选/多选已落地（FOLDER-013）；混合右键跳过语义仍待后续 |
 
 ### E. 资产、文件夹右键菜单与快捷键
 
@@ -329,17 +329,17 @@ FolderBrowseEntry
 | REQ-INSPECT-004 | 多选堆叠预览加微弱阴影                                             | 堆叠层有轻阴影，不糊成一团                                | P3     | `Serpent-1tx` |
 | REQ-SHELL-018   | 筛选/排序文案去掉括注如 Relevance (default)；全局复查漏网括注      | 无「（默认）」/中英叠注；SHELL-017 复验                   | P1     | `Serpent-d45` |
 | REQ-FILTER-020  | 标签过滤默认显示最多使用与最近筛选的 tag；修复中间大空档布局 bug   | 默认列表有 top+recent；popover 无大块空白                 | P1     | `Serpent-1v0` |
-| REQ-FILTER-021  | 点击维度按钮切换启用/关闭；hover 再出设置面板                      | 单击 toggle；悬停打开设置 popover                         | P1     | `Serpent-yp7` |
+| REQ-FILTER-021  | 点击维度按钮切换启用/关闭；hover 再出设置面板                      | 单击 toggle；悬停打开设置 popover                         | P1     | **已实现** `Serpent-yp7` → FILTER-016 |
 | REQ-SORT-002    | 排序方向用升序/降序专用图标，不用上下箭头                          | 图标语义为 asc/desc                                       | P2     | `Serpent-1c9` |
-| REQ-VIEW-008    | 从浏览进查看再返回，浏览视图前后不变（滚动/选中/布局）             | Esc/返回后滚动位置与选中与进入前一致；回归 VIEWER-001     | P1     | `Serpent-cj6` |
+| REQ-VIEW-008    | 从浏览进查看再返回，浏览视图前后不变（滚动/选中/布局）             | Esc/返回后滚动位置与选中与进入前一致；回归 VIEWER-001     | P1     | **已实现** `Serpent-cj6` → VIEWER-001 复验 |
 | REQ-CANVAS-018  | 亮色下网格角标看不清（来源路径 + 类型/时长）                       | 亮色对比度可读；覆盖路径角标与 VIDEO/GIF/时长角标         | P1     | `Serpent-yu8` |
-| REQ-CANVAS-019  | 拖右侧栏或改窗口宽度后资产须重排，且保持当前视图                   | resize 触发 reflow；锚点资产仍在视野                      | P1     | `Serpent-o3z` |
+| REQ-CANVAS-019  | 拖右侧栏或改窗口宽度后资产须重排，且保持当前视图                   | resize 触发 reflow；锚点资产仍在视野                      | P1     | **已实现** `Serpent-o3z` → CANVAS-021 |
 | REQ-NAV-006     | 移除 library root / 资源库根目录冗余入口                           | 侧栏/拖放目标不再出现独立「资源库根目录」行（或等价冗余） | P2     | `Serpent-vms` |
 | REQ-SORT-003    | 排序去掉「相关性」；非搜索场景不应有相关性                         | 排序菜单无 Relevance；默认改为名称或修改日期等            | P1     | `Serpent-96i` |
 | REQ-FILTER-022  | 删除文件夹过滤维度                                                 | 维度条无「文件夹」过滤入口                                | P2     | `Serpent-ckx` |
 | REQ-FILTER-023  | 颜色过滤加黑白；去掉难看双环；选中样式重做                         | 含黑/白；选中清晰不丑                                     | P2     | `Serpent-o75` |
 | REQ-FILTER-024  | 排除类过滤高亮用红色                                               | exclude 态为红，与 include 区分                           | P2     | `Serpent-8s8` |
-| REQ-FILTER-025  | 过滤语言统一：默认点击=覆盖设置；Shift+点击=同维度 OR 追加         | 文档化并实现；跨维度仍 AND                                | P1     | `Serpent-f86` |
+| REQ-FILTER-025  | 过滤语言统一：默认点击=覆盖设置；Shift+点击=同维度 OR 追加         | 文档化并实现；跨维度仍 AND                                | P1     | **已实现** `Serpent-f86` → FILTER-017 |
 | REQ-INSPECT-005 | 视频/GIF 技术元数据不进体积/分辨率/时间行，改 Inspector 底部独立栏 | VIEW-007 复验                                             | P2     | `Serpent-rbx` |
 
 ### C. 过滤交互裁决（本批已确认，勿再猜）
