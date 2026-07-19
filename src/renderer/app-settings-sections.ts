@@ -3,9 +3,10 @@ import type { LocalePreference } from "./i18n";
 import type { ThemePreference } from "./theme";
 
 /**
- * Declarative copy/keys for REQ-PREF-001 / Serpent-97l.
- * Each preference surfaces a short explanation of what it controls and where
- * the effect appears (app chrome vs canvas cards).
+ * Declarative copy/keys for REQ-PREF-001 / Serpent-97l / Serpent-9es.
+ * Section-level hints explain where each preference takes effect. Canvas card
+ * field toggles share one group hint (`settings.cardFieldsHint`) — no
+ * per-field near-duplicate paragraphs.
  */
 
 export type AppSettingsThemeOption = {
@@ -24,11 +25,10 @@ export type AppSettingsCanvasFieldOption = {
     | "toolbar.showFileName"
     | "toolbar.showFileSize"
     | "toolbar.showModifiedDate";
-  readonly descriptionKey:
-    | "settings.showFileNameHint"
-    | "settings.showFileSizeHint"
-    | "settings.showModifiedDateHint";
 };
+
+/** Shared explanatory copy for the card-fields checkbox group (Serpent-9es). */
+export const APP_SETTINGS_CARD_FIELDS_HINT_KEY = "settings.cardFieldsHint" as const;
 
 export const APP_SETTINGS_THEME_OPTIONS: readonly AppSettingsThemeOption[] = [
   { value: "dark", labelKey: "shell.themeDark" },
@@ -44,30 +44,24 @@ export const APP_SETTINGS_LOCALE_OPTIONS: readonly AppSettingsLocaleOption[] = [
 
 export const APP_SETTINGS_CANVAS_FIELD_OPTIONS: readonly AppSettingsCanvasFieldOption[] =
   [
-    {
-      field: "name",
-      labelKey: "toolbar.showFileName",
-      descriptionKey: "settings.showFileNameHint",
-    },
-    {
-      field: "size",
-      labelKey: "toolbar.showFileSize",
-      descriptionKey: "settings.showFileSizeHint",
-    },
-    {
-      field: "date",
-      labelKey: "toolbar.showModifiedDate",
-      descriptionKey: "settings.showModifiedDateHint",
-    },
+    { field: "name", labelKey: "toolbar.showFileName" },
+    { field: "size", labelKey: "toolbar.showFileSize" },
+    { field: "date", labelKey: "toolbar.showModifiedDate" },
   ];
 
-/** Every canvas field toggle must ship with explanatory copy (Serpent-97l). */
-export function canvasFieldOptionsHaveHints(
+/**
+ * Card field toggles must be label-only; explanatory copy lives on the group
+ * heading via `APP_SETTINGS_CARD_FIELDS_HINT_KEY` (Serpent-9es).
+ */
+export function canvasFieldOptionsUseSharedHint(
   options: readonly AppSettingsCanvasFieldOption[] = APP_SETTINGS_CANVAS_FIELD_OPTIONS,
+  sharedHintKey: string = APP_SETTINGS_CARD_FIELDS_HINT_KEY,
 ): boolean {
+  if (sharedHintKey !== APP_SETTINGS_CARD_FIELDS_HINT_KEY) return false;
+  if (options.length === 0) return false;
   return options.every(
     (option) =>
-      option.descriptionKey.startsWith("settings.") &&
-      option.descriptionKey.endsWith("Hint"),
+      option.labelKey.startsWith("toolbar.show") &&
+      !("descriptionKey" in option),
   );
 }

@@ -130,11 +130,8 @@ const SHARP_VERSION = '0.35.3';
 const SHARP_THUMBNAIL_GENERATOR = `sharp@${SHARP_VERSION}-gifstill1`;
 const OIIO_VERSION = '3.1.12.0';
 const FFMPEG_VERSION = '8.1';
-/** Opaque waveform covers (Serpent-13v); stale transparent strips requeue. */
-const AUDIO_WAVEFORM_GENERATOR = `ffmpeg@${FFMPEG_VERSION}+waveform-cover2`;
-const AUDIO_WAVEFORM_WIDTH = 640;
-const AUDIO_WAVEFORM_HEIGHT = 160;
-const AUDIO_WAVEFORM_BACKGROUND = { r: 0x1a, g: 0x20, b: 0x30 };
+/** Opaque ≈4:3 light-stage covers (Serpent-dxk); stale strip/dark covers requeue. */
+const AUDIO_WAVEFORM_GENERATOR = `ffmpeg@${FFMPEG_VERSION}+${AUDIO_WAVEFORM_COVER_GENERATOR_TAG}`;
 const MAX_WEBM_PROXY_BYTES = 512 * 1024 * 1024;
 const SERPENT_OCIO_CONFIG = 'ocio://studio-config-v4.0.0_aces-v2.0_ocio-v2.5';
 const DEFAULT_OIIO_INPUT_COLOR_SPACE = 'scene_linear';
@@ -219,6 +216,11 @@ import {
 import { buildGifExtractedMetadata, type GifExtractedMetadata } from './gif-metadata';
 import {
   AUDIO_EXTENSION_NAMES,
+  AUDIO_WAVEFORM_COVER_BACKGROUND,
+  AUDIO_WAVEFORM_COVER_GENERATOR_TAG,
+  AUDIO_WAVEFORM_COVER_HEIGHT,
+  AUDIO_WAVEFORM_COVER_STROKE,
+  AUDIO_WAVEFORM_COVER_WIDTH,
   audioMimeForExtension,
   isAudioFileName,
 } from '../shared/audio-media';
@@ -7445,7 +7447,7 @@ export class LibraryService {
         '-y',
         '-i', assetPath,
         '-filter_complex',
-        `aformat=channel_layouts=mono,compand,showwavespic=s=${AUDIO_WAVEFORM_WIDTH}x${AUDIO_WAVEFORM_HEIGHT}:colors=#7EB6FF:scale=sqrt`,
+        `aformat=channel_layouts=mono,compand,showwavespic=s=${AUDIO_WAVEFORM_COVER_WIDTH}x${AUDIO_WAVEFORM_COVER_HEIGHT}:colors=${AUDIO_WAVEFORM_COVER_STROKE}:scale=sqrt`,
         '-frames:v', '1',
         '-update', '1',
         tempAbsPath,
@@ -7458,10 +7460,11 @@ export class LibraryService {
       }
 
       // showwavespic defaults to a transparent canvas with a 1px stroke. Flatten
-      // onto an opaque stage so grid/Inspector covers stay visible at card size.
+      // onto a light-friendly opaque stage so grid/Inspector covers stay visible
+      // at card size under the light theme (Serpent-dxk).
       const sharp = this.options.sharpFn ?? requireSharp();
       const flatten = sharp(tempAbsPath).flatten?.({
-        background: AUDIO_WAVEFORM_BACKGROUND,
+        background: { ...AUDIO_WAVEFORM_COVER_BACKGROUND },
       });
       if (!flatten?.png || !flatten.toFile) {
         throw new Error('Sharp flatten/png API unavailable for waveform covers.');
@@ -7482,8 +7485,8 @@ export class LibraryService {
           revisionId,
           outputStat.size,
           artifactRelPath,
-          AUDIO_WAVEFORM_WIDTH,
-          AUDIO_WAVEFORM_HEIGHT,
+          AUDIO_WAVEFORM_COVER_WIDTH,
+          AUDIO_WAVEFORM_COVER_HEIGHT,
           AUDIO_WAVEFORM_GENERATOR,
           new Date().toISOString(),
         );
@@ -8800,8 +8803,8 @@ export class LibraryService {
             )`,
       )
       .run(nowInvalidate);
-    // Serpent-13v: requeue audio covers that never flattened onto an opaque stage
-    // (or never enqueued because audio extensions were missing from this list).
+    // Serpent-dxk: requeue audio covers that are not the current ≈4:3 light-stage
+    // generator (covers pre-cover3 dark strips / wrong aspect / transparent).
     const audioExtensionSql = AUDIO_EXTENSION_NAMES
       .map(() => 'LOWER(a.relative_file_path) LIKE ?')
       .join(' OR ');
@@ -8812,7 +8815,7 @@ export class LibraryService {
           WHERE kind = 'thumbnail'
             AND status = 'ready'
             AND invalidated_at IS NULL
-            AND generator_version NOT LIKE '%waveform-cover%'
+            AND generator_version NOT LIKE ?
             AND revision_id IN (
               SELECT a.current_revision_id FROM assets a
                WHERE a.deleted_at IS NULL
@@ -8822,6 +8825,7 @@ export class LibraryService {
       )
       .run(
         nowInvalidate,
+        `%${AUDIO_WAVEFORM_COVER_GENERATOR_TAG}%`,
         ...AUDIO_EXTENSION_NAMES.map((extension) => `%.${extension}`),
       );
     // CU-D8: GIFs with a ready thumb but no duration/frame metadata requeue once.

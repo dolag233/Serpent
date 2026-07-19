@@ -29,6 +29,23 @@ npm run typecheck
 
 Computer Use：未执行。
 
+## Serpent-dxk（AUDIO-001 复验修复）
+
+人类验收不通过：网格/Inspector 封面过扁（640×160）且 flatten 底为近黑 `#1a2030`。
+
+修复：
+
+1. 封面几何改为 **640×480（≈4:3）**；查看页 `.preview-audio-waveform*` 壳层 CSS 未改。
+2. flatten 底改为亮色友好 `#e8eae7`（对齐 light `--canvas`）；波形描边 `#3B7DD8`。
+3. generator → `waveform-cover3`；`enqueueThumbnailJobs` 失效非 `waveform-cover3` 的音频缩略图以便重生成。
+4. 常量与纯函数在 `src/shared/audio-media.ts`；单测覆盖比例与亮度门禁。
+
+```bash
+node scripts/run-vitest-with-electron.mjs \
+  tests/unit/audio-media.test.ts \
+  tests/worker/video-exr.test.ts -t 'audio waveform thumbnail'
+```
+
 ## 人类验收
 
-- AUDIO-001（待复验：可见波形封面 + 查看页波形时间轴/播放头）
+- AUDIO-001（待人类验收：`Serpent-dxk` 后复验网格/Inspector ≈4:3 + 亮色底非黑；查看页播放头仍在；Seek 另见 `Serpent-jh2`）

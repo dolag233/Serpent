@@ -5125,33 +5125,35 @@ function AppInner() {
             onBack={() => void goWorkspaceBack()}
             onForward={() => void goWorkspaceForward()}
           />
-          <LibrarySwitcher
-            busy={busy}
-            disabled={busy}
-            importMenuCopy={importMenuCopy}
-            libraryName={library?.displayName ?? null}
-            libraryOpen={Boolean(library)}
-            onCloseLibrary={() => void closeLibrary()}
-            onCreateLibrary={() => {
-              setDialogValue(t("shell.myLibrary"));
-              setDialog("library");
-            }}
-            onExportLibrary={() => setExportDialogOpen(true)}
-            onImportFiles={() => void importAssets("files")}
-            onImportFolder={() => void importAssets("folder")}
-            onImportLibrary={() => void startImport()}
-            onImportLinkedFolder={() => void importFolderAsLinked()}
-            onImportZip={() => void startImportZip()}
-            onMenuOpen={() => void refreshRecentLibraries()}
-            onOpenLibrary={() => void runLibraryOperation("open")}
-            onOpenRecent={(path) => void openRecentLibrary(path)}
-            onPasteImage={() => void pasteClipboardImage()}
-            recentLibraries={recentLibraries}
-          />
-          <AppSettingsEntry
-            disabled={busy}
-            onOpen={() => setAppSettingsOpen(true)}
-          />
+          <div className="toolbar-library-settings">
+            <LibrarySwitcher
+              busy={busy}
+              disabled={busy}
+              importMenuCopy={importMenuCopy}
+              libraryName={library?.displayName ?? null}
+              libraryOpen={Boolean(library)}
+              onCloseLibrary={() => void closeLibrary()}
+              onCreateLibrary={() => {
+                setDialogValue(t("shell.myLibrary"));
+                setDialog("library");
+              }}
+              onExportLibrary={() => setExportDialogOpen(true)}
+              onImportFiles={() => void importAssets("files")}
+              onImportFolder={() => void importAssets("folder")}
+              onImportLibrary={() => void startImport()}
+              onImportLinkedFolder={() => void importFolderAsLinked()}
+              onImportZip={() => void startImportZip()}
+              onMenuOpen={() => void refreshRecentLibraries()}
+              onOpenLibrary={() => void runLibraryOperation("open")}
+              onOpenRecent={(path) => void openRecentLibrary(path)}
+              onPasteImage={() => void pasteClipboardImage()}
+              recentLibraries={recentLibraries}
+            />
+            <AppSettingsEntry
+              disabled={busy}
+              onOpen={() => setAppSettingsOpen(true)}
+            />
+          </div>
         </div>
         <ScopeBreadcrumbs
           onNavigateFolder={(folderId) => void chooseFolder(folderId)}

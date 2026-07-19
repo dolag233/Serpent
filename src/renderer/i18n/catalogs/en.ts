@@ -618,6 +618,7 @@ export const en = {
     autoAnalyze: "Automatically upload and analyze supported assets after import",
     save: "Save settings"
   },
+  /** REQ-PREF-001 / Serpent-9es: file name / size / date share one cardFieldsHint. */
   settings: {
     title: "Settings",
     themeHint: "Controls the app’s light or dark appearance. Changes apply immediately.",
@@ -625,10 +626,7 @@ export const en = {
     viewMode: "Browse view",
     canvasHint: "Controls how assets are arranged on the canvas. Changes apply immediately.",
     cardFields: "Card display fields",
-    cardFieldsHint: "Controls which details appear on canvas asset cards. Toggles update the canvas immediately.",
-    showFileNameHint: "Show the file name on canvas cards",
-    showFileSizeHint: "Show the file size on canvas cards",
-    showModifiedDateHint: "Show the modified date on canvas cards"
+    cardFieldsHint: "Show file name, file size, or modified date on canvas cards. Toggles apply immediately."
   },
   preview: {
     ffmpegRequired: "This install is missing FFmpeg, so a video playback proxy cannot be generated. Install or configure FFmpeg and try again.",

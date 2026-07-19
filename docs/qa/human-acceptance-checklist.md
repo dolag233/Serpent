@@ -169,7 +169,7 @@
 | SMART-004 | 重命名智能合集 | 待人类验收 | 重命名已有智能合集 | 新名称立即出现，查询条件保持 | [0005 QA](0005-search-filter-sort-smart-collections-qa-report.md) | — |
 | SMART-005 | 删除智能合集 | 待人类验收 | 删除已有智能合集 | 智能合集消失，资产不受影响 | [0005 QA](0005-search-filter-sort-smart-collections-qa-report.md) | — |
 | SMART-006 | 智能合集侧栏计数 | 待人类验收 | 打开含智能合集的资源库；对照普通合集行；再打开该智能合集 | 侧栏智能合集行显示匹配资产数；与打开后结果总数一致 | [开发日志](../development/2026-07-18-smart-collection-validate-count-development-log.md) / 工单 Serpent-o8v | 2026-07-18 CU-M6：list 批量 count + 执行后刷新。 |
-| PREF-001 | 浏览区设置面板（主题/语言/画布） | 人类验收不通过 | 1) 确认左上角资源库名称旁有齿轮；2) 打开面板看说明对比与字段文案；3) 缩窄窗口观察齿轮与资源库名 | 入口旁资源库；说明可读（勿整片发灰）；文件名/大小/日期共用一条说明；窄窗齿轮与资源库 UI 不重叠 | [开发日志](../development/2026-07-19-prefs-smart-inline-rename-development-log.md) / 原 Serpent-97l / 修复 `Serpent-9es` / [重叠证据](evidence/2026-07-19-acceptance/pref-001-settings-overlap.png) | 2026-07-19 用户不通过：说明全灰；三字段重复解释；窄窗重叠。 |
+| PREF-001 | 浏览区设置面板（主题/语言/画布） | 待人类验收 | 1) 确认左上角资源库名称旁有齿轮；2) 打开面板：说明对比可读、文件名/大小/日期仅一条共用说明；3) 缩窄窗口观察齿轮与资源库名/chevron | 入口旁资源库；说明为次级色但可读（勿整片发灰难读）；三字段共用一条 hint；窄窗齿轮与资源库 UI 永不重叠 | [开发日志](../development/2026-07-19-prefs-smart-inline-rename-development-log.md) / 原 Serpent-97l / 复验修复 `Serpent-9es` / [重叠证据](evidence/2026-07-19-acceptance/pref-001-settings-overlap.png) | 2026-07-19 曾不通过（说明全灰；三字段重复；窄窗重叠）。`Serpent-9es`：hint 对比提升；字段合并为 `cardFieldsHint`；`toolbar-library-settings` 收缩省略防重叠。待复验。 |
 | SMART-007 | 智能合集侧栏加号原地创建 | 人类验收不通过 | 点侧栏「智能合集」旁 +；侧栏命名确认 | 侧栏原地命名创建成功后弹出该智能合集设置窗口（编辑条件）；勿先报「需填写条件」类错误；顶栏无名称/保存区 | [开发日志](../development/2026-07-19-smart-collection-sidebar-inline-create-development-log.md) / 原 Serpent-san / 修复 `Serpent-era` | 2026-07-19 用户不通过：应先创建再开设置面板，而非报缺条件错。 |
 | MENU-023 | 资产画布原地重命名 | 人类验收通过 | ①右键资产「重命名…」或快捷键进入内联编辑；改基名后 Enter；Esc 取消。②进入重命名后点击卡片外/画布空白使输入失焦。③对照侧栏文件夹「重命名…」输入框外观（描边层数、文字颜色）。④进入重命名后不改名直接 Enter 或失焦 | ①卡片内联输入（无对话框）；扩展名旁注保留；Enter 后文件名更新。②失焦与 Enter 相同：提交重命名并退出编辑态，不卡在输入框。③样式与文件夹重命名一致：单层描边/焦点环，输入文字为正常前景色（非灰色）。④基名未变时退出编辑且无「重命名成功」类 toast | [开发日志](../development/2026-07-19-prefs-smart-inline-rename-development-log.md) / 原 Serpent-wfj / `Serpent-0rg` / [提交决议单测](../../tests/unit/asset-inline-rename.test.ts) | 2026-07-19 用户确认通过（`Serpent-0rg`）。 |
 | FOLDER-001 | 文件夹递归显示后代资产 | 已撤回 | — | — | — | 2026-07-17 人类验收不通过；需求改为 REQ-FOLDER-009 显式开关。由 FOLDER-009 承接验收。 |
@@ -358,6 +358,7 @@
 | 2026-07-19 | SHELL-021 | 人类验收通过 | 源链接打开失败可操作 toast。 | Serpent-1pd。 |
 | 2026-07-19 | A11Y-001–003 | 人类验收通过 | 查看页焦点环；库菜单/排序 roving；TagPicker 单焦点与对话框 trap。 | Serpent-vvn。 |
 | 2026-07-19 | AUDIO-001 | 人类验收不通过 | 未见波形；查看页波形需时间轴进度。 | 修复 `Serpent-13v`。 |
+| 2026-07-19 | AUDIO-001 / `Serpent-dxk` | 待人类验收 | 复验：封面 ≈4:3 + 亮色底非黑（`waveform-cover3`）。 | 清单 AUDIO-001 已改回待验收；未 commit。 |
 
 | MEDIA-001 | 视频/音频跳转式播放（seek/scrub）稳定 | 人类验收不通过 | 打开视频与音频查看页；拖动进度条多次跳转播放 | 跳转后应继续正常播放，不频繁出现播放失败错误 | 严重缺陷 `Serpent-jh2` | 2026-07-19 用户点名：跳转式播放经常失败。 |
 | 2026-07-19 | TEXT-001 | 人类验收不通过 | 链接目录新建 txt 刷新未入库；扩格式；过滤「文本」。 | 修复 `Serpent-4l7`。 |
@@ -378,6 +379,7 @@
 | 2026-07-19 | SHELL-018 连续拖拽修复 | 待复验 | 隐藏拖出不再强制结束拖拽；hide/restore 同一 pointer 会话。 | `Serpent-kro`；[开发日志](../development/2026-07-19-sidebar-continuous-drag-development-log.md)。 |
 | 2026-07-19 | PREF-001/SMART-007 复验反馈 | 不通过 | 设置入口/文案/关闭钮；智能合集侧栏原地创建并去顶栏区。 | 新开复验 beads。 |
 | 2026-07-19 | PREF-001 / `Serpent-97l` | 人类验收不通过 | 说明全灰；三字段重复；窄窗重叠。 | 修复 `Serpent-9es`。 |
+| 2026-07-19 | PREF-001 / `Serpent-9es` | 待人类验收 | 复验修复：说明对比、字段共用 hint、窄窗防重叠。 | 清单 PREF-001 已改回待验收；未 commit。 |
 | 2026-07-19 | SMART-007 / `Serpent-san` | 人类验收不通过 | 应创建后开设置面板，勿先报缺条件。 | 修复 `Serpent-era`。 |
 | 2026-07-19 | VIEWER-009/010/VIEW-011 + CANVAS-018/021 | 部分通过 | 009/010/011 通过；018/021 不通过；GIF 去暂停与播放器上限、<>对比、重排可见集、捏合/离散滑块已开单。 | `Serpent-noz` / `3kx` / `1zj` / `32p` / `7ny`。 |
 | 2026-07-19 | VIEW-010 / `Serpent-1zj` | 人类验收通过（撤回项清理） | 查看页无 GIF 暂停/逐帧；仅自动播放。 | `Serpent-1zj`。 |
@@ -396,7 +398,7 @@
 | A11Y-001 | 查看页 nav/close 键盘焦点可见 | 人类验收通过 | 打开查看页；Tab 到上一张/下一张/关闭；可先等 chrome 渐隐再 Tab | 焦点控件有 accent 描边；idle 渐隐时聚焦仍可见 | [开发日志](../development/2026-07-19-keyboard-focus-model-development-log.md) / Serpent-vvn | 2026-07-19 用户确认通过（主观觉得非必须，保留）。 |
 | A11Y-002 | 资源库菜单与排序 listbox 键盘导航 | 人类验收通过 | 打开左上角资源库菜单与排序字段弹出层；用 ↑↓ Home/End、Esc | 箭头移动焦点；Esc 关闭并回到触发按钮 | 同上 / `roving-list-keyboard.test.ts` | 2026-07-19 用户确认通过。 |
 | A11Y-003 | 标签选择器单一焦点 + 对话框焦点陷阱 | 人类验收通过 | 右键→分配标签；箭头高亮选项且输入框保持焦点；打开设置/导出等对话框按 Tab | 选项不可 Tab 抢走焦点；对话框 Tab 不逃到背后 UI | 同上 | 2026-07-19 用户确认通过。 |
-| AUDIO-001 | 音频波形封面与查看页播放 | 人类验收不通过 | 导入音频；看网格/Inspector 波形；亮色主题；双击查看页 | 网格/Inspector 波形约 **4:3**（查看页波形不改比例）；亮色主题波形底非黑；查看页有播放头；失败可降级 | [开发日志](../development/2026-07-19-audio-waveform-playback-development-log.md) / 原 Serpent-13v / 修复 `Serpent-dxk` | 2026-07-19 用户不通过：封面比例过大；亮色底为黑。Seek 失败另见 `Serpent-jh2`。 |
+| AUDIO-001 | 音频波形封面与查看页播放 | 待人类验收 | 导入音频（或打开已有库后等待缩略图重生成）；看网格/Inspector 波形；切亮色主题；双击查看页 | 网格/Inspector 波形约 **4:3**（查看页波形壳层比例不改）；亮色主题波形底非黑；查看页有播放头；失败可降级 | [开发日志](../development/2026-07-19-audio-waveform-playback-development-log.md) / 原 Serpent-13v / 修复 `Serpent-dxk` | 2026-07-19 用户不通过：封面比例过大；亮色底为黑。`Serpent-dxk`：封面改为 640×480（≈4:3）+ 亮色底 `#e8eae7`（`waveform-cover3` 重生成）。Seek 失败另见 `Serpent-jh2`。请复验网格/Inspector 比例与亮色底。 |
 | TEXT-001 | 文本预览/行号查看与托管保存 | 人类验收不通过 | 托管导入 `.txt`/`.md`；在链接文件夹子目录新建 `.txt` 后刷新；看格式过滤 | 摘要/行号/托管可保存；链接新建文本刷新后出现；常见文本格式（txt/md/json/xml 等）支持；格式过滤统一「文本」 | [开发日志](../development/2026-07-19-text-asset-viewer-development-log.md) / 原 Serpent-sh7 / 修复 `Serpent-4l7` | 2026-07-19 用户不通过：链接目录新建未入库；需扩格式；过滤显示「文本」。 |
 | LINK-005 | 从访达向链接文件夹位置导入资产 | 人类验收不通过 | 在访达打开某链接文件夹真实路径，向 App 内对应链接文件夹拖入或导入文件 | 文件写入该外部目录并出现在库中对应位置；失败时错误可理解 | 修复 `Serpent-d3h` | 2026-07-19 用户不通过：向链接位置导入直接报错。 |
 

@@ -608,7 +608,7 @@ export const zhCN = {
     autoAnalyze: "导入后自动上传并分析支持的资产",
     save: "保存配置"
   },
-  /** REQ-PREF-001: 浏览区通用设置面板；主题/语言复用 shell.theme 与 shell.language 下的键。 */
+  /** REQ-PREF-001 / Serpent-9es: 浏览区通用设置面板；主题/语言复用 shell.theme 与 shell.language 下的键。文件名/大小/日期共用一条 cardFieldsHint。 */
   settings: {
     title: "通用设置",
     themeHint: "控制整个应用的亮暗外观，立即生效。",
@@ -616,10 +616,7 @@ export const zhCN = {
     viewMode: "浏览视图",
     canvasHint: "控制资产画布的排列方式；改后立即作用于画布。",
     cardFields: "卡片显示字段",
-    cardFieldsHint: "控制画布资产卡片上显示哪些信息；开关后立即在画布可见。",
-    showFileNameHint: "在画布卡片上显示文件名。",
-    showFileSizeHint: "在画布卡片上显示文件大小。",
-    showModifiedDateHint: "在画布卡片上显示修改日期。"
+    cardFieldsHint: "在画布卡片上显示文件名、文件大小或修改日期；开关后立即生效。"
   },
   preview: {
     ffmpegRequired: "当前安装缺少 FFmpeg，无法生成视频播放代理。请安装或配置 FFmpeg 后重试。",

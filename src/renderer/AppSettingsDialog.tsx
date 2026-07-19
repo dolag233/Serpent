@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import {
   APP_SETTINGS_CANVAS_FIELD_OPTIONS,
+  APP_SETTINGS_CARD_FIELDS_HINT_KEY,
   APP_SETTINGS_LOCALE_OPTIONS,
   APP_SETTINGS_THEME_OPTIONS,
 } from "./app-settings-sections";
@@ -19,10 +20,11 @@ export interface AppSettingsDialogProps {
 }
 
 /**
- * REQ-PREF-001 / Serpent-97l: app-level preferences (theme, language, canvas
- * card fields). Opened from the gear beside the library switcher. Theme and
- * language are no longer in the library dropdown — this dialog is the only
- * settings surface. Esc and backdrop click dismiss; no footer Close button.
+ * REQ-PREF-001 / Serpent-97l / Serpent-9es: app-level preferences (theme,
+ * language, canvas card fields). Opened from the gear beside the library
+ * switcher. Theme and language are no longer in the library dropdown — this
+ * dialog is the only settings surface. Esc and backdrop click dismiss; no
+ * footer Close button.
  */
 export function AppSettingsDialog({
   open,
@@ -139,7 +141,7 @@ export function AppSettingsDialog({
           <div className="micro-label app-settings-sublabel">
             {t("settings.cardFields")}
           </div>
-          <p className="app-settings-hint">{t("settings.cardFieldsHint")}</p>
+          <p className="app-settings-hint">{t(APP_SETTINGS_CARD_FIELDS_HINT_KEY)}</p>
           <div className="app-settings-check-row-group">
             {APP_SETTINGS_CANVAS_FIELD_OPTIONS.map((option) => (
               <label
@@ -153,9 +155,6 @@ export function AppSettingsDialog({
                 />
                 <span className="app-settings-check-copy">
                   <span>{t(option.labelKey)}</span>
-                  <span className="app-settings-field-hint">
-                    {t(option.descriptionKey)}
-                  </span>
                 </span>
               </label>
             ))}
