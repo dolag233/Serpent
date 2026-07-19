@@ -137,7 +137,19 @@ function createMockSpawn(config: MockSpawnConfig): SpawnFunction {
     const outputExtensions = ['.jpg', '.webm', '.png', '.webp', '.json'];
     if (outputPath && outputExtensions.some((ext) => outputPath.endsWith(ext))) {
       mkdirSync(path.dirname(outputPath), { recursive: true });
-      writeFileSync(outputPath, Buffer.from('mock-output-data'));
+      // Valid 1×1 transparent PNG so sharp.flatten can composite waveform covers.
+      // Other formats keep a tiny opaque stub.
+      if (outputPath.endsWith('.png')) {
+        writeFileSync(
+          outputPath,
+          Buffer.from(
+            'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+            'base64',
+          ),
+        );
+      } else {
+        writeFileSync(outputPath, Buffer.from('mock-output-data'));
+      }
     }
 
     if (command === '/fake/ffprobe' || command.includes('ffprobe')) {
@@ -1360,6 +1372,90 @@ describe('enqueueThumbnailJobs handles all media types', () => {
 
     const enqueued = service.enqueueThumbnailJobs(created.libraryId);
     expect(enqueued).toBe(1);
+
+    service.closeAll();
+  });
+
+  it('enqueues jobs for audio assets (Serpent-13v)', () => {
+    process.env['SERPENT_FFMPEG_PATH'] = '/fake/ffmpeg';
+    const root = temporaryRoot();
+    const service = new LibraryService({
+      spawnFn: createMockSpawn({ ffprobeStdout: CANNED_FFPROBE_JSON }),
+    });
+    const created = service.createLibrary({
+      displayName: 'EnqueueAudio',
+      selectedParentPath: root,
+    });
+
+    const sourcePath = path.join(root, 'clip.wav');
+    writeFileSync(sourcePath, Buffer.alloc(4096, 0));
+    importNoConflict(service, created.libraryId, sourcePath);
+
+    const enqueued = service.enqueueThumbnailJobs(created.libraryId);
+    expect(enqueued).toBe(1);
+
+    service.closeAll();
+  });
+});
+
+describe('audio waveform thumbnail (Serpent-13v)', () => {
+  it('dispatches audio assets to ffmpeg waveform + opaque cover', async () => {
+    process.env['SERPENT_FFMPEG_PATH'] = '/fake/ffmpeg';
+    const root = temporaryRoot();
+    const service = new LibraryService({
+      spawnFn: createMockSpawn({ ffprobeStdout: CANNED_FFPROBE_JSON }),
+    });
+    const created = service.createLibrary({
+      displayName: 'AudioWaveform',
+      selectedParentPath: root,
+    });
+
+    const sourcePath = path.join(root, 'tone.mp3');
+    writeFileSync(sourcePath, Buffer.alloc(4096, 0));
+    importNoConflict(service, created.libraryId, sourcePath);
+
+    const assets = service.listAssets({
+      libraryId: created.libraryId,
+      recursive: true,
+    });
+    const result = await service.generateThumbnail({
+      libraryId: created.libraryId,
+      assetId: assets[0]!.assetId,
+    });
+    expect(result.artifactId).toBeTruthy();
+
+    const db = assertDb(created.libraryPath);
+    const row = db
+      .prepare(
+        "SELECT kind, mime_type, generator_version, width, height, status FROM revision_artifacts WHERE artifact_id = ?",
+      )
+      .get(result.artifactId) as {
+        kind: string;
+        mime_type: string;
+        generator_version: string;
+        width: number;
+        height: number;
+        status: string;
+      } | undefined;
+    expect(row).toBeDefined();
+    expect(row!.kind).toBe('thumbnail');
+    expect(row!.mime_type).toBe('image/png');
+    expect(row!.status).toBe('ready');
+    expect(row!.generator_version).toContain('waveform-cover');
+    expect(row!.width).toBe(640);
+    expect(row!.height).toBe(160);
+    db.close();
+
+    expect(assets[0]).toMatchObject({ mediaType: 'audio' });
+    const listed = service.listAssets({
+      libraryId: created.libraryId,
+      recursive: true,
+    });
+    expect(listed[0]).toMatchObject({
+      mediaType: 'audio',
+      thumbnailStatus: 'ready',
+      thumbnailArtifactId: result.artifactId,
+    });
 
     service.closeAll();
   });

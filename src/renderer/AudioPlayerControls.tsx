@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useRef, useState, type SyntheticEvent } from "react";
 
+import {
+  playheadLeftPercent,
+  playheadRatioFromTime,
+  seekRatioFromWaveformClientX,
+} from "./audio-waveform-timeline";
 import { iconActionAttrs } from "./icon-action-attrs";
 import { useT } from "./i18n";
 import {
@@ -23,8 +28,9 @@ export interface AudioPlayerControlsProps {
 const SCRUB_STEP_SECONDS = 5;
 
 /**
- * Viewer chrome for audio assets (Serpent-0x5): waveform backdrop + play/pause
- * and scrub. Reuses video transport helpers for Space and scrub math.
+ * Viewer chrome for audio assets (Serpent-0x5 / Serpent-13v): waveform stage with
+ * an in-waveform playhead timeline, plus play/pause and scrub. Reuses video
+ * transport helpers for Space and scrub math.
  */
 export function AudioPlayerControls({
   onError,
@@ -35,7 +41,9 @@ export function AudioPlayerControls({
   const t = useT();
   const audioRef = useRef<HTMLAudioElement>(null);
   const trackRef = useRef<HTMLDivElement>(null);
+  const waveformRef = useRef<HTMLDivElement>(null);
   const scrubbingPointerId = useRef<number | null>(null);
+  const waveformScrubbingPointerId = useRef<number | null>(null);
   const [paused, setPaused] = useState(true);
   const [duration, setDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
@@ -75,23 +83,97 @@ export function AudioPlayerControls({
     return scrubRatioFromClientX(clientX, { left: rect.left, width: rect.width });
   }, []);
 
+  const ratioFromWaveformPointer = useCallback((clientX: number): number => {
+    const waveform = waveformRef.current;
+    if (!waveform) return 0;
+    const rect = waveform.getBoundingClientRect();
+    return seekRatioFromWaveformClientX(clientX, {
+      left: rect.left,
+      width: rect.width,
+    });
+  }, []);
+
   const displayRatio =
     scrubRatio ?? scrubRatioFromTime(currentTime, duration);
   const displayTime =
     scrubRatio !== null ? scrubTimeFromRatio(scrubRatio, duration) : currentTime;
+  const playheadPercent = playheadLeftPercent(
+    scrubRatio ?? playheadRatioFromTime(currentTime, duration),
+  );
 
   return (
     <div className="preview-audio-stage">
-      {waveformUrl ? (
-        <img
-          alt=""
-          className="preview-audio-waveform"
-          draggable={false}
-          src={waveformUrl}
+      <div
+        aria-label={t("preview.videoScrubAria")}
+        aria-valuemax={Math.round(duration)}
+        aria-valuemin={0}
+        aria-valuenow={Math.round(displayTime)}
+        className="preview-audio-waveform-shell"
+        onKeyDown={(event) => {
+          const audio = audioRef.current;
+          if (!audio) return;
+          let nextTime: number | null = null;
+          if (event.key === "ArrowLeft") {
+            nextTime = clampScrubTime(
+              audio.currentTime - SCRUB_STEP_SECONDS,
+              duration,
+            );
+          } else if (event.key === "ArrowRight") {
+            nextTime = clampScrubTime(
+              audio.currentTime + SCRUB_STEP_SECONDS,
+              duration,
+            );
+          } else if (event.key === "Home") {
+            nextTime = 0;
+          } else if (event.key === "End") {
+            nextTime = clampScrubTime(duration, duration);
+          }
+          if (nextTime === null) return;
+          event.preventDefault();
+          audio.currentTime = nextTime;
+          setCurrentTime(nextTime);
+        }}
+        onPointerDown={(event) => {
+          event.preventDefault();
+          event.currentTarget.focus();
+          waveformScrubbingPointerId.current = event.pointerId;
+          event.currentTarget.setPointerCapture(event.pointerId);
+          const ratio = ratioFromWaveformPointer(event.clientX);
+          setScrubRatio(ratio);
+          seekToRatio(ratio);
+        }}
+        onPointerMove={(event) => {
+          if (waveformScrubbingPointerId.current !== event.pointerId) return;
+          const ratio = ratioFromWaveformPointer(event.clientX);
+          setScrubRatio(ratio);
+          seekToRatio(ratio);
+        }}
+        onPointerUp={(event) => {
+          if (waveformScrubbingPointerId.current !== event.pointerId) return;
+          waveformScrubbingPointerId.current = null;
+          setScrubRatio(null);
+          setCurrentTime(audioRef.current?.currentTime ?? 0);
+        }}
+        ref={waveformRef}
+        role="slider"
+        tabIndex={0}
+      >
+        {waveformUrl ? (
+          <img
+            alt=""
+            className="preview-audio-waveform"
+            draggable={false}
+            src={waveformUrl}
+          />
+        ) : (
+          <div aria-hidden="true" className="preview-audio-waveform is-placeholder" />
+        )}
+        <div
+          aria-hidden="true"
+          className="preview-audio-playhead"
+          style={{ left: `${playheadPercent}%` }}
         />
-      ) : (
-        <div aria-hidden="true" className="preview-audio-waveform is-placeholder" />
-      )}
+      </div>
       <audio
         autoPlay
         className="preview-audio"
@@ -107,7 +189,12 @@ export function AudioPlayerControls({
         onPause={() => setPaused(true)}
         onPlay={() => setPaused(false)}
         onTimeUpdate={(event) => {
-          if (scrubbingPointerId.current !== null) return;
+          if (
+            scrubbingPointerId.current !== null ||
+            waveformScrubbingPointerId.current !== null
+          ) {
+            return;
+          }
           setCurrentTime(event.currentTarget.currentTime);
         }}
         preload="metadata"

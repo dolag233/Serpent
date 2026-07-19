@@ -2476,19 +2476,41 @@ input[type="range"] {
   opacity: 0;
   pointer-events: none;
 }
+.preview-audio-waveform-shell {
+  position: relative;
+  width: 100%;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--raised);
+  cursor: pointer;
+  outline: none;
+}
+.preview-audio-waveform-shell:focus-visible {
+  box-shadow: 0 0 0 2px var(--accent);
+}
 .preview-audio-waveform {
   display: block;
   width: 100%;
   max-height: min(240px, 40vh);
   object-fit: contain;
-  border-radius: 8px;
-  background: var(--raised);
+  pointer-events: none;
+  user-select: none;
 }
 .preview-audio-waveform.is-placeholder {
   min-height: 120px;
   background:
     linear-gradient(90deg, transparent 0%, var(--hover) 50%, transparent 100%),
     var(--raised);
+}
+.preview-audio-playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--pane) 55%, transparent);
+  transform: translateX(-50%);
+  pointer-events: none;
 }
 .preview-audio-controls {
   position: relative;
