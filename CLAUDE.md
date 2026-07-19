@@ -54,8 +54,13 @@ npm run package        # 打包到 out/Serpent-<platform>-<arch>/
 npm run verify:package # 校验 ASAR 和 better_sqlite3.node 原生模块
 npm run make           # 生成平台安装包（dmg/squirrel/zip）
 # 注意：npm run package / make 会更新 dev 的 node_modules/electron binary，跑完务必执行
-# npx @electron/rebuild -f -w better-sqlite3 恢复 dev native 模块，否则 npm run test 会报
-# better_sqlite3.node NODE_MODULE_VERSION 不匹配（package 用新 Electron Node ABI，dev 测试需重编译对齐）。
+# npm run rebuild:native 恢复 dev native 模块（重编 better-sqlite3 并用 Electron ABI 实测 FTS5），
+# 否则 npm run test 会报 better_sqlite3.node NODE_MODULE_VERSION 不匹配
+# （package 用新 Electron Node ABI，dev 测试需重编译对齐）。
+# Windows 特别警告：绝不要直接跑裸 npx @electron/rebuild / node-gyp——本机若装有
+# vcpkg 用户级 MSBuild 集成，链接器会把 better-sqlite3 自带静态 sqlite3 错解析为 vcpkg 的
+# 无 FTS5 sqlite3.dll（library.create 报 LIBRARY_CORRUPT / no such module: fts5）。
+# scripts/rebuild-native.mjs 已强制 VcpkgEnabled=false 并删除 applocal 残留 dll。
 ```
 
 ## 进程架构

@@ -14,6 +14,7 @@
     "prepackage": "node scripts/media-binaries.mjs verify",
     "package": "electron-forge package",
     "verify:package": "node scripts/verify-package.mjs",
+    "rebuild:native": "node scripts/rebuild-native.mjs",
     "media:acquire": "node scripts/media-binaries.mjs acquire",
     "media:manifest": "node scripts/media-binaries.mjs manifest",
     "media:verify": "node scripts/media-binaries.mjs verify",
