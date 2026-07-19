@@ -94,6 +94,7 @@
 | LINK-002 | 默认忽略无用目录和文件 | 待人类验收 | 链接包含 `.git`、`node_modules`、`.DS_Store` 与正常素材的目录 | 无用项目不形成资产，正常素材可见 | [0003 QA](0003-linked-folders-qa-report.md) / [链接 E2E](../../tests/e2e/linked-folders.test.ts) | — |
 | LINK-003 | 链接根离线后显示 offline | 待人类验收 | 暂时移走链接根并刷新磁盘变化 | 链接资产显示 offline/missing，身份和元数据不丢失 | [0003 QA](0003-linked-folders-qa-report.md) / [链接 E2E](../../tests/e2e/linked-folders.test.ts) | — |
 | LINK-004 | 重新指定链接根 | 待人类验收 | 将离线链接文件夹重新指定到结构相同的新根 | 已存在文件恢复可用，资产 ID 和元数据保持不变 | [0003 QA](0003-linked-folders-qa-report.md) / [链接 E2E](../../tests/e2e/linked-folders.test.ts) | — |
+| LINK-005 | 从访达向链接文件夹位置导入资产 | 人类验收不通过 | 在访达打开某链接文件夹真实路径，向 App 内对应链接文件夹拖入或导入文件 | 文件写入该外部目录并出现在库中对应位置；失败时错误可理解 | 修复 `Serpent-d3h` | 2026-07-19 用户不通过：向链接位置导入直接报错。 |
 
 ### C. 元数据、标签与合集
 
@@ -169,7 +170,7 @@
 | SMART-006 | 智能合集侧栏计数 | 待人类验收 | 打开含智能合集的资源库；对照普通合集行；再打开该智能合集 | 侧栏智能合集行显示匹配资产数；与打开后结果总数一致 | [开发日志](../development/2026-07-18-smart-collection-validate-count-development-log.md) / 工单 Serpent-o8v | 2026-07-18 CU-M6：list 批量 count + 执行后刷新。 |
 | PREF-001 | 浏览区设置面板（主题/语言/画布） | 人类验收不通过 | 点资源库旁设置入口；确认库菜单无设置项；改画布字段开关并看卡片；Esc/外点关闭面板 | 入口在资源库切换器旁（非 toolbar）；库菜单无设置；每项有清楚说明（如文件名/大小/修改日期=卡片显示字段）且改后画布可见；无右下角关闭钮 | [开发日志](../development/2026-07-19-prefs-smart-inline-rename-development-log.md) / 原 Serpent-str / 复验修复单见 beads | 2026-07-19 用户不通过：删库菜单设置；入口勿放 toolbar 应靠资源库；设置项缺说明；删冗余关闭钮。 |
 | SMART-007 | 智能合集侧栏加号原地创建 | 人类验收不通过 | 点侧栏「智能合集」旁 +；在侧栏行内输入名称并确认 | 与文件夹新建相同：侧栏原地编辑；顶栏/右上角无智能合集名称输入或保存区 | [开发日志](../development/2026-07-19-prefs-smart-inline-rename-development-log.md) / 原 Serpent-uu9 / 复验修复单见 beads | 2026-07-19 用户不通过：不应跳到右上角编辑；须侧栏原地创建并删除顶栏智能合集相关 UI。 |
-| MENU-023 | 资产画布原地重命名 | 待人类验收 | 右键资产「重命名…」或快捷键；改基名 Enter；Esc 取消；非法名 | 卡片内联输入（无对话框）；扩展名旁注保留；成功后文件名更新 | [开发日志](../development/2026-07-19-prefs-smart-inline-rename-development-log.md) / 工单 Serpent-wfj | 2026-07-19 实现；E2E 断言需跟进改 inline。 |
+| MENU-023 | 资产画布原地重命名 | 人类验收不通过 | 右键资产「重命名…」或快捷键；改基名 Enter；Esc 取消；失焦；改回原名 | 卡片内联输入（无对话框）；扩展名旁注保留；成功后文件名更新；失焦应提交；样式对齐文件夹重命名；输入文字非灰色；未改名不 toast | [开发日志](../development/2026-07-19-prefs-smart-inline-rename-development-log.md) / 原 Serpent-wfj / 修复 `Serpent-0rg` | 2026-07-19 用户不通过：失焦应提交；双层描边→照搬文件夹样式；文字勿灰；未变更不 toast。 |
 | FOLDER-001 | 文件夹递归显示后代资产 | 已撤回 | — | — | — | 2026-07-17 人类验收不通过；需求改为 REQ-FOLDER-009 显式开关。由 FOLDER-009 承接验收。 |
 | FOLDER-009 | 包含子文件夹显式开关 | 人类验收通过 | 进入父文件夹；看标题左侧双层文件夹图标；开启后退出再进入 | 图标在标题左侧；开启后显示子级资产；同一文件夹再次进入仍保持开启 | [开发日志](../development/2026-07-18-folder-include-subfolders-development-log.md) / [偏好单测](../../tests/unit/folder-recursive-preferences.test.ts) / [E2E](../../tests/e2e/folder-recursive-scope.test.ts) | 2026-07-18 用户验收通过（与 A0 同 ID）。 |
 | FOLDER-010 | 子文件夹卡片出现在画布 | 人类验收不通过 | 进入含直接子文件夹的托管文件夹（或托管根目录视图）；观察资产网格上方 | 子文件夹以卡片形式出现在资产之前；**单击选中、双击进入**；空文件夹显示文件夹图标封面 | [开发日志](../development/2026-07-19-folder-cards-development-log.md) / 工单 Serpent-5ja.1 / 修复 `Serpent-829` | 2026-07-19 用户不通过：单击不应进入文件夹（单击=选中）；进入改为双击。混合选中共通动作见 `Serpent-koy`。 |
@@ -199,16 +200,18 @@
 | CANVAS-017  | 递归/混目录视图显示来源文件夹            | 人类验收通过   | 进入含子文件夹的父文件夹，开启「包含子文件夹」；观察子级资产卡片左上角                           | 子文件夹资产显示紧凑来源路径（相对当前文件夹）；当前文件夹直属资产无角标；「所有资产」/搜索/合集中文件夹资产也显示来源路径               | [开发日志](../development/2026-07-18-recursive-source-badge-development-log.md) / [来源角标单测](../../tests/unit/asset-source-badge.test.ts) / 工单 Serpent-mvn                                                                                                                      | 2026-07-18 用户验收通过（CU-U1）；亮色对比度问题见 `Serpent-yu8`。 2026-07-19 亮色对比度随 `Serpent-yu8` 一并修复，请顺带复验。 |
 | CANVAS-021  | 拖侧栏/改窗口宽度触发重排后仍保持锚点资产在视野内 | 人类验收不通过 | 记住当前可见的几张资产（如 A/B/C）；拖侧栏或改窗口宽度触发重排 | 重排后视野中仍应是同一批内容（A/B/C），不能跳到完全不同的资产集合 | [开发日志](../development/2026-07-19-view-preserve-reflow-development-log.md) / 原 Serpent-o3z / 修复 `Serpent-32p` | 2026-07-19 用户不通过：任何重排须保持可见内容集合一致。 |
 | CANVAS-018 | 资产卡片大小：离散档 + 触控板捏合灵敏 | 人类验收不通过 | 拖缩放滑块；再用触控板双指捏合缩放画布 | 滑块与布局均为离散「一卡一卡」档（非连续滑感）；捏合灵敏度更高、档位切换跟手；避免右侧大空隙 | [canvas-preferences 单测](../../tests/unit/canvas-preferences.test.ts) / 原 Serpent-akz / 修复 `Serpent-7ny` | 2026-07-19 用户不通过：滑块须离散对齐表现；捏合要更灵敏。一卡一卡步进可接受。 |
+| CANVAS-022 | 仅有子文件夹且未递归时无大空当 | 人类验收不通过 | 进入仅含子文件夹、无直接资产的文件夹；确认「包含子文件夹」关闭 | 文件夹卡片紧凑排列；卡片下方无大块无意义空白 | [证据](evidence/2026-07-19-acceptance/fig3-folders-only-gap.png) / 修复 `Serpent-an1` | 2026-07-19 用户不通过：图3 仅子文件夹时画布大空当。 |
+| CANVAS-023 | 竖直资产完整显示、圆角与标题不被挤裁 | 人类验收不通过 | 打开含极竖比资产（如 230×512 GIF/视频）的库；观察卡片；再多选含竖资产看 Inspector | 预览完整不裁切、有圆角；标题/元数据不被挤裁；Inspector 竖预览限高且不挡标题 | [证据 fig1](evidence/2026-07-19-acceptance/fig1-vertical-card-title-clip.png) / [fig2](evidence/2026-07-19-acceptance/fig2-inspector-vertical-multi.png) / 修复 `Serpent-woa` | 2026-07-19 用户点名重要缺陷；相关 THUMB-002 / INSPECT-003。 |
 | INSPECT-001 | Inspector 显示真实缩略图 | 待人类验收 | 依次选择支持预览的图片和视频 | Inspector 显示已成功解码的图片或视频封面，不是通用文件图标 | [0018–0019 QA](0018-0019-ui-correctness-qa-report.md) / [媒体 E2E](../../tests/e2e/media-preview.test.ts) | — |
 | INSPECT-002 | 切换资产时 Inspector 不混态/不空闪 | 待人类验收 | 快速在两项具有不同元数据的资产间切换 | 不出现“连接中/加载中”，也不显示前后资产混合内容 | [0018–0019 QA](0018-0019-ui-correctness-qa-report.md) / [切换 E2E](../../tests/e2e/organization-metadata-persistence.test.ts) | — |
 | INSPECT-003 | Inspector 图片等比、宽度优先且无统一外框 | 人类验收通过 | 依次选择横图和竖图观察右侧预览 | 图片完整不拉伸；横图使用可用宽度，竖图受最大高度限制；无包住留白的卡片边框，图片本身有轻微圆角 | [0018–0019 QA](0018-0019-ui-correctness-qa-report.md) / [真实应用截图](evidence/0018-0019-ui-correctness/01-inspector-proportional-preview.png) / [媒体 E2E](../../tests/e2e/media-preview.test.ts) | 2026-07-16 用户先确认预览测试通过，随后明确确认轻圆角没有问题。 |
 | INSPECT-004 | Inspector 资产身份信息在分割线上方居中 | 待人类验收 | 选择任意带预览资产，观察右侧预览下方 | 文件名和大小/分辨率/修改日期均随居中的预览居中；分割线以下的状态、标签和元数据仍左对齐 | [0018–0019 QA](0018-0019-ui-correctness-qa-report.md) | 按 2026-07-16 最新反馈完成；用户要求自行查看，不再启动 Computer Use。 |
 | INSPECT-006 | Inspector 不再显示资源库路径与关闭按钮 | 人类验收通过 | 打开资源库，不选资产与选中资产时各看一次右侧 Inspector；关闭资源库改走左上角菜单 | Inspector 无资源库绝对路径、无「关闭资源库」按钮；菜单内仍可关闭 | [开发日志](../development/2026-07-18-inspector-remove-library-path-close-development-log.md) | 2026-07-18 用户验收通过。 |
-| INSPECT-007 | 描述输入框默认单行、超一行自动增高换行 | 待人类验收 | 选中一项资产，清空/输入一段很短的描述观察输入框高度；再粘贴或输入超过一行的长文本观察高度变化与是否换行 | 空/短描述时输入框只有单行高度；内容超过一行后框体自动增高并可见换行，不是默认就是两行高的大文本框 | [单测](../../tests/unit/inspector-description-autogrow.test.ts) / 工单 Serpent-qto | 2026-07-19 实现：`rows` 从 2 改为 1，CSS `min-height` 与 JS 量高逻辑对齐为单行（`calc(1.6em + 14px)`）；新增纯函数 `resolveAutoGrowHeight` 做增高/封顶的 clamp 数学，单测覆盖单行下限、正常增高、超长封顶、min>max 边界、无穷大上限。Computer Use 未执行，移交人工 QA。 |
-| INSPECT-008 | Inspector 单选时循环播放视频/动图，多选不播放 | 待人类验收 | 单选一项视频或 GIF 资产，观察右侧 Inspector 顶部预览是否播放；再框选该资产与另一项（多选），观察预览是否变为静态堆叠 | 单选视频/GIF 时 Inspector 预览循环播放（视频静音循环，GIF 原生循环）；多选时预览为静态堆叠图，不播放；静态图片始终静态 | [live-preview 单测](../../tests/unit/asset-card-hover-preview.test.ts) / 工单 Serpent-a9n | 2026-07-19 实现：Inspector 复用画布卡片同款「就绪即播」判定（新提取纯函数 `resolveLivePreviewMedia`，已同步重构 `AssetCardMedia` 复用），单选时用独立的 `useAssetCardHoverPreview` 实例（不与画布悬停共享目标，避免悬停其它卡片打断本资产的 Inspector 播放）请求预览并渲染循环视频/GIF；多选路径（`InspectorHeroMultiStack`）从未接入播放，天然不播。Computer Use 未执行（需要真实视频/GIF 解码验证），移交人工 QA。 |
+| INSPECT-007 | 描述输入框默认单行、超一行自动增高换行 | 人类验收通过 | 选中一项资产，清空/输入一段很短的描述观察输入框高度；再粘贴或输入超过一行的长文本观察高度变化与是否换行 | 空/短描述时输入框只有单行高度；内容超过一行后框体自动增高并可见换行，不是默认就是两行高的大文本框 | [单测](../../tests/unit/inspector-description-autogrow.test.ts) / 工单 Serpent-qto / 高度对齐打磨 `Serpent-goe` | 2026-07-19 用户确认通过。附带：默认单行整框仍比作者/原链接略高 → `Serpent-goe`。 |
+| INSPECT-008 | Inspector 单选时循环播放视频/动图，多选不播放 | 人类验收通过 | 单选一项视频或 GIF 资产，观察右侧 Inspector 顶部预览是否播放；再框选该资产与另一项（多选），观察预览是否变为静态堆叠 | 单选视频/GIF 时 Inspector 预览循环播放（视频静音循环，GIF 原生循环）；多选时预览为静态堆叠图，不播放；静态图片始终静态 | [live-preview 单测](../../tests/unit/asset-card-hover-preview.test.ts) / 工单 Serpent-a9n | 2026-07-19 用户确认通过。 |
 | PALETTE-002 | 色卡点击复制 hex 后弹出确认提示          | 人类验收通过   | 选中带自动色卡的图片，点击色块复制 hex                                                           | 出现确认提示（toast），内容表明已复制                                                                                                    | 工单 Serpent-woc                                                                                                                                                                                                                                                                      | 2026-07-18 用户验收通过。                                                                                                      |
 | THUMB-001 | 支持的图片自动生成缩略图 | 待人类验收 | 导入支持的图片，不点击任何“生成预览”操作 | 缩略图自动出现并成功解码 | [0006 QA](0006-thumbnails-preview-format-decoding-qa-report.md) / [媒体预览 E2E](../../tests/e2e/media-preview.test.ts) | — |
-| THUMB-002 | 横图、竖图和方图等比完整显示 | 待人类验收 | 导入横图、竖图和方图并观察资产卡片 | 图片保持比例并完整显示，不裁剪、不拉伸 | [0006 QA](0006-thumbnails-preview-format-decoding-qa-report.md) / [媒体预览 E2E](../../tests/e2e/media-preview.test.ts) | — |
+| THUMB-002 | 横图、竖图和方图等比完整显示 | 人类验收不通过 | 导入横图、竖图和方图并观察资产卡片 | 图片保持比例并完整显示，不裁剪、不拉伸 | [0006 QA](0006-thumbnails-preview-format-decoding-qa-report.md) / [媒体预览 E2E](../../tests/e2e/media-preview.test.ts) / 修复见 CANVAS-023 `Serpent-woa` | 2026-07-19 竖直资产裁切/标题挤占与 CANVAS-023 一并点名；跟进 `Serpent-woa`。 |
 | THUMB-003   | 片头黑场 GIF 网格缩略图非纯黑            | 人类验收通过   | 导入或打开含片头黑场的多帧 GIF；等待缩略图生成（可重开资源库触发重排队）；对比查看页动画         | 网格卡片显示有内容的帧，非纯黑；查看页仍可播原 GIF                                                                                       | [开发日志](../development/2026-07-18-gif-thumbnail-still-page-development-log.md) / [选帧单测](../../tests/unit/gif-thumbnail-page.test.ts) / 工单 Serpent-1wg                                                                                                                        | 2026-07-18 用户验收通过（CU-D7）。                                                                                             |
 
 ### F. 资产查看页面
@@ -350,12 +353,12 @@
 | 2026-07-18 | FILTER-013/014、SEARCH-005、NAV-005、SHELL-015/016、META-008、PALETTE-002                       | 人类验收通过         | REQ-FILTER-001/002、CU-D4、CU-D2（目录树折叠）、macOS 红绿灯、REQ-SHELL-012（并删创建库帮助句）、移除自定义色卡、色卡复制 hex 确认提示。                                                                                                                                                                                                                                          | SHELL-016 帮助句本回合删除；FILTER/排序后续交互见第五批。                                        |
 | 2026-07-18 | SHELL-017、FILTER-015                                                                           | 人类验收不通过       | 「相关性（默认）」等括注仍在；颜色过滤缺黑白且选中样式丑。                                                                                                                                                                                                                                                                                                                        | 第五批：`Serpent-d45` / `Serpent-o75`；技术元数据布局仍见 `Serpent-rbx`（VIEW-007 内容已通过）。 |
 | 2026-07-19 | CANVAS-012 / VIEWER-005（视频） | 角标不通过；视频通过 | 亮色角标仍缺毛玻璃；视频 contain 通过。 | 角标跟进 `Serpent-s3u`；`Serpent-q16` 通过。 |
-| 2026-07-19 | FILTER-019–020 / NAV-006 / SORT-006 / INSPECT-009–010 | 部分通过 | 019/020/NAV根行/SORT-006 已通过；INSPECT-009–010 仍待验。 | 附带打磨见 01i/aj6/9hh/jfi/v78。 |
+| 2026-07-19 | FILTER-019–020 / NAV-006 / SORT-006 / INSPECT-009–010 | 人类验收通过 | 019/020/NAV根行/SORT-006 已通过；INSPECT-009–010 于同日后续批次通过。 | 附带打磨见 01i/aj6/9hh/jfi/v78。 |
 | 2026-07-19 | SHELL-021 | 人类验收通过 | 源链接打开失败可操作 toast。 | Serpent-1pd。 |
-| 2026-07-19 | A11Y-001–003 | 待人类验收 | 查看页焦点环；库菜单/排序 roving；TagPicker 单焦点与对话框 trap。 | Serpent-vvn。 |
-| 2026-07-19 | AUDIO-001 | 待人类验收 | 音频波形封面 + 查看页播放/进度。 | Serpent-0x5。 |
-| 2026-07-19 | TEXT-001 | 待人类验收 | 文本摘要/行号查看/托管保存。 | Serpent-sh7。 |
-| 2026-07-19 | PREF-001 / SMART-007 / MENU-023 | 部分不通过 | PREF/SMART 不通过；MENU-023 仍待验。 | PREF/SMART 复验单已开；wfj 仍待验。 |
+| 2026-07-19 | A11Y-001–003 | 人类验收通过 | 查看页焦点环；库菜单/排序 roving；TagPicker 单焦点与对话框 trap。 | Serpent-vvn。 |
+| 2026-07-19 | AUDIO-001 | 人类验收不通过 | 未见波形；查看页波形需时间轴进度。 | 修复 `Serpent-13v`。 |
+| 2026-07-19 | TEXT-001 | 人类验收不通过 | 链接目录新建 txt 刷新未入库；扩格式；过滤「文本」。 | 修复 `Serpent-4l7`。 |
+| 2026-07-19 | PREF-001 / SMART-007 / MENU-023 | 不通过 | PREF/SMART 不通过；MENU-023 重命名交互/样式不通过。 | PREF/SMART 复验单；重命名 `Serpent-0rg`。 |
 | 2026-07-19 | FOLDER-010–013 | 部分通过 | .3/.4 通过；.1 单击进入不通过；.2 拼盘封面不通过；epic 计数/多选基线接受。 | 修复 `Serpent-829` / `Serpent-7ms`；混合动作 `Serpent-koy`。 |
 | 2026-07-19 | SORT-005 / SHELL-017 / FILTER-013 | 人类验收通过 | 去掉排序相关性；括注复查；删除文件夹过滤维度。 | `Serpent-96i` / `Serpent-d45` / `Serpent-ckx`。 |
 | 2026-07-19 | 本批验收落账 | 记录 | 用户验收上述条目；开修复单 s3u/829/7ms/koy。 | 见各条目笔记。 |
@@ -372,19 +375,21 @@
 | 2026-07-19 | SHELL-018 连续拖拽修复 | 待复验 | 隐藏拖出不再强制结束拖拽；hide/restore 同一 pointer 会话。 | `Serpent-kro`；[开发日志](../development/2026-07-19-sidebar-continuous-drag-development-log.md)。 |
 | 2026-07-19 | PREF-001/SMART-007 复验反馈 | 不通过 | 设置入口/文案/关闭钮；智能合集侧栏原地创建并去顶栏区。 | 新开复验 beads。 |
 | 2026-07-19 | VIEWER-009/010/VIEW-011 + CANVAS-018/021 | 部分通过 | 009/010/011 通过；018/021 不通过；GIF 去暂停与播放器上限、<>对比、重排可见集、捏合/离散滑块已开单。 | `Serpent-noz` / `3kx` / `1zj` / `32p` / `7ny`。 |
+| 2026-07-19 | INSPECT-007–010 / A11Y-001–003 / MENU-023 / TEXT / AUDIO + 竖图/空当/链接导入 | 部分通过 | 007–010 与 A11Y 通过；MENU-023/TEXT-001/AUDIO-001 不通过；新增竖直资产、仅文件夹空当、链接导入失败。 | `Serpent-0rg` / `woa` / `goe` / `4l7` / `13v` / `an1` / `d3h`；证据 `evidence/2026-07-19-acceptance/`。 |
 ### 第五批收口（过滤/导航/排序/Inspector）
 
 | FILTER-019 | 排除过滤红色高亮 | 人类验收通过 | 启用颜色/标签等过滤后勾选排除 | 对应维度按钮呈红色高亮，与包含态区分 | [开发日志](../development/2026-07-19-filter-nav-inspect-polish-development-log.md) / Serpent-8s8 | 2026-07-19 用户确认通过。附带：暗色下红色偏艳 → 降饱和打磨工单。 |
 | FILTER-020 | 颜色过滤黑白与选中样式 | 人类验收通过 | 打开颜色维度；选黑/白；再选彩色 | 有黑白色块；选中为描边缩放而非双环 | 同上 / Serpent-o75 | 2026-07-19 用户确认通过。 |
 | NAV-006b | 无独立资源库根目录行 | 人类验收通过 | 打开含托管文件夹的库，看侧栏文件夹区 | 无「资源库根目录」行；根级文件夹仍在树中；拖到「所有资产」可落到库根 | 同上 / Serpent-vms | 2026-07-19 用户确认通过。注：与 NAV-006（侧栏长名省略）ID 曾冲突，本条记为 NAV-006b。 |
 | SORT-006 | 升序/降序专用图标 | 人类验收通过 | 看排序方向按钮；切换升/降序 | 图标为升序/降序语义，不再是 ↑↓ 文字箭头 | 同上 / Serpent-1c9 | 2026-07-19 用户确认通过。附带产品调整：方向应并入排序面板、去掉独立按钮 → 后续工单。 |
-| INSPECT-009 | 技术元数据底部栏 | 待人类验收 | 选中视频与 GIF，看 Inspector | 体积/分辨率/时间行不含 codec/帧数；底部独立技术栏显示 | 同上 / Serpent-rbx | 2026-07-19；VIEW-007 复验。 |
-| INSPECT-010 | 多选堆叠预览阴影 | 待人类验收 | 多选 2–3 项，看右侧堆叠预览 | 层间有微弱阴影可辨，不糊成一块 | 同上 / Serpent-1tx | 2026-07-19。 |
+| INSPECT-009 | 技术元数据底部栏 | 人类验收通过 | 选中视频与 GIF，看 Inspector | 体积/分辨率/时间行不含 codec/帧数；底部独立技术栏显示 | 同上 / Serpent-rbx | 2026-07-19 用户确认通过。 |
+| INSPECT-010 | 多选堆叠预览阴影 | 人类验收通过 | 多选 2–3 项，看右侧堆叠预览 | 层间有微弱阴影可辨，不糊成一块 | 同上 / Serpent-1tx | 2026-07-19 用户确认通过。竖预览过高另见 CANVAS-023 / `Serpent-woa`。 |
 | SHELL-021 | 源链接打开失败可操作提示 | 人类验收通过 | 选中带有效 HTTP(S) 源链接的资产，点 Inspector 源链接跳转；若系统浏览器打开失败观察 toast；正常成功路径仍应打开浏览器 | 失败时 toast 说明可操作原因；成功时打开系统浏览器 | [开发日志](../development/2026-07-19-external-url-active-context-ipc-development-log.md) / Serpent-1pd | 2026-07-19 用户确认通过。 |
-| A11Y-001 | 查看页 nav/close 键盘焦点可见 | 待人类验收 | 打开查看页；Tab 到上一张/下一张/关闭；可先等 chrome 渐隐再 Tab | 焦点控件有 accent 描边；idle 渐隐时聚焦仍可见 | [开发日志](../development/2026-07-19-keyboard-focus-model-development-log.md) / Serpent-vvn | 2026-07-19。 |
-| A11Y-002 | 资源库菜单与排序 listbox 键盘导航 | 待人类验收 | 打开左上角资源库菜单与排序字段弹出层；用 ↑↓ Home/End、Esc | 箭头移动焦点；Esc 关闭并回到触发按钮 | 同上 / `roving-list-keyboard.test.ts` | 2026-07-19。 |
-| A11Y-003 | 标签选择器单一焦点 + 对话框焦点陷阱 | 待人类验收 | 右键→分配标签；箭头高亮选项且输入框保持焦点；打开设置/导出等对话框按 Tab | 选项不可 Tab 抢走焦点；对话框 Tab 不逃到背后 UI | 同上 | 2026-07-19。 |
-| AUDIO-001 | 音频波形封面与查看页播放 | 待人类验收 | 导入 `.wav`/`.mp3`；看网格/Inspector 波形封面；双击进入查看页播放、拖动进度条；解码失败时 toast/状态可理解 | 卡片有 AUDIO 角标与波形图；查看页可播且进度前进；失败有明确降级 | [开发日志](../development/2026-07-19-audio-waveform-playback-development-log.md) / Serpent-0x5 / 单测 `audio-media.test.ts` | 2026-07-19；Computer Use 未执行。 |
-| TEXT-001 | 文本预览/行号查看与托管保存 | 待人类验收 | 导入 `.txt`/`.md`；看 Inspector 摘要与 TEXT 角标；双击打开带行号查看器；托管资产编辑保存；链接资产应只读提示 | 摘要可见；查看器有行号；托管可保存回盘；链接不可写 | [开发日志](../development/2026-07-19-text-asset-viewer-development-log.md) / Serpent-sh7 / `text-media.test.ts` | 2026-07-19。 |
+| A11Y-001 | 查看页 nav/close 键盘焦点可见 | 人类验收通过 | 打开查看页；Tab 到上一张/下一张/关闭；可先等 chrome 渐隐再 Tab | 焦点控件有 accent 描边；idle 渐隐时聚焦仍可见 | [开发日志](../development/2026-07-19-keyboard-focus-model-development-log.md) / Serpent-vvn | 2026-07-19 用户确认通过（主观觉得非必须，保留）。 |
+| A11Y-002 | 资源库菜单与排序 listbox 键盘导航 | 人类验收通过 | 打开左上角资源库菜单与排序字段弹出层；用 ↑↓ Home/End、Esc | 箭头移动焦点；Esc 关闭并回到触发按钮 | 同上 / `roving-list-keyboard.test.ts` | 2026-07-19 用户确认通过。 |
+| A11Y-003 | 标签选择器单一焦点 + 对话框焦点陷阱 | 人类验收通过 | 右键→分配标签；箭头高亮选项且输入框保持焦点；打开设置/导出等对话框按 Tab | 选项不可 Tab 抢走焦点；对话框 Tab 不逃到背后 UI | 同上 | 2026-07-19 用户确认通过。 |
+| AUDIO-001 | 音频波形封面与查看页播放 | 人类验收不通过 | 导入 `.wav`/`.mp3`；看网格/Inspector 波形封面；双击进入查看页播放 | 卡片有 AUDIO 角标与波形图；查看页可播；**波形区有时间轴表示当前播放进度**；失败有明确降级 | [开发日志](../development/2026-07-19-audio-waveform-playback-development-log.md) / 原 Serpent-0x5 / 修复 `Serpent-13v` | 2026-07-19 用户不通过：未见波形；并修订为波形时间轴进度。 |
+| TEXT-001 | 文本预览/行号查看与托管保存 | 人类验收不通过 | 托管导入 `.txt`/`.md`；在链接文件夹子目录新建 `.txt` 后刷新；看格式过滤 | 摘要/行号/托管可保存；链接新建文本刷新后出现；常见文本格式（txt/md/json/xml 等）支持；格式过滤统一「文本」 | [开发日志](../development/2026-07-19-text-asset-viewer-development-log.md) / 原 Serpent-sh7 / 修复 `Serpent-4l7` | 2026-07-19 用户不通过：链接目录新建未入库；需扩格式；过滤显示「文本」。 |
+| LINK-005 | 从访达向链接文件夹位置导入资产 | 人类验收不通过 | 在访达打开某链接文件夹真实路径，向 App 内对应链接文件夹拖入或导入文件 | 文件写入该外部目录并出现在库中对应位置；失败时错误可理解 | 修复 `Serpent-d3h` | 2026-07-19 用户不通过：向链接位置导入直接报错。 |
 
 
