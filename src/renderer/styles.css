@@ -3261,36 +3261,38 @@ body.serpent-modal-open .app-shell {
   font-size: 12px;
 }
 
-/* F1 (Serpent-lqof): API Key input + eye toggle as one joined control. */
+/* F1 (Serpent-lqof): eye toggle overlaid inside the API Key input's right
+   side — an inline affordance, not a separate button beside the field. */
 .ai-config-api-key-row {
+  position: relative;
   display: flex;
-  gap: 6px;
-  align-items: stretch;
+  align-items: center;
 }
 
 .ai-config-api-key-row .ai-config-input {
-  flex: 1;
-  min-width: 0;
+  width: 100%;
+  padding-right: 32px;
 }
 
 .ai-config-visibility-toggle {
+  position: absolute;
+  right: 5px;
+  top: 50%;
+  transform: translateY(-50%);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  flex: 0 0 auto;
-  width: 34px;
-  height: 28px;
+  width: 22px;
+  height: 22px;
   padding: 0;
-  border: 1px solid var(--divider);
-  border-radius: 6px;
-  background: var(--canvas);
-  color: var(--secondary);
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--tertiary);
   cursor: pointer;
   transition:
     background-color 120ms ease,
-    border-color 120ms ease,
-    color 120ms ease,
-    box-shadow 120ms ease;
+    color 120ms ease;
 }
 
 .ai-config-visibility-toggle:hover {
@@ -3299,9 +3301,8 @@ body.serpent-modal-open .app-shell {
 }
 
 .ai-config-visibility-toggle:focus-visible {
-  border-color: color-mix(in srgb, var(--accent) 62%, var(--divider));
-  box-shadow: 0 0 0 3px var(--accent-soft);
-  outline: 0;
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent-soft);
 }
 
 .ai-config-hint {
