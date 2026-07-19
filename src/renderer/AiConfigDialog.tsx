@@ -79,6 +79,7 @@ export function AiConfigDialog({
   const [modelOptions, setModelOptions] = useState<string[]>([]);
   const [busyAction, setBusyAction] = useState<"test" | "models" | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
+  const [showApiKey, setShowApiKey] = useState(false);
 
   if (!open) return null;
 
@@ -195,17 +196,31 @@ export function AiConfigDialog({
             <label className="micro-label" htmlFor="ai-config-api-key">
               {t("aiConfig.apiKey")}
             </label>
-            <input
-              className="text-field ai-config-input"
-              id="ai-config-api-key"
-              maxLength={512}
-              onChange={(e) => onApiKeyChange(e.target.value)}
-              placeholder={
-                hasKey ? t("aiConfig.apiKeyConfigured") : "sk-…"
-              }
-              type="password"
-              value={apiKey}
-            />
+            <div className="ai-config-api-key-row">
+              <input
+                className="text-field ai-config-input"
+                id="ai-config-api-key"
+                maxLength={512}
+                onChange={(e) => onApiKeyChange(e.target.value)}
+                placeholder={
+                  hasKey ? t("aiConfig.apiKeyConfigured") : "sk-…"
+                }
+                type={showApiKey ? "text" : "password"}
+                value={apiKey}
+              />
+              <button
+                className="ai-config-visibility-toggle"
+                onClick={() => setShowApiKey((prev) => !prev)}
+                type="button"
+                {...iconActionAttrs(
+                  showApiKey
+                    ? t("aiConfig.hideApiKey")
+                    : t("aiConfig.showApiKey"),
+                )}
+              >
+                <Icon name={showApiKey ? "eye-off" : "eye"} size={14} />
+              </button>
+            </div>
           </div>
           <div className="editor-field ai-config-field">
             <label className="micro-label" htmlFor="ai-config-model">

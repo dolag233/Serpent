@@ -3261,6 +3261,49 @@ body.serpent-modal-open .app-shell {
   font-size: 12px;
 }
 
+/* F1 (Serpent-lqof): API Key input + eye toggle as one joined control. */
+.ai-config-api-key-row {
+  display: flex;
+  gap: 6px;
+  align-items: stretch;
+}
+
+.ai-config-api-key-row .ai-config-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.ai-config-visibility-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 34px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--divider);
+  border-radius: 6px;
+  background: var(--canvas);
+  color: var(--secondary);
+  cursor: pointer;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.ai-config-visibility-toggle:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.ai-config-visibility-toggle:focus-visible {
+  border-color: color-mix(in srgb, var(--accent) 62%, var(--divider));
+  box-shadow: 0 0 0 3px var(--accent-soft);
+  outline: 0;
+}
+
 .ai-config-hint {
   margin: 4px 0 0;
   color: var(--tertiary);

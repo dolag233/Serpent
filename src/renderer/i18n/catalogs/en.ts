@@ -651,6 +651,8 @@ export const en = {
     testOk: "Connection succeeded.",
     testFailed: "Connection failed.",
     apiKeyConfigured: "(Configured — re-enter to replace)",
+    showApiKey: "Show API Key",
+    hideApiKey: "Hide API Key",
     language: "Languages",
     languageHint: "Shift-click to multi-select. Analysis and AI search use these languages for output and keyword matching.",
     languagePlaceholder: "Follow system",

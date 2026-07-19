@@ -641,6 +641,8 @@ export const zhCN = {
     testOk: "连接成功。",
     testFailed: "连接失败。",
     apiKeyConfigured: "（已配置，重新输入可覆盖）",
+    showApiKey: "显示 API Key",
+    hideApiKey: "隐藏 API Key",
     language: "语言",
     languageHint: "按住 Shift 点击多选。分析与 AI 搜索按所选语言生成/匹配关键词。",
     languagePlaceholder: "跟随系统",
