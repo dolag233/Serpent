@@ -23,6 +23,19 @@ import {
 const temporaryRoots: string[] = [];
 const require = createRequire(import.meta.url);
 
+// LibraryService holds SQLite connections and recursive fs watchers; on
+// Windows those open handles block rm of the temp tree (POSIX unlinks open
+// files, which is why the leak is invisible on macOS). Always close first.
+const services: LibraryService[] = [];
+
+function newService(
+  ...args: ConstructorParameters<typeof LibraryService>
+): LibraryService {
+  const service = new LibraryService(...args);
+  services.push(service);
+  return service;
+}
+
 function temporaryRoot(): string {
   const root = mkdtempSync(path.join(tmpdir(), 'serpent-zip-test-'));
   temporaryRoots.push(root);
@@ -73,16 +86,37 @@ async function expectRejectReasonAsync(
 }
 
 afterEach(() => {
+  for (const service of services.splice(0)) service.closeAll();
   for (const root of temporaryRoots.splice(0)) {
     rmSync(root, { force: true, recursive: true });
   }
 });
 
+// Windows-only helper: libraries and export destinations can live on
+// different drive letters, where path.relative cannot express a traversal
+// and returns an absolute path (Serpent-59f). Probe for a writable drive
+// other than the temp drive and return a fresh directory on it.
+function createForeignDriveRoot(): string | null {
+  const tempDrive = path.parse(path.resolve(tmpdir())).root.toUpperCase();
+  for (const letter of 'CDEFGHIJKLMNOPQRSTUVWXYZ') {
+    const driveRoot = `${letter}:\\`;
+    if (driveRoot.toUpperCase() === tempDrive) continue;
+    try {
+      const candidate = mkdtempSync(path.join(driveRoot, 'serpent-xdrive-'));
+      temporaryRoots.push(candidate);
+      return candidate;
+    } catch {
+      // Drive absent, read-only media, or not writable — try the next one.
+    }
+  }
+  return null;
+}
+
 describe('LibraryService ZIP export', () => {
   it('rejects a second export for the same library and records the active operation', async () => {
     const root = temporaryRoot();
     const diagnostics: Array<{ scope: string; context?: Record<string, unknown> }> = [];
-    const service = new LibraryService({
+    const service = newService({
       onDiagnostic: ({ scope, context }) => diagnostics.push({ scope, context }),
     });
     const created = service.createLibrary({ displayName: 'Concurrent Export', selectedParentPath: root });
@@ -110,9 +144,44 @@ describe('LibraryService ZIP export', () => {
     service.closeAll();
   });
 
+  it.runIf(process.platform === 'win32')(
+    'accepts a ZIP destination on a different drive letter (Serpent-59f)',
+    async (ctx) => {
+      const foreignRoot = createForeignDriveRoot();
+      if (!foreignRoot) {
+        ctx.skip();
+        return;
+      }
+      const root = temporaryRoot();
+      const service = newService();
+      try {
+        const created = service.createLibrary({ displayName: 'ZIP Cross-Drive Export', selectedParentPath: root });
+        const assetPath = path.join(root, 'sample.png');
+        writeFileSync(assetPath, Buffer.alloc(256));
+        service.prepareOrExecuteImport({
+          libraryId: created.libraryId,
+          sourceKind: 'files',
+          sourcePaths: [assetPath],
+        });
+
+        const destZipPath = path.join(foreignRoot, 'cross-drive-export.zip');
+        const result = await service.exportLibraryToZip({
+          libraryId: created.libraryId,
+          destinationPath: destZipPath,
+          includeLinkedContent: false,
+        });
+
+        expect(result.fileCount).toBeGreaterThan(0);
+        expect(existsSync(destZipPath)).toBe(true);
+      } finally {
+        service.closeAll();
+      }
+    },
+  );
+
   it('exports a library as a valid ZIP with Assets, revisions, trash, and library.db', async () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'ZIP Export Test', selectedParentPath: root });
 
     // Add some content.
@@ -165,7 +234,7 @@ describe('LibraryService ZIP export', () => {
     const linkedRoot = path.join(root, 'linked-source');
     mkdirSync(linkedRoot);
     writeFileSync(path.join(linkedRoot, 'reference.png'), 'linked');
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Linked ZIP', selectedParentPath: root });
     const linked = service.importFolderAsLinked({
       libraryId: created.libraryId,
@@ -191,7 +260,7 @@ describe('LibraryService ZIP export', () => {
 
   it('excludes .serpent/previews/ and .serpent/operations/ from ZIP export', async () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Exclude ZIP Test', selectedParentPath: root });
 
     // Create fake preview/operations content.
@@ -223,7 +292,7 @@ describe('LibraryService ZIP export', () => {
 
   it('rejects ZIP export when file count exceeds 65534 (pre-check)', async () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Large Zip', selectedParentPath: root });
 
     // We cannot easily create 65534 real files, but we can test the pre-check
@@ -244,7 +313,7 @@ describe('LibraryService ZIP export', () => {
 
   it('rejects ZIP export destination inside the library', async () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Inside ZIP', selectedParentPath: root });
 
     const destInsideLibrary = path.join(created.libraryPath, 'export.zip');
@@ -259,7 +328,7 @@ describe('LibraryService ZIP export', () => {
 
   it('rejects ZIP export when library is not open', async () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Closed ZIP', selectedParentPath: root });
     service.closeAll();
 
@@ -275,7 +344,7 @@ describe('LibraryService ZIP export', () => {
 
   it('never overwrites or removes a pre-existing ZIP destination', async () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Existing ZIP', selectedParentPath: root });
     const destZipPath = path.join(root, 'existing.zip');
     writeFileSync(destZipPath, 'user data');
@@ -295,7 +364,7 @@ describe('LibraryService ZIP export', () => {
   it('removes a partially-written ZIP after an archive failure', async () => {
     const root = temporaryRoot();
     let sourceToRemove: string | undefined;
-    const service = new LibraryService({
+    const service = newService({
       onProgress: (event) => {
         if (event.type === 'export.progress' && event.phase === 'compress' && sourceToRemove) {
           rmSync(sourceToRemove, { force: true });
@@ -327,7 +396,7 @@ describe('LibraryService ZIP export', () => {
     const root = temporaryRoot();
     let cancellationRequested = false;
     const phases: string[] = [];
-    const service = new LibraryService({
+    const service = newService({
       onProgress: (event) => {
         if (event.type !== 'export.progress') return;
         phases.push(event.phase);
@@ -363,7 +432,7 @@ describe('LibraryService ZIP export', () => {
 describe('LibraryService ZIP import', () => {
   it('uses the streaming importer for large entries and reports chunk-level byte progress', async () => {
     const root = temporaryRoot();
-    const sourceService = new LibraryService();
+    const sourceService = newService();
     const created = sourceService.createLibrary({ displayName: 'Streaming Import', selectedParentPath: root });
     const payload = randomBytes(2 * 1024 * 1024);
     writeFileSync(path.join(created.libraryPath, 'Assets', 'large.bin'), payload);
@@ -376,7 +445,7 @@ describe('LibraryService ZIP import', () => {
     sourceService.closeAll();
 
     const extractByteProgress: number[] = [];
-    const service = new LibraryService({
+    const service = newService({
       onProgress: (event) => {
         if (event.type === 'import.progress' && event.phase === 'extract' && event.bytesProcessed > 0) {
           extractByteProgress.push(event.bytesProcessed);
@@ -397,7 +466,7 @@ describe('LibraryService ZIP import', () => {
 
   it('rejects overlapping imports that reuse a source or destination and logs the conflict', async () => {
     const root = temporaryRoot();
-    const sourceService = new LibraryService();
+    const sourceService = newService();
     const created = sourceService.createLibrary({ displayName: 'Concurrent Import', selectedParentPath: root });
     writeFileSync(path.join(created.libraryPath, 'Assets', 'asset.bin'), randomBytes(1024));
     const firstSourceDirectory = path.join(root, 'source-a');
@@ -415,7 +484,7 @@ describe('LibraryService ZIP import', () => {
     sourceService.closeAll();
 
     const diagnostics: Array<{ scope: string; context?: Record<string, unknown> }> = [];
-    const service = new LibraryService({
+    const service = newService({
       onDiagnostic: ({ scope, context }) => diagnostics.push({ scope, context }),
     });
     const firstDestination = path.join(root, 'destination-a');
@@ -460,7 +529,7 @@ describe('LibraryService ZIP import', () => {
 
   it('imports a library from a valid ZIP', async () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
 
     // Create and export library to ZIP.
     const created = service.createLibrary({ displayName: 'ZIP Import Test', selectedParentPath: root });
@@ -533,7 +602,7 @@ describe('LibraryService ZIP import', () => {
       archive.finalize();
     });
 
-    const service = new LibraryService();
+    const service = newService();
     const destDir = path.join(root, 'imported-bad');
     mkdirSync(destDir, { recursive: true });
 
@@ -547,7 +616,7 @@ describe('LibraryService ZIP import', () => {
 
   it('rejects ZIP without .serpent/library.db', async () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
 
     // Create library, export to ZIP, then remove the DB entry.
     const created = service.createLibrary({ displayName: 'No DB ZIP', selectedParentPath: root });
@@ -615,7 +684,7 @@ describe('LibraryService ZIP import', () => {
       archive.finalize();
     });
 
-    const service = new LibraryService();
+    const service = newService();
     const destDir = path.join(root, 'imported-escape');
     mkdirSync(destDir, { recursive: true });
 
@@ -650,7 +719,7 @@ describe('LibraryService ZIP import', () => {
     mkdirSync(destinationParentPath);
 
     await expectRejectReasonAsync(
-      () => new LibraryService().importLibraryFromZip({ sourceZipPath: zipPath, destinationParentPath }),
+      () => newService().importLibraryFromZip({ sourceZipPath: zipPath, destinationParentPath }),
       'NOT_A_LIBRARY',
       'PATH_ESCAPE',
     );
@@ -673,7 +742,7 @@ describe('LibraryService ZIP import', () => {
     mkdirSync(destinationParentPath);
 
     await expectRejectReasonAsync(
-      () => new LibraryService().importLibraryFromZip({ sourceZipPath: zipPath, destinationParentPath }),
+      () => newService().importLibraryFromZip({ sourceZipPath: zipPath, destinationParentPath }),
       'NOT_A_LIBRARY',
       'SYMBOLIC_LINK_NOT_ALLOWED',
     );
@@ -695,7 +764,7 @@ describe('LibraryService ZIP import', () => {
     mkdirSync(destinationParentPath);
 
     await expectRejectAsync(
-      () => new LibraryService().importLibraryFromZip({ sourceZipPath: zipPath, destinationParentPath }),
+      () => newService().importLibraryFromZip({ sourceZipPath: zipPath, destinationParentPath }),
       'ZIP_TOO_LARGE',
     );
     expect(existsSync(path.join(destinationParentPath, 'compression-bomb'))).toBe(false);
@@ -703,7 +772,7 @@ describe('LibraryService ZIP import', () => {
 
   it('never overwrites or deletes a pre-existing extraction destination', async () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'ZIP Ownership', selectedParentPath: root });
     const zipPath = path.join(root, 'owned.zip');
     await service.exportLibraryToZip({
@@ -727,7 +796,7 @@ describe('LibraryService ZIP import', () => {
 
   it('can cancel after announcing the import id and removes only its owned extraction', async () => {
     const root = temporaryRoot();
-    const sourceService = new LibraryService();
+    const sourceService = newService();
     const created = sourceService.createLibrary({ displayName: 'Cancel ZIP Import', selectedParentPath: root });
     for (let index = 0; index < 20; index += 1) {
       writeFileSync(path.join(created.libraryPath, 'Assets', `asset-${index}.bin`), Buffer.alloc(4096));
@@ -742,7 +811,7 @@ describe('LibraryService ZIP import', () => {
 
     let cancellationRequested = false;
     const phases: string[] = [];
-    const service = new LibraryService({
+    const service = newService({
       onProgress: (event) => {
         if (event.type !== 'import.progress') return;
         phases.push(event.phase);
@@ -774,7 +843,7 @@ describe('LibraryService ZIP import', () => {
 describe('ZIP round-trip', () => {
   it('preserves asset count and metadata through ZIP export-import cycle', async () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
 
     // Create library with content.
     const created = service.createLibrary({ displayName: 'Roundtrip ZIP', selectedParentPath: root });

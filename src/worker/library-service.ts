@@ -42,6 +42,7 @@ import {
   extractRepresentativePalette,
   type RepresentativeColor,
 } from './palette-extractor';
+import { pathIsWithin } from './path-utils';
 
 import { smartCollectionQueryDefinitionSchema, extractedVideoMetadataSchema, type AssetMetadataResult, type ExtractedMetadataResult, type ExtractedVideoMetadata, type AssetSummary, type CollectionSummary, type FilterClause, type FolderBrowseEntry, type LinkedFolderRule, type LinkedFolderSummary, type ManagedFolderSummary, type SearchScope, type SmartCollectionQueryDefinition, type SmartCollectionSummary, type TagSummary } from '../shared/asset-types';
 import { hasMeaningfulSmartCollectionCondition } from '../shared/smart-collection-query';
@@ -55,6 +56,7 @@ import type { TagOperationSkip } from '../shared/protocol/responses';
 // The Worker loads it lazily so it can still start if sharp is missing.
 export interface SharpModule {
   (input: string, options?: { page?: number }): SharpInstance;
+  cache?(options: boolean | { files?: number }): unknown;
 }
 export interface SharpInstance {
   metadata(): Promise<{
@@ -115,6 +117,12 @@ function requireSharp(): SharpModule {
     try {
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       sharpModule = require('sharp') as SharpModule;
+      // libvips keeps recently used input files open in its file cache. On
+      // Windows an open handle blocks delete/rename, which breaks asset
+      // trash/move/rename right after a thumbnail or palette was generated
+      // (POSIX unlinks open files, so this never surfaced on macOS). Keep the
+      // decoded-operation cache but never hold source files open.
+      sharpModule.cache?.({ files: 0 });
     } catch (error) {
       throw new LibraryServiceError('INTERNAL_ERROR', {
         reason: 'SHARP_UNAVAILABLE',
@@ -1766,6 +1774,24 @@ function isMissingPathError(error: unknown): boolean {
   );
 }
 
+/**
+ * Existence probes in availability reconciliation must also accept EPERM /
+ * EACCES as "not there": on Windows a tree in delete-pending state (removed
+ * while a handle is still open) answers lstat/readdir with EPERM until the
+ * last handle closes, whereas POSIX reports ENOENT. A genuinely ACL-denied
+ * path reconciles to 'missing' as well and flips back when access returns,
+ * which is the designed semantics for unavailable linked content.
+ */
+function isUnreadablePathError(error: unknown): boolean {
+  return (
+    isMissingPathError(error) ||
+    (typeof error === 'object' &&
+      error !== null &&
+      'code' in error &&
+      (error.code === 'EPERM' || error.code === 'EACCES'))
+  );
+}
+
 function hasErrorCode(error: unknown, code: string): boolean {
   let current = error;
   const visited = new Set<unknown>();
@@ -1834,6 +1860,23 @@ interface ActiveImportTransfer {
  */
 function transferCheckpoint(): Promise<void> {
   return new Promise((resolve) => setImmediate(resolve));
+}
+
+/**
+ * Resolves once the stream's 'close' event fires. Destroying a stream only
+ * schedules the file-descriptor release; on Windows the file stays locked
+ * (and undeletable) until 'close', unlike POSIX where unlinking an open file
+ * is allowed. Await this before deleting a stream's target on any platform.
+ */
+function waitForStreamClose(stream: {
+  readonly closed: boolean;
+  once(event: string, listener: () => void): unknown;
+}): Promise<void> {
+  if (stream.closed) return Promise.resolve();
+  return new Promise((resolve) => {
+    stream.once('close', () => resolve());
+    stream.once('error', () => resolve());
+  });
 }
 
 async function copyDirRecursiveCancellable(
@@ -3261,7 +3304,7 @@ export class LibraryService {
         }
       } catch (error) {
         if (error instanceof LibraryServiceError) throw error;
-        if (isMissingPathError(error)) break;
+        if (isUnreadablePathError(error)) break;
         throw new LibraryServiceError('INVALID_LIBRARY_PATH', { cause: error });
       }
     }
@@ -3271,7 +3314,14 @@ export class LibraryService {
   private linkedRootIsGone(absoluteRootPath: string): boolean {
     try {
       const entry = lstatSync(absoluteRootPath);
-      return entry.isSymbolicLink() || !entry.isDirectory();
+      if (entry.isSymbolicLink() || !entry.isDirectory()) return true;
+      // Windows delete-pending: a just-removed tree can leave a directory
+      // entry that lstat still sees but that rejects every access with EPERM
+      // until the last open handle closes. POSIX reports ENOENT at the lstat
+      // above, so only Windows needs this second check — without it the
+      // refresh falls through to enumeration and crashes on the EPERM.
+      accessSync(absoluteRootPath, constants.F_OK);
+      return false;
     } catch {
       return true;
     }
@@ -3314,7 +3364,7 @@ export class LibraryService {
         }
       } catch (error) {
         if (error instanceof LibraryServiceError) throw error;
-        if (isMissingPathError(error)) break;
+        if (isUnreadablePathError(error)) break;
         throw new LibraryServiceError('INVALID_LIBRARY_PATH', { cause: error });
       }
     }
@@ -14135,7 +14185,7 @@ export class LibraryService {
             ? this.options.assetLstat(assetPath)
             : lstatSync(assetPath, { bigint: true });
         } catch (error) {
-          if (isMissingPathError(error)) {
+          if (isUnreadablePathError(error)) {
             fileStat = undefined;
           } else {
             throw new LibraryServiceError('IMPORT_APPLY_FAILED', { cause: error });
@@ -14908,8 +14958,7 @@ export class LibraryService {
     } catch (error) {
       throw new LibraryServiceError('INVALID_LIBRARY_PATH', { cause: error });
     }
-    const rel = path.relative(canonicalLib, canonicalDest);
-    if (rel === '' || (!rel.startsWith('..') && rel.length > 0)) {
+    if (pathIsWithin(canonicalLib, canonicalDest)) {
       throw new LibraryServiceError('INVALID_LIBRARY_PATH');
     }
 
@@ -15384,8 +15433,7 @@ export class LibraryService {
     } catch {
       canonicalDestDir = destDir;
     }
-    const rel = path.relative(canonicalLib, canonicalDestDir);
-    if (rel === '' || (!rel.startsWith('..') && rel.length > 0)) {
+    if (pathIsWithin(canonicalLib, canonicalDestDir)) {
       throw new LibraryServiceError('INVALID_LIBRARY_PATH');
     }
 
@@ -15642,13 +15690,20 @@ export class LibraryService {
       }
 
       if (cancelState.cancelled) {
-        // Destroy streams.
+        // Destroy streams, then wait for the destination handle to close
+        // before deleting the file: the release is asynchronous, and on
+        // Windows an immediate rm hits EPERM and masks CANCELLED with
+        // LIBRARY_NOT_WRITABLE (POSIX unlinks open files, hiding this).
+        const outputClosed = waitForStreamClose(output);
         archive.abort();
         output.destroy();
+        await outputClosed;
         // Remove the temp db and temp dir.
         this.removeOwnedTransferPath('export.zip.cancel.cleanup-temp', tempDir, true);
+        tempDirOwned = false;
         // Remove the destination file.
         this.removeOwnedTransferPath('export.zip.cancel.cleanup-destination', destZipPath, false);
+        destinationOwned = false;
         this.emitProgress({
           type: 'export.progress', exportId,
           libraryId: input.libraryId,

@@ -15,6 +15,8 @@ import { crc32 } from 'node:zlib';
 
 import * as yauzl from 'yauzl';
 
+import { pathIsWithin } from './path-utils';
+
 const DEFAULT_MAX_ENTRIES = 65_534;
 const DEFAULT_MAX_UNCOMPRESSED_BYTES = 4 * 1024 * 1024 * 1024;
 const DEFAULT_MAX_COMPRESSION_RATIO = 100;
@@ -299,12 +301,6 @@ async function planArchive(
   }
 
   return { entries, totalBytes, fileCount, directoryCount };
-}
-
-function pathIsWithin(rootPath: string, candidatePath: string): boolean {
-  const relative = path.relative(rootPath, candidatePath);
-  return relative === ''
-    || (!path.isAbsolute(relative) && relative !== '..' && !relative.startsWith(`..${path.sep}`));
 }
 
 function verifyDestinationRoot(destinationRoot: string): string {
