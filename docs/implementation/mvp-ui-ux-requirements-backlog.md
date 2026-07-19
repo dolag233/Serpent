@@ -428,6 +428,7 @@ FolderBrowseEntry
 | AUDIO 网格波形 4:3；亮色底非黑 | 查看页波形比例不改 | `Serpent-dxk` |
 | 视频/音频跳转式播放经常失败 | 严重；seek/scrub 后播放失败 | `Serpent-jh2` |
 | 非图片/视频资产不显示色卡（音频误显） | Inspector/色卡入口仅图视 | `Serpent-uz1` |
+| AUDIO 查看页波形错位；网格封面与画布底需区分 | dxk 复验不通过；封面/查看页宜分轨 | `Serpent-muc` |
 
 ## 验收与证据要求
 
