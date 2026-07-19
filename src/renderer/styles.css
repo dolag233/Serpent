@@ -755,14 +755,19 @@ body.platform-darwin .toolbar-leading {
   min-width: 0;
   flex: 1 1 auto;
   max-width: 100%;
+  /* Keep dropdown menus from ancestor clipping (Serpent-7fy). */
+  overflow: visible;
 }
 
 .library-switcher {
+  /* Do not set overflow:hidden here — the dropdown menu is position:absolute
+     inside this box (Serpent-7fy: clipping made the menu look “completely wrong”).
+     Ellipsis belongs on .library-switcher-name only. */
   position: relative;
   flex: 1 1 auto;
   min-width: 0;
   max-width: 220px;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .library-switcher-trigger {

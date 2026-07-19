@@ -169,7 +169,7 @@
 | SMART-004 | 重命名智能合集 | 待人类验收 | 重命名已有智能合集 | 新名称立即出现，查询条件保持 | [0005 QA](0005-search-filter-sort-smart-collections-qa-report.md) | — |
 | SMART-005 | 删除智能合集 | 待人类验收 | 删除已有智能合集 | 智能合集消失，资产不受影响 | [0005 QA](0005-search-filter-sort-smart-collections-qa-report.md) | — |
 | SMART-006 | 智能合集侧栏计数 | 待人类验收 | 打开含智能合集的资源库；对照普通合集行；再打开该智能合集 | 侧栏智能合集行显示匹配资产数；与打开后结果总数一致 | [开发日志](../development/2026-07-18-smart-collection-validate-count-development-log.md) / 工单 Serpent-o8v | 2026-07-18 CU-M6：list 批量 count + 执行后刷新。 |
-| PREF-001 | 浏览区设置面板（主题/语言/画布） | 待人类验收 | 1) 确认左上角资源库名称旁有齿轮；2) 打开面板：说明对比可读、文件名/大小/日期仅一条共用说明；3) 缩窄窗口观察齿轮与资源库名/chevron | 入口旁资源库；说明为次级色但可读（勿整片发灰难读）；三字段共用一条 hint；窄窗齿轮与资源库 UI 永不重叠 | [开发日志](../development/2026-07-19-prefs-smart-inline-rename-development-log.md) / 原 Serpent-97l / 复验修复 `Serpent-9es` / [重叠证据](evidence/2026-07-19-acceptance/pref-001-settings-overlap.png) | 2026-07-19 曾不通过（说明全灰；三字段重复；窄窗重叠）。`Serpent-9es`：hint 对比提升；字段合并为 `cardFieldsHint`；`toolbar-library-settings` 收缩省略防重叠。待复验。 |
+| PREF-001 | 浏览区设置面板（主题/语言/画布） | 人类验收不通过 | 1) 资源库旁齿轮；2) 点资源库名称打开菜单，确认是新建/打开/关闭/导入等库菜单；3) 再点齿轮看设置说明与窄窗不重叠 | 库菜单内容正确（非裁切/错乱）；齿轮旁资源库；说明可读；三字段共用 hint；窄窗不重叠 | [开发日志](../development/2026-07-19-prefs-smart-inline-rename-development-log.md) / 原 Serpent-9es / 库菜单裁切修复 `Serpent-7fy` | 2026-07-19 用户不通过：齿轮位置正常，但点资源库弹出菜单完全错误。根因：`.library-switcher` overflow:hidden 裁切下拉。`Serpent-7fy` 已修为 overflow:visible；待复验库菜单+设置项。 |
 | SMART-007 | 智能合集侧栏加号原地创建 | 人类验收不通过 | 点侧栏「智能合集」旁 +；侧栏命名确认 | 侧栏原地命名创建成功后弹出该智能合集设置窗口（编辑条件）；勿先报「需填写条件」类错误；顶栏无名称/保存区 | [开发日志](../development/2026-07-19-smart-collection-sidebar-inline-create-development-log.md) / 原 Serpent-san / 修复 `Serpent-era` | 2026-07-19 用户不通过：应先创建再开设置面板，而非报缺条件错。 |
 | MENU-023 | 资产画布原地重命名 | 人类验收通过 | ①右键资产「重命名…」或快捷键进入内联编辑；改基名后 Enter；Esc 取消。②进入重命名后点击卡片外/画布空白使输入失焦。③对照侧栏文件夹「重命名…」输入框外观（描边层数、文字颜色）。④进入重命名后不改名直接 Enter 或失焦 | ①卡片内联输入（无对话框）；扩展名旁注保留；Enter 后文件名更新。②失焦与 Enter 相同：提交重命名并退出编辑态，不卡在输入框。③样式与文件夹重命名一致：单层描边/焦点环，输入文字为正常前景色（非灰色）。④基名未变时退出编辑且无「重命名成功」类 toast | [开发日志](../development/2026-07-19-prefs-smart-inline-rename-development-log.md) / 原 Serpent-wfj / `Serpent-0rg` / [提交决议单测](../../tests/unit/asset-inline-rename.test.ts) | 2026-07-19 用户确认通过（`Serpent-0rg`）。 |
 | FOLDER-001 | 文件夹递归显示后代资产 | 已撤回 | — | — | — | 2026-07-17 人类验收不通过；需求改为 REQ-FOLDER-009 显式开关。由 FOLDER-009 承接验收。 |
@@ -383,6 +383,7 @@
 | 2026-07-19 | SMART-007 / `Serpent-san` | 人类验收不通过 | 应创建后开设置面板，勿先报缺条件。 | 修复 `Serpent-era`。 |
 | 2026-07-19 | VIEWER-009/010/VIEW-011 + CANVAS-018/021 | 部分通过 | 009/010/011 通过；018/021 不通过；GIF 去暂停与播放器上限、<>对比、重排可见集、捏合/离散滑块已开单。 | `Serpent-noz` / `3kx` / `1zj` / `32p` / `7ny`。 |
 | 2026-07-19 | VIEW-010 / `Serpent-1zj` | 人类验收通过（撤回项清理） | 查看页无 GIF 暂停/逐帧；仅自动播放。 | `Serpent-1zj`。 |
+| 2026-07-19 | PREF-001 库菜单裁切 | 不通过→已修待复验 | 点资源库菜单内容错误；overflow:hidden 裁切。 | `Serpent-7fy`。 |
 | 2026-07-19 | AUDIO 波形复验 | 不通过 | 查看页错位；网格底与画布融合。 | 见 beads 新开单。 |
 | 2026-07-19 | 色卡仅图视 | 记录 | 非图片/视频（含音频）不显示色卡。 | `Serpent-uz1`。 |
 | 2026-07-19 | 并行波复验：0rg/s3u/1zj 通过；97l/san/13v 不通过；seek 严重缺陷 | 部分通过 | 设置说明/重叠；智能合集创建后开设置；波形 4:3+亮色底；音视频 seek 失败。 | `Serpent-9es` / `era` / `dxk` / `jh2`。 |
