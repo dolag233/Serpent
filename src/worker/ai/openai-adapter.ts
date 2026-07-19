@@ -400,10 +400,18 @@ export class OpenAIVendorAdapter implements VendorAdapter {
         ? body.model
         : this.model;
 
-    return {
-      ...parseAiAnalysisResult(JSON.parse(content)),
-      modelVersion,
-    };
+    try {
+      return parseAiAnalysisResult({
+        ...JSON.parse(content),
+        modelVersion,
+      });
+    } catch (error: unknown) {
+      throw new VendorAdapterError(
+        'invalid_response',
+        'The AI response did not match the required schema.',
+        { cause: error },
+      );
+    }
   }
 
   #extractResponsesResult(json: unknown): AiAnalysisResult {
@@ -449,9 +457,17 @@ export class OpenAIVendorAdapter implements VendorAdapter {
         ? body.model
         : this.model;
 
-    return {
-      ...parseAiAnalysisResult(JSON.parse(content)),
-      modelVersion,
-    };
+    try {
+      return parseAiAnalysisResult({
+        ...JSON.parse(content),
+        modelVersion,
+      });
+    } catch (error: unknown) {
+      throw new VendorAdapterError(
+        'invalid_response',
+        'The AI response did not match the required schema.',
+        { cause: error },
+      );
+    }
   }
 }

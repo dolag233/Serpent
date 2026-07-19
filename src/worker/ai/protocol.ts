@@ -35,11 +35,30 @@ export const aiAnalysisResultSchema = aiStructuredOutputSchema.extend({
 export type AiAnalysisResult = z.infer<typeof aiAnalysisResultSchema>;
 
 /**
+ * Drop top-level keys whose value is `null`. Vendor wire schemas mark
+ * optional fields (description / structured_metadata) as required-but-nullable,
+ * so models emit `null` for inapplicable fields; stripping them keeps
+ * explicit-null and absent equivalent before schema validation.
+ */
+function stripNullValues(input: unknown): unknown {
+  if (input && typeof input === 'object' && !Array.isArray(input)) {
+    const out: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(
+      input as Record<string, unknown>,
+    )) {
+      if (value !== null) out[key] = value;
+    }
+    return out;
+  }
+  return input;
+}
+
+/**
  * Parse and validate an AI analysis result.
  * Throws ZodError if the input does not conform to AiAnalysisResult.
  */
 export function parseAiAnalysisResult(input: unknown): AiAnalysisResult {
-  return aiAnalysisResultSchema.parse(input);
+  return aiAnalysisResultSchema.parse(stripNullValues(input));
 }
 
 /**
