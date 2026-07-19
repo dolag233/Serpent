@@ -34,16 +34,6 @@ export const AUDIO_WAVEFORM_VIEWER_HEIGHT = 220;
 export const AUDIO_WAVEFORM_COVER_GENERATOR_TAG = "waveform-cover6";
 
 /**
- * Playhead trail width in CSS px from playbackRate (Serpent-vlx).
- * Faster playback → longer trail; slower → shorter. Clamped for readability.
- */
-export function playheadTrailWidthPx(playbackRate: number): number {
-  const rate = Number.isFinite(playbackRate) && playbackRate > 0 ? playbackRate : 1;
-  const base = 28;
-  return Math.min(72, Math.max(12, Math.round(base * rate)));
-}
-
-/**
  * Light browse canvas (`--canvas` in light theme). Covers must not match this
  * or the 4:3 stage blends into the grid.
  */

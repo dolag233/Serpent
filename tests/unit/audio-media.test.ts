@@ -15,7 +15,6 @@ import {
   isAudioFileName,
   isLightFriendlyWaveformCoverBackground,
   isNearFourByThreeAspect,
-  playheadTrailWidthPx,
   rgbChannelDistance,
 } from "../../src/shared/audio-media";
 
@@ -67,14 +66,6 @@ test("viewer waveform strip is wide (not 4:3 grid cover)", () => {
       AUDIO_WAVEFORM_VIEWER_HEIGHT,
     ),
   ).toBe(false);
-});
-
-test("playhead trail width scales with playbackRate (Serpent-vlx)", () => {
-  expect(playheadTrailWidthPx(1)).toBe(28);
-  expect(playheadTrailWidthPx(2)).toBeGreaterThan(playheadTrailWidthPx(1));
-  expect(playheadTrailWidthPx(0.5)).toBeLessThan(playheadTrailWidthPx(1));
-  expect(playheadTrailWidthPx(0)).toBe(28);
-  expect(playheadTrailWidthPx(100)).toBeLessThanOrEqual(72);
 });
 
 test("waveform cover stage is charcoal grey-black (Serpent-vlx)", () => {

@@ -457,23 +457,23 @@ body.platform-darwin .toolbar-leading {
   cursor: pointer;
 }
 
-/* Serpent-01i: idle hover = neutral wash only; enabled/open = accent-soft. */
-.dimension-filter-btn:hover:not(:disabled):not(.is-active):not(.is-open) {
+/* Serpent-49f / FILTER-025: hover + open settings = neutral wash only.
+   Accent-soft is reserved for is-active (filter actually enabled). */
+.dimension-filter-btn:hover:not(:disabled):not(.is-active),
+.dimension-filter-btn.is-open:not(:disabled):not(.is-active) {
   background: var(--hover);
   border-color: var(--divider);
   color: var(--text);
 }
 
-.dimension-filter-btn.is-active:not(:disabled),
-.dimension-filter-btn.is-open:not(:disabled) {
+.dimension-filter-btn.is-active:not(:disabled) {
   border-color: color-mix(in srgb, var(--accent) 55%, var(--divider));
   background: var(--accent-soft);
   color: var(--accent-soft-fg);
 }
 
 .dimension-filter-btn.is-active:hover:not(:disabled),
-.dimension-filter-btn.is-open:hover:not(:disabled) {
-  /* Keep enabled identity; do not collapse into idle hover. */
+.dimension-filter-btn.is-active.is-open:not(:disabled) {
   border-color: color-mix(in srgb, var(--accent) 55%, var(--divider));
   background: var(--accent-soft);
   color: var(--accent-soft-fg);
@@ -1065,10 +1065,10 @@ body.platform-darwin .toolbar-leading {
 }
 
 .dimension-filter-hint {
-  margin: 8px 0 0;
+  margin: 6px 0 0;
   color: var(--tertiary);
-  font-size: 11px;
-  line-height: 1.35;
+  font-size: 10px;
+  line-height: 1.3;
 }
 
 .dimension-filter-btn.is-excluding:not(:disabled) {
@@ -2562,35 +2562,32 @@ input[type="range"] {
     linear-gradient(90deg, transparent 0%, var(--hover) 50%, transparent 100%),
     var(--pane);
 }
+/* Serpent-r8a: full-height star-yellow playhead; trail = separate particles. */
 .preview-audio-playhead {
-  --playhead-trail-width: 28px;
-  position: absolute;
-  top: 8%;
-  bottom: 8%;
-  width: 2px;
-  background: var(--accent);
-  box-shadow:
-    calc(var(--playhead-trail-width) * -0.65) 0 22px 0
-      color-mix(in srgb, var(--accent) 55%, transparent),
-    calc(var(--playhead-trail-width) * -0.22) 0 10px 0
-      color-mix(in srgb, var(--accent) 40%, transparent),
-    0 0 0 1px color-mix(in srgb, var(--pane) 55%, transparent);
-  transform: translateX(-50%);
-  pointer-events: none;
-  z-index: 1;
-}
-.preview-audio-playhead::before {
-  content: "";
   position: absolute;
   top: 0;
   bottom: 0;
-  right: 0;
-  width: var(--playhead-trail-width);
-  background: linear-gradient(
-    to left,
-    color-mix(in srgb, var(--accent) 45%, transparent),
-    transparent
-  );
+  width: 2px;
+  background: var(--rating-star);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--pane) 45%, transparent);
+  transform: translateX(-50%);
+  pointer-events: none;
+  z-index: 2;
+}
+.preview-audio-trail {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+  overflow: hidden;
+}
+.preview-audio-trail-particle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--rating-star);
+  transform: translateX(-50%);
   pointer-events: none;
 }
 .preview-audio-controls {
@@ -3237,13 +3234,12 @@ select.ai-config-input {
   margin-top: 0;
 }
 
-/* Serpent-9es: secondary tone is fine, but keep body hints readable —
-   mix toward --text so copy is not a washed-out gray slab. */
+/* Settings body hints: smaller + lighter than primary labels (2026-07-19). */
 .app-settings-hint {
   margin: 4px 0 0;
-  color: color-mix(in srgb, var(--text) 68%, var(--secondary));
-  font-size: 12px;
-  line-height: 1.45;
+  color: var(--tertiary);
+  font-size: 10px;
+  line-height: 1.35;
 }
 
 .app-settings-sublabel {

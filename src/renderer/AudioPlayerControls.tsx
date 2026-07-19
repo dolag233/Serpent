@@ -3,11 +3,16 @@ import {
   useEffect,
   useRef,
   useState,
-  type CSSProperties,
   type SyntheticEvent,
 } from "react";
 
-import { playheadTrailWidthPx } from "../shared/audio-media";
+import {
+  nextTrailParticleId,
+  pruneTrailParticles,
+  shouldEmitTrailParticle,
+  trailParticleOpacity,
+  type TrailParticle,
+} from "./audio-playhead-trail";
 import {
   playheadLeftPercent,
   playheadRatioFromTime,
@@ -37,9 +42,10 @@ export interface AudioPlayerControlsProps {
 const SCRUB_STEP_SECONDS = 5;
 
 /**
- * Viewer chrome for audio (Serpent-0x5 / 13v / vlx):
- * full-bleed wide waveform strip (not the 4:3 grid cover); playhead % of shell
- * width; trail length scales with playbackRate.
+ * Viewer chrome for audio (Serpent-0x5 / 13v / vlx / r8a):
+ * full-bleed waveform; full-height star-yellow playhead; particle trail that
+ * deposits samples while playing and fades in place (pause → trail dissipates;
+ * faster rate → longer trail span).
  */
 export function AudioPlayerControls({
   onError,
@@ -53,6 +59,9 @@ export function AudioPlayerControls({
   const waveformRef = useRef<HTMLDivElement>(null);
   const scrubbingPointerId = useRef<number | null>(null);
   const waveformScrubbingPointerId = useRef<number | null>(null);
+  const trailLastEmitAtRef = useRef<number | null>(null);
+  const trailNextIdRef = useRef(0);
+  const trailParticlesRef = useRef<TrailParticle[]>([]);
   const seekSessionRef = useRef(
     createMediaSeekSession(
       () => audioRef.current,
@@ -66,7 +75,8 @@ export function AudioPlayerControls({
   const [duration, setDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
   const [scrubRatio, setScrubRatio] = useState<number | null>(null);
-  const [playbackRate, setPlaybackRate] = useState(1);
+  const [trailParticles, setTrailParticles] = useState<TrailParticle[]>([]);
+  const [trailNowMs, setTrailNowMs] = useState(0);
 
   const togglePlayback = useCallback(() => {
     const audio = audioRef.current;
@@ -92,8 +102,43 @@ export function AudioPlayerControls({
   useEffect(() => {
     const session = seekSessionRef.current;
     session.cancel();
+    trailParticlesRef.current = [];
+    trailLastEmitAtRef.current = null;
+    trailNextIdRef.current = 0;
+    setTrailParticles([]);
     return () => session.cancel();
   }, [src]);
+
+  // Particle trail pump: emit while playing; always prune/fade (incl. pause).
+  useEffect(() => {
+    let frameId = 0;
+    const tick = (nowMs: number) => {
+      const audio = audioRef.current;
+      const scrubbing =
+        scrubbingPointerId.current !== null ||
+        waveformScrubbingPointerId.current !== null;
+      const playing = Boolean(audio && !audio.paused && !audio.ended && !scrubbing);
+      const ratio = audio
+        ? playheadRatioFromTime(audio.currentTime, audio.duration || 0)
+        : 0;
+
+      let particles = pruneTrailParticles(trailParticlesRef.current, nowMs);
+      if (
+        shouldEmitTrailParticle(trailLastEmitAtRef.current, nowMs, playing)
+      ) {
+        trailLastEmitAtRef.current = nowMs;
+        const id = nextTrailParticleId(trailNextIdRef.current);
+        trailNextIdRef.current = id;
+        particles = [...particles, { id, ratio, bornAtMs: nowMs }];
+      }
+      trailParticlesRef.current = particles;
+      setTrailParticles(particles);
+      setTrailNowMs(nowMs);
+      frameId = window.requestAnimationFrame(tick);
+    };
+    frameId = window.requestAnimationFrame(tick);
+    return () => window.cancelAnimationFrame(frameId);
+  }, []);
 
   const seekToRatio = useCallback((ratio: number, mode: "coalesce" | "commit") => {
     const audio = audioRef.current;
@@ -130,11 +175,13 @@ export function AudioPlayerControls({
   const playheadPercent = playheadLeftPercent(
     scrubRatio ?? playheadRatioFromTime(currentTime, duration),
   );
-  const trailWidthPx = playheadTrailWidthPx(playbackRate);
 
   const applyKeySeek = (nextTime: number) => {
     seekSessionRef.current.commit(nextTime);
     setCurrentTime(nextTime);
+    trailParticlesRef.current = [];
+    trailLastEmitAtRef.current = null;
+    setTrailParticles([]);
   };
 
   return (
@@ -173,6 +220,9 @@ export function AudioPlayerControls({
           event.currentTarget.focus();
           waveformScrubbingPointerId.current = event.pointerId;
           event.currentTarget.setPointerCapture(event.pointerId);
+          trailParticlesRef.current = [];
+          trailLastEmitAtRef.current = null;
+          setTrailParticles([]);
           const ratio = ratioFromWaveformPointer(event.clientX);
           setScrubRatio(ratio);
           seekToRatio(ratio, "coalesce");
@@ -205,15 +255,22 @@ export function AudioPlayerControls({
         ) : (
           <div aria-hidden="true" className="preview-audio-waveform is-placeholder" />
         )}
+        <div aria-hidden="true" className="preview-audio-trail">
+          {trailParticles.map((particle) => (
+            <div
+              className="preview-audio-trail-particle"
+              key={particle.id}
+              style={{
+                left: `${playheadLeftPercent(particle.ratio)}%`,
+                opacity: trailParticleOpacity(particle.bornAtMs, trailNowMs),
+              }}
+            />
+          ))}
+        </div>
         <div
           aria-hidden="true"
           className="preview-audio-playhead"
-          style={
-            {
-              left: `${playheadPercent}%`,
-              "--playhead-trail-width": `${trailWidthPx}px`,
-            } as CSSProperties
-          }
+          style={{ left: `${playheadPercent}%` }}
         />
       </div>
       <audio
@@ -226,14 +283,10 @@ export function AudioPlayerControls({
         onError={onError}
         onLoadedMetadata={(event) => {
           setDuration(event.currentTarget.duration || 0);
-          setPlaybackRate(event.currentTarget.playbackRate || 1);
           onReady?.();
         }}
         onPause={() => setPaused(true)}
         onPlay={() => setPaused(false)}
-        onRateChange={(event) =>
-          setPlaybackRate(event.currentTarget.playbackRate || 1)
-        }
         onSeeked={() => {
           seekSessionRef.current.onSeeked();
           if (
@@ -307,6 +360,9 @@ export function AudioPlayerControls({
             event.currentTarget.focus();
             scrubbingPointerId.current = event.pointerId;
             event.currentTarget.setPointerCapture(event.pointerId);
+            trailParticlesRef.current = [];
+            trailLastEmitAtRef.current = null;
+            setTrailParticles([]);
             const ratio = ratioFromPointer(event.clientX);
             setScrubRatio(ratio);
             seekToRatio(ratio, "coalesce");
