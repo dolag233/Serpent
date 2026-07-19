@@ -2500,12 +2500,17 @@ input[type="range"] {
   opacity: 0;
   pointer-events: none;
 }
+/* Serpent-muc: wide full-bleed wave strip. Grid keeps the 4:3 cover PNG;
+   viewer must not letterbox that PNG with object-fit:contain (playhead detaches). */
 .preview-audio-waveform-shell {
   position: relative;
   width: 100%;
+  height: min(200px, 36vh);
+  flex: 0 0 auto;
+  border: 1px solid var(--divider);
   border-radius: 8px;
   overflow: hidden;
-  background: var(--raised);
+  background: var(--pane);
   cursor: pointer;
   outline: none;
 }
@@ -2513,18 +2518,20 @@ input[type="range"] {
   box-shadow: 0 0 0 2px var(--accent);
 }
 .preview-audio-waveform {
+  position: absolute;
+  inset: 0;
   display: block;
   width: 100%;
-  max-height: min(240px, 40vh);
-  object-fit: contain;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
   pointer-events: none;
   user-select: none;
 }
 .preview-audio-waveform.is-placeholder {
-  min-height: 120px;
   background:
     linear-gradient(90deg, transparent 0%, var(--hover) 50%, transparent 100%),
-    var(--raised);
+    var(--pane);
 }
 .preview-audio-playhead {
   position: absolute;
@@ -2535,6 +2542,7 @@ input[type="range"] {
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--pane) 55%, transparent);
   transform: translateX(-50%);
   pointer-events: none;
+  z-index: 1;
 }
 .preview-audio-controls {
   position: relative;

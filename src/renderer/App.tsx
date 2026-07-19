@@ -74,6 +74,10 @@ import { ExtensionPairingDialog } from "./ExtensionPairingDialog";
 import { AiConfigDialog } from "./AiConfigDialog";
 import { AppSettingsDialog } from "./AppSettingsDialog";
 import { AppSettingsEntry } from "./AppSettingsEntry";
+import {
+  SmartCollectionSettingsDialog,
+  type SmartCollectionSettingsTarget,
+} from "./SmartCollectionSettingsDialog";
 import { MediaJobsDialog } from "./MediaJobsDialog";
 
 import {
@@ -705,6 +709,8 @@ function AppInner() {
 
   // REQ-PREF-001: browse-area general settings panel (theme/language/canvas).
   const [appSettingsOpen, setAppSettingsOpen] = useState(false);
+  const [smartCollectionSettings, setSmartCollectionSettings] =
+    useState<SmartCollectionSettingsTarget | null>(null);
 
   // AI analysis state
   const [aiConfigOpen, setAiConfigOpen] = useState(false);
@@ -2876,6 +2882,13 @@ function AppInner() {
       activeAiSearchDefinition ?? currentQueryDefinition(),
     setNotice,
     reloadSmartCollections,
+    onCreated: (collection) => {
+      setSmartCollectionSettings({
+        collectionId: collection.collectionId,
+        name: collection.name,
+      });
+      void chooseSmartCollection(collection.collectionId);
+    },
   });
 
   async function executeSearchDefinition(
@@ -4386,6 +4399,7 @@ function AppInner() {
       collectionEditor ||
       exportDialogOpen ||
       appSettingsOpen ||
+      Boolean(smartCollectionSettings) ||
       aiConfigOpen ||
       extensionPairingOpen ||
       (mediaJobsOpen && library !== null) ||
@@ -6432,6 +6446,21 @@ function AppInner() {
           }));
         }}
         open={appSettingsOpen}
+      />
+      <SmartCollectionSettingsDialog
+        onClose={() => setSmartCollectionSettings(null)}
+        onRename={async (collectionId, name) => {
+          await renameSmartCollection(collectionId, name);
+          setSmartCollectionSettings((current) =>
+            current && current.collectionId === collectionId
+              ? { ...current, name }
+              : current,
+          );
+        }}
+        onSaveCurrentQuery={async (collectionId) => {
+          await updateSmartCollectionQuery(collectionId);
+        }}
+        target={smartCollectionSettings}
       />
       <CreateDialog
         open={dialog !== null}

@@ -1,8 +1,8 @@
 import { useCallback, useState } from "react";
 
+import type { SmartCollectionSummary } from "../shared/asset-types";
 import type { SerpentLibraryApi } from "../shared/library-api";
 import type { RendererLibrarySummary } from "../shared/protocol/responses";
-import { hasMeaningfulSmartCollectionCondition } from "../shared/smart-collection-query";
 import { lookupMessage, useLocale, useT } from "./i18n";
 import { catalogs } from "./i18n/catalogs";
 import { PUBLIC_ERROR_MESSAGES_ZH, toMessage } from "./error-utils";
@@ -16,11 +16,13 @@ import {
   type InlineSmartCollectionEditState,
 } from "./inline-smart-collection-edit";
 
+/** Empty draft query allowed at create time (Serpent-era). */
+export const EMPTY_SMART_COLLECTION_QUERY_JSON = "{}";
+
 /**
- * SMART-007: React owner of the sidebar inline smart-collection create
- * session. Captures the current discovery definition at commit time (same as
- * the former top-bar save), validates a meaningful condition, then calls
- * smart-collection.create. Typed failures stay on the row.
+ * SMART-007 / Serpent-era: sidebar inline create. Create always succeeds with
+ * a draft query (current discovery snapshot, or `{}` if empty). Caller opens
+ * the settings dialog after success — do not block create for missing filters.
  */
 
 export interface UseInlineSmartCollectionEditParams {
@@ -34,6 +36,8 @@ export interface UseInlineSmartCollectionEditParams {
   };
   setNotice: (message: string) => void;
   reloadSmartCollections: () => Promise<void>;
+  /** Fired after a successful create so the host can open settings. */
+  onCreated?: (collection: SmartCollectionSummary) => void;
 }
 
 export interface UseInlineSmartCollectionEditResult {
@@ -50,6 +54,7 @@ export function useInlineSmartCollectionEdit({
   getQueryDefinition,
   setNotice,
   reloadSmartCollections,
+  onCreated,
 }: UseInlineSmartCollectionEditParams): UseInlineSmartCollectionEditResult {
   const t = useT();
   const { locale } = useLocale();
@@ -84,17 +89,12 @@ export function useInlineSmartCollectionEdit({
     if (!api || !library) return;
 
     const definition = getQueryDefinition();
-    if (!hasMeaningfulSmartCollectionCondition(definition)) {
-      setInlineSmartCollectionEdit((current) =>
-        current && isSameInlineSmartCollectionEditSession(current, session)
-          ? failInlineSmartCollectionEdit(
-              current,
-              t("toast.smartCollectionNeedsCondition"),
-            )
-          : current,
-      );
-      return;
-    }
+    const hasSearch = (definition.search?.clauses?.length ?? 0) > 0;
+    const hasFilters = (definition.filters?.length ?? 0) > 0;
+    const queryDefinitionJson =
+      hasSearch || hasFilters
+        ? JSON.stringify(definition)
+        : EMPTY_SMART_COLLECTION_QUERY_JSON;
 
     setInlineSmartCollectionEdit((current) =>
       current && isSameInlineSmartCollectionEditSession(current, session)
@@ -114,7 +114,7 @@ export function useInlineSmartCollectionEdit({
       const result = await api.createSmartCollection({
         libraryId: library.libraryId,
         name: resolution.name,
-        queryDefinitionJson: JSON.stringify(definition),
+        queryDefinitionJson,
       });
       if (!result.ok) {
         const codeMessage =
@@ -133,6 +133,7 @@ export function useInlineSmartCollectionEdit({
       );
       setNotice(t("toast.smartCollectionSaved"));
       await reloadSmartCollections();
+      onCreated?.(result.value);
     } catch (caught) {
       settleFailure(toMessage(caught, t("smartEdit.createFailed"), locale));
     }
@@ -142,6 +143,7 @@ export function useInlineSmartCollectionEdit({
     inlineSmartCollectionEdit,
     library,
     locale,
+    onCreated,
     reloadSmartCollections,
     setNotice,
     t,

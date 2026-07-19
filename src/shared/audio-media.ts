@@ -17,26 +17,40 @@ export const AUDIO_EXTENSIONS = [
 
 /**
  * Grid / Inspector waveform cover geometry (Serpent-dxk).
- * Target ≈ 4:3 — not a tall or wide strip. Viewer chrome CSS is separate.
+ * Target ≈ 4:3 — not a tall or wide strip. Viewer chrome CSS is separate
+ * (Serpent-muc: full-bleed strip via object-fit:cover, not letterboxed contain).
  */
 export const AUDIO_WAVEFORM_COVER_WIDTH = 640;
 export const AUDIO_WAVEFORM_COVER_HEIGHT = 480;
 
 /** Generator tag; bump when cover geometry or stage color changes so thumbs requeue. */
-export const AUDIO_WAVEFORM_COVER_GENERATOR_TAG = "waveform-cover3";
+export const AUDIO_WAVEFORM_COVER_GENERATOR_TAG = "waveform-cover4";
 
 /**
- * Light-theme-friendly opaque stage (matches light `--canvas` closely).
- * Must not be near-black; covers are shared across themes as a single PNG.
+ * Light browse canvas (`--canvas` in light theme). Covers must not match this
+ * or the 4:3 stage blends into the grid (Serpent-muc / AUDIO-001).
  */
-export const AUDIO_WAVEFORM_COVER_BACKGROUND = {
+export const LIGHT_CANVAS_BACKGROUND = {
   r: 0xe8,
   g: 0xea,
   b: 0xe7,
 } as const;
 
+/**
+ * Raised/pane cover stage (light `--raised` / white). Distinct from canvas;
+ * still light-theme friendly. Shared PNG across themes.
+ */
+export const AUDIO_WAVEFORM_COVER_BACKGROUND = {
+  r: 0xff,
+  g: 0xff,
+  b: 0xff,
+} as const;
+
 /** Wave stroke with contrast on the light cover stage. */
 export const AUDIO_WAVEFORM_COVER_STROKE = "#3B7DD8";
+
+/** Minimum Euclidean RGB distance from light canvas so the cover reads as a card. */
+export const AUDIO_WAVEFORM_COVER_CANVAS_MIN_DISTANCE = 24;
 
 export function audioWaveformCoverAspectRatio(): number {
   return AUDIO_WAVEFORM_COVER_WIDTH / AUDIO_WAVEFORM_COVER_HEIGHT;
@@ -49,6 +63,14 @@ export function relativeLuminance(rgb: {
   b: number;
 }): number {
   return (0.2126 * rgb.r + 0.7152 * rgb.g + 0.0722 * rgb.b) / 255;
+}
+
+/** Euclidean distance in 8-bit sRGB channel space. */
+export function rgbChannelDistance(
+  a: { r: number; g: number; b: number },
+  b: { r: number; g: number; b: number },
+): number {
+  return Math.hypot(a.r - b.r, a.g - b.g, a.b - b.b);
 }
 
 /** True when width/height is within relativeTolerance of 4:3. */
@@ -72,6 +94,17 @@ export function isLightFriendlyWaveformCoverBackground(rgb: {
   b: number;
 }): boolean {
   return relativeLuminance(rgb) >= 0.75;
+}
+
+/**
+ * True when the cover stage is visibly distinct from the light browse canvas
+ * (avoids `#e8eae7` blending into `--canvas`).
+ */
+export function contrastsWithLightCanvas(
+  rgb: { r: number; g: number; b: number },
+  minDistance = AUDIO_WAVEFORM_COVER_CANVAS_MIN_DISTANCE,
+): boolean {
+  return rgbChannelDistance(rgb, LIGHT_CANVAS_BACKGROUND) >= minDistance;
 }
 
 /** Extension tokens without the leading dot — for SQL LIKE / enqueue lists. */

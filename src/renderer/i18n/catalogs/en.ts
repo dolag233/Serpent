@@ -745,7 +745,13 @@ export const en = {
   },
   smartEdit: {
     newName: "New smart collection",
-    createFailed: "Failed to create smart collection."
+    createFailed: "Failed to create smart collection.",
+    settingsTitle: "Smart collection settings",
+    settingsHint:
+      "The collection was created. Rename it here, set search or filters above, then click “Save current query”.",
+    nameLabel: "Name",
+    saveName: "Save name only",
+    saveCurrentQuery: "Save current query",
   },
   assetRename: {
     failed: "Failed to rename file.",

@@ -6,11 +6,14 @@ import {
   AUDIO_WAVEFORM_COVER_GENERATOR_TAG,
   AUDIO_WAVEFORM_COVER_HEIGHT,
   AUDIO_WAVEFORM_COVER_WIDTH,
+  LIGHT_CANVAS_BACKGROUND,
   audioMimeForExtension,
   audioWaveformCoverAspectRatio,
+  contrastsWithLightCanvas,
   isAudioFileName,
   isLightFriendlyWaveformCoverBackground,
   isNearFourByThreeAspect,
+  rgbChannelDistance,
 } from "../../src/shared/audio-media";
 
 test("isAudioFileName recognizes common audio extensions", () => {
@@ -46,7 +49,7 @@ test("waveform cover geometry is approximately 4:3 (Serpent-dxk)", () => {
   ).toBe(true);
   expect(isNearFourByThreeAspect(640, 160)).toBe(false);
   expect(isNearFourByThreeAspect(160, 640)).toBe(false);
-  expect(AUDIO_WAVEFORM_COVER_GENERATOR_TAG).toBe("waveform-cover3");
+  expect(AUDIO_WAVEFORM_COVER_GENERATOR_TAG).toBe("waveform-cover4");
 });
 
 test("waveform cover stage is light-theme friendly (Serpent-dxk)", () => {
@@ -58,5 +61,21 @@ test("waveform cover stage is light-theme friendly (Serpent-dxk)", () => {
   ).toBe(false);
   expect(
     isLightFriendlyWaveformCoverBackground({ r: 0, g: 0, b: 0 }),
+  ).toBe(false);
+});
+
+test("waveform cover stage contrasts with light canvas (Serpent-muc)", () => {
+  expect(LIGHT_CANVAS_BACKGROUND).toEqual({ r: 0xe8, g: 0xea, b: 0xe7 });
+  expect(contrastsWithLightCanvas(AUDIO_WAVEFORM_COVER_BACKGROUND)).toBe(true);
+  expect(contrastsWithLightCanvas(LIGHT_CANVAS_BACKGROUND)).toBe(false);
+  expect(
+    rgbChannelDistance(
+      AUDIO_WAVEFORM_COVER_BACKGROUND,
+      LIGHT_CANVAS_BACKGROUND,
+    ),
+  ).toBeGreaterThanOrEqual(24);
+  // Near-canvas gray must fail the contrast gate.
+  expect(
+    contrastsWithLightCanvas({ r: 0xe8, g: 0xea, b: 0xe7 }),
   ).toBe(false);
 });

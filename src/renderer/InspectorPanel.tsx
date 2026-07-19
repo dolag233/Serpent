@@ -18,6 +18,7 @@ import {
   type InspectorMultiEditModel,
 } from "./inspector-multi-edit";
 import { toOpenableExternalUrl } from "../shared/external-url";
+import { shouldShowAutoPaletteSection } from "../shared/palette-visibility";
 import {
   buildTagSuggestions,
   moveTagSuggestionIndex,
@@ -1019,6 +1020,18 @@ export function InspectorPanel(props: InspectorPanelProps) {
               })()}
 
               {(() => {
+                // Serpent-uz1: palette chrome is image/video only — never show
+                // pending extract UI for audio/text/other (e.g. waveform covers).
+                const paletteMediaTypes = (
+                  selectedAssets.length > 0
+                    ? selectedAssets
+                    : selectedAsset
+                      ? [selectedAsset]
+                      : []
+                ).map((asset) => asset.mediaType);
+                if (!shouldShowAutoPaletteSection(paletteMediaTypes)) {
+                  return null;
+                }
                 const paletteSource = assetMetadata?.paletteSource ?? null;
                 return (
               <div className="editor-field">

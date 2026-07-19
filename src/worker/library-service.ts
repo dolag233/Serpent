@@ -7460,8 +7460,8 @@ export class LibraryService {
       }
 
       // showwavespic defaults to a transparent canvas with a 1px stroke. Flatten
-      // onto a light-friendly opaque stage so grid/Inspector covers stay visible
-      // at card size under the light theme (Serpent-dxk).
+      // onto a raised/pane opaque stage (not light `--canvas`) so grid/Inspector
+      // covers read as a card media area (Serpent-dxk / Serpent-muc).
       const sharp = this.options.sharpFn ?? requireSharp();
       const flatten = sharp(tempAbsPath).flatten?.({
         background: { ...AUDIO_WAVEFORM_COVER_BACKGROUND },
@@ -9690,11 +9690,13 @@ export class LibraryService {
     const trimmed = input.name.trim();
     if (trimmed.length === 0) throw new LibraryServiceError('INVALID_FOLDER_NAME');
 
+    // Serpent-era: create may start as a draft with empty `{}` query; the
+    // settings dialog attaches a meaningful condition afterwards. Updates that
+    // change the query still assert via updateSmartCollection.
     const definition = this.parseSmartCollectionDefinition(
       input.queryDefinitionJson,
       'INVALID_IMPORT_DECISION',
     );
-    this.assertMeaningfulSmartCollectionDefinition(definition);
 
     const collectionId = randomUUID();
     const now = new Date().toISOString();

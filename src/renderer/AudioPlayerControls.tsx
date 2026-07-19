@@ -28,9 +28,10 @@ export interface AudioPlayerControlsProps {
 const SCRUB_STEP_SECONDS = 5;
 
 /**
- * Viewer chrome for audio assets (Serpent-0x5 / Serpent-13v): waveform stage with
+ * Viewer chrome for audio assets (Serpent-0x5 / Serpent-13v / Serpent-muc):
+ * full-bleed waveform stage (CSS object-fit:cover over the 4:3 cover PNG) with
  * an in-waveform playhead timeline, plus play/pause and scrub. Reuses video
- * transport helpers for Space and scrub math.
+ * transport helpers for Space and scrub math. Grid/Inspector keep the 4:3 cover.
  */
 export function AudioPlayerControls({
   onError,

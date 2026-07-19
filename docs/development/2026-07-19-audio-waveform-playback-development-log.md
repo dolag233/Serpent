@@ -46,6 +46,23 @@ node scripts/run-vitest-with-electron.mjs \
   tests/worker/video-exr.test.ts -t 'audio waveform thumbnail'
 ```
 
+## Serpent-muc（AUDIO-001 再次复验修复）
+
+人类验收不通过（2026-07-19）：查看页把 4:3 封面 PNG 用 `object-fit:contain` 放进宽壳，左右信箱导致波形居中、播放头按壳宽定位而分离；网格封面 flatten 底 `#e8eae7` 与 light `--canvas` 同色融合。
+
+修复：
+
+1. 查看页 `.preview-audio-waveform-shell` 改为固定高度宽条；波形图 `object-fit:cover` full-bleed（网格/Inspector 仍用 4:3 封面 PNG）。
+2. 封面底改为 raised 白 `#ffffff`；generator → `waveform-cover4`；新增 `contrastsWithLightCanvas` 门禁。
+3. AUDIO-001 清单改回「待人类验收」。
+
+```bash
+node scripts/run-vitest-with-electron.mjs \
+  tests/unit/audio-media.test.ts \
+  tests/unit/audio-waveform-timeline.test.ts
+npm run typecheck
+```
+
 ## 人类验收
 
-- AUDIO-001（待人类验收：`Serpent-dxk` 后复验网格/Inspector ≈4:3 + 亮色底非黑；查看页播放头仍在；Seek 另见 `Serpent-jh2`）
+- AUDIO-001（待人类验收：`Serpent-muc` — 网格/Inspector ≈4:3 + 封面底与画布可辨；查看页波形满宽无错位空白、播放头对齐；Seek 另见 `Serpent-jh2`）

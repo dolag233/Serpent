@@ -21,3 +21,18 @@
 ## 验收 ID
 
 - SMART-007 → 待人类验收（见 `docs/qa/human-acceptance-checklist.md`）。
+
+## Serpent-era（2026-07-19 复验不通过后）
+
+人类反馈：应先创建智能合集，再打开设置；不应因缺条件行内报错阻断创建。
+
+### 变更
+
+- Worker `createSmartCollection`：允许草稿查询 `{}`；`updateSmartCollection` 仍要求有意义条件。
+- `use-inline-smart-collection-edit`：无搜索/过滤时写入 `EMPTY_SMART_COLLECTION_QUERY_JSON`（`"{}"`）；成功后 `onCreated`。
+- 新增 `SmartCollectionSettingsDialog`：改名 / 保存当前条件；创建成功后由 `App` 打开并选中该合集。
+
+### 验证
+
+- `npx vitest run tests/unit/inline-smart-collection-edit.test.ts`
+- `npm run typecheck`

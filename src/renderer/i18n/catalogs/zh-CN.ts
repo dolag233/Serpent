@@ -735,7 +735,13 @@ export const zhCN = {
   },
   smartEdit: {
     newName: "新建智能合集",
-    createFailed: "创建智能合集失败。"
+    createFailed: "创建智能合集失败。",
+    settingsTitle: "智能合集设置",
+    settingsHint:
+      "合集已创建。可先改名称；在上方设置搜索或过滤后，点「保存当前条件」写入查询。",
+    nameLabel: "名称",
+    saveName: "仅保存名称",
+    saveCurrentQuery: "保存当前条件",
   },
   assetRename: {
     failed: "重命名文件失败。",

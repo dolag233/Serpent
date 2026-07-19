@@ -1441,7 +1441,7 @@ describe('audio waveform thumbnail (Serpent-13v)', () => {
     expect(row!.kind).toBe('thumbnail');
     expect(row!.mime_type).toBe('image/png');
     expect(row!.status).toBe('ready');
-    expect(row!.generator_version).toContain('waveform-cover3');
+    expect(row!.generator_version).toContain('waveform-cover4');
     expect(row!.width).toBe(640);
     expect(row!.height).toBe(480);
     db.close();
