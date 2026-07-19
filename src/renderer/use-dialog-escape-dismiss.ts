@@ -159,6 +159,7 @@ export function useDialogEscapeDismiss({
     snapshot,
     cancelAssetRename,
     cancelBatchRelink,
+    cancelDiskDelete,
     setPermanentDeleteDialog,
     setDeleteLinkedDialog,
     setRestoreDialog,
