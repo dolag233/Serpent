@@ -10,6 +10,20 @@ import { LibraryService, LibraryServiceError } from '../../src/worker/library-se
 import { buildFts5Query, tokenizeForFts } from '../../src/worker/search-query';
 
 const temporaryRoots: string[] = [];
+
+// LibraryService holds SQLite connections and recursive fs watchers; on
+// Windows those open handles block rm of the temp tree (POSIX unlinks open
+// files, which is why the leak is invisible on macOS). Always close first.
+const services: LibraryService[] = [];
+
+function newService(
+  ...args: ConstructorParameters<typeof LibraryService>
+): LibraryService {
+  const service = new LibraryService(...args);
+  services.push(service);
+  return service;
+}
+
 const require = createRequire(import.meta.url);
 
 interface TestDatabaseConnection {
@@ -43,6 +57,7 @@ function expectServiceCode(operation: () => unknown, code: LibraryServiceError['
 }
 
 afterEach(() => {
+  for (const service of services.splice(0)) service.closeAll();
   for (const root of temporaryRoots.splice(0)) {
     rmSync(root, { force: true, recursive: true });
   }
@@ -57,7 +72,7 @@ function createLibraryWithAssetAndTags(initialDescription?: string, description?
   assetId: string;
 } {
   const root = temporaryRoot();
-  const service = new LibraryService();
+  const service = newService();
   const library = service.createLibrary({ displayName: 'SearchTest', selectedParentPath: root });
 
   const managedFolder = service.createManagedFolder({ libraryId: library.libraryId, name: 'Assets' });
@@ -378,7 +393,7 @@ describe('CJK tokenization', () => {
 
   it('searches Chinese labels tokenized in asset_search_index', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const library = service.createLibrary({ displayName: 'CJK', selectedParentPath: root });
     const libraryId = library.libraryId;
     const libraryPath = library.libraryPath;
@@ -437,7 +452,7 @@ describe('CJK tokenization', () => {
 describe('bm25 weighting', () => {
   it('ranks filename match above tags match', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const library = service.createLibrary({ displayName: 'BM25', selectedParentPath: root });
     const libraryId = library.libraryId;
     const libraryPath = library.libraryPath;
@@ -786,7 +801,7 @@ describe('search filters', () => {
 
   it('filters by format with OR', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const library = service.createLibrary({ displayName: 'Fmt', selectedParentPath: root });
     const mf = service.createManagedFolder({ libraryId: library.libraryId, name: 'f' });
     service.closeAll();
@@ -1123,7 +1138,7 @@ describe('search filters', () => {
 describe('sort', () => {
   it('preserves a linked asset location kind in search results', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const library = service.createLibrary({ displayName: 'Linked Search', selectedParentPath: root });
     const linkedRoot = path.join(root, 'linked-search-source');
     mkdirSync(linkedRoot);

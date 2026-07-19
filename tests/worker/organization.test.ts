@@ -9,6 +9,20 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { LibraryService, LibraryServiceError } from '../../src/worker/library-service';
 
 const temporaryRoots: string[] = [];
+
+// LibraryService holds SQLite connections and recursive fs watchers; on
+// Windows those open handles block rm of the temp tree (POSIX unlinks open
+// files, which is why the leak is invisible on macOS). Always close first.
+const services: LibraryService[] = [];
+
+function newService(
+  ...args: ConstructorParameters<typeof LibraryService>
+): LibraryService {
+  const service = new LibraryService(...args);
+  services.push(service);
+  return service;
+}
+
 const require = createRequire(import.meta.url);
 
 interface TestDatabaseConnection {
@@ -42,6 +56,7 @@ function expectServiceCode(operation: () => unknown, code: LibraryServiceError['
 }
 
 afterEach(() => {
+  for (const service of services.splice(0)) service.closeAll();
   for (const root of temporaryRoots.splice(0)) {
     rmSync(root, { force: true, recursive: true });
   }
@@ -56,7 +71,7 @@ function createLibraryWithAsset(): {
   assetId: string;
 } {
   const root = temporaryRoot();
-  const service = new LibraryService();
+  const service = newService();
   const library = service.createLibrary({ displayName: 'Org', selectedParentPath: root });
 
   // Create a managed folder and an asset on disk + in DB so tags/collections can reference it.
@@ -610,7 +625,7 @@ describe('collections', () => {
 describe('collection assets', () => {
   it('preserves a linked asset location kind when listing a collection', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const library = service.createLibrary({ displayName: 'Linked Collection', selectedParentPath: root });
     const linkedRoot = path.join(root, 'linked-collection-source');
     mkdirSync(linkedRoot);

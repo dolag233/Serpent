@@ -22,6 +22,20 @@ const VALID_1X1_PNG = Buffer.from(
 );
 const roots: string[] = [];
 
+// LibraryService holds SQLite connections and recursive fs watchers; on
+// Windows those open handles block rm of the temp tree (POSIX unlinks open
+// files, which is why the leak is invisible on macOS). Always close first.
+const services: LibraryService[] = [];
+
+function newService(
+  ...args: ConstructorParameters<typeof LibraryService>
+): LibraryService {
+  const service = new LibraryService(...args);
+  services.push(service);
+  return service;
+}
+
+
 function temporaryRoot(): string {
   const root = mkdtempSync(path.join(tmpdir(), 'serpent-palette-'));
   roots.push(root);
@@ -39,13 +53,14 @@ function importAsset(service: LibraryService, libraryId: string, sourcePath: str
 }
 
 afterEach(() => {
+  for (const service of services.splice(0)) service.closeAll();
   for (const root of roots.splice(0)) rmSync(root, { force: true, recursive: true });
 });
 
 describe('local extracted palette artifact', () => {
   it('persists deterministic hex ratios and ignores manual palette writes', async () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const library = service.createLibrary({ displayName: 'Palette', selectedParentPath: root });
     const source = path.join(root, 'white.png');
     writeFileSync(source, VALID_1X1_PNG);
@@ -97,7 +112,7 @@ describe('local extracted palette artifact', () => {
 
   it('invalidates the prior revision palette and rebuilds it through the media queue', async () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const library = service.createLibrary({ displayName: 'RevisionPalette', selectedParentPath: root });
     const source = path.join(root, 'revision.png');
     writeFileSync(source, VALID_1X1_PNG);
@@ -125,7 +140,7 @@ describe('local extracted palette artifact', () => {
 
   it('extracts from a ready video poster without reading the original video', async () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const library = service.createLibrary({ displayName: 'PosterPalette', selectedParentPath: root });
     const source = path.join(root, 'clip.mp4');
     writeFileSync(source, Buffer.from('not decoded by this test'));
@@ -156,7 +171,7 @@ describe('local extracted palette artifact', () => {
 
   it('recovers an interrupted palette job on reopen without resetting attempts', async () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const library = service.createLibrary({ displayName: 'PaletteRecovery', selectedParentPath: root });
     const source = path.join(root, 'recover.png');
     writeFileSync(source, VALID_1X1_PNG);
@@ -170,7 +185,7 @@ describe('local extracted palette artifact', () => {
     db.close();
     service.closeAll();
 
-    const reopened = new LibraryService();
+    const reopened = newService();
     reopened.openLibrary(library.libraryPath);
     expect(reopened.listMediaJobs(library.libraryId).jobs.find((candidate) =>
       candidate.jobId === job.jobId)).toMatchObject({
@@ -206,7 +221,7 @@ describe('local extracted palette artifact', () => {
       },
     });
     const diagnostics: unknown[] = [];
-    const service = new LibraryService({
+    const service = newService({
       paletteSharpFn,
       onDiagnostic: (diagnostic) => diagnostics.push(diagnostic),
     });

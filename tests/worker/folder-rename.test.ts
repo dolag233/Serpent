@@ -11,6 +11,20 @@ import { portablePathIdentity } from '../../src/worker/library-rules';
 import type { ImportCompletion } from '../../src/shared/protocol/responses';
 
 const roots: string[] = [];
+
+// LibraryService holds SQLite connections and recursive fs watchers; on
+// Windows those open handles block rm of the temp tree (POSIX unlinks open
+// files, which is why the leak is invisible on macOS). Always close first.
+const services: LibraryService[] = [];
+
+function newService(
+  ...args: ConstructorParameters<typeof LibraryService>
+): LibraryService {
+  const service = new LibraryService(...args);
+  services.push(service);
+  return service;
+}
+
 const require = createRequire(import.meta.url);
 const TestDatabase = require('better-sqlite3') as new (filename: string) => {
   close(): void;
@@ -49,13 +63,14 @@ function database(libraryPath: string) {
 }
 
 afterEach(() => {
+  for (const service of services.splice(0)) service.closeAll();
   for (const value of roots.splice(0)) rmSync(value, { force: true, recursive: true });
 });
 
 describe('managed folder rename', () => {
   it('renames a managed folder on disk and rewrites descendant folder and asset paths', () => {
     const temp = root();
-    const service = new LibraryService();
+    const service = newService();
     const library = service.createLibrary({ displayName: 'FolderRename', selectedParentPath: temp });
     const top = service.createManagedFolder({ libraryId: library.libraryId, name: 'a' });
     const nested = service.createManagedFolder({
@@ -136,7 +151,7 @@ describe('managed folder rename', () => {
 
   it('syncs search content for assets inside the renamed subtree', () => {
     const temp = root();
-    const service = new LibraryService();
+    const service = newService();
     const library = service.createLibrary({ displayName: 'FolderFts', selectedParentPath: temp });
     const folder = service.createManagedFolder({ libraryId: library.libraryId, name: 'Shots' });
     const source = path.join(temp, 'pic.png');
@@ -175,7 +190,7 @@ describe('managed folder rename', () => {
 
   it('treats an identical name as a successful no-op', () => {
     const temp = root();
-    const service = new LibraryService();
+    const service = newService();
     const library = service.createLibrary({ displayName: 'FolderNoop', selectedParentPath: temp });
     const folder = service.createManagedFolder({ libraryId: library.libraryId, name: 'Same' });
 
@@ -215,7 +230,7 @@ describe('managed folder rename', () => {
 
   it('rejects renames onto tracked, case-variant, and untracked conflicting names', () => {
     const temp = root();
-    const service = new LibraryService();
+    const service = newService();
     const library = service.createLibrary({ displayName: 'FolderConflicts', selectedParentPath: temp });
     const alpha = service.createManagedFolder({ libraryId: library.libraryId, name: 'Alpha' });
     service.createManagedFolder({ libraryId: library.libraryId, name: 'Beta' });
@@ -260,7 +275,7 @@ describe('managed folder rename', () => {
 
   it('rejects a rename onto an existing managed asset path', () => {
     const temp = root();
-    const service = new LibraryService();
+    const service = newService();
     const library = service.createLibrary({ displayName: 'FolderAssetConflict', selectedParentPath: temp });
     const source = path.join(temp, 'bravo.png');
     writeFileSync(source, 'bravo');
@@ -282,7 +297,7 @@ describe('managed folder rename', () => {
 
   it('rejects invalid names with a typed error and trims surrounding whitespace', () => {
     const temp = root();
-    const service = new LibraryService();
+    const service = newService();
     const library = service.createLibrary({ displayName: 'FolderNames', selectedParentPath: temp });
     const folder = service.createManagedFolder({ libraryId: library.libraryId, name: 'plain' });
 
@@ -341,7 +356,7 @@ describe('managed folder rename', () => {
 
   it('rejects renames for unknown folders and folders missing from disk', () => {
     const temp = root();
-    const service = new LibraryService();
+    const service = newService();
     const library = service.createLibrary({ displayName: 'FolderMissing', selectedParentPath: temp });
     const folder = service.createManagedFolder({ libraryId: library.libraryId, name: 'gone' });
 
@@ -362,7 +377,7 @@ describe('managed folder rename', () => {
 
   it('renames when only the case changes against itself', () => {
     const temp = root();
-    const service = new LibraryService();
+    const service = newService();
     const library = service.createLibrary({ displayName: 'FolderCaseChange', selectedParentPath: temp });
     const folder = service.createManagedFolder({ libraryId: library.libraryId, name: 'cases' });
 
@@ -389,7 +404,7 @@ describe('managed folder rename', () => {
 
   it('rewrites recorded paths for missing assets inside the renamed subtree', () => {
     const temp = root();
-    const service = new LibraryService();
+    const service = newService();
     const library = service.createLibrary({ displayName: 'FolderMissingAsset', selectedParentPath: temp });
     const folder = service.createManagedFolder({ libraryId: library.libraryId, name: 'Hold' });
     const source = path.join(temp, 'lost.png');
@@ -430,7 +445,7 @@ describe('managed folder rename', () => {
 
   it('restores a trashed asset into the renamed folder through the folder identity chain', () => {
     const temp = root();
-    const service = new LibraryService();
+    const service = newService();
     const library = service.createLibrary({ displayName: 'FolderTrashRestore', selectedParentPath: temp });
     const folder = service.createManagedFolder({ libraryId: library.libraryId, name: 'Before' });
     const source = path.join(temp, 'gone.png');

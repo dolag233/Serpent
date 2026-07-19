@@ -24,6 +24,20 @@ import {
 import type { ImportCompletion } from '../../src/shared/protocol/responses';
 
 const temporaryRoots: string[] = [];
+
+// LibraryService holds SQLite connections and recursive fs watchers; on
+// Windows those open handles block rm of the temp tree (POSIX unlinks open
+// files, which is why the leak is invisible on macOS). Always close first.
+const services: LibraryService[] = [];
+
+function newService(
+  ...args: ConstructorParameters<typeof LibraryService>
+): LibraryService {
+  const service = new LibraryService(...args);
+  services.push(service);
+  return service;
+}
+
 const require = createRequire(import.meta.url);
 
 // Valid 1x1 white PNG bytes (pre-computed), matching thumbnails.test.ts so
@@ -75,6 +89,7 @@ function importNoConflict(service: LibraryService, libraryId: string, sourcePath
 }
 
 afterEach(() => {
+  for (const service of services.splice(0)) service.closeAll();
   for (const root of temporaryRoots.splice(0)) {
     rmSync(root, { force: true, recursive: true });
   }
@@ -83,7 +98,7 @@ afterEach(() => {
 describe('schema v8->v9 migration', () => {
   it('creates a new library at schema v9', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({
       displayName: 'V9 Test',
       selectedParentPath: root,
@@ -119,7 +134,7 @@ describe('schema v8->v9 migration', () => {
 
   it('migrates a v8 library to v9 when opening', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({
       displayName: 'V8 to V9',
       selectedParentPath: root,
@@ -154,7 +169,7 @@ describe('schema v8->v9 migration', () => {
 
   it('is idempotent when reopening a v9 database', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Idemp V9', selectedParentPath: root });
     service.closeAll();
     service.openLibrary(created.libraryPath);
@@ -174,7 +189,7 @@ describe('schema v8->v9 migration', () => {
 describe('downgrade helpers still work with v9', () => {
   it('downgrade to v1 then re-migrate through v9', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Downgrade', selectedParentPath: root });
     writeFileSync(path.join(root, 'test.png'), 'data');
     void importNoConflict(service, created.libraryId, path.join(root, 'test.png'));
@@ -223,7 +238,7 @@ describe('downgrade helpers still work with v9', () => {
 describe('trashAssets (soft delete)', () => {
   it('moves managed asset to .serpent/trash/ and sets deleted_at', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Trash Test', selectedParentPath: root });
 
     writeFileSync(path.join(root, 'photo.jpg'), 'data');
@@ -251,7 +266,7 @@ describe('trashAssets (soft delete)', () => {
 
   it('records trashed_from_folder_id when asset was in a folder', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Folder Trash', selectedParentPath: root });
 
     const folder = service.createManagedFolder({ libraryId: created.libraryId, name: 'SubFolder' });
@@ -268,7 +283,7 @@ describe('trashAssets (soft delete)', () => {
 
   it('rejects trashing non-managed assets', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Linked Reject', selectedParentPath: root });
 
     mkdirSync(path.join(root, 'linked-src'), { recursive: true });
@@ -288,7 +303,7 @@ describe('trashAssets (soft delete)', () => {
 
   it('rejects trashing an already-trashed asset', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Double Trash', selectedParentPath: root });
 
     writeFileSync(path.join(root, 'single.jpg'), 'x');
@@ -304,7 +319,7 @@ describe('trashAssets (soft delete)', () => {
 
   it('rejects trashing a nonexistent asset', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'No Asset', selectedParentPath: root });
 
     expectServiceError(
@@ -316,7 +331,7 @@ describe('trashAssets (soft delete)', () => {
 
   it('rolls back filesystem if DB operation fails', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Rollback', selectedParentPath: root });
 
     writeFileSync(path.join(root, 'rollback-test.jpg'), 'data');
@@ -337,7 +352,7 @@ describe('trashAssets (soft delete)', () => {
 describe('listTrash', () => {
   it('lists only trashed assets with remaining days', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Trash List', selectedParentPath: root });
 
     writeFileSync(path.join(root, 'keep.jpg'), 'keep');
@@ -363,7 +378,7 @@ describe('listTrash', () => {
 
   it('returns empty list when no trashed assets', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Empty Trash', selectedParentPath: root });
     expect(service.listTrash(created.libraryId)).toEqual([]);
     service.closeAll();
@@ -392,7 +407,7 @@ describe('trash preview artifacts (BUG-TRASH-001)', () => {
 
   it('keeps the thumbnail resolvable and decodable after trashing', async () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Trash Preview', selectedParentPath: root });
     const assetId = await importWithReadyThumbnail(service, created.libraryId, path.join(root, 'preview.png'));
 
@@ -433,7 +448,7 @@ describe('trash preview artifacts (BUG-TRASH-001)', () => {
 
   it('exposes thumbnail state through listTrash consistently with the trash search scope', async () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Trash List Preview', selectedParentPath: root });
     const assetId = await importWithReadyThumbnail(service, created.libraryId, path.join(root, 'listed.png'));
 
@@ -450,7 +465,7 @@ describe('trash preview artifacts (BUG-TRASH-001)', () => {
 
   it('keeps the same preview resolvable through trash and restore', async () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Restore Preview', selectedParentPath: root });
     const assetId = await importWithReadyThumbnail(service, created.libraryId, path.join(root, 'roundtrip.png'));
     const artifactId = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!.thumbnailArtifactId!;
@@ -479,7 +494,7 @@ describe('trash preview artifacts (BUG-TRASH-001)', () => {
 
   it('stops serving artifacts once the asset is permanently deleted', async () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Purge Preview', selectedParentPath: root });
     const assetId = await importWithReadyThumbnail(service, created.libraryId, path.join(root, 'purged.png'));
     const artifactId = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!.thumbnailArtifactId!;
@@ -503,7 +518,7 @@ describe('trash preview artifacts (BUG-TRASH-001)', () => {
 describe('restoreAssets', () => {
   it('restores to original location', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Restore Orig', selectedParentPath: root });
 
     writeFileSync(path.join(root, 'restore-me.jpg'), 'data');
@@ -524,7 +539,7 @@ describe('restoreAssets', () => {
 
   it('restores to a specified target folder', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Restore Target', selectedParentPath: root });
 
     const targetFolder = service.createManagedFolder({ libraryId: created.libraryId, name: 'Target' });
@@ -542,7 +557,7 @@ describe('restoreAssets', () => {
 
   it('handles name conflict with keep-both (default)', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Conflict', selectedParentPath: root });
 
     writeFileSync(path.join(root, 'clash.png'), 'first');
@@ -567,7 +582,7 @@ describe('restoreAssets', () => {
 
   it('skips a conflicting restore without removing the trashed asset', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Skip Restore', selectedParentPath: root });
 
     writeFileSync(path.join(root, 'clash.png'), 'first');
@@ -592,7 +607,7 @@ describe('restoreAssets', () => {
 
   it('replaces a conflicting active asset while preserving the restored identity', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Replace Restore', selectedParentPath: root });
 
     writeFileSync(path.join(root, 'clash.png'), 'restored-content');
@@ -619,7 +634,7 @@ describe('restoreAssets', () => {
     'crash-restore-before-db-commit',
   ] as const)('rolls back keep-both restore journal on reopen after %s without orphaning its destination', (failAt) => {
     const root = temporaryRoot();
-    const setup = new LibraryService();
+    const setup = newService();
     const created = setup.createLibrary({ displayName: `Restore Journal ${failAt}`, selectedParentPath: root });
 
     writeFileSync(path.join(root, 'clash.png'), 'trashed-content');
@@ -628,7 +643,7 @@ describe('restoreAssets', () => {
     writeFileSync(path.join(created.libraryPath, 'Assets', 'clash.png'), 'untracked-active-content');
     setup.closeAll();
 
-    const crashing = new LibraryService({ failAt });
+    const crashing = newService({ failAt });
     const opened = crashing.openLibrary(created.libraryPath);
     expectServiceError(
       () => crashing.restoreAssets({
@@ -640,7 +655,7 @@ describe('restoreAssets', () => {
     );
     crashing.closeAll();
 
-    const recovered = new LibraryService();
+    const recovered = newService();
     const reopened = recovered.openLibrary(created.libraryPath);
     expect(readFileSync(path.join(reopened.libraryPath, 'Assets', 'clash.png'), 'utf8')).toBe('untracked-active-content');
     expect(existsSync(path.join(reopened.libraryPath, 'Assets', 'clash (2).png'))).toBe(false);
@@ -657,7 +672,7 @@ describe('restoreAssets', () => {
     'crash-restore-before-db-commit',
   ] as const)('restores the replaced active asset on reopen after %s', (failAt) => {
     const root = temporaryRoot();
-    const setup = new LibraryService();
+    const setup = newService();
     const created = setup.createLibrary({ displayName: `Replace Journal ${failAt}`, selectedParentPath: root });
 
     writeFileSync(path.join(root, 'clash.png'), 'restored-content');
@@ -667,7 +682,7 @@ describe('restoreAssets', () => {
     const active = importNoConflict(setup, created.libraryId, path.join(root, 'clash.png')).assets[0]!;
     setup.closeAll();
 
-    const crashing = new LibraryService({ failAt });
+    const crashing = newService({ failAt });
     const opened = crashing.openLibrary(created.libraryPath);
     expectServiceError(
       () => crashing.restoreAssets({
@@ -679,7 +694,7 @@ describe('restoreAssets', () => {
     );
     crashing.closeAll();
 
-    const recovered = new LibraryService();
+    const recovered = newService();
     const reopened = recovered.openLibrary(created.libraryPath);
     expect(readFileSync(path.join(reopened.libraryPath, 'Assets', 'clash.png'), 'utf8')).toBe('active-content');
     expect(recovered.listAssets({ libraryId: reopened.libraryId, recursive: true }).map((asset) => asset.assetId)).toContain(active.assetId);
@@ -689,7 +704,7 @@ describe('restoreAssets', () => {
 
   it('keeps the committed restored identity after a crash immediately following the database commit', () => {
     const root = temporaryRoot();
-    const setup = new LibraryService();
+    const setup = newService();
     const created = setup.createLibrary({ displayName: 'Committed Restore Journal', selectedParentPath: root });
 
     writeFileSync(path.join(root, 'clash.png'), 'restored-content');
@@ -699,7 +714,7 @@ describe('restoreAssets', () => {
     const active = importNoConflict(setup, created.libraryId, path.join(root, 'clash.png')).assets[0]!;
     setup.closeAll();
 
-    const crashing = new LibraryService({ failAt: 'crash-restore-after-db-commit' });
+    const crashing = newService({ failAt: 'crash-restore-after-db-commit' });
     const opened = crashing.openLibrary(created.libraryPath);
     expectServiceError(
       () => crashing.restoreAssets({
@@ -711,7 +726,7 @@ describe('restoreAssets', () => {
     );
     crashing.closeAll();
 
-    const recovered = new LibraryService();
+    const recovered = newService();
     const reopened = recovered.openLibrary(created.libraryPath);
     expect(readFileSync(path.join(reopened.libraryPath, 'Assets', 'clash.png'), 'utf8')).toBe('restored-content');
     expect(recovered.listAssets({ libraryId: reopened.libraryId, recursive: true }).map((asset) => asset.assetId)).toContain(restoredIdentity.assetId);
@@ -722,7 +737,7 @@ describe('restoreAssets', () => {
 
   it('restores explicitly to the library root instead of the original folder', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Explicit Root Restore', selectedParentPath: root });
     const folder = service.createManagedFolder({ libraryId: created.libraryId, name: 'Original' });
 
@@ -739,7 +754,7 @@ describe('restoreAssets', () => {
 
   it('falls back to root when original folder is gone', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Folder Gone', selectedParentPath: root });
 
     const folder = service.createManagedFolder({ libraryId: created.libraryId, name: 'WillBeGone' });
@@ -761,7 +776,7 @@ describe('restoreAssets', () => {
 
   it('rejects restoring an active (non-trashed) asset', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Active Restore', selectedParentPath: root });
 
     writeFileSync(path.join(root, 'active.jpg'), 'data');
@@ -776,7 +791,7 @@ describe('restoreAssets', () => {
 
   it('rejects duplicate asset ids before creating a restore journal', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Duplicate Restore', selectedParentPath: root });
     writeFileSync(path.join(root, 'duplicate.jpg'), 'data');
     const asset = importNoConflict(service, created.libraryId, path.join(root, 'duplicate.jpg')).assets[0]!;
@@ -796,7 +811,7 @@ describe('restoreAssets', () => {
 describe('deleteAssetsPermanent', () => {
   it('removes trash file and DB row with cascade', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Perm Delete', selectedParentPath: root });
 
     writeFileSync(path.join(root, 'delete-me.jpg'), 'data');
@@ -823,7 +838,7 @@ describe('deleteAssetsPermanent', () => {
 
   it('skips already-deleted trash directory (ENOENT ok)', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'ENOENT', selectedParentPath: root });
 
     writeFileSync(path.join(root, 'gone-already.jpg'), 'data');
@@ -842,7 +857,7 @@ describe('deleteAssetsPermanent', () => {
 
   it('rejects deleting an active asset', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Active Del', selectedParentPath: root });
 
     writeFileSync(path.join(root, 'active-perm.jpg'), 'data');
@@ -857,7 +872,7 @@ describe('deleteAssetsPermanent', () => {
 
   it('rejects a mixed or duplicate batch before deleting any trash entry', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Permanent Batch Validation', selectedParentPath: root });
     writeFileSync(path.join(root, 'trashed.jpg'), 'trashed');
     const trashed = importNoConflict(service, created.libraryId, path.join(root, 'trashed.jpg')).assets[0]!;
@@ -889,7 +904,7 @@ describe('deleteAssetsPermanent', () => {
     const root = temporaryRoot();
     let busyAssetId = '';
     const diagnostics: string[] = [];
-    const service = new LibraryService({
+    const service = newService({
       removeTrashPath: (trashPath) => {
         if (path.basename(trashPath) === busyAssetId) {
           throw Object.assign(new Error('file is busy'), { code: 'EBUSY' });
@@ -925,7 +940,7 @@ describe('deleteAssetsPermanent', () => {
 describe('purgeExpiredTrash', () => {
   it('purges assets older than 30 days', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Purge Test', selectedParentPath: root });
 
     writeFileSync(path.join(root, 'old.jpg'), 'data');
@@ -948,7 +963,7 @@ describe('purgeExpiredTrash', () => {
 
   it('does not purge assets younger than 30 days', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Recent', selectedParentPath: root });
 
     writeFileSync(path.join(root, 'recent.jpg'), 'data');
@@ -964,7 +979,7 @@ describe('purgeExpiredTrash', () => {
 
   it('runs on library open without blocking', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Open Purge', selectedParentPath: root });
     service.closeAll();
     service.openLibrary(created.libraryPath);
@@ -975,7 +990,7 @@ describe('purgeExpiredTrash', () => {
   it('continues after a busy item and reports the skipped expiry', () => {
     const root = temporaryRoot();
     let busyAssetId = '';
-    const service = new LibraryService({
+    const service = newService({
       removeTrashPath: (trashPath) => {
         if (path.basename(trashPath) === busyAssetId) {
           throw Object.assign(new Error('busy'), { code: 'EBUSY' });
@@ -1011,7 +1026,7 @@ describe('purgeExpiredTrash', () => {
 describe('deleteLinkedAssets', () => {
   it('deletes linked asset DB row when deleteSourceFile is false', async () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Linked Del', selectedParentPath: root });
 
     mkdirSync(path.join(root, 'linked-del'), { recursive: true });
@@ -1033,7 +1048,7 @@ describe('deleteLinkedAssets', () => {
     const root = temporaryRoot();
     const systemTrashPath = path.join(root, 'system-trash');
     mkdirSync(systemTrashPath);
-    const service = new LibraryService({
+    const service = newService({
       trashItem: async (sourcePath) => {
         renameSync(sourcePath, path.join(systemTrashPath, path.basename(sourcePath)));
       },
@@ -1063,7 +1078,7 @@ describe('deleteLinkedAssets', () => {
   it('keeps the linked record and reports a diagnostic when system trash fails', async () => {
     const root = temporaryRoot();
     const diagnostics: Array<{ scope: string; error: unknown; context?: Record<string, unknown> }> = [];
-    const service = new LibraryService({
+    const service = newService({
       onDiagnostic: (diagnostic) => diagnostics.push(diagnostic),
       trashItem: async () => {
         throw new Error('System trash rejected the source.');
@@ -1110,7 +1125,7 @@ describe('deleteLinkedAssets', () => {
     const root = temporaryRoot();
     const systemTrashPath = path.join(root, 'partial-system-trash');
     mkdirSync(systemTrashPath);
-    const service = new LibraryService({
+    const service = newService({
       trashItem: async (sourcePath) => {
         if (path.basename(sourcePath) === 'fail.txt') {
           throw new Error('Injected second-item trash failure.');
@@ -1151,7 +1166,7 @@ describe('deleteLinkedAssets', () => {
     const systemTrashPath = path.join(root, 'transaction-system-trash');
     const diagnostics: Array<{ scope: string; error: unknown; context?: Record<string, unknown> }> = [];
     mkdirSync(systemTrashPath);
-    const service = new LibraryService({
+    const service = newService({
       onDiagnostic: (diagnostic) => diagnostics.push(diagnostic),
       trashItem: async (sourcePath) => {
         renameSync(sourcePath, path.join(systemTrashPath, path.basename(sourcePath)));
@@ -1204,7 +1219,7 @@ describe('deleteLinkedAssets', () => {
     recoveryDatabase.exec('DROP TRIGGER reject_linked_asset_delete;');
     recoveryDatabase.close();
 
-    const recoveredService = new LibraryService();
+    const recoveredService = newService();
     recoveredService.openLibrary(created.libraryPath);
     expect(recoveredService.listAssets({ libraryId: created.libraryId, recursive: true })).toEqual([]);
     recoveredService.closeAll();
@@ -1221,7 +1236,7 @@ describe('deleteLinkedAssets', () => {
     const root = temporaryRoot();
     const systemTrashPath = path.join(root, 'move-then-throw-trash');
     mkdirSync(systemTrashPath);
-    const service = new LibraryService({
+    const service = newService({
       trashItem: async (sourcePath) => {
         renameSync(sourcePath, path.join(systemTrashPath, path.basename(sourcePath)));
         throw new Error('injected helper exit after move');
@@ -1245,7 +1260,7 @@ describe('deleteLinkedAssets', () => {
     expect(service.listAssets({ libraryId: created.libraryId, recursive: true })).toHaveLength(1);
     service.closeAll();
 
-    const recoveredService = new LibraryService();
+    const recoveredService = newService();
     recoveredService.openLibrary(created.libraryPath);
     expect(recoveredService.listAssets({ libraryId: created.libraryId, recursive: true })).toEqual([]);
     recoveredService.closeAll();
@@ -1253,7 +1268,7 @@ describe('deleteLinkedAssets', () => {
 
   it('rejects duplicate linked asset IDs before performing any deletion', async () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Linked Duplicate IDs', selectedParentPath: root });
     const linkedRoot = path.join(root, 'linked-duplicate-ids');
     mkdirSync(linkedRoot);
@@ -1272,7 +1287,7 @@ describe('deleteLinkedAssets', () => {
 
   it('does not infer an in-flight source was trashed while its linked root is offline', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Linked Offline Recovery', selectedParentPath: root });
     const linkedRoot = path.join(root, 'linked-offline-recovery');
     const offlineRoot = path.join(root, 'linked-offline-recovery-disconnected');
@@ -1299,7 +1314,7 @@ describe('deleteLinkedAssets', () => {
     database.close();
     renameSync(linkedRoot, offlineRoot);
 
-    const recoveredService = new LibraryService();
+    const recoveredService = newService();
     recoveredService.openLibrary(created.libraryPath);
     expect(recoveredService.listAssets({ libraryId: created.libraryId, recursive: true }))
       .toEqual([expect.objectContaining({ assetId: asset!.assetId, locationKind: 'linked' })]);
@@ -1316,7 +1331,7 @@ describe('deleteLinkedAssets', () => {
     auditedDatabase.close();
 
     renameSync(offlineRoot, linkedRoot);
-    const secondRecovery = new LibraryService();
+    const secondRecovery = newService();
     secondRecovery.openLibrary(created.libraryPath);
     expect(secondRecovery.listAssets({ libraryId: created.libraryId, recursive: true }))
       .toEqual([expect.objectContaining({ assetId: asset!.assetId })]);
@@ -1334,7 +1349,7 @@ describe('deleteLinkedAssets', () => {
     'keeps recovery pending when an external symlink makes the in-flight source unsafe to inspect',
     () => {
       const root = temporaryRoot();
-      const service = new LibraryService();
+      const service = newService();
       const created = service.createLibrary({ displayName: 'Linked Symlink Recovery', selectedParentPath: root });
       const linkedRoot = path.join(root, 'linked-symlink-recovery');
       const nestedRoot = path.join(linkedRoot, 'nested');
@@ -1364,7 +1379,7 @@ describe('deleteLinkedAssets', () => {
       rmSync(nestedRoot, { recursive: true });
       symlinkSync(replacementRoot, nestedRoot, 'dir');
 
-      const recoveredService = new LibraryService();
+      const recoveredService = newService();
       expect(() => recoveredService.openLibrary(created.libraryPath)).not.toThrow();
       expect(recoveredService.listAssets({ libraryId: created.libraryId, recursive: true }))
         .toEqual([expect.objectContaining({ assetId: asset!.assetId })]);
@@ -1386,7 +1401,7 @@ describe('deleteLinkedAssets', () => {
     'moves a real linked source through the platform system-trash helper',
     async () => {
       const root = temporaryRoot();
-      const service = new LibraryService();
+      const service = newService();
       const created = service.createLibrary({ displayName: 'Real System Trash', selectedParentPath: root });
       const linkedRoot = path.join(root, 'real-system-trash');
       const sourcePath = path.join(linkedRoot, `serpent-trash-${randomUUID()}.txt`);
@@ -1410,7 +1425,7 @@ describe('deleteLinkedAssets', () => {
 
   it('rejects deleting a managed asset with linked delete', async () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Managed via Linked', selectedParentPath: root });
 
     writeFileSync(path.join(root, 'managed.jpg'), 'data');
@@ -1428,7 +1443,7 @@ describe('deleteLinkedAssets', () => {
 describe('relinkAsset (single missing asset)', () => {
   it('relinks a missing asset to a new file and creates a relink revision', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Relink', selectedParentPath: root });
 
     writeFileSync(path.join(root, 'orig-relink.jpg'), 'orig');
@@ -1457,7 +1472,7 @@ describe('relinkAsset (single missing asset)', () => {
 
   it('copies replacement bytes back to the managed path across refresh and reopen', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Managed Relink Persistence', selectedParentPath: root });
 
     const sourcePath = path.join(root, 'managed-persistence.jpg');
@@ -1497,7 +1512,7 @@ describe('relinkAsset (single missing asset)', () => {
 
   it('preserves metadata and tags after relink', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Relink Meta', selectedParentPath: root });
 
     writeFileSync(path.join(root, 'with-meta.jpg'), 'data');
@@ -1522,7 +1537,7 @@ describe('relinkAsset (single missing asset)', () => {
 
   it('rejects relinking an available asset', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Avail Relink', selectedParentPath: root });
 
     writeFileSync(path.join(root, 'available.jpg'), 'data');
@@ -1538,7 +1553,7 @@ describe('relinkAsset (single missing asset)', () => {
 
   it('rejects relinking to a path inside the managed space', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Escape', selectedParentPath: root });
 
     writeFileSync(path.join(root, 'escape.jpg'), 'data');
@@ -1558,7 +1573,7 @@ describe('relinkAsset (single missing asset)', () => {
 
   it('rejects relinking to a nonexistent file', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Ghost', selectedParentPath: root });
 
     writeFileSync(path.join(root, 'ghost.jpg'), 'data');
@@ -1577,7 +1592,7 @@ describe('relinkAsset (single missing asset)', () => {
 
   it('rejects relinking a trashed asset', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Trashed Relink', selectedParentPath: root });
 
     writeFileSync(path.join(root, 'trashed-relink.jpg'), 'data');
@@ -1594,7 +1609,7 @@ describe('relinkAsset (single missing asset)', () => {
 
   it('does not mark a linked asset available when its linked root is offline', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Offline Linked Relink', selectedParentPath: root });
     const linkedRoot = path.join(root, 'offline-linked-root');
     mkdirSync(linkedRoot, { recursive: true });
@@ -1628,7 +1643,7 @@ describe('relinkAsset (single missing asset)', () => {
 describe('relinkBatchPreview', () => {
   it('returns matched/unmatched counts without absolute paths', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Batch Preview', selectedParentPath: root });
 
     writeFileSync(path.join(root, 'batch1.jpg'), 'data');
@@ -1663,7 +1678,7 @@ describe('relinkBatchPreview', () => {
 
   it('shows unmatched when files are missing in new root', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Unmatched', selectedParentPath: root });
 
     writeFileSync(path.join(root, 'only.jpg'), 'data');
@@ -1683,7 +1698,7 @@ describe('relinkBatchPreview', () => {
 
   it('rejects a nonexistent new root', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Bad Root', selectedParentPath: root });
 
     expectServiceError(
@@ -1695,7 +1710,7 @@ describe('relinkBatchPreview', () => {
 
   it('treats one basename candidate for two assets as ambiguous', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Ambiguous Batch Preview', selectedParentPath: root });
     const firstFolder = service.createManagedFolder({ libraryId: created.libraryId, name: 'first' });
     const secondFolder = service.createManagedFolder({ libraryId: created.libraryId, name: 'second' });
@@ -1738,7 +1753,7 @@ describe('relinkBatchPreview', () => {
 describe('relinkBatchApply', () => {
   it('restores matched assets and leaves unmatched as missing', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Batch Apply', selectedParentPath: root });
 
     writeFileSync(path.join(root, 'match.jpg'), 'data');
@@ -1769,7 +1784,7 @@ describe('relinkBatchApply', () => {
 
   it('copies matched bytes to each managed path across refresh and reopen', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Batch Managed Persistence', selectedParentPath: root });
 
     writeFileSync(path.join(root, 'root-file.jpg'), 'old-root');
@@ -1821,7 +1836,7 @@ describe('relinkBatchApply', () => {
 
   it('keepMetadata=true preserves human and AI metadata, tags, and collections', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Keep Meta', selectedParentPath: root });
 
     writeFileSync(path.join(root, 'keepmeta.jpg'), 'data');
@@ -1867,7 +1882,7 @@ describe('relinkBatchApply', () => {
 
   it('keepMetadata=false clears human and AI metadata, tags, and collections', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Clear Meta', selectedParentPath: root });
 
     writeFileSync(path.join(root, 'clearmeta.jpg'), 'data');
@@ -1916,7 +1931,7 @@ describe('relinkBatchApply', () => {
 
   it('creates only one file_operations row for the entire batch', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Batch FO', selectedParentPath: root });
 
     writeFileSync(path.join(root, 'fo1.jpg'), 'data');
@@ -1946,7 +1961,7 @@ describe('relinkBatchApply', () => {
 
   it('updates a moved linked asset path and remains available after refresh', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Batch Linked Move', selectedParentPath: root });
     const linkedRoot = path.join(root, 'batch-linked-root');
     const oldFolder = path.join(linkedRoot, 'old');
@@ -1994,7 +2009,7 @@ describe('relinkBatchApply', () => {
 describe('active assets should not expose trashed fields', () => {
   it('active assets have null deletedAt/trashedFromPath/remainingDays', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Active Nulls', selectedParentPath: root });
 
     writeFileSync(path.join(root, 'active-null.jpg'), 'data');
@@ -2012,7 +2027,7 @@ describe('active assets should not expose trashed fields', () => {
 describe('refreshManagedAssets skips trashed assets', () => {
   it('does not reconcile files for trashed assets', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Skip Trash', selectedParentPath: root });
 
     writeFileSync(path.join(root, 'skip-refresh.jpg'), 'data');

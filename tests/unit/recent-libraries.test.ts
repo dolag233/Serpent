@@ -64,7 +64,15 @@ describe('recent libraries store (main)', () => {
         },
       ],
     });
-    expect(statSync(storePath).mode & 0o777).toBe(0o600);
+    if (process.platform === 'win32') {
+      // Windows file protection is ACL-based; Node's chmod only toggles the
+      // read-only attribute and stat always reports 0o666 for writable files,
+      // so owner-only mode cannot be asserted here (known platform limitation:
+      // the 0o600 call is a no-op on Windows ACLs).
+      expect(statSync(storePath).isFile()).toBe(true);
+    } else {
+      expect(statSync(storePath).mode & 0o777).toBe(0o600);
+    }
   });
 
   it('migrates a v1 single-library file, deriving the name from the path basename', () => {

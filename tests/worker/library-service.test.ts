@@ -22,6 +22,20 @@ import {
 } from '../../src/worker/library-service';
 
 const temporaryRoots: string[] = [];
+
+// LibraryService holds SQLite connections and recursive fs watchers; on
+// Windows those open handles block rm of the temp tree (POSIX unlinks open
+// files, which is why the leak is invisible on macOS). Always close first.
+const services: LibraryService[] = [];
+
+function newService(
+  ...args: ConstructorParameters<typeof LibraryService>
+): LibraryService {
+  const service = new LibraryService(...args);
+  services.push(service);
+  return service;
+}
+
 const require = createRequire(import.meta.url);
 
 interface TestDatabaseConnection {
@@ -168,6 +182,7 @@ function expectServiceError(operation: () => unknown, code: LibraryServiceError[
 }
 
 afterEach(() => {
+  for (const service of services.splice(0)) service.closeAll();
   for (const root of temporaryRoots.splice(0)) {
     rmSync(root, { force: true, recursive: true });
   }
@@ -176,7 +191,7 @@ afterEach(() => {
 describe('LibraryService lifecycle', () => {
   it('creates a self-contained library and exposes it exactly once', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
 
     const created = service.createLibrary({
       displayName: '  概念设计  ',
@@ -206,7 +221,7 @@ describe('LibraryService lifecycle', () => {
 
   it('migrates v13 Label data to v14 without changing unrelated metadata', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Retire Label', selectedParentPath: root });
     const sourcePath = path.join(root, 'legacy.png');
     writeFileSync(sourcePath, 'legacy image');
@@ -334,7 +349,7 @@ describe('LibraryService lifecycle', () => {
     );
     database.close();
 
-    const migratedService = new LibraryService();
+    const migratedService = newService();
     migratedService.openLibrary(created.libraryPath);
     const metadata = migratedService.getAssetMetadata({ libraryId: created.libraryId, assetId });
     expect(metadata).toMatchObject({
@@ -368,7 +383,7 @@ describe('LibraryService lifecycle', () => {
 
   it('closes, moves, and reopens a library without changing its identity', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({
       displayName: 'Reference',
       selectedParentPath: root,
@@ -387,7 +402,7 @@ describe('LibraryService lifecycle', () => {
 
   it('recreates regenerable directories when reopening a closed library', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({
       displayName: 'Textures',
       selectedParentPath: root,
@@ -409,14 +424,14 @@ describe('LibraryService lifecycle', () => {
 
   it('rejects a conflicting target without leaving a creation partial', () => {
     const root = temporaryRoot();
-    const first = new LibraryService();
+    const first = newService();
     const created = first.createLibrary({
       displayName: 'Existing',
       selectedParentPath: root,
     });
     first.closeAll();
 
-    const second = new LibraryService();
+    const second = newService();
     expectServiceError(
       () => second.createLibrary({ displayName: 'Existing', selectedParentPath: root }),
       'LIBRARY_ALREADY_EXISTS',
@@ -426,14 +441,14 @@ describe('LibraryService lifecycle', () => {
 
   it('rejects folders that are missing a required library location', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
 
     expectServiceError(() => service.openLibrary(root), 'NOT_A_LIBRARY');
   });
 
   it('rejects a missing database as a non-library', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'No Database', selectedParentPath: root });
     service.closeAll();
     rmSync(path.join(created.libraryPath, '.serpent', 'library.db'));
@@ -443,7 +458,7 @@ describe('LibraryService lifecycle', () => {
 
   it('rejects a library whose required Assets directory was removed', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Missing Assets', selectedParentPath: root });
     service.closeAll();
     rmSync(path.join(created.libraryPath, 'Assets'), { recursive: true });
@@ -453,7 +468,7 @@ describe('LibraryService lifecycle', () => {
 
   it('rejects a database created by a newer schema version', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Future', selectedParentPath: root });
     service.closeAll();
     const database = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
@@ -468,7 +483,7 @@ describe('LibraryService lifecycle', () => {
 
   it('migrates a valid v1 library through v2 to v3 when opening', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Migration', selectedParentPath: root });
     service.closeAll();
     downgradeLibraryToV1(created.libraryPath);
@@ -490,7 +505,7 @@ describe('LibraryService lifecycle', () => {
     const root = temporaryRoot();
     const source = path.join(root, 'Café.PNG');
     writeFileSync(source, 'asset');
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Portable Migration', selectedParentPath: root });
     service.prepareOrExecuteImport({
       libraryId: created.libraryId,
@@ -514,7 +529,7 @@ describe('LibraryService lifecycle', () => {
 
   it('rolls back a failed v2 migration and preserves the v1 version', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Rollback', selectedParentPath: root });
     service.closeAll();
     downgradeLibraryToV1(created.libraryPath, true);
@@ -531,7 +546,7 @@ describe('LibraryService lifecycle', () => {
 
   it('does not commit a table-rebuild migration when foreign keys are corrupt', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Foreign Key Rollback', selectedParentPath: root });
     service.closeAll();
     downgradeLibraryToV2(created.libraryPath);
@@ -561,7 +576,7 @@ describe('LibraryService lifecycle', () => {
 
   it('rejects a corrupt database without leaving the library open', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Corrupt', selectedParentPath: root });
     service.closeAll();
     writeFileSync(path.join(created.libraryPath, '.serpent', 'library.db'), 'not a sqlite database');
@@ -572,7 +587,7 @@ describe('LibraryService lifecycle', () => {
 
   it('does not repair internal directories before a database passes validation', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Read First', selectedParentPath: root });
     service.closeAll();
     const previewsPath = path.join(created.libraryPath, '.serpent', 'previews');
@@ -585,7 +600,7 @@ describe('LibraryService lifecycle', () => {
 
   it('rejects a tampered migration audit record', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Tampered', selectedParentPath: root });
     service.closeAll();
     const database = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
@@ -597,7 +612,7 @@ describe('LibraryService lifecycle', () => {
 
   it('does not leave a partial library when the parent is not writable', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     chmodSync(root, 0o500);
     try {
       expectServiceError(
@@ -611,7 +626,7 @@ describe('LibraryService lifecycle', () => {
   });
 
   it('reports an unknown close without changing the open set', () => {
-    const service = new LibraryService();
+    const service = newService();
 
     expectServiceError(() => service.closeLibrary('unknown-library'), 'LIBRARY_NOT_OPEN');
     expect(service.listLibraries()).toEqual([]);

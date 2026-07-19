@@ -9,6 +9,20 @@ import { LibraryService } from '../../src/worker/library-service';
 import type { LibraryServiceError } from '../../src/worker/library-service';
 
 const roots: string[] = [];
+
+// LibraryService holds SQLite connections and recursive fs watchers; on
+// Windows those open handles block rm of the temp tree (POSIX unlinks open
+// files, which is why the leak is invisible on macOS). Always close first.
+const services: LibraryService[] = [];
+
+function newService(
+  ...args: ConstructorParameters<typeof LibraryService>
+): LibraryService {
+  const service = new LibraryService(...args);
+  services.push(service);
+  return service;
+}
+
 const require = createRequire(import.meta.url);
 const TestDatabase = require('better-sqlite3') as new (filename: string) => {
   close(): void;
@@ -31,13 +45,14 @@ function expectCode(
 }
 
 afterEach(() => {
+  for (const service of services.splice(0)) service.closeAll();
   for (const value of roots.splice(0)) rmSync(value, { force: true, recursive: true });
 });
 
 describe('resolveFolderPath (REQ-MENU-006)', () => {
   it('resolves a managed folder to the library Assets root plus its relative path', () => {
     const temp = root();
-    const service = new LibraryService();
+    const service = newService();
     const library = service.createLibrary({ displayName: 'FolderPath', selectedParentPath: temp });
     const top = service.createManagedFolder({ libraryId: library.libraryId, name: 'a' });
     const nested = service.createManagedFolder({
@@ -54,7 +69,7 @@ describe('resolveFolderPath (REQ-MENU-006)', () => {
 
   it('rejects a managed folder whose directory is missing on disk', () => {
     const temp = root();
-    const service = new LibraryService();
+    const service = newService();
     const library = service.createLibrary({ displayName: 'FolderPath', selectedParentPath: temp });
     const folder = service.createManagedFolder({ libraryId: library.libraryId, name: 'gone' });
 
@@ -74,7 +89,7 @@ describe('resolveFolderPath (REQ-MENU-006)', () => {
     mkdirSync(sourceRoot);
     writeFileSync(path.join(sourceRoot, 'a.png'), 'aaa');
 
-    const service = new LibraryService();
+    const service = newService();
     const library = service.createLibrary({ displayName: 'FolderPath', selectedParentPath: temp });
     const linked = service.importFolderAsLinked({
       libraryId: library.libraryId,
@@ -92,7 +107,7 @@ describe('resolveFolderPath (REQ-MENU-006)', () => {
     mkdirSync(sourceRoot);
     writeFileSync(path.join(sourceRoot, 'a.png'), 'aaa');
 
-    const service = new LibraryService();
+    const service = newService();
     const library = service.createLibrary({ displayName: 'FolderPath', selectedParentPath: temp });
     const linked = service.importFolderAsLinked({
       libraryId: library.libraryId,
@@ -113,7 +128,7 @@ describe('resolveFolderPath (REQ-MENU-006)', () => {
     mkdirSync(sourceRoot);
     writeFileSync(path.join(sourceRoot, 'a.png'), 'aaa');
 
-    const service = new LibraryService();
+    const service = newService();
     const library = service.createLibrary({ displayName: 'FolderPath', selectedParentPath: temp });
     const linked = service.importFolderAsLinked({
       libraryId: library.libraryId,
@@ -145,7 +160,7 @@ describe('resolveFolderPath (REQ-MENU-006)', () => {
     mkdirSync(elsewhere);
     writeFileSync(path.join(sourceRoot, 'a.png'), 'aaa');
 
-    const service = new LibraryService();
+    const service = newService();
     const library = service.createLibrary({ displayName: 'FolderPath', selectedParentPath: temp });
     const linked = service.importFolderAsLinked({
       libraryId: library.libraryId,
@@ -163,7 +178,7 @@ describe('resolveFolderPath (REQ-MENU-006)', () => {
 
   it('rejects an unknown folder id', () => {
     const temp = root();
-    const service = new LibraryService();
+    const service = newService();
     const library = service.createLibrary({ displayName: 'FolderPath', selectedParentPath: temp });
 
     expectCode(

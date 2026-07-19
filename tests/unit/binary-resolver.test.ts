@@ -88,8 +88,31 @@ describe('media binary resolver', () => {
     writeFileSync(ffmpeg, 'not executable');
     chmodSync(ffmpeg, 0o644);
 
-    expect(resolveFfmpegPath()).toBe(platformName('ffmpeg'));
+    if (process.platform === 'win32') {
+      // Windows has no execute permission bit (Node maps X_OK to F_OK), so an
+      // existing bundled file is considered runnable; the PE is validated by
+      // CreateProcess at spawn time, where call sites already handle failure.
+      expect(resolveFfmpegPath()).toBe(ffmpeg);
+    } else {
+      expect(resolveFfmpegPath()).toBe(platformName('ffmpeg'));
+    }
     expect(resolveFfprobePath()).toBe(platformName('ffprobe'));
     expect(resolveOiiotoolPath()).toBe(platformName('oiiotool'));
+  });
+
+  it('falls back to PATH names when the bundled path is a directory', () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'serpent-binaries-'));
+    roots.push(root);
+    setResourcesPath(root);
+    const ffmpeg = path.join(
+      root,
+      'resources',
+      'ffmpeg',
+      platformDirectory(),
+      platformName('ffmpeg'),
+    );
+    mkdirSync(ffmpeg, { recursive: true });
+
+    expect(resolveFfmpegPath()).toBe(platformName('ffmpeg'));
   });
 });

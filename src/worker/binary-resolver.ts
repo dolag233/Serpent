@@ -1,4 +1,4 @@
-import { accessSync, constants } from 'node:fs';
+import { accessSync, constants, statSync } from 'node:fs';
 import path from 'node:path';
 
 /**
@@ -19,6 +19,25 @@ function platformBinaryName(baseName: string): string {
   return baseName;
 }
 
+/**
+ * Executability is platform-specific: POSIX has a real execute permission
+ * bit, while Windows decides runnability by extension and PE validation at
+ * spawn time (Node maps X_OK to F_OK there, so an X_OK check would accept
+ * any existing file). On both platforms a directory at the bundled path must
+ * be rejected — accessSync alone would accept it.
+ */
+function isRunnableBundledBinary(filePath: string): boolean {
+  try {
+    if (!statSync(filePath).isFile()) return false;
+    if (process.platform !== 'win32') {
+      accessSync(filePath, constants.X_OK);
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function resolveBundledBinary(
   binaryName: string,
   subdir: string,
@@ -35,13 +54,11 @@ function resolveBundledBinary(
       subdir,
       platformBinaryName(binaryName),
     );
-    try {
-      accessSync(bundled, constants.F_OK | constants.X_OK);
+    if (isRunnableBundledBinary(bundled)) {
       return bundled;
-    } catch {
-      // A resources directory can exist even when optional media binaries were
-      // not packaged. Fall through to PATH instead of returning a dead path.
     }
+    // A resources directory can exist even when optional media binaries were
+    // not packaged. Fall through to PATH instead of returning a dead path.
   }
   return undefined;
 }

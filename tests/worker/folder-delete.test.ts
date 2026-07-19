@@ -9,6 +9,7 @@ import { LibraryService } from '../../src/worker/library-service';
 import type { ImportCompletion } from '../../src/shared/protocol/responses';
 
 const roots: string[] = [];
+const services: LibraryService[] = [];
 const require = createRequire(import.meta.url);
 const TestDatabase = require('better-sqlite3') as new (filename: string) => {
   close(): void;
@@ -23,6 +24,17 @@ function root(): string {
   const value = mkdtempSync(path.join(tmpdir(), 'serpent-folder-delete-'));
   roots.push(value);
   return value;
+}
+
+// LibraryService holds SQLite connections and recursive fs watchers; on
+// Windows those open handles block rm of the temp tree (POSIX unlinks open
+// files, which is why the leak is invisible on macOS). Always close first.
+function newService(
+  ...args: ConstructorParameters<typeof LibraryService>
+): LibraryService {
+  const service = new LibraryService(...args);
+  services.push(service);
+  return service;
 }
 
 function importFile(
@@ -44,13 +56,14 @@ function database(libraryPath: string) {
 }
 
 afterEach(() => {
+  for (const service of services.splice(0)) service.closeAll();
   for (const value of roots.splice(0)) rmSync(value, { force: true, recursive: true });
 });
 
 describe('trashManagedFolder (clarification #7 / Serpent-ekj)', () => {
   it('trashes assets in an empty and non-empty managed folder the same way', () => {
     const temp = root();
-    const service = new LibraryService();
+    const service = newService();
     const library = service.createLibrary({
       displayName: 'FolderTrash',
       selectedParentPath: temp,
@@ -109,7 +122,7 @@ describe('trashManagedFolder (clarification #7 / Serpent-ekj)', () => {
 describe('deleteManagedFolderFromDisk (clarification #7 / Serpent-ekj)', () => {
   it('permanently removes the folder tree and assets without leaving trash rows', () => {
     const temp = root();
-    const service = new LibraryService();
+    const service = newService();
     const library = service.createLibrary({
       displayName: 'FolderDiskDelete',
       selectedParentPath: temp,
@@ -152,7 +165,7 @@ describe('removeLinkedFolder (clarification #7 / Serpent-ekj)', () => {
     const externalFile = path.join(external, 'c.png');
     writeFileSync(externalFile, 'linked-bytes');
 
-    const service = new LibraryService();
+    const service = newService();
     const library = service.createLibrary({
       displayName: 'LinkedRemove',
       selectedParentPath: temp,
@@ -190,7 +203,7 @@ describe('deleteLinkedFolderSubtree (clarification #7 / Serpent-ekj)', () => {
     writeFileSync(path.join(external, 'root.png'), 'root-bytes');
 
     const trashed: string[] = [];
-    const service = new LibraryService({
+    const service = newService({
       trashItem: async (sourcePath: string) => {
         trashed.push(sourcePath);
         rmSync(sourcePath, { force: true, recursive: true });
@@ -225,7 +238,7 @@ describe('deleteLinkedFolderSubtree (clarification #7 / Serpent-ekj)', () => {
     writeFileSync(path.join(child, 'f.png'), 'perm');
     writeFileSync(path.join(external, 'keep.png'), 'keep');
 
-    const service = new LibraryService();
+    const service = newService();
     const library = service.createLibrary({
       displayName: 'LinkedPerm',
       selectedParentPath: temp,
