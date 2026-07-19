@@ -13,6 +13,7 @@ import {
   type SpawnFunction,
   type SpawnResult,
 } from '../../src/worker/library-service';
+import { AUDIO_WAVEFORM_COVER_GENERATOR_TAG } from '../../src/shared/audio-media';
 
 const temporaryRoots: string[] = [];
 const require = createRequire(import.meta.url);
@@ -1508,7 +1509,7 @@ describe('audio waveform thumbnail (Serpent-13v)', () => {
     expect(row!.kind).toBe('thumbnail');
     expect(row!.mime_type).toBe('image/png');
     expect(row!.status).toBe('ready');
-    expect(row!.generator_version).toContain('waveform-cover5');
+    expect(row!.generator_version).toContain(AUDIO_WAVEFORM_COVER_GENERATOR_TAG);
     expect(row!.width).toBe(640);
     expect(row!.height).toBe(480);
     db.close();

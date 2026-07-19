@@ -508,7 +508,7 @@ describe('preview availability while derivatives are generated', () => {
     const root = temporaryRoot();
     const service = new LibraryService();
     const created = service.createLibrary({ displayName: 'UnsupportedPreview', selectedParentPath: root });
-    const sourcePath = path.join(root, 'notes.txt');
+    const sourcePath = path.join(root, 'notes.dat');
     writeFileSync(sourcePath, 'plain text');
     importNoConflict(service, created.libraryId, sourcePath);
     const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;

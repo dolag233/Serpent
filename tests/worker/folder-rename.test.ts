@@ -112,7 +112,7 @@ describe('managed folder rename', () => {
       parentFolderId: null,
       name: 'ex',
       relativePath: 'ex',
-      directAssetCount: 0,
+      directAssetCount: 1,
       childFolderCount: 1,
     });
     expect(existsSync(path.join(assetsRoot, 'a'))).toBe(false);
@@ -143,7 +143,7 @@ describe('managed folder rename', () => {
     }
 
     expect(service.listManagedFolders(library.libraryId)).toEqual([
-      { folderId: top.folderId, parentFolderId: null, name: 'ex', relativePath: 'ex', directAssetCount: 0, childFolderCount: 1 },
+      { folderId: top.folderId, parentFolderId: null, name: 'ex', relativePath: 'ex', directAssetCount: 1, childFolderCount: 1 },
       { folderId: nested.folderId, parentFolderId: top.folderId, name: 'bee', relativePath: 'ex/bee', directAssetCount: 1, childFolderCount: 0 },
     ]);
     service.closeAll();

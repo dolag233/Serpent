@@ -3821,7 +3821,7 @@ export class LibraryService {
     // Identical target (same spelling, same case): success no-op, nothing on
     // disk or in the DB is touched.
     if (name === row.name) {
-      return this.summarizeManagedFolderRow(openLibrary, row);
+      return this.summarizeManagedFolderRowRecursive(openLibrary, row);
     }
 
     const oldRelativePath = row.relative_path;
@@ -3956,7 +3956,7 @@ export class LibraryService {
       throw serviceError(error, 'LIBRARY_NOT_WRITABLE');
     }
 
-    return this.summarizeManagedFolderRow(openLibrary, {
+    return this.summarizeManagedFolderRowRecursive(openLibrary, {
       ...row,
       name,
       relative_path: newRelativePath,
@@ -4535,6 +4535,26 @@ export class LibraryService {
       relativePath: row.relative_path,
       directAssetCount: resolved.directAssetCounts.get(row.folder_id) ?? 0,
       childFolderCount: resolved.childFolderCounts.get(row.folder_id) ?? 0,
+    };
+  }
+
+  /**
+   * Serpent-toh: single-row returns (rename no-op / normal) must show the
+   * displayed recursive directAssetCount, matching listManagedFolders —
+   * otherwise the badge flickers from direct-only to recursive on refresh.
+   */
+  private summarizeManagedFolderRowRecursive(
+    openLibrary: OpenLibrary,
+    row: ManagedFolderRow,
+  ): ManagedFolderSummary {
+    const summary = this.summarizeManagedFolderRow(openLibrary, row);
+    const recursive = this.managedFolderRecursiveAssetCounts(openLibrary, [
+      row,
+    ]);
+    return {
+      ...summary,
+      directAssetCount:
+        recursive.get(row.folder_id) ?? summary.directAssetCount,
     };
   }
 
