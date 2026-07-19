@@ -74,6 +74,11 @@ export interface SharpInstance {
     fit?: 'inside' | 'cover' | 'fill' | 'outside';
     withoutEnlargement?: boolean;
   }): SharpInstance;
+  /** Replace transparent pixels with a solid background (audio waveform covers). */
+  flatten?(options: {
+    background: { r: number; g: number; b: number };
+  }): SharpInstance;
+  png?(options?: { quality?: number }): SharpInstance;
   raw?(): SharpInstance;
   toBuffer?(options: { resolveWithObject: true }): Promise<{
     data: Uint8Array;
@@ -125,6 +130,11 @@ const SHARP_VERSION = '0.35.3';
 const SHARP_THUMBNAIL_GENERATOR = `sharp@${SHARP_VERSION}-gifstill1`;
 const OIIO_VERSION = '3.1.12.0';
 const FFMPEG_VERSION = '8.1';
+/** Opaque waveform covers (Serpent-13v); stale transparent strips requeue. */
+const AUDIO_WAVEFORM_GENERATOR = `ffmpeg@${FFMPEG_VERSION}+waveform-cover2`;
+const AUDIO_WAVEFORM_WIDTH = 640;
+const AUDIO_WAVEFORM_HEIGHT = 160;
+const AUDIO_WAVEFORM_BACKGROUND = { r: 0x1a, g: 0x20, b: 0x30 };
 const MAX_WEBM_PROXY_BYTES = 512 * 1024 * 1024;
 const SERPENT_OCIO_CONFIG = 'ocio://studio-config-v4.0.0_aces-v2.0_ocio-v2.5';
 const DEFAULT_OIIO_INPUT_COLOR_SPACE = 'scene_linear';
@@ -208,6 +218,7 @@ import {
 } from './gif-thumbnail-page';
 import { buildGifExtractedMetadata, type GifExtractedMetadata } from './gif-metadata';
 import {
+  AUDIO_EXTENSION_NAMES,
   audioMimeForExtension,
   isAudioFileName,
 } from '../shared/audio-media';
@@ -7427,15 +7438,17 @@ export class LibraryService {
     const artifactId = randomUUID();
     const artifactRelPath = `${artifactId}.png`;
     const artifactAbsPath = path.join(artifactsDir, artifactRelPath);
+    const tempAbsPath = path.join(artifactsDir, `${artifactId}.wave-tmp.png`);
 
     try {
       const result = await this.runFfmpeg(ffmpegPath, [
         '-y',
         '-i', assetPath,
         '-filter_complex',
-        'aformat=channel_layouts=mono,showwavespic=s=640x160:colors=#7EB6FF',
+        `aformat=channel_layouts=mono,compand,showwavespic=s=${AUDIO_WAVEFORM_WIDTH}x${AUDIO_WAVEFORM_HEIGHT}:colors=#7EB6FF:scale=sqrt`,
         '-frames:v', '1',
-        artifactAbsPath,
+        '-update', '1',
+        tempAbsPath,
       ], { timeoutMs: 120_000, signal: execution.signal });
 
       if (result.exitCode !== 0) {
@@ -7443,6 +7456,18 @@ export class LibraryService {
           `ffmpeg waveform exited with code ${result.exitCode}: ${result.stderr.slice(-200)}`,
         );
       }
+
+      // showwavespic defaults to a transparent canvas with a 1px stroke. Flatten
+      // onto an opaque stage so grid/Inspector covers stay visible at card size.
+      const sharp = this.options.sharpFn ?? requireSharp();
+      const flatten = sharp(tempAbsPath).flatten?.({
+        background: AUDIO_WAVEFORM_BACKGROUND,
+      });
+      if (!flatten?.png || !flatten.toFile) {
+        throw new Error('Sharp flatten/png API unavailable for waveform covers.');
+      }
+      await flatten.png().toFile(artifactAbsPath);
+      rmSync(tempAbsPath, { force: true });
 
       const outputStat = statSync(artifactAbsPath);
       openLibrary.connection
@@ -7457,14 +7482,16 @@ export class LibraryService {
           revisionId,
           outputStat.size,
           artifactRelPath,
-          640,
-          160,
-          `ffmpeg@${FFMPEG_VERSION}`,
+          AUDIO_WAVEFORM_WIDTH,
+          AUDIO_WAVEFORM_HEIGHT,
+          AUDIO_WAVEFORM_GENERATOR,
           new Date().toISOString(),
         );
 
       return artifactId;
     } catch (error) {
+      rmSync(tempAbsPath, { force: true });
+      rmSync(artifactAbsPath, { force: true });
       this.writeFailedArtifact(
         openLibrary,
         artifactId,
@@ -7472,7 +7499,7 @@ export class LibraryService {
         'thumbnail',
         'image/png',
         artifactRelPath,
-        `ffmpeg@${FFMPEG_VERSION}`,
+        AUDIO_WAVEFORM_GENERATOR,
         error,
       );
       throw error;
@@ -8753,6 +8780,7 @@ export class LibraryService {
     const supportedExtensions = [
       'png', 'jpg', 'jpeg', 'gif', 'tiff', 'tif', 'webp', 'bmp',
       'mp4', 'webm', 'mov', 'avi', 'wmv', 'exr', 'tga',
+      ...AUDIO_EXTENSION_NAMES,
     ];
     // CU-D7: invalidate pre-gifstill GIF thumbs so page-0 black frames requeue.
     const nowInvalidate = new Date().toISOString();
@@ -8772,6 +8800,30 @@ export class LibraryService {
             )`,
       )
       .run(nowInvalidate);
+    // Serpent-13v: requeue audio covers that never flattened onto an opaque stage
+    // (or never enqueued because audio extensions were missing from this list).
+    const audioExtensionSql = AUDIO_EXTENSION_NAMES
+      .map(() => 'LOWER(a.relative_file_path) LIKE ?')
+      .join(' OR ');
+    openLibrary.connection
+      .prepare(
+        `UPDATE revision_artifacts
+            SET invalidated_at = ?
+          WHERE kind = 'thumbnail'
+            AND status = 'ready'
+            AND invalidated_at IS NULL
+            AND generator_version NOT LIKE '%waveform-cover%'
+            AND revision_id IN (
+              SELECT a.current_revision_id FROM assets a
+               WHERE a.deleted_at IS NULL
+                 AND a.current_revision_id IS NOT NULL
+                 AND (${audioExtensionSql})
+            )`,
+      )
+      .run(
+        nowInvalidate,
+        ...AUDIO_EXTENSION_NAMES.map((extension) => `%.${extension}`),
+      );
     // CU-D8: GIFs with a ready thumb but no duration/frame metadata requeue once.
     openLibrary.connection
       .prepare(

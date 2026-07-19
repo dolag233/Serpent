@@ -15,6 +15,11 @@ export const AUDIO_EXTENSIONS = [
   ".opus",
 ] as const;
 
+/** Extension tokens without the leading dot — for SQL LIKE / enqueue lists. */
+export const AUDIO_EXTENSION_NAMES = AUDIO_EXTENSIONS.map((ext) =>
+  ext.slice(1),
+);
+
 export const AUDIO_MIME_BY_EXTENSION: Record<
   (typeof AUDIO_EXTENSIONS)[number],
   string

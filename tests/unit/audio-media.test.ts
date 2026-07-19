@@ -1,6 +1,7 @@
 import { expect, test } from "vitest";
 
 import {
+  AUDIO_EXTENSION_NAMES,
   audioMimeForExtension,
   isAudioFileName,
 } from "../../src/shared/audio-media";
@@ -18,4 +19,10 @@ test("audioMimeForExtension maps Chromium-playable MIME types", () => {
   expect(audioMimeForExtension(".wav")).toBe("audio/wav");
   expect(audioMimeForExtension(".m4a")).toBe("audio/mp4");
   expect(audioMimeForExtension(".txt")).toBeNull();
+});
+
+test("AUDIO_EXTENSION_NAMES lists enqueue tokens without dots", () => {
+  expect(AUDIO_EXTENSION_NAMES).toContain("wav");
+  expect(AUDIO_EXTENSION_NAMES).toContain("mp3");
+  expect(AUDIO_EXTENSION_NAMES.every((name) => !name.includes("."))).toBe(true);
 });
