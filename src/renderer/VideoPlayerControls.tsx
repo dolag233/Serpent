@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState, type SyntheticEvent } from "r
 import { Icon } from "./Icons";
 import { iconActionAttrs } from "./icon-action-attrs";
 import { useT } from "./i18n";
+import { createMediaSeekSession } from "./media-seek-session";
 import {
   clampScrubTime,
   formatVideoClockTime,
@@ -34,6 +35,8 @@ const SCRUB_STEP_SECONDS = 5;
  *
  * See `video-player-controls.ts` for why this replaced native
  * `<video controls>` rather than layering on top of it.
+ * Seek/scrub uses `createMediaSeekSession` so Range fetches are not cancelled
+ * on every pointermove (Serpent-jh2).
  */
 export function VideoPlayerControls({
   onError,
@@ -46,6 +49,15 @@ export function VideoPlayerControls({
   const videoRef = useRef<HTMLVideoElement>(null);
   const trackRef = useRef<HTMLDivElement>(null);
   const scrubbingPointerId = useRef<number | null>(null);
+  const seekSessionRef = useRef(
+    createMediaSeekSession(
+      () => videoRef.current,
+      (time) => {
+        const video = videoRef.current;
+        if (video) video.currentTime = time;
+      },
+    ),
+  );
   const [playbackRate, setPlaybackRate] = useState<VideoPlaybackRate>(1);
   const [paused, setPaused] = useState(true);
   const [duration, setDuration] = useState(0);
@@ -78,10 +90,21 @@ export function VideoPlayerControls({
     if (video) video.playbackRate = playbackRate;
   }, [playbackRate, src]);
 
-  const seekToRatio = useCallback((ratio: number) => {
+  useEffect(() => {
+    const session = seekSessionRef.current;
+    session.cancel();
+    return () => session.cancel();
+  }, [src]);
+
+  const seekToRatio = useCallback((ratio: number, mode: "coalesce" | "commit") => {
     const video = videoRef.current;
     if (!video) return;
-    video.currentTime = scrubTimeFromRatio(ratio, video.duration);
+    const time = scrubTimeFromRatio(ratio, video.duration);
+    if (mode === "commit") {
+      seekSessionRef.current.commit(time);
+      return;
+    }
+    seekSessionRef.current.request(time);
   }, []);
 
   const ratioFromPointer = useCallback((clientX: number): number => {
@@ -114,12 +137,18 @@ export function VideoPlayerControls({
         }}
         onPause={() => setPaused(true)}
         onPlay={() => setPaused(false)}
+        onSeeked={() => {
+          seekSessionRef.current.onSeeked();
+          if (scrubbingPointerId.current === null && videoRef.current) {
+            setCurrentTime(videoRef.current.currentTime);
+          }
+        }}
         onTimeUpdate={(event) => {
           if (scrubbingPointerId.current !== null) return;
           setCurrentTime(event.currentTarget.currentTime);
         }}
         poster={posterUrl}
-        preload="metadata"
+        preload="auto"
         ref={videoRef}
         src={src}
       >
@@ -166,7 +195,7 @@ export function VideoPlayerControls({
             }
             if (nextTime === null) return;
             event.preventDefault();
-            video.currentTime = nextTime;
+            seekSessionRef.current.commit(nextTime);
             setCurrentTime(nextTime);
           }}
           onPointerDown={(event) => {
@@ -178,18 +207,20 @@ export function VideoPlayerControls({
             event.currentTarget.setPointerCapture(event.pointerId);
             const ratio = ratioFromPointer(event.clientX);
             setScrubRatio(ratio);
-            seekToRatio(ratio);
+            seekToRatio(ratio, "coalesce");
           }}
           onPointerMove={(event) => {
             if (scrubbingPointerId.current !== event.pointerId) return;
             const ratio = ratioFromPointer(event.clientX);
             setScrubRatio(ratio);
-            seekToRatio(ratio);
+            seekToRatio(ratio, "coalesce");
           }}
           onPointerUp={(event) => {
             if (scrubbingPointerId.current !== event.pointerId) return;
             scrubbingPointerId.current = null;
+            const ratio = ratioFromPointer(event.clientX);
             setScrubRatio(null);
+            seekToRatio(ratio, "commit");
             // Sync display state immediately so the thumb doesn't flicker
             // back to the pre-drag position while waiting for the next
             // native `timeupdate` tick.
@@ -202,6 +233,7 @@ export function VideoPlayerControls({
             if (scrubbingPointerId.current !== event.pointerId) return;
             scrubbingPointerId.current = null;
             setScrubRatio(null);
+            seekSessionRef.current.flush();
             if (videoRef.current) setCurrentTime(videoRef.current.currentTime);
           }}
           ref={trackRef}

@@ -24,6 +24,7 @@ import {
 import { Icon } from "./Icons";
 import type { ViewerChromeActivitySource } from "./viewer-chrome-idle";
 import { resolveViewerPrimarySurface } from "./viewer-preview-policy";
+import { isTransientMediaPlaybackError } from "./media-seek-session";
 import { VideoPlayerControls } from "./VideoPlayerControls";
 import { AudioPlayerControls } from "./AudioPlayerControls";
 import { TextViewerControls } from "./TextViewerControls";
@@ -409,6 +410,11 @@ export function AssetPreviewModal({
 
   function handlePlaybackError(event: SyntheticEvent<HTMLMediaElement>) {
     const mediaError = event.currentTarget.error;
+    // Seek/scrub cancels in-flight Range fetches; Chromium reports ABORTED.
+    // Do not paint a fatal overlay or kick proxy generation for that race.
+    if (isTransientMediaPlaybackError(mediaError)) {
+      return;
+    }
     const isAudio = resolution?.mediaType === "audio";
     const errorCode = mediaError
       ? `${isAudio ? "AUDIO" : "VIDEO"}_MEDIA_ERR_${mediaError.code}`
@@ -434,7 +440,13 @@ export function AssetPreviewModal({
         .catch(() => undefined);
       return;
     }
-    if (resolution?.playbackMode === "source") {
+    // Proxy only for codec/container failure — not MEDIA_ERR_NETWORK (2), which
+    // commonly appears when a Range fetch is cancelled during scrub.
+    const shouldProxyFallback =
+      resolution?.playbackMode === "source" &&
+      mediaError != null &&
+      (mediaError.code === 3 || mediaError.code === 4);
+    if (shouldProxyFallback) {
       setError(
         previewErrorDetail(resolution.errorCode, t) ??
           t("preview.videoFailed", { code: errorCode }),

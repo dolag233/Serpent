@@ -7,6 +7,7 @@ import {
 } from "./audio-waveform-timeline";
 import { iconActionAttrs } from "./icon-action-attrs";
 import { useT } from "./i18n";
+import { createMediaSeekSession } from "./media-seek-session";
 import {
   clampScrubTime,
   formatVideoClockTime,
@@ -32,6 +33,7 @@ const SCRUB_STEP_SECONDS = 5;
  * full-bleed waveform stage (CSS object-fit:cover over the 4:3 cover PNG) with
  * an in-waveform playhead timeline, plus play/pause and scrub. Reuses video
  * transport helpers for Space and scrub math. Grid/Inspector keep the 4:3 cover.
+ * Seek/scrub uses `createMediaSeekSession` (Serpent-jh2).
  */
 export function AudioPlayerControls({
   onError,
@@ -45,6 +47,15 @@ export function AudioPlayerControls({
   const waveformRef = useRef<HTMLDivElement>(null);
   const scrubbingPointerId = useRef<number | null>(null);
   const waveformScrubbingPointerId = useRef<number | null>(null);
+  const seekSessionRef = useRef(
+    createMediaSeekSession(
+      () => audioRef.current,
+      (time) => {
+        const audio = audioRef.current;
+        if (audio) audio.currentTime = time;
+      },
+    ),
+  );
   const [paused, setPaused] = useState(true);
   const [duration, setDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
@@ -71,10 +82,21 @@ export function AudioPlayerControls({
     return () => window.removeEventListener("keydown", onKeyDown, true);
   }, [togglePlayback]);
 
-  const seekToRatio = useCallback((ratio: number) => {
+  useEffect(() => {
+    const session = seekSessionRef.current;
+    session.cancel();
+    return () => session.cancel();
+  }, [src]);
+
+  const seekToRatio = useCallback((ratio: number, mode: "coalesce" | "commit") => {
     const audio = audioRef.current;
     if (!audio) return;
-    audio.currentTime = scrubTimeFromRatio(ratio, audio.duration);
+    const time = scrubTimeFromRatio(ratio, audio.duration);
+    if (mode === "commit") {
+      seekSessionRef.current.commit(time);
+      return;
+    }
+    seekSessionRef.current.request(time);
   }, []);
 
   const ratioFromPointer = useCallback((clientX: number): number => {
@@ -101,6 +123,11 @@ export function AudioPlayerControls({
   const playheadPercent = playheadLeftPercent(
     scrubRatio ?? playheadRatioFromTime(currentTime, duration),
   );
+
+  const applyKeySeek = (nextTime: number) => {
+    seekSessionRef.current.commit(nextTime);
+    setCurrentTime(nextTime);
+  };
 
   return (
     <div className="preview-audio-stage">
@@ -131,8 +158,7 @@ export function AudioPlayerControls({
           }
           if (nextTime === null) return;
           event.preventDefault();
-          audio.currentTime = nextTime;
-          setCurrentTime(nextTime);
+          applyKeySeek(nextTime);
         }}
         onPointerDown={(event) => {
           event.preventDefault();
@@ -141,18 +167,20 @@ export function AudioPlayerControls({
           event.currentTarget.setPointerCapture(event.pointerId);
           const ratio = ratioFromWaveformPointer(event.clientX);
           setScrubRatio(ratio);
-          seekToRatio(ratio);
+          seekToRatio(ratio, "coalesce");
         }}
         onPointerMove={(event) => {
           if (waveformScrubbingPointerId.current !== event.pointerId) return;
           const ratio = ratioFromWaveformPointer(event.clientX);
           setScrubRatio(ratio);
-          seekToRatio(ratio);
+          seekToRatio(ratio, "coalesce");
         }}
         onPointerUp={(event) => {
           if (waveformScrubbingPointerId.current !== event.pointerId) return;
           waveformScrubbingPointerId.current = null;
+          const ratio = ratioFromWaveformPointer(event.clientX);
           setScrubRatio(null);
+          seekToRatio(ratio, "commit");
           setCurrentTime(audioRef.current?.currentTime ?? 0);
         }}
         ref={waveformRef}
@@ -189,6 +217,16 @@ export function AudioPlayerControls({
         }}
         onPause={() => setPaused(true)}
         onPlay={() => setPaused(false)}
+        onSeeked={() => {
+          seekSessionRef.current.onSeeked();
+          if (
+            scrubbingPointerId.current === null &&
+            waveformScrubbingPointerId.current === null &&
+            audioRef.current
+          ) {
+            setCurrentTime(audioRef.current.currentTime);
+          }
+        }}
         onTimeUpdate={(event) => {
           if (
             scrubbingPointerId.current !== null ||
@@ -198,7 +236,7 @@ export function AudioPlayerControls({
           }
           setCurrentTime(event.currentTarget.currentTime);
         }}
-        preload="metadata"
+        preload="auto"
         ref={audioRef}
         src={src}
       >
@@ -245,8 +283,7 @@ export function AudioPlayerControls({
             }
             if (nextTime === null) return;
             event.preventDefault();
-            audio.currentTime = nextTime;
-            setCurrentTime(nextTime);
+            applyKeySeek(nextTime);
           }}
           onPointerDown={(event) => {
             event.preventDefault();
@@ -255,18 +292,20 @@ export function AudioPlayerControls({
             event.currentTarget.setPointerCapture(event.pointerId);
             const ratio = ratioFromPointer(event.clientX);
             setScrubRatio(ratio);
-            seekToRatio(ratio);
+            seekToRatio(ratio, "coalesce");
           }}
           onPointerMove={(event) => {
             if (scrubbingPointerId.current !== event.pointerId) return;
             const ratio = ratioFromPointer(event.clientX);
             setScrubRatio(ratio);
-            seekToRatio(ratio);
+            seekToRatio(ratio, "coalesce");
           }}
           onPointerUp={(event) => {
             if (scrubbingPointerId.current !== event.pointerId) return;
             scrubbingPointerId.current = null;
+            const ratio = ratioFromPointer(event.clientX);
             setScrubRatio(null);
+            seekToRatio(ratio, "commit");
             setCurrentTime(audioRef.current?.currentTime ?? 0);
           }}
           ref={trackRef}

@@ -99,6 +99,7 @@ import {
   createWebImportCollectionCommand,
   createWebImportCommand,
 } from "./web-ingestion";
+import { serpentProtocolSchemes } from "./serpent-protocol-privileges";
 
 if (process.env.SERPENT_E2E === "1") {
   const explicitUserDataPath = process.env.SERPENT_E2E_USER_DATA_PATH;
@@ -109,6 +110,10 @@ if (process.env.SERPENT_E2E === "1") {
       : path.join(tmpdir(), "serpent-e2e-user-data", String(process.pid)),
   );
 }
+
+// Before app.ready: stream privilege is required for seekable <video>/<audio>
+// over serpent:// Range responses (Serpent-jh2).
+protocol.registerSchemesAsPrivileged(serpentProtocolSchemes());
 
 app.enableSandbox();
 
@@ -2423,12 +2428,15 @@ async function startApplication(): Promise<void> {
           return createArtifactResponse(
             sourceResult.absolutePath,
             sourceResult.mimeType,
-            request.headers.get("range"),
-            (error) =>
-              logger?.error("serpent-protocol.source-stream", error, {
-                libraryId,
-                assetId: artifactId,
-              }),
+            {
+              rangeHeader: request.headers.get("range"),
+              signal: request.signal,
+              onStreamError: (error) =>
+                logger?.error("serpent-protocol.source-stream", error, {
+                  libraryId,
+                  assetId: artifactId,
+                }),
+            },
           );
         } catch (error) {
           logger?.error("serpent-protocol.source-read", error, {
@@ -2483,12 +2491,15 @@ async function startApplication(): Promise<void> {
         return createArtifactResponse(
           pathResult.absolutePath,
           mimeType,
-          request.headers.get("range"),
-          (error) =>
-            logger?.error("serpent-protocol.stream", error, {
-              libraryId,
-              artifactId,
-            }),
+          {
+            rangeHeader: request.headers.get("range"),
+            signal: request.signal,
+            onStreamError: (error) =>
+              logger?.error("serpent-protocol.stream", error, {
+                libraryId,
+                artifactId,
+              }),
+          },
         );
       } catch (error) {
         logger?.error("serpent-protocol.read", error, {

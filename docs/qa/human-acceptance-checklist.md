@@ -361,7 +361,7 @@
 | 2026-07-19 | AUDIO-001 / `Serpent-dxk` | 人类验收不通过 | 查看页波形错位；网格封面与画布底融合。 | 新开修复单；证据 audio-viewer/grid png。 |
 | 2026-07-19 | AUDIO-001 / `Serpent-muc` | 待人类验收 | 查看页 full-bleed 波形条 + 播放头；网格封面 raised 白底与画布可辨。 | 复验步骤见 AUDIO-001 行。 |
 
-| MEDIA-001 | 视频/音频跳转式播放（seek/scrub）稳定 | 人类验收不通过 | 打开视频与音频查看页；拖动进度条多次跳转播放 | 跳转后应继续正常播放，不频繁出现播放失败错误 | 严重缺陷 `Serpent-jh2` | 2026-07-19 用户点名：跳转式播放经常失败。 |
+| 2026-07-19 | MEDIA-001 / `Serpent-jh2` | 待人类验收 | 音视频 seek/scrub 失败已修（stream 特权 + 合并 seek）；请按 MEDIA-001 行复验。 | 见 F 节 MEDIA-001。 |
 | 2026-07-19 | TEXT-001 | 人类验收不通过 | 链接目录新建 txt 刷新未入库；扩格式；过滤「文本」。 | 修复 `Serpent-4l7`。 |
 | 2026-07-19 | PREF-001 / SMART-007 / MENU-023 | 不通过 | PREF/SMART 不通过；MENU-023 重命名交互/样式不通过。 | PREF/SMART 复验单；重命名 `Serpent-0rg`。 |
 | 2026-07-19 | FOLDER-010–013 | 部分通过 | .3/.4 通过；.1 单击进入不通过；.2 拼盘封面不通过；epic 计数/多选基线接受。 | 修复 `Serpent-829` / `Serpent-7ms`；混合动作 `Serpent-koy`。 |
