@@ -157,7 +157,7 @@
 | FILTER-017 | 同维度多值：默认点击覆盖，Shift+点击 OR 追加 | 人类验收通过 | 在颜色/评分/格式任一维度先点选项 A，再直接点选项 B（不按 Shift），观察 A 是否被替换；再按住 Shift 点选项 C，观察是否在 B 基础上叠加；再验证标签过滤面板的搜索结果点击同一语言 | 不按 Shift 时新点击的选项替换掉之前的选择（含标签）；按 Shift 点击在现有选择基础上增删该项；跨维度之间仍是且（AND）关系不变 | [开发日志](../development/2026-07-19-filter-toggle-or-development-log.md) / [multi-select 单测](../../tests/unit/dimension-filter-selection.test.ts) / 工单 Serpent-f86（REQ-FILTER-025） | 2026-07-19 用户确认通过。 |
 | FILTER-023 | 过滤面板 Shift 多选提示 | 人类验收通过 | 打开颜色/标签/形状/评分/格式过滤面板 | 底部均有「按住 Shift 可多选」；形状预设支持 Shift+点击 OR | `Serpent-9hh` / `Serpent-gp4` | 2026-07-19 用户确认通过。附带：提示字号再缩小（10px）。 |
 | FILTER-024 | 颜色色块选中框更细、间距更大 | 人类验收通过 | 打开颜色过滤，多选相邻色 | 选中环约 2px、色块间距更疏、无放大粘连 | `Serpent-aj6` | 2026-07-19 用户确认通过。 |
-| FILTER-025 | 维度按钮悬停与启用态可区分 | 待人类验收 | 启用「颜色」过滤；再仅悬停「标签」打开设置（不启用） | 启用态= accent-soft；仅 hover/打开设置=中性弱底，二者不可同色 | `Serpent-49f` / [证据](evidence/2026-07-19-acceptance/filter-025-hover-vs-active.png) | 2026-07-19 复验不通过：`is-open` 误用启用色。已改为仅 `is-active` 用 accent。待复验。 |
+| FILTER-025 | 维度按钮悬停与启用态可区分 | 人类验收通过 | 启用「颜色」过滤；再仅悬停「标签」打开设置（不启用） | 启用态= accent-soft；仅 hover/打开设置=中性弱底，二者不可同色 | `Serpent-49f` / [证据](evidence/2026-07-19-acceptance/filter-025-hover-vs-active.png) | 2026-07-19 用户确认通过（`is-open`≠启用色）。 |
 | INSPECT-011 | 描述框默认高度对齐作者/原链接 | 人类验收通过 | 打开 Inspector，空/单行描述与作者、原链接对照 | 空/单行描述框高度接近作者/原链接单行输入 | `Serpent-goe` / [autogrow](../../tests/unit/inspector-description-autogrow.test.ts) | 2026-07-19 用户确认通过。 |
 | TOAST-001 | 亮色主题警告 toast 可读 | 待人类验收 | 亮色主题下触发一条警告/错误 toast（如拖入无效链接） | 琥珀/橙统一色系，图标与文字同色，无米色底撞蓝橙 | `Serpent-k9g` / [证据](evidence/2026-07-19-acceptance/light-theme-warning-ugly.png) | 2026-07-19 用户：稍后有机会再验收。 |
 | SETTINGS-001 | 设置面板提示文字更小更淡 | 待人类验收 | 打开通用设置（主题/语言/画布等），看各段说明文案 | 提示约 10px、tertiary 淡色，弱于主标签 | `.app-settings-hint` | 2026-07-19 随 FILTER-023 附带反馈一并调整。 |
@@ -411,7 +411,7 @@
 | A11Y-001 | 查看页 nav/close 键盘焦点可见 | 人类验收通过 | 打开查看页；Tab 到上一张/下一张/关闭；可先等 chrome 渐隐再 Tab | 焦点控件有 accent 描边；idle 渐隐时聚焦仍可见 | [开发日志](../development/2026-07-19-keyboard-focus-model-development-log.md) / Serpent-vvn | 2026-07-19 用户确认通过（主观觉得非必须，保留）。 |
 | A11Y-002 | 资源库菜单与排序 listbox 键盘导航 | 人类验收通过 | 打开左上角资源库菜单与排序字段弹出层；用 ↑↓ Home/End、Esc | 箭头移动焦点；Esc 关闭并回到触发按钮 | 同上 / `roving-list-keyboard.test.ts` | 2026-07-19 用户确认通过。 |
 | A11Y-003 | 标签选择器单一焦点 + 对话框焦点陷阱 | 人类验收通过 | 右键→分配标签；箭头高亮选项且输入框保持焦点；打开设置/导出等对话框按 Tab | 选项不可 Tab 抢走焦点；对话框 Tab 不逃到背后 UI | 同上 | 2026-07-19 用户确认通过。 |
-| AUDIO-001 | 音频波形封面与查看页播放 | 待人类验收 | 导入音频；双击查看；播放/暂停/变速（若有）；观察播放头与拖尾 | 播放头竖向顶满波形区、颜色为星黄（`--rating-star`）；拖尾为滞留淡出采样（暂停消散、快播更长、慢播更短），非静态渐变块 | [trail 单测](../../tests/unit/audio-playhead-trail.test.ts) / `Serpent-r8a` / [证据](evidence/2026-07-19-acceptance/audio-playhead-trail-fail.png) | 2026-07-19 再验不通过：头顶不满、蓝指针、静态拖尾。已修粒子式拖尾+星黄满高。待复验。 |
+| AUDIO-001 | 音频波形封面与查看页播放 | 人类验收通过 | 导入音频；双击查看；播放/暂停/变速（若有）；观察播放头与拖尾 | 播放头竖向顶满波形区、颜色为星黄（`--rating-star`）；拖尾为滞留淡出采样（暂停消散、快播更长、慢播更短），非静态渐变块 | [trail 单测](../../tests/unit/audio-playhead-trail.test.ts) / `Serpent-r8a` / [证据](evidence/2026-07-19-acceptance/audio-playhead-trail-fail.png) | 2026-07-19 用户确认通过（星黄满高播放头 + 粒子式拖尾）。 |
 | TEXT-001 | 文本预览/行号查看与托管保存 | 人类验收不通过 | 托管导入 `.txt`/`.md`；在链接文件夹子目录新建 `.txt` 后刷新；看格式过滤 | 摘要/行号/托管可保存；链接新建文本刷新后出现；常见文本格式（txt/md/json/xml 等）支持；格式过滤统一「文本」 | [开发日志](../development/2026-07-19-text-asset-viewer-development-log.md) / 原 Serpent-sh7 / 修复 `Serpent-4l7` | 2026-07-19 用户不通过：链接目录新建未入库；需扩格式；过滤显示「文本」。 |
 | 2026-07-19 | FILTER-023/024 / DND-006 | 人类验收通过 | Shift 提示、色块描边、内部拖放不显导入。 | — |
-| 2026-07-19 | AUDIO-001 / FILTER-025 | 不通过后修复 | 星黄满高播放头 + 粒子拖尾；`is-open`≠启用色；设置提示更小更淡。 | `Serpent-r8a` / `Serpent-49f`；TOAST-001 稍后验。 |
+| 2026-07-19 | AUDIO-001 / FILTER-025 | 人类验收通过 | 星黄满高播放头 + 粒子拖尾；启用态与 hover/open 区分。 | `Serpent-r8a` / `Serpent-49f`。SETTINGS-001 / TOAST-001 / NAV-003 仍待验。 |
