@@ -2790,6 +2790,13 @@ body.serpent-modal-open .app-shell {
   word-break: break-word;
 }
 .preview-video {
+  /* Centered via left/top 50% + translate −50% (not margin auto): keeps the
+     layout origin scale-independent so the translate-based zoom anchor
+     holds at overflow; see .preview-image (Serpent-yo0n / Serpent-190). */
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  translate: -50% -50%;
   width: auto;
   height: auto;
   max-width: 100%;
@@ -2842,6 +2849,7 @@ body.serpent-modal-open .app-shell {
   backdrop-filter: blur(10px);
 }
 .preview-video-playpause,
+.preview-video-fit,
 .preview-video-fullscreen {
   display: grid;
   flex: 0 0 auto;
@@ -2857,10 +2865,17 @@ body.serpent-modal-open .app-shell {
   cursor: pointer;
 }
 .preview-video-playpause:hover,
+.preview-video-fit:hover,
 .preview-video-fullscreen:hover {
   background: color-mix(in srgb, var(--accent) 16%, transparent);
 }
 .preview-video-time {
+  flex: 0 0 auto;
+  color: var(--secondary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.preview-video-zoom-label {
   flex: 0 0 auto;
   color: var(--secondary);
   font-variant-numeric: tabular-nums;
@@ -2923,26 +2938,40 @@ body.serpent-modal-open .app-shell {
   background: var(--pane);
   color: var(--text);
 }
-.preview-image-viewport {
+.preview-image-viewport,
+.preview-video-viewport {
   position: absolute;
-  display: grid;
   overflow: hidden;
   cursor: grab;
   inset: 0;
-  place-items: center;
   touch-action: none;
 }
-.preview-image-viewport.is-pannable {
+.preview-image-viewport.is-pannable,
+.preview-video-viewport.is-pannable {
   cursor: grab;
 }
-.preview-image-viewport.is-pannable:active {
+.preview-image-viewport.is-pannable:active,
+.preview-video-viewport.is-pannable:active {
   cursor: grabbing;
 }
-.preview-image-viewport:active {
+.preview-image-viewport:active,
+.preview-video-viewport:active {
   cursor: grabbing;
 }
 .preview-image {
   /* Size comes from natural dimensions × viewer scale (REQ-VIEW-006). */
+  /* left/top 50% + translate −50% keeps the media centered even when it
+     overflows the viewport: percentage translate is relative to the media's
+     own box, so the layout origin never depends on scale. Grid/flex "safe"
+     centering and abs margin-auto both pin the start edge on overflow
+     (marginLeft computes to 0 for replaced elements), shifting the origin
+     by (media−viewport)/2 and breaking the pointer-zoom anchor
+     (Serpent-yo0n). The pan offset stays in the inline `transform`, which
+     composes after the `translate` property. */
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  translate: -50% -50%;
   max-width: none;
   max-height: none;
   pointer-events: none;

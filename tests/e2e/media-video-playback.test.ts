@@ -332,6 +332,42 @@ test("plays a direct MP4 and a generated WebM fallback through the asset viewer"
       .poll(() => directVideo.getAttribute("src"), { timeout: 30_000 })
       .toMatch(/^serpent:\/\/source\//);
     await expectPlayableAndSeekable(directVideo);
+    // Video zoom/pan/fit mirrors the image viewer (Serpent-190): the mouse
+    // wheel zooms, a drag pans while zoomed, and Fit restores fit-to-window.
+    const videoFitBox = await directVideo.boundingBox();
+    expect(videoFitBox).not.toBeNull();
+    const videoViewport = directViewer.locator(".preview-video-viewport");
+    await videoViewport.hover();
+    const videoViewportBox = await videoViewport.boundingBox();
+    await window.mouse.wheel(0, -400);
+    await expect
+      .poll(async () => (await directVideo.boundingBox())?.width ?? 0)
+      .toBeGreaterThan(videoFitBox!.width * 1.2);
+    const videoZoomBox = await directVideo.boundingBox();
+    const panOrigin = {
+      x: videoViewportBox!.x + videoViewportBox!.width / 2,
+      y: videoViewportBox!.y + videoViewportBox!.height / 2,
+    };
+    await window.mouse.move(panOrigin.x, panOrigin.y);
+    await window.mouse.down();
+    await window.mouse.move(panOrigin.x + 72, panOrigin.y + 48, { steps: 6 });
+    await window.mouse.up();
+    await expect
+      .poll(async () => {
+        const box = await directVideo.boundingBox();
+        return box ? box.x - videoZoomBox!.x : 0;
+      })
+      .toBeGreaterThan(60);
+    await expect
+      .poll(async () => {
+        const box = await directVideo.boundingBox();
+        return box ? box.y - videoZoomBox!.y : 0;
+      })
+      .toBeGreaterThan(36);
+    await directViewer.getByRole("button", { name: "适应" }).click();
+    await expect
+      .poll(async () => (await directVideo.boundingBox())?.width ?? 0)
+      .toBeCloseTo(videoFitBox!.width, 0);
     // Viewer chrome intentionally fades while idle. Real pointer movement
     // wakes it before the close control is clicked.
     await directVideo.hover();

@@ -513,6 +513,8 @@ export function AssetPreviewModal({
               onError={handlePlaybackError}
               onFullscreen={() => void enterFullscreen()}
               onReady={() => setDirectApproved(true)}
+              onSwipeNext={onNext}
+              onSwipePrevious={onPrevious}
               posterUrl={resolution.posterUrl}
               src={resolution.url}
             />

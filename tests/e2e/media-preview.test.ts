@@ -170,19 +170,78 @@ test("generates a decoded thumbnail and keeps asset viewer context coherent", as
       window.getByRole("button", { name: "导入文件", exact: true }).first(),
     ).toBeHidden();
     await expectImageDecoded(preview.locator("img.preview-image"));
-    await preview.locator(".preview-image-viewport").hover();
-    const fitBox = await preview.locator("img.preview-image").boundingBox();
+    const imageLocator = preview.locator("img.preview-image");
+    const fitBox = await imageLocator.boundingBox();
     expect(fitBox).not.toBeNull();
+    // Plain mouse wheel zooms anchored at the pointer (Serpent-yo0n). Hover
+    // off-center along the axis that fills the viewport — that axis always
+    // has pan room once zoomed, so pan clamping cannot override the anchor.
+    const viewportLocator = preview.locator(".preview-image-viewport");
+    const viewportBox = await viewportLocator.boundingBox();
+    const slackX = Math.abs(fitBox!.width - viewportBox!.width);
+    const slackY = Math.abs(fitBox!.height - viewportBox!.height);
+    const hoverX =
+      slackX <= slackY ? viewportBox!.width * 0.62 : viewportBox!.width * 0.5;
+    const hoverY =
+      slackX <= slackY ? viewportBox!.height * 0.5 : viewportBox!.height * 0.62;
+    await viewportLocator.hover({ position: { x: hoverX, y: hoverY } });
+    const pointerX = viewportBox!.x + hoverX;
+    const pointerY = viewportBox!.y + hoverY;
     await window.mouse.wheel(0, -200);
     await expect
-      .poll(async () => (await preview.locator("img.preview-image").boundingBox())?.width)
-      .toBeCloseTo(fitBox!.width, 0);
+      .poll(async () => (await imageLocator.boundingBox())?.width ?? 0)
+      .toBeGreaterThan(fitBox!.width);
+    // The image point under the pointer stays fixed: for box origin b and
+    // scale ratio r, b' = p − (p − b) × r on both axes.
+    const wheelBox = await imageLocator.boundingBox();
+    const wheelRatio = wheelBox!.width / fitBox!.width;
+    expect(
+      Math.abs(wheelBox!.x - (pointerX - (pointerX - fitBox!.x) * wheelRatio)),
+    ).toBeLessThanOrEqual(2);
+    expect(
+      Math.abs(wheelBox!.y - (pointerY - (pointerY - fitBox!.y) * wheelRatio)),
+    ).toBeLessThanOrEqual(2);
+    // The anchor is frozen at the gesture start: drifting the pointer
+    // mid-gesture does not move the zoom center (Serpent-yo0n, user ruling).
+    const driftOffsetX = viewportBox!.width * 0.15;
+    const driftOffsetY = viewportBox!.height * 0.15;
+    await viewportLocator.hover({
+      position: { x: hoverX + driftOffsetX, y: hoverY + driftOffsetY },
+    });
+    await window.mouse.wheel(0, -120);
+    const driftBox = await imageLocator.boundingBox();
+    const driftRatio = driftBox!.width / fitBox!.width;
+    expect(
+      Math.abs(driftBox!.x - (pointerX - (pointerX - fitBox!.x) * driftRatio)),
+    ).toBeLessThanOrEqual(2);
+    expect(
+      Math.abs(driftBox!.y - (pointerY - (pointerY - fitBox!.y) * driftRatio)),
+    ).toBeLessThanOrEqual(2);
+    // After the gesture idles out, the next scroll re-anchors at the current
+    // pointer (asserted on the fitted axis, where pan room is guaranteed).
+    await window.waitForTimeout(600);
+    const secondPointerX = viewportBox!.x + hoverX + driftOffsetX;
+    await window.mouse.wheel(0, -120);
+    const reanchorBox = await imageLocator.boundingBox();
+    const reanchorRatio = reanchorBox!.width / driftBox!.width;
+    expect(
+      Math.abs(
+        reanchorBox!.x -
+          (secondPointerX - (secondPointerX - driftBox!.x) * reanchorRatio),
+      ),
+    ).toBeLessThanOrEqual(2);
+    // Ctrl+wheel (pinch convention) keeps zooming.
     await window.keyboard.down("Control");
     await window.mouse.wheel(0, -400);
     await window.keyboard.up("Control");
     await expect
-      .poll(async () => (await preview.locator("img.preview-image").boundingBox())?.width)
-      .toBeGreaterThan(fitBox!.width);
+      .poll(async () => (await imageLocator.boundingBox())?.width ?? 0)
+      .toBeGreaterThan(reanchorBox!.width);
+    // F returns to fit-to-window.
+    await window.keyboard.press("f");
+    await expect
+      .poll(async () => (await imageLocator.boundingBox())?.width ?? 0)
+      .toBeCloseTo(fitBox!.width, 0);
     await window.keyboard.press("ArrowRight");
     const nextPreview = window.getByRole("region", {
       name: "next-automatic.png 查看页面",

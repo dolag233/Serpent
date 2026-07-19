@@ -8,6 +8,7 @@ export default tseslint.config(
     ignores: [
       '.vite/**',
       '.claude/**',
+      '.worktrees/**',
       '.media-build/**',
       'artifacts/**',
       'dist/**',

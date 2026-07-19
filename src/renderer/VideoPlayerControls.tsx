@@ -4,6 +4,7 @@ import { Icon } from "./Icons";
 import { iconActionAttrs } from "./icon-action-attrs";
 import { useT } from "./i18n";
 import { createMediaSeekSession } from "./media-seek-session";
+import { useViewerZoomPan } from "./use-viewer-zoom-pan";
 import {
   clampScrubTime,
   formatVideoClockTime,
@@ -21,6 +22,8 @@ export interface VideoPlayerControlsProps {
   onError(event: SyntheticEvent<HTMLVideoElement>): void;
   onFullscreen(): void;
   onReady?(): void;
+  onSwipeNext?: () => void;
+  onSwipePrevious?: () => void;
   posterUrl?: string;
   src: string;
 }
@@ -42,12 +45,25 @@ export function VideoPlayerControls({
   onError,
   onFullscreen,
   onReady,
+  onSwipeNext,
+  onSwipePrevious,
   posterUrl,
   src,
 }: VideoPlayerControlsProps) {
   const t = useT();
   const videoRef = useRef<HTMLVideoElement>(null);
   const trackRef = useRef<HTMLDivElement>(null);
+  // Zoom/pan/fit mirrors the image viewer (Serpent-190). No F/Space fit
+  // keybind here: Space toggles playback, and D/F are reserved for video
+  // frame stepping (Serpent-sk1).
+  const {
+    fitToWindow,
+    measureAndFit,
+    natural,
+    view,
+    viewportPointerHandlers,
+    viewportRef,
+  } = useViewerZoomPan({ onSwipeNext, onSwipePrevious });
   const scrubbingPointerId = useRef<number | null>(null);
   const seekSessionRef = useRef(
     createMediaSeekSession(
@@ -119,41 +135,66 @@ export function VideoPlayerControls({
   const displayTime =
     scrubRatio !== null ? scrubTimeFromRatio(scrubRatio, duration) : currentTime;
 
+  const displayW = natural.w > 0 ? natural.w * view.scale : undefined;
+  const displayH = natural.h > 0 ? natural.h * view.scale : undefined;
+  const videoStyle =
+    displayW !== undefined && displayH !== undefined
+      ? {
+          width: displayW,
+          height: displayH,
+          maxWidth: "none",
+          maxHeight: "none",
+          transform: `translate(${view.x}px, ${view.y}px)`,
+          transformOrigin: "center center",
+        }
+      : undefined;
+
   return (
     <div className="preview-video-stage">
-      <video
-        autoPlay
-        className="preview-video"
-        onDurationChange={(event) =>
-          setDuration(event.currentTarget.duration || 0)
-        }
-        onEnded={() => setPaused(true)}
-        onError={onError}
-        onLoadedMetadata={(event) => {
-          const video = event.currentTarget;
-          video.playbackRate = playbackRate;
-          setDuration(video.duration || 0);
-          onReady?.();
-        }}
-        onPause={() => setPaused(true)}
-        onPlay={() => setPaused(false)}
-        onSeeked={() => {
-          seekSessionRef.current.onSeeked();
-          if (scrubbingPointerId.current === null && videoRef.current) {
-            setCurrentTime(videoRef.current.currentTime);
-          }
-        }}
-        onTimeUpdate={(event) => {
-          if (scrubbingPointerId.current !== null) return;
-          setCurrentTime(event.currentTarget.currentTime);
-        }}
-        poster={posterUrl}
-        preload="auto"
-        ref={videoRef}
-        src={src}
+      <div
+        className="preview-video-viewport is-pannable"
+        ref={viewportRef}
+        {...viewportPointerHandlers}
       >
-        {t("preview.videoUnsupported")}
-      </video>
+        <video
+          autoPlay
+          className="preview-video"
+          onDurationChange={(event) =>
+            setDuration(event.currentTarget.duration || 0)
+          }
+          onEnded={() => setPaused(true)}
+          onError={onError}
+          onLoadedMetadata={(event) => {
+            const video = event.currentTarget;
+            video.playbackRate = playbackRate;
+            setDuration(video.duration || 0);
+            measureAndFit("reset", {
+              w: video.videoWidth,
+              h: video.videoHeight,
+            });
+            onReady?.();
+          }}
+          onPause={() => setPaused(true)}
+          onPlay={() => setPaused(false)}
+          onSeeked={() => {
+            seekSessionRef.current.onSeeked();
+            if (scrubbingPointerId.current === null && videoRef.current) {
+              setCurrentTime(videoRef.current.currentTime);
+            }
+          }}
+          onTimeUpdate={(event) => {
+            if (scrubbingPointerId.current !== null) return;
+            setCurrentTime(event.currentTarget.currentTime);
+          }}
+          poster={posterUrl}
+          preload="auto"
+          ref={videoRef}
+          src={src}
+          style={videoStyle}
+        >
+          {t("preview.videoUnsupported")}
+        </video>
+      </div>
       <div className="preview-video-controls preview-chrome-fade">
         <button
           className="preview-video-playpause"
@@ -268,6 +309,19 @@ export function VideoPlayerControls({
             ))}
           </select>
         </label>
+        {natural.w > 0 && (
+          <span aria-hidden="true" className="preview-video-zoom-label">
+            {Math.round(view.scale * 100)}%
+          </span>
+        )}
+        <button
+          className="preview-video-fit"
+          onClick={fitToWindow}
+          type="button"
+          {...iconActionAttrs(t("preview.fitWindow"))}
+        >
+          <Icon name="fit-window" size={14} />
+        </button>
         <button
           className="preview-video-fullscreen"
           onClick={onFullscreen}
