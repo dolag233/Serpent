@@ -3148,8 +3148,32 @@ select.ai-config-input {
   cursor: default;
 }
 
+.app-settings-entry {
+  display: grid;
+  width: var(--shell-control-height);
+  height: var(--shell-control-height);
+  flex: 0 0 auto;
+  place-items: center;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--secondary);
+  cursor: pointer;
+}
+
+.app-settings-entry:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.app-settings-entry:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
 .app-settings-dialog {
-  width: min(380px, calc(100vw - 40px));
+  width: min(420px, calc(100vw - 40px));
 }
 
 .app-settings-section {
@@ -3158,6 +3182,17 @@ select.ai-config-input {
 
 .app-settings-section:first-of-type {
   margin-top: 0;
+}
+
+.app-settings-hint {
+  margin: 4px 0 0;
+  color: var(--secondary);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.app-settings-sublabel {
+  margin-top: 12px;
 }
 
 .app-settings-option-group {
@@ -3189,9 +3224,23 @@ select.ai-config-input {
 
 .app-settings-check-row-group {
   display: flex;
-  flex-wrap: wrap;
-  gap: 4px 16px;
-  margin-top: 10px;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.app-settings-check-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.app-settings-field-hint {
+  color: var(--secondary);
+  font-size: 11px;
+  line-height: 1.35;
+  font-weight: 400;
 }
 
 .dialog-close {

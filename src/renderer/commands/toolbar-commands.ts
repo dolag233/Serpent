@@ -130,9 +130,9 @@ export const toolbarCommandDefinitions: readonly ToolbarCommandDefinition[] = [
     run: (ctx) => ctx.actions.openAiSettings(),
   },
   {
-    // REQ-PREF-001: theme/language/canvas prefs are app-level (not
-    // library-scoped), so unlike ai-settings/background-jobs this stays
-    // visible and enabled with no library open.
+    // REQ-PREF-001 / Serpent-97l: app-level prefs. UI entry is the gear
+    // beside the library switcher (not the canvas toolbar); this command
+    // remains for command-palette / keyboard paths.
     id: 'workspace.app-settings',
     title: (ctx) => t(ctx, 'toolbar.appSettings'),
     group: 'organize',

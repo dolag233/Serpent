@@ -16,3 +16,10 @@
 ## 验收 ID
 
 - PREF-001、SMART-007、MENU-023（见 human-acceptance-checklist）。
+
+## Serpent-97l PREF-001 复验修复
+
+- 设置齿轮移到左上角资源库切换器旁（`AppSettingsEntry`）；画布工具栏不再放设置入口。
+- 资源库下拉去掉主题/语言（设置仅经专用入口）。
+- 设置面板为每项补充说明文案；去掉右下角关闭钮；支持点 backdrop / Esc 关闭。
+- 单测：`tests/unit/app-settings-sections.test.ts`；清单 PREF-001 → 待人类验收。

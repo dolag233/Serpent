@@ -619,7 +619,15 @@ export const en = {
   },
   settings: {
     title: "Settings",
-    viewMode: "Browse view"
+    themeHint: "Controls the app’s light or dark appearance. Changes apply immediately.",
+    languageHint: "Controls the interface language. Changes apply immediately.",
+    viewMode: "Browse view",
+    canvasHint: "Controls how assets are arranged on the canvas. Changes apply immediately.",
+    cardFields: "Card display fields",
+    cardFieldsHint: "Controls which details appear on canvas asset cards. Toggles update the canvas immediately.",
+    showFileNameHint: "Show the file name on canvas cards",
+    showFileSizeHint: "Show the file size on canvas cards",
+    showModifiedDateHint: "Show the modified date on canvas cards"
   },
   preview: {
     ffmpegRequired: "This install is missing FFmpeg, so a video playback proxy cannot be generated. Install or configure FFmpeg and try again.",

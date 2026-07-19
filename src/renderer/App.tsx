@@ -73,6 +73,7 @@ import { CollectionEditorDialog } from "./CollectionEditorDialog";
 import { ExtensionPairingDialog } from "./ExtensionPairingDialog";
 import { AiConfigDialog } from "./AiConfigDialog";
 import { AppSettingsDialog } from "./AppSettingsDialog";
+import { AppSettingsEntry } from "./AppSettingsEntry";
 import { MediaJobsDialog } from "./MediaJobsDialog";
 
 import {
@@ -5149,6 +5150,10 @@ function AppInner() {
             onOpenRecent={(path) => void openRecentLibrary(path)}
             onPasteImage={() => void pasteClipboardImage()}
             recentLibraries={recentLibraries}
+          />
+          <AppSettingsEntry
+            disabled={busy}
+            onOpen={() => setAppSettingsOpen(true)}
           />
         </div>
         <ScopeBreadcrumbs

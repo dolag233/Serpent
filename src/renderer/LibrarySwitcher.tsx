@@ -10,12 +10,11 @@ import {
   type ImportMenuCopy,
 } from "./browse-empty-state";
 import { Icon } from "./Icons";
-import { useLocale, type LocalePreference } from "./i18n";
+import { useLocale } from "./i18n";
 import {
   focusFirstRovingItem,
   handleRovingListKeyDown,
 } from "./roving-list-keyboard";
-import { useTheme, type ThemePreference } from "./theme";
 
 const MENU_ITEM_SELECTOR = '[role="menuitem"], [role="menuitemradio"]';
 
@@ -85,8 +84,7 @@ export function LibrarySwitcher({
   onImportLibrary,
   onImportZip,
 }: LibrarySwitcherProps) {
-  const { t, preference: localePreference, setLocale } = useLocale();
-  const { preference: themePreference, setTheme } = useTheme();
+  const { t } = useLocale();
   const [open, setOpen] = useState(false);
   const [keyboardNav, setKeyboardNav] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -130,15 +128,6 @@ export function LibrarySwitcher({
       cancelAnimationFrame(raf);
     };
   }, [open]);
-
-  function chooseLocale(next: LocalePreference) {
-    setLocale(next);
-    closeMenu(true);
-  }
-
-  function chooseTheme(next: ThemePreference) {
-    setTheme(next);
-  }
 
   function runMenuAction(handler: () => void) {
     closeMenu(true);
@@ -334,86 +323,6 @@ export function LibrarySwitcher({
               </div>
             </>
           )}
-          <div aria-hidden="true" className="library-switcher-divider" />
-          <div
-            aria-label={t("shell.language")}
-            className="library-switcher-section"
-            role="group"
-          >
-            <div className="library-switcher-section-label">
-              {t("shell.language")}
-            </div>
-            <button
-              aria-checked={localePreference === "system"}
-              className="library-switcher-item"
-              onClick={() => chooseLocale("system")}
-              role="menuitemradio"
-              tabIndex={-1}
-              type="button"
-            >
-              {t("shell.languageSystem")}
-            </button>
-            <button
-              aria-checked={localePreference === "zh-CN"}
-              className="library-switcher-item"
-              onClick={() => chooseLocale("zh-CN")}
-              role="menuitemradio"
-              tabIndex={-1}
-              type="button"
-            >
-              {t("shell.languageZh")}
-            </button>
-            <button
-              aria-checked={localePreference === "en"}
-              className="library-switcher-item"
-              onClick={() => chooseLocale("en")}
-              role="menuitemradio"
-              tabIndex={-1}
-              type="button"
-            >
-              {t("shell.languageEn")}
-            </button>
-          </div>
-          <div aria-hidden="true" className="library-switcher-divider" />
-          <div
-            aria-label={t("shell.theme")}
-            className="library-switcher-section"
-            role="group"
-          >
-            <div className="library-switcher-section-label">
-              {t("shell.theme")}
-            </div>
-            <button
-              aria-checked={themePreference === "dark"}
-              className="library-switcher-item"
-              onClick={() => chooseTheme("dark")}
-              role="menuitemradio"
-              tabIndex={-1}
-              type="button"
-            >
-              {t("shell.themeDark")}
-            </button>
-            <button
-              aria-checked={themePreference === "light"}
-              className="library-switcher-item"
-              onClick={() => chooseTheme("light")}
-              role="menuitemradio"
-              tabIndex={-1}
-              type="button"
-            >
-              {t("shell.themeLight")}
-            </button>
-            <button
-              aria-checked={themePreference === "system"}
-              className="library-switcher-item"
-              onClick={() => chooseTheme("system")}
-              role="menuitemradio"
-              tabIndex={-1}
-              type="button"
-            >
-              {t("shell.themeSystem")}
-            </button>
-          </div>
           {recentLibraries.length > 0 && (
             <>
               <div aria-hidden="true" className="library-switcher-divider" />
