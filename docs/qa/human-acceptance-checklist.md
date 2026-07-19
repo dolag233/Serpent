@@ -415,3 +415,4 @@
 | TEXT-001 | 文本预览/行号查看与托管保存 | 人类验收不通过 | 托管导入 `.txt`/`.md`；在链接文件夹子目录新建 `.txt` 后刷新；看格式过滤 | 摘要/行号/托管可保存；链接新建文本刷新后出现；常见文本格式（txt/md/json/xml 等）支持；格式过滤统一「文本」 | [开发日志](../development/2026-07-19-text-asset-viewer-development-log.md) / 原 Serpent-sh7 / 修复 `Serpent-4l7` | 2026-07-19 用户不通过：链接目录新建未入库；需扩格式；过滤显示「文本」。 |
 | 2026-07-19 | FILTER-023/024 / DND-006 | 人类验收通过 | Shift 提示、色块描边、内部拖放不显导入。 | — |
 | 2026-07-19 | AUDIO-001 / FILTER-025 | 人类验收通过 | 星黄满高播放头 + 粒子拖尾；启用态与 hover/open 区分。 | `Serpent-r8a` / `Serpent-49f`。SETTINGS-001 / TOAST-001 / NAV-003 仍待验。 |
+| 2026-07-19 | 导出/亮色/角标/导入库/模态 | 已开单未实现 | 亮色导出进度看不清+取消按钮不协调；取消选目录后进度 UI 残留；小卡片藏角标；无库「导入资源库」；最高层模态吞事件。 | `Serpent-v25` / `tye` / `7zt` / `0wo` / `0rk`；证据 export-progress-light-contrast / asset-card-badges-too-small；详见 backlog「2026-07-19 下午反馈」。 |

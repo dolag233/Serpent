@@ -438,6 +438,18 @@ FolderBrowseEntry
 | 智能合集产品定位四不像 | SMART-007 通过后待澄清 | `Serpent-5nk` |
 | 链接位置从访达导入再次确认失败 | LINK-005 保持不通过 | `Serpent-d3h` |
 
+### 2026-07-19 下午反馈（导出 / 亮色 / 角标 / 导入库 / 模态）
+
+| 需求/缺陷 | 说明 | 优先级 | 工单 |
+| --- | --- | --- | --- |
+| REQ-THEME-010 | 系统性检查亮色 UI 对比度；导出进度面板文字看不清；「取消导出」按钮与主题不协调 | P1 | `Serpent-v25` |
+| REQ-EXPORT-001 | 选择导出目录时取消，导出进度/提示 UI 有概率残留 | P1 | `Serpent-tye` |
+| REQ-CANVAS-019 | 资产预览过小时不显示角标（避免遮挡预览） | P2 | `Serpent-7zt` |
+| REQ-LIB-001 | 无库起始页增加「导入资源库」（文件夹或 zip），并选择本地保存路径 | P2 | `Serpent-0wo` |
+| REQ-SHELL-022 | 最高层模态/面板打开时吞掉底层全部指针事件（含过滤条 hover 打开） | P1 | `Serpent-0rk` |
+
+证据：`docs/qa/evidence/2026-07-19-acceptance/export-progress-light-contrast.png`、`asset-card-badges-too-small.png`。
+
 ## 验收与证据要求
 
 - 每个切片先完成可操作原型或真实应用路径，再进入实现；Eagle 只作为方向参考。
