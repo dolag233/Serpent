@@ -89,6 +89,10 @@ import {
 import { useBatchActions } from "./useBatchActions";
 import { useShellFileActions } from "./use-shell-file-actions";
 import { useAssetDragDropHandlers } from "./use-asset-drag-drop-handlers";
+import { useDialogEscapeDismiss } from "./use-dialog-escape-dismiss";
+import { useExternalImportHandlers } from "./use-external-import-handlers";
+import { importSummaryMessage } from "./import-summary";
+import type { DialogEscapeSnapshot } from "./dialog-escape-stack";
 import { useAssetRename } from "./useAssetRename";
 import { useInlineFolderEdit } from "./use-inline-folder-edit";
 import { usePanelResize } from "./use-panel-resize";
@@ -496,8 +500,6 @@ function AppInner() {
   const [nameDecision, setNameDecision] = useState<
     "keep-both" | "replace" | "skip"
   >("keep-both");
-  const [externalDropActive, setExternalDropActive] = useState(false);
-  const externalDragDepth = useRef(0);
   const [leftOpen, setLeftOpen] = useState(() => window.innerWidth > 800);
   const [rightOpen, setRightOpen] = useState(() => window.innerWidth > 1020);
   // REQ-SHELL-007 / REQ-SHELL-011: draggable nav/inspector pane widths + auto-hide.
@@ -2799,6 +2801,31 @@ function AppInner() {
   });
 
   const {
+    externalDropActive,
+    pasteClipboardImage,
+    importDroppedFiles,
+    handleExternalDragEnter,
+    handleExternalDragLeave,
+    handleExternalDragOver,
+    handleExternalDrop,
+    handleTargetExternalDragOver,
+    handleTargetExternalDrop,
+  } = useExternalImportHandlers({
+    api: api ?? null,
+    library,
+    busy,
+    activeCollectionId,
+    previewBlocksDrop: Boolean(previewAsset),
+    managedImportTargetFolderIdRef,
+    reloadCurrentContent,
+    reloadCurrentContentRef,
+    setUiState,
+    setError,
+    setNotice,
+    setConflicts,
+  });
+
+  const {
     assetRenameDialog,
     openAssetRename,
     changeAssetRenameValue,
@@ -3506,173 +3533,13 @@ function AppInner() {
         setConflicts(result.value);
         return;
       }
-      setNotice(importSummary(result.value, locale));
+      setNotice(importSummaryMessage(result.value, locale));
       await reloadCurrentContent();
     } catch (caught) {
       setError(toMessage(caught, t("toast.importFailed"), locale));
     } finally {
       setUiState("ready");
     }
-  }
-
-  function currentManagedTargetFolderId(): string | undefined {
-    return managedImportTargetFolderIdRef.current;
-  }
-
-  async function applyDesktopImportResult(
-    result: Awaited<ReturnType<SerpentLibraryApi["importDropped"]>>,
-  ): Promise<void> {
-    if (!result.ok) {
-      // Collection assignment is deliberately a post-import relation. Make
-      // the durable partial success visible instead of leaving a stale grid.
-      if (result.error.code === "IMPORT_COLLECTION_ASSIGN_FAILED") {
-        await reloadCurrentContent();
-      }
-      throw new LibraryOperationError(result.error);
-    }
-    if ("importId" in result.value) {
-      setConflicts(result.value);
-      return;
-    }
-    setNotice(importSummary(result.value, locale));
-    await reloadCurrentContent();
-  }
-
-  async function importDroppedFiles(
-    files: File[],
-    targetFolderId: string | null | undefined = currentManagedTargetFolderId(),
-    targetCollectionId = activeCollectionId ?? undefined,
-    webPayload?: { html: string; uriList: string },
-  ) {
-    if (!api || !library || (files.length === 0 && !webPayload) || busy) return;
-    setUiState("importing");
-    setError(null);
-    setNotice(null);
-    try {
-      const result = await api.importDropped({
-        libraryId: library.libraryId,
-        targetFolderId: targetFolderId ?? undefined,
-        targetCollectionId,
-        files,
-        html: webPayload?.html,
-        uriList: webPayload?.uriList,
-      });
-      await applyDesktopImportResult(result);
-    } catch (caught) {
-      setError(toMessage(caught, t("toast.dropImportFailed"), locale));
-    } finally {
-      setUiState("ready");
-      setExternalDropActive(false);
-      externalDragDepth.current = 0;
-    }
-  }
-
-  const pasteClipboardImage = useCallback(async () => {
-    if (!api || !library || busy) return;
-    setUiState("importing");
-    setError(null);
-    setNotice(null);
-    try {
-      const result = await api.pasteClipboardImage({
-        libraryId: library.libraryId,
-        targetFolderId: managedImportTargetFolderIdRef.current,
-        targetCollectionId: activeCollectionId ?? undefined,
-      });
-      if (!result.ok) {
-        if (result.error.code === "IMPORT_COLLECTION_ASSIGN_FAILED") {
-          await reloadCurrentContentRef.current();
-        }
-        throw new LibraryOperationError(result.error);
-      }
-      if ("importId" in result.value) {
-        setConflicts(result.value);
-      } else {
-        setNotice(importSummary(result.value, locale));
-        await reloadCurrentContentRef.current();
-      }
-    } catch (caught) {
-      setError(toMessage(caught, t("toast.clipboardImportFailed"), locale));
-    } finally {
-      setUiState("ready");
-    }
-  }, [activeCollectionId, api, busy, library, locale, setError, setNotice, t]);
-
-  function handleExternalDragEnter(event: React.DragEvent<HTMLElement>) {
-    if (previewAsset) {
-      event.preventDefault();
-      setExternalDropActive(false);
-      return;
-    }
-    if (!library || !supportsExternalImportTransfer(event.dataTransfer)) return;
-    event.preventDefault();
-    externalDragDepth.current += 1;
-    setExternalDropActive(true);
-  }
-
-  function handleExternalDragLeave(event: React.DragEvent<HTMLElement>) {
-    if (!supportsExternalImportTransfer(event.dataTransfer)) return;
-    externalDragDepth.current = Math.max(0, externalDragDepth.current - 1);
-    if (externalDragDepth.current === 0) setExternalDropActive(false);
-  }
-
-  function handleExternalDragOver(event: React.DragEvent<HTMLElement>) {
-    if (previewAsset) {
-      event.preventDefault();
-      event.dataTransfer.dropEffect = "none";
-      return;
-    }
-    if (!library || !supportsExternalImportTransfer(event.dataTransfer)) return;
-    event.preventDefault();
-    event.dataTransfer.dropEffect = "copy";
-  }
-
-  function handleExternalDrop(event: React.DragEvent<HTMLElement>) {
-    if (previewAsset) {
-      event.preventDefault();
-      externalDragDepth.current = 0;
-      setExternalDropActive(false);
-      return;
-    }
-    if (!supportsExternalImportTransfer(event.dataTransfer)) return;
-    event.preventDefault();
-    externalDragDepth.current = 0;
-    setExternalDropActive(false);
-    const payload = externalImportPayload(event.dataTransfer);
-    void importDroppedFiles(payload.files, undefined, undefined, payload);
-  }
-
-  function handleTargetExternalDragOver(event: React.DragEvent<HTMLElement>) {
-    if (previewAsset) {
-      event.preventDefault();
-      event.dataTransfer.dropEffect = "none";
-      return;
-    }
-    if (!library || !supportsExternalImportTransfer(event.dataTransfer)) return;
-    event.preventDefault();
-    event.dataTransfer.dropEffect = "copy";
-  }
-
-  function handleTargetExternalDrop(
-    event: React.DragEvent<HTMLElement>,
-    targetFolderId: string | null | undefined,
-    targetCollectionId: string | undefined,
-  ) {
-    if (previewAsset) {
-      event.preventDefault();
-      externalDragDepth.current = 0;
-      setExternalDropActive(false);
-      return;
-    }
-    if (!supportsExternalImportTransfer(event.dataTransfer)) return;
-    event.preventDefault();
-    event.stopPropagation();
-    const payload = externalImportPayload(event.dataTransfer);
-    void importDroppedFiles(
-      payload.files,
-      targetFolderId,
-      targetCollectionId,
-      payload,
-    );
   }
 
   async function resolveConflicts() {
@@ -3686,7 +3553,7 @@ function AppInner() {
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
       setConflicts(null);
-      setNotice(importSummary(result.value, locale));
+      setNotice(importSummaryMessage(result.value, locale));
       await reloadCurrentContent();
     } catch (caught) {
       setError(toMessage(caught, t("toast.continueImportFailed"), locale));
@@ -4441,119 +4308,31 @@ function AppInner() {
     });
   }, [api, setNotice, t]);
 
-  useEffect(() => {
-    if (
-      !dialog &&
-      !conflicts &&
-      !assetRenameDialog &&
-      !permanentDeleteDialog &&
-      !deleteLinkedDialog &&
-      !batchRelinkPreview &&
-      !restoreDialog &&
-      !moveDialog &&
-      !undoMoveDialog &&
-      !collectionEditor &&
-      !exportDialogOpen &&
-      !appSettingsOpen &&
-      !aiConfigOpen &&
-      !extensionPairingOpen &&
-      !(mediaJobsOpen && library !== null) &&
-      !linkedRulesEditor &&
-      !convertLinkedDialog.folderId
-    )
-      return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      event.preventDefault();
-      if (assetRenameDialog) {
-        cancelAssetRename();
-        return;
-      }
-      if (permanentDeleteDialog) {
-        setPermanentDeleteDialog(null);
-        return;
-      }
-      if (deleteLinkedDialog) {
-        setDeleteLinkedDialog(null);
-        return;
-      }
-      if (batchRelinkPreview) {
-        void cancelBatchRelink();
-        return;
-      }
-      if (restoreDialog) {
-        setRestoreDialog(null);
-        return;
-      }
-      if (moveDialog) {
-        setMoveDialog(null);
-        return;
-      }
-      if (undoMoveDialog) {
-        setUndoMoveDialog(null);
-        return;
-      }
-      if (collectionEditor) {
-        setCollectionEditor(null);
-        return;
-      }
-      if (exportDialogOpen) {
-        setExportDialogOpen(false);
-        return;
-      }
-      if (appSettingsOpen) {
-        setAppSettingsOpen(false);
-        return;
-      }
-      if (aiConfigOpen) {
-        setAiConfigOpen(false);
-        return;
-      }
-      if (extensionPairingOpen) {
-        setExtensionPairingOpen(false);
-        return;
-      }
-      if (mediaJobsOpen) {
-        setMediaJobsOpen(false);
-        return;
-      }
-      if (linkedRulesEditor) {
-        setLinkedRulesEditor(null);
-        return;
-      }
-      if (convertLinkedDialog.folderId) {
-        setConvertLinkedDialog({ folderId: "", name: "", targetFolderId: "" });
-        return;
-      }
-      if (dialog) {
-        setDialog(null);
-        setShowCollectionInput(false);
-        return;
-      }
-      if (!api || !conflicts) return;
-      const importId = conflicts.importId;
-      setConflicts(null);
-      void Promise.resolve().then(async () => {
-        try {
-          const result = await api.abandonImport({ importId });
-          if (!result.ok) throw new LibraryOperationError(result.error);
-        } catch (caught) {
-          setError(toMessage(caught, t("toast.cancelPendingImportFailed"), locale));
-        }
-      });
+  const dialogEscapeSnapshot = useMemo((): DialogEscapeSnapshot => {
+    return {
+      assetRenameOpen: Boolean(assetRenameDialog),
+      permanentDeleteOpen: Boolean(permanentDeleteDialog),
+      deleteLinkedOpen: Boolean(deleteLinkedDialog),
+      batchRelinkOpen: Boolean(batchRelinkPreview),
+      restoreOpen: Boolean(restoreDialog),
+      moveOpen: Boolean(moveDialog),
+      undoMoveOpen: Boolean(undoMoveDialog),
+      collectionEditorOpen: Boolean(collectionEditor),
+      exportDialogOpen,
+      appSettingsOpen,
+      aiConfigOpen,
+      extensionPairingOpen,
+      mediaJobsOpen: Boolean(mediaJobsOpen && library !== null),
+      linkedRulesEditorOpen: Boolean(linkedRulesEditor),
+      convertLinkedOpen: Boolean(convertLinkedDialog.folderId),
+      dialogOpen: Boolean(dialog),
+      conflictsImportId: conflicts?.importId ?? null,
     };
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
   }, [
-    api,
-    conflicts,
-    dialog,
     assetRenameDialog,
-    cancelAssetRename,
     permanentDeleteDialog,
     deleteLinkedDialog,
     batchRelinkPreview,
-    cancelBatchRelink,
     restoreDialog,
     moveDialog,
     undoMoveDialog,
@@ -4566,10 +4345,35 @@ function AppInner() {
     library,
     linkedRulesEditor,
     convertLinkedDialog.folderId,
-    locale,
-    setError,
-    t,
+    dialog,
+    conflicts?.importId,
   ]);
+
+  useDialogEscapeDismiss({
+    api: api ?? null,
+    snapshot: dialogEscapeSnapshot,
+    cancelAssetRename,
+    cancelBatchRelink,
+    setPermanentDeleteDialog,
+    setDeleteLinkedDialog,
+    setRestoreDialog,
+    setMoveDialog,
+    setUndoMoveDialog,
+    setCollectionEditor,
+    setExportDialogOpen,
+    setAppSettingsOpen,
+    setAiConfigOpen,
+    setExtensionPairingOpen,
+    setMediaJobsOpen,
+    setLinkedRulesEditor,
+    resetConvertLinkedDialog: () => {
+      setConvertLinkedDialog({ folderId: "", name: "", targetFolderId: "" });
+    },
+    setDialog,
+    setShowCollectionInput,
+    setConflicts,
+    setError,
+  });
 
   const dialogFocusTrapActive = Boolean(
     dialog ||
@@ -7115,61 +6919,6 @@ function highlightSnippet(value: string): ReactNode {
       <span key={index}>{segment}</span>
     );
   });
-}
-function importSummary(
-  value: {
-    importedCount: number;
-    skippedCount: number;
-    replacedCount: number;
-  },
-  locale: AppLocale,
-) {
-  return (
-    translateForLocale(locale, "toast.importComplete", {
-      imported: value.importedCount,
-      replaced: value.replacedCount
-        ? translateForLocale(locale, "toast.importReplaced", {
-            count: value.replacedCount,
-          })
-        : "",
-    }) +
-    (value.skippedCount
-      ? translateForLocale(locale, "toast.skippedSuffix", {
-          count: value.skippedCount,
-        })
-      : "") +
-    translateForLocale(locale, "common.sentenceEnd")
-  );
-}
-export function supportsExternalImportTypes(types: readonly string[]): boolean {
-  return (
-    types.includes("Files") ||
-    types.includes("text/html") ||
-    types.includes("text/uri-list")
-  );
-}
-function supportsExternalImportTransfer(transfer: DataTransfer): boolean {
-  return supportsExternalImportTypes(Array.from(transfer.types));
-}
-function externalImportPayload(transfer: DataTransfer): {
-  files: File[];
-  html: string;
-  uriList: string;
-} {
-  // Renderer reads browser-provided drag metadata only. Fetching and staging
-  // remain inside Main/Worker and URLs never become filesystem paths.
-  const read = (type: string): string => {
-    try {
-      return transfer.getData(type);
-    } catch {
-      return "";
-    }
-  };
-  return {
-    files: Array.from(transfer.files),
-    html: read("text/html"),
-    uriList: read("text/uri-list"),
-  };
 }
 type OrganizationOperation = "create" | "rename" | "delete" | "removeAsset";
 

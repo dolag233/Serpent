@@ -19,6 +19,10 @@ import {
   type DragDropMode,
 } from "./asset-drag-drop";
 import {
+  externalImportPayload,
+  supportsExternalImportTransfer,
+} from "./external-import-transfer";
+import {
   inlineCreateRowIndex,
   inlineFolderEditDepth,
   type InlineFolderEditState,
@@ -39,38 +43,6 @@ import {
   withCollapsedFolderIds,
   type NavTreePreferences,
 } from "./nav-tree-preferences";
-
-// ---------------------------------------------------------------------------
-// Small local helpers duplicated from App.tsx to avoid circular imports
-// ---------------------------------------------------------------------------
-
-function supportsExternalImportTransfer(transfer: DataTransfer): boolean {
-  const types = Array.from(transfer.types);
-  return (
-    types.includes("Files") ||
-    types.includes("text/html") ||
-    types.includes("text/uri-list")
-  );
-}
-
-function externalImportPayload(transfer: DataTransfer): {
-  files: File[];
-  html: string;
-  uriList: string;
-} {
-  const read = (type: string): string => {
-    try {
-      return transfer.getData(type);
-    } catch {
-      return "";
-    }
-  };
-  return {
-    files: Array.from(transfer.files),
-    html: read("text/html"),
-    uriList: read("text/uri-list"),
-  };
-}
 
 // ---------------------------------------------------------------------------
 // NavRow — local presentational row
