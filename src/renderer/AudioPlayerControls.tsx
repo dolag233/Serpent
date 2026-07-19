@@ -20,7 +20,7 @@ import {
 } from "./audio-waveform-timeline";
 import { iconActionAttrs } from "./icon-action-attrs";
 import { useT } from "./i18n";
-import { createMediaSeekSession } from "./media-seek-session";
+import { createMediaSeekSession, type MediaSeekSession } from "./media-seek-session";
 import {
   clampScrubTime,
   formatVideoClockTime,
@@ -62,15 +62,23 @@ export function AudioPlayerControls({
   const trailLastEmitAtRef = useRef<number | null>(null);
   const trailNextIdRef = useRef(0);
   const trailParticlesRef = useRef<TrailParticle[]>([]);
-  const seekSessionRef = useRef(
-    createMediaSeekSession(
+  // Create the seek session in an effect (not render) so react-hooks/refs
+  // doesn't flag the ref-reading closures. createMediaSeekSession stores
+  // them and only calls them during seek events; all session access here is
+  // event/effect time (after mount), so null-safe ?. is just for TypeScript.
+  const seekSessionRef = useRef<MediaSeekSession | null>(null);
+  useEffect(() => {
+    seekSessionRef.current = createMediaSeekSession(
       () => audioRef.current,
-      (time) => {
+      (time: number) => {
         const audio = audioRef.current;
         if (audio) audio.currentTime = time;
       },
-    ),
-  );
+    );
+    return () => {
+      seekSessionRef.current?.cancel();
+    };
+  }, []);
   const [paused, setPaused] = useState(true);
   const [duration, setDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
@@ -100,13 +108,12 @@ export function AudioPlayerControls({
   }, [togglePlayback]);
 
   useEffect(() => {
-    const session = seekSessionRef.current;
-    session.cancel();
+    seekSessionRef.current?.cancel();
     trailParticlesRef.current = [];
     trailLastEmitAtRef.current = null;
     trailNextIdRef.current = 0;
     setTrailParticles([]);
-    return () => session.cancel();
+    return () => seekSessionRef.current?.cancel();
   }, [src]);
 
   // Particle trail pump: emit while playing; always prune/fade (incl. pause).
@@ -145,10 +152,10 @@ export function AudioPlayerControls({
     if (!audio) return;
     const time = scrubTimeFromRatio(ratio, audio.duration);
     if (mode === "commit") {
-      seekSessionRef.current.commit(time);
+      seekSessionRef.current?.commit(time);
       return;
     }
-    seekSessionRef.current.request(time);
+    seekSessionRef.current?.request(time);
   }, []);
 
   const ratioFromPointer = useCallback((clientX: number): number => {
@@ -177,7 +184,7 @@ export function AudioPlayerControls({
   );
 
   const applyKeySeek = (nextTime: number) => {
-    seekSessionRef.current.commit(nextTime);
+    seekSessionRef.current?.commit(nextTime);
     setCurrentTime(nextTime);
     trailParticlesRef.current = [];
     trailLastEmitAtRef.current = null;
@@ -288,7 +295,7 @@ export function AudioPlayerControls({
         onPause={() => setPaused(true)}
         onPlay={() => setPaused(false)}
         onSeeked={() => {
-          seekSessionRef.current.onSeeked();
+          seekSessionRef.current?.onSeeked();
           if (
             scrubbingPointerId.current === null &&
             waveformScrubbingPointerId.current === null &&

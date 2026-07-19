@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState, type SyntheticEvent } from "r
 import { Icon } from "./Icons";
 import { iconActionAttrs } from "./icon-action-attrs";
 import { useT } from "./i18n";
-import { createMediaSeekSession } from "./media-seek-session";
+import { createMediaSeekSession, type MediaSeekSession } from "./media-seek-session";
 import { useViewerZoomPan } from "./use-viewer-zoom-pan";
 import {
   clampScrubTime,
@@ -65,15 +65,23 @@ export function VideoPlayerControls({
     viewportRef,
   } = useViewerZoomPan({ onSwipeNext, onSwipePrevious });
   const scrubbingPointerId = useRef<number | null>(null);
-  const seekSessionRef = useRef(
-    createMediaSeekSession(
+  // Create the seek session in an effect (not render) so react-hooks/refs
+  // doesn't flag the ref-reading closures. createMediaSeekSession stores
+  // them and only calls them during seek events; all session access here is
+  // event/effect time (after mount), so null-safe ?. is just for TypeScript.
+  const seekSessionRef = useRef<MediaSeekSession | null>(null);
+  useEffect(() => {
+    seekSessionRef.current = createMediaSeekSession(
       () => videoRef.current,
-      (time) => {
+      (time: number) => {
         const video = videoRef.current;
         if (video) video.currentTime = time;
       },
-    ),
-  );
+    );
+    return () => {
+      seekSessionRef.current?.cancel();
+    };
+  }, []);
   const [playbackRate, setPlaybackRate] = useState<VideoPlaybackRate>(1);
   const [paused, setPaused] = useState(true);
   const [duration, setDuration] = useState(0);
@@ -107,9 +115,8 @@ export function VideoPlayerControls({
   }, [playbackRate, src]);
 
   useEffect(() => {
-    const session = seekSessionRef.current;
-    session.cancel();
-    return () => session.cancel();
+    seekSessionRef.current?.cancel();
+    return () => seekSessionRef.current?.cancel();
   }, [src]);
 
   const seekToRatio = useCallback((ratio: number, mode: "coalesce" | "commit") => {
@@ -117,10 +124,10 @@ export function VideoPlayerControls({
     if (!video) return;
     const time = scrubTimeFromRatio(ratio, video.duration);
     if (mode === "commit") {
-      seekSessionRef.current.commit(time);
+      seekSessionRef.current?.commit(time);
       return;
     }
-    seekSessionRef.current.request(time);
+    seekSessionRef.current?.request(time);
   }, []);
 
   const ratioFromPointer = useCallback((clientX: number): number => {
@@ -177,7 +184,7 @@ export function VideoPlayerControls({
           onPause={() => setPaused(true)}
           onPlay={() => setPaused(false)}
           onSeeked={() => {
-            seekSessionRef.current.onSeeked();
+            seekSessionRef.current?.onSeeked();
             if (scrubbingPointerId.current === null && videoRef.current) {
               setCurrentTime(videoRef.current.currentTime);
             }
@@ -236,7 +243,7 @@ export function VideoPlayerControls({
             }
             if (nextTime === null) return;
             event.preventDefault();
-            seekSessionRef.current.commit(nextTime);
+            seekSessionRef.current?.commit(nextTime);
             setCurrentTime(nextTime);
           }}
           onPointerDown={(event) => {
@@ -274,7 +281,7 @@ export function VideoPlayerControls({
             if (scrubbingPointerId.current !== event.pointerId) return;
             scrubbingPointerId.current = null;
             setScrubRatio(null);
-            seekSessionRef.current.flush();
+            seekSessionRef.current?.flush();
             if (videoRef.current) setCurrentTime(videoRef.current.currentTime);
           }}
           ref={trackRef}
