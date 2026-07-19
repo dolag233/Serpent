@@ -1808,6 +1808,20 @@ input[type="range"] {
 .workspace-canvas {
   position: relative;
   display: grid;
+  /* The single implicit grid track must fill the canvas width. Without an
+     explicit track, `place-items: center` leaves the track sized to its
+     content's max-content width, so `.asset-grid`/`.justified-rows`
+     (width:100%) resolve their percentage against a content-sized
+     containing block and stay pinned to the last rendered width once the
+     canvas narrows below that width — the ResizeObserver-driven reflow then
+     never fires and cards get clipped by the side panel. The trigger is a
+     width threshold (canvas vs content max-content), so a wide-enough canvas
+     can mask it — which is why it showed up on Windows here but not on the
+     macOS layout. minmax(0,1fr) — not bare 1fr — lets the track shrink below
+     content so narrowing reflows too; place-items still centers the
+     preview/empty state within the now-definite track. Headless-verified:
+     reflow tracks the canvas both directions after this change. */
+  grid-template-columns: minmax(0, 1fr);
   min-height: 0;
   flex: 1;
   overflow: auto;
