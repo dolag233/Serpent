@@ -1430,7 +1430,9 @@ describe('enqueueThumbnailJobs handles all media types', () => {
             AND invalidated_at IS NULL
             AND revision_id = ?`,
       )
-      .run(new Date().toISOString(), asset.currentRevisionId);
+      .run(new Date().toISOString(), asset.currentRevisionId) as {
+      changes: number;
+    };
     expect(invalidated.changes).toBeGreaterThan(0);
     const poster = db
       .prepare(

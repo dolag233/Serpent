@@ -56,8 +56,8 @@ export type LibrarySwitcherProps = {
   onPasteImage?: () => void;
   onImportLinkedFolder?: () => void;
   onExportLibrary?: () => void;
+  /** Opens second-level chooser (folder vs ZIP). Do not add a separate ZIP menu item. */
   onImportLibrary?: () => void;
-  onImportZip?: () => void;
 };
 
 /**
@@ -82,7 +82,6 @@ export function LibrarySwitcher({
   onImportLinkedFolder,
   onExportLibrary,
   onImportLibrary,
-  onImportZip,
 }: LibrarySwitcherProps) {
   const { t } = useLocale();
   const [open, setOpen] = useState(false);
@@ -100,8 +99,7 @@ export function LibrarySwitcher({
     onPasteImage != null ||
     onImportLinkedFolder != null ||
     onExportLibrary != null ||
-    onImportLibrary != null ||
-    onImportZip != null;
+    onImportLibrary != null;
 
   function closeMenu(restoreTriggerFocus: boolean) {
     setOpen(false);
@@ -306,18 +304,6 @@ export function LibrarySwitcher({
                     type="button"
                   >
                     {t("toolbar.importLibrary")}
-                  </button>
-                )}
-                {onImportZip != null && (
-                  <button
-                    className="library-switcher-item"
-                    disabled={busy}
-                    onClick={() => runMenuAction(onImportZip)}
-                    role="menuitem"
-                    tabIndex={-1}
-                    type="button"
-                  >
-                    {t("toolbar.importZip")}
                   </button>
                 )}
               </div>

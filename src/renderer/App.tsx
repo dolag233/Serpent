@@ -5238,7 +5238,6 @@ function AppInner() {
               onImportFolder={() => void importAssets("folder")}
               onImportLibrary={() => setImportLibraryChooserOpen(true)}
               onImportLinkedFolder={() => void importFolderAsLinked()}
-              onImportZip={() => void startImportZip()}
               onMenuOpen={() => void refreshRecentLibraries()}
               onOpenLibrary={() => void runLibraryOperation("open")}
               onOpenRecent={(path) => void openRecentLibrary(path)}

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 
 import { Icon } from "./Icons";
 import { iconActionAttrs } from "./icon-action-attrs";
@@ -12,28 +12,39 @@ export interface ExportDialogProps {
   onExportZip: (includeLinkedContent: boolean) => void;
 }
 
+/**
+ * Library export chooser — same stacked folder/ZIP pattern as
+ * ImportLibraryChooserDialog (Serpent-ec5).
+ */
 export function ExportDialog({
   open,
   exporting,
   onClose,
   onExportFolder,
   onExportZip,
-}: ExportDialogProps) {
+}: ExportDialogProps): ReactNode {
   const t = useT();
-  const [exportFormat, setExportFormat] = useState<"folder" | "zip">("folder");
   const [includeLinkedContent, setIncludeLinkedContent] = useState(false);
 
   if (!open) return null;
 
   return (
     <div className="dialog-backdrop" role="presentation">
-      <div aria-modal="true" className="create-dialog" role="dialog">
+      <div
+        aria-labelledby="export-library-chooser-title"
+        aria-modal="true"
+        className="create-dialog"
+        role="dialog"
+      >
         <div className="dialog-heading">
           <div>
-            <h2>{t("toolbar.exportLibrary")}</h2>
+            <h2 id="export-library-chooser-title">
+              {t("toolbar.exportLibrary")}
+            </h2>
           </div>
           <button
             className="dialog-close"
+            disabled={exporting}
             onClick={onClose}
             type="button"
             {...iconActionAttrs(t("common.cancel"))}
@@ -41,112 +52,47 @@ export function ExportDialog({
             <Icon name="close" size={16} />
           </button>
         </div>
-        <p
-          style={{
-            color: "var(--secondary)",
-            fontSize: 12,
-            lineHeight: 1.6,
-          }}
-        >
-          {t("dialog.export.help")}
+        <p className="field-help">
+          {t("dialog.export.help")}{" "}
+          {t("dialog.export.zipLimitHint")}
         </p>
-        <fieldset
-          style={{
-            border: "none",
-            padding: 0,
-            marginTop: 14,
-            display: "flex",
-            gap: 16,
-          }}
-        >
-          <legend
-            style={{ fontSize: 11, color: "var(--tertiary)", marginBottom: 6 }}
-          >
-            {t("dialog.export.format")}
-          </legend>
-          <label
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 5,
-              color: "var(--text)",
-              fontSize: 12,
-              cursor: "pointer",
-            }}
-          >
-            <input
-              checked={exportFormat === "folder"}
-              onChange={() => setExportFormat("folder")}
-              type="radio"
-              name="export-format"
-            />
-            {t("dialog.export.formatFolder")}
-          </label>
-          <label
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 5,
-              color: "var(--text)",
-              fontSize: 12,
-              cursor: "pointer",
-            }}
-          >
-            <input
-              checked={exportFormat === "zip"}
-              onChange={() => setExportFormat("zip")}
-              type="radio"
-              name="export-format"
-            />
-            {t("dialog.export.formatZip")}
-            {exportFormat === "zip" && (
-              <span style={{ fontSize: 10, color: "var(--tertiary)" }}>
-                {t("dialog.export.zipLimitHint")}
-              </span>
-            )}
-          </label>
-        </fieldset>
-        <label
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-            marginTop: 10,
-            color: "var(--text)",
-            fontSize: 12,
-            cursor: "pointer",
-          }}
-        >
+        <label className="ai-config-check-row ai-config-check-row-top">
           <input
             checked={includeLinkedContent}
-            onChange={(e) => setIncludeLinkedContent(e.target.checked)}
+            disabled={exporting}
+            onChange={(event) => setIncludeLinkedContent(event.target.checked)}
             type="checkbox"
           />
-          {t("dialog.export.includeLinked")}
+          <span className="app-settings-check-copy">
+            <span>{t("dialog.export.includeLinked")}</span>
+          </span>
         </label>
-        <div className="dialog-actions">
+        <div className="dialog-actions is-stacked">
+          <button
+            className="primary-button"
+            disabled={exporting}
+            onClick={() => onExportFolder(includeLinkedContent)}
+            type="button"
+          >
+            <Icon name="folder" size={15} />
+            {t("dialog.export.folder")}
+          </button>
           <button
             className="secondary-button"
+            disabled={exporting}
+            onClick={() => onExportZip(includeLinkedContent)}
+            type="button"
+          >
+            <Icon name="archive" size={15} />
+            {t("dialog.export.zip")}
+          </button>
+          <button
+            className="secondary-button"
+            disabled={exporting}
             onClick={onClose}
             type="button"
           >
             {t("common.cancel")}
-          </button>
-          <button
-            className="primary-button"
-            disabled={exporting}
-            onClick={() => {
-              if (exportFormat === "zip") {
-                onExportZip(includeLinkedContent);
-              } else {
-                onExportFolder(includeLinkedContent);
-              }
-            }}
-            type="button"
-          >
-            {exportFormat === "zip"
-              ? t("dialog.export.zip")
-              : t("dialog.export.folder")}
           </button>
         </div>
       </div>
