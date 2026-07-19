@@ -693,6 +693,32 @@ async function commandFor(
         libraryId: request.libraryId,
         parentFolderId: request.parentFolderId,
       };
+    case "folder.trash.request":
+      return {
+        type: "folder.trash",
+        libraryId: request.libraryId,
+        folderId: request.folderId,
+      };
+    case "folder.delete-from-disk.request":
+      return {
+        type: "folder.delete-from-disk",
+        libraryId: request.libraryId,
+        folderId: request.folderId,
+      };
+    case "linked-folder.remove.request":
+      return {
+        type: "linked-folder.remove",
+        libraryId: request.libraryId,
+        folderId: request.folderId,
+      };
+    case "linked-folder.delete-subtree.request":
+      return {
+        type: "linked-folder.delete-subtree",
+        libraryId: request.libraryId,
+        linkedFolderId: request.linkedFolderId,
+        relativePath: request.relativePath,
+        deleteFromDisk: request.deleteFromDisk,
+      };
     case "folder.open-in-file-manager.request":
       // Handled directly in handleLibraryRequest because it requires shell.openPath.
       return {

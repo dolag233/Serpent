@@ -12,6 +12,18 @@ export interface SidebarCommandActions {
   readonly renameFolder: (folderId: string, currentName: string) => void;
   readonly openLinkedRules: (folder: LinkedFolderSummary) => void;
   readonly copyFolderPath: (folderId: string) => void;
+  /** Managed folder → app trash (clarification #7). */
+  readonly trashManagedFolder: (folderId: string, name: string) => void;
+  /** Managed or linked-child folder → irreversible disk delete. */
+  readonly deleteFolderFromDisk: (folderId: string, name: string) => void;
+  /** Linked root only: remove index; never deletes source files. */
+  readonly removeLinkedFolder: (folderId: string, name: string) => void;
+  /** Linked child path → OS trash + drop index rows. */
+  readonly trashLinkedFolderSubtree: (
+    linkedFolderId: string,
+    relativePath: string,
+    name: string,
+  ) => void;
   readonly renameOrganization: (id: string, name: string) => void;
   readonly editCollectionDetails: (collectionId: string) => void;
   readonly deleteOrganization: (id: string, name: string) => void;
@@ -28,6 +40,13 @@ export interface SidebarCommandContext extends CommandContext {
   readonly status?: 'available' | 'offline';
   readonly linkedFolderResolved: boolean;
   readonly linkedFolder?: LinkedFolderSummary;
+  /**
+   * Linked roots only expose "remove from library". Linked child folders
+   * (relativePath set) use the same trash / disk-delete entries as managed.
+   */
+  readonly isLinkedRoot?: boolean;
+  /** Present when the subject is a linked child directory path. */
+  readonly linkedRelativePath?: string;
   readonly actions: SidebarCommandActions;
 }
 
@@ -96,6 +115,58 @@ export const sidebarCommandDefinitions: readonly SidebarCommandDefinition[] = [
     visible: (ctx) => ctx.menuKind === 'folder',
     disabledReason: offlineReason,
     run: (ctx) => ctx.actions.copyFolderPath(ctx.subjectId),
+  },
+  {
+    id: 'folder.move-to-trash',
+    title: (ctx) =>
+      translateForLocale(ctx.locale, 'command.folder.moveToTrash'),
+    group: 'delete',
+    visible: (ctx) =>
+      ctx.menuKind === 'folder' &&
+      (ctx.locationKind === 'managed' ||
+        (ctx.locationKind === 'linked' && ctx.isLinkedRoot === false)),
+    disabledReason: offlineReason,
+    run: (ctx) => {
+      if (ctx.locationKind === 'managed') {
+        ctx.actions.trashManagedFolder(ctx.subjectId, ctx.subjectName);
+        return;
+      }
+      if (
+        ctx.locationKind === 'linked' &&
+        ctx.linkedRelativePath !== undefined
+      ) {
+        ctx.actions.trashLinkedFolderSubtree(
+          ctx.subjectId,
+          ctx.linkedRelativePath,
+          ctx.subjectName,
+        );
+      }
+    },
+  },
+  {
+    id: 'folder.delete-from-disk',
+    title: (ctx) =>
+      translateForLocale(ctx.locale, 'command.folder.deleteFromDisk'),
+    group: 'delete',
+    visible: (ctx) =>
+      ctx.menuKind === 'folder' &&
+      (ctx.locationKind === 'managed' ||
+        (ctx.locationKind === 'linked' && ctx.isLinkedRoot === false)),
+    disabledReason: offlineReason,
+    run: (ctx) =>
+      ctx.actions.deleteFolderFromDisk(ctx.subjectId, ctx.subjectName),
+  },
+  {
+    id: 'folder.remove-from-library',
+    title: (ctx) =>
+      translateForLocale(ctx.locale, 'command.folder.removeFromLibrary'),
+    group: 'delete',
+    visible: (ctx) =>
+      ctx.menuKind === 'folder' &&
+      ctx.locationKind === 'linked' &&
+      ctx.isLinkedRoot !== false,
+    run: (ctx) =>
+      ctx.actions.removeLinkedFolder(ctx.subjectId, ctx.subjectName),
   },
   {
     id: 'collection.rename',

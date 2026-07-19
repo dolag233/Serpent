@@ -318,7 +318,11 @@ export const en = {
       revealInExplorer: "Open in File Explorer",
       revealInExplorerShort: "Open in Explorer",
       copyPath: "Copy folder path",
-      linkedRules: "Linked rules…"
+      linkedRules: "Linked rules…",
+      moveToTrash: "Move to Trash",
+      deleteFromDisk: "Delete from disk…",
+      removeFromLibrary: "Remove from library",
+      removeFromLibraryConfirm: "Remove linked folder \"{name}\" from the library?\nThe external source folder will not be deleted."
     },
     collection: {
       rename: "Rename collection",
@@ -496,6 +500,12 @@ export const en = {
       title: "Confirm permanent delete",
       body: "Permanently delete the selected {count} assets? They will be removed from Trash and cannot be undone.",
       submit: "Delete {count} permanently"
+    },
+    diskDelete: {
+      title: "Delete from disk",
+      body: "Permanently delete \"{name}\" and all of its contents from disk? This cannot be undone.",
+      dontShowAgain: "Don't show this again",
+      submit: "Delete from disk"
     },
     deleteLinked: {
       title: "Delete linked asset",
@@ -856,6 +866,14 @@ export const en = {
     readLinkedRulesFailed: "Could not read linked folder filter rules.",
     linkedRulesSaved: "Filter rules saved: hid {hidden}, restored {restored}.",
     saveLinkedRulesFailed: "Failed to save filter rules.",
+    folderTrashed: "Moved folder \"{name}\" to Trash ({count} assets).",
+    folderTrashFailed: "Failed to move folder to Trash.",
+    folderDeletedFromDisk: "Deleted folder \"{name}\" from disk ({count} assets).",
+    folderDeleteFromDiskFailed: "Failed to delete folder from disk.",
+    linkedFolderRemoved: "Removed linked folder \"{name}\" from the library ({count} records); source folder unchanged.",
+    linkedFolderRemoveFailed: "Failed to remove linked folder from the library.",
+    linkedSubtreeTrashed: "Moved linked subfolder \"{name}\" to the system Trash ({count} items).",
+    linkedSubtreeDeletedFromDisk: "Deleted linked subfolder \"{name}\" from disk ({count} items).",
     convertLinkedConfirm: "Copy \"{name}\" into the library and remove the link? The external source folder will not be deleted.",
     convertLinkedDone: "Converted {count} items; external source folder unchanged.",
     convertLinkedFailed: "Failed to convert linked folder.",

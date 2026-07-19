@@ -6,6 +6,7 @@
 export type DialogEscapeSnapshot = {
   assetRenameOpen: boolean;
   permanentDeleteOpen: boolean;
+  diskDeleteOpen: boolean;
   deleteLinkedOpen: boolean;
   batchRelinkOpen: boolean;
   restoreOpen: boolean;
@@ -28,6 +29,7 @@ export type DialogEscapeAction =
   | { kind: "none" }
   | { kind: "cancel-asset-rename" }
   | { kind: "close-permanent-delete" }
+  | { kind: "close-disk-delete" }
   | { kind: "close-delete-linked" }
   | { kind: "cancel-batch-relink" }
   | { kind: "close-restore" }
@@ -55,6 +57,7 @@ export function resolveDialogEscapeAction(
 ): DialogEscapeAction {
   if (snapshot.assetRenameOpen) return { kind: "cancel-asset-rename" };
   if (snapshot.permanentDeleteOpen) return { kind: "close-permanent-delete" };
+  if (snapshot.diskDeleteOpen) return { kind: "close-disk-delete" };
   if (snapshot.deleteLinkedOpen) return { kind: "close-delete-linked" };
   if (snapshot.batchRelinkOpen) return { kind: "cancel-batch-relink" };
   if (snapshot.restoreOpen) return { kind: "close-restore" };

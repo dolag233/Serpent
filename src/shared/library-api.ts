@@ -136,6 +136,43 @@ export interface SerpentLibraryApi {
     libraryId: string;
     parentFolderId: string | null;
   }): Promise<LibraryApiResult<FolderBrowseEntry[]>>;
+  trashFolder(input: {
+    libraryId: string;
+    folderId: string;
+  }): Promise<
+    LibraryApiResult<{
+      folderId: string;
+      trashedAssetCount: number;
+      removedFolderCount: number;
+    }>
+  >;
+  deleteFolderFromDisk(input: {
+    libraryId: string;
+    folderId: string;
+  }): Promise<
+    LibraryApiResult<{
+      folderId: string;
+      deletedAssetCount: number;
+      removedFolderCount: number;
+    }>
+  >;
+  removeLinkedFolder(input: {
+    libraryId: string;
+    folderId: string;
+  }): Promise<LibraryApiResult<{ folderId: string; removedAssetCount: number }>>;
+  deleteLinkedFolderSubtree(input: {
+    libraryId: string;
+    linkedFolderId: string;
+    relativePath: string;
+    deleteFromDisk: boolean;
+  }): Promise<
+    LibraryApiResult<{
+      linkedFolderId: string;
+      relativePath: string;
+      deletedAssetCount: number;
+      failedCount: number;
+    }>
+  >;
   listAssets(input: {
     libraryId: string;
     folderId?: string;

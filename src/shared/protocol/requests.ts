@@ -1,6 +1,13 @@
 import { z } from 'zod';
 
-import { filterClauseSchema, linkedFolderRuleSchema, searchQuerySchema, searchScopeSchema, sortDefinitionSchema } from '../asset-types';
+import {
+  filterClauseSchema,
+  linkedFolderRuleSchema,
+  portableRelativePathSchema,
+  searchQuerySchema,
+  searchScopeSchema,
+  sortDefinitionSchema,
+} from '../asset-types';
 
 const nonBlankString = z.string().min(1).refine((value) => value.trim().length > 0, {
   message: 'Value must not be blank.',
@@ -116,6 +123,29 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     type: z.literal('folder.browse-entries.request'),
     libraryId: identifierSchema,
     parentFolderId: identifierSchema.nullable(),
+  }),
+  // Clarification #7 / Serpent-ekj: managed folder trash / permanent disk delete.
+  z.strictObject({
+    type: z.literal('folder.trash.request'),
+    libraryId: identifierSchema,
+    folderId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('folder.delete-from-disk.request'),
+    libraryId: identifierSchema,
+    folderId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('linked-folder.remove.request'),
+    libraryId: identifierSchema,
+    folderId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('linked-folder.delete-subtree.request'),
+    libraryId: identifierSchema,
+    linkedFolderId: identifierSchema,
+    relativePath: portableRelativePathSchema,
+    deleteFromDisk: z.boolean(),
   }),
   z.strictObject({
     type: z.literal('asset.list.request'),
@@ -690,6 +720,28 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     type: z.literal('folder.browse-entries'),
     libraryId: identifierSchema,
     parentFolderId: identifierSchema.nullable(),
+  }),
+  z.strictObject({
+    type: z.literal('folder.trash'),
+    libraryId: identifierSchema,
+    folderId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('folder.delete-from-disk'),
+    libraryId: identifierSchema,
+    folderId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('linked-folder.remove'),
+    libraryId: identifierSchema,
+    folderId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('linked-folder.delete-subtree'),
+    libraryId: identifierSchema,
+    linkedFolderId: identifierSchema,
+    relativePath: portableRelativePathSchema,
+    deleteFromDisk: z.boolean(),
   }),
   z.strictObject({
     type: z.literal('asset.list'),

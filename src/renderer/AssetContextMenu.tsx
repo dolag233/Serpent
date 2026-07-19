@@ -92,6 +92,19 @@ interface AssetContextMenuProps {
   onOpenFolderInFileManager: (folderId: string) => void;
   onCopyFolderPath: (folderId: string) => void;
   onOpenLinkedRules: (folder: LinkedFolderSummary) => void;
+  onTrashManagedFolder: (folderId: string, name: string) => void;
+  onDeleteFolderFromDisk: (args: {
+    folderId: string;
+    name: string;
+    locationKind: "managed" | "linked";
+    linkedRelativePath?: string;
+  }) => void;
+  onRemoveLinkedFolder: (folderId: string, name: string) => void;
+  onTrashLinkedFolderSubtree: (
+    linkedFolderId: string,
+    relativePath: string,
+    name: string,
+  ) => void;
   onBatchAssignTag: (tagId: string, assetIds: string[]) => void;
   onBatchRemoveTag: (tagId: string, assetIds: string[]) => void;
   onBatchAddToCollection: (collectionId: string, assetIds: string[]) => void;
@@ -140,6 +153,10 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
     onOpenFolderInFileManager,
     onCopyFolderPath,
     onOpenLinkedRules,
+    onTrashManagedFolder,
+    onDeleteFolderFromDisk,
+    onRemoveLinkedFolder,
+    onTrashLinkedFolderSubtree,
     onBatchAssignTag,
     onBatchRemoveTag,
     onBatchAddToCollection,
@@ -307,6 +324,15 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
               renameFolder: onRenameFolder,
               openLinkedRules: onOpenLinkedRules,
               copyFolderPath: onCopyFolderPath,
+              trashManagedFolder: onTrashManagedFolder,
+              deleteFolderFromDisk: (folderId, name) =>
+                onDeleteFolderFromDisk({
+                  folderId,
+                  name,
+                  locationKind: "managed",
+                }),
+              removeLinkedFolder: onRemoveLinkedFolder,
+              trashLinkedFolderSubtree: onTrashLinkedFolderSubtree,
               renameOrganization: onRenameOrganization,
               editCollectionDetails: onEditCollectionDetails,
               deleteOrganization: onDeleteOrganization,
@@ -382,6 +408,15 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
               renameFolder: onRenameFolder,
               openLinkedRules: onOpenLinkedRules,
               copyFolderPath: onCopyFolderPath,
+              trashManagedFolder: onTrashManagedFolder,
+              deleteFolderFromDisk: (folderId, name) =>
+                onDeleteFolderFromDisk({
+                  folderId,
+                  name,
+                  locationKind: "managed",
+                }),
+              removeLinkedFolder: onRemoveLinkedFolder,
+              trashLinkedFolderSubtree: onTrashLinkedFolderSubtree,
               renameOrganization: onRenameOrganization,
               editCollectionDetails: onEditCollectionDetails,
               deleteOrganization: onDeleteOrganization,
@@ -438,6 +473,9 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
           // unavailable-asset convention (disabled + reason, not an error).
           // 0015-D: 标题/可见性/禁用原因由注册表 resolveMenu 求值；此处把
           // descriptor 与 linkedFolders 解析结果组装成 SidebarCommandContext。
+          const isLinkedChild =
+            desc.locationKind === "linked" &&
+            desc.linkedRelativePath !== undefined;
           const linkedFolder =
             desc.locationKind === "linked"
               ? linkedFolders.find((folder) => folder.folderId === desc.folderId)
@@ -457,12 +495,24 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
             status: desc.status,
             linkedFolderResolved: linkedFolder !== undefined,
             linkedFolder,
+            isLinkedRoot: desc.locationKind === "linked" ? !isLinkedChild : undefined,
+            linkedRelativePath: desc.linkedRelativePath,
             actions: {
               openFolderInFileManager: onOpenFolderInFileManager,
               createSubfolder: onCreateSubfolder,
               renameFolder: onRenameFolder,
               openLinkedRules: onOpenLinkedRules,
               copyFolderPath: onCopyFolderPath,
+              trashManagedFolder: onTrashManagedFolder,
+              deleteFolderFromDisk: (folderId, name) =>
+                onDeleteFolderFromDisk({
+                  folderId,
+                  name,
+                  locationKind: desc.locationKind,
+                  linkedRelativePath: desc.linkedRelativePath,
+                }),
+              removeLinkedFolder: onRemoveLinkedFolder,
+              trashLinkedFolderSubtree: onTrashLinkedFolderSubtree,
               renameOrganization: onRenameOrganization,
               editCollectionDetails: onEditCollectionDetails,
               deleteOrganization: onDeleteOrganization,
@@ -490,6 +540,13 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
           const renameItem = resolvedById.get("folder.rename");
           const linkedRulesItem = resolvedById.get("folder.linked-rules");
           const copyPathItem = resolvedById.get("folder.copy-path");
+          const trashItem = resolvedById.get("folder.move-to-trash");
+          const deleteFromDiskItem = resolvedById.get(
+            "folder.delete-from-disk",
+          );
+          const removeFromLibraryItem = resolvedById.get(
+            "folder.remove-from-library",
+          );
           return (
             <>
               <ContextMenuSection label={t("command.group.open")}>
@@ -541,6 +598,44 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                   />
                 )}
               </ContextMenuSection>
+              {(trashItem || deleteFromDiskItem || removeFromLibraryItem) && (
+                <ContextMenuSection label={t("command.group.delete")}>
+                  {trashItem && (
+                    <ContextMenuItem
+                      icon={<Icon name="trash" size={14} />}
+                      label={trashItem.label}
+                      danger
+                      disabled={trashItem.disabled}
+                      disabledReason={trashItem.disabledReason ?? undefined}
+                      onAction={() => runSidebarCommand("folder.move-to-trash")}
+                    />
+                  )}
+                  {deleteFromDiskItem && (
+                    <ContextMenuItem
+                      icon={<Icon name="trash" size={14} />}
+                      label={deleteFromDiskItem.label}
+                      danger
+                      disabled={deleteFromDiskItem.disabled}
+                      disabledReason={
+                        deleteFromDiskItem.disabledReason ?? undefined
+                      }
+                      onAction={() =>
+                        runSidebarCommand("folder.delete-from-disk")
+                      }
+                    />
+                  )}
+                  {removeFromLibraryItem && (
+                    <ContextMenuItem
+                      icon={<Icon name="trash" size={14} />}
+                      label={removeFromLibraryItem.label}
+                      danger
+                      onAction={() =>
+                        runSidebarCommand("folder.remove-from-library")
+                      }
+                    />
+                  )}
+                </ContextMenuSection>
+              )}
             </>
           );
         })()}

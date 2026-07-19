@@ -9,6 +9,7 @@ import {
 const empty: DialogEscapeSnapshot = {
   assetRenameOpen: false,
   permanentDeleteOpen: false,
+  diskDeleteOpen: false,
   deleteLinkedOpen: false,
   batchRelinkOpen: false,
   restoreOpen: false,

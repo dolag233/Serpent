@@ -3888,6 +3888,332 @@ export class LibraryService {
     });
   }
 
+  /**
+   * Clarification #7 / Serpent-ekj: trash a managed folder (empty or not).
+   * All active managed assets in the subtree move to the app trash; folder
+   * rows and the real Assets/ directory tree are then removed. Restoring
+   * assets falls back to the library root when the original folder is gone.
+   */
+  trashManagedFolder(input: {
+    libraryId: string;
+    folderId: string;
+  }): { trashedAssetCount: number; removedFolderCount: number } {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    const { folder, descendantFolders, assetIds } =
+      this.collectManagedFolderSubtree(openLibrary, input.folderId);
+
+    let trashedAssetCount = 0;
+    if (assetIds.length > 0) {
+      const result = this.trashAssets({
+        libraryId: input.libraryId,
+        assetIds,
+      });
+      trashedAssetCount = result.trashedCount;
+    }
+
+    const removedFolderCount = this.removeManagedFolderRowsAndDirectory(
+      openLibrary,
+      folder,
+      descendantFolders,
+    );
+    return { trashedAssetCount, removedFolderCount };
+  }
+
+  /**
+   * Clarification #7 / Serpent-ekj: permanently delete a managed folder and
+   * every active managed asset in its subtree from disk. Irreversible.
+   */
+  deleteManagedFolderFromDisk(input: {
+    libraryId: string;
+    folderId: string;
+  }): { deletedAssetCount: number; removedFolderCount: number } {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    const { folder, descendantFolders, assetIds } =
+      this.collectManagedFolderSubtree(openLibrary, input.folderId);
+
+    let deletedAssetCount = 0;
+    if (assetIds.length > 0) {
+      deletedAssetCount = this.deleteActiveManagedAssetsFromDisk(
+        openLibrary,
+        assetIds,
+      );
+    }
+
+    const removedFolderCount = this.removeManagedFolderRowsAndDirectory(
+      openLibrary,
+      folder,
+      descendantFolders,
+    );
+    return { deletedAssetCount, removedFolderCount };
+  }
+
+  /**
+   * Clarification #7: remove a linked folder root from the library index.
+   * Source files on disk are never touched. Linked child paths use
+   * trashLinkedFolderSubtree / deleteLinkedFolderSubtreeFromDisk instead.
+   */
+  removeLinkedFolder(input: {
+    libraryId: string;
+    folderId: string;
+  }): { removedAssetCount: number } {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    const linked = openLibrary.connection
+      .prepare(
+        'SELECT folder_id FROM linked_folders WHERE folder_id = ? AND library_id = ?',
+      )
+      .get(input.folderId, input.libraryId) as { folder_id: string } | undefined;
+    if (!linked) throw new LibraryServiceError('FOLDER_NOT_FOUND');
+
+    const assetRows = openLibrary.connection
+      .prepare(
+        `SELECT asset_id FROM assets
+          WHERE linked_folder_id = ? AND location_kind = 'linked' AND deleted_at IS NULL`,
+      )
+      .all(input.folderId) as Array<{ asset_id: string }>;
+
+    openLibrary.connection.transaction(() => {
+      for (const row of assetRows) {
+        openLibrary.connection
+          .prepare('DELETE FROM assets WHERE asset_id = ?')
+          .run(row.asset_id);
+      }
+      const removed = openLibrary.connection
+        .prepare('DELETE FROM linked_folders WHERE folder_id = ?')
+        .run(input.folderId);
+      if (removed.changes !== 1) {
+        throw new LibraryServiceError('FOLDER_NOT_FOUND');
+      }
+    })();
+
+    this.stopLinkedWatcher(input.libraryId, input.folderId);
+    return { removedAssetCount: assetRows.length };
+  }
+
+  /**
+   * Clarification #7: delete a linked *child* folder path.
+   * - deleteFromDisk false: move sources to the OS trash (linked bytes are not
+   *   library-owned, so they cannot enter the app trash) and drop index rows.
+   * - deleteFromDisk true: irreversible rm of the child directory tree + rows.
+   */
+  async deleteLinkedFolderSubtree(input: {
+    libraryId: string;
+    linkedFolderId: string;
+    relativePath: string;
+    deleteFromDisk: boolean;
+  }): Promise<{ deletedAssetCount: number; failedCount: number }> {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    let relativePath: string;
+    try {
+      relativePath = normalizeRelativeAssetPath(input.relativePath);
+    } catch (error) {
+      throw new LibraryServiceError('INVALID_IMPORT_DECISION', { cause: error });
+    }
+
+    const linked = openLibrary.connection
+      .prepare(
+        `SELECT folder_id, absolute_root_path, status
+           FROM linked_folders WHERE folder_id = ? AND library_id = ?`,
+      )
+      .get(input.linkedFolderId, input.libraryId) as
+      | {
+          folder_id: string;
+          absolute_root_path: string;
+          status: 'available' | 'offline';
+        }
+      | undefined;
+    if (!linked) throw new LibraryServiceError('FOLDER_NOT_FOUND');
+
+    const prefix = `${relativePath}/`;
+    const assetRows = openLibrary.connection
+      .prepare(
+        `SELECT asset_id FROM assets
+          WHERE linked_folder_id = ?
+            AND location_kind = 'linked'
+            AND deleted_at IS NULL
+            AND (relative_file_path = ? OR substr(relative_file_path, 1, ?) = ?)`,
+      )
+      .all(
+        input.linkedFolderId,
+        relativePath,
+        [...prefix].length,
+        prefix,
+      ) as Array<{ asset_id: string }>;
+
+    const dirPath = path.join(linked.absolute_root_path, ...relativePath.split('/'));
+
+    if (input.deleteFromDisk) {
+      if (linked.status === 'available' && existsSync(dirPath)) {
+        try {
+          rmSync(dirPath, { force: true, recursive: true });
+        } catch (error) {
+          throw serviceError(error, 'LIBRARY_NOT_WRITABLE');
+        }
+      }
+      if (assetRows.length > 0) {
+        openLibrary.connection.transaction(() => {
+          for (const row of assetRows) {
+            openLibrary.connection
+              .prepare('DELETE FROM assets WHERE asset_id = ?')
+              .run(row.asset_id);
+          }
+        })();
+      }
+      return { deletedAssetCount: assetRows.length, failedCount: 0 };
+    }
+
+    // Default: OS trash for indexed files (chunked), then trash leftover dir.
+    let deletedAssetCount = 0;
+    let failedCount = 0;
+    const ids = assetRows.map((row) => row.asset_id);
+    for (let offset = 0; offset < ids.length; offset += 20) {
+      const chunk = ids.slice(offset, offset + 20);
+      const result = await this.deleteLinkedAssets({
+        libraryId: input.libraryId,
+        assetIds: chunk,
+        deleteSourceFile: true,
+      });
+      deletedAssetCount += result.deletedCount;
+      failedCount += result.failedCount;
+    }
+    if (linked.status === 'available' && existsSync(dirPath)) {
+      const trashItem = this.options.trashItem ?? defaultTrashItem;
+      try {
+        await trashItem(dirPath);
+      } catch {
+        // Files already trashed; directory cleanup is best-effort.
+      }
+    }
+    return { deletedAssetCount, failedCount };
+  }
+
+  private collectManagedFolderSubtree(
+    openLibrary: OpenLibrary,
+    folderId: string,
+  ): {
+    folder: ManagedFolderRow;
+    descendantFolders: ManagedFolderRow[];
+    assetIds: string[];
+  } {
+    const folder = openLibrary.connection
+      .prepare(
+        'SELECT folder_id, parent_folder_id, name, relative_path, path_identity FROM managed_folders WHERE folder_id = ?',
+      )
+      .get(folderId) as ManagedFolderRow | undefined;
+    if (!folder) throw new LibraryServiceError('FOLDER_NOT_FOUND');
+
+    const prefixLength = [...folder.relative_path].length + 1;
+    const oldPrefix = `${folder.relative_path}/`;
+    const descendantFolders = openLibrary.connection
+      .prepare(
+        `SELECT folder_id, parent_folder_id, name, relative_path, path_identity FROM managed_folders
+          WHERE substr(relative_path, 1, ?) = ?
+          ORDER BY length(relative_path) DESC`,
+      )
+      .all(prefixLength, oldPrefix) as ManagedFolderRow[];
+
+    const folderIds = [folder.folder_id, ...descendantFolders.map((row) => row.folder_id)];
+    const placeholders = folderIds.map(() => '?').join(', ');
+    const assetRows = openLibrary.connection
+      .prepare(
+        `SELECT asset_id FROM assets
+          WHERE location_kind = 'managed'
+            AND deleted_at IS NULL
+            AND (
+              managed_folder_id IN (${placeholders})
+              OR substr(relative_file_path, 1, ?) = ?
+            )`,
+      )
+      .all(...folderIds, prefixLength, oldPrefix) as Array<{ asset_id: string }>;
+
+    return {
+      folder,
+      descendantFolders,
+      assetIds: assetRows.map((row) => row.asset_id),
+    };
+  }
+
+  private removeManagedFolderRowsAndDirectory(
+    openLibrary: OpenLibrary,
+    folder: ManagedFolderRow,
+    descendantFolders: ManagedFolderRow[],
+  ): number {
+    const ordered = [...descendantFolders, folder];
+    const directoryPath = this.folderPath(openLibrary, folder.relative_path);
+
+    openLibrary.connection.transaction(() => {
+      for (const row of ordered) {
+        const result = openLibrary.connection
+          .prepare('DELETE FROM managed_folders WHERE folder_id = ?')
+          .run(row.folder_id);
+        if (result.changes !== 1) {
+          throw new LibraryServiceError('FOLDER_NOT_FOUND', { reason: 'SOURCE_CHANGED' });
+        }
+      }
+    })();
+
+    try {
+      if (existsSync(directoryPath)) {
+        rmSync(directoryPath, { force: true, recursive: true });
+      }
+    } catch (error) {
+      throw serviceError(error, 'LIBRARY_NOT_WRITABLE');
+    }
+
+    return ordered.length;
+  }
+
+  private deleteActiveManagedAssetsFromDisk(
+    openLibrary: OpenLibrary,
+    assetIds: string[],
+  ): number {
+    if (assetIds.length === 0) return 0;
+    const placeholders = assetIds.map(() => '?').join(', ');
+    const rows = openLibrary.connection
+      .prepare(
+        `SELECT asset_id, relative_file_path FROM assets
+          WHERE asset_id IN (${placeholders})
+            AND location_kind = 'managed'
+            AND deleted_at IS NULL`,
+      )
+      .all(...assetIds) as Array<{ asset_id: string; relative_file_path: string }>;
+
+    if (rows.length !== assetIds.length) {
+      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+    }
+
+    for (const row of rows) {
+      const filePath = this.folderPath(openLibrary, row.relative_file_path);
+      try {
+        if (existsSync(filePath)) {
+          rmSync(filePath, { force: true });
+        }
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code === 'EBUSY' || code === 'EPERM' || code === 'EACCES') {
+          throw new LibraryServiceError('LIBRARY_NOT_WRITABLE', {
+            reason:
+              code === 'EBUSY' ? 'FILE_BUSY' : 'PERMISSION_DENIED',
+            cause: error,
+          });
+        }
+        if (!isMissingPathError(error)) {
+          throw serviceError(error, 'LIBRARY_NOT_WRITABLE');
+        }
+      }
+    }
+
+    openLibrary.connection.transaction(() => {
+      for (const row of rows) {
+        openLibrary.connection
+          .prepare('DELETE FROM assets WHERE asset_id = ?')
+          .run(row.asset_id);
+      }
+    })();
+
+    return rows.length;
+  }
+
+
   listManagedFolders(libraryId: string): ManagedFolderSummary[] {
     const openLibrary = this.requireOpenLibrary(libraryId);
     const rows = openLibrary.connection

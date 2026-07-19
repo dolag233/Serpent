@@ -40,6 +40,10 @@ function makeActions(calls: RecordedCall[]): SidebarCommandActions {
     renameFolder: record('renameFolder'),
     openLinkedRules: record('openLinkedRules'),
     copyFolderPath: record('copyFolderPath'),
+    trashManagedFolder: record('trashManagedFolder'),
+    deleteFolderFromDisk: record('deleteFolderFromDisk'),
+    removeLinkedFolder: record('removeLinkedFolder'),
+    trashLinkedFolderSubtree: record('trashLinkedFolderSubtree'),
     renameOrganization: record('renameOrganization'),
     editCollectionDetails: record('editCollectionDetails'),
     deleteOrganization: record('deleteOrganization'),
@@ -91,27 +95,49 @@ afterEach(() => {
 });
 
 describe('文件夹分支：可见性矩阵（与历史内联 JSX 条件一致）', () => {
-  it('managed：open / create-subfolder / rename / copy-path 可见，linked-rules 隐藏', () => {
+  it('managed：open / create-subfolder / rename / copy-path / trash / disk-delete 可见', () => {
     const { ctx } = makeCtx();
     expect(resolveIds(ctx)).toEqual([
       'folder.open-in-file-manager',
       'folder.create-subfolder',
       'folder.rename',
       'folder.copy-path',
+      'folder.move-to-trash',
+      'folder.delete-from-disk',
     ]);
   });
 
-  it('linked 且已解析：linked-rules 可见，create-subfolder / rename 隐藏', () => {
+  it('linked 根：linked-rules + remove-from-library 可见，无 trash / disk-delete', () => {
     const { ctx } = makeCtx({
       locationKind: 'linked',
       status: 'available',
       linkedFolderResolved: true,
       linkedFolder: LINKED_FOLDER,
+      isLinkedRoot: true,
     });
     expect(resolveIds(ctx)).toEqual([
       'folder.open-in-file-manager',
       'folder.linked-rules',
       'folder.copy-path',
+      'folder.remove-from-library',
+    ]);
+  });
+
+  it('linked 子文件夹：trash / disk-delete 可见，无 remove-from-library', () => {
+    const { ctx } = makeCtx({
+      locationKind: 'linked',
+      status: 'available',
+      linkedFolderResolved: true,
+      linkedFolder: LINKED_FOLDER,
+      isLinkedRoot: false,
+      linkedRelativePath: 'props/wood',
+    });
+    expect(resolveIds(ctx)).toEqual([
+      'folder.open-in-file-manager',
+      'folder.linked-rules',
+      'folder.copy-path',
+      'folder.move-to-trash',
+      'folder.delete-from-disk',
     ]);
   });
 
@@ -120,10 +146,12 @@ describe('文件夹分支：可见性矩阵（与历史内联 JSX 条件一致�
       locationKind: 'linked',
       status: 'available',
       linkedFolderResolved: false,
+      isLinkedRoot: true,
     });
     expect(resolveIds(ctx)).toEqual([
       'folder.open-in-file-manager',
       'folder.copy-path',
+      'folder.remove-from-library',
     ]);
   });
 
@@ -133,12 +161,14 @@ describe('文件夹分支：可见性矩阵（与历史内联 JSX 条件一致�
       status: 'offline',
       linkedFolderResolved: true,
       linkedFolder: { ...LINKED_FOLDER, status: 'offline' },
+      isLinkedRoot: true,
     });
     const menu = registry.resolveMenu(ctx);
     expect(resolveIds(ctx)).toEqual([
       'folder.open-in-file-manager',
       'folder.linked-rules',
       'folder.copy-path',
+      'folder.remove-from-library',
     ]);
     for (const id of ['folder.open-in-file-manager', 'folder.copy-path']) {
       expect(findItem(menu, id)).toMatchObject({
@@ -154,6 +184,7 @@ describe('文件夹分支：可见性矩阵（与历史内联 JSX 条件一致�
       status: 'available',
       linkedFolderResolved: true,
       linkedFolder: LINKED_FOLDER,
+      isLinkedRoot: true,
     });
     const menu = registry.resolveMenu(ctx);
     for (const item of menu) {
@@ -293,6 +324,29 @@ describe('run 委托到 actions 回调包', () => {
     ['folder.rename', {}, 'renameFolder', ['folder-1', '素材']],
     ['folder.copy-path', {}, 'copyFolderPath', ['folder-1']],
     [
+      'folder.move-to-trash',
+      {},
+      'trashManagedFolder',
+      ['folder-1', '素材'],
+    ],
+    [
+      'folder.delete-from-disk',
+      {},
+      'deleteFolderFromDisk',
+      ['folder-1', '素材'],
+    ],
+    [
+      'folder.remove-from-library',
+      {
+        locationKind: 'linked',
+        isLinkedRoot: true,
+        linkedFolderResolved: true,
+        linkedFolder: LINKED_FOLDER,
+      },
+      'removeLinkedFolder',
+      ['folder-1', '素材'],
+    ],
+    [
       'collection.rename',
       { menuKind: 'organization', subjectId: 'col-1', subjectName: '年度合集' },
       'renameOrganization',
@@ -418,13 +472,16 @@ describe('删除确认：window.confirm 保留在 run 内', () => {
 });
 
 describe('注册表完整性', () => {
-  it('11 条定义全部注册且 id 唯一（createCommandRegistry 未抛错）', () => {
+  it('14 条定义全部注册且 id 唯一（createCommandRegistry 未抛错）', () => {
     expect(registry.list().map((def) => def.id)).toEqual([
       'folder.open-in-file-manager',
       'folder.create-subfolder',
       'folder.rename',
       'folder.linked-rules',
       'folder.copy-path',
+      'folder.move-to-trash',
+      'folder.delete-from-disk',
+      'folder.remove-from-library',
       'collection.rename',
       'collection.edit-details',
       'collection.delete',
@@ -434,9 +491,16 @@ describe('注册表完整性', () => {
     ]);
   });
 
-  it('文件夹分支解析结果按 open → organize 组序排列（与历史分区一致）', () => {
+  it('文件夹分支解析结果按 open → organize → delete 组序排列', () => {
     const { ctx } = makeCtx();
     const groups = registry.resolveMenu(ctx).map((item) => item.group);
-    expect(groups).toEqual(['open', 'organize', 'organize', 'organize']);
+    expect(groups).toEqual([
+      'open',
+      'organize',
+      'organize',
+      'organize',
+      'delete',
+      'delete',
+    ]);
   });
 });

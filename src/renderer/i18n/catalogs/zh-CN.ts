@@ -308,7 +308,11 @@ export const zhCN = {
       revealInExplorer: "在文件资源管理器中打开",
       revealInExplorerShort: "在资源管理器中打开",
       copyPath: "复制文件夹路径",
-      linkedRules: "链接规则…"
+      linkedRules: "链接规则…",
+      moveToTrash: "移入回收站",
+      deleteFromDisk: "从硬盘中删除…",
+      removeFromLibrary: "从库中移除",
+      removeFromLibraryConfirm: "从资源库移除链接文件夹「{name}」？\n外部源目录不会被删除。"
     },
     collection: {
       rename: "重命名合集",
@@ -486,6 +490,12 @@ export const zhCN = {
       title: "永久删除确认",
       body: "确定要永久删除所选 {count} 项资产吗？文件将从回收站彻底移除，此操作不可撤销。",
       submit: "永久删除 {count} 项"
+    },
+    diskDelete: {
+      title: "从硬盘中删除",
+      body: "确定要从硬盘永久删除「{name}」及其全部内容吗？此操作不可恢复。",
+      dontShowAgain: "不再显示此提示",
+      submit: "从硬盘中删除"
     },
     deleteLinked: {
       title: "删除链接资产",
@@ -845,6 +855,14 @@ export const zhCN = {
     readLinkedRulesFailed: "无法读取链接文件夹过滤规则。",
     linkedRulesSaved: "过滤规则已保存：隐藏 {hidden} 项，恢复 {restored} 项。",
     saveLinkedRulesFailed: "保存过滤规则失败。",
+    folderTrashed: "已将文件夹「{name}」移入回收站（{count} 项资产）。",
+    folderTrashFailed: "文件夹移入回收站失败。",
+    folderDeletedFromDisk: "已从硬盘删除文件夹「{name}」（{count} 项资产）。",
+    folderDeleteFromDiskFailed: "从硬盘删除文件夹失败。",
+    linkedFolderRemoved: "已从库中移除链接文件夹「{name}」（{count} 项记录）；源目录未改动。",
+    linkedFolderRemoveFailed: "从库中移除链接文件夹失败。",
+    linkedSubtreeTrashed: "已将链接子文件夹「{name}」移入系统回收站（{count} 项）。",
+    linkedSubtreeDeletedFromDisk: "已从硬盘删除链接子文件夹「{name}」（{count} 项）。",
     convertLinkedConfirm: "将\"{name}\"复制进资源库并移除链接关系？外部源目录不会被删除。",
     convertLinkedDone: "已转换 {count} 项；外部源目录保持不变。",
     convertLinkedFailed: "转换链接文件夹失败。",

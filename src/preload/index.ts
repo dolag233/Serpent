@@ -170,6 +170,85 @@ const library: SerpentLibraryApi = Object.freeze({
     return { ok: true, value: result.entries };
   },
 
+  async trashFolder(input: {
+    libraryId: string;
+    folderId: string;
+  }) {
+    const result = await request({ type: 'folder.trash.request', ...input });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'folder.trashed') throw new Error('Unexpected trash-folder response.');
+    return {
+      ok: true as const,
+      value: {
+        folderId: result.folderId,
+        trashedAssetCount: result.trashedAssetCount,
+        removedFolderCount: result.removedFolderCount,
+      },
+    };
+  },
+
+  async deleteFolderFromDisk(input: {
+    libraryId: string;
+    folderId: string;
+  }) {
+    const result = await request({ type: 'folder.delete-from-disk.request', ...input });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'folder.deleted-from-disk') {
+      throw new Error('Unexpected delete-folder-from-disk response.');
+    }
+    return {
+      ok: true as const,
+      value: {
+        folderId: result.folderId,
+        deletedAssetCount: result.deletedAssetCount,
+        removedFolderCount: result.removedFolderCount,
+      },
+    };
+  },
+
+  async removeLinkedFolder(input: {
+    libraryId: string;
+    folderId: string;
+  }) {
+    const result = await request({ type: 'linked-folder.remove.request', ...input });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'linked-folder.removed') {
+      throw new Error('Unexpected remove-linked-folder response.');
+    }
+    return {
+      ok: true as const,
+      value: {
+        folderId: result.folderId,
+        removedAssetCount: result.removedAssetCount,
+      },
+    };
+  },
+
+  async deleteLinkedFolderSubtree(input: {
+    libraryId: string;
+    linkedFolderId: string;
+    relativePath: string;
+    deleteFromDisk: boolean;
+  }) {
+    const result = await request({
+      type: 'linked-folder.delete-subtree.request',
+      ...input,
+    });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'linked-folder.subtree-deleted') {
+      throw new Error('Unexpected delete-linked-folder-subtree response.');
+    }
+    return {
+      ok: true as const,
+      value: {
+        linkedFolderId: result.linkedFolderId,
+        relativePath: result.relativePath,
+        deletedAssetCount: result.deletedAssetCount,
+        failedCount: result.failedCount,
+      },
+    };
+  },
+
   async listAssets(input: {
     libraryId: string;
     folderId?: string;

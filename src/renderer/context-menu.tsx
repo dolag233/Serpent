@@ -40,15 +40,20 @@ export type ContextMenuDescriptor =
     }
   | {
       // Directory-tree folders, managed and linked. Managed folders also
-      // expose create/rename; linked folders reach their rules dialog through
-      // this menu. Offline linked roots disable the path actions, mirroring
-      // the unavailable-asset convention.
+      // expose create/rename; linked roots reach rules + remove-from-library.
+      // Linked child paths (relativePath set) use trash / disk-delete like
+      // managed (clarification #7). Offline linked roots disable path actions.
       type: "folder";
       folderId: string;
       name: string;
       locationKind: "managed" | "linked";
       /** Linked folders only: whether the external root is reachable. */
       status?: "available" | "offline";
+      /**
+       * Linked child directory relative to the linked root. Absent/undefined
+       * means a linked root (or any managed folder).
+       */
+      linkedRelativePath?: string;
     }
   | {
       type: "multi-asset";

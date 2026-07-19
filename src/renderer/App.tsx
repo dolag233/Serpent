@@ -34,7 +34,9 @@ import { resolveSearchSnippetCaption } from "./search-snippet-caption";
 import { ConvertLinkedDialog } from "./ConvertLinkedDialog";
 import { LinkedRulesDialog } from "./LinkedRulesDialog";
 import { PermanentDeleteDialog } from "./PermanentDeleteDialog";
+import { DiskDeleteConfirmDialog } from "./DiskDeleteConfirmDialog";
 import { DeleteLinkedDialog } from "./DeleteLinkedDialog";
+import { useFolderDeleteActions } from "./use-folder-delete-actions";
 import { ExportDialog } from "./ExportDialog";
 import { ImportDialog } from "./ImportDialog";
 import {
@@ -2775,6 +2777,28 @@ function AppInner() {
   });
 
   const {
+    diskDeleteTarget,
+    cancelDiskDelete,
+    confirmDiskDelete,
+    trashManagedFolder,
+    openDiskDelete,
+    removeLinkedFolder,
+    trashLinkedFolderSubtree,
+  } = useFolderDeleteActions({
+    api: api ?? null,
+    libraryId: library?.libraryId ?? null,
+    locale,
+    assetScope,
+    setNotice,
+    setError,
+    setUiState,
+    reloadCurrentContent,
+    onDeletedCurrentScope: () => {
+      void chooseFolder("root");
+    },
+  });
+
+  const {
     handleOpenExternal,
     handleRevealInFolder,
     handleCopyFilePath,
@@ -4323,6 +4347,7 @@ function AppInner() {
     return {
       assetRenameOpen: Boolean(assetRenameDialog),
       permanentDeleteOpen: Boolean(permanentDeleteDialog),
+      diskDeleteOpen: Boolean(diskDeleteTarget),
       deleteLinkedOpen: Boolean(deleteLinkedDialog),
       batchRelinkOpen: Boolean(batchRelinkPreview),
       restoreOpen: Boolean(restoreDialog),
@@ -4342,6 +4367,7 @@ function AppInner() {
   }, [
     assetRenameDialog,
     permanentDeleteDialog,
+    diskDeleteTarget,
     deleteLinkedDialog,
     batchRelinkPreview,
     restoreDialog,
@@ -4366,6 +4392,7 @@ function AppInner() {
     cancelAssetRename,
     cancelBatchRelink,
     setPermanentDeleteDialog,
+    cancelDiskDelete,
     setDeleteLinkedDialog,
     setRestoreDialog,
     setMoveDialog,
@@ -4391,6 +4418,7 @@ function AppInner() {
       conflicts ||
       assetRenameDialog ||
       permanentDeleteDialog ||
+      diskDeleteTarget ||
       deleteLinkedDialog ||
       batchRelinkPreview ||
       restoreDialog ||
@@ -6525,6 +6553,13 @@ function AppInner() {
           onConfirm={() => void deletePermanentFromTrash()}
         />
       )}
+      {diskDeleteTarget && (
+        <DiskDeleteConfirmDialog
+          subjectName={diskDeleteTarget.name}
+          onCancel={cancelDiskDelete}
+          onConfirm={(dontShowAgain) => confirmDiskDelete(dontShowAgain)}
+        />
+      )}
       {deleteLinkedDialog && (
         <DeleteLinkedDialog
           displayNames={deleteLinkedDialog.displayNames}
@@ -6632,6 +6667,29 @@ function AppInner() {
           void handleCopyFolderPath(folderId);
         }}
         onOpenLinkedRules={(folder) => void openLinkedRules(folder)}
+        onTrashManagedFolder={(folderId, name) => {
+          void trashManagedFolder(folderId, name);
+        }}
+        onDeleteFolderFromDisk={({ folderId, name, locationKind, linkedRelativePath }) => {
+          if (locationKind === "managed") {
+            openDiskDelete({ kind: "managed", folderId, name });
+            return;
+          }
+          if (linkedRelativePath) {
+            openDiskDelete({
+              kind: "linked-child",
+              linkedFolderId: folderId,
+              relativePath: linkedRelativePath,
+              name,
+            });
+          }
+        }}
+        onRemoveLinkedFolder={(folderId, name) => {
+          void removeLinkedFolder(folderId, name);
+        }}
+        onTrashLinkedFolderSubtree={(linkedFolderId, relativePath, name) => {
+          void trashLinkedFolderSubtree(linkedFolderId, relativePath, name);
+        }}
         onBatchAssignTag={(tagId, assetIds) => {
           void batchAssignTagToSelection(tagId, assetIds);
         }}

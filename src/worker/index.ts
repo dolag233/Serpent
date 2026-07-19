@@ -273,6 +273,43 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
           parentFolderId: request.command.parentFolderId,
         }),
       };
+    case 'folder.trash': {
+      const result = libraryService.trashManagedFolder(request.command);
+      return {
+        ok: true,
+        type: 'folder.trashed',
+        folderId: request.command.folderId,
+        ...result,
+      };
+    }
+    case 'folder.delete-from-disk': {
+      const result = libraryService.deleteManagedFolderFromDisk(request.command);
+      return {
+        ok: true,
+        type: 'folder.deleted-from-disk',
+        folderId: request.command.folderId,
+        ...result,
+      };
+    }
+    case 'linked-folder.remove': {
+      const result = libraryService.removeLinkedFolder(request.command);
+      return {
+        ok: true,
+        type: 'linked-folder.removed',
+        folderId: request.command.folderId,
+        ...result,
+      };
+    }
+    case 'linked-folder.delete-subtree': {
+      const result = await libraryService.deleteLinkedFolderSubtree(request.command);
+      return {
+        ok: true,
+        type: 'linked-folder.subtree-deleted',
+        linkedFolderId: request.command.linkedFolderId,
+        relativePath: request.command.relativePath,
+        ...result,
+      };
+    }
     case 'asset.list':
       {
         const assets = libraryService.listAssets(request.command);
