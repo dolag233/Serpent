@@ -68,7 +68,7 @@ export function FolderCard({
           {entry.name}
         </strong>
         <span className="folder-card-count">
-          {t("common.itemCount", { count: entry.directAssetCount })}
+          {t("common.itemCount", { count: entry.recursiveAssetCount })}
         </span>
       </div>
     </button>

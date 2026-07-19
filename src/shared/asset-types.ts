@@ -47,8 +47,9 @@ export const folderBrowseEntrySchema = z.strictObject({
   name: nonBlankString,
   relativePath: portableRelativePathSchema,
   status: z.literal('available'),
+  /** Direct-child assets only (covers / layout helpers). */
   directAssetCount: z.number().int().nonnegative(),
-  /** Interim: same as direct until clarification #2 chooses recursive display. */
+  /** All descendant assets (REQ-FOLDER-003 / Serpent-toh). */
   recursiveAssetCount: z.number().int().nonnegative(),
   childFolderCount: z.number().int().nonnegative(),
   /** Up to 3 ready thumbnail/poster artifact ids for Windows-style cover. */
@@ -62,6 +63,8 @@ export const linkedFolderSummarySchema = z.strictObject({
   displayName: nonBlankString,
   status: z.enum(['available', 'offline']),
   assetCount: z.number().int().nonnegative(),
+  /** Absolute linked root for hover affordance (Serpent-rc9). */
+  absoluteRootPath: z.string().min(1).max(4096),
 });
 
 export type LinkedFolderSummary = z.infer<typeof linkedFolderSummarySchema>;

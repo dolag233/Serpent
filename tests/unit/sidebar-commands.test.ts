@@ -21,6 +21,7 @@ const LINKED_FOLDER: LinkedFolderSummary = {
   displayName: '外部素材库',
   status: 'available',
   assetCount: 12,
+  absoluteRootPath: '/Volumes/Art/外部素材库',
 };
 
 interface RecordedCall {

@@ -1,7 +1,9 @@
 import { expect, test } from "vitest";
 
 import {
+  containContentBox,
   playheadLeftPercent,
+  playheadLeftPercentInContainBox,
   playheadRatioFromTime,
   seekRatioFromWaveformClientX,
   seekTimeFromWaveformRatio,
@@ -30,4 +32,16 @@ test("waveform seek helpers clamp pointer geometry to duration", () => {
   expect(seekTimeFromWaveformRatio(0.25, 40)).toBe(10);
   expect(seekTimeFromWaveformRatio(-1, 40)).toBe(0);
   expect(seekTimeFromWaveformRatio(2, 40)).toBe(40);
+});
+
+test("containContentBox letterboxes a 4:3 image in a wide shell (Serpent-vlx)", () => {
+  const box = containContentBox(800, 200, 640, 480);
+  expect(box.height).toBe(200);
+  expect(box.width).toBeCloseTo((200 * 640) / 480, 5);
+  expect(box.left).toBeCloseTo((800 - box.width) / 2, 5);
+  expect(box.top).toBe(0);
+  expect(playheadLeftPercentInContainBox(0.5, 800, box)).toBeCloseTo(
+    ((box.left + box.width / 2) / 800) * 100,
+    5,
+  );
 });

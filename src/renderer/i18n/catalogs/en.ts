@@ -134,6 +134,7 @@ export const en = {
     subcollectionNamePlaceholder: "Enter subcollection name, press Enter to create",
     linkedFolder: "Linked folder",
     linkedFolderOffline: "Linked folder offline — click to relink",
+    linkedFolderPath: "Original path",
     linkedFolderHint: "Right-click to edit rules; Shift+right-click to convert to managed. Drop selected managed assets here.",
     importLinkedFolder: "Import linked folder",
     newFolder: "New folder"
@@ -214,6 +215,7 @@ export const en = {
     missing: "Missing file",
     excludeAvailability: "Exclude this availability",
     exclude: "Exclude",
+    shiftMultiSelectHint: "Hold Shift to multi-select",
     widthPx: "Width",
     heightPx: "Height",
     aspectRatio: "Aspect ratio",

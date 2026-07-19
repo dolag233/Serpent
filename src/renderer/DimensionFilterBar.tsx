@@ -511,6 +511,7 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
                 />
                 {t("filter.exclude")}
               </label>
+              <p className="dimension-filter-hint">{t("filter.shiftMultiSelectHint")}</p>
             </div>
           )}
         </div>
@@ -545,6 +546,7 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
                 />
                 {t("filter.exclude")}
               </label>
+              <p className="dimension-filter-hint">{t("filter.shiftMultiSelectHint")}</p>
             </div>
           )}
         </div>
@@ -640,6 +642,7 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
                 />
                 {t("filter.exclude")}
               </label>
+              <p className="dimension-filter-hint">{t("filter.shiftMultiSelectHint")}</p>
             </div>
           )}
         </div>
@@ -696,6 +699,7 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
                 />
                 {t("filter.exclude")}
               </label>
+              <p className="dimension-filter-hint">{t("filter.shiftMultiSelectHint")}</p>
             </div>
           )}
         </div>

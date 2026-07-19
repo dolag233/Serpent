@@ -463,4 +463,53 @@ describe('Linked folder import', () => {
 
     service.closeAll();
   });
+
+  it('imports external files into an existing linked folder root (Serpent-d3h)', () => {
+    const root = temporaryRoot();
+    const linkedRoot = path.join(root, 'linked-target');
+    const incoming = path.join(root, 'incoming');
+    mkdirSync(linkedRoot);
+    mkdirSync(incoming);
+    writeFileSync(path.join(linkedRoot, 'existing.png'), 'keep');
+    writeFileSync(path.join(incoming, 'new-art.png'), 'fresh bytes');
+
+    const service = new LibraryService();
+    const library = service.createLibrary({
+      displayName: 'LinkedImport',
+      selectedParentPath: root,
+    });
+    const linked = service.importFolderAsLinked({
+      libraryId: library.libraryId,
+      sourceRootPath: linkedRoot,
+    });
+    expect(linked.assetCount).toBe(1);
+    expect(linked.absoluteRootPath.endsWith(`${path.sep}linked-target`)).toBe(
+      true,
+    );
+
+    const result = service.prepareOrExecuteImport({
+      libraryId: library.libraryId,
+      targetFolderId: linked.folderId,
+      sourceKind: 'files',
+      sourcePaths: [path.join(incoming, 'new-art.png')],
+    });
+    if ('importId' in result) throw new Error('Unexpected import conflict.');
+    expect(result.importedCount).toBe(1);
+    expect(
+      readFileSync(path.join(linked.absoluteRootPath, 'new-art.png'), 'utf8'),
+    ).toBe('fresh bytes');
+    const assets = service.listAssets({
+      libraryId: library.libraryId,
+      folderId: linked.folderId,
+      recursive: true,
+    });
+    expect(assets.some((asset) => asset.relativeFilePath === 'new-art.png')).toBe(
+      true,
+    );
+    expect(
+      assets.find((asset) => asset.relativeFilePath === 'new-art.png')
+        ?.locationKind,
+    ).toBe('linked');
+    service.closeAll();
+  });
 });

@@ -445,16 +445,23 @@ body.platform-darwin .toolbar-leading {
   cursor: pointer;
 }
 
-.dimension-filter-btn:hover:not(:disabled) {
+/* Serpent-01i: hover is a weak wash; enabled/open keep accent-soft identity. */
+.dimension-filter-btn:hover:not(:disabled):not(.is-active):not(.is-open) {
   background: var(--hover);
   color: var(--text);
 }
 
 .dimension-filter-btn.is-active:not(:disabled),
 .dimension-filter-btn.is-open:not(:disabled) {
-  border-color: color-mix(in srgb, var(--accent) 45%, var(--divider));
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--divider));
   background: var(--accent-soft);
   color: var(--accent-soft-fg);
+}
+
+.dimension-filter-btn.is-active:hover:not(:disabled),
+.dimension-filter-btn.is-open:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent) 70%, var(--divider));
+  background: color-mix(in srgb, var(--accent-soft) 85%, var(--hover));
 }
 
 .dimension-filter-btn:disabled {
@@ -1039,7 +1046,14 @@ body.platform-darwin .toolbar-leading {
 .dimension-color-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 12px;
+}
+
+.dimension-filter-hint {
+  margin: 8px 0 0;
+  color: var(--tertiary);
+  font-size: 11px;
+  line-height: 1.35;
 }
 
 .dimension-filter-btn.is-excluding:not(:disabled) {
@@ -1072,11 +1086,12 @@ body.platform-darwin .toolbar-leading {
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ink) 18%, transparent);
 }
 
+/* Serpent-aj6: thinner selection ring, no scale, more row gap (above). */
 .dimension-color-swatch.is-active:not(:disabled) {
   border-color: transparent;
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-  transform: scale(1.08);
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+  transform: none;
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--canvas) 80%, transparent);
 }
 
@@ -2500,12 +2515,12 @@ input[type="range"] {
   opacity: 0;
   pointer-events: none;
 }
-/* Serpent-muc: wide full-bleed wave strip. Grid keeps the 4:3 cover PNG;
-   viewer must not letterbox that PNG with object-fit:contain (playhead detaches). */
+/* Serpent-vlx: show full 4:3 waveform (contain); shell uses theme --pane.
+   Playhead + FL-style trail sit over the letterboxed image width. */
 .preview-audio-waveform-shell {
   position: relative;
   width: 100%;
-  height: min(200px, 36vh);
+  height: min(220px, 40vh);
   flex: 0 0 auto;
   border: 1px solid var(--divider);
   border-radius: 8px;
@@ -2523,7 +2538,7 @@ input[type="range"] {
   display: block;
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
   object-position: center;
   pointer-events: none;
   user-select: none;
@@ -2535,14 +2550,31 @@ input[type="range"] {
 }
 .preview-audio-playhead {
   position: absolute;
-  top: 0;
-  bottom: 0;
+  top: 8%;
+  bottom: 8%;
   width: 2px;
   background: var(--accent);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--pane) 55%, transparent);
+  box-shadow:
+    -18px 0 22px 0 color-mix(in srgb, var(--accent) 55%, transparent),
+    -6px 0 10px 0 color-mix(in srgb, var(--accent) 40%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--pane) 55%, transparent);
   transform: translateX(-50%);
   pointer-events: none;
   z-index: 1;
+}
+.preview-audio-playhead::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 0;
+  width: 28px;
+  background: linear-gradient(
+    to left,
+    color-mix(in srgb, var(--accent) 45%, transparent),
+    transparent
+  );
+  pointer-events: none;
 }
 .preview-audio-controls {
   position: relative;
@@ -4481,18 +4513,18 @@ select.ai-config-input {
   letter-spacing: 0.1em;
 }
 
-/* Serpent-qto: default single-line height (min-height = one line + vertical
-   padding); grows toward max-height only once content wraps past a line. */
+/* Serpent-qto / Serpent-goe: empty/single-line height matches .inspector-input
+   (28px); grows toward max-height once content wraps. */
 .inspector-textarea {
   height: auto;
-  min-height: calc(1.6em + 14px);
+  min-height: 28px;
   max-height: 180px;
-  padding-top: 7px;
-  padding-bottom: 7px;
+  padding-top: 6px;
+  padding-bottom: 6px;
   overflow-y: auto;
   resize: none;
   font-size: 11.5px;
-  line-height: 1.6;
+  line-height: 1.35;
 }
 
 /* 源链接：单行截断，右侧嵌一个跳转按钮（仅当内容通过 HTTP(S) 校验时可用）。 */

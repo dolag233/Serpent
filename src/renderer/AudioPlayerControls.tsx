@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useRef, useState, type SyntheticEvent } from "react";
 
 import {
-  playheadLeftPercent,
+  AUDIO_WAVEFORM_COVER_HEIGHT,
+  AUDIO_WAVEFORM_COVER_WIDTH,
+} from "../shared/audio-media";
+import {
+  containContentBox,
+  playheadLeftPercentInContainBox,
   playheadRatioFromTime,
   seekRatioFromWaveformClientX,
 } from "./audio-waveform-timeline";
@@ -29,10 +34,9 @@ export interface AudioPlayerControlsProps {
 const SCRUB_STEP_SECONDS = 5;
 
 /**
- * Viewer chrome for audio assets (Serpent-0x5 / Serpent-13v / Serpent-muc):
- * full-bleed waveform stage (CSS object-fit:cover over the 4:3 cover PNG) with
- * an in-waveform playhead timeline, plus play/pause and scrub. Reuses video
- * transport helpers for Space and scrub math. Grid/Inspector keep the 4:3 cover.
+ * Viewer chrome for audio (Serpent-0x5 / 13v / muc / vlx):
+ * theme-backed shell + object-fit:contain so the full 4:3 waveform is visible;
+ * playhead/scrub map through the contain content box; FL-style trail via CSS.
  * Seek/scrub uses `createMediaSeekSession` (Serpent-jh2).
  */
 export function AudioPlayerControls({
@@ -110,9 +114,15 @@ export function AudioPlayerControls({
     const waveform = waveformRef.current;
     if (!waveform) return 0;
     const rect = waveform.getBoundingClientRect();
+    const box = containContentBox(
+      rect.width,
+      rect.height,
+      AUDIO_WAVEFORM_COVER_WIDTH,
+      AUDIO_WAVEFORM_COVER_HEIGHT,
+    );
     return seekRatioFromWaveformClientX(clientX, {
-      left: rect.left,
-      width: rect.width,
+      left: rect.left + box.left,
+      width: box.width,
     });
   }, []);
 
@@ -120,8 +130,18 @@ export function AudioPlayerControls({
     scrubRatio ?? scrubRatioFromTime(currentTime, duration);
   const displayTime =
     scrubRatio !== null ? scrubTimeFromRatio(scrubRatio, duration) : currentTime;
-  const playheadPercent = playheadLeftPercent(
+  const shellWidth = waveformRef.current?.clientWidth ?? 0;
+  const shellHeight = waveformRef.current?.clientHeight ?? 0;
+  const containBox = containContentBox(
+    shellWidth,
+    shellHeight,
+    AUDIO_WAVEFORM_COVER_WIDTH,
+    AUDIO_WAVEFORM_COVER_HEIGHT,
+  );
+  const playheadPercent = playheadLeftPercentInContainBox(
     scrubRatio ?? playheadRatioFromTime(currentTime, duration),
+    shellWidth,
+    containBox,
   );
 
   const applyKeySeek = (nextTime: number) => {

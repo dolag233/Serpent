@@ -95,6 +95,8 @@ describe('folder browse entries', () => {
       locationKind: 'managed',
       name: 'Parent',
       directAssetCount: 0,
+      // Serpent-toh: parent badge includes assets under ChildA.
+      recursiveAssetCount: 1,
       childFolderCount: 2,
       coverArtifactIds: [],
     });
@@ -107,18 +109,21 @@ describe('folder browse entries', () => {
     const entryA = underParent.find((entry) => entry.folderId === childA.folderId)!;
     const entryB = underParent.find((entry) => entry.folderId === childB.folderId)!;
     expect(entryA.directAssetCount).toBe(1);
+    expect(entryA.recursiveAssetCount).toBe(1);
     expect(entryA.childFolderCount).toBe(1);
     expect(entryA.coverArtifactIds).toEqual([artifactId]);
     expect(entryB.directAssetCount).toBe(0);
+    expect(entryB.recursiveAssetCount).toBe(0);
     expect(entryB.coverArtifactIds).toEqual([]);
 
     const withCounts = service.listManagedFolders(library.libraryId);
+    // ManagedFolderSummary.directAssetCount is the displayed descendant total.
     expect(withCounts.find((folder) => folder.folderId === childA.folderId)).toMatchObject({
       directAssetCount: 1,
       childFolderCount: 1,
     });
     expect(withCounts.find((folder) => folder.folderId === parent.folderId)).toMatchObject({
-      directAssetCount: 0,
+      directAssetCount: 1,
       childFolderCount: 2,
     });
 

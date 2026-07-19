@@ -1,7 +1,10 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Icon, type IconName } from "./Icons";
 import { IconActionButton } from "./icon-action-button";
-import { linkedFolderNavAffordance } from "./availability-affordance";
+import {
+  linkedFolderHoverDetail,
+  linkedFolderNavAffordance,
+} from "./availability-affordance";
 import { useT } from "./i18n";
 import type {
   CollectionSummary,
@@ -696,11 +699,15 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
           key={entry.folderId}
           label={entry.name}
           count={entry.assetCount}
-          title={
-            offline
-              ? t("nav.linkedFolderOffline")
-              : t("nav.linkedFolder")
-          }
+          title={linkedFolderHoverDetail(
+            entry.status,
+            lf.absoluteRootPath,
+            {
+              online: t("nav.linkedFolder"),
+              offline: t("nav.linkedFolderOffline"),
+              pathLabel: t("nav.linkedFolderPath"),
+            },
+          )}
           onClick={
             offline
               ? () => void onRelinkFolder(entry.folderId)

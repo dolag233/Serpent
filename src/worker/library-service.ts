@@ -4222,7 +4222,16 @@ export class LibraryService {
       )
       .all() as ManagedFolderRow[];
     const counts = this.managedFolderCountMaps(openLibrary);
-    return rows.map((row) => this.summarizeManagedFolderRow(openLibrary, row, counts));
+    // Serpent-toh: ManagedFolderSummary.directAssetCount is the displayed
+    // badge count = all descendants (schema field name kept for compat).
+    const recursive = this.managedFolderRecursiveAssetCounts(openLibrary, rows);
+    return rows.map((row) => {
+      const summary = this.summarizeManagedFolderRow(openLibrary, row, counts);
+      return {
+        ...summary,
+        directAssetCount: recursive.get(row.folder_id) ?? summary.directAssetCount,
+      };
+    });
   }
 
   /**
@@ -4263,6 +4272,10 @@ export class LibraryService {
     if (children.length === 0) return [];
 
     const counts = this.managedFolderCountMaps(openLibrary, children.map((row) => row.folder_id));
+    const recursiveCounts = this.managedFolderRecursiveAssetCounts(
+      openLibrary,
+      children,
+    );
     const coverMap = this.folderCoverArtifactMap(
       openLibrary,
       children.map((row) => row.folder_id),
@@ -4278,12 +4291,47 @@ export class LibraryService {
         relativePath: row.relative_path,
         status: 'available' as const,
         directAssetCount,
-        // Interim FOLDER-003/#2: display uses direct; recursive field reserved.
-        recursiveAssetCount: directAssetCount,
+        // Serpent-toh / REQ-FOLDER-003: display all descendant assets.
+        recursiveAssetCount: recursiveCounts.get(row.folder_id) ?? directAssetCount,
         childFolderCount: counts.childFolderCounts.get(row.folder_id) ?? 0,
         coverArtifactIds: coverMap.get(row.folder_id) ?? [],
       };
     });
+  }
+
+  /**
+   * Count assets in each folder's full subtree (self + descendants by
+   * relative_path prefix). Serpent-toh / REQ-FOLDER-003.
+   */
+  private managedFolderRecursiveAssetCounts(
+    openLibrary: OpenLibrary,
+    folders: Array<{ folder_id: string; relative_path: string }>,
+  ): Map<string, number> {
+    const result = new Map<string, number>();
+    if (folders.length === 0) return result;
+
+    const allFolders = openLibrary.connection
+      .prepare(
+        'SELECT folder_id, relative_path FROM managed_folders',
+      )
+      .all() as Array<{ folder_id: string; relative_path: string }>;
+    const { directAssetCounts } = this.managedFolderCountMaps(openLibrary);
+
+    for (const folder of folders) {
+      const prefix = folder.relative_path;
+      let total = directAssetCounts.get(folder.folder_id) ?? 0;
+      for (const candidate of allFolders) {
+        if (candidate.folder_id === folder.folder_id) continue;
+        if (
+          candidate.relative_path === prefix ||
+          candidate.relative_path.startsWith(`${prefix}/`)
+        ) {
+          total += directAssetCounts.get(candidate.folder_id) ?? 0;
+        }
+      }
+      result.set(folder.folder_id, total);
+    }
+    return result;
   }
 
   private managedFolderCountMaps(
@@ -4419,12 +4467,13 @@ export class LibraryService {
     const openLibrary = this.requireOpenLibrary(libraryId);
     const rows = openLibrary.connection
       .prepare(
-        'SELECT folder_id, display_name, status FROM linked_folders WHERE library_id = ? ORDER BY display_name',
+        'SELECT folder_id, display_name, status, absolute_root_path FROM linked_folders WHERE library_id = ? ORDER BY display_name',
       )
       .all(libraryId) as Array<{
         folder_id: string;
         display_name: string;
         status: 'available' | 'offline';
+        absolute_root_path: string;
       }>;
     return rows.map((row) => {
       const countRow = openLibrary.connection
@@ -4437,6 +4486,7 @@ export class LibraryService {
         displayName: row.display_name,
         status: row.status,
         assetCount: countRow.count,
+        absoluteRootPath: row.absolute_root_path,
       };
     });
   }
@@ -4968,6 +5018,7 @@ export class LibraryService {
       displayName: normalizedName,
       status: 'available',
       assetCount: entries.length,
+      absoluteRootPath: canonicalRoot,
     };
   }
 
@@ -5093,6 +5144,7 @@ export class LibraryService {
       displayName: folder.display_name,
       status: 'available',
       assetCount: countRow.count,
+      absoluteRootPath: canonicalNewRoot,
     };
   }
 
@@ -13096,6 +13148,136 @@ export class LibraryService {
     return entries;
   }
 
+  /**
+   * Copy external paths into a linked folder root and register via refresh
+   * (Serpent-d3h / LINK-005). Returns an ImportCompletion-shaped result when
+   * called from prepareOrExecuteImport; prepareImport routes linked targets
+   * here via a zero-conflict plan + immediate resolve is not used — instead
+   * prepareOrExecuteImport short-circuits.
+   */
+  importPathsIntoLinkedFolder(input: {
+    libraryId: string;
+    linkedFolderId: string;
+    sourceKind: 'files' | 'folder';
+    sourcePaths: string[];
+  }): ImportCompletion {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    const folder = openLibrary.connection
+      .prepare(
+        `SELECT folder_id, absolute_root_path, status
+           FROM linked_folders
+          WHERE folder_id = ? AND library_id = ?`,
+      )
+      .get(input.linkedFolderId, input.libraryId) as
+      | { folder_id: string; absolute_root_path: string; status: string }
+      | undefined;
+    if (!folder) throw new LibraryServiceError('FOLDER_NOT_FOUND');
+    if (folder.status !== 'available' || !realDirectoryExists(folder.absolute_root_path)) {
+      throw new LibraryServiceError('INVALID_IMPORT_SOURCE', {
+        reason: 'SOURCE_NOT_FOUND',
+      });
+    }
+
+    const { entries } = this.enumerateImportSources({
+      sourceKind: input.sourceKind,
+      sourcePaths: input.sourcePaths,
+      targetPrefix: '',
+    });
+    if (entries.length === 0) {
+      throw new LibraryServiceError('INVALID_IMPORT_SOURCE');
+    }
+
+    const occupied = new Set<string>();
+    const written: string[] = [];
+    try {
+      for (const entry of entries) {
+        const originalRelative = normalizeRelativeAssetPath(
+          entry.destinationRelativePath,
+        );
+        const originalName = path.posix.basename(originalRelative);
+        const parentRelative = path.posix.dirname(originalRelative);
+        let relativeDestination = originalRelative;
+        let destination = path.join(
+          folder.absolute_root_path,
+          ...relativeDestination.split('/'),
+        );
+        const destinationExists = (): boolean =>
+          occupied.has(portablePathIdentity(relativeDestination)) ||
+          existsSync(destination);
+        if (destinationExists()) {
+          let found = false;
+          for (let suffix = 2; suffix < 10_000 && !found; suffix += 1) {
+            for (const candidate of copyNameCandidates(originalName, suffix)) {
+              relativeDestination = normalizeRelativeAssetPath(
+                parentRelative === '.'
+                  ? candidate
+                  : path.posix.join(parentRelative, candidate),
+              );
+              destination = path.join(
+                folder.absolute_root_path,
+                ...relativeDestination.split('/'),
+              );
+              if (!destinationExists()) {
+                found = true;
+                break;
+              }
+            }
+          }
+          if (!found) {
+            throw new LibraryServiceError('IMPORT_APPLY_FAILED', {
+              reason: 'NAME_NOT_SUPPORTED',
+            });
+          }
+        }
+        mkdirSync(path.dirname(destination), { recursive: true });
+        copyFileSync(entry.sourcePath, destination, constants.COPYFILE_EXCL);
+        written.push(relativeDestination);
+        occupied.add(portablePathIdentity(relativeDestination));
+      }
+    } catch (error) {
+      for (const relativePath of written.reverse()) {
+        rmSync(
+          path.join(folder.absolute_root_path, ...relativePath.split('/')),
+          { force: true },
+        );
+      }
+      throw serviceError(error, 'IMPORT_APPLY_FAILED');
+    }
+
+    this.refreshManagedAssets(input.libraryId);
+    const identities = new Set(written.map(portablePathIdentity));
+    const assets = this.listAssets({
+      libraryId: input.libraryId,
+      folderId: input.linkedFolderId,
+      recursive: true,
+    }).filter((asset) =>
+      identities.has(portablePathIdentity(asset.relativeFilePath)),
+    );
+    return {
+      importedCount: assets.length,
+      skippedCount: Math.max(0, entries.length - assets.length),
+      replacedCount: 0,
+      assets,
+    };
+  }
+
+  private linkedFolderRowForImport(
+    openLibrary: OpenLibrary,
+    folderId: string | undefined,
+  ): { folder_id: string; absolute_root_path: string; status: string } | null {
+    if (!folderId) return null;
+    const row = openLibrary.connection
+      .prepare(
+        `SELECT folder_id, absolute_root_path, status
+           FROM linked_folders
+          WHERE folder_id = ? AND library_id = ?`,
+      )
+      .get(folderId, openLibrary.summary.libraryId) as
+      | { folder_id: string; absolute_root_path: string; status: string }
+      | undefined;
+    return row ?? null;
+  }
+
   prepareImport(input: {
     libraryId: string;
     targetFolderId?: string;
@@ -13103,6 +13285,13 @@ export class LibraryService {
     sourcePaths: string[];
   }): ImportConflictPlan {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
+    if (this.linkedFolderRowForImport(openLibrary, input.targetFolderId)) {
+      // Linked imports skip the managed staging pipeline; callers should use
+      // prepareOrExecuteImport. Surface a clear error if prepareImport is used alone.
+      throw new LibraryServiceError('INVALID_IMPORT_DECISION', {
+        reason: 'SOURCE_NOT_FOUND',
+      });
+    }
     const targetFolder = this.targetFolder(openLibrary, input.targetFolderId);
     const { directories, entries } = this.enumerateImportSources({
       sourceKind: input.sourceKind,
@@ -13248,6 +13437,19 @@ export class LibraryService {
     sourceKind: 'files' | 'folder';
     sourcePaths: string[];
   }): ImportConflictPlan | ImportCompletion {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    const linked = this.linkedFolderRowForImport(
+      openLibrary,
+      input.targetFolderId,
+    );
+    if (linked) {
+      return this.importPathsIntoLinkedFolder({
+        libraryId: input.libraryId,
+        linkedFolderId: linked.folder_id,
+        sourceKind: input.sourceKind,
+        sourcePaths: input.sourcePaths,
+      });
+    }
     const plan = this.prepareImport(input);
     if (plan.suspectedDuplicateCount !== 0 || plan.nameConflictCount !== 0) return plan;
     return this.resolveImport({

@@ -1,8 +1,8 @@
 import type { IconName } from './Icons';
 
 /**
- * Serpent-6nb: only unavailable states get a distinctive icon.
- * Healthy linked folders look like managed folders (no accent link glyph).
+ * Serpent-rc9: linked folders always show a link glyph (online or offline).
+ * Offline uses the disconnect icon + muted color.
  */
 export function linkedFolderNavAffordance(status: string): {
   readonly icon: IconName;
@@ -11,7 +11,19 @@ export function linkedFolderNavAffordance(status: string): {
   if (status === 'offline') {
     return { icon: 'link-off', iconColor: 'var(--tertiary)' };
   }
-  return { icon: 'folder' };
+  return { icon: 'link', iconColor: 'var(--secondary)' };
+}
+
+/** Tooltip body for a linked folder row (name handled by NavRow). */
+export function linkedFolderHoverDetail(
+  status: string,
+  absoluteRootPath: string | null | undefined,
+  copy: { online: string; offline: string; pathLabel: string },
+): string {
+  const base = status === 'offline' ? copy.offline : copy.online;
+  const path = absoluteRootPath?.trim();
+  if (!path) return base;
+  return `${base}\n${copy.pathLabel}: ${path}`;
 }
 
 export function shouldShowMissingAssetOverlay(availability: string): boolean {

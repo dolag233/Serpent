@@ -49,15 +49,18 @@ test("waveform cover geometry is approximately 4:3 (Serpent-dxk)", () => {
   ).toBe(true);
   expect(isNearFourByThreeAspect(640, 160)).toBe(false);
   expect(isNearFourByThreeAspect(160, 640)).toBe(false);
-  expect(AUDIO_WAVEFORM_COVER_GENERATOR_TAG).toBe("waveform-cover4");
+  expect(AUDIO_WAVEFORM_COVER_GENERATOR_TAG).toBe("waveform-cover5");
 });
 
-test("waveform cover stage is light-theme friendly (Serpent-dxk)", () => {
+test("waveform cover stage is charcoal grey-black (Serpent-vlx)", () => {
   expect(
     isLightFriendlyWaveformCoverBackground(AUDIO_WAVEFORM_COVER_BACKGROUND),
   ).toBe(true);
   expect(
     isLightFriendlyWaveformCoverBackground({ r: 0x1a, g: 0x20, b: 0x30 }),
+  ).toBe(true);
+  expect(
+    isLightFriendlyWaveformCoverBackground({ r: 0xff, g: 0xff, b: 0xff }),
   ).toBe(false);
   expect(
     isLightFriendlyWaveformCoverBackground({ r: 0, g: 0, b: 0 }),

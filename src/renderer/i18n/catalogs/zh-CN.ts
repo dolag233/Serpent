@@ -125,6 +125,7 @@ export const zhCN = {
     subcollectionNamePlaceholder: "输入子合集名称，回车创建",
     linkedFolder: "链接文件夹",
     linkedFolderOffline: "链接文件夹离线，点击重新指定",
+    linkedFolderPath: "原路径",
     linkedFolderHint: "右键编辑规则；Shift+右键转换为托管。可拖入所选托管资产。",
     importLinkedFolder: "导入链接文件夹",
     newFolder: "新建文件夹"
@@ -204,6 +205,7 @@ export const zhCN = {
     missing: "文件丢失",
     excludeAvailability: "排除该可用性",
     exclude: "排除",
+    shiftMultiSelectHint: "按住 Shift 可多选",
     widthPx: "宽度",
     heightPx: "高度",
     aspectRatio: "宽高比",

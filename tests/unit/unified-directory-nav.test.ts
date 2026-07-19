@@ -21,6 +21,7 @@ const linked = (
 ): LinkedFolderSummary => ({
   status: "available",
   assetCount: 0,
+  absoluteRootPath: "/tmp/linked",
   ...overrides,
 });
 

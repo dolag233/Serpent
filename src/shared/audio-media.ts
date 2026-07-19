@@ -16,19 +16,18 @@ export const AUDIO_EXTENSIONS = [
 ] as const;
 
 /**
- * Grid / Inspector waveform cover geometry (Serpent-dxk).
- * Target ≈ 4:3 — not a tall or wide strip. Viewer chrome CSS is separate
- * (Serpent-muc: full-bleed strip via object-fit:cover, not letterboxed contain).
+ * Grid / Inspector waveform cover geometry (≈4:3).
+ * Viewer chrome CSS is separate (Serpent-vlx: object-fit contain + theme stage).
  */
 export const AUDIO_WAVEFORM_COVER_WIDTH = 640;
 export const AUDIO_WAVEFORM_COVER_HEIGHT = 480;
 
 /** Generator tag; bump when cover geometry or stage color changes so thumbs requeue. */
-export const AUDIO_WAVEFORM_COVER_GENERATOR_TAG = "waveform-cover4";
+export const AUDIO_WAVEFORM_COVER_GENERATOR_TAG = "waveform-cover5";
 
 /**
  * Light browse canvas (`--canvas` in light theme). Covers must not match this
- * or the 4:3 stage blends into the grid (Serpent-muc / AUDIO-001).
+ * or the 4:3 stage blends into the grid.
  */
 export const LIGHT_CANVAS_BACKGROUND = {
   r: 0xe8,
@@ -37,20 +36,24 @@ export const LIGHT_CANVAS_BACKGROUND = {
 } as const;
 
 /**
- * Raised/pane cover stage (light `--raised` / white). Distinct from canvas;
- * still light-theme friendly. Shared PNG across themes.
+ * Preview/grid cover stage — charcoal grey-black (Serpent-vlx).
+ * Shared PNG across themes; viewer shell uses theme `--pane` separately.
  */
 export const AUDIO_WAVEFORM_COVER_BACKGROUND = {
-  r: 0xff,
-  g: 0xff,
-  b: 0xff,
+  r: 0x2a,
+  g: 0x2d,
+  b: 0x32,
 } as const;
 
-/** Wave stroke with contrast on the light cover stage. */
-export const AUDIO_WAVEFORM_COVER_STROKE = "#3B7DD8";
+/** Wave stroke with contrast on the dark cover stage. */
+export const AUDIO_WAVEFORM_COVER_STROKE = "#6BA3E8";
 
 /** Minimum Euclidean RGB distance from light canvas so the cover reads as a card. */
 export const AUDIO_WAVEFORM_COVER_CANVAS_MIN_DISTANCE = 24;
+
+/** Relative luminance band for the charcoal cover stage (neither near-white nor pure black). */
+export const AUDIO_WAVEFORM_COVER_LUMINANCE_MIN = 0.02;
+export const AUDIO_WAVEFORM_COVER_LUMINANCE_MAX = 0.35;
 
 export function audioWaveformCoverAspectRatio(): number {
   return AUDIO_WAVEFORM_COVER_WIDTH / AUDIO_WAVEFORM_COVER_HEIGHT;
@@ -87,18 +90,37 @@ export function isNearFourByThreeAspect(
   return Math.abs(ratio - target) / target <= relativeTolerance;
 }
 
-/** Reject near-black stages that fail light-theme cover QA. */
+/**
+ * True when the cover stage is a charcoal / grey-black suitable for grid
+ * preview (Serpent-vlx). Rejects near-white and pure black.
+ */
+export function isDarkWaveformCoverBackground(rgb: {
+  r: number;
+  g: number;
+  b: number;
+}): boolean {
+  const lum = relativeLuminance(rgb);
+  return (
+    lum >= AUDIO_WAVEFORM_COVER_LUMINANCE_MIN &&
+    lum <= AUDIO_WAVEFORM_COVER_LUMINANCE_MAX
+  );
+}
+
+/**
+ * @deprecated Prefer `isDarkWaveformCoverBackground` (Serpent-vlx). Kept as an
+ * alias so older call sites that still expect a boolean gate keep compiling
+ * during the tag bump window.
+ */
 export function isLightFriendlyWaveformCoverBackground(rgb: {
   r: number;
   g: number;
   b: number;
 }): boolean {
-  return relativeLuminance(rgb) >= 0.75;
+  return isDarkWaveformCoverBackground(rgb);
 }
 
 /**
- * True when the cover stage is visibly distinct from the light browse canvas
- * (avoids `#e8eae7` blending into `--canvas`).
+ * True when the cover stage is visibly distinct from the light browse canvas.
  */
 export function contrastsWithLightCanvas(
   rgb: { r: number; g: number; b: number },
