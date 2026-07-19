@@ -610,20 +610,29 @@ describe('LibraryService lifecycle', () => {
     expectServiceError(() => service.openLibrary(created.libraryPath), 'LIBRARY_CORRUPT');
   });
 
-  it('does not leave a partial library when the parent is not writable', () => {
-    const root = temporaryRoot();
-    const service = newService();
-    chmodSync(root, 0o500);
-    try {
-      expectServiceError(
-        () => service.createLibrary({ displayName: 'Denied', selectedParentPath: root }),
-        'LIBRARY_NOT_WRITABLE',
-      );
-      expect(readdirSync(root)).toEqual([]);
-    } finally {
-      chmodSync(root, 0o700);
-    }
-  });
+  it.runIf(process.platform !== 'win32')(
+    'does not leave a partial library when the parent is not writable',
+    () => {
+      // POSIX-only: chmod actually revokes the owner's write permission here.
+      // On Windows chmod only toggles the read-only attribute, accessSync(W_OK)
+      // still reports the owner-writable directory as writable, and mkdirSync
+      // succeeds regardless — so a non-writable parent cannot be constructed
+      // this way (it would require ACL/icacls manipulation). createLibrary's
+      // writability probe + partial cleanup are exercised on POSIX.
+      const root = temporaryRoot();
+      const service = newService();
+      chmodSync(root, 0o500);
+      try {
+        expectServiceError(
+          () => service.createLibrary({ displayName: 'Denied', selectedParentPath: root }),
+          'LIBRARY_NOT_WRITABLE',
+        );
+        expect(readdirSync(root)).toEqual([]);
+      } finally {
+        chmodSync(root, 0o700);
+      }
+    },
+  );
 
   it('reports an unknown close without changing the open set', () => {
     const service = newService();

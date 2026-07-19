@@ -167,8 +167,17 @@ describe('resolveFolderPath (REQ-MENU-006)', () => {
       sourceRootPath: sourceRoot,
     });
 
+    // Release the recursive watcher before mutating the root on disk: on
+    // Windows the open watch handle holds a removed directory in delete-
+    // pending state, which blocks recreating it as a symlink (POSIX unlinks
+    // regardless of open handles). Reopen afterwards so resolveFolderPath runs
+    // against the now-symlinked root; the DB status stays 'available' because
+    // no refresh ran, so the rejection exercises the symlink path specifically.
+    service.closeAll();
     rmSync(sourceRoot, { recursive: true, force: true });
     symlinkSync(elsewhere, sourceRoot, 'dir');
+    service.openLibrary(library.libraryPath);
+
     expectCode(
       () => service.resolveFolderPath(library.libraryId, linked.folderId),
       'FOLDER_NOT_FOUND',

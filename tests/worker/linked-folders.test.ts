@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -9,6 +9,19 @@ import { LibraryService } from '../../src/worker/library-service';
 
 const temporaryRoots: string[] = [];
 const require = createRequire(import.meta.url);
+
+// LibraryService holds SQLite connections and recursive fs watchers; on
+// Windows those open handles block rm of the temp tree (POSIX unlinks open
+// files, which is why the leak is invisible on macOS). Always close first.
+const services: LibraryService[] = [];
+
+function newService(
+  ...args: ConstructorParameters<typeof LibraryService>
+): LibraryService {
+  const service = new LibraryService(...args);
+  services.push(service);
+  return service;
+}
 
 interface TestDatabaseConnection {
   close(): void;
@@ -28,6 +41,7 @@ function temporaryRoot(): string {
 }
 
 afterEach(() => {
+  for (const service of services.splice(0)) service.closeAll();
   for (const root of temporaryRoots.splice(0)) {
     rmSync(root, { force: true, recursive: true });
   }
@@ -36,7 +50,7 @@ afterEach(() => {
 describe('Linked folders schema migration', () => {
   it('migrates a v3 library to v4 with a linked_folders table and linked asset columns', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Linked', selectedParentPath: root });
     service.closeAll();
 
@@ -74,7 +88,7 @@ describe('Linked folder import', () => {
     mkdirSync(path.join(sourceRoot, 'sub'));
     writeFileSync(path.join(sourceRoot, 'sub', 'c.png'), 'ccccc');
 
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Linked', selectedParentPath: root });
     const linked = service.importFolderAsLinked({
       libraryId: created.libraryId,
@@ -113,7 +127,7 @@ describe('Linked folder import', () => {
     mkdirSync(sourceRoot);
     writeFileSync(path.join(sourceRoot, 'a.png'), 'aaa');
 
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Linked', selectedParentPath: root });
     service.importFolderAsLinked({
       libraryId: created.libraryId,
@@ -149,7 +163,7 @@ describe('Linked folder import', () => {
     writeFileSync(path.join(sourceRoot, 'a.png'), 'aaa');
     writeFileSync(path.join(sourceRoot, 'b.png'), 'bbbb');
 
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Linked', selectedParentPath: root });
     const linked = service.importFolderAsLinked({
       libraryId: created.libraryId,
@@ -183,7 +197,7 @@ describe('Linked folder import', () => {
     writeFileSync(path.join(sourceRoot, 'a.png'), 'aaa');
     writeFileSync(path.join(sourceRoot, 'b.png'), 'bbbb');
 
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Linked', selectedParentPath: root });
     const linked = service.importFolderAsLinked({
       libraryId: created.libraryId,
@@ -233,7 +247,7 @@ describe('Linked folder import', () => {
     writeFileSync(path.join(sourceRoot, '.DS_Store'), 'x');
     writeFileSync(path.join(sourceRoot, 'Thumbs.db'), 'x');
 
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Linked', selectedParentPath: root });
     const linked = service.importFolderAsLinked({
       libraryId: created.libraryId,
@@ -256,7 +270,7 @@ describe('Linked folder import', () => {
     writeFileSync(path.join(root, 'secret.png'), 'secret');
     symlinkSync(path.join(root, 'secret.png'), path.join(sourceRoot, 'link.png'));
 
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Linked', selectedParentPath: root });
     service.importFolderAsLinked({ libraryId: created.libraryId, sourceRootPath: sourceRoot });
 
@@ -271,7 +285,7 @@ describe('Linked folder import', () => {
     mkdirSync(path.join(sourceRoot, 'node_modules'), { recursive: true });
     writeFileSync(path.join(sourceRoot, 'keep.png'), 'keep');
     writeFileSync(path.join(sourceRoot, 'node_modules', 'later.png'), 'later');
-    const service = new LibraryService();
+    const service = newService();
     const library = service.createLibrary({ displayName: 'Rules', selectedParentPath: root });
     const linked = service.importFolderAsLinked({ libraryId: library.libraryId, sourceRootPath: sourceRoot });
     const original = service.listAssets({ libraryId: library.libraryId, folderId: linked.folderId, recursive: true })[0]!;
@@ -305,7 +319,7 @@ describe('Linked folder import', () => {
     mkdirSync(importRoot);
     const source = path.join(importRoot, 'managed.png');
     writeFileSync(source, 'managed bytes');
-    const service = new LibraryService();
+    const service = newService();
     const library = service.createLibrary({ displayName: 'Copy', selectedParentPath: root });
     const imported = service.prepareOrExecuteImport({
       libraryId: library.libraryId, sourceKind: 'files', sourcePaths: [source],
@@ -328,7 +342,7 @@ describe('Linked folder import', () => {
     const linkedRoot = path.join(root, 'source');
     mkdirSync(linkedRoot);
     writeFileSync(path.join(linkedRoot, 'art.png'), 'art bytes');
-    const service = new LibraryService();
+    const service = newService();
     const library = service.createLibrary({ displayName: 'Convert', selectedParentPath: root });
     const linked = service.importFolderAsLinked({ libraryId: library.libraryId, sourceRootPath: linkedRoot });
     const before = service.listAssets({ libraryId: library.libraryId, folderId: linked.folderId, recursive: true })[0]!;
@@ -350,7 +364,7 @@ describe('Linked folder import', () => {
     const linkedRoot = path.join(root, 'crash-source');
     mkdirSync(linkedRoot);
     writeFileSync(path.join(linkedRoot, 'art.png'), 'art bytes');
-    const interrupted = new LibraryService({ failAt: 'crash-linked-convert-after-filesystem' });
+    const interrupted = newService({ failAt: 'crash-linked-convert-after-filesystem' });
     const library = interrupted.createLibrary({ displayName: 'Crash Convert', selectedParentPath: root });
     const linked = interrupted.importFolderAsLinked({ libraryId: library.libraryId, sourceRootPath: linkedRoot });
     expect(() => interrupted.convertLinkedFolderToManaged({
@@ -359,7 +373,7 @@ describe('Linked folder import', () => {
     expect(existsSync(path.join(library.libraryPath, 'Assets', 'crash-source', 'art.png'))).toBe(true);
     interrupted.closeAll();
 
-    const recovered = new LibraryService();
+    const recovered = newService();
     recovered.openLibrary(library.libraryPath);
     expect(existsSync(path.join(library.libraryPath, 'Assets', 'crash-source'))).toBe(false);
     expect(recovered.listLinkedFolders(library.libraryId)).toMatchObject([{ folderId: linked.folderId }]);
@@ -375,7 +389,7 @@ describe('Linked folder import', () => {
     mkdirSync(path.join(sourceRoot, 'sub'));
     writeFileSync(path.join(sourceRoot, 'sub', 'b.png'), 'bbb');
 
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'D1-Verify', selectedParentPath: root });
     const linked = service.importFolderAsLinked({
       libraryId: created.libraryId,
@@ -418,7 +432,21 @@ describe('Linked folder import', () => {
     mkdirSync(lockedDir);
     writeFileSync(path.join(lockedDir, 'b.png'), 'bbb');
 
-    const service = new LibraryService();
+    // The relink stat goes through the assetLstat seam so the EACCES fault is
+    // injected deterministically; chmod-based permission removal is a POSIX-
+    // only simulation (on Windows chmod only toggles the read-only attribute
+    // and directory traversal cannot be revoked this way). The hook receives
+    // the canonicalized root (realpath differs from the temp path on macOS),
+    // so match on the portable tail instead of an absolute prefix.
+    const lockedTail = path.join('relocated', 'locked', 'b.png');
+    const service = newService({
+      assetLstat: (assetPath) => {
+        if (assetPath.endsWith(lockedTail)) {
+          throw Object.assign(new Error('Injected EACCES'), { code: 'EACCES' });
+        }
+        return lstatSync(assetPath);
+      },
+    });
     const created = service.createLibrary({ displayName: 'D2-Relink', selectedParentPath: root });
     const linked = service.importFolderAsLinked({
       libraryId: created.libraryId,
@@ -430,36 +458,28 @@ describe('Linked folder import', () => {
     rmSync(sourceRoot, { recursive: true, force: true });
     service.refreshManagedAssets(created.libraryId);
 
-    // New root: has a.png and a locked/ subdir whose permissions block lstat of locked/b.png.
+    // New root: has a.png and a locked/ subdir whose b.png fails lstat with EACCES.
     const newRoot = path.join(root, 'relocated');
     mkdirSync(newRoot);
     writeFileSync(path.join(newRoot, 'a.png'), 'aaa-restored');
     mkdirSync(path.join(newRoot, 'locked'));
     writeFileSync(path.join(newRoot, 'locked', 'b.png'), 'bbb-restored');
 
-    try {
-      // Remove all permissions from locked/ so lstatSync(newRoot/locked/b.png) fails with EACCES.
-      chmodSync(path.join(newRoot, 'locked'), 0o000);
+    const result = service.relinkMissingFolder({
+      libraryId: created.libraryId,
+      folderId: linked.folderId,
+      newRootPath: newRoot,
+    });
 
-      const result = service.relinkMissingFolder({
-        libraryId: created.libraryId,
-        folderId: linked.folderId,
-        newRootPath: newRoot,
-      });
+    // The relink must complete (not abort) — a.png restored, b.png stays missing.
+    expect(result.status).toBe('available');
 
-      // The relink must complete (not abort) — a.png restored, b.png stays missing.
-      expect(result.status).toBe('available');
-
-      const assets = service.listAssets({ libraryId: created.libraryId, recursive: true });
-      const aAsset = assets.find((asset) => asset.relativeFilePath === 'a.png')!;
-      const bAsset = assets.find((asset) => asset.relativeFilePath === 'locked/b.png')!;
-      expect(aAsset.availability).toBe('available');
-      expect(aAsset.byteSize).toBe('aaa-restored'.length);
-      expect(bAsset.availability).toBe('missing');
-    } finally {
-      // Restore permissions so cleanup can remove the directory.
-      try { chmodSync(path.join(newRoot, 'locked'), 0o755); } catch { /* ignore */ }
-    }
+    const assets = service.listAssets({ libraryId: created.libraryId, recursive: true });
+    const aAsset = assets.find((asset) => asset.relativeFilePath === 'a.png')!;
+    const bAsset = assets.find((asset) => asset.relativeFilePath === 'locked/b.png')!;
+    expect(aAsset.availability).toBe('available');
+    expect(aAsset.byteSize).toBe('aaa-restored'.length);
+    expect(bAsset.availability).toBe('missing');
 
     service.closeAll();
   });
@@ -473,7 +493,7 @@ describe('Linked folder import', () => {
     writeFileSync(path.join(linkedRoot, 'existing.png'), 'keep');
     writeFileSync(path.join(incoming, 'new-art.png'), 'fresh bytes');
 
-    const service = new LibraryService();
+    const service = newService();
     const library = service.createLibrary({
       displayName: 'LinkedImport',
       selectedParentPath: root,

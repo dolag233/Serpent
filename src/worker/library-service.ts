@@ -1774,21 +1774,44 @@ function isMissingPathError(error: unknown): boolean {
   );
 }
 
+const FS_NAME_COMPONENT_LIMIT = 255;
+
 /**
- * Existence probes in availability reconciliation must also accept EPERM /
- * EACCES as "not there": on Windows a tree in delete-pending state (removed
- * while a handle is still open) answers lstat/readdir with EPERM until the
- * last handle closes, whereas POSIX reports ENOENT. A genuinely ACL-denied
- * path reconciles to 'missing' as well and flips back when access returns,
- * which is the designed semantics for unavailable linked content.
+ * NTFS caps each path component at 255 UTF-16 code units (JS string length);
+ * POSIX filesystems cap it at 255 bytes. Past the limit every create/rename
+ * fails — POSIX with ENAMETOOLONG, Windows with ENOENT
+ * (ERROR_FILENAME_EXCED_RANGE), which would otherwise be misreported as
+ * SOURCE_NOT_FOUND. Validate deterministically before placement so both
+ * platforms surface the same PATH_LIMIT_EXCEEDED reason.
+ */
+function assertNameWithinFsLimit(relativePath: string): void {
+  for (const component of relativePath.split('/')) {
+    if (
+      component.length > FS_NAME_COMPONENT_LIMIT ||
+      Buffer.byteLength(component, 'utf8') > FS_NAME_COMPONENT_LIMIT
+    ) {
+      throw new LibraryServiceError('IMPORT_APPLY_FAILED', { reason: 'PATH_LIMIT_EXCEEDED' });
+    }
+  }
+}
+
+/**
+ * Existence probes in availability reconciliation must also accept EPERM as
+ * "not there" on Windows: a tree in delete-pending state (removed while a
+ * handle is still open) answers lstat/readdir with EPERM
+ * (STATUS_DELETE_PENDING) until the last handle closes, whereas POSIX
+ * reports ENOENT. Genuine permission/IO failures surface as EACCES/EIO and
+ * must keep propagating instead of silently flipping availability, so the
+ * tolerance is EPERM-only and win32-only.
  */
 function isUnreadablePathError(error: unknown): boolean {
   return (
     isMissingPathError(error) ||
-    (typeof error === 'object' &&
+    (process.platform === 'win32' &&
+      typeof error === 'object' &&
       error !== null &&
       'code' in error &&
-      (error.code === 'EPERM' || error.code === 'EACCES'))
+      error.code === 'EPERM')
   );
 }
 
@@ -5143,7 +5166,11 @@ export class LibraryService {
         const assetPath = path.join(canonicalNewRoot, ...asset.relative_file_path.split('/'));
         let fileStat;
         try {
-          fileStat = lstatSync(assetPath, { bigint: true });
+          // Route through the same stat seam as refreshManagedAssets so tests
+          // can inject non-missing-path faults (EACCES/EIO) deterministically.
+          fileStat = this.options.assetLstat
+            ? this.options.assetLstat(assetPath)
+            : lstatSync(assetPath, { bigint: true });
         } catch (error) {
           if (!isMissingPathError(error)) {
             this.diagnose(
@@ -13786,6 +13813,11 @@ export class LibraryService {
     const sortedDirectories = [...directoryPaths].sort(
       (left, right) => left.split('/').length - right.split('/').length || left.localeCompare(right),
     );
+    // Fail fast on over-limit names before any filesystem side effects (see
+    // assertNameWithinFsLimit for why this cannot rely on OS error codes).
+    for (const action of actions) {
+      assertNameWithinFsLimit(action.destinationRelativePath);
+    }
     const manifest: OperationManifest = {
       version: 1,
       files: actions.map((action, index) => ({
