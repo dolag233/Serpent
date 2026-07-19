@@ -1268,11 +1268,11 @@ describe('worker request protocol', () => {
       command: {
         type: 'ai.process-queue',
         libraryId: 'library-1',
-        provider: 'openai',
+        apiFormat: 'openai_chat',
         model: 'gpt-4o-mini',
         apiKey: 'ephemeral-key',
         enabledFields: { description: true, tags: true, structuredMetadata: false },
-        language: 'zh-CN',
+        languages: ['zh-CN', 'en'],
         maxJobs: 10,
       },
     });

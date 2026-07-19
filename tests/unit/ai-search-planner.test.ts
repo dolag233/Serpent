@@ -32,7 +32,7 @@ describe('AI natural-language search planner', () => {
     }));
 
     const plan = await planAiSearch({
-      provider: 'openai', model: 'gpt-4o-mini', apiKey: 'secret',
+      apiFormat: 'openai_chat', model: 'gpt-4o-mini', apiKey: 'secret',
       naturalQuery: '科幻城市，不要草图，最新的优先', fetchFn,
     });
 
@@ -57,7 +57,7 @@ describe('AI natural-language search planner', () => {
       candidates: [{ content: { parts: [{ text: JSON.stringify(rawPlan) }] } }],
     }));
     await planAiSearch({
-      provider: 'gemini', model: 'gemini-2.5-flash', apiKey: 'gemini-secret',
+      apiFormat: 'gemini_native', model: 'gemini-2.5-flash', apiKey: 'gemini-secret',
       naturalQuery: 'wide city', fetchFn,
     });
     const [url, init] = fetchFn.mock.calls[0]!;
@@ -68,12 +68,28 @@ describe('AI natural-language search planner', () => {
     });
   });
 
+  it('posts to OpenAI Responses when apiFormat is openai_responses', async () => {
+    const fetchFn = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({
+      output: [{
+        type: 'message',
+        content: [{ type: 'output_text', text: JSON.stringify(rawPlan) }],
+      }],
+    }));
+    const plan = await planAiSearch({
+      apiFormat: 'openai_responses', model: 'gpt-4o-mini', apiKey: 'secret',
+      naturalQuery: 'city', languages: ['zh-CN', 'en'], fetchFn,
+    });
+    expect(plan.keywords).toEqual(['science fiction', 'city']);
+    const [url] = fetchFn.mock.calls[0]!;
+    expect(String(url)).toContain('/responses');
+  });
+
   it('forces Anthropic to return the one constrained search tool', async () => {
     const fetchFn = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({
       content: [{ type: 'tool_use', name: 'serpent_prepare_search', input: rawPlan }],
     }));
     const plan = await planAiSearch({
-      provider: 'anthropic', model: 'claude-sonnet-4-20250514', apiKey: 'secret',
+      apiFormat: 'anthropic', model: 'claude-sonnet-4-20250514', apiKey: 'secret',
       naturalQuery: 'city', fetchFn,
     });
     expect(plan.keywords).toEqual(['science fiction', 'city']);
@@ -90,13 +106,13 @@ describe('AI natural-language search planner', () => {
       choices: [{ message: { content: JSON.stringify(malicious) } }],
     }));
     await expect(planAiSearch({
-      provider: 'openai', model: 'gpt-4o-mini', apiKey: 'secret', naturalQuery: 'x', fetchFn,
+      apiFormat: 'openai_chat', model: 'gpt-4o-mini', apiKey: 'secret', naturalQuery: 'x', fetchFn,
     })).rejects.toMatchObject({ reason: 'AI_INVALID_RESPONSE' });
 
     const forgedFilter = { ...rawPlan, filters: [{ kind: 'numeric', field: 'tag', values: [], ranges: [{ min: 1, max: 2 }], exclude: false }] };
     fetchFn.mockResolvedValueOnce(jsonResponse({ choices: [{ message: { content: JSON.stringify(forgedFilter) } }] }));
     await expect(planAiSearch({
-      provider: 'openai', model: 'gpt-4o-mini', apiKey: 'secret', naturalQuery: 'x', fetchFn,
+      apiFormat: 'openai_chat', model: 'gpt-4o-mini', apiKey: 'secret', naturalQuery: 'x', fetchFn,
     })).rejects.toMatchObject({ reason: 'AI_INVALID_RESPONSE' });
   });
 
@@ -105,7 +121,7 @@ describe('AI natural-language search planner', () => {
       choices: [{ message: { refusal: 'provider-private-reason' } }],
     }));
     await expect(planAiSearch({
-      provider: 'openai', model: 'model', apiKey: 'secret', naturalQuery: 'x', fetchFn: refusalFetch,
+      apiFormat: 'openai_chat', model: 'model', apiKey: 'secret', naturalQuery: 'x', fetchFn: refusalFetch,
     })).rejects.toMatchObject({ reason: 'AI_REFUSED' });
 
     for (const [response, reason] of [
@@ -113,7 +129,7 @@ describe('AI natural-language search planner', () => {
       [new Response('{"error":"quota exhausted"}', { status: 429 }), 'AI_QUOTA'],
     ] as const) {
       await expect(planAiSearch({
-        provider: 'openai', model: 'model', apiKey: 'secret', naturalQuery: 'x',
+        apiFormat: 'openai_chat', model: 'model', apiKey: 'secret', naturalQuery: 'x',
         fetchFn: vi.fn<typeof fetch>().mockResolvedValue(response),
       })).rejects.toMatchObject({ reason });
     }
@@ -122,7 +138,7 @@ describe('AI natural-language search planner', () => {
       init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), { once: true });
     }));
     await expect(planAiSearch({
-      provider: 'openai', model: 'model', apiKey: 'secret', naturalQuery: 'x',
+      apiFormat: 'openai_chat', model: 'model', apiKey: 'secret', naturalQuery: 'x',
       fetchFn: abortingFetch, timeoutMs: 1,
     })).rejects.toMatchObject({ reason: 'AI_TIMEOUT' });
   });
@@ -170,12 +186,12 @@ describe('AI natural-language search planner', () => {
     expect(parseRendererResult({
       ok: true, type: 'ai.search-plan.result', plan: {
         keywords: ['city'], synonyms: [], exclusions: [], filters: [],
-      }, provider: 'openai', model: 'gpt-4o-mini',
+      }, apiFormat: 'openai_chat', model: 'gpt-4o-mini',
     })).toMatchObject({ type: 'ai.search-plan.result' });
     expect(() => parseRendererResult({
       ok: true, type: 'ai.search-plan.result', plan: {
         keywords: ['city'], synonyms: [], exclusions: [], filters: [], sql: 'DROP TABLE assets',
-      }, provider: 'openai', model: 'gpt-4o-mini',
+      }, apiFormat: 'openai_chat', model: 'gpt-4o-mini',
     })).toThrow();
   });
 });

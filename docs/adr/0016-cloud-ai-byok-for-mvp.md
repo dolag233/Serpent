@@ -13,7 +13,7 @@ MVP 只支持云端模型，并要求用户填写自己的第三方 API Key。Se
 
 首次配置时显示一次数据发送免责声明。用户保存供应商和 API Key 后自动启用 AI，不再逐文件、逐批或每次启动确认。配置界面提供“测试连接”：通过最小请求验证当前供应商、Key 和所选模型此刻是否可访问，分别反馈认证、权限、额度响应和网络错误；这不等于追踪账户剩余额度。
 
-MVP 内置 OpenAI、Gemini 和 Anthropic 三种供应商适配器。三者共享 Serpent 内部的能力接口和结构化输出协议，但各自处理认证、模型选择、视觉输入和错误响应等 API 差异；不把任一供应商的请求格式扩散到领域模型或搜索逻辑中。
+MVP 内置四种 **API 格式（wire protocol）**，对齐 CC Switch `meta.apiFormat`：`openai_chat`（Chat Completions）、`openai_responses`（Responses）、`anthropic`（Messages）、`gemini_native`（generateContent）。界面展示协议名，不把具体模型号写进格式下拉。用户可填写自定义 Base URL；留空使用各格式官方默认端点。模型名与 API Key 为独立字段；尽量支持从兼容 `/models` 端点拉取模型列表。输出语言支持多选（如中文+English），用于分析与 AI 搜索。不把供应商请求格式扩散到领域模型或搜索逻辑中。
 
 长期增加：推荐模型自动下载、用户选择本地模型文件、Ollama 等本地模型服务，以及继续使用用户 API Key。官方代理服务只有在商业化需求出现后重新评估。
 

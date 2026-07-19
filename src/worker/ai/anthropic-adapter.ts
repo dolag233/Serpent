@@ -1,3 +1,4 @@
+import { resolveAnthropicMessagesUrl } from '../../shared/ai-endpoints';
 import { parseAiAnalysisResult } from './protocol';
 import type { AiAnalysisRequest, AiAnalysisResult } from './protocol';
 import { VendorAdapterError } from './vendor-adapter';
@@ -79,11 +80,18 @@ export class AnthropicVendorAdapter implements VendorAdapter {
 
   private readonly apiKey: string;
   private readonly model: string;
+  private readonly baseUrl: string | undefined;
   private readonly _fetch: typeof fetch;
 
-  constructor(apiKey: string, model: string, customFetch?: typeof fetch) {
+  constructor(
+    apiKey: string,
+    model: string,
+    customFetch?: typeof fetch,
+    baseUrl?: string,
+  ) {
     this.apiKey = apiKey;
     this.model = model;
+    this.baseUrl = baseUrl;
     this._fetch = customFetch ?? globalThis.fetch.bind(globalThis);
   }
 
@@ -114,7 +122,7 @@ export class AnthropicVendorAdapter implements VendorAdapter {
     let response: Response;
     try {
       response = await this._fetch(
-        'https://api.anthropic.com/v1/messages',
+        resolveAnthropicMessagesUrl(this.baseUrl),
         {
           method: 'POST',
           headers: {
@@ -163,7 +171,9 @@ export class AnthropicVendorAdapter implements VendorAdapter {
       'You are a digital asset classifier for creative professionals. ' +
       'Analyze the provided asset and return structured classification data ' +
       'by calling the `serpent_classify_asset` tool.\n\n';
-    prompt += `Target language: ${request.language}\n`;
+    prompt += `Target languages: ${request.language}\n`;
+    prompt +=
+      'When multiple languages are listed, write descriptions and tags that remain useful for search in each of those languages (bilingual or multilingual tags are encouraged).\n';
     prompt += `Fill these fields: ${fields.join(', ') || 'tags only'}\n`;
 
     if (request.existingTagNames.length > 0) {

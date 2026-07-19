@@ -81,6 +81,12 @@ import {
 } from "./recent-libraries";
 import { AiQueueScheduler } from "./ai-queue-scheduler";
 import { aiSearchFailureReason, planAiSearch } from "./ai-search-planner";
+import {
+  DEFAULT_AI_LANGUAGES,
+  listAiModels,
+  migrateLegacyProviderToApiFormat,
+  normalizeAiLanguages,
+} from "../shared/ai-endpoints";
 import { createArtifactResponse } from "./artifact-response";
 import {
   createExtensionServer,
@@ -172,23 +178,26 @@ const pendingImportCollections = new Map<string, string>();
 // ── AI Config ────────────────────────────────────────────────────────────
 
 interface AiConfig {
-  provider: "openai" | "gemini" | "anthropic";
+  apiFormat: "openai_chat" | "openai_responses" | "anthropic" | "gemini_native";
   model: string;
+  /** Empty = official default for the selected API format. */
+  baseUrl: string;
   descriptionEnabled: boolean;
   tagEnabled: boolean;
   structuredMetadataEnabled: boolean;
-  language: string;
+  languages: Array<"zh-CN" | "en" | "ja" | "ko">;
   autoAnalyzeEnabled: boolean;
   disclaimerAccepted: boolean;
 }
 
 const DEFAULT_AI_CONFIG: AiConfig = {
-  provider: "openai",
+  apiFormat: "openai_chat",
   model: "gpt-4o-mini",
+  baseUrl: "",
   descriptionEnabled: true,
   tagEnabled: true,
   structuredMetadataEnabled: false,
-  language: "auto",
+  languages: ["zh-CN", "en"],
   autoAnalyzeEnabled: false,
   disclaimerAccepted: false,
 };
@@ -204,10 +213,38 @@ function aiKeyPath(): string {
 function loadAiConfig(): AiConfig & { hasKey: boolean } {
   try {
     const raw = readFileSync(aiConfigPath(), "utf-8");
-    const parsed = JSON.parse(raw) as Partial<AiConfig>;
-    const merged = { ...DEFAULT_AI_CONFIG, ...parsed };
-    // Ensure provider is never null (default to 'openai')
-    if (!merged.provider) merged.provider = DEFAULT_AI_CONFIG.provider;
+    const parsed = JSON.parse(raw) as Partial<AiConfig> & {
+      provider?: string;
+      language?: string;
+      apiFormat?: string;
+      languages?: unknown;
+    };
+    const apiFormat =
+      migrateLegacyProviderToApiFormat(parsed.apiFormat) ??
+      migrateLegacyProviderToApiFormat(parsed.provider) ??
+      DEFAULT_AI_CONFIG.apiFormat;
+    const languages = normalizeAiLanguages(
+      parsed.languages ?? parsed.language ?? DEFAULT_AI_LANGUAGES,
+    );
+    const merged: AiConfig = {
+      ...DEFAULT_AI_CONFIG,
+      model: typeof parsed.model === "string" && parsed.model.trim()
+        ? parsed.model
+        : DEFAULT_AI_CONFIG.model,
+      baseUrl: typeof parsed.baseUrl === "string" ? parsed.baseUrl : "",
+      descriptionEnabled:
+        parsed.descriptionEnabled ?? DEFAULT_AI_CONFIG.descriptionEnabled,
+      tagEnabled: parsed.tagEnabled ?? DEFAULT_AI_CONFIG.tagEnabled,
+      structuredMetadataEnabled:
+        parsed.structuredMetadataEnabled ??
+        DEFAULT_AI_CONFIG.structuredMetadataEnabled,
+      autoAnalyzeEnabled:
+        parsed.autoAnalyzeEnabled ?? DEFAULT_AI_CONFIG.autoAnalyzeEnabled,
+      disclaimerAccepted:
+        parsed.disclaimerAccepted ?? DEFAULT_AI_CONFIG.disclaimerAccepted,
+      apiFormat,
+      languages,
+    };
     const hasKey = existsSync(aiKeyPath());
     return { ...merged, hasKey };
   } catch {
@@ -218,12 +255,13 @@ function loadAiConfig(): AiConfig & { hasKey: boolean } {
 
 function saveAiConfig(config: AiConfig): void {
   const toSave: Record<string, unknown> = {};
-  toSave.provider = config.provider;
+  toSave.apiFormat = config.apiFormat;
   toSave.model = config.model;
+  toSave.baseUrl = config.baseUrl;
   toSave.descriptionEnabled = config.descriptionEnabled;
   toSave.tagEnabled = config.tagEnabled;
   toSave.structuredMetadataEnabled = config.structuredMetadataEnabled;
-  toSave.language = config.language;
+  toSave.languages = config.languages;
   toSave.autoAnalyzeEnabled = config.autoAnalyzeEnabled;
   toSave.disclaimerAccepted = config.disclaimerAccepted;
   writeFileSync(aiConfigPath(), JSON.stringify(toSave, null, 2), "utf-8");
@@ -466,7 +504,7 @@ async function enqueueAutoAnalyzeAfterImport(
   folderId?: string,
 ): Promise<void> {
   const config = loadAiConfig();
-  if (!config.autoAnalyzeEnabled || !config.hasKey || !config.provider) return;
+  if (!config.autoAnalyzeEnabled || !config.hasKey || !config.apiFormat) return;
   if ((importedAssetIds.length === 0 && !folderId) || !workerClient) return;
 
   try {
@@ -504,15 +542,16 @@ async function processAiQueueBatch(
     const result = await workerClient.request({
       type: "ai.process-queue",
       libraryId,
-      provider: config.provider,
+      apiFormat: config.apiFormat,
       model: config.model,
       apiKey,
+      ...(config.baseUrl.trim() ? { baseUrl: config.baseUrl.trim() } : {}),
       enabledFields: {
         description: config.descriptionEnabled,
         tags: config.tagEnabled,
         structuredMetadata: config.structuredMetadataEnabled,
       },
-      language: config.language,
+      languages: config.languages,
       maxJobs,
     });
     if (!result.ok) {
@@ -1365,18 +1404,29 @@ async function commandFor(
     }
     case "ai.config.get.request":
     case "ai.config.set.request":
+    case "ai.list-models.request":
       // Handled directly in handleLibraryRequest — should never reach here.
       return undefined;
     case "ai.test-connection.request": {
-      // Main decrypts the key, sends encrypted payload to Worker.
-      // The Worker will decrypt via safeStorage for the test.
-      const encrypted = safeStorage.encryptString(request.apiKey);
-      const encryptedBase64 = encrypted.toString("base64");
+      // Resolve plaintext key in Main (safeStorage lives here). Pass ephemeral
+      // plaintext to Worker on the private channel — same pattern as asset.analyze.
+      // Do not re-encrypt for Worker: UtilityProcess cannot decrypt Main ciphertext.
+      let apiKey = request.apiKey?.trim() ?? "";
+      if (!apiKey) {
+        try {
+          apiKey = getDecryptedApiKey();
+        } catch {
+          return undefined;
+        }
+      }
       return {
         type: "ai.test-connection",
-        provider: request.provider,
+        apiFormat: request.apiFormat,
         model: request.model,
-        encryptedApiKeyBase64: encryptedBase64,
+        apiKey,
+        ...(request.baseUrl?.trim()
+          ? { baseUrl: request.baseUrl.trim() }
+          : {}),
       };
     }
     case "ai.clear-content.request":
@@ -1441,7 +1491,7 @@ async function commandFor(
     case "asset.analyze.request": {
       const config = loadAiConfig();
       if (!config.hasKey) return undefined; // Will be handled as error downstream.
-      if (!config.provider) return undefined;
+      if (!config.apiFormat) return undefined;
       let apiKey: string;
       try {
         apiKey = getDecryptedApiKey();
@@ -1452,15 +1502,16 @@ async function commandFor(
         type: "asset.analyze",
         libraryId: request.libraryId,
         assetId: request.assetId,
-        provider: config.provider,
+        apiFormat: config.apiFormat,
         model: config.model,
         apiKey,
+        ...(config.baseUrl.trim() ? { baseUrl: config.baseUrl.trim() } : {}),
         enabledFields: {
           description: config.descriptionEnabled,
           tags: config.tagEnabled,
           structuredMetadata: config.structuredMetadataEnabled,
         },
-        language: config.language,
+        languages: config.languages,
       };
     }
     case "asset.thumbnail.request":
@@ -1588,15 +1639,16 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
       return {
         ok: true,
         type: "ai.config.got",
-        provider: config.provider,
+        apiFormat: config.apiFormat,
         model: config.model,
+        baseUrl: config.baseUrl ?? "",
         hasKey: config.hasKey,
         enabledFields: {
           description: config.descriptionEnabled,
           tags: config.tagEnabled,
           structuredMetadata: config.structuredMetadataEnabled,
         },
-        language: config.language,
+        languages: config.languages,
         autoAnalyzeEnabled: config.autoAnalyzeEnabled,
         disclaimerAccepted: config.disclaimerAccepted,
       } satisfies RendererResult;
@@ -1616,18 +1668,57 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
         } satisfies RendererResult;
       }
       saveAiConfig({
-        provider: request.provider,
+        apiFormat: request.apiFormat,
         model: request.model,
+        baseUrl: (request.baseUrl ?? "").trim(),
         descriptionEnabled: request.enabledFields?.description ?? true,
         tagEnabled: request.enabledFields?.tags ?? true,
         structuredMetadataEnabled:
           request.enabledFields?.structuredMetadata ?? false,
-        language: request.language ?? "auto",
+        languages: normalizeAiLanguages(
+          request.languages ?? request.language ?? DEFAULT_AI_LANGUAGES,
+        ),
         autoAnalyzeEnabled: request.autoAnalyzeEnabled,
         disclaimerAccepted: request.disclaimerAccepted,
       });
       if (request.apiKey) saveEncryptedApiKey(request.apiKey);
       return { ok: true, type: "ai.config.saved" } satisfies RendererResult;
+    }
+
+    if (request.type === "ai.list-models.request") {
+      let apiKey = request.apiKey?.trim() ?? "";
+      if (!apiKey) {
+        try {
+          apiKey = getDecryptedApiKey();
+        } catch {
+          return {
+            ok: true,
+            type: "ai.list-models.result",
+            models: [],
+            errorKind: "auth",
+            reason: "API key is required to list models.",
+          } satisfies RendererResult;
+        }
+      }
+      const listed = await listAiModels({
+        apiFormat: request.apiFormat,
+        apiKey,
+        baseUrl: request.baseUrl,
+      });
+      if (!listed.ok) {
+        return {
+          ok: true,
+          type: "ai.list-models.result",
+          models: [],
+          errorKind: listed.errorKind,
+          reason: listed.reason,
+        } satisfies RendererResult;
+      }
+      return {
+        ok: true,
+        type: "ai.list-models.result",
+        models: listed.models,
+      } satisfies RendererResult;
     }
 
     if (request.type === "ai.search-plan.request") {
@@ -1637,7 +1728,7 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
           "ai.search-plan.unavailable",
           "AI search requires configured credentials and accepted disclosure.",
           {
-            provider: config.provider,
+            apiFormat: config.apiFormat,
             hasKey: config.hasKey,
             disclaimerAccepted: config.disclaimerAccepted,
           },
@@ -1652,7 +1743,7 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
         apiKey = getDecryptedApiKey();
       } catch (caught) {
         logger?.error("ai.search-plan.credentials", caught, {
-          provider: config.provider,
+          apiFormat: config.apiFormat,
         });
         return {
           ok: false,
@@ -1661,13 +1752,15 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
       }
       try {
         const plan = await planAiSearch({
-          provider: config.provider,
+          apiFormat: config.apiFormat,
           model: config.model,
           apiKey,
+          baseUrl: config.baseUrl,
+          languages: config.languages,
           naturalQuery: request.naturalQuery,
         });
         logger?.info("ai.search-plan.completed", "AI search plan validated.", {
-          provider: config.provider,
+          apiFormat: config.apiFormat,
           model: config.model,
           keywordCount: plan.keywords.length,
           synonymCount: plan.synonyms.length,
@@ -1678,13 +1771,13 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
           ok: true,
           type: "ai.search-plan.result",
           plan,
-          provider: config.provider,
+          apiFormat: config.apiFormat,
           model: config.model,
         } satisfies RendererResult;
       } catch (caught) {
         const reason = aiSearchFailureReason(caught);
         logger?.error("ai.search-plan.failed", caught, {
-          provider: config.provider,
+          apiFormat: config.apiFormat,
           model: config.model,
           reason,
         });

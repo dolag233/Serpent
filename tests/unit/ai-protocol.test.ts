@@ -243,6 +243,33 @@ describe('OpenAIVendorAdapter', () => {
     expect(result).toEqual({ tags: ['asset'], modelVersion: 'gpt-4o-2024-05-13' });
   });
 
+  it('posts to a custom OpenAI-compatible base URL when provided', async () => {
+    let requestedUrl = '';
+    const fetchStub: typeof fetch = async (input) => {
+      requestedUrl = String(input);
+      return new Response(
+        JSON.stringify(
+          openAiChatResponse({
+            description: null,
+            tags: ['asset'],
+            structured_metadata: null,
+          }),
+        ),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    };
+    const adapter = new OpenAIVendorAdapter(
+      'test-api-key',
+      'gpt-4o',
+      fetchStub,
+      'https://relay.example/v1',
+    );
+
+    await adapter.analyze(TEST_IMAGE_REQUEST);
+
+    expect(requestedUrl).toBe('https://relay.example/v1/chat/completions');
+  });
+
   it('returns a parsed AiAnalysisResult on successful analysis', async () => {
     const adapter = new OpenAIVendorAdapter(
       'test-api-key',

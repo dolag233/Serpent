@@ -1043,15 +1043,17 @@ const rendererSuccessResultSchema = z.discriminatedUnion('type', [
   z.strictObject({
     ok: z.literal(true),
     type: z.literal('ai.config.got'),
-    provider: z.enum(['openai', 'gemini', 'anthropic']).nullable(),
+    apiFormat: z.enum(['openai_chat', 'openai_responses', 'anthropic', 'gemini_native']).nullable(),
     model: nonBlankString.nullable(),
+    /** Empty string means official default for the selected API format. */
+    baseUrl: z.string().max(2048),
     hasKey: z.boolean(),
     enabledFields: z.strictObject({
       description: z.boolean(),
       tags: z.boolean(),
       structuredMetadata: z.boolean(),
     }),
-    language: nonBlankString,
+    languages: z.array(z.enum(['zh-CN', 'en', 'ja', 'ko'])).min(1).max(8),
     autoAnalyzeEnabled: z.boolean(),
     disclaimerAccepted: z.boolean(),
   }),
@@ -1064,9 +1066,16 @@ const rendererSuccessResultSchema = z.discriminatedUnion('type', [
   }),
   z.strictObject({
     ok: z.literal(true),
+    type: z.literal('ai.list-models.result'),
+    models: z.array(nonBlankString),
+    errorKind: nonBlankString.optional(),
+    reason: nonBlankString.optional(),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
     type: z.literal('ai.search-plan.result'),
     plan: aiSearchPlanSchema,
-    provider: z.enum(['openai', 'gemini', 'anthropic']),
+    apiFormat: z.enum(['openai_chat', 'openai_responses', 'anthropic', 'gemini_native']),
     model: nonBlankString,
   }),
   ...assetOperationSuccessSchemas,

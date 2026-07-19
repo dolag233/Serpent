@@ -1,3 +1,7 @@
+import {
+  resolveOpenAiChatCompletionsUrl,
+  resolveOpenAiResponsesUrl,
+} from '../../shared/ai-endpoints';
 import { parseAiAnalysisResult } from './protocol';
 import type { AiAnalysisRequest, AiAnalysisResult } from './protocol';
 import { VendorAdapterError } from './vendor-adapter';
@@ -38,10 +42,6 @@ const OPENAI_RESPONSE_JSON_SCHEMA = {
   },
 };
 
-/**
- * Maps an HTTP status code and response body to a VendorAdapterError kind.
- * Callers use the discriminated kind to decide retry vs permanent failure.
- */
 function httpStatusToErrorKind(
   status: number,
   bodyText: string,
@@ -52,9 +52,6 @@ function httpStatusToErrorKind(
     case 403:
       return 'permission';
     case 429: {
-      // OpenAI returns 429 for both rate-limit and quota-exhausted.
-      // Distinguish by body content — "insufficient_quota" is the
-      // canonical type string.
       const lower = bodyText.toLowerCase();
       if (lower.includes('quota') || lower.includes('insufficient')) {
         return 'quota';
@@ -71,41 +68,57 @@ function httpStatusToErrorKind(
   }
 }
 
+export type OpenAiWireFormat = 'openai_chat' | 'openai_responses';
+
 /**
- * OpenAI vendor adapter implementing the unified {@link VendorAdapter}
- * interface via the chat completions API with structured output.
- *
- * The adapter accepts the API key through the constructor — never
- * hardcoded.  A custom `fetch` implementation can be injected for
- * testing.
+ * OpenAI-family vendor adapter.
+ * Supports CC Switch wire formats:
+ * - openai_chat → POST {base}/chat/completions
+ * - openai_responses → POST {base}/responses
  */
 export class OpenAIVendorAdapter implements VendorAdapter {
   readonly id: VendorId = 'openai';
 
   private readonly apiKey: string;
   private readonly model: string;
+  private readonly baseUrl: string | undefined;
+  private readonly wireFormat: OpenAiWireFormat;
   private readonly _fetch: typeof fetch;
 
-  constructor(apiKey: string, model: string, customFetch?: typeof fetch) {
+  constructor(
+    apiKey: string,
+    model: string,
+    customFetch?: typeof fetch,
+    baseUrl?: string,
+    wireFormat: OpenAiWireFormat = 'openai_chat',
+  ) {
     this.apiKey = apiKey;
     this.model = model;
+    this.baseUrl = baseUrl;
+    this.wireFormat = wireFormat;
     this._fetch = customFetch ?? globalThis.fetch.bind(globalThis);
   }
-
-  // ------------------------------------------------------------------
-  // Public API
-  // ------------------------------------------------------------------
 
   async analyze(
     request: AiAnalysisRequest,
     signal?: AbortSignal,
   ): Promise<AiAnalysisResult> {
-    const messages = this.#buildMessages(request);
+    if (this.wireFormat === 'openai_responses') {
+      return this.#analyzeResponses(request, signal);
+    }
+    return this.#analyzeChatCompletions(request, signal);
+  }
+
+  async #analyzeChatCompletions(
+    request: AiAnalysisRequest,
+    signal?: AbortSignal,
+  ): Promise<AiAnalysisResult> {
+    const messages = this.#buildChatMessages(request);
 
     let response: Response;
     try {
       response = await this._fetch(
-        'https://api.openai.com/v1/chat/completions',
+        resolveOpenAiChatCompletionsUrl(this.baseUrl),
         {
           method: 'POST',
           headers: {
@@ -143,19 +156,72 @@ export class OpenAIVendorAdapter implements VendorAdapter {
       );
     }
 
-    return this.#extractResult(json);
+    return this.#extractChatResult(json);
   }
 
-  // ------------------------------------------------------------------
-  // Prompt construction
-  // ------------------------------------------------------------------
+  async #analyzeResponses(
+    request: AiAnalysisRequest,
+    signal?: AbortSignal,
+  ): Promise<AiAnalysisResult> {
+    const body = {
+      model: this.model,
+      instructions: this.#buildSystemPrompt(request),
+      input: [
+        {
+          role: 'user',
+          content: this.#buildResponsesUserContent(request),
+        },
+      ],
+      text: {
+        format: {
+          type: 'json_schema',
+          name: OPENAI_RESPONSE_JSON_SCHEMA.name,
+          strict: OPENAI_RESPONSE_JSON_SCHEMA.strict,
+          schema: OPENAI_RESPONSE_JSON_SCHEMA.schema,
+        },
+      },
+      temperature: 0.2,
+    };
 
-  #buildMessages(
+    let response: Response;
+    try {
+      response = await this._fetch(resolveOpenAiResponsesUrl(this.baseUrl), {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${this.apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+        signal,
+      });
+    } catch (error: unknown) {
+      throw this.#mapFetchError(error);
+    }
+
+    if (!response.ok) {
+      throw await this.#mapHttpError(response);
+    }
+
+    let json: unknown;
+    try {
+      json = await response.json();
+    } catch (error: unknown) {
+      throw new VendorAdapterError(
+        'invalid_response',
+        'The AI service returned an unreadable response.',
+        { cause: error },
+      );
+    }
+
+    return this.#extractResponsesResult(json);
+  }
+
+  #buildChatMessages(
     request: AiAnalysisRequest,
   ): Array<Record<string, unknown>> {
     return [
       { role: 'system', content: this.#buildSystemPrompt(request) },
-      { role: 'user', content: this.#buildUserContent(request) },
+      { role: 'user', content: this.#buildChatUserContent(request) },
     ];
   }
 
@@ -169,7 +235,9 @@ export class OpenAIVendorAdapter implements VendorAdapter {
     let prompt =
       'You are a digital asset classifier for creative professionals. ' +
       'Analyze the provided asset and return structured classification data.\n\n';
-    prompt += `Target language: ${request.language}\n`;
+    prompt += `Target languages: ${request.language}\n`;
+    prompt +=
+      'When multiple languages are listed, write descriptions and tags that remain useful for search in each of those languages (bilingual or multilingual tags are encouraged).\n';
     prompt += `Fill these fields: ${fields.join(', ') || 'tags only'}\n`;
 
     if (request.existingTagNames.length > 0) {
@@ -182,7 +250,7 @@ export class OpenAIVendorAdapter implements VendorAdapter {
     return prompt;
   }
 
-  #buildUserContent(
+  #buildChatUserContent(
     request: AiAnalysisRequest,
   ): string | Array<Record<string, unknown>> {
     const imageParts: Array<Record<string, unknown>> = [];
@@ -207,6 +275,42 @@ export class OpenAIVendorAdapter implements VendorAdapter {
       });
     }
 
+    const textParts = this.#buildUserTextParts(request);
+
+    if (imageParts.length === 0) {
+      return textParts.join('\n');
+    }
+
+    return [{ type: 'text', text: textParts.join('\n') }, ...imageParts];
+  }
+
+  #buildResponsesUserContent(
+    request: AiAnalysisRequest,
+  ): Array<Record<string, unknown>> {
+    const parts: Array<Record<string, unknown>> = [
+      { type: 'input_text', text: this.#buildUserTextParts(request).join('\n') },
+    ];
+
+    if (request.imageBase64) {
+      parts.push({
+        type: 'input_image',
+        image_url: `data:${request.mime};base64,${request.imageBase64}`,
+        detail: 'low',
+      });
+    }
+
+    if (request.contactSheetBase64) {
+      parts.push({
+        type: 'input_image',
+        image_url: `data:image/png;base64,${request.contactSheetBase64}`,
+        detail: 'low',
+      });
+    }
+
+    return parts;
+  }
+
+  #buildUserTextParts(request: AiAnalysisRequest): string[] {
     const textParts: string[] = [];
     textParts.push(`Filename: ${request.filename}`);
 
@@ -222,16 +326,8 @@ export class OpenAIVendorAdapter implements VendorAdapter {
       );
     }
 
-    if (imageParts.length === 0) {
-      return textParts.join('\n');
-    }
-
-    return [{ type: 'text', text: textParts.join('\n') }, ...imageParts];
+    return textParts;
   }
-
-  // ------------------------------------------------------------------
-  // Error mapping
-  // ------------------------------------------------------------------
 
   #mapFetchError(error: unknown): VendorAdapterError {
     const name =
@@ -271,11 +367,7 @@ export class OpenAIVendorAdapter implements VendorAdapter {
     return new VendorAdapterError(kind, message);
   }
 
-  // ------------------------------------------------------------------
-  // Response extraction
-  // ------------------------------------------------------------------
-
-  #extractResult(json: unknown): AiAnalysisResult {
+  #extractChatResult(json: unknown): AiAnalysisResult {
     if (typeof json !== 'object' || json === null) {
       throw new VendorAdapterError(
         'invalid_response',
@@ -294,45 +386,72 @@ export class OpenAIVendorAdapter implements VendorAdapter {
 
     const choice = body.choices[0] as Record<string, unknown>;
     const message = choice.message as Record<string, unknown> | undefined;
+    const content = message?.content;
 
-    if (!message || typeof message.content !== 'string') {
+    if (typeof content !== 'string' || !content.trim()) {
       throw new VendorAdapterError(
         'invalid_response',
-        'The AI service returned an empty message.',
-      );
-    }
-
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(message.content);
-    } catch (error: unknown) {
-      throw new VendorAdapterError(
-        'invalid_response',
-        'The AI response contained invalid JSON.',
-        { cause: error },
+        'The AI service returned an empty completion.',
       );
     }
 
     const modelVersion =
-      typeof body.model === 'string' && body.model.length > 0
+      typeof body.model === 'string' && body.model.trim()
         ? body.model
         : this.model;
 
-    try {
-      const normalized = Object.fromEntries(
-        Object.entries(parsed as Record<string, unknown>)
-          .filter(([, value]) => value !== null),
-      );
-      return parseAiAnalysisResult({
-        ...normalized,
-        modelVersion,
-      });
-    } catch (error: unknown) {
+    return {
+      ...parseAiAnalysisResult(JSON.parse(content)),
+      modelVersion,
+    };
+  }
+
+  #extractResponsesResult(json: unknown): AiAnalysisResult {
+    if (typeof json !== 'object' || json === null) {
       throw new VendorAdapterError(
         'invalid_response',
-        'The AI response did not match the required schema.',
-        { cause: error },
+        'The AI service returned an unexpected response shape.',
       );
     }
+
+    const body = json as Record<string, unknown>;
+    let content = '';
+
+    if (typeof body.output_text === 'string' && body.output_text.trim()) {
+      content = body.output_text;
+    } else if (Array.isArray(body.output)) {
+      for (const item of body.output) {
+        if (!item || typeof item !== 'object') continue;
+        const row = item as Record<string, unknown>;
+        if (row.type !== 'message' || !Array.isArray(row.content)) continue;
+        for (const part of row.content) {
+          if (!part || typeof part !== 'object') continue;
+          const block = part as Record<string, unknown>;
+          if (
+            (block.type === 'output_text' || block.type === 'text') &&
+            typeof block.text === 'string'
+          ) {
+            content += block.text;
+          }
+        }
+      }
+    }
+
+    if (!content.trim()) {
+      throw new VendorAdapterError(
+        'invalid_response',
+        'The AI service returned an empty Responses output.',
+      );
+    }
+
+    const modelVersion =
+      typeof body.model === 'string' && body.model.trim()
+        ? body.model
+        : this.model;
+
+    return {
+      ...parseAiAnalysisResult(JSON.parse(content)),
+      modelVersion,
+    };
   }
 }

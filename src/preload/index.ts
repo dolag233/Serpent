@@ -651,11 +651,11 @@ const library: SerpentLibraryApi = Object.freeze({
     return { ok: true, value: { items: result.items, total: result.total, offset: result.offset, snippets: result.snippets } };
   },
 
-  async planAiSearch({ naturalQuery }: { naturalQuery: string }): Promise<LibraryApiResult<{ plan: AiSearchPlan; provider: 'openai' | 'gemini' | 'anthropic'; model: string }>> {
+  async planAiSearch({ naturalQuery }: { naturalQuery: string }): Promise<LibraryApiResult<{ plan: AiSearchPlan; apiFormat: 'openai_chat' | 'openai_responses' | 'anthropic' | 'gemini_native'; model: string }>> {
     const result = await request({ type: 'ai.search-plan.request', naturalQuery });
     if (!result.ok) return failure(result);
     if (result.type !== 'ai.search-plan.result') throw new Error('Unexpected AI search-plan response.');
-    return { ok: true, value: { plan: result.plan, provider: result.provider, model: result.model } };
+    return { ok: true, value: { plan: result.plan, apiFormat: result.apiFormat, model: result.model } };
   },
 
   async trashAssets({ libraryId, assetIds }: { libraryId: string; assetIds: string[] }): Promise<LibraryApiResult<{ trashedCount: number }>> {
@@ -876,11 +876,12 @@ const library: SerpentLibraryApi = Object.freeze({
   },
 
   async getAiConfig(): Promise<LibraryApiResult<{
-    provider: 'openai' | 'gemini' | 'anthropic' | null;
+    apiFormat: 'openai_chat' | 'openai_responses' | 'anthropic' | 'gemini_native' | null;
     model: string | null;
+    baseUrl: string;
     hasKey: boolean;
     enabledFields: { description: boolean; tags: boolean; structuredMetadata: boolean };
-    language: string;
+    languages: Array<'zh-CN' | 'en' | 'ja' | 'ko'>;
     autoAnalyzeEnabled: boolean;
     disclaimerAccepted: boolean;
   }>> {
@@ -891,11 +892,12 @@ const library: SerpentLibraryApi = Object.freeze({
   },
 
   async setAiConfig(input: {
-    provider: 'openai' | 'gemini' | 'anthropic';
+    apiFormat: 'openai_chat' | 'openai_responses' | 'anthropic' | 'gemini_native';
     model: string;
+    baseUrl?: string;
     apiKey?: string;
     enabledFields?: { description: boolean; tags: boolean; structuredMetadata: boolean };
-    language?: string;
+    languages?: Array<'zh-CN' | 'en' | 'ja' | 'ko'>;
     autoAnalyzeEnabled: boolean;
     disclaimerAccepted: boolean;
   }): Promise<LibraryApiResult<void>> {
@@ -1036,11 +1038,54 @@ const library: SerpentLibraryApi = Object.freeze({
   },
 
   // AI test-connection
-  async testAiConnection({ provider, model, apiKey }: { provider: 'openai' | 'gemini' | 'anthropic'; model: string; apiKey: string }): Promise<LibraryApiResult<{ success: boolean; errorKind?: string; reason?: string }>> {
-    const result = await request({ type: 'ai.test-connection.request', provider, model, apiKey });
+  async testAiConnection({
+    apiFormat,
+    model,
+    apiKey,
+    baseUrl,
+  }: {
+    apiFormat: 'openai_chat' | 'openai_responses' | 'anthropic' | 'gemini_native';
+    model: string;
+    apiKey?: string;
+    baseUrl?: string;
+  }): Promise<LibraryApiResult<{ success: boolean; errorKind?: string; reason?: string }>> {
+    const result = await request({
+      type: 'ai.test-connection.request',
+      apiFormat,
+      model,
+      ...(apiKey?.trim() ? { apiKey: apiKey.trim() } : {}),
+      ...(baseUrl?.trim() ? { baseUrl: baseUrl.trim() } : {}),
+    });
     if (!result.ok) return failure(result);
     if (result.type !== 'ai.test-connection.result') throw new Error('Unexpected test-connection response.');
     return { ok: true, value: { success: result.success, errorKind: result.errorKind, reason: result.reason } };
+  },
+
+  async listAiModels({
+    apiFormat,
+    apiKey,
+    baseUrl,
+  }: {
+    apiFormat: 'openai_chat' | 'openai_responses' | 'anthropic' | 'gemini_native';
+    apiKey?: string;
+    baseUrl?: string;
+  }): Promise<LibraryApiResult<{ models: string[]; errorKind?: string; reason?: string }>> {
+    const result = await request({
+      type: 'ai.list-models.request',
+      apiFormat,
+      ...(apiKey?.trim() ? { apiKey: apiKey.trim() } : {}),
+      ...(baseUrl?.trim() ? { baseUrl: baseUrl.trim() } : {}),
+    });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'ai.list-models.result') throw new Error('Unexpected list-models response.');
+    return {
+      ok: true,
+      value: {
+        models: result.models,
+        errorKind: result.errorKind,
+        reason: result.reason,
+      },
+    };
   },
 
   // AI clear-content

@@ -320,6 +320,7 @@
 
 以下范围已知不满足进入待验收队列的条件；agent 修复并补齐证据后，必须新增独立 ID 或按历史记录重新进入队列：
 
+- 2026-07-20 AI 自定义模型：按 CC Switch `apiFormat`（Chat Completions / Responses / Messages / Gemini Native）与语言多选下拉纠正；AICFG-002 待人类验收（`Serpent-2d5q` / `Serpent-uiou`）。
 - 2026-07-19 晚间反馈（未实现）：查看页视频逐帧/`Ctrl±2s`、视频缩放、滚轮指针缩放、切图 mip 式加载、去掉「安全预览」文案、亮色面包屑 hover、无库态可选已有库；SVG 预览为 MVP 后。工单见需求池「2026-07-19 晚间反馈」。
 - 2026-07-16 MVP UI/UX 需求池：0015–0018 未全部完成；`38fa873`、`591f524`、`64521c3`、`197ea9e`、`e2d5d60` 的部分实现已进入当前集成基线，0018 Label 退役/Inspector 标签与 0019 产品正确性已进入实现 `5b8b8fe`。SHELL-001–003、MENU-014、COMMAND-001 已于 2026-07-17 人类验收通过；其余相关条目仍为 TAG-006–008、CANVAS-007–009、INSPECT-001–004、MENU-013、SELECT-007 等。
 - 文件夹浏览：画布尚不显示子文件夹卡片、内容封面和统一目录计数；“包含子文件夹资产”尚无正式 UI。
@@ -405,6 +406,7 @@
 | 2026-07-19 | INSPECT-007–010 / A11Y-001–003 / MENU-023 / TEXT / AUDIO + 竖图/空当/链接导入 | 部分通过 | 007–010 与 A11Y 通过；MENU-023/TEXT-001/AUDIO-001 不通过；新增竖直资产、仅文件夹空当、链接导入失败。 | `Serpent-0rg` / `woa` / `goe` / `4l7` / `13v` / `an1` / `d3h`；证据 `evidence/2026-07-19-acceptance/`。 |
 | 2026-07-19 | Windows 交互审计：CANVAS-026 / VIEWER-012 / CANVAS-021 | 人类验收不通过 | 用户点名平铺卡片无效空白、侧栏改宽不重排并遮挡资产、图片查看普通滚轮不能缩放。 | `Serpent-omn` / `Serpent-32p` / `Serpent-itr` / `Serpent-6k1`；[审计报告](2026-07-19-windows-interaction-audit.md)。 |
 | 2026-07-19 晚 | 查看页/亮色面包屑/无库启用/文案 | 已拆解入 beads | 视频 D/F 逐帧与 Ctrl±2s、视频缩放、面包屑亮色 hover、无库选已有库、滚轮指针缩放、去掉「安全预览」文案、切图 mip 式加载；SVG 为 MVP 后 | `Serpent-sk1` / `190` / `xwi1` / `y0au` / `yo0n` / `dl23` / `eh07` / `9ei8`；见需求池「2026-07-19 晚间反馈」。 |
+| 2026-07-20 | AI 自定义模型 / 供应商文案 | 已拆解入 beads | 自定义：请求地址+API格式+Key+模型名；最好自动拉模型列表；参考 cc-switch；供应商勿写「OpenAI（gpt4o）」类，只写 OpenAI/Anthropic/Gemini + API Key | `Serpent-kcj5` / `Serpent-uo27`；见需求池「2026-07-20 AI 自定义模型」。 |
 ### 第五批收口（过滤/导航/排序/Inspector）
 
 | FILTER-019 | 排除过滤红色高亮 | 人类验收通过 | 启用颜色/标签等过滤后勾选排除 | 对应维度按钮呈红色高亮，与包含态区分 | [开发日志](../development/2026-07-19-filter-nav-inspect-polish-development-log.md) / Serpent-8s8 | 2026-07-19 用户确认通过。附带：暗色下红色偏艳 → 降饱和打磨工单。 |
@@ -435,5 +437,6 @@
 | LIB-014 | 从硬盘删除当前资源库 | 人类验收通过 | 打开资源库；左上角菜单点「从硬盘删除资源库…」；确认（可勾选不再显示） | 库关闭且库文件夹从磁盘消失；链接源目录仍在；最近列表不再含该库 | `Serpent-9i8` | 2026-07-19 用户确认强制删除通过。 |
 | LIB-015 | 移除资源库（不删磁盘） | 待人类验收 | 打开库后点菜单「移除资源库」；或在「其他资源库」点条目旁 × | 关闭当前库并从最近列表消失；磁盘库文件夹仍在，可用「打开资源库」再选回 | `Serpent-ucx` | 2026-07-19 用户反馈缺「移除」入口。 |
 | SHELL-022 | 最高层模态吞掉底层事件 | 人类验收通过 | 打开「创建资源库」对话框；尝试悬停过滤维度 | 过滤面板不打开；底层 UI 不响应 hover/点击 | `Serpent-0rk` | 2026-07-19 用户确认通过。 |
+| AICFG-002 | AI 自定义端点、协议格式与多语言 | 待人类验收 | 打开 AI 配置；API 格式选 OpenAI Chat Completions / Responses / Anthropic Messages / Gemini Native（非品牌型号）；填/留空 Base URL；填 Key 与模型；语言多选至少中+英；点获取模型列表与测试连接；保存后对资产跑分析或 AI 搜索 | 下拉为协议名（无 gpt4o 等型号）；可自定义 Base URL；语言为多选且默认/可选中英；可拉模型或手填；测试有结果；分析/搜索走所选协议与语言 | `Serpent-2d5q` / `Serpent-uiou` / ADR-0016 | 2026-07-20 按 CC Switch apiFormat 与语言多选纠正实现。 |
 | SHELL-023 | Windows 字体一致性与小字号可读性 | 待人类验收 | Windows 上分别切换亮/暗主题；创建或打开中文名资源库；重点观察右侧 Inspector 身份摘要；选中资产后比较「为资产写一句备注…」和「输入作者…」；再用长库名检查侧栏与资源库菜单 | Inspector 身份摘要字形/粗细协调；右侧 Inspector 长库名可换行，其他紧凑界面保持单行省略；备注与作者 placeholder 字体一致；高频辅助文字不低于 12px/4.5:1；macOS 外观不变 | [0021 规格](../implementation/0021-windows-native-typography-vertical-slice.md) / [Windows Electron E2E](../../tests/e2e/windows-typography.test.ts) / [用户不通过截图](evidence/0021-windows-typography/windows-inspector-identity-user-fail.png) / [修复后亮色局部](evidence/0021-windows-typography/windows-inspector-identity-light.png) / [暗色局部](evidence/0021-windows-typography/windows-inspector-identity-dark.png) / `Serpent-2lp` | 2026-07-19 首轮反馈的三字体混用已修；第二轮确认换行只限右侧 Inspector，并反馈备注 textarea 字形异常。当前已补齐原生 select/textarea 字体继承，代码/纯文本编辑器仍显式等宽；本次按用户要求仅静态核对，未跑回归，等待用户复验。 |
 | NAV-006 | 亮色主题面包屑 hover 与其他控件一致 | 人类验收通过 | 切换亮色主题；进入多级目录；悬停面包屑中的父级目录项 | hover 背景为细微 `--hover` 色调，与导航树行/工具栏按钮同一 token；不再是刺眼白色块；暗色主题不回归 | `Serpent-xwi1` | 2026-07-19 面包屑 hover 由 `--raised` 改为 `--hover`。用户确认通过。 |

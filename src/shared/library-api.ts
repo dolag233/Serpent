@@ -265,7 +265,7 @@ export interface SerpentLibraryApi {
   executeSmartCollection(input: { libraryId: string; collectionId: string; limit?: number; offset?: number }): Promise<LibraryApiResult<{ items: AssetSummary[]; total: number; offset: number }>>;
   // Search
   searchAssets(input: { libraryId: string; query?: { clauses: { field: string | null; values: string[]; exclude: boolean }[] } | null; filters?: FilterClause[]; scope?: SearchScope; sort?: { field: 'name' | 'modified_at' | 'created_at' | 'byte_size' | 'long_edge' | 'duration' | 'rating' | 'color' | 'author'; order: 'asc' | 'desc' }; limit?: number; offset?: number }): Promise<LibraryApiResult<{ items: AssetSummary[]; total: number; offset: number; snippets?: { assetId: string; text: string }[] }>>;
-  planAiSearch(input: { naturalQuery: string }): Promise<LibraryApiResult<{ plan: AiSearchPlan; provider: 'openai' | 'gemini' | 'anthropic'; model: string }>>;
+  planAiSearch(input: { naturalQuery: string }): Promise<LibraryApiResult<{ plan: AiSearchPlan; apiFormat: 'openai_chat' | 'openai_responses' | 'anthropic' | 'gemini_native'; model: string }>>;
   // Trash / Delete
   trashAssets(input: { libraryId: string; assetIds: string[] }): Promise<LibraryApiResult<{ trashedCount: number }>>;
   restoreAssets(input: { libraryId: string; assetIds: string[]; targetFolderId?: string | null; conflictStrategy?: 'keep-both' | 'replace' | 'skip' }): Promise<LibraryApiResult<{ restoredCount: number; assets: AssetSummary[] }>>;
@@ -311,20 +311,22 @@ export interface SerpentLibraryApi {
   onProgress(listener: (event: ExportProgressEvent | ImportProgressEvent) => void): () => void;
   // AI
   getAiConfig(): Promise<LibraryApiResult<{
-    provider: 'openai' | 'gemini' | 'anthropic' | null;
+    apiFormat: 'openai_chat' | 'openai_responses' | 'anthropic' | 'gemini_native' | null;
     model: string | null;
+    baseUrl: string;
     hasKey: boolean;
     enabledFields: { description: boolean; tags: boolean; structuredMetadata: boolean };
-    language: string;
+    languages: Array<'zh-CN' | 'en' | 'ja' | 'ko'>;
     autoAnalyzeEnabled: boolean;
     disclaimerAccepted: boolean;
   }>>;
   setAiConfig(input: {
-    provider: 'openai' | 'gemini' | 'anthropic';
+    apiFormat: 'openai_chat' | 'openai_responses' | 'anthropic' | 'gemini_native';
     model: string;
+    baseUrl?: string;
     apiKey?: string;
     enabledFields?: { description: boolean; tags: boolean; structuredMetadata: boolean };
-    language?: string;
+    languages?: Array<'zh-CN' | 'en' | 'ja' | 'ko'>;
     autoAnalyzeEnabled: boolean;
     disclaimerAccepted: boolean;
   }): Promise<LibraryApiResult<void>>;
@@ -355,7 +357,17 @@ export interface SerpentLibraryApi {
   retryMediaJobs(input: { libraryId: string; jobIds: string[] }): Promise<LibraryApiResult<{ retriedCount: number }>>;
   onThumbnailEvent(listener: (event: { type: 'asset.thumbnail.ready' | 'asset.thumbnail.failed'; libraryId: string; assetId: string; artifactId?: string; errorCode?: string; reason?: string }) => void): () => void;
   // AI extended
-  testAiConnection(input: { provider: 'openai' | 'gemini' | 'anthropic'; model: string; apiKey: string }): Promise<LibraryApiResult<{ success: boolean; errorKind?: string; reason?: string }>>;
+  testAiConnection(input: {
+    apiFormat: 'openai_chat' | 'openai_responses' | 'anthropic' | 'gemini_native';
+    model: string;
+    apiKey?: string;
+    baseUrl?: string;
+  }): Promise<LibraryApiResult<{ success: boolean; errorKind?: string; reason?: string }>>;
+  listAiModels(input: {
+    apiFormat: 'openai_chat' | 'openai_responses' | 'anthropic' | 'gemini_native';
+    apiKey?: string;
+    baseUrl?: string;
+  }): Promise<LibraryApiResult<{ models: string[]; errorKind?: string; reason?: string }>>;
   clearAiContent(input: { libraryId: string; scope: { kind: 'asset' | 'selection' | 'folder' | 'library'; assetIds?: string[]; folderId?: string }; confirm: boolean }): Promise<LibraryApiResult<{ clearedCount: number }>>;
   pauseAiJobs(input: { libraryId: string; jobIds?: string[] }): Promise<LibraryApiResult<{ pausedCount: number }>>;
   resumeAiJobs(input: { libraryId: string; jobIds?: string[] }): Promise<LibraryApiResult<{ resumedCount: number }>>;

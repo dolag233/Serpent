@@ -730,16 +730,19 @@ function AppInner() {
 
   // AI analysis state
   const [aiConfigOpen, setAiConfigOpen] = useState(false);
-  const [aiProvider, setAiProvider] = useState<
-    "openai" | "gemini" | "anthropic"
-  >("openai");
+  const [aiApiFormat, setAiApiFormat] = useState<
+    "openai_chat" | "openai_responses" | "anthropic" | "gemini_native"
+  >("openai_chat");
   const [aiModel, setAiModel] = useState("gpt-4o-mini");
+  const [aiBaseUrl, setAiBaseUrl] = useState("");
   const [aiApiKey, setAiApiKey] = useState("");
   const [aiHasKey, setAiHasKey] = useState(false);
   const [aiDescriptionEnabled, setAiDescriptionEnabled] = useState(true);
   const [aiTagsEnabled, setAiTagsEnabled] = useState(true);
   const [aiStructuredEnabled, setAiStructuredEnabled] = useState(false);
-  const [aiLanguage, setAiLanguage] = useState("auto");
+  const [aiLanguages, setAiLanguages] = useState<
+    Array<"zh-CN" | "en" | "ja" | "ko">
+  >(["zh-CN", "en"]);
   const [aiAutoAnalyzeEnabled, setAiAutoAnalyzeEnabled] = useState(false);
   const [aiDisclaimerAccepted, setAiDisclaimerAccepted] = useState(false);
   const [extensionPairingOpen, setExtensionPairingOpen] = useState(false);
@@ -5124,15 +5127,25 @@ function AppInner() {
     if (!api) return;
     const result = await api.getAiConfig();
     if (!result.ok) return;
-    setAiProvider(
-      (result.value.provider as "openai" | "gemini" | "anthropic") ?? "openai",
+    setAiApiFormat(
+      (result.value.apiFormat as
+        | "openai_chat"
+        | "openai_responses"
+        | "anthropic"
+        | "gemini_native") ?? "openai_chat",
     );
     setAiModel(result.value.model ?? "gpt-4o-mini");
+    setAiBaseUrl(result.value.baseUrl ?? "");
     setAiHasKey(result.value.hasKey);
     setAiDescriptionEnabled(result.value.enabledFields.description);
     setAiTagsEnabled(result.value.enabledFields.tags);
     setAiStructuredEnabled(result.value.enabledFields.structuredMetadata);
-    setAiLanguage(result.value.language);
+    setAiLanguages(
+      (result.value.languages as Array<"zh-CN" | "en" | "ja" | "ko">) ?? [
+        "zh-CN",
+        "en",
+      ],
+    );
     setAiAutoAnalyzeEnabled(result.value.autoAnalyzeEnabled);
     setAiDisclaimerAccepted(result.value.disclaimerAccepted);
   }
@@ -5140,15 +5153,16 @@ function AppInner() {
   async function saveAiConfig() {
     if (!api || (!aiApiKey.trim() && !aiHasKey)) return;
     const result = await api.setAiConfig({
-      provider: aiProvider,
+      apiFormat: aiApiFormat,
       model: aiModel,
+      baseUrl: aiBaseUrl.trim(),
       ...(aiApiKey.trim() ? { apiKey: aiApiKey.trim() } : {}),
       enabledFields: {
         description: aiDescriptionEnabled,
         tags: aiTagsEnabled,
         structuredMetadata: aiStructuredEnabled,
       },
-      language: aiLanguage,
+      languages: aiLanguages,
       autoAnalyzeEnabled: aiAutoAnalyzeEnabled,
       disclaimerAccepted: aiDisclaimerAccepted,
     });
@@ -5160,6 +5174,58 @@ function AppInner() {
     setAiApiKey("");
     setAiConfigOpen(false);
     setNotice(t("toast.aiConfigSaved"));
+  }
+
+  async function testAiConnectionFromDialog(): Promise<{
+    success: boolean;
+    reason?: string;
+  }> {
+    if (!api) return { success: false, reason: t("aiConfig.testFailed") };
+    if (!aiApiKey.trim() && !aiHasKey) {
+      return { success: false, reason: t("aiConfig.testFailed") };
+    }
+    const result = await api.testAiConnection({
+      apiFormat: aiApiFormat,
+      model: aiModel.trim(),
+      ...(aiApiKey.trim() ? { apiKey: aiApiKey.trim() } : {}),
+      baseUrl: aiBaseUrl.trim() || undefined,
+    });
+    if (!result.ok) {
+      return {
+        success: false,
+        reason: toMessage(result.error, t("aiConfig.testFailed"), locale),
+      };
+    }
+    return {
+      success: result.value.success,
+      reason: result.value.reason,
+    };
+  }
+
+  async function fetchAiModelsFromDialog(): Promise<{
+    models: string[];
+    reason?: string;
+  }> {
+    if (!api) return { models: [], reason: t("aiConfig.fetchModelsFailed") };
+    const result = await api.listAiModels({
+      apiFormat: aiApiFormat,
+      ...(aiApiKey.trim() ? { apiKey: aiApiKey.trim() } : {}),
+      baseUrl: aiBaseUrl.trim() || undefined,
+    });
+    if (!result.ok) {
+      return {
+        models: [],
+        reason: toMessage(
+          result.error,
+          t("aiConfig.fetchModelsFailed"),
+          locale,
+        ),
+      };
+    }
+    return {
+      models: result.value.models,
+      reason: result.value.reason,
+    };
   }
 
   async function handleAnalyzeClick(assetId = selectedAssetId) {
@@ -6843,9 +6909,10 @@ function AppInner() {
       <AiConfigDialog
         open={aiConfigOpen}
         apiKey={aiApiKey}
-        provider={aiProvider}
+        apiFormat={aiApiFormat}
         model={aiModel}
-        language={aiLanguage}
+        baseUrl={aiBaseUrl}
+        languages={aiLanguages}
         hasKey={aiHasKey}
         descriptionEnabled={aiDescriptionEnabled}
         tagsEnabled={aiTagsEnabled}
@@ -6853,9 +6920,10 @@ function AppInner() {
         disclaimerAccepted={aiDisclaimerAccepted}
         autoAnalyzeEnabled={aiAutoAnalyzeEnabled}
         onApiKeyChange={setAiApiKey}
-        onProviderChange={setAiProvider}
+        onApiFormatChange={setAiApiFormat}
         onModelChange={setAiModel}
-        onLanguageChange={setAiLanguage}
+        onBaseUrlChange={setAiBaseUrl}
+        onLanguagesChange={setAiLanguages}
         onDescriptionEnabledChange={setAiDescriptionEnabled}
         onTagsEnabledChange={setAiTagsEnabled}
         onStructuredEnabledChange={setAiStructuredEnabled}
@@ -6866,6 +6934,8 @@ function AppInner() {
           setAiApiKey("");
         }}
         onSave={() => void saveAiConfig()}
+        onTestConnection={testAiConnectionFromDialog}
+        onFetchModels={fetchAiModelsFromDialog}
       />
       <MediaJobsDialog
         open={mediaJobsOpen && library !== null}

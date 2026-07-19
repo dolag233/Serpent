@@ -63,6 +63,16 @@ export const assetAuthorSchema = z.union([
 export const suspectedDuplicateDecisionSchema = z.enum(['skip', 'merge', 'create-copy']);
 export const nameConflictDecisionSchema = z.enum(['keep-both', 'replace', 'skip']);
 
+
+const aiApiFormatSchema = z.enum([
+  'openai_chat',
+  'openai_responses',
+  'anthropic',
+  'gemini_native',
+]);
+const aiLanguageIdSchema = z.enum(['zh-CN', 'en', 'ja', 'ko']);
+const aiLanguagesSchema = z.array(aiLanguageIdSchema).min(1).max(8);
+
 export const rendererRequestSchema = z.discriminatedUnion('type', [
   z.strictObject({
     type: z.literal('library.create.request'),
@@ -553,14 +563,18 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
   }),
   z.strictObject({
     type: z.literal('ai.config.set.request'),
-    provider: z.enum(['openai', 'gemini', 'anthropic']),
+    apiFormat: aiApiFormatSchema,
     model: nonBlankString,
+    /** Empty or omitted = official default endpoint for the API format. */
+    baseUrl: z.string().max(2048).optional(),
     apiKey: nonBlankString.optional(),
     enabledFields: z.strictObject({
       description: z.boolean(),
       tags: z.boolean(),
       structuredMetadata: z.boolean(),
     }).optional(),
+    languages: aiLanguagesSchema.optional(),
+    /** @deprecated Prefer languages[]. */
     language: nonBlankString.optional(),
     autoAnalyzeEnabled: z.boolean(),
     disclaimerAccepted: z.boolean(),
@@ -640,9 +654,18 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
   }),
   z.strictObject({
     type: z.literal('ai.test-connection.request'),
-    provider: z.enum(['openai', 'gemini', 'anthropic']),
+    apiFormat: aiApiFormatSchema,
     model: nonBlankString,
-    apiKey: nonBlankString,
+    /** Omit or blank to use the stored encrypted key. */
+    apiKey: z.string().max(512).optional(),
+    baseUrl: z.string().max(2048).optional(),
+  }),
+  z.strictObject({
+    type: z.literal('ai.list-models.request'),
+    apiFormat: aiApiFormatSchema,
+    /** Omit or blank to use the stored encrypted key. */
+    apiKey: z.string().max(512).optional(),
+    baseUrl: z.string().max(2048).optional(),
   }),
   z.strictObject({
     type: z.literal('ai.clear-content.request'),
@@ -1117,15 +1140,16 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     type: z.literal('asset.analyze'),
     libraryId: identifierSchema,
     assetId: identifierSchema,
-    provider: z.enum(['openai', 'gemini', 'anthropic']),
+    apiFormat: aiApiFormatSchema,
     model: nonBlankString,
     apiKey: nonBlankString,
+    baseUrl: z.string().max(2048).optional(),
     enabledFields: z.strictObject({
       description: z.boolean(),
       tags: z.boolean(),
       structuredMetadata: z.boolean(),
     }),
-    language: nonBlankString,
+    languages: aiLanguagesSchema,
   }),
   z.strictObject({
     type: z.literal('media.generate-thumbnail'),
@@ -1199,20 +1223,24 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
   }),
   z.strictObject({
     type: z.literal('ai.configure'),
-    provider: z.enum(['openai', 'gemini', 'anthropic']),
+    apiFormat: aiApiFormatSchema,
     encryptedApiKeyBase64: nonBlankString,
     model: nonBlankString,
+    baseUrl: z.string().max(2048).optional(),
     descriptionEnabled: z.boolean().optional(),
     tagEnabled: z.boolean().optional(),
     structuredMetadataEnabled: z.boolean().optional(),
+    languages: aiLanguagesSchema.optional(),
     language: nonBlankString.optional(),
     autoAnalyzeEnabled: z.boolean(),
   }),
   z.strictObject({
     type: z.literal('ai.test-connection'),
-    provider: z.enum(['openai', 'gemini', 'anthropic']),
-    encryptedApiKeyBase64: nonBlankString,
+    apiFormat: aiApiFormatSchema,
+    /** Ephemeral plaintext key on the private Main→Worker channel (same as asset.analyze). */
+    apiKey: nonBlankString,
     model: nonBlankString,
+    baseUrl: z.string().max(2048).optional(),
   }),
   z.strictObject({
     type: z.literal('ai.enqueue-analysis'),
@@ -1223,15 +1251,16 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
   z.strictObject({
     type: z.literal('ai.process-queue'),
     libraryId: identifierSchema,
-    provider: z.enum(['openai', 'gemini', 'anthropic']),
+    apiFormat: aiApiFormatSchema,
     model: nonBlankString,
     apiKey: nonBlankString,
+    baseUrl: z.string().max(2048).optional(),
     enabledFields: z.strictObject({
       description: z.boolean(),
       tags: z.boolean(),
       structuredMetadata: z.boolean(),
     }),
-    language: nonBlankString,
+    languages: aiLanguagesSchema,
     maxJobs: z.number().int().min(1).max(100).default(20),
   }),
   z.strictObject({

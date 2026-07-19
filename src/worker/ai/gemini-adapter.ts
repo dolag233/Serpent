@@ -1,3 +1,4 @@
+import { resolveGeminiGenerateContentUrl } from '../../shared/ai-endpoints';
 import { parseAiAnalysisResult } from './protocol';
 import type { AiAnalysisRequest, AiAnalysisResult } from './protocol';
 import { VendorAdapterError } from './vendor-adapter';
@@ -69,11 +70,18 @@ export class GeminiVendorAdapter implements VendorAdapter {
 
   private readonly apiKey: string;
   private readonly model: string;
+  private readonly baseUrl: string | undefined;
   private readonly _fetch: typeof fetch;
 
-  constructor(apiKey: string, model: string, customFetch?: typeof fetch) {
+  constructor(
+    apiKey: string,
+    model: string,
+    customFetch?: typeof fetch,
+    baseUrl?: string,
+  ) {
     this.apiKey = apiKey;
     this.model = model;
+    this.baseUrl = baseUrl;
     this._fetch = customFetch ?? globalThis.fetch.bind(globalThis);
   }
 
@@ -88,9 +96,9 @@ export class GeminiVendorAdapter implements VendorAdapter {
     const contents = this.#buildContents(request);
     const systemInstruction = this.#buildSystemInstruction(request);
 
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${
-      encodeURIComponent(this.model)
-    }:generateContent?key=${encodeURIComponent(this.apiKey)}`;
+    const url = resolveGeminiGenerateContentUrl(this.model, this.baseUrl, {
+      apiKeyQuery: this.apiKey,
+    });
 
     let response: Response;
     try {
@@ -151,7 +159,9 @@ export class GeminiVendorAdapter implements VendorAdapter {
     let prompt =
       'You are a digital asset classifier for creative professionals. ' +
       'Analyze the provided asset and return structured classification data.\n\n';
-    prompt += `Target language: ${request.language}\n`;
+    prompt += `Target languages: ${request.language}\n`;
+    prompt +=
+      'When multiple languages are listed, write descriptions and tags that remain useful for search in each of those languages (bilingual or multilingual tags are encouraged).\n';
     prompt += `Fill these fields: ${fields.join(', ') || 'tags only'}\n`;
 
     if (request.existingTagNames.length > 0) {

@@ -3210,10 +3210,41 @@ body.serpent-modal-open .app-shell {
 }
 
 .ai-config-note {
-  margin: -10px 0 0;
+  margin: -4px 0 0;
   color: var(--secondary);
   font-size: 12px;
-  line-height: 1.6;
+  line-height: 1.55;
+}
+
+.ai-config-dialog {
+  display: flex;
+  flex-direction: column;
+  width: min(480px, calc(100vw - 40px));
+  max-height: min(82vh, 640px);
+  padding: 0;
+  overflow: hidden;
+}
+
+.ai-config-dialog .dialog-heading {
+  flex-shrink: 0;
+  margin-bottom: 0;
+  padding: 20px 20px 12px;
+}
+
+.ai-config-dialog-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 0 20px 12px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.ai-config-dialog .ai-config-actions {
+  flex-shrink: 0;
+  margin-top: 0;
+  padding: 12px 20px 20px;
+  border-top: 1px solid var(--divider);
 }
 
 .ai-config-field {
@@ -3230,17 +3261,79 @@ body.serpent-modal-open .app-shell {
   font-size: 12px;
 }
 
+.ai-config-hint {
+  margin: 4px 0 0;
+  color: var(--tertiary);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.ai-config-model-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.ai-config-model-row .ai-config-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.ai-config-model-picker {
+  flex: 0 1 48%;
+  max-width: 260px;
+}
+
+.ai-config-model-actions {
+  display: flex;
+  margin-top: 8px;
+}
+
+.ai-config-action-message {
+  margin: 10px 0 0;
+  color: var(--secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 select.ai-config-input {
   height: 30px;
 }
 
+/* Fixed viewport of 4 option rows; scroll when more languages exist. */
+select.ai-config-input.ai-config-languages {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  height: calc(4 * 1.5em + 8px);
+  max-height: calc(4 * 1.5em + 8px);
+  padding: 4px 6px;
+  line-height: 1.5;
+  overflow-x: hidden;
+  overflow-y: scroll;
+}
+
 .ai-config-switches {
-  margin-top: 14px;
+  margin-top: 12px;
 }
 
 .ai-config-switches-title {
   display: block;
-  margin-bottom: 5px;
+  margin-bottom: 6px;
+}
+
+.ai-config-switches-row {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 4px 18px;
+  align-items: center;
+}
+
+.ai-config-switches-row .ai-config-check-row {
+  flex: 0 0 auto;
+  padding: 0;
+  white-space: nowrap;
 }
 
 .ai-config-check-row {
@@ -3271,10 +3364,6 @@ select.ai-config-input {
   margin-top: 14px;
   padding-top: 12px;
   border-top: 1px solid var(--divider);
-}
-
-.ai-config-actions {
-  margin-top: 14px;
 }
 
 /* REQ-PREF-001: general settings panel — theme/language/canvas display

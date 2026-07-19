@@ -10,6 +10,7 @@ import { publicErrorForWorkerFailure } from './public-error';
 import { OpenAIVendorAdapter } from './ai/openai-adapter';
 import { GeminiVendorAdapter } from './ai/gemini-adapter';
 import { AnthropicVendorAdapter } from './ai/anthropic-adapter';
+import { apiFormatLimiterKey, formatAiLanguagesForPrompt } from '../shared/ai-endpoints';
 import { VendorAdapterError } from './ai/vendor-adapter';
 import type { VendorAdapter } from './ai/vendor-adapter';
 import type { AiAnalysisRequest } from './ai/protocol';
@@ -706,8 +707,10 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
       };
     }
     case 'asset.analyze': {
-      const { libraryId, assetId, provider, model, apiKey, enabledFields, language } =
+      const { libraryId, assetId, apiFormat, model, apiKey, enabledFields, languages, baseUrl } =
         request.command;
+      const resolvedBaseUrl = baseUrl?.trim() || undefined;
+      const language = formatAiLanguagesForPrompt(languages);
       const controls = analysisControls.get(request.requestId);
 
       // Resolve asset file path + mime.
@@ -834,31 +837,46 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
         existingTagNames,
       };
 
-      // Create adapter based on provider.
+      // Create adapter based on CC Switch wire apiFormat.
       let adapter: VendorAdapter;
-      switch (provider) {
-        case 'openai':
-          adapter = new OpenAIVendorAdapter(apiKey, model);
+      switch (apiFormat) {
+        case 'openai_chat':
+          adapter = new OpenAIVendorAdapter(
+            apiKey,
+            model,
+            undefined,
+            resolvedBaseUrl,
+            'openai_chat',
+          );
           break;
-        case 'gemini':
-          adapter = new GeminiVendorAdapter(apiKey, model);
+        case 'openai_responses':
+          adapter = new OpenAIVendorAdapter(
+            apiKey,
+            model,
+            undefined,
+            resolvedBaseUrl,
+            'openai_responses',
+          );
+          break;
+        case 'gemini_native':
+          adapter = new GeminiVendorAdapter(apiKey, model, undefined, resolvedBaseUrl);
           break;
         case 'anthropic':
-          adapter = new AnthropicVendorAdapter(apiKey, model);
+          adapter = new AnthropicVendorAdapter(apiKey, model, undefined, resolvedBaseUrl);
           break;
         default:
           return {
             ok: true,
             type: 'asset.analyze-unsupported' as const,
             assetId,
-            reason: `provider ${provider} not supported`,
+            reason: `apiFormat ${apiFormat as string} not supported`,
           };
       }
 
       let analysisResult;
       try {
         analysisResult = await providerConcurrencyLimiter.run(
-          provider,
+          apiFormatLimiterKey(apiFormat),
           controls?.signal,
           () => adapter.analyze(aiRequest, controls?.signal),
         );
@@ -1097,35 +1115,37 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
       return { ok: true, type: 'ai.config.saved' as const };
     }
     case 'ai.test-connection': {
-      const { provider, model, encryptedApiKeyBase64 } = request.command;
-      // Decrypt: main sent base64-encoded encrypted payload.
-      const { safeStorage } = await import('electron');
-      let apiKey: string;
-      try {
-        apiKey = safeStorage.decryptString(
-          Buffer.from(encryptedApiKeyBase64, 'base64'),
-        );
-      } catch {
-        return {
-          ok: true,
-          type: 'ai.test-connection.result' as const,
-          success: false,
-          errorKind: 'auth',
-          reason: 'Could not decrypt API key.',
-        };
-      }
+      // Main already decrypted via safeStorage; Worker receives ephemeral plaintext
+      // (same trust boundary as asset.analyze / ai.process-queue).
+      const { apiFormat, model, apiKey, baseUrl } = request.command;
+      const resolvedBaseUrl = baseUrl?.trim() || undefined;
 
       // Build a minimal adapter and try a request.
       let testAdapter: VendorAdapter;
-      switch (provider) {
-        case 'openai':
-          testAdapter = new OpenAIVendorAdapter(apiKey, model);
+      switch (apiFormat) {
+        case 'openai_chat':
+          testAdapter = new OpenAIVendorAdapter(
+            apiKey,
+            model,
+            undefined,
+            resolvedBaseUrl,
+            'openai_chat',
+          );
           break;
-        case 'gemini':
-          testAdapter = new GeminiVendorAdapter(apiKey, model);
+        case 'openai_responses':
+          testAdapter = new OpenAIVendorAdapter(
+            apiKey,
+            model,
+            undefined,
+            resolvedBaseUrl,
+            'openai_responses',
+          );
+          break;
+        case 'gemini_native':
+          testAdapter = new GeminiVendorAdapter(apiKey, model, undefined, resolvedBaseUrl);
           break;
         case 'anthropic':
-          testAdapter = new AnthropicVendorAdapter(apiKey, model);
+          testAdapter = new AnthropicVendorAdapter(apiKey, model, undefined, resolvedBaseUrl);
           break;
         default:
           return {
@@ -1133,7 +1153,7 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
             type: 'ai.test-connection.result' as const,
             success: false,
             errorKind: 'invalid_response',
-            reason: `Unsupported provider: ${provider}`,
+            reason: `Unsupported apiFormat: ${apiFormat as string}`,
           };
       }
 
@@ -1216,11 +1236,12 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
                 type: 'asset.analyze',
                 libraryId,
                 assetId: job.assetId,
-                provider: analysisConfig.provider,
+                apiFormat: analysisConfig.apiFormat,
                 model: analysisConfig.model,
                 apiKey: analysisConfig.apiKey,
+                baseUrl: analysisConfig.baseUrl,
                 enabledFields: analysisConfig.enabledFields,
-                language: analysisConfig.language,
+                languages: analysisConfig.languages,
               },
             });
             if (controller.signal.aborted || safeAiJobState(libraryId, job.jobId) !== 'running') {

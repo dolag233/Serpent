@@ -439,6 +439,16 @@ FolderBrowseEntry
 | 智能合集产品定位四不像 | SMART-007 通过后待澄清 | `Serpent-5nk` |
 | 链接位置从访达导入再次确认失败 | LINK-005 保持不通过 | `Serpent-d3h` |
 
+### 2026-07-20 AI 自定义模型 / API 协议格式（参考 CC Switch）
+
+| 需求/缺陷 | 说明 | 优先级 | 工单 |
+| --- | --- | --- | --- |
+| REQ-AI-001 | 支持自定义模型：请求地址（Base URL）+ **API 格式（wire protocol）** + API Key + 模型名称；尽量自动拉取模型列表。API 格式对齐 CC Switch `meta.apiFormat`：`openai_chat` / `openai_responses` / `anthropic` / `gemini_native`（界面展示协议名，非品牌/型号）。内置默认端点可预填。ADR-0016 已补充。 | P1 | `Serpent-2d5q`（协议纠正已实现，待人类验收 AICFG-002） |
+| REQ-AI-002 | 输出/搜索语言为多选下拉（如中文+English）；分析与 AI 搜索按所选语言生成与匹配关键词。 | P1 | `Serpent-uiou`（已实现，并入 AICFG-002） |
+| REQ-AI-003 | （历史）供应商展示名去掉具体模型号。已被 REQ-AI-001 的协议表述覆盖。 | P1 | 并入 AICFG-002 |
+
+用户原话要点：API 格式指 Chat Completions / Responses / Anthropic Messages / Gemini Native 等协议，不是 OpenAI/Gemini 品牌名；语言要下拉多选（例如同时中英搜索）。
+
 ### 2026-07-19 晚间反馈（查看页 / 亮色面包屑 / 无库启用 / 文案）
 
 | 需求/缺陷 | 说明 | 优先级 | 工单 |
