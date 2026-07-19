@@ -541,7 +541,7 @@ export const en = {
       format: "Export format",
       formatFolder: "Folder",
       formatZip: "Standard ZIP",
-      zipLimitHint: "(up to 4 GiB / 65534 entries)",
+      zipLimitHint: "ZIP limit: 4 GiB / 65534 entries.",
       includeLinked: "Include linked-folder source content",
       zip: "Choose a save location and export ZIP",
       folder: "Choose a destination folder and export"

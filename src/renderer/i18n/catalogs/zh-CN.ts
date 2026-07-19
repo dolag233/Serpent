@@ -531,7 +531,7 @@ export const zhCN = {
       format: "导出格式",
       formatFolder: "文件夹",
       formatZip: "标准 ZIP",
-      zipLimitHint: "（4 GiB / 65534 条目以内）",
+      zipLimitHint: "ZIP 上限为 4 GiB / 65534 条目。",
       includeLinked: "包含链接文件夹源内容",
       zip: "选择保存位置并导出 ZIP",
       folder: "选择目标文件夹并导出"
