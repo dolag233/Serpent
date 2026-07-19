@@ -20,9 +20,14 @@ const BATCH_SIZE = 1000;
 const BATCH_COUNT = Math.floor(ASSET_COUNT / BATCH_SIZE);
 const FILE_EXTENSIONS = ['png', 'jpg', 'psd', 'blend', 'tga'];
 
-// Generous performance thresholds for a 20k-asset soak.
-const EXPORT_PERF_MS = 60_000;
-const IMPORT_PERF_MS = 60_000;
+// Generous performance thresholds for a 20k-asset soak. Windows runs this
+// filesystem-heavy workload markedly slower than macOS: NTFS metadata
+// overhead plus real-time antivirus scanning of every one of the 20k
+// extracted files. Keep the tight POSIX budget to still catch real
+// regressions, and allow a documented, higher ceiling on Windows.
+const PERF_PLATFORM_FACTOR = process.platform === 'win32' ? 2 : 1;
+const EXPORT_PERF_MS = 60_000 * PERF_PLATFORM_FACTOR;
+const IMPORT_PERF_MS = 60_000 * PERF_PLATFORM_FACTOR;
 
 const require = createRequire(import.meta.url);
 
