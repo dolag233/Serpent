@@ -14,6 +14,10 @@
 
 用户截图确认字号/对比改善后字形仍怪。根因不是 DirectWrite 开关，而是同一身份摘要内继续混用三条路径：`.inspector-badge` 的 IBM Plex Mono 无 CJK、标题 560 在静态 YaHei UI 上跳到粗体、资产/文件夹数字的 `.mono`。首轮“YaHei actual font”自动化只能证明字体被选中，不能证明同一组件的字体系统一致；SHELL-023 当场改为人类验收不通过并重开 `Serpent-2lp`。
 
+### 2026-07-19 第二轮反馈
+
+用户确认右侧 Inspector 的长资源库名可以换行，但其他紧凑界面必须继续单行省略；同时指出 Inspector「为资产写一句备注…」与「输入作者…」的 placeholder 字形不一致。静态排查定位为 Chromium 原生 `textarea` 未进入现有 `button, input { font: inherit }` reset，Windows 下因而可能使用独立默认字体。基础 reset 已补齐 `select` 和 `textarea`；普通 UI 表单统一继承应用字体，文本预览编辑器仍由后置显式规则保留等宽字体。按用户要求，本次小改动未运行回归测试。
+
 ## 同步记录
 
 - `git fetch origin` 后确认 `origin/codex/slice-002-asset-ingestion` 从 `8abc73c` 更新到 `5c18852`。

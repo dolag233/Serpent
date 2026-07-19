@@ -178,7 +178,13 @@ body,
 }
 
 button,
-input {
+input,
+select,
+textarea {
+  /* Chromium gives native form controls their own platform defaults. Without
+     this reset, Windows textarea placeholders can fall back to a different
+     (often monospace) family than adjacent inputs. Purpose-built editors set
+     their own family later in the cascade. */
   font: inherit;
 }
 
@@ -5236,8 +5242,9 @@ select.ai-config-input {
 }
 
 :root[data-platform="windows"] .inspector-identity strong {
-  /* Keep long names readable to keyboard/touch users instead of exposing the
-     full value only through a pointer-only native title tooltip. */
+  /* Only the right-hand Inspector identity may wrap. Names in navigation,
+     menus, cards and other compact surfaces keep their existing one-line
+     text-overflow ellipsis. */
   overflow: visible;
   font-family: var(--font-ui);
   overflow-wrap: anywhere;
