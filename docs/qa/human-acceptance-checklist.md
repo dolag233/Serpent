@@ -167,8 +167,8 @@
 | SMART-004 | 重命名智能合集 | 待人类验收 | 重命名已有智能合集 | 新名称立即出现，查询条件保持 | [0005 QA](0005-search-filter-sort-smart-collections-qa-report.md) | — |
 | SMART-005 | 删除智能合集 | 待人类验收 | 删除已有智能合集 | 智能合集消失，资产不受影响 | [0005 QA](0005-search-filter-sort-smart-collections-qa-report.md) | — |
 | SMART-006 | 智能合集侧栏计数 | 待人类验收 | 打开含智能合集的资源库；对照普通合集行；再打开该智能合集 | 侧栏智能合集行显示匹配资产数；与打开后结果总数一致 | [开发日志](../development/2026-07-18-smart-collection-validate-count-development-log.md) / 工单 Serpent-o8v | 2026-07-18 CU-M6：list 批量 count + 执行后刷新。 |
-| PREF-001 | 浏览区设置面板（主题/语言/画布） | 待人类验收 | 打开资源库；点工具栏齿轮设置；切换主题与语言；改画布视图/字段 | 弹出设置面板；主题/语言立即生效且与库名下拉一致；画布偏好同步 | [开发日志](../development/2026-07-19-prefs-smart-inline-rename-development-log.md) / 工单 Serpent-str | 2026-07-19 接通已有 AppSettingsDialog。 |
-| SMART-007 | 智能合集侧栏加号聚焦创建 | 待人类验收 | 点侧栏「智能合集」旁 + | 焦点进入顶栏智能合集名称输入框，可直接输入后保存 | [开发日志](../development/2026-07-19-prefs-smart-inline-rename-development-log.md) / 工单 Serpent-uu9 | 2026-07-19 实现。 |
+| PREF-001 | 浏览区设置面板（主题/语言/画布） | 人类验收不通过 | 点资源库旁设置入口；确认库菜单无设置项；改画布字段开关并看卡片；Esc/外点关闭面板 | 入口在资源库切换器旁（非 toolbar）；库菜单无设置；每项有清楚说明（如文件名/大小/修改日期=卡片显示字段）且改后画布可见；无右下角关闭钮 | [开发日志](../development/2026-07-19-prefs-smart-inline-rename-development-log.md) / 原 Serpent-str / 复验修复单见 beads | 2026-07-19 用户不通过：删库菜单设置；入口勿放 toolbar 应靠资源库；设置项缺说明；删冗余关闭钮。 |
+| SMART-007 | 智能合集侧栏加号原地创建 | 人类验收不通过 | 点侧栏「智能合集」旁 +；在侧栏行内输入名称并确认 | 与文件夹新建相同：侧栏原地编辑；顶栏/右上角无智能合集名称输入或保存区 | [开发日志](../development/2026-07-19-prefs-smart-inline-rename-development-log.md) / 原 Serpent-uu9 / 复验修复单见 beads | 2026-07-19 用户不通过：不应跳到右上角编辑；须侧栏原地创建并删除顶栏智能合集相关 UI。 |
 | MENU-023 | 资产画布原地重命名 | 待人类验收 | 右键资产「重命名…」或快捷键；改基名 Enter；Esc 取消；非法名 | 卡片内联输入（无对话框）；扩展名旁注保留；成功后文件名更新 | [开发日志](../development/2026-07-19-prefs-smart-inline-rename-development-log.md) / 工单 Serpent-wfj | 2026-07-19 实现；E2E 断言需跟进改 inline。 |
 | FOLDER-001 | 文件夹递归显示后代资产 | 已撤回 | — | — | — | 2026-07-17 人类验收不通过；需求改为 REQ-FOLDER-009 显式开关。由 FOLDER-009 承接验收。 |
 | FOLDER-009 | 包含子文件夹显式开关 | 人类验收通过 | 进入父文件夹；看标题左侧双层文件夹图标；开启后退出再进入 | 图标在标题左侧；开启后显示子级资产；同一文件夹再次进入仍保持开启 | [开发日志](../development/2026-07-18-folder-include-subfolders-development-log.md) / [偏好单测](../../tests/unit/folder-recursive-preferences.test.ts) / [E2E](../../tests/e2e/folder-recursive-scope.test.ts) | 2026-07-18 用户验收通过（与 A0 同 ID）。 |
@@ -351,11 +351,11 @@
 | 2026-07-18 | SHELL-017、FILTER-015                                                                           | 人类验收不通过       | 「相关性（默认）」等括注仍在；颜色过滤缺黑白且选中样式丑。                                                                                                                                                                                                                                                                                                                        | 第五批：`Serpent-d45` / `Serpent-o75`；技术元数据布局仍见 `Serpent-rbx`（VIEW-007 内容已通过）。 |
 | 2026-07-19 | CANVAS-012 / VIEWER-005（视频） | 角标不通过；视频通过 | 亮色角标仍缺毛玻璃；视频 contain 通过。 | 角标跟进 `Serpent-s3u`；`Serpent-q16` 通过。 |
 | 2026-07-19 | FILTER-019–020 / NAV-006 / SORT-006 / INSPECT-009–010 | 部分通过 | 019/020/NAV根行/SORT-006 已通过；INSPECT-009–010 仍待验。 | 附带打磨见 01i/aj6/9hh/jfi/v78。 |
-| 2026-07-19 | SHELL-021 | 待人类验收 | 源链接打开失败可操作 toast；IPC 结构化错误码与无 URL 日志。 | Serpent-1pd。 |
+| 2026-07-19 | SHELL-021 | 人类验收通过 | 源链接打开失败可操作 toast。 | Serpent-1pd。 |
 | 2026-07-19 | A11Y-001–003 | 待人类验收 | 查看页焦点环；库菜单/排序 roving；TagPicker 单焦点与对话框 trap。 | Serpent-vvn。 |
 | 2026-07-19 | AUDIO-001 | 待人类验收 | 音频波形封面 + 查看页播放/进度。 | Serpent-0x5。 |
 | 2026-07-19 | TEXT-001 | 待人类验收 | 文本摘要/行号查看/托管保存。 | Serpent-sh7。 |
-| 2026-07-19 | PREF-001 / SMART-007 / MENU-023 | 待人类验收 | 设置面板；智能合集+；资产原地重命名。 | Serpent-str / uu9 / wfj。 |
+| 2026-07-19 | PREF-001 / SMART-007 / MENU-023 | 部分不通过 | PREF/SMART 不通过；MENU-023 仍待验。 | PREF/SMART 复验单已开；wfj 仍待验。 |
 | 2026-07-19 | FOLDER-010–013 | 部分通过 | .3/.4 通过；.1 单击进入不通过；.2 拼盘封面不通过；epic 计数/多选基线接受。 | 修复 `Serpent-829` / `Serpent-7ms`；混合动作 `Serpent-koy`。 |
 | 2026-07-19 | SORT-005 / SHELL-017 / FILTER-013 | 人类验收通过 | 去掉排序相关性；括注复查；删除文件夹过滤维度。 | `Serpent-96i` / `Serpent-d45` / `Serpent-ckx`。 |
 | 2026-07-19 | 本批验收落账 | 记录 | 用户验收上述条目；开修复单 s3u/829/7ms/koy。 | 见各条目笔记。 |
@@ -370,6 +370,7 @@
 | 2026-07-19 | 文件夹删除 P1 再确认 | 记录 | 用户再次点名删除文件夹；`Serpent-ekj` 已是 P1，仍被澄清 #7（`Serpent-w3b`）阻塞。 | 需删除语义裁决后才能实施。 |
 | 2026-07-19 | 澄清#7 删除语义裁决 | 已裁决 | 托管默认进回收站；从硬盘删除需确认+可不再提示+设置可重开；链接根仅移除、子文件夹可删；资产亦需从硬盘删除。 | `Serpent-ekj` 已解除对 w3b 阻塞；`Serpent-9zc` / `Serpent-5no`。 |
 | 2026-07-19 | SHELL-018 连续拖拽修复 | 待复验 | 隐藏拖出不再强制结束拖拽；hide/restore 同一 pointer 会话。 | `Serpent-kro`；[开发日志](../development/2026-07-19-sidebar-continuous-drag-development-log.md)。 |
+| 2026-07-19 | PREF-001/SMART-007 复验反馈 | 不通过 | 设置入口/文案/关闭钮；智能合集侧栏原地创建并去顶栏区。 | 新开复验 beads。 |
 ### 第五批收口（过滤/导航/排序/Inspector）
 
 | FILTER-019 | 排除过滤红色高亮 | 人类验收通过 | 启用颜色/标签等过滤后勾选排除 | 对应维度按钮呈红色高亮，与包含态区分 | [开发日志](../development/2026-07-19-filter-nav-inspect-polish-development-log.md) / Serpent-8s8 | 2026-07-19 用户确认通过。附带：暗色下红色偏艳 → 降饱和打磨工单。 |
@@ -378,7 +379,7 @@
 | SORT-006 | 升序/降序专用图标 | 人类验收通过 | 看排序方向按钮；切换升/降序 | 图标为升序/降序语义，不再是 ↑↓ 文字箭头 | 同上 / Serpent-1c9 | 2026-07-19 用户确认通过。附带产品调整：方向应并入排序面板、去掉独立按钮 → 后续工单。 |
 | INSPECT-009 | 技术元数据底部栏 | 待人类验收 | 选中视频与 GIF，看 Inspector | 体积/分辨率/时间行不含 codec/帧数；底部独立技术栏显示 | 同上 / Serpent-rbx | 2026-07-19；VIEW-007 复验。 |
 | INSPECT-010 | 多选堆叠预览阴影 | 待人类验收 | 多选 2–3 项，看右侧堆叠预览 | 层间有微弱阴影可辨，不糊成一块 | 同上 / Serpent-1tx | 2026-07-19。 |
-| SHELL-021 | 源链接打开失败可操作提示 | 待人类验收 | 选中带有效 HTTP(S) 源链接的资产，点 Inspector 源链接跳转；若系统浏览器打开失败（或临时破坏默认浏览器）观察 toast；正常成功路径仍应打开浏览器 | 失败时 toast 说明「系统浏览器无法打开…请检查默认浏览器」等可操作原因，不再只有笼统失败；成功时仍打开系统浏览器 | [开发日志](../development/2026-07-19-external-url-active-context-ipc-development-log.md) / 单测 `external-url-ipc.test.ts` / Serpent-1pd | 2026-07-19；日志侧失败码不含 URL，需查 `serpent.log` 的 `ipc.open-external-url` / `ipc.active-context`（人工抽查）。 |
+| SHELL-021 | 源链接打开失败可操作提示 | 人类验收通过 | 选中带有效 HTTP(S) 源链接的资产，点 Inspector 源链接跳转；若系统浏览器打开失败观察 toast；正常成功路径仍应打开浏览器 | 失败时 toast 说明可操作原因；成功时打开系统浏览器 | [开发日志](../development/2026-07-19-external-url-active-context-ipc-development-log.md) / Serpent-1pd | 2026-07-19 用户确认通过。 |
 | A11Y-001 | 查看页 nav/close 键盘焦点可见 | 待人类验收 | 打开查看页；Tab 到上一张/下一张/关闭；可先等 chrome 渐隐再 Tab | 焦点控件有 accent 描边；idle 渐隐时聚焦仍可见 | [开发日志](../development/2026-07-19-keyboard-focus-model-development-log.md) / Serpent-vvn | 2026-07-19。 |
 | A11Y-002 | 资源库菜单与排序 listbox 键盘导航 | 待人类验收 | 打开左上角资源库菜单与排序字段弹出层；用 ↑↓ Home/End、Esc | 箭头移动焦点；Esc 关闭并回到触发按钮 | 同上 / `roving-list-keyboard.test.ts` | 2026-07-19。 |
 | A11Y-003 | 标签选择器单一焦点 + 对话框焦点陷阱 | 待人类验收 | 右键→分配标签；箭头高亮选项且输入框保持焦点；打开设置/导出等对话框按 Tab | 选项不可 Tab 抢走焦点；对话框 Tab 不逃到背后 UI | 同上 | 2026-07-19。 |
