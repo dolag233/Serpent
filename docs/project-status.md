@@ -1,13 +1,13 @@
 # Serpent 项目状态
 
-> 更新时间：2026-07-18
+> 更新时间：2026-07-19
 > 事实来源：`docs/implementation/mvp-roadmap.md` 与各切片开发/审查/QA 文档
 
 ## 2026-07-18 MVP 循环前沿
 
 - 当日已合流多批可编码增量（查看页直出/视频控件、作者元数据、空态文案、命令注册表、合集菜单成员过滤、智能合集校验与计数、侧栏省略、搜索 snippet 去重、递归来源角标、壳层对齐、GIF 控件与元数据、Option 拖拽复制光标等）；证据与验收 ID 见 `docs/qa/human-acceptance-checklist.md`。
 - **2026-07-18 晚验收**：FILTER-013/014、SEARCH-005、NAV-005、SHELL-015/016、META-008、PALETTE-002 人类验收通过；SHELL-017、FILTER-015、VIEW-007 不通过/布局反馈。第五批反馈已入池并开单（`mvp-fifth-batch` 标签）：过滤交互重做、排序去相关性、画布 resize 重排、查看返回保视图等，见 `docs/implementation/mvp-ui-ux-requirements-backlog.md`「2026-07-18 第五批」。
-- **可编码 ready 队列**：第五批过滤/布局工单 + **文件夹卡片 epic `Serpent-5ja`（P1，已提上日程）**及其子项 `.1`–`.4`；缺口补录 `Serpent-str`（设置面板）、`Serpent-uu9`（智能合集加号）、`Serpent-wfj`（资产原地重命名）、`Serpent-hrw`（左上角按钮澄清）。澄清 #4 已裁决（文件夹卡片参与多选）。仍阻塞：#5/#7 → `Serpent-ekj`/`Serpent-vgp`/`Serpent-w29`。
+- **澄清队列**：`Serpent-w3b` 已于 2026-07-19 全部裁决或撤回（详见 backlog「集中澄清队列」）。跟进实现：`Serpent-toh`（目录计数全后代）、`Serpent-mqp`（标签管理工作区）、`Serpent-svc`（主题/语言默认跟系统）、`Serpent-5fq`（反选 Ctrl+I / mac Edit 后续）；复制粘贴走系统剪贴板（`Serpent-vgp`/`w29` 已解阻塞）；删除语义 `Serpent-ekj`/`9zc`/`5no`。
 - **人类验收**：清单中「待人类验收」项以 `docs/qa/human-acceptance-checklist.md` 为准；状态只能由用户本人改写。
 
 ## 当前方向
@@ -53,7 +53,7 @@ v0.1.0 继续收口 0001–0010 的桌面主线，并纳入真实使用反馈确
 ## 2026-07-17 0017 第二增量：资产文件重命名与侧栏标签枚举移除
 
 - REQ-MENU-002 重命名落地：asset.renameFile 全链路（protocol/preload/main/worker），扩展名保留、非法名（含 Windows 禁用字符 `<>:"|?*`，审查修正）与同名冲突类型化拒绝、missing/trashed/offline 拒绝、同名 no-op、FTS 事务内同步；单资产菜单新增「重命名…」，对话框保留扩展名、内联中文错误、选择保持。
-- REQ-TAG-001 落地：左侧导航不再枚举标签、不再提供侧栏新建标签入口；tag 范围机制保留（发现工具栏「标签过滤」输入框仍是进入标签范围的 UI 入口）；标签重命名/删除暂无 UI 入口，待集中澄清队列 #8 裁决（worker 能力保留）。
+- REQ-TAG-001 修订（2026-07-19）：侧栏仍不枚举全部标签；改为侧栏「标签管理」入口 → 中间全页 CRUD（`Serpent-mqp`）。
 - 验证：typecheck/lint、unit 395 passed；worker rename 8/8；E2E 当次全绿——asset-rename 3/3、context-menu 10/10、organization-search-trash 3/3、metadata-persistence、asset-pagination、browsing-preferences、shell-navigation（含新增 REQ-TAG-001 负向断言）。
 - 交叉审查（2 深审 + 4 广度）：0 HARD；M1（Windows 禁用字符）已修并补测试；M3（缺负向断言）已补；回滚/IO 失败分支按纪律记未验证。
 - **Computer Use 未执行**（当前环境无桌面控制能力）：MENU-015 进入待人类验收，截图证据移交人工 QA。
