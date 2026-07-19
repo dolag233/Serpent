@@ -5,16 +5,31 @@ import {
   fileExtensionLabel,
   shouldShowAssetCardBadges,
   shouldShowDurationBadge,
+  shouldShowExtensionBadge,
+  shouldShowTypeBadgeAlongsideExtension,
 } from "../../src/renderer/asset-card-badges";
 
 describe("asset-card-badges", () => {
-  it("labels gif, video, and audio for type chips", () => {
+  it("labels gif, video, and text for type chips; audio uses extension instead", () => {
     expect(assetTypeBadgeLabel("image", "loop.gif")).toBe("GIF");
     expect(assetTypeBadgeLabel("video", "clip.mp4")).toBe("VIDEO");
-    expect(assetTypeBadgeLabel("audio", "tone.wav")).toBe("AUDIO");
+    expect(assetTypeBadgeLabel("audio", "tone.wav")).toBeNull();
     expect(assetTypeBadgeLabel("text", "notes.txt")).toBe("TEXT");
     expect(assetTypeBadgeLabel("image", "still.jpg")).toBeNull();
     expect(assetTypeBadgeLabel("other", "notes.bin")).toBeNull();
+  });
+
+  it("shows extension badges for non-images only (Serpent-i07)", () => {
+    expect(shouldShowExtensionBadge("image")).toBe(false);
+    expect(shouldShowExtensionBadge("audio")).toBe(true);
+    expect(shouldShowExtensionBadge("video")).toBe(true);
+    expect(shouldShowExtensionBadge("text")).toBe(true);
+    expect(shouldShowExtensionBadge("other")).toBe(true);
+  });
+
+  it("hides the type chip when extension occupies bottom-right", () => {
+    expect(shouldShowTypeBadgeAlongsideExtension(true)).toBe(false);
+    expect(shouldShowTypeBadgeAlongsideExtension(false)).toBe(true);
   });
 
   it("shows duration for video, audio, and gif when present", () => {

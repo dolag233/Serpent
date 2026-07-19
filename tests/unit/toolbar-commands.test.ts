@@ -54,7 +54,15 @@ function makeCtx(
     libraryOpen: true,
     busy: false,
     viewMode: 'grid',
-    fields: { name: true, size: true, date: true },
+    fields: {
+      name: true,
+      size: true,
+      date: true,
+      badgeType: true,
+      badgeDuration: true,
+      badgeSource: true,
+      badgeExtension: true,
+    },
     ...overrides,
     actions,
   };

@@ -103,3 +103,31 @@ export function formatVideoTechnicalLine(
 
   return parts.length > 0 ? parts.join(" · ") : null;
 }
+
+/**
+ * Compact Inspector line for audio assets (Serpent-i07), e.g.
+ * `mp3 · 320 kbps · 44.1 kHz · stereo`
+ */
+export function formatAudioTechnicalLine(
+  metadata: ExtractedVideoMetadata,
+): string | null {
+  const parts: string[] = [];
+
+  if (metadata.audioCodec) parts.push(metadata.audioCodec);
+
+  const bitrate =
+    parseProbeNumber(metadata.audioBitrate ?? null)
+    ?? parseProbeNumber(metadata.containerBitrate ?? null);
+  if (bitrate !== null) parts.push(formatBitrate(bitrate));
+
+  const sampleRate = parseProbeNumber(metadata.sampleRate);
+  if (sampleRate !== null) parts.push(formatSampleRate(sampleRate));
+
+  if (metadata.channels != null && metadata.channels > 0) {
+    if (metadata.channels === 1) parts.push("mono");
+    else if (metadata.channels === 2) parts.push("stereo");
+    else parts.push(`${metadata.channels} ch`);
+  }
+
+  return parts.length > 0 ? parts.join(" · ") : null;
+}

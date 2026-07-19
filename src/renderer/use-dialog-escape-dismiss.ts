@@ -23,6 +23,7 @@ export type UseDialogEscapeDismissParams = {
   setUndoMoveDialog: (value: null) => void;
   setCollectionEditor: (value: null) => void;
   setExportDialogOpen: (open: boolean) => void;
+  setImportLibraryChooserOpen: (open: boolean) => void;
   setAppSettingsOpen: (open: boolean) => void;
   setAiConfigOpen: (open: boolean) => void;
   setExtensionPairingOpen: (open: boolean) => void;
@@ -52,6 +53,7 @@ export function useDialogEscapeDismiss({
   setUndoMoveDialog,
   setCollectionEditor,
   setExportDialogOpen,
+  setImportLibraryChooserOpen,
   setAppSettingsOpen,
   setAiConfigOpen,
   setExtensionPairingOpen,
@@ -105,6 +107,9 @@ export function useDialogEscapeDismiss({
           return;
         case "close-export":
           setExportDialogOpen(false);
+          return;
+        case "close-import-library-chooser":
+          setImportLibraryChooserOpen(false);
           return;
         case "close-app-settings":
           setAppSettingsOpen(false);
@@ -161,6 +166,7 @@ export function useDialogEscapeDismiss({
     setUndoMoveDialog,
     setCollectionEditor,
     setExportDialogOpen,
+    setImportLibraryChooserOpen,
     setAppSettingsOpen,
     setAiConfigOpen,
     setExtensionPairingOpen,

@@ -14,6 +14,7 @@ export type DialogEscapeSnapshot = {
   undoMoveOpen: boolean;
   collectionEditorOpen: boolean;
   exportDialogOpen: boolean;
+  importLibraryChooserOpen: boolean;
   appSettingsOpen: boolean;
   aiConfigOpen: boolean;
   extensionPairingOpen: boolean;
@@ -37,6 +38,7 @@ export type DialogEscapeAction =
   | { kind: "close-undo-move" }
   | { kind: "close-collection-editor" }
   | { kind: "close-export" }
+  | { kind: "close-import-library-chooser" }
   | { kind: "close-app-settings" }
   | { kind: "close-ai-config" }
   | { kind: "close-extension-pairing" }
@@ -65,6 +67,8 @@ export function resolveDialogEscapeAction(
   if (snapshot.undoMoveOpen) return { kind: "close-undo-move" };
   if (snapshot.collectionEditorOpen) return { kind: "close-collection-editor" };
   if (snapshot.exportDialogOpen) return { kind: "close-export" };
+  if (snapshot.importLibraryChooserOpen)
+    return { kind: "close-import-library-chooser" };
   if (snapshot.appSettingsOpen) return { kind: "close-app-settings" };
   if (snapshot.aiConfigOpen) return { kind: "close-ai-config" };
   if (snapshot.extensionPairingOpen) return { kind: "close-extension-pairing" };

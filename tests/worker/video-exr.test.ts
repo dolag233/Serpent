@@ -1396,6 +1396,71 @@ describe('enqueueThumbnailJobs handles all media types', () => {
 
     service.closeAll();
   });
+
+  it('enqueues audio when only the viewer strip exists (Serpent-051)', async () => {
+    process.env['SERPENT_FFMPEG_PATH'] = '/fake/ffmpeg';
+    const root = temporaryRoot();
+    const service = new LibraryService({
+      spawnFn: createMockSpawn({ ffprobeStdout: CANNED_FFPROBE_JSON }),
+    });
+    const created = service.createLibrary({
+      displayName: 'AudioPosterOnly',
+      selectedParentPath: root,
+    });
+
+    const sourcePath = path.join(root, 'only-poster.mp3');
+    writeFileSync(sourcePath, Buffer.alloc(4096, 0));
+    importNoConflict(service, created.libraryId, sourcePath);
+
+    const asset = service.listAssets({
+      libraryId: created.libraryId,
+      recursive: true,
+    })[0]!;
+    await service.generateThumbnail({
+      libraryId: created.libraryId,
+      assetId: asset.assetId,
+    });
+
+    const db = assertDb(created.libraryPath);
+    const invalidated = db
+      .prepare(
+        `UPDATE revision_artifacts
+            SET invalidated_at = ?
+          WHERE kind = 'thumbnail'
+            AND invalidated_at IS NULL
+            AND revision_id = ?`,
+      )
+      .run(new Date().toISOString(), asset.currentRevisionId);
+    expect(invalidated.changes).toBeGreaterThan(0);
+    const poster = db
+      .prepare(
+        `SELECT artifact_id FROM revision_artifacts
+          WHERE kind = 'video_poster'
+            AND status = 'ready'
+            AND invalidated_at IS NULL
+            AND revision_id = ?`,
+      )
+      .get(asset.currentRevisionId) as { artifact_id: string } | undefined;
+    expect(poster).toBeDefined();
+    db.close();
+
+    // Browse must not adopt the wide strip as the grid cover.
+    const before = service.searchAssets({
+      libraryId: created.libraryId,
+      query: null,
+      limit: 10,
+      offset: 0,
+    });
+    expect(before.items[0]).toMatchObject({
+      mediaType: 'audio',
+      thumbnailStatus: null,
+      thumbnailArtifactId: null,
+    });
+
+    expect(service.enqueueThumbnailJobs(created.libraryId)).toBe(1);
+
+    service.closeAll();
+  });
 });
 
 describe('audio waveform thumbnail (Serpent-13v)', () => {

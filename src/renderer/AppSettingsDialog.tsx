@@ -1,6 +1,8 @@
 import type { ReactNode } from "react";
 import {
-  APP_SETTINGS_CANVAS_FIELD_OPTIONS,
+  APP_SETTINGS_CANVAS_BADGE_FIELD_OPTIONS,
+  APP_SETTINGS_CANVAS_CAPTION_FIELD_OPTIONS,
+  APP_SETTINGS_CARD_BADGES_HINT_KEY,
   APP_SETTINGS_CARD_FIELDS_HINT_KEY,
   APP_SETTINGS_LOCALE_OPTIONS,
   APP_SETTINGS_THEME_OPTIONS,
@@ -143,7 +145,28 @@ export function AppSettingsDialog({
           </div>
           <p className="app-settings-hint">{t(APP_SETTINGS_CARD_FIELDS_HINT_KEY)}</p>
           <div className="app-settings-check-row-group">
-            {APP_SETTINGS_CANVAS_FIELD_OPTIONS.map((option) => (
+            {APP_SETTINGS_CANVAS_CAPTION_FIELD_OPTIONS.map((option) => (
+              <label
+                className="ai-config-check-row ai-config-check-row-top"
+                key={option.field}
+              >
+                <input
+                  checked={canvasPrefs.fields[option.field]}
+                  onChange={() => onToggleField(option.field)}
+                  type="checkbox"
+                />
+                <span className="app-settings-check-copy">
+                  <span>{t(option.labelKey)}</span>
+                </span>
+              </label>
+            ))}
+          </div>
+          <div className="micro-label app-settings-sublabel">
+            {t("settings.cardBadges")}
+          </div>
+          <p className="app-settings-hint">{t(APP_SETTINGS_CARD_BADGES_HINT_KEY)}</p>
+          <div className="app-settings-check-row-group">
+            {APP_SETTINGS_CANVAS_BADGE_FIELD_OPTIONS.map((option) => (
               <label
                 className="ai-config-check-row ai-config-check-row-top"
                 key={option.field}

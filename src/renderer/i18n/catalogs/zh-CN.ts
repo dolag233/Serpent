@@ -172,6 +172,10 @@ export const zhCN = {
     showFileName: "文件名",
     showFileSize: "文件大小",
     showModifiedDate: "修改日期",
+    showBadgeType: "类型角标（GIF / 视频）",
+    showBadgeDuration: "时长角标（左下）",
+    showBadgeSource: "来源文件夹角标",
+    showBadgeExtension: "扩展名角标（右下，图片除外）",
     converting: "转换中…",
     smartCollectionTitle: "智能合集标题",
     smartCollectionName: "智能合集名称",
@@ -602,6 +606,12 @@ export const zhCN = {
       openInPlace: "原地打开（不复制）",
       importZip: "导入 ZIP",
       copyToNew: "复制到新位置"
+    },
+    importLibraryChooser: {
+      title: "导入资源库",
+      help: "可以从资源库文件夹导入，也可以从导出的资源库 ZIP 导入。",
+      folder: "导入资源库文件夹",
+      zip: "导入资源库 ZIP"
     }
   },
   aiConfig: {
@@ -628,7 +638,9 @@ export const zhCN = {
     viewMode: "浏览视图",
     canvasHint: "控制资产画布的排列方式；改后立即作用于画布。",
     cardFields: "卡片显示字段",
-    cardFieldsHint: "在画布卡片上显示文件名、文件大小或修改日期；开关后立即生效。"
+    cardFieldsHint: "在画布卡片标题区显示文件名、文件大小或修改日期；开关后立即生效。",
+    cardBadges: "预览角标",
+    cardBadgesHint: "时长在左下角；扩展名在右下角（图片不显示扩展名）；类型角标仅在无扩展名时出现（如 GIF）。"
   },
   preview: {
     ffmpegRequired: "当前安装缺少 FFmpeg，无法生成视频播放代理。请安装或配置 FFmpeg 后重试。",

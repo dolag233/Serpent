@@ -29,7 +29,7 @@ import { useT } from "./i18n";
 import type { AssetSummary, AssetMetadataResult, ExtractedVideoMetadata, TagSummary } from "../shared/asset-types";
 import type { PreviewResolution, SerpentLibraryApi } from "../shared/library-api";
 import type { RendererLibrarySummary } from "../shared/protocol/responses";
-import { formatVideoTechnicalLine } from "./video-metadata-format";
+import { formatAudioTechnicalLine, formatVideoTechnicalLine } from "./video-metadata-format";
 import { isGifDisplayName } from "./gif-player-controls";
 import {
   isCardHoverPreviewable,
@@ -534,17 +534,23 @@ export function InspectorPanel(props: InspectorPanelProps) {
     }
   }, [showTagInput]);
 
-  // REQ-VIEW-003 / CU-D8: fetch extracted metadata for video tech line and GIF frames.
-  // Display is derived from cache identity so selection changes do not sync-setState.
+  // REQ-VIEW-003 / CU-D8 / Serpent-i07: fetch extracted metadata for video /
+  // audio tech lines and GIF frames. Display is derived from cache identity
+  // so selection changes do not sync-setState.
   useEffect(() => {
     const assetId = selectedAsset?.assetId ?? null;
     const libraryId = library?.libraryId ?? null;
     const isVideo = selectedAsset?.mediaType === "video";
+    const isAudio = selectedAsset?.mediaType === "audio";
     const isGif =
       selectedAsset != null && isGifDisplayName(selectedAsset.displayName);
     const shouldFetch =
       Boolean(
-        api && libraryId && assetId && (isVideo || isGif) && selectionCount < 2,
+        api &&
+          libraryId &&
+          assetId &&
+          (isVideo || isAudio || isGif) &&
+          selectionCount < 2,
       );
 
     if (!shouldFetch || !api || !libraryId || !assetId) {
@@ -596,6 +602,13 @@ export function InspectorPanel(props: InspectorPanelProps) {
 
   const videoTechMetadata =
     selectedAsset?.mediaType === "video"
+    && selectionCount < 2
+    && videoTechCache?.assetId === selectedAsset.assetId
+      ? videoTechCache.metadata
+      : null;
+
+  const audioTechMetadata =
+    selectedAsset?.mediaType === "audio"
     && selectionCount < 2
     && videoTechCache?.assetId === selectedAsset.assetId
       ? videoTechCache.metadata
@@ -750,7 +763,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
     return parts;
   }, [selectedAsset, t, gifExtractedMetadata]);
 
-  // REQ-INSPECT-005: codec / GIF frame tech sits in a bottom bar, not the compact size row.
+  // REQ-INSPECT-005 / Serpent-i07: codec tech sits in a bottom bar, not the compact size row.
   const technicalInfoParts = useMemo(() => {
     if (!selectedAsset || selectionCount >= 2) return [];
     const parts: string[] = [];
@@ -766,8 +779,19 @@ export function InspectorPanel(props: InspectorPanelProps) {
       const techLine = formatVideoTechnicalLine(videoTechMetadata);
       if (techLine) parts.push(techLine);
     }
+    if (selectedAsset.mediaType === "audio" && audioTechMetadata) {
+      const techLine = formatAudioTechnicalLine(audioTechMetadata);
+      if (techLine) parts.push(techLine);
+    }
     return parts;
-  }, [selectedAsset, selectionCount, t, videoTechMetadata, gifExtractedMetadata]);
+  }, [
+    selectedAsset,
+    selectionCount,
+    t,
+    videoTechMetadata,
+    audioTechMetadata,
+    gifExtractedMetadata,
+  ]);
 
   return (
     <aside className="inspector-pane">
