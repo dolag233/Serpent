@@ -427,6 +427,7 @@ FolderBrowseEntry
 | SMART-007 创建后开设置，勿先报缺条件 | 复验不通过 | `Serpent-era` |
 | AUDIO 网格波形 4:3；亮色底非黑 | 查看页波形比例不改 | `Serpent-dxk` |
 | 视频/音频跳转式播放经常失败 | 严重；seek/scrub 后播放失败 | `Serpent-jh2` |
+| 非图片/视频资产不显示色卡（音频误显） | Inspector/色卡入口仅图视 | `Serpent-uz1` |
 
 ## 验收与证据要求
 
