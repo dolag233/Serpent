@@ -1442,14 +1442,23 @@ describe('pagination', () => {
 // ── Smart Collections (v6) ──────────────────────────────────────────
 
 describe('smart collections v6', () => {
-  it('rejects empty smart collection definitions (CU-M5)', () => {
+  it('create allows draft empty; update rejects empty (CU-M5)', () => {
     const { service, libraryId } = createLibraryWithAssetAndTags();
+
+    // Sidebar inline-create allows a draft `{}` query; validation is on
+    // update/save (Serpent-san / SMART-007).
+    const draft = service.createSmartCollection({
+      libraryId,
+      name: 'Empty',
+      queryDefinitionJson: '{}',
+    });
+    expect(draft.collectionId).toBeTruthy();
 
     expectServiceCode(
       () =>
-        service.createSmartCollection({
+        service.updateSmartCollection({
           libraryId,
-          name: 'Empty',
+          collectionId: draft.collectionId,
           queryDefinitionJson: '{}',
         }),
       'INVALID_SMART_COLLECTION_QUERY',

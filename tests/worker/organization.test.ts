@@ -1214,44 +1214,47 @@ describe('asset metadata', () => {
 // ── Smart Collections ───────────────────────────────────────────────────
 
 describe('smart collections', () => {
-  it('rejects empty and sort-only smart collection definitions (CU-M5)', () => {
+  it('create allows draft empty/sort-only; update rejects them (CU-M5)', () => {
     const { service, libraryId } = createLibraryWithAsset();
+
+    // Sidebar inline-create (Serpent-san / SMART-007) intentionally allows a
+    // draft `{}` or sort-only query at create time; the settings dialog
+    // attaches a meaningful condition afterwards. Validation therefore
+    // happens on update/save, not on create.
+    const draftEmpty = service.createSmartCollection({
+      libraryId,
+      name: 'All Assets Trap',
+      queryDefinitionJson: '{}',
+    });
+    expect(draftEmpty.collectionId).toBeTruthy();
+
+    const draftSortOnly = service.createSmartCollection({
+      libraryId,
+      name: 'Sort Only',
+      queryDefinitionJson: JSON.stringify({
+        sort: { field: 'name', order: 'asc' },
+      }),
+    });
+    expect(draftSortOnly.collectionId).toBeTruthy();
 
     expectServiceCode(
       () =>
-        service.createSmartCollection({
+        service.updateSmartCollection({
           libraryId,
-          name: 'All Assets Trap',
+          collectionId: draftEmpty.collectionId,
           queryDefinitionJson: '{}',
         }),
       'INVALID_SMART_COLLECTION_QUERY',
     );
     expectServiceCode(
       () =>
-        service.createSmartCollection({
+        service.updateSmartCollection({
           libraryId,
-          name: 'Sort Only',
+          collectionId: draftSortOnly.collectionId,
           queryDefinitionJson: JSON.stringify({
             sort: { field: 'name', order: 'asc' },
           }),
         }),
-      'INVALID_SMART_COLLECTION_QUERY',
-    );
-    expectServiceCode(
-      () => {
-        const sc = service.createSmartCollection({
-          libraryId,
-          name: 'Has Filter',
-          queryDefinitionJson: JSON.stringify({
-            filters: [{ field: 'favorite', values: [], exclude: false }],
-          }),
-        });
-        return service.updateSmartCollection({
-          libraryId,
-          collectionId: sc.collectionId,
-          queryDefinitionJson: '{}',
-        });
-      },
       'INVALID_SMART_COLLECTION_QUERY',
     );
 
