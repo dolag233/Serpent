@@ -9286,6 +9286,82 @@ export class LibraryService {
   }
 
   /**
+   * Invalidate ready artifacts whose files are missing under `.serpent/artifacts`.
+   * Used after import/open when an older export omitted the artifacts tree while
+   * the DB still recorded status=ready (Serpent-pxd).
+   */
+  private reconcileMissingArtifactFiles(openLibrary: OpenLibrary): number {
+    const artifactsDir = this.artifactsDir(openLibrary);
+    let artifactsRoot: string;
+    try {
+      const rootEntry = lstatSync(artifactsDir);
+      if (!rootEntry.isDirectory() || rootEntry.isSymbolicLink()) return 0;
+      artifactsRoot = realpathSync(artifactsDir);
+    } catch {
+      return 0;
+    }
+
+    const rows = openLibrary.connection
+      .prepare(
+        `SELECT ra.artifact_id, ra.file_path
+           FROM revision_artifacts ra
+           JOIN assets a ON a.current_revision_id = ra.revision_id
+          WHERE ra.status = 'ready'
+            AND ra.invalidated_at IS NULL
+            AND a.deleted_at IS NULL`,
+      )
+      .all() as Array<{ artifact_id: string; file_path: string }>;
+    if (rows.length === 0) return 0;
+
+    const now = new Date().toISOString();
+    const invalidate = openLibrary.connection.prepare(
+      `UPDATE revision_artifacts
+          SET invalidated_at = ?
+        WHERE artifact_id = ?
+          AND invalidated_at IS NULL`,
+    );
+
+    const artifactFilePresent = (filePath: string): boolean => {
+      // Same containment rules as getArtifactAbsolutePath — escape / symlink → treat missing.
+      const targetPath = path.resolve(artifactsRoot, ...filePath.split('/'));
+      const relation = path.relative(artifactsRoot, targetPath);
+      if (
+        relation === '' ||
+        relation.startsWith(`..${path.sep}`) ||
+        path.isAbsolute(relation)
+      ) {
+        return false;
+      }
+      try {
+        const targetEntry = lstatSync(targetPath);
+        if (!targetEntry.isFile() || targetEntry.isSymbolicLink()) return false;
+        const realTarget = realpathSync(targetPath);
+        const realRelation = path.relative(artifactsRoot, realTarget);
+        if (
+          realRelation === '' ||
+          realRelation.startsWith(`..${path.sep}`) ||
+          path.isAbsolute(realRelation)
+        ) {
+          return false;
+        }
+        return true;
+      } catch {
+        return false;
+      }
+    };
+
+    let invalidated = 0;
+    openLibrary.connection.transaction(() => {
+      for (const row of rows) {
+        if (artifactFilePresent(row.file_path)) continue;
+        invalidate.run(now, row.artifact_id);
+        invalidated += 1;
+      }
+    })();
+    return invalidated;
+  }
+
+  /**
    * Enqueue thumbnail jobs for supported assets whose current revision has no
    * terminal artifact. Callers may pass the currently visible asset ids and a
    * limit so opening a large library never materializes or queues the whole
@@ -14501,6 +14577,10 @@ export class LibraryService {
       this.recoverInterruptedAiJobs(openLibrary);
       this.recoverInterruptedThumbnailJobs(openLibrary);
       this.reconcileDefaultIgnoredAssets(openLibrary);
+      // Serpent-pxd: exports that omitted `.serpent/artifacts` (or partial copies)
+      // leave ready rows pointing at missing files → broken <img>. Invalidate so
+      // enqueueThumbnailJobs below can regenerate.
+      this.reconcileMissingArtifactFiles(openLibrary);
       // Purge expired trash on open (best-effort, single busy file does not abort)
       try {
         this.purgeExpiredTrash(summary.libraryId);
@@ -15115,10 +15195,15 @@ export class LibraryService {
           } else if (child.isFile()) {
             // Exclude AI temp files.
             const lowerName = child.name.toLowerCase();
-            if (lowerName.endsWith('.tmp') || lowerName.startsWith('.') && (
-              lowerName.includes('temp') || lowerName.includes('cache') ||
-              lowerName.startsWith('.ds_store') || lowerName === 'thumbs.db'
-            )) {
+            if (
+              lowerName.endsWith('.tmp') ||
+              lowerName.includes('.wave-tmp.') ||
+              lowerName.includes('-tmp.') ||
+              (lowerName.startsWith('.') && (
+                lowerName.includes('temp') || lowerName.includes('cache') ||
+                lowerName.startsWith('.ds_store') || lowerName === 'thumbs.db'
+              ))
+            ) {
               continue;
             }
             // Exclude WAL/SHM files for the temp backup (just in case).
@@ -15166,6 +15251,14 @@ export class LibraryService {
       const trashDir = path.join(libPath, '.serpent', 'trash');
       if (directoryExists(trashDir)) {
         await walkDir(trashDir, '.serpent/trash');
+      }
+
+      // Serpent-pxd: include ready thumbnails/proxies so import does not show
+      // broken images while DB still says status=ready. Legacy `.serpent/previews`
+      // remains excluded (regenerable / unused by current protocol).
+      const artifactsDir = path.join(libPath, '.serpent', 'artifacts');
+      if (directoryExists(artifactsDir)) {
+        await walkDir(artifactsDir, '.serpent/artifacts');
       }
 
       // Include .serpent/library.db (snapshot).
@@ -15604,10 +15697,15 @@ export class LibraryService {
             await walkDir(childPath, childRel);
           } else if (child.isFile()) {
             const lowerName = child.name.toLowerCase();
-            if (lowerName.endsWith('.tmp') || (lowerName.startsWith('.') && (
-              lowerName.includes('temp') || lowerName.includes('cache') ||
-              lowerName.startsWith('.ds_store') || lowerName === 'thumbs.db'
-            ))) {
+            if (
+              lowerName.endsWith('.tmp') ||
+              lowerName.includes('.wave-tmp.') ||
+              lowerName.includes('-tmp.') ||
+              (lowerName.startsWith('.') && (
+                lowerName.includes('temp') || lowerName.includes('cache') ||
+                lowerName.startsWith('.ds_store') || lowerName === 'thumbs.db'
+              ))
+            ) {
               continue;
             }
             const stat = lstatSync(childPath);
@@ -15634,6 +15732,12 @@ export class LibraryService {
       const trashDir = path.join(libPath, '.serpent', 'trash');
       if (directoryExists(trashDir)) {
         await walkDir(trashDir, '.serpent/trash');
+      }
+
+      // Serpent-pxd: same artifacts contract as folder export.
+      const artifactsDir = path.join(libPath, '.serpent', 'artifacts');
+      if (directoryExists(artifactsDir)) {
+        await walkDir(artifactsDir, '.serpent/artifacts');
       }
 
       // Add .serpent/library.db (snapshot).
@@ -16120,6 +16224,52 @@ export class LibraryService {
     openLibrary.connection.close();
     this.openById.delete(libraryId);
     this.openIdByPath.delete(openLibrary.summary.libraryPath);
+  }
+
+  /**
+   * Serpent-9i8: close the open library, then permanently delete its root
+   * directory (Assets / .serpent / managed content). Linked-folder *source*
+   * trees live outside the library root and are not touched.
+   */
+  deleteLibraryFromDisk(libraryId: string): {
+    libraryId: string;
+    displayName: string;
+    libraryPath: string;
+  } {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    const { libraryPath, displayName } = openLibrary.summary;
+
+    for (const directoryName of REQUIRED_DIRECTORIES) {
+      if (!realDirectoryExists(path.join(libraryPath, directoryName))) {
+        throw new LibraryServiceError('NOT_A_LIBRARY');
+      }
+    }
+    if (
+      !realDirectoryExists(path.join(libraryPath, '.serpent')) ||
+      !realFileExists(databasePath(libraryPath))
+    ) {
+      throw new LibraryServiceError('NOT_A_LIBRARY');
+    }
+
+    this.closeLibrary(libraryId);
+
+    try {
+      rmSync(libraryPath, { force: true, recursive: true });
+    } catch (error) {
+      this.diagnose('library.delete-from-disk', error, { libraryPath });
+      throw new LibraryServiceError('LIBRARY_NOT_WRITABLE', {
+        reason: publicReasonFromError(error),
+        cause: error,
+      });
+    }
+
+    if (existsSync(libraryPath)) {
+      throw new LibraryServiceError('LIBRARY_NOT_WRITABLE', {
+        reason: 'IO_ERROR',
+      });
+    }
+
+    return { libraryId, displayName, libraryPath };
   }
 
   listLibraries(): InternalLibrarySummary[] {

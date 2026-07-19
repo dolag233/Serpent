@@ -77,6 +77,7 @@ import {
   readActiveLibraryPath,
   readRecentLibraryEntries,
   rememberRecentLibrary,
+  removeRecentLibrary,
 } from "./recent-libraries";
 import { AiQueueScheduler } from "./ai-queue-scheduler";
 import { aiSearchFailureReason, planAiSearch } from "./ai-search-planner";
@@ -574,6 +575,15 @@ function toRendererResult(
       displayName: result.displayName,
     });
   }
+  // library.deleted includes libraryPath for Main recent-store cleanup only.
+  if (result.type === "library.deleted") {
+    return parseRendererResult({
+      ok: true,
+      type: "library.deleted",
+      libraryId: result.libraryId,
+      displayName: result.displayName,
+    });
+  }
   if (result.type === "asset.relink-batch.preview") {
     if (!relinkPreviewId) {
       throw new Error("Batch relink preview is missing its Main-process token.");
@@ -663,13 +673,17 @@ async function commandFor(
     }
     case "library.close.request":
       return { type: "library.close", libraryId: request.libraryId };
+    case "library.delete-from-disk.request":
+      return { type: "library.delete-from-disk", libraryId: request.libraryId };
     case "library.list.request":
       return { type: "library.list" };
     case "library.list-recent.request":
     case "library.open-recent.request":
+    case "library.forget-recent.request":
       // Both are handled directly in handleLibraryRequest: the list comes from
       // the Main-owned recent libraries store, and open-recent validates store
       // membership before building the same library.open command used here.
+      // forget-recent only mutates the Main store (Serpent-ucx).
       return undefined;
     case "folder.create.request":
       return {
@@ -1551,6 +1565,23 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
       } satisfies RendererResult;
     }
 
+    if (request.type === "library.forget-recent.request") {
+      if (!path.isAbsolute(request.libraryPath)) {
+        return {
+          ok: false,
+          error: createPublicError("LIBRARY_NOT_FOUND"),
+        } satisfies RendererResult;
+      }
+      removeRecentLibrary(recentLibraryPath(), request.libraryPath, (error) => {
+        logger?.error("recent-library.forget", error);
+      });
+      return {
+        ok: true,
+        type: "library.forgotten",
+        libraryPath: request.libraryPath,
+      } satisfies RendererResult;
+    }
+
     // Handle AI config requests entirely in the main process — no Worker involved.
     if (request.type === "ai.config.get.request") {
       const config = loadAiConfig();
@@ -1837,6 +1868,14 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
       );
     } else if (workerResult.ok && workerResult.type === "library.imported") {
       rememberOpenedLibrary(workerResult.libraryPath, workerResult.displayName);
+    } else if (workerResult.ok && workerResult.type === "library.deleted") {
+      removeRecentLibrary(
+        recentLibraryPath(),
+        workerResult.libraryPath,
+        (error) => {
+          logger?.error("recent-library.remove", error);
+        },
+      );
     }
 
     if (!workerResult.ok && request.type === "asset.import-web.request") {
@@ -1860,6 +1899,14 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
       pendingImportCollections.delete(request.importId);
     }
     if (workerResult.ok && request.type === "library.close.request") {
+      pendingRelinkPreviews.clearLibrary(request.libraryId);
+      for (const [importId, libraryId] of pendingImportLibraries) {
+        if (libraryId !== request.libraryId) continue;
+        pendingImportLibraries.delete(importId);
+        pendingImportCollections.delete(importId);
+      }
+    }
+    if (workerResult.ok && request.type === "library.delete-from-disk.request") {
       pendingRelinkPreviews.clearLibrary(request.libraryId);
       for (const [importId, libraryId] of pendingImportLibraries) {
         if (libraryId !== request.libraryId) continue;
@@ -2291,6 +2338,8 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
       clearActiveRecentLibrary(recentLibraryPath(), (error) => {
         logger?.error("recent-library.clear", error);
       });
+      publishLifecycle({ type: "library.closed", libraryId: result.libraryId });
+    } else if (result.type === "library.deleted") {
       publishLifecycle({ type: "library.closed", libraryId: result.libraryId });
     }
     return result;

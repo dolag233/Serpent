@@ -74,6 +74,10 @@ export const en = {
     openLibrary: "Open library",
     openLibraryEllipsis: "Open library…",
     closeLibrary: "Close library",
+    removeLibrary: "Remove library",
+    removeLibraryHint: "Close and remove from recents; disk files stay",
+    forgetRecentLibrary: "Remove from list",
+    deleteLibraryFromDisk: "Delete library from disk…",
     currentLibrary: "Current library {name}",
     libraryNamed: "Library: {name}",
     language: "Language",
@@ -510,6 +514,8 @@ export const en = {
     diskDelete: {
       title: "Delete from disk",
       body: "Permanently delete \"{name}\" and all of its contents from disk? This cannot be undone.",
+      libraryBody:
+        "Permanently delete library \"{name}\" from disk? The library folder and all managed files and metadata will be removed. This cannot be undone. Linked folder source directories are not deleted.",
       dontShowAgain: "Don't show this again",
       submit: "Delete from disk"
     },
@@ -884,6 +890,10 @@ export const en = {
     folderTrashFailed: "Failed to move folder to Trash.",
     folderDeletedFromDisk: "Deleted folder \"{name}\" from disk ({count} assets).",
     folderDeleteFromDiskFailed: "Failed to delete folder from disk.",
+    libraryDeletedFromDisk: "Deleted library \"{name}\" from disk.",
+    libraryDeleteFailed: "Failed to delete library.",
+    libraryRemoved: "Removed library \"{name}\" (disk files kept).",
+    libraryRemoveFailed: "Failed to remove library.",
     linkedFolderRemoved: "Removed linked folder \"{name}\" from the library ({count} records); source folder unchanged.",
     linkedFolderRemoveFailed: "Failed to remove linked folder from the library.",
     linkedSubtreeTrashed: "Moved linked subfolder \"{name}\" to the system Trash ({count} items).",
@@ -925,6 +935,7 @@ export const en = {
     importValidateFailed: "Import validation failed.",
     importCancelled: "Import cancelled.",
     zipImportFailed: "ZIP import failed.",
+    libraryImportComplete: "Imported and opened “{name}”.",
     diskSyncedAuto: "Automatically synced {count} disk changes{missing}.",
     diskSyncedMissing: ", including {count} missing",
     diskChangedRefreshFailed: "Disk contents changed, but refreshing the UI failed.",

@@ -66,7 +66,8 @@
 | `.serpent/library.db` | 是 | 通过 backup API 写入一致快照 |
 | `.serpent/revisions/**` | 是 | 实际仍保留的历史修订文件 |
 | `.serpent/trash/**` | 是 | 回收站中的托管文件 |
-| `.serpent/previews/**` | 否 | 可重新生成的缩略图和预览 |
+| `.serpent/artifacts/**` | 是 | 当前缩略图/代理等衍生文件（缺省会导致导入后破损图；Serpent-pxd） |
+| `.serpent/previews/**` | 否 | 遗留可重新生成目录（当前协议不再使用） |
 | `.serpent/operations/**` | 否 | 进行中的导入暂存，不可恢复 |
 | `*.tmp` / AI 临时文件 | 否 | 可重新生成 |
 | 链接文件夹源内容 | 可选 | 每次导出询问用户 |

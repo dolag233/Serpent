@@ -107,6 +107,15 @@ const library: SerpentLibraryApi = Object.freeze({
     return { ok: true as const, value: result.library };
   },
 
+  async forgetRecent({ path }: { path: string }): Promise<LibraryApiResult<{ path: string }>> {
+    const result = await request({ type: 'library.forget-recent.request', libraryPath: path });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'library.forgotten') {
+      throw new Error('Unexpected forget-recent-library response.');
+    }
+    return { ok: true as const, value: { path: result.libraryPath } };
+  },
+
   async close({
     libraryId,
   }: {
@@ -116,6 +125,22 @@ const library: SerpentLibraryApi = Object.freeze({
     if (!result.ok) return failure(result);
     if (result.type !== 'library.closed') throw new Error('Unexpected close-library response.');
     return { ok: true as const, value: { libraryId: result.libraryId } };
+  },
+
+  async deleteLibraryFromDisk({
+    libraryId,
+  }: {
+    libraryId: string;
+  }): Promise<LibraryApiResult<{ libraryId: string; displayName: string }>> {
+    const result = await request({ type: 'library.delete-from-disk.request', libraryId });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'library.deleted') {
+      throw new Error('Unexpected delete-library response.');
+    }
+    return {
+      ok: true as const,
+      value: { libraryId: result.libraryId, displayName: result.displayName },
+    };
   },
 
   async listOpen(): Promise<LibraryApiResult<RendererLibrarySummary[]>> {

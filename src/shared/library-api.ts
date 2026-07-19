@@ -119,7 +119,13 @@ export interface SerpentLibraryApi {
   open(): Promise<LibraryApiResult<RendererLibrarySummary>>;
   listRecent(): Promise<LibraryApiResult<RecentLibraryEntry[]>>;
   openRecent(input: { path: string }): Promise<LibraryApiResult<RendererLibrarySummary>>;
+  /** Remove a path from the recent list without deleting disk (Serpent-ucx). */
+  forgetRecent(input: { path: string }): Promise<LibraryApiResult<{ path: string }>>;
   close(input: { libraryId: string }): Promise<LibraryApiResult<{ libraryId: string }>>;
+  /** Close then permanently delete the library root on disk (Serpent-9i8). */
+  deleteLibraryFromDisk(input: {
+    libraryId: string;
+  }): Promise<LibraryApiResult<{ libraryId: string; displayName: string }>>;
   listOpen(): Promise<LibraryApiResult<RendererLibrarySummary[]>>;
   createFolder(input: {
     libraryId: string;

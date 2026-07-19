@@ -17,6 +17,7 @@ import {
   readRecentLibraryEntries,
   recentLibraryPersistenceEnabled,
   rememberRecentLibrary,
+  removeRecentLibrary,
 } from '../../src/main/recent-libraries';
 import { buildRecentLibraryMenuEntries } from '../../src/renderer/LibrarySwitcher';
 
@@ -154,6 +155,18 @@ describe('recent libraries store (main)', () => {
     expect(readActiveLibraryPath(storePath)).toBeNull();
     expect(readRecentLibraryEntries(storePath).map((entry) => entry.path)).toEqual([
       '/libraries/b',
+      '/libraries/a',
+    ]);
+  });
+
+  it('removes a deleted library from the recent list and clears activePath (Serpent-9i8)', () => {
+    rememberRecentLibrary(storePath, { path: '/libraries/a', name: 'A' });
+    rememberRecentLibrary(storePath, { path: '/libraries/b', name: 'B' });
+    expect(readActiveLibraryPath(storePath)).toBe('/libraries/b');
+
+    removeRecentLibrary(storePath, '/libraries/b');
+    expect(readActiveLibraryPath(storePath)).toBeNull();
+    expect(readRecentLibraryEntries(storePath).map((entry) => entry.path)).toEqual([
       '/libraries/a',
     ]);
   });

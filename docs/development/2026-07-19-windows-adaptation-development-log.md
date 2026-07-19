@@ -43,17 +43,17 @@
 
 ## 主线红（非 Windows，仅记录、待各功能负责人认领）
 
-> 这些都是今天其他功能提交改了源码、却未同步更新对应测试。修法是把**测试期望**对齐到已发布的源码行为（不改产品逻辑）。按用户要求本次 Windows 适配**不改动**它们。
+> 这些都是今天其他功能提交改了源码、却未同步更新对应测试。修法是把**测试期望**对齐到已发布的源码行为（不改产品逻辑）。按用户要求本次 Windows 适配**不改动**它们。已开单：
 
-| 测试 | 失败 | 引入提交 | 原因 | 建议修法（测试侧） |
-|---|---|---|---|---|
-| `tests/worker/folder-rename.test.ts` > "renames a managed folder on disk and rewrites descendant folder and asset paths" | 顶层文件夹 `directAssetCount` 期望 0、实得 1 | `306f4de`（Serpent-toh） | `listManagedFolders` 现把 `directAssetCount` 覆盖为**后代递归计数**（注释："displayed badge count = all descendants"） | 期望改为递归计数（顶层 1、子层 1） |
-| `tests/worker/thumbnails.test.ts` > "marks an unsupported asset without offering a generatable preview" | `.txt` 期望 `mediaType:'other'/status:'missing'`、实得 `'text'/'ready'` | `facb5bd`（text 预览） | `text` 已成一级 mediaType，`.txt` 可生成预览 | 用例改用真正不支持的扩展名，或断言 `text` 行为 |
-| `tests/worker/organization.test.ts` > "rejects empty and sort-only smart collection definitions (CU-M5)" | 空 `{}` 智能集合期望被拒、实得创建成功 | `ab518ab`（Serpent-era） | `createSmartCollection` 现允许空草稿（"create may start as a draft"） | 改为断言允许创建空草稿 |
-| `tests/worker/search.test.ts` > "rejects empty smart collection definitions (CU-M5)" | 同上 | `ab518ab` | 同上 | 同上 |
-| `tests/worker/video-exr.test.ts` > "dispatches audio assets to ffmpeg waveform + opaque cover" | 期望封面 tag `waveform-cover5`、源码为 `waveform-cover6` | `963daa7` | `AUDIO_WAVEFORM_COVER_GENERATOR_TAG` 升到 cover6，测试未跟 | 测试常量改为 `cover6` |
+| 测试 | 失败 | Bead | 引入提交 | 原因 | 建议修法（测试侧） |
+|---|---|---|---|---|---|
+| `tests/worker/folder-rename.test.ts` > "renames a managed folder on disk and rewrites descendant folder and asset paths" | 顶层文件夹 `directAssetCount` 期望 0、实得 1 | `Serpent-q6f` | `306f4de`（Serpent-toh） | `listManagedFolders` 现把 `directAssetCount` 覆盖为**后代递归计数**（注释："displayed badge count = all descendants"） | 期望改为递归计数（顶层 1、子层 1） |
+| `tests/worker/thumbnails.test.ts` > "marks an unsupported asset without offering a generatable preview" | `.txt` 期望 `mediaType:'other'/status:'missing'`、实得 `'text'/'ready'` | `Serpent-mwc` | `facb5bd`（text 预览） | `text` 已成一级 mediaType，`.txt` 可生成预览 | 用例改用真正不支持的扩展名，或断言 `text` 行为 |
+| `tests/worker/organization.test.ts` > "rejects empty and sort-only smart collection definitions (CU-M5)" | 空 `{}` 智能集合期望被拒、实得创建成功 | `Serpent-df9` | `ab518ab`（Serpent-era） | `createSmartCollection` 现允许空草稿（"create may start as a draft"） | 改为断言允许创建空草稿 |
+| `tests/worker/search.test.ts` > "rejects empty smart collection definitions (CU-M5)" | 同上 | `Serpent-f72` | `ab518ab` | 同上 | 同上 |
+| `tests/worker/video-exr.test.ts` > "dispatches audio assets to ffmpeg waveform + opaque cover" | 期望封面 tag `waveform-cover5`、源码为 `waveform-cover6` | `Serpent-voy` | `963daa7` | `AUDIO_WAVEFORM_COVER_GENERATOR_TAG` 升到 cover6，测试未跟 | 测试常量改为 `cover6` |
 
 ## 未覆盖 / 移交项
-- **E2E 与打包**：生产构建被一个**主线 CSS 构建阻断**挡住（`src/renderer/styles.css` 有一处丢失选择器后遗留的孤立声明，lightningcss 压缩报 `Invalid token in pseudo element`），与 Windows 无关。该 CSS 问题按用户要求不在本次范围，需主线修复后才能跑 packaged/E2E 验收。
+- **E2E 与打包**：生产构建被一个**主线 CSS 构建阻断**挡住（`src/renderer/styles.css` 有一处丢失选择器后遗留的孤立声明，lightningcss 压缩报 `Invalid token in pseudo element`），与 Windows 无关。已开单 `Serpent-a4q`；需主线修复后才能跑 packaged/E2E 验收。
 - 较大功能的 Computer Use 真实桌面验收：本环境无该能力，记为**未执行**，移交具备能力的 agent / 人工 QA。
 - Windows 无 CI runner：以上均为本机人工验证，未进自动化流水线。

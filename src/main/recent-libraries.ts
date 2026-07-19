@@ -220,3 +220,25 @@ export function clearActiveRecentLibrary(
   if (!current) return;
   writeRecentLibraryFile(filePath, { ...current, activePath: null }, onError);
 }
+
+/**
+ * Removes a library path from the recent list after disk deletion (Serpent-9i8).
+ * Also clears activePath when it pointed at the deleted library.
+ */
+export function removeRecentLibrary(
+  filePath: string,
+  libraryPath: string,
+  onError?: ErrorSink,
+): void {
+  if (!recentLibraryPersistenceEnabled()) return;
+  const current = readRecentLibraryFile(filePath, onError);
+  if (!current) return;
+  const libraries = current.libraries.filter((entry) => entry.path !== libraryPath);
+  const activePath =
+    current.activePath === libraryPath ? null : current.activePath;
+  writeRecentLibraryFile(
+    filePath,
+    { version: 2, activePath, libraries },
+    onError,
+  );
+}

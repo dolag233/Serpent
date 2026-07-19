@@ -38,6 +38,10 @@ import { ConvertLinkedDialog } from "./ConvertLinkedDialog";
 import { LinkedRulesDialog } from "./LinkedRulesDialog";
 import { PermanentDeleteDialog } from "./PermanentDeleteDialog";
 import { DiskDeleteConfirmDialog } from "./DiskDeleteConfirmDialog";
+import {
+  isDiskDeletePromptEnabled,
+  setDiskDeletePromptEnabled,
+} from "./disk-delete-confirm-preferences";
 import { DeleteLinkedDialog } from "./DeleteLinkedDialog";
 import { useFolderDeleteActions } from "./use-folder-delete-actions";
 import { ExportDialog } from "./ExportDialog";
@@ -690,6 +694,8 @@ function AppInner() {
   const [permanentDeleteDialog, setPermanentDeleteDialog] = useState<
     string[] | null
   >(null);
+  /** Serpent-9i8: pending irreversible library root deletion. */
+  const [libraryDiskDeletePending, setLibraryDiskDeletePending] = useState(false);
   const [restoreDialog, setRestoreDialog] = useState<{
     assetIds: string[];
     target: "original" | "root" | string;
@@ -3785,32 +3791,109 @@ function AppInner() {
       const result = await api.close({ libraryId: library.libraryId });
       if (!result.ok) throw new LibraryOperationError(result.error);
       closed = true;
-      setLibrary(null);
-      setFolders([]);
-      setLinkedFolders([]);
-      setAssets([]);
-      setAllAssetCount(0);
-      setAssetScope("all");
-      setShowTrash(false);
-      setTrashedAssets([]);
-      setTags([]);
-      setCollections([]);
-      setSmartCollections([]);
-      setActiveTagId(null);
-      setActiveCollectionId(null);
-      setActiveSmartCollectionId(null);
-      setSearchTotal(null);
-      setSearchSnippets(new Map());
-      setMoveDialog(null);
-      setUndoMoveDialog(null);
-      setLastMoveOperationId(null);
-      resetNavHistory({ kind: "all" });
-      api?.setActiveContext(null);
+      applyClosedLibraryUi();
       await refreshRecentLibraries(null);
     } catch (caught) {
       setError(toMessage(caught, t("toast.closeFailed"), locale));
     } finally {
       setUiState(closed ? "idle" : "ready");
+    }
+  }
+
+  async function removeLibrary() {
+    if (!api || !library) return;
+    const removedName = library.displayName;
+    const removedPath = library.displayPath;
+    setUiState("closing");
+    let removed = false;
+    try {
+      await closeAssetPreview(false);
+      const result = await api.close({ libraryId: library.libraryId });
+      if (!result.ok) throw new LibraryOperationError(result.error);
+      const forgotten = await api.forgetRecent({ path: removedPath });
+      if (!forgotten.ok) throw new LibraryOperationError(forgotten.error);
+      removed = true;
+      applyClosedLibraryUi();
+      await refreshRecentLibraries(null);
+      setNotice(t("toast.libraryRemoved", { name: removedName }));
+    } catch (caught) {
+      setError(toMessage(caught, t("toast.libraryRemoveFailed"), locale));
+    } finally {
+      setUiState(removed ? "idle" : "ready");
+    }
+  }
+
+  async function forgetRecentLibrary(libraryPath: string) {
+    if (!api) return;
+    try {
+      const result = await api.forgetRecent({ path: libraryPath });
+      if (!result.ok) throw new LibraryOperationError(result.error);
+      await refreshRecentLibraries(library?.displayPath ?? null);
+    } catch (caught) {
+      setError(toMessage(caught, t("toast.libraryRemoveFailed"), locale));
+    }
+  }
+
+  function applyClosedLibraryUi() {
+    setLibrary(null);
+    setFolders([]);
+    setLinkedFolders([]);
+    setAssets([]);
+    setAllAssetCount(0);
+    setAssetScope("all");
+    setShowTrash(false);
+    setTrashedAssets([]);
+    setTags([]);
+    setCollections([]);
+    setSmartCollections([]);
+    setActiveTagId(null);
+    setActiveCollectionId(null);
+    setActiveSmartCollectionId(null);
+    setSearchTotal(null);
+    setSearchSnippets(new Map());
+    setMoveDialog(null);
+    setUndoMoveDialog(null);
+    setLastMoveOperationId(null);
+    resetNavHistory({ kind: "all" });
+    api?.setActiveContext(null);
+  }
+
+  function requestDeleteLibraryFromDisk() {
+    if (!library) return;
+    if (!isDiskDeletePromptEnabled()) {
+      void confirmDeleteLibraryFromDisk(false);
+      return;
+    }
+    setLibraryDiskDeletePending(true);
+  }
+
+  async function confirmDeleteLibraryFromDisk(dontShowAgain: boolean) {
+    if (!api || !library) return;
+    if (dontShowAgain) setDiskDeletePromptEnabled(false);
+    setLibraryDiskDeletePending(false);
+    const deletedName = library.displayName;
+    setUiState("closing");
+    let toreDown = false;
+    try {
+      await closeAssetPreview(false);
+      const result = await api.deleteLibraryFromDisk({
+        libraryId: library.libraryId,
+      });
+      if (!result.ok) throw new LibraryOperationError(result.error);
+      toreDown = true;
+      applyClosedLibraryUi();
+      await refreshRecentLibraries(null);
+      setNotice(t("toast.libraryDeletedFromDisk", { name: deletedName }));
+    } catch (caught) {
+      // Worker closes the library before rm; clear UI even when rm fails.
+      if (!(caught instanceof LibraryOperationError && caught.code === "LIBRARY_NOT_OPEN")) {
+        toreDown = true;
+        applyClosedLibraryUi();
+        await refreshRecentLibraries(null);
+      }
+      setError(toMessage(caught, t("toast.libraryDeleteFailed"), locale));
+    } finally {
+      setUiState(toreDown ? "idle" : "ready");
     }
   }
 
@@ -4264,9 +4347,44 @@ function AppInner() {
         throw new LibraryOperationError(result.error);
       }
       setImportProgress(null);
+      await activateImportedLibrary(result.value);
     } catch (caught) {
       setError(toMessage(caught, t("toast.zipImportFailed"), locale));
       setImportProgress(null);
+    }
+  }
+
+  async function activateImportedLibrary(imported: { libraryId: string }) {
+    if (!api) {
+      throw new Error(t("toast.bridgeUnavailable"));
+    }
+    let activated = false;
+    try {
+      const openResult = await api.listOpen();
+      if (!openResult.ok) throw new LibraryOperationError(openResult.error);
+      const summary =
+        openResult.value.find((entry) => entry.libraryId === imported.libraryId) ??
+        null;
+      if (!summary) {
+        throw new Error(t("toast.importFailed"));
+      }
+      await closeAssetPreview(false);
+      setLibrary(summary);
+      setShowTrash(false);
+      setTrashedAssets([]);
+      setAssetScope("all");
+      setActiveTagId(null);
+      setActiveCollectionId(null);
+      setActiveSmartCollectionId(null);
+      resetNavHistory({ kind: "all" });
+      clearDiscoveryControls();
+      api.setActiveContext(summary.libraryId);
+      await loadContent(summary, "all");
+      await refreshRecentLibraries(summary.displayPath);
+      activated = true;
+      setNotice(t("toast.libraryImportComplete", { name: summary.displayName }));
+    } finally {
+      setUiState(activated ? "ready" : "idle");
     }
   }
 
@@ -4291,8 +4409,11 @@ function AppInner() {
         } else {
           throw new LibraryOperationError(result.error);
         }
+        return;
       }
       setImportValidated(null);
+      setImportProgress(null);
+      await activateImportedLibrary(result.value);
     } catch (caught) {
       setError(toMessage(caught, t("toast.importFailed"), locale));
       setImportProgress(null);
@@ -4320,8 +4441,11 @@ function AppInner() {
         } else {
           throw new LibraryOperationError(result.error);
         }
+        return;
       }
       setImportValidated(null);
+      setImportProgress(null);
+      await activateImportedLibrary(result.value);
     } catch (caught) {
       setError(toMessage(caught, t("toast.importFailed"), locale));
       setImportProgress(null);
@@ -4389,7 +4513,7 @@ function AppInner() {
     return {
       assetRenameOpen: Boolean(assetRenameDialog),
       permanentDeleteOpen: Boolean(permanentDeleteDialog),
-      diskDeleteOpen: Boolean(diskDeleteTarget),
+      diskDeleteOpen: Boolean(diskDeleteTarget) || libraryDiskDeletePending,
       deleteLinkedOpen: Boolean(deleteLinkedDialog),
       batchRelinkOpen: Boolean(batchRelinkPreview),
       restoreOpen: Boolean(restoreDialog),
@@ -4411,6 +4535,7 @@ function AppInner() {
     assetRenameDialog,
     permanentDeleteDialog,
     diskDeleteTarget,
+    libraryDiskDeletePending,
     deleteLinkedDialog,
     batchRelinkPreview,
     restoreDialog,
@@ -4436,7 +4561,10 @@ function AppInner() {
     cancelAssetRename,
     cancelBatchRelink,
     setPermanentDeleteDialog,
-    cancelDiskDelete,
+    cancelDiskDelete: () => {
+      cancelDiskDelete();
+      setLibraryDiskDeletePending(false);
+    },
     setDeleteLinkedDialog,
     setRestoreDialog,
     setMoveDialog,
@@ -4464,6 +4592,7 @@ function AppInner() {
       assetRenameDialog ||
       permanentDeleteDialog ||
       diskDeleteTarget ||
+      libraryDiskDeletePending ||
       deleteLinkedDialog ||
       batchRelinkPreview ||
       restoreDialog ||
@@ -5229,6 +5358,8 @@ function AppInner() {
               libraryName={library?.displayName ?? null}
               libraryOpen={Boolean(library)}
               onCloseLibrary={() => void closeLibrary()}
+              onRemoveLibrary={() => void removeLibrary()}
+              onDeleteLibraryFromDisk={() => requestDeleteLibraryFromDisk()}
               onCreateLibrary={() => {
                 setDialogValue(t("shell.myLibrary"));
                 setDialog("library");
@@ -5241,6 +5372,7 @@ function AppInner() {
               onMenuOpen={() => void refreshRecentLibraries()}
               onOpenLibrary={() => void runLibraryOperation("open")}
               onOpenRecent={(path) => void openRecentLibrary(path)}
+              onForgetRecent={(path) => void forgetRecentLibrary(path)}
               onPasteImage={() => void pasteClipboardImage()}
               recentLibraries={recentLibraries}
             />
@@ -6663,6 +6795,16 @@ function AppInner() {
           subjectName={diskDeleteTarget.name}
           onCancel={cancelDiskDelete}
           onConfirm={(dontShowAgain) => confirmDiskDelete(dontShowAgain)}
+        />
+      )}
+      {libraryDiskDeletePending && library && (
+        <DiskDeleteConfirmDialog
+          bodyKey="dialog.diskDelete.libraryBody"
+          subjectName={library.displayName}
+          onCancel={() => setLibraryDiskDeletePending(false)}
+          onConfirm={(dontShowAgain) => {
+            void confirmDeleteLibraryFromDisk(dontShowAgain);
+          }}
         />
       )}
       {deleteLinkedDialog && (

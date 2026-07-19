@@ -161,6 +161,126 @@ describe('LibraryService export', () => {
     service.closeAll();
   });
 
+  it('includes .serpent/artifacts so import keeps ready thumbnails (Serpent-pxd)', async () => {
+    const root = temporaryRoot();
+    const service = newService();
+    const created = service.createLibrary({
+      displayName: 'Artifacts Export',
+      selectedParentPath: root,
+    });
+
+    const sourcePath = path.join(root, 'photo.png');
+    writeFileSync(
+      sourcePath,
+      Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==',
+        'base64',
+      ),
+    );
+    const imported = service.prepareOrExecuteImport({
+      libraryId: created.libraryId,
+      sourceKind: 'files',
+      sourcePaths: [sourcePath],
+    });
+    expect('importId' in imported).toBe(false);
+
+    const assets = service.listAssets({ libraryId: created.libraryId, recursive: true });
+    expect(assets).toHaveLength(1);
+    const thumb = await service.generateThumbnail({
+      libraryId: created.libraryId,
+      assetId: assets[0]!.assetId,
+    });
+    const sourceArtifact = path.join(
+      created.libraryPath,
+      '.serpent',
+      'artifacts',
+      `${thumb.artifactId}.webp`,
+    );
+    expect(existsSync(sourceArtifact)).toBe(true);
+
+    const destPath = path.join(root, 'export-with-artifacts');
+    await service.exportLibraryToFolder({
+      libraryId: created.libraryId,
+      destinationPath: destPath,
+      includeLinkedContent: false,
+    });
+
+    expect(
+      existsSync(path.join(destPath, '.serpent', 'artifacts', `${thumb.artifactId}.webp`)),
+    ).toBe(true);
+
+    service.closeAll();
+
+    const service2 = newService();
+    const reopened = service2.openLibrary(destPath);
+    expect(
+      existsSync(
+        path.join(reopened.libraryPath, '.serpent', 'artifacts', `${thumb.artifactId}.webp`),
+      ),
+    ).toBe(true);
+    const listed = service2.listAssets({ libraryId: reopened.libraryId, recursive: true });
+    expect(listed[0]?.thumbnailArtifactId).toBe(thumb.artifactId);
+    service2.closeAll();
+  });
+
+  it('invalidates ready artifacts missing on disk so thumbnails requeue (Serpent-pxd)', async () => {
+    const root = temporaryRoot();
+    const service = newService();
+    const created = service.createLibrary({
+      displayName: 'Missing Artifacts',
+      selectedParentPath: root,
+    });
+
+    const sourcePath = path.join(root, 'photo.png');
+    writeFileSync(
+      sourcePath,
+      Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==',
+        'base64',
+      ),
+    );
+    service.prepareOrExecuteImport({
+      libraryId: created.libraryId,
+      sourceKind: 'files',
+      sourcePaths: [sourcePath],
+    });
+    const assets = service.listAssets({ libraryId: created.libraryId, recursive: true });
+    const thumb = await service.generateThumbnail({
+      libraryId: created.libraryId,
+      assetId: assets[0]!.assetId,
+    });
+    const artifactPath = path.join(
+      created.libraryPath,
+      '.serpent',
+      'artifacts',
+      `${thumb.artifactId}.webp`,
+    );
+    expect(existsSync(artifactPath)).toBe(true);
+    rmSync(artifactPath);
+
+    // Re-open triggers reconcileMissingArtifactFiles + enqueueThumbnailJobs.
+    service.closeAll();
+    const service2 = newService();
+    const reopened = service2.openLibrary(created.libraryPath);
+    const listed = service2.listAssets({ libraryId: reopened.libraryId, recursive: true });
+    expect(listed[0]?.thumbnailStatus).not.toBe('ready');
+    const regenerated = await service2.generateThumbnail({
+      libraryId: reopened.libraryId,
+      assetId: listed[0]!.assetId,
+    });
+    expect(
+      existsSync(
+        path.join(
+          reopened.libraryPath,
+          '.serpent',
+          'artifacts',
+          `${regenerated.artifactId}.webp`,
+        ),
+      ),
+    ).toBe(true);
+    service2.closeAll();
+  });
+
   it('rejects export destination inside the library', async () => {
     const root = temporaryRoot();
     const service = newService();

@@ -878,6 +878,48 @@ body.platform-darwin .toolbar-leading {
   cursor: not-allowed;
 }
 
+.library-switcher-item.is-danger {
+  color: color-mix(in srgb, #e11d48 78%, var(--text));
+}
+
+.library-switcher-item.is-danger:hover:not(:disabled),
+.library-switcher-menu.is-keyboard-navigation
+  .library-switcher-item.is-danger:focus-visible:not(:disabled) {
+  background: color-mix(in srgb, #e11d48 14%, var(--hover));
+  color: #e11d48;
+}
+
+.library-switcher-recent-row {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+}
+
+.library-switcher-recent-open {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.library-switcher-recent-forget {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  margin: 1px 2px 1px 0;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--tertiary);
+  cursor: pointer;
+}
+
+.library-switcher-recent-forget:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
 .library-switcher-divider {
   height: 1px;
   margin: 4px 2px;
@@ -4379,6 +4421,7 @@ select.ai-config-input {
   color: var(--tertiary);
 }
 
+.inspector-hero-compact.is-multi .inspector-hero-title {
   position: relative;
   z-index: 1;
   -webkit-line-clamp: 3;

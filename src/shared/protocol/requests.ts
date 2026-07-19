@@ -75,6 +75,11 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     type: z.literal('library.close.request'),
     libraryId: identifierSchema,
   }),
+  // Irreversible: close then delete the library root on disk (Serpent-9i8).
+  z.strictObject({
+    type: z.literal('library.delete-from-disk.request'),
+    libraryId: identifierSchema,
+  }),
   z.strictObject({
     type: z.literal('library.list.request'),
   }),
@@ -85,6 +90,11 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
   // recent libraries store; Main re-validates membership before dispatching.
   z.strictObject({
     type: z.literal('library.open-recent.request'),
+    libraryPath: selectedPathSchema,
+  }),
+  // Soft-forget: drop from recent list only; disk untouched (Serpent-ucx).
+  z.strictObject({
+    type: z.literal('library.forget-recent.request'),
     libraryPath: selectedPathSchema,
   }),
   z.strictObject({
@@ -688,6 +698,10 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
   }),
   z.strictObject({
     type: z.literal('library.close'),
+    libraryId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('library.delete-from-disk'),
     libraryId: identifierSchema,
   }),
   z.strictObject({

@@ -816,6 +816,13 @@ const workerSuccessResultSchema = z.discriminatedUnion('type', [
   }),
   z.strictObject({
     ok: z.literal(true),
+    type: z.literal('library.deleted'),
+    libraryId: nonBlankString,
+    displayName: nonBlankString,
+    libraryPath: nonBlankString,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
     type: z.literal('library.exported'),
     exportId: nonBlankString,
     libraryId: nonBlankString,
@@ -988,6 +995,11 @@ const rendererSuccessResultSchema = z.discriminatedUnion('type', [
   }),
   z.strictObject({
     ok: z.literal(true),
+    type: z.literal('library.forgotten'),
+    libraryPath: nonBlankString,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
     type: z.literal('library.opened'),
     library: rendererLibrarySummarySchema,
   }),
@@ -995,6 +1007,12 @@ const rendererSuccessResultSchema = z.discriminatedUnion('type', [
     ok: z.literal(true),
     type: z.literal('library.closed'),
     libraryId: nonBlankString,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('library.deleted'),
+    libraryId: nonBlankString,
+    displayName: nonBlankString,
   }),
   z.strictObject({
     ok: z.literal(true),

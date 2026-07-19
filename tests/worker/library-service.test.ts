@@ -1,6 +1,7 @@
 import {
   chmodSync,
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readdirSync,
   realpathSync,
@@ -639,5 +640,42 @@ describe('LibraryService lifecycle', () => {
 
     expectServiceError(() => service.closeLibrary('unknown-library'), 'LIBRARY_NOT_OPEN');
     expect(service.listLibraries()).toEqual([]);
+  });
+
+  it('deletes an open library root from disk and leaves linked sources (Serpent-9i8)', () => {
+    const root = temporaryRoot();
+    const service = newService();
+    const created = service.createLibrary({
+      displayName: 'Delete Me',
+      selectedParentPath: root,
+    });
+
+    const assetPath = path.join(root, 'photo.png');
+    writeFileSync(assetPath, Buffer.alloc(64));
+    service.prepareOrExecuteImport({
+      libraryId: created.libraryId,
+      sourceKind: 'files',
+      sourcePaths: [assetPath],
+    });
+
+    const linkedRoot = path.join(root, 'linked-source');
+    mkdirSync(linkedRoot);
+    writeFileSync(path.join(linkedRoot, 'outside.png'), 'keep');
+    service.importFolderAsLinked({
+      libraryId: created.libraryId,
+      sourceRootPath: linkedRoot,
+      displayName: 'Linked',
+    });
+
+    const libraryPath = created.libraryPath;
+    expect(existsSync(libraryPath)).toBe(true);
+
+    const deleted = service.deleteLibraryFromDisk(created.libraryId);
+    expect(deleted.libraryId).toBe(created.libraryId);
+    expect(deleted.libraryPath).toBe(libraryPath);
+    expect(existsSync(libraryPath)).toBe(false);
+    expect(existsSync(path.join(linkedRoot, 'outside.png'))).toBe(true);
+    expectServiceError(() => service.closeLibrary(created.libraryId), 'LIBRARY_NOT_OPEN');
+    expectServiceError(() => service.openLibrary(libraryPath), 'LIBRARY_NOT_FOUND');
   });
 });

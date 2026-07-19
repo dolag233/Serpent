@@ -242,6 +242,19 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
       aiJobAbortRegistry.abort(request.command.libraryId);
       libraryService.closeLibrary(request.command.libraryId);
       return { ok: true, type: 'library.closed', libraryId: request.command.libraryId };
+    case 'library.delete-from-disk': {
+      libraryService.cancelJobs(request.command.libraryId);
+      publishAiProgress(request.command.libraryId);
+      aiJobAbortRegistry.abort(request.command.libraryId);
+      const deleted = libraryService.deleteLibraryFromDisk(request.command.libraryId);
+      return {
+        ok: true,
+        type: 'library.deleted',
+        libraryId: deleted.libraryId,
+        displayName: deleted.displayName,
+        libraryPath: deleted.libraryPath,
+      };
+    }
     case 'folder.create': {
       const folder = libraryService.createManagedFolder(request.command);
       return { ok: true, type: 'folder.created', folder };

@@ -65,6 +65,10 @@ export const zhCN = {
     openLibrary: "打开资源库",
     openLibraryEllipsis: "打开资源库…",
     closeLibrary: "关闭资源库",
+    removeLibrary: "移除资源库",
+    removeLibraryHint: "关闭并从最近列表移除，不删除磁盘文件",
+    forgetRecentLibrary: "从列表移除",
+    deleteLibraryFromDisk: "从硬盘删除资源库…",
     currentLibrary: "当前资源库 {name}",
     libraryNamed: "资源库：{name}",
     language: "语言",
@@ -500,6 +504,8 @@ export const zhCN = {
     diskDelete: {
       title: "从硬盘中删除",
       body: "确定要从硬盘永久删除「{name}」及其全部内容吗？此操作不可恢复。",
+      libraryBody:
+        "确定要从硬盘永久删除资源库「{name}」吗？将删除该库文件夹中的全部托管文件与元数据，此操作不可恢复。链接文件夹的源目录不会被删除。",
       dontShowAgain: "不再显示此提示",
       submit: "从硬盘中删除"
     },
@@ -873,6 +879,10 @@ export const zhCN = {
     folderTrashFailed: "文件夹移入回收站失败。",
     folderDeletedFromDisk: "已从硬盘删除文件夹「{name}」（{count} 项资产）。",
     folderDeleteFromDiskFailed: "从硬盘删除文件夹失败。",
+    libraryDeletedFromDisk: "已从硬盘删除资源库「{name}」。",
+    libraryDeleteFailed: "删除资源库失败。",
+    libraryRemoved: "已移除资源库「{name}」（磁盘文件未删除）。",
+    libraryRemoveFailed: "移除资源库失败。",
     linkedFolderRemoved: "已从库中移除链接文件夹「{name}」（{count} 项记录）；源目录未改动。",
     linkedFolderRemoveFailed: "从库中移除链接文件夹失败。",
     linkedSubtreeTrashed: "已将链接子文件夹「{name}」移入系统回收站（{count} 项）。",
@@ -914,6 +924,7 @@ export const zhCN = {
     importValidateFailed: "导入验证失败。",
     importCancelled: "导入已取消。",
     zipImportFailed: "ZIP 导入失败。",
+    libraryImportComplete: "已导入并打开「{name}」。",
     diskSyncedAuto: "已自动同步 {count} 项磁盘变化{missing}。",
     diskSyncedMissing: "，其中 {count} 项丢失",
     diskChangedRefreshFailed: "磁盘内容已变化，但界面刷新失败。",

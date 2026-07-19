@@ -10,6 +10,7 @@ import {
   type ImportMenuCopy,
 } from "./browse-empty-state";
 import { Icon } from "./Icons";
+import { iconActionAttrs } from "./icon-action-attrs";
 import { useLocale } from "./i18n";
 import {
   focusFirstRovingItem,
@@ -41,9 +42,15 @@ export type LibrarySwitcherProps = {
   onCreateLibrary: () => void;
   onOpenLibrary: () => void;
   onCloseLibrary: () => void;
+  /** Soft remove: close + drop from recents; disk untouched (Serpent-ucx). */
+  onRemoveLibrary?: () => void;
+  /** Irreversible delete of the currently open library root (Serpent-9i8). */
+  onDeleteLibraryFromDisk?: () => void;
   /** Recent libraries excluding the open one; the section hides when empty. */
   recentLibraries?: RecentLibraryMenuEntry[];
   onOpenRecent?: (path: string) => void;
+  /** Soft-forget a recent entry without opening it. */
+  onForgetRecent?: (path: string) => void;
   /** Called when the menu opens so the owner can refresh recentLibraries. */
   onMenuOpen?: () => void;
   /** True when a library is open (gates library-scoped transfer actions). */
@@ -70,8 +77,11 @@ export function LibrarySwitcher({
   onCreateLibrary,
   onOpenLibrary,
   onCloseLibrary,
+  onRemoveLibrary,
+  onDeleteLibraryFromDisk,
   recentLibraries = [],
   onOpenRecent,
+  onForgetRecent,
   onMenuOpen,
   libraryOpen = false,
   busy = false,
@@ -219,6 +229,31 @@ export function LibrarySwitcher({
           >
             {t("shell.closeLibrary")}
           </button>
+          {onRemoveLibrary != null && (
+            <button
+              className="library-switcher-item"
+              disabled={!libraryName}
+              onClick={() => runMenuAction(onRemoveLibrary)}
+              role="menuitem"
+              tabIndex={-1}
+              title={t("shell.removeLibraryHint")}
+              type="button"
+            >
+              {t("shell.removeLibrary")}
+            </button>
+          )}
+          {onDeleteLibraryFromDisk != null && (
+            <button
+              className="library-switcher-item is-danger"
+              disabled={!libraryName}
+              onClick={() => runMenuAction(onDeleteLibraryFromDisk)}
+              role="menuitem"
+              tabIndex={-1}
+              type="button"
+            >
+              {t("shell.deleteLibraryFromDisk")}
+            </button>
+          )}
           {showTransferSection && (
             <>
               <div aria-hidden="true" className="library-switcher-divider" />
@@ -321,22 +356,38 @@ export function LibrarySwitcher({
                   {t("shell.otherLibraries")}
                 </div>
                 {recentLibraries.map((entry) => (
-                  <button
-                    className="library-switcher-item"
-                    key={entry.path}
-                    onClick={() => {
-                      closeMenu(true);
-                      onOpenRecent?.(entry.path);
-                    }}
-                    role="menuitem"
-                    tabIndex={-1}
-                    title={entry.path}
-                    type="button"
-                  >
-                    <span className="library-switcher-item-label">
-                      {entry.name}
-                    </span>
-                  </button>
+                  <div className="library-switcher-recent-row" key={entry.path}>
+                    <button
+                      className="library-switcher-item library-switcher-recent-open"
+                      onClick={() => {
+                        closeMenu(true);
+                        onOpenRecent?.(entry.path);
+                      }}
+                      role="menuitem"
+                      tabIndex={-1}
+                      title={entry.path}
+                      type="button"
+                    >
+                      <span className="library-switcher-item-label">
+                        {entry.name}
+                      </span>
+                    </button>
+                    {onForgetRecent != null && (
+                      <button
+                        className="library-switcher-recent-forget"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onForgetRecent(entry.path);
+                        }}
+                        tabIndex={-1}
+                        title={t("shell.forgetRecentLibrary")}
+                        type="button"
+                        {...iconActionAttrs(t("shell.forgetRecentLibrary"))}
+                      >
+                        <Icon name="close" size={12} />
+                      </button>
+                    )}
+                  </div>
                 ))}
               </div>
             </>

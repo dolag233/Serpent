@@ -290,6 +290,55 @@ describe('LibraryService ZIP export', () => {
     service.closeAll();
   });
 
+  it('includes .serpent/artifacts in ZIP export (Serpent-pxd)', async () => {
+    const root = temporaryRoot();
+    const service = newService();
+    const created = service.createLibrary({
+      displayName: 'ZIP Artifacts',
+      selectedParentPath: root,
+    });
+
+    const sourcePath = path.join(root, 'photo.png');
+    writeFileSync(
+      sourcePath,
+      Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==',
+        'base64',
+      ),
+    );
+    service.prepareOrExecuteImport({
+      libraryId: created.libraryId,
+      sourceKind: 'files',
+      sourcePaths: [sourcePath],
+    });
+    const assets = service.listAssets({ libraryId: created.libraryId, recursive: true });
+    const thumb = await service.generateThumbnail({
+      libraryId: created.libraryId,
+      assetId: assets[0]!.assetId,
+    });
+    // Leftover temp name must not be packaged.
+    writeFileSync(
+      path.join(created.libraryPath, '.serpent', 'artifacts', `${thumb.artifactId}.wave-tmp.png`),
+      'temp',
+    );
+
+    const destZipPath = path.join(root, 'artifacts.zip');
+    await service.exportLibraryToZip({
+      libraryId: created.libraryId,
+      destinationPath: destZipPath,
+      includeLinkedContent: false,
+    });
+
+    const AdmZip = require('adm-zip') as new (path: string) => {
+      getEntries(): Array<{ entryName: string }>;
+    };
+    const entryNames = new AdmZip(destZipPath).getEntries().map((e) => e.entryName);
+    expect(entryNames).toContain(`.serpent/artifacts/${thumb.artifactId}.webp`);
+    expect(entryNames.some((n) => n.includes('.wave-tmp.'))).toBe(false);
+
+    service.closeAll();
+  });
+
   it('rejects ZIP export when file count exceeds 65534 (pre-check)', async () => {
     const root = temporaryRoot();
     const service = newService();

@@ -6,16 +6,19 @@ import { useT } from "./i18n";
 export interface DiskDeleteConfirmDialogProps {
   /** Folder or subject display name shown in the body. */
   subjectName: string;
+  /** Override body copy; defaults to folder disk-delete wording. */
+  bodyKey?: "dialog.diskDelete.body" | "dialog.diskDelete.libraryBody";
   onCancel: () => void;
   onConfirm: (dontShowAgain: boolean) => void;
 }
 
 /**
  * Irreversible "delete from disk" confirmation (clarification #7).
- * Shared by managed/linked-child folder delete; asset path reuses later.
+ * Shared by managed/linked-child folder delete and library delete (Serpent-9i8).
  */
 export function DiskDeleteConfirmDialog({
   subjectName,
+  bodyKey = "dialog.diskDelete.body",
   onCancel,
   onConfirm,
 }: DiskDeleteConfirmDialogProps) {
@@ -44,7 +47,7 @@ export function DiskDeleteConfirmDialog({
             lineHeight: 1.6,
           }}
         >
-          {t("dialog.diskDelete.body", { name: subjectName })}
+          {t(bodyKey, { name: subjectName })}
         </p>
         <label
           className="field-help"
