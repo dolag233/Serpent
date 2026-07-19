@@ -2159,13 +2159,20 @@ input[type="range"] {
 }
 
 .dialog-backdrop {
+  /* Serpent-0rk: cover the full window above shell chrome (toolbar is z-30). */
   position: fixed;
-  z-index: 20;
+  z-index: 50;
   display: grid;
   background: rgb(15 16 17 / 62%);
-  inset: var(--shell-toolbar-height) 0 0;
+  inset: 0;
   place-items: center;
   backdrop-filter: blur(2px);
+  pointer-events: auto;
+}
+
+/* While a modal is open, freeze shell chrome so hover popovers (filters) cannot open. */
+body.serpent-modal-open .app-shell {
+  pointer-events: none;
 }
 
 /* ------------------------------------------------------------------ */
@@ -3378,6 +3385,17 @@ select.ai-config-input {
   border-top: 1px solid var(--divider-soft);
 }
 
+.dialog-actions.is-stacked {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.dialog-actions.is-stacked .primary-button,
+.dialog-actions.is-stacked .secondary-button {
+  justify-content: center;
+  width: 100%;
+}
+
 .primary-button:disabled,
 .secondary-button:disabled {
   opacity: 0.48;
@@ -3444,16 +3462,61 @@ select.ai-config-input {
   top: 10px;
   left: 50%;
   display: flex;
+  flex-wrap: nowrap;
   align-items: center;
   gap: 8px;
+  max-width: calc(100% - 24px);
   padding: 7px 14px;
-  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--raised));
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--divider));
   border-radius: 999px;
-  background: color-mix(in srgb, var(--accent) 8%, var(--pane));
-  box-shadow: 0 8px 28px rgb(0 0 0 / 30%);
-  color: color-mix(in srgb, var(--accent) 28%, white);
+  background: color-mix(in srgb, var(--accent) 10%, var(--raised));
+  box-shadow: 0 8px 28px rgb(0 0 0 / 18%);
+  color: var(--text);
   font-size: 11px;
+  white-space: nowrap;
   transform: translateX(-50%);
+}
+
+.activity-strip-message {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.activity-strip .secondary-button {
+  flex: 0 0 auto;
+  height: 26px;
+  padding: 0 10px;
+  border-color: var(--divider);
+  background: var(--pane);
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 520;
+  white-space: nowrap;
+}
+
+.activity-strip .secondary-button:hover:not(:disabled) {
+  background: var(--hover);
+  border-color: var(--divider);
+}
+
+.activity-strip .secondary-button:disabled {
+  opacity: 0.55;
+}
+
+[data-theme="light"] .activity-strip {
+  border-color: color-mix(in srgb, var(--accent) 22%, var(--divider));
+  background: var(--raised);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 10%);
+  color: var(--text);
+}
+
+[data-theme="light"] .activity-strip .secondary-button {
+  background: var(--canvas);
+  border-color: var(--divider);
+  color: var(--text);
 }
 
 .activity-pulse {
@@ -3949,10 +4012,11 @@ select.ai-config-input {
 }
 
 /* Floating badges on the preview use a frosted chip so they stay legible
-   over any media (Eagle-style format/duration chips). */
+   over any media (Eagle-style format/duration chips).
+   Serpent-i07: duration bottom-left; extension bottom-right (non-images). */
 .asset-extension {
   position: absolute;
-  top: 6px;
+  bottom: 6px;
   right: 6px;
   padding: 2px 6px;
   border-radius: 5px;
@@ -3962,10 +4026,11 @@ select.ai-config-input {
   font-family: "IBM Plex Mono", monospace;
   font-size: 9px;
   letter-spacing: 0.06em;
+  line-height: 1.45;
+  pointer-events: none;
 }
 
-/* Video duration sits bottom-left so it never collides with the
-   missing/trash banners anchored bottom-right. */
+/* Duration always bottom-left (Serpent-i07). */
 .asset-duration-badge {
   position: absolute;
   bottom: 6px;
@@ -3981,7 +4046,7 @@ select.ai-config-input {
   pointer-events: none;
 }
 
-/* Type chip (GIF / VIDEO) bottom-right; hidden when missing/trash banners occupy that corner. */
+/* Type chip (GIF / VIDEO / TEXT) bottom-right when extension is absent. */
 .asset-type-badge {
   position: absolute;
   bottom: 6px;
@@ -3999,7 +4064,7 @@ select.ai-config-input {
 }
 
 /* CU-U1: containing-folder origin for recursive / mixed-folder grids.
-   Top-left avoids duration (bottom-left), type (bottom-right), and extension (top-right). */
+   Top-left avoids duration (bottom-left) and type/extension (bottom-right). */
 .asset-source-badge {
   position: absolute;
   top: 6px;

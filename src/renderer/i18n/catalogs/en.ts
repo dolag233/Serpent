@@ -182,6 +182,10 @@ export const en = {
     showFileName: "File name",
     showFileSize: "File size",
     showModifiedDate: "Date modified",
+    showBadgeType: "Type badge (GIF / video)",
+    showBadgeDuration: "Duration badge (bottom-left)",
+    showBadgeSource: "Source-folder badge",
+    showBadgeExtension: "Extension badge (bottom-right, non-images)",
     converting: "Converting…",
     smartCollectionTitle: "Smart collection title",
     smartCollectionName: "Smart collection name",
@@ -612,6 +616,12 @@ export const en = {
       openInPlace: "Open in place (no copy)",
       importZip: "Import ZIP",
       copyToNew: "Copy to a new location"
+    },
+    importLibraryChooser: {
+      title: "Import library",
+      help: "Import from a library folder, or from an exported library ZIP.",
+      folder: "Import library folder",
+      zip: "Import library ZIP"
     }
   },
   aiConfig: {
@@ -638,7 +648,9 @@ export const en = {
     viewMode: "Browse view",
     canvasHint: "Controls how assets are arranged on the canvas. Changes apply immediately.",
     cardFields: "Card display fields",
-    cardFieldsHint: "Show file name, file size, or modified date on canvas cards. Toggles apply immediately."
+    cardFieldsHint: "Show file name, file size, or modified date under canvas cards. Toggles apply immediately.",
+    cardBadges: "Preview badges",
+    cardBadgesHint: "Duration is bottom-left; extension is bottom-right (images never show extension). Type badges appear only when extension is off (e.g. GIF)."
   },
   preview: {
     ffmpegRequired: "This install is missing FFmpeg, so a video playback proxy cannot be generated. Install or configure FFmpeg and try again.",

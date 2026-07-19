@@ -4967,10 +4967,9 @@ export class LibraryService {
           : null,
         thumbnail_artifact_id: row.thumbnail_status === 'ready' ? row.thumbnail_artifact_id : null,
         media_type: (() => {
-          const detected = LibraryService.detectMediaType(row.relative_file_path);
-          return detected === 'image' || detected === 'video' || detected === 'audio' || detected === 'text'
-            ? detected
-            : 'other';
+          return LibraryService.toSummaryMediaType(
+            LibraryService.detectMediaType(row.relative_file_path),
+          );
         })(),
       }));
   }
@@ -7517,6 +7516,22 @@ export class LibraryService {
     return 'other';
   }
 
+  /**
+   * Map detector output onto AssetSummary.mediaType.
+   * searchAssets / trash listing previously collapsed audio+text to `other`
+   * (Serpent-671), which hid duration badges and Inspector audio tech lines.
+   */
+  static toSummaryMediaType(
+    detected: ReturnType<typeof LibraryService.detectMediaType>,
+  ): 'image' | 'video' | 'audio' | 'text' | 'other' {
+    return detected === 'image' ||
+      detected === 'video' ||
+      detected === 'audio' ||
+      detected === 'text'
+      ? detected
+      : 'other';
+  }
+
   static supportsThumbnail(filename: string): boolean {
     const mediaType = LibraryService.detectMediaType(filename);
     const extension = path.extname(filename).toLowerCase();
@@ -8343,6 +8358,7 @@ export class LibraryService {
         pixelFormat: videoStream?.pix_fmt || null,
         hasAudio: !!audioStream,
         audioCodec: audioStream?.codec_name || null,
+        audioBitrate: audioStream?.bit_rate || null,
         sampleRate: audioStream?.sample_rate || null,
         channels: audioStream?.channels || null,
         containerBitrate: probeJson.format?.bit_rate || null,
@@ -9358,6 +9374,30 @@ export class LibraryService {
             )`,
       )
       .run(nowInvalidate, ...audioExtensionParams);
+    // Serpent-051: viewer strip ready but no 4:3 grid cover → requeue.
+    // Do not serve video_poster in the browse grid (wide aspect).
+    openLibrary.connection
+      .prepare(
+        `UPDATE revision_artifacts
+            SET invalidated_at = ?
+          WHERE kind = 'video_poster'
+            AND status = 'ready'
+            AND invalidated_at IS NULL
+            AND revision_id IN (
+              SELECT a.current_revision_id FROM assets a
+               WHERE a.deleted_at IS NULL
+                 AND a.current_revision_id IS NOT NULL
+                 AND (${audioExtensionSql})
+                 AND NOT EXISTS (
+                   SELECT 1 FROM revision_artifacts thumb
+                    WHERE thumb.revision_id = a.current_revision_id
+                      AND thumb.kind = 'thumbnail'
+                      AND thumb.status = 'ready'
+                      AND thumb.invalidated_at IS NULL
+                 )
+            )`,
+      )
+      .run(nowInvalidate, ...audioExtensionParams);
     // CU-D8: GIFs with a ready thumb but no duration/frame metadata requeue once.
     openLibrary.connection
       .prepare(
@@ -9706,6 +9746,7 @@ export class LibraryService {
         durationMs: row.artifact_duration_ms,
       });
     }
+
     return map;
   }
 
@@ -10193,9 +10234,7 @@ export class LibraryService {
         artifact_width: artifact?.width ?? null,
         artifact_height: artifact?.height ?? null,
         artifact_duration_ms: artifact?.durationMs ?? null,
-        media_type: detectedMediaType === 'image' ? 'image'
-          : detectedMediaType === 'video' ? 'video'
-          : 'other',
+        media_type: LibraryService.toSummaryMediaType(detectedMediaType),
       });
     });
 
@@ -11036,8 +11075,16 @@ export class LibraryService {
       thumbnailStatus: row.thumbnail_status ?? null,
       thumbnailArtifactId: row.thumbnail_artifact_id ?? null,
       mediaType: row.media_type ?? 'other',
-      width: row.artifact_width ?? null,
-      height: row.artifact_height ?? null,
+      // Probe writes width/height 0 for audio-only streams; AssetSummary
+      // requires positive-or-null, so coerce zeros before IPC validation.
+      width:
+        row.artifact_width != null && row.artifact_width > 0
+          ? row.artifact_width
+          : null,
+      height:
+        row.artifact_height != null && row.artifact_height > 0
+          ? row.artifact_height
+          : null,
       durationMs: row.artifact_duration_ms ?? null,
     };
   }
@@ -12407,9 +12454,7 @@ export class LibraryService {
         artifact_width: artifact?.width ?? null,
         artifact_height: artifact?.height ?? null,
         artifact_duration_ms: artifact?.durationMs ?? null,
-        media_type: detectedMediaType === 'image' ? 'image'
-          : detectedMediaType === 'video' ? 'video'
-          : 'other',
+        media_type: LibraryService.toSummaryMediaType(detectedMediaType),
       });
     });
   }

@@ -17,6 +17,7 @@ const empty: DialogEscapeSnapshot = {
   undoMoveOpen: false,
   collectionEditorOpen: false,
   exportDialogOpen: false,
+  importLibraryChooserOpen: false,
   appSettingsOpen: false,
   aiConfigOpen: false,
   extensionPairingOpen: false,

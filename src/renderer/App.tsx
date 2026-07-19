@@ -18,7 +18,10 @@ import { shouldShowMissingAssetOverlay } from "./availability-affordance";
 import {
   assetTypeBadgeLabel,
   fileExtensionLabel,
+  shouldShowAssetCardBadges,
   shouldShowDurationBadge,
+  shouldShowExtensionBadge,
+  shouldShowTypeBadgeAlongsideExtension,
 } from "./asset-card-badges";
 import {
   resolveAssetSourceBadgeLabel,
@@ -39,6 +42,7 @@ import { DeleteLinkedDialog } from "./DeleteLinkedDialog";
 import { useFolderDeleteActions } from "./use-folder-delete-actions";
 import { ExportDialog } from "./ExportDialog";
 import { ImportDialog } from "./ImportDialog";
+import { ImportLibraryChooserDialog } from "./ImportLibraryChooserDialog";
 import {
   NavigationSidebar,
 } from "./NavigationSidebar";
@@ -748,6 +752,8 @@ function AppInner() {
   const [importValidated, setImportValidated] =
     useState<ImportValidatedResult | null>(null);
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
+  const [importLibraryChooserOpen, setImportLibraryChooserOpen] =
+    useState(false);
 
   // Thumbnail / Preview state
   const [previewAsset, setPreviewAsset] = useState<AssetSummary | null>(null);
@@ -4154,18 +4160,28 @@ function AppInner() {
       });
       if (!result.ok) {
         if (result.error.code === "CANCELLED") {
+          // Serpent-tye: folder/save dialog cancel must clear the optimistic strip.
+          setExportProgress(null);
           setNotice(t("toast.exportCancelled"));
         } else {
           throw new LibraryOperationError(result.error);
         }
       }
     } catch (caught) {
+      setExportProgress(null);
       setError(toMessage(caught, t("toast.exportFailed"), locale));
     } finally {
       setTimeout(() => {
         setExportProgress((prev) => {
-          if (prev?.phase === "complete" || prev?.phase === "cancelled")
+          if (
+            !prev ||
+            prev.phase === "complete" ||
+            prev.phase === "cancelled" ||
+            prev.phase === "failed"
+          ) {
             return null;
+          }
+          // Still running after the dialog returned — keep showing until events settle.
           return prev;
         });
       }, 4000);
@@ -4381,6 +4397,7 @@ function AppInner() {
       undoMoveOpen: Boolean(undoMoveDialog),
       collectionEditorOpen: Boolean(collectionEditor),
       exportDialogOpen,
+      importLibraryChooserOpen,
       appSettingsOpen,
       aiConfigOpen,
       extensionPairingOpen,
@@ -4401,6 +4418,7 @@ function AppInner() {
     undoMoveDialog,
     collectionEditor,
     exportDialogOpen,
+    importLibraryChooserOpen,
     appSettingsOpen,
     aiConfigOpen,
     extensionPairingOpen,
@@ -4425,6 +4443,7 @@ function AppInner() {
     setUndoMoveDialog,
     setCollectionEditor,
     setExportDialogOpen,
+    setImportLibraryChooserOpen,
     setAppSettingsOpen,
     setAiConfigOpen,
     setExtensionPairingOpen,
@@ -4452,6 +4471,7 @@ function AppInner() {
       undoMoveDialog ||
       collectionEditor ||
       exportDialogOpen ||
+      importLibraryChooserOpen ||
       appSettingsOpen ||
       Boolean(smartCollectionSettings) ||
       aiConfigOpen ||
@@ -4461,6 +4481,14 @@ function AppInner() {
       convertLinkedDialog.folderId,
   );
   useDialogFocusTrap(dialogFocusTrapActive);
+
+  useEffect(() => {
+    // Serpent-0rk: freeze shell pointer targets while any modal is open.
+    document.body.classList.toggle("serpent-modal-open", dialogFocusTrapActive);
+    return () => {
+      document.body.classList.remove("serpent-modal-open");
+    };
+  }, [dialogFocusTrapActive]);
 
   useEffect(() => {
     const onSelectionKeyDown = (event: KeyboardEvent) => {
@@ -5208,7 +5236,7 @@ function AppInner() {
               onExportLibrary={() => setExportDialogOpen(true)}
               onImportFiles={() => void importAssets("files")}
               onImportFolder={() => void importAssets("folder")}
-              onImportLibrary={() => void startImport()}
+              onImportLibrary={() => setImportLibraryChooserOpen(true)}
               onImportLinkedFolder={() => void importFolderAsLinked()}
               onImportZip={() => void startImportZip()}
               onMenuOpen={() => void refreshRecentLibraries()}
@@ -5573,6 +5601,7 @@ function AppInner() {
             aspectRatioRanges={aspectRatioRanges}
             colorFilter={colorFilter}
             disabled={!library}
+            interactionsLocked={dialogFocusTrapActive}
             durationRange={durationRange}
             excludeAvailabilityFilter={excludeAvailabilityFilter}
             excludeColorFilter={excludeColorFilter}
@@ -5684,7 +5713,9 @@ function AppInner() {
           {uiState === "importing" && (
             <div className="activity-strip" role="status">
               <span className="activity-pulse" />
-              {t("toolbar.importingProgress")}
+              <span className="activity-strip-message">
+                {t("toolbar.importingProgress")}
+              </span>
             </div>
           )}
           {exportProgress &&
@@ -5693,21 +5724,23 @@ function AppInner() {
             ) && (
               <div className="activity-strip" role="status">
                 <span className="activity-pulse" />
-                {t("progress.exportingLibrary")}
-                {exportProgress.phase === "snapshot-db"
-                  ? t("progress.snapshotDb")
-                  : exportProgress.phase === "enumerate"
-                    ? t("progress.enumerateFiles")
-                    : exportProgress.phase === "compress"
-                      ? t("progress.compressing")
-                      : t("progress.copyingFiles", {
-                          processed: exportProgress.filesProcessed,
-                          total: exportProgress.totalFiles,
-                          bytesProcessed: formatBytes(
-                            exportProgress.bytesProcessed,
-                          ),
-                          bytesTotal: formatBytes(exportProgress.totalBytes),
-                        })}
+                <span className="activity-strip-message">
+                  {t("progress.exportingLibrary")}
+                  {exportProgress.phase === "snapshot-db"
+                    ? t("progress.snapshotDb")
+                    : exportProgress.phase === "enumerate"
+                      ? t("progress.enumerateFiles")
+                      : exportProgress.phase === "compress"
+                        ? t("progress.compressing")
+                        : t("progress.copyingFiles", {
+                            processed: exportProgress.filesProcessed,
+                            total: exportProgress.totalFiles,
+                            bytesProcessed: formatBytes(
+                              exportProgress.bytesProcessed,
+                            ),
+                            bytesTotal: formatBytes(exportProgress.totalBytes),
+                          })}
+                </span>
                 <button
                   className="secondary-button"
                   disabled={!exportProgress.exportId}
@@ -5724,12 +5757,14 @@ function AppInner() {
             ) && (
               <div className="activity-strip" role="status">
                 <span className="activity-pulse" />
-                {t("progress.importingLibrary")}
-                {importProgress.phase === "validate"
-                  ? t("progress.validating")
-                  : importProgress.phase === "copy"
-                    ? t("progress.copying")
-                    : t("progress.opening")}
+                <span className="activity-strip-message">
+                  {t("progress.importingLibrary")}
+                  {importProgress.phase === "validate"
+                    ? t("progress.validating")
+                    : importProgress.phase === "copy"
+                      ? t("progress.copying")
+                      : t("progress.opening")}
+                </span>
                 <button
                   className="secondary-button"
                   disabled={!importProgress.importId}
@@ -5788,21 +5823,35 @@ function AppInner() {
                   style={assetGridLayoutStyle(assetViewMode, assetCardSize)}
                 >
                   {(() => {
+                    const showCornerBadges =
+                      shouldShowAssetCardBadges(assetCardSize);
                     const cards = visibleAssets.map((asset) => {
                       const typeBadge = assetTypeBadgeLabel(
                         asset.mediaType,
                         asset.displayName,
                       );
-                      const showDuration = shouldShowDurationBadge(
-                        asset.mediaType,
-                        asset.displayName,
-                        asset.durationMs,
-                      );
+                      const showExtension =
+                        showCornerBadges &&
+                        canvasPrefs.fields.badgeExtension &&
+                        shouldShowExtensionBadge(asset.mediaType);
+                      const showDuration =
+                        showCornerBadges &&
+                        canvasPrefs.fields.badgeDuration &&
+                        shouldShowDurationBadge(
+                          asset.mediaType,
+                          asset.displayName,
+                          asset.durationMs,
+                        );
                       const showTypeBadge =
+                        showCornerBadges &&
+                        canvasPrefs.fields.badgeType &&
                         Boolean(typeBadge) &&
+                        shouldShowTypeBadgeAlongsideExtension(showExtension) &&
                         !asset.deletedAt &&
                         !shouldShowMissingAssetOverlay(asset.availability);
                       const sourceBadgeLabel =
+                        showCornerBadges &&
+                        canvasPrefs.fields.badgeSource &&
                         !showTrash &&
                         shouldShowAssetSourceBadge(
                           sourceBadgeContext,
@@ -5996,9 +6045,12 @@ function AppInner() {
                           }
                           return (
                             <>
-                              <span className="asset-extension">
-                                {fileExtensionLabel(asset.displayName)}
-                              </span>
+                              {!showExtension &&
+                                shouldShowExtensionBadge(asset.mediaType) && (
+                                  <span className="asset-extension">
+                                    {fileExtensionLabel(asset.displayName)}
+                                  </span>
+                                )}
                               <Icon name="file" size={28} />
                             </>
                           );
@@ -6014,6 +6066,11 @@ function AppInner() {
                             })}
                           >
                             {sourceBadgeLabel}
+                          </span>
+                        )}
+                        {showExtension && (
+                          <span className="asset-extension">
+                            {fileExtensionLabel(asset.displayName)}
                           </span>
                         )}
                         {thumbnailFailures.has(asset.assetId) && (
@@ -6050,10 +6107,10 @@ function AppInner() {
                           </span>
                         )}
                         {showDuration && asset.durationMs != null && (
-                            <span className="asset-duration-badge">
-                              {formatDuration(asset.durationMs)}
-                            </span>
-                          )}
+                          <span className="asset-duration-badge">
+                            {formatDuration(asset.durationMs)}
+                          </span>
+                        )}
                         {showTypeBadge && typeBadge && (
                           <span className="asset-type-badge">{typeBadge}</span>
                         )}
@@ -6246,6 +6303,14 @@ function AppInner() {
                   >
                     <Icon name="folder" size={15} />
                     {t("shell.openLibrary")}
+                  </button>
+                  <button
+                    className="secondary-button"
+                    onClick={() => setImportLibraryChooserOpen(true)}
+                    type="button"
+                  >
+                    <Icon name="download" size={15} />
+                    {t("toolbar.importLibrary")}
                   </button>
                 </div>
               </div>
@@ -6558,6 +6623,18 @@ function AppInner() {
           }
         />
       )}
+      <ImportLibraryChooserDialog
+        open={importLibraryChooserOpen}
+        onCancel={() => setImportLibraryChooserOpen(false)}
+        onImportFolder={() => {
+          setImportLibraryChooserOpen(false);
+          void startImport();
+        }}
+        onImportZip={() => {
+          setImportLibraryChooserOpen(false);
+          void startImportZip();
+        }}
+      />
       {importValidated && (
         <ImportDialog
           open

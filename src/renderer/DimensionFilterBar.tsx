@@ -73,6 +73,11 @@ const EMPTY_RANGE: RangeState = { min: "", max: "", exclude: false };
 
 export type DimensionFilterBarProps = {
   disabled?: boolean;
+  /**
+   * Serpent-0rk: highest-layer modal is open — do not open hover popovers or
+   * accept pointer interaction even if buttons are not `disabled`.
+   */
+  interactionsLocked?: boolean;
   tags: TagSummary[];
   snapshot: DiscoveryFilterSnapshot;
   colorFilter: string;
@@ -157,6 +162,7 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
   const t = useT();
   const {
     disabled,
+    interactionsLocked = false,
     tags,
     snapshot,
     colorFilter,
@@ -244,7 +250,10 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
   // into the other doesn't flicker-close.
   useEffect(() => {
     const root = rootRef.current;
-    if (!root) return;
+    if (!root || disabled || interactionsLocked) {
+      setOpenDimension(null);
+      return;
+    }
 
     let closeTimer: ReturnType<typeof setTimeout> | null = null;
     const clearCloseTimer = () => {
@@ -291,7 +300,7 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
       root.removeEventListener("focusin", onFocusIn);
       root.removeEventListener("focusout", onFocusOut);
     };
-  }, []);
+  }, [disabled, interactionsLocked]);
 
   // REQ-FILTER-021: one remembered-value toggle per dimension. Clicking a
   // dimension button clears its live filter value (remembering it) when
@@ -318,6 +327,7 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
   const moreToggleRef = useRef(new DimensionEnableToggle<MoreFilterState>());
 
   const chips = buildActiveFilterChips(snapshot);
+  const controlsDisabled = Boolean(disabled || interactionsLocked);
   const selectedTagNames = tagFilter
     .split(",")
     .map((value) => value.trim())
@@ -516,7 +526,7 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
         <div className="dimension-filter-dim" data-dimension="color">
           <DimensionButton
             active={colorActive}
-            disabled={disabled}
+            disabled={controlsDisabled}
             excluding={excludeColorFilter && colorActive}
             icon="activity"
             label={t("filter.dimColor")}
@@ -532,7 +542,7 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
                     aria-selected={selectedColors.has(preset.id)}
                     className={`dimension-color-swatch${selectedColors.has(preset.id) ? " is-active" : ""}${preset.kind === "neutral" ? " is-neutral" : ""}`}
                     data-color={preset.id}
-                    disabled={disabled}
+                    disabled={controlsDisabled}
                     key={preset.id}
                     onClick={(event) => toggleColor(preset.id, event.shiftKey)}
                     style={{ background: preset.swatch }}
@@ -559,7 +569,7 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
         <div className="dimension-filter-dim" data-dimension="tags">
           <DimensionButton
             active={tagActive}
-            disabled={disabled}
+            disabled={controlsDisabled}
             excluding={excludeTagFilter && tagActive}
             icon="tag"
             label={t("filter.dimTags")}
@@ -569,7 +579,7 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
           {openDimension === "tags" && (
             <div className="dimension-filter-popover">
               <FilterTagPicker
-                disabled={disabled}
+                disabled={controlsDisabled}
                 onChange={handleTagNamesChange}
                 recentNames={tagRecency.names}
                 selectedNames={selectedTagNames}
@@ -594,7 +604,7 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
         <div className="dimension-filter-dim" data-dimension="shape">
           <DimensionButton
             active={shapeActive}
-            disabled={disabled}
+            disabled={controlsDisabled}
             icon="grid"
             label={t("filter.dimShape")}
             onClick={handleShapeDimensionClick}
@@ -603,7 +613,7 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
           {openDimension === "shape" && (
             <div className="dimension-filter-popover">
               <FilterPresetChips
-                disabled={disabled}
+                disabled={controlsDisabled}
                 label={t("filter.orientation")}
                 onToggle={applyShapePreset}
                 presets={ORIENTATION_PRESETS.map((preset) => ({
@@ -616,7 +626,7 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
                 selected={shapeSelectedRanges}
               />
               <FilterPresetChips
-                disabled={disabled}
+                disabled={controlsDisabled}
                 label={t("filter.aspectRatioPresets")}
                 onToggle={applyShapePreset}
                 presets={ASPECT_RATIO_PRESETS.map((preset) => ({
@@ -648,7 +658,7 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
         <div className="dimension-filter-dim" data-dimension="rating">
           <DimensionButton
             active={ratingActive}
-            disabled={disabled}
+            disabled={controlsDisabled}
             excluding={excludeRatingFilter && ratingActive}
             icon="star"
             label={t("filter.dimRating")}
@@ -662,7 +672,7 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
                   <button
                     aria-pressed={selectedRatings.has(String(star))}
                     className={`dimension-rating-chip${selectedRatings.has(String(star)) ? " is-active" : ""}`}
-                    disabled={disabled}
+                    disabled={controlsDisabled}
                     key={star}
                     onClick={(event) => toggleRating(star, event.shiftKey)}
                     type="button"
@@ -690,7 +700,7 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
         <div className="dimension-filter-dim" data-dimension="format">
           <DimensionButton
             active={formatActive}
-            disabled={disabled}
+            disabled={controlsDisabled}
             excluding={excludeFormatFilter && formatActive}
             icon="file"
             label={t("filter.dimFormat")}
@@ -702,7 +712,7 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
               <input
                 aria-label={t("filter.format")}
                 className="text-field"
-                disabled={disabled}
+                disabled={controlsDisabled}
                 onChange={(event) => setFormatFilter(event.target.value)}
                 placeholder="png, jpg, mp4"
                 value={formatFilter}
@@ -714,7 +724,7 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
                     <button
                       aria-pressed={active}
                       className={`filter-preset-chip${active ? " is-active" : ""}`}
-                      disabled={disabled}
+                      disabled={controlsDisabled}
                       key={ext}
                       onClick={(event) =>
                         setFormatFilter(
@@ -747,7 +757,7 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
         <div className="dimension-filter-dim" data-dimension="more">
           <DimensionButton
             active={moreActive}
-            disabled={disabled}
+            disabled={controlsDisabled}
             excluding={excludeAvailabilityFilter && moreActive}
             icon="menu"
             label={t("filter.dimMore")}
@@ -761,7 +771,7 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
                 <select
                   aria-label={t("filter.favorite")}
                   className="text-field"
-                  disabled={disabled}
+                  disabled={controlsDisabled}
                   onChange={(event) =>
                     setFavoriteFilter(
                       event.target.value as typeof favoriteFilter,
@@ -779,7 +789,7 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
                 <select
                   aria-label={t("filter.sourceUrl")}
                   className="text-field"
-                  disabled={disabled}
+                  disabled={controlsDisabled}
                   onChange={(event) =>
                     setSourceUrlFilter(
                       event.target.value as typeof sourceUrlFilter,
@@ -797,7 +807,7 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
                 <select
                   aria-label={t("filter.availability")}
                   className="text-field"
-                  disabled={disabled}
+                  disabled={controlsDisabled}
                   onChange={(event) =>
                     setAvailabilityFilter(
                       event.target.value as typeof availabilityFilter,
@@ -822,7 +832,7 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
                 {t("filter.exclude")}
               </label>
               <FilterPresetChips
-                disabled={disabled}
+                disabled={controlsDisabled}
                 label={t("filter.resolutionPresets")}
                 onToggle={(range, shiftKey) => {
                   if (shiftKey) {
@@ -901,7 +911,7 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
         </div>
 
         <SortModeControl
-          disabled={disabled}
+          disabled={controlsDisabled}
           setSortField={setSortField}
           setSortOrder={setSortOrder}
           sortField={sortField}

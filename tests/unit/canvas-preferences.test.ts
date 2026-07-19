@@ -71,7 +71,7 @@ describe('loadCanvasPreferences', () => {
       version: 1,
       viewMode: 'masonry',
       cardSize: 200,
-      fields: { name: true, size: true, date: true },
+      fields: { ...DEFAULT_CANVAS_PREFERENCES.fields },
     });
     expect(storage.getItem(LEGACY_VIEW_MODE_KEY)).toBeNull();
     expect(storage.getItem(LEGACY_CARD_SIZE_KEY)).toBeNull();
@@ -120,7 +120,7 @@ describe('loadCanvasPreferences', () => {
         version: 99,
         viewMode: 'grid',
         cardSize: 160,
-        fields: { name: true, size: true, date: true },
+        fields: { ...DEFAULT_CANVAS_PREFERENCES.fields },
       }),
       [LEGACY_VIEW_MODE_KEY]: 'masonry',
       [LEGACY_CARD_SIZE_KEY]: '240',
@@ -132,7 +132,7 @@ describe('loadCanvasPreferences', () => {
       version: 1,
       viewMode: 'masonry',
       cardSize: 240,
-      fields: { name: true, size: true, date: true },
+      fields: { ...DEFAULT_CANVAS_PREFERENCES.fields },
     });
     expect(storage.getItem(LEGACY_VIEW_MODE_KEY)).toBeNull();
     expect(storage.getItem(LEGACY_CARD_SIZE_KEY)).toBeNull();
@@ -144,7 +144,7 @@ describe('loadCanvasPreferences', () => {
         version: 1,
         viewMode: 'grid',
         cardSize: 50,
-        fields: { name: true, size: true, date: true },
+        fields: { ...DEFAULT_CANVAS_PREFERENCES.fields },
       }),
     });
 
@@ -159,7 +159,7 @@ describe('loadCanvasPreferences', () => {
         version: 1,
         viewMode: 'list' as unknown,
         cardSize: 160,
-        fields: { name: true, size: true, date: true },
+        fields: { ...DEFAULT_CANVAS_PREFERENCES.fields },
       }),
     });
 
@@ -181,7 +181,7 @@ describe('loadCanvasPreferences', () => {
         version: 1,
         viewMode: 'masonry',
         cardSize: 200,
-        fields: { name: true, size: true, date: true },
+        fields: { ...DEFAULT_CANVAS_PREFERENCES.fields },
       });
     });
 
@@ -205,7 +205,7 @@ describe('loadCanvasPreferences', () => {
 
       const prefs = loadCanvasPreferences(storage);
 
-      expect(prefs.fields).toEqual({ name: true, size: true, date: true });
+      expect(prefs.fields).toEqual(DEFAULT_CANVAS_PREFERENCES.fields);
     });
 
     it('skips migration when the new key already exists', () => {
@@ -227,7 +227,10 @@ describe('loadCanvasPreferences', () => {
         version: 1,
         viewMode: 'grid',
         cardSize: 160,
-        fields: { name: true, size: true, date: false },
+        fields: {
+          ...DEFAULT_CANVAS_PREFERENCES.fields,
+          date: false,
+        },
       });
       // Legacy keys should be left untouched (new key takes precedence)
     });
@@ -262,7 +265,10 @@ describe('saveCanvasPreferences', () => {
       version: 1,
       viewMode: 'masonry',
       cardSize: 250,
-      fields: { name: false, size: true, date: true },
+      fields: {
+        ...DEFAULT_CANVAS_PREFERENCES.fields,
+        name: false,
+      },
     };
 
     saveCanvasPreferences(prefs, storage);
@@ -290,7 +296,7 @@ describe('saveCanvasPreferences', () => {
       version: 1,
       viewMode: 'grid',
       cardSize: 50,
-      fields: { name: true, size: true, date: true },
+      fields: { ...DEFAULT_CANVAS_PREFERENCES.fields },
     };
 
     saveCanvasPreferences(prefs, storage);
@@ -305,7 +311,11 @@ describe('saveCanvasPreferences', () => {
       version: 1,
       viewMode: 'masonry',
       cardSize: 200,
-      fields: { name: false, size: false, date: true },
+      fields: {
+        ...DEFAULT_CANVAS_PREFERENCES.fields,
+        name: false,
+        size: false,
+      },
     };
 
     saveCanvasPreferences(prefs, saveStorage);
@@ -317,12 +327,35 @@ describe('saveCanvasPreferences', () => {
 });
 
 describe('DEFAULT_CANVAS_PREFERENCES', () => {
+  it('fills missing badge field toggles when loading older v1 prefs (Serpent-cs1)', () => {
+    const storage = createStorageStub({
+      [PREF_KEY]: JSON.stringify({
+        version: 1,
+        viewMode: 'grid',
+        cardSize: 160,
+        fields: { name: true, size: true, date: false },
+      }),
+    });
+
+    const prefs = loadCanvasPreferences(storage);
+
+    expect(prefs.fields).toEqual({
+      name: true,
+      size: true,
+      date: false,
+      badgeType: true,
+      badgeDuration: true,
+      badgeSource: true,
+      badgeExtension: true,
+    });
+  });
+
   it('has viewMode grid, cardSize 160, and all fields enabled', () => {
     expect(DEFAULT_CANVAS_PREFERENCES).toEqual({
       version: 1,
       viewMode: 'grid',
       cardSize: 160,
-      fields: { name: true, size: true, date: true },
+      fields: { ...DEFAULT_CANVAS_PREFERENCES.fields },
     });
   });
 });

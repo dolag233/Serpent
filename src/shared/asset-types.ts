@@ -176,6 +176,8 @@ export const extractedVideoMetadataSchema = z.strictObject({
   pixelFormat: z.string().nullable().optional().default(null),
   hasAudio: z.boolean().optional().default(false),
   audioCodec: z.string().nullable().optional().default(null),
+  /** Audio-stream bit_rate when present (audio assets / video A/V). */
+  audioBitrate: probeNumericSchema.optional().default(null),
   sampleRate: probeNumericSchema.optional().default(null),
   channels: z.number().int().positive().nullable().optional().default(null),
   containerBitrate: probeNumericSchema.optional(),

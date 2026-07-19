@@ -3,10 +3,9 @@ import type { LocalePreference } from "./i18n";
 import type { ThemePreference } from "./theme";
 
 /**
- * Declarative copy/keys for REQ-PREF-001 / Serpent-97l / Serpent-9es.
- * Section-level hints explain where each preference takes effect. Canvas card
- * field toggles share one group hint (`settings.cardFieldsHint`) — no
- * per-field near-duplicate paragraphs.
+ * Declarative copy/keys for REQ-PREF-001 / Serpent-97l / Serpent-9es / Serpent-i07.
+ * Caption fields and corner badges are separate checkbox groups so the settings
+ * panel does not dump unrelated toggles into one pile.
  */
 
 export type AppSettingsThemeOption = {
@@ -24,11 +23,18 @@ export type AppSettingsCanvasFieldOption = {
   readonly labelKey:
     | "toolbar.showFileName"
     | "toolbar.showFileSize"
-    | "toolbar.showModifiedDate";
+    | "toolbar.showModifiedDate"
+    | "toolbar.showBadgeType"
+    | "toolbar.showBadgeDuration"
+    | "toolbar.showBadgeSource"
+    | "toolbar.showBadgeExtension";
 };
 
-/** Shared explanatory copy for the card-fields checkbox group (Serpent-9es). */
+/** Shared hint for caption fields under the card (name / size / date). */
 export const APP_SETTINGS_CARD_FIELDS_HINT_KEY = "settings.cardFieldsHint" as const;
+
+/** Shared hint for corner badges on the preview. */
+export const APP_SETTINGS_CARD_BADGES_HINT_KEY = "settings.cardBadgesHint" as const;
 
 export const APP_SETTINGS_THEME_OPTIONS: readonly AppSettingsThemeOption[] = [
   { value: "dark", labelKey: "shell.themeDark" },
@@ -42,22 +48,42 @@ export const APP_SETTINGS_LOCALE_OPTIONS: readonly AppSettingsLocaleOption[] = [
   { value: "en", labelKey: "shell.languageEn" },
 ];
 
-export const APP_SETTINGS_CANVAS_FIELD_OPTIONS: readonly AppSettingsCanvasFieldOption[] =
+export const APP_SETTINGS_CANVAS_CAPTION_FIELD_OPTIONS: readonly AppSettingsCanvasFieldOption[] =
   [
     { field: "name", labelKey: "toolbar.showFileName" },
     { field: "size", labelKey: "toolbar.showFileSize" },
     { field: "date", labelKey: "toolbar.showModifiedDate" },
   ];
 
+export const APP_SETTINGS_CANVAS_BADGE_FIELD_OPTIONS: readonly AppSettingsCanvasFieldOption[] =
+  [
+    { field: "badgeDuration", labelKey: "toolbar.showBadgeDuration" },
+    { field: "badgeExtension", labelKey: "toolbar.showBadgeExtension" },
+    { field: "badgeType", labelKey: "toolbar.showBadgeType" },
+    { field: "badgeSource", labelKey: "toolbar.showBadgeSource" },
+  ];
+
+/** @deprecated Prefer caption + badge option lists (Serpent-i07). */
+export const APP_SETTINGS_CANVAS_FIELD_OPTIONS: readonly AppSettingsCanvasFieldOption[] =
+  [
+    ...APP_SETTINGS_CANVAS_CAPTION_FIELD_OPTIONS,
+    ...APP_SETTINGS_CANVAS_BADGE_FIELD_OPTIONS,
+  ];
+
 /**
- * Card field toggles must be label-only; explanatory copy lives on the group
- * heading via `APP_SETTINGS_CARD_FIELDS_HINT_KEY` (Serpent-9es).
+ * Caption field toggles must be label-only; explanatory copy lives on the
+ * group heading (Serpent-9es).
  */
 export function canvasFieldOptionsUseSharedHint(
-  options: readonly AppSettingsCanvasFieldOption[] = APP_SETTINGS_CANVAS_FIELD_OPTIONS,
+  options: readonly AppSettingsCanvasFieldOption[] = APP_SETTINGS_CANVAS_CAPTION_FIELD_OPTIONS,
   sharedHintKey: string = APP_SETTINGS_CARD_FIELDS_HINT_KEY,
 ): boolean {
-  if (sharedHintKey !== APP_SETTINGS_CARD_FIELDS_HINT_KEY) return false;
+  if (
+    sharedHintKey !== APP_SETTINGS_CARD_FIELDS_HINT_KEY &&
+    sharedHintKey !== APP_SETTINGS_CARD_BADGES_HINT_KEY
+  ) {
+    return false;
+  }
   if (options.length === 0) return false;
   return options.every(
     (option) =>

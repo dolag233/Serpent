@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  formatAudioTechnicalLine,
   formatBitrate,
   formatFrameRate,
   formatSampleRate,
@@ -54,6 +55,7 @@ describe("video-metadata-format", () => {
       pixelFormat: "yuv420p",
       hasAudio: true,
       audioCodec: "aac",
+      audioBitrate: null,
       sampleRate: "48000",
       channels: 2,
       containerBitrate: "5500000",
@@ -69,6 +71,7 @@ describe("video-metadata-format", () => {
       videoBitrate: null,
       hasAudio: false,
       audioCodec: null,
+      audioBitrate: null,
       sampleRate: null,
       channels: null,
       pixelFormat: null,
@@ -84,10 +87,43 @@ describe("video-metadata-format", () => {
       videoBitrate: null,
       hasAudio: false,
       audioCodec: null,
+      audioBitrate: null,
       sampleRate: null,
       channels: null,
       pixelFormat: null,
     })).toBeNull();
+  });
+
+  it("builds the compact audio technical line (Serpent-i07)", () => {
+    expect(formatAudioTechnicalLine({
+      container: "mp3",
+      hasAudio: true,
+      audioCodec: "mp3",
+      audioBitrate: "320000",
+      sampleRate: "44100",
+      channels: 2,
+      videoCodec: null,
+      videoBitrate: null,
+      framerate: null,
+      pixelFormat: null,
+      containerBitrate: "320000",
+    })).toBe("mp3 · 320 kbps · 44.1 kHz · stereo");
+  });
+
+  it("falls back to container bitrate for audio when stream bitrate is missing", () => {
+    expect(formatAudioTechnicalLine({
+      container: "mp3",
+      hasAudio: true,
+      audioCodec: "mp3",
+      audioBitrate: null,
+      sampleRate: "48000",
+      channels: 1,
+      videoCodec: null,
+      videoBitrate: null,
+      framerate: null,
+      pixelFormat: null,
+      containerBitrate: "192000",
+    })).toBe("mp3 · 192 kbps · 48 kHz · mono");
   });
 });
 
