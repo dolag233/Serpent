@@ -27,6 +27,7 @@ import {
   inlineFolderEditDepth,
   type InlineFolderEditState,
 } from "./inline-folder-edit";
+import type { InlineSmartCollectionEditState } from "./inline-smart-collection-edit";
 import {
   buildUnifiedDirectoryNavEntries,
   filterCollapsedDirectoryEntries,
@@ -161,6 +162,68 @@ function InlineFolderEditRow({
             ? t("nav.newFolderName")
             : t("nav.folderRename")
         }
+        className="text-field"
+        maxLength={80}
+        onBlur={() => onCommit()}
+        onChange={(event) => onChange(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") {
+            event.preventDefault();
+            onCommit();
+          } else if (event.key === "Escape") {
+            event.preventDefault();
+            event.stopPropagation();
+            onCancel();
+          }
+        }}
+        ref={inputRef}
+        value={state.value}
+      />
+      {state.error ? (
+        <p className="nav-inline-edit-error" role="alert">
+          {state.error}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// InlineSmartCollectionEditRow — SMART-007 sidebar create row
+// ---------------------------------------------------------------------------
+
+/**
+ * Name-edit row for the smart-collections section 「+」. Enter commits,
+ * Escape cancels, blur routes through the same commit resolution; typed
+ * failures (including missing discovery conditions) stay under the row.
+ */
+function InlineSmartCollectionEditRow({
+  state,
+  onChange,
+  onCommit,
+  onCancel,
+}: {
+  state: InlineSmartCollectionEditState;
+  onChange: (value: string) => void;
+  onCommit: () => void;
+  onCancel: () => void;
+}) {
+  const t = useT();
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const input = inputRef.current;
+    if (!input) return;
+    input.focus();
+    input.select();
+  }, []);
+
+  return (
+    <div className="nav-inline-edit" style={{ paddingLeft: 7 }}>
+      <Icon name="smart" size={15} />
+      <input
+        aria-invalid={state.error ? true : undefined}
+        aria-label={t("nav.newSmartCollectionName")}
         className="text-field"
         maxLength={80}
         onBlur={() => onCommit()}
@@ -324,7 +387,7 @@ export interface NavigationSidebarProps {
 
   // --- Folder creation entry (sidebar 「+」; opens the inline edit row) ---
   onAddFolder: () => void;
-  /** REQ-SMART-001: focus discovery-bar smart-collection name field. */
+  /** SMART-007: open sidebar inline smart-collection name row. */
   onAddSmartCollection: () => void;
 
   // --- Inline folder edit (REQ-FOLDER-007) ---
@@ -334,6 +397,12 @@ export interface NavigationSidebarProps {
     onCreateSuccess?: (parentFolderId: string | null) => void,
   ) => void;
   onInlineFolderEditCancel: () => void;
+
+  // --- Inline smart-collection create (SMART-007) ---
+  inlineSmartCollectionEdit: InlineSmartCollectionEditState | null;
+  onInlineSmartCollectionEditChange: (value: string) => void;
+  onInlineSmartCollectionEditCommit: () => void;
+  onInlineSmartCollectionEditCancel: () => void;
 
   // --- Context menu ---
   onOpenContextMenu: (
@@ -410,6 +479,10 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
     onInlineFolderEditChange,
     onInlineFolderEditCommit,
     onInlineFolderEditCancel,
+    inlineSmartCollectionEdit,
+    onInlineSmartCollectionEditChange,
+    onInlineSmartCollectionEditCommit,
+    onInlineSmartCollectionEditCancel,
     onOpenContextMenu,
     onReorderCollection,
     onImportDroppedFiles,
@@ -983,31 +1056,42 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
           title={t("nav.smartCollections")}
         >
           {library ? (
-            smartCollections.length ? (
-              smartCollections.map((sc) => (
-                <NavRow
-                  active={activeSmartCollectionId === sc.collectionId}
-                  count={sc.assetCount}
-                  icon="smart"
-                  key={sc.collectionId}
-                  label={sc.name}
-                  onClick={() => void onChooseSmartCollection(sc.collectionId)}
-                  onContextMenu={(event) => {
-                    event.preventDefault();
-                    onOpenContextMenu(
-                      {
-                        type: "smart-collection",
-                        id: sc.collectionId,
-                        name: sc.name,
-                      },
-                      { x: event.clientX, y: event.clientY },
-                    );
-                  }}
+            <>
+              {inlineSmartCollectionEdit ? (
+                <InlineSmartCollectionEditRow
+                  key="inline-smart-collection-create"
+                  onCancel={onInlineSmartCollectionEditCancel}
+                  onChange={onInlineSmartCollectionEditChange}
+                  onCommit={onInlineSmartCollectionEditCommit}
+                  state={inlineSmartCollectionEdit}
                 />
-              ))
-            ) : (
-              <p className="nav-empty">{t("nav.emptySmartCollections")}</p>
-            )
+              ) : null}
+              {smartCollections.length ? (
+                smartCollections.map((sc) => (
+                  <NavRow
+                    active={activeSmartCollectionId === sc.collectionId}
+                    count={sc.assetCount}
+                    icon="smart"
+                    key={sc.collectionId}
+                    label={sc.name}
+                    onClick={() => void onChooseSmartCollection(sc.collectionId)}
+                    onContextMenu={(event) => {
+                      event.preventDefault();
+                      onOpenContextMenu(
+                        {
+                          type: "smart-collection",
+                          id: sc.collectionId,
+                          name: sc.name,
+                        },
+                        { x: event.clientX, y: event.clientY },
+                      );
+                    }}
+                  />
+                ))
+              ) : inlineSmartCollectionEdit ? null : (
+                <p className="nav-empty">{t("nav.emptySmartCollections")}</p>
+              )}
+            </>
           ) : (
             <p className="nav-empty">{t("nav.openLibrarySmartHint")}</p>
           )}
