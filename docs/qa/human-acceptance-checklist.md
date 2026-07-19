@@ -368,6 +368,7 @@
 | 2026-07-19 | VIEWER-009/010（新增）/ CANVAS-018（新增）/ INSPECT-007/008（新增） | 待人类验收 | 用户反馈驱动的查看页/检查器/画布打磨：缩放面板半透明不要太低不透明度；左右切图不应唤醒已渐隐的 chrome，只有鼠标移动才唤醒；描述输入框默认单行、超一行自动增高换行；卡片大小滑块粒度太粗；Inspector 单选视频/动图应循环预览、多选不播放。 | `Serpent-627` / `Serpent-ayf` / `Serpent-qto` / `Serpent-akz` / `Serpent-a9n`；[开发日志](../development/2026-07-19-viewer-inspector-polish-development-log.md)；单测见各条目；Computer Use 未执行，移交人工 QA。 |
 | 2026-07-19 | FILTER-019/020 / NAV-006b / SORT-006 | 人类验收通过 | 排除红、颜色黑白、去根行、排序图标通过；019/006 附带打磨已开单。 | `Serpent-8s8` / `o75` / `vms` / `1c9`。 |
 | 2026-07-19 | 文件夹删除 P1 再确认 | 记录 | 用户再次点名删除文件夹；`Serpent-ekj` 已是 P1，仍被澄清 #7（`Serpent-w3b`）阻塞。 | 需删除语义裁决后才能实施。 |
+| 2026-07-19 | 澄清#7 删除语义裁决 | 已裁决 | 托管默认进回收站；从硬盘删除需确认+可不再提示+设置可重开；链接根仅移除、子文件夹可删；资产亦需从硬盘删除。 | `Serpent-ekj` 已解除对 w3b 阻塞；`Serpent-9zc` / `Serpent-5no`。 |
 ### 第五批收口（过滤/导航/排序/Inspector）
 
 | FILTER-019 | 排除过滤红色高亮 | 人类验收通过 | 启用颜色/标签等过滤后勾选排除 | 对应维度按钮呈红色高亮，与包含态区分 | [开发日志](../development/2026-07-19-filter-nav-inspect-polish-development-log.md) / Serpent-8s8 | 2026-07-19 用户确认通过。附带：暗色下红色偏艳 → 降饱和打磨工单。 |
