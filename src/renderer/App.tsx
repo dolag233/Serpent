@@ -87,19 +87,16 @@ import {
   type InspectorMultiEditModel,
 } from "./inspector-multi-edit";
 import { useBatchActions } from "./useBatchActions";
+import { useShellFileActions } from "./use-shell-file-actions";
+import { useAssetDragDropHandlers } from "./use-asset-drag-drop-handlers";
 import { useAssetRename } from "./useAssetRename";
 import { useInlineFolderEdit } from "./use-inline-folder-edit";
 import { usePanelResize } from "./use-panel-resize";
 import { useToastNotifications } from "./useToastNotifications";
 import {
   MANAGED_ASSETS_DRAG_TYPE,
-  resolveCollectionDrop,
   resolveDragDropMode,
   resolveDraggedAssetIds,
-  resolveFolderDrop,
-  resolveTrashDrop,
-  type DragAssetFact,
-  type DragDropMode,
 } from "./asset-drag-drop";
 import {
   ASSET_DRAG_PREVIEW_HEIGHT,
@@ -1570,7 +1567,7 @@ function AppInner() {
       setError(toMessage(caught, t("toast.workspaceRestoreFailed"), locale));
       setUiState(activeLibrary ? "ready" : "idle");
     }
-  }, [api, loadContent, selectionAnchorRef, setError]);
+  }, [api, loadContent, locale, selectionAnchorRef, setError, t]);
   useEffect(() => {
     void Promise.resolve().then(restore);
   }, [restore]);
@@ -1659,7 +1656,7 @@ function AppInner() {
         }),
       );
     });
-  }, [api, library?.libraryId]);
+  }, [api, library?.libraryId, t]);
   useEffect(() => {
     if (!api || !library) return;
     const unsubscribeProgress = api.onAiProgress((event) => {
@@ -1696,7 +1693,7 @@ function AppInner() {
       unsubscribeCompleted();
       unsubscribeCleared();
     };
-  }, [api, library, setNotice]);
+  }, [api, library, setNotice, t]);
 
   function syncNavHistoryUi() {
     setNavHistoryUi({
@@ -2770,6 +2767,38 @@ function AppInner() {
   });
 
   const {
+    handleOpenExternal,
+    handleRevealInFolder,
+    handleCopyFilePath,
+    handleOpenFolderInFileManager,
+    handleCopyFolderPath,
+  } = useShellFileActions({
+    api: api ?? null,
+    library,
+    setError,
+    setNotice,
+  });
+
+  const {
+    handleAssetsDroppedOnFolder,
+    handleAssetsDroppedOnCollection,
+    handleAssetsDroppedOnTrash,
+  } = useAssetDragDropHandlers({
+    api: api ?? null,
+    library,
+    assets,
+    assetScope,
+    setNotice,
+    setError,
+    setUiState,
+    clearAssetSelection,
+    trashManagedAssets,
+    reloadCurrentContentRef,
+    setCollections,
+    setLastMoveOperationId,
+  });
+
+  const {
     assetRenameDialog,
     openAssetRename,
     changeAssetRenameValue,
@@ -3451,229 +3480,6 @@ function AppInner() {
     }
   }
 
-    const handleOpenExternal = useCallback(async (assetId: string) => {
-    if (!api || !library) return;
-    try {
-      const result = await api.openExternal({
-        libraryId: library.libraryId,
-        assetId,
-      });
-      if (!result.ok) {
-        setError(toMessage(result.error, t("toast.openExternalFailed"), locale));
-      }
-    } catch (caught) {
-      setError(toMessage(caught, t("toast.openExternalError"), locale));
-    }
-  }, [api, library, setError]);
-
-  const handleRevealInFolder = useCallback(async (assetId: string) => {
-    if (!api || !library) return;
-    try {
-      const result = await api.revealInFolder({
-        libraryId: library.libraryId,
-        assetId,
-      });
-      if (!result.ok) {
-        setError(toMessage(result.error, t("toast.revealAssetFailed"), locale));
-      }
-    } catch (caught) {
-      setError(toMessage(caught, t("toast.revealAssetError"), locale));
-    }
-  }, [api, library, setError]);
-
-  const handleCopyFilePath = useCallback(async (assetId: string) => {
-    if (!api || !library) return;
-    try {
-      const result = await api.copyFilePath({
-        libraryId: library.libraryId,
-        assetId,
-      });
-      if (!result.ok) {
-        setError(toMessage(result.error, t("toast.copyPathUnavailable"), locale));
-        return;
-      }
-      setNotice(t("toast.copyPathDone"));
-    } catch (caught) {
-      setError(toMessage(caught, t("toast.copyPathFailed"), locale));
-    }
-  }, [api, library, setError, setNotice]);
-
-  // REQ-MENU-006: folder shell actions mirror the asset versions above —
-  // only the folder id crosses the bridge; the Worker resolves the path.
-  const handleOpenFolderInFileManager = useCallback(async (folderId: string) => {
-    if (!api || !library) return;
-    try {
-      const result = await api.openFolderInFileManager({
-        libraryId: library.libraryId,
-        folderId,
-      });
-      if (!result.ok) {
-        setError(toMessage(result.error, t("toast.openFolderFailed"), locale));
-      }
-    } catch (caught) {
-      setError(toMessage(caught, t("toast.openFolderError"), locale));
-    }
-  }, [api, library, setError]);
-
-  const handleCopyFolderPath = useCallback(async (folderId: string) => {
-    if (!api || !library) return;
-    try {
-      const result = await api.copyFolderPath({
-        libraryId: library.libraryId,
-        folderId,
-      });
-      if (!result.ok) {
-        setError(toMessage(result.error, t("toast.copyFolderPathUnavailable"), locale));
-        return;
-      }
-      setNotice(t("toast.copyFolderPathDone"));
-    } catch (caught) {
-      setError(toMessage(caught, t("toast.copyFolderPathFailed"), locale));
-    }
-  }, [api, library, setError, setNotice]);
-
-  // REQ-DND-001/002: drop executors — the pure decisions live in
-  // asset-drag-drop.ts; here we only look up asset facts and run commands.
-  const dragAssetFacts = useCallback(
-    (assetIds: string[]): DragAssetFact[] =>
-      assetIds.map((assetId) => {
-        const summary = assets.find((candidate) => candidate.assetId === assetId);
-        return {
-          assetId,
-          // Unknown summaries (paged out) fail closed: treated as ineligible.
-          locationKind: summary?.locationKind ?? "linked",
-          availability: summary?.availability ?? "missing",
-          deletedAt: summary?.deletedAt ?? null,
-        };
-      }),
-    [assets],
-  );
-
-  const handleAssetsDroppedOnFolder = useCallback(
-    (targetFolderId: string | null, assetIds: string[], mode: DragDropMode) => {
-      if (!api || !library) return;
-      const resolution = resolveFolderDrop({
-        targetFolderId,
-        // The root row (targetFolderId null) matches the "root" scope; the
-        // "all" scope is not a folder and never blocks a drop.
-        currentFolderId: assetScope === "root" ? null : assetScope,
-        assets: dragAssetFacts(assetIds),
-        mode,
-      });
-      if (resolution.kind === "reject") {
-        if (resolution.reason === "copy-unsupported") {
-          setNotice(t("toast.folderCopyUnsupported"));
-        } else if (resolution.reason === "same-folder") {
-          setNotice(t("toast.alreadyInFolder"));
-        } else {
-          setNotice(t("toast.noMovableAssets"));
-        }
-        return;
-      }
-      void (async () => {
-        setUiState("loading");
-        try {
-          const result = await api.moveAssets({
-            libraryId: library.libraryId,
-            assetIds: resolution.assetIds,
-            targetFolderId,
-            conflictStrategy: "keep-both",
-          });
-          if (!result.ok) throw new LibraryOperationError(result.error);
-          setLastMoveOperationId(result.value.operationId);
-          setNotice(
-            t("toast.movedCount", { count: result.value.movedCount }) +
-              (result.value.skippedCount
-                ? t("toast.conflictSkippedSuffix", {
-                    count: result.value.skippedCount,
-                  })
-                : "") +
-              (resolution.skippedCount
-                ? t("toast.unavailableSkippedSuffix", {
-                    count: resolution.skippedCount,
-                  })
-                : "") +
-              t("common.sentenceEnd"),
-          );
-          clearAssetSelection();
-          await reloadCurrentContentRef.current();
-        } catch (caught) {
-          setError(toMessage(caught, t("toast.moveFailed"), locale));
-        } finally {
-          setUiState("ready");
-        }
-      })();
-    },
-    [api, library, assetScope, dragAssetFacts, setNotice, setError, setUiState, clearAssetSelection],
-  );
-
-  const handleAssetsDroppedOnCollection = useCallback(
-    (collectionId: string, assetIds: string[], mode: DragDropMode) => {
-      if (!api || !library) return;
-      const resolution = resolveCollectionDrop({
-        assets: dragAssetFacts(assetIds),
-        mode,
-      });
-      if (resolution.kind === "reject") {
-        setNotice(t("toast.noCollectionDropAssets"));
-        return;
-      }
-      void (async () => {
-        try {
-          const result = await api.addCollectionAssets({
-            libraryId: library.libraryId,
-            collectionId,
-            assetIds: resolution.assetIds,
-          });
-          if (!result.ok) throw new LibraryOperationError(result.error);
-          const collectionResult = await api.listCollections({
-            libraryId: library.libraryId,
-          });
-          if (collectionResult.ok) setCollections(collectionResult.value);
-          setNotice(
-            t("toast.addedToCollectionCount", {
-              count: resolution.assetIds.length,
-            }) +
-              (resolution.skippedCount
-                ? t("toast.unavailableSkippedSuffix", {
-                    count: resolution.skippedCount,
-                  })
-                : "") +
-              t("common.sentenceEnd"),
-          );
-        } catch (caught) {
-          setError(toMessage(caught, t("toast.addToCollectionFailed"), locale));
-        }
-      })();
-    },
-    [api, library, dragAssetFacts, setNotice, setError],
-  );
-
-  const handleAssetsDroppedOnTrash = useCallback(
-    (assetIds: string[]) => {
-      if (!api || !library) return;
-      const { assetIds: eligible, skippedCount } = resolveTrashDrop(
-        dragAssetFacts(assetIds),
-      );
-      if (eligible.length === 0) {
-        setNotice(t("toast.noTrashableAssets"));
-        return;
-      }
-      void (async () => {
-        await trashManagedAssets(eligible);
-        if (skippedCount > 0) {
-          setNotice(
-            t("toast.trashedWithSkipped", {
-              count: eligible.length,
-              skipped: skippedCount,
-            }),
-          );
-        }
-      })();
-    },
-    [api, library, dragAssetFacts, trashManagedAssets, setNotice],
-  );
-
   // --- Existing operations ---
 
   async function importAssets(kind: "files" | "folder") {
@@ -3789,7 +3595,7 @@ function AppInner() {
     } finally {
       setUiState("ready");
     }
-  }, [activeCollectionId, api, busy, library, setError, setNotice]);
+  }, [activeCollectionId, api, busy, library, locale, setError, setNotice, t]);
 
   function handleExternalDragEnter(event: React.DragEvent<HTMLElement>) {
     if (previewAsset) {
@@ -4395,7 +4201,7 @@ function AppInner() {
     } catch (caught) {
       setError(toMessage(caught, t("toast.cancelBatchRelinkFailed"), locale));
     }
-  }, [api, batchRelinkPreview, library, setError]);
+  }, [api, batchRelinkPreview, library, locale, setError, t]);
 
   // --- Export / Import operations ---
 
@@ -4611,7 +4417,7 @@ function AppInner() {
         }
       });
     });
-  }, [api, library, selectedAssetId, setError, setNotice]);
+  }, [api, library, locale, selectedAssetId, setError, setNotice, t]);
 
   useEffect(() => {
     if (!api) return;
@@ -4633,7 +4439,7 @@ function AppInner() {
         }
       }
     });
-  }, [api, setNotice]);
+  }, [api, setNotice, t]);
 
   useEffect(() => {
     if (
@@ -4760,7 +4566,9 @@ function AppInner() {
     library,
     linkedRulesEditor,
     convertLinkedDialog.folderId,
+    locale,
     setError,
+    t,
   ]);
 
   const dialogFocusTrapActive = Boolean(

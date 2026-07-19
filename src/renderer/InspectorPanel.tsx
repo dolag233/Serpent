@@ -143,12 +143,14 @@ function InspectorHeroSinglePreview({
   const t = useT();
   const previewSrc = resolveInspectorPreviewSrc(asset, library);
   const [decoded, setDecoded] = useState(false);
-  const [textSnippet, setTextSnippet] = useState<string | null>(null);
+  const [textSnippet, setTextSnippet] = useState<{
+    assetId: string;
+    content: string;
+  } | null>(null);
   const live = resolveLivePreviewMedia(Boolean(livePreview), livePreview);
 
   useEffect(() => {
     if (asset.mediaType !== "text" || !api || !library) {
-      setTextSnippet(null);
       return;
     }
     let cancelled = false;
@@ -160,11 +162,12 @@ function InspectorHeroSinglePreview({
       })
       .then((result) => {
         if (cancelled) return;
-        if (result.ok) setTextSnippet(result.value.content);
-        else setTextSnippet(null);
+        if (result.ok) {
+          setTextSnippet({ assetId: asset.assetId, content: result.value.content });
+        }
       })
       .catch(() => {
-        if (!cancelled) setTextSnippet(null);
+        // Best-effort; hero keeps loading copy until a successful read.
       });
     return () => {
       cancelled = true;
@@ -172,10 +175,12 @@ function InspectorHeroSinglePreview({
   }, [api, asset.assetId, asset.mediaType, library]);
 
   if (asset.mediaType === "text") {
+    const snippet =
+      textSnippet?.assetId === asset.assetId ? textSnippet.content : null;
     return (
       <div className="inspector-hero-preview inspector-hero-text-preview">
         <pre className="inspector-hero-text-snippet">
-          {textSnippet ?? t("preview.textLoading")}
+          {snippet ?? t("preview.textLoading")}
         </pre>
       </div>
     );
@@ -584,9 +589,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
   }, [
     api,
     library?.libraryId,
-    selectedAsset?.assetId,
-    selectedAsset?.mediaType,
-    selectedAsset?.displayName,
+    selectedAsset,
     selectionCount,
   ]);
 
