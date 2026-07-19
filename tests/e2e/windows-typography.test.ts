@@ -17,9 +17,13 @@ function contrastRatio(foreground: string, background: string): number {
         ? [...hex].map((channel) => `${channel}${channel}`)
         : [hex.slice(0, 2), hex.slice(2, 4), hex.slice(4, 6)]
       : undefined;
+    const srgbChannels = /^color\(srgb\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)/iu
+      .exec(color)
+      ?.slice(1, 4)
+      .map((channel) => Number(channel) * 255);
     const values = hexChannels
       ? hexChannels.map((channel) => Number.parseInt(channel, 16))
-      : color.match(/[\d.]+/gu)?.map(Number);
+      : srgbChannels ?? color.match(/[\d.]+/gu)?.map(Number);
     if (!values || values.length < 3) {
       throw new Error(`Unsupported computed color: ${color}`);
     }
@@ -51,9 +55,11 @@ async function readTypography(window: Page) {
       }
       const style = getComputedStyle(element);
       return {
+        backgroundColor: style.backgroundColor,
         color: style.color,
         family: style.fontFamily,
         size: style.fontSize,
+        weight: style.fontWeight,
         letterSpacing: style.letterSpacing,
       };
     };
@@ -65,12 +71,12 @@ async function readTypography(window: Page) {
       paneColor: rootStyle.getPropertyValue("--pane").trim(),
       raisedColor: rootStyle.getPropertyValue("--raised").trim(),
       textRendering: rootStyle.textRendering,
-      yaheiAvailable: document.fonts.check(
-        '12px "Microsoft YaHei UI"',
-        "当前资源库",
-      ),
+      badge: computed(".inspector-badge"),
+      identityTitleContainer: computed(".inspector-identity strong"),
+      identityTitle: computed(".inspector-identity-name"),
       microLabel: computed(".inspector-content .micro-label"),
       metadata: computed(".metadata-list dt"),
+      metadataCount: computed(".metadata-list dd.mono"),
       navHeading: computed(".nav-section-heading"),
       navCount: computed(".nav-count"),
       menuSection: computed(".library-switcher-section-label"),
@@ -78,7 +84,7 @@ async function readTypography(window: Page) {
   });
 }
 
-test("uses native Windows UI fonts and readable caption sizes", async (
+test("uses coherent Windows UI fonts and readable caption sizes", async (
   { browserName },
   testInfo,
 ) => {
@@ -124,10 +130,23 @@ test("uses native Windows UI fonts and readable caption sizes", async (
     expect(typography.platform).toBe("windows");
     expect(typography.theme).toBe("dark");
     expect(typography.rootFamily).toContain("Segoe UI Variable");
+    expect(typography.rootFamily).toContain("Noto Sans SC Variable");
+    expect(typography.rootFamily.indexOf("Segoe UI Variable")).toBeLessThan(
+      typography.rootFamily.indexOf("Noto Sans SC Variable"),
+    );
     expect(typography.rootFamily).toContain("Microsoft YaHei UI");
     expect(typography.textRendering).toBe("auto");
-    expect(typography.yaheiAvailable).toBe(true);
-    expect(typography.microLabel.family).toContain("Segoe UI Variable");
+    expect(typography.badge.family).toContain("Noto Sans SC Variable");
+    expect(typography.identityTitle.family).toContain("Noto Sans SC Variable");
+    expect(typography.identityTitleContainer.family).toContain(
+      "Segoe UI Variable",
+    );
+    expect(typography.microLabel.family).toContain("Noto Sans SC Variable");
+    expect(typography.metadataCount.family).toContain("Noto Sans SC Variable");
+    expect(typography.badge.size).toBe("13px");
+    expect(typography.badge.weight).toBe("500");
+    expect(typography.identityTitle.size).toBe("13px");
+    expect(typography.identityTitle.weight).toBe("560");
     expect(typography.microLabel.size).toBe("12px");
     expect(Number.parseFloat(typography.microLabel.letterSpacing)).toBeLessThanOrEqual(
       0.25,
@@ -139,6 +158,9 @@ test("uses native Windows UI fonts and readable caption sizes", async (
     expect(contrastRatio(typography.microLabel.color, typography.paneColor)).toBeGreaterThanOrEqual(
       4.5,
     );
+    expect(
+      contrastRatio(typography.badge.color, typography.badge.backgroundColor),
+    ).toBeGreaterThanOrEqual(4.5);
     expect(contrastRatio(typography.navHeading.color, typography.paneColor)).toBeGreaterThanOrEqual(
       4.5,
     );
@@ -146,13 +168,81 @@ test("uses native Windows UI fonts and readable caption sizes", async (
       4.5,
     );
 
+    const longNameFixture = await window.evaluate(() => {
+      const container = document.querySelector(".inspector-identity strong");
+      const name = document.querySelector(".inspector-identity-name");
+      if (!(container instanceof HTMLElement) || !(name instanceof HTMLElement)) {
+        throw new Error("Missing Inspector identity title fixture");
+      }
+      const originalName = name.textContent;
+      const originalHeight = container.clientHeight;
+      name.textContent = "设计资源库名称很长需要完整换行展示".repeat(3);
+      const result = {
+        clientWidth: container.clientWidth,
+        clientHeight: container.clientHeight,
+        originalHeight,
+        scrollWidth: container.scrollWidth,
+        textOverflow: getComputedStyle(container).textOverflow,
+        whiteSpace: getComputedStyle(container).whiteSpace,
+        containerFamily: getComputedStyle(container).fontFamily,
+        nameFamily: getComputedStyle(name).fontFamily,
+      };
+      name.textContent = originalName;
+      return result;
+    });
+    expect(longNameFixture.scrollWidth).toBeLessThanOrEqual(
+      longNameFixture.clientWidth + 1,
+    );
+    expect(longNameFixture.clientHeight).toBeGreaterThan(
+      longNameFixture.originalHeight,
+    );
+    expect(longNameFixture.textOverflow).toBe("clip");
+    expect(longNameFixture.whiteSpace).toBe("normal");
+    expect(longNameFixture.containerFamily).toContain("Segoe UI Variable");
+    expect(longNameFixture.nameFamily).toContain("Noto Sans SC Variable");
+
     const cdp = await window.context().newCDPSession(window);
     await cdp.send("DOM.enable");
     await cdp.send("CSS.enable");
     const { root } = await cdp.send("DOM.getDocument");
     for (const selector of [
       ".inspector-content .micro-label",
-      ".metadata-list dt",
+      ".inspector-badge",
+      ".inspector-identity-name",
+    ]) {
+      const { nodeId } = await cdp.send("DOM.querySelector", {
+        nodeId: root.nodeId,
+        selector,
+      });
+      const { fonts } = await cdp.send("CSS.getPlatformFontsForNode", {
+        nodeId,
+      });
+      expect(
+        fonts.some(
+          (font) =>
+            /Noto Sans SC/iu.test(font.familyName) && font.isCustomFont,
+        ),
+        `${selector} should resolve through the bundled Noto Sans SC variable font`,
+      ).toBe(true);
+    }
+    const { nodeIds: metadataNodeIds } = await cdp.send("DOM.querySelectorAll", {
+      nodeId: root.nodeId,
+      selector: ".metadata-list dt, .metadata-list dd",
+    });
+    expect(metadataNodeIds).toHaveLength(6);
+    for (const nodeId of metadataNodeIds) {
+      const { fonts } = await cdp.send("CSS.getPlatformFontsForNode", {
+        nodeId,
+      });
+      expect(
+        fonts.some(
+          (font) =>
+            /Noto Sans SC/iu.test(font.familyName) && font.isCustomFont,
+        ),
+        "every status/asset/folder label and value should use bundled Noto",
+      ).toBe(true);
+    }
+    for (const selector of [
       ".nav-section-heading",
       ".library-switcher-section-label",
     ]) {
@@ -165,7 +255,7 @@ test("uses native Windows UI fonts and readable caption sizes", async (
       });
       expect(
         fonts.some((font) => /Microsoft YaHei UI/iu.test(font.familyName)),
-        `${selector} should resolve Chinese glyphs through Microsoft YaHei UI`,
+        `${selector} should keep the native Windows UI fallback`,
       ).toBe(true);
     }
 
@@ -175,6 +265,16 @@ test("uses native Windows UI fonts and readable caption sizes", async (
     await window.screenshot({ path: darkScreenshotPath });
     await testInfo.attach("windows-inspector-typography-dark", {
       path: darkScreenshotPath,
+      contentType: "image/png",
+    });
+    const darkInspectorPath = testInfo.outputPath(
+      "windows-inspector-identity-dark.png",
+    );
+    await window.locator(".inspector-content").screenshot({
+      path: darkInspectorPath,
+    });
+    await testInfo.attach("windows-inspector-identity-dark", {
+      path: darkInspectorPath,
       contentType: "image/png",
     });
 
@@ -201,6 +301,12 @@ test("uses native Windows UI fonts and readable caption sizes", async (
       contrastRatio(lightTypography.microLabel.color, lightTypography.paneColor),
     ).toBeGreaterThanOrEqual(4.5);
     expect(
+      contrastRatio(
+        lightTypography.badge.color,
+        lightTypography.badge.backgroundColor,
+      ),
+    ).toBeGreaterThanOrEqual(4.5);
+    expect(
       contrastRatio(lightTypography.navHeading.color, lightTypography.paneColor),
     ).toBeGreaterThanOrEqual(4.5);
     expect(
@@ -213,6 +319,16 @@ test("uses native Windows UI fonts and readable caption sizes", async (
     await window.screenshot({ path: lightScreenshotPath });
     await testInfo.attach("windows-inspector-typography-light", {
       path: lightScreenshotPath,
+      contentType: "image/png",
+    });
+    const lightInspectorPath = testInfo.outputPath(
+      "windows-inspector-identity-light.png",
+    );
+    await window.locator(".inspector-content").screenshot({
+      path: lightInspectorPath,
+    });
+    await testInfo.attach("windows-inspector-identity-light", {
+      path: lightInspectorPath,
       contentType: "image/png",
     });
   } finally {

@@ -82,6 +82,11 @@
     "Noto Sans SC Variable",
     Arial,
     sans-serif;
+  --font-ui-unified:
+    "Noto Sans SC Variable",
+    "Microsoft YaHei UI",
+    "Microsoft YaHei",
+    sans-serif;
   text-rendering: auto;
 }
 
@@ -5205,6 +5210,48 @@ select.ai-config-input {
   /* IBM Plex Mono does not contain CJK glyphs. Keep the existing macOS label
      styling intact while avoiding an unrelated monospace fallback on Windows. */
   font-family: var(--font-ui);
+}
+
+:root[data-platform="windows"] :where(
+    .inspector-badge,
+    .inspector-identity,
+    .metadata-list
+  ) {
+  /* Identity/summary surfaces mix localized initials, headings and figures.
+     One bundled variable family keeps their glyphs and intermediate weights
+     coherent without moving Noto ahead of Segoe globally (which would regress
+     the U+2026 text-overflow baseline documented at the top of this file). */
+  font-family: var(--font-ui-unified);
+}
+
+:root[data-platform="windows"] .inspector-identity .micro-label {
+  font-family: var(--font-ui-unified);
+}
+
+:root[data-platform="windows"] :where(
+    .inspector-badge
+  ) {
+  color: var(--accent-soft-fg);
+  font-weight: 500;
+}
+
+:root[data-platform="windows"] .inspector-identity strong {
+  /* Keep long names readable to keyboard/touch users instead of exposing the
+     full value only through a pointer-only native title tooltip. */
+  overflow: visible;
+  font-family: var(--font-ui);
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+  white-space: normal;
+}
+
+:root[data-platform="windows"] .inspector-identity-name {
+  font-family: var(--font-ui-unified);
+}
+
+:root[data-platform="windows"] .metadata-list dd.mono {
+  font-family: var(--font-ui-unified);
+  font-variant-numeric: tabular-nums;
 }
 
 :root[data-platform="windows"] :where(

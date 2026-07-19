@@ -1310,12 +1310,16 @@ export function InspectorPanel(props: InspectorPanelProps) {
       ) : library ? (
         <div className="inspector-content">
           <div className="inspector-identity">
-            <div className="inspector-badge">
+            <div aria-hidden="true" className="inspector-badge">
               {initials(library.displayName)}
             </div>
             <div>
               <span className="micro-label">{t("inspector.currentLibrary")}</span>
-              <strong>{library.displayName}</strong>
+              <strong>
+                <span className="inspector-identity-name">
+                  {library.displayName}
+                </span>
+              </strong>
             </div>
           </div>
           <dl className="metadata-list">

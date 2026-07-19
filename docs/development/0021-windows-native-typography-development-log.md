@@ -1,6 +1,6 @@
 # 0021 Windows 原生字体与小字号可读性开发日志
 
-> 状态：implementation complete / mainline gates red
+> 状态：follow-up implementation complete / awaiting human re-acceptance
 > 开始时间：2026-07-19
 > 分支：`codex/windows-adaptation`
 > 基线：`5c18852`
@@ -9,6 +9,10 @@
 ## 用户反馈与复现
 
 用户提供的 Windows 截图显示 Inspector 当前资源库摘要中文字发虚且层级生硬。对应实现位于 `InspectorPanel.tsx` 的空选择资源库摘要；其 `.micro-label` 为 9.5px，`.metadata-list` 为 10px。全局字体栈又把打包的 `Noto Sans SC Variable` 放在 Windows 原生 `Microsoft YaHei` 之前。
+
+### 2026-07-19 首轮复验不通过
+
+用户截图确认字号/对比改善后字形仍怪。根因不是 DirectWrite 开关，而是同一身份摘要内继续混用三条路径：`.inspector-badge` 的 IBM Plex Mono 无 CJK、标题 560 在静态 YaHei UI 上跳到粗体、资产/文件夹数字的 `.mono`。首轮“YaHei actual font”自动化只能证明字体被选中，不能证明同一组件的字体系统一致；SHELL-023 当场改为人类验收不通过并重开 `Serpent-2lp`。
 
 ## 同步记录
 
@@ -32,6 +36,15 @@
 4. Windows 普通 UI 使用 `text-rendering: auto` 与 `font-optical-sizing: auto`，未加入 `font-smooth`、GPU 或 Skia 参数。
 5. E2E 在隔离 userData 中创建中文库，验证亮/暗主题、12px、字距、≥4.5:1 对比度、`document.fonts.check`，并用 CDP 证明四类中文节点实际由 Microsoft YaHei UI 渲染。
 
+## 复验修复
+
+1. 全局 Windows 字体栈继续 Segoe → YaHei UI → Noto，保住已有 U+2026 省略号基线。
+2. Inspector identity/metadata 使用独立 `--font-ui-unified`（bundled Noto Sans SC Variable）；徽标、标题正文、状态、资产、文件夹及数字统一 glyph family，500/560 使用真实可变字重。
+3. `.mono` DOM 语义保留给 macOS/其他平台，仅 Windows metadata 数字覆盖为统一 UI 字体 + tabular figures。
+4. 长资源库名在 Windows 完整换行，避免 Noto 生成省略号，也不依赖 pointer-only `title`；装饰性徽标 `aria-hidden`。
+5. 徽标使用 `--accent-soft-fg`，亮/暗实际背景对比度均由 E2E 守住 4.5:1。
+6. CDP 遍历全部 3 个 `dt` + 3 个 `dd`，不再只抽查「状态」和第一个数字。
+
 ## 已执行命令
 
 | 命令 | 结果 |
@@ -43,6 +56,7 @@
 | 定向 ESLint（4 个 TS/TSX 测试/实现文件） | 通过 |
 | `npx vitest run --config vitest.config.ts tests/unit/renderer-platform.test.ts` | 1 file / 4 tests 通过 |
 | `node scripts/run-e2e-isolated.mjs tests/e2e/windows-typography.test.ts` | 1 test 通过；Windows 亮/暗截图、CDP actual font、12px、字距和对比度断言均通过 |
+| 首轮不通过后的同一字体 E2E | 1/1 通过；新增 identity/metadata bundled Noto actual font、全部 6 个 metadata 节点、徽标对比、长名换行、亮暗局部截图 |
 | `npm run test:unit` | 当前主线红：112 files 中 110 通过、2 失败；996 tests 通过、4 跳过。失败为硬编码 macOS fixture 路径与既有 raw-hex token 测试 |
 | `npm run lint` | 当前主线红：7 errors + 1 warning，均位于既有 Audio/Video/Text/SmartCollection/use-dialog 文件；本切片定向 lint 通过 |
 | `npm run test:e2e:isolated` | 当前主线红：43 通过、3 跳过、18 失败；失败集中在同步后的导入/重命名/文件夹/恢复等既有旅程，字体专项通过 |

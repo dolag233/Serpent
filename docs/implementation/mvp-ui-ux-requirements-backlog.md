@@ -45,7 +45,7 @@
 | REQ-SHELL-009 | 移除装饰性冗余文案（如新建文件夹对话框中文环境下的英文「managed folder」行）；界面只保留功能性文字。 | 是 | 已实现（Wave 1 T1+T4，文件夹对话框整体移除）；待人类验收（SHELL-007） |
 | REQ-SHELL-010 | 右下角通知自动关闭时使用淡出过渡；核心界面状态变化逐步补充克制、统一的动效。 | 是 | 已实现淡出（Wave 1 T1，含状态机单测）；待人类验收（SHELL-008）；更多动效后续增量 |
 | REQ-NAV-005 | 目录树选中/悬停高亮只改变背景色，不使用边缘强调色描边或竖条。 | 是 | 已实现（Wave 1 T1）；待人类验收（NAV-004） |
-| REQ-SHELL-023 | Windows 使用平台原生 UI 字体栈（Segoe UI Variable + Microsoft YaHei UI），高频壳层中文正文不低于 12px Regular；不使用非标准抗锯齿 CSS 伪修复。 | 是 | 已实现，待人类验收：`Serpent-2lp` / [0021 规格](0021-windows-native-typography-vertical-slice.md) / [SHELL-023](../qa/human-acceptance-checklist.md) |
+| REQ-SHELL-023 | Windows 全局保留 Segoe UI + Microsoft YaHei UI 原生回退；混合中文/数字/自定义字重的身份摘要使用打包 Noto Sans SC Variable 统一字形。高频壳层中文不低于 12px，不使用非标准抗锯齿 CSS。 | 是 | 首轮人类验收不通过后已完成统一字体修复，待复验：`Serpent-2lp` / [0021 规格](0021-windows-native-typography-vertical-slice.md) / [SHELL-023](../qa/human-acceptance-checklist.md) |
 
 ### B. 资产画布与发现工具栏
 

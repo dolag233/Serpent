@@ -28,3 +28,11 @@
 ## 最终发现
 
 本切片范围内无未处理 P0–P2。保留项均为缺少平台证据，不得写为通过：macOS 视觉、Windows 125%/150% DPI、packaged 当前 HEAD。当前主线已有 lint/unit/E2E 红灯另记 QA，不由字体补丁掩盖。
+
+## 首轮人类验收不通过后的第二轮 2+4 审查
+
+- Standards 深审发现把 Noto 放到全局首位会复发 U+2026 基线问题、`.mono` 改名会泄漏 macOS；已改为 Windows Inspector 局部 token，并保留原 DOM `.mono`。
+- Standards 复审发现 Noto 标题仍会生成省略号、字体顺序断言可能误报、死 selector；标题改为完整换行，字体存在性单独断言，死 selector 删除。
+- Spec 深审要求文档反映“全局原生、Inspector 局部 Noto”，并验证全部状态/资产/文件夹节点；已补当前 HEAD E2E、当前截图和 6 节点 CDP 遍历。
+- Accessibility 广审发现徽标对比不足、长名只靠 pointer title、装饰 initials 重复朗读；已改 `--accent-soft-fg` + 4.5:1 断言、长名完整换行、`aria-hidden=true`。
+- Regression、CSS/platform、security/dead-code 广审未发现新增阻断；确认 Windows-only cascade、Noto 100–900 资源、E2E 临时 userData 与实际字体证据。
