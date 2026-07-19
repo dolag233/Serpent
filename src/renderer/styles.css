@@ -910,14 +910,14 @@ body.platform-darwin .toolbar-leading {
 }
 
 .library-switcher-item.is-danger {
-  color: color-mix(in srgb, #e11d48 78%, var(--text));
+  color: color-mix(in srgb, var(--danger) 78%, var(--text));
 }
 
 .library-switcher-item.is-danger:hover:not(:disabled),
 .library-switcher-menu.is-keyboard-navigation
   .library-switcher-item.is-danger:focus-visible:not(:disabled) {
-  background: color-mix(in srgb, #e11d48 14%, var(--hover));
-  color: #e11d48;
+  background: color-mix(in srgb, var(--danger) 14%, var(--hover));
+  color: var(--danger);
 }
 
 .library-switcher-recent-row {
@@ -1150,15 +1150,15 @@ body.platform-darwin .toolbar-leading {
 }
 
 .dimension-filter-btn.is-excluding:not(:disabled) {
-  border-color: color-mix(in srgb, #e11d48 55%, var(--divider));
-  background: color-mix(in srgb, #e11d48 16%, var(--canvas));
-  color: color-mix(in srgb, #e11d48 72%, var(--text));
+  border-color: color-mix(in srgb, var(--danger) 55%, var(--divider));
+  background: color-mix(in srgb, var(--danger) 16%, var(--canvas));
+  color: color-mix(in srgb, var(--danger) 72%, var(--text));
 }
 
 .dimension-filter-btn.is-excluding.is-active:not(:disabled) {
-  border-color: #e11d48;
-  background: color-mix(in srgb, #e11d48 22%, var(--canvas));
-  color: #e11d48;
+  border-color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 22%, var(--canvas));
+  color: var(--danger);
 }
 
 .dimension-color-swatch {
@@ -3450,7 +3450,7 @@ select.ai-config-input.ai-config-languages {
 
 .asset-inline-rename-error {
   flex: 1 0 100%;
-  color: var(--danger, #c44);
+  color: var(--danger);
   font-size: 10px;
 }
 
