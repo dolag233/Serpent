@@ -93,8 +93,10 @@
   --danger: #dc2626;
   --danger-muted: #fde8e8;
   --danger-soft: #f87171;
-  --warning-fg: #b45309;
-  --warning-muted: #c4a484;
+  /* Serpent-k9g: soft amber warning family (one hue for icon+text). */
+  --warning: #c2410c;
+  --warning-fg: #9a3412;
+  --warning-muted: #ffedd5;
   --ink: #0f1010;
   --viewer-stage: #e8eae7;
   --border: var(--divider);
@@ -118,7 +120,17 @@
 }
 [data-theme="light"] .toast > :first-child,
 [data-theme="light"] .toast .icon {
-  color: var(--accent-soft-fg);
+  color: var(--secondary);
+}
+[data-theme="light"] .toast.is-error {
+  background: var(--warning-muted);
+  color: var(--warning-fg);
+  border: 1px solid color-mix(in srgb, var(--warning) 28%, transparent);
+}
+[data-theme="light"] .toast.is-error > :first-child,
+[data-theme="light"] .toast.is-error .icon,
+[data-theme="light"] .toast.is-error button {
+  color: var(--warning-fg);
 }
 [data-theme="light"] .context-menu {
   box-shadow:
@@ -445,9 +457,10 @@ body.platform-darwin .toolbar-leading {
   cursor: pointer;
 }
 
-/* Serpent-01i: hover is a weak wash; enabled/open keep accent-soft identity. */
+/* Serpent-01i: idle hover = neutral wash only; enabled/open = accent-soft. */
 .dimension-filter-btn:hover:not(:disabled):not(.is-active):not(.is-open) {
   background: var(--hover);
+  border-color: var(--divider);
   color: var(--text);
 }
 
@@ -460,8 +473,10 @@ body.platform-darwin .toolbar-leading {
 
 .dimension-filter-btn.is-active:hover:not(:disabled),
 .dimension-filter-btn.is-open:hover:not(:disabled) {
-  border-color: color-mix(in srgb, var(--accent) 70%, var(--divider));
-  background: color-mix(in srgb, var(--accent-soft) 85%, var(--hover));
+  /* Keep enabled identity; do not collapse into idle hover. */
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--divider));
+  background: var(--accent-soft);
+  color: var(--accent-soft-fg);
 }
 
 .dimension-filter-btn:disabled {
@@ -1086,10 +1101,10 @@ body.platform-darwin .toolbar-leading {
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ink) 18%, transparent);
 }
 
-/* Serpent-aj6: thinner selection ring, no scale, more row gap (above). */
+/* Serpent-aj6: modest selection ring (retest: slightly thicker), no scale. */
 .dimension-color-swatch.is-active:not(:disabled) {
   border-color: transparent;
-  outline: 1px solid var(--accent);
+  outline: 2px solid var(--accent);
   outline-offset: 1px;
   transform: none;
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--canvas) 80%, transparent);
@@ -2499,10 +2514,10 @@ input[type="range"] {
   position: relative;
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: stretch;
   justify-content: center;
   gap: 16px;
-  width: min(720px, 92%);
+  width: min(1100px, 96%);
   height: 100%;
   min-width: 0;
   min-height: 0;
@@ -2515,12 +2530,11 @@ input[type="range"] {
   opacity: 0;
   pointer-events: none;
 }
-/* Serpent-vlx: show full 4:3 waveform (contain); shell uses theme --pane.
-   Playhead + FL-style trail sit over the letterboxed image width. */
+/* Serpent-vlx: wide strip fills the shell (not 4:3 grid cover / contain letterbox). */
 .preview-audio-waveform-shell {
   position: relative;
   width: 100%;
-  height: min(220px, 40vh);
+  height: min(240px, 42vh);
   flex: 0 0 auto;
   border: 1px solid var(--divider);
   border-radius: 8px;
@@ -2538,7 +2552,7 @@ input[type="range"] {
   display: block;
   width: 100%;
   height: 100%;
-  object-fit: contain;
+  object-fit: fill;
   object-position: center;
   pointer-events: none;
   user-select: none;
@@ -2549,14 +2563,17 @@ input[type="range"] {
     var(--pane);
 }
 .preview-audio-playhead {
+  --playhead-trail-width: 28px;
   position: absolute;
   top: 8%;
   bottom: 8%;
   width: 2px;
   background: var(--accent);
   box-shadow:
-    -18px 0 22px 0 color-mix(in srgb, var(--accent) 55%, transparent),
-    -6px 0 10px 0 color-mix(in srgb, var(--accent) 40%, transparent),
+    calc(var(--playhead-trail-width) * -0.65) 0 22px 0
+      color-mix(in srgb, var(--accent) 55%, transparent),
+    calc(var(--playhead-trail-width) * -0.22) 0 10px 0
+      color-mix(in srgb, var(--accent) 40%, transparent),
     0 0 0 1px color-mix(in srgb, var(--pane) 55%, transparent);
   transform: translateX(-50%);
   pointer-events: none;
@@ -2568,7 +2585,7 @@ input[type="range"] {
   top: 0;
   bottom: 0;
   right: 0;
-  width: 28px;
+  width: var(--playhead-trail-width);
   background: linear-gradient(
     to left,
     color-mix(in srgb, var(--accent) 45%, transparent),
@@ -2579,7 +2596,8 @@ input[type="range"] {
 .preview-audio-controls {
   position: relative;
   width: 100%;
-  max-width: 560px;
+  max-width: none;
+  align-self: stretch;
 }
 .preview-text-stage {
   display: flex;

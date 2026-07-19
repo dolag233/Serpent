@@ -1,12 +1,15 @@
-import { useCallback, useEffect, useRef, useState, type SyntheticEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type SyntheticEvent,
+} from "react";
 
+import { playheadTrailWidthPx } from "../shared/audio-media";
 import {
-  AUDIO_WAVEFORM_COVER_HEIGHT,
-  AUDIO_WAVEFORM_COVER_WIDTH,
-} from "../shared/audio-media";
-import {
-  containContentBox,
-  playheadLeftPercentInContainBox,
+  playheadLeftPercent,
   playheadRatioFromTime,
   seekRatioFromWaveformClientX,
 } from "./audio-waveform-timeline";
@@ -27,17 +30,16 @@ export interface AudioPlayerControlsProps {
   onError(event: SyntheticEvent<HTMLAudioElement>): void;
   onReady?(): void;
   src: string;
-  /** Waveform overview image (thumbnail artifact), optional until ready. */
+  /** Wide viewer waveform strip (audio `video_poster`), optional until ready. */
   waveformUrl?: string;
 }
 
 const SCRUB_STEP_SECONDS = 5;
 
 /**
- * Viewer chrome for audio (Serpent-0x5 / 13v / muc / vlx):
- * theme-backed shell + object-fit:contain so the full 4:3 waveform is visible;
- * playhead/scrub map through the contain content box; FL-style trail via CSS.
- * Seek/scrub uses `createMediaSeekSession` (Serpent-jh2).
+ * Viewer chrome for audio (Serpent-0x5 / 13v / vlx):
+ * full-bleed wide waveform strip (not the 4:3 grid cover); playhead % of shell
+ * width; trail length scales with playbackRate.
  */
 export function AudioPlayerControls({
   onError,
@@ -64,6 +66,7 @@ export function AudioPlayerControls({
   const [duration, setDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
   const [scrubRatio, setScrubRatio] = useState<number | null>(null);
+  const [playbackRate, setPlaybackRate] = useState(1);
 
   const togglePlayback = useCallback(() => {
     const audio = audioRef.current;
@@ -114,15 +117,9 @@ export function AudioPlayerControls({
     const waveform = waveformRef.current;
     if (!waveform) return 0;
     const rect = waveform.getBoundingClientRect();
-    const box = containContentBox(
-      rect.width,
-      rect.height,
-      AUDIO_WAVEFORM_COVER_WIDTH,
-      AUDIO_WAVEFORM_COVER_HEIGHT,
-    );
     return seekRatioFromWaveformClientX(clientX, {
-      left: rect.left + box.left,
-      width: box.width,
+      left: rect.left,
+      width: rect.width,
     });
   }, []);
 
@@ -130,19 +127,10 @@ export function AudioPlayerControls({
     scrubRatio ?? scrubRatioFromTime(currentTime, duration);
   const displayTime =
     scrubRatio !== null ? scrubTimeFromRatio(scrubRatio, duration) : currentTime;
-  const shellWidth = waveformRef.current?.clientWidth ?? 0;
-  const shellHeight = waveformRef.current?.clientHeight ?? 0;
-  const containBox = containContentBox(
-    shellWidth,
-    shellHeight,
-    AUDIO_WAVEFORM_COVER_WIDTH,
-    AUDIO_WAVEFORM_COVER_HEIGHT,
-  );
-  const playheadPercent = playheadLeftPercentInContainBox(
+  const playheadPercent = playheadLeftPercent(
     scrubRatio ?? playheadRatioFromTime(currentTime, duration),
-    shellWidth,
-    containBox,
   );
+  const trailWidthPx = playheadTrailWidthPx(playbackRate);
 
   const applyKeySeek = (nextTime: number) => {
     seekSessionRef.current.commit(nextTime);
@@ -220,7 +208,12 @@ export function AudioPlayerControls({
         <div
           aria-hidden="true"
           className="preview-audio-playhead"
-          style={{ left: `${playheadPercent}%` }}
+          style={
+            {
+              left: `${playheadPercent}%`,
+              "--playhead-trail-width": `${trailWidthPx}px`,
+            } as CSSProperties
+          }
         />
       </div>
       <audio
@@ -233,10 +226,14 @@ export function AudioPlayerControls({
         onError={onError}
         onLoadedMetadata={(event) => {
           setDuration(event.currentTarget.duration || 0);
+          setPlaybackRate(event.currentTarget.playbackRate || 1);
           onReady?.();
         }}
         onPause={() => setPaused(true)}
         onPlay={() => setPaused(false)}
+        onRateChange={(event) =>
+          setPlaybackRate(event.currentTarget.playbackRate || 1)
+        }
         onSeeked={() => {
           seekSessionRef.current.onSeeked();
           if (

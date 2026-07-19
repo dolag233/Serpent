@@ -221,6 +221,8 @@ import {
   AUDIO_WAVEFORM_COVER_HEIGHT,
   AUDIO_WAVEFORM_COVER_STROKE,
   AUDIO_WAVEFORM_COVER_WIDTH,
+  AUDIO_WAVEFORM_VIEWER_HEIGHT,
+  AUDIO_WAVEFORM_VIEWER_WIDTH,
   audioMimeForExtension,
   isAudioFileName,
 } from '../shared/audio-media';
@@ -7479,7 +7481,8 @@ export class LibraryService {
     const artifactKinds = mediaType === 'video'
       ? ['extracted_metadata', 'video_poster']
       : mediaType === 'audio'
-        ? ['extracted_metadata', 'thumbnail']
+        // thumbnail = 4:3 grid cover; video_poster = wide viewer strip (Serpent-vlx)
+        ? ['extracted_metadata', 'thumbnail', 'video_poster']
       : isGifAsset
         ? ['thumbnail', 'extracted_metadata']
         : ['thumbnail'];
@@ -7782,11 +7785,48 @@ export class LibraryService {
 
     let waveformArtifactId: string | null = null;
     try {
-      waveformArtifactId = await this.generateAudioWaveformThumbnail(
-        input, openLibrary, assetPath, revisionId, ffmpegPath, artifactsDir, execution,
+      waveformArtifactId = await this.generateAudioWaveformPng(
+        input,
+        openLibrary,
+        assetPath,
+        revisionId,
+        ffmpegPath,
+        artifactsDir,
+        execution,
+        {
+          kind: 'thumbnail',
+          width: AUDIO_WAVEFORM_COVER_WIDTH,
+          height: AUDIO_WAVEFORM_COVER_HEIGHT,
+          flattenBackground: { ...AUDIO_WAVEFORM_COVER_BACKGROUND },
+        },
       );
     } catch (error) {
       this.diagnose('audio-waveform', error, { libraryId: input.libraryId, assetId: input.assetId });
+    }
+
+    try {
+      await this.generateAudioWaveformPng(
+        input,
+        openLibrary,
+        assetPath,
+        revisionId,
+        ffmpegPath,
+        artifactsDir,
+        execution,
+        {
+          kind: 'video_poster',
+          width: AUDIO_WAVEFORM_VIEWER_WIDTH,
+          height: AUDIO_WAVEFORM_VIEWER_HEIGHT,
+          // Viewer shell paints theme --pane; flatten to near-black so fill
+          // stretch does not flash a light letterbox fringe.
+          flattenBackground: { r: 0x1a, g: 0x1c, b: 0x1f },
+        },
+      );
+    } catch (error) {
+      this.diagnose('audio-waveform-viewer', error, {
+        libraryId: input.libraryId,
+        assetId: input.assetId,
+      });
     }
 
     if (!waveformArtifactId) {
@@ -7805,8 +7845,11 @@ export class LibraryService {
     return { artifactId: waveformArtifactId };
   }
 
-  /** Render a mono waveform overview PNG for card/Inspector cover. */
-  private async generateAudioWaveformThumbnail(
+  /**
+   * Render a mono waveform PNG for grid cover (`thumbnail`) or viewer strip
+   * (`video_poster` for audio — Serpent-vlx).
+   */
+  private async generateAudioWaveformPng(
     input: { libraryId: string; assetId: string },
     openLibrary: OpenLibrary,
     assetPath: string,
@@ -7814,6 +7857,12 @@ export class LibraryService {
     ffmpegPath: string,
     artifactsDir: string,
     execution: MediaExecutionContext,
+    options: {
+      kind: 'thumbnail' | 'video_poster';
+      width: number;
+      height: number;
+      flattenBackground: { r: number; g: number; b: number };
+    },
   ): Promise<string> {
     const artifactId = randomUUID();
     const artifactRelPath = `${artifactId}.png`;
@@ -7825,7 +7874,7 @@ export class LibraryService {
         '-y',
         '-i', assetPath,
         '-filter_complex',
-        `aformat=channel_layouts=mono,compand,showwavespic=s=${AUDIO_WAVEFORM_COVER_WIDTH}x${AUDIO_WAVEFORM_COVER_HEIGHT}:colors=${AUDIO_WAVEFORM_COVER_STROKE}:scale=sqrt`,
+        `aformat=channel_layouts=mono,compand,showwavespic=s=${options.width}x${options.height}:colors=${AUDIO_WAVEFORM_COVER_STROKE}:scale=sqrt`,
         '-frames:v', '1',
         '-update', '1',
         tempAbsPath,
@@ -7837,12 +7886,9 @@ export class LibraryService {
         );
       }
 
-      // showwavespic defaults to a transparent canvas with a 1px stroke. Flatten
-      // onto a raised/pane opaque stage (not light `--canvas`) so grid/Inspector
-      // covers read as a card media area (Serpent-dxk / Serpent-muc).
       const sharp = this.options.sharpFn ?? requireSharp();
       const flatten = sharp(tempAbsPath).flatten?.({
-        background: { ...AUDIO_WAVEFORM_COVER_BACKGROUND },
+        background: { ...options.flattenBackground },
       });
       if (!flatten?.png || !flatten.toFile) {
         throw new Error('Sharp flatten/png API unavailable for waveform covers.');
@@ -7856,15 +7902,16 @@ export class LibraryService {
           `INSERT INTO revision_artifacts
              (artifact_id, revision_id, kind, mime_type, byte_size, file_path,
               width, height, generator_version, status, generated_at)
-           VALUES (?, ?, 'thumbnail', 'image/png', ?, ?, ?, ?, ?, 'ready', ?)`,
+           VALUES (?, ?, ?, 'image/png', ?, ?, ?, ?, ?, 'ready', ?)`,
         )
         .run(
           artifactId,
           revisionId,
+          options.kind,
           outputStat.size,
           artifactRelPath,
-          AUDIO_WAVEFORM_COVER_WIDTH,
-          AUDIO_WAVEFORM_COVER_HEIGHT,
+          options.width,
+          options.height,
           AUDIO_WAVEFORM_GENERATOR,
           new Date().toISOString(),
         );
@@ -7877,7 +7924,7 @@ export class LibraryService {
         openLibrary,
         artifactId,
         revisionId,
-        'thumbnail',
+        options.kind,
         'image/png',
         artifactRelPath,
         AUDIO_WAVEFORM_GENERATOR,
@@ -8743,10 +8790,13 @@ export class LibraryService {
       '.opus': 'audio/ogg',
     };
     const nativeMimeType = nativeMimeTypes[extension];
+    // Audio: viewer uses wide `video_poster` strip; fall back to 4:3 thumbnail
+    // until cover6 regeneration lands (Serpent-vlx).
     const poster = mediaType === 'video'
       ? this.getCurrentArtifact(libraryId, assetId, 'video_poster')
       : mediaType === 'audio'
-        ? this.getCurrentArtifact(libraryId, assetId, 'thumbnail')
+        ? (this.getCurrentArtifact(libraryId, assetId, 'video_poster')
+          ?? this.getCurrentArtifact(libraryId, assetId, 'thumbnail'))
       : null;
     const posterArtifactId = poster?.status === 'ready' ? poster.artifactId : undefined;
     const artifact = this.getCurrentArtifact(libraryId, assetId, kind);
@@ -9181,16 +9231,18 @@ export class LibraryService {
             )`,
       )
       .run(nowInvalidate);
-    // Serpent-dxk: requeue audio covers that are not the current ≈4:3 light-stage
-    // generator (covers pre-cover3 dark strips / wrong aspect / transparent).
+    // Serpent-dxk / vlx: requeue stale audio covers + missing/stale viewer strips.
     const audioExtensionSql = AUDIO_EXTENSION_NAMES
       .map(() => 'LOWER(a.relative_file_path) LIKE ?')
       .join(' OR ');
+    const audioExtensionParams = AUDIO_EXTENSION_NAMES.map(
+      (extension) => `%.${extension}`,
+    );
     openLibrary.connection
       .prepare(
         `UPDATE revision_artifacts
             SET invalidated_at = ?
-          WHERE kind = 'thumbnail'
+          WHERE kind IN ('thumbnail', 'video_poster')
             AND status = 'ready'
             AND invalidated_at IS NULL
             AND generator_version NOT LIKE ?
@@ -9204,8 +9256,31 @@ export class LibraryService {
       .run(
         nowInvalidate,
         `%${AUDIO_WAVEFORM_COVER_GENERATOR_TAG}%`,
-        ...AUDIO_EXTENSION_NAMES.map((extension) => `%.${extension}`),
+        ...audioExtensionParams,
       );
+    // Thumbnail ready but no viewer strip yet → invalidate thumb so both regenerate.
+    openLibrary.connection
+      .prepare(
+        `UPDATE revision_artifacts
+            SET invalidated_at = ?
+          WHERE kind = 'thumbnail'
+            AND status = 'ready'
+            AND invalidated_at IS NULL
+            AND revision_id IN (
+              SELECT a.current_revision_id FROM assets a
+               WHERE a.deleted_at IS NULL
+                 AND a.current_revision_id IS NOT NULL
+                 AND (${audioExtensionSql})
+                 AND NOT EXISTS (
+                   SELECT 1 FROM revision_artifacts poster
+                    WHERE poster.revision_id = a.current_revision_id
+                      AND poster.kind = 'video_poster'
+                      AND poster.status = 'ready'
+                      AND poster.invalidated_at IS NULL
+                 )
+            )`,
+      )
+      .run(nowInvalidate, ...audioExtensionParams);
     // CU-D8: GIFs with a ready thumb but no duration/frame metadata requeue once.
     openLibrary.connection
       .prepare(

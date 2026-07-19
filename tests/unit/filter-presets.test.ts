@@ -7,6 +7,7 @@ import {
   aspectRatioPresetRange,
   rangesEqual,
   togglePresetRange,
+  togglePresetRanges,
 } from '../../src/renderer/filter-presets';
 
 describe('aspect ratio presets (REQ-FILTER-009)', () => {
@@ -57,5 +58,15 @@ describe('preset toggle helpers', () => {
     expect(togglePresetRange(preset, preset)).toEqual({ min: '', max: '' });
     // A custom range is replaced, not cleared.
     expect(togglePresetRange({ min: '2', max: '' }, preset)).toEqual(preset);
+  });
+
+  it('togglePresetRanges supports Shift OR multi-select (Serpent-gp4)', () => {
+    const a = { min: '1.05', max: '' };
+    const b = { min: '', max: '0.95' };
+    expect(togglePresetRanges([], a, false)).toEqual([a]);
+    expect(togglePresetRanges([a], a, false)).toEqual([]);
+    expect(togglePresetRanges([a], b, true)).toEqual([a, b]);
+    expect(togglePresetRanges([a, b], a, true)).toEqual([b]);
+    expect(togglePresetRanges([a, b], a, false)).toEqual([a]);
   });
 });

@@ -15,6 +15,8 @@ import {
   RESOLUTION_PRESETS,
   aspectRatioPresetRange,
   togglePresetRange,
+  togglePresetRanges,
+  type RangeStrings,
 } from "./filter-presets";
 import {
   applyDimensionSelectionClick,
@@ -100,6 +102,9 @@ export type DimensionFilterBarProps = {
   setExcludeAvailabilityFilter: (value: boolean) => void;
   aspectRatioRange: RangeState;
   setAspectRatioRange: Dispatch<SetStateAction<RangeState>>;
+  /** Selected shape/aspect ranges (OR). Empty → use aspectRatioRange alone. */
+  aspectRatioRanges: readonly RangeStrings[];
+  setAspectRatioRanges: Dispatch<SetStateAction<RangeStrings[]>>;
   longEdgeRange: RangeState;
   setLongEdgeRange: Dispatch<SetStateAction<RangeState>>;
   widthRange: RangeState;
@@ -180,6 +185,8 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
     setExcludeAvailabilityFilter,
     aspectRatioRange,
     setAspectRatioRange,
+    aspectRatioRanges,
+    setAspectRatioRanges,
     longEdgeRange,
     setLongEdgeRange,
     widthRange,
@@ -296,7 +303,12 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
   const tagsToggleRef = useRef(
     new DimensionEnableToggle<{ names: string[]; exclude: boolean }>(),
   );
-  const shapeToggleRef = useRef(new DimensionEnableToggle<RangeState>());
+  const shapeToggleRef = useRef(
+    new DimensionEnableToggle<{
+      range: RangeState;
+      presets: RangeStrings[];
+    }>(),
+  );
   const ratingToggleRef = useRef(
     new DimensionEnableToggle<{ ratingFilter: string; exclude: boolean }>(),
   );
@@ -330,7 +342,32 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
   const tagActive = selectedTagNames.length > 0;
   const colorActive = selectedColors.size > 0;
   const shapeActive =
-    aspectRatioRange.min !== "" || aspectRatioRange.max !== "";
+    aspectRatioRanges.length > 0 ||
+    aspectRatioRange.min !== "" ||
+    aspectRatioRange.max !== "";
+  const shapeSelectedRanges: RangeStrings[] =
+    aspectRatioRanges.length > 0
+      ? [...aspectRatioRanges]
+      : aspectRatioRange.min || aspectRatioRange.max
+        ? [{ min: aspectRatioRange.min, max: aspectRatioRange.max }]
+        : [];
+  const applyShapePreset = (range: RangeStrings, shiftKey: boolean) => {
+    const next = togglePresetRanges(shapeSelectedRanges, range, shiftKey);
+    setAspectRatioRanges(next);
+    if (next.length === 1) {
+      setAspectRatioRange((current) => ({
+        ...current,
+        min: next[0]!.min,
+        max: next[0]!.max,
+      }));
+    } else {
+      setAspectRatioRange((current) => ({
+        ...current,
+        min: "",
+        max: "",
+      }));
+    }
+  };
   const ratingActive = selectedRatings.size > 0;
   const formatActive = formatFilter.trim() !== "";
   const moreActive =
@@ -404,9 +441,12 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
   const handleShapeDimensionClick = () => {
     shapeToggleRef.current.toggle(
       shapeActive,
-      aspectRatioRange,
-      EMPTY_RANGE,
-      setAspectRatioRange,
+      { range: aspectRatioRange, presets: [...aspectRatioRanges] },
+      { range: EMPTY_RANGE, presets: [] },
+      (value) => {
+        setAspectRatioRange(value.range);
+        setAspectRatioRanges(value.presets);
+      },
     );
   };
 
@@ -563,15 +603,9 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
           {openDimension === "shape" && (
             <div className="dimension-filter-popover">
               <FilterPresetChips
-                current={aspectRatioRange}
                 disabled={disabled}
                 label={t("filter.orientation")}
-                onToggle={(range) =>
-                  setAspectRatioRange((current) => ({
-                    ...current,
-                    ...togglePresetRange(current, range),
-                  }))
-                }
+                onToggle={applyShapePreset}
                 presets={ORIENTATION_PRESETS.map((preset) => ({
                   label:
                     preset.id === "landscape"
@@ -579,28 +613,34 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
                       : t("filter.portrait"),
                   range: preset.range,
                 }))}
+                selected={shapeSelectedRanges}
               />
               <FilterPresetChips
-                current={aspectRatioRange}
                 disabled={disabled}
                 label={t("filter.aspectRatioPresets")}
-                onToggle={(range) =>
-                  setAspectRatioRange((current) => ({
-                    ...current,
-                    ...togglePresetRange(current, range),
-                  }))
-                }
+                onToggle={applyShapePreset}
                 presets={ASPECT_RATIO_PRESETS.map((preset) => ({
                   label: preset.label,
                   range: aspectRatioPresetRange(preset),
                 }))}
+                selected={shapeSelectedRanges}
               />
               <TechnicalRangeFilter
                 label={t("filter.aspectRatio")}
                 range={aspectRatioRange}
-                setRange={setAspectRatioRange}
+                setRange={(next) => {
+                  setAspectRatioRange(next);
+                  const resolved =
+                    typeof next === "function" ? next(aspectRatioRange) : next;
+                  setAspectRatioRanges(
+                    resolved.min || resolved.max
+                      ? [{ min: resolved.min, max: resolved.max }]
+                      : [],
+                  );
+                }}
                 step="0.01"
               />
+              <p className="dimension-filter-hint">{t("filter.shiftMultiSelectHint")}</p>
             </div>
           )}
         </div>
@@ -782,16 +822,58 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
                 {t("filter.exclude")}
               </label>
               <FilterPresetChips
-                current={longEdgeRange}
                 disabled={disabled}
                 label={t("filter.resolutionPresets")}
-                onToggle={(range) =>
+                onToggle={(range, shiftKey) => {
+                  if (shiftKey) {
+                    const seed =
+                      longEdgeRange.min || longEdgeRange.max
+                        ? [
+                            {
+                              min: longEdgeRange.min,
+                              max: longEdgeRange.max,
+                            },
+                          ]
+                        : [];
+                    const next = togglePresetRanges(seed, range, true);
+                    if (next.length === 1) {
+                      setLongEdgeRange((current) => ({
+                        ...current,
+                        min: next[0]!.min,
+                        max: next[0]!.max,
+                      }));
+                    } else if (next.length === 0) {
+                      setLongEdgeRange((current) => ({
+                        ...current,
+                        min: "",
+                        max: "",
+                      }));
+                    } else {
+                      // Resolution still uses a single range in App state;
+                      // Shift multi falls back to replace for long-edge.
+                      setLongEdgeRange((current) => ({
+                        ...current,
+                        ...range,
+                      }));
+                    }
+                    return;
+                  }
                   setLongEdgeRange((current) => ({
                     ...current,
                     ...togglePresetRange(current, range),
-                  }))
-                }
+                  }));
+                }}
                 presets={RESOLUTION_PRESETS}
+                selected={
+                  longEdgeRange.min || longEdgeRange.max
+                    ? [
+                        {
+                          min: longEdgeRange.min,
+                          max: longEdgeRange.max,
+                        },
+                      ]
+                    : []
+                }
               />
               <TechnicalRangeFilter
                 label={t("filter.longEdgePx")}

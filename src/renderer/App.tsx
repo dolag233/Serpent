@@ -605,6 +605,10 @@ function AppInner() {
     max: "",
     exclude: false,
   });
+  /** Shape/aspect preset OR ranges (Serpent-gp4). */
+  const [aspectRatioRanges, setAspectRatioRanges] = useState<
+    Array<{ min: string; max: string }>
+  >([]);
   // REQ-FILTER-010: resolution buckets filter on the longer edge (long_edge).
   const [longEdgeRange, setLongEdgeRange] = useState({
     min: "",
@@ -882,6 +886,7 @@ function AppInner() {
       widthRange,
       heightRange,
       aspectRatioRange,
+      aspectRatioRanges,
       longEdgeRange,
       durationRange,
     };
@@ -914,6 +919,7 @@ function AppInner() {
     widthRange,
     heightRange,
     aspectRatioRange,
+    aspectRatioRanges,
     longEdgeRange,
     durationRange,
   ]);
@@ -1875,6 +1881,7 @@ function AppInner() {
     setWidthRange({ min: "", max: "", exclude: false });
     setHeightRange({ min: "", max: "", exclude: false });
     setAspectRatioRange({ min: "", max: "", exclude: false });
+    setAspectRatioRanges([]);
     setDurationRange({ min: "", max: "", exclude: false });
     setLongEdgeRange({ min: "", max: "", exclude: false });
     setSortField("name");
@@ -1898,6 +1905,7 @@ function AppInner() {
     setWidthRange({ min: "", max: "", exclude: false });
     setHeightRange({ min: "", max: "", exclude: false });
     setAspectRatioRange({ min: "", max: "", exclude: false });
+    setAspectRatioRanges([]);
     setDurationRange({ min: "", max: "", exclude: false });
     setLongEdgeRange({ min: "", max: "", exclude: false });
   }
@@ -1936,6 +1944,7 @@ function AppInner() {
         return;
       case "aspect_ratio":
         setAspectRatioRange({ min: "", max: "", exclude: false });
+        setAspectRatioRanges([]);
         return;
       case "long_edge":
         setLongEdgeRange({ min: "", max: "", exclude: false });
@@ -2653,10 +2662,25 @@ function AppInner() {
     }> = [
       { field: "width", input: widthRange },
       { field: "height", input: heightRange },
-      { field: "aspect_ratio", input: aspectRatioRange, integer: false },
       { field: "long_edge", input: longEdgeRange },
       { field: "duration_ms", input: durationRange, scale: 1_000 },
     ];
+    const aspectInputs =
+      aspectRatioRanges.length > 0
+        ? aspectRatioRanges
+        : aspectRatioRange.min || aspectRatioRange.max
+          ? [{ min: aspectRatioRange.min, max: aspectRatioRange.max }]
+          : [];
+    const aspectParsed = aspectInputs
+      .map((input) => parseNumericRange(input.min, input.max, 1, false))
+      .filter((range): range is NonNullable<typeof range> => range !== null);
+    if (aspectParsed.length > 0) {
+      filters.push({
+        field: "aspect_ratio",
+        ranges: aspectParsed,
+        exclude: aspectRatioRange.exclude,
+      });
+    }
     for (const { field, input, scale = 1, integer = true } of technicalRanges) {
       const range = parseNumericRange(input.min, input.max, scale, integer);
       if (range)
@@ -3034,6 +3058,7 @@ function AppInner() {
       heightRange.max ||
       aspectRatioRange.min ||
       aspectRatioRange.max ||
+      aspectRatioRanges.length > 0 ||
       durationRange.min ||
       durationRange.max ||
       longEdgeRange.min ||
@@ -3078,6 +3103,7 @@ function AppInner() {
     widthRange,
     heightRange,
     aspectRatioRange,
+    aspectRatioRanges,
     durationRange,
     longEdgeRange,
     sortField,
@@ -5544,6 +5570,7 @@ function AppInner() {
           <DimensionFilterBar
             availabilityFilter={availabilityFilter}
             aspectRatioRange={aspectRatioRange}
+            aspectRatioRanges={aspectRatioRanges}
             colorFilter={colorFilter}
             disabled={!library}
             durationRange={durationRange}
@@ -5567,6 +5594,7 @@ function AppInner() {
             }}
             ratingFilter={ratingFilter}
             setAspectRatioRange={setAspectRatioRange}
+            setAspectRatioRanges={setAspectRatioRanges}
             setAvailabilityFilter={setAvailabilityFilter}
             setColorFilter={setColorFilter}
             setDurationRange={setDurationRange}
@@ -5601,6 +5629,7 @@ function AppInner() {
               widthRange,
               heightRange,
               aspectRatioRange,
+              aspectRatioRanges,
               longEdgeRange,
               durationRange,
             }}

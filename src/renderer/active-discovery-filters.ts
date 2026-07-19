@@ -26,6 +26,8 @@ export type DiscoveryFilterSnapshot = {
   widthRange: { min: string; max: string; exclude: boolean };
   heightRange: { min: string; max: string; exclude: boolean };
   aspectRatioRange: { min: string; max: string; exclude: boolean };
+  /** OR-selected shape/aspect preset ranges (Serpent-gp4). */
+  aspectRatioRanges?: readonly { min: string; max: string }[];
   longEdgeRange: { min: string; max: string; exclude: boolean };
   durationRange: { min: string; max: string; exclude: boolean };
 };
@@ -123,11 +125,23 @@ export function buildActiveFilterChips(
     });
   }
 
-  if (hasRange(snapshot.aspectRatioRange)) {
+  const aspectRanges =
+    snapshot.aspectRatioRanges && snapshot.aspectRatioRanges.length > 0
+      ? snapshot.aspectRatioRanges
+      : hasRange(snapshot.aspectRatioRange)
+        ? [
+            {
+              min: snapshot.aspectRatioRange.min,
+              max: snapshot.aspectRatioRange.max,
+            },
+          ]
+        : [];
+  if (aspectRanges.length > 0) {
+    const detailBody = aspectRanges.map(formatRangeDetail).join(" ∨ ");
     chips.push({
       id: "aspect_ratio",
       labelKey: "filter.aspectRatio",
-      detail: `${snapshot.aspectRatioRange.exclude ? "−" : ""}${formatRangeDetail(snapshot.aspectRatioRange)}`,
+      detail: `${snapshot.aspectRatioRange.exclude ? "−" : ""}${detailBody}`,
     });
   }
 

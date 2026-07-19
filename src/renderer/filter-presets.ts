@@ -75,3 +75,32 @@ export function togglePresetRange(
 ): RangeStrings {
   return rangesEqual(current, preset) ? { min: '', max: '' } : preset;
 }
+
+/** True when `preset` is among the selected ranges (single or multi). */
+export function isPresetRangeSelected(
+  selected: readonly RangeStrings[],
+  preset: RangeStrings,
+): boolean {
+  return selected.some((range) => rangesEqual(range, preset));
+}
+
+/**
+ * Shape / numeric preset chips (Serpent-gp4 / FILTER-017):
+ * default click replaces selection with the preset (or clears if sole match);
+ * Shift+click OR-toggles the preset among selected ranges.
+ */
+export function togglePresetRanges(
+  selected: readonly RangeStrings[],
+  preset: RangeStrings,
+  shiftKey: boolean,
+): RangeStrings[] {
+  if (!shiftKey) {
+    return selected.length === 1 && rangesEqual(selected[0]!, preset)
+      ? []
+      : [preset];
+  }
+  if (isPresetRangeSelected(selected, preset)) {
+    return selected.filter((range) => !rangesEqual(range, preset));
+  }
+  return [...selected, preset];
+}

@@ -17,13 +17,31 @@ export const AUDIO_EXTENSIONS = [
 
 /**
  * Grid / Inspector waveform cover geometry (≈4:3).
- * Viewer chrome CSS is separate (Serpent-vlx: object-fit contain + theme stage).
+ * Viewer uses a separate wide strip artifact (`video_poster` for audio) —
+ * do not reuse this 4:3 cover in the inspect/view surface (Serpent-vlx).
  */
 export const AUDIO_WAVEFORM_COVER_WIDTH = 640;
 export const AUDIO_WAVEFORM_COVER_HEIGHT = 480;
 
-/** Generator tag; bump when cover geometry or stage color changes so thumbs requeue. */
-export const AUDIO_WAVEFORM_COVER_GENERATOR_TAG = "waveform-cover5";
+/**
+ * Viewer / inspect waveform strip — wide, short; fills the preview pane
+ * horizontally (object-fit: fill). Stored as `video_poster` for audio assets.
+ */
+export const AUDIO_WAVEFORM_VIEWER_WIDTH = 1280;
+export const AUDIO_WAVEFORM_VIEWER_HEIGHT = 220;
+
+/** Generator tag; bump when cover/viewer geometry or stage color changes so thumbs requeue. */
+export const AUDIO_WAVEFORM_COVER_GENERATOR_TAG = "waveform-cover6";
+
+/**
+ * Playhead trail width in CSS px from playbackRate (Serpent-vlx).
+ * Faster playback → longer trail; slower → shorter. Clamped for readability.
+ */
+export function playheadTrailWidthPx(playbackRate: number): number {
+  const rate = Number.isFinite(playbackRate) && playbackRate > 0 ? playbackRate : 1;
+  const base = 28;
+  return Math.min(72, Math.max(12, Math.round(base * rate)));
+}
 
 /**
  * Light browse canvas (`--canvas` in light theme). Covers must not match this

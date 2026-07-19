@@ -1,4 +1,11 @@
+import { MANAGED_ASSETS_DRAG_TYPE } from "./asset-drag-drop";
+
 export function supportsExternalImportTypes(types: readonly string[]): boolean {
+  // Internal asset/folder drags often also expose "Files" on Chromium; treat
+  // Serpent-managed payloads as move/copy, never as "import".
+  if (types.includes(MANAGED_ASSETS_DRAG_TYPE)) {
+    return false;
+  }
   return (
     types.includes("Files") ||
     types.includes("text/html") ||

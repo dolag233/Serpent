@@ -6,6 +6,8 @@ import {
   AUDIO_WAVEFORM_COVER_GENERATOR_TAG,
   AUDIO_WAVEFORM_COVER_HEIGHT,
   AUDIO_WAVEFORM_COVER_WIDTH,
+  AUDIO_WAVEFORM_VIEWER_HEIGHT,
+  AUDIO_WAVEFORM_VIEWER_WIDTH,
   LIGHT_CANVAS_BACKGROUND,
   audioMimeForExtension,
   audioWaveformCoverAspectRatio,
@@ -13,6 +15,7 @@ import {
   isAudioFileName,
   isLightFriendlyWaveformCoverBackground,
   isNearFourByThreeAspect,
+  playheadTrailWidthPx,
   rgbChannelDistance,
 } from "../../src/shared/audio-media";
 
@@ -49,7 +52,29 @@ test("waveform cover geometry is approximately 4:3 (Serpent-dxk)", () => {
   ).toBe(true);
   expect(isNearFourByThreeAspect(640, 160)).toBe(false);
   expect(isNearFourByThreeAspect(160, 640)).toBe(false);
-  expect(AUDIO_WAVEFORM_COVER_GENERATOR_TAG).toBe("waveform-cover5");
+  expect(AUDIO_WAVEFORM_COVER_GENERATOR_TAG).toBe("waveform-cover6");
+});
+
+test("viewer waveform strip is wide (not 4:3 grid cover)", () => {
+  expect(AUDIO_WAVEFORM_VIEWER_WIDTH).toBe(1280);
+  expect(AUDIO_WAVEFORM_VIEWER_HEIGHT).toBe(220);
+  expect(
+    AUDIO_WAVEFORM_VIEWER_WIDTH / AUDIO_WAVEFORM_VIEWER_HEIGHT,
+  ).toBeGreaterThan(4);
+  expect(
+    isNearFourByThreeAspect(
+      AUDIO_WAVEFORM_VIEWER_WIDTH,
+      AUDIO_WAVEFORM_VIEWER_HEIGHT,
+    ),
+  ).toBe(false);
+});
+
+test("playhead trail width scales with playbackRate (Serpent-vlx)", () => {
+  expect(playheadTrailWidthPx(1)).toBe(28);
+  expect(playheadTrailWidthPx(2)).toBeGreaterThan(playheadTrailWidthPx(1));
+  expect(playheadTrailWidthPx(0.5)).toBeLessThan(playheadTrailWidthPx(1));
+  expect(playheadTrailWidthPx(0)).toBe(28);
+  expect(playheadTrailWidthPx(100)).toBeLessThanOrEqual(72);
 });
 
 test("waveform cover stage is charcoal grey-black (Serpent-vlx)", () => {
