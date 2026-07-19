@@ -128,6 +128,7 @@ export const en = {
     openLibraryFoldersHint: "Open a library to see folders",
     openLibrarySmartHint: "Open a library to see smart collections",
     newFolderName: "New folder name",
+    newSmartCollectionName: "New smart collection name",
     folderRename: "Rename folder",
     collectionNamePlaceholder: "Enter collection name, press Enter to create",
     subcollectionNamePlaceholder: "Enter subcollection name, press Enter to create",
@@ -749,6 +750,10 @@ export const en = {
     renameFailed: "Rename failed. Please try again.",
     created: "Created folder \"{name}\".",
     renamed: "Renamed folder to “{name}”."
+  },
+  smartEdit: {
+    newName: "New smart collection",
+    createFailed: "Failed to create smart collection."
   },
   assetRename: {
     failed: "Failed to rename file.",

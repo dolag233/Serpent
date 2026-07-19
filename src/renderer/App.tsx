@@ -96,6 +96,7 @@ import { importSummaryMessage } from "./import-summary";
 import type { DialogEscapeSnapshot } from "./dialog-escape-stack";
 import { useAssetRename } from "./useAssetRename";
 import { useInlineFolderEdit } from "./use-inline-folder-edit";
+import { useInlineSmartCollectionEdit } from "./use-inline-smart-collection-edit";
 import { usePanelResize } from "./use-panel-resize";
 import { useToastNotifications } from "./useToastNotifications";
 import {
@@ -623,8 +624,6 @@ function AppInner() {
   const [aiSearchPlanSummary, setAiSearchPlanSummary] = useState<string | null>(
     null,
   );
-  const [smartCollectionName, setSmartCollectionName] = useState("");
-  const smartCollectionNameInputRef = useRef<HTMLInputElement>(null);
   const { open: openContextMenu, close: closeContextMenu } =
     useContextMenu();
   const hadDiscoveryInput = useRef(false);
@@ -2856,6 +2855,29 @@ function AppInner() {
     reloadCurrentContent,
   });
 
+  const reloadSmartCollections = useCallback(async () => {
+    if (!api || !library) return;
+    const listResult = await api.listSmartCollections({
+      libraryId: library.libraryId,
+    });
+    if (listResult.ok) setSmartCollections(listResult.value);
+  }, [api, library]);
+
+  const {
+    inlineSmartCollectionEdit,
+    openInlineSmartCollectionCreate,
+    changeInlineSmartCollectionEdit,
+    cancelInlineSmartCollectionEdit,
+    commitInlineSmartCollectionEdit,
+  } = useInlineSmartCollectionEdit({
+    api: api ?? null,
+    library,
+    getQueryDefinition: () =>
+      activeAiSearchDefinition ?? currentQueryDefinition(),
+    setNotice,
+    reloadSmartCollections,
+  });
+
   async function executeSearchDefinition(
     definition: SearchDefinition,
     offset = 0,
@@ -3024,31 +3046,6 @@ function AppInner() {
     sortField,
     sortOrder,
   ]);
-
-  async function saveSmartCollection() {
-    if (!api || !library || !smartCollectionName.trim()) return;
-    const definition = activeAiSearchDefinition ?? currentQueryDefinition();
-    if (!hasMeaningfulSmartCollectionCondition(definition)) {
-      setError(t("toast.smartCollectionNeedsCondition"));
-      return;
-    }
-    try {
-      const result = await api.createSmartCollection({
-        libraryId: library.libraryId,
-        name: smartCollectionName.trim(),
-        queryDefinitionJson: JSON.stringify(definition),
-      });
-      if (!result.ok) throw new LibraryOperationError(result.error);
-      const listResult = await api.listSmartCollections({
-        libraryId: library.libraryId,
-      });
-      if (listResult.ok) setSmartCollections(listResult.value);
-      setSmartCollectionName("");
-      setNotice(t("toast.smartCollectionSaved"));
-    } catch (caught) {
-      setError(toMessage(caught, t("toast.smartCollectionSaveFailed"), locale));
-    }
-  }
 
   async function chooseSmartCollection(collectionId: string, offset = 0) {
     if (!api || !library) return;
@@ -5276,26 +5273,6 @@ function AppInner() {
               {aiSearchPlanSummary}
             </span>
           )}
-          <input
-            aria-label={t("toolbar.smartCollectionTitle")}
-            className="text-field"
-            disabled={!library}
-            id="smart-collection-name-input"
-            onChange={(event) => setSmartCollectionName(event.target.value)}
-            placeholder={t("toolbar.smartCollectionName")}
-            ref={smartCollectionNameInputRef}
-            style={{ height: 28, width: 110 }}
-            value={smartCollectionName}
-          />
-          <button
-            className="compact-action"
-            disabled={!library || !smartCollectionName.trim()}
-            onClick={() => void saveSmartCollection()}
-            type="button"
-          >
-            <Icon name="smart" size={14} />
-            {t("common.save")}
-          </button>
           <ToolButton
             icon={rightOpen ? "panel-right-close" : "panel-right"}
             label={rightOpen ? t("shell.collapseInspector") : t("shell.expandInspector")}
@@ -5363,12 +5340,13 @@ function AppInner() {
         onSetNewCollectionParentId={setNewCollectionParentId}
         onCollectionInputKeyDown={handleCollectionInputKeyDown}
         onSetCollectionRecursive={setCollectionRecursive}
-        onAddFolder={() => openInlineFolderCreate(selectedFolderId ?? null)}
+        onAddFolder={() => {
+          cancelInlineSmartCollectionEdit();
+          openInlineFolderCreate(selectedFolderId ?? null);
+        }}
         onAddSmartCollection={() => {
-          const input = smartCollectionNameInputRef.current;
-          input?.scrollIntoView({ block: "nearest", behavior: "smooth" });
-          input?.focus();
-          input?.select();
+          cancelInlineFolderEdit();
+          openInlineSmartCollectionCreate();
         }}
         inlineFolderEdit={inlineFolderEdit}
         onInlineFolderEditChange={changeInlineFolderEdit}
@@ -5376,6 +5354,12 @@ function AppInner() {
           void commitInlineFolderEdit(onCreateSuccess)
         }
         onInlineFolderEditCancel={cancelInlineFolderEdit}
+        inlineSmartCollectionEdit={inlineSmartCollectionEdit}
+        onInlineSmartCollectionEditChange={changeInlineSmartCollectionEdit}
+        onInlineSmartCollectionEditCommit={() =>
+          void commitInlineSmartCollectionEdit()
+        }
+        onInlineSmartCollectionEditCancel={cancelInlineSmartCollectionEdit}
         onOpenContextMenu={openContextMenu}
         onReorderCollection={(sourceId, targetId) =>
           void reorderCollectionSibling(sourceId, targetId)
@@ -6602,10 +6586,14 @@ function AppInner() {
         onDeleteOrganization={(id) => {
           void deleteCollection(id);
         }}
-        onCreateSubfolder={(folderId) => openInlineFolderCreate(folderId)}
-        onRenameFolder={(folderId, currentName) =>
-          openInlineFolderRename(folderId, currentName)
-        }
+        onCreateSubfolder={(folderId) => {
+          cancelInlineSmartCollectionEdit();
+          openInlineFolderCreate(folderId);
+        }}
+        onRenameFolder={(folderId, currentName) => {
+          cancelInlineSmartCollectionEdit();
+          openInlineFolderRename(folderId, currentName);
+        }}
         onOpenFolderInFileManager={(folderId) => {
           void handleOpenFolderInFileManager(folderId);
         }}

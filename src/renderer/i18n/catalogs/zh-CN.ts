@@ -119,6 +119,7 @@ export const zhCN = {
     openLibraryFoldersHint: "打开资源库后显示目录",
     openLibrarySmartHint: "打开资源库后显示智能合集",
     newFolderName: "新文件夹名称",
+    newSmartCollectionName: "新智能合集名称",
     folderRename: "文件夹重命名",
     collectionNamePlaceholder: "输入合集名称，回车创建",
     subcollectionNamePlaceholder: "输入子合集名称，回车创建",
@@ -740,6 +741,10 @@ export const zhCN = {
     renameFailed: "重命名失败，请重试。",
     created: "已创建文件夹\"{name}\"。",
     renamed: "已将文件夹重命名为“{name}”。"
+  },
+  smartEdit: {
+    newName: "新建智能合集",
+    createFailed: "创建智能合集失败。"
   },
   assetRename: {
     failed: "重命名文件失败。",
