@@ -1,35 +1,27 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  resolvePanelDragMove,
+  resolveClampedPanelWidth,
+  type PanelDragSnapshot,
+} from "./panel-drag-session";
 import {
   DEFAULT_INSPECTOR_PANEL_WIDTH,
   DEFAULT_NAV_PANEL_WIDTH,
-  clampInspectorPanelWidth,
-  clampNavPanelWidth,
   loadShellPreferences,
   saveShellPreferences,
   type ShellPreferencesStorage,
-} from './shell-preferences';
-import {
-  resolvePanelIntentWidth,
-  shouldAutoHidePanel,
-  shouldRestorePanelFromEdge,
-  type ResizablePanel,
-} from './panel-auto-hide';
+} from "./shell-preferences";
+import type { ResizablePanel } from "./panel-auto-hide";
 
 export type { ResizablePanel };
 
-/**
- * Width for `panel` after a pointer move of `deltaX` px from drag start.
- * The nav handle sits on the pane's right edge (drag right = wider); the
- * inspector handle sits on its left edge (drag left = wider).
- */
+/** @deprecated Prefer resolveClampedPanelWidth from panel-drag-session. */
 export function resolvePanelWidth(
   panel: ResizablePanel,
   startWidth: number,
   deltaX: number,
 ): number {
-  return panel === 'nav'
-    ? clampNavPanelWidth(startWidth + deltaX)
-    : clampInspectorPanelWidth(startWidth - deltaX);
+  return resolveClampedPanelWidth(panel, startWidth, deltaX);
 }
 
 export interface UsePanelResizeOptions {
@@ -56,7 +48,7 @@ export function usePanelResize(
   storageOrOptions?: ShellPreferencesStorage | UsePanelResizeOptions,
 ): UsePanelResizeReturn {
   const options: UsePanelResizeOptions =
-    storageOrOptions && 'getItem' in storageOrOptions
+    storageOrOptions && "getItem" in storageOrOptions
       ? { storage: storageOrOptions }
       : (storageOrOptions ?? {});
   const { storage, onAutoHide, onEdgeRestore } = options;
@@ -69,12 +61,7 @@ export function usePanelResize(
 
   const [widths, setWidths] = useState(() => loadShellPreferences(storage));
   const [resizing, setResizing] = useState<ResizablePanel | null>(null);
-  const dragRef = useRef<{
-    panel: ResizablePanel;
-    startX: number;
-    startWidth: number;
-    mode: 'resize' | 'edge-restore';
-  } | null>(null);
+  const dragRef = useRef<PanelDragSnapshot | null>(null);
   const widthsRef = useRef(widths);
   useEffect(() => {
     widthsRef.current = widths;
@@ -85,128 +72,103 @@ export function usePanelResize(
     [storage],
   );
 
+  const applyWidth = useCallback((panel: ResizablePanel, width: number) => {
+    const next =
+      panel === "nav"
+        ? { ...widthsRef.current, navPanelWidth: width }
+        : { ...widthsRef.current, inspectorPanelWidth: width };
+    widthsRef.current = next;
+    setWidths(next);
+  }, []);
+
+  /**
+   * One continuous pointer session across resize ↔ hide ↔ restore.
+   * SHELL-018: listeners stay until pointerup so revealing a hidden pane does
+   * not forcibly end the drag.
+   */
+  const attachContinuousDrag = useCallback(
+    (initial: PanelDragSnapshot) => {
+      dragRef.current = initial;
+      setResizing(initial.panel);
+
+      const onMove = (event: PointerEvent) => {
+        const drag = dragRef.current;
+        if (!drag) return;
+        const step = resolvePanelDragMove(drag, event.clientX);
+        dragRef.current = step.next;
+        if (step.kind === "resize") {
+          applyWidth(drag.panel, step.width);
+          return;
+        }
+        if (step.kind === "collapse") {
+          applyWidth(drag.panel, step.next.startWidth);
+          onAutoHideRef.current?.(drag.panel);
+          return;
+        }
+        if (step.kind === "restore") {
+          applyWidth(drag.panel, step.width);
+          onEdgeRestoreRef.current?.(drag.panel);
+        }
+      };
+
+      const onUp = () => {
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+        const drag = dragRef.current;
+        dragRef.current = null;
+        setResizing(null);
+        // Persist only when the pane is still open (resize phase). Hidden
+        // edge-restore ends without writing a collapsed width.
+        if (drag?.phase === "resize") {
+          persist(widthsRef.current);
+        }
+      };
+
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
+    },
+    [applyWidth, persist],
+  );
+
   const beginResize = useCallback(
     (panel: ResizablePanel, clientX: number) => {
-      dragRef.current = {
+      attachContinuousDrag({
         panel,
         startX: clientX,
         startWidth:
-          panel === 'nav' ? widthsRef.current.navPanelWidth : widthsRef.current.inspectorPanelWidth,
-        mode: 'resize',
-      };
-      setResizing(panel);
-
-      // REQ-SHELL-011 复验（Serpent-bhv）：拖小死区必须在拖拽过程中（pointermove）
-      // 就给出「已隐藏」的反馈，不能延迟到松手（pointerup）才决定——否则用户在
-      // 死区内持续拖拽时看不到任何变化，松手瞬间才消失，没有段落感，只感觉是
-      // 「松手才隐藏」。因此隐藏判定与收尾逻辑在 onMove 内联执行；onUp 里保留同
-      // 一判定作为兜底（例如测试环境用合成事件直接 pointerup，中间没有 move）。
-      const collapseFromDrag = (drag: NonNullable<typeof dragRef.current>) => {
-        window.removeEventListener('pointermove', onMove);
-        window.removeEventListener('pointerup', onUp);
-        dragRef.current = null;
-        setResizing(null);
-        // Restore the last persisted/clamped width; do not save the tiny intent.
-        widthsRef.current =
-          drag.panel === 'nav'
-            ? { ...widthsRef.current, navPanelWidth: drag.startWidth }
-            : { ...widthsRef.current, inspectorPanelWidth: drag.startWidth };
-        setWidths(widthsRef.current);
-        onAutoHideRef.current?.(drag.panel);
-      };
-      const onMove = (event: PointerEvent) => {
-        const drag = dragRef.current;
-        if (!drag || drag.mode !== 'resize') return;
-        const intent = resolvePanelIntentWidth(
-          drag.panel,
-          drag.startWidth,
-          event.clientX - drag.startX,
-        );
-        if (shouldAutoHidePanel(drag.panel, intent)) {
-          collapseFromDrag(drag);
-          return;
-        }
-        const nextWidth = resolvePanelWidth(drag.panel, drag.startWidth, event.clientX - drag.startX);
-        setWidths((prev) =>
-          drag.panel === 'nav'
-            ? { ...prev, navPanelWidth: nextWidth }
-            : { ...prev, inspectorPanelWidth: nextWidth },
-        );
-        widthsRef.current =
-          drag.panel === 'nav'
-            ? { ...widthsRef.current, navPanelWidth: nextWidth }
-            : { ...widthsRef.current, inspectorPanelWidth: nextWidth };
-      };
-      const onUp = (event: PointerEvent) => {
-        const drag = dragRef.current;
-        if (!drag || drag.mode !== 'resize') {
-          window.removeEventListener('pointermove', onMove);
-          window.removeEventListener('pointerup', onUp);
-          dragRef.current = null;
-          setResizing(null);
-          return;
-        }
-        const intent = resolvePanelIntentWidth(
-          drag.panel,
-          drag.startWidth,
-          event.clientX - drag.startX,
-        );
-        if (shouldAutoHidePanel(drag.panel, intent)) {
-          collapseFromDrag(drag);
-          return;
-        }
-        window.removeEventListener('pointermove', onMove);
-        window.removeEventListener('pointerup', onUp);
-        dragRef.current = null;
-        setResizing(null);
-        persist(widthsRef.current);
-      };
-      window.addEventListener('pointermove', onMove);
-      window.addEventListener('pointerup', onUp);
+          panel === "nav"
+            ? widthsRef.current.navPanelWidth
+            : widthsRef.current.inspectorPanelWidth,
+        phase: "resize",
+      });
     },
-    [persist],
+    [attachContinuousDrag],
   );
 
-  const beginEdgeRestore = useCallback((panel: ResizablePanel, clientX: number) => {
-    dragRef.current = {
-      panel,
-      startX: clientX,
-      startWidth:
-        panel === 'nav' ? widthsRef.current.navPanelWidth : widthsRef.current.inspectorPanelWidth,
-      mode: 'edge-restore',
-    };
-    setResizing(panel);
-
-    // REQ-SHELL-011 复验（Serpent-bhv）：拖出方向共用同一个死区幅度
-    // （PANEL_EDGE_RESTORE_PX === PANEL_AUTO_HIDE_DEAD_ZONE_PX），保证隐藏/拖出
-    // 双向的段落感一致，而不是各自独立的魔数。
-    const onMove = (event: PointerEvent) => {
-      const drag = dragRef.current;
-      if (!drag || drag.mode !== 'edge-restore') return;
-      if (shouldRestorePanelFromEdge(drag.panel, drag.startX, event.clientX)) {
-        window.removeEventListener('pointermove', onMove);
-        window.removeEventListener('pointerup', onUp);
-        dragRef.current = null;
-        setResizing(null);
-        onEdgeRestoreRef.current?.(drag.panel);
-      }
-    };
-    const onUp = () => {
-      window.removeEventListener('pointermove', onMove);
-      window.removeEventListener('pointerup', onUp);
-      dragRef.current = null;
-      setResizing(null);
-    };
-    window.addEventListener('pointermove', onMove);
-    window.addEventListener('pointerup', onUp);
-  }, []);
+  const beginEdgeRestore = useCallback(
+    (panel: ResizablePanel, clientX: number) => {
+      attachContinuousDrag({
+        panel,
+        startX: clientX,
+        startWidth:
+          panel === "nav"
+            ? widthsRef.current.navPanelWidth
+            : widthsRef.current.inspectorPanelWidth,
+        phase: "edge-restore",
+      });
+    },
+    [attachContinuousDrag],
+  );
 
   const resetPanel = useCallback(
     (panel: ResizablePanel) => {
       const next =
-        panel === 'nav'
+        panel === "nav"
           ? { ...widthsRef.current, navPanelWidth: DEFAULT_NAV_PANEL_WIDTH }
-          : { ...widthsRef.current, inspectorPanelWidth: DEFAULT_INSPECTOR_PANEL_WIDTH };
+          : {
+              ...widthsRef.current,
+              inspectorPanelWidth: DEFAULT_INSPECTOR_PANEL_WIDTH,
+            };
       widthsRef.current = next;
       setWidths(next);
       persist(next);
@@ -219,8 +181,8 @@ export function usePanelResize(
     const { body } = document;
     const prevCursor = body.style.cursor;
     const prevSelect = body.style.userSelect;
-    body.style.cursor = 'col-resize';
-    body.style.userSelect = 'none';
+    body.style.cursor = "col-resize";
+    body.style.userSelect = "none";
     return () => {
       body.style.cursor = prevCursor;
       body.style.userSelect = prevSelect;
@@ -232,8 +194,8 @@ export function usePanelResize(
     inspectorPanelWidth: widths.inspectorPanelWidth,
     resizing,
     shellStyle: {
-      '--nav-width': `${widths.navPanelWidth}px`,
-      '--inspector-width': `${widths.inspectorPanelWidth}px`,
+      "--nav-width": `${widths.navPanelWidth}px`,
+      "--inspector-width": `${widths.inspectorPanelWidth}px`,
     },
     beginResize,
     beginEdgeRestore,

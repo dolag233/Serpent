@@ -369,6 +369,7 @@
 | 2026-07-19 | FILTER-019/020 / NAV-006b / SORT-006 | 人类验收通过 | 排除红、颜色黑白、去根行、排序图标通过；019/006 附带打磨已开单。 | `Serpent-8s8` / `o75` / `vms` / `1c9`。 |
 | 2026-07-19 | 文件夹删除 P1 再确认 | 记录 | 用户再次点名删除文件夹；`Serpent-ekj` 已是 P1，仍被澄清 #7（`Serpent-w3b`）阻塞。 | 需删除语义裁决后才能实施。 |
 | 2026-07-19 | 澄清#7 删除语义裁决 | 已裁决 | 托管默认进回收站；从硬盘删除需确认+可不再提示+设置可重开；链接根仅移除、子文件夹可删；资产亦需从硬盘删除。 | `Serpent-ekj` 已解除对 w3b 阻塞；`Serpent-9zc` / `Serpent-5no`。 |
+| 2026-07-19 | SHELL-018 连续拖拽修复 | 待复验 | 隐藏拖出不再强制结束拖拽；hide/restore 同一 pointer 会话。 | `Serpent-kro`；[开发日志](../development/2026-07-19-sidebar-continuous-drag-development-log.md)。 |
 ### 第五批收口（过滤/导航/排序/Inspector）
 
 | FILTER-019 | 排除过滤红色高亮 | 人类验收通过 | 启用颜色/标签等过滤后勾选排除 | 对应维度按钮呈红色高亮，与包含态区分 | [开发日志](../development/2026-07-19-filter-nav-inspect-polish-development-log.md) / Serpent-8s8 | 2026-07-19 用户确认通过。附带：暗色下红色偏艳 → 降饱和打磨工单。 |
