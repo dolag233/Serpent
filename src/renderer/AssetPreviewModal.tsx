@@ -27,8 +27,6 @@ import { resolveViewerPrimarySurface } from "./viewer-preview-policy";
 import { VideoPlayerControls } from "./VideoPlayerControls";
 import { AudioPlayerControls } from "./AudioPlayerControls";
 import { TextViewerControls } from "./TextViewerControls";
-import { GifPlayerControls } from "./GifPlayerControls";
-import { isGifDisplayName } from "./gif-player-controls";
 import { ZoomableImage } from "./zoomable-preview-image";
 
 interface AssetPreviewModalProps {
@@ -521,17 +519,6 @@ export function AssetPreviewModal({
               onError={(message) => setError(message)}
               onSaved={() => setDirectApproved(true)}
             />
-          ) : ready &&
-            resolution?.url &&
-            isGifDisplayName(asset.displayName) ? (
-            <GifPlayerControls
-              alt={asset.displayName}
-              key={resolution.url}
-              onFullscreen={() => void enterFullscreen()}
-              onSwipeNext={onNext}
-              onSwipePrevious={onPrevious}
-              src={resolution.url}
-            />
           ) : ready && resolution?.url ? (
             <ZoomableImage
               alt={asset.displayName}
@@ -541,8 +528,7 @@ export function AssetPreviewModal({
               onSwipePrevious={onPrevious}
               src={resolution.url}
             />
-          ) : unsupported ? (
-            <div className="preview-state" role="status">
+          ) : unsupported ? (            <div className="preview-state" role="status">
               <strong>{t("preview.unsupportedTitle")}</strong>
               <p>
                 {t("preview.unsupportedFormat")} {t("preview.openWithSystem")}
