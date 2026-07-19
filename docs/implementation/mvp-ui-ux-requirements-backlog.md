@@ -423,6 +423,10 @@ FolderBrowseEntry
 | 仅有子文件夹且未递归时画布大空当 | 文件夹卡片下方不应留巨大空白 | `Serpent-an1` |
 | 从访达向链接文件夹位置导入失败 | 应写入外部目录并入库 | `Serpent-d3h` |
 | 描述框默认高度对齐作者/原链接 | INSPECT-007 通过附带 | `Serpent-goe` |
+| PREF-001 说明全灰/字段说明冗余/窄窗重叠 | 复验不通过 | `Serpent-9es` |
+| SMART-007 创建后开设置，勿先报缺条件 | 复验不通过 | `Serpent-era` |
+| AUDIO 网格波形 4:3；亮色底非黑 | 查看页波形比例不改 | `Serpent-dxk` |
+| 视频/音频跳转式播放经常失败 | 严重；seek/scrub 后播放失败 | `Serpent-jh2` |
 
 ## 验收与证据要求
 
