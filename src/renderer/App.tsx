@@ -6021,8 +6021,11 @@ function AppInner() {
                                   <input
                                     aria-label={t("dialog.rename.fileTitle")}
                                     autoFocus
-                                    className="asset-inline-rename-input"
+                                    className="text-field asset-inline-rename-input"
                                     disabled={assetRenameDialog.submitting}
+                                    onBlur={() => {
+                                      void submitAssetRename();
+                                    }}
                                     onChange={(event) =>
                                       changeAssetRenameValue(event.target.value)
                                     }

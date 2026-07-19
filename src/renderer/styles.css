@@ -3101,27 +3101,35 @@ select.ai-config-input {
 
 /* REQ-PREF-001: general settings panel — theme/language/canvas display
    grouped as labelled sections of pill-style radio options. */
+/* MENU-023 / Serpent-0rg: asset inline rename mirrors folder nav-inline-edit
+   (shared .text-field chrome: single border, focus ring via box-shadow only,
+   normal foreground — not caption tertiary gray). */
 .asset-inline-rename {
   display: flex;
   flex-wrap: wrap;
-  align-items: baseline;
+  align-items: center;
   gap: 2px 4px;
   width: 100%;
+  color: var(--text);
 }
 
-.asset-inline-rename-input {
+.asset-inline-rename-input.text-field,
+.asset-inline-rename .text-field.asset-inline-rename-input {
   flex: 1 1 auto;
   min-width: 0;
-  width: 100%;
+  width: auto;
+  height: 23px;
   margin: 0;
-  padding: 1px 4px;
-  border: 1px solid var(--accent);
-  border-radius: 3px;
-  background: var(--raised);
-  color: var(--primary);
+  padding: 0 6px;
   font: inherit;
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.3;
+  color: var(--text);
+}
+
+.asset-inline-rename-input.text-field:focus,
+.asset-inline-rename-input.text-field:focus-visible {
+  outline: 0;
 }
 
 .asset-inline-rename-ext {

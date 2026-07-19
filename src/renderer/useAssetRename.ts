@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 
 import type { AssetSummary } from "../shared/asset-types";
 import type { SerpentLibraryApi } from "../shared/library-api";
@@ -14,17 +14,25 @@ import {
 } from "./i18n";
 
 /**
- * REQ-MENU-008: state machine for single-asset inline canvas rename.
+ * REQ-MENU-008 / MENU-023: state machine for single-asset inline canvas rename.
  * Extracted from App.tsx (acceptance rule 8): App renders the inline caption
  * input and wires the context-menu / shortcut entry. The worker owns the real
  * rename (extension preserved, disk + DB kept in sync); this hook owns session
  * state, client-side name validation, typed error mapping, and the
  * refresh/reselect convention after a successful rename.
+ *
+ * Commit semantics match folder inline rename (Enter and blur share them):
+ * - Blank value cancels (nothing meaningful to submit).
+ * - Basename unchanged from session open cancels: no IPC, no success toast.
+ * - Anything else submits; typed worker failures stay open with an inline error.
  */
+
 export interface AssetRenameDialogState {
   assetId: string;
   /** Preserved extension including the leading dot ("" when the file has none). */
   extension: string;
+  /** Basename when the session opened; re-committing it is a no-op cancel. */
+  originalBaseName: string;
   /** Current editable base name (extension excluded). */
   value: string;
   /** Inline typed failure shown inside the open dialog. */
@@ -32,6 +40,11 @@ export interface AssetRenameDialogState {
   /** True while a rename request is in flight; blocks duplicate submits. */
   submitting: boolean;
 }
+
+export type AssetRenameCommitResolution =
+  | { action: "submit"; newBaseName: string }
+  | { action: "cancel" }
+  | { action: "keep-editing" };
 
 export interface UseAssetRenameParams {
   api: SerpentLibraryApi | null;
@@ -48,6 +61,7 @@ export interface UseAssetRenameResult {
   openAssetRename: (assetId: string) => void;
   changeAssetRenameValue: (value: string) => void;
   cancelAssetRename: () => void;
+  /** Enter and blur both route here; the resolver decides cancel vs submit. */
   submitAssetRename: () => Promise<void>;
 }
 
@@ -110,6 +124,20 @@ export function splitAssetFileName(displayName: string): {
   };
 }
 
+/**
+ * Shared decision for Enter and blur. Unchanged basename cancels so the
+ * client never shows a success toast for a no-op (worker would also no-op).
+ */
+export function resolveAssetRenameCommit(
+  state: AssetRenameDialogState,
+): AssetRenameCommitResolution {
+  if (state.submitting) return { action: "keep-editing" };
+  const newBaseName = state.value.trim();
+  if (newBaseName.length === 0) return { action: "cancel" };
+  if (newBaseName === state.originalBaseName) return { action: "cancel" };
+  return { action: "submit", newBaseName };
+}
+
 export function useAssetRename({
   api,
   library,
@@ -122,6 +150,17 @@ export function useAssetRename({
   const { locale } = useLocale();
   const [assetRenameDialog, setAssetRenameDialog] =
     useState<AssetRenameDialogState | null>(null);
+  // Keep a synchronous mirror so Enter/Escape + the blur that follows
+  // unmount/focus loss do not re-enter commit with a stale React closure.
+  const assetRenameDialogRef = useRef<AssetRenameDialogState | null>(null);
+
+  const replaceAssetRenameDialog = useCallback(
+    (next: AssetRenameDialogState | null) => {
+      assetRenameDialogRef.current = next;
+      setAssetRenameDialog(next);
+    },
+    [],
+  );
 
   const openAssetRename = useCallback(
     (assetId: string) => {
@@ -130,33 +169,40 @@ export function useAssetRename({
       );
       if (!asset) return;
       const { baseName, extension } = splitAssetFileName(asset.displayName);
-      setAssetRenameDialog({
+      replaceAssetRenameDialog({
         assetId,
         extension,
+        originalBaseName: baseName,
         value: baseName,
         error: null,
         submitting: false,
       });
     },
-    [visibleAssets],
+    [replaceAssetRenameDialog, visibleAssets],
   );
 
   const changeAssetRenameValue = useCallback((value: string) => {
-    setAssetRenameDialog((current) =>
-      current ? { ...current, value, error: null } : current,
-    );
-  }, []);
+    const current = assetRenameDialogRef.current;
+    if (!current) return;
+    replaceAssetRenameDialog({ ...current, value, error: null });
+  }, [replaceAssetRenameDialog]);
 
   const cancelAssetRename = useCallback(() => {
-    setAssetRenameDialog(null);
-  }, []);
+    replaceAssetRenameDialog(null);
+  }, [replaceAssetRenameDialog]);
 
   const submitAssetRename = useCallback(async () => {
-    if (!api || !library || !assetRenameDialog || assetRenameDialog.submitting)
+    const session = assetRenameDialogRef.current;
+    if (!session) return;
+    const resolution = resolveAssetRenameCommit(session);
+    if (resolution.action === "keep-editing") return;
+    if (resolution.action === "cancel") {
+      replaceAssetRenameDialog(null);
       return;
-    const newBaseName = assetRenameDialog.value.trim();
-    if (!newBaseName) return;
-    const { assetId, extension } = assetRenameDialog;
+    }
+    if (!api || !library) return;
+    const { assetId, extension } = session;
+    const { newBaseName } = resolution;
     // First-line validation: protocol-schema violations (separators, control
     // characters) never produce a typed error from the worker, so they must be
     // caught here to show the friendly invalid-name reason inline.
@@ -166,14 +212,18 @@ export function useAssetRename({
       locale,
     );
     if (validationError) {
-      setAssetRenameDialog((current) =>
-        current ? { ...current, error: validationError } : current,
-      );
+      const current = assetRenameDialogRef.current;
+      if (current && current.assetId === assetId) {
+        replaceAssetRenameDialog({ ...current, error: validationError });
+      }
       return;
     }
-    setAssetRenameDialog((current) =>
-      current ? { ...current, submitting: true, error: null } : current,
-    );
+    const submittingSession = {
+      ...session,
+      submitting: true,
+      error: null,
+    };
+    replaceAssetRenameDialog(submittingSession);
     const failedFallback = translateForLocale(locale, "assetRename.failed");
     try {
       const result = await api.renameAssetFile({
@@ -190,14 +240,17 @@ export function useAssetRename({
           PUBLIC_ERROR_MESSAGES_ZH[result.error.code];
         const message =
           codeMessage ?? toMessage(result.error, failedFallback, locale);
-        setAssetRenameDialog((current) =>
-          current && current.assetId === assetId
-            ? { ...current, submitting: false, error: message }
-            : current,
-        );
+        const current = assetRenameDialogRef.current;
+        if (current && current.assetId === assetId) {
+          replaceAssetRenameDialog({
+            ...current,
+            submitting: false,
+            error: message,
+          });
+        }
         return;
       }
-      setAssetRenameDialog(null);
+      replaceAssetRenameDialog(null);
       setNotice(
         translateForLocale(locale, "assetRename.success", {
           name: result.value.displayName,
@@ -208,22 +261,21 @@ export function useAssetRename({
       setSelectedAssetIds([assetId]);
       setSelectedAssetId(assetId);
     } catch (caught) {
-      setAssetRenameDialog((current) =>
-        current && current.assetId === assetId
-          ? {
-              ...current,
-              submitting: false,
-              error: toMessage(caught, failedFallback, locale),
-            }
-          : current,
-      );
+      const current = assetRenameDialogRef.current;
+      if (current && current.assetId === assetId) {
+        replaceAssetRenameDialog({
+          ...current,
+          submitting: false,
+          error: toMessage(caught, failedFallback, locale),
+        });
+      }
     }
   }, [
     api,
     library,
-    assetRenameDialog,
     locale,
     reloadCurrentContent,
+    replaceAssetRenameDialog,
     setNotice,
     setSelectedAssetId,
     setSelectedAssetIds,
