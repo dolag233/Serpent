@@ -7,7 +7,7 @@
      Noto Sans SC render U+2026 as a full-width, vertically-centered glyph,
      which made every truncation ellipsis appear mid-height. CJK characters
      still fall through to the CJK entries below. */
-  font-family:
+  --font-ui:
     -apple-system,
     "Segoe UI",
     "Helvetica Neue",
@@ -16,8 +16,10 @@
     "PingFang SC",
     "Microsoft YaHei",
     sans-serif;
+  font-family: var(--font-ui);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
+  font-optical-sizing: auto;
   --canvas: #252729;
   --pane: #2c2e31;
   --raised: #35383b;
@@ -65,6 +67,24 @@
   --shell-control-height: 28px;
   --shell-chip-height: 22px;
 }
+
+/* Windows typography follows the platform's own UI type ramp. Segoe handles
+   Latin/punctuation while Chromium falls through per character to YaHei UI
+   for Simplified Chinese. The bundled Noto face remains a final portability
+   fallback, not the first CJK choice on Windows. DirectWrite owns rasterizing;
+   non-standard font-smoothing properties do not improve it. */
+:root[data-platform="windows"] {
+  --font-ui:
+    "Segoe UI Variable",
+    "Segoe UI",
+    "Microsoft YaHei UI",
+    "Microsoft YaHei",
+    "Noto Sans SC Variable",
+    Arial,
+    sans-serif;
+  text-rendering: auto;
+}
+
 /* REQ-THEME-001/002: light semantic token overrides. Prefer changing tokens
    here over duplicating light-only hardcoded colors in selectors. */
 [data-theme="light"] {
@@ -5124,4 +5144,83 @@ select.ai-config-input {
   color: var(--warning);
   font-size: 10px;
   line-height: 1.5;
+}
+
+/* Windows guidance sets 12 effective pixels as the regular UI-text floor.
+   Keep these explicit platform overrides after component rules so the cascade
+   does not rely on :is() adopting a selector's highest specificity. */
+:root[data-platform="windows"] :where(
+    .micro-label,
+    .ai-search-plan-summary,
+    .search-snippet,
+    .inspector-section-label,
+    .inspector-status-row,
+    .nav-section-heading,
+    .nav-count,
+    .nav-empty,
+    .library-switcher-section-label,
+    .context-menu-item-shortcut,
+    .context-menu-scope-note,
+    .context-menu-section-label,
+    .filter-tag-chip,
+    .filter-tag-section-label,
+    .filter-tag-options button,
+    .filter-tag-count
+  ) {
+  font-size: 12px;
+}
+
+:root[data-platform="windows"] :where(
+    .micro-label,
+    .ai-search-plan-summary,
+    .search-snippet,
+    .inspector-section-label,
+    .inspector-status-row,
+    .nav-section-heading,
+    .nav-count,
+    .nav-empty,
+    .library-switcher-section-label,
+    .context-menu-item-shortcut,
+    .context-menu-scope-note,
+    .context-menu-section-label,
+    .filter-tag-chip,
+    .filter-tag-section-label,
+    .filter-tag-options button,
+    .filter-tag-count
+  ) {
+  /* The tertiary token is intentionally decorative and falls below small-text
+     contrast on both themes. Windows captions remain subtle but readable. */
+  color: var(--secondary);
+}
+
+:root[data-platform="windows"] .metadata-list div {
+  font-size: 12px;
+}
+
+:root[data-platform="windows"] .metadata-list dt {
+  color: var(--secondary);
+}
+
+:root[data-platform="windows"] .micro-label {
+  /* IBM Plex Mono does not contain CJK glyphs. Keep the existing macOS label
+     styling intact while avoiding an unrelated monospace fallback on Windows. */
+  font-family: var(--font-ui);
+}
+
+:root[data-platform="windows"] :where(
+    .ai-search-plan-summary,
+    .search-snippet
+  ) {
+  /* These fields can contain localized prose, so they must not inherit the
+     technical monospace styling used for machine-oriented values. */
+  font-family: var(--font-ui);
+}
+
+:root[data-platform="windows"] :where(
+    .micro-label,
+    .nav-section-heading,
+    .context-menu-section-label,
+    .filter-tag-section-label
+  ) {
+  letter-spacing: 0.02em;
 }
