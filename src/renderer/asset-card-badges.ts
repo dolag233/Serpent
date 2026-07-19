@@ -1,3 +1,13 @@
+/**
+ * Grid corner badges (type / duration / source folder) become noise when the
+ * preview is tiny (Serpent-7zt). Hide them below this card edge length (px).
+ */
+export const ASSET_CARD_BADGE_MIN_SIZE = 140;
+
+export function shouldShowAssetCardBadges(cardSize: number): boolean {
+  return Number.isFinite(cardSize) && cardSize >= ASSET_CARD_BADGE_MIN_SIZE;
+}
+
 /** Corner labels for grid cards (Eagle-style type + duration chips). */
 
 export function fileExtensionLabel(displayName: string): string {

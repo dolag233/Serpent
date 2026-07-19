@@ -18,6 +18,7 @@ import { shouldShowMissingAssetOverlay } from "./availability-affordance";
 import {
   assetTypeBadgeLabel,
   fileExtensionLabel,
+  shouldShowAssetCardBadges,
   shouldShowDurationBadge,
 } from "./asset-card-badges";
 import {
@@ -4154,18 +4155,28 @@ function AppInner() {
       });
       if (!result.ok) {
         if (result.error.code === "CANCELLED") {
+          // Serpent-tye: folder/save dialog cancel must clear the optimistic strip.
+          setExportProgress(null);
           setNotice(t("toast.exportCancelled"));
         } else {
           throw new LibraryOperationError(result.error);
         }
       }
     } catch (caught) {
+      setExportProgress(null);
       setError(toMessage(caught, t("toast.exportFailed"), locale));
     } finally {
       setTimeout(() => {
         setExportProgress((prev) => {
-          if (prev?.phase === "complete" || prev?.phase === "cancelled")
+          if (
+            !prev ||
+            prev.phase === "complete" ||
+            prev.phase === "cancelled" ||
+            prev.phase === "failed"
+          ) {
             return null;
+          }
+          // Still running after the dialog returned — keep showing until events settle.
           return prev;
         });
       }, 4000);
@@ -4461,6 +4472,14 @@ function AppInner() {
       convertLinkedDialog.folderId,
   );
   useDialogFocusTrap(dialogFocusTrapActive);
+
+  useEffect(() => {
+    // Serpent-0rk: freeze shell pointer targets while any modal is open.
+    document.body.classList.toggle("serpent-modal-open", dialogFocusTrapActive);
+    return () => {
+      document.body.classList.remove("serpent-modal-open");
+    };
+  }, [dialogFocusTrapActive]);
 
   useEffect(() => {
     const onSelectionKeyDown = (event: KeyboardEvent) => {
@@ -5573,6 +5592,7 @@ function AppInner() {
             aspectRatioRanges={aspectRatioRanges}
             colorFilter={colorFilter}
             disabled={!library}
+            interactionsLocked={dialogFocusTrapActive}
             durationRange={durationRange}
             excludeAvailabilityFilter={excludeAvailabilityFilter}
             excludeColorFilter={excludeColorFilter}
@@ -5788,21 +5808,27 @@ function AppInner() {
                   style={assetGridLayoutStyle(assetViewMode, assetCardSize)}
                 >
                   {(() => {
+                    const showCornerBadges =
+                      shouldShowAssetCardBadges(assetCardSize);
                     const cards = visibleAssets.map((asset) => {
                       const typeBadge = assetTypeBadgeLabel(
                         asset.mediaType,
                         asset.displayName,
                       );
-                      const showDuration = shouldShowDurationBadge(
-                        asset.mediaType,
-                        asset.displayName,
-                        asset.durationMs,
-                      );
+                      const showDuration =
+                        showCornerBadges &&
+                        shouldShowDurationBadge(
+                          asset.mediaType,
+                          asset.displayName,
+                          asset.durationMs,
+                        );
                       const showTypeBadge =
+                        showCornerBadges &&
                         Boolean(typeBadge) &&
                         !asset.deletedAt &&
                         !shouldShowMissingAssetOverlay(asset.availability);
                       const sourceBadgeLabel =
+                        showCornerBadges &&
                         !showTrash &&
                         shouldShowAssetSourceBadge(
                           sourceBadgeContext,
@@ -6246,6 +6272,22 @@ function AppInner() {
                   >
                     <Icon name="folder" size={15} />
                     {t("shell.openLibrary")}
+                  </button>
+                  <button
+                    className="secondary-button"
+                    onClick={() => void startImport()}
+                    type="button"
+                  >
+                    <Icon name="download" size={15} />
+                    {t("toolbar.importLibrary")}
+                  </button>
+                  <button
+                    className="secondary-button"
+                    onClick={() => void startImportZip()}
+                    type="button"
+                  >
+                    <Icon name="archive" size={15} />
+                    {t("toolbar.importZip")}
                   </button>
                 </div>
               </div>

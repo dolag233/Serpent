@@ -2159,13 +2159,20 @@ input[type="range"] {
 }
 
 .dialog-backdrop {
+  /* Serpent-0rk: cover the full window above shell chrome (toolbar is z-30). */
   position: fixed;
-  z-index: 20;
+  z-index: 50;
   display: grid;
   background: rgb(15 16 17 / 62%);
-  inset: var(--shell-toolbar-height) 0 0;
+  inset: 0;
   place-items: center;
   backdrop-filter: blur(2px);
+  pointer-events: auto;
+}
+
+/* While a modal is open, freeze shell chrome so hover popovers (filters) cannot open. */
+body.serpent-modal-open .app-shell {
+  pointer-events: none;
 }
 
 /* ------------------------------------------------------------------ */
@@ -3447,13 +3454,45 @@ select.ai-config-input {
   align-items: center;
   gap: 8px;
   padding: 7px 14px;
-  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--raised));
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--divider));
   border-radius: 999px;
-  background: color-mix(in srgb, var(--accent) 8%, var(--pane));
-  box-shadow: 0 8px 28px rgb(0 0 0 / 30%);
-  color: color-mix(in srgb, var(--accent) 28%, white);
+  background: color-mix(in srgb, var(--accent) 10%, var(--raised));
+  box-shadow: 0 8px 28px rgb(0 0 0 / 18%);
+  color: var(--text);
   font-size: 11px;
   transform: translateX(-50%);
+}
+
+.activity-strip .secondary-button {
+  height: 26px;
+  padding: 0 10px;
+  border-color: var(--divider);
+  background: var(--pane);
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 520;
+}
+
+.activity-strip .secondary-button:hover:not(:disabled) {
+  background: var(--hover);
+  border-color: var(--divider);
+}
+
+.activity-strip .secondary-button:disabled {
+  opacity: 0.55;
+}
+
+[data-theme="light"] .activity-strip {
+  border-color: color-mix(in srgb, var(--accent) 22%, var(--divider));
+  background: var(--raised);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 10%);
+  color: var(--text);
+}
+
+[data-theme="light"] .activity-strip .secondary-button {
+  background: var(--canvas);
+  border-color: var(--divider);
+  color: var(--text);
 }
 
 .activity-pulse {

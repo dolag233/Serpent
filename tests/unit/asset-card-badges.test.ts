@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  ASSET_CARD_BADGE_MIN_SIZE,
   assetTypeBadgeLabel,
   fileExtensionLabel,
+  shouldShowAssetCardBadges,
   shouldShowDurationBadge,
 } from "../../src/renderer/asset-card-badges";
 
@@ -22,6 +24,13 @@ describe("asset-card-badges", () => {
     expect(shouldShowDurationBadge("image", "a.jpg", 1200)).toBe(false);
     expect(shouldShowDurationBadge("video", "a.mp4", null)).toBe(false);
     expect(shouldShowDurationBadge("video", "a.mp4", 0)).toBe(false);
+  });
+
+  it("hides corner badges when the card preview is too small (Serpent-7zt)", () => {
+    expect(shouldShowAssetCardBadges(ASSET_CARD_BADGE_MIN_SIZE)).toBe(true);
+    expect(shouldShowAssetCardBadges(ASSET_CARD_BADGE_MIN_SIZE - 1)).toBe(false);
+    expect(shouldShowAssetCardBadges(96)).toBe(false);
+    expect(shouldShowAssetCardBadges(320)).toBe(true);
   });
 
   it("truncates long extensions", () => {
