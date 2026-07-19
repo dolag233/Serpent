@@ -1060,9 +1060,14 @@ body.platform-darwin .toolbar-leading {
   cursor: pointer;
 }
 
+/* Serpent-xwi1: breadcrumb hover must use the same hover token as every other
+   clickable shell control (.nav-row, .tool-button, .scope-history-button,
+   .nav-disclosure all use --hover). Using --raised painted a solid panel
+   surface (opaque white in the light theme) under the crumb, which read as a
+   stark block inconsistent with the subtle --hover tint used everywhere else. */
 .scope-crumb-button:hover {
   color: var(--text);
-  background: var(--raised);
+  background: var(--hover);
 }
 
 .scope-crumb-label.is-current {
