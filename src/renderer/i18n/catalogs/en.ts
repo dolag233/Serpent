@@ -128,6 +128,7 @@ export const en = {
     openLibraryFoldersHint: "Open a library to see folders",
     openLibrarySmartHint: "Open a library to see smart collections",
     newFolderName: "New folder name",
+    newSmartCollectionName: "New smart collection name",
     folderRename: "Rename folder",
     collectionNamePlaceholder: "Enter collection name, press Enter to create",
     subcollectionNamePlaceholder: "Enter subcollection name, press Enter to create",
@@ -619,7 +620,15 @@ export const en = {
   },
   settings: {
     title: "Settings",
-    viewMode: "Browse view"
+    themeHint: "Controls the app’s light or dark appearance. Changes apply immediately.",
+    languageHint: "Controls the interface language. Changes apply immediately.",
+    viewMode: "Browse view",
+    canvasHint: "Controls how assets are arranged on the canvas. Changes apply immediately.",
+    cardFields: "Card display fields",
+    cardFieldsHint: "Controls which details appear on canvas asset cards. Toggles update the canvas immediately.",
+    showFileNameHint: "Show the file name on canvas cards",
+    showFileSizeHint: "Show the file size on canvas cards",
+    showModifiedDateHint: "Show the modified date on canvas cards"
   },
   preview: {
     ffmpegRequired: "This install is missing FFmpeg, so a video playback proxy cannot be generated. Install or configure FFmpeg and try again.",
@@ -741,6 +750,10 @@ export const en = {
     renameFailed: "Rename failed. Please try again.",
     created: "Created folder \"{name}\".",
     renamed: "Renamed folder to “{name}”."
+  },
+  smartEdit: {
+    newName: "New smart collection",
+    createFailed: "Failed to create smart collection."
   },
   assetRename: {
     failed: "Failed to rename file.",

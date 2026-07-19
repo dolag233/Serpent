@@ -1,36 +1,14 @@
 import type { ReactNode } from "react";
+import {
+  APP_SETTINGS_CANVAS_FIELD_OPTIONS,
+  APP_SETTINGS_LOCALE_OPTIONS,
+  APP_SETTINGS_THEME_OPTIONS,
+} from "./app-settings-sections";
 import type { CanvasPreferences } from "./canvas-preferences";
 import { Icon } from "./Icons";
 import { iconActionAttrs } from "./icon-action-attrs";
-import { useLocale, type LocalePreference } from "./i18n";
-import { useTheme, type ThemePreference } from "./theme";
-
-const THEME_OPTIONS: readonly {
-  readonly value: ThemePreference;
-  readonly labelKey: "shell.themeDark" | "shell.themeLight" | "shell.themeSystem";
-}[] = [
-  { value: "dark", labelKey: "shell.themeDark" },
-  { value: "light", labelKey: "shell.themeLight" },
-  { value: "system", labelKey: "shell.themeSystem" },
-];
-
-const LOCALE_OPTIONS: readonly {
-  readonly value: LocalePreference;
-  readonly labelKey: "shell.languageSystem" | "shell.languageZh" | "shell.languageEn";
-}[] = [
-  { value: "system", labelKey: "shell.languageSystem" },
-  { value: "zh-CN", labelKey: "shell.languageZh" },
-  { value: "en", labelKey: "shell.languageEn" },
-];
-
-const CANVAS_FIELD_OPTIONS: readonly {
-  readonly field: keyof CanvasPreferences["fields"];
-  readonly labelKey: "toolbar.showFileName" | "toolbar.showFileSize" | "toolbar.showModifiedDate";
-}[] = [
-  { field: "name", labelKey: "toolbar.showFileName" },
-  { field: "size", labelKey: "toolbar.showFileSize" },
-  { field: "date", labelKey: "toolbar.showModifiedDate" },
-];
+import { useLocale } from "./i18n";
+import { useTheme } from "./theme";
 
 export interface AppSettingsDialogProps {
   open: boolean;
@@ -41,20 +19,10 @@ export interface AppSettingsDialogProps {
 }
 
 /**
- * REQ-PREF-001: general settings entry point surfaced in the browse-area
- * workspace toolbar (gear icon next to "more tools"). Theme and language
- * already live in the library-name dropdown (LibrarySwitcher); this dialog
- * is a parallel entry point onto the same `useTheme`/`useLocale` state, not
- * a second source of truth, so both surfaces stay in sync automatically.
- *
- * Canvas display (view mode + field toggles) is included per the backlog's
- * "evaluate other preferences" ask: the state already lives in App.tsx and
- * has an existing toolbar surface, so this is a second entry point onto the
- * same preference, not a new decision. "Confirmation behavior" (also named
- * in the backlog) is intentionally NOT included: it depends on clarification
- * queue item #7 (delete confirmation semantics for managed vs linked
- * assets), which is unresolved — adding a toggle here would invent a product
- * decision that hasn't been made.
+ * REQ-PREF-001 / Serpent-97l: app-level preferences (theme, language, canvas
+ * card fields). Opened from the gear beside the library switcher. Theme and
+ * language are no longer in the library dropdown — this dialog is the only
+ * settings surface. Esc and backdrop click dismiss; no footer Close button.
  */
 export function AppSettingsDialog({
   open,
@@ -69,8 +37,18 @@ export function AppSettingsDialog({
   if (!open) return null;
 
   return (
-    <div className="dialog-backdrop" role="presentation">
-      <div aria-modal="true" className="create-dialog app-settings-dialog" role="dialog">
+    <div
+      className="dialog-backdrop"
+      onClick={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+      role="presentation"
+    >
+      <div
+        aria-modal="true"
+        className="create-dialog app-settings-dialog"
+        role="dialog"
+      >
         <div className="dialog-heading">
           <div>
             <h2>{t("settings.title")}</h2>
@@ -87,12 +65,13 @@ export function AppSettingsDialog({
 
         <section className="app-settings-section">
           <div className="micro-label">{t("shell.theme")}</div>
+          <p className="app-settings-hint">{t("settings.themeHint")}</p>
           <div
             aria-label={t("shell.theme")}
             className="app-settings-option-group"
             role="radiogroup"
           >
-            {THEME_OPTIONS.map((option) => (
+            {APP_SETTINGS_THEME_OPTIONS.map((option) => (
               <button
                 aria-checked={themePreference === option.value}
                 className="app-settings-option"
@@ -109,12 +88,13 @@ export function AppSettingsDialog({
 
         <section className="app-settings-section">
           <div className="micro-label">{t("shell.language")}</div>
+          <p className="app-settings-hint">{t("settings.languageHint")}</p>
           <div
             aria-label={t("shell.language")}
             className="app-settings-option-group"
             role="radiogroup"
           >
-            {LOCALE_OPTIONS.map((option) => (
+            {APP_SETTINGS_LOCALE_OPTIONS.map((option) => (
               <button
                 aria-checked={localePreference === option.value}
                 className="app-settings-option"
@@ -131,6 +111,7 @@ export function AppSettingsDialog({
 
         <section className="app-settings-section">
           <div className="micro-label">{t("toolbar.canvasSettings")}</div>
+          <p className="app-settings-hint">{t("settings.canvasHint")}</p>
           <div
             aria-label={t("settings.viewMode")}
             className="app-settings-option-group"
@@ -155,29 +136,31 @@ export function AppSettingsDialog({
               {t("toolbar.masonryView")}
             </button>
           </div>
+          <div className="micro-label app-settings-sublabel">
+            {t("settings.cardFields")}
+          </div>
+          <p className="app-settings-hint">{t("settings.cardFieldsHint")}</p>
           <div className="app-settings-check-row-group">
-            {CANVAS_FIELD_OPTIONS.map((option) => (
-              <label className="ai-config-check-row" key={option.field}>
+            {APP_SETTINGS_CANVAS_FIELD_OPTIONS.map((option) => (
+              <label
+                className="ai-config-check-row ai-config-check-row-top"
+                key={option.field}
+              >
                 <input
                   checked={canvasPrefs.fields[option.field]}
                   onChange={() => onToggleField(option.field)}
                   type="checkbox"
                 />
-                {t(option.labelKey)}
+                <span className="app-settings-check-copy">
+                  <span>{t(option.labelKey)}</span>
+                  <span className="app-settings-field-hint">
+                    {t(option.descriptionKey)}
+                  </span>
+                </span>
               </label>
             ))}
           </div>
         </section>
-
-        <div className="dialog-actions">
-          <button
-            className="primary-button"
-            onClick={onClose}
-            type="button"
-          >
-            {t("common.close")}
-          </button>
-        </div>
       </div>
     </div>
   );

@@ -119,6 +119,7 @@ export const zhCN = {
     openLibraryFoldersHint: "打开资源库后显示目录",
     openLibrarySmartHint: "打开资源库后显示智能合集",
     newFolderName: "新文件夹名称",
+    newSmartCollectionName: "新智能合集名称",
     folderRename: "文件夹重命名",
     collectionNamePlaceholder: "输入合集名称，回车创建",
     subcollectionNamePlaceholder: "输入子合集名称，回车创建",
@@ -610,7 +611,15 @@ export const zhCN = {
   /** REQ-PREF-001: 浏览区通用设置面板；主题/语言复用 shell.theme 与 shell.language 下的键。 */
   settings: {
     title: "通用设置",
-    viewMode: "浏览视图"
+    themeHint: "控制整个应用的亮暗外观，立即生效。",
+    languageHint: "控制界面文案语言，立即生效。",
+    viewMode: "浏览视图",
+    canvasHint: "控制资产画布的排列方式；改后立即作用于画布。",
+    cardFields: "卡片显示字段",
+    cardFieldsHint: "控制画布资产卡片上显示哪些信息；开关后立即在画布可见。",
+    showFileNameHint: "在画布卡片上显示文件名。",
+    showFileSizeHint: "在画布卡片上显示文件大小。",
+    showModifiedDateHint: "在画布卡片上显示修改日期。"
   },
   preview: {
     ffmpegRequired: "当前安装缺少 FFmpeg，无法生成视频播放代理。请安装或配置 FFmpeg 后重试。",
@@ -732,6 +741,10 @@ export const zhCN = {
     renameFailed: "重命名失败，请重试。",
     created: "已创建文件夹\"{name}\"。",
     renamed: "已将文件夹重命名为“{name}”。"
+  },
+  smartEdit: {
+    newName: "新建智能合集",
+    createFailed: "创建智能合集失败。"
   },
   assetRename: {
     failed: "重命名文件失败。",
