@@ -3915,18 +3915,21 @@ select.ai-config-input {
   pointer-events: none;
 }
 
-/* Light theme: dark frosted chips + --text are unreadable; use light chips. */
-[data-theme="light"] .asset-extension,
-[data-theme="light"] .asset-duration-badge,
-[data-theme="light"] .asset-type-badge,
-[data-theme="light"] .asset-source-badge {
-  background: rgb(255 255 255 / 88%);
-  box-shadow: 0 0 0 1px rgb(0 0 0 / 10%);
-  color: var(--text);
-}
+/* Light theme: invert chip tint (dark frost + --text is unreadable) but keep
+   the same translucent frosted blur as dark — not opaque white chips. */
 [data-theme="light"] .asset-extension,
 [data-theme="light"] .asset-source-badge {
+  background: rgb(255 255 255 / 58%);
+  backdrop-filter: blur(6px);
+  box-shadow: 0 0 0 1px rgb(0 0 0 / 12%);
   color: var(--secondary);
+}
+[data-theme="light"] .asset-duration-badge,
+[data-theme="light"] .asset-type-badge {
+  background: rgb(255 255 255 / 64%);
+  backdrop-filter: blur(6px);
+  box-shadow: 0 0 0 1px rgb(0 0 0 / 12%);
+  color: var(--text);
 }
 
 .missing-banner {
