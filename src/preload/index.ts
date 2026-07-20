@@ -1147,8 +1147,14 @@ const library: SerpentLibraryApi = Object.freeze({
   },
 
   // AI clear-content
-  async clearAiContent({ libraryId, scope, confirm }: { libraryId: string; scope: { kind: 'asset' | 'selection' | 'folder' | 'library'; assetIds?: string[]; folderId?: string }; confirm: boolean }): Promise<LibraryApiResult<{ clearedCount: number }>> {
-    const result = await request({ type: 'ai.clear-content.request', libraryId, scope, confirm });
+  async clearAiContent({ libraryId, scope, confirm, fields }: { libraryId: string; scope: { kind: 'asset' | 'selection' | 'folder' | 'library'; assetIds?: string[]; folderId?: string }; confirm: boolean; fields?: Array<'description' | 'rating' | 'tags'> }): Promise<LibraryApiResult<{ clearedCount: number }>> {
+    const result = await request({
+      type: 'ai.clear-content.request',
+      libraryId,
+      scope,
+      confirm,
+      ...(fields ? { fields } : {}),
+    });
     if (!result.ok) return failure(result);
     if (result.type !== 'ai.content.cleared') throw new Error('Unexpected clear-content response.');
     return { ok: true, value: { clearedCount: result.clearedCount } };

@@ -692,6 +692,11 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
       folderId: identifierSchema.optional(),
     }),
     confirm: z.boolean(),
+    /** When set, only these AI layers are cleared (Serpent-u7hz). Omit = all. */
+    fields: z
+      .array(z.enum(['description', 'rating', 'tags']))
+      .min(1)
+      .optional(),
   }),
   z.strictObject({
     type: z.literal('ai.pause-jobs.request'),
@@ -1288,6 +1293,10 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
       folderId: identifierSchema.optional(),
     }),
     confirm: z.boolean(),
+    fields: z
+      .array(z.enum(['description', 'rating', 'tags']))
+      .min(1)
+      .optional(),
   }),
   z.strictObject({
     type: z.literal('ai.pause-jobs'),

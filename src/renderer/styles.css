@@ -3202,6 +3202,17 @@ body.serpent-modal-open .app-shell {
   color: var(--secondary);
   text-align: center;
 }
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
 .preview-state strong {
   color: var(--text);
   font-size: 15px;
@@ -5516,22 +5527,28 @@ select.ai-config-input.ai-config-languages {
 }
 .conflict-examples {
   display: flex;
-  max-height: 95px;
+  max-height: 140px;
   flex-direction: column;
   gap: 5px;
   overflow: auto;
   margin-top: 14px;
   padding: 9px;
   border: 1px solid var(--divider-soft);
+  border-radius: 8px;
   background: var(--pane);
 }
-.conflict-examples span {
+.conflict-examples > span {
   display: flex;
   align-items: center;
   gap: 7px;
-  overflow: hidden;
+  min-width: 0;
   color: var(--secondary);
   font-size: 10px;
+}
+.conflict-examples .conflict-example-name {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }

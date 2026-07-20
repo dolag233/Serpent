@@ -6915,6 +6915,8 @@ export class LibraryService {
       folderId?: string;
     };
     confirm: boolean;
+    /** Omit to clear every AI layer; otherwise only the listed layers. */
+    fields?: Array<'description' | 'rating' | 'tags'>;
   }): { clearedCount: number } {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
 
@@ -6976,7 +6978,15 @@ export class LibraryService {
       return { clearedCount: 0 };
     }
 
-    const deleteAiContent = conn.prepare(
+    const clearAll = !input.fields || input.fields.length === 0;
+    const clearDescription = clearAll || input.fields!.includes('description');
+    const clearRating = clearAll || input.fields!.includes('rating');
+    const clearTags = clearAll || input.fields!.includes('tags');
+
+    const deleteAiField = conn.prepare(
+      'DELETE FROM ai_content WHERE asset_id = ? AND field_name = ?',
+    );
+    const deleteAllAiContent = conn.prepare(
       'DELETE FROM ai_content WHERE asset_id = ?',
     );
     const deleteAiTags = conn.prepare(
@@ -6985,9 +6995,13 @@ export class LibraryService {
 
     conn.transaction(() => {
       for (const assetId of targetAssetIds) {
-        deleteAiContent.run(assetId);
-        deleteAiTags.run(assetId);
-        // Re-sync FTS (AI tags removed).
+        if (clearAll) {
+          deleteAllAiContent.run(assetId);
+        } else {
+          if (clearDescription) deleteAiField.run(assetId, 'description');
+          if (clearRating) deleteAiField.run(assetId, 'rating');
+        }
+        if (clearTags) deleteAiTags.run(assetId);
         this.syncAssetSearchContent(conn, assetId);
       }
     })();

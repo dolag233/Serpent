@@ -464,6 +464,35 @@ describe('clearAiContent', () => {
     service.closeAll();
   });
 
+  it('clears only the requested AI field and keeps other AI layers (Serpent-u7hz)', () => {
+    const { service, libraryId, assetId } = setupLibraryWithAiContent();
+
+    service.writeAiAnalysisResult({
+      libraryId,
+      assetId,
+      description: 'AI only desc',
+      tags: ['keep-me'],
+      rating: 4,
+      modelId: 'test-model',
+      modelVersion: 'v1',
+      enabledFields: { description: true, tags: true, rating: true },
+    });
+
+    const result = service.clearAiContent({
+      libraryId,
+      scope: { kind: 'asset', assetIds: [assetId] },
+      confirm: false,
+      fields: ['description'],
+    });
+    expect(result.clearedCount).toBe(1);
+
+    const aiContent = service.getAiContent(libraryId, assetId);
+    expect(aiContent.map((row) => row.fieldName).sort()).toEqual(['rating']);
+    expect(service.listAiTagNames(libraryId, assetId)).toEqual(['keep-me']);
+
+    service.closeAll();
+  });
+
   it('clears AI content for multiple assets (kind=selection)', () => {
     const { service, libraryId, root, assetId } = setupLibraryWithAiContent();
 

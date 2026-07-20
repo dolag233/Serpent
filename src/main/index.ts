@@ -1462,6 +1462,7 @@ async function commandFor(
         libraryId: request.libraryId,
         scope: request.scope,
         confirm: request.confirm,
+        ...(request.fields ? { fields: request.fields } : {}),
       };
     case "media.list-jobs.request":
       return { type: "media.list-jobs", libraryId: request.libraryId };

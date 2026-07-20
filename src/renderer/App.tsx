@@ -1234,10 +1234,14 @@ function AppInner() {
           : event.deltaMode === WheelEvent.DOM_DELTA_PAGE
             ? event.deltaY * canvas.clientHeight
             : event.deltaY;
+      // Browse card zoom: keep the asset under the viewport center stable
+      // (Serpent-f0oo). Pointer-relative anchoring jumps the grid when the
+      // cursor is far from center during continuous Ctrl+wheel.
+      const rect = canvas.getBoundingClientRect();
       resizeAssetCards(
         assetCardSize * Math.exp(-delta * 0.002),
-        event.clientX,
-        event.clientY,
+        rect.left + rect.width / 2,
+        rect.top + rect.height / 2,
       );
     };
     canvas.addEventListener("wheel", handleWheel, { passive: false });
@@ -5673,6 +5677,7 @@ function AppInner() {
         libraryId: library.libraryId,
         scope: { kind: "asset", assetIds: [selectedAsset.assetId] },
         confirm: false,
+        fields: ["description"],
       });
       if (!cleared.ok) {
         setError(
@@ -5680,7 +5685,13 @@ function AppInner() {
         );
         return;
       }
-      setAiContent(null);
+      setAiContent((current) => {
+        if (!current || current.assetId !== selectedAsset.assetId) return current;
+        const { description: _cleared, ...rest } = current;
+        const stillHas =
+          Boolean(rest.tags && rest.tags.length > 0) || rest.rating != null;
+        return stillHas ? rest : null;
+      });
       setDescriptionIsAi(false);
       setNotice(t("toast.aiContentPromoted"));
       loadMetadata();

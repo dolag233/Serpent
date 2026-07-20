@@ -156,7 +156,9 @@ function InlineFolderEditRow({
   }, []);
 
   return (
-    <div className="nav-inline-edit" style={{ paddingLeft: 7 + depth * 14 }}>
+    <div className="nav-tree-row">
+      <span className="nav-disclosure-spacer" aria-hidden="true" />
+      <div className="nav-inline-edit" style={{ paddingLeft: 7 + depth * 14 }}>
       <Icon name="folder" size={15} />
       <input
         aria-invalid={state.error ? true : undefined}
@@ -187,6 +189,7 @@ function InlineFolderEditRow({
           {state.error}
         </p>
       ) : null}
+      </div>
     </div>
   );
 }
@@ -222,7 +225,9 @@ function InlineSmartCollectionEditRow({
   }, []);
 
   return (
-    <div className="nav-inline-edit" style={{ paddingLeft: 7 }}>
+    <div className="nav-tree-row">
+      <span className="nav-disclosure-spacer" aria-hidden="true" />
+      <div className="nav-inline-edit" style={{ paddingLeft: 7 }}>
       <Icon name="smart" size={15} />
       <input
         aria-invalid={state.error ? true : undefined}
@@ -249,6 +254,7 @@ function InlineSmartCollectionEditRow({
           {state.error}
         </p>
       ) : null}
+      </div>
     </div>
   );
 }
@@ -994,30 +1000,34 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
           {library ? (
             <>
               {showCollectionInput && (
-                <div className="nav-section">
-                  <input
-                    autoFocus
-                    className="text-field"
-                    maxLength={255}
-                    onBlur={() => {
-                      onSetShowCollectionInput(false);
-                      onSetCollectionInputValue("");
-                      onSetNewCollectionParentId(null);
-                    }}
-                    onChange={(e) => onSetCollectionInputValue(e.target.value)}
-                    onKeyDown={onCollectionInputKeyDown}
-                    placeholder={
-                      newCollectionParentId
-                        ? t("nav.subcollectionNamePlaceholder")
-                        : t("nav.collectionNamePlaceholder")
-                    }
+                <div className="nav-tree-row">
+                  <span className="nav-disclosure-spacer" aria-hidden="true" />
+                  <div
+                    className="nav-inline-edit"
                     style={{
-                      height: 27,
-                      margin: "2px 0 4px 0",
-                      fontSize: 11,
+                      paddingLeft: 7 + (newCollectionParentId ? 14 : 0),
                     }}
-                    value={collectionInputValue}
-                  />
+                  >
+                    <Icon name="collection" size={15} />
+                    <input
+                      autoFocus
+                      className="text-field"
+                      maxLength={255}
+                      onBlur={() => {
+                        onSetShowCollectionInput(false);
+                        onSetCollectionInputValue("");
+                        onSetNewCollectionParentId(null);
+                      }}
+                      onChange={(e) => onSetCollectionInputValue(e.target.value)}
+                      onKeyDown={onCollectionInputKeyDown}
+                      placeholder={
+                        newCollectionParentId
+                          ? t("nav.subcollectionNamePlaceholder")
+                          : t("nav.collectionNamePlaceholder")
+                      }
+                      value={collectionInputValue}
+                    />
+                  </div>
                 </div>
               )}
               {activeCollectionId && (

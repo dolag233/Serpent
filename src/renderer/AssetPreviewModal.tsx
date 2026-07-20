@@ -526,7 +526,7 @@ export function AssetPreviewModal({
           {primarySurface === "loading" ? (
             <div className="preview-state" role="status">
               <span className="activity-pulse" />
-              {t("preview.resolving")}
+              <span className="visually-hidden">{t("preview.resolving")}</span>
             </div>
           ) : ready && resolution?.mediaType === "video" && resolution.url ? (
             <VideoPlayerControls

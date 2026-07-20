@@ -246,7 +246,7 @@
 | VIEWER-010 | 左右切图与键盘导航不唤醒已渐隐的查看 chrome | 人类验收通过 | 进入查看页静置约 2 秒 chrome 渐隐；键盘 ←→ 切图；再移动鼠标 | 切图后 chrome 保持隐藏；仅鼠标移动唤醒 | [单测](../../tests/unit/use-viewer-chrome-idle.test.ts) / Serpent-ayf | 2026-07-19 用户确认通过（记为 VIEWER-00→010）。 |
 | VIEWER-012 | 图片查看页普通鼠标滚轮直接缩放 | 人类验收通过 | Windows/macOS 使用普通鼠标打开图片查看页；不按修饰键向上/向下滚轮；滚动中段移动指针再继续滚；再用触控板 pinch/双指滚动对照 | 普通鼠标滚轮直接缩放；缩放中心为「一段滑动手势开始时」指针所指的图上位置，手势内移动指针不改中心、静默后再滚重新锚定；触控板 pinch 缩放/双指平移仍按设备语义区分 | [开发日志](../development/2026-07-20-viewer-wheel-zoom-and-video-zoom-development-log.md) / [wheel 单测](../../tests/unit/viewer-wheel-intent.test.ts) / [media-preview E2E](../../tests/e2e/media-preview.test.ts) / `Serpent-yo0n` / `Serpent-6k1` | 2026-07-20 用户确认通过。 |
 | VIEWER-013 | 视频查看页缩放、平移与 Fit | 人类验收通过 | 双击 MP4 进入查看页；滚轮放大；拖拽平移；点控制栏「适应」；触控板双指/捏合对照；Space 播放/暂停不回归 | 放大后可平移且有边界；「适应」回到窗口适配；百分比回显；不与播放快捷键冲突（D/F 预留给逐帧 `Serpent-sk1`） | [开发日志](../development/2026-07-20-viewer-wheel-zoom-and-video-zoom-development-log.md) / [media-video E2E](../../tests/e2e/media-video-playback.test.ts) / `Serpent-190` | 2026-07-20 用户确认「确实有作用了，可以验收」。 |
-| VIEWER-014 | 查看页加载态无「安全预览」文案 | 人类验收不通过 | 简体中文下双击打开一项资产；若短暂出现加载态则读文案；再切 English 复验同一路径 | 中文为「正在加载…」（或无可读等待文案），英文为「Loading…」；全程不出现「安全预览」「安全浏览」或 “secure preview” | `preview.resolving` i18n / `Serpent-dl23` | 2026-07-20 用户不通过：别显示这类内容；会引起不必要焦虑的文案都没必要存在（不只是改掉「安全预览」）。修复 `Serpent-xkzf`。 |
+| VIEWER-014 | 查看页加载态无焦虑文案 | 待人类验收 | 简体中文下双击打开一项资产；若短暂出现加载态则观察画面；再切 English 复验 | 可见至多极轻脉冲，无「正在加载」「安全预览」「Loading」等可读等待文案（无障碍可读名可隐藏） | `Serpent-xkzf` / `preview.resolving` | 2026-07-20 用户不通过后修复：加载态仅保留脉冲，文案 visually-hidden。 |
 
 ### G. 回收站与重新定位
 
@@ -417,6 +417,7 @@
 | 2026-07-20 | 集中验收落账 | 部分通过 | FILTER-018 / CANVAS-022 / VIEWER-012 / AICFG-003/006/007/008 / INSPECT-AI-001/002 / JOBS-001 通过；VIEWER-014 不通过；CANVAS-026 待用户确认含义后复验。 | 修复/打磨：`Serpent-xkzf` / `w9c6` / `h2i2` / `u7hz` / `g2qh` / `4i18` / `iokf` / `t8sw` / `wbyi`。 |
 | 2026-07-20 | 晚间产品反馈 #1–#14 | 已开单 | 导入冲突裁切/下拉；视频缩略图缺 FFmpeg（P0）；浏览缩放锚定；Inspector 更窄；dev 端口/多实例；新建缩进；Win 快捷键与去菜单；亮色拖入；主题/风格/快捷键审计；全屏切换；色卡文案；竖图预览圆角裁切。 | `Serpent-6nmf` / `p1rm` / `ehss`(P0) / `f0oo` / `y941` / `i6xg` / `wh77` / `vf8x` / `5vex` / `4ojz` / `r7gu` / `oc2z` / `l79c` / `hhy0`；证据 [竖图预览](evidence/2026-07-20-acceptance/inspect-vertical-preview-corner-crop.png)。 |
 | 2026-07-20 | 首批五单修复 | 待人类验收 | P0 视频缩略图找 bundled ffmpeg；标签过滤不清文件夹；亮色拖入；竖图预览圆角；全屏切换图标。 | `Serpent-ehss` / `w9c6` / `5vex` / `hhy0` / `oc2z` → 见 FILTER-019b / MEDIA-002 / THEME-011 / INSPECT-011 / VIEWER-015。 |
+| 2026-07-20 | 第二批五单修复 | 待人类验收 | 浏览缩放中心锚定；新建缩进；加载无文案；冲突名省略；编辑 AI 描述仅清描述层。 | `Serpent-f0oo` / `wh77` / `xkzf` / `6nmf` / `u7hz` → CANVAS-027 / NAV-007 / VIEWER-014 / IMPORT-001 / INSPECT-AI-003。 |
 ### 第五批收口（过滤/导航/排序/Inspector）
 
 | FILTER-019 | 排除过滤红色高亮 | 人类验收通过 | 启用颜色/标签等过滤后勾选排除 | 对应维度按钮呈红色高亮，与包含态区分 | [开发日志](../development/2026-07-19-filter-nav-inspect-polish-development-log.md) / Serpent-8s8 | 2026-07-19 用户确认通过。附带：暗色下红色偏艳 → 降饱和打磨工单。 |

@@ -85,7 +85,9 @@ export function ConflictsDialog({
             {conflicts.examples.map((item, index) => (
               <span key={`${item.displayName}-${index}`}>
                 <Icon name="file" size={13} />
-                {item.displayName}
+                <span className="conflict-example-name" title={item.displayName}>
+                  {item.displayName}
+                </span>
               </span>
             ))}
           </div>
