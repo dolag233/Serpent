@@ -2311,7 +2311,8 @@ input[type="range"] {
   position: fixed;
   z-index: 50;
   display: grid;
-  background: rgb(15 16 17 / 62%);
+  /* Theme-aware scrim (follow-up from Serpent-5vex audit). */
+  background: color-mix(in srgb, var(--ink) 45%, transparent);
   inset: 0;
   place-items: center;
   backdrop-filter: blur(2px);
@@ -4355,7 +4356,7 @@ select.ai-config-input.ai-config-languages {
   backdrop-filter: blur(4px);
 }
 .external-drop-overlay strong {
-  color: var(--primary);
+  color: var(--text);
   font-size: 16px;
 }
 .external-drop-overlay span {
