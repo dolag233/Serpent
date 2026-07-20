@@ -246,7 +246,7 @@
 | VIEWER-010 | 左右切图与键盘导航不唤醒已渐隐的查看 chrome | 人类验收通过 | 进入查看页静置约 2 秒 chrome 渐隐；键盘 ←→ 切图；再移动鼠标 | 切图后 chrome 保持隐藏；仅鼠标移动唤醒 | [单测](../../tests/unit/use-viewer-chrome-idle.test.ts) / Serpent-ayf | 2026-07-19 用户确认通过（记为 VIEWER-00→010）。 |
 | VIEWER-012 | 图片查看页普通鼠标滚轮直接缩放 | 人类验收通过 | Windows/macOS 使用普通鼠标打开图片查看页；不按修饰键向上/向下滚轮；滚动中段移动指针再继续滚；再用触控板 pinch/双指滚动对照 | 普通鼠标滚轮直接缩放；缩放中心为「一段滑动手势开始时」指针所指的图上位置，手势内移动指针不改中心、静默后再滚重新锚定；触控板 pinch 缩放/双指平移仍按设备语义区分 | [开发日志](../development/2026-07-20-viewer-wheel-zoom-and-video-zoom-development-log.md) / [wheel 单测](../../tests/unit/viewer-wheel-intent.test.ts) / [media-preview E2E](../../tests/e2e/media-preview.test.ts) / `Serpent-yo0n` / `Serpent-6k1` | 2026-07-20 用户确认通过。 |
 | VIEWER-013 | 视频查看页缩放、平移与 Fit | 人类验收通过 | 双击 MP4 进入查看页；滚轮放大；拖拽平移；点控制栏「适应」；触控板双指/捏合对照；Space 播放/暂停不回归 | 放大后可平移且有边界；「适应」回到窗口适配；百分比回显；不与播放快捷键冲突（D/F 预留给逐帧 `Serpent-sk1`） | [开发日志](../development/2026-07-20-viewer-wheel-zoom-and-video-zoom-development-log.md) / [media-video E2E](../../tests/e2e/media-video-playback.test.ts) / `Serpent-190` | 2026-07-20 用户确认「确实有作用了，可以验收」。 |
-| VIEWER-014 | 查看页加载态无焦虑文案 | 待人类验收 | 简体中文下双击打开一项资产；若短暂出现加载态则观察画面；再切 English 复验 | 加载态不显示任何可见 UI（无脉冲、无「正在加载/安全预览/Loading」）；仅可有无障碍隐藏语义 | `Serpent-xkzf` / `preview.resolving` | 2026-07-20 用户不通过（不要脉冲）。再修：`.preview-state.is-silent` 空节点。 |
+| VIEWER-014 | 查看页加载态无焦虑文案 | 人类验收通过 | 简体中文下双击打开一项资产；若短暂出现加载态则观察画面；再切 English 复验 | 加载态不显示任何可见 UI（无脉冲、无「正在加载/安全预览/Loading」）；仅可有无障碍隐藏语义 | `Serpent-xkzf` / `preview.resolving` | 2026-07-20 用户确认通过。 |
 
 ### G. 回收站与重新定位
 
@@ -419,6 +419,7 @@
 | 2026-07-20 | 首批五单修复 | 待人类验收 | P0 视频缩略图找 bundled ffmpeg；标签过滤不清文件夹；亮色拖入；竖图预览圆角；全屏切换图标。 | `Serpent-ehss` / `w9c6` / `5vex` / `hhy0` / `oc2z` → 见 FILTER-019b / MEDIA-002 / THEME-011 / INSPECT-011 / VIEWER-015。 |
 | 2026-07-20 | 第二批五单修复 | 待人类验收 | 浏览缩放中心锚定；新建缩进；加载无文案；冲突名省略；编辑 AI 描述仅清描述层。 | `Serpent-f0oo` / `wh77` / `xkzf` / `6nmf` / `u7hz` → CANVAS-027 / NAV-007 / VIEWER-014 / CONFLICT-001 / INSPECT-AI-003。 |
 | 2026-07-20 | 验收回写 + hhy0/xkzf/l7fu | 部分通过 | 5vex/oc2z/wh77/6nmf/u7hz 通过；hhy0/xkzf 不通过已再修；oc2z 附带改适应图标；ehss/CANVAS-026 仍待；f0oo 保留。 | `Serpent-hhy0` → INSPECT-012；`Serpent-xkzf` → VIEWER-014；`Serpent-l7fu` → VIEWER-016。 |
+| 2026-07-20 | INSPECT-012 复验 | 部分通过 | VIEWER-014/016 通过；INSPECT-012 不通过（文件名叠「标签」）已再修。 | `Serpent-6uyp`：hero `flex-shrink:0`，防 flex 压矮溢出。 |
 ### 第五批收口（过滤/导航/排序/Inspector）
 
 | FILTER-019 | 排除过滤红色高亮 | 人类验收通过 | 启用颜色/标签等过滤后勾选排除 | 对应维度按钮呈红色高亮，与包含态区分 | [开发日志](../development/2026-07-19-filter-nav-inspect-polish-development-log.md) / Serpent-8s8 | 2026-07-19 用户确认通过。附带：暗色下红色偏艳 → 降饱和打磨工单。 |
@@ -465,9 +466,9 @@
 | MEDIA-002 | 视频缩略图不依赖本机自装 FFmpeg | 待人类验收 | 导入 MP4/MOV；观察卡片缩略图；再悬停预览；若曾失败可刷新或重开库 | 卡片有可解码封面/缩略图；hover 可播；失败提示不再要求用户「自行安装 FFmpeg」 | `Serpent-ehss` / [binary-resolver 单测](../../tests/unit/binary-resolver.test.ts) | 2026-07-20：dev/packaged 解析 `resources/ffmpeg`；Main 向 Worker 注入绝对路径。需重启应用后复验已失败条目。 |
 | FILTER-019b | 工具栏标签过滤保留文件夹浏览上下文 | 待人类验收 | 进入某文件夹；工具栏应用标签过滤；看侧栏文件夹高亮、面包屑与结果 | 文件夹仍为当前范围；侧栏高亮不丢；有标签的资产仍能列出（非空因误清范围） | `Serpent-w9c6` / [单测](../../tests/unit/folder-browse-tag-filter.test.ts) | 2026-07-20：工具栏标签不再写入 activeTagId。 |
 | THEME-011 | 亮色主题拖入文件叠加层 | 人类验收通过 | 亮色主题下拖文件到画布 | 叠加层为亮色 canvas 洗色，非暗色半透明黑底 | `Serpent-5vex` | 2026-07-20 用户确认通过。 |
-| INSPECT-012 | Inspector 竖图预览居中、圆角与标题可读 | 待人类验收 | ① 单选竖图：预览相对右侧栏水平居中、圆角；文件名含 `jpg` 等下伸字母完整可见。② 多选多张竖图：堆叠预览下方文件名始终可见，不被堆叠遮挡 | 单选居中+圆角；标题 descender 不裁切；多选标题在堆叠下方可见 | `Serpent-hhy0` / [旧证据](evidence/2026-07-20-acceptance/inspect-vertical-preview-corner-crop.png) | 2026-07-20 用户不通过（未居中、jpg 裁切、多选遮挡文件名）。再修：预览居中、单行标题、堆叠限高+overflow hidden。原误用 ID INSPECT-011 已改本条。 |
+| INSPECT-012 | Inspector 竖图预览居中、圆角与标题可读 | 待人类验收 | ① 单选竖图：预览相对右侧栏水平居中、圆角；文件名含 `jpg` 等下伸字母完整可见；文件名与「标签」分区无重叠。② 多选多张竖图：堆叠预览下方文件名始终可见 | 单选居中+圆角；标题 descender 不裁切；文件名不盖住标签行；多选标题在堆叠下方可见 | `Serpent-hhy0` / `Serpent-6uyp` | 2026-07-20 用户不通过：文件名与「标签」重叠。根因：hero 在 flex 列被压矮后标题溢出。再修：hero `flex-shrink:0`。 |
 | VIEWER-015 | 查看页全屏按钮可退出且图标切换 | 人类验收通过 | 打开图片/视频查看；点全屏；再点同一按钮；观察图标 | 第二次退出全屏；进入/退出图标不同 | `Serpent-oc2z` | 2026-07-20 用户确认通过。附带：适应窗口与退出全屏易混淆 → `VIEWER-016` / `Serpent-l7fu`。 |
-| VIEWER-016 | 适应窗口图标与退出全屏可区分 | 待人类验收 | 打开查看页；对照底部「适应」与全屏后「退出全屏」图标 | 适应=外框+十字；退出全屏=四角内折；二者一眼可辨 | `Serpent-l7fu` / `fit-window` | 2026-07-20：`fit-window` 改为框+十字，保留 `fullscreen-exit` 内折角。 |
+| VIEWER-016 | 适应窗口图标与退出全屏可区分 | 人类验收通过 | 打开查看页；对照底部「适应」与全屏后「退出全屏」图标 | 适应=外框+十字；退出全屏=四角内折；二者一眼可辨 | `Serpent-l7fu` / `fit-window` | 2026-07-20 用户确认通过。 |
 | CANVAS-027 | Ctrl+滚轮缩放卡片时视口中心资产保持 | 待人类验收 | 浏览画布：将某资产置于视口中心；Ctrl+滚轮放大/缩小数次 | 缩放前后该资产仍在视口中心附近，不整页跳飞 | `Serpent-f0oo` | 2026-07-20：滚轮缩放改以视口中心为锚。用户说明原需求是 Cmd/Ctrl± 中心缩放+浏览区调卡片大小；本项非其点名但保留。 |
 | NAV-007 | 新建文件夹/合集/智能合集输入态缩进正确 | 人类验收通过 | 侧栏新建文件夹、合集、智能合集；观察输入行与提交后行 | 输入态与提交后缩进对齐（含 disclosure 占位） | `Serpent-wh77` | 2026-07-20 用户确认通过。 |
 | CONFLICT-001 | 导入冲突列表示例文件名不裁切半截 | 人类验收通过 | 触发导入冲突窗；看底部示例文件名（含长名） | 长名省略号完整可读，hover 可看全名；不被容器硬裁 | `Serpent-6nmf` | 2026-07-20 用户确认通过。 |

@@ -2148,6 +2148,11 @@ input[type="range"] {
   padding: 14px;
 }
 
+/* Keep hero (preview + filename) from being flex-crushed onto tags. */
+.inspector-content > .inspector-hero-compact {
+  flex-shrink: 0;
+}
+
 .inspector-identity {
   display: grid;
   grid-template-columns: 46px minmax(0, 1fr);
@@ -4787,26 +4792,32 @@ select.ai-config-input.ai-config-languages {
   cursor: pointer;
 }
 
-/* Compact hero — preview centered; title/meta full-width below (Serpent-hhy0). */
+/* Compact hero — preview centered; title/meta full-width below (Serpent-hhy0).
+   Must not shrink inside `.inspector-content` flex column: tech-bar uses
+   margin-top:auto and would otherwise crush the hero so the filename paints
+   over the tags header (Serpent-6uyp / INSPECT-012). */
 .inspector-hero-compact {
   display: flex;
   align-items: stretch;
   flex-direction: column;
+  flex-shrink: 0;
   gap: 8px;
   padding: 4px 0 12px;
   border-bottom: 1px solid var(--divider-soft);
-  min-height: 0;
+  min-height: min-content;
+  overflow: hidden;
 }
 
 .inspector-hero-preview {
   position: relative;
   display: flex;
   align-self: stretch;
+  flex-shrink: 0;
   width: 100%;
   max-height: min(360px, 45vh);
   align-items: center;
   justify-content: center;
-  overflow: visible;
+  overflow: hidden;
   border: 0;
   border-radius: 0;
   background: transparent;
@@ -4838,7 +4849,6 @@ select.ai-config-input.ai-config-languages {
 .inspector-hero-compact strong,
 .inspector-hero-title {
   position: relative;
-  z-index: 2;
   flex-shrink: 0;
   align-self: stretch;
   min-width: 0;
@@ -4941,7 +4951,7 @@ select.ai-config-input.ai-config-languages {
 
 .inspector-hero-compact.is-multi .inspector-hero-title {
   position: relative;
-  z-index: 2;
+  z-index: 1;
   margin-top: 2px;
 }
 
@@ -4957,6 +4967,7 @@ select.ai-config-input.ai-config-languages {
 
 /* Compact info line (INSPECT-003) — 与文件名同一左缘的摘要行。 */
 .inspector-compact-info {
+  flex-shrink: 0;
   padding: 0;
 }
 
