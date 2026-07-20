@@ -89,6 +89,7 @@ describe('可见性（与历史内联 JSX 条件一致）', () => {
       'assets.move-to-folder',
       'assets.assign-tag',
       'assets.remove-tag',
+      'assets.ai-analyze',
       'assets.clear-ai-content',
       'assets.move-to-trash',
       'assets.clear-selection',
@@ -320,12 +321,13 @@ describe('run 委托到 actions 回调包', () => {
 });
 
 describe('注册表完整性', () => {
-  it('8 条定义全部注册且 id 唯一（createCommandRegistry 未抛错）', () => {
+  it('9 条定义全部注册且 id 唯一（createCommandRegistry 未抛错）', () => {
     expect(registry.list().map((def) => def.id)).toEqual([
       'assets.restore',
       'assets.delete-permanent',
       'assets.assign-tag',
       'assets.remove-tag',
+      'assets.ai-analyze',
       'assets.clear-ai-content',
       'assets.move-to-folder',
       'assets.move-to-trash',
@@ -338,6 +340,7 @@ describe('注册表完整性', () => {
     const groups = registry.resolveMenu(ctx).map((item) => item.group);
     expect(groups).toEqual([
       'organize',
+      'metadata',
       'metadata',
       'metadata',
       'metadata',

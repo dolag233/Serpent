@@ -115,7 +115,7 @@ interface AssetContextMenuProps {
   onPermanentDelete: (assetIds: string[]) => void;
   onRelink: (assetId: string) => void;
   onDeleteLinked: (assetId: string, displayName: string, canDeleteSourceFile: boolean) => void;
-  onAnalyze: (assetId: string) => void;
+  onAnalyze: (assetId: string, batchIds?: readonly string[]) => void;
   onClearAiContent: (assetIds: string[]) => void;
   canAnalyze: boolean;
   onCopyToLinked: (folder: LinkedFolderSummary, assetIds: string[]) => void;
@@ -695,6 +695,11 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                 restore: onRestore,
                 deletePermanent: onPermanentDelete,
                 clearSelection: onClearSelection,
+                aiAnalyze: (assetIds) => {
+                  const primary = assetIds[0];
+                  if (!primary) return;
+                  onAnalyze(primary, assetIds);
+                },
                 clearAiContent: onClearAiContent,
               },
             };
@@ -714,6 +719,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
             );
             const assignTagItem = resolvedById.get("assets.assign-tag");
             const removeTagItem = resolvedById.get("assets.remove-tag");
+            const aiAnalyzeItem = resolvedById.get("assets.ai-analyze");
             const clearAiContentItem = resolvedById.get("assets.clear-ai-content");
             const moveToFolderItem = resolvedById.get("assets.move-to-folder");
             const moveToTrashItem = resolvedById.get("assets.move-to-trash");
@@ -753,15 +759,30 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                     {skipFooter}
                   </div>
                 )}
-            {clearAiContentItem && (
+            {(aiAnalyzeItem || clearAiContentItem) && (
               <ContextMenuSection label={t("command.group.metadata")}>
-                <ContextMenuItem
-                  icon={<Icon name="close" size={14} />}
-                  label={clearAiContentItem.label}
-                  disabled={clearAiContentItem.disabled}
-                  disabledReason={clearAiContentItem.disabledReason ?? undefined}
-                  onAction={() => runMultiCommand("assets.clear-ai-content")}
-                />
+                {aiAnalyzeItem && (
+                  <ContextMenuItem
+                    icon={<Icon name="smart" size={14} />}
+                    label={aiAnalyzeItem.label}
+                    disabled={aiAnalyzeItem.disabled || !canAnalyze}
+                    disabledReason={
+                      !canAnalyze
+                        ? t("command.reason.aiNotConfigured")
+                        : (aiAnalyzeItem.disabledReason ?? undefined)
+                    }
+                    onAction={() => runMultiCommand("assets.ai-analyze")}
+                  />
+                )}
+                {clearAiContentItem && (
+                  <ContextMenuItem
+                    icon={<Icon name="close" size={14} />}
+                    label={clearAiContentItem.label}
+                    disabled={clearAiContentItem.disabled}
+                    disabledReason={clearAiContentItem.disabledReason ?? undefined}
+                    onAction={() => runMultiCommand("assets.clear-ai-content")}
+                  />
+                )}
               </ContextMenuSection>
             )}
             <ContextMenuSection label={t("command.group.organize")}>

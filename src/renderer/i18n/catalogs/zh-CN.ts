@@ -310,7 +310,8 @@ export const zhCN = {
       moveToTrash: "移入回收站（{count} 项）",
       clearSelection: "清除选择（{count} 项）",
       assignTag: "添加标签…",
-      removeTag: "移除标签…"
+      removeTag: "移除标签…",
+      aiAnalyze: "AI 分析（{count} 项）"
     },
     folder: {
       newSubfolder: "新建子文件夹",
@@ -688,7 +689,10 @@ export const zhCN = {
     cardFields: "卡片显示字段",
     cardFieldsHint: "在画布卡片标题区显示文件名、文件大小或修改日期；开关后立即生效。",
     cardBadges: "预览角标",
-    cardBadgesHint: "时长在左下角；扩展名在右下角（图片不显示扩展名）；类型角标仅在无扩展名时出现（如 GIF）。"
+    cardBadgesHint: "时长在左下角；扩展名在右下角（图片不显示扩展名）；类型角标仅在无扩展名时出现（如 GIF）。",
+    aiSection: "AI 标识",
+    showAiBadges: "显示 AI 角标",
+    showAiBadgesHint: "关闭后仍保留 AI 写入的描述/标签/评分，仅隐藏 Inspector 中的 AI 角标。"
   },
   preview: {
     ffmpegRequired: "当前安装缺少可用的媒体组件，无法生成视频播放代理。请重新安装或修复 Serpent 后重试。",
@@ -993,7 +997,9 @@ export const zhCN = {
     aiAnalyzeFailed: "AI 分析失败。",
     aiAnalyzeUnavailable: "AI 分析暂不可用：{reason}",
     aiAnalyzeDone: "AI 分析完成。",
+    aiAnalyzeDoneBatch: "AI 分析完成：成功 {succeeded} 项、失败 {failed} 项。",
     aiAnalyzeStarted: "正在进行 AI 分析…",
+    aiAnalyzeStartedBatch: "正在对 {count} 项资产进行 AI 分析…",
     aiAnalyzeProgress: "AI 分析进行中（运行 {running} / 排队 {queued}）",
     aiAnalyzeNoAsset: "请先选中要分析的资产。",
     mediaJobsLoadFailed: "后台媒体任务加载失败。",

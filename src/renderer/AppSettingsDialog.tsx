@@ -7,6 +7,7 @@ import {
   APP_SETTINGS_LOCALE_OPTIONS,
   APP_SETTINGS_THEME_OPTIONS,
 } from "./app-settings-sections";
+import type { AiUiPreferences } from "./ai-ui-preferences";
 import type { CanvasPreferences } from "./canvas-preferences";
 import { Icon } from "./Icons";
 import { iconActionAttrs } from "./icon-action-attrs";
@@ -19,6 +20,8 @@ export interface AppSettingsDialogProps {
   canvasPrefs: CanvasPreferences;
   onSetViewMode: (mode: CanvasPreferences["viewMode"]) => void;
   onToggleField: (field: keyof CanvasPreferences["fields"]) => void;
+  aiUiPrefs: AiUiPreferences;
+  onToggleShowAiBadges: () => void;
 }
 
 /**
@@ -34,6 +37,8 @@ export function AppSettingsDialog({
   canvasPrefs,
   onSetViewMode,
   onToggleField,
+  aiUiPrefs,
+  onToggleShowAiBadges,
 }: AppSettingsDialogProps): ReactNode {
   const { t, preference: localePreference, setLocale } = useLocale();
   const { preference: themePreference, setTheme } = useTheme();
@@ -181,6 +186,23 @@ export function AppSettingsDialog({
                 </span>
               </label>
             ))}
+          </div>
+        </section>
+
+        <section className="app-settings-section">
+          <div className="micro-label">{t("settings.aiSection")}</div>
+          <p className="app-settings-hint">{t("settings.showAiBadgesHint")}</p>
+          <div className="app-settings-check-row-group">
+            <label className="ai-config-check-row ai-config-check-row-top">
+              <input
+                checked={aiUiPrefs.showAiBadges}
+                onChange={onToggleShowAiBadges}
+                type="checkbox"
+              />
+              <span className="app-settings-check-copy">
+                <span>{t("settings.showAiBadges")}</span>
+              </span>
+            </label>
           </div>
         </section>
       </div>

@@ -402,6 +402,44 @@ describe('tag assignment', () => {
     service.closeAll();
   });
 
+  it('removeTags also clears AI-authored tag links (Serpent-h2i2)', () => {
+    const { service, libraryId, libraryPath, assetId } = createLibraryWithAsset();
+    const tag = service.createTag({ libraryId, name: 'AiOnly' });
+    const db = new TestDatabase(path.join(libraryPath, '.serpent', 'library.db'));
+    try {
+      db.prepare(
+        `INSERT INTO ai_asset_tags
+           (asset_id, tag_id, revision_id, model_id, model_version)
+         VALUES (?, ?, NULL, 'test-model', '1')`,
+      ).run(assetId, tag.tagId);
+    } finally {
+      db.close();
+    }
+
+    const result = service.removeTags({
+      libraryId,
+      assetIds: [assetId],
+      tagIds: [tag.tagId],
+    });
+    expect(result.removedCount).toBe(1);
+
+    const after = new TestDatabase(path.join(libraryPath, '.serpent', 'library.db'));
+    try {
+      const count = (
+        after
+          .prepare(
+            'SELECT COUNT(*) AS count FROM ai_asset_tags WHERE asset_id = ? AND tag_id = ?',
+          )
+          .get(assetId, tag.tagId) as { count: number }
+      ).count;
+      expect(count).toBe(0);
+    } finally {
+      after.close();
+    }
+
+    service.closeAll();
+  });
+
   it('is idempotent on tag removal', () => {
     const { service, libraryId, assetId } = createLibraryWithAsset();
     const tag = service.createTag({ libraryId, name: 'RemoveMe' });

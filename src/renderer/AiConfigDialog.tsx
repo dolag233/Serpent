@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import {
   AI_OUTPUT_STYLES,
@@ -121,8 +121,7 @@ export function AiConfigDialog({
     text: string;
   } | null>(null);
   const [showApiKey, setShowApiKey] = useState(false);
-
-  if (!open) return null;
+  const modelsFetchInFlightRef = useRef(false);
 
   const canUseKey = Boolean(apiKey.trim()) || hasKey;
   const language = languages[0] ?? "zh-CN";
@@ -148,6 +147,8 @@ export function AiConfigDialog({
   }
 
   async function runFetchModels() {
+    if (modelsFetchInFlightRef.current) return;
+    modelsFetchInFlightRef.current = true;
     setBusyAction("models");
     setModelsMessage(null);
     try {
@@ -165,8 +166,14 @@ export function AiConfigDialog({
         setModelsMessage(result.reason ?? t("aiConfig.fetchModelsFailed"));
       }
     } finally {
+      modelsFetchInFlightRef.current = false;
       setBusyAction(null);
     }
+  }
+
+  function ensureModelsFetched() {
+    if (!canUseKey || busyAction === "models") return;
+    void runFetchModels();
   }
 
   function handleApiFormatChange(next: AiApiFormat) {
@@ -180,6 +187,8 @@ export function AiConfigDialog({
     setModelsMessage(null);
     setTestInline(null);
   }
+
+  if (!open) return null;
 
   const modelPickerValue = modelOptions.includes(model) ? model : "";
   const busy = busyAction !== null || saveVerifying;
@@ -325,7 +334,7 @@ export function AiConfigDialog({
               <select
                 aria-label={t("aiConfig.modelPick")}
                 className="text-field ai-config-input ai-config-model-picker"
-                disabled={modelOptions.length === 0}
+                disabled={!canUseKey || busyAction === "models"}
                 id="ai-config-model-picker"
                 onChange={(e) => {
                   const next = e.target.value;
@@ -334,17 +343,23 @@ export function AiConfigDialog({
                     setTestInline(null);
                   }
                 }}
+                onFocus={() => ensureModelsFetched()}
+                onMouseDown={() => ensureModelsFetched()}
                 title={
-                  modelOptions.length === 0
-                    ? t("aiConfig.modelPickEmpty")
-                    : t("aiConfig.modelPick")
+                  busyAction === "models"
+                    ? t("aiConfig.fetchingModels")
+                    : modelOptions.length === 0
+                      ? t("aiConfig.modelPickEmpty")
+                      : t("aiConfig.modelPick")
                 }
                 value={modelPickerValue}
               >
                 <option value="">
-                  {modelOptions.length === 0
-                    ? t("aiConfig.modelPickEmpty")
-                    : t("aiConfig.modelPick")}
+                  {busyAction === "models"
+                    ? t("aiConfig.fetchingModels")
+                    : modelOptions.length === 0
+                      ? t("aiConfig.modelPickEmpty")
+                      : t("aiConfig.modelPick")}
                 </option>
                 {modelOptions.map((id) => (
                   <option key={id} value={id}>
@@ -352,16 +367,6 @@ export function AiConfigDialog({
                   </option>
                 ))}
               </select>
-              <button
-                className="ai-config-fetch-models"
-                disabled={!canUseKey || busy}
-                onClick={() => void runFetchModels()}
-                type="button"
-              >
-                {busyAction === "models"
-                  ? t("aiConfig.fetchingModels")
-                  : t("aiConfig.fetchModels")}
-              </button>
             </div>
             {modelsMessage ? (
               <p className="ai-config-hint" role="status">

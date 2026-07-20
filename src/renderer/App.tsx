@@ -98,6 +98,11 @@ import {
 import { AppSettingsDialog } from "./AppSettingsDialog";
 import { AppSettingsEntry } from "./AppSettingsEntry";
 import {
+  loadAiUiPreferences,
+  saveAiUiPreferences,
+  type AiUiPreferences,
+} from "./ai-ui-preferences";
+import {
   SmartCollectionSettingsDialog,
   type SmartCollectionSettingsTarget,
 } from "./SmartCollectionSettingsDialog";
@@ -811,7 +816,12 @@ function AppInner() {
   /** Description editor is showing AI-layer text (human description empty). */
   const [descriptionIsAi, setDescriptionIsAi] = useState(false);
   const analyzeFailedBaselineRef = useRef(0);
+  const analyzeSucceededBaselineRef = useRef(0);
   const analyzingAssetIdRef = useRef<string | null>(null);
+  const analyzingBatchSizeRef = useRef(0);
+  const [aiUiPrefs, setAiUiPrefs] = useState<AiUiPreferences>(() =>
+    loadAiUiPreferences(),
+  );
   const [importValidated, setImportValidated] =
     useState<ImportValidatedResult | null>(null);
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
@@ -1221,6 +1231,9 @@ function AppInner() {
   useEffect(() => {
     saveCanvasPreferences(canvasPrefs);
   }, [canvasPrefs]);
+  useEffect(() => {
+    saveAiUiPreferences(aiUiPrefs);
+  }, [aiUiPrefs]);
 
   useEffect(() => {
     const canvas = workspaceCanvasRef.current;
@@ -1813,42 +1826,55 @@ function AppInner() {
         event.queued === 0
       ) {
         const pendingAssetId = analyzingAssetIdRef.current;
+        const batchSize = analyzingBatchSizeRef.current;
+        const failedDelta = event.failed - analyzeFailedBaselineRef.current;
+        const succeededDelta =
+          event.succeeded - analyzeSucceededBaselineRef.current;
         aiAnalyzingRef.current = false;
         analyzingAssetIdRef.current = null;
+        analyzingBatchSizeRef.current = 0;
         setAiAnalyzing(false);
-        if (pendingAssetId && event.failed > analyzeFailedBaselineRef.current) {
-          void api
-            .getAiJobStatus({ libraryId: library.libraryId })
-            .then((result) => {
-              if (!result.ok) {
+        // Serpent-4i18: always surface a completion toast when the queue drains
+        // (do not rely solely on per-asset completed events).
+        if (failedDelta > 0 && succeededDelta === 0) {
+          if (pendingAssetId && batchSize <= 1) {
+            void api
+              .getAiJobStatus({ libraryId: library.libraryId })
+              .then((result) => {
+                if (!result.ok) {
+                  setError(t("toast.aiAnalyzeFailed"));
+                  return;
+                }
+                const failedForAsset = result.value.jobs.some(
+                  (job) =>
+                    job.assetId === pendingAssetId && job.status === "failed",
+                );
+                if (failedForAsset) {
+                  setError(t("toast.aiAnalyzeFailed"));
+                }
+              })
+              .catch(() => {
                 setError(t("toast.aiAnalyzeFailed"));
-                return;
-              }
-              const failedForAsset = result.value.jobs.some(
-                (job) =>
-                  job.assetId === pendingAssetId && job.status === "failed",
-              );
-              if (failedForAsset) {
-                setError(t("toast.aiAnalyzeFailed"));
-              }
-            })
-            .catch(() => {
-              setError(t("toast.aiAnalyzeFailed"));
-            });
+              });
+          } else {
+            setError(t("toast.aiAnalyzeFailed"));
+          }
+        } else if (batchSize > 1 || failedDelta > 0) {
+          setNotice(
+            t("toast.aiAnalyzeDoneBatch", {
+              succeeded: Math.max(0, succeededDelta),
+              failed: Math.max(0, failedDelta),
+            }),
+          );
+        } else {
+          setNotice(t("toast.aiAnalyzeDone"));
         }
+        void reloadCurrentContentRef.current();
       }
     });
     const unsubscribeCompleted = api.onAiCompleted((event) => {
       if (event.libraryId !== library.libraryId) return;
-      aiAnalyzingRef.current = false;
-      setAiAnalyzing(false);
-      analyzingAssetIdRef.current = null;
-      setNotice(
-        t("toast.aiAnalyzeDoneFields", {
-          fieldCount: event.fieldCount,
-          tagCount: event.tagCount,
-        }),
-      );
+      // Refresh only — completion toast is owned by queue-drain (Serpent-4i18).
       void reloadCurrentContentRef.current();
       if (selectedAssetIdRef.current === event.assetId) {
         void refreshAfterAiRef.current(event.assetId);
@@ -5548,12 +5574,25 @@ function AppInner() {
     };
   }
 
-  async function handleAnalyzeClick(assetId = selectedAssetId) {
+  async function handleAnalyzeClick(
+    assetId = selectedAssetId,
+    batchIds?: readonly string[],
+  ) {
     if (!api || !library) {
       setError(t("toast.aiAnalyzeFailed"));
       return;
     }
-    if (!assetId) {
+    const targetIds = [
+      ...new Set(
+        (batchIds && batchIds.length > 0
+          ? batchIds
+          : assetId
+            ? [assetId]
+            : []
+        ).filter(Boolean),
+      ),
+    ] as string[];
+    if (targetIds.length === 0) {
       setError(t("toast.aiAnalyzeNoAsset"));
       return;
     }
@@ -5563,63 +5602,88 @@ function AppInner() {
       return;
     }
     analyzeFailedBaselineRef.current = aiJobs?.failed ?? 0;
-    analyzingAssetIdRef.current = assetId;
+    analyzeSucceededBaselineRef.current = aiJobs?.succeeded ?? 0;
+    analyzingAssetIdRef.current = targetIds[0] ?? null;
+    analyzingBatchSizeRef.current = targetIds.length;
     flushSync(() => {
       aiAnalyzingRef.current = true;
       setAiAnalyzing(true);
     });
-    setNotice(t("toast.aiAnalyzeStarted"));
+    setNotice(
+      targetIds.length > 1
+        ? t("toast.aiAnalyzeStartedBatch", { count: targetIds.length })
+        : t("toast.aiAnalyzeStarted"),
+    );
     void loadAiJobs(true);
-    let queued = false;
+    let queuedAny = false;
+    let syncDone = false;
     try {
-      const result = await api.analyzeAsset({
-        libraryId: library.libraryId,
-        assetId,
-      });
-      if (!result.ok) {
-        setError(toMessage(result.error, t("toast.aiAnalyzeFailed"), locale));
-        return;
+      for (const id of targetIds) {
+        const result = await api.analyzeAsset({
+          libraryId: library.libraryId,
+          assetId: id,
+        });
+        if (!result.ok) {
+          setError(toMessage(result.error, t("toast.aiAnalyzeFailed"), locale));
+          continue;
+        }
+        if ("queued" in result.value && result.value.queued) {
+          queuedAny = true;
+          continue;
+        }
+        if ("reason" in result.value) {
+          setNotice(
+            t("toast.aiAnalyzeUnavailable", { reason: result.value.reason }),
+          );
+          continue;
+        }
+        if (!("generatedFields" in result.value)) {
+          setError(t("toast.aiAnalyzeFailed"));
+          continue;
+        }
+        syncDone = true;
+        const analyzed = result.value;
+        if (targetIds.length === 1) {
+          setAiContent({
+            assetId: id,
+            description: analyzed.generatedFields.description,
+            tags: analyzed.generatedFields.tags,
+            rating: analyzed.generatedFields.rating,
+            modelVersion: analyzed.modelVersion,
+          });
+          const human =
+            metadataByAssetRef.current.get(id)?.description ?? "";
+          const description = resolveInspectorDescription(
+            human,
+            analyzed.generatedFields.description,
+          );
+          if (selectedAssetIdRef.current === id) {
+            setEditDescription(description.value);
+            setDescriptionIsAi(description.fromAi);
+          }
+          setNotice(t("toast.aiAnalyzeDone"));
+          await refreshTagAndMetadataState(id);
+          await loadAiContentForAsset(id);
+        }
       }
-      if ("queued" in result.value && result.value.queued) {
-        queued = true;
+      if (queuedAny) {
         void loadAiJobs(true);
-        return;
+      } else if (syncDone && targetIds.length > 1) {
+        setNotice(
+          t("toast.aiAnalyzeDoneBatch", {
+            succeeded: targetIds.length,
+            failed: 0,
+          }),
+        );
+        await reloadCurrentContentRef.current();
       }
-      if ("reason" in result.value) {
-        setNotice(t("toast.aiAnalyzeUnavailable", { reason: result.value.reason }));
-        return;
-      }
-      if (!("generatedFields" in result.value)) {
-        setError(t("toast.aiAnalyzeFailed"));
-        return;
-      }
-      const analyzed = result.value;
-      setAiContent({
-        assetId,
-        description: analyzed.generatedFields.description,
-        tags: analyzed.generatedFields.tags,
-        rating: analyzed.generatedFields.rating,
-        modelVersion: analyzed.modelVersion,
-      });
-      const human =
-        metadataByAssetRef.current.get(assetId)?.description ?? "";
-      const description = resolveInspectorDescription(
-        human,
-        analyzed.generatedFields.description,
-      );
-      if (selectedAssetIdRef.current === assetId) {
-        setEditDescription(description.value);
-        setDescriptionIsAi(description.fromAi);
-      }
-      setNotice(t("toast.aiAnalyzeDone"));
-      await refreshTagAndMetadataState(assetId);
-      await loadAiContentForAsset(assetId);
     } catch (caught) {
       setError(toMessage(caught, t("toast.aiAnalyzeFailed"), locale));
     } finally {
-      if (!queued) {
+      if (!queuedAny) {
         aiAnalyzingRef.current = false;
         analyzingAssetIdRef.current = null;
+        analyzingBatchSizeRef.current = 0;
         setAiAnalyzing(false);
       }
     }
@@ -7048,6 +7112,7 @@ function AppInner() {
         }
         aiAnalyzing={aiAnalyzing}
         descriptionIsAi={descriptionIsAi}
+        showAiBadges={aiUiPrefs.showAiBadges}
         allAssetCount={allAssetCount}
         allTags={tags}
         api={api}
@@ -7233,6 +7298,7 @@ function AppInner() {
         onCancel={() => setRenameTarget(null)}
       />
       <AppSettingsDialog
+        aiUiPrefs={aiUiPrefs}
         canvasPrefs={canvasPrefs}
         onClose={() => setAppSettingsOpen(false)}
         onSetViewMode={(mode) => {
@@ -7243,6 +7309,9 @@ function AppInner() {
             ...p,
             fields: { ...p.fields, [field]: !p.fields[field] },
           }));
+        }}
+        onToggleShowAiBadges={() => {
+          setAiUiPrefs((p) => ({ ...p, showAiBadges: !p.showAiBadges }));
         }}
         open={appSettingsOpen}
       />
@@ -7537,7 +7606,9 @@ function AppInner() {
             canDeleteSourceFile,
           })
         }
-        onAnalyze={(assetId) => { void handleAnalyzeClick(assetId); }}
+        onAnalyze={(assetId, batchIds) => {
+          void handleAnalyzeClick(assetId, batchIds);
+        }}
         onClearAiContent={(assetIds) => { void handleClearAiContent(assetIds); }}
         canAnalyze={aiHasKey && !aiAnalyzing}
         onCopyToLinked={(folder, assetIds) => { void copyManagedSelectionToLinked(folder, assetIds); }}

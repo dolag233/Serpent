@@ -109,6 +109,8 @@ export interface InspectorPanelProps {
   aiAnalyzing?: boolean;
   /** Description field currently shows AI-layer text (human layer empty). */
   descriptionIsAi?: boolean;
+  /** Serpent-t8sw: when false, hide AI corner badges (data retained). */
+  showAiBadges?: boolean;
   // Metadata editor handlers
   handleMetadataDescriptionSave: () => void;
   handleMetadataDescriptionInput: (
@@ -472,6 +474,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
     aiContent,
     aiAnalyzing = false,
     descriptionIsAi = false,
+    showAiBadges = true,
     handleMetadataDescriptionSave,
     handleMetadataDescriptionInput,
     handleRatingClick,
@@ -861,7 +864,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
                   key={tag.id}
                   style={{ borderColor: tagColor(tag.id) }}
                 >
-                  {tag.source === "ai" && (
+                  {tag.source === "ai" && showAiBadges && (
                     <span
                       aria-label={t("inspector.aiBadge")}
                       className="inspector-ai-badge inspector-ai-badge-inline"
@@ -870,9 +873,11 @@ export function InspectorPanel(props: InspectorPanelProps) {
                       AI
                     </span>
                   )}
-                  <span className="tag-chip-dot" style={{ background: tagColor(tag.id) }} />
+                  {tag.source !== "ai" && (
+                    <span className="tag-chip-dot" style={{ background: tagColor(tag.id) }} />
+                  )}
                   <span className="tag-chip-name">{tag.name}</span>
-                  {tag.source === "user" && onRemoveTagFromAsset && (
+                  {onRemoveTagFromAsset && (
                     <button
                       className="tag-chip-remove"
                       onClick={() => onRemoveTagFromAsset(tag.id)}
@@ -1013,7 +1018,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
                     <span className="inspector-mixed-value">{t("inspector.mixedValues")}</span>
                   ) : (
                     <>
-                      {aiRating != null && (
+                      {aiRating != null && showAiBadges && (
                         <span
                           aria-label={t("inspector.ratingAi")}
                           className="inspector-ai-badge inspector-ai-badge-inline"
@@ -1152,7 +1157,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
                 return (
               <div className="editor-field">
                 <label className="micro-label" htmlFor="meta-desc">
-                  {descriptionIsAi && (
+                  {descriptionIsAi && showAiBadges && (
                     <span
                       aria-label={t("inspector.aiBadge")}
                       className="inspector-ai-badge inspector-ai-badge-inline"

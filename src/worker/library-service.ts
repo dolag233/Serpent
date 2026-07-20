@@ -5461,17 +5461,26 @@ export class LibraryService {
     );
     if (eligibleAssetIds.length === 0) return { removedCount: 0, skipped };
 
-    const result = openLibrary.connection
+    const humanResult = openLibrary.connection
       .prepare(
         `DELETE FROM human_asset_tags
            WHERE asset_id IN (${eligibleAssetIds.map(() => '?').join(',')})
              AND tag_id IN (${input.tagIds.map(() => '?').join(',')})`,
       )
       .run(...eligibleAssetIds, ...input.tagIds);
+    // Serpent-h2i2: removing a chip must also clear AI-authored tag links.
+    const aiResult = openLibrary.connection
+      .prepare(
+        `DELETE FROM ai_asset_tags
+           WHERE asset_id IN (${eligibleAssetIds.map(() => '?').join(',')})
+             AND tag_id IN (${input.tagIds.map(() => '?').join(',')})`,
+      )
+      .run(...eligibleAssetIds, ...input.tagIds);
+    const removedCount = humanResult.changes + aiResult.changes;
     for (const assetId of eligibleAssetIds) {
-      if (result.changes > 0) this.syncAssetSearchContent(openLibrary.connection, assetId);
+      if (removedCount > 0) this.syncAssetSearchContent(openLibrary.connection, assetId);
     }
-    return { removedCount: result.changes, skipped };
+    return { removedCount, skipped };
   }
 
   /**

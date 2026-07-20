@@ -26,6 +26,7 @@ export interface AssetMultiCommandActions {
   readonly restore: (assetIds: string[]) => void;
   readonly deletePermanent: (assetIds: string[]) => void;
   readonly clearSelection: () => void;
+  readonly aiAnalyze?: (assetIds: string[]) => void;
   readonly clearAiContent?: (assetIds: string[]) => void;
 }
 
@@ -99,6 +100,14 @@ export const assetMultiCommandDefinitions: readonly AssetMultiCommandDefinition[
       run: (ctx) => ctx.actions.openRemoveTagPicker([...ctx.selectedAssetIds]),
     },
     // ---- AI 元数据 ----
+    {
+      id: 'assets.ai-analyze',
+      title: (ctx) =>
+        t(ctx, 'command.assets.aiAnalyze', { count: ctx.selectionCount }),
+      group: 'metadata',
+      visible: (ctx) => !ctx.trashedAll,
+      run: (ctx) => ctx.actions.aiAnalyze?.([...ctx.selectedAssetIds]),
+    },
     {
       id: 'assets.clear-ai-content',
       title: (ctx) => t(ctx, 'command.asset.clearAiContent'),

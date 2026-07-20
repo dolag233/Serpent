@@ -320,7 +320,8 @@ export const en = {
       moveToTrash: "Move to Trash ({count})",
       clearSelection: "Clear selection ({count})",
       assignTag: "Add tags…",
-      removeTag: "Remove tags…"
+      removeTag: "Remove tags…",
+      aiAnalyze: "AI analyze ({count})"
     },
     folder: {
       newSubfolder: "New subfolder",
@@ -700,7 +701,10 @@ export const en = {
     cardFields: "Card display fields",
     cardFieldsHint: "Show file name, file size, or modified date under canvas cards. Toggles apply immediately.",
     cardBadges: "Preview badges",
-    cardBadgesHint: "Duration is bottom-left; extension is bottom-right (images never show extension). Type badges appear only when extension is off (e.g. GIF)."
+    cardBadgesHint: "Duration is bottom-left; extension is bottom-right (images never show extension). Type badges appear only when extension is off (e.g. GIF).",
+    aiSection: "AI badges",
+    showAiBadges: "Show AI badges",
+    showAiBadgesHint: "When off, AI-written description/tags/rating stay; only the Inspector AI badges are hidden."
   },
   preview: {
     ffmpegRequired: "This install is missing the media component needed for a video playback proxy. Reinstall or repair Serpent and try again.",
@@ -1006,7 +1010,9 @@ export const en = {
     aiAnalyzeFailed: "AI analysis failed.",
     aiAnalyzeUnavailable: "AI analysis unavailable: {reason}",
     aiAnalyzeDone: "AI analysis finished.",
+    aiAnalyzeDoneBatch: "AI analysis finished: {succeeded} succeeded, {failed} failed.",
     aiAnalyzeStarted: "AI analysis in progress…",
+    aiAnalyzeStartedBatch: "AI analysis started for {count} assets…",
     aiAnalyzeProgress: "AI analysis running ({running} active / {queued} queued)",
     aiAnalyzeNoAsset: "Select an asset to analyze first.",
     mediaJobsLoadFailed: "Failed to load background media jobs.",
