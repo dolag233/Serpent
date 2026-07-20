@@ -31,7 +31,7 @@ export interface UseAssetSelectionReturn {
   /** Attach to the canvas element's onMouseDown */
   handleCanvasMouseDown: (e: React.MouseEvent<HTMLDivElement>) => void;
   /** Clear all selection state (Esc, empty-canvas click, etc.) — also clears folder selection. */
-  clearAssetSelection: () => void;
+  clearAssetSelection: (options?: { preserveFolders?: boolean }) => void;
   /** Ref for the selection anchor used by Shift+click range extension.
    *  External code may also write to this ref (e.g. preview open, select-all). */
   selectionAnchorRef: React.MutableRefObject<string | null>;
@@ -103,12 +103,17 @@ export function useAssetSelection({
   // ── clearAssetSelection ────────────────────────────────────────────────
   // Also clears folder-card selection (REQ-FOLDER-010): the two selections
   // are cleared together on Esc / empty-canvas click / scope changes.
-  function clearAssetSelection() {
+  // Discovery filter refreshes may pass `{ preserveFolders: true }` so a
+  // folder multi-select is not wiped when only the asset grid reloads
+  // (Serpent-w9c6).
+  function clearAssetSelection(options?: { preserveFolders?: boolean }) {
     setSelectedAssetId(undefined);
     setSelectedAssetIds([]);
     selectionAnchorRef.current = null;
-    setSelectedFolderIds?.([]);
-    folderSelectionAnchorRef.current = null;
+    if (!options?.preserveFolders) {
+      setSelectedFolderIds?.([]);
+      folderSelectionAnchorRef.current = null;
+    }
   }
 
   // ── handleFolderCardClick ───────────────────────────────────────────────

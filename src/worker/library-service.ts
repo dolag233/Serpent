@@ -157,7 +157,7 @@ type MediaJobStatus = 'queued' | 'running' | 'paused' | 'succeeded' | 'failed' |
 function safeMediaJobErrorDetail(errorCode: string): string {
   switch (errorCode) {
     case 'FFMPEG_REQUIRED':
-      return 'The FFmpeg media component is unavailable. Reinstall or repair Serpent.';
+      return 'The media component needed for video thumbnails is unavailable. Reinstall or repair Serpent.';
     case 'OIIO_REQUIRED':
       return 'The OpenImageIO component is unavailable. Reinstall or repair Serpent.';
     case 'STALE_REVISION':

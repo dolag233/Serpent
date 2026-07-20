@@ -19,6 +19,7 @@ import {
 } from "./video-player-controls";
 
 export interface VideoPlayerControlsProps {
+  isFullscreen?: boolean;
   onError(event: SyntheticEvent<HTMLVideoElement>): void;
   onFullscreen(): void;
   onReady?(): void;
@@ -42,6 +43,7 @@ const SCRUB_STEP_SECONDS = 5;
  * on every pointermove (Serpent-jh2).
  */
 export function VideoPlayerControls({
+  isFullscreen = false,
   onError,
   onFullscreen,
   onReady,
@@ -333,9 +335,11 @@ export function VideoPlayerControls({
           className="preview-video-fullscreen"
           onClick={onFullscreen}
           type="button"
-          {...iconActionAttrs(t("preview.fullscreen"))}
+          {...iconActionAttrs(
+            isFullscreen ? t("preview.exitFullscreen") : t("preview.fullscreen"),
+          )}
         >
-          <Icon name="fullscreen" size={14} />
+          <Icon name={isFullscreen ? "fullscreen-exit" : "fullscreen"} size={14} />
         </button>
       </div>
     </div>

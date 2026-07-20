@@ -691,7 +691,7 @@ export const zhCN = {
     cardBadgesHint: "时长在左下角；扩展名在右下角（图片不显示扩展名）；类型角标仅在无扩展名时出现（如 GIF）。"
   },
   preview: {
-    ffmpegRequired: "当前安装缺少 FFmpeg，无法生成视频播放代理。请安装或配置 FFmpeg 后重试。",
+    ffmpegRequired: "当前安装缺少可用的媒体组件，无法生成视频播放代理。请重新安装或修复 Serpent 后重试。",
     oiioRequired: "当前安装缺少 OpenImageIO，无法解码此图像格式。请安装或配置 oiiotool 后重试。",
     sharpUnavailable: "图像解码组件不可用，无法生成预览。请重新安装应用后重试。",
     mediaProcessingFailed: "媒体处理失败，源文件可能损坏或编码暂不受支持。",
@@ -720,6 +720,7 @@ export const zhCN = {
     previous: "查看上一个资产",
     next: "查看下一个资产",
     fullscreen: "全屏",
+    exitFullscreen: "退出全屏",
     resolving: "正在加载…",
     videoUnsupported: "当前环境不支持视频播放。",
     playbackRate: "倍速",
@@ -1104,7 +1105,7 @@ export const zhCN = {
       NAME_NOT_SUPPORTED: "当前目标文件系统不接受其中的文件名。",
       IO_ERROR: "操作系统报告了磁盘读写错误。",
       SHARP_UNAVAILABLE: "图像处理引擎 Sharp 不可用。",
-      FFMPEG_REQUIRED: "当前安装缺少 FFmpeg，暂时无法生成视频预览。",
+      FFMPEG_REQUIRED: "当前安装缺少可用的媒体组件，暂时无法生成视频预览。",
       OIIO_REQUIRED: "当前安装中未找到 OpenImageIO，暂时无法解码 EXR/TGA。",
       MEDIA_PROCESSING_FAILED: "媒体处理失败。请检查源文件是否损坏，并查看应用日志了解详细原因。",
       PALETTE_SOURCE_NOT_READY: "当前修订的缩略图或视频封面尚未就绪。",

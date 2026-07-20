@@ -31,6 +31,7 @@ export const ZoomableImage = forwardRef<
     alt: string;
     /** Space+F fit by default; GIF player uses F-only so Space can pause. */
     fitKeybinds?: "space-and-f" | "f-only";
+    isFullscreen?: boolean;
     onFullscreen?: () => void;
     onSwipeNext?: () => void;
     onSwipePrevious?: () => void;
@@ -40,6 +41,7 @@ export const ZoomableImage = forwardRef<
   {
     alt,
     fitKeybinds = "space-and-f",
+    isFullscreen = false,
     onFullscreen,
     onSwipeNext,
     onSwipePrevious,
@@ -153,9 +155,16 @@ export const ZoomableImage = forwardRef<
           <button
             onClick={onFullscreen}
             type="button"
-            {...iconActionAttrs(t("preview.fullscreen"))}
+            {...iconActionAttrs(
+              isFullscreen
+                ? t("preview.exitFullscreen")
+                : t("preview.fullscreen"),
+            )}
           >
-            <Icon name="fullscreen" size={14} />
+            <Icon
+              name={isFullscreen ? "fullscreen-exit" : "fullscreen"}
+              size={14}
+            />
           </button>
         )}
       </div>

@@ -155,6 +155,7 @@ export function AssetPreviewModal({
   const modalRef = useRef<HTMLElement>(null);
   const requestSequence = useRef(0);
   const [resolution, setResolution] = useState<PreviewResolution | null>(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [retrying, setRetrying] = useState(false);
@@ -383,7 +384,15 @@ export function AssetPreviewModal({
     }
   }
 
-  async function enterFullscreen() {
+  async function toggleFullscreen() {
+    if (document.fullscreenElement) {
+      try {
+        await document.exitFullscreen();
+      } catch {
+        setError(t("preview.fullscreenFailed"));
+      }
+      return;
+    }
     const refreshed = await resolvePreview(true, "fullscreen");
     if (!refreshed?.ok || !modalRef.current) return;
     try {
@@ -407,6 +416,17 @@ export function AssetPreviewModal({
         .catch(() => undefined);
     }
   }
+
+  useEffect(() => {
+    const onFullscreenChange = () => {
+      setIsFullscreen(document.fullscreenElement === modalRef.current);
+    };
+    document.addEventListener("fullscreenchange", onFullscreenChange);
+    onFullscreenChange();
+    return () => {
+      document.removeEventListener("fullscreenchange", onFullscreenChange);
+    };
+  }, []);
 
   function handlePlaybackError(event: SyntheticEvent<HTMLMediaElement>) {
     const mediaError = event.currentTarget.error;
@@ -510,8 +530,9 @@ export function AssetPreviewModal({
             </div>
           ) : ready && resolution?.mediaType === "video" && resolution.url ? (
             <VideoPlayerControls
+              isFullscreen={isFullscreen}
               onError={handlePlaybackError}
-              onFullscreen={() => void enterFullscreen()}
+              onFullscreen={() => void toggleFullscreen()}
               onReady={() => setDirectApproved(true)}
               onSwipeNext={onNext}
               onSwipePrevious={onPrevious}
@@ -538,8 +559,9 @@ export function AssetPreviewModal({
           ) : ready && resolution?.url ? (
             <ZoomableImage
               alt={asset.displayName}
+              isFullscreen={isFullscreen}
               key={asset.assetId}
-              onFullscreen={() => void enterFullscreen()}
+              onFullscreen={() => void toggleFullscreen()}
               onSwipeNext={onNext}
               onSwipePrevious={onPrevious}
               src={resolution.url}

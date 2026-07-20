@@ -7,16 +7,22 @@ import path from 'node:path';
  * Resolution order:
  *   1. Environment variable (SERPENT_FFMPEG_PATH / SERPENT_OIIO_PATH)
  *   2. Bundled path under process.resourcesPath (packaged app)
- *   3. System PATH (bare command name)
+ *   3. Dev unpackaged: `<cwd>/resources/<tool>/<platform>/`
+ *   4. System PATH (bare command name)
  *
- * The real LGPL-only FFmpeg + static oiiotool binaries are a build/download
- * step; this module resolves whatever binary is at the resolved path and
- * gracefully handles missing binaries at call time.
+ * Main also injects absolute SERPENT_*_PATH when forking the Library Worker
+ * (`media-binary-env.ts`) because Electron GUI / UtilityProcess PATH often
+ * omits user-installed binaries while Chromium hover preview still works.
  */
 
 function platformBinaryName(baseName: string): string {
   if (process.platform === 'win32') return `${baseName}.exe`;
   return baseName;
+}
+
+function platformDirectory(): string {
+  if (process.platform === 'win32') return 'win32-x64';
+  return process.arch === 'arm64' ? 'darwin-arm64' : 'darwin-x64';
 }
 
 /**
@@ -40,25 +46,33 @@ function isRunnableBundledBinary(filePath: string): boolean {
 
 function resolveBundledBinary(
   binaryName: string,
-  subdir: string,
+  toolDir: string,
 ): string | undefined {
-  // In a packaged Electron app, process.resourcesPath points to the app's
-  // Resources directory. Binaries live under resources/<subdir>/.
+  const fileName = platformBinaryName(binaryName);
+  const platform = platformDirectory();
+  const relative = path.join(toolDir, platform, fileName);
+  const candidates: string[] = [];
+
   if (
     typeof process.resourcesPath === 'string' &&
     process.resourcesPath.length > 0
   ) {
-    const bundled = path.join(
-      process.resourcesPath,
-      'resources',
-      subdir,
-      platformBinaryName(binaryName),
-    );
-    if (isRunnableBundledBinary(bundled)) {
-      return bundled;
+    // Packaged: forge `extraResource: ['resources']` → Resources/resources/…
+    candidates.push(path.join(process.resourcesPath, 'resources', relative));
+    // Some packagers flatten so binaries sit directly under Resources/…
+    candidates.push(path.join(process.resourcesPath, relative));
+  }
+
+  // Dev: electron-forge typically keeps cwd at the project root.
+  candidates.push(path.join(process.cwd(), 'resources', relative));
+
+  const seen = new Set<string>();
+  for (const candidate of candidates) {
+    if (seen.has(candidate)) continue;
+    seen.add(candidate);
+    if (isRunnableBundledBinary(candidate)) {
+      return candidate;
     }
-    // A resources directory can exist even when optional media binaries were
-    // not packaged. Fall through to PATH instead of returning a dead path.
   }
   return undefined;
 }
@@ -66,19 +80,13 @@ function resolveBundledBinary(
 /**
  * Resolve the FFmpeg binary path.
  *
- * Priority: SERPENT_FFMPEG_PATH env > bundled > 'ffmpeg' (system PATH).
+ * Priority: SERPENT_FFMPEG_PATH env > bundled/dev resources > 'ffmpeg' (PATH).
  */
 export function resolveFfmpegPath(): string {
   const envPath = process.env['SERPENT_FFMPEG_PATH'];
   if (envPath) return envPath;
 
-  const platform =
-    process.platform === 'win32'
-      ? 'win32-x64'
-      : process.arch === 'arm64'
-        ? 'darwin-arm64'
-        : 'darwin-x64';
-  const bundled = resolveBundledBinary('ffmpeg', `ffmpeg/${platform}`);
+  const bundled = resolveBundledBinary('ffmpeg', 'ffmpeg');
   if (bundled) return bundled;
 
   return platformBinaryName('ffmpeg');
@@ -88,7 +96,7 @@ export function resolveFfmpegPath(): string {
  * Resolve the ffprobe binary path.
  *
  * If SERPENT_FFMPEG_PATH is set, ffprobe is resolved in the same directory.
- * Otherwise: bundled > 'ffprobe' (system PATH).
+ * Otherwise: bundled/dev resources > 'ffprobe' (PATH).
  */
 export function resolveFfprobePath(): string {
   const envFfmpeg = process.env['SERPENT_FFMPEG_PATH'];
@@ -96,13 +104,7 @@ export function resolveFfprobePath(): string {
     return path.join(path.dirname(envFfmpeg), platformBinaryName('ffprobe'));
   }
 
-  const platform =
-    process.platform === 'win32'
-      ? 'win32-x64'
-      : process.arch === 'arm64'
-        ? 'darwin-arm64'
-        : 'darwin-x64';
-  const bundled = resolveBundledBinary('ffprobe', `ffmpeg/${platform}`);
+  const bundled = resolveBundledBinary('ffprobe', 'ffmpeg');
   if (bundled) return bundled;
 
   return platformBinaryName('ffprobe');
@@ -111,19 +113,13 @@ export function resolveFfprobePath(): string {
 /**
  * Resolve the oiiotool binary path.
  *
- * Priority: SERPENT_OIIO_PATH env > bundled > 'oiiotool' (system PATH).
+ * Priority: SERPENT_OIIO_PATH env > bundled/dev resources > 'oiiotool' (PATH).
  */
 export function resolveOiiotoolPath(): string {
   const envPath = process.env['SERPENT_OIIO_PATH'];
   if (envPath) return envPath;
 
-  const platform =
-    process.platform === 'win32'
-      ? 'win32-x64'
-      : process.arch === 'arm64'
-        ? 'darwin-arm64'
-        : 'darwin-x64';
-  const bundled = resolveBundledBinary('oiiotool', `oiio/${platform}`);
+  const bundled = resolveBundledBinary('oiiotool', 'oiio');
   if (bundled) return bundled;
 
   return platformBinaryName('oiiotool');

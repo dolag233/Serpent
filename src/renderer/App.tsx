@@ -3109,7 +3109,7 @@ function AppInner() {
     setShowTrash(false);
     if (!tagFilter.trim()) setActiveTagId(null);
     setActiveSmartCollectionId(null);
-    if (offset === 0) clearAssetSelection();
+    if (offset === 0) clearAssetSelection({ preserveFolders: true });
     applySearchResult(result.value, offset > 0);
     return result.value;
   }
@@ -6242,12 +6242,12 @@ function AppInner() {
             longEdgeRange={longEdgeRange}
             onClearFilter={clearDiscoveryFilter}
             onTagNamesChange={(names) => {
+              // Discovery tag filters overlay the current folder/collection
+              // scope. Do not set activeTagId — that is "browse by tag" mode
+              // (chooseTag) and would clear folder nav highlight + folder cards
+              // (Serpent-w9c6 / resolveFolderBrowseParentId).
               setTagFilter(names.join(", "));
-              setActiveTagId(
-                names.length === 1
-                  ? (tags.find((tag) => tag.name === names[0])?.tagId ?? null)
-                  : null,
-              );
+              setActiveTagId(null);
             }}
             ratingFilter={ratingFilter}
             setAspectRatioRange={setAspectRatioRange}

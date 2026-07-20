@@ -4337,7 +4337,8 @@ select.ai-config-input.ai-config-languages {
   gap: 7px;
   border: 1.5px dashed color-mix(in srgb, var(--accent) 70%, transparent);
   border-radius: 12px;
-  background: color-mix(in srgb, var(--accent) 9%, rgb(19 21 22 / 88%));
+  /* Theme-aware wash: never hardcode dark rgb() (Serpent-5vex). */
+  background: color-mix(in srgb, var(--accent) 12%, var(--canvas));
   color: var(--accent);
   pointer-events: none;
   backdrop-filter: blur(4px);
@@ -4786,8 +4787,49 @@ select.ai-config-input.ai-config-languages {
   min-height: 0;
 }
 
-.inspector-hero-compact strong {
+.inspector-hero-preview {
+  position: relative;
+  display: flex;
+  align-self: flex-start;
+  width: fit-content;
+  max-width: 100%;
+  max-height: min(360px, 45vh);
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border: 0;
+  /* Clip portrait/landscape media to rounded corners (Serpent-hhy0). */
+  border-radius: 8px;
+  background: transparent;
+}
+
+.inspector-hero-preview-fallback {
+  min-height: 112px;
+  width: 100%;
+  border: 1px solid var(--divider-soft);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--canvas) 86%, var(--ink));
+}
+
+.inspector-hero-image {
+  display: block;
+  width: auto;
+  max-width: 100%;
+  height: auto;
+  max-height: min(360px, 45vh);
+  border-radius: 0;
+  object-fit: contain;
+}
+
+.inspector-hero-image.is-loading {
+  position: absolute;
+  opacity: 0;
+}
+
+.inspector-hero-compact strong,
+.inspector-hero-title {
   min-width: 0;
+  max-width: 100%;
   overflow: hidden;
   display: -webkit-box;
   -webkit-box-orient: vertical;
@@ -4796,19 +4838,7 @@ select.ai-config-input.ai-config-languages {
   font-weight: 600;
   line-height: 1.45;
   overflow-wrap: anywhere;
-}
-
-.inspector-hero-preview {
-  position: relative;
-  display: flex;
-  width: 100%;
-  max-height: min(360px, 45vh);
-  align-items: center;
-  justify-content: center;
-  overflow: hidden;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
+  word-break: break-word;
 }
 
 .inspector-hero-stack {
@@ -4897,28 +4927,6 @@ select.ai-config-input.ai-config-languages {
   position: relative;
   z-index: 1;
   -webkit-line-clamp: 3;
-}
-
-.inspector-hero-preview-fallback {
-  min-height: 112px;
-  border: 1px solid var(--divider-soft);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--canvas) 86%, black);
-}
-
-.inspector-hero-image {
-  display: block;
-  width: auto;
-  max-width: 100%;
-  height: auto;
-  max-height: min(360px, 45vh);
-  border-radius: 8px;
-  object-fit: contain;
-}
-
-.inspector-hero-image.is-loading {
-  position: absolute;
-  opacity: 0;
 }
 
 /* Compact info line (INSPECT-003) — 与文件名同一左缘的摘要行。 */

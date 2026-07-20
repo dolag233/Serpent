@@ -27,6 +27,7 @@ export type IconName =
   | "folder-tree"
   | "folders"
   | "fullscreen"
+  | "fullscreen-exit"
   | "globe"
   | "grid"
   | "heart"
@@ -212,6 +213,15 @@ const iconPaths: Record<IconName, ReactNode> = {
       <path d="M20 9V4h-5" />
       <path d="M4 15v5h5" />
       <path d="M20 15v5h-5" />
+    </>
+  ),
+  // Corners pointing inward — exit fullscreen.
+  "fullscreen-exit": (
+    <>
+      <path d="M9 4v5H4" />
+      <path d="M15 4v5h5" />
+      <path d="M9 20v-5H4" />
+      <path d="M15 20v-5h5" />
     </>
   ),
   grid: (

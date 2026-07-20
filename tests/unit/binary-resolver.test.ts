@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -88,16 +88,22 @@ describe('media binary resolver', () => {
     writeFileSync(ffmpeg, 'not executable');
     chmodSync(ffmpeg, 0o644);
 
-    if (process.platform === 'win32') {
-      // Windows has no execute permission bit (Node maps X_OK to F_OK), so an
-      // existing bundled file is considered runnable; the PE is validated by
-      // CreateProcess at spawn time, where call sites already handle failure.
-      expect(resolveFfmpegPath()).toBe(ffmpeg);
-    } else {
-      expect(resolveFfmpegPath()).toBe(platformName('ffmpeg'));
+    const previousCwd = process.cwd();
+    process.chdir(root);
+    try {
+      if (process.platform === 'win32') {
+        // Windows has no execute permission bit (Node maps X_OK to F_OK), so an
+        // existing bundled file is considered runnable; the PE is validated by
+        // CreateProcess at spawn time, where call sites already handle failure.
+        expect(resolveFfmpegPath()).toBe(ffmpeg);
+      } else {
+        expect(resolveFfmpegPath()).toBe(platformName('ffmpeg'));
+      }
+      expect(resolveFfprobePath()).toBe(platformName('ffprobe'));
+      expect(resolveOiiotoolPath()).toBe(platformName('oiiotool'));
+    } finally {
+      process.chdir(previousCwd);
     }
-    expect(resolveFfprobePath()).toBe(platformName('ffprobe'));
-    expect(resolveOiiotoolPath()).toBe(platformName('oiiotool'));
   });
 
   it('falls back to PATH names when the bundled path is a directory', () => {
@@ -113,6 +119,28 @@ describe('media binary resolver', () => {
     );
     mkdirSync(ffmpeg, { recursive: true });
 
-    expect(resolveFfmpegPath()).toBe(platformName('ffmpeg'));
+    const previousCwd = process.cwd();
+    process.chdir(root);
+    try {
+      expect(resolveFfmpegPath()).toBe(platformName('ffmpeg'));
+    } finally {
+      process.chdir(previousCwd);
+    }
+  });
+
+  it('resolves project resources/ffmpeg when Electron resourcesPath has no bundle', () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'serpent-project-'));
+    roots.push(root);
+    const platform = platformDirectory();
+    const ffmpeg = path.join(root, 'resources', 'ffmpeg', platform, platformName('ffmpeg'));
+    makeExecutable(ffmpeg);
+    setResourcesPath(path.join(root, 'electron-resources-empty'));
+    const previousCwd = process.cwd();
+    process.chdir(root);
+    try {
+      expect(realpathSync(resolveFfmpegPath())).toBe(realpathSync(ffmpeg));
+    } finally {
+      process.chdir(previousCwd);
+    }
   });
 });

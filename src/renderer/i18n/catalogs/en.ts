@@ -703,7 +703,7 @@ export const en = {
     cardBadgesHint: "Duration is bottom-left; extension is bottom-right (images never show extension). Type badges appear only when extension is off (e.g. GIF)."
   },
   preview: {
-    ffmpegRequired: "This install is missing FFmpeg, so a video playback proxy cannot be generated. Install or configure FFmpeg and try again.",
+    ffmpegRequired: "This install is missing the media component needed for a video playback proxy. Reinstall or repair Serpent and try again.",
     oiioRequired: "This install is missing OpenImageIO, so this image format cannot be decoded. Install or configure oiiotool and try again.",
     sharpUnavailable: "The image decoder is unavailable, so a preview cannot be generated. Reinstall the app and try again.",
     mediaProcessingFailed: "Media processing failed. The source file may be damaged or use an unsupported codec.",
@@ -732,6 +732,7 @@ export const en = {
     previous: "Previous asset",
     next: "Next asset",
     fullscreen: "Fullscreen",
+    exitFullscreen: "Exit fullscreen",
     resolving: "Loading…",
     videoUnsupported: "This environment does not support video playback.",
     playbackRate: "Speed",
@@ -1117,7 +1118,7 @@ export const en = {
       NAME_NOT_SUPPORTED: "The destination filesystem does not accept one of the file names.",
       IO_ERROR: "The operating system reported a disk I/O error.",
       SHARP_UNAVAILABLE: "The Sharp image engine is unavailable.",
-      FFMPEG_REQUIRED: "FFmpeg was not found in this install; video previews are unavailable.",
+      FFMPEG_REQUIRED: "The media component was not found in this install; video thumbnails are unavailable.",
       OIIO_REQUIRED: "OpenImageIO was not found in this install; EXR/TGA decoding is unavailable.",
       MEDIA_PROCESSING_FAILED: "Media processing failed. Check whether the source file is damaged, and see the app logs for details.",
       PALETTE_SOURCE_NOT_READY: "The thumbnail or video poster for this revision is not ready yet.",

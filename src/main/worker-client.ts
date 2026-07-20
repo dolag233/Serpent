@@ -4,6 +4,7 @@ import { utilityProcess, type UtilityProcess } from 'electron';
 
 import type { WorkerCommand } from '../shared/protocol/requests';
 import type { AppLogger } from './app-logger';
+import { mediaBinaryWorkerEnv } from './media-binary-env';
 import {
   parseWorkerControlMessage,
   parseAssetChangeEvent,
@@ -80,6 +81,9 @@ export class LibraryWorkerClient {
     const child = utilityProcess.fork(this.#modulePath, [], {
       serviceName: 'Serpent Library Worker',
       stdio: 'pipe',
+      // GUI / UtilityProcess PATH often omits user-installed ffmpeg; pin
+      // absolute bundled/dev media CLIs so video posters match hover preview.
+      env: mediaBinaryWorkerEnv(),
     });
     this.#child = child;
     child.stdout?.on('data', (chunk) => this.logger.worker('stdout', chunk));
