@@ -520,6 +520,7 @@ export function AssetPreviewModal({
             />
           ) : ready && resolution?.mediaType === "audio" && resolution.url ? (
             <AudioPlayerControls
+              key={resolution.url}
               onError={handlePlaybackError}
               onReady={() => setDirectApproved(true)}
               src={resolution.url}
@@ -527,6 +528,7 @@ export function AssetPreviewModal({
             />
           ) : ready && resolution?.mediaType === "text" ? (
             <TextViewerControls
+              key={`${libraryId}:${asset.assetId}`}
               api={api}
               assetId={asset.assetId}
               libraryId={libraryId}

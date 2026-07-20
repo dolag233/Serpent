@@ -103,13 +103,13 @@ describe('GeminiVendorAdapter', () => {
     const adapter = new GeminiVendorAdapter('test-key', 'gemini-2.5-flash', mockFetch);
     await adapter.analyze({
       filename: 'test.png', mime: 'image/png', language: 'en',
-      enabledFields: { description: true, tags: true, structuredMetadata: false },
+      enabledFields: { description: true, tags: true, rating: false },
       existingTagNames: [], imageBase64: 'fakebase64',
     });
 
     const config = requestBody?.generationConfig as Record<string, unknown>;
     const schema = config.responseSchema as Record<string, unknown>;
-    expect(schema.propertyOrdering).toEqual(['description', 'tags', 'structured_metadata']);
+    expect(schema.propertyOrdering).toEqual(['description', 'tags', 'rating']);
   });
 
   it('parses a valid Gemini response', async () => {
@@ -121,7 +121,7 @@ describe('GeminiVendorAdapter', () => {
       filename: 'test.png',
       mime: 'image/png',
       language: 'en',
-      enabledFields: { description: true, tags: true, structuredMetadata: false },
+      enabledFields: { description: true, tags: true, rating: false },
       existingTagNames: [],
       imageBase64: 'fakebase64',
     });
@@ -136,14 +136,14 @@ describe('GeminiVendorAdapter', () => {
     await expect(
       adapter.analyze({
         filename: 'test.png', mime: 'image/png', language: 'en',
-        enabledFields: { description: false, tags: true, structuredMetadata: false },
+        enabledFields: { description: false, tags: true, rating: false },
         existingTagNames: [],
       }),
     ).rejects.toThrow(VendorAdapterError);
     try {
       await adapter.analyze({
         filename: 'test.png', mime: 'image/png', language: 'en',
-        enabledFields: { description: false, tags: true, structuredMetadata: false },
+        enabledFields: { description: false, tags: true, rating: false },
         existingTagNames: [],
       });
     } catch (error) {
@@ -158,7 +158,7 @@ describe('GeminiVendorAdapter', () => {
     try {
       await adapter.analyze({
         filename: 'test.png', mime: 'image/png', language: 'en',
-        enabledFields: { description: false, tags: true, structuredMetadata: false },
+        enabledFields: { description: false, tags: true, rating: false },
         existingTagNames: [],
       });
       expect.fail('Should have thrown');
@@ -174,7 +174,7 @@ describe('GeminiVendorAdapter', () => {
     try {
       await adapter.analyze({
         filename: 'test.png', mime: 'image/png', language: 'en',
-        enabledFields: { description: false, tags: true, structuredMetadata: false },
+        enabledFields: { description: false, tags: true, rating: false },
         existingTagNames: [],
       });
       expect.fail('Should have thrown');
@@ -190,7 +190,7 @@ describe('GeminiVendorAdapter', () => {
     try {
       await adapter.analyze({
         filename: 'test.png', mime: 'image/png', language: 'en',
-        enabledFields: { description: false, tags: true, structuredMetadata: false },
+        enabledFields: { description: false, tags: true, rating: false },
         existingTagNames: [],
       });
       expect.fail('Should have thrown');
@@ -210,7 +210,7 @@ describe('GeminiVendorAdapter', () => {
     try {
       await adapter.analyze({
         filename: 'test.png', mime: 'image/png', language: 'en',
-        enabledFields: { description: false, tags: true, structuredMetadata: false },
+        enabledFields: { description: false, tags: true, rating: false },
         existingTagNames: [],
       });
       expect.fail('Should have thrown');
@@ -235,7 +235,7 @@ describe('GeminiVendorAdapter', () => {
     try {
       await adapter.analyze({
         filename: 'test.png', mime: 'image/png', language: 'en',
-        enabledFields: { description: false, tags: true, structuredMetadata: false },
+        enabledFields: { description: false, tags: true, rating: false },
         existingTagNames: [],
       });
       expect.fail('Should have thrown');
@@ -274,7 +274,7 @@ describe('AnthropicVendorAdapter', () => {
       filename: 'test.png',
       mime: 'image/png',
       language: 'en',
-      enabledFields: { description: true, tags: true, structuredMetadata: false },
+      enabledFields: { description: true, tags: true, rating: false },
       existingTagNames: [],
       imageBase64: 'fakebase64',
     });
@@ -289,7 +289,7 @@ describe('AnthropicVendorAdapter', () => {
     try {
       await adapter.analyze({
         filename: 'test.png', mime: 'image/png', language: 'en',
-        enabledFields: { description: false, tags: true, structuredMetadata: false },
+        enabledFields: { description: false, tags: true, rating: false },
         existingTagNames: [],
       });
       expect.fail('Should have thrown');
@@ -305,7 +305,7 @@ describe('AnthropicVendorAdapter', () => {
     try {
       await adapter.analyze({
         filename: 'test.png', mime: 'image/png', language: 'en',
-        enabledFields: { description: false, tags: true, structuredMetadata: false },
+        enabledFields: { description: false, tags: true, rating: false },
         existingTagNames: [],
       });
       expect.fail('Should have thrown');
@@ -321,7 +321,7 @@ describe('AnthropicVendorAdapter', () => {
     try {
       await adapter.analyze({
         filename: 'test.png', mime: 'image/png', language: 'en',
-        enabledFields: { description: false, tags: true, structuredMetadata: false },
+        enabledFields: { description: false, tags: true, rating: false },
         existingTagNames: [],
       });
       expect.fail('Should have thrown');
@@ -337,7 +337,7 @@ describe('AnthropicVendorAdapter', () => {
     try {
       await adapter.analyze({
         filename: 'test.png', mime: 'image/png', language: 'en',
-        enabledFields: { description: false, tags: true, structuredMetadata: false },
+        enabledFields: { description: false, tags: true, rating: false },
         existingTagNames: [],
       });
       expect.fail('Should have thrown');
@@ -357,7 +357,7 @@ describe('AnthropicVendorAdapter', () => {
     try {
       await adapter.analyze({
         filename: 'test.png', mime: 'image/png', language: 'en',
-        enabledFields: { description: false, tags: true, structuredMetadata: false },
+        enabledFields: { description: false, tags: true, rating: false },
         existingTagNames: [],
       });
       expect.fail('Should have thrown');
@@ -387,7 +387,7 @@ describe('AnthropicVendorAdapter', () => {
     const adapter = new AnthropicVendorAdapter('key', 'claude-haiku-3-5-20250514', mockFetch as typeof fetch);
     const result = await adapter.analyze({
       filename: 'test.png', mime: 'image/png', language: 'en',
-      enabledFields: { description: true, tags: true, structuredMetadata: false },
+      enabledFields: { description: true, tags: true, rating: false },
       existingTagNames: [],
     });
     expect(result.description).toBe('Found in second block');
@@ -428,7 +428,7 @@ describe('clearAiContent', () => {
       tags: ['AI-tag'],
       modelId: 'test-model',
       modelVersion: 'v1',
-      enabledFields: { description: true, tags: true, structuredMetadata: false },
+      enabledFields: { description: true, tags: true, rating: false },
     });
 
     // Write some human content (use expectedVersion: 0 for first write)
@@ -481,7 +481,7 @@ describe('clearAiContent', () => {
       tags: ['AI-tag-2'],
       modelId: 'test-model',
       modelVersion: 'v1',
-      enabledFields: { description: true, tags: true, structuredMetadata: false },
+      enabledFields: { description: true, tags: true, rating: false },
     });
 
     const result = service.clearAiContent({
@@ -934,7 +934,7 @@ describe('AI job queue management', () => {
       tags: ['must-not-be-written'],
       modelId: 'test-model',
       modelVersion: 'test-version',
-      enabledFields: { description: false, tags: true, structuredMetadata: false },
+      enabledFields: { description: false, tags: true, rating: false },
     });
 
     expect(result.committed).toBe(false);

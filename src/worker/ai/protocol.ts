@@ -1,30 +1,32 @@
 import { z } from 'zod';
 
+import {
+  DEFAULT_AI_ANALYSIS_SETTINGS,
+  type AiAnalysisSettings,
+} from '../../shared/ai-analysis-settings';
+
 /**
- * The structured-output contract that AI models must conform to.
- * This is the JSON shape the vendor API is instructed to return.
+ * The structured-output contract that AI models must conform to (F8).
  */
 export const aiStructuredOutputSchema = z.strictObject({
   description: z
     .string()
     .optional()
-    .describe('A detailed natural-language description of the asset content.'),
+    .describe('Natural-language description of the asset content.'),
   tags: z
     .array(z.string())
     .describe('Relevant keyword tags describing the asset.'),
-  structured_metadata: z
-    .record(z.string(), z.unknown())
+  rating: z
+    .number()
+    .int()
+    .min(1)
+    .max(5)
     .optional()
-    .describe('Additional structured metadata keyed by field name.'),
+    .describe('Aesthetic score from 1 to 5.'),
 });
 
 export type AiStructuredOutput = z.infer<typeof aiStructuredOutputSchema>;
 
-/**
- * The validated result returned by a vendor adapter after a successful
- * analysis.  Wraps the model's structured output with the model version
- * reported by the vendor API.
- */
 export const aiAnalysisResultSchema = aiStructuredOutputSchema.extend({
   modelVersion: z
     .string()
@@ -34,12 +36,6 @@ export const aiAnalysisResultSchema = aiStructuredOutputSchema.extend({
 
 export type AiAnalysisResult = z.infer<typeof aiAnalysisResultSchema>;
 
-/**
- * Drop top-level keys whose value is `null`. Vendor wire schemas mark
- * optional fields (description / structured_metadata) as required-but-nullable,
- * so models emit `null` for inapplicable fields; stripping them keeps
- * explicit-null and absent equivalent before schema validation.
- */
 function stripNullValues(input: unknown): unknown {
   if (input && typeof input === 'object' && !Array.isArray(input)) {
     const out: Record<string, unknown> = {};
@@ -53,47 +49,30 @@ function stripNullValues(input: unknown): unknown {
   return input;
 }
 
-/**
- * Parse and validate an AI analysis result.
- * Throws ZodError if the input does not conform to AiAnalysisResult.
- */
 export function parseAiAnalysisResult(input: unknown): AiAnalysisResult {
   return aiAnalysisResultSchema.parse(stripNullValues(input));
 }
 
-/**
- * Vendor-agnostic request for AI asset analysis.
- * Carries all context the adapter needs to construct a prompt and images.
- */
 export interface AiAnalysisRequest {
-  /** The asset's display filename, for contextual prompting. */
   filename: string;
-
-  /** The asset's MIME type. */
   mime: string;
-
-  /** Optional description of contact-sheet contents (video assets). */
   contactSheetDescription?: string;
-
-  /** Base64-encoded primary image (thumbnail for images, poster frame for video). */
   imageBase64?: string;
-
-  /** Base64-encoded contact sheet (video assets only). */
   contactSheetBase64?: string;
-
-  /** BCP-47 language tag for the desired response language. */
+  /** Prompt language line (may list multiple). */
   language: string;
-
-  /** Which fields the AI may populate. */
   enabledFields: {
     description: boolean;
     tags: boolean;
-    structuredMetadata: boolean;
+    rating: boolean;
   };
-
-  /**
-   * Existing tag names in the library, used by the adapter to hint
-   * tag reuse to the model.
-   */
   existingTagNames: string[];
+  /** Defaults to DEFAULT_AI_ANALYSIS_SETTINGS when omitted (tests / stubs). */
+  analysisSettings?: AiAnalysisSettings;
+}
+
+export function resolveAiAnalysisSettings(
+  request: AiAnalysisRequest,
+): AiAnalysisSettings {
+  return request.analysisSettings ?? DEFAULT_AI_ANALYSIS_SETTINGS;
 }

@@ -94,7 +94,7 @@ function mockOpenAiFetchForAnalysis(result: AiAnalysisResult): typeof fetch {
           content: JSON.stringify({
             description: result.description,
             tags: result.tags,
-            structured_metadata: (result as Record<string, unknown>).structured_metadata,
+            rating: (result as { rating?: number }).rating ?? null,
           }),
         },
       },
@@ -435,7 +435,7 @@ describe('video AI analysis — full flow with ready artifacts', () => {
     const enabledFields = {
       description: true,
       tags: true,
-      structuredMetadata: false,
+      rating: false,
     };
 
     // 4) Build AiAnalysisRequest — verify both imageBase64 and contactSheetBase64
@@ -519,7 +519,7 @@ describe('video AI analysis — full flow with ready artifacts', () => {
       tags: ['TestVidTag'],
       modelId: 'gpt-4o',
       modelVersion: 'v1',
-      enabledFields: { description: false, tags: true, structuredMetadata: false },
+      enabledFields: { description: false, tags: true, rating: false },
     });
 
     expect(writeResult.tagsWritten).toContain('TestVidTag');
@@ -711,7 +711,7 @@ describe('OpenAIVendorAdapter with contactSheetBase64', () => {
       imageBase64: 'cG9zdGVyQnl0ZXM=',   // base64 of 'posterBytes'
       contactSheetBase64: 'c2hlZXRCeXRlcw==', // base64 of 'sheetBytes'
       language: 'en',
-      enabledFields: { description: true, tags: true, structuredMetadata: false },
+      enabledFields: { description: true, tags: true, rating: false },
       existingTagNames: [],
     };
 
@@ -770,7 +770,7 @@ describe('OpenAIVendorAdapter with contactSheetBase64', () => {
       mime: 'image/png',
       imageBase64: 'aW1hZ2VEYXRh',
       language: 'en',
-      enabledFields: { description: false, tags: true, structuredMetadata: false },
+      enabledFields: { description: false, tags: true, rating: false },
       existingTagNames: [],
     };
 
@@ -805,7 +805,7 @@ describe('API key security — video path', () => {
       imageBase64: 'cG9zdGVy',
       contactSheetBase64: 'c2hlZXQ=',
       language: 'en',
-      enabledFields: { description: true, tags: true, structuredMetadata: false },
+      enabledFields: { description: true, tags: true, rating: false },
       existingTagNames: [],
     };
 

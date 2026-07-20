@@ -107,12 +107,9 @@ export function AudioPlayerControls({
     return () => window.removeEventListener("keydown", onKeyDown, true);
   }, [togglePlayback]);
 
+  // Parent remounts with key={src}; only cancel in-flight seek on unmount/src change.
   useEffect(() => {
     seekSessionRef.current?.cancel();
-    trailParticlesRef.current = [];
-    trailLastEmitAtRef.current = null;
-    trailNextIdRef.current = 0;
-    setTrailParticles([]);
     return () => seekSessionRef.current?.cancel();
   }, [src]);
 

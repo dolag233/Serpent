@@ -42,17 +42,23 @@ describe("buildTagFilterDefaultSections (REQ-FILTER-020)", () => {
     expect(top.map((tag) => tag.name)).not.toContain("Tag8");
   });
 
-  it("includes recently-used tags not already in the top section", () => {
-    // Tag0 is in top (rank 0); Tag9 is outside top (rank 9, limit is 8).
+  it("puts recently-filtered tags in recent even when they are also top-used", () => {
+    // Tag0 is the most-used; after filtering with it, it must appear under
+    //「最近筛选」rather than being swallowed by「常用标签」(Serpent-e3e).
     const { top, recent } = buildTagFilterDefaultSections(
       manyTags,
       [],
       ["Tag9", "Tag0"],
     );
-    expect(top.some((tag) => tag.name === "Tag0")).toBe(true);
-    // "Tag0" is already in top, so recent should only surface "Tag9" —
-    // order follows the recentNames input order.
-    expect(recent.map((tag) => tag.name)).toEqual(["Tag9"]);
+    expect(recent.map((tag) => tag.name)).toEqual(["Tag9", "Tag0"]);
+    expect(top.some((tag) => tag.name === "Tag0")).toBe(false);
+    expect(top.some((tag) => tag.name === "Tag9")).toBe(false);
+    expect(top[0]?.name).toBe("Tag1");
+  });
+
+  it("surfaces recent section before relying on top-only lists", () => {
+    const { recent } = buildTagFilterDefaultSections(tags, [], ["Glass"]);
+    expect(recent.map((tag) => tag.name)).toEqual(["Glass"]);
   });
 
   it("excludes selected tags from both sections", () => {

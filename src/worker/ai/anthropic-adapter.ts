@@ -1,5 +1,6 @@
+import { buildAiAnalysisSystemPrompt } from '../../shared/ai-analysis-settings';
 import { resolveAnthropicMessagesUrl } from '../../shared/ai-endpoints';
-import { parseAiAnalysisResult } from './protocol';
+import { parseAiAnalysisResult, resolveAiAnalysisSettings } from './protocol';
 import type { AiAnalysisRequest, AiAnalysisResult } from './protocol';
 import { VendorAdapterError } from './vendor-adapter';
 import type { VendorAdapter, VendorId } from './vendor-adapter';
@@ -14,17 +15,17 @@ const ANTHROPIC_TOOL_INPUT_SCHEMA = {
   type: 'object' as const,
   properties: {
     description: {
-      type: 'string' as const,
-      description: 'A detailed description of the asset content. Omit if not applicable.',
+      type: ['string', 'null'] as const,
+      description: 'Description of the asset content, or null if skipped.',
     },
     tags: {
       type: 'array' as const,
       items: { type: 'string' as const },
-      description: 'Relevant keyword tags. Prefer existing library tags when suitable.',
+      description: 'Keyword tags for the asset.',
     },
-    structured_metadata: {
-      type: 'object' as const,
-      description: 'Additional structured metadata as key-value pairs. Omit if not applicable.',
+    rating: {
+      type: ['integer', 'null'] as const,
+      description: 'Aesthetic score from 1 to 5, or null if unknown.',
     },
   },
   required: ['tags'] as string[],
@@ -34,7 +35,7 @@ const ANTHROPIC_TOOL_DEFINITION = {
   name: 'serpent_classify_asset',
   description:
     'Classify a digital asset for a creative professional library. ' +
-    'Provide a description, tags, and structured metadata.',
+    'Provide description, tags, and an optional aesthetic rating.',
   input_schema: ANTHROPIC_TOOL_INPUT_SCHEMA,
 };
 
@@ -156,34 +157,66 @@ export class AnthropicVendorAdapter implements VendorAdapter {
     return this.#extractResult(json);
   }
 
+  async probeConnection(signal?: AbortSignal): Promise<void> {
+    // No tools / vision — midstream proxies often return plain text for
+    // classification tool_choice, which is fine for a reachability check.
+    let response: Response;
+    try {
+      response = await this._fetch(
+        resolveAnthropicMessagesUrl(this.baseUrl),
+        {
+          method: 'POST',
+          headers: {
+            'x-api-key': this.apiKey,
+            'anthropic-version': '2023-06-01',
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: this.model,
+            max_tokens: 16,
+            temperature: 0,
+            messages: [
+              {
+                role: 'user',
+                content: 'Reply with the single word OK.',
+              },
+            ],
+          }),
+          signal,
+        },
+      );
+    } catch (error: unknown) {
+      throw this.#mapFetchError(error);
+    }
+    if (!response.ok) {
+      throw await this.#mapHttpError(response);
+    }
+    // Body shape is irrelevant for probe; HTTP success is enough.
+    try {
+      await response.json();
+    } catch (error: unknown) {
+      throw new VendorAdapterError(
+        'invalid_response',
+        'The AI service returned an unreadable response.',
+        { cause: error },
+      );
+    }
+  }
+
   // ------------------------------------------------------------------
   // Prompt construction
   // ------------------------------------------------------------------
 
   #buildSystemPrompt(request: AiAnalysisRequest): string {
-    const fields: string[] = [];
-    if (request.enabledFields.description) fields.push('description');
-    if (request.enabledFields.tags) fields.push('tags');
-    if (request.enabledFields.structuredMetadata)
-      fields.push('structured_metadata');
-
-    let prompt =
-      'You are a digital asset classifier for creative professionals. ' +
-      'Analyze the provided asset and return structured classification data ' +
-      'by calling the `serpent_classify_asset` tool.\n\n';
-    prompt += `Target languages: ${request.language}\n`;
-    prompt +=
-      'When multiple languages are listed, write descriptions and tags that remain useful for search in each of those languages (bilingual or multilingual tags are encouraged).\n';
-    prompt += `Fill these fields: ${fields.join(', ') || 'tags only'}\n`;
-
-    if (request.existingTagNames.length > 0) {
-      prompt +=
-        '\nExisting library tags (prefer these when suitable): ' +
-        request.existingTagNames.join(', ') +
-        '\n';
-    }
-
-    return prompt;
+    return (
+      buildAiAnalysisSystemPrompt({
+        language: request.language,
+        settings: resolveAiAnalysisSettings(request),
+        enabledFields: request.enabledFields,
+        existingTagNames: request.existingTagNames,
+      }) +
+      '\n通过调用 `serpent_classify_asset` 工具返回结果。\n'
+    );
   }
 
   #buildMessages(

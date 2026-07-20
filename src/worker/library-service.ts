@@ -45,6 +45,7 @@ import {
 import { pathIsWithin } from './path-utils';
 
 import { smartCollectionQueryDefinitionSchema, extractedVideoMetadataSchema, type AssetMetadataResult, type ExtractedMetadataResult, type ExtractedVideoMetadata, type AssetSummary, type CollectionSummary, type FilterClause, type FolderBrowseEntry, type LinkedFolderRule, type LinkedFolderSummary, type ManagedFolderSummary, type SearchScope, type SmartCollectionQueryDefinition, type SmartCollectionSummary, type TagSummary } from '../shared/asset-types';
+import { sanitizeAiDescription } from '../shared/ai-analysis-settings';
 import { hasMeaningfulSmartCollectionCondition } from '../shared/smart-collection-query';
 import {
   colorFilterSql,
@@ -1155,6 +1156,36 @@ const AUTHOR_METADATA_SCHEMA_CHECKSUM = createHash('sha256')
   .update(AUTHOR_METADATA_SCHEMA_SQL)
   .digest('hex');
 
+// Migration v16 (F8 / Serpent-1us6): AI aesthetic rating in ai_content;
+// retire structured_metadata bag.
+const AI_RATING_CONTENT_SCHEMA_SQL = `
+  DELETE FROM ai_content WHERE field_name = 'structured_metadata';
+
+  CREATE TABLE ai_content_v16 (
+    ai_content_id TEXT PRIMARY KEY,
+    asset_id TEXT NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE,
+    revision_id TEXT REFERENCES revisions(revision_id) ON DELETE SET NULL,
+    field_name TEXT NOT NULL CHECK (field_name IN ('description', 'rating')),
+    value TEXT NOT NULL,
+    model_id TEXT NOT NULL,
+    model_version TEXT NOT NULL,
+    generated_at TEXT NOT NULL
+  );
+  INSERT INTO ai_content_v16
+    (ai_content_id, asset_id, revision_id, field_name, value,
+     model_id, model_version, generated_at)
+  SELECT ai_content_id, asset_id, revision_id, field_name, value,
+         model_id, model_version, generated_at
+    FROM ai_content
+   WHERE field_name IN ('description', 'rating');
+  DROP TABLE ai_content;
+  ALTER TABLE ai_content_v16 RENAME TO ai_content;
+  CREATE INDEX ai_content_asset_field ON ai_content(asset_id, field_name);
+`;
+const AI_RATING_CONTENT_SCHEMA_CHECKSUM = createHash('sha256')
+  .update(AI_RATING_CONTENT_SCHEMA_SQL)
+  .digest('hex');
+
 const MIGRATIONS = [
   { version: 1, sql: INITIAL_SCHEMA_SQL, checksum: INITIAL_SCHEMA_CHECKSUM },
   { version: 2, sql: ASSET_SCHEMA_SQL, checksum: ASSET_SCHEMA_CHECKSUM },
@@ -1175,6 +1206,7 @@ const MIGRATIONS = [
   { version: 13, sql: LINKED_FOLDER_RULES_SCHEMA_SQL, checksum: LINKED_FOLDER_RULES_SCHEMA_CHECKSUM },
   { version: 14, sql: RETIRE_ASSET_LABEL_SCHEMA_SQL, checksum: RETIRE_ASSET_LABEL_SCHEMA_CHECKSUM },
   { version: 15, sql: AUTHOR_METADATA_SCHEMA_SQL, checksum: AUTHOR_METADATA_SCHEMA_CHECKSUM },
+  { version: 16, sql: AI_RATING_CONTENT_SCHEMA_SQL, checksum: AI_RATING_CONTENT_SCHEMA_CHECKSUM },
 ] as const;
 const SUPPORTED_SCHEMA_VERSION = MIGRATIONS.at(-1)!.version;
 
@@ -6570,10 +6602,102 @@ export class LibraryService {
   }
 
   /**
+   * F8: up to 100 tag names for the analysis prompt.
+   * Prefer tags used on assets in `folderId` (that folder only, no children),
+   * then tags by library-wide usage count.
+   */
+  listTagNamesForAiPrompt(
+    libraryId: string,
+    folderId: string | null | undefined,
+    limit = 100,
+  ): string[] {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    const capped = Math.min(100, Math.max(1, limit));
+    const conn = openLibrary.connection;
+    const libId = openLibrary.summary.libraryId;
+
+    const usageRows = conn
+      .prepare(
+        `SELECT t.name AS name, COUNT(*) AS usage_count
+           FROM tags t
+           LEFT JOIN human_asset_tags hat ON hat.tag_id = t.tag_id
+           LEFT JOIN ai_asset_tags aat ON aat.tag_id = t.tag_id
+          WHERE t.library_id = ?
+          GROUP BY t.tag_id
+          ORDER BY usage_count DESC, t.name COLLATE NOCASE ASC`,
+      )
+      .all(libId) as Array<{ name: string; usage_count: number }>;
+
+    if (!folderId) {
+      return usageRows.slice(0, capped).map((row) => row.name);
+    }
+
+    const folderRows = conn
+      .prepare(
+        `SELECT t.name AS name, COUNT(*) AS usage_count
+           FROM tags t
+           INNER JOIN (
+             SELECT hat.tag_id AS tag_id FROM human_asset_tags hat
+               INNER JOIN assets a ON a.asset_id = hat.asset_id
+              WHERE a.managed_folder_id = ?
+             UNION ALL
+             SELECT aat.tag_id AS tag_id FROM ai_asset_tags aat
+               INNER JOIN assets a ON a.asset_id = aat.asset_id
+              WHERE a.managed_folder_id = ?
+           ) uses ON uses.tag_id = t.tag_id
+          WHERE t.library_id = ?
+          GROUP BY t.tag_id
+          ORDER BY usage_count DESC, t.name COLLATE NOCASE ASC`,
+      )
+      .all(folderId, folderId, libId) as Array<{ name: string }>;
+
+    const seen = new Set<string>();
+    const ordered: string[] = [];
+    for (const row of folderRows) {
+      if (seen.has(row.name.toLowerCase())) continue;
+      seen.add(row.name.toLowerCase());
+      ordered.push(row.name);
+      if (ordered.length >= capped) return ordered;
+    }
+    for (const row of usageRows) {
+      if (seen.has(row.name.toLowerCase())) continue;
+      seen.add(row.name.toLowerCase());
+      ordered.push(row.name);
+      if (ordered.length >= capped) break;
+    }
+    return ordered;
+  }
+
+  /** True when the asset has a non-empty human description. */
+  hasHumanDescription(libraryId: string, assetId: string): boolean {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    const row = openLibrary.connection
+      .prepare(
+        `SELECT description FROM asset_metadata WHERE asset_id = ?`,
+      )
+      .get(assetId) as { description: string | null } | undefined;
+    return Boolean(row?.description?.trim());
+  }
+
+  /** Managed folder id for an asset, if any (for AI tag weighting). */
+  getAssetManagedFolderId(
+    libraryId: string,
+    assetId: string,
+  ): string | null {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    const row = openLibrary.connection
+      .prepare(
+        `SELECT managed_folder_id FROM assets WHERE asset_id = ?`,
+      )
+      .get(assetId) as { managed_folder_id: string | null } | undefined;
+    return row?.managed_folder_id ?? null;
+  }
+
+  /**
    * Atomically write AI-generated content for an asset.
    * For tags: find-or-create by NOCASE name, then INSERT OR IGNORE into ai_asset_tags.
-   * For description/structured metadata: DELETE old row(s) + INSERT new row in ai_content
-   *   (one row per (asset_id, field_name)).
+   * For description/rating: DELETE old row(s) + INSERT new row in ai_content
+   *   (one row per (asset_id, field_name)). Never writes human asset_metadata.rating.
    * After writing, sync the asset's FTS search content.
    */
   writeAiAnalysisResult(input: {
@@ -6581,14 +6705,15 @@ export class LibraryService {
     assetId: string;
     description?: string;
     tags?: string[];
-    structuredMetadata?: Record<string, unknown>;
+    /** Aesthetic score 1–5 as string or number; AI layer only. */
+    rating?: number | string | null;
     modelId: string;
     modelVersion: string;
     guardJobId?: string;
     enabledFields: {
       description: boolean;
       tags: boolean;
-      structuredMetadata: boolean;
+      rating: boolean;
     };
   }): { tagsWritten: string[]; fieldsWritten: string[]; committed: boolean } {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
@@ -6653,7 +6778,7 @@ export class LibraryService {
         }
       }
 
-      // Description / structured_metadata: DELETE old row(s) + INSERT.
+      // Description / rating: DELETE old row(s) + INSERT when enabled.
       const deleteOld = openLibrary.connection.prepare(
         'DELETE FROM ai_content WHERE asset_id = ? AND field_name = ?',
       );
@@ -6678,25 +6803,31 @@ export class LibraryService {
         fieldsWritten.push(fieldName);
       };
 
-      if (input.enabledFields.description) deleteOld.run(input.assetId, 'description');
-      if (input.enabledFields.structuredMetadata) {
-        deleteOld.run(input.assetId, 'structured_metadata');
+      if (input.enabledFields.description) {
+        deleteOld.run(input.assetId, 'description');
+      }
+      if (input.enabledFields.rating) {
+        deleteOld.run(input.assetId, 'rating');
       }
 
       if (
         input.enabledFields.description &&
-        input.description !== undefined &&
-        input.description.trim().length > 0
+        input.description !== undefined
       ) {
-        writeField('description', input.description.trim());
+        const cleaned = sanitizeAiDescription(input.description);
+        if (cleaned.length > 0) {
+          writeField('description', cleaned);
+        }
       }
 
-      if (
-        input.enabledFields.structuredMetadata &&
-        input.structuredMetadata !== undefined &&
-        Object.keys(input.structuredMetadata).length > 0
-      ) {
-        writeField('structured_metadata', JSON.stringify(input.structuredMetadata));
+      if (input.enabledFields.rating && input.rating != null) {
+        const score =
+          typeof input.rating === 'number'
+            ? input.rating
+            : Number.parseInt(String(input.rating).trim(), 10);
+        if (Number.isInteger(score) && score >= 1 && score <= 5) {
+          writeField('rating', String(score));
+        }
       }
       return true;
     })();
@@ -6706,7 +6837,7 @@ export class LibraryService {
     return { tagsWritten, fieldsWritten, committed };
   }
 
-  /** Retrieve current AI content for an asset. */
+  /** Retrieve current AI content rows for an asset. */
   getAiContent(libraryId: string, assetId: string): Array<{
     fieldName: string;
     value: string;
@@ -6736,6 +6867,39 @@ export class LibraryService {
       modelVersion: r.model_version,
       generatedAt: r.generated_at,
     }));
+  }
+
+  /** AI-layer tag names for an asset (ordered by name). */
+  listAiTagNames(libraryId: string, assetId: string): string[] {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    const rows = openLibrary.connection
+      .prepare(
+        `SELECT t.name AS name
+           FROM ai_asset_tags aat
+           JOIN tags t ON t.tag_id = aat.tag_id
+          WHERE aat.asset_id = ?
+          ORDER BY t.name COLLATE NOCASE ASC`,
+      )
+      .all(assetId) as Array<{ name: string }>;
+    return rows.map((row) => row.name);
+  }
+
+  /** Latest model_version stamped on AI tags for this asset, if any. */
+  getAiTagModelVersion(
+    libraryId: string,
+    assetId: string,
+  ): string | null {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    const row = openLibrary.connection
+      .prepare(
+        `SELECT model_version
+           FROM ai_asset_tags
+          WHERE asset_id = ?
+          ORDER BY rowid DESC
+          LIMIT 1`,
+      )
+      .get(assetId) as { model_version: string } | undefined;
+    return row?.model_version ?? null;
   }
 
   /**

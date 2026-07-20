@@ -10,6 +10,10 @@ import { publicErrorForWorkerFailure } from './public-error';
 import { OpenAIVendorAdapter } from './ai/openai-adapter';
 import { GeminiVendorAdapter } from './ai/gemini-adapter';
 import { AnthropicVendorAdapter } from './ai/anthropic-adapter';
+import {
+  DEFAULT_AI_ANALYSIS_SETTINGS,
+  normalizeAiAnalysisSettings,
+} from '../shared/ai-analysis-settings';
 import { apiFormatLimiterKey, formatAiLanguagesForPrompt } from '../shared/ai-endpoints';
 import { VendorAdapterError } from './ai/vendor-adapter';
 import type { VendorAdapter } from './ai/vendor-adapter';
@@ -707,10 +711,26 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
       };
     }
     case 'asset.analyze': {
-      const { libraryId, assetId, apiFormat, model, apiKey, enabledFields, languages, baseUrl } =
-        request.command;
+      const {
+        libraryId,
+        assetId,
+        apiFormat,
+        model,
+        apiKey,
+        enabledFields,
+        analysisSettings: rawAnalysisSettings,
+        languages,
+        baseUrl,
+      } = request.command;
       const resolvedBaseUrl = baseUrl?.trim() || undefined;
       const language = formatAiLanguagesForPrompt(languages);
+      const analysisSettings = normalizeAiAnalysisSettings({
+        ...DEFAULT_AI_ANALYSIS_SETTINGS,
+        ...rawAnalysisSettings,
+        descriptionEnabled: enabledFields.description,
+        tagEnabled: enabledFields.tags,
+        ratingEnabled: enabledFields.rating,
+      });
       const controls = analysisControls.get(request.requestId);
 
       // Resolve asset file path + mime.
@@ -822,10 +842,35 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
 
       const filename = filePath.split(/[/\\]/).pop() ?? 'asset';
 
-      // Collect existing tag names for reuse hinting.
-      const existingTagNames = libraryService.listTagNames(libraryId);
+      // F8: skip AI description when human description already exists.
+      const skipDescription =
+        enabledFields.description &&
+        libraryService.hasHumanDescription(libraryId, assetId);
+      const effectiveEnabled = {
+        description: enabledFields.description && !skipDescription,
+        tags: enabledFields.tags,
+        rating: enabledFields.rating,
+      };
+      if (
+        !effectiveEnabled.description &&
+        !effectiveEnabled.tags &&
+        !effectiveEnabled.rating
+      ) {
+        return {
+          ok: true,
+          type: 'asset.analyze-unsupported' as const,
+          assetId,
+          reason: 'NO_AI_FIELDS_TO_WRITE',
+        };
+      }
 
-      // Build the vendor-agnostic request.
+      const folderId = libraryService.getAssetManagedFolderId(libraryId, assetId);
+      const existingTagNames = libraryService.listTagNamesForAiPrompt(
+        libraryId,
+        folderId,
+        100,
+      );
+
       const aiRequest: AiAnalysisRequest = {
         filename,
         mime: requestMime,
@@ -833,8 +878,9 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
         contactSheetBase64,
         contactSheetDescription,
         language,
-        enabledFields,
+        enabledFields: effectiveEnabled,
         existingTagNames,
+        analysisSettings,
       };
 
       // Create adapter based on CC Switch wire apiFormat.
@@ -900,19 +946,16 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
         };
       }
 
-      // Write results atomically.
       const { tagsWritten, fieldsWritten, committed } = libraryService.writeAiAnalysisResult({
         libraryId,
         assetId,
         description: analysisResult.description,
         tags: analysisResult.tags,
-        structuredMetadata: analysisResult.structured_metadata as
-          | Record<string, unknown>
-          | undefined,
+        rating: analysisResult.rating,
         modelId: model,
         modelVersion: analysisResult.modelVersion,
         guardJobId: controls?.jobId,
-        enabledFields,
+        enabledFields: effectiveEnabled,
       });
 
       if (!committed || (controls && (controls.signal.aborted || !controls.canWrite()))) {
@@ -924,12 +967,18 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
         };
       }
 
-      const generatedFields: Record<string, unknown> = {};
+      const generatedFields: {
+        description?: string;
+        tags?: string[];
+        rating?: number;
+      } = {};
       if (tagsWritten.length > 0) generatedFields.tags = tagsWritten;
-      if (fieldsWritten.includes('description'))
+      if (fieldsWritten.includes('description') && analysisResult.description) {
         generatedFields.description = analysisResult.description;
-      if (fieldsWritten.includes('structured_metadata'))
-        generatedFields.structuredMetadata = analysisResult.structured_metadata;
+      }
+      if (fieldsWritten.includes('rating') && analysisResult.rating != null) {
+        generatedFields.rating = analysisResult.rating;
+      }
 
       parentPort?.postMessage({
         type: 'ai.analysis.completed',
@@ -943,12 +992,38 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
         ok: true,
         type: 'asset.analyzed' as const,
         assetId,
-        generatedFields: generatedFields as {
-          description?: string;
-          tags?: string[];
-          structuredMetadata?: Record<string, unknown>;
-        },
+        generatedFields,
         modelVersion: analysisResult.modelVersion,
+      };
+    }
+    case 'ai.content.get': {
+      const { libraryId, assetId } = request.command;
+      const rows = libraryService.getAiContent(libraryId, assetId);
+      const tags = libraryService.listAiTagNames(libraryId, assetId);
+      let description: string | null = null;
+      let rating: number | null = null;
+      let modelVersion: string | null = null;
+      for (const row of rows) {
+        modelVersion = row.modelVersion;
+        if (row.fieldName === 'description') description = row.value;
+        if (row.fieldName === 'rating') {
+          const parsed = Number.parseInt(row.value, 10);
+          if (Number.isInteger(parsed) && parsed >= 1 && parsed <= 5) {
+            rating = parsed;
+          }
+        }
+      }
+      if (!modelVersion) {
+        modelVersion = libraryService.getAiTagModelVersion(libraryId, assetId);
+      }
+      return {
+        ok: true,
+        type: 'ai.content.got' as const,
+        assetId,
+        description,
+        tags,
+        rating,
+        modelVersion,
       };
     }
     case 'media.generate-thumbnail': {
@@ -1157,22 +1232,10 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
           };
       }
 
-      // Use a minimal request to verify connectivity.
+      // Lightweight probe — no vision / tool_use / json_schema (avoids
+      // midstream "Expected tool_use but got text" false negatives).
       try {
-        await testAdapter.analyze(
-          {
-            filename: 'test.png',
-            mime: 'image/png',
-            language: 'en',
-            enabledFields: { description: false, tags: true, structuredMetadata: false },
-            existingTagNames: [],
-            imageBase64:
-              // Minimal 1x1 white PNG base64
-              'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk' +
-              '+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
-          },
-          AbortSignal.timeout(15_000),
-        );
+        await testAdapter.probeConnection(AbortSignal.timeout(15_000));
         return {
           ok: true,
           type: 'ai.test-connection.result' as const,
@@ -1241,6 +1304,7 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
                 apiKey: analysisConfig.apiKey,
                 baseUrl: analysisConfig.baseUrl,
                 enabledFields: analysisConfig.enabledFields,
+                analysisSettings: analysisConfig.analysisSettings,
                 languages: analysisConfig.languages,
               },
             });

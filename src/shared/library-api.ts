@@ -315,7 +315,16 @@ export interface SerpentLibraryApi {
     model: string | null;
     baseUrl: string;
     hasKey: boolean;
-    enabledFields: { description: boolean; tags: boolean; structuredMetadata: boolean };
+    enabledFields: { description: boolean; tags: boolean; rating: boolean };
+    analysisSettings: {
+      forceExistingTags: boolean;
+      maxTags: number;
+      maxDescriptionCharsZh: number;
+      maxDescriptionWordsEn: number;
+      outputStyle: 'normal' | 'concise' | 'rigorous';
+      ratingRubric: string;
+      customDescriptionPrompt: string;
+    };
     languages: Array<'zh-CN' | 'en' | 'ja' | 'ko'>;
     autoAnalyzeEnabled: boolean;
     disclaimerAccepted: boolean;
@@ -325,17 +334,37 @@ export interface SerpentLibraryApi {
     model: string;
     baseUrl?: string;
     apiKey?: string;
-    enabledFields?: { description: boolean; tags: boolean; structuredMetadata: boolean };
+    enabledFields?: { description: boolean; tags: boolean; rating: boolean };
+    analysisSettings?: {
+      forceExistingTags: boolean;
+      maxTags: number;
+      maxDescriptionCharsZh: number;
+      maxDescriptionWordsEn: number;
+      outputStyle: 'normal' | 'concise' | 'rigorous';
+      ratingRubric: string;
+      customDescriptionPrompt: string;
+    };
     languages?: Array<'zh-CN' | 'en' | 'ja' | 'ko'>;
     autoAnalyzeEnabled: boolean;
     disclaimerAccepted: boolean;
   }): Promise<LibraryApiResult<void>>;
+  getAiContent(input: {
+    libraryId: string;
+    assetId: string;
+  }): Promise<LibraryApiResult<{
+    assetId: string;
+    description: string | null;
+    tags: string[];
+    rating: number | null;
+    modelVersion: string | null;
+  }>>;
   analyzeAsset(input: {
     libraryId: string;
     assetId: string;
   }): Promise<LibraryApiResult<
-    | { assetId: string; generatedFields: { description?: string; tags?: string[]; structuredMetadata?: Record<string, unknown> }; modelVersion: string }
+    | { assetId: string; generatedFields: { description?: string; tags?: string[]; rating?: number }; modelVersion: string }
     | { assetId: string; reason: string }
+    | { assetId: string; queued: true; enqueued: number }
   >>;
   // Thumbnail & Preview
   requestThumbnail(input: { libraryId: string; assetId: string }): Promise<LibraryApiResult<{ assetId: string; artifactId: string }>>;

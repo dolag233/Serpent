@@ -880,7 +880,16 @@ const library: SerpentLibraryApi = Object.freeze({
     model: string | null;
     baseUrl: string;
     hasKey: boolean;
-    enabledFields: { description: boolean; tags: boolean; structuredMetadata: boolean };
+    enabledFields: { description: boolean; tags: boolean; rating: boolean };
+    analysisSettings: {
+      forceExistingTags: boolean;
+      maxTags: number;
+      maxDescriptionCharsZh: number;
+      maxDescriptionWordsEn: number;
+      outputStyle: 'normal' | 'concise' | 'rigorous';
+      ratingRubric: string;
+      customDescriptionPrompt: string;
+    };
     languages: Array<'zh-CN' | 'en' | 'ja' | 'ko'>;
     autoAnalyzeEnabled: boolean;
     disclaimerAccepted: boolean;
@@ -896,7 +905,16 @@ const library: SerpentLibraryApi = Object.freeze({
     model: string;
     baseUrl?: string;
     apiKey?: string;
-    enabledFields?: { description: boolean; tags: boolean; structuredMetadata: boolean };
+    enabledFields?: { description: boolean; tags: boolean; rating: boolean };
+    analysisSettings?: {
+      forceExistingTags: boolean;
+      maxTags: number;
+      maxDescriptionCharsZh: number;
+      maxDescriptionWordsEn: number;
+      outputStyle: 'normal' | 'concise' | 'rigorous';
+      ratingRubric: string;
+      customDescriptionPrompt: string;
+    };
     languages?: Array<'zh-CN' | 'en' | 'ja' | 'ko'>;
     autoAnalyzeEnabled: boolean;
     disclaimerAccepted: boolean;
@@ -907,16 +925,54 @@ const library: SerpentLibraryApi = Object.freeze({
     return { ok: true, value: undefined };
   },
 
-  async analyzeAsset(input: {
+  async getAiContent(input: {
     libraryId: string;
     assetId: string;
   }): Promise<LibraryApiResult<{
     assetId: string;
-    generatedFields: { description?: string; tags?: string[]; structuredMetadata?: Record<string, unknown> };
-    modelVersion: string;
-  } | { assetId: string; reason: string }>> {
+    description: string | null;
+    tags: string[];
+    rating: number | null;
+    modelVersion: string | null;
+  }>> {
+    const result = await request({
+      type: 'ai.content.get.request',
+      libraryId: input.libraryId,
+      assetId: input.assetId,
+    });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'ai.content.got') throw new Error('Unexpected ai-content response.');
+    return { ok: true, value: result };
+  },
+
+  async analyzeAsset(input: {
+    libraryId: string;
+    assetId: string;
+  }): Promise<LibraryApiResult<
+    | {
+        assetId: string;
+        generatedFields: {
+          description?: string;
+          tags?: string[];
+          rating?: number;
+        };
+        modelVersion: string;
+      }
+    | { assetId: string; reason: string }
+    | { assetId: string; queued: true; enqueued: number }
+  >> {
     const result = await request({ type: 'asset.analyze.request', libraryId: input.libraryId, assetId: input.assetId });
     if (!result.ok) return failure(result);
+    if (result.type === 'asset.analyze-queued') {
+      return {
+        ok: true,
+        value: {
+          assetId: result.assetId,
+          queued: true,
+          enqueued: result.enqueued,
+        },
+      };
+    }
     if (result.type === 'asset.analyzed' || result.type === 'asset.analyze-unsupported') return { ok: true, value: result };
     throw new Error('Unexpected analyze response.');
   },

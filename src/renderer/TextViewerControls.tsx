@@ -32,9 +32,9 @@ export function TextViewerControls({
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
+  // Parent remounts with key=`${libraryId}:${assetId}` so loading starts true.
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
     void api
       .readTextAsset({ libraryId, assetId, maxBytes: TEXT_VIEWER_MAX_BYTES })
       .then((result) => {

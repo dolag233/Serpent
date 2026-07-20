@@ -1,6 +1,8 @@
 # Serpent AI 反馈交接文档（2026-07-20）
 
 > 交接给下一位实施者。本会话由主 agent（opus）执行，已合入 12 个提交到 `codex/slice-002-asset-ingestion`（本地，**未 push**）。本文档记录已完成项、门禁状态、剩余工作、关键代码位置、以及一个重要的 worktree 教训。
+>
+> **2026-07-20 午间验收收尾（后继 agent）**：已在当前分支直接补齐 F4/F7、修 F5 多选确认与 AI 态刷新、F6 `progress>0` 门槛、3+1 个 setState-in-effect lint；校准 beads 与 `human-acceptance-checklist`（AICFG-004/005、INSPECT-AI-001、MENU-AI-001、JOBS-001）。F8 仍待用户讨论。详见本文 §验收收尾。
 
 ## 0. 背景
 
@@ -178,3 +180,33 @@ npm run test:e2e      # Playwright E2E（Electron，后台跑，勿抢前台）
 - AICFG-003（F1 眼睛图标）状态"待人类验收"——用户曾不通过（独立按钮），已改为内嵌（`ffbf9f4`），待复验。
 - AICFG-002（AI 自定义端点）"待人类验收"。
 - 视觉项（F2/F5/F6/F7）实现后均需用户实机视觉验收——本会话环境无 Computer Use，不能自签。
+
+## 11. 验收收尾记录（2026-07-20 午间）
+
+### 前会话质量问题（已修）
+
+| 问题 | 严重度 | 处理 |
+|---|---|---|
+| F4/F7 声称「实现正确」但未合入 main | 高 | 在当前分支直接重做并接线 |
+| F5 多选无 UI 确认（产品简报要求批量确认） | 高 | `confirm()` + i18n |
+| F5 清除后 Inspector 仍显示本地 `aiContent` | 中 | `onAiCleared` / 成功路径 `setAiContent(null)` |
+| F6 媒体进度条要求 `progress > 0` 才显示 | 中 | running 即显示，clamp 0..1 |
+| lint 3× setState-in-effect（预览/智能合集） | 中 | key-remount，删 sync effect |
+| test-connection 无 Key 时走 `CANCELLED` | 中 | Main 早处理 → `AI_NOT_CONFIGURED` |
+| beads 与真实完成度脱节；清单缺 F4–F7 条目 | 中 | close 校准 + 新增验收 ID |
+| F3 仍 open 尽管 badge 早已存在 | 低 | close |
+| worktree isolation 导致无效劳动 | 流程 | 本收尾未再用 worktree |
+
+### 门禁（收尾后）
+
+- `npm run typecheck` ✅
+- `npm run lint` ✅（原 3 error 已清）
+- 相关 unit（asset-commands / multi / ai-endpoints / ai-search-planner）✅
+- 全量 unit/worker/E2E：未在本收尾重跑全量（建议提交前主 agent 跑 `verify:mainline` 或至少 unit+worker）
+
+### 仍待用户
+
+- F8（`Serpent-1us6`）设计讨论
+- 人类验收：AICFG-002/003/004/005、INSPECT-AI-001、MENU-AI-001、JOBS-001
+- `Serpent-lqof` 可保持 open/in_progress 直至 AICFG-003 人类通过
+- 未 push 的前会话 15 commit + 本收尾未提交改动：需用户确认后 commit/push

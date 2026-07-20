@@ -152,11 +152,13 @@ export function MediaJobsDialog({
                           `${Math.round(job.progress * 100)}%`}
                       </span>
                     </div>
-                    {job.status === "running" && job.progress > 0 && (
+                    {job.status === "running" && (
                       <div className="task-progress-track">
                         <div
                           className="task-progress-fill"
-                          style={{ width: `${job.progress * 100}%` }}
+                          style={{
+                            width: `${Math.max(0, Math.min(1, job.progress)) * 100}%`,
+                          }}
                         />
                       </div>
                     )}

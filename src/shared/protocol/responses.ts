@@ -669,7 +669,7 @@ const assetOperationSuccessSchemas = [
     generatedFields: z.strictObject({
       description: nonBlankString.optional(),
       tags: z.array(nonBlankString).optional(),
-      structuredMetadata: z.record(z.string(), z.unknown()).optional(),
+      rating: z.number().int().min(1).max(5).optional(),
     }),
     modelVersion: nonBlankString,
   }),
@@ -678,6 +678,12 @@ const assetOperationSuccessSchemas = [
     type: z.literal('asset.analyze-unsupported'),
     assetId: nonBlankString,
     reason: nonBlankString,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('asset.analyze-queued'),
+    assetId: nonBlankString,
+    enqueued: z.number().int().positive(),
   }),
   z.strictObject({
     ok: z.literal(true),
@@ -941,6 +947,15 @@ const workerSuccessResultSchema = z.discriminatedUnion('type', [
     errorKind: nonBlankString.optional(),
     reason: nonBlankString.optional(),
   }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('ai.content.got'),
+    assetId: nonBlankString,
+    description: z.string().nullable(),
+    tags: z.array(nonBlankString),
+    rating: z.number().int().min(1).max(5).nullable(),
+    modelVersion: nonBlankString.nullable(),
+  }),
   ...assetOperationSuccessSchemas,
 ]);
 
@@ -1051,11 +1066,29 @@ const rendererSuccessResultSchema = z.discriminatedUnion('type', [
     enabledFields: z.strictObject({
       description: z.boolean(),
       tags: z.boolean(),
-      structuredMetadata: z.boolean(),
+      rating: z.boolean(),
+    }),
+    analysisSettings: z.strictObject({
+      forceExistingTags: z.boolean(),
+      maxTags: z.number().int().min(1).max(32),
+      maxDescriptionCharsZh: z.number().int().min(20).max(500),
+      maxDescriptionWordsEn: z.number().int().min(10).max(200),
+      outputStyle: z.enum(['normal', 'concise', 'rigorous']),
+      ratingRubric: z.string().min(1).max(4_000),
+      customDescriptionPrompt: z.string().max(4_000),
     }),
     languages: z.array(z.enum(['zh-CN', 'en', 'ja', 'ko'])).min(1).max(8),
     autoAnalyzeEnabled: z.boolean(),
     disclaimerAccepted: z.boolean(),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('ai.content.got'),
+    assetId: nonBlankString,
+    description: z.string().nullable(),
+    tags: z.array(nonBlankString),
+    rating: z.number().int().min(1).max(5).nullable(),
+    modelVersion: nonBlankString.nullable(),
   }),
   z.strictObject({
     ok: z.literal(true),

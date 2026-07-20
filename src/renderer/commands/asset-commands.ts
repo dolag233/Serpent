@@ -188,12 +188,10 @@ export const assetCommandDefinitions: readonly AssetCommandDefinition[] = [
     title: (ctx) => t(ctx, 'command.asset.aiAnalyze'),
     group: 'metadata',
     visible: (ctx) => !ctx.assetDeleted,
+    // Only hard-disable for unavailable assets. Missing AI config still runs
+    // so the handler can surface a toast (silent disabled clicks feel broken).
     disabledReason: (ctx) =>
-      !ctx.assetAvailable
-        ? t(ctx, 'command.reason.unavailable')
-        : ctx.aiCanAnalyze
-          ? null
-          : t(ctx, 'command.reason.aiNotConfigured'),
+      !ctx.assetAvailable ? t(ctx, 'command.reason.unavailable') : null,
     run: (ctx) => withPrimaryAsset(ctx, (id) => ctx.actions.aiAnalyze(id)),
   },
   {

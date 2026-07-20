@@ -37,15 +37,12 @@ describe('ai-endpoints URL resolution', () => {
     );
   });
 
-  it('normalizes multi-select languages and defaults to zh-CN+en', () => {
-    expect(normalizeAiLanguages('auto')).toEqual(['zh-CN', 'en']);
+  it('normalizes to a single language (first pick) with zh-CN default', () => {
+    expect(normalizeAiLanguages('auto')).toEqual(['zh-CN']);
     expect(normalizeAiLanguages('zh-CN')).toEqual(['zh-CN']);
-    expect(normalizeAiLanguages(['en', 'zh-CN', 'en'])).toEqual([
-      'en',
-      'zh-CN',
-    ]);
-    expect(formatAiLanguagesForPrompt(['zh-CN', 'en'])).toContain('Chinese');
-    expect(formatAiLanguagesForPrompt(['zh-CN', 'en'])).toContain('English');
+    expect(normalizeAiLanguages(['en', 'zh-CN', 'en'])).toEqual(['en']);
+    expect(formatAiLanguagesForPrompt(['zh-CN'])).toContain('Chinese');
+    expect(formatAiLanguagesForPrompt(['en'])).toContain('English');
   });
 });
 

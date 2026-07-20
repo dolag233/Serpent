@@ -9,6 +9,7 @@ import {
   type FormEvent,
   type ReactNode,
 } from "react";
+import { flushSync } from "react-dom";
 
 import { Icon, type IconName } from "./Icons";
 import { IconActionButton } from "./icon-action-button";
@@ -59,7 +60,10 @@ import {
 } from "./ScopeBreadcrumbs";
 import { buildManagedFolderBreadcrumbTrail } from "./folder-breadcrumb-trail";
 import { folderBrowseScope } from "./folder-browse-scope";
-import { resolveFolderBrowseParentId } from "./folder-browse-canvas";
+import {
+  resolveBrowseCanvasBodyLayout,
+  resolveFolderBrowseParentId,
+} from "./folder-browse-canvas";
 import { FolderCard } from "./FolderCard";
 import {
   isFolderRecursiveEnabled,
@@ -81,7 +85,15 @@ import { RenameDialog } from "./RenameDialog";
 import { CreateDialog } from "./CreateDialog";
 import { CollectionEditorDialog } from "./CollectionEditorDialog";
 import { ExtensionPairingDialog } from "./ExtensionPairingDialog";
-import { AiConfigDialog } from "./AiConfigDialog";
+import {
+  AiConfigDialog,
+  type AiConnectionState,
+} from "./AiConfigDialog";
+import {
+  DEFAULT_AI_ANALYSIS_SETTINGS,
+  toWireAiAnalysisSettings,
+  type AiAnalysisSettingsWire,
+} from "../shared/ai-analysis-settings";
 import { AppSettingsDialog } from "./AppSettingsDialog";
 import { AppSettingsEntry } from "./AppSettingsEntry";
 import {
@@ -187,6 +199,7 @@ import {
   distributeMasonryItems,
 } from "./asset-grid-layout";
 import { JustifiedAssetRows } from "./justified-asset-rows";
+import { resolveJustifiedCaptionBandPx } from "./justified-caption-band";
 import {
   captureAnchor,
   clampScrollOffset,
@@ -461,6 +474,13 @@ function AppInner() {
   useEffect(() => {
     document.body.classList.toggle("platform-darwin", IS_MAC_PLATFORM);
   }, []);
+
+  // Keep AI readiness (hasKey) in sync without requiring the settings dialog.
+  useEffect(() => {
+    if (!api) return;
+    void loadAiConfig();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- load once per api identity
+  }, [api]);
   // Library / folder / assets (existing)
   const [library, setLibrary] = useState<RendererLibrarySummary | null>(null);
   const [recentLibraries, setRecentLibraries] = useState<
@@ -648,6 +668,12 @@ function AppInner() {
   const reloadCurrentContentRef = useRef<() => Promise<void>>(
     async () => undefined,
   );
+  const loadAiContentForAssetRef = useRef<(assetId: string) => Promise<void>>(
+    async () => undefined,
+  );
+  const refreshAfterAiRef = useRef<(assetId: string) => Promise<void>>(
+    async () => undefined,
+  );
 
   // Metadata editor
   const [assetMetadata, setAssetMetadata] =
@@ -739,25 +765,46 @@ function AppInner() {
   const [aiHasKey, setAiHasKey] = useState(false);
   const [aiDescriptionEnabled, setAiDescriptionEnabled] = useState(true);
   const [aiTagsEnabled, setAiTagsEnabled] = useState(true);
-  const [aiStructuredEnabled, setAiStructuredEnabled] = useState(false);
+  const [aiRatingEnabled, setAiRatingEnabled] = useState(true);
+  const [aiForceExistingTags, setAiForceExistingTags] = useState(false);
+  const [aiAnalysisSettings, setAiAnalysisSettings] =
+    useState<AiAnalysisSettingsWire>(() =>
+      toWireAiAnalysisSettings(DEFAULT_AI_ANALYSIS_SETTINGS),
+    );
   const [aiLanguages, setAiLanguages] = useState<
     Array<"zh-CN" | "en" | "ja" | "ko">
-  >(["zh-CN", "en"]);
+  >(["zh-CN"]);
   const [aiAutoAnalyzeEnabled, setAiAutoAnalyzeEnabled] = useState(false);
   const [aiDisclaimerAccepted, setAiDisclaimerAccepted] = useState(false);
+  const [aiConnectionState, setAiConnectionState] =
+    useState<AiConnectionState>("idle");
+  const [aiConnectionReason, setAiConnectionReason] = useState<
+    string | undefined
+  >(undefined);
+  const [aiSaveVerifying, setAiSaveVerifying] = useState(false);
+  const aiAutoConnectAttemptedRef = useRef(false);
+  /** Fingerprint of credentials last proven by a successful probe. */
+  const aiVerifiedFingerprintRef = useRef<string | null>(null);
   const [extensionPairingOpen, setExtensionPairingOpen] = useState(false);
   const [extensionPairingToken, setExtensionPairingToken] = useState("");
   const [extensionPairingError, setExtensionPairingError] = useState<
     string | null
   >(null);
   const [aiAnalyzing, setAiAnalyzing] = useState(false);
+  const aiAnalyzingRef = useRef(false);
   const [aiContent, setAiContent] = useState<{
     assetId: string;
     description?: string;
     tags?: string[];
-    structuredMetadata?: Record<string, unknown>;
+    rating?: number;
     modelVersion?: string;
   } | null>(null);
+  const aiContentRef = useRef(aiContent);
+  aiContentRef.current = aiContent;
+  /** Description editor is showing AI-layer text (human description empty). */
+  const [descriptionIsAi, setDescriptionIsAi] = useState(false);
+  const analyzeFailedBaselineRef = useRef(0);
+  const analyzingAssetIdRef = useRef<string | null>(null);
   const [importValidated, setImportValidated] =
     useState<ImportValidatedResult | null>(null);
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
@@ -938,6 +985,13 @@ function AppInner() {
     longEdgeRange,
     durationRange,
   ]);
+
+  // CANVAS-022: folders-only (recursive off, zero direct assets) must not
+  // mount an empty asset grid — its min-height:100% left a large void.
+  const browseCanvasBodyLayout = resolveBrowseCanvasBodyLayout(
+    visibleAssets.length,
+    folderBrowseEntries.length,
+  );
 
   const visibleAssetById = useMemo(() => {
     const map = new Map<string, (typeof visibleAssets)[number]>();
@@ -1701,11 +1755,52 @@ function AppInner() {
               succeeded: event.succeeded,
               failed: event.failed,
             }
-          : current,
+          : {
+              queued: event.queued,
+              running: event.running,
+              succeeded: event.succeeded,
+              failed: event.failed,
+              paused: 0,
+              cancelled: 0,
+              jobs: [],
+            },
       );
+      if (
+        aiAnalyzingRef.current &&
+        event.running === 0 &&
+        event.queued === 0
+      ) {
+        const pendingAssetId = analyzingAssetIdRef.current;
+        aiAnalyzingRef.current = false;
+        analyzingAssetIdRef.current = null;
+        setAiAnalyzing(false);
+        if (pendingAssetId && event.failed > analyzeFailedBaselineRef.current) {
+          void api
+            .getAiJobStatus({ libraryId: library.libraryId })
+            .then((result) => {
+              if (!result.ok) {
+                setError(t("toast.aiAnalyzeFailed"));
+                return;
+              }
+              const failedForAsset = result.value.jobs.some(
+                (job) =>
+                  job.assetId === pendingAssetId && job.status === "failed",
+              );
+              if (failedForAsset) {
+                setError(t("toast.aiAnalyzeFailed"));
+              }
+            })
+            .catch(() => {
+              setError(t("toast.aiAnalyzeFailed"));
+            });
+        }
+      }
     });
     const unsubscribeCompleted = api.onAiCompleted((event) => {
       if (event.libraryId !== library.libraryId) return;
+      aiAnalyzingRef.current = false;
+      setAiAnalyzing(false);
+      analyzingAssetIdRef.current = null;
       setNotice(
         t("toast.aiAnalyzeDoneFields", {
           fieldCount: event.fieldCount,
@@ -1713,9 +1808,13 @@ function AppInner() {
         }),
       );
       void reloadCurrentContentRef.current();
+      if (selectedAssetIdRef.current === event.assetId) {
+        void refreshAfterAiRef.current(event.assetId);
+      }
     });
     const unsubscribeCleared = api.onAiCleared((event) => {
       if (event.libraryId !== library.libraryId) return;
+      setAiContent(null);
       setNotice(t("toast.aiContentCleared", { count: event.affectedAssetCount }));
       void reloadCurrentContentRef.current();
     });
@@ -3302,6 +3401,15 @@ function AppInner() {
 
   // --- Asset metadata ---
 
+  function resolveInspectorDescription(
+    human: string | null | undefined,
+    ai: string | undefined,
+  ): { value: string; fromAi: boolean } {
+    if ((human ?? "").trim()) return { value: human ?? "", fromAi: false };
+    if ((ai ?? "").trim()) return { value: ai ?? "", fromAi: true };
+    return { value: "", fromAi: false };
+  }
+
   function applyLoadedMetadata(
     targetAssetId: string,
     metadata: AssetMetadataResult,
@@ -3312,7 +3420,16 @@ function AppInner() {
     setAssetMetadata(metadata);
     // Multi-select edit fields are owned by the multi-edit effect (REQ-SELECT-004).
     if (selectedAssetIdsRef.current.length >= 2) return;
-    setEditDescription(metadata.description ?? "");
+    const ai =
+      aiContentRef.current?.assetId === targetAssetId
+        ? aiContentRef.current
+        : null;
+    const description = resolveInspectorDescription(
+      metadata.description,
+      ai?.description,
+    );
+    setEditDescription(description.value);
+    setDescriptionIsAi(description.fromAi);
     setEditRating(metadata.rating);
     setEditFavorite(metadata.favorite);
     setEditSourceUrl(metadata.sourcePageUrl ?? "");
@@ -3335,6 +3452,69 @@ function AppInner() {
     }
   }
 
+  async function loadAiContentForAsset(assetId: string) {
+    if (!api || !library || !assetId) {
+      setAiContent(null);
+      return;
+    }
+    try {
+      const result = await api.getAiContent({
+        libraryId: library.libraryId,
+        assetId,
+      });
+      if (selectedAssetIdRef.current !== assetId) return;
+      if (!result.ok) {
+        setAiContent(null);
+        return;
+      }
+      const { description, tags, rating, modelVersion } = result.value;
+      const hasContent =
+        Boolean(description?.trim()) ||
+        tags.length > 0 ||
+        rating != null;
+      if (!hasContent) {
+        setAiContent(null);
+        if (selectedAssetIdsRef.current.length < 2) {
+          const human =
+            metadataByAssetRef.current.get(assetId)?.description ?? "";
+          const resolved = resolveInspectorDescription(human, undefined);
+          setEditDescription(resolved.value);
+          setDescriptionIsAi(resolved.fromAi);
+        }
+        return;
+      }
+      const next = {
+        assetId,
+        ...(description ? { description } : {}),
+        ...(tags.length > 0 ? { tags } : {}),
+        ...(rating != null ? { rating } : {}),
+        ...(modelVersion ? { modelVersion } : {}),
+      };
+      setAiContent(next);
+      if (selectedAssetIdsRef.current.length < 2) {
+        const human =
+          metadataByAssetRef.current.get(assetId)?.description ?? "";
+        const resolved = resolveInspectorDescription(
+          human,
+          next.description,
+        );
+        setEditDescription(resolved.value);
+        setDescriptionIsAi(resolved.fromAi);
+      }
+    } catch {
+      if (selectedAssetIdRef.current === assetId) setAiContent(null);
+    }
+  }
+  loadAiContentForAssetRef.current = loadAiContentForAsset;
+  refreshAfterAiRef.current = async (assetId: string) => {
+    try {
+      await refreshTagAndMetadataState(assetId);
+    } catch {
+      // Best-effort; AI content load still proceeds.
+    }
+    await loadAiContentForAsset(assetId);
+  };
+
   useEffect(() => {
     let cancelled = false;
     if (selectedAssetId) {
@@ -3355,10 +3535,16 @@ function AppInner() {
           if (!cancelled) setError(toMessage(caught, t("toast.readMetadataFailed"), locale));
         }
       });
+      void Promise.resolve().then(async () => {
+        if (cancelled) return;
+        await loadAiContentForAsset(selectedAssetId);
+      });
     } else {
       queueMicrotask(() => {
         setAssetMetadata(null);
         setVersionConflict(false);
+        setAiContent(null);
+        setDescriptionIsAi(false);
       });
     }
     return () => {
@@ -4912,6 +5098,10 @@ function AppInner() {
       });
       return;
     }
+    if (descriptionIsAi) {
+      void handlePromoteAiDescription(editDescription);
+      return;
+    }
     if (!assetMetadata || editDescription === (assetMetadata.description ?? ""))
       return;
     void saveMetadata({ description: editDescription });
@@ -5139,19 +5329,102 @@ function AppInner() {
     setAiHasKey(result.value.hasKey);
     setAiDescriptionEnabled(result.value.enabledFields.description);
     setAiTagsEnabled(result.value.enabledFields.tags);
-    setAiStructuredEnabled(result.value.enabledFields.structuredMetadata);
-    setAiLanguages(
-      (result.value.languages as Array<"zh-CN" | "en" | "ja" | "ko">) ?? [
-        "zh-CN",
-        "en",
-      ],
-    );
+    setAiRatingEnabled(result.value.enabledFields.rating);
+    setAiForceExistingTags(result.value.analysisSettings.forceExistingTags);
+    setAiAnalysisSettings({
+      ...result.value.analysisSettings,
+      forceExistingTags: result.value.analysisSettings.forceExistingTags,
+    });
+    const langs = result.value.languages as
+      | Array<"zh-CN" | "en" | "ja" | "ko">
+      | undefined;
+    setAiLanguages(langs?.length ? [langs[0]!] : ["zh-CN"]);
     setAiAutoAnalyzeEnabled(result.value.autoAnalyzeEnabled);
     setAiDisclaimerAccepted(result.value.disclaimerAccepted);
+    aiVerifiedFingerprintRef.current = null;
   }
+
+  function aiCredentialFingerprint(): string {
+    return [
+      aiApiFormat,
+      aiModel.trim(),
+      aiBaseUrl.trim(),
+      aiApiKey.trim() || (aiHasKey ? "__stored__" : ""),
+    ].join("\u0001");
+  }
+
+  const testAiConnectionFromDialog = useCallback(async (): Promise<{
+    success: boolean;
+    reason?: string;
+  }> => {
+    if (!api) return { success: false, reason: t("aiConfig.testFailed") };
+    if (!aiApiKey.trim() && !aiHasKey) {
+      setAiConnectionState("disconnected");
+      setAiConnectionReason(t("aiConfig.testFailed"));
+      aiVerifiedFingerprintRef.current = null;
+      return { success: false, reason: t("aiConfig.testFailed") };
+    }
+    setAiConnectionState("connecting");
+    setAiConnectionReason(undefined);
+    const fingerprint = [
+      aiApiFormat,
+      aiModel.trim(),
+      aiBaseUrl.trim(),
+      aiApiKey.trim() || (aiHasKey ? "__stored__" : ""),
+    ].join("\u0001");
+    const result = await api.testAiConnection({
+      apiFormat: aiApiFormat,
+      model: aiModel.trim(),
+      ...(aiApiKey.trim() ? { apiKey: aiApiKey.trim() } : {}),
+      baseUrl: aiBaseUrl.trim() || undefined,
+    });
+    if (!result.ok) {
+      const reason = toMessage(
+        result.error,
+        t("aiConfig.testFailed"),
+        locale,
+      );
+      setAiConnectionState("error");
+      setAiConnectionReason(reason);
+      aiVerifiedFingerprintRef.current = null;
+      return { success: false, reason };
+    }
+    if (result.value.success) {
+      setAiConnectionState("connected");
+      setAiConnectionReason(undefined);
+      aiVerifiedFingerprintRef.current = fingerprint;
+      // Typed key is not on disk until save — only mark ready when stored.
+      if (aiHasKey || !aiApiKey.trim()) {
+        setAiHasKey(true);
+      } else {
+        // Probe OK with unsaved key: refresh from disk (still false until save).
+        void api.getAiConfig().then((cfg) => {
+          if (cfg.ok) setAiHasKey(cfg.value.hasKey);
+        });
+      }
+      return { success: true };
+    }
+    const reason = result.value.reason ?? t("aiConfig.testFailed");
+    setAiConnectionState("error");
+    setAiConnectionReason(reason);
+    aiVerifiedFingerprintRef.current = null;
+    return { success: false, reason };
+  }, [
+    aiApiFormat,
+    aiApiKey,
+    aiBaseUrl,
+    aiHasKey,
+    aiModel,
+    api,
+    locale,
+    t,
+  ]);
 
   async function saveAiConfig() {
     if (!api || (!aiApiKey.trim() && !aiHasKey)) return;
+    const alreadyVerified =
+      aiVerifiedFingerprintRef.current === aiCredentialFingerprint() &&
+      aiConnectionState === "connected";
     const result = await api.setAiConfig({
       apiFormat: aiApiFormat,
       model: aiModel,
@@ -5160,9 +5433,13 @@ function AppInner() {
       enabledFields: {
         description: aiDescriptionEnabled,
         tags: aiTagsEnabled,
-        structuredMetadata: aiStructuredEnabled,
+        rating: aiRatingEnabled,
       },
-      languages: aiLanguages,
+      analysisSettings: {
+        ...aiAnalysisSettings,
+        forceExistingTags: aiForceExistingTags,
+      },
+      languages: aiLanguages.length > 0 ? [aiLanguages[0]!] : ["zh-CN"],
       autoAnalyzeEnabled: aiAutoAnalyzeEnabled,
       disclaimerAccepted: aiDisclaimerAccepted,
     });
@@ -5170,37 +5447,38 @@ function AppInner() {
       setError(toMessage(result.error, t("toast.aiConfigSaveFailed"), locale));
       return;
     }
-    setAiHasKey(aiHasKey || Boolean(aiApiKey.trim()));
+    setAiHasKey(true);
     setAiApiKey("");
-    setAiConfigOpen(false);
     setNotice(t("toast.aiConfigSaved"));
+    if (alreadyVerified) {
+      setAiConfigOpen(false);
+      setAiConnectionState("idle");
+      setAiConnectionReason(undefined);
+      setAiSaveVerifying(false);
+      return;
+    }
+    setAiSaveVerifying(true);
+    try {
+      const connection = await testAiConnectionFromDialog();
+      if (connection.success) {
+        setAiConfigOpen(false);
+        setAiConnectionState("idle");
+        setAiConnectionReason(undefined);
+      }
+    } finally {
+      setAiSaveVerifying(false);
+    }
   }
 
-  async function testAiConnectionFromDialog(): Promise<{
-    success: boolean;
-    reason?: string;
-  }> {
-    if (!api) return { success: false, reason: t("aiConfig.testFailed") };
-    if (!aiApiKey.trim() && !aiHasKey) {
-      return { success: false, reason: t("aiConfig.testFailed") };
+  useEffect(() => {
+    if (!aiConfigOpen) {
+      aiAutoConnectAttemptedRef.current = false;
+      return;
     }
-    const result = await api.testAiConnection({
-      apiFormat: aiApiFormat,
-      model: aiModel.trim(),
-      ...(aiApiKey.trim() ? { apiKey: aiApiKey.trim() } : {}),
-      baseUrl: aiBaseUrl.trim() || undefined,
-    });
-    if (!result.ok) {
-      return {
-        success: false,
-        reason: toMessage(result.error, t("aiConfig.testFailed"), locale),
-      };
-    }
-    return {
-      success: result.value.success,
-      reason: result.value.reason,
-    };
-  }
+    if (!aiHasKey || aiAutoConnectAttemptedRef.current) return;
+    aiAutoConnectAttemptedRef.current = true;
+    void testAiConnectionFromDialog();
+  }, [aiConfigOpen, aiHasKey, testAiConnectionFromDialog]);
 
   async function fetchAiModelsFromDialog(): Promise<{
     models: string[];
@@ -5229,9 +5507,28 @@ function AppInner() {
   }
 
   async function handleAnalyzeClick(assetId = selectedAssetId) {
-    if (!api || !library || !assetId) return;
-    setAiAnalyzing(true);
-    setAiContent(null);
+    if (!api || !library) {
+      setError(t("toast.aiAnalyzeFailed"));
+      return;
+    }
+    if (!assetId) {
+      setError(t("toast.aiAnalyzeNoAsset"));
+      return;
+    }
+    if (!aiHasKey) {
+      setError(t("command.reason.aiNotConfigured"));
+      void loadAiConfig();
+      return;
+    }
+    analyzeFailedBaselineRef.current = aiJobs?.failed ?? 0;
+    analyzingAssetIdRef.current = assetId;
+    flushSync(() => {
+      aiAnalyzingRef.current = true;
+      setAiAnalyzing(true);
+    });
+    setNotice(t("toast.aiAnalyzeStarted"));
+    void loadAiJobs(true);
+    let queued = false;
     try {
       const result = await api.analyzeAsset({
         libraryId: library.libraryId,
@@ -5241,38 +5538,116 @@ function AppInner() {
         setError(toMessage(result.error, t("toast.aiAnalyzeFailed"), locale));
         return;
       }
+      if ("queued" in result.value && result.value.queued) {
+        queued = true;
+        void loadAiJobs(true);
+        return;
+      }
       if ("reason" in result.value) {
         setNotice(t("toast.aiAnalyzeUnavailable", { reason: result.value.reason }));
         return;
       }
+      if (!("generatedFields" in result.value)) {
+        setError(t("toast.aiAnalyzeFailed"));
+        return;
+      }
+      const analyzed = result.value;
       setAiContent({
         assetId,
-        description: result.value.generatedFields.description,
-        tags: result.value.generatedFields.tags,
-        structuredMetadata: result.value.generatedFields.structuredMetadata,
-        modelVersion: result.value.modelVersion,
+        description: analyzed.generatedFields.description,
+        tags: analyzed.generatedFields.tags,
+        rating: analyzed.generatedFields.rating,
+        modelVersion: analyzed.modelVersion,
       });
+      const human =
+        metadataByAssetRef.current.get(assetId)?.description ?? "";
+      const description = resolveInspectorDescription(
+        human,
+        analyzed.generatedFields.description,
+      );
+      if (selectedAssetIdRef.current === assetId) {
+        setEditDescription(description.value);
+        setDescriptionIsAi(description.fromAi);
+      }
       setNotice(t("toast.aiAnalyzeDone"));
       await refreshTagAndMetadataState(assetId);
+      await loadAiContentForAsset(assetId);
+    } catch (caught) {
+      setError(toMessage(caught, t("toast.aiAnalyzeFailed"), locale));
     } finally {
-      setAiAnalyzing(false);
+      if (!queued) {
+        aiAnalyzingRef.current = false;
+        analyzingAssetIdRef.current = null;
+        setAiAnalyzing(false);
+      }
     }
   }
 
   async function handleClearAiContent(assetIds: string[]) {
     if (!api || !library || assetIds.length === 0) return;
+    // Product brief: batch clear requires confirmation (UI gate; worker only
+    // enforces confirm for folder/library scopes).
+    if (
+      assetIds.length > 1 &&
+      !confirm(
+        t("toast.aiContentClearConfirm", { count: String(assetIds.length) }),
+      )
+    ) {
+      return;
+    }
     try {
       const result = await api.clearAiContent({
         libraryId: library.libraryId,
-        scope: { kind: 'asset', assetIds },
+        scope: { kind: "asset", assetIds },
         confirm: assetIds.length > 1,
       });
       if (!result.ok) {
-        setError(toMessage(result.error, t("toast.aiContentClearFailed"), locale));
+        setError(
+          toMessage(result.error, t("toast.aiContentClearFailed"), locale),
+        );
+        return;
       }
-      // Success toast + refresh handled by onAiCleared event listener.
+      if (
+        selectedAssetId &&
+        assetIds.includes(selectedAssetId)
+      ) {
+        setAiContent(null);
+      }
+      // Toast + list refresh also arrive via onAiCleared.
     } catch (caught) {
       setError(toMessage(caught, t("toast.aiContentClearFailed"), locale));
+    }
+  }
+
+  async function handlePromoteAiDescription(value: string) {
+    if (!api || !library || !selectedAsset) return;
+    const trimmed = value.trim();
+    const previous = aiContent?.description?.trim() ?? "";
+    if (
+      aiContent?.assetId !== selectedAsset.assetId ||
+      trimmed === previous
+    ) {
+      return;
+    }
+    try {
+      await saveMetadata({ description: trimmed });
+      const cleared = await api.clearAiContent({
+        libraryId: library.libraryId,
+        scope: { kind: "asset", assetIds: [selectedAsset.assetId] },
+        confirm: false,
+      });
+      if (!cleared.ok) {
+        setError(
+          toMessage(cleared.error, t("toast.aiContentClearFailed"), locale),
+        );
+        return;
+      }
+      setAiContent(null);
+      setDescriptionIsAi(false);
+      setNotice(t("toast.aiContentPromoted"));
+      loadMetadata();
+    } catch (caught) {
+      setError(toMessage(caught, t("toast.aiContentPromoteFailed"), locale));
     }
   }
 
@@ -5884,6 +6259,27 @@ function AppInner() {
             widthRange={widthRange}
           />
         </div>
+        {(aiAnalyzing ||
+          (aiJobs !== null && aiJobs.queued + aiJobs.running > 0)) && (
+          <div className="workspace-ai-progress" role="status">
+            <span className="activity-pulse" />
+            <span className="workspace-ai-progress-message">
+              {aiAnalyzing
+                ? t("toast.aiAnalyzeStarted")
+                : t("toast.aiAnalyzeProgress", {
+                    running: String(aiJobs?.running ?? 0),
+                    queued: String(aiJobs?.queued ?? 0),
+                  })}
+            </span>
+            <button
+              className="secondary-button"
+              onClick={() => setMediaJobsOpen(true)}
+              type="button"
+            >
+              {t("toolbar.backgroundJobs")}
+            </button>
+          </div>
+        )}
         <div
           className={`workspace-canvas${previewAsset ? " is-viewing" : ""}${externalDropActive ? " is-external-drop" : ""}`}
           onDragEnter={handleExternalDragEnter}
@@ -5990,11 +6386,15 @@ function AppInner() {
               </div>
             )}
           {library ? (
-            visibleAssets.length || folderBrowseEntries.length ? (
+            browseCanvasBodyLayout.mode !== "empty" ? (
               <>
-                {folderBrowseEntries.length > 0 && (
+                {browseCanvasBodyLayout.showFolders && (
                   <div
-                    className="folder-card-row"
+                    className={
+                      browseCanvasBodyLayout.mode === "folders-only"
+                        ? "folder-card-row is-folders-only"
+                        : "folder-card-row"
+                    }
                     style={
                       { "--folder-card-size": `${assetCardSize}px` } as CSSProperties
                     }
@@ -6032,10 +6432,11 @@ function AppInner() {
                     ))}
                   </div>
                 )}
-                <div
-                  className={`asset-grid is-${assetViewMode}`}
-                  style={assetGridLayoutStyle(assetViewMode, assetCardSize)}
-                >
+                {browseCanvasBodyLayout.showAssetGrid && (
+                  <div
+                    className={`asset-grid is-${assetViewMode}`}
+                    style={assetGridLayoutStyle(assetViewMode, assetCardSize)}
+                  >
                   {(() => {
                     const showCornerBadges =
                       shouldShowAssetCardBadges(assetCardSize);
@@ -6444,7 +6845,16 @@ function AppInner() {
                       <JustifiedAssetRows
                         assets={visibleAssets}
                         cardSize={assetCardSize}
-                        showCaptionBand
+                        captionBandPx={resolveJustifiedCaptionBandPx({
+                          // Flat/tiled always renders「宽 × 高」when metadata exists.
+                          dimensions: true,
+                          name: canvasPrefs.fields.name,
+                          secondary:
+                            canvasPrefs.fields.size ||
+                            canvasPrefs.fields.date ||
+                            showTrash ||
+                            searchSnippets.size > 0,
+                        })}
                       >
                         {cards}
                       </JustifiedAssetRows>
@@ -6462,7 +6872,8 @@ function AppInner() {
                       </>
                     )}
                   </div>
-                </div>
+                  </div>
+                )}
               </>
             ) : (
               <div className="empty-library">
@@ -6585,6 +6996,8 @@ function AppInner() {
         aiContent={
           aiContent?.assetId === selectedAsset?.assetId ? aiContent : null
         }
+        aiAnalyzing={aiAnalyzing}
+        descriptionIsAi={descriptionIsAi}
         allAssetCount={allAssetCount}
         allTags={tags}
         api={api}
@@ -6783,21 +7196,24 @@ function AppInner() {
         }}
         open={appSettingsOpen}
       />
-      <SmartCollectionSettingsDialog
-        onClose={() => setSmartCollectionSettings(null)}
-        onRename={async (collectionId, name) => {
-          await renameSmartCollection(collectionId, name);
-          setSmartCollectionSettings((current) =>
-            current && current.collectionId === collectionId
-              ? { ...current, name }
-              : current,
-          );
-        }}
-        onSaveCurrentQuery={async (collectionId) => {
-          await updateSmartCollectionQuery(collectionId);
-        }}
-        target={smartCollectionSettings}
-      />
+      {smartCollectionSettings ? (
+        <SmartCollectionSettingsDialog
+          key={smartCollectionSettings.collectionId}
+          onClose={() => setSmartCollectionSettings(null)}
+          onRename={async (collectionId, name) => {
+            await renameSmartCollection(collectionId, name);
+            setSmartCollectionSettings((current) =>
+              current && current.collectionId === collectionId
+                ? { ...current, name }
+                : current,
+            );
+          }}
+          onSaveCurrentQuery={async (collectionId) => {
+            await updateSmartCollectionQuery(collectionId);
+          }}
+          target={smartCollectionSettings}
+        />
+      ) : null}
       <CreateDialog
         open={dialog !== null}
         value={dialogValue}
@@ -6933,9 +7349,13 @@ function AppInner() {
         hasKey={aiHasKey}
         descriptionEnabled={aiDescriptionEnabled}
         tagsEnabled={aiTagsEnabled}
-        structuredEnabled={aiStructuredEnabled}
+        ratingEnabled={aiRatingEnabled}
+        forceExistingTags={aiForceExistingTags}
+        analysisSettings={aiAnalysisSettings}
         disclaimerAccepted={aiDisclaimerAccepted}
         autoAnalyzeEnabled={aiAutoAnalyzeEnabled}
+        connectionState={aiConnectionState}
+        connectionReason={aiConnectionReason}
         onApiKeyChange={setAiApiKey}
         onApiFormatChange={setAiApiFormat}
         onModelChange={setAiModel}
@@ -6943,12 +7363,18 @@ function AppInner() {
         onLanguagesChange={setAiLanguages}
         onDescriptionEnabledChange={setAiDescriptionEnabled}
         onTagsEnabledChange={setAiTagsEnabled}
-        onStructuredEnabledChange={setAiStructuredEnabled}
+        onRatingEnabledChange={setAiRatingEnabled}
+        onForceExistingTagsChange={setAiForceExistingTags}
+        onAnalysisSettingsChange={setAiAnalysisSettings}
         onDisclaimerAcceptedChange={setAiDisclaimerAccepted}
         onAutoAnalyzeEnabledChange={setAiAutoAnalyzeEnabled}
+        saveVerifying={aiSaveVerifying}
         onClose={() => {
+          if (aiSaveVerifying) return;
           setAiConfigOpen(false);
           setAiApiKey("");
+          setAiConnectionState("idle");
+          setAiConnectionReason(undefined);
         }}
         onSave={() => void saveAiConfig()}
         onTestConnection={testAiConnectionFromDialog}

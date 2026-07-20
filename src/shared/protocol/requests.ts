@@ -72,6 +72,20 @@ const aiApiFormatSchema = z.enum([
 ]);
 const aiLanguageIdSchema = z.enum(['zh-CN', 'en', 'ja', 'ko']);
 const aiLanguagesSchema = z.array(aiLanguageIdSchema).min(1).max(8);
+const aiEnabledFieldsSchema = z.strictObject({
+  description: z.boolean(),
+  tags: z.boolean(),
+  rating: z.boolean(),
+});
+const aiAnalysisSettingsSchema = z.strictObject({
+  forceExistingTags: z.boolean(),
+  maxTags: z.number().int().min(1).max(32),
+  maxDescriptionCharsZh: z.number().int().min(20).max(500),
+  maxDescriptionWordsEn: z.number().int().min(10).max(200),
+  outputStyle: z.enum(['normal', 'concise', 'rigorous']),
+  ratingRubric: z.string().min(1).max(4_000),
+  customDescriptionPrompt: z.string().max(4_000),
+});
 
 export const rendererRequestSchema = z.discriminatedUnion('type', [
   z.strictObject({
@@ -568,16 +582,18 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     /** Empty or omitted = official default endpoint for the API format. */
     baseUrl: z.string().max(2048).optional(),
     apiKey: nonBlankString.optional(),
-    enabledFields: z.strictObject({
-      description: z.boolean(),
-      tags: z.boolean(),
-      structuredMetadata: z.boolean(),
-    }).optional(),
+    enabledFields: aiEnabledFieldsSchema.optional(),
+    analysisSettings: aiAnalysisSettingsSchema.optional(),
     languages: aiLanguagesSchema.optional(),
     /** @deprecated Prefer languages[]. */
     language: nonBlankString.optional(),
     autoAnalyzeEnabled: z.boolean(),
     disclaimerAccepted: z.boolean(),
+  }),
+  z.strictObject({
+    type: z.literal('ai.content.get.request'),
+    libraryId: identifierSchema,
+    assetId: identifierSchema,
   }),
   z.strictObject({
     type: z.literal('asset.analyze.request'),
@@ -1144,12 +1160,14 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     model: nonBlankString,
     apiKey: nonBlankString,
     baseUrl: z.string().max(2048).optional(),
-    enabledFields: z.strictObject({
-      description: z.boolean(),
-      tags: z.boolean(),
-      structuredMetadata: z.boolean(),
-    }),
+    enabledFields: aiEnabledFieldsSchema,
+    analysisSettings: aiAnalysisSettingsSchema,
     languages: aiLanguagesSchema,
+  }),
+  z.strictObject({
+    type: z.literal('ai.content.get'),
+    libraryId: identifierSchema,
+    assetId: identifierSchema,
   }),
   z.strictObject({
     type: z.literal('media.generate-thumbnail'),
@@ -1229,7 +1247,8 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     baseUrl: z.string().max(2048).optional(),
     descriptionEnabled: z.boolean().optional(),
     tagEnabled: z.boolean().optional(),
-    structuredMetadataEnabled: z.boolean().optional(),
+    ratingEnabled: z.boolean().optional(),
+    analysisSettings: aiAnalysisSettingsSchema.optional(),
     languages: aiLanguagesSchema.optional(),
     language: nonBlankString.optional(),
     autoAnalyzeEnabled: z.boolean(),
@@ -1255,11 +1274,8 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     model: nonBlankString,
     apiKey: nonBlankString,
     baseUrl: z.string().max(2048).optional(),
-    enabledFields: z.strictObject({
-      description: z.boolean(),
-      tags: z.boolean(),
-      structuredMetadata: z.boolean(),
-    }),
+    enabledFields: aiEnabledFieldsSchema,
+    analysisSettings: aiAnalysisSettingsSchema,
     languages: aiLanguagesSchema,
     maxJobs: z.number().int().min(1).max(100).default(20),
   }),

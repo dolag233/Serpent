@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { DEFAULT_AI_ANALYSIS_SETTINGS } from '../../src/shared/ai-analysis-settings';
 import {
   aiAnalysisResultSchema,
   aiStructuredOutputSchema,
@@ -22,9 +23,10 @@ const TEST_IMAGE_REQUEST: AiAnalysisRequest = {
   enabledFields: {
     description: true,
     tags: true,
-    structuredMetadata: false,
+    rating: false,
   },
   existingTagNames: ['角色设计', '场景概念'],
+  analysisSettings: DEFAULT_AI_ANALYSIS_SETTINGS,
 };
 
 function okFetch(body: unknown): typeof fetch {
@@ -84,13 +86,13 @@ describe('aiStructuredOutputSchema', () => {
     const result = aiStructuredOutputSchema.parse({
       description: '一幅描绘未来城市的数字概念艺术作品',
       tags: ['城市场景', '科幻', '概念艺术'],
-      structured_metadata: { resolution: '4K', style: 'cyberpunk' },
+      rating: 4,
     });
 
     expect(result).toEqual({
       description: '一幅描绘未来城市的数字概念艺术作品',
       tags: ['城市场景', '科幻', '概念艺术'],
-      structured_metadata: { resolution: '4K', style: 'cyberpunk' },
+      rating: 4,
     });
   });
 
@@ -229,7 +231,7 @@ describe('OpenAIVendorAdapter', () => {
       return new Response(JSON.stringify(openAiChatResponse({
         description: null,
         tags: ['asset'],
-        structured_metadata: null,
+        rating: null,
       })), { status: 200, headers: { 'content-type': 'application/json' } });
     };
     const adapter = new OpenAIVendorAdapter('test-api-key', 'gpt-4o', fetchStub);
@@ -239,7 +241,7 @@ describe('OpenAIVendorAdapter', () => {
     const responseFormat = requestBody?.response_format as Record<string, unknown>;
     const jsonSchema = responseFormat.json_schema as Record<string, unknown>;
     const schema = jsonSchema.schema as Record<string, unknown>;
-    expect(schema.required).toEqual(['description', 'tags', 'structured_metadata']);
+    expect(schema.required).toEqual(['description', 'tags', 'rating']);
     expect(result).toEqual({ tags: ['asset'], modelVersion: 'gpt-4o-2024-05-13' });
   });
 
@@ -252,7 +254,7 @@ describe('OpenAIVendorAdapter', () => {
           openAiChatResponse({
             description: null,
             tags: ['asset'],
-            structured_metadata: null,
+            rating: null,
           }),
         ),
         { status: 200, headers: { 'content-type': 'application/json' } },

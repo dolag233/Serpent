@@ -136,7 +136,7 @@ describe('writeAiAnalysisResult', () => {
       tags: ['CharacterDesign', '  SciFi  ', 'NewTag'],
       modelId: 'gpt-4o',
       modelVersion: 'gpt-4o-2024-05-13',
-      enabledFields: { description: false, tags: true, structuredMetadata: false },
+      enabledFields: { description: false, tags: true, rating: false },
     });
 
     expect(writeResult.tagsWritten).toEqual(['CharacterDesign', 'SciFi', 'NewTag']);
@@ -184,7 +184,7 @@ describe('writeAiAnalysisResult', () => {
       tags: [],
       modelId: 'gpt-4o',
       modelVersion: 'gpt-4o-2024-05-13',
-      enabledFields: { description: true, tags: true, structuredMetadata: false },
+      enabledFields: { description: true, tags: true, rating: false },
     });
 
     expect(fieldsWritten).toContain('description');
@@ -215,7 +215,7 @@ describe('writeAiAnalysisResult', () => {
       tags: [],
       modelId: 'gpt-4o',
       modelVersion: 'v1',
-      enabledFields: { description: true, tags: true, structuredMetadata: false },
+      enabledFields: { description: true, tags: true, rating: false },
     });
 
     // Second write should replace.
@@ -226,7 +226,7 @@ describe('writeAiAnalysisResult', () => {
       tags: [],
       modelId: 'gpt-4o',
       modelVersion: 'v2',
-      enabledFields: { description: true, tags: true, structuredMetadata: false },
+      enabledFields: { description: true, tags: true, rating: false },
     });
 
     const content = service.getAiContent(created.libraryId, assetId);
@@ -250,13 +250,13 @@ describe('writeAiAnalysisResult', () => {
       libraryId: created.libraryId, assetId,
       description: 'Stale Description', tags: ['StaleTag'],
       modelId: 'openai', modelVersion: 'v1',
-      enabledFields: { description: false, tags: true, structuredMetadata: false },
+      enabledFields: { description: false, tags: true, rating: false },
     });
     service.writeAiAnalysisResult({
       libraryId: created.libraryId, assetId,
       tags: ['FreshTag'],
       modelId: 'openai', modelVersion: 'v2',
-      enabledFields: { description: false, tags: true, structuredMetadata: false },
+      enabledFields: { description: false, tags: true, rating: false },
     });
 
     expect(service.getAiContent(created.libraryId, assetId)).toEqual([]);
@@ -292,7 +292,7 @@ describe('writeAiAnalysisResult', () => {
       tags: [],
       modelId: 'gpt-4o',
       modelVersion: 'v1',
-      enabledFields: { description: true, tags: true, structuredMetadata: false },
+      enabledFields: { description: true, tags: true, rating: false },
     });
 
     expect(fieldsWritten).toContain('description');
@@ -303,10 +303,10 @@ describe('writeAiAnalysisResult', () => {
     service.closeAll();
   });
 
-  it('writes structured_metadata as a JSON string', () => {
+  it('writes rating into the AI content layer only', () => {
     const root = temporaryRoot();
     const service = new LibraryService();
-    const created = service.createLibrary({ displayName: 'AI Structured', selectedParentPath: root });
+    const created = service.createLibrary({ displayName: 'AI Rating', selectedParentPath: root });
 
     writeFileSync(path.join(root, 'test.png'), 'image-data');
     const result = importNoConflict(service, created.libraryId, path.join(root, 'test.png'));
@@ -315,17 +315,21 @@ describe('writeAiAnalysisResult', () => {
     service.writeAiAnalysisResult({
       libraryId: created.libraryId,
       assetId,
-      structuredMetadata: { resolution: '4K', style: 'cyberpunk' },
+      rating: 4,
       tags: [],
       modelId: 'gpt-4o',
       modelVersion: 'v1',
-      enabledFields: { description: false, tags: true, structuredMetadata: true },
+      enabledFields: { description: false, tags: true, rating: true },
     });
 
     const content = service.getAiContent(created.libraryId, assetId);
-    const meta = content.find((c) => c.fieldName === 'structured_metadata');
-    expect(meta).toBeDefined();
-    expect(JSON.parse(meta!.value)).toEqual({ resolution: '4K', style: 'cyberpunk' });
+    const rating = content.find((c) => c.fieldName === 'rating');
+    expect(rating?.value).toBe('4');
+    const metadata = service.getAssetMetadata({
+      libraryId: created.libraryId,
+      assetId,
+    });
+    expect(metadata.rating).toBe(0);
 
     service.closeAll();
   });
@@ -352,7 +356,7 @@ describe('FTS sync with AI tags', () => {
       tags: ['sharedtag'],
       modelId: 'gpt-4o',
       modelVersion: 'v1',
-      enabledFields: { description: false, tags: true, structuredMetadata: false },
+      enabledFields: { description: false, tags: true, rating: false },
     });
 
     expect(service.getAssetMetadata({ libraryId: created.libraryId, assetId }).tags).toEqual([
@@ -381,7 +385,7 @@ describe('FTS sync with AI tags', () => {
       tags: ['AITag1', 'AITag2'],
       modelId: 'gpt-4o',
       modelVersion: 'v1',
-      enabledFields: { description: false, tags: true, structuredMetadata: false },
+      enabledFields: { description: false, tags: true, rating: false },
     });
 
     const db = new Database(path.join(created.libraryPath, '.serpent', 'library.db'));
@@ -555,7 +559,7 @@ describe('API key security', () => {
       tags: [],
       modelId: 'gpt-4o',
       modelVersion: 'v1',
-      enabledFields: { description: false, tags: true, structuredMetadata: false },
+      enabledFields: { description: false, tags: true, rating: false },
     });
 
     // The result should not contain any key fields.
@@ -602,7 +606,7 @@ function makeImageRequest(): AiAnalysisRequest {
     mime: 'image/png',
     imageBase64: 'aW1hZ2VEYXRh',
     language: 'en',
-    enabledFields: { description: true, tags: true, structuredMetadata: false },
+    enabledFields: { description: true, tags: true, rating: false },
     existingTagNames: [],
   };
 }

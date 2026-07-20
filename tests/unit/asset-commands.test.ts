@@ -230,13 +230,13 @@ describe('禁用原因（disabledReason 是唯一禁用来源）', () => {
     });
   });
 
-  it('ai-analyze：available + 无 API Key → 尚未配置 AI API Key', () => {
+  it('ai-analyze：available + 无 API Key → 仍可点（由 handler 提示未配置）', () => {
     const { ctx } = makeCtx({ aiCanAnalyze: false });
     expect(
       findItem(registry.resolveMenu(ctx), 'asset.ai-analyze'),
     ).toMatchObject({
-      disabled: true,
-      disabledReason: '尚未配置 AI API Key',
+      disabled: false,
+      disabledReason: null,
     });
   });
 

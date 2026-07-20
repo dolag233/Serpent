@@ -11,20 +11,31 @@ import {
   aspectRatioForAsset,
   layoutJustifiedRows,
 } from "./asset-grid-layout";
+import { resolveJustifiedCaptionBandPx } from "./justified-caption-band";
 
-/** Fixed caption band under the preview so row image heights stay aligned. */
-export const JUSTIFIED_CAPTION_BAND_PX = 22;
+export {
+  resolveJustifiedCaptionBandPx,
+  type JustifiedCaptionLines,
+} from "./justified-caption-band";
+
+/** @deprecated Use resolveJustifiedCaptionBandPx — kept for call-site discovery. */
+export const JUSTIFIED_CAPTION_BAND_PX = resolveJustifiedCaptionBandPx({
+  dimensions: true,
+  name: true,
+  secondary: true,
+});
 
 export function JustifiedAssetRows({
   assets,
   cardSize,
   children,
-  showCaptionBand,
+  captionBandPx,
 }: {
   assets: AssetSummary[];
   cardSize: number;
   children: ReactNode[];
-  showCaptionBand: boolean;
+  /** Reserved height under the image row; must match rendered caption. */
+  captionBandPx: number;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [availableWidth, setAvailableWidth] = useState(0);
@@ -51,6 +62,7 @@ export function JustifiedAssetRows({
     cardSize,
     ASSET_GRID_GAP_PX,
   );
+  const bandPx = Math.max(0, Math.round(captionBandPx));
 
   return (
     <div className="justified-rows" ref={containerRef}>
@@ -59,7 +71,7 @@ export function JustifiedAssetRows({
           className="justified-row"
           key={`justified-row-${rowIndex}`}
           style={{
-            height: row.height + (showCaptionBand ? JUSTIFIED_CAPTION_BAND_PX : 0),
+            height: row.height + bandPx,
           }}
         >
           {row.items.map((placement) => (

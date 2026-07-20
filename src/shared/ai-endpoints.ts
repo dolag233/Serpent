@@ -47,7 +47,8 @@ export const AI_LANGUAGE_OPTIONS = [
 
 export type AiLanguageId = (typeof AI_LANGUAGE_OPTIONS)[number]['id'];
 
-export const DEFAULT_AI_LANGUAGES: AiLanguageId[] = ['zh-CN', 'en'];
+/** Product: AI analysis language is single-select (array length always 1). */
+export const DEFAULT_AI_LANGUAGES: AiLanguageId[] = ['zh-CN'];
 
 export function isAiApiFormat(value: unknown): value is AiApiFormat {
   return (
@@ -152,24 +153,27 @@ export function normalizeAiLanguages(value: unknown): AiLanguageId[] {
   const allowed = new Set(
     AI_LANGUAGE_OPTIONS.map((option) => option.id as string),
   );
+  let picked: AiLanguageId | null = null;
   if (Array.isArray(value)) {
-    const ids = value
-      .filter((item): item is string => typeof item === 'string')
-      .map((item) => item.trim())
-      .filter((item) => allowed.has(item)) as AiLanguageId[];
-    return ids.length > 0 ? [...new Set(ids)] : [...DEFAULT_AI_LANGUAGES];
-  }
-  if (typeof value === 'string') {
+    for (const item of value) {
+      if (typeof item !== 'string') continue;
+      const id = item.trim();
+      if (allowed.has(id)) {
+        picked = id as AiLanguageId;
+        break;
+      }
+    }
+  } else if (typeof value === 'string') {
     const trimmed = value.trim();
-    if (!trimmed || trimmed === 'auto') return [...DEFAULT_AI_LANGUAGES];
-    const parts = trimmed
-      .split(/[,+/|]/u)
-      .map((part) => part.trim())
-      .filter((part) => allowed.has(part)) as AiLanguageId[];
-    if (parts.length > 0) return [...new Set(parts)];
-    if (allowed.has(trimmed)) return [trimmed as AiLanguageId];
+    if (trimmed && trimmed !== 'auto') {
+      const parts = trimmed
+        .split(/[,+/|]/u)
+        .map((part) => part.trim())
+        .filter((part) => allowed.has(part)) as AiLanguageId[];
+      picked = parts[0] ?? (allowed.has(trimmed) ? (trimmed as AiLanguageId) : null);
+    }
   }
-  return [...DEFAULT_AI_LANGUAGES];
+  return [picked ?? DEFAULT_AI_LANGUAGES[0]!];
 }
 
 export function formatAiLanguagesForPrompt(languages: readonly string[]): string {

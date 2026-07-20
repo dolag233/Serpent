@@ -9,7 +9,7 @@ export type SmartCollectionSettingsTarget = {
 };
 
 export type SmartCollectionSettingsDialogProps = {
-  target: SmartCollectionSettingsTarget | null;
+  target: SmartCollectionSettingsTarget;
   onClose: () => void;
   onRename: (collectionId: string, name: string) => Promise<void>;
   onSaveCurrentQuery: (collectionId: string) => Promise<void>;
@@ -19,6 +19,9 @@ export type SmartCollectionSettingsDialogProps = {
  * Serpent-era / SMART-007: after inline create, open this dialog so the user
  * can name the collection and attach the current discovery filters — instead
  * of blocking create when no condition is set yet.
+ *
+ * Remount with `key={collectionId}` from App when the target changes so name
+ * state resets without a setState-in-effect sync.
  */
 export function SmartCollectionSettingsDialog({
   target,
@@ -27,16 +30,10 @@ export function SmartCollectionSettingsDialog({
   onSaveCurrentQuery,
 }: SmartCollectionSettingsDialogProps): ReactNode {
   const { t } = useLocale();
-  const [name, setName] = useState(target?.name ?? "");
+  const [name, setName] = useState(target.name);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    setName(target?.name ?? "");
-    setBusy(false);
-  }, [target]);
-
-  useEffect(() => {
-    if (!target) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape" || busy) return;
       event.preventDefault();
@@ -44,9 +41,7 @@ export function SmartCollectionSettingsDialog({
     };
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [busy, onClose, target]);
-
-  if (!target) return null;
+  }, [busy, onClose]);
 
   async function run(action: () => Promise<void>) {
     setBusy(true);

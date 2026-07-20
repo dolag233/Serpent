@@ -1,6 +1,12 @@
 import { useState } from "react";
 
 import {
+  AI_OUTPUT_STYLES,
+  DEFAULT_AI_DESCRIPTION_STRUCTURE,
+  type AiAnalysisSettingsWire,
+  type AiOutputStyle,
+} from "../shared/ai-analysis-settings";
+import {
   AI_API_FORMATS,
   AI_API_FORMAT_LABELS,
   AI_LANGUAGE_OPTIONS,
@@ -12,6 +18,13 @@ import { Icon } from "./Icons";
 import { iconActionAttrs } from "./icon-action-attrs";
 import { useT } from "./i18n";
 
+export type AiConnectionState =
+  | "idle"
+  | "connecting"
+  | "connected"
+  | "disconnected"
+  | "error";
+
 export interface AiConfigDialogProps {
   open: boolean;
   apiKey: string;
@@ -22,9 +35,15 @@ export interface AiConfigDialogProps {
   hasKey: boolean;
   descriptionEnabled: boolean;
   tagsEnabled: boolean;
-  structuredEnabled: boolean;
+  ratingEnabled: boolean;
+  forceExistingTags: boolean;
+  analysisSettings: AiAnalysisSettingsWire;
   disclaimerAccepted: boolean;
   autoAnalyzeEnabled: boolean;
+  connectionState: AiConnectionState;
+  connectionReason?: string;
+  /** Shown while save is waiting on a connection probe. */
+  saveVerifying?: boolean;
   onApiKeyChange: (value: string) => void;
   onApiFormatChange: (value: AiApiFormat) => void;
   onModelChange: (value: string) => void;
@@ -32,7 +51,9 @@ export interface AiConfigDialogProps {
   onLanguagesChange: (value: AiLanguageId[]) => void;
   onDescriptionEnabledChange: (value: boolean) => void;
   onTagsEnabledChange: (value: boolean) => void;
-  onStructuredEnabledChange: (value: boolean) => void;
+  onRatingEnabledChange: (value: boolean) => void;
+  onForceExistingTagsChange: (value: boolean) => void;
+  onAnalysisSettingsChange: (value: AiAnalysisSettingsWire) => void;
   onDisclaimerAcceptedChange: (value: boolean) => void;
   onAutoAnalyzeEnabledChange: (value: boolean) => void;
   onClose: () => void;
@@ -47,6 +68,15 @@ export interface AiConfigDialogProps {
   }>;
 }
 
+const OUTPUT_STYLE_LABEL_KEY: Record<
+  AiOutputStyle,
+  "aiConfig.styleNormal" | "aiConfig.styleConcise" | "aiConfig.styleRigorous"
+> = {
+  normal: "aiConfig.styleNormal",
+  concise: "aiConfig.styleConcise",
+  rigorous: "aiConfig.styleRigorous",
+};
+
 export function AiConfigDialog({
   open,
   apiKey,
@@ -57,9 +87,14 @@ export function AiConfigDialog({
   hasKey,
   descriptionEnabled,
   tagsEnabled,
-  structuredEnabled,
+  ratingEnabled,
+  forceExistingTags,
+  analysisSettings,
   disclaimerAccepted,
   autoAnalyzeEnabled,
+  connectionState,
+  connectionReason,
+  saveVerifying = false,
   onApiKeyChange,
   onApiFormatChange,
   onModelChange,
@@ -67,7 +102,9 @@ export function AiConfigDialog({
   onLanguagesChange,
   onDescriptionEnabledChange,
   onTagsEnabledChange,
-  onStructuredEnabledChange,
+  onRatingEnabledChange,
+  onForceExistingTagsChange,
+  onAnalysisSettingsChange,
   onDisclaimerAcceptedChange,
   onAutoAnalyzeEnabledChange,
   onClose,
@@ -78,23 +115,33 @@ export function AiConfigDialog({
   const t = useT();
   const [modelOptions, setModelOptions] = useState<string[]>([]);
   const [busyAction, setBusyAction] = useState<"test" | "models" | null>(null);
-  const [actionMessage, setActionMessage] = useState<string | null>(null);
+  const [modelsMessage, setModelsMessage] = useState<string | null>(null);
+  const [testInline, setTestInline] = useState<{
+    ok: boolean;
+    text: string;
+  } | null>(null);
   const [showApiKey, setShowApiKey] = useState(false);
 
   if (!open) return null;
 
   const canUseKey = Boolean(apiKey.trim()) || hasKey;
+  const language = languages[0] ?? "zh-CN";
+
+  function patchSettings(patch: Partial<AiAnalysisSettingsWire>) {
+    onAnalysisSettingsChange({ ...analysisSettings, ...patch });
+  }
 
   async function runTest() {
     setBusyAction("test");
-    setActionMessage(null);
+    setTestInline(null);
     try {
       const result = await onTestConnection();
-      setActionMessage(
-        result.success
+      setTestInline({
+        ok: result.success,
+        text: result.success
           ? t("aiConfig.testOk")
           : (result.reason ?? t("aiConfig.testFailed")),
-      );
+      });
     } finally {
       setBusyAction(null);
     }
@@ -102,12 +149,12 @@ export function AiConfigDialog({
 
   async function runFetchModels() {
     setBusyAction("models");
-    setActionMessage(null);
+    setModelsMessage(null);
     try {
       const result = await onFetchModels();
       if (result.models.length > 0) {
         setModelOptions(result.models);
-        setActionMessage(
+        setModelsMessage(
           t("aiConfig.fetchModelsOk").replace(
             "{count}",
             String(result.models.length),
@@ -115,7 +162,7 @@ export function AiConfigDialog({
         );
       } else {
         setModelOptions([]);
-        setActionMessage(result.reason ?? t("aiConfig.fetchModelsFailed"));
+        setModelsMessage(result.reason ?? t("aiConfig.fetchModelsFailed"));
       }
     } finally {
       setBusyAction(null);
@@ -130,10 +177,12 @@ export function AiConfigDialog({
       onBaseUrlChange("");
     }
     setModelOptions([]);
-    setActionMessage(null);
+    setModelsMessage(null);
+    setTestInline(null);
   }
 
   const modelPickerValue = modelOptions.includes(model) ? model : "";
+  const busy = busyAction !== null || saveVerifying;
 
   return (
     <div className="dialog-backdrop" role="presentation">
@@ -143,8 +192,31 @@ export function AiConfigDialog({
         role="dialog"
       >
         <div className="dialog-heading">
-          <div>
+          <div className="ai-config-heading-main">
             <h2>{t("aiConfig.title")}</h2>
+            {connectionState !== "idle" ? (
+              <div
+                className="ai-connection-indicator"
+                data-state={connectionState}
+                role="status"
+              >
+                <span aria-hidden="true" className="ai-connection-dot" />
+                <span className="ai-connection-label">
+                  {connectionState === "connecting"
+                    ? t("aiConfig.connectionConnecting")
+                    : connectionState === "connected"
+                      ? t("aiConfig.connectionConnected")
+                      : connectionState === "error"
+                        ? t("aiConfig.connectionError")
+                        : t("aiConfig.connectionDisconnected")}
+                </span>
+                {connectionReason ? (
+                  <span className="ai-connection-reason" title={connectionReason}>
+                    {connectionReason}
+                  </span>
+                ) : null}
+              </div>
+            ) : null}
           </div>
           <button
             className="dialog-close"
@@ -185,7 +257,10 @@ export function AiConfigDialog({
               className="text-field ai-config-input"
               id="ai-config-base-url"
               maxLength={2048}
-              onChange={(e) => onBaseUrlChange(e.target.value)}
+              onChange={(e) => {
+                onBaseUrlChange(e.target.value);
+                setTestInline(null);
+              }}
               placeholder={DEFAULT_AI_BASE_URLS[apiFormat]}
               spellCheck={false}
               value={baseUrl}
@@ -201,7 +276,10 @@ export function AiConfigDialog({
                 className="text-field ai-config-input"
                 id="ai-config-api-key"
                 maxLength={512}
-                onChange={(e) => onApiKeyChange(e.target.value)}
+                onChange={(e) => {
+                  onApiKeyChange(e.target.value);
+                  setTestInline(null);
+                }}
                 placeholder={
                   hasKey ? t("aiConfig.apiKeyConfigured") : "sk-…"
                 }
@@ -231,7 +309,10 @@ export function AiConfigDialog({
                 className="text-field ai-config-input"
                 id="ai-config-model"
                 maxLength={255}
-                onChange={(e) => onModelChange(e.target.value)}
+                onChange={(e) => {
+                  onModelChange(e.target.value);
+                  setTestInline(null);
+                }}
                 placeholder={
                   apiFormat.startsWith("openai")
                     ? "gpt-4o-mini"
@@ -248,7 +329,10 @@ export function AiConfigDialog({
                 id="ai-config-model-picker"
                 onChange={(e) => {
                   const next = e.target.value;
-                  if (next) onModelChange(next);
+                  if (next) {
+                    onModelChange(next);
+                    setTestInline(null);
+                  }
                 }}
                 title={
                   modelOptions.length === 0
@@ -268,11 +352,9 @@ export function AiConfigDialog({
                   </option>
                 ))}
               </select>
-            </div>
-            <div className="ai-config-model-actions">
               <button
-                className="secondary-button"
-                disabled={!canUseKey || busyAction !== null}
+                className="ai-config-fetch-models"
+                disabled={!canUseKey || busy}
                 onClick={() => void runFetchModels()}
                 type="button"
               >
@@ -281,25 +363,23 @@ export function AiConfigDialog({
                   : t("aiConfig.fetchModels")}
               </button>
             </div>
+            {modelsMessage ? (
+              <p className="ai-config-hint" role="status">
+                {modelsMessage}
+              </p>
+            ) : null}
           </div>
           <div className="editor-field ai-config-field">
-            <label className="micro-label" htmlFor="ai-config-languages">
+            <label className="micro-label" htmlFor="ai-config-language">
               {t("aiConfig.language")}
             </label>
             <select
-              className="text-field ai-config-input ai-config-languages"
-              id="ai-config-languages"
-              multiple
-              onChange={(e) => {
-                const selected = Array.from(
-                  e.target.selectedOptions,
-                  (option) => option.value as AiLanguageId,
-                );
-                if (selected.length === 0) return;
-                onLanguagesChange(selected);
-              }}
-              size={4}
-              value={languages}
+              className="text-field ai-config-input"
+              id="ai-config-language"
+              onChange={(e) =>
+                onLanguagesChange([e.target.value as AiLanguageId])
+              }
+              value={language}
             >
               {AI_LANGUAGE_OPTIONS.map((option) => (
                 <option key={option.id} value={option.id}>
@@ -331,10 +411,16 @@ export function AiConfigDialog({
                     setter: onTagsEnabledChange,
                   },
                   {
-                    key: "structured",
-                    label: t("aiConfig.structured"),
-                    state: structuredEnabled,
-                    setter: onStructuredEnabledChange,
+                    key: "rating",
+                    label: t("aiConfig.rating"),
+                    state: ratingEnabled,
+                    setter: onRatingEnabledChange,
+                  },
+                  {
+                    key: "forceTags",
+                    label: t("aiConfig.forceExistingTags"),
+                    state: forceExistingTags,
+                    setter: onForceExistingTagsChange,
                   },
                 ] as const
               ).map((field) => (
@@ -349,6 +435,135 @@ export function AiConfigDialog({
               ))}
             </div>
           </div>
+          <details className="ai-config-advanced">
+            <summary className="ai-config-advanced-summary">
+              {t("aiConfig.advanced")}
+            </summary>
+            <div className="ai-config-advanced-body">
+              <div className="editor-field ai-config-field">
+                <label className="micro-label" htmlFor="ai-config-max-tags">
+                  {t("aiConfig.maxTags")}
+                </label>
+                <input
+                  className="text-field ai-config-input"
+                  id="ai-config-max-tags"
+                  max={32}
+                  min={1}
+                  onChange={(e) =>
+                    patchSettings({
+                      maxTags: Number.parseInt(e.target.value, 10) || 8,
+                    })
+                  }
+                  type="number"
+                  value={analysisSettings.maxTags}
+                />
+              </div>
+              <div className="ai-config-advanced-row">
+                <div className="editor-field ai-config-field">
+                  <label
+                    className="micro-label"
+                    htmlFor="ai-config-max-desc-zh"
+                  >
+                    {t("aiConfig.maxDescriptionCharsZh")}
+                  </label>
+                  <input
+                    className="text-field ai-config-input"
+                    id="ai-config-max-desc-zh"
+                    max={500}
+                    min={20}
+                    onChange={(e) =>
+                      patchSettings({
+                        maxDescriptionCharsZh:
+                          Number.parseInt(e.target.value, 10) || 100,
+                      })
+                    }
+                    type="number"
+                    value={analysisSettings.maxDescriptionCharsZh}
+                  />
+                </div>
+                <div className="editor-field ai-config-field">
+                  <label
+                    className="micro-label"
+                    htmlFor="ai-config-max-desc-en"
+                  >
+                    {t("aiConfig.maxDescriptionWordsEn")}
+                  </label>
+                  <input
+                    className="text-field ai-config-input"
+                    id="ai-config-max-desc-en"
+                    max={200}
+                    min={10}
+                    onChange={(e) =>
+                      patchSettings({
+                        maxDescriptionWordsEn:
+                          Number.parseInt(e.target.value, 10) || 60,
+                      })
+                    }
+                    type="number"
+                    value={analysisSettings.maxDescriptionWordsEn}
+                  />
+                </div>
+              </div>
+              <div className="editor-field ai-config-field">
+                <label className="micro-label" htmlFor="ai-config-output-style">
+                  {t("aiConfig.outputStyle")}
+                </label>
+                <select
+                  className="text-field ai-config-input"
+                  id="ai-config-output-style"
+                  onChange={(e) =>
+                    patchSettings({
+                      outputStyle: e.target.value as AiOutputStyle,
+                    })
+                  }
+                  value={analysisSettings.outputStyle}
+                >
+                  {AI_OUTPUT_STYLES.map((style) => (
+                    <option key={style} value={style}>
+                      {t(OUTPUT_STYLE_LABEL_KEY[style])}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="editor-field ai-config-field">
+                <label className="micro-label" htmlFor="ai-config-rating-rubric">
+                  {t("aiConfig.ratingRubric")}
+                </label>
+                <textarea
+                  className="text-field ai-config-input ai-config-textarea"
+                  id="ai-config-rating-rubric"
+                  maxLength={4000}
+                  onChange={(e) =>
+                    patchSettings({ ratingRubric: e.target.value })
+                  }
+                  rows={3}
+                  value={analysisSettings.ratingRubric}
+                />
+              </div>
+              <div className="editor-field ai-config-field">
+                <label
+                  className="micro-label"
+                  htmlFor="ai-config-custom-desc-prompt"
+                >
+                  {t("aiConfig.customDescriptionPrompt")}
+                </label>
+                <textarea
+                  className="text-field ai-config-input ai-config-textarea"
+                  id="ai-config-custom-desc-prompt"
+                  maxLength={4000}
+                  onChange={(e) =>
+                    patchSettings({ customDescriptionPrompt: e.target.value })
+                  }
+                  placeholder={DEFAULT_AI_DESCRIPTION_STRUCTURE}
+                  rows={3}
+                  value={analysisSettings.customDescriptionPrompt}
+                />
+                <p className="ai-config-hint">
+                  {t("aiConfig.customDescriptionPromptHint")}
+                </p>
+              </div>
+            </div>
+          </details>
           <div className="ai-config-consent">
             <label className="ai-config-check-row ai-config-check-row-top">
               <input
@@ -374,39 +589,43 @@ export function AiConfigDialog({
               {t("aiConfig.autoAnalyze")}
             </label>
           </div>
-          {actionMessage ? (
-            <p className="ai-config-action-message" role="status">
-              {actionMessage}
-            </p>
-          ) : null}
         </div>
         <div className="dialog-actions ai-config-actions">
-          <button
-            className="secondary-button"
-            disabled={!canUseKey || !model.trim() || busyAction !== null}
-            onClick={() => void runTest()}
-            type="button"
-          >
-            {busyAction === "test"
-              ? t("aiConfig.testing")
-              : t("aiConfig.testConnection")}
-          </button>
-          <button
-            className="secondary-button"
-            onClick={onClose}
-            type="button"
-          >
-            {t("common.cancel")}
-          </button>
+          <div className="ai-config-test-cluster">
+            <button
+              className="secondary-button"
+              disabled={!canUseKey || !model.trim() || busy}
+              onClick={() => void runTest()}
+              type="button"
+            >
+              {busyAction === "test"
+                ? t("aiConfig.testing")
+                : t("aiConfig.testConnection")}
+            </button>
+            {testInline ? (
+              <span
+                className="ai-config-test-inline"
+                data-ok={testInline.ok ? "true" : "false"}
+                role="status"
+              >
+                {testInline.text}
+              </span>
+            ) : null}
+          </div>
           <button
             className="primary-button"
-            disabled={!canUseKey || !model.trim() || languages.length === 0}
+            disabled={!canUseKey || !model.trim() || busy}
             onClick={() => void onSave()}
             type="button"
           >
-            {t("aiConfig.save")}
+            {saveVerifying ? t("aiConfig.savingVerifying") : t("aiConfig.save")}
           </button>
         </div>
+        {saveVerifying ? (
+          <p className="ai-config-save-wait" role="status">
+            {t("aiConfig.saveVerifyingHint")}
+          </p>
+        ) : null}
       </div>
     </div>
   );

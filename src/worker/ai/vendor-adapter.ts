@@ -64,4 +64,10 @@ export interface VendorAdapter {
     request: AiAnalysisRequest,
     signal?: AbortSignal,
   ): Promise<AiAnalysisResult>;
+
+  /**
+   * Lightweight credential/reachability check. Must not require vision
+   * payloads or structured tool_use/json_schema output (test-connection).
+   */
+  probeConnection(signal?: AbortSignal): Promise<void>;
 }

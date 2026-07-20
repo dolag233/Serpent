@@ -76,7 +76,7 @@ export function FilterTagPicker({
   const { top, recent } = isSearching
     ? { top: [], recent: [] }
     : buildTagFilterDefaultSections(tags, selectedNames, recentNames);
-  const firstCandidate = isSearching ? searchResults[0] : top[0] ?? recent[0];
+  const firstCandidate = isSearching ? searchResults[0] : recent[0] ?? top[0];
 
   const add = (name: string, shiftKey: boolean) => {
     onChange(applyDimensionSelectionClick(selectedNames, name, shiftKey));
@@ -127,20 +127,20 @@ export function FilterTagPicker({
               )
             : (top.length > 0 || recent.length > 0) && (
                 <>
-                  {top.length > 0 && (
-                    <div className="filter-tag-section">
-                      <div className="filter-tag-section-label">
-                        {t("filter.topTags")}
-                      </div>
-                      <TagOptionList tags={top} onSelect={add} />
-                    </div>
-                  )}
                   {recent.length > 0 && (
                     <div className="filter-tag-section">
                       <div className="filter-tag-section-label">
                         {t("filter.recentTags")}
                       </div>
                       <TagOptionList tags={recent} onSelect={add} />
+                    </div>
+                  )}
+                  {top.length > 0 && (
+                    <div className="filter-tag-section">
+                      <div className="filter-tag-section-label">
+                        {t("filter.topTags")}
+                      </div>
+                      <TagOptionList tags={top} onSelect={add} />
                     </div>
                   )}
                 </>

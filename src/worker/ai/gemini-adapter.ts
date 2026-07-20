@@ -1,5 +1,6 @@
+import { buildAiAnalysisSystemPrompt } from '../../shared/ai-analysis-settings';
 import { resolveGeminiGenerateContentUrl } from '../../shared/ai-endpoints';
-import { parseAiAnalysisResult } from './protocol';
+import { parseAiAnalysisResult, resolveAiAnalysisSettings } from './protocol';
 import type { AiAnalysisRequest, AiAnalysisResult } from './protocol';
 import { VendorAdapterError } from './vendor-adapter';
 import type { VendorAdapter, VendorId } from './vendor-adapter';
@@ -13,20 +14,22 @@ const GEMINI_RESPONSE_SCHEMA = {
   properties: {
     description: {
       type: 'string' as const,
-      description: 'A detailed description of the asset content. Omit if not applicable.',
+      description: 'Description of the asset content.',
+      nullable: true,
     },
     tags: {
       type: 'array' as const,
       items: { type: 'string' as const },
-      description: 'Relevant keyword tags. Prefer existing library tags when suitable.',
+      description: 'Keyword tags for the asset.',
     },
-    structured_metadata: {
-      type: 'object' as const,
-      description: 'Additional structured metadata as key-value pairs. Omit if not applicable.',
+    rating: {
+      type: 'integer' as const,
+      description: 'Aesthetic score from 1 to 5.',
+      nullable: true,
     },
   },
   required: ['tags'],
-  propertyOrdering: ['description', 'tags', 'structured_metadata'],
+  propertyOrdering: ['description', 'tags', 'rating'],
 };
 
 /**
@@ -138,6 +141,46 @@ export class GeminiVendorAdapter implements VendorAdapter {
     return this.#extractResult(json);
   }
 
+  async probeConnection(signal?: AbortSignal): Promise<void> {
+    const url = resolveGeminiGenerateContentUrl(this.model, this.baseUrl, {
+      apiKeyQuery: this.apiKey,
+    });
+    let response: Response;
+    try {
+      response = await this._fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [
+            {
+              role: 'user',
+              parts: [{ text: 'Reply with the single word OK.' }],
+            },
+          ],
+          generationConfig: {
+            temperature: 0,
+            maxOutputTokens: 16,
+          },
+        }),
+        signal,
+      });
+    } catch (error: unknown) {
+      throw this.#mapFetchError(error);
+    }
+    if (!response.ok) {
+      throw await this.#mapHttpError(response);
+    }
+    try {
+      await response.json();
+    } catch (error: unknown) {
+      throw new VendorAdapterError(
+        'invalid_response',
+        'The AI service returned an unreadable response.',
+        { cause: error },
+      );
+    }
+  }
+
   // ------------------------------------------------------------------
   // Prompt construction
   // ------------------------------------------------------------------
@@ -150,28 +193,12 @@ export class GeminiVendorAdapter implements VendorAdapter {
   }
 
   #buildSystemPromptText(request: AiAnalysisRequest): string {
-    const fields: string[] = [];
-    if (request.enabledFields.description) fields.push('description');
-    if (request.enabledFields.tags) fields.push('tags');
-    if (request.enabledFields.structuredMetadata)
-      fields.push('structured_metadata');
-
-    let prompt =
-      'You are a digital asset classifier for creative professionals. ' +
-      'Analyze the provided asset and return structured classification data.\n\n';
-    prompt += `Target languages: ${request.language}\n`;
-    prompt +=
-      'When multiple languages are listed, write descriptions and tags that remain useful for search in each of those languages (bilingual or multilingual tags are encouraged).\n';
-    prompt += `Fill these fields: ${fields.join(', ') || 'tags only'}\n`;
-
-    if (request.existingTagNames.length > 0) {
-      prompt +=
-        '\nExisting library tags (prefer these when suitable): ' +
-        request.existingTagNames.join(', ') +
-        '\n';
-    }
-
-    return prompt;
+    return buildAiAnalysisSystemPrompt({
+      language: request.language,
+      settings: resolveAiAnalysisSettings(request),
+      enabledFields: request.enabledFields,
+      existingTagNames: request.existingTagNames,
+    });
   }
 
   #buildContents(

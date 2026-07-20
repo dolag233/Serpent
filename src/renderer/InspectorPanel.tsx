@@ -81,7 +81,7 @@ export interface AiContent {
   assetId: string;
   description?: string;
   tags?: string[];
-  structuredMetadata?: Record<string, unknown>;
+  rating?: number;
   modelVersion?: string;
 }
 
@@ -105,6 +105,10 @@ export interface InspectorPanelProps {
   displayedPalette: string[];
   automaticPaletteRatios: Map<string, number>;
   aiContent: AiContent | null;
+  /** True while an AI analyze request is in flight for the library. */
+  aiAnalyzing?: boolean;
+  /** Description field currently shows AI-layer text (human layer empty). */
+  descriptionIsAi?: boolean;
   // Metadata editor handlers
   handleMetadataDescriptionSave: () => void;
   handleMetadataDescriptionInput: (
@@ -464,6 +468,8 @@ export function InspectorPanel(props: InspectorPanelProps) {
     displayedPalette,
     automaticPaletteRatios,
     aiContent,
+    aiAnalyzing = false,
+    descriptionIsAi = false,
     handleMetadataDescriptionSave,
     handleMetadataDescriptionInput,
     handleRatingClick,
@@ -853,6 +859,15 @@ export function InspectorPanel(props: InspectorPanelProps) {
                   key={tag.id}
                   style={{ borderColor: tagColor(tag.id) }}
                 >
+                  {tag.source === "ai" && (
+                    <span
+                      aria-label={t("inspector.aiBadge")}
+                      className="inspector-ai-badge inspector-ai-badge-inline"
+                      title={t("inspector.aiBadge")}
+                    >
+                      AI
+                    </span>
+                  )}
                   <span className="tag-chip-dot" style={{ background: tagColor(tag.id) }} />
                   <span className="tag-chip-name">{tag.name}</span>
                   {tag.source === "user" && onRemoveTagFromAsset && (
@@ -979,22 +994,37 @@ export function InspectorPanel(props: InspectorPanelProps) {
                 const ratingMixed = isMultiEdit && multiEdit?.rating.kind === "mixed";
                 const favoriteMixed =
                   isMultiEdit && multiEdit?.favorite.kind === "mixed";
+                const aiRating =
+                  !isMultiEdit && editRating === 0
+                    ? aiContent?.rating
+                    : undefined;
+                const displayRating =
+                  editRating > 0 ? editRating : (aiRating ?? 0);
                 return (
               <div className="inspector-quick-row">
                 <div
                   aria-label={t("inspector.rating")}
-                  className={`inspector-rating${ratingMixed ? " is-mixed" : ""}`}
+                  className={`inspector-rating${ratingMixed ? " is-mixed" : ""}${aiRating != null ? " is-ai" : ""}`}
                   role="group"
                 >
                   {ratingMixed ? (
                     <span className="inspector-mixed-value">{t("inspector.mixedValues")}</span>
                   ) : (
                     <>
+                      {aiRating != null && (
+                        <span
+                          aria-label={t("inspector.ratingAi")}
+                          className="inspector-ai-badge inspector-ai-badge-inline"
+                          title={t("inspector.ratingAi")}
+                        >
+                          AI
+                        </span>
+                      )}
                       {[1, 2, 3, 4, 5].map((star) => (
                         <button
-                          aria-pressed={star <= editRating || undefined}
+                          aria-pressed={star <= displayRating || undefined}
                           className="rating-star"
-                          data-active={star <= editRating || undefined}
+                          data-active={star <= displayRating || undefined}
                           disabled={!ratingEditable}
                           key={star}
                           onClick={() => handleRatingClick(star)}
@@ -1120,6 +1150,15 @@ export function InspectorPanel(props: InspectorPanelProps) {
                 return (
               <div className="editor-field">
                 <label className="micro-label" htmlFor="meta-desc">
+                  {descriptionIsAi && (
+                    <span
+                      aria-label={t("inspector.aiBadge")}
+                      className="inspector-ai-badge inspector-ai-badge-inline"
+                      title={t("inspector.aiBadge")}
+                    >
+                      AI
+                    </span>
+                  )}
                   {t("inspector.description")}
                 </label>
                 {descriptionMixed ? (
@@ -1131,13 +1170,17 @@ export function InspectorPanel(props: InspectorPanelProps) {
                   </div>
                 ) : (
                 <textarea
-                  className="text-field inspector-textarea"
+                  className={`text-field inspector-textarea${descriptionIsAi ? " is-ai-sourced" : ""}`}
                   disabled={!descriptionEditable}
                   id="meta-desc"
                   maxLength={10000}
                   onBlur={handleMetadataDescriptionSave}
                   onChange={handleMetadataDescriptionInput}
-                  placeholder={t("inspector.descriptionPlaceholder")}
+                  placeholder={
+                    aiAnalyzing
+                      ? t("toast.aiAnalyzeStarted")
+                      : t("inspector.descriptionPlaceholder")
+                  }
                   ref={descriptionRef}
                   rows={1}
                   value={editDescription}
@@ -1260,37 +1303,11 @@ export function InspectorPanel(props: InspectorPanelProps) {
             <div className="inspector-metadata-placeholder" aria-hidden="true" />
           )}
 
-          {/* --- AI Content --- */}
-          {aiContent && (
-            <section className="inspector-section">
-              <div className="inspector-section-label">
-                <span className="inspector-ai-badge">AI</span>
-                {t("inspector.aiGenerated")}
-              </div>
-              {aiContent.description && (
-                <div className="editor-field">
-                  <label className="micro-label">{t("inspector.descriptionAi")}</label>
-                  <p className="inspector-ai-text">{aiContent.description}</p>
-                </div>
-              )}
-              {aiContent.tags && aiContent.tags.length > 0 && (
-                <div className="editor-field">
-                  <label className="micro-label">{t("inspector.tagsAi")}</label>
-                  <div className="inspector-ai-tags">
-                    {aiContent.tags.map((tag) => (
-                      <span className="tag-chip" key={tag}>
-                        {tag}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
-              {aiContent.modelVersion && (
-                <div className="inspector-version-line">
-                  {aiContent.modelVersion}
-                </div>
-              )}
-            </section>
+          {aiAnalyzing && (
+            <div className="inspector-ai-analyzing" role="status">
+              <span className="activity-pulse" />
+              {t("toast.aiAnalyzeStarted")}
+            </div>
           )}
 
           {technicalInfoParts.length > 0 && (

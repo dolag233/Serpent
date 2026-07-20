@@ -82,6 +82,12 @@ import {
 import { AiQueueScheduler } from "./ai-queue-scheduler";
 import { aiSearchFailureReason, planAiSearch } from "./ai-search-planner";
 import {
+  DEFAULT_AI_ANALYSIS_SETTINGS,
+  normalizeAiAnalysisSettings,
+  toWireAiAnalysisSettings,
+  type AiAnalysisSettings,
+} from "../shared/ai-analysis-settings";
+import {
   DEFAULT_AI_LANGUAGES,
   listAiModels,
   migrateLegacyProviderToApiFormat,
@@ -184,7 +190,8 @@ interface AiConfig {
   baseUrl: string;
   descriptionEnabled: boolean;
   tagEnabled: boolean;
-  structuredMetadataEnabled: boolean;
+  ratingEnabled: boolean;
+  analysisSettings: AiAnalysisSettings;
   languages: Array<"zh-CN" | "en" | "ja" | "ko">;
   autoAnalyzeEnabled: boolean;
   disclaimerAccepted: boolean;
@@ -196,7 +203,8 @@ const DEFAULT_AI_CONFIG: AiConfig = {
   baseUrl: "",
   descriptionEnabled: true,
   tagEnabled: true,
-  structuredMetadataEnabled: false,
+  ratingEnabled: true,
+  analysisSettings: { ...DEFAULT_AI_ANALYSIS_SETTINGS },
   languages: ["zh-CN", "en"],
   autoAnalyzeEnabled: false,
   disclaimerAccepted: false,
@@ -235,9 +243,18 @@ function loadAiConfig(): AiConfig & { hasKey: boolean } {
       descriptionEnabled:
         parsed.descriptionEnabled ?? DEFAULT_AI_CONFIG.descriptionEnabled,
       tagEnabled: parsed.tagEnabled ?? DEFAULT_AI_CONFIG.tagEnabled,
-      structuredMetadataEnabled:
-        parsed.structuredMetadataEnabled ??
-        DEFAULT_AI_CONFIG.structuredMetadataEnabled,
+      ratingEnabled:
+        (parsed as { ratingEnabled?: boolean }).ratingEnabled ??
+        DEFAULT_AI_CONFIG.ratingEnabled,
+      analysisSettings: normalizeAiAnalysisSettings({
+        ...DEFAULT_AI_ANALYSIS_SETTINGS,
+        ...((parsed as { analysisSettings?: Partial<AiAnalysisSettings> })
+          .analysisSettings ?? {}),
+        forceExistingTags:
+          (parsed as { analysisSettings?: { forceExistingTags?: boolean } })
+            .analysisSettings?.forceExistingTags ??
+          DEFAULT_AI_ANALYSIS_SETTINGS.forceExistingTags,
+      }),
       autoAnalyzeEnabled:
         parsed.autoAnalyzeEnabled ?? DEFAULT_AI_CONFIG.autoAnalyzeEnabled,
       disclaimerAccepted:
@@ -260,7 +277,8 @@ function saveAiConfig(config: AiConfig): void {
   toSave.baseUrl = config.baseUrl;
   toSave.descriptionEnabled = config.descriptionEnabled;
   toSave.tagEnabled = config.tagEnabled;
-  toSave.structuredMetadataEnabled = config.structuredMetadataEnabled;
+  toSave.ratingEnabled = config.ratingEnabled;
+  toSave.analysisSettings = config.analysisSettings;
   toSave.languages = config.languages;
   toSave.autoAnalyzeEnabled = config.autoAnalyzeEnabled;
   toSave.disclaimerAccepted = config.disclaimerAccepted;
@@ -549,8 +567,9 @@ async function processAiQueueBatch(
       enabledFields: {
         description: config.descriptionEnabled,
         tags: config.tagEnabled,
-        structuredMetadata: config.structuredMetadataEnabled,
+        rating: config.ratingEnabled,
       },
+      analysisSettings: toWireAiAnalysisSettings(config.analysisSettings),
       languages: config.languages,
       maxJobs,
     });
@@ -1509,11 +1528,18 @@ async function commandFor(
         enabledFields: {
           description: config.descriptionEnabled,
           tags: config.tagEnabled,
-          structuredMetadata: config.structuredMetadataEnabled,
+          rating: config.ratingEnabled,
         },
+        analysisSettings: toWireAiAnalysisSettings(config.analysisSettings),
         languages: config.languages,
       };
     }
+    case "ai.content.get.request":
+      return {
+        type: "ai.content.get",
+        libraryId: request.libraryId,
+        assetId: request.assetId,
+      };
     case "asset.thumbnail.request":
       return {
         type: "media.generate-thumbnail",
@@ -1633,6 +1659,80 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
       } satisfies RendererResult;
     }
 
+    // Manual analyze: prefer the AI job queue so Renderer gets progress events
+    // and the background-jobs panel updates. Fall through to sync analyze only
+    // when the asset could not be queued (and is not already pending).
+    if (request.type === "asset.analyze.request") {
+      const config = loadAiConfig();
+      if (!config.hasKey || !config.apiFormat) {
+        return {
+          ok: false,
+          error: createPublicError("AI_ANALYSIS_FAILED", "AI_NOT_CONFIGURED"),
+        } satisfies RendererResult;
+      }
+      try {
+        getDecryptedApiKey();
+      } catch {
+        return {
+          ok: false,
+          error: createPublicError("AI_ANALYSIS_FAILED", "AI_NOT_CONFIGURED"),
+        } satisfies RendererResult;
+      }
+      if (!workerClient) throw new Error("Library Worker is unavailable.");
+      try {
+        const enqueueResult = await workerClient.request({
+          type: "ai.enqueue-analysis",
+          libraryId: request.libraryId,
+          assetIds: [request.assetId],
+        });
+        if (
+          enqueueResult.ok &&
+          enqueueResult.type === "media.jobs.enqueued" &&
+          enqueueResult.enqueued > 0
+        ) {
+          void processAiQueue(request.libraryId);
+          return {
+            ok: true,
+            type: "asset.analyze-queued",
+            assetId: request.assetId,
+            enqueued: enqueueResult.enqueued,
+          } satisfies RendererResult;
+        }
+        if (
+          enqueueResult.ok &&
+          enqueueResult.type === "media.jobs.enqueued" &&
+          enqueueResult.enqueued === 0
+        ) {
+          const statusResult = await workerClient.request({
+            type: "ai.status",
+            libraryId: request.libraryId,
+          });
+          const alreadyPending =
+            statusResult.ok &&
+            statusResult.type === "ai.jobs.status" &&
+            statusResult.jobs.some(
+              (job) =>
+                job.assetId === request.assetId &&
+                (job.status === "queued" ||
+                  job.status === "running" ||
+                  job.status === "paused"),
+            );
+          if (alreadyPending) {
+            void processAiQueue(request.libraryId);
+            return {
+              ok: true,
+              type: "asset.analyze-queued",
+              assetId: request.assetId,
+              enqueued: 1,
+            } satisfies RendererResult;
+          }
+        }
+      } catch (error) {
+        logger?.error("ai.analyze.enqueue", error);
+      }
+      // Fall through to synchronous asset.analyze for eligibility errors.
+    }
+
     // Handle AI config requests entirely in the main process — no Worker involved.
     if (request.type === "ai.config.get.request") {
       const config = loadAiConfig();
@@ -1646,8 +1746,9 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
         enabledFields: {
           description: config.descriptionEnabled,
           tags: config.tagEnabled,
-          structuredMetadata: config.structuredMetadataEnabled,
+          rating: config.ratingEnabled,
         },
+        analysisSettings: toWireAiAnalysisSettings(config.analysisSettings),
         languages: config.languages,
         autoAnalyzeEnabled: config.autoAnalyzeEnabled,
         disclaimerAccepted: config.disclaimerAccepted,
@@ -1673,8 +1774,14 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
         baseUrl: (request.baseUrl ?? "").trim(),
         descriptionEnabled: request.enabledFields?.description ?? true,
         tagEnabled: request.enabledFields?.tags ?? true,
-        structuredMetadataEnabled:
-          request.enabledFields?.structuredMetadata ?? false,
+        ratingEnabled: request.enabledFields?.rating ?? true,
+        analysisSettings: normalizeAiAnalysisSettings({
+          ...DEFAULT_AI_ANALYSIS_SETTINGS,
+          ...request.analysisSettings,
+          descriptionEnabled: request.enabledFields?.description ?? true,
+          tagEnabled: request.enabledFields?.tags ?? true,
+          ratingEnabled: request.enabledFields?.rating ?? true,
+        }),
         languages: normalizeAiLanguages(
           request.languages ?? request.language ?? DEFAULT_AI_LANGUAGES,
         ),
@@ -1683,6 +1790,53 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
       });
       if (request.apiKey) saveEncryptedApiKey(request.apiKey);
       return { ok: true, type: "ai.config.saved" } satisfies RendererResult;
+    }
+
+    if (request.type === "ai.test-connection.request") {
+      // Resolve credentials here so a missing key returns AI_NOT_CONFIGURED
+      // instead of the generic CANCELLED path from commandFor().
+      let apiKey = request.apiKey?.trim() ?? "";
+      if (!apiKey) {
+        try {
+          apiKey = getDecryptedApiKey();
+        } catch {
+          return {
+            ok: false,
+            error: createPublicError("AI_ANALYSIS_FAILED", "AI_NOT_CONFIGURED"),
+          } satisfies RendererResult;
+        }
+      }
+      if (!workerClient) throw new Error("Library Worker is unavailable.");
+      const workerResult = await workerClient.request({
+        type: "ai.test-connection",
+        apiFormat: request.apiFormat,
+        model: request.model,
+        apiKey,
+        ...(request.baseUrl?.trim()
+          ? { baseUrl: request.baseUrl.trim() }
+          : {}),
+      });
+      if (!workerResult.ok) {
+        return {
+          ok: false,
+          error: workerResult.error,
+        } satisfies RendererResult;
+      }
+      if (workerResult.type !== "ai.test-connection.result") {
+        return {
+          ok: false,
+          error: createPublicError("AI_ANALYSIS_FAILED"),
+        } satisfies RendererResult;
+      }
+      return {
+        ok: true,
+        type: "ai.test-connection.result",
+        success: workerResult.success,
+        ...(workerResult.errorKind
+          ? { errorKind: workerResult.errorKind }
+          : {}),
+        ...(workerResult.reason ? { reason: workerResult.reason } : {}),
+      } satisfies RendererResult;
     }
 
     if (request.type === "ai.list-models.request") {
