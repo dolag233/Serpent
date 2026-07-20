@@ -5259,6 +5259,23 @@ function AppInner() {
     }
   }
 
+  async function handleClearAiContent(assetIds: string[]) {
+    if (!api || !library || assetIds.length === 0) return;
+    try {
+      const result = await api.clearAiContent({
+        libraryId: library.libraryId,
+        scope: { kind: 'asset', assetIds },
+        confirm: assetIds.length > 1,
+      });
+      if (!result.ok) {
+        setError(toMessage(result.error, t("toast.aiContentClearFailed"), locale));
+      }
+      // Success toast + refresh handled by onAiCleared event listener.
+    } catch (caught) {
+      setError(toMessage(caught, t("toast.aiContentClearFailed"), locale));
+    }
+  }
+
   async function loadMediaJobs(quiet = false) {
     if (!api || !library) return;
     if (!quiet) setMediaJobsLoading(true);
@@ -7045,6 +7062,7 @@ function AppInner() {
           })
         }
         onAnalyze={(assetId) => { void handleAnalyzeClick(assetId); }}
+        onClearAiContent={(assetIds) => { void handleClearAiContent(assetIds); }}
         canAnalyze={aiHasKey && !aiAnalyzing}
         onCopyToLinked={(folder, assetIds) => { void copyManagedSelectionToLinked(folder, assetIds); }}
         onClearSelection={clearAssetSelection}

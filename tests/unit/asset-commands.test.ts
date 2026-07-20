@@ -89,6 +89,7 @@ describe('可见性（与历史内联 JSX 条件一致）', () => {
       'asset.copy-file-path',
       'asset.rename',
       'asset.ai-analyze',
+      'asset.clear-ai-content',
       'asset.move-to-trash',
     ]);
   });
@@ -103,6 +104,7 @@ describe('可见性（与历史内联 JSX 条件一致）', () => {
       'asset.copy-file-path',
       'asset.rename',
       'asset.ai-analyze',
+      'asset.clear-ai-content',
       'asset.move-to-trash',
     ]);
   });
@@ -116,6 +118,7 @@ describe('可见性（与历史内联 JSX 条件一致）', () => {
       'asset.copy-file-path',
       'asset.rename',
       'asset.ai-analyze',
+      'asset.clear-ai-content',
       'asset.delete-linked',
     ]);
   });
@@ -129,6 +132,7 @@ describe('可见性（与历史内联 JSX 条件一致）', () => {
       'asset.copy-file-path',
       'asset.rename',
       'asset.ai-analyze',
+      'asset.clear-ai-content',
       'asset.delete-linked',
     ]);
   });
@@ -155,6 +159,7 @@ describe('可见性（与历史内联 JSX 条件一致）', () => {
       'asset.copy-file-path',
       'asset.rename',
       'asset.ai-analyze',
+      'asset.clear-ai-content',
       'asset.move-to-trash',
     ]);
     const without = makeCtx({ activeCollectionId: null });
@@ -393,7 +398,7 @@ describe('run 委托到 actions 回调包', () => {
 });
 
 describe('注册表完整性', () => {
-  it('12 条定义全部注册且 id 唯一（createCommandRegistry 未抛错）', () => {
+  it('13 条定义全部注册且 id 唯一（createCommandRegistry 未抛错）', () => {
     expect(registry.list().map((def) => def.id)).toEqual([
       'asset.restore',
       'asset.delete-permanent',
@@ -406,6 +411,7 @@ describe('注册表完整性', () => {
       'asset.copy-file-path',
       'asset.rename',
       'asset.ai-analyze',
+      'asset.clear-ai-content',
       'asset.move-to-trash',
       'asset.delete-linked',
     ]);
@@ -422,6 +428,7 @@ describe('注册表完整性', () => {
       'organize',
       'organize',
       'organize',
+      'metadata',
       'metadata',
       'delete',
     ]);
