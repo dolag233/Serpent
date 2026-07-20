@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { isMacPlatform } from "./commands/command-types";
+import {
+  matchGlobalZoomShortcut,
+  nextKeyboardZoomScale,
+  shouldIgnoreGlobalZoomShortcut,
+} from "./global-zoom-shortcuts";
 import {
   clampViewerPan,
   clampViewerScale,
@@ -164,6 +170,31 @@ export function useViewerZoomPan({
     },
     [commitView],
   );
+
+  // Cmd/Ctrl+=|-|0: zoom at viewport center; 0 = fit (Serpent-46i9).
+  useEffect(() => {
+    const platform = isMacPlatform(navigator.userAgent) ? "mac" : "windows";
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (shouldIgnoreGlobalZoomShortcut(event.target)) return;
+      const action = matchGlobalZoomShortcut(event, platform);
+      if (!action) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (action === "reset") {
+        fitToWindow();
+        return;
+      }
+      const bounds = viewportRef.current?.getBoundingClientRect();
+      if (!bounds) return;
+      zoomAt(
+        bounds.left + bounds.width / 2,
+        bounds.top + bounds.height / 2,
+        nextKeyboardZoomScale(viewRef.current.scale, action),
+      );
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [fitToWindow, zoomAt]);
 
   // Wheel: mouse wheel zooms at the pointer; trackpad two-finger scroll
   // pans; pinch (ctrlKey) zooms; at-fit horizontal flick → prev/next

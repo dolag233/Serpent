@@ -14,6 +14,7 @@ import { flushSync } from "react-dom";
 import { Icon, type IconName } from "./Icons";
 import { IconActionButton } from "./icon-action-button";
 import { iconActionAttrs } from "./icon-action-attrs";
+import { EditTextContextMenuHost } from "./edit-text-context-menu";
 import { HoverTipHost } from "./hover-tip";
 import { shouldShowMissingAssetOverlay } from "./availability-affordance";
 import {
@@ -222,6 +223,12 @@ import {
   type ShortcutSpec,
 } from "./commands/command-types";
 import { formatBatchRatingNotice } from "./batch-tag-notice";
+import {
+  defaultKeyboardCardSize,
+  matchGlobalZoomShortcut,
+  nextKeyboardCardSize,
+  shouldIgnoreGlobalZoomShortcut,
+} from "./global-zoom-shortcuts";
 
 const IS_MAC_PLATFORM = isMacPlatform(navigator.userAgent);
 
@@ -1237,6 +1244,37 @@ function AppInner() {
     return () => canvas.removeEventListener("wheel", handleWheel);
   }, [assetCardSize, previewAsset, resizeAssetCards]);
 
+  // Browse canvas Cmd/Ctrl+=|-|0 — same step as Ctrl+wheel; 0 = default size
+  // (Serpent-46i9). Viewer owns the chord while preview is open.
+  useEffect(() => {
+    if (previewAsset) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (shouldIgnoreGlobalZoomShortcut(event.target)) return;
+      const action = matchGlobalZoomShortcut(event, SHORTCUT_PLATFORM);
+      if (!action) return;
+      event.preventDefault();
+      const canvas = workspaceCanvasRef.current;
+      const rect = canvas?.getBoundingClientRect();
+      const centerX = rect
+        ? rect.left + rect.width / 2
+        : undefined;
+      const centerY = rect
+        ? rect.top + rect.height / 2
+        : undefined;
+      if (action === "reset") {
+        resizeAssetCards(defaultKeyboardCardSize(), centerX, centerY);
+        return;
+      }
+      resizeAssetCards(
+        nextKeyboardCardSize(assetCardSize, action),
+        centerX,
+        centerY,
+      );
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [assetCardSize, previewAsset, resizeAssetCards]);
+
   const openAssetPreview = useCallback((asset: AssetSummary) => {
     if (asset.availability !== "available" || asset.deletedAt) return;
     // Serpent-ayf: entering the viewer always shows chrome, regardless of
@@ -1823,7 +1861,7 @@ function AppInner() {
       unsubscribeCompleted();
       unsubscribeCleared();
     };
-  }, [api, library, setNotice, t]);
+  }, [api, library, setError, setNotice, t]);
 
   function syncNavHistoryUi() {
     setNavHistoryUi({
@@ -5790,6 +5828,7 @@ function AppInner() {
   return (
     <>
     <HoverTipHost />
+    <EditTextContextMenuHost />
     <main
       className={`app-shell${leftOpen ? "" : " left-collapsed"}${rightOpen ? "" : " right-collapsed"}${panelResizing ? " is-resizing" : ""}`}
       style={panelResizeShellStyle as React.CSSProperties}

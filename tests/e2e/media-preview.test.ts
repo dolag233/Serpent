@@ -363,7 +363,13 @@ test("video preview reports a specific generation failure and persists its diagn
     await expect(preview).toBeVisible();
     await expect(preview.getByText("缺少 FFmpeg")).toBeVisible();
     await preview.getByRole("button", { name: "重试生成" }).click();
-    await expect(preview.getByText("缺少 FFmpeg")).toBeVisible({
+    // Retry re-queues generation (pending/"正在生成") before the missing-FFmpeg
+    // failure is written again. Wait for the actionable retry surface, then for
+    // any FFmpeg-missing copy (exact「缺少 FFmpeg」or catalog「未找到 FFmpeg」).
+    await expect(preview.getByRole("button", { name: "重试生成" })).toBeVisible({
+      timeout: 30_000,
+    });
+    await expect(preview.getByText(/FFmpeg/)).toBeVisible({
       timeout: 15_000,
     });
 

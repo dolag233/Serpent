@@ -17,6 +17,7 @@ import {
   AI_CLEARED_CHANNEL,
   EXTENSION_PAIRING_CHANNEL,
   OPEN_EXTERNAL_URL_CHANNEL,
+  SHOW_EDIT_CONTEXT_MENU_CHANNEL,
   SHELL_SWIPE_CHANNEL,
 } from '../shared/protocol/channels';
 import {
@@ -24,6 +25,7 @@ import {
   type SerpentShellApi,
   type ShellSwipeDirection,
 } from '../shared/external-url';
+import { parseShowEditContextMenuResult } from '../shared/edit-context-menu';
 import type { RendererRequest } from '../shared/protocol/requests';
 import type { PublicErrorReason } from '../shared/protocol/errors';
 import {
@@ -1282,6 +1284,13 @@ const shell: SerpentShellApi = Object.freeze({
   async openExternalUrl(url: string) {
     const result: unknown = await ipcRenderer.invoke(OPEN_EXTERNAL_URL_CHANNEL, { url });
     return parseOpenExternalUrlResult(result);
+  },
+  async showEditContextMenu(point: { x: number; y: number }) {
+    const result: unknown = await ipcRenderer.invoke(
+      SHOW_EDIT_CONTEXT_MENU_CHANNEL,
+      point,
+    );
+    return parseShowEditContextMenuResult(result);
   },
   onSwipe(listener: (direction: ShellSwipeDirection) => void): () => void {
     const handler = (_event: Electron.IpcRendererEvent, direction: unknown) => {

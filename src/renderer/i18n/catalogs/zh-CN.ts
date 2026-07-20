@@ -1104,7 +1104,7 @@ export const zhCN = {
       NAME_NOT_SUPPORTED: "当前目标文件系统不接受其中的文件名。",
       IO_ERROR: "操作系统报告了磁盘读写错误。",
       SHARP_UNAVAILABLE: "图像处理引擎 Sharp 不可用。",
-      FFMPEG_REQUIRED: "当前安装中未找到 FFmpeg，暂时无法生成视频预览。",
+      FFMPEG_REQUIRED: "当前安装缺少 FFmpeg，暂时无法生成视频预览。",
       OIIO_REQUIRED: "当前安装中未找到 OpenImageIO，暂时无法解码 EXR/TGA。",
       MEDIA_PROCESSING_FAILED: "媒体处理失败。请检查源文件是否损坏，并查看应用日志了解详细原因。",
       PALETTE_SOURCE_NOT_READY: "当前修订的缩略图或视频封面尚未就绪。",

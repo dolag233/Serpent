@@ -20,6 +20,9 @@ import {
   type OpenDialogOptions,
 } from "electron";
 
+import { installApplicationMenu } from "./application-menu";
+
+import { popupEditContextMenu } from "./edit-context-menu";
 import {
   ASSET_CHANGE_CHANNEL,
   THUMBNAIL_CHANNEL,
@@ -32,12 +35,14 @@ import {
   AI_CLEARED_CHANNEL,
   EXTENSION_PAIRING_CHANNEL,
   OPEN_EXTERNAL_URL_CHANNEL,
+  SHOW_EDIT_CONTEXT_MENU_CHANNEL,
   SHELL_SWIPE_CHANNEL,
 } from "../shared/protocol/channels";
 import {
   resolveOpenExternalUrlTarget,
   type OpenExternalUrlResult,
 } from "../shared/external-url";
+import type { ShowEditContextMenuResult } from "../shared/edit-context-menu";
 import {
   parseExtensionPairingRequest,
   type ExtensionPairingResult,
@@ -393,6 +398,9 @@ async function createMainWindow(): Promise<void> {
   });
   window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   window.webContents.on("will-navigate", (event) => event.preventDefault());
+  // Defense in depth (Serpent-46i9): even if a page-zoom accelerator sneaks
+  // back into the menu, Chromium must not rescale the whole UI.
+  void window.webContents.setVisualZoomLevelLimits(1, 1);
   // macOS three-finger swipe (requires Trackpad → Swipe between pages).
   // Event is on BrowserWindow, not webContents.
   window.on("swipe", (_event, direction) => {
@@ -2904,6 +2912,26 @@ async function startApplication(): Promise<void> {
     },
   );
 
+  // 文本输入右键：仅授权主窗口弹出 role 编辑菜单；Renderer 只传坐标。
+  ipcMain.handle(
+    SHOW_EDIT_CONTEXT_MENU_CHANNEL,
+    (event, input: unknown): ShowEditContextMenuResult => {
+      if (!mainWindow || event.sender !== mainWindow.webContents) {
+        logger?.info("ipc.show-edit-context-menu", "Rejected edit context menu.", {
+          code: "unauthorized_sender",
+        });
+        return { ok: false, code: "unauthorized_sender" };
+      }
+      const result = popupEditContextMenu(event.sender, input);
+      if (!result.ok) {
+        logger?.info("ipc.show-edit-context-menu", "Rejected edit context menu.", {
+          code: result.code,
+        });
+      }
+      return result;
+    },
+  );
+
   ipcMain.on(ACTIVE_CONTEXT_CHANNEL, (event, input: unknown) => {
     if (!mainWindow || event.sender !== mainWindow.webContents) {
       logger?.info("ipc.active-context", "Rejected active-context update.", {
@@ -2924,6 +2952,10 @@ async function startApplication(): Promise<void> {
       focusedContexts.set(windowId, parsed.context);
     }
   });
+
+  // Install before the first window so macOS does not keep Electron's default
+  // View→Zoom accelerators that steal Cmd+=/-/0 (Serpent-46i9).
+  installApplicationMenu();
 
   await createMainWindow();
 

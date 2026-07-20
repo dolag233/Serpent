@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import type { ShowEditContextMenuResult } from './edit-context-menu';
+
 /**
  * 「在系统浏览器中打开外部链接」的共享规则与类型。
  *
@@ -83,6 +85,14 @@ export type ShellSwipeDirection = 'left' | 'right' | 'up' | 'down';
 export interface SerpentShellApi {
   /** 打开外部 HTTP(S) 链接；失败时返回公开错误码（不含 URL）。 */
   openExternalUrl(url: string): Promise<OpenExternalUrlResult>;
+  /**
+   * 在文本输入控件上弹出平台原生编辑菜单（撤销/剪切/复制/粘贴/删除/全选）。
+   * 仅传屏幕坐标；菜单项启用态由 Main 侧 Electron role 根据焦点控件计算。
+   */
+  showEditContextMenu(point: {
+    x: number;
+    y: number;
+  }): Promise<ShowEditContextMenuResult>;
   /** macOS 触控板三指轻扫（Electron webContents swipe）。 */
   onSwipe(listener: (direction: ShellSwipeDirection) => void): () => void;
 }
