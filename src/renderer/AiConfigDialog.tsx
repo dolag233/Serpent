@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import {
   AI_OUTPUT_STYLES,
@@ -121,10 +121,14 @@ export function AiConfigDialog({
     text: string;
   } | null>(null);
   const [showApiKey, setShowApiKey] = useState(false);
+  const [modelPickerOpen, setModelPickerOpen] = useState(false);
   const modelsFetchInFlightRef = useRef(false);
+  const modelPickerWrapRef = useRef<HTMLDivElement>(null);
+  const fetchedForRef = useRef<string | null>(null);
 
   const canUseKey = Boolean(apiKey.trim()) || hasKey;
   const language = languages[0] ?? "zh-CN";
+  const modelsFetchKey = `${apiFormat}|${baseUrl.trim()}|${apiKey.trim() ? "typed" : hasKey ? "stored" : "none"}`;
 
   function patchSettings(patch: Partial<AiAnalysisSettingsWire>) {
     onAnalysisSettingsChange({ ...analysisSettings, ...patch });
@@ -146,20 +150,23 @@ export function AiConfigDialog({
     }
   }
 
-  async function runFetchModels() {
-    if (modelsFetchInFlightRef.current) return;
+  async function runFetchModels(options?: { quiet?: boolean }) {
+    if (!canUseKey || modelsFetchInFlightRef.current) return;
     modelsFetchInFlightRef.current = true;
     setBusyAction("models");
-    setModelsMessage(null);
+    if (!options?.quiet) setModelsMessage(null);
     try {
       const result = await onFetchModels();
+      fetchedForRef.current = modelsFetchKey;
       if (result.models.length > 0) {
         setModelOptions(result.models);
         setModelsMessage(
-          t("aiConfig.fetchModelsOk").replace(
-            "{count}",
-            String(result.models.length),
-          ),
+          options?.quiet
+            ? null
+            : t("aiConfig.fetchModelsOk").replace(
+                "{count}",
+                String(result.models.length),
+              ),
         );
       } else {
         setModelOptions([]);
@@ -171,9 +178,19 @@ export function AiConfigDialog({
     }
   }
 
-  function ensureModelsFetched() {
-    if (!canUseKey || busyAction === "models") return;
-    void runFetchModels();
+  async function toggleModelPicker() {
+    if (!canUseKey) return;
+    if (modelPickerOpen) {
+      setModelPickerOpen(false);
+      return;
+    }
+    setModelPickerOpen(true);
+    if (
+      fetchedForRef.current !== modelsFetchKey ||
+      modelOptions.length === 0
+    ) {
+      await runFetchModels();
+    }
   }
 
   function handleApiFormatChange(next: AiApiFormat) {
@@ -186,12 +203,48 @@ export function AiConfigDialog({
     setModelOptions([]);
     setModelsMessage(null);
     setTestInline(null);
+    setModelPickerOpen(false);
+    fetchedForRef.current = null;
   }
+
+  // Prefetch so the first dropdown open usually already has options.
+  useEffect(() => {
+    if (!open) {
+      setModelPickerOpen(false);
+      return;
+    }
+    if (!canUseKey) return;
+    if (fetchedForRef.current === modelsFetchKey && modelOptions.length > 0) {
+      return;
+    }
+    void runFetchModels({ quiet: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fingerprint-driven
+  }, [open, modelsFetchKey, canUseKey]);
+
+  useEffect(() => {
+    if (!modelPickerOpen) return;
+    const onPointerDown = (event: MouseEvent) => {
+      const host = modelPickerWrapRef.current;
+      if (!host) return;
+      if (event.target instanceof Node && !host.contains(event.target)) {
+        setModelPickerOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    return () => document.removeEventListener("mousedown", onPointerDown);
+  }, [modelPickerOpen]);
 
   if (!open) return null;
 
-  const modelPickerValue = modelOptions.includes(model) ? model : "";
   const busy = busyAction !== null || saveVerifying;
+  const pickerLabel =
+    busyAction === "models"
+      ? t("aiConfig.fetchingModels")
+      : modelOptions.includes(model)
+        ? model
+        : modelOptions.length > 0
+          ? t("aiConfig.modelPick")
+          : t("aiConfig.modelPickEmpty");
 
   return (
     <div className="dialog-backdrop" role="presentation">
@@ -331,42 +384,69 @@ export function AiConfigDialog({
                 }
                 value={model}
               />
-              <select
-                aria-label={t("aiConfig.modelPick")}
-                className="text-field ai-config-input ai-config-model-picker"
-                disabled={!canUseKey || busyAction === "models"}
-                id="ai-config-model-picker"
-                onChange={(e) => {
-                  const next = e.target.value;
-                  if (next) {
-                    onModelChange(next);
-                    setTestInline(null);
-                  }
-                }}
-                onFocus={() => ensureModelsFetched()}
-                onMouseDown={() => ensureModelsFetched()}
-                title={
-                  busyAction === "models"
-                    ? t("aiConfig.fetchingModels")
-                    : modelOptions.length === 0
+              <div
+                className="ai-config-model-picker-wrap"
+                ref={modelPickerWrapRef}
+              >
+                <button
+                  aria-expanded={modelPickerOpen}
+                  aria-haspopup="listbox"
+                  aria-label={t("aiConfig.modelPick")}
+                  className="text-field ai-config-input ai-config-model-picker-trigger"
+                  disabled={!canUseKey}
+                  onClick={() => void toggleModelPicker()}
+                  title={
+                    !canUseKey
                       ? t("aiConfig.modelPickEmpty")
                       : t("aiConfig.modelPick")
-                }
-                value={modelPickerValue}
-              >
-                <option value="">
-                  {busyAction === "models"
-                    ? t("aiConfig.fetchingModels")
-                    : modelOptions.length === 0
-                      ? t("aiConfig.modelPickEmpty")
-                      : t("aiConfig.modelPick")}
-                </option>
-                {modelOptions.map((id) => (
-                  <option key={id} value={id}>
-                    {id}
-                  </option>
-                ))}
-              </select>
+                  }
+                  type="button"
+                >
+                  <span className="ai-config-model-picker-label">
+                    {pickerLabel}
+                  </span>
+                  <Icon name="chevron" size={12} />
+                </button>
+                {modelPickerOpen ? (
+                  <ul
+                    aria-label={t("aiConfig.modelPick")}
+                    className="ai-config-model-picker-menu"
+                    role="listbox"
+                  >
+                    {busyAction === "models" && modelOptions.length === 0 ? (
+                      <li className="ai-config-model-picker-empty" role="option">
+                        {t("aiConfig.fetchingModels")}
+                      </li>
+                    ) : modelOptions.length === 0 ? (
+                      <li className="ai-config-model-picker-empty" role="option">
+                        {modelsMessage ?? t("aiConfig.modelPickEmpty")}
+                      </li>
+                    ) : (
+                      modelOptions.map((id) => (
+                        <li key={id} role="presentation">
+                          <button
+                            aria-selected={id === model}
+                            className={
+                              id === model
+                                ? "ai-config-model-picker-option is-selected"
+                                : "ai-config-model-picker-option"
+                            }
+                            onClick={() => {
+                              onModelChange(id);
+                              setTestInline(null);
+                              setModelPickerOpen(false);
+                            }}
+                            role="option"
+                            type="button"
+                          >
+                            {id}
+                          </button>
+                        </li>
+                      ))
+                    )}
+                  </ul>
+                ) : null}
+              </div>
             </div>
             {modelsMessage ? (
               <p className="ai-config-hint" role="status">

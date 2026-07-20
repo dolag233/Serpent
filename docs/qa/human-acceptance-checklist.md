@@ -421,6 +421,7 @@
 | 2026-07-20 | 验收回写 + hhy0/xkzf/l7fu | 部分通过 | 5vex/oc2z/wh77/6nmf/u7hz 通过；hhy0/xkzf 不通过已再修；oc2z 附带改适应图标；ehss/CANVAS-026 仍待；f0oo 保留。 | `Serpent-hhy0` → INSPECT-012；`Serpent-xkzf` → VIEWER-014；`Serpent-l7fu` → VIEWER-016。 |
 | 2026-07-20 | INSPECT-012 复验 | 人类验收通过 | VIEWER-014/016 已通过；INSPECT-012 经 hero 防压缩修复后用户确认通过。 | `Serpent-6uyp` / `ad140d4`。 |
 | 2026-07-20 | AI 反馈五单 | 待人类验收 | AI 标签可删/去圆点；模型下拉自动拉；完成 toast；多选分析；设置关角标。 | `Serpent-h2i2` / `wbyi` / `4i18` / `g2qh` / `t8sw` → INSPECT-AI-004 / AICFG-009 / JOBS-002 / MENU-AI-002 / SETTINGS-002。 |
+| 2026-07-20 | AI 五单复验 | 部分通过 | INSPECT-AI-004 / JOBS-002 / MENU-AI-002 / SETTINGS-002 通过；AICFG-009 不通过已再修。 | `Serpent-c0fc`：自定义模型下拉 + 预取。 |
 ### 第五批收口（过滤/导航/排序/Inspector）
 
 | FILTER-019 | 排除过滤红色高亮 | 人类验收通过 | 启用颜色/标签等过滤后勾选排除 | 对应维度按钮呈红色高亮，与包含态区分 | [开发日志](../development/2026-07-19-filter-nav-inspect-polish-development-log.md) / Serpent-8s8 | 2026-07-19 用户确认通过。附带：暗色下红色偏艳 → 降饱和打磨工单。 |
@@ -474,9 +475,9 @@
 | NAV-007 | 新建文件夹/合集/智能合集输入态缩进正确 | 人类验收通过 | 侧栏新建文件夹、合集、智能合集；观察输入行与提交后行 | 输入态与提交后缩进对齐（含 disclosure 占位） | `Serpent-wh77` | 2026-07-20 用户确认通过。 |
 | CONFLICT-001 | 导入冲突列表示例文件名不裁切半截 | 人类验收通过 | 触发导入冲突窗；看底部示例文件名（含长名） | 长名省略号完整可读，hover 可看全名；不被容器硬裁 | `Serpent-6nmf` | 2026-07-20 用户确认通过。 |
 | INSPECT-AI-003 | 编辑 AI 描述仅去掉描述 AI 标 | 人类验收通过 | AI 分析写出描述+标签+评分后，只改描述并失焦 | 描述变人工、AI 标消失；AI 标签与 AI 评分仍在 | `Serpent-u7hz` / worker clear fields | 2026-07-20 用户确认通过。 |
-| INSPECT-AI-004 | AI 标签可删且无前置圆点 | 待人类验收 | 对资产跑 AI 分析得标签；在 Inspector 点 AI 标签的 ×；对照人工标签样式 | AI 标签可删；仅 AI 角标、无彩色前置圆点 | `Serpent-h2i2` | 2026-07-20：UI 放开删除；removeTags 同步清 ai_asset_tags。 |
-| AICFG-009 | 模型下拉开时自动拉列表 | 待人类验收 | 打开 AI 配置；点模型右侧下拉（有 Key） | 无「获取模型列表」按钮；下拉开时自动拉；可选手填 | `Serpent-wbyi` | 2026-07-20：focus/mousedown 触发 listAiModels。 |
-| JOBS-002 | AI 分析完成有明确 toast | 待人类验收 | 对一项或多项资产启动 AI 分析；等进度条结束 | 队列清空后出现成功/失败汇总 toast，不只是进度条消失 | `Serpent-4i18` | 2026-07-20：队列 drain 时发完成反馈。 |
-| MENU-AI-002 | 多选右键批量 AI 分析 | 待人类验收 | 多选资产；右键「AI 分析」 | 可见并可入队；进度/完成反馈与单选一致 | `Serpent-g2qh` | 2026-07-20：assets.ai-analyze + 批量 enqueue。 |
-| SETTINGS-002 | 通用设置可关闭 AI 角标 | 待人类验收 | 通用设置关闭「显示 AI 角标」；看有 AI 内容的资产 Inspector | 角标隐藏；描述/标签/评分数据仍在；再开恢复 | `Serpent-t8sw` | 2026-07-20：ai-ui-preferences.showAiBadges。 |
+| INSPECT-AI-004 | AI 标签可删且无前置圆点 | 人类验收通过 | 对资产跑 AI 分析得标签；在 Inspector 点 AI 标签的 ×；对照人工标签样式 | AI 标签可删；仅 AI 角标、无彩色前置圆点 | `Serpent-h2i2` | 2026-07-20 用户确认通过。 |
+| AICFG-009 | 模型下拉开时自动拉列表 | 待人类验收 | 打开 AI 配置；左侧手填模型名；点右侧下拉展开 | 无「获取模型列表」按钮；下拉可见自动加载的模型并可选用；仍可手填 | `Serpent-wbyi` / `Serpent-c0fc` | 2026-07-20 用户完全不通过（下拉点无效果）。再修：自定义下拉 + 打开对话框预取，拉取时不再 disabled。 |
+| JOBS-002 | AI 分析完成有明确 toast | 人类验收通过 | 对一项或多项资产启动 AI 分析；等进度条结束 | 队列清空后出现成功/失败汇总 toast，不只是进度条消失 | `Serpent-4i18` | 2026-07-20 用户确认通过。 |
+| MENU-AI-002 | 多选右键批量 AI 分析 | 人类验收通过 | 多选资产；右键「AI 分析」 | 可见并可入队；进度/完成反馈与单选一致 | `Serpent-g2qh` | 2026-07-20 用户确认通过。 |
+| SETTINGS-002 | 通用设置可关闭 AI 角标 | 人类验收通过 | 通用设置关闭「显示 AI 角标」；看有 AI 内容的资产 Inspector | 角标隐藏；描述/标签/评分数据仍在；再开恢复 | `Serpent-t8sw` | 2026-07-20 用户确认通过。 |
 | NAV-006 | 亮色主题面包屑 hover 与其他控件一致 | 人类验收通过 | 切换亮色主题；进入多级目录；悬停面包屑中的父级目录项 | hover 背景为细微 `--hover` 色调，与导航树行/工具栏按钮同一 token；不再是刺眼白色块；暗色主题不回归 | `Serpent-xwi1` | 2026-07-19 面包屑 hover 由 `--raised` 改为 `--hover`。用户确认通过。 |
