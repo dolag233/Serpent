@@ -596,7 +596,9 @@ export const en = {
       pauseAi: "Pause AI",
       resumeAi: "Resume AI",
       cancelAi: "Cancel AI",
-      retryAiFailed: "Retry failed AI jobs"
+      retryAiFailed: "Retry failed AI jobs",
+      progress: "Progress",
+      progressDone: "{done}/{total} processed"
     },
     relinkPreview: {
       title: "Batch relink preview",

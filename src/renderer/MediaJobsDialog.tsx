@@ -128,25 +128,38 @@ export function MediaJobsDialog({
                     key={job.jobId}
                     style={{
                       borderBottom: "1px solid var(--border)",
-                      display: "grid",
-                      gap: 8,
-                      gridTemplateColumns:
-                        "minmax(140px, 1fr) 90px minmax(180px, 2fr)",
-                      padding: "9px 2px",
-                      fontSize: 11,
+                      padding: "6px 2px",
                     }}
                   >
-                    <span>
-                      {job.kind
-                        .replace("generate_", "")
-                        .replaceAll("_", " ")}
-                    </span>
-                    <strong>{job.status}</strong>
-                    <span title={job.errorCode ?? undefined}>
-                      {job.errorDetail ??
-                        job.errorCode ??
-                        `${Math.round(job.progress * 100)}%`}
-                    </span>
+                    <div
+                      style={{
+                        display: "grid",
+                        gap: 8,
+                        gridTemplateColumns:
+                          "minmax(140px, 1fr) 90px minmax(180px, 2fr)",
+                        fontSize: 11,
+                      }}
+                    >
+                      <span>
+                        {job.kind
+                          .replace("generate_", "")
+                          .replaceAll("_", " ")}
+                      </span>
+                      <strong>{job.status}</strong>
+                      <span title={job.errorCode ?? undefined}>
+                        {job.errorDetail ??
+                          job.errorCode ??
+                          `${Math.round(job.progress * 100)}%`}
+                      </span>
+                    </div>
+                    {job.status === "running" && job.progress > 0 && (
+                      <div className="task-progress-track">
+                        <div
+                          className="task-progress-fill"
+                          style={{ width: `${job.progress * 100}%` }}
+                        />
+                      </div>
+                    )}
                   </div>
                 ))
               ) : (
@@ -223,20 +236,28 @@ export function MediaJobsDialog({
                   {aiJobs.jobs.map((job) => (
                     <div
                       key={job.jobId}
-                      style={{
-                        display: "grid",
-                        gap: 8,
-                        gridTemplateColumns:
-                          "minmax(150px, 1fr) 90px minmax(180px, 2fr)",
-                        padding: "7px 2px",
-                        fontSize: 11,
-                      }}
+                      style={{ padding: "5px 2px" }}
                     >
-                      <span>{job.kind}</span>
-                      <strong>{job.status}</strong>
-                      <span title={job.errorCode ?? undefined}>
-                        {job.errorDetail ?? job.errorCode ?? "—"}
-                      </span>
+                      <div
+                        style={{
+                          display: "grid",
+                          gap: 8,
+                          gridTemplateColumns:
+                            "minmax(150px, 1fr) 90px minmax(180px, 2fr)",
+                          fontSize: 11,
+                        }}
+                      >
+                        <span>{job.kind}</span>
+                        <strong>{job.status}</strong>
+                        <span title={job.errorCode ?? undefined}>
+                          {job.errorDetail ?? job.errorCode ?? "—"}
+                        </span>
+                      </div>
+                      {job.status === "running" && (
+                        <div className="task-progress-track">
+                          <div className="task-progress-indeterminate" />
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>

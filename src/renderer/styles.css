@@ -5459,3 +5459,34 @@ select.ai-config-input.ai-config-languages {
   ) {
   letter-spacing: 0.02em;
 }
+
+/* Task progress bar — determinate and indeterminate.
+   Shown per-job in the background tasks dialog (MediaJobsDialog). */
+.task-progress-track {
+  width: 100%;
+  height: 4px;
+  margin-top: 4px;
+  border-radius: 2px;
+  background: var(--hover);
+  overflow: hidden;
+}
+
+.task-progress-fill {
+  height: 100%;
+  border-radius: 2px;
+  background: var(--accent);
+  transition: width 250ms ease;
+}
+
+.task-progress-indeterminate {
+  width: 35%;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--accent);
+  animation: task-progress-slide 1.4s ease-in-out infinite;
+}
+
+@keyframes task-progress-slide {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(285%); }
+}

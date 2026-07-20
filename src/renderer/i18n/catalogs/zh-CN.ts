@@ -586,7 +586,9 @@ export const zhCN = {
       pauseAi: "暂停 AI",
       resumeAi: "继续 AI",
       cancelAi: "取消 AI",
-      retryAiFailed: "重试 AI 失败项"
+      retryAiFailed: "重试 AI 失败项",
+      progress: "进度",
+      progressDone: "已完成 {done}/{total}"
     },
     relinkPreview: {
       title: "批量重新定位预览",
