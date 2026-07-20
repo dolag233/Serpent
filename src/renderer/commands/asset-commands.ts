@@ -21,6 +21,7 @@ export interface AssetCommandActions {
   readonly copyFilePath: (assetId: string) => void;
   readonly rename: (assetId: string) => void;
   readonly aiAnalyze: (assetId: string) => void;
+  readonly clearAiContent?: (assetIds: string[]) => void;
   readonly moveToTrash: (assetIds: string[]) => void;
   readonly moveToFolder: (assetIds: string[]) => void;
   readonly relink: (assetId: string) => void;
@@ -194,6 +195,15 @@ export const assetCommandDefinitions: readonly AssetCommandDefinition[] = [
           ? null
           : t(ctx, 'command.reason.aiNotConfigured'),
     run: (ctx) => withPrimaryAsset(ctx, (id) => ctx.actions.aiAnalyze(id)),
+  },
+  {
+    id: 'asset.clear-ai-content',
+    title: (ctx) => t(ctx, 'command.asset.clearAiContent'),
+    group: 'metadata',
+    visible: (ctx) => !ctx.assetDeleted,
+    disabledReason: unavailableReason,
+    run: (ctx) =>
+      withPrimaryAsset(ctx, (id) => ctx.actions.clearAiContent?.([id])),
   },
   // ---- 删除 ----
   {
