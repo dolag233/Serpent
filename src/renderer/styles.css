@@ -4787,8 +4787,7 @@ select.ai-config-input.ai-config-languages {
   cursor: pointer;
 }
 
-/* Compact hero replacement (INSPECT-003) — 左对齐排版：预览图 → 文件名 →
-   摘要行，信息沿同一左缘排列，视线不需要在居中/居左之间跳动。 */
+/* Compact hero — preview centered; title/meta full-width below (Serpent-hhy0). */
 .inspector-hero-compact {
   display: flex;
   align-items: stretch;
@@ -4802,16 +4801,14 @@ select.ai-config-input.ai-config-languages {
 .inspector-hero-preview {
   position: relative;
   display: flex;
-  align-self: flex-start;
-  width: fit-content;
-  max-width: 100%;
+  align-self: stretch;
+  width: 100%;
   max-height: min(360px, 45vh);
   align-items: center;
   justify-content: center;
-  overflow: hidden;
+  overflow: visible;
   border: 0;
-  /* Clip portrait/landscape media to rounded corners (Serpent-hhy0). */
-  border-radius: 8px;
+  border-radius: 0;
   background: transparent;
 }
 
@@ -4829,7 +4826,7 @@ select.ai-config-input.ai-config-languages {
   max-width: 100%;
   height: auto;
   max-height: min(360px, 45vh);
-  border-radius: 0;
+  border-radius: 8px;
   object-fit: contain;
 }
 
@@ -4840,34 +4837,41 @@ select.ai-config-input.ai-config-languages {
 
 .inspector-hero-compact strong,
 .inspector-hero-title {
+  position: relative;
+  z-index: 2;
+  flex-shrink: 0;
+  align-self: stretch;
   min-width: 0;
   max-width: 100%;
+  /* Single-line ellipsis: webkit-line-clamp was clipping descenders (j/p/g). */
+  display: block;
   overflow: hidden;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 12.5px;
   font-weight: 600;
-  line-height: 1.45;
-  overflow-wrap: anywhere;
-  word-break: break-word;
+  line-height: 1.7;
+  padding-block: 0.1em 0.2em;
 }
 
 .inspector-hero-stack {
   position: relative;
+  z-index: 0;
   display: flex;
+  flex-shrink: 0;
   width: 100%;
+  max-height: min(168px, 28vh);
   align-items: center;
   justify-content: center;
-  /* Room for slight layer offsets so back cards stay inside the flow box. */
-  padding: 10px 12px 14px;
-  overflow: visible;
+  padding: 6px 8px 8px;
+  overflow: hidden;
+  isolation: isolate;
 }
 
 .inspector-hero-stack-stage {
   position: relative;
-  width: min(100%, 220px);
-  height: 160px;
+  width: min(100%, 200px);
+  height: 120px;
   flex: 0 0 auto;
 }
 
@@ -4904,17 +4908,17 @@ select.ai-config-input.ai-config-languages {
   color: var(--tertiary);
 }
 
-/* Slight card-deck offset; no large rotation so title below stays clear. */
+/* Slight card-deck offset; keep offsets small so title below stays clear. */
 .inspector-hero-stack-layer[data-depth="0"] {
   transform: translate(0, 0);
 }
 
 .inspector-hero-stack-layer[data-depth="1"] {
-  transform: translate(-6px, 6px);
+  transform: translate(-4px, 4px);
 }
 
 .inspector-hero-stack-layer[data-depth="2"] {
-  transform: translate(-12px, 12px);
+  transform: translate(-8px, 8px);
 }
 
 .inspector-tech-bar {
@@ -4937,8 +4941,18 @@ select.ai-config-input.ai-config-languages {
 
 .inspector-hero-compact.is-multi .inspector-hero-title {
   position: relative;
-  z-index: 1;
-  -webkit-line-clamp: 3;
+  z-index: 2;
+  margin-top: 2px;
+}
+
+.preview-state.is-silent {
+  max-width: none;
+  min-height: 0;
+  padding: 0;
+  gap: 0;
+  /* Serpent-xkzf: no pulse, no copy — silent wait only. */
+  background: transparent;
+  color: transparent;
 }
 
 /* Compact info line (INSPECT-003) — 与文件名同一左缘的摘要行。 */

@@ -524,10 +524,12 @@ export function AssetPreviewModal({
         {/* REQ-VIEW-006: no top filename/toolbar bar; nav sits on the edges. */}
         <div className="preview-content">
           {primarySurface === "loading" ? (
-            <div className="preview-state" role="status">
-              <span className="activity-pulse" />
-              <span className="visually-hidden">{t("preview.resolving")}</span>
-            </div>
+            <div
+              aria-busy="true"
+              aria-label={t("preview.resolving")}
+              className="preview-state is-silent"
+              role="status"
+            />
           ) : ready && resolution?.mediaType === "video" && resolution.url ? (
             <VideoPlayerControls
               isFullscreen={isFullscreen}

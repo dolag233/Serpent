@@ -181,13 +181,12 @@ const iconPaths: Record<IconName, ReactNode> = {
       <path d="M14 3v5h5" />
     </>
   ),
-  // Corners pointing inward — fit content into the frame.
+  // Distinct from fullscreen-exit (inward corner brackets): framed box +
+  // crosshair reads as “fit / center in window”.
   "fit-window": (
     <>
-      <path d="M9 4v5H4" />
-      <path d="M15 4v5h5" />
-      <path d="M4 15h5v5" />
-      <path d="M20 15h-5v5" />
+      <rect x="3.5" y="3.5" width="17" height="17" rx="2" />
+      <path d="M12 7.5v9M7.5 12h9" />
     </>
   ),
   folder: <path d="M3 6.5h7l2 2h9v10H3z" />,
