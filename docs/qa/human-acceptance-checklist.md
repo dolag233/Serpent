@@ -419,7 +419,7 @@
 | 2026-07-20 | 首批五单修复 | 待人类验收 | P0 视频缩略图找 bundled ffmpeg；标签过滤不清文件夹；亮色拖入；竖图预览圆角；全屏切换图标。 | `Serpent-ehss` / `w9c6` / `5vex` / `hhy0` / `oc2z` → 见 FILTER-019b / MEDIA-002 / THEME-011 / INSPECT-011 / VIEWER-015。 |
 | 2026-07-20 | 第二批五单修复 | 待人类验收 | 浏览缩放中心锚定；新建缩进；加载无文案；冲突名省略；编辑 AI 描述仅清描述层。 | `Serpent-f0oo` / `wh77` / `xkzf` / `6nmf` / `u7hz` → CANVAS-027 / NAV-007 / VIEWER-014 / CONFLICT-001 / INSPECT-AI-003。 |
 | 2026-07-20 | 验收回写 + hhy0/xkzf/l7fu | 部分通过 | 5vex/oc2z/wh77/6nmf/u7hz 通过；hhy0/xkzf 不通过已再修；oc2z 附带改适应图标；ehss/CANVAS-026 仍待；f0oo 保留。 | `Serpent-hhy0` → INSPECT-012；`Serpent-xkzf` → VIEWER-014；`Serpent-l7fu` → VIEWER-016。 |
-| 2026-07-20 | INSPECT-012 复验 | 部分通过 | VIEWER-014/016 通过；INSPECT-012 不通过（文件名叠「标签」）已再修。 | `Serpent-6uyp`：hero `flex-shrink:0`，防 flex 压矮溢出。 |
+| 2026-07-20 | INSPECT-012 复验 | 人类验收通过 | VIEWER-014/016 已通过；INSPECT-012 经 hero 防压缩修复后用户确认通过。 | `Serpent-6uyp` / `ad140d4`。 |
 ### 第五批收口（过滤/导航/排序/Inspector）
 
 | FILTER-019 | 排除过滤红色高亮 | 人类验收通过 | 启用颜色/标签等过滤后勾选排除 | 对应维度按钮呈红色高亮，与包含态区分 | [开发日志](../development/2026-07-19-filter-nav-inspect-polish-development-log.md) / Serpent-8s8 | 2026-07-19 用户确认通过。附带：暗色下红色偏艳 → 降饱和打磨工单。 |
@@ -466,7 +466,7 @@
 | MEDIA-002 | 视频缩略图不依赖本机自装 FFmpeg | 待人类验收 | 导入 MP4/MOV；观察卡片缩略图；再悬停预览；若曾失败可刷新或重开库 | 卡片有可解码封面/缩略图；hover 可播；失败提示不再要求用户「自行安装 FFmpeg」 | `Serpent-ehss` / [binary-resolver 单测](../../tests/unit/binary-resolver.test.ts) | 2026-07-20：dev/packaged 解析 `resources/ffmpeg`；Main 向 Worker 注入绝对路径。需重启应用后复验已失败条目。 |
 | FILTER-019b | 工具栏标签过滤保留文件夹浏览上下文 | 待人类验收 | 进入某文件夹；工具栏应用标签过滤；看侧栏文件夹高亮、面包屑与结果 | 文件夹仍为当前范围；侧栏高亮不丢；有标签的资产仍能列出（非空因误清范围） | `Serpent-w9c6` / [单测](../../tests/unit/folder-browse-tag-filter.test.ts) | 2026-07-20：工具栏标签不再写入 activeTagId。 |
 | THEME-011 | 亮色主题拖入文件叠加层 | 人类验收通过 | 亮色主题下拖文件到画布 | 叠加层为亮色 canvas 洗色，非暗色半透明黑底 | `Serpent-5vex` | 2026-07-20 用户确认通过。 |
-| INSPECT-012 | Inspector 竖图预览居中、圆角与标题可读 | 待人类验收 | ① 单选竖图：预览相对右侧栏水平居中、圆角；文件名含 `jpg` 等下伸字母完整可见；文件名与「标签」分区无重叠。② 多选多张竖图：堆叠预览下方文件名始终可见 | 单选居中+圆角；标题 descender 不裁切；文件名不盖住标签行；多选标题在堆叠下方可见 | `Serpent-hhy0` / `Serpent-6uyp` | 2026-07-20 用户不通过：文件名与「标签」重叠。根因：hero 在 flex 列被压矮后标题溢出。再修：hero `flex-shrink:0`。 |
+| INSPECT-012 | Inspector 竖图预览居中、圆角与标题可读 | 人类验收通过 | ① 单选竖图：预览相对右侧栏水平居中、圆角；文件名含 `jpg` 等下伸字母完整可见；文件名与「标签」分区无重叠。② 多选多张竖图：堆叠预览下方文件名始终可见 | 单选居中+圆角；标题 descender 不裁切；文件名不盖住标签行；多选标题在堆叠下方可见 | `Serpent-hhy0` / `Serpent-6uyp` | 2026-07-20 用户确认通过（含文件名/标签重叠修复复验）。 |
 | VIEWER-015 | 查看页全屏按钮可退出且图标切换 | 人类验收通过 | 打开图片/视频查看；点全屏；再点同一按钮；观察图标 | 第二次退出全屏；进入/退出图标不同 | `Serpent-oc2z` | 2026-07-20 用户确认通过。附带：适应窗口与退出全屏易混淆 → `VIEWER-016` / `Serpent-l7fu`。 |
 | VIEWER-016 | 适应窗口图标与退出全屏可区分 | 人类验收通过 | 打开查看页；对照底部「适应」与全屏后「退出全屏」图标 | 适应=外框+十字；退出全屏=四角内折；二者一眼可辨 | `Serpent-l7fu` / `fit-window` | 2026-07-20 用户确认通过。 |
 | CANVAS-027 | Ctrl+滚轮缩放卡片时视口中心资产保持 | 待人类验收 | 浏览画布：将某资产置于视口中心；Ctrl+滚轮放大/缩小数次 | 缩放前后该资产仍在视口中心附近，不整页跳飞 | `Serpent-f0oo` | 2026-07-20：滚轮缩放改以视口中心为锚。用户说明原需求是 Cmd/Ctrl± 中心缩放+浏览区调卡片大小；本项非其点名但保留。 |
