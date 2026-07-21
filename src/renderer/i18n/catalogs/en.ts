@@ -524,6 +524,12 @@ export const en = {
       dontShowAgain: "Don't show this again",
       submit: "Delete from disk"
     },
+    aiConnectionFailure: {
+      title: "AI connection failed",
+      body: "Could not reach the AI provider after several retries ({count} job(s) failed). Retry the failed jobs, or abort the remaining queue.",
+      retry: "Retry",
+      abort: "Abort remaining"
+    },
     deleteLinked: {
       title: "Delete linked asset",
       body: "Remove linked asset \"{name}\" from Serpent? By default only the index record is removed; source files on disk stay untouched.",

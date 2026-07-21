@@ -25,6 +25,7 @@ const empty: DialogEscapeSnapshot = {
   linkedRulesEditorOpen: false,
   convertLinkedOpen: false,
   dialogOpen: false,
+  aiConnectionFailureOpen: false,
   conflictsImportId: null,
 };
 
@@ -43,6 +44,17 @@ describe("dialog-escape-stack", () => {
         conflictsImportId: "imp_1",
       }),
     ).toEqual({ kind: "cancel-asset-rename" });
+  });
+
+  it("prefers AI connection failure over other layers (Serpent-kdnm)", () => {
+    expect(
+      resolveDialogEscapeAction({
+        ...empty,
+        aiConnectionFailureOpen: true,
+        assetRenameOpen: true,
+        mediaJobsOpen: true,
+      }),
+    ).toEqual({ kind: "abort-ai-connection-failure" });
   });
 
   it("abandons import when only conflicts remain", () => {

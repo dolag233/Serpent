@@ -514,6 +514,12 @@ export const zhCN = {
       dontShowAgain: "不再显示此提示",
       submit: "从硬盘中删除"
     },
+    aiConnectionFailure: {
+      title: "AI 连接失败",
+      body: "多次重试后仍无法连接 AI 供应商（已失败 {count} 项）。可重试失败任务，或终止队列中剩余任务。",
+      retry: "重试",
+      abort: "终止剩余任务"
+    },
     deleteLinked: {
       title: "删除链接资产",
       body: "确定要从 Serpent 中移除链接资产\"{name}\"吗？默认只移除索引记录，磁盘源文件保持不变。",

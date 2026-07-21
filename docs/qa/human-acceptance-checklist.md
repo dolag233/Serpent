@@ -424,6 +424,7 @@
 | 2026-07-20 | AI 五单复验 | 部分通过 | INSPECT-AI-004 / JOBS-002 / MENU-AI-002 / SETTINGS-002 通过；AICFG-009 不通过已再修。 | `Serpent-c0fc`：自定义模型下拉 + 预取。 |
 | 2026-07-21 | DEV-001 启动黑屏/端口 | 人类验收通过 | 用户确认端口冲突黑屏修复与 `start:multi` 可用。 | `Serpent-i6xg` / `scripts/dev-start.mjs` |
 | 2026-07-21 | AI 失败/语言/Toast/进度 | 部分通过 | JOBS-003 / SHELL-011 通过；AICFG-011 描述过短不通过；JOBS-004 UI/停止不通过。附带：误弹搜索 toast、toast 顶掉、AI 重试弹窗、递归标签过滤、查看页手势。 | `Serpent-iokf`/`qpy8` 通过；`sbnt`/`k3dw` 重开；新单 `huvw`/`99lv`/`kdnm`/`5cvr`/`4kg3`。 |
+| 2026-07-21 | JOBS-006 AI 连接失败弹窗 | 待人类验收 | 连接类失败自动重试 3 次后弹一次 Retry/Abort；非连接类（如 AI_INVALID_RESPONSE）不弹。 | `Serpent-kdnm` |
 ### 第五批收口（过滤/导航/排序/Inspector）
 
 | FILTER-019 | 排除过滤红色高亮 | 人类验收通过 | 启用颜色/标签等过滤后勾选排除 | 对应维度按钮呈红色高亮，与包含态区分 | [开发日志](../development/2026-07-19-filter-nav-inspect-polish-development-log.md) / Serpent-8s8 | 2026-07-19 用户确认通过。附带：暗色下红色偏艳 → 降饱和打磨工单。 |
@@ -489,6 +490,7 @@
 | TOAST-002 | warning/error 不被 info 顶掉 | 人类验收通过 | 先触发 error toast；再触发普通 notice | error 仍显示；notice 不抢占 | `Serpent-99lv`（分级首步） | 2026-07-21 用户确认通过。 |
 | FILTER-021 | 标签过滤含 AI 标签 | 人类验收通过 | AI 分析写出标签后，在递归文件夹里用该标签过滤 | 能筛到带该 AI 标签的资产 | `Serpent-5cvr` | 2026-07-21 用户确认通过。 |
 | JOBS-005 | 并行 AI 分析 | 待人类验收 | 多选 ≥4 项启动 AI 分析；看进度与后台任务 | 多项可同时 running（默认最多 4）；进度/停止仍正确；可用环境变量 SERPENT_AI_CONCURRENCY 调整 | `Serpent-opme` | 2026-07-21：lane 数与 ProviderConcurrencyLimiter 对齐，默认 4。 |
+| JOBS-006 | AI 连接失败自动重试后弹窗 | 待人类验收 | ① 断网或故意用无效代理后，多选若干资产启动 AI 分析。② 等待 Worker 对网络类错误自动重试约 3 次。③ 出现「AI 连接失败」对话框后分别试「重试」与「终止剩余任务」。④ 同一批失败不应每个资产各弹一次。 | 网络/超时/限流（及鉴权）耗尽重试后弹出一次对话框；「重试」重新入队失败 AI 任务；「终止」取消排队/运行中剩余任务；`AI_INVALID_RESPONSE` 等非连接类失败不弹此窗 | `Serpent-kdnm` / [connection-failure 单测](../../tests/unit/ai-connection-failure.test.ts) | 2026-07-21 实现。 |
 | JOBS-002 | AI 分析完成有明确 toast | 人类验收通过 | 对一项或多项资产启动 AI 分析；等进度条结束 | 队列清空后出现成功/失败汇总 toast，不只是进度条消失 | `Serpent-4i18` | 2026-07-20 用户确认通过。 |
 | MENU-AI-002 | 多选右键批量 AI 分析 | 人类验收通过 | 多选资产；右键「AI 分析」 | 可见并可入队；进度/完成反馈与单选一致 | `Serpent-g2qh` | 2026-07-20 用户确认通过。 |
 | SETTINGS-002 | 通用设置可关闭 AI 角标 | 人类验收通过 | 通用设置关闭「显示 AI 角标」；看有 AI 内容的资产 Inspector | 角标隐藏；描述/标签/评分数据仍在；再开恢复 | `Serpent-t8sw` | 2026-07-20 用户确认通过。 |

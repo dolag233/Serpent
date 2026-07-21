@@ -112,6 +112,8 @@ import {
   type SmartCollectionSettingsTarget,
 } from "./SmartCollectionSettingsDialog";
 import { MediaJobsDialog } from "./MediaJobsDialog";
+import { AiConnectionFailureDialog } from "./AiConnectionFailureDialog";
+import { useAiConnectionFailure } from "./use-ai-connection-failure";
 
 import {
   ContextMenuProvider,
@@ -905,6 +907,37 @@ function AppInner() {
   const [mediaJobs, setMediaJobs] = useState<MediaJobStatus | null>(null);
   const [aiJobs, setAiJobs] = useState<AiJobStatus | null>(null);
   const [mediaJobsLoading, setMediaJobsLoading] = useState(false);
+  const controlAiJobsRef = useRef<
+    (action: "pause" | "resume" | "cancel" | "retry", jobIds?: string[]) => Promise<void>
+  >(async () => undefined);
+  const {
+    gate: aiConnectionFailureGate,
+    notifyBatchStarted: notifyAiConnectionBatchStarted,
+    onRetry: onAiConnectionFailureRetry,
+    onAbort: onAiConnectionFailureAbort,
+  } = useAiConnectionFailure({
+    api: api ?? null,
+    libraryId: library?.libraryId,
+    failedCount: aiJobs?.failed ?? 0,
+    queuedCount: aiJobs?.queued ?? 0,
+    runningCount: aiJobs?.running ?? 0,
+    aiAnalyzing,
+    controlAiJobs: useCallback(
+      async (action, jobIds) => {
+        await controlAiJobsRef.current(action, jobIds);
+      },
+      [],
+    ),
+  });
+  const handleAiConnectionFailureRetry = useCallback(() => {
+    // Re-arm batch progress / completion toast for the retry wave.
+    flushSync(() => {
+      aiAnalyzingRef.current = true;
+      setAiAnalyzing(true);
+    });
+    onAiConnectionFailureRetry();
+  }, [onAiConnectionFailureRetry]);
+
 
   const selectedFolderId =
     assetScope === "all" || assetScope === "root" ? undefined : assetScope;
@@ -4821,6 +4854,7 @@ function AppInner() {
       linkedRulesEditorOpen: Boolean(linkedRulesEditor),
       convertLinkedOpen: Boolean(convertLinkedDialog.folderId),
       dialogOpen: Boolean(dialog),
+      aiConnectionFailureOpen: aiConnectionFailureGate.open,
       conflictsImportId: conflicts?.importId ?? null,
     };
   }, [
@@ -4844,6 +4878,7 @@ function AppInner() {
     linkedRulesEditor,
     convertLinkedDialog.folderId,
     dialog,
+    aiConnectionFailureGate.open,
     conflicts?.importId,
   ]);
 
@@ -4876,6 +4911,7 @@ function AppInner() {
     setShowCollectionInput,
     setConflicts,
     setError,
+    onAbortAiConnectionFailure: onAiConnectionFailureAbort,
   });
 
   const dialogFocusTrapActive = Boolean(
@@ -4897,6 +4933,7 @@ function AppInner() {
       Boolean(smartCollectionSettings) ||
       aiConfigOpen ||
       extensionPairingOpen ||
+      aiConnectionFailureGate.open ||
       (mediaJobsOpen && library !== null) ||
       linkedRulesEditor ||
       convertLinkedDialog.folderId,
@@ -5640,6 +5677,19 @@ function AppInner() {
     analyzeSucceededBaselineRef.current = aiJobs?.succeeded ?? 0;
     analyzingAssetIdRef.current = targetIds[0] ?? null;
     analyzingBatchSizeRef.current = targetIds.length;
+    // Serpent-kdnm: capture baseline failed jobs before enqueue so old
+    // failures do not immediately re-open the connection dialog.
+    try {
+      const status = await api.getAiJobStatus({ libraryId: library.libraryId });
+      if (status.ok) {
+        setAiJobs(status.value);
+        notifyAiConnectionBatchStarted(status.value.jobs);
+      } else {
+        notifyAiConnectionBatchStarted(aiJobs?.jobs ?? []);
+      }
+    } catch {
+      notifyAiConnectionBatchStarted(aiJobs?.jobs ?? []);
+    }
     flushSync(() => {
       aiAnalyzingRef.current = true;
       setAiAnalyzing(true);
@@ -5928,6 +5978,7 @@ function AppInner() {
       setError(t("toast.aiJobsOpNoResponse"));
     }
   }
+  controlAiJobsRef.current = controlAiJobs;
 
   // Handle inline input keydown for collection creation
   function handleCollectionInputKeyDown(
@@ -7555,6 +7606,12 @@ function AppInner() {
         }}
         onRotate={() => void rotateExtensionPairing()}
         onCopy={() => void copyExtensionPairingToken()}
+      />
+      <AiConnectionFailureDialog
+        failedCount={aiConnectionFailureGate.failedJobIds.length}
+        onAbort={onAiConnectionFailureAbort}
+        onRetry={handleAiConnectionFailureRetry}
+        open={aiConnectionFailureGate.open}
       />
       <AiConfigDialog
         open={aiConfigOpen}

@@ -22,6 +22,8 @@ export type DialogEscapeSnapshot = {
   linkedRulesEditorOpen: boolean;
   convertLinkedOpen: boolean;
   dialogOpen: boolean;
+  /** Serpent-kdnm: AI connection lost — Escape aborts remaining jobs. */
+  aiConnectionFailureOpen: boolean;
   /** When set, Escape abandons this pending import conflict plan. */
   conflictsImportId: string | null;
 };
@@ -46,6 +48,7 @@ export type DialogEscapeAction =
   | { kind: "close-linked-rules" }
   | { kind: "close-convert-linked" }
   | { kind: "close-dialog" }
+  | { kind: "abort-ai-connection-failure" }
   | { kind: "abandon-import"; importId: string };
 
 export function isDialogEscapeLayerActive(
@@ -57,6 +60,10 @@ export function isDialogEscapeLayerActive(
 export function resolveDialogEscapeAction(
   snapshot: DialogEscapeSnapshot,
 ): DialogEscapeAction {
+  // Fatal AI connection dialog sits above other layers (Serpent-kdnm).
+  if (snapshot.aiConnectionFailureOpen) {
+    return { kind: "abort-ai-connection-failure" };
+  }
   if (snapshot.assetRenameOpen) return { kind: "cancel-asset-rename" };
   if (snapshot.permanentDeleteOpen) return { kind: "close-permanent-delete" };
   if (snapshot.diskDeleteOpen) return { kind: "close-disk-delete" };

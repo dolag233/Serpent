@@ -34,6 +34,8 @@ export type UseDialogEscapeDismissParams = {
   setShowCollectionInput: (open: boolean) => void;
   setConflicts: (value: ImportConflictPlan | null) => void;
   setError: (message: string | null) => void;
+  /** Serpent-kdnm: Escape on connection-failure dialog aborts remaining AI jobs. */
+  onAbortAiConnectionFailure?: () => void;
 };
 
 /**
@@ -64,6 +66,7 @@ export function useDialogEscapeDismiss({
   setShowCollectionInput,
   setConflicts,
   setError,
+  onAbortAiConnectionFailure,
 }: UseDialogEscapeDismissParams): void {
   const t = useT();
   const { locale } = useLocale();
@@ -77,6 +80,9 @@ export function useDialogEscapeDismiss({
       const action = resolveDialogEscapeAction(snapshot);
       switch (action.kind) {
         case "none":
+          return;
+        case "abort-ai-connection-failure":
+          onAbortAiConnectionFailure?.();
           return;
         case "cancel-asset-rename":
           cancelAssetRename();
@@ -178,6 +184,7 @@ export function useDialogEscapeDismiss({
     setShowCollectionInput,
     setConflicts,
     setError,
+    onAbortAiConnectionFailure,
     locale,
     t,
   ]);
