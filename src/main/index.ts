@@ -129,13 +129,27 @@ if (process.env.SERPENT_E2E === "1") {
   );
 }
 
+// Dev multi-instance (Serpent-i6xg): isolate userData so SingletonLock / prefs
+// do not collide. Prefer `npm run start:multi`. Do not open the same library
+// for writes from two GUIs — SQLite write coordination is CLI/desktop lease
+// territory (ADR-0021), not dual-GUI.
+const allowMultiInstance = process.env.SERPENT_ALLOW_MULTI_INSTANCE === "1";
+if (allowMultiInstance && process.env.SERPENT_E2E !== "1") {
+  app.setPath(
+    "userData",
+    path.join(app.getPath("userData"), "dev-instances", `pid-${process.pid}`),
+  );
+}
+
 // Before app.ready: stream privilege is required for seekable <video>/<audio>
 // over serpent:// Range responses (Serpent-jh2).
 protocol.registerSchemesAsPrivileged(serpentProtocolSchemes());
 
 app.enableSandbox();
 
-const hasSingleInstanceLock = app.requestSingleInstanceLock();
+const hasSingleInstanceLock = allowMultiInstance
+  ? true
+  : app.requestSingleInstanceLock();
 
 let mainWindow: BrowserWindow | undefined;
 let workerClient: LibraryWorkerClient | undefined;
@@ -408,6 +422,19 @@ async function createMainWindow(): Promise<void> {
   });
 
   if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
+    window.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL) => {
+      if (errorCode === -3) return; // aborted
+      const detail = [
+        `Failed to load renderer (${errorCode}): ${errorDescription}`,
+        validatedURL ? `URL: ${validatedURL}` : null,
+        "If the window is black after npm start, a Vite port conflict is likely.",
+        "Use `npm start` (auto free port) or free the process on 5173.",
+      ]
+        .filter(Boolean)
+        .join("\n");
+      logger?.error("main.window.load", detail);
+      dialog.showErrorBox("Serpent renderer failed to load", detail);
+    });
     await window.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL);
   } else {
     await window.loadFile(

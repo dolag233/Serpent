@@ -422,6 +422,7 @@
 | 2026-07-20 | INSPECT-012 复验 | 人类验收通过 | VIEWER-014/016 已通过；INSPECT-012 经 hero 防压缩修复后用户确认通过。 | `Serpent-6uyp` / `ad140d4`。 |
 | 2026-07-20 | AI 反馈五单 | 待人类验收 | AI 标签可删/去圆点；模型下拉自动拉；完成 toast；多选分析；设置关角标。 | `Serpent-h2i2` / `wbyi` / `4i18` / `g2qh` / `t8sw` → INSPECT-AI-004 / AICFG-009 / JOBS-002 / MENU-AI-002 / SETTINGS-002。 |
 | 2026-07-20 | AI 五单复验 | 部分通过 | INSPECT-AI-004 / JOBS-002 / MENU-AI-002 / SETTINGS-002 通过；AICFG-009 不通过已再修。 | `Serpent-c0fc`：自定义模型下拉 + 预取。 |
+| 2026-07-21 | DEV-001 启动黑屏/端口 | 人类验收通过 | 用户确认端口冲突黑屏修复与 `start:multi` 可用。 | `Serpent-i6xg` / `scripts/dev-start.mjs` |
 ### 第五批收口（过滤/导航/排序/Inspector）
 
 | FILTER-019 | 排除过滤红色高亮 | 人类验收通过 | 启用颜色/标签等过滤后勾选排除 | 对应维度按钮呈红色高亮，与包含态区分 | [开发日志](../development/2026-07-19-filter-nav-inspect-polish-development-log.md) / Serpent-8s8 | 2026-07-19 用户确认通过。附带：暗色下红色偏艳 → 降饱和打磨工单。 |
@@ -478,6 +479,7 @@
 | INSPECT-AI-004 | AI 标签可删且无前置圆点 | 人类验收通过 | 对资产跑 AI 分析得标签；在 Inspector 点 AI 标签的 ×；对照人工标签样式 | AI 标签可删；仅 AI 角标、无彩色前置圆点 | `Serpent-h2i2` | 2026-07-20 用户确认通过。 |
 | AICFG-009 | 模型下拉开时自动拉列表 | 待人类验收 | 打开 AI 配置；左侧手填模型名；点右侧下拉展开 | 无「获取模型列表」按钮；下拉可见自动加载的模型并可选用；仍可手填 | `Serpent-wbyi` / `Serpent-c0fc` | 2026-07-20 用户完全不通过（下拉点无效果）。再修：自定义下拉 + 打开对话框预取，拉取时不再 disabled。 |
 | AICFG-010 | 「已连接」状态与标题对齐 | 待人类验收 | 打开已保存 Key 的 AI 配置；看标题旁「已连接」 | 状态指示与「AI 配置」标题同一水平视觉基线 | `Serpent-4dt3` | 2026-07-21：去掉标题额外 margin，heading 与指示器垂直居中对齐。 |
+| DEV-001 | npm start 避开 Vite 端口冲突黑屏 | 人类验收通过 | ① 先占住 5173（或留下陈旧 Vite）；再 `npm start`。② 需要时可再开 `npm run start:multi` | ① 窗口正常出 UI，终端打印实际端口；无黑屏。② 第二实例可独立启动（隔离 userData）；勿对同一库双开写入 | `Serpent-i6xg` / `scripts/dev-start.mjs` | 2026-07-21：strictPort + 预选空闲端口；多实例开关。用户确认通过。 |
 | JOBS-002 | AI 分析完成有明确 toast | 人类验收通过 | 对一项或多项资产启动 AI 分析；等进度条结束 | 队列清空后出现成功/失败汇总 toast，不只是进度条消失 | `Serpent-4i18` | 2026-07-20 用户确认通过。 |
 | MENU-AI-002 | 多选右键批量 AI 分析 | 人类验收通过 | 多选资产；右键「AI 分析」 | 可见并可入队；进度/完成反馈与单选一致 | `Serpent-g2qh` | 2026-07-20 用户确认通过。 |
 | SETTINGS-002 | 通用设置可关闭 AI 角标 | 人类验收通过 | 通用设置关闭「显示 AI 角标」；看有 AI 内容的资产 Inspector | 角标隐藏；描述/标签/评分数据仍在；再开恢复 | `Serpent-t8sw` | 2026-07-20 用户确认通过。 |

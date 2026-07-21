@@ -10,7 +10,9 @@
     "node": ">=24 <25"
   },
   "scripts": {
-    "start": "electron-forge start",
+    "start": "node scripts/dev-start.mjs",
+    "start:forge": "electron-forge start",
+    "start:multi": "node scripts/dev-start.mjs --multi",
     "prepackage": "node scripts/media-binaries.mjs verify",
     "package": "electron-forge package",
     "verify:package": "node scripts/verify-package.mjs",

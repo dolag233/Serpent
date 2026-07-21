@@ -38,7 +38,7 @@ GitHub 认证：推荐 `gh auth login`（HTTPS + web 浏览器，自动配 git c
 npm start
 ```
 
-`electron-forge start` 先用 Vite 编译 main/preload/worker 三个 target，然后启动 Electron dev server，弹出主窗口。首次启动可能触发 Electron postinstall 下载完整 binary（含 icudtl.dat）。
+`scripts/dev-start.mjs` 先选空闲环回端口并设置 `SERPENT_VITE_PORT`（Vite `strictPort`），再跑 `electron-forge start`，避免 5173 被占时 Forge 仍加载旧 URL 导致黑屏。需要两个开发实例时用 `npm run start:multi`（隔离 userData；勿对同一库双开写入）。首次启动可能触发 Electron postinstall 下载完整 binary（含 icudtl.dat）。
 
 ## 常用命令
 
