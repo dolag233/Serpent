@@ -129,22 +129,23 @@ test("uses coherent Windows UI fonts and readable caption sizes", async (
 
     expect(typography.platform).toBe("windows");
     expect(typography.theme).toBe("dark");
+    expect(typography.rootFamily).toContain("HarmonyOS Sans SC");
     expect(typography.rootFamily).toContain("Segoe UI Variable");
-    expect(typography.rootFamily).toContain("Noto Sans SC Variable");
-    expect(typography.rootFamily.indexOf("Segoe UI Variable")).toBeLessThan(
-      typography.rootFamily.indexOf("Noto Sans SC Variable"),
+    expect(typography.rootFamily.indexOf("HarmonyOS Sans SC")).toBeLessThan(
+      typography.rootFamily.indexOf("Segoe UI Variable"),
     );
     expect(typography.rootFamily).toContain("Microsoft YaHei UI");
+    expect(typography.rootFamily).toContain("Noto Sans SC Variable");
     expect(typography.textRendering).toBe("auto");
-    expect(typography.badge.family).toContain("Noto Sans SC Variable");
-    expect(typography.identityTitle.family).toContain("Noto Sans SC Variable");
+    expect(typography.badge.family).toContain("HarmonyOS Sans SC");
+    expect(typography.identityTitle.family).toContain("HarmonyOS Sans SC");
     expect(typography.identityTitleContainer.family).toContain(
-      "Segoe UI Variable",
+      "HarmonyOS Sans SC",
     );
-    expect(typography.microLabel.family).toContain("Noto Sans SC Variable");
-    expect(typography.metadataCount.family).toContain("Noto Sans SC Variable");
+    expect(typography.microLabel.family).toContain("HarmonyOS Sans SC");
+    expect(typography.metadataCount.family).toContain("HarmonyOS Sans SC");
     expect(typography.badge.size).toBe("13px");
-    expect(typography.badge.weight).toBe("500");
+    expect(typography.badge.weight).toBe("400");
     expect(typography.identityTitle.size).toBe("13px");
     expect(typography.identityTitle.weight).toBe("560");
     expect(typography.microLabel.size).toBe("12px");
@@ -198,8 +199,8 @@ test("uses coherent Windows UI fonts and readable caption sizes", async (
     );
     expect(longNameFixture.textOverflow).toBe("clip");
     expect(longNameFixture.whiteSpace).toBe("normal");
-    expect(longNameFixture.containerFamily).toContain("Segoe UI Variable");
-    expect(longNameFixture.nameFamily).toContain("Noto Sans SC Variable");
+    expect(longNameFixture.containerFamily).toContain("HarmonyOS Sans SC");
+    expect(longNameFixture.nameFamily).toContain("HarmonyOS Sans SC");
 
     const cdp = await window.context().newCDPSession(window);
     await cdp.send("DOM.enable");
@@ -209,6 +210,8 @@ test("uses coherent Windows UI fonts and readable caption sizes", async (
       ".inspector-content .micro-label",
       ".inspector-badge",
       ".inspector-identity-name",
+      ".nav-section-heading",
+      ".library-switcher-section-label",
     ]) {
       const { nodeId } = await cdp.send("DOM.querySelector", {
         nodeId: root.nodeId,
@@ -220,9 +223,9 @@ test("uses coherent Windows UI fonts and readable caption sizes", async (
       expect(
         fonts.some(
           (font) =>
-            /Noto Sans SC/iu.test(font.familyName) && font.isCustomFont,
+            /HarmonyOS Sans SC/iu.test(font.familyName) && font.isCustomFont,
         ),
-        `${selector} should resolve through the bundled Noto Sans SC variable font`,
+        `${selector} should resolve through the bundled HarmonyOS Sans SC font`,
       ).toBe(true);
     }
     const { nodeIds: metadataNodeIds } = await cdp.send("DOM.querySelectorAll", {
@@ -237,25 +240,9 @@ test("uses coherent Windows UI fonts and readable caption sizes", async (
       expect(
         fonts.some(
           (font) =>
-            /Noto Sans SC/iu.test(font.familyName) && font.isCustomFont,
+            /HarmonyOS Sans SC/iu.test(font.familyName) && font.isCustomFont,
         ),
-        "every status/asset/folder label and value should use bundled Noto",
-      ).toBe(true);
-    }
-    for (const selector of [
-      ".nav-section-heading",
-      ".library-switcher-section-label",
-    ]) {
-      const { nodeId } = await cdp.send("DOM.querySelector", {
-        nodeId: root.nodeId,
-        selector,
-      });
-      const { fonts } = await cdp.send("CSS.getPlatformFontsForNode", {
-        nodeId,
-      });
-      expect(
-        fonts.some((font) => /Microsoft YaHei UI/iu.test(font.familyName)),
-        `${selector} should keep the native Windows UI fallback`,
+        "every status/asset/folder label and value should use bundled HarmonyOS",
       ).toBe(true);
     }
 
