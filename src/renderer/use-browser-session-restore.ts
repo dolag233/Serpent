@@ -1,0 +1,311 @@
+/**
+ * Workspace browser-session restore / persist / focus (Serpent-uye).
+ * Keeps App.tsx free of the session-scope apply + selection recovery body.
+ */
+
+import {
+  useCallback,
+  useEffect,
+  type Dispatch,
+  type MutableRefObject,
+  type RefObject,
+  type SetStateAction,
+} from "react";
+
+import type { AssetSummary } from "../shared/asset-types";
+import type { SerpentLibraryApi } from "../shared/library-api";
+import type { RendererLibrarySummary } from "../shared/protocol/responses";
+import {
+  buildBrowserSessionFromBrowseState,
+  readBrowserSession,
+  writeBrowserSession,
+} from "./browser-session";
+import { LibraryOperationError, toMessage } from "./error-utils";
+import {
+  isFolderRecursiveEnabled,
+  loadFolderRecursivePreferences,
+} from "./folder-recursive-preferences";
+import { useLocale, useT } from "./i18n";
+import {
+  applyStoredBrowserSession,
+  type LoadContentForRestore,
+} from "./restore-browser-session";
+import type { WorkspaceNavHistory, WorkspaceNavLocation } from "./workspace-nav-history";
+
+export type UseBrowserSessionRestoreArgs = {
+  api: SerpentLibraryApi | null;
+  loadContent: LoadContentForRestore;
+  pageSize: number;
+  collectionRecursiveRef: MutableRefObject<boolean>;
+  folderRecursiveRef: MutableRefObject<boolean>;
+  setFolderRecursive: (enabled: boolean) => void;
+  setLibrary: Dispatch<SetStateAction<RendererLibrarySummary | null>>;
+  setShowTrash: Dispatch<SetStateAction<boolean>>;
+  setTrashedAssets: Dispatch<SetStateAction<AssetSummary[]>>;
+  setAssetScope: Dispatch<SetStateAction<"all" | "root" | string>>;
+  setActiveTagId: Dispatch<SetStateAction<string | null>>;
+  setTagFilter: Dispatch<SetStateAction<string>>;
+  setActiveCollectionId: Dispatch<SetStateAction<string | null>>;
+  setActiveSmartCollectionId: Dispatch<SetStateAction<string | null>>;
+  setAssets: Dispatch<SetStateAction<AssetSummary[]>>;
+  setSearchTotal: Dispatch<SetStateAction<number | null>>;
+  setSelectedAssetId: Dispatch<SetStateAction<string | undefined>>;
+  setSelectedAssetIds: Dispatch<SetStateAction<string[]>>;
+  selectionAnchorRef: MutableRefObject<string | null>;
+  pendingRestoredFocusRef: MutableRefObject<string | null>;
+  navHistoryRef: MutableRefObject<WorkspaceNavHistory>;
+  setNavHistoryUi: Dispatch<
+    SetStateAction<{ canBack: boolean; canForward: boolean }>
+  >;
+  setUiState: Dispatch<
+    SetStateAction<
+      | "booting"
+      | "idle"
+      | "creating"
+      | "opening"
+      | "closing"
+      | "loading"
+      | "importing"
+      | "ready"
+    >
+  >;
+  setError: (message: string | null) => void;
+};
+
+export function useBrowserSessionRestore(
+  args: UseBrowserSessionRestoreArgs,
+): void {
+  const t = useT();
+  const { locale } = useLocale();
+  const {
+    api,
+    loadContent,
+    pageSize,
+    collectionRecursiveRef,
+    folderRecursiveRef,
+    setFolderRecursive,
+    setLibrary,
+    setShowTrash,
+    setTrashedAssets,
+    setAssetScope,
+    setActiveTagId,
+    setTagFilter,
+    setActiveCollectionId,
+    setActiveSmartCollectionId,
+    setAssets,
+    setSearchTotal,
+    setSelectedAssetId,
+    setSelectedAssetIds,
+    selectionAnchorRef,
+    pendingRestoredFocusRef,
+    navHistoryRef,
+    setNavHistoryUi,
+    setUiState,
+    setError,
+  } = args;
+
+  const restore = useCallback(async () => {
+    if (!api) {
+      setError(t("toast.bridgeUnavailable"));
+      setUiState("idle");
+      return;
+    }
+    let activeLibrary: RendererLibrarySummary | null = null;
+    try {
+      const result = await api.listOpen();
+      if (!result.ok) throw new LibraryOperationError(result.error);
+      activeLibrary = result.value[0] ?? null;
+      setLibrary(activeLibrary);
+      setShowTrash(false);
+      setTrashedAssets([]);
+      if (activeLibrary) {
+        let restoredItems = (await loadContent(activeLibrary, "all")) ?? [];
+        const session = readBrowserSession(activeLibrary.libraryId);
+        let restoredLocation: WorkspaceNavLocation = { kind: "all" };
+        if (session) {
+          try {
+            const applied = await applyStoredBrowserSession({
+              api,
+              library: activeLibrary,
+              session,
+              initialItems: restoredItems,
+              pageSize,
+              collectionRecursive: collectionRecursiveRef.current,
+              isFolderRecursiveEnabled: (libraryId, folderId) =>
+                isFolderRecursiveEnabled(
+                  loadFolderRecursivePreferences(),
+                  libraryId,
+                  folderId,
+                ),
+              loadContent,
+              setShowTrash,
+              setAssetScope,
+              setFolderRecursive,
+              folderRecursiveRef,
+              setActiveTagId,
+              setTagFilter,
+              setActiveCollectionId,
+              setActiveSmartCollectionId,
+              setAssets,
+              setTrashedAssets,
+              setSearchTotal,
+            });
+            restoredLocation = applied.restoredLocation;
+            if (applied.restoredAsset) {
+              setSelectedAssetId(applied.restoredAsset.assetId);
+              setSelectedAssetIds([applied.restoredAsset.assetId]);
+              selectionAnchorRef.current = applied.restoredAsset.assetId;
+              pendingRestoredFocusRef.current = applied.restoredAsset.assetId;
+            }
+          } catch (sessionError) {
+            console.warn(
+              "Saved browser session could not be restored.",
+              sessionError,
+            );
+            setShowTrash(false);
+            setAssetScope("all");
+            setActiveTagId(null);
+            setActiveCollectionId(null);
+            setActiveSmartCollectionId(null);
+            restoredLocation = { kind: "all" };
+            await loadContent(activeLibrary, "all");
+          }
+        }
+        navHistoryRef.current.clear(restoredLocation);
+        setNavHistoryUi({ canBack: false, canForward: false });
+      } else {
+        navHistoryRef.current.clear({ kind: "all" });
+        setNavHistoryUi({ canBack: false, canForward: false });
+      }
+      setUiState(activeLibrary ? "ready" : "idle");
+    } catch (caught) {
+      setError(toMessage(caught, t("toast.workspaceRestoreFailed"), locale));
+      setUiState(activeLibrary ? "ready" : "idle");
+    }
+  }, [
+    api,
+    collectionRecursiveRef,
+    folderRecursiveRef,
+    loadContent,
+    locale,
+    navHistoryRef,
+    pageSize,
+    pendingRestoredFocusRef,
+    selectionAnchorRef,
+    setActiveCollectionId,
+    setActiveSmartCollectionId,
+    setActiveTagId,
+    setAssetScope,
+    setAssets,
+    setError,
+    setFolderRecursive,
+    setLibrary,
+    setNavHistoryUi,
+    setSearchTotal,
+    setSelectedAssetId,
+    setSelectedAssetIds,
+    setShowTrash,
+    setTagFilter,
+    setTrashedAssets,
+    setUiState,
+    t,
+  ]);
+
+  useEffect(() => {
+    void Promise.resolve().then(restore);
+  }, [restore]);
+}
+
+export type UseBrowserSessionPersistArgs = {
+  library: RendererLibrarySummary | null;
+  selectedAsset: AssetSummary | undefined;
+  showTrash: boolean;
+  activeTagId: string | null;
+  tags: readonly { tagId: string; name: string }[];
+  activeCollectionId: string | null;
+  activeSmartCollectionId: string | null;
+  assetScope: "all" | "root" | string;
+};
+
+export function useBrowserSessionPersist(
+  args: UseBrowserSessionPersistArgs,
+): void {
+  const {
+    library,
+    selectedAsset,
+    showTrash,
+    activeTagId,
+    tags,
+    activeCollectionId,
+    activeSmartCollectionId,
+    assetScope,
+  } = args;
+
+  useEffect(() => {
+    if (!library || !selectedAsset) return;
+    const session = buildBrowserSessionFromBrowseState({
+      showTrash,
+      activeTagId,
+      activeTagName: tags.find((tag) => tag.tagId === activeTagId)?.name,
+      activeCollectionId,
+      activeSmartCollectionId,
+      assetScope,
+      selectedAssetId: selectedAsset.assetId,
+      selectedAssetName: selectedAsset.displayName,
+    });
+    writeBrowserSession(library.libraryId, session);
+  }, [
+    activeCollectionId,
+    activeSmartCollectionId,
+    activeTagId,
+    assetScope,
+    library,
+    selectedAsset,
+    showTrash,
+    tags,
+  ]);
+}
+
+export type UsePendingRestoredAssetFocusArgs = {
+  pendingRestoredFocusRef: MutableRefObject<string | null>;
+  workspaceCanvasRef: RefObject<HTMLElement | null>;
+  assets: readonly AssetSummary[];
+  trashedAssets: readonly AssetSummary[];
+  selectedAssetId: string | undefined;
+};
+
+/** After restore, scroll/focus the card once it mounts in the canvas. */
+export function usePendingRestoredAssetFocus(
+  args: UsePendingRestoredAssetFocusArgs,
+): void {
+  const {
+    pendingRestoredFocusRef,
+    workspaceCanvasRef,
+    assets,
+    trashedAssets,
+    selectedAssetId,
+  } = args;
+
+  useEffect(() => {
+    const assetId = pendingRestoredFocusRef.current;
+    if (!assetId) return;
+    const frame = window.requestAnimationFrame(() => {
+      const card = Array.from(
+        workspaceCanvasRef.current?.querySelectorAll<HTMLElement>(
+          "[data-asset-id]",
+        ) ?? [],
+      ).find((candidate) => candidate.dataset.assetId === assetId);
+      if (!card) return;
+      card.scrollIntoView({ block: "center", inline: "center" });
+      card.focus({ preventScroll: true });
+      pendingRestoredFocusRef.current = null;
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [
+    assets,
+    pendingRestoredFocusRef,
+    selectedAssetId,
+    trashedAssets,
+    workspaceCanvasRef,
+  ]);
+}

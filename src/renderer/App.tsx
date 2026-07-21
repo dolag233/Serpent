@@ -125,6 +125,11 @@ import {
 import { resolveBrowseContextMenuIntent } from "./browse-selection-menu";
 import { useAssetSelection } from "./useAssetSelection";
 import { useSelectionKeyboard } from "./use-selection-keyboard";
+import {
+  useBrowserSessionPersist,
+  useBrowserSessionRestore,
+  usePendingRestoredAssetFocus,
+} from "./use-browser-session-restore";
 import { resolveInspectorTagTarget } from "./inspector-tag-target";
 import {
   buildInspectorMultiEdit,
@@ -320,58 +325,8 @@ type SearchDefinition = {
   filters?: FilterClause[];
   sort?: SortDefinition;
 };
-type StoredBrowserSession = {
-  version: 1;
-  scope:
-    | { kind: "all" | "root" | "trash" }
-    | {
-        kind: "folder" | "tag" | "collection" | "smart";
-        id: string;
-        name?: string;
-      };
-  selectedAssetId: string;
-  selectedAssetName: string;
-};
 const ASSET_PAGE_SIZE = 50;
 
-function browserSessionKey(libraryId: string): string {
-  return `serpent.browser-session.v1.${libraryId}`;
-}
-
-function readBrowserSession(libraryId: string): StoredBrowserSession | null {
-  try {
-    const value = JSON.parse(
-      window.localStorage.getItem(browserSessionKey(libraryId)) ?? "null",
-    ) as unknown;
-    if (!value || typeof value !== "object") return null;
-    const session = value as Partial<StoredBrowserSession>;
-    if (
-      session.version !== 1 ||
-      typeof session.selectedAssetId !== "string" ||
-      typeof session.selectedAssetName !== "string" ||
-      !session.scope ||
-      typeof session.scope !== "object" ||
-      ![
-        "all",
-        "root",
-        "trash",
-        "folder",
-        "tag",
-        "collection",
-        "smart",
-      ].includes(session.scope.kind)
-    )
-      return null;
-    if (
-      ["folder", "tag", "collection", "smart"].includes(session.scope.kind) &&
-      !("id" in session.scope && typeof session.scope.id === "string")
-    )
-      return null;
-    return session as StoredBrowserSession;
-  } catch {
-    return null;
-  }
-}
 function ToolButton({
   label,
   icon,
@@ -1540,225 +1495,49 @@ function AppInner() {
     [api],
   );
 
-  const restore = useCallback(async () => {
-    if (!api) {
-      setError(t("toast.bridgeUnavailable"));
-      setUiState("idle");
-      return;
-    }
-    let activeLibrary: RendererLibrarySummary | null = null;
-    try {
-      const result = await api.listOpen();
-      if (!result.ok) throw new LibraryOperationError(result.error);
-      activeLibrary = result.value[0] ?? null;
-      setLibrary(activeLibrary);
-      setShowTrash(false);
-      setTrashedAssets([]);
-      if (activeLibrary) {
-        let restoredItems = (await loadContent(activeLibrary, "all")) ?? [];
-        const session = readBrowserSession(activeLibrary.libraryId);
-        let restoredLocation: WorkspaceNavLocation = { kind: "all" };
-        if (session) {
-          try {
-            let searchScope: SearchScope | undefined;
-            let searchFilters: FilterClause[] | undefined;
-            if (session.scope.kind === "trash") {
-              setShowTrash(true);
-              setAssetScope("all");
-              restoredItems =
-                (await loadContent(activeLibrary, "all", {
-                  trashMode: true,
-                })) ?? [];
-              searchScope = { kind: "trash" };
-              restoredLocation = { kind: "trash" };
-            } else if (session.scope.kind === "root") {
-              setAssetScope("root");
-              restoredItems = (await loadContent(activeLibrary, "root")) ?? [];
-              searchScope = {
-                kind: "folder",
-                folderId: null,
-                recursive: false,
-              };
-              restoredLocation = { kind: "root" };
-            } else if (session.scope.kind === "folder") {
-              setAssetScope(session.scope.id);
-              const enabled = isFolderRecursiveEnabled(
-                loadFolderRecursivePreferences(),
-                activeLibrary.libraryId,
-                session.scope.id,
-              );
-              folderRecursiveRef.current = enabled;
-              setFolderRecursive(enabled);
-              restoredItems =
-                (await loadContent(activeLibrary, session.scope.id)) ?? [];
-              searchScope = {
-                kind: "folder",
-                folderId: session.scope.id,
-                recursive: enabled,
-              };
-              restoredLocation = {
-                kind: "folder",
-                folderId: session.scope.id,
-              };
-            } else if (session.scope.kind === "tag" && session.scope.name) {
-              searchFilters = [
-                { field: "tag", values: [session.scope.name], exclude: false },
-              ];
-              const result = await api.searchAssets({
-                libraryId: activeLibrary.libraryId,
-                query: null,
-                filters: searchFilters,
-                limit: ASSET_PAGE_SIZE,
-                offset: 0,
-              });
-              if (!result.ok) throw new LibraryOperationError(result.error);
-              setActiveTagId(session.scope.id);
-              setTagFilter(session.scope.name);
-              setAssets(result.value.items);
-              setSearchTotal(result.value.total);
-              restoredItems = result.value.items;
-              restoredLocation = { kind: "tag", tagId: session.scope.id };
-            } else if (session.scope.kind === "collection") {
-              searchScope = {
-                kind: "collection",
-                collectionId: session.scope.id,
-                recursive: collectionRecursiveRef.current,
-              };
-              const result = await api.searchAssets({
-                libraryId: activeLibrary.libraryId,
-                query: null,
-                scope: searchScope,
-                limit: ASSET_PAGE_SIZE,
-                offset: 0,
-              });
-              if (!result.ok) throw new LibraryOperationError(result.error);
-              setActiveCollectionId(session.scope.id);
-              setAssets(result.value.items);
-              setSearchTotal(result.value.total);
-              restoredItems = result.value.items;
-              restoredLocation = {
-                kind: "collection",
-                collectionId: session.scope.id,
-                recursive: collectionRecursiveRef.current,
-              };
-            } else if (session.scope.kind === "smart") {
-              const result = await api.executeSmartCollection({
-                libraryId: activeLibrary.libraryId,
-                collectionId: session.scope.id,
-                limit: ASSET_PAGE_SIZE,
-                offset: 0,
-              });
-              if (!result.ok) throw new LibraryOperationError(result.error);
-              setActiveSmartCollectionId(session.scope.id);
-              setAssets(result.value.items);
-              setSearchTotal(result.value.total);
-              restoredItems = result.value.items;
-              restoredLocation = {
-                kind: "smart-collection",
-                collectionId: session.scope.id,
-              };
-            }
-
-            let restoredAsset = restoredItems.find(
-              (asset) => asset.assetId === session.selectedAssetId,
-            );
-            if (!restoredAsset && session.scope.kind === "smart") {
-              for (
-                let offset = ASSET_PAGE_SIZE;
-                !restoredAsset;
-                offset += ASSET_PAGE_SIZE
-              ) {
-                const result = await api.executeSmartCollection({
-                  libraryId: activeLibrary.libraryId,
-                  collectionId: session.scope.id,
-                  limit: ASSET_PAGE_SIZE,
-                  offset,
-                });
-                if (!result.ok || result.value.items.length === 0) break;
-                restoredAsset = result.value.items.find(
-                  (asset) => asset.assetId === session.selectedAssetId,
-                );
-                if (offset + result.value.items.length >= result.value.total)
-                  break;
-              }
-            } else if (!restoredAsset) {
-              for (let offset = 0; !restoredAsset; offset += 200) {
-                const result = await api.searchAssets({
-                  libraryId: activeLibrary.libraryId,
-                  query: {
-                    clauses: [
-                      {
-                        field: "filename",
-                        values: [session.selectedAssetName],
-                        exclude: false,
-                      },
-                    ],
-                  },
-                  filters: searchFilters,
-                  scope: searchScope,
-                  limit: 200,
-                  offset,
-                });
-                if (!result.ok || result.value.items.length === 0) break;
-                restoredAsset = result.value.items.find(
-                  (asset) => asset.assetId === session.selectedAssetId,
-                );
-                if (offset + result.value.items.length >= result.value.total)
-                  break;
-              }
-            }
-            if (restoredAsset) {
-              if (session.scope.kind === "trash") {
-                setTrashedAssets((current) =>
-                  current.some(
-                    (asset) => asset.assetId === restoredAsset!.assetId,
-                  )
-                    ? current
-                    : [...current, restoredAsset!],
-                );
-              } else {
-                setAssets((current) =>
-                  current.some(
-                    (asset) => asset.assetId === restoredAsset!.assetId,
-                  )
-                    ? current
-                    : [...current, restoredAsset!],
-                );
-              }
-              setSelectedAssetId(restoredAsset.assetId);
-              setSelectedAssetIds([restoredAsset.assetId]);
-              selectionAnchorRef.current = restoredAsset.assetId;
-              pendingRestoredFocusRef.current = restoredAsset.assetId;
-            }
-          } catch (sessionError) {
-            console.warn(
-              "Saved browser session could not be restored.",
-              sessionError,
-            );
-            setShowTrash(false);
-            setAssetScope("all");
-            setActiveTagId(null);
-            setActiveCollectionId(null);
-            setActiveSmartCollectionId(null);
-            restoredLocation = { kind: "all" };
-            await loadContent(activeLibrary, "all");
-          }
-        }
-        navHistoryRef.current.clear(restoredLocation);
-        setNavHistoryUi({ canBack: false, canForward: false });
-      } else {
-        navHistoryRef.current.clear({ kind: "all" });
-        setNavHistoryUi({ canBack: false, canForward: false });
-      }
-      setUiState(activeLibrary ? "ready" : "idle");
-    } catch (caught) {
-      setError(toMessage(caught, t("toast.workspaceRestoreFailed"), locale));
-      setUiState(activeLibrary ? "ready" : "idle");
-    }
-  }, [api, loadContent, locale, selectionAnchorRef, setError, t]);
-  useEffect(() => {
-    void Promise.resolve().then(restore);
-  }, [restore]);
+  useBrowserSessionRestore({
+    api: api ?? null,
+    loadContent,
+    pageSize: ASSET_PAGE_SIZE,
+    collectionRecursiveRef,
+    folderRecursiveRef,
+    setFolderRecursive,
+    setLibrary,
+    setShowTrash,
+    setTrashedAssets,
+    setAssetScope,
+    setActiveTagId,
+    setTagFilter,
+    setActiveCollectionId,
+    setActiveSmartCollectionId,
+    setAssets,
+    setSearchTotal,
+    setSelectedAssetId,
+    setSelectedAssetIds,
+    selectionAnchorRef,
+    pendingRestoredFocusRef,
+    navHistoryRef,
+    setNavHistoryUi,
+    setUiState,
+    setError,
+  });
+  useBrowserSessionPersist({
+    library,
+    selectedAsset,
+    showTrash,
+    activeTagId,
+    tags,
+    activeCollectionId,
+    activeSmartCollectionId,
+    assetScope,
+  });
+  usePendingRestoredAssetFocus({
+    pendingRestoredFocusRef,
+    workspaceCanvasRef,
+    assets,
+    trashedAssets,
+    selectedAssetId,
+  });
   // Serpent-y0au: keep recent libraries warm on the no-library start surface.
   useEffect(() => {
     if (!api || library) return;
@@ -1766,59 +1545,6 @@ function AppInner() {
     // refreshRecentLibraries closes over library; null path is intentional.
     // eslint-disable-next-line react-hooks/exhaustive-deps -- refresh when api/library identity changes
   }, [api, library]);
-  useEffect(() => {
-    if (!library || !selectedAsset) return;
-    const scope: StoredBrowserSession["scope"] = showTrash
-      ? { kind: "trash" }
-      : activeTagId
-        ? {
-            kind: "tag",
-            id: activeTagId,
-            name: tags.find((tag) => tag.tagId === activeTagId)?.name,
-          }
-        : activeCollectionId
-          ? { kind: "collection", id: activeCollectionId }
-          : activeSmartCollectionId
-            ? { kind: "smart", id: activeSmartCollectionId }
-            : assetScope === "all" || assetScope === "root"
-              ? { kind: assetScope }
-              : { kind: "folder", id: assetScope };
-    const session: StoredBrowserSession = {
-      version: 1,
-      scope,
-      selectedAssetId: selectedAsset.assetId,
-      selectedAssetName: selectedAsset.displayName,
-    };
-    window.localStorage.setItem(
-      browserSessionKey(library.libraryId),
-      JSON.stringify(session),
-    );
-  }, [
-    activeCollectionId,
-    activeSmartCollectionId,
-    activeTagId,
-    assetScope,
-    library,
-    selectedAsset,
-    showTrash,
-    tags,
-  ]);
-  useEffect(() => {
-    const assetId = pendingRestoredFocusRef.current;
-    if (!assetId) return;
-    const frame = window.requestAnimationFrame(() => {
-      const card = Array.from(
-        workspaceCanvasRef.current?.querySelectorAll<HTMLElement>(
-          "[data-asset-id]",
-        ) ?? [],
-      ).find((candidate) => candidate.dataset.assetId === assetId);
-      if (!card) return;
-      card.scrollIntoView({ block: "center", inline: "center" });
-      card.focus({ preventScroll: true });
-      pendingRestoredFocusRef.current = null;
-    });
-    return () => window.cancelAnimationFrame(frame);
-  }, [assets, trashedAssets, selectedAssetId]);
   useEffect(() => {
     if (!api) return;
     return api.onThumbnailEvent((event) => {
