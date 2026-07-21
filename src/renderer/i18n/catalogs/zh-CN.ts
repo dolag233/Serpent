@@ -82,7 +82,12 @@ export const zhCN = {
     myLibrary: "我的资源库",
     recentLibraries: "最近使用",
     libraryTransfer: "添加与传输",
-    moreWorkspaceTools: "更多工具"
+    moreWorkspaceTools: "更多工具",
+    windowControls: "窗口控制",
+    windowMinimize: "最小化",
+    windowMaximize: "最大化",
+    windowRestore: "向下还原",
+    windowClose: "关闭",
   },
   scope: {
     workspace: "工作区",

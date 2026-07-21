@@ -26,7 +26,12 @@ import {
   type Stats,
 } from 'node:fs';
 import path from 'node:path';
-import { execFile, spawn, type ChildProcess } from 'node:child_process';
+import {
+  execFile,
+  execFileSync,
+  spawn,
+  type ChildProcess,
+} from 'node:child_process';
 import { lookup as dnsLookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
 
@@ -1467,6 +1472,37 @@ export type SpawnFunction = (
   options?: { timeoutMs?: number; signal?: AbortSignal },
 ) => Promise<SpawnResult>;
 
+type MediaAutoRepairComponent = 'ffmpeg' | 'oiio';
+
+const MEDIA_COMPONENT_PROBE_TIMEOUT_MS = 2_500;
+const MEDIA_COMPONENT_PROBE_RETRY_MS = 30_000;
+
+/**
+ * Check the external media environment without starting a persistent media
+ * job. This is intentionally a small capability probe: the actual generator
+ * remains the source of truth for codec/filter compatibility.
+ */
+function defaultMediaComponentProbe(component: MediaAutoRepairComponent): boolean {
+  const canRun = (command: string, args: string[]): boolean => {
+    try {
+      execFileSync(command, args, {
+        stdio: 'ignore',
+        timeout: MEDIA_COMPONENT_PROBE_TIMEOUT_MS,
+        windowsHide: true,
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  if (component === 'ffmpeg') {
+    return canRun(resolveFfmpegPath(), ['-version'])
+      && canRun(resolveFfprobePath(), ['-version']);
+  }
+  return canRun(resolveOiiotoolPath(), ['--help']);
+}
+
 const SPAWN_STDOUT_LIMIT_BYTES = 8 * 1024 * 1024;
 const SPAWN_STDERR_LIMIT_BYTES = 512 * 1024;
 
@@ -1676,6 +1712,11 @@ export interface LibraryServiceOptions {
   sharpFn?: SharpModule;
   /** Injectable raw-pixel decoder used only by local palette extraction. */
   paletteSharpFn?: PaletteSharpModule;
+  /**
+   * Injectable media capability probe. Production probes ffmpeg+ffprobe or
+   * oiiotool before automatically re-queuing component-missing artifacts.
+   */
+  mediaComponentProbe?: (component: MediaAutoRepairComponent) => boolean;
   /** Injectable spawn for binary subprocesses (ffmpeg/ffprobe/oiiotool). */
   spawnFn?: SpawnFunction;
   /** Moves one absolute source path to the OS system trash. */
@@ -2365,6 +2406,21 @@ export class LibraryService {
     controller: AbortController;
     libraryId: string;
   }>();
+  /**
+   * A missing component can be repaired while a library remains open. Once a
+   * repair wave has been queued, do not requeue the same component on every
+   * visible-range refresh if the replacement fails again. Closing the library
+   * starts a new detection wave.
+   */
+  private readonly autoRepairAttemptedByLibrary = new Map<
+    string,
+    Set<MediaAutoRepairComponent>
+  >();
+  /** Avoid synchronously probing missing tools on every visible-range request. */
+  private readonly autoRepairProbeFailedAtByLibrary = new Map<
+    string,
+    Map<MediaAutoRepairComponent, number>
+  >();
 
   constructor(private readonly options: LibraryServiceOptions = {}) {}
 
@@ -2402,6 +2458,16 @@ export class LibraryService {
 
   private get spawnFn(): SpawnFunction {
     return this.options.spawnFn ?? defaultSpawnFn;
+  }
+
+  private mediaComponentAvailable(component: MediaAutoRepairComponent): boolean {
+    try {
+      return this.options.mediaComponentProbe?.(component)
+        ?? defaultMediaComponentProbe(component);
+    } catch (error) {
+      this.diagnose('media-component.probe', error, { component });
+      return false;
+    }
   }
 
   private runFfmpeg(
@@ -10122,6 +10188,160 @@ export class LibraryService {
   }
 
   /**
+   * Find component-related failures that are eligible for one automatic
+   * repair wave. Other failures (corrupt input, unsupported codecs, missing
+   * source files, and so on) remain terminal until the user explicitly retries.
+   */
+  private availableAutoRepairComponents(
+    openLibrary: OpenLibrary,
+  ): Set<MediaAutoRepairComponent> {
+    const rows = openLibrary.connection
+      .prepare(
+        `SELECT DISTINCT ra.error_code
+           FROM revision_artifacts ra
+           JOIN assets a ON a.current_revision_id = ra.revision_id
+          WHERE a.deleted_at IS NULL
+            AND a.availability = 'available'
+            AND ra.kind IN ('thumbnail', 'video_poster')
+            AND ra.status = 'failed'
+            AND ra.invalidated_at IS NULL
+            AND ra.error_code IN ('FFMPEG_REQUIRED', 'OIIO_REQUIRED')`,
+      )
+      .all() as Array<{ error_code: string }>;
+    if (rows.length === 0) return new Set();
+
+    const needed = new Set<MediaAutoRepairComponent>();
+    for (const row of rows) {
+      if (row.error_code === 'FFMPEG_REQUIRED') needed.add('ffmpeg');
+      if (row.error_code === 'OIIO_REQUIRED') needed.add('oiio');
+    }
+    const attempted = this.autoRepairAttemptedByLibrary.get(
+      openLibrary.summary.libraryId,
+    ) ?? new Set<MediaAutoRepairComponent>();
+    const failedProbes = this.autoRepairProbeFailedAtByLibrary.get(
+      openLibrary.summary.libraryId,
+    ) ?? new Map<MediaAutoRepairComponent, number>();
+    const now = Date.now();
+    const available = new Set<MediaAutoRepairComponent>();
+    for (const component of needed) {
+      if (attempted.has(component)) continue;
+      const failedAt = failedProbes.get(component);
+      if (failedAt !== undefined && now - failedAt < MEDIA_COMPONENT_PROBE_RETRY_MS) {
+        continue;
+      }
+      if (this.mediaComponentAvailable(component)) {
+        failedProbes.delete(component);
+        available.add(component);
+      } else {
+        failedProbes.set(component, now);
+      }
+    }
+    if (failedProbes.size > 0) {
+      this.autoRepairProbeFailedAtByLibrary.set(
+        openLibrary.summary.libraryId,
+        failedProbes,
+      );
+    }
+    return available;
+  }
+
+  /**
+   * Requeue every current preview whose failure was specifically caused by a
+   * missing external component. This is separate from the normal bounded
+   * startup scan so a library with many old failures can repair them all while
+   * normal missing-thumbnail work remains bounded.
+   */
+  private enqueueFailedMediaRepairs(
+    openLibrary: OpenLibrary,
+    components: Set<MediaAutoRepairComponent>,
+    priority: number,
+  ): number {
+    const failureConditions: string[] = [];
+    if (components.has('ffmpeg')) failureConditions.push("ra.error_code = 'FFMPEG_REQUIRED'");
+    if (components.has('oiio')) failureConditions.push("ra.error_code = 'OIIO_REQUIRED'");
+    if (failureConditions.length === 0) return 0;
+
+    const rows = openLibrary.connection
+      .prepare(
+        `SELECT a.asset_id, a.current_revision_id
+           FROM assets a
+           JOIN revision_artifacts ra ON ra.revision_id = a.current_revision_id
+          WHERE a.deleted_at IS NULL
+            AND a.availability = 'available'
+            AND a.current_revision_id IS NOT NULL
+            AND ra.kind IN ('thumbnail', 'video_poster')
+            AND ra.status = 'failed'
+            AND ra.invalidated_at IS NULL
+            AND (${failureConditions.join(' OR ')})
+            AND NOT EXISTS (
+              SELECT 1
+                FROM jobs active
+               WHERE active.asset_id = a.asset_id
+                 AND active.revision_id = a.current_revision_id
+                 AND active.kind = 'generate_thumbnail'
+                 AND active.status IN ('queued', 'running', 'paused')
+            )
+          GROUP BY a.asset_id, a.current_revision_id
+          ORDER BY a.relative_file_path`,
+      )
+      .all() as Array<{ asset_id: string; current_revision_id: string }>;
+    if (rows.length === 0) return 0;
+
+    const now = new Date().toISOString();
+    const findFailedJob = openLibrary.connection.prepare(
+      `SELECT job_id
+         FROM jobs
+        WHERE asset_id = ?
+          AND revision_id = ?
+          AND kind = 'generate_thumbnail'
+          AND status = 'failed'
+        ORDER BY updated_at DESC
+        LIMIT 1`,
+    );
+    const resetFailedJob = openLibrary.connection.prepare(
+      `UPDATE jobs
+          SET status = 'queued',
+              priority = MAX(priority, ?),
+              progress = 0.0,
+              attempt_count = 0,
+              error_code = NULL,
+              error_detail = NULL,
+              updated_at = ?
+        WHERE job_id = ?`,
+    );
+    const insertJob = openLibrary.connection.prepare(
+      `INSERT INTO jobs
+         (job_id, library_id, asset_id, revision_id, kind, status, priority, progress,
+          attempt_count, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'generate_thumbnail', 'queued', ?, 0.0, 0, ?, ?)`,
+    );
+
+    let enqueued = 0;
+    openLibrary.connection.transaction(() => {
+      for (const row of rows) {
+        const failedJob = findFailedJob.get(
+          row.asset_id,
+          row.current_revision_id,
+        ) as { job_id: string } | undefined;
+        if (failedJob) {
+          enqueued += resetFailedJob.run(priority, now, failedJob.job_id).changes;
+        } else {
+          enqueued += insertJob.run(
+            randomUUID(),
+            openLibrary.summary.libraryId,
+            row.asset_id,
+            row.current_revision_id,
+            priority,
+            now,
+            now,
+          ).changes;
+        }
+      }
+    })();
+    return enqueued;
+  }
+
+  /**
    * Enqueue thumbnail jobs for supported assets whose current revision has no
    * terminal artifact. Callers may pass the currently visible asset ids and a
    * limit so opening a large library never materializes or queues the whole
@@ -10129,7 +10349,12 @@ export class LibraryService {
    */
   enqueueThumbnailJobs(
     libraryId: string,
-    options: { assetIds?: string[]; limit?: number; priority?: number } = {},
+    options: {
+      assetIds?: string[];
+      limit?: number;
+      priority?: number;
+      repairFailed?: boolean;
+    } = {},
   ): number {
     const openLibrary = this.requireOpenLibrary(libraryId);
     const selectedIds = [...new Set(options.assetIds ?? [])].slice(0, 500);
@@ -10137,6 +10362,34 @@ export class LibraryService {
       ? undefined
       : Math.max(0, Math.min(500, Math.trunc(options.limit)));
     if (limit === 0 || (options.assetIds && selectedIds.length === 0)) return 0;
+    const repairComponents = options.repairFailed
+      ? this.availableAutoRepairComponents(openLibrary)
+      : new Set<MediaAutoRepairComponent>();
+    const repairEnqueued = options.repairFailed
+      ? this.enqueueFailedMediaRepairs(
+        openLibrary,
+        repairComponents,
+        options.priority ?? 0,
+      )
+      : 0;
+    if (options.repairFailed && repairComponents.size > 0) {
+      this.diagnose(
+        'media-auto-repair.enqueued',
+        new Error('Automatic media repair wave evaluated.'),
+        {
+          libraryId,
+          components: [...repairComponents],
+          enqueuedCount: repairEnqueued,
+        },
+      );
+    }
+    if (repairComponents.size > 0) {
+      const attempted = this.autoRepairAttemptedByLibrary.get(libraryId)
+        ?? new Set<MediaAutoRepairComponent>();
+      for (const component of repairComponents) attempted.add(component);
+      this.autoRepairAttemptedByLibrary.set(libraryId, attempted);
+    }
+    let enqueued = repairEnqueued;
     const supportedExtensions = [
       'png', 'jpg', 'jpeg', 'gif', 'tiff', 'tif', 'webp', 'bmp',
       'mp4', 'webm', 'mov', 'avi', 'wmv', 'exr', 'tga',
@@ -10297,7 +10550,6 @@ export class LibraryService {
       ) as Array<{ asset_id: string; current_revision_id: string }>;
 
     const now = new Date().toISOString();
-    let enqueued = 0;
     const insert = openLibrary.connection.prepare(
       `INSERT OR IGNORE INTO jobs
          (job_id, library_id, asset_id, revision_id, kind, status, priority, progress,
@@ -15776,7 +16028,11 @@ export class LibraryService {
       // Persist only the first visible batch. The Worker runtime drains these
       // asynchronously and later list/search requests raise the priority of
       // whatever the user is actually looking at.
-      this.enqueueThumbnailJobs(summary.libraryId, { limit: 50, priority: 100 });
+      this.enqueueThumbnailJobs(summary.libraryId, {
+        limit: 50,
+        priority: 100,
+        repairFailed: true,
+      });
       return summary;
     } catch (error) {
       closeIgnoringFailure(connection);
@@ -17408,6 +17664,8 @@ export class LibraryService {
     openLibrary.connection.close();
     this.openById.delete(libraryId);
     this.openIdByPath.delete(openLibrary.summary.libraryPath);
+    this.autoRepairAttemptedByLibrary.delete(libraryId);
+    this.autoRepairProbeFailedAtByLibrary.delete(libraryId);
   }
 
   /**

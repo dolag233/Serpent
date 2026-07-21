@@ -2,23 +2,26 @@ import { Menu, app } from "electron";
 
 import {
   buildApplicationMenuTemplate,
-  shouldInstallApplicationMenu,
   type ApplicationMenuPlatform,
 } from "../shared/application-menu";
+import { shouldHideApplicationMenuBar } from "../shared/window-controls";
 
 /**
  * Install Serpent's application menu (no page-zoom accelerator roles).
- * Call once during app ready so macOS/Windows defaults cannot steal
+ * Call once during app ready so macOS defaults cannot steal
  * Cmd/Ctrl+=,-,0 from renderer zoom shortcuts (Serpent-46i9).
  *
- * On Windows, clears the menu bar entirely (Serpent-r7gu) so Electron's
- * default File/Edit/View bar never appears.
+ * Windows (Serpent-znex / Serpent-r7gu): hide the menu bar entirely for
+ * frameless shell unity. Chromium still handles Ctrl+C/V in inputs;
+ * right-click edit menu is Serpent-d8u. Setting null also drops Electron
+ * View reload/zoom roles that would otherwise remain as invisible
+ * accelerators if we only hid the bar.
  */
 export function installApplicationMenu(options?: {
   showDevTools?: boolean;
 }): void {
   const platform = process.platform as ApplicationMenuPlatform;
-  if (!shouldInstallApplicationMenu(platform)) {
+  if (shouldHideApplicationMenuBar(platform)) {
     Menu.setApplicationMenu(null);
     return;
   }

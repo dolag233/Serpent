@@ -1,6 +1,10 @@
 import { z } from 'zod';
 
 import type { ShowEditContextMenuResult } from './edit-context-menu';
+import type {
+  WindowControlAction,
+  WindowControlResult,
+} from './window-controls';
 
 /**
  * 「在系统浏览器中打开外部链接」的共享规则与类型。
@@ -107,6 +111,15 @@ export interface SerpentShellApi {
     x: number;
     y: number;
   }): Promise<ShowEditContextMenuResult>;
+  /**
+   * Windows frameless caption actions (Serpent-znex).
+   * minimize / maximize-toggle / close / get-state.
+   */
+  windowControl(action: WindowControlAction): Promise<WindowControlResult>;
+  /** Windows maximize/restore state pushes (Serpent-znex). */
+  onWindowMaximizedChanged(
+    listener: (maximized: boolean) => void,
+  ): () => void;
   /** macOS 触控板三指轻扫（Electron webContents swipe）。 */
   onSwipe(listener: (direction: ShellSwipeDirection) => void): () => void;
 }

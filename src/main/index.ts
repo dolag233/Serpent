@@ -45,6 +45,10 @@ import {
   openPathWithOtherApplication,
 } from "./open-with";
 import {
+  bindWindowMaximizedEvents,
+  registerWindowControls,
+} from "./window-controls";
+import {
   ASSET_CHANGE_CHANNEL,
   THUMBNAIL_CHANNEL,
   ACTIVE_CONTEXT_CHANNEL,
@@ -61,6 +65,7 @@ import {
   SHOW_EDIT_CONTEXT_MENU_CHANNEL,
   SHELL_SWIPE_CHANNEL,
 } from "../shared/protocol/channels";
+import { shouldUseFramelessTitleBar } from "../shared/window-controls";
 import {
   resolveOpenExternalUrlTarget,
   type OpenExternalUrlResult,
@@ -420,7 +425,12 @@ async function createMainWindow(): Promise<void> {
           titleBarStyle: "hiddenInset" as const,
           trafficLightPosition: { x: 14, y: 14 },
         }
-      : {}),
+      : shouldUseFramelessTitleBar(process.platform)
+        ? {
+            // Serpent-znex: hide system title bar; renderer draws caption buttons.
+            titleBarStyle: "hidden" as const,
+          }
+        : {}),
     webPreferences: {
       preload: path.join(__dirname, "index.js"),
       sandbox: true,
@@ -442,6 +452,10 @@ async function createMainWindow(): Promise<void> {
   // Defense in depth (Serpent-46i9): even if a page-zoom accelerator sneaks
   // back into the menu, Chromium must not rescale the whole UI.
   void window.webContents.setVisualZoomLevelLimits(1, 1);
+  // Serpent-znex: keep caption maximize/restore glyph in sync on Windows.
+  if (shouldUseFramelessTitleBar(process.platform)) {
+    bindWindowMaximizedEvents(window);
+  }
   // macOS three-finger swipe (requires Trackpad → Swipe between pages).
   // Event is on BrowserWindow, not webContents.
   window.on("swipe", (_event, direction) => {
@@ -3084,7 +3098,13 @@ async function startApplication(): Promise<void> {
 
   // Install before the first window so macOS does not keep Electron's default
   // View→Zoom accelerators that steal Cmd+=/-/0 (Serpent-46i9).
+  // Windows: hides menu bar for frameless shell (Serpent-znex).
   installApplicationMenu();
+
+  registerWindowControls({
+    getMainWindow: () => mainWindow,
+    logger,
+  });
 
   await createMainWindow();
 

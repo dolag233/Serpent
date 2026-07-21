@@ -64,3 +64,13 @@ describe("buildApplicationMenuTemplate (Serpent-46i9)", () => {
     expect(win).not.toContain("about");
   });
 });
+
+describe("shouldHideApplicationMenuBar (Serpent-znex)", () => {
+  it("hides the Windows menu bar for frameless shell unity", async () => {
+    const { shouldHideApplicationMenuBar } = await import(
+      "../../src/shared/window-controls"
+    );
+    expect(shouldHideApplicationMenuBar("win32")).toBe(true);
+    expect(shouldHideApplicationMenuBar("darwin")).toBe(false);
+  });
+});

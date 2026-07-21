@@ -157,6 +157,11 @@ media.cancel           { libraryId, jobId }
 
 - 打开资源库后，Worker 扫描所有 `status = 'running'` 的 job 并重置为 `queued`。
 - 排队所有缺少当前 `ready` artifact（`invalidated_at IS NULL`）的 revision。
+- 对当前 revision 中明确标记为 `FFMPEG_REQUIRED` / `OIIO_REQUIRED` 的失败
+  预览，先探测对应组件；组件恢复后自动重置并重新排队。损坏文件、格式
+  不支持和其他解码失败不自动循环重试；每个资源库会话每个组件只触发一轮
+  自动修复；组件探测失败在本会话内短暂负缓存，避免每个可见区请求同步
+  启动外部进程。
 - 优先级：缩略图优先（用户可见），其次视频封面，再次元信息提取，最后联系表和 WebM 代理。
 - 并发限制：sharp 队列最多 2 并发；FFmpeg/OIIO 子进程最多 1 并发（各子进程内流控）。
 
@@ -186,6 +191,8 @@ media.cancel           { libraryId, jobId }
 - 预览 IPC：`serpent://` 协议 handler，Renderer 不接触绝对路径，MIME type 正确返回。
 - 外部打开：`shell.openPath()` 被阻止时返回安全错误。
 - 任务生命周期：排队→运行→完成、暂停/继续/取消/重试、崩溃恢复、并发限制、优先级调度。
+- 媒体环境恢复：缺少 FFmpeg/OIIO 时产生的失败 artifact 在组件恢复并重新
+  打开/触发调度后自动重排队；非组件失败保持终态。
 - artifact 失效：内容变化 → 生成新 revision → 旧 artifact 标记 `invalidated_at`，新 revision 排队新衍生物。
 - 错误可观测性：Renderer 接收安全的错误码与原因文本；应用日志保留系统错误码、stderr 摘要、退出码和 cause 链。
 - Electron 用户流：导入各格式后缩略图渐进显示、视频资产查看/显式全屏播放、WebM 代理降级、EXR 预览 + 曝光 slider、外部打开、取消重试。

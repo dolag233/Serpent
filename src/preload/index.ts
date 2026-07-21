@@ -21,6 +21,8 @@ import {
   REVEAL_APP_LOG_CHANNEL,
   SHOW_EDIT_CONTEXT_MENU_CHANNEL,
   SHELL_SWIPE_CHANNEL,
+  WINDOW_CONTROL_CHANNEL,
+  WINDOW_MAXIMIZED_CHANNEL,
 } from '../shared/protocol/channels';
 import {
   parseOpenExternalUrlResult,
@@ -29,6 +31,11 @@ import {
   type ShellSwipeDirection,
 } from '../shared/external-url';
 import { parseShowEditContextMenuResult } from '../shared/edit-context-menu';
+import {
+  parseWindowControlResult,
+  parseWindowMaximizedStateEvent,
+  type WindowControlAction,
+} from '../shared/window-controls';
 import type { RendererRequest } from '../shared/protocol/requests';
 import type { PublicErrorReason } from '../shared/protocol/errors';
 import {
@@ -1441,6 +1448,22 @@ const shell: SerpentShellApi = Object.freeze({
       point,
     );
     return parseShowEditContextMenuResult(result);
+  },
+  async windowControl(action: WindowControlAction) {
+    const result: unknown = await ipcRenderer.invoke(WINDOW_CONTROL_CHANNEL, {
+      action,
+    });
+    return parseWindowControlResult(result);
+  },
+  onWindowMaximizedChanged(listener: (maximized: boolean) => void): () => void {
+    const handler = (_event: Electron.IpcRendererEvent, input: unknown) => {
+      const parsed = parseWindowMaximizedStateEvent(input);
+      if (parsed) listener(parsed.maximized);
+    };
+    ipcRenderer.on(WINDOW_MAXIMIZED_CHANNEL, handler);
+    return () => {
+      ipcRenderer.removeListener(WINDOW_MAXIMIZED_CHANNEL, handler);
+    };
   },
   onSwipe(listener: (direction: ShellSwipeDirection) => void): () => void {
     const handler = (_event: Electron.IpcRendererEvent, direction: unknown) => {
