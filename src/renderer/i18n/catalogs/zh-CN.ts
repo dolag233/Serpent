@@ -143,7 +143,7 @@ export const zhCN = {
   },
   tagMgmt: {
     title: "标签管理",
-    hint: "创建、重命名或删除标签。点击标签可浏览其下资产。",
+    hint: "创建、重命名或删除标签。双击标签可浏览其下资产。",
     search: "搜索标签",
     searchPlaceholder: "筛选标签…",
     newTagName: "新标签名称",
@@ -153,7 +153,7 @@ export const zhCN = {
     noMatches: "没有匹配的标签。",
     rename: "重命名",
     delete: "删除",
-    openHint: "打开带此标签的资产",
+    openHint: "双击打开带此标签的资产",
     assetCount: "{count}",
     deleteConfirm:
       "删除标签「{name}」？将从 {count} 项资产上移除该标签，资产本身保留。"
