@@ -37,6 +37,7 @@ function makeActions(calls: RecordedCall[]): SidebarCommandActions {
     };
   return {
     openFolderInFileManager: record('openFolderInFileManager'),
+    openFolderWith: record('openFolderWith'),
     createSubfolder: record('createSubfolder'),
     renameFolder: record('renameFolder'),
     openLinkedRules: record('openLinkedRules'),
@@ -100,6 +101,7 @@ describe('文件夹分支：可见性矩阵（与历史内联 JSX 条件一致�
     const { ctx } = makeCtx();
     expect(resolveIds(ctx)).toEqual([
       'folder.open-in-file-manager',
+      'folder.open-with',
       'folder.create-subfolder',
       'folder.rename',
       'folder.copy-path',
@@ -118,6 +120,7 @@ describe('文件夹分支：可见性矩阵（与历史内联 JSX 条件一致�
     });
     expect(resolveIds(ctx)).toEqual([
       'folder.open-in-file-manager',
+      'folder.open-with',
       'folder.linked-rules',
       'folder.copy-path',
       'folder.remove-from-library',
@@ -135,6 +138,7 @@ describe('文件夹分支：可见性矩阵（与历史内联 JSX 条件一致�
     });
     expect(resolveIds(ctx)).toEqual([
       'folder.open-in-file-manager',
+      'folder.open-with',
       'folder.linked-rules',
       'folder.copy-path',
       'folder.move-to-trash',
@@ -151,6 +155,7 @@ describe('文件夹分支：可见性矩阵（与历史内联 JSX 条件一致�
     });
     expect(resolveIds(ctx)).toEqual([
       'folder.open-in-file-manager',
+      'folder.open-with',
       'folder.copy-path',
       'folder.remove-from-library',
     ]);
@@ -167,11 +172,16 @@ describe('文件夹分支：可见性矩阵（与历史内联 JSX 条件一致�
     const menu = registry.resolveMenu(ctx);
     expect(resolveIds(ctx)).toEqual([
       'folder.open-in-file-manager',
+      'folder.open-with',
       'folder.linked-rules',
       'folder.copy-path',
       'folder.remove-from-library',
     ]);
-    for (const id of ['folder.open-in-file-manager', 'folder.copy-path']) {
+    for (const id of [
+      'folder.open-in-file-manager',
+      'folder.open-with',
+      'folder.copy-path',
+    ]) {
       expect(findItem(menu, id)).toMatchObject({
         disabled: true,
         disabledReason: '链接文件夹当前离线',
@@ -345,6 +355,12 @@ describe('run 委托到 actions 回调包', () => {
       'openFolderInFileManager',
       ['folder-1'],
     ],
+    [
+      'folder.open-with',
+      {},
+      'openFolderWith',
+      ['folder-1'],
+    ],
     ['folder.create-subfolder', {}, 'createSubfolder', ['folder-1']],
     ['folder.rename', {}, 'renameFolder', ['folder-1', '素材']],
     ['folder.copy-path', {}, 'copyFolderPath', ['folder-1']],
@@ -497,9 +513,10 @@ describe('删除确认：window.confirm 保留在 run 内', () => {
 });
 
 describe('注册表完整性', () => {
-  it('14 条定义全部注册且 id 唯一（createCommandRegistry 未抛错）', () => {
+  it('15 条定义全部注册且 id 唯一（createCommandRegistry 未抛错）', () => {
     expect(registry.list().map((def) => def.id)).toEqual([
       'folder.open-in-file-manager',
+      'folder.open-with',
       'folder.create-subfolder',
       'folder.rename',
       'folder.linked-rules',
@@ -520,6 +537,7 @@ describe('注册表完整性', () => {
     const { ctx } = makeCtx();
     const groups = registry.resolveMenu(ctx).map((item) => item.group);
     expect(groups).toEqual([
+      'open',
       'open',
       'organize',
       'organize',

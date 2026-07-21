@@ -90,6 +90,7 @@ interface AssetContextMenuProps {
   onCreateSubfolder: (folderId: string) => void;
   onRenameFolder: (folderId: string, currentName: string) => void;
   onOpenFolderInFileManager: (folderId: string) => void;
+  onOpenFolderWith: (folderId: string) => void;
   onCopyFolderPath: (folderId: string) => void;
   onOpenLinkedRules: (folder: LinkedFolderSummary) => void;
   onTrashManagedFolder: (folderId: string, name: string) => void;
@@ -124,6 +125,7 @@ interface AssetContextMenuProps {
   onCopyToLinked: (folder: LinkedFolderSummary, assetIds: string[]) => void;
   onClearSelection: () => void;
   onOpenExternal: (assetId: string) => void;
+  onOpenWith: (assetId: string) => void;
   onViewAsset: (assetId: string) => void;
   onRevealInFolder: (assetId: string) => void;
   onCopyFilePath: (assetId: string) => void;
@@ -155,6 +157,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
     onCreateSubfolder,
     onRenameFolder,
     onOpenFolderInFileManager,
+    onOpenFolderWith,
     onCopyFolderPath,
     onOpenLinkedRules,
     onTrashManagedFolder,
@@ -179,6 +182,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
     onCopyToLinked,
     onClearSelection,
     onOpenExternal,
+    onOpenWith,
     onViewAsset,
     onRevealInFolder,
     onCopyFilePath,
@@ -327,6 +331,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
             linkedFolderResolved: false,
             actions: {
               openFolderInFileManager: onOpenFolderInFileManager,
+              openFolderWith: onOpenFolderWith,
               createSubfolder: onCreateSubfolder,
               renameFolder: onRenameFolder,
               openLinkedRules: onOpenLinkedRules,
@@ -411,6 +416,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
             linkedFolderResolved: false,
             actions: {
               openFolderInFileManager: onOpenFolderInFileManager,
+              openFolderWith: onOpenFolderWith,
               createSubfolder: onCreateSubfolder,
               renameFolder: onRenameFolder,
               openLinkedRules: onOpenLinkedRules,
@@ -506,6 +512,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
             linkedRelativePath: desc.linkedRelativePath,
             actions: {
               openFolderInFileManager: onOpenFolderInFileManager,
+              openFolderWith: onOpenFolderWith,
               createSubfolder: onCreateSubfolder,
               renameFolder: onRenameFolder,
               openLinkedRules: onOpenLinkedRules,
@@ -541,6 +548,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
           const openInFileManagerItem = resolvedById.get(
             "folder.open-in-file-manager",
           );
+          const openWithItem = resolvedById.get("folder.open-with");
           const createSubfolderItem = resolvedById.get(
             "folder.create-subfolder",
           );
@@ -568,6 +576,15 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                     onAction={() =>
                       runSidebarCommand("folder.open-in-file-manager")
                     }
+                  />
+                )}
+                {openWithItem && (
+                  <ContextMenuItem
+                    icon={<Icon name="box" size={14} />}
+                    label={openWithItem.label}
+                    disabled={openWithItem.disabled}
+                    disabledReason={openWithItem.disabledReason ?? undefined}
+                    onAction={() => runSidebarCommand("folder.open-with")}
                   />
                 )}
               </ContextMenuSection>
@@ -965,6 +982,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
               actions: {
                 view: onViewAsset,
                 openExternal: onOpenExternal,
+                openWith: onOpenWith,
                 revealInFolder: onRevealInFolder,
                 copyFilePath: onCopyFilePath,
                 rename: onRenameAssetFile,
@@ -995,6 +1013,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
               "asset.delete-permanent",
             );
             const openExternalItem = resolvedById.get("asset.open-external");
+            const openWithItem = resolvedById.get("asset.open-with");
             const viewItem = resolvedById.get("asset.view");
             const revealInFolderItem = resolvedById.get(
               "asset.reveal-in-folder",
@@ -1066,6 +1085,15 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                         openExternalItem.disabledReason ?? undefined
                       }
                       onAction={() => runAssetCommand("asset.open-external")}
+                    />
+                  )}
+                  {openWithItem && (
+                    <ContextMenuItem
+                      icon={<Icon name="box" size={14} />}
+                      label={openWithItem.label}
+                      disabled={openWithItem.disabled}
+                      disabledReason={openWithItem.disabledReason ?? undefined}
+                      onAction={() => runAssetCommand("asset.open-with")}
                     />
                   )}
                   {revealInFolderItem && (

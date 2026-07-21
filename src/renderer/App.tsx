@@ -2823,9 +2823,11 @@ function AppInner() {
 
   const {
     handleOpenExternal,
+    handleOpenWith,
     handleRevealInFolder,
     handleCopyFilePath,
     handleOpenFolderInFileManager,
+    handleOpenFolderWith,
     handleCopyFolderPath,
   } = useShellFileActions({
     api: api ?? null,
@@ -7781,6 +7783,9 @@ function AppInner() {
         onOpenFolderInFileManager={(folderId) => {
           void handleOpenFolderInFileManager(folderId);
         }}
+        onOpenFolderWith={(folderId) => {
+          void handleOpenFolderWith(folderId);
+        }}
         onCopyFolderPath={(folderId) => {
           void handleCopyFolderPath(folderId);
         }}
@@ -7864,6 +7869,7 @@ function AppInner() {
         onCopyToLinked={(folder, assetIds) => { void copyManagedSelectionToLinked(folder, assetIds); }}
         onClearSelection={clearAssetSelection}
         onOpenExternal={(assetId) => { void handleOpenExternal(assetId); }}
+        onOpenWith={(assetId) => { void handleOpenWith(assetId); }}
         onViewAsset={(assetId) => {
           const asset = visibleAssets.find((item) => item.assetId === assetId);
           if (asset) openAssetPreview(asset);

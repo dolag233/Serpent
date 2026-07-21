@@ -43,6 +43,24 @@ export function useShellFileActions({
     [api, library, locale, setError, t],
   );
 
+  const handleOpenWith = useCallback(
+    async (assetId: string) => {
+      if (!api || !library) return;
+      try {
+        const result = await api.openWith({
+          libraryId: library.libraryId,
+          assetId,
+        });
+        if (!result.ok) {
+          setError(toMessage(result.error, t("toast.openWithFailed"), locale));
+        }
+      } catch (caught) {
+        setError(toMessage(caught, t("toast.openWithError"), locale));
+      }
+    },
+    [api, library, locale, setError, t],
+  );
+
   const handleRevealInFolder = useCallback(
     async (assetId: string) => {
       if (!api || !library) return;
@@ -101,6 +119,24 @@ export function useShellFileActions({
     [api, library, locale, setError, t],
   );
 
+  const handleOpenFolderWith = useCallback(
+    async (folderId: string) => {
+      if (!api || !library) return;
+      try {
+        const result = await api.openFolderWith({
+          libraryId: library.libraryId,
+          folderId,
+        });
+        if (!result.ok) {
+          setError(toMessage(result.error, t("toast.openWithFailed"), locale));
+        }
+      } catch (caught) {
+        setError(toMessage(caught, t("toast.openWithError"), locale));
+      }
+    },
+    [api, library, locale, setError, t],
+  );
+
   const handleCopyFolderPath = useCallback(
     async (folderId: string) => {
       if (!api || !library) return;
@@ -125,9 +161,11 @@ export function useShellFileActions({
 
   return {
     handleOpenExternal,
+    handleOpenWith,
     handleRevealInFolder,
     handleCopyFilePath,
     handleOpenFolderInFileManager,
+    handleOpenFolderWith,
     handleCopyFolderPath,
   };
 }

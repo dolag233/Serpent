@@ -36,6 +36,10 @@ import {
 
 import { popupEditContextMenu } from "./edit-context-menu";
 import {
+  createOpenWithDeps,
+  openPathWithOtherApplication,
+} from "./open-with";
+import {
   ASSET_CHANGE_CHANNEL,
   THUMBNAIL_CHANNEL,
   ACTIVE_CONTEXT_CHANNEL,
@@ -816,6 +820,13 @@ async function commandFor(
         libraryId: request.libraryId,
         folderId: request.folderId,
       };
+    case "folder.open-with.request":
+      // Handled directly in handleLibraryRequest (macOS picker / Windows Open With).
+      return {
+        type: "folder.get-path",
+        libraryId: request.libraryId,
+        folderId: request.folderId,
+      };
     case "folder.copy-path.request":
       // Handled directly in handleLibraryRequest because it requires clipboard.writeText.
       return {
@@ -1489,6 +1500,13 @@ async function commandFor(
       return undefined;
     case "asset.open-external.request":
       // Handled directly in handleLibraryRequest because it requires shell.openPath.
+      return {
+        type: "media.get-asset-path",
+        libraryId: request.libraryId,
+        assetId: request.assetId,
+      };
+    case "asset.open-with.request":
+      // Handled directly in handleLibraryRequest (macOS picker / Windows Open With).
       return {
         type: "media.get-asset-path",
         libraryId: request.libraryId,
@@ -2195,6 +2213,29 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
     }
     if (
       workerResult.ok &&
+      request.type === "asset.open-with.request" &&
+      workerResult.type === "media.asset-path"
+    ) {
+      const outcome = await openPathWithOtherApplication(
+        workerResult.absolutePath,
+        createOpenWithDeps(appLocale, () => mainWindow ?? null),
+      );
+      if (outcome === "failed") {
+        logger?.error("main.open-with", new Error("open-with failed"));
+        return {
+          ok: false,
+          error: createPublicError("INTERNAL_ERROR"),
+        } satisfies RendererResult;
+      }
+      // cancelled → quiet ok (no toast); opened → quiet ok.
+      return {
+        ok: true,
+        type: "asset.open-with.requested",
+        assetId: request.assetId,
+      } satisfies RendererResult;
+    }
+    if (
+      workerResult.ok &&
       request.type === "asset.reveal-in-folder.request" &&
       workerResult.type === "media.asset-path"
     ) {
@@ -2258,6 +2299,28 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
           error: createPublicError("INTERNAL_ERROR"),
         } satisfies RendererResult;
       }
+    }
+    if (
+      workerResult.ok &&
+      request.type === "folder.open-with.request" &&
+      workerResult.type === "folder.path"
+    ) {
+      const outcome = await openPathWithOtherApplication(
+        workerResult.absolutePath,
+        createOpenWithDeps(appLocale, () => mainWindow ?? null),
+      );
+      if (outcome === "failed") {
+        logger?.error("main.folder-open-with", new Error("open-with failed"));
+        return {
+          ok: false,
+          error: createPublicError("INTERNAL_ERROR"),
+        } satisfies RendererResult;
+      }
+      return {
+        ok: true,
+        type: "folder.open-with.requested",
+        folderId: request.folderId,
+      } satisfies RendererResult;
     }
     if (
       workerResult.ok &&

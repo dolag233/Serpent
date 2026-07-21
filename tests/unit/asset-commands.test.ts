@@ -27,6 +27,7 @@ function makeActions(calls: RecordedCall[]): AssetCommandActions {
   return {
     view: record('view'),
     openExternal: record('openExternal'),
+    openWith: record('openWith'),
     revealInFolder: record('revealInFolder'),
     copyFilePath: record('copyFilePath'),
     rename: record('rename'),
@@ -85,6 +86,7 @@ describe('可见性（与历史内联 JSX 条件一致）', () => {
     expect(resolveIds(ctx)).toEqual([
       'asset.view',
       'asset.open-external',
+      'asset.open-with',
       'asset.reveal-in-folder',
       'asset.move-to-folder',
       'asset.copy-file-path',
@@ -101,6 +103,7 @@ describe('可见性（与历史内联 JSX 条件一致）', () => {
     expect(resolveIds(ctx)).toEqual([
       'asset.view',
       'asset.open-external',
+      'asset.open-with',
       'asset.reveal-in-folder',
       'asset.relink',
       'asset.copy-file-path',
@@ -117,6 +120,7 @@ describe('可见性（与历史内联 JSX 条件一致）', () => {
     expect(resolveIds(ctx)).toEqual([
       'asset.view',
       'asset.open-external',
+      'asset.open-with',
       'asset.reveal-in-folder',
       'asset.copy-file-path',
       'asset.rename',
@@ -131,6 +135,7 @@ describe('可见性（与历史内联 JSX 条件一致）', () => {
     expect(resolveIds(ctx)).toEqual([
       'asset.view',
       'asset.open-external',
+      'asset.open-with',
       'asset.reveal-in-folder',
       'asset.copy-file-path',
       'asset.rename',
@@ -156,6 +161,7 @@ describe('可见性（与历史内联 JSX 条件一致）', () => {
     expect(resolveIds(withCollection.ctx)).toEqual([
       'asset.view',
       'asset.open-external',
+      'asset.open-with',
       'asset.reveal-in-folder',
       'asset.remove-from-current-collection',
       'asset.move-to-folder',
@@ -198,6 +204,7 @@ describe('禁用原因（disabledReason 是唯一禁用来源）', () => {
     const menu = registry.resolveMenu(ctx);
     for (const id of [
       'asset.open-external',
+      'asset.open-with',
       'asset.reveal-in-folder',
       'asset.copy-file-path',
       'asset.rename',
@@ -274,7 +281,8 @@ describe('标题与快捷键标签', () => {
     ['asset.restore', '恢复'],
     ['asset.delete-permanent', '永久删除'],
     ['asset.view', '查看'],
-    ['asset.open-external', '使用外部应用打开'],
+    ['asset.open-external', '用默认应用打开'],
+    ['asset.open-with', '用其他应用打开…'],
     ['asset.remove-from-current-collection', '从当前合集移除'],
     ['asset.relink', '找回资产…'],
     ['asset.move-to-folder', '移动到文件夹…'],
@@ -330,6 +338,7 @@ describe('run 委托到 actions 回调包', () => {
   it.each([
     ['asset.view', {}, 'view', ['asset-1']],
     ['asset.open-external', {}, 'openExternal', ['asset-1']],
+    ['asset.open-with', {}, 'openWith', ['asset-1']],
     ['asset.reveal-in-folder', {}, 'revealInFolder', ['asset-1']],
     ['asset.copy-file-path', {}, 'copyFilePath', ['asset-1']],
     ['asset.rename', {}, 'rename', ['asset-1']],
@@ -404,12 +413,13 @@ describe('run 委托到 actions 回调包', () => {
 });
 
 describe('注册表完整性', () => {
-  it('15 条定义全部注册且 id 唯一（createCommandRegistry 未抛错）', () => {
+  it('16 条定义全部注册且 id 唯一（createCommandRegistry 未抛错）', () => {
     expect(registry.list().map((def) => def.id)).toEqual([
       'asset.restore',
       'asset.delete-permanent',
       'asset.view',
       'asset.open-external',
+      'asset.open-with',
       'asset.reveal-in-folder',
       'asset.remove-from-current-collection',
       'asset.relink',
@@ -428,6 +438,7 @@ describe('注册表完整性', () => {
     const { ctx } = makeCtx({ activeCollectionId: 'col-1' });
     const groups = registry.resolveMenu(ctx).map((item) => item.group);
     expect(groups).toEqual([
+      'open',
       'open',
       'open',
       'open',

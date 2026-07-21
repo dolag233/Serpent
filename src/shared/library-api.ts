@@ -375,11 +375,14 @@ export interface SerpentLibraryApi {
   closePreview(input: { libraryId: string; assetId: string }): Promise<LibraryApiResult<void>>;
   reportPreviewError(input: { libraryId: string; assetId: string; errorCode: string; detail?: string }): Promise<LibraryApiResult<void>>;
   openExternal(input: { libraryId: string; assetId: string }): Promise<LibraryApiResult<void>>;
+  /** Open asset with a user-chosen application (macOS picker / Windows Open With). */
+  openWith(input: { libraryId: string; assetId: string }): Promise<LibraryApiResult<void>>;
   revealInFolder(input: { libraryId: string; assetId: string }): Promise<LibraryApiResult<void>>;
   copyFilePath(input: { libraryId: string; assetId: string }): Promise<LibraryApiResult<void>>;
   // Folder shell actions (REQ-MENU-006): folder id only crosses the bridge;
   // the absolute path is resolved by the Worker and consumed by Main.
   openFolderInFileManager(input: { libraryId: string; folderId: string }): Promise<LibraryApiResult<void>>;
+  openFolderWith(input: { libraryId: string; folderId: string }): Promise<LibraryApiResult<void>>;
   copyFolderPath(input: { libraryId: string; folderId: string }): Promise<LibraryApiResult<void>>;
   retryArtifact(input: { libraryId: string; assetId: string; kind: 'thumbnail' | 'webm_proxy' }): Promise<LibraryApiResult<{ assetId: string; kind: string }>>;
   listMediaJobs(input: { libraryId: string }): Promise<LibraryApiResult<MediaJobStatus>>;

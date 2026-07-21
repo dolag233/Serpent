@@ -280,9 +280,10 @@ export const zhCN = {
   },
   command: {
     asset: {
-      openExternal: "使用外部应用打开",
+      openExternal: "用默认应用打开",
       view: "查看",
       openExternalAlt: "用系统默认应用打开",
+      openWith: "用其他应用打开…",
       revealInFolder: "在 Finder 中显示",
       revealInFolderWindows: "在文件资源管理器中显示",
       revealInFolderWindowsShort: "在资源管理器中显示",
@@ -322,6 +323,7 @@ export const zhCN = {
       revealInFinder: "在 Finder 中打开",
       revealInExplorer: "在文件资源管理器中打开",
       revealInExplorerShort: "在资源管理器中打开",
+      openWith: "用其他应用打开…",
       copyPath: "复制文件夹路径",
       linkedRules: "链接规则…",
       moveToTrash: "移入回收站",
@@ -919,6 +921,8 @@ export const zhCN = {
     metadataSaveFailed: "保存元数据失败。",
     openExternalFailed: "无法打开外部应用。",
     openExternalError: "打开外部应用失败。",
+    openWithFailed: "无法用其他应用打开。",
+    openWithError: "用其他应用打开失败。",
     revealAssetFailed: "无法在文件管理器中显示该资产。",
     revealAssetError: "在文件管理器中显示失败。",
     copyPathUnavailable: "无法复制文件路径。",

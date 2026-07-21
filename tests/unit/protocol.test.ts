@@ -325,6 +325,15 @@ describe('renderer request protocol', () => {
       libraryId: 'library-01',
       assetId: 'asset-01',
     });
+    expect(parseRendererRequest({
+      type: 'asset.open-with.request',
+      libraryId: 'library-01',
+      assetId: 'asset-01',
+    })).toEqual({
+      type: 'asset.open-with.request',
+      libraryId: 'library-01',
+      assetId: 'asset-01',
+    });
     // REQ-COMMAND-003: the renderer must never supply filesystem paths.
     expect(() => parseRendererRequest({
       type: 'asset.reveal-in-folder.request',
@@ -334,6 +343,12 @@ describe('renderer request protocol', () => {
     })).toThrow();
     expect(() => parseRendererRequest({
       type: 'asset.copy-file-path.request',
+      libraryId: 'library-01',
+      assetId: 'asset-01',
+      absolutePath: '/private/forged/path',
+    })).toThrow();
+    expect(() => parseRendererRequest({
+      type: 'asset.open-with.request',
       libraryId: 'library-01',
       assetId: 'asset-01',
       absolutePath: '/private/forged/path',
@@ -359,6 +374,15 @@ describe('renderer request protocol', () => {
       folderId: 'folder-01',
     });
     expect(parseRendererRequest({
+      type: 'folder.open-with.request',
+      libraryId: 'library-01',
+      folderId: 'folder-01',
+    })).toEqual({
+      type: 'folder.open-with.request',
+      libraryId: 'library-01',
+      folderId: 'folder-01',
+    });
+    expect(parseRendererRequest({
       type: 'folder.copy-path.request',
       libraryId: 'library-01',
       folderId: 'folder-01',
@@ -367,6 +391,12 @@ describe('renderer request protocol', () => {
       libraryId: 'library-01',
       folderId: 'folder-01',
     });
+    expect(() => parseRendererRequest({
+      type: 'folder.open-with.request',
+      libraryId: 'library-01',
+      folderId: 'folder-01',
+      absolutePath: '/private/forged/path',
+    })).toThrow();
     expect(parseWorkerRequest({
       requestId: 'folder-path-01',
       command: {

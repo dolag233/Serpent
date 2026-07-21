@@ -8,6 +8,7 @@ import type { CommandContext, CommandDefinition } from './command-types';
 
 export interface SidebarCommandActions {
   readonly openFolderInFileManager: (folderId: string) => void;
+  readonly openFolderWith: (folderId: string) => void;
   readonly createSubfolder: (folderId: string) => void;
   readonly renameFolder: (folderId: string, currentName: string) => void;
   readonly openLinkedRules: (folder: LinkedFolderSummary) => void;
@@ -77,6 +78,15 @@ export const sidebarCommandDefinitions: readonly SidebarCommandDefinition[] = [
     visible: (ctx) => ctx.menuKind === 'folder',
     disabledReason: offlineReason,
     run: (ctx) => ctx.actions.openFolderInFileManager(ctx.subjectId),
+  },
+  {
+    id: 'folder.open-with',
+    title: (ctx) =>
+      translateForLocale(ctx.locale, 'command.folder.openWith'),
+    group: 'open',
+    visible: (ctx) => ctx.menuKind === 'folder',
+    disabledReason: offlineReason,
+    run: (ctx) => ctx.actions.openFolderWith(ctx.subjectId),
   },
   {
     id: 'folder.create-subfolder',

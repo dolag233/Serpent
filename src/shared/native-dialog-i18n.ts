@@ -55,7 +55,9 @@ export type NativeDialogId =
   | "importLibraryFolder"
   | "importZip"
   | "importZipDestination"
-  | "importCopyDestination";
+  | "importCopyDestination"
+  /** macOS application picker for "Open With…" (Serpent-w29). */
+  | "chooseApplication";
 
 export type NativeDialogCopy = {
   readonly title: string;
@@ -112,6 +114,11 @@ const EN: DialogCatalog = {
   importCopyDestination: {
     title: "Choose where to copy the library",
     buttonLabel: "Copy here",
+  },
+  chooseApplication: {
+    title: "Choose Application",
+    buttonLabel: "Open",
+    filterName: "Applications",
   },
 };
 
@@ -172,6 +179,11 @@ const ZH_CN: DialogCatalog = {
     title:
       "\u9009\u62e9\u5bfc\u5165\u76ee\u6807\u4f4d\u7f6e\uff08\u8d44\u6e90\u5e93\u5c06\u590d\u5236\u5230\u6b64\u6587\u4ef6\u5939\u5185\uff09",
     buttonLabel: "\u590d\u5236\u5230\u6b64\u5904",
+  },
+  chooseApplication: {
+    title: "\u9009\u62e9\u5e94\u7528",
+    buttonLabel: "\u6253\u5f00",
+    filterName: "\u5e94\u7528\u7a0b\u5e8f",
   },
 };
 

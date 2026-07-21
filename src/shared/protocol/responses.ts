@@ -734,6 +734,11 @@ const assetOperationSuccessSchemas = [
   }),
   z.strictObject({
     ok: z.literal(true),
+    type: z.literal('asset.open-with.requested'),
+    assetId: nonBlankString,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
     type: z.literal('asset.reveal-in-folder.requested'),
     assetId: nonBlankString,
   }),
@@ -747,6 +752,11 @@ const assetOperationSuccessSchemas = [
   z.strictObject({
     ok: z.literal(true),
     type: z.literal('folder.open-in-file-manager.requested'),
+    folderId: nonBlankString,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('folder.open-with.requested'),
     folderId: nonBlankString,
   }),
   z.strictObject({

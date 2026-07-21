@@ -145,6 +145,11 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     folderId: identifierSchema,
   }),
   z.strictObject({
+    type: z.literal('folder.open-with.request'),
+    libraryId: identifierSchema,
+    folderId: identifierSchema,
+  }),
+  z.strictObject({
     type: z.literal('folder.copy-path.request'),
     libraryId: identifierSchema,
     folderId: identifierSchema,
@@ -649,6 +654,11 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
   }),
   z.strictObject({
     type: z.literal('asset.open-external.request'),
+    libraryId: identifierSchema,
+    assetId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('asset.open-with.request'),
     libraryId: identifierSchema,
     assetId: identifierSchema,
   }),

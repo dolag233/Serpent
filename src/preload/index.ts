@@ -1054,6 +1054,12 @@ const library: SerpentLibraryApi = Object.freeze({
     return { ok: true, value: undefined };
   },
 
+  async openWith({ libraryId, assetId }: { libraryId: string; assetId: string }): Promise<LibraryApiResult<void>> {
+    const result = await request({ type: 'asset.open-with.request', libraryId, assetId });
+    if (!result.ok) return failure(result);
+    return { ok: true, value: undefined };
+  },
+
   async revealInFolder({ libraryId, assetId }: { libraryId: string; assetId: string }): Promise<LibraryApiResult<void>> {
     const result = await request({ type: 'asset.reveal-in-folder.request', libraryId, assetId });
     if (!result.ok) return failure(result);
@@ -1068,6 +1074,12 @@ const library: SerpentLibraryApi = Object.freeze({
 
   async openFolderInFileManager({ libraryId, folderId }: { libraryId: string; folderId: string }): Promise<LibraryApiResult<void>> {
     const result = await request({ type: 'folder.open-in-file-manager.request', libraryId, folderId });
+    if (!result.ok) return failure(result);
+    return { ok: true, value: undefined };
+  },
+
+  async openFolderWith({ libraryId, folderId }: { libraryId: string; folderId: string }): Promise<LibraryApiResult<void>> {
+    const result = await request({ type: 'folder.open-with.request', libraryId, folderId });
     if (!result.ok) return failure(result);
     return { ok: true, value: undefined };
   },

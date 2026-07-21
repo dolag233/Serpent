@@ -17,6 +17,7 @@ import type { CommandContext, CommandDefinition } from './command-types';
 export interface AssetCommandActions {
   readonly view: (assetId: string) => void;
   readonly openExternal: (assetId: string) => void;
+  readonly openWith: (assetId: string) => void;
   readonly revealInFolder: (assetId: string) => void;
   readonly copyFilePath: (assetId: string) => void;
   readonly rename: (assetId: string) => void;
@@ -117,6 +118,14 @@ export const assetCommandDefinitions: readonly AssetCommandDefinition[] = [
     visible: (ctx) => !ctx.assetDeleted,
     disabledReason: unavailableReason,
     run: (ctx) => withPrimaryAsset(ctx, (id) => ctx.actions.openExternal(id)),
+  },
+  {
+    id: 'asset.open-with',
+    title: (ctx) => t(ctx, 'command.asset.openWith'),
+    group: 'open',
+    visible: (ctx) => !ctx.assetDeleted,
+    disabledReason: unavailableReason,
+    run: (ctx) => withPrimaryAsset(ctx, (id) => ctx.actions.openWith(id)),
   },
   {
     id: 'asset.reveal-in-folder',
