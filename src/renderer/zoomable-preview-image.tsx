@@ -4,12 +4,17 @@ import {
   useEffect,
   useImperativeHandle,
   useRef,
+  useState,
 } from "react";
 
 import { Icon } from "./Icons";
 import { iconActionAttrs } from "./icon-action-attrs";
 import { useT } from "./i18n";
 import { useViewerZoomPan } from "./use-viewer-zoom-pan";
+import {
+  isDecodedImage,
+  resolveViewerImageDisplay,
+} from "./viewer-mip-upgrade";
 
 export type ZoomableImageHandle = {
   fitToWindow: () => void;
@@ -35,6 +40,11 @@ export const ZoomableImage = forwardRef<
     onFullscreen?: () => void;
     onSwipeNext?: () => void;
     onSwipePrevious?: () => void;
+    /**
+     * Optional ready thumbnail / preview. Shown immediately; full `src`
+     * upgrades quietly after decode (Serpent-eh07).
+     */
+    placeholderSrc?: string;
     src: string;
   }
 >(function ZoomableImage(
@@ -45,12 +55,14 @@ export const ZoomableImage = forwardRef<
     onFullscreen,
     onSwipeNext,
     onSwipePrevious,
+    placeholderSrc,
     src,
   },
   ref,
 ) {
   const t = useT();
   const imageRef = useRef<HTMLImageElement>(null);
+  const [fullDecoded, setFullDecoded] = useState(false);
   const {
     fitScale,
     fitToWindow,
@@ -73,10 +85,48 @@ export const ZoomableImage = forwardRef<
 
   useImperativeHandle(ref, () => ({ fitToWindow }), [fitToWindow]);
 
+  // Reset decode latch whenever the full URL identity changes.
+  useEffect(() => {
+    setFullDecoded(false);
+  }, [src]);
+
+  // Prefetch full image; only promote after proven decode (naturalWidth > 0).
+  useEffect(() => {
+    if (!src) return;
+    if (placeholderSrc && src === placeholderSrc) {
+      setFullDecoded(true);
+      return;
+    }
+    let cancelled = false;
+    const probe = new Image();
+    const finish = () => {
+      if (cancelled) return;
+      if (isDecodedImage(probe)) setFullDecoded(true);
+    };
+    probe.onload = finish;
+    probe.onerror = () => {
+      // Fall through: still show placeholder; full may retry via parent.
+    };
+    probe.src = src;
+    if (probe.complete) finish();
+    return () => {
+      cancelled = true;
+      probe.onload = null;
+      probe.onerror = null;
+    };
+  }, [placeholderSrc, src]);
+
+  const display = resolveViewerImageDisplay({
+    placeholderUrl: placeholderSrc ?? null,
+    fullUrl: src,
+    fullDecoded,
+  });
+  const paintSrc = display.displayUrl ?? src;
+
   useEffect(() => {
     const image = imageRef.current;
     if (image && image.naturalWidth > 0) measureFromImage(image);
-  }, [src, measureFromImage]);
+  }, [paintSrc, measureFromImage]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -102,6 +152,8 @@ export const ZoomableImage = forwardRef<
     <>
       <div
         className="preview-image-viewport is-pannable"
+        data-viewer-layer={display.layer}
+        data-viewer-upgrading={display.upgrading ? "true" : "false"}
         ref={viewportRef}
         {...viewportPointerHandlers}
       >
@@ -111,9 +163,15 @@ export const ZoomableImage = forwardRef<
           draggable={false}
           onLoad={(event) => {
             measureFromImage(event.currentTarget);
+            if (
+              paintSrc === src &&
+              isDecodedImage(event.currentTarget)
+            ) {
+              setFullDecoded(true);
+            }
           }}
           ref={imageRef}
-          src={src}
+          src={paintSrc}
           style={{
             width: displayW,
             height: displayH,

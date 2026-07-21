@@ -24,6 +24,9 @@ import {
 import { Icon } from "./Icons";
 import type { ViewerChromeActivitySource } from "./viewer-chrome-idle";
 import { resolveViewerPrimarySurface } from "./viewer-preview-policy";
+import {
+  resolveViewerPlaceholderUrl,
+} from "./viewer-mip-upgrade";
 import { isTransientMediaPlaybackError } from "./media-seek-session";
 import { VideoPlayerControls } from "./VideoPlayerControls";
 import { AudioPlayerControls } from "./AudioPlayerControls";
@@ -485,15 +488,22 @@ export function AssetPreviewModal({
       .catch(() => undefined);
   }
 
+  const placeholderUrl = resolveViewerPlaceholderUrl(asset, libraryId);
   const primarySurface = resolveViewerPrimarySurface({
     loading,
     resolution,
     directApproved,
     // Optimistic: source URL presents without waiting on the capability gate.
     requireDirectApproval: false,
+    hasPlaceholder: Boolean(placeholderUrl),
   });
   const ready = primarySurface === "media";
   const unsupported = primarySurface === "unsupported";
+  const imageSrc = resolution?.url ?? placeholderUrl;
+  const showImage =
+    asset.mediaType === "image" &&
+    Boolean(imageSrc) &&
+    (ready || Boolean(placeholderUrl));
 
   async function openExternal() {
     const result = await api.openExternal({
@@ -523,7 +533,7 @@ export function AssetPreviewModal({
       <div className="preview-modal">
         {/* REQ-VIEW-006: no top filename/toolbar bar; nav sits on the edges. */}
         <div className="preview-content">
-          {primarySurface === "loading" ? (
+          {primarySurface === "loading" && !placeholderUrl ? (
             <div
               aria-busy="true"
               aria-label={t("preview.resolving")}
@@ -558,7 +568,7 @@ export function AssetPreviewModal({
               onError={(message) => setError(message)}
               onSaved={() => setDirectApproved(true)}
             />
-          ) : ready && resolution?.url ? (
+          ) : showImage && imageSrc ? (
             <ZoomableImage
               alt={asset.displayName}
               isFullscreen={isFullscreen}
@@ -566,7 +576,8 @@ export function AssetPreviewModal({
               onFullscreen={() => void toggleFullscreen()}
               onSwipeNext={onNext}
               onSwipePrevious={onPrevious}
-              src={resolution.url}
+              placeholderSrc={placeholderUrl ?? undefined}
+              src={imageSrc}
             />
           ) : unsupported ? (            <div className="preview-state" role="status">
               <strong>{t("preview.unsupportedTitle")}</strong>

@@ -60,6 +60,8 @@ export function resolveViewerPrimarySurface(input: {
   readonly resolution: PreviewPollSnapshot | null;
   readonly directApproved: boolean;
   readonly requireDirectApproval?: boolean;
+  /** Ready thumbnail available for mip-style first paint (Serpent-eh07). */
+  readonly hasPlaceholder?: boolean;
 }): ViewerPrimarySurface {
   const { loading, resolution, directApproved } = input;
   const requireDirectApproval = input.requireDirectApproval ?? false;
@@ -69,6 +71,8 @@ export function resolveViewerPrimarySurface(input: {
   });
 
   if (canPresent) return "media";
+  // Image navigation: show thumbnail immediately while full source resolves.
+  if (input.hasPlaceholder) return "media";
   if (loading && !resolution) return "loading";
   if (
     resolution?.mediaType === "other" ||

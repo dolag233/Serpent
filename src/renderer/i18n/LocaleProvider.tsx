@@ -18,6 +18,7 @@ import {
   type LocalePreference,
   type LocalePreferencesStorage,
 } from './locale-preferences';
+import { syncAppLocaleToMain } from './sync-app-locale';
 import {
   createTranslator,
   type AppLocale,
@@ -62,6 +63,7 @@ export function LocaleProvider({
     if (typeof document !== 'undefined') {
       document.documentElement.lang = locale;
     }
+    syncAppLocaleToMain(locale);
   }, [locale]);
 
   useEffect(() => {

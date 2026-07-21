@@ -8,6 +8,8 @@ export const AI_COMPLETED_CHANNEL = 'serpent:ai:completed' as const;
 export const AI_CLEARED_CHANNEL = 'serpent:ai:cleared' as const;
 
 export const ACTIVE_CONTEXT_CHANNEL = 'serpent:active-context' as const;
+/** Renderer → Main: effective UI locale for native dialogs (Serpent-bwb). */
+export const APP_LOCALE_CHANNEL = 'serpent:app-locale' as const;
 export const EXTENSION_PAIRING_CHANNEL = 'serpent:extension-pairing' as const;
 export const OPEN_EXTERNAL_URL_CHANNEL = 'serpent:shell:open-external-url' as const;
 export const REVEAL_APP_LOG_CHANNEL = 'serpent:shell:reveal-app-log' as const;

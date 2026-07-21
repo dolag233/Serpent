@@ -74,6 +74,7 @@
 | I18N-001 | 右键命令菜单随界面语言切换 | 人类验收通过 | 打开资源库菜单切到 English；右键资产与侧栏文件夹查看菜单标题；再切回简体中文 | English 下菜单为英文；简体中文下恢复原中文文案；无手动偏好时跟随系统语言 | [命令单测](../../tests/unit/asset-commands.test.ts) / [多选命令单测](../../tests/unit/asset-multi-commands.test.ts) / [侧栏命令单测](../../tests/unit/sidebar-commands.test.ts) / [i18n 单测](../../tests/unit/i18n-translate.test.ts) / [开发日志](../development/2026-07-18-i18n-foundation-development-log.md) | 2026-07-18 用户验收：UI 文案覆盖完整通过。默认语言已按反馈改为跟随系统。 |
 | I18N-002 | 壳层语言切换与持久化 | 人类验收通过 | 资源库菜单 → 语言 → English；观察后退/前进、资源库菜单项；完全退出后重启 | 壳层相关文案为英文；重启后仍为 English；再切回简体中文恢复 | [i18n 单测](../../tests/unit/i18n-translate.test.ts) / [开发日志](../development/2026-07-18-i18n-foundation-development-log.md) | 2026-07-18 用户验收通过；默认改为跟随系统语言。 |
 | I18N-003 | 查看页 / toast / 批量操作随语言切换 | 人类验收通过 | 切到 English；打开资产查看页；触发导入完成或复制色卡等通知；执行一项批量提示；再切回简体中文 | English 下查看页按钮与通知为英文；简体中文下恢复；无手动偏好时跟随系统语言 | [开发日志](../development/2026-07-18-i18n-foundation-development-log.md) / [单元 615](../../tests/unit/) | 2026-07-18 用户验收通过。 |
+| I18N-004 | 原生文件对话框跟随应用语言 | 待人类验收 | 切到 English；执行导入文件/创建资源库/导出 ZIP；再切回简体中文重复 | 对话框标题与确认按钮语言与界面一致，不再中英混杂；系统路径浏览惯例保留 | [native-dialog 单测](../../tests/unit/native-dialog-i18n.test.ts) / `Serpent-bwb` | 2026-07-21 实现：locale 安全同步 Main，集中解析 dialog 文案。 |
 
 ### A. 资源库与导入
 
@@ -248,6 +249,7 @@
 | VIEWER-013 | 视频查看页缩放、平移与 Fit | 人类验收通过 | 双击 MP4 进入查看页；滚轮放大；拖拽平移；点控制栏「适应」；触控板双指/捏合对照；Space 播放/暂停不回归 | 放大后可平移且有边界；「适应」回到窗口适配；百分比回显；不与播放快捷键冲突（D/F 已用于逐帧，见 VIEWER-018） | [开发日志](../development/2026-07-20-viewer-wheel-zoom-and-video-zoom-development-log.md) / [media-video E2E](../../tests/e2e/media-video-playback.test.ts) / `Serpent-190` | 2026-07-20 用户确认「确实有作用了，可以验收」。 |
 | VIEWER-014 | 查看页加载态无焦虑文案 | 人类验收通过 | 简体中文下双击打开一项资产；若短暂出现加载态则观察画面；再切 English 复验 | 加载态不显示任何可见 UI（无脉冲、无「正在加载/安全预览/Loading」）；仅可有无障碍隐藏语义 | `Serpent-xkzf` / `preview.resolving` | 2026-07-20 用户确认通过。 |
 | VIEWER-018 | 视频查看页 D/F 逐帧与 Ctrl+←/→ 跳转 2 秒 | 待人类验收 | 双击 MP4 进入查看页；① 播放中按 D / F；② 暂停后再按 D / F 数次观察画面；③ 按 Ctrl+← 与 Ctrl+→；④ 在 Inspector 描述框聚焦时按 D/F 确认不抢键；⑤ 对照裸 ←/→ 仍切上一张/下一张资产 | D=前进约一帧、F=后退约一帧（播放中逐帧会暂停）；Ctrl+方向键约 ±2 秒且不切资产；输入框内不触发；裸方向键仍切资产 | [单测](../../tests/unit/video-player-controls.test.ts) / `Serpent-sk1` | 2026-07-21 实现：捕获阶段处理 D/F 与 Ctrl+←/→，避免与壳层切图冲突。 |
+| VIEWER-019 | 左右切图先缩略图再安静升级原图 | 待人类验收 | 打开含就绪缩略图的多张图片查看页；快速按 ←→ 切图 | 切图时先见可解码缩略图/预览，原图就绪后无闪黑或长时间空白 | [mip 单测](../../tests/unit/viewer-mip-upgrade.test.ts) / [策略单测](../../tests/unit/viewer-preview-policy.test.ts) / `Serpent-eh07` | 2026-07-21 实现：占位图先绘，原图 decode（naturalWidth>0）后升级。 |
 
 ### G. 回收站与重新定位
 

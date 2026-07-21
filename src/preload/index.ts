@@ -9,6 +9,7 @@ import {
   ASSET_CHANGE_CHANNEL,
   THUMBNAIL_CHANNEL,
   ACTIVE_CONTEXT_CHANNEL,
+  APP_LOCALE_CHANNEL,
   LIBRARY_LIFECYCLE_CHANNEL,
   LIBRARY_REQUEST_CHANNEL,
   PROGRESS_CHANNEL,
@@ -1322,6 +1323,9 @@ const shell: SerpentShellApi = Object.freeze({
   async revealAppLog() {
     const result: unknown = await ipcRenderer.invoke(REVEAL_APP_LOG_CHANNEL);
     return parseRevealAppLogResult(result);
+  },
+  setAppLocale(locale: 'zh-CN' | 'en'): void {
+    ipcRenderer.send(APP_LOCALE_CHANNEL, { locale });
   },
   async showEditContextMenu(point: { x: number; y: number }) {
     const result: unknown = await ipcRenderer.invoke(

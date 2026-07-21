@@ -17,16 +17,29 @@ import {
   screen,
   shell,
   nativeImage,
-  type OpenDialogOptions,
 } from "electron";
 
 import { installApplicationMenu } from "./application-menu";
+import {
+  selectImportSources as selectImportSourcesDialog,
+  selectLibraryDirectory,
+  selectOpenDirectory,
+  selectOpenFile,
+  selectSavePath,
+  type NativeDialogHost,
+} from "./native-dialogs";
+import {
+  mapSystemLocaleToAppLocale,
+  tryParseAppLocaleSync,
+  type AppLocale,
+} from "../shared/native-dialog-i18n";
 
 import { popupEditContextMenu } from "./edit-context-menu";
 import {
   ASSET_CHANGE_CHANNEL,
   THUMBNAIL_CHANNEL,
   ACTIVE_CONTEXT_CHANNEL,
+  APP_LOCALE_CHANNEL,
   LIBRARY_LIFECYCLE_CHANNEL,
   LIBRARY_REQUEST_CHANNEL,
   PROGRESS_CHANNEL,
@@ -154,6 +167,8 @@ const hasSingleInstanceLock = allowMultiInstance
   : app.requestSingleInstanceLock();
 
 let mainWindow: BrowserWindow | undefined;
+/** Effective UI locale for native dialogs; synced from Renderer (Serpent-bwb). */
+let appLocale: AppLocale = "en";
 let workerClient: LibraryWorkerClient | undefined;
 let quitAfterShutdown = false;
 let startupComplete = false;
@@ -692,56 +707,24 @@ function toRendererResult(
   return parseRendererResult(result);
 }
 
+function createNativeDialogHost(): NativeDialogHost {
+  return {
+    getLocale: () => appLocale,
+    getMainWindow: () => mainWindow ?? null,
+    isE2e: () => !app.isPackaged && process.env.SERPENT_E2E === "1",
+  };
+}
+
 async function selectImportSources(
   sourceKind: "files" | "folder",
 ): Promise<string[] | undefined> {
-  if (!app.isPackaged && process.env.SERPENT_E2E === "1") {
-    const value =
-      sourceKind === "files"
-        ? process.env.SERPENT_E2E_IMPORT_FILES
-        : process.env.SERPENT_E2E_IMPORT_FOLDER;
-    return value ? value.split(path.delimiter).filter(Boolean) : undefined;
-  }
-
-  const options: OpenDialogOptions =
-    sourceKind === "files"
-      ? {
-          title: "Import Files",
-          buttonLabel: "Import",
-          properties: ["openFile", "multiSelections"],
-        }
-      : {
-          title: "Import Folder",
-          buttonLabel: "Import Folder",
-          properties: ["openDirectory"],
-        };
-  const result = mainWindow
-    ? await dialog.showOpenDialog(mainWindow, options)
-    : await dialog.showOpenDialog(options);
-  return result.canceled || result.filePaths.length === 0
-    ? undefined
-    : result.filePaths;
+  return selectImportSourcesDialog(createNativeDialogHost(), sourceKind);
 }
 
 async function selectDirectory(
-  title: string,
-  buttonLabel: string,
+  dialogId: "createLibrary" | "openLibrary",
 ): Promise<string | undefined> {
-  if (!app.isPackaged && process.env.SERPENT_E2E === "1") {
-    return title === "Create Library"
-      ? process.env.SERPENT_E2E_CREATE_PARENT_PATH
-      : process.env.SERPENT_E2E_OPEN_LIBRARY_PATH;
-  }
-
-  const options: OpenDialogOptions = {
-    title,
-    buttonLabel,
-    properties: ["openDirectory", "createDirectory"],
-  };
-  const result = mainWindow
-    ? await dialog.showOpenDialog(mainWindow, options)
-    : await dialog.showOpenDialog(options);
-  return result.canceled ? undefined : result.filePaths[0];
+  return selectLibraryDirectory(createNativeDialogHost(), dialogId);
 }
 
 async function commandFor(
@@ -749,10 +732,7 @@ async function commandFor(
 ): Promise<WorkerCommand | undefined> {
   switch (request.type) {
     case "library.create.request": {
-      const selectedParentPath = await selectDirectory(
-        "Create Library",
-        "Choose Folder",
-      );
+      const selectedParentPath = await selectDirectory("createLibrary");
       return selectedParentPath
         ? {
             type: "library.create",
@@ -762,7 +742,7 @@ async function commandFor(
         : undefined;
     }
     case "library.open.request": {
-      const selectedLibraryPath = await selectDirectory("Open Library", "Open");
+      const selectedLibraryPath = await selectDirectory("openLibrary");
       return selectedLibraryPath
         ? { type: "library.open", selectedLibraryPath }
         : undefined;
@@ -900,23 +880,11 @@ async function commandFor(
     case "asset.refresh.request":
       return { type: "asset.refresh", libraryId: request.libraryId };
     case "asset.import-linked.request": {
-      let sourceRootPath: string | undefined;
-      if (!app.isPackaged && process.env.SERPENT_E2E === "1") {
-        sourceRootPath = process.env.SERPENT_E2E_LINKED_SOURCE;
-      } else {
-        const result = mainWindow
-          ? await dialog.showOpenDialog(mainWindow, {
-              title: "Link Folder to Library",
-              buttonLabel: "Link Folder",
-              properties: ["openDirectory"],
-            })
-          : await dialog.showOpenDialog({
-              title: "Link Folder to Library",
-              buttonLabel: "Link Folder",
-              properties: ["openDirectory"],
-            });
-        sourceRootPath = result.canceled ? undefined : result.filePaths[0];
-      }
+      const sourceRootPath = await selectOpenDirectory(
+        createNativeDialogHost(),
+        "linkFolder",
+        process.env.SERPENT_E2E_LINKED_SOURCE,
+      );
       return sourceRootPath
         ? {
             type: "asset.import-linked",
@@ -929,23 +897,11 @@ async function commandFor(
     case "linked-folder.list.request":
       return { type: "linked-folder.list", libraryId: request.libraryId };
     case "linked-folder.relink.request": {
-      let newRootPath: string | undefined;
-      if (!app.isPackaged && process.env.SERPENT_E2E === "1") {
-        newRootPath = process.env.SERPENT_E2E_LINKED_NEW_ROOT;
-      } else {
-        const result = mainWindow
-          ? await dialog.showOpenDialog(mainWindow, {
-              title: "Relink Folder",
-              buttonLabel: "Select New Location",
-              properties: ["openDirectory"],
-            })
-          : await dialog.showOpenDialog({
-              title: "Relink Folder",
-              buttonLabel: "Select New Location",
-              properties: ["openDirectory"],
-            });
-        newRootPath = result.canceled ? undefined : result.filePaths[0];
-      }
+      const newRootPath = await selectOpenDirectory(
+        createNativeDialogHost(),
+        "relinkFolder",
+        process.env.SERPENT_E2E_LINKED_NEW_ROOT,
+      );
       return newRootPath
         ? {
             type: "linked-folder.relink",
@@ -1233,23 +1189,11 @@ async function commandFor(
         deleteSourceFile: request.deleteSourceFile,
       };
     case "asset.relink.request": {
-      let newAbsolutePath: string | undefined;
-      if (!app.isPackaged && process.env.SERPENT_E2E === "1") {
-        newAbsolutePath = process.env.SERPENT_E2E_RELINK_FILE;
-      } else {
-        const result = mainWindow
-          ? await dialog.showOpenDialog(mainWindow, {
-              title: "Locate Missing Asset",
-              buttonLabel: "Select File",
-              properties: ["openFile"],
-            })
-          : await dialog.showOpenDialog({
-              title: "Locate Missing Asset",
-              buttonLabel: "Select File",
-              properties: ["openFile"],
-            });
-        newAbsolutePath = result.canceled ? undefined : result.filePaths[0];
-      }
+      const newAbsolutePath = await selectOpenFile(
+        createNativeDialogHost(),
+        "locateMissingAsset",
+        process.env.SERPENT_E2E_RELINK_FILE,
+      );
       return newAbsolutePath
         ? {
             type: "asset.relink",
@@ -1260,23 +1204,11 @@ async function commandFor(
         : undefined;
     }
     case "asset.relink-batch.request": {
-      let newRootPath: string | undefined;
-      if (!app.isPackaged && process.env.SERPENT_E2E === "1") {
-        newRootPath = process.env.SERPENT_E2E_RELINK_ROOT;
-      } else {
-        const result = mainWindow
-          ? await dialog.showOpenDialog(mainWindow, {
-              title: "Select New Root for Relinking",
-              buttonLabel: "Select Folder",
-              properties: ["openDirectory"],
-            })
-          : await dialog.showOpenDialog({
-              title: "Select New Root for Relinking",
-              buttonLabel: "Select Folder",
-              properties: ["openDirectory"],
-            });
-        newRootPath = result.canceled ? undefined : result.filePaths[0];
-      }
+      const newRootPath = await selectOpenDirectory(
+        createNativeDialogHost(),
+        "selectRelinkRoot",
+        process.env.SERPENT_E2E_RELINK_ROOT,
+      );
       if (newRootPath) {
         return {
           type: "asset.relink-batch.preview",
@@ -1303,41 +1235,24 @@ async function commandFor(
       // Handled directly in handleLibraryRequest; no root path crosses to Worker.
       return undefined;
     case "library.export.request": {
-      let destinationPath: string | undefined;
-      if (!app.isPackaged && process.env.SERPENT_E2E === "1") {
-        destinationPath =
-          request.format === "zip"
-            ? process.env.SERPENT_E2E_EXPORT_DEST_ZIP
-            : process.env.SERPENT_E2E_EXPORT_DEST;
-      } else if (request.format === "zip") {
-        const result = mainWindow
-          ? await dialog.showSaveDialog(mainWindow, {
-              title: "导出为 ZIP",
-              buttonLabel: "导出 ZIP",
-              defaultPath: "serpent-library-export.zip",
-              filters: [{ name: "ZIP 文件", extensions: ["zip"] }],
-            })
-          : await dialog.showSaveDialog({
-              title: "导出为 ZIP",
-              buttonLabel: "导出 ZIP",
-              defaultPath: "serpent-library-export.zip",
-              filters: [{ name: "ZIP 文件", extensions: ["zip"] }],
-            });
-        destinationPath = result.canceled ? undefined : result.filePath;
-      } else {
-        const result = mainWindow
-          ? await dialog.showSaveDialog(mainWindow, {
-              title: "导出为文件夹",
-              buttonLabel: "创建导出文件夹",
-              defaultPath: "serpent-library-export",
-            })
-          : await dialog.showSaveDialog({
-              title: "导出为文件夹",
-              buttonLabel: "创建导出文件夹",
-              defaultPath: "serpent-library-export",
-            });
-        destinationPath = result.canceled ? undefined : result.filePath;
-      }
+      const host = createNativeDialogHost();
+      const destinationPath =
+        request.format === "zip"
+          ? await selectSavePath(
+              host,
+              "exportZip",
+              process.env.SERPENT_E2E_EXPORT_DEST_ZIP,
+              {
+                defaultPath: "serpent-library-export.zip",
+                filters: [{ name: "ZIP", extensions: ["zip"] }],
+              },
+            )
+          : await selectSavePath(
+              host,
+              "exportFolder",
+              process.env.SERPENT_E2E_EXPORT_DEST,
+              { defaultPath: "serpent-library-export" },
+            );
       return destinationPath
         ? {
             type: "library.export",
@@ -1351,23 +1266,11 @@ async function commandFor(
     case "library.export.cancel.request":
       return { type: "library.export-cancel", exportId: request.exportId };
     case "library.import.request": {
-      let sourceFolderPath: string | undefined;
-      if (!app.isPackaged && process.env.SERPENT_E2E === "1") {
-        sourceFolderPath = process.env.SERPENT_E2E_IMPORT_SOURCE;
-      } else {
-        const result = mainWindow
-          ? await dialog.showOpenDialog(mainWindow, {
-              title: "选择要导入的资源库文件夹",
-              buttonLabel: "导入此资源库",
-              properties: ["openDirectory"],
-            })
-          : await dialog.showOpenDialog({
-              title: "选择要导入的资源库文件夹",
-              buttonLabel: "导入此资源库",
-              properties: ["openDirectory"],
-            });
-        sourceFolderPath = result.canceled ? undefined : result.filePaths[0];
-      }
+      const sourceFolderPath = await selectOpenDirectory(
+        createNativeDialogHost(),
+        "importLibraryFolder",
+        process.env.SERPENT_E2E_IMPORT_SOURCE,
+      );
       if (!sourceFolderPath) return undefined;
       // Store source path for later use in copy/in-place decision.
       const importId = `import-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -1375,45 +1278,20 @@ async function commandFor(
       return { type: "library.import-validate", importId, sourceFolderPath };
     }
     case "library.import-zip.request": {
-      let sourceZipPath: string | undefined;
-      if (!app.isPackaged && process.env.SERPENT_E2E === "1") {
-        sourceZipPath = process.env.SERPENT_E2E_IMPORT_SOURCE_ZIP;
-      } else {
-        const result = mainWindow
-          ? await dialog.showOpenDialog(mainWindow, {
-              title: "选择要导入的 ZIP 文件",
-              buttonLabel: "导入此 ZIP",
-              filters: [{ name: "ZIP 文件", extensions: ["zip"] }],
-              properties: ["openFile"],
-            })
-          : await dialog.showOpenDialog({
-              title: "选择要导入的 ZIP 文件",
-              buttonLabel: "导入此 ZIP",
-              filters: [{ name: "ZIP 文件", extensions: ["zip"] }],
-              properties: ["openFile"],
-            });
-        sourceZipPath = result.canceled ? undefined : result.filePaths[0];
-      }
+      const host = createNativeDialogHost();
+      const sourceZipPath = await selectOpenFile(
+        host,
+        "importZip",
+        process.env.SERPENT_E2E_IMPORT_SOURCE_ZIP,
+        [{ name: "ZIP", extensions: ["zip"] }],
+      );
       if (!sourceZipPath) return undefined;
-      let destinationParentPath: string | undefined;
-      if (!app.isPackaged && process.env.SERPENT_E2E === "1") {
-        destinationParentPath = process.env.SERPENT_E2E_IMPORT_COPY_PARENT;
-      } else {
-        const destResult = mainWindow
-          ? await dialog.showOpenDialog(mainWindow, {
-              title: "选择导入目标位置（资源库将解压到此文件夹内）",
-              buttonLabel: "解压到此处",
-              properties: ["openDirectory", "createDirectory"],
-            })
-          : await dialog.showOpenDialog({
-              title: "选择导入目标位置（资源库将解压到此文件夹内）",
-              buttonLabel: "解压到此处",
-              properties: ["openDirectory", "createDirectory"],
-            });
-        destinationParentPath = destResult.canceled
-          ? undefined
-          : destResult.filePaths[0];
-      }
+      const destinationParentPath = await selectOpenDirectory(
+        host,
+        "importZipDestination",
+        process.env.SERPENT_E2E_IMPORT_COPY_PARENT,
+        { createDirectory: true },
+      );
       if (!destinationParentPath) return undefined;
       return {
         type: "library.import-zip",
@@ -1427,23 +1305,12 @@ async function commandFor(
       const importId = request.importId;
       const sourcePath = pendingImportSources.get(importId);
       if (!sourcePath) return undefined;
-      let copyToParentPath: string | undefined;
-      if (!app.isPackaged && process.env.SERPENT_E2E === "1") {
-        copyToParentPath = process.env.SERPENT_E2E_IMPORT_COPY_PARENT;
-      } else {
-        const result = mainWindow
-          ? await dialog.showOpenDialog(mainWindow, {
-              title: "选择导入目标位置（资源库将复制到此文件夹内）",
-              buttonLabel: "复制到此处",
-              properties: ["openDirectory", "createDirectory"],
-            })
-          : await dialog.showOpenDialog({
-              title: "选择导入目标位置（资源库将复制到此文件夹内）",
-              buttonLabel: "复制到此处",
-              properties: ["openDirectory", "createDirectory"],
-            });
-        copyToParentPath = result.canceled ? undefined : result.filePaths[0];
-      }
+      const copyToParentPath = await selectOpenDirectory(
+        createNativeDialogHost(),
+        "importCopyDestination",
+        process.env.SERPENT_E2E_IMPORT_COPY_PARENT,
+        { createDirectory: true },
+      );
       pendingImportSources.delete(importId);
       if (!copyToParentPath) return undefined;
       return {
@@ -2989,6 +2856,27 @@ async function startApplication(): Promise<void> {
       return result;
     },
   );
+
+  // Bootstrap dialog locale from OS before Renderer syncs (Serpent-bwb).
+  appLocale = mapSystemLocaleToAppLocale(app.getLocale());
+
+  ipcMain.on(APP_LOCALE_CHANNEL, (event, input: unknown) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents) {
+      logger?.info("ipc.app-locale", "Rejected app-locale update.", {
+        code: "unauthorized_sender",
+      });
+      return;
+    }
+    const parsed = tryParseAppLocaleSync(input);
+    if (!parsed.ok) {
+      logger?.info("ipc.app-locale", "Dropped malformed app-locale update.", {
+        code: parsed.code,
+        issuePaths: parsed.issuePaths,
+      });
+      return;
+    }
+    appLocale = parsed.locale;
+  });
 
   ipcMain.on(ACTIVE_CONTEXT_CHANNEL, (event, input: unknown) => {
     if (!mainWindow || event.sender !== mainWindow.webContents) {

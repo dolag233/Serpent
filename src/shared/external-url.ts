@@ -95,6 +95,11 @@ export interface SerpentShellApi {
    */
   revealAppLog(): Promise<RevealAppLogResult>;
   /**
+   * Sync the effective UI locale to Main for native file dialogs (Serpent-bwb).
+   * Only `zh-CN` | `en` are accepted; malformed payloads are dropped in Main.
+   */
+  setAppLocale(locale: 'zh-CN' | 'en'): void;
+  /**
    * 在文本输入控件上弹出平台原生编辑菜单（撤销/剪切/复制/粘贴/删除/全选）。
    * 仅传屏幕坐标；菜单项启用态由 Main 侧 Electron role 根据焦点控件计算。
    */

@@ -101,4 +101,15 @@ describe('viewer preview policy (REQ-VIEW-002)', () => {
       }),
     ).toBe('unsupported');
   });
+
+  it('presents mip placeholder while full preview is still loading (Serpent-eh07)', () => {
+    expect(
+      resolveViewerPrimarySurface({
+        loading: true,
+        resolution: null,
+        directApproved: false,
+        hasPlaceholder: true,
+      }),
+    ).toBe('media');
+  });
 });
