@@ -148,6 +148,52 @@ export function toMultiEditSlice(input: {
 }
 
 /**
+ * Rebuild the multi-edit model from a per-asset metadata cache.
+ * Returns null when selection size &lt; 2 or any id is still missing from cache.
+ */
+export function rebuildMultiEditFromCache(
+  assetIds: readonly string[],
+  cache: ReadonlyMap<
+    string,
+    {
+      description: string | null;
+      rating: number;
+      favorite: boolean;
+      sourcePageUrl: string | null;
+      author: string | null;
+      tags?: readonly { id: string; name: string; source: "user" | "ai" }[];
+    }
+  >,
+): InspectorMultiEditModel | null {
+  if (assetIds.length < 2) return null;
+  const slices: MultiEditMetadataSlice[] = [];
+  for (const assetId of assetIds) {
+    const metadata = cache.get(assetId);
+    if (!metadata) return null;
+    slices.push(toMultiEditSlice(metadata));
+  }
+  return buildInspectorMultiEdit(slices);
+}
+
+/** Editor field values derived from a multi-edit model (mixed → empty/0/false). */
+export function editorFieldsFromMultiEdit(model: InspectorMultiEditModel): {
+  description: string;
+  rating: number;
+  favorite: boolean;
+  sourceUrl: string;
+  author: string;
+} {
+  return {
+    description:
+      model.description.kind === "uniform" ? model.description.value : "",
+    rating: model.rating.kind === "uniform" ? model.rating.value : 0,
+    favorite: model.favorite.kind === "uniform" ? model.favorite.value : false,
+    sourceUrl: model.sourceUrl.kind === "uniform" ? model.sourceUrl.value : "",
+    author: model.author.kind === "uniform" ? model.author.value : "",
+  };
+}
+
+/**
  * Primary asset first, then other selected assets, capped for the stacked
  * Inspector hero preview (back layers → front = last drawn / highest z).
  */

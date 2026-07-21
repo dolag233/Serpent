@@ -134,13 +134,9 @@ import {
   usePendingRestoredAssetFocus,
 } from "./use-browser-session-restore";
 import { resolveInspectorTagTarget } from "./inspector-tag-target";
-import {
-  buildInspectorMultiEdit,
-  toMultiEditSlice,
-  type InspectorMultiEditModel,
-} from "./inspector-multi-edit";
 import { useBatchActions } from "./useBatchActions";
 import { useShellFileActions } from "./use-shell-file-actions";
+import { useInspectorMultiEdit } from "./use-inspector-multi-edit";
 import { useAssetDragDropHandlers, type UndoableFileOp } from "./use-asset-drag-drop-handlers";
 import { useDialogEscapeDismiss } from "./use-dialog-escape-dismiss";
 import { useExternalImportHandlers } from "./use-external-import-handlers";
@@ -263,7 +259,6 @@ import {
   type CommandPlatform,
 } from "./commands/command-types";
 import { resolveRendererPlatform } from "./renderer-platform";
-import { formatBatchRatingNotice } from "./batch-tag-notice";
 import {
   defaultKeyboardCardSize,
   matchGlobalZoomShortcut,
@@ -636,7 +631,6 @@ function AppInner() {
   const [editSourceUrl, setEditSourceUrl] = useState("");
   const [editAuthor, setEditAuthor] = useState("");
   // REQ-SELECT-004: UE-style multi-select Inspector model (null when <2 selected).
-  const [multiEdit, setMultiEdit] = useState<InspectorMultiEditModel | null>(null);
   const selectedAssetIdsRef = useRef(selectedAssetIds);
   useEffect(() => {
     selectedAssetIdsRef.current = selectedAssetIds;
@@ -654,6 +648,31 @@ function AppInner() {
   // Trash / Delete / Relink state
   const [showTrash, setShowTrash] = useState(false);
   const [trashedAssets, setTrashedAssets] = useState<AssetSummary[]>([]);
+
+  const {
+    multiEdit,
+    rebuildAndApplyMultiEdit,
+    saveMetadataForSelection,
+    batchSetRatingForSelection,
+  } = useInspectorMultiEdit({
+    api: api ?? null,
+    library,
+    selectedAssetIds,
+    selectedAssetIdRef,
+    metadataByAssetRef,
+    metadataConflictAssetIdsRef,
+    setEditDescription,
+    setEditRating,
+    setEditFavorite,
+    setEditSourceUrl,
+    setEditAuthor,
+    setAssetMetadata,
+    setAssets,
+    setTrashedAssets,
+    setNotice,
+    setError,
+  });
+
   const [deleteLinkedDialog, setDeleteLinkedDialog] = useState<{
     assetIds: string[];
     displayNames: string;
@@ -2180,9 +2199,7 @@ function AppInner() {
         await refreshTagAndMetadataState(assetId);
       }
       if (ids.length >= 2) {
-        const model = rebuildMultiEditFromCache(ids);
-        setMultiEdit(model);
-        syncEditorsFromMultiEdit(model);
+        rebuildAndApplyMultiEdit(ids);
       }
     } catch (caught) {
       setError(toMessage(caught, t("toast.tagUpdatedRefreshFailed"), locale));
@@ -3491,83 +3508,6 @@ function AppInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedAssetId]);
 
-  function rebuildMultiEditFromCache(
-    assetIds: readonly string[],
-  ): InspectorMultiEditModel | null {
-    if (assetIds.length < 2) return null;
-    const slices = [];
-    for (const assetId of assetIds) {
-      const metadata = metadataByAssetRef.current.get(assetId);
-      if (!metadata) return null;
-      slices.push(
-        toMultiEditSlice({
-          description: metadata.description,
-          rating: metadata.rating,
-          favorite: metadata.favorite,
-          sourcePageUrl: metadata.sourcePageUrl,
-          author: metadata.author,
-          tags: metadata.tags,
-        }),
-      );
-    }
-    return buildInspectorMultiEdit(slices);
-  }
-
-  function syncEditorsFromMultiEdit(model: InspectorMultiEditModel | null) {
-    if (!model) return;
-    setEditDescription(
-      model.description.kind === "uniform" ? model.description.value : "",
-    );
-    setEditRating(model.rating.kind === "uniform" ? model.rating.value : 0);
-    setEditFavorite(
-      model.favorite.kind === "uniform" ? model.favorite.value : false,
-    );
-    setEditSourceUrl(
-      model.sourceUrl.kind === "uniform" ? model.sourceUrl.value : "",
-    );
-    setEditAuthor(
-      model.author.kind === "uniform" ? model.author.value : "",
-    );
-  }
-
-  // REQ-SELECT-004: load metadata for every selected asset and derive mixed/uniform.
-  useEffect(() => {
-    const ids = [...selectedAssetIds];
-    if (ids.length < 2 || !api || !library) {
-      queueMicrotask(() => {
-        setMultiEdit(null);
-      });
-      return;
-    }
-    let cancelled = false;
-    const libraryId = library.libraryId;
-    void (async () => {
-      try {
-        await Promise.all(
-          ids.map(async (assetId) => {
-            if (metadataByAssetRef.current.has(assetId)) return;
-            const result = await api.getAssetMetadata({ libraryId, assetId });
-            if (result.ok) {
-              metadataByAssetRef.current.set(assetId, result.value);
-            }
-          }),
-        );
-        if (cancelled) return;
-        const model = rebuildMultiEditFromCache(ids);
-        setMultiEdit(model);
-        syncEditorsFromMultiEdit(model);
-      } catch (caught) {
-        if (!cancelled) {
-          setError(toMessage(caught, t("toast.readMetadataFailed"), locale));
-        }
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedAssetIds.join("\0"), library?.libraryId, api]);
-
   function saveMetadata(fields: {
     description?: string;
     rating?: number;
@@ -3633,78 +3573,6 @@ function AppInner() {
     });
     metadataSaveQueueRef.current = operation;
     return operation;
-  }
-
-  async function saveMetadataForSelection(
-    assetIds: readonly string[],
-    fields: {
-      description?: string;
-      favorite?: boolean;
-      palette?: string[];
-      sourcePageUrl?: string;
-      author?: string;
-    },
-  ): Promise<void> {
-    if (!api || !library || assetIds.length === 0) return;
-    const targetApi = api;
-    const targetLibraryId = library.libraryId;
-    let updated = 0;
-    let conflicts = 0;
-    for (const assetId of assetIds) {
-      let current = metadataByAssetRef.current.get(assetId);
-      if (!current) {
-        const fetched = await targetApi.getAssetMetadata({
-          libraryId: targetLibraryId,
-          assetId,
-        });
-        if (!fetched.ok) continue;
-        current = fetched.value;
-        metadataByAssetRef.current.set(assetId, current);
-      }
-      if (metadataConflictAssetIdsRef.current.has(assetId)) {
-        conflicts += 1;
-        continue;
-      }
-      try {
-        const result = await targetApi.setAssetMetadata({
-          libraryId: targetLibraryId,
-          assetId,
-          expectedVersion: current.entityVersion,
-          ...fields,
-        });
-        if (!result.ok) {
-          if (result.error.code === "VERSION_CONFLICT") {
-            metadataConflictAssetIdsRef.current.add(assetId);
-            conflicts += 1;
-            continue;
-          }
-          throw new LibraryOperationError(result.error);
-        }
-        metadataByAssetRef.current.set(assetId, result.value);
-        updated += 1;
-        if ("favorite" in fields && fields.favorite !== undefined) {
-          const favorite = fields.favorite;
-          const updateSummary = (asset: AssetSummary): AssetSummary =>
-            asset.assetId === assetId ? { ...asset, favorite } : asset;
-          setAssets((currentAssets) => currentAssets.map(updateSummary));
-          setTrashedAssets((currentAssets) => currentAssets.map(updateSummary));
-        }
-        if (selectedAssetIdRef.current === assetId) {
-          setAssetMetadata(result.value);
-        }
-      } catch (caught) {
-        setError(toMessage(caught, t("toast.metadataSaveFailed"), locale));
-        return;
-      }
-    }
-    const model = rebuildMultiEditFromCache([...assetIds]);
-    setMultiEdit(model);
-    syncEditorsFromMultiEdit(model);
-    if (conflicts > 0) {
-      setNotice(t("toast.metadataVersionConflict"));
-    } else if (updated > 0) {
-      setNotice(t("toast.metadataSaved"));
-    }
   }
 
   // --- Existing operations ---
@@ -5269,57 +5137,6 @@ function AppInner() {
     if (!assetMetadata) return;
     setEditRating(rating);
     void saveMetadata({ rating });
-  }
-
-  async function batchSetRatingForSelection(rating: number, assetIds: string[]) {
-    if (!api || !library || assetIds.length === 0) return;
-    try {
-      const result = await api.setAssetsRating({
-        libraryId: library.libraryId,
-        assetIds,
-        rating,
-      });
-      if (!result.ok) throw new LibraryOperationError(result.error);
-      const skippedIds = new Set(
-        result.value.skipped.map((item) => item.assetId),
-      );
-      const appliedIds = new Set(
-        assetIds.filter((assetId) => !skippedIds.has(assetId)),
-      );
-      const updateSummary = (asset: AssetSummary): AssetSummary =>
-        appliedIds.has(asset.assetId) ? { ...asset, rating } : asset;
-      setAssets((current) => current.map(updateSummary));
-      setTrashedAssets((current) => current.map(updateSummary));
-      // Refresh cached Inspector metadata in place. The batch write touches
-      // only the rating column, so cached entityVersions stay valid for the
-      // single-asset optimistic-lock path.
-      for (const assetId of appliedIds) {
-        const cached = metadataByAssetRef.current.get(assetId);
-        if (cached)
-          metadataByAssetRef.current.set(assetId, { ...cached, rating });
-      }
-      const primaryAssetId = selectedAssetIdRef.current;
-      if (primaryAssetId && appliedIds.has(primaryAssetId)) {
-        setAssetMetadata((current) =>
-          current && current.assetId === primaryAssetId
-            ? { ...current, rating }
-            : current,
-        );
-      }
-      const model = rebuildMultiEditFromCache(assetIds);
-      setMultiEdit(model);
-      syncEditorsFromMultiEdit(model);
-      setNotice(
-        formatBatchRatingNotice(
-          rating,
-          assetIds.length - result.value.skipped.length,
-          result.value.skipped,
-          locale,
-        ),
-      );
-    } catch (caught) {
-      setError(toMessage(caught, t("toast.batchRatingFailed"), locale));
-    }
   }
 
   function handleFavoriteToggle() {

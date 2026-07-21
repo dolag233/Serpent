@@ -2,10 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildInspectorMultiEdit,
+  editorFieldsFromMultiEdit,
   fitInspectorStackFrame,
   intersectAssetTags,
   isEditableScalar,
   pickInspectorStackAssets,
+  rebuildMultiEditFromCache,
   resolveScalarField,
   type MultiEditMetadataSlice,
 } from "../../src/renderer/inspector-multi-edit";
@@ -212,6 +214,50 @@ describe("fitInspectorStackFrame", () => {
     expect(fitInspectorStackFrame(80, 60, 200, 300)).toEqual({
       width: 80,
       height: 60,
+    });
+  });
+});
+
+describe("rebuildMultiEditFromCache / editorFieldsFromMultiEdit", () => {
+  const sliceA = {
+    description: "same",
+    rating: 3,
+    favorite: true,
+    sourcePageUrl: "https://a.example",
+    author: "Ada",
+    tags: [{ id: "t1", name: "Shared", source: "user" as const }],
+  };
+  const sliceB = {
+    ...sliceA,
+    description: "other",
+    rating: 5,
+  };
+
+  it("returns null when selection is too small or cache incomplete", () => {
+    const cache = new Map([["a", sliceA]]);
+    expect(rebuildMultiEditFromCache(["a"], cache)).toBeNull();
+    expect(rebuildMultiEditFromCache(["a", "b"], cache)).toBeNull();
+  });
+
+  it("builds mixed/uniform fields from a complete cache", () => {
+    const cache = new Map([
+      ["a", sliceA],
+      ["b", sliceB],
+    ]);
+    const model = rebuildMultiEditFromCache(["a", "b"], cache);
+    expect(model).toMatchObject({
+      selectionCount: 2,
+      description: { kind: "mixed" },
+      rating: { kind: "mixed" },
+      favorite: { kind: "uniform", value: true },
+      author: { kind: "uniform", value: "Ada" },
+    });
+    expect(editorFieldsFromMultiEdit(model!)).toEqual({
+      description: "",
+      rating: 0,
+      favorite: true,
+      sourceUrl: "https://a.example",
+      author: "Ada",
     });
   });
 });
