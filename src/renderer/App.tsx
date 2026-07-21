@@ -138,6 +138,7 @@ import { useBatchActions } from "./useBatchActions";
 import { useShellFileActions } from "./use-shell-file-actions";
 import { useInspectorMultiEdit } from "./use-inspector-multi-edit";
 import { useInspectorAssetMetadata } from "./use-inspector-asset-metadata";
+import { useInspectorFieldHandlers } from "./use-inspector-field-handlers";
 import { resolveInspectorDescription } from "./inspector-description";
 import { useAssetDragDropHandlers, type UndoableFileOp } from "./use-asset-drag-drop-handlers";
 import { useDialogEscapeDismiss } from "./use-dialog-escape-dismiss";
@@ -202,10 +203,7 @@ import type {
   AiJobStatus,
 } from "../shared/library-api";
 import type { SerpentExtensionPairingApi } from "../shared/extension-pairing";
-import {
-  toOpenableExternalUrl,
-  type SerpentShellApi,
-} from "../shared/external-url";
+import type { SerpentShellApi } from "../shared/external-url";
 import type {
   ImportConflictPlan,
   RendererLibrarySummary,
@@ -936,6 +934,47 @@ function AppInner() {
   const selectedAsset = showTrash
     ? trashedAssets.find((a) => a.assetId === selectedAssetId)
     : assets.find((asset) => asset.assetId === selectedAssetId);
+
+  const {
+    handleMetadataDescriptionInput,
+    handleMetadataDescriptionSave,
+    handleRatingClick,
+    handleFavoriteToggle,
+    handleSourceUrlInput,
+    handleSourceUrlSave,
+    handleAuthorInput,
+    handleAuthorSave,
+    handleOpenSourceUrl,
+  } = useInspectorFieldHandlers({
+    api: api ?? null,
+    shellApi,
+    library,
+    selectedAsset,
+    selectedAssetId,
+    selectedAssetIds,
+    assetMetadata,
+    multiEdit,
+    editDescription,
+    editFavorite,
+    editSourceUrl,
+    editAuthor,
+    descriptionIsAi,
+    aiContent,
+    setEditDescription,
+    setEditRating,
+    setEditFavorite,
+    setEditSourceUrl,
+    setEditAuthor,
+    setDescriptionIsAi,
+    setAiContent,
+    saveMetadata,
+    saveMetadataForSelection,
+    batchSetRatingForSelection,
+    loadMetadata,
+    setNotice,
+    setError,
+  });
+
   const displayedPalette = assetMetadata?.effectivePalette ?? [];
   const automaticPaletteRatios = new Map(
     (assetMetadata?.automaticPalette ?? []).map((color) => [
@@ -4909,152 +4948,6 @@ function AppInner() {
     return selectedFolder?.name ?? t("scope.workspace");
   }
 
-  // --- Metadata editor helpers ---
-  function handleMetadataDescriptionInput(
-    event: FormEvent<HTMLTextAreaElement>,
-  ) {
-    const value = (event.target as HTMLTextAreaElement).value;
-    setEditDescription(value);
-  }
-
-  function handleMetadataDescriptionSave() {
-    const target = resolveInspectorTagTarget(
-      selectedAssetIds,
-      selectedAssetId ?? undefined,
-    );
-    if (target?.kind === "batch") {
-      if (multiEdit?.description.kind !== "uniform") return;
-      if (editDescription === multiEdit.description.value) return;
-      void saveMetadataForSelection(target.assetIds, {
-        description: editDescription,
-      });
-      return;
-    }
-    if (descriptionIsAi) {
-      void handlePromoteAiDescription(editDescription);
-      return;
-    }
-    if (!assetMetadata || editDescription === (assetMetadata.description ?? ""))
-      return;
-    void saveMetadata({ description: editDescription });
-  }
-
-  // REQ-MENU-007: with a multi-selection the Inspector rating stars apply to
-  // every selected asset through the batch rating command (last-write-wins),
-  // exactly like the Inspector tag operations. The primary asset's stars
-  // update optimistically; a single selection keeps the versioned write.
-  function handleRatingClick(rating: number) {
-    const target = resolveInspectorTagTarget(
-      selectedAssetIds,
-      selectedAssetId ?? undefined,
-    );
-    if (target?.kind === "batch") {
-      if (multiEdit?.rating.kind === "mixed") return;
-      setEditRating(rating);
-      void batchSetRatingForSelection(rating, target.assetIds);
-      return;
-    }
-    if (!assetMetadata) return;
-    setEditRating(rating);
-    void saveMetadata({ rating });
-  }
-
-  function handleFavoriteToggle() {
-    const target = resolveInspectorTagTarget(
-      selectedAssetIds,
-      selectedAssetId ?? undefined,
-    );
-    if (target?.kind === "batch") {
-      if (multiEdit?.favorite.kind !== "uniform") return;
-      const next = !editFavorite;
-      setEditFavorite(next);
-      void saveMetadataForSelection(target.assetIds, { favorite: next });
-      return;
-    }
-    if (!assetMetadata) return;
-    const next = !editFavorite;
-    setEditFavorite(next);
-    void saveMetadata({ favorite: next });
-  }
-
-  function handleSourceUrlInput(event: FormEvent<HTMLInputElement>) {
-    const value = (event.target as HTMLInputElement).value;
-    setEditSourceUrl(value);
-  }
-
-  function handleSourceUrlSave() {
-    const target = resolveInspectorTagTarget(
-      selectedAssetIds,
-      selectedAssetId ?? undefined,
-    );
-    if (editSourceUrl !== "") {
-      try {
-        const parsed = new URL(editSourceUrl);
-        if (
-          editSourceUrl !== editSourceUrl.trim() ||
-          (parsed.protocol !== "http:" && parsed.protocol !== "https:") ||
-          parsed.username !== "" ||
-          parsed.password !== ""
-        ) {
-          throw new Error("invalid source URL");
-        }
-      } catch {
-        setError(t("toast.sourceUrlSaveFailed"));
-        return;
-      }
-    }
-    if (target?.kind === "batch") {
-      if (multiEdit?.sourceUrl.kind !== "uniform") return;
-      if (editSourceUrl === multiEdit.sourceUrl.value) return;
-      void saveMetadataForSelection(target.assetIds, {
-        sourcePageUrl: editSourceUrl,
-      });
-      return;
-    }
-    if (!assetMetadata || editSourceUrl === (assetMetadata.sourcePageUrl ?? ""))
-      return;
-    void saveMetadata({ sourcePageUrl: editSourceUrl });
-  }
-
-  function handleAuthorInput(event: FormEvent<HTMLInputElement>) {
-    const value = (event.target as HTMLInputElement).value;
-    setEditAuthor(value);
-  }
-
-  function handleAuthorSave() {
-    const target = resolveInspectorTagTarget(
-      selectedAssetIds,
-      selectedAssetId ?? undefined,
-    );
-    if (target?.kind === "batch") {
-      if (multiEdit?.author.kind !== "uniform") return;
-      if (editAuthor === multiEdit.author.value) return;
-      void saveMetadataForSelection(target.assetIds, { author: editAuthor });
-      return;
-    }
-    if (!assetMetadata || editAuthor === (assetMetadata.author ?? "")) return;
-    void saveMetadata({ author: editAuthor });
-  }
-
-  // 检查器「源链接」跳转：有效性先按共享口径预判（禁用态），主进程仍会
-  // 在 shell.openExternal 前做最终校验，两道防线都不放行非 HTTP(S)。
-  // 失败时按公开错误码给出可操作提示（不含 URL 原文）。
-  function handleOpenSourceUrl() {
-    const url = toOpenableExternalUrl(editSourceUrl);
-    const shellBridge = (window as RendererWindow).serpent?.shell;
-    if (!url || !shellBridge) return;
-    void shellBridge.openExternalUrl(url).then((result) => {
-      if (result.ok) return;
-      const toastKey =
-        result.code === "rejected_url" || result.code === "malformed_request"
-          ? "toast.sourceUrlOpenFailed"
-          : result.code === "unauthorized_sender"
-            ? "toast.sourceUrlOpenUnauthorized"
-            : "toast.sourceUrlOpenShellFailed";
-      setError(t(toastKey));
-    });
-  }
-
   // ── AI Analysis ────────────────────────────────────────────────────
 
   async function openExtensionPairing() {
@@ -5511,49 +5404,6 @@ function AppInner() {
       // Toast + list refresh also arrive via onAiCleared.
     } catch (caught) {
       setError(toMessage(caught, t("toast.aiContentClearFailed"), locale));
-    }
-  }
-
-  async function handlePromoteAiDescription(value: string) {
-    if (!api || !library || !selectedAsset) return;
-    const trimmed = value.trim();
-    const previous = aiContent?.description?.trim() ?? "";
-    if (
-      aiContent?.assetId !== selectedAsset.assetId ||
-      trimmed === previous
-    ) {
-      return;
-    }
-    try {
-      await saveMetadata({ description: trimmed });
-      const cleared = await api.clearAiContent({
-        libraryId: library.libraryId,
-        scope: { kind: "asset", assetIds: [selectedAsset.assetId] },
-        confirm: false,
-        fields: ["description"],
-      });
-      if (!cleared.ok) {
-        setError(
-          toMessage(cleared.error, t("toast.aiContentClearFailed"), locale),
-        );
-        return;
-      }
-      setAiContent((current) => {
-        if (!current || current.assetId !== selectedAsset.assetId) return current;
-        const rest = {
-          assetId: current.assetId,
-          ...(current.tags ? { tags: current.tags } : {}),
-          ...(current.rating != null ? { rating: current.rating } : {}),
-        };
-        const stillHas =
-          Boolean(rest.tags && rest.tags.length > 0) || rest.rating != null;
-        return stillHas ? rest : null;
-      });
-      setDescriptionIsAi(false);
-      setNotice(t("toast.aiContentPromoted"));
-      loadMetadata();
-    } catch (caught) {
-      setError(toMessage(caught, t("toast.aiContentPromoteFailed"), locale));
     }
   }
 
