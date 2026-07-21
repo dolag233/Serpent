@@ -26,7 +26,9 @@ export interface ShellPreferencesStorage {
 
 export const NAV_PANEL_WIDTH_MIN = 200;
 export const NAV_PANEL_WIDTH_MAX = 420;
-export const INSPECTOR_PANEL_WIDTH_MIN = 260;
+/** Serpent-y941: allow a narrower Inspector so the canvas can grow; still
+ *  above auto-hide dead-zone and usable for rating/tags with ellipsis. */
+export const INSPECTOR_PANEL_WIDTH_MIN = 200;
 export const INSPECTOR_PANEL_WIDTH_MAX = 560;
 
 /** Matches the historical fixed layout widths in styles.css (.app-shell). */

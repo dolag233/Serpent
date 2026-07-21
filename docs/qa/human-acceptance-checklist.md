@@ -435,7 +435,7 @@
 | 2026-07-21 | DEV-001 启动黑屏/端口 | 人类验收通过 | 用户确认端口冲突黑屏修复与 `start:multi` 可用。 | `Serpent-i6xg` / `scripts/dev-start.mjs` |
 | 2026-07-21 | AI 失败/语言/Toast/进度 | 部分通过 | JOBS-003 / SHELL-011 通过；AICFG-011 描述过短不通过；JOBS-004 UI/停止不通过。附带：误弹搜索 toast、toast 顶掉、AI 重试弹窗、递归标签过滤、查看页手势。 | `Serpent-iokf`/`qpy8` 通过；`sbnt`/`k3dw` 重开；新单 `huvw`/`99lv`/`kdnm`/`5cvr`/`4kg3`。 |
 | 2026-07-21 | JOBS-006 AI 连接失败弹窗 | 待人类验收 | 连接类失败自动重试 3 次后弹一次 Retry/Abort；非连接类（如 AI_INVALID_RESPONSE）不弹。 | `Serpent-kdnm` |
-| 2026-07-21 | `Serpent-4ojz` / `Serpent-r7gu` 主题审计部分收口 + Win 去菜单 | 待人类验收 | 警告 toast 琥珀统一、浮层阴影分主题、播放错误条/冲突下拉 token 化；Windows `Menu.setApplicationMenu(null)`；共享快捷键表。 | THEME-012–015 / SHELL-024-windows；[审计](2026-07-21-theme-style-shortcut-audit.md)；**不声称 Windows 人类通过**。 |
+| 2026-07-21 | `Serpent-y941` / `Serpent-p1rm` Inspector 更窄 + 冲突下拉去原生感 | 待人类验收 | Inspector 最小宽 200；冲突窗下拉 appearance:none + 主题 chevron。 | SHELL-025 / THEME-015 |
 | 2026-07-21 | `Serpent-vf8x` / `Serpent-b9xo` 文件夹快捷键 + 主题剩余阴影 | 待人类验收 | 文件夹 Cmd/Ctrl+Shift+N、F2、Delete/⌘⌫；侧栏焦点与菜单标签；起始页/过滤/AI 下拉阴影 token。 | COMMAND-005 / THEME-016；**不声称 Windows 人类通过**；`maxDescriptionCharsZh` 仍为 100。 |
 | 2026-07-21 | TEXT-001 / `Serpent-4l7` + 画布滚动条 `Serpent-itr` | 待人类验收 | 链接子目录新建文本刷新入库；格式「文本」chip；扩常见文本扩展；Windows 经典滚动条横溢 CSS 修复。 | TEXT-001 → 待复验；CANVAS-001/002/021 已注 Windows 勿提前人类通过。 |
 ### 第五批收口（过滤/导航/排序/Inspector）
@@ -487,7 +487,8 @@
 | THEME-011 | 亮色主题拖入文件叠加层 | 人类验收通过 | 亮色主题下拖文件到画布 | 叠加层为亮色 canvas 洗色，非暗色半透明黑底 | `Serpent-5vex` | 2026-07-20 用户确认通过。 |
 | THEME-013 | 亮色浮层阴影与暗色区分 | 待人类验收 | 亮色主题：打开资源库菜单、过滤面板、创建库对话框；对照暗色 | 亮色阴影更轻（非厚重黑晕）；暗色仍清晰分层；表面仍为 token | `Serpent-4ojz` / [审计](2026-07-21-theme-style-shortcut-audit.md) | 2026-07-21：`--shadow-*` 分主题。 |
 | THEME-014 | 查看页播放错误条随主题 | 待人类验收 | 亮色主题打开视频查看页并触发播放错误条（若可） | 错误条为 warning 语义底，非固定深棕块；文字可读 | `Serpent-4ojz` / `.preview-playback-error` | 2026-07-21：去掉硬编码 `rgb(68 53 44)`。 |
-| THEME-015 | 导入冲突下拉与壳层控件同形 | 待人类验收 | 触发导入冲突窗；看两个决策下拉；对照旁 secondary 按钮 | 高度约 28px、圆角 6px、raised 底；亮/暗均一致 | `Serpent-4ojz` / `Serpent-p1rm` | 2026-07-21：对齐 `--shell-control-height`；原生 select 外观剩余见 p1rm。 |
+| THEME-015 | 导入冲突下拉与壳层控件同形 | 待人类验收 | 触发导入冲突窗；看两个决策下拉；对照旁 secondary 按钮；再切亮/暗主题 | 高度约 28px、圆角 6px、raised 底；无系统原生下拉凸起/系统箭头，自定义 chevron；亮/暗一致 | `Serpent-4ojz` / `Serpent-p1rm` / `.decision-field select` | 2026-07-21：对齐 `--shell-control-height`。2026-07-21 续：`appearance:none` + 主题色 chevron 收口 p1rm。 |
+| SHELL-025 | Inspector 可缩到更小最小宽度 | 待人类验收 | 打开资源库；向左拖右侧 Inspector 左缘尽量变窄（不要拖到自动隐藏）；看画布变宽；再选资产核对评分/标签/描述仍可读可用；双击拖拽柄恢复默认；亮暗主题各看一次 | 最小宽度约 200px（与左栏同量级），明显窄于旧约 260px；控件不崩坏；默认仍约 268px；过死区仍可自动隐藏（见 SHELL-018） | [偏好单测](../../tests/unit/shell-preferences.test.ts) / `Serpent-y941` | 2026-07-21：`INSPECTOR_PANEL_WIDTH_MIN` 260→200。 |
 | THEME-016 | 起始页/过滤/AI 配置浮层阴影走主题 token | 待人类验收 | 亮色与暗色：① 无库起始页卡片；② 维度过滤弹出层；③ AI 配置模型下拉 | 阴影随主题变化（亮色更轻、暗色仍分层）；无固定深黑晕；与菜单/对话框阴影家族一致 | `Serpent-b9xo` / `--shadow-elevated` / `--shadow-panel` / `--shadow-menu` | 2026-07-21：empty-state、dimension-filter-popover、ai-config model menu 改走 shadow token。 |
 | SHELL-024-windows | Windows 无原生顶部菜单栏 | 待人类验收 | 在 **Windows** 上启动 Serpent；看窗口标题栏下方；再用 macOS 对照 | Windows 无 File/Edit/View 顶栏；库/右键/命令仍可达；macOS 菜单仍在 | `Serpent-r7gu` / [菜单单测](../../tests/unit/application-menu.test.ts) | 2026-07-21 代码完成：`win32` → `Menu.setApplicationMenu(null)`。**勿标 Windows 人类通过直至真机。** |
 | INSPECT-012 | Inspector 竖图预览居中、圆角与标题可读 | 人类验收通过 | ① 单选竖图：预览相对右侧栏水平居中、圆角；文件名含 `jpg` 等下伸字母完整可见；文件名与「标签」分区无重叠。② 多选多张竖图：堆叠预览下方文件名始终可见 | 单选居中+圆角；标题 descender 不裁切；文件名不盖住标签行；多选标题在堆叠下方可见 | `Serpent-hhy0` / `Serpent-6uyp` | 2026-07-20 用户确认通过（含文件名/标签重叠修复复验）。 |

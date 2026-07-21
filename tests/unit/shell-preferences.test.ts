@@ -85,6 +85,19 @@ describe('shell-preferences (REQ-SHELL-007)', () => {
     expect(clampInspectorPanelWidth(0)).toBe(INSPECTOR_PANEL_WIDTH_MIN);
     expect(clampInspectorPanelWidth(9999)).toBe(INSPECTOR_PANEL_WIDTH_MAX);
   });
+
+  // Serpent-y941: Inspector min matches nav so users can free canvas width.
+  it('allows inspector widths down to 200px (same floor as nav)', () => {
+    expect(INSPECTOR_PANEL_WIDTH_MIN).toBe(200);
+    expect(clampInspectorPanelWidth(200)).toBe(200);
+    expect(clampInspectorPanelWidth(199)).toBe(200);
+    const storage = memoryStorage();
+    saveShellPreferences(
+      { version: 1, navPanelWidth: 224, inspectorPanelWidth: 200 },
+      storage,
+    );
+    expect(loadShellPreferences(storage).inspectorPanelWidth).toBe(200);
+  });
 });
 
 describe('resolvePanelWidth (REQ-SHELL-007 drag math)', () => {
@@ -99,9 +112,8 @@ describe('resolvePanelWidth (REQ-SHELL-007 drag math)', () => {
 
   it('widens the inspector pane when dragging left (left-edge handle)', () => {
     expect(resolvePanelWidth('inspector', 400, -40)).toBe(440);
-    // Narrowing is clamped at the pane minimum (default 268 is only 8px above it).
     expect(resolvePanelWidth('inspector', 400, 32)).toBe(368);
-    expect(resolvePanelWidth('inspector', DEFAULT_INSPECTOR_PANEL_WIDTH, 32)).toBe(
+    expect(resolvePanelWidth('inspector', DEFAULT_INSPECTOR_PANEL_WIDTH, 80)).toBe(
       INSPECTOR_PANEL_WIDTH_MIN,
     );
   });

@@ -25,11 +25,17 @@
 
 | 项 | 说明 | 跟踪 |
 | --- | --- | --- |
-| 导入冲突下拉视觉 | 原生 select 与自定义控件混用的剩余打磨 | `Serpent-p1rm` |
 | Windows 去顶栏菜单 | 代码已平台分支；真机验收 | `Serpent-r7gu` → SHELL-024-windows |
 | Windows 原生对话框语言 | Main 硬编码中英混杂 | `Serpent-bwb` |
 | Inspector 竖图圆角/标题 | 已有相关单 | `Serpent-hhy0`（若仍开） |
 | 色卡文案精简 | 已有相关单 | `Serpent-l79c` |
+
+## 2026-07-21 续（`Serpent-p1rm` / `Serpent-y941`）
+
+| ID | 问题 | 修复 |
+| --- | --- | --- |
+| THEME-015 | 冲突下拉仍偏原生 | `appearance:none` + 主题 tertiary chevron；focus/hover 与 text-field 同族 |
+| SHELL-025 | Inspector 最小宽偏大 | `INSPECTOR_PANEL_WIDTH_MIN` 260→200（与 nav 同地板） |
 
 ## 快捷键（共享表）
 

@@ -51,10 +51,11 @@ export function ConflictsDialog({
             <span>{t("dialog.conflicts.nameConflicts")}</span>
           </div>
         </div>
-        <label className="decision-field">
+        <label className="decision-field" htmlFor="conflict-duplicate-decision">
           <span>{t("dialog.conflicts.suspectedDuplicates")}</span>
           <select
             autoFocus
+            id="conflict-duplicate-decision"
             value={duplicateDecision}
             onChange={(event) =>
               onDuplicateDecisionChange(
@@ -67,9 +68,10 @@ export function ConflictsDialog({
             <option value="create-copy">{t("dialog.conflicts.createCopy")}</option>
           </select>
         </label>
-        <label className="decision-field">
+        <label className="decision-field" htmlFor="conflict-name-decision">
           <span>{t("dialog.conflicts.nameConflicts")}</span>
           <select
+            id="conflict-name-decision"
             value={nameDecision}
             onChange={(event) =>
               onNameDecisionChange(event.target.value as typeof nameDecision)

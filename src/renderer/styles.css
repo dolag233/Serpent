@@ -5890,15 +5890,37 @@ select.ai-config-input.ai-config-languages {
   font-size: 11px;
 }
 .decision-field select {
-  /* Serpent-4ojz / Serpent-p1rm: match shell control rhythm (not a one-off
-     31px/4px native island next to 28px/6px secondary buttons). */
+  /* Serpent-4ojz / Serpent-p1rm: shell rhythm + de-native chrome (no OS
+     select bevel/arrow; custom chevron via theme tertiary stroke). */
+  appearance: none;
+  -webkit-appearance: none;
+  width: 100%;
   height: var(--shell-control-height);
-  padding: 0 8px;
+  padding: 0 28px 0 8px;
   border: 1px solid var(--divider);
   border-radius: 6px;
-  background: var(--raised);
+  background-color: var(--raised);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='none' viewBox='0 0 12 12'%3E%3Cpath stroke='%23777c79' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round' d='M3 4.5 6 7.5 9 4.5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  background-size: 12px 12px;
   color: var(--text);
   font-size: 12px;
+  cursor: pointer;
+  transition:
+    border-color 120ms ease,
+    box-shadow 120ms ease;
+}
+.decision-field select:hover {
+  border-color: color-mix(in srgb, var(--text) 16%, var(--divider));
+}
+.decision-field select:focus {
+  border-color: color-mix(in srgb, var(--accent) 62%, var(--divider));
+  box-shadow: 0 0 0 3px var(--accent-soft);
+  outline: 0;
+}
+[data-theme="light"] .decision-field select {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='none' viewBox='0 0 12 12'%3E%3Cpath stroke='%238a8f8a' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round' d='M3 4.5 6 7.5 9 4.5'/%3E%3C/svg%3E");
 }
 .conflict-examples {
   display: flex;
