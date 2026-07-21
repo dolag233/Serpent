@@ -520,6 +520,10 @@ export const zhCN = {
       retry: "重试",
       abort: "终止剩余任务"
     },
+    fatalAlert: {
+      title: "严重错误",
+      confirm: "知道了"
+    },
     deleteLinked: {
       title: "删除链接资产",
       body: "确定要从 Serpent 中移除链接资产\"{name}\"吗？默认只移除索引记录，磁盘源文件保持不变。",

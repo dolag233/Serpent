@@ -22,6 +22,8 @@ export type DialogEscapeSnapshot = {
   linkedRulesEditorOpen: boolean;
   convertLinkedOpen: boolean;
   dialogOpen: boolean;
+  /** Serpent-99lv: blocking fatal alert — Escape acknowledges/dismisses. */
+  fatalAlertOpen: boolean;
   /** Serpent-kdnm: AI connection lost — Escape aborts remaining jobs. */
   aiConnectionFailureOpen: boolean;
   /** When set, Escape abandons this pending import conflict plan. */
@@ -48,6 +50,7 @@ export type DialogEscapeAction =
   | { kind: "close-linked-rules" }
   | { kind: "close-convert-linked" }
   | { kind: "close-dialog" }
+  | { kind: "dismiss-fatal-alert" }
   | { kind: "abort-ai-connection-failure" }
   | { kind: "abandon-import"; importId: string };
 
@@ -60,7 +63,11 @@ export function isDialogEscapeLayerActive(
 export function resolveDialogEscapeAction(
   snapshot: DialogEscapeSnapshot,
 ): DialogEscapeAction {
-  // Fatal AI connection dialog sits above other layers (Serpent-kdnm).
+  // Generic fatal alert sits above other layers (Serpent-99lv).
+  if (snapshot.fatalAlertOpen) {
+    return { kind: "dismiss-fatal-alert" };
+  }
+  // Fatal AI connection dialog sits above remaining layers (Serpent-kdnm).
   if (snapshot.aiConnectionFailureOpen) {
     return { kind: "abort-ai-connection-failure" };
   }

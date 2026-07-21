@@ -25,6 +25,7 @@ const empty: DialogEscapeSnapshot = {
   linkedRulesEditorOpen: false,
   convertLinkedOpen: false,
   dialogOpen: false,
+  fatalAlertOpen: false,
   aiConnectionFailureOpen: false,
   conflictsImportId: null,
 };
@@ -44,6 +45,18 @@ describe("dialog-escape-stack", () => {
         conflictsImportId: "imp_1",
       }),
     ).toEqual({ kind: "cancel-asset-rename" });
+  });
+
+  it("prefers fatal alert over AI connection failure and other layers (Serpent-99lv)", () => {
+    expect(
+      resolveDialogEscapeAction({
+        ...empty,
+        fatalAlertOpen: true,
+        aiConnectionFailureOpen: true,
+        assetRenameOpen: true,
+        mediaJobsOpen: true,
+      }),
+    ).toEqual({ kind: "dismiss-fatal-alert" });
   });
 
   it("prefers AI connection failure over other layers (Serpent-kdnm)", () => {

@@ -31,6 +31,7 @@ export type UseExternalImportHandlersParams = {
   reloadCurrentContentRef: MutableRefObject<() => Promise<void>>;
   setUiState: (state: "loading" | "importing" | "ready") => void;
   setError: (message: string | null) => void;
+  setFatal: (message: string | null) => void;
   setNotice: (message: string | null) => void;
   setConflicts: (plan: ImportConflictPlan | null) => void;
 };
@@ -50,6 +51,7 @@ export function useExternalImportHandlers({
   reloadCurrentContentRef,
   setUiState,
   setError,
+  setFatal,
   setNotice,
   setConflicts,
 }: UseExternalImportHandlersParams) {
@@ -100,7 +102,7 @@ export function useExternalImportHandlers({
         });
         await applyDesktopImportResult(result);
       } catch (caught) {
-        setError(toMessage(caught, t("toast.dropImportFailed"), locale));
+        setFatal(toMessage(caught, t("toast.dropImportFailed"), locale));
       } finally {
         setUiState("ready");
         setExternalDropActive(false);
@@ -116,6 +118,7 @@ export function useExternalImportHandlers({
       locale,
       managedImportTargetFolderIdRef,
       setError,
+      setFatal,
       setNotice,
       setUiState,
       t,
@@ -146,7 +149,7 @@ export function useExternalImportHandlers({
         await reloadCurrentContentRef.current();
       }
     } catch (caught) {
-      setError(toMessage(caught, t("toast.clipboardImportFailed"), locale));
+      setFatal(toMessage(caught, t("toast.clipboardImportFailed"), locale));
     } finally {
       setUiState("ready");
     }
@@ -160,6 +163,7 @@ export function useExternalImportHandlers({
     reloadCurrentContentRef,
     setConflicts,
     setError,
+    setFatal,
     setNotice,
     setUiState,
     t,

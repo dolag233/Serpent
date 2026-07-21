@@ -5,6 +5,7 @@ import {
   TOAST_ERROR_DURATION_MS,
   TOAST_EXIT_DURATION_MS,
   TOAST_NOTICE_DURATION_MS,
+  TOAST_SEVERITY_RANK,
 } from '../../src/renderer/toast-notifications';
 
 /** Fallback unmount fires the exit duration plus a small margin. */
@@ -19,6 +20,12 @@ describe('createToastNotifications', () => {
     vi.useRealTimers();
   });
 
+  it('orders severities info < warning < error < fatal', () => {
+    expect(TOAST_SEVERITY_RANK.info).toBeLessThan(TOAST_SEVERITY_RANK.warning);
+    expect(TOAST_SEVERITY_RANK.warning).toBeLessThan(TOAST_SEVERITY_RANK.error);
+    expect(TOAST_SEVERITY_RANK.error).toBeLessThan(TOAST_SEVERITY_RANK.fatal);
+  });
+
   it('renders a notice immediately and starts closing after 5s', () => {
     const toast = createToastNotifications();
     toast.setNotice('已保存。');
@@ -27,6 +34,7 @@ describe('createToastNotifications', () => {
       error: null,
       warning: null,
       notice: '已保存。',
+      fatal: null,
       rendered: { kind: 'notice', text: '已保存。' },
       closing: false,
     });
@@ -146,6 +154,18 @@ describe('createToastNotifications', () => {
     toast.dispose();
   });
 
+  it('keeps warning visible when a later info notice arrives (Serpent-99lv)', () => {
+    const toast = createToastNotifications();
+    toast.setWarning('链接源不可用。');
+    toast.setNotice('搜索完成：找到 3 项。');
+    expect(toast.getSnapshot().rendered).toEqual({
+      kind: 'warning',
+      text: '链接源不可用。',
+    });
+    expect(toast.getSnapshot().notice).toBe('搜索完成：找到 3 项。');
+    toast.dispose();
+  });
+
   it('lets warning cover notice, and error cover warning', () => {
     const toast = createToastNotifications();
     toast.setNotice('info');
@@ -158,6 +178,58 @@ describe('createToastNotifications', () => {
     expect(toast.getSnapshot().rendered).toEqual({
       kind: 'error',
       text: 'err',
+    });
+    toast.dispose();
+  });
+
+  it('keeps fatal open while lower toast channels change (Serpent-99lv)', () => {
+    const toast = createToastNotifications();
+    toast.setFatal('开库失败。');
+    toast.setError('普通错误。');
+    toast.setWarning('警告。');
+    toast.setNotice('提示。');
+    expect(toast.getSnapshot().fatal).toBe('开库失败。');
+    expect(toast.getSnapshot().rendered).toEqual({
+      kind: 'error',
+      text: '普通错误。',
+    });
+
+    toast.setError(null);
+    toast.setWarning(null);
+    toast.setNotice(null);
+    expect(toast.getSnapshot().fatal).toBe('开库失败。');
+
+    toast.setFatal(null);
+    expect(toast.getSnapshot().fatal).toBeNull();
+    toast.dispose();
+  });
+
+  it('does not auto-dismiss fatal', () => {
+    const toast = createToastNotifications();
+    toast.setFatal('导入失败。');
+    vi.advanceTimersByTime(60_000);
+    expect(toast.getSnapshot().fatal).toBe('导入失败。');
+    toast.dispose();
+  });
+
+  it('dismissVisible clears only the highest visible toast channel', () => {
+    const toast = createToastNotifications();
+    toast.setNotice('info');
+    toast.setWarning('warn');
+    toast.setError('err');
+    toast.dismissVisible();
+    expect(toast.getSnapshot().error).toBeNull();
+    expect(toast.getSnapshot().warning).toBe('warn');
+    expect(toast.getSnapshot().notice).toBe('info');
+    expect(toast.getSnapshot().rendered).toEqual({
+      kind: 'warning',
+      text: 'warn',
+    });
+    toast.dismissVisible();
+    expect(toast.getSnapshot().warning).toBeNull();
+    expect(toast.getSnapshot().rendered).toEqual({
+      kind: 'notice',
+      text: 'info',
     });
     toast.dispose();
   });

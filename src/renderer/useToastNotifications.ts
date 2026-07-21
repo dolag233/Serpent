@@ -17,6 +17,10 @@ export interface UseToastNotificationsReturn extends ToastSnapshot {
   setWarning: (text: string | null) => void;
   /** Drop-in replacement for the former `setNotice` state setter. */
   setNotice: (text: string | null) => void;
+  /** Blocking fatal modal body; null clears. */
+  setFatal: (text: string | null) => void;
+  /** Clear only the currently visible toast channel (not fatal). */
+  dismissVisible: () => void;
   /** Attach to the toast element's onTransitionEnd. */
   handleToastTransitionEnd: (event: TransitionEvent) => void;
 }
@@ -25,7 +29,7 @@ export interface UseToastNotificationsReturn extends ToastSnapshot {
  * Binds the toast notification controller (toast-notifications.ts) to React.
  * The closing lifecycle — exit transition first, unmount only after it ends —
  * lives in the controller; this hook only exposes the snapshot and stable
- * callbacks (REQ-SHELL-010).
+ * callbacks (REQ-SHELL-010 / Serpent-99lv).
  */
 export function useToastNotifications(): UseToastNotificationsReturn {
   const [controller] = useState<ToastNotifications>(() =>
@@ -47,6 +51,8 @@ export function useToastNotifications(): UseToastNotificationsReturn {
     setError: controller.setError,
     setWarning: controller.setWarning,
     setNotice: controller.setNotice,
+    setFatal: controller.setFatal,
+    dismissVisible: controller.dismissVisible,
     handleToastTransitionEnd,
   };
 }

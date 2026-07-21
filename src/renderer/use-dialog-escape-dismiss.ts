@@ -34,6 +34,8 @@ export type UseDialogEscapeDismissParams = {
   setShowCollectionInput: (open: boolean) => void;
   setConflicts: (value: ImportConflictPlan | null) => void;
   setError: (message: string | null) => void;
+  /** Serpent-99lv: Escape dismisses the blocking fatal alert. */
+  onDismissFatalAlert?: () => void;
   /** Serpent-kdnm: Escape on connection-failure dialog aborts remaining AI jobs. */
   onAbortAiConnectionFailure?: () => void;
 };
@@ -66,6 +68,7 @@ export function useDialogEscapeDismiss({
   setShowCollectionInput,
   setConflicts,
   setError,
+  onDismissFatalAlert,
   onAbortAiConnectionFailure,
 }: UseDialogEscapeDismissParams): void {
   const t = useT();
@@ -80,6 +83,9 @@ export function useDialogEscapeDismiss({
       const action = resolveDialogEscapeAction(snapshot);
       switch (action.kind) {
         case "none":
+          return;
+        case "dismiss-fatal-alert":
+          onDismissFatalAlert?.();
           return;
         case "abort-ai-connection-failure":
           onAbortAiConnectionFailure?.();
@@ -184,6 +190,7 @@ export function useDialogEscapeDismiss({
     setShowCollectionInput,
     setConflicts,
     setError,
+    onDismissFatalAlert,
     onAbortAiConnectionFailure,
     locale,
     t,

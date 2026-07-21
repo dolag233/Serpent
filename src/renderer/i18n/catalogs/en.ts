@@ -530,6 +530,10 @@ export const en = {
       retry: "Retry",
       abort: "Abort remaining"
     },
+    fatalAlert: {
+      title: "Critical error",
+      confirm: "OK"
+    },
     deleteLinked: {
       title: "Delete linked asset",
       body: "Remove linked asset \"{name}\" from Serpent? By default only the index record is removed; source files on disk stay untouched.",

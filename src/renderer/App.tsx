@@ -113,6 +113,7 @@ import {
 } from "./SmartCollectionSettingsDialog";
 import { MediaJobsDialog } from "./MediaJobsDialog";
 import { AiConnectionFailureDialog } from "./AiConnectionFailureDialog";
+import { FatalAlertDialog } from "./FatalAlertDialog";
 import { useAiConnectionFailure } from "./use-ai-connection-failure";
 
 import {
@@ -536,14 +537,16 @@ function AppInner() {
     "loading",
     "importing",
   ].includes(uiState);
-  // Toast notifications (REQ-SHELL-010): the controller owns auto-dismiss
-  // timing and the closing lifecycle; setError/setNotice keep the old setter
-  // shape so call sites are unchanged.
+  // Toast + fatal alert (REQ-SHELL-010 / Serpent-99lv): controller owns
+  // auto-dismiss, severity priority, and the toast closing lifecycle.
   const {
     rendered: renderedToast,
     closing: toastClosing,
+    fatal: fatalAlertMessage,
     setError,
     setNotice,
+    setFatal,
+    dismissVisible,
     handleToastTransitionEnd,
   } = useToastNotifications();
   const [dialog, setDialog] = useState<DialogKind>(null);
@@ -1872,7 +1875,16 @@ function AppInner() {
         analyzingAssetIdRef.current = null;
         analyzingBatchSizeRef.current = 0;
         setAiAnalyzing(false);
-        // Serpent-4i18 / iokf: completion toast with failure reason when possible.
+        // Serpent-4i18 / iokf / 99lv: total failure → blocking fatal; partial
+        // failure stays a notice; single-asset failure can stay toast-level
+        // when not an all-fail batch.
+        const showTotalFailure = (detail?: string) => {
+          setFatal(
+            detail
+              ? t("toast.aiAnalyzeFailedDetail", { detail })
+              : t("toast.aiAnalyzeFailed"),
+          );
+        };
         const showFailureToast = (detail?: string) => {
           setError(
             detail
@@ -1897,7 +1909,8 @@ function AppInner() {
                   if (failedForAsset) showFailureToast(detail || undefined);
                   return;
                 }
-                showFailureToast(detail || undefined);
+                // All-fail (batch or unknown): blocking fatal (Serpent-99lv).
+                showTotalFailure(detail || undefined);
                 return;
               }
               setNotice(
@@ -1909,7 +1922,8 @@ function AppInner() {
             })
             .catch(() => {
               if (succeededDelta === 0) {
-                showFailureToast();
+                if (pendingAssetId && batchSize <= 1) showFailureToast();
+                else showTotalFailure();
               } else {
                 setNotice(
                   t("toast.aiAnalyzeDoneBatch", {
@@ -1951,7 +1965,7 @@ function AppInner() {
       unsubscribeCompleted();
       unsubscribeCleared();
     };
-  }, [api, library, locale, setError, setNotice, t]);
+  }, [api, library, locale, setError, setFatal, setNotice, t]);
 
   function syncNavHistoryUi() {
     setNavHistoryUi({
@@ -2098,7 +2112,7 @@ function AppInner() {
       await loadContent(result.value, "all");
       await refreshRecentLibraries(result.value.displayPath);
     } catch (caught) {
-      setError(toMessage(caught, failureMessage));
+      setFatal(toMessage(caught, failureMessage));
     } finally {
       setUiState(opened ? "ready" : "idle");
     }
@@ -3117,6 +3131,7 @@ function AppInner() {
     reloadCurrentContentRef,
     setUiState,
     setError,
+    setFatal,
     setNotice,
     setConflicts,
   });
@@ -3934,7 +3949,7 @@ function AppInner() {
       setNotice(importSummaryMessage(result.value, locale));
       await reloadCurrentContent();
     } catch (caught) {
-      setError(toMessage(caught, t("toast.importFailed"), locale));
+      setFatal(toMessage(caught, t("toast.importFailed"), locale));
     } finally {
       setUiState("ready");
     }
@@ -3954,7 +3969,7 @@ function AppInner() {
       setNotice(importSummaryMessage(result.value, locale));
       await reloadCurrentContent();
     } catch (caught) {
-      setError(toMessage(caught, t("toast.continueImportFailed"), locale));
+      setFatal(toMessage(caught, t("toast.continueImportFailed"), locale));
     } finally {
       setUiState("ready");
     }
@@ -4645,7 +4660,7 @@ function AppInner() {
       setImportValidated(result.value);
       setImportProgress(null);
     } catch (caught) {
-      setError(toMessage(caught, t("toast.importValidateFailed"), locale));
+      setFatal(toMessage(caught, t("toast.importValidateFailed"), locale));
       setImportProgress(null);
     }
   }
@@ -4674,7 +4689,7 @@ function AppInner() {
       setImportProgress(null);
       await activateImportedLibrary(result.value);
     } catch (caught) {
-      setError(toMessage(caught, t("toast.zipImportFailed"), locale));
+      setFatal(toMessage(caught, t("toast.zipImportFailed"), locale));
       setImportProgress(null);
     }
   }
@@ -4740,7 +4755,7 @@ function AppInner() {
       setImportProgress(null);
       await activateImportedLibrary(result.value);
     } catch (caught) {
-      setError(toMessage(caught, t("toast.importFailed"), locale));
+      setFatal(toMessage(caught, t("toast.importFailed"), locale));
       setImportProgress(null);
     }
   }
@@ -4772,7 +4787,7 @@ function AppInner() {
       setImportProgress(null);
       await activateImportedLibrary(result.value);
     } catch (caught) {
-      setError(toMessage(caught, t("toast.importFailed"), locale));
+      setFatal(toMessage(caught, t("toast.importFailed"), locale));
       setImportProgress(null);
     }
   }
@@ -4854,6 +4869,7 @@ function AppInner() {
       linkedRulesEditorOpen: Boolean(linkedRulesEditor),
       convertLinkedOpen: Boolean(convertLinkedDialog.folderId),
       dialogOpen: Boolean(dialog),
+      fatalAlertOpen: Boolean(fatalAlertMessage),
       aiConnectionFailureOpen: aiConnectionFailureGate.open,
       conflictsImportId: conflicts?.importId ?? null,
     };
@@ -4878,6 +4894,7 @@ function AppInner() {
     linkedRulesEditor,
     convertLinkedDialog.folderId,
     dialog,
+    fatalAlertMessage,
     aiConnectionFailureGate.open,
     conflicts?.importId,
   ]);
@@ -4911,6 +4928,7 @@ function AppInner() {
     setShowCollectionInput,
     setConflicts,
     setError,
+    onDismissFatalAlert: () => setFatal(null),
     onAbortAiConnectionFailure: onAiConnectionFailureAbort,
   });
 
@@ -4933,6 +4951,7 @@ function AppInner() {
       Boolean(smartCollectionSettings) ||
       aiConfigOpen ||
       extensionPairingOpen ||
+      Boolean(fatalAlertMessage) ||
       aiConnectionFailureGate.open ||
       (mediaJobsOpen && library !== null) ||
       linkedRulesEditor ||
@@ -7226,10 +7245,7 @@ function AppInner() {
               omitClassName
               icon="close"
               label={t("common.closeHint")}
-              onClick={() => {
-                setError(null);
-                setNotice(null);
-              }}
+              onClick={() => dismissVisible()}
             />
           </div>
         )}
@@ -7612,6 +7628,10 @@ function AppInner() {
         onAbort={onAiConnectionFailureAbort}
         onRetry={handleAiConnectionFailureRetry}
         open={aiConnectionFailureGate.open}
+      />
+      <FatalAlertDialog
+        message={fatalAlertMessage}
+        onDismiss={() => setFatal(null)}
       />
       <AiConfigDialog
         open={aiConfigOpen}

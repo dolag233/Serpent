@@ -1,9 +1,12 @@
 /**
- * Toast notification state machine for the bottom-right shell toast.
+ * Toast notification state machine for the bottom-right shell toast, plus a
+ * blocking fatal channel (Serpent-99lv).
  *
- * Severities (Serpent-99lv): info(notice) < warning < error. `activeMessage`
- * always picks the highest non-empty channel, so info cannot cover warning/error.
- * Fatal (modal) is handled separately outside this controller.
+ * Severities: info(notice) < warning < error < fatal.
+ * - Toast channels (`notice` / `warning` / `error`): `activeMessage` always
+ *   picks the highest non-empty channel, so lower severity cannot cover higher.
+ * - Fatal is a blocking modal (not a dismissable toast). Lower toast setters
+ *   never clear or hide an active fatal; only `setFatal(null)` dismisses it.
  *
  * Notices auto-dismiss after 5s, warnings/errors after 10s. Dismissal (timer or
  * manual close) is a two-step lifecycle: the toast enters `closing`, which
@@ -17,6 +20,16 @@
 
 export type ToastKind = "notice" | "warning" | "error";
 
+/** Full severity ladder including the blocking fatal modal channel. */
+export type ToastSeverity = "info" | "warning" | "error" | "fatal";
+
+export const TOAST_SEVERITY_RANK: Record<ToastSeverity, number> = {
+  info: 1,
+  warning: 2,
+  error: 3,
+  fatal: 4,
+};
+
 export interface ToastMessage {
   kind: ToastKind;
   text: string;
@@ -26,6 +39,8 @@ export interface ToastSnapshot {
   error: string | null;
   warning: string | null;
   notice: string | null;
+  /** Blocking modal body; null when no fatal alert is open. */
+  fatal: string | null;
   rendered: ToastMessage | null;
   closing: boolean;
 }
@@ -44,6 +59,9 @@ export interface ToastNotifications {
   setError(text: string | null): void;
   setWarning(text: string | null): void;
   setNotice(text: string | null): void;
+  setFatal(text: string | null): void;
+  /** Clear only the currently visible toast channel (not fatal). */
+  dismissVisible(): void;
   finishExit(): void;
   dispose(): void;
 }
@@ -52,9 +70,17 @@ export function createToastNotifications(): ToastNotifications {
   let error: string | null = null;
   let warning: string | null = null;
   let notice: string | null = null;
+  let fatal: string | null = null;
   let rendered: ToastMessage | null = null;
   let closing = false;
-  let snapshot: ToastSnapshot = { error, warning, notice, rendered, closing };
+  let snapshot: ToastSnapshot = {
+    error,
+    warning,
+    notice,
+    fatal,
+    rendered,
+    closing,
+  };
   const listeners = new Set<() => void>();
   let errorTimer: TimerId | null = null;
   let warningTimer: TimerId | null = null;
@@ -62,11 +88,19 @@ export function createToastNotifications(): ToastNotifications {
   let exitTimer: TimerId | null = null;
 
   function commit(): void {
-    const next: ToastSnapshot = { error, warning, notice, rendered, closing };
+    const next: ToastSnapshot = {
+      error,
+      warning,
+      notice,
+      fatal,
+      rendered,
+      closing,
+    };
     if (
       next.error === snapshot.error &&
       next.warning === snapshot.warning &&
       next.notice === snapshot.notice &&
+      next.fatal === snapshot.fatal &&
       next.rendered === snapshot.rendered &&
       next.closing === snapshot.closing
     ) {
@@ -157,6 +191,26 @@ export function createToastNotifications(): ToastNotifications {
     commit();
   }
 
+  function setFatal(text: string | null): void {
+    // Fatal never auto-dismisses; lower toast channels cannot clear it.
+    fatal = text;
+    commit();
+  }
+
+  function dismissVisible(): void {
+    if (error) {
+      setError(null);
+      return;
+    }
+    if (warning) {
+      setWarning(null);
+      return;
+    }
+    if (notice) {
+      setNotice(null);
+    }
+  }
+
   function finishExit(): void {
     if (!closing) return;
     clearExitTimer();
@@ -176,6 +230,8 @@ export function createToastNotifications(): ToastNotifications {
     setError,
     setWarning,
     setNotice,
+    setFatal,
+    dismissVisible,
     finishExit,
     dispose() {
       if (errorTimer !== null) clearTimeout(errorTimer);
