@@ -732,6 +732,12 @@ export const en = {
   settings: {
     title: "Settings",
     themeHint: "Controls the app’s light or dark appearance. Changes apply immediately.",
+    elevationSection: "Elevation shadows",
+    elevationHint:
+      "Soft shadows on the toolbar, side panes, and asset previews to reinforce hierarchy. 0 turns elevation shadows off (not painted); 1–3 go from subtle to strong. Drag or click a tick — changes apply immediately.",
+    elevationOff: "Off",
+    elevationStrong: "Strong",
+    elevationLevelValue: "Level {level}",
     languageHint: "Controls the interface language. Changes apply immediately.",
     viewMode: "Browse view",
     canvasHint: "Controls how assets are arranged on the canvas. Changes apply immediately.",

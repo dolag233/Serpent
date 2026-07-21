@@ -22,6 +22,12 @@ describe('theme CSS tokens (REQ-THEME-002)', () => {
       '--ink',
       '--accent-soft-fg',
       '--rating-star',
+      '--elev-size',
+      '--elev-intensity',
+      '--shadow-toolbar',
+      '--shadow-pane-east',
+      '--shadow-card',
+      '--shadow-menu',
     ]) {
       expect(css).toContain(token);
     }

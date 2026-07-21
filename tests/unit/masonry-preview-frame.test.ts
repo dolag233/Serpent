@@ -1,24 +1,23 @@
 import { describe, expect, it } from "vitest";
 import {
-  MASONRY_PREVIEW_MAX_HEIGHT_PX,
   estimateMasonryPreviewHeightPx,
   resolveMasonryPreviewStyle,
 } from "../../src/renderer/masonry-preview-frame";
 
 describe("estimateMasonryPreviewHeightPx", () => {
-  it("preserves landscape height under the cap", () => {
+  it("preserves landscape natural height", () => {
     expect(estimateMasonryPreviewHeightPx(1920, 1080, 200)).toBeCloseTo(
       200 * (1080 / 1920),
       5,
     );
   });
 
-  it("caps extreme portrait height (Serpent-woa)", () => {
-    // 230×512 in a 200px column → ~445px uncapped; must hit the max.
-    const uncapped = 200 * (512 / 230);
-    expect(uncapped).toBeGreaterThan(MASONRY_PREVIEW_MAX_HEIGHT_PX);
-    expect(estimateMasonryPreviewHeightPx(230, 512, 200)).toBe(
-      MASONRY_PREVIEW_MAX_HEIGHT_PX,
+  it("keeps the natural height for a portrait column (Serpent-5p45)", () => {
+    // A fixed max-height with the same full column width creates horizontal
+    // letterboxing in the contain-fit preview.
+    expect(estimateMasonryPreviewHeightPx(230, 512, 200)).toBeCloseTo(
+      200 * (512 / 230),
+      5,
     );
   });
 
@@ -31,10 +30,10 @@ describe("estimateMasonryPreviewHeightPx", () => {
 });
 
 describe("resolveMasonryPreviewStyle", () => {
-  it("returns aspect-ratio + maxHeight for known dimensions", () => {
+  it("returns only the natural aspect ratio for known dimensions", () => {
     expect(resolveMasonryPreviewStyle(230, 512)).toEqual({
       aspectRatio: "230 / 512",
-      maxHeight: MASONRY_PREVIEW_MAX_HEIGHT_PX,
+      maxHeight: "none",
     });
   });
 

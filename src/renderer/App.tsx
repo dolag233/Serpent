@@ -235,7 +235,6 @@ import {
   distributeMasonryItems,
 } from "./asset-grid-layout";
 import { JustifiedAssetRows } from "./justified-asset-rows";
-import { resolveJustifiedCaptionBandPx } from "./justified-caption-band";
 import {
   estimateMasonryPreviewHeightPx,
   resolveMasonryPreviewStyle,
@@ -366,7 +365,8 @@ function MasonryColumns({
     assets.map((asset, index) => ({ asset, child: children[index] })),
     columnCount,
     ({ asset }) => {
-      // Serpent-woa: estimate must match CSS max-height cap on tall portraits.
+      // Serpent-5p45: keep column packing consistent with the natural preview
+      // height; a fixed cap would create a wider contain-fit letterbox.
       const previewHeight = estimateMasonryPreviewHeightPx(
         asset.width,
         asset.height,
@@ -7021,16 +7021,6 @@ function AppInner() {
                       <JustifiedAssetRows
                         assets={visibleAssets}
                         cardSize={assetCardSize}
-                        captionBandPx={resolveJustifiedCaptionBandPx({
-                          // Flat/tiled always renders「宽 × 高」when metadata exists.
-                          dimensions: true,
-                          name: canvasPrefs.fields.name,
-                          secondary:
-                            canvasPrefs.fields.size ||
-                            canvasPrefs.fields.date ||
-                            showTrash ||
-                            searchSnippets.size > 0,
-                        })}
                       >
                         {cards}
                       </JustifiedAssetRows>

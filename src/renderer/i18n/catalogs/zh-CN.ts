@@ -720,6 +720,12 @@ export const zhCN = {
   settings: {
     title: "通用设置",
     themeHint: "控制整个应用的亮暗外观，立即生效。",
+    elevationSection: "层级投影",
+    elevationHint:
+      "为顶栏、侧栏、资产预览投下淡阴影以强化层级。0 为关闭（不绘制层级投影），1–3 由弱到强；拖动或点击刻度切换，立即生效。",
+    elevationOff: "关闭",
+    elevationStrong: "最强",
+    elevationLevelValue: "等级 {level}",
     languageHint: "控制界面文案语言，立即生效。",
     viewMode: "浏览视图",
     canvasHint: "控制资产画布的排列方式；改后立即作用于画布。",

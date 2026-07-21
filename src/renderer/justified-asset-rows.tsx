@@ -2,6 +2,7 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  type CSSProperties,
   type ReactNode,
 } from "react";
 
@@ -10,6 +11,7 @@ import {
   ASSET_GRID_GAP_PX,
   aspectRatioForAsset,
   layoutJustifiedRows,
+  type JustifiedPlacement,
 } from "./asset-grid-layout";
 import { resolveJustifiedCaptionBandPx } from "./justified-caption-band";
 
@@ -18,24 +20,40 @@ export {
   type JustifiedCaptionLines,
 } from "./justified-caption-band";
 
-/** @deprecated Use resolveJustifiedCaptionBandPx — kept for call-site discovery. */
+/** @deprecated Caption no longer flex-couples to preview height (Serpent-5p45). */
 export const JUSTIFIED_CAPTION_BAND_PX = resolveJustifiedCaptionBandPx({
   dimensions: true,
   name: true,
   secondary: true,
 });
 
+/**
+ * Slot geometry for one justified placement.
+ * Preview height is an explicit CSS variable so caption text can never
+ * flex-shrink the media box (Serpent-omn / Serpent-5p45).
+ */
+export function justifiedSlotStyle(
+  placement: JustifiedPlacement,
+): CSSProperties {
+  return {
+    width: placement.width,
+    ["--justified-preview-height" as string]: `${Math.max(1, placement.height)}px`,
+  };
+}
+
 export function JustifiedAssetRows({
   assets,
   cardSize,
   children,
-  captionBandPx,
 }: {
   assets: AssetSummary[];
   cardSize: number;
   children: ReactNode[];
-  /** Reserved height under the image row; must match rendered caption. */
-  captionBandPx: number;
+  /**
+   * @deprecated Ignored. Preview height is locked to layout placement;
+   * caption renders at natural height below (Serpent-5p45).
+   */
+  captionBandPx?: number;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [availableWidth, setAvailableWidth] = useState(0);
@@ -62,7 +80,6 @@ export function JustifiedAssetRows({
     cardSize,
     ASSET_GRID_GAP_PX,
   );
-  const bandPx = Math.max(0, Math.round(captionBandPx));
 
   return (
     <div className="justified-rows" ref={containerRef}>
@@ -70,18 +87,12 @@ export function JustifiedAssetRows({
         <div
           className="justified-row"
           key={`justified-row-${rowIndex}`}
-          style={{
-            height: row.height + bandPx,
-          }}
         >
           {row.items.map((placement) => (
             <div
               className="justified-card-slot"
               key={placement.id}
-              style={{
-                width: placement.width,
-                height: "100%",
-              }}
+              style={justifiedSlotStyle(placement)}
             >
               {childById.get(placement.id)}
             </div>
