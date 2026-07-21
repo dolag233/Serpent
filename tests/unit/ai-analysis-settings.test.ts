@@ -71,6 +71,18 @@ describe('buildAiAnalysisSystemPrompt', () => {
     expect(prompt).not.toContain('关于标签');
     expect(prompt).not.toContain('关于评分');
   });
+
+  it('hard-constrains Chinese tags when language is zh-CN (Serpent-sbnt)', () => {
+    const prompt = buildAiAnalysisSystemPrompt({
+      language: 'Chinese (zh-CN)',
+      settings: DEFAULT_AI_ANALYSIS_SETTINGS,
+      enabledFields: { description: true, tags: true, rating: false },
+      existingTagNames: [],
+    });
+    expect(prompt).toContain('标签语言硬约束');
+    expect(prompt).toContain('禁止输出纯拉丁字母的英文标签');
+    expect(prompt).toContain('每一个标签都必须使用该语言');
+  });
 });
 
 describe('sanitizeAiDescription', () => {

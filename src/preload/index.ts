@@ -17,11 +17,13 @@ import {
   AI_CLEARED_CHANNEL,
   EXTENSION_PAIRING_CHANNEL,
   OPEN_EXTERNAL_URL_CHANNEL,
+  REVEAL_APP_LOG_CHANNEL,
   SHOW_EDIT_CONTEXT_MENU_CHANNEL,
   SHELL_SWIPE_CHANNEL,
 } from '../shared/protocol/channels';
 import {
   parseOpenExternalUrlResult,
+  type RevealAppLogResult,
   type SerpentShellApi,
   type ShellSwipeDirection,
 } from '../shared/external-url';
@@ -1286,10 +1288,40 @@ const e2eDiagnostics = Object.freeze({
   },
 });
 
+function parseRevealAppLogResult(input: unknown): RevealAppLogResult {
+  if (
+    typeof input === 'object' &&
+    input !== null &&
+    'ok' in input &&
+    (input as { ok: unknown }).ok === true
+  ) {
+    return { ok: true };
+  }
+  const code =
+    typeof input === 'object' &&
+    input !== null &&
+    'code' in input &&
+    typeof (input as { code: unknown }).code === 'string'
+      ? (input as { code: string }).code
+      : 'shell_failure';
+  if (
+    code === 'unauthorized_sender' ||
+    code === 'log_missing' ||
+    code === 'shell_failure'
+  ) {
+    return { ok: false, code };
+  }
+  return { ok: false, code: 'shell_failure' };
+}
+
 const shell: SerpentShellApi = Object.freeze({
   async openExternalUrl(url: string) {
     const result: unknown = await ipcRenderer.invoke(OPEN_EXTERNAL_URL_CHANNEL, { url });
     return parseOpenExternalUrlResult(result);
+  },
+  async revealAppLog() {
+    const result: unknown = await ipcRenderer.invoke(REVEAL_APP_LOG_CHANNEL);
+    return parseRevealAppLogResult(result);
   },
   async showEditContextMenu(point: { x: number; y: number }) {
     const result: unknown = await ipcRenderer.invoke(

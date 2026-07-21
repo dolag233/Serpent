@@ -1,4 +1,7 @@
-import { buildAiAnalysisSystemPrompt } from '../../shared/ai-analysis-settings';
+import {
+  aiTagsSchemaDescription,
+  buildAiAnalysisSystemPrompt,
+} from '../../shared/ai-analysis-settings';
 import {
   resolveOpenAiChatCompletionsUrl,
   resolveOpenAiResponsesUrl,
@@ -13,30 +16,32 @@ import type { VendorAdapter, VendorId } from './vendor-adapter';
  * Mirrors `aiStructuredOutputSchema` from protocol.ts — keep them in
  * sync whenever the Serpent contract changes.
  */
-const OPENAI_RESPONSE_JSON_SCHEMA = {
-  name: 'asset_classification',
-  strict: true,
-  schema: {
-    type: 'object',
-    properties: {
-      description: {
-        type: ['string', 'null'],
-        description: 'Description of the asset content, or null if skipped.',
+function buildOpenAiResponseJsonSchema(language: string) {
+  return {
+    name: 'asset_classification',
+    strict: true,
+    schema: {
+      type: 'object',
+      properties: {
+        description: {
+          type: ['string', 'null'],
+          description: `Description of the asset content in ${language}, or null if skipped.`,
+        },
+        tags: {
+          type: 'array',
+          items: { type: 'string' },
+          description: aiTagsSchemaDescription(language),
+        },
+        rating: {
+          type: ['integer', 'null'],
+          description: 'Aesthetic score from 1 to 5, or null if unknown.',
+        },
       },
-      tags: {
-        type: 'array',
-        items: { type: 'string' },
-        description: 'Keyword tags for the asset.',
-      },
-      rating: {
-        type: ['integer', 'null'],
-        description: 'Aesthetic score from 1 to 5, or null if unknown.',
-      },
+      required: ['description', 'tags', 'rating'],
+      additionalProperties: false,
     },
-    required: ['description', 'tags', 'rating'],
-    additionalProperties: false,
-  },
-};
+  };
+}
 
 function httpStatusToErrorKind(
   status: number,
@@ -182,7 +187,7 @@ export class OpenAIVendorAdapter implements VendorAdapter {
             messages,
             response_format: {
               type: 'json_schema',
-              json_schema: OPENAI_RESPONSE_JSON_SCHEMA,
+              json_schema: buildOpenAiResponseJsonSchema(request.language),
             },
             temperature: 0.2,
           }),
@@ -215,6 +220,7 @@ export class OpenAIVendorAdapter implements VendorAdapter {
     request: AiAnalysisRequest,
     signal?: AbortSignal,
   ): Promise<AiAnalysisResult> {
+    const schema = buildOpenAiResponseJsonSchema(request.language);
     const body = {
       model: this.model,
       instructions: this.#buildSystemPrompt(request),
@@ -227,9 +233,9 @@ export class OpenAIVendorAdapter implements VendorAdapter {
       text: {
         format: {
           type: 'json_schema',
-          name: OPENAI_RESPONSE_JSON_SCHEMA.name,
-          strict: OPENAI_RESPONSE_JSON_SCHEMA.strict,
-          schema: OPENAI_RESPONSE_JSON_SCHEMA.schema,
+          name: schema.name,
+          strict: schema.strict,
+          schema: schema.schema,
         },
       },
       temperature: 0.2,

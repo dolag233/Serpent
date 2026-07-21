@@ -14,6 +14,7 @@ import {
 export interface UseToastNotificationsReturn extends ToastSnapshot {
   /** Drop-in replacement for the former `setError` state setter. */
   setError: (text: string | null) => void;
+  setWarning: (text: string | null) => void;
   /** Drop-in replacement for the former `setNotice` state setter. */
   setNotice: (text: string | null) => void;
   /** Attach to the toast element's onTransitionEnd. */
@@ -44,6 +45,7 @@ export function useToastNotifications(): UseToastNotificationsReturn {
   return {
     ...snapshot,
     setError: controller.setError,
+    setWarning: controller.setWarning,
     setNotice: controller.setNotice,
     handleToastTransitionEnd,
   };

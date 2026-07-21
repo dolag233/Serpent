@@ -1,4 +1,7 @@
-import { buildAiAnalysisSystemPrompt } from '../../shared/ai-analysis-settings';
+import {
+  aiTagsSchemaDescription,
+  buildAiAnalysisSystemPrompt,
+} from '../../shared/ai-analysis-settings';
 import { resolveAnthropicMessagesUrl } from '../../shared/ai-endpoints';
 import { parseAiAnalysisResult, resolveAiAnalysisSettings } from './protocol';
 import type { AiAnalysisRequest, AiAnalysisResult } from './protocol';
@@ -11,33 +14,33 @@ import type { VendorAdapter, VendorId } from './vendor-adapter';
  * we use tool-use with a single tool whose `input_schema` forces
  * structured output, then extract the tool-call arguments.
  */
-const ANTHROPIC_TOOL_INPUT_SCHEMA = {
-  type: 'object' as const,
-  properties: {
-    description: {
-      type: ['string', 'null'] as const,
-      description: 'Description of the asset content, or null if skipped.',
+function buildAnthropicToolDefinition(language: string) {
+  return {
+    name: 'serpent_classify_asset',
+    description:
+      'Classify a digital asset for a creative professional library. ' +
+      `Provide description and tags in ${language}, and an optional aesthetic rating.`,
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        description: {
+          type: ['string', 'null'] as const,
+          description: `Description of the asset content in ${language}, or null if skipped.`,
+        },
+        tags: {
+          type: 'array' as const,
+          items: { type: 'string' as const },
+          description: aiTagsSchemaDescription(language),
+        },
+        rating: {
+          type: ['integer', 'null'] as const,
+          description: 'Aesthetic score from 1 to 5, or null if unknown.',
+        },
+      },
+      required: ['tags'] as string[],
     },
-    tags: {
-      type: 'array' as const,
-      items: { type: 'string' as const },
-      description: 'Keyword tags for the asset.',
-    },
-    rating: {
-      type: ['integer', 'null'] as const,
-      description: 'Aesthetic score from 1 to 5, or null if unknown.',
-    },
-  },
-  required: ['tags'] as string[],
-};
-
-const ANTHROPIC_TOOL_DEFINITION = {
-  name: 'serpent_classify_asset',
-  description:
-    'Classify a digital asset for a creative professional library. ' +
-    'Provide description, tags, and an optional aesthetic rating.',
-  input_schema: ANTHROPIC_TOOL_INPUT_SCHEMA,
-};
+  };
+}
 
 /**
  * Maps HTTP status + body to a VendorAdapterError kind.
@@ -113,7 +116,7 @@ export class AnthropicVendorAdapter implements VendorAdapter {
       temperature: 0.2,
       system,
       messages,
-      tools: [ANTHROPIC_TOOL_DEFINITION],
+      tools: [buildAnthropicToolDefinition(request.language)],
       tool_choice: {
         type: 'tool' as const,
         name: 'serpent_classify_asset',
@@ -340,7 +343,6 @@ export class AnthropicVendorAdapter implements VendorAdapter {
     const block = body.content[0] as Record<string, unknown>;
     if (block.type !== 'tool_use') {
       // Claude might refuse; check for tool_use in other blocks
-      let foundToolUse = false;
       for (const b of body.content as Array<Record<string, unknown>>) {
         if (b.type === 'tool_use') {
           const input = b.input as Record<string, unknown> | undefined;
@@ -363,15 +365,16 @@ export class AnthropicVendorAdapter implements VendorAdapter {
               );
             }
           }
-          foundToolUse = true;
+          throw new VendorAdapterError(
+            'invalid_response',
+            'The AI tool-use input was empty.',
+          );
         }
       }
-      if (foundToolUse) {
-        throw new VendorAdapterError(
-          'invalid_response',
-          'The AI tool-use input was empty.',
-        );
-      }
+      // Serpent-iokf: some Anthropic-compatible proxies return plain text JSON
+      // instead of tool_use — accept that when it parses.
+      const textFallback = this.#tryParseTextContentAsResult(body);
+      if (textFallback) return textFallback;
       throw new VendorAdapterError(
         'invalid_response',
         `Expected tool_use response but got ${String(block.type)}.`,
@@ -403,5 +406,36 @@ export class AnthropicVendorAdapter implements VendorAdapter {
         { cause: error },
       );
     }
+  }
+
+  #tryParseTextContentAsResult(
+    body: Record<string, unknown>,
+  ): AiAnalysisResult | undefined {
+    if (!Array.isArray(body.content)) return undefined;
+    const modelVersion =
+      typeof body.model === 'string' && body.model.length > 0
+        ? body.model
+        : this.model;
+    for (const b of body.content as Array<Record<string, unknown>>) {
+      if (b.type !== 'text' || typeof b.text !== 'string') continue;
+      const raw = b.text.trim();
+      if (!raw) continue;
+      const fenced = raw
+        .replace(/^```(?:json)?\s*/i, '')
+        .replace(/\s*```$/i, '')
+        .trim();
+      try {
+        const parsed = JSON.parse(fenced) as unknown;
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          return parseAiAnalysisResult({
+            ...(parsed as Record<string, unknown>),
+            modelVersion,
+          });
+        }
+      } catch {
+        // keep looking
+      }
+    }
+    return undefined;
   }
 }

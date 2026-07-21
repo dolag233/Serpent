@@ -18,16 +18,27 @@ import { apiFormatLimiterKey, formatAiLanguagesForPrompt } from '../shared/ai-en
 import { VendorAdapterError } from './ai/vendor-adapter';
 import type { VendorAdapter } from './ai/vendor-adapter';
 import type { AiAnalysisRequest } from './ai/protocol';
-import { findVendorError, safeAiDiagnostic, vendorFailure } from './ai/error-mapping';
+import {
+  AI_ARTIFACT_PENDING_CODES,
+  AI_ARTIFACT_PENDING_MAX_ATTEMPTS,
+  findVendorError,
+  safeAiDiagnostic,
+  safeAiErrorDetail,
+  vendorFailure,
+} from './ai/error-mapping';
 import { AiJobAbortRegistry } from './ai/job-abort-registry';
 import { readFileSync } from 'node:fs';
 import { loadAiImageInput } from './ai/image-input';
 import { ProviderConcurrencyLimiter } from './ai/provider-concurrency-limiter';
 import { AiProgressThrottler } from './ai/progress-throttler';
+import { resolveAiAnalysisConcurrency } from '../shared/ai-concurrency';
 
 const parentPort: ParentPort | undefined = process.parentPort;
 const aiJobAbortRegistry = new AiJobAbortRegistry();
-const providerConcurrencyLimiter = new ProviderConcurrencyLimiter(2);
+const aiAnalysisConcurrency = resolveAiAnalysisConcurrency();
+const providerConcurrencyLimiter = new ProviderConcurrencyLimiter(
+  aiAnalysisConcurrency,
+);
 const aiProgressThrottler = new AiProgressThrottler((event) => parentPort?.postMessage(event));
 const analysisControls = new Map<string, { jobId: string; signal: AbortSignal; canWrite: () => boolean }>();
 const activeThumbnailQueues = new Set<string>();
@@ -182,7 +193,11 @@ function errorForLog(error: unknown, depth = 0): unknown {
   };
 }
 
-function aiQueueFailure(error: unknown): { errorCode: string; retryable: boolean } {
+function aiQueueFailure(error: unknown): {
+  errorCode: string;
+  retryable: boolean;
+  maxAttempts?: number;
+} {
   const vendorError = findVendorError(error);
   if (vendorError) {
     const failure = vendorFailure(vendorError);
@@ -190,6 +205,13 @@ function aiQueueFailure(error: unknown): { errorCode: string; retryable: boolean
   }
   if (error instanceof LibraryServiceError) {
     if (error.code === 'AI_ANALYSIS_FAILED' && error.reason) {
+      if (AI_ARTIFACT_PENDING_CODES.has(error.reason)) {
+        return {
+          errorCode: error.reason,
+          retryable: true,
+          maxAttempts: AI_ARTIFACT_PENDING_MAX_ATTEMPTS,
+        };
+      }
       return {
         errorCode: error.reason,
         retryable: error.reason === 'AI_NETWORK'
@@ -1317,11 +1339,30 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
                 : result.type === 'asset.analyze-unsupported'
                   ? result.reason
                   : 'AI_INTERNAL_ERROR';
-              libraryService.failAiJob(libraryId, job.jobId, {
+              const artifactPending = AI_ARTIFACT_PENDING_CODES.has(errorCode);
+              const detail = safeAiErrorDetail(
                 errorCode,
-                retryable: false,
+                !result.ok
+                  ? result.error.message
+                  : result.type === 'asset.analyze-unsupported'
+                    ? result.reason
+                    : undefined,
+              );
+              libraryService.reportDiagnostic(
+                'ai.queue.analysis',
+                safeAiDiagnostic(errorCode),
+                { libraryId, jobId: job.jobId, assetId: job.assetId, errorCode },
+              );
+              const failure = libraryService.failAiJob(libraryId, job.jobId, {
+                errorCode,
+                retryable: artifactPending,
+                maxAttempts: artifactPending
+                  ? AI_ARTIFACT_PENDING_MAX_ATTEMPTS
+                  : undefined,
+                errorDetail: detail,
               });
-              failed++;
+              if (failure.status === 'queued') requeued++;
+              else failed++;
               publishAiProgress(libraryId);
               continue;
             }
@@ -1338,11 +1379,10 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
               safeAiDiagnostic(classification.errorCode, error),
               { libraryId, jobId: job.jobId, assetId: job.assetId, errorCode: classification.errorCode },
             );
-            const failure = libraryService.failAiJob(
-              libraryId,
-              job.jobId,
-              classification,
-            );
+            const failure = libraryService.failAiJob(libraryId, job.jobId, {
+              ...classification,
+              errorDetail: safeAiErrorDetail(classification.errorCode, error),
+            });
             if (failure.status === 'queued') requeued++;
             else failed++;
             publishAiProgress(libraryId);
@@ -1353,7 +1393,9 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
         }
       };
 
-      await Promise.all([processLane(), processLane()]);
+      await Promise.all(
+        Array.from({ length: aiAnalysisConcurrency }, () => processLane()),
+      );
       return {
         ok: true,
         type: 'ai.jobs.processed' as const,

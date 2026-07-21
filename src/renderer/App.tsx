@@ -91,6 +91,11 @@ import {
   type AiConnectionState,
 } from "./AiConfigDialog";
 import {
+  collectRecentAiFailureCodes,
+  computeAiBatchProgress,
+} from "./ai-analyze-progress";
+import { summarizeAiFailureCodes } from "./ai-job-error-message";
+import {
   DEFAULT_AI_ANALYSIS_SETTINGS,
   toWireAiAnalysisSettings,
   type AiAnalysisSettingsWire,
@@ -1834,32 +1839,54 @@ function AppInner() {
         analyzingAssetIdRef.current = null;
         analyzingBatchSizeRef.current = 0;
         setAiAnalyzing(false);
-        // Serpent-4i18: always surface a completion toast when the queue drains
-        // (do not rely solely on per-asset completed events).
-        if (failedDelta > 0 && succeededDelta === 0) {
-          if (pendingAssetId && batchSize <= 1) {
-            void api
-              .getAiJobStatus({ libraryId: library.libraryId })
-              .then((result) => {
-                if (!result.ok) {
-                  setError(t("toast.aiAnalyzeFailed"));
+        // Serpent-4i18 / iokf: completion toast with failure reason when possible.
+        const showFailureToast = (detail?: string) => {
+          setError(
+            detail
+              ? t("toast.aiAnalyzeFailedDetail", { detail })
+              : t("toast.aiAnalyzeFailed"),
+          );
+        };
+        if (failedDelta > 0) {
+          void api
+            .getAiJobStatus({ libraryId: library.libraryId })
+            .then((result) => {
+              const codes = result.ok
+                ? collectRecentAiFailureCodes(result.value.jobs)
+                : [];
+              const detail = summarizeAiFailureCodes(codes, locale);
+              if (succeededDelta === 0) {
+                if (pendingAssetId && batchSize <= 1 && result.ok) {
+                  const failedForAsset = result.value.jobs.some(
+                    (job) =>
+                      job.assetId === pendingAssetId && job.status === "failed",
+                  );
+                  if (failedForAsset) showFailureToast(detail || undefined);
                   return;
                 }
-                const failedForAsset = result.value.jobs.some(
-                  (job) =>
-                    job.assetId === pendingAssetId && job.status === "failed",
+                showFailureToast(detail || undefined);
+                return;
+              }
+              setNotice(
+                t("toast.aiAnalyzeDoneBatch", {
+                  succeeded: Math.max(0, succeededDelta),
+                  failed: Math.max(0, failedDelta),
+                }) + (detail ? ` ${detail}` : ""),
+              );
+            })
+            .catch(() => {
+              if (succeededDelta === 0) {
+                showFailureToast();
+              } else {
+                setNotice(
+                  t("toast.aiAnalyzeDoneBatch", {
+                    succeeded: Math.max(0, succeededDelta),
+                    failed: Math.max(0, failedDelta),
+                  }),
                 );
-                if (failedForAsset) {
-                  setError(t("toast.aiAnalyzeFailed"));
-                }
-              })
-              .catch(() => {
-                setError(t("toast.aiAnalyzeFailed"));
-              });
-          } else {
-            setError(t("toast.aiAnalyzeFailed"));
-          }
-        } else if (batchSize > 1 || failedDelta > 0) {
+              }
+            });
+        } else if (batchSize > 1) {
           setNotice(
             t("toast.aiAnalyzeDoneBatch", {
               succeeded: Math.max(0, succeededDelta),
@@ -1891,7 +1918,7 @@ function AppInner() {
       unsubscribeCompleted();
       unsubscribeCleared();
     };
-  }, [api, library, setError, setNotice, t]);
+  }, [api, library, locale, setError, setNotice, t]);
 
   function syncNavHistoryUi() {
     setNavHistoryUi({
@@ -3144,7 +3171,11 @@ function AppInner() {
     return result.value;
   }
 
-  async function runSearch(event?: FormEvent, offset = 0) {
+  async function runSearch(
+    event?: FormEvent,
+    offset = 0,
+    opts?: { silent?: boolean },
+  ) {
     event?.preventDefault();
     if (!api || !library) return;
     if (offset === 0) await closeAssetPreview(false);
@@ -3153,7 +3184,11 @@ function AppInner() {
       setActiveAiSearchDefinition(null);
       setAiSearchPlanSummary(null);
       const result = await executeSearchDefinition(definition, offset);
-      if (result) setNotice(t("toast.searchDone", { total: result.total }));
+      // Serpent-huvw: discovery debounce / reload must not toast "搜索完成"
+      // and wipe AI completion / error toasts.
+      if (result && !opts?.silent) {
+        setNotice(t("toast.searchDone", { total: result.total }));
+      }
     } catch (caught) {
       setError(toMessage(caught, t("toast.searchFailed"), locale));
     }
@@ -3259,7 +3294,7 @@ function AppInner() {
     )
       return;
     const timer = window.setTimeout(() => {
-      void runSearch(undefined, 0);
+      void runSearch(undefined, 0, { silent: true });
     }, 250);
     return () => window.clearTimeout(timer);
     // Search execution reads the current scope and API from the same render;
@@ -3362,7 +3397,7 @@ function AppInner() {
         await chooseSmartCollection(activeSmartCollectionId, offset);
       else if (activeAiSearchDefinition)
         await executeSearchDefinition(activeAiSearchDefinition, offset);
-      else await runSearch(undefined, offset);
+      else await runSearch(undefined, offset, { silent: true });
     } catch (caught) {
       setError(toMessage(caught, t("toast.loadMoreFailed"), locale));
     } finally {
@@ -5881,6 +5916,13 @@ function AppInner() {
         setError(toMessage(result.error, t("toast.aiJobsOpFailed"), locale));
         return;
       }
+      if (action === "cancel") {
+        aiAnalyzingRef.current = false;
+        analyzingAssetIdRef.current = null;
+        analyzingBatchSizeRef.current = 0;
+        setAiAnalyzing(false);
+        setNotice(t("toast.aiAnalyzeStopped"));
+      }
       await loadAiJobs(true);
     } catch {
       setError(t("toast.aiJobsOpNoResponse"));
@@ -6374,26 +6416,73 @@ function AppInner() {
           />
         </div>
         {(aiAnalyzing ||
-          (aiJobs !== null && aiJobs.queued + aiJobs.running > 0)) && (
-          <div className="workspace-ai-progress" role="status">
-            <span className="activity-pulse" />
-            <span className="workspace-ai-progress-message">
-              {aiAnalyzing
-                ? t("toast.aiAnalyzeStarted")
-                : t("toast.aiAnalyzeProgress", {
-                    running: String(aiJobs?.running ?? 0),
-                    queued: String(aiJobs?.queued ?? 0),
-                  })}
-            </span>
-            <button
-              className="secondary-button"
-              onClick={() => setMediaJobsOpen(true)}
-              type="button"
-            >
-              {t("toolbar.backgroundJobs")}
-            </button>
-          </div>
-        )}
+          (aiJobs !== null && aiJobs.queued + aiJobs.running > 0)) &&
+          (() => {
+            const batchProgress = computeAiBatchProgress(
+              analyzingBatchSizeRef.current,
+              {
+                succeeded: analyzeSucceededBaselineRef.current,
+                failed: analyzeFailedBaselineRef.current,
+              },
+              {
+                queued: aiJobs?.queued ?? 0,
+                running: aiJobs?.running ?? 0,
+                succeeded: aiJobs?.succeeded ?? 0,
+                failed: aiJobs?.failed ?? 0,
+              },
+            );
+            const progressLabel =
+              batchProgress.batchTotal > 0
+                ? t("toast.aiAnalyzeProgressCount", {
+                    done: String(batchProgress.done),
+                    total: String(batchProgress.batchTotal),
+                  })
+                : t("toast.aiAnalyzeStarted");
+            return (
+              <div className="workspace-ai-progress" role="status">
+                <div className="workspace-ai-progress-body">
+                  <div className="workspace-ai-progress-headline">
+                    <span className="activity-pulse" aria-hidden />
+                    <span className="workspace-ai-progress-message">
+                      {progressLabel}
+                    </span>
+                  </div>
+                  {batchProgress.batchTotal > 0 && (
+                    <div
+                      aria-valuemax={batchProgress.batchTotal}
+                      aria-valuemin={0}
+                      aria-valuenow={batchProgress.done}
+                      className="task-progress-track workspace-ai-progress-bar"
+                      role="progressbar"
+                    >
+                      <div
+                        className="task-progress-fill"
+                        style={{
+                          width: `${Math.round((batchProgress.ratio ?? 0) * 100)}%`,
+                        }}
+                      />
+                    </div>
+                  )}
+                </div>
+                <div className="workspace-ai-progress-actions">
+                  <button
+                    className="secondary-button"
+                    onClick={() => void controlAiJobs("cancel")}
+                    type="button"
+                  >
+                    {t("toast.aiAnalyzeStop")}
+                  </button>
+                  <button
+                    className="secondary-button"
+                    onClick={() => setMediaJobsOpen(true)}
+                    type="button"
+                  >
+                    {t("toolbar.backgroundJobs")}
+                  </button>
+                </div>
+              </div>
+            );
+          })()}
         <div
           className={`workspace-canvas${previewAsset ? " is-viewing" : ""}${externalDropActive ? " is-external-drop" : ""}`}
           onDragEnter={handleExternalDragEnter}
@@ -7055,35 +7144,44 @@ function AppInner() {
               </div>
             </div>
           )}
-          {renderedToast && (
-            <div
-              className={`toast${renderedToast.kind === "error" ? " is-error" : ""}${toastClosing ? " is-closing" : ""}`}
-              onTransitionEnd={handleToastTransitionEnd}
-              role={renderedToast.kind === "error" ? "alert" : "status"}
-            >
-              <Icon name={renderedToast.kind === "error" ? "warning" : "info"} size={15} />
-              <span>{renderedToast.text}</span>
-              {renderedToast.kind === "notice" && lastMoveOperationId && (
-                <button
-                  className="secondary-button"
-                  onClick={() => void undoManagedMove(lastMoveOperationId)}
-                  type="button"
-                >
-                  {t("action.undoMove")}
-                </button>
-              )}
-              <IconActionButton
-                omitClassName
-                icon="close"
-                label={t("common.closeHint")}
-                onClick={() => {
-                  setError(null);
-                  setNotice(null);
-                }}
-              />
-            </div>
-          )}
         </div>
+        {renderedToast && (
+          <div
+            className={`toast${renderedToast.kind === "error" ? " is-error" : ""}${renderedToast.kind === "warning" ? " is-warning" : ""}${toastClosing ? " is-closing" : ""}`}
+            onTransitionEnd={handleToastTransitionEnd}
+            role={renderedToast.kind === "error" ? "alert" : "status"}
+          >
+            <Icon
+              name={
+                renderedToast.kind === "error"
+                  ? "warning"
+                  : renderedToast.kind === "warning"
+                    ? "warning"
+                    : "info"
+              }
+              size={15}
+            />
+            <span>{renderedToast.text}</span>
+            {renderedToast.kind === "notice" && lastMoveOperationId && (
+              <button
+                className="secondary-button"
+                onClick={() => void undoManagedMove(lastMoveOperationId)}
+                type="button"
+              >
+                {t("action.undoMove")}
+              </button>
+            )}
+            <IconActionButton
+              omitClassName
+              icon="close"
+              label={t("common.closeHint")}
+              onClick={() => {
+                setError(null);
+                setNotice(null);
+              }}
+            />
+          </div>
+        )}
         {previewAsset && library && api && (
           <AssetPreviewModal
             api={api}
@@ -7507,6 +7605,16 @@ function AppInner() {
         onClose={() => setMediaJobsOpen(false)}
         onControlMediaJobs={(action, jobIds) => void controlMediaJobs(action, jobIds)}
         onControlAiJobs={(action, jobIds) => void controlAiJobs(action, jobIds)}
+        onRevealAppLog={() => {
+          const shellBridge = (window as RendererWindow).serpent?.shell;
+          if (!shellBridge?.revealAppLog) {
+            setError(t("toast.aiRevealLogFailed"));
+            return;
+          }
+          void shellBridge.revealAppLog().then((result) => {
+            if (!result.ok) setError(t("toast.aiRevealLogFailed"));
+          });
+        }}
       />
       {/* Unified context menu */}
       <AssetContextMenu

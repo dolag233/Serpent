@@ -158,17 +158,20 @@ export function buildAiAnalysisSystemPrompt(input: {
     ? '你只能从已有标签列表中选择，不得发明新标签。'
     : '输出标签尽量使用已有标签；仅当非常特殊、重要时才新增标签。';
 
+  const languageRule = buildTagLanguageRule(language);
+
   let prompt = `这是一个视觉分析任务，需要你分析资源库中一个多媒体资产的视觉特征。请分析输入图片/视频，根据风格、氛围、情绪、类型等特征，以严格 JSON 输出（不要 Markdown）。\n`;
   prompt += `JSON 形状：{"description": string|null, "tags": string[], "rating": number|null}\n`;
   prompt += `本次需要填充的字段：${fields.join(', ') || '（无）'}\n`;
   prompt += `未启用的字段请输出 null 或空数组（tags 用 []）。\n\n`;
   prompt += `你必须严格遵守：\n`;
   prompt += `+ 以「${STYLE_LABEL[settings.outputStyle]}」风格输出所有内容\n`;
-  prompt += `+ 目标语言：${language}。描述与标签必须使用该语言\n`;
+  prompt += `+ 目标语言：${language}。description 与 tags[] 中每一个标签都必须使用该语言书写（Serpent-sbnt）\n`;
+  prompt += `+ ${languageRule}\n`;
   prompt += `+ 只输出纯 JSON 对象，不要 Markdown 代码围栏，不要 XML/HTML 标签（例如不要写 </description>）\n`;
 
   if (enabledFields.tags) {
-    prompt += `+ 关于标签。${tagRule}标签一般是描述风格、类型、视觉特点、情绪、主题、主体等的简单词汇；若已有标签含其它类型（如职业），可仿照。输出不超过 ${settings.maxTags} 个。\n`;
+    prompt += `+ 关于标签。${tagRule}标签一般是描述风格、类型、视觉特点、情绪、主题、主体等的简单词汇；若已有标签含其它类型（如职业），可仿照。输出不超过 ${settings.maxTags} 个。每个标签的书写语言必须符合上方目标语言硬约束。\n`;
     prompt += `  已有标签（最多 100，文件夹相关优先）：[${existingTagNames.join(', ')}]\n`;
   }
 
@@ -181,6 +184,46 @@ export function buildAiAnalysisSystemPrompt(input: {
   }
 
   return prompt;
+}
+
+/** Hard language constraint for tags (and descriptions) — Serpent-sbnt. */
+export function buildTagLanguageRule(language: string): string {
+  const lower = language.toLowerCase();
+  if (lower.includes('zh-cn') || lower.includes('chinese')) {
+    return (
+      '标签语言硬约束（中文）：每个标签必须是中文词语（可含数字）；' +
+      '禁止输出纯拉丁字母的英文标签（例如 portrait、cyberpunk），须译成中文（人像、赛博朋克）；' +
+      '唯一例外：该英文标签已原样出现在「已有标签」列表中时可原样选用'
+    );
+  }
+  if (lower.includes('(en)') || lower === 'en' || lower.startsWith('english')) {
+    return (
+      'Tag language hard rule (English): every tag must be English words; ' +
+      'do not emit Chinese-only tags unless that exact string already appears in the existing-tag list'
+    );
+  }
+  if (lower.includes('ja') || lower.includes('japanese')) {
+    return (
+      'タグ言語の硬制約：各タグは日本語で書くこと。英語のみのタグは、既存タグ一覧にその表記がある場合を除き禁止'
+    );
+  }
+  if (lower.includes('ko') || lower.includes('korean')) {
+    return (
+      '태그 언어 강제：각 태그는 한국어로 작성. 영어만으로 된 태그는 기존 태그 목록에 있을 때만 허용'
+    );
+  }
+  return (
+    `Tag language hard rule: write every tag in ${language}; ` +
+    'do not use a different natural language unless that exact string is already in the existing-tag list'
+  );
+}
+
+/** JSON-schema description for tags[] items (vendor adapters). */
+export function aiTagsSchemaDescription(language: string): string {
+  return (
+    `Keyword tags for the asset. Each tag MUST be written in the target language (${language}). ` +
+    'Do not emit English-only tags when the target language is Chinese (unless listed in existing tags).'
+  );
 }
 
 /** Strip model-hallucinated wrappers from AI description text before persist. */

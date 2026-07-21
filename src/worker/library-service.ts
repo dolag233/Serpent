@@ -7192,7 +7192,13 @@ export class LibraryService {
   failAiJob(
     libraryId: string,
     jobId: string,
-    failure: { errorCode: string; retryable: boolean; maxAttempts?: number },
+    failure: {
+      errorCode: string;
+      retryable: boolean;
+      maxAttempts?: number;
+      /** Redacted user/developer-facing detail (Serpent-iokf). */
+      errorDetail?: string | null;
+    },
   ): { status: 'queued' | 'failed' } {
     const openLibrary = this.requireOpenLibrary(libraryId);
     const conn = openLibrary.connection;
@@ -7203,10 +7209,14 @@ export class LibraryService {
     ).get(libId, jobId) as { attempt_count: number } | undefined;
     if (!row) return { status: 'failed' };
     const status = failure.retryable && row.attempt_count < (failure.maxAttempts ?? 3) ? 'queued' : 'failed';
+    const detail =
+      typeof failure.errorDetail === 'string' && failure.errorDetail.trim()
+        ? failure.errorDetail.trim().slice(0, 500)
+        : null;
     conn.prepare(
-      `UPDATE jobs SET status = ?, progress = 0.0, error_code = ?, error_detail = NULL,
+      `UPDATE jobs SET status = ?, progress = 0.0, error_code = ?, error_detail = ?,
         updated_at = ? WHERE library_id = ? AND job_id = ? AND status = 'running'`,
-    ).run(status, failure.errorCode, new Date().toISOString(), libId, jobId);
+    ).run(status, failure.errorCode, detail, new Date().toISOString(), libId, jobId);
     return { status };
   }
 
@@ -10122,23 +10132,35 @@ export class LibraryService {
           break;
         }
         case 'tag': {
-          const phs = filter.values.map(() => '?').join(',');
-          const clause = filter.exclude
-            ? `a.asset_id NOT IN (SELECT hat.asset_id FROM human_asset_tags hat JOIN tags t ON t.tag_id = hat.tag_id WHERE t.name = ? COLLATE NOCASE)`
-            : `a.asset_id IN (SELECT hat.asset_id FROM human_asset_tags hat JOIN tags t ON t.tag_id = hat.tag_id WHERE t.name COLLATE NOCASE IN (${phs}))`;
-          // For exclude with multiple values, build separate clauses
+          // Match listTags: human + AI tags both count (Serpent-5cvr).
+          const taggedAssetsSubquery = (nameParamCount: number) => {
+            const phs = Array.from({ length: nameParamCount }, () => '?').join(',');
+            return `SELECT hat.asset_id FROM human_asset_tags hat
+                      JOIN tags t ON t.tag_id = hat.tag_id
+                      WHERE t.name COLLATE NOCASE IN (${phs})
+                    UNION
+                    SELECT aat.asset_id FROM ai_asset_tags aat
+                      JOIN tags t ON t.tag_id = aat.tag_id
+                      WHERE t.name COLLATE NOCASE IN (${phs})`;
+          };
           if (filter.exclude && filter.values.length > 1) {
-            const notClauses = filter.values.map(() =>
-              `a.asset_id NOT IN (SELECT hat.asset_id FROM human_asset_tags hat JOIN tags t ON t.tag_id = hat.tag_id WHERE t.name = ? COLLATE NOCASE)`,
+            const notClauses = filter.values.map(
+              () => `a.asset_id NOT IN (${taggedAssetsSubquery(1)})`,
             );
             conditions.push(`(${notClauses.join(' AND ')})`);
-            params.push(...filter.values);
+            for (const value of filter.values) {
+              params.push(value, value);
+            }
           } else if (filter.exclude) {
-            conditions.push(`(${clause})`);
-            params.push(filter.values[0]!);
+            conditions.push(
+              `(a.asset_id NOT IN (${taggedAssetsSubquery(1)}))`,
+            );
+            params.push(filter.values[0]!, filter.values[0]!);
           } else {
-            conditions.push(`(${clause})`);
-            params.push(...filter.values);
+            conditions.push(
+              `(a.asset_id IN (${taggedAssetsSubquery(filter.values.length)}))`,
+            );
+            params.push(...filter.values, ...filter.values);
           }
           break;
         }

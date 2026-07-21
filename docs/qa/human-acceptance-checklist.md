@@ -423,6 +423,7 @@
 | 2026-07-20 | AI 反馈五单 | 待人类验收 | AI 标签可删/去圆点；模型下拉自动拉；完成 toast；多选分析；设置关角标。 | `Serpent-h2i2` / `wbyi` / `4i18` / `g2qh` / `t8sw` → INSPECT-AI-004 / AICFG-009 / JOBS-002 / MENU-AI-002 / SETTINGS-002。 |
 | 2026-07-20 | AI 五单复验 | 部分通过 | INSPECT-AI-004 / JOBS-002 / MENU-AI-002 / SETTINGS-002 通过；AICFG-009 不通过已再修。 | `Serpent-c0fc`：自定义模型下拉 + 预取。 |
 | 2026-07-21 | DEV-001 启动黑屏/端口 | 人类验收通过 | 用户确认端口冲突黑屏修复与 `start:multi` 可用。 | `Serpent-i6xg` / `scripts/dev-start.mjs` |
+| 2026-07-21 | AI 失败/语言/Toast/进度 | 部分通过 | JOBS-003 / SHELL-011 通过；AICFG-011 描述过短不通过；JOBS-004 UI/停止不通过。附带：误弹搜索 toast、toast 顶掉、AI 重试弹窗、递归标签过滤、查看页手势。 | `Serpent-iokf`/`qpy8` 通过；`sbnt`/`k3dw` 重开；新单 `huvw`/`99lv`/`kdnm`/`5cvr`/`4kg3`。 |
 ### 第五批收口（过滤/导航/排序/Inspector）
 
 | FILTER-019 | 排除过滤红色高亮 | 人类验收通过 | 启用颜色/标签等过滤后勾选排除 | 对应维度按钮呈红色高亮，与包含态区分 | [开发日志](../development/2026-07-19-filter-nav-inspect-polish-development-log.md) / Serpent-8s8 | 2026-07-19 用户确认通过。附带：暗色下红色偏艳 → 降饱和打磨工单。 |
@@ -480,6 +481,14 @@
 | AICFG-009 | 模型下拉开时自动拉列表 | 待人类验收 | 打开 AI 配置；左侧手填模型名；点右侧下拉展开 | 无「获取模型列表」按钮；下拉可见自动加载的模型并可选用；仍可手填 | `Serpent-wbyi` / `Serpent-c0fc` | 2026-07-20 用户完全不通过（下拉点无效果）。再修：自定义下拉 + 打开对话框预取，拉取时不再 disabled。 |
 | AICFG-010 | 「已连接」状态与标题对齐 | 待人类验收 | 打开已保存 Key 的 AI 配置；看标题旁「已连接」 | 状态指示与「AI 配置」标题同一水平视觉基线 | `Serpent-4dt3` | 2026-07-21：去掉标题额外 margin，heading 与指示器垂直居中对齐。 |
 | DEV-001 | npm start 避开 Vite 端口冲突黑屏 | 人类验收通过 | ① 先占住 5173（或留下陈旧 Vite）；再 `npm start`。② 需要时可再开 `npm run start:multi` | ① 窗口正常出 UI，终端打印实际端口；无黑屏。② 第二实例可独立启动（隔离 userData）；勿对同一库双开写入 | `Serpent-i6xg` / `scripts/dev-start.mjs` | 2026-07-21：strictPort + 预选空闲端口；多实例开关。用户确认通过。 |
+| JOBS-003 | AI 失败有原因提示并可查日志 | 人类验收通过 | 故意用错 Key 或对未就绪缩略图跑 AI；看 toast；打开后台任务 | toast 含失败原因摘要；任务行有 error 详情；「查看应用日志」可打开 serpent.log | `Serpent-iokf` | 2026-07-21 用户确认通过（失败常为 AI_INVALID_RESPONSE）。 |
+| AICFG-011 | AI 语言约束标签语言 | 人类验收不通过 | AI 语言设中文；对图分析；看标签 | 标签为中文（非 portrait 等纯英文），与描述同语言 | `Serpent-sbnt` | 2026-07-21：标签通过；描述过短（默认 100 字上限）。已加长约束待复验。 |
+| SHELL-011 | Toast 不随画布滚动 | 人类验收通过 | 触发任意 toast；滚动资产画布 | toast 仍钉在窗口右下角可见 | `Serpent-qpy8` | 2026-07-21 用户确认通过。 |
+| JOBS-004 | 多文件 AI 分析进度条 | 待人类验收 | 多选若干资产 → AI 分析 | 仅总进度 done/total + 条；有停止；右侧两按钮对齐 | `Serpent-k3dw` | 2026-07-21 复修：对齐停止/后台任务。 |
+| TOAST-001 | 自动搜索不顶掉完成/错误 toast | 人类验收通过 | 有过滤/非默认排序时多选 AI 分析至完成 | 应看到 AI 完成/失败 toast，不应再弹「搜索完成：找到 N 项」 | `Serpent-huvw` | 2026-07-21 用户确认通过。 |
+| TOAST-002 | warning/error 不被 info 顶掉 | 人类验收通过 | 先触发 error toast；再触发普通 notice | error 仍显示；notice 不抢占 | `Serpent-99lv`（分级首步） | 2026-07-21 用户确认通过。 |
+| FILTER-021 | 标签过滤含 AI 标签 | 人类验收通过 | AI 分析写出标签后，在递归文件夹里用该标签过滤 | 能筛到带该 AI 标签的资产 | `Serpent-5cvr` | 2026-07-21 用户确认通过。 |
+| JOBS-005 | 并行 AI 分析 | 待人类验收 | 多选 ≥4 项启动 AI 分析；看进度与后台任务 | 多项可同时 running（默认最多 4）；进度/停止仍正确；可用环境变量 SERPENT_AI_CONCURRENCY 调整 | `Serpent-opme` | 2026-07-21：lane 数与 ProviderConcurrencyLimiter 对齐，默认 4。 |
 | JOBS-002 | AI 分析完成有明确 toast | 人类验收通过 | 对一项或多项资产启动 AI 分析；等进度条结束 | 队列清空后出现成功/失败汇总 toast，不只是进度条消失 | `Serpent-4i18` | 2026-07-20 用户确认通过。 |
 | MENU-AI-002 | 多选右键批量 AI 分析 | 人类验收通过 | 多选资产；右键「AI 分析」 | 可见并可入队；进度/完成反馈与单选一致 | `Serpent-g2qh` | 2026-07-20 用户确认通过。 |
 | SETTINGS-002 | 通用设置可关闭 AI 角标 | 人类验收通过 | 通用设置关闭「显示 AI 角标」；看有 AI 内容的资产 Inspector | 角标隐藏；描述/标签/评分数据仍在；再开恢复 | `Serpent-t8sw` | 2026-07-20 用户确认通过。 |

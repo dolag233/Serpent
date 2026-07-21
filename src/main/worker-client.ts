@@ -33,6 +33,7 @@ interface PendingRequest {
 const READY_TIMEOUT_MS = 5_000;
 const REQUEST_TIMEOUT_MS = 15_000;
 const FILE_OPERATION_TIMEOUT_MS = 5 * 60_000;
+const AI_QUEUE_TIMEOUT_MS = 10 * 60_000;
 const LINKED_DELETE_TIMEOUT_MS = 6 * 60_000;
 const EXPORT_IMPORT_TIMEOUT_MS = 30 * 60_000;
 const SHUTDOWN_TIMEOUT_MS = 2_000;
@@ -48,6 +49,12 @@ const EXPORT_IMPORT_COMMANDS = new Set([
 export function requestTimeoutForCommand(commandType: WorkerCommand['type']): number {
   if (EXPORT_IMPORT_COMMANDS.has(commandType)) return EXPORT_IMPORT_TIMEOUT_MS;
   if (commandType === 'asset.delete-linked') return LINKED_DELETE_TIMEOUT_MS;
+  if (
+    commandType === 'ai.process-queue'
+    || commandType === 'asset.analyze'
+  ) {
+    return AI_QUEUE_TIMEOUT_MS;
+  }
   if (
     commandType.startsWith('asset.import.')
     || commandType === 'asset.refresh'

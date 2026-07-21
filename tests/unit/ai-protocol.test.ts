@@ -217,6 +217,14 @@ describe('parseAiAnalysisResult', () => {
   it('throws on an empty object (missing modelVersion)', () => {
     expect(() => parseAiAnalysisResult({})).toThrow();
   });
+
+  it('coerces comma-separated tags string (Serpent-iokf)', () => {
+    const result = parseAiAnalysisResult({
+      tags: '城市场景, 科幻',
+      modelVersion: 'v1',
+    });
+    expect(result.tags).toEqual(['城市场景', '科幻']);
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -10,6 +10,7 @@ export const AI_CLEARED_CHANNEL = 'serpent:ai:cleared' as const;
 export const ACTIVE_CONTEXT_CHANNEL = 'serpent:active-context' as const;
 export const EXTENSION_PAIRING_CHANNEL = 'serpent:extension-pairing' as const;
 export const OPEN_EXTERNAL_URL_CHANNEL = 'serpent:shell:open-external-url' as const;
+export const REVEAL_APP_LOG_CHANNEL = 'serpent:shell:reveal-app-log' as const;
 export const SHOW_EDIT_CONTEXT_MENU_CHANNEL =
   'serpent:shell:show-edit-context-menu' as const;
 export const SHELL_SWIPE_CHANNEL = 'serpent:shell:swipe' as const;

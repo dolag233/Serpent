@@ -896,6 +896,35 @@ describe('search filters', () => {
     service.closeAll();
   });
 
+  it('filters by AI tags as well as human tags (Serpent-5cvr)', () => {
+    const { service, libraryId, assetId } = createLibraryWithAssetAndTags();
+    service.writeAiAnalysisResult({
+      libraryId,
+      assetId,
+      description: 'AI 描述',
+      tags: ['赛博朋克'],
+      rating: 4,
+      modelId: 'test-model',
+      modelVersion: '1',
+      enabledFields: { description: true, tags: true, rating: true },
+    });
+
+    const withAiTag = service.searchAssets({
+      libraryId,
+      filters: [{ field: 'tag', values: ['赛博朋克'], exclude: false }],
+    });
+    expect(withAiTag.total).toBe(1);
+    expect(withAiTag.items[0]!.assetId).toBe(assetId);
+
+    const excluded = service.searchAssets({
+      libraryId,
+      filters: [{ field: 'tag', values: ['赛博朋克'], exclude: true }],
+    });
+    expect(excluded.total).toBe(0);
+
+    service.closeAll();
+  });
+
   it('excludes multiple tags with every placeholder bound (regression)', () => {
     const { service, libraryId, assetId } = createLibraryWithAssetAndTags();
     const tag = service.createTag({ libraryId, name: 'Character' });

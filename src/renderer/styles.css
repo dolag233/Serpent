@@ -1689,14 +1689,30 @@ body.platform-darwin .toolbar-leading {
   display: flex;
   flex: 0 0 auto;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   min-width: 0;
-  padding: 8px 14px;
-  border-bottom: 1px solid color-mix(in srgb, var(--accent) 28%, var(--divider));
-  background: color-mix(in srgb, var(--accent) 12%, var(--raised));
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--divider);
+  background: var(--raised);
   color: var(--text);
   font-size: 12px;
   font-weight: 520;
+}
+
+.workspace-ai-progress-body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  justify-content: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.workspace-ai-progress-headline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
 }
 
 .workspace-ai-progress-message {
@@ -1705,17 +1721,36 @@ body.platform-darwin .toolbar-leading {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  line-height: 1.2;
+}
+
+.workspace-ai-progress-bar {
+  margin-top: 0;
+  height: 4px;
+  background: color-mix(in srgb, var(--text) 10%, transparent);
+}
+
+.workspace-ai-progress-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  align-self: center;
+  gap: 8px;
 }
 
 .workspace-ai-progress .secondary-button {
   flex: 0 0 auto;
-  height: 26px;
-  padding: 0 10px;
-  border-color: var(--divider);
+  box-sizing: border-box;
+  height: 28px;
+  min-height: 28px;
+  padding: 0 11px;
+  border: 1px solid var(--divider);
+  border-radius: 6px;
   background: var(--pane);
   color: var(--text);
   font-size: 11px;
   font-weight: 520;
+  line-height: 1;
   white-space: nowrap;
 }
 
@@ -1724,7 +1759,7 @@ body.platform-darwin .toolbar-leading {
 }
 
 [data-theme="light"] .workspace-ai-progress {
-  background: color-mix(in srgb, var(--accent) 8%, var(--raised));
+  background: var(--raised);
 }
 
 /* Browse workspace title bar is hidden while viewing (user request). */
@@ -4842,8 +4877,10 @@ select.ai-config-input.ai-config-languages {
 }
 
 .toast {
-  position: absolute;
-  z-index: 8;
+  /* Viewport-fixed (Serpent-qpy8): must not live inside .workspace-canvas
+     scrollport or use absolute against that scrolling ancestor. */
+  position: fixed;
+  z-index: 40;
   right: 14px;
   bottom: 14px;
   display: grid;
@@ -4871,6 +4908,11 @@ select.ai-config-input.ai-config-languages {
 .toast.is-error {
   background: var(--warning-muted);
   color: var(--warning-fg);
+}
+.toast.is-warning {
+  background: color-mix(in srgb, var(--accent) 18%, var(--raised));
+  color: var(--text);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 28%), inset 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
 }
 .toast button {
   display: grid;

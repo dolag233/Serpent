@@ -1,4 +1,7 @@
-import { buildAiAnalysisSystemPrompt } from '../../shared/ai-analysis-settings';
+import {
+  aiTagsSchemaDescription,
+  buildAiAnalysisSystemPrompt,
+} from '../../shared/ai-analysis-settings';
 import { resolveGeminiGenerateContentUrl } from '../../shared/ai-endpoints';
 import { parseAiAnalysisResult, resolveAiAnalysisSettings } from './protocol';
 import type { AiAnalysisRequest, AiAnalysisResult } from './protocol';
@@ -9,28 +12,30 @@ import type { VendorAdapter, VendorId } from './vendor-adapter';
  * Gemini structured-output schema sent via `responseSchema`.
  * Mirrors `aiStructuredOutputSchema` from protocol.ts.
  */
-const GEMINI_RESPONSE_SCHEMA = {
-  type: 'object' as const,
-  properties: {
-    description: {
-      type: 'string' as const,
-      description: 'Description of the asset content.',
-      nullable: true,
+function buildGeminiResponseSchema(language: string) {
+  return {
+    type: 'object' as const,
+    properties: {
+      description: {
+        type: 'string' as const,
+        description: `Description of the asset content in ${language}.`,
+        nullable: true,
+      },
+      tags: {
+        type: 'array' as const,
+        items: { type: 'string' as const },
+        description: aiTagsSchemaDescription(language),
+      },
+      rating: {
+        type: 'integer' as const,
+        description: 'Aesthetic score from 1 to 5.',
+        nullable: true,
+      },
     },
-    tags: {
-      type: 'array' as const,
-      items: { type: 'string' as const },
-      description: 'Keyword tags for the asset.',
-    },
-    rating: {
-      type: 'integer' as const,
-      description: 'Aesthetic score from 1 to 5.',
-      nullable: true,
-    },
-  },
-  required: ['tags'],
-  propertyOrdering: ['description', 'tags', 'rating'],
-};
+    required: ['tags'],
+    propertyOrdering: ['description', 'tags', 'rating'],
+  };
+}
 
 /**
  * Maps HTTP status + body to a VendorAdapterError kind.
@@ -114,7 +119,7 @@ export class GeminiVendorAdapter implements VendorAdapter {
           generationConfig: {
             temperature: 0.2,
             responseMimeType: 'application/json',
-            responseSchema: GEMINI_RESPONSE_SCHEMA,
+            responseSchema: buildGeminiResponseSchema(request.language),
           },
         }),
         signal,

@@ -35,12 +35,14 @@ import {
   AI_CLEARED_CHANNEL,
   EXTENSION_PAIRING_CHANNEL,
   OPEN_EXTERNAL_URL_CHANNEL,
+  REVEAL_APP_LOG_CHANNEL,
   SHOW_EDIT_CONTEXT_MENU_CHANNEL,
   SHELL_SWIPE_CHANNEL,
 } from "../shared/protocol/channels";
 import {
   resolveOpenExternalUrlTarget,
   type OpenExternalUrlResult,
+  type RevealAppLogResult,
 } from "../shared/external-url";
 import type { ShowEditContextMenuResult } from "../shared/edit-context-menu";
 import {
@@ -156,6 +158,7 @@ let workerClient: LibraryWorkerClient | undefined;
 let quitAfterShutdown = false;
 let startupComplete = false;
 let logger: AppLogger | undefined;
+let appLogPath: string | undefined;
 
 function recentLibraryPath(): string {
   return path.join(app.getPath("userData"), "recent-library.json");
@@ -2656,7 +2659,8 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
 
 async function startApplication(): Promise<void> {
   app.setAppLogsPath();
-  logger = new AppLogger(path.join(app.getPath("logs"), "serpent.log"));
+  appLogPath = path.join(app.getPath("logs"), "serpent.log");
+  logger = new AppLogger(appLogPath);
   const staleClipboardCount = cleanupStaleClipboardImages(app.getPath("temp"));
   if (staleClipboardCount > 0) {
     logger.info(
@@ -2935,6 +2939,32 @@ async function startApplication(): Promise<void> {
         return { ok: true };
       } catch (error) {
         logger?.error("ipc.open-external-url", error, { code: "shell_failure" });
+        return { ok: false, code: "shell_failure" };
+      }
+    },
+  );
+
+  // Reveal serpent.log in the file manager without exposing the path to Renderer.
+  ipcMain.handle(
+    REVEAL_APP_LOG_CHANNEL,
+    (event): RevealAppLogResult => {
+      if (!mainWindow || event.sender !== mainWindow.webContents) {
+        logger?.info("ipc.reveal-app-log", "Rejected reveal-app-log request.", {
+          code: "unauthorized_sender",
+        });
+        return { ok: false, code: "unauthorized_sender" };
+      }
+      if (!appLogPath || !existsSync(appLogPath)) {
+        logger?.info("ipc.reveal-app-log", "App log file missing.", {
+          code: "log_missing",
+        });
+        return { ok: false, code: "log_missing" };
+      }
+      try {
+        shell.showItemInFolder(appLogPath);
+        return { ok: true };
+      } catch (error) {
+        logger?.error("ipc.reveal-app-log", error, { code: "shell_failure" });
         return { ok: false, code: "shell_failure" };
       }
     },

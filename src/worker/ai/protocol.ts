@@ -50,7 +50,26 @@ function stripNullValues(input: unknown): unknown {
 }
 
 export function parseAiAnalysisResult(input: unknown): AiAnalysisResult {
-  return aiAnalysisResultSchema.parse(stripNullValues(input));
+  return aiAnalysisResultSchema.parse(normalizeAiStructuredInput(input));
+}
+
+/** Coerce common model drift before Zod (tags as string, nulls, etc.). */
+function normalizeAiStructuredInput(input: unknown): unknown {
+  const stripped = stripNullValues(input);
+  if (!stripped || typeof stripped !== 'object' || Array.isArray(stripped)) {
+    return stripped;
+  }
+  const row = { ...(stripped as Record<string, unknown>) };
+  if (typeof row.tags === 'string') {
+    row.tags = row.tags
+      .split(/[,，;；|]/u)
+      .map((part) => part.trim())
+      .filter(Boolean);
+  }
+  if (typeof row.rating === 'string' && /^\d+$/.test(row.rating.trim())) {
+    row.rating = Number(row.rating.trim());
+  }
+  return row;
 }
 
 export interface AiAnalysisRequest {

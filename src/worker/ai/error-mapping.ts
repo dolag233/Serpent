@@ -63,3 +63,38 @@ export function safeAiDiagnostic(errorCode: string, source?: unknown): Error {
     cause: new Error(summary, { cause: diagnosticCause(vendorError?.cause ?? source) }),
   });
 }
+
+/** Short redacted detail for jobs.error_detail / UI (never raw API keys). */
+export function safeAiErrorDetail(
+  errorCode: string,
+  source?: unknown,
+  maxLength = 480,
+): string {
+  const vendorError = findVendorError(source);
+  const httpStatus = vendorError?.message.match(/\bHTTP\s+(\d{3})\b/i)?.[1];
+  const parts = [
+    errorCode,
+    vendorError ? `kind=${vendorError.kind}` : undefined,
+    httpStatus ? `http=${httpStatus}` : undefined,
+  ].filter((part): part is string => part !== undefined);
+
+  if (source instanceof Error && source.message) {
+    const msg = redactDiagnosticText(source.message).replace(/\s+/g, ' ').trim();
+    if (msg && msg !== errorCode) {
+      parts.push(msg.slice(0, 200));
+    }
+  } else if (typeof source === 'string' && source.trim()) {
+    parts.push(redactDiagnosticText(source.trim()).slice(0, 200));
+  }
+
+  const detail = parts.join(' · ');
+  return detail.length > maxLength ? `${detail.slice(0, maxLength - 1)}…` : detail;
+}
+
+/** Artifact-not-ready codes: retry while media pipeline catches up. */
+export const AI_ARTIFACT_PENDING_CODES = new Set([
+  'THUMBNAIL_REQUIRED',
+  'CONTACT_SHEET_REQUIRED',
+]);
+
+export const AI_ARTIFACT_PENDING_MAX_ATTEMPTS = 12;

@@ -25,6 +25,7 @@ describe('createToastNotifications', () => {
 
     expect(toast.getSnapshot()).toEqual({
       error: null,
+      warning: null,
       notice: '已保存。',
       rendered: { kind: 'notice', text: '已保存。' },
       closing: false,
@@ -130,6 +131,34 @@ describe('createToastNotifications', () => {
       text: '后台提示。',
     });
     expect(toast.getSnapshot().closing).toBe(false);
+    toast.dispose();
+  });
+
+  it('keeps error visible when a later info notice arrives (Serpent-99lv)', () => {
+    const toast = createToastNotifications();
+    toast.setError('AI 分析失败。');
+    toast.setNotice('搜索完成：找到 12 项。');
+    expect(toast.getSnapshot().rendered).toEqual({
+      kind: 'error',
+      text: 'AI 分析失败。',
+    });
+    expect(toast.getSnapshot().notice).toBe('搜索完成：找到 12 项。');
+    toast.dispose();
+  });
+
+  it('lets warning cover notice, and error cover warning', () => {
+    const toast = createToastNotifications();
+    toast.setNotice('info');
+    toast.setWarning('warn');
+    expect(toast.getSnapshot().rendered).toEqual({
+      kind: 'warning',
+      text: 'warn',
+    });
+    toast.setError('err');
+    expect(toast.getSnapshot().rendered).toEqual({
+      kind: 'error',
+      text: 'err',
+    });
     toast.dispose();
   });
 

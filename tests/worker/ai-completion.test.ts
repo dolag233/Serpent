@@ -934,6 +934,23 @@ describe('AI job queue management', () => {
     service.closeAll();
   });
 
+  it('persists redacted error_detail on permanent failure (Serpent-iokf)', () => {
+    const { service, libraryId, jobId } = setupWithJob('queued');
+    service.claimNextAiJob(libraryId);
+
+    service.failAiJob(libraryId, jobId, {
+      errorCode: 'AI_AUTH',
+      retryable: false,
+      errorDetail: 'AI_AUTH · kind=auth',
+    });
+
+    const status = service.getAiJobStatus(libraryId);
+    expect(status.failed).toBe(1);
+    expect(status.jobs[0]?.errorCode).toBe('AI_AUTH');
+    expect(status.jobs[0]?.errorDetail).toBe('AI_AUTH · kind=auth');
+    service.closeAll();
+  });
+
   it('marks permanent failures failed immediately', () => {
     const { service, libraryId, jobId } = setupWithJob('queued');
     service.claimNextAiJob(libraryId);

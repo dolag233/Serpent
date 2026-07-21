@@ -17,6 +17,8 @@ export interface MediaJobsDialogProps {
     action: "pause" | "resume" | "cancel" | "retry",
     jobIds?: string[],
   ) => void;
+  /** Reveal main-process log (Serpent-iokf). */
+  onRevealAppLog?: () => void;
 }
 
 export function MediaJobsDialog({
@@ -27,6 +29,7 @@ export function MediaJobsDialog({
   onClose,
   onControlMediaJobs,
   onControlAiJobs,
+  onRevealAppLog,
 }: MediaJobsDialogProps) {
   const t = useT();
   if (!open) return null;
@@ -233,6 +236,15 @@ export function MediaJobsDialog({
                   >
                     {t("dialog.mediaJobs.retryAiFailed")}
                   </button>
+                  {onRevealAppLog && (
+                    <button
+                      className="secondary-button"
+                      onClick={() => onRevealAppLog()}
+                      type="button"
+                    >
+                      {t("dialog.mediaJobs.revealLog")}
+                    </button>
+                  )}
                 </div>
                 <div style={{ maxHeight: 180, overflow: "auto" }}>
                   {aiJobs.jobs.map((job) => (
