@@ -6,15 +6,21 @@
 export type BrowseNavFlags = {
   assetScope: "all" | "root" | string;
   showTrash: boolean;
+  showTagManagement?: boolean;
   activeTagId: string | null;
   activeCollectionId: string | null;
   activeSmartCollectionId: string | null;
 };
 
+function isTagManagementActive(flags: BrowseNavFlags): boolean {
+  return Boolean(flags.showTagManagement);
+}
+
 export function isAllAssetsNavActive(flags: BrowseNavFlags): boolean {
   return (
     flags.assetScope === "all" &&
     !flags.showTrash &&
+    !isTagManagementActive(flags) &&
     !flags.activeTagId &&
     !flags.activeCollectionId &&
     !flags.activeSmartCollectionId
@@ -24,16 +30,22 @@ export function isAllAssetsNavActive(flags: BrowseNavFlags): boolean {
 export function isTrashNavActive(flags: BrowseNavFlags): boolean {
   return (
     flags.showTrash &&
+    !isTagManagementActive(flags) &&
     !flags.activeTagId &&
     !flags.activeCollectionId &&
     !flags.activeSmartCollectionId
   );
 }
 
+export function isTagManagementNavActive(flags: BrowseNavFlags): boolean {
+  return isTagManagementActive(flags);
+}
+
 export function isRootFolderNavActive(flags: BrowseNavFlags): boolean {
   return (
     flags.assetScope === "root" &&
     !flags.showTrash &&
+    !isTagManagementActive(flags) &&
     !flags.activeTagId &&
     !flags.activeCollectionId &&
     !flags.activeSmartCollectionId
@@ -47,6 +59,7 @@ export function isManagedFolderNavActive(
   return (
     flags.assetScope === folderId &&
     !flags.showTrash &&
+    !isTagManagementActive(flags) &&
     !flags.activeTagId &&
     !flags.activeCollectionId &&
     !flags.activeSmartCollectionId

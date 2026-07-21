@@ -91,8 +91,8 @@ test("library switcher, breadcrumbs, and workspace history", async () => {
       0,
     );
 
-    // REQ-TAG-001: the sidebar no longer enumerates tags or offers tag
-    // creation; tags live in the Inspector chips and the menu tag picker.
+    // REQ-TAG-001: sidebar must not enumerate all tags or offer inline
+    // "添加标签"; a single「标签管理」entry that opens the middle workspace is OK.
     await expect(
       window.locator(".navigation-pane").getByText("标签", { exact: true }),
     ).toHaveCount(0);
@@ -101,6 +101,11 @@ test("library switcher, breadcrumbs, and workspace history", async () => {
         .locator(".navigation-pane")
         .getByRole("button", { name: "添加标签" }),
     ).toHaveCount(0);
+    await expect(
+      window
+        .locator(".navigation-pane")
+        .getByRole("button", { name: "标签管理" }),
+    ).toHaveCount(1);
 
     await libraryTrigger.click();
     await expect(

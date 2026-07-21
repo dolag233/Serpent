@@ -104,6 +104,7 @@ export const en = {
     allAssets: "All assets",
     rootFolder: "Library root",
     trash: "Trash",
+    tagManagement: "Tag management",
     back: "Back",
     forward: "Forward",
     libraryPrefix: "Library >",
@@ -146,7 +147,25 @@ export const en = {
     linkedFolderPath: "Original path",
     linkedFolderHint: "Right-click to edit rules; Shift+right-click to convert to managed. Drop selected managed assets here.",
     importLinkedFolder: "Import linked folder",
-    newFolder: "New folder"
+    newFolder: "New folder",
+    tagManagement: "Tag management"
+  },
+  tagMgmt: {
+    title: "Tag management",
+    hint: "Create, rename, or delete tags. Double-click a tag to browse its assets.",
+    search: "Search tags",
+    searchPlaceholder: "Filter tags…",
+    newTagName: "New tag name",
+    newTagPlaceholder: "New tag name",
+    create: "Create tag",
+    empty: "No tags yet. Create one above.",
+    noMatches: "No tags match this filter.",
+    rename: "Rename",
+    delete: "Delete",
+    openHint: "Double-click to open assets with this tag",
+    assetCount: "{count}",
+    deleteConfirm:
+      "Delete tag “{name}”? It will be removed from {count} assets. Assets themselves are kept."
   },
   toolbar: {
     searchLibrary: "Search library",
@@ -906,6 +925,11 @@ export const en = {
     removeTagFailed: "Failed to remove tag.",
     tagCreatedAssigned: "Created and assigned tag \"{name}\".",
     createTagFailed: "Failed to create tag.",
+    tagCreated: "Created tag “{name}”.",
+    tagRenamed: "Renamed tag to “{name}”.",
+    renameTagFailed: "Failed to rename tag.",
+    tagDeleted: "Tag deleted.",
+    deleteTagFailed: "Failed to delete tag.",
     tagsAddedCount: "Added tags to {count} assets.",
     tagUpdatedRefreshFailed: "Tag updated, but refreshing the display failed.",
     collectionDeleted: "Collection deleted.",

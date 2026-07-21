@@ -38,6 +38,7 @@ import { useAssetCardHoverPreview } from "./use-asset-card-hover-preview";
 import { resolveSearchSnippetCaption } from "./search-snippet-caption";
 import { ConvertLinkedDialog } from "./ConvertLinkedDialog";
 import { LinkedRulesDialog } from "./LinkedRulesDialog";
+import { TagManagementWorkspace } from "./TagManagementWorkspace";
 import { PermanentDeleteDialog } from "./PermanentDeleteDialog";
 import { DiskDeleteConfirmDialog } from "./DiskDeleteConfirmDialog";
 import {
@@ -646,6 +647,7 @@ function AppInner() {
 
   // Trash / Delete / Relink state
   const [showTrash, setShowTrash] = useState(false);
+  const [showTagManagement, setShowTagManagement] = useState(false);
   const [trashedAssets, setTrashedAssets] = useState<AssetSummary[]>([]);
 
   const {
@@ -2047,6 +2049,7 @@ function AppInner() {
     closeContextMenu();
     workspaceCanvasRef.current?.scrollTo({ top: 0, left: 0 });
     setShowTrash(false);
+    setShowTagManagement(false);
     setAssetScope(scope);
     if (scope !== "all" && scope !== "root") {
       const enabled = isFolderRecursiveEnabled(
@@ -2095,6 +2098,7 @@ function AppInner() {
     await closeAssetPreview(false);
     workspaceCanvasRef.current?.scrollTo({ top: 0, left: 0 });
     setShowTrash(true);
+    setShowTagManagement(false);
     setActiveTagId(null);
     setActiveCollectionId(null);
     setActiveSmartCollectionId(null);
@@ -2115,6 +2119,96 @@ function AppInner() {
     }
   }
 
+  async function enterTagManagement() {
+    if (!library) return;
+    await closeAssetPreview(false);
+    closeContextMenu();
+    workspaceCanvasRef.current?.scrollTo({ top: 0, left: 0 });
+    setShowTagManagement(true);
+    setShowTrash(false);
+    setActiveTagId(null);
+    setActiveCollectionId(null);
+    setActiveSmartCollectionId(null);
+    setAssetScope("all");
+    clearAssetSelection();
+    clearDiscoveryControls();
+    setSearchTotal(null);
+    setSearchSnippets(new Map());
+    api?.setActiveContext(library.libraryId);
+    setUiState("loading");
+    try {
+      if (!api) return;
+      const tagResult = await api.listTags({ libraryId: library.libraryId });
+      if (!tagResult.ok) throw new LibraryOperationError(tagResult.error);
+      setTags(tagResult.value);
+    } catch (caught) {
+      setError(toMessage(caught, t("toast.readTagAssetsFailed"), locale));
+    } finally {
+      setUiState("ready");
+    }
+  }
+
+  async function handleCreateTagInManagement(name: string): Promise<boolean> {
+    if (!api || !library) return false;
+    try {
+      const result = await api.createTag({
+        libraryId: library.libraryId,
+        name,
+      });
+      if (!result.ok) throw new LibraryOperationError(result.error);
+      const tagResult = await api.listTags({ libraryId: library.libraryId });
+      if (!tagResult.ok) throw new LibraryOperationError(tagResult.error);
+      setTags(tagResult.value);
+      setNotice(t("toast.tagCreated", { name }));
+      return true;
+    } catch (caught) {
+      setError(toMessage(caught, t("toast.createTagFailed"), locale));
+      return false;
+    }
+  }
+
+  async function handleRenameTagInManagement(
+    tagId: string,
+    name: string,
+  ): Promise<boolean> {
+    if (!api || !library) return false;
+    try {
+      const result = await api.renameTag({
+        libraryId: library.libraryId,
+        tagId,
+        name,
+      });
+      if (!result.ok) throw new LibraryOperationError(result.error);
+      const tagResult = await api.listTags({ libraryId: library.libraryId });
+      if (!tagResult.ok) throw new LibraryOperationError(tagResult.error);
+      setTags(tagResult.value);
+      setNotice(t("toast.tagRenamed", { name }));
+      return true;
+    } catch (caught) {
+      setError(toMessage(caught, t("toast.renameTagFailed"), locale));
+      return false;
+    }
+  }
+
+  async function handleDeleteTagInManagement(tagId: string): Promise<boolean> {
+    if (!api || !library) return false;
+    try {
+      const result = await api.deleteTag({
+        libraryId: library.libraryId,
+        tagId,
+      });
+      if (!result.ok) throw new LibraryOperationError(result.error);
+      const tagResult = await api.listTags({ libraryId: library.libraryId });
+      if (!tagResult.ok) throw new LibraryOperationError(tagResult.error);
+      setTags(tagResult.value);
+      setNotice(t("toast.tagDeleted"));
+      return true;
+    } catch (caught) {
+      setError(toMessage(caught, t("toast.deleteTagFailed"), locale));
+      return false;
+    }
+  }
+
   async function chooseTag(tagId: string) {
     if (!api || !library) return;
     await closeAssetPreview(false);
@@ -2123,6 +2217,7 @@ function AppInner() {
     if (!tag) return;
     workspaceCanvasRef.current?.scrollTo({ top: 0, left: 0 });
     setShowTrash(false);
+    setShowTagManagement(false);
     setActiveTagId(tagId);
     setActiveCollectionId(null);
     setActiveSmartCollectionId(null);
@@ -2547,6 +2642,7 @@ function AppInner() {
     closeContextMenu();
     workspaceCanvasRef.current?.scrollTo({ top: 0, left: 0 });
     setShowTrash(false);
+    setShowTagManagement(false);
     setActiveCollectionId(collectionId);
     setActiveTagId(null);
     setActiveSmartCollectionId(null);
@@ -3086,6 +3182,7 @@ function AppInner() {
     });
     if (!result.ok) throw new LibraryOperationError(result.error);
     setShowTrash(false);
+    setShowTagManagement(false);
     if (!tagFilter.trim()) setActiveTagId(null);
     setActiveSmartCollectionId(null);
     if (offset === 0) clearAssetSelection({ preserveFolders: true });
@@ -3263,6 +3360,7 @@ function AppInner() {
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
       setShowTrash(false);
+      setShowTagManagement(false);
       setActiveTagId(null);
       setActiveCollectionId(null);
       setActiveSmartCollectionId(collectionId);
@@ -3696,6 +3794,7 @@ function AppInner() {
     setAllAssetCount(0);
     setAssetScope("all");
     setShowTrash(false);
+    setShowTagManagement(false);
     setTrashedAssets([]);
     setTags([]);
     setCollections([]);
@@ -4439,6 +4538,7 @@ function AppInner() {
       await closeAssetPreview(false);
       setLibrary(summary);
       setShowTrash(false);
+      setShowTagManagement(false);
       setTrashedAssets([]);
       setAssetScope("all");
       setActiveTagId(null);
@@ -4920,6 +5020,7 @@ function AppInner() {
 
   function workspaceTitle() {
     if (!library) return t("scope.workspace");
+    if (showTagManagement) return t("scope.tagManagement");
     if (showTrash) return t("scope.trash");
     if (activeTagId) {
       const tag = tags.find((x) => x.tagId === activeTagId);
@@ -5740,6 +5841,7 @@ function AppInner() {
         library={library}
         assetScope={assetScope}
         showTrash={showTrash}
+        showTagManagement={showTagManagement}
         activeTagId={activeTagId}
         activeCollectionId={activeCollectionId}
         activeSmartCollectionId={activeSmartCollectionId}
@@ -5759,6 +5861,7 @@ function AppInner() {
         onSetDraggedCollectionId={setDraggedCollectionId}
         onChooseAllAssets={() => void chooseFolder("all")}
         onEnterTrash={() => void enterTrash()}
+        onEnterTagManagement={() => void enterTagManagement()}
         onChooseFolder={(folderId) => void chooseFolder(folderId)}
         onChooseCollection={(collectionId, recursive) =>
           void chooseCollection(collectionId, recursive)
@@ -5833,6 +5936,7 @@ function AppInner() {
           <div className="workspace-title">
             {library &&
               !showTrash &&
+              !showTagManagement &&
               !activeTagId &&
               !activeCollectionId &&
               !activeSmartCollectionId &&
@@ -5876,7 +5980,11 @@ function AppInner() {
               )}
             <span>{workspaceTitle()}</span>
             <span className="item-count">
-              {library ? t("common.itemCount", { count: visibleAssets.length }) : t("common.notLoaded")}
+              {library
+                ? showTagManagement
+                  ? t("common.itemCount", { count: tags.length })
+                  : t("common.itemCount", { count: visibleAssets.length })
+                : t("common.notLoaded")}
             </span>
           </div>
           <div className="workspace-tools">
@@ -5900,6 +6008,7 @@ function AppInner() {
             ) : (
               library &&
               !showTrash &&
+              !showTagManagement &&
               visibleAssets.some(
                 (a) => a.availability === "missing" && !a.deletedAt,
               ) && (
@@ -6202,7 +6311,16 @@ function AppInner() {
               }}
             />
           )}
-          {library ? (
+          {library && showTagManagement ? (
+            <TagManagementWorkspace
+              busy={busy}
+              onCreate={handleCreateTagInManagement}
+              onDelete={handleDeleteTagInManagement}
+              onOpenTag={(tagId) => void chooseTag(tagId)}
+              onRename={handleRenameTagInManagement}
+              tags={tags}
+            />
+          ) : library ? (
             browseCanvasBodyLayout.mode !== "empty" ? (
               <>
                 {browseCanvasBodyLayout.showFolders && (

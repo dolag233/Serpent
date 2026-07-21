@@ -95,6 +95,7 @@ export const zhCN = {
     allAssets: "所有资产",
     rootFolder: "资源库根目录",
     trash: "回收站",
+    tagManagement: "标签管理",
     back: "后退",
     forward: "前进",
     libraryPrefix: "资源库 >",
@@ -137,7 +138,25 @@ export const zhCN = {
     linkedFolderPath: "原路径",
     linkedFolderHint: "右键编辑规则；Shift+右键转换为托管。可拖入所选托管资产。",
     importLinkedFolder: "导入链接文件夹",
-    newFolder: "新建文件夹"
+    newFolder: "新建文件夹",
+    tagManagement: "标签管理"
+  },
+  tagMgmt: {
+    title: "标签管理",
+    hint: "创建、重命名或删除标签。点击标签可浏览其下资产。",
+    search: "搜索标签",
+    searchPlaceholder: "筛选标签…",
+    newTagName: "新标签名称",
+    newTagPlaceholder: "新标签名称",
+    create: "创建标签",
+    empty: "尚无标签，可在上方创建。",
+    noMatches: "没有匹配的标签。",
+    rename: "重命名",
+    delete: "删除",
+    openHint: "打开带此标签的资产",
+    assetCount: "{count}",
+    deleteConfirm:
+      "删除标签「{name}」？将从 {count} 项资产上移除该标签，资产本身保留。"
   },
   toolbar: {
     searchLibrary: "搜索资源库",
@@ -893,6 +912,11 @@ export const zhCN = {
     removeTagFailed: "移除标签失败。",
     tagCreatedAssigned: "已创建并添加标签 \"{name}\"。",
     createTagFailed: "创建标签失败。",
+    tagCreated: "已创建标签「{name}」。",
+    tagRenamed: "已将标签重命名为「{name}」。",
+    renameTagFailed: "重命名标签失败。",
+    tagDeleted: "标签已删除。",
+    deleteTagFailed: "删除标签失败。",
     tagsAddedCount: "已为 {count} 项资产添加标签。",
     tagUpdatedRefreshFailed: "标签已更新，但刷新显示失败。",
     collectionDeleted: "合集已删除。",

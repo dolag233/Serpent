@@ -39,6 +39,7 @@ import {
 import {
   isAllAssetsNavActive,
   isManagedFolderNavActive,
+  isTagManagementNavActive,
   isTrashNavActive,
 } from "./browse-nav-active";
 import {
@@ -328,6 +329,7 @@ export interface NavigationSidebarProps {
   // --- Navigation state ---
   assetScope: string;
   showTrash: boolean;
+  showTagManagement: boolean;
   activeTagId: string | null;
   activeCollectionId: string | null;
   activeSmartCollectionId: string | null;
@@ -355,6 +357,7 @@ export interface NavigationSidebarProps {
   // --- Navigation callbacks ---
   onChooseAllAssets: () => void;
   onEnterTrash: () => void;
+  onEnterTagManagement: () => void;
   onChooseFolder: (folderId: string) => void;
   onChooseCollection: (collectionId: string, recursive?: boolean) => void;
   onChooseSmartCollection: (collectionId: string) => void;
@@ -452,6 +455,7 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
     library,
     assetScope,
     showTrash,
+    showTagManagement,
     activeTagId,
     activeCollectionId,
     activeSmartCollectionId,
@@ -471,6 +475,7 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
     onSetDraggedCollectionId,
     onChooseAllAssets,
     onEnterTrash,
+    onEnterTagManagement,
     onChooseFolder,
     onChooseCollection,
     onChooseSmartCollection,
@@ -508,6 +513,7 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
   const browseNavFlags = {
     assetScope,
     showTrash,
+    showTagManagement,
     activeTagId,
     activeCollectionId,
     activeSmartCollectionId,
@@ -978,6 +984,13 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
             event.preventDefault();
             onAssetsDroppedOnTrash(ids);
           }}
+        />
+        <NavRow
+          active={Boolean(library && isTagManagementNavActive(browseNavFlags))}
+          disabled={!library}
+          icon="tag"
+          label={t("nav.tagManagement")}
+          onClick={() => onEnterTagManagement()}
         />
         <NavRow icon="archive" label={t("shell.recentLibraries")} disabled />
         <Section
