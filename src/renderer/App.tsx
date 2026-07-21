@@ -124,6 +124,7 @@ import {
 } from "./context-menu";
 import { resolveBrowseContextMenuIntent } from "./browse-selection-menu";
 import { useAssetSelection } from "./useAssetSelection";
+import { useSelectionKeyboard } from "./use-selection-keyboard";
 import { resolveInspectorTagTarget } from "./inspector-tag-target";
 import {
   buildInspectorMultiEdit,
@@ -1099,6 +1100,22 @@ function AppInner() {
     () => new Set(selectedFolderIds),
     [selectedFolderIds],
   );
+
+  const visibleAssetIds = useMemo(
+    () => visibleAssets.map((asset) => asset.assetId),
+    [visibleAssets],
+  );
+  useSelectionKeyboard({
+    enabled: Boolean(library),
+    platform: SHORTCUT_PLATFORM,
+    previewOpen: Boolean(previewAsset),
+    visibleAssetIds,
+    selectedAssetIds,
+    setSelectedAssetIds,
+    setSelectedAssetId,
+    selectionAnchorRef,
+    clearAssetSelection,
+  });
 
   // REQ-FOLDER-001/002/003/010: load direct child folder cards whenever the
   // browse parent is a managed folder or the managed root; cleared for
@@ -5201,17 +5218,6 @@ function AppInner() {
       )
         return;
       if (
-        (event.metaKey || event.ctrlKey) &&
-        event.key.toLowerCase() === "a" &&
-        library &&
-        visibleAssets.length > 0
-      ) {
-        event.preventDefault();
-        const ids = visibleAssets.map((asset) => asset.assetId);
-        setSelectedAssetIds(ids);
-        setSelectedAssetId(ids.at(-1));
-        selectionAnchorRef.current = ids[0] ?? null;
-      } else if (
         matchAssetCommandShortcut("asset.open-external", event) &&
         selectedAsset?.availability === "available" &&
         !selectedAsset.deletedAt &&
@@ -5243,14 +5249,6 @@ function AppInner() {
       ) {
         event.preventDefault();
         openAssetRename(selectedAsset.assetId);
-      } else if (
-        event.key === "Escape" &&
-        selectedAssetIds.length > 0 &&
-        !previewAsset &&
-        !document.querySelector('[role="dialog"][aria-modal="true"]')
-      ) {
-        event.preventDefault();
-        clearAssetSelection();
       }
     };
     document.addEventListener("keydown", onSelectionKeyDown);
@@ -5258,16 +5256,12 @@ function AppInner() {
   }, [
     library,
     previewAsset,
-    selectedAssetIds.length,
     showTrash,
     selectedManagedCount,
     selectedAsset,
     handleOpenExternal,
     selectedAssets,
     trashManagedAssets,
-    visibleAssets,
-    clearAssetSelection,
-    selectionAnchorRef,
     openAssetRename,
   ]);
 

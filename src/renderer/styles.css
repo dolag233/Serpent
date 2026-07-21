@@ -48,6 +48,13 @@
   --danger: #e76b7a;
   --danger-muted: #4a3f3f;
   --danger-soft: #efb3ad;
+  /* Serpent-jfi: exclude-filter chips use a desaturated rose in dark theme
+     (less eye fatigue than vivid --danger) while staying distinct from include. */
+  --filter-exclude: #c48990;
+  --filter-exclude-soft: color-mix(in srgb, var(--filter-exclude) 18%, var(--canvas));
+  --filter-exclude-border: color-mix(in srgb, var(--filter-exclude) 48%, var(--divider));
+  --filter-exclude-fg: color-mix(in srgb, var(--filter-exclude) 68%, var(--text));
+  --filter-exclude-active-bg: color-mix(in srgb, var(--filter-exclude) 22%, var(--canvas));
   --warning-fg: #f1c87d;
   --warning-muted: #76533a;
   --ink: #111314;
@@ -124,6 +131,12 @@
   --danger: #dc2626;
   --danger-muted: #fde8e8;
   --danger-soft: #f87171;
+  /* Light keep vivid exclude red (FILTER-019); dark uses muted --filter-exclude. */
+  --filter-exclude: var(--danger);
+  --filter-exclude-soft: color-mix(in srgb, var(--danger) 16%, var(--canvas));
+  --filter-exclude-border: color-mix(in srgb, var(--danger) 55%, var(--divider));
+  --filter-exclude-fg: color-mix(in srgb, var(--danger) 72%, var(--text));
+  --filter-exclude-active-bg: color-mix(in srgb, var(--danger) 22%, var(--canvas));
   /* Serpent-k9g: soft amber warning family (one hue for icon+text). */
   --warning: #c2410c;
   --warning-fg: #9a3412;
@@ -1176,15 +1189,15 @@ body.platform-darwin .toolbar-leading {
 }
 
 .dimension-filter-btn.is-excluding:not(:disabled) {
-  border-color: color-mix(in srgb, var(--danger) 55%, var(--divider));
-  background: color-mix(in srgb, var(--danger) 16%, var(--canvas));
-  color: color-mix(in srgb, var(--danger) 72%, var(--text));
+  border-color: var(--filter-exclude-border);
+  background: var(--filter-exclude-soft);
+  color: var(--filter-exclude-fg);
 }
 
 .dimension-filter-btn.is-excluding.is-active:not(:disabled) {
-  border-color: var(--danger);
-  background: color-mix(in srgb, var(--danger) 22%, var(--canvas));
-  color: var(--danger);
+  border-color: var(--filter-exclude);
+  background: var(--filter-exclude-active-bg);
+  color: var(--filter-exclude);
 }
 
 .dimension-color-swatch {

@@ -138,7 +138,7 @@ function DimensionButton({
   label: string;
   active?: boolean;
   open?: boolean;
-  /** REQ-FILTER-024: exclude mode uses red highlight on the dimension chip. */
+  /** REQ-FILTER-024 / Serpent-jfi: exclude mode uses --filter-exclude (muted in dark). */
   excluding?: boolean;
   disabled?: boolean;
   onClick: () => void;
