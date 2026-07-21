@@ -10,6 +10,7 @@ import {
   normalizeAiLanguages,
   resolveAnthropicMessagesUrl,
   resolveOpenAiChatCompletionsUrl,
+  resolveOpenAiModelsUrl,
   resolveOpenAiResponsesUrl,
 } from '../../src/shared/ai-endpoints';
 
@@ -25,6 +26,33 @@ describe('ai-endpoints URL resolution', () => {
     );
     expect(resolveAnthropicMessagesUrl()).toBe(
       'https://api.anthropic.com/v1/messages',
+    );
+  });
+
+  it('adds /v1 for host-only OpenAI bases but keeps path prefixes (CC Switch style)', () => {
+    expect(resolveOpenAiChatCompletionsUrl('https://relay.example')).toBe(
+      'https://relay.example/v1/chat/completions',
+    );
+    expect(resolveOpenAiChatCompletionsUrl('https://relay.example/v1')).toBe(
+      'https://relay.example/v1/chat/completions',
+    );
+    expect(resolveOpenAiResponsesUrl('https://api.qcode.cc/openai')).toBe(
+      'https://api.qcode.cc/openai/responses',
+    );
+    expect(resolveOpenAiChatCompletionsUrl('https://relay.example/v1/')).toBe(
+      'https://relay.example/v1/chat/completions',
+    );
+  });
+
+  it('collapses duplicated /v1/v1 when joining', () => {
+    expect(resolveOpenAiModelsUrl('openai_chat', 'https://relay.example/v1')).toBe(
+      'https://relay.example/v1/models',
+    );
+    expect(resolveAnthropicMessagesUrl('https://proxy.example/api')).toBe(
+      'https://proxy.example/api/v1/messages',
+    );
+    expect(resolveAnthropicMessagesUrl('https://proxy.example/v1')).toBe(
+      'https://proxy.example/v1/messages',
     );
   });
 

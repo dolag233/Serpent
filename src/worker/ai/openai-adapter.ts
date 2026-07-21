@@ -1,46 +1,29 @@
 import {
-  aiTagsSchemaDescription,
   buildAiAnalysisSystemPrompt,
 } from '../../shared/ai-analysis-settings';
 import {
   resolveOpenAiChatCompletionsUrl,
   resolveOpenAiResponsesUrl,
 } from '../../shared/ai-endpoints';
-import { parseAiAnalysisResult, resolveAiAnalysisSettings } from './protocol';
+import {
+  parseAiAnalysisResultFromModelText,
+  resolveAiAnalysisSettings,
+} from './protocol';
 import type { AiAnalysisRequest, AiAnalysisResult } from './protocol';
 import { VendorAdapterError } from './vendor-adapter';
 import type { VendorAdapter, VendorId } from './vendor-adapter';
 
 /**
- * OpenAI structured-output JSON Schema sent alongside every request.
- * Mirrors `aiStructuredOutputSchema` from protocol.ts — keep them in
- * sync whenever the Serpent contract changes.
+ * Ask for a plain JSON object in the prompt. Prefer `json_object` over
+ * strict `json_schema` — most midstream OpenAI-compatible relays reject
+ * json_schema and only return text / loose JSON (Serpent-0s4i / p4c6).
  */
-function buildOpenAiResponseJsonSchema(language: string) {
-  return {
-    name: 'asset_classification',
-    strict: true,
-    schema: {
-      type: 'object',
-      properties: {
-        description: {
-          type: ['string', 'null'],
-          description: `Description of the asset content in ${language}, or null if skipped.`,
-        },
-        tags: {
-          type: 'array',
-          items: { type: 'string' },
-          description: aiTagsSchemaDescription(language),
-        },
-        rating: {
-          type: ['integer', 'null'],
-          description: 'Aesthetic score from 1 to 5, or null if unknown.',
-        },
-      },
-      required: ['description', 'tags', 'rating'],
-      additionalProperties: false,
-    },
-  };
+function buildJsonOnlySuffix(language: string): string {
+  return (
+    `\nReturn ONLY one JSON object (no markdown fences) with keys ` +
+    `description (string|null), tags (string[]), rating (1-5|null). ` +
+    `Write description and tags in ${language}.`
+  );
 }
 
 function httpStatusToErrorKind(
@@ -185,10 +168,7 @@ export class OpenAIVendorAdapter implements VendorAdapter {
           body: JSON.stringify({
             model: this.model,
             messages,
-            response_format: {
-              type: 'json_schema',
-              json_schema: buildOpenAiResponseJsonSchema(request.language),
-            },
+            response_format: { type: 'json_object' },
             temperature: 0.2,
           }),
           signal,
@@ -196,6 +176,30 @@ export class OpenAIVendorAdapter implements VendorAdapter {
       );
     } catch (error: unknown) {
       throw this.#mapFetchError(error);
+    }
+
+    // Some midstream relays reject json_object; retry as plain chat text.
+    if (response.status === 400) {
+      try {
+        response = await this._fetch(
+          resolveOpenAiChatCompletionsUrl(this.baseUrl),
+          {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${this.apiKey}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              model: this.model,
+              messages,
+              temperature: 0.2,
+            }),
+            signal,
+          },
+        );
+      } catch (error: unknown) {
+        throw this.#mapFetchError(error);
+      }
     }
 
     if (!response.ok) {
@@ -220,7 +224,6 @@ export class OpenAIVendorAdapter implements VendorAdapter {
     request: AiAnalysisRequest,
     signal?: AbortSignal,
   ): Promise<AiAnalysisResult> {
-    const schema = buildOpenAiResponseJsonSchema(request.language);
     const body = {
       model: this.model,
       instructions: this.#buildSystemPrompt(request),
@@ -231,12 +234,7 @@ export class OpenAIVendorAdapter implements VendorAdapter {
         },
       ],
       text: {
-        format: {
-          type: 'json_schema',
-          name: schema.name,
-          strict: schema.strict,
-          schema: schema.schema,
-        },
+        format: { type: 'json_object' },
       },
       temperature: 0.2,
     };
@@ -284,12 +282,14 @@ export class OpenAIVendorAdapter implements VendorAdapter {
   }
 
   #buildSystemPrompt(request: AiAnalysisRequest): string {
-    return buildAiAnalysisSystemPrompt({
-      language: request.language,
-      settings: resolveAiAnalysisSettings(request),
-      enabledFields: request.enabledFields,
-      existingTagNames: request.existingTagNames,
-    });
+    return (
+      buildAiAnalysisSystemPrompt({
+        language: request.language,
+        settings: resolveAiAnalysisSettings(request),
+        enabledFields: request.enabledFields,
+        existingTagNames: request.existingTagNames,
+      }) + buildJsonOnlySuffix(request.language)
+    );
   }
 
   #buildChatUserContent(
@@ -404,7 +404,10 @@ export class OpenAIVendorAdapter implements VendorAdapter {
     }
 
     const kind = httpStatusToErrorKind(response.status, bodyText);
-    const message = `AI service returned HTTP ${response.status}`;
+    const detail = bodyText.trim().slice(0, 180);
+    const message = detail
+      ? `AI service returned HTTP ${response.status}: ${detail}`
+      : `AI service returned HTTP ${response.status}`;
 
     return new VendorAdapterError(kind, message);
   }
@@ -443,10 +446,7 @@ export class OpenAIVendorAdapter implements VendorAdapter {
         : this.model;
 
     try {
-      return parseAiAnalysisResult({
-        ...JSON.parse(content),
-        modelVersion,
-      });
+      return parseAiAnalysisResultFromModelText(content, modelVersion);
     } catch (error: unknown) {
       throw new VendorAdapterError(
         'invalid_response',
@@ -500,10 +500,7 @@ export class OpenAIVendorAdapter implements VendorAdapter {
         : this.model;
 
     try {
-      return parseAiAnalysisResult({
-        ...JSON.parse(content),
-        modelVersion,
-      });
+      return parseAiAnalysisResultFromModelText(content, modelVersion);
     } catch (error: unknown) {
       throw new VendorAdapterError(
         'invalid_response',

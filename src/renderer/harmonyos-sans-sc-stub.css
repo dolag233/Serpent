@@ -1,0 +1,3 @@
+/* Non-Windows stub: HarmonyOS Sans SC is Windows-only (0021).
+   vite.renderer.config.ts aliases the real windows CSS to this file on
+   darwin/linux so npm start does not require the webfont package. */

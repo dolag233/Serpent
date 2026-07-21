@@ -53,6 +53,40 @@ export function parseAiAnalysisResult(input: unknown): AiAnalysisResult {
   return aiAnalysisResultSchema.parse(normalizeAiStructuredInput(input));
 }
 
+/**
+ * Prefer plain model text that embeds a JSON object (optionally fenced).
+ * Avoids requiring vendor-native json_schema / tool_use when midstream
+ * proxies only return text.
+ */
+export function parseAiAnalysisResultFromModelText(
+  text: string,
+  modelVersion: string,
+): AiAnalysisResult {
+  const trimmed = text.trim();
+  const unfenced = trimmed
+    .replace(/^```(?:json)?\s*/iu, '')
+    .replace(/\s*```$/u, '')
+    .trim();
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(unfenced);
+  } catch {
+    const start = unfenced.indexOf('{');
+    const end = unfenced.lastIndexOf('}');
+    if (start < 0 || end <= start) {
+      throw new Error('Model text did not contain a JSON object.');
+    }
+    parsed = JSON.parse(unfenced.slice(start, end + 1));
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('Model JSON was not an object.');
+  }
+  return parseAiAnalysisResult({
+    ...(parsed as Record<string, unknown>),
+    modelVersion,
+  });
+}
+
 /** Coerce common model drift before Zod (tags as string, nulls, etc.). */
 function normalizeAiStructuredInput(input: unknown): unknown {
   const stripped = stripNullValues(input);

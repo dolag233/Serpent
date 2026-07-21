@@ -1,3 +1,6 @@
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
 import react from "@vitejs/plugin-react";
 import { defineConfig, type Plugin } from "vite";
 
@@ -7,6 +10,16 @@ import { defineConfig, type Plugin } from "vite";
  * a stale MAIN_WINDOW_VITE_DEV_SERVER_URL (black screen / Forge#3198).
  */
 const port = Number(process.env.SERPENT_VITE_PORT || 5173);
+
+const rendererDir = path.dirname(fileURLToPath(import.meta.url));
+const harmonyWindowsCss = path.resolve(
+  rendererDir,
+  "src/renderer/harmonyos-sans-sc-windows.css",
+);
+const harmonyStubCss = path.resolve(
+  rendererDir,
+  "src/renderer/harmonyos-sans-sc-stub.css",
+);
 
 /**
  * HarmonyOS Sans SC ships discrete static faces (400/500/600/700). Serpent UI
@@ -74,8 +87,34 @@ function harmonyosFontFacePatchPlugin(): Plugin {
   };
 }
 
+/** Windows-only webfont: on macOS/Linux serve an empty module (no package resolve). */
+function harmonyosWindowsOnlyPlugin(): Plugin {
+  return {
+    name: "harmonyos-windows-only",
+    enforce: "pre",
+    resolveId(source, importer) {
+      if (process.platform === "win32") return null;
+      if (
+        source === "./harmonyos-sans-sc-windows.css" ||
+        source.endsWith("/harmonyos-sans-sc-windows.css") ||
+        source === harmonyWindowsCss
+      ) {
+        return harmonyStubCss;
+      }
+      // Also catch absolute resolves from importer
+      if (
+        importer &&
+        source.includes("harmonyos-sans-sc-windows.css")
+      ) {
+        return harmonyStubCss;
+      }
+      return null;
+    },
+  };
+}
+
 export default defineConfig({
-  plugins: [react(), harmonyosFontFacePatchPlugin()],
+  plugins: [react(), harmonyosWindowsOnlyPlugin(), harmonyosFontFacePatchPlugin()],
   resolve: {
     preserveSymlinks: true,
   },

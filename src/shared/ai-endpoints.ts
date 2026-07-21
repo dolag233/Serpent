@@ -89,33 +89,128 @@ export function effectiveAiBaseUrl(
   return normalizeAiBaseUrl(baseUrl) ?? DEFAULT_AI_BASE_URLS[apiFormat];
 }
 
+/**
+ * Join base + path segments like CC Switch `build_url`: trim slashes and
+ * collapse accidental `/v1/v1` (base and endpoint both carrying a version).
+ */
+export function joinAiApiUrl(baseUrl: string, ...pathParts: string[]): string {
+  let url = pathParts.reduce((prefix, part) => {
+    const left = prefix.replace(/\/+$/u, '');
+    const right = part.replace(/^\/+/u, '');
+    if (!right) return left;
+    return `${left}/${right}`;
+  }, baseUrl.replace(/\/+$/u, ''));
+  while (url.includes('/v1/v1')) {
+    url = url.replace('/v1/v1', '/v1');
+  }
+  while (url.includes('/v1beta/v1beta')) {
+    url = url.replace('/v1beta/v1beta', '/v1beta');
+  }
+  return url;
+}
+
+/**
+ * OpenAI-compatible roots: host-only bases need `/v1` (official shape).
+ * Bases that already end with `/v1`/`/v1beta`, or already have a path prefix
+ * (e.g. `https://relay/openai`), are left alone — mirrors common CC Switch
+ * provider URLs such as `…/openai` + `/responses`.
+ */
+export function ensureOpenAiCompatibleRoot(baseUrl: string): string {
+  const base = baseUrl.replace(/\/+$/u, '');
+  if (/\/v1$/iu.test(base) || /\/v1beta$/iu.test(base)) return base;
+  try {
+    const parsed = new URL(base);
+    if (parsed.pathname === '/' || parsed.pathname === '') {
+      return `${base}/v1`;
+    }
+  } catch {
+    // Non-URL test doubles: keep as-is.
+  }
+  return base;
+}
+
+function effectiveOpenAiRoot(baseUrl?: string | null): string {
+  return ensureOpenAiCompatibleRoot(
+    effectiveAiBaseUrl('openai_chat', baseUrl),
+  );
+}
+
+function effectiveOpenAiResponsesRoot(baseUrl?: string | null): string {
+  return ensureOpenAiCompatibleRoot(
+    effectiveAiBaseUrl('openai_responses', baseUrl),
+  );
+}
+
+/** Anthropic / Gemini: host-only custom bases get the vendor version segment. */
+export function ensureVersionedApiRoot(
+  baseUrl: string,
+  versionSegment: 'v1' | 'v1beta',
+): string {
+  const base = baseUrl.replace(/\/+$/u, '');
+  const versionPattern =
+    versionSegment === 'v1beta' ? /\/v1beta$/iu : /\/v1$/iu;
+  if (versionPattern.test(base)) return base;
+  try {
+    const parsed = new URL(base);
+    if (parsed.pathname === '/' || parsed.pathname === '') {
+      return `${base}/${versionSegment}`;
+    }
+  } catch {
+    // keep
+  }
+  // Anthropic default helper historically always inserted /v1 when missing,
+  // even for path prefixes like `/api` — keep that behavior for messages.
+  if (versionSegment === 'v1' && !/\/v1(\/|$)/iu.test(base)) {
+    return joinAiApiUrl(base, 'v1');
+  }
+  if (versionSegment === 'v1beta' && !/\/v1beta(\/|$)/iu.test(base)) {
+    try {
+      const parsed = new URL(base);
+      if (parsed.pathname === '/' || parsed.pathname === '') {
+        return `${base}/v1beta`;
+      }
+    } catch {
+      // keep
+    }
+  }
+  return base;
+}
+
 export function resolveOpenAiChatCompletionsUrl(
   baseUrl?: string | null,
 ): string {
-  return `${effectiveAiBaseUrl('openai_chat', baseUrl)}/chat/completions`;
+  return joinAiApiUrl(effectiveOpenAiRoot(baseUrl), 'chat/completions');
 }
 
 export function resolveOpenAiResponsesUrl(baseUrl?: string | null): string {
-  return `${effectiveAiBaseUrl('openai_responses', baseUrl)}/responses`;
+  return joinAiApiUrl(effectiveOpenAiResponsesRoot(baseUrl), 'responses');
 }
 
 export function resolveOpenAiModelsUrl(
   apiFormat: 'openai_chat' | 'openai_responses' = 'openai_chat',
   baseUrl?: string | null,
 ): string {
-  return `${effectiveAiBaseUrl(apiFormat, baseUrl)}/models`;
+  const root =
+    apiFormat === 'openai_responses'
+      ? effectiveOpenAiResponsesRoot(baseUrl)
+      : effectiveOpenAiRoot(baseUrl);
+  return joinAiApiUrl(root, 'models');
 }
 
 export function resolveAnthropicMessagesUrl(baseUrl?: string | null): string {
-  const base = effectiveAiBaseUrl('anthropic', baseUrl);
-  if (/\/v1$/iu.test(base)) return `${base}/messages`;
-  return `${base}/v1/messages`;
+  const base = ensureVersionedApiRoot(
+    effectiveAiBaseUrl('anthropic', baseUrl),
+    'v1',
+  );
+  return joinAiApiUrl(base, 'messages');
 }
 
 export function resolveAnthropicModelsUrl(baseUrl?: string | null): string {
-  const base = effectiveAiBaseUrl('anthropic', baseUrl);
-  if (/\/v1$/iu.test(base)) return `${base}/models`;
-  return `${base}/v1/models`;
+  const base = ensureVersionedApiRoot(
+    effectiveAiBaseUrl('anthropic', baseUrl),
+    'v1',
+  );
+  return joinAiApiUrl(base, 'models');
 }
 
 export function resolveGeminiGenerateContentUrl(
@@ -123,7 +218,14 @@ export function resolveGeminiGenerateContentUrl(
   baseUrl?: string | null,
   options?: { apiKeyQuery?: string },
 ): string {
-  const path = `${effectiveAiBaseUrl('gemini_native', baseUrl)}/models/${encodeURIComponent(model)}:generateContent`;
+  const root = ensureVersionedApiRoot(
+    effectiveAiBaseUrl('gemini_native', baseUrl),
+    'v1beta',
+  );
+  const path = joinAiApiUrl(
+    root,
+    `models/${encodeURIComponent(model)}:generateContent`,
+  );
   if (options?.apiKeyQuery !== undefined) {
     return `${path}?key=${encodeURIComponent(options.apiKeyQuery)}`;
   }
@@ -131,7 +233,11 @@ export function resolveGeminiGenerateContentUrl(
 }
 
 export function resolveGeminiModelsUrl(baseUrl?: string | null): string {
-  return `${effectiveAiBaseUrl('gemini_native', baseUrl)}/models`;
+  const root = ensureVersionedApiRoot(
+    effectiveAiBaseUrl('gemini_native', baseUrl),
+    'v1beta',
+  );
+  return joinAiApiUrl(root, 'models');
 }
 
 /** Concurrency / limiter key shared by wire formats of the same vendor family. */

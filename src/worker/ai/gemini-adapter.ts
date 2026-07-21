@@ -112,7 +112,12 @@ export class GeminiVendorAdapter implements VendorAdapter {
     try {
       response = await this._fetch(url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          // Official Google accepts ?key=; many relays (CC Switch Google
+          // strategy) prefer x-goog-api-key. Send both for compatibility.
+          'x-goog-api-key': this.apiKey,
+        },
         body: JSON.stringify({
           system_instruction: systemInstruction,
           contents,
@@ -154,7 +159,10 @@ export class GeminiVendorAdapter implements VendorAdapter {
     try {
       response = await this._fetch(url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-goog-api-key': this.apiKey,
+        },
         body: JSON.stringify({
           contents: [
             {

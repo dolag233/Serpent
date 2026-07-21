@@ -1,4 +1,6 @@
 import '@fontsource-variable/noto-sans-sc/index.css';
+// Windows-only HarmonyOS face; vite aliases this to an empty stub on macOS/Linux
+// so darwin npm start does not require harmonyos-sans-sc-webfont-splitted.
 import './harmonyos-sans-sc-windows.css';
 import '@fontsource/ibm-plex-mono/400.css';
 import '@fontsource/ibm-plex-mono/500.css';

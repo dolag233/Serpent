@@ -5,6 +5,7 @@ import {
   aiAnalysisResultSchema,
   aiStructuredOutputSchema,
   parseAiAnalysisResult,
+  parseAiAnalysisResultFromModelText,
 } from '../../src/worker/ai/protocol';
 import type { AiAnalysisRequest } from '../../src/worker/ai/protocol';
 import { OpenAIVendorAdapter } from '../../src/worker/ai/openai-adapter';
@@ -225,6 +226,24 @@ describe('parseAiAnalysisResult', () => {
     });
     expect(result.tags).toEqual(['城市场景', '科幻']);
   });
+
+  it('parses fenced or prose-wrapped JSON from model text', () => {
+    const fenced = parseAiAnalysisResultFromModelText(
+      '```json\n{"tags":["a"],"description":"d","rating":3}\n```',
+      'm1',
+    );
+    expect(fenced).toEqual({
+      tags: ['a'],
+      description: 'd',
+      rating: 3,
+      modelVersion: 'm1',
+    });
+    const prose = parseAiAnalysisResultFromModelText(
+      'Here you go:\n{"tags":["b"]}\nThanks',
+      'm2',
+    );
+    expect(prose).toEqual({ tags: ['b'], modelVersion: 'm2' });
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -232,7 +251,7 @@ describe('parseAiAnalysisResult', () => {
 // ---------------------------------------------------------------------------
 
 describe('OpenAIVendorAdapter', () => {
-  it('sends an OpenAI strict schema whose fields are all required and nullable when optional', async () => {
+  it('requests json_object (not strict json_schema) for midstream compatibility', async () => {
     let requestBody: Record<string, unknown> | undefined;
     const fetchStub: typeof fetch = async (_input, init) => {
       requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
@@ -246,10 +265,9 @@ describe('OpenAIVendorAdapter', () => {
 
     const result = await adapter.analyze(TEST_IMAGE_REQUEST);
 
-    const responseFormat = requestBody?.response_format as Record<string, unknown>;
-    const jsonSchema = responseFormat.json_schema as Record<string, unknown>;
-    const schema = jsonSchema.schema as Record<string, unknown>;
-    expect(schema.required).toEqual(['description', 'tags', 'rating']);
+    expect(requestBody?.response_format).toEqual({ type: 'json_object' });
+    const messages = requestBody?.messages as Array<{ role: string; content: string }>;
+    expect(messages[0]?.content).toContain('Return ONLY one JSON object');
     expect(result).toEqual({ tags: ['asset'], modelVersion: 'gpt-4o-2024-05-13' });
   });
 
