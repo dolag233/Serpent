@@ -48,6 +48,9 @@
   --danger: #e76b7a;
   --danger-muted: #4a3f3f;
   --danger-soft: #efb3ad;
+  /* Serpent-znex: Win11-like caption close hover (kept as tokens for REQ-THEME-002). */
+  --windows-caption-close-hover: #e81123;
+  --windows-caption-close-hover-fg: #ffffff;
   /* Serpent-jfi: exclude-filter chips use a desaturated rose in dark theme
      (less eye fatigue than vivid --danger) while staying distinct from include. */
   --filter-exclude: #c48990;
@@ -466,13 +469,13 @@ body.platform-darwin .toolbar-leading {
 }
 
 .windows-caption-button-close:hover {
-  background: #e81123;
-  color: #fff;
+  background: var(--windows-caption-close-hover);
+  color: var(--windows-caption-close-hover-fg);
 }
 
 .windows-caption-button-close:active {
-  background: #f1707a;
-  color: #fff;
+  background: color-mix(in srgb, var(--windows-caption-close-hover) 82%, white);
+  color: var(--windows-caption-close-hover-fg);
 }
 
 .windows-caption-glyph {

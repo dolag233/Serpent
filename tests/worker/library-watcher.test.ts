@@ -127,6 +127,7 @@ describe('managed asset watcher', () => {
     const library = service.createLibrary({ displayName: 'Overwrite', selectedParentPath: root });
     const plan = service.prepareImport({ libraryId: library.libraryId, sourceKind: 'files', sourcePaths: [source] });
     const before = service.resolveImport({ importId: plan.importId, suspectedDuplicate: 'skip', nameConflict: 'keep-both' }).assets[0]!;
+    events.length = 0;
     const managedPath = path.join(library.libraryPath, 'Assets', 'watched.png');
     writeFileSync(managedPath, 'second');
     const changedTime = new Date(Date.now() + 20_000);
