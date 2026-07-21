@@ -58,6 +58,8 @@ export type ContextMenuDescriptor =
   | {
       type: "multi-asset";
       assetIds: string[];
+      /** Canvas folder cards in the same multi/mixed selection (Serpent-koy). */
+      folderIds?: string[];
       count: number;
     };
 

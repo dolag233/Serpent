@@ -381,7 +381,9 @@ export const zhCN = {
     skipReasonUnavailable: "不可用",
     skipReasonUnresolved: "不在当前范围",
     skipReasonTrashed: "回收站",
+    skipReasonFolder: "文件夹",
     skipReasonJoin: "、",
+    skipReportAssetOnlyFolders: "标签/合集/AI：跳过 {count}（文件夹）",
     copyToExternal: "复制到外部目录：{name}",
     managedUnavailableHint: "此托管资产当前不可用；文件操作将在资产恢复后可用。",
     removeFromCollectionAction: "从合集移除资产"
@@ -519,6 +521,8 @@ export const zhCN = {
         "确定要从硬盘永久删除资源库「{name}」吗？将删除该库文件夹中的全部托管文件与元数据，此操作不可恢复。链接文件夹的源目录不会被删除。",
       assetBody:
         "确定要从硬盘永久删除所选 {count} 项资产吗？此操作不可恢复，文件不会进入应用回收站。",
+      selectionBody:
+        "确定要从硬盘永久删除所选 {count} 项（含文件夹及其内容）吗？此操作不可恢复，不会进入应用回收站。",
       dontShowAgain: "不再显示此提示",
       submit: "从硬盘中删除"
     },
@@ -1079,6 +1083,10 @@ export const zhCN = {
     batchRemoveDone: "已将 {count} 项资产移出合集。",
     batchRemoveFailed: "批量移出合集失败。",
     batchTrashed: "{count} 项资产已移入回收站。",
+    selectionTrashed:
+      "已移入回收站：{folders} 个文件夹、{assets} 项资产。",
+    selectionDeletedFromDisk:
+      "已从硬盘删除：{folders} 个文件夹、{assets} 项资产。",
     batchDeleteFailed: "删除失败。",
     copyToExternalConfirm: "将 {count} 项托管资产复制到外部目录\"{name}\"？源托管文件不会移动。",
     copyToExternalDone: "已复制 {count} 项到链接文件夹，跳过 {skipped} 项。",

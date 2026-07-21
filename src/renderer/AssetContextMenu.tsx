@@ -65,7 +65,7 @@ function descriptorKey(descriptor: ContextMenuDescriptor): string {
     case "asset":
       return `asset:${descriptor.assetId}`;
     case "multi-asset":
-      return `multi-asset:${descriptor.assetIds.join(",")}`;
+      return `multi-asset:${descriptor.assetIds.join(",")}:${(descriptor.folderIds ?? []).join(",")}`;
     case "organization":
       return `organization:${descriptor.id}`;
     case "smart-collection":
@@ -110,8 +110,8 @@ interface AssetContextMenuProps {
   onBatchAddToCollection: (collectionId: string, assetIds: string[]) => void;
   onBatchRemoveFromCollection: (collectionId: string, assetIds: string[]) => void;
   onMoveToFolder: (assetIds: string[]) => void;
-  onTrash: (assetIds: string[]) => void;
-  onDeleteFromDisk: (assetIds: string[]) => void;
+  onTrash: (assetIds: string[], folderIds?: readonly string[]) => void;
+  onDeleteFromDisk: (assetIds: string[], folderIds?: readonly string[]) => void;
   onRestore: (assetIds: string[]) => void;
   onPermanentDelete: (assetIds: string[]) => void;
   onRelink: (assetId: string) => void;
@@ -650,21 +650,23 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
           (() => {
             const descriptor = activeContextMenu.descriptor;
             const targetAssetIds = [...descriptor.assetIds];
+            const targetFolderIds = [...(descriptor.folderIds ?? [])];
             const targetIdSet = new Set(targetAssetIds);
             const targetAssets = assets.filter((asset) =>
               targetIdSet.has(asset.assetId),
             );
-            // REQ-MENU-004: process/skip counts + reasons from a pure module
-            // (eligibility aligned with drag-drop: exclude linked / unavailable
-            // / trashed / unresolved as appropriate per action).
+            // REQ-MENU-004 / Serpent-koy: process/skip counts + reasons from a
+            // pure module (folders join trash/disk-delete; move skips them).
             const skipReport = buildMultiAssetMenuSkipReport(
               targetAssetIds,
               targetAssets,
+              targetFolderIds,
             );
             const managedAssetIds = [...skipReport.trash.processAssetIds];
             const availableManagedAssetIds = [
               ...skipReport.move.processAssetIds,
             ];
+            const processFolderIds = [...skipReport.trash.processFolderIds];
             const allTrashed = skipReport.allTrashed;
             const skipFooter = formatMultiAssetMenuSkipFooter(
               skipReport,
@@ -683,10 +685,12 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
               primaryAssetId: null,
               assetScope: "multi",
               trashMode: allTrashed,
-              selectionCount: targetAssetIds.length,
+              selectionCount: skipReport.selectionCount,
               managedCount: managedAssetIds.length,
               availableManagedCount: availableManagedAssetIds.length,
               linkedCount: skipReport.linkedCount,
+              folderCount: processFolderIds.length,
+              processFolderIds,
               trashedAll: allTrashed,
               managedAssetIds,
               availableManagedAssetIds,
@@ -739,7 +743,9 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
             return (
               <>
                 <div className="context-menu-selection-summary">
-                  {t("common.selectedCount", { count: targetAssetIds.length })}
+                  {t("common.selectedCount", {
+                    count: skipReport.selectionCount,
+                  })}
                 </div>
                 {allTrashed ? (
                   <ContextMenuSection label={t("command.group.trashActions")}>
@@ -768,7 +774,8 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                     {skipFooter}
                   </div>
                 )}
-            {(aiAnalyzeItem || clearAiContentItem) && (
+            {(targetAssetIds.length > 0 &&
+              (aiAnalyzeItem || clearAiContentItem)) && (
               <ContextMenuSection label={t("command.group.metadata")}>
                 {aiAnalyzeItem && (
                   <ContextMenuItem
@@ -801,6 +808,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                 )}
               </ContextMenuSection>
             )}
+            {targetAssetIds.length > 0 && (
             <ContextMenuSection label={t("command.group.organize")}>
             {tags.length > 0 && assignTagItem && removeTagItem && (
               <ContextMenuSection label={t("command.group.batchTags")}>
@@ -889,6 +897,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                   />
                 ))}
             </ContextMenuSection>
+            )}
             <ContextMenuSection label={t("command.group.delete")}>
               {moveToTrashItem && (
                 <ContextMenuItem

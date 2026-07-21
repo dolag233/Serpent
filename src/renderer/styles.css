@@ -3313,10 +3313,20 @@ body.serpent-modal-open .app-shell {
   opacity: 0.55;
   transform: translateY(-50%);
 }
+.preview-nav.is-on-dark,
+.preview-close-chip.is-on-dark {
+  color: rgb(255 255 255 / 88%);
+  filter: drop-shadow(0 1px 2px rgb(0 0 0 / 55%));
+}
+.preview-nav.is-on-light,
+.preview-close-chip.is-on-light {
+  color: rgb(20 20 20 / 82%);
+  filter: drop-shadow(0 1px 1px rgb(255 255 255 / 55%));
+}
 .preview-nav:hover:not(:disabled),
 .preview-nav:focus-visible:not(:disabled) {
   background: transparent;
-  color: var(--text);
+  color: inherit;
   opacity: 1;
   outline: none;
 }
@@ -3374,7 +3384,7 @@ body.serpent-modal-open .app-shell {
 .preview-close-chip:hover,
 .preview-close-chip:focus-visible {
   background: transparent;
-  color: var(--text);
+  color: inherit;
   opacity: 1;
   outline: none;
 }

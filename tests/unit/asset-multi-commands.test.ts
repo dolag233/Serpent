@@ -55,6 +55,8 @@ function makeCtx(
     managedCount: 2,
     availableManagedCount: 1,
     linkedCount: 1,
+    folderCount: 0,
+    processFolderIds: [],
     trashedAll: false,
     managedAssetIds: ['a-1', 'a-2'],
     availableManagedAssetIds: ['a-1'],
@@ -295,8 +297,8 @@ describe('run 委托到 actions 回调包', () => {
       [['a-1', 'a-2', 'a-3']],
     ],
     ['assets.move-to-folder', {}, 'moveToFolder', [['a-1']]],
-    ['assets.move-to-trash', {}, 'moveToTrash', [['a-1', 'a-2']]],
-    ['assets.delete-from-disk', {}, 'deleteFromDisk', [['a-1', 'a-2']]],
+    ['assets.move-to-trash', {}, 'moveToTrash', [['a-1', 'a-2'], []]],
+    ['assets.delete-from-disk', {}, 'deleteFromDisk', [['a-1', 'a-2'], []]],
     ['assets.clear-selection', {}, 'clearSelection', []],
   ] as const)(
     '%s 转调 %s（操作对象与原内联 onAction 一致）',
@@ -318,7 +320,24 @@ describe('run 委托到 actions 回调包', () => {
     void registry.get('assets.move-to-trash')?.run(ctx);
     expect(calls).toEqual([
       { action: 'moveToFolder', args: [['m-2']] },
-      { action: 'moveToTrash', args: [['m-1', 'm-2', 'm-3']] },
+      { action: 'moveToTrash', args: [['m-1', 'm-2', 'm-3'], []] },
+    ]);
+  });
+
+  it('trash/disk-delete counts and payload include selected folder cards', () => {
+    const { ctx, calls } = makeCtx({
+      folderCount: 2,
+      processFolderIds: ['f-1', 'f-2'],
+      managedCount: 1,
+      managedAssetIds: ['a-1'],
+    });
+    const trash = findItem(registry.resolveMenu(ctx), 'assets.move-to-trash');
+    expect(trash.label).toContain('3');
+    void registry.get('assets.move-to-trash')?.run(ctx);
+    void registry.get('assets.delete-from-disk')?.run(ctx);
+    expect(calls).toEqual([
+      { action: 'moveToTrash', args: [['a-1'], ['f-1', 'f-2']] },
+      { action: 'deleteFromDisk', args: [['a-1'], ['f-1', 'f-2']] },
     ]);
   });
 });

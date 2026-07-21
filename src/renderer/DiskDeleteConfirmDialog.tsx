@@ -6,7 +6,8 @@ import { useT } from "./i18n";
 export type DiskDeleteBodyKey =
   | "dialog.diskDelete.body"
   | "dialog.diskDelete.libraryBody"
-  | "dialog.diskDelete.assetBody";
+  | "dialog.diskDelete.assetBody"
+  | "dialog.diskDelete.selectionBody";
 
 export interface DiskDeleteConfirmDialogProps {
   /** Folder / library / subject display name for name-based bodies. */
@@ -34,7 +35,8 @@ export function DiskDeleteConfirmDialog({
   const t = useT();
   const [dontShowAgain, setDontShowAgain] = useState(false);
   const bodyParams: Readonly<Record<string, string | number>> =
-    bodyKey === "dialog.diskDelete.assetBody"
+    bodyKey === "dialog.diskDelete.assetBody" ||
+    bodyKey === "dialog.diskDelete.selectionBody"
       ? { count: assetCount }
       : { name: subjectName };
   return (

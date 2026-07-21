@@ -391,7 +391,9 @@ export const en = {
     skipReasonUnavailable: "unavailable",
     skipReasonUnresolved: "out of scope",
     skipReasonTrashed: "in trash",
+    skipReasonFolder: "folder",
     skipReasonJoin: ", ",
+    skipReportAssetOnlyFolders: "Tags/collections/AI: skip {count} (folder)",
     copyToExternal: "Copy to external folder: {name}",
     managedUnavailableHint: "This managed asset is unavailable; file actions will be enabled after it is restored.",
     removeFromCollectionAction: "Remove asset from collection"
@@ -529,6 +531,8 @@ export const en = {
         "Permanently delete library \"{name}\" from disk? The library folder and all managed files and metadata will be removed. This cannot be undone. Linked folder source directories are not deleted.",
       assetBody:
         "Permanently delete the selected {count} assets from disk? This cannot be undone; files will not go to the app Trash.",
+      selectionBody:
+        "Permanently delete the selected {count} items (including folders and their contents) from disk? This cannot be undone; nothing goes to the app Trash.",
       dontShowAgain: "Don't show this again",
       submit: "Delete from disk"
     },
@@ -1093,6 +1097,10 @@ export const en = {
     batchRemoveDone: "Removed {count} assets from the collection.",
     batchRemoveFailed: "Batch remove from collection failed.",
     batchTrashed: "{count} assets moved to Trash.",
+    selectionTrashed:
+      "Moved to Trash: {folders} folder(s), {assets} asset(s).",
+    selectionDeletedFromDisk:
+      "Deleted from disk: {folders} folder(s), {assets} asset(s).",
     batchDeleteFailed: "Delete failed.",
     copyToExternalConfirm: "Copy {count} managed assets to external folder \"{name}\"? Source managed files will not be moved.",
     copyToExternalDone: "Copied {count} to the linked folder; skipped {skipped}.",

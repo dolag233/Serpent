@@ -32,6 +32,7 @@ import { VideoPlayerControls } from "./VideoPlayerControls";
 import { AudioPlayerControls } from "./AudioPlayerControls";
 import { TextViewerControls } from "./TextViewerControls";
 import { ZoomableImage } from "./zoomable-preview-image";
+import { useViewerChromeContrast } from "./use-viewer-chrome-contrast";
 
 interface AssetPreviewModalProps {
   api: SerpentLibraryApi;
@@ -158,6 +159,10 @@ export function AssetPreviewModal({
   const modalRef = useRef<HTMLElement>(null);
   const requestSequence = useRef(0);
   const [resolution, setResolution] = useState<PreviewResolution | null>(null);
+  const chromeContrast = useViewerChromeContrast(
+    modalRef,
+    `${asset.assetId}:${resolution?.url ?? ""}:${resolution?.posterUrl ?? ""}`,
+  );
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -633,7 +638,7 @@ export function AssetPreviewModal({
           )}
           <button
             aria-label={t("preview.previous")}
-            className="preview-nav is-prev preview-chrome-fade"
+            className={`preview-nav is-prev preview-chrome-fade is-${chromeContrast.prev}`}
             disabled={!onPrevious}
             onClick={onPrevious}
             type="button"
@@ -642,7 +647,7 @@ export function AssetPreviewModal({
           </button>
           <button
             aria-label={t("preview.next")}
-            className="preview-nav is-next preview-chrome-fade"
+            className={`preview-nav is-next preview-chrome-fade is-${chromeContrast.next}`}
             disabled={!onNext}
             onClick={onNext}
             type="button"
@@ -651,7 +656,7 @@ export function AssetPreviewModal({
           </button>
           <button
             aria-label={t("preview.closeViewer")}
-            className="preview-close-chip preview-chrome-fade"
+            className={`preview-close-chip preview-chrome-fade is-${chromeContrast.close}`}
             onClick={onClose}
             type="button"
           >

@@ -122,6 +122,7 @@ import {
   ContextMenuProvider,
   useContextMenu,
 } from "./context-menu";
+import { resolveBrowseContextMenuIntent } from "./browse-selection-menu";
 import { useAssetSelection } from "./useAssetSelection";
 import { resolveInspectorTagTarget } from "./inspector-tag-target";
 import {
@@ -717,6 +718,11 @@ function AppInner() {
   const [assetDiskDeleteIds, setAssetDiskDeleteIds] = useState<string[] | null>(
     null,
   );
+  /** Serpent-koy: pending disk delete for mixed/multi folder cards (+ assets). */
+  const [selectionDiskDelete, setSelectionDiskDelete] = useState<{
+    assetIds: string[];
+    folderIds: string[];
+  } | null>(null);
   /** Serpent-9i8: pending irreversible library root deletion. */
   const [libraryDiskDeletePending, setLibraryDiskDeletePending] = useState(false);
   const [restoreDialog, setRestoreDialog] = useState<{
@@ -4467,6 +4473,128 @@ function AppInner() {
     await deleteManagedAssetsFromDisk(assetIds);
   }
 
+  function requestSelectionDiskDelete(
+    assetIds: string[],
+    folderIds: readonly string[],
+  ) {
+    const folderIdList = [...folderIds];
+    if (folderIdList.length === 0) {
+      requestAssetDiskDelete(assetIds);
+      return;
+    }
+    if (assetIds.length === 0 && folderIdList.length === 1) {
+      const folderId = folderIdList[0]!;
+      const name =
+        folderBrowseEntries.find((entry) => entry.folderId === folderId)
+          ?.name ??
+        folders.find((folder) => folder.folderId === folderId)?.name ??
+        folderId;
+      openDiskDelete({ kind: "managed", folderId, name });
+      return;
+    }
+    if (!isDiskDeletePromptEnabled()) {
+      void executeSelectionDiskDelete(assetIds, folderIdList);
+      return;
+    }
+    setSelectionDiskDelete({ assetIds, folderIds: folderIdList });
+  }
+
+  async function confirmSelectionDiskDelete(dontShowAgain: boolean) {
+    if (!selectionDiskDelete) return;
+    if (dontShowAgain) setDiskDeletePromptEnabled(false);
+    const pending = selectionDiskDelete;
+    setSelectionDiskDelete(null);
+    await executeSelectionDiskDelete(pending.assetIds, pending.folderIds);
+  }
+
+  async function executeSelectionDiskDelete(
+    assetIds: string[],
+    folderIds: readonly string[],
+  ) {
+    if (!api || !library) return;
+    if (assetIds.length === 0 && folderIds.length === 0) return;
+    setUiState("loading");
+    try {
+      let deletedAssets = 0;
+      let deletedFolders = 0;
+      if (assetIds.length > 0) {
+        const result = await api.deleteAssetsFromDisk({
+          libraryId: library.libraryId,
+          assetIds,
+        });
+        if (!result.ok) throw new LibraryOperationError(result.error);
+        deletedAssets = result.value.deletedCount;
+      }
+      for (const folderId of folderIds) {
+        const result = await api.deleteFolderFromDisk({
+          libraryId: library.libraryId,
+          folderId,
+        });
+        if (!result.ok) throw new LibraryOperationError(result.error);
+        deletedFolders += 1;
+        deletedAssets += result.value.deletedAssetCount;
+      }
+      setNotice(
+        t("toast.selectionDeletedFromDisk", {
+          folders: deletedFolders,
+          assets: deletedAssets,
+        }),
+      );
+      clearAssetSelection();
+      await reloadCurrentContent();
+    } catch (caught) {
+      setError(toMessage(caught, t("toast.folderDeleteFromDiskFailed"), locale));
+    } finally {
+      setUiState("ready");
+    }
+  }
+
+  async function trashMixedSelection(
+    assetIds: string[],
+    folderIds: readonly string[] = [],
+  ) {
+    if (!api || !library) return;
+    if (assetIds.length === 0 && folderIds.length === 0) return;
+    if (folderIds.length === 0) {
+      await trashManagedAssets(assetIds);
+      return;
+    }
+    setUiState("loading");
+    try {
+      let trashedAssets = 0;
+      let trashedFolders = 0;
+      if (assetIds.length > 0) {
+        const result = await api.trashAssets({
+          libraryId: library.libraryId,
+          assetIds,
+        });
+        if (!result.ok) throw new LibraryOperationError(result.error);
+        trashedAssets = result.value.trashedCount;
+      }
+      for (const folderId of folderIds) {
+        const result = await api.trashFolder({
+          libraryId: library.libraryId,
+          folderId,
+        });
+        if (!result.ok) throw new LibraryOperationError(result.error);
+        trashedFolders += 1;
+        trashedAssets += result.value.trashedAssetCount;
+      }
+      setNotice(
+        t("toast.selectionTrashed", {
+          folders: trashedFolders,
+          assets: trashedAssets,
+        }),
+      );
+      clearAssetSelection();
+      await reloadCurrentContent();
+    } catch (caught) {
+      setError(toMessage(caught, t("toast.batchDeleteFailed"), locale));
+    } finally {
+      setUiState("ready");
+    }
+  }
+
   async function purgeTrash() {
     if (!api || !library) return;
     setUiState("loading");
@@ -4942,7 +5070,8 @@ function AppInner() {
       diskDeleteOpen:
         Boolean(diskDeleteTarget) ||
         libraryDiskDeletePending ||
-        Boolean(assetDiskDeleteIds),
+        Boolean(assetDiskDeleteIds) ||
+        Boolean(selectionDiskDelete),
       deleteLinkedOpen: Boolean(deleteLinkedDialog),
       batchRelinkOpen: Boolean(batchRelinkPreview),
       restoreOpen: Boolean(restoreDialog),
@@ -4968,6 +5097,7 @@ function AppInner() {
     diskDeleteTarget,
     libraryDiskDeletePending,
     assetDiskDeleteIds,
+    selectionDiskDelete,
     deleteLinkedDialog,
     batchRelinkPreview,
     restoreDialog,
@@ -5031,6 +5161,7 @@ function AppInner() {
       diskDeleteTarget ||
       libraryDiskDeletePending ||
       assetDiskDeleteIds ||
+      selectionDiskDelete ||
       deleteLinkedDialog ||
       batchRelinkPreview ||
       restoreDialog ||
@@ -5194,6 +5325,7 @@ function AppInner() {
       diskDeleteTarget ||
       libraryDiskDeletePending ||
       assetDiskDeleteIds ||
+      selectionDiskDelete ||
       deleteLinkedDialog ||
       batchRelinkPreview ||
       restoreDialog ||
@@ -6845,14 +6977,35 @@ function AppInner() {
                         }}
                         onContextMenu={(clickedEntry, event) => {
                           event.preventDefault();
-                          setSelectedFolderIds([clickedEntry.folderId]);
-                          setSelectedAssetIds([]);
+                          const intent = resolveBrowseContextMenuIntent(
+                            { kind: "folder", id: clickedEntry.folderId },
+                            {
+                              assetIds: selectedAssetIds,
+                              folderIds: selectedFolderIds,
+                            },
+                          );
+                          if (intent.type === "single-folder") {
+                            setSelectedFolderIds([intent.folderId]);
+                            setSelectedAssetIds([]);
+                            openContextMenu(
+                              {
+                                type: "folder",
+                                folderId: intent.folderId,
+                                name: clickedEntry.name,
+                                locationKind: "managed",
+                              },
+                              { x: event.clientX, y: event.clientY },
+                            );
+                            return;
+                          }
+                          if (intent.type !== "multi") return;
                           openContextMenu(
                             {
-                              type: "folder",
-                              folderId: clickedEntry.folderId,
-                              name: clickedEntry.name,
-                              locationKind: "managed",
+                              type: "multi-asset",
+                              assetIds: [...intent.assetIds],
+                              folderIds: [...intent.folderIds],
+                              count:
+                                intent.assetIds.length + intent.folderIds.length,
                             },
                             { x: event.clientX, y: event.clientY },
                           );
@@ -7008,23 +7161,20 @@ function AppInner() {
                       }}
                       onContextMenu={(e) => {
                         e.preventDefault();
-                        const inSelection = selectedIdSet.has(asset.assetId);
-                        const multiSelected = selectedIdSet.size >= 2 && inSelection;
-                        if (!inSelection) {
-                          setSelectedAssetIds([asset.assetId]);
-                          setSelectedAssetId(asset.assetId);
-                        }
-                        if (library) {
-                          if (multiSelected) {
-                            openContextMenu(
-                              {
-                                type: "multi-asset",
-                                assetIds: [...selectedAssetIds],
-                                count: selectedAssetIds.length,
-                              },
-                              { x: e.clientX, y: e.clientY },
-                            );
-                          } else {
+                        const intent = resolveBrowseContextMenuIntent(
+                          { kind: "asset", id: asset.assetId },
+                          {
+                            assetIds: selectedAssetIds,
+                            folderIds: selectedFolderIds,
+                          },
+                        );
+                        if (intent.type === "single-asset") {
+                          if (!selectedIdSet.has(intent.assetId)) {
+                            setSelectedAssetIds([intent.assetId]);
+                            setSelectedAssetId(intent.assetId);
+                          }
+                          setSelectedFolderIds([]);
+                          if (library) {
                             openContextMenu(
                               {
                                 type: "asset",
@@ -7037,7 +7187,19 @@ function AppInner() {
                               { x: e.clientX, y: e.clientY },
                             );
                           }
+                          return;
                         }
+                        if (intent.type !== "multi" || !library) return;
+                        openContextMenu(
+                          {
+                            type: "multi-asset",
+                            assetIds: [...intent.assetIds],
+                            folderIds: [...intent.folderIds],
+                            count:
+                              intent.assetIds.length + intent.folderIds.length,
+                          },
+                          { x: e.clientX, y: e.clientY },
+                        );
                       }}
                       type="button"
                     >
@@ -7738,6 +7900,19 @@ function AppInner() {
           }}
         />
       )}
+      {selectionDiskDelete && (
+        <DiskDeleteConfirmDialog
+          bodyKey="dialog.diskDelete.selectionBody"
+          assetCount={
+            selectionDiskDelete.assetIds.length +
+            selectionDiskDelete.folderIds.length
+          }
+          onCancel={() => setSelectionDiskDelete(null)}
+          onConfirm={(dontShowAgain) => {
+            void confirmSelectionDiskDelete(dontShowAgain);
+          }}
+        />
+      )}
       {libraryDiskDeletePending && library && (
         <DiskDeleteConfirmDialog
           bodyKey="dialog.diskDelete.libraryBody"
@@ -7932,9 +8107,11 @@ function AppInner() {
             conflictStrategy: "keep-both",
           })
         }
-        onTrash={(assetIds) => { void trashManagedAssets(assetIds); }}
-        onDeleteFromDisk={(assetIds) => {
-          requestAssetDiskDelete(assetIds);
+        onTrash={(assetIds, folderIds) => {
+          void trashMixedSelection(assetIds, folderIds ?? []);
+        }}
+        onDeleteFromDisk={(assetIds, folderIds) => {
+          requestSelectionDiskDelete(assetIds, folderIds ?? []);
         }}
         onRestore={(assetIds) =>
           setRestoreDialog({

@@ -22,8 +22,15 @@ export interface AssetMultiCommandActions {
   readonly openAssignTagPicker: (assetIds: string[]) => void;
   readonly openRemoveTagPicker: (assetIds: string[]) => void;
   readonly moveToFolder: (assetIds: string[]) => void;
-  readonly moveToTrash: (assetIds: string[]) => void;
-  readonly deleteFromDisk: (assetIds: string[]) => void;
+  /** Assets + managed folder cards that trash can process (Serpent-koy). */
+  readonly moveToTrash: (
+    assetIds: string[],
+    folderIds?: readonly string[],
+  ) => void;
+  readonly deleteFromDisk: (
+    assetIds: string[],
+    folderIds?: readonly string[],
+  ) => void;
   readonly restore: (assetIds: string[]) => void;
   readonly deletePermanent: (assetIds: string[]) => void;
   readonly clearSelection: () => void;
@@ -43,6 +50,9 @@ export interface AssetMultiCommandContext extends CommandContext {
   readonly managedCount: number;
   readonly availableManagedCount: number;
   readonly linkedCount: number;
+  /** Managed folder cards included in trash / disk-delete process counts. */
+  readonly folderCount: number;
+  readonly processFolderIds: readonly string[];
   /** 对应原 allTrashed：选中资产全部在回收站时切换为回收站分支。 */
   readonly trashedAll: boolean;
   readonly managedAssetIds: readonly string[];
@@ -136,7 +146,7 @@ export const assetMultiCommandDefinitions: readonly AssetMultiCommandDefinition[
       id: 'assets.move-to-trash',
       title: (ctx) =>
         t(ctx, 'command.assets.moveToTrash', {
-          count: ctx.managedCount,
+          count: ctx.managedCount + ctx.folderCount,
         }),
       group: 'delete',
       shortcut: {
@@ -145,24 +155,32 @@ export const assetMultiCommandDefinitions: readonly AssetMultiCommandDefinition[
       },
       visible: (ctx) => !ctx.trashedAll,
       disabledReason: (ctx) =>
-        ctx.managedCount === 0
+        ctx.managedCount + ctx.folderCount === 0
           ? t(ctx, 'command.reason.noManaged')
           : null,
-      run: (ctx) => ctx.actions.moveToTrash([...ctx.managedAssetIds]),
+      run: (ctx) =>
+        ctx.actions.moveToTrash(
+          [...ctx.managedAssetIds],
+          [...ctx.processFolderIds],
+        ),
     },
     {
       id: 'assets.delete-from-disk',
       title: (ctx) =>
         t(ctx, 'command.assets.deleteFromDisk', {
-          count: ctx.managedCount,
+          count: ctx.managedCount + ctx.folderCount,
         }),
       group: 'delete',
       visible: (ctx) => !ctx.trashedAll,
       disabledReason: (ctx) =>
-        ctx.managedCount === 0
+        ctx.managedCount + ctx.folderCount === 0
           ? t(ctx, 'command.reason.noManaged')
           : null,
-      run: (ctx) => ctx.actions.deleteFromDisk([...ctx.managedAssetIds]),
+      run: (ctx) =>
+        ctx.actions.deleteFromDisk(
+          [...ctx.managedAssetIds],
+          [...ctx.processFolderIds],
+        ),
     },
     // ---- 选择管理：两个分支都渲染，视觉上位于菜单末尾 ----
     {

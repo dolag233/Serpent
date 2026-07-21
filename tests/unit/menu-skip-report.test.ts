@@ -120,6 +120,33 @@ describe("buildMultiAssetMenuSkipReport", () => {
       { reason: "unresolved", count: 1 },
     ]);
   });
+  it("skips folders for move and includes them in trash process counts", () => {
+    const report = buildMultiAssetMenuSkipReport(
+      ["a"],
+      [asset({ assetId: "a" })],
+      ["f1", "f2"],
+    );
+    expect(report.selectionCount).toBe(3);
+    expect(report.folderCount).toBe(2);
+    expect(report.allTrashed).toBe(false);
+    expect(report.move.processAssetIds).toEqual(["a"]);
+    expect(report.move.processFolderIds).toEqual([]);
+    expect(report.move.skips).toEqual([{ reason: "folder", count: 2 }]);
+    expect(report.trash.processAssetIds).toEqual(["a"]);
+    expect(report.trash.processFolderIds).toEqual(["f1", "f2"]);
+    expect(report.trash.processCount).toBe(3);
+    expect(report.trash.skipCount).toBe(0);
+  });
+
+  it("does not enter the all-trashed branch when folders are selected", () => {
+    const report = buildMultiAssetMenuSkipReport(
+      ["bin"],
+      [asset({ assetId: "bin", deletedAt: "2026-07-18T00:00:00.000Z" })],
+      ["f1"],
+    );
+    expect(report.allTrashed).toBe(false);
+    expect(report.trash.processFolderIds).toEqual(["f1"]);
+  });
 });
 
 describe("formatMenuActionSkipLine / formatMultiAssetMenuSkipFooter", () => {
@@ -182,6 +209,20 @@ describe("formatMenuActionSkipLine / formatMultiAssetMenuSkipFooter", () => {
     );
     expect(formatMultiAssetMenuSkipFooter(report, "zh-CN")).toBe(
       "移动：将处理 1 / 跳过 1（不可用）",
+    );
+  });
+
+  it("reports folder skips for move and asset-only ops in a mixed selection", () => {
+    const report = buildMultiAssetMenuSkipReport(
+      ["a"],
+      [asset({ assetId: "a" })],
+      ["f1"],
+    );
+    expect(formatMultiAssetMenuSkipFooter(report, "zh-CN")).toBe(
+      "移动：将处理 1 / 跳过 1（文件夹）；标签/合集/AI：跳过 1（文件夹）",
+    );
+    expect(formatMultiAssetMenuSkipFooter(report, "en")).toBe(
+      "Move: process 1 / skip 1 (folder); Tags/collections/AI: skip 1 (folder)",
     );
   });
 });
