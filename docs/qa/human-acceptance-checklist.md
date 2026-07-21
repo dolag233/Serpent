@@ -444,12 +444,12 @@
 | 2026-07-21 | `Serpent-vf8x` / `Serpent-b9xo` 文件夹快捷键 + 主题剩余阴影 | 待人类验收 | 文件夹 Cmd/Ctrl+Shift+N、F2、Delete/⌘⌫；侧栏焦点与菜单标签；起始页/过滤/AI 下拉阴影 token。 | COMMAND-005 / THEME-016；**不声称 Windows 人类通过**；`maxDescriptionCharsZh` 仍为 100。 |
 | 2026-07-21 | `Serpent-rsbt` / `Serpent-2vn` AI 心跳 + Alt/Option 拖拽复制 | 待人类验收 | 约 60s 心跳与配置标题同源；右键 AI 分析断连 link-off；托管文件夹 Option/Alt 拖拽复制可撤销；平台按键名 Alt/Option。 | AICFG-012 / MENU-AI-003 / DND-005 |
 | 2026-07-21 | `Serpent-v78` / `Serpent-svc` 排序方向入面板 + 默认跟系统 | 待人类验收 | 升降序并入排序面板、去掉独立方向钮；主题默认跟随系统（语言本已跟随）。 | SORT-007 / THEME-017 |
-| 2026-07-21 | `Serpent-jfi` / `Serpent-5fq` 暗色排除红 + 反选快捷键 | 待人类验收 | 暗色排除 chip 降饱和；Ctrl+I/⌘I 反选可见资产；Escape 选择清理由 hook 抽出。 | FILTER-021 / SELECT-012；`maxDescriptionCharsZh` 仍为 100。 |
+| 2026-07-21 | `Serpent-jfi` / `Serpent-5fq` 暗色排除红 + 反选快捷键 | 待人类验收 | 暗色排除 chip 降饱和；Ctrl+I/⌘I 反选可见资产；Escape 选择清理由 hook 抽出。 | FILTER-022 / SELECT-012；`maxDescriptionCharsZh` 仍为 100。 |
 | 2026-07-21 | TEXT-001 / `Serpent-4l7` + 画布滚动条 `Serpent-itr` | 待人类验收 | 链接子目录新建文本刷新入库；格式「文本」chip；扩常见文本扩展；Windows 经典滚动条横溢 CSS 修复。 | TEXT-001 → 待复验；CANVAS-001/002/021 已注 Windows 勿提前人类通过。 |
 ### 第五批收口（过滤/导航/排序/Inspector）
 
-| FILTER-019 | 排除过滤红色高亮 | 人类验收通过 | 启用颜色/标签等过滤后勾选排除 | 对应维度按钮呈红色高亮，与包含态区分 | [开发日志](../development/2026-07-19-filter-nav-inspect-polish-development-log.md) / Serpent-8s8 | 2026-07-19 用户确认通过。附带暗色降饱和 → FILTER-021 / `Serpent-jfi`。 |
-| FILTER-021 | 暗色排除过滤降饱和红 | 待人类验收 | 切到暗色主题；对颜色/标签等启用排除；对照包含态激活蓝；再切亮色确认排除仍为鲜明红 | 暗色排除钮为降饱和玫瑰红（`--filter-exclude`），仍可与包含态区分且不刺眼；亮色排除仍用鲜明红；危险按钮不受影响 | `Serpent-jfi` / `--filter-exclude*` | 2026-07-21 实现。 |
+| FILTER-019 | 排除过滤红色高亮 | 人类验收通过 | 启用颜色/标签等过滤后勾选排除 | 对应维度按钮呈红色高亮，与包含态区分 | [开发日志](../development/2026-07-19-filter-nav-inspect-polish-development-log.md) / Serpent-8s8 | 2026-07-19 用户确认通过。附带暗色降饱和 → FILTER-022 / `Serpent-jfi`。 |
+| FILTER-022 | 暗色排除过滤降饱和红 | 待人类验收 | 切到暗色主题；对颜色/标签等启用排除；对照包含态激活蓝；再切亮色确认排除仍为鲜明红 | 暗色排除钮为降饱和玫瑰红（`--filter-exclude`），仍可与包含态区分且不刺眼；亮色排除仍用鲜明红；危险按钮不受影响 | `Serpent-jfi` / `--filter-exclude*` | 2026-07-21 实现。 |
 | FILTER-020 | 颜色过滤黑白与选中样式 | 人类验收通过 | 打开颜色维度；选黑/白；再选彩色 | 有黑白色块；选中为描边缩放而非双环 | 同上 / Serpent-o75 | 2026-07-19 用户确认通过。 |
 | NAV-006b | 无独立资源库根目录行 | 人类验收通过 | 打开含托管文件夹的库，看侧栏文件夹区 | 无「资源库根目录」行；根级文件夹仍在树中；拖到「所有资产」可落到库根 | 同上 / Serpent-vms | 2026-07-19 用户确认通过。注：与 NAV-006（侧栏长名省略）ID 曾冲突，本条记为 NAV-006b。 |
 | SORT-006 | 升序/降序专用图标 | 人类验收通过 | 看排序方向按钮；切换升/降序 | 图标为升序/降序语义，不再是 ↑↓ 文字箭头 | 同上 / Serpent-1c9 | 2026-07-19 用户确认通过。附带产品调整：方向应并入排序面板 → SORT-007 / `Serpent-v78`。 |
