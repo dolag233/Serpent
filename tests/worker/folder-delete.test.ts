@@ -119,6 +119,62 @@ describe('trashManagedFolder (clarification #7 / Serpent-ekj)', () => {
   });
 });
 
+describe('deleteAssetsFromDisk (clarification #7 / Serpent-9zc)', () => {
+  it('permanently removes managed asset bytes and DB rows without trash', () => {
+    const temp = root();
+    const service = newService();
+    const library = service.createLibrary({
+      displayName: 'AssetDiskDelete',
+      selectedParentPath: temp,
+    });
+    const source = path.join(temp, 'solo.png');
+    writeFileSync(source, 'asset-disk-delete');
+    const asset = importFile(service, library.libraryId, source).assets[0]!;
+    const assetPath = path.join(library.libraryPath, 'Assets', 'solo.png');
+    expect(existsSync(assetPath)).toBe(true);
+
+    const result = service.deleteAssetsFromDisk({
+      libraryId: library.libraryId,
+      assetIds: [asset.assetId],
+    });
+    expect(result).toEqual({ deletedCount: 1 });
+    expect(existsSync(assetPath)).toBe(false);
+    expect(service.listTrash(library.libraryId)).toEqual([]);
+
+    const db = database(library.libraryPath);
+    try {
+      const assetRow = db
+        .prepare('SELECT asset_id FROM assets WHERE asset_id = ?')
+        .get(asset.assetId);
+      expect(assetRow).toBeUndefined();
+    } finally {
+      db.close();
+    }
+  });
+
+  it('rejects linked or already-trashed assets', () => {
+    const temp = root();
+    const service = newService();
+    const library = service.createLibrary({
+      displayName: 'AssetDiskDeleteReject',
+      selectedParentPath: temp,
+    });
+    const source = path.join(temp, 't.png');
+    writeFileSync(source, 'trash-then-disk');
+    const asset = importFile(service, library.libraryId, source).assets[0]!;
+    service.trashAssets({
+      libraryId: library.libraryId,
+      assetIds: [asset.assetId],
+    });
+    expect(() =>
+      service.deleteAssetsFromDisk({
+        libraryId: library.libraryId,
+        assetIds: [asset.assetId],
+      }),
+    ).toThrow();
+  });
+});
+
 describe('deleteManagedFolderFromDisk (clarification #7 / Serpent-ekj)', () => {
   it('permanently removes the folder tree and assets without leaving trash rows', () => {
     const temp = root();

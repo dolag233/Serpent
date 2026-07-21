@@ -737,6 +737,13 @@ const library: SerpentLibraryApi = Object.freeze({
     return { ok: true, value: { deletedCount: result.deletedCount, skippedCount: result.skippedCount, skippedReasons: result.skippedReasons } };
   },
 
+  async deleteAssetsFromDisk({ libraryId, assetIds }: { libraryId: string; assetIds: string[] }): Promise<LibraryApiResult<{ deletedCount: number }>> {
+    const result = await request({ type: 'asset.delete-from-disk.request', libraryId, assetIds });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'asset.deleted-from-disk') throw new Error('Unexpected delete-from-disk response.');
+    return { ok: true, value: { deletedCount: result.deletedCount } };
+  },
+
   async listTrash({ libraryId }: { libraryId: string }): Promise<LibraryApiResult<AssetSummary[]>> {
     const result = await request({ type: 'trash.list.request', libraryId });
     if (!result.ok) return failure(result);

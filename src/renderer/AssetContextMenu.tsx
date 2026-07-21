@@ -111,6 +111,7 @@ interface AssetContextMenuProps {
   onBatchRemoveFromCollection: (collectionId: string, assetIds: string[]) => void;
   onMoveToFolder: (assetIds: string[]) => void;
   onTrash: (assetIds: string[]) => void;
+  onDeleteFromDisk: (assetIds: string[]) => void;
   onRestore: (assetIds: string[]) => void;
   onPermanentDelete: (assetIds: string[]) => void;
   onRelink: (assetId: string) => void;
@@ -164,6 +165,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
     onBatchRemoveFromCollection,
     onMoveToFolder,
     onTrash,
+    onDeleteFromDisk,
     onRestore,
     onPermanentDelete,
     onRelink,
@@ -692,6 +694,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                   setTagPicker({ mode: "remove", assetIds, single: false }),
                 moveToFolder: onMoveToFolder,
                 moveToTrash: onTrash,
+                deleteFromDisk: onDeleteFromDisk,
                 restore: onRestore,
                 deletePermanent: onPermanentDelete,
                 clearSelection: onClearSelection,
@@ -723,6 +726,9 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
             const clearAiContentItem = resolvedById.get("assets.clear-ai-content");
             const moveToFolderItem = resolvedById.get("assets.move-to-folder");
             const moveToTrashItem = resolvedById.get("assets.move-to-trash");
+            const deleteFromDiskItem = resolvedById.get(
+              "assets.delete-from-disk",
+            );
             const clearSelectionItem = resolvedById.get(
               "assets.clear-selection",
             );
@@ -885,6 +891,18 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                   onAction={() => runMultiCommand("assets.move-to-trash")}
                 />
               )}
+              {deleteFromDiskItem && (
+                <ContextMenuItem
+                  icon={<Icon name="trash" size={14} />}
+                  label={deleteFromDiskItem.label}
+                  danger
+                  disabled={deleteFromDiskItem.disabled}
+                  disabledReason={
+                    deleteFromDiskItem.disabledReason ?? undefined
+                  }
+                  onAction={() => runMultiCommand("assets.delete-from-disk")}
+                />
+              )}
             </ContextMenuSection>
                   </>
                 )}
@@ -934,6 +952,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                 aiAnalyze: onAnalyze,
                 clearAiContent: onClearAiContent,
                 moveToTrash: onTrash,
+                deleteFromDisk: onDeleteFromDisk,
                 moveToFolder: onMoveToFolder,
                 relink: onRelink,
                 restore: onRestore,
@@ -971,6 +990,9 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
             const aiAnalyzeItem = resolvedById.get("asset.ai-analyze");
             const clearAiContentItem = resolvedById.get("asset.clear-ai-content");
             const moveToTrashItem = resolvedById.get("asset.move-to-trash");
+            const deleteFromDiskItem = resolvedById.get(
+              "asset.delete-from-disk",
+            );
             const deleteLinkedItem = resolvedById.get("asset.delete-linked");
             return (
               <>
@@ -1188,6 +1210,20 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                         moveToTrashItem.disabledReason ?? undefined
                       }
                       onAction={() => runAssetCommand("asset.move-to-trash")}
+                    />
+                  )}
+                  {deleteFromDiskItem && (
+                    <ContextMenuItem
+                      icon={<Icon name="trash" size={14} />}
+                      label={deleteFromDiskItem.label}
+                      danger
+                      disabled={deleteFromDiskItem.disabled}
+                      disabledReason={
+                        deleteFromDiskItem.disabledReason ?? undefined
+                      }
+                      onAction={() =>
+                        runAssetCommand("asset.delete-from-disk")
+                      }
                     />
                   )}
                   {deleteLinkedItem && (

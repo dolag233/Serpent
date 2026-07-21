@@ -619,6 +619,11 @@ const assetOperationSuccessSchemas = [
   }),
   z.strictObject({
     ok: z.literal(true),
+    type: z.literal('asset.deleted-from-disk'),
+    deletedCount: z.number().int().nonnegative(),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
     type: z.literal('asset.deleted-linked'),
     deletedCount: z.number().int().nonnegative(),
     failedCount: z.number().int().nonnegative(),

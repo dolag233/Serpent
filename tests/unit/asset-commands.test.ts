@@ -32,6 +32,7 @@ function makeActions(calls: RecordedCall[]): AssetCommandActions {
     rename: record('rename'),
     aiAnalyze: record('aiAnalyze'),
     moveToTrash: record('moveToTrash'),
+    deleteFromDisk: record('deleteFromDisk'),
     moveToFolder: record('moveToFolder'),
     relink: record('relink'),
     restore: record('restore'),
@@ -91,6 +92,7 @@ describe('可见性（与历史内联 JSX 条件一致）', () => {
       'asset.ai-analyze',
       'asset.clear-ai-content',
       'asset.move-to-trash',
+      'asset.delete-from-disk',
     ]);
   });
 
@@ -106,6 +108,7 @@ describe('可见性（与历史内联 JSX 条件一致）', () => {
       'asset.ai-analyze',
       'asset.clear-ai-content',
       'asset.move-to-trash',
+      'asset.delete-from-disk',
     ]);
   });
 
@@ -161,6 +164,7 @@ describe('可见性（与历史内联 JSX 条件一致）', () => {
       'asset.ai-analyze',
       'asset.clear-ai-content',
       'asset.move-to-trash',
+      'asset.delete-from-disk',
     ]);
     const without = makeCtx({ activeCollectionId: null });
     expect(resolveIds(without.ctx)).not.toContain(
@@ -278,6 +282,7 @@ describe('标题与快捷键标签', () => {
     ['asset.rename', '重命名…'],
     ['asset.ai-analyze', 'AI 分析'],
     ['asset.move-to-trash', '移入回收站'],
+    ['asset.delete-from-disk', '从硬盘中删除…'],
     ['asset.delete-linked', '删除链接资产…'],
   ] as const)('%s 标题为「%s」（与历史渲染一致）', (id, expected) => {
     // 用全开 ctx 让每项都可见：deleted 覆盖回收站项，正常 ctx 覆盖其余。
@@ -330,6 +335,7 @@ describe('run 委托到 actions 回调包', () => {
     ['asset.rename', {}, 'rename', ['asset-1']],
     ['asset.ai-analyze', {}, 'aiAnalyze', ['asset-1']],
     ['asset.move-to-trash', {}, 'moveToTrash', [['asset-1']]],
+    ['asset.delete-from-disk', {}, 'deleteFromDisk', [['asset-1']]],
     ['asset.move-to-folder', {}, 'moveToFolder', [['asset-1']]],
     [
       'asset.relink',
@@ -398,7 +404,7 @@ describe('run 委托到 actions 回调包', () => {
 });
 
 describe('注册表完整性', () => {
-  it('13 条定义全部注册且 id 唯一（createCommandRegistry 未抛错）', () => {
+  it('15 条定义全部注册且 id 唯一（createCommandRegistry 未抛错）', () => {
     expect(registry.list().map((def) => def.id)).toEqual([
       'asset.restore',
       'asset.delete-permanent',
@@ -413,6 +419,7 @@ describe('注册表完整性', () => {
       'asset.ai-analyze',
       'asset.clear-ai-content',
       'asset.move-to-trash',
+      'asset.delete-from-disk',
       'asset.delete-linked',
     ]);
   });
@@ -430,6 +437,7 @@ describe('注册表完整性', () => {
       'organize',
       'metadata',
       'metadata',
+      'delete',
       'delete',
     ]);
   });

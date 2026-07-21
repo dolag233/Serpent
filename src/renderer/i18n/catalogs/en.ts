@@ -301,6 +301,7 @@ export const en = {
       aiAnalyze: "AI analyze",
       clearAiContent: "Clear AI info",
       moveToTrash: "Move to Trash",
+      deleteFromDisk: "Delete from disk…",
       moveToFolder: "Move to folder…",
       relink: "Relink asset…",
       relinkAlt: "Relink…",
@@ -319,6 +320,7 @@ export const en = {
       deletePermanent: "Delete permanently ({count})",
       moveToFolder: "Move to folder… ({count})",
       moveToTrash: "Move to Trash ({count})",
+      deleteFromDisk: "Delete from disk… ({count})",
       clearSelection: "Clear selection ({count})",
       assignTag: "Add tags…",
       removeTag: "Remove tags…",
@@ -524,6 +526,8 @@ export const en = {
       body: "Permanently delete \"{name}\" and all of its contents from disk? This cannot be undone.",
       libraryBody:
         "Permanently delete library \"{name}\" from disk? The library folder and all managed files and metadata will be removed. This cannot be undone. Linked folder source directories are not deleted.",
+      assetBody:
+        "Permanently delete the selected {count} assets from disk? This cannot be undone; files will not go to the app Trash.",
       dontShowAgain: "Don't show this again",
       submit: "Delete from disk"
     },
@@ -957,6 +961,8 @@ export const en = {
     folderTrashed: "Moved folder \"{name}\" to Trash ({count} assets).",
     folderTrashFailed: "Failed to move folder to Trash.",
     folderDeletedFromDisk: "Deleted folder \"{name}\" from disk ({count} assets).",
+    assetsDeletedFromDisk: "Deleted {count} assets from disk.",
+    assetsDeleteFromDiskFailed: "Failed to delete assets from disk.",
     folderDeleteFromDiskFailed: "Failed to delete folder from disk.",
     libraryDeletedFromDisk: "Deleted library \"{name}\" from disk.",
     libraryDeleteFailed: "Failed to delete library.",

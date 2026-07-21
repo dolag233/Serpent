@@ -507,6 +507,14 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     assetIds: z.array(identifierSchema).min(1),
   }),
   z.strictObject({
+    type: z.literal('asset.delete-from-disk.request'),
+    libraryId: identifierSchema,
+    assetIds: z.array(identifierSchema).min(1).refine(
+      (assetIds) => new Set(assetIds).size === assetIds.length,
+      { message: 'assetIds must not contain duplicates.' },
+    ),
+  }),
+  z.strictObject({
     type: z.literal('trash.list.request'),
     libraryId: identifierSchema,
   }),
@@ -1084,6 +1092,14 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     type: z.literal('asset.delete-permanent'),
     libraryId: identifierSchema,
     assetIds: z.array(identifierSchema).min(1),
+  }),
+  z.strictObject({
+    type: z.literal('asset.delete-from-disk'),
+    libraryId: identifierSchema,
+    assetIds: z.array(identifierSchema).min(1).refine(
+      (assetIds) => new Set(assetIds).size === assetIds.length,
+      { message: 'assetIds must not contain duplicates.' },
+    ),
   }),
   z.strictObject({
     type: z.literal('asset.delete-linked'),

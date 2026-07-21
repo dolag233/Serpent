@@ -3,27 +3,40 @@ import { Icon } from "./Icons";
 import { iconActionAttrs } from "./icon-action-attrs";
 import { useT } from "./i18n";
 
+export type DiskDeleteBodyKey =
+  | "dialog.diskDelete.body"
+  | "dialog.diskDelete.libraryBody"
+  | "dialog.diskDelete.assetBody";
+
 export interface DiskDeleteConfirmDialogProps {
-  /** Folder or subject display name shown in the body. */
-  subjectName: string;
+  /** Folder / library / subject display name for name-based bodies. */
+  subjectName?: string;
+  /** Asset count for `dialog.diskDelete.assetBody`. */
+  assetCount?: number;
   /** Override body copy; defaults to folder disk-delete wording. */
-  bodyKey?: "dialog.diskDelete.body" | "dialog.diskDelete.libraryBody";
+  bodyKey?: DiskDeleteBodyKey;
   onCancel: () => void;
   onConfirm: (dontShowAgain: boolean) => void;
 }
 
 /**
  * Irreversible "delete from disk" confirmation (clarification #7).
- * Shared by managed/linked-child folder delete and library delete (Serpent-9i8).
+ * Shared by managed/linked-child folder delete, library delete (Serpent-9i8),
+ * and managed asset delete (Serpent-9zc).
  */
 export function DiskDeleteConfirmDialog({
-  subjectName,
+  subjectName = "",
+  assetCount = 0,
   bodyKey = "dialog.diskDelete.body",
   onCancel,
   onConfirm,
 }: DiskDeleteConfirmDialogProps) {
   const t = useT();
   const [dontShowAgain, setDontShowAgain] = useState(false);
+  const bodyParams: Readonly<Record<string, string | number>> =
+    bodyKey === "dialog.diskDelete.assetBody"
+      ? { count: assetCount }
+      : { name: subjectName };
   return (
     <div className="dialog-backdrop" role="presentation">
       <div aria-modal="true" className="create-dialog" role="dialog">
@@ -47,7 +60,7 @@ export function DiskDeleteConfirmDialog({
             lineHeight: 1.6,
           }}
         >
-          {t(bodyKey, { name: subjectName })}
+          {t(bodyKey, bodyParams)}
         </p>
         <label
           className="field-help"

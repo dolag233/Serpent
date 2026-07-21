@@ -31,6 +31,7 @@ function makeActions(calls: RecordedCall[]): AssetMultiCommandActions {
     openRemoveTagPicker: record('openRemoveTagPicker'),
     moveToFolder: record('moveToFolder'),
     moveToTrash: record('moveToTrash'),
+    deleteFromDisk: record('deleteFromDisk'),
     restore: record('restore'),
     deletePermanent: record('deletePermanent'),
     clearSelection: record('clearSelection'),
@@ -92,6 +93,7 @@ describe('可见性（与历史内联 JSX 条件一致）', () => {
       'assets.ai-analyze',
       'assets.clear-ai-content',
       'assets.move-to-trash',
+      'assets.delete-from-disk',
       'assets.clear-selection',
     ]);
   });
@@ -294,6 +296,7 @@ describe('run 委托到 actions 回调包', () => {
     ],
     ['assets.move-to-folder', {}, 'moveToFolder', [['a-1']]],
     ['assets.move-to-trash', {}, 'moveToTrash', [['a-1', 'a-2']]],
+    ['assets.delete-from-disk', {}, 'deleteFromDisk', [['a-1', 'a-2']]],
     ['assets.clear-selection', {}, 'clearSelection', []],
   ] as const)(
     '%s 转调 %s（操作对象与原内联 onAction 一致）',
@@ -321,7 +324,7 @@ describe('run 委托到 actions 回调包', () => {
 });
 
 describe('注册表完整性', () => {
-  it('9 条定义全部注册且 id 唯一（createCommandRegistry 未抛错）', () => {
+  it('10 条定义全部注册且 id 唯一（createCommandRegistry 未抛错）', () => {
     expect(registry.list().map((def) => def.id)).toEqual([
       'assets.restore',
       'assets.delete-permanent',
@@ -331,6 +334,7 @@ describe('注册表完整性', () => {
       'assets.clear-ai-content',
       'assets.move-to-folder',
       'assets.move-to-trash',
+      'assets.delete-from-disk',
       'assets.clear-selection',
     ]);
   });
@@ -344,6 +348,7 @@ describe('注册表完整性', () => {
       'metadata',
       'metadata',
       'metadata',
+      'delete',
       'delete',
       'delete',
     ]);

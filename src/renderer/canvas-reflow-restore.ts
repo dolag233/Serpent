@@ -1,0 +1,138 @@
+/**
+ * REQ-CANVAS-019 / Serpent-32p: schedule scroll compensation after a canvas
+ * width reflow so the previously visible asset set stays on screen.
+ *
+ * Pure scheduling + DOM measure helpers live here so the restore policy
+ * (always re-anchor; prefer the topmost visible card) can be unit-tested
+ * without mounting App.tsx.
+ */
+
+import {
+  captureAnchor,
+  clampScrollOffset,
+  computeAnchorScrollDelta,
+  pickNearestCard,
+  type AnchorCard,
+  type CanvasAnchor,
+  type RectLike,
+} from "./canvas-scroll-anchor";
+
+export type { AnchorCard, CanvasAnchor, RectLike };
+
+/**
+ * Among cards that vertically overlap the viewport, pick the one whose top
+ * edge is closest to the viewport top (then leftmost on ties). Anchoring the
+ * topmost visible card keeps the visible set stable when column count changes
+ * — better than viewport-center nearest for "A/B/C stay in view".
+ */
+export function pickTopmostVisibleCard(
+  cards: readonly AnchorCard[],
+  viewport: RectLike,
+): AnchorCard | null {
+  if (cards.length === 0) return null;
+  const visible = cards.filter(
+    (card) =>
+      card.top + card.height > viewport.top &&
+      card.top < viewport.top + viewport.height,
+  );
+  const pool = visible.length > 0 ? visible : cards;
+  return pool.reduce((best, card) => {
+    if (card.top < best.top - 0.5) return card;
+    if (Math.abs(card.top - best.top) <= 0.5 && card.left < best.left) {
+      return card;
+    }
+    return best;
+  });
+}
+
+export function captureReflowAnchorFromCards(
+  cards: readonly AnchorCard[],
+  viewport: RectLike,
+): CanvasAnchor | null {
+  const topmost = pickTopmostVisibleCard(cards, viewport);
+  if (!topmost) return null;
+  // Anchor to the card's top-center within the viewport so vertical scroll
+  // restores the leading edge of the visible band.
+  const anchorX = topmost.left + topmost.width / 2;
+  const anchorY = Math.min(
+    Math.max(topmost.top, viewport.top),
+    viewport.top + viewport.height,
+  );
+  return captureAnchor(topmost, anchorX, anchorY);
+}
+
+/**
+ * Wait `frameCount` animation frames for layout/React commits to settle, then
+ * nudge scroll so `anchor` lands back at its captured client point.
+ *
+ * Intentionally does **not** bail when scroll drifted during the wait: width
+ * reflow often resets scrollTop (content height flicker / remount), and that
+ * was the CANVAS-021 failure mode. User scroll during ~3 frames is rare; if
+ * it happens, restoring the prior visible set is still the safer product
+ * choice than leaving the viewport on unrelated assets.
+ */
+export function scheduleAnchorRestore(
+  canvas: HTMLElement,
+  anchor: CanvasAnchor | null,
+  frameRef: { current: number | null },
+  frameCount = 3,
+): void {
+  if (frameRef.current !== null) {
+    globalThis.cancelAnimationFrame(frameRef.current);
+    frameRef.current = null;
+  }
+  if (!anchor) return;
+
+  const runAfterFrames = (remaining: number): void => {
+    if (remaining <= 0) {
+      frameRef.current = null;
+      const restored = Array.from(
+        canvas.querySelectorAll<HTMLElement>("[data-asset-id]"),
+      ).find((card) => card.dataset.assetId === anchor.assetId);
+      if (!restored) return;
+      const rect = restored.getBoundingClientRect();
+      const delta = computeAnchorScrollDelta(anchor, rect);
+      const nextLeft = clampScrollOffset(
+        canvas.scrollLeft + delta.deltaX,
+        canvas.scrollWidth,
+        canvas.clientWidth,
+      );
+      const nextTop = clampScrollOffset(
+        canvas.scrollTop + delta.deltaY,
+        canvas.scrollHeight,
+        canvas.clientHeight,
+      );
+      if (nextLeft !== canvas.scrollLeft || nextTop !== canvas.scrollTop) {
+        canvas.scrollLeft = nextLeft;
+        canvas.scrollTop = nextTop;
+      }
+      return;
+    }
+    frameRef.current = globalThis.requestAnimationFrame(() => {
+      runAfterFrames(remaining - 1);
+    });
+  };
+
+  runAfterFrames(frameCount);
+}
+
+/** Cancel a previously scheduled restore (used by App unmount/effects). */
+export function cancelScheduledAnchorRestore(
+  frameRef: { current: number | null },
+): void {
+  if (frameRef.current !== null) {
+    globalThis.cancelAnimationFrame(frameRef.current);
+    frameRef.current = null;
+  }
+}
+
+/** @deprecated Prefer captureReflowAnchorFromCards; kept for card-size pinch path. */
+export function captureNearestCenterAnchor(
+  cards: readonly AnchorCard[],
+  viewport: RectLike,
+  clientX: number,
+  clientY: number,
+): CanvasAnchor | null {
+  const card = pickNearestCard(cards, viewport, clientX, clientY);
+  return card ? captureAnchor(card, clientX, clientY) : null;
+}

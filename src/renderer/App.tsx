@@ -229,12 +229,13 @@ import {
 } from "./masonry-preview-frame";
 import {
   captureAnchor,
-  clampScrollOffset,
-  computeAnchorScrollDelta,
   pickNearestCard,
   type AnchorCard,
-  type CanvasAnchor,
 } from "./canvas-scroll-anchor";
+import {
+  captureReflowAnchorFromCards,
+  scheduleAnchorRestore,
+} from "./canvas-reflow-restore";
 import {
   captureBrowseViewSnapshot,
   resolveBrowseRestoreScroll,
@@ -446,56 +447,6 @@ function MasonryColumns({
       ))}
     </div>
   );
-}
-
-/**
- * REQ-CANVAS-019: waits two frames for a card-size/width-driven reflow to
- * settle, then nudges scroll by the delta needed to keep `anchor` at the
- * same on-screen point it occupied before the reflow. Two frames (not one)
- * because the browser may re-clamp scroll against the new content size
- * before React finishes committing the new layout; the extra frame lets
- * that settle before we measure the anchor card's rect. Bails out if the
- * scroll position was already touched by something else in the meantime
- * (user drag, another scrollTo) so this never fights a newer scroll intent.
- */
-function scheduleAnchorRestore(
-  canvas: HTMLElement,
-  anchor: CanvasAnchor | null,
-  measuredScrollLeft: number,
-  measuredScrollTop: number,
-  frameRef: { current: number | null },
-): void {
-  if (frameRef.current !== null) {
-    window.cancelAnimationFrame(frameRef.current);
-    frameRef.current = null;
-  }
-  if (!anchor) return;
-  frameRef.current = window.requestAnimationFrame(() => {
-    frameRef.current = window.requestAnimationFrame(() => {
-      frameRef.current = null;
-      const clampedTop = clampScrollOffset(
-        measuredScrollTop,
-        canvas.scrollHeight,
-        canvas.clientHeight,
-      );
-      const clampedLeft = clampScrollOffset(
-        measuredScrollLeft,
-        canvas.scrollWidth,
-        canvas.clientWidth,
-      );
-      if (canvas.scrollTop !== clampedTop || canvas.scrollLeft !== clampedLeft) {
-        return;
-      }
-      const restored = Array.from(
-        canvas.querySelectorAll<HTMLElement>("[data-asset-id]"),
-      ).find((card) => card.dataset.assetId === anchor.assetId);
-      if (!restored) return;
-      const rect = restored.getBoundingClientRect();
-      const delta = computeAnchorScrollDelta(anchor, rect);
-      canvas.scrollLeft += delta.deltaX;
-      canvas.scrollTop += delta.deltaY;
-    });
-  });
 }
 
 function AppInner() {
@@ -756,6 +707,10 @@ function AppInner() {
   const [permanentDeleteDialog, setPermanentDeleteDialog] = useState<
     string[] | null
   >(null);
+  /** Serpent-9zc: pending irreversible managed-asset disk delete. */
+  const [assetDiskDeleteIds, setAssetDiskDeleteIds] = useState<string[] | null>(
+    null,
+  );
   /** Serpent-9i8: pending irreversible library root deletion. */
   const [libraryDiskDeletePending, setLibraryDiskDeletePending] = useState(false);
   const [restoreDialog, setRestoreDialog] = useState<{
@@ -1226,16 +1181,9 @@ function AppInner() {
         : null;
 
       setCanvasPrefs((p) => ({ ...p, cardSize: nextSize }));
-      // 测量时刻的滚动位置：两帧后的锚点补偿只能覆盖「浏览器钳制」这一种
-      // 位移。若期间出现其它滚动意图（用户拖滚动条、脚本 scrollTo），补偿
-      // 必须作废，否则会把更新的滚动位置强行拉回到旧锚点。
-      scheduleAnchorRestore(
-        root,
-        anchorState,
-        root.scrollLeft,
-        root.scrollTop,
-        cardSizeRestoreFrameRef,
-      );
+      // Serpent-32p: always re-anchor after settle; width/size reflow may reset
+      // scrollTop mid-wait, and bailing left the visible set wrong.
+      scheduleAnchorRestore(root, anchorState, cardSizeRestoreFrameRef);
     },
     [assetCardSize],
   );
@@ -1273,22 +1221,16 @@ function AppInner() {
       lastWidth = width;
 
       const rootRect = canvas.getBoundingClientRect();
-      const anchorX = rootRect.left + rootRect.width / 2;
-      const anchorY = rootRect.top + rootRect.height / 2;
       const cards: AnchorCard[] = Array.from(
         canvas.querySelectorAll<HTMLElement>("[data-asset-id]"),
-      ).map((el) => ({ assetId: el.dataset.assetId!, ...el.getBoundingClientRect() }));
-      const anchorCard = pickNearestCard(cards, rootRect, anchorX, anchorY);
-      const anchorState = anchorCard
-        ? captureAnchor(anchorCard, anchorX, anchorY)
-        : null;
-      scheduleAnchorRestore(
-        canvas,
-        anchorState,
-        canvas.scrollLeft,
-        canvas.scrollTop,
-        reflowRestoreFrameRef,
-      );
+      ).map((el) => ({
+        assetId: el.dataset.assetId!,
+        ...el.getBoundingClientRect(),
+      }));
+      // Prefer topmost visible card so the leading visible set (A/B/C) stays
+      // after column-count changes — center-nearest jumped too easily.
+      const anchorState = captureReflowAnchorFromCards(cards, rootRect);
+      scheduleAnchorRestore(canvas, anchorState, reflowRestoreFrameRef);
     });
     observer.observe(canvas);
     return () => observer.disconnect();
@@ -3084,6 +3026,7 @@ function AppInner() {
     batchAddSelectionToCollection,
     batchRemoveSelectionFromCollection,
     trashManagedAssets,
+    deleteManagedAssetsFromDisk,
     copyManagedSelectionToLinked,
   } = useBatchActions({
     api: api ?? null,
@@ -4454,6 +4397,23 @@ function AppInner() {
     }
   }
 
+  function requestAssetDiskDelete(assetIds: string[]) {
+    if (assetIds.length === 0) return;
+    if (!isDiskDeletePromptEnabled()) {
+      void deleteManagedAssetsFromDisk(assetIds);
+      return;
+    }
+    setAssetDiskDeleteIds(assetIds);
+  }
+
+  async function confirmAssetDiskDelete(dontShowAgain: boolean) {
+    if (!assetDiskDeleteIds) return;
+    if (dontShowAgain) setDiskDeletePromptEnabled(false);
+    const assetIds = assetDiskDeleteIds;
+    setAssetDiskDeleteIds(null);
+    await deleteManagedAssetsFromDisk(assetIds);
+  }
+
   async function purgeTrash() {
     if (!api || !library) return;
     setUiState("loading");
@@ -4926,7 +4886,10 @@ function AppInner() {
     return {
       assetRenameOpen: Boolean(assetRenameDialog),
       permanentDeleteOpen: Boolean(permanentDeleteDialog),
-      diskDeleteOpen: Boolean(diskDeleteTarget) || libraryDiskDeletePending,
+      diskDeleteOpen:
+        Boolean(diskDeleteTarget) ||
+        libraryDiskDeletePending ||
+        Boolean(assetDiskDeleteIds),
       deleteLinkedOpen: Boolean(deleteLinkedDialog),
       batchRelinkOpen: Boolean(batchRelinkPreview),
       restoreOpen: Boolean(restoreDialog),
@@ -4951,6 +4914,7 @@ function AppInner() {
     permanentDeleteDialog,
     diskDeleteTarget,
     libraryDiskDeletePending,
+    assetDiskDeleteIds,
     deleteLinkedDialog,
     batchRelinkPreview,
     restoreDialog,
@@ -4981,6 +4945,7 @@ function AppInner() {
     cancelDiskDelete: () => {
       cancelDiskDelete();
       setLibraryDiskDeletePending(false);
+      setAssetDiskDeleteIds(null);
     },
     setDeleteLinkedDialog,
     setRestoreDialog,
@@ -5012,6 +4977,7 @@ function AppInner() {
       permanentDeleteDialog ||
       diskDeleteTarget ||
       libraryDiskDeletePending ||
+      assetDiskDeleteIds ||
       deleteLinkedDialog ||
       batchRelinkPreview ||
       restoreDialog ||
@@ -5172,6 +5138,9 @@ function AppInner() {
       dialog ||
       conflicts ||
       permanentDeleteDialog ||
+      diskDeleteTarget ||
+      libraryDiskDeletePending ||
+      assetDiskDeleteIds ||
       deleteLinkedDialog ||
       batchRelinkPreview ||
       restoreDialog ||
@@ -7641,6 +7610,16 @@ function AppInner() {
           onConfirm={(dontShowAgain) => confirmDiskDelete(dontShowAgain)}
         />
       )}
+      {assetDiskDeleteIds && (
+        <DiskDeleteConfirmDialog
+          bodyKey="dialog.diskDelete.assetBody"
+          assetCount={assetDiskDeleteIds.length}
+          onCancel={() => setAssetDiskDeleteIds(null)}
+          onConfirm={(dontShowAgain) => {
+            void confirmAssetDiskDelete(dontShowAgain);
+          }}
+        />
+      )}
       {libraryDiskDeletePending && library && (
         <DiskDeleteConfirmDialog
           bodyKey="dialog.diskDelete.libraryBody"
@@ -7835,6 +7814,9 @@ function AppInner() {
           })
         }
         onTrash={(assetIds) => { void trashManagedAssets(assetIds); }}
+        onDeleteFromDisk={(assetIds) => {
+          requestAssetDiskDelete(assetIds);
+        }}
         onRestore={(assetIds) =>
           setRestoreDialog({
             assetIds,

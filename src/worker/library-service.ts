@@ -12601,6 +12601,56 @@ export class LibraryService {
     }
   }
 
+  /**
+   * Clarification #7 / Serpent-9zc: permanently delete active managed assets
+   * from disk (not via app trash). Irreversible; shares confirm preference
+   * with folder disk-delete.
+   */
+  deleteAssetsFromDisk(input: {
+    libraryId: string;
+    assetIds: string[];
+  }): { deletedCount: number } {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    const assetIds = input.assetIds;
+    if (assetIds.length === 0 || new Set(assetIds).size !== assetIds.length) {
+      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+    }
+
+    const rows = openLibrary.connection
+      .prepare(
+        `SELECT asset_id, relative_file_path
+           FROM assets
+          WHERE asset_id IN (${assetIds.map(() => '?').join(',')})
+            AND location_kind = 'managed'
+            AND deleted_at IS NULL`,
+      )
+      .all(...assetIds) as Array<{
+        asset_id: string;
+        relative_file_path: string;
+      }>;
+
+    if (rows.length !== assetIds.length) {
+      for (const id of assetIds) {
+        const exists = openLibrary.connection
+          .prepare(
+            'SELECT asset_id, location_kind, deleted_at FROM assets WHERE asset_id = ?',
+          )
+          .get(id) as
+          | { asset_id: string; location_kind: string; deleted_at: string | null }
+          | undefined;
+        if (!exists) throw new LibraryServiceError('ASSET_NOT_FOUND');
+        if (exists.location_kind !== 'managed' || exists.deleted_at !== null) {
+          throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+        }
+      }
+      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+    }
+
+    return {
+      deletedCount: this.deleteActiveManagedAssetsFromDisk(openLibrary, assetIds),
+    };
+  }
+
   deleteAssetsPermanent(input: {
     libraryId: string;
     assetIds: string[];

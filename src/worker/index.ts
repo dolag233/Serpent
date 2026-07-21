@@ -619,6 +619,10 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
       const { deletedCount, skippedCount, skippedReasons } = libraryService.deleteAssetsPermanent(request.command);
       return { ok: true, type: 'asset.deleted-permanent', deletedCount, skippedCount, skippedReasons };
     }
+    case 'asset.delete-from-disk': {
+      const { deletedCount } = libraryService.deleteAssetsFromDisk(request.command);
+      return { ok: true, type: 'asset.deleted-from-disk', deletedCount };
+    }
     case 'asset.delete-linked': {
       const { deletedCount, failedCount, failures } = await libraryService.deleteLinkedAssets(request.command);
       return { ok: true, type: 'asset.deleted-linked', deletedCount, failedCount, failures };

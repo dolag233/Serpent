@@ -1177,6 +1177,12 @@ async function commandFor(
         libraryId: request.libraryId,
         assetIds: request.assetIds,
       };
+    case "asset.delete-from-disk.request":
+      return {
+        type: "asset.delete-from-disk",
+        libraryId: request.libraryId,
+        assetIds: request.assetIds,
+      };
     case "trash.list.request":
       return { type: "asset.list-trash", libraryId: request.libraryId };
     case "trash.purge.request":

@@ -23,6 +23,7 @@ export interface AssetMultiCommandActions {
   readonly openRemoveTagPicker: (assetIds: string[]) => void;
   readonly moveToFolder: (assetIds: string[]) => void;
   readonly moveToTrash: (assetIds: string[]) => void;
+  readonly deleteFromDisk: (assetIds: string[]) => void;
   readonly restore: (assetIds: string[]) => void;
   readonly deletePermanent: (assetIds: string[]) => void;
   readonly clearSelection: () => void;
@@ -148,6 +149,20 @@ export const assetMultiCommandDefinitions: readonly AssetMultiCommandDefinition[
           ? t(ctx, 'command.reason.noManaged')
           : null,
       run: (ctx) => ctx.actions.moveToTrash([...ctx.managedAssetIds]),
+    },
+    {
+      id: 'assets.delete-from-disk',
+      title: (ctx) =>
+        t(ctx, 'command.assets.deleteFromDisk', {
+          count: ctx.managedCount,
+        }),
+      group: 'delete',
+      visible: (ctx) => !ctx.trashedAll,
+      disabledReason: (ctx) =>
+        ctx.managedCount === 0
+          ? t(ctx, 'command.reason.noManaged')
+          : null,
+      run: (ctx) => ctx.actions.deleteFromDisk([...ctx.managedAssetIds]),
     },
     // ---- 选择管理：两个分支都渲染，视觉上位于菜单末尾 ----
     {

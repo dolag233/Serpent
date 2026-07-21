@@ -291,6 +291,7 @@ export const zhCN = {
       aiAnalyze: "AI 分析",
       clearAiContent: "清除 AI 信息",
       moveToTrash: "移入回收站",
+      deleteFromDisk: "从硬盘中删除…",
       moveToFolder: "移动到文件夹…",
       relink: "找回资产…",
       relinkAlt: "重新指定链接…",
@@ -309,6 +310,7 @@ export const zhCN = {
       deletePermanent: "永久删除（{count} 项）",
       moveToFolder: "移动到文件夹…（{count} 项）",
       moveToTrash: "移入回收站（{count} 项）",
+      deleteFromDisk: "从硬盘中删除…（{count} 项）",
       clearSelection: "清除选择（{count} 项）",
       assignTag: "添加标签…",
       removeTag: "移除标签…",
@@ -514,6 +516,8 @@ export const zhCN = {
       body: "确定要从硬盘永久删除「{name}」及其全部内容吗？此操作不可恢复。",
       libraryBody:
         "确定要从硬盘永久删除资源库「{name}」吗？将删除该库文件夹中的全部托管文件与元数据，此操作不可恢复。链接文件夹的源目录不会被删除。",
+      assetBody:
+        "确定要从硬盘永久删除所选 {count} 项资产吗？此操作不可恢复，文件不会进入应用回收站。",
       dontShowAgain: "不再显示此提示",
       submit: "从硬盘中删除"
     },
@@ -944,6 +948,8 @@ export const zhCN = {
     folderTrashed: "已将文件夹「{name}」移入回收站（{count} 项资产）。",
     folderTrashFailed: "文件夹移入回收站失败。",
     folderDeletedFromDisk: "已从硬盘删除文件夹「{name}」（{count} 项资产）。",
+    assetsDeletedFromDisk: "已从硬盘删除 {count} 项资产。",
+    assetsDeleteFromDiskFailed: "从硬盘删除资产失败。",
     folderDeleteFromDiskFailed: "从硬盘删除文件夹失败。",
     libraryDeletedFromDisk: "已从硬盘删除资源库「{name}」。",
     libraryDeleteFailed: "删除资源库失败。",

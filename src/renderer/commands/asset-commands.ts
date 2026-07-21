@@ -23,6 +23,7 @@ export interface AssetCommandActions {
   readonly aiAnalyze: (assetId: string) => void;
   readonly clearAiContent?: (assetIds: string[]) => void;
   readonly moveToTrash: (assetIds: string[]) => void;
+  readonly deleteFromDisk: (assetIds: string[]) => void;
   readonly moveToFolder: (assetIds: string[]) => void;
   readonly relink: (assetId: string) => void;
   readonly restore: (assetIds: string[]) => void;
@@ -218,6 +219,18 @@ export const assetCommandDefinitions: readonly AssetCommandDefinition[] = [
         ? null
         : t(ctx, 'command.reason.managedUnavailableTrash'),
     run: (ctx) => withPrimaryAsset(ctx, (id) => ctx.actions.moveToTrash([id])),
+  },
+  {
+    id: 'asset.delete-from-disk',
+    title: (ctx) => t(ctx, 'command.asset.deleteFromDisk'),
+    group: 'delete',
+    visible: (ctx) => !ctx.assetDeleted && ctx.locationKind === 'managed',
+    disabledReason: (ctx) =>
+      ctx.assetAvailable
+        ? null
+        : t(ctx, 'command.reason.managedUnavailableTrash'),
+    run: (ctx) =>
+      withPrimaryAsset(ctx, (id) => ctx.actions.deleteFromDisk([id])),
   },
   {
     id: 'asset.delete-linked',

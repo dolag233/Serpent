@@ -27,6 +27,7 @@ export interface UseBatchActionsResult {
   batchAddSelectionToCollection: (collectionId: string, assetIds: string[]) => Promise<void>;
   batchRemoveSelectionFromCollection: (collectionId: string, assetIds: string[]) => Promise<void>;
   trashManagedAssets: (assetIds: string[]) => Promise<void>;
+  deleteManagedAssetsFromDisk: (assetIds: string[]) => Promise<void>;
   copyManagedSelectionToLinked: (folder: LinkedFolderSummary, assetIds: string[]) => Promise<void>;
 }
 
@@ -234,6 +235,35 @@ export function useBatchActions({
     }
   }
 
+  async function deleteManagedAssetsFromDisk(assetIds: string[]) {
+    if (!api || !library || assetIds.length === 0) return;
+    setUiState("loading");
+    try {
+      const result = await api.deleteAssetsFromDisk({
+        libraryId: library.libraryId,
+        assetIds,
+      });
+      if (!result.ok) throw new LibraryOperationError(result.error);
+      setNotice(
+        translateForLocale(locale, "toast.assetsDeletedFromDisk", {
+          count: result.value.deletedCount,
+        }),
+      );
+      clearAssetSelection();
+      await reloadCurrentContent();
+    } catch (caught) {
+      setError(
+        toMessage(
+          caught,
+          translateForLocale(locale, "toast.assetsDeleteFromDiskFailed"),
+          locale,
+        ),
+      );
+    } finally {
+      setUiState("ready");
+    }
+  }
+
   async function copyManagedSelectionToLinked(
     folder: LinkedFolderSummary,
     assetIds: string[],
@@ -283,6 +313,7 @@ export function useBatchActions({
     batchAddSelectionToCollection,
     batchRemoveSelectionFromCollection,
     trashManagedAssets,
+    deleteManagedAssetsFromDisk,
     copyManagedSelectionToLinked,
   };
 }
