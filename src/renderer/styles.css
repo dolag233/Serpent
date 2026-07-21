@@ -88,6 +88,9 @@
     "Microsoft YaHei",
     sans-serif;
   text-rendering: auto;
+  /* Windows-only: one step heavier baseline to counteract thin DirectWrite
+     stems. Gated by data-platform=windows (set in applyRendererPlatform). */
+  font-weight: 500;
 }
 
 /* REQ-THEME-001/002: light semantic token overrides. Prefer changing tokens
@@ -6012,6 +6015,66 @@ select.ai-config-input.ai-config-languages {
     .filter-tag-section-label
   ) {
   letter-spacing: 0.02em;
+}
+
+/* Windows-only weight bump: raise common chrome text ~one step.
+   Must stay under :root[data-platform="windows"] — never apply on macOS. */
+:root[data-platform="windows"] :where(
+    input,
+    textarea,
+    select,
+    button,
+    label,
+    summary,
+    .micro-label,
+    .nav-section-heading,
+    .nav-count,
+    .nav-empty,
+    .nav-row,
+    .tool-button,
+    .compact-action,
+    .primary-button,
+    .secondary-button,
+    .tiny-action,
+    .library-switcher-trigger,
+    .library-switcher-section-label,
+    .scope-crumb-button,
+    .workspace-title,
+    .inspector-section-label,
+    .inspector-status-row,
+    .inspector-identity,
+    .inspector-identity-name,
+    .metadata-list dt,
+    .metadata-list dd,
+    .context-menu-item,
+    .context-menu-item-shortcut,
+    .context-menu-section-label,
+    .context-menu-scope-note,
+    .filter-tag-chip,
+    .filter-tag-section-label,
+    .filter-tag-options button,
+    .filter-preset-chip,
+    .search-control,
+    .search-snippet,
+    .ai-search-plan-summary,
+    .asset-card,
+    .empty-state,
+    .dialog-title,
+    .dialog-body,
+    .toast,
+    .hover-tip
+  ) {
+  font-weight: 550;
+}
+
+:root[data-platform="windows"] :where(
+    .inspector-badge,
+    .inspector-identity strong,
+    .dialog-title,
+    .primary-button,
+    .workspace-title
+  ) {
+  font-weight: 650;
 }
 
 /* Task progress bar — determinate and indeterminate.
