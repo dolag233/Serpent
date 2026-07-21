@@ -7,8 +7,11 @@
  * template keeps Edit/File/Window roles (copy/paste, quit, …) and a View
  * submenu that intentionally omits page-zoom roles.
  *
+ * Serpent-r7gu: Windows has no native menu bar — capabilities live in-app
+ * (library menu, context menus, commands). macOS keeps the system menu.
+ *
  * Pure data — Main installs via Menu.buildFromTemplate; unit tests assert
- * the zoom roles stay absent.
+ * the zoom roles stay absent and Windows stays menu-less.
  */
 
 export type ApplicationMenuPlatform = "darwin" | "linux" | "win32";
@@ -46,6 +49,17 @@ export type ApplicationMenuTemplateOptions = {
 };
 
 const PAGE_ZOOM_ROLES = new Set(["zoomIn", "zoomOut", "resetZoom"]);
+
+/**
+ * Windows: hide the native top menu bar (Serpent-r7gu / Serpent-j5x).
+ * macOS: keep a real application menu (system convention).
+ * linux: keep a menu for now (not in the Windows product ask).
+ */
+export function shouldInstallApplicationMenu(
+  platform: ApplicationMenuPlatform,
+): boolean {
+  return platform !== "win32";
+}
 
 export function collectApplicationMenuRoles(
   items: readonly ApplicationMenuItemTemplate[],

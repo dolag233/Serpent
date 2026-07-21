@@ -160,7 +160,7 @@
 | FILTER-024 | 颜色色块选中框更细、间距更大 | 人类验收通过 | 打开颜色过滤，多选相邻色 | 选中环约 2px、色块间距更疏、无放大粘连 | `Serpent-aj6` | 2026-07-19 用户确认通过。 |
 | FILTER-025 | 维度按钮悬停与启用态可区分 | 人类验收通过 | 启用「颜色」过滤；再仅悬停「标签」打开设置（不启用） | 启用态= accent-soft；仅 hover/打开设置=中性弱底，二者不可同色 | `Serpent-49f` / [证据](evidence/2026-07-19-acceptance/filter-025-hover-vs-active.png) | 2026-07-19 用户确认通过（`is-open`≠启用色）。 |
 | INSPECT-011 | 描述框默认高度对齐作者/原链接 | 人类验收通过 | 打开 Inspector，空/单行描述与作者、原链接对照 | 空/单行描述框高度接近作者/原链接单行输入 | `Serpent-goe` / [autogrow](../../tests/unit/inspector-description-autogrow.test.ts) | 2026-07-19 用户确认通过。 |
-| TOAST-001 | 亮色主题警告 toast 可读 | 待人类验收 | 亮色主题下触发一条警告/错误 toast（如拖入无效链接） | 琥珀/橙统一色系，图标与文字同色，无米色底撞蓝橙 | `Serpent-k9g` / [证据](evidence/2026-07-19-acceptance/light-theme-warning-ugly.png) | 2026-07-19 用户：稍后有机会再验收。 |
+| THEME-012 | 警告/错误 toast 统一琥珀系 | 待人类验收 | 亮色与暗色下各触发一条 warning 与 error toast（如拖入无效链接） | 图标、文字、关闭钮均为 warning 琥珀系；无蓝色 accent 撞色；亮色无米色底+蓝图标 | `Serpent-4ojz` / 原 `Serpent-k9g` / [审计](2026-07-21-theme-style-shortcut-audit.md) / [旧证据](evidence/2026-07-19-acceptance/light-theme-warning-ugly.png) | 2026-07-19 曾记为 TOAST-001（与另一 TOAST-001 撞 ID）；2026-07-21 警告 toast 亦改走 warning token，请复验。 |
 | SETTINGS-001 | 设置面板提示文字更小更淡 | 待人类验收 | 打开通用设置（主题/语言/画布等），看各段说明文案 | 提示约 10px、tertiary 淡色，弱于主标签 | `.app-settings-hint` | 2026-07-19 随 FILTER-023 附带反馈一并调整。 |
 | FILTER-018 | 标签过滤默认列表：常用 + 最近筛选；无大块空白 | 人类验收通过 | 打开有多标签的资源库；悬停「标签」；用某标签过滤后再打开面板 | 面板显示「最近筛选」（最近用于过滤的标签，即使也是常用标签也在此组）与「常用标签」；候选项为紧凑 chip 流式排布（非一行一标签）；开始输入后仍能搜索 | [开发日志](../development/2026-07-19-tag-filter-layout-development-log.md) / `Serpent-e3e` / [suggestions 单测](../../tests/unit/tag-filter-suggestions.test.ts) | 2026-07-20 用户确认通过。附带严重缺陷：工具栏应用标签过滤会清空文件夹选中 → 结果为空，见 `Serpent-w9c6`。 |
 | SEARCH-005 | 搜索激活指示与一键清除                | 人类验收通过   | 在搜索框输入关键词；观察「正在搜索：…」；点输入框内 ×                              | 有搜索词时显示状态 chip；×（一键清除）清空搜索词并恢复浏览（过滤条件可保留）                   | 工单 Serpent-kvz                                                                                                                                                                                                         | 2026-07-18 用户验收通过（CU-D4）。「一键清除」= 搜索框内的 ×。                                                                                                                               |
@@ -327,7 +327,8 @@
 - 2026-07-20 F8 AI 分析输出：实现后待人类验收 AICFG-006、AICFG-007、INSPECT-AI-002（`Serpent-1us6`；决议见 `docs/development/2026-07-20-f8-ai-analysis-design-decisions.md`）。
 - 2026-07-20 AI 反馈后续：心跳断连态 `Serpent-rsbt`；Inspector AI 并入普通字段 `Serpent-4z79`（等下做）。本回合已修：连接 probe、配置 UI、单语言、保存逻辑、描述尾巴、分析中条、评分芯片。
 - 2026-07-20 AI 自定义模型：按 CC Switch `apiFormat`（Chat Completions / Responses / Messages / Gemini Native）与语言多选下拉纠正；AICFG-002 待人类验收（`Serpent-2d5q` / `Serpent-uiou`）。
-- 2026-07-19 晚间反馈：查看页视频逐帧/`Ctrl±2s`（已实现待验 VIEWER-018）、滚轮指针缩放、切图 mip 式加载、亮色面包屑 hover、无库态可选已有库（已实现待验 LIB-016）仍待人类验收；查看页加载焦虑文案不通过（`VIEWER-014` → 修复 `Serpent-xkzf`）；视频缩放见 `VIEWER-013`；SVG 预览为 MVP 后。工单见需求池「2026-07-19 晚间反馈」。
+- 2026-07-19 晚间反馈：查看页视频逐帧/`Ctrl±2s`（已实现待验 VIEWER-018）、滚轮指针缩放、切图 mip 式加载、无库态可选已有库（已实现待验 LIB-016）仍待人类验收；亮色面包屑 hover 已通过（NAV-006 / `Serpent-xwi1`）；查看页加载焦虑文案不通过（`VIEWER-014` → 修复 `Serpent-xkzf`）；视频缩放见 `VIEWER-013`；SVG 预览为 MVP 后。工单见需求池「2026-07-19 晚间反馈」。
+- 2026-07-21 主题/风格/快捷键审计（`Serpent-4ojz`）部分收口：THEME-012–015 待人类验收；Windows 去顶栏 SHELL-024-windows 待真机；文件夹 Windows 快捷键仍见 `Serpent-vf8x`；冲突下拉剩余见 `Serpent-p1rm`。[审计 punch-list](2026-07-21-theme-style-shortcut-audit.md)。
 - 2026-07-16 MVP UI/UX 需求池：0015–0018 未全部完成；`38fa873`、`591f524`、`64521c3`、`197ea9e`、`e2d5d60` 的部分实现已进入当前集成基线，0018 Label 退役/Inspector 标签与 0019 产品正确性已进入实现 `5b8b8fe`。SHELL-001–003、MENU-014、COMMAND-001 已于 2026-07-17 人类验收通过；其余相关条目仍为 TAG-006–008、CANVAS-007–009、INSPECT-001–004、MENU-013、SELECT-007 等。
 - 文件夹浏览：画布尚不显示子文件夹卡片、内容封面和统一目录计数；“包含子文件夹资产”尚无正式 UI。
 - 文件操作：资产菜单已具备外部打开、在 Finder/Explorer 显示、复制文件路径（2026-07-17，协议单测绿、Computer Use 未执行）与重命名真实文件（2026-07-17 第二增量，全链路 + E2E 3/3，见 MENU-015）；文件夹菜单已具备新建子文件夹与重命名真实目录（2026-07-17 第三增量，全链路 + worker 10/10 + E2E 4/4，见 MENU-016/MENU-017）；仍缺资产其他应用打开方式选择、复制/粘贴，文件夹复制/粘贴/克隆/移动/删除（#5/#7 待裁决），链接文件夹菜单动作。
@@ -426,6 +427,7 @@
 | 2026-07-21 | DEV-001 启动黑屏/端口 | 人类验收通过 | 用户确认端口冲突黑屏修复与 `start:multi` 可用。 | `Serpent-i6xg` / `scripts/dev-start.mjs` |
 | 2026-07-21 | AI 失败/语言/Toast/进度 | 部分通过 | JOBS-003 / SHELL-011 通过；AICFG-011 描述过短不通过；JOBS-004 UI/停止不通过。附带：误弹搜索 toast、toast 顶掉、AI 重试弹窗、递归标签过滤、查看页手势。 | `Serpent-iokf`/`qpy8` 通过；`sbnt`/`k3dw` 重开；新单 `huvw`/`99lv`/`kdnm`/`5cvr`/`4kg3`。 |
 | 2026-07-21 | JOBS-006 AI 连接失败弹窗 | 待人类验收 | 连接类失败自动重试 3 次后弹一次 Retry/Abort；非连接类（如 AI_INVALID_RESPONSE）不弹。 | `Serpent-kdnm` |
+| 2026-07-21 | `Serpent-4ojz` / `Serpent-r7gu` 主题审计部分收口 + Win 去菜单 | 待人类验收 | 警告 toast 琥珀统一、浮层阴影分主题、播放错误条/冲突下拉 token 化；Windows `Menu.setApplicationMenu(null)`；共享快捷键表。 | THEME-012–015 / SHELL-024-windows；[审计](2026-07-21-theme-style-shortcut-audit.md)；**不声称 Windows 人类通过**。 |
 ### 第五批收口（过滤/导航/排序/Inspector）
 
 | FILTER-019 | 排除过滤红色高亮 | 人类验收通过 | 启用颜色/标签等过滤后勾选排除 | 对应维度按钮呈红色高亮，与包含态区分 | [开发日志](../development/2026-07-19-filter-nav-inspect-polish-development-log.md) / Serpent-8s8 | 2026-07-19 用户确认通过。附带：暗色下红色偏艳 → 降饱和打磨工单。 |
@@ -473,6 +475,10 @@
 | MEDIA-002 | 视频缩略图不依赖本机自装 FFmpeg | 待人类验收 | 导入 MP4/MOV；观察卡片缩略图；再悬停预览；若曾失败可刷新或重开库 | 卡片有可解码封面/缩略图；hover 可播；失败提示不再要求用户「自行安装 FFmpeg」 | `Serpent-ehss` / [binary-resolver 单测](../../tests/unit/binary-resolver.test.ts) | 2026-07-20：dev/packaged 解析 `resources/ffmpeg`；Main 向 Worker 注入绝对路径。需重启应用后复验已失败条目。 |
 | FILTER-019b | 工具栏标签过滤保留文件夹浏览上下文 | 待人类验收 | 进入某文件夹；工具栏应用标签过滤；看侧栏文件夹高亮、面包屑与结果 | 文件夹仍为当前范围；侧栏高亮不丢；有标签的资产仍能列出（非空因误清范围） | `Serpent-w9c6` / [单测](../../tests/unit/folder-browse-tag-filter.test.ts) | 2026-07-20：工具栏标签不再写入 activeTagId。 |
 | THEME-011 | 亮色主题拖入文件叠加层 | 人类验收通过 | 亮色主题下拖文件到画布 | 叠加层为亮色 canvas 洗色，非暗色半透明黑底 | `Serpent-5vex` | 2026-07-20 用户确认通过。 |
+| THEME-013 | 亮色浮层阴影与暗色区分 | 待人类验收 | 亮色主题：打开资源库菜单、过滤面板、创建库对话框；对照暗色 | 亮色阴影更轻（非厚重黑晕）；暗色仍清晰分层；表面仍为 token | `Serpent-4ojz` / [审计](2026-07-21-theme-style-shortcut-audit.md) | 2026-07-21：`--shadow-*` 分主题。 |
+| THEME-014 | 查看页播放错误条随主题 | 待人类验收 | 亮色主题打开视频查看页并触发播放错误条（若可） | 错误条为 warning 语义底，非固定深棕块；文字可读 | `Serpent-4ojz` / `.preview-playback-error` | 2026-07-21：去掉硬编码 `rgb(68 53 44)`。 |
+| THEME-015 | 导入冲突下拉与壳层控件同形 | 待人类验收 | 触发导入冲突窗；看两个决策下拉；对照旁 secondary 按钮 | 高度约 28px、圆角 6px、raised 底；亮/暗均一致 | `Serpent-4ojz` / `Serpent-p1rm` | 2026-07-21：对齐 `--shell-control-height`；原生 select 外观剩余见 p1rm。 |
+| SHELL-024-windows | Windows 无原生顶部菜单栏 | 待人类验收 | 在 **Windows** 上启动 Serpent；看窗口标题栏下方；再用 macOS 对照 | Windows 无 File/Edit/View 顶栏；库/右键/命令仍可达；macOS 菜单仍在 | `Serpent-r7gu` / [菜单单测](../../tests/unit/application-menu.test.ts) | 2026-07-21 代码完成：`win32` → `Menu.setApplicationMenu(null)`。**勿标 Windows 人类通过直至真机。** |
 | INSPECT-012 | Inspector 竖图预览居中、圆角与标题可读 | 人类验收通过 | ① 单选竖图：预览相对右侧栏水平居中、圆角；文件名含 `jpg` 等下伸字母完整可见；文件名与「标签」分区无重叠。② 多选多张竖图：堆叠预览下方文件名始终可见 | 单选居中+圆角；标题 descender 不裁切；文件名不盖住标签行；多选标题在堆叠下方可见 | `Serpent-hhy0` / `Serpent-6uyp` | 2026-07-20 用户确认通过（含文件名/标签重叠修复复验）。 |
 | VIEWER-015 | 查看页全屏按钮可退出且图标切换 | 人类验收通过 | 打开图片/视频查看；点全屏；再点同一按钮；观察图标 | 第二次退出全屏；进入/退出图标不同 | `Serpent-oc2z` | 2026-07-20 用户确认通过。附带：适应窗口与退出全屏易混淆 → `VIEWER-016` / `Serpent-l7fu`。 |
 | VIEWER-016 | 适应窗口图标与退出全屏可区分 | 人类验收通过 | 打开查看页；对照底部「适应」与全屏后「退出全屏」图标 | 适应=外框+十字；退出全屏=四角内折；二者一眼可辨 | `Serpent-l7fu` / `fit-window` | 2026-07-20 用户确认通过。 |

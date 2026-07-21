@@ -60,6 +60,12 @@
   /* Legacy alias: several components referenced --border before any token
      existed (their borders silently rendered as none). */
   --border: var(--divider);
+  /* Elevation shadows: one family for menus / dialogs / panels so light
+     theme does not inherit the heavy dark-theme black wash (Serpent-4ojz). */
+  --shadow-menu: 0 8px 24px rgb(0 0 0 / 28%);
+  --shadow-elevated: 0 24px 70px rgb(0 0 0 / 42%);
+  --shadow-panel: 0 16px 40px rgb(0 0 0 / 42%);
+  --shadow-toast: 0 12px 32px rgb(0 0 0 / 28%);
   /* REQ-SHELL-002: shell chrome heights — existing literals promoted to
      tokens so toolbar / workspace bar / controls / chips share one rhythm. */
   --shell-toolbar-height: 44px;
@@ -125,6 +131,10 @@
   --ink: #0f1010;
   --viewer-stage: #e8eae7;
   --border: var(--divider);
+  --shadow-menu: 0 6px 18px rgb(0 0 0 / 12%), 0 1px 3px rgb(0 0 0 / 8%);
+  --shadow-elevated: 0 18px 48px rgb(0 0 0 / 16%);
+  --shadow-panel: 0 12px 28px rgb(0 0 0 / 12%);
+  --shadow-toast: 0 8px 20px rgb(0 0 0 / 10%);
   scrollbar-color: rgb(0 0 0 / 22%) transparent;
 }
 
@@ -140,27 +150,29 @@
 
 [data-theme="light"] .toast {
   background: var(--raised);
-  box-shadow: 0 8px 20px rgb(0 0 0 / 10%);
+  box-shadow: var(--shadow-toast);
   color: var(--text);
 }
 [data-theme="light"] .toast > :first-child,
 [data-theme="light"] .toast .icon {
   color: var(--secondary);
 }
-[data-theme="light"] .toast.is-error {
+[data-theme="light"] .toast.is-error,
+[data-theme="light"] .toast.is-warning {
   background: var(--warning-muted);
   color: var(--warning-fg);
   border: 1px solid color-mix(in srgb, var(--warning) 28%, transparent);
 }
 [data-theme="light"] .toast.is-error > :first-child,
 [data-theme="light"] .toast.is-error .icon,
-[data-theme="light"] .toast.is-error button {
+[data-theme="light"] .toast.is-error button,
+[data-theme="light"] .toast.is-warning > :first-child,
+[data-theme="light"] .toast.is-warning .icon,
+[data-theme="light"] .toast.is-warning button {
   color: var(--warning-fg);
 }
 [data-theme="light"] .context-menu {
-  box-shadow:
-    0 6px 18px rgb(0 0 0 / 12%),
-    0 1px 3px rgb(0 0 0 / 8%);
+  box-shadow: var(--shadow-menu);
 }
 
 
@@ -424,7 +436,7 @@ body.platform-darwin .toolbar-leading {
   overflow-y: auto;
   border-radius: 10px;
   background: var(--raised-2);
-  box-shadow: 0 16px 40px rgb(0 0 0 / 42%);
+  box-shadow: var(--shadow-panel);
 }
 .discovery-filter-panel label {
   display: flex;
@@ -1276,8 +1288,8 @@ body.platform-darwin .toolbar-leading {
 }
 
 .ai-search-toggle[aria-pressed="true"]:not(:disabled) {
-  border-color: rgb(206 153 71 / 70%);
-  background: rgb(206 153 71 / 18%);
+  border-color: color-mix(in srgb, var(--warning) 70%, transparent);
+  background: color-mix(in srgb, var(--warning) 18%, transparent);
   color: var(--warning-fg);
 }
 
@@ -1875,7 +1887,7 @@ body.platform-darwin .toolbar-leading {
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--pane);
-  box-shadow: var(--shadow-menu, 0 8px 24px rgb(0 0 0 / 28%));
+  box-shadow: var(--shadow-menu);
 }
 
 .tool-group-utility {
@@ -2161,10 +2173,10 @@ input[type="range"] {
   gap: 9px;
   margin-top: 18px;
   padding: 10px 11px;
-  border: 1px solid rgb(217 154 62 / 38%);
+  border: 1px solid color-mix(in srgb, var(--warning) 38%, transparent);
   border-left: 2px solid var(--warning);
   border-radius: 6px;
-  background: rgb(217 154 62 / 6%);
+  background: color-mix(in srgb, var(--warning) 8%, var(--pane));
   color: var(--text);
   font-size: 11px;
 }
@@ -3397,9 +3409,9 @@ body.serpent-modal-open .app-shell {
   justify-content: space-between;
   gap: 12px;
   padding: 9px 11px;
-  border: 1px solid var(--warning-muted);
+  border: 1px solid color-mix(in srgb, var(--warning) 35%, var(--divider));
   border-radius: 5px;
-  background: rgb(68 53 44 / 96%);
+  background: color-mix(in srgb, var(--warning-muted) 88%, var(--pane));
   color: var(--warning-fg);
   font-size: 11px;
 }
@@ -3410,7 +3422,7 @@ body.serpent-modal-open .app-shell {
   border: 1px solid var(--divider);
   border-radius: 12px;
   background: var(--pane);
-  box-shadow: 0 24px 70px rgb(0 0 0 / 42%);
+  box-shadow: var(--shadow-elevated);
   animation: state-enter 180ms ease-out both;
 }
 
@@ -4921,7 +4933,7 @@ select.ai-config-input.ai-config-languages {
 }
 .search-snippet mark {
   border-radius: 2px;
-  background: rgb(206 153 71 / 24%);
+  background: color-mix(in srgb, var(--warning) 24%, transparent);
   color: var(--warning-fg);
 }
 .search-pagination {
@@ -5010,7 +5022,7 @@ select.ai-config-input.ai-config-languages {
   border: 0;
   border-radius: 8px;
   background: var(--raised);
-  box-shadow: 0 12px 32px rgb(0 0 0 / 28%);
+  box-shadow: var(--shadow-toast);
   color: var(--text);
   font-size: 11px;
   /* REQ-SHELL-010: dismissal adds .is-closing and unmounts only after this
@@ -5023,14 +5035,23 @@ select.ai-config-input.ai-config-languages {
   opacity: 0;
   transform: translateY(6px);
 }
-.toast.is-error {
+.toast.is-error,
+.toast.is-warning {
+  /* Serpent-4ojz: warning + error share one amber family (icon/text/close).
+     Do not tint warnings with --accent blue — that recreates the beige+blue+
+     orange clash fixed for error toasts in Serpent-k9g. */
   background: var(--warning-muted);
   color: var(--warning-fg);
+  border: 1px solid color-mix(in srgb, var(--warning) 28%, transparent);
+  box-shadow: var(--shadow-toast);
 }
-.toast.is-warning {
-  background: color-mix(in srgb, var(--accent) 18%, var(--raised));
-  color: var(--text);
-  box-shadow: 0 12px 32px rgb(0 0 0 / 28%), inset 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
+.toast.is-error > :first-child,
+.toast.is-error .icon,
+.toast.is-error button,
+.toast.is-warning > :first-child,
+.toast.is-warning .icon,
+.toast.is-warning button {
+  color: var(--warning-fg);
 }
 .toast button {
   display: grid;
@@ -5754,7 +5775,7 @@ select.ai-config-input.ai-config-languages {
   border: 1px solid var(--divider);
   border-radius: 12px;
   background: var(--pane);
-  box-shadow: 0 24px 70px rgb(0 0 0 / 42%);
+  box-shadow: var(--shadow-elevated);
   animation: state-enter 180ms ease-out both;
 }
 .conflict-summary {
@@ -5795,13 +5816,15 @@ select.ai-config-input.ai-config-languages {
   font-size: 11px;
 }
 .decision-field select {
-  height: 31px;
+  /* Serpent-4ojz / Serpent-p1rm: match shell control rhythm (not a one-off
+     31px/4px native island next to 28px/6px secondary buttons). */
+  height: var(--shell-control-height);
   padding: 0 8px;
   border: 1px solid var(--divider);
-  border-radius: 4px;
-  background: var(--canvas);
+  border-radius: 6px;
+  background: var(--raised);
   color: var(--text);
-  font-size: 11px;
+  font-size: 12px;
 }
 .conflict-examples {
   display: flex;

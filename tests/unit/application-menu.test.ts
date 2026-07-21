@@ -4,7 +4,17 @@ import {
   applicationMenuHasPageZoomRoles,
   buildApplicationMenuTemplate,
   collectApplicationMenuRoles,
+  shouldInstallApplicationMenu,
 } from "../../src/shared/application-menu";
+
+describe("shouldInstallApplicationMenu (Serpent-r7gu)", () => {
+  it("keeps the macOS application menu and hides Windows", () => {
+    expect(shouldInstallApplicationMenu("darwin")).toBe(true);
+    expect(shouldInstallApplicationMenu("win32")).toBe(false);
+    // Linux retains a menu until a separate product decision; not Windows.
+    expect(shouldInstallApplicationMenu("linux")).toBe(true);
+  });
+});
 
 describe("buildApplicationMenuTemplate (Serpent-46i9)", () => {
   it("omits Electron page-zoom roles that steal Cmd/Ctrl+=,-,0", () => {
