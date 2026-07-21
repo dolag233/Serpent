@@ -1093,17 +1093,9 @@ export function InspectorPanel(props: InspectorPanelProps) {
                 if (!shouldShowAutoPaletteSection(paletteMediaTypes)) {
                   return null;
                 }
-                const paletteSource = assetMetadata?.paletteSource ?? null;
                 return (
-              <div className="editor-field">
-                <label className="micro-label">
-                  {t("inspector.paletteLabel", {
-                    source:
-                      paletteSource === "automatic"
-                        ? t("inspector.paletteAuto")
-                        : t("inspector.palettePending"),
-                  })}
-                </label>
+              <div className="editor-field editor-field-palette">
+                {/* Serpent-l79c: no「色卡 · 自动」label — swatches alone. */}
                 {displayedPalette.length > 0 ? (
                   <div
                     aria-label={t("inspector.palettePreviewAuto")}

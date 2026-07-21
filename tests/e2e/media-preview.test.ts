@@ -147,9 +147,10 @@ test("generates a decoded thumbnail and keeps asset viewer context coherent", as
       inspectorPreviewLayout.naturalAspectRatio,
       1,
     );
-    await expect(window.getByText("色卡 · 自动")).toBeVisible({
+    await expect(window.getByLabel("自动色卡预览")).toBeVisible({
       timeout: 15_000,
     });
+    await expect(window.getByText("色卡 · 自动")).toHaveCount(0);
     await expect
       .poll(() => window.getByLabel("自动色卡预览").locator("span").count())
       .toBeGreaterThan(0);

@@ -223,6 +223,10 @@ import {
 import { JustifiedAssetRows } from "./justified-asset-rows";
 import { resolveJustifiedCaptionBandPx } from "./justified-caption-band";
 import {
+  estimateMasonryPreviewHeightPx,
+  resolveMasonryPreviewStyle,
+} from "./masonry-preview-frame";
+import {
   captureAnchor,
   clampScrollOffset,
   computeAnchorScrollDelta,
@@ -414,10 +418,12 @@ function MasonryColumns({
     assets.map((asset, index) => ({ asset, child: children[index] })),
     columnCount,
     ({ asset }) => {
-      const previewHeight =
-        asset.width && asset.height
-          ? cardSize * (asset.height / asset.width)
-          : cardSize * 0.72;
+      // Serpent-woa: estimate must match CSS max-height cap on tall portraits.
+      const previewHeight = estimateMasonryPreviewHeightPx(
+        asset.width,
+        asset.height,
+        cardSize,
+      );
       return previewHeight + (showCaption ? 42 : 0) + 12;
     },
   );
@@ -6950,12 +6956,11 @@ function AppInner() {
                       <div
                         className="asset-preview"
                         style={
-                          assetViewMode === "masonry" &&
-                          asset.width &&
-                          asset.height
-                            ? {
-                                aspectRatio: `${asset.width} / ${asset.height}`,
-                              }
+                          assetViewMode === "masonry"
+                            ? resolveMasonryPreviewStyle(
+                                asset.width,
+                                asset.height,
+                              )
                             : undefined
                         }
                         title={thumbnailFailures.get(asset.assetId)}

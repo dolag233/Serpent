@@ -4764,6 +4764,9 @@ select.ai-config-input.ai-config-languages {
      The selection ring lives on the parent .asset-card, so this overflow
      clip only rounds the thumbnail, never the ring. */
   border-radius: 7px;
+  /* Force a clipping context so absolutely-positioned GIF/video layers
+     (`.asset-card-media`) inherit the same rounded mask (Serpent-woa). */
+  isolation: isolate;
   /* Flat, near-canvas stage: letterboxed areas of contain-fit thumbnails
      read as quiet negative space instead of a patterned placeholder. */
   background: var(--pane);
@@ -4775,13 +4778,18 @@ select.ai-config-input.ai-config-languages {
   width: 100%;
   height: 100%;
   object-fit: contain;
+  border-radius: inherit;
 }
 
 /* REQ-CANVAS-009: GIF/video in-place hover (or primary selection) preview.
-   Absolute fill; pointer-events none so card click/drag stay on the button. */
+   Absolute fill; pointer-events none so card click/drag stay on the button.
+   Own overflow+radius so live layers cannot paint sharp corners or spill
+   into the caption band on extreme portrait cards (Serpent-woa). */
 .asset-card-media {
   position: absolute;
   inset: 0;
+  overflow: hidden;
+  border-radius: inherit;
   pointer-events: none;
 }
 
@@ -4793,6 +4801,7 @@ select.ai-config-input.ai-config-languages {
   width: 100%;
   height: 100%;
   object-fit: contain;
+  border-radius: inherit;
   pointer-events: none;
 }
 
@@ -4903,11 +4912,15 @@ select.ai-config-input.ai-config-languages {
   font-size: 9px;
 }
 .asset-caption {
+  position: relative;
+  z-index: 1;
   display: flex;
   min-width: 0;
   flex-direction: column;
   gap: 3px;
   padding: 7px 8px 8px;
+  /* Keep filename/meta above any preview overflow on tall portraits. */
+  background: transparent;
 }
 .asset-caption strong {
   overflow: hidden;
@@ -4952,10 +4965,14 @@ select.ai-config-input.ai-config-languages {
 .palette-preview {
   display: flex;
   height: 22px;
-  margin-top: 2px;
+  margin-top: 0;
   overflow: hidden;
   border-radius: 6px;
   box-shadow: inset 0 0 0 1px rgb(255 255 255 / 8%);
+}
+
+.editor-field-palette {
+  gap: 6px;
 }
 .palette-preview span {
   flex: 1 1 0;
