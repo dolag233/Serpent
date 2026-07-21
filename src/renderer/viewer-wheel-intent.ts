@@ -1,6 +1,6 @@
 /**
  * Classify a wheel event on the viewer stage as a zoom or a pan intent
- * (Serpent-yo0n).
+ * (Serpent-yo0n / Serpent-4kg3).
  *
  * A physical mouse wheel should zoom (anchored at the pointer); a trackpad
  * two-finger scroll should keep panning, and a trackpad pinch should zoom.
@@ -9,6 +9,10 @@
  *
  * - ctrlKey/metaKey: Chromium reports trackpad pinch gestures as wheel
  *   events with ctrlKey set; Ctrl+wheel is also the explicit zoom chord.
+ *   Exception (Serpent-4kg3): when the delta is primarily horizontal,
+ *   Chromium sometimes still sets ctrlKey during a two-finger slide.
+ *   Those events must pan/swipe, not zoom — real pinch and Ctrl+wheel
+ *   produce a dominant vertical delta.
  * - deltaMode LINE/PAGE: only discrete devices (mouse wheels) report
  *   non-pixel modes.
  * - Fractional pixel deltas: only high-resolution trackpads produce
@@ -34,12 +38,36 @@ export interface ViewerWheelSample {
 
 export const VIEWER_WHEEL_MOUSE_NOTCH_THRESHOLD = 40;
 
+/**
+ * |deltaX| must exceed |deltaY| by this factor to count as a horizontal
+ * slide rather than a pinch / vertical zoom chord (Serpent-4kg3).
+ * Matches the viewer flick dominance used for prev/next at fit scale.
+ */
+export const VIEWER_WHEEL_HORIZONTAL_DOMINANCE_RATIO = 2;
+
 const DOM_DELTA_PIXEL = 0;
+
+/**
+ * True when the wheel delta is clearly a horizontal slide (pan / swipe),
+ * not a vertical scroll or pinch scale change.
+ */
+export function isPrimarilyHorizontalWheel(
+  sample: Pick<ViewerWheelSample, "deltaX" | "deltaY">,
+): boolean {
+  const absX = Math.abs(sample.deltaX);
+  const absY = Math.abs(sample.deltaY);
+  return absX > absY * VIEWER_WHEEL_HORIZONTAL_DOMINANCE_RATIO;
+}
 
 export function classifyViewerWheel(
   sample: ViewerWheelSample,
 ): ViewerWheelIntent {
-  if (sample.ctrlKey || sample.metaKey) return "zoom";
+  if (sample.ctrlKey || sample.metaKey) {
+    // Pinch / Ctrl|Cmd+wheel zoom — but not when Chromium tagged a
+    // horizontal two-finger slide with ctrlKey (Serpent-4kg3).
+    if (isPrimarilyHorizontalWheel(sample)) return "pan";
+    return "zoom";
+  }
   if (sample.deltaMode !== DOM_DELTA_PIXEL) return "zoom";
   if (sample.deltaX === 0 && sample.deltaY === 0) return "pan";
   if (!Number.isInteger(sample.deltaX) || !Number.isInteger(sample.deltaY)) {

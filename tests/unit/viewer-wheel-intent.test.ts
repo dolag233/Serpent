@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest';
 
 import {
   classifyViewerWheel,
+  isPrimarilyHorizontalWheel,
   resolveWheelGestureAnchor,
   VIEWER_WHEEL_GESTURE_TIMEOUT_MS,
+  VIEWER_WHEEL_HORIZONTAL_DOMINANCE_RATIO,
   VIEWER_WHEEL_MOUSE_NOTCH_THRESHOLD,
 } from '../../src/renderer/viewer-wheel-intent';
 
@@ -16,6 +18,37 @@ const sample = (overrides: Partial<Parameters<typeof classifyViewerWheel>[0]>) =
   ...overrides,
 });
 
+describe('isPrimarilyHorizontalWheel (Serpent-4kg3)', () => {
+  it('is true when |deltaX| exceeds |deltaY| by the dominance ratio', () => {
+    expect(isPrimarilyHorizontalWheel({ deltaX: 40, deltaY: 10 })).toBe(true);
+    expect(
+      isPrimarilyHorizontalWheel({
+        deltaX: VIEWER_WHEEL_HORIZONTAL_DOMINANCE_RATIO * 10 + 0.1,
+        deltaY: 10,
+      }),
+    ).toBe(true);
+  });
+
+  it('is false when vertical is equal or dominant', () => {
+    expect(isPrimarilyHorizontalWheel({ deltaX: 10, deltaY: 10 })).toBe(false);
+    expect(isPrimarilyHorizontalWheel({ deltaX: 8, deltaY: 20 })).toBe(false);
+    expect(isPrimarilyHorizontalWheel({ deltaX: 0, deltaY: 12 })).toBe(false);
+  });
+
+  it('is false exactly at the dominance boundary (not strictly greater)', () => {
+    expect(
+      isPrimarilyHorizontalWheel({
+        deltaX: VIEWER_WHEEL_HORIZONTAL_DOMINANCE_RATIO * 10,
+        deltaY: 10,
+      }),
+    ).toBe(false);
+  });
+
+  it('treats pure horizontal (zero vertical) as horizontal', () => {
+    expect(isPrimarilyHorizontalWheel({ deltaX: -30, deltaY: 0 })).toBe(true);
+  });
+});
+
 describe('classifyViewerWheel (Serpent-yo0n)', () => {
   it('treats ctrlKey as zoom (Chromium reports trackpad pinch with ctrlKey)', () => {
     expect(classifyViewerWheel(sample({ ctrlKey: true, deltaY: 8 }))).toBe('zoom');
@@ -23,6 +56,52 @@ describe('classifyViewerWheel (Serpent-yo0n)', () => {
 
   it('treats metaKey as zoom (explicit zoom chord)', () => {
     expect(classifyViewerWheel(sample({ metaKey: true, deltaY: 8 }))).toBe('zoom');
+  });
+
+  it('pans on ctrlKey when the delta is primarily horizontal (Serpent-4kg3)', () => {
+    // Chromium sometimes tags a two-finger horizontal slide with ctrlKey.
+    expect(
+      classifyViewerWheel(sample({ ctrlKey: true, deltaX: 48, deltaY: 8 })),
+    ).toBe('pan');
+    expect(
+      classifyViewerWheel(sample({ ctrlKey: true, deltaX: -36, deltaY: 0 })),
+    ).toBe('pan');
+    expect(
+      classifyViewerWheel(
+        sample({ ctrlKey: true, deltaX: 20, deltaY: 4, deltaMode: 0 }),
+      ),
+    ).toBe('pan');
+  });
+
+  it('still zooms on ctrlKey when vertical dominates (real pinch / Ctrl+wheel)', () => {
+    expect(
+      classifyViewerWheel(sample({ ctrlKey: true, deltaX: 4, deltaY: 12 })),
+    ).toBe('zoom');
+    expect(
+      classifyViewerWheel(sample({ ctrlKey: true, deltaX: 10, deltaY: -20 })),
+    ).toBe('zoom');
+    expect(
+      classifyViewerWheel(sample({ ctrlKey: true, deltaX: 0, deltaY: -8 })),
+    ).toBe('zoom');
+  });
+
+  it('pans on metaKey when the delta is primarily horizontal', () => {
+    expect(
+      classifyViewerWheel(sample({ metaKey: true, deltaX: 40, deltaY: 5 })),
+    ).toBe('pan');
+  });
+
+  it('treats ambiguous ctrlKey diagonals (not horizontal-dominant) as zoom', () => {
+    // |deltaX| == |deltaY| * ratio sits at the boundary → not horizontal → zoom.
+    expect(
+      classifyViewerWheel(
+        sample({
+          ctrlKey: true,
+          deltaX: VIEWER_WHEEL_HORIZONTAL_DOMINANCE_RATIO * 10,
+          deltaY: 10,
+        }),
+      ),
+    ).toBe('zoom');
   });
 
   it('treats line-mode deltas as a mouse wheel and zooms', () => {

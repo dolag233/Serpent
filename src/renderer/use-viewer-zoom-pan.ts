@@ -12,7 +12,11 @@ import {
   fitContainScale,
   isAtFitScale,
 } from "./viewer-fit";
-import { classifyViewerWheel, resolveWheelGestureAnchor } from "./viewer-wheel-intent";
+import {
+  classifyViewerWheel,
+  isPrimarilyHorizontalWheel,
+  resolveWheelGestureAnchor,
+} from "./viewer-wheel-intent";
 
 export interface ViewerNaturalSize {
   w: number;
@@ -246,7 +250,8 @@ export function useViewerZoomPan({
 
       const atFit = isAtFitScale(viewRef.current.scale, fitScaleRef.current);
       const horizontalFlick =
-        Math.abs(deltaX) >= 28 && Math.abs(deltaX) > Math.abs(deltaY) * 2;
+        Math.abs(deltaX) >= 28 &&
+        isPrimarilyHorizontalWheel({ deltaX, deltaY });
       if (atFit && horizontalFlick) {
         const now = Date.now();
         if (now - swipeCooldownRef.current > 350) {
