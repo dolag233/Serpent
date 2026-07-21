@@ -72,7 +72,12 @@ const processLifetime = setInterval(() => {}, 60 * 60_000);
 
 function scheduleThumbnailQueue(
   libraryId: string,
-  options: { assetIds?: string[]; limit?: number; priority?: number } = {},
+  options: {
+    assetIds?: string[];
+    limit?: number;
+    priority?: number;
+    repairFailed?: boolean;
+  } = {},
 ): number {
   let enqueued: number;
   try {
@@ -163,6 +168,7 @@ function scheduleThumbnailScene(
       ...(assetIds ? { assetIds: assetIds.slice(0, config.maxIds ?? 500) } : {}),
       ...(config.limit === undefined ? {} : { limit: config.limit }),
       priority: config.priority,
+      repairFailed: true,
     });
   } catch {
     // scheduleThumbnailQueue already wrote the complete diagnostic. Automatic

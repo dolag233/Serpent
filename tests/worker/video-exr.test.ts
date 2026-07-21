@@ -611,6 +611,208 @@ describe('video (ffprobe + ffmpeg)', () => {
     service.closeAll();
   });
 
+  it('automatically requeues a component failure after the media environment is repaired', async () => {
+    process.env['SERPENT_FFMPEG_PATH'] = '/fake/ffmpeg';
+    const root = temporaryRoot();
+    const failedService = new LibraryService({
+      spawnFn: createMockSpawn({
+        enoentCommand: '/fake/ffmpeg',
+      }),
+    });
+    const created = failedService.createLibrary({
+      displayName: 'AutoRepairVideo',
+      selectedParentPath: root,
+    });
+    const sourcePath = path.join(root, 'video.mp4');
+    writeFileSync(sourcePath, Buffer.alloc(4096, 0));
+    importNoConflict(failedService, created.libraryId, sourcePath);
+    const asset = failedService.listAssets({
+      libraryId: created.libraryId,
+      recursive: true,
+    })[0]!;
+
+    expect(failedService.enqueueThumbnailJobs(created.libraryId)).toBe(1);
+    await failedService.processThumbnailQueue(created.libraryId, { maxJobs: 1 });
+    expect(failedService.listMediaJobs(created.libraryId).jobs[0]).toMatchObject({
+      status: 'failed',
+      errorCode: 'FFMPEG_REQUIRED',
+    });
+    failedService.closeAll();
+
+    const repairedService = new LibraryService({
+      mediaComponentProbe: (component) => component === 'ffmpeg',
+      spawnFn: createMockSpawn({}),
+    });
+    repairedService.openLibrary(created.libraryPath);
+
+    expect(repairedService.listMediaJobs(created.libraryId).jobs).toEqual([
+      expect.objectContaining({
+        status: 'queued',
+        errorCode: null,
+        attemptCount: 0,
+      }),
+    ]);
+    expect(repairedService.enqueueThumbnailJobs(created.libraryId, {
+      repairFailed: true,
+    })).toBe(0);
+    expect(repairedService.listMediaJobs(created.libraryId).jobs).toHaveLength(1);
+    await repairedService.processThumbnailQueue(created.libraryId, { maxJobs: 1 });
+    expect(repairedService.getCurrentArtifact(
+      created.libraryId,
+      asset.assetId,
+      'video_poster',
+    )).toMatchObject({ status: 'ready' });
+    expect(repairedService.listMediaJobs(created.libraryId).jobs.find(
+      (job) => job.kind === 'generate_thumbnail',
+    )).toMatchObject({
+      status: 'succeeded',
+      errorCode: null,
+    });
+    repairedService.closeAll();
+  });
+
+  it('automatically requeues an OIIO component failure after repair', async () => {
+    process.env['SERPENT_OIIO_PATH'] = '/fake/oiiotool';
+    const root = temporaryRoot();
+    const failedService = new LibraryService({
+      spawnFn: createMockSpawn({
+        enoentCommand: '/fake/oiiotool',
+      }),
+    });
+    const created = failedService.createLibrary({
+      displayName: 'AutoRepairOiio',
+      selectedParentPath: root,
+    });
+    const sourcePath = path.join(root, 'render.exr');
+    writeFileSync(sourcePath, Buffer.alloc(4096, 0));
+    importNoConflict(failedService, created.libraryId, sourcePath);
+    const asset = failedService.listAssets({
+      libraryId: created.libraryId,
+      recursive: true,
+    })[0]!;
+
+    expect(failedService.enqueueThumbnailJobs(created.libraryId)).toBe(1);
+    await failedService.processThumbnailQueue(created.libraryId, { maxJobs: 1 });
+    expect(failedService.listMediaJobs(created.libraryId).jobs[0]).toMatchObject({
+      status: 'failed',
+      errorCode: 'OIIO_REQUIRED',
+    });
+    failedService.closeAll();
+
+    const repairedService = new LibraryService({
+      mediaComponentProbe: (component) => component === 'oiio',
+      spawnFn: createMockSpawn({}),
+    });
+    repairedService.openLibrary(created.libraryPath);
+    expect(repairedService.listMediaJobs(created.libraryId).jobs).toEqual([
+      expect.objectContaining({
+        status: 'queued',
+        errorCode: null,
+        attemptCount: 0,
+      }),
+    ]);
+
+    await repairedService.processThumbnailQueue(created.libraryId, { maxJobs: 1 });
+    expect(repairedService.getCurrentArtifact(
+      created.libraryId,
+      asset.assetId,
+      'thumbnail',
+    )).toMatchObject({ status: 'ready' });
+    const jobsBeforeSecondRepair = repairedService.listMediaJobs(created.libraryId).jobs;
+    expect(repairedService.enqueueThumbnailJobs(created.libraryId, {
+      repairFailed: true,
+    })).toBe(0);
+    expect(repairedService.listMediaJobs(created.libraryId).jobs).toHaveLength(
+      jobsBeforeSecondRepair.length,
+    );
+    repairedService.closeAll();
+  });
+
+  it('throttles repeated probes while a required component remains unavailable', () => {
+    process.env['SERPENT_FFMPEG_PATH'] = '/fake/ffmpeg';
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({
+      displayName: 'AutoRepairProbeThrottle',
+      selectedParentPath: root,
+    });
+    const sourcePath = path.join(root, 'video.mp4');
+    writeFileSync(sourcePath, Buffer.alloc(4096, 0));
+    importNoConflict(service, created.libraryId, sourcePath);
+    const asset = service.listAssets({
+      libraryId: created.libraryId,
+      recursive: true,
+    })[0]!;
+    const db = assertDb(created.libraryPath);
+    db.prepare(
+      `INSERT INTO revision_artifacts
+         (artifact_id, revision_id, kind, mime_type, byte_size, file_path,
+          generator_version, status, error_code, generated_at)
+       VALUES (?, ?, 'video_poster', 'image/jpeg', 0, ?, 'test', 'failed',
+               'FFMPEG_REQUIRED', ?)`,
+    ).run(
+      randomUUID(),
+      asset.currentRevisionId,
+      'failed-poster.jpg',
+      new Date().toISOString(),
+    );
+    db.close();
+    service.closeAll();
+
+    let probeCount = 0;
+    const reopened = new LibraryService({
+      mediaComponentProbe: () => {
+        probeCount += 1;
+        return false;
+      },
+    });
+    reopened.openLibrary(created.libraryPath);
+    expect(probeCount).toBe(1);
+    expect(reopened.enqueueThumbnailJobs(created.libraryId, {
+      repairFailed: true,
+    })).toBe(0);
+    expect(probeCount).toBe(1);
+    reopened.closeAll();
+  });
+
+  it('does not automatically retry a non-component thumbnail failure', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({
+      displayName: 'NoAutoRepairForCorruptInput',
+      selectedParentPath: root,
+    });
+    const sourcePath = path.join(root, 'image.png');
+    createTestImage(sourcePath);
+    importNoConflict(service, created.libraryId, sourcePath);
+    const asset = service.listAssets({
+      libraryId: created.libraryId,
+      recursive: true,
+    })[0]!;
+    const db = assertDb(created.libraryPath);
+    db.prepare(
+      `INSERT INTO revision_artifacts
+         (artifact_id, revision_id, kind, mime_type, byte_size, file_path,
+          generator_version, status, error_code, generated_at)
+       VALUES (?, ?, 'thumbnail', 'image/webp', 0, ?, 'test', 'failed',
+               'THUMBNAIL_GENERATION_FAILED', ?)`,
+    ).run(
+      randomUUID(),
+      asset.currentRevisionId,
+      'failed-thumbnail.webp',
+      new Date().toISOString(),
+    );
+    db.close();
+    service.closeAll();
+
+    const reopened = new LibraryService({
+      mediaComponentProbe: () => true,
+    });
+    reopened.openLibrary(created.libraryPath);
+    expect(reopened.listMediaJobs(created.libraryId).jobs).toHaveLength(0);
+    reopened.closeAll();
+  });
+
   it('invalidates the prior current artifacts before a successful retry', async () => {
     process.env['SERPENT_FFMPEG_PATH'] = '/fake/ffmpeg';
     const root = temporaryRoot();

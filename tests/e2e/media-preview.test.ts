@@ -1,8 +1,10 @@
+import { execFileSync } from "node:child_process";
 import {
   existsSync,
   mkdtempSync,
   readFileSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -22,6 +24,36 @@ import {
 } from "./electron-test-helpers";
 
 test.describe.configure({ timeout: 120_000 });
+
+function configuredMediaBinary(
+  environmentName: string,
+  binaryName: string,
+): string | undefined {
+  const configured = process.env[environmentName];
+  if (!configured) return undefined;
+  const executableName = process.platform === "win32"
+    ? `${binaryName}.exe`
+    : binaryName;
+  try {
+    if (statSync(configured).isDirectory()) {
+      return path.join(configured, executableName);
+    }
+  } catch {
+    // The caller will report the missing executable through the test skip.
+  }
+  return configured;
+}
+
+const configuredFfmpegPath = configuredMediaBinary(
+  "SERPENT_REAL_FFMPEG_PATH",
+  "ffmpeg",
+) ?? configuredMediaBinary("SERPENT_FFMPEG_PATH", "ffmpeg");
+const configuredFfprobePath = configuredFfmpegPath
+  ? path.join(
+    path.dirname(configuredFfmpegPath),
+    process.platform === "win32" ? "ffprobe.exe" : "ffprobe",
+  )
+  : undefined;
 
 async function expectImageDecoded(image: Locator) {
   await expect
@@ -412,6 +444,125 @@ test("video preview reports a specific generation failure and persists its diagn
     await expect(reopenedPreview.getByText("缺少 FFmpeg")).toBeVisible();
   } finally {
     await application.close();
+    rmSync(temporaryRoot, { force: true, recursive: true });
+  }
+});
+
+test("repairs a historical video preview after a full process restart", async () => {
+  test.skip(
+    !configuredFfmpegPath ||
+      !configuredFfprobePath ||
+      !existsSync(configuredFfmpegPath) ||
+      !existsSync(configuredFfprobePath),
+    "requires SERPENT_FFMPEG_PATH (or SERPENT_REAL_FFMPEG_PATH) and ffprobe",
+  );
+  const temporaryRoot = mkdtempSync(
+    path.join(tmpdir(), "serpent-media-auto-repair-e2e-"),
+  );
+  const sourcePath = path.join(temporaryRoot, "repairable-video.mp4");
+  const missingFfmpegPath = path.join(temporaryRoot, "missing-tools", "ffmpeg");
+  const libraryName = "媒体自动修复验收";
+  const libraryPath = path.join(temporaryRoot, libraryName);
+  const profilePath = path.join(temporaryRoot, "user-data");
+  const width = 160;
+  const height = 90;
+  const frameCount = 30;
+  const frameSize = width * height * 3 / 2;
+  const rawVideo = Buffer.alloc(frameSize * frameCount);
+  for (let frame = 0; frame < frameCount; frame += 1) {
+    const offset = frame * frameSize;
+    rawVideo.fill(40 + frame, offset, offset + width * height);
+    rawVideo.fill(
+      96,
+      offset + width * height,
+      offset + width * height + width * height / 4,
+    );
+    rawVideo.fill(
+      160,
+      offset + width * height + width * height / 4,
+      offset + frameSize,
+    );
+  }
+  const rawPath = path.join(temporaryRoot, "repairable-video.yuv");
+  writeFileSync(rawPath, rawVideo);
+  execFileSync(configuredFfmpegPath!, [
+    "-hide_banner",
+    "-loglevel",
+    "error",
+    "-y",
+    "-f",
+    "rawvideo",
+    "-pixel_format",
+    "yuv420p",
+    "-video_size",
+    `${width}x${height}`,
+    "-framerate",
+    "30",
+    "-i",
+    rawPath,
+    "-c:v",
+    "mpeg4",
+    "-q:v",
+    "5",
+    "-an",
+    sourcePath,
+  ]);
+  rmSync(rawPath, { force: true });
+
+  const executablePath = resolveElectronExecutablePath();
+  const applicationDirectory =
+    process.env.SERPENT_E2E_APP_DIRECTORY ?? process.cwd();
+  const launch = (ffmpegPath: string, importFiles?: string) =>
+    electron.launch({
+      args: [applicationDirectory],
+      cwd: applicationDirectory,
+      executablePath,
+      env: {
+        ...process.env,
+        SERPENT_E2E: "1",
+        SERPENT_E2E_CREATE_PARENT_PATH: temporaryRoot,
+        SERPENT_E2E_OPEN_LIBRARY_PATH: libraryPath,
+        SERPENT_E2E_USER_DATA_PATH: profilePath,
+        SERPENT_FFMPEG_PATH: ffmpegPath,
+        ...(importFiles ? { SERPENT_E2E_IMPORT_FILES: importFiles } : {}),
+      },
+    });
+
+  let application: Awaited<ReturnType<typeof electron.launch>> | undefined;
+  try {
+    application = await launch(missingFfmpegPath, sourcePath);
+    let window = await application.firstWindow();
+    await window.getByRole("button", { name: "创建资源库" }).click();
+    await window.getByLabel("名称").fill(libraryName);
+    await window.getByRole("button", { name: "创建", exact: true }).click();
+    await window
+      .getByRole("button", { name: "导入文件", exact: true })
+      .first()
+      .click();
+    const assetCard = window
+      .getByRole("button")
+      .filter({ hasText: "repairable-video.mp4" });
+    await expect(assetCard).toBeVisible();
+    await expect(assetCard.getByText("缩略图失败")).toBeVisible({
+      timeout: 30_000,
+    });
+
+    const firstProcess = application.process();
+    await application.close();
+    expect(firstProcess.exitCode).not.toBeNull();
+
+    application = await launch(configuredFfmpegPath!);
+    window = await application.firstWindow();
+    await window.getByRole("button", { name: "打开资源库" }).click();
+    const repairedCard = window
+      .getByRole("button")
+      .filter({ hasText: "repairable-video.mp4" });
+    await expect(repairedCard).toBeVisible();
+    await expectImageDecoded(
+      repairedCard.locator('img[alt="repairable-video.mp4"]'),
+    );
+  } finally {
+    await application?.close();
     rmSync(temporaryRoot, { force: true, recursive: true });
   }
 });
