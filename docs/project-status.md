@@ -15,6 +15,7 @@
   `OIIO_REQUIRED` 预览的组件探测、自动重新入队和单会话防循环；定向媒体回归
   37/37、缩略图队列回归 38/38；已补充媒体自动修复 Electron E2E，但当前
   Windows Electron 启动参数阻断，Windows 真实 Electron/用户验收仍待执行。
+- **2026-07-21 Windows 无边框壳**：产品要求去掉系统标题栏与菜单栏，顶栏右上角自绘窗口控件（`Serpent-znex` / SHELL-024）；已实现，待 Windows 人类验收。既有 Windows 工单（`j5x`/`bwb`/`itr`/`omn`/`6k1`/`2vn`/`d8u`）仍排队，本回合优先 znex。
 
 ## 当前方向
 

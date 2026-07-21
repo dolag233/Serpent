@@ -14,6 +14,9 @@ export const REVEAL_APP_LOG_CHANNEL = 'serpent:shell:reveal-app-log' as const;
 export const SHOW_EDIT_CONTEXT_MENU_CHANNEL =
   'serpent:shell:show-edit-context-menu' as const;
 export const SHELL_SWIPE_CHANNEL = 'serpent:shell:swipe' as const;
+export const WINDOW_CONTROL_CHANNEL = 'serpent:shell:window-control' as const;
+export const WINDOW_MAXIMIZED_CHANNEL =
+  'serpent:shell:window-maximized' as const;
 
 export const WORKER_READY_MESSAGE_TYPE = 'worker.ready' as const;
 export const WORKER_SHUTDOWN_MESSAGE_TYPE = 'worker.shutdown' as const;

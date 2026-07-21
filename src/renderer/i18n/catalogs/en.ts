@@ -91,7 +91,12 @@ export const en = {
     myLibrary: "My library",
     recentLibraries: "Recent",
     libraryTransfer: "Add & transfer",
-    moreWorkspaceTools: "More tools"
+    moreWorkspaceTools: "More tools",
+    windowControls: "Window controls",
+    windowMinimize: "Minimize",
+    windowMaximize: "Maximize",
+    windowRestore: "Restore",
+    windowClose: "Close",
   },
   scope: {
     workspace: "Workspace",

@@ -344,6 +344,9 @@ summary:focus-visible {
   border-bottom: 1px solid var(--divider-soft);
   background: var(--pane);
   -webkit-app-region: drag;
+  -webkit-user-select: none;
+  user-select: none;
+  position: relative;
 }
 
 .toolbar-cluster,
@@ -369,6 +372,73 @@ body.platform-darwin .toolbar-leading {
   justify-content: flex-end;
   gap: 7px;
   padding-right: 10px;
+}
+
+/* Serpent-znex: reserve space for custom Windows caption buttons. */
+:root[data-platform="windows"] .toolbar-actions {
+  padding-right: calc(3 * var(--windows-caption-width, 46px) + 8px);
+}
+
+.windows-window-controls {
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 40;
+  display: flex;
+  height: 100%;
+  -webkit-app-region: no-drag;
+}
+
+.windows-caption-button {
+  display: inline-grid;
+  width: var(--windows-caption-width, 46px);
+  height: 100%;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--secondary);
+  cursor: default;
+}
+
+.windows-caption-button:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.windows-caption-button:active {
+  background: color-mix(in srgb, var(--hover) 70%, var(--text) 8%);
+}
+
+.windows-caption-button-close:hover {
+  background: #e81123;
+  color: #fff;
+}
+
+.windows-caption-button-close:active {
+  background: #f1707a;
+  color: #fff;
+}
+
+.windows-caption-glyph {
+  width: 10px;
+  height: 10px;
+  display: block;
+}
+
+[data-theme="light"] .windows-caption-button {
+  color: #5a5a5a;
+}
+
+[data-theme="light"] .windows-caption-button:hover {
+  background: rgb(0 0 0 / 6%);
+  color: #1a1a1a;
+}
+
+[data-theme="light"] .windows-caption-button-close:hover {
+  background: #e81123;
+  color: #fff;
 }
 
 .discovery-filters {
@@ -728,7 +798,8 @@ body.platform-darwin .toolbar-leading {
 .app-toolbar button,
 .app-toolbar input,
 .app-toolbar select,
-.app-toolbar label {
+.app-toolbar label,
+.windows-caption-button {
   -webkit-app-region: no-drag;
 }
 

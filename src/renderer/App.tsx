@@ -195,6 +195,7 @@ import type {
   ImportProgressEvent,
 } from "../shared/protocol/responses";
 import { AssetPreviewModal } from "./AssetPreviewModal";
+import { WindowsWindowControls } from "./WindowsWindowControls";
 import { useViewerChromeIdle } from "./use-viewer-chrome-idle";
 import { useDialogFocusTrap } from "./use-dialog-focus-trap";
 import { AssetContextMenu } from "./AssetContextMenu";
@@ -234,6 +235,7 @@ import {
   type CommandPlatform,
   type ShortcutSpec,
 } from "./commands/command-types";
+import { resolveRendererPlatform } from "./renderer-platform";
 import { formatBatchRatingNotice } from "./batch-tag-notice";
 import {
   defaultKeyboardCardSize,
@@ -243,6 +245,8 @@ import {
 } from "./global-zoom-shortcuts";
 
 const IS_MAC_PLATFORM = isMacPlatform(navigator.userAgent);
+const IS_WINDOWS_PLATFORM =
+  resolveRendererPlatform(navigator.userAgent) === "windows";
 
 // 键盘快捷键与菜单标签共用注册表中的同一份 ShortcutSpec（REQ-COMMAND-002）：
 // 按键定义改在命令定义里，此处只按命令 id 查表匹配，不再维护第二份映射。
@@ -489,6 +493,7 @@ function AppInner() {
   const api = (window as RendererWindow).serpent?.library;
   const extensionPairingApi = (window as RendererWindow).serpent
     ?.extensionPairing;
+  const shellApi = (window as RendererWindow).serpent?.shell;
 
   useEffect(() => {
     document.body.classList.toggle("platform-darwin", IS_MAC_PLATFORM);
@@ -6174,6 +6179,9 @@ function AppInner() {
             pressed={rightOpen}
           />
         </form>
+        {IS_WINDOWS_PLATFORM ? (
+          <WindowsWindowControls shell={shellApi} />
+        ) : null}
       </header>
       <NavigationSidebar
         library={library}
