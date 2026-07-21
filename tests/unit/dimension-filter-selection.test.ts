@@ -78,4 +78,11 @@ describe("toggleFormatToken (REQ-FILTER-025)", () => {
   it("shift click on an already-active extension removes just that token", () => {
     expect(toggleFormatToken("png, mp4", "mp4", true)).toBe("png");
   });
+
+  it("supports the unified text format token (Serpent-4l7)", () => {
+    expect(toggleFormatToken("", "text", false)).toBe("text");
+    expect(formatTokensHas("text", "text")).toBe(true);
+    expect(toggleFormatToken("png", "text", true)).toBe("png, text");
+    expect(toggleFormatToken("text", "text", false)).toBe("");
+  });
 });

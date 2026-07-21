@@ -326,7 +326,9 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
   );
   const moreToggleRef = useRef(new DimensionEnableToggle<MoreFilterState>());
 
-  const chips = buildActiveFilterChips(snapshot);
+  const chips = buildActiveFilterChips(snapshot, {
+    textFormatLabel: t("filter.formatText"),
+  });
   const controlsDisabled = Boolean(disabled || interactionsLocked);
   const selectedTagNames = tagFilter
     .split(",")
@@ -718,8 +720,20 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
                 value={formatFilter}
               />
               <div className="filter-presets" role="group">
-                {["png", "jpg", "webp", "gif", "mp4", "mov"].map((ext) => {
+                {(
+                  [
+                    "png",
+                    "jpg",
+                    "webp",
+                    "gif",
+                    "mp4",
+                    "mov",
+                    "text",
+                  ] as const
+                ).map((ext) => {
                   const active = formatTokensHas(formatFilter, ext);
+                  const label =
+                    ext === "text" ? t("filter.formatText") : ext;
                   return (
                     <button
                       aria-pressed={active}
@@ -733,7 +747,7 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
                       }
                       type="button"
                     >
-                      {ext}
+                      {label}
                     </button>
                   );
                 })}

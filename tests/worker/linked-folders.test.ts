@@ -423,6 +423,59 @@ describe('Linked folder import', () => {
     service.closeAll();
   });
 
+  it('TEXT-001: refresh discovers a new .txt under a linked subdirectory (Serpent-4l7)', () => {
+    const root = temporaryRoot();
+    const sourceRoot = path.join(root, 'source');
+    mkdirSync(sourceRoot);
+    mkdirSync(path.join(sourceRoot, 'notes'));
+    writeFileSync(path.join(sourceRoot, 'a.png'), 'aaa');
+    writeFileSync(path.join(sourceRoot, 'notes', 'readme.md'), '# hi');
+
+    const service = newService();
+    const created = service.createLibrary({ displayName: 'LinkedText', selectedParentPath: root });
+    const linked = service.importFolderAsLinked({
+      libraryId: created.libraryId,
+      sourceRootPath: sourceRoot,
+    });
+
+    writeFileSync(path.join(sourceRoot, 'notes', 'new-note.txt'), 'hello text');
+    writeFileSync(path.join(sourceRoot, 'notes', 'data.json'), '{"ok":true}');
+    writeFileSync(path.join(sourceRoot, 'notes', 'payload.xml'), '<ok/>');
+
+    const refresh = service.refreshManagedAssets(created.libraryId);
+    expect(refresh.changedCount).toBeGreaterThanOrEqual(3);
+
+    const listed = service.listAssets({
+      libraryId: created.libraryId,
+      folderId: linked.folderId,
+      recursive: true,
+    });
+    const byPath = new Map(listed.map((asset) => [asset.relativeFilePath, asset]));
+    expect(byPath.get('notes/new-note.txt')?.mediaType).toBe('text');
+    expect(byPath.get('notes/data.json')?.mediaType).toBe('text');
+    expect(byPath.get('notes/payload.xml')?.mediaType).toBe('text');
+
+    // Linked browse keeps nested files visible even when recursive=false
+    // (virtual subdir cards are not yet the nav surface).
+    const searched = service.searchAssets({
+      libraryId: created.libraryId,
+      scope: { kind: 'folder', folderId: linked.folderId, recursive: false },
+      filters: [{ field: 'format', values: ['text'], exclude: false }],
+      limit: 50,
+      offset: 0,
+    });
+    const searchedPaths = searched.items.map((item) => item.relativeFilePath).sort();
+    expect(searchedPaths).toEqual([
+      'notes/data.json',
+      'notes/new-note.txt',
+      'notes/payload.xml',
+      'notes/readme.md',
+    ]);
+    expect(searched.items.every((item) => item.mediaType === 'text')).toBe(true);
+
+    service.closeAll();
+  });
+
   it('D2: relink continues processing remaining assets when one asset lstat fails with a non-missing-path error (e.g. EACCES)', () => {
     const root = temporaryRoot();
     const sourceRoot = path.join(root, 'source');

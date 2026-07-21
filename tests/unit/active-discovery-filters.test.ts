@@ -50,4 +50,18 @@ describe("buildActiveFilterChips", () => {
     expect(chips[0]?.detail).toBe("−png, jpg");
     expect(chips[4]?.detail).toBe("1.52–1.68");
   });
+
+  it("localizes the unified text format token in chip detail", () => {
+    const chips = buildActiveFilterChips(
+      { ...empty, formatFilter: "text" },
+      { textFormatLabel: "文本" },
+    );
+    expect(chips).toEqual([
+      {
+        id: "format",
+        labelKey: "filter.formatField",
+        detail: "文本",
+      },
+    ]);
+  });
 });

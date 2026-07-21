@@ -237,6 +237,7 @@ import {
 } from '../shared/audio-media';
 import {
   countTextLines,
+  expandFormatFilterTokens,
   isTextFileName,
   TEXT_SAVE_MAX_BYTES,
   TEXT_VIEWER_MAX_BYTES,
@@ -10121,12 +10122,14 @@ export class LibraryService {
 
       switch (filter.field) {
         case 'format': {
-          const likes = filter.values.map(() => `LOWER(a.relative_file_path) LIKE ?`);
+          const formatValues = expandFormatFilterTokens(filter.values);
+          if (formatValues.length === 0) break;
+          const likes = formatValues.map(() => `LOWER(a.relative_file_path) LIKE ?`);
           const clause = filter.exclude
             ? `NOT (${likes.join(' OR ')})`
             : `(${likes.join(' OR ')})`;
           conditions.push(clause);
-          for (const v of filter.values) {
+          for (const v of formatValues) {
             params.push(`%.${v.toLowerCase()}`);
           }
           break;

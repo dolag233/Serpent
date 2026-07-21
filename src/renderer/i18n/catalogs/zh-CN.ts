@@ -194,6 +194,7 @@ export const zhCN = {
   filter: {
     format: "格式过滤",
     formatField: "格式",
+    formatText: "文本",
     excludeFormats: "排除这些格式",
     excludeTags: "排除这些标签",
     rating: "评分过滤",

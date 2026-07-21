@@ -178,6 +178,7 @@ import type {
   TagSummary,
 } from "../shared/asset-types";
 import { hasMeaningfulSmartCollectionCondition } from "../shared/smart-collection-query";
+import { expandFormatFilterTokens } from "../shared/text-media";
 import type {
   SerpentLibraryApi,
   LibraryApiResult,
@@ -2894,10 +2895,12 @@ function AppInner() {
     overrides: { tagFilter?: string; includeTextSearch?: boolean } = {},
   ): SearchDefinition {
     const filters: FilterClause[] = [];
-    const formats = formatFilter
-      .split(",")
-      .map((value) => value.trim().replace(/^\./, ""))
-      .filter(Boolean);
+    const formats = expandFormatFilterTokens(
+      formatFilter
+        .split(",")
+        .map((value) => value.trim().replace(/^\./, ""))
+        .filter(Boolean),
+    );
     const selectedTags = (overrides.tagFilter ?? tagFilter)
       .split(",")
       .map((value) => value.trim())

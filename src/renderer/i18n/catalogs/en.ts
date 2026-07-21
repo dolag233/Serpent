@@ -204,6 +204,7 @@ export const en = {
   filter: {
     format: "Format filter",
     formatField: "Format",
+    formatText: "Text",
     excludeFormats: "Exclude these formats",
     excludeTags: "Exclude these tags",
     rating: "Rating filter",

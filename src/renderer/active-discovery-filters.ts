@@ -51,6 +51,7 @@ function formatRangeDetail(range: { min: string; max: string }): string {
  */
 export function buildActiveFilterChips(
   snapshot: DiscoveryFilterSnapshot,
+  options?: { textFormatLabel?: string },
 ): ActiveFilterChip[] {
   const chips: ActiveFilterChip[] = [];
 
@@ -68,13 +69,17 @@ export function buildActiveFilterChips(
 
   const formats = snapshot.formatFilter
     .split(",")
-    .map((value) => value.trim())
+    .map((value) => value.trim().replace(/^\./, ""))
     .filter(Boolean);
   if (formats.length > 0) {
+    const textLabel = options?.textFormatLabel ?? "text";
+    const detailTokens = formats.map((token) =>
+      token.toLowerCase() === "text" ? textLabel : token,
+    );
     chips.push({
       id: "format",
       labelKey: "filter.formatField",
-      detail: `${snapshot.excludeFormatFilter ? "−" : ""}${formats.join(", ")}`,
+      detail: `${snapshot.excludeFormatFilter ? "−" : ""}${detailTokens.join(", ")}`,
     });
   }
 

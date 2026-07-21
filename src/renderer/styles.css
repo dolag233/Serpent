@@ -1932,9 +1932,19 @@ input[type="range"] {
   grid-template-columns: minmax(0, 1fr);
   min-height: 0;
   flex: 1;
-  overflow: auto;
+  /* Serpent-itr: classic Windows scrollbars consume layout width. Keep
+     vertical scrolling, but never grow a meaningless horizontal bar when
+     the vertical gutter appears; grid children measure against clientWidth. */
+  overflow-x: hidden;
+  overflow-y: auto;
   place-items: center;
   user-select: none;
+}
+
+:root[data-platform="windows"] .workspace-canvas {
+  /* Reserve gutter up front on classic scrollbar platforms so justified /
+     masonry layouts never lay out at (clientWidth + scrollbar) then overflow. */
+  scrollbar-gutter: stable;
 }
 
 
@@ -4335,9 +4345,12 @@ select.ai-config-input.ai-config-languages {
   grid-template-columns: repeat(auto-fill, minmax(138px, 1fr));
   gap: 14px;
   width: 100%;
+  max-width: 100%;
+  min-width: 0;
   min-height: 100%;
   overflow: visible;
   padding: 16px 16px 48px;
+  box-sizing: border-box;
   user-select: none;
 }
 
@@ -4361,6 +4374,9 @@ select.ai-config-input.ai-config-languages {
 .justified-rows {
   display: flex;
   width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
   flex-direction: column;
   gap: 14px;
 }

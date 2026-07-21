@@ -40,6 +40,9 @@ export function formatTokensHas(formatFilter: string, ext: string): boolean {
  * replaces the field with just the clicked extension; Shift+click
  * OR-accumulates it case-insensitively (matching the field's existing
  * case-insensitive dedupe).
+ *
+ * The special `text` token (Serpent-4l7) is stored as-is and expanded to
+ * TEXT_EXTENSIONS only when building the worker query.
  */
 export function toggleFormatToken(
   formatFilter: string,

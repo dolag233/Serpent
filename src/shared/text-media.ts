@@ -1,5 +1,5 @@
 /**
- * Pure helpers for text asset detection (Serpent-sh7).
+ * Pure helpers for text asset detection (Serpent-sh7 / Serpent-4l7).
  */
 
 export const TEXT_EXTENSIONS = [
@@ -31,7 +31,27 @@ export const TEXT_EXTENSIONS = [
   ".bat",
   ".ps1",
   ".sql",
+  ".rst",
+  ".tex",
+  ".vue",
+  ".svelte",
+  ".kt",
+  ".swift",
+  ".rb",
+  ".php",
+  ".java",
+  ".c",
+  ".cpp",
+  ".h",
+  ".hpp",
+  ".cs",
+  ".lua",
+  ".r",
+  ".plist",
 ] as const;
+
+/** Format-filter token that expands to every TEXT_EXTENSIONS entry. */
+export const FORMAT_TEXT_TOKEN = "text";
 
 export const TEXT_MIME_BY_EXTENSION: Record<string, string> = {
   ".txt": "text/plain",
@@ -62,6 +82,23 @@ export const TEXT_MIME_BY_EXTENSION: Record<string, string> = {
   ".bat": "text/plain",
   ".ps1": "text/plain",
   ".sql": "application/sql",
+  ".rst": "text/x-rst",
+  ".tex": "application/x-tex",
+  ".vue": "text/plain",
+  ".svelte": "text/plain",
+  ".kt": "text/x-kotlin",
+  ".swift": "text/x-swift",
+  ".rb": "text/x-ruby",
+  ".php": "application/x-httpd-php",
+  ".java": "text/x-java-source",
+  ".c": "text/x-c",
+  ".cpp": "text/x-c",
+  ".h": "text/x-c",
+  ".hpp": "text/x-c",
+  ".cs": "text/plain",
+  ".lua": "text/x-lua",
+  ".r": "text/plain",
+  ".plist": "application/xml",
 };
 
 /** Soft caps for Worker text IPC (bytes, UTF-8). */
@@ -76,6 +113,41 @@ export function isTextFileName(filenameOrMime: string): boolean {
 
 export function textMimeForExtension(extension: string): string | null {
   return TEXT_MIME_BY_EXTENSION[extension.toLowerCase()] ?? null;
+}
+
+/**
+ * Expand format-filter tokens for SQL. The special `text` token becomes every
+ * known text/code extension (without a leading dot); other tokens pass through.
+ */
+export function expandFormatFilterTokens(tokens: readonly string[]): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of tokens) {
+    const token = raw.trim().replace(/^\./, "").toLowerCase();
+    if (!token) continue;
+    if (token === FORMAT_TEXT_TOKEN) {
+      for (const ext of TEXT_EXTENSIONS) {
+        const bare = ext.slice(1);
+        if (seen.has(bare)) continue;
+        seen.add(bare);
+        out.push(bare);
+      }
+      continue;
+    }
+    if (seen.has(token)) continue;
+    seen.add(token);
+    out.push(token);
+  }
+  return out;
+}
+
+/** True when the free-text format field carries the unified text token. */
+export function formatFilterHasTextToken(formatFilter: string): boolean {
+  return formatFilter
+    .split(",")
+    .map((token) => token.trim().replace(/^\./, "").toLowerCase())
+    .filter(Boolean)
+    .includes(FORMAT_TEXT_TOKEN);
 }
 
 /** Count newline-separated lines; trailing newline still counts as a final empty line only if content ends with \\n after non-empty. */
