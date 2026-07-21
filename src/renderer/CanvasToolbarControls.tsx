@@ -1,10 +1,10 @@
 import type { ReactNode } from "react";
 import {
-  CARD_SIZE_MAX,
-  CARD_SIZE_MIN,
-  CARD_SIZE_STEP,
   type CanvasPreferences,
 } from "./canvas-preferences";
+import {
+  indexOfDiscreteCardSize,
+} from "./card-size-stops";
 import {
   TOOLBAR_OVERFLOW_COMMAND_IDS,
   toolbarCommandRegistry,
@@ -84,6 +84,7 @@ export function CanvasToolbarControls({
   busy,
   canvasPrefs,
   cardSize,
+  cardSizeStops,
   locale,
   platform,
   actions,
@@ -93,6 +94,8 @@ export function CanvasToolbarControls({
   busy: boolean;
   canvasPrefs: CanvasPreferences;
   cardSize: number;
+  /** Width-aligned discrete stops (Serpent-7ny); slider indexes into these. */
+  cardSizeStops: readonly number[];
   locale: CommandLocale;
   platform: CommandPlatform;
   actions: ToolbarCommandActions;
@@ -159,14 +162,16 @@ export function CanvasToolbarControls({
             <input
               aria-label={translateCardSizeLabel(locale)}
               data-hover-tip={translateCardSizeLabel(locale)}
-              max={CARD_SIZE_MAX}
-              min={CARD_SIZE_MIN}
+              max={Math.max(0, cardSizeStops.length - 1)}
+              min={0}
               onChange={(event) => {
-                onCardSizeChange(Number(event.target.value));
+                const index = Number(event.target.value);
+                const next = cardSizeStops[index];
+                if (typeof next === "number") onCardSizeChange(next);
               }}
-              step={CARD_SIZE_STEP}
+              step={1}
               type="range"
-              value={cardSize}
+              value={indexOfDiscreteCardSize(cardSize, cardSizeStops)}
             />
           </label>
           <span className="tool-separator" />

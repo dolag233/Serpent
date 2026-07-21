@@ -209,6 +209,12 @@ import {
   type CanvasPreferences,
 } from "./canvas-preferences";
 import {
+  enumerateDiscreteCardSizes,
+  nearestDiscreteCardSize,
+  nextDiscreteCardSizeFromPinchDelta,
+  stepDiscreteCardSize,
+} from "./card-size-stops";
+import {
   assetGridLayoutStyle,
   countFittingColumns,
   distributeMasonryItems,
@@ -240,7 +246,6 @@ import { formatBatchRatingNotice } from "./batch-tag-notice";
 import {
   defaultKeyboardCardSize,
   matchGlobalZoomShortcut,
-  nextKeyboardCardSize,
   shouldIgnoreGlobalZoomShortcut,
 } from "./global-zoom-shortcuts";
 
@@ -862,6 +867,11 @@ function AppInner() {
   );
   const assetViewMode = canvasPrefs.viewMode;
   const assetCardSize = canvasPrefs.cardSize;
+  const [canvasWidthPx, setCanvasWidthPx] = useState(0);
+  const cardSizeStops = useMemo(
+    () => enumerateDiscreteCardSizes(canvasWidthPx),
+    [canvasWidthPx],
+  );
   const [loadingMoreAssets, setLoadingMoreAssets] = useState(false);
   const workspaceCanvasRef = useRef<HTMLDivElement>(null);
   // REQ-CANVAS-019: rAF handle for the card-size-slider anchor restore.
@@ -1175,9 +1185,14 @@ function AppInner() {
   const resizeAssetCards = useCallback(
     (requestedSize: number, clientX?: number, clientY?: number) => {
       const root = workspaceCanvasRef.current;
-      const nextSize = Math.min(
-        CARD_SIZE_MAX,
-        Math.max(CARD_SIZE_MIN, Math.round(requestedSize)),
+      const width = root?.clientWidth ?? 0;
+      const stops = enumerateDiscreteCardSizes(width);
+      const nextSize = nearestDiscreteCardSize(
+        Math.min(
+          CARD_SIZE_MAX,
+          Math.max(CARD_SIZE_MIN, Math.round(requestedSize)),
+        ),
+        stops,
       );
       if (!root || nextSize === assetCardSize) return;
 
@@ -1238,6 +1253,7 @@ function AppInner() {
         lastWidth = null;
         return;
       }
+      setCanvasWidthPx(Math.round(width));
       if (lastWidth === null) {
         lastWidth = width;
         return;
@@ -1289,12 +1305,18 @@ function AppInner() {
           : event.deltaMode === WheelEvent.DOM_DELTA_PAGE
             ? event.deltaY * canvas.clientHeight
             : event.deltaY;
-      // Browse card zoom: keep the asset under the viewport center stable
-      // (Serpent-f0oo). Pointer-relative anchoring jumps the grid when the
-      // cursor is far from center during continuous Ctrl+wheel.
+      // Browse card zoom: discrete column-aligned stops + higher pinch gain
+      // (Serpent-7ny). Keep the asset under the viewport center stable
+      // (Serpent-f0oo).
+      const stops = enumerateDiscreteCardSizes(canvas.clientWidth);
+      const nextSize = nextDiscreteCardSizeFromPinchDelta(
+        assetCardSize,
+        delta,
+        stops,
+      );
       const rect = canvas.getBoundingClientRect();
       resizeAssetCards(
-        assetCardSize * Math.exp(-delta * 0.002),
+        nextSize,
         rect.left + rect.width / 2,
         rect.top + rect.height / 2,
       );
@@ -1303,8 +1325,8 @@ function AppInner() {
     return () => canvas.removeEventListener("wheel", handleWheel);
   }, [assetCardSize, previewAsset, resizeAssetCards]);
 
-  // Browse canvas Cmd/Ctrl+=|-|0 — same step as Ctrl+wheel; 0 = default size
-  // (Serpent-46i9). Viewer owns the chord while preview is open.
+  // Browse canvas Cmd/Ctrl+=|-|0 — discrete card stops; 0 = default size
+  // (Serpent-46i9 / Serpent-7ny). Viewer owns the chord while preview is open.
   useEffect(() => {
     if (previewAsset) return;
     const onKeyDown = (event: KeyboardEvent) => {
@@ -1324,8 +1346,13 @@ function AppInner() {
         resizeAssetCards(defaultKeyboardCardSize(), centerX, centerY);
         return;
       }
+      const stops = enumerateDiscreteCardSizes(canvas?.clientWidth ?? 0);
       resizeAssetCards(
-        nextKeyboardCardSize(assetCardSize, action),
+        stepDiscreteCardSize(
+          assetCardSize,
+          action === "in" ? 1 : -1,
+          stops,
+        ),
         centerX,
         centerY,
       );
@@ -6412,6 +6439,7 @@ function AppInner() {
               busy={busy}
               canvasPrefs={canvasPrefs}
               cardSize={assetCardSize}
+              cardSizeStops={cardSizeStops}
               libraryOpen={Boolean(library)}
               locale={locale}
               onCardSizeChange={resizeAssetCards}
@@ -6690,9 +6718,7 @@ function AppInner() {
                         key={entry.folderId}
                         libraryId={library.libraryId}
                         onClick={(folderId, event) => {
-                          if (handleFolderCardClick(folderId, event) === "navigate") {
-                            void chooseFolder(folderId);
-                          }
+                          handleFolderCardClick(folderId, event);
                         }}
                         onContextMenu={(clickedEntry, event) => {
                           event.preventDefault();

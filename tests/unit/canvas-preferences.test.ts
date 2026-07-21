@@ -360,19 +360,10 @@ describe('DEFAULT_CANVAS_PREFERENCES', () => {
   });
 });
 
-describe('CARD_SIZE_STEP / cardSizeSliderStepCount (Serpent-akz)', () => {
-  it('is finer than the previous 8px step', () => {
-    expect(CARD_SIZE_STEP).toBeLessThan(8);
+describe('CARD_SIZE_STEP / cardSizeSliderStepCount (legacy Serpent-akz helpers)', () => {
+  it('still exposes a positive integer step that divides the range', () => {
     expect(CARD_SIZE_STEP).toBeGreaterThan(0);
-  });
-
-  it('evenly divides the min..max range so the slider always lands on an integer', () => {
     expect((CARD_SIZE_MAX - CARD_SIZE_MIN) % CARD_SIZE_STEP).toBe(0);
-  });
-
-  it('offers materially more stops than the previous 8px step (28 stops)', () => {
-    expect(cardSizeSliderStepCount()).toBeGreaterThan(28);
-    expect(cardSizeSliderStepCount(CARD_SIZE_MIN, CARD_SIZE_MAX, 8)).toBe(28);
   });
 
   it('computes stop count for arbitrary ranges/steps', () => {

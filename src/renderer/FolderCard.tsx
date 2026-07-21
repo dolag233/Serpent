@@ -15,9 +15,9 @@ interface FolderCardProps {
 }
 
 /**
- * Windows-style 1–3 cover collage for a direct child folder on the browse
- * canvas (REQ-FOLDER-001/002/003/010). Covers are pre-batched by the Worker
- * (`coverArtifactIds`); the card never fetches per-folder previews itself.
+ * Direct child folder card on the browse canvas (REQ-FOLDER-001/002/010).
+ * Plain click selects; double-click enters (Serpent-829). Covers are
+ * pre-batched by the Worker (`coverArtifactIds`).
  */
 export function FolderCard({
   entry,

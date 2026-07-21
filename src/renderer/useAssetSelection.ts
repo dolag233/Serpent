@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AssetSummary } from "../shared/asset-types";
+import { resolveFolderCardClickIntent } from "./folder-card-click";
 import { computeMarqueeSelection, isMarqueeAdditive } from "./marquee-selection";
 
 export interface UseAssetSelectionParams {
@@ -40,15 +41,11 @@ export interface UseAssetSelectionReturn {
   /** Attach to individual asset cards: onMouseDown sets the button, onClick calls this */
   handleCardClick: (assetId: string, event: React.MouseEvent) => void;
   /**
-   * Attach to folder cards' onClick. Cmd/Ctrl and Shift apply select/toggle/
-   * range semantics and return "select"; a plain click leaves selection
-   * untouched and returns "navigate" so the caller can enter the folder
-   * (REQ-FOLDER-010's click-to-navigate takes priority over click-to-select).
+   * Attach to folder cards' onClick. Plain click selects (Serpent-829);
+   * Cmd/Ctrl toggles; Shift extends a range. Entering the folder is
+   * `onDoubleClick` in the caller — this handler never navigates.
    */
-  handleFolderCardClick: (
-    folderId: string,
-    event: React.MouseEvent,
-  ) => "select" | "navigate";
+  handleFolderCardClick: (folderId: string, event: React.MouseEvent) => void;
   /** Ref that must be set in the card's onMouseDown: `cardMouseDownRef.current = e.button` */
   cardMouseDownRef: React.MutableRefObject<number>;
   /** Current marquee box (null when not dragging). Render a div with these coordinates. */
@@ -117,43 +114,49 @@ export function useAssetSelection({
   }
 
   // ── handleFolderCardClick ───────────────────────────────────────────────
-  function handleFolderCardClick(
-    folderId: string,
-    event: React.MouseEvent,
-  ): "select" | "navigate" {
-    if (cardMouseDownRef.current !== 0) {
-      cardMouseDownRef.current = 0;
-      return "select";
-    }
-    if (!setSelectedFolderIds) return "navigate";
-    if (event.shiftKey && folderSelectionAnchorRef.current) {
-      const anchorIndex = folderIds.indexOf(folderSelectionAnchorRef.current);
-      const targetIndex = folderIds.indexOf(folderId);
-      if (anchorIndex >= 0 && targetIndex >= 0) {
-        const range = folderIds.slice(
-          Math.min(anchorIndex, targetIndex),
-          Math.max(anchorIndex, targetIndex) + 1,
-        );
-        setSelectedFolderIds(
-          event.metaKey || event.ctrlKey
-            ? (current) => [...new Set([...current, ...range])]
-            : range,
-        );
-        return "select";
+  function handleFolderCardClick(folderId: string, event: React.MouseEvent) {
+    const mouseButton = cardMouseDownRef.current;
+    cardMouseDownRef.current = 0;
+    if (!setSelectedFolderIds) return;
+
+    const intent = resolveFolderCardClickIntent({
+      folderId,
+      folderIds,
+      anchorId: folderSelectionAnchorRef.current,
+      modifiers: {
+        shiftKey: event.shiftKey,
+        metaKey: event.metaKey,
+        ctrlKey: event.ctrlKey,
+      },
+      mouseButton,
+    });
+
+    if (intent.kind === "ignore") return;
+
+    if (intent.kind === "replace") {
+      setSelectedFolderIds([...intent.folderIds]);
+      folderSelectionAnchorRef.current = intent.anchorId;
+      if (intent.clearAssets) {
+        setSelectedAssetIds([]);
+        setSelectedAssetId(undefined);
+        selectionAnchorRef.current = null;
       }
+      return;
     }
-    if (event.metaKey || event.ctrlKey) {
+
+    if (intent.kind === "toggle") {
       setSelectedFolderIds((current) =>
-        current.includes(folderId)
-          ? current.filter((id) => id !== folderId)
-          : [...current, folderId],
+        current.includes(intent.folderId)
+          ? current.filter((id) => id !== intent.folderId)
+          : [...current, intent.folderId],
       );
-      folderSelectionAnchorRef.current = folderId;
-      return "select";
+      folderSelectionAnchorRef.current = intent.anchorId;
+      return;
     }
-    // Plain click: selection is left untouched, caller navigates into the
-    // folder (same as the sidebar row) instead of just selecting it.
-    return "navigate";
+
+    setSelectedFolderIds((current) => [
+      ...new Set([...current, ...intent.folderIds]),
+    ]);
   }
 
   // ── handleCardClick (was selectAsset) ──────────────────────────────────

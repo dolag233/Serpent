@@ -29,10 +29,9 @@ export interface CanvasPreferencesStorage {
 
 export const CARD_SIZE_MIN = 96;
 export const CARD_SIZE_MAX = 320;
-// Serpent-akz: the card-size slider previously stepped by 8px (28 stops
-// across the range), which read as coarse/jumpy in the commonly-used band.
-// 2px gives ~4x the stops for a near-continuous feel while keeping the
-// underlying value an integer pixel count (matches `clampCardSize` below).
+// Serpent-akz originally used this as the range-input step (2px). Serpent-7ny
+// moved the browse slider onto width-aligned discrete column stops
+// (`card-size-stops.ts`); keep the helper for clamp math / legacy tests.
 export const CARD_SIZE_STEP = 2;
 
 // ---------------------------------------------------------------------------
