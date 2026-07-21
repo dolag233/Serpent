@@ -6426,7 +6426,9 @@ function AppInner() {
               </div>
             );
           })()}
-        <div className="workspace-canvas-host">
+        <div
+          className={`workspace-canvas-host${previewAsset ? " is-viewing" : ""}`}
+        >
           {uiState === "importing" && (
             <div className="activity-strip" role="status">
               <span className="activity-pulse" />

@@ -4388,6 +4388,12 @@ select.ai-config-input.ai-config-languages {
   min-width: 0;
 }
 
+/* Viewing hides the canvas child, but the host still had flex:1 and split the
+   workspace 50/50 with .workspace-viewer — empty top half, close chip mid-stage. */
+.workspace-canvas-host.is-viewing {
+  display: none;
+}
+
 .workspace-canvas-host > .workspace-canvas {
   flex: 1;
   min-height: 0;
