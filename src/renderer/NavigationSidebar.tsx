@@ -69,6 +69,8 @@ function NavRow({
   iconColor,
   title,
   disclosure,
+  navFolderId,
+  navFolderKind,
 }: {
   icon: IconName;
   label: string;
@@ -88,6 +90,9 @@ function NavRow({
   title?: string;
   /** CU-D2: optional disclosure control rendered beside the row. */
   disclosure?: ReactNode;
+  /** Serpent-vf8x: focus target for folder keyboard shortcuts. */
+  navFolderId?: string;
+  navFolderKind?: "managed" | "linked";
 }) {
   // CU-D9: always expose the full label on hover; when a status title is also
   // provided (e.g. offline linked folder), append it after the name.
@@ -99,6 +104,8 @@ function NavRow({
       {disclosure ?? <span className="nav-disclosure-spacer" aria-hidden="true" />}
       <button
         className={`nav-row${active ? " is-active" : ""}${dropActive ? " is-drop-target" : ""}`}
+        data-nav-folder-id={navFolderId}
+        data-nav-folder-kind={navFolderKind}
         disabled={disabled}
         onClick={onClick}
         onContextMenu={onContextMenu}
@@ -672,6 +679,8 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
             icon="folder"
             key={entry.folderId}
             label={entry.name}
+            navFolderId={entry.folderId}
+            navFolderKind="managed"
             onClick={() => void onChooseFolder(entry.folderId)}
             onContextMenu={(event) => {
               event.preventDefault();
@@ -704,6 +713,8 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
           iconColor={linkedAffordance.iconColor}
           key={entry.folderId}
           label={entry.name}
+          navFolderId={entry.folderId}
+          navFolderKind="linked"
           count={entry.assetCount}
           title={linkedFolderHoverDetail(
             entry.status,

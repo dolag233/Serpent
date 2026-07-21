@@ -203,6 +203,30 @@ describe('文件夹分支：可见性矩阵（与历史内联 JSX 条件一致�
   });
 });
 
+describe('文件夹分支：快捷键展示（Serpent-vf8x）', () => {
+  it('managed 菜单显示新建/重命名/回收站平台标签', () => {
+    const mac = makeCtx({ platform: 'mac' });
+    const macMenu = registry.resolveMenu(mac.ctx);
+    expect(findItem(macMenu, 'folder.create-subfolder').shortcutLabel).toBe(
+      '⌘⇧N',
+    );
+    expect(findItem(macMenu, 'folder.rename').shortcutLabel).toBe('F2');
+    expect(findItem(macMenu, 'folder.move-to-trash').shortcutLabel).toBe(
+      '⌘⌫',
+    );
+
+    const win = makeCtx({ platform: 'windows' });
+    const winMenu = registry.resolveMenu(win.ctx);
+    expect(findItem(winMenu, 'folder.create-subfolder').shortcutLabel).toBe(
+      'Ctrl+Shift+N',
+    );
+    expect(findItem(winMenu, 'folder.rename').shortcutLabel).toBe('F2');
+    expect(findItem(winMenu, 'folder.move-to-trash').shortcutLabel).toBe(
+      'Delete',
+    );
+  });
+});
+
 describe('文件夹分支：平台条件标题', () => {
   it('mac → 在 Finder 中打开；windows → 在文件资源管理器中打开', () => {
     const mac = makeCtx({ platform: 'mac' });

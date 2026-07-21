@@ -85,7 +85,7 @@ describe('matchesShortcut 修饰键语义（移植自旧匹配器）', () => {
     ).toBe(false);
   });
 
-  it('Alt/Shift 按下时一律拒绝（旧逻辑首行语义）', () => {
+  it('Alt 按下时一律拒绝；未声明 Shift 的和弦拒绝 Shift 变体', () => {
     expect(
       matchesShortcut(
         OPEN_EXTERNAL,
@@ -107,6 +107,39 @@ describe('matchesShortcut 修饰键语义（移植自旧匹配器）', () => {
         'windows',
       ),
     ).toBe(false);
+  });
+
+  it('声明 shiftKey 的和弦要求 Shift 按下（文件夹新建）', () => {
+    const createFolder: ShortcutSpec = {
+      mac: { label: '⌘⇧N', key: 'n', metaKey: true, shiftKey: true },
+      windows: {
+        label: 'Ctrl+Shift+N',
+        key: 'n',
+        ctrlKey: true,
+        shiftKey: true,
+      },
+    };
+    expect(
+      matchesShortcut(
+        createFolder,
+        event({ key: 'n', metaKey: true, shiftKey: true }),
+        'mac',
+      ),
+    ).toBe(true);
+    expect(
+      matchesShortcut(
+        createFolder,
+        event({ key: 'n', metaKey: true }),
+        'mac',
+      ),
+    ).toBe(false);
+    expect(
+      matchesShortcut(
+        createFolder,
+        event({ key: 'n', ctrlKey: true, shiftKey: true }),
+        'windows',
+      ),
+    ).toBe(true);
   });
 
   it('mac ⌘⌫ 是 meta+Backspace，windows Delete 是无修饰键 Delete', () => {

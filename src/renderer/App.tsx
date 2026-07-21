@@ -46,6 +46,7 @@ import {
 } from "./disk-delete-confirm-preferences";
 import { DeleteLinkedDialog } from "./DeleteLinkedDialog";
 import { useFolderDeleteActions } from "./use-folder-delete-actions";
+import { useFolderCommandShortcuts } from "./use-folder-command-shortcuts";
 import { ExportDialog } from "./ExportDialog";
 import { ImportDialog } from "./ImportDialog";
 import { ImportLibraryChooserDialog } from "./ImportLibraryChooserDialog";
@@ -3228,6 +3229,34 @@ function AppInner() {
         name: collection.name,
       });
       void chooseSmartCollection(collection.collectionId);
+    },
+  });
+
+  const resolveManagedFolderName = useCallback(
+    (folderId: string) =>
+      folders.find((folder) => folder.folderId === folderId)?.name,
+    [folders],
+  );
+
+  // Serpent-vf8x: folder create/rename/trash chords (mac ⌘ / Windows Ctrl).
+  useFolderCommandShortcuts({
+    enabled: Boolean(library) && !showTrash,
+    platform: SHORTCUT_PLATFORM,
+    previewOpen: Boolean(previewAsset),
+    browseManagedFolderId: selectedFolder?.folderId ?? null,
+    selectedFolderCardIds: selectedFolderIds,
+    selectedAssetCount: selectedAssetIds.length,
+    resolveManagedFolderName,
+    createSubfolder: (parentFolderId) => {
+      cancelInlineSmartCollectionEdit();
+      openInlineFolderCreate(parentFolderId);
+    },
+    renameFolder: (folderId, currentName) => {
+      cancelInlineSmartCollectionEdit();
+      openInlineFolderRename(folderId, currentName);
+    },
+    trashManagedFolder: (folderId, name) => {
+      void trashManagedFolder(folderId, name);
     },
   });
 

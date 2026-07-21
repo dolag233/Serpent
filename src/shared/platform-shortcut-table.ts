@@ -1,12 +1,13 @@
 /**
- * Shared platform shortcut chords (Serpent-4ojz / Serpent-vf8x peek).
+ * Shared platform shortcut chords (Serpent-4ojz / Serpent-vf8x).
  *
- * Pure data: documents the Cmd (mac) ↔ Ctrl (windows) mappings already used
- * by asset command definitions. Folder-focused keyboard dispatch still needs
- * sidebar focus wiring (Serpent-vf8x) and is intentionally not claimed here.
+ * Pure data: documents the Cmd (mac) ↔ Ctrl (windows) mappings used by
+ * asset and folder command definitions. Folder keyboard dispatch reads the
+ * same ShortcutSpec on sidebar commands; this table is the documented
+ * cross-platform checklist for QA and unit tests.
  *
- * Labels match menu display; matching uses metaKey/ctrlKey exactness from
- * `matchesShortcut` in the renderer command-types module.
+ * Labels match menu display; matching uses metaKey/ctrlKey/shiftKey
+ * exactness from `matchesShortcut` in the renderer command-types module.
  */
 
 export type PlatformShortcutPlatform = "mac" | "windows";
@@ -16,6 +17,7 @@ export type PlatformShortcutChord = {
   readonly key: string;
   readonly metaKey?: boolean;
   readonly ctrlKey?: boolean;
+  readonly shiftKey?: boolean;
 };
 
 export type PlatformShortcutRow = {
@@ -27,7 +29,7 @@ export type PlatformShortcutRow = {
 
 /**
  * Core cross-platform chords that do not require a Windows runner to unit-test.
- * Keep in sync with asset-commands / asset-multi-commands / global zoom.
+ * Keep in sync with asset-commands / sidebar-commands / global zoom.
  */
 export const PLATFORM_SHORTCUT_TABLE: readonly PlatformShortcutRow[] = [
   {
@@ -45,6 +47,24 @@ export const PLATFORM_SHORTCUT_TABLE: readonly PlatformShortcutRow[] = [
   {
     id: "asset.move-to-trash",
     purpose: "Move selection to app trash",
+    mac: { label: "⌘⌫", key: "Backspace", metaKey: true },
+    windows: { label: "Delete", key: "Delete" },
+  },
+  {
+    id: "folder.create-subfolder",
+    purpose: "Create a managed subfolder under the focused/browse folder",
+    mac: { label: "⌘⇧N", key: "n", metaKey: true, shiftKey: true },
+    windows: { label: "Ctrl+Shift+N", key: "n", ctrlKey: true, shiftKey: true },
+  },
+  {
+    id: "folder.rename",
+    purpose: "Rename focused managed folder or single selected folder card",
+    mac: { label: "F2", key: "F2" },
+    windows: { label: "F2", key: "F2" },
+  },
+  {
+    id: "folder.move-to-trash",
+    purpose: "Move focused managed folder to app trash",
     mac: { label: "⌘⌫", key: "Backspace", metaKey: true },
     windows: { label: "Delete", key: "Delete" },
   },

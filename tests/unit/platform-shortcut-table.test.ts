@@ -6,13 +6,18 @@ import {
   windowsUsesCtrlForMacMeta,
 } from "../../src/shared/platform-shortcut-table";
 import { assetCommandDefinitions } from "../../src/renderer/commands/asset-commands";
-import { formatShortcut, matchesShortcut } from "../../src/renderer/commands/command-types";
+import { sidebarCommandDefinitions } from "../../src/renderer/commands/sidebar-commands";
+import {
+  formatShortcut,
+  matchesShortcut,
+} from "../../src/renderer/commands/command-types";
 
-describe("PLATFORM_SHORTCUT_TABLE (Serpent-4ojz / vf8x peek)", () => {
+describe("PLATFORM_SHORTCUT_TABLE (Serpent-4ojz / Serpent-vf8x)", () => {
   it("gives every mac meta chord a windows Ctrl twin", () => {
     for (const row of PLATFORM_SHORTCUT_TABLE) {
       expect(windowsUsesCtrlForMacMeta(row), row.id).toBe(true);
       expect(row.windows.label.includes("⌘")).toBe(false);
+      expect(Boolean(row.mac.shiftKey)).toBe(Boolean(row.windows.shiftKey));
     }
   });
 
@@ -45,6 +50,60 @@ describe("PLATFORM_SHORTCUT_TABLE (Serpent-4ojz / vf8x peek)", () => {
       matchesShortcut(
         open!.shortcut!,
         { key: "o", metaKey: false, ctrlKey: true, altKey: false, shiftKey: false },
+        "windows",
+      ),
+    ).toBe(true);
+    expect(
+      matchesShortcut(
+        trash!.shortcut!,
+        {
+          key: "Delete",
+          metaKey: false,
+          ctrlKey: false,
+          altKey: false,
+          shiftKey: false,
+        },
+        "windows",
+      ),
+    ).toBe(true);
+  });
+
+  it("keeps folder create / rename / trash aligned with sidebar commands", () => {
+    const create = sidebarCommandDefinitions.find(
+      (d) => d.id === "folder.create-subfolder",
+    );
+    const rename = sidebarCommandDefinitions.find((d) => d.id === "folder.rename");
+    const trash = sidebarCommandDefinitions.find(
+      (d) => d.id === "folder.move-to-trash",
+    );
+    expect(create?.shortcut).toBeDefined();
+    expect(rename?.shortcut).toBeDefined();
+    expect(trash?.shortcut).toBeDefined();
+
+    const tableCreate = findPlatformShortcut("folder.create-subfolder");
+    const tableRename = findPlatformShortcut("folder.rename");
+    const tableTrash = findPlatformShortcut("folder.move-to-trash");
+    expect(formatShortcut(create!.shortcut!, "windows")).toBe(
+      tableCreate!.windows.label,
+    );
+    expect(formatShortcut(rename!.shortcut!, "windows")).toBe(
+      tableRename!.windows.label,
+    );
+    expect(formatShortcut(trash!.shortcut!, "windows")).toBe(
+      tableTrash!.windows.label,
+    );
+    expect(formatShortcut(create!.shortcut!, "mac")).toBe("⌘⇧N");
+
+    expect(
+      matchesShortcut(
+        create!.shortcut!,
+        {
+          key: "n",
+          metaKey: false,
+          ctrlKey: true,
+          altKey: false,
+          shiftKey: true,
+        },
         "windows",
       ),
     ).toBe(true);

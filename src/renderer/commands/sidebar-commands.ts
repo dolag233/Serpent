@@ -83,6 +83,11 @@ export const sidebarCommandDefinitions: readonly SidebarCommandDefinition[] = [
     title: (ctx) =>
       translateForLocale(ctx.locale, 'command.folder.newSubfolder'),
     group: 'organize',
+    // Finder/Explorer new-folder chord; Windows Ctrl twin (Serpent-vf8x).
+    shortcut: {
+      mac: { label: '⌘⇧N', key: 'n', metaKey: true, shiftKey: true },
+      windows: { label: 'Ctrl+Shift+N', key: 'n', ctrlKey: true, shiftKey: true },
+    },
     visible: (ctx) => ctx.menuKind === 'folder' && ctx.locationKind === 'managed',
     run: (ctx) => ctx.actions.createSubfolder(ctx.subjectId),
   },
@@ -90,6 +95,10 @@ export const sidebarCommandDefinitions: readonly SidebarCommandDefinition[] = [
     id: 'folder.rename',
     title: (ctx) => translateForLocale(ctx.locale, 'command.folder.rename'),
     group: 'organize',
+    shortcut: {
+      mac: { label: 'F2', key: 'F2' },
+      windows: { label: 'F2', key: 'F2' },
+    },
     visible: (ctx) => ctx.menuKind === 'folder' && ctx.locationKind === 'managed',
     run: (ctx) => ctx.actions.renameFolder(ctx.subjectId, ctx.subjectName),
   },
@@ -121,6 +130,10 @@ export const sidebarCommandDefinitions: readonly SidebarCommandDefinition[] = [
     title: (ctx) =>
       translateForLocale(ctx.locale, 'command.folder.moveToTrash'),
     group: 'delete',
+    shortcut: {
+      mac: { label: '⌘⌫', key: 'Backspace', metaKey: true },
+      windows: { label: 'Delete', key: 'Delete' },
+    },
     visible: (ctx) =>
       ctx.menuKind === 'folder' &&
       (ctx.locationKind === 'managed' ||

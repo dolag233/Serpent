@@ -1,6 +1,6 @@
 # 主题 / 同屏风格 / 快捷键审计 punch-list
 
-> 工单：`Serpent-4ojz`（2026-07-21 部分收口）
+> 工单：`Serpent-4ojz`（2026-07-21 部分收口）→ 后续 `Serpent-vf8x` / `Serpent-b9xo`
 > 平台：以 macOS 开发态可见问题为主；**不声称 Windows 已验证**。
 
 ## 已在本回合修复
@@ -14,20 +14,25 @@
 
 顺带：AI 搜索按下态、搜索高亮 mark、inline-error 边框改走 warning token，去掉散落 RGB。
 
+## 2026-07-21 后续收口（`Serpent-vf8x` / `Serpent-b9xo`）
+
+| ID | 问题 | 修复 |
+| --- | --- | --- |
+| COMMAND-005 | 文件夹快捷键缺失；Windows Ctrl 体系未文档化 | 侧栏命令 ShortcutSpec + `platform-shortcut-table` 文件夹行；`data-nav-folder-*` 焦点派发；`folder-shortcut-dispatch` |
+| THEME-016 | 起始页 / 维度过滤弹出 / AI 模型下拉仍用固定黑晕 | 改走 `--shadow-elevated` / `--shadow-panel` / `--shadow-menu` |
+
 ## 仍开放（已有或新开 beads）
 
 | 项 | 说明 | 跟踪 |
 | --- | --- | --- |
 | 导入冲突下拉视觉 | 原生 select 与自定义控件混用的剩余打磨 | `Serpent-p1rm` |
-| Windows 快捷键（文件夹） | 文件夹新建/重命名/删除 Ctrl 体系与侧栏焦点派发 | `Serpent-vf8x` |
 | Windows 去顶栏菜单 | 代码已平台分支；真机验收 | `Serpent-r7gu` → SHELL-024-windows |
 | Windows 原生对话框语言 | Main 硬编码中英混杂 | `Serpent-bwb` |
 | Inspector 竖图圆角/标题 | 已有相关单 | `Serpent-hhy0`（若仍开） |
 | 色卡文案精简 | 已有相关单 | `Serpent-l79c` |
-| 系统对照完整走查 | 起始页、设置面板、AI 配置、过滤条各态亮/暗再扫一遍 | `Serpent-b9xo` |
 
 ## 快捷键（共享表）
 
-资产命令已有 mac ⌘ / Windows Ctrl 对照；纯数据表见
+资产与文件夹命令的 mac ⌘ / Windows Ctrl 对照见
 [`src/shared/platform-shortcut-table.ts`](../../src/shared/platform-shortcut-table.ts)。
-文件夹侧栏命令的键盘派发仍属 `Serpent-vf8x`，本 epic 不假装已完成。
+文件夹侧栏焦点派发已由 `Serpent-vf8x` 落地；Windows 真机仍待人类验收。
