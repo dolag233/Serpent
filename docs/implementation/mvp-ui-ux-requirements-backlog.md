@@ -402,7 +402,7 @@ FolderBrowseEntry
 | REQ-MENU-008               | 资产重命名改为画布原地编辑                                      | P2     | `Serpent-wfj`                      |
 | REQ-SHELL-019              | 澄清#1：左上角按钮（原文不完整）                                | —      | `Serpent-hrw` 已撤回关闭           |
 | REQ-FOLDER-003（修订）     | 目录计数改为全部后代资产数                                      | P2     | `Serpent-toh`                      |
-| REQ-TAG-001（修订）        | 标签管理工作区（侧栏入口 + 中间全页）                           | P2     | `Serpent-mqp`                      |
+| REQ-TAG-001（修订）        | 标签管理工作区（侧栏入口 + 中间全页）                           | P2     | `Serpent-mqp`（已关闭；TAG-001–003 待人类验收） |
 | 澄清#11                    | 主题/语言默认跟随系统                                           | P2     | `Serpent-svc`                      |
 | 澄清#10                    | 反选 Ctrl+I；mac Edit 菜单后续                                  | P3     | `Serpent-5fq`                      |
 
