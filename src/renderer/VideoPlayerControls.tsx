@@ -8,6 +8,7 @@ import { useViewerZoomPan } from "./use-viewer-zoom-pan";
 import {
   clampScrubTime,
   formatVideoClockTime,
+  matchVideoPlaybackSeekKey,
   nextPlaybackIntent,
   parsePlaybackRate,
   scrubRatioFromClientX,
@@ -15,6 +16,7 @@ import {
   scrubTimeFromRatio,
   shouldHandleVideoSpaceKey,
   VIDEO_PLAYBACK_RATES,
+  videoSeekDeltaSeconds,
   type VideoPlaybackRate,
 } from "./video-player-controls";
 
@@ -34,6 +36,7 @@ const SCRUB_STEP_SECONDS = 5;
 /**
  * Fully custom chrome around `HTMLVideoElement` (REQ-VIEW-005 / Serpent-60k):
  * - Space play/pause when the viewer is focused (not in text fields)
+ * - D / F frame step (±1/30s) and Ctrl+←/→ ±2s skip (Serpent-sk1)
  * - scrubbable progress track (mousedown / drag / click / arrow keys)
  * - playback rate select
  *
@@ -56,8 +59,7 @@ export function VideoPlayerControls({
   const videoRef = useRef<HTMLVideoElement>(null);
   const trackRef = useRef<HTMLDivElement>(null);
   // Zoom/pan/fit mirrors the image viewer (Serpent-190). No F/Space fit
-  // keybind here: Space toggles playback, and D/F are reserved for video
-  // frame stepping (Serpent-sk1).
+  // keybind here: Space toggles playback; D/F step frames; Ctrl+arrows skip.
   const {
     fitToWindow,
     measureAndFit,
@@ -102,14 +104,34 @@ export function VideoPlayerControls({
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (!shouldHandleVideoSpaceKey(event)) return;
+      if (shouldHandleVideoSpaceKey(event)) {
+        event.preventDefault();
+        event.stopPropagation();
+        togglePlayback();
+        return;
+      }
+      const action = matchVideoPlaybackSeekKey(event);
+      if (!action) return;
+      const video = videoRef.current;
+      if (!video) return;
       event.preventDefault();
+      // Stop shell ←/→ asset navigation (bubble listener on document).
       event.stopPropagation();
-      togglePlayback();
+      const mediaDuration = video.duration || duration;
+      const nextTime = clampScrubTime(
+        video.currentTime + videoSeekDeltaSeconds(action),
+        mediaDuration,
+      );
+      // Frame step pauses so the stepped frame is visible (editorial habit).
+      if (action.kind === "frame" && !video.paused) {
+        video.pause();
+      }
+      seekSessionRef.current?.commit(nextTime);
+      setCurrentTime(nextTime);
     };
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [togglePlayback]);
+  }, [duration, togglePlayback]);
 
   useEffect(() => {
     const video = videoRef.current;

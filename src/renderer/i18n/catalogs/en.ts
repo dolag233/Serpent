@@ -465,7 +465,9 @@ export const en = {
       title: "Create library",
       name: "Name",
       help: "",
-      submit: "Create"
+      submit: "Create",
+      existingSection: "Existing library",
+      openExisting: "Open existing library…"
     },
     conflicts: {
       title: "Resolve import conflicts",
@@ -790,7 +792,8 @@ export const en = {
     smartCollectionBody:
       "Smart collections show assets that match a saved query. Import from the library menu goes to the library, not into this query.",
     noLibraryTitle: "Start with a local library",
-    noLibraryBody: "Files, folders, and metadata stay where you control them."
+    noLibraryBody: "Files, folders, and metadata stay where you control them.",
+    recentLibraries: "Recent libraries"
   },
   progress: {
     snapshotDb: "Snapshotting database…",

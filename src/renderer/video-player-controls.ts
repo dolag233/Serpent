@@ -74,6 +74,70 @@ export function shouldHandleVideoSpaceKey(event: {
   return true;
 }
 
+/**
+ * Default frame duration when the container does not expose fps
+ * (HTMLVideoElement has no standard frame-rate field). 30 fps matches
+ * common screen/camera masters and is close enough for editorial stepping.
+ */
+export const VIDEO_FRAME_STEP_SECONDS = 1 / 30;
+
+/** Ctrl+← / Ctrl+→ skip distance (Serpent-sk1). */
+export const VIDEO_SKIP_SECONDS = 2;
+
+export type VideoKeyboardSeekAction =
+  | { kind: "frame"; direction: 1 | -1 }
+  | { kind: "skip"; direction: 1 | -1 };
+
+/**
+ * D = forward one frame, F = back one frame; Ctrl+←/→ = ±2s.
+ * Capture-phase callers must stopPropagation so shell ←/→ asset nav does not fire.
+ * Uses Ctrl (not Cmd) on all platforms per product request.
+ */
+export function matchVideoPlaybackSeekKey(event: {
+  key: string;
+  code?: string;
+  ctrlKey: boolean;
+  metaKey: boolean;
+  altKey: boolean;
+  shiftKey?: boolean;
+  target: KeyboardTargetLike | EventTarget | null;
+}): VideoKeyboardSeekAction | null {
+  if (isEditableKeyboardTarget(event.target)) return null;
+
+  // Ctrl+Arrow — require ctrl, reject Cmd/Alt so macOS system chords stay free.
+  if (event.ctrlKey && !event.metaKey && !event.altKey) {
+    if (event.key === "ArrowLeft" || event.code === "ArrowLeft") {
+      return { kind: "skip", direction: -1 };
+    }
+    if (event.key === "ArrowRight" || event.code === "ArrowRight") {
+      return { kind: "skip", direction: 1 };
+    }
+  }
+
+  if (event.ctrlKey || event.metaKey || event.altKey) return null;
+  if (event.key === "d" || event.key === "D" || event.code === "KeyD") {
+    return { kind: "frame", direction: 1 };
+  }
+  if (event.key === "f" || event.key === "F" || event.code === "KeyF") {
+    return { kind: "frame", direction: -1 };
+  }
+  return null;
+}
+
+/** Seconds to add to `currentTime` for a matched seek action. */
+export function videoSeekDeltaSeconds(
+  action: VideoKeyboardSeekAction,
+  frameStepSeconds: number = VIDEO_FRAME_STEP_SECONDS,
+): number {
+  const step =
+    action.kind === "frame"
+      ? Number.isFinite(frameStepSeconds) && frameStepSeconds > 0
+        ? frameStepSeconds
+        : VIDEO_FRAME_STEP_SECONDS
+      : VIDEO_SKIP_SECONDS;
+  return step * action.direction;
+}
+
 export function parsePlaybackRate(value: string): VideoPlaybackRate {
   const parsed = Number(value);
   if ((VIDEO_PLAYBACK_RATES as readonly number[]).includes(parsed)) {

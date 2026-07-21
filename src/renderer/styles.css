@@ -2001,6 +2001,124 @@ input[type="range"] {
   margin-top: 25px;
 }
 
+.empty-recent {
+  box-sizing: border-box;
+  width: min(100%, 420px);
+  margin: 28px auto 0;
+  padding-top: 18px;
+  border-top: 1px solid var(--divider);
+  text-align: left;
+}
+
+.empty-recent-label,
+.create-dialog-existing-label {
+  margin-bottom: 8px;
+  color: var(--secondary);
+  font-size: 11px;
+  font-weight: 560;
+  letter-spacing: 0.02em;
+}
+
+.empty-recent-list,
+.create-dialog-recent-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.empty-recent-row {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+}
+
+.empty-recent-open,
+.create-dialog-recent-open {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid var(--divider);
+  border-radius: 6px;
+  background: var(--canvas);
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+}
+
+.empty-recent-open:hover:not(:disabled),
+.create-dialog-recent-open:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--pane);
+}
+
+.empty-recent-open:disabled,
+.create-dialog-recent-open:disabled,
+.empty-recent-forget:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.empty-recent-name,
+.create-dialog-recent-name {
+  overflow: hidden;
+  max-width: 100%;
+  font-size: 12px;
+  font-weight: 560;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.empty-recent-path,
+.create-dialog-recent-path {
+  overflow: hidden;
+  max-width: 100%;
+  color: var(--tertiary);
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.empty-recent-forget {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--secondary);
+  cursor: pointer;
+}
+
+.empty-recent-forget:hover:not(:disabled) {
+  background: var(--canvas);
+  color: var(--text);
+}
+
+.create-dialog-existing {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--divider);
+}
+
+.create-dialog-open-existing {
+  width: 100%;
+  margin-bottom: 8px;
+}
+
+.create-dialog-recent-list {
+  margin-top: 4px;
+}
+
 .primary-button,
 .secondary-button {
   display: inline-flex;

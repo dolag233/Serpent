@@ -4,13 +4,17 @@ import {
   clampScrubTime,
   formatVideoClockTime,
   isEditableKeyboardTarget,
+  matchVideoPlaybackSeekKey,
   nextPlaybackIntent,
   parsePlaybackRate,
   scrubRatioFromClientX,
   scrubRatioFromTime,
   scrubTimeFromRatio,
   shouldHandleVideoSpaceKey,
+  VIDEO_FRAME_STEP_SECONDS,
   VIDEO_PLAYBACK_RATES,
+  VIDEO_SKIP_SECONDS,
+  videoSeekDeltaSeconds,
 } from "../../src/renderer/video-player-controls";
 
 describe("VIDEO_PLAYBACK_RATES", () => {
@@ -104,6 +108,81 @@ describe("shouldHandleVideoSpaceKey", () => {
         target: { tagName: "BUTTON" },
       }),
     ).toBe(false);
+  });
+});
+
+describe("matchVideoPlaybackSeekKey / videoSeekDeltaSeconds (Serpent-sk1)", () => {
+  const base = {
+    ctrlKey: false,
+    metaKey: false,
+    altKey: false,
+    target: { tagName: "DIV" } as const,
+  };
+
+  it("maps D forward and F back by one default frame", () => {
+    expect(matchVideoPlaybackSeekKey({ ...base, key: "d" })).toEqual({
+      kind: "frame",
+      direction: 1,
+    });
+    expect(matchVideoPlaybackSeekKey({ ...base, key: "F" })).toEqual({
+      kind: "frame",
+      direction: -1,
+    });
+    expect(
+      videoSeekDeltaSeconds({ kind: "frame", direction: 1 }),
+    ).toBeCloseTo(VIDEO_FRAME_STEP_SECONDS);
+    expect(
+      videoSeekDeltaSeconds({ kind: "frame", direction: -1 }),
+    ).toBeCloseTo(-VIDEO_FRAME_STEP_SECONDS);
+  });
+
+  it("maps Ctrl+Arrow to ±2s skips and ignores Cmd+Arrow", () => {
+    expect(
+      matchVideoPlaybackSeekKey({
+        ...base,
+        key: "ArrowRight",
+        ctrlKey: true,
+      }),
+    ).toEqual({ kind: "skip", direction: 1 });
+    expect(
+      matchVideoPlaybackSeekKey({
+        ...base,
+        key: "ArrowLeft",
+        ctrlKey: true,
+      }),
+    ).toEqual({ kind: "skip", direction: -1 });
+    expect(
+      matchVideoPlaybackSeekKey({
+        ...base,
+        key: "ArrowRight",
+        metaKey: true,
+      }),
+    ).toBeNull();
+    expect(videoSeekDeltaSeconds({ kind: "skip", direction: 1 })).toBe(
+      VIDEO_SKIP_SECONDS,
+    );
+    expect(videoSeekDeltaSeconds({ kind: "skip", direction: -1 })).toBe(
+      -VIDEO_SKIP_SECONDS,
+    );
+  });
+
+  it("ignores D/F while typing and ignores plain arrows", () => {
+    expect(
+      matchVideoPlaybackSeekKey({
+        ...base,
+        key: "d",
+        target: { tagName: "INPUT" },
+      }),
+    ).toBeNull();
+    expect(
+      matchVideoPlaybackSeekKey({ ...base, key: "ArrowLeft" }),
+    ).toBeNull();
+  });
+
+  it("clamps a stepped seek into [0, duration]", () => {
+    const delta = videoSeekDeltaSeconds({ kind: "skip", direction: -1 });
+    expect(clampScrubTime(0.5 + delta, 10)).toBe(0);
+    expect(clampScrubTime(9 + VIDEO_SKIP_SECONDS, 10)).toBe(10);
   });
 });
 

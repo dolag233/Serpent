@@ -455,7 +455,9 @@ export const zhCN = {
       title: "创建资源库",
       name: "名称",
       help: "",
-      submit: "创建"
+      submit: "创建",
+      existingSection: "已有资源库",
+      openExisting: "打开已有资源库…"
     },
     conflicts: {
       title: "处理导入冲突",
@@ -778,7 +780,8 @@ export const zhCN = {
     smartCollectionBody:
       "智能合集显示符合已保存查询条件的资产。资源库菜单中的导入进入资源库，不会写入此查询。",
     noLibraryTitle: "创建本地资源库",
-    noLibraryBody: "资产文件、目录与元数据保存在本地所选位置。"
+    noLibraryBody: "资产文件、目录与元数据保存在本地所选位置。",
+    recentLibraries: "最近使用的资源库"
   },
   progress: {
     snapshotDb: "快照数据库…",

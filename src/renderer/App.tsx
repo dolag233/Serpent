@@ -84,6 +84,7 @@ import { UndoMoveDialog } from "./UndoMoveDialog";
 import { ConflictsDialog } from "./ConflictsDialog";
 import { RenameDialog } from "./RenameDialog";
 import { CreateDialog } from "./CreateDialog";
+import { NoLibraryEmptyState } from "./NoLibraryEmptyState";
 import { CollectionEditorDialog } from "./CollectionEditorDialog";
 import { ExtensionPairingDialog } from "./ExtensionPairingDialog";
 import {
@@ -1752,6 +1753,13 @@ function AppInner() {
   useEffect(() => {
     void Promise.resolve().then(restore);
   }, [restore]);
+  // Serpent-y0au: keep recent libraries warm on the no-library start surface.
+  useEffect(() => {
+    if (!api || library) return;
+    void refreshRecentLibraries(null);
+    // refreshRecentLibraries closes over library; null path is intentional.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- refresh when api/library identity changes
+  }, [api, library]);
   useEffect(() => {
     if (!library || !selectedAsset) return;
     const scope: StoredBrowserSession["scope"] = showTrash
@@ -5855,7 +5863,11 @@ function AppInner() {
       }
       setAiContent((current) => {
         if (!current || current.assetId !== selectedAsset.assetId) return current;
-        const { description: _cleared, ...rest } = current;
+        const rest = {
+          assetId: current.assetId,
+          ...(current.tags ? { tags: current.tags } : {}),
+          ...(current.rating != null ? { rating: current.rating } : {}),
+        };
         const stillHas =
           Boolean(rest.tags && rest.tags.length > 0) || rest.rating != null;
         return stillHas ? rest : null;
@@ -7176,43 +7188,19 @@ function AppInner() {
               </div>
             )
           ) : (
-            <div className="empty-state">
-              <div className="empty-copy">
-                {/* REQ-SHELL-008/009: the «01» step sidebar and the decorative
-                    English caption are gone — the form renders directly. */}
-                <h1>{t("empty.noLibraryTitle")}</h1>
-                <p>{t("empty.noLibraryBody")}</p>
-                <div className="empty-actions">
-                  <button
-                    className="primary-button"
-                    onClick={() => {
-                      setDialogValue(t("shell.myLibrary"));
-                      setDialog("library");
-                    }}
-                    type="button"
-                  >
-                    <Icon name="plus" size={15} />
-                    {t("shell.createLibrary")}
-                  </button>
-                  <button
-                    className="secondary-button"
-                    onClick={() => void runLibraryOperation("open")}
-                    type="button"
-                  >
-                    <Icon name="folder" size={15} />
-                    {t("shell.openLibrary")}
-                  </button>
-                  <button
-                    className="secondary-button"
-                    onClick={() => setImportLibraryChooserOpen(true)}
-                    type="button"
-                  >
-                    <Icon name="download" size={15} />
-                    {t("toolbar.importLibrary")}
-                  </button>
-                </div>
-              </div>
-            </div>
+            <NoLibraryEmptyState
+              busy={busy}
+              onCreateLibrary={() => {
+                setDialogValue(t("shell.myLibrary"));
+                void refreshRecentLibraries(null);
+                setDialog("library");
+              }}
+              onImportLibrary={() => setImportLibraryChooserOpen(true)}
+              onOpenLibrary={() => void runLibraryOperation("open")}
+              onOpenRecent={(path) => void openRecentLibrary(path)}
+              onForgetRecent={(path) => void forgetRecentLibrary(path)}
+              recentLibraries={recentLibraries}
+            />
           )}
         </div>
         {renderedToast && (
@@ -7499,6 +7487,7 @@ function AppInner() {
         />
       ) : null}
       <CreateDialog
+        busy={busy}
         open={dialog !== null}
         value={dialogValue}
         onValueChange={setDialogValue}
@@ -7509,6 +7498,15 @@ function AppInner() {
         onCancel={() => {
           setDialog(null);
         }}
+        onOpenExisting={() => {
+          setDialog(null);
+          void runLibraryOperation("open");
+        }}
+        onOpenRecent={(path) => {
+          setDialog(null);
+          void openRecentLibrary(path);
+        }}
+        recentLibraries={recentLibraries}
       />
       {conflicts && (
         <ConflictsDialog
