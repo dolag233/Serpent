@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 import {
   AI_OUTPUT_STYLES,
@@ -122,8 +123,15 @@ export function AiConfigDialog({
   } | null>(null);
   const [showApiKey, setShowApiKey] = useState(false);
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
+  const [modelPickerMenuBox, setModelPickerMenuBox] = useState<{
+    top: number;
+    left: number;
+    width: number;
+  } | null>(null);
   const modelsFetchInFlightRef = useRef(false);
   const modelPickerWrapRef = useRef<HTMLDivElement>(null);
+  const modelPickerTriggerRef = useRef<HTMLButtonElement>(null);
+  const modelPickerMenuRef = useRef<HTMLUListElement>(null);
   const fetchedForRef = useRef<string | null>(null);
 
   const canUseKey = Boolean(apiKey.trim()) || hasKey;
@@ -178,18 +186,39 @@ export function AiConfigDialog({
     }
   }
 
+  function syncModelPickerMenuBox() {
+    const trigger = modelPickerTriggerRef.current;
+    if (!trigger) return;
+    const rect = trigger.getBoundingClientRect();
+    const width = Math.max(rect.width, 180);
+    const maxHeight = Math.min(240, window.innerHeight * 0.4);
+    const spaceBelow = window.innerHeight - rect.bottom - 8;
+    const openUpward = spaceBelow < Math.min(maxHeight, 120) && rect.top > spaceBelow;
+    const top = openUpward
+      ? Math.max(8, rect.top - maxHeight - 4)
+      : rect.bottom + 4;
+    const left = Math.min(
+      Math.max(8, rect.left),
+      window.innerWidth - width - 8,
+    );
+    setModelPickerMenuBox({ top, left, width });
+  }
+
   async function toggleModelPicker() {
     if (!canUseKey) return;
     if (modelPickerOpen) {
       setModelPickerOpen(false);
+      setModelPickerMenuBox(null);
       return;
     }
     setModelPickerOpen(true);
+    syncModelPickerMenuBox();
     if (
       fetchedForRef.current !== modelsFetchKey ||
       modelOptions.length === 0
     ) {
       await runFetchModels();
+      syncModelPickerMenuBox();
     }
   }
 
@@ -204,6 +233,7 @@ export function AiConfigDialog({
     setModelsMessage(null);
     setTestInline(null);
     setModelPickerOpen(false);
+    setModelPickerMenuBox(null);
     fetchedForRef.current = null;
   }
 
@@ -211,6 +241,7 @@ export function AiConfigDialog({
   useEffect(() => {
     if (!open) {
       setModelPickerOpen(false);
+      setModelPickerMenuBox(null);
       return;
     }
     if (!canUseKey) return;
@@ -223,15 +254,25 @@ export function AiConfigDialog({
 
   useEffect(() => {
     if (!modelPickerOpen) return;
+    syncModelPickerMenuBox();
     const onPointerDown = (event: MouseEvent) => {
-      const host = modelPickerWrapRef.current;
-      if (!host) return;
-      if (event.target instanceof Node && !host.contains(event.target)) {
-        setModelPickerOpen(false);
-      }
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (modelPickerWrapRef.current?.contains(target)) return;
+      if (modelPickerMenuRef.current?.contains(target)) return;
+      setModelPickerOpen(false);
+      setModelPickerMenuBox(null);
     };
+    const onReposition = () => syncModelPickerMenuBox();
     document.addEventListener("mousedown", onPointerDown);
-    return () => document.removeEventListener("mousedown", onPointerDown);
+    window.addEventListener("resize", onReposition);
+    // Dialog body scrolls clip absolute menus; keep fixed menu glued to trigger.
+    document.addEventListener("scroll", onReposition, true);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      window.removeEventListener("resize", onReposition);
+      document.removeEventListener("scroll", onReposition, true);
+    };
   }, [modelPickerOpen]);
 
   if (!open) return null;
@@ -395,6 +436,7 @@ export function AiConfigDialog({
                   className="text-field ai-config-input ai-config-model-picker-trigger"
                   disabled={!canUseKey}
                   onClick={() => void toggleModelPicker()}
+                  ref={modelPickerTriggerRef}
                   title={
                     !canUseKey
                       ? t("aiConfig.modelPickEmpty")
@@ -407,45 +449,62 @@ export function AiConfigDialog({
                   </span>
                   <Icon name="chevron" size={12} />
                 </button>
-                {modelPickerOpen ? (
-                  <ul
-                    aria-label={t("aiConfig.modelPick")}
-                    className="ai-config-model-picker-menu"
-                    role="listbox"
-                  >
-                    {busyAction === "models" && modelOptions.length === 0 ? (
-                      <li className="ai-config-model-picker-empty" role="option">
-                        {t("aiConfig.fetchingModels")}
-                      </li>
-                    ) : modelOptions.length === 0 ? (
-                      <li className="ai-config-model-picker-empty" role="option">
-                        {modelsMessage ?? t("aiConfig.modelPickEmpty")}
-                      </li>
-                    ) : (
-                      modelOptions.map((id) => (
-                        <li key={id} role="presentation">
-                          <button
-                            aria-selected={id === model}
-                            className={
-                              id === model
-                                ? "ai-config-model-picker-option is-selected"
-                                : "ai-config-model-picker-option"
-                            }
-                            onClick={() => {
-                              onModelChange(id);
-                              setTestInline(null);
-                              setModelPickerOpen(false);
-                            }}
+                {modelPickerOpen && modelPickerMenuBox
+                  ? createPortal(
+                      <ul
+                        aria-label={t("aiConfig.modelPick")}
+                        className="ai-config-model-picker-menu is-portaled"
+                        ref={modelPickerMenuRef}
+                        role="listbox"
+                        style={{
+                          top: modelPickerMenuBox.top,
+                          left: modelPickerMenuBox.left,
+                          width: modelPickerMenuBox.width,
+                        }}
+                      >
+                        {busyAction === "models" &&
+                        modelOptions.length === 0 ? (
+                          <li
+                            className="ai-config-model-picker-empty"
                             role="option"
-                            type="button"
                           >
-                            {id}
-                          </button>
-                        </li>
-                      ))
-                    )}
-                  </ul>
-                ) : null}
+                            {t("aiConfig.fetchingModels")}
+                          </li>
+                        ) : modelOptions.length === 0 ? (
+                          <li
+                            className="ai-config-model-picker-empty"
+                            role="option"
+                          >
+                            {modelsMessage ?? t("aiConfig.modelPickEmpty")}
+                          </li>
+                        ) : (
+                          modelOptions.map((id) => (
+                            <li key={id} role="presentation">
+                              <button
+                                aria-selected={id === model}
+                                className={
+                                  id === model
+                                    ? "ai-config-model-picker-option is-selected"
+                                    : "ai-config-model-picker-option"
+                                }
+                                onClick={() => {
+                                  onModelChange(id);
+                                  setTestInline(null);
+                                  setModelPickerOpen(false);
+                                  setModelPickerMenuBox(null);
+                                }}
+                                role="option"
+                                type="button"
+                              >
+                                {id}
+                              </button>
+                            </li>
+                          ))
+                        )}
+                      </ul>,
+                      document.body,
+                    )
+                  : null}
               </div>
             </div>
             {modelsMessage ? (

@@ -3522,6 +3522,12 @@ body.serpent-modal-open .app-shell {
   box-shadow: 0 10px 28px color-mix(in srgb, var(--ink) 22%, transparent);
 }
 
+.ai-config-model-picker-menu.is-portaled {
+  position: fixed;
+  right: auto;
+  z-index: 120;
+}
+
 .ai-config-model-picker-option {
   display: block;
   width: 100%;
