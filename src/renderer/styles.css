@@ -3294,6 +3294,19 @@ body.serpent-modal-open .app-shell {
   flex-wrap: wrap;
   align-items: center;
   gap: 8px 12px;
+  min-width: 0;
+}
+
+.ai-config-dialog .dialog-heading {
+  flex-shrink: 0;
+  align-items: center;
+  margin-bottom: 0;
+  padding: 20px 20px 12px;
+}
+
+.ai-config-dialog .dialog-heading h2 {
+  margin: 0;
+  line-height: 1.25;
 }
 
 .ai-connection-indicator {
@@ -3302,8 +3315,8 @@ body.serpent-modal-open .app-shell {
   gap: 6px;
   min-width: 0;
   color: var(--secondary);
-  font-size: 11px;
-  line-height: 1.3;
+  font-size: 12px;
+  line-height: 1.25;
 }
 
 .ai-connection-dot {
@@ -3364,12 +3377,6 @@ body.serpent-modal-open .app-shell {
   max-height: min(82vh, 640px);
   padding: 0;
   overflow: hidden;
-}
-
-.ai-config-dialog .dialog-heading {
-  flex-shrink: 0;
-  margin-bottom: 0;
-  padding: 20px 20px 12px;
 }
 
 .ai-config-dialog-body {
