@@ -2,8 +2,9 @@
  * Document-level select-all / invert / Escape-clear for the browse canvas
  * (Serpent-5fq; Escape extract from App for Serpent-uye wave).
  *
- * Asset open/trash/rename chords stay in App — this hook only owns selection
- * set mutations so Escape/metadata/restore can keep splitting independently.
+ * Asset open/trash/rename chords live in useAssetActionKeyboard.
+ * This hook only owns selection set mutations so Escape/metadata/restore
+ * can keep splitting independently.
  */
 
 import { useEffect, type Dispatch, type MutableRefObject, type SetStateAction } from "react";

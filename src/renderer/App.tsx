@@ -127,6 +127,7 @@ import {
 import { resolveBrowseContextMenuIntent } from "./browse-selection-menu";
 import { useAssetSelection } from "./useAssetSelection";
 import { useSelectionKeyboard } from "./use-selection-keyboard";
+import { useAssetActionKeyboard } from "./use-asset-action-keyboard";
 import {
   useBrowserSessionPersist,
   useBrowserSessionRestore,
@@ -257,13 +258,9 @@ import {
   resolveBrowseRestoreScroll,
   type BrowseViewSnapshot,
 } from "./view-restore";
-import { createCommandRegistry } from "./commands/command-registry";
-import { assetCommandDefinitions } from "./commands/asset-commands";
 import {
   isMacPlatform,
-  matchesShortcut,
   type CommandPlatform,
-  type ShortcutSpec,
 } from "./commands/command-types";
 import { resolveRendererPlatform } from "./renderer-platform";
 import { formatBatchRatingNotice } from "./batch-tag-notice";
@@ -277,22 +274,7 @@ const IS_MAC_PLATFORM = isMacPlatform(navigator.userAgent);
 const IS_WINDOWS_PLATFORM =
   resolveRendererPlatform(navigator.userAgent) === "windows";
 
-// 键盘快捷键与菜单标签共用注册表中的同一份 ShortcutSpec（REQ-COMMAND-002）：
-// 按键定义改在命令定义里，此处只按命令 id 查表匹配，不再维护第二份映射。
 const SHORTCUT_PLATFORM: CommandPlatform = IS_MAC_PLATFORM ? "mac" : "windows";
-const assetKeyboardCommandRegistry = createCommandRegistry(
-  assetCommandDefinitions,
-);
-const matchAssetCommandShortcut = (
-  commandId: string,
-  event: KeyboardEvent,
-): boolean => {
-  const spec: ShortcutSpec | undefined =
-    assetKeyboardCommandRegistry.get(commandId)?.shortcut;
-  return (
-    spec !== undefined && matchesShortcut(spec, event, SHORTCUT_PLATFORM)
-  );
-};
 
 type RendererWindow = Window & {
   serpent?: {
@@ -5029,63 +5011,23 @@ function AppInner() {
     };
   }, [dialogFocusTrapActive]);
 
-  useEffect(() => {
-    const onSelectionKeyDown = (event: KeyboardEvent) => {
-      const target = event.target;
-      if (
-        target instanceof HTMLInputElement ||
-        target instanceof HTMLTextAreaElement ||
-        target instanceof HTMLSelectElement ||
-        (target instanceof HTMLElement && target.isContentEditable)
-      )
-        return;
-      if (
-        matchAssetCommandShortcut("asset.open-external", event) &&
-        selectedAsset?.availability === "available" &&
-        !selectedAsset.deletedAt &&
-        !previewAsset &&
-        !document.querySelector('[role="dialog"][aria-modal="true"]')
-      ) {
-        event.preventDefault();
-        void handleOpenExternal(selectedAsset.assetId);
-      } else if (
-        matchAssetCommandShortcut("asset.move-to-trash", event) &&
-        !showTrash &&
-        library &&
-        selectedManagedCount > 0 &&
-        !previewAsset &&
-        !document.querySelector('[role="dialog"][aria-modal="true"]')
-      ) {
-        event.preventDefault();
-        const managedIds = selectedAssets
-          .filter((a) => a.locationKind === "managed")
-          .map((a) => a.assetId);
-        void trashManagedAssets(managedIds);
-      } else if (
-        matchAssetCommandShortcut("asset.rename", event) &&
-        selectedAsset?.availability === "available" &&
-        !selectedAsset.deletedAt &&
-        selectedAsset.locationKind === "managed" &&
-        !previewAsset &&
-        !document.querySelector('[role="dialog"][aria-modal="true"]')
-      ) {
-        event.preventDefault();
-        openAssetRename(selectedAsset.assetId);
-      }
-    };
-    document.addEventListener("keydown", onSelectionKeyDown);
-    return () => document.removeEventListener("keydown", onSelectionKeyDown);
-  }, [
-    library,
-    previewAsset,
+  useAssetActionKeyboard({
+    enabled: Boolean(library),
+    platform: SHORTCUT_PLATFORM,
+    previewOpen: Boolean(previewAsset),
     showTrash,
-    selectedManagedCount,
+    libraryOpen: Boolean(library),
     selectedAsset,
-    handleOpenExternal,
     selectedAssets,
-    trashManagedAssets,
-    openAssetRename,
-  ]);
+    selectedManagedCount,
+    onOpenExternal: (assetId) => {
+      void handleOpenExternal(assetId);
+    },
+    onTrashManaged: (assetIds) => {
+      void trashManagedAssets(assetIds);
+    },
+    onRename: openAssetRename,
+  });
 
   // Capture-phase Escape guard: when context menu is open, stop
   // propagation so the non-capture handler (which clears selection)
