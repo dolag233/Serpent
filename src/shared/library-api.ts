@@ -413,6 +413,11 @@ export interface SerpentLibraryApi {
   openWith(input: { libraryId: string; assetId: string }): Promise<LibraryApiResult<void>>;
   revealInFolder(input: { libraryId: string; assetId: string }): Promise<LibraryApiResult<void>>;
   copyFilePath(input: { libraryId: string; assetId: string }): Promise<LibraryApiResult<void>>;
+  /** OS file clipboard copy for one or more assets (Finder/Explorer interoperable). */
+  copyAssetFiles(input: {
+    libraryId: string;
+    assetIds: string[];
+  }): Promise<LibraryApiResult<void>>;
   // Folder shell actions (REQ-MENU-006): folder id only crosses the bridge;
   // the absolute path is resolved by the Worker and consumed by Main.
   openFolderInFileManager(input: { libraryId: string; folderId: string }): Promise<LibraryApiResult<void>>;

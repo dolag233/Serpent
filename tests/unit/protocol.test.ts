@@ -326,6 +326,15 @@ describe('renderer request protocol', () => {
       assetId: 'asset-01',
     });
     expect(parseRendererRequest({
+      type: 'asset.copy-files.request',
+      libraryId: 'library-01',
+      assetIds: ['asset-01', 'asset-02'],
+    })).toEqual({
+      type: 'asset.copy-files.request',
+      libraryId: 'library-01',
+      assetIds: ['asset-01', 'asset-02'],
+    });
+    expect(parseRendererRequest({
       type: 'asset.open-with.request',
       libraryId: 'library-01',
       assetId: 'asset-01',
@@ -348,6 +357,12 @@ describe('renderer request protocol', () => {
       absolutePath: '/private/forged/path',
     })).toThrow();
     expect(() => parseRendererRequest({
+      type: 'asset.copy-files.request',
+      libraryId: 'library-01',
+      assetIds: ['asset-01'],
+      absolutePaths: ['/private/forged/path'],
+    })).toThrow();
+    expect(() => parseRendererRequest({
       type: 'asset.open-with.request',
       libraryId: 'library-01',
       assetId: 'asset-01',
@@ -360,6 +375,11 @@ describe('renderer request protocol', () => {
     expect(() => parseRendererRequest({
       type: 'asset.copy-file-path.request',
       libraryId: 'library-01',
+    })).toThrow();
+    expect(() => parseRendererRequest({
+      type: 'asset.copy-files.request',
+      libraryId: 'library-01',
+      assetIds: [],
     })).toThrow();
   });
 

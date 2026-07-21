@@ -761,6 +761,11 @@ const assetOperationSuccessSchemas = [
     type: z.literal('asset.copy-file-path.requested'),
     assetId: nonBlankString,
   }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('asset.copy-files.requested'),
+    assetIds: z.array(nonBlankString).min(1),
+  }),
   // Folder shell-action acknowledgements carry only the folder id; the
   // absolute path stays on the Worker→Main boundary (REQ-COMMAND-003).
   z.strictObject({
@@ -959,6 +964,13 @@ const workerSuccessResultSchema = z.discriminatedUnion('type', [
     type: z.literal('media.asset-path'),
     assetId: nonBlankString,
     absolutePath: nonBlankString,
+  }),
+  // Worker→Main only: absolute paths never enter the renderer result schema.
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('media.asset-paths'),
+    assetIds: z.array(nonBlankString).min(1),
+    absolutePaths: z.array(nonBlankString).min(1),
   }),
   // Worker→Main only: the resolved folder path never enters the renderer
   // result schema (REQ-COMMAND-003).

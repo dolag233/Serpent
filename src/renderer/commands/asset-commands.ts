@@ -19,6 +19,10 @@ export interface AssetCommandActions {
   readonly openExternal: (assetId: string) => void;
   readonly openWith: (assetId: string) => void;
   readonly revealInFolder: (assetId: string) => void;
+  /** OS file clipboard (Finder/Explorer interoperable). */
+  readonly copyFiles: (assetIds: string[]) => void;
+  /** Paste OS clipboard into a managed folder (reuse folder.paste). */
+  readonly pasteIntoFolder: (folderId: string) => void;
   readonly copyFilePath: (assetId: string) => void;
   readonly rename: (assetId: string) => void;
   readonly aiAnalyze: (assetId: string) => void;
@@ -49,6 +53,11 @@ export interface AssetCommandContext extends CommandContext {
   readonly aiCanAnalyze: boolean;
   /** 删除链接资产的确认流程需要展示名（对应 descriptor.displayName）。 */
   readonly assetDisplayName: string;
+  /**
+   * Managed folder that receives OS clipboard paste (current browse folder
+   * or the asset's parent). Null hides paste.
+   */
+  readonly pasteTargetFolderId: string | null;
   readonly actions: AssetCommandActions;
 }
 
@@ -171,6 +180,35 @@ export const assetCommandDefinitions: readonly AssetCommandDefinition[] = [
       ctx.locationKind === 'managed' &&
       ctx.assetAvailable,
     run: (ctx) => withPrimaryAsset(ctx, (id) => ctx.actions.moveToFolder([id])),
+  },
+  {
+    id: 'asset.copy',
+    title: (ctx) => t(ctx, 'command.asset.copy'),
+    group: 'organize',
+    shortcut: {
+      mac: { label: '⌘C', key: 'c', metaKey: true },
+      windows: { label: 'Ctrl+C', key: 'c', ctrlKey: true },
+    },
+    visible: (ctx) => !ctx.assetDeleted,
+    disabledReason: unavailableReason,
+    run: (ctx) =>
+      withPrimaryAsset(ctx, (id) => ctx.actions.copyFiles([id])),
+  },
+  {
+    id: 'asset.paste',
+    title: (ctx) => t(ctx, 'command.asset.paste'),
+    group: 'organize',
+    shortcut: {
+      mac: { label: '⌘V', key: 'v', metaKey: true },
+      windows: { label: 'Ctrl+V', key: 'v', ctrlKey: true },
+    },
+    visible: (ctx) =>
+      !ctx.assetDeleted && ctx.pasteTargetFolderId !== null,
+    run: (ctx) => {
+      if (ctx.pasteTargetFolderId) {
+        ctx.actions.pasteIntoFolder(ctx.pasteTargetFolderId);
+      }
+    },
   },
   {
     id: 'asset.copy-file-path',

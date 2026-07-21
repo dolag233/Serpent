@@ -1146,6 +1146,22 @@ const library: SerpentLibraryApi = Object.freeze({
     return { ok: true, value: undefined };
   },
 
+  async copyAssetFiles({
+    libraryId,
+    assetIds,
+  }: {
+    libraryId: string;
+    assetIds: string[];
+  }): Promise<LibraryApiResult<void>> {
+    const result = await request({
+      type: 'asset.copy-files.request',
+      libraryId,
+      assetIds,
+    });
+    if (!result.ok) return failure(result);
+    return { ok: true, value: undefined };
+  },
+
   async openFolderInFileManager({ libraryId, folderId }: { libraryId: string; folderId: string }): Promise<LibraryApiResult<void>> {
     const result = await request({ type: 'folder.open-in-file-manager.request', libraryId, folderId });
     if (!result.ok) return failure(result);

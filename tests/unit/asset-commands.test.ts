@@ -29,6 +29,8 @@ function makeActions(calls: RecordedCall[]): AssetCommandActions {
     openExternal: record('openExternal'),
     openWith: record('openWith'),
     revealInFolder: record('revealInFolder'),
+    copyFiles: record('copyFiles'),
+    pasteIntoFolder: record('pasteIntoFolder'),
     copyFilePath: record('copyFilePath'),
     rename: record('rename'),
     aiAnalyze: record('aiAnalyze'),
@@ -61,6 +63,7 @@ function makeCtx(
     activeCollectionId: null,
     aiCanAnalyze: true,
     assetDisplayName: '示例.png',
+    pasteTargetFolderId: 'folder-1',
     actions: makeActions(calls),
     ...overrides,
   };
@@ -89,6 +92,8 @@ describe('可见性（与历史内联 JSX 条件一致）', () => {
       'asset.open-with',
       'asset.reveal-in-folder',
       'asset.move-to-folder',
+      'asset.copy',
+      'asset.paste',
       'asset.copy-file-path',
       'asset.rename',
       'asset.ai-analyze',
@@ -106,6 +111,8 @@ describe('可见性（与历史内联 JSX 条件一致）', () => {
       'asset.open-with',
       'asset.reveal-in-folder',
       'asset.relink',
+      'asset.copy',
+      'asset.paste',
       'asset.copy-file-path',
       'asset.rename',
       'asset.ai-analyze',
@@ -122,6 +129,8 @@ describe('可见性（与历史内联 JSX 条件一致）', () => {
       'asset.open-external',
       'asset.open-with',
       'asset.reveal-in-folder',
+      'asset.copy',
+      'asset.paste',
       'asset.copy-file-path',
       'asset.rename',
       'asset.ai-analyze',
@@ -137,6 +146,8 @@ describe('可见性（与历史内联 JSX 条件一致）', () => {
       'asset.open-external',
       'asset.open-with',
       'asset.reveal-in-folder',
+      'asset.copy',
+      'asset.paste',
       'asset.copy-file-path',
       'asset.rename',
       'asset.ai-analyze',
@@ -165,6 +176,8 @@ describe('可见性（与历史内联 JSX 条件一致）', () => {
       'asset.reveal-in-folder',
       'asset.remove-from-current-collection',
       'asset.move-to-folder',
+      'asset.copy',
+      'asset.paste',
       'asset.copy-file-path',
       'asset.rename',
       'asset.ai-analyze',
@@ -206,6 +219,7 @@ describe('禁用原因（disabledReason 是唯一禁用来源）', () => {
       'asset.open-external',
       'asset.open-with',
       'asset.reveal-in-folder',
+      'asset.copy',
       'asset.copy-file-path',
       'asset.rename',
     ]) {
@@ -214,6 +228,10 @@ describe('禁用原因（disabledReason 是唯一禁用来源）', () => {
         disabledReason: '资产当前不可用',
       });
     }
+    expect(findItem(menu, 'asset.paste')).toMatchObject({
+      disabled: false,
+      disabledReason: null,
+    });
   });
 
   it('managed + unavailable：move-to-trash 使用专属原因，relink 保持启用', () => {
@@ -286,6 +304,8 @@ describe('标题与快捷键标签', () => {
     ['asset.remove-from-current-collection', '从当前合集移除'],
     ['asset.relink', '找回资产…'],
     ['asset.move-to-folder', '移动到文件夹…'],
+    ['asset.copy', '复制'],
+    ['asset.paste', '粘贴'],
     ['asset.copy-file-path', '复制文件路径'],
     ['asset.rename', '重命名…'],
     ['asset.ai-analyze', 'AI 分析'],
@@ -340,6 +360,8 @@ describe('run 委托到 actions 回调包', () => {
     ['asset.open-external', {}, 'openExternal', ['asset-1']],
     ['asset.open-with', {}, 'openWith', ['asset-1']],
     ['asset.reveal-in-folder', {}, 'revealInFolder', ['asset-1']],
+    ['asset.copy', {}, 'copyFiles', [['asset-1']]],
+    ['asset.paste', {}, 'pasteIntoFolder', ['folder-1']],
     ['asset.copy-file-path', {}, 'copyFilePath', ['asset-1']],
     ['asset.rename', {}, 'rename', ['asset-1']],
     ['asset.ai-analyze', {}, 'aiAnalyze', ['asset-1']],
@@ -404,7 +426,10 @@ describe('run 委托到 actions 回调包', () => {
   });
 
   it('primaryAssetId 为空时 run 落空、不调用任何 action', () => {
-    const { ctx, calls } = makeCtx({ primaryAssetId: null });
+    const { ctx, calls } = makeCtx({
+      primaryAssetId: null,
+      pasteTargetFolderId: null,
+    });
     for (const def of registry.list()) {
       void def.run(ctx);
     }
@@ -413,7 +438,7 @@ describe('run 委托到 actions 回调包', () => {
 });
 
 describe('注册表完整性', () => {
-  it('16 条定义全部注册且 id 唯一（createCommandRegistry 未抛错）', () => {
+  it('18 条定义全部注册且 id 唯一（createCommandRegistry 未抛错）', () => {
     expect(registry.list().map((def) => def.id)).toEqual([
       'asset.restore',
       'asset.delete-permanent',
@@ -424,6 +449,8 @@ describe('注册表完整性', () => {
       'asset.remove-from-current-collection',
       'asset.relink',
       'asset.move-to-folder',
+      'asset.copy',
+      'asset.paste',
       'asset.copy-file-path',
       'asset.rename',
       'asset.ai-analyze',
@@ -442,6 +469,8 @@ describe('注册表完整性', () => {
       'open',
       'open',
       'open',
+      'organize',
+      'organize',
       'organize',
       'organize',
       'organize',

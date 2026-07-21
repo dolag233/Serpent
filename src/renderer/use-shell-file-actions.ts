@@ -101,6 +101,32 @@ export function useShellFileActions({
     [api, library, locale, setError, setNotice, t],
   );
 
+  const handleCopyAssetFiles = useCallback(
+    async (assetIds: string[]) => {
+      if (!api || !library || assetIds.length === 0) return;
+      try {
+        const result = await api.copyAssetFiles({
+          libraryId: library.libraryId,
+          assetIds,
+        });
+        if (!result.ok) {
+          setError(
+            toMessage(result.error, t("toast.assetCopyFailed"), locale),
+          );
+          return;
+        }
+        setNotice(
+          assetIds.length === 1
+            ? t("toast.assetCopyDone")
+            : t("toast.assetCopyDoneMany", { count: assetIds.length }),
+        );
+      } catch (caught) {
+        setError(toMessage(caught, t("toast.assetCopyFailed"), locale));
+      }
+    },
+    [api, library, locale, setError, setNotice, t],
+  );
+
   const handleOpenFolderInFileManager = useCallback(
     async (folderId: string) => {
       if (!api || !library) return;
@@ -184,6 +210,7 @@ export function useShellFileActions({
     handleOpenWith,
     handleRevealInFolder,
     handleCopyFilePath,
+    handleCopyAssetFiles,
     handleOpenFolderInFileManager,
     handleOpenFolderWith,
     handleCopyFolderPath,

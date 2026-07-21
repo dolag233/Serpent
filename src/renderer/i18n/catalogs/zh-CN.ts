@@ -293,6 +293,8 @@ export const zhCN = {
       revealInFolderWindows: "在文件资源管理器中显示",
       revealInFolderWindowsShort: "在资源管理器中显示",
       copyFilePath: "复制文件路径",
+      copy: "复制",
+      paste: "粘贴",
       rename: "重命名…",
       aiAnalyze: "AI 分析",
       clearAiContent: "清除 AI 信息",
@@ -320,7 +322,8 @@ export const zhCN = {
       clearSelection: "清除选择（{count} 项）",
       assignTag: "添加标签…",
       removeTag: "移除标签…",
-      aiAnalyze: "AI 分析（{count} 项）"
+      aiAnalyze: "AI 分析（{count} 项）",
+      copy: "复制（{count} 项）"
     },
     folder: {
       newSubfolder: "新建子文件夹",
@@ -944,6 +947,9 @@ export const zhCN = {
     copyFolderPathFailed: "复制文件夹路径失败。",
     folderCopyDone: "文件夹已复制到系统剪贴板。",
     folderCopyFailed: "复制文件夹到系统剪贴板失败。",
+    assetCopyDone: "资产已复制到系统剪贴板。",
+    assetCopyDoneMany: "已将 {count} 项资产复制到系统剪贴板。",
+    assetCopyFailed: "复制资产到系统剪贴板失败。",
     folderPasteDone: "已粘贴到文件夹。",
     folderPasteFailed: "粘贴到文件夹失败。",
     folderCloneDone: "已克隆文件夹「{name}」。",

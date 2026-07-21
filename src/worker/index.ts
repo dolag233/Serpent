@@ -1177,6 +1177,19 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
       );
       return { ok: true, type: 'media.asset-path', assetId: request.command.assetId, absolutePath };
     }
+    case 'media.get-asset-paths': {
+      // Main-only consumer (OS clipboard); paths never reach the Renderer.
+      const { libraryId, assetIds } = request.command;
+      const absolutePaths = assetIds.map((assetId) =>
+        libraryService.resolveAssetPath(libraryId, assetId),
+      );
+      return {
+        ok: true,
+        type: 'media.asset-paths',
+        assetIds,
+        absolutePaths,
+      };
+    }
     case 'media.enqueue-thumbnail-jobs': {
       const enqueued = scheduleThumbnailQueue(request.command.libraryId, { limit: 50 });
       return { ok: true, type: 'media.jobs.enqueued', libraryId: request.command.libraryId, enqueued };

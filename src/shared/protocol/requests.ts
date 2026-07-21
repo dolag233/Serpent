@@ -695,6 +695,19 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     libraryId: identifierSchema,
     assetId: identifierSchema,
   }),
+  // Clarification #5 / Serpent-bkef: OS file clipboard for asset files.
+  z.strictObject({
+    type: z.literal('asset.copy-files.request'),
+    libraryId: identifierSchema,
+    assetIds: z
+      .array(identifierSchema)
+      .min(1)
+      .max(10_000)
+      .refine(
+        (assetIds) => new Set(assetIds).size === assetIds.length,
+        { message: 'assetIds must not contain duplicates.' },
+      ),
+  }),
   z.strictObject({
     type: z.literal('asset.retry-artifact.request'),
     libraryId: identifierSchema,
@@ -1326,6 +1339,18 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     type: z.literal('media.get-asset-path'),
     libraryId: identifierSchema,
     assetId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('media.get-asset-paths'),
+    libraryId: identifierSchema,
+    assetIds: z
+      .array(identifierSchema)
+      .min(1)
+      .max(10_000)
+      .refine(
+        (assetIds) => new Set(assetIds).size === assetIds.length,
+        { message: 'assetIds must not contain duplicates.' },
+      ),
   }),
   z.strictObject({
     type: z.literal('media.get-thumbnail-artifact'),

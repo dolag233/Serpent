@@ -2838,6 +2838,7 @@ function AppInner() {
     handleOpenWith,
     handleRevealInFolder,
     handleCopyFilePath,
+    handleCopyAssetFiles,
     handleOpenFolderInFileManager,
     handleOpenFolderWith,
     handleCopyFolderPath,
@@ -2848,6 +2849,10 @@ function AppInner() {
     setError,
     setNotice,
   });
+
+  /** Managed browse folder for asset-menu OS clipboard paste (Serpent-bkef). */
+  const assetPasteTargetFolderId =
+    selectedFolderId !== undefined ? selectedFolderId : null;
 
   const { pasteIntoFolder, cloneFolder } =
     useFolderOrganizeActions({
@@ -7992,6 +7997,10 @@ function AppInner() {
         }}
         onRevealInFolder={(assetId) => { void handleRevealInFolder(assetId); }}
         onCopyFilePath={(assetId) => { void handleCopyFilePath(assetId); }}
+        onCopyAssetFiles={(assetIds) => {
+          void handleCopyAssetFiles(assetIds);
+        }}
+        pasteTargetFolderId={assetPasteTargetFolderId}
         onRenameAssetFile={(assetId) => { openAssetRename(assetId); }}
         onRemoveFromCurrentCollection={(assetId) => {
           if (activeCollectionId) void removeAssetFromCollection(assetId, activeCollectionId);

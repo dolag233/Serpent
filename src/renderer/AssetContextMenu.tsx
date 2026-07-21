@@ -133,6 +133,13 @@ interface AssetContextMenuProps {
   onViewAsset: (assetId: string) => void;
   onRevealInFolder: (assetId: string) => void;
   onCopyFilePath: (assetId: string) => void;
+  /** OS file clipboard copy (Finder/Explorer interoperable). */
+  onCopyAssetFiles: (assetIds: string[]) => void;
+  /**
+   * Managed folder that receives OS clipboard paste from asset menus.
+   * Typically the current browse folder; null hides paste.
+   */
+  pasteTargetFolderId: string | null;
   onRenameAssetFile: (assetId: string) => void;
   onRemoveFromCurrentCollection: (assetId: string) => void;
   onRemoveFromCollection: (assetId: string, collectionId: string) => void;
@@ -194,6 +201,8 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
     onViewAsset,
     onRevealInFolder,
     onCopyFilePath,
+    onCopyAssetFiles,
+    pasteTargetFolderId,
     onRenameAssetFile,
     onRemoveFromCurrentCollection,
     onRemoveFromCollection,
@@ -739,6 +748,9 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
             const availableManagedAssetIds = [
               ...skipReport.move.processAssetIds,
             ];
+            const availableAssetIds = targetAssets
+              .filter((asset) => asset.availability === "available")
+              .map((asset) => asset.assetId);
             const processFolderIds = [...skipReport.trash.processFolderIds];
             const moveFolderIds = [...skipReport.move.processFolderIds];
             const allTrashed = skipReport.allTrashed;
@@ -768,11 +780,15 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
               trashedAll: allTrashed,
               managedAssetIds,
               availableManagedAssetIds,
+              availableAssetIds,
+              pasteTargetFolderId,
               actions: {
                 openAssignTagPicker: (assetIds) =>
                   setTagPicker({ mode: "assign", assetIds, single: false }),
                 openRemoveTagPicker: (assetIds) =>
                   setTagPicker({ mode: "remove", assetIds, single: false }),
+                copyFiles: onCopyAssetFiles,
+                pasteIntoFolder: onPasteIntoFolder,
                 moveToFolder: onMoveToFolder,
                 moveToTrash: (assetIds, folderIds) =>
                   onTrash(assetIds, folderIds ?? processFolderIds),
@@ -808,6 +824,8 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
             const aiAnalyzeItem = resolvedById.get("assets.ai-analyze");
             const clearAiContentItem = resolvedById.get("assets.clear-ai-content");
             const moveToFolderItem = resolvedById.get("assets.move-to-folder");
+            const copyItem = resolvedById.get("assets.copy");
+            const pasteItem = resolvedById.get("assets.paste");
             const moveToTrashItem = resolvedById.get("assets.move-to-trash");
             const deleteFromDiskItem = resolvedById.get(
               "assets.delete-from-disk",
@@ -953,6 +971,24 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                   onAction={() => runMultiCommand("assets.move-to-folder")}
                 />
               )}
+                  {copyItem && (
+                    <ContextMenuItem
+                      icon={<Icon name="clipboard" size={14} />}
+                      label={copyItem.label}
+                      shortcut={copyItem.shortcutLabel ?? undefined}
+                      disabled={copyItem.disabled}
+                      disabledReason={copyItem.disabledReason ?? undefined}
+                      onAction={() => runMultiCommand("assets.copy")}
+                    />
+                  )}
+                  {pasteItem && (
+                    <ContextMenuItem
+                      icon={<Icon name="clipboard" size={14} />}
+                      label={pasteItem.label}
+                      shortcut={pasteItem.shortcutLabel ?? undefined}
+                      onAction={() => runMultiCommand("assets.paste")}
+                    />
+                  )}
               {linkedFolders
                 .filter((f) => f.status === "available")
                 .map((folder) => (
@@ -1021,6 +1057,10 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
               isDeleted,
             } = activeContextMenu.descriptor;
             const singleManaged = locationKind === "managed";
+            const singleAsset = assets.find((asset) => asset.assetId === assetId);
+            const resolvedPasteTarget =
+              pasteTargetFolderId ??
+              (singleManaged ? singleAsset?.managedFolderId ?? null : null);
             // 0015-B: 静态项的标题/快捷键/可见性/禁用原因由注册表 resolveMenu
             // 求值；此处把 descriptor 与 props 组装成 AssetCommandContext。
             // 动态行（外部目录、合集、标签）与汇总/提示块保持内联不变。
@@ -1038,11 +1078,14 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
               activeCollectionId,
               aiCanAnalyze: canAnalyze,
               assetDisplayName: displayName,
+              pasteTargetFolderId: resolvedPasteTarget,
               actions: {
                 view: onViewAsset,
                 openExternal: onOpenExternal,
                 openWith: onOpenWith,
                 revealInFolder: onRevealInFolder,
+                copyFiles: onCopyAssetFiles,
+                pasteIntoFolder: onPasteIntoFolder,
                 copyFilePath: onCopyFilePath,
                 rename: onRenameAssetFile,
                 aiAnalyze: onAnalyze,
@@ -1082,6 +1125,8 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
             );
             const relinkItem = resolvedById.get("asset.relink");
             const moveToFolderItem = resolvedById.get("asset.move-to-folder");
+            const copyItem = resolvedById.get("asset.copy");
+            const pasteItem = resolvedById.get("asset.paste");
             const copyFilePathItem = resolvedById.get("asset.copy-file-path");
             const renameItem = resolvedById.get("asset.rename");
             const aiAnalyzeItem = resolvedById.get("asset.ai-analyze");
@@ -1191,6 +1236,24 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                       icon={<Icon name="folder" size={14} />}
                       label={moveToFolderItem.label}
                       onAction={() => runAssetCommand("asset.move-to-folder")}
+                    />
+                  )}
+                  {copyItem && (
+                    <ContextMenuItem
+                      icon={<Icon name="clipboard" size={14} />}
+                      label={copyItem.label}
+                      shortcut={copyItem.shortcutLabel ?? undefined}
+                      disabled={copyItem.disabled}
+                      disabledReason={copyItem.disabledReason ?? undefined}
+                      onAction={() => runAssetCommand("asset.copy")}
+                    />
+                  )}
+                  {pasteItem && (
+                    <ContextMenuItem
+                      icon={<Icon name="clipboard" size={14} />}
+                      label={pasteItem.label}
+                      shortcut={pasteItem.shortcutLabel ?? undefined}
+                      onAction={() => runAssetCommand("asset.paste")}
                     />
                   )}
                   {copyFilePathItem && (

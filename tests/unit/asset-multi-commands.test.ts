@@ -29,6 +29,8 @@ function makeActions(calls: RecordedCall[]): AssetMultiCommandActions {
   return {
     openAssignTagPicker: record('openAssignTagPicker'),
     openRemoveTagPicker: record('openRemoveTagPicker'),
+    copyFiles: record('copyFiles'),
+    pasteIntoFolder: record('pasteIntoFolder'),
     moveToFolder: record('moveToFolder'),
     moveToTrash: record('moveToTrash'),
     deleteFromDisk: record('deleteFromDisk'),
@@ -60,6 +62,8 @@ function makeCtx(
     trashedAll: false,
     managedAssetIds: ['a-1', 'a-2'],
     availableManagedAssetIds: ['a-1'],
+    availableAssetIds: ['a-1', 'a-3'],
+    pasteTargetFolderId: 'folder-1',
     actions: makeActions(calls),
     ...overrides,
   };
@@ -89,6 +93,8 @@ describe('可见性（与历史内联 JSX 条件一致）', () => {
   it('正常分支：批量标签/移动/回收站/清除选择可见，回收站两项隐藏', () => {
     const { ctx } = makeCtx();
     expect(resolveIds(ctx)).toEqual([
+      'assets.copy',
+      'assets.paste',
       'assets.move-to-folder',
       'assets.assign-tag',
       'assets.remove-tag',
@@ -133,6 +139,8 @@ describe('内嵌计数标题（与历史渲染一致）', () => {
   it.each([
     ['assets.assign-tag', '添加标签…'],
     ['assets.remove-tag', '移除标签…'],
+    ['assets.copy', '复制（2 项）'],
+    ['assets.paste', '粘贴'],
     ['assets.move-to-folder', '移动到文件夹…（1 项）'],
     ['assets.move-to-trash', '移入回收站（2 项）'],
     ['assets.clear-selection', '清除选择（3 项）'],
@@ -296,6 +304,8 @@ describe('run 委托到 actions 回调包', () => {
       'openRemoveTagPicker',
       [['a-1', 'a-2', 'a-3']],
     ],
+    ['assets.copy', {}, 'copyFiles', [['a-1', 'a-3']]],
+    ['assets.paste', {}, 'pasteIntoFolder', ['folder-1']],
     ['assets.move-to-folder', {}, 'moveToFolder', [['a-1'], []]],
     ['assets.move-to-trash', {}, 'moveToTrash', [['a-1', 'a-2'], []]],
     ['assets.delete-from-disk', {}, 'deleteFromDisk', [['a-1', 'a-2'], []]],
@@ -343,7 +353,7 @@ describe('run 委托到 actions 回调包', () => {
 });
 
 describe('注册表完整性', () => {
-  it('10 条定义全部注册且 id 唯一（createCommandRegistry 未抛错）', () => {
+  it('12 条定义全部注册且 id 唯一（createCommandRegistry 未抛错）', () => {
     expect(registry.list().map((def) => def.id)).toEqual([
       'assets.restore',
       'assets.delete-permanent',
@@ -351,6 +361,8 @@ describe('注册表完整性', () => {
       'assets.remove-tag',
       'assets.ai-analyze',
       'assets.clear-ai-content',
+      'assets.copy',
+      'assets.paste',
       'assets.move-to-folder',
       'assets.move-to-trash',
       'assets.delete-from-disk',
@@ -362,6 +374,8 @@ describe('注册表完整性', () => {
     const { ctx } = makeCtx();
     const groups = registry.resolveMenu(ctx).map((item) => item.group);
     expect(groups).toEqual([
+      'organize',
+      'organize',
       'organize',
       'metadata',
       'metadata',

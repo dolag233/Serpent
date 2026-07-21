@@ -303,6 +303,8 @@ export const en = {
       revealInFolderWindows: "Reveal in File Explorer",
       revealInFolderWindowsShort: "Reveal in Explorer",
       copyFilePath: "Copy file path",
+      copy: "Copy",
+      paste: "Paste",
       rename: "Rename…",
       aiAnalyze: "AI analyze",
       clearAiContent: "Clear AI info",
@@ -330,7 +332,8 @@ export const en = {
       clearSelection: "Clear selection ({count})",
       assignTag: "Add tags…",
       removeTag: "Remove tags…",
-      aiAnalyze: "AI analyze ({count})"
+      aiAnalyze: "AI analyze ({count})",
+      copy: "Copy ({count})"
     },
     folder: {
       newSubfolder: "New subfolder",
@@ -958,6 +961,9 @@ export const en = {
     copyFolderPathFailed: "Failed to copy the folder path.",
     folderCopyDone: "Folder copied to the system clipboard.",
     folderCopyFailed: "Failed to copy the folder to the system clipboard.",
+    assetCopyDone: "Asset copied to the system clipboard.",
+    assetCopyDoneMany: "Copied {count} assets to the system clipboard.",
+    assetCopyFailed: "Failed to copy assets to the system clipboard.",
     folderPasteDone: "Pasted into the folder.",
     folderPasteFailed: "Failed to paste into the folder.",
     folderCloneDone: "Cloned folder \"{name}\".",

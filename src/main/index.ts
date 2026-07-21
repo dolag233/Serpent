@@ -1569,6 +1569,13 @@ async function commandFor(
         libraryId: request.libraryId,
         assetId: request.assetId,
       };
+    case "asset.copy-files.request":
+      // OS file clipboard (clarification #5); paths resolved then written in Main.
+      return {
+        type: "media.get-asset-paths",
+        libraryId: request.libraryId,
+        assetIds: request.assetIds,
+      };
     case "asset.retry-artifact.request":
       return {
         type: "media.retry-artifact",
@@ -2352,6 +2359,35 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
         } satisfies RendererResult;
       } catch (error) {
         logger?.error("main.copy-file-path", error);
+        return {
+          ok: false,
+          error: createPublicError("INTERNAL_ERROR"),
+        } satisfies RendererResult;
+      }
+    }
+    if (
+      workerResult.ok &&
+      request.type === "asset.copy-files.request" &&
+      workerResult.type === "media.asset-paths"
+    ) {
+      try {
+        const wrote = writeFilePathsToClipboard(
+          workerResult.absolutePaths,
+          createFileClipboardDeps(),
+        );
+        if (!wrote) {
+          return {
+            ok: false,
+            error: createPublicError("INTERNAL_ERROR"),
+          } satisfies RendererResult;
+        }
+        return {
+          ok: true,
+          type: "asset.copy-files.requested",
+          assetIds: workerResult.assetIds,
+        } satisfies RendererResult;
+      } catch (error) {
+        logger?.error("main.copy-asset-files", error);
         return {
           ok: false,
           error: createPublicError("INTERNAL_ERROR"),

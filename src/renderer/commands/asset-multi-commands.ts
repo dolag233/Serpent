@@ -21,6 +21,8 @@ import type { CommandContext, CommandDefinition } from './command-types';
 export interface AssetMultiCommandActions {
   readonly openAssignTagPicker: (assetIds: string[]) => void;
   readonly openRemoveTagPicker: (assetIds: string[]) => void;
+  readonly copyFiles: (assetIds: string[]) => void;
+  readonly pasteIntoFolder: (folderId: string) => void;
   readonly moveToFolder: (
     assetIds: string[],
     folderIds?: readonly string[],
@@ -60,6 +62,12 @@ export interface AssetMultiCommandContext extends CommandContext {
   readonly trashedAll: boolean;
   readonly managedAssetIds: readonly string[];
   readonly availableManagedAssetIds: readonly string[];
+  /** Available (non-missing) assets that can be written to OS clipboard. */
+  readonly availableAssetIds: readonly string[];
+  /**
+   * Managed folder that receives OS clipboard paste. Null hides paste.
+   */
+  readonly pasteTargetFolderId: string | null;
   readonly actions: AssetMultiCommandActions;
 }
 
@@ -130,6 +138,38 @@ export const assetMultiCommandDefinitions: readonly AssetMultiCommandDefinition[
       run: (ctx) => ctx.actions.clearAiContent?.([...ctx.selectedAssetIds]),
     },
     // ---- 组织 ----
+    {
+      id: 'assets.copy',
+      title: (ctx) =>
+        t(ctx, 'command.assets.copy', { count: ctx.availableAssetIds.length }),
+      group: 'organize',
+      shortcut: {
+        mac: { label: '⌘C', key: 'c', metaKey: true },
+        windows: { label: 'Ctrl+C', key: 'c', ctrlKey: true },
+      },
+      visible: (ctx) => !ctx.trashedAll,
+      disabledReason: (ctx) =>
+        ctx.availableAssetIds.length === 0
+          ? t(ctx, 'command.reason.unavailable')
+          : null,
+      run: (ctx) => ctx.actions.copyFiles([...ctx.availableAssetIds]),
+    },
+    {
+      id: 'assets.paste',
+      title: (ctx) => t(ctx, 'command.asset.paste'),
+      group: 'organize',
+      shortcut: {
+        mac: { label: '⌘V', key: 'v', metaKey: true },
+        windows: { label: 'Ctrl+V', key: 'v', ctrlKey: true },
+      },
+      visible: (ctx) =>
+        !ctx.trashedAll && ctx.pasteTargetFolderId !== null,
+      run: (ctx) => {
+        if (ctx.pasteTargetFolderId) {
+          ctx.actions.pasteIntoFolder(ctx.pasteTargetFolderId);
+        }
+      },
+    },
     {
       id: 'assets.move-to-folder',
       title: (ctx) =>
