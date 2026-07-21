@@ -46,6 +46,7 @@ import {
 } from "./disk-delete-confirm-preferences";
 import { DeleteLinkedDialog } from "./DeleteLinkedDialog";
 import { useFolderDeleteActions } from "./use-folder-delete-actions";
+import { useFolderOrganizeActions } from "./use-folder-organize-actions";
 import { useFolderCommandShortcuts } from "./use-folder-command-shortcuts";
 import { ExportDialog } from "./ExportDialog";
 import { ImportDialog } from "./ImportDialog";
@@ -688,6 +689,7 @@ function AppInner() {
   } | null>(null);
   const [moveDialog, setMoveDialog] = useState<{
     assetIds: string[];
+    folderIds: string[];
     targetFolderId: string | null;
     conflictStrategy: "keep-both" | "replace" | "skip";
   } | null>(null);
@@ -2829,12 +2831,27 @@ function AppInner() {
     handleOpenFolderInFileManager,
     handleOpenFolderWith,
     handleCopyFolderPath,
+    handleCopyFolder,
   } = useShellFileActions({
     api: api ?? null,
     library,
     setError,
     setNotice,
   });
+
+  const { pasteIntoFolder, cloneFolder } =
+    useFolderOrganizeActions({
+      api: api ?? null,
+      libraryId: library?.libraryId ?? null,
+      locale,
+      setNotice,
+      setError,
+      setUiState,
+      reloadCurrentContent,
+      onPasteConflict: (plan) => {
+        setConflicts(plan);
+      },
+    });
 
   const {
     handleAssetsDroppedOnFolder,
@@ -4046,32 +4063,60 @@ function AppInner() {
 
   async function moveManagedAssets() {
     if (!api || !library || !moveDialog) return;
-    const { assetIds, targetFolderId, conflictStrategy } = moveDialog;
+    const { assetIds, folderIds, targetFolderId, conflictStrategy } = moveDialog;
     setMoveDialog(null);
     setUiState("loading");
     try {
-      const result = await api.moveAssets({
-        libraryId: library.libraryId,
-        assetIds,
-        targetFolderId,
-        conflictStrategy,
-      });
-      if (!result.ok) throw new LibraryOperationError(result.error);
-      if (result.value.operationId) {
-        setLastUndoableOp({
-          kind: "move",
-          operationId: result.value.operationId,
+      if (assetIds.length > 0) {
+        const result = await api.moveAssets({
+          libraryId: library.libraryId,
+          assetIds,
+          targetFolderId,
+          conflictStrategy,
         });
-      } else {
-        setLastUndoableOp(null);
+        if (!result.ok) throw new LibraryOperationError(result.error);
+        if (result.value.operationId) {
+          setLastUndoableOp({
+            kind: "move",
+            operationId: result.value.operationId,
+          });
+        } else {
+          setLastUndoableOp(null);
+        }
+        setNotice(
+          t("toast.movedCountDetail", { count: result.value.movedCount }) +
+            (result.value.skippedCount
+              ? t("toast.skippedSuffix", { count: result.value.skippedCount })
+              : "") +
+            t("common.sentenceEnd"),
+        );
       }
-      setNotice(
-        t("toast.movedCountDetail", { count: result.value.movedCount }) +
-          (result.value.skippedCount
-            ? t("toast.skippedSuffix", { count: result.value.skippedCount })
-            : "") +
-          t("common.sentenceEnd"),
-      );
+      if (folderIds.length > 0) {
+        const folderResult = await api.moveFolders({
+          libraryId: library.libraryId,
+          folderIds,
+          targetParentFolderId: targetFolderId,
+          conflictStrategy:
+            conflictStrategy === "replace" ? "keep-both" : conflictStrategy,
+        });
+        if (!folderResult.ok) throw new LibraryOperationError(folderResult.error);
+        if (assetIds.length === 0) {
+          if (folderResult.value.skippedCount > 0) {
+            setNotice(
+              t("toast.folderMoveSkipped", {
+                moved: folderResult.value.movedCount,
+                skipped: folderResult.value.skippedCount,
+              }),
+            );
+          } else {
+            setNotice(
+              t("toast.folderMoveDone", {
+                count: folderResult.value.movedCount,
+              }),
+            );
+          }
+        }
+      }
       clearAssetSelection();
       await reloadCurrentContent();
     } catch (caught) {
@@ -7408,9 +7453,13 @@ function AppInner() {
       {moveDialog && (
         <MoveDialog
           assetIds={moveDialog.assetIds}
+          folderIds={moveDialog.folderIds}
           folders={folders}
           targetFolderId={moveDialog.targetFolderId}
           conflictStrategy={moveDialog.conflictStrategy}
+          folderOnly={
+            moveDialog.folderIds.length > 0 && moveDialog.assetIds.length === 0
+          }
           onTargetChange={(folderId) =>
             setMoveDialog((current) =>
               current ? { ...current, targetFolderId: folderId } : current,
@@ -7789,6 +7838,23 @@ function AppInner() {
         onCopyFolderPath={(folderId) => {
           void handleCopyFolderPath(folderId);
         }}
+        onCopyFolder={(folderId) => {
+          void handleCopyFolder(folderId);
+        }}
+        onPasteIntoFolder={(folderId) => {
+          void pasteIntoFolder(folderId);
+        }}
+        onCloneFolder={(folderId) => {
+          void cloneFolder(folderId);
+        }}
+        onMoveFolder={(folderIds) =>
+          setMoveDialog({
+            assetIds: [],
+            folderIds: [...folderIds],
+            targetFolderId: null,
+            conflictStrategy: "keep-both",
+          })
+        }
         onOpenLinkedRules={(folder) => void openLinkedRules(folder)}
         onTrashManagedFolder={(folderId, name) => {
           void trashManagedFolder(folderId, name);
@@ -7825,9 +7891,10 @@ function AppInner() {
         onBatchRemoveFromCollection={(collectionId, assetIds) => {
           void batchRemoveSelectionFromCollection(collectionId, assetIds);
         }}
-        onMoveToFolder={(assetIds) =>
+        onMoveToFolder={(assetIds, folderIds) =>
           setMoveDialog({
-            assetIds,
+            assetIds: [...assetIds],
+            folderIds: [...(folderIds ?? [])],
             targetFolderId: null,
             conflictStrategy: "keep-both",
           })

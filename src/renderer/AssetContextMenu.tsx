@@ -92,6 +92,10 @@ interface AssetContextMenuProps {
   onOpenFolderInFileManager: (folderId: string) => void;
   onOpenFolderWith: (folderId: string) => void;
   onCopyFolderPath: (folderId: string) => void;
+  onCopyFolder: (folderId: string) => void;
+  onPasteIntoFolder: (folderId: string) => void;
+  onCloneFolder: (folderId: string) => void;
+  onMoveFolder: (folderIds: string[]) => void;
   onOpenLinkedRules: (folder: LinkedFolderSummary) => void;
   onTrashManagedFolder: (folderId: string, name: string) => void;
   onDeleteFolderFromDisk: (args: {
@@ -110,7 +114,7 @@ interface AssetContextMenuProps {
   onBatchRemoveTag: (tagId: string, assetIds: string[]) => void;
   onBatchAddToCollection: (collectionId: string, assetIds: string[]) => void;
   onBatchRemoveFromCollection: (collectionId: string, assetIds: string[]) => void;
-  onMoveToFolder: (assetIds: string[]) => void;
+  onMoveToFolder: (assetIds: string[], folderIds?: readonly string[]) => void;
   onTrash: (assetIds: string[], folderIds?: readonly string[]) => void;
   onDeleteFromDisk: (assetIds: string[], folderIds?: readonly string[]) => void;
   onRestore: (assetIds: string[]) => void;
@@ -159,6 +163,10 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
     onOpenFolderInFileManager,
     onOpenFolderWith,
     onCopyFolderPath,
+    onCopyFolder,
+    onPasteIntoFolder,
+    onCloneFolder,
+    onMoveFolder,
     onOpenLinkedRules,
     onTrashManagedFolder,
     onDeleteFolderFromDisk,
@@ -336,6 +344,10 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
               renameFolder: onRenameFolder,
               openLinkedRules: onOpenLinkedRules,
               copyFolderPath: onCopyFolderPath,
+              copyFolder: onCopyFolder,
+              pasteIntoFolder: onPasteIntoFolder,
+              cloneFolder: onCloneFolder,
+              moveFolder: onMoveFolder,
               trashManagedFolder: onTrashManagedFolder,
               deleteFolderFromDisk: (folderId, name) =>
                 onDeleteFolderFromDisk({
@@ -421,6 +433,10 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
               renameFolder: onRenameFolder,
               openLinkedRules: onOpenLinkedRules,
               copyFolderPath: onCopyFolderPath,
+              copyFolder: onCopyFolder,
+              pasteIntoFolder: onPasteIntoFolder,
+              cloneFolder: onCloneFolder,
+              moveFolder: onMoveFolder,
               trashManagedFolder: onTrashManagedFolder,
               deleteFolderFromDisk: (folderId, name) =>
                 onDeleteFolderFromDisk({
@@ -517,6 +533,10 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
               renameFolder: onRenameFolder,
               openLinkedRules: onOpenLinkedRules,
               copyFolderPath: onCopyFolderPath,
+              copyFolder: onCopyFolder,
+              pasteIntoFolder: onPasteIntoFolder,
+              cloneFolder: onCloneFolder,
+              moveFolder: onMoveFolder,
               trashManagedFolder: onTrashManagedFolder,
               deleteFolderFromDisk: (folderId, name) =>
                 onDeleteFolderFromDisk({
@@ -555,6 +575,10 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
           const renameItem = resolvedById.get("folder.rename");
           const linkedRulesItem = resolvedById.get("folder.linked-rules");
           const copyPathItem = resolvedById.get("folder.copy-path");
+          const copyItem = resolvedById.get("folder.copy");
+          const pasteItem = resolvedById.get("folder.paste");
+          const cloneItem = resolvedById.get("folder.clone");
+          const moveToItem = resolvedById.get("folder.move-to");
           const trashItem = resolvedById.get("folder.move-to-trash");
           const deleteFromDiskItem = resolvedById.get(
             "folder.delete-from-disk",
@@ -610,6 +634,38 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                     icon={<Icon name="link" size={14} />}
                     label={linkedRulesItem.label}
                     onAction={() => runSidebarCommand("folder.linked-rules")}
+                  />
+                )}
+                {copyItem && (
+                  <ContextMenuItem
+                    icon={<Icon name="clipboard" size={14} />}
+                    label={copyItem.label}
+                    disabled={copyItem.disabled}
+                    disabledReason={copyItem.disabledReason ?? undefined}
+                    shortcut={copyItem.shortcutLabel ?? undefined}
+                    onAction={() => runSidebarCommand("folder.copy")}
+                  />
+                )}
+                {pasteItem && (
+                  <ContextMenuItem
+                    icon={<Icon name="clipboard" size={14} />}
+                    label={pasteItem.label}
+                    shortcut={pasteItem.shortcutLabel ?? undefined}
+                    onAction={() => runSidebarCommand("folder.paste")}
+                  />
+                )}
+                {cloneItem && (
+                  <ContextMenuItem
+                    icon={<Icon name="folder" size={14} />}
+                    label={cloneItem.label}
+                    onAction={() => runSidebarCommand("folder.clone")}
+                  />
+                )}
+                {moveToItem && (
+                  <ContextMenuItem
+                    icon={<Icon name="folder" size={14} />}
+                    label={moveToItem.label}
+                    onAction={() => runSidebarCommand("folder.move-to")}
                   />
                 )}
                 {copyPathItem && (
@@ -684,6 +740,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
               ...skipReport.move.processAssetIds,
             ];
             const processFolderIds = [...skipReport.trash.processFolderIds];
+            const moveFolderIds = [...skipReport.move.processFolderIds];
             const allTrashed = skipReport.allTrashed;
             const skipFooter = formatMultiAssetMenuSkipFooter(
               skipReport,
@@ -706,8 +763,8 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
               managedCount: managedAssetIds.length,
               availableManagedCount: availableManagedAssetIds.length,
               linkedCount: skipReport.linkedCount,
-              folderCount: processFolderIds.length,
-              processFolderIds,
+              folderCount: moveFolderIds.length,
+              processFolderIds: moveFolderIds,
               trashedAll: allTrashed,
               managedAssetIds,
               availableManagedAssetIds,
@@ -717,8 +774,10 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                 openRemoveTagPicker: (assetIds) =>
                   setTagPicker({ mode: "remove", assetIds, single: false }),
                 moveToFolder: onMoveToFolder,
-                moveToTrash: onTrash,
-                deleteFromDisk: onDeleteFromDisk,
+                moveToTrash: (assetIds, folderIds) =>
+                  onTrash(assetIds, folderIds ?? processFolderIds),
+                deleteFromDisk: (assetIds, folderIds) =>
+                  onDeleteFromDisk(assetIds, folderIds ?? processFolderIds),
                 restore: onRestore,
                 deletePermanent: onPermanentDelete,
                 clearSelection: onClearSelection,

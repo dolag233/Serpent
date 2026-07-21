@@ -296,7 +296,7 @@ describe('run 委托到 actions 回调包', () => {
       'openRemoveTagPicker',
       [['a-1', 'a-2', 'a-3']],
     ],
-    ['assets.move-to-folder', {}, 'moveToFolder', [['a-1']]],
+    ['assets.move-to-folder', {}, 'moveToFolder', [['a-1'], []]],
     ['assets.move-to-trash', {}, 'moveToTrash', [['a-1', 'a-2'], []]],
     ['assets.delete-from-disk', {}, 'deleteFromDisk', [['a-1', 'a-2'], []]],
     ['assets.clear-selection', {}, 'clearSelection', []],
@@ -319,7 +319,7 @@ describe('run 委托到 actions 回调包', () => {
     void registry.get('assets.move-to-folder')?.run(ctx);
     void registry.get('assets.move-to-trash')?.run(ctx);
     expect(calls).toEqual([
-      { action: 'moveToFolder', args: [['m-2']] },
+      { action: 'moveToFolder', args: [['m-2'], []] },
       { action: 'moveToTrash', args: [['m-1', 'm-2', 'm-3'], []] },
     ]);
   });

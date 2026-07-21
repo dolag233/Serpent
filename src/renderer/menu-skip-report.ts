@@ -3,9 +3,9 @@
  * into process vs skip counts with stable reason codes, and format a concise
  * menu footer (e.g. "将处理 3 / 跳过 2（回收站）").
  *
- * Serpent-koy: folder cards in a mixed selection participate in trash /
- * disk-delete; asset-only actions (move, tags, …) skip folders with reason
- * "folder".
+ * Serpent-koy / Serpent-vgp: folder cards in a mixed selection participate in
+ * trash / disk-delete and move (reparent). Asset-only actions (tags, …) still
+ * skip folders with reason "folder".
  *
  * Eligibility mirrors drag-drop / file-op gates: move needs managed + available
  * + not trashed; trash needs managed + not trashed. Linked, unavailable,
@@ -106,8 +106,8 @@ function buildScope(
  * Classify the multi-select snapshot into move/trash process sets and skip
  * reason buckets. `assets` is the currently loaded scope; ids present in
  * `selectedAssetIds` but missing from `assets` count as unresolved.
- * Canvas folder cards are managed folders and join trash/disk-delete;
- * they are skipped for move (folder batch move is not shipped yet).
+ * Canvas folder cards are managed folders and join trash/disk-delete and
+ * move (reparent). Mixed selections still skip folders for asset-only ops.
  */
 export function buildMultiAssetMenuSkipReport(
   selectedAssetIds: readonly string[],
@@ -156,8 +156,6 @@ export function buildMultiAssetMenuSkipReport(
 
   pushSkip(moveSkips, "unresolved", unresolvedCount);
   pushSkip(trashSkips, "unresolved", unresolvedCount);
-  // Move does not yet support folders (REQ-MENU-005 / Serpent-vgp).
-  pushSkip(moveSkips, "folder", folderCount);
 
   for (const asset of resolved) {
     if (asset.locationKind === "linked") {
@@ -189,7 +187,7 @@ export function buildMultiAssetMenuSkipReport(
     unavailableManagedCount,
     trashedCount,
     folderCount,
-    move: buildScope("move", moveIds, [], moveSkips),
+    move: buildScope("move", moveIds, folderIds, moveSkips),
     trash: buildScope("trash", trashIds, folderIds, trashSkips),
   };
 }

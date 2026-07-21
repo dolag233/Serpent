@@ -4,6 +4,7 @@ import { useT } from "./i18n";
 
 export interface MoveDialogProps {
   assetIds: string[];
+  folderIds?: string[];
   folders: Array<{
     folderId: string;
     name: string;
@@ -12,6 +13,8 @@ export interface MoveDialogProps {
   }>;
   targetFolderId: string | null;
   conflictStrategy: "keep-both" | "replace" | "skip";
+  /** When only folders are moved, hide replace (folders use keep-both / skip). */
+  folderOnly?: boolean;
   onTargetChange: (folderId: string | null) => void;
   onStrategyChange: (strategy: "keep-both" | "replace" | "skip") => void;
   onConfirm: () => void;
@@ -20,15 +23,32 @@ export interface MoveDialogProps {
 
 export function MoveDialog({
   assetIds,
+  folderIds = [],
   folders,
   targetFolderId,
   conflictStrategy,
+  folderOnly = false,
   onTargetChange,
   onStrategyChange,
   onConfirm,
   onCancel,
 }: MoveDialogProps) {
   const t = useT();
+  const itemCount = assetIds.length + folderIds.length;
+  // Exclude folders being moved from the destination list (and their
+  // descendants via relativePath prefix) so the picker cannot target self.
+  const movingFolderIds = new Set(folderIds);
+  const movingPrefixes = folders
+    .filter((folder) => movingFolderIds.has(folder.folderId))
+    .map((folder) => folder.relativePath);
+  const destinationFolders = folders.filter((folder) => {
+    if (movingFolderIds.has(folder.folderId)) return false;
+    return !movingPrefixes.some(
+      (prefix) =>
+        folder.relativePath === prefix ||
+        folder.relativePath.startsWith(`${prefix}/`),
+    );
+  });
   return (
     <div className="dialog-backdrop" role="presentation">
       <div
@@ -40,7 +60,7 @@ export function MoveDialog({
         <div className="dialog-heading">
           <div>
             <h2 id="move-dialog-title">
-              {t("dialog.move.title", { count: assetIds.length })}
+              {t("dialog.move.title", { count: itemCount })}
             </h2>
           </div>
           <button
@@ -64,7 +84,7 @@ export function MoveDialog({
           value={targetFolderId ?? ""}
         >
           <option value="">{t("scope.rootFolder")}</option>
-          {folders.map((folder) => (
+          {destinationFolders.map((folder) => (
             <option key={folder.folderId} value={folder.folderId}>
               {folder.relativePath} ({folder.directAssetCount})
             </option>
@@ -85,10 +105,16 @@ export function MoveDialog({
               event.target.value as MoveDialogProps["conflictStrategy"],
             )
           }
-          value={conflictStrategy}
+          value={
+            folderOnly && conflictStrategy === "replace"
+              ? "keep-both"
+              : conflictStrategy
+          }
         >
           <option value="keep-both">{t("dialog.move.keepBoth")}</option>
-          <option value="replace">{t("dialog.move.replace")}</option>
+          {!folderOnly && (
+            <option value="replace">{t("dialog.move.replace")}</option>
+          )}
           <option value="skip">{t("dialog.move.skip")}</option>
         </select>
         <p className="field-help">{t("dialog.move.help")}</p>

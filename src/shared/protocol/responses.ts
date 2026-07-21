@@ -297,6 +297,20 @@ const assetOperationSuccessSchemas = [
   }),
   z.strictObject({
     ok: z.literal(true),
+    type: z.literal('folder.cloned'),
+    folder: managedFolderSummarySchema,
+    clonedFolderCount: z.number().int().nonnegative(),
+    clonedAssetCount: z.number().int().nonnegative(),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('folder.moved'),
+    movedCount: z.number().int().nonnegative(),
+    skippedCount: z.number().int().nonnegative(),
+    folders: z.array(managedFolderSummarySchema),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
     type: z.literal('folder.list'),
     folders: z.array(managedFolderSummarySchema),
   }),
@@ -762,6 +776,11 @@ const assetOperationSuccessSchemas = [
   z.strictObject({
     ok: z.literal(true),
     type: z.literal('folder.copy-path.requested'),
+    folderId: nonBlankString,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('folder.copy.requested'),
     folderId: nonBlankString,
   }),
   z.strictObject({

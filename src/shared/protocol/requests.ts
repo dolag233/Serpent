@@ -154,6 +154,29 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     libraryId: identifierSchema,
     folderId: identifierSchema,
   }),
+  // Clarification #5 / Serpent-vgp: OS file clipboard (Finder/Explorer).
+  z.strictObject({
+    type: z.literal('folder.copy.request'),
+    libraryId: identifierSchema,
+    folderId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('folder.paste.request'),
+    libraryId: identifierSchema,
+    folderId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('folder.clone.request'),
+    libraryId: identifierSchema,
+    folderId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('folder.move.request'),
+    libraryId: identifierSchema,
+    folderIds: z.array(identifierSchema).min(1).max(10_000),
+    targetParentFolderId: identifierSchema.nullable(),
+    conflictStrategy: z.enum(['keep-both', 'skip']).default('keep-both'),
+  }),
   z.strictObject({
     type: z.literal('folder.list.request'),
     libraryId: identifierSchema,
@@ -796,6 +819,18 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     libraryId: identifierSchema,
     folderId: identifierSchema,
     newName: displayNameSchema,
+  }),
+  z.strictObject({
+    type: z.literal('folder.clone'),
+    libraryId: identifierSchema,
+    folderId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('folder.move'),
+    libraryId: identifierSchema,
+    folderIds: z.array(identifierSchema).min(1).max(10_000),
+    targetParentFolderId: identifierSchema.nullable(),
+    conflictStrategy: z.enum(['keep-both', 'skip']).default('keep-both'),
   }),
   // Resolves the absolute path of a managed or linked folder. Only Main may
   // consume the result (shell/clipboard); it never reaches the Renderer.

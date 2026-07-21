@@ -13,6 +13,14 @@ export interface SidebarCommandActions {
   readonly renameFolder: (folderId: string, currentName: string) => void;
   readonly openLinkedRules: (folder: LinkedFolderSummary) => void;
   readonly copyFolderPath: (folderId: string) => void;
+  /** OS file clipboard copy (clarification #5). */
+  readonly copyFolder: (folderId: string) => void;
+  /** Paste OS clipboard files into this managed folder. */
+  readonly pasteIntoFolder: (folderId: string) => void;
+  /** Duplicate managed folder as sibling. */
+  readonly cloneFolder: (folderId: string) => void;
+  /** Open move-target dialog for managed folder(s). */
+  readonly moveFolder: (folderIds: string[]) => void;
   /** Managed folder → app trash (clarification #7). */
   readonly trashManagedFolder: (folderId: string, name: string) => void;
   /** Managed or linked-child folder → irreversible disk delete. */
@@ -134,6 +142,43 @@ export const sidebarCommandDefinitions: readonly SidebarCommandDefinition[] = [
     visible: (ctx) => ctx.menuKind === 'folder',
     disabledReason: offlineReason,
     run: (ctx) => ctx.actions.copyFolderPath(ctx.subjectId),
+  },
+  {
+    id: 'folder.copy',
+    title: (ctx) => translateForLocale(ctx.locale, 'command.folder.copy'),
+    group: 'organize',
+    shortcut: {
+      mac: { label: '⌘C', key: 'c', metaKey: true },
+      windows: { label: 'Ctrl+C', key: 'c', ctrlKey: true },
+    },
+    visible: (ctx) => ctx.menuKind === 'folder',
+    disabledReason: offlineReason,
+    run: (ctx) => ctx.actions.copyFolder(ctx.subjectId),
+  },
+  {
+    id: 'folder.paste',
+    title: (ctx) => translateForLocale(ctx.locale, 'command.folder.paste'),
+    group: 'organize',
+    shortcut: {
+      mac: { label: '⌘V', key: 'v', metaKey: true },
+      windows: { label: 'Ctrl+V', key: 'v', ctrlKey: true },
+    },
+    visible: (ctx) => ctx.menuKind === 'folder' && ctx.locationKind === 'managed',
+    run: (ctx) => ctx.actions.pasteIntoFolder(ctx.subjectId),
+  },
+  {
+    id: 'folder.clone',
+    title: (ctx) => translateForLocale(ctx.locale, 'command.folder.clone'),
+    group: 'organize',
+    visible: (ctx) => ctx.menuKind === 'folder' && ctx.locationKind === 'managed',
+    run: (ctx) => ctx.actions.cloneFolder(ctx.subjectId),
+  },
+  {
+    id: 'folder.move-to',
+    title: (ctx) => translateForLocale(ctx.locale, 'command.folder.moveTo'),
+    group: 'organize',
+    visible: (ctx) => ctx.menuKind === 'folder' && ctx.locationKind === 'managed',
+    run: (ctx) => ctx.actions.moveFolder([ctx.subjectId]),
   },
   {
     id: 'folder.move-to-trash',

@@ -4123,6 +4123,422 @@ export class LibraryService {
   }
 
   /**
+   * Clone a managed folder as a sibling (REQ-MENU-005 / Serpent-vgp).
+   * Creates a new folder tree with fresh folder/asset identities; human
+   * metadata + tags are cloned via copyAssets. Linked folders are refused.
+   */
+  cloneManagedFolder(input: {
+    libraryId: string;
+    folderId: string;
+  }): {
+    folder: ManagedFolderSummary;
+    clonedFolderCount: number;
+    clonedAssetCount: number;
+  } {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    const { folder, descendantFolders, assetIds } =
+      this.collectManagedFolderSubtree(openLibrary, input.folderId);
+
+    const cloneName = this.availableSiblingFolderName(
+      openLibrary,
+      folder.parent_folder_id,
+      folder.name,
+    );
+    const rootClone = this.createManagedFolder({
+      libraryId: input.libraryId,
+      name: cloneName,
+      parentFolderId: folder.parent_folder_id ?? undefined,
+    });
+
+    const idMap = new Map<string, string>([[folder.folder_id, rootClone.folderId]]);
+    // Create descendants shallow→deep so parents exist before children.
+    const descendantsShallowFirst = [...descendantFolders].sort(
+      (left, right) => left.relative_path.length - right.relative_path.length,
+    );
+    for (const descendant of descendantsShallowFirst) {
+      const parentCloneId = descendant.parent_folder_id
+        ? idMap.get(descendant.parent_folder_id)
+        : undefined;
+      if (!parentCloneId) {
+        throw new LibraryServiceError('LIBRARY_CORRUPT');
+      }
+      const created = this.createManagedFolder({
+        libraryId: input.libraryId,
+        name: descendant.name,
+        parentFolderId: parentCloneId,
+      });
+      idMap.set(descendant.folder_id, created.folderId);
+    }
+
+    // Direct assets of each source folder → matching clone folder.
+    let clonedAssetCount = 0;
+    const foldersToCopy = [folder, ...descendantsShallowFirst];
+    for (const sourceFolder of foldersToCopy) {
+      const targetFolderId = idMap.get(sourceFolder.folder_id);
+      if (!targetFolderId) continue;
+      const directAssetIds = openLibrary.connection
+        .prepare(
+          `SELECT asset_id FROM assets
+            WHERE location_kind = 'managed'
+              AND deleted_at IS NULL
+              AND availability = 'available'
+              AND managed_folder_id = ?`,
+        )
+        .all(sourceFolder.folder_id) as Array<{ asset_id: string }>;
+      if (directAssetIds.length === 0) continue;
+      const copied = this.copyAssets({
+        libraryId: input.libraryId,
+        assetIds: directAssetIds.map((row) => row.asset_id),
+        targetFolderId,
+        conflictStrategy: 'keep-both',
+      });
+      clonedAssetCount += copied.copiedCount;
+    }
+
+    // assetIds was collected for the whole subtree; unused beyond validation.
+    void assetIds;
+
+    return {
+      folder: this.summarizeManagedFolderRowRecursive(openLibrary, {
+        folder_id: rootClone.folderId,
+        parent_folder_id: rootClone.parentFolderId,
+        name: rootClone.name,
+        relative_path: rootClone.relativePath,
+        path_identity: portablePathIdentity(rootClone.relativePath),
+      }),
+      clonedFolderCount: idMap.size,
+      clonedAssetCount,
+    };
+  }
+
+  /**
+   * Move managed folders under a new parent (REQ-MENU-005 / Serpent-vgp).
+   * Rejects moves into self/descendant. Nested selections are collapsed to
+   * outermost folders so a parent move does not double-move a child.
+   */
+  moveManagedFolders(input: {
+    libraryId: string;
+    folderIds: string[];
+    targetParentFolderId: string | null;
+    conflictStrategy?: 'keep-both' | 'skip';
+  }): {
+    movedCount: number;
+    skippedCount: number;
+    folders: ManagedFolderSummary[];
+  } {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    if (
+      input.folderIds.length === 0 ||
+      new Set(input.folderIds).size !== input.folderIds.length
+    ) {
+      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+    }
+    const strategy = input.conflictStrategy ?? 'keep-both';
+    const targetParent =
+      input.targetParentFolderId === null
+        ? null
+        : (openLibrary.connection
+            .prepare(
+              'SELECT folder_id, relative_path FROM managed_folders WHERE folder_id = ?',
+            )
+            .get(input.targetParentFolderId) as
+            | { folder_id: string; relative_path: string }
+            | undefined);
+    if (input.targetParentFolderId !== null && !targetParent) {
+      throw new LibraryServiceError('FOLDER_NOT_FOUND');
+    }
+
+    const rows = openLibrary.connection
+      .prepare(
+        `SELECT folder_id, parent_folder_id, name, relative_path, path_identity
+           FROM managed_folders
+          WHERE folder_id IN (${input.folderIds.map(() => '?').join(',')})`,
+      )
+      .all(...input.folderIds) as ManagedFolderRow[];
+    if (rows.length !== input.folderIds.length) {
+      throw new LibraryServiceError('FOLDER_NOT_FOUND');
+    }
+
+    // Drop folders that are descendants of another selected folder.
+    const selected = rows.filter(
+      (row) =>
+        !rows.some(
+          (other) =>
+            other.folder_id !== row.folder_id &&
+            (row.relative_path === other.relative_path ||
+              row.relative_path.startsWith(`${other.relative_path}/`)),
+        ),
+    );
+
+    let movedCount = 0;
+    let skippedCount = 0;
+    const moved: ManagedFolderSummary[] = [];
+
+    for (const row of selected) {
+      // Moving onto the current parent is a no-op skip.
+      const currentParent = row.parent_folder_id;
+      if (
+        (currentParent === null && input.targetParentFolderId === null) ||
+        currentParent === input.targetParentFolderId
+      ) {
+        skippedCount += 1;
+        continue;
+      }
+
+      // Refuse move into self or descendant.
+      if (input.targetParentFolderId !== null) {
+        const targetRelative = targetParent!.relative_path;
+        if (
+          targetRelative === row.relative_path ||
+          targetRelative.startsWith(`${row.relative_path}/`)
+        ) {
+          throw new LibraryServiceError('FOLDER_NAME_CONFLICT');
+        }
+      }
+
+      const destParentRelative = targetParent?.relative_path ?? '';
+      let destName = row.name;
+      let destRelative = destParentRelative
+        ? path.posix.join(destParentRelative, destName)
+        : destName;
+      let destIdentity = portablePathIdentity(destRelative);
+
+      const conflict =
+        openLibrary.connection
+          .prepare(
+            'SELECT folder_id FROM managed_folders WHERE path_identity = ? AND folder_id != ?',
+          )
+          .get(destIdentity, row.folder_id) ??
+        openLibrary.connection
+          .prepare(
+            `SELECT asset_id FROM assets
+              WHERE path_identity = ? AND location_kind = 'managed' AND deleted_at IS NULL`,
+          )
+          .get(destIdentity);
+
+      if (conflict) {
+        if (strategy === 'skip') {
+          skippedCount += 1;
+          continue;
+        }
+        destName = this.availableSiblingFolderName(
+          openLibrary,
+          input.targetParentFolderId,
+          row.name,
+        );
+        destRelative = destParentRelative
+          ? path.posix.join(destParentRelative, destName)
+          : destName;
+        destIdentity = portablePathIdentity(destRelative);
+      }
+
+      const sourcePath = this.folderPath(openLibrary, row.relative_path);
+      if (!realDirectoryExists(sourcePath)) {
+        throw new LibraryServiceError('FOLDER_NOT_FOUND', {
+          reason: 'SOURCE_NOT_FOUND',
+        });
+      }
+      const destinationPath = this.folderPath(openLibrary, destRelative);
+      if (this.portableDiskDestination(openLibrary, destRelative)) {
+        if (strategy === 'skip') {
+          skippedCount += 1;
+          continue;
+        }
+        destName = this.availableSiblingFolderName(
+          openLibrary,
+          input.targetParentFolderId,
+          row.name,
+        );
+        destRelative = destParentRelative
+          ? path.posix.join(destParentRelative, destName)
+          : destName;
+        destIdentity = portablePathIdentity(destRelative);
+      }
+      const finalDestination = this.folderPath(openLibrary, destRelative);
+
+      const oldRelativePath = row.relative_path;
+      const now = new Date().toISOString();
+      let renamed = false;
+      try {
+        renameSync(sourcePath, finalDestination);
+        renamed = true;
+        openLibrary.connection.transaction(() => {
+          const changed = openLibrary.connection
+            .prepare(
+              `UPDATE managed_folders
+                  SET parent_folder_id = ?, name = ?, relative_path = ?, path_identity = ?
+                WHERE folder_id = ?`,
+            )
+            .run(
+              input.targetParentFolderId,
+              destName,
+              destRelative,
+              destIdentity,
+              row.folder_id,
+            );
+          if (changed.changes !== 1) {
+            throw new LibraryServiceError('FOLDER_NOT_FOUND', {
+              reason: 'SOURCE_CHANGED',
+            });
+          }
+
+          const prefixLength = [...oldRelativePath].length + 1;
+          const oldPrefix = `${oldRelativePath}/`;
+          const descendantFolders = openLibrary.connection
+            .prepare(
+              `SELECT folder_id, relative_path FROM managed_folders
+                WHERE substr(relative_path, 1, ?) = ?`,
+            )
+            .all(prefixLength, oldPrefix) as Array<{
+              folder_id: string;
+              relative_path: string;
+            }>;
+          const updateDescendant = openLibrary.connection.prepare(
+            `UPDATE managed_folders
+                SET relative_path = ?, path_identity = ?
+              WHERE folder_id = ?`,
+          );
+          for (const descendant of descendantFolders) {
+            const rewritten =
+              destRelative +
+              descendant.relative_path.slice(oldRelativePath.length);
+            updateDescendant.run(
+              rewritten,
+              portablePathIdentity(rewritten),
+              descendant.folder_id,
+            );
+          }
+
+          const subtreeAssets = openLibrary.connection
+            .prepare(
+              `SELECT asset_id, relative_file_path, deleted_at FROM assets
+                WHERE location_kind = 'managed'
+                  AND substr(relative_file_path, 1, ?) = ?`,
+            )
+            .all(prefixLength, oldPrefix) as Array<{
+              asset_id: string;
+              relative_file_path: string;
+              deleted_at: string | null;
+            }>;
+          // Also rewrite assets whose managed_folder_id is the moved root and
+          // whose relative path equals the old folder path prefix for files
+          // stored directly in the folder (path = folder/file).
+          const updateAsset = openLibrary.connection.prepare(
+            `UPDATE assets
+                SET relative_file_path = ?, path_identity = ?, updated_at = ?
+              WHERE asset_id = ?`,
+          );
+          for (const asset of subtreeAssets) {
+            const rewritten =
+              destRelative +
+              asset.relative_file_path.slice(oldRelativePath.length);
+            updateAsset.run(
+              rewritten,
+              portablePathIdentity(rewritten),
+              now,
+              asset.asset_id,
+            );
+            if (asset.deleted_at === null) {
+              this.syncAssetSearchContent(openLibrary.connection, asset.asset_id);
+            }
+          }
+
+          // Direct children whose path is exactly under the old folder but
+          // matched via managed_folder_id when relative path uses the folder.
+          // The substr prefix match already covers `oldRelativePath/` assets;
+          // also cover the rare case of the folder path itself never holding
+          // an asset file named equal to the folder.
+        })();
+      } catch (error) {
+        if (renamed) {
+          try {
+            renameSync(finalDestination, sourcePath);
+          } catch (rollbackError) {
+            this.diagnose('folder.move.rollback', rollbackError, {
+              libraryId: input.libraryId,
+              folderId: row.folder_id,
+            });
+          }
+        }
+        if (isMissingPathError(error)) {
+          throw new LibraryServiceError('FOLDER_NOT_FOUND', {
+            reason: 'SOURCE_NOT_FOUND',
+            cause: error,
+          });
+        }
+        throw serviceError(error, 'LIBRARY_NOT_WRITABLE');
+      }
+
+      movedCount += 1;
+      moved.push(
+        this.summarizeManagedFolderRowRecursive(openLibrary, {
+          ...row,
+          parent_folder_id: input.targetParentFolderId,
+          name: destName,
+          relative_path: destRelative,
+          path_identity: destIdentity,
+        }),
+      );
+    }
+
+    return { movedCount, skippedCount, folders: moved };
+  }
+
+  /** Sibling folder name that does not collide on disk or in the DB. */
+  private availableSiblingFolderName(
+    openLibrary: OpenLibrary,
+    parentFolderId: string | null,
+    baseName: string,
+  ): string {
+    const parentRelative =
+      parentFolderId === null
+        ? ''
+        : (
+            openLibrary.connection
+              .prepare(
+                'SELECT relative_path FROM managed_folders WHERE folder_id = ?',
+              )
+              .get(parentFolderId) as { relative_path: string } | undefined
+          )?.relative_path;
+    if (parentFolderId !== null && parentRelative === undefined) {
+      throw new LibraryServiceError('FOLDER_NOT_FOUND');
+    }
+
+    const candidates = [`${baseName} copy`];
+    for (let index = 2; index < 10_000; index += 1) {
+      candidates.push(`${baseName} copy ${index}`);
+    }
+    for (const candidate of candidates) {
+      let name: string;
+      try {
+        name = normalizeFolderName(candidate);
+      } catch {
+        continue;
+      }
+      const relativePath = parentRelative
+        ? path.posix.join(parentRelative, name)
+        : name;
+      const identity = portablePathIdentity(relativePath);
+      const databaseConflict =
+        openLibrary.connection
+          .prepare(
+            'SELECT folder_id FROM managed_folders WHERE path_identity = ?',
+          )
+          .get(identity) ??
+        openLibrary.connection
+          .prepare(
+            `SELECT asset_id FROM assets
+              WHERE path_identity = ? AND location_kind = 'managed' AND deleted_at IS NULL`,
+          )
+          .get(identity);
+      if (databaseConflict) continue;
+      if (this.portableDiskDestination(openLibrary, relativePath)) continue;
+      return name;
+    }
+    throw new LibraryServiceError('FOLDER_ALREADY_EXISTS');
+  }
+
+  /**
    * Clarification #7 / Serpent-ekj: trash a managed folder (empty or not).
    * All active managed assets in the subtree move to the app trash; folder
    * rows and the real Assets/ directory tree are then removed. Restoring

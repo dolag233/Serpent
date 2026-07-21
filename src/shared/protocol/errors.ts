@@ -15,6 +15,8 @@ export const PUBLIC_ERROR_MESSAGES = {
   WEB_MEDIA_URL_INVALID: 'The dropped browser media address is not a valid HTTP(S) URL.',
   WEB_MEDIA_DROP_TOO_LARGE: 'The dropped browser metadata is too large to inspect safely.',
   CLIPBOARD_IMAGE_NOT_FOUND: 'Copy an image to the system clipboard and try again.',
+  CLIPBOARD_FILES_NOT_FOUND:
+    'Copy files or folders in Finder/Explorer, then paste again.',
   IMPORT_COLLECTION_ASSIGN_FAILED: 'The assets were imported, but Serpent could not add them to the selected collection.',
   INVALID_IMPORT_DECISION: 'Choose a valid import conflict decision.',
   IMPORT_NOT_FOUND: 'The pending import no longer exists.',

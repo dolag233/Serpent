@@ -137,6 +137,40 @@ export interface SerpentLibraryApi {
     folderId: string;
     newName: string;
   }): Promise<LibraryApiResult<ManagedFolderSummary>>;
+  /** OS file clipboard copy (Finder/Explorer interoperable). */
+  copyFolder(input: {
+    libraryId: string;
+    folderId: string;
+  }): Promise<LibraryApiResult<void>>;
+  /** Paste OS clipboard files/folders into a managed folder. */
+  pasteIntoFolder(input: {
+    libraryId: string;
+    folderId: string;
+  }): Promise<LibraryApiResult<ImportCompletion | ImportConflictPlan>>;
+  /** Duplicate managed folder subtree as a sibling. */
+  cloneFolder(input: {
+    libraryId: string;
+    folderId: string;
+  }): Promise<
+    LibraryApiResult<{
+      folder: ManagedFolderSummary;
+      clonedFolderCount: number;
+      clonedAssetCount: number;
+    }>
+  >;
+  /** Reparent managed folders under a new parent. */
+  moveFolders(input: {
+    libraryId: string;
+    folderIds: string[];
+    targetParentFolderId: string | null;
+    conflictStrategy?: 'keep-both' | 'skip';
+  }): Promise<
+    LibraryApiResult<{
+      movedCount: number;
+      skippedCount: number;
+      folders: ManagedFolderSummary[];
+    }>
+  >;
   listFolders(input: { libraryId: string }): Promise<LibraryApiResult<ManagedFolderSummary[]>>;
   listFolderBrowseEntries(input: {
     libraryId: string;

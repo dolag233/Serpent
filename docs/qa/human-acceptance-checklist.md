@@ -189,7 +189,7 @@
 | FOLDER-011 | 文件夹卡片实体外形 + 堆叠封面 | 待人类验收 | 进入含子文件夹的父目录；对照 0/1/2/3 张封面的卡片；亮暗主题各看一眼 | 实体文件夹外形（页签+本体）；封面为夹入堆叠照片非拼盘；无图仅图标；缩略图解码可见 | [堆叠单测](../../tests/unit/folder-card-cover-stack.test.ts) / `Serpent-7ms` / [FolderCard](../../src/renderer/FolderCard.tsx) | 2026-07-19 不通过（Windows 拼盘）。2026-07-21 改为实体文件夹+堆叠封面，请复验。 |
 | FOLDER-012 | 目录位置显示资产数 | 人类验收通过 | 建父子文件夹，资产只在孙级；对比侧栏/卡片/移动对话框计数 | 三处均显示全部后代资产数（含孙级） | [browse 单测](../../tests/worker/folder-browse-entries.test.ts) / `Serpent-toh` | 2026-07-19 用户确认通过。 |
 | FOLDER-013 | 文件夹卡片参与框选/多选 | 人类验收通过 | 在同时有子文件夹卡片与资产的视图：拖拽框选两者；再 Cmd/Ctrl 点选文件夹；Shift 点选范围 | 文件夹与资产均可进入选中态；框选命中文件夹卡片；Esc 清空两者；资产批量操作不受文件夹 ID 污染 | [开发日志](../development/2026-07-19-folder-cards-development-log.md) / 工单 Serpent-5ja.4 / 后续 `Serpent-koy` | 2026-07-19 用户确认通过；混合选中后的移动/删除等共通动作另开 `Serpent-koy`。 |
-| FOLDER-015 | 混合选中文件夹+资产的共通动作与跳过原因 | 待人类验收 | ① 在含子文件夹卡片与资产的视图，Cmd/Ctrl 混选 ≥1 文件夹 + ≥1 资产，右键任一选中项。② 观察页脚与「移入回收站」「从硬盘中删除」计数。③ 执行回收站；再混选测从硬盘删除确认。④ 对照：仅多选资产时移动仍可用；混选时移动应跳过文件夹并说明原因 | 菜单显示总选中数；回收站/从硬盘对文件夹+托管资产生效；移动/标签/合集/AI 跳过文件夹并有清晰原因（如「文件夹」）；仅文件夹多选也可回收站/从硬盘删除 | [开发日志](../development/2026-07-21-mixed-selection-and-viewer-contrast-development-log.md) / [skip 单测](../../tests/unit/menu-skip-report.test.ts) / [菜单决议单测](../../tests/unit/browse-selection-menu.test.ts) / `Serpent-koy` | 2026-07-21 实现；Computer Use 未执行。文件夹批量移动仍待 `Serpent-vgp`。 |
+| FOLDER-015 | 混合选中文件夹+资产的共通动作与跳过原因 | 待人类验收 | ① 在含子文件夹卡片与资产的视图，Cmd/Ctrl 混选 ≥1 文件夹 + ≥1 资产，右键任一选中项。② 观察页脚与「移入回收站」「从硬盘中删除」计数。③ 执行回收站；再混选测从硬盘删除。④ 混选后「移动到…」应同时处理资产与文件夹；标签/合集/AI 仍跳过文件夹并说明原因 | 菜单显示总选中数；回收站/从硬盘/移动对文件夹+托管资产生效；标签/合集/AI 跳过文件夹并有清晰原因；仅文件夹多选也可回收站/从硬盘/移动 | [开发日志](../development/2026-07-21-mixed-selection-and-viewer-contrast-development-log.md) / [skip 单测](../../tests/unit/menu-skip-report.test.ts) / `Serpent-koy` / `Serpent-vgp` | 2026-07-21 初版；同日 `Serpent-vgp` 起文件夹参与移动。Computer Use 未执行。 |
 | FILTER-012 | 文件夹内搜索递归后代 | 人类验收通过 | 在含子文件夹的父文件夹范围内，搜索一个只存在于孙级文件夹资产的关键词 | 孙级文件夹中的资产被搜到；切到回收站或「所有资产」后搜索行为不变 | [批次 3 开发日志](../development/0015-0019-ux-feedback-batch3-development-log.md) / [worker 测试](../../tests/worker/search.test.ts) / [递归 E2E](../../tests/e2e/folder-recursive-scope.test.ts) | 2026-07-17 实现（孙级深度 worker 回归测试）；Computer Use 未执行，移交人工 QA。2026-07-17 用户手动验收：“递归搜索通过”。2026-07-18：递归搜索与「包含子文件夹」开关共用；默认关时不递归搜索。 |
 
 ### E. 资产画布与缩略图
@@ -271,6 +271,10 @@
 | MENU-025 | 托管资产「从硬盘中删除」+ 可不再提示 | 待人类验收 | 右键托管资产选「从硬盘中删除…」；确认并可勾选「不再显示」；再删一项；多选同测；链接资产对照 | 不可恢复、不进应用回收站；与文件夹共用确认偏好；链接无此项 | `Serpent-9zc` / [worker](../../tests/worker/folder-delete.test.ts) / [命令单测](../../tests/unit/asset-commands.test.ts) | 2026-07-21 实现。设置重开见 PREF-002 / `Serpent-5no`。 |
 | MENU-026 | 资产「用其他应用打开」 | 待人类验收 | ① 右键可用资产，点「用其他应用打开…」（对照上方「用默认应用打开」）。② macOS：在应用选择器中选 Preview 等打开；再取消一次。③ Windows：出现系统「打开方式」对话框并选应用。④ 不可用/回收站资产：菜单禁用或无此项 | 仅传资产 ID；路径由 Main 处理。macOS 用所选应用打开源文件；取消无报错。Windows 走系统 Open With。默认打开仍用 ⌘O/Ctrl+O | [open-with 单测](../../tests/unit/open-with.test.ts) / [命令单测](../../tests/unit/asset-commands.test.ts) / [协议单测](../../tests/unit/protocol.test.ts) / `Serpent-w29` | 2026-07-21 实现；复制/粘贴另单。**Windows 真机未验证**。 |
 | MENU-027 | 文件夹「用其他应用打开」 | 待人类验收 | ① 侧栏右键托管/链接文件夹，点「用其他应用打开…」。② macOS 选 VS Code/终端等打开目录；取消一次。③ Windows 用系统「打开方式」。④ 离线链接：该项禁用 | 选中应用打开该文件夹真实路径；取消无报错；离线禁用 | 同上 / [侧栏命令单测](../../tests/unit/sidebar-commands.test.ts) / `Serpent-w29` | 2026-07-21 实现。**Windows 真机未验证**。 |
+| MENU-028 | 文件夹「复制」到系统剪贴板 | 待人类验收 | ① 侧栏右键托管文件夹，点「复制」。② 在访达/Explorer 粘贴到临时目录。③ 离线链接：复制应禁用 | 系统剪贴板含该文件夹；访达可粘贴出真实目录树；Renderer 不接触绝对路径；离线禁用 | [file-clipboard 单测](../../tests/unit/file-clipboard.test.ts) / [侧栏命令](../../tests/unit/sidebar-commands.test.ts) / `Serpent-vgp` | 2026-07-21。**Windows 真机未验证**。 |
+| MENU-029 | 文件夹「粘贴」系统剪贴板 | 待人类验收 | ① 在访达复制若干文件（或单个文件夹）。② 侧栏右键托管文件夹点「粘贴」。③ 剪贴板为空时再点粘贴看错误提示 | 文件/文件夹导入到该托管目录；空剪贴板有明确错误；链接文件夹无「粘贴」项 | 同上 / `folder.paste` / `Serpent-vgp` | 2026-07-21。资产侧剪贴板另见 `Serpent-bkef`。 |
+| MENU-030 | 文件夹「克隆」 | 待人类验收 | ① 右键含资产与子文件夹的托管文件夹，点「克隆」。② 观察侧栏出现「原名 copy」兄弟项并打开核对内容 | 同级出现副本；子树与资产内容复制且为新身份；源文件夹不变；链接文件夹无此项 | [worker](../../tests/worker/folder-organize.test.ts) / `Serpent-vgp` | 2026-07-21。 |
+| MENU-031 | 文件夹「移动到…」 | 待人类验收 | ① 右键托管文件夹点「移动到…」，选另一父目录确认。② 再测移动到已有同名的目标（保留两者）。③ 画布混选文件夹+资产后「移动到…」 | 文件夹改挂到目标下且磁盘路径更新；同名走 keep-both；混选可同时移动资产与文件夹；不可移入自身/子孙 | 同上 / [MoveDialog](../../src/renderer/MoveDialog.tsx) / `Serpent-vgp` | 2026-07-21。 |
 
 ### H. 资产选择与基础右键菜单
 
@@ -343,7 +347,7 @@
 - 2026-07-21 主题/风格/快捷键审计（`Serpent-4ojz`）部分收口：THEME-012–015 待人类验收；Windows 去顶栏 SHELL-024-windows 待真机；文件夹快捷键已由 `Serpent-vf8x` 落地为 COMMAND-005（Windows 真机仍待）；主题剩余阴影 `Serpent-b9xo` → THEME-016；冲突下拉剩余见 `Serpent-p1rm`。[审计 punch-list](2026-07-21-theme-style-shortcut-audit.md)。
 - 2026-07-16 MVP UI/UX 需求池：0015–0018 未全部完成；`38fa873`、`591f524`、`64521c3`、`197ea9e`、`e2d5d60` 的部分实现已进入当前集成基线，0018 Label 退役/Inspector 标签与 0019 产品正确性已进入实现 `5b8b8fe`。SHELL-001–003、MENU-014、COMMAND-001 已于 2026-07-17 人类验收通过；其余相关条目仍为 TAG-006–008、CANVAS-007–009、INSPECT-001–004、MENU-013、SELECT-007 等。
 - 文件夹浏览：画布尚不显示子文件夹卡片、内容封面和统一目录计数；“包含子文件夹资产”尚无正式 UI。
-- 文件操作：资产菜单已具备默认应用打开、用其他应用打开（MENU-026，`Serpent-w29`）、在 Finder/Explorer 显示、复制文件路径与重命名；文件夹菜单已具备在文件管理器打开、用其他应用打开（MENU-027）、新建/重命名等。仍缺资产/文件夹系统剪贴板复制粘贴（跟进单）、文件夹克隆/移动等（`Serpent-vgp`）。
+- 文件操作：资产菜单已具备默认应用打开、用其他应用打开（MENU-026）、Finder/Explorer 显示、复制文件路径与重命名；文件夹菜单已具备打开/其他应用打开（MENU-027）、复制/粘贴/克隆/移动（MENU-028–031，`Serpent-vgp`）、新建/重命名等。资产系统剪贴板复制粘贴仍见 `Serpent-bkef`。
 - 框选集合运算：Shift 并集、Command 切换与 Command+Shift 范围追加已有实现；差集/对称差不作为当前额外模式，Windows 真实 Ctrl 仍待平台验证。
 - 标签新体验：Inspector chip 已由用户验收，空输入按创建时间提供最近添加且仍在使用的标签；右键菜单批量可搜索选择器 2026-07-17 已实现（自动化全绿，Computer Use 证据未执行，TAG-004/TAG-005 待补证据后重新验收）；左侧标签枚举移除 2026-07-17 第二增量已实现（含 shell-navigation 负向断言），发现工具栏「标签过滤」输入框是进入标签范围的保留入口；标签重命名/删除暂无 UI 入口，待集中澄清队列 #8 裁决；仍未完成的是基于实际使用行为的最近时间和维度式标签过滤器。
 - Label 退役：ADR 0022 与预发布迁移策略已确认；数据库 v14、FTS、AI 和一等协议退役已有自动化与真实应用 QA；`META-001`、`SEARCH-002` 保持撤回，因为产品概念本身已删除。
@@ -535,3 +539,4 @@
 | NAV-006 | 亮色主题面包屑 hover 与其他控件一致 | 人类验收通过 | 切换亮色主题；进入多级目录；悬停面包屑中的父级目录项 | hover 背景为细微 `--hover` 色调，与导航树行/工具栏按钮同一 token；不再是刺眼白色块；暗色主题不回归 | `Serpent-xwi1` | 2026-07-19 面包屑 hover 由 `--raised` 改为 `--hover`。用户确认通过。 |
 | 2026-07-21 | CANVAS-023 / THUMB-002 / PALETTE-003 | 待人类验收 | 竖直卡片限高+圆角裁切；色卡去「色卡·自动」标签 | `Serpent-woa` / `Serpent-l79c` | 实现完成，勿标人类通过。 |
 | 2026-07-21 | MENU-026 / MENU-027 | 待人类验收 | 资产/文件夹「用其他应用打开」；复制粘贴另单 | `Serpent-w29` | open-with 已实现；Windows 真机未验。 |
+| 2026-07-21 | MENU-028–031 / FOLDER-015 | 待人类验收 | 文件夹系统剪贴板复制/粘贴、克隆、移动；混选移动含文件夹 | `Serpent-vgp` | Windows 真机未验；资产剪贴板见 `Serpent-bkef`。 |

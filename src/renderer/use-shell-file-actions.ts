@@ -159,6 +159,26 @@ export function useShellFileActions({
     [api, library, locale, setError, setNotice, t],
   );
 
+  const handleCopyFolder = useCallback(
+    async (folderId: string) => {
+      if (!api || !library) return;
+      try {
+        const result = await api.copyFolder({
+          libraryId: library.libraryId,
+          folderId,
+        });
+        if (!result.ok) {
+          setError(toMessage(result.error, t("toast.folderCopyFailed"), locale));
+          return;
+        }
+        setNotice(t("toast.folderCopyDone"));
+      } catch (caught) {
+        setError(toMessage(caught, t("toast.folderCopyFailed"), locale));
+      }
+    },
+    [api, library, locale, setError, setNotice, t],
+  );
+
   return {
     handleOpenExternal,
     handleOpenWith,
@@ -167,5 +187,6 @@ export function useShellFileActions({
     handleOpenFolderInFileManager,
     handleOpenFolderWith,
     handleCopyFolderPath,
+    handleCopyFolder,
   };
 }

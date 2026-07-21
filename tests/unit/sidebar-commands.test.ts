@@ -42,6 +42,10 @@ function makeActions(calls: RecordedCall[]): SidebarCommandActions {
     renameFolder: record('renameFolder'),
     openLinkedRules: record('openLinkedRules'),
     copyFolderPath: record('copyFolderPath'),
+    copyFolder: record('copyFolder'),
+    pasteIntoFolder: record('pasteIntoFolder'),
+    cloneFolder: record('cloneFolder'),
+    moveFolder: record('moveFolder'),
     trashManagedFolder: record('trashManagedFolder'),
     deleteFolderFromDisk: record('deleteFolderFromDisk'),
     removeLinkedFolder: record('removeLinkedFolder'),
@@ -97,7 +101,7 @@ afterEach(() => {
 });
 
 describe('文件夹分支：可见性矩阵（与历史内联 JSX 条件一致）', () => {
-  it('managed：open / create-subfolder / rename / copy-path / trash / disk-delete 可见', () => {
+  it('managed：open / create / rename / copy-paste-clone-move / trash 可见', () => {
     const { ctx } = makeCtx();
     expect(resolveIds(ctx)).toEqual([
       'folder.open-in-file-manager',
@@ -105,6 +109,10 @@ describe('文件夹分支：可见性矩阵（与历史内联 JSX 条件一致�
       'folder.create-subfolder',
       'folder.rename',
       'folder.copy-path',
+      'folder.copy',
+      'folder.paste',
+      'folder.clone',
+      'folder.move-to',
       'folder.move-to-trash',
       'folder.delete-from-disk',
     ]);
@@ -123,6 +131,7 @@ describe('文件夹分支：可见性矩阵（与历史内联 JSX 条件一致�
       'folder.open-with',
       'folder.linked-rules',
       'folder.copy-path',
+      'folder.copy',
       'folder.remove-from-library',
     ]);
   });
@@ -141,6 +150,7 @@ describe('文件夹分支：可见性矩阵（与历史内联 JSX 条件一致�
       'folder.open-with',
       'folder.linked-rules',
       'folder.copy-path',
+      'folder.copy',
       'folder.move-to-trash',
       'folder.delete-from-disk',
     ]);
@@ -157,6 +167,7 @@ describe('文件夹分支：可见性矩阵（与历史内联 JSX 条件一致�
       'folder.open-in-file-manager',
       'folder.open-with',
       'folder.copy-path',
+      'folder.copy',
       'folder.remove-from-library',
     ]);
   });
@@ -175,12 +186,14 @@ describe('文件夹分支：可见性矩阵（与历史内联 JSX 条件一致�
       'folder.open-with',
       'folder.linked-rules',
       'folder.copy-path',
+      'folder.copy',
       'folder.remove-from-library',
     ]);
     for (const id of [
       'folder.open-in-file-manager',
       'folder.open-with',
       'folder.copy-path',
+      'folder.copy',
     ]) {
       expect(findItem(menu, id)).toMatchObject({
         disabled: true,
@@ -257,6 +270,10 @@ describe('文件夹分支：平台条件标题', () => {
     ['folder.create-subfolder', '新建子文件夹'],
     ['folder.rename', '重命名…'],
     ['folder.copy-path', '复制文件夹路径'],
+    ['folder.copy', '复制'],
+    ['folder.paste', '粘贴'],
+    ['folder.clone', '克隆'],
+    ['folder.move-to', '移动到…'],
   ] as const)('%s 标题为「%s」（与历史渲染一致）', (id, expected) => {
     const { ctx } = makeCtx();
     expect(findItem(registry.resolveMenu(ctx), id).label).toBe(expected);
@@ -364,6 +381,10 @@ describe('run 委托到 actions 回调包', () => {
     ['folder.create-subfolder', {}, 'createSubfolder', ['folder-1']],
     ['folder.rename', {}, 'renameFolder', ['folder-1', '素材']],
     ['folder.copy-path', {}, 'copyFolderPath', ['folder-1']],
+    ['folder.copy', {}, 'copyFolder', ['folder-1']],
+    ['folder.paste', {}, 'pasteIntoFolder', ['folder-1']],
+    ['folder.clone', {}, 'cloneFolder', ['folder-1']],
+    ['folder.move-to', {}, 'moveFolder', [['folder-1']]],
     [
       'folder.move-to-trash',
       {},
@@ -513,7 +534,7 @@ describe('删除确认：window.confirm 保留在 run 内', () => {
 });
 
 describe('注册表完整性', () => {
-  it('15 条定义全部注册且 id 唯一（createCommandRegistry 未抛错）', () => {
+  it('19 条定义全部注册且 id 唯一（createCommandRegistry 未抛错）', () => {
     expect(registry.list().map((def) => def.id)).toEqual([
       'folder.open-in-file-manager',
       'folder.open-with',
@@ -521,6 +542,10 @@ describe('注册表完整性', () => {
       'folder.rename',
       'folder.linked-rules',
       'folder.copy-path',
+      'folder.copy',
+      'folder.paste',
+      'folder.clone',
+      'folder.move-to',
       'folder.move-to-trash',
       'folder.delete-from-disk',
       'folder.remove-from-library',
@@ -539,6 +564,10 @@ describe('注册表完整性', () => {
     expect(groups).toEqual([
       'open',
       'open',
+      'organize',
+      'organize',
+      'organize',
+      'organize',
       'organize',
       'organize',
       'organize',

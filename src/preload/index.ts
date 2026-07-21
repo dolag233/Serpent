@@ -181,6 +181,73 @@ const library: SerpentLibraryApi = Object.freeze({
     return { ok: true, value: result.folder };
   },
 
+  async copyFolder({ libraryId, folderId }: { libraryId: string; folderId: string }): Promise<LibraryApiResult<void>> {
+    const result = await request({ type: 'folder.copy.request', libraryId, folderId });
+    if (!result.ok) return failure(result);
+    return { ok: true, value: undefined };
+  },
+
+  async pasteIntoFolder(input: {
+    libraryId: string;
+    folderId: string;
+  }): Promise<LibraryApiResult<ImportCompletion | ImportConflictPlan>> {
+    return importRequest({ type: 'folder.paste.request', ...input });
+  },
+
+  async cloneFolder(input: {
+    libraryId: string;
+    folderId: string;
+  }): Promise<
+    LibraryApiResult<{
+      folder: ManagedFolderSummary;
+      clonedFolderCount: number;
+      clonedAssetCount: number;
+    }>
+  > {
+    const result = await request({ type: 'folder.clone.request', ...input });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'folder.cloned') throw new Error('Unexpected clone-folder response.');
+    return {
+      ok: true,
+      value: {
+        folder: result.folder,
+        clonedFolderCount: result.clonedFolderCount,
+        clonedAssetCount: result.clonedAssetCount,
+      },
+    };
+  },
+
+  async moveFolders(input: {
+    libraryId: string;
+    folderIds: string[];
+    targetParentFolderId: string | null;
+    conflictStrategy?: 'keep-both' | 'skip';
+  }): Promise<
+    LibraryApiResult<{
+      movedCount: number;
+      skippedCount: number;
+      folders: ManagedFolderSummary[];
+    }>
+  > {
+    const result = await request({
+      type: 'folder.move.request',
+      libraryId: input.libraryId,
+      folderIds: input.folderIds,
+      targetParentFolderId: input.targetParentFolderId,
+      conflictStrategy: input.conflictStrategy ?? 'keep-both',
+    });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'folder.moved') throw new Error('Unexpected move-folders response.');
+    return {
+      ok: true,
+      value: {
+        movedCount: result.movedCount,
+        skippedCount: result.skippedCount,
+        folders: result.folders,
+      },
+    };
+  },
+
   async listFolders({ libraryId }: { libraryId: string }): Promise<LibraryApiResult<ManagedFolderSummary[]>> {
     const result = await request({ type: 'folder.list.request', libraryId });
     if (!result.ok) return failure(result);
@@ -1302,7 +1369,13 @@ const extensionPairing: SerpentExtensionPairingApi = Object.freeze({
 
 async function importRequest(
   command: Extract<RendererRequest, {
-    type: 'asset.import-files.request' | 'asset.import-folder.request' | 'asset.import-drop.request' | 'asset.import-web.request' | 'asset.import-clipboard.request';
+    type:
+      | 'asset.import-files.request'
+      | 'asset.import-folder.request'
+      | 'asset.import-drop.request'
+      | 'asset.import-web.request'
+      | 'asset.import-clipboard.request'
+      | 'folder.paste.request';
   }>,
 ): Promise<LibraryApiResult<ImportCompletion | ImportConflictPlan>> {
   const result = await request(command);

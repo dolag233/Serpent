@@ -21,7 +21,10 @@ import type { CommandContext, CommandDefinition } from './command-types';
 export interface AssetMultiCommandActions {
   readonly openAssignTagPicker: (assetIds: string[]) => void;
   readonly openRemoveTagPicker: (assetIds: string[]) => void;
-  readonly moveToFolder: (assetIds: string[]) => void;
+  readonly moveToFolder: (
+    assetIds: string[],
+    folderIds?: readonly string[],
+  ) => void;
   /** Assets + managed folder cards that trash can process (Serpent-koy). */
   readonly moveToTrash: (
     assetIds: string[],
@@ -131,15 +134,19 @@ export const assetMultiCommandDefinitions: readonly AssetMultiCommandDefinition[
       id: 'assets.move-to-folder',
       title: (ctx) =>
         t(ctx, 'command.assets.moveToFolder', {
-          count: ctx.availableManagedCount,
+          count: ctx.availableManagedCount + ctx.folderCount,
         }),
       group: 'organize',
       visible: (ctx) => !ctx.trashedAll,
       disabledReason: (ctx) =>
-        ctx.availableManagedCount === 0
+        ctx.availableManagedCount + ctx.folderCount === 0
           ? t(ctx, 'command.reason.noMovableManaged')
           : null,
-      run: (ctx) => ctx.actions.moveToFolder([...ctx.availableManagedAssetIds]),
+      run: (ctx) =>
+        ctx.actions.moveToFolder(
+          [...ctx.availableManagedAssetIds],
+          [...ctx.processFolderIds],
+        ),
     },
     // ---- 删除 ----
     {

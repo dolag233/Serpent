@@ -290,6 +290,26 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
       const folder = libraryService.renameManagedFolder(request.command);
       return { ok: true, type: 'folder.renamed', folder };
     }
+    case 'folder.clone': {
+      const result = libraryService.cloneManagedFolder(request.command);
+      return {
+        ok: true,
+        type: 'folder.cloned',
+        folder: result.folder,
+        clonedFolderCount: result.clonedFolderCount,
+        clonedAssetCount: result.clonedAssetCount,
+      };
+    }
+    case 'folder.move': {
+      const result = libraryService.moveManagedFolders(request.command);
+      return {
+        ok: true,
+        type: 'folder.moved',
+        movedCount: result.movedCount,
+        skippedCount: result.skippedCount,
+        folders: result.folders,
+      };
+    }
     case 'folder.get-path': {
       // Main-only consumer (shell/clipboard); the path never reaches the Renderer.
       const absolutePath = libraryService.resolveFolderPath(

@@ -36,6 +36,11 @@ import {
 
 import { popupEditContextMenu } from "./edit-context-menu";
 import {
+  createFileClipboardDeps,
+  readFilePathsFromClipboard,
+  writeFilePathsToClipboard,
+} from "./file-clipboard";
+import {
   createOpenWithDeps,
   openPathWithOtherApplication,
 } from "./open-with";
@@ -833,6 +838,30 @@ async function commandFor(
         type: "folder.get-path",
         libraryId: request.libraryId,
         folderId: request.folderId,
+      };
+    case "folder.copy.request":
+      // OS file clipboard (clarification #5); path resolved then written in Main.
+      return {
+        type: "folder.get-path",
+        libraryId: request.libraryId,
+        folderId: request.folderId,
+      };
+    case "folder.paste.request":
+      // Clipboard paths are read in handleLibraryRequest, then imported.
+      return undefined;
+    case "folder.clone.request":
+      return {
+        type: "folder.clone",
+        libraryId: request.libraryId,
+        folderId: request.folderId,
+      };
+    case "folder.move.request":
+      return {
+        type: "folder.move",
+        libraryId: request.libraryId,
+        folderIds: request.folderIds,
+        targetParentFolderId: request.targetParentFolderId,
+        conflictStrategy: request.conflictStrategy,
       };
     case "asset.list.request":
       return {
@@ -2020,6 +2049,47 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
           ),
         } satisfies RendererResult;
       }
+    } else if (request.type === "folder.paste.request") {
+      try {
+        const injectedPaths =
+          !app.isPackaged &&
+          process.env.SERPENT_E2E === "1" &&
+          process.env.SERPENT_E2E_CLIPBOARD_FILE_PATHS
+            ? process.env.SERPENT_E2E_CLIPBOARD_FILE_PATHS.split("\n").filter(
+                Boolean,
+              )
+            : null;
+        const sourcePaths =
+          injectedPaths ??
+          readFilePathsFromClipboard(createFileClipboardDeps());
+        if (sourcePaths.length === 0) {
+          return {
+            ok: false,
+            error: createPublicError("CLIPBOARD_FILES_NOT_FOUND"),
+          } satisfies RendererResult;
+        }
+        const sourceKind = classifyDroppedSourcePaths(sourcePaths);
+        command = {
+          type: "asset.import.prepare",
+          libraryId: request.libraryId,
+          targetFolderId: request.folderId,
+          sourceKind,
+          sourcePaths,
+        };
+      } catch (error) {
+        logger?.error("desktop-ingestion.clipboard-files", error);
+        const isSelectionShapeError =
+          error instanceof Error && error.message === "INVALID_DROP_SELECTION";
+        return {
+          ok: false,
+          error: isSelectionShapeError
+            ? createPublicError("INVALID_DROP_SELECTION")
+            : createPublicError(
+                "INVALID_IMPORT_SOURCE",
+                publicReasonFromError(error),
+              ),
+        } satisfies RendererResult;
+      }
     } else {
       command = await commandFor(request);
     }
@@ -2336,6 +2406,35 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
         } satisfies RendererResult;
       } catch (error) {
         logger?.error("main.copy-folder-path", error);
+        return {
+          ok: false,
+          error: createPublicError("INTERNAL_ERROR"),
+        } satisfies RendererResult;
+      }
+    }
+    if (
+      workerResult.ok &&
+      request.type === "folder.copy.request" &&
+      workerResult.type === "folder.path"
+    ) {
+      try {
+        const wrote = writeFilePathsToClipboard(
+          [workerResult.absolutePath],
+          createFileClipboardDeps(),
+        );
+        if (!wrote) {
+          return {
+            ok: false,
+            error: createPublicError("INTERNAL_ERROR"),
+          } satisfies RendererResult;
+        }
+        return {
+          ok: true,
+          type: "folder.copy.requested",
+          folderId: request.folderId,
+        } satisfies RendererResult;
+      } catch (error) {
+        logger?.error("main.copy-folder-files", error);
         return {
           ok: false,
           error: createPublicError("INTERNAL_ERROR"),

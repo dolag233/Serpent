@@ -120,7 +120,7 @@ describe("buildMultiAssetMenuSkipReport", () => {
       { reason: "unresolved", count: 1 },
     ]);
   });
-  it("skips folders for move and includes them in trash process counts", () => {
+  it("includes folders in move and trash process counts", () => {
     const report = buildMultiAssetMenuSkipReport(
       ["a"],
       [asset({ assetId: "a" })],
@@ -130,8 +130,9 @@ describe("buildMultiAssetMenuSkipReport", () => {
     expect(report.folderCount).toBe(2);
     expect(report.allTrashed).toBe(false);
     expect(report.move.processAssetIds).toEqual(["a"]);
-    expect(report.move.processFolderIds).toEqual([]);
-    expect(report.move.skips).toEqual([{ reason: "folder", count: 2 }]);
+    expect(report.move.processFolderIds).toEqual(["f1", "f2"]);
+    expect(report.move.processCount).toBe(3);
+    expect(report.move.skipCount).toBe(0);
     expect(report.trash.processAssetIds).toEqual(["a"]);
     expect(report.trash.processFolderIds).toEqual(["f1", "f2"]);
     expect(report.trash.processCount).toBe(3);
@@ -212,17 +213,17 @@ describe("formatMenuActionSkipLine / formatMultiAssetMenuSkipFooter", () => {
     );
   });
 
-  it("reports folder skips for move and asset-only ops in a mixed selection", () => {
+  it("reports asset-only folder skips without skipping move in a mixed selection", () => {
     const report = buildMultiAssetMenuSkipReport(
       ["a"],
       [asset({ assetId: "a" })],
       ["f1"],
     );
     expect(formatMultiAssetMenuSkipFooter(report, "zh-CN")).toBe(
-      "移动：将处理 1 / 跳过 1（文件夹）；标签/合集/AI：跳过 1（文件夹）",
+      "标签/合集/AI：跳过 1（文件夹）",
     );
     expect(formatMultiAssetMenuSkipFooter(report, "en")).toBe(
-      "Move: process 1 / skip 1 (folder); Tags/collections/AI: skip 1 (folder)",
+      "Tags/collections/AI: skip 1 (folder)",
     );
   });
 });

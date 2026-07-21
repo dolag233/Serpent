@@ -391,6 +391,46 @@ describe('renderer request protocol', () => {
       libraryId: 'library-01',
       folderId: 'folder-01',
     });
+    expect(parseRendererRequest({
+      type: 'folder.copy.request',
+      libraryId: 'library-01',
+      folderId: 'folder-01',
+    })).toEqual({
+      type: 'folder.copy.request',
+      libraryId: 'library-01',
+      folderId: 'folder-01',
+    });
+    expect(parseRendererRequest({
+      type: 'folder.paste.request',
+      libraryId: 'library-01',
+      folderId: 'folder-01',
+    })).toEqual({
+      type: 'folder.paste.request',
+      libraryId: 'library-01',
+      folderId: 'folder-01',
+    });
+    expect(parseRendererRequest({
+      type: 'folder.clone.request',
+      libraryId: 'library-01',
+      folderId: 'folder-01',
+    })).toEqual({
+      type: 'folder.clone.request',
+      libraryId: 'library-01',
+      folderId: 'folder-01',
+    });
+    expect(parseRendererRequest({
+      type: 'folder.move.request',
+      libraryId: 'library-01',
+      folderIds: ['folder-01', 'folder-02'],
+      targetParentFolderId: null,
+      conflictStrategy: 'keep-both',
+    })).toEqual({
+      type: 'folder.move.request',
+      libraryId: 'library-01',
+      folderIds: ['folder-01', 'folder-02'],
+      targetParentFolderId: null,
+      conflictStrategy: 'keep-both',
+    });
     expect(() => parseRendererRequest({
       type: 'folder.open-with.request',
       libraryId: 'library-01',
