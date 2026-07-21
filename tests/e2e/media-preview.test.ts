@@ -123,7 +123,7 @@ test("generates a decoded thumbnail and keeps asset viewer context coherent", as
   try {
     const window = await application.firstWindow();
     await window.getByRole("button", { name: "创建资源库" }).click();
-    await window.getByLabel("名称").fill(libraryName);
+    await window.getByRole("textbox", { name: "名称" }).fill(libraryName);
     await window.getByRole("button", { name: "创建", exact: true }).click();
     await window
       .getByRole("button", { name: "导入文件", exact: true })
@@ -203,14 +203,24 @@ test("generates a decoded thumbnail and keeps asset viewer context coherent", as
       window.getByRole("button", { name: "导入文件", exact: true }).first(),
     ).toBeHidden();
     await expectImageDecoded(preview.locator("img.preview-image"));
+    // Viewing must hide the canvas host; otherwise flex:1 host + viewer split
+    // the workspace 50/50 (empty top half, close chip mid-stage).
+    await expect(window.locator(".workspace-canvas-host")).toBeHidden();
     const imageLocator = preview.locator("img.preview-image");
     const fitBox = await imageLocator.boundingBox();
     expect(fitBox).not.toBeNull();
+    const viewportLocator = preview.locator(".preview-image-viewport");
+    const viewportBox = await viewportLocator.boundingBox();
+    expect(viewportBox).not.toBeNull();
+    const imageCenterX = fitBox!.x + fitBox!.width / 2;
+    const imageCenterY = fitBox!.y + fitBox!.height / 2;
+    const viewportCenterX = viewportBox!.x + viewportBox!.width / 2;
+    const viewportCenterY = viewportBox!.y + viewportBox!.height / 2;
+    expect(Math.abs(imageCenterX - viewportCenterX)).toBeLessThanOrEqual(2);
+    expect(Math.abs(imageCenterY - viewportCenterY)).toBeLessThanOrEqual(2);
     // Plain mouse wheel zooms anchored at the pointer (Serpent-yo0n). Hover
     // off-center along the axis that fills the viewport — that axis always
     // has pan room once zoomed, so pan clamping cannot override the anchor.
-    const viewportLocator = preview.locator(".preview-image-viewport");
-    const viewportBox = await viewportLocator.boundingBox();
     const slackX = Math.abs(fitBox!.width - viewportBox!.width);
     const slackY = Math.abs(fitBox!.height - viewportBox!.height);
     const hoverX =
@@ -370,7 +380,7 @@ test("video preview reports a specific generation failure and persists its diagn
       ? readFileSync(logPath).byteLength
       : 0;
     await window.getByRole("button", { name: "创建资源库" }).click();
-    await window.getByLabel("名称").fill(libraryName);
+    await window.getByRole("textbox", { name: "名称" }).fill(libraryName);
     await window.getByRole("button", { name: "创建", exact: true }).click();
     await window
       .getByRole("button", { name: "导入文件", exact: true })
@@ -534,7 +544,7 @@ test("repairs a historical video preview after a full process restart", async ()
     application = await launch(missingFfmpegPath, sourcePath);
     let window = await application.firstWindow();
     await window.getByRole("button", { name: "创建资源库" }).click();
-    await window.getByLabel("名称").fill(libraryName);
+    await window.getByRole("textbox", { name: "名称" }).fill(libraryName);
     await window.getByRole("button", { name: "创建", exact: true }).click();
     await window
       .getByRole("button", { name: "导入文件", exact: true })

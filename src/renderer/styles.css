@@ -84,13 +84,12 @@
   --shell-chip-height: 22px;
 }
 
-/* Windows typography follows the platform's own UI type ramp. Segoe handles
-   Latin/punctuation while Chromium falls through per character to YaHei UI
-   for Simplified Chinese. The bundled Noto face remains a final portability
-   fallback, not the first CJK choice on Windows. DirectWrite owns rasterizing;
-   non-standard font-smoothing properties do not improve it. */
+/* Windows UI: bundled HarmonyOS Sans SC (Regular–Black). Vite injects
+   @font-face weight ranges + ascent/descent overrides so intermediate UI
+   weights (520–650) map onto static faces without browser-synthesized bold. */
 :root[data-platform="windows"] {
   --font-ui:
+    "HarmonyOS Sans SC",
     "Segoe UI Variable",
     "Segoe UI",
     "Microsoft YaHei UI",
@@ -98,15 +97,8 @@
     "Noto Sans SC Variable",
     Arial,
     sans-serif;
-  --font-ui-unified:
-    "Noto Sans SC Variable",
-    "Microsoft YaHei UI",
-    "Microsoft YaHei",
-    sans-serif;
+  --font-ui-unified: var(--font-ui);
   text-rendering: auto;
-  /* Windows-only: one step heavier baseline to counteract thin DirectWrite
-     stems. Gated by data-platform=windows (set in applyRendererPlatform). */
-  font-weight: 500;
 }
 
 /* REQ-THEME-001/002: light semantic token overrides. Prefer changing tokens
@@ -4551,6 +4543,12 @@ select.ai-config-input.ai-config-languages {
   min-width: 0;
 }
 
+/* Viewing hides the canvas child, but the host still had flex:1 and split the
+   workspace 50/50 with .workspace-viewer — empty top half, close chip mid-stage. */
+.workspace-canvas-host.is-viewing {
+  display: none;
+}
+
 .workspace-canvas-host > .workspace-canvas {
   flex: 1;
   min-height: 0;
@@ -6443,10 +6441,7 @@ select.ai-config-input.ai-config-languages {
     .inspector-identity,
     .metadata-list
   ) {
-  /* Identity/summary surfaces mix localized initials, headings and figures.
-     One bundled variable family keeps their glyphs and intermediate weights
-     coherent without moving Noto ahead of Segoe globally (which would regress
-     the U+2026 text-overflow baseline documented at the top of this file). */
+  /* Identity/summary surfaces share the HarmonyOS-first Windows stack. */
   font-family: var(--font-ui-unified);
 }
 
@@ -6458,7 +6453,6 @@ select.ai-config-input.ai-config-languages {
     .inspector-badge
   ) {
   color: var(--accent-soft-fg);
-  font-weight: 500;
 }
 
 :root[data-platform="windows"] .inspector-identity strong {
@@ -6497,66 +6491,6 @@ select.ai-config-input.ai-config-languages {
     .filter-tag-section-label
   ) {
   letter-spacing: 0.02em;
-}
-
-/* Windows-only weight bump: raise common chrome text ~one step.
-   Must stay under :root[data-platform="windows"] — never apply on macOS. */
-:root[data-platform="windows"] :where(
-    input,
-    textarea,
-    select,
-    button,
-    label,
-    summary,
-    .micro-label,
-    .nav-section-heading,
-    .nav-count,
-    .nav-empty,
-    .nav-row,
-    .tool-button,
-    .compact-action,
-    .primary-button,
-    .secondary-button,
-    .tiny-action,
-    .library-switcher-trigger,
-    .library-switcher-section-label,
-    .scope-crumb-button,
-    .workspace-title,
-    .inspector-section-label,
-    .inspector-status-row,
-    .inspector-identity,
-    .inspector-identity-name,
-    .metadata-list dt,
-    .metadata-list dd,
-    .context-menu-item,
-    .context-menu-item-shortcut,
-    .context-menu-section-label,
-    .context-menu-scope-note,
-    .filter-tag-chip,
-    .filter-tag-section-label,
-    .filter-tag-options button,
-    .filter-preset-chip,
-    .search-control,
-    .search-snippet,
-    .ai-search-plan-summary,
-    .asset-card,
-    .empty-state,
-    .dialog-title,
-    .dialog-body,
-    .toast,
-    .hover-tip
-  ) {
-  font-weight: 550;
-}
-
-:root[data-platform="windows"] :where(
-    .inspector-badge,
-    .inspector-identity strong,
-    .dialog-title,
-    .primary-button,
-    .workspace-title
-  ) {
-  font-weight: 650;
 }
 
 /* Task progress bar — determinate and indeterminate.

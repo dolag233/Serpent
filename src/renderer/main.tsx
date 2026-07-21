@@ -1,4 +1,5 @@
 import '@fontsource-variable/noto-sans-sc/index.css';
+import './harmonyos-sans-sc-windows.css';
 import '@fontsource/ibm-plex-mono/400.css';
 import '@fontsource/ibm-plex-mono/500.css';
 import { StrictMode } from 'react';

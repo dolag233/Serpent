@@ -45,6 +45,7 @@
     "archiver": "^8.0.0",
     "better-sqlite3": "12.11.1",
     "exifr": "^7.1.3",
+    "harmonyos-sans-sc-webfont-splitted": "^1.1.0",
     "react": "19.2.7",
     "react-dom": "19.2.7",
     "sharp": "^0.35.3",
