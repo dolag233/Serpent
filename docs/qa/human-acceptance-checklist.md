@@ -489,6 +489,8 @@
 | JOBS-004 | 多文件 AI 分析进度条 | 待人类验收 | 多选若干资产 → AI 分析 | 仅总进度 done/total + 条；有停止；右侧两按钮对齐 | `Serpent-k3dw` | 2026-07-21 复修：对齐停止/后台任务。 |
 | TOAST-001 | 自动搜索不顶掉完成/错误 toast | 人类验收通过 | 有过滤/非默认排序时多选 AI 分析至完成 | 应看到 AI 完成/失败 toast，不应再弹「搜索完成：找到 N 项」 | `Serpent-huvw` | 2026-07-21 用户确认通过。 |
 | TOAST-002 | warning/error 不被 info 顶掉 | 人类验收通过 | 先触发 error toast；再触发普通 notice | error 仍显示；notice 不抢占 | `Serpent-99lv`（分级首步） | 2026-07-21 用户确认通过。 |
+| TOAST-003 | fatal 以阻塞弹窗确认 | 待人类验收 | ① 开库/建库失败（取消选择除外）。② 导入失败（拖入/粘贴/文件选择）。③ 多选 AI 分析全部失败 | 出现「严重错误」对话框（非右下角 toast）；须点「知道了」或 Esc 才能继续；不会被后续 info/warning/error toast 顶掉或埋掉 | `Serpent-99lv` / `FatalAlertDialog` | 2026-07-21：fatal 通道 + 开库/导入/AI 全失败接线。 |
+| TOAST-004 | 完整分级 info < warning < error < fatal | 待人类验收 | 依次观察：普通 notice；warning/error toast；fatal 弹窗；在 error 显示时再触发 notice | notice 可被更高 toast 覆盖；error 不被 notice 顶掉；fatal 始终为模态确认，普通 error 仍为 toast | `Serpent-99lv` | 与 TOAST-002/003 对照验收即可。 |
 | FILTER-021 | 标签过滤含 AI 标签 | 人类验收通过 | AI 分析写出标签后，在递归文件夹里用该标签过滤 | 能筛到带该 AI 标签的资产 | `Serpent-5cvr` | 2026-07-21 用户确认通过。 |
 | JOBS-005 | 并行 AI 分析 | 待人类验收 | 多选 ≥4 项启动 AI 分析；看进度与后台任务 | 多项可同时 running（默认最多 4）；进度/停止仍正确；可用环境变量 SERPENT_AI_CONCURRENCY 调整 | `Serpent-opme` | 2026-07-21：lane 数与 ProviderConcurrencyLimiter 对齐，默认 4。 |
 | JOBS-006 | AI 连接失败自动重试后弹窗 | 待人类验收 | ① 断网或故意用无效代理后，多选若干资产启动 AI 分析。② 等待 Worker 对网络类错误自动重试约 3 次。③ 出现「AI 连接失败」对话框后分别试「重试」与「终止剩余任务」。④ 同一批失败不应每个资产各弹一次。 | 网络/超时/限流（及鉴权）耗尽重试后弹出一次对话框；「重试」重新入队失败 AI 任务；「终止」取消排队/运行中剩余任务；`AI_INVALID_RESPONSE` 等非连接类失败不弹此窗 | `Serpent-kdnm` / [connection-failure 单测](../../tests/unit/ai-connection-failure.test.ts) | 2026-07-21 实现。 |
