@@ -37,9 +37,9 @@ export const APP_SETTINGS_CARD_FIELDS_HINT_KEY = "settings.cardFieldsHint" as co
 export const APP_SETTINGS_CARD_BADGES_HINT_KEY = "settings.cardBadgesHint" as const;
 
 export const APP_SETTINGS_THEME_OPTIONS: readonly AppSettingsThemeOption[] = [
-  { value: "dark", labelKey: "shell.themeDark" },
-  { value: "light", labelKey: "shell.themeLight" },
   { value: "system", labelKey: "shell.themeSystem" },
+  { value: "light", labelKey: "shell.themeLight" },
+  { value: "dark", labelKey: "shell.themeDark" },
 ];
 
 export const APP_SETTINGS_LOCALE_OPTIONS: readonly AppSettingsLocaleOption[] = [

@@ -4,6 +4,7 @@ import {
   DEFAULT_THEME_PREFERENCE,
   THEME_PREF_KEY,
   loadThemePreferences,
+  readSystemTheme,
   resolveEffectiveTheme,
   setStoredTheme,
 } from '../../src/renderer/theme';
@@ -23,10 +24,10 @@ function memoryStorage() {
 }
 
 describe('theme preferences', () => {
-  it('defaults to dark until clarification #11 changes policy', () => {
+  it('defaults to system (clarification #11 / Serpent-svc)', () => {
     const storage = memoryStorage();
     expect(loadThemePreferences(storage).theme).toBe(DEFAULT_THEME_PREFERENCE);
-    expect(DEFAULT_THEME_PREFERENCE).toBe('dark');
+    expect(DEFAULT_THEME_PREFERENCE).toBe('system');
   });
 
   it('round-trips light/dark/system through injectable storage', () => {
@@ -41,7 +42,7 @@ describe('theme preferences', () => {
   it('falls back to default on corrupt storage', () => {
     const storage = memoryStorage();
     storage.setItem(THEME_PREF_KEY, '{not-json');
-    expect(loadThemePreferences(storage).theme).toBe('dark');
+    expect(loadThemePreferences(storage).theme).toBe('system');
   });
 });
 
@@ -54,5 +55,28 @@ describe('resolveEffectiveTheme', () => {
   it('follows system when preference is system', () => {
     expect(resolveEffectiveTheme('system', 'light')).toBe('light');
     expect(resolveEffectiveTheme('system', 'dark')).toBe('dark');
+  });
+});
+
+describe('readSystemTheme E2E override', () => {
+  it('honors __SERPENT_E2E_THEME__ when present', () => {
+    const previous = (globalThis as { __SERPENT_E2E_THEME__?: string })
+      .__SERPENT_E2E_THEME__;
+    try {
+      (globalThis as { __SERPENT_E2E_THEME__?: string }).__SERPENT_E2E_THEME__ =
+        'light';
+      expect(readSystemTheme(() => ({ matches: false }))).toBe('light');
+      (globalThis as { __SERPENT_E2E_THEME__?: string }).__SERPENT_E2E_THEME__ =
+        'dark';
+      expect(readSystemTheme(() => ({ matches: true }))).toBe('dark');
+    } finally {
+      if (previous === undefined) {
+        delete (globalThis as { __SERPENT_E2E_THEME__?: string })
+          .__SERPENT_E2E_THEME__;
+      } else {
+        (globalThis as { __SERPENT_E2E_THEME__?: string }).__SERPENT_E2E_THEME__ =
+          previous;
+      }
+    }
   });
 });

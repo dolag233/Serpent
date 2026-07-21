@@ -17,6 +17,15 @@ describe("app-settings-sections (Serpent-97l / Serpent-9es / Serpent-i07)", () =
     expect(APP_SETTINGS_LOCALE_OPTIONS.length).toBe(3);
   });
 
+  it("lists system theme first (Serpent-svc default policy)", () => {
+    expect(APP_SETTINGS_THEME_OPTIONS.map((o) => o.value)).toEqual([
+      "system",
+      "light",
+      "dark",
+    ]);
+    expect(APP_SETTINGS_LOCALE_OPTIONS[0]?.value).toBe("system");
+  });
+
   it("splits caption fields and corner badges into separate groups", () => {
     expect(APP_SETTINGS_CARD_FIELDS_HINT_KEY).toBe("settings.cardFieldsHint");
     expect(APP_SETTINGS_CARD_BADGES_HINT_KEY).toBe("settings.cardBadgesHint");

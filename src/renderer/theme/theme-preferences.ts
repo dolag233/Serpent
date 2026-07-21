@@ -1,11 +1,11 @@
 import { z } from 'zod';
 
 /**
- * Theme preference persistence (REQ-THEME-001).
+ * Theme preference persistence (REQ-THEME-001 / clarification #11).
  *
- * Clarification queue #11 still owns the *default* policy (follow system vs
- * keep dark). Until that lands, the stored default is `dark` so the current
- * dark UI and E2E visual baselines stay stable.
+ * Default preference is `system` (follow OS appearance). Effective theme is
+ * resolved to `light` or `dark`. E2E injects `__SERPENT_E2E_THEME__` via
+ * preload so visual baselines stay stable when preference is still `system`.
  */
 
 export type ThemePreference = 'light' | 'dark' | 'system';
@@ -22,7 +22,8 @@ const themePreferenceSchema = z.enum(['light', 'dark', 'system']);
 
 export const THEME_PREF_KEY = 'serpent.theme-prefs.v1';
 
-export const DEFAULT_THEME_PREFERENCE: ThemePreference = 'dark';
+/** First-run / empty-storage preference (product: follow system). */
+export const DEFAULT_THEME_PREFERENCE: ThemePreference = 'system';
 
 const themePreferencesSchema = z.object({
   version: z.literal(1),
@@ -90,6 +91,13 @@ export function readSystemTheme(
     globalThis,
   ) ?? (() => ({ matches: false })),
 ): ResolvedTheme {
+  const e2eTheme = (
+    globalThis as { __SERPENT_E2E_THEME__?: string }
+  ).__SERPENT_E2E_THEME__;
+  if (e2eTheme === 'light' || e2eTheme === 'dark') {
+    return e2eTheme;
+  }
+
   try {
     return matchMedia('(prefers-color-scheme: light)').matches
       ? 'light'

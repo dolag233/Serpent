@@ -64,6 +64,10 @@ if (e2eEnabled) {
   const e2eLocale = process.env.SERPENT_E2E_LOCALE === 'en' ? 'en' : 'zh-CN';
   (globalThis as { __SERPENT_E2E_LOCALE__?: string }).__SERPENT_E2E_LOCALE__ =
     e2eLocale;
+  // Default dark so system-theme preference stays visually stable in CI.
+  const e2eTheme = process.env.SERPENT_E2E_THEME === 'light' ? 'light' : 'dark';
+  (globalThis as { __SERPENT_E2E_THEME__?: string }).__SERPENT_E2E_THEME__ =
+    e2eTheme;
 }
 
 const requestCounts = new Map<RendererRequest['type'], number>();

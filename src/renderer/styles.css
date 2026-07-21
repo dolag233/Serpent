@@ -635,6 +635,15 @@ body.platform-darwin .toolbar-leading {
   text-transform: uppercase;
 }
 
+.sort-mode-section-label:first-child {
+  margin-top: 0;
+}
+
+.sort-mode-order-group .sort-mode-section-label,
+.sort-mode-field-list .sort-mode-section-label:first-of-type {
+  margin-top: 0;
+}
+
 .sort-mode-option {
   display: block;
   width: 100%;
@@ -646,6 +655,12 @@ body.platform-darwin .toolbar-leading {
   font-size: 12px;
   text-align: left;
   cursor: pointer;
+}
+
+.sort-mode-order-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .sort-mode-option:hover {
@@ -664,14 +679,13 @@ body.platform-darwin .toolbar-leading {
   color: var(--accent-soft-fg);
 }
 
-.sort-order-btn {
-  min-width: var(--shell-control-height);
-  padding: 0 8px;
-}
-
 .sort-order-glyph {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
   font-size: 13px;
   line-height: 1;
+  opacity: 0.85;
 }
 
 .dimension-active-chip {

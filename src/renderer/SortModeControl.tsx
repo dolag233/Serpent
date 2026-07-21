@@ -14,6 +14,9 @@ import {
   ROVING_OPTION_SELECTOR,
 } from "./roving-list-keyboard";
 
+/** Field options + in-panel order radios share one arrow-key roving set. */
+const SORT_PANEL_ROVING_SELECTOR = `${ROVING_OPTION_SELECTOR}, [role="radio"]`;
+
 /** Browse/sort fields only — relevance removed from sort UI (REQ-SORT-003). */
 export type SortFieldOption = SortDefinition["field"];
 
@@ -34,6 +37,11 @@ export const SECONDARY_SORT_FIELDS: SortFieldOption[] = [
 
 export const DEFAULT_SORT_FIELD: SortFieldOption = "name";
 export const DEFAULT_SORT_ORDER: SortDefinition["order"] = "asc";
+
+export const SORT_ORDER_OPTIONS: readonly SortDefinition["order"][] = [
+  "asc",
+  "desc",
+];
 
 export type SortModeControlProps = {
   disabled?: boolean;
@@ -67,6 +75,13 @@ function labelForSortField(
     case "author":
       return t("filter.sortAuthor");
   }
+}
+
+function labelForSortOrder(
+  order: SortDefinition["order"],
+  t: ReturnType<typeof useT>,
+): string {
+  return order === "asc" ? t("filter.sortAsc") : t("filter.sortDesc");
 }
 
 export function SortModeControl({
@@ -114,7 +129,7 @@ export function SortModeControl({
         selected.focus();
         return;
       }
-      focusFirstRovingItem(list, ROVING_OPTION_SELECTOR);
+      focusFirstRovingItem(list, SORT_PANEL_ROVING_SELECTOR);
     });
     return () => {
       document.removeEventListener("mousedown", onMouseDown, true);
@@ -128,7 +143,7 @@ export function SortModeControl({
     const result = handleRovingListKeyDown({
       key: event.key,
       container: list,
-      itemSelector: ROVING_OPTION_SELECTOR,
+      itemSelector: SORT_PANEL_ROVING_SELECTOR,
     });
     if (!result.handled) return;
     event.preventDefault();
@@ -145,6 +160,11 @@ export function SortModeControl({
     closeList(true);
   }
 
+  function pickOrder(order: SortDefinition["order"]) {
+    setSortOrder(order);
+    closeList(true);
+  }
+
   return (
     <div className="sort-mode-control" ref={rootRef}>
       <div className="dimension-filter-dim-sep" aria-hidden="true" />
@@ -152,7 +172,7 @@ export function SortModeControl({
         <button
           aria-expanded={open || undefined}
           aria-haspopup="listbox"
-          aria-label={t("filter.sortMode")}
+          aria-label={`${t("filter.sortMode")}: ${labelForSortField(sortField, t)}, ${labelForSortOrder(sortOrder, t)}`}
           className={`dimension-filter-btn${nonDefault ? " is-active" : ""}${open ? " is-open" : ""}`}
           disabled={disabled}
           onClick={() => {
@@ -164,63 +184,83 @@ export function SortModeControl({
         >
           <Icon name="sliders" size={14} />
           <span>{labelForSortField(sortField, t)}</span>
+          <span className="sort-order-glyph" aria-hidden="true">
+            <Icon
+              name={sortOrder === "asc" ? "sort-asc" : "sort-desc"}
+              size={14}
+            />
+          </span>
         </button>
         {open && (
           <div
-            aria-label={t("filter.sortMode")}
             className={`dimension-filter-popover sort-mode-popover${keyboardNav ? " is-keyboard-navigation" : ""}`}
             onKeyDown={onListKeyDown}
             onPointerMove={() => setKeyboardNav(false)}
             ref={listRef}
-            role="listbox"
           >
-            <div className="sort-mode-section-label">{t("filter.sortPrimary")}</div>
-            {PRIMARY_SORT_FIELDS.map((field) => (
-              <button
-                aria-selected={sortField === field}
-                className={`sort-mode-option${sortField === field ? " is-active" : ""}`}
-                key={field}
-                onClick={() => pickField(field)}
-                role="option"
-                tabIndex={-1}
-                type="button"
-              >
-                {labelForSortField(field, t)}
-              </button>
-            ))}
-            <div className="sort-mode-section-label">{t("filter.sortMore")}</div>
-            {SECONDARY_SORT_FIELDS.map((field) => (
-              <button
-                aria-selected={sortField === field}
-                className={`sort-mode-option${sortField === field ? " is-active" : ""}`}
-                key={field}
-                onClick={() => pickField(field)}
-                role="option"
-                tabIndex={-1}
-                type="button"
-              >
-                {labelForSortField(field, t)}
-              </button>
-            ))}
+            <div
+              aria-label={t("filter.sortDirection")}
+              className="sort-mode-order-group"
+              role="radiogroup"
+            >
+              <div className="sort-mode-section-label">
+                {t("filter.sortDirection")}
+              </div>
+              {SORT_ORDER_OPTIONS.map((order) => (
+                <button
+                  aria-checked={sortOrder === order}
+                  className={`sort-mode-option sort-mode-order-option${sortOrder === order ? " is-active" : ""}`}
+                  key={order}
+                  onClick={() => pickOrder(order)}
+                  role="radio"
+                  tabIndex={-1}
+                  type="button"
+                >
+                  <Icon
+                    name={order === "asc" ? "sort-asc" : "sort-desc"}
+                    size={14}
+                  />
+                  <span>{labelForSortOrder(order, t)}</span>
+                </button>
+              ))}
+            </div>
+            <div
+              aria-label={t("filter.sortMode")}
+              className="sort-mode-field-list"
+              role="listbox"
+            >
+              <div className="sort-mode-section-label">{t("filter.sortPrimary")}</div>
+              {PRIMARY_SORT_FIELDS.map((field) => (
+                <button
+                  aria-selected={sortField === field}
+                  className={`sort-mode-option${sortField === field ? " is-active" : ""}`}
+                  key={field}
+                  onClick={() => pickField(field)}
+                  role="option"
+                  tabIndex={-1}
+                  type="button"
+                >
+                  {labelForSortField(field, t)}
+                </button>
+              ))}
+              <div className="sort-mode-section-label">{t("filter.sortMore")}</div>
+              {SECONDARY_SORT_FIELDS.map((field) => (
+                <button
+                  aria-selected={sortField === field}
+                  className={`sort-mode-option${sortField === field ? " is-active" : ""}`}
+                  key={field}
+                  onClick={() => pickField(field)}
+                  role="option"
+                  tabIndex={-1}
+                  type="button"
+                >
+                  {labelForSortField(field, t)}
+                </button>
+              ))}
+            </div>
           </div>
         )}
       </div>
-      <button
-        aria-label={
-          sortOrder === "asc" ? t("filter.sortAsc") : t("filter.sortDesc")
-        }
-        className={`dimension-filter-btn sort-order-btn${sortOrder === "desc" ? " is-active" : ""}`}
-        disabled={disabled}
-        onClick={() => setSortOrder(sortOrder === "asc" ? "desc" : "asc")}
-        title={
-          sortOrder === "asc" ? t("filter.sortAsc") : t("filter.sortDesc")
-        }
-        type="button"
-      >
-        <span className="sort-order-glyph" aria-hidden="true">
-          <Icon name={sortOrder === "asc" ? "sort-asc" : "sort-desc"} size={14} />
-        </span>
-      </button>
     </div>
   );
 }

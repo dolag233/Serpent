@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { PRIMARY_SORT_FIELDS } from "../../src/renderer/SortModeControl";
+import {
+  PRIMARY_SORT_FIELDS,
+  SECONDARY_SORT_FIELDS,
+  SORT_ORDER_OPTIONS,
+} from "../../src/renderer/SortModeControl";
 
 describe("sort mode primary fields", () => {
   it("exposes ticket-required sorts including resolution (long_edge)", () => {
@@ -10,5 +14,18 @@ describe("sort mode primary fields", () => {
     expect(PRIMARY_SORT_FIELDS).toContain("long_edge");
     expect(PRIMARY_SORT_FIELDS).toContain("duration");
     expect(PRIMARY_SORT_FIELDS).not.toContain("relevance");
+  });
+});
+
+describe("sort mode panel order options (Serpent-v78)", () => {
+  it("exposes asc/desc for the in-panel direction section", () => {
+    expect(SORT_ORDER_OPTIONS).toEqual(["asc", "desc"]);
+  });
+
+  it("keeps field lists free of direction pseudo-fields", () => {
+    expect(PRIMARY_SORT_FIELDS).not.toContain("asc");
+    expect(PRIMARY_SORT_FIELDS).not.toContain("desc");
+    expect(SECONDARY_SORT_FIELDS).not.toContain("asc");
+    expect(SECONDARY_SORT_FIELDS).not.toContain("desc");
   });
 });

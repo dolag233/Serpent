@@ -7,7 +7,7 @@
 
 - 当日已合流多批可编码增量（查看页直出/视频控件、作者元数据、空态文案、命令注册表、合集菜单成员过滤、智能合集校验与计数、侧栏省略、搜索 snippet 去重、递归来源角标、壳层对齐、GIF 控件与元数据、Option 拖拽复制光标等）；证据与验收 ID 见 `docs/qa/human-acceptance-checklist.md`。
 - **2026-07-18 晚验收**：FILTER-013/014、SEARCH-005、NAV-005、SHELL-015/016、META-008、PALETTE-002 人类验收通过；SHELL-017、FILTER-015、VIEW-007 不通过/布局反馈。第五批反馈已入池并开单（`mvp-fifth-batch` 标签）：过滤交互重做、排序去相关性、画布 resize 重排、查看返回保视图等，见 `docs/implementation/mvp-ui-ux-requirements-backlog.md`「2026-07-18 第五批」。
-- **澄清队列**：`Serpent-w3b` 已于 2026-07-19 全部裁决或撤回（详见 backlog「集中澄清队列」）。跟进实现：`Serpent-toh`（目录计数全后代）、`Serpent-mqp`（标签管理工作区）、`Serpent-svc`（主题/语言默认跟系统）、`Serpent-5fq`（反选 Ctrl+I / mac Edit 后续）；复制粘贴走系统剪贴板（`Serpent-vgp`/`w29` 已解阻塞）；删除语义 `Serpent-ekj`/`9zc`/`5no`。
+- **澄清队列**：`Serpent-w3b` 已于 2026-07-19 全部裁决或撤回（详见 backlog「集中澄清队列」）。跟进实现：`Serpent-toh`（目录计数全后代）、`Serpent-mqp`（标签管理工作区）、`Serpent-svc`（主题/语言默认跟系统，已实现待验 THEME-017）、`Serpent-5fq`（反选 Ctrl+I / mac Edit 后续）；复制粘贴走系统剪贴板（`Serpent-vgp`/`w29` 已解阻塞）；删除语义 `Serpent-ekj`/`9zc`/`5no`。
 - **人类验收**：清单中「待人类验收」项以 `docs/qa/human-acceptance-checklist.md` 为准；状态只能由用户本人改写。
 - **2026-07-19 晚间反馈**（已入需求池与 beads，未实现）：查看页视频逐帧/`Ctrl±2s`（`Serpent-sk1`）、视频缩放（`190`）、滚轮指针缩放（`yo0n`）、切图 mip 式加载（`eh07`）、去掉「安全预览」文案（`dl23`）、亮色面包屑 hover（`xwi1`）、无库态可选已有库（`y0au`）；SVG 预览为 MVP 后（`9ei8`）。详见 `mvp-ui-ux-requirements-backlog.md`「2026-07-19 晚间反馈」。
 - **2026-07-20 AI 配置/反馈**：BYOK 自定义端点 + F1–F7（眼睛图标、token 按钮、AI 角标、编辑转人工、右键清 AI、任务进度条、自动连接状态）已实现/收尾；待人类验收 AICFG-002–005、INSPECT-AI-001、MENU-AI-001、JOBS-001。F8 设计讨论待用户（`Serpent-1us6`）。
