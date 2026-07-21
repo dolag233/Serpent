@@ -118,6 +118,7 @@ import { MediaJobsDialog } from "./MediaJobsDialog";
 import { AiConnectionFailureDialog } from "./AiConnectionFailureDialog";
 import { FatalAlertDialog } from "./FatalAlertDialog";
 import { useAiConnectionFailure } from "./use-ai-connection-failure";
+import { useScrollbarActivity } from "./use-scrollbar-activity";
 
 import {
   ContextMenuProvider,
@@ -429,6 +430,8 @@ function AppInner() {
     document.body.classList.toggle("platform-darwin", IS_MAC_PLATFORM);
   }, []);
 
+  useScrollbarActivity();
+
   // Keep AI readiness (hasKey) in sync without requiring the settings dialog.
   useEffect(() => {
     if (!api) return;
@@ -463,6 +466,8 @@ function AppInner() {
   const [selectedAssetId, setSelectedAssetId] = useState<string | undefined>();
   const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([]);
   const [uiState, setUiState] = useState<UiState>("booting");
+  const uiStateRef = useRef(uiState);
+  uiStateRef.current = uiState;
   const busy = [
     "booting",
     "creating",
@@ -4803,8 +4808,38 @@ function AppInner() {
 
   useEffect(() => {
     if (!api || !library) return;
-    return api.onAssetsChanged((event) => {
+    let reloadTimer: number | undefined;
+    let reloadInFlight = false;
+    let reloadQueued = false;
+    const scheduleSilentReload = () => {
+      if (reloadTimer !== undefined) window.clearTimeout(reloadTimer);
+      reloadTimer = window.setTimeout(() => {
+        reloadTimer = undefined;
+        if (reloadInFlight) {
+          reloadQueued = true;
+          return;
+        }
+        reloadInFlight = true;
+        void reloadCurrentContentRef
+          .current()
+          .catch(() => undefined)
+          .finally(() => {
+            reloadInFlight = false;
+            if (reloadQueued) {
+              reloadQueued = false;
+              scheduleSilentReload();
+            }
+          });
+      }, 120);
+    };
+    const unsubscribe = api.onAssetsChanged((event) => {
       if (event.libraryId !== library.libraryId) return;
+      // Serpent-yqrl: while a user import is applying, each committed asset
+      // triggers a silent canvas refresh so cards appear one-by-one.
+      if (uiStateRef.current === "importing") {
+        scheduleSilentReload();
+        return;
+      }
       void Promise.resolve().then(async () => {
         try {
           await reloadCurrentContentRef.current();
@@ -4834,6 +4869,10 @@ function AppInner() {
         }
       });
     });
+    return () => {
+      if (reloadTimer !== undefined) window.clearTimeout(reloadTimer);
+      unsubscribe();
+    };
   }, [api, library, locale, selectedAssetId, setError, setNotice, t]);
 
   useEffect(() => {
@@ -6623,46 +6662,7 @@ function AppInner() {
               </div>
             );
           })()}
-        <div
-          className={`workspace-canvas${previewAsset ? " is-viewing" : ""}${externalDropActive ? " is-external-drop" : ""}`}
-          onDragEnter={handleExternalDragEnter}
-          onDragLeave={handleExternalDragLeave}
-          onDragOver={handleExternalDragOver}
-          onDrop={handleExternalDrop}
-          onMouseDown={handleCanvasMouseDown}
-          onScroll={(event) => {
-            const target = event.currentTarget;
-            if (
-              target.scrollHeight - target.scrollTop - target.clientHeight <
-              480
-            ) {
-              void loadMoreAssets();
-            }
-          }}
-          ref={workspaceCanvasRef}
-        >
-          {externalDropActive && (
-            <div className="external-drop-overlay" role="status">
-              <Icon name="upload" size={28} />
-              <strong>{t("toolbar.dropToImport")}</strong>
-              <span>
-                {activeCollectionId
-                  ? t("toolbar.dropHintWithCollection")
-                  : t("toolbar.dropHint")}
-              </span>
-            </div>
-          )}
-          {marqueeBox && (
-            <div
-              className="marquee-selection-box"
-              style={{
-                left: marqueeBox.left,
-                top: marqueeBox.top,
-                width: marqueeBox.width,
-                height: marqueeBox.height,
-              }}
-            />
-          )}
+        <div className="workspace-canvas-host">
           {uiState === "importing" && (
             <div className="activity-strip" role="status">
               <span className="activity-pulse" />
@@ -6728,6 +6728,46 @@ function AppInner() {
                 </button>
               </div>
             )}
+        <div
+          className={`workspace-canvas${previewAsset ? " is-viewing" : ""}${externalDropActive ? " is-external-drop" : ""}`}
+          onDragEnter={handleExternalDragEnter}
+          onDragLeave={handleExternalDragLeave}
+          onDragOver={handleExternalDragOver}
+          onDrop={handleExternalDrop}
+          onMouseDown={handleCanvasMouseDown}
+          onScroll={(event) => {
+            const target = event.currentTarget;
+            if (
+              target.scrollHeight - target.scrollTop - target.clientHeight <
+              480
+            ) {
+              void loadMoreAssets();
+            }
+          }}
+          ref={workspaceCanvasRef}
+        >
+          {externalDropActive && (
+            <div className="external-drop-overlay" role="status">
+              <Icon name="upload" size={28} />
+              <strong>{t("toolbar.dropToImport")}</strong>
+              <span>
+                {activeCollectionId
+                  ? t("toolbar.dropHintWithCollection")
+                  : t("toolbar.dropHint")}
+              </span>
+            </div>
+          )}
+          {marqueeBox && (
+            <div
+              className="marquee-selection-box"
+              style={{
+                left: marqueeBox.left,
+                top: marqueeBox.top,
+                width: marqueeBox.width,
+                height: marqueeBox.height,
+              }}
+            />
+          )}
           {library ? (
             browseCanvasBodyLayout.mode !== "empty" ? (
               <>
@@ -7287,6 +7327,7 @@ function AppInner() {
               recentLibraries={recentLibraries}
             />
           )}
+        </div>
         </div>
         {renderedToast && (
           <div

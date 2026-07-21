@@ -15471,14 +15471,19 @@ export class LibraryService {
       this.failAt('after-place');
       this.failAt('crash-after-place');
 
+      // Serpent-yqrl: commit folders first, then each asset in its own
+      // transaction so the canvas can refresh as items become durable.
+      // failAt('before-db-commit') still fires before the first asset commit
+      // (import-planning rollback tests). After ≥1 asset commits, later
+      // failures keep those assets and return a partial completion.
+      const now = new Date().toISOString();
+      const folderRows = openLibrary.connection
+        .prepare(
+          'SELECT folder_id, parent_folder_id, name, relative_path, path_identity FROM managed_folders ORDER BY relative_path',
+        )
+        .all() as ManagedFolderRow[];
+      const foldersByPath = new Map(folderRows.map((folder) => [folder.path_identity, folder]));
       openLibrary.connection.transaction(() => {
-        const now = new Date().toISOString();
-        const folderRows = openLibrary.connection
-          .prepare(
-            'SELECT folder_id, parent_folder_id, name, relative_path, path_identity FROM managed_folders ORDER BY relative_path',
-          )
-          .all() as ManagedFolderRow[];
-        const foldersByPath = new Map(folderRows.map((folder) => [folder.path_identity, folder]));
         for (const relativeDirectory of sortedDirectories) {
           const directoryIdentity = portablePathIdentity(relativeDirectory);
           if (foldersByPath.has(directoryIdentity)) continue;
@@ -15513,8 +15518,12 @@ export class LibraryService {
             );
           foldersByPath.set(directoryIdentity, folder);
         }
+      })();
 
-        actions.forEach((action) => {
+      for (const action of actions) {
+        this.failAt('before-db-commit');
+        let committedAssetId: string | null = null;
+        openLibrary.connection.transaction(() => {
           const destinationPath = this.folderPath(openLibrary, action.destinationRelativePath);
           // Persist the exact same millisecond representation used by watcher
           // refreshes. Mixing Stats.mtime (Date) with BigIntStats.mtimeMs can
@@ -15608,14 +15617,23 @@ export class LibraryService {
               .run(assetId, sourcePageUrl, now);
             this.failAt('after-import-metadata');
           }
-          affectedAssetIds.push(assetId);
           this.syncAssetSearchContent(openLibrary.connection, assetId);
-        });
-        this.failAt('before-db-commit');
-        openLibrary.connection
-          .prepare("UPDATE file_operations SET status = 'committed', updated_at = ? WHERE operation_id = ?")
-          .run(new Date().toISOString(), operationId);
-      })();
+          committedAssetId = assetId;
+        })();
+        if (committedAssetId) {
+          affectedAssetIds.push(committedAssetId);
+          this.options.onAssetsChanged?.({
+            type: 'asset.changed',
+            libraryId: pending.libraryId,
+            changedCount: 1,
+            missingCount: 0,
+          });
+        }
+      }
+
+      openLibrary.connection
+        .prepare("UPDATE file_operations SET status = 'committed', updated_at = ? WHERE operation_id = ?")
+        .run(new Date().toISOString(), operationId);
       committed = true;
 
       const affected = new Set([...affectedAssetIds, ...mergedAssetIds]);
@@ -15644,6 +15662,32 @@ export class LibraryService {
     } catch (error) {
       if (committed) {
         return { importedCount, skippedCount, replacedCount, assets: [] };
+      }
+      if (affectedAssetIds.length > 0) {
+        // Partial durable import: keep committed rows/files and finish the op.
+        try {
+          openLibrary.connection
+            .prepare("UPDATE file_operations SET status = 'committed', updated_at = ? WHERE operation_id = ?")
+            .run(new Date().toISOString(), operationId);
+          this.removeOperation(operationPath);
+        } catch {
+          // Recovery can finalize a stale applying row on the next open.
+        }
+        committed = true;
+        const affected = new Set([...affectedAssetIds, ...mergedAssetIds]);
+        let assets: AssetSummary[] = [];
+        try {
+          const allAssets = this.listAssets({ libraryId: pending.libraryId, recursive: true });
+          assets = allAssets.filter((asset) => affected.has(asset.assetId));
+        } catch {
+          // Committed rows remain; later list/refresh supplies cards.
+        }
+        return {
+          importedCount,
+          skippedCount,
+          replacedCount,
+          assets,
+        };
       }
       if (error instanceof SimulatedCrashError) {
         throw new LibraryServiceError('IMPORT_APPLY_FAILED', { cause: error });

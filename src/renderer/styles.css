@@ -151,17 +151,6 @@
   --shadow-elevated: 0 18px 48px rgb(0 0 0 / 16%);
   --shadow-panel: 0 12px 28px rgb(0 0 0 / 12%);
   --shadow-toast: 0 8px 20px rgb(0 0 0 / 10%);
-  scrollbar-color: rgb(0 0 0 / 22%) transparent;
-}
-
-[data-theme="light"] ::-webkit-scrollbar-thumb {
-  background: rgb(0 0 0 / 16%);
-  background-clip: padding-box;
-}
-
-[data-theme="light"] ::-webkit-scrollbar-thumb:hover {
-  background: rgb(0 0 0 / 28%);
-  background-clip: padding-box;
 }
 
 [data-theme="light"] .toast {
@@ -232,11 +221,25 @@ summary:focus-visible {
   background: color-mix(in srgb, var(--accent) 34%, transparent);
 }
 
-/* Thin, unobtrusive scrollbars that sit on top of the surface instead of
-   carving out a gutter; the thumb only appears while scrolling content. */
+/* Thin overlay scrollbars (Serpent-xqot): thumb stays transparent until the
+   surface is hovered, focused, or actively scrolling. Windows canvas still
+   reserves scrollbar-gutter (Serpent-itr) so hide-on-idle never reintroduces
+   horizontal overflow from classic gutter appearance. */
 * {
-  scrollbar-color: rgb(255 255 255 / 18%) transparent;
+  scrollbar-color: transparent transparent;
   scrollbar-width: thin;
+}
+
+*:hover,
+*:focus-within,
+*.is-scrollbar-active {
+  scrollbar-color: rgb(255 255 255 / 22%) transparent;
+}
+
+[data-theme="light"] *:hover,
+[data-theme="light"] *:focus-within,
+[data-theme="light"] *.is-scrollbar-active {
+  scrollbar-color: rgb(0 0 0 / 28%) transparent;
 }
 
 ::-webkit-scrollbar {
@@ -252,12 +255,35 @@ summary:focus-visible {
 ::-webkit-scrollbar-thumb {
   border: 3px solid transparent;
   border-radius: 8px;
+  background: transparent;
+  background-clip: padding-box;
+}
+
+*:hover::-webkit-scrollbar-thumb,
+*:focus-within::-webkit-scrollbar-thumb,
+*.is-scrollbar-active::-webkit-scrollbar-thumb {
   background: rgb(255 255 255 / 13%);
   background-clip: padding-box;
 }
 
-::-webkit-scrollbar-thumb:hover {
+*:hover::-webkit-scrollbar-thumb:hover,
+*:focus-within::-webkit-scrollbar-thumb:hover,
+*.is-scrollbar-active::-webkit-scrollbar-thumb:hover {
   background: rgb(255 255 255 / 24%);
+  background-clip: padding-box;
+}
+
+[data-theme="light"] *:hover::-webkit-scrollbar-thumb,
+[data-theme="light"] *:focus-within::-webkit-scrollbar-thumb,
+[data-theme="light"] *.is-scrollbar-active::-webkit-scrollbar-thumb {
+  background: rgb(0 0 0 / 18%);
+  background-clip: padding-box;
+}
+
+[data-theme="light"] *:hover::-webkit-scrollbar-thumb:hover,
+[data-theme="light"] *:focus-within::-webkit-scrollbar-thumb:hover,
+[data-theme="light"] *.is-scrollbar-active::-webkit-scrollbar-thumb:hover {
+  background: rgb(0 0 0 / 28%);
   background-clip: padding-box;
 }
 
@@ -4356,6 +4382,31 @@ select.ai-config-input.ai-config-languages {
   user-select: none;
 }
 
+/* Serpent-yl67: host owns flex growth; activity strips overlay the scrollport
+   instead of living inside the scrolling canvas content. */
+.workspace-canvas-host {
+  position: relative;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+
+.workspace-canvas-host > .workspace-canvas {
+  flex: 1;
+  min-height: 0;
+}
+
+.workspace-canvas-host > .activity-strip {
+  position: absolute;
+  z-index: 20;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  pointer-events: auto;
+}
+
 .activity-strip {
   position: absolute;
   z-index: 20;
@@ -4375,7 +4426,6 @@ select.ai-config-input.ai-config-languages {
   color: var(--text);
   font-size: 11px;
   white-space: nowrap;
-  transform: translateX(-50%);
 }
 
 .activity-strip-message {

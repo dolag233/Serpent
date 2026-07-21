@@ -452,7 +452,7 @@
 | 2026-07-21 | `Serpent-rsbt` / `Serpent-2vn` AI 心跳 + Alt/Option 拖拽复制 | 待人类验收 | 约 60s 心跳与配置标题同源；右键 AI 分析断连 link-off；托管文件夹 Option/Alt 拖拽复制可撤销；平台按键名 Alt/Option。 | AICFG-012 / MENU-AI-003 / DND-005 |
 | 2026-07-21 | `Serpent-v78` / `Serpent-svc` 排序方向入面板 + 默认跟系统 | 待人类验收 | 升降序并入排序面板、去掉独立方向钮；主题默认跟随系统（语言本已跟随）。 | SORT-007 / THEME-017 |
 | 2026-07-21 | `Serpent-jfi` / `Serpent-5fq` 暗色排除红 + 反选快捷键 | 待人类验收 | 暗色排除 chip 降饱和；Ctrl+I/⌘I 反选可见资产；Escape 选择清理由 hook 抽出。 | FILTER-022 / SELECT-012；`maxDescriptionCharsZh` 仍为 100。 |
-| 2026-07-21 | 滚动条隐藏 / 导入逐项出现 / 导出条随滚 | 已开单 | 空闲隐藏滚动条；导入完成项逐个上画布；导出「压缩中」条不随画布滚动。 | `Serpent-xqot` / `Serpent-yqrl` / `Serpent-yl67`。 |
+| 2026-07-21 | 滚动条/导入渐进显示/导出进度条 | 待人类验收 | ① 滚动条空闲隐藏；② 导入时已处理好的资产逐个出现在画布；③ 「正在导出资源库：压缩中」不随画布滚动。 | `Serpent-xqot` / `Serpent-yqrl` / `Serpent-yl67` → SHELL-026 / IMPORT-005 / EXPORT-002。 |
 | 2026-07-21 | TEXT-001 / `Serpent-4l7` + 画布滚动条 `Serpent-itr` | 待人类验收 | 链接子目录新建文本刷新入库；格式「文本」chip；扩常见文本扩展；Windows 经典滚动条横溢 CSS 修复。 | TEXT-001 → 待复验；CANVAS-001/002/021 已注 Windows 勿提前人类通过。 |
 ### 第五批收口（过滤/导航/排序/Inspector）
 
@@ -543,4 +543,7 @@
 | 2026-07-21 | CANVAS-023 / THUMB-002 / PALETTE-003 | 待人类验收 | 竖直卡片限高+圆角裁切；色卡去「色卡·自动」标签 | `Serpent-woa` / `Serpent-l79c` | 实现完成，勿标人类通过。 |
 | 2026-07-21 | MENU-026 / MENU-027 | 待人类验收 | 资产/文件夹「用其他应用打开」；复制粘贴另单 | `Serpent-w29` | open-with 已实现；Windows 真机未验。 |
 | 2026-07-21 | MENU-028–031 / FOLDER-015 | 待人类验收 | 文件夹系统剪贴板复制/粘贴、克隆、移动；混选移动含文件夹 | `Serpent-vgp` | Windows 真机未验；资产剪贴板见 `Serpent-bkef`。 |
-| 2026-07-21 | 滚动条/导入渐进显示/导出进度条 | 已开单（未实现） | ① 滚动条空闲隐藏；② 导入时已处理好的资产逐个出现在画布；③ 「正在导出资源库：压缩中」随画布滚动移动（应相对壳层固定）。 | `Serpent-xqot` / `Serpent-yqrl` / `Serpent-yl67` | 仅记录，待实施后进验收表。 |
+| 2026-07-21 | 滚动条/导入渐进显示/导出进度条 | 待人类验收 | ① 滚动条空闲隐藏；② 导入时已处理好的资产逐个出现在画布；③ 「正在导出资源库：压缩中」不随画布滚动。 | `Serpent-xqot` / `Serpent-yqrl` / `Serpent-yl67` | 见 SHELL-026 / IMPORT-005 / EXPORT-002。 |
+| IMPORT-005 | 导入过程中画布逐个出现已入库资产 | 待人类验收 | 多选若干文件导入（或导入含多文件文件夹）；观察画布，勿等全部结束后才看 | 导入进行中可见资产数随入库逐步增加；进度条仍可用；取消后不再继续刷入 | `Serpent-yqrl` | 2026-07-21：resolveImport 按资产提交并发 `asset.changed`；导入中静默刷新。 |
+| EXPORT-002 | 导出进度条不随画布滚动 | 待人类验收 | 启动导出资源库；在「压缩中/复制中」时上下滚动画布 | 进度条相对画布视口顶部固定，不跟着内容滚走；完成后消失 | `Serpent-yl67` | 2026-07-21：activity-strip 移出滚动 canvas，挂到 `workspace-canvas-host`。 |
+| SHELL-026 | 滚动条空闲时隐藏 | 待人类验收 | 打开含长列表的库；静止观察；再滚动或悬停侧栏/画布/Inspector | 静止时几乎看不到滚动条；滚动/悬停可见可用；Windows 长列表仍无横溢 | `Serpent-xqot` | 2026-07-21：overlay 空闲透明 + 滚动时 `.is-scrollbar-active`；保留 Windows `scrollbar-gutter`。 |
