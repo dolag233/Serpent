@@ -52,4 +52,13 @@ describe('disk-delete-confirm-preferences', () => {
       DEFAULT_DISK_DELETE_CONFIRM_PREFERENCES,
     );
   });
+
+  it('can re-enable the prompt after the user chose not to show it (Serpent-5no)', () => {
+    const storage = memoryStorage();
+    setDiskDeletePromptEnabled(false, storage);
+    expect(isDiskDeletePromptEnabled(storage)).toBe(false);
+    setDiskDeletePromptEnabled(true, storage);
+    expect(isDiskDeletePromptEnabled(storage)).toBe(true);
+    expect(loadDiskDeleteConfirmPreferences(storage).promptEnabled).toBe(true);
+  });
 });

@@ -722,7 +722,11 @@ export const en = {
     cardBadgesHint: "Duration is bottom-left; extension is bottom-right (images never show extension). Type badges appear only when extension is off (e.g. GIF).",
     aiSection: "AI badges",
     showAiBadges: "Show AI badges",
-    showAiBadgesHint: "When off, AI-written description/tags/rating stay; only the Inspector AI badges are hidden."
+    showAiBadgesHint: "When off, AI-written description/tags/rating stay; only the Inspector AI badges are hidden.",
+    confirmationsSection: "Confirmations",
+    diskDeleteConfirm: "Confirm before deleting from disk",
+    diskDeleteConfirmHint:
+      "When off, “Delete from disk” skips the dialog. You can turn this back on anytime. Shared by assets and folders."
   },
   preview: {
     ffmpegRequired: "This install is missing the media component needed for a video playback proxy. Reinstall or repair Serpent and try again.",

@@ -1,5 +1,9 @@
 import { Icon } from "./Icons";
 import { coverSrc } from "./asset-card-hover-preview";
+import {
+  folderCoverStackSlots,
+  folderCoverStackStyle,
+} from "./folder-card-cover-stack";
 import { useT } from "./i18n";
 import type { FolderBrowseEntry } from "../shared/asset-types";
 
@@ -15,9 +19,9 @@ interface FolderCardProps {
 }
 
 /**
- * Direct child folder card on the browse canvas (REQ-FOLDER-001/002/010).
- * Plain click selects; double-click enters (Serpent-829). Covers are
- * pre-batched by the Worker (`coverArtifactIds`).
+ * Direct child folder card on the browse canvas (REQ-FOLDER-001/010 / Serpent-7ms).
+ * Plain click selects; double-click enters. Cover photos are stacked inside a
+ * physical folder shell (not a Windows mosaic grid).
  */
 export function FolderCard({
   entry,
@@ -30,6 +34,7 @@ export function FolderCard({
 }: FolderCardProps) {
   const t = useT();
   const covers = entry.coverArtifactIds.slice(0, 3);
+  const stackSlots = folderCoverStackSlots(covers.length);
 
   return (
     <button
@@ -46,22 +51,37 @@ export function FolderCard({
       <div
         className={`folder-card-cover folder-card-cover-count-${covers.length}`}
       >
-        {covers.length === 0 ? (
-          <div className="folder-card-cover-tile folder-card-cover-empty">
-            <Icon name="folder" size={28} />
+        <div className="folder-card-shell" aria-hidden="true">
+          <div className="folder-card-tab" />
+          <div className="folder-card-body">
+            {covers.length === 0 ? (
+              <div className="folder-card-cover-empty">
+                <Icon name="folder" size={28} />
+              </div>
+            ) : (
+              <div className="folder-card-stack">
+                {covers.map((artifactId, index) => {
+                  const slot = stackSlots[index];
+                  if (!slot) return null;
+                  return (
+                    <div
+                      className="folder-card-stack-photo"
+                      key={artifactId}
+                      style={folderCoverStackStyle(slot)}
+                    >
+                      <img
+                        alt=""
+                        className="folder-card-cover-image"
+                        loading="lazy"
+                        src={coverSrc(libraryId, artifactId)}
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
-        ) : (
-          covers.map((artifactId) => (
-            <div className="folder-card-cover-tile" key={artifactId}>
-              <img
-                alt=""
-                className="folder-card-cover-image"
-                loading="lazy"
-                src={coverSrc(libraryId, artifactId)}
-              />
-            </div>
-          ))
-        )}
+        </div>
       </div>
       <div className="folder-card-caption">
         <strong className="folder-card-name" title={entry.name}>

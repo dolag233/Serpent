@@ -710,7 +710,10 @@ export const zhCN = {
     cardBadgesHint: "时长在左下角；扩展名在右下角（图片不显示扩展名）；类型角标仅在无扩展名时出现（如 GIF）。",
     aiSection: "AI 标识",
     showAiBadges: "显示 AI 角标",
-    showAiBadgesHint: "关闭后仍保留 AI 写入的描述/标签/评分，仅隐藏 Inspector 中的 AI 角标。"
+    showAiBadgesHint: "关闭后仍保留 AI 写入的描述/标签/评分，仅隐藏 Inspector 中的 AI 角标。",
+    confirmationsSection: "确认提示",
+    diskDeleteConfirm: "从硬盘删除前确认",
+    diskDeleteConfirmHint: "关闭后，「从硬盘中删除」不再弹窗；可随时重新开启。资产与文件夹共用。"
   },
   preview: {
     ffmpegRequired: "当前安装缺少可用的媒体组件，无法生成视频播放代理。请重新安装或修复 Serpent 后重试。",

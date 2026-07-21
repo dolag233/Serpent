@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import {
   APP_SETTINGS_CANVAS_BADGE_FIELD_OPTIONS,
   APP_SETTINGS_CANVAS_CAPTION_FIELD_OPTIONS,
@@ -9,6 +9,10 @@ import {
 } from "./app-settings-sections";
 import type { AiUiPreferences } from "./ai-ui-preferences";
 import type { CanvasPreferences } from "./canvas-preferences";
+import {
+  isDiskDeletePromptEnabled,
+  setDiskDeletePromptEnabled,
+} from "./disk-delete-confirm-preferences";
 import { Icon } from "./Icons";
 import { iconActionAttrs } from "./icon-action-attrs";
 import { useLocale } from "./i18n";
@@ -42,6 +46,15 @@ export function AppSettingsDialog({
 }: AppSettingsDialogProps): ReactNode {
   const { t, preference: localePreference, setLocale } = useLocale();
   const { preference: themePreference, setTheme } = useTheme();
+  const [diskDeletePromptEnabled, setDiskDeletePromptEnabledState] = useState(
+    () => isDiskDeletePromptEnabled(),
+  );
+
+  // Serpent-5no: reload when the dialog opens so "don't show again" from
+  // delete confirms is reflected without lifting storage into App.
+  useEffect(() => {
+    if (open) setDiskDeletePromptEnabledState(isDiskDeletePromptEnabled());
+  }, [open]);
 
   if (!open) return null;
 
@@ -201,6 +214,27 @@ export function AppSettingsDialog({
               />
               <span className="app-settings-check-copy">
                 <span>{t("settings.showAiBadges")}</span>
+              </span>
+            </label>
+          </div>
+        </section>
+
+        <section className="app-settings-section">
+          <div className="micro-label">{t("settings.confirmationsSection")}</div>
+          <p className="app-settings-hint">{t("settings.diskDeleteConfirmHint")}</p>
+          <div className="app-settings-check-row-group">
+            <label className="ai-config-check-row ai-config-check-row-top">
+              <input
+                checked={diskDeletePromptEnabled}
+                onChange={() => {
+                  const next = !diskDeletePromptEnabled;
+                  setDiskDeletePromptEnabled(next);
+                  setDiskDeletePromptEnabledState(next);
+                }}
+                type="checkbox"
+              />
+              <span className="app-settings-check-copy">
+                <span>{t("settings.diskDeleteConfirm")}</span>
               </span>
             </label>
           </div>

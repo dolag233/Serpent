@@ -2,8 +2,8 @@ import { z } from 'zod';
 
 /**
  * Shared preference for the irreversible "delete from disk" confirmation
- * (clarification #7). Used by folder delete now; asset delete (Serpent-9zc)
- * and the settings re-enable toggle (Serpent-5no) share the same key.
+ * (clarification #7). Folder/asset/library delete share this key; the
+ * settings toggle (Serpent-5no) re-enables the prompt after "don't show again".
  */
 
 export interface DiskDeleteConfirmPreferencesStorage {
