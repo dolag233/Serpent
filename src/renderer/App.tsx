@@ -131,7 +131,7 @@ import {
 } from "./inspector-multi-edit";
 import { useBatchActions } from "./useBatchActions";
 import { useShellFileActions } from "./use-shell-file-actions";
-import { useAssetDragDropHandlers } from "./use-asset-drag-drop-handlers";
+import { useAssetDragDropHandlers, type UndoableFileOp } from "./use-asset-drag-drop-handlers";
 import { useDialogEscapeDismiss } from "./use-dialog-escape-dismiss";
 import { useExternalImportHandlers } from "./use-external-import-handlers";
 import { importSummaryMessage } from "./import-summary";
@@ -141,6 +141,12 @@ import { useInlineFolderEdit } from "./use-inline-folder-edit";
 import { useInlineSmartCollectionEdit } from "./use-inline-smart-collection-edit";
 import { usePanelResize } from "./use-panel-resize";
 import { useToastNotifications } from "./useToastNotifications";
+import {
+  AI_CONNECTION_HEARTBEAT_MS,
+  aiAnalyzeConnectionReady,
+  aiAnalyzeShowsDisconnectGlyph,
+  shouldRunAiConnectionHeartbeat,
+} from "./ai-connection-heartbeat";
 import {
   MANAGED_ASSETS_DRAG_TYPE,
   resolveDragDropMode,
@@ -723,7 +729,7 @@ function AppInner() {
     targetFolderId: string | null;
     conflictStrategy: "keep-both" | "replace" | "skip";
   } | null>(null);
-  const [lastMoveOperationId, setLastMoveOperationId] = useState<string | null>(
+  const [lastUndoableOp, setLastUndoableOp] = useState<UndoableFileOp | null>(
     null,
   );
   const [undoMoveDialog, setUndoMoveDialog] = useState<{
@@ -3095,7 +3101,7 @@ function AppInner() {
     trashManagedAssets,
     reloadCurrentContentRef,
     setCollections,
-    setLastMoveOperationId,
+    setLastUndoableOp,
   });
 
   const {
@@ -4209,7 +4215,7 @@ function AppInner() {
     setSearchSnippets(new Map());
     setMoveDialog(null);
     setUndoMoveDialog(null);
-    setLastMoveOperationId(null);
+    setLastUndoableOp(null);
     resetNavHistory({ kind: "all" });
     api?.setActiveContext(null);
   }
@@ -4300,7 +4306,14 @@ function AppInner() {
         conflictStrategy,
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
-      setLastMoveOperationId(result.value.operationId);
+      if (result.value.operationId) {
+        setLastUndoableOp({
+          kind: "move",
+          operationId: result.value.operationId,
+        });
+      } else {
+        setLastUndoableOp(null);
+      }
       setNotice(
         t("toast.movedCountDetail", { count: result.value.movedCount }) +
           (result.value.skippedCount
@@ -4339,7 +4352,7 @@ function AppInner() {
         }
         throw new LibraryOperationError(result.error);
       }
-      setLastMoveOperationId(null);
+      setLastUndoableOp(null);
       setNotice(
         t("toast.undoMoveDone", { count: result.value.undoneCount }) +
           (result.value.skippedCount
@@ -4355,6 +4368,46 @@ function AppInner() {
     } finally {
       setUiState("ready");
     }
+  }
+
+  async function undoManagedCopy(
+    operationId: string,
+    conflictStrategy: "error" | "keep-both" | "replace" | "skip" = "error",
+  ) {
+    if (!api || !library) return;
+    setUiState("loading");
+    try {
+      const result = await api.undoCopyAssets({
+        libraryId: library.libraryId,
+        operationId,
+        conflictStrategy,
+      });
+      if (!result.ok) throw new LibraryOperationError(result.error);
+      setLastUndoableOp(null);
+      setNotice(
+        t("toast.undoCopyDone", { count: result.value.undoneCount }) +
+          (result.value.skippedCount
+            ? t("toast.conflictAssetsSkippedSuffix", {
+                count: result.value.skippedCount,
+              })
+            : "") +
+          t("common.sentenceEnd"),
+      );
+      await reloadCurrentContent();
+    } catch (caught) {
+      setError(toMessage(caught, t("toast.undoCopyFailed"), locale));
+    } finally {
+      setUiState("ready");
+    }
+  }
+
+  async function undoLastFileOp() {
+    if (!lastUndoableOp) return;
+    if (lastUndoableOp.kind === "copy") {
+      await undoManagedCopy(lastUndoableOp.operationId);
+      return;
+    }
+    await undoManagedMove(lastUndoableOp.operationId);
   }
 
   async function deletePermanentFromTrash() {
@@ -5653,7 +5706,6 @@ function AppInner() {
     setNotice(t("toast.aiConfigSaved"));
     if (alreadyVerified) {
       setAiConfigOpen(false);
-      setAiConnectionState("idle");
       setAiConnectionReason(undefined);
       setAiSaveVerifying(false);
       return;
@@ -5663,7 +5715,6 @@ function AppInner() {
       const connection = await testAiConnectionFromDialog();
       if (connection.success) {
         setAiConfigOpen(false);
-        setAiConnectionState("idle");
         setAiConnectionReason(undefined);
       }
     } finally {
@@ -5680,6 +5731,71 @@ function AppInner() {
     aiAutoConnectAttemptedRef.current = true;
     void testAiConnectionFromDialog();
   }, [aiConfigOpen, aiHasKey, testAiConnectionFromDialog]);
+
+  const probeStoredAiConnection = useCallback(async () => {
+    if (!api) return;
+    if (!shouldRunAiConnectionHeartbeat(aiHasKey)) {
+      setAiConnectionState("disconnected");
+      setAiConnectionReason(undefined);
+      aiVerifiedFingerprintRef.current = null;
+      return;
+    }
+    setAiConnectionState((prev) =>
+      prev === "connected" || prev === "connecting" ? prev : "connecting",
+    );
+    const cfg = await api.getAiConfig();
+    if (!cfg.ok || !cfg.value.hasKey || !cfg.value.apiFormat || !cfg.value.model) {
+      setAiConnectionState("disconnected");
+      setAiConnectionReason(t("aiConfig.testFailed"));
+      aiVerifiedFingerprintRef.current = null;
+      return;
+    }
+    const result = await api.testAiConnection({
+      apiFormat: cfg.value.apiFormat,
+      model: cfg.value.model,
+      baseUrl: cfg.value.baseUrl.trim() || undefined,
+    });
+    if (!result.ok) {
+      setAiConnectionState("error");
+      setAiConnectionReason(
+        toMessage(result.error, t("aiConfig.testFailed"), locale),
+      );
+      aiVerifiedFingerprintRef.current = null;
+      return;
+    }
+    if (result.value.success) {
+      setAiConnectionState("connected");
+      setAiConnectionReason(undefined);
+      aiVerifiedFingerprintRef.current = [
+        cfg.value.apiFormat,
+        cfg.value.model.trim(),
+        cfg.value.baseUrl.trim(),
+        "__stored__",
+      ].join("\u0001");
+      return;
+    }
+    setAiConnectionState("error");
+    setAiConnectionReason(result.value.reason ?? t("aiConfig.testFailed"));
+    aiVerifiedFingerprintRef.current = null;
+  }, [api, aiHasKey, locale, t]);
+
+  useEffect(() => {
+    if (!shouldRunAiConnectionHeartbeat(aiHasKey)) {
+      return;
+    }
+    void probeStoredAiConnection();
+    const timer = window.setInterval(() => {
+      void probeStoredAiConnection();
+    }, AI_CONNECTION_HEARTBEAT_MS);
+    const onFocus = () => {
+      void probeStoredAiConnection();
+    };
+    window.addEventListener("focus", onFocus);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", onFocus);
+    };
+  }, [aiHasKey, probeStoredAiConnection]);
 
   async function fetchAiModelsFromDialog(): Promise<{
     models: string[];
@@ -7252,13 +7368,15 @@ function AppInner() {
               size={15}
             />
             <span>{renderedToast.text}</span>
-            {renderedToast.kind === "notice" && lastMoveOperationId && (
+            {renderedToast.kind === "notice" && lastUndoableOp && (
               <button
                 className="secondary-button"
-                onClick={() => void undoManagedMove(lastMoveOperationId)}
+                onClick={() => void undoLastFileOp()}
                 type="button"
               >
-                {t("action.undoMove")}
+                {lastUndoableOp.kind === "copy"
+                  ? t("action.undoCopy")
+                  : t("action.undoMove")}
               </button>
             )}
             <IconActionButton
@@ -7707,8 +7825,9 @@ function AppInner() {
           if (aiSaveVerifying) return;
           setAiConfigOpen(false);
           setAiApiKey("");
-          setAiConnectionState("idle");
-          setAiConnectionReason(undefined);
+          // Keep global connection state for heartbeat / context menu
+          // (Serpent-rsbt); re-sync from stored credentials after draft edits.
+          void probeStoredAiConnection();
         }}
         onSave={() => void saveAiConfig()}
         onTestConnection={testAiConnectionFromDialog}
@@ -7838,7 +7957,13 @@ function AppInner() {
           void handleAnalyzeClick(assetId, batchIds);
         }}
         onClearAiContent={(assetIds) => { void handleClearAiContent(assetIds); }}
-        canAnalyze={aiHasKey && !aiAnalyzing}
+        canAnalyze={
+          aiAnalyzeConnectionReady(aiHasKey, aiConnectionState) && !aiAnalyzing
+        }
+        aiDisconnected={aiAnalyzeShowsDisconnectGlyph(
+          aiHasKey,
+          aiConnectionState,
+        )}
         onCopyToLinked={(folder, assetIds) => { void copyManagedSelectionToLinked(folder, assetIds); }}
         onClearSelection={clearAssetSelection}
         onOpenExternal={(assetId) => { void handleOpenExternal(assetId); }}

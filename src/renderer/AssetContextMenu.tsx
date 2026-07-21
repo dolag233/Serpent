@@ -119,6 +119,8 @@ interface AssetContextMenuProps {
   onAnalyze: (assetId: string, batchIds?: readonly string[]) => void;
   onClearAiContent: (assetIds: string[]) => void;
   canAnalyze: boolean;
+  /** Serpent-rsbt: show link-off on AI analyze when connection is unavailable. */
+  aiDisconnected: boolean;
   onCopyToLinked: (folder: LinkedFolderSummary, assetIds: string[]) => void;
   onClearSelection: () => void;
   onOpenExternal: (assetId: string) => void;
@@ -173,6 +175,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
     onAnalyze,
     onClearAiContent,
     canAnalyze,
+    aiDisconnected,
     onCopyToLinked,
     onClearSelection,
     onOpenExternal,
@@ -769,12 +772,19 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
               <ContextMenuSection label={t("command.group.metadata")}>
                 {aiAnalyzeItem && (
                   <ContextMenuItem
-                    icon={<Icon name="smart" size={14} />}
+                    icon={
+                      <Icon
+                        name={aiDisconnected ? "link-off" : "smart"}
+                        size={14}
+                      />
+                    }
                     label={aiAnalyzeItem.label}
                     disabled={aiAnalyzeItem.disabled || !canAnalyze}
                     disabledReason={
                       !canAnalyze
-                        ? t("command.reason.aiNotConfigured")
+                        ? aiDisconnected
+                          ? t("command.reason.aiDisconnected")
+                          : t("command.reason.aiNotConfigured")
                         : (aiAnalyzeItem.disabledReason ?? undefined)
                     }
                     onAction={() => runMultiCommand("assets.ai-analyze")}
@@ -1181,10 +1191,21 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                 <ContextMenuSection label={t("command.group.metadata")}>
                   {aiAnalyzeItem && (
                     <ContextMenuItem
-                      icon={<Icon name="smart" size={14} />}
+                      icon={
+                        <Icon
+                          name={aiDisconnected ? "link-off" : "smart"}
+                          size={14}
+                        />
+                      }
                       label={aiAnalyzeItem.label}
-                      disabled={aiAnalyzeItem.disabled}
-                      disabledReason={aiAnalyzeItem.disabledReason ?? undefined}
+                      disabled={aiAnalyzeItem.disabled || !canAnalyze}
+                      disabledReason={
+                        !canAnalyze
+                          ? aiDisconnected
+                            ? t("command.reason.aiDisconnected")
+                            : t("command.reason.aiNotConfigured")
+                          : (aiAnalyzeItem.disabledReason ?? undefined)
+                      }
                       onAction={() => runAssetCommand("asset.ai-analyze")}
                     />
                   )}

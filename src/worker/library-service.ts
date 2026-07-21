@@ -1391,11 +1391,27 @@ interface ManagedMoveOperationManifest {
   version: 4;
 }
 
+/** Durable journal for managed-folder duplicate (Option/Alt drag copy). */
+interface ManagedCopyOperationManifest {
+  files: Array<{
+    destinationConflict: ManagedMoveConflict | null;
+    destinationFolderId: string | null;
+    destinationRelativePath: string;
+    newAssetId: string;
+    sourceAssetId: string;
+    sourceRelativePath: string;
+  }>;
+  kind: 'managed-copy' | 'managed-copy-undo';
+  originalOperationId: string | null;
+  version: 5;
+}
+
 type PersistedOperationManifest =
   | OperationManifest
   | LinkedTrashOperationManifest
   | RestoreOperationManifest
-  | ManagedMoveOperationManifest;
+  | ManagedMoveOperationManifest
+  | ManagedCopyOperationManifest;
 
 interface OperationRow {
   error_code: string | null;
@@ -2834,6 +2850,65 @@ export class LibraryService {
       }
       return value as unknown as RestoreOperationManifest;
     }
+    if (value.version === 5) {
+      const candidate = value as Record<string, unknown>;
+      if (
+        (candidate.kind !== 'managed-copy' && candidate.kind !== 'managed-copy-undo') ||
+        !Array.isArray(candidate.files) ||
+        (candidate.originalOperationId !== null &&
+          (typeof candidate.originalOperationId !== 'string' || !UUID.test(candidate.originalOperationId))) ||
+        (candidate.kind === 'managed-copy' && candidate.originalOperationId !== null) ||
+        (candidate.kind === 'managed-copy-undo' && candidate.originalOperationId === null)
+      ) {
+        throw new LibraryServiceError('LIBRARY_CORRUPT');
+      }
+      const newAssetIds = new Set<string>();
+      const destinationIdentities = new Set<string>();
+      const validRelativePath = (relativePath: unknown): relativePath is string =>
+        typeof relativePath === 'string' && relativePath.length > 0 &&
+        !relativePath.includes('\\') && !path.posix.isAbsolute(relativePath) &&
+        path.posix.normalize(relativePath) === relativePath &&
+        !relativePath.split('/').some((segment) => segment === '.' || segment === '..');
+      const validConflict = (conflict: unknown): boolean => {
+        if (conflict === null) return true;
+        if (typeof conflict !== 'object') return false;
+        const entry = conflict as Record<string, unknown>;
+        return (entry.kind === 'managed' || entry.kind === 'untracked') &&
+          validRelativePath(entry.relativePath) &&
+          typeof entry.backupName === 'string' && entry.backupName.length > 0 &&
+          path.posix.basename(entry.backupName) === entry.backupName &&
+          path.win32.basename(entry.backupName) === entry.backupName &&
+          (entry.assetId === null || (typeof entry.assetId === 'string' && UUID.test(entry.assetId))) &&
+          (entry.managedFolderId === null || (typeof entry.managedFolderId === 'string' && UUID.test(entry.managedFolderId))) &&
+          typeof entry.operationId === 'string' && UUID.test(entry.operationId) &&
+          (entry.trashFilename === null || (
+            typeof entry.trashFilename === 'string' && entry.trashFilename.length > 0 &&
+            path.posix.basename(entry.trashFilename) === entry.trashFilename &&
+            path.win32.basename(entry.trashFilename) === entry.trashFilename
+          )) &&
+          (entry.kind !== 'managed' || (entry.assetId !== null && entry.trashFilename !== null));
+      };
+      for (const file of candidate.files) {
+        if (typeof file !== 'object' || file === null) throw new LibraryServiceError('LIBRARY_CORRUPT');
+        const entry = file as Record<string, unknown>;
+        if (
+          typeof entry.sourceAssetId !== 'string' || !UUID.test(entry.sourceAssetId) ||
+          typeof entry.newAssetId !== 'string' || !UUID.test(entry.newAssetId) ||
+          newAssetIds.has(entry.newAssetId) ||
+          !validRelativePath(entry.sourceRelativePath) || !validRelativePath(entry.destinationRelativePath) ||
+          (entry.destinationFolderId !== null &&
+            (typeof entry.destinationFolderId !== 'string' || !UUID.test(entry.destinationFolderId))) ||
+          !validConflict(entry.destinationConflict)
+        ) {
+          throw new LibraryServiceError('LIBRARY_CORRUPT');
+        }
+        const destinationIdentity = portablePathIdentity(entry.destinationRelativePath);
+        if (destinationIdentities.has(destinationIdentity)) throw new LibraryServiceError('LIBRARY_CORRUPT');
+        newAssetIds.add(entry.newAssetId);
+        destinationIdentities.add(destinationIdentity);
+      }
+      return value as unknown as ManagedCopyOperationManifest;
+    }
     if (value.version === 4) {
       const candidate = value as Record<string, unknown>;
       if (
@@ -3171,6 +3246,48 @@ export class LibraryService {
     ).run(new Date().toISOString(), row.operation_id);
   }
 
+  private recoverManagedCopyOperation(
+    openLibrary: OpenLibrary,
+    row: OperationRow,
+    manifest: ManagedCopyOperationManifest,
+    operationPath: string,
+  ): void {
+    if (row.status === 'preparing') {
+      this.removeOperation(operationPath);
+      openLibrary.connection.prepare(
+        "UPDATE file_operations SET status = 'rolled_back', error_code = 'PROCESS_INTERRUPTED', updated_at = ? WHERE operation_id = ?",
+      ).run(new Date().toISOString(), row.operation_id);
+      return;
+    }
+
+    // Incomplete copy: drop any destination files that were written before the
+    // DB commit, then restore any replace-held conflict targets.
+    for (const file of [...manifest.files].reverse()) {
+      const newAsset = openLibrary.connection.prepare(
+        'SELECT asset_id FROM assets WHERE asset_id = ?',
+      ).get(file.newAssetId) as { asset_id: string } | undefined;
+      if (newAsset) {
+        openLibrary.connection.prepare('DELETE FROM assets WHERE asset_id = ?').run(file.newAssetId);
+      }
+      const destinationPath = this.folderPath(openLibrary, file.destinationRelativePath);
+      if (realFileExists(destinationPath)) {
+        rmSync(destinationPath, { force: true });
+      }
+      if (file.destinationConflict) {
+        const holdingPath = this.moveConflictHoldingPath(openLibrary, file.destinationConflict);
+        if (realFileExists(holdingPath) && !realFileExists(destinationPath)) {
+          mkdirSync(path.dirname(destinationPath), { recursive: true });
+          renameSync(holdingPath, destinationPath);
+        }
+      }
+    }
+
+    this.removeOperation(operationPath);
+    openLibrary.connection.prepare(
+      "UPDATE file_operations SET status = 'rolled_back', error_code = 'PROCESS_INTERRUPTED', updated_at = ? WHERE operation_id = ?",
+    ).run(new Date().toISOString(), row.operation_id);
+  }
+
   private recoverFileOperations(openLibrary: OpenLibrary): void {
     const rows = openLibrary.connection
       .prepare(
@@ -3197,9 +3314,13 @@ export class LibraryService {
       }
       if (row.status === 'committed') {
         const manifest = this.parseOperationManifest(row.manifest_json);
-        if (manifest.version === 4 && manifest.kind === 'managed-move' && row.error_code !== 'UNDONE') {
-          // The committed move's backup is the durable source for its one-shot
-          // undo. Keep it until an undo consumes it.
+        if (
+          ((manifest.version === 4 && manifest.kind === 'managed-move') ||
+            (manifest.version === 5 && manifest.kind === 'managed-copy')) &&
+          row.error_code !== 'UNDONE'
+        ) {
+          // The committed move/copy journal backs one-shot undo. Keep it until
+          // an undo consumes it.
           retainedOperationIds.add(row.operation_id);
           continue;
         }
@@ -3214,7 +3335,8 @@ export class LibraryService {
         row.status === 'failed' &&
         row.error_code !== 'IMPORT_APPLY_FAILED' &&
         row.error_code !== 'RESTORE_APPLY_FAILED' &&
-        row.error_code !== 'MOVE_APPLY_FAILED'
+        row.error_code !== 'MOVE_APPLY_FAILED' &&
+        row.error_code !== 'COPY_APPLY_FAILED'
       ) {
         this.removeOperation(operationPath);
         continue;
@@ -3231,6 +3353,10 @@ export class LibraryService {
       }
       if (manifest.version === 4) {
         this.recoverManagedMoveOperation(openLibrary, row, manifest, operationPath);
+        continue;
+      }
+      if (manifest.version === 5) {
+        this.recoverManagedCopyOperation(openLibrary, row, manifest, operationPath);
         continue;
       }
       if (
@@ -11764,6 +11890,366 @@ export class LibraryService {
     this.applyManagedMoveOperation(openLibrary, undoOperationId, manifest);
     return { undoneCount: files.length, skippedCount,
       assets: this.managedMoveSummaries(openLibrary, files.map((file) => file.assetId)) };
+  }
+
+  /**
+   * Duplicate managed assets into a target folder (Option/Alt drag copy).
+   * Creates new asset identities; clones human metadata + tags; does not clone
+   * AI content, collections, or thumbnail binaries (regenerated via jobs).
+   */
+  copyAssets(input: {
+    libraryId: string;
+    assetIds: string[];
+    targetFolderId: string | null;
+    conflictStrategy?: 'keep-both' | 'replace' | 'skip';
+  }): { copiedCount: number; skippedCount: number; operationId: string | null; assets: AssetSummary[] } {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    if (input.assetIds.length === 0 || new Set(input.assetIds).size !== input.assetIds.length) {
+      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+    }
+    const targetFolder = input.targetFolderId === null
+      ? undefined
+      : this.targetFolder(openLibrary, input.targetFolderId);
+    const rows = openLibrary.connection.prepare(
+      `SELECT asset_id, relative_file_path, managed_folder_id, availability FROM assets
+        WHERE asset_id IN (${input.assetIds.map(() => '?').join(',')})
+          AND location_kind = 'managed' AND deleted_at IS NULL`,
+    ).all(...input.assetIds) as Array<{
+      asset_id: string;
+      relative_file_path: string;
+      managed_folder_id: string | null;
+      availability: 'available' | 'missing';
+    }>;
+    const byId = new Map(rows.map((row) => [row.asset_id, row]));
+    for (const assetId of input.assetIds) {
+      const row = byId.get(assetId);
+      if (!row) throw new LibraryServiceError('ASSET_NOT_FOUND');
+      if (row.availability !== 'available') {
+        throw new LibraryServiceError('ASSET_NOT_FOUND', { reason: 'SOURCE_NOT_FOUND' });
+      }
+    }
+
+    const operationId = randomUUID();
+    const selectedIds = new Set(input.assetIds);
+    const planned = new Set<string>();
+    const strategy = input.conflictStrategy ?? 'keep-both';
+    const files: ManagedCopyOperationManifest['files'] = [];
+    let skippedCount = 0;
+    const targetPrefix = targetFolder?.relative_path ?? '';
+
+    for (const assetId of input.assetIds) {
+      const row = byId.get(assetId)!;
+      if (!realFileExists(this.folderPath(openLibrary, row.relative_file_path))) {
+        throw new LibraryServiceError('ASSET_NOT_FOUND', { reason: 'SOURCE_NOT_FOUND' });
+      }
+      const filename = path.posix.basename(row.relative_file_path);
+      let destinationRelativePath = targetPrefix
+        ? path.posix.join(targetPrefix, filename)
+        : filename;
+      let identity = portablePathIdentity(destinationRelativePath);
+      // Same-folder / same-path always needs a keep-both style rename.
+      const sameAsSource = identity === portablePathIdentity(row.relative_file_path);
+      let conflict = sameAsSource
+        ? null
+        : this.managedMoveConflict(
+            openLibrary,
+            operationId,
+            String(files.length),
+            destinationRelativePath,
+            assetId,
+          );
+      const selectedConflict = conflict?.assetId ? selectedIds.has(conflict.assetId) : false;
+      const batchConflict = planned.has(identity) || selectedConflict || sameAsSource;
+      if (batchConflict || conflict) {
+        if (strategy === 'skip' && !sameAsSource) {
+          skippedCount += 1;
+          continue;
+        }
+        if (strategy === 'keep-both' || batchConflict || sameAsSource) {
+          destinationRelativePath = this.availableMoveDestination(
+            openLibrary,
+            destinationRelativePath,
+            planned,
+          );
+          identity = portablePathIdentity(destinationRelativePath);
+          conflict = null;
+        }
+      }
+      planned.add(identity);
+      files.push({
+        sourceAssetId: assetId,
+        newAssetId: randomUUID(),
+        destinationConflict: strategy === 'replace' && !sameAsSource ? conflict : null,
+        destinationFolderId: targetFolder?.folder_id ?? null,
+        destinationRelativePath,
+        sourceRelativePath: row.relative_file_path,
+      });
+    }
+
+    if (files.length === 0) {
+      return { copiedCount: 0, skippedCount, operationId: null, assets: [] };
+    }
+    const manifest: ManagedCopyOperationManifest = {
+      files,
+      kind: 'managed-copy',
+      originalOperationId: null,
+      version: 5,
+    };
+    this.applyManagedCopyOperation(openLibrary, operationId, manifest);
+    return {
+      copiedCount: files.length,
+      skippedCount,
+      operationId,
+      assets: this.managedMoveSummaries(
+        openLibrary,
+        files.map((file) => file.newAssetId),
+      ),
+    };
+  }
+
+  undoCopyAssets(input: {
+    libraryId: string;
+    operationId: string;
+    conflictStrategy?: 'error' | 'keep-both' | 'replace' | 'skip';
+  }): { undoneCount: number; skippedCount: number; assets: AssetSummary[] } {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    const operation = openLibrary.connection.prepare(
+      `SELECT operation_id, status, manifest_json, error_code FROM file_operations
+        WHERE operation_id = ? AND kind = 'managed-copy'`,
+    ).get(input.operationId) as OperationRow | undefined;
+    if (!operation || operation.status !== 'committed' || operation.error_code !== null) {
+      throw new LibraryServiceError('ASSET_MOVE_CONFLICT', { reason: 'SOURCE_CHANGED' });
+    }
+    const original = this.parseOperationManifest(operation.manifest_json);
+    if (original.version !== 5 || original.kind !== 'managed-copy') {
+      throw new LibraryServiceError('LIBRARY_CORRUPT');
+    }
+    const strategy = input.conflictStrategy ?? 'error';
+    const toDelete: string[] = [];
+    let skippedCount = 0;
+
+    for (const file of original.files) {
+      const current = openLibrary.connection.prepare(
+        `SELECT relative_file_path, availability FROM assets
+          WHERE asset_id = ? AND location_kind = 'managed' AND deleted_at IS NULL`,
+      ).get(file.newAssetId) as {
+        relative_file_path: string;
+        availability: 'available' | 'missing';
+      } | undefined;
+      const pathMatches = current
+        && portablePathIdentity(current.relative_file_path)
+          === portablePathIdentity(file.destinationRelativePath);
+      if (!current || current.availability !== 'available' || !pathMatches) {
+        if (strategy === 'skip') {
+          skippedCount += 1;
+          continue;
+        }
+        throw new LibraryServiceError('ASSET_MOVE_CONFLICT', { reason: 'SOURCE_CHANGED' });
+      }
+      if (!realFileExists(this.folderPath(openLibrary, current.relative_file_path))) {
+        if (strategy === 'skip') {
+          skippedCount += 1;
+          continue;
+        }
+        throw new LibraryServiceError('ASSET_MOVE_CONFLICT', { reason: 'SOURCE_CHANGED' });
+      }
+      toDelete.push(file.newAssetId);
+    }
+
+    if (toDelete.length === 0) {
+      return { undoneCount: 0, skippedCount, assets: [] };
+    }
+
+    const summaries = this.managedMoveSummaries(openLibrary, toDelete);
+    this.deleteActiveManagedAssetsFromDisk(openLibrary, toDelete);
+    const now = new Date().toISOString();
+    const consumed = openLibrary.connection.prepare(
+      `UPDATE file_operations SET error_code = 'UNDONE', updated_at = ?
+        WHERE operation_id = ? AND kind = 'managed-copy' AND status = 'committed' AND error_code IS NULL`,
+    ).run(now, input.operationId);
+    if (consumed.changes !== 1) {
+      throw new LibraryServiceError('ASSET_MOVE_CONFLICT', { reason: 'SOURCE_CHANGED' });
+    }
+    const operationsRoot = this.assertSafeOperationsRoot(openLibrary.summary.libraryPath);
+    this.removeOperation(path.join(operationsRoot, input.operationId));
+    return { undoneCount: toDelete.length, skippedCount, assets: summaries };
+  }
+
+  private applyManagedCopyOperation(
+    openLibrary: OpenLibrary,
+    operationId: string,
+    manifest: ManagedCopyOperationManifest,
+  ): void {
+    const operationsRoot = this.assertSafeOperationsRoot(openLibrary.summary.libraryPath);
+    const operationPath = path.join(operationsRoot, operationId);
+    mkdirSync(path.join(operationPath, 'backup'), { recursive: true });
+    this.assertSafeOperationPath(operationPath);
+    const now = new Date().toISOString();
+    openLibrary.connection.prepare(
+      `INSERT INTO file_operations
+         (operation_id, kind, status, manifest_json, error_code, created_at, updated_at)
+       VALUES (?, ?, 'preparing', ?, NULL, ?, ?)`,
+    ).run(operationId, manifest.kind, JSON.stringify(manifest), now, now);
+
+    const copiedPaths: string[] = [];
+    try {
+      const applying = openLibrary.connection.prepare(
+        "UPDATE file_operations SET status = 'applying', updated_at = ? WHERE operation_id = ? AND status = 'preparing'",
+      ).run(new Date().toISOString(), operationId);
+      if (applying.changes !== 1) throw new LibraryServiceError('LIBRARY_CORRUPT');
+
+      for (const file of manifest.files) {
+        if (!file.destinationConflict) continue;
+        const destinationPath = this.folderPath(openLibrary, file.destinationConflict.relativePath);
+        const holdingPath = this.moveConflictHoldingPath(openLibrary, file.destinationConflict);
+        mkdirSync(path.dirname(holdingPath), { recursive: true });
+        renameSync(destinationPath, holdingPath);
+      }
+
+      for (const file of manifest.files) {
+        const sourcePath = this.folderPath(openLibrary, file.sourceRelativePath);
+        const destinationPath = this.folderPath(openLibrary, file.destinationRelativePath);
+        mkdirSync(path.dirname(destinationPath), { recursive: true });
+        copyFileSync(sourcePath, destinationPath, constants.COPYFILE_EXCL);
+        copiedPaths.push(file.destinationRelativePath);
+      }
+
+      openLibrary.connection.transaction(() => {
+        for (const file of manifest.files) {
+          const conflict = file.destinationConflict;
+          if (!conflict || conflict.kind !== 'managed' || !conflict.assetId || !conflict.trashFilename) {
+            continue;
+          }
+          const trashRelativePath = `__trash__/${conflict.assetId}/${conflict.trashFilename}`;
+          const changed = openLibrary.connection.prepare(
+            `UPDATE assets SET relative_file_path = ?, managed_folder_id = NULL, path_identity = ?,
+                    deleted_at = ?, trashed_from_relative_path = ?, trashed_from_folder_id = ?, updated_at = ?
+              WHERE asset_id = ? AND deleted_at IS NULL`,
+          ).run(
+            trashRelativePath,
+            portablePathIdentity(trashRelativePath),
+            now,
+            conflict.relativePath,
+            conflict.managedFolderId,
+            now,
+            conflict.assetId,
+          );
+          if (changed.changes !== 1) {
+            throw new LibraryServiceError('ASSET_MOVE_CONFLICT', { reason: 'SOURCE_CHANGED' });
+          }
+          this.syncAssetSearchContent(openLibrary.connection, conflict.assetId);
+        }
+
+        for (const file of manifest.files) {
+          const destinationPath = this.folderPath(openLibrary, file.destinationRelativePath);
+          const fileStat = lstatSync(destinationPath, { bigint: true });
+          const fileByteSize = Number(fileStat.size);
+          if (!Number.isSafeInteger(fileByteSize)) {
+            throw new LibraryServiceError('LIBRARY_NOT_WRITABLE', {
+              reason: 'UNSUPPORTED_FILE_ENTRY',
+            });
+          }
+          const fileModifiedAt = new Date(Number(fileStat.mtimeMs)).toISOString();
+          const revisionId = randomUUID();
+          const pathIdentity = portablePathIdentity(file.destinationRelativePath);
+          openLibrary.connection.prepare(
+            `INSERT INTO assets
+               (asset_id, location_kind, managed_folder_id, relative_file_path,
+                path_identity, current_revision_id, availability, created_at, updated_at)
+             VALUES (?, 'managed', ?, ?, ?, NULL, 'available', ?, ?)`,
+          ).run(
+            file.newAssetId,
+            file.destinationFolderId,
+            file.destinationRelativePath,
+            pathIdentity,
+            now,
+            now,
+          );
+          openLibrary.connection.prepare(
+            `INSERT INTO revisions
+               (revision_id, asset_id, parent_revision_id, byte_size, modified_at,
+                original_filename, origin, accepted_at)
+             VALUES (?, ?, NULL, ?, ?, ?, 'import', ?)`,
+          ).run(
+            revisionId,
+            file.newAssetId,
+            fileByteSize,
+            fileModifiedAt,
+            path.posix.basename(file.destinationRelativePath),
+            now,
+          );
+          openLibrary.connection.prepare(
+            `UPDATE assets SET current_revision_id = ?, updated_at = ? WHERE asset_id = ?`,
+          ).run(revisionId, now, file.newAssetId);
+
+          const metadata = openLibrary.connection.prepare(
+            `SELECT description, rating, favorite, palette, source_page_url, author
+               FROM asset_metadata WHERE asset_id = ?`,
+          ).get(file.sourceAssetId) as {
+            description: string | null;
+            rating: number;
+            favorite: number;
+            palette: string | null;
+            source_page_url: string | null;
+            author: string | null;
+          } | undefined;
+          if (metadata) {
+            openLibrary.connection.prepare(
+              `INSERT INTO asset_metadata
+                 (asset_id, description, rating, favorite, palette,
+                  source_page_url, author, entity_version, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)`,
+            ).run(
+              file.newAssetId,
+              metadata.description,
+              metadata.rating,
+              metadata.favorite,
+              metadata.palette,
+              metadata.source_page_url,
+              metadata.author,
+              now,
+            );
+          }
+
+          const tags = openLibrary.connection.prepare(
+            'SELECT tag_id FROM human_asset_tags WHERE asset_id = ?',
+          ).all(file.sourceAssetId) as Array<{ tag_id: string }>;
+          const insertTag = openLibrary.connection.prepare(
+            'INSERT OR IGNORE INTO human_asset_tags (asset_id, tag_id) VALUES (?, ?)',
+          );
+          for (const tag of tags) {
+            insertTag.run(file.newAssetId, tag.tag_id);
+          }
+
+          this.syncAssetSearchContent(openLibrary.connection, file.newAssetId);
+        }
+
+        openLibrary.connection.prepare(
+          "UPDATE file_operations SET status = 'committed', updated_at = ? WHERE operation_id = ?",
+        ).run(new Date().toISOString(), operationId);
+      })();
+    } catch (error) {
+      for (const relativePath of copiedPaths.reverse()) {
+        rmSync(this.folderPath(openLibrary, relativePath), { force: true });
+      }
+      for (const file of manifest.files) {
+        if (!file.destinationConflict) continue;
+        const holdingPath = this.moveConflictHoldingPath(openLibrary, file.destinationConflict);
+        const restorePath = this.folderPath(openLibrary, file.destinationConflict.relativePath);
+        if (existsSync(holdingPath) && !existsSync(restorePath)) {
+          mkdirSync(path.dirname(restorePath), { recursive: true });
+          renameSync(holdingPath, restorePath);
+        }
+      }
+      openLibrary.connection.prepare(
+        "UPDATE file_operations SET status = 'failed', error_code = 'COPY_APPLY_FAILED', updated_at = ? WHERE operation_id = ?",
+      ).run(new Date().toISOString(), operationId);
+      this.diagnose('asset.copy.rollback', error, {
+        operationId,
+        libraryId: openLibrary.summary.libraryId,
+      });
+      throw serviceError(error, 'LIBRARY_NOT_WRITABLE');
+    }
   }
 
   /**

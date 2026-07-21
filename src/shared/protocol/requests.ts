@@ -480,6 +480,22 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     operationId: identifierSchema,
     conflictStrategy: z.enum(['error', 'keep-both', 'replace', 'skip']).optional(),
   }),
+  z.strictObject({
+    type: z.literal('asset.copy.request'),
+    libraryId: identifierSchema,
+    assetIds: z.array(identifierSchema).min(1).max(10_000).refine(
+      (assetIds) => new Set(assetIds).size === assetIds.length,
+      { message: 'assetIds must not contain duplicates.' },
+    ),
+    targetFolderId: identifierSchema.nullable(),
+    conflictStrategy: nameConflictDecisionSchema.optional(),
+  }),
+  z.strictObject({
+    type: z.literal('asset.copy-undo.request'),
+    libraryId: identifierSchema,
+    operationId: identifierSchema,
+    conflictStrategy: z.enum(['error', 'keep-both', 'replace', 'skip']).optional(),
+  }),
   // REQ-MENU-002 / REQ-COMMAND-003: rename one asset's real file by id and
   // extension-less base name only; no filesystem path may cross this boundary.
   z.strictObject({
@@ -1065,6 +1081,22 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
   }),
   z.strictObject({
     type: z.literal('asset.move-undo'),
+    libraryId: identifierSchema,
+    operationId: identifierSchema,
+    conflictStrategy: z.enum(['error', 'keep-both', 'replace', 'skip']).optional(),
+  }),
+  z.strictObject({
+    type: z.literal('asset.copy'),
+    libraryId: identifierSchema,
+    assetIds: z.array(identifierSchema).min(1).max(10_000).refine(
+      (assetIds) => new Set(assetIds).size === assetIds.length,
+      { message: 'assetIds must not contain duplicates.' },
+    ),
+    targetFolderId: identifierSchema.nullable(),
+    conflictStrategy: nameConflictDecisionSchema.optional(),
+  }),
+  z.strictObject({
+    type: z.literal('asset.copy-undo'),
     libraryId: identifierSchema,
     operationId: identifierSchema,
     conflictStrategy: z.enum(['error', 'keep-both', 'replace', 'skip']).optional(),

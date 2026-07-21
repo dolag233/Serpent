@@ -316,7 +316,7 @@
 | DND-002 | 拖拽资产到回收站完成删除 | 待人类验收 | 拖动一项资产（及一个多选）到左侧「回收站」 | 回收站行悬停有背景高亮；松开后资产移入回收站并可在回收站看到；链接资产等不适用项会计入跳过提示 | [Wave 2 开发日志](../development/0015-0019-ux-feedback-wave2-development-log.md) / [拖放单测](../../tests/unit/asset-drag-drop.test.ts) | 2026-07-17 Wave 2 T6 实现；Computer Use 未执行，移交人工 QA。 |
 | DND-003 | 拖拽预览小图标 | 待人类验收 | 拖动一项资产观察跟随光标的预览；再框选多项后拖动 | 预览为缩小、圆角、半透明图标（约 96×72、透明度约 0.6、圆角约 9px），不再是不透明的整卡快照；多选时预览带数量徽标 | [批次 3 开发日志](../development/0015-0019-ux-feedback-batch3-development-log.md) / [预览模型单测](../../tests/unit/asset-drag-preview.test.ts) | 2026-07-17 实现（setDragImage 自定义预览节点）；合集内排序拖拽保持原生预览。Computer Use 未执行，移交人工 QA。 |
 | DND-004 | 拖拽悬停文件夹高亮稳定性 | 待人类验收 | 拖动资产在左侧多个文件夹行之间来回移动并逐行停留；也在链接文件夹行上停留 | 每个目标行（含链接文件夹）稳定高亮，不闪烁、不丢失；移开后高亮消失 | [批次 3 开发日志](../development/0015-0019-ux-feedback-batch3-development-log.md) | 2026-07-17 修复（drop-target 特异性压过 hover、行子元素 pointer-events 豁免、dragleave relatedTarget 守卫、链接行补高亮）；Computer Use 未执行，移交人工 QA。 |
-| DND-005 | Option/Alt 拖拽复制模式光标与拒绝语义 | 待人类验收 | 拖动托管资产到另一文件夹时按住 Option（macOS）或 Alt（Windows）；松开修饰键再拖到文件夹；再拖到合集（带/不带 Option）；拖到回收站时按住 Option | 按住 Option/Alt 时光标为复制（copy），预览可出现「+」徽标；松到托管文件夹时提示「复制到文件夹尚未支持，松开 Option 以移动」且资产未移动；松开修饰键后仍为移动；拖到合集无论是否按住 Option 均为加入成员（源文件夹不变）；回收站仍为移入回收站 | [开发日志](../development/2026-07-18-drag-copy-mode-development-log.md) / [拖放单测](../../tests/unit/asset-drag-drop.test.ts) / 工单 Serpent-aa3 | 2026-07-18 实现：无 managed 文件复制 API，文件夹 copy 明确拒绝；合集两侧均为 membership-add。Computer Use 未执行，移交人工 QA。 |
+| DND-005 | Option/Alt 拖拽复制到托管文件夹 | 待人类验收 | 拖动托管资产到另一文件夹时按住 Option（macOS）或 Alt（Windows）；松开修饰键再拖到文件夹；再拖到合集（带/不带 Option）；拖到回收站时按住 Option；复制成功后点 toast「撤销复制」 | 按住 Option/Alt 时光标为复制（copy），预览可出现「+」徽标；松到托管文件夹后生成新资产（源文件仍在），toast 可撤销复制；Windows toast/文案用 Alt、macOS 用 Option；松开修饰键后仍为移动；拖到合集无论是否按住 Option 均为加入成员；回收站仍为移入回收站 | [拖放单测](../../tests/unit/asset-drag-drop.test.ts) / [managed-copy worker](../../tests/worker/managed-copy.test.ts) / 工单 Serpent-2vn | 2026-07-21：补全 managed `copyAssets`/`undoCopyAssets`；DND-005 从「拒绝复制」改为真实复制+撤销。**Windows 真机未验证**。 |
 
 ### I. 资源库导入导出
 
@@ -331,7 +331,7 @@
 
 - 2026-07-20 AI 反馈 F1–F7：实现/收尾后待人类验收 AICFG-002–005、INSPECT-AI-001、MENU-AI-001、JOBS-001。
 - 2026-07-20 F8 AI 分析输出：实现后待人类验收 AICFG-006、AICFG-007、INSPECT-AI-002（`Serpent-1us6`；决议见 `docs/development/2026-07-20-f8-ai-analysis-design-decisions.md`）。
-- 2026-07-20 AI 反馈后续：心跳断连态 `Serpent-rsbt`；Inspector AI 并入普通字段 `Serpent-4z79`（等下做）。本回合已修：连接 probe、配置 UI、单语言、保存逻辑、描述尾巴、分析中条、评分芯片。
+- 2026-07-20 AI 反馈后续：心跳断连态 `Serpent-rsbt` 已实现待验（AICFG-012 / MENU-AI-003）；Inspector AI 并入普通字段 `Serpent-4z79`（等下做）。本回合已修：连接 probe、配置 UI、单语言、保存逻辑、描述尾巴、分析中条、评分芯片。
 - 2026-07-20 AI 自定义模型：按 CC Switch `apiFormat`（Chat Completions / Responses / Messages / Gemini Native）与语言多选下拉纠正；AICFG-002 待人类验收（`Serpent-2d5q` / `Serpent-uiou`）。
 - 2026-07-19 晚间反馈：查看页视频逐帧/`Ctrl±2s`（已实现待验 VIEWER-018）、滚轮指针缩放、切图 mip 式加载、无库态可选已有库（已实现待验 LIB-016）仍待人类验收；亮色面包屑 hover 已通过（NAV-006 / `Serpent-xwi1`）；查看页加载焦虑文案不通过（`VIEWER-014` → 修复 `Serpent-xkzf`）；视频缩放见 `VIEWER-013`；SVG 预览为 MVP 后。工单见需求池「2026-07-19 晚间反馈」。
 - 2026-07-21 主题/风格/快捷键审计（`Serpent-4ojz`）部分收口：THEME-012–015 待人类验收；Windows 去顶栏 SHELL-024-windows 待真机；文件夹快捷键已由 `Serpent-vf8x` 落地为 COMMAND-005（Windows 真机仍待）；主题剩余阴影 `Serpent-b9xo` → THEME-016；冲突下拉剩余见 `Serpent-p1rm`。[审计 punch-list](2026-07-21-theme-style-shortcut-audit.md)。
@@ -437,6 +437,7 @@
 | 2026-07-21 | JOBS-006 AI 连接失败弹窗 | 待人类验收 | 连接类失败自动重试 3 次后弹一次 Retry/Abort；非连接类（如 AI_INVALID_RESPONSE）不弹。 | `Serpent-kdnm` |
 | 2026-07-21 | `Serpent-y941` / `Serpent-p1rm` Inspector 更窄 + 冲突下拉去原生感 | 待人类验收 | Inspector 最小宽 200；冲突窗下拉 appearance:none + 主题 chevron。 | SHELL-025 / THEME-015 |
 | 2026-07-21 | `Serpent-vf8x` / `Serpent-b9xo` 文件夹快捷键 + 主题剩余阴影 | 待人类验收 | 文件夹 Cmd/Ctrl+Shift+N、F2、Delete/⌘⌫；侧栏焦点与菜单标签；起始页/过滤/AI 下拉阴影 token。 | COMMAND-005 / THEME-016；**不声称 Windows 人类通过**；`maxDescriptionCharsZh` 仍为 100。 |
+| 2026-07-21 | `Serpent-rsbt` / `Serpent-2vn` AI 心跳 + Alt/Option 拖拽复制 | 待人类验收 | 约 60s 心跳与配置标题同源；右键 AI 分析断连 link-off；托管文件夹 Option/Alt 拖拽复制可撤销；平台按键名 Alt/Option。 | AICFG-012 / MENU-AI-003 / DND-005 |
 | 2026-07-21 | TEXT-001 / `Serpent-4l7` + 画布滚动条 `Serpent-itr` | 待人类验收 | 链接子目录新建文本刷新入库；格式「文本」chip；扩常见文本扩展；Windows 经典滚动条横溢 CSS 修复。 | TEXT-001 → 待复验；CANVAS-001/002/021 已注 Windows 勿提前人类通过。 |
 ### 第五批收口（过滤/导航/排序/Inspector）
 
@@ -503,6 +504,8 @@
 | INSPECT-AI-004 | AI 标签可删且无前置圆点 | 人类验收通过 | 对资产跑 AI 分析得标签；在 Inspector 点 AI 标签的 ×；对照人工标签样式 | AI 标签可删；仅 AI 角标、无彩色前置圆点 | `Serpent-h2i2` | 2026-07-20 用户确认通过。 |
 | AICFG-009 | 模型下拉开时自动拉列表 | 待人类验收 | 打开 AI 配置；左侧手填模型名；点右侧下拉展开 | 无「获取模型列表」按钮；下拉可见自动加载的模型并可选用；仍可手填 | `Serpent-wbyi` / `Serpent-c0fc` | 2026-07-20 用户完全不通过（下拉点无效果）。再修：自定义下拉 + 打开对话框预取，拉取时不再 disabled。 |
 | AICFG-010 | 「已连接」状态与标题对齐 | 待人类验收 | 打开已保存 Key 的 AI 配置；看标题旁「已连接」 | 状态指示与「AI 配置」标题同一水平视觉基线 | `Serpent-4dt3` | 2026-07-21：去掉标题额外 margin，heading 与指示器垂直居中对齐。 |
+| AICFG-012 | AI 连接约 60s 心跳与标题同源 | 待人类验收 | ① 已保存 Key：打开应用后不进配置，约 1 分钟内观察；再打开 AI 配置看标题旁状态。② 断网或改坏代理后再等一轮心跳。③ 手动点「测试连接」看状态是否与心跳同一指示器。 | 有 Key 时后台约每 60s 复用 probe；标题状态与全局心跳同源（连接中/已连接/错误）；断网后会切到未连接/错误 | [heartbeat 单测](../../tests/unit/ai-connection-heartbeat.test.ts) / `Serpent-rsbt` | 2026-07-21 实现。 |
+| MENU-AI-003 | 右键 AI 分析断连显示 link-off | 待人类验收 | ① 未配置 Key 或断连时：资产右键看「AI 分析」。② 配置并连上后再右键对照。 | 不可用时菜单项为断连图标（link-off），不只是置灰；已连接时恢复智能/星芒图标且可点 | `Serpent-rsbt` / AssetContextMenu | 2026-07-21 实现；与 AICFG-012 同源连接态。 |
 | DEV-001 | npm start 避开 Vite 端口冲突黑屏 | 人类验收通过 | ① 先占住 5173（或留下陈旧 Vite）；再 `npm start`。② 需要时可再开 `npm run start:multi` | ① 窗口正常出 UI，终端打印实际端口；无黑屏。② 第二实例可独立启动（隔离 userData）；勿对同一库双开写入 | `Serpent-i6xg` / `scripts/dev-start.mjs` | 2026-07-21：strictPort + 预选空闲端口；多实例开关。用户确认通过。 |
 | JOBS-003 | AI 失败有原因提示并可查日志 | 人类验收通过 | 故意用错 Key 或对未就绪缩略图跑 AI；看 toast；打开后台任务 | toast 含失败原因摘要；任务行有 error 详情；「查看应用日志」可打开 serpent.log | `Serpent-iokf` | 2026-07-21 用户确认通过（失败常为 AI_INVALID_RESPONSE）。 |
 | AICFG-011 | AI 语言约束标签语言 | 人类验收不通过 | AI 语言设中文；对图分析；看标签 | 标签为中文（非 portrait 等纯英文），与描述同语言 | `Serpent-sbnt` | 2026-07-21：标签通过；描述过短（默认 100 字上限）。已加长约束待复验。 |

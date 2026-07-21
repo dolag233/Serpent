@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   MANAGED_ASSETS_DRAG_TYPE,
+  dragCopyModifierLabel,
   parseManagedAssetDrag,
   resolveCollectionDrop,
   resolveDragDropMode,
@@ -63,6 +64,11 @@ describe('resolveDragDropMode / resolveManagedDropEffect (Serpent-aa3)', () => {
     expect(resolveManagedDropEffect('copy')).toBe('copy');
     expect(resolveManagedDropEffect('move')).toBe('move');
   });
+
+  it('uses platform-correct modifier labels (Serpent-2vn)', () => {
+    expect(dragCopyModifierLabel('mac')).toBe('Option');
+    expect(dragCopyModifierLabel('windows')).toBe('Alt');
+  });
 });
 
 describe('resolveFolderDrop (REQ-DND-001)', () => {
@@ -104,7 +110,15 @@ describe('resolveFolderDrop (REQ-DND-001)', () => {
     ).toEqual({ kind: 'reject', reason: 'no-eligible-assets', skippedCount: 1 });
   });
 
-  it('refuses copy mode without silently moving (no managed duplicate API)', () => {
+  it('copies eligible managed assets including onto the current folder', () => {
+    expect(
+      resolveFolderDrop({
+        targetFolderId: 'f1',
+        currentFolderId: 'f1',
+        assets: [managed('a')],
+        mode: 'copy',
+      }),
+    ).toEqual({ kind: 'copy', assetIds: ['a'], skippedCount: 0 });
     expect(
       resolveFolderDrop({
         targetFolderId: 'f2',
@@ -112,7 +126,7 @@ describe('resolveFolderDrop (REQ-DND-001)', () => {
         assets: [managed('a')],
         mode: 'copy',
       }),
-    ).toEqual({ kind: 'reject', reason: 'copy-unsupported', skippedCount: 0 });
+    ).toEqual({ kind: 'copy', assetIds: ['a'], skippedCount: 0 });
   });
 });
 

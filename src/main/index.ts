@@ -1149,6 +1149,21 @@ async function commandFor(
         operationId: request.operationId,
         conflictStrategy: request.conflictStrategy,
       };
+    case "asset.copy.request":
+      return {
+        type: "asset.copy",
+        libraryId: request.libraryId,
+        assetIds: request.assetIds,
+        targetFolderId: request.targetFolderId,
+        conflictStrategy: request.conflictStrategy,
+      };
+    case "asset.copy-undo.request":
+      return {
+        type: "asset.copy-undo",
+        libraryId: request.libraryId,
+        operationId: request.operationId,
+        conflictStrategy: request.conflictStrategy,
+      };
     case "asset.rename-file.request":
       return {
         type: "asset.rename-file",

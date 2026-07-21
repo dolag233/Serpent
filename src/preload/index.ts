@@ -688,6 +688,18 @@ const library: SerpentLibraryApi = Object.freeze({
     if (result.type !== 'asset.move-undone') throw new Error('Unexpected undo-move response.');
     return { ok: true, value: { undoneCount: result.undoneCount, skippedCount: result.skippedCount, assets: result.assets } };
   },
+  async copyAssets({ libraryId, assetIds, targetFolderId, conflictStrategy }: { libraryId: string; assetIds: string[]; targetFolderId: string | null; conflictStrategy?: 'keep-both' | 'replace' | 'skip' }): Promise<LibraryApiResult<{ copiedCount: number; skippedCount: number; operationId: string | null; assets: AssetSummary[] }>> {
+    const result = await request({ type: 'asset.copy.request', libraryId, assetIds, targetFolderId, conflictStrategy });
+    if (!result.ok) return result;
+    if (result.type !== 'asset.copied') throw new Error('Unexpected copy-assets response.');
+    return { ok: true, value: { copiedCount: result.copiedCount, skippedCount: result.skippedCount, operationId: result.operationId, assets: result.assets } };
+  },
+  async undoCopyAssets({ libraryId, operationId, conflictStrategy }: { libraryId: string; operationId: string; conflictStrategy?: 'error' | 'keep-both' | 'replace' | 'skip' }): Promise<LibraryApiResult<{ undoneCount: number; skippedCount: number; assets: AssetSummary[] }>> {
+    const result = await request({ type: 'asset.copy-undo.request', libraryId, operationId, conflictStrategy });
+    if (!result.ok) return result;
+    if (result.type !== 'asset.copy-undone') throw new Error('Unexpected undo-copy response.');
+    return { ok: true, value: { undoneCount: result.undoneCount, skippedCount: result.skippedCount, assets: result.assets } };
+  },
 
   async renameAssetFile({ libraryId, assetId, newBaseName }: { libraryId: string; assetId: string; newBaseName: string }): Promise<LibraryApiResult<AssetSummary>> {
     const result = await request({ type: 'asset.rename-file.request', libraryId, assetId, newBaseName });

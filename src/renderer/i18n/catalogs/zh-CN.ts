@@ -346,6 +346,7 @@ export const zhCN = {
     reason: {
       unavailable: "资产当前不可用",
       aiNotConfigured: "尚未配置 AI API Key",
+      aiDisconnected: "AI 未连接",
       managedUnavailableTrash: "托管资产当前不可用，无法移入回收站",
       linkedOffline: "链接文件夹当前离线",
       noMovableManaged: "所选资产中没有可移动的托管资产",
@@ -926,11 +927,13 @@ export const zhCN = {
     copyFolderPathFailed: "复制文件夹路径失败。",
     alreadyInFolder: "资产已在当前文件夹，无需移动。",
     noMovableAssets: "没有可移动的资产（链接、丢失或回收站资产不参与移动）。",
-    folderCopyUnsupported: "复制到文件夹尚未支持，松开 Option 以移动。",
+    folderCopyUnsupported: "复制到文件夹尚未支持，松开 {modifier} 以移动。",
     noCollectionDropAssets: "没有可加入合集的资产（回收站中的资产已跳过）。",
     addedToCollectionCount: "已将 {count} 项资产加入合集",
     movedCount: "已移动 {count} 项资产",
+    copiedCount: "已复制 {count} 项资产",
     moveFailed: "移动资产失败。",
+    copyFailed: "复制资产失败。",
     noTrashableAssets: "没有可移入回收站的资产（链接资产请从菜单删除）。",
     trashedWithSkipped: "{count} 项资产已移入回收站，跳过 {skipped} 项不可用资产。",
     importFailed: "导入失败。",
@@ -971,6 +974,8 @@ export const zhCN = {
     movedCountDetail: "已移动 {count} 项资产",
     undoMoveDone: "已撤销移动 {count} 项资产",
     undoMoveFailed: "撤销移动失败。",
+    undoCopyDone: "已撤销复制 {count} 项资产",
+    undoCopyFailed: "撤销复制失败。",
     permanentDeleted: "已永久删除 {count} 项。",
     permanentDeleteItem: "{name}（{reason}）",
     selectedAsset: "所选资产",
@@ -1171,7 +1176,8 @@ export const zhCN = {
     delete: "删除",
     rename: "重命名",
     removeAsset: "移除资产",
-    undoMove: "撤销移动"
+    undoMove: "撤销移动",
+    undoCopy: "撤销复制"
   }
 } as const satisfies MessageTree;
 

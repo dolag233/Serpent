@@ -603,6 +603,16 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
       scheduleThumbnailScene(request.command.libraryId, 'visible', assets.map((asset) => asset.assetId));
       return { ok: true, type: 'asset.move-undone', undoneCount, skippedCount, assets };
     }
+    case 'asset.copy': {
+      const { copiedCount, skippedCount, operationId, assets } = libraryService.copyAssets(request.command);
+      scheduleThumbnailScene(request.command.libraryId, 'visible', assets.map((asset) => asset.assetId));
+      return { ok: true, type: 'asset.copied', copiedCount, skippedCount, operationId, assets };
+    }
+    case 'asset.copy-undo': {
+      const { undoneCount, skippedCount, assets } = libraryService.undoCopyAssets(request.command);
+      scheduleThumbnailScene(request.command.libraryId, 'visible', assets.map((asset) => asset.assetId));
+      return { ok: true, type: 'asset.copy-undone', undoneCount, skippedCount, assets };
+    }
     case 'asset.rename-file': {
       const { asset } = libraryService.renameAssetFile(request.command);
       return { ok: true, type: 'asset.file-renamed', asset };

@@ -8,8 +8,8 @@
 // eligibility here so App.tsx stays a thin executor and every branch is
 // unit-testable without React or the DOM.
 //
-// Copy mode (Option/Alt held): dropEffect is "copy". Folder drops refuse
-// until a managed-file duplicate API exists; collection drops are always
+// Copy mode (Option/Alt held): dropEffect is "copy". Folder drops duplicate
+// managed files via copyAssets (Serpent-2vn); collection drops are always
 // membership-add for both move and copy (never remove from a source folder
 // or source collection on sidebar drop).
 // ---------------------------------------------------------------------------
@@ -26,6 +26,13 @@ export interface DragAssetFact {
 
 /** Finder/Eagle-style modifier: Option (macOS) / Alt (Windows) = copy. */
 export type DragDropMode = 'move' | 'copy';
+
+/** Platform-correct modifier name for copy-mode toasts (Serpent-2vn). */
+export function dragCopyModifierLabel(
+  platform: 'mac' | 'windows',
+): 'Option' | 'Alt' {
+  return platform === 'mac' ? 'Option' : 'Alt';
+}
 
 /**
  * Selection snapshot for a drag start: dragging a card that belongs to the
@@ -96,20 +103,18 @@ function membershipEligibleAssets(
 
 export type FolderDropResolution =
   | { readonly kind: 'move'; readonly assetIds: string[]; readonly skippedCount: number }
+  | { readonly kind: 'copy'; readonly assetIds: string[]; readonly skippedCount: number }
   | {
       readonly kind: 'reject';
-      readonly reason: 'same-folder' | 'no-eligible-assets' | 'copy-unsupported';
+      readonly reason: 'same-folder' | 'no-eligible-assets';
       readonly skippedCount: number;
     };
 
 /**
  * Resolve a drop onto a managed folder row (or the library root, targetFolderId
- * = null). Dropping onto the folder the assets already live in is a no-op
- * reject; linked/missing/trashed assets in the snapshot are skipped and
- * counted (the caller explains the skip in the result toast).
- *
- * Copy mode: there is no managed-file duplicate / copy-into-folder worker API.
- * Refuse with `copy-unsupported` — never silently fall through to move.
+ * = null). Move onto the current folder is a no-op reject; copy onto the
+ * current folder is allowed (Finder-style duplicate with keep-both naming).
+ * Linked/missing/trashed assets are skipped and counted for the result toast.
  */
 export function resolveFolderDrop(input: {
   readonly targetFolderId: string | null;
@@ -118,10 +123,7 @@ export function resolveFolderDrop(input: {
   readonly mode?: DragDropMode;
 }): FolderDropResolution {
   const mode = input.mode ?? 'move';
-  if (mode === 'copy') {
-    return { kind: 'reject', reason: 'copy-unsupported', skippedCount: 0 };
-  }
-  if (input.targetFolderId === input.currentFolderId) {
+  if (mode === 'move' && input.targetFolderId === input.currentFolderId) {
     return { kind: 'reject', reason: 'same-folder', skippedCount: 0 };
   }
   const eligible = movableAssets(input.assets);
@@ -130,7 +132,7 @@ export function resolveFolderDrop(input: {
     return { kind: 'reject', reason: 'no-eligible-assets', skippedCount };
   }
   return {
-    kind: 'move',
+    kind: mode === 'copy' ? 'copy' : 'move',
     assetIds: eligible.map((asset) => asset.assetId),
     skippedCount,
   };

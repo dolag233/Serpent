@@ -741,6 +741,28 @@ describe('renderer request protocol', () => {
     })).toThrow();
   });
 
+  it('accepts path-free managed copy and one-shot undo requests (Serpent-2vn)', () => {
+    expect(parseRendererRequest({
+      type: 'asset.copy.request',
+      libraryId: 'library-01',
+      assetIds: ['asset-01', 'asset-02'],
+      targetFolderId: null,
+      conflictStrategy: 'keep-both',
+    })).toMatchObject({ type: 'asset.copy.request', targetFolderId: null });
+    expect(parseRendererRequest({
+      type: 'asset.copy-undo.request',
+      libraryId: 'library-01',
+      operationId: 'operation-01',
+      conflictStrategy: 'error',
+    })).toMatchObject({ type: 'asset.copy-undo.request', conflictStrategy: 'error' });
+    expect(() => parseRendererRequest({
+      type: 'asset.copy.request',
+      libraryId: 'library-01',
+      assetIds: ['asset-01', 'asset-01'],
+      targetFolderId: 'folder-01',
+    })).toThrow();
+  });
+
   it('accepts preload-resolved drops and path-free clipboard requests', () => {
     expect(parseRendererRequest({
       type: 'asset.import-drop.request',

@@ -13,6 +13,11 @@ import {
 import { LibraryOperationError, toMessage } from "./error-utils";
 import { useLocale, useT } from "./i18n";
 
+export type UndoableFileOp = {
+  readonly kind: "move" | "copy";
+  readonly operationId: string;
+};
+
 export type UseAssetDragDropHandlersParams = {
   api: SerpentLibraryApi | null;
   library: RendererLibrarySummary | null;
@@ -25,7 +30,7 @@ export type UseAssetDragDropHandlersParams = {
   trashManagedAssets: (assetIds: string[]) => Promise<void>;
   reloadCurrentContentRef: MutableRefObject<() => Promise<void>>;
   setCollections: (collections: CollectionSummary[]) => void;
-  setLastMoveOperationId: (operationId: string | null) => void;
+  setLastUndoableOp: (op: UndoableFileOp | null) => void;
 };
 
 /**
@@ -44,7 +49,7 @@ export function useAssetDragDropHandlers({
   trashManagedAssets,
   reloadCurrentContentRef,
   setCollections,
-  setLastMoveOperationId,
+  setLastUndoableOp,
 }: UseAssetDragDropHandlersParams) {
   const t = useT();
   const { locale } = useLocale();
@@ -76,9 +81,7 @@ export function useAssetDragDropHandlers({
         mode,
       });
       if (resolution.kind === "reject") {
-        if (resolution.reason === "copy-unsupported") {
-          setNotice(t("toast.folderCopyUnsupported"));
-        } else if (resolution.reason === "same-folder") {
+        if (resolution.reason === "same-folder") {
           setNotice(t("toast.alreadyInFolder"));
         } else {
           setNotice(t("toast.noMovableAssets"));
@@ -88,32 +91,79 @@ export function useAssetDragDropHandlers({
       void (async () => {
         setUiState("loading");
         try {
-          const result = await api.moveAssets({
-            libraryId: library.libraryId,
-            assetIds: resolution.assetIds,
-            targetFolderId,
-            conflictStrategy: "keep-both",
-          });
-          if (!result.ok) throw new LibraryOperationError(result.error);
-          setLastMoveOperationId(result.value.operationId);
-          setNotice(
-            t("toast.movedCount", { count: result.value.movedCount }) +
-              (result.value.skippedCount
-                ? t("toast.conflictSkippedSuffix", {
-                    count: result.value.skippedCount,
-                  })
-                : "") +
-              (resolution.skippedCount
-                ? t("toast.unavailableSkippedSuffix", {
-                    count: resolution.skippedCount,
-                  })
-                : "") +
-              t("common.sentenceEnd"),
-          );
+          if (resolution.kind === "copy") {
+            const result = await api.copyAssets({
+              libraryId: library.libraryId,
+              assetIds: resolution.assetIds,
+              targetFolderId,
+              conflictStrategy: "keep-both",
+            });
+            if (!result.ok) throw new LibraryOperationError(result.error);
+            if (result.value.operationId) {
+              setLastUndoableOp({
+                kind: "copy",
+                operationId: result.value.operationId,
+              });
+            } else {
+              setLastUndoableOp(null);
+            }
+            setNotice(
+              t("toast.copiedCount", { count: result.value.copiedCount }) +
+                (result.value.skippedCount
+                  ? t("toast.conflictSkippedSuffix", {
+                      count: result.value.skippedCount,
+                    })
+                  : "") +
+                (resolution.skippedCount
+                  ? t("toast.unavailableSkippedSuffix", {
+                      count: resolution.skippedCount,
+                    })
+                  : "") +
+                t("common.sentenceEnd"),
+            );
+          } else {
+            const result = await api.moveAssets({
+              libraryId: library.libraryId,
+              assetIds: resolution.assetIds,
+              targetFolderId,
+              conflictStrategy: "keep-both",
+            });
+            if (!result.ok) throw new LibraryOperationError(result.error);
+            if (result.value.operationId) {
+              setLastUndoableOp({
+                kind: "move",
+                operationId: result.value.operationId,
+              });
+            } else {
+              setLastUndoableOp(null);
+            }
+            setNotice(
+              t("toast.movedCount", { count: result.value.movedCount }) +
+                (result.value.skippedCount
+                  ? t("toast.conflictSkippedSuffix", {
+                      count: result.value.skippedCount,
+                    })
+                  : "") +
+                (resolution.skippedCount
+                  ? t("toast.unavailableSkippedSuffix", {
+                      count: resolution.skippedCount,
+                    })
+                  : "") +
+                t("common.sentenceEnd"),
+            );
+          }
           clearAssetSelection();
           await reloadCurrentContentRef.current();
         } catch (caught) {
-          setError(toMessage(caught, t("toast.moveFailed"), locale));
+          setError(
+            toMessage(
+              caught,
+              resolution.kind === "copy"
+                ? t("toast.copyFailed")
+                : t("toast.moveFailed"),
+              locale,
+            ),
+          );
         } finally {
           setUiState("ready");
         }
@@ -129,7 +179,7 @@ export function useAssetDragDropHandlers({
       setUiState,
       clearAssetSelection,
       reloadCurrentContentRef,
-      setLastMoveOperationId,
+      setLastUndoableOp,
       locale,
       t,
     ],

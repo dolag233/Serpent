@@ -356,6 +356,7 @@ export const en = {
     reason: {
       unavailable: "Asset is currently unavailable",
       aiNotConfigured: "AI API key not configured yet",
+      aiDisconnected: "AI is disconnected",
       managedUnavailableTrash: "Managed asset is unavailable and cannot be moved to Trash",
       linkedOffline: "Linked folder is currently offline",
       noMovableManaged: "No movable managed assets in the selection",
@@ -940,11 +941,13 @@ export const en = {
     copyFolderPathFailed: "Failed to copy the folder path.",
     alreadyInFolder: "Asset is already in this folder; no move needed.",
     noMovableAssets: "No movable assets (linked, missing, or Trash assets are excluded).",
-    folderCopyUnsupported: "Copy into a folder is not supported yet; release Option/Alt to move.",
+    folderCopyUnsupported: "Copy into a folder is not supported yet; release {modifier} to move.",
     noCollectionDropAssets: "No assets can be added to the collection (trashed assets are skipped).",
     addedToCollectionCount: "Added {count} assets to the collection",
     movedCount: "Moved {count} assets",
+    copiedCount: "Copied {count} assets",
     moveFailed: "Failed to move assets.",
+    copyFailed: "Failed to copy assets.",
     noTrashableAssets: "No assets can be moved to Trash (delete linked assets from the menu).",
     trashedWithSkipped: "{count} assets moved to Trash; skipped {skipped} unavailable assets.",
     importFailed: "Import failed.",
@@ -985,6 +988,8 @@ export const en = {
     movedCountDetail: "Moved {count} assets",
     undoMoveDone: "Undid move for {count} assets",
     undoMoveFailed: "Failed to undo move.",
+    undoCopyDone: "Undid copy for {count} assets",
+    undoCopyFailed: "Failed to undo copy.",
     permanentDeleted: "Permanently deleted {count} items.",
     permanentDeleteItem: "{name} ({reason})",
     selectedAsset: "Selected asset",
@@ -1185,7 +1190,8 @@ export const en = {
     delete: "Delete",
     rename: "Rename",
     removeAsset: "Remove asset",
-    undoMove: "Undo move"
+    undoMove: "Undo move",
+    undoCopy: "Undo copy"
   }
 } as CatalogMessages<typeof zhCN>;
 

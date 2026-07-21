@@ -584,6 +584,21 @@ const assetOperationSuccessSchemas = [
   }),
   z.strictObject({
     ok: z.literal(true),
+    type: z.literal('asset.copied'),
+    copiedCount: z.number().int().nonnegative(),
+    skippedCount: z.number().int().nonnegative(),
+    operationId: nonBlankString.nullable(),
+    assets: z.array(assetSummarySchema),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('asset.copy-undone'),
+    undoneCount: z.number().int().nonnegative(),
+    skippedCount: z.number().int().nonnegative(),
+    assets: z.array(assetSummarySchema),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
     type: z.literal('asset.file-renamed'),
     asset: assetSummarySchema,
   }),
