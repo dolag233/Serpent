@@ -6,8 +6,10 @@ import {
   cardSizeFillingColumns,
   enumerateDiscreteCardSizes,
   indexOfDiscreteCardSize,
+  isBrowseCardMouseWheelNotch,
   nearestDiscreteCardSize,
   nextDiscreteCardSizeFromPinchDelta,
+  nextDiscreteCardSizeFromWheelDelta,
   stepDiscreteCardSize,
 } from "../../src/renderer/card-size-stops";
 import { CARD_SIZE_MAX, CARD_SIZE_MIN } from "../../src/renderer/canvas-preferences";
@@ -80,5 +82,51 @@ describe("nextDiscreteCardSizeFromPinchDelta", () => {
     const current = stops[Math.floor(stops.length / 2)]!;
     const next = nextDiscreteCardSizeFromPinchDelta(current, 40, stops);
     expect(next).toBeLessThan(current);
+  });
+});
+
+describe("Ctrl+wheel mouse notch vs trackpad pinch (Serpent-fvpi)", () => {
+  const stops = enumerateDiscreteCardSizes(1200);
+
+  it("classifies Windows-style mouse deltas as notches", () => {
+    expect(
+      isBrowseCardMouseWheelNotch({ deltaX: 0, deltaY: -120, deltaMode: 0 }),
+    ).toBe(true);
+    expect(
+      isBrowseCardMouseWheelNotch({ deltaX: 0, deltaY: -1, deltaMode: 1 }),
+    ).toBe(true);
+  });
+
+  it("classifies fractional pinch samples as non-notch", () => {
+    expect(
+      isBrowseCardMouseWheelNotch({ deltaX: 0, deltaY: -12.5, deltaMode: 0 }),
+    ).toBe(false);
+    expect(
+      isBrowseCardMouseWheelNotch({ deltaX: 0, deltaY: -8, deltaMode: 0 }),
+    ).toBe(false);
+  });
+
+  it("large mouse notch advances exactly one stop (not to max)", () => {
+    const current = stops[Math.floor(stops.length / 2)]!;
+    const currentIndex = indexOfDiscreteCardSize(current, stops);
+    const next = nextDiscreteCardSizeFromWheelDelta(
+      current,
+      -300,
+      stops,
+      { deltaX: 0, deltaY: -300, deltaMode: 0 },
+    );
+    expect(next).toBe(stops[currentIndex + 1]);
+    expect(next).toBeLessThan(CARD_SIZE_MAX);
+  });
+
+  it("trackpad pinch can still cross a stop with modest continuous delta", () => {
+    const current = stops[Math.floor(stops.length / 2)]!;
+    const next = nextDiscreteCardSizeFromWheelDelta(
+      current,
+      30,
+      stops,
+      { deltaX: 0, deltaY: 12.5, deltaMode: 0 },
+    );
+    expect(next).not.toBe(current);
   });
 });

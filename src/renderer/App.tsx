@@ -253,9 +253,14 @@ import {
   type CanvasPreferences,
 } from "./canvas-preferences";
 import {
+  browseLoadMoreObserverRoot,
+  countNewlyAddedAssets,
+  resolveSearchTotalAfterAppend,
+} from "./asset-browse-load-more";
+import {
   enumerateDiscreteCardSizes,
   nearestDiscreteCardSize,
-  nextDiscreteCardSizeFromPinchDelta,
+  nextDiscreteCardSizeFromWheelDelta,
   stepDiscreteCardSize,
 } from "./card-size-stops";
 import {
@@ -940,6 +945,8 @@ function AppInner() {
   // 筛选与排序面板：外点 / Esc 自动关闭（现代浮层语义），summary 切换不变。
   const loadMoreSentinelRef = useRef<HTMLDivElement>(null);
   const loadMoreAssetsRef = useRef<() => Promise<void>>(async () => undefined);
+  /** Sync lock so scroll + IntersectionObserver cannot thrash load-more (Serpent-r94b). */
+  const loadingMoreLockRef = useRef(false);
   const pendingRestoredFocusRef = useRef<string | null>(null);
   const previewFocusReturnRef = useRef<string | null>(null);
   // REQ-VIEW-008: snapshot of the browse scroll position + the previewed
@@ -1466,20 +1473,25 @@ function AppInner() {
     const handleWheel = (event: WheelEvent) => {
       if (!event.ctrlKey || previewAsset) return;
       event.preventDefault();
+      const wheelSample = {
+        deltaX: event.deltaX,
+        deltaY: event.deltaY,
+        deltaMode: event.deltaMode,
+      };
+      // Mouse notches: sign-only (one stop). Trackpad pinch: normalize LINE/PAGE
+      // into pixels for the continuous high-gain path (Serpent-fvpi / Serpent-7ny).
       const delta =
         event.deltaMode === WheelEvent.DOM_DELTA_LINE
           ? event.deltaY * 16
           : event.deltaMode === WheelEvent.DOM_DELTA_PAGE
             ? event.deltaY * canvas.clientHeight
             : event.deltaY;
-      // Browse card zoom: discrete column-aligned stops + higher pinch gain
-      // (Serpent-7ny). Keep the asset under the viewport center stable
-      // (Serpent-f0oo).
       const stops = enumerateDiscreteCardSizes(canvas.clientWidth);
-      const nextSize = nextDiscreteCardSizeFromPinchDelta(
+      const nextSize = nextDiscreteCardSizeFromWheelDelta(
         assetCardSize,
         delta,
         stops,
+        wheelSample,
       );
       const rect = canvas.getBoundingClientRect();
       resizeAssetCards(
@@ -3057,18 +3069,27 @@ function AppInner() {
     },
     append = false,
   ) {
-    setAssets((current) =>
-      append
-        ? [
-            ...current,
-            ...result.items.filter(
-              (item) =>
-                !current.some((existing) => existing.assetId === item.assetId),
-            ),
-          ]
-        : result.items,
-    );
-    setSearchTotal(result.total);
+    if (append) {
+      const newlyAddedCount = countNewlyAddedAssets(assets, result.items);
+      setAssets((current) => {
+        const fresh = result.items.filter(
+          (item) =>
+            !current.some((existing) => existing.assetId === item.assetId),
+        );
+        return fresh.length === 0 ? current : [...current, ...fresh];
+      });
+      setSearchTotal(
+        resolveSearchTotalAfterAppend({
+          requestOffset: assets.length,
+          serverTotal: result.total,
+          pageItemCount: result.items.length,
+          newlyAddedCount,
+        }),
+      );
+    } else {
+      setAssets(result.items);
+      setSearchTotal(result.total);
+    }
     setSearchOffset(result.offset + result.items.length);
     setSearchSnippets(
       (current) =>
@@ -3575,13 +3596,16 @@ function AppInner() {
 
   async function loadMoreAssets() {
     if (
+      loadingMoreLockRef.current ||
       loadingMoreAssets ||
       searchTotal === null ||
       visibleAssets.length >= searchTotal
     )
       return;
+    loadingMoreLockRef.current = true;
     setLoadingMoreAssets(true);
     const offset = visibleAssets.length;
+    const existingIds = visibleAssets;
     try {
       if (showTrash) {
         if (!api || !library) return;
@@ -3593,6 +3617,10 @@ function AppInner() {
           offset,
         });
         if (!result.ok) throw new LibraryOperationError(result.error);
+        const newlyAdded = countNewlyAddedAssets(
+          existingIds,
+          result.value.items,
+        );
         setTrashedAssets((current) => [
           ...current,
           ...result.value.items.filter(
@@ -3600,7 +3628,14 @@ function AppInner() {
               !current.some((existing) => existing.assetId === item.assetId),
           ),
         ]);
-        setSearchTotal(result.value.total);
+        setSearchTotal(
+          resolveSearchTotalAfterAppend({
+            requestOffset: offset,
+            serverTotal: result.value.total,
+            pageItemCount: result.value.items.length,
+            newlyAddedCount: newlyAdded,
+          }),
+        );
         setSearchOffset(result.value.offset + result.value.items.length);
       } else if (activeSmartCollectionId)
         await chooseSmartCollection(activeSmartCollectionId, offset);
@@ -3610,6 +3645,7 @@ function AppInner() {
     } catch (caught) {
       setError(toMessage(caught, t("toast.loadMoreFailed"), locale));
     } finally {
+      loadingMoreLockRef.current = false;
       setLoadingMoreAssets(false);
     }
   }
@@ -3626,11 +3662,11 @@ function AppInner() {
       visibleAssets.length >= searchTotal
     )
       return;
-    const root =
-      assetViewMode === "grid"
-        ? sentinel.closest(".asset-grid")
-        : sentinel.closest(".workspace-canvas");
-    if (!(root instanceof HTMLElement)) return;
+    // Always observe against the scrollport. Using `.asset-grid` as root makes
+    // the sentinel permanently intersecting (it is a child of that box), which
+    // thrash-loads on Windows (Serpent-r94b).
+    const root = browseLoadMoreObserverRoot(sentinel);
+    if (!root) return;
     const observer = new IntersectionObserver(
       (entries) => {
         if (entries.some((entry) => entry.isIntersecting))
@@ -3640,7 +3676,7 @@ function AppInner() {
     );
     observer.observe(sentinel);
     return () => observer.disconnect();
-  }, [assetViewMode, loadingMoreAssets, searchTotal, visibleAssets.length]);
+  }, [loadingMoreAssets, searchTotal, visibleAssets.length]);
 
   async function renameSmartCollection(collectionId: string, name: string) {
     if (!api || !library || !name.trim()) return;

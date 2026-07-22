@@ -24,6 +24,38 @@ export const BROWSE_CARD_PINCH_GAIN = 0.01;
  */
 export const BROWSE_CARD_PINCH_STOP_DELTA = 28;
 
+/**
+ * Pixel |delta| at or above this (with integer deltas) is treated as a
+ * physical mouse-wheel notch rather than a trackpad pinch sample.
+ * Aligns with `VIEWER_WHEEL_MOUSE_NOTCH_THRESHOLD` (Serpent-fvpi).
+ */
+export const BROWSE_CARD_MOUSE_NOTCH_THRESHOLD = 40;
+
+const DOM_DELTA_PIXEL = 0;
+
+/**
+ * True when a Ctrl/Cmd+wheel event is a discrete mouse notch (Windows/Linux
+ * mice commonly report ±100/±120 pixel or LINE/PAGE deltas). Trackpad pinch
+ * synthesizes ctrlKey with small / fractional pixel deltas and must keep the
+ * continuous high-gain path (Serpent-7ny).
+ */
+export function isBrowseCardMouseWheelNotch(sample: {
+  readonly deltaX: number;
+  readonly deltaY: number;
+  /** WheelEvent.deltaMode: 0 = pixel, 1 = line, 2 = page. */
+  readonly deltaMode: number;
+}): boolean {
+  if (sample.deltaMode !== DOM_DELTA_PIXEL) return true;
+  if (sample.deltaX === 0 && sample.deltaY === 0) return false;
+  if (!Number.isInteger(sample.deltaX) || !Number.isInteger(sample.deltaY)) {
+    return false;
+  }
+  return (
+    Math.max(Math.abs(sample.deltaX), Math.abs(sample.deltaY)) >=
+    BROWSE_CARD_MOUSE_NOTCH_THRESHOLD
+  );
+}
+
 export function cardSizeFillingColumns(
   availableWidthPx: number,
   columnCount: number,
@@ -129,6 +161,10 @@ export function stepDiscreteCardSize(
  * Sensitivity (Serpent-7ny): higher gain + a modest |deltaY| floor that
  * forces a one-stop step when the continuous projection would otherwise
  * stay in the current stop's Voronoi cell.
+ *
+ * Mouse Ctrl+wheel notches must not use this path alone: a single Windows
+ * notch is often |deltaY|≥100 and would jump many stops (Serpent-fvpi).
+ * Prefer `nextDiscreteCardSizeFromWheelDelta`.
  */
 export function nextDiscreteCardSizeFromPinchDelta(
   currentSize: number,
@@ -154,4 +190,40 @@ export function nextDiscreteCardSizeFromPinchDelta(
     );
   }
   return currentStop;
+}
+
+/**
+ * Browse-canvas Ctrl/Cmd+wheel → discrete card size.
+ * Mouse notches advance exactly one stop; trackpad pinch keeps the continuous
+ * high-gain projection (Serpent-fvpi / Serpent-7ny).
+ */
+export function nextDiscreteCardSizeFromWheelDelta(
+  currentSize: number,
+  deltaY: number,
+  stops: readonly number[],
+  sample: {
+    readonly deltaX: number;
+    readonly deltaY: number;
+    readonly deltaMode: number;
+  },
+  gain: number = BROWSE_CARD_PINCH_GAIN,
+  stepDelta: number = BROWSE_CARD_PINCH_STOP_DELTA,
+): number {
+  if (stops.length === 0 || deltaY === 0) {
+    return nearestDiscreteCardSize(currentSize, stops);
+  }
+  if (isBrowseCardMouseWheelNotch(sample)) {
+    return stepDiscreteCardSize(
+      nearestDiscreteCardSize(currentSize, stops),
+      deltaY > 0 ? -1 : 1,
+      stops,
+    );
+  }
+  return nextDiscreteCardSizeFromPinchDelta(
+    currentSize,
+    deltaY,
+    stops,
+    gain,
+    stepDelta,
+  );
 }
