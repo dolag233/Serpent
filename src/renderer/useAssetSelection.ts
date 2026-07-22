@@ -1,7 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AssetSummary } from "../shared/asset-types";
+import {
+  buildBrowseSelectionOrder,
+  resolveShiftBrowseRange,
+  type BrowseSelectionAnchor,
+} from "./browse-selection-order";
 import { resolveFolderCardClickIntent } from "./folder-card-click";
 import { computeMarqueeSelection, isMarqueeAdditive } from "./marquee-selection";
+import {
+  isToggleSelectionModifier,
+  resolveSelectionPlatform,
+} from "./selection-modifiers";
 
 export interface UseAssetSelectionParams {
   /** Visible asset summaries, used for Shift+click range computation */
@@ -67,6 +76,11 @@ export function useAssetSelection({
   selectedFolderIds = [],
   setSelectedFolderIds,
 }: UseAssetSelectionParams): UseAssetSelectionReturn {
+  const selectionPlatform = useMemo(
+    () => resolveSelectionPlatform(navigator.userAgent),
+    [],
+  );
+
   // ── Derived ────────────────────────────────────────────────────────────
   const selectedIdSet = useMemo(
     () => new Set(selectedAssetIds),
@@ -76,6 +90,7 @@ export function useAssetSelection({
   // ── Selection anchor (Shift+click range extension) ─────────────────────
   const selectionAnchorRef = useRef<string | null>(null);
   const folderSelectionAnchorRef = useRef<string | null>(null);
+  const browseSelectionAnchorRef = useRef<BrowseSelectionAnchor | null>(null);
 
   // ── Card click button guard ────────────────────────────────────────────
   const cardMouseDownRef = useRef<number>(0);
@@ -111,6 +126,50 @@ export function useAssetSelection({
       setSelectedFolderIds?.([]);
       folderSelectionAnchorRef.current = null;
     }
+    browseSelectionAnchorRef.current = null;
+  }
+
+  const assetIds = useMemo(
+    () => assets.map((asset) => asset.assetId),
+    [assets],
+  );
+
+  const browseSelectionItems = useMemo(
+    () => buildBrowseSelectionOrder(folderIds, assetIds),
+    [assetIds, folderIds],
+  );
+
+  function applyShiftBrowseSelection(
+    target: BrowseSelectionAnchor,
+    event: React.MouseEvent,
+  ): boolean {
+    if (!event.shiftKey || !browseSelectionAnchorRef.current) return false;
+    const resolution = resolveShiftBrowseRange({
+      items: browseSelectionItems,
+      anchor: browseSelectionAnchorRef.current,
+      target,
+      currentFolderIds: selectedFolderIds,
+      currentAssetIds: selectedAssetIds,
+      additive: isToggleSelectionModifier(event, selectionPlatform),
+    });
+    if (!resolution) return false;
+    if (setSelectedFolderIds) {
+      setSelectedFolderIds(resolution.folderIds);
+    }
+    setSelectedAssetIds(resolution.assetIds);
+    setSelectedAssetId(
+      resolution.assetIds.includes(target.id) && target.kind === "asset"
+        ? target.id
+        : resolution.assetIds.at(-1),
+    );
+    if (resolution.folderIds.length > 0) {
+      folderSelectionAnchorRef.current = resolution.folderIds[0]!;
+    }
+    if (resolution.assetIds.length > 0) {
+      selectionAnchorRef.current = resolution.assetIds[0]!;
+    }
+    browseSelectionAnchorRef.current = resolution.anchor;
+    return true;
   }
 
   // ── handleFolderCardClick ───────────────────────────────────────────────
@@ -118,6 +177,12 @@ export function useAssetSelection({
     const mouseButton = cardMouseDownRef.current;
     cardMouseDownRef.current = 0;
     if (!setSelectedFolderIds) return;
+
+    if (
+      applyShiftBrowseSelection({ kind: "folder", id: folderId }, event)
+    ) {
+      return;
+    }
 
     const intent = resolveFolderCardClickIntent({
       folderId,
@@ -128,6 +193,7 @@ export function useAssetSelection({
         metaKey: event.metaKey,
         ctrlKey: event.ctrlKey,
       },
+      platform: selectionPlatform,
       mouseButton,
     });
 
@@ -136,6 +202,10 @@ export function useAssetSelection({
     if (intent.kind === "replace") {
       setSelectedFolderIds([...intent.folderIds]);
       folderSelectionAnchorRef.current = intent.anchorId;
+      browseSelectionAnchorRef.current = {
+        kind: "folder",
+        id: intent.anchorId,
+      };
       if (intent.clearAssets) {
         setSelectedAssetIds([]);
         setSelectedAssetId(undefined);
@@ -151,12 +221,12 @@ export function useAssetSelection({
           : [...current, intent.folderId],
       );
       folderSelectionAnchorRef.current = intent.anchorId;
+      browseSelectionAnchorRef.current = {
+        kind: "folder",
+        id: intent.anchorId,
+      };
       return;
     }
-
-    setSelectedFolderIds((current) => [
-      ...new Set([...current, ...intent.folderIds]),
-    ]);
   }
 
   // ── handleCardClick (was selectAsset) ──────────────────────────────────
@@ -167,41 +237,37 @@ export function useAssetSelection({
       cardMouseDownRef.current = 0;
       return;
     }
-    const visibleIds = assets.map((asset) => asset.assetId);
-    if (event.shiftKey && selectionAnchorRef.current) {
-      const anchorIndex = visibleIds.indexOf(selectionAnchorRef.current);
-      const targetIndex = visibleIds.indexOf(assetId);
-      if (anchorIndex >= 0 && targetIndex >= 0) {
-        const range = visibleIds.slice(
-          Math.min(anchorIndex, targetIndex),
-          Math.max(anchorIndex, targetIndex) + 1,
-        );
-        setSelectedAssetIds(
-          event.metaKey || event.ctrlKey
-            ? (current) => [...new Set([...current, ...range])]
-            : range,
-        );
-        setSelectedAssetId(assetId);
-        return;
-      }
+
+    if (applyShiftBrowseSelection({ kind: "asset", id: assetId }, event)) {
+      return;
     }
-    if (event.metaKey || event.ctrlKey) {
+
+    if (isToggleSelectionModifier(event, selectionPlatform)) {
       setSelectedAssetIds((current) => {
         if (current.includes(assetId)) {
           const next = current.filter((id) => id !== assetId);
           setSelectedAssetId(next.at(-1));
-          if (next.length === 0) selectionAnchorRef.current = null;
+          if (next.length === 0) {
+            selectionAnchorRef.current = null;
+            browseSelectionAnchorRef.current = null;
+          }
           return next;
         }
         setSelectedAssetId(assetId);
         return [...current, assetId];
       });
       selectionAnchorRef.current = assetId;
+      browseSelectionAnchorRef.current = { kind: "asset", id: assetId };
       return;
     }
     setSelectedAssetIds([assetId]);
     setSelectedAssetId(assetId);
     selectionAnchorRef.current = assetId;
+    browseSelectionAnchorRef.current = { kind: "asset", id: assetId };
+    if (setSelectedFolderIds) {
+      setSelectedFolderIds([]);
+      folderSelectionAnchorRef.current = null;
+    }
   }
 
   // ── handleCanvasMouseDown ──────────────────────────────────────────────
@@ -244,10 +310,16 @@ export function useAssetSelection({
         shiftKey: e.shiftKey,
       };
       marqueeModifiersRef.current = modifierSnapshot;
-      marqueeInitialSelectionRef.current = isMarqueeAdditive(modifierSnapshot)
+      marqueeInitialSelectionRef.current = isMarqueeAdditive(
+        modifierSnapshot,
+        selectionPlatform,
+      )
         ? [...selectedAssetIds]
         : [];
-      marqueeInitialFolderSelectionRef.current = isMarqueeAdditive(modifierSnapshot)
+      marqueeInitialFolderSelectionRef.current = isMarqueeAdditive(
+        modifierSnapshot,
+        selectionPlatform,
+      )
         ? [...selectedFolderIds]
         : [];
       setMarqueeBox({
@@ -258,7 +330,7 @@ export function useAssetSelection({
       });
       marqueeActiveRef.current = true;
     },
-    [previewAsset, draggedMemberId, draggedCollectionId, selectedAssetIds, selectedFolderIds],
+    [previewAsset, draggedMemberId, draggedCollectionId, selectedAssetIds, selectedFolderIds, selectionPlatform],
   );
 
   // ── Marquee document-level mousemove + mouseup when active ─────────────
@@ -333,6 +405,7 @@ export function useAssetSelection({
         marqueeInitialSelectionRef.current,
         effectiveHitIds,
         marqueeModifiersRef.current,
+        selectionPlatform,
       );
       setSelectedAssetIds(nextSelection);
       setSelectedAssetId(nextSelection[0]);
@@ -342,6 +415,7 @@ export function useAssetSelection({
             marqueeInitialFolderSelectionRef.current,
             effectiveFolderHitIds,
             marqueeModifiersRef.current,
+            selectionPlatform,
           ),
         );
       }
@@ -470,7 +544,7 @@ export function useAssetSelection({
       // Use the mousedown-time snapshot, not this mouseup event's live
       // modifiers, so a key released/pressed mid-drag can't retroactively
       // change the operation (REQ-SELECT-001 rule 5).
-      if (!isMarqueeAdditive(marqueeModifiersRef.current)) {
+      if (!isMarqueeAdditive(marqueeModifiersRef.current, selectionPlatform)) {
         if (
           marqueeHitIdsRef.current.length === 0 &&
           marqueeFolderHitIdsRef.current.length === 0
@@ -482,9 +556,19 @@ export function useAssetSelection({
       // Set anchors for subsequent Shift+click range-extension
       if (marqueeHitIdsRef.current.length > 0) {
         selectionAnchorRef.current = marqueeHitIdsRef.current[0]!;
+        browseSelectionAnchorRef.current = {
+          kind: "asset",
+          id: marqueeHitIdsRef.current[0]!,
+        };
       }
       if (marqueeFolderHitIdsRef.current.length > 0) {
         folderSelectionAnchorRef.current = marqueeFolderHitIdsRef.current[0]!;
+        if (!browseSelectionAnchorRef.current) {
+          browseSelectionAnchorRef.current = {
+            kind: "folder",
+            id: marqueeFolderHitIdsRef.current[0]!,
+          };
+        }
       }
 
       setMarqueeBox(null);

@@ -15,69 +15,78 @@ const CTRL_SHIFT: MarqueeModifierSnapshot = { metaKey: false, ctrlKey: true, shi
 
 describe('isMarqueeAdditive', () => {
   it('is false when no modifier is held', () => {
-    expect(isMarqueeAdditive(NONE)).toBe(false);
+    expect(isMarqueeAdditive(NONE, 'mac')).toBe(false);
   });
 
-  it('is true for metaKey (macOS Command)', () => {
-    expect(isMarqueeAdditive(META)).toBe(true);
+  it('is true for metaKey on macOS', () => {
+    expect(isMarqueeAdditive(META, 'mac')).toBe(true);
   });
 
-  it('is true for ctrlKey (Windows Ctrl)', () => {
-    expect(isMarqueeAdditive(CTRL)).toBe(true);
+  it('ignores ctrlKey on macOS (system context menu)', () => {
+    expect(isMarqueeAdditive(CTRL, 'mac')).toBe(false);
+  });
+
+  it('is true for ctrlKey on Windows', () => {
+    expect(isMarqueeAdditive(CTRL, 'windows')).toBe(true);
   });
 
   it('is true for shiftKey alone', () => {
-    expect(isMarqueeAdditive(SHIFT)).toBe(true);
+    expect(isMarqueeAdditive(SHIFT, 'mac')).toBe(true);
   });
 
   it('is true for meta+shift and ctrl+shift combinations', () => {
-    expect(isMarqueeAdditive(META_SHIFT)).toBe(true);
-    expect(isMarqueeAdditive(CTRL_SHIFT)).toBe(true);
+    expect(isMarqueeAdditive(META_SHIFT, 'mac')).toBe(true);
+    expect(isMarqueeAdditive(CTRL_SHIFT, 'windows')).toBe(true);
   });
 });
 
 describe('computeMarqueeSelection', () => {
   it('replaces with the hit set when no modifier is held', () => {
-    const result = computeMarqueeSelection(['a', 'b'], ['c', 'd'], NONE);
+    const result = computeMarqueeSelection(['a', 'b'], ['c', 'd'], NONE, 'mac');
     expect(result).toEqual(['c', 'd']);
   });
 
   it('replaces with an empty hit set when no modifier is held and nothing is hit', () => {
-    const result = computeMarqueeSelection(['a', 'b'], [], NONE);
+    const result = computeMarqueeSelection(['a', 'b'], [], NONE, 'mac');
     expect(result).toEqual([]);
   });
 
-  it('toggles the hit set against the initial selection for metaKey (Command)', () => {
-    const result = computeMarqueeSelection(['a', 'b'], ['b', 'c'], META);
+  it('toggles the hit set against the initial selection for metaKey on macOS', () => {
+    const result = computeMarqueeSelection(['a', 'b'], ['b', 'c'], META, 'mac');
     expect(new Set(result)).toEqual(new Set(['a', 'c']));
   });
 
-  it('toggles the hit set against the initial selection for ctrlKey (Windows Ctrl)', () => {
-    const result = computeMarqueeSelection(['a', 'b'], ['b', 'c'], CTRL);
+  it('does not toggle for ctrlKey on macOS', () => {
+    const result = computeMarqueeSelection(['a', 'b'], ['b', 'c'], CTRL, 'mac');
+    expect(result).toEqual(['b', 'c']);
+  });
+
+  it('toggles the hit set against the initial selection for ctrlKey on Windows', () => {
+    const result = computeMarqueeSelection(['a', 'b'], ['b', 'c'], CTRL, 'windows');
     expect(new Set(result)).toEqual(new Set(['a', 'c']));
   });
 
   it('unions the initial selection with the hit set for shiftKey', () => {
-    const result = computeMarqueeSelection(['a'], ['b'], SHIFT);
+    const result = computeMarqueeSelection(['a'], ['b'], SHIFT, 'mac');
     expect(new Set(result)).toEqual(new Set(['a', 'b']));
   });
 
   it('unions for Ctrl/Command+Shift combinations, with Shift taking precedence', () => {
-    expect(new Set(computeMarqueeSelection(['a'], ['b'], META_SHIFT))).toEqual(
+    expect(new Set(computeMarqueeSelection(['a'], ['b'], META_SHIFT, 'mac'))).toEqual(
       new Set(['a', 'b']),
     );
-    expect(new Set(computeMarqueeSelection(['a'], ['b'], CTRL_SHIFT))).toEqual(
-      new Set(['a', 'b']),
-    );
+    expect(
+      new Set(computeMarqueeSelection(['a'], ['b'], CTRL_SHIFT, 'windows')),
+    ).toEqual(new Set(['a', 'b']));
   });
 
   it('does not duplicate ids already present in the initial selection', () => {
-    const result = computeMarqueeSelection(['a', 'b'], ['a', 'b'], SHIFT);
+    const result = computeMarqueeSelection(['a', 'b'], ['a', 'b'], SHIFT, 'mac');
     expect(result).toEqual(['a', 'b']);
   });
 
   it('keeps the initial selection when the additive hit set is empty', () => {
-    const result = computeMarqueeSelection(['a', 'b'], [], SHIFT);
+    const result = computeMarqueeSelection(['a', 'b'], [], SHIFT, 'mac');
     expect(new Set(result)).toEqual(new Set(['a', 'b']));
   });
 });

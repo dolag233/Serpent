@@ -12,6 +12,7 @@ describe("resolveFolderCardClickIntent (Serpent-829)", () => {
         folderIds: folders,
         anchorId: null,
         modifiers: { shiftKey: false, metaKey: false, ctrlKey: false },
+        platform: "mac",
         mouseButton: 2,
       }),
     ).toEqual({ kind: "ignore" });
@@ -24,6 +25,7 @@ describe("resolveFolderCardClickIntent (Serpent-829)", () => {
         folderIds: folders,
         anchorId: "a",
         modifiers: { shiftKey: false, metaKey: false, ctrlKey: false },
+        platform: "mac",
         mouseButton: 0,
       }),
     ).toEqual({
@@ -34,13 +36,14 @@ describe("resolveFolderCardClickIntent (Serpent-829)", () => {
     });
   });
 
-  it("Cmd/Ctrl click toggles without clearing assets", () => {
+  it("Cmd click toggles without clearing assets on macOS", () => {
     expect(
       resolveFolderCardClickIntent({
         folderId: "b",
         folderIds: folders,
         anchorId: "a",
         modifiers: { shiftKey: false, metaKey: true, ctrlKey: false },
+        platform: "mac",
         mouseButton: 0,
       }),
     ).toEqual({
@@ -51,36 +54,57 @@ describe("resolveFolderCardClickIntent (Serpent-829)", () => {
     });
   });
 
-  it("Shift click replaces with the inclusive range", () => {
+  it("Ctrl click does not toggle on macOS (reserved for context menu)", () => {
+    expect(
+      resolveFolderCardClickIntent({
+        folderId: "b",
+        folderIds: folders,
+        anchorId: "a",
+        modifiers: { shiftKey: false, metaKey: false, ctrlKey: true },
+        platform: "mac",
+        mouseButton: 0,
+      }),
+    ).toEqual({
+      kind: "replace",
+      folderIds: ["b"],
+      anchorId: "b",
+      clearAssets: true,
+    });
+  });
+
+  it("Ctrl click toggles on Windows", () => {
+    expect(
+      resolveFolderCardClickIntent({
+        folderId: "b",
+        folderIds: folders,
+        anchorId: "a",
+        modifiers: { shiftKey: false, metaKey: false, ctrlKey: true },
+        platform: "windows",
+        mouseButton: 0,
+      }),
+    ).toEqual({
+      kind: "toggle",
+      folderId: "b",
+      anchorId: "b",
+      clearAssets: false,
+    });
+  });
+
+  it("Shift click is handled by unified browse selection, not folder intent", () => {
     expect(
       resolveFolderCardClickIntent({
         folderId: "d",
         folderIds: folders,
         anchorId: "b",
         modifiers: { shiftKey: true, metaKey: false, ctrlKey: false },
+        platform: "mac",
         mouseButton: 0,
       }),
     ).toEqual({
       kind: "replace",
-      folderIds: ["b", "c", "d"],
-      anchorId: "b",
+      folderIds: ["d"],
+      anchorId: "d",
       clearAssets: true,
-    });
-  });
-
-  it("Shift+Cmd click adds the range without clearing assets", () => {
-    expect(
-      resolveFolderCardClickIntent({
-        folderId: "c",
-        folderIds: folders,
-        anchorId: "a",
-        modifiers: { shiftKey: true, metaKey: true, ctrlKey: false },
-        mouseButton: 0,
-      }),
-    ).toEqual({
-      kind: "additive-range",
-      folderIds: ["a", "b", "c"],
-      clearAssets: false,
     });
   });
 });

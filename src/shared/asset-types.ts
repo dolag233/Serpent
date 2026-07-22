@@ -58,6 +58,19 @@ export const folderBrowseEntrySchema = z.strictObject({
 
 export type FolderBrowseEntry = z.infer<typeof folderBrowseEntrySchema>;
 
+export const trashedFolderSummarySchema = z.strictObject({
+  tombstoneId: nonBlankString,
+  /** Original managed folder id before trash removed the row. */
+  folderId: nonBlankString,
+  relativePath: portableRelativePathSchema,
+  name: nonBlankString,
+  parentRelativePath: portableRelativePathSchema.nullable(),
+  trashedAt: nonBlankString,
+  assetCount: z.number().int().nonnegative(),
+});
+
+export type TrashedFolderSummary = z.infer<typeof trashedFolderSummarySchema>;
+
 export const linkedFolderSummarySchema = z.strictObject({
   folderId: nonBlankString,
   displayName: nonBlankString,
@@ -111,6 +124,30 @@ export const tagSummarySchema = z.strictObject({
 });
 
 export type TagSummary = z.infer<typeof tagSummarySchema>;
+
+export const tagCooccurrenceNodeSchema = z.strictObject({
+  tagId: nonBlankString,
+  name: nonBlankString,
+  assetCount: z.number().int().nonnegative(),
+});
+
+export type TagCooccurrenceNode = z.infer<typeof tagCooccurrenceNodeSchema>;
+
+export const tagCooccurrenceEdgeSchema = z.strictObject({
+  sourceTagId: nonBlankString,
+  targetTagId: nonBlankString,
+  weight: z.number().int().positive(),
+});
+
+export type TagCooccurrenceEdge = z.infer<typeof tagCooccurrenceEdgeSchema>;
+
+export const tagCooccurrenceGraphSchema = z.strictObject({
+  nodes: z.array(tagCooccurrenceNodeSchema),
+  edges: z.array(tagCooccurrenceEdgeSchema),
+  truncated: z.boolean(),
+});
+
+export type TagCooccurrenceGraph = z.infer<typeof tagCooccurrenceGraphSchema>;
 
 export const collectionSummarySchema = z.strictObject({
   collectionId: nonBlankString,

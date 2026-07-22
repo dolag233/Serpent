@@ -25,6 +25,14 @@ export type ApplicationMenuRole =
   | "quit"
   | "fileMenu"
   | "editMenu"
+  | "undo"
+  | "redo"
+  | "cut"
+  | "copy"
+  | "paste"
+  | "pasteAndMatchStyle"
+  | "delete"
+  | "selectAll"
   | "reload"
   | "forceReload"
   | "toggleDevTools"
@@ -40,12 +48,16 @@ export type ApplicationMenuItemTemplate = {
   readonly type?: "separator" | "normal" | "submenu";
   readonly label?: string;
   readonly submenu?: readonly ApplicationMenuItemTemplate[];
+  /** Custom Serpent command (wired in Main when installing the menu). */
+  readonly command?: "invert-selection";
 };
 
 export type ApplicationMenuTemplateOptions = {
   readonly platform: ApplicationMenuPlatform;
   /** DevTools toggle — keep for unpackaged / E2E builds. */
   readonly showDevTools: boolean;
+  /** App UI locale for custom menu labels (Serpent-te8p). */
+  readonly locale?: "zh-CN" | "en";
 };
 
 const PAGE_ZOOM_ROLES = new Set(["zoomIn", "zoomOut", "resetZoom"]);
@@ -122,10 +134,31 @@ export function buildApplicationMenuTemplate(
       ]
     : [{ role: "minimize" }, { role: "close" }];
 
+  const invertLabel =
+    options.locale === "zh-CN" ? "反选" : "Invert Selection";
+
+  const editSubmenu: ApplicationMenuItemTemplate[] = isMac
+    ? [
+        { role: "undo" },
+        { role: "redo" },
+        { type: "separator" },
+        { role: "cut" },
+        { role: "copy" },
+        { role: "paste" },
+        { role: "pasteAndMatchStyle" },
+        { role: "delete" },
+        { role: "selectAll" },
+        { type: "separator" },
+        { label: invertLabel, command: "invert-selection" },
+      ]
+    : [{ role: "editMenu" }];
+
   return [
     ...(isMac ? [macAppMenu] : []),
     { role: "fileMenu" },
-    { role: "editMenu" },
+    isMac
+      ? { label: "Edit", submenu: editSubmenu }
+      : { role: "editMenu" },
     { label: "View", submenu: viewSubmenu },
     isMac
       ? { role: "window", submenu: windowSubmenu }

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { DEFAULT_AI_ANALYSIS_SETTINGS } from '../../src/shared/ai-analysis-settings';
 import {
@@ -567,5 +567,31 @@ describe('OpenAIVendorAdapter', () => {
 
     expect(error).toBeInstanceOf(VendorAdapterError);
     expect((error as VendorAdapterError).kind).toBe('invalid_response');
+  });
+
+  it('falls back to chat completions probe when responses endpoint fails', async () => {
+    let call = 0;
+    const fetchStub = vi.fn(async (url: string) => {
+      call += 1;
+      if (url.includes('/responses')) {
+        return new Response('not found', { status: 404 });
+      }
+      return new Response(JSON.stringify({ choices: [{ message: { content: 'OK' } }] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    });
+    const adapter = new OpenAIVendorAdapter(
+      'test-key',
+      'gpt-4o',
+      fetchStub as typeof fetch,
+      undefined,
+      'openai_responses',
+    );
+
+    await expect(adapter.probeConnection()).resolves.toBeUndefined();
+    expect(call).toBe(2);
+    expect(fetchStub.mock.calls[0]?.[0]).toContain('/responses');
+    expect(fetchStub.mock.calls[1]?.[0]).toContain('/chat/completions');
   });
 });

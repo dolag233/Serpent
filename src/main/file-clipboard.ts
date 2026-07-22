@@ -152,7 +152,8 @@ export function writeFilePathsToClipboard(
           Buffer.from(fileUrl, "utf8"),
         );
       }
-      deps.writeText(absolute.join("\n"));
+      // Do not call writeText here: Electron replaces the pasteboard and drops
+      // NSFilenamesPboardType (Serpent-z67e / MENU-032).
       return true;
     }
     if (deps.platform === "win32") {
@@ -160,7 +161,6 @@ export function writeFilePathsToClipboard(
       // FileNameW: first path, UCS-2, double-null terminated.
       const first = `${absolute[0]!}\0\0`;
       deps.writeBuffer("FileNameW", Buffer.from(first, "ucs2"));
-      deps.writeText(absolute.join("\r\n"));
       return true;
     }
     // Unsupported platform: text-only fallback so paste-in-app can still work

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   collectRecentAiFailureCodes,
   computeAiBatchProgress,
+  inferAutoAnalyzeBatchTotal,
 } from "../../src/renderer/ai-analyze-progress";
 
 describe("computeAiBatchProgress (Serpent-k3dw)", () => {
@@ -25,6 +26,38 @@ describe("computeAiBatchProgress (Serpent-k3dw)", () => {
       { queued: 2, running: 1, succeeded: 0, failed: 0 },
     );
     expect(snapshot.ratio).toBeNull();
+  });
+});
+
+describe("inferAutoAnalyzeBatchTotal (Serpent-qabe)", () => {
+  it("returns explicit batch total when set", () => {
+    expect(
+      inferAutoAnalyzeBatchTotal(
+        5,
+        { queued: 2, running: 1, succeeded: 10, failed: 0 },
+        { succeeded: 8, failed: 0 },
+      ),
+    ).toBe(5);
+  });
+
+  it("infers total from in-flight plus done delta when batch unknown", () => {
+    expect(
+      inferAutoAnalyzeBatchTotal(
+        0,
+        { queued: 2, running: 1, succeeded: 5, failed: 1 },
+        { succeeded: 2, failed: 0 },
+      ),
+    ).toBe(7);
+  });
+
+  it("returns 0 when queue is idle and batch unknown", () => {
+    expect(
+      inferAutoAnalyzeBatchTotal(
+        0,
+        { queued: 0, running: 0, succeeded: 3, failed: 0 },
+        { succeeded: 0, failed: 0 },
+      ),
+    ).toBe(0);
   });
 });
 

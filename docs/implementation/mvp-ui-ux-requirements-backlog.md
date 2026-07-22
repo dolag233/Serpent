@@ -538,6 +538,18 @@ FolderBrowseEntry
 
 证据：`docs/qa/evidence/2026-07-19-acceptance/export-progress-light-contrast.png`、`asset-card-badges-too-small.png`。
 
+### 2026-07-22 反馈（拖放高亮 / 库级去重 / 主题色 / 通知位置）
+
+| 需求/缺陷 | 说明 | 优先级 | 工单 |
+| --- | --- | --- | --- |
+| REQ-DND-006 | 从外部拖文件到浏览区**子文件夹卡片**时，目标卡片应出现与 hover / 侧栏 `is-drop-target` 一致的高亮；松手导入该文件夹 | P2 | `Serpent-12mb` |
+| REQ-IMPORT-006 | **资源库级**防重复：跨文件夹识别相同内容/重复导入；**裁决（2026-07-22）**：先比 byteSize、再比 SHA-256；文件夹级与库级统一该流程 | P2 | `Serpent-55fy` |
+| REQ-SHELL-025 | 侧栏/Inspector `panel-resizer` 拖拽指示条改用 `--accent` 主题色（现为 `--secondary`） | P3 | `Serpent-gd3m` |
+| REQ-THEME-005 | 设置中可配置用户强调色（accent）；持久化并驱动 `--accent` 派生 token。完整自定义主题仍 MVP 后（REQ-THEME-003） | P2 | `Serpent-lti3` |
+| REQ-SHELL-026 | **info/notice** 类提示显示在当前中间工作区**顶部居中**（浏览区顶 / 查看页顶 / 标签管理页顶），不再用全局右下角 | P2 | `Serpent-ss1k` |
+
+用户原话要点：外部拖入文件夹要高亮；整库防重复；侧栏拖动条要主题色；支持设置主题色；info 提示顶中、随工作区（浏览/查看）锚定。
+
 ## 验收与证据要求
 
 - 每个切片先完成可操作原型或真实应用路径，再进入实现；Eagle 只作为方向参考。

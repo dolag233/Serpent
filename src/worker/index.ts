@@ -339,6 +339,14 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
           parentFolderId: request.command.parentFolderId,
         }),
       };
+    case 'folder.list-trashed': {
+      const folders = libraryService.listTrashedFolders(request.command.libraryId);
+      return { ok: true, type: 'folder.list-trashed', folders };
+    }
+    case 'folder.restore-trashed': {
+      const result = libraryService.restoreTrashedManagedFolder(request.command);
+      return { ok: true, type: 'folder.restored-trashed', ...result };
+    }
     case 'folder.trash': {
       const result = libraryService.trashManagedFolder(request.command);
       return {
@@ -483,6 +491,25 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
         ok: true,
         type: 'tag.deleted',
         tagId: libraryService.deleteTag(request.command),
+      };
+    case 'tag.delete-many': {
+      const { deletedTagIds } = libraryService.deleteTags(request.command);
+      return { ok: true, type: 'tag.deleted-many', deletedTagIds };
+    }
+    case 'tag.merge': {
+      const tag = libraryService.mergeTags(request.command);
+      return {
+        ok: true,
+        type: 'tag.merged',
+        tag,
+        mergedTagIds: request.command.sourceTagIds,
+      };
+    }
+    case 'tag.cooccurrence':
+      return {
+        ok: true,
+        type: 'tag.cooccurrence',
+        graph: libraryService.getTagCooccurrenceGraph(request.command),
       };
     case 'tag.assign': {
       const { assignedCount, skipped } = libraryService.assignTags(request.command);

@@ -106,6 +106,14 @@ describe('trashManagedFolder (clarification #7 / Serpent-ekj)', () => {
     const trash = service.listTrash(library.libraryId);
     expect(trash.map((row) => row.assetId)).toEqual([asset.assetId]);
 
+    const tombstones = service.listTrashedFolders(library.libraryId);
+    expect(tombstones.map((row) => row.name).sort()).toEqual(
+      ['empty', 'filled', 'nested'].sort(),
+    );
+    expect(tombstones.find((row) => row.name === 'nested')?.assetCount).toBe(1);
+    expect(tombstones.find((row) => row.name === 'filled')?.assetCount).toBe(0);
+    expect(tombstones.find((row) => row.name === 'empty')?.assetCount).toBe(0);
+
     const db = database(library.libraryPath);
     try {
       const folders = db
@@ -321,5 +329,101 @@ describe('deleteLinkedFolderSubtree (clarification #7 / Serpent-ekj)', () => {
       recursive: true,
     });
     expect(remaining.map((asset) => asset.relativeFilePath)).toEqual(['keep.png']);
+  });
+});
+
+describe('restoreTrashedManagedFolder (Serpent-qufh)', () => {
+  it('recreates folder rows and restores trashed assets in the subtree', () => {
+    const temp = root();
+    const service = newService();
+    const library = service.createLibrary({
+      displayName: 'FolderRestore',
+      selectedParentPath: temp,
+    });
+    const filled = service.createManagedFolder({
+      libraryId: library.libraryId,
+      name: 'filled',
+    });
+    const nested = service.createManagedFolder({
+      libraryId: library.libraryId,
+      name: 'nested',
+      parentFolderId: filled.folderId,
+    });
+    const source = path.join(temp, 'a.png');
+    writeFileSync(source, 'asset-bytes');
+    const asset = importFile(
+      service,
+      library.libraryId,
+      source,
+      nested.folderId,
+    ).assets[0]!;
+
+    service.trashManagedFolder({
+      libraryId: library.libraryId,
+      folderId: filled.folderId,
+    });
+    const tombstone = service
+      .listTrashedFolders(library.libraryId)
+      .find((row) => row.name === 'filled');
+    expect(tombstone).toBeDefined();
+
+    const result = service.restoreTrashedManagedFolder({
+      libraryId: library.libraryId,
+      tombstoneId: tombstone!.tombstoneId,
+    });
+    expect(result.restoredFolderCount).toBeGreaterThanOrEqual(2);
+    expect(result.restoredAssetCount).toBe(1);
+    expect(service.listTrash(library.libraryId)).toEqual([]);
+    expect(
+      existsSync(path.join(library.libraryPath, 'Assets', 'filled', 'nested')),
+    ).toBe(true);
+
+    const db = database(library.libraryPath);
+    try {
+      const folderIds = (
+        db.prepare('SELECT folder_id FROM managed_folders').all() as Array<{
+          folder_id: string;
+        }>
+      ).map((row) => row.folder_id);
+      expect(folderIds).toContain(filled.folderId);
+      expect(folderIds).toContain(nested.folderId);
+      const active = db
+        .prepare('SELECT deleted_at FROM assets WHERE asset_id = ?')
+        .get(asset.assetId) as { deleted_at: string | null };
+      expect(active.deleted_at).toBeNull();
+    } finally {
+      db.close();
+    }
+  });
+});
+
+describe('syncTrashedFolderTombstones (Serpent-kqqy)', () => {
+  it('removes folder tombstones after permanent delete empties them', () => {
+    const temp = root();
+    const service = newService();
+    const library = service.createLibrary({
+      displayName: 'TombstoneCleanup',
+      selectedParentPath: temp,
+    });
+    const folder = service.createManagedFolder({
+      libraryId: library.libraryId,
+      name: 'solo',
+    });
+    const source = path.join(temp, 'solo.png');
+    writeFileSync(source, 'solo-bytes');
+    const asset = importFile(service, library.libraryId, source, folder.folderId)
+      .assets[0]!;
+
+    service.trashManagedFolder({
+      libraryId: library.libraryId,
+      folderId: folder.folderId,
+    });
+    expect(service.listTrashedFolders(library.libraryId).length).toBeGreaterThan(0);
+
+    service.deleteAssetsPermanent({
+      libraryId: library.libraryId,
+      assetIds: [asset.assetId],
+    });
+    expect(service.listTrashedFolders(library.libraryId)).toEqual([]);
   });
 });

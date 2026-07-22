@@ -271,6 +271,91 @@ describe('tags', () => {
     );
     service.closeAll();
   });
+
+  it('deletes multiple tags in one call', () => {
+    const { service, libraryId } = createLibraryWithAsset();
+    const alpha = service.createTag({ libraryId, name: 'BatchA' });
+    const beta = service.createTag({ libraryId, name: 'BatchB' });
+
+    const { deletedTagIds } = service.deleteTags({
+      libraryId,
+      tagIds: [alpha.tagId, beta.tagId],
+    });
+    expect(deletedTagIds.sort()).toEqual([alpha.tagId, beta.tagId].sort());
+    expect(service.listTags(libraryId)).toHaveLength(0);
+
+    service.closeAll();
+  });
+
+  it('merges tags into a newly named tag and deduplicates asset links', () => {
+    const { service, libraryId, assetId } = createLibraryWithAsset();
+    const alpha = service.createTag({ libraryId, name: 'MergeA' });
+    const beta = service.createTag({ libraryId, name: 'MergeB' });
+    service.assignTags({ libraryId, assetIds: [assetId], tagIds: [alpha.tagId] });
+    service.assignTags({ libraryId, assetIds: [assetId], tagIds: [beta.tagId] });
+
+    const merged = service.mergeTags({
+      libraryId,
+      sourceTagIds: [alpha.tagId, beta.tagId],
+      name: 'Merged',
+    });
+    expect(merged.name).toBe('Merged');
+    expect(merged.assetCount).toBe(1);
+
+    const list = service.listTags(libraryId);
+    expect(list).toHaveLength(1);
+    expect(list[0]?.tagId).toBe(merged.tagId);
+    expect(list.find((tag) => tag.tagId === alpha.tagId)).toBeUndefined();
+
+    service.closeAll();
+  });
+
+  it('throws when merging fewer than two tags', () => {
+    const { service, libraryId } = createLibraryWithAsset();
+    const tag = service.createTag({ libraryId, name: 'Solo' });
+    expectServiceCode(
+      () =>
+        service.mergeTags({
+          libraryId,
+          sourceTagIds: [tag.tagId],
+          name: 'Nope',
+        }),
+      'INVALID_FOLDER_NAME',
+    );
+    service.closeAll();
+  });
+
+  it('builds tag co-occurrence graph with weighted edges', () => {
+    const { service, libraryId, assetId } = createLibraryWithAsset();
+    const alpha = service.createTag({ libraryId, name: 'CoAlpha' });
+    const beta = service.createTag({ libraryId, name: 'CoBeta' });
+    const solo = service.createTag({ libraryId, name: 'CoSolo' });
+    service.assignTags({ libraryId, assetIds: [assetId], tagIds: [alpha.tagId, beta.tagId] });
+
+    const graph = service.getTagCooccurrenceGraph({ libraryId });
+    expect(graph.nodes).toHaveLength(2);
+    expect(graph.edges).toHaveLength(1);
+    const edge = graph.edges[0]!;
+    expect(edge.weight).toBe(1);
+    expect([edge.sourceTagId, edge.targetTagId].sort()).toEqual(
+      [alpha.tagId, beta.tagId].sort(),
+    );
+    expect(graph.nodes.find((node) => node.tagId === solo.tagId)).toBeUndefined();
+
+    service.closeAll();
+  });
+
+  it('respects minWeight when building co-occurrence edges', () => {
+    const { service, libraryId, assetId } = createLibraryWithAsset();
+    const alpha = service.createTag({ libraryId, name: 'WeightA' });
+    const beta = service.createTag({ libraryId, name: 'WeightB' });
+    service.assignTags({ libraryId, assetIds: [assetId], tagIds: [alpha.tagId, beta.tagId] });
+
+    const graph = service.getTagCooccurrenceGraph({ libraryId, minWeight: 2 });
+    expect(graph.edges).toHaveLength(0);
+
+    service.closeAll();
+  });
 });
 
 // ── Tag assignment ────────────────────────────────────────────────────

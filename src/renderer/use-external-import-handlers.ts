@@ -16,6 +16,10 @@ import {
   externalImportPayload,
   supportsExternalImportTransfer,
 } from "./external-import-transfer";
+import {
+  parseManagedFolderDrag,
+  supportsManagedFolderDrag,
+} from "./folder-drag-drop";
 import { useLocale, useT } from "./i18n";
 import { importSummaryMessage } from "./import-summary";
 
@@ -34,6 +38,10 @@ export type UseExternalImportHandlersParams = {
   setFatal: (message: string | null) => void;
   setNotice: (message: string | null) => void;
   setConflicts: (plan: ImportConflictPlan | null) => void;
+  onFoldersDroppedOnFolder?: (
+    targetFolderId: string,
+    folderIds: readonly string[],
+  ) => void;
 };
 
 /**
@@ -54,10 +62,14 @@ export function useExternalImportHandlers({
   setFatal,
   setNotice,
   setConflicts,
+  onFoldersDroppedOnFolder,
 }: UseExternalImportHandlersParams) {
   const t = useT();
   const { locale } = useLocale();
   const [externalDropActive, setExternalDropActive] = useState(false);
+  const [folderCardDropTarget, setFolderCardDropTarget] = useState<string | null>(
+    null,
+  );
   const externalDragDepth = useRef(0);
 
   const applyDesktopImportResult = useCallback(
@@ -249,11 +261,13 @@ export function useExternalImportHandlers({
         event.preventDefault();
         externalDragDepth.current = 0;
         setExternalDropActive(false);
+        setFolderCardDropTarget(null);
         return;
       }
       if (!supportsExternalImportTransfer(event.dataTransfer)) return;
       event.preventDefault();
       event.stopPropagation();
+      setFolderCardDropTarget(null);
       const payload = externalImportPayload(event.dataTransfer);
       void importDroppedFiles(
         payload.files,
@@ -265,9 +279,57 @@ export function useExternalImportHandlers({
     [importDroppedFiles, previewBlocksDrop],
   );
 
+  const createFolderCardDropHandlers = useCallback(
+    (folderId: string) => ({
+      dropActive: folderCardDropTarget === folderId,
+      onDragEnter: (event: DragEvent<HTMLButtonElement>) => {
+        if (
+          supportsExternalImportTransfer(event.dataTransfer) ||
+          supportsManagedFolderDrag(event.dataTransfer)
+        ) {
+          setFolderCardDropTarget(folderId);
+        }
+      },
+      onDragLeave: (event: DragEvent<HTMLButtonElement>) => {
+        if (event.currentTarget.contains(event.relatedTarget as Node | null)) {
+          return;
+        }
+        setFolderCardDropTarget((current) =>
+          current === folderId ? null : current,
+        );
+      },
+      onDragOver: (event: DragEvent<HTMLButtonElement>) => {
+        if (supportsManagedFolderDrag(event.dataTransfer)) {
+          event.preventDefault();
+          event.dataTransfer.dropEffect = "move";
+          return;
+        }
+        handleTargetExternalDragOver(event);
+      },
+      onDrop: (event: DragEvent<HTMLButtonElement>) => {
+        const draggedFolderIds = parseManagedFolderDrag(event.dataTransfer);
+        if (draggedFolderIds && draggedFolderIds.length > 0) {
+          event.preventDefault();
+          setFolderCardDropTarget(null);
+          onFoldersDroppedOnFolder?.(folderId, draggedFolderIds);
+          return;
+        }
+        handleTargetExternalDrop(event, folderId, undefined);
+      },
+    }),
+    [
+      folderCardDropTarget,
+      handleTargetExternalDragOver,
+      handleTargetExternalDrop,
+      onFoldersDroppedOnFolder,
+    ],
+  );
+
   return {
     externalDropActive,
     setExternalDropActive,
+    folderCardDropTarget,
+    createFolderCardDropHandlers,
     pasteClipboardImage,
     importDroppedFiles,
     handleExternalDragEnter,

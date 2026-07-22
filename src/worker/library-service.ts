@@ -49,7 +49,7 @@ import {
 } from './palette-extractor';
 import { pathIsWithin } from './path-utils';
 
-import { smartCollectionQueryDefinitionSchema, extractedVideoMetadataSchema, type AssetMetadataResult, type ExtractedMetadataResult, type ExtractedVideoMetadata, type AssetSummary, type CollectionSummary, type FilterClause, type FolderBrowseEntry, type LinkedFolderRule, type LinkedFolderSummary, type ManagedFolderSummary, type SearchScope, type SmartCollectionQueryDefinition, type SmartCollectionSummary, type TagSummary } from '../shared/asset-types';
+import { smartCollectionQueryDefinitionSchema, extractedVideoMetadataSchema, type AssetMetadataResult, type ExtractedMetadataResult, type ExtractedVideoMetadata, type AssetSummary, type CollectionSummary, type FilterClause, type FolderBrowseEntry, type LinkedFolderRule, type LinkedFolderSummary, type ManagedFolderSummary, type SearchScope, type SmartCollectionQueryDefinition, type SmartCollectionSummary, type TagCooccurrenceGraph, type TagSummary, type TrashedFolderSummary } from '../shared/asset-types';
 import { sanitizeAiDescription } from '../shared/ai-analysis-settings';
 import { hasMeaningfulSmartCollectionCondition } from '../shared/smart-collection-query';
 import {
@@ -1192,6 +1192,24 @@ const AI_RATING_CONTENT_SCHEMA_CHECKSUM = createHash('sha256')
   .update(AI_RATING_CONTENT_SCHEMA_SQL)
   .digest('hex');
 
+const TRASHED_MANAGED_FOLDERS_SCHEMA_SQL = `
+  CREATE TABLE trashed_managed_folders (
+    tombstone_id TEXT PRIMARY KEY,
+    folder_id TEXT NOT NULL,
+    relative_path TEXT NOT NULL,
+    name TEXT NOT NULL,
+    parent_relative_path TEXT,
+    trashed_at TEXT NOT NULL,
+    trashed_asset_count INTEGER NOT NULL CHECK (trashed_asset_count >= 0)
+  );
+
+  CREATE INDEX trashed_managed_folders_trashed_at_idx
+    ON trashed_managed_folders(trashed_at DESC);
+`;
+const TRASHED_MANAGED_FOLDERS_SCHEMA_CHECKSUM = createHash('sha256')
+  .update(TRASHED_MANAGED_FOLDERS_SCHEMA_SQL)
+  .digest('hex');
+
 const MIGRATIONS = [
   { version: 1, sql: INITIAL_SCHEMA_SQL, checksum: INITIAL_SCHEMA_CHECKSUM },
   { version: 2, sql: ASSET_SCHEMA_SQL, checksum: ASSET_SCHEMA_CHECKSUM },
@@ -1213,6 +1231,11 @@ const MIGRATIONS = [
   { version: 14, sql: RETIRE_ASSET_LABEL_SCHEMA_SQL, checksum: RETIRE_ASSET_LABEL_SCHEMA_CHECKSUM },
   { version: 15, sql: AUTHOR_METADATA_SCHEMA_SQL, checksum: AUTHOR_METADATA_SCHEMA_CHECKSUM },
   { version: 16, sql: AI_RATING_CONTENT_SCHEMA_SQL, checksum: AI_RATING_CONTENT_SCHEMA_CHECKSUM },
+  {
+    version: 17,
+    sql: TRASHED_MANAGED_FOLDERS_SCHEMA_SQL,
+    checksum: TRASHED_MANAGED_FOLDERS_SCHEMA_CHECKSUM,
+  },
 ] as const;
 const SUPPORTED_SCHEMA_VERSION = MIGRATIONS.at(-1)!.version;
 
@@ -2078,6 +2101,16 @@ function sha256DescriptorSync(descriptor: number): string {
     position += bytesRead;
   }
   return hash.digest('hex');
+}
+
+function sha256FileAtPath(filePath: string): string {
+  const flags = constants.O_RDONLY | (process.platform === 'win32' ? 0 : constants.O_NOFOLLOW);
+  const descriptor = openSync(filePath, flags);
+  try {
+    return sha256DescriptorSync(descriptor);
+  } finally {
+    closeSync(descriptor);
+  }
 }
 
 function sourceChanged(cause?: unknown): LibraryServiceError {
@@ -4627,6 +4660,47 @@ export class LibraryService {
       trashedAssetCount = result.trashedCount;
     }
 
+    const trashedAt = new Date().toISOString();
+    const tombstoneFolders = [...descendantFolders, folder];
+    const folderIds = tombstoneFolders.map((row) => row.folder_id);
+    const countPlaceholders = folderIds.map(() => '?').join(', ');
+    const countRows =
+      folderIds.length === 0
+        ? []
+        : (openLibrary.connection
+            .prepare(
+              `SELECT trashed_from_folder_id AS folder_id, COUNT(*) AS asset_count
+                 FROM assets
+                WHERE deleted_at IS NOT NULL
+                  AND trashed_from_folder_id IN (${countPlaceholders})
+                GROUP BY trashed_from_folder_id`,
+            )
+            .all(...folderIds) as Array<{ folder_id: string; asset_count: number }>);
+    const assetCountByFolderId = new Map(
+      countRows.map((row) => [row.folder_id, row.asset_count]),
+    );
+
+    openLibrary.connection.transaction(() => {
+      const insert = openLibrary.connection.prepare(
+        `INSERT INTO trashed_managed_folders
+           (tombstone_id, folder_id, relative_path, name, parent_relative_path,
+            trashed_at, trashed_asset_count)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      );
+      for (const row of tombstoneFolders) {
+        const parentRelative = path.posix.dirname(row.relative_path);
+        insert.run(
+          randomUUID(),
+          row.folder_id,
+          row.relative_path,
+          row.name,
+          parentRelative === '.' ? null : parentRelative,
+          trashedAt,
+          assetCountByFolderId.get(row.folder_id) ?? 0,
+        );
+      }
+    })();
+
     const removedFolderCount = this.removeManagedFolderRowsAndDirectory(
       openLibrary,
       folder,
@@ -6018,6 +6092,220 @@ export class LibraryService {
       }
     })();
     return input.tagId;
+  }
+
+  deleteTags(input: {
+    libraryId: string;
+    tagIds: string[];
+  }): { deletedTagIds: string[] } {
+    const uniqueTagIds = [...new Set(input.tagIds)];
+    if (uniqueTagIds.length === 0) return { deletedTagIds: [] };
+
+    this.requireOpenLibrary(input.libraryId);
+    const deletedTagIds: string[] = [];
+    for (const tagId of uniqueTagIds) {
+      deletedTagIds.push(this.deleteTag({ libraryId: input.libraryId, tagId }));
+    }
+    return { deletedTagIds };
+  }
+
+  /**
+   * Merge multiple tags into a newly named tag (REQ-TAG-012b / Serpent-36il.4).
+   * All human/AI links from source tags move to the new tag; sources are removed.
+   */
+  mergeTags(input: {
+    libraryId: string;
+    sourceTagIds: string[];
+    name: string;
+  }): TagSummary {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    const trimmed = input.name.trim();
+    if (trimmed.length === 0) throw new LibraryServiceError('INVALID_FOLDER_NAME');
+
+    const sourceTagIds = [...new Set(input.sourceTagIds)];
+    if (sourceTagIds.length < 2) {
+      throw new LibraryServiceError('INVALID_FOLDER_NAME');
+    }
+
+    const placeholders = sourceTagIds.map(() => '?').join(',');
+    const tagRows = openLibrary.connection
+      .prepare(
+        `SELECT tag_id FROM tags WHERE tag_id IN (${placeholders}) AND library_id = ?`,
+      )
+      .all(...sourceTagIds, openLibrary.summary.libraryId) as Array<{
+      tag_id: string;
+    }>;
+    if (tagRows.length !== sourceTagIds.length) {
+      throw new LibraryServiceError('FOLDER_NOT_FOUND');
+    }
+
+    const newTagId = randomUUID();
+    const now = new Date().toISOString();
+    const affectedAssets = openLibrary.connection
+      .prepare(
+        `SELECT DISTINCT asset_id FROM (
+           SELECT asset_id FROM human_asset_tags WHERE tag_id IN (${placeholders})
+           UNION
+           SELECT asset_id FROM ai_asset_tags WHERE tag_id IN (${placeholders})
+         )`,
+      )
+      .all(...sourceTagIds, ...sourceTagIds) as Array<{ asset_id: string }>;
+
+    try {
+      openLibrary.connection.transaction(() => {
+        openLibrary.connection
+          .prepare(
+            'INSERT INTO tags (tag_id, library_id, name, created_at) VALUES (?, ?, ?, ?)',
+          )
+          .run(newTagId, openLibrary.summary.libraryId, trimmed, now);
+
+        const insertHuman = openLibrary.connection.prepare(
+          'INSERT OR IGNORE INTO human_asset_tags (asset_id, tag_id) VALUES (?, ?)',
+        );
+        for (const { asset_id: assetId } of affectedAssets) {
+          insertHuman.run(assetId, newTagId);
+        }
+
+        openLibrary.connection
+          .prepare(
+            `DELETE FROM human_asset_tags WHERE tag_id IN (${placeholders})`,
+          )
+          .run(...sourceTagIds);
+        openLibrary.connection
+          .prepare(`DELETE FROM ai_asset_tags WHERE tag_id IN (${placeholders})`)
+          .run(...sourceTagIds);
+        openLibrary.connection
+          .prepare(`DELETE FROM tags WHERE tag_id IN (${placeholders})`)
+          .run(...sourceTagIds);
+
+        for (const { asset_id: assetId } of affectedAssets) {
+          this.syncAssetSearchContent(openLibrary.connection, assetId);
+        }
+      })();
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        'code' in error &&
+        error.code === 'SQLITE_CONSTRAINT_UNIQUE'
+      ) {
+        throw new LibraryServiceError('FOLDER_ALREADY_EXISTS');
+      }
+      throw new LibraryServiceError('LIBRARY_NOT_WRITABLE', { cause: error });
+    }
+
+    const countRow = openLibrary.connection
+      .prepare(
+        `SELECT COUNT(*) AS count
+           FROM (
+             SELECT asset_id FROM human_asset_tags WHERE tag_id = ?
+             UNION
+             SELECT asset_id FROM ai_asset_tags WHERE tag_id = ?
+           )`,
+      )
+      .get(newTagId, newTagId) as { count: number };
+    return { tagId: newTagId, name: trimmed, assetCount: countRow.count };
+  }
+
+  /**
+   * Tag co-occurrence graph for the management graph view (Serpent-k6g6.1).
+   * Limits node/edge counts for large libraries; edges are undirected (a < b).
+   */
+  getTagCooccurrenceGraph(input: {
+    libraryId: string;
+    minWeight?: number;
+    maxNodes?: number;
+    maxEdges?: number;
+  }): TagCooccurrenceGraph {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    const minWeight = Math.max(1, input.minWeight ?? 1);
+    const maxNodes = Math.min(Math.max(1, input.maxNodes ?? 200), 500);
+    const maxEdges = Math.min(Math.max(1, input.maxEdges ?? 500), 2_000);
+
+    const totalTags = openLibrary.connection
+      .prepare('SELECT COUNT(*) AS count FROM tags WHERE library_id = ?')
+      .get(openLibrary.summary.libraryId) as { count: number };
+
+    const nodeRows = openLibrary.connection
+      .prepare(
+        `SELECT t.tag_id, t.name,
+                COUNT(DISTINCT used.asset_id) AS asset_count
+           FROM tags t
+           LEFT JOIN (
+             SELECT asset_id, tag_id FROM human_asset_tags
+             UNION
+             SELECT asset_id, tag_id FROM ai_asset_tags
+           ) used ON used.tag_id = t.tag_id
+          WHERE t.library_id = ?
+          GROUP BY t.tag_id, t.name
+          ORDER BY asset_count DESC, t.name COLLATE NOCASE
+          LIMIT ?`,
+      )
+      .all(openLibrary.summary.libraryId, maxNodes) as Array<{
+      tag_id: string;
+      name: string;
+      asset_count: number;
+    }>;
+
+    const nodes = nodeRows.map((row) => ({
+      tagId: row.tag_id,
+      name: row.name,
+      assetCount: row.asset_count,
+    }));
+
+    if (nodes.length < 2) {
+      return { nodes, edges: [], truncated: totalTags.count > nodes.length };
+    }
+
+    const nodeIds = nodes.map((node) => node.tagId);
+    const placeholders = nodeIds.map(() => '?').join(',');
+    const edgeRows = openLibrary.connection
+      .prepare(
+        `WITH tag_usage AS (
+           SELECT DISTINCT asset_id, tag_id FROM human_asset_tags
+           UNION
+           SELECT DISTINCT asset_id, tag_id FROM ai_asset_tags
+         )
+         SELECT u1.tag_id AS tag_a, u2.tag_id AS tag_b,
+                COUNT(DISTINCT u1.asset_id) AS weight
+           FROM tag_usage u1
+           JOIN tag_usage u2
+             ON u1.asset_id = u2.asset_id
+            AND u1.tag_id < u2.tag_id
+          WHERE u1.tag_id IN (${placeholders})
+            AND u2.tag_id IN (${placeholders})
+          GROUP BY u1.tag_id, u2.tag_id
+         HAVING weight >= ?
+          ORDER BY weight DESC
+          LIMIT ?`,
+      )
+      .all(...nodeIds, ...nodeIds, minWeight, maxEdges) as Array<{
+      tag_a: string;
+      tag_b: string;
+      weight: number;
+    }>;
+
+    const edges = edgeRows.map((row) => ({
+      sourceTagId: row.tag_a,
+      targetTagId: row.tag_b,
+      weight: row.weight,
+    }));
+
+    const connectedIds = new Set<string>();
+    for (const edge of edges) {
+      connectedIds.add(edge.sourceTagId);
+      connectedIds.add(edge.targetTagId);
+    }
+    const visibleNodes =
+      edges.length === 0
+        ? nodes
+        : nodes.filter((node) => connectedIds.has(node.tagId));
+
+    return {
+      nodes: visibleNodes,
+      edges,
+      truncated:
+        totalTags.count > maxNodes || edgeRows.length >= maxEdges,
+    };
   }
 
   assignTags(input: {
@@ -13892,10 +14180,242 @@ export class LibraryService {
       deletedCount = deletedAssetIds.length;
     }
 
+    this.syncTrashedFolderTombstones(openLibrary);
+
     return {
       deletedCount,
       skippedCount: rows.length - deletedCount,
       skippedReasons,
+    };
+  }
+
+  private syncTrashedFolderTombstones(openLibrary: OpenLibrary): void {
+    openLibrary.connection.transaction(() => {
+      openLibrary.connection
+        .prepare(
+          `UPDATE trashed_managed_folders
+              SET trashed_asset_count = (
+                SELECT COUNT(*)
+                  FROM assets
+                 WHERE deleted_at IS NOT NULL
+                   AND trashed_from_folder_id = trashed_managed_folders.folder_id
+              )`,
+        )
+        .run();
+      openLibrary.connection
+        .prepare(
+          `DELETE FROM trashed_managed_folders WHERE trashed_asset_count = 0`,
+        )
+        .run();
+    })();
+  }
+
+  /**
+   * Recreate managed folder rows (and disk paths) from trash tombstones, then
+   * restore trashed assets that belonged to the subtree (Serpent-qufh).
+   */
+  restoreTrashedManagedFolder(input: {
+    libraryId: string;
+    tombstoneId: string;
+  }): {
+    restoredFolderCount: number;
+    restoredAssetCount: number;
+    folders: ManagedFolderSummary[];
+  } {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    const root = openLibrary.connection
+      .prepare(
+        `SELECT tombstone_id, folder_id, relative_path, name, parent_relative_path,
+                trashed_at, trashed_asset_count
+           FROM trashed_managed_folders
+          WHERE tombstone_id = ?`,
+      )
+      .get(input.tombstoneId) as
+      | {
+          tombstone_id: string;
+          folder_id: string;
+          relative_path: string;
+          name: string;
+          parent_relative_path: string | null;
+          trashed_at: string;
+          trashed_asset_count: number;
+        }
+      | undefined;
+    if (!root) throw new LibraryServiceError('FOLDER_NOT_FOUND');
+
+    const tombstones = openLibrary.connection
+      .prepare(
+        `SELECT tombstone_id, folder_id, relative_path, name, parent_relative_path,
+                trashed_at, trashed_asset_count
+           FROM trashed_managed_folders
+          WHERE trashed_at = ?
+            AND (relative_path = ? OR substr(relative_path, 1, ?) = ?)
+          ORDER BY length(relative_path) ASC`,
+      )
+      .all(
+        root.trashed_at,
+        root.relative_path,
+        root.relative_path.length + 1,
+        `${root.relative_path}/`,
+      ) as Array<{
+        tombstone_id: string;
+        folder_id: string;
+        relative_path: string;
+        name: string;
+        parent_relative_path: string | null;
+        trashed_at: string;
+        trashed_asset_count: number;
+      }>;
+
+    const folderIds = tombstones.map((row) => row.folder_id);
+    const restoredFolders: ManagedFolderSummary[] = [];
+    const now = new Date().toISOString();
+
+    try {
+      openLibrary.connection.transaction(() => {
+        for (const row of tombstones) {
+          const existing = openLibrary.connection
+            .prepare(
+              'SELECT folder_id FROM managed_folders WHERE folder_id = ?',
+            )
+            .get(row.folder_id) as { folder_id: string } | undefined;
+          if (existing) {
+            const inserted = openLibrary.connection
+              .prepare(
+                'SELECT folder_id, parent_folder_id, name, relative_path, path_identity FROM managed_folders WHERE folder_id = ?',
+              )
+              .get(row.folder_id) as ManagedFolderRow;
+            restoredFolders.push(
+              this.summarizeManagedFolderRow(
+                openLibrary,
+                inserted,
+                this.managedFolderCountMaps(openLibrary, [row.folder_id]),
+              ),
+            );
+            continue;
+          }
+
+          let parentFolderId: string | null = null;
+          if (row.parent_relative_path) {
+            const parent = openLibrary.connection
+              .prepare(
+                'SELECT folder_id FROM managed_folders WHERE relative_path = ?',
+              )
+              .get(row.parent_relative_path) as { folder_id: string } | undefined;
+            if (!parent) {
+              throw new LibraryServiceError('FOLDER_NOT_FOUND', {
+                reason: 'SOURCE_CHANGED',
+              });
+            }
+            parentFolderId = parent.folder_id;
+          }
+
+          const targetPath = this.folderPath(openLibrary, row.relative_path);
+          const pathIdentity = portablePathIdentity(row.relative_path);
+          const conflict =
+            openLibrary.connection
+              .prepare('SELECT folder_id FROM managed_folders WHERE path_identity = ?')
+              .get(pathIdentity) ??
+            openLibrary.connection
+              .prepare(
+                'SELECT asset_id FROM assets WHERE path_identity = ? AND deleted_at IS NULL',
+              )
+              .get(pathIdentity) ??
+            this.portableDiskDestination(openLibrary, row.relative_path);
+          if (conflict) {
+            throw new LibraryServiceError('FOLDER_ALREADY_EXISTS');
+          }
+
+          mkdirSync(targetPath, { recursive: true });
+          openLibrary.connection
+            .prepare(
+              `INSERT INTO managed_folders
+                 (folder_id, parent_folder_id, name, relative_path, path_identity, created_at)
+               VALUES (?, ?, ?, ?, ?, ?)`,
+            )
+            .run(
+              row.folder_id,
+              parentFolderId,
+              row.name,
+              row.relative_path,
+              pathIdentity,
+              now,
+            );
+          const inserted = openLibrary.connection
+            .prepare(
+              'SELECT folder_id, parent_folder_id, name, relative_path, path_identity FROM managed_folders WHERE folder_id = ?',
+            )
+            .get(row.folder_id) as ManagedFolderRow;
+          restoredFolders.push(
+            this.summarizeManagedFolderRow(
+              openLibrary,
+              inserted,
+              this.managedFolderCountMaps(openLibrary, [row.folder_id]),
+            ),
+          );
+        }
+      })();
+    } catch (error) {
+      if (error instanceof LibraryServiceError) throw error;
+      throw serviceError(error, 'LIBRARY_NOT_WRITABLE');
+    }
+
+    const folderIdSet = new Set(folderIds);
+    const tombstoneRelativePaths = tombstones.map((row) => row.relative_path);
+    const trashedAssetRows = openLibrary.connection
+      .prepare(
+        `SELECT asset_id, trashed_from_relative_path, trashed_from_folder_id
+           FROM assets
+          WHERE deleted_at IS NOT NULL`,
+      )
+      .all() as Array<{
+        asset_id: string;
+        trashed_from_relative_path: string | null;
+        trashed_from_folder_id: string | null;
+      }>;
+    const restoreAssetIds: string[] = [];
+    const seenRestoreAssetIds = new Set<string>();
+    for (const row of trashedAssetRows) {
+      const matchesFolderId =
+        row.trashed_from_folder_id !== null &&
+        folderIdSet.has(row.trashed_from_folder_id);
+      let matchesSubtree = false;
+      if (row.trashed_from_relative_path) {
+        const parentPath = path.posix.dirname(row.trashed_from_relative_path);
+        matchesSubtree = tombstoneRelativePaths.some(
+          (folderPath) =>
+            parentPath === folderPath ||
+            parentPath.startsWith(`${folderPath}/`),
+        );
+      }
+      if (!matchesFolderId && !matchesSubtree) continue;
+      if (seenRestoreAssetIds.has(row.asset_id)) continue;
+      seenRestoreAssetIds.add(row.asset_id);
+      restoreAssetIds.push(row.asset_id);
+    }
+
+    let restoredAssetCount = 0;
+    if (restoreAssetIds.length > 0) {
+      const result = this.restoreAssets({
+        libraryId: input.libraryId,
+        assetIds: restoreAssetIds,
+      });
+      restoredAssetCount = result.restoredCount;
+    }
+
+    if (tombstones.length > 0) {
+      openLibrary.connection
+        .prepare(
+          `DELETE FROM trashed_managed_folders
+            WHERE tombstone_id IN (${tombstones.map(() => '?').join(', ')})`,
+        )
+        .run(...tombstones.map((row) => row.tombstone_id));
+    }
+
+    return {
+      restoredFolderCount: tombstones.length,
+      restoredAssetCount,
+      folders: restoredFolders,
     };
   }
 
@@ -13927,7 +14447,41 @@ export class LibraryService {
       failures.push(...result.skippedReasons);
     }
 
+    openLibrary.connection
+      .prepare('DELETE FROM trashed_managed_folders WHERE trashed_at < ?')
+      .run(expiryDate);
+
     return { purgedCount, skippedCount, failures };
+  }
+
+  listTrashedFolders(libraryId: string): TrashedFolderSummary[] {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    const rows = openLibrary.connection
+      .prepare(
+        `SELECT tombstone_id, folder_id, relative_path, name, parent_relative_path,
+                trashed_at, trashed_asset_count
+           FROM trashed_managed_folders
+          ORDER BY trashed_at DESC, relative_path COLLATE NOCASE`,
+      )
+      .all() as Array<{
+        tombstone_id: string;
+        folder_id: string;
+        relative_path: string;
+        name: string;
+        parent_relative_path: string | null;
+        trashed_at: string;
+        trashed_asset_count: number;
+      }>;
+
+    return rows.map((row) => ({
+      tombstoneId: row.tombstone_id,
+      folderId: row.folder_id,
+      relativePath: row.relative_path,
+      name: row.name,
+      parentRelativePath: row.parent_relative_path,
+      trashedAt: row.trashed_at,
+      assetCount: row.trashed_asset_count,
+    }));
   }
 
   listTrash(libraryId: string): AssetSummary[] {
@@ -14987,6 +15541,90 @@ export class LibraryService {
     return row ?? null;
   }
 
+  private findActiveManagedAssetIdByContent(
+    openLibrary: OpenLibrary,
+    byteSize: number,
+    sha256: string,
+    contentHashCache: Map<string, string>,
+  ): string | null {
+    const rows = openLibrary.connection
+      .prepare(
+        `SELECT a.asset_id, a.relative_file_path
+           FROM assets a
+           JOIN revisions r ON r.revision_id = a.current_revision_id
+          WHERE a.deleted_at IS NULL
+            AND a.location_kind = 'managed'
+            AND r.byte_size = ?`,
+      )
+      .all(byteSize) as Array<{ asset_id: string; relative_file_path: string }>;
+
+    for (const row of rows) {
+      const absolutePath = this.folderPath(openLibrary, row.relative_file_path);
+      let fileHash = contentHashCache.get(absolutePath);
+      if (fileHash === undefined) {
+        try {
+          fileHash = sha256FileAtPath(absolutePath);
+          contentHashCache.set(absolutePath, fileHash);
+        } catch {
+          continue;
+        }
+      }
+      if (fileHash === sha256) return row.asset_id;
+    }
+    return null;
+  }
+
+  private classifyImportEntryConflict(input: {
+    openLibrary: OpenLibrary;
+    entry: ImportSourceEntry;
+    entrySha256: string;
+    existingSize: number | undefined;
+    existingAbsolutePath: string | undefined;
+    contentHashCache: Map<string, string>;
+    seenContentHashes: Set<string>;
+  }): 'none' | 'suspected-duplicate' | 'name-conflict' {
+    const {
+      openLibrary,
+      entry,
+      entrySha256,
+      existingSize,
+      existingAbsolutePath,
+      contentHashCache,
+      seenContentHashes,
+    } = input;
+
+    if (seenContentHashes.has(entrySha256)) return 'suspected-duplicate';
+
+    if (existingSize !== undefined) {
+      if (existingSize === -1) return 'name-conflict';
+      if (existingSize !== entry.byteSize) return 'name-conflict';
+      if (!existingAbsolutePath) return 'name-conflict';
+      let destinationHash = contentHashCache.get(existingAbsolutePath);
+      if (destinationHash === undefined) {
+        try {
+          destinationHash = sha256FileAtPath(existingAbsolutePath);
+          contentHashCache.set(existingAbsolutePath, destinationHash);
+        } catch {
+          return 'name-conflict';
+        }
+      }
+      return destinationHash === entrySha256 ? 'suspected-duplicate' : 'name-conflict';
+    }
+
+    if (
+      this.findActiveManagedAssetIdByContent(
+        openLibrary,
+        entry.byteSize,
+        entrySha256,
+        contentHashCache,
+      ) !== null
+    ) {
+      return 'suspected-duplicate';
+    }
+
+    return 'none';
+  }
+
   prepareImport(input: {
     libraryId: string;
     targetFolderId?: string;
@@ -15068,22 +15706,52 @@ export class LibraryService {
       throw new LibraryServiceError('INVALID_IMPORT_SOURCE', { cause: error });
     }
     const seenDestinations = new Map<string, number>();
+    const contentHashCache = new Map<string, string>();
+    const seenContentHashes = new Set<string>();
     let suspectedDuplicateCount = 0;
+    let libraryDuplicateCount = 0;
     let nameConflictCount = 0;
     const examples: ImportConflictPlan['examples'] = [];
 
     try {
       for (const entry of stagedEntries) {
+        const entrySha256 = sha256FileAtPath(entry.sourcePath);
         const identity = portablePathIdentity(entry.destinationRelativePath);
         let existingSize = seenDestinations.get(identity);
+        let existingAbsolutePath: string | undefined;
         if (existingSize === undefined) {
           const destination = this.portableDiskDestination(
             openLibrary,
             entry.destinationRelativePath,
           );
           existingSize = destination?.size;
+          if (destination && destination.size !== -1) {
+            existingAbsolutePath = this.folderPath(openLibrary, destination.actualRelativePath);
+          }
         }
-        if (existingSize === -1) {
+        const conflictKind = this.classifyImportEntryConflict({
+          openLibrary,
+          entry,
+          entrySha256,
+          existingSize,
+          existingAbsolutePath,
+          contentHashCache,
+          seenContentHashes,
+        });
+
+        if (conflictKind === 'suspected-duplicate') {
+          suspectedDuplicateCount += 1;
+          const isLibraryScope = existingSize === undefined;
+          if (isLibraryScope) libraryDuplicateCount += 1;
+          if (examples.length < 8) {
+            examples.push({
+              displayName: path.posix.basename(entry.destinationRelativePath),
+              kind: isLibraryScope ? 'library-duplicate' : 'suspected-duplicate',
+            });
+          }
+          continue;
+        }
+        if (conflictKind === 'name-conflict') {
           nameConflictCount += 1;
           if (examples.length < 8) {
             examples.push({
@@ -15094,20 +15762,8 @@ export class LibraryService {
           continue;
         }
 
-        if (existingSize !== undefined) {
-          const kind =
-            existingSize === entry.byteSize ? 'suspected-duplicate' : 'name-conflict';
-          if (kind === 'suspected-duplicate') suspectedDuplicateCount += 1;
-          else nameConflictCount += 1;
-          if (examples.length < 8) {
-            examples.push({
-              displayName: path.posix.basename(entry.destinationRelativePath),
-              kind,
-            });
-          }
-        } else {
-          seenDestinations.set(identity, entry.byteSize);
-        }
+        seenContentHashes.add(entrySha256);
+        seenDestinations.set(identity, entry.byteSize);
       }
     } catch (error) {
       this.removeOperation(operationPath);
@@ -15134,6 +15790,7 @@ export class LibraryService {
       fileCount: stagedEntries.length,
       totalBytes: stagedEntries.reduce((total, entry) => total + entry.byteSize, 0),
       suspectedDuplicateCount,
+      libraryDuplicateCount,
       nameConflictCount,
       examples,
     };
@@ -15262,7 +15919,10 @@ export class LibraryService {
     };
 
     try {
+      const contentHashCache = new Map<string, string>();
+      const seenContentHashes = new Set<string>();
       for (const entry of pending.entries) {
+        const entrySha256 = sha256FileAtPath(entry.sourcePath);
         const requestedDirectory = path.posix.dirname(entry.destinationRelativePath);
         const resolvedDirectory =
           requestedDirectory === '.'
@@ -15275,12 +15935,21 @@ export class LibraryService {
             : path.posix.join(resolvedDirectory, path.posix.basename(entry.destinationRelativePath));
         const existingDestination = destination(requestedDestination);
         const existingSize = existingDestination?.size;
+        const existingAbsolutePath =
+          existingDestination && existingDestination.size !== -1
+            ? this.folderPath(openLibrary, existingDestination.actualRelativePath)
+            : undefined;
+        const classified = this.classifyImportEntryConflict({
+          openLibrary,
+          entry,
+          entrySha256,
+          existingSize,
+          existingAbsolutePath,
+          contentHashCache,
+          seenContentHashes,
+        });
         const conflictKind =
-          existingSize === undefined
-            ? undefined
-            : existingSize === entry.byteSize
-              ? 'suspected-duplicate'
-              : 'name-conflict';
+          classified === 'none' ? undefined : classified;
         let destinationRelativePath =
           existingDestination?.actualRelativePath ?? requestedDestination;
         let isReplacement = false;
@@ -15292,10 +15961,23 @@ export class LibraryService {
           if (input.suspectedDuplicate === 'create-copy') {
             destinationRelativePath = copyPath(requestedDestination);
           } else {
-            const retainedAsset = openLibrary.connection
-              .prepare('SELECT asset_id, current_revision_id FROM assets WHERE path_identity = ?')
-              .get(portablePathIdentity(destinationRelativePath)) as ExistingAssetRow | undefined;
-            if (retainedAsset) mergedAssetIds.add(retainedAsset.asset_id);
+            const retainedAssetId = existingDestination
+              ? (
+                  openLibrary.connection
+                    .prepare(
+                      'SELECT asset_id FROM assets WHERE path_identity = ?',
+                    )
+                    .get(portablePathIdentity(destinationRelativePath)) as
+                    | { asset_id: string }
+                    | undefined
+                )?.asset_id
+              : this.findActiveManagedAssetIdByContent(
+                  openLibrary,
+                  entry.byteSize,
+                  entrySha256,
+                  contentHashCache,
+                );
+            if (retainedAssetId) mergedAssetIds.add(retainedAssetId);
             else skippedCount += 1;
             continue;
           }
@@ -15342,6 +16024,7 @@ export class LibraryService {
           existingAsset,
           isReplacement,
         });
+        seenContentHashes.add(entrySha256);
       }
     } catch (error) {
       this.removeOperation(pending.operationPath);

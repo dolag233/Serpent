@@ -72,6 +72,10 @@ function descriptorKey(descriptor: ContextMenuDescriptor): string {
       return `smart-collection:${descriptor.id}`;
     case "folder":
       return `folder:${descriptor.folderId}`;
+    case "trash":
+      return "trash";
+    case "trashed-folder":
+      return `trashed-folder:${descriptor.tombstoneId}`;
   }
 }
 
@@ -90,7 +94,6 @@ interface AssetContextMenuProps {
   onCreateSubfolder: (folderId: string) => void;
   onRenameFolder: (folderId: string, currentName: string) => void;
   onOpenFolderInFileManager: (folderId: string) => void;
-  onOpenFolderWith: (folderId: string) => void;
   onCopyFolderPath: (folderId: string) => void;
   onCopyFolder: (folderId: string) => void;
   onPasteIntoFolder: (folderId: string) => void;
@@ -129,7 +132,6 @@ interface AssetContextMenuProps {
   onCopyToLinked: (folder: LinkedFolderSummary, assetIds: string[]) => void;
   onClearSelection: () => void;
   onOpenExternal: (assetId: string) => void;
-  onOpenWith: (assetId: string) => void;
   onViewAsset: (assetId: string) => void;
   onRevealInFolder: (assetId: string) => void;
   onCopyFilePath: (assetId: string) => void;
@@ -149,6 +151,9 @@ interface AssetContextMenuProps {
   onLoadCollectionMemberships: (
     assetIds: string[],
   ) => Promise<CollectionMembershipRow[]>;
+  trashedAssetCount: number;
+  onRestoreTrashedFolder: (tombstoneId: string, name: string) => void;
+  onPurgeExpiredTrash: () => void;
 }
 
 export function AssetContextMenu(props: AssetContextMenuProps) {
@@ -168,7 +173,6 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
     onCreateSubfolder,
     onRenameFolder,
     onOpenFolderInFileManager,
-    onOpenFolderWith,
     onCopyFolderPath,
     onCopyFolder,
     onPasteIntoFolder,
@@ -197,7 +201,6 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
     onCopyToLinked,
     onClearSelection,
     onOpenExternal,
-    onOpenWith,
     onViewAsset,
     onRevealInFolder,
     onCopyFilePath,
@@ -277,9 +280,15 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
             ? t("menu.folderOps", {
                 name: activeContextMenu.descriptor.name,
               })
-            : t("menu.smartCollectionOps", {
-                name: activeContextMenu.descriptor.name,
-              });
+            : activeContextMenu.descriptor.type === "trash"
+              ? t("scope.trash")
+              : activeContextMenu.descriptor.type === "trashed-folder"
+                ? t("menu.folderOps", {
+                    name: activeContextMenu.descriptor.name,
+                  })
+                : t("menu.smartCollectionOps", {
+                  name: activeContextMenu.descriptor.name,
+                });
 
   return (
     <ContextMenuBackdrop>
@@ -329,6 +338,39 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
           />
         ) : (
           <>
+        {activeContextMenu.descriptor.type === "trash" && (
+          <ContextMenuSection label={t("command.group.delete")}>
+            <ContextMenuItem
+              danger
+              disabled={props.trashedAssetCount === 0}
+              disabledReason={
+                props.trashedAssetCount === 0
+                  ? t("empty.trashTitle")
+                  : undefined
+              }
+              icon={<Icon name="trash" size={14} />}
+              label={t("toolbar.emptyExpiredTrash")}
+              onAction={() => {
+                if (confirm(t("toast.emptyTrashConfirm"))) {
+                  props.onPurgeExpiredTrash();
+                }
+              }}
+            />
+          </ContextMenuSection>
+        )}
+        {activeContextMenu.descriptor.type === "trashed-folder" && (
+          <ContextMenuSection label={t("command.group.trashActions")}>
+            <ContextMenuItem
+              icon={<Icon name="refresh" size={14} />}
+              label={t("menu.restoreTrashedFolder")}
+              onAction={() => {
+                const desc = activeContextMenu.descriptor;
+                if (desc.type !== "trashed-folder") return;
+                props.onRestoreTrashedFolder(desc.tombstoneId, desc.name);
+              }}
+            />
+          </ContextMenuSection>
+        )}
         {activeContextMenu.descriptor.type === "smart-collection" && (() => {
           const desc = activeContextMenu.descriptor;
           if (desc.type !== "smart-collection") return null;
@@ -348,7 +390,6 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
             linkedFolderResolved: false,
             actions: {
               openFolderInFileManager: onOpenFolderInFileManager,
-              openFolderWith: onOpenFolderWith,
               createSubfolder: onCreateSubfolder,
               renameFolder: onRenameFolder,
               openLinkedRules: onOpenLinkedRules,
@@ -437,7 +478,6 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
             linkedFolderResolved: false,
             actions: {
               openFolderInFileManager: onOpenFolderInFileManager,
-              openFolderWith: onOpenFolderWith,
               createSubfolder: onCreateSubfolder,
               renameFolder: onRenameFolder,
               openLinkedRules: onOpenLinkedRules,
@@ -537,7 +577,6 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
             linkedRelativePath: desc.linkedRelativePath,
             actions: {
               openFolderInFileManager: onOpenFolderInFileManager,
-              openFolderWith: onOpenFolderWith,
               createSubfolder: onCreateSubfolder,
               renameFolder: onRenameFolder,
               openLinkedRules: onOpenLinkedRules,
@@ -577,7 +616,6 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
           const openInFileManagerItem = resolvedById.get(
             "folder.open-in-file-manager",
           );
-          const openWithItem = resolvedById.get("folder.open-with");
           const createSubfolderItem = resolvedById.get(
             "folder.create-subfolder",
           );
@@ -587,7 +625,6 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
           const copyItem = resolvedById.get("folder.copy");
           const pasteItem = resolvedById.get("folder.paste");
           const cloneItem = resolvedById.get("folder.clone");
-          const moveToItem = resolvedById.get("folder.move-to");
           const trashItem = resolvedById.get("folder.move-to-trash");
           const deleteFromDiskItem = resolvedById.get(
             "folder.delete-from-disk",
@@ -609,15 +646,6 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                     onAction={() =>
                       runSidebarCommand("folder.open-in-file-manager")
                     }
-                  />
-                )}
-                {openWithItem && (
-                  <ContextMenuItem
-                    icon={<Icon name="box" size={14} />}
-                    label={openWithItem.label}
-                    disabled={openWithItem.disabled}
-                    disabledReason={openWithItem.disabledReason ?? undefined}
-                    onAction={() => runSidebarCommand("folder.open-with")}
                   />
                 )}
               </ContextMenuSection>
@@ -668,13 +696,6 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                     icon={<Icon name="folder" size={14} />}
                     label={cloneItem.label}
                     onAction={() => runSidebarCommand("folder.clone")}
-                  />
-                )}
-                {moveToItem && (
-                  <ContextMenuItem
-                    icon={<Icon name="folder" size={14} />}
-                    label={moveToItem.label}
-                    onAction={() => runSidebarCommand("folder.move-to")}
                   />
                 )}
                 {copyPathItem && (
@@ -1082,7 +1103,6 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
               actions: {
                 view: onViewAsset,
                 openExternal: onOpenExternal,
-                openWith: onOpenWith,
                 revealInFolder: onRevealInFolder,
                 copyFiles: onCopyAssetFiles,
                 pasteIntoFolder: onPasteIntoFolder,
@@ -1115,7 +1135,6 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
               "asset.delete-permanent",
             );
             const openExternalItem = resolvedById.get("asset.open-external");
-            const openWithItem = resolvedById.get("asset.open-with");
             const viewItem = resolvedById.get("asset.view");
             const revealInFolderItem = resolvedById.get(
               "asset.reveal-in-folder",
@@ -1189,15 +1208,6 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                         openExternalItem.disabledReason ?? undefined
                       }
                       onAction={() => runAssetCommand("asset.open-external")}
-                    />
-                  )}
-                  {openWithItem && (
-                    <ContextMenuItem
-                      icon={<Icon name="box" size={14} />}
-                      label={openWithItem.label}
-                      disabled={openWithItem.disabled}
-                      disabledReason={openWithItem.disabledReason ?? undefined}
-                      onAction={() => runAssetCommand("asset.open-with")}
                     />
                   )}
                   {revealInFolderItem && (

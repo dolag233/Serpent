@@ -339,6 +339,43 @@ describe('pending import plans', () => {
     service.closeAll();
   });
 
+  it('detects library-wide suspected duplicates across folders via byteSize and SHA-256', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const library = service.createLibrary({ displayName: 'Library', selectedParentPath: root });
+    const folderA = service.createManagedFolder({
+      libraryId: library.libraryId,
+      name: 'folder-a',
+    });
+    const folderB = service.createManagedFolder({
+      libraryId: library.libraryId,
+      name: 'folder-b',
+    });
+    const sourceA = path.join(root, 'a.png');
+    const sourceB = path.join(root, 'b.png');
+    writeFileSync(sourceA, 'same-bytes');
+    writeFileSync(sourceB, 'same-bytes');
+    service.prepareOrExecuteImport({
+      libraryId: library.libraryId,
+      sourceKind: 'files',
+      sourcePaths: [sourceA],
+      targetFolderId: folderA.folderId,
+    });
+
+    const plan = service.prepareImport({
+      libraryId: library.libraryId,
+      sourceKind: 'files',
+      sourcePaths: [sourceB],
+      targetFolderId: folderB.folderId,
+    });
+    expect(plan).toMatchObject({
+      suspectedDuplicateCount: 1,
+      nameConflictCount: 0,
+      examples: [{ displayName: 'b.png', kind: 'suspected-duplicate' }],
+    });
+    service.closeAll();
+  });
+
   it('rejects symlinks and invalid source shapes before creating a plan', () => {
     const root = temporaryRoot();
     const source = path.join(root, 'Source');
@@ -566,8 +603,8 @@ describe('pending import plans', () => {
     mkdirSync(incomingDirectory);
     const originalSource = path.join(originalDirectory, 'same.png');
     const incomingSource = path.join(incomingDirectory, 'same.png');
-    writeFileSync(originalSource, 'old');
-    writeFileSync(incomingSource, 'new');
+    writeFileSync(originalSource, 'same-content');
+    writeFileSync(incomingSource, 'same-content');
     const service = new LibraryService();
     const library = service.createLibrary({ displayName: 'Duplicates', selectedParentPath: root });
     const initial = service.prepareImport({
@@ -592,7 +629,9 @@ describe('pending import plans', () => {
       suspectedDuplicate: 'skip',
       nameConflict: 'replace',
     })).toMatchObject({ importedCount: 0, skippedCount: 1, replacedCount: 0, assets: [] });
-    expect(readFileSync(path.join(library.libraryPath, 'Assets', 'same.png'), 'utf8')).toBe('old');
+    expect(readFileSync(path.join(library.libraryPath, 'Assets', 'same.png'), 'utf8')).toBe(
+      'same-content',
+    );
 
     const copyPlan = service.prepareImport({
       libraryId: library.libraryId,
@@ -605,7 +644,9 @@ describe('pending import plans', () => {
       nameConflict: 'replace',
     });
     expect(copy.assets[0]?.relativeFilePath).toBe('same (2).png');
-    expect(readFileSync(path.join(library.libraryPath, 'Assets', 'same (2).png'), 'utf8')).toBe('new');
+    expect(readFileSync(path.join(library.libraryPath, 'Assets', 'same (2).png'), 'utf8')).toBe(
+      'same-content',
+    );
 
     const mergePlan = service.prepareImport({
       libraryId: library.libraryId,
@@ -619,7 +660,9 @@ describe('pending import plans', () => {
     }).assets[0]!;
     expect(merged.assetId).toBe(initialAsset.assetId);
     expect(merged.currentRevisionId).toBe(initialAsset.currentRevisionId);
-    expect(readFileSync(path.join(library.libraryPath, 'Assets', 'same.png'), 'utf8')).toBe('old');
+    expect(readFileSync(path.join(library.libraryPath, 'Assets', 'same.png'), 'utf8')).toBe(
+      'same-content',
+    );
     service.closeAll();
   });
 

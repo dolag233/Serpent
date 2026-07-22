@@ -37,7 +37,6 @@ function makeActions(calls: RecordedCall[]): SidebarCommandActions {
     };
   return {
     openFolderInFileManager: record('openFolderInFileManager'),
-    openFolderWith: record('openFolderWith'),
     createSubfolder: record('createSubfolder'),
     renameFolder: record('renameFolder'),
     openLinkedRules: record('openLinkedRules'),
@@ -101,18 +100,16 @@ afterEach(() => {
 });
 
 describe('文件夹分支：可见性矩阵（与历史内联 JSX 条件一致）', () => {
-  it('managed：open / create / rename / copy-paste-clone-move / trash 可见', () => {
+  it('managed：open / create / rename / copy-paste-clone / trash 可见（移动到…已退役）', () => {
     const { ctx } = makeCtx();
     expect(resolveIds(ctx)).toEqual([
       'folder.open-in-file-manager',
-      'folder.open-with',
       'folder.create-subfolder',
       'folder.rename',
       'folder.copy-path',
       'folder.copy',
       'folder.paste',
       'folder.clone',
-      'folder.move-to',
       'folder.move-to-trash',
       'folder.delete-from-disk',
     ]);
@@ -128,7 +125,6 @@ describe('文件夹分支：可见性矩阵（与历史内联 JSX 条件一致�
     });
     expect(resolveIds(ctx)).toEqual([
       'folder.open-in-file-manager',
-      'folder.open-with',
       'folder.linked-rules',
       'folder.copy-path',
       'folder.copy',
@@ -147,7 +143,6 @@ describe('文件夹分支：可见性矩阵（与历史内联 JSX 条件一致�
     });
     expect(resolveIds(ctx)).toEqual([
       'folder.open-in-file-manager',
-      'folder.open-with',
       'folder.linked-rules',
       'folder.copy-path',
       'folder.copy',
@@ -165,7 +160,6 @@ describe('文件夹分支：可见性矩阵（与历史内联 JSX 条件一致�
     });
     expect(resolveIds(ctx)).toEqual([
       'folder.open-in-file-manager',
-      'folder.open-with',
       'folder.copy-path',
       'folder.copy',
       'folder.remove-from-library',
@@ -183,7 +177,6 @@ describe('文件夹分支：可见性矩阵（与历史内联 JSX 条件一致�
     const menu = registry.resolveMenu(ctx);
     expect(resolveIds(ctx)).toEqual([
       'folder.open-in-file-manager',
-      'folder.open-with',
       'folder.linked-rules',
       'folder.copy-path',
       'folder.copy',
@@ -191,7 +184,6 @@ describe('文件夹分支：可见性矩阵（与历史内联 JSX 条件一致�
     ]);
     for (const id of [
       'folder.open-in-file-manager',
-      'folder.open-with',
       'folder.copy-path',
       'folder.copy',
     ]) {
@@ -273,10 +265,18 @@ describe('文件夹分支：平台条件标题', () => {
     ['folder.copy', '复制'],
     ['folder.paste', '粘贴'],
     ['folder.clone', '克隆'],
-    ['folder.move-to', '移动到…'],
   ] as const)('%s 标题为「%s」（与历史渲染一致）', (id, expected) => {
     const { ctx } = makeCtx();
     expect(findItem(registry.resolveMenu(ctx), id).label).toBe(expected);
+  });
+
+  it('folder.move-to 保留注册但已从菜单隐藏（Serpent-nno6）', () => {
+    const { ctx } = makeCtx();
+    const def = registry.get('folder.move-to');
+    const title =
+      typeof def?.title === 'function' ? def.title(ctx) : def?.title;
+    expect(title).toBe('移动到…');
+    expect(resolveIds(ctx)).not.toContain('folder.move-to');
   });
 
   it('folder.linked-rules 标题为「链接规则…」', () => {
@@ -370,12 +370,6 @@ describe('run 委托到 actions 回调包', () => {
       'folder.open-in-file-manager',
       {},
       'openFolderInFileManager',
-      ['folder-1'],
-    ],
-    [
-      'folder.open-with',
-      {},
-      'openFolderWith',
       ['folder-1'],
     ],
     ['folder.create-subfolder', {}, 'createSubfolder', ['folder-1']],
@@ -534,10 +528,9 @@ describe('删除确认：window.confirm 保留在 run 内', () => {
 });
 
 describe('注册表完整性', () => {
-  it('19 条定义全部注册且 id 唯一（createCommandRegistry 未抛错）', () => {
+  it('18 条定义全部注册且 id 唯一（createCommandRegistry 未抛错）', () => {
     expect(registry.list().map((def) => def.id)).toEqual([
       'folder.open-in-file-manager',
-      'folder.open-with',
       'folder.create-subfolder',
       'folder.rename',
       'folder.linked-rules',
@@ -563,8 +556,6 @@ describe('注册表完整性', () => {
     const groups = registry.resolveMenu(ctx).map((item) => item.group);
     expect(groups).toEqual([
       'open',
-      'open',
-      'organize',
       'organize',
       'organize',
       'organize',

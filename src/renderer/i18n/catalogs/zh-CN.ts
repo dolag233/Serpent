@@ -405,6 +405,7 @@ export const zhCN = {
     assetOps: "资产操作：{name}",
     collectionOps: "合集操作：{name}",
     folderOps: "文件夹操作：{name}",
+    restoreTrashedFolder: "恢复文件夹",
     smartCollectionOps: "智能合集操作：{name}",
     skipReportLine: "{action}：将处理 {process} / 跳过 {skip}（{reasons}）",
     skipReportActionMove: "移动",
@@ -502,6 +503,7 @@ export const zhCN = {
       title: "处理导入冲突",
       pendingFiles: "待导入文件",
       suspectedDuplicates: "疑似重复",
+      libraryDuplicates: "库内已有相同内容",
       nameConflicts: "同名冲突",
       skip: "跳过",
       merge: "合并到已有资产",
@@ -751,7 +753,11 @@ export const zhCN = {
     showAiBadgesHint: "关闭后仍保留 AI 写入的描述/标签/评分，仅隐藏 Inspector 中的 AI 角标。",
     confirmationsSection: "确认提示",
     diskDeleteConfirm: "从硬盘删除前确认",
-    diskDeleteConfirmHint: "关闭后，「从硬盘中删除」不再弹窗；可随时重新开启。资产与文件夹共用。"
+    diskDeleteConfirmHint: "关闭后，「从硬盘中删除」不再弹窗；可随时重新开启。资产与文件夹共用。",
+    accentColor: "强调色",
+    accentHint: "控制按钮、链接与高亮的主色调，立即生效。",
+    accentCustom: "自定义强调色（#RRGGBB）",
+    accentReset: "恢复默认"
   },
   preview: {
     ffmpegRequired: "当前安装缺少可用的媒体组件，无法生成视频播放代理。请重新安装或修复 Serpent 后重试。",
@@ -982,6 +988,9 @@ export const zhCN = {
     folderMoveSkipped: "已移动 {moved} 个文件夹，跳过 {skipped} 个。",
     folderMoveFailed: "移动文件夹失败。",
     folderMoveNothing: "没有可移动的文件夹。",
+    folderAlreadyThere: "文件夹已在该位置，无需移动。",
+    folderMoveIntoSelf: "不能将文件夹移动到自身。",
+    folderMoveIntoDescendant: "不能将文件夹移动到其子文件夹。",
     alreadyInFolder: "资产已在当前文件夹，无需移动。",
     noMovableAssets: "没有可移动的资产（链接、丢失或回收站资产不参与移动）。",
     folderCopyUnsupported: "复制到文件夹尚未支持，松开 {modifier} 以移动。",
@@ -1027,6 +1036,9 @@ export const zhCN = {
     convertLinkedFailed: "转换链接文件夹失败。",
     closeFailed: "关闭失败。",
     restoredCount: "已恢复 {count} 项资产",
+    restoreTrashedFolderDone:
+      "已恢复文件夹「{name}」：{folders} 个文件夹、{assets} 项资产",
+    restoreTrashedFolderFailed: "恢复文件夹失败。",
     restoreFailed: "恢复失败。",
     movedCountDetail: "已移动 {count} 项资产",
     undoMoveDone: "已撤销移动 {count} 项资产",

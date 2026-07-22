@@ -1,10 +1,36 @@
-import { Menu, app } from "electron";
+import { Menu, app, type BrowserWindow } from "electron";
 
 import {
   buildApplicationMenuTemplate,
+  type ApplicationMenuItemTemplate,
   type ApplicationMenuPlatform,
 } from "../shared/application-menu";
+import { INVERT_SELECTION_CHANNEL } from "../shared/protocol/channels";
 import { shouldHideApplicationMenuBar } from "../shared/window-controls";
+
+function enrichMenuTemplate(
+  items: readonly ApplicationMenuItemTemplate[],
+): Electron.MenuItemConstructorOptions[] {
+  return items.map((item) => {
+    if (item.command === "invert-selection") {
+      return {
+        label: item.label,
+        accelerator: process.platform === "darwin" ? "Cmd+I" : "Ctrl+I",
+        click: (_menuItem, window) => {
+          const target = window as BrowserWindow | undefined;
+          target?.webContents.send(INVERT_SELECTION_CHANNEL);
+        },
+      };
+    }
+    if (item.submenu) {
+      return {
+        ...item,
+        submenu: enrichMenuTemplate(item.submenu),
+      } as Electron.MenuItemConstructorOptions;
+    }
+    return { ...item } as Electron.MenuItemConstructorOptions;
+  });
+}
 
 /**
  * Install Serpent's application menu (no page-zoom accelerator roles).
@@ -19,6 +45,7 @@ import { shouldHideApplicationMenuBar } from "../shared/window-controls";
  */
 export function installApplicationMenu(options?: {
   showDevTools?: boolean;
+  locale?: "zh-CN" | "en";
 }): void {
   const platform = process.platform as ApplicationMenuPlatform;
   if (shouldHideApplicationMenuBar(platform)) {
@@ -27,12 +54,12 @@ export function installApplicationMenu(options?: {
   }
   const showDevTools =
     options?.showDevTools ?? (!app.isPackaged || process.env.SERPENT_E2E === "1");
-  const template = buildApplicationMenuTemplate({ platform, showDevTools });
-  // Template roles are a vetted subset of Electron's Menu roles; cast keeps
-  // the shared pure builder free of the electron import.
+  const template = buildApplicationMenuTemplate({
+    platform,
+    showDevTools,
+    locale: options?.locale,
+  });
   Menu.setApplicationMenu(
-    Menu.buildFromTemplate(
-      template as Electron.MenuItemConstructorOptions[],
-    ),
+    Menu.buildFromTemplate(enrichMenuTemplate(template)),
   );
 }

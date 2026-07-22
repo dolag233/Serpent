@@ -4,7 +4,7 @@ import type { AiJobStatus, LibraryApiResult, LinkedAssetDeleteResult, MediaJobSt
 import type { RecentLibraryEntry } from '../shared/recent-libraries';
 import { parseExtensionPairingResult, type SerpentExtensionPairingApi } from '../shared/extension-pairing';
 import { searchQuerySchema } from '../shared/asset-types';
-import type { AiSearchPlan, AssetSummary, AssetMetadataResult, ExtractedMetadataResult, CollectionSummary, FilterClause, FolderBrowseEntry, LinkedFolderRule, LinkedFolderSummary, ManagedFolderSummary, SearchScope, SmartCollectionSummary, TagSummary } from '../shared/asset-types';
+import type { AiSearchPlan, AssetSummary, AssetMetadataResult, ExtractedMetadataResult, CollectionSummary, FilterClause, FolderBrowseEntry, LinkedFolderRule, LinkedFolderSummary, ManagedFolderSummary, SearchScope, SmartCollectionSummary, TagCooccurrenceGraph, TagSummary, TrashedFolderSummary } from '../shared/asset-types';
 import {
   ASSET_CHANGE_CHANNEL,
   THUMBNAIL_CHANNEL,
@@ -21,6 +21,8 @@ import {
   REVEAL_APP_LOG_CHANNEL,
   SHOW_EDIT_CONTEXT_MENU_CHANNEL,
   SHELL_SWIPE_CHANNEL,
+  WINDOW_FOCUS_CHANNEL,
+  INVERT_SELECTION_CHANNEL,
   WINDOW_CONTROL_CHANNEL,
   WINDOW_MAXIMIZED_CHANNEL,
 } from '../shared/protocol/channels';
@@ -569,6 +571,27 @@ const library: SerpentLibraryApi = Object.freeze({
     return { ok: true, value: { tagId: result.tagId } };
   },
 
+  async deleteTags({ libraryId, tagIds }: { libraryId: string; tagIds: string[] }): Promise<LibraryApiResult<{ deletedTagIds: string[] }>> {
+    const result = await request({ type: 'tag.delete-many.request', libraryId, tagIds });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'tag.deleted-many') throw new Error('Unexpected delete-tags response.');
+    return { ok: true, value: { deletedTagIds: result.deletedTagIds } };
+  },
+
+  async mergeTags({ libraryId, sourceTagIds, name }: { libraryId: string; sourceTagIds: string[]; name: string }): Promise<LibraryApiResult<TagSummary>> {
+    const result = await request({ type: 'tag.merge.request', libraryId, sourceTagIds, name });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'tag.merged') throw new Error('Unexpected merge-tags response.');
+    return { ok: true, value: result.tag };
+  },
+
+  async getTagCooccurrenceGraph({ libraryId, minWeight, maxNodes, maxEdges }: { libraryId: string; minWeight?: number; maxNodes?: number; maxEdges?: number }): Promise<LibraryApiResult<TagCooccurrenceGraph>> {
+    const result = await request({ type: 'tag.cooccurrence.request', libraryId, minWeight, maxNodes, maxEdges });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'tag.cooccurrence') throw new Error('Unexpected tag-cooccurrence response.');
+    return { ok: true, value: result.graph };
+  },
+
   async assignTags({ libraryId, assetIds, tagIds }: { libraryId: string; assetIds: string[]; tagIds: string[] }): Promise<LibraryApiResult<{ assignedCount: number; skipped: TagOperationSkip[] }>> {
     const result = await request({ type: 'tag.assign.request', libraryId, assetIds, tagIds });
     if (!result.ok) return failure(result);
@@ -839,6 +862,43 @@ const library: SerpentLibraryApi = Object.freeze({
     if (!result.ok) return failure(result);
     if (result.type !== 'asset.list-trash') throw new Error('Unexpected list-trash response.');
     return { ok: true, value: result.assets };
+  },
+
+  async listTrashedFolders({ libraryId }: { libraryId: string }): Promise<LibraryApiResult<TrashedFolderSummary[]>> {
+    const result = await request({ type: 'trash.list-folders.request', libraryId });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'folder.list-trashed') throw new Error('Unexpected list-trashed-folders response.');
+    return { ok: true, value: result.folders };
+  },
+
+  async restoreTrashedManagedFolder({
+    libraryId,
+    tombstoneId,
+  }: {
+    libraryId: string;
+    tombstoneId: string;
+  }): Promise<LibraryApiResult<{
+    restoredFolderCount: number;
+    restoredAssetCount: number;
+    folders: ManagedFolderSummary[];
+  }>> {
+    const result = await request({
+      type: 'trash.restore-folder.request',
+      libraryId,
+      tombstoneId,
+    });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'folder.restored-trashed') {
+      throw new Error('Unexpected restore-trashed-folder response.');
+    }
+    return {
+      ok: true,
+      value: {
+        restoredFolderCount: result.restoredFolderCount,
+        restoredAssetCount: result.restoredAssetCount,
+        folders: result.folders,
+      },
+    };
   },
 
   async purgeTrash({ libraryId }: { libraryId: string }): Promise<LibraryApiResult<{ purgedCount: number; skippedCount: number; failures: Array<{ assetId: string; reason: PublicErrorReason }> }>> {
@@ -1495,6 +1555,34 @@ const shell: SerpentShellApi = Object.freeze({
     ipcRenderer.on(SHELL_SWIPE_CHANNEL, handler);
     return () => {
       ipcRenderer.removeListener(SHELL_SWIPE_CHANNEL, handler);
+    };
+  },
+  onWindowFocusChanged(listener: (focused: boolean) => void) {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      payload: unknown,
+    ) => {
+      if (
+        typeof payload === 'object' &&
+        payload !== null &&
+        'focused' in payload &&
+        typeof (payload as { focused: unknown }).focused === 'boolean'
+      ) {
+        listener((payload as { focused: boolean }).focused);
+      }
+    };
+    ipcRenderer.on(WINDOW_FOCUS_CHANNEL, handler);
+    return () => {
+      ipcRenderer.removeListener(WINDOW_FOCUS_CHANNEL, handler);
+    };
+  },
+  onInvertSelection(listener: () => void): () => void {
+    const handler = () => {
+      listener();
+    };
+    ipcRenderer.on(INVERT_SELECTION_CHANNEL, handler);
+    return () => {
+      ipcRenderer.removeListener(INVERT_SELECTION_CHANNEL, handler);
     };
   },
 });

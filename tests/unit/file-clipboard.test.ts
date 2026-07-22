@@ -72,14 +72,14 @@ describe("file-clipboard (Serpent-vgp)", () => {
     expect(parseCfHdrop(buildCfHdrop(paths))).toEqual(paths);
   });
 
-  it("macOS write uses NSFilenamesPboardType and text fallback", () => {
+  it("macOS write uses NSFilenamesPboardType without clobbering text write", () => {
     const deps = makeDeps({ platform: "darwin" });
     expect(
       writeFilePathsToClipboard(["/Users/me/Assets/Folder"], deps),
     ).toBe(true);
     expect(deps.hasFormat("NSFilenamesPboardType")).toBe(true);
     expect(deps.hasFormat("public.file-url")).toBe(true);
-    expect(deps.text).toBe("/Users/me/Assets/Folder");
+    expect(deps.text).toBe("");
     expect(readFilePathsFromClipboard(deps)).toEqual([
       "/Users/me/Assets/Folder",
     ]);

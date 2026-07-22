@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { aiSearchPlanSchema, assetMetadataResultSchema, extractedMetadataResultSchema, assetSummarySchema, collectionSummarySchema, folderBrowseEntrySchema, linkedFolderRuleSchema, linkedFolderSummarySchema, managedFolderSummarySchema, portableRelativePathSchema, smartCollectionSummarySchema, tagSummarySchema } from '../asset-types';
+import { aiSearchPlanSchema, assetMetadataResultSchema, extractedMetadataResultSchema, assetSummarySchema, collectionSummarySchema, folderBrowseEntrySchema, linkedFolderRuleSchema, linkedFolderSummarySchema, managedFolderSummarySchema, portableRelativePathSchema, smartCollectionSummarySchema, tagCooccurrenceGraphSchema, tagSummarySchema, trashedFolderSummarySchema } from '../asset-types';
 import { recentLibraryListSchema } from '../recent-libraries';
 import { publicErrorReasonSchema, publicErrorSchema } from './errors';
 import {
@@ -59,11 +59,12 @@ export const importConflictPlanSchema = z.strictObject({
   fileCount: z.number().int().nonnegative(),
   totalBytes: z.number().int().nonnegative(),
   suspectedDuplicateCount: z.number().int().nonnegative(),
+  libraryDuplicateCount: z.number().int().nonnegative(),
   nameConflictCount: z.number().int().nonnegative(),
   examples: z.array(
     z.strictObject({
       displayName: safeDisplayName,
-      kind: z.enum(['suspected-duplicate', 'name-conflict']),
+      kind: z.enum(['suspected-duplicate', 'library-duplicate', 'name-conflict']),
     }),
   ).max(8),
 });
@@ -321,6 +322,18 @@ const assetOperationSuccessSchemas = [
   }),
   z.strictObject({
     ok: z.literal(true),
+    type: z.literal('folder.list-trashed'),
+    folders: z.array(trashedFolderSummarySchema),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('folder.restored-trashed'),
+    restoredFolderCount: z.number().int().nonnegative(),
+    restoredAssetCount: z.number().int().nonnegative(),
+    folders: z.array(managedFolderSummarySchema),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
     type: z.literal('folder.trashed'),
     folderId: nonBlankString,
     trashedAssetCount: z.number().int().nonnegative(),
@@ -434,6 +447,22 @@ const assetOperationSuccessSchemas = [
     ok: z.literal(true),
     type: z.literal('tag.deleted'),
     tagId: nonBlankString,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('tag.deleted-many'),
+    deletedTagIds: z.array(nonBlankString),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('tag.merged'),
+    tag: tagSummarySchema,
+    mergedTagIds: z.array(nonBlankString),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('tag.cooccurrence'),
+    graph: tagCooccurrenceGraphSchema,
   }),
   z.strictObject({
     ok: z.literal(true),

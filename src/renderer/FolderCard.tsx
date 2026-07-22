@@ -11,11 +11,21 @@ interface FolderCardProps {
   entry: FolderBrowseEntry;
   libraryId: string;
   selected: boolean;
+  /** REQ-DND-006 / Serpent-12mb: external file drop target highlight. */
+  dropActive?: boolean;
   onClick: (folderId: string, event: React.MouseEvent) => void;
   onDoubleClick: (folderId: string) => void;
   onContextMenu: (entry: FolderBrowseEntry, event: React.MouseEvent) => void;
   /** Mirrors the asset card's button-guard convention (useAssetSelection). */
   onMouseDown: (event: React.MouseEvent) => void;
+  onDragEnter?: (event: React.DragEvent<HTMLButtonElement>) => void;
+  onDragLeave?: (event: React.DragEvent<HTMLButtonElement>) => void;
+  onDragOver?: (event: React.DragEvent<HTMLButtonElement>) => void;
+  onDrop?: (event: React.DragEvent<HTMLButtonElement>) => void;
+  draggable?: boolean;
+  onDragStart?: (event: React.DragEvent<HTMLButtonElement>) => void;
+  /** Trash view tombstone — display only, no navigation (Serpent-l4nl). */
+  trashed?: boolean;
 }
 
 /**
@@ -27,10 +37,18 @@ export function FolderCard({
   entry,
   libraryId,
   selected,
+  dropActive = false,
   onClick,
   onDoubleClick,
   onContextMenu,
   onMouseDown,
+  onDragEnter,
+  onDragLeave,
+  onDragOver,
+  onDrop,
+  draggable = false,
+  onDragStart,
+  trashed = false,
 }: FolderCardProps) {
   const t = useT();
   const covers = entry.coverArtifactIds.slice(0, 3);
@@ -39,11 +57,17 @@ export function FolderCard({
   return (
     <button
       aria-pressed={selected}
-      className={`folder-card${selected ? " is-selected" : ""}`}
+      className={`folder-card${selected ? " is-selected" : ""}${dropActive ? " is-drop-target" : ""}${trashed ? " is-trashed-folder" : ""}`}
       data-folder-id={entry.folderId}
+      draggable={draggable}
       onClick={(event) => onClick(entry.folderId, event)}
       onContextMenu={(event) => onContextMenu(entry, event)}
       onDoubleClick={() => onDoubleClick(entry.folderId)}
+      onDragEnter={onDragEnter}
+      onDragLeave={onDragLeave}
+      onDragOver={onDragOver}
+      onDragStart={onDragStart}
+      onDrop={onDrop}
       onMouseDown={onMouseDown}
       title={entry.name}
       type="button"

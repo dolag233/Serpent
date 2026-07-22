@@ -13,6 +13,8 @@ import type {
   SearchScope,
   SmartCollectionSummary,
   TagSummary,
+  TagCooccurrenceGraph,
+  TrashedFolderSummary,
 } from './asset-types';
 import type {
   ImportCompletion,
@@ -272,6 +274,9 @@ export interface SerpentLibraryApi {
   createTag(input: { libraryId: string; name: string }): Promise<LibraryApiResult<TagSummary>>;
   renameTag(input: { libraryId: string; tagId: string; name: string }): Promise<LibraryApiResult<TagSummary>>;
   deleteTag(input: { libraryId: string; tagId: string }): Promise<LibraryApiResult<{ tagId: string }>>;
+  deleteTags(input: { libraryId: string; tagIds: string[] }): Promise<LibraryApiResult<{ deletedTagIds: string[] }>>;
+  mergeTags(input: { libraryId: string; sourceTagIds: string[]; name: string }): Promise<LibraryApiResult<TagSummary>>;
+  getTagCooccurrenceGraph(input: { libraryId: string; minWeight?: number; maxNodes?: number; maxEdges?: number }): Promise<LibraryApiResult<TagCooccurrenceGraph>>;
   assignTags(input: { libraryId: string; assetIds: string[]; tagIds: string[] }): Promise<LibraryApiResult<{ assignedCount: number; skipped: TagOperationSkip[] }>>;
   removeTags(input: { libraryId: string; assetIds: string[]; tagIds: string[] }): Promise<LibraryApiResult<{ removedCount: number; skipped: TagOperationSkip[] }>>;
   // Collections
@@ -327,6 +332,15 @@ export interface SerpentLibraryApi {
   deleteAssetsPermanent(input: { libraryId: string; assetIds: string[] }): Promise<LibraryApiResult<{ deletedCount: number; skippedCount: number; skippedReasons: Array<{ assetId: string; reason: PublicErrorReason }> }>>;
   deleteAssetsFromDisk(input: { libraryId: string; assetIds: string[] }): Promise<LibraryApiResult<{ deletedCount: number }>>;
   listTrash(input: { libraryId: string }): Promise<LibraryApiResult<AssetSummary[]>>;
+  listTrashedFolders(input: { libraryId: string }): Promise<LibraryApiResult<TrashedFolderSummary[]>>;
+  restoreTrashedManagedFolder(input: {
+    libraryId: string;
+    tombstoneId: string;
+  }): Promise<LibraryApiResult<{
+    restoredFolderCount: number;
+    restoredAssetCount: number;
+    folders: ManagedFolderSummary[];
+  }>>;
   purgeTrash(input: { libraryId: string }): Promise<LibraryApiResult<{ purgedCount: number; skippedCount: number; failures: Array<{ assetId: string; reason: PublicErrorReason }> }>>;
   // Linked delete
   deleteLinkedAssets(input: { libraryId: string; assetIds: string[]; deleteSourceFile: boolean }): Promise<LibraryApiResult<LinkedAssetDeleteResult>>;

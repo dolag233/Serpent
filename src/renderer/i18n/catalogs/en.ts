@@ -415,6 +415,7 @@ export const en = {
     assetOps: "Asset actions: {name}",
     collectionOps: "Collection actions: {name}",
     folderOps: "Folder actions: {name}",
+    restoreTrashedFolder: "Restore folder",
     smartCollectionOps: "Smart collection actions: {name}",
     skipReportLine: "{action}: process {process} / skip {skip} ({reasons})",
     skipReportActionMove: "Move",
@@ -512,6 +513,7 @@ export const en = {
       title: "Resolve import conflicts",
       pendingFiles: "Files to import",
       suspectedDuplicates: "Suspected duplicates",
+      libraryDuplicates: "Same content elsewhere in library",
       nameConflicts: "Name conflicts",
       skip: "Skip",
       merge: "Merge into existing asset",
@@ -764,7 +766,11 @@ export const en = {
     confirmationsSection: "Confirmations",
     diskDeleteConfirm: "Confirm before deleting from disk",
     diskDeleteConfirmHint:
-      "When off, “Delete from disk” skips the dialog. You can turn this back on anytime. Shared by assets and folders."
+      "When off, “Delete from disk” skips the dialog. You can turn this back on anytime. Shared by assets and folders.",
+    accentColor: "Accent color",
+    accentHint: "Controls buttons, links, and highlights. Changes apply immediately.",
+    accentCustom: "Custom accent color (#RRGGBB)",
+    accentReset: "Reset to default"
   },
   preview: {
     ffmpegRequired: "This install is missing the media component needed for a video playback proxy. Reinstall or repair Serpent and try again.",
@@ -996,6 +1002,9 @@ export const en = {
     folderMoveSkipped: "Moved {moved} folder(s); skipped {skipped}.",
     folderMoveFailed: "Failed to move folder(s).",
     folderMoveNothing: "No folders to move.",
+    folderAlreadyThere: "Folder is already in that location.",
+    folderMoveIntoSelf: "Cannot move a folder into itself.",
+    folderMoveIntoDescendant: "Cannot move a folder into one of its subfolders.",
     alreadyInFolder: "Asset is already in this folder; no move needed.",
     noMovableAssets: "No movable assets (linked, missing, or Trash assets are excluded).",
     folderCopyUnsupported: "Copy into a folder is not supported yet; release {modifier} to move.",
@@ -1041,6 +1050,9 @@ export const en = {
     convertLinkedFailed: "Failed to convert linked folder.",
     closeFailed: "Close failed.",
     restoredCount: "Restored {count} assets",
+    restoreTrashedFolderDone:
+      "Restored folder “{name}”: {folders} folders, {assets} assets",
+    restoreTrashedFolderFailed: "Failed to restore folder.",
     restoreFailed: "Restore failed.",
     movedCountDetail: "Moved {count} assets",
     undoMoveDone: "Undid move for {count} assets",

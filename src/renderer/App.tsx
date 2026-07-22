@@ -97,6 +97,7 @@ import {
 import {
   collectRecentAiFailureCodes,
   computeAiBatchProgress,
+  inferAutoAnalyzeBatchTotal,
 } from "./ai-analyze-progress";
 import { summarizeAiFailureCodes } from "./ai-job-error-message";
 import {
@@ -144,6 +145,12 @@ import { resolveInspectorDescription } from "./inspector-description";
 import { useAssetDragDropHandlers, type UndoableFileOp } from "./use-asset-drag-drop-handlers";
 import { useDialogEscapeDismiss } from "./use-dialog-escape-dismiss";
 import { useExternalImportHandlers } from "./use-external-import-handlers";
+import { useFolderDragDropHandlers } from "./use-folder-drag-drop-handlers";
+import { WorkspaceNoticeBanner } from "./WorkspaceNoticeBanner";
+import {
+  MANAGED_FOLDERS_DRAG_TYPE,
+  resolveDraggedFolderIds,
+} from "./folder-drag-drop";
 import { importSummaryMessage } from "./import-summary";
 import type { DialogEscapeSnapshot } from "./dialog-escape-stack";
 import { useAssetRename } from "./useAssetRename";
@@ -176,6 +183,9 @@ import {
 } from "./active-discovery-filters";
 import { resolveBrowseEmptyState, resolveImportMenuCopy } from "./browse-empty-state";
 import { trashedFromLabel } from "./trashed-from-label";
+import { groupTrashedAssetsBySourceFolder } from "./trash-folder-groups";
+import { invertSelection } from "./invert-selection";
+import { trashedFoldersToBrowseEntries } from "./trashed-folder-entries";
 import { toMessage, LibraryOperationError } from "./error-utils";
 
 import type {
@@ -438,6 +448,9 @@ function AppInner() {
   // REQ-FOLDER-001/002/003/010: direct child folder cards shown above assets
   // when the current browse parent is a managed folder or the managed root.
   const [folderBrowseEntries, setFolderBrowseEntries] = useState<FolderBrowseEntry[]>([]);
+  const [trashedFolderBrowseEntries, setTrashedFolderBrowseEntries] = useState<
+    FolderBrowseEntry[]
+  >([]);
   const [selectedFolderIds, setSelectedFolderIds] = useState<string[]>([]);
   const managedImportTargetFolderIdRef = useRef<string | undefined>(undefined);
   const [allAssetCount, setAllAssetCount] = useState(0);
@@ -466,6 +479,10 @@ function AppInner() {
     dismissVisible,
     handleToastTransitionEnd,
   } = useToastNotifications();
+  const workspaceNotice =
+    renderedToast?.kind === "notice" ? renderedToast : null;
+  const cornerToast =
+    renderedToast && renderedToast.kind !== "notice" ? renderedToast : null;
   const [dialog, setDialog] = useState<DialogKind>(null);
   const [dialogValue, setDialogValue] = useState(() => t("shell.myLibrary"));
   const [conflicts, setConflicts] = useState<ImportConflictPlan | null>(null);
@@ -990,6 +1007,16 @@ function AppInner() {
     return assets;
   }, [assets, trashedAssets, showTrash]);
 
+  const trashedAssetGroups = useMemo(() => {
+    if (!showTrash) return null;
+    return groupTrashedAssetsBySourceFolder(visibleAssets, t("scope.allAssets"));
+  }, [showTrash, visibleAssets, t]);
+
+  const assetRenderSections = useMemo(() => {
+    if (showTrash && trashedAssetGroups) return trashedAssetGroups;
+    return [{ key: "", label: null, assets: visibleAssets }];
+  }, [showTrash, trashedAssetGroups, visibleAssets]);
+
   // CU-U1: origin chip context for recursive folder / mixed-folder surfaces.
   const sourceBadgeContext = useMemo(() => {
     const mixedFolderBrowse =
@@ -1073,9 +1100,12 @@ function AppInner() {
 
   // CANVAS-022: folders-only (recursive off, zero direct assets) must not
   // mount an empty asset grid — its min-height:100% left a large void.
+  const canvasFolderBrowseEntries = showTrash
+    ? trashedFolderBrowseEntries
+    : folderBrowseEntries;
   const browseCanvasBodyLayout = resolveBrowseCanvasBodyLayout(
     visibleAssets.length,
-    folderBrowseEntries.length,
+    canvasFolderBrowseEntries.length,
   );
 
   const visibleAssetById = useMemo(() => {
@@ -1156,6 +1186,25 @@ function AppInner() {
     selectionAnchorRef,
     clearAssetSelection,
   });
+
+  useEffect(() => {
+    if (!shellApi) return;
+    return shellApi.onInvertSelection(() => {
+      if (previewAsset) return;
+      if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
+      if (visibleAssetIds.length === 0) return;
+      const next = invertSelection(visibleAssetIds, selectedAssetIds);
+      setSelectedAssetIds(next);
+      setSelectedAssetId(next.at(-1));
+      selectionAnchorRef.current = next[0] ?? null;
+    });
+  }, [
+    shellApi,
+    previewAsset,
+    visibleAssetIds,
+    selectedAssetIds,
+    selectionAnchorRef,
+  ]);
 
   // REQ-FOLDER-001/002/003/010: load direct child folder cards whenever the
   // browse parent is a managed folder or the managed root; cleared for
@@ -1532,6 +1581,7 @@ function AppInner() {
         tagResult,
         collectionResult,
         smartResult,
+        trashedFoldersResult,
       ] = await Promise.all([
         api.listFolders(libId),
         api.searchAssets({
@@ -1550,6 +1600,9 @@ function AppInner() {
         api.listTags(libId),
         api.listCollections(libId),
         api.listSmartCollections(libId),
+        trashMode
+          ? api.listTrashedFolders(libId)
+          : Promise.resolve(null),
       ]);
       if (!folderResult.ok) throw new LibraryOperationError(folderResult.error);
       if (!assetResult.ok) throw new LibraryOperationError(assetResult.error);
@@ -1563,8 +1616,17 @@ function AppInner() {
       setFolders(folderResult.value);
       if (trashMode) {
         setTrashedAssets(assetResult.value.items);
+        if (trashedFoldersResult && !trashedFoldersResult.ok) {
+          throw new LibraryOperationError(trashedFoldersResult.error);
+        }
+        setTrashedFolderBrowseEntries(
+          trashedFoldersResult
+            ? trashedFoldersToBrowseEntries(trashedFoldersResult.value)
+            : [],
+        );
       } else {
         setAssets(assetResult.value.items);
+        setTrashedFolderBrowseEntries([]);
       }
       // CU-B2: keep library-wide count fresh even while browsing trash.
       setAllAssetCount(allResult?.value.total ?? assetResult.value.total);
@@ -1667,6 +1729,17 @@ function AppInner() {
     if (!api || !library) return;
     const unsubscribeProgress = api.onAiProgress((event) => {
       if (event.libraryId !== library.libraryId) return;
+      const inFlight = event.queued + event.running;
+      if (
+        inFlight > 0 &&
+        !aiAnalyzingRef.current &&
+        analyzingBatchSizeRef.current === 0
+      ) {
+        analyzeFailedBaselineRef.current = event.failed;
+        analyzeSucceededBaselineRef.current = event.succeeded;
+        aiAnalyzingRef.current = true;
+        setAiAnalyzing(true);
+      }
       setAiJobs((current) =>
         current
           ? {
@@ -1758,7 +1831,10 @@ function AppInner() {
                 );
               }
             });
-        } else if (batchSize > 1) {
+        } else if (
+          batchSize > 1 ||
+          (batchSize === 0 && succeededDelta + failedDelta > 1)
+        ) {
           setNotice(
             t("toast.aiAnalyzeDoneBatch", {
               succeeded: Math.max(0, succeededDelta),
@@ -3000,12 +3076,10 @@ function AppInner() {
 
   const {
     handleOpenExternal,
-    handleOpenWith,
     handleRevealInFolder,
     handleCopyFilePath,
     handleCopyAssetFiles,
     handleOpenFolderInFileManager,
-    handleOpenFolderWith,
     handleCopyFolderPath,
     handleCopyFolder,
   } = useShellFileActions({
@@ -3052,6 +3126,16 @@ function AppInner() {
     setLastUndoableOp,
   });
 
+  const { handleFoldersDroppedOnFolder } = useFolderDragDropHandlers({
+    api: api ?? null,
+    libraryId: library?.libraryId ?? null,
+    folders,
+    setNotice,
+    setError,
+    setUiState,
+    reloadCurrentContent,
+  });
+
   const {
     externalDropActive,
     pasteClipboardImage,
@@ -3062,6 +3146,7 @@ function AppInner() {
     handleExternalDrop,
     handleTargetExternalDragOver,
     handleTargetExternalDrop,
+    createFolderCardDropHandlers,
   } = useExternalImportHandlers({
     api: api ?? null,
     library,
@@ -3076,6 +3161,7 @@ function AppInner() {
     setFatal,
     setNotice,
     setConflicts,
+    onFoldersDroppedOnFolder: handleFoldersDroppedOnFolder,
   });
 
   const {
@@ -3879,6 +3965,35 @@ function AppInner() {
       await loadContent(library, "all", { trashMode: true });
     } catch (caught) {
       setError(toMessage(caught, t("toast.restoreFailed"), locale));
+    } finally {
+      setUiState("ready");
+    }
+  }
+
+  async function restoreTrashedManagedFolder(
+    tombstoneId: string,
+    name: string,
+  ) {
+    if (!api || !library) return;
+    closeContextMenu();
+    setUiState("loading");
+    try {
+      const result = await api.restoreTrashedManagedFolder({
+        libraryId: library.libraryId,
+        tombstoneId,
+      });
+      if (!result.ok) throw new LibraryOperationError(result.error);
+      setNotice(
+        t("toast.restoreTrashedFolderDone", {
+          name,
+          folders: result.value.restoredFolderCount,
+          assets: result.value.restoredAssetCount,
+        }) + t("common.sentenceEnd"),
+      );
+      clearAssetSelection();
+      await loadContent(library, "all", { trashMode: true });
+    } catch (caught) {
+      setError(toMessage(caught, t("toast.restoreTrashedFolderFailed"), locale));
     } finally {
       setUiState("ready");
     }
@@ -4701,6 +4816,8 @@ function AppInner() {
               bytes: formatBytes(event.totalBytes),
             }),
           );
+        } else if (event.phase === "cancelled") {
+          setNotice(t("toast.exportCancelled"));
         }
       } else if (event.type === "import.progress") {
         setImportProgress(event);
@@ -5017,6 +5134,20 @@ function AppInner() {
     previewIndex,
     visibleAssets,
   ]);
+
+  // Serpent-oy07: sync BrowserWindow focus to document (native macOS traffic lights
+  // dim on inactive via hiddenInset; renderer can mirror for shell chrome).
+  useEffect(() => {
+    const shellBridge = (window as RendererWindow).serpent?.shell;
+    if (!shellBridge?.onWindowFocusChanged) return;
+    const apply = (focused: boolean) => {
+      document.documentElement.dataset.windowFocused = focused
+        ? "true"
+        : "false";
+    };
+    apply(document.hasFocus());
+    return shellBridge.onWindowFocusChanged(apply);
+  }, []);
 
   function workspaceTitle() {
     if (!library) return t("scope.workspace");
@@ -5861,6 +5992,12 @@ function AppInner() {
         onSetDraggedCollectionId={setDraggedCollectionId}
         onChooseAllAssets={() => void chooseFolder("all")}
         onEnterTrash={() => void enterTrash()}
+        onTrashContextMenu={(event) => {
+          openContextMenu(
+            { type: "trash" },
+            { x: event.clientX, y: event.clientY },
+          );
+        }}
         onEnterTagManagement={() => void enterTagManagement()}
         onChooseFolder={(folderId) => void chooseFolder(folderId)}
         onChooseCollection={(collectionId, recursive) =>
@@ -5876,6 +6013,8 @@ function AppInner() {
         onAssetsDroppedOnFolder={(folderId, assetIds, mode) =>
           handleAssetsDroppedOnFolder(folderId, assetIds, mode)
         }
+        onFoldersDroppedOnFolder={handleFoldersDroppedOnFolder}
+        selectedFolderIds={selectedFolderIds}
         onAssetsDroppedOnTrash={(assetIds) =>
           handleAssetsDroppedOnTrash(assetIds)
         }
@@ -6140,18 +6279,25 @@ function AppInner() {
         {(aiAnalyzing ||
           (aiJobs !== null && aiJobs.queued + aiJobs.running > 0)) &&
           (() => {
-            const batchProgress = computeAiBatchProgress(
+            const queueCounters = {
+              queued: aiJobs?.queued ?? 0,
+              running: aiJobs?.running ?? 0,
+              succeeded: aiJobs?.succeeded ?? 0,
+              failed: aiJobs?.failed ?? 0,
+            };
+            const batchBaseline = {
+              succeeded: analyzeSucceededBaselineRef.current,
+              failed: analyzeFailedBaselineRef.current,
+            };
+            const effectiveBatchTotal = inferAutoAnalyzeBatchTotal(
               analyzingBatchSizeRef.current,
-              {
-                succeeded: analyzeSucceededBaselineRef.current,
-                failed: analyzeFailedBaselineRef.current,
-              },
-              {
-                queued: aiJobs?.queued ?? 0,
-                running: aiJobs?.running ?? 0,
-                succeeded: aiJobs?.succeeded ?? 0,
-                failed: aiJobs?.failed ?? 0,
-              },
+              queueCounters,
+              batchBaseline,
+            );
+            const batchProgress = computeAiBatchProgress(
+              effectiveBatchTotal,
+              batchBaseline,
+              queueCounters,
             );
             const progressLabel =
               batchProgress.batchTotal > 0
@@ -6208,6 +6354,24 @@ function AppInner() {
         <div
           className={`workspace-canvas-host${previewAsset ? " is-viewing" : ""}`}
         >
+          {workspaceNotice && (
+            <WorkspaceNoticeBanner
+              closing={toastClosing}
+              message={workspaceNotice}
+              onDismiss={() => dismissVisible()}
+              onTransitionEnd={handleToastTransitionEnd}
+              onUndo={
+                lastUndoableOp ? () => void undoLastFileOp() : undefined
+              }
+              undoLabel={
+                lastUndoableOp
+                  ? lastUndoableOp.kind === "copy"
+                    ? t("action.undoCopy")
+                    : t("action.undoMove")
+                  : undefined
+              }
+            />
+          )}
           {uiState === "importing" && (
             <div className="activity-strip" role="status">
               <span className="activity-pulse" />
@@ -6336,16 +6500,42 @@ function AppInner() {
                       { "--folder-card-size": `${assetCardSize}px` } as CSSProperties
                     }
                   >
-                    {folderBrowseEntries.map((entry) => (
+                    {canvasFolderBrowseEntries.map((entry) => (
                       <FolderCard
+                        draggable={!showTrash}
                         entry={entry}
                         key={entry.folderId}
                         libraryId={library.libraryId}
+                        trashed={showTrash}
+                        {...createFolderCardDropHandlers(entry.folderId)}
+                        onDragStart={(event) => {
+                          const folderIds = resolveDraggedFolderIds(
+                            entry.folderId,
+                            selectedFolderIds,
+                          );
+                          event.dataTransfer.setData(
+                            MANAGED_FOLDERS_DRAG_TYPE,
+                            JSON.stringify(folderIds),
+                          );
+                          event.dataTransfer.effectAllowed = "move";
+                        }}
                         onClick={(folderId, event) => {
                           handleFolderCardClick(folderId, event);
                         }}
                         onContextMenu={(clickedEntry, event) => {
                           event.preventDefault();
+                          if (showTrash) {
+                            openContextMenu(
+                              {
+                                type: "trashed-folder",
+                                tombstoneId: clickedEntry.folderId,
+                                name: clickedEntry.name,
+                                relativePath: clickedEntry.relativePath,
+                              },
+                              { x: event.clientX, y: event.clientY },
+                            );
+                            return;
+                          }
                           const intent = resolveBrowseContextMenuIntent(
                             { kind: "folder", id: clickedEntry.folderId },
                             {
@@ -6379,7 +6569,9 @@ function AppInner() {
                             { x: event.clientX, y: event.clientY },
                           );
                         }}
-                        onDoubleClick={(folderId) => void chooseFolder(folderId)}
+                        onDoubleClick={(folderId) => {
+                          if (!showTrash) void chooseFolder(folderId);
+                        }}
                         onMouseDown={(event) => {
                           cardMouseDownRef.current = event.button;
                         }}
@@ -6396,7 +6588,7 @@ function AppInner() {
                   {(() => {
                     const showCornerBadges =
                       shouldShowAssetCardBadges(assetCardSize);
-                    const cards = visibleAssets.map((asset) => {
+                    const renderAssetCard = (asset: AssetSummary) => {
                       const typeBadge = assetTypeBadgeLabel(
                         asset.mediaType,
                         asset.displayName,
@@ -6792,37 +6984,50 @@ function AppInner() {
                       )}
                     </CardTag>
                     );
-                    });
-                    return assetViewMode === "masonry" ? (
-                      <MasonryColumns
-                        assets={visibleAssets}
-                        cardSize={assetCardSize}
-                        showCaption={
-                          canvasPrefs.fields.name ||
-                          canvasPrefs.fields.size ||
-                          canvasPrefs.fields.date
+                    };
+                    return assetRenderSections.map((section) => (
+                      <div
+                        className={
+                          section.label ? "trash-folder-group" : undefined
                         }
+                        key={section.key || "__root__"}
                       >
-                        {cards}
-                      </MasonryColumns>
-                    ) : (
-                      <JustifiedAssetRows
-                        assets={visibleAssets}
-                        cardSize={assetCardSize}
-                        captionBandPx={resolveJustifiedCaptionBandPx({
-                          // Flat/tiled always renders「宽 × 高」when metadata exists.
-                          dimensions: true,
-                          name: canvasPrefs.fields.name,
-                          secondary:
-                            canvasPrefs.fields.size ||
-                            canvasPrefs.fields.date ||
-                            showTrash ||
-                            searchSnippets.size > 0,
-                        })}
-                      >
-                        {cards}
-                      </JustifiedAssetRows>
-                    );
+                        {section.label ? (
+                          <h3 className="trash-folder-group-header">
+                            {section.label}
+                          </h3>
+                        ) : null}
+                        {assetViewMode === "masonry" ? (
+                          <MasonryColumns
+                            assets={section.assets}
+                            cardSize={assetCardSize}
+                            showCaption={
+                              canvasPrefs.fields.name ||
+                              canvasPrefs.fields.size ||
+                              canvasPrefs.fields.date
+                            }
+                          >
+                            {section.assets.map(renderAssetCard)}
+                          </MasonryColumns>
+                        ) : (
+                          <JustifiedAssetRows
+                            assets={section.assets}
+                            cardSize={assetCardSize}
+                            captionBandPx={resolveJustifiedCaptionBandPx({
+                              dimensions: true,
+                              name: canvasPrefs.fields.name,
+                              secondary:
+                                canvasPrefs.fields.size ||
+                                canvasPrefs.fields.date ||
+                                showTrash ||
+                                searchSnippets.size > 0,
+                            })}
+                          >
+                            {section.assets.map(renderAssetCard)}
+                          </JustifiedAssetRows>
+                        )}
+                      </div>
+                    ));
                   })()}
                   <div
                     className="asset-loading-more"
@@ -6883,34 +7088,23 @@ function AppInner() {
           )}
         </div>
         </div>
-        {renderedToast && (
+        {cornerToast && (
           <div
-            className={`toast${renderedToast.kind === "error" ? " is-error" : ""}${renderedToast.kind === "warning" ? " is-warning" : ""}${toastClosing ? " is-closing" : ""}`}
+            className={`toast${cornerToast.kind === "error" ? " is-error" : ""}${cornerToast.kind === "warning" ? " is-warning" : ""}${toastClosing ? " is-closing" : ""}`}
             onTransitionEnd={handleToastTransitionEnd}
-            role={renderedToast.kind === "error" ? "alert" : "status"}
+            role={cornerToast.kind === "error" ? "alert" : "status"}
           >
             <Icon
               name={
-                renderedToast.kind === "error"
+                cornerToast.kind === "error"
                   ? "warning"
-                  : renderedToast.kind === "warning"
+                  : cornerToast.kind === "warning"
                     ? "warning"
                     : "info"
               }
               size={15}
             />
-            <span>{renderedToast.text}</span>
-            {renderedToast.kind === "notice" && lastUndoableOp && (
-              <button
-                className="secondary-button"
-                onClick={() => void undoLastFileOp()}
-                type="button"
-              >
-                {lastUndoableOp.kind === "copy"
-                  ? t("action.undoCopy")
-                  : t("action.undoMove")}
-              </button>
-            )}
+            <span>{cornerToast.text}</span>
             <IconActionButton
               omitClassName
               icon="close"
@@ -7435,9 +7629,6 @@ function AppInner() {
         onOpenFolderInFileManager={(folderId) => {
           void handleOpenFolderInFileManager(folderId);
         }}
-        onOpenFolderWith={(folderId) => {
-          void handleOpenFolderWith(folderId);
-        }}
         onCopyFolderPath={(folderId) => {
           void handleCopyFolderPath(folderId);
         }}
@@ -7539,7 +7730,6 @@ function AppInner() {
         onCopyToLinked={(folder, assetIds) => { void copyManagedSelectionToLinked(folder, assetIds); }}
         onClearSelection={clearAssetSelection}
         onOpenExternal={(assetId) => { void handleOpenExternal(assetId); }}
-        onOpenWith={(assetId) => { void handleOpenWith(assetId); }}
         onViewAsset={(assetId) => {
           const asset = visibleAssets.find((item) => item.assetId === assetId);
           if (asset) openAssetPreview(asset);
@@ -7558,6 +7748,13 @@ function AppInner() {
         onAssignTag={(assetId, tagId) => { void assignAssetToTag(assetId, tagId); }}
         onAddToCollection={(assetId, collectionId) => { void addAssetToCollection(assetId, collectionId); }}
         onLoadCollectionMemberships={loadCollectionMemberships}
+        trashedAssetCount={trashedAssets.length}
+        onRestoreTrashedFolder={(tombstoneId, name) => {
+          void restoreTrashedManagedFolder(tombstoneId, name);
+        }}
+        onPurgeExpiredTrash={() => {
+          void purgeTrash();
+        }}
       />
       {/* REQ-SHELL-007 / REQ-SHELL-011 pane resize + edge restore handles. */}
       {leftOpen ? (

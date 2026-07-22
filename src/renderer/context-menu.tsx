@@ -61,6 +61,17 @@ export type ContextMenuDescriptor =
       /** Canvas folder cards in the same multi/mixed selection (Serpent-koy). */
       folderIds?: string[];
       count: number;
+    }
+  | {
+      /** Sidebar trash row context menu (Serpent-gaoi). */
+      type: "trash";
+    }
+  | {
+      /** Deleted managed-folder tombstone in trash browse (Serpent-qufh). */
+      type: "trashed-folder";
+      tombstoneId: string;
+      name: string;
+      relativePath: string;
     };
 
 interface ContextMenuContextValue {

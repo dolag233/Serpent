@@ -331,6 +331,24 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     tagId: identifierSchema,
   }),
   z.strictObject({
+    type: z.literal('tag.delete-many.request'),
+    libraryId: identifierSchema,
+    tagIds: z.array(identifierSchema).min(1),
+  }),
+  z.strictObject({
+    type: z.literal('tag.merge.request'),
+    libraryId: identifierSchema,
+    sourceTagIds: z.array(identifierSchema).min(2),
+    name: displayNameSchema,
+  }),
+  z.strictObject({
+    type: z.literal('tag.cooccurrence.request'),
+    libraryId: identifierSchema,
+    minWeight: z.number().int().positive().optional(),
+    maxNodes: z.number().int().positive().max(500).optional(),
+    maxEdges: z.number().int().positive().max(2000).optional(),
+  }),
+  z.strictObject({
     type: z.literal('tag.assign.request'),
     libraryId: identifierSchema,
     assetIds: z.array(identifierSchema).min(1),
@@ -561,6 +579,15 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
   z.strictObject({
     type: z.literal('trash.list.request'),
     libraryId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('trash.list-folders.request'),
+    libraryId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('trash.restore-folder.request'),
+    libraryId: identifierSchema,
+    tombstoneId: identifierSchema,
   }),
   z.strictObject({
     type: z.literal('trash.purge.request'),
@@ -862,6 +889,15 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     parentFolderId: identifierSchema.nullable(),
   }),
   z.strictObject({
+    type: z.literal('folder.list-trashed'),
+    libraryId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('folder.restore-trashed'),
+    libraryId: identifierSchema,
+    tombstoneId: identifierSchema,
+  }),
+  z.strictObject({
     type: z.literal('folder.trash'),
     libraryId: identifierSchema,
     folderId: identifierSchema,
@@ -969,6 +1005,24 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     type: z.literal('tag.delete'),
     libraryId: identifierSchema,
     tagId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('tag.delete-many'),
+    libraryId: identifierSchema,
+    tagIds: z.array(identifierSchema).min(1),
+  }),
+  z.strictObject({
+    type: z.literal('tag.merge'),
+    libraryId: identifierSchema,
+    sourceTagIds: z.array(identifierSchema).min(2),
+    name: displayNameSchema,
+  }),
+  z.strictObject({
+    type: z.literal('tag.cooccurrence'),
+    libraryId: identifierSchema,
+    minWeight: z.number().int().positive().optional(),
+    maxNodes: z.number().int().positive().max(500).optional(),
+    maxEdges: z.number().int().positive().max(2000).optional(),
   }),
   z.strictObject({
     type: z.literal('tag.assign'),

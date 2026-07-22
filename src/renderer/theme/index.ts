@@ -14,6 +14,20 @@ export {
   type ThemePreferencesStorage,
 } from './theme-preferences';
 export {
+  ACCENT_PRESET_HEX,
+  ACCENT_PREF_KEY,
+  DEFAULT_ACCENT_HEX,
+  DEFAULT_ACCENT_PREFERENCES,
+  applyAccentColor,
+  loadAccentPreferences,
+  normalizeAccentHex,
+  resetAccentColor,
+  saveAccentPreferences,
+  setStoredAccentHex,
+  type AccentPreferences,
+  type AccentPreferencesStorage,
+} from './accent-preferences';
+export {
   ThemeProvider,
   useTheme,
   type ThemeProviderProps,

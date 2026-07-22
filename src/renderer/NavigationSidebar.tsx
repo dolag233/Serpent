@@ -22,6 +22,12 @@ import {
   type DragDropMode,
 } from "./asset-drag-drop";
 import {
+  MANAGED_FOLDERS_DRAG_TYPE,
+  parseManagedFolderDrag,
+  resolveDraggedFolderIds,
+  supportsManagedFolderDrag,
+} from "./folder-drag-drop";
+import {
   externalImportPayload,
   supportsExternalImportTransfer,
 } from "./external-import-transfer";
@@ -67,6 +73,8 @@ function NavRow({
   dropActive,
   depth = 0,
   disabled,
+  draggable,
+  onDragStart,
   iconColor,
   title,
   disclosure,
@@ -87,6 +95,8 @@ function NavRow({
   dropActive?: boolean;
   depth?: number;
   disabled?: boolean;
+  draggable?: boolean;
+  onDragStart?: (event: React.DragEvent<HTMLButtonElement>) => void;
   iconColor?: string;
   title?: string;
   /** CU-D2: optional disclosure control rendered beside the row. */
@@ -108,8 +118,10 @@ function NavRow({
         data-nav-folder-id={navFolderId}
         data-nav-folder-kind={navFolderKind}
         disabled={disabled}
+        draggable={draggable}
         onClick={onClick}
         onContextMenu={onContextMenu}
+        onDragStart={onDragStart}
         onDragOver={onDragOver}
         onDrop={onDrop}
         onDragEnter={onDragEnter}
@@ -357,6 +369,7 @@ export interface NavigationSidebarProps {
   // --- Navigation callbacks ---
   onChooseAllAssets: () => void;
   onEnterTrash: () => void;
+  onTrashContextMenu?: (event: React.MouseEvent) => void;
   onEnterTagManagement: () => void;
   onChooseFolder: (folderId: string) => void;
   onChooseCollection: (collectionId: string, recursive?: boolean) => void;
@@ -376,6 +389,12 @@ export interface NavigationSidebarProps {
     assetIds: string[],
     mode: DragDropMode,
   ) => void;
+  onFoldersDroppedOnFolder: (
+    targetFolderId: string | null,
+    folderIds: string[],
+  ) => void;
+  /** Canvas/sidebar folder selection for folder drag (Serpent-nno6). */
+  selectedFolderIds: readonly string[];
   onAssetsDroppedOnTrash: (assetIds: string[]) => void;
   onAssetsDroppedOnCollection: (
     collectionId: string,
@@ -475,6 +494,7 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
     onSetDraggedCollectionId,
     onChooseAllAssets,
     onEnterTrash,
+    onTrashContextMenu,
     onEnterTagManagement,
     onChooseFolder,
     onChooseCollection,
@@ -482,6 +502,8 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
     onExternalDragOver,
     onExternalDrop,
     onAssetsDroppedOnFolder,
+    onFoldersDroppedOnFolder,
+    selectedFolderIds,
     onAssetsDroppedOnTrash,
     onAssetsDroppedOnCollection,
     onManagedAssetCopyModeChange,
@@ -591,6 +613,10 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
     return {
       dropActive: assetDropTarget === key,
       onDragEnter: (event: React.DragEvent<HTMLButtonElement>) => {
+        if (supportsManagedFolderDrag(event.dataTransfer)) {
+          setAssetDropTarget(key);
+          return;
+        }
         if (supportsManagedAssetDrag(event.dataTransfer)) setAssetDropTarget(key);
       },
       onDragLeave: (event: React.DragEvent<HTMLButtonElement>) => {
@@ -601,6 +627,11 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
         setAssetDropTarget((current) => (current === key ? null : current));
       },
       onDragOver: (event: React.DragEvent<HTMLButtonElement>) => {
+        if (supportsManagedFolderDrag(event.dataTransfer)) {
+          event.preventDefault();
+          event.dataTransfer.dropEffect = "move";
+          return;
+        }
         if (supportsManagedAssetDrag(event.dataTransfer)) {
           applyManagedAssetDragOver(event);
           return;
@@ -608,6 +639,13 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
         onExternalDragOver(event);
       },
       onDrop: (event: React.DragEvent<HTMLButtonElement>) => {
+        const folderIds = parseManagedFolderDrag(event.dataTransfer);
+        setAssetDropTarget(null);
+        if (folderIds && folderIds.length > 0) {
+          event.preventDefault();
+          onFoldersDroppedOnFolder(folderId, folderIds);
+          return;
+        }
         const ids = parseManagedAssetDrag(event.dataTransfer);
         setAssetDropTarget(null);
         if (ids && ids.length > 0) {
@@ -688,6 +726,18 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
             navFolderId={entry.folderId}
             navFolderKind="managed"
             onClick={() => void onChooseFolder(entry.folderId)}
+            draggable
+            onDragStart={(event) => {
+              const ids = resolveDraggedFolderIds(
+                entry.folderId,
+                selectedFolderIds,
+              );
+              event.dataTransfer.setData(
+                MANAGED_FOLDERS_DRAG_TYPE,
+                JSON.stringify(ids),
+              );
+              event.dataTransfer.effectAllowed = "move";
+            }}
             onContextMenu={(event) => {
               event.preventDefault();
               onOpenContextMenu(
@@ -957,6 +1007,11 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
           icon="trash"
           label={t("scope.trash")}
           onClick={() => void onEnterTrash()}
+          onContextMenu={(event) => {
+            if (!library) return;
+            event.preventDefault();
+            onTrashContextMenu?.(event);
+          }}
           dropActive={assetDropTarget === "trash"}
           onDragEnter={(event) => {
             if (supportsManagedAssetDrag(event.dataTransfer))

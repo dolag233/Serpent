@@ -46,6 +46,12 @@ export function ConflictsDialog({
             <strong>{conflicts.suspectedDuplicateCount}</strong>
             <span>{t("dialog.conflicts.suspectedDuplicates")}</span>
           </div>
+          {conflicts.libraryDuplicateCount > 0 ? (
+            <div>
+              <strong>{conflicts.libraryDuplicateCount}</strong>
+              <span>{t("dialog.conflicts.libraryDuplicates")}</span>
+            </div>
+          ) : null}
           <div>
             <strong>{conflicts.nameConflictCount}</strong>
             <span>{t("dialog.conflicts.nameConflicts")}</span>

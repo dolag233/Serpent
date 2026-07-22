@@ -122,4 +122,8 @@ export interface SerpentShellApi {
   ): () => void;
   /** macOS 触控板三指轻扫（Electron webContents swipe）。 */
   onSwipe(listener: (direction: ShellSwipeDirection) => void): () => void;
+  /** BrowserWindow 聚焦态（Serpent-oy07）；macOS 原生红绿灯失焦变灰由系统负责。 */
+  onWindowFocusChanged(listener: (focused: boolean) => void): () => void;
+  /** macOS Edit 菜单反选（Serpent-te8p）；与 ⌘I / Ctrl+I 等价。 */
+  onInvertSelection(listener: () => void): () => void;
 }

@@ -1623,6 +1623,7 @@ describe('renderer-safe import plans', () => {
       fileCount: 1,
       totalBytes: 100,
       suspectedDuplicateCount: 1,
+      libraryDuplicateCount: 0,
       nameConflictCount: 0,
       examples: [{ displayName: '/private/source.png', kind: 'suspected-duplicate' }],
     })).toThrow();

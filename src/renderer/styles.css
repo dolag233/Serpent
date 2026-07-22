@@ -368,7 +368,7 @@ summary:focus-visible {
 .panel-resizer:hover::after,
 .panel-resizer:focus-visible::after,
 .panel-resizer.is-active::after {
-  background: var(--secondary);
+  background: var(--accent);
 }
 
 /* Collapsed edge hit target (REQ-SHELL-011): slightly wider, flush to screen edge. */
@@ -2222,6 +2222,23 @@ input[type="range"] {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+}
+
+.trash-folder-group {
+  display: contents;
+}
+
+.trash-folder-group-header {
+  grid-column: 1 / -1;
+  margin: 12px 4px 4px;
+  color: var(--secondary);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.asset-grid .trash-folder-group-header:first-child {
+  margin-top: 0;
 }
 
 
@@ -4356,6 +4373,40 @@ select.ai-config-input.ai-config-languages {
   color: var(--accent-soft-fg);
 }
 
+.app-settings-accent-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.app-settings-accent-swatch {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.app-settings-accent-swatch.is-active {
+  border-color: var(--text);
+  box-shadow: 0 0 0 2px var(--pane);
+}
+
+.app-settings-accent-custom {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-top: 10px;
+}
+
+.app-settings-accent-custom .text-field {
+  flex: 1 1 140px;
+  min-width: 0;
+}
+
 .app-settings-check-row-group {
   display: flex;
   flex-direction: column;
@@ -4545,7 +4596,7 @@ select.ai-config-input.ai-config-languages {
 
 /* Viewing hides the canvas child, but the host still had flex:1 and split the
    workspace 50/50 with .workspace-viewer — empty top half, close chip mid-stage. */
-.workspace-canvas-host.is-viewing {
+.workspace-canvas-host.is-viewing > .workspace-canvas {
   display: none;
 }
 
@@ -4561,6 +4612,45 @@ select.ai-config-input.ai-config-languages {
   left: 50%;
   transform: translateX(-50%);
   pointer-events: auto;
+}
+
+/* Serpent-ss1k: info/notice channel anchored to workspace top center. */
+.workspace-notice {
+  position: absolute;
+  z-index: 25;
+  top: 10px;
+  left: 50%;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+  max-width: min(520px, calc(100% - 32px));
+  padding: 9px 11px;
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--divider));
+  border-radius: 8px;
+  background: var(--raised);
+  box-shadow: var(--shadow-toast);
+  color: var(--text);
+  font-size: 12px;
+  transform: translateX(-50%);
+  transition:
+    opacity 180ms ease,
+    transform 180ms ease;
+  pointer-events: auto;
+}
+
+.workspace-notice.is-closing {
+  opacity: 0;
+  transform: translate(-50%, -6px);
+}
+
+.workspace-notice-text {
+  min-width: 0;
+}
+
+.workspace-notice .secondary-button {
+  font-size: 11px;
+  padding: 4px 8px;
 }
 
 .activity-strip {
@@ -4800,6 +4890,21 @@ select.ai-config-input.ai-config-languages {
 
 .folder-card.is-selected {
   background: color-mix(in srgb, var(--accent) 9%, transparent);
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+.folder-card.is-trashed-folder {
+  opacity: 0.82;
+}
+
+.folder-card.is-trashed-folder .folder-card-shell {
+  filter: grayscale(0.35);
+}
+
+/* REQ-DND-006 / Serpent-12mb: external import drop target on folder cards. */
+.folder-card.is-drop-target,
+.folder-card.is-drop-target:hover {
+  background: color-mix(in srgb, var(--accent) 20%, var(--active));
   box-shadow: 0 0 0 2px var(--accent);
 }
 

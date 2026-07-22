@@ -5,6 +5,7 @@ import {
   buildApplicationMenuTemplate,
   collectApplicationMenuRoles,
   shouldInstallApplicationMenu,
+  type ApplicationMenuItemTemplate,
 } from "../../src/shared/application-menu";
 
 describe("shouldInstallApplicationMenu (Serpent-r7gu)", () => {
@@ -29,9 +30,14 @@ describe("buildApplicationMenuTemplate (Serpent-46i9)", () => {
       expect(roles).not.toContain("zoomOut");
       expect(roles).not.toContain("resetZoom");
       // Window "Zoom" (maximize) on macOS is unrelated and may remain.
-      expect(roles).toContain("editMenu");
       expect(roles).toContain("togglefullscreen");
       expect(roles).toContain("toggleDevTools");
+      if (platform === "darwin") {
+        expect(roles).not.toContain("editMenu");
+        expect(roles).toContain("undo");
+      } else {
+        expect(roles).toContain("editMenu");
+      }
     }
   });
 
@@ -62,6 +68,37 @@ describe("buildApplicationMenuTemplate (Serpent-46i9)", () => {
     expect(mac).toContain("about");
     expect(mac).toContain("quit");
     expect(win).not.toContain("about");
+  });
+
+  it("adds macOS Edit invert selection with locale label (Serpent-te8p)", () => {
+    function findInvert(
+      items: readonly ApplicationMenuItemTemplate[],
+    ): ApplicationMenuItemTemplate | undefined {
+      for (const item of items) {
+        if (item.command === "invert-selection") return item;
+        if (item.submenu) {
+          const nested = findInvert(item.submenu);
+          if (nested) return nested;
+        }
+      }
+      return undefined;
+    }
+    const zh = findInvert(
+      buildApplicationMenuTemplate({
+        platform: "darwin",
+        showDevTools: false,
+        locale: "zh-CN",
+      }),
+    );
+    const en = findInvert(
+      buildApplicationMenuTemplate({
+        platform: "darwin",
+        showDevTools: false,
+        locale: "en",
+      }),
+    );
+    expect(zh?.label).toBe("反选");
+    expect(en?.label).toBe("Invert Selection");
   });
 });
 

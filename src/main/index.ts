@@ -64,6 +64,7 @@ import {
   REVEAL_APP_LOG_CHANNEL,
   SHOW_EDIT_CONTEXT_MENU_CHANNEL,
   SHELL_SWIPE_CHANNEL,
+  WINDOW_FOCUS_CHANNEL,
 } from "../shared/protocol/channels";
 import { shouldUseFramelessTitleBar } from "../shared/window-controls";
 import {
@@ -461,6 +462,15 @@ async function createMainWindow(): Promise<void> {
   window.on("swipe", (_event, direction) => {
     window.webContents.send(SHELL_SWIPE_CHANNEL, direction);
   });
+
+  const publishWindowFocus = () => {
+    window.webContents.send(WINDOW_FOCUS_CHANNEL, {
+      focused: window.isFocused(),
+    });
+  };
+  window.on("focus", publishWindowFocus);
+  window.on("blur", publishWindowFocus);
+  window.once("ready-to-show", publishWindowFocus);
 
   if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
     window.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL) => {
@@ -1014,6 +1024,27 @@ async function commandFor(
         libraryId: request.libraryId,
         tagId: request.tagId,
       };
+    case "tag.delete-many.request":
+      return {
+        type: "tag.delete-many",
+        libraryId: request.libraryId,
+        tagIds: request.tagIds,
+      };
+    case "tag.merge.request":
+      return {
+        type: "tag.merge",
+        libraryId: request.libraryId,
+        sourceTagIds: request.sourceTagIds,
+        name: request.name,
+      };
+    case "tag.cooccurrence.request":
+      return {
+        type: "tag.cooccurrence",
+        libraryId: request.libraryId,
+        minWeight: request.minWeight,
+        maxNodes: request.maxNodes,
+        maxEdges: request.maxEdges,
+      };
     case "tag.assign.request":
       return {
         type: "tag.assign",
@@ -1254,6 +1285,14 @@ async function commandFor(
       };
     case "trash.list.request":
       return { type: "asset.list-trash", libraryId: request.libraryId };
+    case "trash.list-folders.request":
+      return { type: "folder.list-trashed", libraryId: request.libraryId };
+    case "trash.restore-folder.request":
+      return {
+        type: "folder.restore-trashed",
+        libraryId: request.libraryId,
+        tombstoneId: request.tombstoneId,
+      };
     case "trash.purge.request":
       return { type: "asset.purge-trash", libraryId: request.libraryId };
     case "asset.delete-linked.request":
@@ -3109,6 +3148,7 @@ async function startApplication(): Promise<void> {
       return;
     }
     appLocale = parsed.locale;
+    installApplicationMenu({ locale: appLocale });
   });
 
   ipcMain.on(ACTIVE_CONTEXT_CHANNEL, (event, input: unknown) => {
@@ -3135,7 +3175,7 @@ async function startApplication(): Promise<void> {
   // Install before the first window so macOS does not keep Electron's default
   // View→Zoom accelerators that steal Cmd+=/-/0 (Serpent-46i9).
   // Windows: hides menu bar for frameless shell (Serpent-znex).
-  installApplicationMenu();
+  installApplicationMenu({ locale: appLocale });
 
   registerWindowControls({
     getMainWindow: () => mainWindow,

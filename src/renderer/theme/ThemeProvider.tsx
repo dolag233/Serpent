@@ -9,6 +9,11 @@ import {
 } from 'react';
 
 import {
+  applyAccentColor,
+  loadAccentPreferences,
+  setStoredAccentHex,
+} from './accent-preferences';
+import {
   applyResolvedTheme,
   loadThemePreferences,
   readSystemTheme,
@@ -22,7 +27,9 @@ import {
 type ThemeContextValue = {
   readonly preference: ThemePreference;
   readonly resolved: ResolvedTheme;
+  readonly accentHex: string;
   readonly setTheme: (theme: ThemePreference) => void;
+  readonly setAccentHex: (hex: string) => void;
 };
 
 const ThemeContext = createContext<ThemeContextValue | null>(null);
@@ -41,6 +48,9 @@ export function ThemeProvider({
   const [preference, setPreferenceState] = useState<ThemePreference>(
     () => initialPreference ?? loadThemePreferences(storage).theme,
   );
+  const [accentHex, setAccentHexState] = useState(
+    () => loadAccentPreferences(storage).accentHex,
+  );
   const [systemTheme, setSystemTheme] = useState<ResolvedTheme>(() =>
     readSystemTheme(),
   );
@@ -53,6 +63,10 @@ export function ThemeProvider({
   useEffect(() => {
     applyResolvedTheme(resolved);
   }, [resolved]);
+
+  useEffect(() => {
+    applyAccentColor(accentHex);
+  }, [accentHex]);
 
   useEffect(() => {
     if (typeof window === 'undefined' || !window.matchMedia) return;
@@ -71,9 +85,17 @@ export function ThemeProvider({
     [storage],
   );
 
+  const setAccentHex = useCallback(
+    (hex: string) => {
+      const next = setStoredAccentHex(hex, storage);
+      setAccentHexState(next.accentHex);
+    },
+    [storage],
+  );
+
   const value = useMemo(
-    () => ({ preference, resolved, setTheme }),
-    [preference, resolved, setTheme],
+    () => ({ preference, resolved, accentHex, setTheme, setAccentHex }),
+    [accentHex, preference, resolved, setAccentHex, setTheme],
   );
 
   return (

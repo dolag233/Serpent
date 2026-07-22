@@ -17,8 +17,12 @@ export const SHOW_EDIT_CONTEXT_MENU_CHANNEL =
   'serpent:shell:show-edit-context-menu' as const;
 export const SHELL_SWIPE_CHANNEL = 'serpent:shell:swipe' as const;
 export const WINDOW_CONTROL_CHANNEL = 'serpent:shell:window-control' as const;
+/** Main → Renderer: trigger invert selection (macOS Edit menu, Serpent-te8p). */
+export const INVERT_SELECTION_CHANNEL = 'serpent:shell:invert-selection' as const;
 export const WINDOW_MAXIMIZED_CHANNEL =
   'serpent:shell:window-maximized' as const;
+/** Main → Renderer: BrowserWindow focus state (macOS traffic lights / shell chrome). */
+export const WINDOW_FOCUS_CHANNEL = 'serpent:shell:window-focus' as const;
 
 export const WORKER_READY_MESSAGE_TYPE = 'worker.ready' as const;
 export const WORKER_SHUTDOWN_MESSAGE_TYPE = 'worker.shutdown' as const;
