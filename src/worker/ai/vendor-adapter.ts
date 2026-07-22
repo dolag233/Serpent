@@ -3,7 +3,7 @@ import type { AiAnalysisRequest, AiAnalysisResult } from './protocol';
 /**
  * Supported AI vendor identifiers.
  */
-export type VendorId = 'openai' | 'gemini' | 'anthropic';
+export type VendorId = 'dashscope' | 'openai' | 'gemini' | 'anthropic';
 
 /**
  * Discriminated error kind used by every vendor adapter.
@@ -25,16 +25,30 @@ export type VendorAdapterErrorKind =
  */
 export class VendorAdapterError extends Error {
   readonly kind: VendorAdapterErrorKind;
+  /** Explicitly opt a normally terminal category into bounded queue retry. */
+  readonly retryable?: boolean;
 
   constructor(
     kind: VendorAdapterErrorKind,
     message: string,
-    options?: { cause?: unknown },
+    options?: { cause?: unknown; retryable?: boolean },
   ) {
     super(message, options);
     this.name = 'VendorAdapterError';
     this.kind = kind;
+    this.retryable = options?.retryable;
   }
+}
+
+/**
+ * Node's AbortSignal.timeout() rejects fetch with TimeoutError, whereas a
+ * caller cancellation is normally AbortError. Both must remain retryable AI
+ * timeouts rather than being misclassified as an ordinary network failure.
+ */
+export function isAiAbortOrTimeoutError(error: unknown): boolean {
+  if (!error || typeof error !== 'object' || !('name' in error)) return false;
+  const name = (error as { name?: unknown }).name;
+  return name === 'AbortError' || name === 'TimeoutError';
 }
 
 /**

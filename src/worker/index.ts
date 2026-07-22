@@ -10,6 +10,7 @@ import { publicErrorForWorkerFailure } from './public-error';
 import { OpenAIVendorAdapter } from './ai/openai-adapter';
 import { GeminiVendorAdapter } from './ai/gemini-adapter';
 import { AnthropicVendorAdapter } from './ai/anthropic-adapter';
+import { DashScopeVendorAdapter } from './ai/dashscope-adapter';
 import {
   DEFAULT_AI_ANALYSIS_SETTINGS,
   normalizeAiAnalysisSettings,
@@ -22,6 +23,7 @@ import {
   AI_ARTIFACT_PENDING_CODES,
   AI_ARTIFACT_PENDING_MAX_ATTEMPTS,
   findVendorError,
+  safeAiConnectionFailure,
   safeAiDiagnostic,
   safeAiErrorDetail,
   vendorFailure,
@@ -30,17 +32,23 @@ import { AiJobAbortRegistry } from './ai/job-abort-registry';
 import { readFileSync } from 'node:fs';
 import { loadAiImageInput } from './ai/image-input';
 import { ProviderConcurrencyLimiter } from './ai/provider-concurrency-limiter';
+import { runLimitedAiRequest } from './ai/limited-request';
 import { AiProgressThrottler } from './ai/progress-throttler';
-import { resolveAiAnalysisConcurrency } from '../shared/ai-concurrency';
+import { DEFAULT_AI_ANALYSIS_CONCURRENCY } from '../shared/ai-concurrency';
+import { DEFAULT_AI_RELIABILITY_SETTINGS } from '../shared/ai-reliability';
 
 const parentPort: ParentPort | undefined = process.parentPort;
 const aiJobAbortRegistry = new AiJobAbortRegistry();
-const aiAnalysisConcurrency = resolveAiAnalysisConcurrency();
 const providerConcurrencyLimiter = new ProviderConcurrencyLimiter(
-  aiAnalysisConcurrency,
+  DEFAULT_AI_ANALYSIS_CONCURRENCY,
 );
 const aiProgressThrottler = new AiProgressThrottler((event) => parentPort?.postMessage(event));
-const analysisControls = new Map<string, { jobId: string; signal: AbortSignal; canWrite: () => boolean }>();
+const analysisControls = new Map<string, {
+  jobId: string;
+  signal: AbortSignal;
+  canWrite: () => boolean;
+  requestTimeoutMs: number;
+}>();
 const activeThumbnailQueues = new Set<string>();
 const rescheduledThumbnailQueues = new Set<string>();
 
@@ -63,6 +71,14 @@ const libraryService = new LibraryService({
       // A serialization or stderr failure must not change the background operation.
     }
   },
+});
+
+// A DB job becomes `running` before it acquires the global semaphore. Publish
+// that distinct snapshot so UI progress proves actual outbound concurrency.
+providerConcurrencyLimiter.onChange(() => {
+  for (const library of libraryService.listLibraries()) {
+    publishAiProgress(library.libraryId);
+  }
 });
 
 // Electron's ParentPort delivers IPC messages but does not provide a documented
@@ -220,9 +236,10 @@ function aiQueueFailure(error: unknown): {
       }
       return {
         errorCode: error.reason,
-        retryable: error.reason === 'AI_NETWORK'
-          || error.reason === 'AI_TIMEOUT'
-          || error.reason === 'AI_RATE_LIMIT',
+        retryable: error.retryable
+          ?? (error.reason === 'AI_NETWORK'
+            || error.reason === 'AI_TIMEOUT'
+            || error.reason === 'AI_RATE_LIMIT'),
       };
     }
     return { errorCode: error.code, retryable: false };
@@ -242,6 +259,7 @@ function safeAiJobState(libraryId: string, jobId: string): string | null {
 function publishAiProgress(libraryId: string): void {
   try {
     const status = libraryService.getAiJobStatus(libraryId);
+    const concurrency = providerConcurrencyLimiter.snapshot();
     aiProgressThrottler.publish({
       type: 'ai.progress',
       libraryId,
@@ -249,6 +267,9 @@ function publishAiProgress(libraryId: string): void {
       running: status.running,
       succeeded: status.succeeded,
       failed: status.failed,
+      inFlight: concurrency.inFlight,
+      concurrencyLimit: concurrency.limit,
+      waitingForSlot: concurrency.waitingForSlot,
     });
   } catch (error) {
     if (!(error instanceof LibraryServiceError && error.code === 'LIBRARY_NOT_OPEN')) throw error;
@@ -975,6 +996,9 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
       // Create adapter based on CC Switch wire apiFormat.
       let adapter: VendorAdapter;
       switch (apiFormat) {
+        case 'dashscope_native':
+          adapter = new DashScopeVendorAdapter(apiKey, model, undefined, resolvedBaseUrl);
+          break;
         case 'openai_chat':
           adapter = new OpenAIVendorAdapter(
             apiKey,
@@ -1010,10 +1034,13 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
 
       let analysisResult;
       try {
-        analysisResult = await providerConcurrencyLimiter.run(
+        analysisResult = await runLimitedAiRequest(
+          providerConcurrencyLimiter,
           apiFormatLimiterKey(apiFormat),
           controls?.signal,
-          () => adapter.analyze(aiRequest, controls?.signal),
+          controls?.requestTimeoutMs
+            ?? DEFAULT_AI_RELIABILITY_SETTINGS.requestTimeoutMs,
+          (requestSignal) => adapter.analyze(aiRequest, requestSignal),
         );
       } catch (error) {
         if (error instanceof VendorAdapterError) {
@@ -1021,6 +1048,7 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
           throw new LibraryServiceError('AI_ANALYSIS_FAILED', {
             cause: safeAiDiagnostic(failure.errorCode, error),
             reason: failure.reason,
+            retryable: failure.retryable,
           });
         }
         throw error;
@@ -1300,6 +1328,9 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
       // Build a minimal adapter and try a request.
       let testAdapter: VendorAdapter;
       switch (apiFormat) {
+        case 'dashscope_native':
+          testAdapter = new DashScopeVendorAdapter(apiKey, model, undefined, resolvedBaseUrl);
+          break;
         case 'openai_chat':
           testAdapter = new OpenAIVendorAdapter(
             apiKey,
@@ -1344,21 +1375,13 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
           success: true,
         };
       } catch (error) {
-        if (error instanceof VendorAdapterError) {
-          return {
-            ok: true,
-            type: 'ai.test-connection.result' as const,
-            success: false,
-            errorKind: error.kind,
-            reason: error.message,
-          };
-        }
+        const failure = safeAiConnectionFailure(error);
         return {
           ok: true,
           type: 'ai.test-connection.result' as const,
           success: false,
-          errorKind: 'network',
-          reason: String(error),
+          errorKind: failure.errorKind,
+          reason: failure.reason,
         };
       }
     }
@@ -1373,7 +1396,18 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
       };
     }
     case 'ai.process-queue': {
-      const { libraryId, maxJobs, ...analysisConfig } = request.command;
+      const {
+        libraryId,
+        maxJobs,
+        concurrencyLimit,
+        requestTimeoutMs,
+        maxAttempts,
+        ...analysisConfig
+      } = request.command;
+      // This is a process-wide cap. Setting it here makes a saved preference
+      // take effect for the next queue batch without restarting Serpent, while
+      // the limiter lets already in-flight requests finish safely.
+      providerConcurrencyLimiter.setLimit(concurrencyLimit);
       let processed = 0;
       let succeeded = 0;
       let failed = 0;
@@ -1393,6 +1427,7 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
             jobId: job.jobId,
             signal: controller.signal,
             canWrite: () => safeAiJobState(libraryId, job.jobId) === 'running',
+            requestTimeoutMs,
           });
           try {
             const result = await handleRequest({
@@ -1438,7 +1473,7 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
                 retryable: artifactPending,
                 maxAttempts: artifactPending
                   ? AI_ARTIFACT_PENDING_MAX_ATTEMPTS
-                  : undefined,
+                  : maxAttempts,
                 errorDetail: detail,
               });
               if (failure.status === 'queued') requeued++;
@@ -1461,6 +1496,7 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
             );
             const failure = libraryService.failAiJob(libraryId, job.jobId, {
               ...classification,
+              maxAttempts: classification.maxAttempts ?? maxAttempts,
               errorDetail: safeAiErrorDetail(classification.errorCode, error),
             });
             if (failure.status === 'queued') requeued++;
@@ -1474,7 +1510,7 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
       };
 
       await Promise.all(
-        Array.from({ length: aiAnalysisConcurrency }, () => processLane()),
+        Array.from({ length: Math.min(concurrencyLimit, maxJobs) }, () => processLane()),
       );
       return {
         ok: true,
@@ -1484,6 +1520,14 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
         succeeded,
         failed,
         requeued,
+      };
+    }
+    case 'ai.set-concurrency-limit': {
+      providerConcurrencyLimiter.setLimit(request.command.concurrencyLimit);
+      return {
+        ok: true,
+        type: 'ai.concurrency.updated' as const,
+        concurrencyLimit: request.command.concurrencyLimit,
       };
     }
     case 'ai.clear-content': {

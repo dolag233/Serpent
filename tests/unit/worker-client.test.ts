@@ -15,4 +15,29 @@ describe('requestTimeoutForCommand', () => {
     expect(requestTimeoutForCommand('ai.process-queue')).toBe(10 * 60_000);
     expect(requestTimeoutForCommand('asset.analyze')).toBe(10 * 60_000);
   });
+
+  it('waits for all bounded request waves when a user lowers AI concurrency', () => {
+    expect(requestTimeoutForCommand({
+      type: 'ai.process-queue',
+      libraryId: 'library-1',
+      apiFormat: 'dashscope_native',
+      model: 'qwen3-vl-plus',
+      apiKey: 'ephemeral-key',
+      enabledFields: { description: true, tags: true, rating: false },
+      analysisSettings: {
+        forceExistingTags: false,
+        maxTags: 8,
+        maxDescriptionCharsZh: 100,
+        maxDescriptionWordsEn: 60,
+        outputStyle: 'normal',
+        ratingRubric: 'score 1-5',
+        customDescriptionPrompt: '',
+      },
+      languages: ['zh-CN'],
+      concurrencyLimit: 1,
+      requestTimeoutMs: 120_000,
+      maxAttempts: 3,
+      maxJobs: 20,
+    })).toBe(2_460_000);
+  });
 });

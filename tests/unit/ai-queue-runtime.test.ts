@@ -101,6 +101,29 @@ describe('AiQueueScheduler', () => {
     vi.useRealTimers();
   });
 
+  it('applies deterministic retry jitter when configured, preventing synchronized retry waves', async () => {
+    vi.useFakeTimers();
+    const processBatch = vi.fn()
+      .mockResolvedValueOnce({ processed: 1, requeued: 1 })
+      .mockResolvedValueOnce({ processed: 1, requeued: 0 });
+    const scheduler = new AiQueueScheduler(processBatch, {
+      batchSize: 20,
+      baseRetryDelayMs: 100,
+      maxRetryDelayMs: 800,
+      retryJitterRatio: 0.2,
+      random: () => 1,
+    });
+
+    await scheduler.trigger('library-1');
+    await vi.advanceTimersByTimeAsync(119);
+    expect(processBatch).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(processBatch).toHaveBeenCalledTimes(2);
+
+    scheduler.clearAll();
+    vi.useRealTimers();
+  });
+
   it('clears pending retry timers on shutdown', async () => {
     vi.useFakeTimers();
     const processBatch = vi.fn().mockResolvedValue({ processed: 1, requeued: 1 });

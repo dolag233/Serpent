@@ -8,9 +8,14 @@ import {
   parseAiAnalysisResultFromModelText,
 } from '../../src/worker/ai/protocol';
 import type { AiAnalysisRequest } from '../../src/worker/ai/protocol';
+import { DashScopeVendorAdapter } from '../../src/worker/ai/dashscope-adapter';
 import { OpenAIVendorAdapter } from '../../src/worker/ai/openai-adapter';
 import { VendorAdapterError } from '../../src/worker/ai/vendor-adapter';
-import { safeAiDiagnostic, vendorFailure } from '../../src/worker/ai/error-mapping';
+import {
+  safeAiConnectionFailure,
+  safeAiDiagnostic,
+  vendorFailure,
+} from '../../src/worker/ai/error-mapping';
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -153,6 +158,17 @@ describe('vendorFailure', () => {
     });
   });
 
+  it('permits bounded retry only for a model-output parse failure', () => {
+    expect(vendorFailure(new VendorAdapterError(
+      'invalid_response',
+      'The AI response did not match the required schema.',
+      { retryable: true },
+    ))).toMatchObject({
+      reason: 'AI_INVALID_RESPONSE',
+      retryable: true,
+    });
+  });
+
   it('creates a cause-bearing diagnostic with safe provider and system details', () => {
     const systemError = Object.assign(
       new Error('fetch https://example.test/path?key=AIza-secret failed with Bearer top-secret'),
@@ -243,6 +259,161 @@ describe('parseAiAnalysisResult', () => {
       'm2',
     );
     expect(prose).toEqual({ tags: ['b'], modelVersion: 'm2' });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// DashScope adapter tests (native multimodal transport)
+// ---------------------------------------------------------------------------
+
+describe('DashScopeVendorAdapter', () => {
+  it('uses the native multimodal transport and validates JSON text output', async () => {
+    let requestedUrl = '';
+    let requestBody: Record<string, unknown> | undefined;
+    const fetchStub: typeof fetch = async (input, init) => {
+      requestedUrl = String(input);
+      requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return new Response(JSON.stringify({
+        request_id: 'dashscope-request',
+        output: {
+          choices: [{
+            message: {
+              content: [{
+                text: JSON.stringify({
+                  description: '一张概念设计图',
+                  tags: ['概念设计'],
+                  rating: 4,
+                }),
+              }],
+            },
+          }],
+        },
+      }), { status: 200, headers: { 'content-type': 'application/json' } });
+    };
+    const adapter = new DashScopeVendorAdapter(
+      'test-api-key',
+      'qwen3-vl-plus',
+      fetchStub,
+      'https://workspace.cn-beijing.maas.aliyuncs.com/compatible-mode/v1',
+    );
+
+    const result = await adapter.analyze(TEST_IMAGE_REQUEST);
+
+    expect(requestedUrl).toBe(
+      'https://workspace.cn-beijing.maas.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation',
+    );
+    expect(requestBody?.parameters).toMatchObject({
+      result_format: 'message',
+      response_format: { type: 'json_object' },
+    });
+    const messages = (requestBody?.input as { messages?: Array<{ role: string; content: unknown }> })
+      .messages;
+    expect(messages?.[0]?.role).toBe('system');
+    expect(messages?.[1]?.content).toEqual(expect.arrayContaining([
+      expect.objectContaining({ image: 'data:image/png;base64,aW1hZ2VEYXRh' }),
+    ]));
+    expect(result).toEqual({
+      description: '一张概念设计图',
+      tags: ['概念设计'],
+      rating: 4,
+      modelVersion: 'qwen3-vl-plus',
+    });
+  });
+
+  it('maps a native authorization failure without leaking response details', async () => {
+    const adapter = new DashScopeVendorAdapter(
+      'test-api-key',
+      'qwen3-vl-plus',
+      httpErrorFetch(401, 'credential rejected'),
+    );
+
+    await expect(adapter.analyze(TEST_IMAGE_REQUEST)).rejects.toMatchObject({
+      name: 'VendorAdapterError',
+      kind: 'auth',
+      message: 'AI service returned HTTP 401',
+    });
+  });
+
+  it.each([
+    [401, 'credential rejected', 'auth', false],
+    [403, 'permission denied', 'permission', false],
+    [429, 'too many requests', 'rate_limit', true],
+    [429, 'quota exhausted', 'quota', false],
+    [500, 'temporary upstream failure', 'network', true],
+  ] as const)(
+    'classifies native HTTP %i as %s with retryable=%s',
+    async (status, body, kind, retryable) => {
+      const adapter = new DashScopeVendorAdapter(
+        'test-api-key',
+        'qwen3-vl-plus',
+        httpErrorFetch(status, body),
+      );
+
+      await expect(adapter.analyze(TEST_IMAGE_REQUEST)).rejects.toMatchObject({ kind });
+      try {
+        await adapter.analyze(TEST_IMAGE_REQUEST);
+      } catch (error) {
+        expect(error).toBeInstanceOf(VendorAdapterError);
+        expect(vendorFailure(error as VendorAdapterError).retryable).toBe(retryable);
+      }
+    },
+  );
+
+  it('classifies native network and bounded-retry malformed-output failures', async () => {
+    const network = new DashScopeVendorAdapter(
+      'test-api-key',
+      'qwen3-vl-plus',
+      networkErrorFetch(new TypeError('socket closed')),
+    );
+    await expect(network.analyze(TEST_IMAGE_REQUEST)).rejects.toMatchObject({ kind: 'network' });
+
+    const malformed = new DashScopeVendorAdapter(
+      'test-api-key',
+      'qwen3-vl-plus',
+      okFetch({ output: { choices: [{ message: { content: 'not-json' } }] } }),
+    );
+    try {
+      await malformed.analyze(TEST_IMAGE_REQUEST);
+    } catch (error) {
+      expect(error).toMatchObject({ kind: 'invalid_response' });
+      expect(vendorFailure(error as VendorAdapterError).retryable).toBe(true);
+    }
+  });
+
+  it('maps a real AbortSignal.timeout rejection to the timeout category', async () => {
+    const fetchUntilAborted: typeof fetch = async (_input, init) =>
+      new Promise<Response>((_resolve, reject) => {
+        const signal = init?.signal;
+        if (!signal) throw new Error('Expected an AbortSignal.');
+        if (signal.aborted) {
+          reject(signal.reason);
+          return;
+        }
+        signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+      });
+    const adapter = new DashScopeVendorAdapter(
+      'test-api-key',
+      'qwen3-vl-plus',
+      fetchUntilAborted,
+    );
+
+    await expect(adapter.analyze(TEST_IMAGE_REQUEST, AbortSignal.timeout(10)))
+      .rejects.toMatchObject({ kind: 'timeout' });
+  });
+});
+
+describe('safe AI connection failures', () => {
+  it('never sends credentials or proxy diagnostics across the Worker boundary', () => {
+    const result = safeAiConnectionFailure(new VendorAdapterError(
+      'network',
+      'proxy failed for https://relay.example/?key=secret Bearer sk-super-secret',
+    ));
+
+    expect(result).toEqual({
+      errorKind: 'network',
+      reason: 'Could not reach the AI service.',
+    });
+    expect(JSON.stringify(result)).not.toContain('secret');
   });
 });
 
@@ -552,10 +723,14 @@ describe('OpenAIVendorAdapter', () => {
   });
 
   it('maps HTTP 400 to invalid_response error kind', async () => {
+    let calls = 0;
     const adapter = new OpenAIVendorAdapter(
       'test-key',
       'gpt-4o',
-      httpErrorFetch(400),
+      (() => {
+        calls += 1;
+        return Promise.resolve(new Response('unknown model', { status: 400 }));
+      }) as typeof fetch,
     );
 
     let error: unknown;
@@ -567,5 +742,32 @@ describe('OpenAIVendorAdapter', () => {
 
     expect(error).toBeInstanceOf(VendorAdapterError);
     expect((error as VendorAdapterError).kind).toBe('invalid_response');
+    expect(calls).toBe(1);
+  });
+
+  it('maps a timeout while reading a 400 compatibility body to retryable timeout', async () => {
+    const timeout = Object.assign(new Error('body read timed out'), { name: 'TimeoutError' });
+    const adapter = new OpenAIVendorAdapter(
+      'test-key',
+      'gpt-4o',
+      (() => Promise.resolve({
+        ok: false,
+        status: 400,
+        clone: () => ({ text: async () => { throw timeout; } }),
+      } as unknown as Response)) as typeof fetch,
+    );
+
+    await expect(adapter.analyze(TEST_IMAGE_REQUEST)).rejects.toMatchObject({
+      kind: 'timeout',
+    });
+  });
+
+  it('marks a transient successful-but-empty completion envelope retryable', async () => {
+    const adapter = new OpenAIVendorAdapter('test-key', 'gpt-4o', okFetch({ choices: [] }));
+
+    await expect(adapter.analyze(TEST_IMAGE_REQUEST)).rejects.toMatchObject({
+      kind: 'invalid_response',
+      retryable: true,
+    });
   });
 });

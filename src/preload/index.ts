@@ -2,6 +2,8 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron';
 
 import type { AiJobStatus, LibraryApiResult, LinkedAssetDeleteResult, MediaJobStatus, PreviewResolution, SerpentLibraryApi } from '../shared/library-api';
 import type { RecentLibraryEntry } from '../shared/recent-libraries';
+import type { AiApiFormat } from '../shared/ai-endpoints';
+import type { AiReliabilitySettings } from '../shared/ai-reliability';
 import { parseExtensionPairingResult, type SerpentExtensionPairingApi } from '../shared/extension-pairing';
 import { searchQuerySchema } from '../shared/asset-types';
 import type { AiSearchPlan, AssetSummary, AssetMetadataResult, ExtractedMetadataResult, CollectionSummary, FilterClause, FolderBrowseEntry, LinkedFolderRule, LinkedFolderSummary, ManagedFolderSummary, SearchScope, SmartCollectionSummary, TagCooccurrenceGraph, TagSummary, TrashedFolderSummary } from '../shared/asset-types';
@@ -759,7 +761,7 @@ const library: SerpentLibraryApi = Object.freeze({
     return { ok: true, value: { items: result.items, total: result.total, offset: result.offset, snippets: result.snippets } };
   },
 
-  async planAiSearch({ naturalQuery }: { naturalQuery: string }): Promise<LibraryApiResult<{ plan: AiSearchPlan; apiFormat: 'openai_chat' | 'openai_responses' | 'anthropic' | 'gemini_native'; model: string }>> {
+  async planAiSearch({ naturalQuery }: { naturalQuery: string }): Promise<LibraryApiResult<{ plan: AiSearchPlan; apiFormat: AiApiFormat; model: string }>> {
     const result = await request({ type: 'ai.search-plan.request', naturalQuery });
     if (!result.ok) return failure(result);
     if (result.type !== 'ai.search-plan.result') throw new Error('Unexpected AI search-plan response.');
@@ -1040,7 +1042,7 @@ const library: SerpentLibraryApi = Object.freeze({
   },
 
   async getAiConfig(): Promise<LibraryApiResult<{
-    apiFormat: 'openai_chat' | 'openai_responses' | 'anthropic' | 'gemini_native' | null;
+    apiFormat: AiApiFormat | null;
     model: string | null;
     baseUrl: string;
     hasKey: boolean;
@@ -1055,6 +1057,8 @@ const library: SerpentLibraryApi = Object.freeze({
       customDescriptionPrompt: string;
     };
     languages: Array<'zh-CN' | 'en' | 'ja' | 'ko'>;
+    concurrencyLimit: number;
+    reliabilitySettings: AiReliabilitySettings;
     autoAnalyzeEnabled: boolean;
     disclaimerAccepted: boolean;
   }>> {
@@ -1065,7 +1069,7 @@ const library: SerpentLibraryApi = Object.freeze({
   },
 
   async setAiConfig(input: {
-    apiFormat: 'openai_chat' | 'openai_responses' | 'anthropic' | 'gemini_native';
+    apiFormat: AiApiFormat;
     model: string;
     baseUrl?: string;
     apiKey?: string;
@@ -1080,6 +1084,8 @@ const library: SerpentLibraryApi = Object.freeze({
       customDescriptionPrompt: string;
     };
     languages?: Array<'zh-CN' | 'en' | 'ja' | 'ko'>;
+    concurrencyLimit?: number;
+    reliabilitySettings?: AiReliabilitySettings;
     autoAnalyzeEnabled: boolean;
     disclaimerAccepted: boolean;
   }): Promise<LibraryApiResult<void>> {
@@ -1292,7 +1298,7 @@ const library: SerpentLibraryApi = Object.freeze({
     apiKey,
     baseUrl,
   }: {
-    apiFormat: 'openai_chat' | 'openai_responses' | 'anthropic' | 'gemini_native';
+    apiFormat: AiApiFormat;
     model: string;
     apiKey?: string;
     baseUrl?: string;
@@ -1314,7 +1320,7 @@ const library: SerpentLibraryApi = Object.freeze({
     apiKey,
     baseUrl,
   }: {
-    apiFormat: 'openai_chat' | 'openai_responses' | 'anthropic' | 'gemini_native';
+    apiFormat: AiApiFormat;
     apiKey?: string;
     baseUrl?: string;
   }): Promise<LibraryApiResult<{ models: string[]; errorKind?: string; reason?: string }>> {
@@ -1388,7 +1394,17 @@ const library: SerpentLibraryApi = Object.freeze({
   },
 
   // AI events
-  onAiProgress(listener: (event: { type: 'ai.progress'; libraryId: string; queued: number; running: number; succeeded: number; failed: number }) => void) {
+  onAiProgress(listener: (event: {
+    type: 'ai.progress';
+    libraryId: string;
+    queued: number;
+    running: number;
+    succeeded: number;
+    failed: number;
+    inFlight: number;
+    concurrencyLimit: number;
+    waitingForSlot: number;
+  }) => void) {
     const subscription = (_event: Electron.IpcRendererEvent, input: unknown) => {
       try {
         listener(parseAiProgressEvent(input));

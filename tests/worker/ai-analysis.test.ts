@@ -455,8 +455,207 @@ describe('listTagNames', () => {
 });
 
 // ---------------------------------------------------------------------------
-// VendorAdapterError mapping (via OpenAIVendorAdapter injected fetch)
+// OpenAI-compatible text fallback + error mapping
 // ---------------------------------------------------------------------------
+
+describe('OpenAIVendorAdapter Responses compatibility', () => {
+  it('retries without the Responses json_object envelope when a compatible relay rejects it', async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    let call = 0;
+    const mockFetch: typeof fetch = async (_input, init) => {
+      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      call += 1;
+      if (call === 1) {
+        return new Response('unsupported text.format', { status: 400 });
+      }
+      return new Response(JSON.stringify({
+        model: 'compatible-vision',
+        output_text: JSON.stringify({
+          description: '一张测试图片',
+          tags: ['测试'],
+          rating: 4,
+        }),
+      }), { status: 200 });
+    };
+    const adapter = new OpenAIVendorAdapter(
+      'test-key',
+      'compatible-vision',
+      mockFetch,
+      'https://relay.example/v1',
+      'openai_responses',
+    );
+
+    const result = await adapter.analyze({
+      filename: 'test.png',
+      mime: 'image/png',
+      language: 'zh-CN',
+      enabledFields: { description: true, tags: true, rating: true },
+      existingTagNames: [],
+      imageBase64: 'fakebase64',
+    });
+
+    expect(result).toMatchObject({
+      description: '一张测试图片',
+      tags: ['测试'],
+      rating: 4,
+      modelVersion: 'compatible-vision',
+    });
+    expect(bodies).toHaveLength(2);
+    expect(bodies[0]?.text).toEqual({ format: { type: 'json_object' } });
+    expect(bodies[1]).not.toHaveProperty('text');
+
+    await adapter.analyze({
+      filename: 'second.png',
+      mime: 'image/png',
+      language: 'zh-CN',
+      enabledFields: { description: true, tags: true, rating: true },
+      existingTagNames: [],
+      imageBase64: 'fakebase64',
+    });
+    // The first request negotiated the relay capability. Later assets on the
+    // same endpoint send one request, so a 400 fallback cannot halve batch
+    // throughput or silently consume every retry budget.
+    expect(bodies).toHaveLength(3);
+    expect(bodies[2]).not.toHaveProperty('text');
+  });
+
+  it('does not retry an ordinary Responses 400 as a format fallback', async () => {
+    let calls = 0;
+    const fetch = async () => {
+      calls += 1;
+      return new Response('model is invalid', { status: 400 });
+    };
+    const adapter = new OpenAIVendorAdapter(
+      'test-key',
+      'unknown-model',
+      fetch as typeof globalThis.fetch,
+      'https://invalid-model.example/v1',
+      'openai_responses',
+    );
+
+    await expect(adapter.analyze({
+      filename: 'test.png',
+      mime: 'image/png',
+      language: 'zh-CN',
+      enabledFields: { description: true, tags: true, rating: true },
+      existingTagNames: [],
+      imageBase64: 'fakebase64',
+    })).rejects.toMatchObject({ kind: 'invalid_response' });
+    expect(calls).toBe(1);
+  });
+
+  it('coordinates the first format probe without holding followers at the global limiter', async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    let structuredCalls = 0;
+    let releaseFirstProbe!: () => void;
+    const firstProbe = new Promise<void>((resolve) => { releaseFirstProbe = resolve; });
+    const mockFetch: typeof fetch = async (_input, init) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      bodies.push(body);
+      if (body.text) {
+        structuredCalls += 1;
+        if (structuredCalls === 1) await firstProbe;
+        return new Response('unsupported text.format', { status: 400 });
+      }
+      return new Response(JSON.stringify({
+        model: 'compatible-vision',
+        output_text: JSON.stringify({ tags: ['parallel'] }),
+      }), { status: 200 });
+    };
+    const request = {
+      filename: 'parallel.png',
+      mime: 'image/png',
+      language: 'zh-CN' as const,
+      enabledFields: { description: true, tags: true, rating: true },
+      existingTagNames: [],
+      imageBase64: 'fakebase64',
+    };
+    const first = new OpenAIVendorAdapter(
+      'test-key', 'compatible-vision', mockFetch,
+      'https://parallel-negotiation.example/v1', 'openai_responses',
+    ).analyze(request);
+    await Promise.resolve();
+    const second = new OpenAIVendorAdapter(
+      'test-key', 'compatible-vision', mockFetch,
+      'https://parallel-negotiation.example/v1', 'openai_responses',
+    ).analyze(request);
+    // A same-endpoint follower uses the portable JSON-text body right away;
+    // it must not wait for the leader's deliberately stalled probe while
+    // holding one of the global outbound-request slots.
+    await expect(second).resolves.toMatchObject({ tags: ['parallel'] });
+    expect(structuredCalls).toBe(1);
+    releaseFirstProbe();
+    await expect(first).resolves.toMatchObject({ tags: ['parallel'] });
+    expect(structuredCalls).toBe(1);
+    expect(bodies.filter((body) => !body.text)).toHaveLength(2);
+  });
+
+  it('cleans up an unreadable probe response so a later request cannot hang', async () => {
+    let calls = 0;
+    const mockFetch: typeof fetch = async () => {
+      calls += 1;
+      if (calls === 1) {
+        return {
+          ok: false,
+          status: 400,
+          clone: () => ({ text: async () => { throw new Error('broken body'); } }),
+        } as unknown as Response;
+      }
+      return new Response(JSON.stringify({
+        model: 'compatible-vision',
+        output_text: JSON.stringify({ tags: ['recovered'] }),
+      }), { status: 200 });
+    };
+    const endpoint = 'https://broken-probe.example/v1';
+    const request = {
+      filename: 'recovery.png', mime: 'image/png', language: 'zh-CN' as const,
+      enabledFields: { description: true, tags: true, rating: true },
+      existingTagNames: [], imageBase64: 'fakebase64',
+    };
+    await expect(new OpenAIVendorAdapter(
+      'test-key', 'compatible-vision', mockFetch, endpoint, 'openai_responses',
+    ).analyze(request)).rejects.toMatchObject({
+      kind: 'invalid_response', retryable: true,
+    });
+    await expect(new OpenAIVendorAdapter(
+      'test-key', 'compatible-vision', mockFetch, endpoint, 'openai_responses',
+    ).analyze(request)).resolves.toMatchObject({ tags: ['recovered'] });
+    expect(calls).toBe(2);
+  });
+
+  it('accepts a Chat-style compatibility envelope but still validates its JSON text', async () => {
+    const adapter = new OpenAIVendorAdapter(
+      'test-key',
+      'compatible-vision',
+      async () => new Response(JSON.stringify({
+        model: 'compatible-vision',
+        choices: [{
+          message: {
+            content: JSON.stringify({
+              description: '一张角色设计图',
+              tags: ['角色设计'],
+              rating: 4,
+            }),
+          },
+        }],
+      }), { status: 200 }),
+      'https://chat-shaped-relay.example/v1',
+      'openai_responses',
+    );
+
+    await expect(adapter.analyze({
+      filename: 'test.png',
+      mime: 'image/png',
+      language: 'zh-CN',
+      enabledFields: { description: true, tags: true, rating: true },
+      existingTagNames: [],
+      imageBase64: 'fakebase64',
+    })).resolves.toMatchObject({
+      tags: ['角色设计'],
+      modelVersion: 'compatible-vision',
+    });
+  });
+});
 
 describe('error mapping', () => {
   function fetchReturning(status: number, body: unknown): typeof fetch {

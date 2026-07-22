@@ -5,7 +5,7 @@ import {
 import { resolveGeminiGenerateContentUrl } from '../../shared/ai-endpoints';
 import { parseAiAnalysisResult, resolveAiAnalysisSettings } from './protocol';
 import type { AiAnalysisRequest, AiAnalysisResult } from './protocol';
-import { VendorAdapterError } from './vendor-adapter';
+import { isAiAbortOrTimeoutError, VendorAdapterError } from './vendor-adapter';
 import type { VendorAdapter, VendorId } from './vendor-adapter';
 
 /**
@@ -144,7 +144,7 @@ export class GeminiVendorAdapter implements VendorAdapter {
       throw new VendorAdapterError(
         'invalid_response',
         'The AI service returned an unreadable response.',
-        { cause: error },
+        { cause: error, retryable: true },
       );
     }
 
@@ -261,15 +261,7 @@ export class GeminiVendorAdapter implements VendorAdapter {
   // ------------------------------------------------------------------
 
   #mapFetchError(error: unknown): VendorAdapterError {
-    const name =
-      typeof error === 'object' &&
-      error !== null &&
-      'name' in error &&
-      typeof (error as Record<string, unknown>).name === 'string'
-        ? ((error as Record<string, unknown>).name as string)
-        : '';
-
-    if (name === 'AbortError') {
+    if (isAiAbortOrTimeoutError(error)) {
       return new VendorAdapterError(
         'timeout',
         'The AI request timed out or was cancelled.',
@@ -279,7 +271,7 @@ export class GeminiVendorAdapter implements VendorAdapter {
 
     return new VendorAdapterError(
       'network',
-      `Could not reach the AI service: ${String(error)}`,
+      'Could not reach the AI service.',
       { cause: error },
     );
   }
@@ -307,6 +299,7 @@ export class GeminiVendorAdapter implements VendorAdapter {
       throw new VendorAdapterError(
         'invalid_response',
         'The AI service returned an unexpected response shape.',
+        { retryable: true },
       );
     }
 
@@ -317,6 +310,7 @@ export class GeminiVendorAdapter implements VendorAdapter {
       throw new VendorAdapterError(
         'invalid_response',
         'The AI service returned no candidates.',
+        { retryable: true },
       );
     }
 
@@ -329,6 +323,7 @@ export class GeminiVendorAdapter implements VendorAdapter {
       throw new VendorAdapterError(
         'invalid_response',
         'The AI service returned an empty response.',
+        { retryable: true },
       );
     }
 
@@ -338,6 +333,7 @@ export class GeminiVendorAdapter implements VendorAdapter {
       throw new VendorAdapterError(
         'invalid_response',
         'The AI response contained no text.',
+        { retryable: true },
       );
     }
 
@@ -348,7 +344,7 @@ export class GeminiVendorAdapter implements VendorAdapter {
       throw new VendorAdapterError(
         'invalid_response',
         'The AI response contained invalid JSON.',
-        { cause: error },
+        { cause: error, retryable: true },
       );
     }
 
@@ -366,7 +362,7 @@ export class GeminiVendorAdapter implements VendorAdapter {
       throw new VendorAdapterError(
         'invalid_response',
         'The AI response did not match the required schema.',
-        { cause: error },
+        { cause: error, retryable: true },
       );
     }
   }

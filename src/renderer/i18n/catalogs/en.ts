@@ -717,6 +717,7 @@ export const en = {
     apiFormatHint: "Choose the upstream protocol, not a model brand. If your relay only speaks Chat Completions, select OpenAI Chat Completions.",
     baseUrl: "Base URL",
     baseUrlHint: "Leave blank for the official default of this API format. For a custom proxy, enter the base URL prefix.",
+    dashscopeBaseUrlHint: "DashScope native uses /api/v1. A /compatible-mode/v1 URL from the same workspace is converted automatically.",
     apiKey: "API Key",
     model: "Model",
     modelPick: "Choose model",
@@ -747,7 +748,15 @@ export const en = {
     tags: "Tags",
     rating: "AI rating",
     forceExistingTags: "Force existing tags only",
-    advanced: "Advanced model settings",
+    advanced: "Model and reliability settings",
+    concurrencyLimit: "Concurrent analysis limit",
+    concurrencyLimitHint: "Maximum simultaneous analysis requests sent to the AI service. Default 16; lower it if the service rate-limits you. Range: 1–32.",
+    requestTimeout: "Request timeout (seconds)",
+    maxAttempts: "Maximum attempts (including first)",
+    retryBaseDelay: "Initial retry delay (seconds)",
+    retryMaxDelay: "Maximum retry delay (seconds)",
+    retryJitter: "Retry jitter (%)",
+    reliabilityHint: "Only network, rate-limit, and timeout failures retry. Exponential backoff with jitter avoids a synchronized retry surge.",
     maxTags: "Max tags",
     maxDescriptionCharsZh: "Description limit (Chinese characters)",
     maxDescriptionWordsEn: "Description limit (English words)",
@@ -1140,6 +1149,7 @@ export const en = {
     aiAnalyzeStartedBatch: "AI analysis started for {count} assets…",
     aiAnalyzeProgress: "AI analysis running ({running} active / {queued} queued)",
     aiAnalyzeProgressCount: "AI analysis {done}/{total}",
+    aiAnalyzeInFlight: "Model requests {active}/{limit} · waiting for a slot {waiting}",
     aiAnalyzeStop: "Stop",
     aiAnalyzeStopped: "AI analysis stopped.",
     aiAnalyzeNoAsset: "Select an asset to analyze first.",
@@ -1294,4 +1304,3 @@ export const en = {
     undoCopy: "Undo copy"
   }
 } as CatalogMessages<typeof zhCN>;
-

@@ -65,6 +65,7 @@ export const nameConflictDecisionSchema = z.enum(['keep-both', 'replace', 'skip'
 
 
 const aiApiFormatSchema = z.enum([
+  'dashscope_native',
   'openai_chat',
   'openai_responses',
   'anthropic',
@@ -85,6 +86,14 @@ const aiAnalysisSettingsSchema = z.strictObject({
   outputStyle: z.enum(['normal', 'concise', 'rigorous']),
   ratingRubric: z.string().min(1).max(4_000),
   customDescriptionPrompt: z.string().max(4_000),
+});
+const aiConcurrencyLimitSchema = z.number().int().min(1).max(32);
+const aiReliabilitySettingsSchema = z.strictObject({
+  requestTimeoutMs: z.number().int().min(15_000).max(600_000),
+  maxAttempts: z.number().int().min(1).max(10),
+  retryBaseDelayMs: z.number().int().min(100).max(60_000),
+  retryMaxDelayMs: z.number().int().min(1_000).max(600_000),
+  retryJitterRatio: z.number().min(0).max(0.5),
 });
 
 export const rendererRequestSchema = z.discriminatedUnion('type', [
@@ -666,6 +675,8 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     languages: aiLanguagesSchema.optional(),
     /** @deprecated Prefer languages[]. */
     language: nonBlankString.optional(),
+    concurrencyLimit: aiConcurrencyLimitSchema.optional(),
+    reliabilitySettings: aiReliabilitySettingsSchema.optional(),
     autoAnalyzeEnabled: z.boolean(),
     disclaimerAccepted: z.boolean(),
   }),
@@ -1454,7 +1465,15 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     enabledFields: aiEnabledFieldsSchema,
     analysisSettings: aiAnalysisSettingsSchema,
     languages: aiLanguagesSchema,
+    concurrencyLimit: aiConcurrencyLimitSchema,
+    requestTimeoutMs: z.number().int().min(15_000).max(600_000),
+    maxAttempts: z.number().int().min(1).max(10),
     maxJobs: z.number().int().min(1).max(100).default(20),
+  }),
+  z.strictObject({
+    /** Applies the persisted global cap to a live Worker without restarting it. */
+    type: z.literal('ai.set-concurrency-limit'),
+    concurrencyLimit: aiConcurrencyLimitSchema,
   }),
   z.strictObject({
     type: z.literal('ai.clear-content'),

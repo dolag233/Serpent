@@ -1394,6 +1394,9 @@ describe('worker request protocol', () => {
           customDescriptionPrompt: '',
         },
         languages: ['zh-CN', 'en'],
+        concurrencyLimit: 16,
+        requestTimeoutMs: 120_000,
+        maxAttempts: 3,
         maxJobs: 10,
       },
     });
@@ -1401,6 +1404,22 @@ describe('worker request protocol', () => {
     expect(() => parseWorkerRequest({
       requestId: 'request-ai-2',
       command: { ...parsed.command, maxJobs: 101 },
+    })).toThrow();
+    expect(() => parseWorkerRequest({
+      requestId: 'request-ai-3',
+      command: { ...parsed.command, concurrencyLimit: 33 },
+    })).toThrow();
+    expect(() => parseWorkerRequest({
+      requestId: 'request-ai-4',
+      command: { ...parsed.command, requestTimeoutMs: 14_999 },
+    })).toThrow();
+    expect(parseWorkerRequest({
+      requestId: 'request-ai-concurrency',
+      command: { type: 'ai.set-concurrency-limit', concurrencyLimit: 16 },
+    }).command).toEqual({ type: 'ai.set-concurrency-limit', concurrencyLimit: 16 });
+    expect(() => parseWorkerRequest({
+      requestId: 'request-ai-concurrency-invalid',
+      command: { type: 'ai.set-concurrency-limit', concurrencyLimit: 33 },
     })).toThrow();
   });
 
@@ -1445,6 +1464,9 @@ describe('worker request protocol', () => {
       running: 1,
       succeeded: 4,
       failed: 1,
+      inFlight: 1,
+      concurrencyLimit: 16,
+      waitingForSlot: 0,
     })).toMatchObject({ running: 1, succeeded: 4 });
     expect(parseAiAnalysisCompletedEvent({
       type: 'ai.analysis.completed',
@@ -1456,6 +1478,7 @@ describe('worker request protocol', () => {
     expect(() => parseAiProgressEvent({
       type: 'ai.progress', libraryId: 'library-1', queued: -1,
       running: 0, succeeded: 0, failed: 0,
+      inFlight: 0, concurrencyLimit: 16, waitingForSlot: 0,
     })).toThrow();
   });
 

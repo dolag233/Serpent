@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { loadAiImageInput } from '../../src/worker/ai/image-input';
 import { ProviderConcurrencyLimiter } from '../../src/worker/ai/provider-concurrency-limiter';
+import { runLimitedAiRequest } from '../../src/worker/ai/limited-request';
 import { AiProgressThrottler } from '../../src/worker/ai/progress-throttler';
 
 describe('ProviderConcurrencyLimiter', () => {
@@ -45,6 +46,94 @@ describe('ProviderConcurrencyLimiter', () => {
     release();
     await first;
   });
+
+  it('enforces one global cap across providers and applies a lower limit without interrupting running requests', async () => {
+    const limiter = new ProviderConcurrencyLimiter(2);
+    let active = 0;
+    let maximum = 0;
+    const releases: Array<() => void> = [];
+    const task = async () => {
+      active += 1;
+      maximum = Math.max(maximum, active);
+      await new Promise<void>((resolve) => releases.push(resolve));
+      active -= 1;
+    };
+
+    const first = limiter.run('openai', undefined, task);
+    const second = limiter.run('gemini', undefined, task);
+    const third = limiter.run('anthropic', undefined, task);
+    await vi.waitFor(() => expect(releases).toHaveLength(2));
+    expect(maximum).toBe(2);
+
+    limiter.setLimit(1);
+    releases.shift()?.();
+    await vi.waitFor(() => expect(releases).toHaveLength(1));
+
+    releases.shift()?.();
+    await vi.waitFor(() => expect(releases).toHaveLength(1));
+    releases.shift()?.();
+    await Promise.all([first, second, third]);
+    expect(maximum).toBe(2);
+  });
+
+  it('admits waiting requests immediately when the live cap is raised to sixteen', async () => {
+    const limiter = new ProviderConcurrencyLimiter(1);
+    const releases: Array<() => void> = [];
+    const task = vi.fn(async () => {
+      await new Promise<void>((resolve) => releases.push(resolve));
+    });
+    const requests = Array.from(
+      { length: 16 },
+      (_, index) => limiter.run(index % 2 === 0 ? 'openai' : 'dashscope', undefined, task),
+    );
+
+    await vi.waitFor(() => expect(task).toHaveBeenCalledTimes(1));
+    limiter.setLimit(16);
+    await vi.waitFor(() => expect(task).toHaveBeenCalledTimes(16));
+    expect(limiter.snapshot()).toEqual({
+      inFlight: 16,
+      limit: 16,
+      waitingForSlot: 0,
+    });
+    releases.splice(0).forEach((release) => release());
+    await Promise.all(requests);
+  });
+
+  it('starts the request timeout after, not while waiting for, a global slot', async () => {
+    const limiter = new ProviderConcurrencyLimiter(1);
+    let releaseFirst!: () => void;
+    let firstStarted!: () => void;
+    const first = runLimitedAiRequest(
+      limiter,
+      'openai',
+      undefined,
+      15,
+      async () => {
+        firstStarted();
+        await new Promise<void>((resolve) => { releaseFirst = resolve; });
+      },
+    );
+    await new Promise<void>((resolve) => { firstStarted = resolve; });
+
+    let secondSignal!: AbortSignal;
+    const second = runLimitedAiRequest(
+      limiter,
+      'dashscope',
+      undefined,
+      15,
+      async (signal) => {
+        secondSignal = signal;
+        return 'sent-after-wait';
+      },
+    );
+    // A caller's configured request timeout must not expire while this task
+    // only waits for the global semaphore.
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    releaseFirst();
+    await expect(second).resolves.toBe('sent-after-wait');
+    expect(secondSignal.aborted).toBe(false);
+    await first;
+  });
 });
 
 describe('AiProgressThrottler', () => {
@@ -52,7 +141,16 @@ describe('AiProgressThrottler', () => {
     vi.useFakeTimers();
     const emit = vi.fn();
     const throttler = new AiProgressThrottler(emit);
-    const base = { type: 'ai.progress' as const, libraryId: 'library-1', running: 0, succeeded: 0, failed: 0 };
+    const base = {
+      type: 'ai.progress' as const,
+      libraryId: 'library-1',
+      running: 0,
+      succeeded: 0,
+      failed: 0,
+      inFlight: 0,
+      concurrencyLimit: 16,
+      waitingForSlot: 0,
+    };
 
     throttler.publish({ ...base, queued: 3 });
     throttler.publish({ ...base, queued: 2, running: 1 });

@@ -46,13 +46,24 @@ const EXPORT_IMPORT_COMMANDS = new Set([
   'library.import-cancel',
 ]);
 
-export function requestTimeoutForCommand(commandType: WorkerCommand['type']): number {
+export function requestTimeoutForCommand(
+  command: WorkerCommand | WorkerCommand['type'],
+): number {
+  const commandType = typeof command === 'string' ? command : command.type;
   if (EXPORT_IMPORT_COMMANDS.has(commandType)) return EXPORT_IMPORT_TIMEOUT_MS;
   if (commandType === 'asset.delete-linked') return LINKED_DELETE_TIMEOUT_MS;
-  if (
-    commandType === 'ai.process-queue'
-    || commandType === 'asset.analyze'
-  ) {
+  if (commandType === 'ai.process-queue') {
+    if (typeof command === 'object' && command.type === 'ai.process-queue') {
+      const lanes = Math.max(1, Math.min(command.maxJobs, command.concurrencyLimit));
+      const waves = Math.ceil(command.maxJobs / lanes);
+      return Math.max(
+        AI_QUEUE_TIMEOUT_MS,
+        (waves * command.requestTimeoutMs) + 60_000,
+      );
+    }
+    return AI_QUEUE_TIMEOUT_MS;
+  }
+  if (commandType === 'asset.analyze') {
     return AI_QUEUE_TIMEOUT_MS;
   }
   if (
@@ -149,7 +160,7 @@ export class LibraryWorkerClient {
 
     const requestId = randomUUID();
     return new Promise<WorkerResult>((resolve, reject) => {
-      const timeout = requestTimeoutForCommand(command.type);
+      const timeout = requestTimeoutForCommand(command);
       const timer = setTimeout(() => {
         this.#pending.delete(requestId);
         this.#expiredRequestIds.add(requestId);

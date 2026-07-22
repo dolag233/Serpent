@@ -15,6 +15,8 @@ import {
   type AiApiFormat,
   type AiLanguageId,
 } from "../shared/ai-endpoints";
+import type { AiReliabilitySettings } from "../shared/ai-reliability";
+import { AiReliabilitySettingsFields } from "./AiReliabilitySettingsFields";
 import { Icon } from "./Icons";
 import { iconActionAttrs } from "./icon-action-attrs";
 import { useT } from "./i18n";
@@ -33,6 +35,8 @@ export interface AiConfigDialogProps {
   model: string;
   baseUrl: string;
   languages: AiLanguageId[];
+  concurrencyLimit: number;
+  reliabilitySettings: AiReliabilitySettings;
   hasKey: boolean;
   descriptionEnabled: boolean;
   tagsEnabled: boolean;
@@ -50,6 +54,8 @@ export interface AiConfigDialogProps {
   onModelChange: (value: string) => void;
   onBaseUrlChange: (value: string) => void;
   onLanguagesChange: (value: AiLanguageId[]) => void;
+  onConcurrencyLimitChange: (value: number) => void;
+  onReliabilitySettingsChange: (value: AiReliabilitySettings) => void;
   onDescriptionEnabledChange: (value: boolean) => void;
   onTagsEnabledChange: (value: boolean) => void;
   onRatingEnabledChange: (value: boolean) => void;
@@ -85,6 +91,8 @@ export function AiConfigDialog({
   model,
   baseUrl,
   languages,
+  concurrencyLimit,
+  reliabilitySettings,
   hasKey,
   descriptionEnabled,
   tagsEnabled,
@@ -101,6 +109,8 @@ export function AiConfigDialog({
   onModelChange,
   onBaseUrlChange,
   onLanguagesChange,
+  onConcurrencyLimitChange,
+  onReliabilitySettingsChange,
   onDescriptionEnabledChange,
   onTagsEnabledChange,
   onRatingEnabledChange,
@@ -368,7 +378,11 @@ export function AiConfigDialog({
               spellCheck={false}
               value={baseUrl}
             />
-            <p className="ai-config-hint">{t("aiConfig.baseUrlHint")}</p>
+            <p className="ai-config-hint">
+              {apiFormat === "dashscope_native"
+                ? t("aiConfig.dashscopeBaseUrlHint")
+                : t("aiConfig.baseUrlHint")}
+            </p>
           </div>
           <div className="editor-field ai-config-field">
             <label className="micro-label" htmlFor="ai-config-api-key">
@@ -417,7 +431,9 @@ export function AiConfigDialog({
                   setTestInline(null);
                 }}
                 placeholder={
-                  apiFormat.startsWith("openai")
+                  apiFormat === "dashscope_native"
+                    ? "qwen3-vl-plus"
+                    : apiFormat.startsWith("openai")
                     ? "gpt-4o-mini"
                     : apiFormat === "gemini_native"
                       ? "gemini-2.0-flash"
@@ -584,6 +600,32 @@ export function AiConfigDialog({
               {t("aiConfig.advanced")}
             </summary>
             <div className="ai-config-advanced-body">
+              <div className="editor-field ai-config-field">
+                <label className="micro-label" htmlFor="ai-config-concurrency-limit">
+                  {t("aiConfig.concurrencyLimit")}
+                </label>
+                <input
+                  className="text-field ai-config-input"
+                  id="ai-config-concurrency-limit"
+                  max={32}
+                  min={1}
+                  onChange={(e) => {
+                    const value = Number.parseInt(e.target.value, 10);
+                    onConcurrencyLimitChange(
+                      Number.isFinite(value)
+                        ? Math.min(32, Math.max(1, value))
+                        : 16,
+                    );
+                  }}
+                  type="number"
+                  value={concurrencyLimit}
+                />
+                <p className="ai-config-hint">{t("aiConfig.concurrencyLimitHint")}</p>
+              </div>
+              <AiReliabilitySettingsFields
+                onChange={onReliabilitySettingsChange}
+                settings={reliabilitySettings}
+              />
               <div className="editor-field ai-config-field">
                 <label className="micro-label" htmlFor="ai-config-max-tags">
                   {t("aiConfig.maxTags")}

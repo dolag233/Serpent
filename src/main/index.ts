@@ -124,10 +124,20 @@ import {
   type AiAnalysisSettings,
 } from "../shared/ai-analysis-settings";
 import {
+  DEFAULT_AI_ANALYSIS_CONCURRENCY,
+  normalizeAiAnalysisConcurrency,
+} from "../shared/ai-concurrency";
+import {
+  DEFAULT_AI_RELIABILITY_SETTINGS,
+  normalizeAiReliabilitySettings,
+  type AiReliabilitySettings,
+} from "../shared/ai-reliability";
+import {
   DEFAULT_AI_LANGUAGES,
   listAiModels,
   migrateLegacyProviderToApiFormat,
   normalizeAiLanguages,
+  type AiApiFormat,
 } from "../shared/ai-endpoints";
 import { createArtifactResponse } from "./artifact-response";
 import {
@@ -211,8 +221,9 @@ let extensionServer: ExtensionServer | undefined;
 let extensionPairingStore: ExtensionPairingStore | undefined;
 const aiQueueScheduler = new AiQueueScheduler(processAiQueueBatch, {
   batchSize: 20,
-  baseRetryDelayMs: 1_000,
-  maxRetryDelayMs: 30_000,
+  baseRetryDelayMs: DEFAULT_AI_RELIABILITY_SETTINGS.retryBaseDelayMs,
+  maxRetryDelayMs: DEFAULT_AI_RELIABILITY_SETTINGS.retryMaxDelayMs,
+  retryJitterRatio: DEFAULT_AI_RELIABILITY_SETTINGS.retryJitterRatio,
 });
 
 // Maps BrowserWindow.id to the active library/folder context for extension save.
@@ -237,7 +248,7 @@ const pendingImportCollections = new Map<string, string>();
 // ── AI Config ────────────────────────────────────────────────────────────
 
 interface AiConfig {
-  apiFormat: "openai_chat" | "openai_responses" | "anthropic" | "gemini_native";
+  apiFormat: AiApiFormat;
   model: string;
   /** Empty = official default for the selected API format. */
   baseUrl: string;
@@ -245,19 +256,23 @@ interface AiConfig {
   tagEnabled: boolean;
   ratingEnabled: boolean;
   analysisSettings: AiAnalysisSettings;
+  concurrencyLimit: number;
+  reliabilitySettings: AiReliabilitySettings;
   languages: Array<"zh-CN" | "en" | "ja" | "ko">;
   autoAnalyzeEnabled: boolean;
   disclaimerAccepted: boolean;
 }
 
 const DEFAULT_AI_CONFIG: AiConfig = {
-  apiFormat: "openai_chat",
-  model: "gpt-4o-mini",
+  apiFormat: "dashscope_native",
+  model: "qwen3-vl-plus",
   baseUrl: "",
   descriptionEnabled: true,
   tagEnabled: true,
   ratingEnabled: true,
   analysisSettings: { ...DEFAULT_AI_ANALYSIS_SETTINGS },
+  concurrencyLimit: DEFAULT_AI_ANALYSIS_CONCURRENCY,
+  reliabilitySettings: { ...DEFAULT_AI_RELIABILITY_SETTINGS },
   languages: ["zh-CN", "en"],
   autoAnalyzeEnabled: false,
   disclaimerAccepted: false,
@@ -308,6 +323,10 @@ function loadAiConfig(): AiConfig & { hasKey: boolean } {
             .analysisSettings?.forceExistingTags ??
           DEFAULT_AI_ANALYSIS_SETTINGS.forceExistingTags,
       }),
+      concurrencyLimit: normalizeAiAnalysisConcurrency(parsed.concurrencyLimit),
+      reliabilitySettings: normalizeAiReliabilitySettings(
+        parsed.reliabilitySettings,
+      ),
       autoAnalyzeEnabled:
         parsed.autoAnalyzeEnabled ?? DEFAULT_AI_CONFIG.autoAnalyzeEnabled,
       disclaimerAccepted:
@@ -332,6 +351,8 @@ function saveAiConfig(config: AiConfig): void {
   toSave.tagEnabled = config.tagEnabled;
   toSave.ratingEnabled = config.ratingEnabled;
   toSave.analysisSettings = config.analysisSettings;
+  toSave.concurrencyLimit = config.concurrencyLimit;
+  toSave.reliabilitySettings = config.reliabilitySettings;
   toSave.languages = config.languages;
   toSave.autoAnalyzeEnabled = config.autoAnalyzeEnabled;
   toSave.disclaimerAccepted = config.disclaimerAccepted;
@@ -633,6 +654,8 @@ async function enqueueAutoAnalyzeAfterImport(
 }
 
 async function processAiQueue(libraryId: string): Promise<void> {
+  const config = loadAiConfig();
+  aiQueueScheduler.setRetryPolicy(config.reliabilitySettings);
   await aiQueueScheduler.trigger(libraryId);
 }
 
@@ -658,6 +681,9 @@ async function processAiQueueBatch(
       },
       analysisSettings: toWireAiAnalysisSettings(config.analysisSettings),
       languages: config.languages,
+      concurrencyLimit: config.concurrencyLimit,
+      requestTimeoutMs: config.reliabilitySettings.requestTimeoutMs,
+      maxAttempts: config.reliabilitySettings.maxAttempts,
       maxJobs,
     });
     if (!result.ok) {
@@ -1785,6 +1811,8 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
         },
         analysisSettings: toWireAiAnalysisSettings(config.analysisSettings),
         languages: config.languages,
+        concurrencyLimit: config.concurrencyLimit,
+        reliabilitySettings: config.reliabilitySettings,
         autoAnalyzeEnabled: config.autoAnalyzeEnabled,
         disclaimerAccepted: config.disclaimerAccepted,
       } satisfies RendererResult;
@@ -1803,7 +1831,7 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
           error: createPublicError("INVALID_IMPORT_DECISION"),
         } satisfies RendererResult;
       }
-      saveAiConfig({
+      const savedConfig: AiConfig = {
         apiFormat: request.apiFormat,
         model: request.model,
         baseUrl: (request.baseUrl ?? "").trim(),
@@ -1817,13 +1845,39 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
           tagEnabled: request.enabledFields?.tags ?? true,
           ratingEnabled: request.enabledFields?.rating ?? true,
         }),
+        concurrencyLimit: normalizeAiAnalysisConcurrency(request.concurrencyLimit),
+        reliabilitySettings: normalizeAiReliabilitySettings(
+          request.reliabilitySettings,
+        ),
         languages: normalizeAiLanguages(
           request.languages ?? request.language ?? DEFAULT_AI_LANGUAGES,
         ),
         autoAnalyzeEnabled: request.autoAnalyzeEnabled,
         disclaimerAccepted: request.disclaimerAccepted,
-      });
+      };
+      saveAiConfig(savedConfig);
       if (request.apiKey) saveEncryptedApiKey(request.apiKey);
+      if (workerClient) {
+        try {
+          const update = await workerClient.request({
+            type: 'ai.set-concurrency-limit',
+            concurrencyLimit: savedConfig.concurrencyLimit,
+          });
+          if (!update.ok || update.type !== 'ai.concurrency.updated') {
+            logger?.error(
+              'ai.config.concurrency-update',
+              new Error('Library Worker did not acknowledge the AI concurrency update.'),
+              { concurrencyLimit: savedConfig.concurrencyLimit },
+            );
+          }
+        } catch (error) {
+          // Saving stays durable even if the Worker is restarting. The next
+          // queue batch always reapplies this value before dispatching work.
+          logger?.error('ai.config.concurrency-update', error, {
+            concurrencyLimit: savedConfig.concurrencyLimit,
+          });
+        }
+      }
       return { ok: true, type: "ai.config.saved" } satisfies RendererResult;
     }
 

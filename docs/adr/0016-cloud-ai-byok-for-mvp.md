@@ -13,7 +13,9 @@ MVP 只支持云端模型，并要求用户填写自己的第三方 API Key。Se
 
 首次配置时显示一次数据发送免责声明。用户保存供应商和 API Key 后自动启用 AI，不再逐文件、逐批或每次启动确认。配置界面提供“测试连接”：通过最小请求验证当前供应商、Key 和所选模型此刻是否可访问，分别反馈认证、权限、额度响应和网络错误；这不等于追踪账户剩余额度。
 
-MVP 内置四种 **API 格式（wire protocol）**，对齐 CC Switch `meta.apiFormat`：`openai_chat`（Chat Completions）、`openai_responses`（Responses）、`anthropic`（Messages）、`gemini_native`（generateContent）。界面展示协议名，不把具体模型号写进格式下拉。用户可填写自定义 Base URL；留空使用各格式官方默认端点。模型名与 API Key 为独立字段；尽量支持从兼容 `/models` 端点拉取模型列表。输出语言支持多选（如中文+English），用于分析与 AI 搜索。不把供应商请求格式扩散到领域模型或搜索逻辑中。
+MVP 内置五种 **API 格式（wire protocol）**，对齐 CC Switch 将协议格式与模型身份分开的做法：`dashscope_native`（DashScope Multimodal）、`openai_chat`（Chat Completions）、`openai_responses`（Responses）、`anthropic`（Messages）、`gemini_native`（generateContent）。界面展示协议名，不把具体模型号写进格式下拉。用户可填写自定义 Base URL；留空使用各格式官方默认端点。模型名与 API Key 为独立字段；尽量支持从兼容 `/models` 端点拉取模型列表。
+
+对于阿里云百炼，`dashscope_native` 是推荐的多模态通道：workspace 域名使用 `/api/v1/services/aigc/multimodal-generation/generation`，并以 `response_format: { type: "json_object" }` 要求一个可验证的 JSON 文本结果。用户误粘贴同一 workspace 的 `/compatible-mode/v1` 时，原生格式会自动转换到 `/api/v1`；选择 `openai_responses` 时则保持兼容模式并访问 `/responses`。这两种格式不能互相猜测或混用。为保护隐私与控制负载，视频分析仍只发送既有的联系表/海报等有界衍生图，而不是直接上传原始视频。输出语言支持多选（如中文+English），用于分析与 AI 搜索。不把供应商请求格式扩散到领域模型或搜索逻辑中。
 
 长期增加：推荐模型自动下载、用户选择本地模型文件、Ollama 等本地模型服务，以及继续使用用户 API Key。官方代理服务只有在商业化需求出现后重新评估。
 
@@ -21,7 +23,7 @@ MVP 内置四种 **API 格式（wire protocol）**，对齐 CC Switch `meta.apiF
 
 - AI 功能不是零配置能力，首次使用需要配置供应商和密钥。
 - 保存有效配置即启用 AI，因此配置流程必须让数据发送范围清晰可见；用户仍可在全局设置中暂停 AI 或关闭指定字段写入。
-- 三个适配器都需要独立的契约测试与最小受支持模型清单；供应商 API 演进会产生持续维护成本。
+- 每个适配器都需要独立的契约测试与最小受支持模型清单；供应商 API 演进会产生持续维护成本。
 - 密钥必须使用操作系统安全凭据存储，不能写进资源库或普通设置文件。
 - 云端调用必须展示将发送的数据并遵守用户授权。
 - MVP 不统计供应商账户额度，也不维护价格表或估算费用。

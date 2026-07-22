@@ -33,6 +33,8 @@ import type {
   SuspectedDuplicateDecision,
 } from './protocol/requests';
 import type { RecentLibraryEntry } from './recent-libraries';
+import type { AiApiFormat } from './ai-endpoints';
+import type { AiReliabilitySettings } from './ai-reliability';
 
 export type LibraryApiResult<T> =
   | { ok: true; value: T }
@@ -304,7 +306,7 @@ export interface SerpentLibraryApi {
   executeSmartCollection(input: { libraryId: string; collectionId: string; limit?: number; offset?: number }): Promise<LibraryApiResult<{ items: AssetSummary[]; total: number; offset: number }>>;
   // Search
   searchAssets(input: { libraryId: string; query?: { clauses: { field: string | null; values: string[]; exclude: boolean }[] } | null; filters?: FilterClause[]; scope?: SearchScope; sort?: { field: 'name' | 'modified_at' | 'created_at' | 'byte_size' | 'long_edge' | 'duration' | 'rating' | 'color' | 'author'; order: 'asc' | 'desc' }; limit?: number; offset?: number }): Promise<LibraryApiResult<{ items: AssetSummary[]; total: number; offset: number; snippets?: { assetId: string; text: string }[] }>>;
-  planAiSearch(input: { naturalQuery: string }): Promise<LibraryApiResult<{ plan: AiSearchPlan; apiFormat: 'openai_chat' | 'openai_responses' | 'anthropic' | 'gemini_native'; model: string }>>;
+  planAiSearch(input: { naturalQuery: string }): Promise<LibraryApiResult<{ plan: AiSearchPlan; apiFormat: AiApiFormat; model: string }>>;
   // Trash / Delete
   trashAssets(input: { libraryId: string; assetIds: string[] }): Promise<LibraryApiResult<{ trashedCount: number }>>;
   restoreAssets(input: { libraryId: string; assetIds: string[]; targetFolderId?: string | null; conflictStrategy?: 'keep-both' | 'replace' | 'skip' }): Promise<LibraryApiResult<{ restoredCount: number; assets: AssetSummary[] }>>;
@@ -362,7 +364,7 @@ export interface SerpentLibraryApi {
   onProgress(listener: (event: ExportProgressEvent | ImportProgressEvent) => void): () => void;
   // AI
   getAiConfig(): Promise<LibraryApiResult<{
-    apiFormat: 'openai_chat' | 'openai_responses' | 'anthropic' | 'gemini_native' | null;
+    apiFormat: AiApiFormat | null;
     model: string | null;
     baseUrl: string;
     hasKey: boolean;
@@ -377,11 +379,13 @@ export interface SerpentLibraryApi {
       customDescriptionPrompt: string;
     };
     languages: Array<'zh-CN' | 'en' | 'ja' | 'ko'>;
+    concurrencyLimit: number;
+    reliabilitySettings: AiReliabilitySettings;
     autoAnalyzeEnabled: boolean;
     disclaimerAccepted: boolean;
   }>>;
   setAiConfig(input: {
-    apiFormat: 'openai_chat' | 'openai_responses' | 'anthropic' | 'gemini_native';
+    apiFormat: AiApiFormat;
     model: string;
     baseUrl?: string;
     apiKey?: string;
@@ -396,6 +400,8 @@ export interface SerpentLibraryApi {
       customDescriptionPrompt: string;
     };
     languages?: Array<'zh-CN' | 'en' | 'ja' | 'ko'>;
+    concurrencyLimit?: number;
+    reliabilitySettings?: AiReliabilitySettings;
     autoAnalyzeEnabled: boolean;
     disclaimerAccepted: boolean;
   }): Promise<LibraryApiResult<void>>;
@@ -446,13 +452,13 @@ export interface SerpentLibraryApi {
   onThumbnailEvent(listener: (event: { type: 'asset.thumbnail.ready' | 'asset.thumbnail.failed'; libraryId: string; assetId: string; artifactId?: string; errorCode?: string; reason?: string }) => void): () => void;
   // AI extended
   testAiConnection(input: {
-    apiFormat: 'openai_chat' | 'openai_responses' | 'anthropic' | 'gemini_native';
+    apiFormat: AiApiFormat;
     model: string;
     apiKey?: string;
     baseUrl?: string;
   }): Promise<LibraryApiResult<{ success: boolean; errorKind?: string; reason?: string }>>;
   listAiModels(input: {
-    apiFormat: 'openai_chat' | 'openai_responses' | 'anthropic' | 'gemini_native';
+    apiFormat: AiApiFormat;
     apiKey?: string;
     baseUrl?: string;
   }): Promise<LibraryApiResult<{ models: string[]; errorKind?: string; reason?: string }>>;
@@ -462,7 +468,17 @@ export interface SerpentLibraryApi {
   cancelAiJobs(input: { libraryId: string; jobIds?: string[] }): Promise<LibraryApiResult<{ cancelledCount: number }>>;
   retryAiJobs(input: { libraryId: string; jobIds: string[] }): Promise<LibraryApiResult<{ retriedCount: number }>>;
   getAiJobStatus(input: { libraryId: string }): Promise<LibraryApiResult<AiJobStatus>>;
-  onAiProgress(listener: (event: { type: 'ai.progress'; libraryId: string; queued: number; running: number; succeeded: number; failed: number }) => void): () => void;
+  onAiProgress(listener: (event: {
+    type: 'ai.progress';
+    libraryId: string;
+    queued: number;
+    running: number;
+    succeeded: number;
+    failed: number;
+    inFlight: number;
+    concurrencyLimit: number;
+    waitingForSlot: number;
+  }) => void): () => void;
   onAiCompleted(listener: (event: { type: 'ai.analysis.completed'; libraryId: string; assetId: string; fieldCount: number; tagCount: number }) => void): () => void;
   onAiCleared(listener: (event: { type: 'ai.content.cleared'; libraryId: string; affectedAssetCount: number }) => void): () => void;
 }

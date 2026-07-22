@@ -166,6 +166,10 @@ export const aiProgressEventSchema = z.strictObject({
   running: z.number().int().nonnegative(),
   succeeded: z.number().int().nonnegative(),
   failed: z.number().int().nonnegative(),
+  /** Actual global model requests, distinct from DB jobs marked running. */
+  inFlight: z.number().int().nonnegative(),
+  concurrencyLimit: z.number().int().min(1).max(32),
+  waitingForSlot: z.number().int().nonnegative(),
 });
 
 export type AiProgressEvent = z.infer<typeof aiProgressEventSchema>;
@@ -1032,6 +1036,11 @@ const workerSuccessResultSchema = z.discriminatedUnion('type', [
   }),
   z.strictObject({
     ok: z.literal(true),
+    type: z.literal('ai.concurrency.updated'),
+    concurrencyLimit: z.number().int().min(1).max(32),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
     type: z.literal('ai.test-connection.result'),
     success: z.boolean(),
     errorKind: nonBlankString.optional(),
@@ -1148,7 +1157,7 @@ const rendererSuccessResultSchema = z.discriminatedUnion('type', [
   z.strictObject({
     ok: z.literal(true),
     type: z.literal('ai.config.got'),
-    apiFormat: z.enum(['openai_chat', 'openai_responses', 'anthropic', 'gemini_native']).nullable(),
+    apiFormat: z.enum(['dashscope_native', 'openai_chat', 'openai_responses', 'anthropic', 'gemini_native']).nullable(),
     model: nonBlankString.nullable(),
     /** Empty string means official default for the selected API format. */
     baseUrl: z.string().max(2048),
@@ -1168,6 +1177,14 @@ const rendererSuccessResultSchema = z.discriminatedUnion('type', [
       customDescriptionPrompt: z.string().max(4_000),
     }),
     languages: z.array(z.enum(['zh-CN', 'en', 'ja', 'ko'])).min(1).max(8),
+    concurrencyLimit: z.number().int().min(1).max(32),
+    reliabilitySettings: z.strictObject({
+      requestTimeoutMs: z.number().int().min(15_000).max(600_000),
+      maxAttempts: z.number().int().min(1).max(10),
+      retryBaseDelayMs: z.number().int().min(100).max(60_000),
+      retryMaxDelayMs: z.number().int().min(1_000).max(600_000),
+      retryJitterRatio: z.number().min(0).max(0.5),
+    }),
     autoAnalyzeEnabled: z.boolean(),
     disclaimerAccepted: z.boolean(),
   }),
@@ -1198,7 +1215,7 @@ const rendererSuccessResultSchema = z.discriminatedUnion('type', [
     ok: z.literal(true),
     type: z.literal('ai.search-plan.result'),
     plan: aiSearchPlanSchema,
-    apiFormat: z.enum(['openai_chat', 'openai_responses', 'anthropic', 'gemini_native']),
+    apiFormat: z.enum(['dashscope_native', 'openai_chat', 'openai_responses', 'anthropic', 'gemini_native']),
     model: nonBlankString,
   }),
   ...assetOperationSuccessSchemas,

@@ -19,7 +19,8 @@ export function vendorFailure(error: VendorAdapterError): {
   return {
     errorCode: `AI_${error.kind.toUpperCase()}`,
     reason: REASON_BY_KIND[error.kind],
-    retryable: error.kind === 'network' || error.kind === 'timeout' || error.kind === 'rate_limit',
+    retryable: error.retryable
+      ?? (error.kind === 'network' || error.kind === 'timeout' || error.kind === 'rate_limit'),
   };
 }
 
@@ -32,6 +33,37 @@ export function findVendorError(error: unknown): VendorAdapterError | undefined 
     current = 'cause' in current ? current.cause : undefined;
   }
   return undefined;
+}
+
+/**
+ * Connection diagnostics cross the Worker → Renderer boundary. Deliberately
+ * return stable category copy instead of provider/transport exception text,
+ * which may include a proxy URL, query key, or echoed Authorization header.
+ */
+export function safeAiConnectionFailure(error: unknown): {
+  errorKind: VendorAdapterError['kind'] | 'network';
+  reason: string;
+} {
+  const vendorError = findVendorError(error);
+  if (!vendorError) {
+    return { errorKind: 'network', reason: 'Could not reach the AI service.' };
+  }
+  switch (vendorError.kind) {
+    case 'auth':
+      return { errorKind: 'auth', reason: 'AI service authentication failed.' };
+    case 'permission':
+      return { errorKind: 'permission', reason: 'AI service permission was denied.' };
+    case 'quota':
+      return { errorKind: 'quota', reason: 'AI service quota is unavailable.' };
+    case 'rate_limit':
+      return { errorKind: 'rate_limit', reason: 'AI service is rate-limiting requests.' };
+    case 'timeout':
+      return { errorKind: 'timeout', reason: 'The AI connection test timed out.' };
+    case 'invalid_response':
+      return { errorKind: 'invalid_response', reason: 'The AI service returned an invalid response.' };
+    case 'network':
+      return { errorKind: 'network', reason: 'Could not reach the AI service.' };
+  }
 }
 
 function redactDiagnosticText(value: string): string {

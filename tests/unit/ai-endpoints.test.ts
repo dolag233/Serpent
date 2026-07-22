@@ -9,6 +9,7 @@ import {
   normalizeAiBaseUrl,
   normalizeAiLanguages,
   resolveAnthropicMessagesUrl,
+  resolveDashScopeMultimodalGenerationUrl,
   resolveOpenAiChatCompletionsUrl,
   resolveOpenAiModelsUrl,
   resolveOpenAiResponsesUrl,
@@ -26,6 +27,9 @@ describe('ai-endpoints URL resolution', () => {
     );
     expect(resolveAnthropicMessagesUrl()).toBe(
       'https://api.anthropic.com/v1/messages',
+    );
+    expect(resolveDashScopeMultimodalGenerationUrl()).toBe(
+      'https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation',
     );
   });
 
@@ -53,6 +57,14 @@ describe('ai-endpoints URL resolution', () => {
     );
     expect(resolveAnthropicMessagesUrl('https://proxy.example/v1')).toBe(
       'https://proxy.example/v1/messages',
+    );
+  });
+
+  it('converts Model Studio compatible-mode workspace URLs to the native DashScope root', () => {
+    expect(resolveDashScopeMultimodalGenerationUrl(
+      'https://workspace.cn-beijing.maas.aliyuncs.com/compatible-mode/v1',
+    )).toBe(
+      'https://workspace.cn-beijing.maas.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation',
     );
   });
 
@@ -100,5 +112,20 @@ describe('listAiModels', () => {
         method: 'GET',
       }),
     );
+  });
+
+  it('provides native DashScope visual-model presets without a brittle model-list request', async () => {
+    const fetchFn = vi.fn() as unknown as typeof fetch;
+    const result = await listAiModels({
+      apiFormat: 'dashscope_native',
+      apiKey: 'sk-test',
+      fetchFn,
+    });
+
+    expect(result).toEqual({
+      ok: true,
+      models: ['qwen3-vl-flash', 'qwen3-vl-plus'],
+    });
+    expect(fetchFn).not.toHaveBeenCalled();
   });
 });

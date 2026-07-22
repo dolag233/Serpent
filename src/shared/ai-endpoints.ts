@@ -4,11 +4,13 @@
  * - openai_responses — OpenAI Responses API
  * - anthropic — Anthropic Messages
  * - gemini_native — Google Gemini generateContent
+ * - dashscope_native — Alibaba Cloud DashScope multimodal generation
  *
  * Base URL is a prefix (no trailing slash); paths are appended like CC Switch.
  */
 
 export type AiApiFormat =
+  | 'dashscope_native'
   | 'openai_chat'
   | 'openai_responses'
   | 'anthropic'
@@ -18,6 +20,7 @@ export type AiApiFormat =
 export type LegacyAiProviderId = 'openai' | 'gemini' | 'anthropic';
 
 export const AI_API_FORMATS: readonly AiApiFormat[] = [
+  'dashscope_native',
   'openai_chat',
   'openai_responses',
   'anthropic',
@@ -25,6 +28,7 @@ export const AI_API_FORMATS: readonly AiApiFormat[] = [
 ] as const;
 
 export const AI_API_FORMAT_LABELS: Record<AiApiFormat, string> = {
+  dashscope_native: 'DashScope Multimodal (native)',
   openai_chat: 'OpenAI Chat Completions',
   openai_responses: 'OpenAI Responses',
   anthropic: 'Anthropic Messages',
@@ -32,6 +36,7 @@ export const AI_API_FORMAT_LABELS: Record<AiApiFormat, string> = {
 };
 
 export const DEFAULT_AI_BASE_URLS: Record<AiApiFormat, string> = {
+  dashscope_native: 'https://dashscope.aliyuncs.com/api/v1',
   openai_chat: 'https://api.openai.com/v1',
   openai_responses: 'https://api.openai.com/v1',
   anthropic: 'https://api.anthropic.com',
@@ -240,11 +245,52 @@ export function resolveGeminiModelsUrl(baseUrl?: string | null): string {
   return joinAiApiUrl(root, 'models');
 }
 
+/**
+ * DashScope native calls use `/api/v1/services/...`, unlike Model Studio's
+ * OpenAI-compatible `/compatible-mode/v1` prefix. Accepting the latter here
+ * is intentional: it makes switching formats for one workspace safe and
+ * avoids accidentally sending a native request through a compatibility relay.
+ */
+function effectiveDashScopeRoot(baseUrl?: string | null): string {
+  const configured = effectiveAiBaseUrl('dashscope_native', baseUrl);
+  const normalized = configured.replace(/\/compatible-mode\/v1$/iu, '/api/v1');
+  if (/\/api\/v1$/iu.test(normalized)) return normalized;
+  try {
+    const parsed = new URL(normalized);
+    if (parsed.pathname === '/' || parsed.pathname === '') {
+      return joinAiApiUrl(normalized, 'api/v1');
+    }
+  } catch {
+    // Keep non-URL test doubles as provided.
+  }
+  return normalized;
+}
+
+export function resolveDashScopeMultimodalGenerationUrl(
+  baseUrl?: string | null,
+): string {
+  return joinAiApiUrl(
+    effectiveDashScopeRoot(baseUrl),
+    'services/aigc/multimodal-generation/generation',
+  );
+}
+
+export function resolveDashScopeTextGenerationUrl(
+  baseUrl?: string | null,
+): string {
+  return joinAiApiUrl(
+    effectiveDashScopeRoot(baseUrl),
+    'services/aigc/text-generation/generation',
+  );
+}
+
 /** Concurrency / limiter key shared by wire formats of the same vendor family. */
 export function apiFormatLimiterKey(
   apiFormat: AiApiFormat,
-): 'openai' | 'gemini' | 'anthropic' {
+): 'dashscope' | 'openai' | 'gemini' | 'anthropic' {
   switch (apiFormat) {
+    case 'dashscope_native':
+      return 'dashscope';
     case 'openai_chat':
     case 'openai_responses':
       return 'openai';
@@ -312,6 +358,16 @@ function httpStatusToListError(
   return 'invalid_response';
 }
 
+/**
+ * DashScope does not expose an OpenAI-style `/models` endpoint for this
+ * transport. Keep the picker useful without making a brittle undocumented
+ * network call; manual model entry remains available for eligible models.
+ */
+export const DASHSCOPE_MULTIMODAL_PRESET_MODELS = [
+  'qwen3-vl-flash',
+  'qwen3-vl-plus',
+] as const;
+
 function parseOpenAiStyleModelIds(body: unknown): string[] {
   if (!body || typeof body !== 'object') return [];
   const data = (body as { data?: unknown }).data;
@@ -349,6 +405,9 @@ export async function listAiModels(input: {
   fetchFn?: typeof fetch;
   signal?: AbortSignal;
 }): Promise<ListAiModelsResult> {
+  if (input.apiFormat === 'dashscope_native') {
+    return { ok: true, models: [...DASHSCOPE_MULTIMODAL_PRESET_MODELS] };
+  }
   const fetchFn = input.fetchFn ?? globalThis.fetch.bind(globalThis);
   try {
     let response: Response;

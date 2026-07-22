@@ -76,6 +76,11 @@ import {
   withFolderRecursiveEnabled,
 } from "./folder-recursive-preferences";
 import { useT, useLocale, translateForLocale, type AppLocale } from "./i18n";
+import type { AiApiFormat } from "../shared/ai-endpoints";
+import {
+  DEFAULT_AI_RELIABILITY_SETTINGS,
+  type AiReliabilitySettings,
+} from "../shared/ai-reliability";
 import {
   createWorkspaceNavHistory,
   type WorkspaceNavLocation,
@@ -809,10 +814,8 @@ function AppInner() {
 
   // AI analysis state
   const [aiConfigOpen, setAiConfigOpen] = useState(false);
-  const [aiApiFormat, setAiApiFormat] = useState<
-    "openai_chat" | "openai_responses" | "anthropic" | "gemini_native"
-  >("openai_chat");
-  const [aiModel, setAiModel] = useState("gpt-4o-mini");
+  const [aiApiFormat, setAiApiFormat] = useState<AiApiFormat>("dashscope_native");
+  const [aiModel, setAiModel] = useState("qwen3-vl-plus");
   const [aiBaseUrl, setAiBaseUrl] = useState("");
   const [aiApiKey, setAiApiKey] = useState("");
   const [aiHasKey, setAiHasKey] = useState(false);
@@ -827,6 +830,9 @@ function AppInner() {
   const [aiLanguages, setAiLanguages] = useState<
     Array<"zh-CN" | "en" | "ja" | "ko">
   >(["zh-CN"]);
+  const [aiConcurrencyLimit, setAiConcurrencyLimit] = useState(16);
+  const [aiReliabilitySettings, setAiReliabilitySettings] =
+    useState<AiReliabilitySettings>({ ...DEFAULT_AI_RELIABILITY_SETTINGS });
   const [aiAutoAnalyzeEnabled, setAiAutoAnalyzeEnabled] = useState(false);
   const [aiDisclaimerAccepted, setAiDisclaimerAccepted] = useState(false);
   const [aiConnectionState, setAiConnectionState] =
@@ -991,6 +997,11 @@ function AppInner() {
   const [mediaJobsOpen, setMediaJobsOpen] = useState(false);
   const [mediaJobs, setMediaJobs] = useState<MediaJobStatus | null>(null);
   const [aiJobs, setAiJobs] = useState<AiJobStatus | null>(null);
+  const [aiConcurrencyStatus, setAiConcurrencyStatus] = useState({
+    inFlight: 0,
+    limit: 16,
+    waitingForSlot: 0,
+  });
   const [mediaJobsLoading, setMediaJobsLoading] = useState(false);
   const controlAiJobsRef = useRef<
     (action: "pause" | "resume" | "cancel" | "retry", jobIds?: string[]) => Promise<void>
@@ -1869,6 +1880,11 @@ function AppInner() {
     if (!api || !library) return;
     const unsubscribeProgress = api.onAiProgress((event) => {
       if (event.libraryId !== library.libraryId) return;
+      setAiConcurrencyStatus({
+        inFlight: event.inFlight,
+        limit: event.concurrencyLimit,
+        waitingForSlot: event.waitingForSlot,
+      });
       // Serpent-u0tn: do not arm analyzing UI for background/import auto jobs
       // when no user-initiated batch size was set (JOBS-007 rollback residue).
       setAiJobs((current) =>
@@ -5461,13 +5477,9 @@ function AppInner() {
     const result = await api.getAiConfig();
     if (!result.ok) return;
     setAiApiFormat(
-      (result.value.apiFormat as
-        | "openai_chat"
-        | "openai_responses"
-        | "anthropic"
-        | "gemini_native") ?? "openai_chat",
+      (result.value.apiFormat as AiApiFormat) ?? "dashscope_native",
     );
-    setAiModel(result.value.model ?? "gpt-4o-mini");
+    setAiModel(result.value.model ?? "qwen3-vl-plus");
     setAiBaseUrl(result.value.baseUrl ?? "");
     setAiHasKey(result.value.hasKey);
     setAiDescriptionEnabled(result.value.enabledFields.description);
@@ -5482,6 +5494,8 @@ function AppInner() {
       | Array<"zh-CN" | "en" | "ja" | "ko">
       | undefined;
     setAiLanguages(langs?.length ? [langs[0]!] : ["zh-CN"]);
+    setAiConcurrencyLimit(result.value.concurrencyLimit);
+    setAiReliabilitySettings(result.value.reliabilitySettings);
     setAiAutoAnalyzeEnabled(result.value.autoAnalyzeEnabled);
     setAiDisclaimerAccepted(result.value.disclaimerAccepted);
     aiVerifiedFingerprintRef.current = null;
@@ -5583,6 +5597,8 @@ function AppInner() {
         forceExistingTags: aiForceExistingTags,
       },
       languages: aiLanguages.length > 0 ? [aiLanguages[0]!] : ["zh-CN"],
+      concurrencyLimit: aiConcurrencyLimit,
+      reliabilitySettings: aiReliabilitySettings,
       autoAnalyzeEnabled: aiAutoAnalyzeEnabled,
       disclaimerAccepted: aiDisclaimerAccepted,
     });
@@ -5760,11 +5776,8 @@ function AppInner() {
       aiAnalyzingRef.current = true;
       setAiAnalyzing(true);
     });
-    setNotice(
-      targetIds.length > 1
-        ? t("toast.aiAnalyzeStartedBatch", { count: targetIds.length })
-        : t("toast.aiAnalyzeStarted"),
-    );
+    // The fixed workspace progress banner is the only in-progress signal.
+    // A transient notice duplicates it and can hide more important feedback.
     void loadAiJobs(true);
     let queuedAny = false;
     let syncDone = false;
@@ -6550,6 +6563,13 @@ function AppInner() {
                     <span className="workspace-ai-progress-message">
                       {progressLabel}
                     </span>
+                  </div>
+                  <div className="ai-config-hint">
+                    {t("toast.aiAnalyzeInFlight", {
+                      active: String(aiConcurrencyStatus.inFlight),
+                      limit: String(aiConcurrencyStatus.limit),
+                      waiting: String(aiConcurrencyStatus.waitingForSlot),
+                    })}
                   </div>
                   {batchProgress.batchTotal > 0 && (
                     <div
@@ -7776,6 +7796,8 @@ function AppInner() {
         model={aiModel}
         baseUrl={aiBaseUrl}
         languages={aiLanguages}
+        concurrencyLimit={aiConcurrencyLimit}
+        reliabilitySettings={aiReliabilitySettings}
         hasKey={aiHasKey}
         descriptionEnabled={aiDescriptionEnabled}
         tagsEnabled={aiTagsEnabled}
@@ -7791,6 +7813,8 @@ function AppInner() {
         onModelChange={setAiModel}
         onBaseUrlChange={setAiBaseUrl}
         onLanguagesChange={setAiLanguages}
+        onConcurrencyLimitChange={setAiConcurrencyLimit}
+        onReliabilitySettingsChange={setAiReliabilitySettings}
         onDescriptionEnabledChange={setAiDescriptionEnabled}
         onTagsEnabledChange={setAiTagsEnabled}
         onRatingEnabledChange={setAiRatingEnabled}

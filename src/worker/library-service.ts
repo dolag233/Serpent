@@ -1859,16 +1859,19 @@ export class LibraryServiceError extends Error {
     options?: {
       cause?: unknown;
       reason?: PublicErrorReason;
+      retryable?: boolean;
       currentEntityVersion?: number;
     },
   ) {
     super(code, options);
     this.name = 'LibraryServiceError';
     this.reason = options?.reason ?? publicReasonFromError(options?.cause);
+    this.retryable = options?.retryable;
     this.currentEntityVersion = options?.currentEntityVersion;
   }
 
   readonly reason?: PublicErrorReason;
+  readonly retryable?: boolean;
   readonly currentEntityVersion?: number;
 }
 

@@ -84,6 +84,34 @@ describe('AI natural-language search planner', () => {
     expect(String(url)).toContain('/responses');
   });
 
+  it('uses DashScope native multimodal generation for the profile model rather than an OpenAI or Anthropic wire format', async () => {
+    const fetchFn = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({
+      output: {
+        choices: [{
+          message: { content: [{ text: JSON.stringify(rawPlan) }] },
+        }],
+      },
+    }));
+    const plan = await planAiSearch({
+      apiFormat: 'dashscope_native',
+      model: 'qwen3-vl-plus',
+      apiKey: 'secret',
+      baseUrl: 'https://workspace.cn-beijing.maas.aliyuncs.com/compatible-mode/v1',
+      naturalQuery: 'city',
+      fetchFn,
+    });
+
+    expect(plan.keywords).toEqual(['science fiction', 'city']);
+    const [url, init] = fetchFn.mock.calls[0]!;
+    expect(String(url)).toBe(
+      'https://workspace.cn-beijing.maas.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation',
+    );
+    expect(init?.headers).toMatchObject({ Authorization: 'Bearer secret' });
+    expect(JSON.parse(String(init?.body))).toMatchObject({
+      parameters: { result_format: 'message', response_format: { type: 'json_object' } },
+    });
+  });
+
   it('forces Anthropic to return the one constrained search tool', async () => {
     const fetchFn = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({
       content: [{ type: 'tool_use', name: 'serpent_prepare_search', input: rawPlan }],

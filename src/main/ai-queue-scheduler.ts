@@ -7,6 +7,8 @@ interface AiQueueSchedulerOptions {
   batchSize: number;
   baseRetryDelayMs: number;
   maxRetryDelayMs: number;
+  retryJitterRatio?: number;
+  random?: () => number;
 }
 
 interface QueueState {
@@ -18,11 +20,27 @@ interface QueueState {
 
 export class AiQueueScheduler {
   private readonly stateByLibrary = new Map<string, QueueState>();
+  private options: AiQueueSchedulerOptions;
 
   constructor(
     private readonly processBatch: (libraryId: string, maxJobs: number) => Promise<AiQueueBatchResult>,
-    private readonly options: AiQueueSchedulerOptions,
-  ) {}
+    options: AiQueueSchedulerOptions,
+  ) {
+    this.options = { ...options };
+  }
+
+  setRetryPolicy(policy: {
+    retryBaseDelayMs: number;
+    retryMaxDelayMs: number;
+    retryJitterRatio: number;
+  }): void {
+    this.options = {
+      ...this.options,
+      baseRetryDelayMs: policy.retryBaseDelayMs,
+      maxRetryDelayMs: policy.retryMaxDelayMs,
+      retryJitterRatio: policy.retryJitterRatio,
+    };
+  }
 
   async trigger(libraryId: string): Promise<void> {
     const state = this.stateByLibrary.get(libraryId) ?? { running: false, requested: false, retryRound: 0 };
@@ -42,9 +60,15 @@ export class AiQueueScheduler {
         state.requested = false;
         const result = await this.processBatch(libraryId, this.options.batchSize);
         if (result.requeued > 0) {
-          const delay = Math.min(
+          const baseDelay = Math.min(
             this.options.baseRetryDelayMs * (2 ** state.retryRound),
             this.options.maxRetryDelayMs,
+          );
+          const jitter = baseDelay * (this.options.retryJitterRatio ?? 0);
+          const random = this.options.random ?? Math.random;
+          const delay = Math.max(
+            0,
+            Math.round(baseDelay + ((random() * 2) - 1) * jitter),
           );
           state.retryRound = Math.min(state.retryRound + 1, 30);
           state.timer = setTimeout(() => {

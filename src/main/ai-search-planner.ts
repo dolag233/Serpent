@@ -1,6 +1,7 @@
 import {
   formatAiLanguagesForPrompt,
   resolveAnthropicMessagesUrl,
+  resolveDashScopeMultimodalGenerationUrl,
   resolveGeminiGenerateContentUrl,
   resolveOpenAiChatCompletionsUrl,
   resolveOpenAiResponsesUrl,
@@ -284,6 +285,29 @@ function providerRequest(
       }),
     }];
   }
+  if (input.apiFormat === 'dashscope_native') {
+    // A DashScope profile has one selected model. The default qwen3-vl-plus
+    // is a multimodal model, so use its multimodal generation endpoint even
+    // for text-only search planning instead of the text-only model endpoint.
+    return [resolveDashScopeMultimodalGenerationUrl(input.baseUrl), {
+      method: 'POST', signal,
+      headers: { Authorization: `Bearer ${input.apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: input.model,
+        input: {
+          messages: [
+            { role: 'system', content: `${system}\nReturn only one JSON object with no Markdown fences.` },
+            { role: 'user', content: input.naturalQuery },
+          ],
+        },
+        parameters: {
+          result_format: 'message',
+          response_format: { type: 'json_object' },
+          temperature: 0,
+        },
+      }),
+    }];
+  }
   if (input.apiFormat === 'gemini_native') {
     return [resolveGeminiGenerateContentUrl(input.model, input.baseUrl), {
       method: 'POST', signal,
@@ -366,6 +390,17 @@ function extractProviderOutput(apiFormat: AiApiFormat, body: unknown): unknown {
       throw new AiSearchPlannerError('AI_REFUSED', 'The provider refused to prepare this search.');
     }
     return parseEmbeddedJson(message.content);
+  }
+  if (apiFormat === 'dashscope_native') {
+    const output = asRecord(record.output);
+    const choice = asRecord(asArray(output.choices)[0]);
+    const content = asRecord(choice.message).content;
+    const text = typeof content === 'string'
+      ? content
+      : asArray(content)
+        .map((part) => asRecord(part).text)
+        .find((value): value is string => typeof value === 'string');
+    return parseEmbeddedJson(text);
   }
   if (apiFormat === 'gemini_native') {
     const feedback = asRecord(record.promptFeedback);
