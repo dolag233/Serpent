@@ -10,6 +10,7 @@ import os from 'node:os';
 import { randomUUID } from 'node:crypto';
 
 import { LibraryService } from '../../src/worker/library-service';
+import { importNoConflict as sharedImportNoConflict } from './import-no-conflict';
 import { OpenAIVendorAdapter } from '../../src/worker/ai/openai-adapter';
 import type { AiAnalysisRequest, AiAnalysisResult } from '../../src/worker/ai/protocol';
 
@@ -45,20 +46,7 @@ function importNoConflict(
   libraryId: string,
   sourceFile: string,
 ) {
-  const prepared = service.prepareOrExecuteImport({
-    libraryId,
-    targetFolderId: undefined,
-    sourceKind: 'files',
-    sourcePaths: [sourceFile],
-  });
-  if ('importId' in prepared) {
-    return service.resolveImport({
-      importId: prepared.importId,
-      suspectedDuplicate: 'skip',
-      nameConflict: 'keep-both',
-    });
-  }
-  return prepared;
+  return sharedImportNoConflict(service, libraryId, sourceFile);
 }
 
 // Minimal valid 1x1 white JPEG (107 bytes).

@@ -13,7 +13,7 @@ export interface WorkspaceNoticeBannerProps {
 }
 
 /**
- * Info/notice channel anchored to the active workspace top center (Serpent-ss1k).
+ * Unified top-center shell notice for info/warning/error (Serpent-ss1k / nlji).
  */
 export function WorkspaceNoticeBanner({
   message,
@@ -24,13 +24,21 @@ export function WorkspaceNoticeBanner({
   onTransitionEnd,
 }: WorkspaceNoticeBannerProps) {
   const t = useT();
+  const kindClass =
+    message.kind === "error"
+      ? " is-error"
+      : message.kind === "warning"
+        ? " is-warning"
+        : "";
+  const iconName =
+    message.kind === "error" || message.kind === "warning" ? "warning" : "info";
   return (
     <div
-      className={`workspace-notice${closing ? ' is-closing' : ''}`}
+      className={`workspace-notice${kindClass}${closing ? ' is-closing' : ''}`}
       onTransitionEnd={onTransitionEnd}
-      role="status"
+      role={message.kind === "error" ? "alert" : "status"}
     >
-      <Icon name="info" size={15} />
+      <Icon name={iconName} size={15} />
       <span className="workspace-notice-text">{message.text}</span>
       {undoLabel && onUndo ? (
         <button className="secondary-button" onClick={onUndo} type="button">

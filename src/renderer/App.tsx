@@ -84,7 +84,20 @@ import { RelinkPreview } from "./RelinkPreview";
 import { MoveDialog } from "./MoveDialog";
 import { RestoreDialog } from "./RestoreDialog";
 import { UndoMoveDialog } from "./UndoMoveDialog";
-import { ConflictsDialog } from "./ConflictsDialog";
+import { NameConflictDialog } from "./NameConflictDialog";
+import { ContentDuplicateDialog } from "./ContentDuplicateDialog";
+import {
+  loadImportConflictPreferences,
+  rememberDuplicateDecision,
+  rememberNameConflictDecision,
+  type RememberedDuplicateDecision,
+  type RememberedNameConflictDecision,
+} from "./import-conflict-preferences";
+import {
+  nextImportConflictPhaseAfterName,
+  resolveImportConflictPresentation,
+  type ImportConflictPhase,
+} from "./import-conflict-flow";
 import { RenameDialog } from "./RenameDialog";
 import { CreateDialog } from "./CreateDialog";
 import { NoLibraryEmptyState } from "./NoLibraryEmptyState";
@@ -182,9 +195,14 @@ import {
 } from "./active-discovery-filters";
 import { resolveBrowseEmptyState, resolveImportMenuCopy } from "./browse-empty-state";
 import { trashedFromLabel } from "./trashed-from-label";
-import { groupTrashedAssetsBySourceFolder } from "./trash-folder-groups";
+import {
+  buildTrashBreadcrumbHops,
+  filterTrashedAssetsAtPath,
+  filterTrashedFoldersAtPath,
+} from "./trash-browse";
 import { invertSelection } from "./invert-selection";
 import { trashedFoldersToBrowseEntries } from "./trashed-folder-entries";
+import { computeMasonrySelectionAssetIds } from "./masonry-selection-order";
 import { toMessage, LibraryOperationError } from "./error-utils";
 
 import type {
@@ -201,6 +219,7 @@ import type {
   SmartCollectionSummary,
   SortDefinition,
   TagSummary,
+  TrashedFolderSummary,
 } from "../shared/asset-types";
 import { hasMeaningfulSmartCollectionCondition } from "../shared/smart-collection-query";
 import { expandFormatFilterTokens } from "../shared/text-media";
@@ -447,9 +466,14 @@ function AppInner() {
   // REQ-FOLDER-001/002/003/010: direct child folder cards shown above assets
   // when the current browse parent is a managed folder or the managed root.
   const [folderBrowseEntries, setFolderBrowseEntries] = useState<FolderBrowseEntry[]>([]);
-  const [trashedFolderBrowseEntries, setTrashedFolderBrowseEntries] = useState<
-    FolderBrowseEntry[]
-  >([]);
+  /** Full trash tombstone list for hierarchy browse (Serpent-6pcd). */
+  const [trashedFolders, setTrashedFolders] = useState<TrashedFolderSummary[]>(
+    [],
+  );
+  const [trashBrowsePath, setTrashBrowsePath] = useState<string | null>(null);
+  const [masonryGridWidth, setMasonryGridWidth] = useState(0);
+  const assetGridRef = useRef<HTMLDivElement | null>(null);
+  const [fatalDialogTitle, setFatalDialogTitle] = useState<string | null>(null);
   const [selectedFolderIds, setSelectedFolderIds] = useState<string[]>([]);
   const managedImportTargetFolderIdRef = useRef<string | undefined>(undefined);
   const [allAssetCount, setAllAssetCount] = useState(0);
@@ -478,19 +502,50 @@ function AppInner() {
     dismissVisible,
     handleToastTransitionEnd,
   } = useToastNotifications();
-  const workspaceNotice =
-    renderedToast?.kind === "notice" ? renderedToast : null;
-  const cornerToast =
-    renderedToast && renderedToast.kind !== "notice" ? renderedToast : null;
+  const dismissFatalAlert = useCallback(() => {
+    setFatalDialogTitle(null);
+    setFatal(null);
+  }, [setFatal]);
   const [dialog, setDialog] = useState<DialogKind>(null);
   const [dialogValue, setDialogValue] = useState(() => t("shell.myLibrary"));
   const [conflicts, setConflicts] = useState<ImportConflictPlan | null>(null);
-  const [duplicateDecision, setDuplicateDecision] = useState<
-    "skip" | "merge" | "create-copy"
-  >("skip");
-  const [nameDecision, setNameDecision] = useState<
-    "keep-both" | "replace" | "skip"
-  >("keep-both");
+  const [conflictPhase, setConflictPhase] = useState<ImportConflictPhase | null>(
+    null,
+  );
+  const [duplicateDecision, setDuplicateDecision] =
+    useState<RememberedDuplicateDecision>("skip");
+  const [nameDecision, setNameDecision] =
+    useState<RememberedNameConflictDecision>("keep-both");
+  const [rememberNameConflict, setRememberNameConflict] = useState(false);
+  const [rememberDuplicate, setRememberDuplicate] = useState(false);
+  const resolveImportConflictsRef = useRef<
+    (
+      plan: ImportConflictPlan,
+      name: RememberedNameConflictDecision,
+      duplicate: RememberedDuplicateDecision,
+    ) => Promise<void>
+  >(async () => {});
+  const presentImportConflicts = useCallback((plan: ImportConflictPlan) => {
+    const prefs = loadImportConflictPreferences();
+    const presentation = resolveImportConflictPresentation(plan, prefs);
+    setConflicts(plan);
+    setNameDecision(presentation.nameDecision);
+    setDuplicateDecision(presentation.duplicateDecision);
+    setRememberNameConflict(false);
+    setRememberDuplicate(false);
+    setConflictPhase(presentation.phase);
+    if (presentation.phase === null) {
+      void resolveImportConflictsRef.current(
+        plan,
+        presentation.nameDecision,
+        presentation.duplicateDecision,
+      );
+    }
+  }, []);
+  const clearImportConflictsUi = useCallback(() => {
+    setConflicts(null);
+    setConflictPhase(null);
+  }, []);
   const [leftOpen, setLeftOpen] = useState(() => window.innerWidth > 800);
   const [rightOpen, setRightOpen] = useState(() => window.innerWidth > 1020);
   // REQ-SHELL-007 / REQ-SHELL-011: draggable nav/inspector pane widths + auto-hide.
@@ -1002,20 +1057,21 @@ function AppInner() {
   );
 
   const visibleAssets = useMemo(() => {
-    if (showTrash) return trashedAssets;
+    if (showTrash) {
+      return filterTrashedAssetsAtPath(
+        trashedAssets,
+        trashedFolders,
+        trashBrowsePath,
+      );
+    }
     return assets;
-  }, [assets, trashedAssets, showTrash]);
+  }, [assets, showTrash, trashBrowsePath, trashedAssets, trashedFolders]);
 
-  const trashedAssetGroups = useMemo(() => {
-    if (!showTrash) return null;
-    return groupTrashedAssetsBySourceFolder(visibleAssets, t("scope.allAssets"));
-  }, [showTrash, visibleAssets, t]);
-
-  const assetRenderSections = useMemo(() => {
-    if (showTrash && trashedAssetGroups) return trashedAssetGroups;
-    return [{ key: "", label: null, assets: visibleAssets }];
-  }, [showTrash, trashedAssetGroups, visibleAssets]);
-
+  // Serpent-6pcd: assets at the current trash hop only (no source-folder grouping).
+  const assetRenderSections = useMemo(
+    () => [{ key: "", label: null as string | null, assets: visibleAssets }],
+    [visibleAssets],
+  );
   // CU-U1: origin chip context for recursive folder / mixed-folder surfaces.
   const sourceBadgeContext = useMemo(() => {
     const mixedFolderBrowse =
@@ -1099,9 +1155,23 @@ function AppInner() {
 
   // CANVAS-022: folders-only (recursive off, zero direct assets) must not
   // mount an empty asset grid — its min-height:100% left a large void.
-  const canvasFolderBrowseEntries = showTrash
-    ? trashedFolderBrowseEntries
-    : folderBrowseEntries;
+  const canvasFolderBrowseEntries = useMemo(() => {
+    if (!showTrash) return folderBrowseEntries;
+    return trashedFoldersToBrowseEntries(
+      filterTrashedFoldersAtPath(trashedFolders, trashBrowsePath),
+    );
+  }, [folderBrowseEntries, showTrash, trashBrowsePath, trashedFolders]);
+  const trashBreadcrumbHops = useMemo(
+    () =>
+      showTrash
+        ? buildTrashBreadcrumbHops(
+            trashedFolders,
+            trashBrowsePath,
+            t("scope.trash"),
+          )
+        : [],
+    [showTrash, t, trashBrowsePath, trashedFolders],
+  );
   const browseCanvasBodyLayout = resolveBrowseCanvasBodyLayout(
     visibleAssets.length,
     canvasFolderBrowseEntries.length,
@@ -1135,13 +1205,42 @@ function AppInner() {
     isPreviewable: isHoverPreviewable,
   });
 
-  // REQ-FOLDER-010: folder-card ids visible in the current browse view, used
-  // for marquee/Shift-range selection; empty whenever folderBrowseEntries is
-  // empty (trash/collection/smart/search/linked-only scopes, per
-  // resolveFolderBrowseParentId).
+  const selectionAssetIds = useMemo(() => {
+    if (assetViewMode !== "masonry") return undefined;
+    return computeMasonrySelectionAssetIds(
+      visibleAssets,
+      masonryGridWidth,
+      assetCardSize,
+      canvasPrefs.fields.name ||
+        canvasPrefs.fields.size ||
+        canvasPrefs.fields.date,
+    );
+  }, [
+    assetCardSize,
+    assetViewMode,
+    canvasPrefs.fields.date,
+    canvasPrefs.fields.name,
+    canvasPrefs.fields.size,
+    masonryGridWidth,
+    visibleAssets,
+  ]);
+
+  useLayoutEffect(() => {
+    if (assetViewMode !== "masonry") return;
+    const element = assetGridRef.current;
+    if (!element) return;
+    const updateWidth = () => setMasonryGridWidth(element.clientWidth);
+    updateWidth();
+    const observer = new ResizeObserver(updateWidth);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [assetViewMode, visibleAssets.length, canvasFolderBrowseEntries.length]);
+
+  // REQ-FOLDER-010 / Serpent-nu6o: selection order must match the canvas,
+  // including trash tombstone cards (folderBrowseEntries is empty in trash).
   const visibleFolderIds = useMemo(
-    () => folderBrowseEntries.map((entry) => entry.folderId),
-    [folderBrowseEntries],
+    () => canvasFolderBrowseEntries.map((entry) => entry.folderId),
+    [canvasFolderBrowseEntries],
   );
   const {
     handleCanvasMouseDown,
@@ -1162,6 +1261,7 @@ function AppInner() {
     draggedCollectionId,
     workspaceCanvasRef,
     folderIds: visibleFolderIds,
+    selectionAssetIds,
     selectedFolderIds,
     setSelectedFolderIds,
   });
@@ -1618,15 +1718,20 @@ function AppInner() {
         if (trashedFoldersResult && !trashedFoldersResult.ok) {
           throw new LibraryOperationError(trashedFoldersResult.error);
         }
-        setTrashedFolderBrowseEntries(
-          trashedFoldersResult
-            ? trashedFoldersToBrowseEntries(trashedFoldersResult.value)
-            : [],
-        );
+        setTrashedFolders(trashedFoldersResult?.value ?? []);
       } else {
         setAssets(assetResult.value.items);
-        setTrashedFolderBrowseEntries([]);
+        setTrashedFolders([]);
       }
+      // Serpent-2oga: drop stale failure badges when the list already has ready thumbs.
+      setThumbnailFailures((current) => {
+        if (current.size === 0) return current;
+        const next = new Map(current);
+        for (const asset of assetResult.value.items) {
+          if (asset.thumbnailStatus === "ready") next.delete(asset.assetId);
+        }
+        return next.size === current.size ? current : next;
+      });
       // CU-B2: keep library-wide count fresh even while browsing trash.
       setAllAssetCount(allResult?.value.total ?? assetResult.value.total);
       setSearchTotal(assetResult.value.total);
@@ -1702,7 +1807,9 @@ function AppInner() {
             event.assetId,
             event.reason ?? t("toast.thumbnailFailed"),
           );
-        } else next.delete(event.assetId);
+        } else if (event.type === "asset.thumbnail.ready") {
+          next.delete(event.assetId);
+        }
         return next;
       });
       setAssets((current) =>
@@ -1714,6 +1821,10 @@ function AppInner() {
               thumbnailStatus: "ready",
               thumbnailArtifactId: event.artifactId,
             };
+          }
+          if (event.type === "asset.thumbnail.ready") {
+            // Ready without artifactId: keep prior status; do not force failed.
+            return asset;
           }
           return {
             ...asset,
@@ -1728,17 +1839,8 @@ function AppInner() {
     if (!api || !library) return;
     const unsubscribeProgress = api.onAiProgress((event) => {
       if (event.libraryId !== library.libraryId) return;
-      const inFlight = event.queued + event.running;
-      if (
-        inFlight > 0 &&
-        !aiAnalyzingRef.current &&
-        analyzingBatchSizeRef.current === 0
-      ) {
-        analyzeFailedBaselineRef.current = event.failed;
-        analyzeSucceededBaselineRef.current = event.succeeded;
-        aiAnalyzingRef.current = true;
-        setAiAnalyzing(true);
-      }
+      // Serpent-u0tn: do not arm analyzing UI for background/import auto jobs
+      // when no user-initiated batch size was set (JOBS-007 rollback residue).
       setAiJobs((current) =>
         current
           ? {
@@ -1776,6 +1878,7 @@ function AppInner() {
         // failure stays a notice; single-asset failure can stay toast-level
         // when not an all-fail batch.
         const showTotalFailure = (detail?: string) => {
+          setFatalDialogTitle(t("dialog.aiAnalyzeFailure.title"));
           setFatal(
             detail
               ? t("toast.aiAnalyzeFailedDetail", { detail })
@@ -1830,17 +1933,14 @@ function AppInner() {
                 );
               }
             });
-        } else if (
-          batchSize > 1 ||
-          (batchSize === 0 && succeededDelta + failedDelta > 1)
-        ) {
+        } else if (batchSize > 1) {
           setNotice(
             t("toast.aiAnalyzeDoneBatch", {
               succeeded: Math.max(0, succeededDelta),
               failed: Math.max(0, failedDelta),
             }),
           );
-        } else {
+        } else if (batchSize > 0) {
           setNotice(t("toast.aiAnalyzeDone"));
         }
         void reloadCurrentContentRef.current();
@@ -2173,6 +2273,7 @@ function AppInner() {
     await closeAssetPreview(false);
     workspaceCanvasRef.current?.scrollTo({ top: 0, left: 0 });
     setShowTrash(true);
+    setTrashBrowsePath(null);
     setShowTagManagement(false);
     setActiveTagId(null);
     setActiveCollectionId(null);
@@ -3102,7 +3203,7 @@ function AppInner() {
       setUiState,
       reloadCurrentContent,
       onPasteConflict: (plan) => {
-        setConflicts(plan);
+        presentImportConflicts(plan);
       },
     });
 
@@ -3159,7 +3260,10 @@ function AppInner() {
     setError,
     setFatal,
     setNotice,
-    setConflicts,
+    setConflicts: (plan) => {
+      if (plan === null) clearImportConflictsUi();
+      else presentImportConflicts(plan);
+    },
     onFoldersDroppedOnFolder: handleFoldersDroppedOnFolder,
   });
 
@@ -3640,7 +3744,7 @@ function AppInner() {
         throw new LibraryOperationError(result.error);
       }
       if ("importId" in result.value) {
-        setConflicts(result.value);
+        presentImportConflicts(result.value);
         return;
       }
       setNotice(importSummaryMessage(result.value, locale));
@@ -3652,17 +3756,21 @@ function AppInner() {
     }
   }
 
-  async function resolveConflicts() {
-    if (!api || !library || !conflicts) return;
+  async function resolveImportConflictsWith(
+    plan: ImportConflictPlan,
+    name: RememberedNameConflictDecision,
+    duplicate: RememberedDuplicateDecision,
+  ) {
+    if (!api || !library) return;
     setUiState("importing");
     try {
       const result = await api.resolveImport({
-        importId: conflicts.importId,
-        suspectedDuplicate: duplicateDecision,
-        nameConflict: nameDecision,
+        importId: plan.importId,
+        suspectedDuplicate: duplicate,
+        nameConflict: name,
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
-      setConflicts(null);
+      clearImportConflictsUi();
       setNotice(importSummaryMessage(result.value, locale));
       await reloadCurrentContent();
     } catch (caught) {
@@ -3671,11 +3779,42 @@ function AppInner() {
       setUiState("ready");
     }
   }
+  resolveImportConflictsRef.current = resolveImportConflictsWith;
+
+  function confirmNameConflictDialog() {
+    if (!conflicts) return;
+    if (rememberNameConflict) {
+      rememberNameConflictDecision(nameDecision);
+    }
+    const prefs = loadImportConflictPreferences();
+    const next = nextImportConflictPhaseAfterName(conflicts, prefs);
+    if (next === "duplicate") {
+      setConflictPhase("duplicate");
+      return;
+    }
+    void resolveImportConflictsWith(
+      conflicts,
+      nameDecision,
+      duplicateDecision,
+    );
+  }
+
+  function confirmContentDuplicateDialog() {
+    if (!conflicts) return;
+    if (rememberDuplicate) {
+      rememberDuplicateDecision(duplicateDecision);
+    }
+    void resolveImportConflictsWith(
+      conflicts,
+      nameDecision,
+      duplicateDecision,
+    );
+  }
 
   async function abandonConflicts() {
     if (!api || !conflicts) return;
     const plan = conflicts;
-    setConflicts(null);
+    clearImportConflictsUi();
     try {
       const result = await api.abandonImport({ importId: plan.importId });
       if (!result.ok) throw new LibraryOperationError(result.error);
@@ -4853,7 +4992,7 @@ function AppInner() {
       dialogOpen: Boolean(dialog),
       fatalAlertOpen: Boolean(fatalAlertMessage),
       aiConnectionFailureOpen: aiConnectionFailureGate.open,
-      conflictsImportId: conflicts?.importId ?? null,
+      conflictsImportId: conflictPhase ? (conflicts?.importId ?? null) : null,
     };
   }, [
     assetRenameDialog,
@@ -4881,6 +5020,7 @@ function AppInner() {
     fatalAlertMessage,
     aiConnectionFailureGate.open,
     conflicts?.importId,
+    conflictPhase,
   ]);
 
   useDialogEscapeDismiss({
@@ -4911,9 +5051,12 @@ function AppInner() {
     },
     setDialog,
     setShowCollectionInput,
-    setConflicts,
+    setConflicts: (value) => {
+      if (value === null) clearImportConflictsUi();
+      else presentImportConflicts(value);
+    },
     setError,
-    onDismissFatalAlert: () => setFatal(null),
+    onDismissFatalAlert: dismissFatalAlert,
     onAbortAiConnectionFailure: onAiConnectionFailureAbort,
   });
 
@@ -4970,7 +5113,48 @@ function AppInner() {
       void trashManagedAssets(assetIds);
     },
     onRename: openAssetRename,
+    onCopyFiles: (assetIds) => {
+      void handleCopyAssetFiles(assetIds);
+    },
   });
+
+  // Serpent-166q: macOS Edit → Copy accelerator (custom menu, not role:copy).
+  useEffect(() => {
+    if (!shellApi) return;
+    return shellApi.onCopySelection(() => {
+      const target = document.activeElement;
+      if (
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target instanceof HTMLSelectElement ||
+        (target instanceof HTMLElement && target.isContentEditable)
+      ) {
+        void shellApi.nativeEditCopy();
+        return;
+      }
+      if (previewAsset || showTrash || !library) {
+        void shellApi.nativeEditCopy();
+        return;
+      }
+      const copyIds = selectedAssets
+        .filter(
+          (asset) => asset.availability === "available" && !asset.deletedAt,
+        )
+        .map((asset) => asset.assetId);
+      if (copyIds.length > 0) {
+        void handleCopyAssetFiles(copyIds);
+        return;
+      }
+      void shellApi.nativeEditCopy();
+    });
+  }, [
+    shellApi,
+    previewAsset,
+    showTrash,
+    library,
+    selectedAssets,
+    handleCopyAssetFiles,
+  ]);
 
   // Capture-phase Escape guard: when context menu is open, stop
   // propagation so the non-capture handler (which clears selection)
@@ -5838,9 +6022,15 @@ function AppInner() {
         </div>
         <ScopeBreadcrumbs
           onNavigateFolder={(folderId) => void chooseFolder(folderId)}
+          onNavigateTrashPath={(path) => {
+            setTrashBrowsePath(path);
+            clearAssetSelection();
+            workspaceCanvasRef.current?.scrollTo({ top: 0, left: 0 });
+          }}
           segments={buildScopeBreadcrumbSegments(
             {
               showTrash,
+              trashBreadcrumbHops,
               activeTagLabel: activeTagId
                 ? (tags.find((tag) => tag.tagId === activeTagId)?.name ?? null)
                 : null,
@@ -6346,17 +6536,19 @@ function AppInner() {
         <div
           className={`workspace-canvas-host${previewAsset ? " is-viewing" : ""}`}
         >
-          {workspaceNotice && (
+          {renderedToast && (
             <WorkspaceNoticeBanner
               closing={toastClosing}
-              message={workspaceNotice}
+              message={renderedToast}
               onDismiss={() => dismissVisible()}
               onTransitionEnd={handleToastTransitionEnd}
               onUndo={
-                lastUndoableOp ? () => void undoLastFileOp() : undefined
+                lastUndoableOp && renderedToast.kind === "notice"
+                  ? () => void undoLastFileOp()
+                  : undefined
               }
               undoLabel={
-                lastUndoableOp
+                lastUndoableOp && renderedToast.kind === "notice"
                   ? lastUndoableOp.kind === "copy"
                     ? t("action.undoCopy")
                     : t("action.undoMove")
@@ -6499,7 +6691,9 @@ function AppInner() {
                         key={entry.folderId}
                         libraryId={library.libraryId}
                         trashed={showTrash}
-                        {...createFolderCardDropHandlers(entry.folderId)}
+                        {...(showTrash
+                          ? {}
+                          : createFolderCardDropHandlers(entry.folderId))}
                         onDragStart={(event) => {
                           const folderIds = resolveDraggedFolderIds(
                             entry.folderId,
@@ -6562,7 +6756,20 @@ function AppInner() {
                           );
                         }}
                         onDoubleClick={(folderId) => {
-                          if (!showTrash) void chooseFolder(folderId);
+                          if (showTrash) {
+                            const entry = canvasFolderBrowseEntries.find(
+                              (item) => item.folderId === folderId,
+                            );
+                            if (!entry) return;
+                            setTrashBrowsePath(entry.relativePath);
+                            clearAssetSelection();
+                            workspaceCanvasRef.current?.scrollTo({
+                              top: 0,
+                              left: 0,
+                            });
+                            return;
+                          }
+                          void chooseFolder(folderId);
                         }}
                         onMouseDown={(event) => {
                           cardMouseDownRef.current = event.button;
@@ -6575,6 +6782,7 @@ function AppInner() {
                 {browseCanvasBodyLayout.showAssetGrid && (
                   <div
                     className={`asset-grid is-${assetViewMode}`}
+                    ref={assetGridRef}
                     style={assetGridLayoutStyle(assetViewMode, assetCardSize)}
                   >
                   {(() => {
@@ -6836,7 +7044,8 @@ function AppInner() {
                             {fileExtensionLabel(asset.displayName)}
                           </span>
                         )}
-                        {thumbnailFailures.has(asset.assetId) && (
+                        {thumbnailFailures.has(asset.assetId) &&
+                          asset.thumbnailStatus !== "ready" && (
                           <span className="missing-banner">
                             <Icon name="warning" size={12} />
                             {t("toast.thumbnailFailedBadge")}
@@ -7080,31 +7289,6 @@ function AppInner() {
           )}
         </div>
         </div>
-        {cornerToast && (
-          <div
-            className={`toast${cornerToast.kind === "error" ? " is-error" : ""}${cornerToast.kind === "warning" ? " is-warning" : ""}${toastClosing ? " is-closing" : ""}`}
-            onTransitionEnd={handleToastTransitionEnd}
-            role={cornerToast.kind === "error" ? "alert" : "status"}
-          >
-            <Icon
-              name={
-                cornerToast.kind === "error"
-                  ? "warning"
-                  : cornerToast.kind === "warning"
-                    ? "warning"
-                    : "info"
-              }
-              size={15}
-            />
-            <span>{cornerToast.text}</span>
-            <IconActionButton
-              omitClassName
-              icon="close"
-              label={t("common.closeHint")}
-              onClick={() => dismissVisible()}
-            />
-          </div>
-        )}
         {previewAsset && library && api && (
           <AssetPreviewModal
             api={api}
@@ -7380,15 +7564,26 @@ function AppInner() {
         }}
         recentLibraries={recentLibraries}
       />
-      {conflicts && (
-        <ConflictsDialog
+      {conflicts && conflictPhase === "name" && (
+        <NameConflictDialog
           conflicts={conflicts}
-          duplicateDecision={duplicateDecision}
-          nameDecision={nameDecision}
-          onDuplicateDecisionChange={setDuplicateDecision}
-          onNameDecisionChange={setNameDecision}
+          decision={nameDecision}
+          remember={rememberNameConflict}
+          onDecisionChange={setNameDecision}
+          onRememberChange={setRememberNameConflict}
           onCancel={() => void abandonConflicts()}
-          onConfirm={() => void resolveConflicts()}
+          onConfirm={() => confirmNameConflictDialog()}
+        />
+      )}
+      {conflicts && conflictPhase === "duplicate" && (
+        <ContentDuplicateDialog
+          conflicts={conflicts}
+          decision={duplicateDecision}
+          remember={rememberDuplicate}
+          onDecisionChange={setDuplicateDecision}
+          onRememberChange={setRememberDuplicate}
+          onCancel={() => void abandonConflicts()}
+          onConfirm={() => confirmContentDuplicateDialog()}
         />
       )}
       {exportDialogOpen && (
@@ -7524,7 +7719,8 @@ function AppInner() {
       />
       <FatalAlertDialog
         message={fatalAlertMessage}
-        onDismiss={() => setFatal(null)}
+        title={fatalDialogTitle}
+        onDismiss={dismissFatalAlert}
       />
       <AiConfigDialog
         open={aiConfigOpen}
@@ -7741,6 +7937,7 @@ function AppInner() {
         onAddToCollection={(assetId, collectionId) => { void addAssetToCollection(assetId, collectionId); }}
         onLoadCollectionMemberships={loadCollectionMemberships}
         trashedAssetCount={trashedAssets.length}
+        trashedFolderCount={trashedFolders.length}
         onRestoreTrashedFolder={(tombstoneId, name) => {
           void restoreTrashedManagedFolder(tombstoneId, name);
         }}

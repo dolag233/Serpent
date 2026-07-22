@@ -14,6 +14,7 @@ import {
   type SpawnResult,
 } from '../../src/worker/library-service';
 import { AUDIO_WAVEFORM_COVER_GENERATOR_TAG } from '../../src/shared/audio-media';
+import { importNoConflict as sharedImportNoConflict } from './import-no-conflict';
 
 const temporaryRoots: string[] = [];
 const require = createRequire(import.meta.url);
@@ -54,16 +55,7 @@ function importNoConflict(
   libraryId: string,
   sourcePath: string,
 ): void {
-  const result = service.prepareOrExecuteImport({
-    libraryId,
-    sourceKind: 'files',
-    sourcePaths: [sourcePath],
-  });
-  if ('importId' in result) {
-    const discard = service.abandonImport(result.importId);
-    expect(discard).toBe(result.importId);
-    throw new Error('Import generated unexpected conflicts.');
-  }
+  sharedImportNoConflict(service, libraryId, sourcePath);
 }
 
 afterEach(() => {

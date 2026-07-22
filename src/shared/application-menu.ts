@@ -49,7 +49,7 @@ export type ApplicationMenuItemTemplate = {
   readonly label?: string;
   readonly submenu?: readonly ApplicationMenuItemTemplate[];
   /** Custom Serpent command (wired in Main when installing the menu). */
-  readonly command?: "invert-selection";
+  readonly command?: "invert-selection" | "copy-selection";
 };
 
 export type ApplicationMenuTemplateOptions = {
@@ -136,6 +136,7 @@ export function buildApplicationMenuTemplate(
 
   const invertLabel =
     options.locale === "zh-CN" ? "反选" : "Invert Selection";
+  const copyLabel = options.locale === "zh-CN" ? "复制" : "Copy";
 
   const editSubmenu: ApplicationMenuItemTemplate[] = isMac
     ? [
@@ -143,7 +144,8 @@ export function buildApplicationMenuTemplate(
         { role: "redo" },
         { type: "separator" },
         { role: "cut" },
-        { role: "copy" },
+        // Serpent-166q: do not use role:copy — it steals ⌘C from asset file copy.
+        { label: copyLabel, command: "copy-selection" },
         { role: "paste" },
         { role: "pasteAndMatchStyle" },
         { role: "delete" },

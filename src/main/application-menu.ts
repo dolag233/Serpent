@@ -5,7 +5,7 @@ import {
   type ApplicationMenuItemTemplate,
   type ApplicationMenuPlatform,
 } from "../shared/application-menu";
-import { INVERT_SELECTION_CHANNEL } from "../shared/protocol/channels";
+import { INVERT_SELECTION_CHANNEL, COPY_SELECTION_CHANNEL } from "../shared/protocol/channels";
 import { shouldHideApplicationMenuBar } from "../shared/window-controls";
 
 function enrichMenuTemplate(
@@ -19,6 +19,16 @@ function enrichMenuTemplate(
         click: (_menuItem, window) => {
           const target = window as BrowserWindow | undefined;
           target?.webContents.send(INVERT_SELECTION_CHANNEL);
+        },
+      };
+    }
+    if (item.command === "copy-selection") {
+      return {
+        label: item.label,
+        accelerator: process.platform === "darwin" ? "Cmd+C" : "Ctrl+C",
+        click: (_menuItem, window) => {
+          const target = window as BrowserWindow | undefined;
+          target?.webContents.send(COPY_SELECTION_CHANNEL);
         },
       };
     }

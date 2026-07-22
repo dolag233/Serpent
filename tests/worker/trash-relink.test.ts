@@ -22,6 +22,7 @@ import {
   LibraryServiceError,
 } from '../../src/worker/library-service';
 import type { ImportCompletion } from '../../src/shared/protocol/responses';
+import { importNoConflict } from './import-no-conflict';
 
 const temporaryRoots: string[] = [];
 
@@ -77,15 +78,6 @@ function expectServiceError(operation: () => unknown, code: LibraryServiceError[
   }
   expect(thrown).toBeInstanceOf(LibraryServiceError);
   expect((thrown as LibraryServiceError).code).toBe(code);
-}
-
-function importNoConflict(service: LibraryService, libraryId: string, sourcePath: string, targetFolderId?: string): ImportCompletion {
-  return service.prepareOrExecuteImport({
-    libraryId,
-    targetFolderId,
-    sourceKind: 'files',
-    sourcePaths: [sourcePath],
-  }) as ImportCompletion;
 }
 
 afterEach(() => {
@@ -952,6 +944,58 @@ describe('emptyTrash', () => {
     const { purgedCount } = service.emptyTrash(created.libraryId);
     expect(purgedCount).toBe(2);
     expect(service.listTrash(created.libraryId)).toEqual([]);
+    service.closeAll();
+  });
+
+  it('keeps folder tombstones when some assets fail to purge (Serpent-b3kf)', () => {
+    const root = temporaryRoot();
+    let busyAssetId = '';
+    const service = newService({
+      removeTrashPath: (trashPath) => {
+        if (path.basename(trashPath) === busyAssetId) {
+          throw Object.assign(new Error('file is busy'), { code: 'EBUSY' });
+        }
+        rmSync(trashPath, { force: true, recursive: true });
+      },
+    });
+    const created = service.createLibrary({
+      displayName: 'Empty Trash Partial',
+      selectedParentPath: root,
+    });
+    const folder = service.createManagedFolder({
+      libraryId: created.libraryId,
+      name: 'keep-me',
+    });
+    writeFileSync(path.join(root, 'busy.jpg'), 'busy');
+    writeFileSync(path.join(root, 'ok.jpg'), 'ok');
+    const busy = importNoConflict(
+      service,
+      created.libraryId,
+      path.join(root, 'busy.jpg'),
+      folder.folderId,
+    ).assets[0]!;
+    const ok = importNoConflict(
+      service,
+      created.libraryId,
+      path.join(root, 'ok.jpg'),
+      folder.folderId,
+    ).assets[0]!;
+    service.trashManagedFolder({
+      libraryId: created.libraryId,
+      folderId: folder.folderId,
+    });
+    busyAssetId = busy.assetId;
+
+    const result = service.emptyTrash(created.libraryId);
+    expect(result.purgedCount).toBe(1);
+    expect(result.skippedCount).toBe(1);
+    expect(service.listTrash(created.libraryId).map((asset) => asset.assetId)).toEqual([
+      busy.assetId,
+    ]);
+    expect(service.listTrashedFolders(created.libraryId).some((row) => row.name === 'keep-me')).toBe(
+      true,
+    );
+    expect(ok.assetId).toBeTruthy();
     service.closeAll();
   });
 });

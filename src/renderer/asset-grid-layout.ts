@@ -98,6 +98,21 @@ export function distributeMasonryItems<T>(
   return columns;
 }
 
+/**
+ * Masonry Shift-range order (Serpent-oz1t): left-to-right columns, top-to-bottom
+ * within each column — matches `MasonryColumns` DOM order from
+ * `distributeMasonryItems`, not array ingestion order.
+ */
+export function masonryVisualReadingOrderIds<T>(
+  items: readonly T[],
+  columnCount: number,
+  estimateHeightPx: (item: T, index: number) => number,
+  getId: (item: T) => string,
+): string[] {
+  const columns = distributeMasonryItems(items, columnCount, estimateHeightPx);
+  return columns.flatMap((column) => column.items.map((item) => getId(item)));
+}
+
 export type JustifiedLayoutItem = {
   id: string;
   /** width / height; missing metadata uses 1. */

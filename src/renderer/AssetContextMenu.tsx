@@ -152,6 +152,8 @@ interface AssetContextMenuProps {
     assetIds: string[],
   ) => Promise<CollectionMembershipRow[]>;
   trashedAssetCount: number;
+  /** Folder tombstones in trash (Serpent-b3kf / empty-trash enablement). */
+  trashedFolderCount: number;
   onRestoreTrashedFolder: (tombstoneId: string, name: string) => void;
   onEmptyTrash: () => void;
 }
@@ -342,9 +344,13 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
           <ContextMenuSection label={t("command.group.delete")}>
             <ContextMenuItem
               danger
-              disabled={props.trashedAssetCount === 0}
+              disabled={
+                props.trashedAssetCount === 0 &&
+                props.trashedFolderCount === 0
+              }
               disabledReason={
-                props.trashedAssetCount === 0
+                props.trashedAssetCount === 0 &&
+                props.trashedFolderCount === 0
                   ? t("empty.trashTitle")
                   : undefined
               }

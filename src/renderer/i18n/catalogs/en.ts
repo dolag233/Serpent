@@ -517,8 +517,21 @@ export const en = {
       merge: "Merge into existing asset",
       createCopy: "Create a copy",
       keepBoth: "Keep both",
-      replace: "Replace existing asset",
+      autoRename: "Auto-rename",
+      replace: "Overwrite",
       apply: "Apply and import"
+    },
+    nameConflict: {
+      title: "Name conflict",
+      countLabel: "name conflicts",
+      actionLabel: "When names collide",
+      remember: "Remember my choice and don’t ask again"
+    },
+    contentDuplicate: {
+      title: "Duplicate content",
+      countLabel: "content duplicates",
+      actionLabel: "When content matches",
+      remember: "Remember my choice and don’t ask again"
     },
     move: {
       cancelAria: "Cancel move",
@@ -570,10 +583,13 @@ export const en = {
       submit: "Delete from disk"
     },
     aiConnectionFailure: {
-      title: "AI connection failed",
+      title: "AI analysis failed",
       body: "Could not reach the AI provider after several retries ({count} job(s) failed). Retry the failed jobs, or abort the remaining queue.",
       retry: "Retry",
       abort: "Abort remaining"
+    },
+    aiAnalyzeFailure: {
+      title: "AI analysis failed"
     },
     fatalAlert: {
       title: "Critical error",
@@ -751,6 +767,11 @@ export const en = {
   settings: {
     title: "Settings",
     themeHint: "Controls the app’s light or dark appearance. Changes apply immediately.",
+    accentColor: "Accent color",
+    accentHint:
+      "Controls buttons, selection rings, focus, active filters, and drop highlights. Applies immediately and persists across restarts. Continuous controls like the card-size slider stay neutral.",
+    accentCustom: "Custom accent (#RRGGBB)",
+    accentReset: "Reset to default",
     languageHint: "Controls the interface language. Changes apply immediately.",
     viewMode: "Browse view",
     canvasHint: "Controls how assets are arranged on the canvas. Changes apply immediately.",
@@ -764,7 +785,13 @@ export const en = {
     confirmationsSection: "Confirmations",
     diskDeleteConfirm: "Confirm before deleting from disk",
     diskDeleteConfirmHint:
-      "When off, “Delete from disk” skips the dialog. You can turn this back on anytime. Shared by assets and folders."
+      "When off, “Delete from disk” skips the dialog. You can turn this back on anytime. Shared by assets and folders.",
+    importConflictRemember: "Remembered import conflict choices",
+    importConflictRememberHint:
+      "If you chose “Remember my choice”, name and content-duplicate imports apply that decision without a dialog.",
+    importConflictRememberReset: "Clear remembered choices",
+    importConflictRememberActive: "A name or content-duplicate choice is remembered",
+    importConflictRememberEmpty: "No import conflict choices remembered"
   },
   preview: {
     ffmpegRequired: "This install is missing the media component needed for a video playback proxy. Reinstall or repair Serpent and try again.",

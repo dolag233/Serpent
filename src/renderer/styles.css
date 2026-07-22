@@ -29,11 +29,11 @@
   --text: #f1f2ef;
   --secondary: #a9ada9;
   --tertiary: #777c79;
-  /* REQ-THEME-004: default accent is blue. Accent-tinted surfaces below all
-     derive from these two tokens via color-mix so one token change re-themes
-     every accent usage; do not hardcode per-selector accent colors. */
+  /* REQ-THEME-004 / Serpent-gnus: only --accent is a leaf color. soft / ring /
+     dark / soft-fg must derive via color-mix so user accent prefs retheme every
+     accent surface. Continuous controls (sliders) stay on --secondary. */
   --accent: #3b82f6;
-  --accent-dark: #2563eb;
+  --accent-dark: color-mix(in srgb, var(--accent) 78%, black);
   --warning: #d99a3e;
   /* Surface state tokens: quiet, content-first hover/active shades shared by
      nav rows, tool buttons, cards and menus. */
@@ -117,12 +117,13 @@
   --secondary: #5a5f5a;
   --tertiary: #8a8f8a;
   --accent: #3b82f6;
-  --accent-dark: #2563eb;
+  --accent-dark: color-mix(in srgb, var(--accent) 78%, black);
   --warning: #b45309;
   --hover: rgb(0 0 0 / 4.5%);
   --active: rgb(0 0 0 / 8%);
   --accent-soft: color-mix(in srgb, var(--accent) 18%, #ffffff);
-  --accent-soft-fg: #1d4ed8;
+  /* Was hardcoded #1d4ed8 — that froze soft labels to blue after accent change. */
+  --accent-soft-fg: color-mix(in srgb, var(--accent) 68%, black);
   --accent-ring: color-mix(in srgb, var(--accent) 38%, transparent);
   --rating-star: #ecc83a;
   --success: #16a34a;
@@ -4373,6 +4374,40 @@ select.ai-config-input.ai-config-languages {
   color: var(--accent-soft-fg);
 }
 
+.app-settings-accent-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.app-settings-accent-swatch {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.app-settings-accent-swatch.is-active {
+  border-color: var(--text);
+  box-shadow: 0 0 0 2px var(--pane);
+}
+
+.app-settings-accent-custom {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-top: 10px;
+}
+
+.app-settings-accent-custom .text-field {
+  flex: 1 1 140px;
+  min-width: 0;
+}
+
 .app-settings-check-row-group {
   display: flex;
   flex-direction: column;
@@ -4612,6 +4647,27 @@ select.ai-config-input.ai-config-languages {
 
 .workspace-notice-text {
   min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-notice.is-error,
+.workspace-notice.is-warning {
+  /* Serpent-nlji: migrate amber toast tokens to top notice. */
+  background: var(--warning-muted);
+  color: var(--warning-fg);
+  border: 1px solid color-mix(in srgb, var(--warning) 28%, transparent);
+  box-shadow: var(--shadow-toast);
+}
+
+.workspace-notice.is-error > :first-child,
+.workspace-notice.is-error .icon,
+.workspace-notice.is-error button,
+.workspace-notice.is-warning > :first-child,
+.workspace-notice.is-warning .icon,
+.workspace-notice.is-warning button {
+  color: var(--warning-fg);
 }
 
 .workspace-notice .secondary-button {

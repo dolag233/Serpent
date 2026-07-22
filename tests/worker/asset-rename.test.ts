@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { LibraryService } from '../../src/worker/library-service';
 import type { LibraryServiceError } from '../../src/worker/library-service';
 import { portablePathIdentity } from '../../src/worker/library-rules';
-import type { ImportCompletion } from '../../src/shared/protocol/responses';
+import { importNoConflict as importFile } from './import-no-conflict';
 
 const roots: string[] = [];
 
@@ -39,15 +39,6 @@ function root(): string {
   const value = mkdtempSync(path.join(tmpdir(), 'serpent-asset-rename-'));
   roots.push(value);
   return value;
-}
-
-function importFile(service: LibraryService, libraryId: string, sourcePath: string, targetFolderId?: string) {
-  return service.prepareOrExecuteImport({
-    libraryId,
-    sourceKind: 'files',
-    sourcePaths: [sourcePath],
-    targetFolderId,
-  }) as ImportCompletion;
 }
 
 function expectCode(

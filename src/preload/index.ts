@@ -23,6 +23,8 @@ import {
   SHELL_SWIPE_CHANNEL,
   WINDOW_FOCUS_CHANNEL,
   INVERT_SELECTION_CHANNEL,
+  COPY_SELECTION_CHANNEL,
+  NATIVE_EDIT_COPY_CHANNEL,
   WINDOW_CONTROL_CHANNEL,
   WINDOW_MAXIMIZED_CHANNEL,
 } from '../shared/protocol/channels';
@@ -1584,6 +1586,18 @@ const shell: SerpentShellApi = Object.freeze({
     return () => {
       ipcRenderer.removeListener(INVERT_SELECTION_CHANNEL, handler);
     };
+  },
+  onCopySelection(listener: () => void): () => void {
+    const handler = () => {
+      listener();
+    };
+    ipcRenderer.on(COPY_SELECTION_CHANNEL, handler);
+    return () => {
+      ipcRenderer.removeListener(COPY_SELECTION_CHANNEL, handler);
+    };
+  },
+  async nativeEditCopy(): Promise<void> {
+    await ipcRenderer.invoke(NATIVE_EDIT_COPY_CHANNEL);
   },
 });
 

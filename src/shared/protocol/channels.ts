@@ -19,6 +19,10 @@ export const SHELL_SWIPE_CHANNEL = 'serpent:shell:swipe' as const;
 export const WINDOW_CONTROL_CHANNEL = 'serpent:shell:window-control' as const;
 /** Main → Renderer: trigger invert selection (macOS Edit menu, Serpent-te8p). */
 export const INVERT_SELECTION_CHANNEL = 'serpent:shell:invert-selection' as const;
+/** Main → Renderer: Edit Copy (⌘C) — file copy when assets selected (Serpent-166q). */
+export const COPY_SELECTION_CHANNEL = 'serpent:shell:copy-selection' as const;
+/** Renderer → Main: fall back to Chromium text copy when no asset file copy. */
+export const NATIVE_EDIT_COPY_CHANNEL = 'serpent:shell:native-edit-copy' as const;
 export const WINDOW_MAXIMIZED_CHANNEL =
   'serpent:shell:window-maximized' as const;
 /** Main → Renderer: BrowserWindow focus state (macOS traffic lights / shell chrome). */

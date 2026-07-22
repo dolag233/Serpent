@@ -6,6 +6,8 @@ import { useT } from "./i18n";
 export interface FatalAlertDialogProps {
   /** Body text; dialog is closed when null/empty. */
   message: string | null;
+  /** Optional title override (Serpent-4sw0: AI uses plain wording). */
+  title?: string | null;
   onDismiss: () => void;
 }
 
@@ -15,10 +17,13 @@ export interface FatalAlertDialogProps {
  */
 export function FatalAlertDialog({
   message,
+  title,
   onDismiss,
 }: FatalAlertDialogProps) {
   const t = useT();
   if (!message) return null;
+
+  const heading = title?.trim() ? title : t("dialog.fatalAlert.title");
 
   return (
     <div className="dialog-backdrop" role="presentation">
@@ -31,7 +36,7 @@ export function FatalAlertDialog({
       >
         <div className="dialog-heading">
           <div>
-            <h2 id="fatal-alert-title">{t("dialog.fatalAlert.title")}</h2>
+            <h2 id="fatal-alert-title">{heading}</h2>
           </div>
           <button
             className="dialog-close"

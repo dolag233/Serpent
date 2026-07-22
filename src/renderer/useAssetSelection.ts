@@ -31,6 +31,11 @@ export interface UseAssetSelectionParams {
   workspaceCanvasRef: React.RefObject<HTMLDivElement | null>;
   /** Visible folder-card ids (REQ-FOLDER-010), used for Shift+click range and marquee. */
   folderIds?: string[];
+  /**
+   * Optional asset id order for Shift/marquee (Serpent-oz1t). When omitted,
+   * uses `assets` array order. Masonry passes visual reading order here.
+   */
+  selectionAssetIds?: string[];
   /** Currently selected folder-card IDs */
   selectedFolderIds?: string[];
   /** Setter for folder multi-select */
@@ -73,6 +78,7 @@ export function useAssetSelection({
   draggedCollectionId,
   workspaceCanvasRef,
   folderIds = [],
+  selectionAssetIds,
   selectedFolderIds = [],
   setSelectedFolderIds,
 }: UseAssetSelectionParams): UseAssetSelectionReturn {
@@ -130,8 +136,8 @@ export function useAssetSelection({
   }
 
   const assetIds = useMemo(
-    () => assets.map((asset) => asset.assetId),
-    [assets],
+    () => selectionAssetIds ?? assets.map((asset) => asset.assetId),
+    [assets, selectionAssetIds],
   );
 
   const browseSelectionItems = useMemo(

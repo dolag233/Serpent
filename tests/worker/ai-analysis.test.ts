@@ -8,6 +8,7 @@ import path from 'node:path';
 import os from 'node:os';
 
 import { LibraryService } from '../../src/worker/library-service';
+import { importNoConflict as sharedImportNoConflict } from './import-no-conflict';
 import { OpenAIVendorAdapter } from '../../src/worker/ai/openai-adapter';
 import { VendorAdapterError } from '../../src/worker/ai/vendor-adapter';
 import type { AiAnalysisRequest } from '../../src/worker/ai/protocol';
@@ -37,20 +38,7 @@ function temporaryRoot(): string {
 }
 
 function importNoConflict(service: LibraryService, libraryId: string, sourceFile: string) {
-  const prepared = service.prepareOrExecuteImport({
-    libraryId,
-    targetFolderId: undefined,
-    sourceKind: 'files',
-    sourcePaths: [sourceFile],
-  });
-  if ('importId' in prepared) {
-    return service.resolveImport({
-      importId: prepared.importId,
-      suspectedDuplicate: 'skip',
-      nameConflict: 'keep-both',
-    });
-  }
-  return prepared;
+  return sharedImportNoConflict(service, libraryId, sourceFile);
 }
 
 // ---------------------------------------------------------------------------

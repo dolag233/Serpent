@@ -78,6 +78,20 @@ describe("asset action keyboard chords (Serpent-uye)", () => {
         "windows",
       ),
     ).toBe(true);
+    expect(
+      matchAssetActionKeyboardCommand(
+        "asset.copy",
+        event({ key: "c", metaKey: true }),
+        "mac",
+      ),
+    ).toBe(true);
+    expect(
+      matchAssetActionKeyboardCommand(
+        "asset.copy",
+        event({ key: "c", ctrlKey: true }),
+        "windows",
+      ),
+    ).toBe(true);
   });
 
   it("rejects wrong modifier or key", () => {

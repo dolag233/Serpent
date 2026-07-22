@@ -1,5 +1,6 @@
 import {
   useCallback,
+  useEffect,
   useRef,
   useState,
   type DragEvent,
@@ -70,6 +71,17 @@ export function useExternalImportHandlers({
   const [folderCardDropTarget, setFolderCardDropTarget] = useState<string | null>(
     null,
   );
+
+  useEffect(() => {
+    if (!folderCardDropTarget) return;
+    const clear = () => setFolderCardDropTarget(null);
+    window.addEventListener("dragend", clear);
+    window.addEventListener("drop", clear);
+    return () => {
+      window.removeEventListener("dragend", clear);
+      window.removeEventListener("drop", clear);
+    };
+  }, [folderCardDropTarget]);
   const externalDragDepth = useRef(0);
 
   const applyDesktopImportResult = useCallback(
@@ -291,7 +303,10 @@ export function useExternalImportHandlers({
         }
       },
       onDragLeave: (event: DragEvent<HTMLButtonElement>) => {
-        if (event.currentTarget.contains(event.relatedTarget as Node | null)) {
+        // Serpent-4gyr: cross-app drags often report relatedTarget=null while
+        // still hovering; clearing here kills the highlight when unfocused.
+        if (event.relatedTarget == null) return;
+        if (event.currentTarget.contains(event.relatedTarget as Node)) {
           return;
         }
         setFolderCardDropTarget((current) =>
@@ -299,10 +314,16 @@ export function useExternalImportHandlers({
         );
       },
       onDragOver: (event: DragEvent<HTMLButtonElement>) => {
+        // Serpent-4gyr: keep target warm on dragover — unfocused windows may
+        // skip a stable dragenter or only deliver over events.
         if (supportsManagedFolderDrag(event.dataTransfer)) {
           event.preventDefault();
           event.dataTransfer.dropEffect = "move";
+          setFolderCardDropTarget(folderId);
           return;
+        }
+        if (supportsExternalImportTransfer(event.dataTransfer)) {
+          setFolderCardDropTarget(folderId);
         }
         handleTargetExternalDragOver(event);
       },

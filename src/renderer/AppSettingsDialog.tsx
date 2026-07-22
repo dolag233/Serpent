@@ -13,10 +13,19 @@ import {
   isDiskDeletePromptEnabled,
   setDiskDeletePromptEnabled,
 } from "./disk-delete-confirm-preferences";
+import {
+  clearImportConflictPreferences,
+  hasRememberedImportConflictPreferences,
+} from "./import-conflict-preferences";
 import { Icon } from "./Icons";
 import { iconActionAttrs } from "./icon-action-attrs";
 import { useLocale } from "./i18n";
 import { useTheme } from "./theme";
+import {
+  ACCENT_PRESET_HEX,
+  DEFAULT_ACCENT_HEX,
+  normalizeAccentHex,
+} from "./theme/accent-preferences";
 
 export interface AppSettingsDialogProps {
   open: boolean;
@@ -45,16 +54,25 @@ export function AppSettingsDialog({
   onToggleShowAiBadges,
 }: AppSettingsDialogProps): ReactNode {
   const { t, preference: localePreference, setLocale } = useLocale();
-  const { preference: themePreference, setTheme } = useTheme();
+  const { preference: themePreference, setTheme, accentHex, setAccentHex } =
+    useTheme();
+  const [accentDraft, setAccentDraft] = useState(accentHex);
   const [diskDeletePromptEnabled, setDiskDeletePromptEnabledState] = useState(
     () => isDiskDeletePromptEnabled(),
+  );
+  const [importConflictRemembered, setImportConflictRemembered] = useState(
+    () => hasRememberedImportConflictPreferences(),
   );
 
   // Serpent-5no: reload when the dialog opens so "don't show again" from
   // delete confirms is reflected without lifting storage into App.
   useEffect(() => {
-    if (open) setDiskDeletePromptEnabledState(isDiskDeletePromptEnabled());
-  }, [open]);
+    if (open) {
+      setDiskDeletePromptEnabledState(isDiskDeletePromptEnabled());
+      setImportConflictRemembered(hasRememberedImportConflictPreferences());
+      setAccentDraft(accentHex);
+    }
+  }, [accentHex, open]);
 
   if (!open) return null;
 
@@ -105,6 +123,46 @@ export function AppSettingsDialog({
                 {t(option.labelKey)}
               </button>
             ))}
+          </div>
+        </section>
+
+        <section className="app-settings-section">
+          <div className="micro-label">{t("settings.accentColor")}</div>
+          <p className="app-settings-hint">{t("settings.accentHint")}</p>
+          <div className="app-settings-accent-presets" role="list">
+            {ACCENT_PRESET_HEX.map((hex) => (
+              <button
+                aria-label={hex}
+                aria-pressed={accentHex === hex}
+                className={`app-settings-accent-swatch${accentHex === hex ? " is-active" : ""}`}
+                key={hex}
+                onClick={() => setAccentHex(hex)}
+                style={{ backgroundColor: hex }}
+                type="button"
+              />
+            ))}
+          </div>
+          <div className="app-settings-accent-custom">
+            <input
+              aria-label={t("settings.accentCustom")}
+              className="text-field"
+              onBlur={() => {
+                const normalized = normalizeAccentHex(accentDraft);
+                if (normalized) setAccentHex(normalized);
+                else setAccentDraft(accentHex);
+              }}
+              onChange={(event) => setAccentDraft(event.target.value)}
+              placeholder="#3b82f6"
+              type="text"
+              value={accentDraft}
+            />
+            <button
+              className="secondary-button"
+              onClick={() => setAccentHex(DEFAULT_ACCENT_HEX)}
+              type="button"
+            >
+              {t("settings.accentReset")}
+            </button>
           </div>
         </section>
 
@@ -237,6 +295,30 @@ export function AppSettingsDialog({
                 <span>{t("settings.diskDeleteConfirm")}</span>
               </span>
             </label>
+          </div>
+          <p className="app-settings-hint">
+            {t("settings.importConflictRememberHint")}
+          </p>
+          <div className="app-settings-check-row-group">
+            <div className="app-settings-check-copy">
+              <span>{t("settings.importConflictRemember")}</span>
+              <span className="app-settings-hint">
+                {importConflictRemembered
+                  ? t("settings.importConflictRememberActive")
+                  : t("settings.importConflictRememberEmpty")}
+              </span>
+            </div>
+            <button
+              className="secondary-button"
+              disabled={!importConflictRemembered}
+              onClick={() => {
+                clearImportConflictPreferences();
+                setImportConflictRemembered(false);
+              }}
+              type="button"
+            >
+              {t("settings.importConflictRememberReset")}
+            </button>
           </div>
         </section>
       </div>

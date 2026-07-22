@@ -328,11 +328,13 @@ describe('pending import plans', () => {
 
     expect(duplicate).toMatchObject({
       suspectedDuplicateCount: 1,
+      libraryDuplicateCount: 0,
       nameConflictCount: 0,
       examples: [{ displayName: 'same.png', kind: 'suspected-duplicate' }],
     });
     expect(conflict).toMatchObject({
       suspectedDuplicateCount: 0,
+      libraryDuplicateCount: 0,
       nameConflictCount: 1,
       examples: [{ displayName: 'same.png', kind: 'name-conflict' }],
     });
@@ -368,11 +370,27 @@ describe('pending import plans', () => {
       sourcePaths: [sourceB],
       targetFolderId: folderB.folderId,
     });
+    // Serpent-1syi: cross-folder content match is library-scoped (not path collision).
     expect(plan).toMatchObject({
       suspectedDuplicateCount: 1,
+      libraryDuplicateCount: 1,
       nameConflictCount: 0,
-      examples: [{ displayName: 'b.png', kind: 'suspected-duplicate' }],
+      examples: [{ displayName: 'b.png', kind: 'library-duplicate' }],
     });
+
+    // Serpent-hy1n: create-copy keeps free destination basename for library scope.
+    const completion = service.resolveImport({
+      importId: plan.importId,
+      suspectedDuplicate: 'create-copy',
+      nameConflict: 'keep-both',
+    });
+    expect(completion.importedCount).toBe(1);
+    expect(completion.assets[0]!.relativeFilePath).toBe(
+      path.posix.join('folder-b', 'b.png'),
+    );
+    expect(
+      existsSync(path.join(library.libraryPath, 'Assets', 'folder-b', 'b.png')),
+    ).toBe(true);
     service.closeAll();
   });
 

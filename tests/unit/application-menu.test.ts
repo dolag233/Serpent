@@ -71,34 +71,55 @@ describe("buildApplicationMenuTemplate (Serpent-46i9)", () => {
   });
 
   it("adds macOS Edit invert selection with locale label (Serpent-te8p)", () => {
-    function findInvert(
+    function findCommand(
       items: readonly ApplicationMenuItemTemplate[],
+      command: "invert-selection" | "copy-selection",
     ): ApplicationMenuItemTemplate | undefined {
       for (const item of items) {
-        if (item.command === "invert-selection") return item;
+        if (item.command === command) return item;
         if (item.submenu) {
-          const nested = findInvert(item.submenu);
+          const nested = findCommand(item.submenu, command);
           if (nested) return nested;
         }
       }
       return undefined;
     }
-    const zh = findInvert(
+    const zh = findCommand(
       buildApplicationMenuTemplate({
         platform: "darwin",
         showDevTools: false,
         locale: "zh-CN",
       }),
+      "invert-selection",
     );
-    const en = findInvert(
+    const en = findCommand(
       buildApplicationMenuTemplate({
         platform: "darwin",
         showDevTools: false,
         locale: "en",
       }),
+      "invert-selection",
     );
     expect(zh?.label).toBe("反选");
     expect(en?.label).toBe("Invert Selection");
+
+    // Serpent-166q: Copy is a custom command (not role:copy) so ⌘C can copy files.
+    const zhCopy = findCommand(
+      buildApplicationMenuTemplate({
+        platform: "darwin",
+        showDevTools: false,
+        locale: "zh-CN",
+      }),
+      "copy-selection",
+    );
+    const roles = collectApplicationMenuRoles(
+      buildApplicationMenuTemplate({
+        platform: "darwin",
+        showDevTools: false,
+      }),
+    );
+    expect(zhCopy?.label).toBe("复制");
+    expect(roles).not.toContain("copy");
   });
 });
 

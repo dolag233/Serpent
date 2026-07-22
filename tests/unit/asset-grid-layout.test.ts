@@ -7,6 +7,7 @@ import {
   distributeMasonryItems,
   layoutJustifiedRows,
   leftoverWidthPx,
+  masonryVisualReadingOrderIds,
 } from "../../src/renderer/asset-grid-layout";
 
 describe("assetGridLayoutStyle", () => {
@@ -79,6 +80,37 @@ describe("distributed masonry", () => {
       230,
       200,
     ]);
+  });
+
+  it("orders Shift selection by masonry column DOM order (Serpent-oz1t)", () => {
+    const heights: Record<string, number> = {
+      a: 300,
+      b: 100,
+      c: 200,
+      d: 80,
+      e: 50,
+    };
+    // Columns: [a] | [b,d,e] | [c] → DOM order a,b,d,e,c
+    expect(
+      masonryVisualReadingOrderIds(
+        ["a", "b", "c", "d", "e"],
+        3,
+        (item) => heights[item]!,
+        (item) => item,
+      ),
+    ).toEqual(["a", "b", "d", "e", "c"]);
+
+    const order = masonryVisualReadingOrderIds(
+      ["a", "b", "c", "d", "e"],
+      3,
+      (item) => heights[item]!,
+      (item) => item,
+    );
+    const b = order.indexOf("b");
+    const e = order.indexOf("e");
+    const range = order.slice(Math.min(b, e), Math.max(b, e) + 1);
+    expect(range).toEqual(["b", "d", "e"]);
+    expect(range).not.toContain("c");
   });
 
   it("normalizes invalid column counts and ignores invalid height estimates", () => {

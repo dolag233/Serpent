@@ -24,7 +24,7 @@ interface FolderCardProps {
   onDrop?: (event: React.DragEvent<HTMLButtonElement>) => void;
   draggable?: boolean;
   onDragStart?: (event: React.DragEvent<HTMLButtonElement>) => void;
-  /** Trash view tombstone — display only, no navigation (Serpent-l4nl). */
+  /** Trash tombstone card; double-click enters hierarchy (Serpent-6pcd). */
   trashed?: boolean;
 }
 

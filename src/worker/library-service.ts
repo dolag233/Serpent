@@ -14191,6 +14191,8 @@ export class LibraryService {
 
   private syncTrashedFolderTombstones(openLibrary: OpenLibrary): void {
     openLibrary.connection.transaction(() => {
+      // Serpent-b3kf / gz4y: managed_folders DELETE SET NULL clears
+      // trashed_from_folder_id, so count by path prefix as well.
       openLibrary.connection
         .prepare(
           `UPDATE trashed_managed_folders
@@ -14198,7 +14200,12 @@ export class LibraryService {
                 SELECT COUNT(*)
                   FROM assets
                  WHERE deleted_at IS NOT NULL
-                   AND trashed_from_folder_id = trashed_managed_folders.folder_id
+                   AND (
+                     trashed_from_folder_id = trashed_managed_folders.folder_id
+                     OR trashed_from_relative_path = trashed_managed_folders.relative_path
+                     OR trashed_from_relative_path LIKE
+                          (trashed_managed_folders.relative_path || '/%')
+                   )
               )`,
         )
         .run();
@@ -14268,6 +14275,71 @@ export class LibraryService {
       }>;
 
     const folderIds = tombstones.map((row) => row.folder_id);
+
+    // Serpent-gz4y: resolve assets before recreating folders so a match miss
+    // cannot leave an empty restored folder + deleted tombstones.
+    const restoreAssetIds: string[] = [];
+    const seenRestoreAssetIds = new Set<string>();
+    const rememberRestoreAssetId = (assetId: string) => {
+      if (seenRestoreAssetIds.has(assetId)) return;
+      seenRestoreAssetIds.add(assetId);
+      restoreAssetIds.push(assetId);
+    };
+
+    if (folderIds.length > 0) {
+      const byFolderId = openLibrary.connection
+        .prepare(
+          `SELECT asset_id FROM assets
+            WHERE deleted_at IS NOT NULL
+              AND trashed_from_folder_id IN (${folderIds.map(() => '?').join(', ')})`,
+        )
+        .all(...folderIds) as Array<{ asset_id: string }>;
+      for (const row of byFolderId) rememberRestoreAssetId(row.asset_id);
+    }
+
+    const folderIdSet = new Set(folderIds);
+    const tombstoneRelativePaths = tombstones.map((row) => row.relative_path);
+    const trashedAssetRows = openLibrary.connection
+      .prepare(
+        `SELECT asset_id, trashed_from_relative_path, trashed_from_folder_id
+           FROM assets
+          WHERE deleted_at IS NOT NULL`,
+      )
+      .all() as Array<{
+        asset_id: string;
+        trashed_from_relative_path: string | null;
+        trashed_from_folder_id: string | null;
+      }>;
+    for (const row of trashedAssetRows) {
+      if (
+        row.trashed_from_folder_id !== null &&
+        folderIdSet.has(row.trashed_from_folder_id)
+      ) {
+        rememberRestoreAssetId(row.asset_id);
+        continue;
+      }
+      if (!row.trashed_from_relative_path) continue;
+      const parentPath = path.posix.dirname(row.trashed_from_relative_path);
+      const matchesSubtree = tombstoneRelativePaths.some(
+        (folderPath) =>
+          parentPath === folderPath ||
+          parentPath.startsWith(`${folderPath}/`) ||
+          row.trashed_from_relative_path === folderPath ||
+          row.trashed_from_relative_path!.startsWith(`${folderPath}/`),
+      );
+      if (matchesSubtree) rememberRestoreAssetId(row.asset_id);
+    }
+
+    const expectedAssetCount = tombstones.reduce(
+      (sum, row) => sum + row.trashed_asset_count,
+      0,
+    );
+    if (expectedAssetCount > 0 && restoreAssetIds.length === 0) {
+      throw new LibraryServiceError('ASSET_NOT_FOUND', {
+        reason: 'SOURCE_CHANGED',
+      });
+    }
+
     const restoredFolders: ManagedFolderSummary[] = [];
     const now = new Date().toISOString();
 
@@ -14360,47 +14432,21 @@ export class LibraryService {
       throw serviceError(error, 'LIBRARY_NOT_WRITABLE');
     }
 
-    const folderIdSet = new Set(folderIds);
-    const tombstoneRelativePaths = tombstones.map((row) => row.relative_path);
-    const trashedAssetRows = openLibrary.connection
-      .prepare(
-        `SELECT asset_id, trashed_from_relative_path, trashed_from_folder_id
-           FROM assets
-          WHERE deleted_at IS NOT NULL`,
-      )
-      .all() as Array<{
-        asset_id: string;
-        trashed_from_relative_path: string | null;
-        trashed_from_folder_id: string | null;
-      }>;
-    const restoreAssetIds: string[] = [];
-    const seenRestoreAssetIds = new Set<string>();
-    for (const row of trashedAssetRows) {
-      const matchesFolderId =
-        row.trashed_from_folder_id !== null &&
-        folderIdSet.has(row.trashed_from_folder_id);
-      let matchesSubtree = false;
-      if (row.trashed_from_relative_path) {
-        const parentPath = path.posix.dirname(row.trashed_from_relative_path);
-        matchesSubtree = tombstoneRelativePaths.some(
-          (folderPath) =>
-            parentPath === folderPath ||
-            parentPath.startsWith(`${folderPath}/`),
-        );
-      }
-      if (!matchesFolderId && !matchesSubtree) continue;
-      if (seenRestoreAssetIds.has(row.asset_id)) continue;
-      seenRestoreAssetIds.add(row.asset_id);
-      restoreAssetIds.push(row.asset_id);
-    }
-
     let restoredAssetCount = 0;
-    if (restoreAssetIds.length > 0) {
-      const result = this.restoreAssets({
-        libraryId: input.libraryId,
-        assetIds: restoreAssetIds,
-      });
-      restoredAssetCount = result.restoredCount;
+    try {
+      if (restoreAssetIds.length > 0) {
+        const result = this.restoreAssets({
+          libraryId: input.libraryId,
+          assetIds: restoreAssetIds,
+        });
+        restoredAssetCount = result.restoredCount;
+      }
+    } catch (error) {
+      // Folders may already exist on disk/DB; keep tombstones so the user can
+      // retry instead of orphaning trashed assets without folder metadata.
+      throw error instanceof LibraryServiceError
+        ? error
+        : serviceError(error, 'LIBRARY_NOT_WRITABLE');
     }
 
     if (tombstones.length > 0) {
@@ -14459,7 +14505,12 @@ export class LibraryService {
       rows.map((row) => row.asset_id),
     );
 
-    openLibrary.connection.prepare('DELETE FROM trashed_managed_folders').run();
+    // Serpent-b3kf: never wipe all tombstones when some assets remain in trash.
+    if (result.skippedCount === 0) {
+      openLibrary.connection.prepare('DELETE FROM trashed_managed_folders').run();
+    } else {
+      this.syncTrashedFolderTombstones(openLibrary);
+    }
 
     return result;
   }
@@ -15997,7 +16048,16 @@ export class LibraryService {
             continue;
           }
           if (input.suspectedDuplicate === 'create-copy') {
-            destinationRelativePath = copyPath(requestedDestination);
+            // Path-level duplicate: destination occupied → auto-number.
+            // Library-level duplicate with a free destination basename: keep the
+            // requested name (Serpent-hy1n); only renumber when the path is taken.
+            const requestedIdentity = portablePathIdentity(requestedDestination);
+            const destinationFree =
+              existingDestination === undefined &&
+              !occupied.has(requestedIdentity);
+            destinationRelativePath = destinationFree
+              ? requestedDestination
+              : copyPath(requestedDestination);
           } else {
             const retainedAssetId = existingDestination
               ? (

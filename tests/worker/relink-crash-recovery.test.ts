@@ -40,6 +40,7 @@ import {
   LibraryServiceError,
 } from '../../src/worker/library-service';
 import type { ImportCompletion } from '../../src/shared/protocol/responses';
+import { importNoConflict as sharedImportNoConflict } from './import-no-conflict';
 
 const temporaryRoots: string[] = [];
 const require = createRequire(import.meta.url);
@@ -77,12 +78,7 @@ function expectServiceError(operation: () => unknown, code: LibraryServiceError[
 }
 
 function importNoConflict(service: LibraryService, libraryId: string, sourcePath: string, targetFolderId?: string): ImportCompletion {
-  return service.prepareOrExecuteImport({
-    libraryId,
-    targetFolderId,
-    sourceKind: 'files',
-    sourcePaths: [sourcePath],
-  }) as ImportCompletion;
+  return sharedImportNoConflict(service, libraryId, sourcePath, targetFolderId);
 }
 
 function missingManagedAssetFixture(label: string): {

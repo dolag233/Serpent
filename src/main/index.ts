@@ -65,6 +65,7 @@ import {
   SHOW_EDIT_CONTEXT_MENU_CHANNEL,
   SHELL_SWIPE_CHANNEL,
   WINDOW_FOCUS_CHANNEL,
+  NATIVE_EDIT_COPY_CHANNEL,
 } from "../shared/protocol/channels";
 import { shouldUseFramelessTitleBar } from "../shared/window-controls";
 import {
@@ -3128,6 +3129,12 @@ async function startApplication(): Promise<void> {
       return result;
     },
   );
+
+  // Serpent-166q: text-field ⌘C fallback when Edit menu routes through renderer.
+  ipcMain.handle(NATIVE_EDIT_COPY_CHANNEL, (event): void => {
+    if (!mainWindow || event.sender !== mainWindow.webContents) return;
+    event.sender.copy();
+  });
 
   // Bootstrap dialog locale from OS before Renderer syncs (Serpent-bwb).
   appLocale = mapSystemLocaleToAppLocale(app.getLocale());

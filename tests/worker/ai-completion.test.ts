@@ -8,6 +8,7 @@ import os from 'node:os';
 import { randomUUID } from 'node:crypto';
 
 import { LibraryService } from '../../src/worker/library-service';
+import { importNoConflict as sharedImportNoConflict } from './import-no-conflict';
 import { GeminiVendorAdapter } from '../../src/worker/ai/gemini-adapter';
 import { AnthropicVendorAdapter } from '../../src/worker/ai/anthropic-adapter';
 import { VendorAdapterError } from '../../src/worker/ai/vendor-adapter';
@@ -44,20 +45,7 @@ function importNoConflict(
   libraryId: string,
   sourceFile: string,
 ) {
-  const prepared = service.prepareOrExecuteImport({
-    libraryId,
-    targetFolderId: undefined,
-    sourceKind: 'files',
-    sourcePaths: [sourceFile],
-  });
-  if ('importId' in prepared) {
-    return service.resolveImport({
-      importId: prepared.importId,
-      suspectedDuplicate: 'skip',
-      nameConflict: 'keep-both',
-    });
-  }
-  return prepared;
+  return sharedImportNoConflict(service, libraryId, sourceFile);
 }
 
 function createPngFile(dir: string, name: string): string {

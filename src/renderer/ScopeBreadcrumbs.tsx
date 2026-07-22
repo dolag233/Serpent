@@ -1,18 +1,23 @@
 import type { ManagedFolderBreadcrumbEntry } from "./folder-breadcrumb-trail";
 import { useT, type TranslateFn } from "./i18n";
+import type { TrashBreadcrumbHop } from "./trash-browse";
 
 export type ScopeBreadcrumbSegment =
   | { kind: "static"; id: string; label: string }
-  | { kind: "folder"; id: string; label: string; folderId: string };
+  | { kind: "folder"; id: string; label: string; folderId: string }
+  /** Trash hierarchy hop; path null = trash root (Serpent-6pcd). */
+  | { kind: "trash-path"; id: string; label: string; path: string | null };
 
 export type ScopeBreadcrumbsProps = {
   segments: ScopeBreadcrumbSegment[];
   onNavigateFolder: (folderId: string) => void;
+  onNavigateTrashPath?: (path: string | null) => void;
 };
 
 export function buildScopeBreadcrumbSegments(
   input: {
     showTrash: boolean;
+    trashBreadcrumbHops?: readonly TrashBreadcrumbHop[];
     activeTagLabel: string | null;
     activeCollectionLabel: string | null;
     activeSmartCollectionLabel: string | null;
@@ -23,6 +28,15 @@ export function buildScopeBreadcrumbSegments(
   t: TranslateFn,
 ): ScopeBreadcrumbSegment[] {
   if (input.showTrash) {
+    const hops = input.trashBreadcrumbHops;
+    if (hops && hops.length > 0) {
+      return hops.map((hop, index) => ({
+        kind: "trash-path" as const,
+        id: hop.path === null ? "trash" : `trash:${hop.path}`,
+        label: hop.label,
+        path: hop.path,
+      }));
+    }
     return [{ kind: "static", id: "trash", label: t("scope.trash") }];
   }
   if (input.activeTagLabel) {
@@ -90,6 +104,7 @@ export function buildScopeBreadcrumbSegments(
 export function ScopeBreadcrumbs({
   segments,
   onNavigateFolder,
+  onNavigateTrashPath,
 }: ScopeBreadcrumbsProps) {
   const t = useT();
   return (
@@ -104,6 +119,14 @@ export function ScopeBreadcrumbs({
                 <button
                   className="scope-crumb-button"
                   onClick={() => onNavigateFolder(segment.folderId)}
+                  type="button"
+                >
+                  {segment.label}
+                </button>
+              ) : segment.kind === "trash-path" && !isLast ? (
+                <button
+                  className="scope-crumb-button"
+                  onClick={() => onNavigateTrashPath?.(segment.path)}
                   type="button"
                 >
                   {segment.label}

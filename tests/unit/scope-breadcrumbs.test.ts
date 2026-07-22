@@ -40,6 +40,34 @@ describe("buildScopeBreadcrumbSegments", () => {
     ).toEqual([{ kind: "static", id: "all", label: "所有资产" }]);
   });
 
+  it("builds trash hierarchy crumbs (Serpent-6pcd)", () => {
+    expect(
+      buildScopeBreadcrumbSegments(
+        {
+          showTrash: true,
+          trashBreadcrumbHops: [
+            { path: null, label: "回收站" },
+            { path: "filled", label: "filled" },
+          ],
+          activeTagLabel: null,
+          activeCollectionLabel: null,
+          activeSmartCollectionLabel: null,
+          assetScope: "all",
+          folderTrail: [],
+        },
+        t,
+      ),
+    ).toEqual([
+      { kind: "trash-path", id: "trash", label: "回收站", path: null },
+      {
+        kind: "trash-path",
+        id: "trash:filled",
+        label: "filled",
+        path: "filled",
+      },
+    ]);
+  });
+
   it("builds clickable managed folder crumbs", () => {
     expect(
       buildScopeBreadcrumbSegments(

@@ -507,8 +507,21 @@ export const zhCN = {
       merge: "合并到已有资产",
       createCopy: "创建副本",
       keepBoth: "保留两者",
-      replace: "替换现有资产",
+      autoRename: "自动重命名",
+      replace: "覆盖",
       apply: "应用并导入"
+    },
+    nameConflict: {
+      title: "同名冲突",
+      countLabel: "个同名文件",
+      actionLabel: "同名时",
+      remember: "记住我的选择，下次不再询问"
+    },
+    contentDuplicate: {
+      title: "内容重复",
+      countLabel: "个内容重复",
+      actionLabel: "内容重复时",
+      remember: "记住我的选择，下次不再询问"
     },
     move: {
       cancelAria: "取消移动",
@@ -560,10 +573,13 @@ export const zhCN = {
       submit: "从硬盘中删除"
     },
     aiConnectionFailure: {
-      title: "AI 连接失败",
+      title: "AI 分析失败",
       body: "多次重试后仍无法连接 AI 供应商（已失败 {count} 项）。可重试失败任务，或终止队列中剩余任务。",
       retry: "重试",
       abort: "终止剩余任务"
+    },
+    aiAnalyzeFailure: {
+      title: "AI 分析失败"
     },
     fatalAlert: {
       title: "严重错误",
@@ -739,6 +755,10 @@ export const zhCN = {
   settings: {
     title: "通用设置",
     themeHint: "控制整个应用的亮暗外观，立即生效。",
+    accentColor: "强调色",
+    accentHint: "控制按钮、选中环、焦点、过滤启用态与拖放高亮等主色调；立即生效并跨重启保存。卡片尺寸滑块等连续控件保持中性色。",
+    accentCustom: "自定义强调色（#RRGGBB）",
+    accentReset: "恢复默认",
     languageHint: "控制界面文案语言，立即生效。",
     viewMode: "浏览视图",
     canvasHint: "控制资产画布的排列方式；改后立即作用于画布。",
@@ -751,7 +771,12 @@ export const zhCN = {
     showAiBadgesHint: "关闭后仍保留 AI 写入的描述/标签/评分，仅隐藏 Inspector 中的 AI 角标。",
     confirmationsSection: "确认提示",
     diskDeleteConfirm: "从硬盘删除前确认",
-    diskDeleteConfirmHint: "关闭后，「从硬盘中删除」不再弹窗；可随时重新开启。资产与文件夹共用。"
+    diskDeleteConfirmHint: "关闭后，「从硬盘中删除」不再弹窗；可随时重新开启。资产与文件夹共用。",
+    importConflictRemember: "记住的导入冲突选择",
+    importConflictRememberHint: "若曾勾选「记住我的选择」，导入同名或内容重复时会直接应用，不再弹窗。",
+    importConflictRememberReset: "清除记住的选择",
+    importConflictRememberActive: "已记住同名或内容重复处理方式",
+    importConflictRememberEmpty: "当前未记住导入冲突选择"
   },
   preview: {
     ffmpegRequired: "当前安装缺少可用的媒体组件，无法生成视频播放代理。请重新安装或修复 Serpent 后重试。",

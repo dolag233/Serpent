@@ -23,7 +23,8 @@ const assetKeyboardCommandRegistry = createCommandRegistry(
 export type AssetActionKeyboardCommand =
   | "asset.open-external"
   | "asset.move-to-trash"
-  | "asset.rename";
+  | "asset.rename"
+  | "asset.copy";
 
 export function matchAssetActionKeyboardCommand(
   commandId: AssetActionKeyboardCommand,

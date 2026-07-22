@@ -27,6 +27,8 @@ export type UseAssetActionKeyboardArgs = {
   readonly onOpenExternal: (assetId: string) => void;
   readonly onTrashManaged: (assetIds: string[]) => void;
   readonly onRename: (assetId: string) => void;
+  /** Serpent-166q: ⌘C / Ctrl+C copy available assets to the OS file clipboard. */
+  readonly onCopyFiles: (assetIds: string[]) => void;
 };
 
 export function useAssetActionKeyboard(
@@ -44,6 +46,7 @@ export function useAssetActionKeyboard(
     onOpenExternal,
     onTrashManaged,
     onRename,
+    onCopyFiles,
   } = args;
 
   useEffect(() => {
@@ -66,6 +69,24 @@ export function useAssetActionKeyboard(
         event.preventDefault();
         onOpenExternal(selectedAsset.assetId);
         return;
+      }
+
+      if (
+        matchAssetActionKeyboardCommand("asset.copy", event, platform) &&
+        !showTrash &&
+        libraryOpen
+      ) {
+        const copyIds = selectedAssets
+          .filter(
+            (asset) =>
+              asset.availability === "available" && !asset.deletedAt,
+          )
+          .map((asset) => asset.assetId);
+        if (copyIds.length > 0) {
+          event.preventDefault();
+          onCopyFiles(copyIds);
+          return;
+        }
       }
 
       if (
@@ -111,5 +132,6 @@ export function useAssetActionKeyboard(
     onOpenExternal,
     onTrashManaged,
     onRename,
+    onCopyFiles,
   ]);
 }

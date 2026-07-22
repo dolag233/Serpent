@@ -6,7 +6,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { LibraryService } from '../../src/worker/library-service';
-import type { ImportCompletion } from '../../src/shared/protocol/responses';
+import { importNoConflict as importFile } from './import-no-conflict';
 
 const roots: string[] = [];
 const services: LibraryService[] = [];
@@ -35,20 +35,6 @@ function newService(
   const service = new LibraryService(...args);
   services.push(service);
   return service;
-}
-
-function importFile(
-  service: LibraryService,
-  libraryId: string,
-  sourcePath: string,
-  targetFolderId?: string,
-) {
-  return service.prepareOrExecuteImport({
-    libraryId,
-    sourceKind: 'files',
-    sourcePaths: [sourcePath],
-    targetFolderId,
-  }) as ImportCompletion;
 }
 
 function database(libraryPath: string) {
@@ -394,6 +380,52 @@ describe('restoreTrashedManagedFolder (Serpent-qufh)', () => {
     } finally {
       db.close();
     }
+  });
+
+  it('restores assets matched by path when folder id is null (Serpent-gz4y)', () => {
+    const temp = root();
+    const service = newService();
+    const library = service.createLibrary({
+      displayName: 'FolderRestoreByPath',
+      selectedParentPath: temp,
+    });
+    const folder = service.createManagedFolder({
+      libraryId: library.libraryId,
+      name: 'path-only',
+    });
+    const source = path.join(temp, 'path.png');
+    writeFileSync(source, 'path-bytes');
+    const asset = importFile(
+      service,
+      library.libraryId,
+      source,
+      folder.folderId,
+    ).assets[0]!;
+
+    service.trashManagedFolder({
+      libraryId: library.libraryId,
+      folderId: folder.folderId,
+    });
+    const db = database(library.libraryPath);
+    try {
+      db.prepare(
+        'UPDATE assets SET trashed_from_folder_id = NULL WHERE asset_id = ?',
+      ).run(asset.assetId);
+    } finally {
+      db.close();
+    }
+
+    const tombstone = service
+      .listTrashedFolders(library.libraryId)
+      .find((row) => row.name === 'path-only');
+    expect(tombstone).toBeDefined();
+
+    const result = service.restoreTrashedManagedFolder({
+      libraryId: library.libraryId,
+      tombstoneId: tombstone!.tombstoneId,
+    });
+    expect(result.restoredAssetCount).toBe(1);
+    expect(service.listTrash(library.libraryId)).toEqual([]);
   });
 });
 
