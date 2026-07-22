@@ -74,10 +74,13 @@
      Level 0 omits elev box-shadows entirely via :not([data-elevation="0"]). */
   --elev-size: 0.9;
   --elev-intensity: 0.8;
-  /* Shell hierarchy: chrome / panes / cards sit above --canvas. */
+  /* Shell hierarchy: chrome / panes / cards sit above --canvas.
+     Toolbar is full-bleed; its shadow lands on side panes AND the browse
+     column top — keep it softer/shorter than pane/card elev so the canvas
+     header stays quiet. */
   --shadow-toolbar:
-    0 calc(2px * var(--elev-size)) calc(10px * var(--elev-size))
-    rgb(0 0 0 / calc(0.28 * var(--elev-intensity)));
+    0 calc(1px * var(--elev-size)) calc(5px * var(--elev-size))
+    rgb(0 0 0 / calc(0.06 * var(--elev-intensity)));
   --shadow-pane-east:
     calc(6px * var(--elev-size)) 0 calc(18px * var(--elev-size))
     rgb(0 0 0 / calc(0.22 * var(--elev-intensity)));
@@ -159,10 +162,11 @@
   --ink: #0f1010;
   --viewer-stage: #e8eae7;
   --border: var(--divider);
-  /* Light: softer elev base alphas; still scaled by --elev-* (Serpent-zcyg). */
+  /* Light: softer elev base alphas; still scaled by --elev-* (Serpent-zcyg).
+     Toolbar softer/shorter than panes/cards (casts onto browse header too). */
   --shadow-toolbar:
-    0 calc(1px * var(--elev-size)) calc(8px * var(--elev-size))
-    rgb(0 0 0 / calc(0.1 * var(--elev-intensity)));
+    0 calc(1px * var(--elev-size)) calc(4px * var(--elev-size))
+    rgb(0 0 0 / calc(0.02 * var(--elev-intensity)));
   --shadow-pane-east:
     calc(4px * var(--elev-size)) 0 calc(14px * var(--elev-size))
     rgb(0 0 0 / calc(0.08 * var(--elev-intensity)));
