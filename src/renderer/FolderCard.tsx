@@ -29,9 +29,9 @@ interface FolderCardProps {
 }
 
 /**
- * Direct child folder card on the browse canvas (REQ-FOLDER-001/010 / Serpent-7ms).
- * Plain click selects; double-click enters. Cover photos are stacked inside a
- * physical folder shell (not a Windows mosaic grid).
+ * Direct child folder card on the browse canvas (REQ-FOLDER-001/010 / Serpent-l67w).
+ * Plain click selects; double-click enters. Chrome matches the reference: rear
+ * rounded panel + front pocket with a left tab and soft S-curve shelf.
  */
 export function FolderCard({
   entry,
@@ -76,8 +76,35 @@ export function FolderCard({
         className={`folder-card-cover folder-card-cover-count-${covers.length}`}
       >
         <div className="folder-card-shell" aria-hidden="true">
-          <div className="folder-card-tab" />
-          <div className="folder-card-body">
+          {/* Back panel: full rounded rect; front pocket sits on top. */}
+          <div className="folder-card-back" />
+          <svg
+            className="folder-card-front"
+            viewBox="0 0 160 124"
+            preserveAspectRatio="none"
+          >
+            {/*
+              Left tab flush with the top edge, soft S-curve into the shelf,
+              then a full pocket aligned to the outer rounded corners.
+            */}
+            <path
+              className="folder-card-front-shape"
+              d="M8 0.6
+                 H45
+                 C53.5 0.6 56 5.5 59.5 11
+                 C63.2 16.8 67.5 20.4 76 20.4
+                 H152
+                 A7.4 7.4 0 0 1 159.4 27.8
+                 V116
+                 A7.4 7.4 0 0 1 152 123.4
+                 H8
+                 A7.4 7.4 0 0 1 0.6 116
+                 V8
+                 A7.4 7.4 0 0 1 8 0.6
+                 Z"
+            />
+          </svg>
+          <div className="folder-card-pocket">
             {covers.length === 0 ? (
               <div className="folder-card-cover-empty">
                 <Icon name="folder" size={28} />

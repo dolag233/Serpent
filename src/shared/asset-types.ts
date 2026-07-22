@@ -52,7 +52,7 @@ export const folderBrowseEntrySchema = z.strictObject({
   /** All descendant assets (REQ-FOLDER-003 / Serpent-toh). */
   recursiveAssetCount: z.number().int().nonnegative(),
   childFolderCount: z.number().int().nonnegative(),
-  /** Up to 3 ready thumbnail/poster artifact ids for Windows-style cover. */
+  /** Up to 3 ready thumbnail/poster artifact ids for the folder cover deck. */
   coverArtifactIds: z.array(nonBlankString).max(3),
 });
 

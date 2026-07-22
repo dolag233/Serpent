@@ -253,6 +253,10 @@ import {
   type CanvasPreferences,
 } from "./canvas-preferences";
 import {
+  FOLDER_CARD_ROW_INLINE_PADDING_PX,
+  masonryAlignedFolderWidthPx,
+} from "./folder-card-width";
+import {
   browseLoadMoreObserverRoot,
   countNewlyAddedAssets,
   resolveSearchTotalAfterAppend,
@@ -922,6 +926,20 @@ function AppInner() {
   const cardSizeStops = useMemo(
     () => enumerateDiscreteCardSizes(canvasWidthPx),
     [canvasWidthPx],
+  );
+  // Serpent-l67w: folder cards share the flush masonry column width so the
+  // folder row lines up with waterfall columns (raw slider size can leave
+  // leftover that `1fr` columns absorb).
+  const folderCardWidthPx = useMemo(
+    () =>
+      masonryAlignedFolderWidthPx(
+        Math.max(
+          0,
+          canvasWidthPx - FOLDER_CARD_ROW_INLINE_PADDING_PX * 2,
+        ),
+        assetCardSize,
+      ),
+    [assetCardSize, canvasWidthPx],
   );
   const [loadingMoreAssets, setLoadingMoreAssets] = useState(false);
   const workspaceCanvasRef = useRef<HTMLDivElement>(null);
@@ -6717,7 +6735,9 @@ function AppInner() {
                         : "folder-card-row"
                     }
                     style={
-                      { "--folder-card-size": `${assetCardSize}px` } as CSSProperties
+                      {
+                        "--folder-card-size": `${folderCardWidthPx}px`,
+                      } as CSSProperties
                     }
                   >
                     {canvasFolderBrowseEntries.map((entry) => (
