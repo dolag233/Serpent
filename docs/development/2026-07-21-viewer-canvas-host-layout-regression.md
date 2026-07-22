@@ -63,3 +63,16 @@ macOS 上看到的正常效果对应 **host 引入之前** 的布局：viewer �
 1. 关闭钮位置是布局问题的强信号；不要先改媒体 transform。
 2. 子节点 `display: none` 不会取消父级 `flex: 1` 占位；查看态要把整条 chrome/host 一并收起。
 3. 相对 viewport 的居中断言在「viewport 本身只占半屏」时仍会绿——应用断言覆盖「host 已隐藏 / viewer 占满工作区」。
+
+## 2026-07-22 二次回归
+
+`8556caa`（WorkspaceNoticeBanner / SHELL-027）为让查看态仍显示 notice，把选择器从
+`.workspace-canvas-host.is-viewing` 改成 `.workspace-canvas-host.is-viewing > .workspace-canvas`，
+半屏空白立刻回来。
+
+兼顾方案（同日）：
+
+- host 查看态折叠为 `flex:0; height:0; overflow:visible`（不占 flex 行），而不是 `display:none`
+- `z-index: 25` + `pointer-events` 分流，让绝对定位的 notice/strip 叠在 viewer 之上
+- canvas 子节点仍 `display: none`
+- E2E 继续断言 host `toBeHidden`（零尺寸 bounding box）

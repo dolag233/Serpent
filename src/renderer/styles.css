@@ -4802,10 +4802,28 @@ select.ai-config-input.ai-config-languages {
   min-width: 0;
 }
 
-/* Viewing hides the canvas child, but the host still had flex:1 and split the
-   workspace 50/50 with .workspace-viewer — empty top half, close chip mid-stage. */
+/* Viewing must take the host out of flex layout. Hiding only `.workspace-canvas`
+   left the host at flex:1 and split the workspace 50/50 with `.workspace-viewer`
+   (empty top half, close chip mid-stage) — VIEWER-019 / 2026-07-21 regression.
+   Do not use display:none on the host: WorkspaceNoticeBanner / activity-strip
+   live here and must stay visible while preview is open (SHELL-027). Collapse
+   the host box instead and raise its stacking context above the viewer. */
+.workspace-canvas-host.is-viewing {
+  flex: 0 0 0;
+  height: 0;
+  min-height: 0;
+  overflow: visible;
+  z-index: 25;
+  pointer-events: none;
+}
+
 .workspace-canvas-host.is-viewing > .workspace-canvas {
   display: none;
+}
+
+.workspace-canvas-host.is-viewing > .workspace-notice,
+.workspace-canvas-host.is-viewing > .activity-strip {
+  pointer-events: auto;
 }
 
 .workspace-canvas-host > .workspace-canvas {
