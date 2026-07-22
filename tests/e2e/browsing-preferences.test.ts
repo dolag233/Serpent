@@ -106,7 +106,7 @@ test("restores canvas preferences after a full restart", async () => {
 
     // Create library
     await window.getByRole("button", { name: "创建资源库" }).click();
-    await window.getByLabel("名称").fill(libraryName);
+    await window.getByRole("textbox", { name: "名称" }).fill(libraryName);
     await window.getByRole("button", { name: "创建", exact: true }).click();
     await expect(
       window.getByText(libraryName, { exact: true }).first(),
@@ -257,7 +257,7 @@ test("lays out a sparse masonry folder from left to right", async () => {
     const window = await application.firstWindow();
     await window.setViewportSize({ width: 1440, height: 720 });
     await window.getByRole("button", { name: "创建资源库" }).click();
-    await window.getByLabel("名称").fill(libraryName);
+    await window.getByRole("textbox", { name: "名称" }).fill(libraryName);
     await window.getByRole("button", { name: "创建", exact: true }).click();
     await window
       .getByRole("button", { name: "导入文件", exact: true })
@@ -346,7 +346,7 @@ test("maintains consistent preferences, accessible names, zoom behavior, and avo
 
     // Create library
     await window.getByRole("button", { name: "创建资源库" }).click();
-    await window.getByLabel("名称").fill(libraryName);
+    await window.getByRole("textbox", { name: "名称" }).fill(libraryName);
     await window.getByRole("button", { name: "创建", exact: true }).click();
     await expect(
       window.getByText(libraryName, { exact: true }).first(),
@@ -545,6 +545,29 @@ test("maintains consistent preferences, accessible names, zoom behavior, and avo
       await masonryButton.click();
       await expect(masonryButton).toHaveAttribute("aria-pressed", "true");
     }
+
+    // Portrait masonry previews must keep the source aspect ratio. A fixed
+    // max-height with full column width makes contain-fit paint a horizontal
+    // letterbox (the Windows right-side blank reported in Serpent-5p45).
+    const portraitCard = window
+      .locator(".asset-card")
+      .filter({ hasText: "automatic-001.png" })
+      .first();
+    const portraitPreview = portraitCard.locator(".asset-preview");
+    await expect(portraitPreview).toBeVisible();
+    const portraitGeometry = await portraitPreview.evaluate((element) => {
+      const rect = element.getBoundingClientRect();
+      return {
+        width: rect.width,
+        height: rect.height,
+        maxHeight: getComputedStyle(element).maxHeight,
+      };
+    });
+    expect(portraitGeometry.width / portraitGeometry.height).toBeCloseTo(
+      180 / 320,
+      2,
+    );
+    expect(portraitGeometry.maxHeight).toBe("none");
 
     // Explicit masonry columns must remain bounded by the canvas at every
     // supported size, across a compact and a wide window.  At 96px both

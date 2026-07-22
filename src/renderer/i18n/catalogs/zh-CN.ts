@@ -759,6 +759,12 @@ export const zhCN = {
     accentHint: "控制按钮、选中环、焦点、过滤启用态与拖放高亮等主色调；立即生效并跨重启保存。卡片尺寸滑块等连续控件保持中性色。",
     accentCustom: "自定义强调色（#RRGGBB）",
     accentReset: "恢复默认",
+    elevationSection: "层级投影",
+    elevationHint:
+      "为顶栏、侧栏、资产预览投下淡阴影以强化层级。0 为关闭（不绘制层级投影），1–3 由弱到强；拖动或点击刻度切换，立即生效。",
+    elevationOff: "关闭",
+    elevationStrong: "最强",
+    elevationLevelValue: "等级 {level}",
     languageHint: "控制界面文案语言，立即生效。",
     viewMode: "浏览视图",
     canvasHint: "控制资产画布的排列方式；改后立即作用于画布。",

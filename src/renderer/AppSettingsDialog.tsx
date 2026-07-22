@@ -17,15 +17,23 @@ import {
   clearImportConflictPreferences,
   hasRememberedImportConflictPreferences,
 } from "./import-conflict-preferences";
+import { useElevation } from "./ElevationProvider";
 import { Icon } from "./Icons";
 import { iconActionAttrs } from "./icon-action-attrs";
 import { useLocale } from "./i18n";
+import {
+  SHADOW_LEVEL_MAX,
+  SHADOW_LEVEL_MIN,
+  clampShadowLevel,
+} from "./shadow-preferences";
 import { useTheme } from "./theme";
 import {
   ACCENT_PRESET_HEX,
   DEFAULT_ACCENT_HEX,
   normalizeAccentHex,
 } from "./theme/accent-preferences";
+
+const SHADOW_LEVEL_TICKS = [0, 1, 2, 3] as const;
 
 export interface AppSettingsDialogProps {
   open: boolean;
@@ -56,6 +64,7 @@ export function AppSettingsDialog({
   const { t, preference: localePreference, setLocale } = useLocale();
   const { preference: themePreference, setTheme, accentHex, setAccentHex } =
     useTheme();
+  const { preferences: shadowPrefs, setLevel: setShadowLevel } = useElevation();
   const [accentDraft, setAccentDraft] = useState(accentHex);
   const [diskDeletePromptEnabled, setDiskDeletePromptEnabledState] = useState(
     () => isDiskDeletePromptEnabled(),
@@ -163,6 +172,60 @@ export function AppSettingsDialog({
             >
               {t("settings.accentReset")}
             </button>
+          </div>
+        </section>
+
+        <section className="app-settings-section">
+          <div className="micro-label">{t("settings.elevationSection")}</div>
+          <p className="app-settings-hint">{t("settings.elevationHint")}</p>
+          <div className="app-settings-elevation-scale">
+            <div className="app-settings-elevation-rail">
+              <input
+                aria-label={t("settings.elevationSection")}
+                aria-valuemax={SHADOW_LEVEL_MAX}
+                aria-valuemin={SHADOW_LEVEL_MIN}
+                aria-valuenow={shadowPrefs.level}
+                aria-valuetext={t("settings.elevationLevelValue", {
+                  level: shadowPrefs.level,
+                })}
+                className="app-settings-elevation-slider"
+                max={SHADOW_LEVEL_MAX}
+                min={SHADOW_LEVEL_MIN}
+                onChange={(event) =>
+                  setShadowLevel(clampShadowLevel(Number(event.target.value)))
+                }
+                step={1}
+                type="range"
+                value={shadowPrefs.level}
+              />
+              <div
+                aria-hidden="true"
+                className="app-settings-elevation-ticks"
+                role="presentation"
+              >
+                {SHADOW_LEVEL_TICKS.map((tick) => (
+                  <button
+                    className={
+                      shadowPrefs.level === tick
+                        ? "app-settings-elevation-tick is-active"
+                        : "app-settings-elevation-tick"
+                    }
+                    key={tick}
+                    onClick={() => setShadowLevel(tick)}
+                    type="button"
+                  >
+                    <span className="app-settings-elevation-tick-mark" />
+                    <span className="app-settings-elevation-tick-label">
+                      {tick}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div aria-hidden="true" className="app-settings-elevation-ends">
+              <span>{t("settings.elevationOff")}</span>
+              <span>{t("settings.elevationStrong")}</span>
+            </div>
           </div>
         </section>
 

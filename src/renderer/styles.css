@@ -70,8 +70,24 @@
   /* Legacy alias: several components referenced --border before any token
      existed (their borders silently rendered as none). */
   --border: var(--divider);
-  /* Elevation shadows: one family for menus / dialogs / panels so light
-     theme does not inherit the heavy dark-theme black wash (Serpent-4ojz). */
+  /* Elevation multipliers (Serpent-zcyg): levels 1–3 write these on :root.
+     Level 0 omits elev box-shadows entirely via :not([data-elevation="0"]). */
+  --elev-size: 0.9;
+  --elev-intensity: 0.8;
+  /* Shell hierarchy: chrome / panes / cards sit above --canvas. */
+  --shadow-toolbar:
+    0 calc(2px * var(--elev-size)) calc(10px * var(--elev-size))
+    rgb(0 0 0 / calc(0.28 * var(--elev-intensity)));
+  --shadow-pane-east:
+    calc(6px * var(--elev-size)) 0 calc(18px * var(--elev-size))
+    rgb(0 0 0 / calc(0.22 * var(--elev-intensity)));
+  --shadow-pane-west:
+    calc(-6px * var(--elev-size)) 0 calc(18px * var(--elev-size))
+    rgb(0 0 0 / calc(0.22 * var(--elev-intensity)));
+  --shadow-card:
+    0 calc(2px * var(--elev-size)) calc(10px * var(--elev-size))
+    rgb(0 0 0 / calc(0.24 * var(--elev-intensity)));
+  /* Floating overlays stay fixed (pre-elevation family; Serpent-4ojz). */
   --shadow-menu: 0 8px 24px rgb(0 0 0 / 28%);
   --shadow-elevated: 0 24px 70px rgb(0 0 0 / 42%);
   --shadow-panel: 0 16px 40px rgb(0 0 0 / 42%);
@@ -143,6 +159,19 @@
   --ink: #0f1010;
   --viewer-stage: #e8eae7;
   --border: var(--divider);
+  /* Light: softer elev base alphas; still scaled by --elev-* (Serpent-zcyg). */
+  --shadow-toolbar:
+    0 calc(1px * var(--elev-size)) calc(8px * var(--elev-size))
+    rgb(0 0 0 / calc(0.1 * var(--elev-intensity)));
+  --shadow-pane-east:
+    calc(4px * var(--elev-size)) 0 calc(14px * var(--elev-size))
+    rgb(0 0 0 / calc(0.08 * var(--elev-intensity)));
+  --shadow-pane-west:
+    calc(-4px * var(--elev-size)) 0 calc(14px * var(--elev-size))
+    rgb(0 0 0 / calc(0.08 * var(--elev-intensity)));
+  --shadow-card:
+    0 calc(1px * var(--elev-size)) calc(8px * var(--elev-size))
+    rgb(0 0 0 / calc(0.1 * var(--elev-intensity)));
   --shadow-menu: 0 6px 18px rgb(0 0 0 / 12%), 0 1px 3px rgb(0 0 0 / 8%);
   --shadow-elevated: 0 18px 48px rgb(0 0 0 / 16%);
   --shadow-panel: 0 12px 28px rgb(0 0 0 / 12%);
@@ -397,6 +426,11 @@ summary:focus-visible {
   -webkit-user-select: none;
   user-select: none;
   position: relative;
+}
+
+/* Serpent-zcyg: elev shadows only when level > 0 (skip paint at 0). */
+:root:not([data-elevation="0"]) .app-toolbar {
+  box-shadow: var(--shadow-toolbar);
 }
 
 .toolbar-cluster,
@@ -1428,11 +1462,15 @@ body.platform-darwin .toolbar-leading {
 
 .navigation-pane,
 .inspector-pane {
+  /* overflow on scroll children so pane box-shadow is not clipped
+     (Serpent-zcyg hierarchical elevation). */
+  position: relative;
+  z-index: 2;
   display: flex;
   min-width: 0;
   min-height: 0;
   flex-direction: column;
-  overflow: hidden;
+  overflow: visible;
   background: var(--pane);
 }
 
@@ -1442,6 +1480,14 @@ body.platform-darwin .toolbar-leading {
 
 .inspector-pane {
   border-left: 1px solid var(--divider);
+}
+
+:root:not([data-elevation="0"]) .navigation-pane {
+  box-shadow: var(--shadow-pane-east);
+}
+
+:root:not([data-elevation="0"]) .inspector-pane {
+  box-shadow: var(--shadow-pane-west);
 }
 
 .left-collapsed .navigation-pane,
@@ -1464,6 +1510,7 @@ body.platform-darwin .toolbar-leading {
 
 .navigation-scroll {
   flex: 1;
+  min-height: 0;
   overflow: auto;
   padding: 10px 8px 12px;
 }
@@ -2613,6 +2660,8 @@ input[type="range"] {
 
 .inspector-content {
   display: flex;
+  flex: 1;
+  min-height: 0;
   flex-direction: column;
   overflow: auto;
   padding: 14px;
@@ -2727,6 +2776,7 @@ input[type="range"] {
 .inspector-empty {
   display: flex;
   flex: 1;
+  min-height: 0;
   align-items: center;
   flex-direction: column;
   justify-content: center;
@@ -3309,6 +3359,10 @@ body.serpent-modal-open .app-shell {
   border: 1px solid var(--divider);
   border-radius: 8px;
   background: var(--raised);
+}
+
+:root:not([data-elevation="0"]) .inspector-hero-text-preview {
+  box-shadow: var(--shadow-card);
 }
 .inspector-hero-text-snippet {
   margin: 0;
@@ -4347,6 +4401,155 @@ select.ai-config-input.ai-config-languages {
   margin-top: 12px;
 }
 
+.app-settings-slider-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 36px;
+  align-items: center;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.app-settings-slider-row input[type="range"] {
+  width: 100%;
+  min-width: 0;
+}
+
+.app-settings-slider-value {
+  color: var(--secondary);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+/* Serpent-zcyg: compact 0–3 elevation control; ticks inset to match thumb travel. */
+.app-settings-elevation-scale {
+  --elev-thumb: 12px;
+  --elev-inset: calc(var(--elev-thumb) / 2);
+  width: 168px;
+  max-width: 100%;
+  margin-top: 10px;
+}
+
+.app-settings-elevation-rail {
+  position: relative;
+}
+
+.app-settings-elevation-slider {
+  display: block;
+  width: 100%;
+  height: 18px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  appearance: none;
+  cursor: pointer;
+  accent-color: var(--secondary);
+}
+
+.app-settings-elevation-slider::-webkit-slider-runnable-track {
+  height: 3px;
+  border-radius: 2px;
+  background: var(--divider);
+}
+
+.app-settings-elevation-slider::-webkit-slider-thumb {
+  width: var(--elev-thumb);
+  height: var(--elev-thumb);
+  margin-top: -4.5px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--secondary);
+  appearance: none;
+}
+
+.app-settings-elevation-slider:hover::-webkit-slider-thumb,
+.app-settings-elevation-slider:focus-visible::-webkit-slider-thumb {
+  background: var(--text);
+}
+
+.app-settings-elevation-slider::-moz-range-track {
+  height: 3px;
+  border-radius: 2px;
+  background: var(--divider);
+}
+
+.app-settings-elevation-slider::-moz-range-thumb {
+  width: var(--elev-thumb);
+  height: var(--elev-thumb);
+  border: 0;
+  border-radius: 50%;
+  background: var(--secondary);
+}
+
+.app-settings-elevation-ticks {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  /* Same inset as thumb centers at min/max on the native range track. */
+  padding: 2px var(--elev-inset) 0;
+  margin: 0;
+}
+
+.app-settings-elevation-tick {
+  position: relative;
+  display: flex;
+  width: 0;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--tertiary);
+  cursor: pointer;
+}
+
+/* Widen hit target without shifting the 0-width flex centers. */
+.app-settings-elevation-tick::after {
+  content: "";
+  position: absolute;
+  z-index: 1;
+  top: -6px;
+  bottom: -4px;
+  left: -12px;
+  width: 24px;
+}
+
+.app-settings-elevation-tick-mark {
+  flex: 0 0 auto;
+  width: 1px;
+  height: 7px;
+  background: var(--divider);
+}
+
+.app-settings-elevation-tick.is-active {
+  color: var(--text);
+}
+
+.app-settings-elevation-tick.is-active .app-settings-elevation-tick-mark {
+  width: 2px;
+  background: var(--accent);
+}
+
+.app-settings-elevation-tick-label {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.app-settings-elevation-ends {
+  display: flex;
+  justify-content: space-between;
+  padding: 2px var(--elev-inset) 0;
+  color: var(--tertiary);
+  font-size: 10px;
+  line-height: 1.2;
+}
+
 .app-settings-option-group {
   display: flex;
   flex-wrap: wrap;
@@ -4814,7 +5017,9 @@ select.ai-config-input.ai-config-languages {
   display: flex;
   width: 100%;
   flex-direction: row;
-  align-items: stretch;
+  /* flex-start: caption natural height must not stretch/shrink sibling media
+     boxes (Serpent-5p45). */
+  align-items: flex-start;
   gap: 14px;
 }
 
@@ -4825,13 +5030,16 @@ select.ai-config-input.ai-config-languages {
 .justified-card-slot .asset-card {
   display: flex;
   width: 100%;
-  height: 100%;
+  height: auto;
   flex-direction: column;
 }
 
 .justified-card-slot .asset-preview {
-  flex: 1 1 auto;
+  /* Explicit height from --justified-preview-height (placement.height).
+     Never flex-shrink against the caption band (Serpent-omn / Serpent-5p45). */
+  flex: 0 0 auto;
   width: 100%;
+  height: var(--justified-preview-height);
   min-height: 0;
   aspect-ratio: auto;
 }
@@ -4904,6 +5112,7 @@ select.ai-config-input.ai-config-languages {
   background: transparent;
   text-align: left;
   cursor: pointer;
+  transition: box-shadow 120ms ease;
 }
 
 .folder-card:hover {
@@ -4933,6 +5142,15 @@ select.ai-config-input.ai-config-languages {
 .folder-card:focus-visible {
   outline: none;
   box-shadow: 0 0 0 2px var(--accent);
+}
+
+:root:not([data-elevation="0"]) .folder-card {
+  box-shadow: var(--shadow-card);
+}
+
+:root:not([data-elevation="0"]) .folder-card.is-selected,
+:root:not([data-elevation="0"]) .folder-card:focus-visible {
+  box-shadow: var(--shadow-card), 0 0 0 2px var(--accent);
 }
 
 /* Serpent-7ms / FOLDER-011: physical folder shell + stacked photo covers
@@ -5135,6 +5353,7 @@ select.ai-config-input.ai-config-languages {
   background: transparent;
   text-align: left;
   cursor: pointer;
+  transition: box-shadow 120ms ease;
 }
 
 /* Hover only lifts the surface — no border flash, so dense grids stay calm
@@ -5161,6 +5380,15 @@ select.ai-config-input.ai-config-languages {
 .asset-card:focus-visible {
   outline: none;
   box-shadow: 0 0 0 2px var(--accent);
+}
+
+:root:not([data-elevation="0"]) .asset-card {
+  box-shadow: var(--shadow-card);
+}
+
+:root:not([data-elevation="0"]) .asset-card.is-selected,
+:root:not([data-elevation="0"]) .asset-card:focus-visible {
+  box-shadow: var(--shadow-card), 0 0 0 2px var(--accent);
 }
 .asset-card[draggable="true"] {
   cursor: grab;
@@ -5596,7 +5824,8 @@ select.ai-config-input.ai-config-languages {
   padding: 4px 0 12px;
   border-bottom: 1px solid var(--divider-soft);
   min-height: min-content;
-  overflow: hidden;
+  /* Allow hero preview card shadow to paint (Serpent-zcyg). */
+  overflow: visible;
 }
 
 .inspector-hero-preview {
@@ -5608,7 +5837,8 @@ select.ai-config-input.ai-config-languages {
   max-height: min(360px, 45vh);
   align-items: center;
   justify-content: center;
-  overflow: hidden;
+  /* Visible so hero image elevation shadow is not clipped (Serpent-zcyg). */
+  overflow: visible;
   border: 0;
   border-radius: 0;
   background: transparent;
@@ -5630,6 +5860,11 @@ select.ai-config-input.ai-config-languages {
   max-height: min(360px, 45vh);
   border-radius: 8px;
   object-fit: contain;
+}
+
+:root:not([data-elevation="0"]) .inspector-hero-preview-fallback,
+:root:not([data-elevation="0"]) .inspector-hero-image {
+  box-shadow: var(--shadow-card);
 }
 
 .inspector-hero-image.is-loading {
@@ -6414,7 +6649,6 @@ select.ai-config-input.ai-config-languages {
     bottom: 0;
     width: 224px;
     visibility: visible;
-    box-shadow: 10px 0 30px rgb(0 0 0 / 24%);
   }
 
   .navigation-pane {
@@ -6424,7 +6658,14 @@ select.ai-config-input.ai-config-languages {
   .inspector-pane {
     right: 0;
     width: 268px;
-    box-shadow: -10px 0 30px rgb(0 0 0 / 24%);
+  }
+
+  :root:not([data-elevation="0"]) .navigation-pane {
+    box-shadow: var(--shadow-pane-east);
+  }
+
+  :root:not([data-elevation="0"]) .inspector-pane {
+    box-shadow: var(--shadow-pane-west);
   }
 
   .left-collapsed .navigation-pane,

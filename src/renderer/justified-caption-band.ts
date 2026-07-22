@@ -1,8 +1,10 @@
 /**
- * Justified (flat/tiled) row height must reserve the real caption band.
- * If the reserved band is shorter than the rendered caption, flex shrinks the
- * preview while slot widths still assume the full image height — causing
- * horizontal letterboxing (Serpent-omn / CANVAS-026).
+ * Caption band sizing constants for justified (flat/tiled) cards.
+ *
+ * Historically used to reserve row height so flex did not shrink the preview
+ * (Serpent-omn / CANVAS-026). Serpent-5p45 locks preview height via
+ * `--justified-preview-height` instead; this helper remains for measurements
+ * and regression tests.
  *
  * Values mirror `.justified-card-slot .asset-caption` in styles.css.
  */
@@ -28,8 +30,8 @@ export type JustifiedCaptionLines = {
 };
 
 /**
- * Pixel height to add under the justified image row so preview flex space
- * matches `layoutJustifiedRows` placement heights.
+ * Estimated caption band height for the given visible lines.
+ * Not used to drive preview geometry after Serpent-5p45.
  */
 export function resolveJustifiedCaptionBandPx(
   lines: JustifiedCaptionLines,

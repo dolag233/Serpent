@@ -8,12 +8,19 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 
 import { App } from './App';
+import { ElevationProvider } from './ElevationProvider';
 import { LocaleProvider } from './i18n';
 import { applyRendererPlatform } from './renderer-platform';
+import {
+  applyShadowPreferences,
+  loadShadowPreferences,
+} from './shadow-preferences';
 import { ThemeProvider } from './theme';
 import './styles.css';
 
 applyRendererPlatform(document.documentElement, navigator.userAgent);
+// Apply elev level before first paint so level 0 never flashes shell shadows.
+applyShadowPreferences(loadShadowPreferences());
 
 const root = document.getElementById('root');
 
@@ -25,7 +32,9 @@ createRoot(root).render(
   <StrictMode>
     <LocaleProvider>
       <ThemeProvider>
-        <App />
+        <ElevationProvider>
+          <App />
+        </ElevationProvider>
       </ThemeProvider>
     </LocaleProvider>
   </StrictMode>,
