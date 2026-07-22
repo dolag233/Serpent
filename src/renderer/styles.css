@@ -4373,40 +4373,6 @@ select.ai-config-input.ai-config-languages {
   color: var(--accent-soft-fg);
 }
 
-.app-settings-accent-presets {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 8px;
-}
-
-.app-settings-accent-swatch {
-  width: 28px;
-  height: 28px;
-  padding: 0;
-  border: 2px solid transparent;
-  border-radius: 50%;
-  cursor: pointer;
-}
-
-.app-settings-accent-swatch.is-active {
-  border-color: var(--text);
-  box-shadow: 0 0 0 2px var(--pane);
-}
-
-.app-settings-accent-custom {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  align-items: center;
-  margin-top: 10px;
-}
-
-.app-settings-accent-custom .text-field {
-  flex: 1 1 140px;
-  min-width: 0;
-}
-
 .app-settings-check-row-group {
   display: flex;
   flex-direction: column;

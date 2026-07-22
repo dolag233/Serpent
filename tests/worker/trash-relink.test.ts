@@ -937,6 +937,25 @@ describe('deleteAssetsPermanent', () => {
   });
 });
 
+describe('emptyTrash', () => {
+  it('permanently deletes all trashed assets and folder tombstones', () => {
+    const root = temporaryRoot();
+    const service = newService();
+    const created = service.createLibrary({ displayName: 'Empty Trash', selectedParentPath: root });
+
+    writeFileSync(path.join(root, 'a.jpg'), 'a');
+    writeFileSync(path.join(root, 'b.jpg'), 'b');
+    const a = importNoConflict(service, created.libraryId, path.join(root, 'a.jpg')).assets[0]!;
+    const b = importNoConflict(service, created.libraryId, path.join(root, 'b.jpg')).assets[0]!;
+    service.trashAssets({ libraryId: created.libraryId, assetIds: [a.assetId, b.assetId] });
+
+    const { purgedCount } = service.emptyTrash(created.libraryId);
+    expect(purgedCount).toBe(2);
+    expect(service.listTrash(created.libraryId)).toEqual([]);
+    service.closeAll();
+  });
+});
+
 describe('purgeExpiredTrash', () => {
   it('purges assets older than 30 days', () => {
     const root = temporaryRoot();

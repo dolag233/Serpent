@@ -153,7 +153,7 @@ interface AssetContextMenuProps {
   ) => Promise<CollectionMembershipRow[]>;
   trashedAssetCount: number;
   onRestoreTrashedFolder: (tombstoneId: string, name: string) => void;
-  onPurgeExpiredTrash: () => void;
+  onEmptyTrash: () => void;
 }
 
 export function AssetContextMenu(props: AssetContextMenuProps) {
@@ -349,10 +349,10 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                   : undefined
               }
               icon={<Icon name="trash" size={14} />}
-              label={t("toolbar.emptyExpiredTrash")}
+              label={t("toolbar.emptyTrash")}
               onAction={() => {
                 if (confirm(t("toast.emptyTrashConfirm"))) {
-                  props.onPurgeExpiredTrash();
+                  props.onEmptyTrash();
                 }
               }}
             />

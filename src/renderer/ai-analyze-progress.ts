@@ -60,24 +60,3 @@ export function collectRecentAiFailureCodes(
   }
   return codes;
 }
-
-/**
- * Infer batch total for auto-analyze after import when no explicit user batch
- * was recorded (Serpent-qabe).
- */
-export function inferAutoAnalyzeBatchTotal(
-  explicitBatchTotal: number,
-  counters: AiQueueCounters,
-  baseline: { succeeded: number; failed: number },
-): number {
-  if (explicitBatchTotal > 0) return explicitBatchTotal;
-  const inFlight = counters.queued + counters.running;
-  if (inFlight <= 0) return 0;
-  const done = Math.max(
-    0,
-    counters.succeeded -
-      baseline.succeeded +
-      (counters.failed - baseline.failed),
-  );
-  return inFlight + done;
-}

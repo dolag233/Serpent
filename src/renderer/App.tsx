@@ -97,7 +97,6 @@ import {
 import {
   collectRecentAiFailureCodes,
   computeAiBatchProgress,
-  inferAutoAnalyzeBatchTotal,
 } from "./ai-analyze-progress";
 import { summarizeAiFailureCodes } from "./ai-job-error-message";
 import {
@@ -4323,7 +4322,7 @@ function AppInner() {
     }
   }
 
-  async function purgeTrash() {
+  async function emptyTrash() {
     if (!api || !library) return;
     setUiState("loading");
     try {
@@ -6137,12 +6136,12 @@ function AppInner() {
                       t("toast.emptyTrashConfirm"),
                     )
                   )
-                    void purgeTrash();
+                    void emptyTrash();
                 }}
                 type="button"
               >
                 <Icon name="trash" size={14} />
-                {t("toolbar.emptyExpiredTrash")}
+                {t("toolbar.emptyTrash")}
               </button>
             ) : (
               library &&
@@ -6279,25 +6278,18 @@ function AppInner() {
         {(aiAnalyzing ||
           (aiJobs !== null && aiJobs.queued + aiJobs.running > 0)) &&
           (() => {
-            const queueCounters = {
-              queued: aiJobs?.queued ?? 0,
-              running: aiJobs?.running ?? 0,
-              succeeded: aiJobs?.succeeded ?? 0,
-              failed: aiJobs?.failed ?? 0,
-            };
-            const batchBaseline = {
-              succeeded: analyzeSucceededBaselineRef.current,
-              failed: analyzeFailedBaselineRef.current,
-            };
-            const effectiveBatchTotal = inferAutoAnalyzeBatchTotal(
-              analyzingBatchSizeRef.current,
-              queueCounters,
-              batchBaseline,
-            );
             const batchProgress = computeAiBatchProgress(
-              effectiveBatchTotal,
-              batchBaseline,
-              queueCounters,
+              analyzingBatchSizeRef.current,
+              {
+                succeeded: analyzeSucceededBaselineRef.current,
+                failed: analyzeFailedBaselineRef.current,
+              },
+              {
+                queued: aiJobs?.queued ?? 0,
+                running: aiJobs?.running ?? 0,
+                succeeded: aiJobs?.succeeded ?? 0,
+                failed: aiJobs?.failed ?? 0,
+              },
             );
             const progressLabel =
               batchProgress.batchTotal > 0
@@ -7752,8 +7744,8 @@ function AppInner() {
         onRestoreTrashedFolder={(tombstoneId, name) => {
           void restoreTrashedManagedFolder(tombstoneId, name);
         }}
-        onPurgeExpiredTrash={() => {
-          void purgeTrash();
+        onEmptyTrash={() => {
+          void emptyTrash();
         }}
       />
       {/* REQ-SHELL-007 / REQ-SHELL-011 pane resize + edge restore handles. */}

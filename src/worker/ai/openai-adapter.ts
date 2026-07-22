@@ -94,30 +94,10 @@ export class OpenAIVendorAdapter implements VendorAdapter {
   }
 
   async probeConnection(signal?: AbortSignal): Promise<void> {
-    if (this.wireFormat === 'openai_responses') {
-      try {
-        await this.#probeResponses(signal);
-        return;
-      } catch (error: unknown) {
-        if (
-          error instanceof VendorAdapterError &&
-          (error.kind === 'invalid_response' || error.kind === 'network')
-        ) {
-          await this.#probeChatCompletions(signal);
-          return;
-        }
-        throw error;
-      }
-    }
-    await this.#probeChatCompletions(signal);
-  }
-
-  async #probeChatCompletions(signal?: AbortSignal): Promise<void> {
     let response: Response;
     try {
-      response = await this._fetch(
-        resolveOpenAiChatCompletionsUrl(this.baseUrl),
-        {
+      if (this.wireFormat === 'openai_responses') {
+        response = await this._fetch(resolveOpenAiResponsesUrl(this.baseUrl), {
           method: 'POST',
           headers: {
             Authorization: `Bearer ${this.apiKey}`,
@@ -125,49 +105,33 @@ export class OpenAIVendorAdapter implements VendorAdapter {
           },
           body: JSON.stringify({
             model: this.model,
-            messages: [
-              { role: 'user', content: 'Reply with the single word OK.' },
-            ],
-            max_tokens: 16,
+            input: 'Reply with the single word OK.',
+            max_output_tokens: 16,
             temperature: 0,
           }),
           signal,
-        },
-      );
-    } catch (error: unknown) {
-      throw this.#mapFetchError(error);
-    }
-    if (!response.ok) {
-      throw await this.#mapHttpError(response);
-    }
-    try {
-      await response.json();
-    } catch (error: unknown) {
-      throw new VendorAdapterError(
-        'invalid_response',
-        'The AI service returned an unreadable response.',
-        { cause: error },
-      );
-    }
-  }
-
-  async #probeResponses(signal?: AbortSignal): Promise<void> {
-    let response: Response;
-    try {
-      response = await this._fetch(resolveOpenAiResponsesUrl(this.baseUrl), {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${this.apiKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: this.model,
-          input: 'Reply with the single word OK.',
-          max_output_tokens: 16,
-          temperature: 0,
-        }),
-        signal,
-      });
+        });
+      } else {
+        response = await this._fetch(
+          resolveOpenAiChatCompletionsUrl(this.baseUrl),
+          {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${this.apiKey}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              model: this.model,
+              messages: [
+                { role: 'user', content: 'Reply with the single word OK.' },
+              ],
+              max_tokens: 16,
+              temperature: 0,
+            }),
+            signal,
+          },
+        );
+      }
     } catch (error: unknown) {
       throw this.#mapFetchError(error);
     }

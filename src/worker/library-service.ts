@@ -14419,6 +14419,51 @@ export class LibraryService {
     };
   }
 
+  /** Permanently delete trashed assets by id; shared by emptyTrash and purgeExpiredTrash. */
+  private purgeTrashedAssetsById(
+    libraryId: string,
+    assetIds: string[],
+  ): {
+    purgedCount: number;
+    skippedCount: number;
+    failures: Array<{ assetId: string; reason: PublicErrorReason }>;
+  } {
+    let purgedCount = 0;
+    let skippedCount = 0;
+    const failures: Array<{ assetId: string; reason: PublicErrorReason }> = [];
+
+    for (const assetId of assetIds) {
+      const result = this.deleteAssetsPermanent({ libraryId, assetIds: [assetId] });
+      purgedCount += result.deletedCount;
+      skippedCount += result.skippedCount;
+      failures.push(...result.skippedReasons);
+    }
+
+    return { purgedCount, skippedCount, failures };
+  }
+
+  /** Permanently delete every item currently in Trash (user-initiated empty). */
+  emptyTrash(libraryId: string): {
+    purgedCount: number;
+    skippedCount: number;
+    failures: Array<{ assetId: string; reason: PublicErrorReason }>;
+  } {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+
+    const rows = openLibrary.connection
+      .prepare(`SELECT asset_id FROM assets WHERE deleted_at IS NOT NULL`)
+      .all() as Array<{ asset_id: string }>;
+
+    const result = this.purgeTrashedAssetsById(
+      libraryId,
+      rows.map((row) => row.asset_id),
+    );
+
+    openLibrary.connection.prepare('DELETE FROM trashed_managed_folders').run();
+
+    return result;
+  }
+
   purgeExpiredTrash(libraryId: string): {
     purgedCount: number;
     skippedCount: number;
@@ -14435,23 +14480,16 @@ export class LibraryService {
 
     if (rows.length === 0) return { purgedCount: 0, skippedCount: 0, failures: [] };
 
-    const assetIds = rows.map((r) => r.asset_id);
-    let purgedCount = 0;
-    let skippedCount = 0;
-    const failures: Array<{ assetId: string; reason: PublicErrorReason }> = [];
-
-    for (const assetId of assetIds) {
-      const result = this.deleteAssetsPermanent({ libraryId, assetIds: [assetId] });
-      purgedCount += result.deletedCount;
-      skippedCount += result.skippedCount;
-      failures.push(...result.skippedReasons);
-    }
+    const result = this.purgeTrashedAssetsById(
+      libraryId,
+      rows.map((row) => row.asset_id),
+    );
 
     openLibrary.connection
       .prepare('DELETE FROM trashed_managed_folders WHERE trashed_at < ?')
       .run(expiryDate);
 
-    return { purgedCount, skippedCount, failures };
+    return result;
   }
 
   listTrashedFolders(libraryId: string): TrashedFolderSummary[] {

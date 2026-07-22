@@ -695,7 +695,7 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
       return { ok: true, type: 'asset.list-trash', assets };
     }
     case 'asset.purge-trash': {
-      const { purgedCount, skippedCount, failures } = libraryService.purgeExpiredTrash(request.command.libraryId);
+      const { purgedCount, skippedCount, failures } = libraryService.emptyTrash(request.command.libraryId);
       return { ok: true, type: 'asset.purge-trash', purgedCount, skippedCount, failures };
     }
     case 'asset.relink': {
