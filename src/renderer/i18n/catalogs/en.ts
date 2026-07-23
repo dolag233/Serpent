@@ -171,8 +171,8 @@ export const en = {
     searchLibrary: "Search library",
     aiSearch: "AI search",
     aiSearchTitle: "When on, submitting uses configured AI to turn natural language into normal search criteria",
-    aiSearchPlaceholder: "Natural language, e.g. landscape sci-fi city concept, no sketches",
-    searchPlaceholder: "Search; supports filename:\"phrase\", NOT tags:sketch, OR",
+    aiSearchPlaceholder: "Describe what you are looking for…",
+    searchPlaceholder: "Search library…",
     aiSearchHint: "On submit, the configured cloud model builds constrained search criteria",
     searchHint: "Example: filename:\"hero concept\" NOT tags:sketch",
     clearSearch: "Clear search",
@@ -950,13 +950,6 @@ export const en = {
   assetRename: {
     failed: "Failed to rename file.",
     success: "File renamed to \"{name}\"."
-  },
-  aiPlan: {
-    terms: "{count} terms",
-    exclusions: "Exclude {count}",
-    filters: "{count} filters",
-    withSort: "Includes sort",
-    summary: "AI plan: {parts}"
   },
   toast: {
     bridgeUnavailable: "Cannot connect to the Serpent desktop service. Please restart the app.",

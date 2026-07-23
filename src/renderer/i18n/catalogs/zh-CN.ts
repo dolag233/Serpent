@@ -162,8 +162,8 @@ export const zhCN = {
     searchLibrary: "搜索资源库",
     aiSearch: "AI 搜索",
     aiSearchTitle: "点亮后仅在提交时调用已配置的 AI，把自然语言转换为普通搜索条件",
-    aiSearchPlaceholder: "自然语言，例如：横版科幻城市概念图，不要草图",
-    searchPlaceholder: "搜索；支持 filename:\"短语\"、NOT tags:草图、OR",
+    aiSearchPlaceholder: "描述想找的内容…",
+    searchPlaceholder: "搜索资源库…",
     aiSearchHint: "提交后由已配置的云端模型生成受限搜索条件",
     searchHint: "示例：filename:\"hero concept\" NOT tags:草图",
     clearSearch: "清除搜索",
@@ -934,13 +934,6 @@ export const zhCN = {
   assetRename: {
     failed: "重命名文件失败。",
     success: "文件已重命名为\"{name}\"。"
-  },
-  aiPlan: {
-    terms: "{count} 个词",
-    exclusions: "排除 {count} 项",
-    filters: "{count} 个筛选",
-    withSort: "含排序",
-    summary: "AI 计划：{parts}"
   },
   toast: {
     bridgeUnavailable: "无法连接到 Serpent 桌面服务。请重新启动应用。",

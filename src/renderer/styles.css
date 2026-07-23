@@ -1255,15 +1255,88 @@ body.platform-darwin .toolbar-leading {
   flex: 1 1 240px;
   min-width: 200px;
   max-width: 360px;
+  height: var(--shell-control-height);
   align-items: center;
+  border: 1px solid var(--divider);
+  border-radius: 6px;
+  background: var(--canvas);
+  color: var(--tertiary);
+  transition:
+    border-color 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.search-control-wrap > .icon {
+  flex: 0 0 auto;
+  margin-left: 9px;
+}
+
+.search-control-wrap:hover {
+  border-color: var(--divider);
+}
+
+.search-control-wrap:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 62%, var(--divider));
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.search-control-wrap.is-ai-search {
+  border-color: color-mix(in srgb, var(--warning) 56%, var(--divider));
 }
 
 .search-control-wrap .search-control {
   flex: 1 1 auto;
   width: 100%;
+  height: 100%;
   min-width: 0;
   max-width: none;
-  padding-right: 28px;
+  padding: 0 34px 0 7px;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  color: var(--text);
+}
+
+.search-control-wrap.has-value .search-control {
+  padding-right: 59px;
+}
+
+.search-ai-toggle {
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  display: inline-grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--secondary);
+  cursor: pointer;
+  transform: translateY(-50%);
+}
+
+.search-control-wrap.has-value .search-ai-toggle {
+  right: 29px;
+}
+
+.search-ai-toggle:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.search-ai-toggle:focus-visible,
+.search-clear-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.search-ai-toggle:disabled {
+  color: var(--tertiary);
+  opacity: 0.48;
+  cursor: not-allowed;
 }
 
 .search-clear-btn {
@@ -1291,23 +1364,6 @@ body.platform-darwin .toolbar-leading {
   color: var(--tertiary);
   opacity: 0.48;
   cursor: not-allowed;
-}
-
-.search-active-chip {
-  display: inline-flex;
-  max-width: 160px;
-  height: var(--shell-chip-height);
-  align-items: center;
-  overflow: hidden;
-  padding: 0 8px;
-  border: 1px solid var(--divider);
-  border-radius: 999px;
-  background: var(--accent-soft);
-  color: var(--accent-soft-fg);
-  font-size: 11px;
-  line-height: 1;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .dimension-color-row {
@@ -1396,47 +1452,17 @@ body.platform-darwin .toolbar-leading {
 }
 
 .search-control {
-  display: flex;
-  align-items: center;
-  /* REQ-CANVAS-006: the keyword input takes the toolbar's leftover width
-     (up to 360px) instead of being capped at 200px, and never shrinks below
-     a usable 200px so neighbours keep their natural size. */
-  flex: 1 1 240px;
-  min-width: 200px;
-  max-width: 360px;
-  height: var(--shell-control-height);
-  gap: 7px;
-  padding: 0 9px;
-  border: 1px solid var(--divider);
-  border-radius: 6px;
-  background: var(--canvas);
-  color: var(--secondary);
   font-size: 12px;
   line-height: 1.2;
   text-align: left;
-  transition:
-    border-color 120ms ease,
-    box-shadow 120ms ease;
-}
-
-.search-control:hover:not(:disabled) {
-  border-color: var(--divider);
 }
 
 .search-control:focus {
-  border-color: color-mix(in srgb, var(--accent) 62%, var(--divider));
-  box-shadow: 0 0 0 3px var(--accent-soft);
   outline: none;
 }
 
-.search-control span {
-  flex: 1;
-}
-
-.search-control kbd {
-  font-family: "IBM Plex Mono", monospace;
-  font-size: 10px;
-  color: var(--tertiary);
+.search-control::-webkit-search-cancel-button {
+  appearance: none;
 }
 
 .search-control:disabled {
@@ -1449,20 +1475,9 @@ body.platform-darwin .toolbar-leading {
   color: var(--tertiary);
 }
 
-.ai-search-toggle[aria-pressed="true"]:not(:disabled) {
-  border-color: color-mix(in srgb, var(--warning) 70%, transparent);
+.search-ai-toggle[aria-pressed="true"]:not(:disabled) {
   background: color-mix(in srgb, var(--warning) 18%, transparent);
   color: var(--warning-fg);
-}
-
-.ai-search-plan-summary {
-  overflow: hidden;
-  max-width: 120px;
-  color: var(--tertiary);
-  font-family: "IBM Plex Mono", monospace;
-  font-size: 9px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .navigation-pane,
@@ -7031,12 +7046,11 @@ select.ai-config-input.ai-config-languages {
   }
 
   .library-switcher-name,
-  .scope-sep,
-  .search-control kbd {
+  .scope-sep {
     display: none;
   }
 
-  .search-control {
+  .search-control-wrap {
     flex-basis: 132px;
     min-width: 132px;
   }
@@ -7101,7 +7115,6 @@ select.ai-config-input.ai-config-languages {
    does not rely on :is() adopting a selector's highest specificity. */
 :root[data-platform="windows"] :where(
     .micro-label,
-    .ai-search-plan-summary,
     .search-snippet,
     .inspector-section-label,
     .inspector-status-row,
@@ -7122,7 +7135,6 @@ select.ai-config-input.ai-config-languages {
 
 :root[data-platform="windows"] :where(
     .micro-label,
-    .ai-search-plan-summary,
     .search-snippet,
     .inspector-section-label,
     .inspector-status-row,
@@ -7196,10 +7208,7 @@ select.ai-config-input.ai-config-languages {
   font-variant-numeric: tabular-nums;
 }
 
-:root[data-platform="windows"] :where(
-    .ai-search-plan-summary,
-    .search-snippet
-  ) {
+:root[data-platform="windows"] .search-snippet {
   /* These fields can contain localized prose, so they must not inherit the
      technical monospace styling used for machine-oriented values. */
   font-family: var(--font-ui);

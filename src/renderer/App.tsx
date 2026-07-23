@@ -684,9 +684,6 @@ function AppInner() {
   const [aiSearchLoading, setAiSearchLoading] = useState(false);
   const [activeAiSearchDefinition, setActiveAiSearchDefinition] =
     useState<SearchDefinition | null>(null);
-  const [aiSearchPlanSummary, setAiSearchPlanSummary] = useState<string | null>(
-    null,
-  );
   const { open: openContextMenu, close: closeContextMenu } =
     useContextMenu();
   const hadDiscoveryInput = useRef(false);
@@ -2101,7 +2098,6 @@ function AppInner() {
   function clearDiscoveryControls() {
     setSearchValue("");
     setActiveAiSearchDefinition(null);
-    setAiSearchPlanSummary(null);
     setFormatFilter("");
     setExcludeFormatFilter(false);
     setColorFilter("");
@@ -3379,7 +3375,6 @@ function AppInner() {
     try {
       const definition = currentQueryDefinition();
       setActiveAiSearchDefinition(null);
-      setAiSearchPlanSummary(null);
       const result = await executeSearchDefinition(definition, offset);
       // Serpent-huvw: discovery debounce / reload must not toast "搜索完成"
       // and wipe AI completion / error toasts.
@@ -3421,7 +3416,6 @@ function AppInner() {
           : {}),
       };
       setActiveAiSearchDefinition(definition);
-      setAiSearchPlanSummary(describeAiSearchPlan(planned.value.plan, locale));
       const result = await executeSearchDefinition(definition, offset);
       if (result)
         setNotice(t("toast.aiSearchDone", { total: result.total }));
@@ -3429,7 +3423,6 @@ function AppInner() {
       const explanation = toMessage(caught, t("toast.aiSearchFailed"), locale);
       setAiSearchEnabled(false);
       setActiveAiSearchDefinition(null);
-      setAiSearchPlanSummary(null);
       try {
         const fallback = await executeSearchDefinition(
           currentQueryDefinition(),
@@ -6136,23 +6129,12 @@ function AppInner() {
             if (aiSearchEnabled) void runAiSearch(event);
             else void runSearch(event);
           }}
+          role="search"
         >
-          <button
-            aria-pressed={aiSearchEnabled}
-            className="compact-action ai-search-toggle"
-            data-hover-tip={t("toolbar.aiSearchTitle")}
-            disabled={!library || aiSearchLoading}
-            onClick={() => {
-              setAiSearchEnabled((enabled) => !enabled);
-              setActiveAiSearchDefinition(null);
-              setAiSearchPlanSummary(null);
-            }}
-            type="button"
+          <div
+            className={`search-control-wrap${aiSearchEnabled ? " is-ai-search" : ""}${searchValue.trim() ? " has-value" : ""}`}
           >
-            <Icon name="smart" size={14} />
-            {t("toolbar.aiSearch")}
-          </button>
-          <div className="search-control-wrap">
+            <Icon name="search" size={15} />
             <input
               aria-label={t("toolbar.searchLibrary")}
               className="search-control"
@@ -6160,20 +6142,29 @@ function AppInner() {
               onChange={(event) => {
                 setSearchValue(event.target.value);
                 setActiveAiSearchDefinition(null);
-                setAiSearchPlanSummary(null);
               }}
               placeholder={
                 aiSearchEnabled
                   ? t("toolbar.aiSearchPlaceholder")
                   : t("toolbar.searchPlaceholder")
               }
-              title={
-                aiSearchEnabled
-                  ? t("toolbar.aiSearchHint")
-                  : t("toolbar.searchHint")
-              }
+              type="search"
               value={searchValue}
             />
+            <button
+              aria-label={t("toolbar.aiSearch")}
+              aria-pressed={aiSearchEnabled}
+              className="search-ai-toggle"
+              data-hover-tip={t("toolbar.aiSearchTitle")}
+              disabled={!library || aiSearchLoading}
+              onClick={() => {
+                setAiSearchEnabled((enabled) => !enabled);
+                setActiveAiSearchDefinition(null);
+              }}
+              type="button"
+            >
+              <Icon name="smart" size={14} />
+            </button>
             {searchValue.trim() !== "" && (
               <button
                 aria-label={t("toolbar.clearSearch")}
@@ -6182,7 +6173,6 @@ function AppInner() {
                 onClick={() => {
                   setSearchValue("");
                   setActiveAiSearchDefinition(null);
-                  setAiSearchPlanSummary(null);
                 }}
                 type="button"
               >
@@ -6190,31 +6180,6 @@ function AppInner() {
               </button>
             )}
           </div>
-          {searchValue.trim() !== "" && (
-            <span className="search-active-chip" title={searchValue.trim()}>
-              {t("toolbar.searchingFor", { query: searchValue.trim() })}
-            </span>
-          )}
-          <button
-            className="compact-action is-accent"
-            disabled={
-              !library ||
-              aiSearchLoading ||
-              (aiSearchEnabled && !searchValue.trim())
-            }
-            type="submit"
-          >
-            <Icon name="search" size={14} />
-            {aiSearchLoading ? t("toolbar.converting") : t("common.search")}
-          </button>
-          {aiSearchPlanSummary && (
-            <span
-              className="ai-search-plan-summary"
-              title={aiSearchPlanSummary}
-            >
-              {aiSearchPlanSummary}
-            </span>
-          )}
           <ToolButton
             icon={rightOpen ? "panel-right-close" : "panel-right"}
             label={rightOpen ? t("shell.collapseInspector") : t("shell.expandInspector")}
@@ -8186,29 +8151,6 @@ export function aiSearchPlanToDefinition(plan: AiSearchPlan): SearchDefinition {
     ...(plan.filters.length > 0 ? { filters: plan.filters } : {}),
     ...(plan.sort ? { sort: plan.sort } : {}),
   };
-}
-function describeAiSearchPlan(plan: AiSearchPlan, locale: AppLocale): string {
-  const parts = [
-    plan.keywords.length + plan.synonyms.length > 0
-      ? translateForLocale(locale, "aiPlan.terms", {
-          count: plan.keywords.length + plan.synonyms.length,
-        })
-      : undefined,
-    plan.exclusions.length > 0
-      ? translateForLocale(locale, "aiPlan.exclusions", {
-          count: plan.exclusions.length,
-        })
-      : undefined,
-    plan.filters.length > 0
-      ? translateForLocale(locale, "aiPlan.filters", {
-          count: plan.filters.length,
-        })
-      : undefined,
-    plan.sort ? translateForLocale(locale, "aiPlan.withSort") : undefined,
-  ].filter((part): part is string => Boolean(part));
-  return translateForLocale(locale, "aiPlan.summary", {
-    parts: parts.join(" · "),
-  });
 }
 function formatBytes(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
