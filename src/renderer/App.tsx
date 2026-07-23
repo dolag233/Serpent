@@ -122,6 +122,7 @@ import {
 } from "../shared/ai-analysis-settings";
 import { AppSettingsDialog } from "./AppSettingsDialog";
 import { AppSettingsEntry } from "./AppSettingsEntry";
+import type { AppSettingsCategoryId } from "./app-settings-sections";
 import {
   loadAiUiPreferences,
   saveAiUiPreferences,
@@ -809,6 +810,8 @@ function AppInner() {
 
   // REQ-PREF-001: browse-area general settings panel (theme/language/canvas).
   const [appSettingsOpen, setAppSettingsOpen] = useState(false);
+  const [appSettingsCategory, setAppSettingsCategory] =
+    useState<AppSettingsCategoryId>("general");
   const [smartCollectionSettings, setSmartCollectionSettings] =
     useState<SmartCollectionSettingsTarget | null>(null);
 
@@ -6079,7 +6082,10 @@ function AppInner() {
             />
             <AppSettingsEntry
               disabled={busy}
-              onOpen={() => setAppSettingsOpen(true)}
+              onOpen={() => {
+                setAppSettingsCategory("general");
+                setAppSettingsOpen(true);
+              }}
             />
           </div>
         </div>
@@ -6434,10 +6440,13 @@ function AppInner() {
                 },
                 openBackgroundJobs: () => setMediaJobsOpen(true),
                 openAiSettings: () => {
-                  void loadAiConfig();
-                  setAiConfigOpen(true);
+                  setAppSettingsCategory("ai");
+                  setAppSettingsOpen(true);
                 },
-                openAppSettings: () => setAppSettingsOpen(true),
+                openAppSettings: () => {
+                  setAppSettingsCategory("general");
+                  setAppSettingsOpen(true);
+                },
               }}
               busy={busy}
               canvasPrefs={canvasPrefs}
@@ -7564,9 +7573,19 @@ function AppInner() {
         onCancel={() => setRenameTarget(null)}
       />
       <AppSettingsDialog
+        activeCategory={appSettingsCategory}
         aiUiPrefs={aiUiPrefs}
         canvasPrefs={canvasPrefs}
-        onClose={() => setAppSettingsOpen(false)}
+        onActiveCategoryChange={setAppSettingsCategory}
+        onClose={() => {
+          setAppSettingsOpen(false);
+          setAppSettingsCategory("general");
+        }}
+        onOpenAiConfig={() => {
+          setAppSettingsOpen(false);
+          void loadAiConfig();
+          setAiConfigOpen(true);
+        }}
         onSetViewMode={(mode) => {
           setCanvasPrefs((p) => ({ ...p, viewMode: mode }));
         }}

@@ -25,8 +25,9 @@ export interface ToolbarCommandActions {
   readonly toggleField: (field: CanvasFieldKey) => void;
   readonly openBrowserExtension: () => void;
   readonly openBackgroundJobs: () => void;
+  /** Opens the AI category in the consolidated settings center. */
   readonly openAiSettings: () => void;
-  /** REQ-PREF-001: opens the general settings panel (theme/language/canvas). */
+  /** Opens the general category in the consolidated settings center. */
   readonly openAppSettings: () => void;
 }
 

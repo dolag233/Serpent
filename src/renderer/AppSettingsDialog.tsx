@@ -1,87 +1,61 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { type ReactNode } from "react";
+
+import { AppSettingsNavigation } from "./AppSettingsNavigation";
 import {
-  APP_SETTINGS_CANVAS_BADGE_FIELD_OPTIONS,
-  APP_SETTINGS_CANVAS_CAPTION_FIELD_OPTIONS,
-  APP_SETTINGS_CARD_BADGES_HINT_KEY,
-  APP_SETTINGS_CARD_FIELDS_HINT_KEY,
-  APP_SETTINGS_LOCALE_OPTIONS,
-  APP_SETTINGS_THEME_OPTIONS,
+  AiSettingsPage,
+  AppearanceSettingsPage,
+  BrowseSettingsPage,
+  GeneralSettingsPage,
+  SafetySettingsPage,
+} from "./AppSettingsPages";
+import {
+  APP_SETTINGS_CATEGORIES,
+  type AppSettingsCategoryId,
 } from "./app-settings-sections";
 import type { AiUiPreferences } from "./ai-ui-preferences";
 import type { CanvasPreferences } from "./canvas-preferences";
-import {
-  isDiskDeletePromptEnabled,
-  setDiskDeletePromptEnabled,
-} from "./disk-delete-confirm-preferences";
-import {
-  clearImportConflictPreferences,
-  hasRememberedImportConflictPreferences,
-} from "./import-conflict-preferences";
-import { useElevation } from "./ElevationProvider";
 import { Icon } from "./Icons";
 import { iconActionAttrs } from "./icon-action-attrs";
-import { useLocale } from "./i18n";
-import {
-  SHADOW_LEVEL_MAX,
-  SHADOW_LEVEL_MIN,
-  clampShadowLevel,
-} from "./shadow-preferences";
-import { useTheme } from "./theme";
-import {
-  ACCENT_PRESET_HEX,
-  DEFAULT_ACCENT_HEX,
-  normalizeAccentHex,
-} from "./theme/accent-preferences";
-
-const SHADOW_LEVEL_TICKS = [0, 1, 2, 3] as const;
+import { useT } from "./i18n";
 
 export interface AppSettingsDialogProps {
   open: boolean;
+  activeCategory: AppSettingsCategoryId;
   onClose: () => void;
+  onActiveCategoryChange: (category: AppSettingsCategoryId) => void;
   canvasPrefs: CanvasPreferences;
   onSetViewMode: (mode: CanvasPreferences["viewMode"]) => void;
   onToggleField: (field: keyof CanvasPreferences["fields"]) => void;
   aiUiPrefs: AiUiPreferences;
   onToggleShowAiBadges: () => void;
+  onOpenAiConfig: () => void;
 }
 
 /**
- * REQ-PREF-001 / Serpent-97l / Serpent-9es: app-level preferences (theme,
- * language, canvas card fields). Opened from the gear beside the library
- * switcher. Theme and language are no longer in the library dropdown — this
- * dialog is the only settings surface. Esc and backdrop click dismiss; no
- * footer Close button.
+ * Consolidated application preferences. The category rail deliberately keeps
+ * stable settings discoverable without turning direct-manipulation workspace
+ * state (panel widths, tree expansion) into another configuration screen.
  */
 export function AppSettingsDialog({
   open,
+  activeCategory,
   onClose,
+  onActiveCategoryChange,
   canvasPrefs,
   onSetViewMode,
   onToggleField,
   aiUiPrefs,
   onToggleShowAiBadges,
+  onOpenAiConfig,
 }: AppSettingsDialogProps): ReactNode {
-  const { t, preference: localePreference, setLocale } = useLocale();
-  const { preference: themePreference, setTheme, accentHex, setAccentHex } =
-    useTheme();
-  const { preferences: shadowPrefs, setLevel: setShadowLevel } = useElevation();
-  const [accentDraft, setAccentDraft] = useState(accentHex);
-  const [diskDeletePromptEnabled, setDiskDeletePromptEnabledState] = useState(
-    () => isDiskDeletePromptEnabled(),
-  );
-  const [importConflictRemembered, setImportConflictRemembered] = useState(
-    () => hasRememberedImportConflictPreferences(),
-  );
+  const t = useT();
+  const activeCategoryDefinition = APP_SETTINGS_CATEGORIES.find(
+    (category) => category.id === activeCategory,
+  )!;
 
-  // Serpent-5no: reload when the dialog opens so "don't show again" from
-  // delete confirms is reflected without lifting storage into App.
-  useEffect(() => {
-    if (open) {
-      setDiskDeletePromptEnabledState(isDiskDeletePromptEnabled());
-      setImportConflictRemembered(hasRememberedImportConflictPreferences());
-      setAccentDraft(accentHex);
-    }
-  }, [accentHex, open]);
+  function handleClose() {
+    onClose();
+  }
 
   if (!open) return null;
 
@@ -89,301 +63,62 @@ export function AppSettingsDialog({
     <div
       className="dialog-backdrop"
       onClick={(event) => {
-        if (event.target === event.currentTarget) onClose();
+        if (event.target === event.currentTarget) handleClose();
       }}
       role="presentation"
     >
       <div
+        aria-labelledby="app-settings-dialog-title"
         aria-modal="true"
         className="create-dialog app-settings-dialog"
         role="dialog"
       >
-        <div className="dialog-heading">
-          <div>
-            <h2>{t("settings.title")}</h2>
-          </div>
+        <div className="dialog-heading app-settings-heading">
+          <h2 id="app-settings-dialog-title">{t("settings.title")}</h2>
           <button
             className="dialog-close"
-            onClick={onClose}
+            onClick={handleClose}
             type="button"
             {...iconActionAttrs(t("common.close"))}
           >
             <Icon name="close" size={16} />
           </button>
         </div>
-
-        <section className="app-settings-section">
-          <div className="micro-label">{t("shell.theme")}</div>
-          <p className="app-settings-hint">{t("settings.themeHint")}</p>
-          <div
-            aria-label={t("shell.theme")}
-            className="app-settings-option-group"
-            role="radiogroup"
+        <div className="app-settings-frame">
+          <AppSettingsNavigation
+            activeCategory={activeCategory}
+            onSelect={onActiveCategoryChange}
+          />
+          <main
+            aria-labelledby={`app-settings-tab-${activeCategory}`}
+            className="app-settings-content"
+            id={`app-settings-page-${activeCategory}`}
+            role="tabpanel"
           >
-            {APP_SETTINGS_THEME_OPTIONS.map((option) => (
-              <button
-                aria-checked={themePreference === option.value}
-                className="app-settings-option"
-                key={option.value}
-                onClick={() => setTheme(option.value)}
-                role="radio"
-                type="button"
-              >
-                {t(option.labelKey)}
-              </button>
-            ))}
-          </div>
-        </section>
-
-        <section className="app-settings-section">
-          <div className="micro-label">{t("settings.accentColor")}</div>
-          <p className="app-settings-hint">{t("settings.accentHint")}</p>
-          <div className="app-settings-accent-presets" role="list">
-            {ACCENT_PRESET_HEX.map((hex) => (
-              <button
-                aria-label={hex}
-                aria-pressed={accentHex === hex}
-                className={`app-settings-accent-swatch${accentHex === hex ? " is-active" : ""}`}
-                key={hex}
-                onClick={() => setAccentHex(hex)}
-                style={{ backgroundColor: hex }}
-                type="button"
-              />
-            ))}
-          </div>
-          <div className="app-settings-accent-custom">
-            <input
-              aria-label={t("settings.accentCustom")}
-              className="text-field"
-              onBlur={() => {
-                const normalized = normalizeAccentHex(accentDraft);
-                if (normalized) setAccentHex(normalized);
-                else setAccentDraft(accentHex);
-              }}
-              onChange={(event) => setAccentDraft(event.target.value)}
-              placeholder="#3b82f6"
-              type="text"
-              value={accentDraft}
-            />
-            <button
-              className="secondary-button"
-              onClick={() => setAccentHex(DEFAULT_ACCENT_HEX)}
-              type="button"
-            >
-              {t("settings.accentReset")}
-            </button>
-          </div>
-        </section>
-
-        <section className="app-settings-section">
-          <div className="micro-label">{t("settings.elevationSection")}</div>
-          <p className="app-settings-hint">{t("settings.elevationHint")}</p>
-          <div className="app-settings-elevation-scale">
-            <div className="app-settings-elevation-rail">
-              <input
-                aria-label={t("settings.elevationSection")}
-                aria-valuemax={SHADOW_LEVEL_MAX}
-                aria-valuemin={SHADOW_LEVEL_MIN}
-                aria-valuenow={shadowPrefs.level}
-                aria-valuetext={t("settings.elevationLevelValue", {
-                  level: shadowPrefs.level,
-                })}
-                className="app-settings-elevation-slider"
-                max={SHADOW_LEVEL_MAX}
-                min={SHADOW_LEVEL_MIN}
-                onChange={(event) =>
-                  setShadowLevel(clampShadowLevel(Number(event.target.value)))
-                }
-                step={1}
-                type="range"
-                value={shadowPrefs.level}
-              />
-              <div
-                aria-hidden="true"
-                className="app-settings-elevation-ticks"
-                role="presentation"
-              >
-                {SHADOW_LEVEL_TICKS.map((tick) => (
-                  <button
-                    className={
-                      shadowPrefs.level === tick
-                        ? "app-settings-elevation-tick is-active"
-                        : "app-settings-elevation-tick"
-                    }
-                    key={tick}
-                    onClick={() => setShadowLevel(tick)}
-                    type="button"
-                  >
-                    <span className="app-settings-elevation-tick-mark" />
-                    <span className="app-settings-elevation-tick-label">
-                      {tick}
-                    </span>
-                  </button>
-                ))}
-              </div>
+            <div className="app-settings-page-heading">
+              <p>{t("settings.pageEyebrow")}</p>
+              <h3>{t(activeCategoryDefinition.labelKey)}</h3>
+              <span>{t(activeCategoryDefinition.descriptionKey)}</span>
             </div>
-            <div aria-hidden="true" className="app-settings-elevation-ends">
-              <span>{t("settings.elevationOff")}</span>
-              <span>{t("settings.elevationStrong")}</span>
-            </div>
-          </div>
-        </section>
-
-        <section className="app-settings-section">
-          <div className="micro-label">{t("shell.language")}</div>
-          <p className="app-settings-hint">{t("settings.languageHint")}</p>
-          <div
-            aria-label={t("shell.language")}
-            className="app-settings-option-group"
-            role="radiogroup"
-          >
-            {APP_SETTINGS_LOCALE_OPTIONS.map((option) => (
-              <button
-                aria-checked={localePreference === option.value}
-                className="app-settings-option"
-                key={option.value}
-                onClick={() => setLocale(option.value)}
-                role="radio"
-                type="button"
-              >
-                {t(option.labelKey)}
-              </button>
-            ))}
-          </div>
-        </section>
-
-        <section className="app-settings-section">
-          <div className="micro-label">{t("toolbar.canvasSettings")}</div>
-          <p className="app-settings-hint">{t("settings.canvasHint")}</p>
-          <div
-            aria-label={t("settings.viewMode")}
-            className="app-settings-option-group"
-            role="radiogroup"
-          >
-            <button
-              aria-checked={canvasPrefs.viewMode === "grid"}
-              className="app-settings-option"
-              onClick={() => onSetViewMode("grid")}
-              role="radio"
-              type="button"
-            >
-              {t("toolbar.gridView")}
-            </button>
-            <button
-              aria-checked={canvasPrefs.viewMode === "masonry"}
-              className="app-settings-option"
-              onClick={() => onSetViewMode("masonry")}
-              role="radio"
-              type="button"
-            >
-              {t("toolbar.masonryView")}
-            </button>
-          </div>
-          <div className="micro-label app-settings-sublabel">
-            {t("settings.cardFields")}
-          </div>
-          <p className="app-settings-hint">{t(APP_SETTINGS_CARD_FIELDS_HINT_KEY)}</p>
-          <div className="app-settings-check-row-group">
-            {APP_SETTINGS_CANVAS_CAPTION_FIELD_OPTIONS.map((option) => (
-              <label
-                className="ai-config-check-row ai-config-check-row-top"
-                key={option.field}
-              >
-                <input
-                  checked={canvasPrefs.fields[option.field]}
-                  onChange={() => onToggleField(option.field)}
-                  type="checkbox"
-                />
-                <span className="app-settings-check-copy">
-                  <span>{t(option.labelKey)}</span>
-                </span>
-              </label>
-            ))}
-          </div>
-          <div className="micro-label app-settings-sublabel">
-            {t("settings.cardBadges")}
-          </div>
-          <p className="app-settings-hint">{t(APP_SETTINGS_CARD_BADGES_HINT_KEY)}</p>
-          <div className="app-settings-check-row-group">
-            {APP_SETTINGS_CANVAS_BADGE_FIELD_OPTIONS.map((option) => (
-              <label
-                className="ai-config-check-row ai-config-check-row-top"
-                key={option.field}
-              >
-                <input
-                  checked={canvasPrefs.fields[option.field]}
-                  onChange={() => onToggleField(option.field)}
-                  type="checkbox"
-                />
-                <span className="app-settings-check-copy">
-                  <span>{t(option.labelKey)}</span>
-                </span>
-              </label>
-            ))}
-          </div>
-        </section>
-
-        <section className="app-settings-section">
-          <div className="micro-label">{t("settings.aiSection")}</div>
-          <p className="app-settings-hint">{t("settings.showAiBadgesHint")}</p>
-          <div className="app-settings-check-row-group">
-            <label className="ai-config-check-row ai-config-check-row-top">
-              <input
-                checked={aiUiPrefs.showAiBadges}
-                onChange={onToggleShowAiBadges}
-                type="checkbox"
+            {activeCategory === "general" ? <GeneralSettingsPage /> : null}
+            {activeCategory === "appearance" ? <AppearanceSettingsPage /> : null}
+            {activeCategory === "browse" ? (
+              <BrowseSettingsPage
+                canvasPrefs={canvasPrefs}
+                onSetViewMode={onSetViewMode}
+                onToggleField={onToggleField}
               />
-              <span className="app-settings-check-copy">
-                <span>{t("settings.showAiBadges")}</span>
-              </span>
-            </label>
-          </div>
-        </section>
-
-        <section className="app-settings-section">
-          <div className="micro-label">{t("settings.confirmationsSection")}</div>
-          <p className="app-settings-hint">{t("settings.diskDeleteConfirmHint")}</p>
-          <div className="app-settings-check-row-group">
-            <label className="ai-config-check-row ai-config-check-row-top">
-              <input
-                checked={diskDeletePromptEnabled}
-                onChange={() => {
-                  const next = !diskDeletePromptEnabled;
-                  setDiskDeletePromptEnabled(next);
-                  setDiskDeletePromptEnabledState(next);
-                }}
-                type="checkbox"
+            ) : null}
+            {activeCategory === "ai" ? (
+              <AiSettingsPage
+                aiUiPrefs={aiUiPrefs}
+                onOpenAiConfig={onOpenAiConfig}
+                onToggleShowAiBadges={onToggleShowAiBadges}
               />
-              <span className="app-settings-check-copy">
-                <span>{t("settings.diskDeleteConfirm")}</span>
-              </span>
-            </label>
-          </div>
-          <p className="app-settings-hint">
-            {t("settings.importConflictRememberHint")}
-          </p>
-          <div className="app-settings-check-row-group">
-            <div className="app-settings-check-copy">
-              <span>{t("settings.importConflictRemember")}</span>
-              <span className="app-settings-hint">
-                {importConflictRemembered
-                  ? t("settings.importConflictRememberActive")
-                  : t("settings.importConflictRememberEmpty")}
-              </span>
-            </div>
-            <button
-              className="secondary-button"
-              disabled={!importConflictRemembered}
-              onClick={() => {
-                clearImportConflictPreferences();
-                setImportConflictRemembered(false);
-              }}
-              type="button"
-            >
-              {t("settings.importConflictRememberReset")}
-            </button>
-          </div>
-        </section>
+            ) : null}
+            {activeCategory === "safety" ? <SafetySettingsPage /> : null}
+          </main>
+        </div>
       </div>
     </div>
   );

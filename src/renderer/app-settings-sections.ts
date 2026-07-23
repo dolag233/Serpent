@@ -1,4 +1,5 @@
 import type { CanvasPreferences } from "./canvas-preferences";
+import type { IconName } from "./Icons";
 import type { LocalePreference } from "./i18n";
 import type { ThemePreference } from "./theme";
 
@@ -29,6 +30,74 @@ export type AppSettingsCanvasFieldOption = {
     | "toolbar.showBadgeSource"
     | "toolbar.showBadgeExtension";
 };
+
+export type AppSettingsCategoryId =
+  | "general"
+  | "appearance"
+  | "browse"
+  | "ai"
+  | "safety";
+
+/**
+ * Stable settings information architecture. It deliberately lists only
+ * user-facing preferences with a durable, comprehensible effect; transient
+ * workspace state and internal runtime diagnostics do not belong here.
+ */
+export type AppSettingsCategory = {
+  readonly id: AppSettingsCategoryId;
+  readonly icon: IconName;
+  readonly labelKey:
+    | "settings.categoryGeneral"
+    | "settings.categoryAppearance"
+    | "settings.categoryBrowse"
+    | "settings.categoryAi"
+    | "settings.categorySafety";
+  readonly descriptionKey:
+    | "settings.categoryGeneralDescription"
+    | "settings.categoryAppearanceDescription"
+    | "settings.categoryBrowseDescription"
+    | "settings.categoryAiDescription"
+    | "settings.categorySafetyDescription";
+};
+
+export const APP_SETTINGS_CATEGORIES: readonly AppSettingsCategory[] = [
+  {
+    id: "general",
+    icon: "settings",
+    labelKey: "settings.categoryGeneral",
+    descriptionKey: "settings.categoryGeneralDescription",
+  },
+  {
+    id: "appearance",
+    icon: "sliders",
+    labelKey: "settings.categoryAppearance",
+    descriptionKey: "settings.categoryAppearanceDescription",
+  },
+  {
+    id: "browse",
+    icon: "grid",
+    labelKey: "settings.categoryBrowse",
+    descriptionKey: "settings.categoryBrowseDescription",
+  },
+  {
+    id: "ai",
+    icon: "activity",
+    labelKey: "settings.categoryAi",
+    descriptionKey: "settings.categoryAiDescription",
+  },
+  {
+    id: "safety",
+    icon: "warning",
+    labelKey: "settings.categorySafety",
+    descriptionKey: "settings.categorySafetyDescription",
+  },
+];
+
+export function isAppSettingsCategoryId(
+  value: string,
+): value is AppSettingsCategoryId {
+  return APP_SETTINGS_CATEGORIES.some((category) => category.id === value);
+}
 
 /** Shared hint for caption fields under the card (name / size / date). */
 export const APP_SETTINGS_CARD_FIELDS_HINT_KEY = "settings.cardFieldsHint" as const;

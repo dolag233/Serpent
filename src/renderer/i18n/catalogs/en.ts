@@ -777,6 +777,22 @@ export const en = {
   /** REQ-PREF-001 / Serpent-9es: file name / size / date share one cardFieldsHint. */
   settings: {
     title: "Settings",
+    categoriesLabel: "Settings categories",
+    categoryGeneral: "General",
+    categoryGeneralDescription: "Language and everyday preferences",
+    categoryAppearance: "Appearance",
+    categoryAppearanceDescription: "Theme, accent, and elevation",
+    categoryBrowse: "Browse",
+    categoryBrowseDescription: "Asset canvas and card details",
+    categoryAi: "AI",
+    categoryAiDescription: "AI indicators and analysis configuration",
+    categorySafety: "Safety & import",
+    categorySafetyDescription: "Confirmations and import decisions",
+    pageEyebrow: "Application preferences",
+    aiConfigEntry: "AI configuration",
+    aiConfigEntryHint:
+      "Manage provider, model, analysis writes, language, and concurrency.",
+    aiConfigEntryAction: "Open AI settings",
     themeHint: "Controls the app’s light or dark appearance. Changes apply immediately.",
     accentColor: "Accent color",
     accentHint:

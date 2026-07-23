@@ -4401,15 +4401,293 @@ select.ai-config-input.ai-config-languages {
 }
 
 .app-settings-dialog {
-  width: min(420px, calc(100vw - 40px));
+  display: flex;
+  width: min(900px, calc(100vw - 48px));
+  max-height: min(700px, calc(100vh - 48px));
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
 }
 
-.app-settings-section {
-  margin-top: 16px;
+.app-settings-heading {
+  flex: 0 0 auto;
+  align-items: center;
+  margin: 0;
+  padding: 17px 18px 15px 22px;
+  border-bottom: 1px solid var(--divider);
 }
 
-.app-settings-section:first-of-type {
-  margin-top: 0;
+.app-settings-heading h2 {
+  margin: 0;
+  letter-spacing: -0.02em;
+}
+
+.app-settings-frame {
+  display: grid;
+  min-height: 0;
+  flex: 1 1 auto;
+  grid-template-columns: 196px minmax(0, 1fr);
+}
+
+.app-settings-nav {
+  min-width: 0;
+  padding: 18px 10px;
+  border-right: 1px solid var(--divider);
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--raised) 92%, var(--accent-soft)) 0%,
+      var(--raised) 100%
+    );
+}
+
+.app-settings-nav-eyebrow,
+.app-settings-page-heading > p {
+  margin: 0;
+  color: var(--tertiary);
+  font-size: 9.5px;
+  font-weight: 620;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+}
+
+.app-settings-nav-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 10px;
+}
+
+.app-settings-nav-item {
+  display: grid;
+  width: 100%;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
+  padding: 8px 9px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--secondary);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 540;
+  text-align: left;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease;
+}
+
+.app-settings-nav-item:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.app-settings-nav-item.is-active {
+  border-color: color-mix(in srgb, var(--accent) 18%, var(--divider));
+  background: color-mix(in srgb, var(--accent) 11%, var(--raised));
+  color: var(--text);
+}
+
+.app-settings-nav-item.is-active .icon {
+  color: var(--accent);
+}
+
+.app-settings-nav-item:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.app-settings-content {
+  min-width: 0;
+  padding: 28px 32px 34px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.app-settings-page-heading {
+  margin-bottom: 20px;
+}
+
+.app-settings-page-heading h3 {
+  margin: 6px 0 0;
+  color: var(--text);
+  font-size: 23px;
+  font-weight: 590;
+  letter-spacing: -0.025em;
+  line-height: 1.12;
+}
+
+.app-settings-page-heading > span {
+  display: block;
+  margin-top: 7px;
+  color: var(--secondary);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.app-settings-page-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.app-settings-card {
+  min-width: 0;
+  padding: 15px 16px;
+  border: 1px solid color-mix(in srgb, var(--divider) 92%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--raised) 92%, var(--pane));
+  box-shadow: inset 0 1px rgb(255 255 255 / 2%);
+}
+
+.app-settings-row,
+.app-settings-action-row,
+.app-settings-toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.app-settings-row-stack {
+  align-items: flex-start;
+  flex-direction: column;
+  gap: 11px;
+}
+
+.app-settings-row-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.app-settings-row-copy strong {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 590;
+  line-height: 1.35;
+}
+
+.app-settings-row-copy > span {
+  color: var(--secondary);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.app-settings-card-divider {
+  height: 1px;
+  margin: 15px 0;
+  background: var(--divider);
+}
+
+.app-settings-toggle-row {
+  cursor: pointer;
+}
+
+.app-settings-toggle-control {
+  position: relative;
+  display: inline-flex;
+  width: 34px;
+  height: 20px;
+  flex: 0 0 auto;
+}
+
+.app-settings-toggle-control input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.app-settings-toggle-track {
+  width: 100%;
+  height: 100%;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--tertiary) 52%, var(--divider));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ink) 10%, transparent);
+  transition:
+    background-color 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.app-settings-toggle-track::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: white;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 22%);
+  transition: transform 140ms ease;
+}
+
+.app-settings-toggle-control input:checked + .app-settings-toggle-track {
+  background: var(--accent);
+}
+
+.app-settings-toggle-control input:checked + .app-settings-toggle-track::after {
+  transform: translateX(14px);
+}
+
+.app-settings-toggle-control input:focus-visible + .app-settings-toggle-track {
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.app-settings-inline-checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px 16px;
+  margin-top: 11px;
+}
+
+.app-settings-inline-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+@media (max-width: 680px) {
+  .app-settings-dialog {
+    width: min(560px, calc(100vw - 24px));
+    max-height: calc(100vh - 24px);
+  }
+
+  .app-settings-frame {
+    grid-template-columns: 132px minmax(0, 1fr);
+  }
+
+  .app-settings-content {
+    padding: 22px 20px 26px;
+  }
+
+  .app-settings-nav {
+    padding-inline: 7px;
+  }
+
+  .app-settings-nav-item {
+    grid-template-columns: 16px minmax(0, 1fr);
+    gap: 7px;
+    padding-inline: 7px;
+  }
+
+  .app-settings-action-row {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 12px;
+  }
 }
 
 /* Settings body hints: smaller + lighter than primary labels (2026-07-19). */
