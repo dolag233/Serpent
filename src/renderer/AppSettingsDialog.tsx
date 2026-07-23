@@ -96,7 +96,6 @@ export function AppSettingsDialog({
             role="tabpanel"
           >
             <div className="app-settings-page-heading">
-              <p>{t("settings.pageEyebrow")}</p>
               <h3>{t(activeCategoryDefinition.labelKey)}</h3>
               <span>{t(activeCategoryDefinition.descriptionKey)}</span>
             </div>

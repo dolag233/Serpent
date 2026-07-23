@@ -776,7 +776,6 @@ export const zhCN = {
     categoryAiDescription: "AI 标识与分析配置",
     categorySafety: "安全与导入",
     categorySafetyDescription: "确认提示与导入决策",
-    pageEyebrow: "应用偏好",
     aiConfigEntry: "配置 AI",
     aiConfigEntryHint: "管理服务商、模型、分析写入内容、语言与并发上限。",
     aiConfigEntryAction: "打开 AI 配置",

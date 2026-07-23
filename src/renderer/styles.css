@@ -4403,7 +4403,7 @@ select.ai-config-input.ai-config-languages {
 .app-settings-dialog {
   display: flex;
   width: min(900px, calc(100vw - 48px));
-  max-height: min(700px, calc(100vh - 48px));
+  height: min(700px, calc(100vh - 48px));
   flex-direction: column;
   padding: 0;
   overflow: hidden;
@@ -4441,21 +4441,11 @@ select.ai-config-input.ai-config-languages {
     );
 }
 
-.app-settings-nav-eyebrow,
-.app-settings-page-heading > p {
-  margin: 0;
-  color: var(--tertiary);
-  font-size: 9.5px;
-  font-weight: 620;
-  letter-spacing: 0.11em;
-  text-transform: uppercase;
-}
-
 .app-settings-nav-list {
   display: flex;
   flex-direction: column;
   gap: 3px;
-  margin-top: 10px;
+  margin-top: 0;
 }
 
 .app-settings-nav-item {
@@ -4512,7 +4502,7 @@ select.ai-config-input.ai-config-languages {
 }
 
 .app-settings-page-heading h3 {
-  margin: 6px 0 0;
+  margin: 0;
   color: var(--text);
   font-size: 23px;
   font-weight: 590;
@@ -4662,7 +4652,7 @@ select.ai-config-input.ai-config-languages {
 @media (max-width: 680px) {
   .app-settings-dialog {
     width: min(560px, calc(100vw - 24px));
-    max-height: calc(100vh - 24px);
+    height: calc(100vh - 24px);
   }
 
   .app-settings-frame {

@@ -788,7 +788,6 @@ export const en = {
     categoryAiDescription: "AI indicators and analysis configuration",
     categorySafety: "Safety & import",
     categorySafetyDescription: "Confirmations and import decisions",
-    pageEyebrow: "Application preferences",
     aiConfigEntry: "AI configuration",
     aiConfigEntryHint:
       "Manage provider, model, analysis writes, language, and concurrency.",

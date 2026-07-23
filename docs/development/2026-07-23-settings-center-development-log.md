@@ -28,6 +28,7 @@
 - 分类切换不打开嵌套对话框；AI 分类内的「配置 AI」使用既有受保护的 AI 配置对话框，避免复制 Key、测试连接及模型列表状态机。
 - 当前分类数量可完整显示在一屏内，首版不加入只会筛分类名称的伪搜索；当设置项扩展到需要搜索时，再以逐设置项匹配实现。
 - 工具栏中的「AI 设置」先进入设置中心的 AI 分类；分类内再按需打开既有 Key/模型配置对话框，设置入口不再分散。
+- 根据产品反馈移除侧栏和内容标题旁重复的「应用偏好」文案；对话框采用稳定高度，分类内容仅在右侧区域纵向滚动，切换分类不再带动窗口尺寸变化。
 
 ## 验证计划
 
@@ -53,6 +54,7 @@ Computer Use skill 已检查，但当前会话未提供可调用的 `node_repl` 
 | 分类侧栏与右侧内容区 | `AppSettingsDialog.tsx`、`AppSettingsNavigation.tsx`、`styles.css` | `app-settings-sections.test.ts` | SETTINGS-003 待人类验收 |
 | 已有应用偏好按用户语义收敛 | `AppSettingsPages.tsx`；现有 preferences/provider 模块 | 相关 preferences 8 个 unit suites | SETTINGS-003 待人类验收 |
 | AI 设置入口收敛到设置中心 | `App.tsx`、`AppSettingsPages.tsx`、`toolbar-commands.ts` | `toolbar-commands.test.ts` | SETTINGS-003 待人类验收 |
+| 稳定窗口高度与分类内容滚动 | `AppSettingsDialog.tsx`、`styles.css` | typecheck、设置中心定向测试 | SETTINGS-003 待人类验收 |
 
 ## 独立复审
 

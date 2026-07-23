@@ -44,7 +44,6 @@ export function AppSettingsNavigation({
 
   return (
     <nav aria-label={t("settings.categoriesLabel")} className="app-settings-nav">
-      <div className="app-settings-nav-eyebrow">{t("settings.pageEyebrow")}</div>
       <div className="app-settings-nav-list" role="tablist">
         {APP_SETTINGS_CATEGORIES.map((category) => {
           const selected = category.id === activeCategory;
