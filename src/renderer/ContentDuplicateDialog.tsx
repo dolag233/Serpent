@@ -67,9 +67,8 @@ export function ContentDuplicateDialog({
             }
           >
             <option value="skip">{t("dialog.conflicts.skip")}</option>
-            <option value="merge">{t("dialog.conflicts.merge")}</option>
             <option value="create-copy">
-              {t("dialog.conflicts.createCopy")}
+              {t("dialog.conflicts.importAnyway")}
             </option>
           </select>
         </label>

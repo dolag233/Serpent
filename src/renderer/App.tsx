@@ -78,10 +78,6 @@ import {
 import { useT, useLocale, translateForLocale, type AppLocale } from "./i18n";
 import type { AiApiFormat } from "../shared/ai-endpoints";
 import {
-  DEFAULT_AI_RELIABILITY_SETTINGS,
-  type AiReliabilitySettings,
-} from "../shared/ai-reliability";
-import {
   createWorkspaceNavHistory,
   type WorkspaceNavLocation,
 } from "./workspace-nav-history";
@@ -113,8 +109,10 @@ import {
   type AiConnectionState,
 } from "./AiConfigDialog";
 import {
+  cancellationAffectsAiBatch,
   collectRecentAiFailureCodes,
-  computeAiBatchProgress,
+  computeAiBatchProgressForJobs,
+  type AiBatchProgressSnapshot,
 } from "./ai-analyze-progress";
 import { summarizeAiFailureCodes } from "./ai-job-error-message";
 import {
@@ -158,7 +156,6 @@ import { useShellFileActions } from "./use-shell-file-actions";
 import { useInspectorMultiEdit } from "./use-inspector-multi-edit";
 import { useInspectorAssetMetadata } from "./use-inspector-asset-metadata";
 import { useInspectorFieldHandlers } from "./use-inspector-field-handlers";
-import { resolveInspectorDescription } from "./inspector-description";
 import { useAssetDragDropHandlers, type UndoableFileOp } from "./use-asset-drag-drop-handlers";
 import { useDialogEscapeDismiss } from "./use-dialog-escape-dismiss";
 import { useExternalImportHandlers } from "./use-external-import-handlers";
@@ -208,6 +205,7 @@ import {
 import { invertSelection } from "./invert-selection";
 import { trashedFoldersToBrowseEntries } from "./trashed-folder-entries";
 import { computeMasonrySelectionAssetIds } from "./masonry-selection-order";
+import { shuffleArray } from "./client-shuffle";
 import { toMessage, LibraryOperationError } from "./error-utils";
 
 import type {
@@ -674,6 +672,8 @@ function AppInner() {
   });
   const [sortField, setSortField] = useState<SortDefinition["field"]>("name");
   const [sortOrder, setSortOrder] = useState<SortDefinition["order"]>("asc");
+  /** Serpent-hm28: null = normal sort; otherwise client shuffle seed. */
+  const [shuffleSeed, setShuffleSeed] = useState<number | null>(null);
   const [, setSearchOffset] = useState(0);
   const [searchTotal, setSearchTotal] = useState<number | null>(null);
   const [searchSnippets, setSearchSnippets] = useState<Map<string, string>>(
@@ -831,8 +831,6 @@ function AppInner() {
     Array<"zh-CN" | "en" | "ja" | "ko">
   >(["zh-CN"]);
   const [aiConcurrencyLimit, setAiConcurrencyLimit] = useState(16);
-  const [aiReliabilitySettings, setAiReliabilitySettings] =
-    useState<AiReliabilitySettings>({ ...DEFAULT_AI_RELIABILITY_SETTINGS });
   const [aiAutoAnalyzeEnabled, setAiAutoAnalyzeEnabled] = useState(false);
   const [aiDisclaimerAccepted, setAiDisclaimerAccepted] = useState(false);
   const [aiConnectionState, setAiConnectionState] =
@@ -892,10 +890,16 @@ function AppInner() {
     setError,
   });
 
-  const analyzeFailedBaselineRef = useRef(0);
-  const analyzeSucceededBaselineRef = useRef(0);
   const analyzingAssetIdRef = useRef<string | null>(null);
   const analyzingBatchSizeRef = useRef(0);
+  const aiBatchJobIdsRef = useRef<string[]>([]);
+  const aiBatchSkippedCountRef = useRef(0);
+  const lastAiBatchJobIdsRef = useRef<string[]>([]);
+  const lastAiBatchAssetIdRef = useRef<string | null>(null);
+  const aiBatchStatusRequestRef = useRef(0);
+  const refreshAiBatchStatusRef = useRef<() => void>(() => undefined);
+  const [aiBatchProgress, setAiBatchProgress] =
+    useState<AiBatchProgressSnapshot | null>(null);
   const [aiUiPrefs, setAiUiPrefs] = useState<AiUiPreferences>(() =>
     loadAiUiPreferences(),
   );
@@ -997,11 +1001,6 @@ function AppInner() {
   const [mediaJobsOpen, setMediaJobsOpen] = useState(false);
   const [mediaJobs, setMediaJobs] = useState<MediaJobStatus | null>(null);
   const [aiJobs, setAiJobs] = useState<AiJobStatus | null>(null);
-  const [aiConcurrencyStatus, setAiConcurrencyStatus] = useState({
-    inFlight: 0,
-    limit: 16,
-    waitingForSlot: 0,
-  });
   const [mediaJobsLoading, setMediaJobsLoading] = useState(false);
   const controlAiJobsRef = useRef<
     (action: "pause" | "resume" | "cancel" | "retry", jobIds?: string[]) => Promise<void>
@@ -1025,14 +1024,27 @@ function AppInner() {
       [],
     ),
   });
-  const handleAiConnectionFailureRetry = useCallback(() => {
-    // Re-arm batch progress / completion toast for the retry wave.
+  const handleAiConnectionFailureRetry = useCallback(async () => {
+    const retryJobIds = aiConnectionFailureGate.failedJobIds.filter((jobId) =>
+      lastAiBatchJobIdsRef.current.includes(jobId),
+    );
+    // Wait for Worker retry to persist `queued` before re-arming. Otherwise a
+    // status refresh can observe the old terminal `failed` state and finish
+    // the retried batch immediately.
+    await onAiConnectionFailureRetry();
+    if (retryJobIds.length === 0) return;
+    aiBatchStatusRequestRef.current++;
+    aiBatchJobIdsRef.current = retryJobIds;
+    aiBatchSkippedCountRef.current = 0;
+    analyzingAssetIdRef.current = lastAiBatchAssetIdRef.current;
+    analyzingBatchSizeRef.current = retryJobIds.length;
+    setAiBatchProgress(computeAiBatchProgressForJobs(retryJobIds, []));
     flushSync(() => {
       aiAnalyzingRef.current = true;
       setAiAnalyzing(true);
     });
-    onAiConnectionFailureRetry();
-  }, [onAiConnectionFailureRetry]);
+    void refreshAiBatchStatus();
+  }, [aiConnectionFailureGate.failedJobIds, onAiConnectionFailureRetry]);
 
 
   const selectedFolderId =
@@ -1093,15 +1105,23 @@ function AppInner() {
   );
 
   const visibleAssets = useMemo(() => {
-    if (showTrash) {
-      return filterTrashedAssetsAtPath(
-        trashedAssets,
-        trashedFolders,
-        trashBrowsePath,
-      );
-    }
-    return assets;
-  }, [assets, showTrash, trashBrowsePath, trashedAssets, trashedFolders]);
+    const base = showTrash
+      ? filterTrashedAssetsAtPath(
+          trashedAssets,
+          trashedFolders,
+          trashBrowsePath,
+        )
+      : assets;
+    if (shuffleSeed === null || showTrash) return base;
+    return shuffleArray(base, shuffleSeed);
+  }, [
+    assets,
+    showTrash,
+    shuffleSeed,
+    trashBrowsePath,
+    trashedAssets,
+    trashedFolders,
+  ]);
 
   // Serpent-6pcd: assets at the current trash hop only (no source-folder grouping).
   const assetRenderSections = useMemo(
@@ -1880,11 +1900,6 @@ function AppInner() {
     if (!api || !library) return;
     const unsubscribeProgress = api.onAiProgress((event) => {
       if (event.libraryId !== library.libraryId) return;
-      setAiConcurrencyStatus({
-        inFlight: event.inFlight,
-        limit: event.concurrencyLimit,
-        waitingForSlot: event.waitingForSlot,
-      });
       // Serpent-u0tn: do not arm analyzing UI for background/import auto jobs
       // when no user-initiated batch size was set (JOBS-007 rollback residue).
       setAiJobs((current) =>
@@ -1906,91 +1921,7 @@ function AppInner() {
               jobs: [],
             },
       );
-      if (
-        aiAnalyzingRef.current &&
-        event.running === 0 &&
-        event.queued === 0
-      ) {
-        const pendingAssetId = analyzingAssetIdRef.current;
-        const batchSize = analyzingBatchSizeRef.current;
-        const failedDelta = event.failed - analyzeFailedBaselineRef.current;
-        const succeededDelta =
-          event.succeeded - analyzeSucceededBaselineRef.current;
-        aiAnalyzingRef.current = false;
-        analyzingAssetIdRef.current = null;
-        analyzingBatchSizeRef.current = 0;
-        setAiAnalyzing(false);
-        // Serpent-4i18 / iokf / 99lv: total failure → blocking fatal; partial
-        // failure stays a notice; single-asset failure can stay toast-level
-        // when not an all-fail batch.
-        const showTotalFailure = (detail?: string) => {
-          setFatalDialogTitle(t("dialog.aiAnalyzeFailure.title"));
-          setFatal(
-            detail
-              ? t("toast.aiAnalyzeFailedDetail", { detail })
-              : t("toast.aiAnalyzeFailed"),
-          );
-        };
-        const showFailureToast = (detail?: string) => {
-          setError(
-            detail
-              ? t("toast.aiAnalyzeFailedDetail", { detail })
-              : t("toast.aiAnalyzeFailed"),
-          );
-        };
-        if (failedDelta > 0) {
-          void api
-            .getAiJobStatus({ libraryId: library.libraryId })
-            .then((result) => {
-              const codes = result.ok
-                ? collectRecentAiFailureCodes(result.value.jobs)
-                : [];
-              const detail = summarizeAiFailureCodes(codes, locale);
-              if (succeededDelta === 0) {
-                if (pendingAssetId && batchSize <= 1 && result.ok) {
-                  const failedForAsset = result.value.jobs.some(
-                    (job) =>
-                      job.assetId === pendingAssetId && job.status === "failed",
-                  );
-                  if (failedForAsset) showFailureToast(detail || undefined);
-                  return;
-                }
-                // All-fail (batch or unknown): blocking fatal (Serpent-99lv).
-                showTotalFailure(detail || undefined);
-                return;
-              }
-              setNotice(
-                t("toast.aiAnalyzeDoneBatch", {
-                  succeeded: Math.max(0, succeededDelta),
-                  failed: Math.max(0, failedDelta),
-                }) + (detail ? ` ${detail}` : ""),
-              );
-            })
-            .catch(() => {
-              if (succeededDelta === 0) {
-                if (pendingAssetId && batchSize <= 1) showFailureToast();
-                else showTotalFailure();
-              } else {
-                setNotice(
-                  t("toast.aiAnalyzeDoneBatch", {
-                    succeeded: Math.max(0, succeededDelta),
-                    failed: Math.max(0, failedDelta),
-                  }),
-                );
-              }
-            });
-        } else if (batchSize > 1) {
-          setNotice(
-            t("toast.aiAnalyzeDoneBatch", {
-              succeeded: Math.max(0, succeededDelta),
-              failed: Math.max(0, failedDelta),
-            }),
-          );
-        } else if (batchSize > 0) {
-          setNotice(t("toast.aiAnalyzeDone"));
-        }
-        void reloadCurrentContentRef.current();
-      }
+      if (aiAnalyzingRef.current) refreshAiBatchStatusRef.current();
     });
     const unsubscribeCompleted = api.onAiCompleted((event) => {
       if (event.libraryId !== library.libraryId) return;
@@ -5495,7 +5426,6 @@ function AppInner() {
       | undefined;
     setAiLanguages(langs?.length ? [langs[0]!] : ["zh-CN"]);
     setAiConcurrencyLimit(result.value.concurrencyLimit);
-    setAiReliabilitySettings(result.value.reliabilitySettings);
     setAiAutoAnalyzeEnabled(result.value.autoAnalyzeEnabled);
     setAiDisclaimerAccepted(result.value.disclaimerAccepted);
     aiVerifiedFingerprintRef.current = null;
@@ -5598,7 +5528,6 @@ function AppInner() {
       },
       languages: aiLanguages.length > 0 ? [aiLanguages[0]!] : ["zh-CN"],
       concurrencyLimit: aiConcurrencyLimit,
-      reliabilitySettings: aiReliabilitySettings,
       autoAnalyzeEnabled: aiAutoAnalyzeEnabled,
       disclaimerAccepted: aiDisclaimerAccepted,
     });
@@ -5755,12 +5684,6 @@ function AppInner() {
       void loadAiConfig();
       return;
     }
-    analyzeFailedBaselineRef.current = aiJobs?.failed ?? 0;
-    analyzeSucceededBaselineRef.current = aiJobs?.succeeded ?? 0;
-    analyzingAssetIdRef.current = targetIds[0] ?? null;
-    analyzingBatchSizeRef.current = targetIds.length;
-    // Serpent-kdnm: capture baseline failed jobs before enqueue so old
-    // failures do not immediately re-open the connection dialog.
     try {
       const status = await api.getAiJobStatus({ libraryId: library.libraryId });
       if (status.ok) {
@@ -5772,84 +5695,50 @@ function AppInner() {
     } catch {
       notifyAiConnectionBatchStarted(aiJobs?.jobs ?? []);
     }
-    flushSync(() => {
-      aiAnalyzingRef.current = true;
-      setAiAnalyzing(true);
-    });
-    // The fixed workspace progress banner is the only in-progress signal.
-    // A transient notice duplicates it and can hide more important feedback.
-    void loadAiJobs(true);
-    let queuedAny = false;
-    let syncDone = false;
     try {
-      for (const id of targetIds) {
-        const result = await api.analyzeAsset({
-          libraryId: library.libraryId,
-          assetId: id,
-        });
-        if (!result.ok) {
-          setError(toMessage(result.error, t("toast.aiAnalyzeFailed"), locale));
-          continue;
-        }
-        if ("queued" in result.value && result.value.queued) {
-          queuedAny = true;
-          continue;
-        }
-        if ("reason" in result.value) {
+      const result = await api.analyzeAssets({
+        libraryId: library.libraryId,
+        assetIds: targetIds,
+      });
+      if (!result.ok) {
+        setError(toMessage(result.error, t("toast.aiAnalyzeFailed"), locale));
+        return;
+      }
+      const jobIds = result.value.jobIds;
+      const skippedCount = result.value.skippedAssetIds.length;
+      if (jobIds.length === 0) {
+        if (skippedCount > 0) {
           setNotice(
-            t("toast.aiAnalyzeUnavailable", { reason: result.value.reason }),
+            t("toast.aiAnalyzeDoneBatch", {
+              succeeded: 0,
+              failed: skippedCount,
+            }),
           );
-          continue;
-        }
-        if (!("generatedFields" in result.value)) {
+        } else {
           setError(t("toast.aiAnalyzeFailed"));
-          continue;
         }
-        syncDone = true;
-        const analyzed = result.value;
-        if (targetIds.length === 1) {
-          setAiContent({
-            assetId: id,
-            description: analyzed.generatedFields.description,
-            tags: analyzed.generatedFields.tags,
-            rating: analyzed.generatedFields.rating,
-            modelVersion: analyzed.modelVersion,
-          });
-          const human =
-            metadataByAssetRef.current.get(id)?.description ?? "";
-          const description = resolveInspectorDescription(
-            human,
-            analyzed.generatedFields.description,
-          );
-          if (selectedAssetIdRef.current === id) {
-            setEditDescription(description.value);
-            setDescriptionIsAi(description.fromAi);
-          }
-          setNotice(t("toast.aiAnalyzeDone"));
-          await refreshTagAndMetadataState(id);
-          await loadAiContentForAsset(id);
-        }
+        return;
       }
-      if (queuedAny) {
-        void loadAiJobs(true);
-      } else if (syncDone && targetIds.length > 1) {
-        setNotice(
-          t("toast.aiAnalyzeDoneBatch", {
-            succeeded: targetIds.length,
-            failed: 0,
-          }),
-        );
-        await reloadCurrentContentRef.current();
-      }
+      aiBatchStatusRequestRef.current++;
+      aiBatchJobIdsRef.current = jobIds;
+      aiBatchSkippedCountRef.current = skippedCount;
+      lastAiBatchJobIdsRef.current = jobIds;
+      analyzingAssetIdRef.current = targetIds[0] ?? null;
+      lastAiBatchAssetIdRef.current = analyzingAssetIdRef.current;
+      analyzingBatchSizeRef.current = jobIds.length + skippedCount;
+      setAiBatchProgress(
+        computeAiBatchProgressForJobs(jobIds, [], { skipped: skippedCount }),
+      );
+      flushSync(() => {
+        aiAnalyzingRef.current = true;
+        setAiAnalyzing(true);
+      });
+      // The fixed workspace progress banner is the only in-progress signal.
+      // A transient notice duplicates it and can hide more important feedback.
+      void loadAiJobs(true);
+      void refreshAiBatchStatus();
     } catch (caught) {
       setError(toMessage(caught, t("toast.aiAnalyzeFailed"), locale));
-    } finally {
-      if (!queuedAny) {
-        aiAnalyzingRef.current = false;
-        analyzingAssetIdRef.current = null;
-        analyzingBatchSizeRef.current = 0;
-        setAiAnalyzing(false);
-      }
     }
   }
 
@@ -5922,6 +5811,96 @@ function AppInner() {
       if (!quiet) setMediaJobsLoading(false);
     }
   }
+
+  async function refreshAiBatchStatus() {
+    if (!api || !library) return;
+    const jobIds = aiBatchJobIdsRef.current;
+    if (jobIds.length === 0) return;
+    const requestNumber = ++aiBatchStatusRequestRef.current;
+    try {
+      const result = await api.getAiJobStatus({
+        libraryId: library.libraryId,
+        jobIds,
+      });
+      if (
+        !result.ok ||
+        requestNumber !== aiBatchStatusRequestRef.current ||
+        aiBatchJobIdsRef.current !== jobIds
+      ) {
+        return;
+      }
+      const progress = computeAiBatchProgressForJobs(jobIds, result.value.jobs, {
+        skipped: aiBatchSkippedCountRef.current,
+      });
+      setAiBatchProgress(progress);
+      if (progress.done < progress.batchTotal) return;
+
+      // Completion is defined by this batch's durable job IDs, not by the
+      // whole library becoming idle. Other manual or automatic jobs may run.
+      aiBatchJobIdsRef.current = [];
+      aiBatchStatusRequestRef.current++;
+      const pendingAssetId = analyzingAssetIdRef.current;
+      const batchSize = analyzingBatchSizeRef.current;
+      aiAnalyzingRef.current = false;
+      analyzingAssetIdRef.current = null;
+      analyzingBatchSizeRef.current = 0;
+      setAiAnalyzing(false);
+      setAiBatchProgress(null);
+
+      const detail = summarizeAiFailureCodes(
+        collectRecentAiFailureCodes(result.value.jobs),
+        locale,
+      );
+      const showTotalFailure = () => {
+        setFatalDialogTitle(t("dialog.aiAnalyzeFailure.title"));
+        setFatal(
+          detail
+            ? t("toast.aiAnalyzeFailedDetail", { detail })
+            : t("toast.aiAnalyzeFailed"),
+        );
+      };
+      const showSingleFailure = () => {
+        setError(
+          detail
+            ? t("toast.aiAnalyzeFailedDetail", { detail })
+            : t("toast.aiAnalyzeFailed"),
+        );
+      };
+
+      const failedOutcomes = progress.failed + progress.skipped;
+      if (failedOutcomes > 0) {
+        if (progress.succeeded === 0 && progress.cancelled === 0) {
+          if (pendingAssetId && batchSize <= 1) showSingleFailure();
+          else showTotalFailure();
+        } else {
+          setNotice(
+            t("toast.aiAnalyzeDoneBatch", {
+              succeeded: progress.succeeded,
+              failed: failedOutcomes,
+            }) + (detail ? ` ${detail}` : ""),
+          );
+        }
+      } else if (progress.cancelled > 0) {
+        setNotice(t("toast.aiAnalyzeStopped"));
+      } else if (batchSize > 1) {
+        setNotice(
+          t("toast.aiAnalyzeDoneBatch", {
+            succeeded: progress.succeeded,
+            failed: 0,
+          }),
+        );
+      } else if (batchSize > 0) {
+        setNotice(t("toast.aiAnalyzeDone"));
+      }
+      void reloadCurrentContentRef.current();
+    } catch {
+      // A transient status query must not finish or miscount an active batch;
+      // the next throttled progress event will retry this refresh.
+    }
+  }
+  refreshAiBatchStatusRef.current = () => {
+    void refreshAiBatchStatus();
+  };
 
   useEffect(() => {
     if (!mediaJobsOpen || !library || !api) return;
@@ -6007,11 +5986,28 @@ function AppInner() {
         return;
       }
       if (action === "cancel") {
-        aiAnalyzingRef.current = false;
-        analyzingAssetIdRef.current = null;
-        analyzingBatchSizeRef.current = 0;
-        setAiAnalyzing(false);
-        setNotice(t("toast.aiAnalyzeStopped"));
+        const activeJobIds = aiBatchJobIdsRef.current;
+        const affectsActiveBatch = cancellationAffectsAiBatch(activeJobIds, jobIds);
+        if (!jobIds) {
+          // The workspace Stop control cancels the whole queue, including the
+          // active batch. A panel action with explicit ids must not erase
+          // unrelated or partially cancelled batch tracking.
+          aiBatchJobIdsRef.current = [];
+          aiBatchSkippedCountRef.current = 0;
+          lastAiBatchJobIdsRef.current = [];
+          lastAiBatchAssetIdRef.current = null;
+          aiBatchStatusRequestRef.current++;
+          aiAnalyzingRef.current = false;
+          analyzingAssetIdRef.current = null;
+          analyzingBatchSizeRef.current = 0;
+          setAiAnalyzing(false);
+          setAiBatchProgress(null);
+          setNotice(t("toast.aiAnalyzeStopped"));
+        } else if (affectsActiveBatch) {
+          // Keep the full ID set: the next status refresh records cancelled
+          // jobs alongside any remaining success/failure outcomes.
+          void refreshAiBatchStatus();
+        }
       }
       await loadAiJobs(true);
     } catch {
@@ -6499,11 +6495,24 @@ function AppInner() {
             setHeightRange={setHeightRange}
             setLongEdgeRange={setLongEdgeRange}
             setRatingFilter={setRatingFilter}
-            setSortField={setSortField}
-            setSortOrder={setSortOrder}
+            setSortField={(field) => {
+              setShuffleSeed(null);
+              setSortField(field);
+            }}
+            setSortOrder={(order) => {
+              setShuffleSeed(null);
+              setSortOrder(order);
+            }}
             setSourceUrlFilter={setSourceUrlFilter}
             setTagFilter={setTagFilter}
             setWidthRange={setWidthRange}
+            shuffleActive={shuffleSeed !== null}
+            onShuffle={() => {
+              setShuffleSeed((prev) => {
+                const next = Date.now() >>> 0;
+                return prev === null ? next : (next ^ ((prev + 1) >>> 0)) >>> 0;
+              });
+            }}
             snapshot={{
               colorFilter,
               excludeColorFilter,
@@ -6535,21 +6544,9 @@ function AppInner() {
         {(aiAnalyzing ||
           (aiJobs !== null && aiJobs.queued + aiJobs.running > 0)) &&
           (() => {
-            const batchProgress = computeAiBatchProgress(
-              analyzingBatchSizeRef.current,
-              {
-                succeeded: analyzeSucceededBaselineRef.current,
-                failed: analyzeFailedBaselineRef.current,
-              },
-              {
-                queued: aiJobs?.queued ?? 0,
-                running: aiJobs?.running ?? 0,
-                succeeded: aiJobs?.succeeded ?? 0,
-                failed: aiJobs?.failed ?? 0,
-              },
-            );
+            const batchProgress = aiBatchProgress;
             const progressLabel =
-              batchProgress.batchTotal > 0
+              batchProgress && batchProgress.batchTotal > 0
                 ? t("toast.aiAnalyzeProgressCount", {
                     done: String(batchProgress.done),
                     total: String(batchProgress.batchTotal),
@@ -6564,14 +6561,7 @@ function AppInner() {
                       {progressLabel}
                     </span>
                   </div>
-                  <div className="ai-config-hint">
-                    {t("toast.aiAnalyzeInFlight", {
-                      active: String(aiConcurrencyStatus.inFlight),
-                      limit: String(aiConcurrencyStatus.limit),
-                      waiting: String(aiConcurrencyStatus.waitingForSlot),
-                    })}
-                  </div>
-                  {batchProgress.batchTotal > 0 && (
+                  {batchProgress && batchProgress.batchTotal > 0 && (
                     <div
                       aria-valuemax={batchProgress.batchTotal}
                       aria-valuemin={0}
@@ -7797,7 +7787,6 @@ function AppInner() {
         baseUrl={aiBaseUrl}
         languages={aiLanguages}
         concurrencyLimit={aiConcurrencyLimit}
-        reliabilitySettings={aiReliabilitySettings}
         hasKey={aiHasKey}
         descriptionEnabled={aiDescriptionEnabled}
         tagsEnabled={aiTagsEnabled}
@@ -7814,7 +7803,6 @@ function AppInner() {
         onBaseUrlChange={setAiBaseUrl}
         onLanguagesChange={setAiLanguages}
         onConcurrencyLimitChange={setAiConcurrencyLimit}
-        onReliabilitySettingsChange={setAiReliabilitySettings}
         onDescriptionEnabledChange={setAiDescriptionEnabled}
         onTagsEnabledChange={setAiTagsEnabled}
         onRatingEnabledChange={setAiRatingEnabled}

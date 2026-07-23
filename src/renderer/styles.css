@@ -125,11 +125,12 @@
 [data-theme="light"] {
   color-scheme: light;
   color: #1c1e1c;
-  background: #e8eae7;
-  --canvas: #e8eae7;
-  --pane: #f3f4f2;
-  --raised: #f1f3ef;
-  --raised-2: #f7f8f6;
+  /* Serpent-28h7: ~1% brighter canvas after elevation shadows read dark. */
+  background: #ebeceb;
+  --canvas: #ebeceb;
+  --pane: #f4f5f3;
+  --raised: #f2f4f0;
+  --raised-2: #f8f9f7;
   --divider: #c9cdc8;
   --divider-soft: #d8dcd6;
   --text: #1c1e1c;
@@ -160,7 +161,7 @@
   --warning-fg: #9a3412;
   --warning-muted: #ffedd5;
   --ink: #0f1010;
-  --viewer-stage: #e8eae7;
+  --viewer-stage: #ebeceb;
   --border: var(--divider);
   /* Light: softer elev base alphas; still scaled by --elev-* (Serpent-zcyg).
      Toolbar softer/shorter than panes/cards (casts onto browse header too). */
@@ -2319,6 +2320,16 @@ input[type="range"] {
   }
 }
 
+/* Serpent-q3qu: dialogs must not use translateY enter — it biases optical center down. */
+@keyframes dialog-enter {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
 .empty-state {
   /* REQ-SHELL-008: the step sidebar («01» marker) and specimen column are
      gone — the create-library content renders directly in a single column. */
@@ -2839,11 +2850,16 @@ input[type="range"] {
   /* Serpent-0rk: cover the full window above shell chrome (toolbar is z-30). */
   position: fixed;
   z-index: 50;
-  display: grid;
+  display: flex;
   /* Theme-aware scrim (follow-up from Serpent-5vex audit). */
   background: color-mix(in srgb, var(--ink) 45%, transparent);
   inset: 0;
-  place-items: center;
+  /* Serpent-q3qu: dialog box center === window center (no optical bias). */
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  box-sizing: border-box;
+  overflow: auto;
   backdrop-filter: blur(2px);
   pointer-events: auto;
 }
@@ -3791,12 +3807,15 @@ body.serpent-modal-open .app-shell {
 
 .create-dialog {
   width: min(420px, calc(100vw - 40px));
+  flex: 0 0 auto;
+  margin: auto;
   padding: 20px;
   border: 1px solid var(--divider);
   border-radius: 12px;
   background: var(--pane);
   box-shadow: var(--shadow-elevated);
-  animation: state-enter 180ms ease-out both;
+  /* Opacity-only enter — translateY fights true window centering. */
+  animation: dialog-enter 180ms ease-out both;
 }
 
 .dialog-heading {
@@ -4847,17 +4866,19 @@ select.ai-config-input.ai-config-languages {
   top: 10px;
   left: 50%;
   display: grid;
-  grid-template-columns: 18px minmax(0, 1fr) auto auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  gap: 8px;
+  column-gap: 8px;
   max-width: min(520px, calc(100% - 32px));
-  padding: 9px 11px;
+  /* Serpent-fvto: tighter trailing pad — X sat in a wide empty gutter. */
+  padding: 7px 6px 7px 10px;
   border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--divider));
   border-radius: 8px;
   background: var(--raised);
   box-shadow: var(--shadow-toast);
   color: var(--text);
   font-size: 12px;
+  line-height: 1.25;
   transform: translateX(-50%);
   transition:
     opacity 180ms ease,
@@ -4870,11 +4891,28 @@ select.ai-config-input.ai-config-languages {
   transform: translate(-50%, -6px);
 }
 
+.workspace-notice-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  line-height: 0;
+  color: inherit;
+}
+
 .workspace-notice-text {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  line-height: 1.25;
+}
+
+.workspace-notice-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .workspace-notice.is-error,
@@ -4886,18 +4924,45 @@ select.ai-config-input.ai-config-languages {
   box-shadow: var(--shadow-toast);
 }
 
-.workspace-notice.is-error > :first-child,
-.workspace-notice.is-error .icon,
-.workspace-notice.is-error button,
-.workspace-notice.is-warning > :first-child,
-.workspace-notice.is-warning .icon,
-.workspace-notice.is-warning button {
+.workspace-notice.is-error .workspace-notice-icon,
+.workspace-notice.is-error .workspace-notice-dismiss,
+.workspace-notice.is-warning .workspace-notice-icon,
+.workspace-notice.is-warning .workspace-notice-dismiss {
   color: var(--warning-fg);
 }
 
 .workspace-notice .secondary-button {
   font-size: 11px;
   padding: 4px 8px;
+}
+
+/* Serpent-2wu4 / fvto: dismiss is a glyph, vertically centered with text. */
+.workspace-notice-dismiss {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--tertiary);
+  cursor: pointer;
+  line-height: 0;
+}
+
+.workspace-notice-dismiss:hover,
+.workspace-notice-dismiss:focus-visible {
+  color: var(--text);
+  background: transparent;
+  outline: none;
+}
+
+.workspace-notice-dismiss:focus-visible {
+  box-shadow: 0 0 0 2px var(--accent-ring);
 }
 
 .activity-strip {
@@ -6556,12 +6621,14 @@ select.ai-config-input.ai-config-languages {
 
 .conflict-dialog {
   width: min(520px, calc(100vw - 40px));
+  flex: 0 0 auto;
+  margin: auto;
   padding: 20px;
   border: 1px solid var(--divider);
   border-radius: 12px;
   background: var(--pane);
   box-shadow: var(--shadow-elevated);
-  animation: state-enter 180ms ease-out both;
+  animation: dialog-enter 180ms ease-out both;
 }
 .conflict-summary {
   display: grid;

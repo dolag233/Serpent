@@ -1,5 +1,6 @@
 /**
- * Masonry visual order for Shift-range selection (Serpent-oz1t).
+ * Masonry visual order for Shift-range selection (Serpent-1jnp).
+ * Identical to asset array order — layout is round-robin 良序.
  */
 
 import type { AssetSummary } from '../shared/asset-types';

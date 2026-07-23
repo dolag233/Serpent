@@ -46,19 +46,16 @@ export function leftoverWidthPx(
 }
 
 /**
- * Partitions masonry items into explicit columns while preserving the visual
- * expectation that the first row fills from left to right.
+ * Partitions masonry items into explicit columns in **asset order**
+ * (Serpent-1jnp / SELECT-014).
  *
- * CSS multi-column layout flows top-to-bottom before it advances horizontally,
- * which is why a small folder can appear as one tall stack at the far left.
- * An explicit-column renderer can use this result instead: the first
- * `columnCount` items seed consecutive columns, then later items go to the
- * currently shortest column (ties resolve left-to-right).
+ * Round-robin by index (`i % columnCount`) so rank 0 is left→right across
+ * columns, rank 1 is the next item in each column, etc. Visual reading order
+ * then matches sort/array order — same as 平铺 — which keeps Shift ranges
+ * coherent. Shortest-column packing previously scrambled that order.
  *
  * `estimateHeightPx` should include the whole card height (preview, optional
- * caption, and any vertical gap the renderer wants to account for). Keeping
- * that estimate injectable makes this helper independent from React and from
- * the current card presentation.
+ * caption, and any vertical gap the renderer wants to account for).
  */
 export function distributeMasonryItems<T>(
   items: readonly T[],
@@ -74,20 +71,7 @@ export function distributeMasonryItems<T>(
   }));
 
   items.forEach((item, index) => {
-    let targetColumnIndex = index;
-    if (targetColumnIndex >= safeColumnCount) {
-      targetColumnIndex = 0;
-      for (let candidate = 1; candidate < safeColumnCount; candidate += 1) {
-        if (
-          columns[candidate]!.estimatedHeightPx <
-          columns[targetColumnIndex]!.estimatedHeightPx
-        ) {
-          targetColumnIndex = candidate;
-        }
-      }
-    }
-
-    const target = columns[targetColumnIndex]!;
+    const target = columns[index % safeColumnCount]!;
     target.items.push(item);
     const estimatedHeight = estimateHeightPx(item, index);
     if (Number.isFinite(estimatedHeight) && estimatedHeight > 0) {
@@ -99,9 +83,8 @@ export function distributeMasonryItems<T>(
 }
 
 /**
- * Masonry Shift-range order (Serpent-oz1t): left-to-right columns, top-to-bottom
- * within each column — matches `MasonryColumns` DOM order from
- * `distributeMasonryItems`, not array ingestion order.
+ * Shift-range ids for masonry: identical to asset array order (Serpent-1jnp).
+ * Kept as a helper so callers/tests stay explicit about the 良序 contract.
  */
 export function masonryVisualReadingOrderIds<T>(
   items: readonly T[],
@@ -109,8 +92,11 @@ export function masonryVisualReadingOrderIds<T>(
   estimateHeightPx: (item: T, index: number) => number,
   getId: (item: T) => string,
 ): string[] {
-  const columns = distributeMasonryItems(items, columnCount, estimateHeightPx);
-  return columns.flatMap((column) => column.items.map((item) => getId(item)));
+  // Distribution is round-robin; selection must follow the same array order
+  // as 平铺 — do not re-sort by estimated geometry.
+  void columnCount;
+  void estimateHeightPx;
+  return items.map((item) => getId(item));
 }
 
 export type JustifiedLayoutItem = {

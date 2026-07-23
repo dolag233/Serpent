@@ -10,6 +10,13 @@ export const AI_ANALYSIS_CONCURRENCY_MIN = 1;
 export const AI_ANALYSIS_CONCURRENCY_MAX = 32;
 export const DEFAULT_AI_ANALYSIS_CONCURRENCY = 16;
 
+/**
+ * A scheduler run must fetch at least as many jobs as the largest supported
+ * lane count. Otherwise a user setting above the scheduler batch size would
+ * silently be capped before the worker can start all configured lanes.
+ */
+export const AI_ANALYSIS_QUEUE_BATCH_SIZE = AI_ANALYSIS_CONCURRENCY_MAX;
+
 /** Normalize the persisted/UI setting without consulting process state. */
 export function normalizeAiAnalysisConcurrency(raw: unknown): number {
   if (raw === undefined || raw === null || raw === '') {

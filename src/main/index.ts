@@ -124,6 +124,7 @@ import {
   type AiAnalysisSettings,
 } from "../shared/ai-analysis-settings";
 import {
+  AI_ANALYSIS_QUEUE_BATCH_SIZE,
   DEFAULT_AI_ANALYSIS_CONCURRENCY,
   normalizeAiAnalysisConcurrency,
 } from "../shared/ai-concurrency";
@@ -220,7 +221,7 @@ function rememberOpenedLibrary(libraryPath: string, displayName: string): void {
 let extensionServer: ExtensionServer | undefined;
 let extensionPairingStore: ExtensionPairingStore | undefined;
 const aiQueueScheduler = new AiQueueScheduler(processAiQueueBatch, {
-  batchSize: 20,
+  batchSize: AI_ANALYSIS_QUEUE_BATCH_SIZE,
   baseRetryDelayMs: DEFAULT_AI_RELIABILITY_SETTINGS.retryBaseDelayMs,
   maxRetryDelayMs: DEFAULT_AI_RELIABILITY_SETTINGS.retryMaxDelayMs,
   retryJitterRatio: DEFAULT_AI_RELIABILITY_SETTINGS.retryJitterRatio,
@@ -640,7 +641,7 @@ async function enqueueAutoAnalyzeAfterImport(
       ...(importedAssetIds.length > 0 ? { assetIds: importedAssetIds } : {}),
       ...(folderId ? { folderId } : {}),
     });
-    if (result.ok && result.type === "media.jobs.enqueued") {
+    if (result.ok && result.type === "ai.jobs.enqueued") {
       logger?.info(
         "auto-analyze",
         `Enqueued ${result.enqueued} AI analysis jobs after import.`,
@@ -1553,7 +1554,11 @@ async function commandFor(
         jobIds: request.jobIds,
       };
     case "ai.status.request":
-      return { type: "ai.status", libraryId: request.libraryId };
+      return {
+        type: "ai.status",
+        libraryId: request.libraryId,
+        ...(request.jobIds ? { jobIds: request.jobIds } : {}),
+      };
     case "asset.analyze.request": {
       const config = loadAiConfig();
       if (!config.hasKey) return undefined; // Will be handled as error downstream.
@@ -1581,6 +1586,10 @@ async function commandFor(
         languages: config.languages,
       };
     }
+    case "assets.analyze.request":
+      // Handled before generic Worker-command dispatch because it atomically
+      // enqueues the whole selected batch and starts the scheduler once.
+      return undefined;
     case "ai.content.get.request":
       return {
         type: "ai.content.get",
@@ -1720,6 +1729,59 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
       } satisfies RendererResult;
     }
 
+    // A selected batch must be enqueued atomically. Sending one IPC request per
+    // asset lets the first scheduler batch observe only one job and serializes
+    // the entire operation despite a higher configured lane limit.
+    if (request.type === "assets.analyze.request") {
+      const config = loadAiConfig();
+      if (!config.hasKey || !config.apiFormat) {
+        return {
+          ok: false,
+          error: createPublicError("AI_ANALYSIS_FAILED", "AI_NOT_CONFIGURED"),
+        } satisfies RendererResult;
+      }
+      try {
+        getDecryptedApiKey();
+      } catch {
+        return {
+          ok: false,
+          error: createPublicError("AI_ANALYSIS_FAILED", "AI_NOT_CONFIGURED"),
+        } satisfies RendererResult;
+      }
+      if (!workerClient) throw new Error("Library Worker is unavailable.");
+      try {
+        const enqueueResult = await workerClient.request({
+          type: "ai.enqueue-analysis",
+          libraryId: request.libraryId,
+          assetIds: request.assetIds,
+          resumePaused: true,
+        });
+        if (enqueueResult.ok && enqueueResult.type === "ai.jobs.enqueued") {
+          const jobIds = [
+            ...enqueueResult.jobIds,
+            ...enqueueResult.alreadyPendingJobIds,
+          ];
+          if (jobIds.length > 0) {
+            void processAiQueue(request.libraryId);
+            return {
+              ok: true,
+              type: "assets.analyze-queued",
+              assetIds: request.assetIds,
+              jobIds,
+              skippedAssetIds: enqueueResult.skippedAssetIds,
+              enqueued: enqueueResult.enqueued,
+            } satisfies RendererResult;
+          }
+        }
+      } catch (error) {
+        logger?.error("ai.analyze.batch-enqueue", error);
+      }
+      return {
+        ok: false,
+        error: createPublicError("AI_ANALYSIS_FAILED"),
+      } satisfies RendererResult;
+    }
+
     // Manual analyze: prefer the AI job queue so Renderer gets progress events
     // and the background-jobs panel updates. Fall through to sync analyze only
     // when the asset could not be queued (and is not already pending).
@@ -1748,7 +1810,7 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
         });
         if (
           enqueueResult.ok &&
-          enqueueResult.type === "media.jobs.enqueued" &&
+          enqueueResult.type === "ai.jobs.enqueued" &&
           enqueueResult.enqueued > 0
         ) {
           void processAiQueue(request.libraryId);
@@ -1761,7 +1823,7 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
         }
         if (
           enqueueResult.ok &&
-          enqueueResult.type === "media.jobs.enqueued" &&
+          enqueueResult.type === "ai.jobs.enqueued" &&
           enqueueResult.enqueued === 0
         ) {
           const statusResult = await workerClient.request({
@@ -1819,13 +1881,14 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
     }
 
     if (request.type === "ai.config.set.request") {
+      const currentConfig = loadAiConfig();
       if (request.autoAnalyzeEnabled && !request.disclaimerAccepted) {
         return {
           ok: false,
           error: createPublicError("INVALID_IMPORT_DECISION"),
         } satisfies RendererResult;
       }
-      if (!request.apiKey && !loadAiConfig().hasKey) {
+      if (!request.apiKey && !currentConfig.hasKey) {
         return {
           ok: false,
           error: createPublicError("INVALID_IMPORT_DECISION"),
@@ -1845,10 +1908,13 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
           tagEnabled: request.enabledFields?.tags ?? true,
           ratingEnabled: request.enabledFields?.rating ?? true,
         }),
-        concurrencyLimit: normalizeAiAnalysisConcurrency(request.concurrencyLimit),
-        reliabilitySettings: normalizeAiReliabilitySettings(
-          request.reliabilitySettings,
+        concurrencyLimit: normalizeAiAnalysisConcurrency(
+          request.concurrencyLimit ?? currentConfig.concurrencyLimit,
         ),
+        // Retry policy remains durable but is no longer a user-facing setting.
+        reliabilitySettings: request.reliabilitySettings
+          ? normalizeAiReliabilitySettings(request.reliabilitySettings)
+          : currentConfig.reliabilitySettings,
         languages: normalizeAiLanguages(
           request.languages ?? request.language ?? DEFAULT_AI_LANGUAGES,
         ),

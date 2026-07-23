@@ -423,6 +423,15 @@ export interface SerpentLibraryApi {
     | { assetId: string; reason: string }
     | { assetId: string; queued: true; enqueued: number }
   >>;
+  analyzeAssets(input: {
+    libraryId: string;
+    assetIds: string[];
+  }): Promise<LibraryApiResult<{
+    assetIds: string[];
+    jobIds: string[];
+    skippedAssetIds: string[];
+    enqueued: number;
+  }>>;
   // Thumbnail & Preview
   requestThumbnail(input: { libraryId: string; assetId: string }): Promise<LibraryApiResult<{ assetId: string; artifactId: string }>>;
   requestPreview(input: { libraryId: string; assetId: string; mode: 'client' | 'fullscreen' }): Promise<LibraryApiResult<PreviewResolution>>;
@@ -467,7 +476,10 @@ export interface SerpentLibraryApi {
   resumeAiJobs(input: { libraryId: string; jobIds?: string[] }): Promise<LibraryApiResult<{ resumedCount: number }>>;
   cancelAiJobs(input: { libraryId: string; jobIds?: string[] }): Promise<LibraryApiResult<{ cancelledCount: number }>>;
   retryAiJobs(input: { libraryId: string; jobIds: string[] }): Promise<LibraryApiResult<{ retriedCount: number }>>;
-  getAiJobStatus(input: { libraryId: string }): Promise<LibraryApiResult<AiJobStatus>>;
+  getAiJobStatus(input: {
+    libraryId: string;
+    jobIds?: string[];
+  }): Promise<LibraryApiResult<AiJobStatus>>;
   onAiProgress(listener: (event: {
     type: 'ai.progress';
     libraryId: string;
@@ -475,9 +487,6 @@ export interface SerpentLibraryApi {
     running: number;
     succeeded: number;
     failed: number;
-    inFlight: number;
-    concurrencyLimit: number;
-    waitingForSlot: number;
   }) => void): () => void;
   onAiCompleted(listener: (event: { type: 'ai.analysis.completed'; libraryId: string; assetId: string; fieldCount: number; tagCount: number }) => void): () => void;
   onAiCleared(listener: (event: { type: 'ai.content.cleared'; libraryId: string; affectedAssetCount: number }) => void): () => void;

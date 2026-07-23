@@ -57,7 +57,12 @@ export function loadImportConflictPreferences(
   if (!raw) return DEFAULT_IMPORT_CONFLICT_PREFERENCES;
   try {
     const parsed = importConflictPreferencesSchema.safeParse(JSON.parse(raw));
-    return parsed.success ? parsed.data : DEFAULT_IMPORT_CONFLICT_PREFERENCES;
+    if (!parsed.success) return DEFAULT_IMPORT_CONFLICT_PREFERENCES;
+    // Serpent-9h01: merge removed from UI — treat remembered merge as create-copy.
+    if (parsed.data.duplicate === 'merge') {
+      return { ...parsed.data, duplicate: 'create-copy' };
+    }
+    return parsed.data;
   } catch {
     return DEFAULT_IMPORT_CONFLICT_PREFERENCES;
   }
@@ -89,10 +94,11 @@ export function rememberDuplicateDecision(
   decision: RememberedDuplicateDecision,
   storage?: ImportConflictPreferencesStorage,
 ): ImportConflictPreferences {
+  const normalized = decision === 'merge' ? 'create-copy' : decision;
   const current = loadImportConflictPreferences(storage);
   const next: ImportConflictPreferences = {
     ...current,
-    duplicate: decision,
+    duplicate: normalized,
   };
   saveImportConflictPreferences(next, storage);
   return next;

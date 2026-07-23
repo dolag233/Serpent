@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   AI_ANALYSIS_CONCURRENCY_MAX,
+  AI_ANALYSIS_QUEUE_BATCH_SIZE,
   DEFAULT_AI_ANALYSIS_CONCURRENCY,
   resolveAiAnalysisConcurrency,
 } from "../../src/shared/ai-concurrency";
@@ -22,5 +23,9 @@ describe("resolveAiAnalysisConcurrency (Serpent-opme)", () => {
     expect(resolveAiAnalysisConcurrency("99")).toBe(
       AI_ANALYSIS_CONCURRENCY_MAX,
     );
+  });
+
+  it("keeps a scheduler batch large enough for every supported lane", () => {
+    expect(AI_ANALYSIS_QUEUE_BATCH_SIZE).toBe(AI_ANALYSIS_CONCURRENCY_MAX);
   });
 });

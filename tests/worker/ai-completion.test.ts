@@ -669,6 +669,11 @@ describe('enqueueAiAnalysisJobs', () => {
 
     const result = service.enqueueAiAnalysisJobs({ libraryId });
     expect(result.enqueued).toBe(2);
+    expect(result.jobIds).toHaveLength(2);
+    expect(new Set(result.jobIds)).toHaveLength(2);
+    expect(
+      service.getAiJobStatus(libraryId).jobs.map((job) => job.jobId),
+    ).toEqual(expect.arrayContaining(result.jobIds));
 
     service.closeAll();
   });
@@ -690,6 +695,7 @@ describe('enqueueAiAnalysisJobs', () => {
     const result = service.enqueueAiAnalysisJobs({ libraryId });
     // Video should not be enqueued for AI analysis (needs contact sheet)
     expect(result.enqueued).toBe(0);
+    expect(result.skippedAssetIds).toHaveLength(1);
 
     service.closeAll();
   });
@@ -713,6 +719,33 @@ describe('enqueueAiAnalysisJobs', () => {
     const r2 = service.enqueueAiAnalysisJobs({ libraryId });
     expect(r2.enqueued).toBe(0);
 
+    service.closeAll();
+  });
+
+  it('resumes an explicitly paused job when manual analysis requests it again', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'AI Resume Paused', selectedParentPath: root });
+    const libraryId = created.libraryId;
+    const sourceDir = path.join(root, 'sources');
+    mkdirSync(sourceDir, { recursive: true });
+    createPngFile(sourceDir, 'img.png');
+    const imported = importNoConflict(service, libraryId, path.join(sourceDir, 'img.png'));
+    const assetId = imported.assets[0]!.assetId;
+
+    const first = service.enqueueAiAnalysisJobs({ libraryId, assetIds: [assetId] });
+    service.pauseJobs(libraryId, first.jobIds);
+    const resumed = service.enqueueAiAnalysisJobs({
+      libraryId,
+      assetIds: [assetId],
+      resumePaused: true,
+    });
+
+    expect(resumed).toMatchObject({
+      enqueued: 0,
+      alreadyPendingJobIds: first.jobIds,
+    });
+    expect(service.getAiJobStatus(libraryId, first.jobIds).queued).toBe(1);
     service.closeAll();
   });
 
@@ -881,6 +914,41 @@ describe('AI job queue management', () => {
     expect(result.queued).toBeGreaterThanOrEqual(1);
     expect(result.jobs.length).toBeGreaterThanOrEqual(1);
 
+    service.closeAll();
+  });
+
+  it('returns exact counts for explicitly tracked job IDs, excluding history', () => {
+    const { service, libraryId, jobId } = setupWithJob('queued');
+    const historicalJobId = randomUUID();
+    const status = service.getAiJobStatus(libraryId);
+    const db = new Database(
+      path.join(service.listLibraries()[0]!.libraryPath, '.serpent', 'library.db'),
+    );
+    const libraryRow = db.prepare('SELECT library_id FROM library LIMIT 1').get() as {
+      library_id: string;
+    };
+    db.prepare(
+      `INSERT INTO jobs
+         (job_id, library_id, asset_id, revision_id, kind, status, priority,
+          progress, attempt_count, created_at, updated_at)
+       VALUES (?, ?, ?, NULL, 'ai.image.analysis', 'succeeded', 0, 1.0, 1, ?, ?)`,
+    ).run(
+      historicalJobId,
+      libraryRow.library_id,
+      status.jobs[0]!.assetId,
+      new Date().toISOString(),
+      new Date().toISOString(),
+    );
+    db.close();
+
+    const tracked = service.getAiJobStatus(libraryId, [jobId]);
+    expect(tracked).toMatchObject({
+      queued: 1,
+      running: 0,
+      succeeded: 0,
+      failed: 0,
+    });
+    expect(tracked.jobs.map((job) => job.jobId)).toEqual([jobId]);
     service.closeAll();
   });
 

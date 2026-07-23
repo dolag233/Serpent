@@ -33,7 +33,7 @@ export interface UseAiConnectionFailureResult {
   gate: ConnectionFailureGateState;
   /** Call when the user enqueues a new analyze batch. */
   notifyBatchStarted: (jobs: ReadonlyArray<AiJob>) => void;
-  onRetry: () => void;
+  onRetry: () => Promise<void>;
   onAbort: () => void;
 }
 
@@ -109,11 +109,11 @@ export function useAiConnectionFailure({
     refreshSnapshot,
   ]);
 
-  const onRetry = useCallback(() => {
+  const onRetry = useCallback(async () => {
     const jobIds = gateRef.current.failedJobIds;
     dispatch({ type: "resolved", decision: "retry" });
     if (jobIds.length === 0) return;
-    void controlAiJobs("retry", jobIds);
+    await controlAiJobs("retry", jobIds);
   }, [controlAiJobs]);
 
   const onAbort = useCallback(() => {

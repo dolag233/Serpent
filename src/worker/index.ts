@@ -73,14 +73,6 @@ const libraryService = new LibraryService({
   },
 });
 
-// A DB job becomes `running` before it acquires the global semaphore. Publish
-// that distinct snapshot so UI progress proves actual outbound concurrency.
-providerConcurrencyLimiter.onChange(() => {
-  for (const library of libraryService.listLibraries()) {
-    publishAiProgress(library.libraryId);
-  }
-});
-
 // Electron's ParentPort delivers IPC messages but does not provide a documented
 // event-loop ref. Development builds happen to have other active handles; a
 // packaged utility process can otherwise exit cleanly immediately after ready.
@@ -259,7 +251,6 @@ function safeAiJobState(libraryId: string, jobId: string): string | null {
 function publishAiProgress(libraryId: string): void {
   try {
     const status = libraryService.getAiJobStatus(libraryId);
-    const concurrency = providerConcurrencyLimiter.snapshot();
     aiProgressThrottler.publish({
       type: 'ai.progress',
       libraryId,
@@ -267,9 +258,6 @@ function publishAiProgress(libraryId: string): void {
       running: status.running,
       succeeded: status.succeeded,
       failed: status.failed,
-      inFlight: concurrency.inFlight,
-      concurrencyLimit: concurrency.limit,
-      waitingForSlot: concurrency.waitingForSlot,
     });
   } catch (error) {
     if (!(error instanceof LibraryServiceError && error.code === 'LIBRARY_NOT_OPEN')) throw error;
@@ -1386,13 +1374,16 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
       }
     }
     case 'ai.enqueue-analysis': {
-      const { enqueued } = libraryService.enqueueAiAnalysisJobs(request.command);
+      const { enqueued, jobIds, alreadyPendingJobIds, skippedAssetIds } = libraryService.enqueueAiAnalysisJobs(request.command);
       publishAiProgress(request.command.libraryId);
       return {
         ok: true,
-        type: 'media.jobs.enqueued' as const,
+        type: 'ai.jobs.enqueued' as const,
         libraryId: request.command.libraryId,
         enqueued,
+        jobIds,
+        alreadyPendingJobIds,
+        skippedAssetIds,
       };
     }
     case 'ai.process-queue': {
@@ -1602,7 +1593,10 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
       };
     }
     case 'ai.status': {
-      const status = libraryService.getAiJobStatus(request.command.libraryId);
+      const status = libraryService.getAiJobStatus(
+        request.command.libraryId,
+        request.command.jobIds,
+      );
       return {
         ok: true,
         type: 'ai.jobs.status' as const,

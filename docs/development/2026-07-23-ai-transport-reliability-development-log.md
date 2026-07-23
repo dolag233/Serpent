@@ -28,6 +28,8 @@ in-flight 请求上限；同时新增百炼 DashScope 原生多模态协议、�
   对不接受 `text.format` 的兼容服务仅重试一次为 JSON 文本提示，结果仍受同一 schema 校验。
 - `ProviderConcurrencyLimiter` 变为全局 FIFO semaphore。持久化上限范围为 1–32，默认 16；
   调低上限只约束尚未开始的请求，绝不终止运行中的分析。
+- Main 的单资源库调度批次与该上限共用 32；因此设置为 21–32 时，首个调度波次也能实际取到
+  足够任务，不能被旧的 20 项批次大小暗中削低。
 - 非流式单次请求由可取消的 timeout signal 限制；网络、限流和 timeout 才会有界重试。
   重试使用指数退避及对称随机抖动，降低多任务同步重试对上游的冲击。
 - semaphore 的排队等待只受用户取消控制，**不**消耗「单次请求超时」；timeout 在真正获得
@@ -35,8 +37,9 @@ in-flight 请求上限；同时新增百炼 DashScope 原生多模态协议、�
 - 兼容 Responses 对明确的 `text.format` 不支持错误只协商一次并按 endpoint 缓存；普通 HTTP 400
   不会重发。首批并行任务共享这个协商中的结果，避免默认 16 并发时重复发送 16 次已知不兼容的
   结构化探测。兼容 relay 的 Chat/DashScope 风格返回包络仍会进入同一 JSON/schema 校验。
-- `running` 是已 claim 的数据库 job，不能证明网络并发。工作区进度条额外显示全局 semaphore
-  的真实 in-flight、上限和等待槽位；保存并发设置会即时下发到运行中 Worker。
+- `running` 是已 claim 的数据库 job，不能证明网络并发。全局 semaphore 的真实 in-flight
+  仅保留给内部限流与自动化测试；工作区不再向用户显示“实际模型请求/等待槽位”等内部 telemetry。
+  保存并发设置仍会即时下发到运行中 Worker。
 - 无法形成可验证模型 JSON 的 HTTP 200 包络、空输出和 schema 输出不合格是可恢复错误，会使用
   已配置的有界尝试次数；认证、权限、额度和 HTTP 400 参数错误仍然终止，避免盲重试。
 - Main 等待 Worker 批次时按任务波次与单次请求 timeout 计算下限，避免低并发/长 timeout
@@ -49,9 +52,9 @@ in-flight 请求上限；同时新增百炼 DashScope 原生多模态协议、�
 | 默认 16、可设并发、跨 provider/资源库全局限制 | `src/shared/ai-concurrency.ts`；`src/worker/ai/provider-concurrency-limiter.ts`；`src/worker/index.ts`；`src/renderer/AiConfigDialog.tsx` | `tests/unit/ai-concurrency.test.ts`；`tests/unit/ai-provider-runtime.test.ts`；`tests/unit/protocol.test.ts` | 待人类：JOBS-005 |
 | 百炼原生 DashScope，兼容 URL 正确分流 | `src/shared/ai-endpoints.ts`；`src/worker/ai/dashscope-adapter.ts`；`src/worker/index.ts` | `tests/unit/ai-endpoints.test.ts`；`tests/unit/ai-protocol.test.ts`；`tests/unit/ai-search-planner.test.ts` | 待人类：AICFG-013；真实 key/media 旅程未执行 |
 | Responses 的 JSON 文本兼容回退 | `src/worker/ai/openai-adapter.ts` | `tests/worker/ai-analysis.test.ts` | 真实兼容服务回退路径未执行 |
-| 持久化 timeout、尝试次数、退避/抖动 | `src/shared/ai-reliability.ts`；`src/main/ai-queue-scheduler.ts`；`src/main/index.ts`；`src/main/worker-client.ts`；`src/worker/index.ts`；`src/worker/ai/limited-request.ts`；`src/renderer/AiReliabilitySettingsFields.tsx` | `tests/unit/ai-reliability.test.ts`；`tests/unit/ai-provider-runtime.test.ts`；`tests/unit/ai-queue-runtime.test.ts`；`tests/unit/worker-client.test.ts` | 待人类：AICFG-014；真实网络故障旅程未执行 |
+| 持久化 timeout、尝试次数、退避/抖动 | `src/shared/ai-reliability.ts`；`src/main/ai-queue-scheduler.ts`；`src/main/index.ts`；`src/main/worker-client.ts`；`src/worker/index.ts`；`src/worker/ai/limited-request.ts` | `tests/unit/ai-reliability.test.ts`；`tests/unit/ai-provider-runtime.test.ts`；`tests/unit/ai-queue-runtime.test.ts`；`tests/unit/worker-client.test.ts` | 运行时默认策略保留；用户明确不再在配置界面暴露 |
 | 开始分析不重复弹 notice，固定进度条保留 | `src/renderer/App.tsx` | 当前无定向 UI 自动化 | 待人类：JOBS-008 |
-| 真实请求并发可观察，运行时更新并发上限 | `src/worker/ai/provider-concurrency-limiter.ts`；`src/worker/index.ts`；`src/renderer/App.tsx` | `tests/unit/ai-provider-runtime.test.ts`；`tests/unit/protocol.test.ts` | 待人类：JOBS-005 |
+| 原子批量入队、精确批次进度/汇总、运行时更新并发上限 | `src/main/index.ts`；`src/worker/library-service.ts`；`src/worker/index.ts`；`src/renderer/App.tsx`；`src/renderer/ai-analyze-progress.ts` | `tests/worker/ai-completion.test.ts`；`tests/unit/ai-analyze-progress.test.ts`；`tests/unit/ai-provider-runtime.test.ts`；`tests/unit/protocol.test.ts` | 待人类：JOBS-005 |
 | 兼容 Responses 输出/格式协商和坏 JSON 的有界恢复 | `src/worker/ai/openai-adapter.ts`；`src/worker/ai/dashscope-adapter.ts`；`src/worker/ai/error-mapping.ts` | `tests/worker/ai-analysis.test.ts`；`tests/unit/ai-protocol.test.ts` | 待真实兼容 relay 验证 |
 
 ## 验证记录
@@ -74,6 +77,31 @@ in-flight 请求上限；同时新增百炼 DashScope 原生多模态协议、�
   `getByLabel("名称")` 同时匹配创建库输入和排序按钮的 `aria-label="排序: 名称, 升序"`；另有偏好测试对 range input 使用
   `fill()`。这些与 AI 传输无调用交集，未为本轮改动跨范围修复。
 - `git diff --check`：通过（最终审查修复前后均无空白错误）。
+
+### 2026-07-23 用户验收反馈修复
+
+- 根因：Renderer 对多选资产按顺序逐项发送 `asset.analyze.request`，并在每项入队后立即
+  触发 Scheduler。第一轮 Worker batch 只看见第一个 job，其他 job 只能等该 batch 结束，故即使
+  设置为 16，真实调用也常表现为串行 1。现改为一个 `assets.analyze.request` 原子入队整个选择，
+  再只启动一次 scheduler。
+- 根因：进度和完成 toast 从资源库全历史 `succeeded/failed` 总数求差；在最新状态到达前记录的
+  陈旧 baseline 会把旧 job 误算进本次，导致开始即 `5/5`，或单个文件显示数十项成功/失败。
+  现由 Worker 返回新建（或已在排队的）job ID，Renderer 仅查询这些 ID 的精确状态；大于 SQLite
+  单条参数上限的选择会分块查询，不能因 200 条任务列表上限而漏计。
+- AI 配置折叠标题收敛为“高级设置”，保留唯一新增用户控制“最大同时请求数”；可靠性策略继续以
+  持久化运行时默认值执行，但不再显示可编辑字段。工作区也不再显示“实际模型请求”等内部数据。
+- 交叉审查后修复三条状态机回归：任务面板取消无关或部分 job 不会抹掉当前批次；连接类失败点“重试”
+  会在 Worker 写回 `queued` 后恢复该批次的失败 job ID；手动重新分析已暂停的 job 会先恢复它，而非
+  永久等待。不可分析的选择会显式计为本批次一个失败结果，避免选中 5 项却静默显示 `4/4`。
+- 红测后验证：`npm run typecheck` 通过；`npm exec vitest run tests/unit/ai-analyze-progress.test.ts
+  tests/unit/protocol.test.ts tests/unit/ai-provider-runtime.test.ts tests/unit/ai-queue-runtime.test.ts
+  tests/worker/ai-completion.test.ts` 连续运行 3 次均通过，每轮 5 files / 130 tests。后续独立复审
+  发现上限 21–32 会受 Main 旧的 20 项 scheduler batch 截断，现已将该批次绑定为 32，并增加常量
+  关系测试。修复后 `npm run typecheck` 通过；5 个 unit files / 88 tests 连续 3 轮通过，另有
+  `tests/worker/ai-completion.test.ts` 的 45 tests 通过。为运行 Worker
+  用例先以 Node ABI 重建 `better-sqlite3`；测试后已恢复 Electron 开发 ABI。
+- 本环境未提供可调用的 Computer Use runtime，故未把真实桌面截图或真实百炼端点并行旅程写为通过；
+  仍需人类按 JOBS-005 用自己的 Key 验收。
 
 尚未把未运行的 packaged、Windows、真实百炼端点或 Computer Use 检查写成通过；这些证据缺失时，以上人类验收项保持“待人类验收”。
 

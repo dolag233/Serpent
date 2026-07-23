@@ -147,9 +147,6 @@ describe('AiProgressThrottler', () => {
       running: 0,
       succeeded: 0,
       failed: 0,
-      inFlight: 0,
-      concurrencyLimit: 16,
-      waitingForSlot: 0,
     };
 
     throttler.publish({ ...base, queued: 3 });

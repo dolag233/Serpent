@@ -166,10 +166,6 @@ export const aiProgressEventSchema = z.strictObject({
   running: z.number().int().nonnegative(),
   succeeded: z.number().int().nonnegative(),
   failed: z.number().int().nonnegative(),
-  /** Actual global model requests, distinct from DB jobs marked running. */
-  inFlight: z.number().int().nonnegative(),
-  concurrencyLimit: z.number().int().min(1).max(32),
-  waitingForSlot: z.number().int().nonnegative(),
 });
 
 export type AiProgressEvent = z.infer<typeof aiProgressEventSchema>;
@@ -754,6 +750,14 @@ const assetOperationSuccessSchemas = [
   }),
   z.strictObject({
     ok: z.literal(true),
+    type: z.literal('assets.analyze-queued'),
+    assetIds: z.array(nonBlankString).min(1),
+    jobIds: z.array(nonBlankString).min(1),
+    skippedAssetIds: z.array(nonBlankString),
+    enqueued: z.number().int().nonnegative(),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
     type: z.literal('asset.thumbnail.generated'),
     assetId: nonBlankString,
     artifactId: nonBlankString,
@@ -1018,6 +1022,15 @@ const workerSuccessResultSchema = z.discriminatedUnion('type', [
     type: z.literal('media.jobs.enqueued'),
     libraryId: nonBlankString,
     enqueued: z.number().int().nonnegative(),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('ai.jobs.enqueued'),
+    libraryId: nonBlankString,
+    enqueued: z.number().int().nonnegative(),
+    jobIds: z.array(nonBlankString),
+    alreadyPendingJobIds: z.array(nonBlankString),
+    skippedAssetIds: z.array(nonBlankString),
   }),
   z.strictObject({
     ok: z.literal(true),

@@ -691,6 +691,11 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     assetId: identifierSchema,
   }),
   z.strictObject({
+    type: z.literal('assets.analyze.request'),
+    libraryId: identifierSchema,
+    assetIds: z.array(identifierSchema).min(1).max(10_000),
+  }),
+  z.strictObject({
     type: z.literal('asset.thumbnail.request'),
     libraryId: identifierSchema,
     assetId: identifierSchema,
@@ -829,6 +834,7 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
   z.strictObject({
     type: z.literal('ai.status.request'),
     libraryId: identifierSchema,
+    jobIds: z.array(identifierSchema).min(1).max(10_000).optional(),
   }),
 ]);
 
@@ -1454,6 +1460,8 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     libraryId: identifierSchema,
     assetIds: z.array(identifierSchema).min(1).optional(),
     folderId: identifierSchema.optional(),
+    /** Manual analysis may resume jobs intentionally paused by the user. */
+    resumePaused: z.boolean().optional(),
   }),
   z.strictObject({
     type: z.literal('ai.process-queue'),
@@ -1512,6 +1520,7 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
   z.strictObject({
     type: z.literal('ai.status'),
     libraryId: identifierSchema,
+    jobIds: z.array(identifierSchema).min(1).max(10_000).optional(),
   }),
 ]);
 

@@ -1147,6 +1147,35 @@ const library: SerpentLibraryApi = Object.freeze({
     throw new Error('Unexpected analyze response.');
   },
 
+  async analyzeAssets(input: {
+    libraryId: string;
+    assetIds: string[];
+  }): Promise<LibraryApiResult<{
+    assetIds: string[];
+    jobIds: string[];
+    skippedAssetIds: string[];
+    enqueued: number;
+  }>> {
+    const result = await request({
+      type: 'assets.analyze.request',
+      libraryId: input.libraryId,
+      assetIds: input.assetIds,
+    });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'assets.analyze-queued') {
+      throw new Error('Unexpected batch analyze response.');
+    }
+    return {
+      ok: true,
+      value: {
+        assetIds: result.assetIds,
+        jobIds: result.jobIds,
+        skippedAssetIds: result.skippedAssetIds,
+        enqueued: result.enqueued,
+      },
+    };
+  },
+
   async requestThumbnail({ libraryId, assetId }: { libraryId: string; assetId: string }): Promise<LibraryApiResult<{ assetId: string; artifactId: string }>> {
     const result = await request({ type: 'asset.thumbnail.request', libraryId, assetId });
     if (!result.ok) return failure(result);
@@ -1385,8 +1414,18 @@ const library: SerpentLibraryApi = Object.freeze({
     return { ok: true, value: { retriedCount: result.retriedCount } };
   },
 
-  async getAiJobStatus({ libraryId }: { libraryId: string }): Promise<LibraryApiResult<AiJobStatus>> {
-    const result = await request({ type: 'ai.status.request', libraryId });
+  async getAiJobStatus({
+    libraryId,
+    jobIds,
+  }: {
+    libraryId: string;
+    jobIds?: string[];
+  }): Promise<LibraryApiResult<AiJobStatus>> {
+    const result = await request({
+      type: 'ai.status.request',
+      libraryId,
+      ...(jobIds ? { jobIds } : {}),
+    });
     if (!result.ok) return failure(result);
     if (result.type !== 'ai.jobs.status') throw new Error('Unexpected AI status response.');
     const { queued, running, succeeded, failed, paused, cancelled, jobs } = result;
@@ -1401,9 +1440,6 @@ const library: SerpentLibraryApi = Object.freeze({
     running: number;
     succeeded: number;
     failed: number;
-    inFlight: number;
-    concurrencyLimit: number;
-    waitingForSlot: number;
   }) => void) {
     const subscription = (_event: Electron.IpcRendererEvent, input: unknown) => {
       try {

@@ -49,6 +49,9 @@ export type SortModeControlProps = {
   setSortField: (value: SortFieldOption) => void;
   sortOrder: SortDefinition["order"];
   setSortOrder: (value: SortDefinition["order"]) => void;
+  /** Serpent-hm28: client-side shuffle mode (not a SortDefinition field). */
+  shuffleActive?: boolean;
+  onShuffle?: () => void;
 };
 
 function labelForSortField(
@@ -90,6 +93,8 @@ export function SortModeControl({
   setSortField,
   sortOrder,
   setSortOrder,
+  shuffleActive = false,
+  onShuffle,
 }: SortModeControlProps) {
   const t = useT();
   const [open, setOpen] = useState(false);
@@ -98,7 +103,12 @@ export function SortModeControl({
   const triggerRef = useRef<HTMLButtonElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const nonDefault =
-    sortField !== DEFAULT_SORT_FIELD || sortOrder !== DEFAULT_SORT_ORDER;
+    shuffleActive ||
+    sortField !== DEFAULT_SORT_FIELD ||
+    sortOrder !== DEFAULT_SORT_ORDER;
+  const triggerLabel = shuffleActive
+    ? t("filter.sortShuffle")
+    : labelForSortField(sortField, t);
 
   function closeList(restoreTriggerFocus: boolean) {
     setOpen(false);
@@ -165,6 +175,11 @@ export function SortModeControl({
     closeList(true);
   }
 
+  function pickShuffle() {
+    onShuffle?.();
+    closeList(true);
+  }
+
   return (
     <div className="sort-mode-control" ref={rootRef}>
       <div className="dimension-filter-dim-sep" aria-hidden="true" />
@@ -172,7 +187,7 @@ export function SortModeControl({
         <button
           aria-expanded={open || undefined}
           aria-haspopup="listbox"
-          aria-label={`${t("filter.sortMode")}: ${labelForSortField(sortField, t)}, ${labelForSortOrder(sortOrder, t)}`}
+          aria-label={`${t("filter.sortMode")}: ${triggerLabel}${shuffleActive ? "" : `, ${labelForSortOrder(sortOrder, t)}`}`}
           className={`dimension-filter-btn${nonDefault ? " is-active" : ""}${open ? " is-open" : ""}`}
           disabled={disabled}
           onClick={() => {
@@ -183,13 +198,15 @@ export function SortModeControl({
           type="button"
         >
           <Icon name="sliders" size={14} />
-          <span>{labelForSortField(sortField, t)}</span>
-          <span className="sort-order-glyph" aria-hidden="true">
-            <Icon
-              name={sortOrder === "asc" ? "sort-asc" : "sort-desc"}
-              size={14}
-            />
-          </span>
+          <span>{triggerLabel}</span>
+          {!shuffleActive ? (
+            <span className="sort-order-glyph" aria-hidden="true">
+              <Icon
+                name={sortOrder === "asc" ? "sort-asc" : "sort-desc"}
+                size={14}
+              />
+            </span>
+          ) : null}
         </button>
         {open && (
           <div
@@ -208,8 +225,8 @@ export function SortModeControl({
               </div>
               {SORT_ORDER_OPTIONS.map((order) => (
                 <button
-                  aria-checked={sortOrder === order}
-                  className={`sort-mode-option sort-mode-order-option${sortOrder === order ? " is-active" : ""}`}
+                  aria-checked={!shuffleActive && sortOrder === order}
+                  className={`sort-mode-option sort-mode-order-option${!shuffleActive && sortOrder === order ? " is-active" : ""}`}
                   key={order}
                   onClick={() => pickOrder(order)}
                   role="radio"
@@ -230,10 +247,22 @@ export function SortModeControl({
               role="listbox"
             >
               <div className="sort-mode-section-label">{t("filter.sortPrimary")}</div>
+              {onShuffle ? (
+                <button
+                  aria-selected={shuffleActive}
+                  className={`sort-mode-option${shuffleActive ? " is-active" : ""}`}
+                  onClick={pickShuffle}
+                  role="option"
+                  tabIndex={-1}
+                  type="button"
+                >
+                  {t("filter.sortShuffle")}
+                </button>
+              ) : null}
               {PRIMARY_SORT_FIELDS.map((field) => (
                 <button
-                  aria-selected={sortField === field}
-                  className={`sort-mode-option${sortField === field ? " is-active" : ""}`}
+                  aria-selected={!shuffleActive && sortField === field}
+                  className={`sort-mode-option${!shuffleActive && sortField === field ? " is-active" : ""}`}
                   key={field}
                   onClick={() => pickField(field)}
                   role="option"
@@ -246,8 +275,8 @@ export function SortModeControl({
               <div className="sort-mode-section-label">{t("filter.sortMore")}</div>
               {SECONDARY_SORT_FIELDS.map((field) => (
                 <button
-                  aria-selected={sortField === field}
-                  className={`sort-mode-option${sortField === field ? " is-active" : ""}`}
+                  aria-selected={!shuffleActive && sortField === field}
+                  className={`sort-mode-option${!shuffleActive && sortField === field ? " is-active" : ""}`}
                   key={field}
                   onClick={() => pickField(field)}
                   role="option"

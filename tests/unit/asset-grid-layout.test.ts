@@ -56,7 +56,7 @@ describe("distributed masonry", () => {
     ]);
   });
 
-  it("places later cards in the shortest column with stable left-to-right ties", () => {
+  it("places later cards by round-robin so ranks stay LTR in asset order (Serpent-1jnp)", () => {
     const heights: Record<string, number> = {
       a: 300,
       b: 100,
@@ -70,19 +70,20 @@ describe("distributed masonry", () => {
       (item) => heights[item]!,
     );
 
+    // index % 3 → [a,d] | [b,e] | [c]
     expect(columns.map((column) => column.items)).toEqual([
-      ["a"],
-      ["b", "d", "e"],
+      ["a", "d"],
+      ["b", "e"],
       ["c"],
     ]);
     expect(columns.map((column) => column.estimatedHeightPx)).toEqual([
-      300,
-      230,
+      380,
+      150,
       200,
     ]);
   });
 
-  it("orders Shift selection by masonry column DOM order (Serpent-oz1t)", () => {
+  it("keeps Shift selection identical to asset array order (Serpent-1jnp)", () => {
     const heights: Record<string, number> = {
       a: 300,
       b: 100,
@@ -90,7 +91,6 @@ describe("distributed masonry", () => {
       d: 80,
       e: 50,
     };
-    // Columns: [a] | [b,d,e] | [c] → DOM order a,b,d,e,c
     expect(
       masonryVisualReadingOrderIds(
         ["a", "b", "c", "d", "e"],
@@ -98,7 +98,7 @@ describe("distributed masonry", () => {
         (item) => heights[item]!,
         (item) => item,
       ),
-    ).toEqual(["a", "b", "d", "e", "c"]);
+    ).toEqual(["a", "b", "c", "d", "e"]);
 
     const order = masonryVisualReadingOrderIds(
       ["a", "b", "c", "d", "e"],
@@ -109,8 +109,7 @@ describe("distributed masonry", () => {
     const b = order.indexOf("b");
     const e = order.indexOf("e");
     const range = order.slice(Math.min(b, e), Math.max(b, e) + 1);
-    expect(range).toEqual(["b", "d", "e"]);
-    expect(range).not.toContain("c");
+    expect(range).toEqual(["b", "c", "d", "e"]);
   });
 
   it("normalizes invalid column counts and ignores invalid height estimates", () => {

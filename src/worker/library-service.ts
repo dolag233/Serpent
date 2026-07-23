@@ -7923,7 +7923,13 @@ export class LibraryService {
     libraryId: string;
     assetIds?: string[];
     folderId?: string;
-  }): { enqueued: number } {
+    resumePaused?: boolean;
+  }): {
+    enqueued: number;
+    jobIds: string[];
+    alreadyPendingJobIds: string[];
+    skippedAssetIds: string[];
+  } {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     const conn = openLibrary.connection;
     const now = new Date().toISOString();
@@ -7967,6 +7973,11 @@ export class LibraryService {
     const getRevision = conn.prepare(
       'SELECT current_revision_id FROM assets WHERE asset_id = ?',
     );
+    const resumePausedJob = conn.prepare(
+      `UPDATE jobs
+          SET status = 'queued', updated_at = ?
+        WHERE job_id = ? AND status = 'paused'`,
+    );
 
     // Image extensions for filtering.
     const imageExts = new Set([
@@ -7987,6 +7998,9 @@ export class LibraryService {
     );
 
     let enqueued = 0;
+    const jobIds: string[] = [];
+    const alreadyPendingJobIds: string[] = [];
+    const skippedAssetIds: string[] = [];
     conn.transaction(() => {
       for (const assetId of targetAssetIds) {
         const row = conn
@@ -7998,24 +8012,39 @@ export class LibraryService {
             relative_file_path: string;
             location_kind: string;
           } | undefined;
-        if (!row) continue;
+        if (!row) {
+          skippedAssetIds.push(assetId);
+          continue;
+        }
 
         const ext = path.extname(row.relative_file_path).toLowerCase();
         const isImage = imageExts.has(ext);
         const isVideo = videoExts.has(ext);
-        if (!isImage && !isVideo) continue;
+        if (!isImage && !isVideo) {
+          skippedAssetIds.push(assetId);
+          continue;
+        }
         if (isVideo) {
           const artifacts = videoArtifactsReady.get(assetId) as { ready_count: number };
-          if (artifacts.ready_count !== 2) continue;
+          if (artifacts.ready_count !== 2) {
+            skippedAssetIds.push(assetId);
+            continue;
+          }
         }
 
         // Check if there's already a pending/running AI job for this asset.
         const existingJob = conn
           .prepare(
-            "SELECT job_id FROM jobs WHERE asset_id = ? AND kind IN ('ai.image.analysis', 'ai.video.analysis') AND status IN ('queued', 'running', 'paused') LIMIT 1",
+            "SELECT job_id, status FROM jobs WHERE asset_id = ? AND kind IN ('ai.image.analysis', 'ai.video.analysis') AND status IN ('queued', 'running', 'paused') LIMIT 1",
           )
-          .get(assetId) as { job_id: string } | undefined;
-        if (existingJob) continue;
+          .get(assetId) as { job_id: string; status: 'queued' | 'running' | 'paused' } | undefined;
+        if (existingJob) {
+          if (existingJob.status === 'paused' && input.resumePaused) {
+            resumePausedJob.run(now, existingJob.job_id);
+          }
+          alreadyPendingJobIds.push(existingJob.job_id);
+          continue;
+        }
 
         const jobId = randomUUID();
         const revisionRow = getRevision.get(assetId) as
@@ -8033,10 +8062,11 @@ export class LibraryService {
           now,
         );
         enqueued++;
+        jobIds.push(jobId);
       }
     })();
 
-    return { enqueued };
+    return { enqueued, jobIds, alreadyPendingJobIds, skippedAssetIds };
   }
 
   claimNextAiJob(libraryId: string, excludedJobIds: string[] = []): {
@@ -8227,7 +8257,7 @@ export class LibraryService {
   }
 
   /** List all AI jobs for a library with counts by status. */
-  getAiJobStatus(libraryId: string): {
+  getAiJobStatus(libraryId: string, jobIds?: string[]): {
     queued: number;
     running: number;
     succeeded: number;
@@ -8248,37 +8278,59 @@ export class LibraryService {
     const conn = openLibrary.connection;
     const libId = openLibrary.summary.libraryId;
 
-    const counts = conn
-      .prepare(
-        `SELECT status, COUNT(*) as cnt
-           FROM jobs
-          WHERE library_id = ?
-            AND kind IN ('ai.image.analysis', 'ai.video.analysis')
-          GROUP BY status`,
-      )
-      .all(libId) as Array<{ status: string; cnt: number }>;
-
-    const jobs = conn
-      .prepare(
-        `SELECT job_id, asset_id, kind, status, error_code, error_detail, updated_at
-           FROM jobs
-          WHERE library_id = ?
-            AND kind IN ('ai.image.analysis', 'ai.video.analysis')
-          ORDER BY created_at DESC
-          LIMIT 200`,
-      )
-      .all(libId) as Array<{
-        job_id: string;
-        asset_id: string;
-        kind: 'ai.image.analysis' | 'ai.video.analysis';
-        status: 'queued' | 'running' | 'paused' | 'succeeded' | 'failed' | 'cancelled';
-        error_code: string | null;
-        error_detail: string | null;
-        updated_at: string;
-      }>;
-
+    type AiJobRow = {
+      job_id: string;
+      asset_id: string;
+      kind: 'ai.image.analysis' | 'ai.video.analysis';
+      status: 'queued' | 'running' | 'paused' | 'succeeded' | 'failed' | 'cancelled';
+      error_code: string | null;
+      error_detail: string | null;
+      updated_at: string;
+    };
     const statusMap: Record<string, number> = {};
-    for (const c of counts) statusMap[c.status] = c.cnt;
+    let jobs: AiJobRow[];
+
+    if (jobIds && jobIds.length > 0) {
+      // SQLite binds only a limited number of values per statement. Chunking
+      // keeps large user selections exact instead of silently truncating them.
+      const requestedJobIds = [...new Set(jobIds)];
+      const rows: AiJobRow[] = [];
+      for (let index = 0; index < requestedJobIds.length; index += 900) {
+        const chunk = requestedJobIds.slice(index, index + 900);
+        rows.push(...conn
+          .prepare(
+            `SELECT job_id, asset_id, kind, status, error_code, error_detail, updated_at
+               FROM jobs
+              WHERE library_id = ?
+                AND kind IN ('ai.image.analysis', 'ai.video.analysis')
+                AND job_id IN (${chunk.map(() => '?').join(',')})`,
+          )
+          .all(libId, ...chunk) as AiJobRow[]);
+      }
+      jobs = rows;
+      for (const job of jobs) statusMap[job.status] = (statusMap[job.status] ?? 0) + 1;
+    } else {
+      const counts = conn
+        .prepare(
+          `SELECT status, COUNT(*) as cnt
+             FROM jobs
+            WHERE library_id = ?
+              AND kind IN ('ai.image.analysis', 'ai.video.analysis')
+            GROUP BY status`,
+        )
+        .all(libId) as Array<{ status: string; cnt: number }>;
+      for (const count of counts) statusMap[count.status] = count.cnt;
+      jobs = conn
+        .prepare(
+          `SELECT job_id, asset_id, kind, status, error_code, error_detail, updated_at
+             FROM jobs
+            WHERE library_id = ?
+              AND kind IN ('ai.image.analysis', 'ai.video.analysis')
+            ORDER BY created_at DESC
+            LIMIT 200`,
+        )
+        .all(libId) as AiJobRow[];
+    }
 
     return {
       queued: statusMap['queued'] ?? 0,

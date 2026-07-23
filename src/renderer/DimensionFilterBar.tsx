@@ -122,6 +122,8 @@ export type DimensionFilterBarProps = {
   setSortField: (value: SortFieldOption) => void;
   sortOrder: SortDefinition["order"];
   setSortOrder: (value: SortDefinition["order"]) => void;
+  shuffleActive?: boolean;
+  onShuffle?: () => void;
   onClearFilter: (id: ClearableFilterId) => void;
 };
 
@@ -205,6 +207,8 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
     setSortField,
     sortOrder,
     setSortOrder,
+    shuffleActive = false,
+    onShuffle,
     onClearFilter,
   } = props;
 
@@ -926,8 +930,10 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
 
         <SortModeControl
           disabled={controlsDisabled}
+          onShuffle={onShuffle}
           setSortField={setSortField}
           setSortOrder={setSortOrder}
+          shuffleActive={shuffleActive}
           sortField={sortField}
           sortOrder={sortOrder}
         />

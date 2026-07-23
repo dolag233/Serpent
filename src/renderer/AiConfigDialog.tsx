@@ -15,8 +15,6 @@ import {
   type AiApiFormat,
   type AiLanguageId,
 } from "../shared/ai-endpoints";
-import type { AiReliabilitySettings } from "../shared/ai-reliability";
-import { AiReliabilitySettingsFields } from "./AiReliabilitySettingsFields";
 import { Icon } from "./Icons";
 import { iconActionAttrs } from "./icon-action-attrs";
 import { useT } from "./i18n";
@@ -36,7 +34,6 @@ export interface AiConfigDialogProps {
   baseUrl: string;
   languages: AiLanguageId[];
   concurrencyLimit: number;
-  reliabilitySettings: AiReliabilitySettings;
   hasKey: boolean;
   descriptionEnabled: boolean;
   tagsEnabled: boolean;
@@ -55,7 +52,6 @@ export interface AiConfigDialogProps {
   onBaseUrlChange: (value: string) => void;
   onLanguagesChange: (value: AiLanguageId[]) => void;
   onConcurrencyLimitChange: (value: number) => void;
-  onReliabilitySettingsChange: (value: AiReliabilitySettings) => void;
   onDescriptionEnabledChange: (value: boolean) => void;
   onTagsEnabledChange: (value: boolean) => void;
   onRatingEnabledChange: (value: boolean) => void;
@@ -92,7 +88,6 @@ export function AiConfigDialog({
   baseUrl,
   languages,
   concurrencyLimit,
-  reliabilitySettings,
   hasKey,
   descriptionEnabled,
   tagsEnabled,
@@ -110,7 +105,6 @@ export function AiConfigDialog({
   onBaseUrlChange,
   onLanguagesChange,
   onConcurrencyLimitChange,
-  onReliabilitySettingsChange,
   onDescriptionEnabledChange,
   onTagsEnabledChange,
   onRatingEnabledChange,
@@ -622,10 +616,6 @@ export function AiConfigDialog({
                 />
                 <p className="ai-config-hint">{t("aiConfig.concurrencyLimitHint")}</p>
               </div>
-              <AiReliabilitySettingsFields
-                onChange={onReliabilitySettingsChange}
-                settings={reliabilitySettings}
-              />
               <div className="editor-field ai-config-field">
                 <label className="micro-label" htmlFor="ai-config-max-tags">
                   {t("aiConfig.maxTags")}

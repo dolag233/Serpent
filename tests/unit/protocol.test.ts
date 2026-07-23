@@ -1433,6 +1433,15 @@ describe('worker request protocol', () => {
       requestId: 'request-ai-status',
       command: { type: 'ai.status', libraryId: 'library-1' },
     })).toMatchObject({ command: { type: 'ai.status' } });
+    expect(parseRendererRequest({
+      type: 'ai.status.request',
+      libraryId: 'library-1',
+      jobIds: ['job-1', 'job-2'],
+    })).toMatchObject({ jobIds: ['job-1', 'job-2'] });
+    expect(parseWorkerRequest({
+      requestId: 'request-ai-status-filtered',
+      command: { type: 'ai.status', libraryId: 'library-1', jobIds: ['job-1'] },
+    })).toMatchObject({ command: { jobIds: ['job-1'] } });
 
     expect(parseRendererResult({
       ok: true,
@@ -1456,6 +1465,22 @@ describe('worker request protocol', () => {
     })).toMatchObject({ type: 'ai.jobs.status', queued: 1, cancelled: 3 });
   });
 
+  it('accepts one atomic renderer request for a selected AI batch', () => {
+    expect(parseRendererRequest({
+      type: 'assets.analyze.request',
+      libraryId: 'library-1',
+      assetIds: ['asset-1', 'asset-2'],
+    })).toMatchObject({ assetIds: ['asset-1', 'asset-2'] });
+    expect(parseRendererResult({
+      ok: true,
+      type: 'assets.analyze-queued',
+      assetIds: ['asset-1', 'asset-2'],
+      jobIds: ['job-1', 'job-2'],
+      skippedAssetIds: [],
+      enqueued: 2,
+    })).toMatchObject({ jobIds: ['job-1', 'job-2'] });
+  });
+
   it('validates AI progress and completion events before Main forwards them', () => {
     expect(parseAiProgressEvent({
       type: 'ai.progress',
@@ -1464,9 +1489,6 @@ describe('worker request protocol', () => {
       running: 1,
       succeeded: 4,
       failed: 1,
-      inFlight: 1,
-      concurrencyLimit: 16,
-      waitingForSlot: 0,
     })).toMatchObject({ running: 1, succeeded: 4 });
     expect(parseAiAnalysisCompletedEvent({
       type: 'ai.analysis.completed',
@@ -1478,7 +1500,11 @@ describe('worker request protocol', () => {
     expect(() => parseAiProgressEvent({
       type: 'ai.progress', libraryId: 'library-1', queued: -1,
       running: 0, succeeded: 0, failed: 0,
-      inFlight: 0, concurrencyLimit: 16, waitingForSlot: 0,
+    })).toThrow();
+    expect(() => parseAiProgressEvent({
+      type: 'ai.progress', libraryId: 'library-1', queued: 0,
+      running: 0, succeeded: 0, failed: 0,
+      inFlight: 1,
     })).toThrow();
   });
 

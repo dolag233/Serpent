@@ -62,9 +62,20 @@ describe('import-conflict-preferences', () => {
     expect(loadImportConflictPreferences(storage)).toEqual({
       version: 1,
       nameConflict: 'replace',
-      duplicate: 'merge',
+      duplicate: 'create-copy',
     });
-    expect(storage.getItem(IMPORT_CONFLICT_PREF_KEY)).toContain('"replace"');
+    expect(storage.getItem(IMPORT_CONFLICT_PREF_KEY)).toContain('"create-copy"');
+  });
+
+  it('migrates stored merge preference to create-copy on load (Serpent-9h01)', () => {
+    const storage = memoryStorage({
+      [IMPORT_CONFLICT_PREF_KEY]: JSON.stringify({
+        version: 1,
+        nameConflict: null,
+        duplicate: 'merge',
+      }),
+    });
+    expect(loadImportConflictPreferences(storage).duplicate).toBe('create-copy');
   });
 
   it('clears remembered decisions (Serpent-gf8n)', () => {

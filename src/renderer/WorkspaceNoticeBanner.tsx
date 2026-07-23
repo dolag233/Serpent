@@ -38,19 +38,24 @@ export function WorkspaceNoticeBanner({
       onTransitionEnd={onTransitionEnd}
       role={message.kind === "error" ? "alert" : "status"}
     >
-      <Icon name={iconName} size={15} />
+      <span className="workspace-notice-icon" aria-hidden>
+        <Icon name={iconName} size={15} />
+      </span>
       <span className="workspace-notice-text">{message.text}</span>
-      {undoLabel && onUndo ? (
-        <button className="secondary-button" onClick={onUndo} type="button">
-          {undoLabel}
-        </button>
-      ) : null}
-      <IconActionButton
-        omitClassName
-        icon="close"
-        label={t('common.closeHint')}
-        onClick={onDismiss}
-      />
+      <span className="workspace-notice-actions">
+        {undoLabel && onUndo ? (
+          <button className="secondary-button" onClick={onUndo} type="button">
+            {undoLabel}
+          </button>
+        ) : null}
+        <IconActionButton
+          className="workspace-notice-dismiss"
+          icon="close"
+          label={t('common.closeHint')}
+          onClick={onDismiss}
+          size={12}
+        />
+      </span>
     </div>
   );
 }
