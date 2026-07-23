@@ -29,6 +29,7 @@
 - 当前分类数量可完整显示在一屏内，首版不加入只会筛分类名称的伪搜索；当设置项扩展到需要搜索时，再以逐设置项匹配实现。
 - 工具栏中的「AI 设置」先进入设置中心的 AI 分类；分类内再按需打开既有 Key/模型配置对话框，设置入口不再分散。
 - 根据产品反馈移除侧栏和内容标题旁重复的「应用偏好」文案；对话框采用稳定高度，分类内容仅在右侧区域纵向滚动，切换分类不再带动窗口尺寸变化。
+- 后续视觉收敛：页级标题缩小并移除其说明文字；每个分类使用连续的设置卡片，外观和安全与导入不再按单项切成独立卡片，内部只保留轻量分隔。
 
 ## 验证计划
 
@@ -42,6 +43,7 @@
 - `npm exec vitest run tests/unit/app-settings-sections.test.ts tests/unit/toolbar-commands.test.ts tests/unit/dialog-escape-stack.test.ts tests/unit/ai-ui-preferences.test.ts tests/unit/disk-delete-confirm-preferences.test.ts tests/unit/import-conflict-preferences.test.ts tests/unit/canvas-preferences.test.ts tests/unit/theme-preferences.test.ts tests/unit/accent-preferences.test.ts tests/unit/shadow-preferences.test.ts`：10 files / 82 tests 通过。
 - 新增设置中心模块及其单测的定向 ESLint：通过；全仓 `npm run lint` 仍有 9 error / 2 warnings，涉及既有的 `AiConfigDialog.tsx`、`App.tsx`、`ScopeBreadcrumbs.tsx`、`library-service.ts` 等，不将其归因于本增量。
 - `git diff --check`：通过。
+- 页标题与卡片收敛后：`npm run typecheck`、`npm exec vitest run tests/unit/app-settings-sections.test.ts tests/unit/i18n-translate.test.ts tests/unit/theme-preferences.test.ts tests/unit/shadow-preferences.test.ts`（4 files / 22 tests）、相关 Renderer/i18n 定向 ESLint 与 `git diff --check` 均通过。
 
 ## 人工 UX 证据
 
@@ -55,6 +57,7 @@ Computer Use skill 已检查，但当前会话未提供可调用的 `node_repl` 
 | 已有应用偏好按用户语义收敛 | `AppSettingsPages.tsx`；现有 preferences/provider 模块 | 相关 preferences 8 个 unit suites | SETTINGS-003 待人类验收 |
 | AI 设置入口收敛到设置中心 | `App.tsx`、`AppSettingsPages.tsx`、`toolbar-commands.ts` | `toolbar-commands.test.ts` | SETTINGS-003 待人类验收 |
 | 稳定窗口高度与分类内容滚动 | `AppSettingsDialog.tsx`、`styles.css` | typecheck、设置中心定向测试 | SETTINGS-003 待人类验收 |
+| 紧凑页标题与连续设置卡片 | `AppSettingsDialog.tsx`、`AppSettingsPages.tsx`、`styles.css` | typecheck、设置中心定向测试 | SETTINGS-003 待人类验收 |
 
 ## 独立复审
 

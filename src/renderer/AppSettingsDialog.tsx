@@ -97,7 +97,6 @@ export function AppSettingsDialog({
           >
             <div className="app-settings-page-heading">
               <h3>{t(activeCategoryDefinition.labelKey)}</h3>
-              <span>{t(activeCategoryDefinition.descriptionKey)}</span>
             </div>
             {activeCategory === "general" ? <GeneralSettingsPage /> : null}
             {activeCategory === "appearance" ? <AppearanceSettingsPage /> : null}

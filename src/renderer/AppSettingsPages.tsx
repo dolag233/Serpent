@@ -99,8 +99,12 @@ export function GeneralSettingsPage(): ReactNode {
 
 export function AppearanceSettingsPage(): ReactNode {
   const t = useT();
-  const { preference: themePreference, setTheme, accentHex, setAccentHex } =
-    useTheme();
+  const {
+    preference: themePreference,
+    setTheme,
+    accentHex,
+    setAccentHex,
+  } = useTheme();
   const { preferences: shadowPrefs, setLevel: setShadowLevel } = useElevation();
   const [accentDraft, setAccentDraft] = useState(accentHex);
 
@@ -110,126 +114,122 @@ export function AppearanceSettingsPage(): ReactNode {
   }
 
   return (
-    <div className="app-settings-page-stack">
-      <SettingsCard>
-        <div className="app-settings-row app-settings-row-stack">
-          <div className="app-settings-row-copy">
-            <strong>{t("shell.theme")}</strong>
-            <span>{t("settings.themeHint")}</span>
-          </div>
-          <div
-            aria-label={t("shell.theme")}
-            className="app-settings-option-group"
-            role="radiogroup"
-          >
-            {APP_SETTINGS_THEME_OPTIONS.map((option) => (
+    <SettingsCard>
+      <div className="app-settings-row app-settings-row-stack">
+        <div className="app-settings-row-copy">
+          <strong>{t("shell.theme")}</strong>
+          <span>{t("settings.themeHint")}</span>
+        </div>
+        <div
+          aria-label={t("shell.theme")}
+          className="app-settings-option-group"
+          role="radiogroup"
+        >
+          {APP_SETTINGS_THEME_OPTIONS.map((option) => (
+            <button
+              aria-checked={themePreference === option.value}
+              className="app-settings-option"
+              key={option.value}
+              onClick={() => setTheme(option.value)}
+              role="radio"
+              type="button"
+            >
+              {t(option.labelKey)}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="app-settings-card-divider" />
+      <div className="app-settings-row-copy">
+        <strong>{t("settings.accentColor")}</strong>
+        <span>{t("settings.accentHint")}</span>
+      </div>
+      <div className="app-settings-accent-presets" role="list">
+        {ACCENT_PRESET_HEX.map((hex) => (
+          <button
+            aria-label={hex}
+            aria-pressed={accentHex === hex}
+            className={`app-settings-accent-swatch${accentHex === hex ? " is-active" : ""}`}
+            key={hex}
+            onClick={() => selectAccent(hex)}
+            style={{ backgroundColor: hex }}
+            type="button"
+          />
+        ))}
+      </div>
+      <div className="app-settings-accent-custom">
+        <input
+          aria-label={t("settings.accentCustom")}
+          className="text-field"
+          onBlur={() => {
+            const normalized = normalizeAccentHex(accentDraft);
+            if (normalized) selectAccent(normalized);
+            else setAccentDraft(accentHex);
+          }}
+          onChange={(event) => setAccentDraft(event.target.value)}
+          placeholder="#3b82f6"
+          type="text"
+          value={accentDraft}
+        />
+        <button
+          className="secondary-button"
+          onClick={() => selectAccent(DEFAULT_ACCENT_HEX)}
+          type="button"
+        >
+          {t("settings.accentReset")}
+        </button>
+      </div>
+      <div className="app-settings-card-divider" />
+      <div className="app-settings-row-copy">
+        <strong>{t("settings.elevationSection")}</strong>
+        <span>{t("settings.elevationHint")}</span>
+      </div>
+      <div className="app-settings-elevation-scale">
+        <div className="app-settings-elevation-rail">
+          <input
+            aria-label={t("settings.elevationSection")}
+            aria-valuemax={SHADOW_LEVEL_MAX}
+            aria-valuemin={SHADOW_LEVEL_MIN}
+            aria-valuenow={shadowPrefs.level}
+            aria-valuetext={t("settings.elevationLevelValue", {
+              level: shadowPrefs.level,
+            })}
+            className="app-settings-elevation-slider"
+            max={SHADOW_LEVEL_MAX}
+            min={SHADOW_LEVEL_MIN}
+            onChange={(event) =>
+              setShadowLevel(clampShadowLevel(Number(event.target.value)))
+            }
+            step={1}
+            type="range"
+            value={shadowPrefs.level}
+          />
+          <div aria-hidden="true" className="app-settings-elevation-ticks">
+            {SHADOW_LEVEL_TICKS.map((tick) => (
               <button
-                aria-checked={themePreference === option.value}
-                className="app-settings-option"
-                key={option.value}
-                onClick={() => setTheme(option.value)}
-                role="radio"
+                className={
+                  shadowPrefs.level === tick
+                    ? "app-settings-elevation-tick is-active"
+                    : "app-settings-elevation-tick"
+                }
+                key={tick}
+                onClick={() => setShadowLevel(tick)}
                 type="button"
               >
-                {t(option.labelKey)}
+                <span className="app-settings-elevation-tick-mark" />
+                <span className="app-settings-elevation-tick-label">
+                  {tick}
+                </span>
               </button>
             ))}
           </div>
         </div>
-      </SettingsCard>
-
-      <SettingsCard>
-        <div className="app-settings-row-copy">
-          <strong>{t("settings.accentColor")}</strong>
-          <span>{t("settings.accentHint")}</span>
+        <div aria-hidden="true" className="app-settings-elevation-ends">
+          <span>{t("settings.elevationOff")}</span>
+          <span>{t("settings.elevationStrong")}</span>
         </div>
-        <div className="app-settings-accent-presets" role="list">
-          {ACCENT_PRESET_HEX.map((hex) => (
-            <button
-              aria-label={hex}
-              aria-pressed={accentHex === hex}
-              className={`app-settings-accent-swatch${accentHex === hex ? " is-active" : ""}`}
-              key={hex}
-              onClick={() => selectAccent(hex)}
-              style={{ backgroundColor: hex }}
-              type="button"
-            />
-          ))}
-        </div>
-        <div className="app-settings-accent-custom">
-          <input
-            aria-label={t("settings.accentCustom")}
-            className="text-field"
-            onBlur={() => {
-              const normalized = normalizeAccentHex(accentDraft);
-              if (normalized) selectAccent(normalized);
-              else setAccentDraft(accentHex);
-            }}
-            onChange={(event) => setAccentDraft(event.target.value)}
-            placeholder="#3b82f6"
-            type="text"
-            value={accentDraft}
-          />
-          <button
-            className="secondary-button"
-            onClick={() => selectAccent(DEFAULT_ACCENT_HEX)}
-            type="button"
-          >
-            {t("settings.accentReset")}
-          </button>
-        </div>
-      </SettingsCard>
-
-      <SettingsCard>
-        <div className="app-settings-row-copy">
-          <strong>{t("settings.elevationSection")}</strong>
-          <span>{t("settings.elevationHint")}</span>
-        </div>
-        <div className="app-settings-elevation-scale">
-          <div className="app-settings-elevation-rail">
-            <input
-              aria-label={t("settings.elevationSection")}
-              aria-valuemax={SHADOW_LEVEL_MAX}
-              aria-valuemin={SHADOW_LEVEL_MIN}
-              aria-valuenow={shadowPrefs.level}
-              aria-valuetext={t("settings.elevationLevelValue", {
-                level: shadowPrefs.level,
-              })}
-              className="app-settings-elevation-slider"
-              max={SHADOW_LEVEL_MAX}
-              min={SHADOW_LEVEL_MIN}
-              onChange={(event) =>
-                setShadowLevel(clampShadowLevel(Number(event.target.value)))
-              }
-              step={1}
-              type="range"
-              value={shadowPrefs.level}
-            />
-            <div aria-hidden="true" className="app-settings-elevation-ticks">
-              {SHADOW_LEVEL_TICKS.map((tick) => (
-                <button
-                  className={
-                    shadowPrefs.level === tick
-                      ? "app-settings-elevation-tick is-active"
-                      : "app-settings-elevation-tick"
-                  }
-                  key={tick}
-                  onClick={() => setShadowLevel(tick)}
-                  type="button"
-                >
-                  <span className="app-settings-elevation-tick-mark" />
-                  <span className="app-settings-elevation-tick-label">{tick}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-          <div aria-hidden="true" className="app-settings-elevation-ends">
-            <span>{t("settings.elevationOff")}</span>
-            <span>{t("settings.elevationStrong")}</span>
-          </div>
-        </div>
-      </SettingsCard>
-    </div>
+      </div>
+    </SettingsCard>
   );
 }
 
@@ -334,7 +334,11 @@ export function AiSettingsPage({
           <strong>{t("settings.aiConfigEntry")}</strong>
           <span>{t("settings.aiConfigEntryHint")}</span>
         </div>
-        <button className="secondary-button" onClick={onOpenAiConfig} type="button">
+        <button
+          className="secondary-button"
+          onClick={onOpenAiConfig}
+          type="button"
+        >
           {t("settings.aiConfigEntryAction")}
         </button>
       </div>
@@ -354,46 +358,43 @@ export function SafetySettingsPage(): ReactNode {
   const [diskDeletePromptEnabled, setDiskDeletePromptEnabledState] = useState(
     () => isDiskDeletePromptEnabled(),
   );
-  const [importConflictRemembered, setImportConflictRemembered] = useState(
-    () => hasRememberedImportConflictPreferences(),
+  const [importConflictRemembered, setImportConflictRemembered] = useState(() =>
+    hasRememberedImportConflictPreferences(),
   );
   return (
-    <div className="app-settings-page-stack">
-      <SettingsCard>
-        <SettingsToggleRow
-          checked={diskDeletePromptEnabled}
-          hint={t("settings.diskDeleteConfirmHint")}
-          label={t("settings.diskDeleteConfirm")}
-          onChange={() => {
-            const next = !diskDeletePromptEnabled;
-            setDiskDeletePromptEnabled(next);
-            setDiskDeletePromptEnabledState(next);
-          }}
-        />
-      </SettingsCard>
-      <SettingsCard>
-        <div className="app-settings-action-row">
-          <div className="app-settings-row-copy">
-            <strong>{t("settings.importConflictRemember")}</strong>
-            <span>
-              {importConflictRemembered
-                ? t("settings.importConflictRememberActive")
-                : t("settings.importConflictRememberEmpty")}
-            </span>
-          </div>
-          <button
-            className="secondary-button"
-            disabled={!importConflictRemembered}
-            onClick={() => {
-              clearImportConflictPreferences();
-              setImportConflictRemembered(false);
-            }}
-            type="button"
-          >
-            {t("settings.importConflictRememberReset")}
-          </button>
+    <SettingsCard>
+      <SettingsToggleRow
+        checked={diskDeletePromptEnabled}
+        hint={t("settings.diskDeleteConfirmHint")}
+        label={t("settings.diskDeleteConfirm")}
+        onChange={() => {
+          const next = !diskDeletePromptEnabled;
+          setDiskDeletePromptEnabled(next);
+          setDiskDeletePromptEnabledState(next);
+        }}
+      />
+      <div className="app-settings-card-divider" />
+      <div className="app-settings-action-row">
+        <div className="app-settings-row-copy">
+          <strong>{t("settings.importConflictRemember")}</strong>
+          <span>
+            {importConflictRemembered
+              ? t("settings.importConflictRememberActive")
+              : t("settings.importConflictRememberEmpty")}
+          </span>
         </div>
-      </SettingsCard>
-    </div>
+        <button
+          className="secondary-button"
+          disabled={!importConflictRemembered}
+          onClick={() => {
+            clearImportConflictPreferences();
+            setImportConflictRemembered(false);
+          }}
+          type="button"
+        >
+          {t("settings.importConflictRememberReset")}
+        </button>
+      </div>
+    </SettingsCard>
   );
 }

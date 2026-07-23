@@ -4498,30 +4498,16 @@ select.ai-config-input.ai-config-languages {
 }
 
 .app-settings-page-heading {
-  margin-bottom: 20px;
+  margin-bottom: 16px;
 }
 
 .app-settings-page-heading h3 {
   margin: 0;
   color: var(--text);
-  font-size: 23px;
+  font-size: 19px;
   font-weight: 590;
   letter-spacing: -0.025em;
-  line-height: 1.12;
-}
-
-.app-settings-page-heading > span {
-  display: block;
-  margin-top: 7px;
-  color: var(--secondary);
-  font-size: 12px;
-  line-height: 1.45;
-}
-
-.app-settings-page-stack {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
+  line-height: 1.2;
 }
 
 .app-settings-card {

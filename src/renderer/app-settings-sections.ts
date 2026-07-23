@@ -52,12 +52,6 @@ export type AppSettingsCategory = {
     | "settings.categoryBrowse"
     | "settings.categoryAi"
     | "settings.categorySafety";
-  readonly descriptionKey:
-    | "settings.categoryGeneralDescription"
-    | "settings.categoryAppearanceDescription"
-    | "settings.categoryBrowseDescription"
-    | "settings.categoryAiDescription"
-    | "settings.categorySafetyDescription";
 };
 
 export const APP_SETTINGS_CATEGORIES: readonly AppSettingsCategory[] = [
@@ -65,31 +59,26 @@ export const APP_SETTINGS_CATEGORIES: readonly AppSettingsCategory[] = [
     id: "general",
     icon: "settings",
     labelKey: "settings.categoryGeneral",
-    descriptionKey: "settings.categoryGeneralDescription",
   },
   {
     id: "appearance",
     icon: "sliders",
     labelKey: "settings.categoryAppearance",
-    descriptionKey: "settings.categoryAppearanceDescription",
   },
   {
     id: "browse",
     icon: "grid",
     labelKey: "settings.categoryBrowse",
-    descriptionKey: "settings.categoryBrowseDescription",
   },
   {
     id: "ai",
     icon: "activity",
     labelKey: "settings.categoryAi",
-    descriptionKey: "settings.categoryAiDescription",
   },
   {
     id: "safety",
     icon: "warning",
     labelKey: "settings.categorySafety",
-    descriptionKey: "settings.categorySafetyDescription",
   },
 ];
 
