@@ -46,8 +46,8 @@ describe("buildScopeBreadcrumbSegments", () => {
         {
           showTrash: true,
           trashBreadcrumbHops: [
-            { path: null, label: "回收站" },
-            { path: "filled", label: "filled" },
+            { tombstoneId: null, label: "回收站" },
+            { tombstoneId: "tomb-filled", label: "filled" },
           ],
           activeTagLabel: null,
           activeCollectionLabel: null,
@@ -58,12 +58,12 @@ describe("buildScopeBreadcrumbSegments", () => {
         t,
       ),
     ).toEqual([
-      { kind: "trash-path", id: "trash", label: "回收站", path: null },
+      { kind: "trash-path", id: "trash", label: "回收站", tombstoneId: null },
       {
         kind: "trash-path",
-        id: "trash:filled",
+        id: "trash:tomb-filled",
         label: "filled",
-        path: "filled",
+        tombstoneId: "tomb-filled",
       },
     ]);
   });

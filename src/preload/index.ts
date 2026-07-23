@@ -1058,6 +1058,7 @@ const library: SerpentLibraryApi = Object.freeze({
     };
     languages: Array<'zh-CN' | 'en' | 'ja' | 'ko'>;
     concurrencyLimit: number;
+    maxAnalysisImageEdgePx: number;
     reliabilitySettings: AiReliabilitySettings;
     autoAnalyzeEnabled: boolean;
     disclaimerAccepted: boolean;
@@ -1085,6 +1086,7 @@ const library: SerpentLibraryApi = Object.freeze({
     };
     languages?: Array<'zh-CN' | 'en' | 'ja' | 'ko'>;
     concurrencyLimit?: number;
+    maxAnalysisImageEdgePx?: number;
     reliabilitySettings?: AiReliabilitySettings;
     autoAnalyzeEnabled: boolean;
     disclaimerAccepted: boolean;

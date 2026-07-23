@@ -4981,22 +4981,31 @@ select.ai-config-input.ai-config-languages {
 .app-settings-accent-presets {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 12px;
   margin-top: 8px;
 }
 
+/* Serpent-vl8r: match .dimension-color-swatch shape, ring, and gap. */
 .app-settings-accent-swatch {
-  width: 28px;
-  height: 28px;
+  width: 22px;
+  height: 22px;
   padding: 0;
-  border: 2px solid transparent;
-  border-radius: 50%;
+  border: 1px solid color-mix(in srgb, var(--ink) 22%, transparent);
+  border-radius: 999px;
   cursor: pointer;
+  box-shadow: none;
+  transition:
+    transform 100ms ease,
+    box-shadow 100ms ease,
+    outline-color 100ms ease;
 }
 
 .app-settings-accent-swatch.is-active {
-  border-color: var(--text);
-  box-shadow: 0 0 0 2px var(--pane);
+  border-color: transparent;
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  transform: none;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--canvas) 80%, transparent);
 }
 
 .app-settings-accent-custom {

@@ -147,6 +147,8 @@ import { resolveBrowseContextMenuIntent } from "./browse-selection-menu";
 import { useAssetSelection } from "./useAssetSelection";
 import { useSelectionKeyboard } from "./use-selection-keyboard";
 import { useAssetActionKeyboard } from "./use-asset-action-keyboard";
+import { useWorkspaceMouseNavigation } from "./use-workspace-mouse-navigation";
+import { isBrowseScopeAffectedByFolderTrash } from "./folder-trash-scope";
 import {
   useBrowserSessionPersist,
   useBrowserSessionRestore,
@@ -201,8 +203,8 @@ import { resolveBrowseEmptyState, resolveImportMenuCopy } from "./browse-empty-s
 import { trashedFromLabel } from "./trashed-from-label";
 import {
   buildTrashBreadcrumbHops,
-  filterTrashedAssetsAtPath,
-  filterTrashedFoldersAtPath,
+  filterTrashedAssetsAtTombstone,
+  filterTrashedFoldersAtTombstone,
 } from "./trash-browse";
 import { invertSelection } from "./invert-selection";
 import { trashedFoldersToBrowseEntries } from "./trashed-folder-entries";
@@ -478,7 +480,9 @@ function AppInner() {
   const [trashedFolders, setTrashedFolders] = useState<TrashedFolderSummary[]>(
     [],
   );
-  const [trashBrowsePath, setTrashBrowsePath] = useState<string | null>(null);
+  const [trashBrowseTombstoneId, setTrashBrowseTombstoneId] = useState<
+    string | null
+  >(null);
   const [masonryGridWidth, setMasonryGridWidth] = useState(0);
   const assetGridRef = useRef<HTMLDivElement | null>(null);
   const [fatalDialogTitle, setFatalDialogTitle] = useState<string | null>(null);
@@ -724,6 +728,9 @@ function AppInner() {
 
   // Trash / Delete / Relink state
   const [showTrash, setShowTrash] = useState(false);
+  useEffect(() => {
+    if (!showTrash) setTrashBrowseTombstoneId(null);
+  }, [showTrash]);
   const [showTagManagement, setShowTagManagement] = useState(false);
   const [trashedAssets, setTrashedAssets] = useState<AssetSummary[]>([]);
 
@@ -825,6 +832,7 @@ function AppInner() {
     Array<"zh-CN" | "en" | "ja" | "ko">
   >(["zh-CN"]);
   const [aiConcurrencyLimit, setAiConcurrencyLimit] = useState(16);
+  const [aiMaxAnalysisImageEdgePx, setAiMaxAnalysisImageEdgePx] = useState(2048);
   const [aiAutoAnalyzeEnabled, setAiAutoAnalyzeEnabled] = useState(false);
   const [aiDisclaimerAccepted, setAiDisclaimerAccepted] = useState(false);
   const [aiConnectionState, setAiConnectionState] =
@@ -1100,10 +1108,10 @@ function AppInner() {
 
   const visibleAssets = useMemo(() => {
     const base = showTrash
-      ? filterTrashedAssetsAtPath(
+      ? filterTrashedAssetsAtTombstone(
           trashedAssets,
           trashedFolders,
-          trashBrowsePath,
+          trashBrowseTombstoneId,
         )
       : assets;
     if (shuffleSeed === null || showTrash) return base;
@@ -1112,7 +1120,7 @@ function AppInner() {
     assets,
     showTrash,
     shuffleSeed,
-    trashBrowsePath,
+    trashBrowseTombstoneId,
     trashedAssets,
     trashedFolders,
   ]);
@@ -1208,19 +1216,19 @@ function AppInner() {
   const canvasFolderBrowseEntries = useMemo(() => {
     if (!showTrash) return folderBrowseEntries;
     return trashedFoldersToBrowseEntries(
-      filterTrashedFoldersAtPath(trashedFolders, trashBrowsePath),
+      filterTrashedFoldersAtTombstone(trashedFolders, trashBrowseTombstoneId),
     );
-  }, [folderBrowseEntries, showTrash, trashBrowsePath, trashedFolders]);
+  }, [folderBrowseEntries, showTrash, trashBrowseTombstoneId, trashedFolders]);
   const trashBreadcrumbHops = useMemo(
     () =>
       showTrash
         ? buildTrashBreadcrumbHops(
             trashedFolders,
-            trashBrowsePath,
+            trashBrowseTombstoneId,
             t("scope.trash"),
           )
         : [],
-    [showTrash, t, trashBrowsePath, trashedFolders],
+    [showTrash, t, trashBrowseTombstoneId, trashedFolders],
   );
   const browseCanvasBodyLayout = resolveBrowseCanvasBodyLayout(
     visibleAssets.length,
@@ -1975,7 +1983,7 @@ function AppInner() {
         await chooseSmartCollection(location.collectionId);
         return;
       case "trash":
-        await enterTrash();
+        await enterTrashAt(location.tombstoneId);
         return;
     }
   }
@@ -2236,11 +2244,23 @@ function AppInner() {
   }
 
   async function enterTrash() {
+    await enterTrashAt(null);
+  }
+
+  async function enterTrashAt(tombstoneId: string | null) {
     if (!library) return;
     await closeAssetPreview(false);
     workspaceCanvasRef.current?.scrollTo({ top: 0, left: 0 });
+    if (showTrash) {
+      setTrashBrowseTombstoneId(tombstoneId);
+      clearAssetSelection();
+      if (!suppressNavHistoryRef.current) {
+        recordNavigation({ kind: "trash", tombstoneId });
+      }
+      return;
+    }
     setShowTrash(true);
-    setTrashBrowsePath(null);
+    setTrashBrowseTombstoneId(tombstoneId);
     setShowTagManagement(false);
     setActiveTagId(null);
     setActiveCollectionId(null);
@@ -2254,7 +2274,7 @@ function AppInner() {
     setUiState("loading");
     try {
       await loadContent(library, "all", { trashMode: true });
-      recordNavigation({ kind: "trash" });
+      recordNavigation({ kind: "trash", tombstoneId });
     } catch (caught) {
       setError(toMessage(caught, t("toast.readTrashFailed"), locale));
     } finally {
@@ -3132,6 +3152,7 @@ function AppInner() {
     libraryId: library?.libraryId ?? null,
     locale,
     assetScope,
+    folders,
     setNotice,
     setError,
     setUiState,
@@ -4368,7 +4389,13 @@ function AppInner() {
         }),
       );
       clearAssetSelection();
-      await reloadCurrentContent();
+      if (
+        isBrowseScopeAffectedByFolderTrash(assetScope, folderIds, folders)
+      ) {
+        await chooseFolder("root");
+      } else {
+        await reloadCurrentContent();
+      }
     } catch (caught) {
       setError(toMessage(caught, t("toast.batchDeleteFailed"), locale));
     } finally {
@@ -5033,6 +5060,16 @@ function AppInner() {
     },
   });
 
+  useWorkspaceMouseNavigation({
+    enabled: Boolean(library),
+    onBack: () => {
+      void goWorkspaceBack();
+    },
+    onForward: () => {
+      void goWorkspaceForward();
+    },
+  });
+
   // Serpent-166q: macOS Edit → Copy accelerator (custom menu, not role:copy).
   useEffect(() => {
     if (!shellApi) return;
@@ -5340,6 +5377,7 @@ function AppInner() {
       | undefined;
     setAiLanguages(langs?.length ? [langs[0]!] : ["zh-CN"]);
     setAiConcurrencyLimit(result.value.concurrencyLimit);
+    setAiMaxAnalysisImageEdgePx(result.value.maxAnalysisImageEdgePx);
     setAiAutoAnalyzeEnabled(result.value.autoAnalyzeEnabled);
     setAiDisclaimerAccepted(result.value.disclaimerAccepted);
     aiVerifiedFingerprintRef.current = null;
@@ -5442,6 +5480,7 @@ function AppInner() {
       },
       languages: aiLanguages.length > 0 ? [aiLanguages[0]!] : ["zh-CN"],
       concurrencyLimit: aiConcurrencyLimit,
+      maxAnalysisImageEdgePx: aiMaxAnalysisImageEdgePx,
       autoAnalyzeEnabled: aiAutoAnalyzeEnabled,
       disclaimerAccepted: aiDisclaimerAccepted,
     });
@@ -6002,10 +6041,8 @@ function AppInner() {
             />
             <ScopeBreadcrumbs
               onNavigateFolder={(folderId) => void chooseFolder(folderId)}
-              onNavigateTrashPath={(path) => {
-                setTrashBrowsePath(path);
-                clearAssetSelection();
-                workspaceCanvasRef.current?.scrollTo({ top: 0, left: 0 });
+              onNavigateTrashTombstone={(tombstoneId) => {
+                void enterTrashAt(tombstoneId);
               }}
               segments={buildScopeBreadcrumbSegments(
                 {
@@ -6710,12 +6747,7 @@ function AppInner() {
                               (item) => item.folderId === folderId,
                             );
                             if (!entry) return;
-                            setTrashBrowsePath(entry.relativePath);
-                            clearAssetSelection();
-                            workspaceCanvasRef.current?.scrollTo({
-                              top: 0,
-                              left: 0,
-                            });
+                            void enterTrashAt(entry.folderId);
                             return;
                           }
                           void chooseFolder(folderId);
@@ -7677,6 +7709,7 @@ function AppInner() {
         baseUrl={aiBaseUrl}
         languages={aiLanguages}
         concurrencyLimit={aiConcurrencyLimit}
+        maxAnalysisImageEdgePx={aiMaxAnalysisImageEdgePx}
         hasKey={aiHasKey}
         descriptionEnabled={aiDescriptionEnabled}
         tagsEnabled={aiTagsEnabled}
@@ -7693,6 +7726,7 @@ function AppInner() {
         onBaseUrlChange={setAiBaseUrl}
         onLanguagesChange={setAiLanguages}
         onConcurrencyLimitChange={setAiConcurrencyLimit}
+        onMaxAnalysisImageEdgePxChange={setAiMaxAnalysisImageEdgePx}
         onDescriptionEnabledChange={setAiDescriptionEnabled}
         onTagsEnabledChange={setAiTagsEnabled}
         onRatingEnabledChange={setAiRatingEnabled}

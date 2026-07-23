@@ -5,7 +5,7 @@ export type WorkspaceNavLocation =
   | { kind: "tag"; tagId: string }
   | { kind: "collection"; collectionId: string; recursive: boolean }
   | { kind: "smart-collection"; collectionId: string }
-  | { kind: "trash" };
+  | { kind: "trash"; tombstoneId: string | null };
 
 export type WorkspaceNavHistory = {
   current: WorkspaceNavLocation;
@@ -31,8 +31,12 @@ export function workspaceNavLocationsEqual(
   switch (a.kind) {
     case "all":
     case "root":
-    case "trash":
       return true;
+    case "trash":
+      return (
+        a.tombstoneId ===
+        (b as Extract<WorkspaceNavLocation, { kind: "trash" }>).tombstoneId
+      );
     case "folder":
       return a.folderId === (b as Extract<WorkspaceNavLocation, { kind: "folder" }>).folderId;
     case "tag":

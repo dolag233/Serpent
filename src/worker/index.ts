@@ -30,7 +30,11 @@ import {
 } from './ai/error-mapping';
 import { AiJobAbortRegistry } from './ai/job-abort-registry';
 import { readFileSync } from 'node:fs';
-import { loadAiImageInput } from './ai/image-input';
+import { encodeAiAnalysisImage, loadAiImageInput } from './ai/image-input';
+import {
+  DEFAULT_AI_ANALYSIS_IMAGE_EDGE_PX,
+  normalizeAiAnalysisImageEdgePx,
+} from '../shared/ai-analysis-image';
 import { ProviderConcurrencyLimiter } from './ai/provider-concurrency-limiter';
 import { runLimitedAiRequest } from './ai/limited-request';
 import { AiProgressThrottler } from './ai/progress-throttler';
@@ -819,9 +823,13 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
         analysisSettings: rawAnalysisSettings,
         languages,
         baseUrl,
+        maxAnalysisImageEdgePx: rawMaxEdge,
       } = request.command;
       const resolvedBaseUrl = baseUrl?.trim() || undefined;
       const language = formatAiLanguagesForPrompt(languages);
+      const maxAnalysisImageEdgePx = normalizeAiAnalysisImageEdgePx(
+        rawMaxEdge ?? DEFAULT_AI_ANALYSIS_IMAGE_EDGE_PX,
+      );
       const analysisSettings = normalizeAiAnalysisSettings({
         ...DEFAULT_AI_ANALYSIS_SETTINGS,
         ...rawAnalysisSettings,
@@ -885,10 +893,26 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
           throw new LibraryServiceError('ASSET_NOT_FOUND', { cause: error });
         }
 
-        imageBase64 = posterBytes.toString('base64');
-        contactSheetBase64 = sheetBytes.toString('base64');
-        // Use the poster artifact's MIME type for the image data URL.
-        requestMime = poster.mimeType;
+        try {
+          const posterEncoded = await encodeAiAnalysisImage(
+            posterBytes,
+            maxAnalysisImageEdgePx,
+          );
+          imageBase64 = posterEncoded.imageBase64;
+          requestMime = posterEncoded.mime;
+        } catch {
+          imageBase64 = posterBytes.toString('base64');
+          requestMime = poster.mimeType;
+        }
+        try {
+          const sheetEncoded = await encodeAiAnalysisImage(
+            sheetBytes,
+            maxAnalysisImageEdgePx,
+          );
+          contactSheetBase64 = sheetEncoded.imageBase64;
+        } catch {
+          contactSheetBase64 = sheetBytes.toString('base64');
+        }
 
         // Optional: include contextual description from extracted metadata.
         const metadataArtifact = libraryService.getCurrentArtifact(
@@ -914,10 +938,18 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
           }
         }
       } else if (mime.startsWith('image/')) {
-        // Cloud analysis is restricted to Serpent's bounded 512px derivative.
-        // Never upload the original image (especially TIFF/EXR sources).
+        // Resize source to the configured longest-edge cap (default 2K).
+        // Unreadable originals (e.g. some EXR) fall back to the thumbnail.
         try {
-          const imageInput = await loadAiImageInput(libraryService, libraryId, assetId);
+          const imageInput = await loadAiImageInput(
+            libraryService,
+            libraryId,
+            assetId,
+            {
+              sourcePath: filePath,
+              maxEdgePx: maxAnalysisImageEdgePx,
+            },
+          );
           imageBase64 = imageInput.imageBase64;
           requestMime = imageInput.mime;
         } catch (error) {
@@ -1434,6 +1466,7 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
                 enabledFields: analysisConfig.enabledFields,
                 analysisSettings: analysisConfig.analysisSettings,
                 languages: analysisConfig.languages,
+                maxAnalysisImageEdgePx: analysisConfig.maxAnalysisImageEdgePx,
               },
             });
             if (controller.signal.aborted || safeAiJobState(libraryId, job.jobId) !== 'running') {

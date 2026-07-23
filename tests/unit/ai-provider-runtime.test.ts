@@ -3,10 +3,23 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { loadAiImageInput } from '../../src/worker/ai/image-input';
+import { loadAiImageInput, encodeAiAnalysisImage, type AiAnalysisSharpFactory } from '../../src/worker/ai/image-input';
 import { ProviderConcurrencyLimiter } from '../../src/worker/ai/provider-concurrency-limiter';
 import { runLimitedAiRequest } from '../../src/worker/ai/limited-request';
 import { AiProgressThrottler } from '../../src/worker/ai/progress-throttler';
+import {
+  DEFAULT_AI_ANALYSIS_IMAGE_EDGE_PX,
+  normalizeAiAnalysisImageEdgePx,
+} from '../../src/shared/ai-analysis-image';
+
+describe('normalizeAiAnalysisImageEdgePx', () => {
+  it('defaults to 2048 (2K) and clamps to 512–4096', () => {
+    expect(normalizeAiAnalysisImageEdgePx(undefined)).toBe(DEFAULT_AI_ANALYSIS_IMAGE_EDGE_PX);
+    expect(normalizeAiAnalysisImageEdgePx(100)).toBe(512);
+    expect(normalizeAiAnalysisImageEdgePx(9999)).toBe(4096);
+    expect(normalizeAiAnalysisImageEdgePx(1536)).toBe(1536);
+  });
+});
 
 describe('ProviderConcurrencyLimiter', () => {
   it('caps one provider at two active requests across libraries', async () => {
@@ -171,28 +184,98 @@ describe('loadAiImageInput', () => {
     for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
   });
 
-  it('uploads a ready derivative with its explicit MIME and never requests a source path', async () => {
+  it('encodes the source path under the max edge and never reads the thumbnail', async () => {
     const root = mkdtempSync(path.join(tmpdir(), 'serpent-ai-input-'));
     roots.push(root);
+    const sourcePath = path.join(root, 'source.png');
+    writeFileSync(sourcePath, Buffer.from('source-pixels'));
+    const service = {
+      getCurrentArtifact: vi.fn(),
+      generateThumbnail: vi.fn(),
+      getArtifactAbsolutePath: vi.fn(),
+    };
+    const sharpFn = vi.fn(() => {
+      const chain = {
+        rotate: vi.fn(),
+        resize: vi.fn(),
+        jpeg: vi.fn(),
+        toBuffer: vi.fn(async () => Buffer.from('resized-jpeg')),
+      };
+      chain.rotate.mockReturnValue(chain);
+      chain.resize.mockReturnValue(chain);
+      chain.jpeg.mockReturnValue(chain);
+      return chain;
+    }) as unknown as AiAnalysisSharpFactory;
+
+    const result = await loadAiImageInput(service, 'library-1', 'asset-1', {
+      sourcePath,
+      maxEdgePx: 2048,
+      sharpFn,
+    });
+
+    expect(result).toEqual({
+      imageBase64: Buffer.from('resized-jpeg').toString('base64'),
+      mime: 'image/jpeg',
+    });
+    expect(service.getCurrentArtifact).not.toHaveBeenCalled();
+    expect(service.generateThumbnail).not.toHaveBeenCalled();
+    expect(sharpFn).toHaveBeenCalledWith(sourcePath);
+  });
+
+  it('falls back to the ready thumbnail when source encode fails', async () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'serpent-ai-input-'));
+    roots.push(root);
+    const sourcePath = path.join(root, 'broken.exr');
+    writeFileSync(sourcePath, Buffer.from('not-an-image'));
     const artifactPath = path.join(root, 'bounded.webp');
     writeFileSync(artifactPath, Buffer.from('bounded-512px-derivative'));
     const service = {
-      getCurrentArtifact: vi.fn(() => ({ artifactId: 'artifact-1', mimeType: 'image/webp', status: 'ready' })),
+      getCurrentArtifact: vi.fn(() => ({
+        artifactId: 'artifact-1',
+        mimeType: 'image/webp',
+        status: 'ready',
+      })),
       generateThumbnail: vi.fn(),
       getArtifactAbsolutePath: vi.fn(() => artifactPath),
     };
+    let call = 0;
+    const sharpFn = vi.fn((input: string | Buffer) => {
+      call += 1;
+      if (call === 1) {
+        throw new Error('unsupported format');
+      }
+      const chain = {
+        rotate: vi.fn(),
+        resize: vi.fn(),
+        jpeg: vi.fn(),
+        toBuffer: vi.fn(async () => Buffer.from('thumb-jpeg')),
+      };
+      chain.rotate.mockReturnValue(chain);
+      chain.resize.mockReturnValue(chain);
+      chain.jpeg.mockReturnValue(chain);
+      expect(Buffer.isBuffer(input)).toBe(true);
+      return chain;
+    }) as unknown as AiAnalysisSharpFactory;
 
-    const result = await loadAiImageInput(service, 'library-1', 'asset-1');
+    const result = await loadAiImageInput(service, 'library-1', 'asset-1', {
+      sourcePath,
+      maxEdgePx: 1024,
+      sharpFn,
+    });
 
-    expect(Buffer.from(result.imageBase64, 'base64').toString()).toBe('bounded-512px-derivative');
-    expect(result.mime).toBe('image/webp');
+    expect(result).toMatchObject({
+      mime: 'image/jpeg',
+      artifactId: 'artifact-1',
+      imageBase64: Buffer.from('thumb-jpeg').toString('base64'),
+    });
     expect(service.generateThumbnail).not.toHaveBeenCalled();
-    expect(service.getArtifactAbsolutePath).toHaveBeenCalledWith('library-1', 'artifact-1');
   });
 
-  it('generates a bounded thumbnail when no ready derivative exists', async () => {
+  it('generates a thumbnail when source fails and no ready derivative exists', async () => {
     const root = mkdtempSync(path.join(tmpdir(), 'serpent-ai-input-'));
     roots.push(root);
+    const sourcePath = path.join(root, 'broken.exr');
+    writeFileSync(sourcePath, Buffer.from('not-an-image'));
     const artifactPath = path.join(root, 'generated.png');
     writeFileSync(artifactPath, Buffer.from('generated-thumbnail'));
     const getCurrentArtifact = vi.fn()
@@ -203,10 +286,59 @@ describe('loadAiImageInput', () => {
       generateThumbnail: vi.fn().mockResolvedValue({ artifactId: 'generated-1' }),
       getArtifactAbsolutePath: vi.fn(() => artifactPath),
     };
+    let call = 0;
+    const sharpFn = vi.fn(() => {
+      call += 1;
+      if (call === 1) throw new Error('unsupported');
+      const chain = {
+        rotate: vi.fn(),
+        resize: vi.fn(),
+        jpeg: vi.fn(),
+        toBuffer: vi.fn(async () => Buffer.from('generated-jpeg')),
+      };
+      chain.rotate.mockReturnValue(chain);
+      chain.resize.mockReturnValue(chain);
+      chain.jpeg.mockReturnValue(chain);
+      return chain;
+    }) as unknown as AiAnalysisSharpFactory;
 
-    const result = await loadAiImageInput(service, 'library-1', 'asset-1');
+    const result = await loadAiImageInput(service, 'library-1', 'asset-1', {
+      sourcePath,
+      sharpFn,
+    });
 
-    expect(service.generateThumbnail).toHaveBeenCalledWith({ libraryId: 'library-1', assetId: 'asset-1' });
-    expect(result).toMatchObject({ mime: 'image/png', artifactId: 'generated-1' });
+    expect(service.generateThumbnail).toHaveBeenCalledWith({
+      libraryId: 'library-1',
+      assetId: 'asset-1',
+    });
+    expect(result).toMatchObject({
+      mime: 'image/jpeg',
+      artifactId: 'generated-1',
+    });
+  });
+});
+
+describe('encodeAiAnalysisImage', () => {
+  it('passes withoutEnlargement and the requested edge into sharp', async () => {
+    const resize = vi.fn();
+    const chain = {
+      rotate: vi.fn(),
+      resize,
+      jpeg: vi.fn(),
+      toBuffer: vi.fn(async () => Buffer.from('out')),
+    };
+    chain.rotate.mockReturnValue(chain);
+    resize.mockReturnValue(chain);
+    chain.jpeg.mockReturnValue(chain);
+    const sharpFn = vi.fn(() => chain) as unknown as AiAnalysisSharpFactory;
+
+    await encodeAiAnalysisImage(Buffer.from('in'), 2048, sharpFn);
+
+    expect(resize).toHaveBeenCalledWith({
+      width: 2048,
+      height: 2048,
+      fit: 'inside',
+      withoutEnlargement: true,
+    });
   });
 });

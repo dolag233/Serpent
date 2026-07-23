@@ -13,6 +13,7 @@ describe('trashedFoldersToBrowseEntries', () => {
         parentRelativePath: null,
         trashedAt: '2026-07-22T00:00:00.000Z',
         assetCount: 0,
+        coverArtifactIds: ['art-a'],
       },
       {
         tombstoneId: 'tomb-1',
@@ -22,6 +23,7 @@ describe('trashedFoldersToBrowseEntries', () => {
         parentRelativePath: 'photos',
         trashedAt: '2026-07-22T00:00:00.000Z',
         assetCount: 3,
+        coverArtifactIds: ['art-b', 'art-c'],
       },
     ]);
 
@@ -35,11 +37,72 @@ describe('trashedFoldersToBrowseEntries', () => {
       directAssetCount: 3,
       recursiveAssetCount: 3,
       childFolderCount: 0,
-      coverArtifactIds: [],
+      coverArtifactIds: ['art-b', 'art-c'],
     });
     expect(entries.find((entry) => entry.folderId === 'tomb-photos')).toMatchObject({
       parentFolderId: null,
       childFolderCount: 1,
+      coverArtifactIds: ['art-a'],
+    });
+  });
+
+  it('keeps same-path tombstones from different trash batches distinct', () => {
+    const entries = trashedFoldersToBrowseEntries([
+      {
+        tombstoneId: 'tomb-a',
+        folderId: 'folder-a',
+        relativePath: 'photos',
+        name: 'photos',
+        parentRelativePath: null,
+        trashedAt: '2026-07-22T00:00:00.000Z',
+        assetCount: 1,
+        coverArtifactIds: ['art-a'],
+      },
+      {
+        tombstoneId: 'tomb-a-child',
+        folderId: 'folder-a-child',
+        relativePath: 'photos/nested',
+        name: 'nested',
+        parentRelativePath: 'photos',
+        trashedAt: '2026-07-22T00:00:00.000Z',
+        assetCount: 0,
+        coverArtifactIds: [],
+      },
+      {
+        tombstoneId: 'tomb-b',
+        folderId: 'folder-b',
+        relativePath: 'photos',
+        name: 'photos',
+        parentRelativePath: null,
+        trashedAt: '2026-07-23T00:00:00.000Z',
+        assetCount: 2,
+        coverArtifactIds: ['art-b'],
+      },
+      {
+        tombstoneId: 'tomb-b-child',
+        folderId: 'folder-b-child',
+        relativePath: 'photos/nested',
+        name: 'nested',
+        parentRelativePath: 'photos',
+        trashedAt: '2026-07-23T00:00:00.000Z',
+        assetCount: 0,
+        coverArtifactIds: [],
+      },
+    ]);
+
+    expect(entries.find((entry) => entry.folderId === 'tomb-a-child')).toMatchObject({
+      parentFolderId: 'tomb-a',
+    });
+    expect(entries.find((entry) => entry.folderId === 'tomb-b-child')).toMatchObject({
+      parentFolderId: 'tomb-b',
+    });
+    expect(entries.find((entry) => entry.folderId === 'tomb-a')).toMatchObject({
+      childFolderCount: 1,
+      coverArtifactIds: ['art-a'],
+    });
+    expect(entries.find((entry) => entry.folderId === 'tomb-b')).toMatchObject({
+      childFolderCount: 1,
+      coverArtifactIds: ['art-b'],
     });
   });
 });

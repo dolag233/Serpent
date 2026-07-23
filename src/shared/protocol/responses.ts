@@ -1191,6 +1191,7 @@ const rendererSuccessResultSchema = z.discriminatedUnion('type', [
     }),
     languages: z.array(z.enum(['zh-CN', 'en', 'ja', 'ko'])).min(1).max(8),
     concurrencyLimit: z.number().int().min(1).max(32),
+    maxAnalysisImageEdgePx: z.number().int().min(512).max(4096),
     reliabilitySettings: z.strictObject({
       requestTimeoutMs: z.number().int().min(15_000).max(600_000),
       maxAttempts: z.number().int().min(1).max(10),

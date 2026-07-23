@@ -459,3 +459,128 @@ describe('syncTrashedFolderTombstones (Serpent-kqqy)', () => {
     expect(service.listTrashedFolders(library.libraryId)).toEqual([]);
   });
 });
+
+describe('same-name trash folders (Serpent-whvm)', () => {
+  it('binds assets to distinct tombstones and restores only one subtree', () => {
+    const temp = root();
+    const service = newService();
+    const library = service.createLibrary({
+      displayName: 'SameNameTrash',
+      selectedParentPath: temp,
+    });
+
+    const first = service.createManagedFolder({
+      libraryId: library.libraryId,
+      name: 'photos',
+    });
+    const firstSource = path.join(temp, 'first.png');
+    writeFileSync(firstSource, 'first-bytes');
+    const firstAsset = importFile(
+      service,
+      library.libraryId,
+      firstSource,
+      first.folderId,
+    ).assets[0]!;
+    service.trashManagedFolder({
+      libraryId: library.libraryId,
+      folderId: first.folderId,
+    });
+
+    const second = service.createManagedFolder({
+      libraryId: library.libraryId,
+      name: 'photos',
+    });
+    const secondSource = path.join(temp, 'second.png');
+    writeFileSync(secondSource, 'second-bytes');
+    const secondAsset = importFile(
+      service,
+      library.libraryId,
+      secondSource,
+      second.folderId,
+    ).assets[0]!;
+    service.trashManagedFolder({
+      libraryId: library.libraryId,
+      folderId: second.folderId,
+    });
+
+    const tombstones = service
+      .listTrashedFolders(library.libraryId)
+      .filter((row) => row.name === 'photos')
+      .sort((a, b) => a.trashedAt.localeCompare(b.trashedAt));
+    expect(tombstones).toHaveLength(2);
+
+    const db = database(library.libraryPath);
+    try {
+      const bindings = db
+        .prepare(
+          `SELECT asset_id, trashed_from_tombstone_id
+             FROM assets
+            WHERE asset_id IN (?, ?)
+            ORDER BY asset_id`,
+        )
+        .all(firstAsset.assetId, secondAsset.assetId) as Array<{
+        asset_id: string;
+        trashed_from_tombstone_id: string | null;
+      }>;
+      expect(bindings).toHaveLength(2);
+      expect(bindings[0]!.trashed_from_tombstone_id).toBeTruthy();
+      expect(bindings[1]!.trashed_from_tombstone_id).toBeTruthy();
+      expect(bindings[0]!.trashed_from_tombstone_id).not.toBe(
+        bindings[1]!.trashed_from_tombstone_id,
+      );
+      expect(
+        new Set(bindings.map((row) => row.trashed_from_tombstone_id)),
+      ).toEqual(new Set(tombstones.map((row) => row.tombstoneId)));
+    } finally {
+      db.close();
+    }
+
+    const restoreFirst = service.restoreTrashedManagedFolder({
+      libraryId: library.libraryId,
+      tombstoneId: tombstones[0]!.tombstoneId,
+    });
+    expect(restoreFirst.restoredAssetCount).toBe(1);
+    expect(
+      service.listTrash(library.libraryId).map((asset) => asset.assetId),
+    ).toEqual([secondAsset.assetId]);
+    expect(
+      service.listTrashedFolders(library.libraryId).map((row) => row.tombstoneId),
+    ).toEqual([tombstones[1]!.tombstoneId]);
+  });
+
+  it('refuses restore when the original folder path is occupied', () => {
+    const temp = root();
+    const service = newService();
+    const library = service.createLibrary({
+      displayName: 'RestoreConflict',
+      selectedParentPath: temp,
+    });
+    const folder = service.createManagedFolder({
+      libraryId: library.libraryId,
+      name: 'photos',
+    });
+    const source = path.join(temp, 'keep.png');
+    writeFileSync(source, 'keep-bytes');
+    importFile(service, library.libraryId, source, folder.folderId);
+    service.trashManagedFolder({
+      libraryId: library.libraryId,
+      folderId: folder.folderId,
+    });
+
+    service.createManagedFolder({
+      libraryId: library.libraryId,
+      name: 'photos',
+    });
+    const tombstone = service
+      .listTrashedFolders(library.libraryId)
+      .find((row) => row.name === 'photos');
+    expect(tombstone).toBeDefined();
+
+    expect(() =>
+      service.restoreTrashedManagedFolder({
+        libraryId: library.libraryId,
+        tombstoneId: tombstone!.tombstoneId,
+      }),
+    ).toThrow(/FOLDER_ALREADY_EXISTS/);
+  });
+});

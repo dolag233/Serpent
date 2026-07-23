@@ -5,13 +5,18 @@ import type { TrashBreadcrumbHop } from "./trash-browse";
 export type ScopeBreadcrumbSegment =
   | { kind: "static"; id: string; label: string }
   | { kind: "folder"; id: string; label: string; folderId: string }
-  /** Trash hierarchy hop; path null = trash root (Serpent-6pcd). */
-  | { kind: "trash-path"; id: string; label: string; path: string | null };
+  /** Trash hierarchy hop; tombstoneId null = trash root (Serpent-6pcd / whvm). */
+  | {
+      kind: "trash-path";
+      id: string;
+      label: string;
+      tombstoneId: string | null;
+    };
 
 export type ScopeBreadcrumbsProps = {
   segments: ScopeBreadcrumbSegment[];
   onNavigateFolder: (folderId: string) => void;
-  onNavigateTrashPath?: (path: string | null) => void;
+  onNavigateTrashTombstone?: (tombstoneId: string | null) => void;
 };
 
 export function buildScopeBreadcrumbSegments(
@@ -30,11 +35,11 @@ export function buildScopeBreadcrumbSegments(
   if (input.showTrash) {
     const hops = input.trashBreadcrumbHops;
     if (hops && hops.length > 0) {
-      return hops.map((hop, index) => ({
+      return hops.map((hop) => ({
         kind: "trash-path" as const,
-        id: hop.path === null ? "trash" : `trash:${hop.path}`,
+        id: hop.tombstoneId === null ? "trash" : `trash:${hop.tombstoneId}`,
         label: hop.label,
-        path: hop.path,
+        tombstoneId: hop.tombstoneId,
       }));
     }
     return [{ kind: "static", id: "trash", label: t("scope.trash") }];
@@ -104,7 +109,7 @@ export function buildScopeBreadcrumbSegments(
 export function ScopeBreadcrumbs({
   segments,
   onNavigateFolder,
-  onNavigateTrashPath,
+  onNavigateTrashTombstone,
 }: ScopeBreadcrumbsProps) {
   const t = useT();
   return (
@@ -126,7 +131,9 @@ export function ScopeBreadcrumbs({
               ) : segment.kind === "trash-path" && !isLast ? (
                 <button
                   className="scope-crumb-button"
-                  onClick={() => onNavigateTrashPath?.(segment.path)}
+                  onClick={() =>
+                    onNavigateTrashTombstone?.(segment.tombstoneId)
+                  }
                   type="button"
                 >
                   {segment.label}

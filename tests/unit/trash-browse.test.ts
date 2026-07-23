@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 import {
   buildTrashBreadcrumbHops,
-  filterTrashedAssetsAtPath,
-  filterTrashedFoldersAtPath,
+  filterTrashedAssetsAtTombstone,
+  filterTrashedFoldersAtTombstone,
 } from '../../src/renderer/trash-browse';
 import type { AssetSummary, TrashedFolderSummary } from '../../src/shared/asset-types';
 
@@ -16,80 +16,117 @@ function folder(
     parentRelativePath: partial.parentRelativePath ?? null,
     trashedAt: partial.trashedAt ?? '2026-07-22T00:00:00.000Z',
     assetCount: partial.assetCount ?? 0,
+    coverArtifactIds: partial.coverArtifactIds ?? [],
     ...partial,
   };
 }
 
 function asset(
   assetId: string,
-  trashedFromPath: string | null,
+  opts: {
+    trashedFromPath?: string | null;
+    trashedFromTombstoneId?: string | null;
+  } = {},
 ): AssetSummary {
   return {
     assetId,
     displayName: assetId,
-    relativeFilePath: trashedFromPath ?? assetId,
-    trashedFromPath,
+    relativeFilePath: opts.trashedFromPath ?? assetId,
+    trashedFromPath: opts.trashedFromPath ?? null,
+    trashedFromTombstoneId: opts.trashedFromTombstoneId ?? null,
   } as AssetSummary;
 }
 
-describe('trash-browse (Serpent-6pcd)', () => {
+describe('trash-browse (Serpent-6pcd / whvm)', () => {
   const folders = [
     folder({
       tombstoneId: 't-filled',
       relativePath: 'filled',
       name: 'filled',
       parentRelativePath: null,
+      trashedAt: '2026-07-22T00:00:00.000Z',
     }),
     folder({
       tombstoneId: 't-nested',
       relativePath: 'filled/nested',
       name: 'nested',
       parentRelativePath: 'filled',
+      trashedAt: '2026-07-22T00:00:00.000Z',
     }),
   ];
 
   it('lists only top-level tombstones at trash root', () => {
     expect(
-      filterTrashedFoldersAtPath(folders, null).map((row) => row.name),
+      filterTrashedFoldersAtTombstone(folders, null).map((row) => row.name),
     ).toEqual(['filled']);
   });
 
-  it('lists direct child tombstones under a path', () => {
+  it('lists direct child tombstones under a tombstone', () => {
     expect(
-      filterTrashedFoldersAtPath(folders, 'filled').map((row) => row.name),
+      filterTrashedFoldersAtTombstone(folders, 't-filled').map((row) => row.name),
     ).toEqual(['nested']);
   });
 
-  it('shows root assets only when their parent is not a tombstone', () => {
-    const assets = [
-      asset('root.png', 'root.png'),
-      asset('nested.png', 'filled/nested/nested.png'),
-      asset('orphan.png', 'gone/orphan.png'),
+  it('keeps same-name root tombstones distinct', () => {
+    const sameName = [
+      folder({
+        tombstoneId: 't-a',
+        folderId: 'folder-a',
+        relativePath: 'photos',
+        name: 'photos',
+        trashedAt: '2026-07-22T01:00:00.000Z',
+      }),
+      folder({
+        tombstoneId: 't-b',
+        folderId: 'folder-b',
+        relativePath: 'photos',
+        name: 'photos',
+        trashedAt: '2026-07-22T02:00:00.000Z',
+      }),
     ];
     expect(
-      filterTrashedAssetsAtPath(assets, folders, null).map((row) => row.assetId),
+      filterTrashedFoldersAtTombstone(sameName, null).map((row) => row.tombstoneId),
+    ).toEqual(['t-a', 't-b']);
+    const assets = [
+      asset('a1.png', { trashedFromTombstoneId: 't-a' }),
+      asset('b1.png', { trashedFromTombstoneId: 't-b' }),
+    ];
+    expect(
+      filterTrashedAssetsAtTombstone(assets, sameName, 't-a').map((row) => row.assetId),
+    ).toEqual(['a1.png']);
+    expect(
+      filterTrashedAssetsAtTombstone(assets, sameName, 't-b').map((row) => row.assetId),
+    ).toEqual(['b1.png']);
+  });
+
+  it('shows root assets only when unbound to a surviving tombstone', () => {
+    const assets = [
+      asset('root.png', { trashedFromPath: 'root.png' }),
+      asset('nested.png', { trashedFromTombstoneId: 't-nested' }),
+      asset('orphan.png', { trashedFromPath: 'gone/orphan.png' }),
+    ];
+    expect(
+      filterTrashedAssetsAtTombstone(assets, folders, null).map((row) => row.assetId),
     ).toEqual(['root.png', 'orphan.png']);
   });
 
-  it('shows direct assets under the current trash hop', () => {
+  it('shows direct assets under the current tombstone hop', () => {
     const assets = [
-      asset('a.png', 'filled/a.png'),
-      asset('b.png', 'filled/nested/b.png'),
+      asset('a.png', { trashedFromTombstoneId: 't-filled' }),
+      asset('b.png', { trashedFromTombstoneId: 't-nested' }),
     ];
     expect(
-      filterTrashedAssetsAtPath(assets, folders, 'filled').map(
+      filterTrashedAssetsAtTombstone(assets, folders, 't-filled').map(
         (row) => row.assetId,
       ),
     ).toEqual(['a.png']);
   });
 
-  it('builds breadcrumb hops from tombstone names', () => {
-    expect(
-      buildTrashBreadcrumbHops(folders, 'filled/nested', '回收站'),
-    ).toEqual([
-      { path: null, label: '回收站' },
-      { path: 'filled', label: 'filled' },
-      { path: 'filled/nested', label: 'nested' },
+  it('builds breadcrumb hops from tombstone ids', () => {
+    expect(buildTrashBreadcrumbHops(folders, 't-nested', '回收站')).toEqual([
+      { tombstoneId: null, label: '回收站' },
+      { tombstoneId: 't-filled', label: 'filled' },
+      { tombstoneId: 't-nested', label: 'nested' },
     ]);
   });
 });

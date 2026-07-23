@@ -192,7 +192,7 @@ export async function applyStoredBrowserSession(
     restoredItems =
       (await loadContent(library, "all", { trashMode: true })) ?? [];
     searchScope = { kind: "trash" };
-    restoredLocation = { kind: "trash" };
+    restoredLocation = { kind: "trash", tombstoneId: null };
   } else if (session.scope.kind === "root") {
     setAssetScope("root");
     restoredItems = (await loadContent(library, "root")) ?? [];

@@ -34,6 +34,7 @@ export interface AiConfigDialogProps {
   baseUrl: string;
   languages: AiLanguageId[];
   concurrencyLimit: number;
+  maxAnalysisImageEdgePx: number;
   hasKey: boolean;
   descriptionEnabled: boolean;
   tagsEnabled: boolean;
@@ -52,6 +53,7 @@ export interface AiConfigDialogProps {
   onBaseUrlChange: (value: string) => void;
   onLanguagesChange: (value: AiLanguageId[]) => void;
   onConcurrencyLimitChange: (value: number) => void;
+  onMaxAnalysisImageEdgePxChange: (value: number) => void;
   onDescriptionEnabledChange: (value: boolean) => void;
   onTagsEnabledChange: (value: boolean) => void;
   onRatingEnabledChange: (value: boolean) => void;
@@ -88,6 +90,7 @@ export function AiConfigDialog({
   baseUrl,
   languages,
   concurrencyLimit,
+  maxAnalysisImageEdgePx,
   hasKey,
   descriptionEnabled,
   tagsEnabled,
@@ -105,6 +108,7 @@ export function AiConfigDialog({
   onBaseUrlChange,
   onLanguagesChange,
   onConcurrencyLimitChange,
+  onMaxAnalysisImageEdgePxChange,
   onDescriptionEnabledChange,
   onTagsEnabledChange,
   onRatingEnabledChange,
@@ -615,6 +619,29 @@ export function AiConfigDialog({
                   value={concurrencyLimit}
                 />
                 <p className="ai-config-hint">{t("aiConfig.concurrencyLimitHint")}</p>
+              </div>
+              <div className="editor-field ai-config-field">
+                <label className="micro-label" htmlFor="ai-config-max-image-edge">
+                  {t("aiConfig.maxAnalysisImageEdge")}
+                </label>
+                <input
+                  className="text-field ai-config-input"
+                  id="ai-config-max-image-edge"
+                  max={4096}
+                  min={512}
+                  onChange={(e) => {
+                    const value = Number.parseInt(e.target.value, 10);
+                    onMaxAnalysisImageEdgePxChange(
+                      Number.isFinite(value)
+                        ? Math.min(4096, Math.max(512, value))
+                        : 2048,
+                    );
+                  }}
+                  step={64}
+                  type="number"
+                  value={maxAnalysisImageEdgePx}
+                />
+                <p className="ai-config-hint">{t("aiConfig.maxAnalysisImageEdgeHint")}</p>
               </div>
               <div className="editor-field ai-config-field">
                 <label className="micro-label" htmlFor="ai-config-max-tags">

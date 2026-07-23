@@ -271,7 +271,7 @@ describe("applyStoredBrowserSession", () => {
       "all",
       { trashMode: true },
     );
-    expect(result.restoredLocation).toEqual({ kind: "trash" });
+    expect(result.restoredLocation).toEqual({ kind: "trash", tombstoneId: null });
     expect(result.restoredAsset?.assetId).toBe("t1");
     expect(setTrashedAssets).toHaveBeenCalled();
   });

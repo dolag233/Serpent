@@ -7,6 +7,10 @@ import {
   isDiskDeletePromptEnabled,
   setDiskDeletePromptEnabled,
 } from "./disk-delete-confirm-preferences";
+import {
+  isBrowseScopeAffectedByFolderTrash,
+  type FolderParentNode,
+} from "./folder-trash-scope";
 
 export type FolderDiskDeleteTarget =
   | {
@@ -26,6 +30,7 @@ interface UseFolderDeleteActionsParams {
   libraryId: string | null;
   locale: AppLocale;
   assetScope: string;
+  folders: readonly FolderParentNode[];
   setNotice: (message: string) => void;
   setError: (message: string | null) => void;
   setUiState: (state: "loading" | "ready") => void;
@@ -39,6 +44,7 @@ export function useFolderDeleteActions({
   libraryId,
   locale,
   assetScope,
+  folders,
   setNotice,
   setError,
   setUiState,
@@ -49,13 +55,16 @@ export function useFolderDeleteActions({
     useState<FolderDiskDeleteTarget | null>(null);
 
   const afterFolderMutation = useCallback(
-    async (deletedFolderId: string | null) => {
-      if (deletedFolderId !== null && assetScope === deletedFolderId) {
+    async (deletedFolderIds: readonly string[]) => {
+      if (
+        isBrowseScopeAffectedByFolderTrash(assetScope, deletedFolderIds, folders)
+      ) {
         onDeletedCurrentScope();
+        return;
       }
       await reloadCurrentContent();
     },
-    [assetScope, onDeletedCurrentScope, reloadCurrentContent],
+    [assetScope, folders, onDeletedCurrentScope, reloadCurrentContent],
   );
 
   const trashManagedFolder = useCallback(
@@ -71,7 +80,7 @@ export function useFolderDeleteActions({
             count: result.value.trashedAssetCount,
           }),
         );
-        await afterFolderMutation(folderId);
+        await afterFolderMutation([folderId]);
       } catch (caught) {
         setError(
           toMessage(
@@ -114,7 +123,7 @@ export function useFolderDeleteActions({
               count: result.value.deletedAssetCount,
             }),
           );
-          await afterFolderMutation(target.folderId);
+          await afterFolderMutation([target.folderId]);
           return;
         }
         const result = await api.deleteLinkedFolderSubtree({
@@ -130,7 +139,7 @@ export function useFolderDeleteActions({
             count: result.value.deletedAssetCount,
           }),
         );
-        await afterFolderMutation(null);
+        await afterFolderMutation([]);
       } catch (caught) {
         setError(
           toMessage(
@@ -184,7 +193,7 @@ export function useFolderDeleteActions({
             count: result.value.removedAssetCount,
           }),
         );
-        await afterFolderMutation(folderId);
+        await afterFolderMutation([folderId]);
       } catch (caught) {
         setError(
           toMessage(
@@ -226,7 +235,7 @@ export function useFolderDeleteActions({
             count: result.value.deletedAssetCount,
           }),
         );
-        await afterFolderMutation(null);
+        await afterFolderMutation([]);
       } catch (caught) {
         setError(
           toMessage(

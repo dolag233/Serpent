@@ -129,6 +129,10 @@ import {
   normalizeAiAnalysisConcurrency,
 } from "../shared/ai-concurrency";
 import {
+  DEFAULT_AI_ANALYSIS_IMAGE_EDGE_PX,
+  normalizeAiAnalysisImageEdgePx,
+} from "../shared/ai-analysis-image";
+import {
   DEFAULT_AI_RELIABILITY_SETTINGS,
   normalizeAiReliabilitySettings,
   type AiReliabilitySettings,
@@ -258,6 +262,8 @@ interface AiConfig {
   ratingEnabled: boolean;
   analysisSettings: AiAnalysisSettings;
   concurrencyLimit: number;
+  /** Longest edge for images uploaded to analysis (default 2048 / 2K). */
+  maxAnalysisImageEdgePx: number;
   reliabilitySettings: AiReliabilitySettings;
   languages: Array<"zh-CN" | "en" | "ja" | "ko">;
   autoAnalyzeEnabled: boolean;
@@ -273,6 +279,7 @@ const DEFAULT_AI_CONFIG: AiConfig = {
   ratingEnabled: true,
   analysisSettings: { ...DEFAULT_AI_ANALYSIS_SETTINGS },
   concurrencyLimit: DEFAULT_AI_ANALYSIS_CONCURRENCY,
+  maxAnalysisImageEdgePx: DEFAULT_AI_ANALYSIS_IMAGE_EDGE_PX,
   reliabilitySettings: { ...DEFAULT_AI_RELIABILITY_SETTINGS },
   languages: ["zh-CN", "en"],
   autoAnalyzeEnabled: false,
@@ -325,6 +332,9 @@ function loadAiConfig(): AiConfig & { hasKey: boolean } {
           DEFAULT_AI_ANALYSIS_SETTINGS.forceExistingTags,
       }),
       concurrencyLimit: normalizeAiAnalysisConcurrency(parsed.concurrencyLimit),
+      maxAnalysisImageEdgePx: normalizeAiAnalysisImageEdgePx(
+        (parsed as { maxAnalysisImageEdgePx?: unknown }).maxAnalysisImageEdgePx,
+      ),
       reliabilitySettings: normalizeAiReliabilitySettings(
         parsed.reliabilitySettings,
       ),
@@ -353,6 +363,7 @@ function saveAiConfig(config: AiConfig): void {
   toSave.ratingEnabled = config.ratingEnabled;
   toSave.analysisSettings = config.analysisSettings;
   toSave.concurrencyLimit = config.concurrencyLimit;
+  toSave.maxAnalysisImageEdgePx = config.maxAnalysisImageEdgePx;
   toSave.reliabilitySettings = config.reliabilitySettings;
   toSave.languages = config.languages;
   toSave.autoAnalyzeEnabled = config.autoAnalyzeEnabled;
@@ -683,6 +694,7 @@ async function processAiQueueBatch(
       analysisSettings: toWireAiAnalysisSettings(config.analysisSettings),
       languages: config.languages,
       concurrencyLimit: config.concurrencyLimit,
+      maxAnalysisImageEdgePx: config.maxAnalysisImageEdgePx,
       requestTimeoutMs: config.reliabilitySettings.requestTimeoutMs,
       maxAttempts: config.reliabilitySettings.maxAttempts,
       maxJobs,
@@ -1584,6 +1596,7 @@ async function commandFor(
         },
         analysisSettings: toWireAiAnalysisSettings(config.analysisSettings),
         languages: config.languages,
+        maxAnalysisImageEdgePx: config.maxAnalysisImageEdgePx,
       };
     }
     case "assets.analyze.request":
@@ -1874,6 +1887,7 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
         analysisSettings: toWireAiAnalysisSettings(config.analysisSettings),
         languages: config.languages,
         concurrencyLimit: config.concurrencyLimit,
+        maxAnalysisImageEdgePx: config.maxAnalysisImageEdgePx,
         reliabilitySettings: config.reliabilitySettings,
         autoAnalyzeEnabled: config.autoAnalyzeEnabled,
         disclaimerAccepted: config.disclaimerAccepted,
@@ -1910,6 +1924,9 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
         }),
         concurrencyLimit: normalizeAiAnalysisConcurrency(
           request.concurrencyLimit ?? currentConfig.concurrencyLimit,
+        ),
+        maxAnalysisImageEdgePx: normalizeAiAnalysisImageEdgePx(
+          request.maxAnalysisImageEdgePx ?? currentConfig.maxAnalysisImageEdgePx,
         ),
         // Retry policy remains durable but is no longer a user-facing setting.
         reliabilitySettings: request.reliabilitySettings

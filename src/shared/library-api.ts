@@ -381,6 +381,7 @@ export interface SerpentLibraryApi {
     };
     languages: Array<'zh-CN' | 'en' | 'ja' | 'ko'>;
     concurrencyLimit: number;
+    maxAnalysisImageEdgePx: number;
     reliabilitySettings: AiReliabilitySettings;
     autoAnalyzeEnabled: boolean;
     disclaimerAccepted: boolean;
@@ -402,6 +403,7 @@ export interface SerpentLibraryApi {
     };
     languages?: Array<'zh-CN' | 'en' | 'ja' | 'ko'>;
     concurrencyLimit?: number;
+    maxAnalysisImageEdgePx?: number;
     reliabilitySettings?: AiReliabilitySettings;
     autoAnalyzeEnabled: boolean;
     disclaimerAccepted: boolean;

@@ -1269,6 +1269,19 @@ const AI_DESCRIPTION_SEARCH_BACKFILL_SCHEMA_CHECKSUM = createHash('sha256')
   .update(AI_DESCRIPTION_SEARCH_BACKFILL_SCHEMA_SQL)
   .digest('hex');
 
+// Migration v20 (Serpent-whvm / jcur): durable trash-folder binding so
+// same-name tombstones do not share assets/covers after managed_folders rows
+// are deleted (trashed_from_folder_id is FK ON DELETE SET NULL).
+const TRASH_TOMBSTONE_ASSET_BIND_SCHEMA_SQL = `
+  ALTER TABLE assets ADD COLUMN trashed_from_tombstone_id TEXT;
+  CREATE INDEX assets_trashed_tombstone_idx
+    ON assets(trashed_from_tombstone_id)
+    WHERE deleted_at IS NOT NULL AND trashed_from_tombstone_id IS NOT NULL;
+`;
+const TRASH_TOMBSTONE_ASSET_BIND_SCHEMA_CHECKSUM = createHash('sha256')
+  .update(TRASH_TOMBSTONE_ASSET_BIND_SCHEMA_SQL)
+  .digest('hex');
+
 const MIGRATIONS = [
   { version: 1, sql: INITIAL_SCHEMA_SQL, checksum: INITIAL_SCHEMA_CHECKSUM },
   { version: 2, sql: ASSET_SCHEMA_SQL, checksum: ASSET_SCHEMA_CHECKSUM },
@@ -1304,6 +1317,11 @@ const MIGRATIONS = [
     version: 19,
     sql: AI_DESCRIPTION_SEARCH_BACKFILL_SCHEMA_SQL,
     checksum: AI_DESCRIPTION_SEARCH_BACKFILL_SCHEMA_CHECKSUM,
+  },
+  {
+    version: 20,
+    sql: TRASH_TOMBSTONE_ASSET_BIND_SCHEMA_SQL,
+    checksum: TRASH_TOMBSTONE_ASSET_BIND_SCHEMA_CHECKSUM,
   },
 ] as const;
 const SUPPORTED_SCHEMA_VERSION = MIGRATIONS.at(-1)!.version;
@@ -2255,6 +2273,108 @@ function verifyMigrationHistory(connection: DatabaseConnection, version: number)
   }
 }
 
+/**
+ * Migration v20 helper: ADD COLUMN is not idempotent under simulated
+ * downgrade fixtures that leave the column in place. Apply only if missing;
+ * checksum still records the canonical SQL text.
+ */
+function ensureTrashTombstoneAssetBindSchema(
+  connection: DatabaseConnection,
+): void {
+  const columns = connection.pragma('table_info(assets)') as Array<{
+    name: string;
+  }>;
+  if (!columns.some((column) => column.name === 'trashed_from_tombstone_id')) {
+    connection.exec(
+      'ALTER TABLE assets ADD COLUMN trashed_from_tombstone_id TEXT',
+    );
+  }
+  connection.exec(`
+    CREATE INDEX IF NOT EXISTS assets_trashed_tombstone_idx
+      ON assets(trashed_from_tombstone_id)
+      WHERE deleted_at IS NOT NULL AND trashed_from_tombstone_id IS NOT NULL
+  `);
+}
+
+/**
+ * Bind legacy trashed assets (FK already nulled) to surviving tombstones.
+ * Prefer folder_id; else unique path; else closest trashed_at among same path.
+ */
+function backfillTrashedFromTombstoneIds(
+  connection: DatabaseConnection,
+): void {
+  connection
+    .prepare(
+      `UPDATE assets
+          SET trashed_from_tombstone_id = (
+            SELECT t.tombstone_id
+              FROM trashed_managed_folders t
+             WHERE t.folder_id = assets.trashed_from_folder_id
+             LIMIT 1
+          )
+        WHERE deleted_at IS NOT NULL
+          AND trashed_from_tombstone_id IS NULL
+          AND trashed_from_folder_id IS NOT NULL`,
+    )
+    .run();
+
+  const tombstones = connection
+    .prepare(
+      `SELECT tombstone_id, relative_path, trashed_at
+         FROM trashed_managed_folders`,
+    )
+    .all() as Array<{
+    tombstone_id: string;
+    relative_path: string;
+    trashed_at: string;
+  }>;
+  if (tombstones.length === 0) return;
+
+  const byPath = new Map<string, typeof tombstones>();
+  for (const tombstone of tombstones) {
+    const list = byPath.get(tombstone.relative_path) ?? [];
+    list.push(tombstone);
+    byPath.set(tombstone.relative_path, list);
+  }
+
+  const unbound = connection
+    .prepare(
+      `SELECT asset_id, trashed_from_relative_path, deleted_at
+         FROM assets
+        WHERE deleted_at IS NOT NULL
+          AND trashed_from_tombstone_id IS NULL
+          AND trashed_from_relative_path IS NOT NULL`,
+    )
+    .all() as Array<{
+    asset_id: string;
+    trashed_from_relative_path: string;
+    deleted_at: string;
+  }>;
+
+  const update = connection.prepare(
+    `UPDATE assets
+        SET trashed_from_tombstone_id = ?
+      WHERE asset_id = ?`,
+  );
+
+  for (const asset of unbound) {
+    const parentPath = path.posix.dirname(asset.trashed_from_relative_path);
+    if (!parentPath || parentPath === '.') continue;
+    const candidates = byPath.get(parentPath);
+    if (!candidates || candidates.length === 0) continue;
+    let chosen = candidates[0]!;
+    if (candidates.length > 1) {
+      const deletedMs = Date.parse(asset.deleted_at);
+      chosen = candidates.reduce((best, candidate) => {
+        const bestDelta = Math.abs(Date.parse(best.trashed_at) - deletedMs);
+        const nextDelta = Math.abs(Date.parse(candidate.trashed_at) - deletedMs);
+        return nextDelta < bestDelta ? candidate : best;
+      });
+    }
+    update.run(chosen.tombstone_id, asset.asset_id);
+  }
+}
+
 function backfillPortablePathIdentities(connection: DatabaseConnection): void {
   const folderRows = connection
     .prepare('SELECT folder_id AS id, relative_path FROM managed_folders ORDER BY folder_id')
@@ -2621,7 +2741,13 @@ function migrateDatabase(connection: DatabaseConnection, allowFresh: boolean): v
     if (rebuildsTable) connection.pragma('foreign_keys = OFF');
     try {
       connection.transaction(() => {
-        connection.exec(migration.sql);
+        if (migration.version === 20) {
+          // Idempotent: downgrade fixtures may already have the column.
+          ensureTrashTombstoneAssetBindSchema(connection);
+          backfillTrashedFromTombstoneIds(connection);
+        } else {
+          connection.exec(migration.sql);
+        }
         if (migration.version === 3) {
           backfillPortablePathIdentities(connection);
           connection.exec(PORTABLE_PATH_SCHEMA_AFTER_BACKFILL_SQL);
@@ -4978,8 +5104,9 @@ export class LibraryService {
       );
       for (const row of tombstoneFolders) {
         const parentRelative = path.posix.dirname(row.relative_path);
+        const tombstoneId = randomUUID();
         insert.run(
-          randomUUID(),
+          tombstoneId,
           row.folder_id,
           row.relative_path,
           row.name,
@@ -4987,6 +5114,15 @@ export class LibraryService {
           trashedAt,
           assetCountByFolderId.get(row.folder_id) ?? 0,
         );
+        // Bind before deleting managed_folders rows (FK would null folder_id).
+        openLibrary.connection
+          .prepare(
+            `UPDATE assets
+                SET trashed_from_tombstone_id = ?
+              WHERE deleted_at IS NOT NULL
+                AND trashed_from_folder_id = ?`,
+          )
+          .run(tombstoneId, row.folder_id);
       }
     })();
 
@@ -11910,12 +12046,12 @@ export class LibraryService {
       ? `a.asset_id, a.location_kind, a.managed_folder_id, a.relative_file_path, a.current_revision_id,
          a.availability, r.byte_size, r.modified_at,
          COALESCE(m.rating, 0) AS rating, COALESCE(m.favorite, 0) AS favorite,
-         a.deleted_at, a.trashed_from_relative_path,
+         a.deleted_at, a.trashed_from_relative_path, a.trashed_from_tombstone_id,
          snippet(asset_search, -1, '<b>', '</b>', '...', 32) AS snippet_text`
       : `a.asset_id, a.location_kind, a.managed_folder_id, a.relative_file_path, a.current_revision_id,
          a.availability, r.byte_size, r.modified_at,
          COALESCE(m.rating, 0) AS rating, COALESCE(m.favorite, 0) AS favorite,
-         a.deleted_at, a.trashed_from_relative_path`;
+         a.deleted_at, a.trashed_from_relative_path, a.trashed_from_tombstone_id`;
 
     // Total count query.
     const countSql = `SELECT COUNT(*) AS total ${baseFrom} ${whereClause}`;
@@ -11941,6 +12077,7 @@ export class LibraryService {
         favorite: number;
         deleted_at?: string | null;
         trashed_from_relative_path?: string | null;
+        trashed_from_tombstone_id?: string | null;
         snippet_text?: string;
       }>;
 
@@ -12767,6 +12904,7 @@ export class LibraryService {
       favorite: number;
       deleted_at?: string | null;
       trashed_from_relative_path?: string | null;
+      trashed_from_tombstone_id?: string | null;
       thumbnail_status?: 'ready' | 'pending' | 'failed' | null;
       thumbnail_artifact_id?: string | null;
       media_type?: 'image' | 'video' | 'audio' | 'text' | 'other' | null;
@@ -12795,6 +12933,7 @@ export class LibraryService {
       favorite: row.favorite !== 0,
       deletedAt: row.deleted_at ?? null,
       trashedFromPath: row.trashed_from_relative_path ?? null,
+      trashedFromTombstoneId: row.trashed_from_tombstone_id ?? null,
       remainingDays,
       thumbnailStatus: row.thumbnail_status ?? null,
       thumbnailArtifactId: row.thumbnail_artifact_id ?? null,
@@ -14293,6 +14432,7 @@ export class LibraryService {
                     SET relative_file_path = ?, managed_folder_id = ?,
                         path_identity = ?, deleted_at = NULL,
                         trashed_from_relative_path = NULL, trashed_from_folder_id = NULL,
+                        trashed_from_tombstone_id = NULL,
                         updated_at = ?
                   WHERE asset_id = ?`,
               )
@@ -14525,8 +14665,9 @@ export class LibraryService {
 
   private syncTrashedFolderTombstones(openLibrary: OpenLibrary): void {
     openLibrary.connection.transaction(() => {
-      // Serpent-b3kf / gz4y: managed_folders DELETE SET NULL clears
-      // trashed_from_folder_id, so count by path prefix as well.
+      // Prefer tombstone bind (Serpent-whvm). Path prefix only when that
+      // relative_path is unique among tombstones — otherwise same-name
+      // folders would inflate each other's counts.
       openLibrary.connection
         .prepare(
           `UPDATE trashed_managed_folders
@@ -14535,10 +14676,27 @@ export class LibraryService {
                   FROM assets
                  WHERE deleted_at IS NOT NULL
                    AND (
-                     trashed_from_folder_id = trashed_managed_folders.folder_id
-                     OR trashed_from_relative_path = trashed_managed_folders.relative_path
-                     OR trashed_from_relative_path LIKE
-                          (trashed_managed_folders.relative_path || '/%')
+                     trashed_from_tombstone_id = trashed_managed_folders.tombstone_id
+                     OR (
+                       trashed_from_tombstone_id IS NULL
+                       AND trashed_from_folder_id = trashed_managed_folders.folder_id
+                     )
+                     OR (
+                       trashed_from_tombstone_id IS NULL
+                       AND trashed_from_folder_id IS NULL
+                       AND (
+                         SELECT COUNT(*)
+                           FROM trashed_managed_folders AS peers
+                          WHERE peers.relative_path =
+                                trashed_managed_folders.relative_path
+                       ) = 1
+                       AND (
+                         trashed_from_relative_path =
+                           trashed_managed_folders.relative_path
+                         OR trashed_from_relative_path LIKE
+                              (trashed_managed_folders.relative_path || '/%')
+                       )
+                     )
                    )
               )`,
         )
@@ -14609,9 +14767,12 @@ export class LibraryService {
       }>;
 
     const folderIds = tombstones.map((row) => row.folder_id);
+    const tombstoneIds = tombstones.map((row) => row.tombstone_id);
 
-    // Serpent-gz4y: resolve assets before recreating folders so a match miss
-    // cannot leave an empty restored folder + deleted tombstones.
+    // Serpent-gz4y / whvm: bind by tombstone id first so same-path tombstones
+    // never steal each other's assets. folder_id is a secondary match for
+    // rows that still retain the FK; path is a last-resort legacy fallback
+    // only when that relative_path has a single competing tombstone.
     const restoreAssetIds: string[] = [];
     const seenRestoreAssetIds = new Set<string>();
     const rememberRestoreAssetId = (assetId: string) => {
@@ -14620,47 +14781,68 @@ export class LibraryService {
       restoreAssetIds.push(assetId);
     };
 
+    if (tombstoneIds.length > 0) {
+      const byTombstone = openLibrary.connection
+        .prepare(
+          `SELECT asset_id FROM assets
+            WHERE deleted_at IS NOT NULL
+              AND trashed_from_tombstone_id IN (${tombstoneIds.map(() => '?').join(', ')})`,
+        )
+        .all(...tombstoneIds) as Array<{ asset_id: string }>;
+      for (const row of byTombstone) rememberRestoreAssetId(row.asset_id);
+    }
+
     if (folderIds.length > 0) {
       const byFolderId = openLibrary.connection
         .prepare(
           `SELECT asset_id FROM assets
             WHERE deleted_at IS NOT NULL
+              AND trashed_from_tombstone_id IS NULL
               AND trashed_from_folder_id IN (${folderIds.map(() => '?').join(', ')})`,
         )
         .all(...folderIds) as Array<{ asset_id: string }>;
       for (const row of byFolderId) rememberRestoreAssetId(row.asset_id);
     }
 
-    const folderIdSet = new Set(folderIds);
+    const ambiguousPaths = new Set<string>();
+    const pathCounts = openLibrary.connection
+      .prepare(
+        `SELECT relative_path AS relative_path, COUNT(*) AS count
+           FROM trashed_managed_folders
+          GROUP BY relative_path
+         HAVING COUNT(*) > 1`,
+      )
+      .all() as Array<{ relative_path: string; count: number }>;
+    for (const row of pathCounts) ambiguousPaths.add(row.relative_path);
+
     const tombstoneRelativePaths = tombstones.map((row) => row.relative_path);
     const trashedAssetRows = openLibrary.connection
       .prepare(
-        `SELECT asset_id, trashed_from_relative_path, trashed_from_folder_id
+        `SELECT asset_id, trashed_from_relative_path, trashed_from_folder_id,
+                trashed_from_tombstone_id
            FROM assets
-          WHERE deleted_at IS NOT NULL`,
+          WHERE deleted_at IS NOT NULL
+            AND trashed_from_tombstone_id IS NULL
+            AND trashed_from_folder_id IS NULL`,
       )
       .all() as Array<{
         asset_id: string;
         trashed_from_relative_path: string | null;
         trashed_from_folder_id: string | null;
+        trashed_from_tombstone_id: string | null;
       }>;
     for (const row of trashedAssetRows) {
-      if (
-        row.trashed_from_folder_id !== null &&
-        folderIdSet.has(row.trashed_from_folder_id)
-      ) {
-        rememberRestoreAssetId(row.asset_id);
-        continue;
-      }
       if (!row.trashed_from_relative_path) continue;
       const parentPath = path.posix.dirname(row.trashed_from_relative_path);
-      const matchesSubtree = tombstoneRelativePaths.some(
-        (folderPath) =>
+      const matchesSubtree = tombstoneRelativePaths.some((folderPath) => {
+        if (ambiguousPaths.has(folderPath)) return false;
+        return (
           parentPath === folderPath ||
           parentPath.startsWith(`${folderPath}/`) ||
           row.trashed_from_relative_path === folderPath ||
-          row.trashed_from_relative_path!.startsWith(`${folderPath}/`),
-      );
+          row.trashed_from_relative_path!.startsWith(`${folderPath}/`)
+        );
+      });
       if (matchesSubtree) rememberRestoreAssetId(row.asset_id);
     }
 
@@ -14896,6 +15078,11 @@ export class LibraryService {
         trashed_asset_count: number;
       }>;
 
+    const coverMap = this.trashedFolderCoverArtifactMap(
+      openLibrary,
+      rows.map((row) => row.tombstone_id),
+    );
+
     return rows.map((row) => ({
       tombstoneId: row.tombstone_id,
       folderId: row.folder_id,
@@ -14904,7 +15091,51 @@ export class LibraryService {
       parentRelativePath: row.parent_relative_path,
       trashedAt: row.trashed_at,
       assetCount: row.trashed_asset_count,
+      coverArtifactIds: coverMap.get(row.tombstone_id) ?? [],
     }));
+  }
+
+  /**
+   * Covers for trash folder cards keyed by tombstone id (Serpent-jcur / whvm).
+   */
+  private trashedFolderCoverArtifactMap(
+    openLibrary: OpenLibrary,
+    tombstoneIds: string[],
+  ): Map<string, string[]> {
+    const covers = new Map<string, string[]>();
+    if (tombstoneIds.length === 0) return covers;
+    const placeholders = tombstoneIds.map(() => '?').join(', ');
+    const rows = openLibrary.connection
+      .prepare(
+        `SELECT a.trashed_from_tombstone_id AS tombstone_id,
+                ra.artifact_id AS artifact_id
+           FROM assets a
+           JOIN revision_artifacts ra
+             ON ra.revision_id = a.current_revision_id
+            AND ra.invalidated_at IS NULL
+            AND ra.status = 'ready'
+            AND ra.kind = CASE
+              WHEN LOWER(a.relative_file_path) LIKE '%.mp4'
+                OR LOWER(a.relative_file_path) LIKE '%.webm'
+                OR LOWER(a.relative_file_path) LIKE '%.mov'
+                OR LOWER(a.relative_file_path) LIKE '%.avi'
+                OR LOWER(a.relative_file_path) LIKE '%.wmv'
+              THEN 'video_poster'
+              ELSE 'thumbnail'
+            END
+          WHERE a.deleted_at IS NOT NULL
+            AND a.trashed_from_tombstone_id IN (${placeholders})
+          ORDER BY a.trashed_from_tombstone_id, a.relative_file_path`,
+      )
+      .all(...tombstoneIds) as Array<{ tombstone_id: string; artifact_id: string }>;
+
+    for (const row of rows) {
+      const existing = covers.get(row.tombstone_id) ?? [];
+      if (existing.length >= 3) continue;
+      existing.push(row.artifact_id);
+      covers.set(row.tombstone_id, existing);
+    }
+    return covers;
   }
 
   listTrash(libraryId: string): AssetSummary[] {
@@ -14915,7 +15146,7 @@ export class LibraryService {
         `SELECT a.asset_id, a.managed_folder_id, a.linked_folder_id, a.location_kind, a.relative_file_path,
                 a.current_revision_id, a.availability, r.byte_size, r.modified_at,
                 COALESCE(m.rating, 0) AS rating, COALESCE(m.favorite, 0) AS favorite,
-                a.deleted_at, a.trashed_from_relative_path
+                a.deleted_at, a.trashed_from_relative_path, a.trashed_from_tombstone_id
            FROM assets a
            JOIN revisions r ON r.revision_id = a.current_revision_id
            LEFT JOIN asset_metadata m ON m.asset_id = a.asset_id
@@ -14925,6 +15156,7 @@ export class LibraryService {
       .all() as Array<AssetSummaryRow & {
         deleted_at: string | null;
         trashed_from_relative_path: string | null;
+        trashed_from_tombstone_id: string | null;
       }>;
 
     // Expose the same thumbnail state as the trash search scope so every
@@ -17146,6 +17378,7 @@ export class LibraryService {
     try {
       connection = openConfiguredDatabase(databasePath(canonicalPath));
       migrateDatabase(connection, false);
+      backfillTrashedFromTombstoneIds(connection);
       const library = verifyDatabase(connection);
       try {
         for (const directoryName of REGENERABLE_DIRECTORIES) {

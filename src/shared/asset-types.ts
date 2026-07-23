@@ -67,6 +67,8 @@ export const trashedFolderSummarySchema = z.strictObject({
   parentRelativePath: portableRelativePathSchema.nullable(),
   trashedAt: nonBlankString,
   assetCount: z.number().int().nonnegative(),
+  /** Up to three ready thumbnail/poster artifact ids for folder cards. */
+  coverArtifactIds: z.array(nonBlankString).max(3),
 });
 
 export type TrashedFolderSummary = z.infer<typeof trashedFolderSummarySchema>;
@@ -106,6 +108,8 @@ export const assetSummarySchema = z.strictObject({
   favorite: z.boolean(),
   deletedAt: nonBlankString.nullable(),
   trashedFromPath: portableRelativePathSchema.nullable(),
+  /** Tombstone that owned this asset when its folder was trashed (Serpent-whvm). */
+  trashedFromTombstoneId: nonBlankString.nullable().optional().default(null),
   remainingDays: z.number().int().nullable(),
   thumbnailStatus: z.enum(['ready', 'pending', 'failed']).nullable(),
   thumbnailArtifactId: nonBlankString.nullable(),

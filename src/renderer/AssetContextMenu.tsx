@@ -906,13 +906,15 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                         size={14}
                       />
                     }
-                    label={aiAnalyzeItem.label}
+                    label={
+                      !canAnalyze
+                        ? `${aiAnalyzeItem.label}${t("command.reason.aiDisconnectedSuffix")}`
+                        : aiAnalyzeItem.label
+                    }
                     disabled={aiAnalyzeItem.disabled || !canAnalyze}
                     disabledReason={
                       !canAnalyze
-                        ? aiDisconnected
-                          ? t("command.reason.aiDisconnected")
-                          : t("command.reason.aiNotConfigured")
+                        ? t("command.reason.aiSetupHint")
                         : (aiAnalyzeItem.disabledReason ?? undefined)
                     }
                     onAction={() => runMultiCommand("assets.ai-analyze")}
@@ -1372,13 +1374,15 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                           size={14}
                         />
                       }
-                      label={aiAnalyzeItem.label}
+                      label={
+                        !canAnalyze
+                          ? `${aiAnalyzeItem.label}${t("command.reason.aiDisconnectedSuffix")}`
+                          : aiAnalyzeItem.label
+                      }
                       disabled={aiAnalyzeItem.disabled || !canAnalyze}
                       disabledReason={
                         !canAnalyze
-                          ? aiDisconnected
-                            ? t("command.reason.aiDisconnected")
-                            : t("command.reason.aiNotConfigured")
+                          ? t("command.reason.aiSetupHint")
                           : (aiAnalyzeItem.disabledReason ?? undefined)
                       }
                       onAction={() => runAssetCommand("asset.ai-analyze")}

@@ -37,7 +37,18 @@ describe("workspaceNavLocationsEqual", () => {
     expect(
       workspaceNavLocationsEqual({ kind: "tag", tagId: "t" }, { kind: "tag", tagId: "t" }),
     ).toBe(true);
-    expect(workspaceNavLocationsEqual({ kind: "trash" }, { kind: "trash" })).toBe(true);
+    expect(
+      workspaceNavLocationsEqual(
+        { kind: "trash", tombstoneId: null },
+        { kind: "trash", tombstoneId: null },
+      ),
+    ).toBe(true);
+    expect(
+      workspaceNavLocationsEqual(
+        { kind: "trash", tombstoneId: null },
+        { kind: "trash", tombstoneId: "a/b" },
+      ),
+    ).toBe(false);
   });
 });
 
@@ -97,11 +108,11 @@ describe("createWorkspaceNavHistory", () => {
 
   it("back and forward move the index and return the new current", () => {
     const history = createWorkspaceNavHistory();
-    history.push({ kind: "trash" });
+    history.push({ kind: "trash", tombstoneId: null });
     history.push({ kind: "collection", collectionId: "c1", recursive: true });
 
-    expect(history.back()).toEqual({ kind: "trash" });
-    expect(history.current).toEqual({ kind: "trash" });
+    expect(history.back()).toEqual({ kind: "trash", tombstoneId: null });
+    expect(history.current).toEqual({ kind: "trash", tombstoneId: null });
     expect(history.canBack).toBe(true);
     expect(history.canForward).toBe(true);
 
@@ -109,7 +120,7 @@ describe("createWorkspaceNavHistory", () => {
     expect(history.back()).toBeNull();
     expect(history.canBack).toBe(false);
 
-    expect(history.forward()).toEqual({ kind: "trash" });
+    expect(history.forward()).toEqual({ kind: "trash", tombstoneId: null });
     expect(history.forward()).toEqual({
       kind: "collection",
       collectionId: "c1",
@@ -133,7 +144,7 @@ describe("createWorkspaceNavHistory", () => {
   it("clear resets the stack to the default or provided initial", () => {
     const history = createWorkspaceNavHistory();
     history.push({ kind: "smart-collection", collectionId: "s1" });
-    history.push({ kind: "trash" });
+    history.push({ kind: "trash", tombstoneId: "a" });
     history.back();
 
     history.clear();

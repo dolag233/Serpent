@@ -1,74 +1,134 @@
 /**
- * Pure helpers for trash folder hierarchy browse (Serpent-6pcd).
- * Navigate tombstones like normal folders — not click-to-filter lists.
+ * Pure helpers for trash folder hierarchy browse (Serpent-6pcd / jcur / whvm).
+ * Navigate by tombstone id — never by display name or bare relativePath alone,
+ * so two same-named folders stay distinct.
  */
 
 import type { AssetSummary, TrashedFolderSummary } from '../shared/asset-types';
-import { trashGroupKey } from './trash-folder-groups';
 
-/** Direct child tombstones under `browsePath` (null = trash root). */
+/** Direct child tombstones under `browseTombstoneId` (null = trash root). */
+export function filterTrashedFoldersAtTombstone(
+  folders: readonly TrashedFolderSummary[],
+  browseTombstoneId: string | null,
+): TrashedFolderSummary[] {
+  if (browseTombstoneId === null) {
+    const byPathAndTime = new Map<string, TrashedFolderSummary>();
+    for (const folder of folders) {
+      byPathAndTime.set(`${folder.trashedAt}\0${folder.relativePath}`, folder);
+    }
+    return folders.filter((folder) => {
+      if (folder.parentRelativePath === null) return true;
+      const parentKey = `${folder.trashedAt}\0${folder.parentRelativePath}`;
+      return !byPathAndTime.has(parentKey);
+    });
+  }
+
+  const current = folders.find((folder) => folder.tombstoneId === browseTombstoneId);
+  if (!current) return [];
+  return folders.filter(
+    (folder) =>
+      folder.trashedAt === current.trashedAt &&
+      folder.parentRelativePath === current.relativePath,
+  );
+}
+
+/**
+ * Assets that belonged directly to the browsed tombstone folder.
+ * At trash root, only assets not bound to any surviving tombstone.
+ */
+export function filterTrashedAssetsAtTombstone(
+  assets: readonly AssetSummary[],
+  folders: readonly TrashedFolderSummary[],
+  browseTombstoneId: string | null,
+): AssetSummary[] {
+  const tombstoneIds = new Set(folders.map((folder) => folder.tombstoneId));
+  if (browseTombstoneId === null) {
+    return assets.filter((asset) => {
+      const bound = asset.trashedFromTombstoneId ?? null;
+      if (bound) return !tombstoneIds.has(bound);
+      // Legacy rows without tombstone binding: keep at root only when their
+      // parent path is not covered by any tombstone relativePath.
+      const parent = trashParentPath(asset.trashedFromPath);
+      if (!parent) return true;
+      return !folders.some((folder) => folder.relativePath === parent);
+    });
+  }
+
+  return assets.filter(
+    (asset) => (asset.trashedFromTombstoneId ?? null) === browseTombstoneId,
+  );
+}
+
+export type TrashBreadcrumbHop = {
+  readonly tombstoneId: string | null;
+  readonly label: string;
+};
+
+/** Trail from trash root through the browsed tombstone. */
+export function buildTrashBreadcrumbHops(
+  folders: readonly TrashedFolderSummary[],
+  browseTombstoneId: string | null,
+  trashRootLabel: string,
+): TrashBreadcrumbHop[] {
+  const hops: TrashBreadcrumbHop[] = [
+    { tombstoneId: null, label: trashRootLabel },
+  ];
+  if (!browseTombstoneId) return hops;
+
+  const current = folders.find((folder) => folder.tombstoneId === browseTombstoneId);
+  if (!current) return hops;
+
+  const byPathAndTime = new Map<string, TrashedFolderSummary>();
+  for (const folder of folders) {
+    byPathAndTime.set(`${folder.trashedAt}\0${folder.relativePath}`, folder);
+  }
+  const chain: TrashedFolderSummary[] = [];
+  let cursor: TrashedFolderSummary | undefined = current;
+  const seen = new Set<string>();
+  while (cursor) {
+    if (seen.has(cursor.tombstoneId)) break;
+    seen.add(cursor.tombstoneId);
+    chain.push(cursor);
+    if (!cursor.parentRelativePath) break;
+    cursor = byPathAndTime.get(
+      `${cursor.trashedAt}\0${cursor.parentRelativePath}`,
+    );
+  }
+  chain.reverse();
+  for (const folder of chain) {
+    hops.push({ tombstoneId: folder.tombstoneId, label: folder.name });
+  }
+  return hops;
+}
+
+/** @deprecated Prefer filterTrashedFoldersAtTombstone. */
 export function filterTrashedFoldersAtPath(
   folders: readonly TrashedFolderSummary[],
   browsePath: string | null,
 ): TrashedFolderSummary[] {
-  const pathSet = new Set(folders.map((folder) => folder.relativePath));
   if (browsePath === null) {
-    return folders.filter(
-      (folder) =>
-        folder.parentRelativePath === null ||
-        !pathSet.has(folder.parentRelativePath),
-    );
+    return filterTrashedFoldersAtTombstone(folders, null);
   }
-  return folders.filter((folder) => folder.parentRelativePath === browsePath);
+  const match = folders.find((folder) => folder.relativePath === browsePath);
+  return filterTrashedFoldersAtTombstone(folders, match?.tombstoneId ?? null);
 }
 
-/**
- * Assets whose original parent folder equals `browsePath`.
- * At trash root, only assets not belonging to any surviving tombstone folder.
- */
+/** @deprecated Prefer filterTrashedAssetsAtTombstone. */
 export function filterTrashedAssetsAtPath(
   assets: readonly AssetSummary[],
   folders: readonly TrashedFolderSummary[],
   browsePath: string | null,
 ): AssetSummary[] {
-  const folderPaths = new Set(folders.map((folder) => folder.relativePath));
-  return assets.filter((asset) => {
-    const parent = trashGroupKey(asset.trashedFromPath);
-    if (browsePath === null) {
-      if (parent === '') return true;
-      return !folderPaths.has(parent);
-    }
-    return parent === browsePath;
-  });
+  if (browsePath === null) {
+    return filterTrashedAssetsAtTombstone(assets, folders, null);
+  }
+  const match = folders.find((folder) => folder.relativePath === browsePath);
+  return filterTrashedAssetsAtTombstone(assets, folders, match?.tombstoneId ?? null);
 }
 
-export type TrashBreadcrumbHop = {
-  readonly path: string | null;
-  readonly label: string;
-};
-
-/** Trail from trash root through `browsePath` using tombstone names. */
-export function buildTrashBreadcrumbHops(
-  folders: readonly TrashedFolderSummary[],
-  browsePath: string | null,
-  trashRootLabel: string,
-): TrashBreadcrumbHop[] {
-  const hops: TrashBreadcrumbHop[] = [
-    { path: null, label: trashRootLabel },
-  ];
-  if (!browsePath) return hops;
-
-  const byPath = new Map(
-    folders.map((folder) => [folder.relativePath, folder] as const),
-  );
-  const parts = browsePath.split('/').filter(Boolean);
-  let acc = '';
-  for (const part of parts) {
-    acc = acc ? `${acc}/${part}` : part;
-    hops.push({
-      path: acc,
-      label: byPath.get(acc)?.name ?? part,
-    });
-  }
-  return hops;
+function trashParentPath(trashedFromPath: string | null): string {
+  if (!trashedFromPath) return '';
+  const slash = trashedFromPath.lastIndexOf('/');
+  if (slash <= 0) return '';
+  return trashedFromPath.slice(0, slash);
 }

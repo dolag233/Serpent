@@ -88,6 +88,7 @@ const aiAnalysisSettingsSchema = z.strictObject({
   customDescriptionPrompt: z.string().max(4_000),
 });
 const aiConcurrencyLimitSchema = z.number().int().min(1).max(32);
+const aiAnalysisImageEdgeSchema = z.number().int().min(512).max(4096);
 const aiReliabilitySettingsSchema = z.strictObject({
   requestTimeoutMs: z.number().int().min(15_000).max(600_000),
   maxAttempts: z.number().int().min(1).max(10),
@@ -676,6 +677,7 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     /** @deprecated Prefer languages[]. */
     language: nonBlankString.optional(),
     concurrencyLimit: aiConcurrencyLimitSchema.optional(),
+    maxAnalysisImageEdgePx: aiAnalysisImageEdgeSchema.optional(),
     reliabilitySettings: aiReliabilitySettingsSchema.optional(),
     autoAnalyzeEnabled: z.boolean(),
     disclaimerAccepted: z.boolean(),
@@ -1345,6 +1347,7 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     enabledFields: aiEnabledFieldsSchema,
     analysisSettings: aiAnalysisSettingsSchema,
     languages: aiLanguagesSchema,
+    maxAnalysisImageEdgePx: aiAnalysisImageEdgeSchema.optional(),
   }),
   z.strictObject({
     type: z.literal('ai.content.get'),
@@ -1474,6 +1477,7 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     analysisSettings: aiAnalysisSettingsSchema,
     languages: aiLanguagesSchema,
     concurrencyLimit: aiConcurrencyLimitSchema,
+    maxAnalysisImageEdgePx: aiAnalysisImageEdgeSchema.optional(),
     requestTimeoutMs: z.number().int().min(15_000).max(600_000),
     maxAttempts: z.number().int().min(1).max(10),
     maxJobs: z.number().int().min(1).max(100).default(20),
