@@ -330,6 +330,13 @@ export const searchScopeSchema = z.discriminatedUnion('kind', [
     recursive: z.boolean(),
   }),
   z.strictObject({
+    // A smart collection is a stored query, not a materialized asset list.
+    // Search resolves the saved definition in the Worker and ANDs the live
+    // user query/filter state with it so the current browse scope is retained.
+    kind: z.literal('smart_collection'),
+    collectionId: nonBlankString,
+  }),
+  z.strictObject({
     kind: z.literal('trash'),
   }),
 ]);
@@ -352,12 +359,36 @@ export const searchClauseSchema = z.strictObject({
 
 export type SearchClause = z.infer<typeof searchClauseSchema>;
 
-export const searchQuerySchema = z.strictObject({
+const searchQueryDefinitionSchema = z.strictObject({
+  /**
+   * A backwards-compatible conjunction used by saved searches created before
+   * contextual `|` alternatives existed. When `groups` is absent, every
+   * clause here must match.
+   */
   clauses: z.array(searchClauseSchema).max(32),
+  /**
+   * A disjunction of conjunctions: each inner group is ANDed and the groups
+   * are ORed. This keeps `name:hero tag:y2k | author:Jane` structured across
+   * renderer, preload, main and worker without passing a query string over
+   * the process boundary.
+   */
+  groups: z.array(z.array(searchClauseSchema).min(1).max(32)).min(1).max(32).optional(),
+}).superRefine((query, context) => {
+  if (query.groups !== undefined && query.clauses.length > 0) {
+    context.addIssue({
+      code: 'custom',
+      message: 'A search query must use either legacy clauses or contextual groups, not both.',
+      path: ['groups'],
+    });
+  }
 }).nullable();
 
+export const searchQuerySchema = searchQueryDefinitionSchema;
+
+export type SearchQuery = Exclude<z.infer<typeof searchQuerySchema>, null>;
+
 export const smartCollectionQueryDefinitionSchema = z.strictObject({
-  search: z.strictObject({ clauses: z.array(searchClauseSchema).max(32) }).optional(),
+  search: searchQueryDefinitionSchema.unwrap().optional(),
   filters: z.array(filterClauseSchema).max(16).optional(),
   sort: sortDefinitionSchema.optional(),
 });

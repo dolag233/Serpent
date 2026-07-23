@@ -97,7 +97,7 @@ describe('schema v8->v9 migration', () => {
     });
 
     const database = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
-    expect(database.pragma('user_version')).toEqual([{ user_version: 16 }]);
+    expect(database.pragma('user_version')).toEqual([{ user_version: 18 }]);
 
     const columns = database.prepare("PRAGMA table_info('assets')").all() as Array<{
       cid: number; name: string; type: string;
@@ -142,6 +142,8 @@ describe('schema v8->v9 migration', () => {
     db.exec(`
     DROP TABLE IF EXISTS linked_ignored_assets;
     DROP TABLE IF EXISTS linked_folder_rules;
+    DROP TABLE IF EXISTS trashed_managed_folders;
+    DROP INDEX IF EXISTS trashed_managed_folders_trashed_at_idx;
       DROP TABLE IF EXISTS revision_artifacts;
       DROP TABLE IF EXISTS jobs;
       DELETE FROM schema_migrations WHERE version >= 9;
@@ -152,7 +154,7 @@ describe('schema v8->v9 migration', () => {
     service.openLibrary(created.libraryPath);
 
     const db2 = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
-    expect(db2.pragma('user_version')).toEqual([{ user_version: 16 }]);
+    expect(db2.pragma('user_version')).toEqual([{ user_version: 18 }]);
     const migrationRows = db2.prepare('SELECT version FROM schema_migrations ORDER BY version').all() as Array<{ version: number }>;
     expect(migrationRows.map((r) => r.version)).toContain(9);
     db2.close();
@@ -166,7 +168,7 @@ describe('schema v8->v9 migration', () => {
     service.closeAll();
     service.openLibrary(created.libraryPath);
     const db = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
-    expect(db.pragma('user_version')).toEqual([{ user_version: 16 }]);
+    expect(db.pragma('user_version')).toEqual([{ user_version: 18 }]);
     service.closeAll();
     service.openLibrary(created.libraryPath);
     const migrationCount = db.prepare(
@@ -203,8 +205,10 @@ describe('downgrade helpers still work with v9', () => {
       DROP TABLE IF EXISTS ai_asset_tags;
       DROP TABLE IF EXISTS ai_content;
       DROP INDEX IF EXISTS ai_content_asset_field;
-    DROP TABLE IF EXISTS linked_ignored_assets;
-    DROP TABLE IF EXISTS linked_folder_rules;
+      DROP TABLE IF EXISTS linked_ignored_assets;
+      DROP TABLE IF EXISTS linked_folder_rules;
+      DROP TABLE IF EXISTS trashed_managed_folders;
+      DROP INDEX IF EXISTS trashed_managed_folders_trashed_at_idx;
       DROP TABLE IF EXISTS revision_artifacts;
       DROP TABLE IF EXISTS jobs;
       DROP TABLE IF EXISTS asset_metadata;
@@ -221,7 +225,7 @@ describe('downgrade helpers still work with v9', () => {
 
     service.openLibrary(created.libraryPath);
     const db = new TestDatabase(dbPath);
-    expect(db.pragma('user_version')).toEqual([{ user_version: 16 }]);
+    expect(db.pragma('user_version')).toEqual([{ user_version: 18 }]);
     db.close();
     service.closeAll();
   });

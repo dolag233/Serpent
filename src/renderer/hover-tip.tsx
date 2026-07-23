@@ -1,8 +1,10 @@
 import {
+  Fragment,
   useEffect,
   useRef,
   useState,
   type CSSProperties,
+  type ReactNode,
 } from 'react';
 import { createPortal } from 'react-dom';
 
@@ -13,7 +15,23 @@ type TipState = {
   readonly text: string;
   readonly left: number;
   readonly top: number;
+  readonly variant: "default" | "search-syntax";
 };
+
+function renderSearchSyntaxTip(text: string): ReactNode {
+  return text.split('\n').map((line, lineIndex) => (
+    <span className="search-syntax-tip-line" key={`${lineIndex}:${line}`}>
+      {line.split(/(\*\*[^*]+\*\*)/u).map((part, partIndex) => {
+        const isEmphasis = part.startsWith('**') && part.endsWith('**');
+        return isEmphasis ? (
+          <strong key={`${partIndex}:${part}`}>{part.slice(2, -2)}</strong>
+        ) : (
+          <Fragment key={`${partIndex}:${part}`}>{part}</Fragment>
+        );
+      })}
+    </span>
+  ));
+}
 
 /**
  * Document-level hover tip host. Mount once near the app root. Any element
@@ -52,12 +70,31 @@ export function HoverTipHost() {
       showTimerRef.current = window.setTimeout(() => {
         if (activeElRef.current !== el) return;
         const rect = el.getBoundingClientRect();
+        const variant =
+          el.getAttribute('data-hover-tip-variant') === 'search-syntax'
+            ? 'search-syntax'
+            : 'default';
+        // The search guide has a fixed, readable width. Clamp its centre by
+        // half that width so the right-hand toolbar control cannot make it
+        // overflow off the edge of the window.
+        const searchGuideHalfWidth = Math.min(
+          156,
+          Math.max(0, (window.innerWidth - 24) / 2),
+        );
+        const edgeInset = variant === 'search-syntax'
+          ? 12 + searchGuideHalfWidth
+          : 12;
         const left = Math.min(
-          window.innerWidth - 12,
-          Math.max(12, rect.left + rect.width / 2),
+          window.innerWidth - edgeInset,
+          Math.max(edgeInset, rect.left + rect.width / 2),
         );
         const top = Math.min(window.innerHeight - 8, rect.bottom + 6);
-        setTip({ text, left, top });
+        setTip({
+          text,
+          left,
+          top,
+          variant,
+        });
         showTimerRef.current = null;
       }, HOVER_TIP_SHOW_DELAY_MS);
     };
@@ -125,8 +162,14 @@ export function HoverTipHost() {
   };
 
   return createPortal(
-    <div className="hover-tip" role="tooltip" style={style}>
-      {tip.text}
+    <div
+      className={`hover-tip${tip.variant === 'search-syntax' ? ' is-search-syntax' : ''}`}
+      role="tooltip"
+      style={style}
+    >
+      {tip.variant === 'search-syntax'
+        ? renderSearchSyntaxTip(tip.text)
+        : tip.text}
     </div>,
     document.body,
   );

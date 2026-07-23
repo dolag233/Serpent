@@ -169,12 +169,10 @@ export const en = {
   },
   toolbar: {
     searchLibrary: "Search library",
-    aiSearch: "AI search",
-    aiSearchTitle: "When on, submitting uses configured AI to turn natural language into normal search criteria",
-    aiSearchPlaceholder: "Describe what you are looking for…",
     searchPlaceholder: "Search",
-    aiSearchHint: "On submit, the configured cloud model builds constrained search criteria",
-    searchHint: "Example: filename:\"hero concept\" NOT tags:sketch",
+    searchSyntax: "Search syntax",
+    searchSyntaxHint: "Advanced search:\n- Use **spaces** to filter by several keywords; every keyword must match\n- Use **|** to search alternatives; either keyword may match\n- Use tag: to search tags and name: to search filenames",
+    searchHint: "Example: name:\"hero concept\" -tag:sketch | author:Jane",
     clearSearch: "Clear search",
     searchingFor: "Searching: {query}",
     importFiles: "Import files",
@@ -713,7 +711,7 @@ export const en = {
   },
   aiConfig: {
     title: "AI settings",
-    note: "Used for asset AI analysis (description, tags, and related fields) and natural-language AI search.",
+    note: "Used for asset AI analysis (description, tags, and related fields).",
     provider: "Provider",
     apiFormat: "API format",
     apiFormatHint: "Choose the upstream protocol, not a model brand. If your relay only speaks Chat Completions, select OpenAI Chat Completions.",
@@ -740,7 +738,7 @@ export const en = {
     showApiKey: "Show API Key",
     hideApiKey: "Hide API Key",
     language: "Language",
-    languageHint: "Descriptions, tags, and AI search keywords use the selected language; tags must match that language.",
+    languageHint: "Descriptions and tags use the selected language; tags must match that language.",
     languagePlaceholder: "Follow system",
     savingVerifying: "Verifying connection…",
     saveVerifyingHint:

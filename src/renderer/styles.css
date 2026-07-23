@@ -488,10 +488,74 @@ body.platform-darwin .toolbar-nav-cluster {
   overflow: visible;
 }
 
+/* A collapsed side column has zero grid width, but its panel toggle remains a
+   stable window-edge affordance. Pin the toggle over the toolbar instead of
+   allowing it to spill into the browse grid track; the browse controls then
+   reserve exactly one control-width plus a quiet gap beside it. */
+.app-shell.left-collapsed .toolbar-nav-cluster {
+  position: absolute;
+  z-index: 1;
+  top: 0;
+  left: 10px;
+  width: var(--shell-control-height);
+  min-width: 0;
+  padding: 0;
+  gap: 0;
+  overflow: visible;
+}
+
+.app-shell.left-collapsed .toolbar-workspace-cluster {
+  padding-left: calc(10px + var(--shell-control-height) + 6px);
+}
+
+/* macOS traffic lights occupy the title-bar's leading inset, so both the
+   pinned sidebar toggle and its adjacent history controls move past it. */
+body.platform-darwin .app-shell.left-collapsed .toolbar-nav-cluster {
+  left: 78px;
+}
+
+body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
+  padding-left: calc(78px + var(--shell-control-height) + 6px);
+}
+
+.app-shell.right-collapsed .toolbar-inspector-cluster {
+  position: absolute;
+  z-index: 1;
+  top: 0;
+  right: 10px;
+  width: var(--shell-control-height);
+  min-width: 0;
+  padding: 0;
+  gap: 0;
+  overflow: visible;
+}
+
+/* The search field ends before the pinned Inspector control, not beneath it. */
+.app-shell.right-collapsed .toolbar-workspace-cluster {
+  padding-right: calc(10px + var(--shell-control-height) + 6px);
+}
+
+/* Windows caption buttons sit at the far right. Keep the Inspector toggle
+   immediately to their left and reserve both hit areas before the search. */
+:root[data-platform="windows"] .app-shell.right-collapsed .toolbar-inspector-cluster {
+  right: calc(3 * var(--windows-caption-width, 46px) + 8px);
+  padding-right: 0;
+}
+
+:root[data-platform="windows"] .app-shell.right-collapsed .toolbar-workspace-cluster {
+  padding-right: calc(
+    3 * var(--windows-caption-width, 46px) +
+    8px +
+    var(--shell-control-height) +
+    6px
+  );
+}
+
 /* Serpent-znex: reserve space for custom Windows caption buttons. */
 :root[data-platform="windows"] .toolbar-inspector-cluster {
   padding-right: calc(3 * var(--windows-caption-width, 46px) + 8px);
 }
+
 
 .windows-window-controls {
   position: absolute;
@@ -955,6 +1019,47 @@ body.platform-darwin .toolbar-nav-cluster {
   box-shadow: 0 1px 2px rgb(0 0 0 / 8%);
 }
 
+/* Search grammar needs a little room to teach rather than a one-line system
+   hint. Keep it light and quiet so it reads as guidance, not a warning. */
+.hover-tip.is-search-syntax {
+  width: min(312px, calc(100vw - 24px));
+  max-width: none;
+  padding: 8px 10px;
+  border-color: color-mix(in srgb, var(--divider-soft) 72%, white);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--raised-2) 84%, white);
+  color: var(--secondary);
+  font-size: 11px;
+  line-height: 1.55;
+  white-space: normal;
+  text-align: left;
+  box-shadow: 0 4px 12px rgb(0 0 0 / 10%);
+}
+
+.search-syntax-tip-line {
+  display: block;
+}
+
+.search-syntax-tip-line + .search-syntax-tip-line {
+  margin-top: 2px;
+}
+
+.search-syntax-tip-line:first-child {
+  margin-bottom: 5px;
+  color: var(--text);
+  font-weight: 620;
+}
+
+.search-syntax-tip-line strong {
+  color: var(--text);
+  font-weight: 650;
+}
+
+[data-theme="light"] .hover-tip.is-search-syntax {
+  background: color-mix(in srgb, var(--raised-2) 94%, white);
+  border-color: var(--divider-soft);
+}
+
 .tool-button {
   display: inline-grid;
   width: var(--shell-control-height);
@@ -1294,10 +1399,6 @@ body.platform-darwin .toolbar-nav-cluster {
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
-.search-control-wrap.is-ai-search {
-  border-color: color-mix(in srgb, var(--warning) 56%, var(--divider));
-}
-
 .search-control-wrap .search-control {
   flex: 1 1 auto;
   width: 100%;
@@ -1315,42 +1416,41 @@ body.platform-darwin .toolbar-nav-cluster {
   padding-right: 59px;
 }
 
-.search-ai-toggle {
+.search-syntax-help {
   position: absolute;
   top: 50%;
   right: 4px;
   display: inline-grid;
-  width: 22px;
-  height: 22px;
+  width: 20px;
+  height: 20px;
   place-items: center;
   padding: 0;
-  border: 0;
-  border-radius: 5px;
-  background: transparent;
-  color: var(--secondary);
+  border: 1px solid color-mix(in srgb, var(--divider-soft) 66%, transparent);
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--raised) 54%, transparent);
+  color: var(--tertiary);
   cursor: pointer;
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1;
   transform: translateY(-50%);
 }
 
-.search-control-wrap.has-value .search-ai-toggle {
+.search-control-wrap.has-value .search-syntax-help {
   right: 29px;
 }
 
-.search-ai-toggle:hover:not(:disabled) {
-  background: var(--hover);
-  color: var(--text);
+.search-syntax-help:hover {
+  border-color: color-mix(in srgb, var(--divider) 78%, transparent);
+  background: color-mix(in srgb, var(--raised-2) 74%, transparent);
+  color: var(--secondary);
 }
 
-.search-ai-toggle:focus-visible,
+.search-syntax-help:focus-visible,
 .search-clear-btn:focus-visible {
   outline: none;
   box-shadow: 0 0 0 2px var(--accent-soft);
-}
-
-.search-ai-toggle:disabled {
-  color: var(--tertiary);
-  opacity: 0.48;
-  cursor: not-allowed;
 }
 
 .search-clear-btn {
@@ -1487,11 +1587,6 @@ body.platform-darwin .toolbar-nav-cluster {
 
 .search-control:disabled::placeholder {
   color: var(--tertiary);
-}
-
-.search-ai-toggle[aria-pressed="true"]:not(:disabled) {
-  background: color-mix(in srgb, var(--warning) 18%, transparent);
-  color: var(--warning-fg);
 }
 
 .navigation-pane,
@@ -6057,6 +6152,13 @@ select.ai-config-input.ai-config-languages {
   border-radius: 2px;
   background: color-mix(in srgb, var(--warning) 24%, transparent);
   color: var(--warning-fg);
+}
+
+.search-text-highlight {
+  padding: 0;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--warning) 26%, transparent);
+  color: inherit;
 }
 .search-pagination {
   display: flex;

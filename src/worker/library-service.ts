@@ -217,9 +217,12 @@ import {
   targetLibraryPath,
 } from './library-rules';
 import {
-  buildFts5Query,
+  buildTrigramFts5Query,
+  canUseTrigramSearch,
+  normalizeSearchText,
   tokenizeForFts,
   type SearchClause,
+  type SearchGroup,
 } from './search-query';
 import {
   GIF_THUMBNAIL_PROBE_SIZE,
@@ -1210,6 +1213,52 @@ const TRASHED_MANAGED_FOLDERS_SCHEMA_CHECKSUM = createHash('sha256')
   .update(TRASHED_MANAGED_FOLDERS_SCHEMA_SQL)
   .digest('hex');
 
+// Migration v18 (Serpent-wcnk): replace exact-token FTS with a raw,
+// normalized trigram index. FTS5's trigram tokenizer accelerates arbitrary
+// contains matching for terms of three or more characters; the Worker applies
+// the same exact predicate for shorter terms so one-character search remains
+// correct instead of silently returning no results.
+const CONTEXTUAL_SUBSTRING_SEARCH_SCHEMA_SQL = `
+  DROP TRIGGER IF EXISTS asset_search_index_ai;
+  DROP TRIGGER IF EXISTS asset_search_index_ad;
+  DROP TRIGGER IF EXISTS asset_search_index_au;
+  DROP TABLE asset_search;
+  DELETE FROM asset_search_index;
+
+  CREATE VIRTUAL TABLE asset_search USING fts5(
+    filename,
+    tags,
+    description,
+    source_url,
+    author,
+    folder_path,
+    metadata_text,
+    content='asset_search_index',
+    tokenize='trigram case_sensitive 0'
+  );
+  CREATE TRIGGER asset_search_index_ai AFTER INSERT ON asset_search_index BEGIN
+    INSERT INTO asset_search(rowid, filename, tags, description, source_url, author, folder_path, metadata_text)
+    VALUES (new.rowid, new.filename, new.tags, new.description,
+            new.source_url, new.author, new.folder_path, new.metadata_text);
+  END;
+  CREATE TRIGGER asset_search_index_ad AFTER DELETE ON asset_search_index BEGIN
+    INSERT INTO asset_search(asset_search, rowid, filename, tags, description, source_url, author, folder_path, metadata_text)
+    VALUES ('delete', old.rowid, old.filename, old.tags, old.description,
+            old.source_url, old.author, old.folder_path, old.metadata_text);
+  END;
+  CREATE TRIGGER asset_search_index_au AFTER UPDATE ON asset_search_index BEGIN
+    INSERT INTO asset_search(asset_search, rowid, filename, tags, description, source_url, author, folder_path, metadata_text)
+    VALUES ('delete', old.rowid, old.filename, old.tags, old.description,
+            old.source_url, old.author, old.folder_path, old.metadata_text);
+    INSERT INTO asset_search(rowid, filename, tags, description, source_url, author, folder_path, metadata_text)
+    VALUES (new.rowid, new.filename, new.tags, new.description,
+            new.source_url, new.author, new.folder_path, new.metadata_text);
+  END;
+`;
+const CONTEXTUAL_SUBSTRING_SEARCH_SCHEMA_CHECKSUM = createHash('sha256')
+  .update(CONTEXTUAL_SUBSTRING_SEARCH_SCHEMA_SQL)
+  .digest('hex');
+
 const MIGRATIONS = [
   { version: 1, sql: INITIAL_SCHEMA_SQL, checksum: INITIAL_SCHEMA_CHECKSUM },
   { version: 2, sql: ASSET_SCHEMA_SQL, checksum: ASSET_SCHEMA_CHECKSUM },
@@ -1235,6 +1284,11 @@ const MIGRATIONS = [
     version: 17,
     sql: TRASHED_MANAGED_FOLDERS_SCHEMA_SQL,
     checksum: TRASHED_MANAGED_FOLDERS_SCHEMA_CHECKSUM,
+  },
+  {
+    version: 18,
+    sql: CONTEXTUAL_SUBSTRING_SEARCH_SCHEMA_SQL,
+    checksum: CONTEXTUAL_SUBSTRING_SEARCH_SCHEMA_CHECKSUM,
   },
 ] as const;
 const SUPPORTED_SCHEMA_VERSION = MIGRATIONS.at(-1)!.version;
@@ -2310,6 +2364,202 @@ function backfillAssetSearchContent(connection: DatabaseConnection): void {
   }
 }
 
+/** Rebuild v18's raw normalized index from the canonical asset tables. */
+function backfillContextualSearchContent(connection: DatabaseConnection): void {
+  const assets = connection
+    .prepare(
+      `SELECT a.asset_id, a.relative_file_path, a.availability, r.byte_size,
+              m.description, m.source_page_url, m.author
+         FROM assets a
+         JOIN revisions r ON r.revision_id = a.current_revision_id
+         LEFT JOIN asset_metadata m ON m.asset_id = a.asset_id
+        ORDER BY a.asset_id`,
+    )
+    .all() as Array<{
+      asset_id: string;
+      relative_file_path: string;
+      availability: string;
+      byte_size: number;
+      description: string | null;
+      source_page_url: string | null;
+      author: string | null;
+    }>;
+  const tagRows = connection
+    .prepare(
+      `SELECT asset_id, GROUP_CONCAT(tag_name, ' ') AS tags
+         FROM (
+           SELECT hat.asset_id, t.name AS tag_name
+             FROM human_asset_tags hat JOIN tags t ON t.tag_id = hat.tag_id
+           UNION
+           SELECT aat.asset_id, t.name AS tag_name
+             FROM ai_asset_tags aat JOIN tags t ON t.tag_id = aat.tag_id
+         )
+        GROUP BY asset_id`,
+    )
+    .all() as Array<{ asset_id: string; tags: string | null }>;
+  const tagsByAsset = new Map(tagRows.map((row) => [row.asset_id, row.tags ?? '']));
+  const insert = connection.prepare(
+    `INSERT INTO asset_search_index
+       (asset_id, filename, tags, description, source_url, author, folder_path, metadata_text)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+  );
+  for (const asset of assets) {
+    insert.run(
+      asset.asset_id,
+      normalizeSearchText(buildFileName(asset.relative_file_path)),
+      normalizeSearchText(tagsByAsset.get(asset.asset_id) ?? ''),
+      normalizeSearchText(asset.description ?? ''),
+      normalizeSearchText(asset.source_page_url ?? ''),
+      normalizeSearchText(asset.author ?? ''),
+      normalizeSearchText(buildFolderPath(asset.relative_file_path)),
+      normalizeSearchText(
+        buildMetadataText({
+          availability: asset.availability,
+          byteSize: asset.byte_size,
+          relativeFilePath: asset.relative_file_path,
+        }),
+      ),
+    );
+  }
+}
+
+const SEARCH_INDEX_FIELDS = [
+  'filename',
+  'tags',
+  'description',
+  'source_url',
+  'author',
+  'folder_path',
+  'metadata_text',
+] as const;
+type SearchIndexField = (typeof SEARCH_INDEX_FIELDS)[number];
+
+function normalizedSearchGroups(query: {
+  clauses: SearchClause[];
+  groups?: SearchGroup[];
+}): SearchGroup[] {
+  if (query.groups && query.groups.length > 0) return query.groups;
+  return query.clauses.length > 0 ? [query.clauses] : [];
+}
+
+function hasPositiveSearchClause(groups: SearchGroup[]): boolean {
+  return groups.some((group) => group.some((clause) => !clause.exclude));
+}
+
+function ftsCanNarrowSearchGroups(groups: SearchGroup[]): boolean {
+  return (
+    groups.length > 0 &&
+    groups.every((group) => group.some((clause) => !clause.exclude)) &&
+    canUseTrigramSearch(groups)
+  );
+}
+
+function searchFieldsForClause(field: string | null): readonly SearchIndexField[] {
+  if (field === null) return SEARCH_INDEX_FIELDS;
+  return SEARCH_INDEX_FIELDS.includes(field as SearchIndexField)
+    ? [field as SearchIndexField]
+    : [];
+}
+
+/**
+ * Exact contains predicate applied after the FTS candidate lookup (or alone
+ * for one/two-character terms). It is deliberately parameterized: user text
+ * never becomes SQL, even when a saved smart collection is malformed.
+ */
+function buildContextualSearchWhere(groups: SearchGroup[]): {
+  sql: string;
+  params: string[];
+} {
+  const params: string[] = [];
+  const groupExpressions: string[] = [];
+  for (const group of groups) {
+    const clauseExpressions: string[] = [];
+    for (const clause of group) {
+      const fields = searchFieldsForClause(clause.field);
+      const normalizedValues = clause.values
+        .map((value) => normalizeSearchText(value).trim())
+        .filter(Boolean);
+      if (fields.length === 0 || normalizedValues.length === 0) {
+        clauseExpressions.push('0');
+        continue;
+      }
+      const valueExpressions = normalizedValues.map((value) => {
+        const fieldExpressions = fields.map((field) => {
+          params.push(value);
+          return `instr(sc.${field}, ?) > 0`;
+        });
+        return fieldExpressions.length === 1
+          ? fieldExpressions[0]!
+          : `(${fieldExpressions.join(' OR ')})`;
+      });
+      const clauseExpression =
+        valueExpressions.length === 1
+          ? valueExpressions[0]!
+          : `(${valueExpressions.join(' OR ')})`;
+      clauseExpressions.push(
+        clause.exclude ? `NOT (${clauseExpression})` : `(${clauseExpression})`,
+      );
+    }
+    if (clauseExpressions.length > 0) {
+      groupExpressions.push(`(${clauseExpressions.join(' AND ')})`);
+    }
+  }
+  return {
+    sql:
+      groupExpressions.length === 0
+        ? '0'
+        : groupExpressions.length === 1
+          ? groupExpressions[0]!
+          : `(${groupExpressions.join(' OR ')})`,
+    params,
+  };
+}
+
+/**
+ * Stable relevance tiers for contextual search. Exact beats prefix, prefix
+ * beats arbitrary contains, and ties favour filename then tags before the
+ * remaining indexed fields. Multiple positive terms retain the best tier.
+ */
+function buildContextualSearchRank(groups: SearchGroup[]): {
+  sql: string;
+  params: string[];
+} {
+  const params: string[] = [];
+  const termRanks: string[] = [];
+  for (const clause of groups.flat()) {
+    if (clause.exclude) continue;
+    const fields = searchFieldsForClause(clause.field);
+    for (const rawValue of clause.values) {
+      const value = normalizeSearchText(rawValue).trim();
+      if (!value || fields.length === 0) continue;
+      const fieldRanks = fields.map((field) => {
+        const fieldPriority = SEARCH_INDEX_FIELDS.indexOf(field);
+        params.push(value, value, value);
+        return `CASE
+          WHEN sc.${field} = ? THEN ${fieldPriority}
+          WHEN instr(sc.${field}, ?) = 1 THEN ${10 + fieldPriority}
+          WHEN instr(sc.${field}, ?) > 0 THEN ${20 + fieldPriority}
+          ELSE 99
+        END`;
+      });
+      termRanks.push(
+        fieldRanks.length === 1
+          ? fieldRanks[0]!
+          : `MIN(${fieldRanks.join(', ')})`,
+      );
+    }
+  }
+  return {
+    sql:
+      termRanks.length === 0
+        ? '99'
+        : termRanks.length === 1
+          ? termRanks[0]!
+          : `MIN(${termRanks.join(', ')})`,
+    params,
+  };
+}
+
 function migrateDatabase(connection: DatabaseConnection, allowFresh: boolean): void {
   const currentVersion = schemaVersion(connection);
   if (currentVersion > SUPPORTED_SCHEMA_VERSION) {
@@ -2346,6 +2596,9 @@ function migrateDatabase(connection: DatabaseConnection, allowFresh: boolean): v
         if (migration.version === 6) {
           backfillAssetSearchContent(connection);
           connection.exec("INSERT INTO asset_search(asset_search) VALUES('rebuild')");
+        }
+        if (migration.version === 18) {
+          backfillContextualSearchContent(connection);
         }
         if (rebuildsTable) {
           const foreignKeyViolations = connection.pragma('foreign_key_check');
@@ -7415,13 +7668,13 @@ export class LibraryService {
       )
       .run(
         assetId,
-        tokenizeForFts(buildFileName(asset.relative_file_path)),
-        tokenizeForFts(tagRow?.tags ?? ''),
-        tokenizeForFts(asset.description ?? ''),
-        tokenizeForFts(asset.source_page_url ?? ''),
-        tokenizeForFts(asset.author ?? ''),
-        tokenizeForFts(buildFolderPath(asset.relative_file_path)),
-        tokenizeForFts(
+        normalizeSearchText(buildFileName(asset.relative_file_path)),
+        normalizeSearchText(tagRow?.tags ?? ''),
+        normalizeSearchText(asset.description ?? ''),
+        normalizeSearchText(asset.source_page_url ?? ''),
+        normalizeSearchText(asset.author ?? ''),
+        normalizeSearchText(buildFolderPath(asset.relative_file_path)),
+        normalizeSearchText(
           buildMetadataText({
             availability: asset.availability,
             byteSize: asset.byte_size,
@@ -11350,7 +11603,7 @@ export class LibraryService {
 
   searchAssets(input: {
     libraryId: string;
-    query?: { clauses: SearchClause[] } | null;
+    query?: { clauses: SearchClause[]; groups?: SearchGroup[] } | null;
     filters?: FilterClause[] | null;
     scope?: SearchScope | null;
     sort?: { field: string; order: 'asc' | 'desc' } | null;
@@ -11367,17 +11620,16 @@ export class LibraryService {
     const limit = input.limit ?? 50;
     const offset = input.offset ?? 0;
 
-    const hasQuery =
-      input.query !== null &&
-      input.query !== undefined &&
-      input.query.clauses.length > 0;
-    const hasPositiveQuery = hasQuery && input.query!.clauses.some((clause) => !clause.exclude);
-    const isExcludeOnlyQuery = hasQuery && !hasPositiveQuery;
-    const fts5Query = hasQuery
-      ? buildFts5Query(isExcludeOnlyQuery
-        ? input.query!.clauses.map((clause) => ({ ...clause, exclude: false }))
-        : input.query!.clauses)
+    const searchGroups = input.query ? normalizedSearchGroups(input.query) : [];
+    const hasQuery = searchGroups.length > 0;
+    const hasPositiveQuery = hasPositiveSearchClause(searchGroups);
+    const useTrigramIndex = hasQuery && ftsCanNarrowSearchGroups(searchGroups);
+    const fts5Query = useTrigramIndex
+      ? buildTrigramFts5Query(searchGroups)
       : null;
+    const { sql: contextualSearchWhere, params: contextualSearchParams } = hasQuery
+      ? buildContextualSearchWhere(searchGroups)
+      : { sql: '', params: [] };
     const { sql: filterWhere, params: filterParams } = this.buildFilterWhere(
       input.filters ?? [],
     );
@@ -11387,13 +11639,9 @@ export class LibraryService {
     let orderBy: string;
     const orderParams: unknown[] = [];
     if (hasPositiveQuery && !input.sort) {
-      // When searching, order by BM25 relevance with per-column weights
-      // (filename 10, tags 8, description 5, source_url 3, author 3,
-      // folder_path 2, metadata_text 1) per ADR-0009. The FTS5 `rank` hidden
-      // column uses default weights (all 1.0); explicit bm25() is required to
-      // apply the weighted ranking. This sacrifices the rank-column snippet
-      // lazy-evaluation optimization (restorable later via a custom rank fn).
-      orderBy = `bm25(asset_search, 10.0, 8.0, 5.0, 3.0, 3.0, 2.0, 1.0) ASC, a.asset_id ASC`;
+      const relevance = buildContextualSearchRank(searchGroups);
+      orderBy = `${relevance.sql} ASC, a.relative_file_path ASC, a.asset_id ASC`;
+      orderParams.push(...relevance.params);
     } else if (input.sort) {
       const sortField = input.sort.field;
       const dir = input.sort.order === 'desc' ? 'DESC' : 'ASC';
@@ -11473,7 +11721,7 @@ export class LibraryService {
     }
 
     // Build the base FROM + JOIN clauses.
-    const baseFrom = hasPositiveQuery
+    const baseFrom = hasQuery
       ? `FROM assets a
            JOIN revisions r ON r.revision_id = a.current_revision_id
            LEFT JOIN asset_metadata m ON m.asset_id = a.asset_id
@@ -11533,21 +11781,13 @@ export class LibraryService {
     const whereParts: string[] = [];
     const allParams: unknown[] = [];
 
-    if (hasPositiveQuery) {
-      whereParts.push(
-        `asset_search MATCH ? AND rank MATCH 'bm25(10.0, 8.0, 5.0, 3.0, 3.0, 2.0, 1.0)'`,
-      );
-      allParams.push(fts5Query);
-    } else if (isExcludeOnlyQuery) {
-      whereParts.push(
-        `a.asset_id NOT IN (
-           SELECT excluded.asset_id
-             FROM asset_search_index excluded
-             JOIN asset_search ON excluded.rowid = asset_search.rowid
-            WHERE asset_search MATCH ?
-         )`,
-      );
-      allParams.push(fts5Query);
+    if (hasQuery) {
+      if (useTrigramIndex) {
+        whereParts.push('asset_search MATCH ?');
+        allParams.push(fts5Query!);
+      }
+      whereParts.push(contextualSearchWhere);
+      allParams.push(...contextualSearchParams);
     }
 
     // Soft-deleted assets retain their organization relationships for restore.
@@ -11627,7 +11867,7 @@ export class LibraryService {
       whereParts.length > 0 ? `WHERE ${whereParts.join(' AND ')}` : '';
 
     // Columns for data query.
-    const dataColumns = hasPositiveQuery
+    const dataColumns = useTrigramIndex
       ? `a.asset_id, a.location_kind, a.managed_folder_id, a.relative_file_path, a.current_revision_id,
          a.availability, r.byte_size, r.modified_at,
          COALESCE(m.rating, 0) AS rating, COALESCE(m.favorite, 0) AS favorite,
@@ -11684,7 +11924,7 @@ export class LibraryService {
     });
 
     const snippets: Array<{ assetId: string; text: string }> | undefined =
-      hasPositiveQuery
+      useTrigramIndex
         ? rows
             .filter((r) => r.snippet_text && r.snippet_text.length > 0)
             .map((r) => ({ assetId: r.asset_id, text: r.snippet_text! }))

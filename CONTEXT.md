@@ -29,3 +29,21 @@ _Avoid_: Search query, filter, tag, collection
 **Asset filter**:
 A condition that selects a set of assets by properties or organization, such as tags, collections, folders, ratings, or formats. A filter is not an exact resource reference.
 _Avoid_: Resource reference, search query
+
+## Discovery and search
+
+**Browsable asset set**:
+The assets reachable in the active workspace context after its current navigation scope, recursive-browse choice, and structured filters are applied. A keyword search narrows this set rather than implicitly changing it to an entire library or a different collection.
+_Avoid_: Global library result set, visible cards
+
+**Plain-text search**:
+A case-insensitive contains search over every indexed asset field, including filename, tags, description, source link, author, folder path, and metadata. It accepts a one-character term, starts automatically after a 200ms input debounce, and is distinct from structured filtering. It is the only search mode; AI analysis does not create a separate search path.
+_Avoid_: Exact-token search, tag filter, AI search
+
+**Search expression**:
+The text entered into the workspace search box. Whitespace-separated terms are conjunctive, `|` separates alternatives, a leading `-` excludes a term, and double quotes preserve a literal phrase. A field clause limits a term to a canonical asset field: `name:`, `tag:`, `desc:`, `link:`, `author:`, `path:`, or `meta:`. The expression is evaluated only within the browsable asset set.
+_Avoid_: Filter preset, smart collection
+
+**Highlighted match**:
+The exact text span matched by a plain-text search term within a result's displayed searchable value. Result cards render matching filename spans and contextual snippets with a distinct but accessible emphasis without changing the underlying value.
+_Avoid_: Selected text, tag color

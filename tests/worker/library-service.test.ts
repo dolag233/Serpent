@@ -75,6 +75,8 @@ function downgradeLibraryToV1(libraryPath: string, createMigrationBlocker = fals
     -- Reverse v9: drop revision_artifacts + jobs.
     DROP TABLE IF EXISTS linked_ignored_assets;
     DROP TABLE IF EXISTS linked_folder_rules;
+    DROP TABLE IF EXISTS trashed_managed_folders;
+    DROP INDEX IF EXISTS trashed_managed_folders_trashed_at_idx;
     DROP TABLE IF EXISTS revision_artifacts;
     DROP TABLE IF EXISTS jobs;
     DROP TABLE IF EXISTS asset_metadata;
@@ -117,6 +119,8 @@ function downgradeLibraryToV2(libraryPath: string): void {
     -- Reverse v9: drop revision_artifacts + jobs.
     DROP TABLE IF EXISTS linked_ignored_assets;
     DROP TABLE IF EXISTS linked_folder_rules;
+    DROP TABLE IF EXISTS trashed_managed_folders;
+    DROP INDEX IF EXISTS trashed_managed_folders_trashed_at_idx;
     DROP TABLE IF EXISTS revision_artifacts;
     DROP TABLE IF EXISTS jobs;
     DROP TABLE IF EXISTS asset_metadata;
@@ -212,7 +216,7 @@ describe('LibraryService lifecycle', () => {
     expect(service.listLibraries()).toEqual([created]);
 
     const database = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
-    expect(database.pragma('user_version')).toEqual([{ user_version: 16 }]);
+    expect(database.pragma('user_version')).toEqual([{ user_version: 18 }]);
     database.close();
 
     expect(service.openLibrary(created.libraryPath)).toEqual(created);
@@ -301,6 +305,8 @@ describe('LibraryService lifecycle', () => {
       DROP TRIGGER IF EXISTS asset_search_index_ad;
       DROP TRIGGER IF EXISTS asset_search_index_au;
       DROP TABLE asset_search;
+      DROP TABLE IF EXISTS trashed_managed_folders;
+      DROP INDEX IF EXISTS trashed_managed_folders_trashed_at_idx;
       CREATE TABLE asset_search_index_v13 (
         asset_id TEXT UNIQUE NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE,
         label TEXT NOT NULL DEFAULT '',
@@ -374,7 +380,7 @@ describe('LibraryService lifecycle', () => {
     migratedService.closeAll();
 
     const migratedDatabase = new TestDatabase(databasePath);
-    expect(migratedDatabase.pragma('user_version')).toEqual([{ user_version: 16 }]);
+    expect(migratedDatabase.pragma('user_version')).toEqual([{ user_version: 18 }]);
     expect(migratedDatabase.prepare("PRAGMA table_info('asset_metadata')").all())
       .not.toEqual(expect.arrayContaining([expect.objectContaining({ name: 'label' })]));
     expect(migratedDatabase.prepare("PRAGMA table_info('asset_search_index')").all())
@@ -492,7 +498,7 @@ describe('LibraryService lifecycle', () => {
     service.openLibrary(created.libraryPath);
 
     const database = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
-    expect(database.pragma('user_version')).toEqual([{ user_version: 16 }]);
+    expect(database.pragma('user_version')).toEqual([{ user_version: 18 }]);
     expect(
       database
         .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'assets'")
@@ -520,7 +526,7 @@ describe('LibraryService lifecycle', () => {
     expect(service.listAssets({ libraryId: reopened.libraryId, recursive: true })[0])
       .toMatchObject({ relativeFilePath: 'Café.PNG' });
     const database = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
-    expect(database.pragma('user_version')).toEqual([{ user_version: 16 }]);
+    expect(database.pragma('user_version')).toEqual([{ user_version: 18 }]);
     expect(database.prepare('SELECT path_identity FROM assets').all()).toEqual([
       { path_identity: 'café.png' },
     ]);

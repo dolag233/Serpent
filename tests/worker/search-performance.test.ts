@@ -7,6 +7,7 @@ import { performance } from 'node:perf_hooks';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { LibraryService } from '../../src/worker/library-service';
+import { normalizeSearchText } from '../../src/worker/search-query';
 
 const ASSET_COUNT = 100_000;
 const FIRST_PAGE_SIZE = 50;
@@ -124,12 +125,12 @@ function seedAssets(libraryPath: string, folderId: string): void {
       );
       insertSearchIndex.run(
         assetId,
-        filename,
-        favorite ? 'favorite' : '',
-        description,
-        sourceUrl ?? '',
-        'Performance',
-        `rating:${rating}`,
+        normalizeSearchText(filename),
+        normalizeSearchText(favorite ? 'favorite' : ''),
+        normalizeSearchText(description),
+        normalizeSearchText(sourceUrl ?? ''),
+        normalizeSearchText('Performance'),
+        normalizeSearchText(`rating:${rating}`),
       );
     }
     database.exec('COMMIT');
@@ -212,6 +213,28 @@ describe('100k asset search performance gate', () => {
     expect(elapsedMs).toBeLessThan(MAX_QUERY_MS);
   });
 
+  it('keeps one-character substring search interactive without FTS', () => {
+    let result: ReturnType<LibraryService['searchAssets']> | undefined;
+    const elapsedMs = benchmark(() => {
+      result = fixture.service.searchAssets({
+        libraryId: fixture.libraryId,
+        query: {
+          clauses: [{ field: null, values: ['y'], exclude: false }],
+        },
+        limit: FIRST_PAGE_SIZE,
+        offset: 0,
+      });
+    });
+
+    // SQLite's trigram tokenizer cannot index one-character terms. The
+    // contextual fallback must therefore stay usable even when it scans the
+    // current 100k-asset search scope directly.
+    expect(result?.total).toBe(90_000);
+    expect(result?.items).toHaveLength(FIRST_PAGE_SIZE);
+    console.info(`[search-perf] one-character median=${elapsedMs.toFixed(1)}ms assets=${ASSET_COUNT}`);
+    expect(elapsedMs).toBeLessThan(MAX_QUERY_MS);
+  });
+
   it('keeps combined filter and sort first-page latency below one second', () => {
     let result: ReturnType<LibraryService['searchAssets']> | undefined;
     const elapsedMs = benchmark(() => {
@@ -278,8 +301,13 @@ describe('100k asset search performance gate', () => {
         `INSERT INTO asset_search_index (
            asset_id, filename, tags, description, source_url,
            folder_path, metadata_text
-         ) VALUES (?, 'concurrent.png', '', 'Needle concurrent', '', 'Performance', '')`,
-      ).run('perf-asset-concurrent');
+         ) VALUES (?, ?, '', ?, '', ?, '')`,
+      ).run(
+        'perf-asset-concurrent',
+        normalizeSearchText('concurrent.png'),
+        normalizeSearchText('Needle concurrent'),
+        normalizeSearchText('Performance'),
+      );
 
       const whileWriting = fixture.service.searchAssets({
         libraryId: fixture.libraryId,

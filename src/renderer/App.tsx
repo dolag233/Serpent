@@ -12,7 +12,6 @@ import {
 import { flushSync } from "react-dom";
 
 import { Icon, type IconName } from "./Icons";
-import { IconActionButton } from "./icon-action-button";
 import { iconActionAttrs } from "./icon-action-attrs";
 import { EditTextContextMenuHost } from "./edit-text-context-menu";
 import { HoverTipHost } from "./hover-tip";
@@ -36,6 +35,7 @@ import {
 import { AssetCardMedia } from "./AssetCardMedia";
 import { useAssetCardHoverPreview } from "./use-asset-card-hover-preview";
 import { resolveSearchSnippetCaption } from "./search-snippet-caption";
+import { parseSearchExpression, splitSearchHighlights } from "./search-expression";
 import { ConvertLinkedDialog } from "./ConvertLinkedDialog";
 import { LinkedRulesDialog } from "./LinkedRulesDialog";
 import { TagManagementWorkspace } from "./TagManagementWorkspace";
@@ -77,6 +77,7 @@ import {
 } from "./folder-recursive-preferences";
 import { useT, useLocale, translateForLocale, type AppLocale } from "./i18n";
 import type { AiApiFormat } from "../shared/ai-endpoints";
+import type { SearchQuery } from "../shared/asset-types";
 import {
   createWorkspaceNavHistory,
   type WorkspaceNavLocation,
@@ -339,13 +340,7 @@ type OrganizationRenameTarget = {
   name: string;
 };
 type SearchDefinition = {
-  search?: {
-    clauses: Array<{
-      field: string | null;
-      values: string[];
-      exclude: boolean;
-    }>;
-  };
+  search?: SearchQuery;
   filters?: FilterClause[];
   sort?: SortDefinition;
 };
@@ -680,13 +675,12 @@ function AppInner() {
   const [searchSnippets, setSearchSnippets] = useState<Map<string, string>>(
     new Map(),
   );
-  const [aiSearchEnabled, setAiSearchEnabled] = useState(false);
-  const [aiSearchLoading, setAiSearchLoading] = useState(false);
-  const [activeAiSearchDefinition, setActiveAiSearchDefinition] =
-    useState<SearchDefinition | null>(null);
   const { open: openContextMenu, close: closeContextMenu } =
     useContextMenu();
   const hadDiscoveryInput = useRef(false);
+  // Auto-search requests can resolve out of order while the user is still
+  // typing. Only the newest first-page request may replace the canvas.
+  const searchRequestGenerationRef = useRef(0);
   const reloadCurrentContentRef = useRef<() => Promise<void>>(
     async () => undefined,
   );
@@ -1376,8 +1370,7 @@ function AppInner() {
               activeCollectionId,
               activeSmartCollectionId,
               folders,
-              searchActive:
-                Boolean(searchValue.trim()) || activeAiSearchDefinition !== null,
+              searchActive: Boolean(searchValue.trim()),
             })
           : undefined;
       if (!api || !library || parentFolderId === undefined) {
@@ -1404,7 +1397,6 @@ function AppInner() {
     activeSmartCollectionId,
     folders,
     searchValue,
-    activeAiSearchDefinition,
   ]);
 
   const previewIndex = previewAsset
@@ -2097,7 +2089,6 @@ function AppInner() {
 
   function clearDiscoveryControls() {
     setSearchValue("");
-    setActiveAiSearchDefinition(null);
     setFormatFilter("");
     setExcludeFormatFilter(false);
     setColorFilter("");
@@ -2380,16 +2371,7 @@ function AppInner() {
     api.setActiveContext(library.libraryId);
     setUiState("loading");
     try {
-      const definition = activeAiSearchDefinition
-        ? {
-            ...activeAiSearchDefinition,
-            filters: [
-              ...(activeAiSearchDefinition.filters ?? []),
-              { field: "tag" as const, values: [tag.name], exclude: false },
-            ],
-          }
-        : currentQueryDefinition({ tagFilter: tag.name });
-      if (activeAiSearchDefinition) setActiveAiSearchDefinition(definition);
+      const definition = currentQueryDefinition({ tagFilter: tag.name });
       const result = await api.searchAssets({
         libraryId: library.libraryId,
         query: definition.search ?? null,
@@ -2918,7 +2900,7 @@ function AppInner() {
   }
 
   function currentQueryDefinition(
-    overrides: { tagFilter?: string; includeTextSearch?: boolean } = {},
+    overrides: { tagFilter?: string } = {},
   ): SearchDefinition {
     const filters: FilterClause[] = [];
     const formats = expandFormatFilterTokens(
@@ -3014,9 +2996,9 @@ function AppInner() {
         filters.push({ field, ranges: [range], exclude: input.exclude });
     }
     return {
-      ...(overrides.includeTextSearch !== false && searchValue.trim()
+      ...(searchValue.trim()
         ? {
-            search: { clauses: parseSearchExpression(searchValue) },
+            search: parseSearchExpression(searchValue),
           }
         : {}),
       ...(filters.length > 0 ? { filters } : {}),
@@ -3299,8 +3281,7 @@ function AppInner() {
   } = useInlineSmartCollectionEdit({
     api: api ?? null,
     library,
-    getQueryDefinition: () =>
-      activeAiSearchDefinition ?? currentQueryDefinition(),
+    getQueryDefinition: () => currentQueryDefinition(),
     setNotice,
     reloadSmartCollections,
     onCreated: (collection) => {
@@ -3345,6 +3326,10 @@ function AppInner() {
     offset = 0,
   ) {
     if (!api || !library) return;
+    const requestGeneration =
+      offset === 0
+        ? ++searchRequestGenerationRef.current
+        : searchRequestGenerationRef.current;
     const result = await api.searchAssets({
       libraryId: library.libraryId,
       query: definition.search ?? null,
@@ -3355,6 +3340,7 @@ function AppInner() {
       offset,
     });
     if (!result.ok) throw new LibraryOperationError(result.error);
+    if (requestGeneration !== searchRequestGenerationRef.current) return;
     setShowTrash(false);
     setShowTagManagement(false);
     if (!tagFilter.trim()) setActiveTagId(null);
@@ -3374,7 +3360,6 @@ function AppInner() {
     if (offset === 0) await closeAssetPreview(false);
     try {
       const definition = currentQueryDefinition();
-      setActiveAiSearchDefinition(null);
       const result = await executeSearchDefinition(definition, offset);
       // Serpent-huvw: discovery debounce / reload must not toast "搜索完成"
       // and wipe AI completion / error toasts.
@@ -3383,69 +3368,6 @@ function AppInner() {
       }
     } catch (caught) {
       setError(toMessage(caught, t("toast.searchFailed"), locale));
-    }
-  }
-
-  async function runAiSearch(event?: FormEvent, offset = 0) {
-    event?.preventDefault();
-    if (!api || !library || !searchValue.trim() || aiSearchLoading) return;
-    if (offset === 0) await closeAssetPreview(false);
-    setAiSearchLoading(true);
-    setError(null);
-    try {
-      const planned = await api.planAiSearch({
-        naturalQuery: searchValue.trim(),
-      });
-      if (!planned.ok) throw new LibraryOperationError(planned.error);
-      const aiDefinition = aiSearchPlanToDefinition(planned.value.plan);
-      const manualDefinition = currentQueryDefinition({
-        includeTextSearch: false,
-      });
-      const definition: SearchDefinition = {
-        ...(aiDefinition.search ? { search: aiDefinition.search } : {}),
-        ...(aiDefinition.filters?.length || manualDefinition.filters?.length
-          ? {
-              filters: [
-                ...(aiDefinition.filters ?? []),
-                ...(manualDefinition.filters ?? []),
-              ],
-            }
-          : {}),
-        ...((manualDefinition.sort ?? aiDefinition.sort)
-          ? { sort: (manualDefinition.sort ?? aiDefinition.sort)! }
-          : {}),
-      };
-      setActiveAiSearchDefinition(definition);
-      const result = await executeSearchDefinition(definition, offset);
-      if (result)
-        setNotice(t("toast.aiSearchDone", { total: result.total }));
-    } catch (caught) {
-      const explanation = toMessage(caught, t("toast.aiSearchFailed"), locale);
-      setAiSearchEnabled(false);
-      setActiveAiSearchDefinition(null);
-      try {
-        const fallback = await executeSearchDefinition(
-          currentQueryDefinition(),
-          0,
-        );
-        setError(
-          t("toast.aiSearchFallback", {
-            explanation,
-            fallback: fallback
-              ? t("toast.aiSearchFallbackFound", { total: fallback.total })
-              : "",
-          }) + t("common.sentenceEnd"),
-        );
-      } catch (fallbackError) {
-        setError(
-          t("toast.aiSearchFallbackFailed", {
-            explanation,
-            detail: toMessage(fallbackError, t("toast.desktopNoResponse"), locale),
-          }),
-        );
-      }
-    } finally {
-      setAiSearchLoading(false);
     }
   }
 
@@ -3479,13 +3401,12 @@ function AppInner() {
     if (
       !library ||
       showTrash ||
-      aiSearchEnabled ||
       (!hasDiscoveryInput && !shouldClearPreviousResults)
     )
       return;
     const timer = window.setTimeout(() => {
       void runSearch(undefined, 0, { silent: true });
-    }, 250);
+    }, 200);
     return () => window.clearTimeout(timer);
     // Search execution reads the current scope and API from the same render;
     // only discovery controls should restart the debounce timer.
@@ -3493,7 +3414,6 @@ function AppInner() {
   }, [
     library,
     showTrash,
-    aiSearchEnabled,
     searchValue,
     colorFilter,
     excludeColorFilter,
@@ -3600,8 +3520,6 @@ function AppInner() {
         setSearchOffset(result.value.offset + result.value.items.length);
       } else if (activeSmartCollectionId)
         await chooseSmartCollection(activeSmartCollectionId, offset);
-      else if (activeAiSearchDefinition)
-        await executeSearchDefinition(activeAiSearchDefinition, offset);
       else await runSearch(undefined, offset, { silent: true });
     } catch (caught) {
       setError(toMessage(caught, t("toast.loadMoreFailed"), locale));
@@ -3661,7 +3579,7 @@ function AppInner() {
 
   async function updateSmartCollectionQuery(collectionId: string) {
     if (!api || !library) return;
-    const definition = activeAiSearchDefinition ?? currentQueryDefinition();
+    const definition = currentQueryDefinition();
     if (!hasMeaningfulSmartCollectionCondition(definition)) {
       setError(t("toast.smartCollectionNeedsCondition"));
       return;
@@ -6035,13 +5953,6 @@ function AppInner() {
     >
       <header className="app-toolbar">
         <div className="toolbar-cluster toolbar-nav-cluster">
-          <AppSettingsEntry
-            disabled={busy}
-            onOpen={() => {
-              setAppSettingsCategory("general");
-              setAppSettingsOpen(true);
-            }}
-          />
           <ToolButton
             icon={leftOpen ? "panel-left-close" : "panel-left"}
             label={leftOpen ? t("shell.collapseNav") : t("shell.expandNav")}
@@ -6056,6 +5967,13 @@ function AppInner() {
               canForward={navHistoryUi.canForward}
               onBack={() => void goWorkspaceBack()}
               onForward={() => void goWorkspaceForward()}
+            />
+            <AppSettingsEntry
+              disabled={busy}
+              onOpen={() => {
+                setAppSettingsCategory("general");
+                setAppSettingsOpen(true);
+              }}
             />
             <LibrarySwitcher
               busy={busy}
@@ -6127,55 +6045,37 @@ function AppInner() {
           </div>
           <form
             className="toolbar-workspace-search"
-            onSubmit={(event) => {
-              if (aiSearchEnabled) void runAiSearch(event);
-              else void runSearch(event);
-            }}
+            onSubmit={(event) => void runSearch(event)}
             role="search"
           >
             <div
-              className={`search-control-wrap${aiSearchEnabled ? " is-ai-search" : ""}${searchValue.trim() ? " has-value" : ""}`}
+              className={`search-control-wrap${searchValue.trim() ? " has-value" : ""}`}
             >
               <Icon name="search" size={15} />
               <input
                 aria-label={t("toolbar.searchLibrary")}
                 className="search-control"
                 disabled={!library}
-                onChange={(event) => {
-                  setSearchValue(event.target.value);
-                  setActiveAiSearchDefinition(null);
-                }}
-                placeholder={
-                  aiSearchEnabled
-                    ? t("toolbar.aiSearchPlaceholder")
-                    : t("toolbar.searchPlaceholder")
-                }
+                onChange={(event) => setSearchValue(event.target.value)}
+                placeholder={t("toolbar.searchPlaceholder")}
                 type="search"
                 value={searchValue}
               />
               <button
-                aria-label={t("toolbar.aiSearch")}
-                aria-pressed={aiSearchEnabled}
-                className="search-ai-toggle"
-                data-hover-tip={t("toolbar.aiSearchTitle")}
-                disabled={!library || aiSearchLoading}
-                onClick={() => {
-                  setAiSearchEnabled((enabled) => !enabled);
-                  setActiveAiSearchDefinition(null);
-                }}
+                aria-label={t("toolbar.searchSyntax")}
+                className="search-syntax-help"
+                data-hover-tip={t("toolbar.searchSyntaxHint")}
+                data-hover-tip-variant="search-syntax"
                 type="button"
               >
-                <Icon name="smart" size={14} />
+                ?
               </button>
               {searchValue.trim() !== "" && (
                 <button
                   aria-label={t("toolbar.clearSearch")}
                   className="search-clear-btn"
                   disabled={!library}
-                  onClick={() => {
-                    setSearchValue("");
-                    setActiveAiSearchDefinition(null);
-                  }}
+                  onClick={() => setSearchValue("")}
                   type="button"
                 >
                   <Icon name="close" size={12} />
@@ -7196,7 +7096,22 @@ function AppInner() {
                                 </span>
                               ) : (
                                 <strong title={asset.displayName}>
-                                  {asset.displayName}
+                                  {splitSearchHighlights(
+                                    asset.displayName,
+                                    searchValue,
+                                    "filename",
+                                  ).map((segment, index) =>
+                                    segment.matched ? (
+                                      <mark
+                                        className="search-text-highlight"
+                                        key={index}
+                                      >
+                                        {segment.text}
+                                      </mark>
+                                    ) : (
+                                      <span key={index}>{segment.text}</span>
+                                    ),
+                                  )}
                                 </strong>
                               )}
                             </>
@@ -7396,24 +7311,6 @@ function AppInner() {
         multiEdit={multiEdit}
         versionConflict={versionConflict}
       />
-      {!leftOpen && (
-        <IconActionButton
-          className="pane-reveal pane-reveal-left"
-          icon="panel-left"
-          label={t("shell.expandNav")}
-          onClick={() => setLeftOpen(true)}
-          size={15}
-        />
-      )}
-      {!rightOpen && (
-        <IconActionButton
-          className="pane-reveal pane-reveal-right"
-          icon="panel-right"
-          label={t("shell.expandInspector")}
-          onClick={() => setRightOpen(true)}
-          size={15}
-        />
-      )}
       {linkedRulesEditor && (
         <LinkedRulesDialog
           name={linkedRulesEditor.name}
@@ -8075,75 +7972,9 @@ function organizationNoun(kind: OrganizationKind, locale: AppLocale) {
       : "dialog.rename.nounSmartCollection",
   );
 }
-export function parseSearchExpression(
-  value: string,
-): Array<{ field: string | null; values: string[]; exclude: boolean }> {
-  const allowedFields = new Set([
-    "filename",
-    "tags",
-    "description",
-    "source_url",
-    "folder_path",
-    "metadata_text",
-  ]);
-  const tokens = value.match(/-?[a-z_]+:"[^"]*"|"[^"]*"|\S+/gi) ?? [];
-  const clauses: Array<{
-    field: string | null;
-    values: string[];
-    exclude: boolean;
-  }> = [];
-  let excludeNext = false;
-  let mergeWithPrevious = false;
-  for (const rawToken of tokens) {
-    if (rawToken.toUpperCase() === "NOT") {
-      excludeNext = true;
-      continue;
-    }
-    if (rawToken.toUpperCase() === "OR") {
-      mergeWithPrevious = true;
-      continue;
-    }
-    let token = rawToken;
-    const exclude = excludeNext || token.startsWith("-");
-    excludeNext = false;
-    if (token.startsWith("-")) token = token.slice(1);
-    const separator = token.indexOf(":");
-    const candidateField = separator > 0 ? token.slice(0, separator) : null;
-    const field =
-      candidateField && allowedFields.has(candidateField)
-        ? candidateField
-        : null;
-    const rawValues = (field ? token.slice(separator + 1) : token).replace(
-      /^"|"$/g,
-      "",
-    );
-    const values = rawValues
-      .split(",")
-      .map((item) => item.trim())
-      .filter(Boolean);
-    if (values.length === 0) continue;
-    const previous = clauses.at(-1);
-    if (
-      mergeWithPrevious &&
-      previous &&
-      previous.field === field &&
-      previous.exclude === exclude
-    ) {
-      previous.values.push(...values);
-    } else {
-      clauses.push({ field, values, exclude });
-    }
-    mergeWithPrevious = false;
-  }
-  return clauses;
-}
 export function aiSearchPlanToDefinition(plan: AiSearchPlan): SearchDefinition {
   const positiveTerms = [...new Set([...plan.keywords, ...plan.synonyms])];
-  const clauses: Array<{
-    field: string | null;
-    values: string[];
-    exclude: boolean;
-  }> = [];
+  const clauses: SearchQuery["clauses"] = [];
   if (positiveTerms.length > 0)
     clauses.push({ field: null, values: positiveTerms, exclude: false });
   // LibraryService executes exclude-only clauses through a parameterized

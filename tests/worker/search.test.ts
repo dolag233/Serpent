@@ -7,7 +7,7 @@ import { randomUUID } from 'node:crypto';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { LibraryService, LibraryServiceError } from '../../src/worker/library-service';
-import { buildFts5Query, tokenizeForFts } from '../../src/worker/search-query';
+import { buildFts5Query, normalizeSearchText, tokenizeForFts } from '../../src/worker/search-query';
 
 const temporaryRoots: string[] = [];
 
@@ -181,7 +181,7 @@ describe('schema v5->v6 migration', () => {
 
     const db = new TestDatabase(path.join(libraryPath, '.serpent', 'library.db'));
     try {
-      expect(db.pragma('user_version')).toEqual([{ user_version: 16 }]);
+      expect(db.pragma('user_version')).toEqual([{ user_version: 18 }]);
 
       // Verify FTS tables exist.
       const searchIndex = db.prepare(
@@ -391,7 +391,7 @@ describe('CJK tokenization', () => {
     expect(tokenizeForFts('   ')).toBe('');
   });
 
-  it('searches Chinese labels tokenized in asset_search_index', () => {
+  it('searches CJK substrings stored as normalized contextual text', () => {
     const root = temporaryRoot();
     const service = newService();
     const library = service.createLibrary({ displayName: 'CJK', selectedParentPath: root });
@@ -419,11 +419,11 @@ describe('CJK tokenization', () => {
       db.prepare('UPDATE assets SET current_revision_id = (SELECT revision_id FROM revisions WHERE asset_id = ? LIMIT 1), updated_at = ? WHERE asset_id = ?')
         .run(assetId, now, assetId);
 
-      // Manually insert a tokenized Chinese description.
+      // Manually insert raw normalized Chinese text, as v18 does.
       db.prepare(
         `INSERT INTO asset_search_index (asset_id, filename, tags, description, source_url, folder_path, metadata_text)
          VALUES (?, '', '', ?, '', 'CJKAssets', '')`,
-      ).run(assetId, tokenizeForFts('角色概念设计'));
+      ).run(assetId, normalizeSearchText('角色概念设计'));
     } finally {
       db.close();
     }
@@ -444,6 +444,103 @@ describe('CJK tokenization', () => {
     expect(result2.total).toBe(1);
 
     service.closeAll();
+  });
+});
+
+// ── Contextual substring search ─────────────────────────────────────
+
+describe('contextual substring search', () => {
+  it('finds a one-character query inside both filename and tag text', () => {
+    const { service, libraryId, libraryPath, assetId } = createLibraryWithAssetAndTags();
+    const db = new TestDatabase(path.join(libraryPath, '.serpent', 'library.db'));
+    try {
+      db.prepare(
+        `UPDATE asset_search_index
+            SET filename = ?, tags = ?
+          WHERE asset_id = ?`,
+      ).run(normalizeSearchText('y-reference.png'), normalizeSearchText('y2k'), assetId);
+    } finally {
+      db.close();
+    }
+
+    const result = service.searchAssets({
+      libraryId,
+      query: { clauses: [{ field: null, values: ['y'], exclude: false }] },
+    });
+
+    expect(result.items.map((item) => item.assetId)).toContain(assetId);
+  });
+
+  it('applies canonical field clauses and OR groups without broadening a match', () => {
+    const { service, libraryId, libraryPath, assetId } = createLibraryWithAssetAndTags();
+    const db = new TestDatabase(path.join(libraryPath, '.serpent', 'library.db'));
+    try {
+      db.prepare(
+        `UPDATE asset_search_index
+            SET filename = ?, tags = ?, author = ?
+          WHERE asset_id = ?`,
+      ).run(
+        normalizeSearchText('midcentury-reference.png'),
+        normalizeSearchText('y2k'),
+        normalizeSearchText('Jane Doe'),
+        assetId,
+      );
+    } finally {
+      db.close();
+    }
+
+    expect(
+      service.searchAssets({
+        libraryId,
+        query: { clauses: [{ field: 'tags', values: ['century'], exclude: false }] },
+      }).total,
+    ).toBe(0);
+    expect(
+      service.searchAssets({
+        libraryId,
+        query: { clauses: [{ field: 'tags', values: ['2k'], exclude: false }] },
+      }).items.map((item) => item.assetId),
+    ).toContain(assetId);
+    expect(
+      service.searchAssets({
+        libraryId,
+        query: {
+          clauses: [],
+          groups: [
+            [{ field: 'filename', values: ['not-present'], exclude: false }],
+            [
+              { field: 'author', values: ['jane'], exclude: false },
+              { field: 'tags', values: ['y2k'], exclude: false },
+            ],
+          ],
+        },
+      }).items.map((item) => item.assetId),
+    ).toContain(assetId);
+  });
+
+  it('ranks a filename exact match before an arbitrary tag contains match', () => {
+    const { service, libraryId, libraryPath, assetId } = createLibraryWithAssetAndTags();
+    const secondAssetId = createSecondAsset(service, libraryId, libraryPath, 'nothing');
+    const db = new TestDatabase(path.join(libraryPath, '.serpent', 'library.db'));
+    try {
+      db.prepare(
+        `UPDATE asset_search_index SET filename = ?, tags = ? WHERE asset_id = ?`,
+      ).run(normalizeSearchText('y2k'), '', assetId);
+      db.prepare(
+        `UPDATE asset_search_index SET filename = ?, tags = ? WHERE asset_id = ?`,
+      ).run(normalizeSearchText('reference'), normalizeSearchText('modern-y2k'), secondAssetId);
+    } finally {
+      db.close();
+    }
+
+    const result = service.searchAssets({
+      libraryId,
+      query: { clauses: [{ field: null, values: ['y2k'], exclude: false }] },
+    });
+    expect(result.items.slice(0, 2).map((item) => item.assetId)).toEqual([
+      assetId,
+      secondAssetId,
+    ]);
   });
 });
 
@@ -567,22 +664,22 @@ describe('bm25 weighting', () => {
   });
 });
 
-// ── FTS5 Query Builder ──────────────────────────────────────────────
+// ── FTS5 trigram query builder ──────────────────────────────────────
 
-describe('FTS5 query builder', () => {
-  it('builds single-token query', () => {
+describe('FTS5 trigram query builder', () => {
+  it('normalizes a single substring phrase', () => {
     const query = buildFts5Query([{ field: null, values: ['hero'], exclude: false }]);
-    expect(query).toBe('"hero"');
+    expect(query).toBe('("hero")');
   });
 
-  it('builds field-specific query', () => {
+  it('builds a field-specific normalized phrase', () => {
     const query = buildFts5Query([{ field: 'filename', values: ['PBR'], exclude: false }]);
-    expect(query).toBe('filename:"PBR"');
+    expect(query).toBe('(filename : "pbr")');
   });
 
   it('builds multi-value OR query', () => {
     const query = buildFts5Query([{ field: 'tags', values: ['character', 'prop'], exclude: false }]);
-    expect(query).toBe('(tags:"character" OR tags:"prop")');
+    expect(query).toBe('((tags : "character" OR tags : "prop"))');
   });
 
   it('builds exclude query', () => {
@@ -596,7 +693,7 @@ describe('FTS5 query builder', () => {
       { field: 'tags', values: ['character', 'prop'], exclude: false },
       { field: 'folder_path', values: ['archive'], exclude: true },
     ]);
-    expect(query).toBe('filename:"PBR" (tags:"character" OR tags:"prop") NOT folder_path:"archive"');
+    expect(query).toBe('(filename : "pbr" AND (tags : "character" OR tags : "prop") AND NOT folder_path : "archive")');
   });
 
   it('normalizes an exclusion that arrives before positive clauses', () => {
@@ -604,7 +701,7 @@ describe('FTS5 query builder', () => {
       { field: null, values: ['draft'], exclude: true },
       { field: null, values: ['hero'], exclude: false },
     ]);
-    expect(query).toBe('"hero" NOT "draft"');
+    expect(query).toBe('("hero" AND NOT "draft")');
   });
 
   it('never emits a leading NOT when positive input sanitizes to empty', () => {
@@ -622,15 +719,9 @@ describe('FTS5 query builder', () => {
 
   it('sanitizes FTS5 special characters', () => {
     const query = buildFts5Query([{ field: null, values: ['" OR 1=1 --'], exclude: false }]);
-    // Quotes are stripped, but the words become safe quoted literals.
-    // The query should not contain unquoted special chars that alter FTS semantics.
-    // Check that the returned string is a legitimate FTS5 query (all tokens double-quoted).
-    const parts = query.split(' ');
-    for (const part of parts) {
-      // Each token should be a double-quoted literal.
-      expect(part.startsWith('"')).toBe(true);
-      expect(part.endsWith('"')).toBe(true);
-    }
+    // The user text remains a quoted phrase, so OR cannot become an operator.
+    expect(query).toContain('"or 1=1 --"');
+    expect(query).not.toContain(' OR 1=1');
   });
 
   it('strips asterisk wildcards', () => {

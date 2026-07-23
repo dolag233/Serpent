@@ -1,14 +1,9 @@
 /**
- * Secure FTS5 query builder.
+ * Search-query utilities shared by the SQLite owner and worker tests.
  *
- * Builds a complete MATCH expression string from structured SearchClause[] input.
- * The entire expression is intended to be passed as a single `?` bind parameter
- * to `WHERE asset_search MATCH ?` -- SQL fragments are never concatenated.
- *
- * A separate `tokenizeForFts()` helper splits CJK text into space-separated
- * tokens via Intl.Segmenter (word granularity), plus a CJK character-level
- * fallback. Apply this to filename/description/tags before writing to
- * asset_search_content so that unicode61 tokenizer can index CJK correctly.
+ * The current index uses FTS5's trigram tokenizer for real substring matches.
+ * Query strings remain structured at the process boundary; these helpers emit
+ * only a bindable MATCH expression after validating every field identifier.
  */
 
 export interface SearchClause {
@@ -19,6 +14,8 @@ export interface SearchClause {
   /** When true the clause is negated (FTS5 NOT). */
   exclude: boolean;
 }
+
+export type SearchGroup = SearchClause[];
 
 const FTS5_COLUMNS = new Set([
   'filename',
@@ -31,10 +28,39 @@ const FTS5_COLUMNS = new Set([
 ]);
 
 /**
- * Characters that have special meaning inside FTS5 query strings.
- * We strip them so they cannot change the parse tree.
+ * Characters that have special meaning inside an FTS5 phrase. They are not
+ * discarded: doing so broadens the candidate query and can make it disagree
+ * with the exact `instr()` predicate. Queries containing one fall back to the
+ * exact path instead.
  */
-const FTS5_SPECIAL_RE = /["'()*^]/g;
+const FTS5_UNSAFE_LITERAL_RE = /["'()*^:]/u;
+
+/**
+ * Normalized text stored in `asset_search_index`. Unicode normalization keeps
+ * full-width and composed forms predictable; lowercasing happens in JS rather
+ * than relying on SQLite's ASCII-only LOWER() implementation.
+ */
+export function normalizeSearchText(value: string): string {
+  return value.normalize('NFKC').toLowerCase();
+}
+
+export function searchValueLength(value: string): number {
+  return Array.from(normalizeSearchText(value).trim()).length;
+}
+
+/** True when each requested value can be narrowed safely by a trigram MATCH. */
+export function canUseTrigramSearch(groups: SearchGroup[]): boolean {
+  const values = groups.flatMap((group) =>
+    group.flatMap((clause) => clause.values),
+  );
+  return values.length > 0 && values.every((value) => {
+    const normalized = normalizeSearchText(value).trim();
+    return (
+      Array.from(normalized).length >= 3 &&
+      !FTS5_UNSAFE_LITERAL_RE.test(normalized)
+    );
+  });
+}
 
 /**
  * Build a complete FTS5 MATCH expression string from structured clauses.
@@ -44,75 +70,62 @@ const FTS5_SPECIAL_RE = /["'()*^]/g;
  * intentionally matches nothing (`"__IMPOSSIBLE__"`).
  */
 export function buildFts5Query(clauses: SearchClause[]): string {
-  const positiveParts: string[] = [];
-  const negativeParts: string[] = [];
-
-  // FTS5 NOT is a binary operator and cannot lead an expression. Normalize
-  // caller order so mixed queries always emit positive terms before exclusions.
-  const normalizedClauses = [
-    ...clauses.filter((clause) => !clause.exclude),
-    ...clauses.filter((clause) => clause.exclude),
-  ];
-
-  for (const clause of normalizedClauses) {
-    if (clause.values.length === 0) continue;
-
-    // Validate field name if specified.
-    if (clause.field !== null && !FTS5_COLUMNS.has(clause.field)) {
-      // Unknown field: produce a query that will never match anything,
-      // rather than silently ignoring the clause.
-      return '"__IMPOSSIBLE__"';
-    }
-
-    const sanitizedValues: string[] = [];
-    for (const raw of clause.values) {
-      const token = fts5SafeToken(raw);
-      // If after sanitization the token is empty, skip it for this clause.
-      // If all values produce empty tokens the clause is skipped entirely.
-      if (token.length === 0) continue;
-      const valueWithField =
-        clause.field !== null ? `${clause.field}:${token}` : token;
-      sanitizedValues.push(valueWithField);
-    }
-
-    if (sanitizedValues.length === 0) continue;
-
-    const valueExpr =
-      sanitizedValues.length > 1
-        ? `(${sanitizedValues.join(' OR ')})`
-        : sanitizedValues[0]!;
-
-    if (clause.exclude) negativeParts.push(valueExpr);
-    else positiveParts.push(valueExpr);
-  }
-
-  if (positiveParts.length === 0) {
-    // FTS5 has no unary NOT or universal-match term. Callers that intentionally
-    // support a pure exclusion must invert a positive subquery outside MATCH.
-    // Invalid/empty positive input therefore safely matches nothing.
-    return '"__IMPOSSIBLE__"';
-  }
-
-  return [...positiveParts, ...negativeParts.map((part) => `NOT ${part}`)].join(' ');
+  return buildTrigramFts5Query([clauses]);
 }
 
 /**
- * Sanitize a user-supplied value into an FTS5-safe token string.
- *
- * - Applies CJK tokenization (same as used when writing to asset_search_index)
- *   so search terms match the indexed token stream.
- * - Strips special characters that have syntactic meaning ('"' ( ) * ^).
- * - Wraps each whitespace-delimited word in double quotes for literal matching.
- * - Returns empty string when the raw input is empty or consists entirely of
- *   special characters after tokenization.
+ * Build a trigram MATCH expression for `(AND clauses) OR (AND clauses)`.
+ * A negative-only group cannot be represented by FTS5 because NOT is binary;
+ * callers route such a query through the exact `instr()` predicate instead.
  */
-function fts5SafeToken(raw: string): string {
-  // Apply CJK tokenization first so search terms match indexed tokens.
-  const tokenized = tokenizeForFts(raw);
-  const cleaned = tokenized.replace(FTS5_SPECIAL_RE, ' ');
-  const words = cleaned.split(/\s+/).filter(Boolean);
-  if (words.length === 0) return '';
-  return words.map((w) => `"${w}"`).join(' ');
+export function buildTrigramFts5Query(groups: SearchGroup[]): string {
+  const groupExpressions: string[] = [];
+  for (const group of groups) {
+    const positives: string[] = [];
+    const negatives: string[] = [];
+    for (const clause of group) {
+      if (clause.field !== null && !FTS5_COLUMNS.has(clause.field)) {
+        return '"__IMPOSSIBLE__"';
+      }
+      const phrases = clause.values.map(fts5SafePhrase);
+      // `canUseTrigramSearch` avoids this path for unsafe text. Keep the
+      // builder defensive for direct callers as well: never silently change a
+      // literal such as `https://` or `O'Reilly` into another search term.
+      if (phrases.some((value) => value === null)) return '"__IMPOSSIBLE__"';
+      const values = phrases
+        .filter((value): value is string => value !== null)
+        .map((value) =>
+          clause.field === null
+            ? `"${value}"`
+            : `${clause.field} : "${value}"`,
+        );
+      if (values.length === 0) continue;
+      const expression = values.length === 1 ? values[0]! : `(${values.join(' OR ')})`;
+      if (clause.exclude) negatives.push(expression);
+      else positives.push(expression);
+    }
+    if (positives.length === 0) return '"__IMPOSSIBLE__"';
+    let expression = positives.length === 1
+      ? positives[0]!
+      : `(${positives.join(' AND ')})`;
+    // FTS5 NOT is binary (`left NOT right`), not a unary expression. Nesting
+    // also keeps multiple exclusions unambiguous.
+    for (const negative of negatives)
+      expression = `(${expression} NOT ${negative})`;
+    groupExpressions.push(expression);
+  }
+  return groupExpressions.length === 0
+    ? '"__IMPOSSIBLE__"'
+    : groupExpressions.length === 1
+      ? groupExpressions[0]!
+      : `(${groupExpressions.join(' OR ')})`;
+}
+
+function fts5SafePhrase(raw: string): string | null {
+  const normalized = normalizeSearchText(raw).trim();
+  return normalized.length > 0 && !FTS5_UNSAFE_LITERAL_RE.test(normalized)
+    ? normalized
+    : null;
 }
 
 /**
