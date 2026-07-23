@@ -99,7 +99,7 @@ export function buildScopeBreadcrumbSegments(
 /**
  * Borderless scope trail. Does not include a leading library prefix.
  * Workspace back/forward controls live in `ScopeHistoryButtons`, rendered
- * leftmost in the app toolbar.
+ * at the leading edge of the browse toolbar column.
  */
 export function ScopeBreadcrumbs({
   segments,

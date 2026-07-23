@@ -418,10 +418,7 @@ summary:focus-visible {
   z-index: 30;
   display: grid;
   grid-column: 1 / -1;
-  grid-template-columns: minmax(210px, 0.8fr) minmax(280px, 1.4fr) minmax(
-      270px,
-      1fr
-    );
+  grid-template-columns: subgrid;
   align-items: center;
   height: var(--shell-toolbar-height);
   min-width: 0;
@@ -447,24 +444,52 @@ summary:focus-visible {
   line-height: 1.35;
 }
 
-.toolbar-leading {
+.toolbar-nav-cluster {
+  grid-column: 1;
   gap: 9px;
   padding-left: 10px;
+  overflow: visible;
 }
 
 /* Serpent-4ze: leave room for hiddenInset traffic lights on macOS. */
-body.platform-darwin .toolbar-leading {
+body.platform-darwin .toolbar-nav-cluster {
   padding-left: 78px;
 }
 
-.toolbar-actions {
+.toolbar-workspace-cluster {
+  grid-column: 2;
+  justify-content: space-between;
+  gap: 12px;
+  /* Match workspace-bar / workspace-discovery horizontal gutters. */
+  padding: 0 12px 0 14px;
+}
+
+.toolbar-workspace-main {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 9px;
+}
+
+.toolbar-workspace-search {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  margin-left: auto;
+  -webkit-app-region: no-drag;
+}
+
+.toolbar-inspector-cluster {
+  grid-column: 3;
   justify-content: flex-end;
   gap: 7px;
   padding-right: 10px;
+  overflow: visible;
 }
 
 /* Serpent-znex: reserve space for custom Windows caption buttons. */
-:root[data-platform="windows"] .toolbar-actions {
+:root[data-platform="windows"] .toolbar-inspector-cluster {
   padding-right: calc(3 * var(--windows-caption-width, 46px) + 8px);
 }
 
@@ -973,25 +998,13 @@ body.platform-darwin .toolbar-leading {
   stroke-width: 1.55;
 }
 
-/* Serpent-9es: cluster keeps the settings gear from colliding with the
-   library name/chevron when the leading toolbar column shrinks. */
-.toolbar-library-settings {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  min-width: 0;
-  flex: 1 1 auto;
-  max-width: 100%;
-  /* Keep dropdown menus from ancestor clipping (Serpent-7fy). */
-  overflow: visible;
-}
-
+/* Library switcher sits in the browse column beside history + breadcrumbs. */
 .library-switcher {
   /* Do not set overflow:hidden here — the dropdown menu is position:absolute
      inside this box (Serpent-7fy: clipping made the menu look “completely wrong”).
      Ellipsis belongs on .library-switcher-name only. */
   position: relative;
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   min-width: 0;
   max-width: 220px;
   overflow: visible;
@@ -1152,10 +1165,11 @@ body.platform-darwin .toolbar-leading {
 .scope-trace {
   display: flex;
   min-width: 0;
+  flex: 1 1 auto;
   align-items: center;
   gap: 8px;
   overflow: hidden;
-  padding: 0 14px;
+  padding: 0;
   font-size: 11px;
   color: var(--tertiary);
   user-select: none;
@@ -1168,7 +1182,7 @@ body.platform-darwin .toolbar-leading {
 }
 
 /* Sized to match .tool-button so the pair aligns with the other controls in
-   .toolbar-leading. */
+   the browse toolbar cluster. */
 .scope-history-button {
   display: grid;
   width: var(--shell-control-height);
@@ -1252,9 +1266,9 @@ body.platform-darwin .toolbar-leading {
 .search-control-wrap {
   position: relative;
   display: flex;
-  flex: 1 1 240px;
+  flex: 0 1 360px;
+  width: min(360px, 100%);
   min-width: 200px;
-  max-width: 360px;
   height: var(--shell-control-height);
   align-items: center;
   border: 1px solid var(--divider);

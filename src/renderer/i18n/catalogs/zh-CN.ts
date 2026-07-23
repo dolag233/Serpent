@@ -163,7 +163,7 @@ export const zhCN = {
     aiSearch: "AI 搜索",
     aiSearchTitle: "点亮后仅在提交时调用已配置的 AI，把自然语言转换为普通搜索条件",
     aiSearchPlaceholder: "描述想找的内容…",
-    searchPlaceholder: "搜索资源库…",
+    searchPlaceholder: "搜索",
     aiSearchHint: "提交后由已配置的云端模型生成受限搜索条件",
     searchHint: "示例：filename:\"hero concept\" NOT tags:草图",
     clearSearch: "清除搜索",

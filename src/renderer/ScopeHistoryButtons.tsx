@@ -10,9 +10,8 @@ export type ScopeHistoryButtonsProps = {
 };
 
 /**
- * Workspace back/forward controls. Rendered as the leftmost controls of the
- * app toolbar (before the navigation toggle), so they always sit left of the
- * current directory breadcrumb trail.
+ * Workspace back/forward controls. Rendered at the leading edge of the browse
+ * column (left of the library switcher and breadcrumb trail).
  */
 export function ScopeHistoryButtons({
   canBack,

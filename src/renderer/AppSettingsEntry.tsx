@@ -9,8 +9,8 @@ export type AppSettingsEntryProps = {
 };
 
 /**
- * Serpent-97l / PREF-001: dedicated settings gear beside the library
- * switcher (top-left shell). Not part of the browse/canvas toolbar.
+ * Serpent-97l / PREF-001: dedicated settings gear in the navigation column,
+ * left of the sidebar toggle. Not part of the browse/canvas toolbar.
  */
 export function AppSettingsEntry({
   onOpen,

@@ -6034,20 +6034,29 @@ function AppInner() {
       style={panelResizeShellStyle as React.CSSProperties}
     >
       <header className="app-toolbar">
-        <div className="toolbar-cluster toolbar-leading">
+        <div className="toolbar-cluster toolbar-nav-cluster">
+          <AppSettingsEntry
+            disabled={busy}
+            onOpen={() => {
+              setAppSettingsCategory("general");
+              setAppSettingsOpen(true);
+            }}
+          />
           <ToolButton
             icon={leftOpen ? "panel-left-close" : "panel-left"}
             label={leftOpen ? t("shell.collapseNav") : t("shell.expandNav")}
             onClick={() => setLeftOpen((v) => !v)}
             pressed={leftOpen}
           />
-          <ScopeHistoryButtons
-            canBack={navHistoryUi.canBack}
-            canForward={navHistoryUi.canForward}
-            onBack={() => void goWorkspaceBack()}
-            onForward={() => void goWorkspaceForward()}
-          />
-          <div className="toolbar-library-settings">
+        </div>
+        <div className="toolbar-cluster toolbar-workspace-cluster">
+          <div className="toolbar-workspace-main">
+            <ScopeHistoryButtons
+              canBack={navHistoryUi.canBack}
+              canForward={navHistoryUi.canForward}
+              onBack={() => void goWorkspaceBack()}
+              onForward={() => void goWorkspaceForward()}
+            />
             <LibrarySwitcher
               busy={busy}
               disabled={busy}
@@ -6073,120 +6082,120 @@ function AppInner() {
               onPasteImage={() => void pasteClipboardImage()}
               recentLibraries={recentLibraries}
             />
-            <AppSettingsEntry
-              disabled={busy}
-              onOpen={() => {
-                setAppSettingsCategory("general");
-                setAppSettingsOpen(true);
+            <ScopeBreadcrumbs
+              onNavigateFolder={(folderId) => void chooseFolder(folderId)}
+              onNavigateTrashPath={(path) => {
+                setTrashBrowsePath(path);
+                clearAssetSelection();
+                workspaceCanvasRef.current?.scrollTo({ top: 0, left: 0 });
               }}
+              segments={buildScopeBreadcrumbSegments(
+                {
+                  showTrash,
+                  trashBreadcrumbHops,
+                  activeTagLabel: activeTagId
+                    ? (tags.find((tag) => tag.tagId === activeTagId)?.name ??
+                      null)
+                    : null,
+                  activeCollectionLabel: activeCollectionId
+                    ? (collections.find(
+                        (collection) =>
+                          collection.collectionId === activeCollectionId,
+                      )?.name ?? null)
+                    : null,
+                  activeSmartCollectionLabel: activeSmartCollectionId
+                    ? (smartCollections.find(
+                        (collection) =>
+                          collection.collectionId === activeSmartCollectionId,
+                      )?.name ?? null)
+                    : null,
+                  assetScope,
+                  folderTrail:
+                    assetScope !== "all" && assetScope !== "root"
+                      ? buildManagedFolderBreadcrumbTrail(folders, assetScope)
+                      : [],
+                  linkedFolderLabel:
+                    assetScope !== "all" && assetScope !== "root"
+                      ? (linkedFolders.find(
+                          (folder) => folder.folderId === assetScope,
+                        )?.displayName ?? null)
+                      : null,
+                },
+                t,
+              )}
             />
           </div>
-        </div>
-        <ScopeBreadcrumbs
-          onNavigateFolder={(folderId) => void chooseFolder(folderId)}
-          onNavigateTrashPath={(path) => {
-            setTrashBrowsePath(path);
-            clearAssetSelection();
-            workspaceCanvasRef.current?.scrollTo({ top: 0, left: 0 });
-          }}
-          segments={buildScopeBreadcrumbSegments(
-            {
-              showTrash,
-              trashBreadcrumbHops,
-              activeTagLabel: activeTagId
-                ? (tags.find((tag) => tag.tagId === activeTagId)?.name ?? null)
-                : null,
-              activeCollectionLabel: activeCollectionId
-                ? (collections.find(
-                    (collection) =>
-                      collection.collectionId === activeCollectionId,
-                  )?.name ?? null)
-                : null,
-              activeSmartCollectionLabel: activeSmartCollectionId
-                ? (smartCollections.find(
-                    (collection) =>
-                      collection.collectionId === activeSmartCollectionId,
-                  )?.name ?? null)
-                : null,
-              assetScope,
-              folderTrail:
-                assetScope !== "all" && assetScope !== "root"
-                  ? buildManagedFolderBreadcrumbTrail(folders, assetScope)
-                  : [],
-              linkedFolderLabel:
-                assetScope !== "all" && assetScope !== "root"
-                  ? (linkedFolders.find(
-                      (folder) => folder.folderId === assetScope,
-                    )?.displayName ?? null)
-                  : null,
-            },
-            t,
-          )}
-        />
-        <form
-          className="toolbar-cluster toolbar-actions"
-          onSubmit={(event) => {
-            if (aiSearchEnabled) void runAiSearch(event);
-            else void runSearch(event);
-          }}
-          role="search"
-        >
-          <div
-            className={`search-control-wrap${aiSearchEnabled ? " is-ai-search" : ""}${searchValue.trim() ? " has-value" : ""}`}
+          <form
+            className="toolbar-workspace-search"
+            onSubmit={(event) => {
+              if (aiSearchEnabled) void runAiSearch(event);
+              else void runSearch(event);
+            }}
+            role="search"
           >
-            <Icon name="search" size={15} />
-            <input
-              aria-label={t("toolbar.searchLibrary")}
-              className="search-control"
-              disabled={!library}
-              onChange={(event) => {
-                setSearchValue(event.target.value);
-                setActiveAiSearchDefinition(null);
-              }}
-              placeholder={
-                aiSearchEnabled
-                  ? t("toolbar.aiSearchPlaceholder")
-                  : t("toolbar.searchPlaceholder")
-              }
-              type="search"
-              value={searchValue}
-            />
-            <button
-              aria-label={t("toolbar.aiSearch")}
-              aria-pressed={aiSearchEnabled}
-              className="search-ai-toggle"
-              data-hover-tip={t("toolbar.aiSearchTitle")}
-              disabled={!library || aiSearchLoading}
-              onClick={() => {
-                setAiSearchEnabled((enabled) => !enabled);
-                setActiveAiSearchDefinition(null);
-              }}
-              type="button"
+            <div
+              className={`search-control-wrap${aiSearchEnabled ? " is-ai-search" : ""}${searchValue.trim() ? " has-value" : ""}`}
             >
-              <Icon name="smart" size={14} />
-            </button>
-            {searchValue.trim() !== "" && (
-              <button
-                aria-label={t("toolbar.clearSearch")}
-                className="search-clear-btn"
+              <Icon name="search" size={15} />
+              <input
+                aria-label={t("toolbar.searchLibrary")}
+                className="search-control"
                 disabled={!library}
+                onChange={(event) => {
+                  setSearchValue(event.target.value);
+                  setActiveAiSearchDefinition(null);
+                }}
+                placeholder={
+                  aiSearchEnabled
+                    ? t("toolbar.aiSearchPlaceholder")
+                    : t("toolbar.searchPlaceholder")
+                }
+                type="search"
+                value={searchValue}
+              />
+              <button
+                aria-label={t("toolbar.aiSearch")}
+                aria-pressed={aiSearchEnabled}
+                className="search-ai-toggle"
+                data-hover-tip={t("toolbar.aiSearchTitle")}
+                disabled={!library || aiSearchLoading}
                 onClick={() => {
-                  setSearchValue("");
+                  setAiSearchEnabled((enabled) => !enabled);
                   setActiveAiSearchDefinition(null);
                 }}
                 type="button"
               >
-                <Icon name="close" size={12} />
+                <Icon name="smart" size={14} />
               </button>
-            )}
-          </div>
+              {searchValue.trim() !== "" && (
+                <button
+                  aria-label={t("toolbar.clearSearch")}
+                  className="search-clear-btn"
+                  disabled={!library}
+                  onClick={() => {
+                    setSearchValue("");
+                    setActiveAiSearchDefinition(null);
+                  }}
+                  type="button"
+                >
+                  <Icon name="close" size={12} />
+                </button>
+              )}
+            </div>
+          </form>
+        </div>
+        <div className="toolbar-cluster toolbar-inspector-cluster">
           <ToolButton
             icon={rightOpen ? "panel-right-close" : "panel-right"}
-            label={rightOpen ? t("shell.collapseInspector") : t("shell.expandInspector")}
+            label={
+              rightOpen
+                ? t("shell.collapseInspector")
+                : t("shell.expandInspector")
+            }
             onClick={() => setRightOpen((v) => !v)}
             pressed={rightOpen}
           />
-        </form>
+        </div>
         {IS_WINDOWS_PLATFORM ? (
           <WindowsWindowControls shell={shellApi} />
         ) : null}

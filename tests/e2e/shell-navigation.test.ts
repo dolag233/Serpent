@@ -55,14 +55,16 @@ test("library switcher, breadcrumbs, and workspace history", async () => {
     await expect(window.locator(".brand-glyph")).toHaveCount(0);
     await expect(window.getByText("SERPENT / LOCAL WORKSPACE")).toHaveCount(0);
 
-    // History controls: leftmost in the toolbar, before the nav toggle and
-    // left of the current directory breadcrumbs.
+    // History controls live in the browse column: settings and nav toggle sit
+    // in the nav column to their left; breadcrumbs trail to their right.
     const backButton = window.getByRole("button", { name: "后退" });
     const forwardButton = window.getByRole("button", { name: "前进" });
+    const settingsButton = window.getByRole("button", { name: "设置" });
     await expect(backButton).toBeVisible();
     await expect(forwardButton).toBeVisible();
+    await expect(settingsButton).toBeVisible();
     await expect(
-      window.locator(".toolbar-leading > .scope-history"),
+      window.locator(".toolbar-workspace-cluster .scope-history"),
     ).toBeVisible();
     await expect(window.locator(".scope-trace .scope-history")).toHaveCount(0);
     await expect(backButton.locator("svg")).toBeVisible();
@@ -70,14 +72,20 @@ test("library switcher, breadcrumbs, and workspace history", async () => {
     const navToggle = window.getByRole("button", {
       name: /收起导航|展开导航/,
     });
+    const settingsBox = await settingsButton.boundingBox();
     const backBox = await backButton.boundingBox();
     const toggleBox = await navToggle.boundingBox();
     const crumbsBox = await window.locator(".scope-breadcrumbs").boundingBox();
+    const workspaceBox = await window.locator(".workspace").boundingBox();
+    expect(settingsBox).not.toBeNull();
     expect(backBox).not.toBeNull();
     expect(toggleBox).not.toBeNull();
     expect(crumbsBox).not.toBeNull();
+    expect(workspaceBox).not.toBeNull();
+    expect(settingsBox!.x).toBeLessThan(toggleBox!.x);
     expect(toggleBox!.x).toBeLessThan(backBox!.x);
     expect(backBox!.x).toBeLessThan(crumbsBox!.x);
+    expect(backBox!.x - workspaceBox!.x).toBeCloseTo(14, 0);
 
     // Left sidebar status dots (top/bottom) were removed as redundant.
     await expect(window.locator(".navigation-pane .pane-header")).toHaveCount(

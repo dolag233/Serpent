@@ -172,7 +172,7 @@ export const en = {
     aiSearch: "AI search",
     aiSearchTitle: "When on, submitting uses configured AI to turn natural language into normal search criteria",
     aiSearchPlaceholder: "Describe what you are looking for…",
-    searchPlaceholder: "Search library…",
+    searchPlaceholder: "Search",
     aiSearchHint: "On submit, the configured cloud model builds constrained search criteria",
     searchHint: "Example: filename:\"hero concept\" NOT tags:sketch",
     clearSearch: "Clear search",
