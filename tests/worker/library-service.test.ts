@@ -216,7 +216,7 @@ describe('LibraryService lifecycle', () => {
     expect(service.listLibraries()).toEqual([created]);
 
     const database = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
-    expect(database.pragma('user_version')).toEqual([{ user_version: 18 }]);
+    expect(database.pragma('user_version')).toEqual([{ user_version: 19 }]);
     database.close();
 
     expect(service.openLibrary(created.libraryPath)).toEqual(created);
@@ -377,10 +377,14 @@ describe('LibraryService lifecycle', () => {
       libraryId: created.libraryId,
       query: { clauses: [{ field: 'description', values: ['survives'], exclude: false }] },
     }).items.map((asset) => asset.assetId)).toEqual([assetId]);
+    expect(migratedService.searchAssets({
+      libraryId: created.libraryId,
+      query: { clauses: [{ field: 'description', values: ['AI description'], exclude: false }] },
+    }).items.map((asset) => asset.assetId)).toEqual([assetId]);
     migratedService.closeAll();
 
     const migratedDatabase = new TestDatabase(databasePath);
-    expect(migratedDatabase.pragma('user_version')).toEqual([{ user_version: 18 }]);
+    expect(migratedDatabase.pragma('user_version')).toEqual([{ user_version: 19 }]);
     expect(migratedDatabase.prepare("PRAGMA table_info('asset_metadata')").all())
       .not.toEqual(expect.arrayContaining([expect.objectContaining({ name: 'label' })]));
     expect(migratedDatabase.prepare("PRAGMA table_info('asset_search_index')").all())
@@ -498,7 +502,7 @@ describe('LibraryService lifecycle', () => {
     service.openLibrary(created.libraryPath);
 
     const database = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
-    expect(database.pragma('user_version')).toEqual([{ user_version: 18 }]);
+    expect(database.pragma('user_version')).toEqual([{ user_version: 19 }]);
     expect(
       database
         .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'assets'")
@@ -526,7 +530,7 @@ describe('LibraryService lifecycle', () => {
     expect(service.listAssets({ libraryId: reopened.libraryId, recursive: true })[0])
       .toMatchObject({ relativeFilePath: 'Café.PNG' });
     const database = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
-    expect(database.pragma('user_version')).toEqual([{ user_version: 18 }]);
+    expect(database.pragma('user_version')).toEqual([{ user_version: 19 }]);
     expect(database.prepare('SELECT path_identity FROM assets').all()).toEqual([
       { path_identity: 'café.png' },
     ]);

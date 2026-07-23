@@ -186,6 +186,45 @@ describe('writeAiAnalysisResult', () => {
     service.closeAll();
   });
 
+  it('indexes an AI-generated description for search and removes it when cleared', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'AI Description Search', selectedParentPath: root });
+
+    writeFileSync(path.join(root, 'poster.webp'), 'image-data');
+    const result = importNoConflict(service, created.libraryId, path.join(root, 'poster.webp'));
+    const assetId = result.assets[0]!.assetId;
+
+    service.writeAiAnalysisResult({
+      libraryId: created.libraryId,
+      assetId,
+      description: '这是一张游戏音乐的招贴海报，主体为复古电子鼓机与正在旋转的光盘。',
+      tags: [],
+      modelId: 'test-model',
+      modelVersion: '1',
+      enabledFields: { description: true, tags: false, rating: false },
+    });
+
+    expect(service.searchAssets({
+      libraryId: created.libraryId,
+      query: { clauses: [{ field: null, values: ['鼓机'], exclude: false }] },
+    }).items.map((item) => item.assetId)).toContain(assetId);
+
+    service.clearAiContent({
+      libraryId: created.libraryId,
+      scope: { kind: 'asset', assetIds: [assetId] },
+      confirm: true,
+      fields: ['description'],
+    });
+
+    expect(service.searchAssets({
+      libraryId: created.libraryId,
+      query: { clauses: [{ field: null, values: ['鼓机'], exclude: false }] },
+    }).total).toBe(0);
+
+    service.closeAll();
+  });
+
   it('atomically replaces previous AI content for the same field', () => {
     const root = temporaryRoot();
     const service = new LibraryService();

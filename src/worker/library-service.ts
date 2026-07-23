@@ -1259,6 +1259,16 @@ const CONTEXTUAL_SUBSTRING_SEARCH_SCHEMA_CHECKSUM = createHash('sha256')
   .update(CONTEXTUAL_SUBSTRING_SEARCH_SCHEMA_SQL)
   .digest('hex');
 
+// Migration v19 (Serpent-3cz9): AI descriptions are stored separately from
+// human metadata. Rebuild the canonical search index so existing AI analysis
+// results are searchable without requiring a new analysis run.
+const AI_DESCRIPTION_SEARCH_BACKFILL_SCHEMA_SQL = `
+  DELETE FROM asset_search_index;
+`;
+const AI_DESCRIPTION_SEARCH_BACKFILL_SCHEMA_CHECKSUM = createHash('sha256')
+  .update(AI_DESCRIPTION_SEARCH_BACKFILL_SCHEMA_SQL)
+  .digest('hex');
+
 const MIGRATIONS = [
   { version: 1, sql: INITIAL_SCHEMA_SQL, checksum: INITIAL_SCHEMA_CHECKSUM },
   { version: 2, sql: ASSET_SCHEMA_SQL, checksum: ASSET_SCHEMA_CHECKSUM },
@@ -1289,6 +1299,11 @@ const MIGRATIONS = [
     version: 18,
     sql: CONTEXTUAL_SUBSTRING_SEARCH_SCHEMA_SQL,
     checksum: CONTEXTUAL_SUBSTRING_SEARCH_SCHEMA_CHECKSUM,
+  },
+  {
+    version: 19,
+    sql: AI_DESCRIPTION_SEARCH_BACKFILL_SCHEMA_SQL,
+    checksum: AI_DESCRIPTION_SEARCH_BACKFILL_SCHEMA_CHECKSUM,
   },
 ] as const;
 const SUPPORTED_SCHEMA_VERSION = MIGRATIONS.at(-1)!.version;
@@ -2305,6 +2320,16 @@ function buildMetadataText(input: {
   return parts.join(' ');
 }
 
+/** Both content layers are searchable; neither changes what the UI displays. */
+function buildSearchDescription(
+  humanDescription: string | null,
+  aiDescription: string | null,
+): string {
+  return [humanDescription, aiDescription]
+    .filter((description): description is string => Boolean(description?.trim()))
+    .join('\n');
+}
+
 function backfillAssetSearchContent(connection: DatabaseConnection): void {
   const assets = connection
     .prepare(
@@ -2369,10 +2394,17 @@ function backfillContextualSearchContent(connection: DatabaseConnection): void {
   const assets = connection
     .prepare(
       `SELECT a.asset_id, a.relative_file_path, a.availability, r.byte_size,
-              m.description, m.source_page_url, m.author
+              m.description, ai.description AS ai_description,
+              m.source_page_url, m.author
          FROM assets a
          JOIN revisions r ON r.revision_id = a.current_revision_id
          LEFT JOIN asset_metadata m ON m.asset_id = a.asset_id
+         LEFT JOIN (
+           SELECT asset_id, GROUP_CONCAT(value, '\n') AS description
+             FROM ai_content
+            WHERE field_name = 'description'
+            GROUP BY asset_id
+         ) ai ON ai.asset_id = a.asset_id
         ORDER BY a.asset_id`,
     )
     .all() as Array<{
@@ -2381,6 +2413,7 @@ function backfillContextualSearchContent(connection: DatabaseConnection): void {
       availability: string;
       byte_size: number;
       description: string | null;
+      ai_description: string | null;
       source_page_url: string | null;
       author: string | null;
     }>;
@@ -2408,7 +2441,7 @@ function backfillContextualSearchContent(connection: DatabaseConnection): void {
       asset.asset_id,
       normalizeSearchText(buildFileName(asset.relative_file_path)),
       normalizeSearchText(tagsByAsset.get(asset.asset_id) ?? ''),
-      normalizeSearchText(asset.description ?? ''),
+      normalizeSearchText(buildSearchDescription(asset.description, asset.ai_description)),
       normalizeSearchText(asset.source_page_url ?? ''),
       normalizeSearchText(asset.author ?? ''),
       normalizeSearchText(buildFolderPath(asset.relative_file_path)),
@@ -2597,7 +2630,7 @@ function migrateDatabase(connection: DatabaseConnection, allowFresh: boolean): v
           backfillAssetSearchContent(connection);
           connection.exec("INSERT INTO asset_search(asset_search) VALUES('rebuild')");
         }
-        if (migration.version === 18) {
+        if (migration.version === 18 || migration.version === 19) {
           backfillContextualSearchContent(connection);
         }
         if (rebuildsTable) {
@@ -7619,7 +7652,12 @@ export class LibraryService {
     const asset = connection
       .prepare(
         `SELECT a.relative_file_path, a.availability, r.byte_size,
-                m.description, m.source_page_url, m.author
+                m.description,
+                (SELECT GROUP_CONCAT(value, '\n')
+                   FROM ai_content
+                  WHERE asset_id = a.asset_id
+                    AND field_name = 'description') AS ai_description,
+                m.source_page_url, m.author
            FROM assets a
            JOIN revisions r ON r.revision_id = a.current_revision_id
            LEFT JOIN asset_metadata m ON m.asset_id = a.asset_id
@@ -7630,6 +7668,7 @@ export class LibraryService {
         availability: string;
         byte_size: number;
         description: string | null;
+        ai_description: string | null;
         source_page_url: string | null;
         author: string | null;
       } | undefined;
@@ -7670,7 +7709,7 @@ export class LibraryService {
         assetId,
         normalizeSearchText(buildFileName(asset.relative_file_path)),
         normalizeSearchText(tagRow?.tags ?? ''),
-        normalizeSearchText(asset.description ?? ''),
+        normalizeSearchText(buildSearchDescription(asset.description, asset.ai_description)),
         normalizeSearchText(asset.source_page_url ?? ''),
         normalizeSearchText(asset.author ?? ''),
         normalizeSearchText(buildFolderPath(asset.relative_file_path)),
