@@ -63,6 +63,24 @@ function observerHarness() {
   return { callbacks, closed, errorCallbacks, factory, roots };
 }
 
+/**
+ * Controllable clock for the client-mutation watcher-notification suppression
+ * window. Import/resolve are client-initiated filesystem mutations, so the
+ * service suppresses watcher "disk synced" notifications for `debounceMs * 6`
+ * after them (real wall-clock seconds). Tests drive the debounce scheduler
+ * manually and would otherwise sit inside that window; advancing this clock
+ * past it keeps them deterministic without wall-clock sleeps.
+ */
+function watchClock(startMs = 1_000_000) {
+  let current = startMs;
+  return {
+    advance: (ms: number) => {
+      current += ms;
+    },
+    clock: { now: () => current },
+  };
+}
+
 afterEach(() => {
   for (const root of temporaryRoots.splice(0)) rmSync(root, { force: true, recursive: true });
 });
@@ -118,10 +136,12 @@ describe('managed asset watcher', () => {
     writeFileSync(source, 'first');
     const observers = observerHarness();
     const scheduler = new ManualScheduler();
+    const { advance, clock } = watchClock();
     const events: unknown[] = [];
     const service = new LibraryService({
       observerFactory: observers.factory,
       scheduler,
+      watchNotifyClock: clock,
       onAssetsChanged: (event) => events.push(event),
     });
     const library = service.createLibrary({ displayName: 'Overwrite', selectedParentPath: root });
@@ -132,6 +152,9 @@ describe('managed asset watcher', () => {
     writeFileSync(managedPath, 'second');
     const changedTime = new Date(Date.now() + 20_000);
     utimesSync(managedPath, changedTime, changedTime);
+    // The import above is a client mutation: advance past the suppression
+    // window so this external overwrite is reported as a watcher change.
+    advance(10_000);
 
     observers.callbacks[0]!();
     scheduler.flush();
@@ -140,7 +163,7 @@ describe('managed asset watcher', () => {
     expect(after.assetId).toBe(before.assetId);
     expect(after.currentRevisionId).not.toBe(before.currentRevisionId);
     expect(events).toEqual([
-      { type: 'asset.changed', libraryId: library.libraryId, changedCount: 1, missingCount: 0 },
+      { type: 'asset.changed', libraryId: library.libraryId, changedCount: 1, missingCount: 0, source: 'watcher' },
     ]);
     observers.callbacks[0]!();
     scheduler.flush();
@@ -261,7 +284,7 @@ describe('managed asset watcher', () => {
       'FolderA/added-b.png',
     ]);
     expect(events).toEqual([
-      { type: 'asset.changed', libraryId: library.libraryId, changedCount: 2, missingCount: 0 },
+      { type: 'asset.changed', libraryId: library.libraryId, changedCount: 2, missingCount: 0, source: 'watcher' },
     ]);
     service.closeAll();
   });
@@ -309,7 +332,7 @@ describe('linked folder watcher', () => {
       'new/added.png',
     ]);
     expect(events).toEqual([
-      { type: 'asset.changed', libraryId: library.libraryId, changedCount: 1, missingCount: 0 },
+      { type: 'asset.changed', libraryId: library.libraryId, changedCount: 1, missingCount: 0, source: 'watcher' },
     ]);
     service.closeAll();
     expect(observers.closed.sort()).toEqual([0, 1]);

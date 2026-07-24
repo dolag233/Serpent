@@ -1838,6 +1838,12 @@ export interface LibraryServiceOptions {
   trashItem?: (sourcePath: string) => Promise<void>;
   /** Removes one Serpent trash directory; injectable for platform-error tests. */
   removeTrashPath?: (trashPath: string) => void;
+  /**
+   * Clock for the client-mutation watcher-notification suppression window.
+   * Tests that drive the debounce scheduler manually inject a controllable
+   * clock; production falls back to Date.now().
+   */
+  watchNotifyClock?: { now(): number };
 }
 
 export interface LibraryServiceDiagnostic {
@@ -2888,12 +2894,21 @@ export class LibraryService {
     const debounceMs = this.options.debounceMs ?? 250;
     this.suppressWatcherNotifyUntilMs = Math.max(
       this.suppressWatcherNotifyUntilMs,
-      Date.now() + debounceMs * 6,
+      this.watchNotifyNow() + debounceMs * 6,
     );
   }
 
   private shouldEmitWatcherAssetChange(): boolean {
-    return Date.now() >= this.suppressWatcherNotifyUntilMs;
+    return this.watchNotifyNow() >= this.suppressWatcherNotifyUntilMs;
+  }
+
+  /**
+   * Clock used to arm/check the client-mutation suppression window. Injectable
+   * so watcher tests that drive the debounce scheduler manually can advance
+   * time past the suppression instead of relying on wall-clock sleeps.
+   */
+  private watchNotifyNow(): number {
+    return this.options.watchNotifyClock?.now() ?? Date.now();
   }
 
   private async createConsistentDatabaseSnapshot(
