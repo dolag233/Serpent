@@ -101,8 +101,10 @@ import {
   type ImportConflictPhase,
 } from "./import-conflict-flow";
 import { RenameDialog } from "./RenameDialog";
-import { CreateDialog } from "./CreateDialog";
-import { NoLibraryEmptyState } from "./NoLibraryEmptyState";
+import {
+  CreateDialog,
+  type CreateLibraryPhase,
+} from "./CreateDialog";
 import { CollectionEditorDialog } from "./CollectionEditorDialog";
 import {
   AiConfigDialog,
@@ -515,6 +517,8 @@ function AppInner() {
     setFatal(null);
   }, [setFatal]);
   const [dialog, setDialog] = useState<DialogKind>(null);
+  const [createLibraryPhase, setCreateLibraryPhase] =
+    useState<CreateLibraryPhase>("start");
   const [dialogValue, setDialogValue] = useState(() => t("shell.myLibrary"));
   const [conflicts, setConflicts] = useState<ImportConflictPlan | null>(null);
   const [conflictPhase, setConflictPhase] = useState<ImportConflictPhase | null>(
@@ -1856,6 +1860,36 @@ function AppInner() {
     // refreshRecentLibraries closes over library; null path is intentional.
     // eslint-disable-next-line react-hooks/exhaustive-deps -- refresh when api/library identity changes
   }, [api, library]);
+  // Serpent-kipk: no-library surface is the shared create dialog (start phase),
+  // full-window centered with backdrop — not a card inside the canvas.
+  useEffect(() => {
+    if (library) return;
+    if (importLibraryChooserOpen || appSettingsOpen || busy) return;
+    if (dialog === "library") return;
+    setDialogValue(t("shell.myLibrary"));
+    setCreateLibraryPhase("start");
+    setDialog("library");
+  }, [
+    library,
+    dialog,
+    importLibraryChooserOpen,
+    appSettingsOpen,
+    busy,
+    t,
+  ]);
+  // Yield the required create surface while another full-window modal is up.
+  useEffect(() => {
+    if (library) return;
+    if (!importLibraryChooserOpen && !appSettingsOpen) return;
+    if (dialog === "library") setDialog(null);
+  }, [library, importLibraryChooserOpen, appSettingsOpen, dialog]);
+  // Drop the auto-opened start surface once a library is restored/opened.
+  // Keep an intentional menu 「创建资源库」 form while a library is already open.
+  useEffect(() => {
+    if (library && dialog === "library" && createLibraryPhase === "start") {
+      setDialog(null);
+    }
+  }, [library, dialog, createLibraryPhase]);
   useEffect(() => {
     if (!api) return;
     return api.onThumbnailEvent((event) => {
@@ -4984,7 +5018,15 @@ function AppInner() {
     resetConvertLinkedDialog: () => {
       setConvertLinkedDialog({ folderId: "", name: "", targetFolderId: "" });
     },
-    setDialog,
+    setDialog: (value) => {
+      // Serpent-kipk: required no-library surface cannot dismiss; Escape returns
+      // to the start phase instead of leaving an empty canvas.
+      if (value === null && !library) {
+        setCreateLibraryPhase("start");
+        return;
+      }
+      setDialog(value);
+    },
     setShowCollectionInput,
     setConflicts: (value) => {
       if (value === null) clearImportConflictsUi();
@@ -5987,6 +6029,7 @@ function AppInner() {
               onDeleteLibraryFromDisk={() => requestDeleteLibraryFromDisk()}
               onCreateLibrary={() => {
                 setDialogValue(t("shell.myLibrary"));
+                setCreateLibraryPhase("form");
                 setDialog("library");
               }}
               onExportLibrary={() => setExportDialogOpen(true)}
@@ -7219,21 +7262,7 @@ function AppInner() {
                 ) : null}
               </div>
             )
-          ) : (
-            <NoLibraryEmptyState
-              busy={busy}
-              onCreateLibrary={() => {
-                setDialogValue(t("shell.myLibrary"));
-                void refreshRecentLibraries(null);
-                setDialog("library");
-              }}
-              onImportLibrary={() => setImportLibraryChooserOpen(true)}
-              onOpenLibrary={() => void runLibraryOperation("open")}
-              onOpenRecent={(path) => void openRecentLibrary(path)}
-              onForgetRecent={(path) => void forgetRecentLibrary(path)}
-              recentLibraries={recentLibraries}
-            />
-          )}
+          ) : null}
         </div>
         </div>
         {previewAsset && library && api && (
@@ -7526,19 +7555,33 @@ function AppInner() {
       ) : null}
       <CreateDialog
         busy={busy}
-        open={dialog !== null}
+        open={dialog === "library"}
+        phase={createLibraryPhase}
+        required={!library}
         value={dialogValue}
         onValueChange={setDialogValue}
+        onBeginCreate={() => {
+          setDialogValue(t("shell.myLibrary"));
+          setCreateLibraryPhase("form");
+        }}
+        onBackToStart={() => {
+          setCreateLibraryPhase("start");
+        }}
         onSubmit={() => {
           setDialog(null);
           void runLibraryOperation("create");
         }}
         onCancel={() => {
           setDialog(null);
+          setCreateLibraryPhase("start");
         }}
         onOpenExisting={() => {
           setDialog(null);
           void runLibraryOperation("open");
+        }}
+        onImportLibrary={() => {
+          setDialog(null);
+          setImportLibraryChooserOpen(true);
         }}
         onOpenRecent={(path) => {
           setDialog(null);

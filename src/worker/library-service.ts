@@ -17875,10 +17875,16 @@ export class LibraryService {
       const ctExt = extensionForContentType(contentType);
       if (ctExt) filename = `${filename}${ctExt}`;
     } else if (!filenameMatchesRemoteContentType(filename, contentType)) {
-      throw new LibraryServiceError('INVALID_IMPORT_SOURCE', {
-        reason: 'MIME_EXTENSION_MISMATCH',
-        cause: new Error(`Filename extension ${fileExt} does not match ${contentType}.`),
-      });
+      const ctExt = extensionForContentType(contentType);
+      if (!ctExt) {
+        throw new LibraryServiceError('INVALID_IMPORT_SOURCE', {
+          reason: 'MIME_EXTENSION_MISMATCH',
+          cause: new Error(`Filename extension ${fileExt} does not match ${contentType}.`),
+        });
+      }
+      // Browser uploads often carry CDN URL extensions that disagree with the
+      // declared Content-Type; magic-byte validation below is authoritative.
+      filename = `${path.posix.basename(filename, fileExt)}${ctExt}`;
     }
 
     const magicProbe = new RemoteMediaMagicProbe();

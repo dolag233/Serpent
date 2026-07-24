@@ -16,6 +16,16 @@
         <li>在网页图片或视频上右键，选择「保存到 Serpent」。</li>
       </ol>
       <p>无需配对码。扩展通过本机 loopback 与正在运行的 Serpent 通信；媒体由浏览器下载后上传到桌面应用，可绕过多数防盗链限制。</p>
+
+      <section class="options-section">
+        <h2>设置</h2>
+        <label class="options-toggle">
+          <input id="notifications-enabled" type="checkbox">
+          <span>显示 Windows 系统通知（保存成功/失败提示）</span>
+        </label>
+        <p class="options-hint">关闭后扩展仍会把结果回传给网页浮层菜单，但不再弹出系统通知。</p>
+      </section>
+
       <p id="status" aria-live="polite"></p>
     </main>
     <script type="module" src="options.js"></script>

@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
@@ -786,5 +786,24 @@ describe('saveAssetFromUrl', () => {
       mediaUrl: 'https://example.com/download',
     })).rejects.toMatchObject({ reason: 'PATH_LIMIT_EXCEEDED' });
     expect(service.listAssets({ libraryId, recursive: true })).toHaveLength(0);
+  });
+
+  it('realigns a browser-upload filename when the URL extension disagrees with Content-Type', async () => {
+    const pngBody = Buffer.from([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00,
+    ]);
+    const stagedPath = path.join(tempDir(), 'cdn-thumb.jpg');
+    writeFileSync(stagedPath, pngBody);
+
+    const result = await service.saveAssetFromFile({
+      libraryId,
+      stagedFilePath: stagedPath,
+      contentType: 'image/png',
+      filename: 'cdn-thumb.jpg',
+      sourcePageUrl: 'https://example.com/page',
+      mediaUrl: 'https://cdn.example.com/cdn-thumb.jpg',
+    });
+
+    expect(result.asset.displayName).toBe('cdn-thumb.png');
   });
 });

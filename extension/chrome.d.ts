@@ -81,6 +81,13 @@ interface SerpentChromeApi {
       ): void;
       set(values: Record<string, unknown>, callback?: () => void): void;
     };
+    sync: {
+      get(
+        key: string,
+        callback: (values: Record<string, unknown>) => void,
+      ): void;
+      set(values: Record<string, unknown>, callback?: () => void): void;
+    };
   };
 }
 

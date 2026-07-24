@@ -4,113 +4,187 @@ import { iconActionAttrs } from "./icon-action-attrs";
 import { useT } from "./i18n";
 import type { RecentLibraryMenuEntry } from "./LibrarySwitcher";
 
+export type CreateLibraryPhase = "start" | "form";
+
 export interface CreateDialogProps {
   open: boolean;
+  /**
+   * Serpent-kipk: `start` is the no-library surface; `form` is the name
+   * prompt. Both share the same full-window modal shell.
+   */
+  phase: CreateLibraryPhase;
   value: string;
   onValueChange: (val: string) => void;
   onSubmit: () => void;
   onCancel: () => void;
+  /** Switch from start CTAs into the name form. */
+  onBeginCreate: () => void;
+  /** Return from the name form to start CTAs (required/no-library only). */
+  onBackToStart: () => void;
   /** Open an existing library via the native folder picker (Serpent-y0au). */
-  onOpenExisting?: () => void;
-  /** One-click open from the recent list shown inside the create flow. */
-  onOpenRecent?: (path: string) => void;
+  onOpenExisting: () => void;
+  /** Import a library folder/ZIP (same entry as the former empty-state CTA). */
+  onImportLibrary: () => void;
+  /** One-click open from the recent list. */
+  onOpenRecent: (path: string) => void;
   recentLibraries?: RecentLibraryMenuEntry[];
   busy?: boolean;
+  /**
+   * When true (no library open), hide dismiss controls so the surface stays
+   * until a library is opened or created.
+   */
+  required?: boolean;
 }
 
 /**
- * Library-creation dialog. Folder creation used to share this dialog until
- * REQ-FOLDER-007 moved folder create/rename to inline editing in the directory
- * tree; what remains here is the local-library name prompt only.
+ * Unified create / no-library start dialog (Serpent-kipk / y0au).
  *
- * Serpent-y0au: the create flow also surfaces opening an existing library
- * (picker + recent list) so users are not forced back to the empty-state
- * 「打开资源库…」 button alone.
+ * Renders as a full-window centered modal with backdrop blur so shell chrome
+ * and canvas content are defocused. Menu 「创建资源库」 and the no-library
+ * start surface share this component.
  */
 export function CreateDialog({
   open,
+  phase,
   value,
   onValueChange,
   onSubmit,
   onCancel,
+  onBeginCreate,
+  onBackToStart,
   onOpenExisting,
+  onImportLibrary,
   onOpenRecent,
   recentLibraries = [],
   busy = false,
+  required = false,
 }: CreateDialogProps) {
   const t = useT();
   if (!open) return null;
 
-  const showExisting =
-    onOpenExisting != null ||
-    (onOpenRecent != null && recentLibraries.length > 0);
+  const titleId = "create-dialog-title";
+  const showRecents =
+    required && phase === "start" && recentLibraries.length > 0;
+  const showOpenExisting = phase === "form" && !required;
 
   return (
     <div className="dialog-backdrop" role="presentation">
-      <form
-        aria-labelledby="create-dialog-title"
+      <div
+        aria-labelledby={titleId}
         aria-modal="true"
-        className="create-dialog"
-        onSubmit={(event: FormEvent) => {
-          event.preventDefault();
-          if (!value.trim() || busy) return;
-          onSubmit();
-        }}
+        className="create-dialog create-library-dialog"
         role="dialog"
       >
         <div className="dialog-heading">
           <div>
-            {/* REQ-SHELL-009: no decorative English caption in the Chinese
-                UI — the library-only dialog goes straight to the title. */}
-            <h2 id="create-dialog-title">{t("dialog.createLibrary.title")}</h2>
+            <h2 id={titleId}>{t("empty.noLibraryTitle")}</h2>
+            <p className="create-library-lead">{t("empty.noLibraryBody")}</p>
           </div>
-          <button
-            className="dialog-close"
-            onClick={onCancel}
-            type="button"
-            {...iconActionAttrs(t("common.cancel"))}
-          >
-            <Icon name="close" size={16} />
-          </button>
+          {!required ? (
+            <button
+              className="dialog-close"
+              onClick={onCancel}
+              type="button"
+              {...iconActionAttrs(t("common.cancel"))}
+            >
+              <Icon name="close" size={16} />
+            </button>
+          ) : null}
         </div>
-        <label className="field-label" htmlFor="dialog-name">
-          {t("dialog.createLibrary.name")}
-        </label>
-        <input
-          autoFocus
-          className="text-field"
-          disabled={busy}
-          id="dialog-name"
-          maxLength={255}
-          onChange={(event) => onValueChange(event.target.value)}
-          value={value}
-        />
-        {t("dialog.createLibrary.help").trim() ? (
-          <p className="field-help">{t("dialog.createLibrary.help")}</p>
-        ) : null}
-        <div className="dialog-actions">
-          <button
-            className="secondary-button"
-            disabled={busy}
-            onClick={onCancel}
-            type="button"
+
+        {phase === "form" ? (
+          <form
+            className="create-library-form"
+            onSubmit={(event: FormEvent) => {
+              event.preventDefault();
+              if (!value.trim() || busy) return;
+              onSubmit();
+            }}
           >
-            {t("common.cancel")}
-          </button>
-          <button
-            className="primary-button"
-            disabled={busy || !value.trim()}
-            type="submit"
-          >
-            {t("dialog.createLibrary.submit")}
-          </button>
-        </div>
-        {showExisting ? (
+            <label className="field-label" htmlFor="dialog-name">
+              {t("dialog.createLibrary.name")}
+            </label>
+            <input
+              autoFocus
+              className="text-field"
+              disabled={busy}
+              id="dialog-name"
+              maxLength={255}
+              onChange={(event) => onValueChange(event.target.value)}
+              value={value}
+            />
+            {t("dialog.createLibrary.help").trim() ? (
+              <p className="field-help">{t("dialog.createLibrary.help")}</p>
+            ) : null}
+            <div className="dialog-actions">
+              {required ? (
+                <button
+                  className="secondary-button"
+                  disabled={busy}
+                  onClick={onBackToStart}
+                  type="button"
+                >
+                  {t("common.back")}
+                </button>
+              ) : (
+                <button
+                  className="secondary-button"
+                  disabled={busy}
+                  onClick={onCancel}
+                  type="button"
+                >
+                  {t("common.cancel")}
+                </button>
+              )}
+              <button
+                className="primary-button"
+                disabled={busy || !value.trim()}
+                type="submit"
+              >
+                {t("dialog.createLibrary.submit")}
+              </button>
+            </div>
+          </form>
+        ) : (
+          <div className="empty-actions create-library-actions">
+            <button
+              className="primary-button"
+              disabled={busy}
+              onClick={onBeginCreate}
+              type="button"
+            >
+              <Icon name="plus" size={15} />
+              {t("shell.createLibrary")}
+            </button>
+            <button
+              className="secondary-button"
+              disabled={busy}
+              onClick={onOpenExisting}
+              type="button"
+            >
+              <Icon name="folder" size={15} />
+              {t("shell.openLibrary")}
+            </button>
+            <button
+              className="secondary-button"
+              disabled={busy}
+              onClick={onImportLibrary}
+              type="button"
+            >
+              <Icon name="download" size={15} />
+              {t("toolbar.importLibrary")}
+            </button>
+          </div>
+        )}
+
+        {showRecents || showOpenExisting ? (
           <div className="create-dialog-existing">
             <div className="create-dialog-existing-label">
-              {t("dialog.createLibrary.existingSection")}
+              {showRecents
+                ? t("empty.recentLibraries")
+                : t("dialog.createLibrary.existingSection")}
             </div>
-            {onOpenExisting != null ? (
+            {showOpenExisting ? (
               <button
                 className="secondary-button create-dialog-open-existing"
                 disabled={busy}
@@ -121,7 +195,7 @@ export function CreateDialog({
                 {t("dialog.createLibrary.openExisting")}
               </button>
             ) : null}
-            {onOpenRecent != null && recentLibraries.length > 0 ? (
+            {showRecents ? (
               <ul className="create-dialog-recent-list">
                 {recentLibraries.map((entry) => (
                   <li key={entry.path}>
@@ -145,7 +219,7 @@ export function CreateDialog({
             ) : null}
           </div>
         ) : null}
-      </form>
+      </div>
     </div>
   );
 }

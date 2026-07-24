@@ -2526,7 +2526,7 @@ input[type="range"] {
 .create-dialog-recent-list {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -2538,6 +2538,7 @@ input[type="range"] {
   gap: 4px;
 }
 
+/* Serpent-kipk: recent rows are plain list items — no card chrome, no dismiss X. */
 .empty-recent-open,
 .create-dialog-recent-open {
   display: flex;
@@ -2547,9 +2548,9 @@ input[type="range"] {
   align-items: flex-start;
   gap: 2px;
   padding: 8px 10px;
-  border: 1px solid var(--divider);
+  border: none;
   border-radius: 6px;
-  background: var(--canvas);
+  background: transparent;
   color: var(--text);
   cursor: pointer;
   text-align: left;
@@ -2557,8 +2558,7 @@ input[type="range"] {
 
 .empty-recent-open:hover:not(:disabled),
 .create-dialog-recent-open:hover:not(:disabled) {
-  border-color: var(--accent);
-  background: var(--pane);
+  background: var(--hover);
 }
 
 .empty-recent-open:disabled,
@@ -2608,13 +2608,17 @@ input[type="range"] {
 }
 
 .create-dialog-existing {
-  margin-top: 18px;
+  margin-top: 22px;
   padding-top: 16px;
   border-top: 1px solid var(--divider);
 }
 
 .create-dialog-open-existing {
+  display: inline-flex;
   width: 100%;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
   margin-bottom: 8px;
 }
 
@@ -2984,7 +2988,7 @@ input[type="range"] {
   padding: 24px;
   box-sizing: border-box;
   overflow: auto;
-  backdrop-filter: blur(2px);
+  backdrop-filter: blur(4px);
   pointer-events: auto;
 }
 
@@ -3940,6 +3944,28 @@ body.serpent-modal-open .app-shell {
   box-shadow: var(--shadow-elevated);
   /* Opacity-only enter — translateY fights true window centering. */
   animation: dialog-enter 180ms ease-out both;
+}
+
+.create-library-dialog {
+  width: min(440px, calc(100vw - 40px));
+  padding: 24px 24px 20px;
+}
+
+.create-library-lead {
+  max-width: 36em;
+  margin: 8px 0 0;
+  color: var(--secondary);
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+.create-library-actions {
+  margin-top: 4px;
+}
+
+.create-library-form {
+  display: flex;
+  flex-direction: column;
 }
 
 .create-dialog-wide {

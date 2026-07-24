@@ -7,6 +7,7 @@ import {
   sortFoldersForMenu,
   type ExtensionFolderOption,
 } from './folder-menu';
+import { readNotificationsEnabled } from './preferences';
 import {
   fetchSerpentFolders,
   notificationForOutcome,
@@ -172,19 +173,22 @@ function scheduleConnectionChecks(): void {
 }
 
 function showNotification(notification: UserNotification): void {
-  notificationSequence += 1;
-  chrome.notifications.create(
-    `serpent-save-${Date.now()}-${notificationSequence}`,
-    {
-      type: 'basic',
-      iconUrl: 'icons/icon-128.png',
-      title: notification.title,
-      message: notification.message,
-    },
-    () => {
-      void chrome.runtime.lastError;
-    },
-  );
+  void readNotificationsEnabled().then((enabled) => {
+    if (!enabled) return;
+    notificationSequence += 1;
+    chrome.notifications.create(
+      `serpent-save-${Date.now()}-${notificationSequence}`,
+      {
+        type: 'basic',
+        iconUrl: 'icons/icon-128.png',
+        title: notification.title,
+        message: notification.message,
+      },
+      () => {
+        void chrome.runtime.lastError;
+      },
+    );
+  });
 }
 
 async function rememberRecentFolder(

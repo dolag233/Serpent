@@ -1,12 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+  alignFilenameWithContentType,
   deliverSaveUpload,
   fetchMediaInBrowser,
   notificationForOutcome,
   probeSerpentConnection,
   saveIntentFromContextMenu,
   saveMediaViaBrowser,
+  sniffContentType,
   SERPENT_PORTS,
   type SaveIntent,
 } from '../../extension/save-client';
@@ -292,6 +294,19 @@ describe('browser extension save client', () => {
 
     await expect(probeSerpentConnection(fetchFn)).resolves.toEqual({ kind: 'offline' });
     expect(fetchFn).toHaveBeenCalledTimes(SERPENT_PORTS.length);
+  });
+
+  it('aligns URL filenames with the response Content-Type before upload', () => {
+    expect(alignFilenameWithContentType('photo.jpg', 'image/png')).toBe('photo.png');
+    expect(alignFilenameWithContentType('clip.bin', 'video/mp4')).toBe('clip.mp4');
+    expect(alignFilenameWithContentType('already.png', 'image/png')).toBe('already.png');
+  });
+
+  it('sniffs image/png when the response omits a useful Content-Type', () => {
+    const body = new Uint8Array([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+    ]).buffer;
+    expect(sniffContentType(body)).toBe('image/png');
   });
 
   it('maps every outcome to an explicit user notification', () => {

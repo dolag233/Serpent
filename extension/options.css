@@ -4,6 +4,11 @@ main { max-width: 620px; margin: 8vh auto; padding: 32px; background: #1a1e21; b
 .eyebrow { color: #8fb89f; font-size: 11px; letter-spacing: .14em; }
 h1 { margin: 8px 0 12px; }
 p { color: #aeb5b1; line-height: 1.6; }
+.options-section { margin-top: 28px; padding-top: 18px; border-top: 1px solid #30363a; }
+.options-section h2 { margin: 0 0 12px; font-size: 15px; font-weight: 650; color: #e8ebe8; }
+.options-toggle { display: flex; align-items: flex-start; gap: 10px; font-size: 13px; color: #d5dad7; cursor: pointer; }
+.options-toggle input { margin-top: 2px; }
+.options-hint { margin: 8px 0 0; font-size: 12px; color: #8a9290; }
 form { display: grid; gap: 8px; margin-top: 24px; }
 label { font-size: 12px; color: #cbd0cd; }
 input { padding: 11px 12px; color: #fff; background: #0f1214; border: 1px solid #41484d; border-radius: 6px; font-family: ui-monospace, monospace; }
