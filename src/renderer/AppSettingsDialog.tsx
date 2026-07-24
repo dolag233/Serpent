@@ -27,8 +27,8 @@ export interface AppSettingsDialogProps {
   onSetViewMode: (mode: CanvasPreferences["viewMode"]) => void;
   onToggleField: (field: keyof CanvasPreferences["fields"]) => void;
   aiUiPrefs: AiUiPreferences;
+  aiConfigPanel: ReactNode;
   onToggleShowAiBadges: () => void;
-  onOpenAiConfig: () => void;
 }
 
 /**
@@ -45,8 +45,8 @@ export function AppSettingsDialog({
   onSetViewMode,
   onToggleField,
   aiUiPrefs,
+  aiConfigPanel,
   onToggleShowAiBadges,
-  onOpenAiConfig,
 }: AppSettingsDialogProps): ReactNode {
   const t = useT();
   const activeCategoryDefinition = APP_SETTINGS_CATEGORIES.find(
@@ -110,7 +110,7 @@ export function AppSettingsDialog({
             {activeCategory === "ai" ? (
               <AiSettingsPage
                 aiUiPrefs={aiUiPrefs}
-                onOpenAiConfig={onOpenAiConfig}
+                aiConfigPanel={aiConfigPanel}
                 onToggleShowAiBadges={onToggleShowAiBadges}
               />
             ) : null}

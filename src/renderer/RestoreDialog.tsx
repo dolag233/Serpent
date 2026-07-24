@@ -72,9 +72,8 @@ export function RestoreDialog({
           ))}
         </select>
         <label
-          className="field-label"
+          className="field-label field-label-spaced"
           htmlFor="restore-conflict"
-          style={{ marginTop: 12 }}
         >
           {t("dialog.restore.nameConflict")}
         </label>

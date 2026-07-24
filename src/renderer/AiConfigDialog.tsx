@@ -28,6 +28,8 @@ export type AiConnectionState =
 
 export interface AiConfigDialogProps {
   open: boolean;
+  /** Renders inside the settings center instead of a modal dialog. */
+  variant?: "dialog" | "embedded";
   apiKey: string;
   apiFormat: AiApiFormat;
   model: string;
@@ -84,6 +86,7 @@ const OUTPUT_STYLE_LABEL_KEY: Record<
 
 export function AiConfigDialog({
   open,
+  variant = "dialog",
   apiKey,
   apiFormat,
   model,
@@ -286,6 +289,7 @@ export function AiConfigDialog({
   if (!open) return null;
 
   const busy = busyAction !== null || saveVerifying;
+  const embedded = variant === "embedded";
   const pickerLabel =
     busyAction === "models"
       ? t("aiConfig.fetchingModels")
@@ -295,49 +299,62 @@ export function AiConfigDialog({
           ? t("aiConfig.modelPick")
           : t("aiConfig.modelPickEmpty");
 
+  const showHeading =
+    !embedded || connectionState !== "idle" || Boolean(connectionReason);
+
   return (
-    <div className="dialog-backdrop" role="presentation">
+    <div
+      className={embedded ? "ai-config-embedded" : "dialog-backdrop"}
+      role={embedded ? undefined : "presentation"}
+    >
       <div
-        aria-modal="true"
-        className="create-dialog ai-config-dialog"
-        role="dialog"
+        aria-modal={embedded ? undefined : true}
+        className={embedded ? undefined : "create-dialog ai-config-dialog"}
+        role={embedded ? undefined : "dialog"}
       >
-        <div className="dialog-heading">
-          <div className="ai-config-heading-main">
-            <h2>{t("aiConfig.title")}</h2>
-            {connectionState !== "idle" ? (
-              <div
-                className="ai-connection-indicator"
-                data-state={connectionState}
-                role="status"
-              >
-                <span aria-hidden="true" className="ai-connection-dot" />
-                <span className="ai-connection-label">
-                  {connectionState === "connecting"
-                    ? t("aiConfig.connectionConnecting")
-                    : connectionState === "connected"
-                      ? t("aiConfig.connectionConnected")
-                      : connectionState === "error"
-                        ? t("aiConfig.connectionError")
-                        : t("aiConfig.connectionDisconnected")}
-                </span>
-                {connectionReason ? (
-                  <span className="ai-connection-reason" title={connectionReason}>
-                    {connectionReason}
+        {showHeading ? (
+          <div className="dialog-heading">
+            <div className="ai-config-heading-main">
+              {!embedded ? <h2>{t("aiConfig.title")}</h2> : null}
+              {connectionState !== "idle" ? (
+                <div
+                  className="ai-connection-indicator"
+                  data-state={connectionState}
+                  role="status"
+                >
+                  <span aria-hidden="true" className="ai-connection-dot" />
+                  <span className="ai-connection-label">
+                    {connectionState === "connecting"
+                      ? t("aiConfig.connectionConnecting")
+                      : connectionState === "connected"
+                        ? t("aiConfig.connectionConnected")
+                        : connectionState === "error"
+                          ? t("aiConfig.connectionError")
+                          : t("aiConfig.connectionDisconnected")}
                   </span>
-                ) : null}
-              </div>
+                  {connectionReason ? (
+                    <span
+                      className="ai-connection-reason"
+                      title={connectionReason}
+                    >
+                      {connectionReason}
+                    </span>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+            {!embedded ? (
+              <button
+                className="dialog-close"
+                onClick={onClose}
+                type="button"
+                {...iconActionAttrs(t("common.cancel"))}
+              >
+                <Icon name="close" size={16} />
+              </button>
             ) : null}
           </div>
-          <button
-            className="dialog-close"
-            onClick={onClose}
-            type="button"
-            {...iconActionAttrs(t("common.cancel"))}
-          >
-            <Icon name="close" size={16} />
-          </button>
-        </div>
+        ) : null}
         <div className="ai-config-dialog-body">
           <p className="ai-config-note">{t("aiConfig.note")}</p>
           <div className="editor-field ai-config-field">

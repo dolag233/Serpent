@@ -3942,6 +3942,32 @@ body.serpent-modal-open .app-shell {
   animation: dialog-enter 180ms ease-out both;
 }
 
+.create-dialog-wide {
+  width: min(680px, calc(100vw - 40px));
+}
+
+.create-dialog-wider {
+  width: min(700px, calc(100vw - 40px));
+}
+
+.dialog-actions-start {
+  justify-content: flex-start;
+}
+
+.dialog-actions-start.is-spaced {
+  margin-bottom: 12px;
+}
+
+.dialog-actions-start.is-tight {
+  margin-bottom: 10px;
+}
+
+.media-jobs-section-title {
+  margin: 0 0 5px;
+  font-size: 13px;
+  font-weight: 590;
+}
+
 .dialog-heading {
   display: flex;
   align-items: flex-start;
@@ -3983,6 +4009,21 @@ body.serpent-modal-open .app-shell {
   align-items: center;
   margin-bottom: 0;
   padding: 20px 20px 12px;
+}
+
+.ai-config-embedded .dialog-heading {
+  align-items: center;
+  margin-bottom: 0;
+  padding: 0 0 12px;
+}
+
+.ai-config-embedded .dialog-heading:empty {
+  display: none;
+  padding: 0;
+}
+
+.ai-config-embedded .ai-config-heading-main:empty {
+  display: none;
 }
 
 .ai-config-dialog .dialog-heading h2 {
@@ -4069,10 +4110,22 @@ body.serpent-modal-open .app-shell {
   overscroll-behavior: contain;
 }
 
+.ai-config-embedded .ai-config-dialog-body {
+  min-height: auto;
+  padding: 0;
+  overflow: visible;
+}
+
 .ai-config-dialog .ai-config-actions {
   flex-shrink: 0;
   margin-top: 0;
   padding: 12px 20px 20px;
+  border-top: 1px solid var(--divider);
+}
+
+.ai-config-embedded .ai-config-actions {
+  margin-top: 12px;
+  padding: 12px 0 0;
   border-top: 1px solid var(--divider);
 }
 
@@ -4242,18 +4295,6 @@ body.serpent-modal-open .app-shell {
   line-height: 1.45;
 }
 
-.ai-config-model-actions {
-  display: flex;
-  margin-top: 8px;
-}
-
-.ai-config-action-message {
-  margin: 10px 0 0;
-  color: var(--secondary);
-  font-size: 12px;
-  line-height: 1.5;
-}
-
 select.ai-config-input {
   height: 30px;
 }
@@ -4376,29 +4417,6 @@ select.ai-config-input.ai-config-languages {
   min-height: 64px;
   font-family: inherit;
   line-height: 1.4;
-}
-
-.ai-config-fetch-models {
-  flex: 0 0 auto;
-  margin: 0;
-  padding: 0 10px;
-  border: 1px solid var(--divider);
-  border-radius: 6px;
-  background: transparent;
-  color: var(--secondary);
-  font-size: 12px;
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-.ai-config-fetch-models:hover:not(:disabled) {
-  color: var(--text);
-  background: var(--hover);
-}
-
-.ai-config-fetch-models:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
 }
 
 .ai-config-actions {
@@ -5062,6 +5080,10 @@ select.ai-config-input.ai-config-languages {
   font-weight: 560;
 }
 
+.field-label-spaced {
+  margin-top: 12px;
+}
+
 .text-field {
   width: 100%;
   height: 34px;
@@ -5097,6 +5119,50 @@ select.ai-config-input.ai-config-languages {
   margin: 7px 0 0;
   color: var(--tertiary);
   font-size: 10px;
+}
+
+.dialog-body-copy {
+  margin: 0;
+  color: var(--secondary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.dialog-checkbox-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 12px;
+  color: var(--secondary);
+  font-size: 12px;
+  line-height: 1.5;
+  cursor: pointer;
+}
+
+.dialog-checkbox-row.is-centered {
+  align-items: center;
+}
+
+.dialog-checkbox-row.is-disabled {
+  cursor: not-allowed;
+}
+
+.dialog-checkbox-row.field-help {
+  margin-top: 12px;
+  color: var(--tertiary);
+  font-size: 10px;
+}
+
+.dialog-alert-warning {
+  margin: 8px 0 0;
+  color: var(--warning);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.text-field-mono {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 11px;
 }
 
 .rename-file-field {
@@ -7014,7 +7080,7 @@ select.ai-config-input.ai-config-languages {
 }
 
 .conflict-dialog {
-  width: min(520px, calc(100vw - 40px));
+  width: min(420px, calc(100vw - 40px));
   flex: 0 0 auto;
   margin: auto;
   padding: 20px;
@@ -7024,6 +7090,38 @@ select.ai-config-input.ai-config-languages {
   box-shadow: var(--shadow-elevated);
   animation: dialog-enter 180ms ease-out both;
 }
+.conflict-dialog-compact .dialog-heading {
+  margin-bottom: 8px;
+}
+.conflict-summary-line {
+  margin: 0 0 14px;
+  color: var(--secondary);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.conflict-remember-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 10px 0 4px;
+  color: var(--tertiary);
+  font-size: 11px;
+  line-height: 1.4;
+}
+.conflict-remember-row input {
+  margin-top: 2px;
+}
+.conflict-examples-line {
+  margin: 8px 0 0;
+  overflow: hidden;
+  color: var(--tertiary);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Dense summary/examples chrome: still used by RelinkPreview.
+   Import name/content conflict dialogs use conflict-summary-line /
+   conflict-examples-line instead (Serpent-79c7 / a22y). */
 .conflict-summary {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -7113,13 +7211,6 @@ select.ai-config-input.ai-config-languages {
   min-width: 0;
   color: var(--secondary);
   font-size: 10px;
-}
-.conflict-examples .conflict-example-name {
-  min-width: 0;
-  flex: 1 1 auto;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 @media (max-width: 1020px) {

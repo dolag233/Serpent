@@ -24,9 +24,8 @@ export function LinkedRulesDialog({
     <div className="dialog-backdrop" role="presentation">
       <div
         aria-modal="true"
-        className="create-dialog"
+        className="create-dialog create-dialog-wider"
         role="dialog"
-        style={{ maxWidth: 700 }}
       >
         <div className="dialog-heading">
           <div>

@@ -509,29 +509,26 @@ export const en = {
       openExisting: "Open existing library…"
     },
     conflicts: {
-      title: "Resolve import conflicts",
-      pendingFiles: "Files to import",
-      suspectedDuplicates: "Suspected duplicates",
-      libraryDuplicates: "Same content elsewhere in library",
-      nameConflicts: "Name conflicts",
       skip: "Skip",
-      merge: "Merge into existing asset",
-      createCopy: "Create a copy",
       importAnyway: "Import anyway",
-      keepBoth: "Keep both",
       autoRename: "Auto-rename",
       replace: "Overwrite",
-      apply: "Apply and import"
+      cancelImport: "Cancel this import",
+      confirmRename: "Auto-rename and import",
+      confirmReplace: "Overwrite and import",
+      confirmSkip: "Skip and continue",
+      confirmImportAnyway: "Import anyway",
+      examplesMore: "{name} and {count} more"
     },
     nameConflict: {
       title: "Name conflict",
-      countLabel: "name conflicts",
+      summary: "Found {count} files with the same name",
       actionLabel: "When names collide",
       remember: "Remember my choice and don’t ask again"
     },
     contentDuplicate: {
       title: "Duplicate content",
-      countLabel: "content duplicates",
+      summary: "Found {count} files that already exist in the library",
       actionLabel: "When content matches",
       remember: "Remember my choice and don’t ask again"
     },
@@ -617,14 +614,10 @@ export const en = {
       helpFile: "Renaming changes the file name on disk.",
       helpOrg: "The name only affects organization in the library; asset files are not changed.",
       nounCollection: "collection",
-      nounSmartCollection: "smart collection",
-      nounFolder: "folder"
+      nounSmartCollection: "smart collection"
     },
     export: {
       help: "Export the library as a full folder or a standard ZIP. The export includes all managed assets, the database, revisions, and Trash files.",
-      format: "Export format",
-      formatFolder: "Folder",
-      formatZip: "Standard ZIP",
       zipLimitHint: "ZIP limit: 4 GiB / 65534 entries.",
       includeLinked: "Include linked-folder source content",
       zip: "Choose a save location and export ZIP",
@@ -675,9 +668,7 @@ export const en = {
       resumeAi: "Resume AI",
       cancelAi: "Cancel AI",
       retryAiFailed: "Retry failed AI jobs",
-      revealLog: "Reveal app log",
-      progress: "Progress",
-      progressDone: "{done}/{total} processed"
+      revealLog: "Reveal app log"
     },
     relinkPreview: {
       title: "Batch relink preview",
@@ -724,7 +715,6 @@ export const en = {
     model: "Model",
     modelPick: "Choose model",
     modelPickEmpty: "No models loaded",
-    fetchModels: "Fetch models",
     fetchingModels: "Loading models…",
     fetchModelsOk: "Loaded {count} models. Pick from the dropdown or keep typing.",
     fetchModelsFailed: "Could not fetch models. Enter the model name manually.",
@@ -744,7 +734,7 @@ export const en = {
     languagePlaceholder: "Follow system",
     savingVerifying: "Verifying connection…",
     saveVerifyingHint:
-      "Testing the connection; this window will close when verification succeeds.",
+      "Testing the connection; your settings will remain open after verification succeeds.",
     fieldSwitches: "AI write toggles",
     description: "Description",
     tags: "Tags",
@@ -785,10 +775,6 @@ export const en = {
     categoryBrowse: "Browse",
     categoryAi: "AI",
     categorySafety: "Safety & import",
-    aiConfigEntry: "AI configuration",
-    aiConfigEntryHint:
-      "Manage provider, model, analysis writes, language, concurrency, and analysis image resolution.",
-    aiConfigEntryAction: "Open AI settings",
     themeHint: "Controls the app’s light or dark appearance. Changes apply immediately.",
     accentColor: "Accent color",
     accentHint:
@@ -979,6 +965,8 @@ export const en = {
     renameTagFailed: "Failed to rename tag.",
     tagDeleted: "Tag deleted.",
     deleteTagFailed: "Failed to delete tag.",
+    undoTagDeleted: "Restored tag “{name}”.",
+    undoTagDeleteFailed: "Could not restore the deleted tag.",
     tagsAddedCount: "Added tags to {count} assets.",
     tagUpdatedRefreshFailed: "Tag updated, but refreshing the display failed.",
     collectionDeleted: "Collection deleted.",
@@ -1249,6 +1237,7 @@ export const en = {
       ASSET_NOT_FOUND: "Could not find the selected asset.",
       INVALID_ASSET_FILE_NAME: "Enter a file name that is safe across platforms.",
       ASSET_FILE_NAME_CONFLICT: "A file with this name already exists in the same folder.",
+      TAG_UNDO_EXPIRED: "The 10-second undo period has ended.",
       ASSET_MOVE_CONFLICT: "Asset move could not complete: the source or destination changed. Serpent did not overwrite silently.",
       ASSET_SOURCE_TRASH_FAILED: "Could not move the source file to the system Trash. Check the logs for details.",
       AI_ANALYSIS_FAILED: "The AI service could not finish asset analysis.",
@@ -1308,6 +1297,7 @@ export const en = {
     rename: "Rename",
     removeAsset: "Remove asset",
     undoMove: "Undo move",
-    undoCopy: "Undo copy"
+    undoCopy: "Undo copy",
+    undoTagDelete: "Undo"
   }
 } as CatalogMessages<typeof zhCN>;

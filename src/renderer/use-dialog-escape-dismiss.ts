@@ -25,7 +25,6 @@ export type UseDialogEscapeDismissParams = {
   setExportDialogOpen: (open: boolean) => void;
   setImportLibraryChooserOpen: (open: boolean) => void;
   setAppSettingsOpen: (open: boolean) => void;
-  setAiConfigOpen: (open: boolean) => void;
   setExtensionPairingOpen: (open: boolean) => void;
   setMediaJobsOpen: (open: boolean) => void;
   setLinkedRulesEditor: (value: null) => void;
@@ -59,7 +58,6 @@ export function useDialogEscapeDismiss({
   setExportDialogOpen,
   setImportLibraryChooserOpen,
   setAppSettingsOpen,
-  setAiConfigOpen,
   setExtensionPairingOpen,
   setMediaJobsOpen,
   setLinkedRulesEditor,
@@ -126,9 +124,6 @@ export function useDialogEscapeDismiss({
         case "close-app-settings":
           setAppSettingsOpen(false);
           return;
-        case "close-ai-config":
-          setAiConfigOpen(false);
-          return;
         case "close-extension-pairing":
           setExtensionPairingOpen(false);
           return;
@@ -181,7 +176,6 @@ export function useDialogEscapeDismiss({
     setExportDialogOpen,
     setImportLibraryChooserOpen,
     setAppSettingsOpen,
-    setAiConfigOpen,
     setExtensionPairingOpen,
     setMediaJobsOpen,
     setLinkedRulesEditor,

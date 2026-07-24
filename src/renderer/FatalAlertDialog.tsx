@@ -47,14 +47,7 @@ export function FatalAlertDialog({
             <Icon name="close" size={16} />
           </button>
         </div>
-        <p
-          id="fatal-alert-body"
-          style={{
-            color: "var(--secondary)",
-            fontSize: 12,
-            lineHeight: 1.6,
-          }}
-        >
+        <p className="dialog-body-copy" id="fatal-alert-body">
           {message}
         </p>
         <div className="dialog-actions">

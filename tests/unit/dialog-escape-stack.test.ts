@@ -19,7 +19,6 @@ const empty: DialogEscapeSnapshot = {
   exportDialogOpen: false,
   importLibraryChooserOpen: false,
   appSettingsOpen: false,
-  aiConfigOpen: false,
   extensionPairingOpen: false,
   mediaJobsOpen: false,
   linkedRulesEditorOpen: false,
@@ -93,5 +92,14 @@ describe("dialog-escape-stack", () => {
         conflictsImportId: "imp_2",
       }),
     ).toEqual({ kind: "close-dialog" });
+  });
+
+  it("treats embedded AI configuration as part of settings", () => {
+    expect(
+      resolveDialogEscapeAction({
+        ...empty,
+        appSettingsOpen: true,
+      }),
+    ).toEqual({ kind: "close-app-settings" });
   });
 });

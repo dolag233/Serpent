@@ -44,10 +44,7 @@ export function RelinkPreview({
             <Icon name="close" size={16} />
           </button>
         </div>
-        <div
-          className="conflict-summary"
-          style={{ gridTemplateColumns: "repeat(3, 1fr)" }}
-        >
+        <div className="conflict-summary">
           <div>
             <strong>{preview.totalCount}</strong>
             <span>{t("dialog.relinkPreview.totalMissing")}</span>
@@ -76,23 +73,14 @@ export function RelinkPreview({
             ))}
           </div>
         )}
-        <label
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-            marginTop: 14,
-            color: "var(--secondary)",
-            fontSize: 12,
-            cursor: "pointer",
-          }}
-        >
+        <label className="conflict-remember-row" htmlFor="relink-keep-metadata">
           <input
             checked={keepMetadata}
+            id="relink-keep-metadata"
             onChange={(e) => onKeepMetadataChange(e.target.checked)}
             type="checkbox"
           />
-          {t("dialog.relinkPreview.keepMetadata")}
+          <span>{t("dialog.relinkPreview.keepMetadata")}</span>
         </label>
         <div className="dialog-actions">
           <button

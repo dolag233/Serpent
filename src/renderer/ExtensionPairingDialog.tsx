@@ -45,17 +45,11 @@ export function ExtensionPairingDialog({
             <Icon name="close" size={16} />
           </button>
         </div>
-        <p
-          style={{
-            color: "var(--secondary)",
-            fontSize: 12,
-            lineHeight: 1.6,
-          }}
-        >
+        <p className="dialog-body-copy">
           {t("dialog.extensionPairing.help")}
         </p>
         {error ? (
-          <p role="alert" style={{ color: "var(--warning)", fontSize: 12 }}>
+          <p className="dialog-alert-warning" role="alert">
             {error}
           </p>
         ) : (
@@ -67,15 +61,11 @@ export function ExtensionPairingDialog({
               {t("dialog.extensionPairing.tokenLabel")}
             </label>
             <input
-              className="text-field"
+              className="text-field text-field-mono"
               id="extension-pairing-token"
               onFocus={(event) => event.currentTarget.select()}
               readOnly
               spellCheck={false}
-              style={{
-                fontFamily: "'IBM Plex Mono', monospace",
-                fontSize: 11,
-              }}
               value={token || t("dialog.extensionPairing.reading")}
             />
             <p className="field-help">{t("dialog.extensionPairing.rotateHelp")}</p>

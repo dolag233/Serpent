@@ -47,14 +47,7 @@ export function AiConnectionFailureDialog({
             <Icon name="close" size={16} />
           </button>
         </div>
-        <p
-          id="ai-connection-failure-body"
-          style={{
-            color: "var(--secondary)",
-            fontSize: 12,
-            lineHeight: 1.6,
-          }}
-        >
+        <p className="dialog-body-copy" id="ai-connection-failure-body">
           {t("dialog.aiConnectionFailure.body", {
             count: String(Math.max(1, failedCount)),
           })}

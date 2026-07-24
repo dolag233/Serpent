@@ -222,11 +222,29 @@ export function useExternalImportHandlers({
       if (previewBlocksDrop) {
         event.preventDefault();
         event.dataTransfer.dropEffect = "none";
+        setFolderCardDropTarget(null);
         return;
       }
-      if (!library || !supportsExternalImportTransfer(event.dataTransfer)) return;
+      // Serpent-pagf: resolve folder-card under pointer from the canvas
+      // dragover (incl. capture). Unfocused Finder→Electron may skip a
+      // stable card dragenter; canvas over + closest() still warms highlight
+      // when any over event reaches the renderer.
+      const card = (event.target as Element | null)?.closest?.(
+        ".folder-card:not(.is-trashed-folder)",
+      );
+      const folderId = card?.getAttribute("data-folder-id") ?? null;
+      if (supportsManagedFolderDrag(event.dataTransfer)) {
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "move";
+        setFolderCardDropTarget(folderId);
+        return;
+      }
+      if (!library || !supportsExternalImportTransfer(event.dataTransfer)) {
+        return;
+      }
       event.preventDefault();
       event.dataTransfer.dropEffect = "copy";
+      setFolderCardDropTarget(folderId);
     },
     [library, previewBlocksDrop],
   );

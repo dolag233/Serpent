@@ -814,7 +814,6 @@ function AppInner() {
     useState<SmartCollectionSettingsTarget | null>(null);
 
   // AI analysis state
-  const [aiConfigOpen, setAiConfigOpen] = useState(false);
   const [aiApiFormat, setAiApiFormat] = useState<AiApiFormat>("dashscope_native");
   const [aiModel, setAiModel] = useState("qwen3-vl-plus");
   const [aiBaseUrl, setAiBaseUrl] = useState("");
@@ -4926,7 +4925,6 @@ function AppInner() {
       exportDialogOpen,
       importLibraryChooserOpen,
       appSettingsOpen,
-      aiConfigOpen,
       extensionPairingOpen,
       mediaJobsOpen: Boolean(mediaJobsOpen && library !== null),
       linkedRulesEditorOpen: Boolean(linkedRulesEditor),
@@ -4952,7 +4950,6 @@ function AppInner() {
     exportDialogOpen,
     importLibraryChooserOpen,
     appSettingsOpen,
-    aiConfigOpen,
     extensionPairingOpen,
     mediaJobsOpen,
     library,
@@ -4984,7 +4981,6 @@ function AppInner() {
     setExportDialogOpen,
     setImportLibraryChooserOpen,
     setAppSettingsOpen,
-    setAiConfigOpen,
     setExtensionPairingOpen,
     setMediaJobsOpen,
     setLinkedRulesEditor,
@@ -5021,7 +5017,6 @@ function AppInner() {
       importLibraryChooserOpen ||
       appSettingsOpen ||
       Boolean(smartCollectionSettings) ||
-      aiConfigOpen ||
       extensionPairingOpen ||
       Boolean(fatalAlertMessage) ||
       aiConnectionFailureGate.open ||
@@ -5492,7 +5487,6 @@ function AppInner() {
     setAiApiKey("");
     setNotice(t("toast.aiConfigSaved"));
     if (alreadyVerified) {
-      setAiConfigOpen(false);
       setAiConnectionReason(undefined);
       setAiSaveVerifying(false);
       return;
@@ -5501,7 +5495,6 @@ function AppInner() {
     try {
       const connection = await testAiConnectionFromDialog();
       if (connection.success) {
-        setAiConfigOpen(false);
         setAiConnectionReason(undefined);
       }
     } finally {
@@ -5510,14 +5503,26 @@ function AppInner() {
   }
 
   useEffect(() => {
-    if (!aiConfigOpen) {
+    const aiSettingsOpen =
+      appSettingsOpen && appSettingsCategory === "ai";
+    if (!aiSettingsOpen) {
       aiAutoConnectAttemptedRef.current = false;
       return;
     }
     if (!aiHasKey || aiAutoConnectAttemptedRef.current) return;
     aiAutoConnectAttemptedRef.current = true;
     void testAiConnectionFromDialog();
-  }, [aiConfigOpen, aiHasKey, testAiConnectionFromDialog]);
+  }, [
+    appSettingsOpen,
+    appSettingsCategory,
+    aiHasKey,
+    testAiConnectionFromDialog,
+  ]);
+
+  useEffect(() => {
+    if (!appSettingsOpen || appSettingsCategory !== "ai") return;
+    void loadAiConfig();
+  }, [appSettingsOpen, appSettingsCategory]);
 
   const probeStoredAiConnection = useCallback(async () => {
     if (!api) return;
@@ -6610,6 +6615,7 @@ function AppInner() {
           onDragEnter={handleExternalDragEnter}
           onDragLeave={handleExternalDragLeave}
           onDragOver={handleExternalDragOver}
+          onDragOverCapture={handleExternalDragOver}
           onDrop={handleExternalDrop}
           onMouseDown={handleCanvasMouseDown}
           onScroll={(event) => {
@@ -7477,17 +7483,60 @@ function AppInner() {
       />
       <AppSettingsDialog
         activeCategory={appSettingsCategory}
+        aiConfigPanel={
+          <AiConfigDialog
+            open={appSettingsOpen && appSettingsCategory === "ai"}
+            variant="embedded"
+            apiKey={aiApiKey}
+            apiFormat={aiApiFormat}
+            model={aiModel}
+            baseUrl={aiBaseUrl}
+            languages={aiLanguages}
+            concurrencyLimit={aiConcurrencyLimit}
+            maxAnalysisImageEdgePx={aiMaxAnalysisImageEdgePx}
+            hasKey={aiHasKey}
+            descriptionEnabled={aiDescriptionEnabled}
+            tagsEnabled={aiTagsEnabled}
+            ratingEnabled={aiRatingEnabled}
+            forceExistingTags={aiForceExistingTags}
+            analysisSettings={aiAnalysisSettings}
+            disclaimerAccepted={aiDisclaimerAccepted}
+            autoAnalyzeEnabled={aiAutoAnalyzeEnabled}
+            connectionState={aiConnectionState}
+            connectionReason={aiConnectionReason}
+            onApiKeyChange={setAiApiKey}
+            onApiFormatChange={setAiApiFormat}
+            onModelChange={setAiModel}
+            onBaseUrlChange={setAiBaseUrl}
+            onLanguagesChange={setAiLanguages}
+            onConcurrencyLimitChange={setAiConcurrencyLimit}
+            onMaxAnalysisImageEdgePxChange={setAiMaxAnalysisImageEdgePx}
+            onDescriptionEnabledChange={setAiDescriptionEnabled}
+            onTagsEnabledChange={setAiTagsEnabled}
+            onRatingEnabledChange={setAiRatingEnabled}
+            onForceExistingTagsChange={setAiForceExistingTags}
+            onAnalysisSettingsChange={setAiAnalysisSettings}
+            onDisclaimerAcceptedChange={setAiDisclaimerAccepted}
+            onAutoAnalyzeEnabledChange={setAiAutoAnalyzeEnabled}
+            saveVerifying={aiSaveVerifying}
+            onClose={() => {
+              if (aiSaveVerifying) return;
+              setAiApiKey("");
+              // Keep global connection state for heartbeat / context menu
+              // (Serpent-rsbt); re-sync from stored credentials after draft edits.
+              void probeStoredAiConnection();
+            }}
+            onSave={() => void saveAiConfig()}
+            onTestConnection={testAiConnectionFromDialog}
+            onFetchModels={fetchAiModelsFromDialog}
+          />
+        }
         aiUiPrefs={aiUiPrefs}
         canvasPrefs={canvasPrefs}
         onActiveCategoryChange={setAppSettingsCategory}
         onClose={() => {
           setAppSettingsOpen(false);
           setAppSettingsCategory("general");
-        }}
-        onOpenAiConfig={() => {
-          setAppSettingsOpen(false);
-          void loadAiConfig();
-          setAiConfigOpen(true);
         }}
         onSetViewMode={(mode) => {
           setCanvasPrefs((p) => ({ ...p, viewMode: mode }));
@@ -7700,52 +7749,6 @@ function AppInner() {
         message={fatalAlertMessage}
         title={fatalDialogTitle}
         onDismiss={dismissFatalAlert}
-      />
-      <AiConfigDialog
-        open={aiConfigOpen}
-        apiKey={aiApiKey}
-        apiFormat={aiApiFormat}
-        model={aiModel}
-        baseUrl={aiBaseUrl}
-        languages={aiLanguages}
-        concurrencyLimit={aiConcurrencyLimit}
-        maxAnalysisImageEdgePx={aiMaxAnalysisImageEdgePx}
-        hasKey={aiHasKey}
-        descriptionEnabled={aiDescriptionEnabled}
-        tagsEnabled={aiTagsEnabled}
-        ratingEnabled={aiRatingEnabled}
-        forceExistingTags={aiForceExistingTags}
-        analysisSettings={aiAnalysisSettings}
-        disclaimerAccepted={aiDisclaimerAccepted}
-        autoAnalyzeEnabled={aiAutoAnalyzeEnabled}
-        connectionState={aiConnectionState}
-        connectionReason={aiConnectionReason}
-        onApiKeyChange={setAiApiKey}
-        onApiFormatChange={setAiApiFormat}
-        onModelChange={setAiModel}
-        onBaseUrlChange={setAiBaseUrl}
-        onLanguagesChange={setAiLanguages}
-        onConcurrencyLimitChange={setAiConcurrencyLimit}
-        onMaxAnalysisImageEdgePxChange={setAiMaxAnalysisImageEdgePx}
-        onDescriptionEnabledChange={setAiDescriptionEnabled}
-        onTagsEnabledChange={setAiTagsEnabled}
-        onRatingEnabledChange={setAiRatingEnabled}
-        onForceExistingTagsChange={setAiForceExistingTags}
-        onAnalysisSettingsChange={setAiAnalysisSettings}
-        onDisclaimerAcceptedChange={setAiDisclaimerAccepted}
-        onAutoAnalyzeEnabledChange={setAiAutoAnalyzeEnabled}
-        saveVerifying={aiSaveVerifying}
-        onClose={() => {
-          if (aiSaveVerifying) return;
-          setAiConfigOpen(false);
-          setAiApiKey("");
-          // Keep global connection state for heartbeat / context menu
-          // (Serpent-rsbt); re-sync from stored credentials after draft edits.
-          void probeStoredAiConnection();
-        }}
-        onSave={() => void saveAiConfig()}
-        onTestConnection={testAiConnectionFromDialog}
-        onFetchModels={fetchAiModelsFromDialog}
       />
       <MediaJobsDialog
         open={mediaJobsOpen && library !== null}
