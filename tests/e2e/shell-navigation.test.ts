@@ -138,11 +138,18 @@ test("library switcher, breadcrumbs, and workspace history", async () => {
     await window.getByRole("button", { name: "添加文件夹" }).click();
     await window.getByLabel("新文件夹名称").fill("场景");
     await window.keyboard.press("Enter");
-    await expect(
-      window.getByRole("button", { name: "场景", exact: true }),
-    ).toBeVisible({ timeout: 10_000 });
-
-    await window.getByRole("button", { name: "场景", exact: true }).click();
+    // The folder is created under the current browse parent. In the default
+    // "所有资产" scope there is intentionally no folder-card row (folder cards
+    // only appear inside a managed folder / root view — see FOLDER-010 and
+    // folder-card-selection.test.ts), so navigate to the new folder through
+    // the sidebar instead of clicking a canvas card. The sidebar row label
+    // ellipsis-truncates in narrow panes, which clips its text node and makes
+    // Playwright's accessible-name match flaky; target the row element by its
+    // exact label text instead.
+    await window
+      .locator(".navigation-pane .nav-row-label", { hasText: "场景" })
+      .locator("xpath=ancestor::button[contains(@class, 'nav-row')]")
+      .click();
     await expect(
       window.locator(".scope-crumb-label.is-current"),
     ).toHaveText("场景");
