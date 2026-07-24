@@ -80,7 +80,6 @@ export const zhCN = {
     themeLight: "亮色",
     themeSystem: "跟随系统",
     myLibrary: "我的资源库",
-    recentLibraries: "最近使用",
     libraryTransfer: "添加与传输",
     moreWorkspaceTools: "更多工具",
     windowControls: "窗口控制",

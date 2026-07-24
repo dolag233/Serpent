@@ -1047,7 +1047,6 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
           label={t("nav.tagManagement")}
           onClick={() => onEnterTagManagement()}
         />
-        <NavRow icon="archive" label={t("shell.recentLibraries")} disabled />
         <Section
           title={t("nav.folders")}
           action={library ? onAddFolder : undefined}

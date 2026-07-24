@@ -89,7 +89,6 @@ export const en = {
     themeLight: "Light",
     themeSystem: "System",
     myLibrary: "My library",
-    recentLibraries: "Recent",
     libraryTransfer: "Add & transfer",
     moreWorkspaceTools: "More tools",
     windowControls: "Window controls",
