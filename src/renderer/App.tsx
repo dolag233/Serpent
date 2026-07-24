@@ -154,6 +154,7 @@ import {
   useBrowserSessionRestore,
   usePendingRestoredAssetFocus,
 } from "./use-browser-session-restore";
+import { useExtensionActiveContext } from "./use-extension-active-context";
 import { resolveInspectorTagTarget } from "./inspector-tag-target";
 import { useBatchActions } from "./useBatchActions";
 import { useShellFileActions } from "./use-shell-file-actions";
@@ -1831,6 +1832,15 @@ function AppInner() {
     setNavHistoryUi,
     setUiState,
     setError,
+  });
+  useExtensionActiveContext({
+    api: api ?? null,
+    libraryId: library?.libraryId ?? null,
+    showTrash,
+    activeTagId,
+    activeCollectionId,
+    activeSmartCollectionId,
+    assetScope,
   });
   useBrowserSessionPersist({
     library,

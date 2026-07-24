@@ -151,6 +151,7 @@ import {
   type SaveIntent,
   type SaveIntentDisposition,
 } from "./extension-server";
+import { resolveExtensionSaveContext } from "./extension-save-context";
 import { ExtensionPairingStore } from "./extension-pairing-store";
 import { RelinkPreviewStore } from "./relink-preview-store";
 import {
@@ -236,6 +237,8 @@ const focusedContexts = new Map<
   number,
   { libraryId: string | null; selectedFolderId?: string }
 >();
+// Last Serpent window that published browse context or received OS focus.
+let lastExtensionTargetWindowId: number | undefined;
 
 // Keeps selected roots in Main. Renderer receives only an opaque, one-shot token.
 const pendingRelinkPreviews = new RelinkPreviewStore();
@@ -498,6 +501,9 @@ async function createMainWindow(): Promise<void> {
   });
 
   const publishWindowFocus = () => {
+    if (window.isFocused()) {
+      lastExtensionTargetWindowId = window.id;
+    }
     window.webContents.send(WINDOW_FOCUS_CHANNEL, {
       focused: window.isFocused(),
     });
@@ -540,28 +546,34 @@ async function handleSaveIntent(
   }
 
   const focusedWindow = BrowserWindow.getFocusedWindow();
-  if (!focusedWindow) {
+  const saveContext = resolveExtensionSaveContext({
+    focusedWindowId: focusedWindow?.id ?? null,
+    contexts: focusedContexts,
+    lastTargetWindowId: lastExtensionTargetWindowId ?? null,
+    mainWindowId:
+      mainWindow && !mainWindow.isDestroyed() ? mainWindow.id : null,
+  });
+  if (!saveContext) {
     logger?.info(
       "extension-server.save",
-      "No focused window; dropping save intent.",
-    );
-    return { accepted: false, status: 503, reason: "no active library" };
-  }
-
-  const context = focusedContexts.get(focusedWindow.id);
-  const libraryId = context?.libraryId;
-  if (!libraryId) {
-    logger?.info(
-      "extension-server.save",
-      "No active library in focused window; dropping save intent.",
+      focusedWindow
+        ? "No active library in focused window; dropping save intent."
+        : "No focused Serpent window and no fallback browse context; dropping save intent.",
+      {
+        focusedWindowId: focusedWindow?.id ?? null,
+        lastTargetWindowId: lastExtensionTargetWindowId ?? null,
+        mainWindowId:
+          mainWindow && !mainWindow.isDestroyed() ? mainWindow.id : null,
+        contextWindowCount: focusedContexts.size,
+      },
     );
     return { accepted: false, status: 503, reason: "no active library" };
   }
 
   const command: WorkerCommand = {
     type: "extension.save-from-url",
-    libraryId,
-    targetFolderId: context.selectedFolderId,
+    libraryId: saveContext.libraryId,
+    targetFolderId: saveContext.selectedFolderId,
     sourcePageUrl: intent.sourcePageUrl,
     mediaUrl: intent.mediaUrl,
     mediaType: intent.mediaType,
@@ -3313,6 +3325,9 @@ async function startApplication(): Promise<void> {
     const windowId = BrowserWindow.fromWebContents(event.sender)?.id;
     if (windowId !== undefined) {
       focusedContexts.set(windowId, parsed.context);
+      if (parsed.context.libraryId) {
+        lastExtensionTargetWindowId = windowId;
+      }
     }
   });
 
