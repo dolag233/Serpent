@@ -15,7 +15,10 @@ import { Icon, type IconName } from "./Icons";
 import { iconActionAttrs } from "./icon-action-attrs";
 import { EditTextContextMenuHost } from "./edit-text-context-menu";
 import { HoverTipHost } from "./hover-tip";
-import { shouldShowMissingAssetOverlay } from "./availability-affordance";
+import {
+  missingAssetAffordance,
+  shouldShowMissingAssetOverlay,
+} from "./availability-affordance";
 import {
   assetTypeBadgeLabel,
   fileExtensionLabel,
@@ -7267,7 +7270,16 @@ function AppInner() {
                             title={t("inspector.missing")}
                             className="missing-overlay"
                           >
-                            <Icon name="link-off" size={28} />
+                            {(() => {
+                              const affordance = missingAssetAffordance();
+                              return (
+                                <Icon
+                                  color={affordance.iconColor}
+                                  name={affordance.icon}
+                                  size={28}
+                                />
+                              );
+                            })()}
                           </span>
                         )}
                         {asset.deletedAt && (

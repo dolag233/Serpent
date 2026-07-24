@@ -29,3 +29,15 @@ export function linkedFolderHoverDetail(
 export function shouldShowMissingAssetOverlay(availability: string): boolean {
   return availability === 'missing';
 }
+
+/** Same disconnect glyph + muted color as an offline linked folder row. */
+export function missingAssetAffordance(): {
+  readonly icon: IconName;
+  readonly iconColor: string;
+} {
+  const offline = linkedFolderNavAffordance('offline');
+  return {
+    icon: offline.icon,
+    iconColor: offline.iconColor ?? 'var(--tertiary)',
+  };
+}

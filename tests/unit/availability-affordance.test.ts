@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   linkedFolderHoverDetail,
   linkedFolderNavAffordance,
+  missingAssetAffordance,
   shouldShowMissingAssetOverlay,
 } from '../../src/renderer/availability-affordance';
 
@@ -34,5 +35,9 @@ describe('availability affordance (Serpent-rc9)', () => {
   it('shows the missing overlay only for missing assets', () => {
     expect(shouldShowMissingAssetOverlay('missing')).toBe(true);
     expect(shouldShowMissingAssetOverlay('available')).toBe(false);
+  });
+
+  it('reuses the offline linked-folder disconnect affordance for missing assets', () => {
+    expect(missingAssetAffordance()).toEqual(linkedFolderNavAffordance('offline'));
   });
 });

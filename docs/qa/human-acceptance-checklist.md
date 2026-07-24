@@ -89,7 +89,7 @@
 | IMPORT-002 | 一次导入多个文件 | 待人类验收 | 在“导入文件”中一次选择多个文件 | 所有选中文件均导入，且没有重复或遗漏 | [0002 QA](0002-asset-ingestion-qa-report.md) / [导入 E2E](../../tests/e2e/asset-ingestion.test.ts) | — |
 | IMPORT-003 | 导入目录并保留层级 | 待人类验收 | 导入一个包含子目录的素材目录 | `Assets/` 和侧栏保留原目录层级，正常素材全部出现 | [0002 QA](0002-asset-ingestion-qa-report.md) / [桌面导入 E2E](../../tests/e2e/desktop-ingestion.test.ts) | — |
 | IMPORT-004 | 托管资产被外部删除后显示 missing | 待人类验收 | 在外部删除一项托管资产，再执行“刷新磁盘变化” | 该资产显示文件丢失状态，不再表现为可用 | [0002 QA](0002-asset-ingestion-qa-report.md) / [导入 E2E](../../tests/e2e/asset-ingestion.test.ts) | — |
-| IMPORT-014 | 托管文件夹外部新增文件自动入库 | 待人类验收 | ① 新建资源库并在侧栏创建托管文件夹 A。② 在资源管理器打开该库 `Assets/A/` 路径，复制两张支持预览的图片进去。③ 回到 Serpent（无需手动「刷新磁盘变化」），等待数秒 | 文件夹 A 内自动出现新资产并可生成缩略图；列表无需手动刷新即可更新 | [watcher 测试](../../tests/worker/library-watcher.test.ts) / [refreshManagedAssets](../../src/worker/library-service.ts) | 2026-07-24 实现托管目录扫描发现。 |
+| IMPORT-014 | 托管文件夹外部新增文件自动入库 | 人类验收通过 | ① 新建资源库并在侧栏创建托管文件夹 A。② 在资源管理器打开该库 `Assets/A/` 路径，复制两张支持预览的图片进去。③ 回到 Serpent（无需手动「刷新磁盘变化」），等待数秒 | 文件夹 A 内自动出现新资产并可生成缩略图；列表无需手动刷新即可更新 | [watcher 测试](../../tests/worker/library-watcher.test.ts) / [refreshManagedAssets](../../src/worker/library-service.ts) | 2026-07-24 用户验收通过。 |
 | EXT-001 | 浏览器扩展：连接态图标 + 文件夹子菜单保存（无配对码；浏览器下载后上传） | 人类验收通过 | ① `npm run extension:build` 后在 Chrome/Edge 重新加载 `dist/extension/`。② 启动 Serpent 并打开资源库；观察扩展图标由灰变彩（**无需配对码**）。③ 在普通博客直链图右键「保存到 Serpent」→ 根目录。④ 再在易防盗链站点（如 Pinterest/Behance）试一次；**URL 扩展名与 Content-Type 不一致的 CDN 图**也应成功 | 连接成功图标变彩色；**无需打开配对对话框**；直链与防盗链场景均能保存到对应文件夹；不再因 `MIME_EXTENSION_MISMATCH` 误拒；失败时有明确通知 | `Serpent-1jyi` / `Serpent-1cxv` / [extension README](../../extension/README.md) / [save-client](../../extension/save-client.ts) | 2026-07-24 用户验收通过（含 CDN MIME 修复复验）。 |
 | EXT-006 | 扩展保存后自动显示 Serpent 窗口（可配置） | 人类验收通过 | ① 扩展选项页确认「保存后显示 Serpent 窗口」默认开启。② 将 Serpent 最小化或置于后台；从浏览器保存一张图片。③ 取消勾选该选项后再保存一次 | 开启时保存成功后 Serpent 窗口恢复前台并聚焦；关闭时保存仍成功但不抢焦点 | [preferences](../../extension/preferences.ts) / [main save-upload](../../src/main/index.ts) | 2026-07-24 用户验收通过。 |
 | EXT-007 | 扩展保存后跳转文件夹并选中资产（可配置） | 人类验收通过 | ① 扩展选项页确认「保存后跳转到目标文件夹并选中文件」默认开启。② 当前浏览其他文件夹或标签视图；从浏览器保存到指定文件夹。③ 取消勾选后再保存 | 开启时 Serpent 自动切到目标文件夹、刷新列表并**选中**刚保存资产（可滚动到可见）；关闭时仅保存不跳转 | [use-extension-save-reveal](../../src/renderer/use-extension-save-reveal.ts) / [pending-asset-reveal](../../src/renderer/pending-asset-reveal.ts) / `Serpent-mscq` | 2026-07-24 用户验收通过。 |
@@ -646,4 +646,5 @@
 | 2026-07-24 | 小打磨续批 2 | 清单/i18n | 删 aiConfigEntry*；AICFG-002–007 步骤同步；RelinkPreview 去冗余 style | `Serpent-qfem`/`uprn`/`7kwu`/`wfa3` |
 | 2026-07-24 | NAV-008 / `Serpent-1xmk` | 人类验收通过 | 鼠标侧键后退/前进与工作区历史一致；查看页先退出；输入框/对话框不抢占。 | Windows 真机验收。 |
 | 2026-07-24 | THUMB-005 | 人类验收通过 | 不支持缩略图的格式不显示失败角标；可预览格式失败仍提示。 | — |
-| 2026-07-24 | IMPORT-014 | 待人类验收 | 托管文件夹磁盘路径新增文件后 watcher 自动发现入库。 | 修复 refresh 仅同步已有资产、不扫描新文件。 |
+| 2026-07-24 | IMPORT-014 | 人类验收通过 | 托管文件夹磁盘路径新增文件后 watcher 自动发现入库。 | — |
+| 2026-07-24 | IMPORT-014 / missing icon | 待人类验收 | 资产丢失时卡片中央显示描边断开链接图标，不再出现实心叠层。 | 修复 missing-overlay fill 与 file 图标叠层。 |
