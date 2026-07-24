@@ -662,6 +662,32 @@ describe('bm25 weighting', () => {
     expect(result.items.some((asset) => asset.assetId === keptAssetId)).toBe(true);
     service.closeAll();
   });
+
+  it('keeps positives and drops excluded matches when trigram narrowing applies', () => {
+    // 'hero'/'draft' are >=3 chars with no FTS5-unsafe characters, so the
+    // query goes through the trigram index (A NOT B). This guards the real
+    // positive+exclusion path that the builder emits `A NOT B` for.
+    const { service, libraryId, libraryPath, assetId } =
+      createLibraryWithAssetAndTags('Hero Concept');
+    const excludedId = createSecondAsset(service, libraryId, libraryPath, 'Hero draft poster');
+    const keptId = createSecondAsset(service, libraryId, libraryPath, 'Hero lineup poster');
+
+    const result = service.searchAssets({
+      libraryId,
+      query: {
+        clauses: [
+          { field: null, values: ['hero'], exclude: false },
+          { field: null, values: ['draft'], exclude: true },
+        ],
+      },
+      sort: { field: 'name', order: 'asc' },
+    });
+
+    expect(result.items.some((asset) => asset.assetId === assetId)).toBe(true);
+    expect(result.items.some((asset) => asset.assetId === keptId)).toBe(true);
+    expect(result.items.some((asset) => asset.assetId === excludedId)).toBe(false);
+    service.closeAll();
+  });
 });
 
 // ── FTS5 trigram query builder ──────────────────────────────────────
@@ -669,17 +695,17 @@ describe('bm25 weighting', () => {
 describe('FTS5 trigram query builder', () => {
   it('normalizes a single substring phrase', () => {
     const query = buildFts5Query([{ field: null, values: ['hero'], exclude: false }]);
-    expect(query).toBe('("hero")');
+    expect(query).toBe('"hero"');
   });
 
   it('builds a field-specific normalized phrase', () => {
     const query = buildFts5Query([{ field: 'filename', values: ['PBR'], exclude: false }]);
-    expect(query).toBe('(filename : "pbr")');
+    expect(query).toBe('filename : "pbr"');
   });
 
   it('builds multi-value OR query', () => {
     const query = buildFts5Query([{ field: 'tags', values: ['character', 'prop'], exclude: false }]);
-    expect(query).toBe('((tags : "character" OR tags : "prop"))');
+    expect(query).toBe('(tags : "character" OR tags : "prop")');
   });
 
   it('builds exclude query', () => {
@@ -693,7 +719,9 @@ describe('FTS5 trigram query builder', () => {
       { field: 'tags', values: ['character', 'prop'], exclude: false },
       { field: 'folder_path', values: ['archive'], exclude: true },
     ]);
-    expect(query).toBe('(filename : "pbr" AND (tags : "character" OR tags : "prop") AND NOT folder_path : "archive")');
+    // FTS5 NOT is a binary operator (`left NOT right`); `AND NOT` is a syntax
+    // error (verified against SQLite trigram FTS5).
+    expect(query).toBe('((filename : "pbr" AND (tags : "character" OR tags : "prop")) NOT folder_path : "archive")');
   });
 
   it('normalizes an exclusion that arrives before positive clauses', () => {
@@ -701,7 +729,7 @@ describe('FTS5 trigram query builder', () => {
       { field: null, values: ['draft'], exclude: true },
       { field: null, values: ['hero'], exclude: false },
     ]);
-    expect(query).toBe('("hero" AND NOT "draft")');
+    expect(query).toBe('("hero" NOT "draft")');
   });
 
   it('never emits a leading NOT when positive input sanitizes to empty', () => {
@@ -719,8 +747,10 @@ describe('FTS5 trigram query builder', () => {
 
   it('sanitizes FTS5 special characters', () => {
     const query = buildFts5Query([{ field: null, values: ['" OR 1=1 --'], exclude: false }]);
-    // The user text remains a quoted phrase, so OR cannot become an operator.
-    expect(query).toContain('"or 1=1 --"');
+    // Quotes are FTS5-unsafe: the builder must refuse to embed the text as a
+    // phrase and fall back to the impossible query, which routes the search to
+    // the exact instr() predicate rather than risking `OR` as an operator.
+    expect(query).toBe('"__IMPOSSIBLE__"');
     expect(query).not.toContain(' OR 1=1');
   });
 
