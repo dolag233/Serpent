@@ -11,7 +11,7 @@ interface FolderListResponse {
 }
 
 interface FolderListErrorResponse {
-  kind: 'rejected' | 'unreachable' | 'needs_pairing';
+  kind: 'rejected' | 'unreachable';
 }
 
 interface SaveResponse {

@@ -19,7 +19,6 @@ const empty: DialogEscapeSnapshot = {
   exportDialogOpen: false,
   importLibraryChooserOpen: false,
   appSettingsOpen: false,
-  extensionPairingOpen: false,
   mediaJobsOpen: false,
   linkedRulesEditorOpen: false,
   convertLinkedOpen: false,
@@ -99,6 +98,16 @@ describe("dialog-escape-stack", () => {
       resolveDialogEscapeAction({
         ...empty,
         appSettingsOpen: true,
+      }),
+    ).toEqual({ kind: "close-app-settings" });
+  });
+
+  it("closes app settings when that layer is open", () => {
+    expect(
+      resolveDialogEscapeAction({
+        ...empty,
+        appSettingsOpen: true,
+        mediaJobsOpen: true,
       }),
     ).toEqual({ kind: "close-app-settings" });
   });

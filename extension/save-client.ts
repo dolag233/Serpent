@@ -3,6 +3,8 @@ import type { ExtensionFolderOption } from './folder-menu';
 export const SERPENT_PORTS = [19876, 19877, 19878] as const;
 
 const SERPENT_HOST = 'http://127.0.0.1';
+/** Keep in sync with Main MAX_EXTENSION_UPLOAD_BYTES. */
+export const MAX_BROWSER_FETCH_BYTES = 500 * 1024 * 1024;
 
 export interface SaveIntent {
   kind: 'image' | 'video';
@@ -20,11 +22,11 @@ export interface ContextMenuMediaInfo {
 export type SaveOutcome =
   | { kind: 'accepted' }
   | { kind: 'rejected'; status: number; reason: string }
-  | { kind: 'unreachable' };
+  | { kind: 'unreachable' }
+  | { kind: 'fetch_failed'; reason: string };
 
 export type ConnectionOutcome =
   | { kind: 'connected' }
-  | { kind: 'needs_pairing' }
   | { kind: 'offline' };
 
 export type FolderListOutcome =
@@ -37,10 +39,24 @@ export interface UserNotification {
   message: string;
 }
 
-type FetchResponse = Pick<Response, 'status' | 'text'>;
+export interface FetchedMedia {
+  body: ArrayBuffer;
+  contentType: string;
+  filename: string;
+}
+
+type FetchHeaders = { get(name: string): string | null };
+type FetchResponse = {
+  status: number;
+  ok: boolean;
+  headers: FetchHeaders;
+  arrayBuffer(): Promise<ArrayBuffer>;
+  text(): Promise<string>;
+  blob(): Promise<Blob>;
+};
 type FetchFunction = (
   input: string,
-  init: RequestInit,
+  init?: RequestInit,
 ) => Promise<FetchResponse>;
 
 function isHttpUrl(value: string | undefined): value is string {
@@ -84,10 +100,6 @@ function rejectionReason(body: string): string | undefined {
   return undefined;
 }
 
-function authHeaders(pairingToken: string): HeadersInit {
-  return { Authorization: `Bearer ${pairingToken}` };
-}
-
 async function requestSerpent(
   path: string,
   init: RequestInit,
@@ -104,22 +116,16 @@ async function requestSerpent(
 }
 
 export async function probeSerpentConnection(
-  pairingToken: string | undefined,
   fetchFn: FetchFunction = fetch,
 ): Promise<ConnectionOutcome> {
-  if (!pairingToken) return { kind: 'needs_pairing' };
-
   const ping = await requestSerpent('/ping', { method: 'GET' }, fetchFn);
   if (!ping) return { kind: 'offline' };
+  if (ping.status !== 200) return { kind: 'offline' };
 
-  const status = await requestSerpent(
-    '/folders',
-    { method: 'GET', headers: authHeaders(pairingToken) },
-    fetchFn,
-  );
-  if (!status) return { kind: 'offline' };
-  if (status.status === 401) return { kind: 'needs_pairing' };
-  if (status.status === 200 || status.status === 503) return { kind: 'connected' };
+  const folders = await requestSerpent('/folders', { method: 'GET' }, fetchFn);
+  if (!folders) return { kind: 'offline' };
+  // 200 = library open; 503 = app up but no library — still "connected" for icon.
+  if (folders.status === 200 || folders.status === 503) return { kind: 'connected' };
   return { kind: 'connected' };
 }
 
@@ -146,14 +152,9 @@ function parseFolderList(body: string): ExtensionFolderOption[] {
 }
 
 export async function fetchSerpentFolders(
-  pairingToken: string,
   fetchFn: FetchFunction = fetch,
 ): Promise<FolderListOutcome> {
-  const response = await requestSerpent(
-    '/folders',
-    { method: 'GET', headers: authHeaders(pairingToken) },
-    fetchFn,
-  );
+  const response = await requestSerpent('/folders', { method: 'GET' }, fetchFn);
   if (!response) return { kind: 'unreachable' };
 
   let body = '';
@@ -174,34 +175,100 @@ export async function fetchSerpentFolders(
   };
 }
 
+function filenameFromUrl(mediaUrl: string, contentType: string): string {
+  try {
+    const pathname = new URL(mediaUrl).pathname;
+    const base = pathname.split('/').filter(Boolean).pop();
+    if (base && base.includes('.')) return decodeURIComponent(base);
+  } catch {
+    // Fall through.
+  }
+  if (contentType.startsWith('video/')) return 'video.bin';
+  if (contentType === 'image/png') return 'image.png';
+  if (contentType === 'image/jpeg') return 'image.jpg';
+  if (contentType === 'image/webp') return 'image.webp';
+  if (contentType === 'image/gif') return 'image.gif';
+  return 'download.bin';
+}
+
 /**
- * Delivers one save intent to the first running Serpent extension server.
- * A reachable server owns the request even when it rejects it, so only
- * connection failures fall through to the next port.
+ * Fetch media in the browser with cookies + page referrer (Serpent-1jyi).
+ * This is the anti-hotlink path; Serpent no longer re-downloads the URL.
  */
-export async function deliverSaveIntent(
+export async function fetchMediaInBrowser(
   intent: SaveIntent,
-  pairingToken: string,
+  fetchFn: FetchFunction = fetch,
+): Promise<FetchedMedia | { error: string }> {
+  let response: FetchResponse;
+  try {
+    response = await fetchFn(intent.mediaUrl, {
+      method: 'GET',
+      credentials: 'include',
+      referrer: intent.sourcePageUrl,
+      referrerPolicy: 'unsafe-url',
+      cache: 'no-store',
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { error: message.slice(0, 200) || 'network error' };
+  }
+
+  if (!response.ok) {
+    return { error: `HTTP ${response.status}` };
+  }
+
+  const contentTypeHeader = response.headers.get('content-type') ?? '';
+  const contentType = contentTypeHeader.split(';')[0]?.trim().toLowerCase() ||
+    (intent.kind === 'video' ? 'video/mp4' : 'image/jpeg');
+
+  const declared = Number(response.headers.get('content-length'));
+  if (Number.isFinite(declared) && declared > MAX_BROWSER_FETCH_BYTES) {
+    return { error: 'file too large' };
+  }
+
+  let body: ArrayBuffer;
+  try {
+    body = await response.arrayBuffer();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { error: message.slice(0, 200) || 'read failed' };
+  }
+
+  if (body.byteLength === 0) return { error: 'empty body' };
+  if (body.byteLength > MAX_BROWSER_FETCH_BYTES) return { error: 'file too large' };
+
+  return {
+    body,
+    contentType,
+    filename: filenameFromUrl(intent.mediaUrl, contentType),
+  };
+}
+
+export async function deliverSaveUpload(
+  intent: SaveIntent,
+  media: FetchedMedia,
   fetchFn: FetchFunction = fetch,
 ): Promise<SaveOutcome> {
-  const payload: Record<string, unknown> = {
-    kind: intent.kind,
-    sourcePageUrl: intent.sourcePageUrl,
-    mediaUrl: intent.mediaUrl,
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/octet-stream',
+    'Content-Length': String(media.body.byteLength),
+    'X-Serpent-Kind': intent.kind,
+    'X-Serpent-Source-Page-Url': encodeURIComponent(intent.sourcePageUrl),
+    'X-Serpent-Media-Url': encodeURIComponent(intent.mediaUrl),
+    'X-Serpent-Content-Type': media.contentType,
+    'X-Serpent-Filename': encodeURIComponent(media.filename),
   };
   if (intent.targetFolderId !== undefined) {
-    payload.targetFolderId = intent.targetFolderId;
+    headers['X-Serpent-Target-Folder-Id'] =
+      intent.targetFolderId === null ? 'null' : encodeURIComponent(intent.targetFolderId);
   }
 
   const response = await requestSerpent(
-    '/save',
+    '/save-upload',
     {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...authHeaders(pairingToken),
-      },
-      body: JSON.stringify(payload),
+      headers,
+      body: media.body,
     },
     fetchFn,
   );
@@ -215,7 +282,7 @@ export async function deliverSaveIntent(
   try {
     body = await response.text();
   } catch {
-    // The HTTP status is still actionable if the response body is unreadable.
+    // Status alone is still actionable.
   }
 
   return {
@@ -223,6 +290,18 @@ export async function deliverSaveIntent(
     status: response.status,
     reason: rejectionReason(body) ?? `HTTP ${response.status}`,
   };
+}
+
+/** Preferred path: browser fetch + upload. Falls back is not used (anti-hotlink). */
+export async function saveMediaViaBrowser(
+  intent: SaveIntent,
+  fetchFn: FetchFunction = fetch,
+): Promise<SaveOutcome> {
+  const fetched = await fetchMediaInBrowser(intent, fetchFn);
+  if ('error' in fetched) {
+    return { kind: 'fetch_failed', reason: fetched.error };
+  }
+  return deliverSaveUpload(intent, fetched, fetchFn);
 }
 
 export function notificationForOutcome(outcome: SaveOutcome): UserNotification {
@@ -233,12 +312,6 @@ export function notificationForOutcome(outcome: SaveOutcome): UserNotification {
         message: 'Serpent 已接收保存请求。',
       };
     case 'rejected':
-      if (outcome.status === 401) {
-        return {
-          title: 'Serpent 配对已失效',
-          message: '请打开扩展选项，粘贴桌面应用显示的新配对码。',
-        };
-      }
       return {
         title: 'Serpent 拒绝了保存请求',
         message: `HTTP ${outcome.status}：${outcome.reason}`,
@@ -246,7 +319,12 @@ export function notificationForOutcome(outcome: SaveOutcome): UserNotification {
     case 'unreachable':
       return {
         title: '无法连接 Serpent',
-        message: '请先启动 Serpent 桌面应用，然后重新保存。',
+        message: '请先启动 Serpent 桌面应用并打开资源库，然后重新保存。',
+      };
+    case 'fetch_failed':
+      return {
+        title: '浏览器无法下载该媒体',
+        message: `下载失败：${outcome.reason}`,
       };
   }
 }

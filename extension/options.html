@@ -3,19 +3,19 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Serpent 扩展配对</title>
+    <title>Serpent 扩展</title>
     <link rel="stylesheet" href="options.css">
   </head>
   <body>
     <main>
       <p class="eyebrow">SERPENT BROWSER EXTENSION</p>
-      <h1>连接桌面应用</h1>
-      <p>在 Serpent 桌面应用中打开“浏览器扩展”，复制配对码并粘贴到这里。配对码只保存在本机浏览器配置中。</p>
-      <form id="pairing-form">
-        <label for="pairing-token">配对码</label>
-        <input id="pairing-token" name="pairing-token" type="password" autocomplete="off" spellcheck="false" required>
-        <button type="submit">保存配对码</button>
-      </form>
+      <h1>使用说明</h1>
+      <ol>
+        <li>启动 Serpent 桌面应用并打开一个资源库。</li>
+        <li>确认扩展工具栏图标变为彩色（已连接）。</li>
+        <li>在网页图片或视频上右键，选择「保存到 Serpent」。</li>
+      </ol>
+      <p>无需配对码。扩展通过本机 loopback 与正在运行的 Serpent 通信；媒体由浏览器下载后上传到桌面应用，可绕过多数防盗链限制。</p>
       <p id="status" aria-live="polite"></p>
     </main>
     <script type="module" src="options.js"></script>

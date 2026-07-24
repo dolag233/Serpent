@@ -4676,6 +4676,21 @@ select.ai-config-input.ai-config-languages {
   gap: 11px;
 }
 
+.app-settings-help-list {
+  margin: 0;
+  padding-left: 1.2rem;
+  color: var(--secondary);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.app-settings-help-note {
+  margin: 0;
+  color: var(--tertiary);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
 .app-settings-row-copy {
   display: flex;
   min-width: 0;
@@ -5123,6 +5138,14 @@ select.ai-config-input.ai-config-languages {
 
 .dialog-body-copy {
   margin: 0;
+  color: var(--secondary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.dialog-body-list {
+  margin: 0;
+  padding-left: 1.25rem;
   color: var(--secondary);
   font-size: 12px;
   line-height: 1.6;

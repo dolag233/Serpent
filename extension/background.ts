@@ -8,11 +8,11 @@ import {
   type ExtensionFolderOption,
 } from './folder-menu';
 import {
-  deliverSaveIntent,
   fetchSerpentFolders,
   notificationForOutcome,
   probeSerpentConnection,
   saveIntentFromContextMenu,
+  saveMediaViaBrowser,
   type SaveIntent,
   type UserNotification,
 } from './save-client';
@@ -26,16 +26,6 @@ let notificationSequence = 0;
 let connectionState: 'connected' | 'disconnected' = 'disconnected';
 let dynamicFolderMenuIds: string[] = [];
 let folderMenuRefreshPromise: Promise<void> | null = null;
-
-function readPairingToken(): Promise<string | undefined> {
-  return new Promise((resolve) => {
-    chrome.storage.local.get('pairingToken', (values) => {
-      void chrome.runtime.lastError;
-      const value = values.pairingToken;
-      resolve(typeof value === 'string' && value.length > 0 ? value : undefined);
-    });
-  });
-}
 
 function readRecentFolderIds(): Promise<string[]> {
   return new Promise((resolve) => {
@@ -82,7 +72,7 @@ function setToolbarIcon(connected: boolean): void {
   chrome.action.setTitle({
     title: connected
       ? 'Serpent 已连接'
-      : 'Serpent 未连接，请启动桌面应用并完成配对',
+      : 'Serpent 未连接，请启动桌面应用并打开资源库',
   });
 }
 
@@ -136,13 +126,7 @@ async function refreshFolderMenus(): Promise<void> {
       return;
     }
 
-    const token = await readPairingToken();
-    if (!token) {
-      await removeDynamicFolderMenus();
-      return;
-    }
-
-    const outcome = await fetchSerpentFolders(token);
+    const outcome = await fetchSerpentFolders();
     if (outcome.kind !== 'ok') {
       await removeDynamicFolderMenus();
       return;
@@ -175,8 +159,7 @@ async function refreshFolderMenus(): Promise<void> {
 }
 
 async function refreshConnectionState(): Promise<void> {
-  const token = await readPairingToken();
-  const outcome = await probeSerpentConnection(token);
+  const outcome = await probeSerpentConnection();
   const nextState = outcome.kind === 'connected' ? 'connected' : 'disconnected';
   connectionState = nextState;
   setToolbarIcon(nextState === 'connected');
@@ -215,13 +198,33 @@ async function rememberRecentFolder(
   );
 }
 
+async function saveIntentAndNotify(intent: SaveIntent): Promise<UserNotification> {
+  const outcome = await saveMediaViaBrowser(intent);
+  if (outcome.kind === 'accepted') {
+    const foldersOutcome = await fetchSerpentFolders();
+    if (foldersOutcome.kind === 'ok') {
+      const folderId =
+        typeof intent.targetFolderId === 'string' ? intent.targetFolderId : null;
+      await rememberRecentFolder(folderId, foldersOutcome.folders);
+      await refreshFolderMenus();
+    }
+  }
+  const notification = notificationForOutcome(outcome);
+  showNotification(notification);
+  return notification;
+}
+
 async function handleContextMenuClick(
   info: SerpentContextMenuClickData,
 ): Promise<void> {
   const targetFolderId = parseFolderMenuId(info.menuItemId);
   if (targetFolderId === undefined) return;
 
-  const intent = saveIntentFromContextMenu(info);
+  const intent = saveIntentFromContextMenu({
+    mediaType: info.mediaType,
+    pageUrl: info.pageUrl,
+    srcUrl: info.srcUrl,
+  });
   if (!intent) {
     showNotification({
       title: '无法保存到 Serpent',
@@ -230,28 +233,10 @@ async function handleContextMenuClick(
     return;
   }
 
-  const pairingToken = await readPairingToken();
-  if (!pairingToken) {
-    showNotification({
-      title: '需要与 Serpent 配对',
-      message: '请打开扩展选项，粘贴桌面应用中的浏览器扩展配对码。',
-    });
-    return;
-  }
-
-  const saveIntent: SaveIntent = {
+  await saveIntentAndNotify({
     ...intent,
     targetFolderId,
-  };
-  const outcome = await deliverSaveIntent(saveIntent, pairingToken);
-  if (outcome.kind === 'accepted') {
-    const foldersOutcome = await fetchSerpentFolders(pairingToken);
-    if (foldersOutcome.kind === 'ok') {
-      await rememberRecentFolder(targetFolderId, foldersOutcome.folders);
-      await refreshFolderMenus();
-    }
-  }
-  showNotification(notificationForOutcome(outcome));
+  });
 }
 
 chrome.runtime.onInstalled.addListener(() => {
@@ -271,19 +256,10 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (!message || typeof message !== 'object') return;
 
   const type = Reflect.get(message, 'type');
-  if (type === 'pairing-updated') {
-    void refreshConnectionState();
-    return;
-  }
 
   if (type === 'serpent-list-folders') {
     void (async () => {
-      const pairingToken = await readPairingToken();
-      if (!pairingToken) {
-        sendResponse({ kind: 'needs_pairing' });
-        return;
-      }
-      const outcome = await fetchSerpentFolders(pairingToken);
+      const outcome = await fetchSerpentFolders();
       if (outcome.kind === 'ok') {
         const recentFolderIds = await readRecentFolderIds();
         const validFolderIds = new Set(outcome.folders.map((folder) => folder.folderId));
@@ -332,17 +308,6 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         return;
       }
 
-      const pairingToken = await readPairingToken();
-      if (!pairingToken) {
-        const notification = {
-          title: '需要与 Serpent 配对',
-          message: '请打开扩展选项，粘贴桌面应用中的浏览器扩展配对码。',
-        };
-        showNotification(notification);
-        sendResponse({ notification });
-        return;
-      }
-
       const saveIntent: SaveIntent = {
         kind,
         sourcePageUrl,
@@ -352,20 +317,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
             ? targetFolderId
             : undefined,
       };
-      const outcome = await deliverSaveIntent(saveIntent, pairingToken);
-      if (outcome.kind === 'accepted') {
-        const foldersOutcome = await fetchSerpentFolders(pairingToken);
-        if (foldersOutcome.kind === 'ok') {
-          const folderId =
-            typeof saveIntent.targetFolderId === 'string'
-              ? saveIntent.targetFolderId
-              : null;
-          await rememberRecentFolder(folderId, foldersOutcome.folders);
-          await refreshFolderMenus();
-        }
-      }
-      const notification = notificationForOutcome(outcome);
-      showNotification(notification);
+      const notification = await saveIntentAndNotify(saveIntent);
       sendResponse({ notification });
     })();
     return true;

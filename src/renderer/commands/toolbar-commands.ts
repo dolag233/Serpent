@@ -23,7 +23,6 @@ export interface ToolbarCommandActions {
   readonly refresh: () => void;
   readonly setViewMode: (mode: CanvasViewMode) => void;
   readonly toggleField: (field: CanvasFieldKey) => void;
-  readonly openBrowserExtension: () => void;
   readonly openBackgroundJobs: () => void;
   /** Opens the AI category in the consolidated settings center. */
   readonly openAiSettings: () => void;
@@ -53,7 +52,6 @@ export const TOOLBAR_CANVAS_COMMAND_IDS = [
 
 /** 「更多工具」溢出菜单条目（导入类不在此列）。 */
 export const TOOLBAR_OVERFLOW_COMMAND_IDS = [
-  'workspace.browser-extension',
   'workspace.background-jobs',
   'workspace.ai-settings',
 ] as const;
@@ -109,12 +107,6 @@ export const toolbarCommandDefinitions: readonly ToolbarCommandDefinition[] = [
     title: (ctx) => t(ctx, 'toolbar.showModifiedDate'),
     group: 'metadata',
     run: (ctx) => ctx.actions.toggleField('date'),
-  },
-  {
-    id: 'workspace.browser-extension',
-    title: (ctx) => t(ctx, 'toolbar.browserExtension'),
-    group: 'organize',
-    run: (ctx) => ctx.actions.openBrowserExtension(),
   },
   {
     id: 'workspace.background-jobs',

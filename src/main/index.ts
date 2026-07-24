@@ -4,6 +4,7 @@ import {
   readFileSync,
   writeFileSync,
   existsSync,
+  rmSync,
 } from "node:fs";
 
 import {
@@ -59,7 +60,6 @@ import {
   AI_PROGRESS_CHANNEL,
   AI_COMPLETED_CHANNEL,
   AI_CLEARED_CHANNEL,
-  EXTENSION_PAIRING_CHANNEL,
   OPEN_EXTERNAL_URL_CHANNEL,
   REVEAL_APP_LOG_CHANNEL,
   SHOW_EDIT_CONTEXT_MENU_CHANNEL,
@@ -74,10 +74,6 @@ import {
   type RevealAppLogResult,
 } from "../shared/external-url";
 import type { ShowEditContextMenuResult } from "../shared/edit-context-menu";
-import {
-  parseExtensionPairingRequest,
-  type ExtensionPairingResult,
-} from "../shared/extension-pairing";
 import {
   createPublicError,
   publicReasonFromError,
@@ -150,10 +146,11 @@ import {
   type ExtensionServer,
   type SaveIntent,
   type SaveIntentDisposition,
+  type SaveUploadDisposition,
+  type SaveUploadRequest,
   type ListFoldersDisposition,
 } from "./extension-server";
 import { resolveExtensionSaveContext } from "./extension-save-context";
-import { ExtensionPairingStore } from "./extension-pairing-store";
 import { RelinkPreviewStore } from "./relink-preview-store";
 import {
   classifyDroppedSourcePaths,
@@ -225,7 +222,6 @@ function rememberOpenedLibrary(libraryPath: string, displayName: string): void {
 }
 
 let extensionServer: ExtensionServer | undefined;
-let extensionPairingStore: ExtensionPairingStore | undefined;
 const aiQueueScheduler = new AiQueueScheduler(processAiQueueBatch, {
   batchSize: AI_ANALYSIS_QUEUE_BATCH_SIZE,
   baseRetryDelayMs: DEFAULT_AI_RELIABILITY_SETTINGS.retryBaseDelayMs,
@@ -649,6 +645,82 @@ async function handleSaveIntent(
   } catch (error) {
     logger?.error("extension-server.save", error);
     throw error;
+  }
+}
+
+async function handleSaveUpload(
+  upload: SaveUploadRequest,
+): Promise<SaveUploadDisposition> {
+  if (!workerClient) {
+    return { accepted: false, status: 503, reason: "worker unavailable" };
+  }
+
+  const focusedWindow = BrowserWindow.getFocusedWindow();
+  const saveContext = getExtensionSaveContext();
+  if (!saveContext) {
+    logger?.info(
+      "extension-server.save-upload",
+      focusedWindow
+        ? "No active library in focused window; dropping upload."
+        : "No focused Serpent window and no fallback browse context; dropping upload.",
+      {
+        focusedWindowId: focusedWindow?.id ?? null,
+        lastTargetWindowId: lastExtensionTargetWindowId ?? null,
+        mainWindowId:
+          mainWindow && !mainWindow.isDestroyed() ? mainWindow.id : null,
+        contextWindowCount: focusedContexts.size,
+      },
+    );
+    return { accepted: false, status: 503, reason: "no active library" };
+  }
+
+  const targetFolderId =
+    upload.targetFolderId !== undefined
+      ? upload.targetFolderId ?? undefined
+      : saveContext.selectedFolderId;
+
+  const command: WorkerCommand = {
+    type: "extension.save-from-file",
+    libraryId: saveContext.libraryId,
+    targetFolderId,
+    sourcePageUrl: upload.sourcePageUrl,
+    mediaUrl: upload.mediaUrl,
+    stagedFilePath: upload.stagedFilePath,
+    contentType: upload.contentType,
+    filename: upload.filename,
+  };
+
+  try {
+    const result = await workerClient.request(command);
+    if (!result.ok) {
+      logger?.error(
+        "extension-server.save-upload",
+        new Error(`Upload save failed: ${result.error.message}`),
+        {
+          code: result.error.code,
+          reason: result.error.reason,
+        },
+      );
+      return {
+        accepted: false,
+        status: result.error.code === "LIBRARY_NOT_OPEN" ? 503 : 422,
+        reason: result.error.reason ?? result.error.code,
+      };
+    }
+    logger?.info("extension-server.save-upload", "Asset saved successfully.", {
+      type: result.type,
+      byteLength: upload.byteLength,
+    });
+    return { accepted: true };
+  } catch (error) {
+    logger?.error("extension-server.save-upload", error);
+    throw error;
+  } finally {
+    try {
+      rmSync(upload.stagingDirectory, { recursive: true, force: true });
+    } catch (error) {
+      logger?.error("extension-server.save-upload-cleanup", error);
+    }
   }
 }
 
@@ -3006,10 +3078,6 @@ async function startApplication(): Promise<void> {
       },
     );
   }
-  extensionPairingStore = new ExtensionPairingStore(
-    path.join(app.getPath("userData"), "extension-pairing-token.enc"),
-    safeStorage,
-  );
   workerClient = new LibraryWorkerClient(
     path.join(__dirname, "library_worker.js"),
     logger,
@@ -3221,36 +3289,6 @@ async function startApplication(): Promise<void> {
     return handleLibraryRequest(input);
   });
 
-  ipcMain.handle(
-    EXTENSION_PAIRING_CHANNEL,
-    (event, input: unknown): ExtensionPairingResult => {
-      if (
-        !mainWindow ||
-        event.sender !== mainWindow.webContents ||
-        !extensionPairingStore
-      ) {
-        return {
-          ok: false,
-          message: "Browser-extension pairing is unavailable.",
-        };
-      }
-      try {
-        const request = parseExtensionPairingRequest(input);
-        const token =
-          request.type === "extension-pairing.rotate"
-            ? extensionPairingStore.rotate()
-            : extensionPairingStore.current();
-        return { ok: true, token };
-      } catch (error) {
-        logger?.error("extension-pairing", error);
-        return {
-          ok: false,
-          message: "Browser-extension pairing is unavailable.",
-        };
-      }
-    },
-  );
-
   // 渲染进程请求在系统浏览器打开外部链接（检查器「源链接」跳转）。
   // 发送者与 URL 双重校验，仅放行不含凭据的 HTTP(S)。失败回传公开错误码；日志不含 URL。
   ipcMain.handle(
@@ -3391,12 +3429,12 @@ async function startApplication(): Promise<void> {
 
   // Start the browser-extension HTTP server on 127.0.0.1.
   try {
-    extensionPairingStore.current();
     extensionServer = await createExtensionServer({
       port: 19876,
-      getPairingToken: () => extensionPairingStore!.current(),
+      uploadStagingRoot: app.getPath("temp"),
       onListFolders: handleListFolders,
       onSaveIntent: handleSaveIntent,
+      onSaveUpload: handleSaveUpload,
       onError: (err) => logger?.error("extension-server", err),
     });
     logger?.info(

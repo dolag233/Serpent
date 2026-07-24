@@ -33,7 +33,7 @@ async function validateBuild() {
     throw new Error('Extension manifest must request notifications permission');
   }
   if (!manifest.permissions?.includes('storage')) {
-    throw new Error('Extension manifest must request storage permission for pairing');
+    throw new Error('Extension manifest must request storage permission for recent folders');
   }
   if (!manifest.permissions?.includes('alarms')) {
     throw new Error('Extension manifest must request alarms permission for connection checks');

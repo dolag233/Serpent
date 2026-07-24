@@ -70,6 +70,7 @@ export function requestTimeoutForCommand(
     commandType.startsWith('asset.import.')
     || commandType === 'asset.refresh'
     || commandType === 'extension.save-from-url'
+    || commandType === 'extension.save-from-file'
   ) return FILE_OPERATION_TIMEOUT_MS;
   return REQUEST_TIMEOUT_MS;
 }

@@ -201,7 +201,6 @@ export const en = {
     aiSettings: "AI settings",
     appSettings: "Settings",
     canvasSettings: "Canvas display",
-    browserExtension: "Browser extension",
     gridView: "Grid view",
     masonryView: "Masonry view",
     thumbnailSize: "Asset thumbnail size",
@@ -678,16 +677,6 @@ export const en = {
       keepMetadata: "Keep original asset info (tags, description, rating, collections, and other manual metadata)",
       apply: "Apply batch relink"
     },
-    extensionPairing: {
-      title: "Browser extension pairing",
-      closeAria: "Close browser extension pairing",
-      reading: "Loading…",
-      help: "Paste the pairing code into the Serpent extension options in Chrome or Edge. The code is encrypted in the OS secure store; plaintext is not kept in the UI after this window closes.",
-      tokenLabel: "Pairing code",
-      rotateHelp: "Rotation immediately invalidates old pairing codes saved in any browser.",
-      rotate: "Rotate pairing code",
-      copy: "Copy pairing code"
-    },
     importLibrary: {
       title: "Import library",
       validated: "Library {name} validated. Choose an import method:",
@@ -788,6 +777,17 @@ export const en = {
     elevationStrong: "Strong",
     elevationLevelValue: "Level {level}",
     languageHint: "Controls the interface language. Changes apply immediately.",
+    browserExtensionTitle: "Browser extension",
+    browserExtensionIntro:
+      "Save web images and videos into the active library with the Chrome / Edge extension. No pairing code — keep Serpent running with a library open.",
+    browserExtensionStepBuild:
+      "During development: run npm run extension:build in the repo root to produce dist/extension.",
+    browserExtensionStepLoad:
+      "Open chrome://extensions or edge://extensions, enable Developer mode, and load unpacked dist/extension.",
+    browserExtensionStepUse:
+      "When the toolbar icon turns color, right-click an image or video and choose Save to Serpent.",
+    browserExtensionNote:
+      "Install copy will be formalized before release (see Serpent-999o). After code changes, rebuild and reload the extension.",
     viewMode: "Browse view",
     canvasHint: "Controls how assets are arranged on the canvas. Changes apply immediately.",
     cardFields: "Card display fields",
@@ -1128,11 +1128,11 @@ export const en = {
     sourceUrlOpenFailed: "Cannot open source URL: only valid HTTP(S) links are supported.",
     sourceUrlOpenUnauthorized: "Cannot open the source URL from this window. Reload Serpent and try again.",
     sourceUrlOpenShellFailed: "The system browser could not open this source URL. Check the default browser and try again.",
-    extensionPairingUnsupported: "This desktop bridge does not support browser extension pairing.",
-    extensionRotateConfirm: "After rotation, the old pairing code saved in the browser extension stops working immediately. Continue?",
-    extensionRotated: "Browser extension pairing code rotated. Update it in the extension options.",
-    extensionCopied: "Browser extension pairing code copied.",
-    extensionCopyFailed: "Copy failed. Select the pairing code manually.",
+    extensionPairingUnsupported: "(unused)",
+    extensionRotateConfirm: "(unused)",
+    extensionRotated: "(unused)",
+    extensionCopied: "(unused)",
+    extensionCopyFailed: "(unused)",
     aiConfigSaveFailed: "Failed to save AI settings.",
     aiConfigSaved: "AI settings saved.",
     aiAnalyzeFailed: "AI analysis failed.",

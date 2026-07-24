@@ -730,6 +730,11 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
       scheduleThumbnailScene(request.command.libraryId, 'mutation', [asset.assetId]);
       return { ok: true, type: 'extension.asset-saved', asset };
     }
+    case 'extension.save-from-file': {
+      const { asset } = await libraryService.saveAssetFromFile(request.command);
+      scheduleThumbnailScene(request.command.libraryId, 'mutation', [asset.assetId]);
+      return { ok: true, type: 'extension.asset-saved', asset };
+    }
     case 'library.export': {
       if (request.command.format === 'zip') {
         const exported = await libraryService.exportLibraryToZip({

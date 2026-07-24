@@ -104,7 +104,6 @@ import { RenameDialog } from "./RenameDialog";
 import { CreateDialog } from "./CreateDialog";
 import { NoLibraryEmptyState } from "./NoLibraryEmptyState";
 import { CollectionEditorDialog } from "./CollectionEditorDialog";
-import { ExtensionPairingDialog } from "./ExtensionPairingDialog";
 import {
   AiConfigDialog,
   type AiConnectionState,
@@ -239,7 +238,6 @@ import type {
   MediaJobStatus,
   AiJobStatus,
 } from "../shared/library-api";
-import type { SerpentExtensionPairingApi } from "../shared/extension-pairing";
 import type { SerpentShellApi } from "../shared/external-url";
 import type {
   ImportConflictPlan,
@@ -319,7 +317,6 @@ const SHORTCUT_PLATFORM: CommandPlatform = IS_MAC_PLATFORM ? "mac" : "windows";
 type RendererWindow = Window & {
   serpent?: {
     library?: SerpentLibraryApi;
-    extensionPairing?: SerpentExtensionPairingApi;
     shell?: SerpentShellApi;
   };
 };
@@ -439,8 +436,6 @@ function AppInner() {
   const t = useT();
   const { locale } = useLocale();
   const api = (window as RendererWindow).serpent?.library;
-  const extensionPairingApi = (window as RendererWindow).serpent
-    ?.extensionPairing;
   const shellApi = (window as RendererWindow).serpent?.shell;
 
   useEffect(() => {
@@ -844,11 +839,6 @@ function AppInner() {
   const aiAutoConnectAttemptedRef = useRef(false);
   /** Fingerprint of credentials last proven by a successful probe. */
   const aiVerifiedFingerprintRef = useRef<string | null>(null);
-  const [extensionPairingOpen, setExtensionPairingOpen] = useState(false);
-  const [extensionPairingToken, setExtensionPairingToken] = useState("");
-  const [extensionPairingError, setExtensionPairingError] = useState<
-    string | null
-  >(null);
   const [aiAnalyzing, setAiAnalyzing] = useState(false);
   const aiAnalyzingRef = useRef(false);
   const [aiContent, setAiContent] = useState<{
@@ -4935,7 +4925,6 @@ function AppInner() {
       exportDialogOpen,
       importLibraryChooserOpen,
       appSettingsOpen,
-      extensionPairingOpen,
       mediaJobsOpen: Boolean(mediaJobsOpen && library !== null),
       linkedRulesEditorOpen: Boolean(linkedRulesEditor),
       convertLinkedOpen: Boolean(convertLinkedDialog.folderId),
@@ -4960,7 +4949,6 @@ function AppInner() {
     exportDialogOpen,
     importLibraryChooserOpen,
     appSettingsOpen,
-    extensionPairingOpen,
     mediaJobsOpen,
     library,
     linkedRulesEditor,
@@ -4991,7 +4979,6 @@ function AppInner() {
     setExportDialogOpen,
     setImportLibraryChooserOpen,
     setAppSettingsOpen,
-    setExtensionPairingOpen,
     setMediaJobsOpen,
     setLinkedRulesEditor,
     resetConvertLinkedDialog: () => {
@@ -5027,7 +5014,6 @@ function AppInner() {
       importLibraryChooserOpen ||
       appSettingsOpen ||
       Boolean(smartCollectionSettings) ||
-      extensionPairingOpen ||
       Boolean(fatalAlertMessage) ||
       aiConnectionFailureGate.open ||
       (mediaJobsOpen && library !== null) ||
@@ -5318,45 +5304,6 @@ function AppInner() {
     if (assetScope === "all") return t("scope.allAssets");
     if (assetScope === "root") return t("scope.rootFolder");
     return selectedFolder?.name ?? t("scope.workspace");
-  }
-
-  // ── AI Analysis ────────────────────────────────────────────────────
-
-  async function openExtensionPairing() {
-    setExtensionPairingOpen(true);
-    setExtensionPairingToken("");
-    setExtensionPairingError(null);
-    if (!extensionPairingApi) {
-      setExtensionPairingError(t("toast.extensionPairingUnsupported"));
-      return;
-    }
-    const result = await extensionPairingApi.getToken();
-    if (result.ok) setExtensionPairingToken(result.token);
-    else setExtensionPairingError(result.message);
-  }
-
-  async function rotateExtensionPairing() {
-    if (!extensionPairingApi) return;
-    if (!confirm(t("toast.extensionRotateConfirm")))
-      return;
-    const result = await extensionPairingApi.rotateToken();
-    if (result.ok) {
-      setExtensionPairingToken(result.token);
-      setExtensionPairingError(null);
-      setNotice(t("toast.extensionRotated"));
-    } else {
-      setExtensionPairingError(result.message);
-    }
-  }
-
-  async function copyExtensionPairingToken() {
-    if (!extensionPairingToken) return;
-    try {
-      await navigator.clipboard.writeText(extensionPairingToken);
-      setNotice(t("toast.extensionCopied"));
-    } catch {
-      setExtensionPairingError(t("toast.extensionCopyFailed"));
-    }
   }
 
   async function loadAiConfig() {
@@ -6360,9 +6307,6 @@ function AppInner() {
                     ...p,
                     fields: { ...p.fields, [field]: !p.fields[field] },
                   }));
-                },
-                openBrowserExtension: () => {
-                  void openExtensionPairing();
                 },
                 openBackgroundJobs: () => setMediaJobsOpen(true),
                 openAiSettings: () => {
@@ -7736,18 +7680,6 @@ function AppInner() {
         onKeepMetadataChange={setBatchRelinkKeepMetadata}
         onApply={() => void applyBatchRelink()}
         onCancel={() => void cancelBatchRelink()}
-      />
-      <ExtensionPairingDialog
-        open={extensionPairingOpen}
-        token={extensionPairingToken}
-        error={extensionPairingError}
-        onClose={() => {
-          setExtensionPairingOpen(false);
-          setExtensionPairingToken("");
-          setExtensionPairingError(null);
-        }}
-        onRotate={() => void rotateExtensionPairing()}
-        onCopy={() => void copyExtensionPairingToken()}
       />
       <AiConnectionFailureDialog
         failedCount={aiConnectionFailureGate.failedJobIds.length}

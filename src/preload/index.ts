@@ -4,7 +4,6 @@ import type { AiJobStatus, LibraryApiResult, LinkedAssetDeleteResult, MediaJobSt
 import type { RecentLibraryEntry } from '../shared/recent-libraries';
 import type { AiApiFormat } from '../shared/ai-endpoints';
 import type { AiReliabilitySettings } from '../shared/ai-reliability';
-import { parseExtensionPairingResult, type SerpentExtensionPairingApi } from '../shared/extension-pairing';
 import { searchQuerySchema } from '../shared/asset-types';
 import type { AiSearchPlan, AssetSummary, AssetMetadataResult, ExtractedMetadataResult, CollectionSummary, FilterClause, FolderBrowseEntry, LinkedFolderRule, LinkedFolderSummary, ManagedFolderSummary, SearchQuery, SearchScope, SmartCollectionSummary, TagCooccurrenceGraph, TagSummary, TrashedFolderSummary } from '../shared/asset-types';
 import {
@@ -18,7 +17,6 @@ import {
   AI_PROGRESS_CHANNEL,
   AI_COMPLETED_CHANNEL,
   AI_CLEARED_CHANNEL,
-  EXTENSION_PAIRING_CHANNEL,
   OPEN_EXTERNAL_URL_CHANNEL,
   REVEAL_APP_LOG_CHANNEL,
   SHOW_EDIT_CONTEXT_MENU_CHANNEL,
@@ -1491,21 +1489,6 @@ const library: SerpentLibraryApi = Object.freeze({
   },
 });
 
-const extensionPairing: SerpentExtensionPairingApi = Object.freeze({
-  async getToken() {
-    return parseExtensionPairingResult(await ipcRenderer.invoke(
-      EXTENSION_PAIRING_CHANNEL,
-      { type: 'extension-pairing.get' },
-    ));
-  },
-  async rotateToken() {
-    return parseExtensionPairingResult(await ipcRenderer.invoke(
-      EXTENSION_PAIRING_CHANNEL,
-      { type: 'extension-pairing.rotate' },
-    ));
-  },
-});
-
 async function importRequest(
   command: Extract<RendererRequest, {
     type:
@@ -1659,7 +1642,6 @@ contextBridge.exposeInMainWorld(
   'serpent',
   Object.freeze({
     library,
-    extensionPairing,
     shell,
     ...(e2eEnabled ? { e2e: e2eDiagnostics } : {}),
   }),

@@ -1307,6 +1307,16 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     mediaType: z.string().optional(),
   }),
   z.strictObject({
+    type: z.literal('extension.save-from-file'),
+    libraryId: identifierSchema,
+    targetFolderId: optionalIdentifierSchema,
+    sourcePageUrl: httpUrlSchema.optional(),
+    mediaUrl: httpUrlSchema.optional(),
+    stagedFilePath: selectedPathSchema,
+    contentType: z.string().min(1).max(128),
+    filename: z.string().min(1).max(255),
+  }),
+  z.strictObject({
     type: z.literal('library.export'),
     libraryId: identifierSchema,
     destinationPath: selectedPathSchema,

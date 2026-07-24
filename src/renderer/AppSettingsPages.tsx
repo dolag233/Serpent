@@ -68,32 +68,50 @@ function SettingsToggleRow({
 export function GeneralSettingsPage(): ReactNode {
   const { t, preference: localePreference, setLocale } = useLocale();
   return (
-    <SettingsCard>
-      <div className="app-settings-row app-settings-row-stack">
-        <div className="app-settings-row-copy">
-          <strong>{t("shell.language")}</strong>
-          <span>{t("settings.languageHint")}</span>
+    <>
+      <SettingsCard>
+        <div className="app-settings-row app-settings-row-stack">
+          <div className="app-settings-row-copy">
+            <strong>{t("shell.language")}</strong>
+            <span>{t("settings.languageHint")}</span>
+          </div>
+          <div
+            aria-label={t("shell.language")}
+            className="app-settings-option-group"
+            role="radiogroup"
+          >
+            {APP_SETTINGS_LOCALE_OPTIONS.map((option) => (
+              <button
+                aria-checked={localePreference === option.value}
+                className="app-settings-option"
+                key={option.value}
+                onClick={() => setLocale(option.value)}
+                role="radio"
+                type="button"
+              >
+                {t(option.labelKey)}
+              </button>
+            ))}
+          </div>
         </div>
-        <div
-          aria-label={t("shell.language")}
-          className="app-settings-option-group"
-          role="radiogroup"
-        >
-          {APP_SETTINGS_LOCALE_OPTIONS.map((option) => (
-            <button
-              aria-checked={localePreference === option.value}
-              className="app-settings-option"
-              key={option.value}
-              onClick={() => setLocale(option.value)}
-              role="radio"
-              type="button"
-            >
-              {t(option.labelKey)}
-            </button>
-          ))}
+      </SettingsCard>
+      <SettingsCard>
+        <div className="app-settings-row app-settings-row-stack">
+          <div className="app-settings-row-copy">
+            <strong>{t("settings.browserExtensionTitle")}</strong>
+            <span>{t("settings.browserExtensionIntro")}</span>
+          </div>
+          <ol className="app-settings-help-list">
+            <li>{t("settings.browserExtensionStepBuild")}</li>
+            <li>{t("settings.browserExtensionStepLoad")}</li>
+            <li>{t("settings.browserExtensionStepUse")}</li>
+          </ol>
+          <p className="app-settings-help-note">
+            {t("settings.browserExtensionNote")}
+          </p>
         </div>
-      </div>
-    </SettingsCard>
+      </SettingsCard>
+    </>
   );
 }
 

@@ -191,7 +191,6 @@ export const zhCN = {
     aiSettings: "AI 设置",
     appSettings: "设置",
     canvasSettings: "画布显示",
-    browserExtension: "浏览器扩展",
     gridView: "平铺视图",
     masonryView: "瀑布流视图",
     thumbnailSize: "资产缩略图大小",
@@ -668,16 +667,6 @@ export const zhCN = {
       keepMetadata: "沿用原资产信息（保留标签、描述、评分、合集等人工元数据）",
       apply: "应用批量重新定位"
     },
-    extensionPairing: {
-      title: "浏览器扩展配对",
-      closeAria: "关闭浏览器扩展配对",
-      reading: "正在读取…",
-      help: "将配对码粘贴到 Chrome 或 Edge 的 Serpent 扩展选项中。配对码由操作系统安全存储加密保存；此窗口关闭后不会在界面中保留明文。",
-      tokenLabel: "配对码",
-      rotateHelp: "轮换会使所有浏览器中保存的旧配对码立即失效。",
-      rotate: "轮换配对码",
-      copy: "复制配对码"
-    },
     importLibrary: {
       title: "导入资源库",
       validated: "资源库 {name} 验证通过。请选择导入方式：",
@@ -775,6 +764,17 @@ export const zhCN = {
     elevationStrong: "最强",
     elevationLevelValue: "等级 {level}",
     languageHint: "控制界面文案语言，立即生效。",
+    browserExtensionTitle: "浏览器扩展",
+    browserExtensionIntro:
+      "用 Chrome / Edge 扩展把网页图片或视频保存到当前资源库。无需配对码；保持本应用运行并打开资源库即可。",
+    browserExtensionStepBuild:
+      "开发阶段：在项目根目录运行 npm run extension:build，生成 dist/extension。",
+    browserExtensionStepLoad:
+      "打开 chrome://extensions 或 edge://extensions，开启开发者模式，加载已解压的 dist/extension。",
+    browserExtensionStepUse:
+      "扩展图标变为彩色后，在网页图片或视频上右键选择「保存到 Serpent」。",
+    browserExtensionNote:
+      "正式发布前会改为商店或安装包说明（见工单 Serpent-999o）。代码更新后需重新构建并在扩展管理页点击重新加载。",
     viewMode: "浏览视图",
     canvasHint: "控制资产画布的排列方式；改后立即作用于画布。",
     cardFields: "卡片显示字段",
@@ -1112,11 +1112,11 @@ export const zhCN = {
     sourceUrlOpenFailed: "无法打开源链接：仅支持有效的 HTTP(S) 链接。",
     sourceUrlOpenUnauthorized: "无法从此窗口打开源链接。请重新加载 Serpent 后再试。",
     sourceUrlOpenShellFailed: "系统浏览器无法打开该源链接。请检查默认浏览器设置后重试。",
-    extensionPairingUnsupported: "当前桌面桥接不支持浏览器扩展配对。",
-    extensionRotateConfirm: "轮换后，浏览器扩展中保存的旧配对码会立即失效。确定继续吗？",
-    extensionRotated: "浏览器扩展配对码已轮换，请在扩展选项中更新。",
-    extensionCopied: "浏览器扩展配对码已复制。",
-    extensionCopyFailed: "复制失败，请手动选择配对码。",
+    extensionPairingUnsupported: "当前桌面桥接不支持浏览器扩展说明。",
+    extensionRotateConfirm: "（已废弃）",
+    extensionRotated: "（已废弃）",
+    extensionCopied: "（已废弃）",
+    extensionCopyFailed: "（已废弃）",
     aiConfigSaveFailed: "AI 配置保存失败。",
     aiConfigSaved: "AI 配置已保存。",
     aiAnalyzeFailed: "AI 分析失败。",

@@ -31,7 +31,6 @@ function makeActions(calls: RecordedCall[]): ToolbarCommandActions {
     refresh: record('refresh'),
     setViewMode: record('setViewMode'),
     toggleField: record('toggleField'),
-    openBrowserExtension: record('openBrowserExtension'),
     openBackgroundJobs: record('openBackgroundJobs'),
     openAiSettings: record('openAiSettings'),
     openAppSettings: record('openAppSettings'),
@@ -83,13 +82,12 @@ function findItem(
 }
 
 describe('工具栏命令可见性', () => {
-  it('资源库打开时：常驻画布命令与溢出三项全部可见', () => {
+  it('资源库打开时：常驻画布命令与溢出两项全部可见', () => {
     const { ctx } = makeCtx();
     expect(resolveIds(ctx)).toEqual([
       'canvas.view.grid',
       'canvas.view.masonry',
       'canvas.refresh',
-      'workspace.browser-extension',
       'workspace.background-jobs',
       'workspace.ai-settings',
       'workspace.app-settings',
@@ -105,7 +103,6 @@ describe('工具栏命令可见性', () => {
       'canvas.view.grid',
       'canvas.view.masonry',
       'canvas.refresh',
-      'workspace.browser-extension',
       'workspace.app-settings',
       'canvas.field.name',
       'canvas.field.size',
@@ -115,7 +112,6 @@ describe('工具栏命令可见性', () => {
 
   it('溢出 id 列表与注册表一致且不含导入类命令', () => {
     expect([...TOOLBAR_OVERFLOW_COMMAND_IDS]).toEqual([
-      'workspace.browser-extension',
       'workspace.background-jobs',
       'workspace.ai-settings',
     ]);
@@ -185,9 +181,7 @@ describe('标题与 locale', () => {
     expect(findItem(menu, 'canvas.view.grid').label).toBe('平铺视图');
     expect(findItem(menu, 'canvas.view.masonry').label).toBe('瀑布流视图');
     expect(findItem(menu, 'canvas.field.name').label).toBe('文件名');
-    expect(findItem(menu, 'workspace.browser-extension').label).toBe(
-      '浏览器扩展',
-    );
+    expect(findItem(menu, 'workspace.ai-settings').label).toBe('AI 设置');
   });
 
   it('en 标题对齐 toolbar 文案', () => {
@@ -214,13 +208,11 @@ describe('run 委托 actions', () => {
     ]);
   });
 
-  it('溢出三项分别委托', () => {
+  it('溢出两项分别委托', () => {
     const { ctx, calls } = makeCtx();
-    registry.get('workspace.browser-extension')!.run(ctx);
     registry.get('workspace.background-jobs')!.run(ctx);
     registry.get('workspace.ai-settings')!.run(ctx);
     expect(calls.map((c) => c.action)).toEqual([
-      'openBrowserExtension',
       'openBackgroundJobs',
       'openAiSettings',
     ]);

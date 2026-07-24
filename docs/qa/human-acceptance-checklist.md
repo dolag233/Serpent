@@ -89,8 +89,9 @@
 | IMPORT-002 | 一次导入多个文件 | 待人类验收 | 在“导入文件”中一次选择多个文件 | 所有选中文件均导入，且没有重复或遗漏 | [0002 QA](0002-asset-ingestion-qa-report.md) / [导入 E2E](../../tests/e2e/asset-ingestion.test.ts) | — |
 | IMPORT-003 | 导入目录并保留层级 | 待人类验收 | 导入一个包含子目录的素材目录 | `Assets/` 和侧栏保留原目录层级，正常素材全部出现 | [0002 QA](0002-asset-ingestion-qa-report.md) / [桌面导入 E2E](../../tests/e2e/desktop-ingestion.test.ts) | — |
 | IMPORT-004 | 托管资产被外部删除后显示 missing | 待人类验收 | 在外部删除一项托管资产，再执行“刷新磁盘变化” | 该资产显示文件丢失状态，不再表现为可用 | [0002 QA](0002-asset-ingestion-qa-report.md) / [导入 E2E](../../tests/e2e/asset-ingestion.test.ts) | — |
-| EXT-001 | 浏览器扩展：连接态图标 + 文件夹子菜单保存 | 人类验收通过 | ① 安装扩展并连接 Serpent；观察工具栏图标由灰变彩。② 在网页图片右键「保存到 Serpent」→ 子菜单选「根目录」或某文件夹。③ 保存后资产出现在对应浏览范围 | 连接成功图标变彩色、断连为灰色；子菜单列出根目录与库内文件夹（最近目标优先）；保存成功且落入所选文件夹 | extension/ + `c8c0f29`（active library）/ [folder-menu 单测](../../tests/unit/extension-folder-menu.test.ts) | 2026-07-24 用户确认通过。 |
-| EXT-002 | 浏览器扩展保存查重与普通导入一致 | 待人类验收 | ① 在库中已有某图 A。② 用扩展从网页保存同内容图片到同一或不同文件夹。③ 对照菜单「导入文件」拖入同内容文件时的冲突/跳过/保留两份行为 | 扩展保存走与普通导入相同的查重与冲突决策（含「记住选择」偏好）；不得使用 extension 专用旁路；重复时不应悄悄双份入库（除非策略为保留两份） | 工单 `Serpent-d8ex` / `saveAssetFromUrl` / `prepareOrExecuteImport` | 2026-07-24：用户验收通过当前临时查重，但要求对齐客户端内置导入流程后再验本条。 |
+| EXT-001 | 浏览器扩展：连接态图标 + 文件夹子菜单保存（无配对码；浏览器下载后上传） | 待人类验收 | ① `npm run extension:build` 后在 Chrome/Edge 重新加载 `dist/extension/`。② 启动 Serpent 并打开资源库；观察扩展图标由灰变彩（**无需配对码**）。③ 在普通博客直链图右键「保存到 Serpent」→ 根目录。④ 再在易防盗链站点（如 Pinterest/Behance）试一次 | 连接成功图标变彩色；**无需打开配对对话框**；直链与防盗链场景均能保存到对应文件夹；失败时有明确通知 | `Serpent-1jyi` / `Serpent-1cxv` / [extension README](../../extension/README.md) / [save-client](../../extension/save-client.ts) | 2026-07-24 曾通过旧「配对+URL 后台下载」路径；同日改为浏览器侧下载上传并取消配对，需复验。 |
+| EXT-004 | 设置 → 常规：浏览器扩展安装说明（无独立面板） | 人类验收通过 | ① 打开设置（工具栏设置或「更多工具 → 设置」）。② 进入「常规」。③ 阅读「浏览器扩展」卡片中的步骤与正式化提示。④ 确认「更多工具」中**没有**「浏览器扩展」项，也无单独帮助对话框 | 常规页可见简洁安装步骤；无客户端独立扩展面板；文案注明正式发布前会改（`Serpent-999o`） | `AppSettingsPages.tsx` / `Serpent-999o` | 2026-07-24 用户验收通过。 |
+| EXT-002 | 浏览器扩展保存查重与普通导入一致 | 待人类验收 | ① 在库中已有某图 A。② 用扩展从网页保存同内容图片到同一或不同文件夹。③ 对照菜单「导入文件」拖入同内容文件时的冲突/跳过/保留两份行为 | 扩展保存走与普通导入相同的查重与冲突决策（含「记住选择」偏好）；不得使用 extension 专用旁路；重复时不应悄悄双份入库（除非策略为保留两份） | 工单 `Serpent-d8ex` / `saveAssetFromFile` / `prepareOrExecuteImport` | 2026-07-24：用户验收通过当前临时查重，但要求对齐客户端内置导入流程后再验本条。上传路径实现后需复验。 |
 | EXT-003 | 浏览器扩展：Pinterest/Behance/Google 图片等浮层右键保存 | 人类验收不通过 | ① `npm run extension:build` 后在 Chrome 重新加载 `dist/extension/`。② 打开 Pinterest 大图页，在图片区域右键。③ 选「保存到 Serpent」→「根目录」或文件夹。④ 在 Behance 项目页、Google 图片、普通博客图片各试一次 | 上述站点显示 Serpent 浮层菜单（非浏览器原生菜单）；能解析到最高清 `srcset` URL；保存后资产出现在 Serpent 对应文件夹 | [media-target 单测](../../tests/unit/extension-media-target.test.ts) / `extension/content-script.ts` / 修复 `Serpent-pn8k` | 2026-07-24 用户复验：Pinterest closeup 仍无保存菜单；已开 `Serpent-pn8k` 专项修复。 |
 
 ### B. 链接文件夹
@@ -621,6 +622,8 @@
 | 2026-07-23 | FOLDER-011 | 待人类验收 | 按新参考图改为左侧标签 + S 曲线搁架的前层口袋，后层完整圆角面板；中部仍放层叠预览。 | `Serpent-l67w` |
 | 2026-07-24 | EXT-003 / `Serpent-pn8k` | 人类验收不通过 | Pinterest closeup 右键仍无 Serpent 保存菜单；浮层 content script 方案未生效。 | 专项修复 `Serpent-pn8k` |
 | 2026-07-24 | EXT-001 | 人类验收通过 | 扩展连接态彩色图标；右键保存子菜单（根目录 + 文件夹列表）。 | 查重对齐普通导入 → `Serpent-d8ex` / EXT-002 |
+| 2026-07-24 | EXT-001 | 待人类复验 | 改为浏览器侧下载上传（绕防盗链）并取消配对码；需重新构建并加载扩展后复验。 | `Serpent-1jyi` / `Serpent-1cxv` |
+| 2026-07-24 | EXT-004 | 人类验收通过 | 删除客户端独立扩展面板；安装说明迁入设置 → 常规；正式文案跟踪 `Serpent-999o`。 | 设置页卡片 + 移除工具栏入口 |
 | 2026-07-24 | TRASH-009 / TRASH-011 | 人类验收通过 | 回收站封面与后退；同名墓碑互不串资产；目标占用不覆盖。 | `Serpent-jcur` / `Serpent-whvm` |
 | 2026-07-24 | 工单批次 `agent/ticket-batch-20260724` | 待人类验收 | SETTINGS-003（含 AI 内联）、IMPORT-012、DND-007、SEARCH-005 | `Serpent-jvin`/`cr8h`/`79c7`/`pagf`/`45io` |
 | 2026-07-24 | 小打磨续批 | 清单/样式 | 撤回 CANVAS-011；AICFG 步骤改「设置→AI」；embedded 去重复标题 | `Serpent-l6f7`/`ivn2`/`d1ck`/`a22y` |
