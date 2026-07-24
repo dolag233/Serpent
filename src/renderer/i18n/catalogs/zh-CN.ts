@@ -143,7 +143,6 @@ export const zhCN = {
   },
   tagMgmt: {
     title: "标签管理",
-    hint: "创建、重命名或删除标签。双击标签可浏览其下资产。",
     search: "搜索标签",
     searchPlaceholder: "筛选标签…",
     newTagName: "新标签名称",

@@ -6549,6 +6549,7 @@ function AppInner() {
             />
           </div>
         </div>
+        {!showTagManagement && (
         <div
           className={`workspace-discovery${previewAsset ? " is-viewing" : ""}`}
         >
@@ -6644,6 +6645,7 @@ function AppInner() {
             widthRange={widthRange}
           />
         </div>
+        )}
         {(aiAnalyzing ||
           (aiJobs !== null && aiJobs.queued + aiJobs.running > 0)) &&
           (() => {

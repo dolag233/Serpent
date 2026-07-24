@@ -230,10 +230,7 @@ export function TagManagementWorkspace({
       onMouseDown={(event) => event.stopPropagation()}
     >
       <header className="tag-management-header">
-        <div>
-          <h2 className="tag-management-title">{t("tagMgmt.title")}</h2>
-          <p className="tag-management-hint">{t("tagMgmt.hint")}</p>
-        </div>
+        <h2 className="tag-management-title">{t("tagMgmt.title")}</h2>
         <input
           aria-label={t("tagMgmt.search")}
           className="text-field tag-management-search"
@@ -254,7 +251,7 @@ export function TagManagementWorkspace({
           {(["name", "count"] as const).map((key) => (
             <button
               aria-pressed={sortKey === key}
-              className={`tag-management-sort-button${sortKey === key ? " is-active" : ""}`}
+              className={`dimension-filter-btn${sortKey === key ? " is-active" : ""}`}
               key={key}
               onClick={() => handleSortClick(key)}
               title={
@@ -269,11 +266,14 @@ export function TagManagementWorkspace({
               type="button"
             >
               {t(key === "name" ? "tagMgmt.sortName" : "tagMgmt.sortCount")}
-              {sortKey === key && (
-                <span aria-hidden="true">
-                  {sortDirection === "asc" ? " ↑" : " ↓"}
+              {sortKey === key ? (
+                <span aria-hidden="true" className="sort-order-glyph">
+                  <Icon
+                    name={sortDirection === "asc" ? "sort-asc" : "sort-desc"}
+                    size={14}
+                  />
                 </span>
-              )}
+              ) : null}
             </button>
           ))}
         </div>
@@ -296,7 +296,7 @@ export function TagManagementWorkspace({
             value={draftName}
           />
           <button
-            className="primary-button"
+            className="secondary-button"
             disabled={busy || !draftName.trim()}
             type="submit"
           >

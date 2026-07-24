@@ -2264,7 +2264,7 @@ input[type="range"] {
 .tag-management-header {
   display: flex;
   flex-wrap: wrap;
-  align-items: flex-end;
+  align-items: center;
   justify-content: space-between;
   gap: 12px 20px;
 }
@@ -2274,13 +2274,6 @@ input[type="range"] {
   font-size: 18px;
   font-weight: 600;
   letter-spacing: -0.02em;
-}
-
-.tag-management-hint {
-  margin: 4px 0 0;
-  color: var(--tertiary);
-  font-size: 12px;
-  line-height: 1.4;
 }
 
 .tag-management-search {
@@ -2307,38 +2300,13 @@ input[type="range"] {
   min-width: 0;
 }
 
-/* Sort segmented control (REQ-TAG-011): click switches key, clicking the
-   active key flips direction. */
+/* Sort buttons match discovery toolbar rounded-rect controls
+   (.dimension-filter-btn), with browse sort glyphs for direction. */
 .tag-management-sort {
   display: inline-flex;
-  overflow: hidden;
-  border: 1px solid var(--divider-soft);
-  border-radius: 8px;
-}
-
-.tag-management-sort-button {
-  padding: 4px 12px;
-  border: 0;
-  background: transparent;
-  color: var(--secondary);
-  font-size: 12px;
-  line-height: 1.6;
-  cursor: pointer;
-  white-space: nowrap;
-  transition: background 120ms ease, color 120ms ease;
-}
-
-.tag-management-sort-button + .tag-management-sort-button {
-  border-left: 1px solid var(--divider-soft);
-}
-
-.tag-management-sort-button:hover {
-  background: var(--hover);
-}
-
-.tag-management-sort-button.is-active {
-  background: var(--accent-soft);
-  color: var(--text);
+  flex-shrink: 0;
+  align-items: center;
+  gap: 4px;
 }
 
 .tag-management-selection {
@@ -2356,8 +2324,9 @@ input[type="range"] {
   font-size: 13px;
 }
 
-/* Chip flow grid (REQ-TAG-010): tags render as chips in the same visual
-   language as asset tag chips, never as a row list. */
+/* Chip flow grid (REQ-TAG-010): management chips stay larger than
+   inspector chips for denser click targets; selection ring matches
+   .asset-card.is-selected. */
 .tag-management-grid {
   display: flex;
   flex-wrap: wrap;
@@ -2388,15 +2357,13 @@ input[type="range"] {
   color: var(--text);
 }
 
-/* Same outward-ring geometry as selected asset cards, so selection reads
-   identically across the app and never stacks with the focus ring. */
 .tag-management-chip:focus-visible {
   outline: none;
   box-shadow: 0 0 0 2px var(--accent);
 }
 
 .tag-management-chip.is-selected {
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
   box-shadow: 0 0 0 2px var(--accent);
   color: var(--text);
 }
@@ -2413,7 +2380,7 @@ input[type="range"] {
 }
 
 .tag-management-chip.is-selected .tag-management-chip-count {
-  color: var(--accent-soft-fg);
+  color: var(--secondary);
 }
 
 .tag-management-chip-rename {

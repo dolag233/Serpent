@@ -152,7 +152,6 @@ export const en = {
   },
   tagMgmt: {
     title: "Tag management",
-    hint: "Create, rename, or delete tags. Double-click a tag to browse its assets.",
     search: "Search tags",
     searchPlaceholder: "Filter tags…",
     newTagName: "New tag name",
