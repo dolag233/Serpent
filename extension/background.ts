@@ -7,7 +7,8 @@ import {
   sortFoldersForMenu,
   type ExtensionFolderOption,
 } from './folder-menu';
-import { readNotificationsEnabled } from './preferences';
+import { saveMenuTitle } from './connection-ui';
+import { readExtensionSaveBehavior } from './preferences';
 import {
   fetchSerpentFolders,
   notificationForOutcome,
@@ -52,6 +53,7 @@ function createMenuItem(properties: {
   title: string;
   contexts: Array<'image' | 'video'>;
   parentId?: string;
+  enabled?: boolean;
 }): Promise<void> {
   return new Promise((resolve) => {
     chrome.contextMenus.create(properties, () => {
@@ -61,6 +63,19 @@ function createMenuItem(properties: {
   });
 }
 
+function updateMenuItem(
+  id: string,
+  properties: { title?: string; enabled?: boolean },
+): Promise<void> {
+  return new Promise((resolve) => {
+    chrome.contextMenus.update(id, properties, () => {
+      void chrome.runtime.lastError;
+      resolve();
+    });
+  });
+}
+
+/** Root context-menu title reflects connection so disabled state is obvious. */
 function setToolbarIcon(connected: boolean): void {
   const suffix = connected ? '' : '-gray';
   const path: Record<string, string> = {};
@@ -95,17 +110,31 @@ async function removeDynamicFolderMenus(): Promise<void> {
 }
 
 async function createStaticMenus(): Promise<void> {
+  const connected = connectionState === 'connected';
   await createMenuItem({
     id: MENU_ROOT_ID,
-    title: '保存到 Serpent',
+    title: saveMenuTitle(connected),
     contexts: ['image', 'video'],
+    enabled: connected,
   });
   await createMenuItem({
     id: MENU_ROOT_FOLDER_ID,
     parentId: MENU_ROOT_ID,
     title: '根目录',
     contexts: ['image', 'video'],
+    enabled: connected,
   });
+}
+
+async function syncSaveMenuEnabled(connected: boolean): Promise<void> {
+  await updateMenuItem(MENU_ROOT_ID, {
+    title: saveMenuTitle(connected),
+    enabled: connected,
+  });
+  await updateMenuItem(MENU_ROOT_FOLDER_ID, { enabled: connected });
+  for (const id of dynamicFolderMenuIds) {
+    await updateMenuItem(id, { enabled: connected });
+  }
 }
 
 async function installMenus(): Promise<void> {
@@ -122,7 +151,10 @@ async function refreshFolderMenus(): Promise<void> {
   if (folderMenuRefreshPromise) return folderMenuRefreshPromise;
 
   folderMenuRefreshPromise = (async () => {
-    if (connectionState !== 'connected') {
+    const connected = connectionState === 'connected';
+    await syncSaveMenuEnabled(connected);
+
+    if (!connected) {
       await removeDynamicFolderMenus();
       return;
     }
@@ -150,6 +182,7 @@ async function refreshFolderMenus(): Promise<void> {
         parentId: MENU_ROOT_ID,
         title: folderMenuLabel(folder),
         contexts: ['image', 'video'],
+        enabled: true,
       });
     }
   })().finally(() => {
@@ -173,8 +206,8 @@ function scheduleConnectionChecks(): void {
 }
 
 function showNotification(notification: UserNotification): void {
-  void readNotificationsEnabled().then((enabled) => {
-    if (!enabled) return;
+  void readExtensionSaveBehavior().then((behavior) => {
+    if (!behavior.notificationsEnabled) return;
     notificationSequence += 1;
     chrome.notifications.create(
       `serpent-save-${Date.now()}-${notificationSequence}`,
@@ -203,7 +236,8 @@ async function rememberRecentFolder(
 }
 
 async function saveIntentAndNotify(intent: SaveIntent): Promise<UserNotification> {
-  const outcome = await saveMediaViaBrowser(intent);
+  const behavior = await readExtensionSaveBehavior();
+  const outcome = await saveMediaViaBrowser(intent, behavior);
   if (outcome.kind === 'accepted') {
     const foldersOutcome = await fetchSerpentFolders();
     if (foldersOutcome.kind === 'ok') {
@@ -221,6 +255,14 @@ async function saveIntentAndNotify(intent: SaveIntent): Promise<UserNotification
 async function handleContextMenuClick(
   info: SerpentContextMenuClickData,
 ): Promise<void> {
+  if (connectionState !== 'connected') {
+    showNotification({
+      title: '无法保存到 Serpent',
+      message: '请先启动 Serpent 桌面应用并打开资源库。',
+    });
+    return;
+  }
+
   const targetFolderId = parseFolderMenuId(info.menuItemId);
   if (targetFolderId === undefined) return;
 
@@ -261,6 +303,13 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
   const type = Reflect.get(message, 'type');
 
+  if (type === 'serpent-connection-status') {
+    sendResponse({
+      kind: connectionState === 'connected' ? 'connected' : 'disconnected',
+    });
+    return true;
+  }
+
   if (type === 'serpent-list-folders') {
     void (async () => {
       const outcome = await fetchSerpentFolders();
@@ -283,6 +332,16 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
   if (type === 'serpent-save-request') {
     void (async () => {
+      if (connectionState !== 'connected') {
+        const notification = {
+          title: '无法保存到 Serpent',
+          message: '请先启动 Serpent 桌面应用并打开资源库。',
+        };
+        showNotification(notification);
+        sendResponse({ notification });
+        return;
+      }
+
       const intentValue = Reflect.get(message, 'intent');
       if (!intentValue || typeof intentValue !== 'object') {
         sendResponse({

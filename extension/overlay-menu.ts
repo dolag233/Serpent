@@ -1,9 +1,13 @@
+import { disconnectedMenuHint, saveMenuTitle } from './connection-ui';
 import { folderMenuLabel, type ExtensionFolderOption } from './folder-menu';
 import type { MediaTarget } from './media-target';
 import type { SaveIntent } from './save-client';
 
-const MENU_ROOT_LABEL = '保存到 Serpent';
 const ROOT_FOLDER_LABEL = '根目录';
+
+interface ConnectionStatusResponse {
+  kind: 'connected' | 'disconnected';
+}
 
 interface FolderListResponse {
   kind: 'ok';
@@ -33,7 +37,7 @@ function sendRuntimeMessage<T>(message: Record<string, unknown>): Promise<T> {
   });
 }
 
-function createMenuShell(clientX: number, clientY: number): {
+function createMenuShell(clientX: number, clientY: number, titleText: string): {
   host: HTMLDivElement;
   list: HTMLUListElement;
   dispose: () => void;
@@ -59,7 +63,7 @@ function createMenuShell(clientX: number, clientY: number): {
   });
 
   const title = document.createElement('div');
-  title.textContent = MENU_ROOT_LABEL;
+  title.textContent = titleText;
   Object.assign(title.style, {
     padding: '6px 12px 8px',
     fontWeight: '600',
@@ -101,34 +105,38 @@ function createMenuShell(clientX: number, clientY: number): {
 function appendMenuItem(
   list: HTMLUListElement,
   label: string,
-  onSelect: () => void,
+  onSelect: (() => void) | null,
 ): void {
   const item = document.createElement('li');
   const button = document.createElement('button');
   button.type = 'button';
   button.textContent = label;
+  const enabled = onSelect !== null;
+  button.disabled = !enabled;
   Object.assign(button.style, {
     display: 'block',
     width: '100%',
     border: '0',
     background: 'transparent',
-    color: 'inherit',
+    color: enabled ? 'inherit' : 'rgba(245,245,245,0.38)',
     textAlign: 'left',
     padding: '8px 12px',
-    cursor: 'pointer',
+    cursor: enabled ? 'pointer' : 'default',
     font: 'inherit',
   });
-  button.addEventListener('mouseenter', () => {
-    button.style.background = 'rgba(255,255,255,0.08)';
-  });
-  button.addEventListener('mouseleave', () => {
-    button.style.background = 'transparent';
-  });
-  button.addEventListener('click', (event) => {
-    event.preventDefault();
-    event.stopPropagation();
-    onSelect();
-  });
+  if (enabled) {
+    button.addEventListener('mouseenter', () => {
+      button.style.background = 'rgba(255,255,255,0.08)';
+    });
+    button.addEventListener('mouseleave', () => {
+      button.style.background = 'transparent';
+    });
+    button.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      onSelect();
+    });
+  }
   item.appendChild(button);
   list.appendChild(item);
 }
@@ -154,7 +162,26 @@ export async function showOverlaySaveMenu(
   clientY: number,
   media: MediaTarget,
 ): Promise<void> {
-  const { list, dispose } = createMenuShell(clientX, clientY);
+  let connected = false;
+  try {
+    const status = await sendRuntimeMessage<ConnectionStatusResponse>({
+      type: 'serpent-connection-status',
+    });
+    connected = status.kind === 'connected';
+  } catch {
+    connected = false;
+  }
+
+  const { list, dispose } = createMenuShell(
+    clientX,
+    clientY,
+    saveMenuTitle(connected),
+  );
+
+  if (!connected) {
+    appendMenuItem(list, disconnectedMenuHint(), null);
+    return;
+  }
 
   const closeAfter = async (action: () => Promise<void>) => {
     try {

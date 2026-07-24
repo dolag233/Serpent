@@ -137,6 +137,22 @@ export function parseAssetChangeEvent(input: unknown): AssetChangeEvent {
   return assetChangeEventSchema.parse(input);
 }
 
+export const extensionSaveCompletedEventSchema = z.strictObject({
+  type: z.literal('extension.save.completed'),
+  libraryId: nonBlankString,
+  asset: assetSummarySchema,
+});
+
+export type ExtensionSaveCompletedEvent = z.infer<
+  typeof extensionSaveCompletedEventSchema
+>;
+
+export function parseExtensionSaveCompletedEvent(
+  input: unknown,
+): ExtensionSaveCompletedEvent {
+  return extensionSaveCompletedEventSchema.parse(input);
+}
+
 export const thumbnailEventSchema = z.discriminatedUnion('type', [
   z.strictObject({
     type: z.literal('asset.thumbnail.ready'),

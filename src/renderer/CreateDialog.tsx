@@ -65,7 +65,6 @@ export function CreateDialog({
   const titleId = "create-dialog-title";
   const showRecents =
     required && phase === "start" && recentLibraries.length > 0;
-  const showOpenExisting = phase === "form" && !required;
 
   return (
     <div className="dialog-backdrop" role="presentation">
@@ -117,25 +116,14 @@ export function CreateDialog({
               <p className="field-help">{t("dialog.createLibrary.help")}</p>
             ) : null}
             <div className="dialog-actions">
-              {required ? (
-                <button
-                  className="secondary-button"
-                  disabled={busy}
-                  onClick={onBackToStart}
-                  type="button"
-                >
-                  {t("common.back")}
-                </button>
-              ) : (
-                <button
-                  className="secondary-button"
-                  disabled={busy}
-                  onClick={onCancel}
-                  type="button"
-                >
-                  {t("common.cancel")}
-                </button>
-              )}
+              <button
+                className="secondary-button"
+                disabled={busy}
+                onClick={onBackToStart}
+                type="button"
+              >
+                {t("common.back")}
+              </button>
               <button
                 className="primary-button"
                 disabled={busy || !value.trim()}
@@ -177,46 +165,31 @@ export function CreateDialog({
           </div>
         )}
 
-        {showRecents || showOpenExisting ? (
+        {showRecents ? (
           <div className="create-dialog-existing">
             <div className="create-dialog-existing-label">
-              {showRecents
-                ? t("empty.recentLibraries")
-                : t("dialog.createLibrary.existingSection")}
+              {t("empty.recentLibraries")}
             </div>
-            {showOpenExisting ? (
-              <button
-                className="secondary-button create-dialog-open-existing"
-                disabled={busy}
-                onClick={onOpenExisting}
-                type="button"
-              >
-                <Icon name="folder" size={14} />
-                {t("dialog.createLibrary.openExisting")}
-              </button>
-            ) : null}
-            {showRecents ? (
-              <ul className="create-dialog-recent-list">
-                {recentLibraries.map((entry) => (
-                  <li key={entry.path}>
-                    <button
-                      className="create-dialog-recent-open"
-                      disabled={busy}
-                      onClick={() => onOpenRecent(entry.path)}
-                      title={entry.path}
-                      type="button"
-                    >
-                      <span className="create-dialog-recent-name">
-                        {entry.name}
-                      </span>
-                      <span className="create-dialog-recent-path">
-                        {entry.path}
-                      </span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            ) : null}
+            <ul className="create-dialog-recent-list">
+              {recentLibraries.map((entry) => (
+                <li key={entry.path}>
+                  <button
+                    className="create-dialog-recent-open"
+                    disabled={busy}
+                    onClick={() => onOpenRecent(entry.path)}
+                    title={entry.path}
+                    type="button"
+                  >
+                    <span className="create-dialog-recent-name">
+                      {entry.name}
+                    </span>
+                    <span className="create-dialog-recent-path">
+                      {entry.path}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
           </div>
         ) : null}
       </div>

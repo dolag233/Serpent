@@ -2249,10 +2249,14 @@ input[type="range"] {
 .tag-management {
   position: relative;
   z-index: 1;
+  /* The canvas grid centers children (place-items: center) for empty/preview
+     states; a management page anchors to the top instead of floating in the
+     vertical middle of the canvas. */
+  align-self: start;
   display: flex;
   flex-direction: column;
   gap: 16px;
-  width: min(720px, calc(100% - 48px));
+  width: min(960px, calc(100% - 48px));
   margin: 24px auto;
   padding: 0 4px 32px;
 }
@@ -2283,18 +2287,67 @@ input[type="range"] {
   width: min(240px, 100%);
 }
 
-.tag-management-create,
-.tag-management-rename {
+.tag-management-toolbar {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.tag-management-create {
+  display: flex;
+  flex: 1 1 260px;
+  max-width: 440px;
   gap: 8px;
   align-items: center;
 }
 
-.tag-management-create .text-field,
-.tag-management-rename .text-field {
+.tag-management-create .text-field {
   flex: 1 1 180px;
   min-width: 0;
+}
+
+/* Sort segmented control (REQ-TAG-011): click switches key, clicking the
+   active key flips direction. */
+.tag-management-sort {
+  display: inline-flex;
+  overflow: hidden;
+  border: 1px solid var(--divider-soft);
+  border-radius: 8px;
+}
+
+.tag-management-sort-button {
+  padding: 4px 12px;
+  border: 0;
+  background: transparent;
+  color: var(--secondary);
+  font-size: 12px;
+  line-height: 1.6;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.tag-management-sort-button + .tag-management-sort-button {
+  border-left: 1px solid var(--divider-soft);
+}
+
+.tag-management-sort-button:hover {
+  background: var(--hover);
+}
+
+.tag-management-sort-button.is-active {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
+.tag-management-selection {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  color: var(--secondary);
+  font-size: 12px;
 }
 
 .tag-management-empty {
@@ -2303,102 +2356,70 @@ input[type="range"] {
   font-size: 13px;
 }
 
-.tag-management-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  border: 1px solid var(--divider);
-  border-radius: 10px;
-  overflow: hidden;
-  background: var(--pane);
-}
-
-.tag-management-row {
+/* Chip flow grid (REQ-TAG-010): tags render as chips in the same visual
+   language as asset tag chips, never as a row list. */
+.tag-management-grid {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
-  gap: 8px 12px;
-  padding: 8px 12px;
-  border-top: 1px solid var(--divider);
-}
-
-.tag-management-row:first-child {
-  border-top: none;
-}
-
-.tag-management-open {
-  display: flex;
-  flex: 1 1 200px;
-  align-items: center;
+  align-content: flex-start;
   gap: 8px;
-  min-width: 0;
-  margin: 0;
-  padding: 6px 4px;
-  border: none;
-  border-radius: 6px;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
+  padding: 4px 2px;
 }
 
-.tag-management-open:hover:not(:disabled),
-.tag-management-open:focus-visible:not(:disabled) {
-  background: var(--hover);
+.tag-management-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border: 1px solid var(--divider-soft);
+  border-radius: 999px;
+  background: var(--pane);
+  color: var(--secondary);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: nowrap;
+  cursor: default;
+  user-select: none;
+  transition: background 120ms ease, color 120ms ease, box-shadow 120ms ease;
 }
 
-.tag-management-name {
-  flex: 1 1 auto;
-  min-width: 0;
+.tag-management-chip:hover {
+  background: var(--raised);
+  color: var(--text);
+}
+
+/* Same outward-ring geometry as selected asset cards, so selection reads
+   identically across the app and never stacks with the focus ring. */
+.tag-management-chip:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+.tag-management-chip.is-selected {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  box-shadow: 0 0 0 2px var(--accent);
+  color: var(--text);
+}
+
+.tag-management-chip-name {
+  max-width: 200px;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
-  font-weight: 500;
 }
 
-.tag-management-count {
-  flex: 0 0 auto;
+.tag-management-chip-count {
   color: var(--tertiary);
+  font-size: 11px;
+}
+
+.tag-management-chip.is-selected .tag-management-chip-count {
+  color: var(--accent-soft-fg);
+}
+
+.tag-management-chip-rename {
+  width: 140px;
+  padding: 1px 6px;
   font-size: 12px;
-  font-variant-numeric: tabular-nums;
-}
-
-.tag-management-actions {
-  display: flex;
-  flex: 0 0 auto;
-  gap: 6px;
-}
-
-.tag-management-actions .secondary-button {
-  padding: 4px 10px;
-  font-size: 12px;
-}
-
-.tag-management-confirm {
-  position: absolute;
-  inset: 12% 16px auto;
-  z-index: 2;
-  display: grid;
-  gap: 16px;
-  max-width: 420px;
-  margin: 0 auto;
-  padding: 18px 20px;
-  border: 1px solid var(--divider);
-  border-radius: 12px;
-  background: var(--pane);
-  box-shadow: var(--shadow-elevated);
-}
-
-.tag-management-confirm p {
-  margin: 0;
-  line-height: 1.45;
-}
-
-.tag-management-confirm-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
 }
 
 .trash-folder-group {

@@ -156,6 +156,14 @@ import {
   usePendingRestoredAssetFocus,
 } from "./use-browser-session-restore";
 import { useExtensionActiveContext } from "./use-extension-active-context";
+import { useExtensionSaveReveal } from "./use-extension-save-reveal";
+import { usePendingAssetReveal } from "./use-pending-asset-reveal";
+import {
+  currentScopeShowsRevealAssets,
+  pendingRevealFromAssets,
+  sharedBrowseScopeForAssets,
+  type PendingAssetReveal,
+} from "./pending-asset-reveal";
 import { resolveInspectorTagTarget } from "./inspector-tag-target";
 import { useBatchActions } from "./useBatchActions";
 import { useShellFileActions } from "./use-shell-file-actions";
@@ -260,6 +268,10 @@ import {
   saveCanvasPreferences,
   type CanvasPreferences,
 } from "./canvas-preferences";
+import {
+  loadBrowseSortPreferences,
+  saveBrowseSortPreferences,
+} from "./browse-sort-preferences";
 import {
   FOLDER_CARD_ROW_INLINE_PADDING_PX,
   masonryAlignedFolderWidthPx,
@@ -519,6 +531,7 @@ function AppInner() {
   const [dialog, setDialog] = useState<DialogKind>(null);
   const [createLibraryPhase, setCreateLibraryPhase] =
     useState<CreateLibraryPhase>("start");
+  const hadLibraryRef = useRef(false);
   const [dialogValue, setDialogValue] = useState(() => t("shell.myLibrary"));
   const [conflicts, setConflicts] = useState<ImportConflictPlan | null>(null);
   const [conflictPhase, setConflictPhase] = useState<ImportConflictPhase | null>(
@@ -627,6 +640,10 @@ function AppInner() {
   const [excludeColorFilter, setExcludeColorFilter] = useState(false);
   const [tagFilter, setTagFilter] = useState("");
   const [excludeTagFilter, setExcludeTagFilter] = useState(false);
+  // Serpent-eaxs: tag-management AND search ("包含 N 个标签") splits the tag
+  // names into separate clauses (clauses are ANDed; values within one clause
+  // are ORed). Any explicit filter-bar edit resets this to "any".
+  const [tagFilterMatch, setTagFilterMatch] = useState<"any" | "all">("any");
   const [ratingFilter, setRatingFilter] = useState("");
   const [excludeRatingFilter, setExcludeRatingFilter] = useState(false);
   const [favoriteFilter, setFavoriteFilter] = useState<"any" | "yes" | "no">(
@@ -670,8 +687,12 @@ function AppInner() {
     max: "",
     exclude: false,
   });
-  const [sortField, setSortField] = useState<SortDefinition["field"]>("name");
-  const [sortOrder, setSortOrder] = useState<SortDefinition["order"]>("asc");
+  const [sortField, setSortField] = useState<SortDefinition["field"]>(
+    () => loadBrowseSortPreferences().field,
+  );
+  const [sortOrder, setSortOrder] = useState<SortDefinition["order"]>(
+    () => loadBrowseSortPreferences().order,
+  );
   /** Serpent-hm28: null = normal sort; otherwise client shuffle seed. */
   const [shuffleSeed, setShuffleSeed] = useState<number | null>(null);
   const [, setSearchOffset] = useState(0);
@@ -972,6 +993,13 @@ function AppInner() {
   /** Sync lock so scroll + IntersectionObserver cannot thrash load-more (Serpent-r94b). */
   const loadingMoreLockRef = useRef(false);
   const pendingRestoredFocusRef = useRef<string | null>(null);
+  const pendingRevealRef = useRef<PendingAssetReveal | null>(null);
+  const chooseFolderRef = useRef<(scope: AssetScope) => Promise<void>>(
+    async () => undefined,
+  );
+  const revealAfterImportRef = useRef<
+    (completion: { assets: AssetSummary[] }) => Promise<void>
+  >(async () => undefined);
   const previewFocusReturnRef = useRef<string | null>(null);
   // REQ-VIEW-008: snapshot of the browse scroll position + the previewed
   // card's on-screen anchor, captured when the viewer opens so the close
@@ -1507,6 +1535,13 @@ function AppInner() {
     saveCanvasPreferences(canvasPrefs);
   }, [canvasPrefs]);
   useEffect(() => {
+    saveBrowseSortPreferences({
+      version: 1,
+      field: sortField,
+      order: sortOrder,
+    });
+  }, [sortField, sortOrder]);
+  useEffect(() => {
     saveAiUiPreferences(aiUiPrefs);
   }, [aiUiPrefs]);
 
@@ -1853,6 +1888,20 @@ function AppInner() {
     trashedAssets,
     selectedAssetId,
   });
+  usePendingAssetReveal({
+    pendingRevealRef,
+    assets,
+    setSelectedAssetIds,
+    setSelectedAssetId,
+    selectionAnchorRef,
+    pendingRestoredFocusRef,
+  });
+  useExtensionSaveReveal({
+    api: api ?? null,
+    libraryId: library?.libraryId,
+    chooseFolderRef,
+    pendingRevealRef,
+  });
   // Serpent-y0au: keep recent libraries warm on the no-library start surface.
   useEffect(() => {
     if (!api || library) return;
@@ -1883,13 +1932,19 @@ function AppInner() {
     if (!importLibraryChooserOpen && !appSettingsOpen) return;
     if (dialog === "library") setDialog(null);
   }, [library, importLibraryChooserOpen, appSettingsOpen, dialog]);
-  // Drop the auto-opened start surface once a library is restored/opened.
-  // Keep an intentional menu 「创建资源库」 form while a library is already open.
+  // Dismiss the auto-opened no-library surface once a library becomes available.
+  // Do not close a menu-opened create dialog while a library is already open.
   useEffect(() => {
-    if (library && dialog === "library" && createLibraryPhase === "start") {
-      setDialog(null);
+    if (!library) {
+      hadLibraryRef.current = false;
+      return;
     }
-  }, [library, dialog, createLibraryPhase]);
+    if (!hadLibraryRef.current && dialog === "library") {
+      setDialog(null);
+      setCreateLibraryPhase("start");
+    }
+    hadLibraryRef.current = true;
+  }, [library, dialog]);
   useEffect(() => {
     if (!api) return;
     return api.onThumbnailEvent((event) => {
@@ -2148,8 +2203,6 @@ function AppInner() {
     setAspectRatioRanges([]);
     setDurationRange({ min: "", max: "", exclude: false });
     setLongEdgeRange({ min: "", max: "", exclude: false });
-    setSortField("name");
-    setSortOrder("asc");
     hadDiscoveryInput.current = false;
   }
 
@@ -2261,7 +2314,9 @@ function AppInner() {
     api?.setActiveContext(library.libraryId, folderId);
     setUiState("loading");
     try {
-      await loadContent(library, scope);
+      await loadContent(library, scope, {
+        discovery: { sort: { field: sortField, order: sortOrder } },
+      });
       recordNavigation(
         scope === "all"
           ? { kind: "all" }
@@ -2275,6 +2330,7 @@ function AppInner() {
       setUiState("ready");
     }
   }
+  chooseFolderRef.current = chooseFolder;
 
   async function enterTrash() {
     await enterTrashAt(null);
@@ -2386,22 +2442,100 @@ function AppInner() {
     }
   }
 
-  async function handleDeleteTagInManagement(tagId: string): Promise<boolean> {
-    if (!api || !library) return false;
+  async function handleDeleteTagsInManagement(
+    tagIds: string[],
+  ): Promise<boolean> {
+    if (!api || !library || tagIds.length === 0) return false;
     try {
-      const result = await api.deleteTag({
+      const result =
+        tagIds.length === 1
+          ? await api.deleteTag({
+              libraryId: library.libraryId,
+              tagId: tagIds[0]!,
+            })
+          : await api.deleteTags({ libraryId: library.libraryId, tagIds });
+      if (!result.ok) throw new LibraryOperationError(result.error);
+      const tagResult = await api.listTags({ libraryId: library.libraryId });
+      if (!tagResult.ok) throw new LibraryOperationError(tagResult.error);
+      setTags(tagResult.value);
+      setNotice(
+        tagIds.length === 1
+          ? t("toast.tagDeleted")
+          : t("toast.tagsDeleted", { count: tagIds.length }),
+      );
+      return true;
+    } catch (caught) {
+      setError(toMessage(caught, t("toast.deleteTagFailed"), locale));
+      return false;
+    }
+  }
+
+  async function handleMergeTagsInManagement(
+    tagIds: string[],
+    name: string,
+  ): Promise<boolean> {
+    if (!api || !library || tagIds.length < 2 || !name.trim()) return false;
+    try {
+      const result = await api.mergeTags({
         libraryId: library.libraryId,
-        tagId,
+        sourceTagIds: tagIds,
+        name: name.trim(),
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
       const tagResult = await api.listTags({ libraryId: library.libraryId });
       if (!tagResult.ok) throw new LibraryOperationError(tagResult.error);
       setTags(tagResult.value);
-      setNotice(t("toast.tagDeleted"));
+      setNotice(t("toast.tagMerged", { name: name.trim() }));
       return true;
     } catch (caught) {
-      setError(toMessage(caught, t("toast.deleteTagFailed"), locale));
+      setError(toMessage(caught, t("toast.mergeTagsFailed"), locale));
       return false;
+    }
+  }
+
+  // Serpent-eaxs: tag-management AND/OR jump — leave management, scope to all
+  // assets and apply the selected tag names as one OR clause (any) or one
+  // clause per tag (all).
+  async function handleSearchTagsFromManagement(
+    tagNames: string[],
+    match: "all" | "any",
+  ) {
+    if (!api || !library || tagNames.length === 0) return;
+    await closeAssetPreview(false);
+    closeContextMenu();
+    const joined = tagNames.join(", ");
+    workspaceCanvasRef.current?.scrollTo({ top: 0, left: 0 });
+    setShowTrash(false);
+    setShowTagManagement(false);
+    setActiveTagId(null);
+    setActiveCollectionId(null);
+    setActiveSmartCollectionId(null);
+    setAssetScope("all");
+    clearAssetSelection();
+    setTagFilter(joined);
+    setTagFilterMatch(match);
+    setSearchOffset(0);
+    api.setActiveContext(library.libraryId);
+    setUiState("loading");
+    try {
+      const definition = currentQueryDefinition({
+        tagFilter: joined,
+        tagFilterMatch: match,
+      });
+      const result = await api.searchAssets({
+        libraryId: library.libraryId,
+        query: definition.search ?? null,
+        filters: definition.filters,
+        sort: definition.sort,
+        limit: ASSET_PAGE_SIZE,
+        offset: 0,
+      });
+      if (!result.ok) throw new LibraryOperationError(result.error);
+      applySearchResult(result.value);
+    } catch (caught) {
+      setError(toMessage(caught, t("toast.readTagAssetsFailed"), locale));
+    } finally {
+      setUiState("ready");
     }
   }
 
@@ -2420,6 +2554,7 @@ function AppInner() {
     setAssetScope("all");
     clearAssetSelection();
     setTagFilter(tag.name);
+    setTagFilterMatch("any");
     setSearchOffset(0);
     api.setActiveContext(library.libraryId);
     setUiState("loading");
@@ -2953,7 +3088,7 @@ function AppInner() {
   }
 
   function currentQueryDefinition(
-    overrides: { tagFilter?: string } = {},
+    overrides: { tagFilter?: string; tagFilterMatch?: "any" | "all" } = {},
   ): SearchDefinition {
     const filters: FilterClause[] = [];
     const formats = expandFormatFilterTokens(
@@ -2986,12 +3121,24 @@ function AppInner() {
         values: formats,
         exclude: excludeFormatFilter,
       });
-    if (selectedTags.length > 0)
-      filters.push({
-        field: "tag",
-        values: selectedTags,
-        exclude: excludeTagFilter,
-      });
+    if (selectedTags.length > 0) {
+      const matchAll =
+        (overrides.tagFilterMatch ?? tagFilterMatch) === "all" &&
+        selectedTags.length > 1;
+      // AND semantics ("包含 N 个标签"): one clause per tag — separate
+      // clauses are ANDed, values within a clause are ORed.
+      if (matchAll) {
+        for (const tag of selectedTags) {
+          filters.push({ field: "tag", values: [tag], exclude: excludeTagFilter });
+        }
+      } else {
+        filters.push({
+          field: "tag",
+          values: selectedTags,
+          exclude: excludeTagFilter,
+        });
+      }
+    }
     if (ratings.length > 0)
       filters.push({
         field: "rating",
@@ -3226,6 +3373,7 @@ function AppInner() {
       onPasteConflict: (plan) => {
         presentImportConflicts(plan);
       },
+      onPasteCompleted: (completion) => revealAfterImportRef.current(completion),
     });
 
   const {
@@ -3277,6 +3425,7 @@ function AppInner() {
     managedImportTargetFolderIdRef,
     reloadCurrentContent,
     reloadCurrentContentRef,
+    onImportCompleted: (completion) => revealAfterImportRef.current(completion),
     setUiState,
     setError,
     setFatal,
@@ -3399,7 +3548,9 @@ function AppInner() {
     setShowTagManagement(false);
     if (!tagFilter.trim()) setActiveTagId(null);
     setActiveSmartCollectionId(null);
-    if (offset === 0) clearAssetSelection({ preserveFolders: true });
+    if (offset === 0 && !pendingRevealRef.current) {
+      clearAssetSelection({ preserveFolders: true });
+    }
     applySearchResult(result.value, offset > 0);
     return result.value;
   }
@@ -3455,6 +3606,11 @@ function AppInner() {
     if (
       !library ||
       showTrash ||
+      // Serpent-eaxs: entering tag management clears discovery controls; the
+      // debounced "clear filters → show all" reload must not fire behind the
+      // management page — its response handler closes the page and dumps the
+      // user back on 所有资产. Explicit submit (runSearch) still exits.
+      showTagManagement ||
       (!hasDiscoveryInput && !shouldClearPreviousResults)
     )
       return;
@@ -3468,6 +3624,7 @@ function AppInner() {
   }, [
     library,
     showTrash,
+    showTagManagement,
     searchValue,
     colorFilter,
     excludeColorFilter,
@@ -3690,6 +3847,26 @@ function AppInner() {
     await loadAiContentForAsset(assetId);
   };
 
+  async function revealAfterImport(completion: {
+    assets: AssetSummary[];
+  }): Promise<void> {
+    const reveal = pendingRevealFromAssets(completion.assets);
+    if (!reveal) {
+      await reloadCurrentContent();
+      return;
+    }
+    pendingRevealRef.current = reveal;
+    if (!currentScopeShowsRevealAssets(assetScope, completion.assets)) {
+      const target = sharedBrowseScopeForAssets(completion.assets);
+      if (target) {
+        await chooseFolder(target);
+        return;
+      }
+    }
+    await reloadCurrentContent();
+  }
+  revealAfterImportRef.current = revealAfterImport;
+
   // --- Existing operations ---
 
   async function importAssets(kind: "files" | "folder") {
@@ -3717,7 +3894,7 @@ function AppInner() {
         return;
       }
       setNotice(importSummaryMessage(result.value, locale));
-      await reloadCurrentContent();
+      await revealAfterImport(result.value);
     } catch (caught) {
       setFatal(toMessage(caught, t("toast.importFailed"), locale));
     } finally {
@@ -3741,7 +3918,7 @@ function AppInner() {
       if (!result.ok) throw new LibraryOperationError(result.error);
       clearImportConflictsUi();
       setNotice(importSummaryMessage(result.value, locale));
-      await reloadCurrentContent();
+      await revealAfterImport(result.value);
     } catch (caught) {
       setFatal(toMessage(caught, t("toast.continueImportFailed"), locale));
     } finally {
@@ -6029,7 +6206,7 @@ function AppInner() {
               onDeleteLibraryFromDisk={() => requestDeleteLibraryFromDisk()}
               onCreateLibrary={() => {
                 setDialogValue(t("shell.myLibrary"));
-                setCreateLibraryPhase("form");
+                setCreateLibraryPhase("start");
                 setDialog("library");
               }}
               onExportLibrary={() => setExportDialogOpen(true)}
@@ -6426,7 +6603,11 @@ function AppInner() {
               setSortOrder(order);
             }}
             setSourceUrlFilter={setSourceUrlFilter}
-            setTagFilter={setTagFilter}
+            setTagFilter={(value) => {
+              // Explicit filter-bar edits leave the tag-management AND mode.
+              setTagFilterMatch("any");
+              setTagFilter(value);
+            }}
             setWidthRange={setWidthRange}
             shuffleActive={shuffleSeed !== null}
             onShuffle={() => {
@@ -6652,9 +6833,13 @@ function AppInner() {
             <TagManagementWorkspace
               busy={busy}
               onCreate={handleCreateTagInManagement}
-              onDelete={handleDeleteTagInManagement}
+              onDeleteMany={handleDeleteTagsInManagement}
+              onMerge={handleMergeTagsInManagement}
               onOpenTag={(tagId) => void chooseTag(tagId)}
               onRename={handleRenameTagInManagement}
+              onSearchTags={(names, match) =>
+                void handleSearchTagsFromManagement(names, match)
+              }
               tags={tags}
             />
           ) : library ? (

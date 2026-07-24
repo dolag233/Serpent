@@ -156,7 +156,27 @@ export const zhCN = {
     openHint: "双击打开带此标签的资产",
     assetCount: "{count}",
     deleteConfirm:
-      "删除标签「{name}」？将从 {count} 项资产上移除该标签，资产本身保留。"
+      "删除标签「{name}」？将从 {count} 项资产上移除该标签，资产本身保留。",
+    sortLabel: "排序方式",
+    sortName: "名称",
+    sortCount: "数量",
+    sortAscending: "升序",
+    sortDescending: "降序",
+    selectedCount: "已选 {count} 个标签",
+    clearSelection: "清除选择",
+    openTag: "浏览标签资产",
+    searchAll: "搜索包含这 {count} 个标签的资产",
+    searchAny: "搜索含有任一标签的资产",
+    merge: "合并 {count} 个标签…",
+    mergeTitle: "合并标签",
+    mergeHint:
+      "将 {count} 个标签（{names}）合并为一个新标签。原标签会被删除，其资产关联转移到新标签。",
+    mergeNameLabel: "新标签名称",
+    mergeSubmit: "合并",
+    deleteMany: "删除 {count} 个标签",
+    deleteManyConfirm:
+      "删除 {count} 个标签？将从相关资产上移除这些标签，资产本身保留。",
+    menuAriaLabel: "标签操作（{count} 个）"
   },
   toolbar: {
     searchLibrary: "搜索资源库",
@@ -949,6 +969,9 @@ export const zhCN = {
     tagRenamed: "已将标签重命名为「{name}」。",
     renameTagFailed: "重命名标签失败。",
     tagDeleted: "标签已删除。",
+    tagsDeleted: "已删除 {count} 个标签。",
+    tagMerged: "已合并为标签「{name}」。",
+    mergeTagsFailed: "合并标签失败。",
     deleteTagFailed: "删除标签失败。",
     undoTagDeleted: "已恢复标签「{name}」。",
     undoTagDeleteFailed: "恢复已删除标签失败。",

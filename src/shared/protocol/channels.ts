@@ -7,6 +7,8 @@ export const AI_PROGRESS_CHANNEL = 'serpent:ai:progress' as const;
 export const AI_COMPLETED_CHANNEL = 'serpent:ai:completed' as const;
 export const AI_CLEARED_CHANNEL = 'serpent:ai:cleared' as const;
 
+export const EXTENSION_SAVE_COMPLETED_CHANNEL =
+  'serpent:extension:save-completed' as const;
 export const ACTIVE_CONTEXT_CHANNEL = 'serpent:active-context' as const;
 /** Renderer → Main: effective UI locale for native dialogs (Serpent-bwb). */
 export const APP_LOCALE_CHANNEL = 'serpent:app-locale' as const;

@@ -21,6 +21,7 @@ import type {
   ImportCompletion,
   ImportConflictPlan,
   AssetChangeEvent,
+  ExtensionSaveCompletedEvent,
   RendererLibrarySummary,
   RendererLifecycleEvent,
   ExportProgressEvent,
@@ -272,6 +273,9 @@ export interface SerpentLibraryApi {
   convertLinkedFolderToManaged(input: { libraryId: string; folderId: string; targetFolderId?: string }): Promise<LibraryApiResult<{ managedFolderId: string; convertedCount: number; assets: AssetSummary[] }>>;
   onLifecycle(listener: (event: RendererLifecycleEvent) => void): () => void;
   onAssetsChanged(listener: (event: AssetChangeEvent) => void): () => void;
+  onExtensionSaveCompleted(
+    listener: (event: ExtensionSaveCompletedEvent) => void,
+  ): () => void;
   // Tags
   listTags(input: { libraryId: string }): Promise<LibraryApiResult<TagSummary[]>>;
   createTag(input: { libraryId: string; name: string }): Promise<LibraryApiResult<TagSummary>>;

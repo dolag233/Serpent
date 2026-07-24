@@ -54,9 +54,12 @@ export function useFolderOrganizeActions({
           onPasteConflict?.(result.value);
           return;
         }
-        await onPasteCompleted?.(result.value);
+        if (onPasteCompleted) {
+          await onPasteCompleted(result.value);
+        } else {
+          await reloadCurrentContent();
+        }
         setNotice(t("toast.folderPasteDone"));
-        await reloadCurrentContent();
       } catch (caught) {
         setError(toMessage(caught, t("toast.folderPasteFailed"), locale));
       } finally {

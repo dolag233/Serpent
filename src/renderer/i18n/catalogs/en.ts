@@ -165,7 +165,27 @@ export const en = {
     openHint: "Double-click to open assets with this tag",
     assetCount: "{count}",
     deleteConfirm:
-      "Delete tag “{name}”? It will be removed from {count} assets. Assets themselves are kept."
+      "Delete tag “{name}”? It will be removed from {count} assets. Assets themselves are kept.",
+    sortLabel: "Sort by",
+    sortName: "Name",
+    sortCount: "Count",
+    sortAscending: "Ascending",
+    sortDescending: "Descending",
+    selectedCount: "{count} tags selected",
+    clearSelection: "Clear selection",
+    openTag: "Browse tag assets",
+    searchAll: "Search assets with all {count} tags",
+    searchAny: "Search assets with any of the tags",
+    merge: "Merge {count} tags…",
+    mergeTitle: "Merge tags",
+    mergeHint:
+      "Merge {count} tags ({names}) into one new tag. The original tags are deleted and their asset links move to the new tag.",
+    mergeNameLabel: "New tag name",
+    mergeSubmit: "Merge",
+    deleteMany: "Delete {count} tags",
+    deleteManyConfirm:
+      "Delete {count} tags? They will be removed from the linked assets. Assets themselves are kept.",
+    menuAriaLabel: "Tag operations ({count})"
   },
   toolbar: {
     searchLibrary: "Search library",
@@ -964,6 +984,9 @@ export const en = {
     tagRenamed: "Renamed tag to “{name}”.",
     renameTagFailed: "Failed to rename tag.",
     tagDeleted: "Tag deleted.",
+    tagsDeleted: "Deleted {count} tags.",
+    tagMerged: "Merged into tag “{name}”.",
+    mergeTagsFailed: "Failed to merge tags.",
     deleteTagFailed: "Failed to delete tag.",
     undoTagDeleted: "Restored tag “{name}”.",
     undoTagDeleteFailed: "Could not restore the deleted tag.",

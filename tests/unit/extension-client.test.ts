@@ -12,6 +12,13 @@ import {
   SERPENT_PORTS,
   type SaveIntent,
 } from '../../extension/save-client';
+import type { ExtensionSaveBehavior } from '../../extension/preferences';
+
+const defaultSaveBehavior: ExtensionSaveBehavior = {
+  notificationsEnabled: true,
+  focusAppAfterSave: true,
+  revealInLibraryAfterSave: true,
+};
 
 const imageIntent: SaveIntent = {
   kind: 'image',
@@ -136,6 +143,7 @@ describe('browser extension save client', () => {
       deliverSaveUpload(
         imageIntent,
         { body: mediaBody, contentType: 'image/png', filename: 'shot.png' },
+        defaultSaveBehavior,
         fetchFn,
       ),
     ).resolves.toEqual({ kind: 'accepted' });
@@ -168,6 +176,7 @@ describe('browser extension save client', () => {
       deliverSaveUpload(
         imageIntent,
         { body: mediaBody, contentType: 'image/png', filename: 'a.png' },
+        defaultSaveBehavior,
         fetchFn,
       ),
     ).resolves.toEqual({ kind: 'accepted' });
@@ -190,6 +199,7 @@ describe('browser extension save client', () => {
       deliverSaveUpload(
         imageIntent,
         { body: new Uint8Array([1]).buffer, contentType: 'image/png', filename: 'a.png' },
+        defaultSaveBehavior,
         fetchFn,
       ),
     ).resolves.toEqual({
@@ -216,6 +226,7 @@ describe('browser extension save client', () => {
       deliverSaveUpload(
         imageIntent,
         { body: new Uint8Array([1]).buffer, contentType: 'image/png', filename: 'a.png' },
+        defaultSaveBehavior,
         fetchFn,
       ),
     ).resolves.toEqual({
@@ -234,6 +245,7 @@ describe('browser extension save client', () => {
       deliverSaveUpload(
         imageIntent,
         { body: new Uint8Array([1]).buffer, contentType: 'image/png', filename: 'a.png' },
+        defaultSaveBehavior,
         fetchFn,
       ),
     ).resolves.toEqual({ kind: 'unreachable' });
@@ -253,7 +265,7 @@ describe('browser extension save client', () => {
       )
       .mockResolvedValueOnce(mockFetchResponse({ status: 202 }));
 
-    await expect(saveMediaViaBrowser(imageIntent, fetchFn)).resolves.toEqual({
+    await expect(saveMediaViaBrowser(imageIntent, defaultSaveBehavior, fetchFn)).resolves.toEqual({
       kind: 'accepted',
     });
 
@@ -264,7 +276,7 @@ describe('browser extension save client', () => {
   it('returns fetch_failed when the browser download step fails', async () => {
     const fetchFn = vi.fn(async () => mockFetchResponse({ status: 403 }));
 
-    await expect(saveMediaViaBrowser(imageIntent, fetchFn)).resolves.toEqual({
+    await expect(saveMediaViaBrowser(imageIntent, defaultSaveBehavior, fetchFn)).resolves.toEqual({
       kind: 'fetch_failed',
       reason: 'HTTP 403',
     });

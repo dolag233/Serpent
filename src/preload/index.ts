@@ -8,6 +8,7 @@ import { searchQuerySchema } from '../shared/asset-types';
 import type { AiSearchPlan, AssetSummary, AssetMetadataResult, ExtractedMetadataResult, CollectionSummary, FilterClause, FolderBrowseEntry, LinkedFolderRule, LinkedFolderSummary, ManagedFolderSummary, SearchQuery, SearchScope, SmartCollectionSummary, TagCooccurrenceGraph, TagSummary, TrashedFolderSummary } from '../shared/asset-types';
 import {
   ASSET_CHANGE_CHANNEL,
+  EXTENSION_SAVE_COMPLETED_CHANNEL,
   THUMBNAIL_CHANNEL,
   ACTIVE_CONTEXT_CHANNEL,
   APP_LOCALE_CHANNEL,
@@ -56,6 +57,8 @@ import {
   type ImportConflictPlan,
   type AssetChangeEvent,
   parseAssetChangeEvent,
+  type ExtensionSaveCompletedEvent,
+  parseExtensionSaveCompletedEvent,
   type ExportProgressEvent,
   parseExportProgressEvent,
   type ImportProgressEvent,
@@ -970,6 +973,15 @@ const library: SerpentLibraryApi = Object.freeze({
     };
     ipcRenderer.on(ASSET_CHANGE_CHANNEL, subscription);
     return () => ipcRenderer.removeListener(ASSET_CHANGE_CHANNEL, subscription);
+  },
+
+  onExtensionSaveCompleted(listener: (event: ExtensionSaveCompletedEvent) => void) {
+    const subscription = (_event: Electron.IpcRendererEvent, input: unknown) => {
+      listener(parseExtensionSaveCompletedEvent(input));
+    };
+    ipcRenderer.on(EXTENSION_SAVE_COMPLETED_CHANNEL, subscription);
+    return () =>
+      ipcRenderer.removeListener(EXTENSION_SAVE_COMPLETED_CHANNEL, subscription);
   },
 
   async exportLibrary({ libraryId, includeLinkedContent, format }: { libraryId: string; includeLinkedContent: boolean; format: 'folder' | 'zip' }) {

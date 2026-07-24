@@ -8,22 +8,21 @@
   </head>
   <body>
     <main>
-      <p class="eyebrow">SERPENT BROWSER EXTENSION</p>
-      <h1>使用说明</h1>
-      <ol>
-        <li>启动 Serpent 桌面应用并打开一个资源库。</li>
-        <li>确认扩展工具栏图标变为彩色（已连接）。</li>
-        <li>在网页图片或视频上右键，选择「保存到 Serpent」。</li>
-      </ol>
-      <p>无需配对码。扩展通过本机 loopback 与正在运行的 Serpent 通信；媒体由浏览器下载后上传到桌面应用，可绕过多数防盗链限制。</p>
+      <h1>Serpent 扩展设置</h1>
 
       <section class="options-section">
-        <h2>设置</h2>
         <label class="options-toggle">
           <input id="notifications-enabled" type="checkbox">
-          <span>显示 Windows 系统通知（保存成功/失败提示）</span>
+          <span>保存后显示系统通知</span>
         </label>
-        <p class="options-hint">关闭后扩展仍会把结果回传给网页浮层菜单，但不再弹出系统通知。</p>
+        <label class="options-toggle">
+          <input id="focus-app-after-save" type="checkbox">
+          <span>保存后显示 Serpent 窗口</span>
+        </label>
+        <label class="options-toggle">
+          <input id="reveal-in-library-after-save" type="checkbox">
+          <span>保存后跳转到目标文件夹并选中文件</span>
+        </label>
       </section>
 
       <p id="status" aria-live="polite"></p>

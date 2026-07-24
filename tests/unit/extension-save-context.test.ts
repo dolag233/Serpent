@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { resolveExtensionSaveContext } from "../../src/main/extension-save-context";
+import { resolveExtensionSaveContext, resolveExtensionSaveRouting } from "../../src/main/extension-save-context";
 import type { ActiveContext } from "../../src/shared/protocol/requests";
 
 function contexts(
@@ -63,5 +63,25 @@ describe("resolveExtensionSaveContext", () => {
     });
 
     expect(resolved).toBeNull();
+  });
+
+  it("returns the routed target window id for browser saves", () => {
+    const routing = resolveExtensionSaveRouting({
+      focusedWindowId: null,
+      lastTargetWindowId: 1,
+      mainWindowId: 9,
+      contexts: contexts([
+        [1, { libraryId: "lib-a", selectedFolderId: "folder-a" }],
+        [9, { libraryId: "lib-main" }],
+      ]),
+    });
+
+    expect(routing).toEqual({
+      targetWindowId: 1,
+      context: {
+        libraryId: "lib-a",
+        selectedFolderId: "folder-a",
+      },
+    });
   });
 });

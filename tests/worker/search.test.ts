@@ -1039,6 +1039,43 @@ describe('search filters', () => {
     service.closeAll();
   });
 
+  it('ANDs separate single-value tag clauses (Serpent-eaxs tag-management AND search)', () => {
+    const { service, libraryId, assetId } = createLibraryWithAssetAndTags();
+    const character = service.createTag({ libraryId, name: 'Character' });
+    const environment = service.createTag({ libraryId, name: 'Environment' });
+    service.assignTags({ libraryId, assetIds: [assetId], tagIds: [character.tagId] });
+
+    // The asset carries only one of the two tags: separate clauses (AND)
+    // must miss while one multi-value clause (OR) still hits.
+    const andMiss = service.searchAssets({
+      libraryId,
+      filters: [
+        { field: 'tag', values: ['Character'], exclude: false },
+        { field: 'tag', values: ['Environment'], exclude: false },
+      ],
+    });
+    expect(andMiss.total).toBe(0);
+
+    const orHit = service.searchAssets({
+      libraryId,
+      filters: [{ field: 'tag', values: ['Character', 'Environment'], exclude: false }],
+    });
+    expect(orHit.total).toBe(1);
+
+    // Assign the second tag: AND matches now.
+    service.assignTags({ libraryId, assetIds: [assetId], tagIds: [environment.tagId] });
+    const andHit = service.searchAssets({
+      libraryId,
+      filters: [
+        { field: 'tag', values: ['Character'], exclude: false },
+        { field: 'tag', values: ['Environment'], exclude: false },
+      ],
+    });
+    expect(andHit.total).toBe(1);
+
+    service.closeAll();
+  });
+
   it('combines format AND rating filters', () => {
     const { service, libraryId, assetId } = createLibraryWithAssetAndTags();
     service.setAssetMetadata({ libraryId, assetId, expectedVersion: 1, rating: 5 });

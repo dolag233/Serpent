@@ -34,6 +34,8 @@ export type FolderListOutcome =
   | { kind: 'rejected'; status: number; reason: string }
   | { kind: 'unreachable' };
 
+import type { ExtensionSaveBehavior } from './preferences';
+
 export interface UserNotification {
   title: string;
   message: string;
@@ -341,6 +343,7 @@ export async function fetchMediaInBrowser(
 export async function deliverSaveUpload(
   intent: SaveIntent,
   media: FetchedMedia,
+  behavior: ExtensionSaveBehavior,
   fetchFn: FetchFunction = fetch,
 ): Promise<SaveOutcome> {
   const headers: Record<string, string> = {
@@ -351,6 +354,8 @@ export async function deliverSaveUpload(
     'X-Serpent-Media-Url': encodeURIComponent(intent.mediaUrl),
     'X-Serpent-Content-Type': media.contentType,
     'X-Serpent-Filename': encodeURIComponent(media.filename),
+    'X-Serpent-Focus-App-After-Save': String(behavior.focusAppAfterSave),
+    'X-Serpent-Reveal-In-Library': String(behavior.revealInLibraryAfterSave),
   };
   if (intent.targetFolderId !== undefined) {
     headers['X-Serpent-Target-Folder-Id'] =
@@ -389,13 +394,14 @@ export async function deliverSaveUpload(
 /** Preferred path: browser fetch + upload. Falls back is not used (anti-hotlink). */
 export async function saveMediaViaBrowser(
   intent: SaveIntent,
+  behavior: ExtensionSaveBehavior,
   fetchFn: FetchFunction = fetch,
 ): Promise<SaveOutcome> {
   const fetched = await fetchMediaInBrowser(intent, fetchFn);
   if ('error' in fetched) {
     return { kind: 'fetch_failed', reason: fetched.error };
   }
-  return deliverSaveUpload(intent, fetched, fetchFn);
+  return deliverSaveUpload(intent, fetched, behavior, fetchFn);
 }
 
 export function notificationForOutcome(outcome: SaveOutcome): UserNotification {

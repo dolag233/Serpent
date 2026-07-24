@@ -49,6 +49,15 @@ interface SerpentChromeApi {
         title: string;
         contexts: Array<'image' | 'video'>;
         parentId?: string;
+        enabled?: boolean;
+      },
+      callback?: () => void,
+    ): void;
+    update(
+      id: string,
+      properties: {
+        title?: string;
+        enabled?: boolean;
       },
       callback?: () => void,
     ): void;
@@ -83,7 +92,7 @@ interface SerpentChromeApi {
     };
     sync: {
       get(
-        key: string,
+        keys: string | string[] | null,
         callback: (values: Record<string, unknown>) => void,
       ): void;
       set(values: Record<string, unknown>, callback?: () => void): void;

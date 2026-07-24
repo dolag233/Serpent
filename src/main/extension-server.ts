@@ -49,6 +49,8 @@ export interface SaveUploadRequest {
   stagingDirectory: string;
   targetFolderId?: string | null;
   byteLength: number;
+  focusAppAfterSave: boolean;
+  revealInLibrary: boolean;
 }
 
 export type SaveUploadDisposition =
@@ -137,8 +139,29 @@ function decodeHeaderText(value: string | undefined): string | undefined {
   }
 }
 
+function parseBooleanHeader(
+  value: string | undefined,
+  defaultValue: boolean,
+): boolean {
+  if (value === undefined || value === '') return defaultValue;
+  const normalized = value.trim().toLowerCase();
+  if (normalized === 'true' || normalized === '1') return true;
+  if (normalized === 'false' || normalized === '0') return false;
+  return defaultValue;
+}
+
 function parseUploadMetadata(headers: http.IncomingHttpHeaders):
-  | { ok: true; kind: 'image' | 'video'; sourcePageUrl: string; mediaUrl: string; contentType: string; filename: string; targetFolderId?: string | null }
+  | {
+    ok: true;
+    kind: 'image' | 'video';
+    sourcePageUrl: string;
+    mediaUrl: string;
+    contentType: string;
+    filename: string;
+    targetFolderId?: string | null;
+    focusAppAfterSave: boolean;
+    revealInLibrary: boolean;
+  }
   | { ok: false; reason: string } {
   const kindRaw = headerValue(headers, 'x-serpent-kind');
   const sourcePageUrl = decodeHeaderText(headerValue(headers, 'x-serpent-source-page-url'));
@@ -185,6 +208,14 @@ function parseUploadMetadata(headers: http.IncomingHttpHeaders):
     contentType,
     filename: filename.trim() || 'download',
     targetFolderId,
+    focusAppAfterSave: parseBooleanHeader(
+      headerValue(headers, 'x-serpent-focus-app-after-save'),
+      true,
+    ),
+    revealInLibrary: parseBooleanHeader(
+      headerValue(headers, 'x-serpent-reveal-in-library'),
+      true,
+    ),
   };
 }
 
@@ -329,6 +360,8 @@ export async function createExtensionServer(
             stagingDirectory,
             targetFolderId: metadata.targetFolderId,
             byteLength,
+            focusAppAfterSave: metadata.focusAppAfterSave,
+            revealInLibrary: metadata.revealInLibrary,
           });
 
           if (

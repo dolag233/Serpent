@@ -9,6 +9,7 @@ import {
 
 import type { SerpentLibraryApi } from "../shared/library-api";
 import type {
+  ImportCompletion,
   ImportConflictPlan,
   RendererLibrarySummary,
 } from "../shared/protocol/responses";
@@ -34,6 +35,8 @@ export type UseExternalImportHandlersParams = {
   managedImportTargetFolderIdRef: MutableRefObject<string | undefined>;
   reloadCurrentContent: () => Promise<void>;
   reloadCurrentContentRef: MutableRefObject<() => Promise<void>>;
+  /** After a successful import without conflicts: reveal/select imported assets. */
+  onImportCompleted: (completion: ImportCompletion) => void | Promise<void>;
   setUiState: (state: "loading" | "importing" | "ready") => void;
   setError: (message: string | null) => void;
   setFatal: (message: string | null) => void;
@@ -58,6 +61,7 @@ export function useExternalImportHandlers({
   managedImportTargetFolderIdRef,
   reloadCurrentContent,
   reloadCurrentContentRef,
+  onImportCompleted,
   setUiState,
   setError,
   setFatal,
@@ -99,9 +103,9 @@ export function useExternalImportHandlers({
         return;
       }
       setNotice(importSummaryMessage(result.value, locale));
-      await reloadCurrentContent();
+      await onImportCompleted(result.value);
     },
-    [locale, reloadCurrentContent, setConflicts, setNotice],
+    [locale, onImportCompleted, setConflicts, setNotice],
   );
 
   const importDroppedFiles = useCallback(
@@ -170,7 +174,7 @@ export function useExternalImportHandlers({
         setConflicts(result.value);
       } else {
         setNotice(importSummaryMessage(result.value, locale));
-        await reloadCurrentContentRef.current();
+        await onImportCompleted(result.value);
       }
     } catch (caught) {
       setFatal(toMessage(caught, t("toast.clipboardImportFailed"), locale));
@@ -184,6 +188,7 @@ export function useExternalImportHandlers({
     library,
     locale,
     managedImportTargetFolderIdRef,
+    onImportCompleted,
     reloadCurrentContentRef,
     setConflicts,
     setError,

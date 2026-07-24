@@ -51,6 +51,7 @@ import {
 } from "./window-controls";
 import {
   ASSET_CHANGE_CHANNEL,
+  EXTENSION_SAVE_COMPLETED_CHANNEL,
   THUMBNAIL_CHANNEL,
   ACTIVE_CONTEXT_CHANNEL,
   APP_LOCALE_CHANNEL,
@@ -93,6 +94,8 @@ import {
   type WorkerResult,
   type AssetChangeEvent,
   parseAssetChangeEvent,
+  type ExtensionSaveCompletedEvent,
+  parseExtensionSaveCompletedEvent,
   type ProgressEvent,
   type AiProgressEvent,
   type AiAnalysisCompletedEvent,
@@ -150,7 +153,7 @@ import {
   type SaveUploadRequest,
   type ListFoldersDisposition,
 } from "./extension-server";
-import { resolveExtensionSaveContext } from "./extension-save-context";
+import { resolveExtensionSaveRouting } from "./extension-save-context";
 import { RelinkPreviewStore } from "./relink-preview-store";
 import {
   classifyDroppedSourcePaths,
@@ -386,10 +389,20 @@ function saveEncryptedApiKey(apiKey: string): void {
 }
 
 function focusMainWindow(): void {
-  if (!mainWindow) return;
-  if (mainWindow.isMinimized()) mainWindow.restore();
-  mainWindow.show();
-  mainWindow.focus();
+  focusSerpentWindow(
+    mainWindow && !mainWindow.isDestroyed() ? mainWindow.id : undefined,
+  );
+}
+
+function focusSerpentWindow(windowId?: number): void {
+  const target =
+    windowId === undefined
+      ? mainWindow
+      : BrowserWindow.getAllWindows().find((window) => window.id === windowId);
+  if (!target || target.isDestroyed()) return;
+  if (target.isMinimized()) target.restore();
+  target.show();
+  target.focus();
 }
 
 /**
@@ -535,15 +548,19 @@ function cancelled(): RendererResult {
   return { ok: false, error: createPublicError("CANCELLED") };
 }
 
-function getExtensionSaveContext() {
+function getExtensionSaveRouting() {
   const focusedWindow = BrowserWindow.getFocusedWindow();
-  return resolveExtensionSaveContext({
+  return resolveExtensionSaveRouting({
     focusedWindowId: focusedWindow?.id ?? null,
     contexts: focusedContexts,
     lastTargetWindowId: lastExtensionTargetWindowId ?? null,
     mainWindowId:
       mainWindow && !mainWindow.isDestroyed() ? mainWindow.id : null,
   });
+}
+
+function getExtensionSaveContext() {
+  return getExtensionSaveRouting().context;
 }
 
 async function handleListFolders(): Promise<ListFoldersDisposition> {
@@ -656,7 +673,8 @@ async function handleSaveUpload(
   }
 
   const focusedWindow = BrowserWindow.getFocusedWindow();
-  const saveContext = getExtensionSaveContext();
+  const saveRouting = getExtensionSaveRouting();
+  const saveContext = saveRouting.context;
   if (!saveContext) {
     logger?.info(
       "extension-server.save-upload",
@@ -707,10 +725,24 @@ async function handleSaveUpload(
         reason: result.error.reason ?? result.error.code,
       };
     }
+    if (result.type !== "extension.asset-saved") {
+      return { accepted: false, status: 500, reason: "unexpected worker response" };
+    }
     logger?.info("extension-server.save-upload", "Asset saved successfully.", {
       type: result.type,
       byteLength: upload.byteLength,
+      assetId: result.asset.assetId,
     });
+    if (upload.focusAppAfterSave) {
+      focusSerpentWindow(saveRouting.targetWindowId ?? undefined);
+    }
+    if (upload.revealInLibrary) {
+      publishExtensionSaveCompleted(saveRouting.targetWindowId, {
+        type: "extension.save.completed",
+        libraryId: saveContext.libraryId,
+        asset: result.asset,
+      });
+    }
     return { accepted: true };
   } catch (error) {
     logger?.error("extension-server.save-upload", error);
@@ -737,6 +769,21 @@ function publishAssetChange(event: AssetChangeEvent): void {
   mainWindow.webContents.send(
     ASSET_CHANGE_CHANNEL,
     parseAssetChangeEvent(event),
+  );
+}
+
+function publishExtensionSaveCompleted(
+  windowId: number | null,
+  event: ExtensionSaveCompletedEvent,
+): void {
+  const target =
+    windowId === null
+      ? mainWindow
+      : BrowserWindow.getAllWindows().find((window) => window.id === windowId);
+  if (!target || target.isDestroyed()) return;
+  target.webContents.send(
+    EXTENSION_SAVE_COMPLETED_CHANNEL,
+    parseExtensionSaveCompletedEvent(event),
   );
 }
 
