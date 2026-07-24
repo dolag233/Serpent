@@ -2,11 +2,24 @@ import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSy
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
-import { _electron as electron, expect, test } from '@playwright/test';
+import { _electron as electron, expect, test, type Page } from '@playwright/test';
 
 import { resolveElectronExecutablePath } from './electron-test-helpers';
 
 test.describe.configure({ timeout: 120_000 });
+
+/**
+ * Locates a managed folder's sidebar nav row by its label text. Folder cards
+ * only render in a managed-folder/root view (not the default "所有资产" scope
+ * — FOLDER-010), so create-and-enter goes through the sidebar. The nav label
+ * ellipsis-truncates in narrow panes (clipping its text node and breaking an
+ * accessible-name match), hence label text + ancestor row.
+ */
+function sidebarFolderRow(window: Page, folderName: string) {
+  return window
+    .locator('.navigation-pane .nav-row-label', { hasText: folderName })
+    .locator("xpath=ancestor::button[contains(@class, 'nav-row')]");
+}
 
 test('pastes a Main-owned clipboard image into the current folder and collection', async () => {
   const temporaryRoot = mkdtempSync(path.join(tmpdir(), 'serpent-desktop-ingestion-e2e-'));
@@ -43,7 +56,7 @@ test('pastes a Main-owned clipboard image into the current folder and collection
     await window.getByRole('button', { name: '添加文件夹' }).click();
     await window.getByLabel("新文件夹名称").fill('项目');
     await window.keyboard.press("Enter");
-    await window.getByRole('button', { name: '项目' }).click();
+    await sidebarFolderRow(window, '项目').click();
 
     await window.getByRole('button', { name: '添加合集' }).click();
     await window.getByPlaceholder('输入合集名称，回车创建').fill('情绪板');
@@ -52,7 +65,11 @@ test('pastes a Main-owned clipboard image into the current folder and collection
 
     await window.getByRole('button', { name: /当前资源库/ }).click();
     await window.getByRole('menuitem', { name: '粘贴图片' }).click();
-    await expect(window.getByText('Clipboard 2026-07-13T12-34-56Z.png', { exact: true })).toBeVisible();
+    // The pasted filename also appears in the Inspector hero title, so scope to
+    // the canvas asset card to avoid a strict-mode violation.
+    await expect(
+      window.locator('.asset-card', { hasText: 'Clipboard 2026-07-13T12-34-56Z.png' }),
+    ).toBeVisible();
 
     const projectDirectory = path.join(libraryPath, 'Assets', '项目');
     const importedNames = readdirSync(projectDirectory).filter((name) => /^Clipboard .*\.png$/.test(name));
@@ -64,9 +81,9 @@ test('pastes a Main-owned clipboard image into the current folder and collection
     await window.getByRole('button', { name: /当前资源库/ }).click();
     await window.getByRole('menuitem', { name: '粘贴图片' }).click();
     const conflictDialog = window.getByRole('dialog');
-    await expect(conflictDialog.getByRole('heading', { name: '处理导入冲突' })).toBeVisible();
-    await conflictDialog.getByLabel('疑似重复').selectOption('create-copy');
-    await conflictDialog.getByRole('button', { name: '应用并导入' }).click();
+    await expect(conflictDialog.getByRole('heading', { name: '内容重复' })).toBeVisible();
+    await conflictDialog.getByLabel('内容重复时').selectOption('create-copy');
+    await conflictDialog.getByRole('button', { name: '仍然导入' }).click();
     await expect(conflictDialog).toBeHidden();
     await expect(window.locator('.asset-card')).toHaveCount(2);
     expect(readdirSync(projectDirectory).filter((name) => /^Clipboard .*\.png$/.test(name))).toHaveLength(2);
@@ -105,7 +122,7 @@ test('returns specific safe desktop-ingestion errors and records their diagnosti
 
     await window.getByRole('button', { name: /当前资源库/ }).click();
     await window.getByRole('menuitem', { name: '粘贴图片' }).click();
-    await expect(window.getByRole('alert')).toContainText('系统剪贴板中没有可导入的图片');
+    await expect(window.getByRole('alertdialog')).toContainText('系统剪贴板中没有可导入的图片');
 
     const invalidDrop = await window.evaluate(async () => {
       const bridge = window as unknown as {
