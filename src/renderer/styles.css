@@ -5770,25 +5770,16 @@ select.ai-config-input.ai-config-languages {
   position: absolute;
   z-index: 3;
   /* Sit inside the front pocket below the shelf (~16% in the 124 viewBox). */
-  inset: 22% 7% 8%;
+  inset: 19% 4% 5%;
   display: grid;
   place-items: center;
   overflow: hidden;
   pointer-events: none;
 }
 
-.folder-card-stack {
-  position: absolute;
-  inset: 0;
-  display: grid;
-  place-items: center;
-  pointer-events: none;
-}
-
-.folder-card-stack-photo {
-  position: absolute;
-  width: 92%;
-  height: 92%;
+.folder-card-cover-photo {
+  width: 100%;
+  height: 100%;
   overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--ink) 14%, transparent);
   border-radius: 7px;
@@ -5796,7 +5787,6 @@ select.ai-config-input.ai-config-languages {
   box-shadow:
     0 1px 2px rgb(0 0 0 / 12%),
     0 3px 8px rgb(0 0 0 / 10%);
-  transform-origin: center center;
 }
 
 .folder-card-cover-image {

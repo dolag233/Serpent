@@ -1,9 +1,5 @@
 import { Icon } from "./Icons";
 import { coverSrc } from "./asset-card-hover-preview";
-import {
-  folderCoverStackSlots,
-  folderCoverStackStyle,
-} from "./folder-card-cover-stack";
 import { useT } from "./i18n";
 import type { FolderBrowseEntry } from "../shared/asset-types";
 
@@ -31,7 +27,8 @@ interface FolderCardProps {
 /**
  * Direct child folder card on the browse canvas (REQ-FOLDER-001/010 / Serpent-l67w).
  * Plain click selects; double-click enters. Chrome matches the reference: rear
- * rounded panel + front pocket with a left tab and soft S-curve shelf.
+ * rounded panel + front pocket with a left tab and soft S-curve shelf. Pocket
+ * shows a single cover thumbnail (first child asset), not a stacked deck.
  */
 export function FolderCard({
   entry,
@@ -51,8 +48,7 @@ export function FolderCard({
   trashed = false,
 }: FolderCardProps) {
   const t = useT();
-  const covers = entry.coverArtifactIds.slice(0, 3);
-  const stackSlots = folderCoverStackSlots(covers.length);
+  const coverArtifactId = entry.coverArtifactIds[0] ?? null;
 
   return (
     <button
@@ -72,9 +68,7 @@ export function FolderCard({
       title={entry.name}
       type="button"
     >
-      <div
-        className={`folder-card-cover folder-card-cover-count-${covers.length}`}
-      >
+      <div className="folder-card-cover">
         <div className="folder-card-shell" aria-hidden="true">
           {/* Back panel: full rounded rect; front pocket sits on top. */}
           <div className="folder-card-back" />
@@ -105,30 +99,18 @@ export function FolderCard({
             />
           </svg>
           <div className="folder-card-pocket">
-            {covers.length === 0 ? (
+            {coverArtifactId === null ? (
               <div className="folder-card-cover-empty">
                 <Icon name="folder" size={28} />
               </div>
             ) : (
-              <div className="folder-card-stack">
-                {covers.map((artifactId, index) => {
-                  const slot = stackSlots[index];
-                  if (!slot) return null;
-                  return (
-                    <div
-                      className="folder-card-stack-photo"
-                      key={artifactId}
-                      style={folderCoverStackStyle(slot)}
-                    >
-                      <img
-                        alt=""
-                        className="folder-card-cover-image"
-                        loading="lazy"
-                        src={coverSrc(libraryId, artifactId)}
-                      />
-                    </div>
-                  );
-                })}
+              <div className="folder-card-cover-photo">
+                <img
+                  alt=""
+                  className="folder-card-cover-image"
+                  loading="lazy"
+                  src={coverSrc(libraryId, coverArtifactId)}
+                />
               </div>
             )}
           </div>
