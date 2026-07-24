@@ -1,4 +1,5 @@
 import { readFileSync } from "fs";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   assetSummarySchema,
@@ -10,7 +11,7 @@ describe("audio extracted metadata fixture", () => {
   it("parses and formats the library mp3 probe json", () => {
     const raw = JSON.parse(
       readFileSync(
-        "/Users/dolag/Documents/Temp/我的资源库/.serpent/artifacts/6eb3af23-e3f2-4a46-bd56-8e7794e8fd0e.json",
+        resolve(__dirname, "../fixtures/audio-mp3-probe.json"),
         "utf8",
       ),
     );

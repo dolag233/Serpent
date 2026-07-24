@@ -1,0 +1,15 @@
+{
+  "container": "mp3",
+  "durationMs": 124839,
+  "width": 0,
+  "height": 0,
+  "framerate": null,
+  "videoCodec": null,
+  "videoBitrate": null,
+  "pixelFormat": null,
+  "hasAudio": true,
+  "audioCodec": "mp3",
+  "sampleRate": "44100",
+  "channels": 2,
+  "containerBitrate": "256000"
+}
