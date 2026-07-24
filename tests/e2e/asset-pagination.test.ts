@@ -238,7 +238,7 @@ test("ordinary browsing continuously appends every asset without page controls",
           ).toHaveCount(0);
           await expect(
             unsupportedViewer.getByRole("button", {
-              name: "使用外部应用打开",
+              name: "用默认应用打开",
             }),
           ).toBeVisible();
           await unsupportedViewer

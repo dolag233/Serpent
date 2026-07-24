@@ -105,9 +105,9 @@ test("context menu closes on outside click, Escape, scroll, and window resize", 
     await expect(
       window.getByRole("menu").getByText("已选择 1 项", { exact: true }),
     ).toBeVisible();
-    await expect(window.getByRole("menuitem", { name: "使用外部应用打开" })).toBeVisible();
+    await expect(window.getByRole("menuitem", { name: "用默认应用打开" })).toBeVisible();
     await expect(
-      window.getByRole("menuitem", { name: "使用外部应用打开" }).locator(".context-menu-item-shortcut"),
+      window.getByRole("menuitem", { name: "用默认应用打开" }).locator(".context-menu-item-shortcut"),
     ).toHaveText(process.platform === "darwin" ? "⌘O" : "Ctrl+O");
   } finally {
     await application.close();
@@ -188,7 +188,7 @@ test("context menu clamps at viewport edges", async () => {
     await window.keyboard.press("Escape");
     await assetCard.click({ button: "right" });
     await expect(window.getByRole("menu")).toBeVisible({ timeout: 5_000 });
-    await expect(window.getByRole("menuitem", { name: "使用外部应用打开" })).toBeVisible();
+    await expect(window.getByRole("menuitem", { name: "用默认应用打开" })).toBeVisible();
   } finally {
     await application.close();
     rmSync(temporaryRoot, { recursive: true, force: true });
@@ -231,7 +231,7 @@ test("single-menu enforcement — opening new context menu closes existing one",
     // Step 1: Open context menu on the asset card
     await assetCard.click({ button: "right" });
     await expect(window.getByRole("menu")).toBeVisible({ timeout: 5_000 });
-    await expect(window.getByRole("menuitem", { name: "使用外部应用打开" })).toBeVisible();
+    await expect(window.getByRole("menuitem", { name: "用默认应用打开" })).toBeVisible();
 
     // Step 2: Open context menu on the collection (should close asset menu, single-menu enforced)
     // The backdrop now has pointer-events:none so right-clicks pass through
@@ -244,7 +244,7 @@ test("single-menu enforcement — opening new context menu closes existing one",
 
     // Step 3: Open context menu on the asset again (should close collection menu)
     await assetCard.click({ button: "right" });
-    await expect(window.getByRole("menuitem", { name: "使用外部应用打开" })).toBeVisible();
+    await expect(window.getByRole("menuitem", { name: "用默认应用打开" })).toBeVisible();
     await expect(menus).toHaveCount(1);
   } finally {
     await application.close();
@@ -459,7 +459,7 @@ test("scope change closes the context menu", async () => {
     // Open context menu on the asset
     await assetCard.click({ button: "right" });
     await expect(window.getByRole("menu")).toBeVisible({ timeout: 5_000 });
-    await expect(window.getByRole("menuitem", { name: "使用外部应用打开" })).toBeVisible();
+    await expect(window.getByRole("menuitem", { name: "用默认应用打开" })).toBeVisible();
 
     // Click a sidebar nav item (scope change) — should close the menu
     await window.getByRole("button", { name: /所有资产/ }).click();
