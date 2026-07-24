@@ -71,7 +71,7 @@ test("creates, closes, and reopens a library through the sandboxed UI", async ()
     );
 
     await window.getByRole("button", { name: "创建资源库" }).click();
-    await window.getByLabel("名称").fill(libraryName);
+    await window.getByRole("textbox", { name: "名称" }).fill(libraryName);
     await window.getByRole("button", { name: "创建", exact: true }).click();
     await expect(
       window.getByText(libraryName, { exact: true }).first(),
@@ -140,7 +140,7 @@ test("restores the recent library and focuses the last browsed asset after a ful
   try {
     let window = await application.firstWindow();
     await window.getByRole("button", { name: "创建资源库" }).click();
-    await window.getByLabel("名称").fill(libraryName);
+    await window.getByRole("textbox", { name: "名称" }).fill(libraryName);
     await window.getByRole("button", { name: "创建", exact: true }).click();
     await expect(
       window.getByText(libraryName, { exact: true }).first(),

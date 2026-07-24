@@ -44,7 +44,7 @@ test("lists other recent libraries in the switcher and opens one directly", asyn
       window.getByRole("heading", { name: "创建本地资源库" }),
     ).toBeVisible();
     await window.getByRole("button", { name: "创建资源库" }).click();
-    await window.getByLabel("名称").fill(firstName);
+    await window.getByRole("textbox", { name: "名称" }).fill(firstName);
     await window.getByRole("button", { name: "创建", exact: true }).click();
     const firstTrigger = window.getByRole("button", {
       name: `当前资源库 ${firstName}`,
@@ -69,7 +69,7 @@ test("lists other recent libraries in the switcher and opens one directly", asyn
       window.getByRole("heading", { name: "创建本地资源库" }),
     ).toBeVisible();
     await window.getByRole("button", { name: "创建资源库" }).click();
-    await window.getByLabel("名称").fill(secondName);
+    await window.getByRole("textbox", { name: "名称" }).fill(secondName);
     await window.getByRole("button", { name: "创建", exact: true }).click();
     const secondTrigger = window.getByRole("button", {
       name: `当前资源库 ${secondName}`,

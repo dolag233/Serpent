@@ -37,7 +37,7 @@ test('pastes a Main-owned clipboard image into the current folder and collection
   try {
     const window = await application.firstWindow();
     await window.getByRole('button', { name: '创建资源库' }).click();
-    await window.getByLabel('名称').fill(libraryName);
+    await window.getByRole("textbox", { name: "名称" }).fill(libraryName);
     await window.getByRole('button', { name: '创建', exact: true }).click();
 
     await window.getByRole('button', { name: '添加文件夹' }).click();
@@ -100,7 +100,7 @@ test('returns specific safe desktop-ingestion errors and records their diagnosti
   try {
     const window = await application.firstWindow();
     await window.getByRole('button', { name: '创建资源库' }).click();
-    await window.getByLabel('名称').fill('桌面导入错误验收');
+    await window.getByRole("textbox", { name: "名称" }).fill('桌面导入错误验收');
     await window.getByRole('button', { name: '创建', exact: true }).click();
 
     await window.getByRole('button', { name: /当前资源库/ }).click();

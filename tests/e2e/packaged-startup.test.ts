@@ -50,7 +50,7 @@ test('the packaged application starts and completes a real Worker import', async
     ).toEqual({ hasNodeProcess: false, hasRequire: false });
 
     await window.getByRole('button', { name: '创建资源库' }).click();
-    await window.getByLabel('名称').fill(libraryName);
+    await window.getByRole('textbox', { name: '名称' }).fill(libraryName);
     await window.getByRole('button', { name: '创建', exact: true }).click();
     await expect(window.getByText(libraryName, { exact: true }).first()).toBeVisible();
 
@@ -116,7 +116,7 @@ test('the packaged application FTS5 search finds and filters imported assets', a
 
     // Create library
     await window.getByRole('button', { name: '创建资源库' }).click();
-    await window.getByLabel('名称').fill(libraryName);
+    await window.getByRole('textbox', { name: '名称' }).fill(libraryName);
     await window.getByRole('button', { name: '创建', exact: true }).click();
     await expect(window.getByText(libraryName, { exact: true }).first()).toBeVisible();
 

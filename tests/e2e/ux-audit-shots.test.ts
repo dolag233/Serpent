@@ -113,7 +113,7 @@ test("capture primary UI surfaces for the wave-3 UX audit", async () => {
 
     // Create and open the library.
     await window.getByRole("button", { name: "创建资源库" }).click();
-    await window.getByLabel("名称").fill("UX 审计");
+    await window.getByRole("textbox", { name: "名称" }).fill("UX 审计");
     await shot(window, "02-create-library-dialog");
     await window.getByRole("button", { name: "创建", exact: true }).click();
     await expect(window.getByRole("button", { name: "添加文件夹" })).toBeVisible({ timeout: 20_000 });

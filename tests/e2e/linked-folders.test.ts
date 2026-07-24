@@ -51,7 +51,7 @@ test('imports a linked folder, reconciles external changes, and relinks after th
   try {
     const window = await application.firstWindow();
     await window.getByRole('button', { name: '创建资源库' }).click();
-    await window.getByLabel('名称').fill(libraryName);
+    await window.getByRole("textbox", { name: "名称" }).fill(libraryName);
     await window.getByRole('button', { name: '创建', exact: true }).click();
     await expect(window.getByRole('heading', { name: '导入资产以开始整理' })).toBeVisible();
 
@@ -191,7 +191,7 @@ test('restores a linked library after a full app restart', async () => {
   try {
     let window = await application.firstWindow();
     await window.getByRole('button', { name: '创建资源库' }).click();
-    await window.getByLabel('名称').fill(libraryName);
+    await window.getByRole("textbox", { name: "名称" }).fill(libraryName);
     await window.getByRole('button', { name: '创建', exact: true }).click();
     await expect(window.getByRole('heading', { name: '导入资产以开始整理' })).toBeVisible();
 
@@ -286,7 +286,7 @@ test('applies default ignore rules — .git and node_modules are not registered 
   try {
     const window = await application.firstWindow();
     await window.getByRole('button', { name: '创建资源库' }).click();
-    await window.getByLabel('名称').fill(libraryName);
+    await window.getByRole("textbox", { name: "名称" }).fill(libraryName);
     await window.getByRole('button', { name: '创建', exact: true }).click();
     await expect(window.getByRole('heading', { name: '导入资产以开始整理' })).toBeVisible();
 

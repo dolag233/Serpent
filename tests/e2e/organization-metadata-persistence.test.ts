@@ -42,7 +42,7 @@ test("persists organization and metadata across restart and surfaces optimistic-
   try {
     let window = await application.firstWindow();
     await window.getByRole("button", { name: "创建资源库" }).click();
-    await window.getByLabel("名称").fill(libraryName);
+    await window.getByRole("textbox", { name: "名称" }).fill(libraryName);
     await window.getByRole("button", { name: "创建", exact: true }).click();
     await window
       .getByRole("button", { name: "导入文件", exact: true })
@@ -400,7 +400,7 @@ test("switches Inspector assets without connection flashes or mixed metadata", a
   try {
     const window = await application.firstWindow();
     await window.getByRole("button", { name: "创建资源库" }).click();
-    await window.getByLabel("名称").fill(libraryName);
+    await window.getByRole("textbox", { name: "名称" }).fill(libraryName);
     await window.getByRole("button", { name: "创建", exact: true }).click();
     await window
       .getByRole("button", { name: "导入文件", exact: true })
@@ -572,7 +572,7 @@ test("assigns Inspector tag suggestions directly and hides tags after their fina
   try {
     let window = await application.firstWindow();
     await window.getByRole("button", { name: "创建资源库" }).click();
-    await window.getByLabel("名称").fill(libraryName);
+    await window.getByRole("textbox", { name: "名称" }).fill(libraryName);
     await window.getByRole("button", { name: "创建", exact: true }).click();
     await window
       .getByRole("button", { name: "导入文件", exact: true })

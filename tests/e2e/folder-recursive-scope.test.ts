@@ -28,7 +28,7 @@ function launchApp(temporaryRoot: string, libraryPath: string, importFiles: stri
 
 async function createLibrary(window: Page, libraryName: string) {
   await window.getByRole("button", { name: "创建资源库" }).click();
-  await window.getByLabel("名称").fill(libraryName);
+  await window.getByRole("textbox", { name: "名称" }).fill(libraryName);
   await window.getByRole("button", { name: "创建", exact: true }).click();
 }
 

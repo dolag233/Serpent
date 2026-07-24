@@ -55,7 +55,7 @@ test("context menu closes on outside click, Escape, scroll, and window resize", 
 
     // Create library
     await window.getByRole("button", { name: "创建资源库" }).click();
-    await window.getByLabel("名称").fill("CM Close Test");
+    await window.getByRole("textbox", { name: "名称" }).fill("CM Close Test");
     await window.getByRole("button", { name: "创建", exact: true }).click();
 
     // Import file
@@ -132,7 +132,7 @@ test("context menu clamps at viewport edges", async () => {
 
     // Create library
     await window.getByRole("button", { name: "创建资源库" }).click();
-    await window.getByLabel("名称").fill("CM Clamp Test");
+    await window.getByRole("textbox", { name: "名称" }).fill("CM Clamp Test");
     await window.getByRole("button", { name: "创建", exact: true }).click();
 
     // Import file
@@ -212,7 +212,7 @@ test("single-menu enforcement — opening new context menu closes existing one",
 
     // Create library
     await window.getByRole("button", { name: "创建资源库" }).click();
-    await window.getByLabel("名称").fill("CM Single Test");
+    await window.getByRole("textbox", { name: "名称" }).fill("CM Single Test");
     await window.getByRole("button", { name: "创建", exact: true }).click();
 
     // Import file
@@ -269,7 +269,7 @@ test("context menu has accessible name and keyboard Escape", async () => {
 
     // Create library
     await window.getByRole("button", { name: "创建资源库" }).click();
-    await window.getByLabel("名称").fill("CM A11y Test");
+    await window.getByRole("textbox", { name: "名称" }).fill("CM A11y Test");
     await window.getByRole("button", { name: "创建", exact: true }).click();
 
     // Import file
@@ -313,7 +313,7 @@ test("window blur closes the context menu", async () => {
 
     // Create library
     await window.getByRole("button", { name: "创建资源库" }).click();
-    await window.getByLabel("名称").fill("CM Blur Test");
+    await window.getByRole("textbox", { name: "名称" }).fill("CM Blur Test");
     await window.getByRole("button", { name: "创建", exact: true }).click();
 
     // Import file
@@ -353,7 +353,7 @@ test("context menu clamps within viewport at all four corners", async () => {
 
     // Create library
     await window.getByRole("button", { name: "创建资源库" }).click();
-    await window.getByLabel("名称").fill("CM Four Corner");
+    await window.getByRole("textbox", { name: "名称" }).fill("CM Four Corner");
     await window.getByRole("button", { name: "创建", exact: true }).click();
 
     // Import file
@@ -448,7 +448,7 @@ test("scope change closes the context menu", async () => {
 
     // Create library
     await window.getByRole("button", { name: "创建资源库" }).click();
-    await window.getByLabel("名称").fill("CM Scope Test");
+    await window.getByRole("textbox", { name: "名称" }).fill("CM Scope Test");
     await window.getByRole("button", { name: "创建", exact: true }).click();
 
     // Import file
@@ -480,7 +480,7 @@ test("pointer hover stays subtle while arrow navigation uses the keyboard focus 
   try {
     const window = await application.firstWindow();
     await window.getByRole("button", { name: "创建资源库" }).click();
-    await window.getByLabel("名称").fill("CM Highlight Test");
+    await window.getByRole("textbox", { name: "名称" }).fill("CM Highlight Test");
     await window.getByRole("button", { name: "创建", exact: true }).click();
     await window
       .getByRole("button", { name: "导入文件", exact: true })
@@ -611,7 +611,7 @@ test("multi-asset menu shows a visible count and mixed-selection skip reasons", 
   try {
     const window = await application.firstWindow();
     await window.getByRole("button", { name: "创建资源库" }).click();
-    await window.getByLabel("名称").fill("CM Mixed Test");
+    await window.getByRole("textbox", { name: "名称" }).fill("CM Mixed Test");
     await window.getByRole("button", { name: "创建", exact: true }).click();
 
     await window
@@ -682,7 +682,7 @@ test("tag picker searches, survives in-menu scroll, restores focus on back, and 
 
     // Create library and import one asset
     await window.getByRole("button", { name: "创建资源库" }).click();
-    await window.getByLabel("名称").fill("CM Tag Picker");
+    await window.getByRole("textbox", { name: "名称" }).fill("CM Tag Picker");
     await window.getByRole("button", { name: "创建", exact: true }).click();
     await window.getByRole("button", { name: "导入文件", exact: true }).first().click();
     const assetCard = window.locator("[data-asset-id]").first();

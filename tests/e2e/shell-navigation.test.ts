@@ -45,7 +45,7 @@ test("library switcher, breadcrumbs, and workspace history", async () => {
     const window = await application.firstWindow();
 
     await window.getByRole("button", { name: "创建资源库" }).click();
-    await window.getByLabel("名称").fill(libraryName);
+    await window.getByRole("textbox", { name: "名称" }).fill(libraryName);
     await window.getByRole("button", { name: "创建", exact: true }).click();
 
     const libraryTrigger = window.getByRole("button", {

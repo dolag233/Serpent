@@ -33,7 +33,7 @@ test('organizes, finds, trashes, and restores an imported asset through the UI',
   try {
     const window = await application.firstWindow();
     await window.getByRole('button', { name: '创建资源库' }).click();
-    await window.getByLabel('名称').fill(libraryName);
+    await window.getByRole("textbox", { name: "名称" }).fill(libraryName);
     await window.getByRole('button', { name: '创建', exact: true }).click();
     await window.getByRole('button', { name: '导入文件', exact: true }).first().click();
     const assetCard = window.getByRole('button', { name: /hero\.png/i });
@@ -262,7 +262,7 @@ test('multi-select performs batch organization, trash, restore, and permanent de
     const window = await application.firstWindow();
     const additiveModifier = process.platform === 'darwin' ? 'Meta' : 'Control';
     await window.getByRole('button', { name: '创建资源库' }).click();
-    await window.getByLabel('名称').fill('批量组织验收');
+    await window.getByRole("textbox", { name: "名称" }).fill('批量组织验收');
     await window.getByRole('button', { name: '创建', exact: true }).click();
     await window.getByRole('button', { name: '导入文件', exact: true }).first().click();
     await expect(window.locator('.asset-card')).toHaveCount(2);
@@ -431,7 +431,7 @@ test('collection recursion toggle immediately refreshes the visible collection s
   try {
     const window = await application.firstWindow();
     await window.getByRole('button', { name: '创建资源库' }).click();
-    await window.getByLabel('名称').fill('合集递归验收');
+    await window.getByRole("textbox", { name: "名称" }).fill('合集递归验收');
     await window.getByRole('button', { name: '创建', exact: true }).click();
     await window.getByRole('button', { name: '导入文件', exact: true }).first().click();
     await expect(window.getByRole('button', { name: /child-only\.txt/i })).toBeVisible();

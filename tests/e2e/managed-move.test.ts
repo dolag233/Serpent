@@ -31,7 +31,7 @@ test('moves a managed asset to a real folder and exposes one visible undo', asyn
   try {
     const window = await application.firstWindow();
     await window.getByRole('button', { name: '创建资源库' }).click();
-    await window.getByLabel('名称').fill(libraryName);
+    await window.getByRole('textbox', { name: '名称' }).fill(libraryName);
     await window.getByRole('button', { name: '创建', exact: true }).click();
     await window.getByRole('button', { name: '添加文件夹' }).click();
     await window.getByLabel('新文件夹名称').fill('Target');

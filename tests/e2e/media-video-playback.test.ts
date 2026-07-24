@@ -305,7 +305,7 @@ test("plays a direct MP4 and a generated WebM fallback through the asset viewer"
     });
     const window = await application.firstWindow();
     await window.getByRole("button", { name: "创建资源库" }).click();
-    await window.getByLabel("名称").fill(libraryName);
+    await window.getByRole("textbox", { name: "名称" }).fill(libraryName);
     await window.getByRole("button", { name: "创建", exact: true }).click();
     await window
       .getByRole("button", { name: "导入文件", exact: true })
