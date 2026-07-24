@@ -690,7 +690,7 @@ export const en = {
     relinkPreview: {
       title: "Batch relink preview",
       totalMissing: "Total missing",
-      matched: "Matched at new location",
+      matched: "Recovered",
       notFound: "Not found",
       keepMetadata: "Keep original asset info (tags, description, rating, collections, and other manual metadata)",
       apply: "Apply batch relink"

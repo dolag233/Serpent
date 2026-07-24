@@ -135,12 +135,13 @@ describe('可见性（与历史内联 JSX 条件一致）', () => {
     ]);
   });
 
-  it('linked + unavailable：delete-linked 仍可见，relink / move-to-folder 隐藏', () => {
+  it('linked + unavailable：delete-linked 与 relink 可见，move-to-folder 隐藏', () => {
     const { ctx } = makeCtx({ locationKind: 'linked', assetAvailable: false });
     expect(resolveIds(ctx)).toEqual([
       'asset.view',
       'asset.open-external',
       'asset.reveal-in-folder',
+      'asset.relink',
       'asset.copy',
       'asset.paste',
       'asset.copy-file-path',
@@ -227,25 +228,33 @@ describe('禁用原因（disabledReason 是唯一禁用来源）', () => {
     });
   });
 
-  it('managed + unavailable：move-to-trash 使用专属原因，relink 保持启用', () => {
+  it('managed + unavailable：move-to-trash 可用，relink 保持启用', () => {
     const { ctx } = makeCtx({ assetAvailable: false });
     const menu = registry.resolveMenu(ctx);
     expect(findItem(menu, 'asset.move-to-trash')).toMatchObject({
-      disabled: true,
-      disabledReason: '托管资产当前不可用，无法移入回收站',
+      disabled: false,
+      disabledReason: null,
     });
     expect(findItem(menu, 'asset.relink')).toMatchObject({
       disabled: false,
       disabledReason: null,
     });
+    expect(findItem(menu, 'asset.delete-from-disk')).toMatchObject({
+      disabled: true,
+      disabledReason: '托管资产当前不可用，无法移入回收站',
+    });
   });
 
-  it('linked + unavailable：路径操作禁用，delete-linked 保持启用', () => {
+  it('linked + unavailable：路径操作禁用，relink 与 delete-linked 保持启用', () => {
     const { ctx } = makeCtx({ locationKind: 'linked', assetAvailable: false });
     const menu = registry.resolveMenu(ctx);
     expect(findItem(menu, 'asset.open-external').disabledReason).toBe(
       '资产当前不可用',
     );
+    expect(findItem(menu, 'asset.relink')).toMatchObject({
+      disabled: false,
+      disabledReason: null,
+    });
     expect(findItem(menu, 'asset.delete-linked')).toMatchObject({
       disabled: false,
       disabledReason: null,

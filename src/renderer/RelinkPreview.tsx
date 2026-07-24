@@ -3,8 +3,19 @@ import { iconActionAttrs } from "./icon-action-attrs";
 import { useT } from "./i18n";
 import type { RelinkBatchPreviewResult } from "../shared/library-api";
 
+export interface BatchRelinkPreviewSession {
+  preview: RelinkBatchPreviewResult;
+  priorRestoredCount: number;
+  priorRestoredExamples: Array<{ relativeFilePath: string; matched: boolean }>;
+}
+
+export function formatRelinkExamplePath(relativeFilePath: string): string {
+  const segments = relativeFilePath.split("/");
+  return segments.slice(-2).join("/") || relativeFilePath;
+}
+
 export interface RelinkPreviewProps {
-  preview: RelinkBatchPreviewResult | null;
+  session: BatchRelinkPreviewSession | null;
   keepMetadata: boolean;
   onKeepMetadataChange: (value: boolean) => void;
   onApply: () => void;
@@ -12,14 +23,20 @@ export interface RelinkPreviewProps {
 }
 
 export function RelinkPreview({
-  preview,
+  session,
   keepMetadata,
   onKeepMetadataChange,
   onApply,
   onCancel,
 }: RelinkPreviewProps) {
   const t = useT();
-  if (!preview) return null;
+  if (!session) return null;
+
+  const { preview, priorRestoredCount, priorRestoredExamples } = session;
+  const totalCount = preview.totalCount + priorRestoredCount;
+  const restoredCount = preview.matchedCount + priorRestoredCount;
+  const unmatchedCount = preview.unmatchedCount;
+  const examples = [...priorRestoredExamples, ...preview.examples].slice(0, 8);
 
   return (
     <div className="dialog-backdrop" role="presentation">
@@ -46,21 +63,21 @@ export function RelinkPreview({
         </div>
         <div className="conflict-summary">
           <div>
-            <strong>{preview.totalCount}</strong>
+            <strong>{totalCount}</strong>
             <span>{t("dialog.relinkPreview.totalMissing")}</span>
           </div>
           <div>
-            <strong>{preview.matchedCount}</strong>
+            <strong>{restoredCount}</strong>
             <span>{t("dialog.relinkPreview.matched")}</span>
           </div>
           <div>
-            <strong>{preview.unmatchedCount}</strong>
+            <strong>{unmatchedCount}</strong>
             <span>{t("dialog.relinkPreview.notFound")}</span>
           </div>
         </div>
-        {preview.examples.length > 0 && (
+        {examples.length > 0 && (
           <div className="conflict-examples">
-            {preview.examples.map((item, index) => (
+            {examples.map((item, index) => (
               <span
                 key={`${item.relativeFilePath}-${index}`}
                 style={{

@@ -728,6 +728,7 @@ const assetOperationSuccessSchemas = [
     ok: z.literal(true),
     type: z.literal('asset.relinked'),
     asset: assetSummarySchema,
+    batchFollowUpRoot: z.string().min(1),
   }),
   z.strictObject({
     ok: z.literal(true),

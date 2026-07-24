@@ -46,7 +46,7 @@ test('cancels a batch relink preview and later applies a fresh preview', async (
 
     await window.getByRole('button', { name: '批量重新定位' }).click();
     const firstPreview = window.getByRole('dialog', { name: '批量重新定位预览' });
-    await expect(firstPreview).toContainText('新位置匹配');
+    await expect(firstPreview).toContainText('已找回');
     await expect(firstPreview).toContainText('1');
     await firstPreview.getByRole('button', { name: '取消', exact: true }).last().click();
     await expect(firstPreview).toHaveCount(0);

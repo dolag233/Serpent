@@ -1534,6 +1534,13 @@ async function commandFor(
           }
         : undefined;
     }
+    case "asset.relink-batch.preview-at-root.request": {
+      return {
+        type: "asset.relink-batch.preview",
+        libraryId: request.libraryId,
+        newRootPath: request.newRootPath,
+      };
+    }
     case "asset.relink-batch.request": {
       const newRootPath = await selectOpenDirectory(
         createNativeDialogHost(),
@@ -2470,7 +2477,8 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
     }
     if (!command) return cancelled();
     if (
-      request.type === "asset.relink-batch.request" &&
+      (request.type === "asset.relink-batch.request" ||
+        request.type === "asset.relink-batch.preview-at-root.request") &&
       command.type === "asset.relink-batch.preview"
     ) {
       const previewId = pendingRelinkPreviews.create(

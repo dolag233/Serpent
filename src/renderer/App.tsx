@@ -90,7 +90,12 @@ import {
   createWorkspaceNavHistory,
   type WorkspaceNavLocation,
 } from "./workspace-nav-history";
-import { RelinkPreview } from "./RelinkPreview";
+import { mergeAssetSummaries } from "./merge-asset-summaries";
+import {
+  RelinkPreview,
+  type BatchRelinkPreviewSession,
+  formatRelinkExamplePath,
+} from "./RelinkPreview";
 import { MoveDialog } from "./MoveDialog";
 import { RestoreDialog } from "./RestoreDialog";
 import { UndoMoveDialog } from "./UndoMoveDialog";
@@ -826,7 +831,7 @@ function AppInner() {
     conflictStrategy: "keep-both" | "replace" | "skip";
   } | null>(null);
   const [batchRelinkPreview, setBatchRelinkPreview] =
-    useState<RelinkBatchPreviewResult | null>(null);
+    useState<BatchRelinkPreviewSession | null>(null);
   const [batchRelinkKeepMetadata, setBatchRelinkKeepMetadata] = useState(true);
 
   // Export / Import state
@@ -4755,8 +4760,35 @@ function AppInner() {
         if (result.error.code === "CANCELLED") return;
         throw new LibraryOperationError(result.error);
       }
+      setAssets((current) =>
+        mergeAssetSummaries(current, [result.value.asset]),
+      );
       setNotice(t("toast.relinkSuccess"));
       await reloadCurrentContent();
+
+      const preview = await api.relinkBatchPreviewAtRoot({
+        libraryId: library.libraryId,
+        newRootPath: result.value.batchFollowUpRoot,
+        keepMetadata: batchRelinkKeepMetadata,
+      });
+      if (!preview.ok) {
+        if (preview.error.code === "CANCELLED") return;
+        throw new LibraryOperationError(preview.error);
+      }
+      if (preview.value.matchedCount > 0) {
+        setBatchRelinkPreview({
+          preview: preview.value,
+          priorRestoredCount: 1,
+          priorRestoredExamples: [
+            {
+              relativeFilePath: formatRelinkExamplePath(
+                result.value.asset.relativeFilePath,
+              ),
+              matched: true,
+            },
+          ],
+        });
+      }
     } catch (caught) {
       setError(toMessage(caught, t("toast.relinkFailed"), locale));
     } finally {
@@ -4776,7 +4808,11 @@ function AppInner() {
         if (result.error.code === "CANCELLED") return;
         throw new LibraryOperationError(result.error);
       }
-      setBatchRelinkPreview(result.value);
+      setBatchRelinkPreview({
+        preview: result.value,
+        priorRestoredCount: 0,
+        priorRestoredExamples: [],
+      });
     } catch (caught) {
       setError(toMessage(caught, t("toast.batchRelinkPreviewFailed"), locale));
     } finally {
@@ -4790,18 +4826,30 @@ function AppInner() {
     try {
       const result = await api.relinkBatchApply({
         libraryId: library.libraryId,
-        previewId: batchRelinkPreview.previewId,
+        previewId: batchRelinkPreview.preview.previewId,
         keepMetadata: batchRelinkKeepMetadata,
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
+      const priorRestoredCount = batchRelinkPreview.priorRestoredCount;
       setBatchRelinkPreview(null);
+      setAssets((current) =>
+        mergeAssetSummaries(current, result.value.assets),
+      );
+      const refresh = await api.refreshAssets({
+        libraryId: library.libraryId,
+      });
+      if (refresh.ok) {
+        setAssets((current) =>
+          mergeAssetSummaries(current, refresh.value.assets),
+        );
+      }
+      await reloadCurrentContent();
       setNotice(
         t("toast.batchRelinkDone", {
-          restored: result.value.restoredCount,
+          restored: result.value.restoredCount + priorRestoredCount,
           missing: result.value.unchangedMissingCount,
         }),
       );
-      await reloadCurrentContent();
     } catch (caught) {
       setBatchRelinkPreview(null);
       setError(toMessage(caught, t("toast.batchRelinkFailed"), locale));
@@ -4812,7 +4860,7 @@ function AppInner() {
 
   const cancelBatchRelink = useCallback(async () => {
     if (!api || !library || !batchRelinkPreview) return;
-    const previewId = batchRelinkPreview.previewId;
+    const previewId = batchRelinkPreview.preview.previewId;
     setBatchRelinkPreview(null);
     try {
       const result = await api.cancelRelinkBatch({
@@ -7956,7 +8004,7 @@ function AppInner() {
         />
       )}
       <RelinkPreview
-        preview={batchRelinkPreview}
+        session={batchRelinkPreview}
         keepMetadata={batchRelinkKeepMetadata}
         onKeepMetadataChange={setBatchRelinkKeepMetadata}
         onApply={() => void applyBatchRelink()}

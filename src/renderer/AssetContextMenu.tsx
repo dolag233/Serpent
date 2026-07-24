@@ -1190,11 +1190,6 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                   </ContextMenuSection>
                 ) : (
                   <>
-                {singleManaged && !isAvailable && (
-                  <div className="context-menu-scope-note" role="note">
-                    {t("menu.managedUnavailableHint")}
-                  </div>
-                )}
                 <ContextMenuSection label={t("command.group.open")}>
                   {viewItem && (
                     <ContextMenuItem

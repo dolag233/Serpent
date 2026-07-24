@@ -251,6 +251,7 @@ import {
   TEXT_VIEWER_MAX_BYTES,
   textMimeForExtension,
 } from '../shared/text-media';
+import { inferRelinkBatchRoot } from '../shared/infer-relink-batch-root';
 import { assetSupportsThumbnail } from '../shared/thumbnail-support';
 import {
   extractZipStream,
@@ -14101,10 +14102,22 @@ export class LibraryService {
     }> = [];
 
     try {
-      // Phase 1: move files to trash
+      // Phase 1: move files to trash when the source still exists on disk.
+      // Already-missing managed assets are metadata-only trash rows.
       for (const row of rows) {
         const filename = path.posix.basename(row.relative_file_path);
         const sourcePath = this.folderPath(openLibrary, row.relative_file_path);
+        let sourceExists = false;
+        try {
+          const sourceStat = lstatSync(sourcePath, { bigint: true });
+          sourceExists = sourceStat.isFile() && !sourceStat.isSymbolicLink();
+        } catch (error) {
+          if (!isUnreadablePathError(error)) {
+            throw new LibraryServiceError('IMPORT_APPLY_FAILED', { cause: error });
+          }
+        }
+        if (!sourceExists) continue;
+
         const trashDir = path.join(openLibrary.summary.libraryPath, '.serpent', 'trash', row.asset_id);
         mkdirSync(trashDir, { recursive: true });
         const trashFilePath = path.join(trashDir, filename);
@@ -14251,6 +14264,7 @@ export class LibraryService {
       destinationRelativePath: string;
       managedFolderId: string | null;
       trashFilename: string;
+      trashFileMissing: boolean;
     };
     const plans: RestorePlan[] = [];
     const plannedDestinations = new Set<string>();
@@ -14261,15 +14275,18 @@ export class LibraryService {
       for (const row of orderedRows) {
         const filename = path.posix.basename(row.trashed_from_relative_path);
         const trashFilePath = this.trashPath(openLibrary, row.asset_id, filename);
-        let trashEntry: Stats;
+        let trashFileMissing = false;
         try {
-          trashEntry = lstatSync(trashFilePath);
+          const trashEntry = lstatSync(trashFilePath);
+          if (!trashEntry.isFile() || trashEntry.isSymbolicLink()) {
+            throw new LibraryServiceError('LIBRARY_CORRUPT');
+          }
         } catch (error) {
-          if (!isMissingPathError(error)) throw error;
-          throw new LibraryServiceError('ASSET_NOT_FOUND');
-        }
-        if (!trashEntry.isFile() || trashEntry.isSymbolicLink()) {
-          throw new LibraryServiceError('LIBRARY_CORRUPT');
+          if (isMissingPathError(error)) {
+            trashFileMissing = true;
+          } else {
+            throw error;
+          }
         }
 
         // Determine target folder path
@@ -14362,6 +14379,7 @@ export class LibraryService {
           destinationRelativePath: destRelativePath,
           managedFolderId: resolvedFolderId,
           trashFilename: filename,
+          trashFileMissing,
         });
       }
 
@@ -14411,6 +14429,7 @@ export class LibraryService {
         this.failAt('crash-restore-after-backup');
 
         for (const plan of plans) {
+          if (plan.trashFileMissing) continue;
           const sourcePath = this.trashPath(openLibrary, plan.assetId, plan.trashFilename);
           const destinationPath = this.folderPath(openLibrary, plan.destinationRelativePath);
           mkdirSync(path.dirname(destinationPath), { recursive: true });
@@ -14435,13 +14454,14 @@ export class LibraryService {
                         path_identity = ?, deleted_at = NULL,
                         trashed_from_relative_path = NULL, trashed_from_folder_id = NULL,
                         trashed_from_tombstone_id = NULL,
-                        updated_at = ?
+                        availability = ?, updated_at = ?
                   WHERE asset_id = ?`,
               )
               .run(
                 plan.destinationRelativePath,
                 plan.managedFolderId,
                 pathIdentity,
+                plan.trashFileMissing ? 'missing' : 'available',
                 now,
                 plan.assetId,
               );
@@ -15402,7 +15422,7 @@ export class LibraryService {
     libraryId: string;
     assetId: string;
     newAbsolutePath: string;
-  }): { asset: AssetSummary } {
+  }): { asset: AssetSummary; batchFollowUpRoot: string } {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
 
     // Validate asset is missing and not trashed
@@ -15425,6 +15445,11 @@ export class LibraryService {
     if (!assetRow) throw new LibraryServiceError('ASSET_NOT_FOUND');
     if (assetRow.deleted_at !== null) throw new LibraryServiceError('INVALID_IMPORT_DECISION');
     if (assetRow.availability !== 'missing') throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+
+    const batchFollowUpRoot = inferRelinkBatchRoot(
+      assetRow.relative_file_path,
+      input.newAbsolutePath,
+    );
 
     // Validate new file
     let newPath: string;
@@ -15580,7 +15605,7 @@ export class LibraryService {
       } | undefined;
     if (!updated) throw new LibraryServiceError('ASSET_NOT_FOUND');
 
-    return { asset: this.assetSummaryFromRow(updated) };
+    return { asset: this.assetSummaryFromRow(updated), batchFollowUpRoot };
   }
 
   private batchRelinkRows(openLibrary: OpenLibrary): BatchRelinkAssetRow[] {
@@ -15920,6 +15945,19 @@ export class LibraryService {
           .get(r.asset_id);
         return !!still;
       }).length;
+
+    if (restoredCount > 0) {
+      const refreshed = this.refreshManagedAssets(input.libraryId);
+      const restoredIds = new Set(
+        rows.filter((row) => matches.has(row.asset_id)).map((row) => row.asset_id),
+      );
+      restoredAssets.length = 0;
+      for (const asset of refreshed.assets) {
+        if (restoredIds.has(asset.assetId)) {
+          restoredAssets.push(asset);
+        }
+      }
+    }
 
     return { restoredCount, unchangedMissingCount, assets: restoredAssets };
   }

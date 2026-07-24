@@ -157,9 +157,7 @@ export const assetCommandDefinitions: readonly AssetCommandDefinition[] = [
     title: (ctx) => t(ctx, 'command.asset.relink'),
     group: 'organize',
     visible: (ctx) =>
-      !ctx.assetDeleted &&
-      ctx.locationKind === 'managed' &&
-      !ctx.assetAvailable,
+      !ctx.assetDeleted && !ctx.assetAvailable,
     run: (ctx) => withPrimaryAsset(ctx, (id) => ctx.actions.relink(id)),
   },
   {
@@ -253,9 +251,9 @@ export const assetCommandDefinitions: readonly AssetCommandDefinition[] = [
     },
     visible: (ctx) => !ctx.assetDeleted && ctx.locationKind === 'managed',
     disabledReason: (ctx) =>
-      ctx.assetAvailable
-        ? null
-        : t(ctx, 'command.reason.managedUnavailableTrash'),
+      ctx.assetDeleted
+        ? t(ctx, 'command.reason.unavailable')
+        : null,
     run: (ctx) => withPrimaryAsset(ctx, (id) => ctx.actions.moveToTrash([id])),
   },
   {

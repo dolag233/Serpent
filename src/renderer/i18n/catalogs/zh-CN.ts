@@ -680,7 +680,7 @@ export const zhCN = {
     relinkPreview: {
       title: "批量重新定位预览",
       totalMissing: "总计丢失",
-      matched: "新位置匹配",
+      matched: "已找回",
       notFound: "未找到",
       keepMetadata: "沿用原资产信息（保留标签、描述、评分、合集等人工元数据）",
       apply: "应用批量重新定位"

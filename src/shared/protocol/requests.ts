@@ -618,6 +618,12 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     assetId: identifierSchema,
   }),
   z.strictObject({
+    type: z.literal('asset.relink-batch.preview-at-root.request'),
+    libraryId: identifierSchema,
+    newRootPath: selectedPathSchema,
+    keepMetadata: z.boolean(),
+  }),
+  z.strictObject({
     type: z.literal('asset.relink-batch.request'),
     libraryId: identifierSchema,
     keepMetadata: z.boolean(),

@@ -293,6 +293,8 @@
 | TRASH-001 | 托管资产移入回收站 | 待人类验收 | 删除一项或多项托管资产后进入回收站 | 正常视图移除这些资产，回收站中可见 | [0007 QA](0007-trash-relink-batch-relocate-qa-report.md) / [组织与回收站 E2E](../../tests/e2e/organization-search-trash.test.ts) | — |
 | TRASH-002 | 从回收站恢复资产 | 待人类验收 | 恢复一项回收站资产 | 资产回到可浏览范围，ID、标签和元数据保持 | [0007 QA](0007-trash-relink-batch-relocate-qa-report.md) | — |
 | TRASH-003 | 多选后永久删除并确认数量 | 待人类验收 | 在回收站多选两项，执行永久删除并确认 | 确认框显示准确数量；确认后两项消失 | [0007 QA](0007-trash-relink-batch-relocate-qa-report.md) / [组织与回收站 E2E](../../tests/e2e/organization-search-trash.test.ts) | — |
+| TRASH-012 | missing 托管资产可移入回收站 | 人类验收通过 | ① 使一项托管资产变为 missing（外部删除文件并刷新）。② 选中后 Delete / 右键「移入回收站」。 | 成功进入回收站，不再提示找不到磁盘文件；回收站可见该资产记录 | [worker 测试](../../tests/worker/trash-relink.test.ts) | 2026-07-25 实现 metadata-only trash。 |
+| RELINK-004 | 单项找回后按相对路径批量预览 | 人类验收通过 | ① 准备多项 missing 资产，目录结构在新位置保持一致。② 对其中一项「找回资产…」，选中一个文件。③ 若还有其他可匹配项，应弹出批量预览。④ 确认应用后其余资产一并恢复 | 先恢复所选文件；自动推断根目录并预览其余匹配；预览统计统一为「已找回」；应用后断连图标消失 | [infer-relink-batch-root](../../src/shared/infer-relink-batch-root.ts) / [App relink](../../src/renderer/App.tsx) | 2026-07-25 人类验收通过。 |
 | RELINK-001 | 批量重新定位预览 | 待人类验收 | 让托管资产 missing，选择候选新根并发起预览 | 只显示相对路径和匹配/缺失数量，不泄露候选根绝对路径 | [0007 QA](0007-trash-relink-batch-relocate-qa-report.md) / [重新定位 E2E](../../tests/e2e/trash-relink-flow.test.ts) | — |
 | RELINK-002 | 取消批量重新定位不修改资产 | 待人类验收 | 得到预览后取消 | 资产位置和状态不变 | [0007 QA](0007-trash-relink-batch-relocate-qa-report.md) / [重新定位 E2E](../../tests/e2e/trash-relink-flow.test.ts) | — |
 | RELINK-003 | 重新预览后应用批量重新定位 | 待人类验收 | 取消一次预览后，重新选择候选根并应用新预览 | 匹配资产恢复可用，使用的是第二次预览结果 | [0007 QA](0007-trash-relink-batch-relocate-qa-report.md) / [重新定位 E2E](../../tests/e2e/trash-relink-flow.test.ts) | — |
@@ -647,4 +649,5 @@
 | 2026-07-24 | NAV-008 / `Serpent-1xmk` | 人类验收通过 | 鼠标侧键后退/前进与工作区历史一致；查看页先退出；输入框/对话框不抢占。 | Windows 真机验收。 |
 | 2026-07-24 | THUMB-005 | 人类验收通过 | 不支持缩略图的格式不显示失败角标；可预览格式失败仍提示。 | — |
 | 2026-07-24 | IMPORT-014 | 人类验收通过 | 托管文件夹磁盘路径新增文件后 watcher 自动发现入库。 | — |
-| 2026-07-24 | IMPORT-014 / missing icon | 待人类验收 | 资产丢失时卡片中央显示描边断开链接图标，不再出现实心叠层。 | 修复 missing-overlay fill 与 file 图标叠层。 |
+| 2026-07-24 | IMPORT-014 / missing icon | 人类验收通过 | 资产丢失时卡片中央显示与离线链接文件夹一致的断开链接描边图标。 | 复用 link-off；略加粗描边。 |
+| 2026-07-25 | TRASH-012 / RELINK-004 | 人类验收通过 | missing 托管可进回收站；单项找回后批量预览与应用；预览「已找回」统计；应用后 UI 断连状态同步。 | Windows 真机验收。 |

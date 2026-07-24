@@ -42,6 +42,11 @@ export type LibraryApiResult<T> =
   | { ok: true; value: T }
   | { ok: false; error: PublicError };
 
+export interface RelinkAssetResult {
+  asset: AssetSummary;
+  batchFollowUpRoot: string;
+}
+
 export interface RelinkBatchPreviewResult {
   previewId: string;
   matchedCount: number;
@@ -352,8 +357,13 @@ export interface SerpentLibraryApi {
   // Linked delete
   deleteLinkedAssets(input: { libraryId: string; assetIds: string[]; deleteSourceFile: boolean }): Promise<LibraryApiResult<LinkedAssetDeleteResult>>;
   // Relink
-  relinkAsset(input: { libraryId: string; assetId: string }): Promise<LibraryApiResult<AssetSummary>>;
+  relinkAsset(input: { libraryId: string; assetId: string }): Promise<LibraryApiResult<RelinkAssetResult>>;
   relinkBatchPreview(input: { libraryId: string; keepMetadata: boolean }): Promise<LibraryApiResult<RelinkBatchPreviewResult>>;
+  relinkBatchPreviewAtRoot(input: {
+    libraryId: string;
+    newRootPath: string;
+    keepMetadata: boolean;
+  }): Promise<LibraryApiResult<RelinkBatchPreviewResult>>;
   relinkBatchApply(input: { libraryId: string; previewId: string; keepMetadata: boolean }): Promise<LibraryApiResult<RelinkBatchAppliedResult>>;
   cancelRelinkBatch(input: { libraryId: string; previewId: string }): Promise<LibraryApiResult<{ previewId: string }>>;
   // Extension active context

@@ -714,9 +714,9 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
       return { ok: true, type: 'asset.purge-trash', purgedCount, skippedCount, failures };
     }
     case 'asset.relink': {
-      const { asset } = libraryService.relinkAsset(request.command);
+      const { asset, batchFollowUpRoot } = libraryService.relinkAsset(request.command);
       scheduleThumbnailScene(request.command.libraryId, 'mutation', [asset.assetId]);
-      return { ok: true, type: 'asset.relinked', asset };
+      return { ok: true, type: 'asset.relinked', asset, batchFollowUpRoot };
     }
     case 'asset.relink-batch.preview': {
       const preview = libraryService.relinkBatchPreview(request.command);

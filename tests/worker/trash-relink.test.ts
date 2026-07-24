@@ -297,6 +297,28 @@ describe('trashAssets (soft delete)', () => {
     service.closeAll();
   });
 
+  it('moves already-missing managed assets to trash without a source file', () => {
+    const root = temporaryRoot();
+    const service = newService();
+    const created = service.createLibrary({ displayName: 'Missing Trash', selectedParentPath: root });
+
+    writeFileSync(path.join(root, 'gone.jpg'), 'data');
+    const r = importNoConflict(service, created.libraryId, path.join(root, 'gone.jpg'));
+    const assetId = r.assets[0]!.assetId;
+    rmSync(path.join(created.libraryPath, 'Assets', 'gone.jpg'));
+    service.refreshManagedAssets(created.libraryId);
+
+    const { trashedCount } = service.trashAssets({ libraryId: created.libraryId, assetIds: [assetId] });
+    expect(trashedCount).toBe(1);
+    expect(existsSync(path.join(created.libraryPath, '.serpent', 'trash', assetId, 'gone.jpg'))).toBe(false);
+
+    const trash = service.listTrash(created.libraryId);
+    expect(trash).toHaveLength(1);
+    expect(trash[0]!.assetId).toBe(assetId);
+    expect(trash[0]!.trashedFromPath).toBe('gone.jpg');
+    service.closeAll();
+  });
+
   it('rejects trashing an already-trashed asset', () => {
     const root = temporaryRoot();
     const service = newService();
@@ -1524,10 +1546,11 @@ describe('relinkAsset (single missing asset)', () => {
     expect(before[0]!.availability).toBe('missing');
 
     writeFileSync(path.join(root, 'new-location.jpg'), 'new');
-    const { asset } = service.relinkAsset({ libraryId: created.libraryId, assetId, newAbsolutePath: path.join(root, 'new-location.jpg') });
+    const { asset, batchFollowUpRoot } = service.relinkAsset({ libraryId: created.libraryId, assetId, newAbsolutePath: path.join(root, 'new-location.jpg') });
 
     expect(asset.assetId).toBe(assetId);
     expect(asset.availability).toBe('available');
+    expect(batchFollowUpRoot).toBe(root);
 
     const db = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
     const revisions = db.prepare("SELECT origin FROM revisions WHERE asset_id = ? ORDER BY accepted_at DESC").all(assetId) as Array<{ origin: string }>;
@@ -1898,6 +1921,55 @@ describe('relinkBatchApply', () => {
     expect(readFileSync(service.resolveAssetPath(created.libraryId, nestedImport.assets[0]!.assetId), 'utf8')).toBe('new-nested');
     expect(service.listAssets({ libraryId: created.libraryId, recursive: true }))
       .toSatisfy((assets: Array<{ availability: string }>) => assets.every((asset) => asset.availability === 'available'));
+    service.closeAll();
+  });
+
+  it('follow-up batch apply after single relink restores sibling missing assets', () => {
+    const root = temporaryRoot();
+    const service = newService();
+    const created = service.createLibrary({ displayName: 'Follow Up Batch', selectedParentPath: root });
+    const folder = service.createManagedFolder({ libraryId: created.libraryId, name: 'sub' });
+
+    writeFileSync(path.join(root, 'a.jpg'), 'a');
+    writeFileSync(path.join(root, 'b.jpg'), 'b');
+    const first = importNoConflict(service, created.libraryId, path.join(root, 'a.jpg'), folder.folderId);
+    const second = importNoConflict(service, created.libraryId, path.join(root, 'b.jpg'), folder.folderId);
+
+    rmSync(path.join(created.libraryPath, 'Assets', 'sub', 'a.jpg'));
+    rmSync(path.join(created.libraryPath, 'Assets', 'sub', 'b.jpg'));
+    service.refreshManagedAssets(created.libraryId);
+
+    const replacementRoot = path.join(root, 'replacements');
+    mkdirSync(path.join(replacementRoot, 'sub'), { recursive: true });
+    writeFileSync(path.join(replacementRoot, 'sub', 'a.jpg'), 'new-a');
+    writeFileSync(path.join(replacementRoot, 'sub', 'b.jpg'), 'new-b');
+
+    const relinked = service.relinkAsset({
+      libraryId: created.libraryId,
+      assetId: first.assets[0]!.assetId,
+      newAbsolutePath: path.join(replacementRoot, 'sub', 'a.jpg'),
+    });
+    expect(relinked.asset.availability).toBe('available');
+    expect(relinked.batchFollowUpRoot).toBe(replacementRoot);
+
+    const preview = service.relinkBatchPreview({
+      libraryId: created.libraryId,
+      newRootPath: relinked.batchFollowUpRoot,
+    });
+    expect(preview).toMatchObject({ matchedCount: 1, totalCount: 1, unmatchedCount: 0 });
+
+    const applied = service.relinkBatchApply({
+      libraryId: created.libraryId,
+      newRootPath: replacementRoot,
+      keepMetadata: true,
+    });
+    expect(applied.restoredCount).toBe(1);
+    expect(applied.assets).toHaveLength(1);
+    expect(applied.assets[0]!.availability).toBe('available');
+
+    const all = service.listAssets({ libraryId: created.libraryId, recursive: true });
+    expect(all.find((asset) => asset.assetId === first.assets[0]!.assetId)!.availability).toBe('available');
+    expect(all.find((asset) => asset.assetId === second.assets[0]!.assetId)!.availability).toBe('available');
     service.closeAll();
   });
 

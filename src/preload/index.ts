@@ -927,11 +927,17 @@ const library: SerpentLibraryApi = Object.freeze({
     };
   },
 
-  async relinkAsset({ libraryId, assetId }: { libraryId: string; assetId: string }): Promise<LibraryApiResult<AssetSummary>> {
+  async relinkAsset({ libraryId, assetId }: { libraryId: string; assetId: string }): Promise<LibraryApiResult<import('../shared/library-api').RelinkAssetResult>> {
     const result = await request({ type: 'asset.relink.request', libraryId, assetId });
     if (!result.ok) return failure(result);
     if (result.type !== 'asset.relinked') throw new Error('Unexpected relink response.');
-    return { ok: true, value: result.asset };
+    return {
+      ok: true,
+      value: {
+        asset: result.asset,
+        batchFollowUpRoot: result.batchFollowUpRoot,
+      },
+    };
   },
 
   async relinkBatchPreview({ libraryId, keepMetadata }: { libraryId: string; keepMetadata: boolean }) {
@@ -939,6 +945,35 @@ const library: SerpentLibraryApi = Object.freeze({
     if (!result.ok) return failure(result);
     if (result.type !== 'asset.relink-batch.preview') throw new Error('Unexpected relink-batch-preview response.');
     return { ok: true as const, value: { previewId: result.previewId, matchedCount: result.matchedCount, unmatchedCount: result.unmatchedCount, totalCount: result.totalCount, examples: result.examples } };
+  },
+
+  async relinkBatchPreviewAtRoot({
+    libraryId,
+    newRootPath,
+    keepMetadata,
+  }: {
+    libraryId: string;
+    newRootPath: string;
+    keepMetadata: boolean;
+  }) {
+    const result = await request({
+      type: 'asset.relink-batch.preview-at-root.request',
+      libraryId,
+      newRootPath,
+      keepMetadata,
+    });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'asset.relink-batch.preview') throw new Error('Unexpected relink-batch-preview response.');
+    return {
+      ok: true as const,
+      value: {
+        previewId: result.previewId,
+        matchedCount: result.matchedCount,
+        unmatchedCount: result.unmatchedCount,
+        totalCount: result.totalCount,
+        examples: result.examples,
+      },
+    };
   },
 
   async relinkBatchApply({ libraryId, previewId, keepMetadata }: { libraryId: string; previewId: string; keepMetadata: boolean }) {
