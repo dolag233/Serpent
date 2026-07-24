@@ -833,8 +833,8 @@ const library: SerpentLibraryApi = Object.freeze({
     };
   },
 
-  async saveTextAsset({ libraryId, assetId, content, expectedRevisionId }: { libraryId: string; assetId: string; content: string; expectedRevisionId?: string }) {
-    const result = await request({ type: 'asset.text.save.request', libraryId, assetId, content, expectedRevisionId });
+  async saveTextAsset({ libraryId, assetId, content, expectedRevisionId, createRevision }: { libraryId: string; assetId: string; content: string; expectedRevisionId?: string; createRevision?: boolean }) {
+    const result = await request({ type: 'asset.text.save.request', libraryId, assetId, content, expectedRevisionId, createRevision });
     if (!result.ok) return failure(result);
     if (result.type !== 'asset.text.saved') throw new Error('Unexpected text-save response.');
     return {

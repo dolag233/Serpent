@@ -268,7 +268,8 @@ import type {
   ExportProgressEvent,
   ImportProgressEvent,
 } from "../shared/protocol/responses";
-import { AssetPreviewModal } from "./AssetPreviewModal";
+import { AssetPreviewModal, type AssetPreviewModalHandle } from "./AssetPreviewModal";
+import { TextAssetPreviewTile } from "./TextAssetPreviewTile";
 import { WindowsWindowControls } from "./WindowsWindowControls";
 import { useViewerChromeIdle } from "./use-viewer-chrome-idle";
 import { useDialogFocusTrap } from "./use-dialog-focus-trap";
@@ -941,6 +942,7 @@ function AppInner() {
 
   // Thumbnail / Preview state
   const [previewAsset, setPreviewAsset] = useState<AssetSummary | null>(null);
+  const previewModalRef = useRef<AssetPreviewModalHandle>(null);
   // REQ-CANVAS-019: read synchronously inside the canvas ResizeObserver
   // callback (which is created once and does not close over fresh state)
   // to skip the reflow-anchor logic while the viewer hides the canvas.
@@ -5157,15 +5159,20 @@ function AppInner() {
                 setAssetMetadata(metadata.value);
             }
           }
-          const missing = event.missingCount
-            ? t("toast.diskSyncedMissing", { count: event.missingCount })
-            : "";
-          setNotice(
-            t("toast.diskSyncedAuto", {
-              count: event.changedCount,
-              missing,
-            }),
-          );
+          if (event.source === "text-save") {
+            setNotice(t("toast.textFileSaved"));
+          } else if (event.source === "watcher") {
+            const missing = event.missingCount
+              ? t("toast.diskSyncedMissing", { count: event.missingCount })
+              : "";
+            setNotice(
+              t("toast.diskSyncedAuto", {
+                count: event.changedCount,
+                missing,
+              }),
+            );
+          }
+          // source === 'client' (or omitted): silent canvas refresh only.
         } catch (caught) {
           setError(toMessage(caught, t("toast.diskChangedRefreshFailed"), locale));
         }
@@ -5467,7 +5474,13 @@ function AppInner() {
       if (previewAsset) {
         if (event.key === "Escape" && !document.fullscreenElement) {
           event.preventDefault();
-          void closeAssetPreview();
+          void (async () => {
+            if (previewModalRef.current) {
+              await previewModalRef.current.requestClose();
+            } else {
+              await closeAssetPreview();
+            }
+          })();
           return;
         }
         if (
@@ -7239,6 +7252,16 @@ function AppInner() {
                         }
                       >
                         {(() => {
+                          if (asset.mediaType === "text" && api && library) {
+                            return (
+                              <TextAssetPreviewTile
+                                api={api}
+                                assetId={asset.assetId}
+                                libraryId={library.libraryId}
+                                revisionId={asset.currentRevisionId}
+                              />
+                            );
+                          }
                           const thumbCover =
                             asset.thumbnailStatus === "ready" &&
                             asset.thumbnailArtifactId &&
@@ -7553,6 +7576,7 @@ function AppInner() {
         </div>
         {previewAsset && library && api && (
           <AssetPreviewModal
+            ref={previewModalRef}
             api={api}
             asset={previewAsset}
             chromeIdle={viewerChromeIdle}

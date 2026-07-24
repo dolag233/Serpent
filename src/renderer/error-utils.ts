@@ -51,6 +51,21 @@ function reasonForCode(
   );
 }
 
+export function messageForPublicError(
+  error: PublicError,
+  locale: AppLocale = DEFAULT_LOCALE,
+  fallback?: string,
+): string {
+  const message =
+    messageForCode(error.code, locale) ?? fallback ?? error.message;
+  const reason = error.reason
+    ? reasonForCode(error.reason, locale)
+    : undefined;
+  return reason
+    ? translateForLocale(locale, "error.withReason", { message, reason })
+    : message;
+}
+
 export function toMessage(
   error: unknown,
   fallback: string,

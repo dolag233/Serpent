@@ -105,6 +105,18 @@ export const TEXT_MIME_BY_EXTENSION: Record<string, string> = {
 export const TEXT_PREVIEW_MAX_BYTES = 16 * 1024;
 export const TEXT_VIEWER_MAX_BYTES = 1024 * 1024;
 export const TEXT_SAVE_MAX_BYTES = 1024 * 1024;
+/** Characters shown in Inspector / card text preview tiles. */
+export const TEXT_CARD_PREVIEW_CHARS = 360;
+
+/** First-page snippet for 4:3 text preview tiles (no need to show the whole file). */
+export function textCardPreviewSnippet(
+  content: string,
+  maxChars: number = TEXT_CARD_PREVIEW_CHARS,
+): string {
+  const normalized = content.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  if (normalized.length <= maxChars) return normalized;
+  return `${normalized.slice(0, maxChars).trimEnd()}…`;
+}
 
 export function isTextFileName(filenameOrMime: string): boolean {
   const lower = filenameOrMime.toLowerCase();
@@ -150,12 +162,12 @@ export function formatFilterHasTextToken(formatFilter: string): boolean {
     .includes(FORMAT_TEXT_TOKEN);
 }
 
-/** Count newline-separated lines; trailing newline still counts as a final empty line only if content ends with \\n after non-empty. */
+/** Count lines the same way a textarea displays them (\\n, \\r\\n, and lone \\r). */
 export function countTextLines(content: string): number {
   if (content.length === 0) return 1;
-  let lines = 1;
-  for (let i = 0; i < content.length; i += 1) {
-    if (content.charCodeAt(i) === 10) lines += 1;
-  }
-  return lines;
+  const normalized = content
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .replace(/\u2028|\u2029/g, "\n");
+  return normalized.split("\n").length;
 }

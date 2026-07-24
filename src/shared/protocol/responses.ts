@@ -129,6 +129,11 @@ export const assetChangeEventSchema = z.strictObject({
   libraryId: nonBlankString,
   changedCount: z.number().int().positive(),
   missingCount: z.number().int().nonnegative(),
+  /**
+   * `watcher` = external disk reconciliation (only this shows the disk-sync toast).
+   * `text-save` / `client` = in-app mutations; UI should use operation-specific copy.
+   */
+  source: z.enum(['watcher', 'text-save', 'client']).optional(),
 });
 
 export type AssetChangeEvent = z.infer<typeof assetChangeEventSchema>;

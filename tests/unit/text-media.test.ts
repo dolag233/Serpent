@@ -5,6 +5,7 @@ import {
   expandFormatFilterTokens,
   FORMAT_TEXT_TOKEN,
   isTextFileName,
+  textCardPreviewSnippet,
   textMimeForExtension,
 } from "../../src/shared/text-media";
 
@@ -27,6 +28,16 @@ test("textMimeForExtension and countTextLines", () => {
   expect(countTextLines("a")).toBe(1);
   expect(countTextLines("a\nb")).toBe(2);
   expect(countTextLines("a\nb\n")).toBe(3);
+  expect(countTextLines("a\r\nb\rc")).toBe(3);
+  expect(countTextLines("a\rb")).toBe(2);
+});
+
+test("textCardPreviewSnippet truncates long content", () => {
+  const long = "abc".repeat(200);
+  const snippet = textCardPreviewSnippet(long, 10);
+  expect(snippet.endsWith("…")).toBe(true);
+  expect(snippet.length).toBeLessThanOrEqual(11);
+  expect(textCardPreviewSnippet("short")).toBe("short");
 });
 
 test("expandFormatFilterTokens expands the unified text token", () => {

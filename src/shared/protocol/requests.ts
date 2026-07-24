@@ -572,6 +572,8 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     assetId: identifierSchema,
     content: z.string().max(1_048_576),
     expectedRevisionId: identifierSchema.optional(),
+    /** When true, insert a new revision row (exit-from-editor commit). */
+    createRevision: z.boolean().optional(),
   }),
   z.strictObject({
     type: z.literal('asset.delete-permanent.request'),
@@ -1256,6 +1258,7 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     assetId: identifierSchema,
     content: z.string().max(1_048_576),
     expectedRevisionId: identifierSchema.optional(),
+    createRevision: z.boolean().optional(),
   }),
   z.strictObject({
     type: z.literal('asset.delete-permanent'),

@@ -1487,6 +1487,7 @@ async function commandFor(
         assetId: request.assetId,
         content: request.content,
         expectedRevisionId: request.expectedRevisionId,
+        createRevision: request.createRevision,
       };
     case "asset.delete-permanent.request":
       return {

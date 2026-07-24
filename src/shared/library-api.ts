@@ -335,7 +335,13 @@ export interface SerpentLibraryApi {
     editable: boolean;
     mimeType: string;
   }>>;
-  saveTextAsset(input: { libraryId: string; assetId: string; content: string; expectedRevisionId?: string }): Promise<LibraryApiResult<{
+  saveTextAsset(input: {
+    libraryId: string;
+    assetId: string;
+    content: string;
+    expectedRevisionId?: string;
+    createRevision?: boolean;
+  }): Promise<LibraryApiResult<{
     asset: AssetSummary;
     revisionId: string;
     byteSize: number;

@@ -19,6 +19,7 @@ import {
 } from "./inspector-multi-edit";
 import { toOpenableExternalUrl } from "../shared/external-url";
 import { shouldShowAutoPaletteSection } from "../shared/palette-visibility";
+import { TextAssetPreviewTile } from "./TextAssetPreviewTile";
 import {
   buildTagSuggestions,
   moveTagSuggestionIndex,
@@ -150,46 +151,25 @@ function InspectorHeroSinglePreview({
   const t = useT();
   const previewSrc = resolveInspectorPreviewSrc(asset, library);
   const [decoded, setDecoded] = useState(false);
-  const [textSnippet, setTextSnippet] = useState<{
-    assetId: string;
-    content: string;
-  } | null>(null);
   const live = resolveLivePreviewMedia(Boolean(livePreview), livePreview);
 
-  useEffect(() => {
-    if (asset.mediaType !== "text" || !api || !library) {
-      return;
-    }
-    let cancelled = false;
-    void api
-      .readTextAsset({
-        libraryId: library.libraryId,
-        assetId: asset.assetId,
-        maxBytes: 2048,
-      })
-      .then((result) => {
-        if (cancelled) return;
-        if (result.ok) {
-          setTextSnippet({ assetId: asset.assetId, content: result.value.content });
-        }
-      })
-      .catch(() => {
-        // Best-effort; hero keeps loading copy until a successful read.
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [api, asset.assetId, asset.mediaType, library]);
-
   if (asset.mediaType === "text") {
-    const snippet =
-      textSnippet?.assetId === asset.assetId ? textSnippet.content : null;
+    if (!api || !library) {
+      return (
+        <div className="inspector-hero-preview inspector-hero-preview-fallback">
+          <Icon name="file" size={20} />
+        </div>
+      );
+    }
     return (
-      <div className="inspector-hero-preview inspector-hero-text-preview">
-        <pre className="inspector-hero-text-snippet">
-          {snippet ?? t("preview.textLoading")}
-        </pre>
-      </div>
+      <TextAssetPreviewTile
+        api={api}
+        assetId={asset.assetId}
+        className="inspector-hero-preview inspector-hero-text-preview text-asset-preview"
+        libraryId={library.libraryId}
+        revisionId={asset.currentRevisionId}
+        snippetClassName="inspector-hero-text-snippet text-asset-preview-snippet"
+      />
     );
   }
 

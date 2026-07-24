@@ -459,6 +459,9 @@ const ALWAYS_IGNORED_ASSET_FILES = new Set([
 function isDefaultIgnoredAssetEntry(name: string, kind: 'directory' | 'file'): boolean {
   const normalized = name.toLocaleLowerCase('en-US');
   if (kind === 'directory') return DEFAULT_IGNORED_ASSET_DIRECTORIES.has(normalized);
+  if (normalized.startsWith('.serpent-text-edit-') && normalized.endsWith('.tmp')) {
+    return true;
+  }
   return DEFAULT_IGNORED_ASSET_FILES.has(normalized) || normalized.startsWith('._');
 }
 
@@ -1847,6 +1850,7 @@ export interface AssetsChangedEvent {
   changedCount: number;
   libraryId: string;
   missingCount: number;
+  source?: 'watcher' | 'text-save' | 'client';
   type: 'asset.changed';
 }
 
@@ -2871,8 +2875,26 @@ export class LibraryService {
     string,
     Map<MediaAutoRepairComponent, number>
   >();
+  /**
+   * After in-app filesystem mutations (text save, copy, move, import…), watcher
+   * refreshes still update DB but must not surface a "disk synced" toast — that
+   * copy is reserved for true external changes.
+   */
+  private suppressWatcherNotifyUntilMs = 0;
 
   constructor(private readonly options: LibraryServiceOptions = {}) {}
+
+  private noteClientFilesystemMutation(): void {
+    const debounceMs = this.options.debounceMs ?? 250;
+    this.suppressWatcherNotifyUntilMs = Math.max(
+      this.suppressWatcherNotifyUntilMs,
+      Date.now() + debounceMs * 6,
+    );
+  }
+
+  private shouldEmitWatcherAssetChange(): boolean {
+    return Date.now() >= this.suppressWatcherNotifyUntilMs;
+  }
 
   private async createConsistentDatabaseSnapshot(
     connection: DatabaseConnection,
@@ -2992,12 +3014,13 @@ export class LibraryService {
         if (!this.watchByLibraryId.has(libraryId) || !this.openById.has(libraryId)) return;
         try {
           const refresh = this.refreshManagedAssets(libraryId);
-          if (refresh.changedCount > 0) {
+          if (refresh.changedCount > 0 && this.shouldEmitWatcherAssetChange()) {
             this.options.onAssetsChanged?.({
               type: 'asset.changed',
               libraryId,
               changedCount: refresh.changedCount,
               missingCount: refresh.missingCount,
+              source: 'watcher',
             });
           }
         } catch (error) {
@@ -3085,12 +3108,13 @@ export class LibraryService {
         if (!this.linkedWatchByKey.has(key) || !this.openById.has(libraryId)) return;
         try {
           const refresh = this.refreshManagedAssets(libraryId);
-          if (refresh.changedCount > 0) {
+          if (refresh.changedCount > 0 && this.shouldEmitWatcherAssetChange()) {
             this.options.onAssetsChanged?.({
               type: 'asset.changed',
               libraryId,
               changedCount: refresh.changedCount,
               missingCount: refresh.missingCount,
+              source: 'watcher',
             });
           }
         } catch (error) {
@@ -9361,6 +9385,7 @@ export class LibraryService {
         libraryId: input.libraryId,
         changedCount: 1,
         missingCount: 0,
+        source: 'client',
       });
 
       return { artifactId };
@@ -9532,6 +9557,7 @@ export class LibraryService {
       libraryId: input.libraryId,
       changedCount: 1,
       missingCount: 0,
+      source: 'client',
     });
 
     return { artifactId: waveformArtifactId };
@@ -9679,6 +9705,7 @@ export class LibraryService {
       libraryId: input.libraryId,
       changedCount: 1,
       missingCount: 0,
+      source: 'client',
     });
 
     return { artifactId: posterArtifactId };
@@ -9827,6 +9854,7 @@ export class LibraryService {
         libraryId,
         changedCount: 1,
         missingCount: 0,
+        source: 'client',
       });
       return true;
     } catch (error) {
@@ -10236,6 +10264,7 @@ export class LibraryService {
         libraryId: input.libraryId,
         changedCount: 1,
         missingCount: 0,
+        source: 'client',
       });
 
       return { artifactId };
@@ -13243,6 +13272,7 @@ export class LibraryService {
       version: 4,
     };
     this.applyManagedMoveOperation(openLibrary, operationId, manifest);
+    this.noteClientFilesystemMutation();
     return { movedCount: files.length, skippedCount, operationId,
       assets: this.managedMoveSummaries(openLibrary, files.map((file) => file.assetId)) };
   }
@@ -13428,6 +13458,7 @@ export class LibraryService {
       version: 5,
     };
     this.applyManagedCopyOperation(openLibrary, operationId, manifest);
+    this.noteClientFilesystemMutation();
     return {
       copiedCount: files.length,
       skippedCount,
@@ -13777,6 +13808,7 @@ export class LibraryService {
     assetId: string;
     content: string;
     expectedRevisionId?: string;
+    createRevision?: boolean;
   }): {
     asset: AssetSummary;
     revisionId: string;
@@ -13822,6 +13854,7 @@ export class LibraryService {
     const dir = path.dirname(absolutePath);
     const tmpPath = path.join(dir, `.serpent-text-edit-${randomUUID()}.tmp`);
     const payload = Buffer.from(input.content, 'utf8');
+    this.noteClientFilesystemMutation();
     try {
       writeFileSync(tmpPath, payload);
       const fd = openSync(tmpPath, 'r+');
@@ -13840,27 +13873,78 @@ export class LibraryService {
       throw new LibraryServiceError('LIBRARY_NOT_WRITABLE', { cause: error });
     }
 
+    // Persist the filesystem mtime/size so a subsequent watcher refresh does not
+    // invent an `external_change` revision and break the next expectedRevisionId.
+    let fileStat: Stats | BigIntStats;
+    try {
+      fileStat = this.options.assetLstat
+        ? this.options.assetLstat(absolutePath)
+        : lstatSync(absolutePath, { bigint: true });
+    } catch (error) {
+      throw new LibraryServiceError('LIBRARY_NOT_WRITABLE', { cause: error });
+    }
+    const storedByteSize = Number(fileStat.size);
+    if (!Number.isSafeInteger(storedByteSize)) {
+      throw new LibraryServiceError('LIBRARY_NOT_WRITABLE');
+    }
+    const modifiedAt = new Date(Number(fileStat.mtimeMs)).toISOString();
     const now = new Date().toISOString();
-    const revisionId = row.current_revision_id;
+    const previousRevisionId = row.current_revision_id;
+    const createRevision = input.createRevision === true;
+    const revisionId = createRevision ? randomUUID() : previousRevisionId;
     openLibrary.connection.transaction(() => {
-      openLibrary.connection
-        .prepare(
-          `UPDATE revisions
-              SET byte_size = ?, modified_at = ?
-            WHERE revision_id = ?`,
-        )
-        .run(payload.length, now, revisionId);
-      openLibrary.connection
-        .prepare(`UPDATE assets SET updated_at = ? WHERE asset_id = ?`)
-        .run(now, input.assetId);
-      openLibrary.connection
-        .prepare(
-          `UPDATE revision_artifacts
-              SET invalidated_at = ?
-            WHERE revision_id = ?
-              AND invalidated_at IS NULL`,
-        )
-        .run(now, revisionId);
+      if (createRevision) {
+        openLibrary.connection
+          .prepare(
+            `INSERT INTO revisions
+               (revision_id, asset_id, parent_revision_id, byte_size, modified_at,
+                original_filename, origin, accepted_at)
+             VALUES (?, ?, ?, ?, ?, ?, 'replace', ?)`,
+          )
+          .run(
+            revisionId,
+            input.assetId,
+            previousRevisionId,
+            storedByteSize,
+            modifiedAt,
+            path.posix.basename(row.relative_file_path),
+            now,
+          );
+        openLibrary.connection
+          .prepare(
+            `UPDATE assets
+                SET current_revision_id = ?, updated_at = ?
+              WHERE asset_id = ?`,
+          )
+          .run(revisionId, now, input.assetId);
+        openLibrary.connection
+          .prepare(
+            `UPDATE revision_artifacts
+                SET invalidated_at = ?
+              WHERE revision_id = ?
+                AND invalidated_at IS NULL`,
+          )
+          .run(now, previousRevisionId);
+      } else {
+        openLibrary.connection
+          .prepare(
+            `UPDATE revisions
+                SET byte_size = ?, modified_at = ?
+              WHERE revision_id = ?`,
+          )
+          .run(storedByteSize, modifiedAt, revisionId);
+        openLibrary.connection
+          .prepare(`UPDATE assets SET updated_at = ? WHERE asset_id = ?`)
+          .run(now, input.assetId);
+        openLibrary.connection
+          .prepare(
+            `UPDATE revision_artifacts
+                SET invalidated_at = ?
+              WHERE revision_id = ?
+                AND invalidated_at IS NULL`,
+          )
+          .run(now, revisionId);
+      }
       this.syncAssetSearchContent(openLibrary.connection, input.assetId);
     })();
 
@@ -13871,11 +13955,12 @@ export class LibraryService {
       libraryId: input.libraryId,
       changedCount: 1,
       missingCount: 0,
+      source: 'text-save',
     });
     return {
       asset,
       revisionId,
-      byteSize: payload.length,
+      byteSize: storedByteSize,
       lineCount: countTextLines(input.content),
     };
   }
@@ -14017,6 +14102,7 @@ export class LibraryService {
     const destinationPath = path.join(parentDirectoryPath, newFileName);
     const now = new Date().toISOString();
     let renamed = false;
+    this.noteClientFilesystemMutation();
     try {
       renameSync(sourcePath, destinationPath);
       renamed = true;
@@ -17094,11 +17180,13 @@ export class LibraryService {
         })();
         if (committedAssetId) {
           affectedAssetIds.push(committedAssetId);
+          this.noteClientFilesystemMutation();
           this.options.onAssetsChanged?.({
             type: 'asset.changed',
             libraryId: pending.libraryId,
             changedCount: 1,
             missingCount: 0,
+            source: 'client',
           });
         }
       }

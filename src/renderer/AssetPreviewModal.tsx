@@ -1,6 +1,8 @@
 import {
+  forwardRef,
   useCallback,
   useEffect,
+  useImperativeHandle,
   useRef,
   useState,
   type SyntheticEvent,
@@ -30,7 +32,7 @@ import {
 import { isTransientMediaPlaybackError } from "./media-seek-session";
 import { VideoPlayerControls } from "./VideoPlayerControls";
 import { AudioPlayerControls } from "./AudioPlayerControls";
-import { TextViewerControls } from "./TextViewerControls";
+import { TextViewerControls, type TextViewerControlsHandle } from "./TextViewerControls";
 import { ZoomableImage } from "./zoomable-preview-image";
 import { useViewerChromeContrast } from "./use-viewer-chrome-contrast";
 
@@ -45,6 +47,11 @@ interface AssetPreviewModalProps {
   onNext?: () => void;
   onPrevious?: () => void;
 }
+
+export type AssetPreviewModalHandle = {
+  /** Flush text edits (and create a revision if the session changed) then close. */
+  requestClose: () => Promise<void>;
+};
 
 const PREVIEW_ERROR_KEYS: Record<string, string> = {
   FFMPEG_REQUIRED: "preview.ffmpegRequired",
@@ -145,16 +152,22 @@ function safeRendererDiagnostic(value: string): string {
     .slice(0, 500);
 }
 
-export function AssetPreviewModal({
-  api,
-  asset,
-  chromeIdle,
-  libraryId,
-  onChromeActivity,
-  onClose,
-  onNext,
-  onPrevious,
-}: AssetPreviewModalProps) {
+export const AssetPreviewModal = forwardRef<
+  AssetPreviewModalHandle,
+  AssetPreviewModalProps
+>(function AssetPreviewModal(
+  {
+    api,
+    asset,
+    chromeIdle,
+    libraryId,
+    onChromeActivity,
+    onClose,
+    onNext,
+    onPrevious,
+  },
+  ref,
+) {
   const t = useT();
   const modalRef = useRef<HTMLElement>(null);
   const requestSequence = useRef(0);
@@ -171,6 +184,7 @@ export function AssetPreviewModal({
   const resolutionRef = useRef<PreviewResolution | null>(null);
   const directApprovedRef = useRef(false);
   const directGateIdentityRef = useRef<string | null>(null);
+  const textViewerRef = useRef<TextViewerControlsHandle>(null);
 
   const resolvePreview = useCallback(
     async (quiet = false, mode: "client" | "fullscreen" = "client") => {
@@ -509,6 +523,33 @@ export function AssetPreviewModal({
     asset.mediaType === "image" &&
     Boolean(imageSrc) &&
     (ready || Boolean(placeholderUrl));
+  const isTextViewer = ready && resolution?.mediaType === "text";
+
+  const handleTextSave = useCallback(async () => {
+    await textViewerRef.current?.save();
+  }, []);
+
+  const requestClose = useCallback(async () => {
+    if (textViewerRef.current) {
+      const ok = await textViewerRef.current.flushBeforeClose();
+      if (!ok) return;
+    }
+    onClose();
+  }, [onClose]);
+
+  useImperativeHandle(ref, () => ({ requestClose }), [requestClose]);
+
+  useEffect(() => {
+    if (!isTextViewer) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
+        event.preventDefault();
+        void handleTextSave();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [handleTextSave, isTextViewer]);
 
   async function openExternal() {
     const result = await api.openExternal({
@@ -528,7 +569,7 @@ export function AssetPreviewModal({
   return (
     <section
       aria-label={t("preview.viewPage", { name: asset.displayName })}
-      className={`workspace-viewer${chromeIdle ? " is-chrome-idle" : ""}`}
+      className={`workspace-viewer${chromeIdle ? " is-chrome-idle" : ""}${isTextViewer ? " is-text-viewer" : ""}`}
       onPointerDown={() => onChromeActivity("pointerdownOrClick")}
       onPointerMove={() => onChromeActivity("pointermove")}
       ref={modalRef}
@@ -537,7 +578,7 @@ export function AssetPreviewModal({
     >
       <div className="preview-modal">
         {/* REQ-VIEW-006: no top filename/toolbar bar; nav sits on the edges. */}
-        <div className="preview-content">
+        <div className={`preview-content${isTextViewer ? " is-text-mode" : ""}`}>
           {primarySurface === "loading" && !placeholderUrl ? (
             <div
               aria-busy="true"
@@ -567,10 +608,11 @@ export function AssetPreviewModal({
           ) : ready && resolution?.mediaType === "text" ? (
             <TextViewerControls
               key={`${libraryId}:${asset.assetId}`}
+              ref={textViewerRef}
               api={api}
               assetId={asset.assetId}
               libraryId={libraryId}
-              onError={(message) => setError(message)}
+              onClose={onClose}
               onSaved={() => setDirectApproved(true)}
             />
           ) : showImage && imageSrc ? (
@@ -636,34 +678,38 @@ export function AssetPreviewModal({
               )}
             </div>
           )}
-          <button
-            aria-label={t("preview.previous")}
-            className={`preview-nav is-prev preview-chrome-fade is-${chromeContrast.prev}`}
-            disabled={!onPrevious}
-            onClick={onPrevious}
-            type="button"
-          >
-            <Icon name="chevron-left" size={28} />
-          </button>
-          <button
-            aria-label={t("preview.next")}
-            className={`preview-nav is-next preview-chrome-fade is-${chromeContrast.next}`}
-            disabled={!onNext}
-            onClick={onNext}
-            type="button"
-          >
-            <Icon name="chevron-right" size={28} />
-          </button>
-          <button
-            aria-label={t("preview.closeViewer")}
-            className={`preview-close-chip preview-chrome-fade is-${chromeContrast.close}`}
-            onClick={onClose}
-            type="button"
-          >
-            <Icon name="close" size={18} />
-          </button>
+          {!isTextViewer ? (
+            <>
+              <button
+                aria-label={t("preview.previous")}
+                className={`preview-nav is-prev preview-chrome-fade is-${chromeContrast.prev}`}
+                disabled={!onPrevious}
+                onClick={onPrevious}
+                type="button"
+              >
+                <Icon name="chevron-left" size={28} />
+              </button>
+              <button
+                aria-label={t("preview.next")}
+                className={`preview-nav is-next preview-chrome-fade is-${chromeContrast.next}`}
+                disabled={!onNext}
+                onClick={onNext}
+                type="button"
+              >
+                <Icon name="chevron-right" size={28} />
+              </button>
+              <button
+                aria-label={t("preview.closeViewer")}
+                className={`preview-close-chip preview-chrome-fade is-${chromeContrast.close}`}
+                onClick={() => void requestClose()}
+                type="button"
+              >
+                <Icon name="close" size={18} />
+              </button>
+            </>
+          ) : null}
         </div>
       </div>
     </section>
   );
-}
+});
