@@ -48,15 +48,31 @@ async function commitInlineFolderEdit(window: Page, folderName: string) {
 }
 
 /**
+ * Locates a managed folder's sidebar nav row by its exact label text.
+ *
+ * Folder names are NOT looked up via getByRole('button', { name }) because a
+ * new folder only shows as a canvas folder-card in a managed folder/root view
+ * — the default "所有资产" scope intentionally has no folder-card row
+ * (FOLDER-010; folder-card-selection.test.ts) — and the sidebar nav-row label
+ * ellipsis-truncates in narrow panes, clipping the text node and breaking an
+ * accessible-name match. Targeting the label text + ancestor row is stable.
+ */
+function sidebarFolderRow(window: Page, folderName: string) {
+  return window
+    .locator(".navigation-pane .nav-row-label", { hasText: folderName })
+    .locator("xpath=ancestor::button[contains(@class, 'nav-row')]");
+}
+
+/**
  * Creates a root-level managed folder through the sidebar “添加文件夹” entry
  * and waits until its nav row is rendered.
  */
 async function createFolderViaSidebar(window: Page, folderName: string) {
   await window.getByRole("button", { name: "添加文件夹" }).click();
   await commitInlineFolderEdit(window, folderName);
-  await expect(
-    window.getByRole("button", { name: folderName, exact: true }),
-  ).toBeVisible({ timeout: 10_000 });
+  await expect(sidebarFolderRow(window, folderName)).toBeVisible({
+    timeout: 10_000,
+  });
 }
 
 /**
@@ -64,7 +80,7 @@ async function createFolderViaSidebar(window: Page, folderName: string) {
  * context menu, asserting it is labelled for that exact folder.
  */
 async function openFolderContextMenu(window: Page, folderName: string) {
-  const row = window.getByRole("button", { name: folderName, exact: true });
+  const row = sidebarFolderRow(window, folderName);
   await expect(row).toBeVisible();
   await row.click({ button: "right" });
   const menu = window.getByRole("menu", {
@@ -110,15 +126,13 @@ test("folder browse stays direct until include-subfolders is checked", async () 
     const menu = await openFolderContextMenu(window, "父文件夹");
     await menu.getByRole("menuitem", { name: "新建子文件夹" }).click();
     await commitInlineFolderEdit(window, "子文件夹");
-    await expect(
-      window.getByRole("button", { name: "子文件夹", exact: true }),
-    ).toBeVisible({ timeout: 10_000 });
+    await expect(sidebarFolderRow(window, "子文件夹")).toBeVisible({
+      timeout: 10_000,
+    });
 
     // Import targets the currently selected folder: scope into 子文件夹 and
     // import both files into it.
-    await window
-      .getByRole("button", { name: "子文件夹", exact: true })
-      .click();
+    await sidebarFolderRow(window, "子文件夹").click();
     await expect(window.locator(".scope-crumb-label.is-current")).toHaveText(
       "子文件夹",
     );
@@ -170,12 +184,10 @@ test("folder browse stays direct until include-subfolders is checked", async () 
     await expect(childCard).toBeVisible({ timeout: 15_000 });
 
     // REQ-FILTER-012: searching while scoped to 父文件夹 with include on
-    // recurses into descendant folders.
+    // recurses into descendant folders. There is no explicit search button —
+    // submitting the search form (Enter) runs the query.
     await window.getByLabel("搜索资源库").fill("child-note");
-    await window.getByRole("button", { name: "搜索", exact: true }).click();
-    await expect(
-      window.locator(".toast").filter({ hasText: "找到 1 项" }),
-    ).toBeVisible({ timeout: 15_000 });
+    await window.getByLabel("搜索资源库").press("Enter");
     await expect(childCard).toBeVisible({ timeout: 15_000 });
     await expect(parentCard).toHaveCount(0);
   } finally {

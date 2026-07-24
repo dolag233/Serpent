@@ -847,7 +847,7 @@ test("maintains consistent preferences, accessible names, zoom behavior, and avo
     await window
       .getByRole("option", { name: "偏好测试标签" })
       .click();
-    await expect(window.locator(".toast")).toContainText("标签已添加");
+    await expect(window.locator(".workspace-notice")).toContainText("标签已添加");
 
     // Enter the tag-filtered view through the retained 标签过滤 entry and
     // verify presentation consistency
@@ -878,7 +878,7 @@ test("maintains consistent preferences, accessible names, zoom behavior, and avo
     await window
       .getByRole("menuitem", { name: "加入合集：偏好测试合集" })
       .click();
-    await expect(window.locator(".toast")).toContainText("资产已加入合集");
+    await expect(window.locator(".workspace-notice")).toContainText("资产已加入合集");
 
     // Navigate to collection scope through sidebar and verify consistency
     await window.getByRole("button", { name: /偏好测试合集/ }).click();

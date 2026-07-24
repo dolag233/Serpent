@@ -826,7 +826,7 @@ test("Delete key trashes selected managed assets", async () => {
     await window.keyboard.press(
       process.platform === "darwin" ? "Meta+Backspace" : "Delete",
     );
-    await expect(window.locator(".toast")).toContainText("已移入回收站", {
+    await expect(window.locator(".workspace-notice")).toContainText("已移入回收站", {
       timeout: 10_000,
     });
     await expect.poll(() => selectedCount(window)).toBe(0);

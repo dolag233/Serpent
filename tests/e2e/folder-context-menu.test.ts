@@ -55,13 +55,47 @@ async function commitInlineFolderEdit(window: Page, folderName: string) {
 /**
  * Creates a root-level managed folder through the sidebar “添加文件夹” entry
  * and waits until its nav row is rendered.
+ *
+ * The new folder only appears as a canvas folder-card in a managed
+ * folder/root view — the default "所有资产" scope intentionally has no
+ * folder-card row (FOLDER-010; folder-card-selection.test.ts). Wait on the
+ * sidebar nav row instead: its label ellipsis-truncates in narrow panes
+ * (clipping the text node and breaking an accessible-name match), so target
+ * the row via its exact label text.
  */
 async function createFolderViaSidebar(window: Page, folderName: string) {
   await window.getByRole("button", { name: "添加文件夹" }).click();
   await commitInlineFolderEdit(window, folderName);
-  await expect(
-    window.getByRole("button", { name: folderName, exact: true }),
-  ).toBeVisible({ timeout: 10_000 });
+  await expect(sidebarFolderRow(window, folderName)).toBeVisible({
+    timeout: 10_000,
+  });
+}
+
+/**
+ * Locates a managed folder's sidebar nav row by its exact label text.
+ *
+ * Folder names are NOT looked up via getByRole('button', { name }) because a
+ * new folder only shows as a canvas folder-card in a managed folder/root view
+ * — the default "所有资产" scope intentionally has no folder-card row
+ * (FOLDER-010; folder-card-selection.test.ts) — and the sidebar nav-row label
+ * ellipsis-truncates in narrow panes, clipping the text node and breaking an
+ * accessible-name match. Targeting the label text + ancestor row is stable.
+ */
+function sidebarFolderRow(window: Page, folderName: string) {
+  return window
+    .locator(".navigation-pane .nav-row-label", { hasText: folderName })
+    .locator("xpath=ancestor::button[contains(@class, 'nav-row')]");
+}
+
+/**
+ * Like sidebarFolderRow but matches the label by exact text, so a renamed
+ * folder's old name (a substring of the new name, e.g. 原画 ⊂ 角色原画) is
+ * asserted gone instead of substring-matching the new row.
+ */
+function sidebarFolderRowExact(window: Page, folderName: string) {
+  return window
+    .locator(".navigation-pane .nav-row-label", { hasText: new RegExp(`^${folderName}$`, "u") })
+    .locator("xpath=ancestor::button[contains(@class, 'nav-row')]");
 }
 
 /**
@@ -69,7 +103,7 @@ async function createFolderViaSidebar(window: Page, folderName: string) {
  * context menu, asserting it is labelled for that exact folder.
  */
 async function openFolderContextMenu(window: Page, folderName: string) {
-  const row = window.getByRole("button", { name: folderName, exact: true });
+  const row = sidebarFolderRow(window, folderName);
   await expect(row).toBeVisible();
   await row.click({ button: "right" });
   const menu = window.getByRole("menu", {
@@ -151,7 +185,7 @@ test("creates a nested subfolder inline from the folder context menu", async () 
 
     // The pending row is the right-clicked folder's first child: rendered
     // directly after it and indented by exactly one depth step.
-    const parentRow = window.getByRole("button", { name: "父级", exact: true });
+    const parentRow = sidebarFolderRow(window, "父级");
     const parentPadding = await parentRow.evaluate((element) =>
       parseFloat(getComputedStyle(element).paddingLeft),
     );
@@ -170,12 +204,12 @@ test("creates a nested subfolder inline from the folder context menu", async () 
     await input.fill("子级");
     await input.press("Enter");
     await expect(editRow).toHaveCount(0, { timeout: 10_000 });
-    await expect(window.locator(".toast")).toContainText("已创建文件夹", {
+    await expect(window.locator(".workspace-notice")).toContainText("已创建文件夹", {
       timeout: 10_000,
     });
 
     // The sidebar lists the child nested one level under the parent.
-    const childRow = window.getByRole("button", { name: "子级", exact: true });
+    const childRow = sidebarFolderRow(window, "子级");
     await expect(childRow).toBeVisible({ timeout: 10_000 });
     const childPadding = await childRow.evaluate((element) =>
       parseFloat(getComputedStyle(element).paddingLeft),
@@ -219,7 +253,7 @@ test("renames a folder inline from the context menu and keeps its assets visible
 
     // Enter the folder scope and import into it (import targets the selected
     // folder), so the rename has real content to carry over.
-    await window.getByRole("button", { name: "原画", exact: true }).click();
+    await sidebarFolderRow(window, "原画").click();
     await expect(window.locator(".scope-crumb-label.is-current")).toHaveText(
       "原画",
     );
@@ -248,7 +282,7 @@ test("renames a folder inline from the context menu and keeps its assets visible
     await expect(window.locator(".nav-inline-edit")).toHaveCount(0, {
       timeout: 10_000,
     });
-    await expect(window.locator(".toast")).toContainText(
+    await expect(window.locator(".workspace-notice")).toContainText(
       "已将文件夹重命名为",
       { timeout: 10_000 },
     );
@@ -256,10 +290,10 @@ test("renames a folder inline from the context menu and keeps its assets visible
     // The sidebar, the active scope breadcrumb, and the canvas content all
     // follow the rename — the folderId is unchanged, so nothing is lost.
     await expect(
-      window.getByRole("button", { name: "角色原画", exact: true }),
+      sidebarFolderRow(window, "角色原画"),
     ).toBeVisible({ timeout: 10_000 });
     await expect(
-      window.getByRole("button", { name: "原画", exact: true }),
+      sidebarFolderRowExact(window, "原画"),
     ).toHaveCount(0);
     await expect(window.locator(".scope-crumb-label.is-current")).toHaveText(
       "角色原画",
@@ -320,13 +354,13 @@ test("keeps the inline rename row open with an inline conflict error and allows 
       timeout: 10_000,
     });
     await expect(
-      window.getByRole("button", { name: "素材丙", exact: true }),
+      sidebarFolderRow(window, "素材丙"),
     ).toBeVisible({ timeout: 10_000 });
     expect(existsSync(path.join(libraryPath, "Assets", "素材丙"))).toBe(true);
     expect(existsSync(path.join(libraryPath, "Assets", "素材甲"))).toBe(false);
     // The conflicting sibling folder was never touched.
     await expect(
-      window.getByRole("button", { name: "素材乙", exact: true }),
+      sidebarFolderRow(window, "素材乙"),
     ).toBeVisible();
     expect(existsSync(path.join(libraryPath, "Assets", "素材乙"))).toBe(true);
   } finally {
@@ -380,7 +414,7 @@ test("shows inline invalid-name errors for illegal folder names and cancels with
       timeout: 5_000,
     });
     await expect(
-      window.getByRole("button", { name: "角色", exact: true }),
+      sidebarFolderRow(window, "角色"),
     ).toBeVisible();
     expect(existsSync(path.join(libraryPath, "Assets", "角色"))).toBe(true);
     expect(existsSync(path.join(libraryPath, "Assets", "a"))).toBe(false);
@@ -408,7 +442,7 @@ test("creates under the selected folder from the sidebar plus entry, cancels wit
     await createFolderViaSidebar(window, "父级");
 
     // Select 父级: the 「+」 entry targets the currently selected location.
-    await window.getByRole("button", { name: "父级", exact: true }).click();
+    await sidebarFolderRow(window, "父级").click();
     await expect(window.locator(".scope-crumb-label.is-current")).toHaveText(
       "父级",
     );
@@ -421,20 +455,20 @@ test("creates under the selected folder from the sidebar plus entry, cancels wit
     await editRow.locator("input").fill("已有子级");
     await window.locator(".workspace").click();
     await expect(
-      window.getByRole("button", { name: "已有子级", exact: true }),
+      sidebarFolderRow(window, "已有子级"),
     ).toBeVisible({ timeout: 10_000 });
     await window.getByRole("button", { name: "折叠 父级" }).click();
     await expect(
-      window.getByRole("button", { name: "已有子级", exact: true }),
+      sidebarFolderRow(window, "已有子级"),
     ).toHaveCount(0);
 
     await window.getByRole("button", { name: "添加文件夹" }).click();
 
     // The pending row nests under the selected folder, not at the root.
     await expect(editRow).toBeVisible({ timeout: 5_000 });
-    const parentPadding = await window
-      .getByRole("button", { name: "父级", exact: true })
-      .evaluate((element) => parseFloat(getComputedStyle(element).paddingLeft));
+    const parentPadding = await sidebarFolderRow(window, "父级").evaluate(
+      (element) => parseFloat(getComputedStyle(element).paddingLeft),
+    );
     const editPadding = await editRow.evaluate((element) =>
       parseFloat(getComputedStyle(element).paddingLeft),
     );
@@ -445,7 +479,7 @@ test("creates under the selected folder from the sidebar plus entry, cancels wit
     await input.press("Escape");
     await expect(editRow).toHaveCount(0, { timeout: 5_000 });
     await expect(
-      window.getByRole("button", { name: "已有子级", exact: true }),
+      sidebarFolderRow(window, "已有子级"),
     ).toHaveCount(0);
     expect(existsSync(path.join(libraryPath, "Assets", "父级", "新建文件夹"))).toBe(
       false,
@@ -459,7 +493,7 @@ test("creates under the selected folder from the sidebar plus entry, cancels wit
     await window.locator(".workspace").click();
     await expect(editRow).toHaveCount(0, { timeout: 5_000 });
     await expect(
-      window.getByRole("button", { name: "已有子级", exact: true }),
+      sidebarFolderRow(window, "已有子级"),
     ).toHaveCount(0);
 
     // A rejected create keeps the editor visible. Cancelling it afterwards
@@ -475,7 +509,7 @@ test("creates under the selected folder from the sidebar plus entry, cancels wit
     await input.press("Escape");
     await expect(editRow).toHaveCount(0, { timeout: 5_000 });
     await expect(
-      window.getByRole("button", { name: "已有子级", exact: true }),
+      sidebarFolderRow(window, "已有子级"),
     ).toHaveCount(0);
 
     // Blur with a valid name commits: clicking away creates the folder.
@@ -484,14 +518,14 @@ test("creates under the selected folder from the sidebar plus entry, cancels wit
     await input.fill("子级");
     await window.locator(".workspace").click();
     await expect(editRow).toHaveCount(0, { timeout: 10_000 });
-    await expect(window.locator(".toast")).toContainText("已创建文件夹", {
+    await expect(window.locator(".workspace-notice")).toContainText("已创建文件夹", {
       timeout: 10_000,
     });
     await expect(
-      window.getByRole("button", { name: "子级", exact: true }),
+      sidebarFolderRow(window, "子级"),
     ).toBeVisible({ timeout: 10_000 });
     await expect(
-      window.getByRole("button", { name: "已有子级", exact: true }),
+      sidebarFolderRow(window, "已有子级"),
     ).toBeVisible({ timeout: 10_000 });
     await expect(
       window.getByRole("button", { name: "折叠 父级" }),

@@ -156,7 +156,7 @@ test("capture primary UI surfaces for the wave-3 UX audit", async () => {
 
     // Copy folder path → toast with fade lifecycle.
     await window.getByRole("menuitem", { name: "复制文件夹路径" }).click();
-    await expect(window.locator(".toast")).toBeVisible({ timeout: 5_000 });
+    await expect(window.locator(".workspace-notice")).toBeVisible({ timeout: 5_000 });
     await shot(window, "08-toast");
     await window.waitForTimeout(5_600); // let the notice dismiss (5s + fade)
 

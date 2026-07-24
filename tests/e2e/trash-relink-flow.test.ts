@@ -55,7 +55,7 @@ test('cancels a batch relink preview and later applies a fresh preview', async (
     await window.getByRole('button', { name: '批量重新定位' }).click();
     const freshPreview = window.getByRole('dialog', { name: '批量重新定位预览' });
     await freshPreview.getByRole('button', { name: '应用批量重新定位' }).click();
-    await expect(window.locator('.toast')).toContainText('恢复 1 项');
+    await expect(window.locator('.workspace-notice')).toContainText('恢复 1 项');
     expect(readFileSync(managedPath, 'utf8')).toBe('replacement');
     await window.getByRole('button', { name: '刷新磁盘变化' }).click();
     await expect(window.getByRole('button', { name: '批量重新定位' })).toHaveCount(0);

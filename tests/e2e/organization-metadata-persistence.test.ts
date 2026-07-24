@@ -109,13 +109,13 @@ test("persists organization and metadata across restart and surfaces optimistic-
     await window
       .getByRole("option", { name: "持久标签" })
       .click();
-    await expect(window.locator(".toast")).toContainText("标签已添加");
+    await expect(window.locator(".workspace-notice")).toContainText("标签已添加");
     await expect(window.locator(".tag-chip-name")).toContainText("持久标签");
     await assetCard.click({ button: "right" });
     await window
       .getByRole("menuitem", { name: "加入合集：持久子合集" })
       .click();
-    await expect(window.locator(".toast")).toContainText("资产已加入合集");
+    await expect(window.locator(".workspace-notice")).toContainText("资产已加入合集");
 
     await assetCard.click();
     const descriptionInput = window.getByLabel("描述");

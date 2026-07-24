@@ -65,11 +65,11 @@ test('organizes, finds, trashes, and restores an imported asset through the UI',
     await assetCard.click({ button: 'right' });
     await window.getByRole('menuitem', { name: '添加标签…' }).click();
     await window.getByRole('option', { name: '角色' }).click();
-    await expect(window.locator('.toast')).toContainText('标签已添加');
+    await expect(window.locator('.workspace-notice')).toContainText('标签已添加');
     await assetCard.click({ button: 'right' });
     await window.getByRole('menuitem', { name: '添加标签…' }).click();
     await window.getByRole('option', { name: '临时' }).click();
-    await expect(window.locator('.toast')).toContainText('标签已添加');
+    await expect(window.locator('.workspace-notice')).toContainText('标签已添加');
     // The sidebar no longer enumerates tags (REQ-TAG-001); enter the
     // tag-filtered view through the retained 标签过滤 entry instead.
     await window.getByRole('button', { name: '标签', exact: true }).click();
@@ -82,7 +82,7 @@ test('organizes, finds, trashes, and restores an imported asset through the UI',
     await window.getByRole('button', { name: /所有资产/ }).click();
     await window.getByRole('button', { name: /hero\.png/i }).click({ button: 'right' });
     await window.getByRole('menuitem', { name: '加入合集：精选' }).click();
-    await expect(window.locator('.toast')).toContainText('资产已加入合集');
+    await expect(window.locator('.workspace-notice')).toContainText('资产已加入合集');
     await window.getByRole('button', { name: /精选/ }).click();
     await expect(window.getByRole('button', { name: /hero\.png/i })).toBeVisible();
 
@@ -92,14 +92,14 @@ test('organizes, finds, trashes, and restores an imported asset through the UI',
     await window.getByLabel('合集名称').fill('收藏');
     await window.getByRole('button', { name: '保存名称' }).click();
     await expect(window.getByRole('button', { name: /收藏/ })).toBeVisible();
-    await expect(window.locator('.toast')).toContainText('合集已重命名');
+    await expect(window.locator('.workspace-notice')).toContainText('合集已重命名');
 
     await window.getByRole('button', { name: /收藏/ }).click({ button: 'right' });
     await window.getByRole('menuitem', { name: '编辑合集详情' }).click();
     await window.getByLabel('描述').fill('主要角色精选资产');
     await window.getByLabel('封面资产').selectOption({ label: 'hero.png' });
     await window.getByRole('button', { name: '保存详情' }).click();
-    await expect(window.locator('.toast')).toContainText('合集详情已更新');
+    await expect(window.locator('.workspace-notice')).toContainText('合集详情已更新');
     const collectionDetails = await window.evaluate(async () => {
       const api = (globalThis as typeof globalThis & { serpent: { library: {
         listOpen(): Promise<{ ok: boolean; value?: Array<{ libraryId: string }> }>;
@@ -116,14 +116,14 @@ test('organizes, finds, trashes, and restores an imported asset through the UI',
 
     await window.getByRole('button', { name: /hero\.png/i }).click({ button: 'right' });
     await window.getByRole('menuitem', { name: '从当前合集移除' }).click();
-    await expect(window.locator('.toast')).toContainText('资产已从合集移除');
+    await expect(window.locator('.workspace-notice')).toContainText('资产已从合集移除');
     await expect(window.getByRole('button', { name: /hero\.png/i })).toHaveCount(0);
 
     window.once('dialog', (dialog) => dialog.accept());
     await window.getByRole('button', { name: /收藏/ }).click({ button: 'right' });
     await window.getByRole('menuitem', { name: '删除合集' }).click();
     await expect(window.getByRole('button', { name: /收藏/ })).toHaveCount(0);
-    await expect(window.locator('.toast')).toContainText('合集已删除');
+    await expect(window.locator('.workspace-notice')).toContainText('合集已删除');
     await expect(window.getByRole('button', { name: /hero\.png/i })).toBeVisible();
 
     await window.getByRole('button', { name: /hero\.png/i }).click();
@@ -186,7 +186,7 @@ test('organizes, finds, trashes, and restores an imported asset through the UI',
     await window.getByLabel('标签过滤').fill('临时');
     await window.getByRole("option", { name: /临时/ }).click();
     await window.getByRole('button', { name: '搜索', exact: true }).click();
-    await expect(window.locator('.toast')).toContainText('找到 1 项');
+    await expect(window.locator('.workspace-notice')).toContainText('找到 1 项');
     await expect(window.getByRole('button', { name: /hero\.png/i })).toBeVisible();
     await expect(window.locator('.search-snippet')).toBeVisible();
     await expect(window.locator('.search-snippet mark').first()).toBeVisible();
@@ -210,7 +210,7 @@ test('organizes, finds, trashes, and restores an imported asset through the UI',
     await window.getByLabel('格式过滤').fill('png');
     await window.getByRole('button', { name: /英雄精选/ }).click({ button: 'right' });
     await window.getByRole('menuitem', { name: '用当前条件更新' }).click();
-    await expect(window.locator('.toast')).toContainText('智能合集条件已更新');
+    await expect(window.locator('.workspace-notice')).toContainText('智能合集条件已更新');
 
     await window.getByRole('button', { name: /英雄精选/ }).click({ button: 'right' });
     await window.getByRole('menuitem', { name: '重命名智能合集' }).click();
@@ -221,14 +221,14 @@ test('organizes, finds, trashes, and restores an imported asset through the UI',
     await window.getByRole('button', { name: /所有资产/ }).click();
     await window.getByRole('button', { name: /hero\.png/i }).click({ button: 'right' });
     await window.getByRole('menuitem', { name: '移入回收站' }).click();
-    await expect(window.locator('.toast')).toContainText('已移入回收站');
+    await expect(window.locator('.workspace-notice')).toContainText('已移入回收站');
     await window.getByRole('button', { name: '回收站', exact: true }).click();
     await window.getByRole('button', { name: /hero\.png/i }).click({ button: 'right' });
     await window.getByRole('menuitem', { name: '恢复' }).click();
     await window.getByLabel('恢复位置').selectOption('original');
     await window.getByLabel('同名冲突').selectOption('keep-both');
     await window.getByRole('button', { name: '确认恢复' }).click();
-    await expect(window.locator('.toast')).toContainText('已恢复 1 项资产');
+    await expect(window.locator('.workspace-notice')).toContainText('已恢复 1 项资产');
     await window.getByRole('button', { name: /所有资产/ }).click();
     await expect(window.getByRole('button', { name: /hero\.png/i })).toBeVisible();
   } finally {
@@ -292,11 +292,11 @@ test('multi-select performs batch organization, trash, restore, and permanent de
     await window.getByRole('button', { name: /first\.txt/i }).click({ button: 'right' });
     await window.getByRole('menuitem', { name: '添加标签…' }).click();
     await window.getByRole('option', { name: '批量标签' }).click();
-    await expect(window.locator('.toast')).toContainText('已为 2 项资产添加标签');
+    await expect(window.locator('.workspace-notice')).toContainText('已为 2 项资产添加标签');
     // Re-right-click for next batch operation (menu auto-closes after action)
     await window.getByRole('button', { name: /first\.txt/i }).click({ button: 'right' });
     await window.getByRole('menuitem', { name: '加入合集：批量合集' }).click();
-    await expect(window.locator('.toast')).toContainText('已将 2 项资产加入合集');
+    await expect(window.locator('.workspace-notice')).toContainText('已将 2 项资产加入合集');
 
     const counts = await window.evaluate(async () => {
       const api = (globalThis as typeof globalThis & { serpent: { library: {
@@ -340,7 +340,7 @@ test('multi-select performs batch organization, trash, restore, and permanent de
     await window.getByRole('button', { name: /first\.txt/i }).click({ button: 'right' });
     await window.getByRole('menuitem', { name: '移除标签…' }).click();
     await window.getByRole('option', { name: '批量标签' }).click();
-    await expect(window.locator('.toast')).toContainText('已为 2 项资产移除标签');
+    await expect(window.locator('.workspace-notice')).toContainText('已为 2 项资产移除标签');
     await expect(window.locator('.asset-card')).toHaveCount(0);
 
     await window.getByRole('button', { name: /批量合集/ }).first().click();
@@ -348,7 +348,7 @@ test('multi-select performs batch organization, trash, restore, and permanent de
     const firstMember = window.getByRole('button', { name: /first\.txt/i });
     const secondMember = window.getByRole('button', { name: /second\.txt/i });
     await firstMember.dragTo(secondMember);
-    await expect(window.locator('.toast')).toContainText('合集成员顺序已更新');
+    await expect(window.locator('.workspace-notice')).toContainText('合集成员顺序已更新');
     const memberOrder = await window.evaluate(async () => {
       const api = (globalThis as typeof globalThis & { serpent: { library: {
         listOpen(): Promise<{ ok: boolean; value?: Array<{ libraryId: string }> }>;
@@ -372,7 +372,7 @@ test('multi-select performs batch organization, trash, restore, and permanent de
     // Right-click to open multi-asset context menu
     await window.getByRole('button', { name: /first\.txt/i }).click({ button: 'right' });
     await window.getByRole('menuitem', { name: /移入回收站（2 项）/ }).click();
-    await expect(window.locator('.toast')).toContainText('2 项资产已移入回收站');
+    await expect(window.locator('.workspace-notice')).toContainText('2 项资产已移入回收站');
     await window.getByRole('button', { name: '回收站', exact: true }).click();
     await expect(window.locator('.asset-card')).toHaveCount(2);
     await window.locator('.asset-card').first().click();
@@ -382,7 +382,7 @@ test('multi-select performs batch organization, trash, restore, and permanent de
     await window.getByLabel('恢复位置').selectOption('root');
     await window.getByLabel('同名冲突').selectOption('skip');
     await window.getByRole('button', { name: '确认恢复' }).click();
-    await expect(window.locator('.toast')).toContainText('已恢复 2 项资产');
+    await expect(window.locator('.workspace-notice')).toContainText('已恢复 2 项资产');
     await window.getByRole('button', { name: /所有资产/ }).click();
     await expect(window.locator('.asset-card')).toHaveCount(2);
 
@@ -390,7 +390,7 @@ test('multi-select performs batch organization, trash, restore, and permanent de
     await window.locator('.asset-card').last().click({ modifiers: [additiveModifier] });
     await window.getByRole('button', { name: /first\.txt/i }).click({ button: 'right' });
     await window.getByRole('menuitem', { name: /移入回收站（2 项）/ }).click();
-    await expect(window.locator('.toast')).toContainText('2 项资产已移入回收站');
+    await expect(window.locator('.workspace-notice')).toContainText('2 项资产已移入回收站');
     await window.getByRole('button', { name: '回收站', exact: true }).click();
     await expect(window.locator('.asset-card')).toHaveCount(2);
     await window.locator('.asset-card').first().click();
@@ -399,7 +399,7 @@ test('multi-select performs batch organization, trash, restore, and permanent de
     await window.getByRole('menuitem', { name: /永久删除（2 项）/ }).click();
     await expect(window.getByRole('dialog')).toContainText('所选 2 项资产');
     await window.getByRole('dialog').getByRole('button', { name: '永久删除 2 项' }).click();
-    await expect(window.locator('.toast')).toContainText('已永久删除 2 项');
+    await expect(window.locator('.workspace-notice')).toContainText('已永久删除 2 项');
     await expect(window.locator('.asset-card')).toHaveCount(0);
   } finally {
     await application.close();
@@ -488,7 +488,7 @@ test('collection recursion toggle immediately refreshes the visible collection s
     await expect(window.getByRole('menuitem', { name: '移出合集：父合集' })).toBeVisible();
     await expect(window.getByRole('menuitem', { name: '加入合集：父合集' })).toBeVisible();
     await window.getByRole('menuitem', { name: '移出合集：父合集' }).click();
-    await expect(window.locator('.toast')).toContainText('已将 1 项直接成员移出合集；1 项不是该合集的直接成员，未改动');
+    await expect(window.locator('.workspace-notice')).toContainText('已将 1 项直接成员移出合集；1 项不是该合集的直接成员，未改动');
     await expect(window.getByRole('button', { name: /child-only\.txt/i })).toBeVisible();
     await expect(window.getByRole('button', { name: /direct-only\.txt/i })).toHaveCount(0);
 
