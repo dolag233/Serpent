@@ -13,10 +13,12 @@ const TEST_PORT = 30_000 + (process.pid % 10_000);
 const PAIRING_TOKEN = 'a'.repeat(43);
 
 function createExtensionServer(
-  options: Omit<ExtensionServerOptions, 'getPairingToken'> & Pick<Partial<ExtensionServerOptions>, 'getPairingToken'>,
+  options: Omit<ExtensionServerOptions, 'getPairingToken' | 'onListFolders'> &
+    Pick<Partial<ExtensionServerOptions>, 'getPairingToken' | 'onListFolders'>,
 ): Promise<ExtensionServer> {
   return createAuthenticatedExtensionServer({
     getPairingToken: () => PAIRING_TOKEN,
+    onListFolders: async () => ({ ok: true, folders: [] }),
     ...options,
   });
 }
@@ -107,6 +109,39 @@ function getPing(port: number): Promise<{ status: number; body: unknown }> {
         resolve({ status: res.statusCode ?? 0, body: JSON.parse(text) });
       });
     }).on('error', reject);
+  });
+}
+
+function getFolders(
+  port: number,
+  opts?: { pairingToken?: string | null },
+): Promise<{ status: number; body: unknown }> {
+  return new Promise((resolve, reject) => {
+    http.get(
+      {
+        hostname: '127.0.0.1',
+        port,
+        path: '/folders',
+        headers:
+          opts?.pairingToken === null
+            ? {}
+            : { Authorization: `Bearer ${opts?.pairingToken ?? PAIRING_TOKEN}` },
+      },
+      (res) => {
+        const chunks: Buffer[] = [];
+        res.on('data', (chunk: Buffer) => chunks.push(chunk));
+        res.on('end', () => {
+          const text = Buffer.concat(chunks).toString('utf-8');
+          let parsed: unknown;
+          try {
+            parsed = JSON.parse(text);
+          } catch {
+            parsed = text;
+          }
+          resolve({ status: res.statusCode ?? 0, body: parsed });
+        });
+      },
+    ).on('error', reject);
   });
 }
 
@@ -324,6 +359,7 @@ describe('createExtensionServer', () => {
       kind: 'image',
       sourcePageUrl: 'https://example.com/gallery',
       mediaUrl: 'https://example.com/photo.png',
+      targetFolderId: 'folder-1',
     });
 
     expect(res.status).toBe(202);
@@ -333,7 +369,44 @@ describe('createExtensionServer', () => {
       kind: 'image',
       sourcePageUrl: 'https://example.com/gallery',
       mediaUrl: 'https://example.com/photo.png',
+      targetFolderId: 'folder-1',
     });
+  });
+
+  it('returns folder list for authenticated GET /folders', async () => {
+    server = await createExtensionServer({
+      port: TEST_PORT,
+      onListFolders: async () => ({
+        ok: true,
+        folders: [
+          {
+            folderId: 'folder-1',
+            name: '场景',
+            relativePath: '场景',
+          },
+        ],
+      }),
+      onSaveIntent: () => {},
+    });
+
+    const res = await getFolders(server.port);
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      status: 'ok',
+      folders: [
+        {
+          folderId: 'folder-1',
+          name: '场景',
+          relativePath: '场景',
+        },
+      ],
+    });
+  });
+
+  it('rejects GET /folders without pairing token', async () => {
+    server = await createExtensionServer({ port: TEST_PORT, onSaveIntent: () => {} });
+    const res = await getFolders(server.port, { pairingToken: null });
+    expect(res.status).toBe(401);
   });
 
   it('returns the same 401 response for missing and incorrect pairing tokens', async () => {

@@ -29,5 +29,6 @@ form.addEventListener('submit', (event) => {
     input.value = token;
     status.textContent = '配对码已保存。现在可以从网页右键保存到 Serpent。';
     status.dataset.kind = 'success';
+    chrome.runtime.sendMessage({ type: 'pairing-updated' });
   });
 });

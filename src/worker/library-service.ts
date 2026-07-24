@@ -17697,6 +17697,49 @@ export class LibraryService {
         ),
       };
 
+      const entrySha256 = sha256FileAtPath(stageFilePath);
+      const existingDestination = this.portableDiskDestination(
+        openLibrary,
+        normalizedDestination,
+      );
+      const existingSize = existingDestination?.size;
+      const existingAbsolutePath =
+        existingDestination && existingDestination.size !== -1
+          ? this.folderPath(openLibrary, existingDestination.actualRelativePath)
+          : undefined;
+      const contentHashCache = new Map<string, string>();
+      const conflictKind = this.classifyImportEntryConflict({
+        openLibrary,
+        entry,
+        entrySha256,
+        existingSize,
+        existingAbsolutePath,
+        contentHashCache,
+        seenContentHashes: new Set<string>(),
+      });
+      if (conflictKind === 'suspected-duplicate') {
+        const existingAssetId = this.findActiveManagedAssetIdByContent(
+          openLibrary,
+          byteSize,
+          entrySha256,
+          contentHashCache,
+        );
+        openLibrary.connection
+          .prepare(
+            "UPDATE file_operations SET status = 'rolled_back', error_code = NULL, updated_at = ? WHERE operation_id = ?",
+          )
+          .run(new Date().toISOString(), operationId);
+        this.removeOperation(operationPath);
+        if (existingAssetId) {
+          const existing = this.listAssets({
+            libraryId: input.libraryId,
+            recursive: true,
+          }).find((asset) => asset.assetId === existingAssetId);
+          if (existing) return { asset: existing };
+        }
+        throw new LibraryServiceError('IMPORT_APPLY_FAILED');
+      }
+
       // Create PendingImport and register.
       const pending: PendingImport = {
         directories: [],
@@ -17725,10 +17768,10 @@ export class LibraryService {
       this.pendingImports.set(operationId, pending);
       this.scheduleImportExpiry(operationId, pending);
 
-      // Resolve import: always create-copy for suspected duplicates, keep-both for name conflicts.
+      // Resolve import: skip library-level duplicates; keep-both for name conflicts.
       const completion = this.resolveImport({
         importId: operationId,
-        suspectedDuplicate: 'create-copy',
+        suspectedDuplicate: 'skip',
         nameConflict: 'keep-both',
       });
       return { asset: completion.assets[0]! };

@@ -150,6 +150,7 @@ import {
   type ExtensionServer,
   type SaveIntent,
   type SaveIntentDisposition,
+  type ListFoldersDisposition,
 } from "./extension-server";
 import { resolveExtensionSaveContext } from "./extension-save-context";
 import { ExtensionPairingStore } from "./extension-pairing-store";
@@ -538,6 +539,52 @@ function cancelled(): RendererResult {
   return { ok: false, error: createPublicError("CANCELLED") };
 }
 
+function getExtensionSaveContext() {
+  const focusedWindow = BrowserWindow.getFocusedWindow();
+  return resolveExtensionSaveContext({
+    focusedWindowId: focusedWindow?.id ?? null,
+    contexts: focusedContexts,
+    lastTargetWindowId: lastExtensionTargetWindowId ?? null,
+    mainWindowId:
+      mainWindow && !mainWindow.isDestroyed() ? mainWindow.id : null,
+  });
+}
+
+async function handleListFolders(): Promise<ListFoldersDisposition> {
+  if (!workerClient) {
+    return { ok: false, status: 503, reason: "worker unavailable" };
+  }
+
+  const saveContext = getExtensionSaveContext();
+  if (!saveContext) {
+    return { ok: false, status: 503, reason: "no active library" };
+  }
+
+  const result = await workerClient.request({
+    type: "folder.list",
+    libraryId: saveContext.libraryId,
+  });
+  if (!result.ok) {
+    return {
+      ok: false,
+      status: result.error.code === "LIBRARY_NOT_OPEN" ? 503 : 422,
+      reason: result.error.reason ?? result.error.code,
+    };
+  }
+  if (result.type !== "folder.list") {
+    return { ok: false, status: 500, reason: "unexpected worker response" };
+  }
+
+  return {
+    ok: true,
+    folders: result.folders.map((folder) => ({
+      folderId: folder.folderId,
+      name: folder.name,
+      relativePath: folder.relativePath,
+    })),
+  };
+}
+
 async function handleSaveIntent(
   intent: SaveIntent,
 ): Promise<SaveIntentDisposition> {
@@ -546,13 +593,7 @@ async function handleSaveIntent(
   }
 
   const focusedWindow = BrowserWindow.getFocusedWindow();
-  const saveContext = resolveExtensionSaveContext({
-    focusedWindowId: focusedWindow?.id ?? null,
-    contexts: focusedContexts,
-    lastTargetWindowId: lastExtensionTargetWindowId ?? null,
-    mainWindowId:
-      mainWindow && !mainWindow.isDestroyed() ? mainWindow.id : null,
-  });
+  const saveContext = getExtensionSaveContext();
   if (!saveContext) {
     logger?.info(
       "extension-server.save",
@@ -570,10 +611,15 @@ async function handleSaveIntent(
     return { accepted: false, status: 503, reason: "no active library" };
   }
 
+  const targetFolderId =
+    intent.targetFolderId !== undefined
+      ? intent.targetFolderId ?? undefined
+      : saveContext.selectedFolderId;
+
   const command: WorkerCommand = {
     type: "extension.save-from-url",
     libraryId: saveContext.libraryId,
-    targetFolderId: saveContext.selectedFolderId,
+    targetFolderId,
     sourcePageUrl: intent.sourcePageUrl,
     mediaUrl: intent.mediaUrl,
     mediaType: intent.mediaType,
@@ -3349,6 +3395,7 @@ async function startApplication(): Promise<void> {
     extensionServer = await createExtensionServer({
       port: 19876,
       getPairingToken: () => extensionPairingStore!.current(),
+      onListFolders: handleListFolders,
       onSaveIntent: handleSaveIntent,
       onError: (err) => logger?.error("extension-server", err),
     });

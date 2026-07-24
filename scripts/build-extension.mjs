@@ -35,14 +35,22 @@ async function validateBuild() {
   if (!manifest.permissions?.includes('storage')) {
     throw new Error('Extension manifest must request storage permission for pairing');
   }
+  if (!manifest.permissions?.includes('alarms')) {
+    throw new Error('Extension manifest must request alarms permission for connection checks');
+  }
+  if (!manifest.action?.default_icon?.['16']?.includes('icon-gray-16.png')) {
+    throw new Error('Extension action must default to the gray toolbar icon');
+  }
   if (manifest.options_page !== 'options.html') {
     throw new Error('Extension manifest must reference options.html');
   }
-  if (manifest.content_scripts) {
-    throw new Error('Extension must not depend on a content-script capture cache');
+  const contentScript = manifest.content_scripts?.[0];
+  if (!contentScript?.js?.includes('content-script.js')) {
+    throw new Error('Extension manifest must register content-script.js on http(s) pages');
   }
 
   await assertFile('background.js');
+  await assertFile('content-script.js');
   await assertFile('options.js');
   await assertFile('options.html');
   await assertFile('options.css');
@@ -53,6 +61,11 @@ async function validateBuild() {
       throw new Error(`Extension manifest icon ${size} must reference ${relativePath}`);
     }
     await assertFile(relativePath);
+    const grayRelativePath = `icons/icon-gray-${size}.png`;
+    if (manifest.action?.default_icon?.[String(size)] !== grayRelativePath) {
+      throw new Error(`Extension action icon ${size} must reference ${grayRelativePath}`);
+    }
+    await assertFile(grayRelativePath);
   }
 
   const background = await readFile(path.join(outDir, 'background.js'), 'utf8');
@@ -79,6 +92,7 @@ async function buildExtension() {
       rollupOptions: {
         input: {
           background: path.join(sourceDir, 'background.ts'),
+          'content-script': path.join(sourceDir, 'content-script.ts'),
           options: path.join(sourceDir, 'options.ts'),
         },
         output: {
@@ -95,12 +109,17 @@ async function buildExtension() {
   await mkdir(path.join(outDir, 'icons'), { recursive: true });
 
   const iconSource = path.join(sourceDir, 'icon.svg');
-  await Promise.all(iconSizes.map(async (size) => {
-    await sharp(iconSource)
+  const iconGraySource = path.join(sourceDir, 'icon-gray.svg');
+  await Promise.all(iconSizes.flatMap((size) => [
+    sharp(iconSource)
       .resize(size, size)
       .png()
-      .toFile(path.join(outDir, 'icons', `icon-${size}.png`));
-  }));
+      .toFile(path.join(outDir, 'icons', `icon-${size}.png`)),
+    sharp(iconGraySource)
+      .resize(size, size)
+      .png()
+      .toFile(path.join(outDir, 'icons', `icon-gray-${size}.png`)),
+  ]));
 
   await validateBuild();
 }

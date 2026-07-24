@@ -16,9 +16,22 @@ export const saveIntentSchema = z.strictObject({
   sourcePageUrl: httpUrlSchema,
   mediaUrl: httpUrlSchema,
   mediaType: z.string().optional(),
+  targetFolderId: z.string().min(1).nullable().optional(),
 });
 
 export type SaveIntent = z.infer<typeof saveIntentSchema>;
+
+export const extensionFolderSchema = z.strictObject({
+  folderId: z.string().min(1),
+  name: z.string().min(1),
+  relativePath: z.string().min(1),
+});
+
+export type ExtensionFolderSummary = z.infer<typeof extensionFolderSchema>;
+
+export type ListFoldersDisposition =
+  | { ok: true; folders: ExtensionFolderSummary[] }
+  | { ok: false; status: number; reason: string };
 
 // ---------------------------------------------------------------------------
 // Server options
@@ -31,6 +44,8 @@ export interface ExtensionServerOptions {
   onSaveIntent: (
     intent: SaveIntent,
   ) => void | SaveIntentDisposition | Promise<void | SaveIntentDisposition>;
+  /** Called on GET /folders after auth succeeds. */
+  onListFolders: () => ListFoldersDisposition | Promise<ListFoldersDisposition>;
   /** Returns the current high-entropy pairing token. Called per request so rotation is immediate. */
   getPairingToken: () => string;
   /** Optional error callback for server-level errors (e.g. bind failure). */
@@ -89,8 +104,9 @@ function jsonResponse(
 /**
  * Starts a lightweight HTTP server bound to 127.0.0.1. Accepts:
  *
- *   GET  /ping  → 200 {"app":"Serpent"}
- *   POST /save  → 202 on valid save-intent JSON, 400/403 otherwise
+ *   GET  /ping    → 200 {"app":"Serpent"}
+ *   GET  /folders → 200 {"folders":[...]} on success
+ *   POST /save    → 202 on valid save-intent JSON, 400/403 otherwise
  *
  * Only loopback connections (127.0.0.1, ::1) are accepted; all others
  * receive 403. If the preferred port is unavailable the server falls
@@ -124,6 +140,39 @@ export async function createExtensionServer(
     if (req.method === 'GET' && req.url === '/ping') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ app: 'Serpent' }));
+      return;
+    }
+
+    // -------- GET /folders --------
+    if (req.method === 'GET' && req.url === '/folders') {
+      if (!isAllowedOrigin(req.headers.origin)) {
+        jsonResponse(res, 403, { status: 'rejected', reason: 'forbidden origin' });
+        req.resume();
+        return;
+      }
+      if (!hasValidPairingToken(req.headers.authorization, options.getPairingToken())) {
+        res.setHeader('WWW-Authenticate', 'Bearer realm="Serpent"');
+        jsonResponse(res, 401, { status: 'rejected', reason: 'authentication required' });
+        req.resume();
+        return;
+      }
+
+      void Promise.resolve(options.onListFolders())
+        .then((disposition) => {
+          if (!disposition.ok) {
+            jsonResponse(res, disposition.status, {
+              status: 'rejected',
+              reason: disposition.reason,
+            });
+            return;
+          }
+          jsonResponse(res, 200, { status: 'ok', folders: disposition.folders });
+        })
+        .catch((error) => {
+          const normalized = error instanceof Error ? error : new Error(String(error));
+          options.onError?.(normalized);
+          jsonResponse(res, 500, { status: 'rejected', reason: 'internal error' });
+        });
       return;
     }
 

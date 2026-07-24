@@ -477,7 +477,11 @@ describe('saveAssetFromUrl', () => {
       mediaUrl: 'https://example.com/photo.png',
     });
 
-    // Import second asset with same filename.
+    // Import second asset with the same filename but different bytes.
+    stubFetch({
+      contentType: 'image/png',
+      body: new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x01, 0x02]),
+    });
     const second = await service.saveAssetFromUrl({
       libraryId,
       sourcePageUrl: 'https://example.com/page2',
@@ -501,6 +505,25 @@ describe('saveAssetFromUrl', () => {
 
     const meta2 = service.getAssetMetadata({ libraryId, assetId: second.asset.assetId });
     expect(meta2.sourcePageUrl).toBe('https://example.com/page2');
+  });
+
+  it('skips library-level duplicate content and returns the existing asset', async () => {
+    stubFetch({ contentType: 'image/png' });
+
+    const first = await service.saveAssetFromUrl({
+      libraryId,
+      sourcePageUrl: 'https://example.com/page',
+      mediaUrl: 'https://example.com/photo.png',
+    });
+
+    const second = await service.saveAssetFromUrl({
+      libraryId,
+      sourcePageUrl: 'https://example.com/page-again',
+      mediaUrl: 'https://example.com/photo.png',
+    });
+
+    expect(second.asset.assetId).toBe(first.asset.assetId);
+    expect(service.listAssets({ libraryId, recursive: true })).toHaveLength(1);
   });
 
   it('rejects non-http scheme for mediaUrl (defense in depth)', async () => {

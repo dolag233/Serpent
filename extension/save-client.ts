@@ -1,3 +1,5 @@
+import type { ExtensionFolderOption } from './folder-menu';
+
 export const SERPENT_PORTS = [19876, 19877, 19878] as const;
 
 const SERPENT_HOST = 'http://127.0.0.1';
@@ -6,6 +8,7 @@ export interface SaveIntent {
   kind: 'image' | 'video';
   sourcePageUrl: string;
   mediaUrl: string;
+  targetFolderId?: string | null;
 }
 
 export interface ContextMenuMediaInfo {
@@ -16,6 +19,16 @@ export interface ContextMenuMediaInfo {
 
 export type SaveOutcome =
   | { kind: 'accepted' }
+  | { kind: 'rejected'; status: number; reason: string }
+  | { kind: 'unreachable' };
+
+export type ConnectionOutcome =
+  | { kind: 'connected' }
+  | { kind: 'needs_pairing' }
+  | { kind: 'offline' };
+
+export type FolderListOutcome =
+  | { kind: 'ok'; folders: ExtensionFolderOption[] }
   | { kind: 'rejected'; status: number; reason: string }
   | { kind: 'unreachable' };
 
@@ -71,6 +84,96 @@ function rejectionReason(body: string): string | undefined {
   return undefined;
 }
 
+function authHeaders(pairingToken: string): HeadersInit {
+  return { Authorization: `Bearer ${pairingToken}` };
+}
+
+async function requestSerpent(
+  path: string,
+  init: RequestInit,
+  fetchFn: FetchFunction,
+): Promise<FetchResponse | null> {
+  for (const port of SERPENT_PORTS) {
+    try {
+      return await fetchFn(`${SERPENT_HOST}:${port}${path}`, init);
+    } catch {
+      // Serpent may have selected the next fallback port.
+    }
+  }
+  return null;
+}
+
+export async function probeSerpentConnection(
+  pairingToken: string | undefined,
+  fetchFn: FetchFunction = fetch,
+): Promise<ConnectionOutcome> {
+  if (!pairingToken) return { kind: 'needs_pairing' };
+
+  const ping = await requestSerpent('/ping', { method: 'GET' }, fetchFn);
+  if (!ping) return { kind: 'offline' };
+
+  const status = await requestSerpent(
+    '/folders',
+    { method: 'GET', headers: authHeaders(pairingToken) },
+    fetchFn,
+  );
+  if (!status) return { kind: 'offline' };
+  if (status.status === 401) return { kind: 'needs_pairing' };
+  if (status.status === 200 || status.status === 503) return { kind: 'connected' };
+  return { kind: 'connected' };
+}
+
+function parseFolderList(body: string): ExtensionFolderOption[] {
+  const parsed = JSON.parse(body) as unknown;
+  if (!parsed || typeof parsed !== 'object') return [];
+  const folders = Reflect.get(parsed, 'folders');
+  if (!Array.isArray(folders)) return [];
+
+  return folders.flatMap((entry) => {
+    if (!entry || typeof entry !== 'object') return [];
+    const folderId = Reflect.get(entry, 'folderId');
+    const name = Reflect.get(entry, 'name');
+    const relativePath = Reflect.get(entry, 'relativePath');
+    if (
+      typeof folderId !== 'string' ||
+      typeof name !== 'string' ||
+      typeof relativePath !== 'string'
+    ) {
+      return [];
+    }
+    return [{ folderId, name, relativePath }];
+  });
+}
+
+export async function fetchSerpentFolders(
+  pairingToken: string,
+  fetchFn: FetchFunction = fetch,
+): Promise<FolderListOutcome> {
+  const response = await requestSerpent(
+    '/folders',
+    { method: 'GET', headers: authHeaders(pairingToken) },
+    fetchFn,
+  );
+  if (!response) return { kind: 'unreachable' };
+
+  let body = '';
+  try {
+    body = await response.text();
+  } catch {
+    body = '';
+  }
+
+  if (response.status === 200) {
+    return { kind: 'ok', folders: parseFolderList(body) };
+  }
+
+  return {
+    kind: 'rejected',
+    status: response.status,
+    reason: rejectionReason(body) ?? `HTTP ${response.status}`,
+  };
+}
+
 /**
  * Delivers one save intent to the first running Serpent extension server.
  * A reachable server owns the request even when it rejects it, so only
@@ -81,39 +184,45 @@ export async function deliverSaveIntent(
   pairingToken: string,
   fetchFn: FetchFunction = fetch,
 ): Promise<SaveOutcome> {
-  for (const port of SERPENT_PORTS) {
-    try {
-      const response = await fetchFn(`${SERPENT_HOST}:${port}/save`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${pairingToken}`,
-        },
-        body: JSON.stringify(intent),
-      });
-
-      if (response.status === 202) {
-        return { kind: 'accepted' };
-      }
-
-      let body = '';
-      try {
-        body = await response.text();
-      } catch {
-        // The HTTP status is still actionable if the response body is unreadable.
-      }
-
-      return {
-        kind: 'rejected',
-        status: response.status,
-        reason: rejectionReason(body) ?? `HTTP ${response.status}`,
-      };
-    } catch {
-      // Serpent may have selected the next fallback port.
-    }
+  const payload: Record<string, unknown> = {
+    kind: intent.kind,
+    sourcePageUrl: intent.sourcePageUrl,
+    mediaUrl: intent.mediaUrl,
+  };
+  if (intent.targetFolderId !== undefined) {
+    payload.targetFolderId = intent.targetFolderId;
   }
 
-  return { kind: 'unreachable' };
+  const response = await requestSerpent(
+    '/save',
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...authHeaders(pairingToken),
+      },
+      body: JSON.stringify(payload),
+    },
+    fetchFn,
+  );
+  if (!response) return { kind: 'unreachable' };
+
+  if (response.status === 202) {
+    return { kind: 'accepted' };
+  }
+
+  let body = '';
+  try {
+    body = await response.text();
+  } catch {
+    // The HTTP status is still actionable if the response body is unreadable.
+  }
+
+  return {
+    kind: 'rejected',
+    status: response.status,
+    reason: rejectionReason(body) ?? `HTTP ${response.status}`,
+  };
 }
 
 export function notificationForOutcome(outcome: SaveOutcome): UserNotification {
