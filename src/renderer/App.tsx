@@ -6269,6 +6269,13 @@ function AppInner() {
     >
       <header className="app-toolbar">
         <div className="toolbar-cluster toolbar-nav-cluster">
+          <AppSettingsEntry
+            disabled={busy}
+            onOpen={() => {
+              setAppSettingsCategory("general");
+              setAppSettingsOpen(true);
+            }}
+          />
           <ToolButton
             icon={leftOpen ? "panel-left-close" : "panel-left"}
             label={leftOpen ? t("shell.collapseNav") : t("shell.expandNav")}
@@ -6283,13 +6290,6 @@ function AppInner() {
               canForward={navHistoryUi.canForward}
               onBack={() => void goWorkspaceBack()}
               onForward={() => void goWorkspaceForward()}
-            />
-            <AppSettingsEntry
-              disabled={busy}
-              onOpen={() => {
-                setAppSettingsCategory("general");
-                setAppSettingsOpen(true);
-              }}
             />
             <LibrarySwitcher
               busy={busy}
