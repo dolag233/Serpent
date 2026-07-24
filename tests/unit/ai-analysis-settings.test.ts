@@ -31,7 +31,7 @@ describe('toWireAiAnalysisSettings', () => {
     expect(wire).toEqual({
       forceExistingTags: false,
       maxTags: 8,
-      maxDescriptionCharsZh: 100,
+      maxDescriptionCharsZh: 220,
       maxDescriptionWordsEn: 60,
       outputStyle: 'normal',
       ratingRubric: DEFAULT_AI_ANALYSIS_SETTINGS.ratingRubric,

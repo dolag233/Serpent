@@ -39,7 +39,7 @@ export const DEFAULT_AI_ANALYSIS_SETTINGS: AiAnalysisSettings = {
   ratingEnabled: true,
   forceExistingTags: false,
   maxTags: 8,
-  maxDescriptionCharsZh: 100,
+  maxDescriptionCharsZh: 220,
   maxDescriptionWordsEn: 60,
   outputStyle: 'normal',
   ratingRubric: DEFAULT_AI_RATING_RUBRIC,

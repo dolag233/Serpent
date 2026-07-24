@@ -694,7 +694,7 @@ export function AiConfigDialog({
                     onChange={(e) =>
                       patchSettings({
                         maxDescriptionCharsZh:
-                          Number.parseInt(e.target.value, 10) || 100,
+                          Number.parseInt(e.target.value, 10) || 220,
                       })
                     }
                     type="number"
