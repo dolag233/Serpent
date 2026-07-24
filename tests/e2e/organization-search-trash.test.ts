@@ -191,27 +191,24 @@ test('organizes, finds, trashes, and restores an imported asset through the UI',
     await expect(window.locator('.search-snippet')).toBeVisible();
     await expect(window.locator('.search-snippet mark').first()).toBeVisible();
 
-    await window.getByLabel('智能合集标题').fill('英雄精选');
-    await window.getByRole('button', { name: '保存', exact: true }).click();
+    // Save the current query as a smart collection via the sidebar inline
+    // create; creating auto-opens the settings dialog. Rename it there (仅保存名称)
+    // and write the active query (保存当前条件) in the same dialog — the rename
+    // menu item reuses this settings dialog.
+    await window.getByRole('button', { name: '新建智能合集' }).click();
+    await window.getByLabel('新智能合集名称').fill('英雄精选');
+    await window.getByLabel('新智能合集名称').press('Enter');
+    const smartSettings = window.getByRole('dialog');
+    await expect(smartSettings).toBeVisible();
+    await smartSettings.getByLabel('名称').fill('英雄精选');
+    await smartSettings.getByRole('button', { name: '保存当前条件' }).click();
+    await expect(smartSettings).toBeHidden();
     await expect(window.getByRole('button', { name: /英雄精选/ })).toBeVisible();
-    // Flush smart-collection save toast before navigating
-    await window.waitForFunction(
-      () => !document.querySelector('.workspace-notice'),
-      { timeout: 10_000 },
-    );
     await window.getByRole('button', { name: /英雄精选/ }).click();
-    // Smart collection may show search result toast but it's not guaranteed
-    // across runs; verify the asset is visible instead
     await expect(window.getByRole('button', { name: /hero\.png/i })).toBeVisible({ timeout: 10_000 });
 
-    // Opening a smart collection intentionally clears transient discovery
-    // controls. Set an explicit current condition before exercising update.
-    await window.getByRole('button', { name: '格式', exact: true }).click();
-    await window.getByLabel('格式过滤').fill('png');
-    await window.getByRole('button', { name: /英雄精选/ }).click({ button: 'right' });
-    await window.getByRole('menuitem', { name: '用当前条件更新' }).click();
-    await expect(window.locator('.workspace-notice')).toContainText('智能合集条件已更新');
-
+    // Rename through the sidebar context menu → the rename dialog (a focused
+    // single-field dialog, distinct from the multi-button settings dialog).
     await window.getByRole('button', { name: /英雄精选/ }).click({ button: 'right' });
     await window.getByRole('menuitem', { name: '重命名智能合集' }).click();
     await window.getByRole('dialog').getByLabel('智能合集名称').fill('英雄筛选');
@@ -219,9 +216,16 @@ test('organizes, finds, trashes, and restores an imported asset through the UI',
     await expect(window.getByRole('button', { name: /英雄筛选/ })).toBeVisible();
 
     await window.getByRole('button', { name: /所有资产/ }).click();
+    await expect(window.getByRole('button', { name: /hero\.png/i })).toBeVisible();
+    // Let the smart-collection toast fade so the trash toast below is the
+    // current .workspace-notice (the banner is a single reused element).
+    await window.waitForFunction(
+      () => !document.querySelector('.workspace-notice'),
+      { timeout: 10_000 },
+    ).catch(() => undefined);
     await window.getByRole('button', { name: /hero\.png/i }).click({ button: 'right' });
     await window.getByRole('menuitem', { name: '移入回收站' }).click();
-    await expect(window.locator('.workspace-notice')).toContainText('已移入回收站');
+    await expect(window.locator('.workspace-notice')).toContainText('1 项资产已移入回收站');
     await window.getByRole('button', { name: '回收站', exact: true }).click();
     await window.getByRole('button', { name: /hero\.png/i }).click({ button: 'right' });
     await window.getByRole('menuitem', { name: '恢复' }).click();
