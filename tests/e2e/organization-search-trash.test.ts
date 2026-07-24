@@ -73,7 +73,7 @@ test('organizes, finds, trashes, and restores an imported asset through the UI',
     // The sidebar no longer enumerates tags (REQ-TAG-001); enter the
     // tag-filtered view through the retained 标签过滤 entry instead.
     await window.getByRole('button', { name: '标签', exact: true }).click();
-    await window.getByLabel('标签过滤').fill('角色');
+    await window.getByRole('textbox', { name: '标签过滤' }).fill('角色');
     await window.getByRole("option", { name: /角色/ }).click();
     await expect(window.getByRole('button', { name: /hero\.png/i })).toBeVisible();
     // Close the tag dimension before continuing with other discovery controls.
@@ -183,10 +183,10 @@ test('organizes, finds, trashes, and restores an imported asset through the UI',
     await window.getByRole('button', { name: '更多', exact: true }).click();
     await window.getByLabel('喜欢过滤').selectOption('yes');
     await window.getByRole('button', { name: '标签', exact: true }).click();
-    await window.getByLabel('标签过滤').fill('临时');
+    await window.getByRole('textbox', { name: '标签过滤' }).fill('临时');
     await window.getByRole("option", { name: /临时/ }).click();
-    await window.getByRole('button', { name: '搜索', exact: true }).click();
-    await expect(window.locator('.workspace-notice')).toContainText('找到 1 项');
+    // Search auto-runs on debounce (no 「搜索」 button since c60d890); the
+    // auto-search is intentionally silent (Serpent-huvw), so assert on results.
     await expect(window.getByRole('button', { name: /hero\.png/i })).toBeVisible();
     await expect(window.locator('.search-snippet')).toBeVisible();
     await expect(window.locator('.search-snippet mark').first()).toBeVisible();
@@ -196,7 +196,7 @@ test('organizes, finds, trashes, and restores an imported asset through the UI',
     await expect(window.getByRole('button', { name: /英雄精选/ })).toBeVisible();
     // Flush smart-collection save toast before navigating
     await window.waitForFunction(
-      () => !document.querySelector('.toast'),
+      () => !document.querySelector('.workspace-notice'),
       { timeout: 10_000 },
     );
     await window.getByRole('button', { name: /英雄精选/ }).click();
@@ -324,13 +324,13 @@ test('multi-select performs batch organization, trash, restore, and permanent de
     // The sidebar no longer enumerates tags (REQ-TAG-001); enter the
     // tag-filtered view through the retained 标签过滤 entry instead.
     await window.getByRole('button', { name: '标签', exact: true }).click();
-    await window.getByLabel('标签过滤').fill('批量标签');
+    await window.getByRole('textbox', { name: '标签过滤' }).fill('批量标签');
     await window.getByRole("option", { name: /批量标签/ }).click();
     await expect.poll(searchRequestCount).toBeGreaterThan(tagSearchCount);
     await expect(window.getByText('正在同步资源库…')).toHaveCount(0);
     // Flush search-result toast before opening context menu
     await window.waitForFunction(
-      () => !document.querySelector('.toast'),
+      () => !document.querySelector('.workspace-notice'),
       { timeout: 10_000 },
     );
     // Multi-select first
