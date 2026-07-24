@@ -22,6 +22,19 @@ import {
 
 test.describe.configure({ timeout: 120_000 });
 
+/**
+ * Locates a managed folder's sidebar nav row by its label text. Folder cards
+ * only render in a managed-folder/root view (not the default "所有资产" scope
+ * — FOLDER-010), and the nav label ellipsis-truncates in narrow panes (which
+ * clips the text node and breaks an accessible-name match), so target the
+ * label text + ancestor row instead of getByRole('button', { name }).
+ */
+function sidebarFolderRow(window: Page, folderName: string) {
+  return window
+    .locator('.navigation-pane .nav-row-label', { hasText: folderName })
+    .locator("xpath=ancestor::button[contains(@class, 'nav-row')]");
+}
+
 test('imports files and a directory hierarchy, then reconciles external changes', async () => {
   const testInfo = test.info();
   const temporaryRoot = mkdtempSync(path.join(tmpdir(), 'serpent-ingestion-e2e-'));
@@ -67,15 +80,15 @@ test('imports files and a directory hierarchy, then reconciles external changes'
     await window.getByRole('button', { name: '添加文件夹' }).click();
     await window.getByLabel("新文件夹名称").fill('项目');
     await window.keyboard.press("Enter");
-    await expect(window.getByRole('button', { name: '项目', exact: true })).toBeVisible();
-    await window.getByRole('button', { name: '项目', exact: true }).click();
+    await expect(sidebarFolderRow(window, '项目')).toBeVisible();
+    await sidebarFolderRow(window, '项目').click();
 
     await window.getByRole('button', { name: '添加文件夹' }).click();
     await window.getByLabel("新文件夹名称").fill('角色');
     await window.keyboard.press("Enter");
-    await expect(window.getByRole('button', { name: '角色' })).toBeVisible();
+    await expect(sidebarFolderRow(window, '角色')).toBeVisible();
 
-    await window.getByRole('button', { name: '项目', exact: true }).click();
+    await sidebarFolderRow(window, '项目').click();
     await window.getByRole('button', { name: /资源库菜单|当前资源库/ }).click();
     await window.getByRole('menuitem', { name: '导入文件', exact: true }).click();
     await expect(window.getByText('hero.png', { exact: true })).toBeVisible();
@@ -97,22 +110,28 @@ test('imports files and a directory hierarchy, then reconciles external changes'
     await window.getByRole('menuitem', { name: '导入文件', exact: true }).click();
     const conflictDialog = window.getByRole('dialog');
     await expect(conflictDialog).toBeVisible();
-    await expect(conflictDialog.getByRole('heading', { name: '处理导入冲突' })).toBeVisible();
+    // Same filenames land first (同名冲突 → keep-both), then identical content
+    // (内容重复 → create-copy). Both phases must be resolved to complete the
+    // import and end up with two copies of each file.
+    await expect(conflictDialog.getByRole('heading', { name: '同名冲突' })).toBeVisible();
     const conflictScreenshot = testInfo.outputPath('import-conflict.png');
     await window.screenshot({ path: conflictScreenshot });
     await testInfo.attach('import-conflict', { path: conflictScreenshot, contentType: 'image/png' });
-    await conflictDialog.getByLabel('疑似重复').selectOption('create-copy');
-    await conflictDialog.getByRole('button', { name: '应用并导入' }).click();
+    await conflictDialog.getByLabel('同名时').selectOption('keep-both');
+    await conflictDialog.getByRole('button', { name: '自动重命名并导入' }).click();
+    await expect(conflictDialog.getByRole('heading', { name: '内容重复' })).toBeVisible();
+    await conflictDialog.getByLabel('内容重复时').selectOption('create-copy');
+    await conflictDialog.getByRole('button', { name: '仍然导入' }).click();
     await expect(conflictDialog).toBeHidden();
     const assetsAfterCopy = await listAllAssets(window);
     expect(assetsAfterCopy.filter((asset) => asset.displayName.startsWith('hero')).length).toBe(2);
     expect(assetsAfterCopy.filter((asset) => asset.displayName.startsWith('notes')).length).toBe(2);
 
-    await window.getByRole('button', { name: '角色' }).click();
+    await sidebarFolderRow(window, '角色').click();
     await window.getByRole('button', { name: /资源库菜单|当前资源库/ }).click();
     await window.getByRole('menuitem', { name: '导入文件夹', exact: true }).click();
-    await expect(window.getByRole('button', { name: '正面' })).toBeVisible();
-    await window.getByRole('button', { name: '正面' }).click();
+    await expect(sidebarFolderRow(window, '正面')).toBeVisible();
+    await sidebarFolderRow(window, '正面').click();
     await expect(window.getByText('pose.webp', { exact: true })).toBeVisible();
     const importedNestedPath = path.join(
       libraryPath,
@@ -169,7 +188,7 @@ test('imports files and a directory hierarchy, then reconciles external changes'
     expect(existsSync(operationsPath) ? readdirSync(operationsPath, { recursive: true }) : []).toHaveLength(0);
     expect(await resolveImportToken(window, pendingBeforeClose.importId)).toBe(false);
     await window.getByRole('button', { name: '打开资源库' }).click();
-    await expect(window.getByRole('button', { name: '项目', exact: true })).toBeVisible();
+    await expect(sidebarFolderRow(window, '项目')).toBeVisible();
     const afterReopen = await listAllAssets(window);
     expect(afterReopen.find((asset) => asset.displayName === 'hero.png')?.assetId).toBe(heroBefore?.assetId);
     expect(afterReopen.find((asset) => asset.displayName === 'pose.webp')?.availability).toBe('missing');
@@ -209,7 +228,7 @@ test('shows a specific safe import reason and persists the complete Worker error
     await window.getByRole("textbox", { name: "名称" }).fill(libraryName);
     await window.getByRole('button', { name: '创建', exact: true }).click();
     await window.getByRole('button', { name: '导入文件夹', exact: true }).first().click();
-    await expect(window.getByRole('alert')).toContainText(
+    await expect(window.getByRole('alertdialog')).toContainText(
       '原因：目录中包含当前切片不支持的符号链接。',
     );
 
@@ -256,7 +275,7 @@ test('maps a real filesystem permission failure and logs its complete cause chai
     await window.getByRole('button', { name: '创建', exact: true }).click();
     chmodSync(sourceDirectory, 0o000);
     await window.getByRole('button', { name: '导入文件夹', exact: true }).first().click();
-    await expect(window.getByRole('alert')).toContainText(
+    await expect(window.getByRole('alertdialog')).toContainText(
       '原因：当前用户没有读取源文件或写入目标位置的权限。',
     );
 
