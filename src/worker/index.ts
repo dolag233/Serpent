@@ -5,6 +5,7 @@ import {
   type WorkerResult,
 } from '../shared/protocol/responses';
 import type { ParentPort } from 'electron';
+import { isBenignThumbnailErrorCode } from '../shared/thumbnail-support';
 import { LibraryService, LibraryServiceError } from './library-service';
 import { publicErrorForWorkerFailure } from './public-error';
 import { OpenAIVendorAdapter } from './ai/openai-adapter';
@@ -122,6 +123,7 @@ function scheduleThumbnailQueue(
           });
         } else {
           const errorCode = result.errorCode ?? 'THUMBNAIL_GENERATION_FAILED';
+          if (isBenignThumbnailErrorCode(errorCode)) return;
           parentPort?.postMessage({
             type: 'asset.thumbnail.failed',
             libraryId,

@@ -32,6 +32,11 @@ import {
   coverSrc,
   isCardHoverPreviewable,
 } from "./asset-card-hover-preview";
+import { shouldShowThumbnailFailureBadge } from "./thumbnail-failure-badge";
+import {
+  assetSupportsThumbnail,
+  isBenignThumbnailErrorCode,
+} from "../shared/thumbnail-support";
 import { AssetCardMedia } from "./AssetCardMedia";
 import { useAssetCardHoverPreview } from "./use-asset-card-hover-preview";
 import { resolveSearchSnippetCaption } from "./search-snippet-caption";
@@ -1949,39 +1954,66 @@ function AppInner() {
     if (!api) return;
     return api.onThumbnailEvent((event) => {
       if (event.libraryId !== library?.libraryId) return;
-      setThumbnailFailures((current) => {
-        const next = new Map(current);
+      setAssets((current) => {
+        const asset = current.find((item) => item.assetId === event.assetId);
+        if (!asset) return current;
+
         if (event.type === "asset.thumbnail.failed") {
-          next.set(
-            event.assetId,
-            event.reason ?? t("toast.thumbnailFailed"),
+          const suppressFailure =
+            isBenignThumbnailErrorCode(event.errorCode) ||
+            !assetSupportsThumbnail(asset);
+          setThumbnailFailures((failures) => {
+            const next = new Map(failures);
+            if (suppressFailure) {
+              next.delete(event.assetId);
+            } else {
+              next.set(
+                event.assetId,
+                event.reason ?? t("toast.thumbnailFailed"),
+              );
+            }
+            return next;
+          });
+          if (suppressFailure) return current;
+          return current.map((item) =>
+            item.assetId === event.assetId
+              ? {
+                  ...item,
+                  thumbnailStatus: "failed",
+                  thumbnailArtifactId: null,
+                }
+              : item,
           );
-        } else if (event.type === "asset.thumbnail.ready") {
-          next.delete(event.assetId);
         }
-        return next;
+
+        if (event.type === "asset.thumbnail.ready" && event.artifactId) {
+          setThumbnailFailures((failures) => {
+            if (!failures.has(event.assetId)) return failures;
+            const next = new Map(failures);
+            next.delete(event.assetId);
+            return next;
+          });
+          return current.map((item) =>
+            item.assetId === event.assetId
+              ? {
+                  ...item,
+                  thumbnailStatus: "ready" as const,
+                  thumbnailArtifactId: event.artifactId ?? null,
+                }
+              : item,
+          );
+        }
+
+        if (event.type === "asset.thumbnail.ready") {
+          setThumbnailFailures((failures) => {
+            if (!failures.has(event.assetId)) return failures;
+            const next = new Map(failures);
+            next.delete(event.assetId);
+            return next;
+          });
+        }
+        return current;
       });
-      setAssets((current) =>
-        current.map((asset) => {
-          if (asset.assetId !== event.assetId) return asset;
-          if (event.type === "asset.thumbnail.ready" && event.artifactId) {
-            return {
-              ...asset,
-              thumbnailStatus: "ready",
-              thumbnailArtifactId: event.artifactId,
-            };
-          }
-          if (event.type === "asset.thumbnail.ready") {
-            // Ready without artifactId: keep prior status; do not force failed.
-            return asset;
-          }
-          return {
-            ...asset,
-            thumbnailStatus: "failed",
-            thumbnailArtifactId: null,
-          };
-        }),
-      );
     });
   }, [api, library?.libraryId, t]);
   useEffect(() => {
@@ -7001,6 +7033,10 @@ function AppInner() {
                         searchSnippets.get(asset.assetId),
                         asset.displayName,
                       );
+                      const showThumbnailFailure = shouldShowThumbnailFailureBadge(
+                        asset,
+                        thumbnailFailures.has(asset.assetId),
+                      );
                       const renamingThisAsset =
                         assetRenameDialog?.assetId === asset.assetId;
                       const CardTag = renamingThisAsset ? "div" : "button";
@@ -7145,7 +7181,11 @@ function AppInner() {
                               )
                             : undefined
                         }
-                        title={thumbnailFailures.get(asset.assetId)}
+                        title={
+                          showThumbnailFailure
+                            ? thumbnailFailures.get(asset.assetId)
+                            : undefined
+                        }
                       >
                         {(() => {
                           const thumbCover =
@@ -7215,8 +7255,7 @@ function AppInner() {
                             {fileExtensionLabel(asset.displayName)}
                           </span>
                         )}
-                        {thumbnailFailures.has(asset.assetId) &&
-                          asset.thumbnailStatus !== "ready" && (
+                        {showThumbnailFailure && (
                           <span className="missing-banner">
                             <Icon name="warning" size={12} />
                             {t("toast.thumbnailFailedBadge")}

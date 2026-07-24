@@ -228,6 +228,43 @@ describe('managed asset watcher', () => {
     expect(() => service.createLibrary({ displayName: 'Best effort', selectedParentPath: root })).not.toThrow();
     service.closeAll();
   });
+
+  it('discovers new files in a managed folder after a debounced event', () => {
+    const root = temporaryRoot();
+    const observers = observerHarness();
+    const scheduler = new ManualScheduler();
+    const events: unknown[] = [];
+    const service = new LibraryService({
+      observerFactory: observers.factory,
+      scheduler,
+      onAssetsChanged: (event) => events.push(event),
+    });
+    const library = service.createLibrary({ displayName: 'Managed watch', selectedParentPath: root });
+    const folder = service.createManagedFolder({
+      libraryId: library.libraryId,
+      name: 'FolderA',
+    });
+
+    writeFileSync(path.join(library.libraryPath, 'Assets', folder.relativePath, 'added-a.png'), 'a');
+    writeFileSync(path.join(library.libraryPath, 'Assets', folder.relativePath, 'added-b.png'), 'b');
+    observers.callbacks[0]!();
+    observers.callbacks[0]!();
+    expect(scheduler.pendingCount()).toBe(1);
+    scheduler.flush();
+
+    expect(service.listAssets({
+      libraryId: library.libraryId,
+      folderId: folder.folderId,
+      recursive: false,
+    }).map((asset) => asset.relativeFilePath).sort()).toEqual([
+      'FolderA/added-a.png',
+      'FolderA/added-b.png',
+    ]);
+    expect(events).toEqual([
+      { type: 'asset.changed', libraryId: library.libraryId, changedCount: 2, missingCount: 0 },
+    ]);
+    service.closeAll();
+  });
 });
 
 describe('linked folder watcher', () => {

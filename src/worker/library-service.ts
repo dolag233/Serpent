@@ -251,6 +251,7 @@ import {
   TEXT_VIEWER_MAX_BYTES,
   textMimeForExtension,
 } from '../shared/text-media';
+import { assetSupportsThumbnail } from '../shared/thumbnail-support';
 import {
   extractZipStream,
   ZipImportStreamError,
@@ -9130,11 +9131,12 @@ export class LibraryService {
   }
 
   static supportsThumbnail(filename: string): boolean {
-    const mediaType = LibraryService.detectMediaType(filename);
-    const extension = path.extname(filename).toLowerCase();
-    // Text has no raster thumbnail job; preview is IPC-capped UTF-8 (Serpent-sh7).
-    if (mediaType === 'text') return false;
-    return mediaType !== 'other' || extension === '.exr' || extension === '.tga';
+    return assetSupportsThumbnail({
+      mediaType: LibraryService.toSummaryMediaType(
+        LibraryService.detectMediaType(filename),
+      ),
+      displayName: path.basename(filename),
+    });
   }
 
   // ── Thumbnail Generation Dispatch ─────────────────────────────────
@@ -16066,6 +16068,91 @@ export class LibraryService {
     return entries;
   }
 
+  private enumerateManagedSources(assetsRootPath: string): Array<{
+    relativePath: string;
+    byteSize: number;
+    modifiedAt: string;
+    originalFilename: string;
+  }> {
+    const entries: Array<{
+      relativePath: string;
+      byteSize: number;
+      modifiedAt: string;
+      originalFilename: string;
+    }> = [];
+    const visit = (directoryPath: string, relativeDirectory: string): void => {
+      let children;
+      try {
+        children = readdirSync(directoryPath, { withFileTypes: true }).sort((left, right) =>
+          left.name.localeCompare(right.name),
+        );
+      } catch (error) {
+        throw new LibraryServiceError('IMPORT_APPLY_FAILED', { cause: error });
+      }
+      for (const child of children) {
+        const childRelative =
+          relativeDirectory === ''
+            ? child.name
+            : path.posix.join(relativeDirectory, child.name);
+        if (child.isSymbolicLink()) {
+          this.diagnose(
+            'managed-asset.symlink-skipped',
+            new LibraryServiceError('INVALID_IMPORT_SOURCE', {
+              reason: 'SYMBOLIC_LINK_NOT_ALLOWED',
+            }),
+            { assetsRootPath, relativePath: childRelative },
+          );
+          continue;
+        }
+        if (child.isDirectory()) {
+          if (isDefaultIgnoredAssetEntry(child.name, 'directory')) continue;
+          visit(path.join(directoryPath, child.name), childRelative);
+          continue;
+        }
+        if (!child.isFile()) continue;
+        const childPath = path.join(directoryPath, child.name);
+        let stat: BigIntStats;
+        try {
+          stat = lstatSync(childPath, { bigint: true });
+        } catch (error) {
+          throw new LibraryServiceError('IMPORT_APPLY_FAILED', { cause: error });
+        }
+        if (stat.isSymbolicLink()) {
+          this.diagnose(
+            'managed-asset.symlink-skipped',
+            new LibraryServiceError('INVALID_IMPORT_SOURCE', {
+              reason: 'SYMBOLIC_LINK_NOT_ALLOWED',
+            }),
+            { assetsRootPath, relativePath: childRelative },
+          );
+          continue;
+        }
+        if (!stat.isFile()) continue;
+        if (isDefaultIgnoredAssetEntry(child.name, 'file')) continue;
+        let normalized: string;
+        try {
+          normalized = normalizeRelativeAssetPath(childRelative);
+        } catch (error) {
+          throw new LibraryServiceError('IMPORT_APPLY_FAILED', { cause: error });
+        }
+        const byteSize = Number(stat.size);
+        if (!Number.isSafeInteger(byteSize)) {
+          throw new LibraryServiceError('IMPORT_APPLY_FAILED', {
+            reason: 'UNSUPPORTED_FILE_ENTRY',
+          });
+        }
+        entries.push({
+          relativePath: normalized,
+          byteSize,
+          modifiedAt: new Date(Number(stat.mtimeMs)).toISOString(),
+          originalFilename: child.name,
+        });
+      }
+    };
+    visit(assetsRootPath, '');
+    return entries;
+  }
+
   /**
    * Copy external paths into a linked folder root and register via refresh
    * (Serpent-d3h / LINK-005). Returns an ImportCompletion-shaped result when
@@ -17152,6 +17239,117 @@ export class LibraryService {
           this.syncAssetSearchContent(openLibrary.connection, assetId);
           changedCount += 1;
         }
+      }
+
+      const folderRows = openLibrary.connection
+        .prepare(
+          'SELECT folder_id, parent_folder_id, name, relative_path, path_identity FROM managed_folders ORDER BY relative_path',
+        )
+        .all() as ManagedFolderRow[];
+      const foldersByPath = new Map(folderRows.map((folder) => [folder.path_identity, folder]));
+      const existingManagedIdentities = new Set(
+        (openLibrary.connection
+          .prepare("SELECT path_identity FROM assets WHERE location_kind = 'managed'")
+          .all() as Array<{ path_identity: string }>)
+          .map((row) => row.path_identity),
+      );
+      const managedEntries = this.enumerateManagedSources(this.assetsPath(openLibrary));
+      const directoriesNeeded = new Set<string>();
+      for (const entry of managedEntries) {
+        let directory = path.posix.dirname(entry.relativePath);
+        while (directory !== '.') {
+          directoriesNeeded.add(directory);
+          directory = path.posix.dirname(directory);
+        }
+      }
+      for (const relativeDirectory of [...directoriesNeeded].sort()) {
+        const directoryIdentity = portablePathIdentity(relativeDirectory);
+        if (foldersByPath.has(directoryIdentity)) continue;
+        const parentPath = path.posix.dirname(relativeDirectory);
+        const parentIdentity = parentPath === '.' ? undefined : portablePathIdentity(parentPath);
+        const folder: ManagedFolderRow = {
+          folder_id: randomUUID(),
+          parent_folder_id:
+            parentIdentity === undefined
+              ? null
+              : (foldersByPath.get(parentIdentity)?.folder_id ?? null),
+          name: path.posix.basename(relativeDirectory),
+          relative_path: relativeDirectory,
+          path_identity: directoryIdentity,
+        };
+        if (parentPath !== '.' && folder.parent_folder_id === null) continue;
+        openLibrary.connection
+          .prepare(
+            `INSERT INTO managed_folders
+               (folder_id, parent_folder_id, name, relative_path, path_identity, created_at)
+             VALUES (?, ?, ?, ?, ?, ?)`,
+          )
+          .run(
+            folder.folder_id,
+            folder.parent_folder_id,
+            folder.name,
+            folder.relative_path,
+            folder.path_identity,
+            folderNow,
+          );
+        foldersByPath.set(directoryIdentity, folder);
+      }
+      const insertManagedAsset = openLibrary.connection.prepare(
+        `INSERT INTO assets
+           (asset_id, location_kind, managed_folder_id, linked_folder_id, relative_file_path,
+            path_identity, current_revision_id, availability, created_at, updated_at)
+         VALUES (?, 'managed', ?, NULL, ?, ?, NULL, 'available', ?, ?)`,
+      );
+      const insertManagedRevision = openLibrary.connection.prepare(
+        `INSERT INTO revisions
+           (revision_id, asset_id, parent_revision_id, byte_size, modified_at,
+            original_filename, origin, accepted_at)
+         VALUES (?, ?, NULL, ?, ?, ?, 'external_change', ?)`,
+      );
+      const setManagedCurrentRevision = openLibrary.connection.prepare(
+        'UPDATE assets SET current_revision_id = ?, updated_at = ? WHERE asset_id = ?',
+      );
+      for (const entry of managedEntries) {
+        const pathIdentity = portablePathIdentity(entry.relativePath);
+        if (existingManagedIdentities.has(pathIdentity)) continue;
+        const directory = path.posix.dirname(entry.relativePath);
+        const managedFolderId =
+          directory === '.'
+            ? null
+            : (foldersByPath.get(portablePathIdentity(directory))?.folder_id ?? null);
+        if (directory !== '.' && managedFolderId === null) continue;
+        const assetId = randomUUID();
+        const revisionId = randomUUID();
+        insertManagedAsset.run(
+          assetId,
+          managedFolderId,
+          entry.relativePath,
+          pathIdentity,
+          folderNow,
+          folderNow,
+        );
+        insertManagedRevision.run(
+          revisionId,
+          assetId,
+          entry.byteSize,
+          entry.modifiedAt,
+          entry.originalFilename,
+          folderNow,
+        );
+        setManagedCurrentRevision.run(revisionId, folderNow, assetId);
+        existingManagedIdentities.add(pathIdentity);
+        this.syncAssetSearchContent(openLibrary.connection, assetId);
+        if (LibraryService.supportsThumbnail(entry.relativePath)) {
+          openLibrary.connection
+            .prepare(
+              `INSERT OR IGNORE INTO jobs
+                 (job_id, library_id, asset_id, revision_id, kind, status, priority,
+                  progress, attempt_count, created_at, updated_at)
+               VALUES (?, ?, ?, ?, 'generate_thumbnail', 'queued', 0, 0.0, 0, ?, ?)`,
+            )
+            .run(randomUUID(), libraryId, assetId, revisionId, folderNow, folderNow);
+        }
+        changedCount += 1;
       }
 
       for (const asset of before) {

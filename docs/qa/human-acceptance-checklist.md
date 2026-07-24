@@ -89,6 +89,7 @@
 | IMPORT-002 | 一次导入多个文件 | 待人类验收 | 在“导入文件”中一次选择多个文件 | 所有选中文件均导入，且没有重复或遗漏 | [0002 QA](0002-asset-ingestion-qa-report.md) / [导入 E2E](../../tests/e2e/asset-ingestion.test.ts) | — |
 | IMPORT-003 | 导入目录并保留层级 | 待人类验收 | 导入一个包含子目录的素材目录 | `Assets/` 和侧栏保留原目录层级，正常素材全部出现 | [0002 QA](0002-asset-ingestion-qa-report.md) / [桌面导入 E2E](../../tests/e2e/desktop-ingestion.test.ts) | — |
 | IMPORT-004 | 托管资产被外部删除后显示 missing | 待人类验收 | 在外部删除一项托管资产，再执行“刷新磁盘变化” | 该资产显示文件丢失状态，不再表现为可用 | [0002 QA](0002-asset-ingestion-qa-report.md) / [导入 E2E](../../tests/e2e/asset-ingestion.test.ts) | — |
+| IMPORT-014 | 托管文件夹外部新增文件自动入库 | 待人类验收 | ① 新建资源库并在侧栏创建托管文件夹 A。② 在资源管理器打开该库 `Assets/A/` 路径，复制两张支持预览的图片进去。③ 回到 Serpent（无需手动「刷新磁盘变化」），等待数秒 | 文件夹 A 内自动出现新资产并可生成缩略图；列表无需手动刷新即可更新 | [watcher 测试](../../tests/worker/library-watcher.test.ts) / [refreshManagedAssets](../../src/worker/library-service.ts) | 2026-07-24 实现托管目录扫描发现。 |
 | EXT-001 | 浏览器扩展：连接态图标 + 文件夹子菜单保存（无配对码；浏览器下载后上传） | 人类验收通过 | ① `npm run extension:build` 后在 Chrome/Edge 重新加载 `dist/extension/`。② 启动 Serpent 并打开资源库；观察扩展图标由灰变彩（**无需配对码**）。③ 在普通博客直链图右键「保存到 Serpent」→ 根目录。④ 再在易防盗链站点（如 Pinterest/Behance）试一次；**URL 扩展名与 Content-Type 不一致的 CDN 图**也应成功 | 连接成功图标变彩色；**无需打开配对对话框**；直链与防盗链场景均能保存到对应文件夹；不再因 `MIME_EXTENSION_MISMATCH` 误拒；失败时有明确通知 | `Serpent-1jyi` / `Serpent-1cxv` / [extension README](../../extension/README.md) / [save-client](../../extension/save-client.ts) | 2026-07-24 用户验收通过（含 CDN MIME 修复复验）。 |
 | EXT-006 | 扩展保存后自动显示 Serpent 窗口（可配置） | 人类验收通过 | ① 扩展选项页确认「保存后显示 Serpent 窗口」默认开启。② 将 Serpent 最小化或置于后台；从浏览器保存一张图片。③ 取消勾选该选项后再保存一次 | 开启时保存成功后 Serpent 窗口恢复前台并聚焦；关闭时保存仍成功但不抢焦点 | [preferences](../../extension/preferences.ts) / [main save-upload](../../src/main/index.ts) | 2026-07-24 用户验收通过。 |
 | EXT-007 | 扩展保存后跳转文件夹并选中资产（可配置） | 人类验收通过 | ① 扩展选项页确认「保存后跳转到目标文件夹并选中文件」默认开启。② 当前浏览其他文件夹或标签视图；从浏览器保存到指定文件夹。③ 取消勾选后再保存 | 开启时 Serpent 自动切到目标文件夹、刷新列表并**选中**刚保存资产（可滚动到可见）；关闭时仅保存不跳转 | [use-extension-save-reveal](../../src/renderer/use-extension-save-reveal.ts) / [pending-asset-reveal](../../src/renderer/pending-asset-reveal.ts) / `Serpent-mscq` | 2026-07-24 用户验收通过。 |
@@ -254,6 +255,7 @@
 | THUMB-001 | 支持的图片自动生成缩略图 | 待人类验收 | 导入支持的图片，不点击任何“生成预览”操作 | 缩略图自动出现并成功解码 | [0006 QA](0006-thumbnails-preview-format-decoding-qa-report.md) / [媒体预览 E2E](../../tests/e2e/media-preview.test.ts) | — |
 | THUMB-002 | 横图、竖图和方图等比完整显示 | 待人类验收 | 导入横图、竖图和方图并观察资产卡片（含极竖 GIF/视频） | 图片保持比例并完整显示，不裁剪、不拉伸；竖图有圆角且标题可读 | [0006 QA](0006-thumbnails-preview-format-decoding-qa-report.md) / [媒体预览 E2E](../../tests/e2e/media-preview.test.ts) / [masonry 单测](../../tests/unit/masonry-preview-frame.test.ts) / `Serpent-woa` | 2026-07-19 与 CANVAS-023 一并点名不通过。2026-07-21 同修；待复验。 |
 | THUMB-004 | 缩略图已显示时不残留失败角标 | 人类验收通过 | 导入图片；若曾短暂失败后缩略图已正常显示，观察右下角 | 可见缩略图时不显示「缩略图失败」角标；真正失败且无 ready 缩略图时仍提示 | `Serpent-2oga` | 2026-07-22 用户确认通过。 |
+| THUMB-005 | 不支持缩略图的格式不显示「缩略图失败」 | 人类验收通过 | 导入 `.txt`、`.zip`、`.psd` 等无栅格缩略图格式；再导入一张损坏的 `.jpg` 或缺 FFmpeg 的 `.mp4` 对照 | 前者只显示文件图标/扩展名角标，不出现「缩略图失败」；后者仍显示失败角标 | [thumbnail-support](../../src/shared/thumbnail-support.ts) / [角标策略](../../src/renderer/thumbnail-failure-badge.ts) / [单测](../../tests/unit/thumbnail-support.test.ts) | 2026-07-24 用户验收通过。 |
 | THUMB-003   | 片头黑场 GIF 网格缩略图非纯黑            | 人类验收通过   | 导入或打开含片头黑场的多帧 GIF；等待缩略图生成（可重开资源库触发重排队）；对比查看页动画         | 网格卡片显示有内容的帧，非纯黑；查看页仍可播原 GIF                                                                                       | [开发日志](../development/2026-07-18-gif-thumbnail-still-page-development-log.md) / [选帧单测](../../tests/unit/gif-thumbnail-page.test.ts) / 工单 Serpent-1wg                                                                                                                        | 2026-07-18 用户验收通过（CU-D7）。                                                                                             |
 
 ### F. 资产查看页面
@@ -558,7 +560,7 @@
 | VIEWER-018 | 视频 D/F 逐帧 + Ctrl+←/→ ±2s | 待人类验收 | 见 F 节同 ID | 见 F 节同 ID | [单测](../../tests/unit/video-player-controls.test.ts) / `Serpent-sk1` | 与 F 节 VIEWER-018 同一条目。 |
 | CANVAS-027 | Ctrl+滚轮缩放卡片时视口中心资产保持 | 待人类验收 | 浏览画布：将某资产置于视口中心；Ctrl+滚轮放大/缩小数次 | 缩放前后该资产仍在视口中心附近，不整页跳飞 | `Serpent-f0oo` | 2026-07-20：滚轮缩放改以视口中心为锚。用户说明原需求是 Cmd/Ctrl± 中心缩放+浏览区调卡片大小；本项非其点名但保留。 |
 | NAV-007 | 新建文件夹/合集/智能合集输入态缩进正确 | 人类验收通过 | 侧栏新建文件夹、合集、智能合集；观察输入行与提交后行 | 输入态与提交后缩进对齐（含 disclosure 占位） | `Serpent-wh77` | 2026-07-20 用户确认通过。 |
-| NAV-008 | 鼠标侧键触发工作区后退/前进 | 待人类验收 | ① 打开资源库，在「所有资产」与多个文件夹间切换浏览范围；按鼠标后退键（通常侧键靠拇指）再按前进键。② 打开任意资产查看页；按后退键。③ 在搜索框或 Inspector 可编辑字段聚焦时按侧键。④ 打开任意对话框（如**设置**）时按侧键 | ① 与工具栏后退/前进一致，恢复此前浏览范围。② 先退出查看页（同 REQ-VIEW-004 / 工具栏后退），不直接跳历史。③④ 不触发工作区导航 | [鼠标导航单测](../../tests/unit/workspace-mouse-navigation.test.ts) / `Serpent-1xmk` / REQ-NAV-007 | 2026-07-24 实现侧键监听；Windows 真机未验证。同日步骤④ 示例改为设置对话框（`Serpent-8c0r`）。 |
+| NAV-008 | 鼠标侧键触发工作区后退/前进 | 人类验收通过 | ① 打开资源库，在「所有资产」与多个文件夹间切换浏览范围；按鼠标后退键（通常侧键靠拇指）再按前进键。② 打开任意资产查看页；按后退键。③ 在搜索框或 Inspector 可编辑字段聚焦时按侧键。④ 打开任意对话框（如**设置**）时按侧键 | ① 与工具栏后退/前进一致，恢复此前浏览范围。② 先退出查看页（同 REQ-VIEW-004 / 工具栏后退），不直接跳历史。③④ 不触发工作区导航 | [鼠标导航单测](../../tests/unit/workspace-mouse-navigation.test.ts) / `Serpent-1xmk` / REQ-NAV-007 | 2026-07-24 用户验收通过（Windows）。 |
 | CONFLICT-001 | 导入冲突列表示例文件名不裁切半截 | 人类验收通过 | 触发导入冲突窗；看底部示例文件名（含长名） | 长名省略号完整可读，hover 可看全名；不被容器硬裁 | `Serpent-6nmf` | 2026-07-20 用户确认通过。 |
 | INSPECT-AI-003 | 编辑 AI 描述仅去掉描述 AI 标 | 人类验收通过 | AI 分析写出描述+标签+评分后，只改描述并失焦 | 描述变人工、AI 标消失；AI 标签与 AI 评分仍在 | `Serpent-u7hz` / worker clear fields | 2026-07-20 用户确认通过。 |
 | INSPECT-AI-004 | AI 标签可删且无前置圆点 | 人类验收通过 | 对资产跑 AI 分析得标签；在 Inspector 点 AI 标签的 ×；对照人工标签样式 | AI 标签可删；仅 AI 角标、无彩色前置圆点 | `Serpent-h2i2` | 2026-07-20 用户确认通过。 |
@@ -642,3 +644,6 @@
 | 2026-07-24 | 工单批次 `agent/ticket-batch-20260724` | 待人类验收 | SETTINGS-003（含 AI 内联）、IMPORT-012、DND-007、SEARCH-005 | `Serpent-jvin`/`cr8h`/`79c7`/`pagf`/`45io` |
 | 2026-07-24 | 小打磨续批 | 清单/样式 | 撤回 CANVAS-011；AICFG 步骤改「设置→AI」；embedded 去重复标题 | `Serpent-l6f7`/`ivn2`/`d1ck`/`a22y` |
 | 2026-07-24 | 小打磨续批 2 | 清单/i18n | 删 aiConfigEntry*；AICFG-002–007 步骤同步；RelinkPreview 去冗余 style | `Serpent-qfem`/`uprn`/`7kwu`/`wfa3` |
+| 2026-07-24 | NAV-008 / `Serpent-1xmk` | 人类验收通过 | 鼠标侧键后退/前进与工作区历史一致；查看页先退出；输入框/对话框不抢占。 | Windows 真机验收。 |
+| 2026-07-24 | THUMB-005 | 人类验收通过 | 不支持缩略图的格式不显示失败角标；可预览格式失败仍提示。 | — |
+| 2026-07-24 | IMPORT-014 | 待人类验收 | 托管文件夹磁盘路径新增文件后 watcher 自动发现入库。 | 修复 refresh 仅同步已有资产、不扫描新文件。 |
