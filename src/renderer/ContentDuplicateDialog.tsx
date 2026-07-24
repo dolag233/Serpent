@@ -1,6 +1,7 @@
 import { useT } from "./i18n";
 import type { ImportConflictPlan } from "../shared/protocol/responses";
 import type { RememberedDuplicateDecision } from "./import-conflict-preferences";
+import { ImportConflictDialogShell } from "./ImportConflictDialogShell";
 
 export interface ContentDuplicateDialogProps {
   conflicts: ImportConflictPlan;
@@ -12,7 +13,7 @@ export interface ContentDuplicateDialogProps {
   onConfirm: () => void;
 }
 
-/** Library / content duplicates only (Serpent-glua / zp8q). */
+/** Library / content duplicates only (Serpent-glua / zp8q / 79c7). */
 export function ContentDuplicateDialog({
   conflicts,
   decision,
@@ -23,87 +24,53 @@ export function ContentDuplicateDialog({
   onConfirm,
 }: ContentDuplicateDialogProps) {
   const t = useT();
-  const examples = conflicts.examples.filter(
-    (item) =>
-      item.kind === "suspected-duplicate" || item.kind === "library-duplicate",
-  );
+  const totalDuplicates =
+    conflicts.suspectedDuplicateCount + conflicts.libraryDuplicateCount;
+  const examples = conflicts.examples
+    .filter(
+      (item) =>
+        item.kind === "suspected-duplicate" || item.kind === "library-duplicate",
+    )
+    .map((item) => item.displayName);
+  const confirmLabel =
+    decision === "create-copy"
+      ? t("dialog.conflicts.confirmImportAnyway")
+      : t("dialog.conflicts.confirmSkip");
+
   return (
-    <div className="dialog-backdrop" role="presentation">
-      <div
-        aria-labelledby="content-duplicate-dialog-title"
-        aria-modal="true"
-        className="conflict-dialog"
-        role="dialog"
-      >
-        <div className="dialog-heading">
-          <div>
-            <h2 id="content-duplicate-dialog-title">
-              {t("dialog.contentDuplicate.title")}
-            </h2>
-          </div>
-        </div>
-        <div className="conflict-summary">
-          <div>
-            <strong>{conflicts.suspectedDuplicateCount}</strong>
-            <span>{t("dialog.contentDuplicate.countLabel")}</span>
-          </div>
-          {conflicts.libraryDuplicateCount > 0 ? (
-            <div>
-              <strong>{conflicts.libraryDuplicateCount}</strong>
-              <span>{t("dialog.conflicts.libraryDuplicates")}</span>
-            </div>
-          ) : null}
-        </div>
-        <label className="decision-field" htmlFor="content-duplicate-decision">
-          <span>{t("dialog.contentDuplicate.actionLabel")}</span>
-          <select
-            autoFocus
-            id="content-duplicate-decision"
-            value={decision}
-            onChange={(event) =>
-              onDecisionChange(
-                event.target.value as RememberedDuplicateDecision,
-              )
-            }
-          >
-            <option value="skip">{t("dialog.conflicts.skip")}</option>
-            <option value="create-copy">
-              {t("dialog.conflicts.importAnyway")}
-            </option>
-          </select>
-        </label>
-        <label
-          className="ai-config-check-row"
-          htmlFor="content-duplicate-remember"
+    <ImportConflictDialogShell
+      confirmLabel={confirmLabel}
+      decision={
+        <select
+          autoFocus
+          id="content-duplicate-decision"
+          value={decision}
+          onChange={(event) =>
+            onDecisionChange(
+              event.target.value as RememberedDuplicateDecision,
+            )
+          }
         >
-          <input
-            checked={remember}
-            id="content-duplicate-remember"
-            onChange={(event) => onRememberChange(event.target.checked)}
-            type="checkbox"
-          />
-          <span>{t("dialog.contentDuplicate.remember")}</span>
-        </label>
-        {examples.length > 0 && (
-          <div className="conflict-examples">
-            {examples.map((item, index) => (
-              <span key={`${item.displayName}-${index}`}>
-                <span className="conflict-example-name" title={item.displayName}>
-                  {item.displayName}
-                </span>
-              </span>
-            ))}
-          </div>
-        )}
-        <div className="dialog-actions">
-          <button className="secondary-button" onClick={onCancel} type="button">
-            {t("common.cancel")}
-          </button>
-          <button className="primary-button" onClick={onConfirm} type="button">
-            {t("dialog.conflicts.apply")}
-          </button>
-        </div>
-      </div>
-    </div>
+          <option value="skip">{t("dialog.conflicts.skip")}</option>
+          <option value="create-copy">
+            {t("dialog.conflicts.importAnyway")}
+          </option>
+        </select>
+      }
+      decisionControlId="content-duplicate-decision"
+      decisionLabel={t("dialog.contentDuplicate.actionLabel")}
+      examples={examples}
+      onCancel={onCancel}
+      onConfirm={onConfirm}
+      onRememberChange={onRememberChange}
+      remember={remember}
+      rememberId="content-duplicate-remember"
+      rememberLabel={t("dialog.contentDuplicate.remember")}
+      summary={t("dialog.contentDuplicate.summary", {
+        count: totalDuplicates,
+      })}
+      title={t("dialog.contentDuplicate.title")}
+      titleId="content-duplicate-dialog-title"
+    />
   );
 }

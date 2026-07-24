@@ -55,25 +55,10 @@ export function DiskDeleteConfirmDialog({
             <Icon name="close" size={16} />
           </button>
         </div>
-        <p
-          style={{
-            color: "var(--secondary)",
-            fontSize: 12,
-            lineHeight: 1.6,
-          }}
-        >
+        <p className="dialog-body-copy">
           {t(bodyKey, bodyParams)}
         </p>
-        <label
-          className="field-help"
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-            marginTop: 12,
-            cursor: "pointer",
-          }}
-        >
+        <label className="dialog-checkbox-row is-centered field-help">
           <input
             checked={dontShowAgain}
             onChange={(event) => setDontShowAgain(event.target.checked)}

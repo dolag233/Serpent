@@ -91,9 +91,8 @@ export function MoveDialog({
           ))}
         </select>
         <label
-          className="field-label"
+          className="field-label field-label-spaced"
           htmlFor="move-conflict"
-          style={{ marginTop: 12 }}
         >
           {t("dialog.move.nameConflict")}
         </label>

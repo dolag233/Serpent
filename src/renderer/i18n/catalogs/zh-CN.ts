@@ -499,29 +499,26 @@ export const zhCN = {
       openExisting: "打开已有资源库…"
     },
     conflicts: {
-      title: "处理导入冲突",
-      pendingFiles: "待导入文件",
-      suspectedDuplicates: "疑似重复",
-      libraryDuplicates: "库内已有相同内容",
-      nameConflicts: "同名冲突",
       skip: "跳过",
-      merge: "合并到已有资产",
-      createCopy: "创建副本",
       importAnyway: "仍然导入",
-      keepBoth: "保留两者",
       autoRename: "自动重命名",
       replace: "覆盖",
-      apply: "应用并导入"
+      cancelImport: "取消本次导入",
+      confirmRename: "自动重命名并导入",
+      confirmReplace: "覆盖并导入",
+      confirmSkip: "跳过并继续",
+      confirmImportAnyway: "仍然导入",
+      examplesMore: "{name} 等 {count} 项"
     },
     nameConflict: {
       title: "同名冲突",
-      countLabel: "个同名文件",
+      summary: "发现 {count} 个同名文件",
       actionLabel: "同名时",
       remember: "记住我的选择，下次不再询问"
     },
     contentDuplicate: {
       title: "内容重复",
-      countLabel: "个内容重复",
+      summary: "发现 {count} 个内容重复文件（库内已有相同内容）",
       actionLabel: "内容重复时",
       remember: "记住我的选择，下次不再询问"
     },
@@ -607,14 +604,10 @@ export const zhCN = {
       helpFile: "重命名会直接修改磁盘上的文件名。",
       helpOrg: "名称仅影响资源库中的组织方式，不会修改资产文件。",
       nounCollection: "合集",
-      nounSmartCollection: "智能合集",
-      nounFolder: "文件夹"
+      nounSmartCollection: "智能合集"
     },
     export: {
       help: "将资源库导出为完整文件夹或标准 ZIP。导出内容包括所有托管资产、数据库、修订记录和回收站文件。",
-      format: "导出格式",
-      formatFolder: "文件夹",
-      formatZip: "标准 ZIP",
       zipLimitHint: "ZIP 上限为 4 GiB / 65534 条目。",
       includeLinked: "包含链接文件夹源内容",
       zip: "选择保存位置并导出 ZIP",
@@ -665,9 +658,7 @@ export const zhCN = {
       resumeAi: "继续 AI",
       cancelAi: "取消 AI",
       retryAiFailed: "重试 AI 失败项",
-      revealLog: "查看应用日志",
-      progress: "进度",
-      progressDone: "已完成 {done}/{total}"
+      revealLog: "查看应用日志"
     },
     relinkPreview: {
       title: "批量重新定位预览",
@@ -714,7 +705,6 @@ export const zhCN = {
     model: "模型",
     modelPick: "选择模型",
     modelPickEmpty: "暂无模型列表",
-    fetchModels: "获取模型列表",
     fetchingModels: "正在加载模型…",
     fetchModelsOk: "已加载 {count} 个模型，可从右侧下拉选择或继续手填。",
     fetchModelsFailed: "无法获取模型列表，请手填模型名称。",
@@ -733,7 +723,7 @@ export const zhCN = {
     languageHint: "分析按所选语言生成描述与标签；标签语言须与所选语言一致。",
     languagePlaceholder: "跟随系统",
     savingVerifying: "验证连接中…",
-    saveVerifyingHint: "正在测试连接，验证通过后将自动关闭此窗口。",
+    saveVerifyingHint: "正在测试连接，验证通过后将保留当前设置页。",
     fieldSwitches: "AI 写入开关",
     description: "描述",
     tags: "标签",
@@ -773,9 +763,6 @@ export const zhCN = {
     categoryBrowse: "浏览",
     categoryAi: "AI",
     categorySafety: "安全与导入",
-    aiConfigEntry: "配置 AI",
-    aiConfigEntryHint: "管理服务商、模型、分析写入内容、语言、并发上限与分析图像分辨率。",
-    aiConfigEntryAction: "打开 AI 配置",
     themeHint: "控制整个应用的亮暗外观，立即生效。",
     accentColor: "强调色",
     accentHint: "控制按钮、选中环、焦点、过滤启用态与拖放高亮等主色调；立即生效并跨重启保存。卡片尺寸滑块等连续控件保持中性色。",
@@ -963,6 +950,8 @@ export const zhCN = {
     renameTagFailed: "重命名标签失败。",
     tagDeleted: "标签已删除。",
     deleteTagFailed: "删除标签失败。",
+    undoTagDeleted: "已恢复标签「{name}」。",
+    undoTagDeleteFailed: "恢复已删除标签失败。",
     tagsAddedCount: "已为 {count} 项资产添加标签。",
     tagUpdatedRefreshFailed: "标签已更新，但刷新显示失败。",
     collectionDeleted: "合集已删除。",
@@ -1230,6 +1219,7 @@ export const zhCN = {
       ASSET_NOT_FOUND: "找不到所选资产。",
       INVALID_ASSET_FILE_NAME: "请输入可跨平台安全使用的文件名。",
       ASSET_FILE_NAME_CONFLICT: "同一文件夹内已存在同名文件。",
+      TAG_UNDO_EXPIRED: "10 秒撤销时间已结束。",
       ASSET_MOVE_CONFLICT: "资产移动无法完成：源位置或目标位置已经变化，Serpent 未执行静默覆盖。",
       ASSET_SOURCE_TRASH_FAILED: "无法将源文件移入系统回收站，请查看日志了解具体原因。",
       AI_ANALYSIS_FAILED: "AI 服务未能完成资产分析。",
@@ -1289,7 +1279,8 @@ export const zhCN = {
     rename: "重命名",
     removeAsset: "移除资产",
     undoMove: "撤销移动",
-    undoCopy: "撤销复制"
+    undoCopy: "撤销复制",
+    undoTagDelete: "撤销"
   }
 } as const satisfies MessageTree;
 

@@ -39,9 +39,8 @@ export function MediaJobsDialog({
       <div
         aria-labelledby="media-jobs-title"
         aria-modal="true"
-        className="create-dialog"
+        className="create-dialog create-dialog-wide"
         role="dialog"
-        style={{ maxWidth: 680 }}
       >
         <div className="dialog-heading">
           <div>
@@ -69,10 +68,7 @@ export function MediaJobsDialog({
                 completed: mediaJobs.succeeded,
               })}
             </p>
-            <div
-              className="dialog-actions"
-              style={{ justifyContent: "flex-start", marginBottom: 12 }}
-            >
+            <div className="dialog-actions dialog-actions-start is-spaced">
               <button
                 className="secondary-button"
                 disabled={mediaJobs.queued + mediaJobs.running === 0}
@@ -179,7 +175,7 @@ export function MediaJobsDialog({
                   paddingTop: 12,
                 }}
               >
-                <h3 style={{ fontSize: 13, margin: "0 0 5px" }}>
+                <h3 className="media-jobs-section-title">
                   {t("dialog.mediaJobs.aiSection")}
                 </h3>
                 <p className="field-help">
@@ -191,10 +187,7 @@ export function MediaJobsDialog({
                     completed: aiJobs.succeeded,
                   })}
                 </p>
-                <div
-                  className="dialog-actions"
-                  style={{ justifyContent: "flex-start", marginBottom: 10 }}
-                >
+                <div className="dialog-actions dialog-actions-start is-tight">
                   <button
                     className="secondary-button"
                     disabled={aiJobs.queued + aiJobs.running === 0}

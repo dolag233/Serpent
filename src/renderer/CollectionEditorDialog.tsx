@@ -61,9 +61,8 @@ export function CollectionEditorDialog({
           value={description}
         />
         <label
-          className="field-label"
+          className="field-label field-label-spaced"
           htmlFor="collection-cover"
-          style={{ marginTop: 12 }}
         >
           {t("dialog.collectionEditor.cover")}
         </label>

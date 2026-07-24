@@ -317,31 +317,19 @@ export function BrowseSettingsPage({
 
 export type AiSettingsPageProps = {
   aiUiPrefs: AiUiPreferences;
-  onOpenAiConfig: () => void;
+  aiConfigPanel: ReactNode;
   onToggleShowAiBadges: () => void;
 };
 
 export function AiSettingsPage({
   aiUiPrefs,
-  onOpenAiConfig,
+  aiConfigPanel,
   onToggleShowAiBadges,
 }: AiSettingsPageProps): ReactNode {
   const t = useT();
   return (
     <SettingsCard>
-      <div className="app-settings-action-row">
-        <div className="app-settings-row-copy">
-          <strong>{t("settings.aiConfigEntry")}</strong>
-          <span>{t("settings.aiConfigEntryHint")}</span>
-        </div>
-        <button
-          className="secondary-button"
-          onClick={onOpenAiConfig}
-          type="button"
-        >
-          {t("settings.aiConfigEntryAction")}
-        </button>
-      </div>
+      {aiConfigPanel}
       <div className="app-settings-card-divider" />
       <SettingsToggleRow
         checked={aiUiPrefs.showAiBadges}

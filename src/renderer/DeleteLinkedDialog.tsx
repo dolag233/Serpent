@@ -37,28 +37,15 @@ export function DeleteLinkedDialog({
             <Icon name="close" size={16} />
           </button>
         </div>
-        <p
-          style={{
-            color: "var(--secondary)",
-            fontSize: 12,
-            lineHeight: 1.6,
-          }}
-        >
+        <p className="dialog-body-copy">
           {t("dialog.deleteLinked.body", { name: displayNames })}
         </p>
         <label
-          style={{
-            display: "flex",
-            alignItems: "flex-start",
-            gap: 8,
-            marginTop: 12,
-            color: "var(--secondary)",
-            fontSize: 12,
-            cursor: canDeleteSourceFile
-              ? "pointer"
-              : "not-allowed",
-            lineHeight: 1.5,
-          }}
+          className={
+            canDeleteSourceFile
+              ? "dialog-checkbox-row"
+              : "dialog-checkbox-row is-disabled"
+          }
         >
           <input
             aria-label={t("dialog.deleteLinked.deleteSourceAria")}

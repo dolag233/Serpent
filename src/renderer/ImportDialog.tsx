@@ -41,13 +41,7 @@ export function ImportDialog({
             <Icon name="close" size={16} />
           </button>
         </div>
-        <p
-          style={{
-            color: "var(--secondary)",
-            fontSize: 12,
-            lineHeight: 1.6,
-          }}
-        >
+        <p className="dialog-body-copy">
           {t("dialog.importLibrary.validated", {
             name: validated.displayName,
           })}
