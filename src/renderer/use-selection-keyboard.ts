@@ -27,6 +27,7 @@ export type UseSelectionKeyboardArgs = {
   readonly setSelectedAssetIds: Dispatch<SetStateAction<string[]>>;
   readonly setSelectedAssetId: Dispatch<SetStateAction<string | undefined>>;
   readonly selectionAnchorRef: MutableRefObject<string | null>;
+  readonly setAssetSelectionAnchor: (assetId: string | null) => void;
   readonly clearAssetSelection: () => void;
 };
 
@@ -41,6 +42,7 @@ export function useSelectionKeyboard(args: UseSelectionKeyboardArgs): void {
     setSelectedAssetIds,
     setSelectedAssetId,
     selectionAnchorRef,
+    setAssetSelectionAnchor,
     clearAssetSelection,
   } = args;
 
@@ -60,7 +62,7 @@ export function useSelectionKeyboard(args: UseSelectionKeyboardArgs): void {
         event.preventDefault();
         setSelectedAssetIds([...browseScopeAssetIds]);
         setSelectedAssetId(browseScopeAssetIds.at(-1));
-        selectionAnchorRef.current = browseScopeAssetIds[0] ?? null;
+        setAssetSelectionAnchor(browseScopeAssetIds[0] ?? null);
         return;
       }
 
@@ -70,7 +72,7 @@ export function useSelectionKeyboard(args: UseSelectionKeyboardArgs): void {
         const next = invertSelection(browseScopeAssetIds, selectedAssetIds);
         setSelectedAssetIds(next);
         setSelectedAssetId(next.at(-1));
-        selectionAnchorRef.current = next[0] ?? null;
+        setAssetSelectionAnchor(next[0] ?? null);
         return;
       }
 
@@ -92,6 +94,7 @@ export function useSelectionKeyboard(args: UseSelectionKeyboardArgs): void {
     setSelectedAssetIds,
     setSelectedAssetId,
     selectionAnchorRef,
+    setAssetSelectionAnchor,
     clearAssetSelection,
   ]);
 }

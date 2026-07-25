@@ -1405,6 +1405,7 @@ function AppInner() {
     handleCanvasMouseDown,
     clearAssetSelection,
     selectionAnchorRef,
+    setAssetSelectionAnchor,
     handleCardClick,
     handleFolderCardClick,
     cardMouseDownRef,
@@ -1459,6 +1460,7 @@ function AppInner() {
     setSelectedAssetIds,
     setSelectedAssetId,
     selectionAnchorRef,
+    setAssetSelectionAnchor,
     clearAssetSelection,
   });
 
@@ -1471,7 +1473,7 @@ function AppInner() {
       const next = invertSelection(browseScopeAssetIds, selectedAssetIds);
       setSelectedAssetIds(next);
       setSelectedAssetId(next.at(-1));
-      selectionAnchorRef.current = next[0] ?? null;
+      setAssetSelectionAnchor(next[0] ?? null);
     });
   }, [
     shellApi,
@@ -1479,6 +1481,7 @@ function AppInner() {
     browseScopeAssetIds,
     selectedAssetIds,
     selectionAnchorRef,
+    setAssetSelectionAnchor,
   ]);
 
   // REQ-FOLDER-001/002/003/010: load direct child folder cards whenever the
@@ -1960,7 +1963,7 @@ function AppInner() {
     setSearchTotal,
     setSelectedAssetId,
     setSelectedAssetIds,
-    selectionAnchorRef,
+    setAssetSelectionAnchor,
     pendingRestoredFocusRef,
     navHistoryRef,
     setNavHistoryUi,
@@ -1998,7 +2001,7 @@ function AppInner() {
     assets,
     setSelectedAssetIds,
     setSelectedAssetId,
-    selectionAnchorRef,
+    setAssetSelectionAnchor,
     pendingRestoredFocusRef,
   });
   useExtensionSaveReveal({

@@ -48,8 +48,12 @@ export interface UseAssetSelectionReturn {
   /** Clear all selection state (Esc, empty-canvas click, etc.) — also clears folder selection. */
   clearAssetSelection: (options?: { preserveFolders?: boolean }) => void;
   /** Ref for the selection anchor used by Shift+click range extension.
-   *  External code may also write to this ref (e.g. preview open, select-all). */
+   *  Prefer `setAssetSelectionAnchor` for writes; the ref remains exposed for
+   *  read access and legacy call sites. */
   selectionAnchorRef: React.MutableRefObject<string | null>;
+  /** Single write entry point for the asset selection anchor (session restore,
+   *  import reveal, select-all, invert-selection). */
+  setAssetSelectionAnchor: (assetId: string | null) => void;
   /** Same as `selectionAnchorRef`, but for folder-card Shift+click ranges. */
   folderSelectionAnchorRef: React.MutableRefObject<string | null>;
   /** Attach to individual asset cards: onMouseDown sets the button, onClick calls this */
@@ -97,6 +101,16 @@ export function useAssetSelection({
   const selectionAnchorRef = useRef<string | null>(null);
   const folderSelectionAnchorRef = useRef<string | null>(null);
   const browseSelectionAnchorRef = useRef<BrowseSelectionAnchor | null>(null);
+
+  /**
+   * Single write entry point for the asset selection anchor. Session restore,
+   * import reveal, select-all and invert-selection all update the anchor here
+   * so the browse-order anchor fallback (selection-anchor.ts) can be wired in
+   * one place instead of hunting direct `selectionAnchorRef.current` writes.
+   */
+  const setAssetSelectionAnchor = useCallback((assetId: string | null) => {
+    selectionAnchorRef.current = assetId;
+  }, []);
 
   // ── Card click button guard ────────────────────────────────────────────
   const cardMouseDownRef = useRef<number>(0);
@@ -599,6 +613,7 @@ export function useAssetSelection({
     handleCanvasMouseDown,
     clearAssetSelection,
     selectionAnchorRef,
+    setAssetSelectionAnchor,
     folderSelectionAnchorRef,
     handleCardClick,
     handleFolderCardClick,

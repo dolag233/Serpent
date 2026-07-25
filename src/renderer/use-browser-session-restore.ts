@@ -50,7 +50,7 @@ export type UseBrowserSessionRestoreArgs = {
   setSearchTotal: Dispatch<SetStateAction<number | null>>;
   setSelectedAssetId: Dispatch<SetStateAction<string | undefined>>;
   setSelectedAssetIds: Dispatch<SetStateAction<string[]>>;
-  selectionAnchorRef: MutableRefObject<string | null>;
+  setAssetSelectionAnchor: (assetId: string | null) => void;
   pendingRestoredFocusRef: MutableRefObject<string | null>;
   navHistoryRef: MutableRefObject<WorkspaceNavHistory>;
   setNavHistoryUi: Dispatch<
@@ -94,7 +94,7 @@ export function useBrowserSessionRestore(
     setSearchTotal,
     setSelectedAssetId,
     setSelectedAssetIds,
-    selectionAnchorRef,
+    setAssetSelectionAnchor,
     pendingRestoredFocusRef,
     navHistoryRef,
     setNavHistoryUi,
@@ -151,7 +151,7 @@ export function useBrowserSessionRestore(
             if (applied.restoredAsset) {
               setSelectedAssetId(applied.restoredAsset.assetId);
               setSelectedAssetIds([applied.restoredAsset.assetId]);
-              selectionAnchorRef.current = applied.restoredAsset.assetId;
+              setAssetSelectionAnchor(applied.restoredAsset.assetId);
               pendingRestoredFocusRef.current = applied.restoredAsset.assetId;
             }
           } catch (sessionError) {
@@ -187,11 +187,11 @@ export function useBrowserSessionRestore(
     locale,
     navHistoryRef,
     pendingRestoredFocusRef,
-    selectionAnchorRef,
     setActiveCollectionId,
     setActiveSmartCollectionId,
     setActiveTagId,
     setAssetScope,
+    setAssetSelectionAnchor,
     setAssets,
     setError,
     setFolderRecursive,

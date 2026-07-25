@@ -15,7 +15,7 @@ export type UsePendingAssetRevealArgs = {
   assets: readonly AssetSummary[];
   setSelectedAssetIds: (assetIds: string[]) => void;
   setSelectedAssetId: (assetId: string | undefined) => void;
-  selectionAnchorRef: MutableRefObject<string | null>;
+  setAssetSelectionAnchor: (assetId: string | null) => void;
   pendingRestoredFocusRef: MutableRefObject<string | null>;
 };
 
@@ -29,7 +29,7 @@ export function usePendingAssetReveal({
   assets,
   setSelectedAssetIds,
   setSelectedAssetId,
-  selectionAnchorRef,
+  setAssetSelectionAnchor,
   pendingRestoredFocusRef,
 }: UsePendingAssetRevealArgs): void {
   useEffect(() => {
@@ -55,7 +55,7 @@ export function usePendingAssetReveal({
     const apply = () => {
       setSelectedAssetIds(present);
       setSelectedAssetId(focusId);
-      selectionAnchorRef.current = focusId;
+      setAssetSelectionAnchor(focusId);
       pendingRestoredFocusRef.current = focusId;
     };
 
@@ -72,7 +72,7 @@ export function usePendingAssetReveal({
     assets,
     pendingRestoredFocusRef,
     pendingRevealRef,
-    selectionAnchorRef,
+    setAssetSelectionAnchor,
     setSelectedAssetId,
     setSelectedAssetIds,
   ]);
