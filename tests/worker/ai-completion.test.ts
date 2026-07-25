@@ -440,6 +440,9 @@ describe('clearAiContent', () => {
     });
 
     expect(result.clearedCount).toBe(1);
+    // Serpent-c9r3: the cleared IDs ride out so the renderer can refresh the
+    // Inspector of a selected asset that was among the cleared set.
+    expect(result.affectedAssetIds).toEqual([assetId]);
 
     // AI content should be gone
     const aiContent = service.getAiContent(libraryId, assetId);

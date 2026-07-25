@@ -13,6 +13,7 @@ import {
   parseRendererLifecycleEvent,
   parseAiProgressEvent,
   parseAiAnalysisCompletedEvent,
+  parseAiContentClearedEvent,
 } from '../../src/shared/protocol/responses';
 
 describe('renderer request protocol', () => {
@@ -1497,6 +1498,18 @@ describe('worker request protocol', () => {
       fieldCount: 2,
       tagCount: 3,
     })).toMatchObject({ assetId: 'asset-1', tagCount: 3 });
+    // Serpent-c9r3: the cleared event carries the affected IDs (strict).
+    expect(parseAiContentClearedEvent({
+      type: 'ai.content.cleared',
+      libraryId: 'library-1',
+      affectedAssetCount: 2,
+      affectedAssetIds: ['asset-1', 'asset-2'],
+    })).toMatchObject({ affectedAssetCount: 2, affectedAssetIds: ['asset-1', 'asset-2'] });
+    expect(() => parseAiContentClearedEvent({
+      type: 'ai.content.cleared',
+      libraryId: 'library-1',
+      affectedAssetCount: 1,
+    })).toThrow();
     expect(() => parseAiProgressEvent({
       type: 'ai.progress', libraryId: 'library-1', queued: -1,
       running: 0, succeeded: 0, failed: 0,

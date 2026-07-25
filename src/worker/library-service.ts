@@ -8295,7 +8295,7 @@ export class LibraryService {
     confirm: boolean;
     /** Omit to clear every AI layer; otherwise only the listed layers. */
     fields?: Array<'description' | 'rating' | 'tags'>;
-  }): { clearedCount: number } {
+  }): { clearedCount: number; affectedAssetIds: string[] } {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
 
     // Batch operations require confirmation.
@@ -8353,7 +8353,7 @@ export class LibraryService {
     }
 
     if (targetAssetIds.length === 0) {
-      return { clearedCount: 0 };
+      return { clearedCount: 0, affectedAssetIds: [] };
     }
 
     const clearAll = !input.fields || input.fields.length === 0;
@@ -8384,7 +8384,7 @@ export class LibraryService {
       }
     })();
 
-    return { clearedCount: targetAssetIds.length };
+    return { clearedCount: targetAssetIds.length, affectedAssetIds: targetAssetIds };
   }
 
   /** Enqueue image jobs and video jobs whose poster/contact sheet are ready. */

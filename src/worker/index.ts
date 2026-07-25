@@ -1562,13 +1562,14 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
       };
     }
     case 'ai.clear-content': {
-      const { clearedCount } = libraryService.clearAiContent(request.command);
+      const { clearedCount, affectedAssetIds } = libraryService.clearAiContent(request.command);
       // Publish ai.content.cleared event
       if (parentPort) {
         parentPort.postMessage({
           type: 'ai.content.cleared',
           libraryId: request.command.libraryId,
           affectedAssetCount: clearedCount,
+          affectedAssetIds,
         });
       }
       return {
@@ -1576,6 +1577,7 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
         type: 'ai.content.cleared' as const,
         libraryId: request.command.libraryId,
         clearedCount,
+        affectedAssetIds,
       };
     }
     case 'ai.pause-jobs': {

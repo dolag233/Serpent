@@ -792,6 +792,12 @@ function AppInner() {
     setNotice,
     setError,
   });
+  // Serpent-c9r3: bridge the multi-edit rebuilder into the ai.content.cleared
+  // event effect (whose deps intentionally exclude it) via a ref, matching the
+  // reloadCurrentContentRef / refreshAfterAiRef pattern.
+  const rebuildAndApplyMultiEditRef = useRef<(ids: string[]) => void>(
+    () => undefined,
+  );
 
   const [deleteLinkedDialog, setDeleteLinkedDialog] = useState<{
     assetIds: string[];
@@ -2065,7 +2071,28 @@ function AppInner() {
       if (event.libraryId !== library.libraryId) return;
       setAiContent(null);
       setNotice(t("toast.aiContentCleared", { count: event.affectedAssetCount }));
-      void reloadCurrentContentRef.current();
+      // Serpent-c9r3: clearing AI must NOT disturb the browsing view, selection
+      // or scroll position — so we deliberately do NOT call reloadCurrentContent
+      // here (a full grid refetch resets the canvas). Grid cards carry no AI
+      // badges, so skipping the grid reload leaves no visible AI residue. The
+      // only surface that shows AI provenance is the Inspector, so refresh just
+      // that: when the current selection (primary, or any member of a
+      // multi-selection) was among the cleared assets, reload its metadata +
+      // tags + AI content so the Inspector drops the stale AI description /
+      // badge / tags / rating immediately instead of waiting for a reselect.
+      const affected = new Set(event.affectedAssetIds);
+      const selectedIds = selectedAssetIdsRef.current;
+      const primary = selectedAssetIdRef.current;
+      const selectedAffected =
+        (primary != null && affected.has(primary)) ||
+        selectedIds.some((id) => affected.has(id));
+      if (selectedAffected && primary) {
+        void refreshAfterAiRef.current(primary).then(() => {
+          if (selectedAssetIdsRef.current.length >= 2) {
+            rebuildAndApplyMultiEditRef.current([...selectedAssetIdsRef.current]);
+          }
+        });
+      }
     });
     return () => {
       unsubscribeProgress();
@@ -3880,6 +3907,7 @@ function AppInner() {
   }
 
   loadAiContentForAssetRef.current = loadAiContentForAsset;
+  rebuildAndApplyMultiEditRef.current = rebuildAndApplyMultiEdit;
   refreshAfterAiRef.current = async (assetId: string) => {
     try {
       await refreshTagAndMetadataState(assetId);

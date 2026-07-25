@@ -213,6 +213,10 @@ export const aiContentClearedEventSchema = z.strictObject({
   type: z.literal('ai.content.cleared'),
   libraryId: nonBlankString,
   affectedAssetCount: z.number().int().nonnegative(),
+  // Serpent-c9r3: IDs whose AI layer was cleared, so the renderer can refresh
+  // the Inspector when the selected asset is among them (count alone is not
+  // enough to know whether the current selection was affected).
+  affectedAssetIds: z.array(nonBlankString),
 });
 
 export type AiContentClearedEvent = z.infer<typeof aiContentClearedEventSchema>;
@@ -868,6 +872,7 @@ const assetOperationSuccessSchemas = [
     type: z.literal('ai.content.cleared'),
     libraryId: nonBlankString,
     clearedCount: z.number().int().nonnegative(),
+    affectedAssetIds: z.array(nonBlankString),
   }),
   z.strictObject({
     ok: z.literal(true),

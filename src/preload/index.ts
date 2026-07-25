@@ -1511,7 +1511,7 @@ const library: SerpentLibraryApi = Object.freeze({
     return () => ipcRenderer.removeListener(AI_COMPLETED_CHANNEL, subscription);
   },
 
-  onAiCleared(listener: (event: { type: 'ai.content.cleared'; libraryId: string; affectedAssetCount: number }) => void) {
+  onAiCleared(listener: (event: { type: 'ai.content.cleared'; libraryId: string; affectedAssetCount: number; affectedAssetIds: string[] }) => void) {
     const subscription = (_event: Electron.IpcRendererEvent, input: unknown) => {
       try {
         listener(parseAiContentClearedEvent(input));
