@@ -18,6 +18,7 @@ export type PlatformShortcutChord = {
   readonly metaKey?: boolean;
   readonly ctrlKey?: boolean;
   readonly shiftKey?: boolean;
+  readonly altKey?: boolean;
 };
 
 export type PlatformShortcutRow = {
@@ -49,6 +50,36 @@ export const PLATFORM_SHORTCUT_TABLE: readonly PlatformShortcutRow[] = [
     purpose: "Move selection to app trash",
     mac: { label: "⌘⌫", key: "Backspace", metaKey: true },
     windows: { label: "Delete", key: "Delete" },
+  },
+  {
+    id: "asset.paste",
+    purpose: "Paste OS clipboard files into browse folder",
+    mac: { label: "⌘V", key: "v", metaKey: true },
+    windows: { label: "Ctrl+V", key: "v", ctrlKey: true },
+  },
+  {
+    id: "asset.reveal-in-folder",
+    purpose: "Reveal selected asset in Finder / File Explorer",
+    mac: { label: "⌘⇧S", key: "s", metaKey: true, shiftKey: true },
+    windows: { label: "Ctrl+Shift+S", key: "s", ctrlKey: true, shiftKey: true },
+  },
+  {
+    id: "asset.delete-from-disk",
+    purpose: "Delete selection from disk (skip app trash)",
+    mac: { label: "⌥⌘Delete", key: "Delete", metaKey: true, altKey: true },
+    windows: { label: "Shift+Delete", key: "Delete", shiftKey: true },
+  },
+  {
+    id: "workspace.focus-search",
+    purpose: "Focus library search field",
+    mac: { label: "⌘F", key: "f", metaKey: true },
+    windows: { label: "Ctrl+F", key: "f", ctrlKey: true },
+  },
+  {
+    id: "canvas.refresh",
+    purpose: "Refresh assets from disk",
+    mac: { label: "F5", key: "F5" },
+    windows: { label: "F5", key: "F5" },
   },
   {
     id: "folder.create-subfolder",
@@ -96,6 +127,7 @@ export const PLATFORM_SHORTCUT_TABLE: readonly PlatformShortcutRow[] = [
 export function windowsUsesCtrlForMacMeta(
   row: PlatformShortcutRow,
 ): boolean {
+  if (row.id === "asset.delete-from-disk") return true;
   if (row.mac.metaKey !== true) return true;
   if (row.mac.key.toLowerCase() !== row.windows.key.toLowerCase()) {
     return row.windows.metaKey !== true;

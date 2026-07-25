@@ -137,6 +137,10 @@ export const assetCommandDefinitions: readonly AssetCommandDefinition[] = [
           : 'command.asset.revealInFolderWindows',
       ),
     group: 'open',
+    shortcut: {
+      mac: { label: '⌘⇧S', key: 's', metaKey: true, shiftKey: true },
+      windows: { label: 'Ctrl+Shift+S', key: 's', ctrlKey: true, shiftKey: true },
+    },
     visible: (ctx) => !ctx.assetDeleted,
     disabledReason: unavailableReason,
     run: (ctx) => withPrimaryAsset(ctx, (id) => ctx.actions.revealInFolder(id)),
@@ -260,6 +264,15 @@ export const assetCommandDefinitions: readonly AssetCommandDefinition[] = [
     id: 'asset.delete-from-disk',
     title: (ctx) => t(ctx, 'command.asset.deleteFromDisk'),
     group: 'delete',
+    shortcut: {
+      mac: {
+        label: '⌥⌘Delete',
+        key: 'Delete',
+        metaKey: true,
+        altKey: true,
+      },
+      windows: { label: 'Shift+Delete', key: 'Delete', shiftKey: true },
+    },
     visible: (ctx) => !ctx.assetDeleted && ctx.locationKind === 'managed',
     disabledReason: (ctx) =>
       ctx.assetAvailable

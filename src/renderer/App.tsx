@@ -158,9 +158,10 @@ import {
   useContextMenu,
 } from "./context-menu";
 import { resolveBrowseContextMenuIntent } from "./browse-selection-menu";
+import { buildMultiAssetMenuSkipReport } from "./menu-skip-report";
 import { useAssetSelection } from "./useAssetSelection";
 import { useSelectionKeyboard } from "./use-selection-keyboard";
-import { useAssetActionKeyboard } from "./use-asset-action-keyboard";
+import { useBrowseCommandKeyboard } from "./use-browse-command-keyboard";
 import { useWorkspaceMouseNavigation } from "./use-workspace-mouse-navigation";
 import { isBrowseScopeAffectedByFolderTrash } from "./folder-trash-scope";
 import {
@@ -648,6 +649,7 @@ function AppInner() {
     string | null
   >(null);
   const [searchValue, setSearchValue] = useState("");
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const [formatFilter, setFormatFilter] = useState("");
   const [excludeFormatFilter, setExcludeFormatFilter] = useState(false);
   const [colorFilter, setColorFilter] = useState("");
@@ -884,6 +886,59 @@ function AppInner() {
   const aiAutoConnectAttemptedRef = useRef(false);
   /** Fingerprint of credentials last proven by a successful probe. */
   const aiVerifiedFingerprintRef = useRef<string | null>(null);
+  const aiConfigPersistDraftRef = useRef({
+    apiFormat: "dashscope_native" as AiApiFormat,
+    model: "qwen3-vl-plus",
+    baseUrl: "",
+    apiKey: "",
+    hasKey: false,
+    descriptionEnabled: true,
+    tagsEnabled: true,
+    ratingEnabled: true,
+    forceExistingTags: false,
+    analysisSettings: toWireAiAnalysisSettings(DEFAULT_AI_ANALYSIS_SETTINGS),
+    languages: ["zh-CN"] as Array<"zh-CN" | "en" | "ja" | "ko">,
+    concurrencyLimit: 16,
+    maxAnalysisImageEdgePx: 2048,
+    autoAnalyzeEnabled: false,
+    disclaimerAccepted: false,
+  });
+
+  useEffect(() => {
+    aiConfigPersistDraftRef.current = {
+      apiFormat: aiApiFormat,
+      model: aiModel,
+      baseUrl: aiBaseUrl,
+      apiKey: aiApiKey,
+      hasKey: aiHasKey,
+      descriptionEnabled: aiDescriptionEnabled,
+      tagsEnabled: aiTagsEnabled,
+      ratingEnabled: aiRatingEnabled,
+      forceExistingTags: aiForceExistingTags,
+      analysisSettings: aiAnalysisSettings,
+      languages: aiLanguages,
+      concurrencyLimit: aiConcurrencyLimit,
+      maxAnalysisImageEdgePx: aiMaxAnalysisImageEdgePx,
+      autoAnalyzeEnabled: aiAutoAnalyzeEnabled,
+      disclaimerAccepted: aiDisclaimerAccepted,
+    };
+  }, [
+    aiAnalysisSettings,
+    aiApiFormat,
+    aiApiKey,
+    aiAutoAnalyzeEnabled,
+    aiBaseUrl,
+    aiConcurrencyLimit,
+    aiDescriptionEnabled,
+    aiDisclaimerAccepted,
+    aiForceExistingTags,
+    aiHasKey,
+    aiLanguages,
+    aiMaxAnalysisImageEdgePx,
+    aiModel,
+    aiRatingEnabled,
+    aiTagsEnabled,
+  ]);
   const [aiAnalyzing, setAiAnalyzing] = useState(false);
   const aiAnalyzingRef = useRef(false);
   const [aiContent, setAiContent] = useState<{
@@ -1461,6 +1516,17 @@ function AppInner() {
     () => selectedAssets.filter((a) => a.locationKind === "managed").length,
     [selectedAssets],
   );
+  const diskDeleteKeyboardTargets = useMemo(() => {
+    const report = buildMultiAssetMenuSkipReport(
+      selectedAssetIds,
+      visibleAssets,
+      selectedFolderIds,
+    );
+    return {
+      assetIds: [...report.trash.processAssetIds],
+      folderIds: [...report.trash.processFolderIds],
+    };
+  }, [selectedAssetIds, visibleAssets, selectedFolderIds]);
   const resizeAssetCards = useCallback(
     (requestedSize: number, clientX?: number, clientY?: number) => {
       const root = workspaceCanvasRef.current;
@@ -3497,7 +3563,6 @@ function AppInner() {
     onImportCompleted: (completion) => revealAfterImportRef.current(completion),
     setUiState,
     setError,
-    setFatal,
     setNotice,
     setConflicts: (plan) => {
       if (plan === null) clearImportConflictsUi();
@@ -5367,15 +5432,20 @@ function AppInner() {
     };
   }, [dialogFocusTrapActive]);
 
-  useAssetActionKeyboard({
-    enabled: Boolean(library),
+  useBrowseCommandKeyboard({
+    enabled: Boolean(library) && !showTagManagement,
     platform: SHORTCUT_PLATFORM,
     previewOpen: Boolean(previewAsset),
     showTrash,
     libraryOpen: Boolean(library),
+    busy,
     selectedAsset,
     selectedAssets,
     selectedManagedCount,
+    pasteTargetFolderId: assetPasteTargetFolderId,
+    diskDeleteAssetIds: diskDeleteKeyboardTargets.assetIds,
+    diskDeleteFolderIds: diskDeleteKeyboardTargets.folderIds,
+    searchInputRef,
     onOpenExternal: (assetId) => {
       void handleOpenExternal(assetId);
     },
@@ -5385,6 +5455,21 @@ function AppInner() {
     onRename: openAssetRename,
     onCopyFiles: (assetIds) => {
       void handleCopyAssetFiles(assetIds);
+    },
+    onPasteIntoFolder: (folderId) => {
+      void pasteIntoFolder(folderId);
+    },
+    onRevealInFolder: (assetId) => {
+      void handleRevealInFolder(assetId);
+    },
+    onDiskDelete: (assetIds, folderIds) => {
+      requestSelectionDiskDelete([...assetIds], folderIds);
+    },
+    onPermanentDelete: (assetIds) => {
+      setPermanentDeleteDialog([...assetIds]);
+    },
+    onRefreshDisk: () => {
+      void refreshAssets();
     },
   });
 
@@ -5754,50 +5839,114 @@ function AppInner() {
     t,
   ]);
 
+  type AiConfigPersistOverrides = {
+    maxAnalysisImageEdgePx?: number;
+    concurrencyLimit?: number;
+    analysisSettings?: AiAnalysisSettingsWire;
+  };
+
+  async function persistAiConfig(
+    overrides: AiConfigPersistOverrides = {},
+    options: {
+      showNotice?: boolean;
+      clearApiKeyDraft?: boolean;
+      verifyConnection?: boolean;
+    } = {},
+  ): Promise<boolean> {
+    const {
+      showNotice = true,
+      clearApiKeyDraft = false,
+      verifyConnection = false,
+    } = options;
+    if (!api) return false;
+    const draft = aiConfigPersistDraftRef.current;
+    if (!draft.apiKey.trim() && !draft.hasKey) {
+      if (showNotice) {
+        setError(t("toast.aiConfigSaveFailed"));
+      }
+      return false;
+    }
+    const result = await api.setAiConfig({
+      apiFormat: draft.apiFormat,
+      model: draft.model,
+      baseUrl: draft.baseUrl.trim(),
+      ...(draft.apiKey.trim() ? { apiKey: draft.apiKey.trim() } : {}),
+      enabledFields: {
+        description: draft.descriptionEnabled,
+        tags: draft.tagsEnabled,
+        rating: draft.ratingEnabled,
+      },
+      analysisSettings: {
+        ...(overrides.analysisSettings ?? draft.analysisSettings),
+        forceExistingTags: draft.forceExistingTags,
+      },
+      languages: draft.languages.length > 0 ? [draft.languages[0]!] : ["zh-CN"],
+      concurrencyLimit: overrides.concurrencyLimit ?? draft.concurrencyLimit,
+      maxAnalysisImageEdgePx:
+        overrides.maxAnalysisImageEdgePx ?? draft.maxAnalysisImageEdgePx,
+      autoAnalyzeEnabled: draft.autoAnalyzeEnabled,
+      disclaimerAccepted: draft.disclaimerAccepted,
+    });
+    if (!result.ok) {
+      if (showNotice) {
+        setError(toMessage(result.error, t("toast.aiConfigSaveFailed"), locale));
+      }
+      return false;
+    }
+    setAiHasKey(true);
+    if (clearApiKeyDraft) setAiApiKey("");
+    if (showNotice) setNotice(t("toast.aiConfigSaved"));
+    if (verifyConnection) {
+      setAiSaveVerifying(true);
+      try {
+        const connection = await testAiConnectionFromDialog();
+        if (connection.success) {
+          setAiConnectionReason(undefined);
+        }
+      } finally {
+        setAiSaveVerifying(false);
+      }
+    }
+    return true;
+  }
+
+  function commitAiMaxAnalysisImageEdgePx(value: number) {
+    setAiMaxAnalysisImageEdgePx(value);
+    aiConfigPersistDraftRef.current.maxAnalysisImageEdgePx = value;
+    void persistAiConfig({ maxAnalysisImageEdgePx: value });
+  }
+
+  function commitAiConcurrencyLimit(value: number) {
+    setAiConcurrencyLimit(value);
+    aiConfigPersistDraftRef.current.concurrencyLimit = value;
+    void persistAiConfig({ concurrencyLimit: value });
+  }
+
+  function commitAiAnalysisSettingsPatch(
+    patch: Partial<AiAnalysisSettingsWire>,
+  ) {
+    const next = { ...aiAnalysisSettings, ...patch };
+    setAiAnalysisSettings(next);
+    aiConfigPersistDraftRef.current.analysisSettings = next;
+    void persistAiConfig({ analysisSettings: next });
+  }
+
   async function saveAiConfig() {
     if (!api || (!aiApiKey.trim() && !aiHasKey)) return;
     const alreadyVerified =
       aiVerifiedFingerprintRef.current === aiCredentialFingerprint() &&
       aiConnectionState === "connected";
-    const result = await api.setAiConfig({
-      apiFormat: aiApiFormat,
-      model: aiModel,
-      baseUrl: aiBaseUrl.trim(),
-      ...(aiApiKey.trim() ? { apiKey: aiApiKey.trim() } : {}),
-      enabledFields: {
-        description: aiDescriptionEnabled,
-        tags: aiTagsEnabled,
-        rating: aiRatingEnabled,
+    const ok = await persistAiConfig(
+      {},
+      {
+        showNotice: true,
+        clearApiKeyDraft: true,
+        verifyConnection: !alreadyVerified,
       },
-      analysisSettings: {
-        ...aiAnalysisSettings,
-        forceExistingTags: aiForceExistingTags,
-      },
-      languages: aiLanguages.length > 0 ? [aiLanguages[0]!] : ["zh-CN"],
-      concurrencyLimit: aiConcurrencyLimit,
-      maxAnalysisImageEdgePx: aiMaxAnalysisImageEdgePx,
-      autoAnalyzeEnabled: aiAutoAnalyzeEnabled,
-      disclaimerAccepted: aiDisclaimerAccepted,
-    });
-    if (!result.ok) {
-      setError(toMessage(result.error, t("toast.aiConfigSaveFailed"), locale));
-      return;
-    }
-    setAiHasKey(true);
-    setAiApiKey("");
-    setNotice(t("toast.aiConfigSaved"));
+    );
+    if (!ok) return;
     if (alreadyVerified) {
       setAiConnectionReason(undefined);
-      setAiSaveVerifying(false);
-      return;
-    }
-    setAiSaveVerifying(true);
-    try {
-      const connection = await testAiConnectionFromDialog();
-      if (connection.success) {
-        setAiConnectionReason(undefined);
-      }
-    } finally {
       setAiSaveVerifying(false);
     }
   }
@@ -6401,6 +6550,7 @@ function AppInner() {
                 disabled={!library}
                 onChange={(event) => setSearchValue(event.target.value)}
                 placeholder={t("toolbar.searchPlaceholder")}
+                ref={searchInputRef}
                 type="search"
                 value={searchValue}
               />
@@ -7830,13 +7980,14 @@ function AppInner() {
             onModelChange={setAiModel}
             onBaseUrlChange={setAiBaseUrl}
             onLanguagesChange={setAiLanguages}
-            onConcurrencyLimitChange={setAiConcurrencyLimit}
-            onMaxAnalysisImageEdgePxChange={setAiMaxAnalysisImageEdgePx}
+            onConcurrencyLimitChange={commitAiConcurrencyLimit}
+            onMaxAnalysisImageEdgePxChange={commitAiMaxAnalysisImageEdgePx}
             onDescriptionEnabledChange={setAiDescriptionEnabled}
             onTagsEnabledChange={setAiTagsEnabled}
             onRatingEnabledChange={setAiRatingEnabled}
             onForceExistingTagsChange={setAiForceExistingTags}
             onAnalysisSettingsChange={setAiAnalysisSettings}
+            onCommitAnalysisSettingsPatch={commitAiAnalysisSettingsPatch}
             onDisclaimerAcceptedChange={setAiDisclaimerAccepted}
             onAutoAnalyzeEnabledChange={setAiAutoAnalyzeEnabled}
             saveVerifying={aiSaveVerifying}

@@ -1,7 +1,7 @@
 /**
  * Browse-canvas asset action chords (open-external / trash / rename).
  *
- * Pure match helpers — useAssetActionKeyboard owns the DOM listener.
+ * Pure match helpers — useBrowseCommandKeyboard owns the DOM listener.
  * Shortcut specs come from assetCommandDefinitions (REQ-COMMAND-002).
  */
 
@@ -24,7 +24,10 @@ export type AssetActionKeyboardCommand =
   | "asset.open-external"
   | "asset.move-to-trash"
   | "asset.rename"
-  | "asset.copy";
+  | "asset.copy"
+  | "asset.paste"
+  | "asset.reveal-in-folder"
+  | "asset.delete-from-disk";
 
 export function matchAssetActionKeyboardCommand(
   commandId: AssetActionKeyboardCommand,

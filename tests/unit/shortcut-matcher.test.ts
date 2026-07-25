@@ -85,7 +85,7 @@ describe('matchesShortcut 修饰键语义（移植自旧匹配器）', () => {
     ).toBe(false);
   });
 
-  it('Alt 按下时一律拒绝；未声明 Shift 的和弦拒绝 Shift 变体', () => {
+  it('Alt 未声明时按下拒绝；声明 altKey 的和弦要求 Option/Alt', () => {
     expect(
       matchesShortcut(
         OPEN_EXTERNAL,
@@ -93,6 +93,25 @@ describe('matchesShortcut 修饰键语义（移植自旧匹配器）', () => {
         'mac',
       ),
     ).toBe(false);
+    const diskDelete: ShortcutSpec = {
+      mac: {
+        label: '⌥⌘Delete',
+        key: 'Delete',
+        metaKey: true,
+        altKey: true,
+      },
+      windows: { label: 'Shift+Delete', key: 'Delete', shiftKey: true },
+    };
+    expect(
+      matchesShortcut(
+        diskDelete,
+        event({ key: 'Delete', metaKey: true, altKey: true }),
+        'mac',
+      ),
+    ).toBe(true);
+  });
+
+  it('未声明 Shift 的和弦拒绝 Shift 变体', () => {
     expect(
       matchesShortcut(
         OPEN_EXTERNAL,

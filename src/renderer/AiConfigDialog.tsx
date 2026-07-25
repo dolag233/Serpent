@@ -4,9 +4,14 @@ import { createPortal } from "react-dom";
 import {
   AI_OUTPUT_STYLES,
   DEFAULT_AI_DESCRIPTION_STRUCTURE,
+  normalizeAiMaxDescriptionCharsZh,
+  normalizeAiMaxDescriptionWordsEn,
+  normalizeAiMaxTags,
   type AiAnalysisSettingsWire,
   type AiOutputStyle,
 } from "../shared/ai-analysis-settings";
+import { normalizeAiAnalysisImageEdgePx } from "../shared/ai-analysis-image";
+import { normalizeAiAnalysisConcurrency } from "../shared/ai-concurrency";
 import {
   AI_API_FORMATS,
   AI_API_FORMAT_LABELS,
@@ -16,6 +21,7 @@ import {
   type AiLanguageId,
 } from "../shared/ai-endpoints";
 import { Icon } from "./Icons";
+import { AiConfigNumberInput } from "./ai-config-number-input";
 import { iconActionAttrs } from "./icon-action-attrs";
 import { useT } from "./i18n";
 
@@ -61,6 +67,10 @@ export interface AiConfigDialogProps {
   onRatingEnabledChange: (value: boolean) => void;
   onForceExistingTagsChange: (value: boolean) => void;
   onAnalysisSettingsChange: (value: AiAnalysisSettingsWire) => void;
+  /** Blur-commit for advanced numeric fields: updates state and persists. */
+  onCommitAnalysisSettingsPatch?: (
+    patch: Partial<AiAnalysisSettingsWire>,
+  ) => void;
   onDisclaimerAcceptedChange: (value: boolean) => void;
   onAutoAnalyzeEnabledChange: (value: boolean) => void;
   onClose: () => void;
@@ -117,6 +127,7 @@ export function AiConfigDialog({
   onRatingEnabledChange,
   onForceExistingTagsChange,
   onAnalysisSettingsChange,
+  onCommitAnalysisSettingsPatch,
   onDisclaimerAcceptedChange,
   onAutoAnalyzeEnabledChange,
   onClose,
@@ -151,6 +162,14 @@ export function AiConfigDialog({
 
   function patchSettings(patch: Partial<AiAnalysisSettingsWire>) {
     onAnalysisSettingsChange({ ...analysisSettings, ...patch });
+  }
+
+  function commitNumericSettings(patch: Partial<AiAnalysisSettingsWire>) {
+    if (onCommitAnalysisSettingsPatch) {
+      onCommitAnalysisSettingsPatch(patch);
+      return;
+    }
+    patchSettings(patch);
   }
 
   async function runTest() {
@@ -619,20 +638,10 @@ export function AiConfigDialog({
                 <label className="micro-label" htmlFor="ai-config-concurrency-limit">
                   {t("aiConfig.concurrencyLimit")}
                 </label>
-                <input
-                  className="text-field ai-config-input"
+                <AiConfigNumberInput
                   id="ai-config-concurrency-limit"
-                  max={32}
-                  min={1}
-                  onChange={(e) => {
-                    const value = Number.parseInt(e.target.value, 10);
-                    onConcurrencyLimitChange(
-                      Number.isFinite(value)
-                        ? Math.min(32, Math.max(1, value))
-                        : 16,
-                    );
-                  }}
-                  type="number"
+                  normalize={normalizeAiAnalysisConcurrency}
+                  onCommit={onConcurrencyLimitChange}
                   value={concurrencyLimit}
                 />
                 <p className="ai-config-hint">{t("aiConfig.concurrencyLimitHint")}</p>
@@ -641,21 +650,10 @@ export function AiConfigDialog({
                 <label className="micro-label" htmlFor="ai-config-max-image-edge">
                   {t("aiConfig.maxAnalysisImageEdge")}
                 </label>
-                <input
-                  className="text-field ai-config-input"
+                <AiConfigNumberInput
                   id="ai-config-max-image-edge"
-                  max={4096}
-                  min={512}
-                  onChange={(e) => {
-                    const value = Number.parseInt(e.target.value, 10);
-                    onMaxAnalysisImageEdgePxChange(
-                      Number.isFinite(value)
-                        ? Math.min(4096, Math.max(512, value))
-                        : 2048,
-                    );
-                  }}
-                  step={64}
-                  type="number"
+                  normalize={normalizeAiAnalysisImageEdgePx}
+                  onCommit={onMaxAnalysisImageEdgePxChange}
                   value={maxAnalysisImageEdgePx}
                 />
                 <p className="ai-config-hint">{t("aiConfig.maxAnalysisImageEdgeHint")}</p>
@@ -664,17 +662,10 @@ export function AiConfigDialog({
                 <label className="micro-label" htmlFor="ai-config-max-tags">
                   {t("aiConfig.maxTags")}
                 </label>
-                <input
-                  className="text-field ai-config-input"
+                <AiConfigNumberInput
                   id="ai-config-max-tags"
-                  max={32}
-                  min={1}
-                  onChange={(e) =>
-                    patchSettings({
-                      maxTags: Number.parseInt(e.target.value, 10) || 8,
-                    })
-                  }
-                  type="number"
+                  normalize={normalizeAiMaxTags}
+                  onCommit={(maxTags) => commitNumericSettings({ maxTags })}
                   value={analysisSettings.maxTags}
                 />
               </div>
@@ -686,18 +677,12 @@ export function AiConfigDialog({
                   >
                     {t("aiConfig.maxDescriptionCharsZh")}
                   </label>
-                  <input
-                    className="text-field ai-config-input"
+                  <AiConfigNumberInput
                     id="ai-config-max-desc-zh"
-                    max={500}
-                    min={20}
-                    onChange={(e) =>
-                      patchSettings({
-                        maxDescriptionCharsZh:
-                          Number.parseInt(e.target.value, 10) || 100,
-                      })
+                    normalize={normalizeAiMaxDescriptionCharsZh}
+                    onCommit={(maxDescriptionCharsZh) =>
+                      commitNumericSettings({ maxDescriptionCharsZh })
                     }
-                    type="number"
                     value={analysisSettings.maxDescriptionCharsZh}
                   />
                 </div>
@@ -708,18 +693,12 @@ export function AiConfigDialog({
                   >
                     {t("aiConfig.maxDescriptionWordsEn")}
                   </label>
-                  <input
-                    className="text-field ai-config-input"
+                  <AiConfigNumberInput
                     id="ai-config-max-desc-en"
-                    max={200}
-                    min={10}
-                    onChange={(e) =>
-                      patchSettings({
-                        maxDescriptionWordsEn:
-                          Number.parseInt(e.target.value, 10) || 60,
-                      })
+                    normalize={normalizeAiMaxDescriptionWordsEn}
+                    onCommit={(maxDescriptionWordsEn) =>
+                      commitNumericSettings({ maxDescriptionWordsEn })
                     }
-                    type="number"
                     value={analysisSettings.maxDescriptionWordsEn}
                   />
                 </div>

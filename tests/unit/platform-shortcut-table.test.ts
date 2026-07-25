@@ -17,7 +17,10 @@ describe("PLATFORM_SHORTCUT_TABLE (Serpent-4ojz / Serpent-vf8x)", () => {
     for (const row of PLATFORM_SHORTCUT_TABLE) {
       expect(windowsUsesCtrlForMacMeta(row), row.id).toBe(true);
       expect(row.windows.label.includes("⌘")).toBe(false);
-      expect(Boolean(row.mac.shiftKey)).toBe(Boolean(row.windows.shiftKey));
+      if (row.id !== "asset.delete-from-disk") {
+        expect(Boolean(row.mac.shiftKey)).toBe(Boolean(row.windows.shiftKey));
+        expect(Boolean(row.mac.altKey)).toBe(Boolean(row.windows.altKey));
+      }
     }
   });
 

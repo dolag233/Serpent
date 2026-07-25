@@ -4,6 +4,8 @@ import {
   buildAiAnalysisSystemPrompt,
   DEFAULT_AI_ANALYSIS_SETTINGS,
   normalizeAiAnalysisSettings,
+  normalizeAiMaxDescriptionCharsZh,
+  normalizeAiMaxTags,
   sanitizeAiDescription,
   toWireAiAnalysisSettings,
 } from '../../src/shared/ai-analysis-settings';
@@ -22,6 +24,23 @@ describe('normalizeAiAnalysisSettings', () => {
     expect(settings.maxDescriptionWordsEn).toBe(200);
     expect(settings.outputStyle).toBe('normal');
     expect(settings.forceExistingTags).toBe(true);
+  });
+});
+
+describe('normalizeAiMaxTags', () => {
+  it('parses string drafts on blur-style commit', () => {
+    expect(normalizeAiMaxTags('12')).toBe(12);
+    expect(normalizeAiMaxTags('')).toBe(DEFAULT_AI_ANALYSIS_SETTINGS.maxTags);
+    expect(normalizeAiMaxTags('abc')).toBe(DEFAULT_AI_ANALYSIS_SETTINGS.maxTags);
+  });
+});
+
+describe('normalizeAiMaxDescriptionCharsZh', () => {
+  it('parses string drafts on blur-style commit', () => {
+    expect(normalizeAiMaxDescriptionCharsZh('220')).toBe(220);
+    expect(normalizeAiMaxDescriptionCharsZh('')).toBe(
+      DEFAULT_AI_ANALYSIS_SETTINGS.maxDescriptionCharsZh,
+    );
   });
 });
 

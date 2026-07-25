@@ -124,8 +124,23 @@ function clampInt(
   max: number,
   fallback: number,
 ): number {
-  if (typeof value !== 'number' || !Number.isFinite(value)) return fallback;
-  return Math.min(max, Math.max(min, Math.round(value)));
+  if (value === undefined || value === null || value === '') return fallback;
+  const parsed = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(max, Math.max(min, Math.round(parsed)));
+}
+
+/** Normalize a single advanced-setting numeric field (UI blur / wire). */
+export function normalizeAiMaxTags(raw: unknown): number {
+  return clampInt(raw, 1, 32, DEFAULT_AI_ANALYSIS_SETTINGS.maxTags);
+}
+
+export function normalizeAiMaxDescriptionCharsZh(raw: unknown): number {
+  return clampInt(raw, 20, 500, DEFAULT_AI_ANALYSIS_SETTINGS.maxDescriptionCharsZh);
+}
+
+export function normalizeAiMaxDescriptionWordsEn(raw: unknown): number {
+  return clampInt(raw, 10, 200, DEFAULT_AI_ANALYSIS_SETTINGS.maxDescriptionWordsEn);
 }
 
 const STYLE_LABEL: Record<AiOutputStyle, string> = {

@@ -13,7 +13,7 @@ import type {
   ImportConflictPlan,
   RendererLibrarySummary,
 } from "../shared/protocol/responses";
-import { LibraryOperationError, toMessage } from "./error-utils";
+import { LibraryOperationError, toMessage, shouldSuppressClipboardPasteFeedback } from "./error-utils";
 import {
   externalImportPayload,
   supportsExternalImportTransfer,
@@ -39,7 +39,6 @@ export type UseExternalImportHandlersParams = {
   onImportCompleted: (completion: ImportCompletion) => void | Promise<void>;
   setUiState: (state: "loading" | "importing" | "ready") => void;
   setError: (message: string | null) => void;
-  setFatal: (message: string | null) => void;
   setNotice: (message: string | null) => void;
   setConflicts: (plan: ImportConflictPlan | null) => void;
   onFoldersDroppedOnFolder?: (
@@ -64,7 +63,6 @@ export function useExternalImportHandlers({
   onImportCompleted,
   setUiState,
   setError,
-  setFatal,
   setNotice,
   setConflicts,
   onFoldersDroppedOnFolder,
@@ -130,7 +128,9 @@ export function useExternalImportHandlers({
         });
         await applyDesktopImportResult(result);
       } catch (caught) {
-        setFatal(toMessage(caught, t("toast.dropImportFailed"), locale));
+        if (!shouldSuppressClipboardPasteFeedback(caught)) {
+          setError(toMessage(caught, t("toast.dropImportFailed"), locale));
+        }
       } finally {
         setUiState("ready");
         setExternalDropActive(false);
@@ -146,7 +146,6 @@ export function useExternalImportHandlers({
       locale,
       managedImportTargetFolderIdRef,
       setError,
-      setFatal,
       setNotice,
       setUiState,
       t,
@@ -177,7 +176,9 @@ export function useExternalImportHandlers({
         await onImportCompleted(result.value);
       }
     } catch (caught) {
-      setFatal(toMessage(caught, t("toast.clipboardImportFailed"), locale));
+      if (!shouldSuppressClipboardPasteFeedback(caught)) {
+        setError(toMessage(caught, t("toast.clipboardImportFailed"), locale));
+      }
     } finally {
       setUiState("ready");
     }
@@ -192,7 +193,6 @@ export function useExternalImportHandlers({
     reloadCurrentContentRef,
     setConflicts,
     setError,
-    setFatal,
     setNotice,
     setUiState,
     t,

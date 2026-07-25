@@ -43,6 +43,11 @@ export interface ShortcutChord {
    * When true, Shift must be down (e.g. folder create ⌘⇧N / Ctrl+Shift+N).
    */
   readonly shiftKey?: boolean;
+  /**
+   * Optional Alt/Option. When omitted, Alt must be up. Used for mac
+   * ⌥⌘Delete (delete-from-disk) and other platform-native chords.
+   */
+  readonly altKey?: boolean;
 }
 
 /**
@@ -77,7 +82,7 @@ export interface ShortcutEvent {
 /**
  * 事件是否命中当前平台的快捷键和弦。语义逐条移植自
  * 0015-B 的 matchesAssetCommandShortcut，并扩展可选 Shift：
- * - Alt 按下时一律拒绝；
+ * - Alt 精确匹配：和弦未声明 altKey 时要求松开；声明 altKey: true 时要求按下；
  * - Shift 精确匹配：和弦未声明 shiftKey 时要求松开（旧资产快捷键），
  *   声明 shiftKey: true 时要求按下（文件夹新建 ⌘⇧N / Ctrl+Shift+N）；
  * - meta/ctrl 精确匹配：mac 和弦声明 metaKey 时要求 meta 按下且 ctrl 松开，
@@ -91,9 +96,9 @@ export function matchesShortcut(
   event: ShortcutEvent,
   platform: CommandPlatform,
 ): boolean {
-  if (event.altKey) return false;
   const chord = platform === 'mac' ? spec.mac : spec.windows;
   if (chord === undefined) return false;
+  if (event.altKey !== (chord.altKey ?? false)) return false;
   if (event.metaKey !== (chord.metaKey ?? false)) return false;
   if (event.ctrlKey !== (chord.ctrlKey ?? false)) return false;
   if (event.shiftKey !== (chord.shiftKey ?? false)) return false;

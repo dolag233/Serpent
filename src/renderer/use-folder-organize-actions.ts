@@ -2,7 +2,7 @@ import { useCallback } from "react";
 
 import type { SerpentLibraryApi } from "../shared/library-api";
 import type { ImportConflictPlan, ImportCompletion } from "../shared/protocol/responses";
-import { LibraryOperationError, toMessage } from "./error-utils";
+import { LibraryOperationError, toMessage, shouldSuppressClipboardPasteFeedback } from "./error-utils";
 import { useT } from "./i18n";
 import type { AppLocale } from "./i18n/types";
 
@@ -61,6 +61,7 @@ export function useFolderOrganizeActions({
         }
         setNotice(t("toast.folderPasteDone"));
       } catch (caught) {
+        if (shouldSuppressClipboardPasteFeedback(caught)) return;
         setError(toMessage(caught, t("toast.folderPasteFailed"), locale));
       } finally {
         setUiState("ready");

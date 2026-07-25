@@ -75,6 +75,10 @@ export const toolbarCommandDefinitions: readonly ToolbarCommandDefinition[] = [
     id: 'canvas.refresh',
     title: (ctx) => t(ctx, 'toolbar.refreshDisk'),
     group: 'organize',
+    shortcut: {
+      mac: { label: 'F5', key: 'F5' },
+      windows: { label: 'F5', key: 'F5' },
+    },
     disabledReason: libraryBusyReason,
     run: (ctx) => ctx.actions.refresh(),
   },

@@ -82,3 +82,12 @@ export function toMessage(
   }
   return error instanceof Error && error.message ? error.message : fallback;
 }
+
+/** Benign clipboard paste outcomes — no toast or blocking dialog. */
+export function shouldSuppressClipboardPasteFeedback(error: unknown): boolean {
+  return (
+    error instanceof LibraryOperationError &&
+    (error.code === "CLIPBOARD_FILES_NOT_FOUND" ||
+      error.code === "INVALID_DROP_SELECTION")
+  );
+}
