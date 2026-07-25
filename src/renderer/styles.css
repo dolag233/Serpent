@@ -3808,6 +3808,13 @@ body.serpent-modal-open .app-shell {
   opacity: 1;
   pointer-events: auto;
 }
+/* Fullscreen viewer: hide the system cursor when chrome is idle (Serpent-c3lf). */
+.workspace-viewer:fullscreen.is-chrome-idle {
+  cursor: none;
+}
+.workspace-viewer:fullscreen.is-chrome-idle * {
+  cursor: none !important;
+}
 .preview-zoom-controls {
   position: absolute;
   z-index: 2;

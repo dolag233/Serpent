@@ -13763,14 +13763,27 @@ export class LibraryService {
         availability: 'available' | 'missing';
         deleted_at: string | null;
       } | undefined;
-    if (!row || row.deleted_at || row.availability !== 'available' || !row.current_revision_id) {
+    if (!row) {
+      throw new LibraryServiceError('ASSET_NOT_FOUND', { reason: 'SOURCE_NOT_FOUND' });
+    }
+    const isTrashed = row.deleted_at !== null;
+    if (!row.current_revision_id) {
+      throw new LibraryServiceError('ASSET_NOT_FOUND', { reason: 'SOURCE_NOT_FOUND' });
+    }
+    if (!isTrashed && row.availability !== 'available') {
       throw new LibraryServiceError('ASSET_NOT_FOUND', { reason: 'SOURCE_NOT_FOUND' });
     }
     if (LibraryService.detectMediaType(row.relative_file_path) !== 'text') {
       throw new LibraryServiceError('INVALID_IMPORT_DECISION', { reason: 'UNSUPPORTED_FORMAT' });
     }
 
-    const absolutePath = this.resolveAssetPath(input.libraryId, input.assetId);
+    const absolutePath = isTrashed
+      ? this.trashPath(
+          openLibrary,
+          row.asset_id,
+          path.posix.basename(row.relative_file_path),
+        )
+      : this.resolveAssetPath(input.libraryId, input.assetId);
     const maxBytes = Math.min(
       Math.max(1, input.maxBytes ?? TEXT_VIEWER_MAX_BYTES),
       TEXT_VIEWER_MAX_BYTES,
@@ -13809,7 +13822,7 @@ export class LibraryService {
       truncated,
       byteSize: truncated ? maxBytes : buffer.length,
       lineCount: countTextLines(content),
-      editable: row.location_kind === 'managed',
+      editable: row.location_kind === 'managed' && !isTrashed,
       mimeType: textMimeForExtension(extension) ?? 'text/plain',
     };
   }

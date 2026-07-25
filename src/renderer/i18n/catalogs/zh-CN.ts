@@ -1048,7 +1048,6 @@ export const zhCN = {
     folderMoveIntoDescendant: "不能将文件夹移动到其子文件夹。",
     alreadyInFolder: "资产已在当前文件夹，无需移动。",
     noMovableAssets: "没有可移动的资产（链接、丢失或回收站资产不参与移动）。",
-    folderCopyUnsupported: "复制到文件夹尚未支持，松开 {modifier} 以移动。",
     noCollectionDropAssets: "没有可加入合集的资产（回收站中的资产已跳过）。",
     addedToCollectionCount: "已将 {count} 项资产加入合集",
     movedCount: "已移动 {count} 项资产",

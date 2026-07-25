@@ -586,6 +586,26 @@ describe('restoreAssets', () => {
     service.closeAll();
   });
 
+  it('readTextAsset reads trashed text from the trash store (Serpent-hv6n)', () => {
+    const root = temporaryRoot();
+    const service = newService();
+    const created = service.createLibrary({ displayName: 'Trash Text', selectedParentPath: root });
+
+    writeFileSync(path.join(root, 'note.txt'), 'hello from trash');
+    const assetId = importNoConflict(service, created.libraryId, path.join(root, 'note.txt')).assets[0]!.assetId;
+    service.trashAssets({ libraryId: created.libraryId, assetIds: [assetId] });
+
+    const read = service.readTextAsset({
+      libraryId: created.libraryId,
+      assetId,
+      maxBytes: 2048,
+    });
+
+    expect(read.content).toContain('hello from trash');
+    expect(read.editable).toBe(false);
+    service.closeAll();
+  });
+
   it('restores to a specified target folder', () => {
     const root = temporaryRoot();
     const service = newService();

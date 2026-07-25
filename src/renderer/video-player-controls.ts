@@ -89,7 +89,7 @@ export type VideoKeyboardSeekAction =
   | { kind: "skip"; direction: 1 | -1 };
 
 /**
- * D = forward one frame, F = back one frame; Ctrl+←/→ = ±2s.
+ * D = previous frame, F = next frame (Serpent-soii); Ctrl+←/→ = ±2s.
  * Capture-phase callers must stopPropagation so shell ←/→ asset nav does not fire.
  * Uses Ctrl (not Cmd) on all platforms per product request.
  */
@@ -116,12 +116,52 @@ export function matchVideoPlaybackSeekKey(event: {
 
   if (event.ctrlKey || event.metaKey || event.altKey) return null;
   if (event.key === "d" || event.key === "D" || event.code === "KeyD") {
-    return { kind: "frame", direction: 1 };
-  }
-  if (event.key === "f" || event.key === "F" || event.code === "KeyF") {
     return { kind: "frame", direction: -1 };
   }
+  if (event.key === "f" || event.key === "F" || event.code === "KeyF") {
+    return { kind: "frame", direction: 1 };
+  }
   return null;
+}
+
+export type VideoPlaybackRateStep = "slower" | "faster";
+
+/**
+ * X = slower, C = faster — step within VIDEO_PLAYBACK_RATES (Serpent-soii).
+ */
+export function matchVideoPlaybackRateKey(event: {
+  key: string;
+  code?: string;
+  ctrlKey: boolean;
+  metaKey: boolean;
+  altKey: boolean;
+  target: KeyboardTargetLike | EventTarget | null;
+}): VideoPlaybackRateStep | null {
+  if (isEditableKeyboardTarget(event.target)) return null;
+  if (event.ctrlKey || event.metaKey || event.altKey) return null;
+  if (event.key === "x" || event.key === "X" || event.code === "KeyX") {
+    return "slower";
+  }
+  if (event.key === "c" || event.key === "C" || event.code === "KeyC") {
+    return "faster";
+  }
+  return null;
+}
+
+export function stepVideoPlaybackRate(
+  current: VideoPlaybackRate,
+  step: VideoPlaybackRateStep,
+): VideoPlaybackRate {
+  const index = VIDEO_PLAYBACK_RATES.indexOf(current);
+  const resolvedIndex = index >= 0 ? index : VIDEO_PLAYBACK_RATES.indexOf(1);
+  if (step === "slower") {
+    return VIDEO_PLAYBACK_RATES[Math.max(0, resolvedIndex - 1)] ?? current;
+  }
+  return (
+    VIDEO_PLAYBACK_RATES[
+      Math.min(VIDEO_PLAYBACK_RATES.length - 1, resolvedIndex + 1)
+    ] ?? current
+  );
 }
 
 /** Seconds to add to `currentTime` for a matched seek action. */

@@ -5,12 +5,14 @@ import {
   formatVideoClockTime,
   isEditableKeyboardTarget,
   matchVideoPlaybackSeekKey,
+  matchVideoPlaybackRateKey,
   nextPlaybackIntent,
   parsePlaybackRate,
   scrubRatioFromClientX,
   scrubRatioFromTime,
   scrubTimeFromRatio,
   shouldHandleVideoSpaceKey,
+  stepVideoPlaybackRate,
   VIDEO_FRAME_STEP_SECONDS,
   VIDEO_PLAYBACK_RATES,
   VIDEO_SKIP_SECONDS,
@@ -119,21 +121,21 @@ describe("matchVideoPlaybackSeekKey / videoSeekDeltaSeconds (Serpent-sk1)", () =
     target: { tagName: "DIV" } as const,
   };
 
-  it("maps D forward and F back by one default frame", () => {
+  it("maps D to previous frame and F to next frame (Serpent-soii)", () => {
     expect(matchVideoPlaybackSeekKey({ ...base, key: "d" })).toEqual({
-      kind: "frame",
-      direction: 1,
-    });
-    expect(matchVideoPlaybackSeekKey({ ...base, key: "F" })).toEqual({
       kind: "frame",
       direction: -1,
     });
-    expect(
-      videoSeekDeltaSeconds({ kind: "frame", direction: 1 }),
-    ).toBeCloseTo(VIDEO_FRAME_STEP_SECONDS);
+    expect(matchVideoPlaybackSeekKey({ ...base, key: "F" })).toEqual({
+      kind: "frame",
+      direction: 1,
+    });
     expect(
       videoSeekDeltaSeconds({ kind: "frame", direction: -1 }),
     ).toBeCloseTo(-VIDEO_FRAME_STEP_SECONDS);
+    expect(
+      videoSeekDeltaSeconds({ kind: "frame", direction: 1 }),
+    ).toBeCloseTo(VIDEO_FRAME_STEP_SECONDS);
   });
 
   it("maps Ctrl+Arrow to ±2s skips and ignores Cmd+Arrow", () => {
@@ -183,6 +185,34 @@ describe("matchVideoPlaybackSeekKey / videoSeekDeltaSeconds (Serpent-sk1)", () =
     const delta = videoSeekDeltaSeconds({ kind: "skip", direction: -1 });
     expect(clampScrubTime(0.5 + delta, 10)).toBe(0);
     expect(clampScrubTime(9 + VIDEO_SKIP_SECONDS, 10)).toBe(10);
+  });
+});
+
+describe("matchVideoPlaybackRateKey / stepVideoPlaybackRate (Serpent-soii)", () => {
+  const base = {
+    ctrlKey: false,
+    metaKey: false,
+    altKey: false,
+    target: { tagName: "DIV" } as const,
+  };
+
+  it("maps X slower and C faster within discrete rates", () => {
+    expect(matchVideoPlaybackRateKey({ ...base, key: "x" })).toBe("slower");
+    expect(matchVideoPlaybackRateKey({ ...base, key: "C" })).toBe("faster");
+    expect(stepVideoPlaybackRate(1, "faster")).toBe(1.25);
+    expect(stepVideoPlaybackRate(1, "slower")).toBe(0.75);
+    expect(stepVideoPlaybackRate(0.5, "slower")).toBe(0.5);
+    expect(stepVideoPlaybackRate(2, "faster")).toBe(2);
+  });
+
+  it("ignores X/C while typing", () => {
+    expect(
+      matchVideoPlaybackRateKey({
+        ...base,
+        key: "c",
+        target: { tagName: "TEXTAREA" },
+      }),
+    ).toBeNull();
   });
 });
 

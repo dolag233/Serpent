@@ -1064,7 +1064,6 @@ export const en = {
     folderMoveIntoDescendant: "Cannot move a folder into one of its subfolders.",
     alreadyInFolder: "Asset is already in this folder; no move needed.",
     noMovableAssets: "No movable assets (linked, missing, or Trash assets are excluded).",
-    folderCopyUnsupported: "Copy into a folder is not supported yet; release {modifier} to move.",
     noCollectionDropAssets: "No assets can be added to the collection (trashed assets are skipped).",
     addedToCollectionCount: "Added {count} assets to the collection",
     movedCount: "Moved {count} assets",

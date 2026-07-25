@@ -9,12 +9,14 @@ import {
   clampScrubTime,
   formatVideoClockTime,
   matchVideoPlaybackSeekKey,
+  matchVideoPlaybackRateKey,
   nextPlaybackIntent,
   parsePlaybackRate,
   scrubRatioFromClientX,
   scrubRatioFromTime,
   scrubTimeFromRatio,
   shouldHandleVideoSpaceKey,
+  stepVideoPlaybackRate,
   VIDEO_PLAYBACK_RATES,
   videoSeekDeltaSeconds,
   type VideoPlaybackRate,
@@ -36,7 +38,8 @@ const SCRUB_STEP_SECONDS = 5;
 /**
  * Fully custom chrome around `HTMLVideoElement` (REQ-VIEW-005 / Serpent-60k):
  * - Space play/pause when the viewer is focused (not in text fields)
- * - D / F frame step (±1/30s) and Ctrl+←/→ ±2s skip (Serpent-sk1)
+ * - D / F frame step (D=back, F=forward) and Ctrl+←/→ ±2s skip (Serpent-sk1 / soii)
+ * - X / C step playback rate within VIDEO_PLAYBACK_RATES (Serpent-soii)
  * - scrubbable progress track (mousedown / drag / click / arrow keys)
  * - playback rate select
  *
@@ -111,23 +114,28 @@ export function VideoPlayerControls({
         return;
       }
       const action = matchVideoPlaybackSeekKey(event);
-      if (!action) return;
-      const video = videoRef.current;
-      if (!video) return;
-      event.preventDefault();
-      // Stop shell ←/→ asset navigation (bubble listener on document).
-      event.stopPropagation();
-      const mediaDuration = video.duration || duration;
-      const nextTime = clampScrubTime(
-        video.currentTime + videoSeekDeltaSeconds(action),
-        mediaDuration,
-      );
-      // Frame step pauses so the stepped frame is visible (editorial habit).
-      if (action.kind === "frame" && !video.paused) {
-        video.pause();
+      if (action) {
+        const video = videoRef.current;
+        if (!video) return;
+        event.preventDefault();
+        event.stopPropagation();
+        const mediaDuration = video.duration || duration;
+        const nextTime = clampScrubTime(
+          video.currentTime + videoSeekDeltaSeconds(action),
+          mediaDuration,
+        );
+        if (action.kind === "frame" && !video.paused) {
+          video.pause();
+        }
+        seekSessionRef.current?.commit(nextTime);
+        setCurrentTime(nextTime);
+        return;
       }
-      seekSessionRef.current?.commit(nextTime);
-      setCurrentTime(nextTime);
+      const rateStep = matchVideoPlaybackRateKey(event);
+      if (!rateStep) return;
+      event.preventDefault();
+      event.stopPropagation();
+      setPlaybackRate((current) => stepVideoPlaybackRate(current, rateStep));
     };
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);

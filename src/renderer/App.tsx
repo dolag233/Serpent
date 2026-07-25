@@ -7358,6 +7358,12 @@ function AppInner() {
                               selectedFolderId ?? null,
                             )
                           : null;
+                      const trashOriginBadgeLabel =
+                        showTrash &&
+                        asset.deletedAt &&
+                        asset.trashedFromPath
+                          ? trashedFromLabel(asset.trashedFromPath, locale)
+                          : null;
                       const snippetCaption = resolveSearchSnippetCaption(
                         searchSnippets.get(asset.assetId),
                         asset.displayName,
@@ -7589,6 +7595,17 @@ function AppInner() {
                             {sourceBadgeLabel}
                           </span>
                         )}
+                        {trashOriginBadgeLabel && (
+                          <span
+                            aria-label={t("scope.containingFolder", {
+                              name: trashOriginBadgeLabel,
+                            })}
+                            className="asset-source-badge"
+                            title={asset.trashedFromPath ?? trashOriginBadgeLabel}
+                          >
+                            {trashOriginBadgeLabel}
+                          </span>
+                        )}
                         {showExtension && (
                           <span className="asset-extension">
                             {fileExtensionLabel(asset.displayName)}
@@ -7650,7 +7667,6 @@ function AppInner() {
                         canvasPrefs.fields.size ||
                         canvasPrefs.fields.date ||
                         snippetCaption != null ||
-                        (asset.deletedAt && asset.trashedFromPath) ||
                         (assetViewMode === "grid" &&
                           asset.width != null &&
                           asset.height != null)) && (
@@ -7728,19 +7744,6 @@ function AppInner() {
                           {snippetCaption != null ? (
                             <span className="search-snippet">
                               {highlightSnippet(snippetCaption)}
-                            </span>
-                          ) : asset.deletedAt && asset.trashedFromPath ? (
-                            <span
-                              style={{
-                                color: "var(--tertiary)",
-                                fontSize: 8,
-                                overflow: "hidden",
-                                textOverflow: "ellipsis",
-                                whiteSpace: "nowrap",
-                              }}
-                              title={asset.trashedFromPath}
-                            >
-                              {trashedFromLabel(asset.trashedFromPath, locale)}
                             </span>
                           ) : (canvasPrefs.fields.size ||
                               canvasPrefs.fields.date) ? (
