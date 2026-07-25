@@ -20,6 +20,8 @@ export type UseSelectionKeyboardArgs = {
   readonly enabled: boolean;
   readonly platform: CommandPlatform;
   readonly previewOpen: boolean;
+  /** Full browse-scope asset ids (Serpent-6w7n); used for select-all / invert. */
+  readonly browseScopeAssetIds: readonly string[];
   readonly visibleAssetIds: readonly string[];
   readonly selectedAssetIds: readonly string[];
   readonly setSelectedAssetIds: Dispatch<SetStateAction<string[]>>;
@@ -33,6 +35,7 @@ export function useSelectionKeyboard(args: UseSelectionKeyboardArgs): void {
     enabled,
     platform,
     previewOpen,
+    browseScopeAssetIds,
     visibleAssetIds,
     selectedAssetIds,
     setSelectedAssetIds,
@@ -53,18 +56,18 @@ export function useSelectionKeyboard(args: UseSelectionKeyboardArgs): void {
       if (action === null) return;
 
       if (action === "select-all") {
-        if (visibleAssetIds.length === 0) return;
+        if (browseScopeAssetIds.length === 0) return;
         event.preventDefault();
-        setSelectedAssetIds([...visibleAssetIds]);
-        setSelectedAssetId(visibleAssetIds.at(-1));
-        selectionAnchorRef.current = visibleAssetIds[0] ?? null;
+        setSelectedAssetIds([...browseScopeAssetIds]);
+        setSelectedAssetId(browseScopeAssetIds.at(-1));
+        selectionAnchorRef.current = browseScopeAssetIds[0] ?? null;
         return;
       }
 
       if (action === "invert") {
-        if (visibleAssetIds.length === 0) return;
+        if (browseScopeAssetIds.length === 0) return;
         event.preventDefault();
-        const next = invertSelection(visibleAssetIds, selectedAssetIds);
+        const next = invertSelection(browseScopeAssetIds, selectedAssetIds);
         setSelectedAssetIds(next);
         setSelectedAssetId(next.at(-1));
         selectionAnchorRef.current = next[0] ?? null;
@@ -83,6 +86,7 @@ export function useSelectionKeyboard(args: UseSelectionKeyboardArgs): void {
     enabled,
     platform,
     previewOpen,
+    browseScopeAssetIds,
     visibleAssetIds,
     selectedAssetIds,
     setSelectedAssetIds,

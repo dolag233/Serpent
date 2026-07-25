@@ -1624,6 +1624,18 @@ describe('pagination', () => {
 
     service.closeAll();
   });
+
+  it('loads the full browse scope when scopeMode is true', () => {
+    const { service, libraryId, libraryPath } = createLibraryWithAssetAndTags();
+    void createSecondAsset(service, libraryId, libraryPath, 'Second');
+
+    const result = service.searchAssets({ libraryId, scopeMode: true });
+    expect(result.items).toHaveLength(2);
+    expect(result.total).toBe(2);
+    expect(result.offset).toBe(0);
+
+    service.closeAll();
+  });
 });
 
 // ── Smart Collections (v6) ──────────────────────────────────────────

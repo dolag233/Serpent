@@ -1416,6 +1416,7 @@ async function commandFor(
         filters: request.filters,
         scope: request.scope,
         sort: request.sort,
+        scopeMode: request.scopeMode,
         limit: request.limit,
         offset: request.offset,
       };
@@ -1452,6 +1453,7 @@ async function commandFor(
         type: "smart-collection.execute",
         libraryId: request.libraryId,
         collectionId: request.collectionId,
+        scopeMode: request.scopeMode,
         limit: request.limit,
         offset: request.offset,
       };

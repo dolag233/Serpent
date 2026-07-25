@@ -131,7 +131,7 @@ describe("browser-session", () => {
 });
 
 describe("findSessionSelectedAsset", () => {
-  it("returns the asset already in the first page", async () => {
+  it("returns the asset already in the restored scope", async () => {
     const found = await findSessionSelectedAsset({
       api: { searchAssets: vi.fn(), executeSmartCollection: vi.fn() },
       libraryId: "lib",
@@ -142,28 +142,19 @@ describe("findSessionSelectedAsset", () => {
         selectedAssetName: "b.png",
       },
       restoredItems: [asset({ assetId: "a1" }), asset({ assetId: "a2" })],
-      pageSize: 50,
     });
     expect(found?.assetId).toBe("a2");
   });
 
-  it("pages smart collections then filename search", async () => {
-    const executeSmartCollection = vi.fn(async ({ offset }: { offset?: number }) => {
-      if ((offset ?? 0) === 50) {
-        return {
-          ok: true as const,
-          value: {
-            items: [asset({ assetId: "deep" })],
-            total: 51,
-            offset: 50,
-          },
-        };
-      }
-      return {
-        ok: true as const,
-        value: { items: [], total: 51, offset: offset ?? 0 },
-      };
-    });
+  it("loads the full smart collection when the asset is missing", async () => {
+    const executeSmartCollection = vi.fn(async () => ({
+      ok: true as const,
+      value: {
+        items: [asset({ assetId: "deep" })],
+        total: 1,
+        offset: 0,
+      },
+    }));
     const api: RestoreBrowserSessionApi = {
       executeSmartCollection,
       searchAssets: vi.fn(),
@@ -178,10 +169,11 @@ describe("findSessionSelectedAsset", () => {
         selectedAssetName: "deep.png",
       },
       restoredItems: [asset({ assetId: "page0" })],
-      pageSize: 50,
     });
     expect(found?.assetId).toBe("deep");
-    expect(executeSmartCollection).toHaveBeenCalled();
+    expect(executeSmartCollection).toHaveBeenCalledWith(
+      expect.objectContaining({ scopeMode: true }),
+    );
   });
 
   it("falls back to filename search outside smart scope", async () => {
@@ -203,11 +195,11 @@ describe("findSessionSelectedAsset", () => {
         selectedAssetName: "hero.png",
       },
       restoredItems: [asset({ assetId: "other" })],
-      pageSize: 50,
     });
     expect(found?.assetId).toBe("named");
     expect(searchAssets).toHaveBeenCalledWith(
       expect.objectContaining({
+        scopeMode: true,
         query: {
           clauses: [
             { field: "filename", values: ["hero.png"], exclude: false },
@@ -247,7 +239,6 @@ describe("applyStoredBrowserSession", () => {
         selectedAssetName: "t1.png",
       },
       initialItems: [],
-      pageSize: 50,
       collectionRecursive: false,
       isFolderRecursiveEnabled: () => false,
       loadContent,

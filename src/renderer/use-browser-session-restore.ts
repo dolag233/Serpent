@@ -35,7 +35,6 @@ import type { WorkspaceNavHistory, WorkspaceNavLocation } from "./workspace-nav-
 export type UseBrowserSessionRestoreArgs = {
   api: SerpentLibraryApi | null;
   loadContent: LoadContentForRestore;
-  pageSize: number;
   collectionRecursiveRef: MutableRefObject<boolean>;
   folderRecursiveRef: MutableRefObject<boolean>;
   setFolderRecursive: (enabled: boolean) => void;
@@ -80,7 +79,6 @@ export function useBrowserSessionRestore(
   const {
     api,
     loadContent,
-    pageSize,
     collectionRecursiveRef,
     folderRecursiveRef,
     setFolderRecursive,
@@ -129,7 +127,6 @@ export function useBrowserSessionRestore(
               library: activeLibrary,
               session,
               initialItems: restoredItems,
-              pageSize,
               collectionRecursive: collectionRecursiveRef.current,
               isFolderRecursiveEnabled: (libraryId, folderId) =>
                 isFolderRecursiveEnabled(
@@ -189,7 +186,6 @@ export function useBrowserSessionRestore(
     loadContent,
     locale,
     navHistoryRef,
-    pageSize,
     pendingRestoredFocusRef,
     selectionAnchorRef,
     setActiveCollectionId,

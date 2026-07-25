@@ -746,19 +746,19 @@ const library: SerpentLibraryApi = Object.freeze({
     return { ok: true, value: { collectionId: result.collectionId } };
   },
 
-  async executeSmartCollection({ libraryId, collectionId, limit, offset }: { libraryId: string; collectionId: string; limit?: number; offset?: number }): Promise<LibraryApiResult<{ items: AssetSummary[]; total: number; offset: number }>> {
-    const result = await request({ type: 'smart-collection.execute.request', libraryId, collectionId, limit, offset });
+  async executeSmartCollection({ libraryId, collectionId, scopeMode, limit, offset }: { libraryId: string; collectionId: string; scopeMode?: boolean; limit?: number; offset?: number }): Promise<LibraryApiResult<{ items: AssetSummary[]; total: number; offset: number }>> {
+    const result = await request({ type: 'smart-collection.execute.request', libraryId, collectionId, scopeMode, limit, offset });
     if (!result.ok) return failure(result);
     if (result.type !== 'smart-collection.executed') throw new Error('Unexpected execute-smart-collection response.');
     return { ok: true, value: { items: result.items, total: result.total, offset: result.offset } };
   },
 
-  async searchAssets({ libraryId, query, filters, scope, sort, limit, offset }: { libraryId: string; query?: SearchQuery | null; filters?: FilterClause[]; scope?: SearchScope; sort?: { field: 'name' | 'modified_at' | 'created_at' | 'byte_size' | 'long_edge' | 'duration' | 'rating' | 'color' | 'author'; order: 'asc' | 'desc' }; limit?: number; offset?: number }): Promise<LibraryApiResult<{ items: AssetSummary[]; total: number; offset: number; snippets?: { assetId: string; text: string }[] }>> {
+  async searchAssets({ libraryId, query, filters, scope, sort, scopeMode, limit, offset }: { libraryId: string; query?: SearchQuery | null; filters?: FilterClause[]; scope?: SearchScope; sort?: { field: 'name' | 'modified_at' | 'created_at' | 'byte_size' | 'long_edge' | 'duration' | 'rating' | 'color' | 'author'; order: 'asc' | 'desc' }; scopeMode?: boolean; limit?: number; offset?: number }): Promise<LibraryApiResult<{ items: AssetSummary[]; total: number; offset: number; snippets?: { assetId: string; text: string }[] }>> {
     const parsedQuery = searchQuerySchema.safeParse(query ?? null);
     if (!parsedQuery.success) {
       return { ok: false, error: createPublicError('INVALID_SEARCH_QUERY') };
     }
-    const result = await request({ type: 'asset.search.request', libraryId, query: parsedQuery.data, filters, scope, sort, limit, offset });
+    const result = await request({ type: 'asset.search.request', libraryId, query: parsedQuery.data, filters, scope, sort, scopeMode, limit, offset });
     if (!result.ok) return failure(result);
     if (result.type !== 'asset.search.result') throw new Error('Unexpected search-assets response.');
     return { ok: true, value: { items: result.items, total: result.total, offset: result.offset, snippets: result.snippets } };

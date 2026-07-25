@@ -12,6 +12,7 @@ import type {
 import type { LibraryApiResult } from "../shared/library-api";
 import type { RendererLibrarySummary } from "../shared/protocol/responses";
 import type { StoredBrowserSession } from "./browser-session";
+import { BROWSE_SCOPE_SEARCH } from "./browse-scope-search";
 import { LibraryOperationError } from "./error-utils";
 import type { WorkspaceNavLocation } from "./workspace-nav-history";
 
@@ -33,12 +34,14 @@ export type RestoreBrowserSessionApi = {
     } | null;
     filters?: FilterClause[];
     scope?: SearchScope;
+    scopeMode?: boolean;
     limit?: number;
     offset?: number;
   }): Promise<LibraryApiResult<SessionAssetPage>>;
   executeSmartCollection(input: {
     libraryId: string;
     collectionId: string;
+    scopeMode?: boolean;
     limit?: number;
     offset?: number;
   }): Promise<LibraryApiResult<SessionAssetPage>>;
@@ -56,7 +59,6 @@ export type RestoreBrowserSessionDeps = {
   session: StoredBrowserSession;
   /** Items from the initial all-scope load before session apply. */
   initialItems: AssetSummary[];
-  pageSize: number;
   collectionRecursive: boolean;
   isFolderRecursiveEnabled: (libraryId: string, folderId: string) => boolean;
   loadContent: LoadContentForRestore;
@@ -83,8 +85,8 @@ export type RestoreBrowserSessionResult = {
 };
 
 /**
- * Page through smart-collection / filename search until the saved asset
- * appears (or the result set is exhausted).
+ * Recover the saved selection from the restored scope rows, or one extra
+ * scope query / filename search when the asset is missing (Serpent-6w7n).
  */
 export async function findSessionSelectedAsset(args: {
   api: RestoreBrowserSessionApi;
@@ -93,64 +95,46 @@ export async function findSessionSelectedAsset(args: {
   restoredItems: readonly AssetSummary[];
   searchScope?: SearchScope;
   searchFilters?: FilterClause[];
-  pageSize: number;
 }): Promise<AssetSummary | undefined> {
-  const {
-    api,
-    libraryId,
-    session,
-    restoredItems,
-    searchScope,
-    searchFilters,
-    pageSize,
-  } = args;
+  const { api, libraryId, session, restoredItems, searchScope, searchFilters } =
+    args;
 
-  let restoredAsset = restoredItems.find(
+  const restoredAsset = restoredItems.find(
     (asset) => asset.assetId === session.selectedAssetId,
   );
   if (restoredAsset) return restoredAsset;
 
   if (session.scope.kind === "smart") {
-    for (let offset = pageSize; !restoredAsset; offset += pageSize) {
-      const result = await api.executeSmartCollection({
-        libraryId,
-        collectionId: session.scope.id,
-        limit: pageSize,
-        offset,
-      });
-      if (!result.ok || result.value.items.length === 0) break;
-      restoredAsset = result.value.items.find(
-        (asset) => asset.assetId === session.selectedAssetId,
-      );
-      if (offset + result.value.items.length >= result.value.total) break;
-    }
-    return restoredAsset;
-  }
-
-  for (let offset = 0; !restoredAsset; offset += 200) {
-    const result = await api.searchAssets({
+    const result = await api.executeSmartCollection({
       libraryId,
-      query: {
-        clauses: [
-          {
-            field: "filename",
-            values: [session.selectedAssetName],
-            exclude: false,
-          },
-        ],
-      },
-      filters: searchFilters,
-      scope: searchScope,
-      limit: 200,
-      offset,
+      collectionId: session.scope.id,
+      ...BROWSE_SCOPE_SEARCH,
     });
-    if (!result.ok || result.value.items.length === 0) break;
-    restoredAsset = result.value.items.find(
+    if (!result.ok || result.value.items.length === 0) return undefined;
+    return result.value.items.find(
       (asset) => asset.assetId === session.selectedAssetId,
     );
-    if (offset + result.value.items.length >= result.value.total) break;
   }
-  return restoredAsset;
+
+  const result = await api.searchAssets({
+    libraryId,
+    query: {
+      clauses: [
+        {
+          field: "filename",
+          values: [session.selectedAssetName],
+          exclude: false,
+        },
+      ],
+    },
+    filters: searchFilters,
+    scope: searchScope,
+    ...BROWSE_SCOPE_SEARCH,
+  });
+  if (!result.ok || result.value.items.length === 0) return undefined;
+  return result.value.items.find(
+    (asset) => asset.assetId === session.selectedAssetId,
+  );
 }
 
 /**
@@ -164,7 +148,6 @@ export async function applyStoredBrowserSession(
     api,
     library,
     session,
-    pageSize,
     collectionRecursive,
     isFolderRecursiveEnabled,
     loadContent,
@@ -228,8 +211,7 @@ export async function applyStoredBrowserSession(
       libraryId: library.libraryId,
       query: null,
       filters: searchFilters,
-      limit: pageSize,
-      offset: 0,
+      ...BROWSE_SCOPE_SEARCH,
     });
     if (!result.ok) throw new LibraryOperationError(result.error);
     setActiveTagId(session.scope.id);
@@ -248,8 +230,7 @@ export async function applyStoredBrowserSession(
       libraryId: library.libraryId,
       query: null,
       scope: searchScope,
-      limit: pageSize,
-      offset: 0,
+      ...BROWSE_SCOPE_SEARCH,
     });
     if (!result.ok) throw new LibraryOperationError(result.error);
     setActiveCollectionId(session.scope.id);
@@ -265,8 +246,7 @@ export async function applyStoredBrowserSession(
     const result = await api.executeSmartCollection({
       libraryId: library.libraryId,
       collectionId: session.scope.id,
-      limit: pageSize,
-      offset: 0,
+      ...BROWSE_SCOPE_SEARCH,
     });
     if (!result.ok) throw new LibraryOperationError(result.error);
     setActiveSmartCollectionId(session.scope.id);
@@ -287,7 +267,6 @@ export async function applyStoredBrowserSession(
       restoredItems,
       searchScope,
       searchFilters,
-      pageSize,
     })) ?? null;
 
   if (restoredAsset) {

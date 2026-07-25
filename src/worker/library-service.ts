@@ -50,7 +50,7 @@ import {
 import { pathIsWithin } from './path-utils';
 
 import { smartCollectionQueryDefinitionSchema, extractedVideoMetadataSchema, type AssetMetadataResult, type ExtractedMetadataResult, type ExtractedVideoMetadata, type AssetSummary, type CollectionSummary, type FilterClause, type FolderBrowseEntry, type LinkedFolderRule, type LinkedFolderSummary, type ManagedFolderSummary, type SearchScope, type SmartCollectionQueryDefinition, type SmartCollectionSummary, type TagCooccurrenceGraph, type TagSummary, type TrashedFolderSummary } from '../shared/asset-types';
-import { sanitizeAiDescription } from '../shared/ai-analysis-settings';
+import { BROWSE_SCOPE_MAX_ASSETS } from '../shared/browse-scope';
 import { hasMeaningfulSmartCollectionCondition } from '../shared/smart-collection-query';
 import {
   colorFilterSql,
@@ -11831,6 +11831,8 @@ export class LibraryService {
     sort?: { field: string; order: 'asc' | 'desc' } | null;
     limit?: number | null;
     offset?: number | null;
+    /** Serpent-6w7n: fetch entire browse scope (lightweight rows, capped). */
+    scopeMode?: boolean | null;
   }): {
     items: AssetSummary[];
     total: number;
@@ -11839,8 +11841,9 @@ export class LibraryService {
   } {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     const connection = openLibrary.connection;
-    const limit = input.limit ?? 50;
-    const offset = input.offset ?? 0;
+    const scopeMode = input.scopeMode === true;
+    const limit = scopeMode ? BROWSE_SCOPE_MAX_ASSETS : (input.limit ?? 50);
+    const offset = scopeMode ? 0 : (input.offset ?? 0);
 
     const searchGroups = input.query ? normalizedSearchGroups(input.query) : [];
     const hasQuery = searchGroups.length > 0;
@@ -12352,6 +12355,7 @@ export class LibraryService {
     collectionId: string;
     limit?: number;
     offset?: number;
+    scopeMode?: boolean | null;
   }): { items: AssetSummary[]; total: number; offset: number } {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     const sc = openLibrary.connection
@@ -12371,8 +12375,9 @@ export class LibraryService {
       query: definition.search ?? null,
       filters: definition.filters ?? null,
       sort: definition.sort ?? null,
-      limit: input.limit ?? 50,
-      offset: input.offset ?? 0,
+      scopeMode: input.scopeMode ?? false,
+      limit: input.scopeMode ? null : (input.limit ?? 50),
+      offset: input.scopeMode ? 0 : (input.offset ?? 0),
     });
   }
 

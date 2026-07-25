@@ -608,10 +608,15 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
         filters: request.command.filters ?? null,
         scope: request.command.scope ?? null,
         sort: request.command.sort ?? null,
-        limit: request.command.limit ?? 50,
-        offset: request.command.offset ?? 0,
+        scopeMode: request.command.scopeMode ?? false,
+        limit: request.command.scopeMode ? null : (request.command.limit ?? 50),
+        offset: request.command.scopeMode ? 0 : (request.command.offset ?? 0),
       });
-      scheduleThumbnailScene(request.command.libraryId, 'visible', result.items.map((asset) => asset.assetId));
+      scheduleThumbnailScene(
+        request.command.libraryId,
+        'visible',
+        result.items.map((asset) => asset.assetId),
+      );
       return {
         ok: true,
         type: 'asset.search.result',
@@ -643,7 +648,11 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
       };
     case 'smart-collection.execute': {
       const result = libraryService.executeSmartCollection(request.command);
-      scheduleThumbnailScene(request.command.libraryId, 'visible', result.items.map((asset) => asset.assetId));
+      scheduleThumbnailScene(
+        request.command.libraryId,
+        'visible',
+        result.items.map((asset) => asset.assetId),
+      );
       return {
         ok: true,
         type: 'smart-collection.executed',

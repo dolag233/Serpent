@@ -297,11 +297,7 @@ import {
   FOLDER_CARD_ROW_INLINE_PADDING_PX,
   masonryAlignedFolderWidthPx,
 } from "./folder-card-width";
-import {
-  browseLoadMoreObserverRoot,
-  countNewlyAddedAssets,
-  resolveSearchTotalAfterAppend,
-} from "./asset-browse-load-more";
+import { BROWSE_SCOPE_SEARCH } from "./browse-scope-search";
 import {
   enumerateDiscreteCardSizes,
   nearestDiscreteCardSize,
@@ -379,8 +375,6 @@ type SearchDefinition = {
   filters?: FilterClause[];
   sort?: SortDefinition;
 };
-const ASSET_PAGE_SIZE = 50;
-
 function ToolButton({
   label,
   icon,
@@ -1058,7 +1052,6 @@ function AppInner() {
       ),
     [assetCardSize, canvasWidthPx],
   );
-  const [loadingMoreAssets, setLoadingMoreAssets] = useState(false);
   const workspaceCanvasRef = useRef<HTMLDivElement>(null);
   // REQ-CANVAS-019: rAF handle for the card-size-slider anchor restore.
   const cardSizeRestoreFrameRef = useRef<number | null>(null);
@@ -1078,10 +1071,6 @@ function AppInner() {
     [],
   );
   // 筛选与排序面板：外点 / Esc 自动关闭（现代浮层语义），summary 切换不变。
-  const loadMoreSentinelRef = useRef<HTMLDivElement>(null);
-  const loadMoreAssetsRef = useRef<() => Promise<void>>(async () => undefined);
-  /** Sync lock so scroll + IntersectionObserver cannot thrash load-more (Serpent-r94b). */
-  const loadingMoreLockRef = useRef(false);
   const pendingRestoredFocusRef = useRef<string | null>(null);
   const pendingRevealRef = useRef<PendingAssetReveal | null>(null);
   const chooseFolderRef = useRef<(scope: AssetScope) => Promise<void>>(
@@ -1444,10 +1433,27 @@ function AppInner() {
     () => visibleAssets.map((asset) => asset.assetId),
     [visibleAssets],
   );
+  const browseScopeAssetIds = useMemo(() => {
+    const rows = showTrash ? trashedAssets : assets;
+    return rows.map((asset) => asset.assetId);
+  }, [showTrash, trashedAssets, assets]);
+  const workspaceBrowseCount = useMemo(() => {
+    if (showTagManagement) return tags.length;
+    if (searchTotal !== null) return searchTotal;
+    return showTrash ? trashedAssets.length : visibleAssets.length;
+  }, [
+    showTagManagement,
+    tags.length,
+    searchTotal,
+    showTrash,
+    trashedAssets.length,
+    visibleAssets.length,
+  ]);
   useSelectionKeyboard({
     enabled: Boolean(library),
     platform: SHORTCUT_PLATFORM,
     previewOpen: Boolean(previewAsset),
+    browseScopeAssetIds,
     visibleAssetIds,
     selectedAssetIds,
     setSelectedAssetIds,
@@ -1461,8 +1467,8 @@ function AppInner() {
     return shellApi.onInvertSelection(() => {
       if (previewAsset) return;
       if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
-      if (visibleAssetIds.length === 0) return;
-      const next = invertSelection(visibleAssetIds, selectedAssetIds);
+      if (browseScopeAssetIds.length === 0) return;
+      const next = invertSelection(browseScopeAssetIds, selectedAssetIds);
       setSelectedAssetIds(next);
       setSelectedAssetId(next.at(-1));
       selectionAnchorRef.current = next[0] ?? null;
@@ -1470,7 +1476,7 @@ function AppInner() {
   }, [
     shellApi,
     previewAsset,
-    visibleAssetIds,
+    browseScopeAssetIds,
     selectedAssetIds,
     selectionAnchorRef,
   ]);
@@ -1880,8 +1886,7 @@ function AppInner() {
           filters: opts?.discovery?.filters,
           scope: browseScope,
           sort: opts?.discovery?.sort,
-          limit: ASSET_PAGE_SIZE,
-          offset: 0,
+          ...BROWSE_SCOPE_SEARCH,
         }),
         trashMode || scope !== "all"
           ? api.searchAssets({ ...libId, query: null, limit: 1, offset: 0 })
@@ -1940,7 +1945,6 @@ function AppInner() {
   useBrowserSessionRestore({
     api: api ?? null,
     loadContent,
-    pageSize: ASSET_PAGE_SIZE,
     collectionRecursiveRef,
     folderRecursiveRef,
     setFolderRecursive,
@@ -2681,8 +2685,7 @@ function AppInner() {
         query: definition.search ?? null,
         filters: definition.filters,
         sort: definition.sort,
-        limit: ASSET_PAGE_SIZE,
-        offset: 0,
+        ...BROWSE_SCOPE_SEARCH,
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
       applySearchResult(result.value);
@@ -2719,8 +2722,7 @@ function AppInner() {
         query: definition.search ?? null,
         filters: definition.filters,
         sort: definition.sort,
-        limit: ASSET_PAGE_SIZE,
-        offset: 0,
+        ...BROWSE_SCOPE_SEARCH,
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
       applySearchResult(result.value);
@@ -3136,8 +3138,7 @@ function AppInner() {
           collectionId,
           recursive,
         },
-        limit: ASSET_PAGE_SIZE,
-        offset: 0,
+        ...BROWSE_SCOPE_SEARCH,
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
       applySearchResult(result.value);
@@ -3367,38 +3368,16 @@ function AppInner() {
       offset: number;
       snippets?: Array<{ assetId: string; text: string }>;
     },
-    append = false,
   ) {
-    if (append) {
-      const newlyAddedCount = countNewlyAddedAssets(assets, result.items);
-      setAssets((current) => {
-        const fresh = result.items.filter(
-          (item) =>
-            !current.some((existing) => existing.assetId === item.assetId),
-        );
-        return fresh.length === 0 ? current : [...current, ...fresh];
-      });
-      setSearchTotal(
-        resolveSearchTotalAfterAppend({
-          requestOffset: assets.length,
-          serverTotal: result.total,
-          pageItemCount: result.items.length,
-          newlyAddedCount,
-        }),
-      );
-    } else {
-      setAssets(result.items);
-      setSearchTotal(result.total);
-    }
+    setAssets(result.items);
+    setSearchTotal(result.total);
     setSearchOffset(result.offset + result.items.length);
     setSearchSnippets(
-      (current) =>
-        new Map([
-          ...(append ? current.entries() : []),
-          ...(result.snippets ?? []).map(
-            (snippet) => [snippet.assetId, snippet.text] as const,
-          ),
-        ]),
+      new Map(
+        (result.snippets ?? []).map(
+          (snippet) => [snippet.assetId, snippet.text] as const,
+        ),
+      ),
     );
   }
 
@@ -3424,7 +3403,7 @@ function AppInner() {
   async function reloadCurrentContent() {
     if (!library) return;
     if (activeSmartCollectionId) {
-      await chooseSmartCollection(activeSmartCollectionId, 0);
+      await chooseSmartCollection(activeSmartCollectionId);
       return;
     }
     if (showTrash) {
@@ -3692,23 +3671,16 @@ function AppInner() {
     },
   });
 
-  async function executeSearchDefinition(
-    definition: SearchDefinition,
-    offset = 0,
-  ) {
+  async function executeSearchDefinition(definition: SearchDefinition) {
     if (!api || !library) return;
-    const requestGeneration =
-      offset === 0
-        ? ++searchRequestGenerationRef.current
-        : searchRequestGenerationRef.current;
+    const requestGeneration = ++searchRequestGenerationRef.current;
     const result = await api.searchAssets({
       libraryId: library.libraryId,
       query: definition.search ?? null,
       filters: definition.filters,
       scope: currentSearchScope(),
       sort: definition.sort,
-      limit: ASSET_PAGE_SIZE,
-      offset,
+      ...BROWSE_SCOPE_SEARCH,
     });
     if (!result.ok) throw new LibraryOperationError(result.error);
     if (requestGeneration !== searchRequestGenerationRef.current) return;
@@ -3716,24 +3688,24 @@ function AppInner() {
     setShowTagManagement(false);
     if (!tagFilter.trim()) setActiveTagId(null);
     setActiveSmartCollectionId(null);
-    if (offset === 0 && !pendingRevealRef.current) {
+    if (!pendingRevealRef.current) {
       clearAssetSelection({ preserveFolders: true });
     }
-    applySearchResult(result.value, offset > 0);
+    applySearchResult(result.value);
     return result.value;
   }
 
   async function runSearch(
     event?: FormEvent,
-    offset = 0,
+    _offset = 0,
     opts?: { silent?: boolean },
   ) {
     event?.preventDefault();
     if (!api || !library) return;
-    if (offset === 0) await closeAssetPreview(false);
+    await closeAssetPreview(false);
     try {
       const definition = currentQueryDefinition();
-      const result = await executeSearchDefinition(definition, offset);
+      const result = await executeSearchDefinition(definition);
       // Serpent-huvw: discovery debounce / reload must not toast "搜索完成"
       // and wipe AI completion / error toasts.
       if (result && !opts?.silent) {
@@ -3816,17 +3788,16 @@ function AppInner() {
     sortOrder,
   ]);
 
-  async function chooseSmartCollection(collectionId: string, offset = 0) {
+  async function chooseSmartCollection(collectionId: string) {
     if (!api || !library) return;
-    if (offset === 0) await closeAssetPreview(false);
+    await closeAssetPreview(false);
     closeContextMenu();
-    if (offset === 0) workspaceCanvasRef.current?.scrollTo({ top: 0, left: 0 });
+    workspaceCanvasRef.current?.scrollTo({ top: 0, left: 0 });
     try {
       const result = await api.executeSmartCollection({
         libraryId: library.libraryId,
         collectionId,
-        limit: ASSET_PAGE_SIZE,
-        offset,
+        ...BROWSE_SCOPE_SEARCH,
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
       setShowTrash(false);
@@ -3835,106 +3806,21 @@ function AppInner() {
       setActiveCollectionId(null);
       setActiveSmartCollectionId(collectionId);
       setAssetScope("all");
-      if (offset === 0) {
-        clearAssetSelection();
-        clearDiscoveryControls();
-        recordNavigation({ kind: "smart-collection", collectionId });
-        // Refresh sidebar badge from the live execute total (CU-M6 cache).
-        setSmartCollections((current) =>
-          current.map((collection) =>
-            collection.collectionId === collectionId
-              ? { ...collection, assetCount: result.value.total }
-              : collection,
-          ),
-        );
-      }
-      applySearchResult(result.value, offset > 0);
+      clearAssetSelection();
+      clearDiscoveryControls();
+      recordNavigation({ kind: "smart-collection", collectionId });
+      setSmartCollections((current) =>
+        current.map((collection) =>
+          collection.collectionId === collectionId
+            ? { ...collection, assetCount: result.value.total }
+            : collection,
+        ),
+      );
+      applySearchResult(result.value);
     } catch (caught) {
       setError(toMessage(caught, t("toast.smartCollectionRunFailed"), locale));
     }
   }
-
-  async function loadMoreAssets() {
-    if (
-      loadingMoreLockRef.current ||
-      loadingMoreAssets ||
-      searchTotal === null ||
-      visibleAssets.length >= searchTotal
-    )
-      return;
-    loadingMoreLockRef.current = true;
-    setLoadingMoreAssets(true);
-    const offset = visibleAssets.length;
-    const existingIds = visibleAssets;
-    try {
-      if (showTrash) {
-        if (!api || !library) return;
-        const result = await api.searchAssets({
-          libraryId: library.libraryId,
-          query: null,
-          scope: { kind: "trash" },
-          limit: ASSET_PAGE_SIZE,
-          offset,
-        });
-        if (!result.ok) throw new LibraryOperationError(result.error);
-        const newlyAdded = countNewlyAddedAssets(
-          existingIds,
-          result.value.items,
-        );
-        setTrashedAssets((current) => [
-          ...current,
-          ...result.value.items.filter(
-            (item) =>
-              !current.some((existing) => existing.assetId === item.assetId),
-          ),
-        ]);
-        setSearchTotal(
-          resolveSearchTotalAfterAppend({
-            requestOffset: offset,
-            serverTotal: result.value.total,
-            pageItemCount: result.value.items.length,
-            newlyAddedCount: newlyAdded,
-          }),
-        );
-        setSearchOffset(result.value.offset + result.value.items.length);
-      } else if (activeSmartCollectionId)
-        await chooseSmartCollection(activeSmartCollectionId, offset);
-      else await runSearch(undefined, offset, { silent: true });
-    } catch (caught) {
-      setError(toMessage(caught, t("toast.loadMoreFailed"), locale));
-    } finally {
-      loadingMoreLockRef.current = false;
-      setLoadingMoreAssets(false);
-    }
-  }
-
-  useEffect(() => {
-    loadMoreAssetsRef.current = loadMoreAssets;
-  });
-
-  useEffect(() => {
-    const sentinel = loadMoreSentinelRef.current;
-    if (
-      !sentinel ||
-      searchTotal === null ||
-      visibleAssets.length >= searchTotal
-    )
-      return;
-    // Always observe against the scrollport. Using `.asset-grid` as root makes
-    // the sentinel permanently intersecting (it is a child of that box), which
-    // thrash-loads on Windows (Serpent-r94b).
-    const root = browseLoadMoreObserverRoot(sentinel);
-    if (!root) return;
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries.some((entry) => entry.isIntersecting))
-          void loadMoreAssetsRef.current();
-      },
-      { root, rootMargin: "600px" },
-    );
-    observer.observe(sentinel);
-    return () => observer.disconnect();
-  }, [loadingMoreAssets, searchTotal, visibleAssets.length]);
 
   async function renameSmartCollection(collectionId: string, name: string) {
     if (!api || !library || !name.trim()) return;
@@ -6689,7 +6575,7 @@ function AppInner() {
         activeCollectionId={activeCollectionId}
         activeSmartCollectionId={activeSmartCollectionId}
         allAssetCount={allAssetCount}
-        trashedAssetCount={trashedAssets.length}
+        trashedAssetCount={searchTotal ?? trashedAssets.length}
         folders={folders}
         collections={collections}
         collectionTree={collectionTree}
@@ -6834,7 +6720,7 @@ function AppInner() {
               {library
                 ? showTagManagement
                   ? t("common.itemCount", { count: tags.length })
-                  : t("common.itemCount", { count: visibleAssets.length })
+                  : t("common.itemCount", { count: workspaceBrowseCount })
                 : t("common.notLoaded")}
             </span>
           </div>
@@ -7164,15 +7050,6 @@ function AppInner() {
           onDragOverCapture={handleExternalDragOver}
           onDrop={handleExternalDrop}
           onMouseDown={handleCanvasMouseDown}
-          onScroll={(event) => {
-            const target = event.currentTarget;
-            if (
-              target.scrollHeight - target.scrollTop - target.clientHeight <
-              480
-            ) {
-              void loadMoreAssets();
-            }
-          }}
           ref={workspaceCanvasRef}
         >
           {externalDropActive && (
@@ -7802,18 +7679,6 @@ function AppInner() {
                       </div>
                     ));
                   })()}
-                  <div
-                    className="asset-loading-more"
-                    ref={loadMoreSentinelRef}
-                    role="status"
-                  >
-                    {loadingMoreAssets && (
-                      <>
-                        <span className="activity-pulse" />
-                        {t("progress.loadingMore")}
-                      </>
-                    )}
-                  </div>
                   </div>
                 )}
               </>
@@ -8487,7 +8352,7 @@ function AppInner() {
         onAssignTag={(assetId, tagId) => { void assignAssetToTag(assetId, tagId); }}
         onAddToCollection={(assetId, collectionId) => { void addAssetToCollection(assetId, collectionId); }}
         onLoadCollectionMemberships={loadCollectionMemberships}
-        trashedAssetCount={trashedAssets.length}
+        trashedAssetCount={searchTotal ?? trashedAssets.length}
         trashedFolderCount={trashedFolders.length}
         onRestoreTrashedFolder={(tombstoneId, name) => {
           void restoreTrashedManagedFolder(tombstoneId, name);
