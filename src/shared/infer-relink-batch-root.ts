@@ -11,7 +11,15 @@ export function inferRelinkBatchRoot(
 ): string {
   const relativeSegments = relativeFilePath.split('/').filter(Boolean);
   const resolvedAnchor = path.resolve(anchorAbsolutePath);
-  const anchorSegments = resolvedAnchor.split(path.sep).filter(Boolean);
+  // Split only the root-relative portion: splitting an absolute path and
+  // filtering empties drops the root itself (the leading "/" on POSIX, the
+  // UNC host on Windows), so joining the remaining segments back would
+  // silently yield a relative path. Keeping `root` apart preserves it.
+  const { root } = path.parse(resolvedAnchor);
+  const anchorSegments = resolvedAnchor
+    .slice(root.length)
+    .split(path.sep)
+    .filter(Boolean);
 
   if (
     relativeSegments.length > 0 &&
@@ -31,9 +39,9 @@ export function inferRelinkBatchRoot(
         anchorSegments.length - relativeSegments.length,
       );
       if (rootSegments.length === 0) {
-        return path.parse(resolvedAnchor).root;
+        return root;
       }
-      return rootSegments.join(path.sep);
+      return root + rootSegments.join(path.sep);
     }
   }
 
