@@ -800,6 +800,9 @@ export const en = {
     elevationOff: "Off",
     elevationStrong: "Strong",
     elevationLevelValue: "Level {level}",
+    inspectorCardFeel: "Inspector preview card motion",
+    inspectorCardFeelHint:
+      "Pointer tilt, glare, and press depth on the Inspector preview card. Browse grid cards are unchanged. Respects system reduced-motion when on.",
     languageHint: "Controls the interface language. Changes apply immediately.",
     browserExtensionTitle: "Browser extension",
     browserExtensionIntro:

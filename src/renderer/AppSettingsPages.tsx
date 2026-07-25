@@ -13,6 +13,7 @@ import {
   setDiskDeletePromptEnabled,
 } from "./disk-delete-confirm-preferences";
 import { useElevation } from "./ElevationProvider";
+import { useInspectorCardFeel } from "./InspectorCardFeelProvider";
 import {
   clearImportConflictPreferences,
   hasRememberedImportConflictPreferences,
@@ -124,6 +125,8 @@ export function AppearanceSettingsPage(): ReactNode {
     setAccentHex,
   } = useTheme();
   const { preferences: shadowPrefs, setLevel: setShadowLevel } = useElevation();
+  const { enabled: inspectorCardFeelEnabled, toggle: toggleInspectorCardFeel } =
+    useInspectorCardFeel();
   const [accentDraft, setAccentDraft] = useState(accentHex);
 
   function selectAccent(hex: string) {
@@ -247,6 +250,13 @@ export function AppearanceSettingsPage(): ReactNode {
           <span>{t("settings.elevationStrong")}</span>
         </div>
       </div>
+      <div className="app-settings-card-divider" />
+      <SettingsToggleRow
+        checked={inspectorCardFeelEnabled}
+        hint={t("settings.inspectorCardFeelHint")}
+        label={t("settings.inspectorCardFeel")}
+        onChange={toggleInspectorCardFeel}
+      />
     </SettingsCard>
   );
 }

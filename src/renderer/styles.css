@@ -6585,11 +6585,37 @@ select.ai-config-input.ai-config-languages {
 }
 
 /*
- * Inspector preview card feel (experiment/card-feel-preview subset, Serpent-62wm+).
- * Trading-card pointer tilt + soft shadow; browse grid unchanged.
+ * Inspector preview card feel (experiment/card-feel-preview subset).
+ * Tilt host is the visual face (.inspector-hero-face / fallback / text tile),
+ * not the full-width hero strip — so glare/hit-testing match the card bounds.
  */
+.inspector-pane[data-inspector-card-feel="on"] .inspector-hero-face,
+.inspector-pane[data-inspector-card-feel="on"] .inspector-hero-preview-fallback {
+  display: inline-flex;
+  max-width: 100%;
+  max-height: min(360px, 45vh);
+  border-radius: 8px;
+}
+
+.inspector-pane[data-inspector-card-feel="on"] .inspector-hero-face {
+  /* Shrink-wrap the contain-fit media so the face box == visible card. */
+  width: fit-content;
+  height: fit-content;
+}
+
+.inspector-pane[data-inspector-card-feel="on"] .inspector-hero-face > .inspector-hero-image {
+  display: block;
+  max-width: 100%;
+  max-height: min(360px, 45vh);
+  width: auto;
+  height: auto;
+  border-radius: inherit;
+  /* Shadow lives on the face host so glare inset matches the card, not a halo. */
+  box-shadow: none !important;
+}
+
 .inspector-pane[data-inspector-card-feel="on"] .inspector-hero-preview-fallback,
-.inspector-pane[data-inspector-card-feel="on"] .inspector-hero-image {
+.inspector-pane[data-inspector-card-feel="on"] .inspector-hero-face {
   box-shadow:
     inset 0 1px 0 rgb(255 255 255 / 0.04),
     0 0 0 1px rgb(255 255 255 / 0.025),
@@ -6597,10 +6623,24 @@ select.ai-config-input.ai-config-languages {
     0 5px 14px rgb(0 0 0 / 0.12);
 }
 
-.inspector-pane[data-inspector-card-feel="on"]:not([data-elevation="0"])
+.inspector-pane[data-inspector-card-feel="on"]
+  .inspector-hero-text-preview.text-asset-preview {
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.04),
+    0 0 0 1px rgb(255 255 255 / 0.025),
+    0 1px 2px rgb(0 0 0 / 0.16),
+    0 5px 14px rgb(0 0 0 / 0.12);
+}
+
+:root:not([data-elevation="0"])
+  .inspector-pane[data-inspector-card-feel="on"]
   .inspector-hero-preview-fallback,
-.inspector-pane[data-inspector-card-feel="on"]:not([data-elevation="0"])
-  .inspector-hero-image {
+:root:not([data-elevation="0"])
+  .inspector-pane[data-inspector-card-feel="on"]
+  .inspector-hero-face,
+:root:not([data-elevation="0"])
+  .inspector-pane[data-inspector-card-feel="on"]
+  .inspector-hero-text-preview.text-asset-preview {
   box-shadow:
     var(--shadow-card),
     inset 0 1px 0 rgb(255 255 255 / 0.04),
@@ -6612,7 +6652,10 @@ select.ai-config-input.ai-config-languages {
   .inspector-hero-preview-fallback,
 [data-theme="light"]
   .inspector-pane[data-inspector-card-feel="on"]
-  .inspector-hero-image {
+  .inspector-hero-face,
+[data-theme="light"]
+  .inspector-pane[data-inspector-card-feel="on"]
+  .inspector-hero-text-preview.text-asset-preview {
   box-shadow:
     inset 0 1px 0 rgb(255 255 255 / 0.7),
     0 0 0 1px rgb(0 0 0 / 0.04),
@@ -6622,7 +6665,7 @@ select.ai-config-input.ai-config-languages {
 
 @media (prefers-reduced-motion: no-preference) {
   .inspector-pane[data-inspector-card-feel="on"] [data-card-feel-tilt] {
-    transform: perspective(920px) rotateX(var(--card-tilt-x, 0deg))
+    transform: perspective(1100px) rotateX(var(--card-tilt-x, 0deg))
       rotateY(var(--card-tilt-y, 0deg)) translateZ(0);
     transform-style: preserve-3d;
     transform-origin: center center;
@@ -6639,12 +6682,18 @@ select.ai-config-input.ai-config-languages {
 
   .inspector-pane[data-inspector-card-feel="on"]
     [data-card-feel-tilt].is-card-pressing {
-    transform: perspective(920px) rotateX(var(--card-tilt-x, 0deg))
-      rotateY(var(--card-tilt-y, 0deg)) scale(0.965) translateZ(-8px);
+    transform: perspective(1100px) rotateX(var(--card-tilt-x, 0deg))
+      rotateY(var(--card-tilt-y, 0deg)) scale(0.975) translateZ(-5px);
     transition-duration: 80ms;
   }
 
-  .inspector-pane[data-inspector-card-feel="on"] .inspector-hero-preview::after {
+  .inspector-pane[data-inspector-card-feel="on"] [data-card-feel-tilt] {
+    /* Keep overflow visible so contact shadow is not clipped; ::after is
+       inset:0 on the shrink-wrapped face so glare stays on the card. */
+    position: relative;
+  }
+
+  .inspector-pane[data-inspector-card-feel="on"] [data-card-feel-tilt]::after {
     content: "";
     position: absolute;
     inset: 0;
@@ -6652,93 +6701,28 @@ select.ai-config-input.ai-config-languages {
     border-radius: inherit;
     pointer-events: none;
     opacity: 0;
-    background:
-      radial-gradient(
-        circle at var(--card-glare-x, 50%) var(--card-glare-y, 40%),
-        rgb(255 255 255 / 0.22),
-        transparent 55%
-      ),
-      linear-gradient(
-        115deg,
-        transparent 38%,
-        rgb(255 255 255 / 0.07) 50%,
-        transparent 62%
-      );
+    /* Point-light specular only — no fixed-angle linear stripe. */
+    background: radial-gradient(
+      circle at var(--card-glare-x, 50%) var(--card-glare-y, 40%),
+      rgb(255 255 255 / 0.32) 0%,
+      rgb(255 255 255 / 0.1) 38%,
+      transparent 66%
+    );
     mix-blend-mode: soft-light;
     transition: opacity 140ms ease;
   }
 
   .inspector-pane[data-inspector-card-feel="on"]
-    .inspector-hero-preview.is-card-tilting::after {
-    opacity: 1;
-    transition: opacity 140ms ease;
-  }
-
-  .inspector-pane[data-inspector-card-feel="on"] .inspector-hero-preview {
-    transform-style: preserve-3d;
+    [data-card-feel-tilt].is-card-tilting::after {
+    opacity: 0.95;
   }
 
   .inspector-pane[data-inspector-card-feel="on"]
-    .inspector-hero-preview[data-card-feel-tilt]:not(
-      .inspector-hero-preview-fallback
-    ) {
-    transform: none;
-    transition: none;
-    will-change: auto;
-  }
-
-  .inspector-pane[data-inspector-card-feel="on"]
-    .inspector-hero-preview[data-card-feel-tilt]:not(
-      .inspector-hero-preview-fallback
-    )
-    > .inspector-hero-image,
-  .inspector-pane[data-inspector-card-feel="on"]
-    .inspector-hero-preview[data-card-feel-tilt]:not(
-      .inspector-hero-preview-fallback
-    )
-    > .inspector-hero-text-snippet {
-    transform: perspective(920px) rotateX(var(--card-tilt-x, 0deg))
-      rotateY(var(--card-tilt-y, 0deg)) translateZ(0);
-    transform-style: preserve-3d;
-    transform-origin: center center;
-    transition: transform 160ms cubic-bezier(0.2, 0.85, 0.25, 1);
-    will-change: transform;
-  }
-
-  .inspector-pane[data-inspector-card-feel="on"]
-    .inspector-hero-preview.is-card-tilting:not(.inspector-hero-preview-fallback)
-    > .inspector-hero-image,
-  .inspector-pane[data-inspector-card-feel="on"]
-    .inspector-hero-preview.is-card-tilting:not(.inspector-hero-preview-fallback)
-    > .inspector-hero-text-snippet {
-    transition: transform 40ms linear;
-  }
-
-  .inspector-pane[data-inspector-card-feel="on"]
-    .inspector-hero-preview.is-card-pressing:not(.inspector-hero-preview-fallback)
-    > .inspector-hero-image,
-  .inspector-pane[data-inspector-card-feel="on"]
-    .inspector-hero-preview.is-card-pressing:not(.inspector-hero-preview-fallback)
-    > .inspector-hero-text-snippet {
-    transform: perspective(920px) rotateX(var(--card-tilt-x, 0deg))
-      rotateY(var(--card-tilt-y, 0deg)) scale(0.965) translateZ(-8px);
-    transition-duration: 80ms;
-  }
-
-  .inspector-pane[data-inspector-card-feel="on"]
-    .inspector-hero-preview.is-card-tilting
-    .inspector-hero-image,
-  .inspector-pane[data-inspector-card-feel="on"]
-    .inspector-hero-preview.is-card-tilting
-    .inspector-hero-preview-fallback,
-  .inspector-pane[data-inspector-card-feel="on"]
-    .inspector-hero-preview.is-card-tilting
-    .inspector-hero-text-snippet {
+    [data-card-feel-tilt].is-card-tilting {
     box-shadow:
       inset 0 1px 0 rgb(255 255 255 / 0.06),
-      var(--card-shadow-x, 0px) var(--card-shadow-y, 8px) 18px
-        rgb(0 0 0 / 0.18);
-    transition: box-shadow 160ms ease;
+      var(--card-shadow-x, 0px) var(--card-shadow-y, 8px) 14px
+        rgb(0 0 0 / 0.15);
   }
 
   .inspector-pane[data-inspector-card-feel="on"]

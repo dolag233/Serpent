@@ -8,6 +8,7 @@ import {
 
 import { Icon } from "./Icons";
 import { InspectorCardFeelMotion } from "./inspector-card-feel-motion";
+import { useInspectorCardFeel } from "./InspectorCardFeelProvider";
 import { IconActionButton } from "./icon-action-button";
 import { iconActionAttrs } from "./icon-action-attrs";
 import { formatDuration } from "./App";
@@ -143,22 +144,30 @@ function InspectorHeroSinglePreview({
   library,
   livePreview,
   api,
+  cardFeelEnabled = false,
 }: {
   asset: AssetSummary;
   library: RendererLibrarySummary | null;
   /** Ready GIF/video resolution to loop-play (Serpent-a9n); null = static only. */
   livePreview?: PreviewResolution | null;
   api?: SerpentLibraryApi | null;
+  cardFeelEnabled?: boolean;
 }) {
   const t = useT();
   const previewSrc = resolveInspectorPreviewSrc(asset, library);
   const [decoded, setDecoded] = useState(false);
   const live = resolveLivePreviewMedia(Boolean(livePreview), livePreview);
+  const cardFeelTiltProps = cardFeelEnabled
+    ? ({ "data-card-feel-tilt": "" } as const)
+    : {};
 
   if (asset.mediaType === "text") {
     if (!api || !library) {
       return (
-        <div className="inspector-hero-preview inspector-hero-preview-fallback" data-card-feel-tilt="">
+        <div
+          className="inspector-hero-preview inspector-hero-preview-fallback"
+          {...cardFeelTiltProps}
+        >
           <Icon name="file" size={20} />
         </div>
       );
@@ -167,7 +176,7 @@ function InspectorHeroSinglePreview({
       <TextAssetPreviewTile
         api={api}
         assetId={asset.assetId}
-        cardFeelTilt
+        cardFeelTilt={cardFeelEnabled}
         className="inspector-hero-preview inspector-hero-text-preview text-asset-preview"
         libraryId={library.libraryId}
         revisionId={asset.currentRevisionId}
@@ -180,7 +189,7 @@ function InspectorHeroSinglePreview({
     return (
       <div
         className="inspector-hero-preview inspector-hero-preview-fallback"
-        data-card-feel-tilt=""
+        {...cardFeelTiltProps}
       >
         <Icon name="file" size={20} />
       </div>
@@ -189,35 +198,39 @@ function InspectorHeroSinglePreview({
 
   if (live.kind === "video" && live.url) {
     return (
-      <div className="inspector-hero-preview" data-card-feel-tilt="">
-        <video
-          autoPlay
-          className="inspector-hero-image"
-          loop
-          muted
-          playsInline
-          poster={previewSrc ?? undefined}
-          preload="metadata"
-          src={live.url}
-        />
+      <div className="inspector-hero-preview">
+        <div className="inspector-hero-face" {...cardFeelTiltProps}>
+          <video
+            autoPlay
+            className="inspector-hero-image"
+            loop
+            muted
+            playsInline
+            poster={previewSrc ?? undefined}
+            preload="metadata"
+            src={live.url}
+          />
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="inspector-hero-preview" data-card-feel-tilt="">
+    <div className="inspector-hero-preview">
       {!decoded && <Icon name="file" size={20} />}
-      <img
-        alt={asset.displayName}
-        className={
-          decoded ? "inspector-hero-image" : "inspector-hero-image is-loading"
-        }
-        onLoad={(event) => {
-          const image = event.currentTarget;
-          if (image.complete && image.naturalWidth > 0) setDecoded(true);
-        }}
-        src={live.kind === "gif" && live.url ? live.url : (previewSrc ?? undefined)}
-      />
+      <div className="inspector-hero-face" {...cardFeelTiltProps}>
+        <img
+          alt={asset.displayName}
+          className={
+            decoded ? "inspector-hero-image" : "inspector-hero-image is-loading"
+          }
+          onLoad={(event) => {
+            const image = event.currentTarget;
+            if (image.complete && image.naturalWidth > 0) setDecoded(true);
+          }}
+          src={live.kind === "gif" && live.url ? live.url : (previewSrc ?? undefined)}
+        />
+      </div>
     </div>
   );
 }
@@ -357,6 +370,7 @@ function InspectorHero({
   selectionCount,
   livePreview,
   api,
+  cardFeelEnabled = false,
 }: {
   asset: AssetSummary;
   selectedAssets: readonly AssetSummary[];
@@ -366,6 +380,7 @@ function InspectorHero({
   /** Serpent-a9n: only ever passed/used for single selection. */
   livePreview?: PreviewResolution | null;
   api?: SerpentLibraryApi | null;
+  cardFeelEnabled?: boolean;
 }) {
   const t = useT();
   const isMulti = selectionCount >= 2;
@@ -399,6 +414,7 @@ function InspectorHero({
         <InspectorHeroSinglePreview
           api={api}
           asset={asset}
+          cardFeelEnabled={cardFeelEnabled}
           library={library}
           livePreview={livePreview}
         />
@@ -479,6 +495,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
   } = props;
 
   const t = useT();
+  const { enabled: inspectorCardFeelEnabled } = useInspectorCardFeel();
   const isMultiEdit = multiEdit !== null && multiEdit.selectionCount >= 2;
   const selectionCount = Math.max(
     multiEdit?.selectionCount ?? 0,
@@ -791,13 +808,17 @@ export function InspectorPanel(props: InspectorPanelProps) {
   ]);
 
   return (
-    <aside className="inspector-pane" data-inspector-card-feel="on">
-      <InspectorCardFeelMotion />
+    <aside
+      className="inspector-pane"
+      data-inspector-card-feel={inspectorCardFeelEnabled ? "on" : "off"}
+    >
+      {inspectorCardFeelEnabled ? <InspectorCardFeelMotion /> : null}
       {selectedAsset ? (
         <div className="inspector-content">
           <InspectorHero
             api={api}
             asset={selectedAsset}
+            cardFeelEnabled={inspectorCardFeelEnabled}
             infoParts={compactInfoParts}
             key={`${selectedAsset.assetId}:${selectionCount}`}
             library={library}

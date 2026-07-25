@@ -787,6 +787,9 @@ export const zhCN = {
     elevationOff: "关闭",
     elevationStrong: "最强",
     elevationLevelValue: "等级 {level}",
+    inspectorCardFeel: "Inspector 预览卡片动效",
+    inspectorCardFeelHint:
+      "右侧 Inspector 预览卡在指针悬停时的倾斜、高光与按下景深；浏览网格卡片不受影响。开启时仍遵循系统「减少动态效果」。",
     languageHint: "控制界面文案语言，立即生效。",
     browserExtensionTitle: "浏览器扩展",
     browserExtensionIntro:

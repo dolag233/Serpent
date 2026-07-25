@@ -8,6 +8,7 @@ import {
   setCardFeelPressing,
   type CardFeelTiltRect,
 } from "./card-feel-tilt";
+import { useInspectorCardFeel } from "./InspectorCardFeelProvider";
 
 function prefersReducedMotion(): boolean {
   return (
@@ -21,8 +22,10 @@ function prefersReducedMotion(): boolean {
  * Scoped to `.inspector-pane [data-card-feel-tilt]` — browse grid unchanged.
  */
 export function InspectorCardFeelMotion(): null {
+  const { enabled } = useInspectorCardFeel();
+
   useEffect(() => {
-    if (prefersReducedMotion()) return;
+    if (!enabled || prefersReducedMotion()) return;
 
     let active: HTMLElement | null = null;
     let layoutRect: CardFeelTiltRect | null = null;
@@ -113,7 +116,7 @@ export function InspectorCardFeelMotion(): null {
       window.removeEventListener("dragstart", onDragStart);
       window.removeEventListener("scroll", onScroll, true);
     };
-  }, []);
+  }, [enabled]);
 
   return null;
 }

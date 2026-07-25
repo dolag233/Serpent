@@ -9,6 +9,7 @@ import { createRoot } from 'react-dom/client';
 
 import { App } from './App';
 import { ElevationProvider } from './ElevationProvider';
+import { InspectorCardFeelProvider } from './InspectorCardFeelProvider';
 import { LocaleProvider } from './i18n';
 import { applyRendererPlatform } from './renderer-platform';
 import {
@@ -33,7 +34,9 @@ createRoot(root).render(
     <LocaleProvider>
       <ThemeProvider>
         <ElevationProvider>
-          <App />
+          <InspectorCardFeelProvider>
+            <App />
+          </InspectorCardFeelProvider>
         </ElevationProvider>
       </ThemeProvider>
     </LocaleProvider>
