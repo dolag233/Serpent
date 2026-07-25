@@ -597,13 +597,15 @@ FolderBrowseEntry
 | --- | --- | --- | --- |
 | REQ-IGNORE-001 | **文件、文件夹 ignore 支持**：用户可对单个文件或文件夹执行 ignore，使其不被索引、展示或操作；与链接文件夹既有 `.gitignore` 式过滤规则（`linked_ignored_assets`、默认 `.git`/`node_modules` 等）协同，补齐面向人的显式 ignore / unignore 入口（对齐澄清队列 #7「不想显示用 ignore」）。需定义作用域、持久化、刷新与计数口径。 | P2 | `Serpent-v6m3` |
 | REQ-MEDIA-001 | **扩展格式完整媒体旅程**：为 **TGA、EXR、TIFF、BMP、ICO、SVG、PSD** 七种格式补齐缩略图生成与查看页缩放查看。每种格式均须：(1) 资产卡片与 Inspector 可解码缩略图；(2) 查看页支持 Fit/平移/滚轮缩放等与现有图片查看一致的基础交互（EXR 曝光等专业能力沿用 0006 规格）。注：EXR/TGA/TIFF 在 product-brief / 0006 已为首发格式，本条目强调七种格式**全部**达到可验收的缩略图 + 查看闭环；SVG/PSD 从此前 MVP 后候选提升。 | P2 | `Serpent-aav1` |
-| REQ-EXT-005 | **浏览器扩展拖拽保存径向菜单（Hotbox）**：在浏览器中拖拽图片、视频等资产时显示 Serpent 保存菜单，能力对齐 Eagle 浏览器插件的拖放收藏，但交互需专门设计。目标类似 Houdini N 键菜单 / Maya Hotbox / 游戏快速轮盘：指针朝某一方向移动即选中该方向指令；可展开指令再生成下一级轮盘；**支持返回上一级**；`Esc` 完全退出。多级轮盘用于任意选择保存位置（资源库 → 文件夹层级 → 确认等）。与现有扩展 loopback 上传（REQ-EXT-001/002）集成；需独立 UI/UX 规格。 | P2 | `Serpent-6llg` |
+| REQ-EXT-005 | **浏览器扩展拖拽保存径向菜单（Hotbox）**：在浏览器中拖拽图片、视频等资产时显示 Serpent 保存菜单，能力对齐 Eagle 浏览器插件的拖放收藏，但交互需专门设计。目标类似 Houdini N 键菜单 / Maya Hotbox / 游戏快速轮盘：指针朝某一方向移动即选中该方向指令；可展开指令再生成下一级轮盘；**支持返回上一级**；`Esc` 完全退出。多级轮盘用于任意选择保存位置（资源库 → 文件夹层级 → 确认等）。与现有扩展 loopback 上传（REQ-EXT-001/002）集成；需独立 UI/UX 规格。 | P2 | `Serpent-6llg`（已实现，EXT-009 人类验收通过） |
+| REQ-INSPECT-006 | **Inspector 在 AI 操作后及时刷新**：清除 AI 信息、AI 分析完成（单选/批量）后，右侧资产信息栏须立即反映最新描述/标签/评分与 AI 角标，不残留分析中占位或旧 AI 字段；无需切换选中或重开 Inspector。 | P1 | `Serpent-c9r3` |
 
 用户原话要点：
 
 1. 文件、文件夹的 ignore 功能支持。
 2. 接下来要实现的重要功能：支持 tga、exr、tiff、bmp、ico、svg、psd 格式；每种资产都需要支持生成缩略图、缩放查看功能。
 3. 浏览器插件，拖拽图片、视频等资产时能够显示 Serpent 的保存菜单，对齐 Eagle 浏览器插件类似功能；菜单设计成类似 Houdini n 键菜单或 Maya hotbox（游戏快速轮盘）：往一个方向移动表示选择该方向指令，可展开则再生成下一级轮盘，支持返回上一级，按 Esc 完全退出；多级菜单可任意选择保存位置。
+4. 右侧资产信息栏需要及时刷新；比如在清除 AI 信息、生成 AI 信息之后都需要及时刷新右侧的显示。
 
 **REQ-EXT-005 设计决策（2026-07-25，`Serpent-6llg`）**：① 可展开项手势 = 松开保存进该文件夹、按住穿越外环展开下一级（否决：松开展开+中心确认、悬停停留展开）；② 轮盘只做拖拽触发，右键两套 UI 不动；③ 先可交互 HTML 原型验证手感再接入扩展。规格与视觉稿：`docs/ui/0002-extension-drag-radial-save-menu.md`；原型：`docs/ui/prototypes/radial-save-menu.html`；验收：EXT-009。
 

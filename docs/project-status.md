@@ -8,6 +8,7 @@
 - 产品负责人新增待办：**ignore**（`Serpent-v6m3`）、**七种扩展格式**（`Serpent-aav1`）、均已记入 backlog 与 beads，**未实现**。
 - **浏览器扩展径向 Hotbox**（`Serpent-6llg` / REQ-EXT-005）：已实现且 **EXT-009 人类验收通过**（2026-07-25）；工单已关闭。
 - 工单卫生：关闭 14 条僵尸 open（实现已完成、验收已通过或已被新工单取代）；重建 `Serpent-ak94`（EXT-003）、`Serpent-u9yv`（EXT-002）。agent 查队列见 `docs/agent-work-queue.md`。
+- **Inspector AI 刷新**（`Serpent-c9r3` / REQ-INSPECT-006）：清除或生成 AI 信息后右侧信息栏须立即更新，未实现。
 
 ## 2026-07-18 MVP 循环前沿
 
