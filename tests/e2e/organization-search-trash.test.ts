@@ -453,8 +453,13 @@ test('collection recursion toggle immediately refreshes the visible collection s
     await window.getByRole('button', { name: '添加合集' }).click();
     await window.getByPlaceholder('输入合集名称，回车创建').fill('空合集');
     await window.getByPlaceholder('输入合集名称，回车创建').press('Enter');
+    // Import auto-selects every imported asset (reveal), so right-clicking one
+    // card would open the multi-asset menu and add the whole selection. Click
+    // the canvas background first to reset the selection to the single target.
+    await window.locator('.workspace-canvas').click({ position: { x: 8, y: 8 } });
     await window.getByRole('button', { name: /child-only\.txt/i }).click({ button: 'right' });
     await window.getByRole('menuitem', { name: '加入合集：子合集' }).click();
+    await window.locator('.workspace-canvas').click({ position: { x: 8, y: 8 } });
     await window.getByRole('button', { name: /direct-only\.txt/i }).click({ button: 'right' });
     await window.getByRole('menuitem', { name: '加入合集：父合集' }).click();
     const collectionState = await window.evaluate(async () => {
