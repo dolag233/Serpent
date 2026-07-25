@@ -51,9 +51,14 @@ async function createLibraryAndImport(window: Page, libraryName: string) {
 /**
  * Right-clicks the card whose caption contains fileName and picks 重命名…,
  * returning the inline rename input on the card (REQ-MENU-008).
+ *
+ * The card is located by [data-asset-id] + title attribute (which keeps the
+ * full filename) rather than hasText: once rename mode opens, the caption text
+ * becomes just the base name (the extension moves to a sibling span), so a
+ * hasText filter on "name.ext" would drop the card mid-rename.
  */
 async function openInlineRename(window: Page, fileName: string) {
-  const card = window.locator("[data-asset-id]", { hasText: fileName });
+  const card = window.locator(`[data-asset-id][title="${fileName}"]`);
   await expect(card).toBeVisible();
   await card.click({ button: "right" });
   const menu = window.getByRole("menu");
@@ -124,6 +129,9 @@ test("keeps the inline rename open with a conflict error and allows retry after 
   try {
     const window = await application.firstWindow();
     await createLibraryAndImport(window, libraryName);
+    // Importing auto-selects every imported asset (reveal); reset to a single
+    // target so the right-click below opens the single-asset menu with 重命名….
+    await window.locator(".workspace-canvas").click({ position: { x: 8, y: 8 } });
     await expect(
       window.locator('[data-asset-id][title="alpha.png"]'),
     ).toBeVisible({ timeout: 15_000 });
