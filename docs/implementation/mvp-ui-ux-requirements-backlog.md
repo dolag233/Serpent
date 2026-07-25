@@ -605,6 +605,8 @@ FolderBrowseEntry
 2. 接下来要实现的重要功能：支持 tga、exr、tiff、bmp、ico、svg、psd 格式；每种资产都需要支持生成缩略图、缩放查看功能。
 3. 浏览器插件，拖拽图片、视频等资产时能够显示 Serpent 的保存菜单，对齐 Eagle 浏览器插件类似功能；菜单设计成类似 Houdini n 键菜单或 Maya hotbox（游戏快速轮盘）：往一个方向移动表示选择该方向指令，可展开则再生成下一级轮盘，支持返回上一级，按 Esc 完全退出；多级菜单可任意选择保存位置。
 
+**REQ-EXT-005 设计决策（2026-07-25，`Serpent-6llg`）**：① 可展开项手势 = 松开保存进该文件夹、按住穿越外环展开下一级（否决：松开展开+中心确认、悬停停留展开）；② 轮盘只做拖拽触发，右键两套 UI 不动；③ 先可交互 HTML 原型验证手感再接入扩展。规格与视觉稿：`docs/ui/0002-extension-drag-radial-save-menu.md`；原型：`docs/ui/prototypes/radial-save-menu.html`；验收：EXT-009。
+
 ## 验收与证据要求
 
 - 每个切片先完成可操作原型或真实应用路径，再进入实现；Eagle 只作为方向参考。

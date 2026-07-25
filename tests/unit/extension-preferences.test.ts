@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  DRAG_RADIAL_MENU_ENABLED_KEY,
+  dragRadialMenuEnabledFromStored,
   focusAppAfterSaveFromStored,
   FOCUS_APP_AFTER_SAVE_KEY,
   notificationsEnabledFromStored,
@@ -23,11 +25,18 @@ describe('extension save preferences', () => {
     expect(revealInLibraryAfterSaveFromStored(false)).toBe(false);
   });
 
+  it('defaults drag radial menu to enabled unless explicitly disabled', () => {
+    expect(dragRadialMenuEnabledFromStored(undefined)).toBe(true);
+    expect(dragRadialMenuEnabledFromStored(true)).toBe(true);
+    expect(dragRadialMenuEnabledFromStored(false)).toBe(false);
+  });
+
   it('uses stable storage keys', () => {
     expect(NOTIFICATIONS_ENABLED_KEY).toBe('serpentNotificationsEnabled');
     expect(FOCUS_APP_AFTER_SAVE_KEY).toBe('serpentFocusAppAfterSave');
     expect(REVEAL_IN_LIBRARY_AFTER_SAVE_KEY).toBe(
       'serpentRevealInLibraryAfterSave',
     );
+    expect(DRAG_RADIAL_MENU_ENABLED_KEY).toBe('serpentDragRadialMenuEnabled');
   });
 });

@@ -316,12 +316,12 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       if (outcome.kind === 'ok') {
         const recentFolderIds = await readRecentFolderIds();
         const validFolderIds = new Set(outcome.folders.map((folder) => folder.folderId));
+        const validRecentIds = recentFolderIds.filter((folderId) => validFolderIds.has(folderId));
         sendResponse({
           kind: 'ok',
-          folders: sortFoldersForMenu(
-            outcome.folders,
-            recentFolderIds.filter((folderId) => validFolderIds.has(folderId)),
-          ),
+          folders: sortFoldersForMenu(outcome.folders, validRecentIds),
+          // 拖拽径向轮盘（Serpent-6llg）需要区分最近项以着重显示
+          recentFolderIds: validRecentIds,
         });
         return;
       }

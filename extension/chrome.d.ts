@@ -97,6 +97,14 @@ interface SerpentChromeApi {
       ): void;
       set(values: Record<string, unknown>, callback?: () => void): void;
     };
+    onChanged: {
+      addListener(
+        callback: (
+          changes: Record<string, { newValue?: unknown; oldValue?: unknown }>,
+          areaName: string,
+        ) => void,
+      ): void;
+    };
   };
 }
 

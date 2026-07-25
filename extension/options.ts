@@ -1,10 +1,13 @@
 import {
+  DRAG_RADIAL_MENU_ENABLED_KEY,
+  dragRadialMenuEnabledFromStored,
   FOCUS_APP_AFTER_SAVE_KEY,
   focusAppAfterSaveFromStored,
   NOTIFICATIONS_ENABLED_KEY,
   notificationsEnabledFromStored,
   REVEAL_IN_LIBRARY_AFTER_SAVE_KEY,
   revealInLibraryAfterSaveFromStored,
+  writeDragRadialMenuEnabled,
   writeFocusAppAfterSave,
   writeNotificationsEnabled,
   writeRevealInLibraryAfterSave,
@@ -19,6 +22,9 @@ const focusAppCheckbox = document.getElementById(
 ) as HTMLInputElement | null;
 const revealInLibraryCheckbox = document.getElementById(
   'reveal-in-library-after-save',
+) as HTMLInputElement | null;
+const dragRadialMenuCheckbox = document.getElementById(
+  'drag-radial-menu-enabled',
 ) as HTMLInputElement | null;
 
 function setStatus(message: string, kind?: 'success' | 'error'): void {
@@ -37,6 +43,7 @@ function loadPreferences(): void {
       NOTIFICATIONS_ENABLED_KEY,
       FOCUS_APP_AFTER_SAVE_KEY,
       REVEAL_IN_LIBRARY_AFTER_SAVE_KEY,
+      DRAG_RADIAL_MENU_ENABLED_KEY,
     ],
     (values) => {
       void chrome.runtime.lastError;
@@ -53,6 +60,11 @@ function loadPreferences(): void {
       if (revealInLibraryCheckbox) {
         revealInLibraryCheckbox.checked = revealInLibraryAfterSaveFromStored(
           values[REVEAL_IN_LIBRARY_AFTER_SAVE_KEY],
+        );
+      }
+      if (dragRadialMenuCheckbox) {
+        dragRadialMenuCheckbox.checked = dragRadialMenuEnabledFromStored(
+          values[DRAG_RADIAL_MENU_ENABLED_KEY],
         );
       }
     },
@@ -74,5 +86,6 @@ function bindToggle(
 bindToggle(notificationsCheckbox, writeNotificationsEnabled);
 bindToggle(focusAppCheckbox, writeFocusAppAfterSave);
 bindToggle(revealInLibraryCheckbox, writeRevealInLibraryAfterSave);
+bindToggle(dragRadialMenuCheckbox, writeDragRadialMenuEnabled);
 
 loadPreferences();
