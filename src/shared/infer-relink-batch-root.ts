@@ -33,13 +33,7 @@ export function inferRelinkBatchRoot(
       if (rootSegments.length === 0) {
         return path.parse(resolvedAnchor).root;
       }
-      // Rebuild with the same absolute/relative character as the resolved
-      // anchor so POSIX callers keep a leading slash (dropping it would make
-      // the root cwd-relative).
-      const joined = rootSegments.join(path.sep);
-      return path.isAbsolute(resolvedAnchor)
-        ? path.parse(resolvedAnchor).root + joined
-        : joined;
+      return rootSegments.join(path.sep);
     }
   }
 
