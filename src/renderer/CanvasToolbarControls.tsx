@@ -119,6 +119,9 @@ export function CanvasToolbarControls({
   const refresh = resolveItem(ctx, "canvas.refresh");
   const grid = resolveItem(ctx, "canvas.view.grid");
   const masonry = resolveItem(ctx, "canvas.view.masonry");
+  const backgroundJobs = libraryOpen
+    ? resolveItem(ctx, "workspace.background-jobs")
+    : null;
 
   const overflowItems = TOOLBAR_OVERFLOW_COMMAND_IDS.flatMap((id) => {
     const def = toolbarCommandRegistry.get(id);
@@ -189,8 +192,23 @@ export function CanvasToolbarControls({
           })}
         </div>
       </span>
-      <span className="tool-separator" />
-      <WorkspaceToolsOverflow items={overflowItems} />
+      {backgroundJobs ? (
+        <>
+          <span className="tool-separator" />
+          <ToolButton
+            disabled={backgroundJobs.disabled}
+            icon="activity"
+            label={backgroundJobs.label}
+            onClick={backgroundJobs.run}
+          />
+        </>
+      ) : null}
+      {overflowItems.length > 0 ? (
+        <>
+          <span className="tool-separator" />
+          <WorkspaceToolsOverflow items={overflowItems} />
+        </>
+      ) : null}
     </>
   );
 }

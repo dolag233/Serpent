@@ -33,6 +33,7 @@ import { isTransientMediaPlaybackError } from "./media-seek-session";
 import { VideoPlayerControls } from "./VideoPlayerControls";
 import { AudioPlayerControls } from "./AudioPlayerControls";
 import { TextViewerControls, type TextViewerControlsHandle } from "./TextViewerControls";
+import { useViewerVolume } from "./use-viewer-volume";
 import { ZoomableImage } from "./zoomable-preview-image";
 import { useViewerChromeContrast } from "./use-viewer-chrome-contrast";
 
@@ -185,6 +186,14 @@ export const AssetPreviewModal = forwardRef<
   const directApprovedRef = useRef(false);
   const directGateIdentityRef = useRef<string | null>(null);
   const textViewerRef = useRef<TextViewerControlsHandle>(null);
+  const {
+    volume: viewerVolume,
+    muted: viewerMuted,
+    setVolume: setViewerVolume,
+    setMuted: setViewerMuted,
+  } = useViewerVolume(
+    resolution?.mediaType === "video" || resolution?.mediaType === "audio",
+  );
 
   const resolvePreview = useCallback(
     async (quiet = false, mode: "client" | "fullscreen" = "client") => {
@@ -589,20 +598,28 @@ export const AssetPreviewModal = forwardRef<
           ) : ready && resolution?.mediaType === "video" && resolution.url ? (
             <VideoPlayerControls
               isFullscreen={isFullscreen}
+              muted={viewerMuted}
               onError={handlePlaybackError}
               onFullscreen={() => void toggleFullscreen()}
+              onMutedChange={setViewerMuted}
               onReady={() => setDirectApproved(true)}
               onSwipeNext={onNext}
               onSwipePrevious={onPrevious}
+              onVolumeChange={setViewerVolume}
               posterUrl={resolution.posterUrl}
               src={resolution.url}
+              volume={viewerVolume}
             />
           ) : ready && resolution?.mediaType === "audio" && resolution.url ? (
             <AudioPlayerControls
               key={resolution.url}
+              muted={viewerMuted}
               onError={handlePlaybackError}
+              onMutedChange={setViewerMuted}
               onReady={() => setDirectApproved(true)}
+              onVolumeChange={setViewerVolume}
               src={resolution.url}
+              volume={viewerVolume}
               waveformUrl={resolution.posterUrl}
             />
           ) : ready && resolution?.mediaType === "text" ? (

@@ -30,11 +30,17 @@ import {
   scrubTimeFromRatio,
   shouldHandleVideoSpaceKey,
 } from "./video-player-controls";
+import { ViewerVolumeControls } from "./ViewerVolumeControls";
+import { applyViewerVolumeToMedia } from "./viewer-volume-preferences";
 
 export interface AudioPlayerControlsProps {
+  muted: boolean;
   onError(event: SyntheticEvent<HTMLAudioElement>): void;
+  onMutedChange(muted: boolean): void;
   onReady?(): void;
+  onVolumeChange(volume: number): void;
   src: string;
+  volume: number;
   /** Wide viewer waveform strip (audio `video_poster`), optional until ready. */
   waveformUrl?: string;
 }
@@ -48,9 +54,13 @@ const SCRUB_STEP_SECONDS = 5;
  * faster rate → longer trail span).
  */
 export function AudioPlayerControls({
+  muted,
   onError,
+  onMutedChange,
   onReady,
+  onVolumeChange,
   src,
+  volume,
   waveformUrl,
 }: AudioPlayerControlsProps) {
   const t = useT();
@@ -112,6 +122,12 @@ export function AudioPlayerControls({
     seekSessionRef.current?.cancel();
     return () => seekSessionRef.current?.cancel();
   }, [src]);
+
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    applyViewerVolumeToMedia(audio, { volume, muted });
+  }, [volume, muted, src]);
 
   // Particle trail pump: emit while playing; always prune/fade (incl. pause).
   useEffect(() => {
@@ -398,6 +414,12 @@ export function AudioPlayerControls({
             style={{ left: `${displayRatio * 100}%` }}
           />
         </div>
+        <ViewerVolumeControls
+          muted={muted}
+          onMutedChange={onMutedChange}
+          onVolumeChange={onVolumeChange}
+          volume={volume}
+        />
       </div>
     </div>
   );

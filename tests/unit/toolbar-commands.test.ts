@@ -4,6 +4,7 @@ import { createCommandRegistry } from '../../src/renderer/commands/command-regis
 import type { ResolvedMenuItem } from '../../src/renderer/commands/command-types';
 import {
   TOOLBAR_CANVAS_COMMAND_IDS,
+  TOOLBAR_DIRECT_UTILITY_COMMAND_IDS,
   TOOLBAR_OVERFLOW_COMMAND_IDS,
   runToolbarCommand,
   toolbarCommandDefinitions,
@@ -112,8 +113,10 @@ describe('工具栏命令可见性', () => {
 
   it('溢出 id 列表与注册表一致且不含导入类命令', () => {
     expect([...TOOLBAR_OVERFLOW_COMMAND_IDS]).toEqual([
-      'workspace.background-jobs',
       'workspace.ai-settings',
+    ]);
+    expect([...TOOLBAR_DIRECT_UTILITY_COMMAND_IDS]).toEqual([
+      'workspace.background-jobs',
     ]);
     for (const id of TOOLBAR_OVERFLOW_COMMAND_IDS) {
       expect(registry.get(id)).toBeDefined();

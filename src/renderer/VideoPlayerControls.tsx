@@ -21,16 +21,22 @@ import {
   videoSeekDeltaSeconds,
   type VideoPlaybackRate,
 } from "./video-player-controls";
+import { ViewerVolumeControls } from "./ViewerVolumeControls";
+import { applyViewerVolumeToMedia } from "./viewer-volume-preferences";
 
 export interface VideoPlayerControlsProps {
   isFullscreen?: boolean;
+  muted: boolean;
   onError(event: SyntheticEvent<HTMLVideoElement>): void;
   onFullscreen(): void;
+  onMutedChange(muted: boolean): void;
   onReady?(): void;
   onSwipeNext?: () => void;
   onSwipePrevious?: () => void;
+  onVolumeChange(volume: number): void;
   posterUrl?: string;
   src: string;
+  volume: number;
 }
 
 const SCRUB_STEP_SECONDS = 5;
@@ -50,13 +56,17 @@ const SCRUB_STEP_SECONDS = 5;
  */
 export function VideoPlayerControls({
   isFullscreen = false,
+  muted,
   onError,
   onFullscreen,
+  onMutedChange,
   onReady,
   onSwipeNext,
   onSwipePrevious,
+  onVolumeChange,
   posterUrl,
   src,
+  volume,
 }: VideoPlayerControlsProps) {
   const t = useT();
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -145,6 +155,12 @@ export function VideoPlayerControls({
     const video = videoRef.current;
     if (video) video.playbackRate = playbackRate;
   }, [playbackRate, src]);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    applyViewerVolumeToMedia(video, { volume, muted });
+  }, [volume, muted, src]);
 
   useEffect(() => {
     seekSessionRef.current?.cancel();
@@ -333,7 +349,7 @@ export function VideoPlayerControls({
           {formatVideoClockTime(duration)}
         </span>
         <label className="preview-video-rate">
-          {t("preview.playbackRate")}
+          <span className="visually-hidden">{t("preview.playbackRate")}</span>
           <select
             aria-label={t("preview.playbackRateAria")}
             onChange={(event) => {
@@ -348,6 +364,12 @@ export function VideoPlayerControls({
             ))}
           </select>
         </label>
+        <ViewerVolumeControls
+          muted={muted}
+          onMutedChange={onMutedChange}
+          onVolumeChange={onVolumeChange}
+          volume={volume}
+        />
         {natural.w > 0 && (
           <span aria-hidden="true" className="preview-video-zoom-label">
             {Math.round(view.scale * 100)}%

@@ -50,9 +50,13 @@ export const TOOLBAR_CANVAS_COMMAND_IDS = [
   'canvas.field.date',
 ] as const;
 
+/** 工作区工具栏直出按钮（Serpent-9gt2：后台任务不再藏在溢出菜单）。 */
+export const TOOLBAR_DIRECT_UTILITY_COMMAND_IDS = [
+  'workspace.background-jobs',
+] as const;
+
 /** 「更多工具」溢出菜单条目（导入类不在此列）。 */
 export const TOOLBAR_OVERFLOW_COMMAND_IDS = [
-  'workspace.background-jobs',
   'workspace.ai-settings',
 ] as const;
 
