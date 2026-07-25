@@ -8,10 +8,33 @@ import { resolveElectronExecutablePath } from "./electron-test-helpers";
 
 test.describe.configure({ timeout: 120_000 });
 
-const VALID_PNG = Buffer.from(
-  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
-  "base64",
-);
+/**
+ * A minimal valid 1×1 PNG whose IDAT payload embeds `token`, so every source
+ * file in a batch has distinct content. Identical bytes would trip the
+ * content-duplicate detector (SHA-256) and divert the import into the conflict
+ * dialog instead of producing N cards.
+ */
+function pngWithToken(token: string): Buffer {
+  const header = Buffer.from(
+    "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c489",
+    "hex",
+  );
+  const idatBody = Buffer.concat([
+    Buffer.from([0x78, 0x9c]),
+    Buffer.from(`marquee-${token}`, "utf8"),
+    Buffer.from([0x00, 0x00, 0x00, 0x00]),
+  ]);
+  const idatLen = Buffer.alloc(4);
+  idatLen.writeUInt32BE(idatBody.length, 0);
+  const idat = Buffer.concat([
+    idatLen,
+    Buffer.from("IDAT", "ascii"),
+    idatBody,
+    Buffer.from("ffffffff", "hex"),
+  ]);
+  const iend = Buffer.from("0000000049454e44ae426082", "hex");
+  return Buffer.concat([header, idat, iend]);
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -38,7 +61,7 @@ async function setupLibrary(assetCount: number) {
       sourceRoot,
       `marquee-${index.toString().padStart(2, "0")}.png`,
     );
-    writeFileSync(sourcePath, VALID_PNG);
+    writeFileSync(sourcePath, pngWithToken(index.toString().padStart(2, "0")));
     return sourcePath;
   });
 
@@ -573,37 +596,62 @@ test("selection survives view-switch and card-size zoom", async () => {
       name: "瀑布流视图",
     });
 
-    // Select 2 cards in grid mode
+    // Select 2 cards in grid mode. Import auto-selects all 4 and re-applies
+    // that reveal selection on a 280ms settle timer (use-pending-asset-reveal),
+    // so wait out the settle, clear the reveal selection with a blank-canvas
+    // click, then build a clean 2-selection.
     const cards = window.locator(".asset-card");
+    await window.waitForTimeout(600);
+    const canvasForClear = await canvasBox(window);
+    await window.mouse.click(
+      canvasForClear.x + canvasForClear.width - 8,
+      canvasForClear.y + canvasForClear.height - 8,
+    );
+    await expect.poll(() => selectedCount(window)).toBe(0);
     await cards.nth(0).click();
+    await expect.poll(() => selectedCount(window)).toBe(1);
     await cards.nth(1).click({
       modifiers: [process.platform === "darwin" ? "Meta" : "Control"],
     });
     await expect.poll(() => selectedCount(window)).toBe(2);
 
-    // Switch to masonry — selection must survive
+    // Switch to masonry — selection must survive. Re-query .asset-card after
+    // each switch because the grid fully re-mounts the cards on view change.
     await masonryButton.click();
     await expect(masonryButton).toHaveAttribute("aria-pressed", "true");
-    await window.waitForTimeout(500);
-    await expect.poll(() => selectedCount(window)).toBe(2);
+    await expect
+      .poll(() => selectedCount(window), { timeout: 10_000 })
+      .toBe(2);
 
     // Switch back to grid — selection must survive
     await gridButton.click();
     await expect(gridButton).toHaveAttribute("aria-pressed", "true");
-    await window.waitForTimeout(500);
-    await expect.poll(() => selectedCount(window)).toBe(2);
+    await expect
+      .poll(() => selectedCount(window), { timeout: 10_000 })
+      .toBe(2);
 
-    // Card-size zoom via Ctrl+wheel — selection must survive
+    // Card-size zoom via Ctrl+wheel — selection must survive. The zoom handler
+    // requires ctrlKey, so hold the modifier key across the wheel events
+    // (mouse.wheel's own modifier option does not reach the DOM wheel event).
     const canvas = await canvasBox(window);
     const cx = canvas.x + canvas.width / 2;
     const cy = canvas.y + canvas.height / 2;
+    const zoomModifier = process.platform === "darwin" ? "Meta" : "Control";
     await window.mouse.move(cx, cy);
-    await window.mouse.wheel(0, -100); // zoom in
-    await window.waitForTimeout(200);
-    await expect.poll(() => selectedCount(window)).toBe(2);
-    await window.mouse.wheel(0, 100); // zoom out
-    await window.waitForTimeout(200);
-    await expect.poll(() => selectedCount(window)).toBe(2);
+    await window.keyboard.down(zoomModifier);
+    await window.mouse.wheel(0, -480); // zoom in (several notches)
+    await window.keyboard.up(zoomModifier);
+    await window.waitForTimeout(500);
+    await expect
+      .poll(() => selectedCount(window), { timeout: 10_000 })
+      .toBe(2);
+    await window.keyboard.down(zoomModifier);
+    await window.mouse.wheel(0, 480); // zoom out
+    await window.keyboard.up(zoomModifier);
+    await window.waitForTimeout(500);
+    await expect
+      .poll(() => selectedCount(window), { timeout: 10_000 })
+      .toBe(2);
   } finally {
     await application.close();
     rmSync(temporaryRoot, { force: true, recursive: true });
