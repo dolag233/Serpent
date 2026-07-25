@@ -7,6 +7,7 @@ import {
 } from "react";
 
 import { Icon } from "./Icons";
+import { InspectorCardFeelMotion } from "./inspector-card-feel-motion";
 import { IconActionButton } from "./icon-action-button";
 import { iconActionAttrs } from "./icon-action-attrs";
 import { formatDuration } from "./App";
@@ -157,7 +158,7 @@ function InspectorHeroSinglePreview({
   if (asset.mediaType === "text") {
     if (!api || !library) {
       return (
-        <div className="inspector-hero-preview inspector-hero-preview-fallback">
+        <div className="inspector-hero-preview inspector-hero-preview-fallback" data-card-feel-tilt="">
           <Icon name="file" size={20} />
         </div>
       );
@@ -166,6 +167,7 @@ function InspectorHeroSinglePreview({
       <TextAssetPreviewTile
         api={api}
         assetId={asset.assetId}
+        cardFeelTilt
         className="inspector-hero-preview inspector-hero-text-preview text-asset-preview"
         libraryId={library.libraryId}
         revisionId={asset.currentRevisionId}
@@ -176,7 +178,10 @@ function InspectorHeroSinglePreview({
 
   if (!previewSrc && !live.url) {
     return (
-      <div className="inspector-hero-preview inspector-hero-preview-fallback">
+      <div
+        className="inspector-hero-preview inspector-hero-preview-fallback"
+        data-card-feel-tilt=""
+      >
         <Icon name="file" size={20} />
       </div>
     );
@@ -184,7 +189,7 @@ function InspectorHeroSinglePreview({
 
   if (live.kind === "video" && live.url) {
     return (
-      <div className="inspector-hero-preview">
+      <div className="inspector-hero-preview" data-card-feel-tilt="">
         <video
           autoPlay
           className="inspector-hero-image"
@@ -200,7 +205,7 @@ function InspectorHeroSinglePreview({
   }
 
   return (
-    <div className="inspector-hero-preview">
+    <div className="inspector-hero-preview" data-card-feel-tilt="">
       {!decoded && <Icon name="file" size={20} />}
       <img
         alt={asset.displayName}
@@ -786,7 +791,8 @@ export function InspectorPanel(props: InspectorPanelProps) {
   ]);
 
   return (
-    <aside className="inspector-pane">
+    <aside className="inspector-pane" data-inspector-card-feel="on">
+      <InspectorCardFeelMotion />
       {selectedAsset ? (
         <div className="inspector-content">
           <InspectorHero

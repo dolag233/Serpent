@@ -18,6 +18,8 @@ export type TextAssetPreviewTileProps = {
   revisionId: string;
   className?: string;
   snippetClassName?: string;
+  /** Inspector card-feel tilt host (experiment/card-feel-preview subset). */
+  cardFeelTilt?: boolean;
 };
 
 /**
@@ -31,6 +33,7 @@ export function TextAssetPreviewTile({
   revisionId,
   className = "text-asset-preview",
   snippetClassName = "text-asset-preview-snippet",
+  cardFeelTilt = false,
 }: TextAssetPreviewTileProps) {
   const t = useT();
   const key = cacheKey(libraryId, assetId, revisionId);
@@ -64,7 +67,10 @@ export function TextAssetPreviewTile({
   }, [api, assetId, key, libraryId]);
 
   return (
-    <div className={className}>
+    <div
+      className={className}
+      {...(cardFeelTilt ? { "data-card-feel-tilt": "" } : {})}
+    >
       <pre className={snippetClassName}>
         {snippet ?? t("preview.textLoading")}
       </pre>

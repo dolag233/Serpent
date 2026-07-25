@@ -500,7 +500,7 @@
 | 2026-07-21 | `Serpent-rsbt` / `Serpent-2vn` AI 心跳 + Alt/Option 拖拽复制 | 待人类验收 | 约 60s 心跳与配置标题同源；右键 AI 分析断连 link-off；托管文件夹 Option/Alt 拖拽复制可撤销；平台按键名 Alt/Option。 | AICFG-012 / MENU-AI-003 / DND-005 |
 | 2026-07-21 | `Serpent-v78` / `Serpent-svc` 排序方向入面板 + 默认跟系统 | 待人类验收 | 升降序并入排序面板、去掉独立方向钮；主题默认跟随系统（语言本已跟随）。 | SORT-007 / THEME-017 |
 | 2026-07-21 | `Serpent-jfi` / `Serpent-5fq` 暗色排除红 + 反选快捷键 | 待人类验收 | 暗色排除 chip 降饱和；Ctrl+I/⌘I 反选可见资产；Escape 选择清理由 hook 抽出。 | FILTER-022 / SELECT-012；`maxDescriptionCharsZh` 仍为 100。 |
-| 2026-07-21 | 滚动条/导入渐进显示/导出进度条 | 待人类验收 | ① 滚动条空闲隐藏；② 导入时已处理好的资产逐个出现在画布；③ 「正在导出资源库：压缩中」不随画布滚动。 | `Serpent-xqot` / `Serpent-yqrl` / `Serpent-yl67` → SHELL-026 / IMPORT-005 / EXPORT-002。 |
+| 2026-07-21 | 滚动条/导入渐进显示/导出进度条 | 待人类验收 | ① 滚动条空闲隐藏；② 导入时已处理好的资产逐个出现在画布；③ 「正在导出资源库：压缩中」不随画布滚动。 | `Serpent-xqot` / `Serpent-yqrl` / `Serpent-yl67` → SHELL-030 / IMPORT-005 / EXPORT-002。 |
 | 2026-07-21 | TEXT-001 / `Serpent-4l7` + 画布滚动条 `Serpent-itr` | 待人类验收 | 链接子目录新建文本刷新入库；格式「文本」chip；扩常见文本扩展；Windows 经典滚动条横溢 CSS 修复。 | TEXT-001 → 待复验；CANVAS-001/002/021 已注 Windows 勿提前人类通过。 |
 | 2026-07-21 | `Serpent-zcyg` 层级投影 0–3 档 | 待人类验收 | 带刻度滑块；0 关闭不绘制壳层/卡片 elev 阴影；1–3 由弱到强。 | THEME-018 |
 | 2026-07-22 | `Serpent-5p45` 瀑布流竖图右侧空白 | 待人类验收 | 瀑布流预览取消固定 420px 上限，按列宽自然高度渲染，避免 contain 横向 letterbox。 | CANVAS-030（并复验 CANVAS-023） |
@@ -612,7 +612,7 @@
 | 2026-07-21 | MENU-028–031 / FOLDER-015 | 部分通过 | 028–031 通过；031 产品改为拖拽移动、去掉菜单项；FOLDER-015 不通过（回收站无文件夹 + 选中不清）。 | `Serpent-vgp`；跟进 beads。 |
 | 2026-07-21 | MENU-032 / MENU-033 | 部分不通过 | 032 复制只得路径文本、无法粘贴到访达；033 待 032 修复后复验。 | `Serpent-bkef`。 |
 | 2026-07-21 | TAG-001–003 / `Serpent-mqp` | 部分通过 | 001/002 通过（后续还要迭代）；003 删除无反应不通过。 | `a114a2a`。 |
-| 2026-07-21 | 滚动条/导入渐进显示/导出进度条 | 部分通过 | SHELL-026 / EXPORT-002 通过（取消导出需 toast）；IMPORT-005 用户稍后测。 | `Serpent-xqot` / `Serpent-yqrl` / `Serpent-yl67` |
+| 2026-07-21 | 滚动条/导入渐进显示/导出进度条 | 部分通过 | SHELL-030 取代 SHELL-026 待复验；EXPORT-002 通过（取消导出需 toast）；IMPORT-005 用户稍后测。 | `Serpent-xqot` / `Serpent-yqrl` / `Serpent-yl67` / `Serpent-62wm` |
 | 2026-07-21 | FOLDER-010 / FOLDER-011 | 部分通过 | 010 通过；011 文件夹卡片 UI 下一轮深入讨论。 | `Serpent-829` / `Serpent-7ms`。 |
 | 2026-07-21 | 晚间验收+新反馈 | 入池 | 红绿灯失焦应变灰；回收站右键清空；macOS 多选修饰键讨论；Shift 漏选；导入自动 AI 无进度条。 | 见 backlog「2026-07-21 晚间验收」。 |
 | 2026-07-22 | TRASH-008 / IMPORT-006 / SELECT-012 / FOLDER-015 | 人类验收通过 | 回收站文件夹卡片；库级去重；反选；混合选中共通动作。 | 用户 2026-07-22 确认。 |
@@ -635,7 +635,7 @@
 | IMPORT-010 | 库级重复选「创建副本」保留空闲目标名 | 人类验收通过 | 文件夹 A 已有内容 X；向文件夹 B 导入同内容但文件名为 `b.png`（B 中尚无该名）；选「创建副本」/「仍然导入」 | 入库路径为 `…/B/b.png`（**不是** `b (2).png`）；仅当目标路径已被占用时才自动编号 | `Serpent-hy1n` / `Serpent-9h01` | 2026-07-22 用户确认通过。跟进文案：内容重复用「仍然导入」、去掉「合并资产」→ `Serpent-9h01`。 |
 | IMPORT-011 | 内容重复窗：仍然导入、无合并 | 人类验收通过 | 触发内容重复对话框；看选项与文案 | 仅「跳过」「仍然导入」；无「合并到已有资产」；英文为 Import anyway | `Serpent-9h01` / [ContentDuplicateDialog](../../src/renderer/ContentDuplicateDialog.tsx) | 2026-07-23 用户确认通过。 |
 | EXPORT-002 | 导出进度条不随画布滚动 | 人类验收通过 | 启动导出资源库；在「压缩中/复制中」时上下滚动画布 | 进度条相对画布视口顶部固定，不跟着内容滚走；完成后消失 | `Serpent-yl67` | 2026-07-21 用户确认通过。附带：取消导出时应提示「已取消导出」→ `Serpent-dcou`。 |
-| SHELL-026 | 滚动条空闲时隐藏 | 人类验收通过 | 打开含长列表的库；静止观察；再滚动或悬停侧栏/画布/Inspector | 静止时几乎看不到滚动条；滚动/悬停可见可用；Windows 长列表仍无横溢 | `Serpent-xqot` | 2026-07-21 用户确认通过。 |
+| SHELL-030 | 滚动条仅在滚动或靠近轨道时显示 | 待人类验收 | 打开含长列表的资源库。① 鼠标在资产画布内容区移动（不贴右缘）→ 滚动条应保持隐藏。② 滚轮滚动 → 滚动条短暂出现。③ 指针移到画布**右侧滚动条轨道/gutter** → 滚动条出现。④ 离开轨道或停止滚动后观察拇指**淡出**（非硬切）。⑤ 侧栏、Inspector 同样规则。⑥ Windows 长列表仍无横向溢出 | 仅滚动或靠近轨道时显示；隐藏时淡出；悬停内容区不唤醒；Windows 无横溢 | [scrollbar-visibility](../../src/renderer/scrollbar-visibility.ts) / [动效原则](../ui/0005-motion-and-reveal-ux-principles.md) / `Serpent-62wm` | 2026-07-25 取代 SHELL-026。 |
 | SHELL-027 | info/notice 显示在工作区顶部居中 | 人类验收通过 | 触发普通成功 notice；再触发 warning 与 error；在标签管理页与资产预览打开时各试一次 | **成功/警告/错误均在工作区顶部居中**（样式统一，无右下角分叉）；notice 可带撤销；fatal 仍为模态 | `Serpent-ss1k` / `Serpent-nlji` / [WorkspaceNoticeBanner](../../src/renderer/WorkspaceNoticeBanner.tsx) | 2026-07-22 用户确认通过。打磨：关闭 X 非按钮外观、对齐 → `Serpent-2wu4` / `fvto`。 |
 | SHELL-028 | 通知关闭为字形而非按钮 | 待人类验收 | 触发一条成功 notice；观察右侧关闭 X、info 图标与文案中线；看 X 右侧留白 | X 无按钮边框/底；icon/文案/X **竖直对齐**；X 右侧无明显空档 | `Serpent-2wu4` / `Serpent-fvto` / `.workspace-notice` | 2026-07-23 功能通过；对齐与右侧留白不通过 → `fvto` 收紧 padding + actions 组。 |
 | SHELL-029 | 模态对话框垂直居中（创建资源库等） | 人类验收通过 | 无库启动与**已打开库**时菜单「创建资源库」；设置/冲突窗对照；量对话框中心 vs **整个窗口**中心 | **对话框几何中心 = 整个窗口中心**（禁止只在画布区居中）；背后壳层失焦；create/conflict/settings 一致 | `Serpent-kipk` / `Serpent-q3qu` / `.dialog-backdrop` / [CreateDialog](../../src/renderer/CreateDialog.tsx) | 2026-07-24 用户验收通过。 |

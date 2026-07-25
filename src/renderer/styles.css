@@ -251,25 +251,30 @@ summary:focus-visible {
   background: color-mix(in srgb, var(--accent) 34%, transparent);
 }
 
-/* Thin overlay scrollbars (Serpent-xqot): thumb stays transparent until the
-   surface is hovered, focused, or actively scrolling. Windows canvas still
-   reserves scrollbar-gutter (Serpent-itr) so hide-on-idle never reintroduces
-   horizontal overflow from classic gutter appearance. */
+/* Thin overlay scrollbars (Serpent-62wm): thumb stays transparent until the
+   user scrolls or the pointer is near the track — not on generic panel hover.
+   Show is instant; hide fades out (docs/ui/0005-motion-and-reveal-ux-principles).
+   Windows canvas still reserves scrollbar-gutter (Serpent-itr). */
 * {
   scrollbar-color: transparent transparent;
   scrollbar-width: thin;
+  transition: scrollbar-color var(--scrollbar-fade-out, 220ms) ease-in;
 }
 
-*:hover,
-*:focus-within,
-*.is-scrollbar-active {
+*.is-scrollbar-active,
+*.is-scrollbar-proximity {
   scrollbar-color: rgb(255 255 255 / 22%) transparent;
+  transition: none;
 }
 
-[data-theme="light"] *:hover,
-[data-theme="light"] *:focus-within,
-[data-theme="light"] *.is-scrollbar-active {
+[data-theme="light"] * {
+  transition: scrollbar-color var(--scrollbar-fade-out, 220ms) ease-in;
+}
+
+[data-theme="light"] *.is-scrollbar-active,
+[data-theme="light"] *.is-scrollbar-proximity {
   scrollbar-color: rgb(0 0 0 / 28%) transparent;
+  transition: none;
 }
 
 ::-webkit-scrollbar {
@@ -287,34 +292,35 @@ summary:focus-visible {
   border-radius: 8px;
   background: transparent;
   background-clip: padding-box;
+  transition: background var(--scrollbar-fade-out, 220ms) ease-in;
 }
 
-*:hover::-webkit-scrollbar-thumb,
-*:focus-within::-webkit-scrollbar-thumb,
-*.is-scrollbar-active::-webkit-scrollbar-thumb {
+*.is-scrollbar-active::-webkit-scrollbar-thumb,
+*.is-scrollbar-proximity::-webkit-scrollbar-thumb {
   background: rgb(255 255 255 / 13%);
   background-clip: padding-box;
+  transition: none;
 }
 
-*:hover::-webkit-scrollbar-thumb:hover,
-*:focus-within::-webkit-scrollbar-thumb:hover,
-*.is-scrollbar-active::-webkit-scrollbar-thumb:hover {
+*.is-scrollbar-active::-webkit-scrollbar-thumb:hover,
+*.is-scrollbar-proximity::-webkit-scrollbar-thumb:hover {
   background: rgb(255 255 255 / 24%);
   background-clip: padding-box;
+  transition: background 120ms ease-out;
 }
 
-[data-theme="light"] *:hover::-webkit-scrollbar-thumb,
-[data-theme="light"] *:focus-within::-webkit-scrollbar-thumb,
-[data-theme="light"] *.is-scrollbar-active::-webkit-scrollbar-thumb {
+[data-theme="light"] *.is-scrollbar-active::-webkit-scrollbar-thumb,
+[data-theme="light"] *.is-scrollbar-proximity::-webkit-scrollbar-thumb {
   background: rgb(0 0 0 / 18%);
   background-clip: padding-box;
+  transition: none;
 }
 
-[data-theme="light"] *:hover::-webkit-scrollbar-thumb:hover,
-[data-theme="light"] *:focus-within::-webkit-scrollbar-thumb:hover,
-[data-theme="light"] *.is-scrollbar-active::-webkit-scrollbar-thumb:hover {
+[data-theme="light"] *.is-scrollbar-active::-webkit-scrollbar-thumb:hover,
+[data-theme="light"] *.is-scrollbar-proximity::-webkit-scrollbar-thumb:hover {
   background: rgb(0 0 0 / 28%);
   background-clip: padding-box;
+  transition: background 120ms ease-out;
 }
 
 /* One shared motion language for every quiet control: fast, opacity-neutral
@@ -6576,6 +6582,171 @@ select.ai-config-input.ai-config-languages {
 .inspector-hero-image.is-loading {
   position: absolute;
   opacity: 0;
+}
+
+/*
+ * Inspector preview card feel (experiment/card-feel-preview subset, Serpent-62wm+).
+ * Trading-card pointer tilt + soft shadow; browse grid unchanged.
+ */
+.inspector-pane[data-inspector-card-feel="on"] .inspector-hero-preview-fallback,
+.inspector-pane[data-inspector-card-feel="on"] .inspector-hero-image {
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.04),
+    0 0 0 1px rgb(255 255 255 / 0.025),
+    0 1px 2px rgb(0 0 0 / 0.16),
+    0 5px 14px rgb(0 0 0 / 0.12);
+}
+
+.inspector-pane[data-inspector-card-feel="on"]:not([data-elevation="0"])
+  .inspector-hero-preview-fallback,
+.inspector-pane[data-inspector-card-feel="on"]:not([data-elevation="0"])
+  .inspector-hero-image {
+  box-shadow:
+    var(--shadow-card),
+    inset 0 1px 0 rgb(255 255 255 / 0.04),
+    0 1px 2px rgb(0 0 0 / 0.12);
+}
+
+[data-theme="light"]
+  .inspector-pane[data-inspector-card-feel="on"]
+  .inspector-hero-preview-fallback,
+[data-theme="light"]
+  .inspector-pane[data-inspector-card-feel="on"]
+  .inspector-hero-image {
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.7),
+    0 0 0 1px rgb(0 0 0 / 0.04),
+    0 1px 2px rgb(0 0 0 / 0.04),
+    0 4px 12px rgb(0 0 0 / 0.05);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .inspector-pane[data-inspector-card-feel="on"] [data-card-feel-tilt] {
+    transform: perspective(920px) rotateX(var(--card-tilt-x, 0deg))
+      rotateY(var(--card-tilt-y, 0deg)) translateZ(0);
+    transform-style: preserve-3d;
+    transform-origin: center center;
+    transition: transform 160ms cubic-bezier(0.2, 0.85, 0.25, 1);
+    will-change: transform;
+  }
+
+  .inspector-pane[data-inspector-card-feel="on"]
+    [data-card-feel-tilt].is-card-tilting {
+    position: relative;
+    z-index: 3;
+    transition: transform 40ms linear;
+  }
+
+  .inspector-pane[data-inspector-card-feel="on"]
+    [data-card-feel-tilt].is-card-pressing {
+    transform: perspective(920px) rotateX(var(--card-tilt-x, 0deg))
+      rotateY(var(--card-tilt-y, 0deg)) scale(0.965) translateZ(-8px);
+    transition-duration: 80ms;
+  }
+
+  .inspector-pane[data-inspector-card-feel="on"] .inspector-hero-preview::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    border-radius: inherit;
+    pointer-events: none;
+    opacity: 0;
+    background:
+      radial-gradient(
+        circle at var(--card-glare-x, 50%) var(--card-glare-y, 40%),
+        rgb(255 255 255 / 0.22),
+        transparent 55%
+      ),
+      linear-gradient(
+        115deg,
+        transparent 38%,
+        rgb(255 255 255 / 0.07) 50%,
+        transparent 62%
+      );
+    mix-blend-mode: soft-light;
+    transition: opacity 140ms ease;
+  }
+
+  .inspector-pane[data-inspector-card-feel="on"]
+    .inspector-hero-preview.is-card-tilting::after {
+    opacity: 1;
+    transition: opacity 140ms ease;
+  }
+
+  .inspector-pane[data-inspector-card-feel="on"] .inspector-hero-preview {
+    transform-style: preserve-3d;
+  }
+
+  .inspector-pane[data-inspector-card-feel="on"]
+    .inspector-hero-preview[data-card-feel-tilt]:not(
+      .inspector-hero-preview-fallback
+    ) {
+    transform: none;
+    transition: none;
+    will-change: auto;
+  }
+
+  .inspector-pane[data-inspector-card-feel="on"]
+    .inspector-hero-preview[data-card-feel-tilt]:not(
+      .inspector-hero-preview-fallback
+    )
+    > .inspector-hero-image,
+  .inspector-pane[data-inspector-card-feel="on"]
+    .inspector-hero-preview[data-card-feel-tilt]:not(
+      .inspector-hero-preview-fallback
+    )
+    > .inspector-hero-text-snippet {
+    transform: perspective(920px) rotateX(var(--card-tilt-x, 0deg))
+      rotateY(var(--card-tilt-y, 0deg)) translateZ(0);
+    transform-style: preserve-3d;
+    transform-origin: center center;
+    transition: transform 160ms cubic-bezier(0.2, 0.85, 0.25, 1);
+    will-change: transform;
+  }
+
+  .inspector-pane[data-inspector-card-feel="on"]
+    .inspector-hero-preview.is-card-tilting:not(.inspector-hero-preview-fallback)
+    > .inspector-hero-image,
+  .inspector-pane[data-inspector-card-feel="on"]
+    .inspector-hero-preview.is-card-tilting:not(.inspector-hero-preview-fallback)
+    > .inspector-hero-text-snippet {
+    transition: transform 40ms linear;
+  }
+
+  .inspector-pane[data-inspector-card-feel="on"]
+    .inspector-hero-preview.is-card-pressing:not(.inspector-hero-preview-fallback)
+    > .inspector-hero-image,
+  .inspector-pane[data-inspector-card-feel="on"]
+    .inspector-hero-preview.is-card-pressing:not(.inspector-hero-preview-fallback)
+    > .inspector-hero-text-snippet {
+    transform: perspective(920px) rotateX(var(--card-tilt-x, 0deg))
+      rotateY(var(--card-tilt-y, 0deg)) scale(0.965) translateZ(-8px);
+    transition-duration: 80ms;
+  }
+
+  .inspector-pane[data-inspector-card-feel="on"]
+    .inspector-hero-preview.is-card-tilting
+    .inspector-hero-image,
+  .inspector-pane[data-inspector-card-feel="on"]
+    .inspector-hero-preview.is-card-tilting
+    .inspector-hero-preview-fallback,
+  .inspector-pane[data-inspector-card-feel="on"]
+    .inspector-hero-preview.is-card-tilting
+    .inspector-hero-text-snippet {
+    box-shadow:
+      inset 0 1px 0 rgb(255 255 255 / 0.06),
+      var(--card-shadow-x, 0px) var(--card-shadow-y, 8px) 18px
+        rgb(0 0 0 / 0.18);
+    transition: box-shadow 160ms ease;
+  }
+
+  .inspector-pane[data-inspector-card-feel="on"]
+    [data-card-feel-tilt].is-card-tilting:not(.is-card-pressing) {
+    transition:
+      transform 220ms cubic-bezier(0.2, 0.85, 0.25, 1),
+      box-shadow 220ms ease-in;
+  }
 }
 
 .inspector-hero-compact strong,
