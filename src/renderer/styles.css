@@ -51,13 +51,13 @@
   /* Serpent-znex: Win11-like caption close hover (kept as tokens for REQ-THEME-002). */
   --windows-caption-close-hover: #e81123;
   --windows-caption-close-hover-fg: #ffffff;
-  /* Serpent-jfi: exclude-filter chips use a desaturated rose in dark theme
-     (less eye fatigue than vivid --danger) while staying distinct from include. */
-  --filter-exclude: #c48990;
-  --filter-exclude-soft: color-mix(in srgb, var(--filter-exclude) 18%, var(--canvas));
-  --filter-exclude-border: color-mix(in srgb, var(--filter-exclude) 48%, var(--divider));
-  --filter-exclude-fg: color-mix(in srgb, var(--filter-exclude) 68%, var(--text));
-  --filter-exclude-active-bg: color-mix(in srgb, var(--filter-exclude) 22%, var(--canvas));
+  /* Serpent-jfi: exclude-filter chips use a muted red in dark theme — clearly
+     red but softer than --danger; avoid washed-out pink (#c48990 was too pale). */
+  --filter-exclude: #b35660;
+  --filter-exclude-soft: color-mix(in srgb, var(--filter-exclude) 22%, var(--canvas));
+  --filter-exclude-border: color-mix(in srgb, var(--filter-exclude) 55%, var(--divider));
+  --filter-exclude-fg: color-mix(in srgb, var(--filter-exclude) 78%, var(--text));
+  --filter-exclude-active-bg: color-mix(in srgb, var(--filter-exclude) 28%, var(--canvas));
   --warning-fg: #f1c87d;
   --warning-muted: #76533a;
   --ink: #111314;
@@ -150,12 +150,12 @@
   --danger: #dc2626;
   --danger-muted: #fde8e8;
   --danger-soft: #f87171;
-  /* Light keep vivid exclude red (FILTER-019); dark uses muted --filter-exclude. */
-  --filter-exclude: var(--danger);
-  --filter-exclude-soft: color-mix(in srgb, var(--danger) 16%, var(--canvas));
-  --filter-exclude-border: color-mix(in srgb, var(--danger) 55%, var(--divider));
-  --filter-exclude-fg: color-mix(in srgb, var(--danger) 72%, var(--text));
-  --filter-exclude-active-bg: color-mix(in srgb, var(--danger) 22%, var(--canvas));
+  /* Light: exclude red softer than --danger on destructive buttons (FILTER-022). */
+  --filter-exclude: #c24e4e;
+  --filter-exclude-soft: color-mix(in srgb, var(--filter-exclude) 14%, var(--canvas));
+  --filter-exclude-border: color-mix(in srgb, var(--filter-exclude) 50%, var(--divider));
+  --filter-exclude-fg: color-mix(in srgb, var(--filter-exclude) 75%, var(--text));
+  --filter-exclude-active-bg: color-mix(in srgb, var(--filter-exclude) 20%, var(--canvas));
   /* Serpent-k9g: soft amber warning family (one hue for icon+text). */
   --warning: #c2410c;
   --warning-fg: #9a3412;
