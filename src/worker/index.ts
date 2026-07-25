@@ -661,6 +661,10 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
       scheduleThumbnailScene(request.command.libraryId, 'restore', assets.map((asset) => asset.assetId));
       return { ok: true, type: 'asset.restored', restoredCount, assets };
     }
+    case 'asset.restore-preview': {
+      const preview = libraryService.previewRestoreAssets(request.command);
+      return { ok: true, type: 'asset.restore-previewed', ...preview };
+    }
     case 'asset.move': {
       const { movedCount, skippedCount, operationId, assets } = libraryService.moveAssets(request.command);
       scheduleThumbnailScene(request.command.libraryId, 'visible', assets.map((asset) => asset.assetId));

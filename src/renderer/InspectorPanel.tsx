@@ -3,6 +3,7 @@ import {
   useMemo,
   useRef,
   useEffect,
+  useLayoutEffect,
 } from "react";
 
 import { Icon } from "./Icons";
@@ -669,7 +670,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
   // 同一对边界的可视化兜底（resize:none + 超出后内部滚动）；这里的常量与其
   // 保持一致，避免两处漂移。
   const descriptionRef = useRef<HTMLTextAreaElement>(null);
-  useEffect(() => {
+  useLayoutEffect(() => {
     const textarea = descriptionRef.current;
     if (!textarea) return;
     textarea.style.height = "auto";
@@ -684,7 +685,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
       minHeight || 0,
       maxHeight || Number.POSITIVE_INFINITY,
     )}px`;
-  }, [editDescription, selectedAsset?.assetId]);
+  }, [editDescription, descriptionIsAi, selectedAsset?.assetId]);
 
   const handleAddTagKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {

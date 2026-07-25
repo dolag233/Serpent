@@ -782,6 +782,12 @@ const library: SerpentLibraryApi = Object.freeze({
     if (result.type !== 'asset.restored') throw new Error('Unexpected restore response.');
     return { ok: true, value: { restoredCount: result.restoredCount, assets: result.assets } };
   },
+  async previewRestoreAssets({ libraryId, assetIds, targetFolderId }: { libraryId: string; assetIds: string[]; targetFolderId?: string | null }): Promise<LibraryApiResult<{ hasNameConflicts: boolean }>> {
+    const result = await request({ type: 'asset.restore-preview.request', libraryId, assetIds, targetFolderId });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'asset.restore-previewed') throw new Error('Unexpected restore-preview response.');
+    return { ok: true, value: { hasNameConflicts: result.hasNameConflicts } };
+  },
   async moveAssets({ libraryId, assetIds, targetFolderId, conflictStrategy }: { libraryId: string; assetIds: string[]; targetFolderId: string | null; conflictStrategy?: 'keep-both' | 'replace' | 'skip' }): Promise<LibraryApiResult<{ movedCount: number; skippedCount: number; operationId: string | null; assets: AssetSummary[] }>> {
     const result = await request({ type: 'asset.move.request', libraryId, assetIds, targetFolderId, conflictStrategy });
     if (!result.ok) return result;

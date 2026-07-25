@@ -522,6 +522,12 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     conflictStrategy: z.enum(['keep-both', 'replace', 'skip']).optional(),
   }),
   z.strictObject({
+    type: z.literal('asset.restore-preview.request'),
+    libraryId: identifierSchema,
+    assetIds: z.array(identifierSchema).min(1),
+    targetFolderId: identifierSchema.nullable().optional(),
+  }),
+  z.strictObject({
     type: z.literal('asset.move.request'),
     libraryId: identifierSchema,
     assetIds: z.array(identifierSchema).min(1).max(10_000).refine(
@@ -1208,6 +1214,12 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     assetIds: z.array(identifierSchema).min(1),
     targetFolderId: identifierSchema.nullable().optional(),
     conflictStrategy: z.enum(['keep-both', 'replace', 'skip']).optional(),
+  }),
+  z.strictObject({
+    type: z.literal('asset.restore-preview'),
+    libraryId: identifierSchema,
+    assetIds: z.array(identifierSchema).min(1),
+    targetFolderId: identifierSchema.nullable().optional(),
   }),
   z.strictObject({
     type: z.literal('asset.move'),

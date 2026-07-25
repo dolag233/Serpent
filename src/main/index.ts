@@ -1436,6 +1436,13 @@ async function commandFor(
         targetFolderId: request.targetFolderId,
         conflictStrategy: request.conflictStrategy,
       };
+    case "asset.restore-preview.request":
+      return {
+        type: "asset.restore-preview",
+        libraryId: request.libraryId,
+        assetIds: request.assetIds,
+        targetFolderId: request.targetFolderId,
+      };
     case "asset.move.request":
       return {
         type: "asset.move",

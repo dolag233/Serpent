@@ -637,6 +637,11 @@ const assetOperationSuccessSchemas = [
   }),
   z.strictObject({
     ok: z.literal(true),
+    type: z.literal('asset.restore-previewed'),
+    hasNameConflicts: z.boolean(),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
     type: z.literal('asset.moved'),
     movedCount: z.number().int().nonnegative(),
     skippedCount: z.number().int().nonnegative(),

@@ -555,6 +555,37 @@ describe('restoreAssets', () => {
     service.closeAll();
   });
 
+  it('previewRestoreAssets reports no conflicts when the original path is free (Serpent-0hnx)', () => {
+    const root = temporaryRoot();
+    const service = newService();
+    const created = service.createLibrary({ displayName: 'Preview Free', selectedParentPath: root });
+
+    writeFileSync(path.join(root, 'restore-me.jpg'), 'data');
+    const assetId = importNoConflict(service, created.libraryId, path.join(root, 'restore-me.jpg')).assets[0]!.assetId;
+    service.trashAssets({ libraryId: created.libraryId, assetIds: [assetId] });
+
+    expect(
+      service.previewRestoreAssets({ libraryId: created.libraryId, assetIds: [assetId] }),
+    ).toEqual({ hasNameConflicts: false });
+    service.closeAll();
+  });
+
+  it('previewRestoreAssets reports conflicts when the original path is occupied (Serpent-0hnx)', () => {
+    const root = temporaryRoot();
+    const service = newService();
+    const created = service.createLibrary({ displayName: 'Preview Conflict', selectedParentPath: root });
+
+    writeFileSync(path.join(root, 'clash.jpg'), 'trashed');
+    const assetId = importNoConflict(service, created.libraryId, path.join(root, 'clash.jpg')).assets[0]!.assetId;
+    service.trashAssets({ libraryId: created.libraryId, assetIds: [assetId] });
+    writeFileSync(path.join(created.libraryPath, 'Assets', 'clash.jpg'), 'replacement');
+
+    expect(
+      service.previewRestoreAssets({ libraryId: created.libraryId, assetIds: [assetId] }),
+    ).toEqual({ hasNameConflicts: true });
+    service.closeAll();
+  });
+
   it('restores to a specified target folder', () => {
     const root = temporaryRoot();
     const service = newService();

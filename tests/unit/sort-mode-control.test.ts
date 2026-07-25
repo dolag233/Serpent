@@ -29,3 +29,14 @@ describe("sort mode panel order options (Serpent-v78)", () => {
     expect(SECONDARY_SORT_FIELDS).not.toContain("desc");
   });
 });
+
+describe("sort mode trigger aria-label (Serpent-2lq6)", () => {
+  it("does not embed the active field label in the trigger aria-label", () => {
+    // Mirrors SortModeControl trigger: mode + optional order only, not "名称".
+    const triggerAriaLabel = (modeLabel: string, orderLabel: string, shuffle: boolean) =>
+      `${modeLabel}${shuffle ? "" : `, ${orderLabel}`}`;
+
+    expect(triggerAriaLabel("排序", "升序", false)).toBe("排序, 升序");
+    expect(triggerAriaLabel("排序", "升序", false)).not.toContain("名称");
+  });
+});

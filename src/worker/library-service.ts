@@ -14301,6 +14301,88 @@ export class LibraryService {
     }
   }
 
+  previewRestoreAssets(input: {
+    libraryId: string;
+    assetIds: string[];
+    targetFolderId?: string | null;
+  }): { hasNameConflicts: boolean } {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    const assetIds = input.assetIds;
+    if (assetIds.length === 0 || new Set(assetIds).size !== assetIds.length) {
+      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+    }
+
+    const rows = openLibrary.connection
+      .prepare(
+        `SELECT a.asset_id, a.relative_file_path, a.deleted_at,
+                a.trashed_from_relative_path, a.trashed_from_folder_id
+           FROM assets a
+          WHERE a.asset_id IN (${assetIds.map(() => '?').join(',')})
+            AND a.deleted_at IS NOT NULL`,
+      )
+      .all(...assetIds) as Array<{
+        asset_id: string;
+        relative_file_path: string;
+        deleted_at: string;
+        trashed_from_relative_path: string;
+        trashed_from_folder_id: string | null;
+      }>;
+
+    const foundIds = new Set(rows.map((r) => r.asset_id));
+    for (const id of assetIds) {
+      if (!foundIds.has(id)) {
+        const exists = openLibrary.connection
+          .prepare('SELECT asset_id FROM assets WHERE asset_id = ?')
+          .get(id);
+        if (!exists) throw new LibraryServiceError('ASSET_NOT_FOUND');
+        throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+      }
+    }
+
+    const rowById = new Map(rows.map((row) => [row.asset_id, row]));
+    const orderedRows = assetIds.map((assetId) => rowById.get(assetId)!);
+
+    const hasExplicitTarget = input.targetFolderId !== undefined;
+    let targetFolder: ManagedFolderRow | undefined;
+    if (typeof input.targetFolderId === 'string') {
+      targetFolder = this.targetFolder(openLibrary, input.targetFolderId);
+    }
+
+    for (const row of orderedRows) {
+      const filename = path.posix.basename(row.trashed_from_relative_path);
+
+      let targetFolderPath = '';
+      if (targetFolder) {
+        targetFolderPath = targetFolder.relative_path;
+      } else if (!hasExplicitTarget && row.trashed_from_folder_id) {
+        const origFolder = openLibrary.connection
+          .prepare('SELECT folder_id, relative_path FROM managed_folders WHERE folder_id = ?')
+          .get(row.trashed_from_folder_id) as { folder_id: string; relative_path: string } | undefined;
+        if (origFolder) {
+          targetFolderPath = origFolder.relative_path;
+        }
+      }
+
+      const destRelativePath = targetFolderPath
+        ? path.posix.join(targetFolderPath, filename)
+        : filename;
+      const destIdentity = portablePathIdentity(destRelativePath);
+      const activeConflict = openLibrary.connection
+        .prepare(
+          `SELECT asset_id FROM assets
+              WHERE path_identity = ? AND location_kind = 'managed'
+                AND deleted_at IS NULL AND asset_id != ?`,
+        )
+        .get(destIdentity, row.asset_id);
+      const diskConflict = this.portableDiskDestination(openLibrary, destRelativePath);
+      if (activeConflict || diskConflict) {
+        return { hasNameConflicts: true };
+      }
+    }
+
+    return { hasNameConflicts: false };
+  }
+
   restoreAssets(input: {
     libraryId: string;
     assetIds: string[];

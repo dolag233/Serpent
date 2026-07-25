@@ -164,6 +164,11 @@ import { useSelectionKeyboard } from "./use-selection-keyboard";
 import { useBrowseCommandKeyboard } from "./use-browse-command-keyboard";
 import { resolveBrowsePasteDestination } from "./browse-paste-target";
 import { useWorkspaceMouseNavigation } from "./use-workspace-mouse-navigation";
+import {
+  shouldOpenTrashRestoreDialog,
+  silentTrashRestoreRequest,
+  type TrashRestoreRequest,
+} from "./trash-restore-flow";
 import { isBrowseScopeAffectedByFolderTrash } from "./folder-trash-scope";
 import {
   useBrowserSessionPersist,
@@ -4390,11 +4395,34 @@ function AppInner() {
     }
   }
 
+  async function requestRestoreTrashedAssets(assetIds: string[]) {
+    if (!api || !library) return;
+    try {
+      const preview = await api.previewRestoreAssets({
+        libraryId: library.libraryId,
+        assetIds,
+      });
+      if (!preview.ok) throw new LibraryOperationError(preview.error);
+      if (shouldOpenTrashRestoreDialog(preview.value.hasNameConflicts)) {
+        setRestoreDialog({
+          assetIds,
+          target: "original",
+          conflictStrategy: "keep-both",
+        });
+        return;
+      }
+      await restoreTrashedAssets(silentTrashRestoreRequest(assetIds));
+    } catch (caught) {
+      setError(toMessage(caught, t("toast.restoreFailed"), locale));
+    }
+  }
+
   // --- Trash operations ---
 
-  async function restoreTrashedAssets() {
-    if (!api || !library || !restoreDialog) return;
-    const { assetIds, target, conflictStrategy } = restoreDialog;
+  async function restoreTrashedAssets(payload?: TrashRestoreRequest) {
+    const request = payload ?? restoreDialog;
+    if (!api || !library || !request) return;
+    const { assetIds, target, conflictStrategy } = request;
     setRestoreDialog(null);
     setUiState("loading");
     try {
@@ -8406,13 +8434,9 @@ function AppInner() {
         onDeleteFromDisk={(assetIds, folderIds) => {
           requestSelectionDiskDelete(assetIds, folderIds ?? []);
         }}
-        onRestore={(assetIds) =>
-          setRestoreDialog({
-            assetIds,
-            target: "original",
-            conflictStrategy: "keep-both",
-          })
-        }
+        onRestore={(assetIds) => {
+          void requestRestoreTrashedAssets(assetIds);
+        }}
         onPermanentDelete={(assetIds) => setPermanentDeleteDialog(assetIds)}
         onRelink={(assetId) => { void relinkMissingAsset(assetId); }}
         onDeleteLinked={(assetId, displayName, canDeleteSourceFile) =>

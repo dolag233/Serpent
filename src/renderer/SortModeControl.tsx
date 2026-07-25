@@ -187,7 +187,7 @@ export function SortModeControl({
         <button
           aria-expanded={open || undefined}
           aria-haspopup="listbox"
-          aria-label={`${t("filter.sortMode")}: ${triggerLabel}${shuffleActive ? "" : `, ${labelForSortOrder(sortOrder, t)}`}`}
+          aria-label={`${t("filter.sortMode")}${shuffleActive ? "" : `, ${labelForSortOrder(sortOrder, t)}`}`}
           className={`dimension-filter-btn${nonDefault ? " is-active" : ""}${open ? " is-open" : ""}`}
           disabled={disabled}
           onClick={() => {
