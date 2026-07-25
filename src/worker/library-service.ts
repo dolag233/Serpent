@@ -49,6 +49,7 @@ import {
 } from './palette-extractor';
 import { pathIsWithin } from './path-utils';
 
+import { sanitizeAiDescription } from '../shared/ai-analysis-settings';
 import { smartCollectionQueryDefinitionSchema, extractedVideoMetadataSchema, type AssetMetadataResult, type ExtractedMetadataResult, type ExtractedVideoMetadata, type AssetSummary, type CollectionSummary, type FilterClause, type FolderBrowseEntry, type LinkedFolderRule, type LinkedFolderSummary, type ManagedFolderSummary, type SearchScope, type SmartCollectionQueryDefinition, type SmartCollectionSummary, type TagCooccurrenceGraph, type TagSummary, type TrashedFolderSummary } from '../shared/asset-types';
 import { BROWSE_SCOPE_MAX_ASSETS } from '../shared/browse-scope';
 import { hasMeaningfulSmartCollectionCondition } from '../shared/smart-collection-query';
