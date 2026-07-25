@@ -333,7 +333,7 @@ describe('标题与快捷键标签', () => {
     expect(
       findItem(registry.resolveMenu(windows.ctx), 'asset.reveal-in-folder')
         .label,
-    ).toBe('在文件资源管理器中显示');
+    ).toBe('在文件浏览器中显示');
   });
 
   it('快捷键标签按平台解析，未声明快捷键的项为 null', () => {

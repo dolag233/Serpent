@@ -9,13 +9,17 @@ import {
   resolveImportMenuCopy,
   type ImportMenuCopy,
 } from "./browse-empty-state";
-import { Icon } from "./Icons";
+import {
+  buildLibraryTransferMenuItems,
+  type LibraryTransferMenuHandlers,
+} from "./library-transfer-menu";
 import { iconActionAttrs } from "./icon-action-attrs";
 import { useLocale } from "./i18n";
 import {
   focusFirstRovingItem,
   handleRovingListKeyDown,
 } from "./roving-list-keyboard";
+import { Icon } from "./Icons";
 
 const MENU_ITEM_SELECTOR = '[role="menuitem"], [role="menuitemradio"]';
 
@@ -56,11 +60,9 @@ export type LibrarySwitcherProps = {
   /** True when a library is open (gates library-scoped transfer actions). */
   libraryOpen?: boolean;
   busy?: boolean;
-  /** Labels/titles for transfer items when browsing a collection scope (CU-U5). */
+  /** Labels/titles for folder/linked-folder transfer items (CU-U5). */
   importMenuCopy?: ImportMenuCopy;
-  onImportFiles?: () => void;
   onImportFolder?: () => void;
-  onPasteImage?: () => void;
   onImportLinkedFolder?: () => void;
   onExportLibrary?: () => void;
   /** Opens second-level chooser (folder vs ZIP). Do not add a separate ZIP menu item. */
@@ -86,9 +88,7 @@ export function LibrarySwitcher({
   libraryOpen = false,
   busy = false,
   importMenuCopy,
-  onImportFiles,
   onImportFolder,
-  onPasteImage,
   onImportLinkedFolder,
   onExportLibrary,
   onImportLibrary,
@@ -103,13 +103,23 @@ export function LibrarySwitcher({
   const label = libraryName ?? t("shell.chooseLibrary");
   const libraryScopedDisabled = !libraryOpen || busy;
   const transferCopy = importMenuCopy ?? resolveImportMenuCopy("folder");
-  const showTransferSection =
-    onImportFiles != null ||
-    onImportFolder != null ||
-    onPasteImage != null ||
-    onImportLinkedFolder != null ||
-    onExportLibrary != null ||
-    onImportLibrary != null;
+
+  const transferHandlers: LibraryTransferMenuHandlers = {};
+  if (onImportFolder) transferHandlers["import-folder"] = onImportFolder;
+  if (onImportLinkedFolder) {
+    transferHandlers["import-linked-folder"] = onImportLinkedFolder;
+  }
+  if (onImportLibrary) transferHandlers["import-library"] = onImportLibrary;
+  if (onExportLibrary) transferHandlers["export-library"] = onExportLibrary;
+
+  const transferMenuItems = buildLibraryTransferMenuItems({
+    handlers: transferHandlers,
+    libraryScopedDisabled,
+    busy,
+    importFolderCopy: transferCopy.importFolder,
+    importLinkedFolderCopy: transferCopy.importLinkedFolder,
+  });
+  const showTransferSection = transferMenuItems.length > 0;
 
   function closeMenu(restoreTriggerFocus: boolean) {
     setOpen(false);
@@ -265,82 +275,20 @@ export function LibrarySwitcher({
                 <div className="library-switcher-section-label">
                   {t("shell.libraryTransfer")}
                 </div>
-                {onImportFiles != null && (
+                {transferMenuItems.map((item) => (
                   <button
                     className="library-switcher-item"
-                    disabled={libraryScopedDisabled}
-                    onClick={() => runMenuAction(onImportFiles)}
+                    disabled={item.disabled}
+                    key={item.id}
+                    onClick={() => runMenuAction(item.onSelect)}
                     role="menuitem"
                     tabIndex={-1}
-                    title={t(transferCopy.importFiles.titleKey)}
+                    title={item.titleKey ? t(item.titleKey) : undefined}
                     type="button"
                   >
-                    {t(transferCopy.importFiles.labelKey)}
+                    {t(item.labelKey)}
                   </button>
-                )}
-                {onImportFolder != null && (
-                  <button
-                    className="library-switcher-item"
-                    disabled={libraryScopedDisabled}
-                    onClick={() => runMenuAction(onImportFolder)}
-                    role="menuitem"
-                    tabIndex={-1}
-                    title={t(transferCopy.importFolder.titleKey)}
-                    type="button"
-                  >
-                    {t(transferCopy.importFolder.labelKey)}
-                  </button>
-                )}
-                {onPasteImage != null && (
-                  <button
-                    className="library-switcher-item"
-                    disabled={libraryScopedDisabled}
-                    onClick={() => runMenuAction(onPasteImage)}
-                    role="menuitem"
-                    tabIndex={-1}
-                    title={t(transferCopy.pasteImage.titleKey)}
-                    type="button"
-                  >
-                    {t(transferCopy.pasteImage.labelKey)}
-                  </button>
-                )}
-                {onImportLinkedFolder != null && (
-                  <button
-                    className="library-switcher-item"
-                    disabled={libraryScopedDisabled}
-                    onClick={() => runMenuAction(onImportLinkedFolder)}
-                    role="menuitem"
-                    tabIndex={-1}
-                    title={t(transferCopy.importLinkedFolder.titleKey)}
-                    type="button"
-                  >
-                    {t(transferCopy.importLinkedFolder.labelKey)}
-                  </button>
-                )}
-                {onExportLibrary != null && (
-                  <button
-                    className="library-switcher-item"
-                    disabled={libraryScopedDisabled}
-                    onClick={() => runMenuAction(onExportLibrary)}
-                    role="menuitem"
-                    tabIndex={-1}
-                    type="button"
-                  >
-                    {t("toolbar.exportLibrary")}
-                  </button>
-                )}
-                {onImportLibrary != null && (
-                  <button
-                    className="library-switcher-item"
-                    disabled={busy}
-                    onClick={() => runMenuAction(onImportLibrary)}
-                    role="menuitem"
-                    tabIndex={-1}
-                    type="button"
-                  >
-                    {t("toolbar.importLibrary")}
-                  </button>
-                )}
+                ))}
               </div>
             </>
           )}

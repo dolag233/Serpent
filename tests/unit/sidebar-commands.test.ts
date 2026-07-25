@@ -243,7 +243,7 @@ describe('文件夹分支：快捷键展示（Serpent-vf8x）', () => {
 });
 
 describe('文件夹分支：平台条件标题', () => {
-  it('mac → 在 Finder 中打开；windows → 在文件资源管理器中打开', () => {
+  it('mac → 在 Finder 中打开；windows → 在文件浏览器中打开', () => {
     const mac = makeCtx({ platform: 'mac' });
     expect(
       findItem(registry.resolveMenu(mac.ctx), 'folder.open-in-file-manager')
@@ -255,7 +255,7 @@ describe('文件夹分支：平台条件标题', () => {
         registry.resolveMenu(windows.ctx),
         'folder.open-in-file-manager',
       ).label,
-    ).toBe('在文件资源管理器中打开');
+    ).toBe('在文件浏览器中打开');
   });
 
   it.each([

@@ -6544,7 +6544,6 @@ function AppInner() {
                 setDialog("library");
               }}
               onExportLibrary={() => setExportDialogOpen(true)}
-              onImportFiles={() => void importAssets("files")}
               onImportFolder={() => void importAssets("folder")}
               onImportLibrary={() => setImportLibraryChooserOpen(true)}
               onImportLinkedFolder={() => void importFolderAsLinked()}
@@ -6552,7 +6551,6 @@ function AppInner() {
               onOpenLibrary={() => void runLibraryOperation("open")}
               onOpenRecent={(path) => void openRecentLibrary(path)}
               onForgetRecent={(path) => void forgetRecentLibrary(path)}
-              onPasteImage={() => void pasteClipboardImage()}
               recentLibraries={recentLibraries}
             />
             <ScopeBreadcrumbs

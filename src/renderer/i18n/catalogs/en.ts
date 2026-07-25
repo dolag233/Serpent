@@ -901,7 +901,7 @@ export const en = {
     trashBody: "Assets you move to Trash will appear here.",
     collectionTitle: "This collection is empty",
     collectionBody:
-      "Add assets from the library by drag-and-drop or the context menu. Library-menu import goes to Assets and does not join this collection automatically; paste image does.",
+      "Add assets from the library by drag-and-drop or the context menu. Library-menu folder or linked-folder import goes to Assets and does not join this collection automatically.",
     smartCollectionTitle: "No assets match this smart collection",
     smartCollectionBody:
       "Smart collections show assets that match a saved query. Import from the library menu goes to the library, not into this query.",

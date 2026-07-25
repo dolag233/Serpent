@@ -33,6 +33,17 @@ describe('theme CSS tokens (REQ-THEME-002)', () => {
     }
   });
 
+  it('keeps dark-theme exclude filter desaturated (Serpent-jfi / FILTER-022)', () => {
+    const darkRoot = css.match(
+      /:root\s*\{[\s\S]*?--filter-exclude:\s*([^;]+);/,
+    );
+    expect(darkRoot?.[1]?.trim()).toBe('#c48990');
+
+    expect(css).toMatch(
+      /\[data-theme="light"\][\s\S]*?--filter-exclude:\s*var\(--danger\);/,
+    );
+  });
+
   it('keeps no raw hex colors outside token definition blocks', () => {
     const lines = css.split('\n');
     const hard: string[] = [];
