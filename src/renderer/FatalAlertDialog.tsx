@@ -12,8 +12,8 @@ export interface FatalAlertDialogProps {
 }
 
 /**
- * Blocking fatal alert (Serpent-99lv). Not a toast — user must acknowledge
- * before continuing. Escape / close / confirm all dismiss.
+ * Blocking error alert (Serpent-99lv). Not a toast — user must acknowledge
+ * before continuing. Title names the operation (import, open library, etc.).
  */
 export function FatalAlertDialog({
   message,
@@ -23,7 +23,8 @@ export function FatalAlertDialog({
   const t = useT();
   if (!message) return null;
 
-  const heading = title?.trim() ? title : t("dialog.fatalAlert.title");
+  const heading =
+    title?.trim() || t("dialog.blockingError.fallback");
 
   return (
     <div className="dialog-backdrop" role="presentation">
@@ -42,7 +43,7 @@ export function FatalAlertDialog({
             className="dialog-close"
             onClick={onDismiss}
             type="button"
-            {...iconActionAttrs(t("dialog.fatalAlert.confirm"))}
+            {...iconActionAttrs(t("dialog.blockingError.confirm"))}
           >
             <Icon name="close" size={16} />
           </button>
@@ -52,7 +53,7 @@ export function FatalAlertDialog({
         </p>
         <div className="dialog-actions">
           <button className="primary-button" onClick={onDismiss} type="button">
-            {t("dialog.fatalAlert.confirm")}
+            {t("dialog.blockingError.confirm")}
           </button>
         </div>
       </div>

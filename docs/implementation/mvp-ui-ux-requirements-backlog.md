@@ -634,7 +634,7 @@ FolderBrowseEntry
 | BUG-TRASH-001 | 回收站中文本文件缩略图长期显示「文本加载中」。 | P2 | `Serpent-hv6n` |
 | BUG-TRASH-002 | 回收站资产原文件夹路径应在卡片角标呈现（与普通浏览一致），不应在卡片下方单独一行。 | P2 | `Serpent-g36n` |
 | BUG-TRASH-003 | 回收站恢复：目标为原目录；无同名冲突时直接恢复不弹窗；有同名时使用现有同名冲突对话框。 | P1 | `Serpent-0hnx` |
-| BUG-TOAST-001 | **禁止耸人听闻的阻塞错误窗**：粘贴失败等常规操作不得弹出默认标题「严重错误」/ Critical error 的 `FatalAlertDialog`；应静默或顶部 error 条 + 具体原因。全仓 `setFatal` 调用点需分级审计（见清单 TOAST-005）。 | P1 | `Serpent-rk65` |
+| BUG-TOAST-001 | **禁止耸人听闻的阻塞错误窗**：阻塞对话框标题必须为具体操作名（导入失败、无法打开资源库等）；禁止「严重错误」/ Critical error。粘贴空剪贴板静默；常规失败用顶部 error 条 + 具体原因。原则见 `docs/ui/0004-calm-error-and-copy-ux-principles.md`。 | P1 | `Serpent-rk65`（标题具体化已落地，待人类验收 TOAST-003/005） |
 
 用户原话要点（本批）：
 

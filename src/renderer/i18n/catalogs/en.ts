@@ -607,8 +607,14 @@ export const en = {
     aiAnalyzeFailure: {
       title: "AI analysis failed"
     },
-    fatalAlert: {
-      title: "Critical error",
+    blockingError: {
+      fallback: "Couldn't finish",
+      libraryOpenFailed: "Couldn't open library",
+      libraryCreateFailed: "Couldn't create library",
+      importFailed: "Import failed",
+      importContinueFailed: "Couldn't continue import",
+      importValidateFailed: "Couldn't validate import",
+      libraryImportFailed: "Couldn't import library",
       confirm: "OK"
     },
     deleteLinked: {
@@ -797,7 +803,7 @@ export const en = {
     languageHint: "Controls the interface language. Changes apply immediately.",
     browserExtensionTitle: "Browser extension",
     browserExtensionIntro:
-      "Save web images and videos into the active library with the Chrome / Edge extension. No pairing code — keep Serpent running with a library open.",
+      "Save web images and videos into the active library with the Chrome / Edge extension. Keep Serpent running with a library open.",
     browserExtensionStepBuild:
       "During development: run npm run extension:build in the repo root to produce dist/extension.",
     browserExtensionStepLoad:
@@ -1151,9 +1157,6 @@ export const en = {
     sourceUrlOpenFailed: "Cannot open source URL: only valid HTTP(S) links are supported.",
     sourceUrlOpenUnauthorized: "Cannot open the source URL from this window. Reload Serpent and try again.",
     sourceUrlOpenShellFailed: "The system browser could not open this source URL. Check the default browser and try again.",
-    extensionPairingUnsupported: "(unused)",
-    extensionRotateConfirm: "(unused)",
-    extensionRotated: "(unused)",
     extensionCopied: "(unused)",
     extensionCopyFailed: "(unused)",
     aiConfigSaveFailed: "Failed to save AI settings.",

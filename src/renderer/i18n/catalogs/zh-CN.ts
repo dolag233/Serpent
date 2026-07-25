@@ -597,8 +597,14 @@ export const zhCN = {
     aiAnalyzeFailure: {
       title: "AI 分析失败"
     },
-    fatalAlert: {
-      title: "严重错误",
+    blockingError: {
+      fallback: "操作未完成",
+      libraryOpenFailed: "无法打开资源库",
+      libraryCreateFailed: "无法创建资源库",
+      importFailed: "导入失败",
+      importContinueFailed: "无法继续导入",
+      importValidateFailed: "无法校验导入",
+      libraryImportFailed: "无法导入资源库",
       confirm: "知道了"
     },
     deleteLinked: {
@@ -784,7 +790,7 @@ export const zhCN = {
     languageHint: "控制界面文案语言，立即生效。",
     browserExtensionTitle: "浏览器扩展",
     browserExtensionIntro:
-      "用 Chrome / Edge 扩展把网页图片或视频保存到当前资源库。无需配对码；保持本应用运行并打开资源库即可。",
+      "用 Chrome / Edge 扩展把网页图片或视频保存到当前资源库。保持本应用运行并打开资源库即可。",
     browserExtensionStepBuild:
       "开发阶段：在项目根目录运行 npm run extension:build，生成 dist/extension。",
     browserExtensionStepLoad:
@@ -1135,9 +1141,6 @@ export const zhCN = {
     sourceUrlOpenFailed: "无法打开源链接：仅支持有效的 HTTP(S) 链接。",
     sourceUrlOpenUnauthorized: "无法从此窗口打开源链接。请重新加载 Serpent 后再试。",
     sourceUrlOpenShellFailed: "系统浏览器无法打开该源链接。请检查默认浏览器设置后重试。",
-    extensionPairingUnsupported: "当前桌面桥接不支持浏览器扩展说明。",
-    extensionRotateConfirm: "（已废弃）",
-    extensionRotated: "（已废弃）",
     extensionCopied: "（已废弃）",
     extensionCopyFailed: "（已废弃）",
     aiConfigSaveFailed: "AI 配置保存失败。",

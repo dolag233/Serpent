@@ -543,6 +543,14 @@ function AppInner() {
     setFatalDialogTitle(null);
     setFatal(null);
   }, [setFatal]);
+
+  const showBlockingError = useCallback(
+    (title: string, message: string) => {
+      setFatalDialogTitle(title);
+      setFatal(message);
+    },
+    [setFatal],
+  );
   const [dialog, setDialog] = useState<DialogKind>(null);
   const [createLibraryPhase, setCreateLibraryPhase] =
     useState<CreateLibraryPhase>("start");
@@ -2312,7 +2320,12 @@ function AppInner() {
       await loadContent(result.value, "all");
       await refreshRecentLibraries(result.value.displayPath);
     } catch (caught) {
-      setFatal(toMessage(caught, failureMessage));
+      showBlockingError(
+        busyState === "creating"
+          ? t("dialog.blockingError.libraryCreateFailed")
+          : t("dialog.blockingError.libraryOpenFailed"),
+        toMessage(caught, failureMessage),
+      );
     } finally {
       setUiState(opened ? "ready" : "idle");
     }
@@ -4031,7 +4044,10 @@ function AppInner() {
       setNotice(importSummaryMessage(result.value, locale));
       await revealAfterImport(result.value);
     } catch (caught) {
-      setFatal(toMessage(caught, t("toast.importFailed"), locale));
+      showBlockingError(
+        t("dialog.blockingError.importFailed"),
+        toMessage(caught, t("toast.importFailed"), locale),
+      );
     } finally {
       setUiState("ready");
     }
@@ -4055,7 +4071,10 @@ function AppInner() {
       setNotice(importSummaryMessage(result.value, locale));
       await revealAfterImport(result.value);
     } catch (caught) {
-      setFatal(toMessage(caught, t("toast.continueImportFailed"), locale));
+      showBlockingError(
+        t("dialog.blockingError.importContinueFailed"),
+        toMessage(caught, t("toast.continueImportFailed"), locale),
+      );
     } finally {
       setUiState("ready");
     }
@@ -5070,7 +5089,10 @@ function AppInner() {
       setImportValidated(result.value);
       setImportProgress(null);
     } catch (caught) {
-      setFatal(toMessage(caught, t("toast.importValidateFailed"), locale));
+      showBlockingError(
+        t("dialog.blockingError.importValidateFailed"),
+        toMessage(caught, t("toast.importValidateFailed"), locale),
+      );
       setImportProgress(null);
     }
   }
@@ -5099,7 +5121,10 @@ function AppInner() {
       setImportProgress(null);
       await activateImportedLibrary(result.value);
     } catch (caught) {
-      setFatal(toMessage(caught, t("toast.zipImportFailed"), locale));
+      showBlockingError(
+        t("dialog.blockingError.libraryImportFailed"),
+        toMessage(caught, t("toast.zipImportFailed"), locale),
+      );
       setImportProgress(null);
     }
   }
@@ -5166,7 +5191,10 @@ function AppInner() {
       setImportProgress(null);
       await activateImportedLibrary(result.value);
     } catch (caught) {
-      setFatal(toMessage(caught, t("toast.importFailed"), locale));
+      showBlockingError(
+        t("dialog.blockingError.libraryImportFailed"),
+        toMessage(caught, t("toast.importFailed"), locale),
+      );
       setImportProgress(null);
     }
   }
@@ -5198,7 +5226,10 @@ function AppInner() {
       setImportProgress(null);
       await activateImportedLibrary(result.value);
     } catch (caught) {
-      setFatal(toMessage(caught, t("toast.importFailed"), locale));
+      showBlockingError(
+        t("dialog.blockingError.libraryImportFailed"),
+        toMessage(caught, t("toast.importFailed"), locale),
+      );
       setImportProgress(null);
     }
   }
@@ -6259,8 +6290,8 @@ function AppInner() {
         locale,
       );
       const showTotalFailure = () => {
-        setFatalDialogTitle(t("dialog.aiAnalyzeFailure.title"));
-        setFatal(
+        showBlockingError(
+          t("dialog.aiAnalyzeFailure.title"),
           detail
             ? t("toast.aiAnalyzeFailedDetail", { detail })
             : t("toast.aiAnalyzeFailed"),

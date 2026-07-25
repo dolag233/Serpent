@@ -88,3 +88,7 @@ Serpent 的默认快捷键不是「能绑就绑」，而是**可发现、可记�
 2. 实现：命令注册表 + 分发 + `platform-shortcut-table` + 单测。  
 3. 更新 `docs/qa/human-acceptance-checklist.md` 可独立操作步骤（待人类验收）。  
 4. Windows 真机键盘验收不得由 macOS 开发态单独代签。
+
+## 9. 相关文档
+
+- [0004 错误与文案语气](./0004-calm-error-and-copy-ux-principles.md) — 阻塞窗标题、禁止「严重错误」、避免焦虑
