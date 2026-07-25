@@ -22,7 +22,7 @@ export interface AssetMultiCommandActions {
   readonly openAssignTagPicker: (assetIds: string[]) => void;
   readonly openRemoveTagPicker: (assetIds: string[]) => void;
   readonly copyFiles: (assetIds: string[]) => void;
-  readonly pasteIntoFolder: (folderId: string) => void;
+  readonly pasteIntoFolder: (folderId: string | null) => void;
   readonly moveToFolder: (
     assetIds: string[],
     folderIds?: readonly string[],
@@ -67,7 +67,7 @@ export interface AssetMultiCommandContext extends CommandContext {
   /**
    * Managed folder that receives OS clipboard paste. Null hides paste.
    */
-  readonly pasteTargetFolderId: string | null;
+  readonly pasteTargetFolderId: string | null | undefined;
   readonly actions: AssetMultiCommandActions;
 }
 
@@ -163,9 +163,9 @@ export const assetMultiCommandDefinitions: readonly AssetMultiCommandDefinition[
         windows: { label: 'Ctrl+V', key: 'v', ctrlKey: true },
       },
       visible: (ctx) =>
-        !ctx.trashedAll && ctx.pasteTargetFolderId !== null,
+        !ctx.trashedAll && ctx.pasteTargetFolderId !== undefined,
       run: (ctx) => {
-        if (ctx.pasteTargetFolderId) {
+        if (ctx.pasteTargetFolderId !== undefined) {
           ctx.actions.pasteIntoFolder(ctx.pasteTargetFolderId);
         }
       },

@@ -30,7 +30,7 @@ export type UseBrowseCommandKeyboardArgs = {
   readonly selectedAsset: AssetSummary | undefined;
   readonly selectedAssets: readonly AssetSummary[];
   readonly selectedManagedCount: number;
-  readonly pasteTargetFolderId: string | null;
+  readonly pasteDestinationFolderId: string | null | undefined;
   readonly diskDeleteAssetIds: readonly string[];
   readonly diskDeleteFolderIds: readonly string[];
   readonly searchInputRef: RefObject<HTMLInputElement | null>;
@@ -38,7 +38,7 @@ export type UseBrowseCommandKeyboardArgs = {
   readonly onTrashManaged: (assetIds: string[]) => void;
   readonly onRename: (assetId: string) => void;
   readonly onCopyFiles: (assetIds: string[]) => void;
-  readonly onPasteIntoFolder: (folderId: string) => void;
+  readonly onPasteIntoFolder: (folderId: string | null) => void;
   readonly onRevealInFolder: (assetId: string) => void;
   readonly onDiskDelete: (
     assetIds: readonly string[],
@@ -61,7 +61,7 @@ export function useBrowseCommandKeyboard(
     selectedAsset,
     selectedAssets,
     selectedManagedCount,
-    pasteTargetFolderId,
+    pasteDestinationFolderId,
     diskDeleteAssetIds,
     diskDeleteFolderIds,
     searchInputRef,
@@ -113,10 +113,11 @@ export function useBrowseCommandKeyboard(
         matchAssetActionKeyboardCommand("asset.paste", event, platform) &&
         !showTrash &&
         libraryOpen &&
-        pasteTargetFolderId !== null
+        !busy &&
+        pasteDestinationFolderId !== undefined
       ) {
         event.preventDefault();
-        onPasteIntoFolder(pasteTargetFolderId);
+        onPasteIntoFolder(pasteDestinationFolderId);
         return;
       }
 
@@ -237,7 +238,7 @@ export function useBrowseCommandKeyboard(
     selectedAsset,
     selectedAssets,
     selectedManagedCount,
-    pasteTargetFolderId,
+    pasteDestinationFolderId,
     diskDeleteAssetIds,
     diskDeleteFolderIds,
     searchInputRef,

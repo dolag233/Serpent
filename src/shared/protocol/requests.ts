@@ -173,7 +173,8 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
   z.strictObject({
     type: z.literal('folder.paste.request'),
     libraryId: identifierSchema,
-    folderId: identifierSchema,
+    /** Omit or null to paste into library Assets root. */
+    folderId: optionalIdentifierSchema.nullable().optional(),
   }),
   z.strictObject({
     type: z.literal('folder.clone.request'),

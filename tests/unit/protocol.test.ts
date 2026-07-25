@@ -431,6 +431,13 @@ describe('renderer request protocol', () => {
       folderId: 'folder-01',
     });
     expect(parseRendererRequest({
+      type: 'folder.paste.request',
+      libraryId: 'library-01',
+    })).toEqual({
+      type: 'folder.paste.request',
+      libraryId: 'library-01',
+    });
+    expect(parseRendererRequest({
       type: 'folder.clone.request',
       libraryId: 'library-01',
       folderId: 'folder-01',

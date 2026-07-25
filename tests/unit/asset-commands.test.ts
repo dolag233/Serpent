@@ -362,6 +362,7 @@ describe('run 委托到 actions 回调包', () => {
     ['asset.reveal-in-folder', {}, 'revealInFolder', ['asset-1']],
     ['asset.copy', {}, 'copyFiles', [['asset-1']]],
     ['asset.paste', {}, 'pasteIntoFolder', ['folder-1']],
+    ['asset.paste', { pasteTargetFolderId: null }, 'pasteIntoFolder', [null]],
     ['asset.copy-file-path', {}, 'copyFilePath', ['asset-1']],
     ['asset.rename', {}, 'rename', ['asset-1']],
     ['asset.ai-analyze', {}, 'aiAnalyze', ['asset-1']],
@@ -428,7 +429,7 @@ describe('run 委托到 actions 回调包', () => {
   it('primaryAssetId 为空时 run 落空、不调用任何 action', () => {
     const { ctx, calls } = makeCtx({
       primaryAssetId: null,
-      pasteTargetFolderId: null,
+      pasteTargetFolderId: undefined,
     });
     for (const def of registry.list()) {
       void def.run(ctx);

@@ -162,6 +162,7 @@ import { buildMultiAssetMenuSkipReport } from "./menu-skip-report";
 import { useAssetSelection } from "./useAssetSelection";
 import { useSelectionKeyboard } from "./use-selection-keyboard";
 import { useBrowseCommandKeyboard } from "./use-browse-command-keyboard";
+import { resolveBrowsePasteDestination } from "./browse-paste-target";
 import { useWorkspaceMouseNavigation } from "./use-workspace-mouse-navigation";
 import { isBrowseScopeAffectedByFolderTrash } from "./folder-trash-scope";
 import {
@@ -3505,9 +3506,13 @@ function AppInner() {
     setNotice,
   });
 
-  /** Managed browse folder for asset-menu OS clipboard paste (Serpent-bkef). */
-  const assetPasteTargetFolderId =
-    selectedFolderId !== undefined ? selectedFolderId : null;
+  const browsePasteDestination = resolveBrowsePasteDestination({
+    libraryOpen: Boolean(library),
+    showTrash,
+    showTagManagement,
+    assetScope,
+    selectedFolderId,
+  });
 
   const { pasteIntoFolder, cloneFolder } =
     useFolderOrganizeActions({
@@ -3523,6 +3528,17 @@ function AppInner() {
       },
       onPasteCompleted: (completion) => revealAfterImportRef.current(completion),
     });
+
+  const osClipboardPasteAtRef = useRef(0);
+  const pasteOsClipboardFiles = useCallback(
+    (folderId: string | null) => {
+      const now = Date.now();
+      if (now - osClipboardPasteAtRef.current < 400) return;
+      osClipboardPasteAtRef.current = now;
+      void pasteIntoFolder(folderId);
+    },
+    [pasteIntoFolder],
+  );
 
   const {
     handleAssetsDroppedOnFolder,
@@ -5473,7 +5489,7 @@ function AppInner() {
     selectedAsset,
     selectedAssets,
     selectedManagedCount,
-    pasteTargetFolderId: assetPasteTargetFolderId,
+    pasteDestinationFolderId: browsePasteDestination,
     diskDeleteAssetIds: diskDeleteKeyboardTargets.assetIds,
     diskDeleteFolderIds: diskDeleteKeyboardTargets.folderIds,
     searchInputRef,
@@ -5487,9 +5503,7 @@ function AppInner() {
     onCopyFiles: (assetIds) => {
       void handleCopyAssetFiles(assetIds);
     },
-    onPasteIntoFolder: (folderId) => {
-      void pasteIntoFolder(folderId);
-    },
+    onPasteIntoFolder: pasteOsClipboardFiles,
     onRevealInFolder: (assetId) => {
       void handleRevealInFolder(assetId);
     },
@@ -5578,25 +5592,41 @@ function AppInner() {
       if (
         !library ||
         busy ||
+        showTrash ||
         target instanceof HTMLInputElement ||
         target instanceof HTMLTextAreaElement ||
         target instanceof HTMLSelectElement ||
         (target instanceof HTMLElement && target.isContentEditable)
-      )
+      ) {
         return;
-      if (
+      }
+      if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
+
+      const hasImage =
         event.clipboardData &&
-        !Array.from(event.clipboardData.items).some((item) =>
+        Array.from(event.clipboardData.items).some((item) =>
           item.type.startsWith("image/"),
-        )
-      )
+        );
+      if (hasImage) {
+        event.preventDefault();
+        void pasteClipboardImage();
         return;
+      }
+
+      if (browsePasteDestination === undefined) return;
       event.preventDefault();
-      void pasteClipboardImage();
+      pasteOsClipboardFiles(browsePasteDestination);
     };
     document.addEventListener("paste", onPaste);
     return () => document.removeEventListener("paste", onPaste);
-  }, [library, busy, pasteClipboardImage]);
+  }, [
+    library,
+    busy,
+    showTrash,
+    browsePasteDestination,
+    pasteClipboardImage,
+    pasteOsClipboardFiles,
+  ]);
 
   useEffect(() => {
     if (
@@ -8418,7 +8448,7 @@ function AppInner() {
         onCopyAssetFiles={(assetIds) => {
           void handleCopyAssetFiles(assetIds);
         }}
-        pasteTargetFolderId={assetPasteTargetFolderId}
+        pasteTargetFolderId={browsePasteDestination}
         onRenameAssetFile={(assetId) => { openAssetRename(assetId); }}
         onRemoveFromCurrentCollection={(assetId) => {
           if (activeCollectionId) void removeAssetFromCollection(assetId, activeCollectionId);

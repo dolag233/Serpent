@@ -21,7 +21,7 @@ export interface AssetCommandActions {
   /** OS file clipboard (Finder/Explorer interoperable). */
   readonly copyFiles: (assetIds: string[]) => void;
   /** Paste OS clipboard into a managed folder (reuse folder.paste). */
-  readonly pasteIntoFolder: (folderId: string) => void;
+  readonly pasteIntoFolder: (folderId: string | null) => void;
   readonly copyFilePath: (assetId: string) => void;
   readonly rename: (assetId: string) => void;
   readonly aiAnalyze: (assetId: string) => void;
@@ -56,7 +56,7 @@ export interface AssetCommandContext extends CommandContext {
    * Managed folder that receives OS clipboard paste (current browse folder
    * or the asset's parent). Null hides paste.
    */
-  readonly pasteTargetFolderId: string | null;
+  readonly pasteTargetFolderId: string | null | undefined;
   readonly actions: AssetCommandActions;
 }
 
@@ -196,9 +196,9 @@ export const assetCommandDefinitions: readonly AssetCommandDefinition[] = [
       windows: { label: 'Ctrl+V', key: 'v', ctrlKey: true },
     },
     visible: (ctx) =>
-      !ctx.assetDeleted && ctx.pasteTargetFolderId !== null,
+      !ctx.assetDeleted && ctx.pasteTargetFolderId !== undefined,
     run: (ctx) => {
-      if (ctx.pasteTargetFolderId) {
+      if (ctx.pasteTargetFolderId !== undefined) {
         ctx.actions.pasteIntoFolder(ctx.pasteTargetFolderId);
       }
     },

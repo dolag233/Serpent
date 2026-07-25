@@ -156,7 +156,7 @@ export interface SerpentLibraryApi {
   /** Paste OS clipboard files/folders into a managed folder. */
   pasteIntoFolder(input: {
     libraryId: string;
-    folderId: string;
+    folderId?: string | null;
   }): Promise<LibraryApiResult<ImportCompletion | ImportConflictPlan>>;
   /** Duplicate managed folder subtree as a sibling. */
   cloneFolder(input: {

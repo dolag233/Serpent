@@ -203,7 +203,7 @@ const library: SerpentLibraryApi = Object.freeze({
 
   async pasteIntoFolder(input: {
     libraryId: string;
-    folderId: string;
+    folderId?: string | null;
   }): Promise<LibraryApiResult<ImportCompletion | ImportConflictPlan>> {
     return importRequest({ type: 'folder.paste.request', ...input });
   },

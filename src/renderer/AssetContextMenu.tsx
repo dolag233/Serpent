@@ -141,7 +141,7 @@ interface AssetContextMenuProps {
    * Managed folder that receives OS clipboard paste from asset menus.
    * Typically the current browse folder; null hides paste.
    */
-  pasteTargetFolderId: string | null;
+  pasteTargetFolderId: string | null | undefined;
   onRenameAssetFile: (assetId: string) => void;
   onRemoveFromCurrentCollection: (assetId: string) => void;
   onRemoveFromCollection: (assetId: string, collectionId: string) => void;

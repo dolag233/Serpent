@@ -41,7 +41,7 @@ export function useFolderOrganizeActions({
   const t = useT();
 
   const pasteIntoFolder = useCallback(
-    async (folderId: string) => {
+    async (folderId: string | null) => {
       if (!api || !libraryId) return;
       setUiState("loading");
       try {

@@ -2455,7 +2455,7 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
         command = {
           type: "asset.import.prepare",
           libraryId: request.libraryId,
-          targetFolderId: request.folderId,
+          targetFolderId: request.folderId ?? undefined,
           sourceKind,
           sourcePaths,
         };
