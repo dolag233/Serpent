@@ -55,10 +55,8 @@ export const TOOLBAR_DIRECT_UTILITY_COMMAND_IDS = [
   'workspace.background-jobs',
 ] as const;
 
-/** 「更多工具」溢出菜单条目（导入类不在此列）。 */
-export const TOOLBAR_OVERFLOW_COMMAND_IDS = [
-  'workspace.ai-settings',
-] as const;
+/** 「更多工具」溢出菜单条目（导入类不在此列）。AI 设置已迁入设置中心。 */
+export const TOOLBAR_OVERFLOW_COMMAND_IDS = [] as const;
 
 export type ToolbarCanvasCommandId = (typeof TOOLBAR_CANVAS_COMMAND_IDS)[number];
 export type ToolbarOverflowCommandId =

@@ -137,7 +137,13 @@ export function VideoPlayerControls({
         if (action.kind === "frame" && !video.paused) {
           video.pause();
         }
-        seekSessionRef.current?.commit(nextTime);
+        if (action.kind === "frame") {
+          // Frame steps are sub-epsilon; bypass seek-session coalescing
+          // (MEDIA_SEEK_EPSILON_SECONDS) so D/F visibly advance (VIEWER-018).
+          video.currentTime = nextTime;
+        } else {
+          seekSessionRef.current?.commit(nextTime);
+        }
         setCurrentTime(nextTime);
         return;
       }
@@ -145,11 +151,14 @@ export function VideoPlayerControls({
       if (!rateStep) return;
       event.preventDefault();
       event.stopPropagation();
-      setPlaybackRate((current) => stepVideoPlaybackRate(current, rateStep));
+      const nextRate = stepVideoPlaybackRate(playbackRate, rateStep);
+      setPlaybackRate(nextRate);
+      const video = videoRef.current;
+      if (video) video.playbackRate = nextRate;
     };
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [duration, togglePlayback]);
+  }, [duration, playbackRate, togglePlayback]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -370,11 +379,6 @@ export function VideoPlayerControls({
           onVolumeChange={onVolumeChange}
           volume={volume}
         />
-        {natural.w > 0 && (
-          <span aria-hidden="true" className="preview-video-zoom-label">
-            {Math.round(view.scale * 100)}%
-          </span>
-        )}
         <button
           className="preview-video-fit"
           onClick={fitToWindow}

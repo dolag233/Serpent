@@ -34,6 +34,7 @@ export type IconName =
   | "info"
   | "link"
   | "link-off"
+  | "loader"
   | "menu"
   | "plus"
   | "refresh"
@@ -244,6 +245,18 @@ const iconPaths: Record<IconName, ReactNode> = {
     <>
       <path d="M10 13a5 5 0 0 0 7.5.5l2-2a5 5 0 0 0-7-7l-1.2 1.2" />
       <path d="M14 11a5 5 0 0 0-7.5-.5l-2 2a5 5 0 0 0 7 7l1.2-1.2" />
+    </>
+  ),
+  loader: (
+    <>
+      <path d="M12 2v4" />
+      <path d="M12 18v4" />
+      <path d="M4.93 4.93l2.83 2.83" />
+      <path d="M16.24 16.24l2.83 2.83" />
+      <path d="M2 12h4" />
+      <path d="M18 12h4" />
+      <path d="M4.93 19.07l2.83-2.83" />
+      <path d="M16.24 7.76l2.83-2.83" />
     </>
   ),
   "link-off": (

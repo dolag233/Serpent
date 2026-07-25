@@ -83,7 +83,7 @@ function findItem(
 }
 
 describe('工具栏命令可见性', () => {
-  it('资源库打开时：常驻画布命令与溢出两项全部可见', () => {
+  it('资源库打开时：常驻画布命令可见，后台任务仍在注册表', () => {
     const { ctx } = makeCtx();
     expect(resolveIds(ctx)).toEqual([
       'canvas.view.grid',
@@ -111,10 +111,8 @@ describe('工具栏命令可见性', () => {
     ]);
   });
 
-  it('溢出 id 列表与注册表一致且不含导入类命令', () => {
-    expect([...TOOLBAR_OVERFLOW_COMMAND_IDS]).toEqual([
-      'workspace.ai-settings',
-    ]);
+  it('溢出 id 列表为空（AI 设置已迁入设置中心）', () => {
+    expect([...TOOLBAR_OVERFLOW_COMMAND_IDS]).toEqual([]);
     expect([...TOOLBAR_DIRECT_UTILITY_COMMAND_IDS]).toEqual([
       'workspace.background-jobs',
     ]);
@@ -211,7 +209,7 @@ describe('run 委托 actions', () => {
     ]);
   });
 
-  it('溢出两项分别委托', () => {
+  it('后台任务命令仍可通过注册表委托', () => {
     const { ctx, calls } = makeCtx();
     registry.get('workspace.background-jobs')!.run(ctx);
     registry.get('workspace.ai-settings')!.run(ctx);

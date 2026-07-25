@@ -6840,22 +6840,25 @@ function AppInner() {
           </div>
           <div className="workspace-tools">
             {library && showTrash ? (
-              <button
-                className="compact-action"
-                disabled={busy}
-                onClick={() => {
-                  if (
-                    confirm(
-                      t("toast.emptyTrashConfirm"),
+              <>
+                <button
+                  className="compact-action"
+                  disabled={busy}
+                  onClick={() => {
+                    if (
+                      confirm(
+                        t("toast.emptyTrashConfirm"),
+                      )
                     )
-                  )
-                    void emptyTrash();
-                }}
-                type="button"
-              >
-                <Icon name="trash" size={14} />
-                {t("toolbar.emptyTrash")}
-              </button>
+                      void emptyTrash();
+                  }}
+                  type="button"
+                >
+                  <Icon name="trash" size={14} />
+                  {t("toolbar.emptyTrash")}
+                </button>
+                <span className="tool-separator" />
+              </>
             ) : (
               library &&
               !showTrash &&
@@ -6863,18 +6866,20 @@ function AppInner() {
               visibleAssets.some(
                 (a) => a.availability === "missing" && !a.deletedAt,
               ) && (
-                <button
-                  className="compact-action"
-                  disabled={busy}
-                  onClick={() => void startBatchRelink()}
-                  type="button"
-                >
-                  <Icon name="folder" size={14} />
-                  {t("toolbar.batchRelink")}
-                </button>
+                <>
+                  <button
+                    className="compact-action"
+                    disabled={busy}
+                    onClick={() => void startBatchRelink()}
+                    type="button"
+                  >
+                    <Icon name="folder" size={14} />
+                    {t("toolbar.batchRelink")}
+                  </button>
+                  <span className="tool-separator" />
+                </>
               )
             )}
-            <span className="tool-separator" />
             <CanvasToolbarControls
               actions={{
                 refresh: () => {

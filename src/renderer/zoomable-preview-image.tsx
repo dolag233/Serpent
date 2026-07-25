@@ -144,7 +144,6 @@ export const ZoomableImage = forwardRef<
   }, [fitKeybinds, fitToWindow]);
 
   const sliderMax = Math.max((fitScale || 1) * 4, 2);
-  const percentLabel = Math.round(view.scale * 100);
   const displayW = natural.w > 0 ? natural.w * view.scale : undefined;
   const displayH = natural.h > 0 ? natural.h * view.scale : undefined;
 
@@ -184,7 +183,6 @@ export const ZoomableImage = forwardRef<
         className="preview-zoom-controls preview-chrome-fade"
         aria-label={t("preview.imageZoom")}
       >
-        <span className="preview-zoom-label">{percentLabel}%</span>
         <input
           aria-label={t("preview.imageZoom")}
           max={sliderMax}

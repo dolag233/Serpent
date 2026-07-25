@@ -6,7 +6,6 @@ import {
   indexOfDiscreteCardSize,
 } from "./card-size-stops";
 import {
-  TOOLBAR_OVERFLOW_COMMAND_IDS,
   toolbarCommandRegistry,
   type ToolbarCommandActions,
   type ToolbarCommandContext,
@@ -15,7 +14,6 @@ import type { CommandLocale, CommandPlatform } from "./commands/command-types";
 import { Icon, type IconName } from "./Icons";
 import { iconActionAttrs } from "./icon-action-attrs";
 import { translateForLocale } from "./i18n";
-import { WorkspaceToolsOverflow } from "./WorkspaceToolsOverflow";
 
 const FIELD_BUTTONS: readonly {
   readonly id: "canvas.field.name" | "canvas.field.size" | "canvas.field.date";
@@ -76,7 +74,7 @@ function translateCardSizeLabel(locale: CommandLocale): string {
 }
 
 /**
- * 工作区常驻画布控件 +「更多工具」溢出。按钮文案/禁用/执行均经
+ * 工作区常驻画布控件 + 后台任务直出按钮。按钮文案/禁用/执行均经
  * toolbar-commands 注册表，与后续命令盘/快捷键共用同一份 handler。
  */
 export function CanvasToolbarControls({
@@ -123,92 +121,69 @@ export function CanvasToolbarControls({
     ? resolveItem(ctx, "workspace.background-jobs")
     : null;
 
-  const overflowItems = TOOLBAR_OVERFLOW_COMMAND_IDS.flatMap((id) => {
-    const def = toolbarCommandRegistry.get(id);
-    if (def === undefined) return [];
-    if (def.visible !== undefined && !def.visible(ctx)) return [];
-    const item = resolveItem(ctx, id);
-    return [
-      {
-        id,
-        label: item.label,
-        disabled: item.disabled,
-        onSelect: item.run,
-      },
-    ];
-  });
-
   return (
-    <>
-      <span className="tool-group-view">
-        <div className="canvas-controls">
-          <ToolButton
-            disabled={refresh.disabled}
-            icon="refresh"
-            label={refresh.label}
-            onClick={refresh.run}
+    <span className="tool-group-view">
+      <div className="canvas-controls">
+        <ToolButton
+          disabled={refresh.disabled}
+          icon="refresh"
+          label={refresh.label}
+          onClick={refresh.run}
+        />
+        <span className="tool-separator" />
+        <ToolButton
+          icon="grid"
+          label={grid.label}
+          onClick={grid.run}
+          pressed={canvasPrefs.viewMode === "grid"}
+        />
+        <ToolButton
+          icon="menu"
+          label={masonry.label}
+          onClick={masonry.run}
+          pressed={canvasPrefs.viewMode === "masonry"}
+        />
+        <label className="asset-size-control">
+          <input
+            aria-label={translateCardSizeLabel(locale)}
+            data-hover-tip={translateCardSizeLabel(locale)}
+            max={Math.max(0, cardSizeStops.length - 1)}
+            min={0}
+            onChange={(event) => {
+              const index = Number(event.target.value);
+              const next = cardSizeStops[index];
+              if (typeof next === "number") onCardSizeChange(next);
+            }}
+            step={1}
+            type="range"
+            value={indexOfDiscreteCardSize(cardSize, cardSizeStops)}
           />
-          <span className="tool-separator" />
-          <ToolButton
-            icon="grid"
-            label={grid.label}
-            onClick={grid.run}
-            pressed={canvasPrefs.viewMode === "grid"}
-          />
-          <ToolButton
-            icon="menu"
-            label={masonry.label}
-            onClick={masonry.run}
-            pressed={canvasPrefs.viewMode === "masonry"}
-          />
-          <label className="asset-size-control">
-            <input
-              aria-label={translateCardSizeLabel(locale)}
-              data-hover-tip={translateCardSizeLabel(locale)}
-              max={Math.max(0, cardSizeStops.length - 1)}
-              min={0}
-              onChange={(event) => {
-                const index = Number(event.target.value);
-                const next = cardSizeStops[index];
-                if (typeof next === "number") onCardSizeChange(next);
-              }}
-              step={1}
-              type="range"
-              value={indexOfDiscreteCardSize(cardSize, cardSizeStops)}
+        </label>
+        <span className="tool-separator" />
+        {FIELD_BUTTONS.map(({ id, field, icon }) => {
+          const item = resolveItem(ctx, id);
+          return (
+            <ToolButton
+              key={field}
+              icon={icon}
+              label={item.label}
+              onClick={item.run}
+              pressed={canvasPrefs.fields[field]}
             />
-          </label>
-          <span className="tool-separator" />
-          {FIELD_BUTTONS.map(({ id, field, icon }) => {
-            const item = resolveItem(ctx, id);
-            return (
-              <ToolButton
-                key={field}
-                icon={icon}
-                label={item.label}
-                onClick={item.run}
-                pressed={canvasPrefs.fields[field]}
-              />
-            );
-          })}
-        </div>
-      </span>
-      {backgroundJobs ? (
-        <>
-          <span className="tool-separator" />
-          <ToolButton
-            disabled={backgroundJobs.disabled}
-            icon="activity"
-            label={backgroundJobs.label}
-            onClick={backgroundJobs.run}
-          />
-        </>
-      ) : null}
-      {overflowItems.length > 0 ? (
-        <>
-          <span className="tool-separator" />
-          <WorkspaceToolsOverflow items={overflowItems} />
-        </>
-      ) : null}
-    </>
+          );
+        })}
+        {backgroundJobs ? (
+          <>
+            <span className="tool-separator" />
+            <ToolButton
+              disabled={backgroundJobs.disabled}
+              icon="loader"
+              label={backgroundJobs.label}
+              onClick={backgroundJobs.run}
+            />
+          </>
+        ) : null}
+      </div>
+    </span>
   );
 }
