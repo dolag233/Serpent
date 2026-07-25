@@ -3,9 +3,11 @@
 > 更新时间：2026-07-25
 > 事实来源：`docs/implementation/mvp-roadmap.md` 与各切片开发/审查/QA 文档
 
-## 2026-07-25 产品待办入池
+## 2026-07-25 产品待办入池与工单卫生
 
-- 产品负责人新增三项待办已记入需求池与 beads（均未实现）：**文件/文件夹 ignore**（`Serpent-v6m3` / REQ-IGNORE-001）、**七种扩展格式缩略图+查看** TGA/EXR/TIFF/BMP/ICO/SVG/PSD（`Serpent-aav1` / REQ-MEDIA-001）、**浏览器扩展拖拽保存径向 Hotbox 菜单**（`Serpent-6llg` / REQ-EXT-005）。详见 `mvp-ui-ux-requirements-backlog.md`「2026-07-25 反馈」。
+- 产品负责人新增待办：**ignore**（`Serpent-v6m3`）、**七种扩展格式**（`Serpent-aav1`）、均已记入 backlog 与 beads，**未实现**。
+- **浏览器扩展径向 Hotbox**（`Serpent-6llg` / REQ-EXT-005）：已实现且 **EXT-009 人类验收通过**（2026-07-25）；工单已关闭。
+- 工单卫生：关闭 14 条僵尸 open（实现已完成、验收已通过或已被新工单取代）；重建 `Serpent-ak94`（EXT-003）、`Serpent-u9yv`（EXT-002）。agent 查队列见 `docs/agent-work-queue.md`。
 
 ## 2026-07-18 MVP 循环前沿
 

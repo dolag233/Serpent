@@ -84,6 +84,7 @@ Library Worker (UtilityProcess; filesystem + SQLite owner)
 - 阻塞关系：`bd dep add <被阻塞 id> <阻塞 id>`；被澄清队列（`Serpent-w3b`）阻塞的工单不得自行猜测实施。
 - 跨设备 / 多 agent：先 `git pull` 再用 bd；认领或关闭后尽快 `bd dolt push`（并随代码提交同步 `.beads/`），否则其他会话看不到认领状态，仍可能撞单。
 - 可运行 `bd prime` 获取完整命令参考。
+- **真实编码待办怎么查**（与「待人类验收」清单区分）：见 [`docs/agent-work-queue.md`](docs/agent-work-queue.md)。开工顺序：`bd ready --json` → `docs/project-status.md` 当前前沿 → 清单中仅「人类验收不通过」作缺陷池。
 
 ## 当前开发状态
 
