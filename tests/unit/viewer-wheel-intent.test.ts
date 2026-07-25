@@ -118,22 +118,14 @@ describe('classifyViewerWheel (Serpent-yo0n)', () => {
     expect(classifyViewerWheel(sample({ deltaY: 100 }))).toBe('zoom');
   });
 
-  it('treats diagonal small pixel deltas as trackpad scroll and pans', () => {
+  it('treats small continuous pixel deltas as trackpad scroll and pans', () => {
+    expect(classifyViewerWheel(sample({ deltaY: 12 }))).toBe('pan');
     expect(classifyViewerWheel(sample({ deltaX: 20, deltaY: 4 }))).toBe('pan');
   });
 
   it('treats fractional pixel deltas as trackpad precision and pans', () => {
     expect(classifyViewerWheel(sample({ deltaY: -53.5 }))).toBe('pan');
     expect(classifyViewerWheel(sample({ deltaY: 149.8 }))).toBe('pan');
-  });
-
-  it('zooms a plain vertical integer wheel even below the notch threshold (Serpent-6k1)', () => {
-    // macOS reports a mouse-wheel notch as small integer pixels; a strictly
-    // vertical integer delta is unambiguously a mouse wheel, so it zooms
-    // without Ctrl. Trackpad scroll is fractional/diagonal and still pans.
-    expect(classifyViewerWheel(sample({ deltaY: 12 }))).toBe('zoom');
-    expect(classifyViewerWheel(sample({ deltaY: -3 }))).toBe('zoom');
-    expect(classifyViewerWheel(sample({ deltaY: 39 }))).toBe('zoom');
   });
 
   it('pans on a zero delta so a no-op event never zooms', () => {
@@ -144,16 +136,9 @@ describe('classifyViewerWheel (Serpent-yo0n)', () => {
     expect(
       classifyViewerWheel(sample({ deltaY: VIEWER_WHEEL_MOUSE_NOTCH_THRESHOLD })),
     ).toBe('zoom');
-    // Below the threshold a purely-vertical integer delta is still a mouse
-    // wheel (6k1); only a diagonal trackpad-style delta pans.
     expect(
       classifyViewerWheel(
         sample({ deltaY: VIEWER_WHEEL_MOUSE_NOTCH_THRESHOLD - 1 }),
-      ),
-    ).toBe('zoom');
-    expect(
-      classifyViewerWheel(
-        sample({ deltaX: 6, deltaY: VIEWER_WHEEL_MOUSE_NOTCH_THRESHOLD - 1 }),
       ),
     ).toBe('pan');
   });

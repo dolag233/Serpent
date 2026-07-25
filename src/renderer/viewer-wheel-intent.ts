@@ -24,12 +24,6 @@
  * Known trade-off: a mouse with driver-level smooth scrolling (small pixel
  * deltas) is read as a trackpad and pans instead of zooming. The threshold
  * is exported so tests document the boundary.
- *
- * Serpent-6k1: a strictly-vertical INTEGER pixel wheel is always a mouse
- * wheel (trackpad two-finger scroll is fractional and/or diagonal), so it
- * zooms regardless of magnitude — this is what makes a plain mouse wheel zoom
- * on macOS, where Chromium reports the notch as small integer pixels rather
- * than the ~120px it reports on Windows.
  */
 export type ViewerWheelIntent = "zoom" | "pan";
 
@@ -80,14 +74,7 @@ export function classifyViewerWheel(
     return "pan";
   }
   const dominant = Math.max(Math.abs(sample.deltaX), Math.abs(sample.deltaY));
-  if (dominant >= VIEWER_WHEEL_MOUSE_NOTCH_THRESHOLD) return "zoom";
-  // Serpent-6k1: on macOS a real mouse wheel reports small *integer* pixel
-  // deltas (Chromium converts the line-based notch, unlike Windows' ~120px),
-  // which the threshold above misreads as a trackpad → pan, forcing Ctrl to
-  // zoom. A strictly vertical integer delta is a mouse wheel — zoom it.
-  // Trackpad two-finger scroll is fractional and/or diagonal, so it still pans.
-  if (sample.deltaX === 0 && sample.deltaY !== 0) return "zoom";
-  return "pan";
+  return dominant >= VIEWER_WHEEL_MOUSE_NOTCH_THRESHOLD ? "zoom" : "pan";
 }
 
 /**
