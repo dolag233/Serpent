@@ -22,6 +22,12 @@ import {
 
 import { installApplicationMenu } from "./application-menu";
 import {
+  clearViewerVideoShortcutCapture,
+  isViewerVideoShortcutContentsActive,
+  setViewerVideoShortcutCaptureActive,
+} from "./viewer-video-shortcut-capture";
+import { forwardViewerVideoShortcut } from "./viewer-video-shortcut-forward";
+import {
   selectImportSources as selectImportSourcesDialog,
   selectLibraryDirectory,
   selectOpenDirectory,
@@ -67,8 +73,10 @@ import {
   SHELL_SWIPE_CHANNEL,
   WINDOW_FOCUS_CHANNEL,
   NATIVE_EDIT_COPY_CHANNEL,
+  VIEWER_VIDEO_SHORTCUTS_ACTIVE_CHANNEL,
 } from "../shared/protocol/channels";
 import { shouldUseFramelessTitleBar } from "../shared/window-controls";
+import { matchViewerVideoLetterShortcut } from "../shared/viewer-video-shortcuts";
 import {
   resolveOpenExternalUrlTarget,
   type OpenExternalUrlResult,
@@ -488,7 +496,12 @@ async function createMainWindow(): Promise<void> {
   });
 
   mainWindow = window;
+  const mainContentsId = window.webContents.id;
   window.on("ready-to-show", () => window.show());
+  // Cleanup while webContents/HWND still exist (`closed` is too late).
+  window.on("close", () => {
+    clearViewerVideoShortcutCapture(mainContentsId);
+  });
   window.on("closed", () => {
     if (mainWindow === window) {
       focusedContexts.delete(window.id);
@@ -497,6 +510,26 @@ async function createMainWindow(): Promise<void> {
   });
   window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   window.webContents.on("will-navigate", (event) => event.preventDefault());
+  // VIEWER-018: letter keys under CJK IME — Menu accelerators + IMM32 suspend
+  // are primary on Windows; before-input remains a cross-platform fallback.
+  window.webContents.on("before-input-event", (event, input) => {
+    if (!isViewerVideoShortcutContentsActive(window.webContents.id)) {
+      return;
+    }
+    const action = matchViewerVideoLetterShortcut({
+      type: input.type,
+      code: input.code,
+      key: input.key,
+      keyCode: (input as { keyCode?: number }).keyCode,
+      control: input.control,
+      meta: input.meta,
+      alt: input.alt,
+      shift: input.shift,
+    });
+    if (!action) return;
+    event.preventDefault();
+    forwardViewerVideoShortcut(window.webContents, action);
+  });
   // Defense in depth (Serpent-46i9): even if a page-zoom accelerator sneaks
   // back into the menu, Chromium must not rescale the whole UI.
   void window.webContents.setVisualZoomLevelLimits(1, 1);
@@ -3476,6 +3509,15 @@ async function startApplication(): Promise<void> {
         lastExtensionTargetWindowId = windowId;
       }
     }
+  });
+
+  ipcMain.on(VIEWER_VIDEO_SHORTCUTS_ACTIVE_CHANNEL, (event, input: unknown) => {
+    const active =
+      typeof input === "object" &&
+      input !== null &&
+      "active" in input &&
+      Boolean((input as { active?: unknown }).active);
+    setViewerVideoShortcutCaptureActive(event.sender, active);
   });
 
   // Install before the first window so macOS does not keep Electron's default

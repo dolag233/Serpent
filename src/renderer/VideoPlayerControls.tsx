@@ -10,21 +10,30 @@ import {
   formatVideoClockTime,
   matchVideoPlaybackSeekKey,
   matchVideoPlaybackRateKey,
+  nextFrameSeekTime,
   nextPlaybackIntent,
-  parsePlaybackRate,
+  resolveFrameStepSeconds,
   scrubRatioFromClientX,
   scrubRatioFromTime,
   scrubTimeFromRatio,
   shouldHandleVideoSpaceKey,
   stepVideoPlaybackRate,
-  VIDEO_PLAYBACK_RATES,
   videoSeekDeltaSeconds,
+  isTypingKeyboardTarget,
   type VideoPlaybackRate,
 } from "./video-player-controls";
 import { ViewerVolumeControls } from "./ViewerVolumeControls";
 import { applyViewerVolumeToMedia } from "./viewer-volume-preferences";
+import type { SerpentShellApi } from "../shared/external-url";
+import type { ViewerVideoShortcutAction } from "../shared/viewer-video-shortcuts";
+
+type RendererWindow = Window & {
+  serpent?: { shell?: SerpentShellApi };
+};
 
 export interface VideoPlayerControlsProps {
+  /** Optional probe fps for editorial frame steps (falls back to 30). */
+  frameRateFps?: number | null;
   isFullscreen?: boolean;
   muted: boolean;
   onError(event: SyntheticEvent<HTMLVideoElement>): void;
@@ -33,6 +42,8 @@ export interface VideoPlayerControlsProps {
   onReady?(): void;
   onSwipeNext?: () => void;
   onSwipePrevious?: () => void;
+  /** Wake viewer chrome (e.g. Main-forwarded IME letter shortcuts). */
+  onUserActivity?: () => void;
   onVolumeChange(volume: number): void;
   posterUrl?: string;
   src: string;
@@ -41,13 +52,26 @@ export interface VideoPlayerControlsProps {
 
 const SCRUB_STEP_SECONDS = 5;
 
+function waitForVideoSeeked(video: HTMLVideoElement): Promise<void> {
+  if (!video.seeking) return Promise.resolve();
+  return new Promise((resolve) => {
+    const done = () => {
+      window.clearTimeout(timer);
+      video.removeEventListener("seeked", done);
+      resolve();
+    };
+    const timer = window.setTimeout(done, 250);
+    video.addEventListener("seeked", done, { once: true });
+  });
+}
+
 /**
  * Fully custom chrome around `HTMLVideoElement` (REQ-VIEW-005 / Serpent-60k):
  * - Space play/pause when the viewer is focused (not in text fields)
  * - D / F frame step (D=back, F=forward) and Ctrl+←/→ ±2s skip (Serpent-sk1 / soii)
  * - X / C step playback rate within VIDEO_PLAYBACK_RATES (Serpent-soii)
  * - scrubbable progress track (mousedown / drag / click / arrow keys)
- * - playback rate select
+ * - playback rate button (cycles; no native select focus trap)
  *
  * See `video-player-controls.ts` for why this replaced native
  * `<video controls>` rather than layering on top of it.
@@ -55,6 +79,7 @@ const SCRUB_STEP_SECONDS = 5;
  * on every pointermove (Serpent-jh2).
  */
 export function VideoPlayerControls({
+  frameRateFps = null,
   isFullscreen = false,
   muted,
   onError,
@@ -63,6 +88,7 @@ export function VideoPlayerControls({
   onReady,
   onSwipeNext,
   onSwipePrevious,
+  onUserActivity,
   onVolumeChange,
   posterUrl,
   src,
@@ -104,6 +130,13 @@ export function VideoPlayerControls({
   const [duration, setDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
   const [scrubRatio, setScrubRatio] = useState<number | null>(null);
+  const playbackRateRef = useRef(playbackRate);
+  playbackRateRef.current = playbackRate;
+  const durationRef = useRef(duration);
+  durationRef.current = duration;
+  const frameRateFpsRef = useRef(frameRateFps);
+  frameRateFpsRef.current = frameRateFps;
+  const frameSeekGeneration = useRef(0);
 
   const togglePlayback = useCallback(() => {
     const video = videoRef.current;
@@ -115,8 +148,60 @@ export function VideoPlayerControls({
     }
   }, []);
 
+  const applyPlaybackRate = useCallback((next: VideoPlaybackRate) => {
+    setPlaybackRate(next);
+    playbackRateRef.current = next;
+    const video = videoRef.current;
+    if (video) video.playbackRate = next;
+  }, []);
+
+  const stepFrame = useCallback(async (direction: 1 | -1) => {
+    const video = videoRef.current;
+    if (!video) return;
+    const generation = ++frameSeekGeneration.current;
+    video.pause();
+    setPaused(true);
+    const mediaDuration = video.duration || durationRef.current;
+    const frameStep = resolveFrameStepSeconds(frameRateFpsRef.current);
+    const start = video.currentTime;
+    // HTMLVideoElement often snaps to the nearest keyframe. Advance by
+    // additional frame increments until the clock moves enough to paint a
+    // new frame — otherwise D/F feel broken on typical GOP-encoded MP4s.
+    let multiple = 1;
+    for (let attempt = 0; attempt < 48; attempt += 1) {
+      if (generation !== frameSeekGeneration.current) return;
+      const target = nextFrameSeekTime(
+        start,
+        mediaDuration,
+        direction,
+        frameStep * multiple,
+      );
+      if (Math.abs(target - start) < 1e-4) {
+        setCurrentTime(start);
+        return;
+      }
+      video.currentTime = target;
+      await waitForVideoSeeked(video);
+      if (generation !== frameSeekGeneration.current) return;
+      const moved = Math.abs(video.currentTime - start);
+      if (
+        moved >= frameStep * 0.45 ||
+        video.currentTime <= 1e-4 ||
+        video.currentTime >= mediaDuration - 1e-3
+      ) {
+        setCurrentTime(video.currentTime);
+        return;
+      }
+      multiple += 1;
+    }
+    setCurrentTime(video.currentTime);
+  }, []);
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      if (document.querySelector('[role="dialog"][aria-modal="true"]')) {
+        return;
+      }
       if (shouldHandleVideoSpaceKey(event)) {
         event.preventDefault();
         event.stopPropagation();
@@ -129,21 +214,16 @@ export function VideoPlayerControls({
         if (!video) return;
         event.preventDefault();
         event.stopPropagation();
-        const mediaDuration = video.duration || duration;
+        if (action.kind === "frame") {
+          void stepFrame(action.direction);
+          return;
+        }
+        const mediaDuration = video.duration || durationRef.current;
         const nextTime = clampScrubTime(
           video.currentTime + videoSeekDeltaSeconds(action),
           mediaDuration,
         );
-        if (action.kind === "frame" && !video.paused) {
-          video.pause();
-        }
-        if (action.kind === "frame") {
-          // Frame steps are sub-epsilon; bypass seek-session coalescing
-          // (MEDIA_SEEK_EPSILON_SECONDS) so D/F visibly advance (VIEWER-018).
-          video.currentTime = nextTime;
-        } else {
-          seekSessionRef.current?.commit(nextTime);
-        }
+        seekSessionRef.current?.commit(nextTime);
         setCurrentTime(nextTime);
         return;
       }
@@ -151,14 +231,68 @@ export function VideoPlayerControls({
       if (!rateStep) return;
       event.preventDefault();
       event.stopPropagation();
-      const nextRate = stepVideoPlaybackRate(playbackRate, rateStep);
-      setPlaybackRate(nextRate);
-      const video = videoRef.current;
-      if (video) video.playbackRate = nextRate;
+      applyPlaybackRate(
+        stepVideoPlaybackRate(playbackRateRef.current, rateStep),
+      );
     };
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [duration, playbackRate, togglePlayback]);
+  }, [applyPlaybackRate, stepFrame, togglePlayback]);
+
+  // Main path: Windows Menu accelerators + IMM32 IME suspend while armed;
+  // before-input remains a fallback. Ctrl+Arrow still arrives via the listener above.
+  useEffect(() => {
+    const shell = (window as RendererWindow).serpent?.shell;
+    if (!shell?.setViewerVideoShortcutsActive || !shell.onViewerVideoShortcut) {
+      return;
+    }
+
+    const syncArmed = () => {
+      // Only true typing surfaces disarm capture — keep armed under Chinese
+      // IME while focus is on the viewer / chrome (product: any IME works).
+      const typing = isTypingKeyboardTarget(document.activeElement);
+      const modalOpen = Boolean(
+        document.querySelector('[role="dialog"][aria-modal="true"]'),
+      );
+      shell.setViewerVideoShortcutsActive(!typing && !modalOpen);
+    };
+    // Arm immediately so the first key after open is not lost to IME.
+    shell.setViewerVideoShortcutsActive(true);
+    syncArmed();
+    document.addEventListener("focusin", syncArmed, true);
+    document.addEventListener("focusout", syncArmed, true);
+    // Some IMEs flip composition without a focus change; re-check on keyup.
+    window.addEventListener("keyup", syncArmed, true);
+
+    const applyMainAction = (action: ViewerVideoShortcutAction) => {
+      if (isTypingKeyboardTarget(document.activeElement)) return;
+      if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
+      onUserActivity?.();
+      if (action === "frame-prev") {
+        void stepFrame(-1);
+        return;
+      }
+      if (action === "frame-next") {
+        void stepFrame(1);
+        return;
+      }
+      applyPlaybackRate(
+        stepVideoPlaybackRate(
+          playbackRateRef.current,
+          action === "rate-slower" ? "slower" : "faster",
+        ),
+      );
+    };
+    const unsubscribe = shell.onViewerVideoShortcut(applyMainAction);
+
+    return () => {
+      shell.setViewerVideoShortcutsActive(false);
+      document.removeEventListener("focusin", syncArmed, true);
+      document.removeEventListener("focusout", syncArmed, true);
+      window.removeEventListener("keyup", syncArmed, true);
+      unsubscribe();
+    };
+  }, [applyPlaybackRate, onUserActivity, stepFrame]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -357,22 +491,22 @@ export function VideoPlayerControls({
         <span aria-hidden="true" className="preview-video-time">
           {formatVideoClockTime(duration)}
         </span>
-        <label className="preview-video-rate">
-          <span className="visually-hidden">{t("preview.playbackRate")}</span>
-          <select
-            aria-label={t("preview.playbackRateAria")}
-            onChange={(event) => {
-              setPlaybackRate(parsePlaybackRate(event.target.value));
-            }}
-            value={playbackRate}
-          >
-            {VIDEO_PLAYBACK_RATES.map((rate) => (
-              <option key={rate} value={rate}>
-                {t("preview.playbackRateOption", { rate })}
-              </option>
-            ))}
-          </select>
-        </label>
+        <button
+          className="preview-video-rate"
+          onClick={() => {
+            applyPlaybackRate(
+              stepVideoPlaybackRate(playbackRateRef.current, "faster"),
+            );
+          }}
+          type="button"
+          {...iconActionAttrs(
+            `${t("preview.playbackRate")}: ${t("preview.playbackRateOption", {
+              rate: playbackRate,
+            })}`,
+          )}
+        >
+          {t("preview.playbackRateOption", { rate: playbackRate })}
+        </button>
         <ViewerVolumeControls
           muted={muted}
           onMutedChange={onMutedChange}

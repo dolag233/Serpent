@@ -28,6 +28,8 @@ import {
   NATIVE_EDIT_COPY_CHANNEL,
   WINDOW_CONTROL_CHANNEL,
   WINDOW_MAXIMIZED_CHANNEL,
+  VIEWER_VIDEO_SHORTCUTS_ACTIVE_CHANNEL,
+  VIEWER_VIDEO_SHORTCUT_CHANNEL,
 } from '../shared/protocol/channels';
 import {
   parseOpenExternalUrlResult,
@@ -1688,6 +1690,29 @@ const shell: SerpentShellApi = Object.freeze({
   },
   async nativeEditCopy(): Promise<void> {
     await ipcRenderer.invoke(NATIVE_EDIT_COPY_CHANNEL);
+  },
+  setViewerVideoShortcutsActive(active: boolean): void {
+    ipcRenderer.send(VIEWER_VIDEO_SHORTCUTS_ACTIVE_CHANNEL, { active: Boolean(active) });
+  },
+  onViewerVideoShortcut(listener: (action: import('../shared/viewer-video-shortcuts').ViewerVideoShortcutAction) => void): () => void {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      payload: { action?: string },
+    ) => {
+      const action = payload?.action;
+      if (
+        action === 'frame-prev' ||
+        action === 'frame-next' ||
+        action === 'rate-slower' ||
+        action === 'rate-faster'
+      ) {
+        listener(action);
+      }
+    };
+    ipcRenderer.on(VIEWER_VIDEO_SHORTCUT_CHANNEL, handler);
+    return () => {
+      ipcRenderer.removeListener(VIEWER_VIDEO_SHORTCUT_CHANNEL, handler);
+    };
   },
 });
 

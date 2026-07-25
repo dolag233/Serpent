@@ -28,6 +28,12 @@ export const WINDOW_MAXIMIZED_CHANNEL =
   'serpent:shell:window-maximized' as const;
 /** Main → Renderer: BrowserWindow focus state (macOS traffic lights / shell chrome). */
 export const WINDOW_FOCUS_CHANNEL = 'serpent:shell:window-focus' as const;
+/** Renderer → Main: enable Main before-input capture for video letter keys. */
+export const VIEWER_VIDEO_SHORTCUTS_ACTIVE_CHANNEL =
+  'serpent:viewer:video-shortcuts-active' as const;
+/** Main → Renderer: video letter shortcut (D/F/X/C) after before-input. */
+export const VIEWER_VIDEO_SHORTCUT_CHANNEL =
+  'serpent:viewer:video-shortcut' as const;
 
 export const WORKER_READY_MESSAGE_TYPE = 'worker.ready' as const;
 export const WORKER_SHUTDOWN_MESSAGE_TYPE = 'worker.shutdown' as const;

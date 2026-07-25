@@ -1025,15 +1025,15 @@ function AppInner() {
   useLayoutEffect(() => {
     previewAssetRef.current = previewAsset;
   }, [previewAsset]);
-  // Serpent-ayf: owned here (not inside AssetPreviewModal, which remounts
-  // per-asset via `key`) so switching assets never resets idle-faded chrome
-  // back to visible. `wakeViewerChrome` is called only when the viewer first
-  // opens; left/right navigation never calls it.
+  // Serpent-njoy: owned here (not inside AssetPreviewModal, which remounts
+  // per-asset via `key`) so switching assets never resets idle by itself.
+  // While preview is open, any keyboard/pointer/wheel input wakes chrome;
+  // `wakeViewerChrome` also runs when the viewer first opens.
   const {
     idle: viewerChromeIdle,
     onActivity: onViewerChromeActivity,
     wake: wakeViewerChrome,
-  } = useViewerChromeIdle();
+  } = useViewerChromeIdle(undefined, Boolean(previewAsset));
   const [canvasPrefs, setCanvasPrefs] = useState<CanvasPreferences>(() =>
     loadCanvasPreferences(),
   );

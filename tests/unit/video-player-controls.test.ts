@@ -4,10 +4,13 @@ import {
   clampScrubTime,
   formatVideoClockTime,
   isEditableKeyboardTarget,
+  isTypingKeyboardTarget,
   matchVideoPlaybackSeekKey,
   matchVideoPlaybackRateKey,
+  nextFrameSeekTime,
   nextPlaybackIntent,
   parsePlaybackRate,
+  resolveFrameStepSeconds,
   scrubRatioFromClientX,
   scrubRatioFromTime,
   scrubTimeFromRatio,
@@ -40,6 +43,15 @@ describe("parsePlaybackRate", () => {
     expect(parsePlaybackRate("0.5")).toBe(0.5);
     expect(parsePlaybackRate("9")).toBe(1);
     expect(parsePlaybackRate("nope")).toBe(1);
+  });
+});
+
+describe("isTypingKeyboardTarget", () => {
+  it("blocks text inputs and textareas but not viewer chrome select", () => {
+    expect(isTypingKeyboardTarget({ tagName: "INPUT" })).toBe(true);
+    expect(isTypingKeyboardTarget({ tagName: "TEXTAREA" })).toBe(true);
+    expect(isTypingKeyboardTarget({ tagName: "SELECT" })).toBe(false);
+    expect(isTypingKeyboardTarget({ tagName: "DIV" })).toBe(false);
   });
 });
 
@@ -138,6 +150,33 @@ describe("matchVideoPlaybackSeekKey / videoSeekDeltaSeconds (Serpent-sk1)", () =
     ).toBeCloseTo(VIDEO_FRAME_STEP_SECONDS);
   });
 
+  it("matches D/F by physical code even when IME sets key to Process", () => {
+    expect(
+      matchVideoPlaybackSeekKey({
+        ...base,
+        key: "Process",
+        code: "KeyD",
+      }),
+    ).toEqual({ kind: "frame", direction: -1 });
+    expect(
+      matchVideoPlaybackSeekKey({
+        ...base,
+        key: "Process",
+        code: "KeyF",
+      }),
+    ).toEqual({ kind: "frame", direction: 1 });
+  });
+
+  it("still matches D/F when focus is on a viewer rate select", () => {
+    expect(
+      matchVideoPlaybackSeekKey({
+        ...base,
+        key: "d",
+        target: { tagName: "SELECT" },
+      }),
+    ).toEqual({ kind: "frame", direction: -1 });
+  });
+
   it("maps Ctrl+Arrow to ±2s skips and ignores Cmd+Arrow", () => {
     expect(
       matchVideoPlaybackSeekKey({
@@ -205,6 +244,15 @@ describe("matchVideoPlaybackRateKey / stepVideoPlaybackRate (Serpent-soii)", () 
     expect(stepVideoPlaybackRate(2, "faster")).toBe(2);
   });
 
+  it("matches X/C by physical code under IME Process keys", () => {
+    expect(
+      matchVideoPlaybackRateKey({ ...base, key: "Process", code: "KeyX" }),
+    ).toBe("slower");
+    expect(
+      matchVideoPlaybackRateKey({ ...base, key: "Process", code: "KeyC" }),
+    ).toBe("faster");
+  });
+
   it("ignores X/C while typing", () => {
     expect(
       matchVideoPlaybackRateKey({
@@ -213,6 +261,18 @@ describe("matchVideoPlaybackRateKey / stepVideoPlaybackRate (Serpent-soii)", () 
         target: { tagName: "TEXTAREA" },
       }),
     ).toBeNull();
+  });
+});
+
+describe("resolveFrameStepSeconds / nextFrameSeekTime", () => {
+  it("uses probe fps when available", () => {
+    expect(resolveFrameStepSeconds(24)).toBeCloseTo(1 / 24);
+    expect(resolveFrameStepSeconds(null)).toBe(VIDEO_FRAME_STEP_SECONDS);
+  });
+
+  it("steps one frame and clamps", () => {
+    expect(nextFrameSeekTime(1, 10, 1, 1 / 30)).toBeCloseTo(1 + 1 / 30);
+    expect(nextFrameSeekTime(0.01, 10, -1, 1 / 30)).toBe(0);
   });
 });
 

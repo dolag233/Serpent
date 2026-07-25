@@ -46,12 +46,18 @@ describe("createViewerChromeIdleScheduler", () => {
   });
 });
 
-describe("shouldWakeViewerChrome (Serpent-ayf)", () => {
-  it("wakes on genuine pointer movement", () => {
+describe("shouldWakeViewerChrome (Serpent-njoy)", () => {
+  it("wakes on pointer movement", () => {
     expect(shouldWakeViewerChrome("pointermove")).toBe(true);
   });
 
-  it("does not wake on pointer-down / click, e.g. clicking the on-screen prev/next affordances", () => {
-    expect(shouldWakeViewerChrome("pointerdownOrClick")).toBe(false);
+  it("wakes on pointer-down / click (incl. on-screen prev/next)", () => {
+    expect(shouldWakeViewerChrome("pointerdownOrClick")).toBe(true);
+  });
+
+  it("wakes on keyboard and wheel", () => {
+    expect(shouldWakeViewerChrome("keyboard")).toBe(true);
+    expect(shouldWakeViewerChrome("wheel")).toBe(true);
+    expect(shouldWakeViewerChrome("other")).toBe(true);
   });
 });

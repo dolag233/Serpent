@@ -605,6 +605,7 @@ export const AssetPreviewModal = forwardRef<
               onReady={() => setDirectApproved(true)}
               onSwipeNext={onNext}
               onSwipePrevious={onPrevious}
+              onUserActivity={() => onChromeActivity("keyboard")}
               onVolumeChange={setViewerVolume}
               posterUrl={resolution.posterUrl}
               src={resolution.url}

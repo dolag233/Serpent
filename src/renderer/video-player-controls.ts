@@ -41,6 +41,51 @@ export function isEditableKeyboardTarget(
   return false;
 }
 
+/**
+ * True only for targets where letter keys must type (Inspector fields etc.).
+ * Viewer chrome `<select>` / buttons are NOT typing targets — D/F/X/C must
+ * still work after the rate control was clicked (VIEWER-018 / Serpent-gwp1).
+ */
+export function isTypingKeyboardTarget(
+  target: KeyboardTargetLike | EventTarget | null,
+): boolean {
+  if (target == null || typeof target !== "object") return false;
+  const el = target as KeyboardTargetLike & object;
+  const tag = el.tagName?.toUpperCase();
+  if (tag === "TEXTAREA") return true;
+  if (tag === "INPUT") {
+    // Range/checkbox/button inputs are chrome, not typing surfaces.
+    const type =
+      "type" in el && typeof (el as { type?: unknown }).type === "string"
+        ? String((el as { type: string }).type).toLowerCase()
+        : "text";
+    if (
+      type === "button" ||
+      type === "checkbox" ||
+      type === "radio" ||
+      type === "range" ||
+      type === "file" ||
+      type === "reset" ||
+      type === "submit"
+    ) {
+      return false;
+    }
+    return true;
+  }
+  if (el.isContentEditable) return true;
+  return false;
+}
+
+/** Prefer physical key codes so IME `key: "Process"` still matches D/F/X/C. */
+function matchPhysicalOrKey(
+  event: { key: string; code?: string },
+  code: string,
+  keys: readonly string[],
+): boolean {
+  if (event.code === code) return true;
+  return keys.includes(event.key);
+}
+
 function isFocusedChromeControl(
   target: KeyboardTargetLike | EventTarget | null,
 ): boolean {
@@ -102,7 +147,8 @@ export function matchVideoPlaybackSeekKey(event: {
   shiftKey?: boolean;
   target: KeyboardTargetLike | EventTarget | null;
 }): VideoKeyboardSeekAction | null {
-  if (isEditableKeyboardTarget(event.target)) return null;
+  // Only block true typing surfaces — not viewer chrome select/buttons.
+  if (isTypingKeyboardTarget(event.target)) return null;
 
   // Ctrl+Arrow — require ctrl, reject Cmd/Alt so macOS system chords stay free.
   if (event.ctrlKey && !event.metaKey && !event.altKey) {
@@ -115,10 +161,10 @@ export function matchVideoPlaybackSeekKey(event: {
   }
 
   if (event.ctrlKey || event.metaKey || event.altKey) return null;
-  if (event.key === "d" || event.key === "D" || event.code === "KeyD") {
+  if (matchPhysicalOrKey(event, "KeyD", ["d", "D"])) {
     return { kind: "frame", direction: -1 };
   }
-  if (event.key === "f" || event.key === "F" || event.code === "KeyF") {
+  if (matchPhysicalOrKey(event, "KeyF", ["f", "F"])) {
     return { kind: "frame", direction: 1 };
   }
   return null;
@@ -137,15 +183,40 @@ export function matchVideoPlaybackRateKey(event: {
   altKey: boolean;
   target: KeyboardTargetLike | EventTarget | null;
 }): VideoPlaybackRateStep | null {
-  if (isEditableKeyboardTarget(event.target)) return null;
+  if (isTypingKeyboardTarget(event.target)) return null;
   if (event.ctrlKey || event.metaKey || event.altKey) return null;
-  if (event.key === "x" || event.key === "X" || event.code === "KeyX") {
+  if (matchPhysicalOrKey(event, "KeyX", ["x", "X"])) {
     return "slower";
   }
-  if (event.key === "c" || event.key === "C" || event.code === "KeyC") {
+  if (matchPhysicalOrKey(event, "KeyC", ["c", "C"])) {
     return "faster";
   }
   return null;
+}
+
+/** Frame duration from probe fps, else 1/30. */
+export function resolveFrameStepSeconds(fps?: number | null): number {
+  if (typeof fps === "number" && Number.isFinite(fps) && fps > 0) {
+    return 1 / fps;
+  }
+  return VIDEO_FRAME_STEP_SECONDS;
+}
+
+/**
+ * One editorial frame step target. HTMLVideoElement may snap to the nearest
+ * keyframe; callers that need a visible advance can retry with a larger step.
+ */
+export function nextFrameSeekTime(
+  currentTime: number,
+  duration: number,
+  direction: 1 | -1,
+  frameStepSeconds: number = VIDEO_FRAME_STEP_SECONDS,
+): number {
+  const step =
+    Number.isFinite(frameStepSeconds) && frameStepSeconds > 0
+      ? frameStepSeconds
+      : VIDEO_FRAME_STEP_SECONDS;
+  return clampScrubTime(currentTime + direction * step, duration);
 }
 
 export function stepVideoPlaybackRate(

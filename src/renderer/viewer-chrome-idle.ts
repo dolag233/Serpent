@@ -18,17 +18,21 @@ export function createViewerChromeIdleScheduler(
 }
 
 /**
- * Sources of viewer activity that can request idle-faded chrome to wake back
- * up (Serpent-ayf). Only genuine pointer/mouse movement should wake it —
- * clicking the on-screen prev/next affordances, and keyboard arrow-key asset
- * navigation, must leave idle-faded chrome hidden. Pointer-down (clicks) is
- * included as a named, explicitly-rejected source rather than simply being
- * unwired, so future call sites cannot silently reintroduce click-wakes.
+ * Sources of viewer activity that can interrupt idle-faded chrome
+ * (Serpent-njoy). Product rule (2026-07-25): **any** keyboard / pointer /
+ * wheel input wakes chrome and restarts the idle timer. Supersedes
+ * VIEWER-010 / Serpent-ayf (keyboard nav / clicks used to leave chrome
+ * hidden).
  */
-export type ViewerChromeActivitySource = "pointermove" | "pointerdownOrClick";
+export type ViewerChromeActivitySource =
+  | "pointermove"
+  | "pointerdownOrClick"
+  | "keyboard"
+  | "wheel"
+  | "other";
 
 export function shouldWakeViewerChrome(
-  source: ViewerChromeActivitySource,
+  _source: ViewerChromeActivitySource,
 ): boolean {
-  return source === "pointermove";
+  return true;
 }

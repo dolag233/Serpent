@@ -66,6 +66,8 @@ Serpent 的默认快捷键不是「能绑就绑」，而是**可发现、可记�
 
 逐帧与倍速**不需要 Ctrl**；勿改为 `,`/`.` 等除非产品重新裁决。
 
+**IME（强制）**：中文等输入法开启时，裸字母键常到不了 Renderer。凡默认字母快捷键（视频 D/F/X/C 等）在 Windows 上必须同时具备：(1) 隐藏 Menu accelerator；(2) 非打字上下文临时 `ImmAssociateContext`/`ImmSetOpenStatus` 关闭转换态；(3) Main `before-input-event` 兜底。禁止做成「仅英文输入法可用」。输入框/对话框聚焦时立刻恢复 IME 并卸掉加速键，不抢打字。
+
 音频查看器共用全局音量与 `↑/↓`（`Serpent-8w6x`）。
 
 ## 6. 文案与菜单

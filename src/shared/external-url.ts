@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import type { ShowEditContextMenuResult } from './edit-context-menu';
+import type { ViewerVideoShortcutAction } from './viewer-video-shortcuts';
 import type {
   WindowControlAction,
   WindowControlResult,
@@ -126,11 +127,19 @@ export interface SerpentShellApi {
   onWindowFocusChanged(listener: (focused: boolean) => void): () => void;
   /** macOS Edit 菜单反选（Serpent-te8p）；与 ⌘I / Ctrl+I 等价。 */
   onInvertSelection(listener: () => void): () => void;
-  /**
-   * macOS Edit 菜单「复制」（Serpent-166q）。有选中资产时复制文件到系统剪贴板；
+  /** macOS Edit 菜单「复制」（Serpent-166q）。有选中资产时复制文件到系统剪贴板；
    * 否则回退为原生文本复制。
    */
   onCopySelection(listener: () => void): () => void;
   /** 请求 Main 对当前 webContents 执行原生 copy（文本框 ⌘C）。 */
   nativeEditCopy(): Promise<void>;
+  /**
+   * Enable Main `before-input-event` capture for video D/F/X/C (VIEWER-018).
+   * Required on Windows when IME swallows unmodified letter keydowns.
+   */
+  setViewerVideoShortcutsActive(active: boolean): void;
+  /** Main-forwarded video letter shortcuts (frame / rate). */
+  onViewerVideoShortcut(
+    listener: (action: ViewerVideoShortcutAction) => void,
+  ): () => void;
 }
