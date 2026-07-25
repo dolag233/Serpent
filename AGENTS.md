@@ -134,6 +134,7 @@ Library Worker (UtilityProcess; filesystem + SQLite owner)
 - `docs/qa/NNNN-*.md` — QA 报告
 - `docs/qa/human-acceptance-checklist.md` — 面向产品负责人的持续人类验收队列
 - `docs/ui/0001-studio-contact-sheet-direction.md` — UI 视觉方向
+- `docs/ui/0003-keyboard-shortcut-ux-principles.md` — 默认快捷键 UX 原则（何时配键、跨平台、查看器媒体键）
 - `docs/research/` — 技术调研
 
 ## 人类功能验收清单（强制）
