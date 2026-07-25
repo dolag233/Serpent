@@ -55,6 +55,18 @@ async function validateBuild() {
   await assertFile('options.html');
   await assertFile('options.css');
   await assertFile('README.md');
+
+  // 三个脚本都必须是自包含单文件。多入口同一次构建会让 Rollup 抽取共享 chunk，
+  // 产物首行出现 import 语句；Chrome content script 不能是 ES module，
+  // 整个脚本会解析失败、静默失效（2026-07-25 实测事故）。
+  for (const relativePath of ['background.js', 'content-script.js', 'options.js']) {
+    const source = await readFile(path.join(outDir, relativePath), 'utf8');
+    if (/^(?:import|export)\s/m.test(source)) {
+      throw new Error(
+        `${relativePath} must be a self-contained single file (found top-level import/export)`,
+      );
+    }
+  }
   for (const size of iconSizes) {
     const relativePath = `icons/icon-${size}.png`;
     if (manifest.icons?.[String(size)] !== relativePath) {
@@ -76,31 +88,47 @@ async function validateBuild() {
   process.stdout.write(`Verified installable extension at ${outDir}\n`);
 }
 
+/**
+ * 三个入口各自独立打包：单入口构建会把全部静态依赖内联进一个文件，
+ * 不会产生共享 chunk。content script 必须是 classic script（IIFE）；
+ * background（manifest "type": "module"）与 options（type="module" 引入）
+ * 同样输出无任何 import 的单文件，杜绝 chunk 解析依赖。
+ */
+const scriptEntries = [
+  { name: 'background', format: 'es' },
+  { name: 'content-script', format: 'iife' },
+  { name: 'options', format: 'es' },
+];
+
+async function bundleScriptEntries() {
+  for (const [index, entry] of scriptEntries.entries()) {
+    await build({
+      configFile: false,
+      root: rootDir,
+      logLevel: 'warn',
+      build: {
+        target: 'chrome120',
+        outDir,
+        emptyOutDir: index === 0,
+        minify: false,
+        sourcemap: true,
+        rollupOptions: {
+          input: path.join(sourceDir, `${entry.name}.ts`),
+          output: {
+            format: entry.format,
+            codeSplitting: false,
+            entryFileNames: `${entry.name}.js`,
+          },
+        },
+      },
+    });
+  }
+}
+
 async function buildExtension() {
   await rm(outDir, { recursive: true, force: true });
 
-  await build({
-    configFile: false,
-    root: rootDir,
-    logLevel: 'warn',
-    build: {
-      target: 'chrome120',
-      outDir,
-      emptyOutDir: true,
-      minify: false,
-      sourcemap: true,
-      rollupOptions: {
-        input: {
-          background: path.join(sourceDir, 'background.ts'),
-          'content-script': path.join(sourceDir, 'content-script.ts'),
-          options: path.join(sourceDir, 'options.ts'),
-        },
-        output: {
-          entryFileNames: '[name].js',
-        },
-      },
-    },
-  });
+  await bundleScriptEntries();
 
   await copyFile(path.join(sourceDir, 'manifest.json'), path.join(outDir, 'manifest.json'));
   await copyFile(path.join(sourceDir, 'README.md'), path.join(outDir, 'README.md'));
