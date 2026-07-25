@@ -3354,8 +3354,10 @@ function AppInner() {
     setNotice,
     setError,
     reloadCurrentContent,
+    chooseTag,
     chooseCollection,
     clearAssetSelection,
+    activeTagId,
     activeCollectionId,
   });
 

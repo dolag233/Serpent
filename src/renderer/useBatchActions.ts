@@ -14,8 +14,10 @@ export interface UseBatchActionsParams {
   setNotice: (msg: string) => void;
   setError: (msg: string | null) => void;
   reloadCurrentContent: () => Promise<void>;
+  chooseTag: (tagId: string) => Promise<void>;
   chooseCollection: (collectionId: string, recursive?: boolean) => Promise<void>;
   clearAssetSelection: () => void;
+  activeTagId: string | null;
   activeCollectionId: string | null;
 }
 
@@ -38,8 +40,10 @@ export function useBatchActions({
   setNotice,
   setError,
   reloadCurrentContent,
+  chooseTag,
   chooseCollection,
   clearAssetSelection,
+  activeTagId,
   activeCollectionId,
 }: UseBatchActionsParams): UseBatchActionsResult {
   const { locale } = useLocale();
@@ -89,11 +93,9 @@ export function useBatchActions({
       if (!result.ok) throw new LibraryOperationError(result.error);
       const tagResult = await api.listTags({ libraryId: library.libraryId });
       if (tagResult.ok) setTags(tagResult.value);
-      // Removing a tag can change which assets match the current view — a
-      // tag-filtered browse loses the de-tagged assets, and a smart-collection
-      // whose query references the tag changes too. Re-run the current scope so
-      // the canvas reflects the removal instead of keeping stale cards.
-      await reloadCurrentContent();
+      if (activeTagId === tagId) {
+        await chooseTag(tagId);
+      }
       setNotice(
         formatBatchTagNotice(
           "remove",
