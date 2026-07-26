@@ -319,9 +319,10 @@ import {
   captureAnchor,
   pickNearestCard,
   type AnchorCard,
+  type CanvasAnchor,
 } from "./canvas-scroll-anchor";
 import {
-  captureReflowAnchorFromCards,
+  retainReflowAnchor,
   scheduleAnchorRestore,
 } from "./canvas-reflow-restore";
 import {
@@ -1061,6 +1062,7 @@ function AppInner() {
   // resize) anchor restore; separate from the card-size one above so the
   // two triggers never cancel each other's in-flight restoration.
   const reflowRestoreFrameRef = useRef<number | null>(null);
+  const reflowAnchorRef = useRef<CanvasAnchor | null>(null);
   useEffect(
     () => () => {
       if (cardSizeRestoreFrameRef.current !== null) {
@@ -1069,6 +1071,7 @@ function AppInner() {
       if (reflowRestoreFrameRef.current !== null) {
         window.cancelAnimationFrame(reflowRestoreFrameRef.current);
       }
+      reflowAnchorRef.current = null;
     },
     [],
   );
@@ -1645,8 +1648,20 @@ function AppInner() {
       }));
       // Prefer topmost visible card so the leading visible set (A/B/C) stays
       // after column-count changes — center-nearest jumped too easily.
-      const anchorState = captureReflowAnchorFromCards(cards, rootRect);
-      scheduleAnchorRestore(canvas, anchorState, reflowRestoreFrameRef);
+      reflowAnchorRef.current = retainReflowAnchor(
+        reflowAnchorRef.current,
+        cards,
+        rootRect,
+      );
+      scheduleAnchorRestore(
+        canvas,
+        reflowAnchorRef.current,
+        reflowRestoreFrameRef,
+        3,
+        () => {
+          reflowAnchorRef.current = null;
+        },
+      );
     });
     observer.observe(canvas);
     return () => observer.disconnect();

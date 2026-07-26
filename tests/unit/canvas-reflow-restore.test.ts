@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   captureReflowAnchorFromCards,
   pickTopmostVisibleCard,
+  retainReflowAnchor,
   scheduleAnchorRestore,
   type AnchorCard,
 } from "../../src/renderer/canvas-reflow-restore";
@@ -40,6 +41,22 @@ describe("captureReflowAnchorFromCards", () => {
     expect(anchor?.assetId).toBe("lead");
     expect(anchor?.clientX).toBeCloseTo(100);
     expect(anchor?.clientY).toBeCloseTo(80);
+  });
+});
+
+describe("retainReflowAnchor", () => {
+  it("does not replace the anchor during a continuous resize burst", () => {
+    const first = captureReflowAnchorFromCards(
+      [{ assetId: "first", left: 0, top: 120, width: 100, height: 100 }],
+      { left: 0, top: 100, width: 800, height: 600 },
+    );
+    const retained = retainReflowAnchor(
+      first,
+      [{ assetId: "later", left: 0, top: 0, width: 100, height: 100 }],
+      { left: 0, top: 0, width: 800, height: 600 },
+    );
+    expect(retained).toBe(first);
+    expect(retained?.assetId).toBe("first");
   });
 });
 

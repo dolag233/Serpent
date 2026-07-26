@@ -61,6 +61,15 @@ export function captureReflowAnchorFromCards(
   return captureAnchor(topmost, anchorX, anchorY);
 }
 
+/** Keep the first anchor throughout one continuous resize/reflow burst. */
+export function retainReflowAnchor(
+  current: CanvasAnchor | null,
+  cards: readonly AnchorCard[],
+  viewport: RectLike,
+): CanvasAnchor | null {
+  return current ?? captureReflowAnchorFromCards(cards, viewport);
+}
+
 /**
  * Wait `frameCount` animation frames for layout/React commits to settle, then
  * nudge scroll so `anchor` lands back at its captured client point.
@@ -76,6 +85,7 @@ export function scheduleAnchorRestore(
   anchor: CanvasAnchor | null,
   frameRef: { current: number | null },
   frameCount = 3,
+  onRestored?: () => void,
 ): void {
   if (frameRef.current !== null) {
     globalThis.cancelAnimationFrame(frameRef.current);
@@ -89,23 +99,25 @@ export function scheduleAnchorRestore(
       const restored = Array.from(
         canvas.querySelectorAll<HTMLElement>("[data-asset-id]"),
       ).find((card) => card.dataset.assetId === anchor.assetId);
-      if (!restored) return;
-      const rect = restored.getBoundingClientRect();
-      const delta = computeAnchorScrollDelta(anchor, rect);
-      const nextLeft = clampScrollOffset(
-        canvas.scrollLeft + delta.deltaX,
-        canvas.scrollWidth,
-        canvas.clientWidth,
-      );
-      const nextTop = clampScrollOffset(
-        canvas.scrollTop + delta.deltaY,
-        canvas.scrollHeight,
-        canvas.clientHeight,
-      );
-      if (nextLeft !== canvas.scrollLeft || nextTop !== canvas.scrollTop) {
-        canvas.scrollLeft = nextLeft;
-        canvas.scrollTop = nextTop;
+      if (restored) {
+        const rect = restored.getBoundingClientRect();
+        const delta = computeAnchorScrollDelta(anchor, rect);
+        const nextLeft = clampScrollOffset(
+          canvas.scrollLeft + delta.deltaX,
+          canvas.scrollWidth,
+          canvas.clientWidth,
+        );
+        const nextTop = clampScrollOffset(
+          canvas.scrollTop + delta.deltaY,
+          canvas.scrollHeight,
+          canvas.clientHeight,
+        );
+        if (nextLeft !== canvas.scrollLeft || nextTop !== canvas.scrollTop) {
+          canvas.scrollLeft = nextLeft;
+          canvas.scrollTop = nextTop;
+        }
       }
+      onRestored?.();
       return;
     }
     frameRef.current = globalThis.requestAnimationFrame(() => {
