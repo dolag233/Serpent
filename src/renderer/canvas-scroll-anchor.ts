@@ -17,6 +17,24 @@ export interface AnchorCard extends RectLike {
   assetId: string;
 }
 
+/**
+ * Copy the geometry fields from a browser DOMRect explicitly.
+ *
+ * DOMRect accessors are not guaranteed to be enumerable, so `{ ...rect }`
+ * can silently produce an empty object and poison every anchor calculation
+ * with NaN.
+ */
+export function rectLikeFromDomRect(
+  rect: Pick<DOMRectReadOnly, "left" | "top" | "width" | "height">,
+): RectLike {
+  return {
+    left: rect.left,
+    top: rect.top,
+    width: rect.width,
+    height: rect.height,
+  };
+}
+
 /** A captured viewport point expressed relative to the anchor card's box. */
 export interface CanvasAnchor {
   assetId: string;

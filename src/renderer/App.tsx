@@ -318,6 +318,7 @@ import {
 import {
   captureAnchor,
   pickNearestCard,
+  rectLikeFromDomRect,
   type AnchorCard,
   type CanvasAnchor,
 } from "./canvas-scroll-anchor";
@@ -1132,11 +1133,11 @@ function AppInner() {
       canvas.querySelectorAll<HTMLElement>("[data-asset-id]"),
     ).map((el) => ({
       assetId: el.dataset.assetId!,
-      ...el.getBoundingClientRect(),
+      ...rectLikeFromDomRect(el.getBoundingClientRect()),
     }));
     reflowAnchorRef.current = captureReflowAnchorFromCards(
       cards,
-      canvas.getBoundingClientRect(),
+      rectLikeFromDomRect(canvas.getBoundingClientRect()),
     );
     reflowScrollSnapshotRef.current = {
       left: canvas.scrollLeft,
@@ -1757,7 +1758,10 @@ function AppInner() {
       );
       const cards: AnchorCard[] = cardEls.map((el) => {
         const rect = el.getBoundingClientRect();
-        return { assetId: el.dataset.assetId!, ...rect };
+        return {
+          assetId: el.dataset.assetId!,
+          ...rectLikeFromDomRect(rect),
+        };
       });
       const pointed = document
         .elementFromPoint(anchorX, anchorY)
@@ -1836,14 +1840,14 @@ function AppInner() {
         canvas.querySelectorAll<HTMLElement>("[data-asset-id]"),
       ).map((el) => ({
         assetId: el.dataset.assetId!,
-        ...el.getBoundingClientRect(),
+        ...rectLikeFromDomRect(el.getBoundingClientRect()),
       }));
       // Prefer topmost visible card so the leading visible set (A/B/C) stays
       // after column-count changes — center-nearest jumped too easily.
       reflowAnchorRef.current = retainReflowAnchor(
         reflowAnchorRef.current,
         cards,
-        rootRect,
+        rectLikeFromDomRect(rootRect),
       );
       if (!reflowScrollSnapshotRef.current) {
         reflowScrollSnapshotRef.current = {

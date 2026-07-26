@@ -61,6 +61,73 @@ describe("retainReflowAnchor", () => {
 });
 
 describe("scheduleAnchorRestore", () => {
+  it("keeps the compensated offset after restoring a captured scroll snapshot", () => {
+    const rafQueue: FrameRequestCallback[] = [];
+    const originalRaf = globalThis.requestAnimationFrame;
+    const originalCancel = globalThis.cancelAnimationFrame;
+    globalThis.requestAnimationFrame = ((cb: FrameRequestCallback) => {
+      rafQueue.push(cb);
+      return rafQueue.length;
+    }) as typeof requestAnimationFrame;
+    globalThis.cancelAnimationFrame = ((id: number) => {
+      rafQueue[id - 1] = () => undefined;
+    }) as typeof cancelAnimationFrame;
+
+    const canvas = {
+      scrollLeft: 0,
+      scrollTop: 1_000,
+      scrollWidth: 800,
+      scrollHeight: 4_000,
+      clientWidth: 800,
+      clientHeight: 600,
+      querySelectorAll: () => [card],
+    } as unknown as HTMLElement;
+    const card = {
+      dataset: { assetId: "lead" },
+      getBoundingClientRect: () => ({
+        left: 40,
+        top: 1_500 - canvas.scrollTop,
+        width: 120,
+        height: 100,
+        right: 160,
+        bottom: 1_600 - canvas.scrollTop,
+        x: 40,
+        y: 1_500 - canvas.scrollTop,
+        toJSON() {
+          return {};
+        },
+      }),
+    } as unknown as HTMLElement;
+
+    const frameRef: { current: number | null } = { current: null };
+    scheduleAnchorRestore(
+      canvas,
+      {
+        assetId: "lead",
+        ratioX: 0.5,
+        ratioY: 0,
+        clientX: 100,
+        clientY: 80,
+      },
+      frameRef,
+      1,
+      undefined,
+      { left: 0, top: 1_000 },
+    );
+
+    while (rafQueue.length > 0) {
+      const next = rafQueue.shift();
+      next?.(0);
+    }
+
+    // The reflow moved the card's document top from 1080 to 1500. Restoring
+    // the exact client anchor therefore requires scrollTop 1500 - 80 = 1420.
+    expect(canvas.scrollTop).toBeCloseTo(1_420);
+
+    globalThis.requestAnimationFrame = originalRaf;
+    globalThis.cancelAnimationFrame = originalCancel;
+  });
+
   it("restores scroll even when scrollTop drifted during the wait (Serpent-32p)", () => {
     const rafQueue: FrameRequestCallback[] = [];
     const originalRaf = globalThis.requestAnimationFrame;
@@ -77,13 +144,13 @@ describe("scheduleAnchorRestore", () => {
       dataset: { assetId: "lead" },
       getBoundingClientRect: () => ({
         left: 40,
-        top: 500,
+        top: 500 - canvas.scrollTop,
         width: 120,
         height: 100,
         right: 160,
-        bottom: 600,
+        bottom: 600 - canvas.scrollTop,
         x: 40,
-        y: 500,
+        y: 500 - canvas.scrollTop,
         toJSON() {
           return {};
         },

@@ -5,8 +5,31 @@ import {
   clampScrollOffset,
   computeAnchorScrollDelta,
   pickNearestCard,
+  rectLikeFromDomRect,
   type AnchorCard,
 } from "../../src/renderer/canvas-scroll-anchor";
+
+describe("rectLikeFromDomRect", () => {
+  it("copies non-enumerable DOMRect geometry accessors explicitly", () => {
+    const rect = Object.defineProperties(
+      {},
+      {
+        left: { value: 12, enumerable: false },
+        top: { value: 34, enumerable: false },
+        width: { value: 56, enumerable: false },
+        height: { value: 78, enumerable: false },
+      },
+    ) as DOMRectReadOnly;
+
+    expect({ ...rect }).toEqual({});
+    expect(rectLikeFromDomRect(rect)).toEqual({
+      left: 12,
+      top: 34,
+      width: 56,
+      height: 78,
+    });
+  });
+});
 
 describe("pickNearestCard", () => {
   const viewport = { left: 0, top: 0, width: 800, height: 600 };

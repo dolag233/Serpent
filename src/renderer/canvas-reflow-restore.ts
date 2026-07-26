@@ -113,22 +113,7 @@ export function scheduleAnchorRestore(
           canvas.clientHeight,
         );
       }
-      const settle = (
-        passesRemaining: number,
-        previousRect?: RectLike,
-      ): void => {
-        if (initialScroll) {
-          canvas.scrollLeft = clampScrollOffset(
-            initialScroll.left,
-            canvas.scrollWidth,
-            canvas.clientWidth,
-          );
-          canvas.scrollTop = clampScrollOffset(
-            initialScroll.top,
-            canvas.scrollHeight,
-            canvas.clientHeight,
-          );
-        }
+      const settle = (passesRemaining: number, stableFrames = 0): void => {
         const restored = Array.from(
           canvas.querySelectorAll<HTMLElement>("[data-asset-id]"),
         ).find((card) => card.dataset.assetId === anchor.assetId);
@@ -138,15 +123,6 @@ export function scheduleAnchorRestore(
           return;
         }
         const rect = restored.getBoundingClientRect();
-        if (
-          previousRect &&
-          Math.abs(rect.left - previousRect.left) < 0.5 &&
-          Math.abs(rect.top - previousRect.top) < 0.5
-        ) {
-          frameRef.current = null;
-          onRestored?.();
-          return;
-        }
         const delta = computeAnchorScrollDelta(anchor, rect);
         const nextLeft = clampScrollOffset(
           canvas.scrollLeft + delta.deltaX,
@@ -158,20 +134,31 @@ export function scheduleAnchorRestore(
           canvas.scrollHeight,
           canvas.clientHeight,
         );
+        const aligned =
+          Math.abs(delta.deltaX) < 0.5 && Math.abs(delta.deltaY) < 0.5;
         if (nextLeft !== canvas.scrollLeft || nextTop !== canvas.scrollTop) {
           canvas.scrollLeft = nextLeft;
           canvas.scrollTop = nextTop;
         }
+        const nextStableFrames = aligned ? stableFrames + 1 : 0;
+        if (nextStableFrames >= 2 || passesRemaining <= 0) {
+          frameRef.current = null;
+          onRestored?.();
+          return;
+        }
         if (passesRemaining > 0) {
           frameRef.current = globalThis.requestAnimationFrame(() =>
-            settle(passesRemaining - 1, rect),
+            settle(passesRemaining - 1, nextStableFrames),
           );
           return;
         }
         frameRef.current = null;
         onRestored?.();
       };
-      settle(3);
+      // Apply the raw snapshot once, then converge on the captured client
+      // point. Re-applying the snapshot on every pass undid the previous
+      // compensation just before the old "stable rect" early exit.
+      settle(6);
       return;
     }
     frameRef.current = globalThis.requestAnimationFrame(() => {

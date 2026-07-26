@@ -56,6 +56,29 @@
 用户复验发现上一轮仍有拖动过程中的视口滑动。新增复现追踪后确认：拖动期间 `scrollTop` 可以保持不变，但瀑布流列数随每个 `pointermove` 实时变化，同一滚动偏移因此映射到另一批资产；单纯锁滚动值并不能保持视野内容。
 
 本轮修复为拖动会话冻结内容布局宽度：按下分隔条时同步冻结文件夹行和资产网格宽度、关闭浏览器 `overflow-anchor`，拖动期间不再实时重排；拖动结束由 `usePanelResize` 的 `onResizeEnd` 回调释放冻结，并只执行一次锚点恢复。冷启动后的 Computer Use 复测中，瀑布流从深滚动位置将导航栏约 220→420 拖动后，前后截图保持同一批资产；连续缩放仍保持原锚点。
+
+### 2026-07-27 CANVAS-021 third follow-up
+
+用户再次复验指出：拖动期间虽已冻结，但松手重排后的视图位置仍未对齐。本轮建立了“同一资产的内部锚点在重排后必须回到同一 clientY”的确定性回归，定位到两个根因：
+
+1. `App.tsx` 用 `{ ...element.getBoundingClientRect() }` 构造锚点卡片；真实浏览器的 `DOMRect` 几何属性不是可枚举自有属性，对象展开后 `top/left/width/height` 实际为空，锚点坐标变成 `NaN`。
+2. 恢复循环每轮都先写回拖动前的原始 `scrollTop`，第二轮又因矩形稳定提前退出，从而撤销上一轮刚算出的精确补偿。
+
+新增 `rectLikeFromDomRect` 显式复制四个几何字段，并把面板拖动、容器 ResizeObserver、卡片缩放三条测量路径统一接入；恢复循环只在开始时应用一次原始滚动快照，随后最多七帧按锚点误差收敛，连续两帧小于 0.5px 才提前结束。
+
+自动化：
+
+- `npx vitest run tests/unit/canvas-scroll-anchor.test.ts tests/unit/canvas-reflow-restore.test.ts --config vitest.config.ts`：21/21 通过。
+- `npm run typecheck`：未通过；当前工作树存在与本改动无关的并行类型错误（`AssetContextMenu.tsx`、extension/radial/AI/media 测试），本改动涉及文件无新增 TypeScript 诊断。
+
+真实应用：
+
+- 冷启动 `npm start`，加载持久化的 155 项资源库并滚动至瀑布流深处。
+- 导航栏约 248→420：锚点资产内部点最终回到 clientY=125，恢复过程还捕获到 Chromium 自身一次滚动回拨并再次收敛。
+- 导航栏约 420→248：另一锚点资产内部点同样最终回到 clientY=125。
+- 正反两次均未在拖动过程中重排；松手后才重排并完成精确锚点补偿。
+
+所有 `[DEBUG-canvas-anchor]` 临时诊断在提交前已删除。
 - **真实 Electron E2E 未新增**：`VIEWER-001` 现有的 `tests/e2e/asset-pagination.test.ts` 覆盖"深滚动进入/退出查看页"场景，但不覆盖"查看期间拖侧栏/改窗口宽度导致重排"这一具体回归路径；受限于本回合时间与并行 filter agent 同时改动 `App.tsx`，未新增覆盖该组合场景的 E2E，只有几何层的单测。建议后续补一条 Playwright 用例：进入查看页 → 触发窗口 resize → 关闭 → 断言选中资产仍可见。
 - **画布重排锚点的"最近命中"策略**是几何近似（挑离视口中心最近、且与可视区域有垂直重叠的卡片），跟已有卡片缩放锚点逻辑一致，但没有模拟真实鼠标 hover 命中测试（`elementFromPoint`）；容器宽度重排场景下没有明确的"鼠标位置"概念，因此用画布视口中心作为锚点参考点，如后续人工验收发现锚点资产选择不符合直觉（例如用户视觉关注点不在正中），可再调整参考点策略。
 - `MoveDialog.tsx` 的既有 `directAssetCount` 类型错误与本工单无关，未做修复（避免与同时进行文件夹维度相关改动的并行 agent 冲突）；移交该改动的负责方处理。
