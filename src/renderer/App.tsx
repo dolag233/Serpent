@@ -1432,6 +1432,7 @@ function AppInner() {
     workspaceCanvasRef,
     folderIds: visibleFolderIds,
     selectionAssetIds,
+    masonryShiftSelection: assetViewMode === "masonry",
     selectedFolderIds,
     setSelectedFolderIds,
   });

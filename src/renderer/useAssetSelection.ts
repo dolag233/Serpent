@@ -7,6 +7,7 @@ import {
 } from "./browse-selection-order";
 import { resolveFolderCardClickIntent } from "./folder-card-click";
 import { computeMarqueeSelection, isMarqueeAdditive } from "./marquee-selection";
+import { resolveMasonryCenterRange } from "./masonry-selection-range";
 import {
   isToggleSelectionModifier,
   resolveSelectionPlatform,
@@ -36,6 +37,8 @@ export interface UseAssetSelectionParams {
    * uses `assets` array order. Masonry passes visual reading order here.
    */
   selectionAssetIds?: string[];
+  /** Use center-point rectangle semantics for Shift+click in masonry. */
+  masonryShiftSelection?: boolean;
   /** Currently selected folder-card IDs */
   selectedFolderIds?: string[];
   /** Setter for folder multi-select */
@@ -83,6 +86,7 @@ export function useAssetSelection({
   workspaceCanvasRef,
   folderIds = [],
   selectionAssetIds,
+  masonryShiftSelection = false,
   selectedFolderIds = [],
   setSelectedFolderIds,
 }: UseAssetSelectionParams): UseAssetSelectionReturn {
@@ -192,6 +196,38 @@ export function useAssetSelection({
     return true;
   }
 
+  function applyMasonryShiftSelection(
+    assetId: string,
+    event: React.MouseEvent,
+  ): boolean {
+    if (!masonryShiftSelection || !event.shiftKey) return false;
+    const anchorId = selectionAnchorRef.current;
+    const canvas = workspaceCanvasRef.current;
+    if (!anchorId || !canvas) return false;
+    const items = [...canvas.querySelectorAll<HTMLElement>(".asset-card[data-asset-id]")].flatMap(
+      (card) => {
+        const id = card.dataset.assetId;
+        if (!id) return [];
+        const rect = card.getBoundingClientRect();
+        return [{ id, x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }];
+      },
+    );
+    const range = resolveMasonryCenterRange({
+      items,
+      browseOrder: assetIds,
+      anchorId,
+      targetId: assetId,
+    });
+    if (range.length === 0) return false;
+    const nextAssetIds = isToggleSelectionModifier(event, selectionPlatform)
+      ? [...new Set([...selectedAssetIds, ...range])]
+      : range;
+    setSelectedAssetIds(nextAssetIds);
+    setSelectedAssetId(assetId);
+    browseSelectionAnchorRef.current = { kind: "asset", id: anchorId };
+    return true;
+  }
+
   // ── handleFolderCardClick ───────────────────────────────────────────────
   function handleFolderCardClick(folderId: string, event: React.MouseEvent) {
     const mouseButton = cardMouseDownRef.current;
@@ -258,6 +294,9 @@ export function useAssetSelection({
       return;
     }
 
+    if (applyMasonryShiftSelection(assetId, event)) {
+      return;
+    }
     if (applyShiftBrowseSelection({ kind: "asset", id: assetId }, event)) {
       return;
     }
