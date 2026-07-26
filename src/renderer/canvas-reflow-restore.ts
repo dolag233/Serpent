@@ -117,6 +117,18 @@ export function scheduleAnchorRestore(
         passesRemaining: number,
         previousRect?: RectLike,
       ): void => {
+        if (initialScroll) {
+          canvas.scrollLeft = clampScrollOffset(
+            initialScroll.left,
+            canvas.scrollWidth,
+            canvas.clientWidth,
+          );
+          canvas.scrollTop = clampScrollOffset(
+            initialScroll.top,
+            canvas.scrollHeight,
+            canvas.clientHeight,
+          );
+        }
         const restored = Array.from(
           canvas.querySelectorAll<HTMLElement>("[data-asset-id]"),
         ).find((card) => card.dataset.assetId === anchor.assetId);

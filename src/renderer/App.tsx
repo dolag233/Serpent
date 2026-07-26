@@ -1111,15 +1111,18 @@ function AppInner() {
   // resize) anchor restore; separate from the card-size one above so the
   // two triggers never cancel each other's in-flight restoration.
   const reflowRestoreFrameRef = useRef<number | null>(null);
+  const cardResizeAnchorRef = useRef<CanvasAnchor | null>(null);
+  const cardResizeScrollSnapshotRef = useRef<ScrollOffsetSnapshot | null>(null);
   const reflowAnchorRef = useRef<CanvasAnchor | null>(null);
   const reflowScrollSnapshotRef = useRef<ScrollOffsetSnapshot | null>(null);
+  const panelResizeLockRef = useRef(false);
   const panelWidthSnapshotRef = useRef({ nav: navPanelWidth, inspector: inspectorPanelWidth });
   const panelResizingRef = useRef(panelResizing);
   useLayoutEffect(() => {
     panelResizingRef.current = panelResizing;
   }, [panelResizing]);
 
-  const capturePanelResizeAnchor = useCallback(() => {
+  const capturePanelResizeAnchor = useCallback((lock = true) => {
     const canvas = workspaceCanvasRef.current;
     if (!canvas) return;
     const cards: AnchorCard[] = Array.from(
@@ -1136,7 +1139,31 @@ function AppInner() {
       left: canvas.scrollLeft,
       top: canvas.scrollTop,
     };
+    panelResizeLockRef.current = lock;
   }, []);
+
+  const restorePanelAfterResize = useCallback(() => {
+    panelResizeLockRef.current = false;
+    const canvas = workspaceCanvasRef.current;
+    const anchor = reflowAnchorRef.current;
+    if (!canvas || !anchor) return;
+    scheduleAnchorRestore(
+      canvas,
+      anchor,
+      reflowRestoreFrameRef,
+      12,
+      () => {
+        reflowAnchorRef.current = null;
+        reflowScrollSnapshotRef.current = null;
+      },
+      reflowScrollSnapshotRef.current ?? undefined,
+    );
+  }, []);
+
+  useEffect(() => {
+    window.addEventListener("pointerup", restorePanelAfterResize);
+    return () => window.removeEventListener("pointerup", restorePanelAfterResize);
+  }, [restorePanelAfterResize]);
 
   useLayoutEffect(() => {
     const previous = panelWidthSnapshotRef.current;
@@ -1164,6 +1191,9 @@ function AppInner() {
         Math.max(0, canvas.scrollHeight - canvas.clientHeight),
       );
     }
+    // During a drag, keep the raw offset fixed. Applying anchor deltas on
+    // every width tick makes the viewport visibly slide with the divider.
+    if (panelResizeLockRef.current) return;
     scheduleAnchorRestore(
       canvas,
       reflowAnchorRef.current,
@@ -1714,11 +1744,28 @@ function AppInner() {
       const anchorState = anchorCard
         ? captureAnchor(anchorCard, anchorX, anchorY)
         : null;
+      if (!cardResizeAnchorRef.current) {
+        cardResizeAnchorRef.current = anchorState;
+        cardResizeScrollSnapshotRef.current = {
+          left: root.scrollLeft,
+          top: root.scrollTop,
+        };
+      }
 
       setCanvasPrefs((p) => ({ ...p, cardSize: nextSize }));
       // Serpent-32p: always re-anchor after settle; width/size reflow may reset
       // scrollTop mid-wait, and bailing left the visible set wrong.
-      scheduleAnchorRestore(root, anchorState, cardSizeRestoreFrameRef);
+      scheduleAnchorRestore(
+        root,
+        cardResizeAnchorRef.current,
+        cardSizeRestoreFrameRef,
+        30,
+        () => {
+          cardResizeAnchorRef.current = null;
+          cardResizeScrollSnapshotRef.current = null;
+        },
+        cardResizeScrollSnapshotRef.current ?? undefined,
+      );
     },
     [assetCardSize],
   );
@@ -1779,6 +1826,14 @@ function AppInner() {
           top: canvas.scrollTop,
         };
       }
+      if (panelResizeLockRef.current) {
+        const snapshot = reflowScrollSnapshotRef.current;
+        if (snapshot) {
+          canvas.scrollLeft = snapshot.left;
+          canvas.scrollTop = snapshot.top;
+        }
+        return;
+      }
       scheduleAnchorRestore(
         canvas,
         reflowAnchorRef.current,
@@ -1786,8 +1841,10 @@ function AppInner() {
         10,
         () => {
           if (!panelResizingRef.current) {
-            reflowAnchorRef.current = null;
-            reflowScrollSnapshotRef.current = null;
+      reflowAnchorRef.current = null;
+      reflowScrollSnapshotRef.current = null;
+      cardResizeAnchorRef.current = null;
+      cardResizeScrollSnapshotRef.current = null;
           }
         },
         reflowScrollSnapshotRef.current ?? undefined,
@@ -8597,7 +8654,7 @@ function AppInner() {
           className={`panel-resizer${panelResizing === "nav" ? " is-active" : ""}`}
           data-hover-tip={t("shell.resizeNav")}
           onDoubleClick={() => {
-            capturePanelResizeAnchor();
+            capturePanelResizeAnchor(false);
             resetPanelWidth("nav");
           }}
           onPointerDown={(event) => {
@@ -8632,7 +8689,7 @@ function AppInner() {
           className={`panel-resizer${panelResizing === "inspector" ? " is-active" : ""}`}
           data-hover-tip={t("shell.resizeInspector")}
           onDoubleClick={() => {
-            capturePanelResizeAnchor();
+            capturePanelResizeAnchor(false);
             resetPanelWidth("inspector");
           }}
           onPointerDown={(event) => {
