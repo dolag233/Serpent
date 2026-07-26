@@ -371,6 +371,22 @@ summary:focus-visible {
   transition: none;
 }
 
+/* Reflow is controlled by the canvas anchor logic while a pane is dragged;
+   the browser must not apply its own scroll-anchoring correction as columns
+   change underneath the pointer. */
+.app-shell.is-resizing .workspace-canvas {
+  overflow-anchor: none;
+}
+
+/* Apply the freeze synchronously on pointer-down as well as through the
+   React render that follows it. This prevents the first pointermove from
+   reflowing cards before panelResizing has committed. */
+.workspace-canvas.is-reflow-frozen > .folder-card-row,
+.workspace-canvas.is-reflow-frozen > .asset-grid {
+  width: var(--reflow-frozen-width);
+  max-width: none;
+}
+
 .app-shell.left-collapsed {
   grid-template-columns: 0 minmax(420px, 1fr) var(--inspector-width, 268px);
 }

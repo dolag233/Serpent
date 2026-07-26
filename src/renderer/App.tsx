@@ -647,6 +647,7 @@ function AppInner() {
   }, []);
   const [leftOpen, setLeftOpen] = useState(() => window.innerWidth > 800);
   const [rightOpen, setRightOpen] = useState(() => window.innerWidth > 1020);
+  const panelResizeReleaseRef = useRef<() => void>(() => undefined);
   // REQ-SHELL-007 / REQ-SHELL-011: draggable nav/inspector pane widths + auto-hide.
   const {
     navPanelWidth,
@@ -665,6 +666,7 @@ function AppInner() {
       if (panel === "nav") setLeftOpen(true);
       else setRightOpen(true);
     },
+    onResizeEnd: () => panelResizeReleaseRef.current(),
   });
   const navHistoryRef = useRef(createWorkspaceNavHistory());
   const suppressNavHistoryRef = useRef(false);
@@ -1116,6 +1118,7 @@ function AppInner() {
   const reflowAnchorRef = useRef<CanvasAnchor | null>(null);
   const reflowScrollSnapshotRef = useRef<ScrollOffsetSnapshot | null>(null);
   const panelResizeLockRef = useRef(false);
+  const panelReflowFrozenWidthRef = useRef<number | null>(null);
   const panelWidthSnapshotRef = useRef({ nav: navPanelWidth, inspector: inspectorPanelWidth });
   const panelResizingRef = useRef(panelResizing);
   useLayoutEffect(() => {
@@ -1139,6 +1142,12 @@ function AppInner() {
       left: canvas.scrollLeft,
       top: canvas.scrollTop,
     };
+    panelReflowFrozenWidthRef.current = canvas.clientWidth;
+    canvas.classList.add("is-reflow-frozen");
+    canvas.style.setProperty(
+      "--reflow-frozen-width",
+      `${panelReflowFrozenWidthRef.current}px`,
+    );
     panelResizeLockRef.current = lock;
   }, []);
 
@@ -1164,6 +1173,22 @@ function AppInner() {
     window.addEventListener("pointerup", restorePanelAfterResize);
     return () => window.removeEventListener("pointerup", restorePanelAfterResize);
   }, [restorePanelAfterResize]);
+
+  useLayoutEffect(() => {
+    panelResizeReleaseRef.current = restorePanelAfterResize;
+    return () => {
+      panelResizeReleaseRef.current = () => undefined;
+    };
+  }, [restorePanelAfterResize]);
+
+  useLayoutEffect(() => {
+    if (!panelResizing) {
+      panelReflowFrozenWidthRef.current = null;
+      const canvas = workspaceCanvasRef.current;
+      canvas?.classList.remove("is-reflow-frozen");
+      canvas?.style.removeProperty("--reflow-frozen-width");
+    }
+  }, [panelResizing]);
 
   useLayoutEffect(() => {
     const previous = panelWidthSnapshotRef.current;
@@ -7379,6 +7404,11 @@ function AppInner() {
                     style={
                       {
                         "--folder-card-size": `${folderCardWidthPx}px`,
+                        ...(panelResizing && panelReflowFrozenWidthRef.current
+                          ? {
+                              width: `${panelReflowFrozenWidthRef.current}px`,
+                            }
+                          : {}),
                       } as CSSProperties
                     }
                   >
@@ -7476,7 +7506,15 @@ function AppInner() {
                   <div
                     className={`asset-grid is-${assetViewMode}`}
                     ref={assetGridRef}
-                    style={assetGridLayoutStyle(assetViewMode, assetCardSize)}
+                    style={{
+                      ...assetGridLayoutStyle(assetViewMode, assetCardSize),
+                      ...(panelResizing && panelReflowFrozenWidthRef.current
+                        ? {
+                            width: `${panelReflowFrozenWidthRef.current}px`,
+                            maxWidth: "none",
+                          }
+                        : {}),
+                    }}
                   >
                   {(() => {
                     const showCornerBadges =
@@ -8662,7 +8700,7 @@ function AppInner() {
             capturePanelResizeAnchor();
             beginPanelResize("nav", event.clientX);
           }}
-          onMouseDown={capturePanelResizeAnchor}
+          onMouseDown={() => capturePanelResizeAnchor()}
           role="separator"
           style={{ left: navPanelWidth - 3 }}
         />
@@ -8677,7 +8715,7 @@ function AppInner() {
             capturePanelResizeAnchor();
             beginPanelEdgeRestore("nav", event.clientX);
           }}
-          onMouseDown={capturePanelResizeAnchor}
+          onMouseDown={() => capturePanelResizeAnchor()}
           role="separator"
           style={{ left: 0 }}
         />
@@ -8697,7 +8735,7 @@ function AppInner() {
             capturePanelResizeAnchor();
             beginPanelResize("inspector", event.clientX);
           }}
-          onMouseDown={capturePanelResizeAnchor}
+          onMouseDown={() => capturePanelResizeAnchor()}
           role="separator"
           style={{ right: inspectorPanelWidth - 3 }}
         />
@@ -8712,7 +8750,7 @@ function AppInner() {
             capturePanelResizeAnchor();
             beginPanelEdgeRestore("inspector", event.clientX);
           }}
-          onMouseDown={capturePanelResizeAnchor}
+          onMouseDown={() => capturePanelResizeAnchor()}
           role="separator"
           style={{ right: 0 }}
         />
