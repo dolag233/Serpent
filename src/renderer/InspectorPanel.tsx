@@ -315,9 +315,9 @@ function InspectorHeroMultiStack({
       (Number.parseFloat(styles.paddingLeft) || 0) +
       (Number.parseFloat(styles.paddingRight) || 0);
     const maxWidth = Math.max(48, host.clientWidth - padX);
-    // Keep stack short so the filename under multi-select never gets covered
-    // by tall portrait frames (Serpent-hhy0 / fig2).
-    const maxHeight = Math.min(140, Math.round(window.innerHeight * 0.22));
+    // Tall enough to read portrait thumbs; still below single-select hero
+    // (min(360px, 45vh)) so the filename under multi-select stays visible.
+    const maxHeight = Math.min(280, Math.round(window.innerHeight * 0.36));
     setFrame(
       fitInspectorStackFrame(
         natural.width,

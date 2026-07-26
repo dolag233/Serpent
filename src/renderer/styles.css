@@ -2242,9 +2242,6 @@ input[type="range"] {
      the vertical gutter appears; grid children measure against clientWidth. */
   overflow-x: hidden;
   overflow-y: auto;
-  /* Serpent-32p: reflow restore owns scroll position; native scroll anchoring
-     applies a second correction during column/card relayout. */
-  overflow-anchor: none;
   place-items: center;
   user-select: none;
 }
@@ -3279,6 +3276,40 @@ body.serpent-modal-open .app-shell {
   color: var(--tertiary, var(--tertiary));
   font-size: 12px;
   text-align: center;
+}
+
+/* Color-space picker (Serpent-aoj0) — secondary view for viewer/context menu. */
+.color-space-picker {
+  min-width: 220px;
+}
+
+.color-space-picker-back {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  width: 100%;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--secondary, var(--secondary));
+  font: inherit;
+  font-size: 11px;
+  text-align: left;
+}
+
+.color-space-picker-back:hover,
+.color-space-picker-back:focus-visible {
+  background: var(--raised-2);
+  color: var(--text);
+  outline: none;
+}
+
+.color-space-picker-title {
+  padding: 5px 8px 4px;
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 650;
 }
 
 .workspace-viewer {
@@ -6826,18 +6857,18 @@ select.ai-config-input.ai-config-languages {
   display: flex;
   flex-shrink: 0;
   width: 100%;
-  max-height: min(168px, 28vh);
+  max-height: min(300px, 38vh);
   align-items: center;
   justify-content: center;
-  padding: 6px 8px 8px;
-  overflow: hidden;
+  padding: 10px 12px 10px;
+  overflow: visible;
   isolation: isolate;
 }
 
 .inspector-hero-stack-stage {
   position: relative;
-  width: min(100%, 200px);
-  height: 120px;
+  width: min(100%, 220px);
+  height: 200px;
   flex: 0 0 auto;
 }
 
@@ -6874,17 +6905,29 @@ select.ai-config-input.ai-config-languages {
   color: var(--tertiary);
 }
 
-/* Slight card-deck offset; keep offsets small so title below stays clear. */
+/* Serpent-ijfm: middle card centered; front top-right, back bottom-left. */
 .inspector-hero-stack-layer[data-depth="0"] {
-  transform: translate(0, 0);
+  transform: translate(7px, -7px);
 }
 
 .inspector-hero-stack-layer[data-depth="1"] {
-  transform: translate(-4px, 4px);
+  transform: translate(0, 0);
 }
 
 .inspector-hero-stack-layer[data-depth="2"] {
-  transform: translate(-8px, 8px);
+  transform: translate(-7px, 7px);
+}
+
+.inspector-hero-stack[data-layer-count="2"] .inspector-hero-stack-layer[data-depth="0"] {
+  transform: translate(6px, -6px);
+}
+
+.inspector-hero-stack[data-layer-count="2"] .inspector-hero-stack-layer[data-depth="1"] {
+  transform: translate(-6px, 6px);
+}
+
+.inspector-hero-stack[data-layer-count="1"] .inspector-hero-stack-layer[data-depth="0"] {
+  transform: translate(0, 0);
 }
 
 .inspector-tech-bar {
