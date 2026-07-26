@@ -30,12 +30,13 @@ export const extensionFolderSchema = z.strictObject({
   folderId: z.string().min(1),
   name: z.string().min(1),
   relativePath: z.string().min(1),
+  assetCount: z.number().int().nonnegative().optional(),
 });
 
 export type ExtensionFolderSummary = z.infer<typeof extensionFolderSchema>;
 
 export type ListFoldersDisposition =
-  | { ok: true; folders: ExtensionFolderSummary[] }
+  | { ok: true; folders: ExtensionFolderSummary[]; recentBrowsedFolderIds: string[] }
   | { ok: false; status: number; reason: string };
 
 /** Metadata for browser-fetched binary uploads (Serpent-1jyi). */
@@ -97,7 +98,11 @@ export interface ExtensionServer {
 // ---------------------------------------------------------------------------
 
 function isLoopback(addr: string | undefined): boolean {
-  return addr === '127.0.0.1' || addr === '::1';
+  if (!addr) return false;
+  if (addr === '127.0.0.1' || addr === '::1') return true;
+  // Windows / dual-stack Node may report IPv4 loopback clients as IPv4-mapped IPv6.
+  if (addr === '::ffff:127.0.0.1') return true;
+  return false;
 }
 
 function isAllowedOrigin(origin: string | string[] | undefined): boolean {
@@ -295,7 +300,11 @@ export async function createExtensionServer(
             });
             return;
           }
-          jsonResponse(res, 200, { status: 'ok', folders: disposition.folders });
+          jsonResponse(res, 200, {
+            status: 'ok',
+            folders: disposition.folders,
+            recentBrowsedFolderIds: disposition.recentBrowsedFolderIds,
+          });
         })
         .catch((error) => {
           const normalized = error instanceof Error ? error : new Error(String(error));

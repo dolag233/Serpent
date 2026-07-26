@@ -30,7 +30,7 @@ export type ConnectionOutcome =
   | { kind: 'offline' };
 
 export type FolderListOutcome =
-  | { kind: 'ok'; folders: ExtensionFolderOption[] }
+  | { kind: 'ok'; folders: ExtensionFolderOption[]; recentBrowsedFolderIds: string[] }
   | { kind: 'rejected'; status: number; reason: string }
   | { kind: 'unreachable' };
 
@@ -131,17 +131,22 @@ export async function probeSerpentConnection(
   return { kind: 'connected' };
 }
 
-function parseFolderList(body: string): ExtensionFolderOption[] {
+function parseFolderList(body: string): {
+  folders: ExtensionFolderOption[];
+  recentBrowsedFolderIds: string[];
+} {
   const parsed = JSON.parse(body) as unknown;
-  if (!parsed || typeof parsed !== 'object') return [];
+  if (!parsed || typeof parsed !== 'object') {
+    return { folders: [], recentBrowsedFolderIds: [] };
+  }
   const folders = Reflect.get(parsed, 'folders');
-  if (!Array.isArray(folders)) return [];
-
-  return folders.flatMap((entry) => {
+  const recentBrowsedFolderIds = Reflect.get(parsed, 'recentBrowsedFolderIds');
+  const folderList = !Array.isArray(folders) ? [] : folders.flatMap((entry) => {
     if (!entry || typeof entry !== 'object') return [];
     const folderId = Reflect.get(entry, 'folderId');
     const name = Reflect.get(entry, 'name');
     const relativePath = Reflect.get(entry, 'relativePath');
+    const assetCount = Reflect.get(entry, 'assetCount');
     if (
       typeof folderId !== 'string' ||
       typeof name !== 'string' ||
@@ -149,8 +154,19 @@ function parseFolderList(body: string): ExtensionFolderOption[] {
     ) {
       return [];
     }
-    return [{ folderId, name, relativePath }];
+    return [{
+      folderId,
+      name,
+      relativePath,
+      ...(typeof assetCount === 'number' && Number.isFinite(assetCount)
+        ? { assetCount: Math.max(0, Math.floor(assetCount)) }
+        : {}),
+    }];
   });
+  const browsed = Array.isArray(recentBrowsedFolderIds)
+    ? recentBrowsedFolderIds.filter((entry): entry is string => typeof entry === 'string')
+    : [];
+  return { folders: folderList, recentBrowsedFolderIds: browsed };
 }
 
 export async function fetchSerpentFolders(
@@ -167,7 +183,12 @@ export async function fetchSerpentFolders(
   }
 
   if (response.status === 200) {
-    return { kind: 'ok', folders: parseFolderList(body) };
+    const parsed = parseFolderList(body);
+    return {
+      kind: 'ok',
+      folders: parsed.folders,
+      recentBrowsedFolderIds: parsed.recentBrowsedFolderIds,
+    };
   }
 
   return {

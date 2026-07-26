@@ -161,6 +161,10 @@ import {
   type SaveUploadRequest,
   type ListFoldersDisposition,
 } from "./extension-server";
+import {
+  readExtensionBrowseFolderIds,
+  recordExtensionBrowseFolder,
+} from "./extension-recent-browse-folders";
 import { resolveExtensionSaveRouting } from "./extension-save-context";
 import { RelinkPreviewStore } from "./relink-preview-store";
 import {
@@ -233,6 +237,7 @@ function rememberOpenedLibrary(libraryPath: string, displayName: string): void {
 }
 
 let extensionServer: ExtensionServer | undefined;
+let extensionBrowseFoldersStorePath: string | undefined;
 const aiQueueScheduler = new AiQueueScheduler(processAiQueueBatch, {
   batchSize: AI_ANALYSIS_QUEUE_BATCH_SIZE,
   baseRetryDelayMs: DEFAULT_AI_RELIABILITY_SETTINGS.retryBaseDelayMs,
@@ -623,10 +628,26 @@ async function handleListFolders(): Promise<ListFoldersDisposition> {
 
   return {
     ok: true,
+    recentBrowsedFolderIds: (() => {
+      let ids = extensionBrowseFoldersStorePath
+        ? readExtensionBrowseFolderIds(
+            extensionBrowseFoldersStorePath,
+            saveContext.libraryId,
+          )
+        : [];
+      if (saveContext.selectedFolderId) {
+        ids = [
+          saveContext.selectedFolderId,
+          ...ids.filter((id) => id !== saveContext.selectedFolderId),
+        ];
+      }
+      return ids;
+    })(),
     folders: result.folders.map((folder) => ({
       folderId: folder.folderId,
       name: folder.name,
       relativePath: folder.relativePath,
+      assetCount: folder.directAssetCount,
     })),
   };
 }
@@ -3524,6 +3545,17 @@ async function startApplication(): Promise<void> {
       if (parsed.context.libraryId) {
         lastExtensionTargetWindowId = windowId;
       }
+      if (
+        extensionBrowseFoldersStorePath &&
+        parsed.context.libraryId &&
+        parsed.context.selectedFolderId
+      ) {
+        recordExtensionBrowseFolder(
+          extensionBrowseFoldersStorePath,
+          parsed.context.libraryId,
+          parsed.context.selectedFolderId,
+        );
+      }
     }
   });
 
@@ -3547,6 +3579,11 @@ async function startApplication(): Promise<void> {
   });
 
   await createMainWindow();
+
+  extensionBrowseFoldersStorePath = path.join(
+    app.getPath("userData"),
+    "extension-recent-browse-folders.json",
+  );
 
   // Start the browser-extension HTTP server on 127.0.0.1.
   try {

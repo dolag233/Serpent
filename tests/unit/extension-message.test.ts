@@ -22,7 +22,7 @@ function startServer(overrides: Partial<ExtensionServerOptions> = {}): Promise<E
     uploadStagingRoot: os.tmpdir(),
     onSaveIntent: () => {},
     onSaveUpload: async () => ({ accepted: true }),
-    onListFolders: async () => ({ ok: true, folders: [] }),
+    onListFolders: async () => ({ ok: true, folders: [], recentBrowsedFolderIds: [] }),
     ...overrides,
   });
 }

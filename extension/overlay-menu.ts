@@ -162,6 +162,12 @@ export async function showOverlaySaveMenu(
   clientY: number,
   media: MediaTarget,
 ): Promise<void> {
+  const { list, dispose } = createMenuShell(
+    clientX,
+    clientY,
+    '保存到 Serpent',
+  );
+
   let connected = false;
   try {
     const status = await sendRuntimeMessage<ConnectionStatusResponse>({
@@ -172,16 +178,19 @@ export async function showOverlaySaveMenu(
     connected = false;
   }
 
-  const { list, dispose } = createMenuShell(
-    clientX,
-    clientY,
-    saveMenuTitle(connected),
-  );
+  const shell = list.parentElement;
+  if (shell instanceof HTMLDivElement) {
+    const title = shell.querySelector('div');
+    if (title) title.textContent = saveMenuTitle(connected);
+  }
 
   if (!connected) {
+    list.replaceChildren();
     appendMenuItem(list, disconnectedMenuHint(), null);
     return;
   }
+
+  list.replaceChildren();
 
   const closeAfter = async (action: () => Promise<void>) => {
     try {

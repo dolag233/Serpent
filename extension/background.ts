@@ -1,10 +1,13 @@
 import {
+  buildSaveMenuFolderHints,
   folderMenuId,
   folderMenuLabel,
+  MENU_ROOT_PARENT_ID,
   parseFolderMenuId,
   pushRecentFolderId,
   RECENT_FOLDER_IDS_KEY,
-  sortFoldersForMenu,
+  sortFoldersForSaveMenu,
+  splitSaveMenuFolders,
   type ExtensionFolderOption,
 } from './folder-menu';
 import { saveMenuTitle } from './connection-ui';
@@ -118,7 +121,7 @@ async function createStaticMenus(): Promise<void> {
     enabled: connected,
   });
   await createMenuItem({
-    id: MENU_ROOT_FOLDER_ID,
+    id: MENU_ROOT_PARENT_ID,
     parentId: MENU_ROOT_ID,
     title: '根目录',
     contexts: ['image', 'video'],
@@ -131,7 +134,7 @@ async function syncSaveMenuEnabled(connected: boolean): Promise<void> {
     title: saveMenuTitle(connected),
     enabled: connected,
   });
-  await updateMenuItem(MENU_ROOT_FOLDER_ID, { enabled: connected });
+  await updateMenuItem(MENU_ROOT_PARENT_ID, { enabled: connected });
   for (const id of dynamicFolderMenuIds) {
     await updateMenuItem(id, { enabled: connected });
   }
@@ -168,18 +171,40 @@ async function refreshFolderMenus(): Promise<void> {
     await removeDynamicFolderMenus();
 
     const recentFolderIds = await readRecentFolderIds();
-    const validFolderIds = new Set(outcome.folders.map((folder) => folder.folderId));
-    const sorted = sortFoldersForMenu(
+    const hints = buildSaveMenuFolderHints(
       outcome.folders,
-      recentFolderIds.filter((folderId) => validFolderIds.has(folderId)),
+      recentFolderIds,
+      outcome.recentBrowsedFolderIds,
     );
+    const { topLevel, underRoot } = splitSaveMenuFolders(outcome.folders, hints);
 
-    for (const folder of sorted) {
+    for (const folder of topLevel) {
       const id = folderMenuId(folder.folderId);
       dynamicFolderMenuIds.push(id);
       await createMenuItem({
         id,
         parentId: MENU_ROOT_ID,
+        title: folderMenuLabel(folder),
+        contexts: ['image', 'video'],
+        enabled: true,
+      });
+    }
+
+    dynamicFolderMenuIds.push(MENU_ROOT_FOLDER_ID);
+    await createMenuItem({
+      id: MENU_ROOT_FOLDER_ID,
+      parentId: MENU_ROOT_PARENT_ID,
+      title: '保存至此',
+      contexts: ['image', 'video'],
+      enabled: true,
+    });
+
+    for (const folder of underRoot) {
+      const id = folderMenuId(folder.folderId);
+      dynamicFolderMenuIds.push(id);
+      await createMenuItem({
+        id,
+        parentId: MENU_ROOT_PARENT_ID,
         title: folderMenuLabel(folder),
         contexts: ['image', 'video'],
         enabled: true,
@@ -304,8 +329,10 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   const type = Reflect.get(message, 'type');
 
   if (type === 'serpent-connection-status') {
-    sendResponse({
-      kind: connectionState === 'connected' ? 'connected' : 'disconnected',
+    void refreshConnectionState().then(() => {
+      sendResponse({
+        kind: connectionState === 'connected' ? 'connected' : 'disconnected',
+      });
     });
     return true;
   }
@@ -315,13 +342,18 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       const outcome = await fetchSerpentFolders();
       if (outcome.kind === 'ok') {
         const recentFolderIds = await readRecentFolderIds();
-        const validFolderIds = new Set(outcome.folders.map((folder) => folder.folderId));
-        const validRecentIds = recentFolderIds.filter((folderId) => validFolderIds.has(folderId));
+        const hints = buildSaveMenuFolderHints(
+          outcome.folders,
+          recentFolderIds,
+          outcome.recentBrowsedFolderIds,
+        );
+        const { topLevel } = splitSaveMenuFolders(outcome.folders, hints);
         sendResponse({
           kind: 'ok',
-          folders: sortFoldersForMenu(outcome.folders, validRecentIds),
-          // 拖拽径向轮盘（Serpent-6llg）需要区分最近项以着重显示
-          recentFolderIds: validRecentIds,
+          folders: sortFoldersForSaveMenu(outcome.folders, hints),
+          firstLevelFolderIds: topLevel.map((folder) => folder.folderId),
+          recentFolderIds: hints.savedRecentIds,
+          recentBrowsedFolderIds: hints.browsedRecentIds,
         });
         return;
       }
@@ -390,7 +422,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 if (chrome.contextMenus.onShown) {
   chrome.contextMenus.onShown.addListener((info) => {
     if (info.contexts.includes('image') || info.contexts.includes('video')) {
-      void refreshFolderMenus();
+      void refreshConnectionState();
     }
   });
 }

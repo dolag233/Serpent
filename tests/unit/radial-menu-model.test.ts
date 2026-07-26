@@ -17,6 +17,8 @@ import {
   itemsForLevel,
   midAngle,
   pageCountForLevel,
+  RADIAL_CROSS_OUTWARD_PX,
+  radialCrossTriggerRadius,
   rotationForEntry,
   sectorAt,
   type FolderNode,
@@ -44,14 +46,13 @@ const FIXTURE_FOLDERS: ExtensionFolderOption[] = [
   folder('f-inspire', '灵感采集', '灵感采集'),
 ];
 
-function contextWithRecents(recentIds: readonly string[]): RadialMenuContext {
+function contextWithQuickPick(quickPickIds: readonly string[]): RadialMenuContext {
   const tree = buildFolderTree(FIXTURE_FOLDERS);
   return {
     roots: tree.roots,
-    recents: recentIds
+    quickPickFolders: quickPickIds
       .map((id) => tree.byId.get(id))
-      .filter((node): node is FolderNode => node !== undefined)
-      .slice(0, 5),
+      .filter((node): node is FolderNode => node !== undefined),
   };
 }
 
@@ -85,6 +86,14 @@ describe('radial geometry', () => {
       const rotation = rotationForEntry(theta);
       expect(norm(midAngle(0, 8, rotation))).toBeCloseTo(norm(theta + Math.PI), 9);
     }
+  });
+
+  it('keeps the visual expand band at 16px but triggers cross at ringOut + 100px', () => {
+    const g = DEFAULT_RADIAL_GEOMETRY;
+    expect(g.band).toBe(16);
+    expect(expandRadius(g)).toBe(g.ringOut + 16);
+    expect(RADIAL_CROSS_OUTWARD_PX).toBe(100);
+    expect(radialCrossTriggerRadius(g)).toBe(g.ringOut + 100);
   });
 
   it('accepts release only inside the sector ring', () => {
@@ -147,24 +156,29 @@ describe('buildFolderTree', () => {
 });
 
 describe('itemsForLevel', () => {
-  it('root emphasizes recents first (most recent at index 0), then 根目录 and 全部文件夹', () => {
-    const context = contextWithRecents(['f-tex-skin', 'f-inspire']);
+  it('root lists quick-pick folders first, then expandable 根目录', () => {
+    const context = contextWithQuickPick(['f-tex-skin', 'f-inspire']);
     const items = itemsForLevel({ kind: 'root' }, 0, context);
-    expect(items.map((item) => item.label)).toEqual(['皮肤', '灵感采集', '根目录', '全部文件夹']);
-    expect(items[0]).toMatchObject({ recent: true, nav: 'save', folderId: 'f-tex-skin' });
-    expect(items[1]).toMatchObject({ recent: true });
-    expect(items[2]).toMatchObject({ nav: 'save', folderId: null });
-    expect(items[3]).toMatchObject({ nav: 'expand', expandable: true });
+    expect(items.map((item) => item.label)).toEqual(['皮肤', '灵感采集', '根目录']);
+    expect(items[0]).toMatchObject({ nav: 'save', folderId: 'f-tex-skin' });
+    expect(items[1]).toMatchObject({ nav: 'save', folderId: 'f-inspire' });
+    expect(items[2]).toMatchObject({
+      nav: 'save',
+      folderId: null,
+      expandable: true,
+      target: { kind: 'all' },
+    });
   });
 
-  it('root works with zero recents (fresh library)', () => {
-    const context = contextWithRecents([]);
+  it('root works with zero quick picks (fresh library)', () => {
+    const context = contextWithQuickPick([]);
     const items = itemsForLevel({ kind: 'root' }, 0, context);
-    expect(items.map((item) => item.label)).toEqual(['根目录', '全部文件夹']);
+    expect(items.map((item) => item.label)).toEqual(['根目录']);
+    expect(items[0]).toMatchObject({ nav: 'save', expandable: true, target: { kind: 'all' } });
   });
 
-  it('disambiguates duplicate recent names with full paths', () => {
-    const context = contextWithRecents(['f-ref-role', 'f-cd-role', 'f-tex-skin']);
+  it('disambiguates duplicate quick-pick names with full paths', () => {
+    const context = contextWithQuickPick(['f-ref-role', 'f-cd-role', 'f-tex-skin']);
     const items = itemsForLevel({ kind: 'root' }, 0, context);
     const labels = items.map((item) => item.label);
     expect(labels).toContain('参考 / 角色');
@@ -174,7 +188,7 @@ describe('itemsForLevel', () => {
   });
 
   it('all level prepends crossable back item and shows top-level folders', () => {
-    const context = contextWithRecents([]);
+    const context = contextWithQuickPick([]);
     const items = itemsForLevel({ kind: 'all' }, 0, context);
     expect(items[0]).toMatchObject({ nav: 'back', expandable: true });
     expect(items.length).toBe(1 + 4); // 返回 + 概念设计/参考/贴图/灵感采集
@@ -183,7 +197,7 @@ describe('itemsForLevel', () => {
   });
 
   it('folder level has no save-here item; ≤7 children fit one page', () => {
-    const context = contextWithRecents([]);
+    const context = contextWithQuickPick([]);
     const level = { kind: 'folder', path: '概念设计' } as const;
     expect(pageCountForLevel(level, context)).toBe(1);
     const items = itemsForLevel(level, 0, context);
@@ -199,7 +213,7 @@ describe('itemsForLevel', () => {
       manyChildren.push(folder(`big-${i}`, `子${i}`, `大目录/子${i}`));
     }
     const tree = buildFolderTree(manyChildren);
-    const context: RadialMenuContext = { roots: tree.roots, recents: [] };
+    const context: RadialMenuContext = { roots: tree.roots, quickPickFolders: [] };
     const level = { kind: 'folder', path: '大目录' } as const;
     expect(pageCountForLevel(level, context)).toBe(2);
     const page0 = itemsForLevel(level, 0, context);
@@ -210,7 +224,7 @@ describe('itemsForLevel', () => {
   });
 
   it('empty folder level shows only the back item', () => {
-    const context = contextWithRecents([]);
+    const context = contextWithQuickPick([]);
     const items = itemsForLevel({ kind: 'folder', path: '灵感采集' }, 0, context);
     expect(items.map((item) => item.nav)).toEqual(['back']);
   });
@@ -223,26 +237,26 @@ describe('itemsForLevel', () => {
 
 describe('crumbs', () => {
   it('previews the full save path for armed save items', () => {
-    const context = contextWithRecents(['f-ref-role']);
+    const context = contextWithQuickPick(['f-ref-role']);
     const root = itemsForLevel({ kind: 'root' }, 0, context);
     expect(armedCrumb(root[0])).toBe('保存到：参考 / 角色');
   });
 
   it('previews navigation actions', () => {
-    const context = contextWithRecents([]);
+    const context = contextWithQuickPick([]);
     const all = itemsForLevel({ kind: 'all' }, 0, context);
     expect(armedCrumb(all[0])).toBe('返回上一级');
-    const expand = itemsForLevel({ kind: 'root' }, 0, context).find(
-      (item) => item.nav === 'expand',
-    );
-    expect(armedCrumb(expand)).toBe('展开：全部文件夹');
+    const root = itemsForLevel({ kind: 'root' }, 0, context)[0];
+    expect(armedCrumb(root)).toBe('保存到：根目录');
+    expect(root?.expandable).toBe(true);
   });
 
   it('describes the current level path', () => {
-    const context = contextWithRecents([]);
+    const context = contextWithQuickPick([]);
     expect(crumbForLevel({ kind: 'root' }, context)).toBe('保存到 Serpent');
+    expect(crumbForLevel({ kind: 'all' }, context)).toBe('根目录');
     expect(crumbForLevel({ kind: 'folder', path: '参考/角色' }, context)).toBe(
-      '全部文件夹 / 参考 / 角色',
+      '根目录 / 参考 / 角色',
     );
   });
 });

@@ -1,8 +1,12 @@
-import type { ExtensionFolderOption } from './folder-menu';
-import type { MediaTarget } from './media-target';
+import {
+  buildSaveMenuFolderHints,
+  MAX_TOP_LEVEL_FOLDER_SLOTS,
+  splitSaveMenuFolders,
+  type ExtensionFolderOption,
+} from './folder-menu';
+import { findMediaElementAtPoint, type MediaTarget } from './media-target';
 import {
   DEFAULT_RADIAL_GEOMETRY,
-  RADIAL_MAX_RECENTS,
   RADIAL_TAU,
   RADIAL_TOP,
   armedCrumb,
@@ -14,6 +18,7 @@ import {
   itemsForLevel,
   midAngle,
   pageCountForLevel,
+  radialCrossTriggerRadius,
   rotationForEntry,
   sectorAt,
   type FolderNode,
@@ -40,7 +45,9 @@ interface ConnectionStatusResponse {
 interface FolderListResponse {
   kind: 'ok';
   folders: ExtensionFolderOption[];
+  firstLevelFolderIds?: string[];
   recentFolderIds?: string[];
+  recentBrowsedFolderIds?: string[];
 }
 
 interface FolderListErrorResponse {
@@ -96,7 +103,6 @@ const STYLE_TEXT = `
   }
   svg.layer { position: absolute; overflow: visible; display: block; }
   .armed-wedge { fill: rgba(59, 130, 246, 0.78); }
-  .recent-tint { fill: rgba(59, 130, 246, 0.12); }
   .back-tint { fill: rgba(255, 255, 255, 0.055); }
   .divider { stroke: rgba(255, 255, 255, 0.13); stroke-width: 1; }
   .band { fill: rgba(59, 130, 246, 0.30); }
@@ -162,9 +168,6 @@ const ICONS = {
   back: svgIcon('<path d="M14.5 5.5 8 12l6.5 6.5"/>'),
   more: '<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5.5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="18.5" cy="12" r="1.6"/></svg>',
 };
-
-const RECENT_BADGE =
-  '<svg class="badge" viewBox="0 0 12 12"><circle cx="6" cy="6" r="5.4" fill="#3b82f6" stroke="rgba(20,22,25,0.9)" stroke-width="1"/><path d="M6 3.4v2.9l1.9 1.2" stroke="#fff" stroke-width="1.3" fill="none" stroke-linecap="round"/></svg>';
 
 function iconForItem(item: RadialItem): string {
   if (item.nav === 'back') return ICONS.back;
@@ -292,8 +295,6 @@ function render(): void {
     const mid = midAngle(i, count, entry.rotation);
     if (item.nav === 'back') {
       svg += `<path class="back-tint" d="${wedgePath(GEOMETRY.hub + 1.5, GEOMETRY.ringOut - 1.5, mid - width / 2, mid + width / 2)}"/>`;
-    } else if (item.recent) {
-      svg += `<path class="recent-tint" d="${wedgePath(GEOMETRY.hub + 1.5, GEOMETRY.ringOut - 1.5, mid - width / 2, mid + width / 2)}"/>`;
     }
   });
 
@@ -325,9 +326,9 @@ function render(): void {
   labels.innerHTML = items
     .map((item, i) => {
       const [lx, ly] = polar(labelRadius, midAngle(i, count, entry.rotation));
-      const badge = item.recent ? RECENT_BADGE : '';
+      const badge = '';
       return `<div class="sector-label${i === s.armed ? ' armed' : ''}" style="transform: translate(${lx.toFixed(1)}px, ${ly.toFixed(1)}px) translate(-50%, -50%)">` +
-        `<span class="ico">${iconForItem(item)}${badge}</span>` +
+        `<span class="ico">${iconForItem(item)}</span>` +
         `<span class="txt"></span></div>`;
     })
     .join('');
@@ -433,8 +434,9 @@ function onDragOver(event: DragEvent): void {
   const dx = event.clientX - entry.cx;
   const dy = event.clientY - entry.cy;
   const distance = Math.hypot(dx, dy);
-  const expand = expandRadius(GEOMETRY);
-  if (distance <= expand) s.canCross = true;
+  const expandVisual = expandRadius(GEOMETRY);
+  const crossTrigger = radialCrossTriggerRadius(GEOMETRY);
+  if (distance <= crossTrigger) s.canCross = true;
 
   const items = itemsForLevel(entry.level, entry.page, s.context);
   if (distance < GEOMETRY.hub) {
@@ -445,7 +447,7 @@ function onDragOver(event: DragEvent): void {
     const index = sectorAt(Math.atan2(dy, dx), items.length, entry.rotation);
     s.armed = index;
     const item = items[index];
-    if (item && item.expandable && distance > expand && s.canCross) {
+    if (item && item.expandable && distance > crossTrigger && s.canCross) {
       if (item.nav === 'page') nextPage();
       else if (item.nav === 'back') goBack();
       else if (item.target) pushLevel(item.target, midAngle(index, items.length, entry.rotation));
@@ -568,12 +570,12 @@ const DRAG_GHOST_MAX_SIZE = 96;
 export function applyDragGhostThumbnail(event: DragEvent): void {
   const { dataTransfer } = event;
   if (!dataTransfer) return;
-  const source = document
-    .elementsFromPoint(event.clientX, event.clientY)
-    .find(
-      (element): element is HTMLImageElement | HTMLVideoElement =>
-        element instanceof HTMLImageElement || element instanceof HTMLVideoElement,
-    );
+  const source = findMediaElementAtPoint(
+    document,
+    event.clientX,
+    event.clientY,
+    event.composedPath(),
+  );
   if (!source) return;
 
   const sourceWidth =
@@ -647,21 +649,26 @@ export async function startRadialSaveMenu(
       return;
     }
 
-    let context: RadialMenuContext = { roots: [], recents: [] };
+    let context: RadialMenuContext = { roots: [], quickPickFolders: [] };
     try {
       const response = await sendRuntimeMessage<FolderListResponse | FolderListErrorResponse>({
         type: 'serpent-list-folders',
       });
       if (response.kind === 'ok') {
         const tree = buildFolderTree(response.folders);
-        const recentIds = 'recentFolderIds' in response && Array.isArray(response.recentFolderIds)
-          ? response.recentFolderIds
-          : [];
-        const recents = recentIds
-          .map((id) => tree.byId.get(id))
-          .filter((node): node is FolderNode => node !== undefined)
-          .slice(0, RADIAL_MAX_RECENTS);
-        context = { roots: tree.roots, recents };
+        const hints = buildSaveMenuFolderHints(
+          response.folders,
+          Array.isArray(response.recentFolderIds) ? response.recentFolderIds : [],
+          Array.isArray(response.recentBrowsedFolderIds) ? response.recentBrowsedFolderIds : [],
+        );
+        const firstLevelIds = Array.isArray(response.firstLevelFolderIds)
+          && response.firstLevelFolderIds.length > 0
+          ? response.firstLevelFolderIds.slice(0, MAX_TOP_LEVEL_FOLDER_SLOTS)
+          : splitSaveMenuFolders(response.folders, hints).topLevel.map((folder) => folder.folderId);
+        const quickPickFolders = firstLevelIds
+          .map((folderId) => tree.byId.get(folderId))
+          .filter((node): node is FolderNode => node !== undefined);
+        context = { roots: tree.roots, quickPickFolders };
       }
     } catch {
       // 文件夹列表失败时降级为仅根目录（与既有浮层策略一致）

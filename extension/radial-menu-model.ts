@@ -25,8 +25,17 @@ export const DEFAULT_RADIAL_GEOMETRY: RadialGeometry = {
   releaseTolerance: 8,
 };
 
+/**
+ * 外环外再拖行的距离才触发进入子级（识别范围）；与 {@link band} 视觉带宽解耦。
+ */
+export const RADIAL_CROSS_OUTWARD_PX = 100;
+
 export function expandRadius(geometry: RadialGeometry): number {
   return geometry.ringOut + geometry.band;
+}
+
+export function radialCrossTriggerRadius(geometry: RadialGeometry): number {
+  return geometry.ringOut + RADIAL_CROSS_OUTWARD_PX;
 }
 
 /** 只有落在扇区环内的松开才执行动作；中心与环外松开一律退出不保存。 */
@@ -158,8 +167,6 @@ export interface RadialItem {
   /** 可穿越外环执行导航动作（展开/返回/翻页） */
   readonly expandable: boolean;
   readonly target?: RadialLevel;
-  /** 最近使用（根级着重显示） */
-  readonly recent?: boolean;
 }
 
 /** 每级内容槽位：返回 1 + 内容 7；>7 → 返回 + 6 + 更多 */
@@ -169,14 +176,14 @@ export const RADIAL_MAX_RECENTS = 5;
 
 export interface RadialMenuContext {
   readonly roots: readonly FolderNode[];
-  /** 最近使用文件夹节点，按最近顺序（最多 RADIAL_MAX_RECENTS 个） */
-  readonly recents: readonly FolderNode[];
+  /** 根级便捷文件夹（最近保存 / 最近浏览 / 资产数；最多 7 个，与「根目录」合计 8 扇区）。 */
+  readonly quickPickFolders: readonly FolderNode[];
 }
 
 const BACK_ITEM: RadialItem = { label: '返回', nav: 'back', expandable: true };
 const ROOT_FOLDER_PATH = '根目录';
 
-function folderItem(node: FolderNode, recent: boolean): RadialItem {
+function folderItem(node: FolderNode): RadialItem {
   const expandable = node.children.length > 0;
   return {
     label: node.name,
@@ -185,7 +192,6 @@ function folderItem(node: FolderNode, recent: boolean): RadialItem {
     folderId: node.folderId,
     expandable,
     target: expandable ? { kind: 'folder', path: node.path } : undefined,
-    recent,
   };
 }
 
@@ -227,9 +233,8 @@ function pagedContent<T>(items: readonly T[], page: number): { slice: T[]; paged
 }
 
 /**
- * 根级布局（最近位置着重显示，v4 决策）：最近 ×N（最近第 1 名在 12 点位，顺时针递次）
- * → 根目录 → 全部文件夹。子级 index 0 固定为「返回」（钉在进入方向正对面）。
- * 无「保存在此」：存进某文件夹在上一级松开于它的扇区即可。
+ * 根级：便捷文件夹（最多 7）→ 根目录（环内保存、外甩展开全库树）。
+ * 子级 index 0 固定为「返回」（钉在进入方向正对面）。
  */
 export function itemsForLevel(
   level: RadialLevel,
@@ -238,16 +243,22 @@ export function itemsForLevel(
 ): RadialItem[] {
   if (level.kind === 'root') {
     const items: RadialItem[] = [
-      ...context.recents.map((node) => folderItem(node, true)),
-      { label: ROOT_FOLDER_PATH, nav: 'save', path: ROOT_FOLDER_PATH, folderId: null, expandable: false },
-      { label: '全部文件夹', nav: 'expand', expandable: true, target: { kind: 'all' } },
+      ...context.quickPickFolders.map((node) => folderItem(node)),
+      {
+        label: ROOT_FOLDER_PATH,
+        nav: 'save',
+        path: ROOT_FOLDER_PATH,
+        folderId: null,
+        expandable: true,
+        target: { kind: 'all' },
+      },
     ];
     return disambiguateLabels(items);
   }
 
   if (level.kind === 'all') {
     const { slice, paged } = pagedContent(context.roots, page);
-    const items = slice.map((node) => folderItem(node, false));
+    const items = slice.map((node) => folderItem(node));
     if (paged) items.push({ label: '更多', nav: 'page', expandable: true });
     return disambiguateLabels([BACK_ITEM, ...items]);
   }
@@ -256,7 +267,7 @@ export function itemsForLevel(
   const node = findFolderNode(context.roots, level.path);
   const children = node?.children ?? [];
   const { slice, paged } = pagedContent(children, page);
-  const items = slice.map((child) => folderItem(child, false));
+  const items = slice.map((child) => folderItem(child));
   if (paged) items.push({ label: '更多', nav: 'page', expandable: true });
   return disambiguateLabels([{ ...BACK_ITEM }, ...items]);
 }
@@ -276,7 +287,7 @@ export function armedCrumb(item: RadialItem | null | undefined): string | null {
 export function crumbForLevel(level: RadialLevel, context: RadialMenuContext): string {
   if (level.kind === 'root') return '保存到 Serpent';
   if (level.kind === 'all') {
-    return pageCountForLevel(level, context) > 1 ? '全部文件夹（翻页）' : '全部文件夹';
+    return pageCountForLevel(level, context) > 1 ? '根目录（翻页）' : '根目录';
   }
-  return `全部文件夹 / ${level.path.split('/').join(' / ')}`;
+  return `根目录 / ${level.path.split('/').join(' / ')}`;
 }
