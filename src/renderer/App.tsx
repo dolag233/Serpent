@@ -319,7 +319,10 @@ import {
   pickNearestCard,
   type AnchorCard,
 } from "./canvas-scroll-anchor";
-import { useCanvasReflowRestore } from "./use-canvas-reflow-restore";
+import {
+  captureReflowAnchorFromCards,
+  scheduleAnchorRestore,
+} from "./canvas-reflow-restore";
 import {
   captureBrowseViewSnapshot,
   resolveBrowseRestoreScroll,
@@ -593,7 +596,6 @@ function AppInner() {
   }, []);
   const [leftOpen, setLeftOpen] = useState(() => window.innerWidth > 800);
   const [rightOpen, setRightOpen] = useState(() => window.innerWidth > 1020);
-  const panelReflowEndRef = useRef<(() => void) | null>(null);
   // REQ-SHELL-007 / REQ-SHELL-011: draggable nav/inspector pane widths + auto-hide.
   const {
     navPanelWidth,
@@ -611,9 +613,6 @@ function AppInner() {
     onEdgeRestore: (panel) => {
       if (panel === "nav") setLeftOpen(true);
       else setRightOpen(true);
-    },
-    onResizeEnd: () => {
-      panelReflowEndRef.current?.();
     },
   });
   const navHistoryRef = useRef(createWorkspaceNavHistory());
@@ -1054,6 +1053,23 @@ function AppInner() {
     [assetCardSize, canvasWidthPx],
   );
   const workspaceCanvasRef = useRef<HTMLDivElement>(null);
+  // REQ-CANVAS-019: rAF handle for the card-size-slider anchor restore.
+  const cardSizeRestoreFrameRef = useRef<number | null>(null);
+  // REQ-CANVAS-019: rAF handle for the container-width (sidebar/window
+  // resize) anchor restore; separate from the card-size one above so the
+  // two triggers never cancel each other's in-flight restoration.
+  const reflowRestoreFrameRef = useRef<number | null>(null);
+  useEffect(
+    () => () => {
+      if (cardSizeRestoreFrameRef.current !== null) {
+        window.cancelAnimationFrame(cardSizeRestoreFrameRef.current);
+      }
+      if (reflowRestoreFrameRef.current !== null) {
+        window.cancelAnimationFrame(reflowRestoreFrameRef.current);
+      }
+    },
+    [],
+  );
   // 筛选与排序面板：外点 / Esc 自动关闭（现代浮层语义），summary 切换不变。
   const pendingRestoredFocusRef = useRef<string | null>(null);
   const pendingRevealRef = useRef<PendingAssetReveal | null>(null);
@@ -1379,118 +1395,6 @@ function AppInner() {
     return () => observer.disconnect();
   }, [assetViewMode, visibleAssets.length, canvasFolderBrowseEntries.length]);
 
-  const canvasReflowLayoutGeneration = useMemo(
-    () =>
-      [
-        assetViewMode,
-        canvasWidthPx,
-        assetCardSize,
-        masonryGridWidth,
-        visibleAssets.length,
-      ].join(":"),
-    [
-      assetViewMode,
-      assetCardSize,
-      canvasWidthPx,
-      masonryGridWidth,
-      visibleAssets.length,
-    ],
-  );
-  const reflowGestureDeferRef = useRef(false);
-  const panelReflowGestureRef = useRef(false);
-  const cardSizeReflowGestureRef = useRef(false);
-  const syncReflowGestureDefer = useCallback(() => {
-    reflowGestureDeferRef.current =
-      panelReflowGestureRef.current || cardSizeReflowGestureRef.current;
-  }, []);
-  const {
-    armCanvasReflow,
-    scheduleReflowCommit,
-    armCanvasReflowFromCanvas,
-    restoreCanvasReflowDuringGesture,
-    cancelPendingReflowRestore,
-  } = useCanvasReflowRestore(
-    workspaceCanvasRef,
-    assetGridRef,
-    canvasReflowLayoutGeneration,
-    Boolean(library),
-    reflowGestureDeferRef,
-  );
-  const beginCardSizeReflowGesture = useCallback(() => {
-    cardSizeReflowGestureRef.current = true;
-    syncReflowGestureDefer();
-    cancelPendingReflowRestore();
-    armCanvasReflowFromCanvas("card-size-gesture-start");
-  }, [
-    armCanvasReflowFromCanvas,
-    cancelPendingReflowRestore,
-    syncReflowGestureDefer,
-  ]);
-  const endCardSizeReflowGesture = useCallback(() => {
-    if (!cardSizeReflowGestureRef.current) return;
-    cardSizeReflowGestureRef.current = false;
-    syncReflowGestureDefer();
-    // Let the final controlled range value commit first. The restore then
-    // runs in the same frame before the browser paints the new layout.
-    window.requestAnimationFrame(() => {
-      scheduleReflowCommit("card-size-end");
-    });
-  }, [scheduleReflowCommit, syncReflowGestureDefer]);
-  useEffect(() => {
-    // Chromium can deliver range-input pointerup to the native control rather
-    // than React's listener when the pointer leaves the toolbar. End the
-    // gesture at the window boundary as well so the final restore is never
-    // left deferred.
-    const finishCardSizeGesture = () => endCardSizeReflowGesture();
-    window.addEventListener("pointerup", finishCardSizeGesture, true);
-    window.addEventListener("pointercancel", finishCardSizeGesture, true);
-    window.addEventListener("blur", finishCardSizeGesture);
-    return () => {
-      window.removeEventListener("pointerup", finishCardSizeGesture, true);
-      window.removeEventListener("pointercancel", finishCardSizeGesture, true);
-      window.removeEventListener("blur", finishCardSizeGesture);
-    };
-  }, [endCardSizeReflowGesture]);
-  const beginPanelResizeWithReflow = useCallback(
-    (panel: "nav" | "inspector", clientX: number) => {
-      panelReflowGestureRef.current = true;
-      syncReflowGestureDefer();
-      cancelPendingReflowRestore();
-      // Capture synchronously from the current canvas. The rAF-tracked
-      // snapshot can lag behind the pointerdown position by one frame.
-      armCanvasReflowFromCanvas(`panel-resize-start:${panel}`);
-      beginPanelResize(panel, clientX);
-    },
-    [
-      armCanvasReflowFromCanvas,
-      beginPanelResize,
-      cancelPendingReflowRestore,
-      syncReflowGestureDefer,
-    ],
-  );
-  useEffect(() => {
-    if (!panelResizing && panelReflowGestureRef.current) {
-      panelReflowGestureRef.current = false;
-      syncReflowGestureDefer();
-      window.requestAnimationFrame(() => {
-        scheduleReflowCommit("panel-resize-end");
-      });
-    }
-  }, [panelResizing, scheduleReflowCommit, syncReflowGestureDefer]);
-  useEffect(() => {
-    panelReflowEndRef.current = () => {
-      if (!panelReflowGestureRef.current) return;
-      panelReflowGestureRef.current = false;
-      syncReflowGestureDefer();
-      window.requestAnimationFrame(() => {
-        scheduleReflowCommit("panel-resize-end-pointer");
-      });
-    };
-    return () => {
-      panelReflowEndRef.current = null;
-    };
-  }, [scheduleReflowCommit, syncReflowGestureDefer]);
-
   // REQ-FOLDER-010 / Serpent-nu6o: selection order must match the canvas,
   // including trash tombstone cards (folderBrowseEntries is empty in trash).
   const visibleFolderIds = useMemo(
@@ -1681,21 +1585,12 @@ function AppInner() {
         ? captureAnchor(anchorCard, anchorX, anchorY)
         : null;
 
-      armCanvasReflow(
-        anchorCard && anchorState
-          ? captureBrowseViewSnapshot(
-              anchorCard.assetId,
-              anchorCard,
-              root.scrollLeft,
-              root.scrollTop,
-            )
-          : null,
-        "card-size",
-      );
       setCanvasPrefs((p) => ({ ...p, cardSize: nextSize }));
-      scheduleReflowCommit("card-size");
+      // Serpent-32p: always re-anchor after settle; width/size reflow may reset
+      // scrollTop mid-wait, and bailing left the visible set wrong.
+      scheduleAnchorRestore(root, anchorState, cardSizeRestoreFrameRef);
     },
-    [armCanvasReflow, assetCardSize, scheduleReflowCommit],
+    [assetCardSize],
   );
 
   // REQ-CANVAS-019: dragging the sidebar or resizing the window changes the
@@ -1730,22 +1625,21 @@ function AppInner() {
       }
       lastWidth = width;
 
-      // During a live gesture restore against the fixed pointerdown snapshot
-      // before paint; after release, use the debounced multi-pass commit.
-      if (reflowGestureDeferRef.current) {
-        restoreCanvasReflowDuringGesture("canvas-width");
-      } else {
-        armCanvasReflowFromCanvas("canvas-width");
-        scheduleReflowCommit("canvas-width");
-      }
+      const rootRect = canvas.getBoundingClientRect();
+      const cards: AnchorCard[] = Array.from(
+        canvas.querySelectorAll<HTMLElement>("[data-asset-id]"),
+      ).map((el) => ({
+        assetId: el.dataset.assetId!,
+        ...el.getBoundingClientRect(),
+      }));
+      // Prefer topmost visible card so the leading visible set (A/B/C) stays
+      // after column-count changes — center-nearest jumped too easily.
+      const anchorState = captureReflowAnchorFromCards(cards, rootRect);
+      scheduleAnchorRestore(canvas, anchorState, reflowRestoreFrameRef);
     });
     observer.observe(canvas);
     return () => observer.disconnect();
-  }, [
-    armCanvasReflowFromCanvas,
-    restoreCanvasReflowDuringGesture,
-    scheduleReflowCommit,
-  ]);
+  }, []);
 
   useEffect(() => {
     saveCanvasPreferences(canvasPrefs);
@@ -6941,8 +6835,6 @@ function AppInner() {
               libraryOpen={Boolean(library)}
               locale={locale}
               onCardSizeChange={resizeAssetCards}
-              onCardSizeGestureEnd={endCardSizeReflowGesture}
-              onCardSizeGestureStart={beginCardSizeReflowGesture}
               platform={SHORTCUT_PLATFORM}
             />
           </div>
@@ -8523,7 +8415,7 @@ function AppInner() {
           onDoubleClick={() => resetPanelWidth("nav")}
           onPointerDown={(event) => {
             event.preventDefault();
-            beginPanelResizeWithReflow("nav", event.clientX);
+            beginPanelResize("nav", event.clientX);
           }}
           role="separator"
           style={{ left: navPanelWidth - 3 }}
@@ -8551,7 +8443,7 @@ function AppInner() {
           onDoubleClick={() => resetPanelWidth("inspector")}
           onPointerDown={(event) => {
             event.preventDefault();
-            beginPanelResizeWithReflow("inspector", event.clientX);
+            beginPanelResize("inspector", event.clientX);
           }}
           role="separator"
           style={{ right: inspectorPanelWidth - 3 }}

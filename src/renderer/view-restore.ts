@@ -17,7 +17,6 @@ import {
   type CanvasAnchor,
   type RectLike,
 } from "./canvas-scroll-anchor";
-import { escapeCssAttrValue } from "./escape-css-selector";
 
 export interface BrowseViewSnapshot {
   scrollLeft: number;
@@ -57,43 +56,6 @@ export interface ScrollExtent {
  * position, so the delta only needs to correct for reflow that happened
  * while the viewer was open.
  */
-/** Apply a captured browse snapshot to a scroll container (viewer close + reflow). */
-export function applyBrowseScrollSnapshot(
-  canvas: {
-    scrollLeft: number;
-    scrollTop: number;
-    scrollWidth: number;
-    scrollHeight: number;
-    clientWidth: number;
-    clientHeight: number;
-    scrollTo: (options: { left: number; top: number }) => void;
-    querySelector: (selector: string) => Element | null;
-  },
-  snapshot: BrowseViewSnapshot,
-): boolean {
-  canvas.scrollTo({
-    left: snapshot.scrollLeft,
-    top: snapshot.scrollTop,
-  });
-  const restoredCard = snapshot.anchor
-    ? canvas.querySelector(
-        `[data-asset-id="${escapeCssAttrValue(snapshot.anchor.assetId)}"]`,
-      )
-    : null;
-  const target = resolveBrowseRestoreScroll(
-    snapshot,
-    restoredCard?.getBoundingClientRect() ?? null,
-    {
-      scrollWidth: canvas.scrollWidth,
-      scrollHeight: canvas.scrollHeight,
-      clientWidth: canvas.clientWidth,
-      clientHeight: canvas.clientHeight,
-    },
-  );
-  canvas.scrollTo({ left: target.left, top: target.top });
-  return Boolean(restoredCard ?? !snapshot.anchor);
-}
-
 export function resolveBrowseRestoreScroll(
   snapshot: BrowseViewSnapshot,
   restoredCardRect: RectLike | null,

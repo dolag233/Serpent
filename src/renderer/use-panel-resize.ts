@@ -30,8 +30,6 @@ export interface UsePanelResizeOptions {
   onAutoHide?: (panel: ResizablePanel) => void;
   /** REQ-SHELL-011: expand after dragging inward from the screen edge. */
   onEdgeRestore?: (panel: ResizablePanel) => void;
-  /** Notify consumers at the exact end of the pointer session. */
-  onResizeEnd?: (panel: ResizablePanel) => void;
 }
 
 export interface UsePanelResizeReturn {
@@ -53,15 +51,13 @@ export function usePanelResize(
     storageOrOptions && "getItem" in storageOrOptions
       ? { storage: storageOrOptions }
       : (storageOrOptions ?? {});
-  const { storage, onAutoHide, onEdgeRestore, onResizeEnd } = options;
+  const { storage, onAutoHide, onEdgeRestore } = options;
   const onAutoHideRef = useRef(onAutoHide);
   const onEdgeRestoreRef = useRef(onEdgeRestore);
-  const onResizeEndRef = useRef(onResizeEnd);
   useEffect(() => {
     onAutoHideRef.current = onAutoHide;
     onEdgeRestoreRef.current = onEdgeRestore;
-    onResizeEndRef.current = onResizeEnd;
-  }, [onAutoHide, onEdgeRestore, onResizeEnd]);
+  }, [onAutoHide, onEdgeRestore]);
 
   const [widths, setWidths] = useState(() => loadShellPreferences(storage));
   const [resizing, setResizing] = useState<ResizablePanel | null>(null);
@@ -120,9 +116,6 @@ export function usePanelResize(
         window.removeEventListener("pointerup", onUp);
         const drag = dragRef.current;
         dragRef.current = null;
-        if (drag) {
-          onResizeEndRef.current?.(drag.panel);
-        }
         setResizing(null);
         // Persist only when the pane is still open (resize phase). Hidden
         // edge-restore ends without writing a collapsed width.

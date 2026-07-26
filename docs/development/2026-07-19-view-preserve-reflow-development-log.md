@@ -45,13 +45,6 @@
 ## 未覆盖 / 后续
 
 - **Computer Use 未执行**：本回合无法操作真实 Electron 应用做视觉验收（当前环境不具备桌面控制能力）。人工验收步骤已写入 `docs/qa/human-acceptance-checklist.md` 的 `VIEWER-001`（回归复验）与新增 `CANVAS-021`；请人工按步骤操作后给出结论。
-
-## 2026-07-26 收口修复
-
-- 用户再次反馈侧栏拖动、卡片缩放期间及完成后仍需保持重排前的大致可见区域；`CANVAS-021` 继续保持「人类验收不通过」，不能用自动化结论替代桌面验收。
-- 发现滚动快照跟踪器把所有 `scrollTop <= 48` 都视为布局回弹，用户主动滚回顶部后仍会保留旧的深层快照；下一次重排可能因此跳回旧区域。现在只有在重排快照已 armed 时才忽略回顶，普通用户滚动到顶部会更新跟踪快照。
-- 重排开始时只有在锚点仍存在于当前浏览范围才允许复用 tracked snapshot，避免切换文件夹/搜索范围后复用旧资产 ID。
-- 定向验证：`npx vitest run tests/unit/browse-scroll-snapshot.test.ts tests/unit/canvas-reflow-restore.test.ts tests/unit/view-restore.test.ts`（18/18）；新增主动回顶、重排回弹和跨范围锚点用例。真实 Electron 浏览旅程尝试执行 `node scripts/run-e2e.mjs tests/e2e/asset-pagination.test.ts`，在创建测试文件夹后因既有测试定位器超时退出，未形成 CANVAS-021 桌面证据。
 - **真实 Electron E2E 未新增**：`VIEWER-001` 现有的 `tests/e2e/asset-pagination.test.ts` 覆盖"深滚动进入/退出查看页"场景，但不覆盖"查看期间拖侧栏/改窗口宽度导致重排"这一具体回归路径；受限于本回合时间与并行 filter agent 同时改动 `App.tsx`，未新增覆盖该组合场景的 E2E，只有几何层的单测。建议后续补一条 Playwright 用例：进入查看页 → 触发窗口 resize → 关闭 → 断言选中资产仍可见。
 - **画布重排锚点的"最近命中"策略**是几何近似（挑离视口中心最近、且与可视区域有垂直重叠的卡片），跟已有卡片缩放锚点逻辑一致，但没有模拟真实鼠标 hover 命中测试（`elementFromPoint`）；容器宽度重排场景下没有明确的"鼠标位置"概念，因此用画布视口中心作为锚点参考点，如后续人工验收发现锚点资产选择不符合直觉（例如用户视觉关注点不在正中），可再调整参考点策略。
 - `MoveDialog.tsx` 的既有 `directAssetCount` 类型错误与本工单无关，未做修复（避免与同时进行文件夹维度相关改动的并行 agent 冲突）；移交该改动的负责方处理。
