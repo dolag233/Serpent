@@ -74,6 +74,9 @@ export interface SharpInstance {
     pages?: number;
     delay?: number[];
     loop?: number;
+    space?: string;
+    hasProfile?: boolean;
+    icc?: Buffer;
   }>;
   rotate(): SharpInstance;
   toColourspace(colourspace: 'srgb'): SharpInstance;
@@ -149,12 +152,12 @@ const FFMPEG_VERSION = '8.1';
 const AUDIO_WAVEFORM_GENERATOR = `ffmpeg@${FFMPEG_VERSION}+${AUDIO_WAVEFORM_COVER_GENERATOR_TAG}`;
 const MAX_WEBM_PROXY_BYTES = 512 * 1024 * 1024;
 const SERPENT_OCIO_CONFIG = 'ocio://studio-config-v4.0.0_aces-v2.0_ocio-v2.5';
-const DEFAULT_OIIO_INPUT_COLOR_SPACE = 'scene_linear';
 const MEDIA_JOB_KINDS = [
   'generate_thumbnail',
   'generate_video_poster',
   'generate_contact_sheet',
   'generate_webm_proxy',
+  'generate_audio_proxy',
   'extract_palette',
 ] as const;
 type MediaJobKind = (typeof MEDIA_JOB_KINDS)[number];
@@ -181,6 +184,50 @@ type OiioArtifactErrorCode =
   | 'OIIO_REQUIRED'
   | 'OIIO_COLOR_TRANSFORM_FAILED'
   | 'OIIO_GENERATION_FAILED';
+
+export type ExrPlaneDescriptor = {
+  index: number;
+  label: string;
+};
+
+/**
+ * `oiiotool --info -v -a` reports each EXR part as `subimage N`. Depending on
+ * the OIIO version and EXR writer, the name is either on that header in
+ * parentheses or in a following `name:`/`oiio:subimagename:` metadata line.
+ * Keep the parser deliberately conservative: an unfamiliar OIIO build still
+ * gets a usable Part 0 preview rather than a guessed channel name.
+ */
+export function parseExrPlaneDescriptors(output: string): ExrPlaneDescriptor[] {
+  const planes = new Map<number, { index: number; name?: string }>();
+  let currentIndex: number | null = null;
+  for (const line of output.split(/\r?\n/u)) {
+    const header = /^\s*subimage\s+(\d+)(?:\s*\(([^)]+)\))?\s*:?/iu.exec(line);
+    if (header) {
+      const index = Number(header[1]);
+      if (!Number.isSafeInteger(index) || index < 0) {
+        currentIndex = null;
+        continue;
+      }
+      const name = header[2]?.trim();
+      planes.set(index, { index, ...(name ? { name } : {}) });
+      currentIndex = index;
+      continue;
+    }
+
+    if (currentIndex === null) continue;
+    const metadataName = /^\s*(?:name|oiio:subimagename):\s*"([^"]+)"\s*$/iu.exec(line);
+    const name = metadataName?.[1]?.trim();
+    if (name) planes.set(currentIndex, { index: currentIndex, name });
+  }
+  return planes.size > 0
+    ? [...planes.values()]
+      .sort((left, right) => left.index - right.index)
+      .map(({ index, name }) => ({
+        index,
+        label: name ? `Part ${index}: ${name}` : `Part ${index}`,
+      }))
+    : [{ index: 0, label: 'Part 0' }];
+}
 
 class OiioInvocationError extends Error {
   constructor(
@@ -245,6 +292,24 @@ import {
   isAudioFileName,
 } from '../shared/audio-media';
 import {
+  IMAGE_EXTENSIONS,
+  directImageMimeForExtension,
+  imageDecoderForExtension,
+  imageMimeForExtension,
+  isSupportedImageExtension,
+  isSupportedVideoExtension,
+  videoMimeForExtension,
+} from '../shared/media-formats';
+import {
+  COMMON_IMAGE_COLOR_SPACE_OPTIONS,
+  colorSpaceInfoFromName,
+  defaultImageColorSpace,
+  parseIccProfileDescription,
+  parseOiioColorSpaceInfo,
+  type ImageColorSpaceInfo,
+  type ImageColorSpaceOption,
+} from './image-color-space';
+import {
   countTextLines,
   expandFormatFilterTokens,
   isTextFileName,
@@ -252,6 +317,7 @@ import {
   TEXT_VIEWER_MAX_BYTES,
   textMimeForExtension,
 } from '../shared/text-media';
+import { canOverrideImageColorSpace } from '../shared/image-color-space';
 import { inferRelinkBatchRoot } from '../shared/infer-relink-batch-root';
 import { assetSupportsThumbnail } from '../shared/thumbnail-support';
 import {
@@ -1288,6 +1354,99 @@ const TRASH_TOMBSTONE_ASSET_BIND_SCHEMA_CHECKSUM = createHash('sha256')
   .update(TRASH_TOMBSTONE_ASSET_BIND_SCHEMA_SQL)
   .digest('hex');
 
+// Migration v21 (Serpent-aav1): audio must not depend on Chromium's variable
+// container/codec support. Add a distinct Opus/Ogg playback proxy and job kind
+// without changing the established video WebM artifact contract.
+const MEDIA_PROXY_SCHEMA_SQL = `
+  CREATE TABLE revision_artifacts_v21 (
+    artifact_id TEXT PRIMARY KEY,
+    revision_id TEXT NOT NULL REFERENCES revisions(revision_id) ON DELETE CASCADE,
+    kind TEXT NOT NULL CHECK (
+      kind IN ('thumbnail', 'video_poster', 'contact_sheet', 'webm_proxy', 'audio_proxy',
+               'extracted_metadata', 'extracted_palette')
+    ),
+    mime_type TEXT NOT NULL,
+    byte_size INTEGER NOT NULL CHECK (byte_size >= 0),
+    file_path TEXT NOT NULL,
+    width INTEGER,
+    height INTEGER,
+    generator_version TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (
+      status IN ('pending', 'generating', 'ready', 'failed')
+    ),
+    error_code TEXT,
+    generated_at TEXT,
+    invalidated_at TEXT,
+    duration_ms INTEGER CHECK (duration_ms IS NULL OR duration_ms >= 0),
+    dominant_hue REAL CHECK (dominant_hue IS NULL OR (dominant_hue >= 0 AND dominant_hue < 360)),
+    dominant_lightness REAL CHECK (dominant_lightness IS NULL OR (dominant_lightness >= 0 AND dominant_lightness <= 1))
+  );
+  INSERT INTO revision_artifacts_v21
+    (artifact_id, revision_id, kind, mime_type, byte_size, file_path, width, height,
+     generator_version, status, error_code, generated_at, invalidated_at, duration_ms,
+     dominant_hue, dominant_lightness)
+    SELECT artifact_id, revision_id, kind, mime_type, byte_size, file_path, width, height,
+           generator_version, status, error_code, generated_at, invalidated_at, duration_ms,
+           dominant_hue, dominant_lightness
+      FROM revision_artifacts;
+  DROP TABLE revision_artifacts;
+  ALTER TABLE revision_artifacts_v21 RENAME TO revision_artifacts;
+  CREATE UNIQUE INDEX revision_artifacts_current
+    ON revision_artifacts(revision_id, kind)
+    WHERE invalidated_at IS NULL;
+  CREATE INDEX revision_artifacts_duration_idx
+    ON revision_artifacts(duration_ms)
+    WHERE kind = 'extracted_metadata' AND status = 'ready' AND invalidated_at IS NULL;
+  CREATE INDEX revision_artifacts_palette_sort_idx
+    ON revision_artifacts(dominant_hue, dominant_lightness)
+    WHERE kind = 'extracted_palette' AND status = 'ready' AND invalidated_at IS NULL;
+
+  CREATE TABLE jobs_v21 (
+    job_id TEXT PRIMARY KEY,
+    library_id TEXT NOT NULL,
+    asset_id TEXT REFERENCES assets(asset_id) ON DELETE CASCADE,
+    revision_id TEXT REFERENCES revisions(revision_id) ON DELETE SET NULL,
+    kind TEXT NOT NULL CHECK (
+      kind IN ('generate_thumbnail', 'generate_video_poster',
+               'generate_contact_sheet', 'generate_webm_proxy', 'generate_audio_proxy',
+               'extract_metadata', 'extract_palette',
+               'ai.image.analysis', 'ai.video.analysis')
+    ),
+    status TEXT NOT NULL CHECK (
+      status IN ('queued', 'running', 'paused', 'succeeded', 'failed', 'cancelled')
+    ),
+    priority INTEGER NOT NULL DEFAULT 0,
+    progress REAL DEFAULT 0.0,
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    error_code TEXT,
+    error_detail TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  INSERT INTO jobs_v21 SELECT * FROM jobs;
+  DROP TABLE jobs;
+  ALTER TABLE jobs_v21 RENAME TO jobs;
+  CREATE INDEX jobs_library_status_priority
+    ON jobs(library_id, status, priority DESC, created_at);
+`;
+const MEDIA_PROXY_SCHEMA_CHECKSUM = createHash('sha256')
+  .update(MEDIA_PROXY_SCHEMA_SQL)
+  .digest('hex');
+
+// Migration v22 (Serpent-aoj0): keep a user-selected input color space
+// separate from file metadata so the source remains untouched and clearing the
+// override restores automatic detection.
+const COLOR_SPACE_OVERRIDE_SCHEMA_SQL = `
+  CREATE TABLE IF NOT EXISTS asset_color_space_overrides (
+    asset_id TEXT PRIMARY KEY REFERENCES assets(asset_id) ON DELETE CASCADE,
+    color_space TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+`;
+const COLOR_SPACE_OVERRIDE_SCHEMA_CHECKSUM = createHash('sha256')
+  .update(COLOR_SPACE_OVERRIDE_SCHEMA_SQL)
+  .digest('hex');
+
 const MIGRATIONS = [
   { version: 1, sql: INITIAL_SCHEMA_SQL, checksum: INITIAL_SCHEMA_CHECKSUM },
   { version: 2, sql: ASSET_SCHEMA_SQL, checksum: ASSET_SCHEMA_CHECKSUM },
@@ -1329,6 +1488,8 @@ const MIGRATIONS = [
     sql: TRASH_TOMBSTONE_ASSET_BIND_SCHEMA_SQL,
     checksum: TRASH_TOMBSTONE_ASSET_BIND_SCHEMA_CHECKSUM,
   },
+  { version: 21, sql: MEDIA_PROXY_SCHEMA_SQL, checksum: MEDIA_PROXY_SCHEMA_CHECKSUM },
+  { version: 22, sql: COLOR_SPACE_OVERRIDE_SCHEMA_SQL, checksum: COLOR_SPACE_OVERRIDE_SCHEMA_CHECKSUM },
 ] as const;
 const SUPPORTED_SCHEMA_VERSION = MIGRATIONS.at(-1)!.version;
 
@@ -2882,6 +3043,10 @@ export class LibraryService {
     string,
     Map<MediaAutoRepairComponent, number>
   >();
+  /** Successful OIIO part probes are immutable for a revision. */
+  private readonly exrPlanesByRevision = new Map<string, ExrPlaneDescriptor[]>();
+  /** Color metadata probes are immutable for a revision. */
+  private readonly imageColorSpaceByRevision = new Map<string, ImageColorSpaceInfo>();
   /**
    * After in-app filesystem mutations (text save, copy, move, import…), watcher
    * refreshes still update DB but must not surface a "disk synced" toast — that
@@ -5680,6 +5845,8 @@ export class LibraryService {
                 OR LOWER(a.relative_file_path) LIKE '%.mov'
                 OR LOWER(a.relative_file_path) LIKE '%.avi'
                 OR LOWER(a.relative_file_path) LIKE '%.wmv'
+                OR LOWER(a.relative_file_path) LIKE '%.mkv'
+                OR LOWER(a.relative_file_path) LIKE '%.m4v'
               THEN 'video_poster'
               ELSE 'thumbnail'
             END
@@ -6123,6 +6290,8 @@ export class LibraryService {
                 OR LOWER(a.relative_file_path) LIKE '%.mov'
                 OR LOWER(a.relative_file_path) LIKE '%.avi'
                 OR LOWER(a.relative_file_path) LIKE '%.wmv'
+                OR LOWER(a.relative_file_path) LIKE '%.mkv'
+                OR LOWER(a.relative_file_path) LIKE '%.m4v'
               THEN 'video_poster'
               ELSE 'thumbnail'
             END
@@ -7340,6 +7509,56 @@ export class LibraryService {
     return { automaticPalette: [], effectivePalette: [], paletteSource: null };
   }
 
+  setAssetColorSpaceOverride(input: {
+    libraryId: string;
+    assetId: string;
+    colorSpace: string | null;
+  }): { assetId: string; colorSpaceOverride: string | null } {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    const asset = openLibrary.connection
+      .prepare('SELECT current_revision_id FROM assets WHERE asset_id = ?')
+      .get(input.assetId) as { current_revision_id: string | null } | undefined;
+    if (!asset) throw new LibraryServiceError('ASSET_NOT_FOUND');
+
+    const normalized = input.colorSpace?.trim() || null;
+    if (normalized && !colorSpaceInfoFromName(normalized, 'metadata')) {
+      throw new LibraryServiceError('INVALID_ASSET_METADATA');
+    }
+    const now = new Date().toISOString();
+    if (normalized) {
+      openLibrary.connection.prepare(
+        `INSERT INTO asset_color_space_overrides(asset_id, color_space, updated_at)
+         VALUES (?, ?, ?)
+         ON CONFLICT(asset_id) DO UPDATE SET color_space = excluded.color_space,
+           updated_at = excluded.updated_at`,
+      ).run(input.assetId, normalized, now);
+    } else {
+      openLibrary.connection
+        .prepare('DELETE FROM asset_color_space_overrides WHERE asset_id = ?')
+        .run(input.assetId);
+    }
+
+    const isImage = LibraryService.detectMediaType(this.resolveAssetPath(input.libraryId, input.assetId)) === 'image';
+    if (asset.current_revision_id && isImage) {
+      openLibrary.connection.prepare(
+        `UPDATE revision_artifacts
+            SET invalidated_at = ?
+          WHERE revision_id = ?
+            AND kind = 'thumbnail'
+            AND invalidated_at IS NULL`,
+      ).run(now, asset.current_revision_id);
+      this.imageColorSpaceByRevision.delete(asset.current_revision_id);
+    }
+    this.options.onAssetsChanged?.({
+      type: 'asset.changed',
+      libraryId: input.libraryId,
+      changedCount: 1,
+      missingCount: 0,
+      source: 'client',
+    });
+    return { assetId: input.assetId, colorSpaceOverride: normalized };
+  }
+
   getAssetMetadata(input: { libraryId: string; assetId: string }): AssetMetadataResult {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
 
@@ -7940,22 +8159,6 @@ export class LibraryService {
 
     const ext = path.extname(asset.relative_file_path).toLowerCase();
     const mimeMap: Record<string, string> = {
-      '.png': 'image/png',
-      '.jpg': 'image/jpeg',
-      '.jpeg': 'image/jpeg',
-      '.gif': 'image/gif',
-      '.tiff': 'image/tiff',
-      '.tif': 'image/tiff',
-      '.webp': 'image/webp',
-      '.bmp': 'image/bmp',
-      '.svg': 'image/svg+xml',
-      '.exr': 'image/x-exr',
-      '.tga': 'image/x-tga',
-      '.mp4': 'video/mp4',
-      '.webm': 'video/webm',
-      '.mov': 'video/quicktime',
-      '.avi': 'video/x-msvideo',
-      '.wmv': 'video/x-ms-wmv',
       '.wav': 'audio/wav',
       '.mp3': 'audio/mpeg',
       '.ogg': 'audio/ogg',
@@ -7965,7 +8168,10 @@ export class LibraryService {
       '.flac': 'audio/flac',
       '.opus': 'audio/ogg',
     };
-    const mime = mimeMap[ext] ?? 'application/octet-stream';
+    const mime = imageMimeForExtension(ext)
+      ?? videoMimeForExtension(ext)
+      ?? mimeMap[ext]
+      ?? 'application/octet-stream';
     const isVideo = mime.startsWith('video/');
 
     return { filePath, mime, isVideo };
@@ -8449,11 +8655,10 @@ export class LibraryService {
         WHERE job_id = ? AND status = 'paused'`,
     );
 
-    // Image extensions for filtering.
-    const imageExts = new Set([
-      '.png', '.jpg', '.jpeg', '.gif', '.tiff', '.tif',
-      '.webp', '.bmp', '.svg', '.exr', '.tga',
-    ]);
+    // Product format registry, shared with thumbnail dispatch. Importing a
+    // file is intentionally broader than this set; this gate only decides
+    // whether AI can obtain a decoded visual derivative.
+    const imageExts = new Set<string>(IMAGE_EXTENSIONS);
     const videoExts = new Set([
       '.mp4', '.mov', '.avi', '.wmv', '.webm', '.mkv', '.m4v',
     ]);
@@ -8635,7 +8840,7 @@ export class LibraryService {
         error_code = 'PROCESS_INTERRUPTED', error_detail = NULL, updated_at = ?
         WHERE library_id = ? AND status = 'running'
           AND kind IN ('generate_thumbnail', 'generate_video_poster',
-                       'generate_contact_sheet', 'generate_webm_proxy',
+                       'generate_contact_sheet', 'generate_webm_proxy', 'generate_audio_proxy',
                        'extract_palette')`,
     ).run(new Date().toISOString(), openLibrary.summary.libraryId);
   }
@@ -9131,19 +9336,16 @@ export class LibraryService {
 
   /**
    * Detect media type from a file extension.
-   * Returns 'image' for PNG/JPEG/GIF/TIFF/WebP/BMP, 'video' for MP4/MOV/AVI/WMV/WebM,
-   * 'audio' for WAV/MP3/OGG/M4A/AAC/FLAC/Opus, 'text' for common plain-text/code
-   * extensions, and 'other' for everything else (including EXR/TGA which would need OIIO).
+   * Returns a product media category, not a Chromium capability. Images whose
+   * source cannot be safely mounted in Chromium (RAW, EXR, PSD, etc.) still
+   * classify as `image` because the Worker owns an OIIO-derived preview path.
    */
   static detectMediaType(filenameOrMime: string): 'image' | 'video' | 'audio' | 'text' | 'other' {
     const lower = filenameOrMime.toLowerCase();
-    if (lower.endsWith('.png') || lower.endsWith('.jpg') || lower.endsWith('.jpeg') ||
-        lower.endsWith('.gif') || lower.endsWith('.tiff') || lower.endsWith('.tif') ||
-        lower.endsWith('.webp') || lower.endsWith('.bmp')) {
+    if (isSupportedImageExtension(lower)) {
       return 'image';
     }
-    if (lower.endsWith('.mp4') || lower.endsWith('.webm') ||
-        lower.endsWith('.mov') || lower.endsWith('.avi') || lower.endsWith('.wmv')) {
+    if (isSupportedVideoExtension(lower)) {
       return 'video';
     }
     if (isAudioFileName(lower)) {
@@ -9202,8 +9404,8 @@ export class LibraryService {
     if (!assetRow?.current_revision_id) throw new LibraryServiceError('ASSET_NOT_FOUND');
     const revisionId = assetRow.current_revision_id;
     const ext = path.extname(assetPath).toLowerCase();
-    const isOiioImage = ext === '.exr' || ext === '.tga';
-    if (mediaType === 'other' && !isOiioImage) {
+    const imageDecoder = imageDecoderForExtension(ext);
+    if (mediaType === 'other' || (mediaType === 'image' && !imageDecoder)) {
       throw new LibraryServiceError('INVALID_IMPORT_DECISION', {
         reason: 'UNSUPPORTED_FORMAT',
       });
@@ -9228,8 +9430,38 @@ export class LibraryService {
       )
       .run(new Date().toISOString(), revisionId, ...artifactKinds);
 
-    if (mediaType === 'image') {
+    const colorSpaceOverride = mediaType === 'image'
+      ? this.getColorSpaceOverride(openLibrary.connection, input.assetId)
+      : null;
+    if (
+      mediaType === 'image' &&
+      imageDecoder === 'sharp' &&
+      (!colorSpaceOverride || !canOverrideImageColorSpace(ext))
+    ) {
       return this.generateImageThumbnail(input, openLibrary, assetPath, revisionId, execution);
+    }
+
+    if (mediaType === 'image' && imageDecoder === 'oiio') {
+      const colorSpace = await this.getImageColorSpace(revisionId, assetPath, 'oiio');
+      return this.generateOiiOThumbnail(
+        input,
+        openLibrary,
+        assetPath,
+        revisionId,
+        { inputColorSpace: colorSpaceOverride ?? colorSpace.id },
+        execution,
+      );
+    }
+
+    if (mediaType === 'image' && imageDecoder === 'sharp' && colorSpaceOverride) {
+      return this.generateOiiOThumbnail(
+        input,
+        openLibrary,
+        assetPath,
+        revisionId,
+        { inputColorSpace: colorSpaceOverride },
+        execution,
+      );
     }
 
     if (mediaType === 'video') {
@@ -9238,10 +9470,6 @@ export class LibraryService {
 
     if (mediaType === 'audio') {
       return this.generateAudioArtifacts(input, openLibrary, assetPath, revisionId, execution);
-    }
-
-    if (isOiioImage) {
-      return this.generateOiiOThumbnail(input, openLibrary, assetPath, revisionId, {}, execution);
     }
 
     throw new LibraryServiceError('INTERNAL_ERROR');
@@ -9754,6 +9982,31 @@ export class LibraryService {
     ).run(randomUUID(), openLibrary.summary.libraryId, assetId, revisionId, kind, priority, now, now);
   }
 
+  private enqueueAudioProxyJob(
+    openLibrary: OpenLibrary,
+    assetId: string,
+    revisionId: string,
+    priority: number,
+  ): void {
+    const terminalArtifact = openLibrary.connection.prepare(
+      `SELECT artifact_id FROM revision_artifacts WHERE revision_id = ? AND kind = 'audio_proxy'
+        AND status IN ('ready', 'failed') AND invalidated_at IS NULL LIMIT 1`,
+    ).get(revisionId);
+    if (terminalArtifact) return;
+    const active = openLibrary.connection.prepare(
+      `SELECT job_id FROM jobs WHERE asset_id = ? AND revision_id = ?
+        AND kind = 'generate_audio_proxy' AND status IN ('queued', 'running', 'paused') LIMIT 1`,
+    ).get(assetId, revisionId);
+    if (active) return;
+    const now = new Date().toISOString();
+    openLibrary.connection.prepare(
+      `INSERT INTO jobs
+         (job_id, library_id, asset_id, revision_id, kind, status, priority, progress,
+          attempt_count, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'generate_audio_proxy', 'queued', ?, 0.0, 0, ?, ?)`,
+    ).run(randomUUID(), openLibrary.summary.libraryId, assetId, revisionId, priority, now, now);
+  }
+
   private enqueuePaletteJob(
     openLibrary: OpenLibrary,
     assetId: string,
@@ -9934,6 +10187,33 @@ export class LibraryService {
         { libraryId, assetId }, openLibrary, assetPath, revisionId, ffmpegPath, artifactsDir, durationSec, execution,
       );
     }
+    return true;
+  }
+
+  private async generateQueuedAudioProxy(
+    libraryId: string,
+    assetId: string,
+    queuedRevisionId: string,
+    execution: MediaExecutionContext,
+  ): Promise<boolean> {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    const asset = openLibrary.connection.prepare(
+      'SELECT current_revision_id FROM assets WHERE asset_id = ?',
+    ).get(assetId) as { current_revision_id: string | null } | undefined;
+    if (!asset?.current_revision_id) throw new LibraryServiceError('ASSET_NOT_FOUND');
+    if (asset.current_revision_id !== queuedRevisionId) return false;
+    const assetPath = this.resolveAssetPath(libraryId, assetId);
+    const artifactsDir = this.artifactsDir(openLibrary);
+    mkdirSync(artifactsDir, { recursive: true });
+    await this.generateAudioProxy(
+      { libraryId, assetId },
+      openLibrary,
+      assetPath,
+      queuedRevisionId,
+      resolveFfmpegPath(),
+      artifactsDir,
+      execution,
+    );
     return true;
   }
 
@@ -10202,6 +10482,72 @@ export class LibraryService {
     }
   }
 
+  /** Generate an Opus/Ogg proxy so audio playback does not rely on source codecs. */
+  private async generateAudioProxy(
+    input: { libraryId: string; assetId: string },
+    openLibrary: OpenLibrary,
+    assetPath: string,
+    revisionId: string,
+    ffmpegPath: string,
+    artifactsDir: string,
+    execution: MediaExecutionContext,
+  ): Promise<string> {
+    const artifactId = randomUUID();
+    const artifactRelPath = `${artifactId}.ogg`;
+    const artifactAbsPath = path.join(artifactsDir, artifactRelPath);
+
+    try {
+      const result = await this.runFfmpeg(ffmpegPath, [
+        '-y',
+        '-i', assetPath,
+        '-map', '0:a:0?',
+        '-vn',
+        '-c:a', 'libopus',
+        '-b:a', '128k',
+        '-f', 'ogg',
+        artifactAbsPath,
+      ], { timeoutMs: 600_000, signal: execution.signal });
+      if (result.exitCode !== 0) {
+        throw new Error(`ffmpeg audio proxy exited with code ${result.exitCode}: ${result.stderr.slice(-200)}`);
+      }
+      const outputStat = statSync(artifactAbsPath);
+      if (outputStat.size > MAX_WEBM_PROXY_BYTES) {
+        rmSync(artifactAbsPath, { force: true });
+        const error = new Error(
+          `Generated audio proxy exceeds the 512 MiB safety limit (${outputStat.size} bytes).`,
+        ) as Error & { code: string };
+        error.code = 'MEDIA_PROCESSING_FAILED';
+        throw error;
+      }
+      openLibrary.connection.prepare(
+        `INSERT INTO revision_artifacts
+           (artifact_id, revision_id, kind, mime_type, byte_size, file_path,
+            generator_version, status, generated_at)
+         VALUES (?, ?, 'audio_proxy', 'audio/ogg', ?, ?, ?, 'ready', ?)`,
+      ).run(
+        artifactId,
+        revisionId,
+        outputStat.size,
+        artifactRelPath,
+        `ffmpeg@${FFMPEG_VERSION};opus@128k`,
+        new Date().toISOString(),
+      );
+      return artifactId;
+    } catch (error) {
+      this.writeFailedArtifact(
+        openLibrary,
+        artifactId,
+        revisionId,
+        'audio_proxy',
+        'audio/ogg',
+        artifactRelPath,
+        `ffmpeg@${FFMPEG_VERSION};opus@128k`,
+        error,
+      );
+      throw error;
+    }
+  }
+
   // ── OIIO thumbnail (EXR/TGA and complex TIFF fallback) ─────────────
 
   private async generateOiiOThumbnail(
@@ -10209,7 +10555,7 @@ export class LibraryService {
     openLibrary: OpenLibrary,
     assetPath: string,
     revisionId: string,
-    options: { exposureStops?: number; inputColorSpace?: string } = {},
+    options: { exposureStops?: number; inputColorSpace?: string; subimage?: number } = {},
     execution: MediaExecutionContext = {},
   ): Promise<{ artifactId: string }> {
     const oiiotoolPath = resolveOiiotoolPath();
@@ -10218,14 +10564,16 @@ export class LibraryService {
     mkdirSync(artifactsDir, { recursive: true });
     const artifactRelPath = `${artifactId}.png`;
     const artifactAbsPath = path.join(artifactsDir, artifactRelPath);
+    const subimage = Number.isSafeInteger(options.subimage) && (options.subimage ?? 0) >= 0
+      ? options.subimage ?? 0
+      : 0;
 
     try {
       const exposureStops = Number.isFinite(options.exposureStops)
         ? Math.max(-10, Math.min(10, options.exposureStops ?? 0))
         : 0;
       const exposureMultiplier = 2 ** exposureStops;
-      const inputColorSpace = options.inputColorSpace?.trim()
-        || DEFAULT_OIIO_INPUT_COLOR_SPACE;
+      const inputColorSpace = options.inputColorSpace?.trim() || null;
       const exposureValues = [
         exposureMultiplier,
         exposureMultiplier,
@@ -10234,19 +10582,23 @@ export class LibraryService {
       ].join(',');
 
       // OpenImageIO 3.1's ociodisplay action accepts OCIO built-in config URIs,
-      // explicit input roles, and "default" display/view selectors. Keep the
-      // exposure multiplier in the command even at zero stops so a future
-      // preview control can regenerate a deterministic variant through this
-      // existing parameter seam.
+      // explicit input roles, and "default" display/view selectors. EXR and
+      // TGA retain the established scene-linear route; PSD/BMP/ICO/RAW preserve
+      // the decoder's color-space metadata/default instead of being mislabelled
+      // as HDR input. Keep exposure deterministic for a future preview control.
       const args: string[] = [
         '--colorconfig', SERPENT_OCIO_CONFIG,
+        '--subimage', String(subimage),
         assetPath,
-        '--iscolorspace', inputColorSpace,
+        ...(inputColorSpace ? ['--iscolorspace', inputColorSpace] : []),
         // Preserve alpha while applying exposure to RGB color channels.
         '--mulc', exposureValues,
         // Empty display/view select the OCIO config defaults. Literal "default"
         // would instead request names that the selected config may not define.
-        `--ociodisplay:from=${inputColorSpace}:unpremult=1`, '', '',
+        inputColorSpace
+          ? `--ociodisplay:from=${inputColorSpace}:unpremult=1`
+          : '--ociodisplay:unpremult=1',
+        '', '',
         '--resize', '0x512',
         '-o', artifactAbsPath,
       ];
@@ -10272,7 +10624,7 @@ export class LibraryService {
            VALUES (?, ?, 'thumbnail', 'image/png', ?, ?, ?, 'ready', ?)`,
         )
         .run(artifactId, revisionId, outputStat.size, artifactRelPath,
-          `oiio@${OIIO_VERSION};ocio=studio-v4-aces2;exposure=${exposureStops}`,
+          `oiio@${OIIO_VERSION};ocio=studio-v4-aces2;colorspace=${inputColorSpace ?? 'auto'};exposure=${exposureStops};subimage=${subimage}`,
           new Date().toISOString());
 
       this.options.onAssetsChanged?.({
@@ -10308,7 +10660,7 @@ export class LibraryService {
         )
         .run(
           artifactId, revisionId, artifactRelPath,
-          `oiio@${OIIO_VERSION};ocio=studio-v4-aces2`, errorCode,
+          `oiio@${OIIO_VERSION};ocio=studio-v4-aces2;subimage=${subimage}`, errorCode,
           new Date().toISOString(),
         );
 
@@ -10332,7 +10684,7 @@ export class LibraryService {
   ): void {
     let errorCode: string;
     if (isMissingPathError(error) || (typeof error === 'object' && error !== null && 'code' in error && (error as Record<string, unknown>).code === 'ENOENT')) {
-      errorCode = kind === 'extracted_metadata' || kind === 'video_poster' || kind === 'contact_sheet' || kind === 'webm_proxy'
+      errorCode = kind === 'extracted_metadata' || kind === 'video_poster' || kind === 'contact_sheet' || kind === 'webm_proxy' || kind === 'audio_proxy'
         ? 'FFMPEG_REQUIRED' : 'OIIO_REQUIRED';
     } else if (typeof error === 'object' && error !== null && 'code' in error) {
       errorCode = String((error as Record<string, unknown>).code);
@@ -10437,6 +10789,201 @@ export class LibraryService {
       : null;
   }
 
+  private async getImageColorSpace(
+    revisionId: string,
+    assetPath: string,
+    decoder: 'sharp' | 'oiio',
+  ): Promise<ImageColorSpaceInfo> {
+    const cached = this.imageColorSpaceByRevision.get(revisionId);
+    if (cached) return cached;
+    const extension = path.extname(assetPath).toLowerCase();
+    let detected: ImageColorSpaceInfo | undefined;
+    try {
+      if (decoder === 'sharp') {
+        const metadata = await (this.options.sharpFn ?? requireSharp())(assetPath).metadata();
+        const profileName = parseIccProfileDescription(metadata.icc);
+        detected = colorSpaceInfoFromName(profileName, 'embedded')
+          ?? colorSpaceInfoFromName(metadata.space, metadata.hasProfile ? 'embedded' : 'metadata');
+      } else {
+        const result = await this.runOiio(resolveOiiotoolPath(), [
+          '--info', '-v', '-a', assetPath,
+        ], { timeoutMs: 30_000 });
+        if (result.exitCode === 0) {
+          detected = parseOiioColorSpaceInfo(result.stdout.toString('utf-8'));
+        }
+      }
+    } catch (error) {
+      this.diagnose('image.colorspace-probe', error, { revisionId, decoder });
+    }
+    const resolved = detected ?? defaultImageColorSpace(extension);
+    this.imageColorSpaceByRevision.set(revisionId, resolved);
+    return resolved;
+  }
+
+  private getColorSpaceOverride(
+    connection: DatabaseConnection,
+    assetId: string,
+  ): string | null {
+    const row = connection
+      .prepare('SELECT color_space FROM asset_color_space_overrides WHERE asset_id = ?')
+      .get(assetId) as { color_space: string } | undefined;
+    return row?.color_space ?? null;
+  }
+
+  private async getExrPlanes(
+    revisionId: string,
+    assetPath: string,
+  ): Promise<ExrPlaneDescriptor[]> {
+    const cached = this.exrPlanesByRevision.get(revisionId);
+    if (cached) return cached;
+    try {
+      const result = await this.runOiio(resolveOiiotoolPath(), [
+        '--info', '-v', '-a', assetPath,
+      ], { timeoutMs: 30_000 });
+      if (result.exitCode !== 0) return [{ index: 0, label: 'Part 0' }];
+      const planes = parseExrPlaneDescriptors(result.stdout.toString('utf-8'));
+      this.exrPlanesByRevision.set(revisionId, planes);
+      return planes;
+    } catch (error) {
+      this.diagnose('oiio.exr-plane-info', error, { revisionId });
+      return [{ index: 0, label: 'Part 0' }];
+    }
+  }
+
+  /**
+   * Async renderer entrypoint. Base preview resolution stays synchronous for
+   * cards and worker tests; EXR selection is the only on-demand derivative
+   * because each part needs a distinct OIIO decode.
+   */
+  async resolvePreviewArtifact(
+    libraryId: string,
+    assetId: string,
+    requestedExrPlane?: number,
+    requestedColorSpace?: string,
+  ): Promise<ReturnType<LibraryService['getPreviewArtifact']> & {
+    exrPlanes?: ExrPlaneDescriptor[];
+    selectedExrPlane?: number;
+    colorSpace?: ImageColorSpaceInfo & { options: ImageColorSpaceOption[] };
+  }> {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    const asset = openLibrary.connection
+      .prepare(
+        `SELECT relative_file_path, current_revision_id, availability
+           FROM assets
+          WHERE asset_id = ? AND deleted_at IS NULL`,
+      )
+      .get(assetId) as {
+        relative_file_path: string;
+        current_revision_id: string | null;
+        availability: 'available' | 'missing';
+      } | undefined;
+    if (!asset) throw new LibraryServiceError('ASSET_NOT_FOUND');
+    if (asset.availability === 'missing') {
+      throw new LibraryServiceError('ASSET_NOT_FOUND', { reason: 'SOURCE_NOT_FOUND' });
+    }
+
+    const basePreview = this.getPreviewArtifact(libraryId, assetId);
+    const extension = path.extname(asset.relative_file_path).toLowerCase();
+    const decoder = imageDecoderForExtension(extension);
+    if (basePreview.mediaType === 'video' && asset.current_revision_id) {
+      const override = this.getColorSpaceOverride(openLibrary.connection, assetId);
+      const selected = colorSpaceInfoFromName(requestedColorSpace ?? override ?? undefined, 'metadata')
+        ?? defaultImageColorSpace(extension);
+      return {
+        ...basePreview,
+        colorSpace: {
+          ...selected,
+          options: [...COMMON_IMAGE_COLOR_SPACE_OPTIONS],
+        },
+      };
+    }
+    if (basePreview.mediaType !== 'image' || !asset.current_revision_id || !decoder) {
+      return basePreview;
+    }
+    const detectedColorSpace = await this.getImageColorSpace(
+      asset.current_revision_id,
+      this.resolveAssetPath(libraryId, assetId),
+      decoder,
+    );
+    const storedOverride = this.getColorSpaceOverride(openLibrary.connection, assetId);
+    const selectedColorSpace = colorSpaceInfoFromName(
+      requestedColorSpace ?? storedOverride ?? undefined,
+      'metadata',
+    ) ?? detectedColorSpace;
+    const colorSpace = {
+      ...selectedColorSpace,
+      options: decoder === 'oiio' || canOverrideImageColorSpace(extension)
+        ? [...COMMON_IMAGE_COLOR_SPACE_OPTIONS]
+        : [{ id: detectedColorSpace.id, label: detectedColorSpace.label, isLinear: detectedColorSpace.isLinear }],
+    };
+    let planes: ExrPlaneDescriptor[] | undefined;
+    let selected = 0;
+    if (extension === '.exr') {
+      planes = await this.getExrPlanes(
+        asset.current_revision_id,
+        this.resolveAssetPath(libraryId, assetId),
+      );
+      const requested = Number.isSafeInteger(requestedExrPlane) && requestedExrPlane! >= 0
+        ? requestedExrPlane!
+        : 0;
+      selected = planes.some((plane) => plane.index === requested)
+        ? requested
+        : 0;
+    }
+
+    // OIIO derivatives must be regenerated when the source profile or the
+    // viewer override differs from the artifact that is currently cached. This
+    // also repairs older PSD/EXR thumbnails created before color metadata was
+    // wired into the generator version.
+    const shouldRegenerateWithOiiO =
+      basePreview.status === 'ready' &&
+      (decoder === 'oiio' || requestedColorSpace !== undefined || storedOverride !== null) &&
+      canOverrideImageColorSpace(extension);
+    if (shouldRegenerateWithOiiO) {
+      const current = openLibrary.connection.prepare(
+        `SELECT generator_version
+           FROM revision_artifacts
+          WHERE revision_id = ?
+            AND kind = 'thumbnail'
+            AND status = 'ready'
+            AND invalidated_at IS NULL
+          LIMIT 1`,
+      ).get(asset.current_revision_id) as { generator_version: string } | undefined;
+      const version = current?.generator_version ?? '';
+      const needsColor = !version.includes(`colorspace=${selectedColorSpace.id}`);
+      const needsPlane = extension === '.exr' && !version.includes(`subimage=${selected}`);
+      if (needsColor || needsPlane) {
+        openLibrary.connection.prepare(
+          `UPDATE revision_artifacts
+              SET invalidated_at = ?
+            WHERE revision_id = ?
+              AND kind = 'thumbnail'
+              AND invalidated_at IS NULL`,
+        ).run(new Date().toISOString(), asset.current_revision_id);
+        try {
+          await this.generateOiiOThumbnail(
+            { libraryId, assetId },
+            openLibrary,
+            this.resolveAssetPath(libraryId, assetId),
+            asset.current_revision_id,
+            {
+              inputColorSpace: selectedColorSpace.id,
+              ...(extension === '.exr' ? { subimage: selected } : {}),
+            },
+          );
+        } catch {
+          // The refreshed artifact carries the renderer-safe failure reason.
+        }
+      }
+    }
+
+    return {
+      ...this.getPreviewArtifact(libraryId, assetId),
+      ...(planes ? { exrPlanes: planes, selectedExrPlane: selected } : {}),
+      colorSpace,
+    };
+  }
+
   /**
    * Resolve the renderer-safe preview state for an asset. The renderer receives
    * only an opaque artifact id; absolute and library-relative paths stay in the
@@ -10448,7 +10995,7 @@ export class LibraryService {
   ): {
     mediaType: 'image' | 'video' | 'audio' | 'text' | 'other';
     status: 'ready' | 'pending' | 'failed' | 'missing';
-    kind: 'thumbnail' | 'webm_proxy';
+    kind: 'thumbnail' | 'webm_proxy' | 'audio_proxy';
     artifactId?: string;
     mimeType: string;
     errorCode?: string;
@@ -10473,11 +11020,15 @@ export class LibraryService {
     }
 
     const mediaType = LibraryService.detectMediaType(asset.relative_file_path);
-    const kind = mediaType === 'video' ? 'webm_proxy' : 'thumbnail';
+    const kind = mediaType === 'video'
+      ? 'webm_proxy'
+      : mediaType === 'audio'
+        ? 'audio_proxy'
+        : 'thumbnail';
     const mimeType = mediaType === 'video'
       ? 'video/webm'
       : mediaType === 'audio'
-        ? 'audio/mpeg'
+        ? 'audio/ogg'
         : mediaType === 'text'
           ? 'text/plain'
         : 'image/webp';
@@ -10509,12 +11060,6 @@ export class LibraryService {
 
     const extension = path.extname(asset.relative_file_path).toLowerCase();
     const nativeMimeTypes: Record<string, string> = {
-      '.png': 'image/png',
-      '.jpg': 'image/jpeg',
-      '.jpeg': 'image/jpeg',
-      '.gif': 'image/gif',
-      '.webp': 'image/webp',
-      '.bmp': 'image/bmp',
       '.mp4': 'video/mp4',
       '.mov': 'video/quicktime',
       '.webm': 'video/webm',
@@ -10527,7 +11072,8 @@ export class LibraryService {
       '.flac': 'audio/flac',
       '.opus': 'audio/ogg',
     };
-    const nativeMimeType = nativeMimeTypes[extension];
+    const nativeMimeType = directImageMimeForExtension(extension)
+      ?? nativeMimeTypes[extension];
     // Audio: viewer uses wide `video_poster` strip; fall back to 4:3 thumbnail
     // until cover6 regeneration lands (Serpent-vlx).
     const poster = mediaType === 'video'
@@ -10538,15 +11084,76 @@ export class LibraryService {
       : null;
     const posterArtifactId = poster?.status === 'ready' ? poster.artifactId : undefined;
     const artifact = this.getCurrentArtifact(libraryId, assetId, kind);
+    if (mediaType === 'video' || mediaType === 'audio') {
+      const status = artifact?.status === 'generating' ? 'pending' : artifact?.status;
+      if (status === 'ready' && artifact) {
+        return {
+          mediaType,
+          status,
+          kind,
+          artifactId: artifact.artifactId,
+          mimeType: artifact.mimeType,
+          playbackMode: 'proxy',
+          ...(posterArtifactId ? { posterArtifactId } : {}),
+        };
+      }
+      if (status === 'failed' && artifact) {
+        return {
+          mediaType,
+          status,
+          kind,
+          artifactId: artifact.artifactId,
+          mimeType: artifact.mimeType,
+          errorCode: artifact.errorCode ?? 'MEDIA_PROCESSING_FAILED',
+          ...(posterArtifactId ? { posterArtifactId } : {}),
+        };
+      }
+      const activeProxyJob = openLibrary.connection
+        .prepare(
+          `SELECT job_id FROM jobs
+            WHERE asset_id = ?
+              AND kind IN ('generate_thumbnail', 'generate_webm_proxy', 'generate_audio_proxy')
+              AND status IN ('queued', 'running', 'paused')
+            ORDER BY updated_at DESC LIMIT 1`,
+        )
+        .get(assetId) as { job_id: string } | undefined;
+      if (!activeProxyJob) {
+        // A viewer request can race the normal browse queue, or the old
+        // version may already have produced a poster without a playback
+        // proxy. Queue the owned playback derivative directly instead of
+        // depending on a thumbnail job to eventually schedule it.
+        if (mediaType === 'video' && asset.current_revision_id) {
+          this.enqueueVideoDerivativeJob(
+            openLibrary,
+            assetId,
+            asset.current_revision_id,
+            'generate_webm_proxy',
+            300,
+          );
+        } else if (mediaType === 'audio' && asset.current_revision_id) {
+          this.enqueueAudioProxyJob(
+            openLibrary,
+            assetId,
+            asset.current_revision_id,
+            300,
+          );
+        }
+      }
+      return {
+        mediaType,
+        status: 'pending',
+        kind,
+        mimeType,
+        ...(posterArtifactId ? { posterArtifactId } : {}),
+      };
+    }
     if (artifact) {
       const status = artifact.status === 'generating' ? 'pending' : artifact.status;
       // Prefer a ready derivative, except native images always use the original
-      // (REQ-VIEW-002: uncompressed source in the viewer). Audio always plays
-      // the source; waveform thumbnail is exposed via posterArtifactId.
+      // (REQ-VIEW-002: uncompressed source in the viewer).
       if (
         status === 'ready' &&
-        !(mediaType === 'image' && nativeMimeType) &&
-        mediaType !== 'audio'
+        !(mediaType === 'image' && nativeMimeType)
       ) {
         return {
           mediaType,
@@ -10554,7 +11161,6 @@ export class LibraryService {
           kind,
           artifactId: artifact.artifactId,
           mimeType: artifact.mimeType,
-          ...(mediaType === 'video' ? { playbackMode: 'proxy' as const } : {}),
           ...(posterArtifactId ? { posterArtifactId } : {}),
         };
       }
@@ -10583,54 +11189,19 @@ export class LibraryService {
       }
     }
 
-    // Browsing the original and generating derivatives are independent. Native
-    // Chromium formats remain immediately viewable while thumbnail/proxy work
-    // is queued, running, paused, or has failed.
+    // Browsing native images remains an optimization. Audio and video take the
+    // safe proxy branch above because a container extension is not a
+    // cross-platform playback guarantee.
     if (nativeMimeType && asset.current_revision_id) {
-        let sourceCodecs: string[] = [];
-        const metadataArtifact = mediaType === 'video'
-          ? this.getCurrentArtifact(libraryId, assetId, 'extracted_metadata')
-          : null;
-        if (mediaType === 'video' && metadataArtifact?.status === 'ready') {
-          try {
-            const descriptor = JSON.parse(
-              readFileSync(path.join(this.artifactsDir(openLibrary), metadataArtifact.filePath), 'utf-8'),
-            ) as { videoCodec?: string | null; audioCodec?: string | null };
-            const videoCodec = descriptor.videoCodec === 'h264' ? 'avc1.42E01E'
-              : descriptor.videoCodec === 'vp9' ? 'vp09.00.10.08'
-              : descriptor.videoCodec ?? undefined;
-            const audioCodec = descriptor.audioCodec === 'aac' ? 'mp4a.40.2'
-              : descriptor.audioCodec === 'opus' ? 'opus'
-              : descriptor.audioCodec ?? undefined;
-            sourceCodecs = [videoCodec, audioCodec].filter((codec): codec is string => Boolean(codec));
-          } catch {
-            // The base container MIME remains a valid conservative descriptor.
-          }
-        }
         return {
           mediaType,
           status: 'ready',
           kind,
           mimeType: nativeMimeType,
-          ...(mediaType === 'video' &&
-          (artifact?.status === 'failed' || poster?.status === 'failed')
-            ? {
-                errorCode:
-                  (artifact?.status === 'failed'
-                    ? artifact.errorCode
-                    : poster?.errorCode) ?? 'MEDIA_PROCESSING_FAILED',
-              }
-            : {}),
           ...(posterArtifactId ? { posterArtifactId } : {}),
           playbackMode: 'source',
           sourceRevisionId: asset.current_revision_id,
           sourceMimeType: nativeMimeType,
-          ...(mediaType === 'video'
-            ? {
-                sourceContainer: extension.slice(1) as 'mp4' | 'mov' | 'webm',
-                ...(sourceCodecs.length > 0 ? { sourceCodecs } : {}),
-              }
-            : {}),
         };
     }
 
@@ -10639,7 +11210,7 @@ export class LibraryService {
         `SELECT status
            FROM jobs
           WHERE asset_id = ?
-            AND kind IN ('generate_thumbnail', 'generate_webm_proxy')
+             AND kind IN ('generate_thumbnail', 'generate_webm_proxy', 'generate_audio_proxy')
             AND status IN ('queued', 'running', 'paused')
           ORDER BY updated_at DESC
           LIMIT 1`,
@@ -10654,16 +11225,6 @@ export class LibraryService {
         ...(posterArtifactId ? { posterArtifactId } : {}),
       };
     }
-    if (mediaType === 'video' && poster?.status === 'failed') {
-      return {
-        mediaType,
-        status: 'failed',
-        kind,
-        mimeType,
-        errorCode: poster.errorCode ?? 'MEDIA_PROCESSING_FAILED',
-      };
-    }
-
     return {
       mediaType,
       status: 'missing',
@@ -10677,7 +11238,7 @@ export class LibraryService {
   enqueueArtifactRetry(input: {
     libraryId: string;
     assetId: string;
-    kind: 'thumbnail' | 'webm_proxy';
+    kind: 'thumbnail' | 'webm_proxy' | 'audio_proxy';
   }): string {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     const asset = openLibrary.connection
@@ -10695,13 +11256,20 @@ export class LibraryService {
     if (asset.availability !== 'available') {
       throw new LibraryServiceError('ASSET_NOT_FOUND', { reason: 'SOURCE_NOT_FOUND' });
     }
-    const expectedKind = LibraryService.detectMediaType(asset.relative_file_path) === 'video'
+    const assetMediaType = LibraryService.detectMediaType(asset.relative_file_path);
+    const expectedKind = assetMediaType === 'video'
       ? 'webm_proxy'
-      : 'thumbnail';
+      : assetMediaType === 'audio'
+        ? 'audio_proxy'
+        : 'thumbnail';
     if (input.kind !== expectedKind) {
       throw new LibraryServiceError('INVALID_IMPORT_DECISION', { reason: 'UNSUPPORTED_FORMAT' });
     }
-    const jobKind = input.kind === 'webm_proxy' ? 'generate_webm_proxy' : 'generate_thumbnail';
+    const jobKind = input.kind === 'webm_proxy'
+      ? 'generate_webm_proxy'
+      : input.kind === 'audio_proxy'
+        ? 'generate_audio_proxy'
+        : 'generate_thumbnail';
 
     return openLibrary.connection.transaction(() => {
       const active = openLibrary.connection
@@ -10722,11 +11290,11 @@ export class LibraryService {
         return active.job_id;
       }
 
-      if (input.kind === 'webm_proxy') {
+      if (input.kind === 'webm_proxy' || input.kind === 'audio_proxy') {
         openLibrary.connection.prepare(
           `UPDATE revision_artifacts SET invalidated_at = ?
-            WHERE revision_id = ? AND kind = 'webm_proxy' AND invalidated_at IS NULL`,
-        ).run(new Date().toISOString(), asset.current_revision_id);
+            WHERE revision_id = ? AND kind = ? AND invalidated_at IS NULL`,
+        ).run(new Date().toISOString(), asset.current_revision_id, input.kind);
       }
 
       const jobId = randomUUID();
@@ -10767,7 +11335,7 @@ export class LibraryService {
     if (!row) throw new LibraryServiceError('ASSET_NOT_FOUND');
     if (usage) {
       const allowedKinds = usage === 'proxy'
-        ? new Set(['webm_proxy'])
+        ? new Set(['webm_proxy', 'audio_proxy'])
         : new Set(['thumbnail', 'video_poster']);
       if (!allowedKinds.has(row.kind)) throw new LibraryServiceError('ASSET_NOT_FOUND');
     }
@@ -10837,17 +11405,6 @@ export class LibraryService {
     }
     const extension = path.extname(asset.relative_file_path).toLowerCase();
     const mimeTypes: Record<string, string> = {
-      '.png': 'image/png',
-      '.jpg': 'image/jpeg',
-      '.jpeg': 'image/jpeg',
-      '.gif': 'image/gif',
-      '.webp': 'image/webp',
-      '.bmp': 'image/bmp',
-      '.mp4': 'video/mp4',
-      '.mov': 'video/quicktime',
-      '.webm': 'video/webm',
-      '.avi': 'video/x-msvideo',
-      '.wmv': 'video/x-ms-wmv',
       '.wav': 'audio/wav',
       '.mp3': 'audio/mpeg',
       '.ogg': 'audio/ogg',
@@ -10857,7 +11414,11 @@ export class LibraryService {
       '.flac': 'audio/flac',
       '.opus': 'audio/ogg',
     };
-    const mimeType = mimeTypes[extension] ?? audioMimeForExtension(extension) ?? undefined;
+    const mimeType = directImageMimeForExtension(extension)
+      ?? videoMimeForExtension(extension)
+      ?? mimeTypes[extension]
+      ?? audioMimeForExtension(extension)
+      ?? undefined;
     if (!mimeType) throw new LibraryServiceError('INVALID_IMPORT_DECISION', { reason: 'UNSUPPORTED_FORMAT' });
     return { absolutePath: this.resolveAssetPath(libraryId, assetId), mimeType };
   }
@@ -11021,7 +11582,7 @@ export class LibraryService {
            JOIN assets a ON a.current_revision_id = ra.revision_id
           WHERE a.deleted_at IS NULL
             AND a.availability = 'available'
-            AND ra.kind IN ('thumbnail', 'video_poster')
+            AND ra.kind IN ('thumbnail', 'video_poster', 'webm_proxy', 'audio_proxy')
             AND ra.status = 'failed'
             AND ra.invalidated_at IS NULL
             AND ra.error_code IN ('FFMPEG_REQUIRED', 'OIIO_REQUIRED')`,
@@ -11082,13 +11643,13 @@ export class LibraryService {
 
     const rows = openLibrary.connection
       .prepare(
-        `SELECT a.asset_id, a.current_revision_id
+        `SELECT a.asset_id, a.current_revision_id, ra.kind AS artifact_kind
            FROM assets a
            JOIN revision_artifacts ra ON ra.revision_id = a.current_revision_id
           WHERE a.deleted_at IS NULL
             AND a.availability = 'available'
             AND a.current_revision_id IS NOT NULL
-            AND ra.kind IN ('thumbnail', 'video_poster')
+            AND ra.kind IN ('thumbnail', 'video_poster', 'webm_proxy', 'audio_proxy')
             AND ra.status = 'failed'
             AND ra.invalidated_at IS NULL
             AND (${failureConditions.join(' OR ')})
@@ -11097,13 +11658,20 @@ export class LibraryService {
                 FROM jobs active
                WHERE active.asset_id = a.asset_id
                  AND active.revision_id = a.current_revision_id
-                 AND active.kind = 'generate_thumbnail'
+                 AND active.kind = CASE ra.kind
+                   WHEN 'webm_proxy' THEN 'generate_webm_proxy'
+                   WHEN 'audio_proxy' THEN 'generate_audio_proxy'
+                   ELSE 'generate_thumbnail'
+                 END
                  AND active.status IN ('queued', 'running', 'paused')
             )
-          GROUP BY a.asset_id, a.current_revision_id
           ORDER BY a.relative_file_path`,
       )
-      .all() as Array<{ asset_id: string; current_revision_id: string }>;
+      .all() as Array<{
+        asset_id: string;
+        current_revision_id: string;
+        artifact_kind: 'thumbnail' | 'video_poster' | 'webm_proxy' | 'audio_proxy';
+      }>;
     if (rows.length === 0) return 0;
 
     const now = new Date().toISOString();
@@ -11112,7 +11680,7 @@ export class LibraryService {
          FROM jobs
         WHERE asset_id = ?
           AND revision_id = ?
-          AND kind = 'generate_thumbnail'
+          AND kind = ?
           AND status = 'failed'
         ORDER BY updated_at DESC
         LIMIT 1`,
@@ -11132,15 +11700,33 @@ export class LibraryService {
       `INSERT INTO jobs
          (job_id, library_id, asset_id, revision_id, kind, status, priority, progress,
           attempt_count, created_at, updated_at)
-       VALUES (?, ?, ?, ?, 'generate_thumbnail', 'queued', ?, 0.0, 0, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, 'queued', ?, 0.0, 0, ?, ?)`,
     );
 
+    const repairJobs = new Map<string, {
+      assetId: string;
+      revisionId: string;
+      kind: 'generate_thumbnail' | 'generate_webm_proxy' | 'generate_audio_proxy';
+    }>();
+    for (const row of rows) {
+      const kind = row.artifact_kind === 'webm_proxy'
+        ? 'generate_webm_proxy'
+        : row.artifact_kind === 'audio_proxy'
+          ? 'generate_audio_proxy'
+          : 'generate_thumbnail';
+      repairJobs.set(`${row.asset_id}:${kind}`, {
+        assetId: row.asset_id,
+        revisionId: row.current_revision_id,
+        kind,
+      });
+    }
     let enqueued = 0;
     openLibrary.connection.transaction(() => {
-      for (const row of rows) {
+      for (const row of repairJobs.values()) {
         const failedJob = findFailedJob.get(
-          row.asset_id,
-          row.current_revision_id,
+          row.assetId,
+          row.revisionId,
+          row.kind,
         ) as { job_id: string } | undefined;
         if (failedJob) {
           enqueued += resetFailedJob.run(priority, now, failedJob.job_id).changes;
@@ -11148,8 +11734,9 @@ export class LibraryService {
           enqueued += insertJob.run(
             randomUUID(),
             openLibrary.summary.libraryId,
-            row.asset_id,
-            row.current_revision_id,
+            row.assetId,
+            row.revisionId,
+            row.kind,
             priority,
             now,
             now,
@@ -11210,8 +11797,8 @@ export class LibraryService {
     }
     let enqueued = repairEnqueued;
     const supportedExtensions = [
-      'png', 'jpg', 'jpeg', 'gif', 'tiff', 'tif', 'webp', 'bmp',
-      'mp4', 'webm', 'mov', 'avi', 'wmv', 'exr', 'tga',
+      ...IMAGE_EXTENSIONS.map((extension) => extension.slice(1)),
+      'mp4', 'webm', 'mov', 'avi', 'wmv', 'mkv', 'm4v',
       ...AUDIO_EXTENSION_NAMES,
     ];
     // CU-D7: invalidate pre-gifstill GIF thumbs so page-0 black frames requeue.
@@ -11384,6 +11971,73 @@ export class LibraryService {
       enqueued += inserted.changes;
     }
 
+    // Libraries created before the proxy-first viewer may already have a
+    // poster/waveform and therefore never re-enter the thumbnail queue. Give
+    // those legacy-ready assets an independent playback route. Fresh assets
+    // schedule their proxy after the primary thumbnail job succeeds, keeping
+    // queue ordering and cancellation semantics stable.
+    const playbackRows = openLibrary.connection
+      .prepare(
+        `SELECT a.asset_id, a.current_revision_id, a.relative_file_path
+           FROM assets a
+          WHERE a.deleted_at IS NULL
+            AND a.current_revision_id IS NOT NULL
+            AND a.availability = 'available'
+            ${selectedSql}
+            AND (${extensionSql})
+            AND EXISTS (
+              SELECT 1 FROM revision_artifacts primary_artifact
+               WHERE primary_artifact.revision_id = a.current_revision_id
+                 AND primary_artifact.kind IN ('thumbnail', 'video_poster')
+                 AND primary_artifact.status = 'ready'
+                 AND primary_artifact.invalidated_at IS NULL
+            )
+            AND NOT EXISTS (
+              SELECT 1 FROM revision_artifacts ra
+               WHERE ra.revision_id = a.current_revision_id
+                 AND ra.kind IN ('webm_proxy', 'audio_proxy')
+                 AND ra.status IN ('ready', 'failed')
+                 AND ra.invalidated_at IS NULL
+            )
+            AND NOT EXISTS (
+              SELECT 1 FROM jobs j
+               WHERE j.asset_id = a.asset_id
+                 AND j.revision_id = a.current_revision_id
+                 AND j.kind IN ('generate_webm_proxy', 'generate_audio_proxy')
+                 AND j.status IN ('queued', 'running', 'paused')
+            )
+          ORDER BY a.relative_file_path
+          ${queryLimit}`,
+      )
+      .all(
+        ...selectedIds,
+        ...supportedExtensions.map((extension) => `%.${extension}`),
+        ...(limit === undefined ? [] : [limit]),
+      ) as Array<{
+        asset_id: string;
+        current_revision_id: string;
+        relative_file_path: string;
+      }>;
+    for (const row of playbackRows) {
+      const mediaType = LibraryService.detectMediaType(row.relative_file_path);
+      if (mediaType === 'video') {
+        this.enqueueVideoDerivativeJob(
+          openLibrary,
+          row.asset_id,
+          row.current_revision_id,
+          'generate_webm_proxy',
+          options.priority ?? 0,
+        );
+      } else if (mediaType === 'audio') {
+        this.enqueueAudioProxyJob(
+          openLibrary,
+          row.asset_id,
+          row.current_revision_id,
+          options.priority ?? 0,
+        );
+      }
+    }
+
     // Existing ready thumbnails/posters (for example after reopening a library
     // created by an older build) receive their missing local palettes too.
     this.enqueueReadyPaletteJobs(openLibrary, options);
@@ -11412,7 +12066,7 @@ export class LibraryService {
          FROM jobs
         WHERE library_id = ?
           AND kind IN ('generate_thumbnail', 'generate_video_poster',
-                       'generate_contact_sheet', 'generate_webm_proxy',
+                       'generate_contact_sheet', 'generate_webm_proxy', 'generate_audio_proxy',
                        'extract_palette')
           AND status = 'queued'
         ORDER BY priority DESC, created_at
@@ -11463,9 +12117,13 @@ export class LibraryService {
           if (asset && LibraryService.detectMediaType(asset.relative_file_path) === 'video') {
             this.enqueueVideoDerivativeJob(openLibrary, job.asset_id, job.revision_id, 'generate_contact_sheet', -100);
             const extension = path.extname(asset.relative_file_path).toLowerCase();
-            if (extension === '.avi' || extension === '.wmv') {
-              this.enqueueVideoDerivativeJob(openLibrary, job.asset_id, job.revision_id, 'generate_webm_proxy', 100);
-            }
+            // Container names and Chromium capabilities are not a contract.
+            // Generate one safe WebM route for every video rather than first
+            // presenting a MOV/MKV/etc. source that may immediately error.
+            this.enqueueVideoDerivativeJob(openLibrary, job.asset_id, job.revision_id, 'generate_webm_proxy', 100);
+          }
+          if (asset && LibraryService.detectMediaType(asset.relative_file_path) === 'audio') {
+            this.enqueueAudioProxyJob(openLibrary, job.asset_id, job.revision_id, 100);
           }
           this.enqueuePaletteJob(openLibrary, job.asset_id, job.revision_id, -10);
           options.onResult?.({ assetId: job.asset_id, artifactId: generated.artifactId });
@@ -11475,6 +12133,17 @@ export class LibraryService {
             job.asset_id,
             job.revision_id,
             { signal: controller.signal },
+          );
+          if (!current) {
+            openLibrary.connection.prepare(
+              "UPDATE jobs SET status = 'cancelled', error_code = 'STALE_REVISION', updated_at = ? WHERE job_id = ?",
+            ).run(new Date().toISOString(), job.job_id);
+            processed += 1;
+            continue;
+          }
+        } else if (job.kind === 'generate_audio_proxy') {
+          const current = await this.generateQueuedAudioProxy(
+            libraryId, job.asset_id, job.revision_id, { signal: controller.signal },
           );
           if (!current) {
             openLibrary.connection.prepare(
@@ -11530,8 +12199,10 @@ export class LibraryService {
           ? 'extracted_palette'
           : job.kind === 'generate_contact_sheet'
             ? 'contact_sheet'
-            : job.kind === 'generate_webm_proxy'
-              ? 'webm_proxy'
+          : job.kind === 'generate_webm_proxy'
+            ? 'webm_proxy'
+            : job.kind === 'generate_audio_proxy'
+              ? 'audio_proxy'
               : null;
         const failedArtifact = openLibrary.connection
           .prepare(
@@ -11613,6 +12284,8 @@ export class LibraryService {
                 OR LOWER(a.relative_file_path) LIKE '%.mov'
                 OR LOWER(a.relative_file_path) LIKE '%.avi'
                 OR LOWER(a.relative_file_path) LIKE '%.wmv'
+                OR LOWER(a.relative_file_path) LIKE '%.mkv'
+                OR LOWER(a.relative_file_path) LIKE '%.m4v'
               THEN 'video_poster'
               ELSE 'thumbnail'
             END
@@ -11969,6 +12642,8 @@ export class LibraryService {
                 OR LOWER(a.relative_file_path) LIKE '%.mov'
                 OR LOWER(a.relative_file_path) LIKE '%.avi'
                 OR LOWER(a.relative_file_path) LIKE '%.wmv'
+                OR LOWER(a.relative_file_path) LIKE '%.mkv'
+                OR LOWER(a.relative_file_path) LIKE '%.m4v'
               THEN 'video_poster'
               ELSE 'thumbnail'
             END
@@ -11997,6 +12672,8 @@ export class LibraryService {
                 OR LOWER(a.relative_file_path) LIKE '%.mov'
                 OR LOWER(a.relative_file_path) LIKE '%.avi'
                 OR LOWER(a.relative_file_path) LIKE '%.wmv'
+                OR LOWER(a.relative_file_path) LIKE '%.mkv'
+                OR LOWER(a.relative_file_path) LIKE '%.m4v'
               THEN 'video_poster'
               ELSE 'thumbnail'
             END
@@ -15344,6 +16021,8 @@ export class LibraryService {
                 OR LOWER(a.relative_file_path) LIKE '%.mov'
                 OR LOWER(a.relative_file_path) LIKE '%.avi'
                 OR LOWER(a.relative_file_path) LIKE '%.wmv'
+                OR LOWER(a.relative_file_path) LIKE '%.mkv'
+                OR LOWER(a.relative_file_path) LIKE '%.m4v'
               THEN 'video_poster'
               ELSE 'thumbnail'
             END

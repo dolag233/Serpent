@@ -472,7 +472,7 @@ FolderBrowseEntry
 | REQ-VIEW-011 | 查看页滚轮缩放，锚点为鼠标指针位置 | P1 | `Serpent-yo0n` |
 | BUG-VIEW-001 | 移除「正在解析安全预览…」等意义不明文案（用户口述「安全浏览」） | P1 | `Serpent-dl23` |
 | REQ-VIEW-012 | 左右切图时先出缩略图/预览再安静升级完整图像（mip 式，减轻 IO 空白） | P1 | `Serpent-eh07` |
-| REQ-VIEW-013 | SVG 预览 + 缩放 | P4（MVP 后） | `Serpent-9ei8` |
+| REQ-VIEW-013 | SVG 原图预览 + 缩放 | 已实现；用户验收通过（2026-07-26） | `Serpent-aav1`（原 `Serpent-9ei8` 记录） |
 
 用户原话要点：视频逐帧与 Ctrl 方向键跳转；视频缩放；亮色面包屑 hover；无库创建界面可选已有库；滚轮以鼠标为中心缩放；勿显示「正在解析安全浏览」；切图先预览后原图；SVG 明确 MVP 之后。
 
@@ -596,7 +596,9 @@ FolderBrowseEntry
 | 需求/缺陷 | 说明 | 优先级 | 工单 |
 | --- | --- | --- | --- |
 | REQ-IGNORE-001 | **文件、文件夹 ignore 支持**：用户可对单个文件或文件夹执行 ignore，使其不被索引、展示或操作；与链接文件夹既有 `.gitignore` 式过滤规则（`linked_ignored_assets`、默认 `.git`/`node_modules` 等）协同，补齐面向人的显式 ignore / unignore 入口（对齐澄清队列 #7「不想显示用 ignore」）。需定义作用域、持久化、刷新与计数口径。 | P2 | `Serpent-v6m3` |
-| REQ-MEDIA-001 | **扩展格式完整媒体旅程**：为 **TGA、EXR、TIFF、BMP、ICO、SVG、PSD** 七种格式补齐缩略图生成与查看页缩放查看。每种格式均须：(1) 资产卡片与 Inspector 可解码缩略图；(2) 查看页支持 Fit/平移/滚轮缩放等与现有图片查看一致的基础交互（EXR 曝光等专业能力沿用 0006 规格）。注：EXR/TGA/TIFF 在 product-brief / 0006 已为首发格式，本条目强调七种格式**全部**达到可验收的缩略图 + 查看闭环；SVG/PSD 从此前 MVP 后候选提升。 | P2 | `Serpent-aav1` |
+| REQ-MEDIA-001 | **常用媒体格式完整旅程**：静态图像覆盖 **TGA、EXR、TIFF、BMP、ICO、SVG、PSD**，相机 RAW 覆盖 **DNG、CR2、CR3、NEF、ARW、RAF、ORF、RW2**；视频覆盖 **MP4、MOV、AVI、WMV、WebM、MKV、M4V**；音频覆盖 **WAV、MP3、OGG/OGA、M4A、AAC、FLAC、Opus**。每种图像/RAW 格式均须有资产卡片和 Inspector 缩略图，并在查看页支持 Fit/平移/滚轮缩放；视频须可稳定播放（无法确定 Chromium 直放能力时自动播放 WebM 代理）；音频须有波形缩略图与播放。PSD 仅合成预览，SVG/ICO 仅可视化预览。EXR 需列出并允许切换可显示 plane/part，专业通道检查与调色面板不在 MVP。所有结论必须基于真实导入、解码和查看/播放证据，不能以 MIME 映射或代码路径代替。 | P2 | `Serpent-aav1` |
+| REQ-MEDIA-002 | **媒体色彩管理与 EXR 多通道**：EXR 查看器需在 plane/part 之外支持多 channel 读取与选择；非 PNG/JPEG 等固定 sRGB 语义的图像（尤其 PSD）读取嵌入 ICC/色彩空间元数据，打开时默认采用文件声明的色彩空间；无声明时使用明确默认值；查看器允许在可用色彩空间之间切换。缩略图与原图查看须使用一致的色彩管理口径。 | P2 | `Serpent-aoj0`（关联 `Serpent-aav1`） |
+| REQ-MEDIA-003 | **RGBA 通道查看器**：参考 UE4 通道查看器，在查看页保留 RGBA 合成视图，并支持单独查看 R/G/B/A 或任意两个、三个通道组合；未选通道显示为 0/黑；需明确无 alpha、单通道图像及 EXR/PSD 的显示语义。 | P3（后续） | `Serpent-oc6g`（关联 `Serpent-aav1`） |
 | REQ-EXT-005 | **浏览器扩展拖拽保存径向菜单（Hotbox）**：在浏览器中拖拽图片、视频等资产时显示 Serpent 保存菜单，能力对齐 Eagle 浏览器插件的拖放收藏，但交互需专门设计。目标类似 Houdini N 键菜单 / Maya Hotbox / 游戏快速轮盘：指针朝某一方向移动即选中该方向指令；可展开指令再生成下一级轮盘；**支持返回上一级**；`Esc` 完全退出。多级轮盘用于任意选择保存位置（资源库 → 文件夹层级 → 确认等）。与现有扩展 loopback 上传（REQ-EXT-001/002）集成；需独立 UI/UX 规格。 | P2 | `Serpent-6llg`（已实现，EXT-009 人类验收通过） |
 | REQ-INSPECT-006 | **Inspector 在 AI 操作后及时刷新**：清除 AI 信息、AI 分析完成（单选/批量）后，右侧资产信息栏须立即反映最新描述/标签/评分与 AI 角标，不残留分析中占位或旧 AI 字段；无需切换选中或重开 Inspector。 | P1 | `Serpent-c9r3` |
 

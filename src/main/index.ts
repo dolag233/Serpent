@@ -1386,6 +1386,13 @@ async function commandFor(
         libraryId: request.libraryId,
         assetId: request.assetId,
       };
+    case "asset.color-space.set.request":
+      return {
+        type: "asset.color-space.set",
+        libraryId: request.libraryId,
+        assetId: request.assetId,
+        colorSpace: request.colorSpace,
+      };
     case "asset.metadata.set.request":
       return {
         type: "asset.metadata.set",
@@ -1849,6 +1856,8 @@ async function commandFor(
         type: "media.get-preview-artifact",
         libraryId: request.libraryId,
         assetId: request.assetId,
+        ...(request.exrPlane === undefined ? {} : { exrPlane: request.exrPlane }),
+        ...(request.colorSpace === undefined ? {} : { colorSpace: request.colorSpace }),
       };
     case "asset.close-preview.request":
       // Preview close is a no-op on the Main side; renderer handles UI state.
@@ -2634,7 +2643,7 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
             workerResult.sourceRevisionId
             ? `serpent://source/${request.libraryId}/${request.assetId}?revision=${encodeURIComponent(workerResult.sourceRevisionId)}`
             : workerResult.artifactId
-              ? `serpent://${workerResult.mediaType === "video" ? "proxy" : "preview"}/${request.libraryId}/${workerResult.artifactId}`
+              ? `serpent://${workerResult.playbackMode === "proxy" ? "proxy" : "preview"}/${request.libraryId}/${workerResult.artifactId}`
               : undefined
           : undefined;
       const posterUrl = workerResult.posterArtifactId
@@ -2679,6 +2688,11 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
               playbackToken: `${request.assetId}:${workerResult.sourceRevisionId}`,
             }
           : {}),
+        ...(workerResult.exrPlanes ? { exrPlanes: workerResult.exrPlanes } : {}),
+        ...(workerResult.selectedExrPlane === undefined
+          ? {}
+          : { selectedExrPlane: workerResult.selectedExrPlane }),
+        ...(workerResult.colorSpace ? { colorSpace: workerResult.colorSpace } : {}),
       } satisfies RendererResult;
     }
     if (

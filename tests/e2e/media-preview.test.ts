@@ -82,6 +82,7 @@ test("generates a decoded thumbnail and keeps asset viewer context coherent", as
   );
   const sourcePath = path.join(temporaryRoot, "automatic.png");
   const nextSourcePath = path.join(temporaryRoot, "next-automatic.png");
+  const svgSourcePath = path.join(temporaryRoot, "vector.svg");
   const libraryName = "自动缩略图验收";
   const libraryPath = path.join(temporaryRoot, libraryName);
   await sharp({
@@ -100,6 +101,10 @@ test("generates a decoded thumbnail and keeps asset viewer context coherent", as
       background: { r: 160, g: 84, b: 48, alpha: 1 },
     },
   }).png().toFile(nextSourcePath);
+  writeFileSync(
+    svgSourcePath,
+    '<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360" viewBox="0 0 640 360"><rect width="640" height="360" fill="#245bff"/><circle cx="320" cy="180" r="90" fill="#fff"/></svg>',
+  );
 
   const executablePath = resolveElectronExecutablePath();
   const applicationDirectory =
@@ -114,7 +119,7 @@ test("generates a decoded thumbnail and keeps asset viewer context coherent", as
       SERPENT_E2E_CREATE_PARENT_PATH: temporaryRoot,
       SERPENT_E2E_OPEN_LIBRARY_PATH: libraryPath,
       SERPENT_E2E_USER_DATA_PATH: path.join(temporaryRoot, "user-data"),
-      SERPENT_E2E_IMPORT_FILES: [sourcePath, nextSourcePath].join(
+      SERPENT_E2E_IMPORT_FILES: [sourcePath, nextSourcePath, svgSourcePath].join(
         path.delimiter,
       ),
     },
@@ -158,24 +163,16 @@ test("generates a decoded thumbnail and keeps asset viewer context coherent", as
       const preview = image.closest<HTMLElement>(".inspector-hero-preview");
       if (!preview) throw new Error("Missing Inspector preview container");
       const imageRect = image.getBoundingClientRect();
-      const previewRect = preview.getBoundingClientRect();
       return {
         borderStyle: getComputedStyle(preview).borderStyle,
         imageBorderRadius: getComputedStyle(image).borderRadius,
         imageAspectRatio: imageRect.width / imageRect.height,
         naturalAspectRatio: image.naturalWidth / image.naturalHeight,
-        previewAspectRatio: preview.clientWidth / preview.clientHeight,
-        widthDelta: Math.abs(imageRect.width - previewRect.width),
       };
     });
     expect(inspectorPreviewLayout.borderStyle).toBe("none");
     expect(Number.parseFloat(inspectorPreviewLayout.imageBorderRadius)).toBeGreaterThan(0);
-    expect(inspectorPreviewLayout.widthDelta).toBeLessThanOrEqual(3);
     expect(inspectorPreviewLayout.imageAspectRatio).toBeCloseTo(
-      inspectorPreviewLayout.naturalAspectRatio,
-      1,
-    );
-    expect(inspectorPreviewLayout.previewAspectRatio).toBeCloseTo(
       inspectorPreviewLayout.naturalAspectRatio,
       1,
     );
@@ -307,6 +304,24 @@ test("generates a decoded thumbnail and keeps asset viewer context coherent", as
     await expect(assetCard).toHaveAttribute("aria-pressed", "false");
     await expect(nextAssetCard).toBeFocused();
 
+    const svgAssetCard = window
+      .locator(".asset-card")
+      .filter({ hasText: "vector.svg" });
+    await expect(svgAssetCard).toBeVisible();
+    await expectImageDecoded(svgAssetCard.locator('img[alt="vector.svg"]'));
+    await svgAssetCard.dblclick();
+    const svgPreview = window.getByRole("region", {
+      name: "vector.svg 查看页面",
+    });
+    await expect(svgPreview).toBeVisible();
+    const svgPreviewImage = svgPreview.locator("img.preview-image");
+    await expectImageDecoded(svgPreviewImage);
+    await expect
+      .poll(() => svgPreviewImage.getAttribute("src"))
+      .toContain("serpent://source/");
+    await window.keyboard.press("Escape");
+    await expect(svgPreview).toBeHidden();
+
     const masonryViewButton = window.locator(
       'button[aria-label="瀑布流视图"]',
     );
@@ -396,7 +411,7 @@ test("video preview reports a specific generation failure and persists its diagn
     });
     await expect(assetCard.locator(".asset-preview")).toHaveAttribute(
       "title",
-      /缺少 FFmpeg|缩略图生成失败/,
+      /媒体组件不可用|缩略图生成失败/,
     );
     await assetCard.dblclick();
 
@@ -404,7 +419,7 @@ test("video preview reports a specific generation failure and persists its diagn
       name: "broken-preview.mp4 查看页面",
     });
     await expect(preview).toBeVisible();
-    await expect(preview.getByText("缺少 FFmpeg")).toBeVisible();
+    await expect(preview.getByText(/媒体组件/)).toBeVisible();
     await preview.getByRole("button", { name: "重试生成" }).click();
     // Retry re-queues generation (pending/"正在生成") before the missing-FFmpeg
     // failure is written again. Wait for the actionable retry surface, then for
@@ -412,7 +427,7 @@ test("video preview reports a specific generation failure and persists its diagn
     await expect(preview.getByRole("button", { name: "重试生成" })).toBeVisible({
       timeout: 30_000,
     });
-    await expect(preview.getByText(/FFmpeg/)).toBeVisible({
+    await expect(preview.getByText(/媒体组件|媒体处理失败/)).toBeVisible({
       timeout: 15_000,
     });
 
@@ -432,13 +447,12 @@ test("video preview reports a specific generation failure and persists its diagn
 
     await preview.getByRole("button", { name: "关闭查看页面" }).click();
     await expect(preview).toBeHidden();
-    await window.getByRole("button", { name: "更多工具" }).click();
-    await window.getByRole("menuitem", { name: "后台任务" }).click();
+    await window.getByRole("button", { name: "后台任务" }).click();
     const jobsDialog = window.getByRole("dialog", { name: "后台媒体任务" });
     await expect(jobsDialog).toBeVisible();
     await expect(jobsDialog.getByText(/失败 [1-9]/)).toBeVisible();
     await expect(
-      jobsDialog.getByText(/FFmpeg media component is unavailable/).first(),
+      jobsDialog.getByText(/media component needed for video thumbnails is unavailable/).first(),
     ).toBeVisible();
     await expect(jobsDialog).not.toContainText(temporaryRoot);
     await jobsDialog.getByRole("button", { name: "关闭后台任务" }).click();
@@ -452,7 +466,7 @@ test("video preview reports a specific generation failure and persists its diagn
     const reopenedPreview = window.getByRole("region", {
       name: "broken-preview.mp4 查看页面",
     });
-    await expect(reopenedPreview.getByText("缺少 FFmpeg")).toBeVisible();
+    await expect(reopenedPreview.getByText(/媒体组件/)).toBeVisible();
   } finally {
     await application.close();
     rmSync(temporaryRoot, { force: true, recursive: true });

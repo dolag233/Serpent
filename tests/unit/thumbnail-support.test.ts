@@ -19,7 +19,7 @@ describe("assetSupportsThumbnail", () => {
     ).toBe(true);
   });
 
-  it("rejects text and generic other formats", () => {
+  it("rejects text and unknown formats", () => {
     expect(
       assetSupportsThumbnail({ mediaType: "text", displayName: "notes.md" }),
     ).toBe(false);
@@ -27,16 +27,10 @@ describe("assetSupportsThumbnail", () => {
       assetSupportsThumbnail({ mediaType: "other", displayName: "archive.zip" }),
     ).toBe(false);
     expect(
-      assetSupportsThumbnail({ mediaType: "other", displayName: "layer.psd" }),
-    ).toBe(false);
-  });
-
-  it("allows OIIO-backed other formats", () => {
-    expect(
-      assetSupportsThumbnail({ mediaType: "other", displayName: "light.exr" }),
+      assetSupportsThumbnail({ mediaType: "image", displayName: "layer.psd" }),
     ).toBe(true);
     expect(
-      assetSupportsThumbnail({ mediaType: "other", displayName: "tex.TGA" }),
+      assetSupportsThumbnail({ mediaType: "image", displayName: "light.exr" }),
     ).toBe(true);
   });
 });

@@ -383,6 +383,90 @@ export function ContextMenuItem({
   );
 }
 
+/** A Windows-style submenu that opens as soon as the pointer hovers its row. */
+export function ContextMenuSubmenu({
+  icon,
+  label,
+  children,
+}: {
+  icon?: ReactNode;
+  label: string;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const [position, setPosition] = useState({ left: 0, top: 0 });
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const closeTimer = useRef<number | null>(null);
+
+  const cancelClose = () => {
+    if (closeTimer.current !== null) {
+      window.clearTimeout(closeTimer.current);
+      closeTimer.current = null;
+    }
+  };
+  const scheduleClose = () => {
+    cancelClose();
+    closeTimer.current = window.setTimeout(() => setOpen(false), 140);
+  };
+  const openSubmenu = () => {
+    cancelClose();
+    const rect = triggerRef.current?.getBoundingClientRect();
+    if (rect) {
+      const width = 248;
+      const gap = 4;
+      const left = rect.right + gap + width <= window.innerWidth
+        ? rect.right + gap
+        : Math.max(gap, rect.left - width - gap);
+      const top = Math.min(
+        Math.max(gap, rect.top),
+        Math.max(gap, window.innerHeight - 360),
+      );
+      setPosition({ left, top });
+    }
+    setOpen(true);
+  };
+
+  useEffect(() => () => cancelClose(), []);
+
+  return (
+    <div
+      className="context-menu-submenu-trigger"
+      onMouseEnter={openSubmenu}
+      onMouseLeave={scheduleClose}
+    >
+      <button
+        aria-expanded={open}
+        aria-haspopup="menu"
+        aria-label={label}
+        className="context-menu-item"
+        ref={triggerRef}
+        role="menuitem"
+        tabIndex={-1}
+        type="button"
+        onFocus={openSubmenu}
+      >
+        {icon && <span className="context-menu-item-icon">{icon}</span>}
+        <span className="context-menu-item-label">{label}</span>
+        <span className="context-menu-item-shortcut" aria-hidden="true">
+          <span className="context-menu-submenu-chevron">›</span>
+        </span>
+      </button>
+      {open ? (
+        <div
+          aria-label={label}
+          className="context-menu context-menu-submenu"
+          role="menu"
+          style={{ left: position.left, top: position.top }}
+          onMouseEnter={cancelClose}
+          onMouseLeave={scheduleClose}
+        >
+          {children}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // ContextMenuSection — grouping with optional divider label
 // ---------------------------------------------------------------------------

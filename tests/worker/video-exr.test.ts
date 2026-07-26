@@ -127,7 +127,7 @@ function createMockSpawn(config: MockSpawnConfig): SpawnFunction {
     // Write a small output file for any spawn that produces an output
     // (last argument is always the output file path).
     const outputPath = args[args.length - 1];
-    const outputExtensions = ['.jpg', '.webm', '.png', '.webp', '.json'];
+    const outputExtensions = ['.jpg', '.webm', '.ogg', '.png', '.webp', '.json'];
     if (outputPath && outputExtensions.some((ext) => outputPath.endsWith(ext))) {
       mkdirSync(path.dirname(outputPath), { recursive: true });
       // Valid 1×1 transparent PNG so sharp.flatten can composite waveform covers.
@@ -592,11 +592,9 @@ describe('video (ffprobe + ffmpeg)', () => {
 
     expect(service.getPreviewArtifact(created.libraryId, assets[0]!.assetId)).toMatchObject({
       mediaType: 'video',
-      status: 'ready',
+      status: 'pending',
       kind: 'webm_proxy',
-      mimeType: 'video/mp4',
-      playbackMode: 'source',
-      errorCode: 'FFMPEG_REQUIRED',
+      mimeType: 'video/webm',
     });
 
     db.close();
@@ -717,6 +715,41 @@ describe('video (ffprobe + ffmpeg)', () => {
     expect(repairedService.listMediaJobs(created.libraryId).jobs).toHaveLength(
       jobsBeforeSecondRepair.length,
     );
+    repairedService.closeAll();
+  });
+
+  it('automatically requeues a failed audio proxy after FFmpeg is repaired', async () => {
+    process.env['SERPENT_FFMPEG_PATH'] = '/fake/ffmpeg';
+    const root = temporaryRoot();
+    const failedService = new LibraryService({
+      spawnFn: createMockSpawn({ enoentCommand: '/fake/ffmpeg' }),
+    });
+    const created = failedService.createLibrary({
+      displayName: 'AutoRepairAudioProxy',
+      selectedParentPath: root,
+    });
+    const sourcePath = path.join(root, 'voice.flac');
+    writeFileSync(sourcePath, Buffer.alloc(4096, 0));
+    importNoConflict(failedService, created.libraryId, sourcePath);
+    const asset = failedService.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
+    failedService.enqueueArtifactRetry({
+      libraryId: created.libraryId,
+      assetId: asset.assetId,
+      kind: 'audio_proxy',
+    });
+    await failedService.processThumbnailQueue(created.libraryId, { maxJobs: 1 });
+    expect(failedService.getCurrentArtifact(created.libraryId, asset.assetId, 'audio_proxy'))
+      .toMatchObject({ status: 'failed', errorCode: 'FFMPEG_REQUIRED' });
+    failedService.closeAll();
+
+    const repairedService = new LibraryService({
+      mediaComponentProbe: (component) => component === 'ffmpeg',
+      spawnFn: createMockSpawn({}),
+    });
+    repairedService.openLibrary(created.libraryPath);
+    expect(repairedService.listMediaJobs(created.libraryId).jobs.find((job) =>
+      job.assetId === asset.assetId && job.kind === 'generate_audio_proxy',
+    )).toMatchObject({ status: 'queued', errorCode: null, attemptCount: 0 });
     repairedService.closeAll();
   });
 
@@ -1110,7 +1143,7 @@ describe('EXR/TGA (oiiotool)', () => {
     // Verify oiiotool args
     const assetPath = service.resolveAssetPath(created.libraryId, assets[0]!.assetId);
     const oiioCall = capturedSpawnArgs.find(
-      (c) => c.command === '/fake/oiiotool' && c.args.includes(assetPath),
+      (c) => c.command === '/fake/oiiotool' && c.args.includes(assetPath) && c.args.includes('--colorconfig'),
     );
     expect(oiioCall).toBeDefined();
     expect(oiioCall!.args).toContain('--colorconfig');
@@ -1129,6 +1162,104 @@ describe('EXR/TGA (oiiotool)', () => {
     expect(oiioCall!.args).toContain(assetPath);
 
     db.close();
+    service.closeAll();
+  });
+
+  it('lists EXR parts and regenerates the selected part for the viewer', async () => {
+    process.env['SERPENT_OIIO_PATH'] = '/fake/oiiotool';
+    const root = temporaryRoot();
+    const invocations: string[][] = [];
+    const service = new LibraryService({
+      spawnFn: async (_command, args) => {
+        invocations.push(args);
+        if (args.includes('--info')) {
+          return {
+            stdout: Buffer.from([
+              ' subimage  0: 64 x 48, 3 channel, float openexr',
+              '    name: "beauty"',
+              ' subimage  1: 64 x 48, 3 channel, float openexr',
+              '    name: "depth"',
+              '',
+            ].join('\n')),
+            stderr: '',
+            exitCode: 0,
+          };
+        }
+        const outputPath = args.at(-1);
+        if (outputPath?.endsWith('.png')) {
+          mkdirSync(path.dirname(outputPath), { recursive: true });
+          writeFileSync(outputPath, Buffer.from('fake-png-data'));
+        }
+        return { stdout: Buffer.alloc(0), stderr: '', exitCode: 0 };
+      },
+    });
+    const created = service.createLibrary({ displayName: 'EXRParts', selectedParentPath: root });
+    const sourcePath = path.join(root, 'layers.exr');
+    writeFileSync(sourcePath, Buffer.alloc(4096, 0));
+    importNoConflict(service, created.libraryId, sourcePath);
+    const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
+
+    await service.generateThumbnail({ libraryId: created.libraryId, assetId: asset.assetId });
+    await expect(service.resolvePreviewArtifact(created.libraryId, asset.assetId, 1))
+      .resolves.toMatchObject({
+        mediaType: 'image',
+        status: 'ready',
+        selectedExrPlane: 1,
+        exrPlanes: [
+          { index: 0, label: 'Part 0: beauty' },
+          { index: 1, label: 'Part 1: depth' },
+        ],
+      });
+    const partOneDecode = invocations.find((args) =>
+      args.includes('--subimage') && args[args.indexOf('--subimage') + 1] === '1',
+    );
+    expect(partOneDecode).toBeDefined();
+    const db = assertDb(created.libraryPath);
+    expect(db.prepare(
+      "SELECT generator_version FROM revision_artifacts WHERE kind = 'thumbnail' AND invalidated_at IS NULL",
+    ).get()).toMatchObject({ generator_version: expect.stringContaining('subimage=1') });
+    db.close();
+    service.closeAll();
+  });
+
+  it('routes every OIIO-backed image and RAW format through a derived PNG', async () => {
+    process.env['SERPENT_OIIO_PATH'] = '/fake/oiiotool';
+    const root = temporaryRoot();
+    const invocations: string[][] = [];
+    const service = new LibraryService({
+      spawnFn: async (_command, args) => {
+        invocations.push(args);
+        const outputPath = args.at(-1);
+        if (outputPath?.endsWith('.png')) {
+          mkdirSync(path.dirname(outputPath), { recursive: true });
+          writeFileSync(outputPath, Buffer.from('fake-png-data'));
+        }
+        return { stdout: Buffer.alloc(0), stderr: '', exitCode: 0 };
+      },
+    });
+    const created = service.createLibrary({ displayName: 'OiioFormatMatrix', selectedParentPath: root });
+    const extensions = [
+      'bmp', 'ico', 'psd', 'exr', 'tga', 'dng', 'cr2', 'cr3', 'nef', 'arw', 'raf', 'orf', 'rw2',
+    ];
+    for (const extension of extensions) {
+      const sourcePath = path.join(root, `sample.${extension}`);
+      writeFileSync(sourcePath, Buffer.alloc(4096, 0));
+      importNoConflict(service, created.libraryId, sourcePath);
+    }
+
+    const assets = service.listAssets({ libraryId: created.libraryId, recursive: true });
+    expect(assets).toHaveLength(extensions.length);
+    for (const asset of assets) {
+      const result = await service.generateThumbnail({
+        libraryId: created.libraryId,
+        assetId: asset.assetId,
+      });
+      expect(result.artifactId).toBeTruthy();
+      expect(service.getCurrentArtifact(created.libraryId, asset.assetId, 'thumbnail'))
+        .toMatchObject({ status: 'ready', mimeType: 'image/png' });
+    }
+    expect(invocations.filter((args) => args.includes('--colorconfig')))
+      .toHaveLength(extensions.length);
     service.closeAll();
   });
 
@@ -1160,7 +1291,7 @@ describe('EXR/TGA (oiiotool)', () => {
 
     const invocation = capturedSpawnArgs.find((args) => args.includes(
       service.resolveAssetPath(created.libraryId, asset.assetId),
-    ));
+    ) && args.includes('--colorconfig'));
     expect(invocation).toEqual(expect.arrayContaining([
       '--colorconfig',
       'ocio://studio-config-v4.0.0_aces-v2.0_ocio-v2.5',
@@ -1719,6 +1850,56 @@ describe('audio waveform thumbnail (Serpent-13v)', () => {
       thumbnailArtifactId: result.artifactId,
     });
 
+    service.closeAll();
+  });
+
+  it('generates an Opus/Ogg playback proxy for WAV after its waveform is ready', async () => {
+    process.env['SERPENT_FFMPEG_PATH'] = '/fake/ffmpeg';
+    const root = temporaryRoot();
+    const capturedSpawnArgs: Array<{ command: string; args: string[] }> = [];
+    const service = new LibraryService({
+      spawnFn: async (command, args) => {
+        capturedSpawnArgs.push({ command, args });
+        const outputPath = args.at(-1);
+        if (outputPath && ['.ogg', '.png', '.json'].some((extension) => outputPath.endsWith(extension))) {
+          mkdirSync(path.dirname(outputPath), { recursive: true });
+          if (outputPath.endsWith('.png')) {
+            writeFileSync(outputPath, VALID_1X1_PNG);
+          } else {
+            writeFileSync(outputPath, Buffer.from('mock-output-data'));
+          }
+        }
+        if (command.includes('ffprobe')) {
+          return { stdout: Buffer.from(CANNED_FFPROBE_JSON), stderr: '', exitCode: 0 };
+        }
+        return { stdout: Buffer.alloc(0), stderr: '', exitCode: 0 };
+      },
+    });
+    const created = service.createLibrary({ displayName: 'AudioProxy', selectedParentPath: root });
+    const sourcePath = path.join(root, 'tone.wav');
+    writeFileSync(sourcePath, Buffer.alloc(4096, 0));
+    importNoConflict(service, created.libraryId, sourcePath);
+    const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
+
+    service.enqueueThumbnailJobs(created.libraryId);
+    await service.processThumbnailQueue(created.libraryId);
+
+    expect(service.getCurrentArtifact(created.libraryId, asset.assetId, 'audio_proxy'))
+      .toMatchObject({ status: 'ready', mimeType: 'audio/ogg' });
+    expect(service.getPreviewArtifact(created.libraryId, asset.assetId)).toMatchObject({
+      mediaType: 'audio',
+      status: 'ready',
+      kind: 'audio_proxy',
+      mimeType: 'audio/ogg',
+      playbackMode: 'proxy',
+    });
+    const proxyCall = capturedSpawnArgs.find((call) =>
+      call.args.includes('libopus') && call.args.at(-1)?.endsWith('.ogg'),
+    );
+    expect(proxyCall).toBeDefined();
+    expect(proxyCall!.args).toContain('-vn');
+    expect(proxyCall!.args).toContain('-f');
+    expect(proxyCall!.args).toContain('ogg');
     service.closeAll();
   });
 });

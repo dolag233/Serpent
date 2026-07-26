@@ -85,6 +85,16 @@ portfile = replaceExactly(
   `if("gpl" IN_LIST FEATURES)\n    set(OPTIONS "\${OPTIONS} --enable-gpl")\nelse()\n    set(OPTIONS "\${OPTIONS} --disable-gpl")\nendif()`,
   'GPL configuration',
 );
+portfile = replaceExactly(
+  portfile,
+  `set(OPTIONS_CROSS "--enable-cross-compile")`,
+  `# Serpent generates audio waveform thumbnails as PNG. Keep the encoder in
+# the minimal LGPL runtime; filters alone cannot write an image2 PNG output.
+set(OPTIONS "\${OPTIONS} --enable-encoder=png")
+
+set(OPTIONS_CROSS "--enable-cross-compile")`,
+  'cross-compile options block',
+);
 writeFileSync(portfilePath, portfile, 'utf8');
 
 console.log(`Prepared audited FFmpeg overlay port at ${overlayPort}`);

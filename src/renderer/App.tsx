@@ -1759,6 +1759,20 @@ function AppInner() {
     setPreviewAsset(asset);
   }, [selectionAnchorRef, wakeViewerChrome]);
 
+  const persistAssetColorSpace = useCallback(async (assetId: string, colorSpace: string | null) => {
+    if (!api || !library) return;
+    const result = await api.setAssetColorSpaceOverride({
+      libraryId: library.libraryId,
+      assetId,
+      colorSpace,
+    });
+    if (!result.ok) {
+      setError(t("toast.colorSpaceSaveFailed"));
+      return;
+    }
+    setNotice(t("toast.colorSpaceSaved"));
+  }, [api, library, setError, setNotice, t]);
+
   const navigateAssetPreview = useCallback((asset: AssetSummary) => {
     setSelectedAssetIds([asset.assetId]);
     setSelectedAssetId(asset.assetId);
@@ -1927,7 +1941,12 @@ function AppInner() {
         if (current.size === 0) return current;
         const next = new Map(current);
         for (const asset of assetResult.value.items) {
-          if (asset.thumbnailStatus === "ready") next.delete(asset.assetId);
+          if (
+            asset.thumbnailStatus === "ready" ||
+            !assetSupportsThumbnail(asset)
+          ) {
+            next.delete(asset.assetId);
+          }
         }
         return next.size === current.size ? current : next;
       });
@@ -2057,6 +2076,26 @@ function AppInner() {
     if (!api) return;
     return api.onThumbnailEvent((event) => {
       if (event.libraryId !== library?.libraryId) return;
+      // A failed worker job can complete before the first post-import browse
+      // request puts its asset in `assets` (ENOENT for a missing media tool is
+      // especially fast). Keep the result independently so loadContent can
+      // render the failure once that request resolves, rather than dropping a
+      // terminal error forever because this particular state snapshot is empty.
+      if (event.type === "asset.thumbnail.failed") {
+        const suppressFailure = isBenignThumbnailErrorCode(event.errorCode);
+        setThumbnailFailures((failures) => {
+          const next = new Map(failures);
+          if (suppressFailure) {
+            next.delete(event.assetId);
+          } else {
+            next.set(
+              event.assetId,
+              event.reason ?? t("toast.thumbnailFailed"),
+            );
+          }
+          return next;
+        });
+      }
       setAssets((current) => {
         const asset = current.find((item) => item.assetId === event.assetId);
         if (!asset) return current;
@@ -2065,18 +2104,14 @@ function AppInner() {
           const suppressFailure =
             isBenignThumbnailErrorCode(event.errorCode) ||
             !assetSupportsThumbnail(asset);
-          setThumbnailFailures((failures) => {
-            const next = new Map(failures);
-            if (suppressFailure) {
+          if (suppressFailure) {
+            setThumbnailFailures((failures) => {
+              if (!failures.has(event.assetId)) return failures;
+              const next = new Map(failures);
               next.delete(event.assetId);
-            } else {
-              next.set(
-                event.assetId,
-                event.reason ?? t("toast.thumbnailFailed"),
-              );
-            }
-            return next;
-          });
+              return next;
+            });
+          }
           if (suppressFailure) return current;
           return current.map((item) =>
             item.assetId === event.assetId
@@ -7724,6 +7759,9 @@ function AppInner() {
             key={previewAsset.assetId}
             libraryId={library.libraryId}
             onChromeActivity={onViewerChromeActivity}
+            onSetColorSpace={(assetId, colorSpace) => {
+              void persistAssetColorSpace(assetId, colorSpace);
+            }}
             onClose={() => void closeAssetPreview()}
             onNext={
               previewIndex >= 0 && previewIndex < visibleAssets.length - 1
@@ -8340,6 +8378,9 @@ function AppInner() {
         onViewAsset={(assetId) => {
           const asset = visibleAssets.find((item) => item.assetId === assetId);
           if (asset) openAssetPreview(asset);
+        }}
+        onSetAssetColorSpace={(assetId, colorSpace) => {
+          void persistAssetColorSpace(assetId, colorSpace);
         }}
         onRevealInFolder={(assetId) => { void handleRevealInFolder(assetId); }}
         onCopyFilePath={(assetId) => { void handleCopyFilePath(assetId); }}

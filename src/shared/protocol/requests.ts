@@ -441,6 +441,12 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     assetId: identifierSchema,
   }),
   z.strictObject({
+    type: z.literal('asset.color-space.set.request'),
+    libraryId: identifierSchema,
+    assetId: identifierSchema,
+    colorSpace: z.union([nonBlankString.max(120), z.null()]),
+  }),
+  z.strictObject({
     type: z.literal('asset.metadata.set.request'),
     libraryId: identifierSchema,
     assetId: identifierSchema,
@@ -725,6 +731,8 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     libraryId: identifierSchema,
     assetId: identifierSchema,
     mode: z.enum(['client', 'fullscreen']),
+    exrPlane: z.number().int().min(0).max(255).optional(),
+    colorSpace: nonBlankString.max(120).optional(),
   }),
   z.strictObject({
     type: z.literal('asset.close-preview.request'),
@@ -775,7 +783,7 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     type: z.literal('asset.retry-artifact.request'),
     libraryId: identifierSchema,
     assetId: identifierSchema,
-    kind: z.enum(['thumbnail', 'webm_proxy']),
+    kind: z.enum(['thumbnail', 'webm_proxy', 'audio_proxy']),
   }),
   z.strictObject({
     type: z.literal('media.list-jobs.request'),
@@ -1142,6 +1150,12 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     assetId: identifierSchema,
   }),
   z.strictObject({
+    type: z.literal('asset.color-space.set'),
+    libraryId: identifierSchema,
+    assetId: identifierSchema,
+    colorSpace: z.union([nonBlankString.max(120), z.null()]),
+  }),
+  z.strictObject({
     type: z.literal('asset.metadata.set'),
     libraryId: identifierSchema,
     assetId: identifierSchema,
@@ -1400,7 +1414,7 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     type: z.literal('media.retry-artifact'),
     libraryId: identifierSchema,
     assetId: identifierSchema,
-    kind: z.enum(['thumbnail', 'webm_proxy']),
+    kind: z.enum(['thumbnail', 'webm_proxy', 'audio_proxy']),
   }),
   z.strictObject({
     type: z.literal('media.get-artifact-path'),
@@ -1472,6 +1486,8 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     type: z.literal('media.get-preview-artifact'),
     libraryId: identifierSchema,
     assetId: identifierSchema,
+    exrPlane: z.number().int().min(0).max(255).optional(),
+    colorSpace: nonBlankString.max(120).optional(),
   }),
   z.strictObject({
     type: z.literal('ai.configure'),

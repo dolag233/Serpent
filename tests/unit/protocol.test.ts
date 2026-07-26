@@ -292,19 +292,26 @@ describe('renderer request protocol', () => {
     }
   });
 
-  it('accepts semantic video preview and proxy retry requests without paths', () => {
+  it('accepts semantic preview and proxy retry requests without paths', () => {
     expect(parseRendererRequest({
       type: 'asset.preview.request',
       libraryId: 'library-01',
       assetId: 'asset-01',
       mode: 'fullscreen',
-    })).toMatchObject({ type: 'asset.preview.request', mode: 'fullscreen' });
+      exrPlane: 2,
+    })).toMatchObject({ type: 'asset.preview.request', mode: 'fullscreen', exrPlane: 2 });
     expect(parseRendererRequest({
       type: 'asset.retry-artifact.request',
       libraryId: 'library-01',
       assetId: 'asset-01',
       kind: 'webm_proxy',
     })).toMatchObject({ kind: 'webm_proxy' });
+    expect(parseRendererRequest({
+      type: 'asset.retry-artifact.request',
+      libraryId: 'library-01',
+      assetId: 'asset-01',
+      kind: 'audio_proxy',
+    })).toMatchObject({ kind: 'audio_proxy' });
   });
 
   it('accepts path-free reveal-in-folder and copy-file-path requests by asset id only', () => {
@@ -1002,6 +1009,43 @@ describe('preview response protocol', () => {
     });
     expect(result).toMatchObject({ status: 'failed', errorCode: 'FFMPEG_REQUIRED' });
     expect(JSON.stringify(result)).not.toContain('/Users/');
+  });
+
+  it('allows an audio proxy response without exposing a source path', () => {
+    expect(parseRendererResult({
+      ok: true,
+      type: 'asset.preview.resolved',
+      assetId: 'asset-01',
+      mediaType: 'audio',
+      status: 'ready',
+      kind: 'audio_proxy',
+      url: 'serpent://proxy/library-01/artifact-01',
+      playbackMode: 'proxy',
+    })).toMatchObject({ kind: 'audio_proxy', playbackMode: 'proxy' });
+  });
+
+  it('carries only numeric EXR part selection and labels to the renderer', () => {
+    expect(parseRendererResult({
+      ok: true,
+      type: 'asset.preview.resolved',
+      assetId: 'asset-01',
+      mediaType: 'image',
+      status: 'ready',
+      kind: 'thumbnail',
+      url: 'serpent://preview/library-01/artifact-01',
+      exrPlanes: [
+        { index: 0, label: 'Part 0: beauty' },
+        { index: 1, label: 'Part 1: depth' },
+      ],
+      selectedExrPlane: 1,
+    })).toMatchObject({ selectedExrPlane: 1 });
+    expect(() => parseRendererRequest({
+      type: 'asset.preview.request',
+      libraryId: 'library-01',
+      assetId: 'asset-01',
+      mode: 'client',
+      exrPlane: -1,
+    })).toThrow();
   });
 
   it('validates the renderer-safe media job listing', () => {

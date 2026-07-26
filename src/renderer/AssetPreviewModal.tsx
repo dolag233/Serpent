@@ -5,6 +5,7 @@ import {
   useImperativeHandle,
   useRef,
   useState,
+  type ChangeEvent,
   type SyntheticEvent,
 } from "react";
 
@@ -44,6 +45,7 @@ interface AssetPreviewModalProps {
   chromeIdle: boolean;
   libraryId: string;
   onChromeActivity: (source: ViewerChromeActivitySource) => void;
+  onSetColorSpace?: (assetId: string, colorSpace: string | null) => void;
   onClose(): void;
   onNext?: () => void;
   onPrevious?: () => void;
@@ -163,6 +165,7 @@ export const AssetPreviewModal = forwardRef<
     chromeIdle,
     libraryId,
     onChromeActivity,
+    onSetColorSpace,
     onClose,
     onNext,
     onPrevious,
@@ -181,6 +184,8 @@ export const AssetPreviewModal = forwardRef<
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [retrying, setRetrying] = useState(false);
+  const [selectedExrPlane, setSelectedExrPlane] = useState(0);
+  const [selectedColorSpace, setSelectedColorSpace] = useState<string | undefined>();
   const [directApproved, setDirectApproved] = useState(false);
   const resolutionRef = useRef<PreviewResolution | null>(null);
   const directApprovedRef = useRef(false);
@@ -196,7 +201,12 @@ export const AssetPreviewModal = forwardRef<
   );
 
   const resolvePreview = useCallback(
-    async (quiet = false, mode: "client" | "fullscreen" = "client") => {
+    async (
+      quiet = false,
+      mode: "client" | "fullscreen" = "client",
+      exrPlane = selectedExrPlane,
+      colorSpace = selectedColorSpace,
+    ) => {
       const sequence = ++requestSequence.current;
       if (!quiet) setLoading(true);
       try {
@@ -204,6 +214,8 @@ export const AssetPreviewModal = forwardRef<
           libraryId,
           assetId: asset.assetId,
           mode,
+          ...(asset.mediaType === "image" ? { exrPlane } : {}),
+          ...(colorSpace ? { colorSpace } : {}),
         });
         if (sequence !== requestSequence.current) return result;
         if (!result.ok) {
@@ -212,6 +224,22 @@ export const AssetPreviewModal = forwardRef<
           );
         } else {
           setResolution((previous) => {
+            // A derivative refresh may temporarily return pending without a
+            // URL. Keep the currently decoded media mounted until the
+            // replacement is ready; otherwise the viewer flashes its
+            // missing/unavailable state for the duration of the request.
+            if (
+              previous?.url &&
+              !result.value.url &&
+              result.value.status === "pending"
+            ) {
+              return {
+                ...previous,
+                ...(result.value.colorSpace
+                  ? { colorSpace: result.value.colorSpace }
+                  : {}),
+              };
+            }
             if (previous && samePreviewPlayback(previous, result.value)) {
               return previous;
             }
@@ -245,8 +273,13 @@ export const AssetPreviewModal = forwardRef<
         if (!quiet && sequence === requestSequence.current) setLoading(false);
       }
     },
-    [api, asset.assetId, libraryId, t],
+    [api, asset.assetId, asset.mediaType, libraryId, selectedColorSpace, selectedExrPlane, t],
   );
+
+  useEffect(() => {
+    setSelectedExrPlane(0);
+    setSelectedColorSpace(undefined);
+  }, [asset.assetId]);
 
   const ensureProxyFallback = useCallback(
     async (errorCode: string) => {
@@ -399,7 +432,11 @@ export const AssetPreviewModal = forwardRef<
         assetId: asset.assetId,
         kind:
           resolution?.kind ??
-          (asset.mediaType === "video" ? "webm_proxy" : "thumbnail"),
+          (asset.mediaType === "video"
+            ? "webm_proxy"
+            : asset.mediaType === "audio"
+              ? "audio_proxy"
+              : "thumbnail"),
       });
       if (!result.ok) {
         setError(
@@ -413,6 +450,21 @@ export const AssetPreviewModal = forwardRef<
     } finally {
       setRetrying(false);
     }
+  }
+
+  function selectExrPlane(event: ChangeEvent<HTMLSelectElement>) {
+    const plane = Number(event.currentTarget.value);
+    if (!Number.isSafeInteger(plane) || plane < 0) return;
+    setSelectedExrPlane(plane);
+    void resolvePreview(false, "client", plane);
+  }
+
+  function selectColorSpace(value: string) {
+    const colorSpace = value.trim();
+    if (!colorSpace) return;
+    setSelectedColorSpace(colorSpace);
+    onSetColorSpace?.(asset.assetId, colorSpace);
+    void resolvePreview(false, "client", selectedExrPlane, colorSpace);
   }
 
   async function toggleFullscreen() {
@@ -636,8 +688,13 @@ export const AssetPreviewModal = forwardRef<
           ) : showImage && imageSrc ? (
             <ZoomableImage
               alt={asset.displayName}
+              colorSpaceOptions={resolution?.colorSpace?.options}
+              colorSpaceValue={
+                selectedColorSpace ?? resolution?.colorSpace?.id
+              }
               isFullscreen={isFullscreen}
               key={asset.assetId}
+              onColorSpaceChange={selectColorSpace}
               onFullscreen={() => void toggleFullscreen()}
               onSwipeNext={onNext}
               onSwipePrevious={onPrevious}
@@ -696,6 +753,22 @@ export const AssetPreviewModal = forwardRef<
               )}
             </div>
           )}
+          {resolution?.exrPlanes && resolution.exrPlanes.length > 1 ? (
+            <label className="preview-exr-plane-selector">
+              <span>{t("preview.exrPlane")}</span>
+              <select
+                aria-label={t("preview.exrPlane")}
+                onChange={selectExrPlane}
+                value={resolution.selectedExrPlane ?? selectedExrPlane}
+              >
+                {resolution.exrPlanes.map((plane) => (
+                  <option key={plane.index} value={plane.index}>
+                    {plane.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
           {!isTextViewer ? (
             <>
               <button

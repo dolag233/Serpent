@@ -52,15 +52,15 @@ function createFixture(gpl = false): string {
   );
 
   const config = gpl
-    ? '--disable-nonfree --enable-gpl --enable-libx264 --enable-libvpx --enable-libopus --enable-libfreetype --enable-libharfbuzz'
-    : '--disable-gpl --disable-nonfree --enable-libvpx --enable-libopus --enable-libfreetype --enable-libharfbuzz';
+    ? '--disable-nonfree --enable-gpl --enable-libx264 --enable-libvpx --enable-libopus --enable-libfreetype --enable-libharfbuzz --enable-zlib'
+    : '--disable-gpl --disable-nonfree --enable-libvpx --enable-libopus --enable-libfreetype --enable-libharfbuzz --enable-zlib';
   writeExecutable(
     path.join(root, 'ffmpeg', 'darwin-arm64', 'ffmpeg'),
     `case "$*" in
       *-version*) echo "ffmpeg version 8.1" ;;
       *-buildconf*) echo "${config}" ;;
-      *-encoders*) echo " V..... libvpx-vp9"; echo " A..... libopus" ;;
-      *-filters*) echo " ... drawtext"; echo " ... fps"; echo " ... scale"; echo " ... thumbnail"; echo " ... tile" ;;
+      *-encoders*) echo " V..... libvpx-vp9"; echo " A..... libopus"; echo " V..... png" ;;
+      *-filters*) echo " ... drawtext"; echo " ... fps"; echo " ... scale"; echo " ... thumbnail"; echo " ... tile"; echo " ... aformat"; echo " ... compand"; echo " ... showwavespic" ;;
       *) exit 2 ;;
     esac`,
   );
@@ -298,6 +298,73 @@ it('marks the custom macOS triplet as Darwin for vcpkg dependency resolution', (
     'utf8',
   );
   expect(triplet).toMatch(/^set\(VCPKG_CMAKE_SYSTEM_NAME Darwin\)$/m);
+});
+
+it('uses one LibRaw- and zlib-enabled media manifest for macOS and Windows builds', () => {
+  const manifest = JSON.parse(readFileSync(
+    path.join(projectRoot, 'resources/media-binaries/vcpkg/vcpkg.json'),
+    'utf8',
+  )) as {
+    dependencies: Array<{ name: string; features?: string[] }>;
+  };
+  const oiio = manifest.dependencies.find((dependency) => dependency.name === 'openimageio');
+  expect(oiio?.features).toEqual(expect.arrayContaining(['libraw', 'opencolorio', 'tools']));
+  const ffmpeg = manifest.dependencies.find((dependency) => dependency.name === 'ffmpeg');
+  expect(ffmpeg?.features).toEqual(expect.arrayContaining(['zlib']));
+
+  const macScript = readFileSync(
+    path.join(projectRoot, 'scripts/media-build/darwin-arm64.sh'),
+    'utf8',
+  );
+  const windowsScript = readFileSync(
+    path.join(projectRoot, 'scripts/media-build/win32-x64.ps1'),
+    'utf8',
+  );
+  expect(macScript).toContain('MANIFEST_ROOT="$ROOT/resources/media-binaries/vcpkg"');
+  expect(windowsScript).toContain("$ManifestRoot = Join-Path $Root 'resources/media-binaries/vcpkg'");
+  expect(macScript).toContain('export VCPKG_ROOT');
+  expect(windowsScript).toContain('$env:VCPKG_ROOT = $VcpkgRoot');
+  expect(windowsScript).toContain("Join-Path $env:LOCALAPPDATA 'Serpent\\media-build\\win32-x64'");
+});
+
+it('keeps the PNG encoder required for audio waveform thumbnails in the FFmpeg overlay', () => {
+  const overlayBuilder = readFileSync(
+    path.join(projectRoot, 'scripts/media-build/prepare-vcpkg-overlay.mjs'),
+    'utf8',
+  );
+  expect(overlayBuilder).toContain('--enable-encoder=png');
+});
+
+it('checksum-verifies the pinned Windows vcpkg tool instead of weakening integrity checks', () => {
+  const sourceLock = JSON.parse(readFileSync(
+    path.join(projectRoot, 'resources/media-binaries/source-lock.json'),
+    'utf8',
+  )) as {
+    vcpkgTool?: { releaseTag?: string; windowsX64?: { url?: string; sha256?: string } };
+  };
+  expect(sourceLock.vcpkgTool).toMatchObject({
+    releaseTag: '2026-04-08',
+    windowsX64: {
+      url: 'https://github.com/microsoft/vcpkg-tool/releases/download/2026-04-08/vcpkg.exe',
+      sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+    },
+  });
+
+  const windowsScript = readFileSync(
+    path.join(projectRoot, 'scripts/media-build/win32-x64.ps1'),
+    'utf8',
+  );
+  expect(windowsScript).toContain('Get-FileHash -LiteralPath $DownloadPath -Algorithm SHA256');
+  expect(windowsScript).toContain('Pinned Windows vcpkg tool checksum does not match source-lock.json.');
+  expect(windowsScript).not.toContain('bootstrap-vcpkg.bat');
+  expect(windowsScript).toContain("'^.+-windows\\.partial\\.\\d+$'");
+  expect(windowsScript).toContain("-Filter '*.exe' -File");
+  expect(windowsScript).toContain('Recovered completed vcpkg tool extraction');
+  expect(windowsScript).toContain('$Attempt -le 5');
+  expect(windowsScript).toContain('Retrying vcpkg media dependency build after a failed attempt');
+  expect(windowsScript).toContain("Start-Sleep -Seconds $Attempt");
+  expect(windowsScript).toContain('$PSNativeCommandUseErrorActionPreference = $false');
+  expect(windowsScript).toContain('$PSNativeCommandUseErrorActionPreference = $PreviousNativeErrorPreference');
 });
 
 it('keeps checksum-locked source archives available for license staging', () => {

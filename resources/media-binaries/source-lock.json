@@ -6,6 +6,13 @@
     "tag": "2026.04.27",
     "commit": "56bb2411609227288b70117ead2c47585ba07713"
   },
+  "vcpkgTool": {
+    "releaseTag": "2026-04-08",
+    "windowsX64": {
+      "url": "https://github.com/microsoft/vcpkg-tool/releases/download/2026-04-08/vcpkg.exe",
+      "sha256": "f1edbf3a39de350e2bb065214fdc057111aa87a2e2ed9a7dcb8ddc86e17751b9"
+    }
+  },
   "components": {
     "ffmpeg": {
       "version": "8.1",

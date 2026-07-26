@@ -589,6 +589,10 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
       const result = libraryService.getExtractedMetadata(request.command);
       return { ok: true, type: 'asset.extracted-metadata.got', result };
     }
+    case 'asset.color-space.set': {
+      const result = libraryService.setAssetColorSpaceOverride(request.command);
+      return { ok: true, type: 'asset.color-space.updated', ...result };
+    }
     case 'asset.metadata.set': {
       const metadata = libraryService.setAssetMetadata(request.command);
       return { ok: true, type: 'asset.metadata.updated', metadata };
@@ -1248,15 +1252,16 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
     }
     case 'media.get-preview-artifact': {
       // Opening a preview is also an idempotent, high-priority generation hint.
-      // The original source remains independently viewable for native formats.
       scheduleThumbnailScene(
         request.command.libraryId,
         'mutation',
         [request.command.assetId],
       );
-      const preview = libraryService.getPreviewArtifact(
+      const preview = await libraryService.resolvePreviewArtifact(
         request.command.libraryId,
         request.command.assetId,
+        request.command.exrPlane,
+        request.command.colorSpace,
       );
       return {
         ok: true,

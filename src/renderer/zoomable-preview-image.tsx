@@ -40,6 +40,9 @@ export const ZoomableImage = forwardRef<
     onFullscreen?: () => void;
     onSwipeNext?: () => void;
     onSwipePrevious?: () => void;
+    colorSpaceOptions?: Array<{ id: string; label: string }>;
+    colorSpaceValue?: string;
+    onColorSpaceChange?: (colorSpace: string) => void;
     /**
      * Optional ready thumbnail / preview. Shown immediately; full `src`
      * upgrades quietly after decode (Serpent-eh07).
@@ -55,6 +58,9 @@ export const ZoomableImage = forwardRef<
     onFullscreen,
     onSwipeNext,
     onSwipePrevious,
+    colorSpaceOptions,
+    colorSpaceValue,
+    onColorSpaceChange,
     placeholderSrc,
     src,
   },
@@ -183,6 +189,22 @@ export const ZoomableImage = forwardRef<
         className="preview-zoom-controls preview-chrome-fade"
         aria-label={t("preview.imageZoom")}
       >
+        {colorSpaceOptions && colorSpaceOptions.length > 1 && onColorSpaceChange ? (
+          <label className="preview-color-space-control">
+            <span>{t("preview.colorSpace")}</span>
+            <select
+              aria-label={t("preview.colorSpace")}
+              onChange={(event) => onColorSpaceChange(event.currentTarget.value)}
+              value={colorSpaceValue}
+            >
+              {colorSpaceOptions.map((option) => (
+                <option key={option.id} value={option.id}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
         <input
           aria-label={t("preview.imageZoom")}
           max={sliderMax}

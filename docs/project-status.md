@@ -1,11 +1,12 @@
 # Serpent 项目状态
 
-> 更新时间：2026-07-25
+> 更新时间：2026-07-26
 > 事实来源：`docs/implementation/mvp-roadmap.md` 与各切片开发/审查/QA 文档
 
 ## 2026-07-25 产品待办入池与工单卫生
 
-- 产品负责人新增待办：**ignore**（`Serpent-v6m3`）、**七种扩展格式**（`Serpent-aav1`）、均已记入 backlog 与 beads，**未实现**。
+- 产品负责人新增待办：**ignore**（`Serpent-v6m3`）已入 backlog 与 beads、未实现；**常用媒体格式**（`Serpent-aav1`）正在实现。后者已有 Windows 本地 bundle、真实 Worker 解码/代理矩阵和开发态 Electron 媒体预览 E2E 证据，但 Windows/macOS 打包应用的查看/播放与人工验收尚未执行，不能标记完成。
+- 2026-07-26 媒体验收补充：用户已明确验收通过 SVG、TIFF、TGA、EXR、ARAW（按用户原文）和 PSD；后续需求已拆为 `Serpent-aoj0`（EXR 多通道 + 色彩空间读取/选择，P2）与 `Serpent-oc6g`（RGBA 单通道/组合查看器，P3）。
 - **浏览器扩展径向 Hotbox**（`Serpent-6llg` / REQ-EXT-005）：已实现且 **EXT-009 人类验收通过**（2026-07-25）；工单已关闭。
 - 工单卫生：关闭 14 条僵尸 open（实现已完成、验收已通过或已被新工单取代）；重建 `Serpent-ak94`（EXT-003）、`Serpent-u9yv`（EXT-002）。agent 查队列见 `docs/agent-work-queue.md`。
 - **Inspector AI 刷新**（`Serpent-c9r3` / REQ-INSPECT-006）：清除或生成 AI 信息后右侧信息栏须立即更新，未实现。
@@ -18,7 +19,7 @@
 - **2026-07-18 晚验收**：FILTER-013/014、SEARCH-005、NAV-005、SHELL-015/016、META-008、PALETTE-002 人类验收通过；SHELL-017、FILTER-015、VIEW-007 不通过/布局反馈。第五批反馈已入池并开单（`mvp-fifth-batch` 标签）：过滤交互重做、排序去相关性、画布 resize 重排、查看返回保视图等，见 `docs/implementation/mvp-ui-ux-requirements-backlog.md`「2026-07-18 第五批」。
 - **澄清队列**：`Serpent-w3b` 已于 2026-07-19 全部裁决或撤回（详见 backlog「集中澄清队列」）。跟进实现：`Serpent-toh`（目录计数全后代）、`Serpent-mqp`（标签管理工作区）、`Serpent-svc`（主题/语言默认跟系统，已实现待验 THEME-017）、`Serpent-5fq`（反选 Ctrl+I / mac Edit 后续）；复制粘贴走系统剪贴板（`Serpent-vgp`/`w29` 已解阻塞）；删除语义 `Serpent-ekj`/`9zc`/`5no`。
 - **人类验收**：清单中「待人类验收」项以 `docs/qa/human-acceptance-checklist.md` 为准；状态只能由用户本人改写。2026-07-21 新增待验：FOLDER-015（`Serpent-koy` 混合选中共通删除）、VIEWER-020（`Serpent-noz` 查看页 <>/x 自动对比）。
-- **2026-07-19 晚间反馈**（已入需求池与 beads，未实现）：查看页视频逐帧/`Ctrl±2s`（`Serpent-sk1`）、视频缩放（`190`）、滚轮指针缩放（`yo0n`）、切图 mip 式加载（`eh07`）、去掉「安全预览」文案（`dl23`）、亮色面包屑 hover（`xwi1`）、无库态可选已有库（`y0au`）；SVG 预览为 MVP 后（`9ei8`）。详见 `mvp-ui-ux-requirements-backlog.md`「2026-07-19 晚间反馈」。
+- **2026-07-19 晚间反馈**（已入需求池与 beads，未实现）：查看页视频逐帧/`Ctrl±2s`（`Serpent-sk1`）、视频缩放（`190`）、滚轮指针缩放（`yo0n`）、切图 mip 式加载（`eh07`）、去掉「安全预览」文案（`dl23`）、亮色面包屑 hover（`xwi1`）、无库态可选已有库（`y0au`）；SVG 原图矢量查看已在本轮接入，并由用户验收通过（2026-07-26）。详见 `mvp-ui-ux-requirements-backlog.md`「2026-07-19 晚间反馈」。
 - **2026-07-20 AI 配置/反馈**：BYOK 自定义端点 + F1–F7（眼睛图标、token 按钮、AI 角标、编辑转人工、右键清 AI、任务进度条、自动连接状态）已实现/收尾；待人类验收 AICFG-002–005、INSPECT-AI-001、MENU-AI-001、JOBS-001。F8 设计讨论待用户（`Serpent-1us6`）。
 - **2026-07-21 媒体恢复**：MEDIA-003 已在 Worker 实现历史 `FFMPEG_REQUIRED` /
   `OIIO_REQUIRED` 预览的组件探测、自动重新入队和单会话防循环；定向媒体回归

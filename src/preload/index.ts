@@ -697,6 +697,13 @@ const library: SerpentLibraryApi = Object.freeze({
     return { ok: true, value: result.result };
   },
 
+  async setAssetColorSpaceOverride({ libraryId, assetId, colorSpace }: { libraryId: string; assetId: string; colorSpace: string | null }): Promise<LibraryApiResult<{ assetId: string; colorSpaceOverride: string | null }>> {
+    const result = await request({ type: 'asset.color-space.set.request', libraryId, assetId, colorSpace });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'asset.color-space.updated') throw new Error('Unexpected set-color-space response.');
+    return { ok: true, value: { assetId: result.assetId, colorSpaceOverride: result.colorSpaceOverride } };
+  },
+
   async setAssetMetadata({ libraryId, assetId, expectedVersion, description, rating, favorite, palette, sourcePageUrl, author }: { libraryId: string; assetId: string; expectedVersion: number; description?: string; rating?: number; favorite?: boolean; palette?: string[]; sourcePageUrl?: string; author?: string }): Promise<LibraryApiResult<AssetMetadataResult>> {
     const result = await request({ type: 'asset.metadata.set.request', libraryId, assetId, expectedVersion, description, rating, favorite, palette, sourcePageUrl, author });
     if (!result.ok) return failure(result);
@@ -1238,8 +1245,8 @@ const library: SerpentLibraryApi = Object.freeze({
     return { ok: true, value: { assetId: result.assetId, artifactId: result.artifactId } };
   },
 
-  async requestPreview({ libraryId, assetId, mode }: { libraryId: string; assetId: string; mode: 'client' | 'fullscreen' }): Promise<LibraryApiResult<PreviewResolution>> {
-    const result = await request({ type: 'asset.preview.request', libraryId, assetId, mode });
+  async requestPreview({ libraryId, assetId, mode, exrPlane, colorSpace }: { libraryId: string; assetId: string; mode: 'client' | 'fullscreen'; exrPlane?: number; colorSpace?: string }): Promise<LibraryApiResult<PreviewResolution>> {
+    const result = await request({ type: 'asset.preview.request', libraryId, assetId, mode, ...(exrPlane === undefined ? {} : { exrPlane }), ...(colorSpace === undefined ? {} : { colorSpace }) });
     if (!result.ok) return failure(result);
     if (result.type !== 'asset.preview.resolved') throw new Error('Unexpected preview response.');
     return {
@@ -1257,6 +1264,9 @@ const library: SerpentLibraryApi = Object.freeze({
         ...(result.sourceContainer ? { sourceContainer: result.sourceContainer } : {}),
         ...(result.sourceCodecs ? { sourceCodecs: result.sourceCodecs } : {}),
         ...(result.playbackToken ? { playbackToken: result.playbackToken } : {}),
+        ...(result.exrPlanes ? { exrPlanes: result.exrPlanes } : {}),
+        ...(result.selectedExrPlane === undefined ? {} : { selectedExrPlane: result.selectedExrPlane }),
+        ...(result.colorSpace ? { colorSpace: result.colorSpace } : {}),
       },
     };
   },
@@ -1332,7 +1342,7 @@ const library: SerpentLibraryApi = Object.freeze({
     return { ok: true, value: undefined };
   },
 
-  async retryArtifact({ libraryId, assetId, kind }: { libraryId: string; assetId: string; kind: 'thumbnail' | 'webm_proxy' }): Promise<LibraryApiResult<{ assetId: string; kind: string }>> {
+  async retryArtifact({ libraryId, assetId, kind }: { libraryId: string; assetId: string; kind: 'thumbnail' | 'webm_proxy' | 'audio_proxy' }): Promise<LibraryApiResult<{ assetId: string; kind: string }>> {
     const result = await request({ type: 'asset.retry-artifact.request', libraryId, assetId, kind });
     if (!result.ok) return failure(result);
     if (result.type !== 'asset.retry-artifact.started') throw new Error('Unexpected retry-artifact response.');

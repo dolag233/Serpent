@@ -1,7 +1,9 @@
 /**
  * Whether Serpent should generate or surface raster thumbnail failures for an
- * asset. Text and most `other` formats only show the generic file icon; EXR/TGA
- * are the OIIO-backed exceptions.
+ * asset. Text and unknown `other` formats show the generic file icon. Supported
+ * image formats are categorized as `image` even when their preview must first
+ * be derived by OIIO, so every supported image receives the same card and
+ * Inspector thumbnail treatment.
  */
 
 export type ThumbnailSupportMediaType =
@@ -16,9 +18,7 @@ export function assetSupportsThumbnail(asset: {
   displayName: string;
 }): boolean {
   if (asset.mediaType === "text") return false;
-  if (asset.mediaType !== "other") return true;
-  const lower = asset.displayName.toLowerCase();
-  return lower.endsWith(".exr") || lower.endsWith(".tga");
+  return asset.mediaType !== "other";
 }
 
 /** Error codes that mean "no thumbnail expected" rather than a user-actionable failure. */

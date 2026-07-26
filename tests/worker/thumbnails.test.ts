@@ -72,7 +72,7 @@ describe('schema v9 migration', () => {
     const created = service.createLibrary({ displayName: 'V9', selectedParentPath: root });
 
     const db = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
-    expect(db.pragma('user_version', { simple: true })).toBe(20);
+    expect(db.pragma('user_version', { simple: true })).toBe(22);
 
     const revArtifactCols = (db.prepare("PRAGMA table_info('revision_artifacts')").all() as Array<{ name: string }>).map((c) => c.name);
     expect(revArtifactCols).toContain('artifact_id');
@@ -135,21 +135,27 @@ describe('schema v9 migration', () => {
 });
 
 describe('detectMediaType', () => {
-  it('detects image types', () => {
-    expect(LibraryService.detectMediaType('photo.png')).toBe('image');
-    expect(LibraryService.detectMediaType('photo.jpeg')).toBe('image');
-    expect(LibraryService.detectMediaType('photo.gif')).toBe('image');
-    expect(LibraryService.detectMediaType('photo.webp')).toBe('image');
+  it('detects product image types, including OIIO and RAW derivatives', () => {
+    for (const filename of [
+      'photo.png', 'photo.jpeg', 'photo.gif', 'photo.webp', 'photo.bmp',
+      'photo.tiff', 'photo.tga', 'photo.exr', 'photo.ico', 'layer.psd',
+      'camera.dng', 'camera.cr2', 'camera.cr3', 'camera.nef', 'camera.arw',
+      'camera.raf', 'camera.orf', 'camera.rw2',
+    ]) {
+      expect(LibraryService.detectMediaType(filename)).toBe('image');
+    }
   });
 
   it('detects video types', () => {
-    expect(LibraryService.detectMediaType('video.mp4')).toBe('video');
-    expect(LibraryService.detectMediaType('video.mov')).toBe('video');
+    for (const filename of [
+      'video.mp4', 'video.mov', 'video.avi', 'video.wmv', 'video.webm',
+      'video.mkv', 'video.m4v',
+    ]) {
+      expect(LibraryService.detectMediaType(filename)).toBe('video');
+    }
   });
 
-  it('returns other for EXR/TGA and unknown', () => {
-    expect(LibraryService.detectMediaType('render.exr')).toBe('other');
-    expect(LibraryService.detectMediaType('render.tga')).toBe('other');
+  it('returns other only for unknown extensions', () => {
     expect(LibraryService.detectMediaType('file.xyz')).toBe('other');
   });
 });
@@ -422,7 +428,7 @@ describe('preview availability while derivatives are generated', () => {
     service.closeAll();
   });
 
-  it('serves a native video source while its webm proxy artifact is still generating', () => {
+  it('waits for a video proxy while it is generating instead of mounting the source', () => {
     const root = temporaryRoot();
     const service = new LibraryService();
     const created = service.createLibrary({
@@ -450,16 +456,15 @@ describe('preview availability while derivatives are generated', () => {
 
     expect(service.getPreviewArtifact(created.libraryId, asset.assetId)).toMatchObject({
       mediaType: 'video',
-      status: 'ready',
-      playbackMode: 'source',
-      sourceRevisionId: asset.currentRevisionId,
-      sourceMimeType: 'video/mp4',
+      status: 'pending',
+      kind: 'webm_proxy',
+      mimeType: 'video/webm',
     });
 
     service.closeAll();
   });
 
-  it('serves a native video source when its webm proxy artifact has failed', () => {
+  it('reports a failed video proxy instead of retrying an unreliable source', () => {
     const root = temporaryRoot();
     const service = new LibraryService();
     const created = service.createLibrary({
@@ -487,12 +492,39 @@ describe('preview availability while derivatives are generated', () => {
 
     expect(service.getPreviewArtifact(created.libraryId, asset.assetId)).toMatchObject({
       mediaType: 'video',
-      status: 'ready',
-      playbackMode: 'source',
-      sourceMimeType: 'video/mp4',
+      status: 'failed',
+      kind: 'webm_proxy',
       errorCode: 'MEDIA_PROCESSING_FAILED',
     });
 
+    service.closeAll();
+  });
+
+  it('queues an Ogg proxy for WAV playback rather than relying on a source codec', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({
+      displayName: 'ProxyFirstWav',
+      selectedParentPath: root,
+    });
+    const sourcePath = path.join(root, 'voice.wav');
+    writeFileSync(sourcePath, Buffer.alloc(4096, 0));
+    importNoConflict(service, created.libraryId, sourcePath);
+    const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
+
+    expect(service.getPreviewArtifact(created.libraryId, asset.assetId)).toMatchObject({
+      mediaType: 'audio',
+      status: 'pending',
+      kind: 'audio_proxy',
+      mimeType: 'audio/ogg',
+    });
+    const db = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    expect(
+      db.prepare(
+        "SELECT kind, status FROM jobs WHERE asset_id = ? AND kind = 'generate_audio_proxy'",
+      ).get(asset.assetId),
+    ).toMatchObject({ kind: 'generate_audio_proxy', status: 'queued' });
+    db.close();
     service.closeAll();
   });
 

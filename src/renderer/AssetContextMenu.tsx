@@ -10,11 +10,13 @@ import {
   ContextMenuBackdrop,
   ContextMenuItem,
   ContextMenuSection,
+  ContextMenuSubmenu,
   useContextMenu,
   type ContextMenuDescriptor,
 } from "./context-menu";
 import { Icon } from "./Icons";
 import { TagPickerEntry, TagPickerMenu } from "./TagPickerMenu";
+import { ColorSpaceSubmenuItems } from "./ColorSpacePickerMenu";
 import { isMacPlatform } from "./commands/command-types";
 import { createCommandRegistry } from "./commands/command-registry";
 import { useLocale } from "./i18n";
@@ -133,6 +135,7 @@ interface AssetContextMenuProps {
   onClearSelection: () => void;
   onOpenExternal: (assetId: string) => void;
   onViewAsset: (assetId: string) => void;
+  onSetAssetColorSpace: (assetId: string, colorSpace: string | null) => void;
   onRevealInFolder: (assetId: string) => void;
   onCopyFilePath: (assetId: string) => void;
   /** OS file clipboard copy (Finder/Explorer interoperable). */
@@ -1200,6 +1203,18 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                       disabledReason={viewItem.disabledReason ?? undefined}
                       onAction={() => runAssetCommand("asset.view")}
                     />
+                  )}
+                  {singleAsset && (singleAsset.mediaType === "image" || singleAsset.mediaType === "video") && (
+                    <ContextMenuSubmenu
+                      icon={<Icon name="sliders" size={14} />}
+                      label={t("menu.colorSpace")}
+                    >
+                      <ColorSpaceSubmenuItems
+                        onPick={(colorSpace) =>
+                          props.onSetAssetColorSpace(assetId, colorSpace)
+                        }
+                      />
+                    </ContextMenuSubmenu>
                   )}
                   {openExternalItem && (
                     <ContextMenuItem

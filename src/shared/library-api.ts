@@ -94,7 +94,7 @@ export interface PreviewResolution {
   assetId: string;
   mediaType: 'image' | 'video' | 'audio' | 'text' | 'other';
   status: 'ready' | 'pending' | 'failed' | 'missing';
-  kind: 'thumbnail' | 'webm_proxy';
+  kind: 'thumbnail' | 'webm_proxy' | 'audio_proxy';
   url?: string;
   posterUrl?: string;
   errorCode?: string;
@@ -103,6 +103,19 @@ export interface PreviewResolution {
   sourceContainer?: 'mp4' | 'mov' | 'webm';
   sourceCodecs?: string[];
   playbackToken?: string;
+  /** EXR subimages/parts exposed by OpenImageIO; absent for other formats. */
+  exrPlanes?: Array<{ index: number; label: string }>;
+  selectedExrPlane?: number;
+  colorSpace?: PreviewColorSpace;
+}
+
+export interface PreviewColorSpace {
+  id: string;
+  label: string;
+  source: 'embedded' | 'metadata' | 'inferred';
+  isLinear: boolean;
+  metadataName?: string;
+  options: Array<{ id: string; label: string; isLinear: boolean }>;
 }
 
 export interface MediaJobStatus {
@@ -305,6 +318,7 @@ export interface SerpentLibraryApi {
   // Asset Metadata
   getAssetMetadata(input: { libraryId: string; assetId: string }): Promise<LibraryApiResult<AssetMetadataResult>>;
   getExtractedMetadata(input: { libraryId: string; assetId: string }): Promise<LibraryApiResult<ExtractedMetadataResult>>;
+  setAssetColorSpaceOverride(input: { libraryId: string; assetId: string; colorSpace: string | null }): Promise<LibraryApiResult<{ assetId: string; colorSpaceOverride: string | null }>>;
   setAssetMetadata(input: { libraryId: string; assetId: string; expectedVersion: number; description?: string; rating?: number; favorite?: boolean; palette?: string[]; sourcePageUrl?: string; author?: string }): Promise<LibraryApiResult<AssetMetadataResult>>;
   setAssetsRating(input: { libraryId: string; assetIds: string[]; rating: number }): Promise<LibraryApiResult<{ updatedCount: number; skipped: TagOperationSkip[] }>>;
   backfillAssetMetadata(input: { libraryId: string }): Promise<LibraryApiResult<{ backfilledCount: number }>>;
@@ -458,7 +472,7 @@ export interface SerpentLibraryApi {
   }>>;
   // Thumbnail & Preview
   requestThumbnail(input: { libraryId: string; assetId: string }): Promise<LibraryApiResult<{ assetId: string; artifactId: string }>>;
-  requestPreview(input: { libraryId: string; assetId: string; mode: 'client' | 'fullscreen' }): Promise<LibraryApiResult<PreviewResolution>>;
+  requestPreview(input: { libraryId: string; assetId: string; mode: 'client' | 'fullscreen'; exrPlane?: number; colorSpace?: string }): Promise<LibraryApiResult<PreviewResolution>>;
   closePreview(input: { libraryId: string; assetId: string }): Promise<LibraryApiResult<void>>;
   reportPreviewError(input: { libraryId: string; assetId: string; errorCode: string; detail?: string }): Promise<LibraryApiResult<void>>;
   openExternal(input: { libraryId: string; assetId: string }): Promise<LibraryApiResult<void>>;
@@ -476,7 +490,7 @@ export interface SerpentLibraryApi {
   openFolderInFileManager(input: { libraryId: string; folderId: string }): Promise<LibraryApiResult<void>>;
   openFolderWith(input: { libraryId: string; folderId: string }): Promise<LibraryApiResult<void>>;
   copyFolderPath(input: { libraryId: string; folderId: string }): Promise<LibraryApiResult<void>>;
-  retryArtifact(input: { libraryId: string; assetId: string; kind: 'thumbnail' | 'webm_proxy' }): Promise<LibraryApiResult<{ assetId: string; kind: string }>>;
+  retryArtifact(input: { libraryId: string; assetId: string; kind: 'thumbnail' | 'webm_proxy' | 'audio_proxy' }): Promise<LibraryApiResult<{ assetId: string; kind: string }>>;
   listMediaJobs(input: { libraryId: string }): Promise<LibraryApiResult<MediaJobStatus>>;
   pauseMediaJobs(input: { libraryId: string; jobIds?: string[] }): Promise<LibraryApiResult<{ pausedCount: number }>>;
   resumeMediaJobs(input: { libraryId: string; jobIds?: string[] }): Promise<LibraryApiResult<{ resumedCount: number }>>;

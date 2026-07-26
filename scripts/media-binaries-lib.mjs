@@ -27,10 +27,14 @@ const REQUIRED_FFMPEG_CONFIG = [
   '--enable-libopus',
   '--enable-libfreetype',
   '--enable-libharfbuzz',
+  '--enable-zlib',
 ];
 
-const REQUIRED_ENCODERS = ['libvpx-vp9', 'libopus'];
-const REQUIRED_FILTERS = ['drawtext', 'fps', 'scale', 'thumbnail', 'tile'];
+const REQUIRED_ENCODERS = ['libvpx-vp9', 'libopus', 'png'];
+const REQUIRED_FILTERS = [
+  'drawtext', 'fps', 'scale', 'thumbnail', 'tile',
+  'aformat', 'compand', 'showwavespic',
+];
 
 export function currentPlatformKey() {
   if (process.platform === 'darwin' && process.arch === 'arm64') {

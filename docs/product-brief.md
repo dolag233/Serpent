@@ -166,7 +166,7 @@ MVP 支持把搜索、过滤和排序条件保存为智能合集（Smart Collect
 - 3D（MVP 后）：简单模型查看。
 - 不支持内置预览时：允许调用外部软件。
 
-首发格式：PNG、JPG/JPEG、GIF、MP4、MOV、AVI、WMV、EXR、TGA、TIFF。
+MVP 常用格式：PNG、JPG/JPEG、GIF、WebP、BMP、TIFF、TGA、EXR、ICO、SVG、PSD；主流相机 RAW（DNG、CR2、CR3、NEF、ARW、RAF、ORF、RW2）；MP4、MOV、AVI、WMV、WebM、MKV、M4V；WAV、MP3、OGG/OGA、M4A、AAC、FLAC、Opus。
 
 预览与查看术语拆分为：
 
@@ -180,7 +180,7 @@ MVP 支持把搜索、过滤和排序条件保存为智能合集（Smart Collect
 
 所有资产在悬停时都放大卡片。在放大状态下，视频和 GIF 支持按设置自动播放或悬停播放，音频支持播放；其他格式逐步增加适合自身的快速交互。放大交互需先通过独立原型验证视觉效果与易用性；若验证不通过，MVP 使用普通资产卡片和显式预览入口，不为保留该交互牺牲可用性。
 
-EXR、TIFF 和 TGA 在 MVP 中显示合成后的常规预览，并支持基本色彩管理与曝光显示；通道、多页等专业结构检查推迟。
+EXR、TIFF 和 TGA 在 MVP 中显示常规预览，并支持基本色彩管理与曝光显示。PSD 只显示合成预览，不读取或编辑图层；SVG 与 ICO 只提供可视化预览，不提供编辑能力；RAW 使用内置解码器生成显示预览，不提供 RAW 调整面板。EXR 必须列出并允许切换文件中的可显示 plane/part；复杂通道检查、专业调色和图层/矢量编辑推迟。
 
 产品还计划提供类似 PureRef 的独立白板文档；白板引用资产库中的资产。该能力推迟到 MVP 后。
 
