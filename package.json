@@ -72,6 +72,7 @@
     "eslint": "10.7.0",
     "eslint-plugin-react-hooks": "7.1.1",
     "globals": "17.7.0",
+    "happy-dom": "^20.0.11",
     "typescript": "6.0.3",
     "typescript-eslint": "8.63.0",
     "vite": "8.1.4",
