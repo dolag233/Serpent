@@ -34,3 +34,4 @@ artifacts/media-binaries/
 *.db
 .beads-credential-key
 .beads/proxieddb/
+/skills
