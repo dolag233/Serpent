@@ -769,7 +769,7 @@ export const zhCN = {
     customTagPrompt: "自定义标签提示词",
     customTagPromptHint: "标签语义指引（不含数量、已有标签列表等格式化约束），可按需编辑。",
     disclaimer: "我了解启用 AI 分析会将选中资产的图像或视频联系表上传给所选第三方供应商，并可能产生费用。",
-    autoAnalyze: "导入后自动上传并分析支持的资产",
+    autoAnalyze: "新增资产自动进行AI分析",
     save: "保存配置"
   },
   /** REQ-PREF-001 / Serpent-9es: 浏览区通用设置面板；主题/语言复用 shell.theme 与 shell.language 下的键。文件名/大小/日期共用一条 cardFieldsHint。 */

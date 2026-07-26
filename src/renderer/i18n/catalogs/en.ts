@@ -782,7 +782,7 @@ export const en = {
     customTagPromptHint:
       "Tag semantics guidance (excludes counts, existing-tag lists, and other formatting rules). Edit as needed.",
     disclaimer: "I understand that enabling AI analysis uploads selected asset images or video contact sheets to the chosen third-party provider and may incur charges.",
-    autoAnalyze: "Automatically upload and analyze supported assets after import",
+    autoAnalyze: "Automatically run AI analysis on new assets",
     save: "Save settings"
   },
   /** REQ-PREF-001 / Serpent-9es: file name / size / date share one cardFieldsHint. */

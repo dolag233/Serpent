@@ -712,6 +712,11 @@ async function handleSaveIntent(
     logger?.info("extension-server.save", "Asset saved successfully.", {
       type: result.type,
     });
+    if (result.type === "extension.asset-saved") {
+      void enqueueAutoAnalyzeAfterImport(saveContext.libraryId, [
+        result.asset.assetId,
+      ]);
+    }
     return { accepted: true };
   } catch (error) {
     logger?.error("extension-server.save", error);
@@ -797,6 +802,9 @@ async function handleSaveUpload(
         asset: result.asset,
       });
     }
+    void enqueueAutoAnalyzeAfterImport(saveContext.libraryId, [
+      result.asset.assetId,
+    ]);
     return { accepted: true };
   } catch (error) {
     logger?.error("extension-server.save-upload", error);
