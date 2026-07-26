@@ -8,6 +8,8 @@ import { defineConfig, type Plugin } from "vite";
  * Pin the renderer dev server to SERPENT_VITE_PORT (set by scripts/dev-start.mjs)
  * with strictPort so Vite never silently moves to 5174+ while Main still loads
  * a stale MAIN_WINDOW_VITE_DEV_SERVER_URL (black screen / Forge#3198).
+ * Host must stay `localhost` to match Forge's injected dev-server URL and the
+ * renderer CSP connect-src allowlist for Vite 8's WebSocket module runner.
  */
 const port = Number(process.env.SERPENT_VITE_PORT || 5173);
 
@@ -87,6 +89,27 @@ function harmonyosFontFacePatchPlugin(): Plugin {
   };
 }
 
+/**
+ * Vite 8 dev client uses blob: SharedWorkers and WebSocket module runner; the
+ * production CSP meta in index.html blocks those under Electron. Strip the meta
+ * during `vite serve` only — packaged / `vite build` output keeps strict CSP.
+ */
+function devRelaxCspPlugin(): Plugin {
+  return {
+    name: "serpent-dev-relax-csp",
+    apply: "serve",
+    transformIndexHtml: {
+      order: "pre",
+      handler(html) {
+        return html.replace(
+          /<meta\s+http-equiv="Content-Security-Policy"[^>]*>\s*/iu,
+          "",
+        );
+      },
+    },
+  };
+}
+
 /** Windows-only webfont: on macOS/Linux serve an empty module (no package resolve). */
 function harmonyosWindowsOnlyPlugin(): Plugin {
   return {
@@ -114,13 +137,25 @@ function harmonyosWindowsOnlyPlugin(): Plugin {
 }
 
 export default defineConfig({
-  plugins: [react(), harmonyosWindowsOnlyPlugin(), harmonyosFontFacePatchPlugin()],
+  plugins: [
+    devRelaxCspPlugin(),
+    react(),
+    harmonyosWindowsOnlyPlugin(),
+    harmonyosFontFacePatchPlugin(),
+  ],
   resolve: {
     preserveSymlinks: true,
   },
   server: {
-    host: "127.0.0.1",
+    // Must match @electron-forge/plugin-vite, which hardcodes
+    // MAIN_WINDOW_VITE_DEV_SERVER_URL as http://localhost:<port>. Binding only
+    // 127.0.0.1 breaks Vite 8's WebSocket module runner under the renderer CSP
+    // (connect-src allows ws://localhost:* but not ws://127.0.0.1:*).
+    host: "localhost",
     port: Number.isFinite(port) && port > 0 ? port : 5173,
     strictPort: true,
+    hmr: {
+      host: "localhost",
+    },
   },
 });

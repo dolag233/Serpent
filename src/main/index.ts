@@ -407,6 +407,21 @@ function focusMainWindow(): void {
   );
 }
 
+function handleSecondInstance(): void {
+  if (
+    MAIN_WINDOW_VITE_DEV_SERVER_URL &&
+    mainWindow &&
+    !mainWindow.isDestroyed()
+  ) {
+    void loadRendererDevUrl(
+      mainWindow,
+      MAIN_WINDOW_VITE_DEV_SERVER_URL,
+    ).finally(() => focusMainWindow());
+    return;
+  }
+  focusMainWindow();
+}
+
 function focusSerpentWindow(windowId?: number): void {
   const target =
     windowId === undefined
@@ -461,6 +476,106 @@ function resolveE2eIsolatedPlacement(
     { displayCount: displays.length },
   );
   return undefined;
+}
+
+const DEV_SERVER_WAIT_MS = 60_000;
+const DEV_SERVER_POLL_MS = 250;
+const DEV_RENDERER_MOUNT_TIMEOUT_MS = 20_000;
+const DEV_RENDERER_LOAD_ATTEMPTS = 4;
+
+async function waitForDevServer(url: string): Promise<void> {
+  const deadline = Date.now() + DEV_SERVER_WAIT_MS;
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(url, { signal: AbortSignal.timeout(2_000) });
+      if (response.ok) return;
+    } catch {
+      // Vite may still be binding; keep polling until the deadline.
+    }
+    await new Promise((resolve) => setTimeout(resolve, DEV_SERVER_POLL_MS));
+  }
+  throw new Error(
+    `Renderer dev server did not become reachable within ${DEV_SERVER_WAIT_MS}ms: ${url}`,
+  );
+}
+
+async function isRendererMounted(
+  webContents: Electron.WebContents,
+): Promise<boolean> {
+  try {
+    return await webContents.executeJavaScript(
+      "Boolean(document.querySelector('#root .app-shell'))",
+    );
+  } catch {
+    return false;
+  }
+}
+
+async function waitForRendererMounted(
+  webContents: Electron.WebContents,
+  timeoutMs = DEV_RENDERER_MOUNT_TIMEOUT_MS,
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await isRendererMounted(webContents)) return true;
+    await new Promise((resolve) => setTimeout(resolve, DEV_SERVER_POLL_MS));
+  }
+  return false;
+}
+
+async function loadRendererDevUrl(
+  window: BrowserWindow,
+  url: string,
+): Promise<void> {
+  for (let attempt = 1; attempt <= DEV_RENDERER_LOAD_ATTEMPTS; attempt++) {
+    try {
+      await waitForDevServer(url);
+      await window.loadURL(url);
+    } catch (error) {
+      logger?.error("main.window.load-attempt", error, { attempt, url });
+      await new Promise((resolve) => setTimeout(resolve, 400 * attempt));
+      continue;
+    }
+    if (await waitForRendererMounted(window.webContents)) {
+      logger?.info("main.window.mount-verified", "Renderer shell visible.", {
+        attempt,
+        url,
+      });
+      return;
+    }
+    logger?.info(
+      "main.window.mount-retry",
+      "Renderer still blank after load; retrying.",
+      { attempt, url },
+    );
+    await new Promise((resolve) => setTimeout(resolve, 400 * attempt));
+  }
+  logger?.error(
+    "main.window.mount-failed",
+    new Error("Renderer remained blank after dev load retries."),
+    { url, attempts: DEV_RENDERER_LOAD_ATTEMPTS },
+  );
+  throw new Error(`Renderer remained blank after dev load retries: ${url}`);
+}
+
+function attachRendererDevDiagnostics(window: BrowserWindow): void {
+  window.webContents.on(
+    "console-message",
+    (_event, level, message, line, sourceId) => {
+      const scope =
+        level >= 3 ? "renderer.console.error" : "renderer.console";
+      logger?.info(scope, message, {
+        level,
+        line,
+        sourceId,
+      });
+    },
+  );
+  window.webContents.on("render-process-gone", (_event, details) => {
+    logger?.error("renderer.process-gone", new Error(details.reason), {
+      exitCode: details.exitCode,
+    });
+  });
 }
 
 async function createMainWindow(): Promise<void> {
@@ -561,6 +676,7 @@ async function createMainWindow(): Promise<void> {
   window.once("ready-to-show", publishWindowFocus);
 
   if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
+    attachRendererDevDiagnostics(window);
     window.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL) => {
       if (errorCode === -3) return; // aborted
       const detail = [
@@ -574,7 +690,16 @@ async function createMainWindow(): Promise<void> {
       logger?.error("main.window.load", detail);
       dialog.showErrorBox("Serpent renderer failed to load", detail);
     });
-    await window.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL);
+    try {
+      await loadRendererDevUrl(window, MAIN_WINDOW_VITE_DEV_SERVER_URL);
+    } catch (error) {
+      logger?.error("main.window.dev-load", error);
+      dialog.showErrorBox(
+        "Serpent renderer failed to load",
+        error instanceof Error ? error.message : String(error),
+      );
+      throw error;
+    }
   } else {
     await window.loadFile(
       path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`),
@@ -3618,7 +3743,7 @@ async function startApplication(): Promise<void> {
 if (!hasSingleInstanceLock) {
   app.quit();
 } else {
-  app.on("second-instance", focusMainWindow);
+  app.on("second-instance", handleSecondInstance);
 
   app
     .whenReady()

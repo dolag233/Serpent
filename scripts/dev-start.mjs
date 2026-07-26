@@ -14,8 +14,13 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 
 import { findFreeTcpPort } from "./free-port.mjs";
+import { killStaleSerpentDevProcesses } from "./kill-stale-dev.mjs";
 
 const projectRoot = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+
+// Orphan Electron after Ctrl+C is the most common black-screen restart path.
+killStaleSerpentDevProcesses(projectRoot);
+await new Promise((resolve) => setTimeout(resolve, 400));
 
 if (
   process.argv.includes("--multi") ||
@@ -35,7 +40,7 @@ if (port !== preferredPort) {
     `[serpent:dev] port ${preferredPort} busy → using ${port} for Vite (strictPort)`,
   );
 } else {
-  console.log(`[serpent:dev] Vite renderer on http://127.0.0.1:${port}`);
+  console.log(`[serpent:dev] Vite renderer on http://localhost:${port}`);
 }
 
 if (process.env.SERPENT_ALLOW_MULTI_INSTANCE === "1") {
@@ -53,6 +58,10 @@ const forgeBin = path.join(
 
 const forgeArgs = process.argv.slice(2).filter((arg) => arg !== "--multi");
 
+function cleanupDevTree() {
+  killStaleSerpentDevProcesses(projectRoot);
+}
+
 const child = spawn(forgeBin, ["start", ...forgeArgs], {
   cwd: projectRoot,
   env: {
@@ -64,9 +73,17 @@ const child = spawn(forgeBin, ["start", ...forgeArgs], {
 });
 
 child.on("exit", (code, signal) => {
+  cleanupDevTree();
   if (signal) {
     process.kill(process.pid, signal);
     return;
   }
   process.exit(code ?? 1);
 });
+
+for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
+  process.on(signal, () => {
+    cleanupDevTree();
+    child.kill(signal);
+  });
+}
