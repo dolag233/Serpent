@@ -22,6 +22,7 @@ import {
 // ---------------------------------------------------------------------------
 
 const TEST_IMAGE_REQUEST: AiAnalysisRequest = {
+  displayName: 'concept-art.png',
   filename: 'concept-art.png',
   mime: 'image/png',
   imageBase64: 'aW1hZ2VEYXRh', // "imageData" in base64

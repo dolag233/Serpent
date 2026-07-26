@@ -828,6 +828,7 @@ describe('video asset analyze-unsupported', () => {
 
 function makeImageRequest(): AiAnalysisRequest {
   return {
+    displayName: 'test.png',
     filename: 'test.png',
     mime: 'image/png',
     imageBase64: 'aW1hZ2VEYXRh',

@@ -1,6 +1,7 @@
 import { buildAiAnalysisSystemPrompt } from '../../shared/ai-analysis-settings';
 import { resolveDashScopeMultimodalGenerationUrl } from '../../shared/ai-endpoints';
 import {
+  buildAiAnalysisUserTextLines,
   parseAiAnalysisResultFromModelText,
   resolveAiAnalysisSettings,
 } from './protocol';
@@ -170,13 +171,7 @@ export class DashScopeVendorAdapter implements VendorAdapter {
     if (request.contactSheetBase64) {
       content.push({ image: `data:image/png;base64,${request.contactSheetBase64}` });
     }
-    const lines = [`Filename: ${request.filename}`];
-    if (request.contactSheetDescription) {
-      lines.push(`Contact sheet description: ${request.contactSheetDescription}`);
-    }
-    if (request.contactSheetBase64) {
-      lines.push('The first image is the poster frame and the second is a contact sheet of key frames.');
-    }
+    const lines = buildAiAnalysisUserTextLines(request);
     content.push({ text: lines.join('\n') });
     return content;
   }

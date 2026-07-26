@@ -37,6 +37,7 @@ import { TextViewerControls, type TextViewerControlsHandle } from "./TextViewerC
 import { useViewerVolume } from "./use-viewer-volume";
 import { ZoomableImage } from "./zoomable-preview-image";
 import { useViewerChromeContrast } from "./use-viewer-chrome-contrast";
+import { VIEWER_CHROME_TAB_INDEX } from "./viewer-focus-policy";
 
 interface AssetPreviewModalProps {
   api: SerpentLibraryApi;
@@ -657,7 +658,7 @@ export const AssetPreviewModal = forwardRef<
               onReady={() => setDirectApproved(true)}
               onSwipeNext={onNext}
               onSwipePrevious={onPrevious}
-              onUserActivity={() => onChromeActivity("keyboard")}
+              onUserActivity={() => onChromeActivity("pointerdownOrClick")}
               onVolumeChange={setViewerVolume}
               posterUrl={resolution.posterUrl}
               src={resolution.url}
@@ -670,6 +671,7 @@ export const AssetPreviewModal = forwardRef<
               onError={handlePlaybackError}
               onMutedChange={setViewerMuted}
               onReady={() => setDirectApproved(true)}
+              onUserActivity={() => onChromeActivity("pointerdownOrClick")}
               onVolumeChange={setViewerVolume}
               src={resolution.url}
               volume={viewerVolume}
@@ -706,7 +708,11 @@ export const AssetPreviewModal = forwardRef<
               <p>
                 {t("preview.unsupportedFormat")} {t("preview.openWithSystem")}
               </p>
-              <button onClick={() => void openExternal()} type="button">
+              <button
+                onClick={() => void openExternal()}
+                tabIndex={VIEWER_CHROME_TAB_INDEX}
+                type="button"
+              >
                 {t("preview.openExternal")}
               </button>
             </div>
@@ -730,6 +736,7 @@ export const AssetPreviewModal = forwardRef<
                 <button
                   disabled={retrying}
                   onClick={() => void retry()}
+                  tabIndex={VIEWER_CHROME_TAB_INDEX}
                   type="button"
                 >
                   {retrying
@@ -746,6 +753,7 @@ export const AssetPreviewModal = forwardRef<
                 <button
                   disabled={retrying}
                   onClick={() => void retry()}
+                  tabIndex={VIEWER_CHROME_TAB_INDEX}
                   type="button"
                 >
                   {t("preview.retryGenerate")}
@@ -759,6 +767,7 @@ export const AssetPreviewModal = forwardRef<
               <select
                 aria-label={t("preview.exrPlane")}
                 onChange={selectExrPlane}
+                tabIndex={VIEWER_CHROME_TAB_INDEX}
                 value={resolution.selectedExrPlane ?? selectedExrPlane}
               >
                 {resolution.exrPlanes.map((plane) => (
@@ -776,6 +785,7 @@ export const AssetPreviewModal = forwardRef<
                 className={`preview-nav is-prev preview-chrome-fade is-${chromeContrast.prev}`}
                 disabled={!onPrevious}
                 onClick={onPrevious}
+                tabIndex={VIEWER_CHROME_TAB_INDEX}
                 type="button"
               >
                 <Icon name="chevron-left" size={28} />
@@ -785,6 +795,7 @@ export const AssetPreviewModal = forwardRef<
                 className={`preview-nav is-next preview-chrome-fade is-${chromeContrast.next}`}
                 disabled={!onNext}
                 onClick={onNext}
+                tabIndex={VIEWER_CHROME_TAB_INDEX}
                 type="button"
               >
                 <Icon name="chevron-right" size={28} />
@@ -793,6 +804,7 @@ export const AssetPreviewModal = forwardRef<
                 aria-label={t("preview.closeViewer")}
                 className={`preview-close-chip preview-chrome-fade is-${chromeContrast.close}`}
                 onClick={() => void requestClose()}
+                tabIndex={VIEWER_CHROME_TAB_INDEX}
                 type="button"
               >
                 <Icon name="close" size={18} />

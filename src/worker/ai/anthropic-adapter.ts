@@ -3,7 +3,7 @@ import {
   buildAiAnalysisSystemPrompt,
 } from '../../shared/ai-analysis-settings';
 import { resolveAnthropicMessagesUrl } from '../../shared/ai-endpoints';
-import { parseAiAnalysisResult, resolveAiAnalysisSettings } from './protocol';
+import { buildAiAnalysisUserTextLines, parseAiAnalysisResult, resolveAiAnalysisSettings } from './protocol';
 import type { AiAnalysisRequest, AiAnalysisResult } from './protocol';
 import { isAiAbortOrTimeoutError, VendorAdapterError } from './vendor-adapter';
 import type { VendorAdapter, VendorId } from './vendor-adapter';
@@ -228,20 +228,7 @@ export class AnthropicVendorAdapter implements VendorAdapter {
     const content: Array<Record<string, unknown>> = [];
 
     // Text part
-    const textLines: string[] = [];
-    textLines.push(`Filename: ${request.filename}`);
-
-    if (request.contactSheetDescription) {
-      textLines.push(
-        `Contact sheet description: ${request.contactSheetDescription}`,
-      );
-    }
-
-    if (request.contactSheetBase64) {
-      textLines.push(
-        'The first image is the poster frame and the second is a contact sheet of key frames.',
-      );
-    }
+    const textLines = buildAiAnalysisUserTextLines(request);
 
     content.push({
       type: 'text',

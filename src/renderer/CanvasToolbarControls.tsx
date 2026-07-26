@@ -31,23 +31,28 @@ function ToolButton({
   onClick,
   pressed,
   disabled,
+  showBadge,
 }: {
   label: string;
   icon: IconName;
   onClick?: () => void;
   pressed?: boolean;
   disabled?: boolean;
+  showBadge?: boolean;
 }) {
   return (
     <button
       aria-pressed={pressed}
-      className="tool-button"
+      className={`tool-button${showBadge ? " has-badge" : ""}`}
       disabled={disabled}
       onClick={onClick}
       type="button"
       {...iconActionAttrs(label)}
     >
       <Icon name={icon} />
+      {showBadge ? (
+        <span aria-hidden="true" className="tool-button-badge-dot" />
+      ) : null}
     </button>
   );
 }
@@ -87,6 +92,7 @@ export function CanvasToolbarControls({
   platform,
   actions,
   onCardSizeChange,
+  backgroundJobsActive = false,
 }: {
   libraryOpen: boolean;
   busy: boolean;
@@ -98,6 +104,8 @@ export function CanvasToolbarControls({
   platform: CommandPlatform;
   actions: ToolbarCommandActions;
   onCardSizeChange: (size: number) => void;
+  /** Accent dot on the background-jobs toolbar icon while work is in flight. */
+  backgroundJobsActive?: boolean;
 }): ReactNode {
   const ctx: ToolbarCommandContext = {
     surface: "canvas",
@@ -180,6 +188,7 @@ export function CanvasToolbarControls({
               icon="loader"
               label={backgroundJobs.label}
               onClick={backgroundJobs.run}
+              showBadge={backgroundJobsActive}
             />
           </>
         ) : null}

@@ -1115,6 +1115,7 @@ const library: SerpentLibraryApi = Object.freeze({
       outputStyle: 'normal' | 'concise' | 'rigorous';
       ratingRubric: string;
       customDescriptionPrompt: string;
+      customTagPrompt: string;
     };
     languages: Array<'zh-CN' | 'en' | 'ja' | 'ko'>;
     concurrencyLimit: number;
@@ -1143,6 +1144,7 @@ const library: SerpentLibraryApi = Object.freeze({
       outputStyle: 'normal' | 'concise' | 'rigorous';
       ratingRubric: string;
       customDescriptionPrompt: string;
+      customTagPrompt: string;
     };
     languages?: Array<'zh-CN' | 'en' | 'ja' | 'ko'>;
     concurrencyLimit?: number;

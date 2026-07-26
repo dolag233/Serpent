@@ -413,6 +413,7 @@ export interface SerpentLibraryApi {
       outputStyle: 'normal' | 'concise' | 'rigorous';
       ratingRubric: string;
       customDescriptionPrompt: string;
+      customTagPrompt: string;
     };
     languages: Array<'zh-CN' | 'en' | 'ja' | 'ko'>;
     concurrencyLimit: number;
@@ -435,6 +436,7 @@ export interface SerpentLibraryApi {
       outputStyle: 'normal' | 'concise' | 'rigorous';
       ratingRubric: string;
       customDescriptionPrompt: string;
+      customTagPrompt: string;
     };
     languages?: Array<'zh-CN' | 'en' | 'ja' | 'ko'>;
     concurrencyLimit?: number;

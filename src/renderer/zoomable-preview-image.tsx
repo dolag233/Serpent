@@ -11,6 +11,7 @@ import { Icon } from "./Icons";
 import { iconActionAttrs } from "./icon-action-attrs";
 import { useT } from "./i18n";
 import { useViewerZoomPan } from "./use-viewer-zoom-pan";
+import { VIEWER_CHROME_TAB_INDEX } from "./viewer-focus-policy";
 import {
   isDecodedImage,
   resolveViewerImageDisplay,
@@ -219,11 +220,13 @@ export const ZoomableImage = forwardRef<
             );
           }}
           step={Math.max(sliderMax / 200, 0.01)}
+          tabIndex={VIEWER_CHROME_TAB_INDEX}
           type="range"
           value={Math.min(sliderMax, Math.max(0.05, view.scale))}
         />
         <button
           onClick={fitToWindow}
+          tabIndex={VIEWER_CHROME_TAB_INDEX}
           type="button"
           {...iconActionAttrs(t("preview.fitWindow"))}
         >
@@ -232,6 +235,7 @@ export const ZoomableImage = forwardRef<
         {onFullscreen && (
           <button
             onClick={onFullscreen}
+            tabIndex={VIEWER_CHROME_TAB_INDEX}
             type="button"
             {...iconActionAttrs(
               isFullscreen

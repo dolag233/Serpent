@@ -31,6 +31,7 @@ import {
   shouldHandleVideoSpaceKey,
 } from "./video-player-controls";
 import { ViewerVolumeControls } from "./ViewerVolumeControls";
+import { VIEWER_CHROME_TAB_INDEX } from "./viewer-focus-policy";
 import { applyViewerVolumeToMedia } from "./viewer-volume-preferences";
 
 export interface AudioPlayerControlsProps {
@@ -38,6 +39,7 @@ export interface AudioPlayerControlsProps {
   onError(event: SyntheticEvent<HTMLAudioElement>): void;
   onMutedChange(muted: boolean): void;
   onReady?(): void;
+  onUserActivity?: () => void;
   onVolumeChange(volume: number): void;
   src: string;
   volume: number;
@@ -58,6 +60,7 @@ export function AudioPlayerControls({
   onError,
   onMutedChange,
   onReady,
+  onUserActivity,
   onVolumeChange,
   src,
   volume,
@@ -263,7 +266,7 @@ export function AudioPlayerControls({
         }}
         ref={waveformRef}
         role="slider"
-        tabIndex={0}
+        tabIndex={VIEWER_CHROME_TAB_INDEX}
       >
         {waveformUrl ? (
           <img
@@ -336,6 +339,7 @@ export function AudioPlayerControls({
         <button
           className="preview-video-playpause"
           onClick={togglePlayback}
+          tabIndex={VIEWER_CHROME_TAB_INDEX}
           type="button"
           {...iconActionAttrs(
             paused ? t("preview.videoPlay") : t("preview.videoPause"),
@@ -403,7 +407,7 @@ export function AudioPlayerControls({
           }}
           ref={trackRef}
           role="slider"
-          tabIndex={0}
+          tabIndex={VIEWER_CHROME_TAB_INDEX}
         >
           <div
             className="preview-video-track-fill"
@@ -416,6 +420,7 @@ export function AudioPlayerControls({
         </div>
         <ViewerVolumeControls
           muted={muted}
+          onInteract={onUserActivity}
           onMutedChange={onMutedChange}
           onVolumeChange={onVolumeChange}
           volume={volume}

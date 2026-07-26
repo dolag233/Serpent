@@ -3068,6 +3068,24 @@ export class LibraryService {
     return this.watchNotifyNow() >= this.suppressWatcherNotifyUntilMs;
   }
 
+  /** Reconcile disk changes that happened while the app was closed. */
+  private refreshManagedAssetsOnOpen(libraryId: string): void {
+    try {
+      const refresh = this.refreshManagedAssets(libraryId);
+      if (refresh.changedCount > 0 && this.shouldEmitWatcherAssetChange()) {
+        this.options.onAssetsChanged?.({
+          type: 'asset.changed',
+          libraryId,
+          changedCount: refresh.changedCount,
+          missingCount: refresh.missingCount,
+          source: 'watcher',
+        });
+      }
+    } catch (error) {
+      this.diagnose('open.refresh-managed-assets', error, { libraryId });
+    }
+  }
+
   /**
    * Clock used to arm/check the client-mutation suppression window. Injectable
    * so watcher tests that drive the debounce scheduler manually can advance
@@ -8276,6 +8294,16 @@ export class LibraryService {
       )
       .get(assetId) as { managed_folder_id: string | null } | undefined;
     return row?.managed_folder_id ?? null;
+  }
+
+  /** Display name shown in the UI (basename of the library-relative path). */
+  getAssetDisplayName(libraryId: string, assetId: string): string {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    const row = openLibrary.connection
+      .prepare(`SELECT relative_file_path FROM assets WHERE asset_id = ?`)
+      .get(assetId) as { relative_file_path: string } | undefined;
+    if (!row?.relative_file_path) return 'asset';
+    return path.posix.basename(row.relative_file_path);
   }
 
   /**
@@ -18536,6 +18564,7 @@ export class LibraryService {
       }
       this.startAssetWatcher(openLibrary);
       this.reconcileLinkedWatchers(openLibrary);
+      this.refreshManagedAssetsOnOpen(summary.libraryId);
       // Persist only the first visible batch. The Worker runtime drains these
       // asynchronously and later list/search requests raise the priority of
       // whatever the user is actually looking at.

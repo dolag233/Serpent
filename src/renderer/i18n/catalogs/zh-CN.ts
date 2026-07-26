@@ -765,7 +765,9 @@ export const zhCN = {
     styleRigorous: "严谨",
     ratingRubric: "评分标准",
     customDescriptionPrompt: "自定义描述提示词",
-    customDescriptionPromptHint: "留空则使用默认结构：类型 → 风格 → 内容。",
+    customDescriptionPromptHint: "描述生成指引，可按需编辑。",
+    customTagPrompt: "自定义标签提示词",
+    customTagPromptHint: "标签语义指引（不含数量、已有标签列表等格式化约束），可按需编辑。",
     disclaimer: "我了解启用 AI 分析会将选中资产的图像或视频联系表上传给所选第三方供应商，并可能产生费用。",
     autoAnalyze: "导入后自动上传并分析支持的资产",
     save: "保存配置"
@@ -1167,6 +1169,7 @@ export const zhCN = {
     aiAnalyzeProgress: "AI 分析进行中（运行 {running} / 排队 {queued}）",
     aiAnalyzeProgressCount: "AI 分析进度 {done}/{total}",
     aiAnalyzeStop: "停止",
+    aiAnalyzeRunInBackground: "转到后台",
     aiAnalyzeStopped: "已停止 AI 分析。",
     aiAnalyzeNoAsset: "请先选中要分析的资产。",
     aiRevealLogFailed: "无法打开应用日志。",

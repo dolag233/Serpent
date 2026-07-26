@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import {
   clampViewerVolume,
+  DEFAULT_VIEWER_VOLUME_PREFERENCES,
   loadViewerVolumePreferences,
   matchViewerVolumeKey,
   saveViewerVolumePreferences,
@@ -22,40 +23,59 @@ export function useViewerVolume(
     loadViewerVolumePreferences(),
   );
 
-  const persist = useCallback((next: ViewerVolumePreferences) => {
-    setPrefs(next);
-    saveViewerVolumePreferences(next);
-  }, []);
+  /** Always derive next prefs from previous state so rapid drag updates never race. */
+  const commit = useCallback(
+    (updater: (prev: ViewerVolumePreferences) => ViewerVolumePreferences) => {
+      setPrefs((prev) => {
+        const next = updater(prev);
+        saveViewerVolumePreferences(next);
+        return next;
+      });
+    },
+    [],
+  );
 
   const setVolume = useCallback(
     (volume: number) => {
       const clamped = clampViewerVolume(volume);
-      persist({
+      commit(() => ({
         version: 1,
         volume: clamped,
-        muted: clamped === 0 ? true : prefs.muted,
-      });
+        muted: clamped === 0,
+      }));
     },
-    [persist, prefs.muted],
+    [commit],
   );
 
   const setMuted = useCallback(
     (muted: boolean) => {
-      persist({ version: 1, volume: prefs.volume, muted });
+      commit((prev) => {
+        if (muted) {
+          return { version: 1, volume: prev.volume, muted: true };
+        }
+        // Unmute must restore audible gain when the slider is parked at 0.
+        const volume =
+          prev.volume > 0
+            ? prev.volume
+            : DEFAULT_VIEWER_VOLUME_PREFERENCES.volume;
+        return { version: 1, volume, muted: false };
+      });
     },
-    [persist, prefs.volume],
+    [commit],
   );
 
   const adjustVolume = useCallback(
     (direction: ViewerVolumeDirection) => {
-      const nextVolume = stepViewerVolumeLevel(prefs.volume, direction);
-      persist({
-        version: 1,
-        volume: nextVolume,
-        muted: nextVolume === 0,
+      commit((prev) => {
+        const nextVolume = stepViewerVolumeLevel(prev.volume, direction);
+        return {
+          version: 1,
+          volume: nextVolume,
+          muted: nextVolume === 0,
+        };
       });
     },
-    [persist, prefs.volume],
+    [commit],
   );
 
   useEffect(() => {

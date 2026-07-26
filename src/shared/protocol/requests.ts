@@ -86,6 +86,7 @@ const aiAnalysisSettingsSchema = z.strictObject({
   outputStyle: z.enum(['normal', 'concise', 'rigorous']),
   ratingRubric: z.string().min(1).max(4_000),
   customDescriptionPrompt: z.string().max(4_000),
+  customTagPrompt: z.string().max(4_000),
 });
 const aiConcurrencyLimitSchema = z.number().int().min(1).max(32);
 const aiAnalysisImageEdgeSchema = z.number().int().min(512).max(4096);

@@ -23,6 +23,7 @@ import {
   type VideoPlaybackRate,
 } from "./video-player-controls";
 import { ViewerVolumeControls } from "./ViewerVolumeControls";
+import { VIEWER_CHROME_TAB_INDEX } from "./viewer-focus-policy";
 import { applyViewerVolumeToMedia } from "./viewer-volume-preferences";
 import type { SerpentShellApi } from "../shared/external-url";
 import type { ViewerVideoShortcutAction } from "../shared/viewer-video-shortcuts";
@@ -397,6 +398,7 @@ export function VideoPlayerControls({
         <button
           className="preview-video-playpause"
           onClick={togglePlayback}
+          tabIndex={VIEWER_CHROME_TAB_INDEX}
           type="button"
           {...iconActionAttrs(
             paused ? t("preview.videoPlay") : t("preview.videoPause"),
@@ -477,7 +479,7 @@ export function VideoPlayerControls({
           }}
           ref={trackRef}
           role="slider"
-          tabIndex={0}
+          tabIndex={VIEWER_CHROME_TAB_INDEX}
         >
           <div
             className="preview-video-track-fill"
@@ -498,6 +500,7 @@ export function VideoPlayerControls({
               stepVideoPlaybackRate(playbackRateRef.current, "faster"),
             );
           }}
+          tabIndex={VIEWER_CHROME_TAB_INDEX}
           type="button"
           {...iconActionAttrs(
             `${t("preview.playbackRate")}: ${t("preview.playbackRateOption", {
@@ -509,6 +512,7 @@ export function VideoPlayerControls({
         </button>
         <ViewerVolumeControls
           muted={muted}
+          onInteract={onUserActivity}
           onMutedChange={onMutedChange}
           onVolumeChange={onVolumeChange}
           volume={volume}
@@ -516,6 +520,7 @@ export function VideoPlayerControls({
         <button
           className="preview-video-fit"
           onClick={fitToWindow}
+          tabIndex={VIEWER_CHROME_TAB_INDEX}
           type="button"
           {...iconActionAttrs(t("preview.fitWindow"))}
         >
@@ -524,6 +529,7 @@ export function VideoPlayerControls({
         <button
           className="preview-video-fullscreen"
           onClick={onFullscreen}
+          tabIndex={VIEWER_CHROME_TAB_INDEX}
           type="button"
           {...iconActionAttrs(
             isFullscreen ? t("preview.exitFullscreen") : t("preview.fullscreen"),

@@ -1261,6 +1261,7 @@ const rendererSuccessResultSchema = z.discriminatedUnion('type', [
       outputStyle: z.enum(['normal', 'concise', 'rigorous']),
       ratingRubric: z.string().min(1).max(4_000),
       customDescriptionPrompt: z.string().max(4_000),
+      customTagPrompt: z.string().max(4_000),
     }),
     languages: z.array(z.enum(['zh-CN', 'en', 'ja', 'ko'])).min(1).max(8),
     concurrencyLimit: z.number().int().min(1).max(32),

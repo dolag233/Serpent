@@ -429,6 +429,7 @@ describe('video AI analysis — full flow with ready artifacts', () => {
     // 4) Build AiAnalysisRequest — verify both imageBase64 and contactSheetBase64
     //    are populated.
     const aiRequest: AiAnalysisRequest = {
+      displayName: filename,
       filename,
       mime: requestMime,
       imageBase64,
@@ -694,6 +695,7 @@ describe('OpenAIVendorAdapter with contactSheetBase64', () => {
     }) as unknown as typeof fetch;
 
     const request: AiAnalysisRequest = {
+      displayName: 'test-video.mp4',
       filename: 'test-video.mp4',
       mime: 'image/jpeg',
       imageBase64: 'cG9zdGVyQnl0ZXM=',   // base64 of 'posterBytes'
@@ -754,6 +756,7 @@ describe('OpenAIVendorAdapter with contactSheetBase64', () => {
     }) as unknown as typeof fetch;
 
     const request: AiAnalysisRequest = {
+      displayName: 'photo.png',
       filename: 'photo.png',
       mime: 'image/png',
       imageBase64: 'aW1hZ2VEYXRh',
@@ -788,6 +791,7 @@ describe('OpenAIVendorAdapter with contactSheetBase64', () => {
 describe('API key security — video path', () => {
   it('adapter analyze call does not leak apiKey in AiAnalysisRequest fields', () => {
     const request: AiAnalysisRequest = {
+      displayName: 'vid.mp4',
       filename: 'vid.mp4',
       mime: 'image/jpeg',
       imageBase64: 'cG9zdGVy',

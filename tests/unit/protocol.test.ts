@@ -1444,6 +1444,7 @@ describe('worker request protocol', () => {
           outputStyle: 'normal',
           ratingRubric: '1-5 aesthetic score',
           customDescriptionPrompt: '',
+          customTagPrompt: '',
         },
         languages: ['zh-CN', 'en'],
         concurrencyLimit: 16,

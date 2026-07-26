@@ -3,7 +3,7 @@ import {
   buildAiAnalysisSystemPrompt,
 } from '../../shared/ai-analysis-settings';
 import { resolveGeminiGenerateContentUrl } from '../../shared/ai-endpoints';
-import { parseAiAnalysisResult, resolveAiAnalysisSettings } from './protocol';
+import { buildAiAnalysisUserTextLines, parseAiAnalysisResult, resolveAiAnalysisSettings } from './protocol';
 import type { AiAnalysisRequest, AiAnalysisResult } from './protocol';
 import { isAiAbortOrTimeoutError, VendorAdapterError } from './vendor-adapter';
 import type { VendorAdapter, VendorId } from './vendor-adapter';
@@ -220,18 +220,7 @@ export class GeminiVendorAdapter implements VendorAdapter {
     const parts: Array<Record<string, unknown>> = [];
 
     // Text part with context
-    const textLines: string[] = [];
-    textLines.push(`Filename: ${request.filename}`);
-    if (request.contactSheetDescription) {
-      textLines.push(
-        `Contact sheet description: ${request.contactSheetDescription}`,
-      );
-    }
-    if (request.contactSheetBase64) {
-      textLines.push(
-        'The first image is the poster frame and the second is a contact sheet of key frames.',
-      );
-    }
+    const textLines = buildAiAnalysisUserTextLines(request);
     parts.push({ text: textLines.join('\n') });
 
     // Image parts

@@ -132,6 +132,7 @@ import {
 import { summarizeAiFailureCodes } from "./ai-job-error-message";
 import {
   DEFAULT_AI_ANALYSIS_SETTINGS,
+  normalizeAiAnalysisSettings,
   toWireAiAnalysisSettings,
   type AiAnalysisSettingsWire,
 } from "../shared/ai-analysis-settings";
@@ -949,6 +950,7 @@ function AppInner() {
   ]);
   const [aiAnalyzing, setAiAnalyzing] = useState(false);
   const aiAnalyzingRef = useRef(false);
+  const [aiProgressBannerVisible, setAiProgressBannerVisible] = useState(true);
   const [aiContent, setAiContent] = useState<{
     assetId: string;
     description?: string;
@@ -1105,6 +1107,13 @@ function AppInner() {
   const [mediaJobs, setMediaJobs] = useState<MediaJobStatus | null>(null);
   const [aiJobs, setAiJobs] = useState<AiJobStatus | null>(null);
   const [mediaJobsLoading, setMediaJobsLoading] = useState(false);
+  const backgroundJobsActive = useMemo(() => {
+    if (aiAnalyzing) return true;
+    const mediaActive =
+      (mediaJobs?.queued ?? 0) + (mediaJobs?.running ?? 0) > 0;
+    const aiActive = (aiJobs?.queued ?? 0) + (aiJobs?.running ?? 0) > 0;
+    return mediaActive || aiActive;
+  }, [aiAnalyzing, aiJobs, mediaJobs]);
   const controlAiJobsRef = useRef<
     (action: "pause" | "resume" | "cancel" | "retry", jobIds?: string[]) => Promise<void>
   >(async () => undefined);
@@ -1145,6 +1154,7 @@ function AppInner() {
     flushSync(() => {
       aiAnalyzingRef.current = true;
       setAiAnalyzing(true);
+      setAiProgressBannerVisible(true);
     });
     void refreshAiBatchStatus();
   }, [aiConnectionFailureGate.failedJobIds, onAiConnectionFailureRetry]);
@@ -5761,10 +5771,11 @@ function AppInner() {
     setAiTagsEnabled(result.value.enabledFields.tags);
     setAiRatingEnabled(result.value.enabledFields.rating);
     setAiForceExistingTags(result.value.analysisSettings.forceExistingTags);
-    setAiAnalysisSettings({
-      ...result.value.analysisSettings,
-      forceExistingTags: result.value.analysisSettings.forceExistingTags,
-    });
+    setAiAnalysisSettings(
+      toWireAiAnalysisSettings(
+        normalizeAiAnalysisSettings(result.value.analysisSettings),
+      ),
+    );
     const langs = result.value.languages as
       | Array<"zh-CN" | "en" | "ja" | "ko">
       | undefined;
@@ -6152,6 +6163,7 @@ function AppInner() {
       flushSync(() => {
         aiAnalyzingRef.current = true;
         setAiAnalyzing(true);
+        setAiProgressBannerVisible(true);
       });
       // The fixed workspace progress banner is the only in-progress signal.
       // A transient notice duplicates it and can hide more important feedback.
@@ -6350,6 +6362,29 @@ function AppInner() {
       window.clearInterval(timer);
     };
   }, [api, library, mediaJobsOpen]);
+
+  useEffect(() => {
+    if (!library || !api) return;
+    let active = true;
+    const poll = async () => {
+      try {
+        const [mediaResult, aiResult] = await Promise.all([
+          api.listMediaJobs({ libraryId: library.libraryId }),
+          api.getAiJobStatus({ libraryId: library.libraryId }),
+        ]);
+        if (active && mediaResult.ok) setMediaJobs(mediaResult.value);
+        if (active && aiResult.ok) setAiJobs(aiResult.value);
+      } catch {
+        // Keep the last known task state during a transient Worker restart.
+      }
+    };
+    void poll();
+    const timer = window.setInterval(() => void poll(), 2_000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [api, library]);
 
   async function controlMediaJobs(
     action: "pause" | "resume" | "cancel" | "retry",
@@ -6805,6 +6840,7 @@ function AppInner() {
               )
             )}
             <CanvasToolbarControls
+              backgroundJobsActive={backgroundJobsActive}
               actions={{
                 refresh: () => {
                   void refreshAssets();
@@ -6938,6 +6974,7 @@ function AppInner() {
         )}
         {(aiAnalyzing ||
           (aiJobs !== null && aiJobs.queued + aiJobs.running > 0)) &&
+          aiProgressBannerVisible &&
           (() => {
             const batchProgress = aiBatchProgress;
             const progressLabel =
@@ -6983,10 +7020,10 @@ function AppInner() {
                   </button>
                   <button
                     className="secondary-button"
-                    onClick={() => setMediaJobsOpen(true)}
+                    onClick={() => setAiProgressBannerVisible(false)}
                     type="button"
                   >
-                    {t("toolbar.backgroundJobs")}
+                    {t("toast.aiAnalyzeRunInBackground")}
                   </button>
                 </div>
               </div>

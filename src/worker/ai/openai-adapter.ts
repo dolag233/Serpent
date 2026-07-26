@@ -6,6 +6,7 @@ import {
   resolveOpenAiResponsesUrl,
 } from '../../shared/ai-endpoints';
 import {
+  buildAiAnalysisUserTextLines,
   parseAiAnalysisResultFromModelText,
   resolveAiAnalysisSettings,
 } from './protocol';
@@ -459,22 +460,7 @@ export class OpenAIVendorAdapter implements VendorAdapter {
   }
 
   #buildUserTextParts(request: AiAnalysisRequest): string[] {
-    const textParts: string[] = [];
-    textParts.push(`Filename: ${request.filename}`);
-
-    if (request.contactSheetDescription) {
-      textParts.push(
-        `Contact sheet description: ${request.contactSheetDescription}`,
-      );
-    }
-
-    if (request.contactSheetBase64) {
-      textParts.push(
-        'The first image is the poster frame and the second is a contact sheet of key frames.',
-      );
-    }
-
-    return textParts;
+    return buildAiAnalysisUserTextLines(request);
   }
 
   #mapFetchError(error: unknown): VendorAdapterError {

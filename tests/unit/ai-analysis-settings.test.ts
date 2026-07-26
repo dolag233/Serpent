@@ -11,6 +11,24 @@ import {
 } from '../../src/shared/ai-analysis-settings';
 
 describe('normalizeAiAnalysisSettings', () => {
+  it('fills empty custom description prompt with the built-in rule text', () => {
+    const settings = normalizeAiAnalysisSettings({
+      customDescriptionPrompt: '',
+    });
+    expect(settings.customDescriptionPrompt).toBe(
+      DEFAULT_AI_ANALYSIS_SETTINGS.customDescriptionPrompt,
+    );
+  });
+
+  it('fills empty custom tag prompt with the built-in rule text', () => {
+    const settings = normalizeAiAnalysisSettings({
+      customTagPrompt: '',
+    });
+    expect(settings.customTagPrompt).toBe(
+      DEFAULT_AI_ANALYSIS_SETTINGS.customTagPrompt,
+    );
+  });
+
   it('clamps numeric bounds and defaults missing fields', () => {
     const settings = normalizeAiAnalysisSettings({
       maxTags: 99,
@@ -54,7 +72,8 @@ describe('toWireAiAnalysisSettings', () => {
       maxDescriptionWordsEn: 60,
       outputStyle: 'normal',
       ratingRubric: DEFAULT_AI_ANALYSIS_SETTINGS.ratingRubric,
-      customDescriptionPrompt: '',
+      customDescriptionPrompt: DEFAULT_AI_ANALYSIS_SETTINGS.customDescriptionPrompt,
+      customTagPrompt: DEFAULT_AI_ANALYSIS_SETTINGS.customTagPrompt,
     });
     expect(wire).not.toHaveProperty('descriptionEnabled');
   });

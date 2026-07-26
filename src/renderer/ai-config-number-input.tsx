@@ -7,6 +7,7 @@ export type AiConfigNumberInputProps = {
   /** Called on blur (and Enter) only — not while typing. */
   normalize: (raw: unknown) => number;
   className?: string;
+  disabled?: boolean;
 };
 
 /**
@@ -18,6 +19,7 @@ export function AiConfigNumberInput({
   onCommit,
   normalize,
   className = "text-field ai-config-input",
+  disabled = false,
 }: AiConfigNumberInputProps) {
   const [draft, setDraft] = useState(() => String(value));
   const isFocusedRef = useRef(false);
@@ -37,6 +39,7 @@ export function AiConfigNumberInput({
   return (
     <input
       className={className}
+      disabled={disabled}
       id={id}
       inputMode="numeric"
       onBlur={() => {

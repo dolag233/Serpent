@@ -3,7 +3,6 @@ import { createPortal } from "react-dom";
 
 import {
   AI_OUTPUT_STYLES,
-  DEFAULT_AI_DESCRIPTION_STRUCTURE,
   normalizeAiMaxDescriptionCharsZh,
   normalizeAiMaxDescriptionWordsEn,
   normalizeAiMaxTags,
@@ -658,18 +657,44 @@ export function AiConfigDialog({
                 />
                 <p className="ai-config-hint">{t("aiConfig.maxAnalysisImageEdgeHint")}</p>
               </div>
-              <div className="editor-field ai-config-field">
+              <div
+                className={`editor-field ai-config-field${tagsEnabled ? "" : " is-disabled"}`}
+              >
                 <label className="micro-label" htmlFor="ai-config-max-tags">
                   {t("aiConfig.maxTags")}
                 </label>
                 <AiConfigNumberInput
+                  disabled={!tagsEnabled}
                   id="ai-config-max-tags"
                   normalize={normalizeAiMaxTags}
                   onCommit={(maxTags) => commitNumericSettings({ maxTags })}
                   value={analysisSettings.maxTags}
                 />
               </div>
-              <div className="ai-config-advanced-row">
+              <div
+                className={`editor-field ai-config-field${tagsEnabled ? "" : " is-disabled"}`}
+              >
+                <label className="micro-label" htmlFor="ai-config-custom-tag-prompt">
+                  {t("aiConfig.customTagPrompt")}
+                </label>
+                <textarea
+                  className="text-field ai-config-input ai-config-textarea"
+                  disabled={!tagsEnabled}
+                  id="ai-config-custom-tag-prompt"
+                  maxLength={4000}
+                  onChange={(e) =>
+                    patchSettings({ customTagPrompt: e.target.value })
+                  }
+                  rows={3}
+                  value={analysisSettings.customTagPrompt}
+                />
+                <p className="ai-config-hint">
+                  {t("aiConfig.customTagPromptHint")}
+                </p>
+              </div>
+              <div
+                className={`ai-config-advanced-row${descriptionEnabled ? "" : " is-disabled"}`}
+              >
                 <div className="editor-field ai-config-field">
                   <label
                     className="micro-label"
@@ -678,6 +703,7 @@ export function AiConfigDialog({
                     {t("aiConfig.maxDescriptionCharsZh")}
                   </label>
                   <AiConfigNumberInput
+                    disabled={!descriptionEnabled}
                     id="ai-config-max-desc-zh"
                     normalize={normalizeAiMaxDescriptionCharsZh}
                     onCommit={(maxDescriptionCharsZh) =>
@@ -694,6 +720,7 @@ export function AiConfigDialog({
                     {t("aiConfig.maxDescriptionWordsEn")}
                   </label>
                   <AiConfigNumberInput
+                    disabled={!descriptionEnabled}
                     id="ai-config-max-desc-en"
                     normalize={normalizeAiMaxDescriptionWordsEn}
                     onCommit={(maxDescriptionWordsEn) =>
@@ -724,12 +751,15 @@ export function AiConfigDialog({
                   ))}
                 </select>
               </div>
-              <div className="editor-field ai-config-field">
+              <div
+                className={`editor-field ai-config-field${ratingEnabled ? "" : " is-disabled"}`}
+              >
                 <label className="micro-label" htmlFor="ai-config-rating-rubric">
                   {t("aiConfig.ratingRubric")}
                 </label>
                 <textarea
                   className="text-field ai-config-input ai-config-textarea"
+                  disabled={!ratingEnabled}
                   id="ai-config-rating-rubric"
                   maxLength={4000}
                   onChange={(e) =>
@@ -739,7 +769,9 @@ export function AiConfigDialog({
                   value={analysisSettings.ratingRubric}
                 />
               </div>
-              <div className="editor-field ai-config-field">
+              <div
+                className={`editor-field ai-config-field${descriptionEnabled ? "" : " is-disabled"}`}
+              >
                 <label
                   className="micro-label"
                   htmlFor="ai-config-custom-desc-prompt"
@@ -748,12 +780,12 @@ export function AiConfigDialog({
                 </label>
                 <textarea
                   className="text-field ai-config-input ai-config-textarea"
+                  disabled={!descriptionEnabled}
                   id="ai-config-custom-desc-prompt"
                   maxLength={4000}
                   onChange={(e) =>
                     patchSettings({ customDescriptionPrompt: e.target.value })
                   }
-                  placeholder={DEFAULT_AI_DESCRIPTION_STRUCTURE}
                   rows={3}
                   value={analysisSettings.customDescriptionPrompt}
                 />

@@ -17,6 +17,9 @@ export const DEFAULT_AI_RATING_RUBRIC =
 export const DEFAULT_AI_DESCRIPTION_STRUCTURE =
   '先写资产类型（如：这是一张照片/一张插画/一段视频截图），再写风格与氛围，再写画面主要内容与主体。';
 
+export const DEFAULT_AI_TAG_PROMPT =
+  '标签一般是描述风格、类型、视觉特点、情绪、主题、主体等的简单词汇；若已有标签含其它类型（如职业），可仿照。';
+
 export interface AiAnalysisSettings {
   descriptionEnabled: boolean;
   tagEnabled: boolean;
@@ -29,8 +32,30 @@ export interface AiAnalysisSettings {
   maxDescriptionWordsEn: number;
   outputStyle: AiOutputStyle;
   ratingRubric: string;
-  /** Empty = use default type→style→content structure. */
+  /** Empty in storage = use {@link DEFAULT_AI_DESCRIPTION_STRUCTURE}. */
   customDescriptionPrompt: string;
+  /** Empty in storage = use {@link DEFAULT_AI_TAG_PROMPT}. */
+  customTagPrompt: string;
+}
+
+/** UI / wire value: empty persisted string resolves to the built-in rule text. */
+export function resolveCustomDescriptionPromptForUi(
+  value: string | null | undefined,
+): string {
+  if (typeof value === 'string' && value.trim()) {
+    return value.trim().slice(0, 4_000);
+  }
+  return DEFAULT_AI_DESCRIPTION_STRUCTURE;
+}
+
+/** UI / wire value: empty persisted string resolves to the built-in tag rule text. */
+export function resolveCustomTagPromptForUi(
+  value: string | null | undefined,
+): string {
+  if (typeof value === 'string' && value.trim()) {
+    return value.trim().slice(0, 4_000);
+  }
+  return DEFAULT_AI_TAG_PROMPT;
 }
 
 export const DEFAULT_AI_ANALYSIS_SETTINGS: AiAnalysisSettings = {
@@ -43,7 +68,8 @@ export const DEFAULT_AI_ANALYSIS_SETTINGS: AiAnalysisSettings = {
   maxDescriptionWordsEn: 60,
   outputStyle: 'normal',
   ratingRubric: DEFAULT_AI_RATING_RUBRIC,
-  customDescriptionPrompt: '',
+  customDescriptionPrompt: DEFAULT_AI_DESCRIPTION_STRUCTURE,
+  customTagPrompt: DEFAULT_AI_TAG_PROMPT,
 };
 
 export function isAiOutputStyle(value: unknown): value is AiOutputStyle {
@@ -86,10 +112,10 @@ export function normalizeAiAnalysisSettings(
       typeof partial.ratingRubric === 'string' && partial.ratingRubric.trim()
         ? partial.ratingRubric.trim().slice(0, 4_000)
         : base.ratingRubric,
-    customDescriptionPrompt:
-      typeof partial.customDescriptionPrompt === 'string'
-        ? partial.customDescriptionPrompt.trim().slice(0, 4_000)
-        : '',
+    customDescriptionPrompt: resolveCustomDescriptionPromptForUi(
+      partial.customDescriptionPrompt,
+    ),
+    customTagPrompt: resolveCustomTagPromptForUi(partial.customTagPrompt),
   };
 }
 
@@ -102,6 +128,7 @@ export type AiAnalysisSettingsWire = {
   outputStyle: AiOutputStyle;
   ratingRubric: string;
   customDescriptionPrompt: string;
+  customTagPrompt: string;
 };
 
 export function toWireAiAnalysisSettings(
@@ -115,6 +142,7 @@ export function toWireAiAnalysisSettings(
     outputStyle: settings.outputStyle,
     ratingRubric: settings.ratingRubric,
     customDescriptionPrompt: settings.customDescriptionPrompt,
+    customTagPrompt: settings.customTagPrompt,
   };
 }
 
@@ -169,6 +197,9 @@ export function buildAiAnalysisSystemPrompt(input: {
     settings.customDescriptionPrompt.trim() ||
     DEFAULT_AI_DESCRIPTION_STRUCTURE;
 
+  const tagSemantics =
+    settings.customTagPrompt.trim() || DEFAULT_AI_TAG_PROMPT;
+
   const tagRule = settings.forceExistingTags
     ? '你只能从已有标签列表中选择，不得发明新标签。'
     : '输出标签尽量使用已有标签；仅当非常特殊、重要时才新增标签。';
@@ -186,7 +217,7 @@ export function buildAiAnalysisSystemPrompt(input: {
   prompt += `+ 只输出纯 JSON 对象，不要 Markdown 代码围栏，不要 XML/HTML 标签（例如不要写 </description>）\n`;
 
   if (enabledFields.tags) {
-    prompt += `+ 关于标签。${tagRule}标签一般是描述风格、类型、视觉特点、情绪、主题、主体等的简单词汇；若已有标签含其它类型（如职业），可仿照。输出不超过 ${settings.maxTags} 个。每个标签的书写语言必须符合上方目标语言硬约束。\n`;
+    prompt += `+ 关于标签。${tagRule}${tagSemantics}输出不超过 ${settings.maxTags} 个。每个标签的书写语言必须符合上方目标语言硬约束。\n`;
     prompt += `  已有标签（最多 100，文件夹相关优先）：[${existingTagNames.join(', ')}]\n`;
   }
 

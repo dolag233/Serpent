@@ -107,6 +107,8 @@ function normalizeAiStructuredInput(input: unknown): unknown {
 }
 
 export interface AiAnalysisRequest {
+  /** UI display name (basename of library-relative path). */
+  displayName: string;
   filename: string;
   mime: string;
   contactSheetDescription?: string;
@@ -128,4 +130,24 @@ export function resolveAiAnalysisSettings(
   request: AiAnalysisRequest,
 ): AiAnalysisSettings {
   return request.analysisSettings ?? DEFAULT_AI_ANALYSIS_SETTINGS;
+}
+
+/** Shared user-message context for all vendor adapters. */
+export function buildAiAnalysisUserTextLines(
+  request: AiAnalysisRequest,
+): string[] {
+  const lines = [
+    'Asset metadata:',
+    `- Name: ${request.displayName}`,
+    `Filename: ${request.filename}`,
+  ];
+  if (request.contactSheetDescription) {
+    lines.push(`Contact sheet description: ${request.contactSheetDescription}`);
+  }
+  if (request.contactSheetBase64) {
+    lines.push(
+      'The first image is the poster frame and the second is a contact sheet of key frames.',
+    );
+  }
+  return lines;
 }

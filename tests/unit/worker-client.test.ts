@@ -32,6 +32,7 @@ describe('requestTimeoutForCommand', () => {
         outputStyle: 'normal',
         ratingRubric: 'score 1-5',
         customDescriptionPrompt: '',
+        customTagPrompt: '',
       },
       languages: ['zh-CN'],
       concurrencyLimit: 1,

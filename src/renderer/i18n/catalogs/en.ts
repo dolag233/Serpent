@@ -777,7 +777,10 @@ export const en = {
     ratingRubric: "Rating rubric",
     customDescriptionPrompt: "Custom description prompt",
     customDescriptionPromptHint:
-      "Leave empty to use the default structure: type → style → content.",
+      "Guidance for description generation. Edit as needed.",
+    customTagPrompt: "Custom tag prompt",
+    customTagPromptHint:
+      "Tag semantics guidance (excludes counts, existing-tag lists, and other formatting rules). Edit as needed.",
     disclaimer: "I understand that enabling AI analysis uploads selected asset images or video contact sheets to the chosen third-party provider and may incur charges.",
     autoAnalyze: "Automatically upload and analyze supported assets after import",
     save: "Save settings"
@@ -1183,6 +1186,7 @@ export const en = {
     aiAnalyzeProgress: "AI analysis running ({running} active / {queued} queued)",
     aiAnalyzeProgressCount: "AI analysis {done}/{total}",
     aiAnalyzeStop: "Stop",
+    aiAnalyzeRunInBackground: "Run in background",
     aiAnalyzeStopped: "AI analysis stopped.",
     aiAnalyzeNoAsset: "Select an asset to analyze first.",
     aiRevealLogFailed: "Could not open the application log.",

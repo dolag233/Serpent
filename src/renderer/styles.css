@@ -1099,6 +1099,22 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
   cursor: not-allowed;
 }
 
+.tool-button.has-badge {
+  position: relative;
+}
+
+.tool-button-badge-dot {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 1px var(--pane);
+  pointer-events: none;
+}
+
 .icon {
   display: block;
   flex: 0 0 auto;
@@ -3818,13 +3834,52 @@ body.serpent-modal-open .app-shell {
   flex: 0 0 auto;
   align-items: center;
   gap: 4px;
+  position: relative;
+  z-index: 1;
 }
-.preview-viewer-volume-slider {
-  width: 72px;
-  height: 14px;
-  margin: 0;
-  accent-color: var(--accent);
+.preview-viewer-volume-track {
+  position: relative;
+  flex: 0 0 auto;
+  width: 88px;
+  height: 20px;
   cursor: pointer;
+  touch-action: none;
+}
+.preview-viewer-volume-track::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 0;
+  right: 0;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--divider);
+  transform: translateY(-50%);
+}
+.preview-viewer-volume-track-fill {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--accent);
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+.preview-viewer-volume-track-thumb {
+  position: absolute;
+  top: 50%;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--accent);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+.preview-viewer-volume-track:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 4px;
 }
 .preview-image-viewport,
 .preview-video-viewport {
@@ -3874,6 +3929,13 @@ body.serpent-modal-open .app-shell {
 .workspace-viewer.is-chrome-idle .preview-chrome-fade {
   opacity: 0;
   pointer-events: none;
+}
+/* Volume/scrub chrome must stay interactive while idle-faded (Serpent-jy9z). */
+.workspace-viewer.is-chrome-idle .preview-chrome-fade:hover,
+.workspace-viewer.is-chrome-idle .preview-chrome-fade:focus-within,
+.workspace-viewer.is-chrome-idle .preview-chrome-fade:has(.preview-viewer-volume.is-adjusting) {
+  opacity: 1;
+  pointer-events: auto;
 }
 /* Keyboard focus on chrome must remain visible even while idle-faded (Serpent-vvn). */
 .workspace-viewer.is-chrome-idle:has(.preview-chrome-fade:focus-visible) .preview-chrome-fade {
@@ -4372,6 +4434,19 @@ body.serpent-modal-open .app-shell {
 
 .ai-config-field {
   margin-top: 12px;
+}
+
+.ai-config-field.is-disabled .micro-label,
+.ai-config-advanced-row.is-disabled .micro-label,
+.ai-config-field.is-disabled .ai-config-hint,
+.ai-config-advanced-row.is-disabled .ai-config-hint {
+  color: var(--tertiary);
+}
+
+.ai-config-field.is-disabled .text-field:disabled,
+.ai-config-advanced-row.is-disabled .text-field:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .ai-config-field .micro-label {

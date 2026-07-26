@@ -1025,7 +1025,9 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
         100,
       );
 
+      const displayName = libraryService.getAssetDisplayName(libraryId, assetId);
       const aiRequest: AiAnalysisRequest = {
+        displayName,
         filename,
         mime: requestMime,
         imageBase64,
