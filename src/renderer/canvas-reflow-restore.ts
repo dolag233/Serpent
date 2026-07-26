@@ -19,6 +19,11 @@ import {
 
 export type { AnchorCard, CanvasAnchor, RectLike };
 
+export interface ScrollOffsetSnapshot {
+  readonly left: number;
+  readonly top: number;
+}
+
 /**
  * Among cards that vertically overlap the viewport, pick the one whose top
  * edge is closest to the viewport top (then leftmost on ties). Anchoring the
@@ -86,6 +91,7 @@ export function scheduleAnchorRestore(
   frameRef: { current: number | null },
   frameCount = 3,
   onRestored?: () => void,
+  initialScroll?: ScrollOffsetSnapshot,
 ): void {
   if (frameRef.current !== null) {
     globalThis.cancelAnimationFrame(frameRef.current);
@@ -95,12 +101,40 @@ export function scheduleAnchorRestore(
 
   const runAfterFrames = (remaining: number): void => {
     if (remaining <= 0) {
-      frameRef.current = null;
-      const restored = Array.from(
-        canvas.querySelectorAll<HTMLElement>("[data-asset-id]"),
-      ).find((card) => card.dataset.assetId === anchor.assetId);
-      if (restored) {
+      if (initialScroll) {
+        canvas.scrollLeft = clampScrollOffset(
+          initialScroll.left,
+          canvas.scrollWidth,
+          canvas.clientWidth,
+        );
+        canvas.scrollTop = clampScrollOffset(
+          initialScroll.top,
+          canvas.scrollHeight,
+          canvas.clientHeight,
+        );
+      }
+      const settle = (
+        passesRemaining: number,
+        previousRect?: RectLike,
+      ): void => {
+        const restored = Array.from(
+          canvas.querySelectorAll<HTMLElement>("[data-asset-id]"),
+        ).find((card) => card.dataset.assetId === anchor.assetId);
+        if (!restored) {
+          frameRef.current = null;
+          onRestored?.();
+          return;
+        }
         const rect = restored.getBoundingClientRect();
+        if (
+          previousRect &&
+          Math.abs(rect.left - previousRect.left) < 0.5 &&
+          Math.abs(rect.top - previousRect.top) < 0.5
+        ) {
+          frameRef.current = null;
+          onRestored?.();
+          return;
+        }
         const delta = computeAnchorScrollDelta(anchor, rect);
         const nextLeft = clampScrollOffset(
           canvas.scrollLeft + delta.deltaX,
@@ -116,8 +150,16 @@ export function scheduleAnchorRestore(
           canvas.scrollLeft = nextLeft;
           canvas.scrollTop = nextTop;
         }
-      }
-      onRestored?.();
+        if (passesRemaining > 0) {
+          frameRef.current = globalThis.requestAnimationFrame(() =>
+            settle(passesRemaining - 1, rect),
+          );
+          return;
+        }
+        frameRef.current = null;
+        onRestored?.();
+      };
+      settle(3);
       return;
     }
     frameRef.current = globalThis.requestAnimationFrame(() => {
