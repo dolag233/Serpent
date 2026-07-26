@@ -1,29 +1,41 @@
 /**
  * REQ-CANVAS-019 / Serpent-32p: schedule scroll compensation after a canvas
  * width reflow so the previously visible asset set stays on screen.
- *
- * Pure scheduling + DOM measure helpers live here so the restore policy
- * (always re-anchor; prefer the topmost visible card) can be unit-tested
- * without mounting App.tsx.
  */
 
 import {
+  reflowDebug,
+  summarizeReflowSnapshot,
+} from "./canvas-reflow-debug";
+import { escapeCssAttrValue } from "./escape-css-selector";
+import {
   captureAnchor,
-  clampScrollOffset,
-  computeAnchorScrollDelta,
   pickNearestCard,
   type AnchorCard,
   type CanvasAnchor,
   type RectLike,
 } from "./canvas-scroll-anchor";
+import {
+  applyBrowseScrollSnapshot,
+  type BrowseViewSnapshot,
+} from "./view-restore";
 
 export type { AnchorCard, CanvasAnchor, RectLike };
+export type CanvasReflowSnapshot = BrowseViewSnapshot;
+
+export type ReflowRestoreResult = {
+  success: boolean;
+  passes: number;
+  anchorFound: boolean;
+  driftPx: number | null;
+  scrollTopBefore: number;
+  scrollTopAfter: number;
+  debugLabel?: string;
+};
 
 /**
  * Among cards that vertically overlap the viewport, pick the one whose top
- * edge is closest to the viewport top (then leftmost on ties). Anchoring the
- * topmost visible card keeps the visible set stable when column count changes
- * — better than viewport-center nearest for "A/B/C stay in view".
+ * edge is closest to the viewport top (then leftmost on ties).
  */
 export function pickTopmostVisibleCard(
   cards: readonly AnchorCard[],
@@ -51,8 +63,6 @@ export function captureReflowAnchorFromCards(
 ): CanvasAnchor | null {
   const topmost = pickTopmostVisibleCard(cards, viewport);
   if (!topmost) return null;
-  // Anchor to the card's top-center within the viewport so vertical scroll
-  // restores the leading edge of the visible band.
   const anchorX = topmost.left + topmost.width / 2;
   const anchorY = Math.min(
     Math.max(topmost.top, viewport.top),
@@ -61,62 +71,209 @@ export function captureReflowAnchorFromCards(
   return captureAnchor(topmost, anchorX, anchorY);
 }
 
+export function measureAnchorDriftPx(
+  canvas: HTMLElement,
+  snapshot: CanvasReflowSnapshot,
+): number | null {
+  if (!snapshot.anchor) return null;
+  const restored = canvas.querySelector<HTMLElement>(
+    `[data-asset-id="${escapeCssAttrValue(snapshot.anchor.assetId)}"]`,
+  );
+  if (!restored) return null;
+  const rect = restored.getBoundingClientRect();
+  const actualY = rect.top + rect.height * snapshot.anchor.ratioY;
+  return Math.abs(actualY - snapshot.anchor.clientY);
+}
+
+export function applyCanvasReflowRestore(
+  canvas: HTMLElement,
+  snapshot: CanvasReflowSnapshot,
+): boolean {
+  return applyBrowseScrollSnapshot(canvas, snapshot);
+}
+
 /**
- * Wait `frameCount` animation frames for layout/React commits to settle, then
- * nudge scroll so `anchor` lands back at its captured client point.
- *
- * Intentionally does **not** bail when scroll drifted during the wait: width
- * reflow often resets scrollTop (content height flicker / remount), and that
- * was the CANVAS-021 failure mode. User scroll during ~3 frames is rare; if
- * it happens, restoring the prior visible set is still the safer product
- * choice than leaving the viewport on unrelated assets.
+ * Wait for layout to settle, then restore. Retries while anchor drift remains.
  */
+export function scheduleCanvasReflowRestore(
+  canvas: HTMLElement,
+  snapshot: CanvasReflowSnapshot | null,
+  frameRef: { current: number | null },
+  options?: {
+    settleFrames?: number;
+    maxPasses?: number;
+    stablePasses?: number;
+    driftTolerancePx?: number;
+    debugLabel?: string;
+    onComplete?: (result: ReflowRestoreResult) => void;
+  },
+): void {
+  if (frameRef.current !== null) {
+    globalThis.cancelAnimationFrame(frameRef.current);
+    frameRef.current = null;
+  }
+  if (!snapshot) return;
+
+  const settleFrames = options?.settleFrames ?? 2;
+  const maxPasses = options?.maxPasses ?? 12;
+  const requiredStablePasses = options?.stablePasses ?? 1;
+  const driftTolerancePx = options?.driftTolerancePx ?? 3;
+  const debugLabel = options?.debugLabel;
+  let pass = 0;
+  let stablePasses = 0;
+
+  reflowDebug("schedule", {
+    label: debugLabel,
+    snapshot: summarizeReflowSnapshot(snapshot),
+    scrollTopNow: canvas.scrollTop,
+    scrollHeight: canvas.scrollHeight,
+  });
+
+  const runAfterFrames = (remaining: number, then: () => void): void => {
+    if (remaining <= 0) {
+      then();
+      return;
+    }
+    frameRef.current = globalThis.requestAnimationFrame(() => {
+      runAfterFrames(remaining - 1, then);
+    });
+  };
+
+  const finish = (result: ReflowRestoreResult): void => {
+    frameRef.current = null;
+    reflowDebug("complete", { label: debugLabel, ...result });
+    options?.onComplete?.(result);
+  };
+
+  const runPass = (): void => {
+    pass += 1;
+    const scrollTopBefore = canvas.scrollTop;
+    const anchorFound = snapshot.anchor
+      ? Boolean(
+          canvas.querySelector(
+            `[data-asset-id="${escapeCssAttrValue(snapshot.anchor.assetId)}"]`,
+          ),
+        )
+      : false;
+
+    reflowDebug("pass-start", {
+      label: debugLabel,
+      pass,
+      scrollTopBefore,
+      anchorFound,
+    });
+
+    const applied = applyCanvasReflowRestore(canvas, snapshot);
+    const scrollTopAfter = canvas.scrollTop;
+    const drift = measureAnchorDriftPx(canvas, snapshot);
+    const restoredAwayFromTop =
+      snapshot.scrollTop <= 48 || scrollTopAfter > 48;
+
+    reflowDebug("pass-end", {
+      label: debugLabel,
+      pass,
+      applied,
+      anchorFound,
+      driftPx: drift,
+      scrollTopAfter,
+      restoredAwayFromTop,
+    });
+
+    if (!applied) {
+      finish({
+        success: false,
+        passes: pass,
+        anchorFound,
+        driftPx: drift,
+        scrollTopBefore,
+        scrollTopAfter,
+        debugLabel,
+      });
+      return;
+    }
+
+    if (
+      restoredAwayFromTop &&
+      drift !== null &&
+      drift <= driftTolerancePx
+    ) {
+      stablePasses += 1;
+      reflowDebug("pass-stable", {
+        label: debugLabel,
+        pass,
+        stablePasses,
+        requiredStablePasses,
+        scrollTop: canvas.scrollTop,
+        scrollHeight: canvas.scrollHeight,
+      });
+      if (stablePasses < requiredStablePasses) {
+        if (pass >= maxPasses) {
+          finish({
+            success: false,
+            passes: pass,
+            anchorFound,
+            driftPx: drift,
+            scrollTopBefore,
+            scrollTopAfter,
+            debugLabel,
+          });
+          return;
+        }
+        runAfterFrames(2, runPass);
+        return;
+      }
+      finish({
+        success: true,
+        passes: pass,
+        anchorFound,
+        driftPx: drift,
+        scrollTopBefore,
+        scrollTopAfter,
+        debugLabel,
+      });
+      return;
+    }
+    stablePasses = 0;
+
+    if (pass >= maxPasses) {
+      finish({
+        success: false,
+        passes: pass,
+        anchorFound,
+        driftPx: drift,
+        scrollTopBefore,
+        scrollTopAfter,
+        debugLabel,
+      });
+      return;
+    }
+
+    runAfterFrames(2, runPass);
+  };
+
+  runAfterFrames(settleFrames, runPass);
+}
+
+/** @deprecated Use scheduleCanvasReflowRestore with a full BrowseViewSnapshot. */
 export function scheduleAnchorRestore(
   canvas: HTMLElement,
   anchor: CanvasAnchor | null,
   frameRef: { current: number | null },
   frameCount = 3,
 ): void {
-  if (frameRef.current !== null) {
-    globalThis.cancelAnimationFrame(frameRef.current);
-    frameRef.current = null;
-  }
   if (!anchor) return;
-
-  const runAfterFrames = (remaining: number): void => {
-    if (remaining <= 0) {
-      frameRef.current = null;
-      const restored = Array.from(
-        canvas.querySelectorAll<HTMLElement>("[data-asset-id]"),
-      ).find((card) => card.dataset.assetId === anchor.assetId);
-      if (!restored) return;
-      const rect = restored.getBoundingClientRect();
-      const delta = computeAnchorScrollDelta(anchor, rect);
-      const nextLeft = clampScrollOffset(
-        canvas.scrollLeft + delta.deltaX,
-        canvas.scrollWidth,
-        canvas.clientWidth,
-      );
-      const nextTop = clampScrollOffset(
-        canvas.scrollTop + delta.deltaY,
-        canvas.scrollHeight,
-        canvas.clientHeight,
-      );
-      if (nextLeft !== canvas.scrollLeft || nextTop !== canvas.scrollTop) {
-        canvas.scrollLeft = nextLeft;
-        canvas.scrollTop = nextTop;
-      }
-      return;
-    }
-    frameRef.current = globalThis.requestAnimationFrame(() => {
-      runAfterFrames(remaining - 1);
-    });
-  };
-
-  runAfterFrames(frameCount);
+  scheduleCanvasReflowRestore(
+    canvas,
+    {
+      anchor,
+      scrollLeft: canvas.scrollLeft,
+      scrollTop: canvas.scrollTop,
+    },
+    frameRef,
+    { settleFrames: frameCount },
+  );
 }
 
-/** Cancel a previously scheduled restore (used by App unmount/effects). */
 export function cancelScheduledAnchorRestore(
   frameRef: { current: number | null },
 ): void {
@@ -126,7 +283,6 @@ export function cancelScheduledAnchorRestore(
   }
 }
 
-/** @deprecated Prefer captureReflowAnchorFromCards; kept for card-size pinch path. */
 export function captureNearestCenterAnchor(
   cards: readonly AnchorCard[],
   viewport: RectLike,

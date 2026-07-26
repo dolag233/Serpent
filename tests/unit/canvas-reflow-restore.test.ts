@@ -4,6 +4,7 @@ import {
   captureReflowAnchorFromCards,
   pickTopmostVisibleCard,
   scheduleAnchorRestore,
+  scheduleCanvasReflowRestore,
   type AnchorCard,
 } from "../../src/renderer/canvas-reflow-restore";
 
@@ -73,14 +74,23 @@ describe("scheduleAnchorRestore", () => {
       }),
     } as unknown as HTMLElement;
 
+    let scrollTop = 0;
     const canvas = {
-      scrollLeft: 0,
-      scrollTop: 0,
+      get scrollLeft() {
+        return 0;
+      },
+      get scrollTop() {
+        return scrollTop;
+      },
       scrollWidth: 800,
       scrollHeight: 4000,
       clientWidth: 800,
       clientHeight: 600,
+      scrollTo: ({ top }: { left: number; top: number }) => {
+        scrollTop = top;
+      },
       querySelectorAll: () => [card],
+      querySelector: () => card,
     } as unknown as HTMLElement;
 
     const frameRef: { current: number | null } = { current: null };
@@ -98,14 +108,91 @@ describe("scheduleAnchorRestore", () => {
     );
 
     // Simulate unintended scroll reset to 0 during reflow (the old bail path).
-    canvas.scrollTop = 0;
+    scrollTop = 0;
     while (rafQueue.length > 0) {
       const next = rafQueue.shift();
       next?.(0);
     }
 
     // Card top 500 vs desired clientY 80 → scrollTop should move by ~420.
-    expect(canvas.scrollTop).toBeCloseTo(420);
+    expect(scrollTop).toBeCloseTo(420);
+
+    globalThis.requestAnimationFrame = originalRaf;
+    globalThis.cancelAnimationFrame = originalCancel;
+  });
+
+  it("uses captured scrollTop before anchor correction (viewer-close parity)", () => {
+    const rafQueue: FrameRequestCallback[] = [];
+    const originalRaf = globalThis.requestAnimationFrame;
+    const originalCancel = globalThis.cancelAnimationFrame;
+    globalThis.requestAnimationFrame = ((cb: FrameRequestCallback) => {
+      rafQueue.push(cb);
+      return rafQueue.length;
+    }) as typeof requestAnimationFrame;
+    globalThis.cancelAnimationFrame = ((id: number) => {
+      rafQueue[id - 1] = () => undefined;
+    }) as typeof cancelAnimationFrame;
+
+    let scrollTop = 0;
+    const card = {
+      dataset: { assetId: "lead" },
+      getBoundingClientRect: () => ({
+        left: 40,
+        top: 80,
+        width: 120,
+        height: 100,
+        right: 160,
+        bottom: 180,
+        x: 40,
+        y: 80,
+        toJSON() {
+          return {};
+        },
+      }),
+    } as unknown as HTMLElement;
+
+    const canvas = {
+      get scrollLeft() {
+        return 0;
+      },
+      get scrollTop() {
+        return scrollTop;
+      },
+      scrollWidth: 800,
+      scrollHeight: 4000,
+      clientWidth: 800,
+      clientHeight: 600,
+      scrollTo: ({ top }: { left: number; top: number }) => {
+        scrollTop = top;
+      },
+      querySelector: () => card,
+      querySelectorAll: () => [card],
+    } as unknown as HTMLElement;
+
+    const frameRef: { current: number | null } = { current: null };
+    scheduleCanvasReflowRestore(
+      canvas,
+      {
+        scrollLeft: 0,
+        scrollTop: 800,
+        anchor: {
+          assetId: "lead",
+          ratioX: 0.5,
+          ratioY: 0,
+          clientX: 100,
+          clientY: 80,
+        },
+      },
+      frameRef,
+      { settleFrames: 0, maxPasses: 1 },
+    );
+
+    while (rafQueue.length > 0) {
+      const next = rafQueue.shift();
+      next?.(0);
+    }
+
+    expect(scrollTop).toBe(800);
 
     globalThis.requestAnimationFrame = originalRaf;
     globalThis.cancelAnimationFrame = originalCancel;

@@ -87,6 +87,8 @@ export function CanvasToolbarControls({
   platform,
   actions,
   onCardSizeChange,
+  onCardSizeGestureStart,
+  onCardSizeGestureEnd,
 }: {
   libraryOpen: boolean;
   busy: boolean;
@@ -98,6 +100,8 @@ export function CanvasToolbarControls({
   platform: CommandPlatform;
   actions: ToolbarCommandActions;
   onCardSizeChange: (size: number) => void;
+  onCardSizeGestureStart?: () => void;
+  onCardSizeGestureEnd?: () => void;
 }): ReactNode {
   const ctx: ToolbarCommandContext = {
     surface: "canvas",
@@ -154,6 +158,9 @@ export function CanvasToolbarControls({
               const next = cardSizeStops[index];
               if (typeof next === "number") onCardSizeChange(next);
             }}
+            onPointerDown={() => onCardSizeGestureStart?.()}
+            onPointerUp={() => onCardSizeGestureEnd?.()}
+            onPointerCancel={() => onCardSizeGestureEnd?.()}
             step={1}
             type="range"
             value={indexOfDiscreteCardSize(cardSize, cardSizeStops)}

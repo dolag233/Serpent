@@ -2242,6 +2242,9 @@ input[type="range"] {
      the vertical gutter appears; grid children measure against clientWidth. */
   overflow-x: hidden;
   overflow-y: auto;
+  /* Serpent-32p: reflow restore owns scroll position; native scroll anchoring
+     applies a second correction during column/card relayout. */
+  overflow-anchor: none;
   place-items: center;
   user-select: none;
 }
