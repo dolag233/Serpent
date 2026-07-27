@@ -103,7 +103,7 @@ export function useExternalImportHandlers({
       setNotice(importSummaryMessage(result.value, locale));
       await onImportCompleted(result.value);
     },
-    [locale, onImportCompleted, setConflicts, setNotice],
+    [locale, onImportCompleted, reloadCurrentContent, setConflicts, setNotice],
   );
 
   const importDroppedFiles = useCallback(

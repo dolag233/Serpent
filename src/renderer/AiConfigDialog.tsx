@@ -269,8 +269,10 @@ export function AiConfigDialog({
   // Prefetch so the first dropdown open usually already has options.
   useEffect(() => {
     if (!open) {
-      setModelPickerOpen(false);
-      setModelPickerMenuBox(null);
+      queueMicrotask(() => {
+        setModelPickerOpen(false);
+        setModelPickerMenuBox(null);
+      });
       return;
     }
     if (!canUseKey) return;

@@ -44,11 +44,11 @@ export function TextAssetPreviewTile({
   useEffect(() => {
     const cached = previewCache.get(key);
     if (cached != null) {
-      setSnippet(cached);
+      queueMicrotask(() => setSnippet(cached));
       return;
     }
     let cancelled = false;
-    setSnippet(null);
+    queueMicrotask(() => setSnippet(null));
     void api
       .readTextAsset({ libraryId, assetId, maxBytes: 2048 })
       .then((result) => {

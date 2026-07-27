@@ -14,8 +14,9 @@ export type TrashFolderGroup = {
  */
 export function groupTrashedAssetsBySourceFolder(
   assets: readonly AssetSummary[],
-  rootLabel: string,
+  _rootLabel: string,
 ): TrashFolderGroup[] {
+  void _rootLabel;
   const byKey = new Map<string, AssetSummary[]>();
 
   for (const asset of assets) {

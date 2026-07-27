@@ -1,9 +1,10 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 
-import type { AiJobStatus, LibraryApiResult, LinkedAssetDeleteResult, MediaJobStatus, PreviewResolution, SerpentLibraryApi } from '../shared/library-api';
+import type { AiJobStatus, LibraryApiResult, LinkedAssetDeleteResult, MediaJobStatus, PreviewResolution, RelinkAssetResult, SerpentLibraryApi } from '../shared/library-api';
 import type { RecentLibraryEntry } from '../shared/recent-libraries';
 import type { AiApiFormat } from '../shared/ai-endpoints';
 import type { AiReliabilitySettings } from '../shared/ai-reliability';
+import type { ViewerVideoShortcutAction } from '../shared/viewer-video-shortcuts';
 import { searchQuerySchema } from '../shared/asset-types';
 import type { AiSearchPlan, AssetSummary, AssetMetadataResult, ExtractedMetadataResult, CollectionSummary, FilterClause, FolderBrowseEntry, LinkedFolderRule, LinkedFolderSummary, ManagedFolderSummary, SearchQuery, SearchScope, SmartCollectionSummary, TagCooccurrenceGraph, TagSummary, TrashedFolderSummary } from '../shared/asset-types';
 import {
@@ -956,7 +957,7 @@ const library: SerpentLibraryApi = Object.freeze({
     };
   },
 
-  async relinkAsset({ libraryId, assetId }: { libraryId: string; assetId: string }): Promise<LibraryApiResult<import('../shared/library-api').RelinkAssetResult>> {
+  async relinkAsset({ libraryId, assetId }: { libraryId: string; assetId: string }): Promise<LibraryApiResult<RelinkAssetResult>> {
     const result = await request({ type: 'asset.relink.request', libraryId, assetId });
     if (!result.ok) return failure(result);
     if (result.type !== 'asset.relinked') throw new Error('Unexpected relink response.');
@@ -1720,7 +1721,7 @@ const shell: SerpentShellApi = Object.freeze({
   setViewerVideoShortcutsActive(active: boolean): void {
     ipcRenderer.send(VIEWER_VIDEO_SHORTCUTS_ACTIVE_CHANNEL, { active: Boolean(active) });
   },
-  onViewerVideoShortcut(listener: (action: import('../shared/viewer-video-shortcuts').ViewerVideoShortcutAction) => void): () => void {
+  onViewerVideoShortcut(listener: (action: ViewerVideoShortcutAction) => void): () => void {
     const handler = (
       _event: Electron.IpcRendererEvent,
       payload: { action?: string },

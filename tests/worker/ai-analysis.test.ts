@@ -525,6 +525,7 @@ describe('OpenAIVendorAdapter Responses compatibility', () => {
     );
 
     const result = await adapter.analyze({
+      displayName: 'test.png',
       filename: 'test.png',
       mime: 'image/png',
       language: 'zh-CN',
@@ -544,6 +545,7 @@ describe('OpenAIVendorAdapter Responses compatibility', () => {
     expect(bodies[1]).not.toHaveProperty('text');
 
     await adapter.analyze({
+      displayName: 'second.png',
       filename: 'second.png',
       mime: 'image/png',
       language: 'zh-CN',
@@ -573,6 +575,7 @@ describe('OpenAIVendorAdapter Responses compatibility', () => {
     );
 
     await expect(adapter.analyze({
+      displayName: 'test.png',
       filename: 'test.png',
       mime: 'image/png',
       language: 'zh-CN',
@@ -602,6 +605,7 @@ describe('OpenAIVendorAdapter Responses compatibility', () => {
       }), { status: 200 });
     };
     const request = {
+      displayName: 'parallel.png',
       filename: 'parallel.png',
       mime: 'image/png',
       language: 'zh-CN' as const,
@@ -647,6 +651,7 @@ describe('OpenAIVendorAdapter Responses compatibility', () => {
     };
     const endpoint = 'https://broken-probe.example/v1';
     const request = {
+      displayName: 'recovery.png',
       filename: 'recovery.png', mime: 'image/png', language: 'zh-CN' as const,
       enabledFields: { description: true, tags: true, rating: true },
       existingTagNames: [], imageBase64: 'fakebase64',
@@ -683,6 +688,7 @@ describe('OpenAIVendorAdapter Responses compatibility', () => {
     );
 
     await expect(adapter.analyze({
+      displayName: 'test.png',
       filename: 'test.png',
       mime: 'image/png',
       language: 'zh-CN',

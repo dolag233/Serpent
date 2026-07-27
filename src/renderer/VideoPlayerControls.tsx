@@ -140,11 +140,13 @@ export function VideoPlayerControls({
   const [sourceNatural, setSourceNatural] = useState({ w: 0, h: 0 });
   const [scrubRatio, setScrubRatio] = useState<number | null>(null);
   const playbackRateRef = useRef(playbackRate);
-  playbackRateRef.current = playbackRate;
   const durationRef = useRef(duration);
-  durationRef.current = duration;
   const frameRateFpsRef = useRef(frameRateFps);
-  frameRateFpsRef.current = frameRateFps;
+  useEffect(() => {
+    playbackRateRef.current = playbackRate;
+    durationRef.current = duration;
+    frameRateFpsRef.current = frameRateFps;
+  }, [playbackRate, duration, frameRateFps]);
   const frameSeekGeneration = useRef(0);
 
   const togglePlayback = useCallback(() => {

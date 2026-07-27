@@ -1,5 +1,3 @@
-/// <reference path="./chrome.d.ts" />
-
 export const NOTIFICATIONS_ENABLED_KEY = 'serpentNotificationsEnabled';
 export const FOCUS_APP_AFTER_SAVE_KEY = 'serpentFocusAppAfterSave';
 export const REVEAL_IN_LIBRARY_AFTER_SAVE_KEY = 'serpentRevealInLibraryAfterSave';

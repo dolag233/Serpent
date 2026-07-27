@@ -94,7 +94,7 @@ async function stopNpmStartLikeUser(child) {
   await sleep(800);
 }
 
-async function runRound(index) {
+async function runRound() {
   killStaleSerpentDevProcesses(projectRoot);
   await sleep(600);
 
@@ -118,7 +118,7 @@ const results = [];
 for (let i = 1; i <= rounds; i += 1) {
   process.stdout.write(`[stress] round ${i}/${rounds}… `);
   try {
-    const result = await runRound(i);
+    const result = await runRound();
     results.push({ round: i, ...result });
     console.log(result.ok ? "PASS" : "FAIL", {
       reason: result.mount.reason,

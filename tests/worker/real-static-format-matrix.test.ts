@@ -91,7 +91,7 @@ describe.runIf(canRun)('real OIIO static-format matrix', () => {
           ? 'image/png'
           : 'image/webp';
         expect(artifact, asset.displayName).toMatchObject({ status: 'ready', mimeType: expectedMimeType });
-        const outputPath = service.getArtifactAbsolutePath(library.libraryId, artifact!.artifactId, 'thumbnail');
+        const outputPath = service.getArtifactAbsolutePath(library.libraryId, artifact!.artifactId, 'preview');
         const output = readFileSync(outputPath);
         if (expectedMimeType === 'image/png') {
           expect(output.subarray(0, 8)).toEqual(

@@ -201,7 +201,7 @@ describe('itemsForLevel', () => {
     const level = { kind: 'folder', path: '概念设计' } as const;
     expect(pageCountForLevel(level, context)).toBe(1);
     const items = itemsForLevel(level, 0, context);
-    expect(items[0].nav).toBe('back');
+    expect(items[0]!.nav).toBe('back');
     expect(items.filter((item) => item.nav === 'page')).toHaveLength(0);
     expect(items.length).toBe(1 + 7);
     expect(items.some((item) => item.label === '保存在此')).toBe(false);
@@ -269,9 +269,9 @@ describe('disambiguateLabels', () => {
       { label: '角色', nav: 'save', path: '概念设计/角色', expandable: false },
       { label: '皮肤', nav: 'save', path: '贴图/皮肤', expandable: false },
     ]);
-    expect(items[0].label).toBe('返回');
-    expect(items[1].label).toBe('参考 / 角色');
-    expect(items[2].label).toBe('概念设计 / 角色');
-    expect(items[3].label).toBe('皮肤');
+    expect(items[0]!.label).toBe('返回');
+    expect(items[1]!.label).toBe('参考 / 角色');
+    expect(items[2]!.label).toBe('概念设计 / 角色');
+    expect(items[3]!.label).toBe('皮肤');
   });
 });

@@ -326,7 +326,6 @@ function render(): void {
   labels.innerHTML = items
     .map((item, i) => {
       const [lx, ly] = polar(labelRadius, midAngle(i, count, entry.rotation));
-      const badge = '';
       return `<div class="sector-label${i === s.armed ? ' armed' : ''}" style="transform: translate(${lx.toFixed(1)}px, ${ly.toFixed(1)}px) translate(-50%, -50%)">` +
         `<span class="ico">${iconForItem(item)}</span>` +
         `<span class="txt"></span></div>`;
@@ -434,7 +433,6 @@ function onDragOver(event: DragEvent): void {
   const dx = event.clientX - entry.cx;
   const dy = event.clientY - entry.cy;
   const distance = Math.hypot(dx, dy);
-  const expandVisual = expandRadius(GEOMETRY);
   const crossTrigger = radialCrossTriggerRadius(GEOMETRY);
   if (distance <= crossTrigger) s.canCross = true;
 

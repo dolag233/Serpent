@@ -175,7 +175,7 @@ export async function fetchSerpentFolders(
   const response = await requestSerpent('/folders', { method: 'GET' }, fetchFn);
   if (!response) return { kind: 'unreachable' };
 
-  let body = '';
+  let body: string;
   try {
     body = await response.text();
   } catch {

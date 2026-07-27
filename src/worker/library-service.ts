@@ -5131,7 +5131,6 @@ export class LibraryService {
           reason: 'SOURCE_NOT_FOUND',
         });
       }
-      const destinationPath = this.folderPath(openLibrary, destRelative);
       if (this.portableDiskDestination(openLibrary, destRelative)) {
         if (strategy === 'skip') {
           skippedCount += 1;
@@ -12459,7 +12458,6 @@ export class LibraryService {
           ).get(job.asset_id) as { relative_file_path: string } | undefined;
           if (asset && LibraryService.detectMediaType(asset.relative_file_path) === 'video') {
             this.enqueueVideoDerivativeJob(openLibrary, job.asset_id, job.revision_id, 'generate_contact_sheet', -100);
-            const extension = path.extname(asset.relative_file_path).toLowerCase();
             // Container names and Chromium capabilities are not a contract.
             // Generate one safe WebM route for every video rather than first
             // presenting a MOV/MKV/etc. source that may immediately error.
@@ -18386,7 +18384,6 @@ export class LibraryService {
         } catch {
           // Recovery can finalize a stale applying row on the next open.
         }
-        committed = true;
         this.createDetectedImageSequences(openLibrary, affectedAssetIds);
         const affected = new Set([...affectedAssetIds, ...mergedAssetIds]);
         let assets: AssetSummary[] = [];

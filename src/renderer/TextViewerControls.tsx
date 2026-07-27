@@ -134,7 +134,6 @@ export const TextViewerControls = forwardRef<
   }, [api, assetId, libraryId, t]);
 
   const dirty = content !== baseline;
-  const sessionChanged = content !== openedContent;
   const lineCount = useMemo(() => countTextLines(content), [content]);
   const gutter = useMemo(
     () =>

@@ -345,7 +345,12 @@ export async function createExtensionServer(
           options.uploadStagingRoot,
           `${UPLOAD_STAGE_PREFIX}${randomUUID()}`,
         );
-        const safeName = path.basename(metadata.filename).replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_') || 'download';
+        const safeName =
+          path.basename(metadata.filename).replace(
+            // eslint-disable-next-line no-control-regex -- strip illegal filename chars
+            /[<>:"/\\|?*\u0000-\u001f]/g,
+            '_',
+          ) || 'download';
         const stagedFilePath = path.join(stagingDirectory, safeName);
         try {
           await mkdir(stagingDirectory, { recursive: true });

@@ -265,7 +265,6 @@ import { expandFormatFilterTokens } from "../shared/text-media";
 import type {
   SerpentLibraryApi,
   LibraryApiResult,
-  RelinkBatchPreviewResult,
   ImportValidatedResult,
   MediaJobStatus,
   AiJobStatus,
@@ -829,7 +828,9 @@ function AppInner() {
   // Trash / Delete / Relink state
   const [showTrash, setShowTrash] = useState(false);
   useEffect(() => {
-    if (!showTrash) setTrashBrowseTombstoneId(null);
+    if (!showTrash) {
+      queueMicrotask(() => setTrashBrowseTombstoneId(null));
+    }
   }, [showTrash]);
   const [showTagManagement, setShowTagManagement] = useState(false);
   const [trashedAssets, setTrashedAssets] = useState<AssetSummary[]>([]);
@@ -1338,7 +1339,7 @@ function AppInner() {
       setAiAnalyzing(true);
       setAiProgressBannerVisible(true);
     });
-    void refreshAiBatchStatus();
+    void refreshAiBatchStatusRef.current();
   }, [aiConnectionFailureGate.failedJobIds, onAiConnectionFailureRetry]);
 
 
@@ -2292,9 +2293,11 @@ function AppInner() {
     if (library) return;
     if (importLibraryChooserOpen || appSettingsOpen || busy) return;
     if (dialog === "library") return;
-    setDialogValue(t("shell.myLibrary"));
-    setCreateLibraryPhase("start");
-    setDialog("library");
+    queueMicrotask(() => {
+      setDialogValue(t("shell.myLibrary"));
+      setCreateLibraryPhase("start");
+      setDialog("library");
+    });
   }, [
     library,
     dialog,
@@ -2307,7 +2310,9 @@ function AppInner() {
   useEffect(() => {
     if (library) return;
     if (!importLibraryChooserOpen && !appSettingsOpen) return;
-    if (dialog === "library") setDialog(null);
+    if (dialog === "library") {
+      queueMicrotask(() => setDialog(null));
+    }
   }, [library, importLibraryChooserOpen, appSettingsOpen, dialog]);
   // Dismiss the auto-opened no-library surface once a library becomes available.
   // Do not close a menu-opened create dialog while a library is already open.
@@ -4044,7 +4049,6 @@ function AppInner() {
 
   async function runSearch(
     event?: FormEvent,
-    _offset = 0,
     opts?: { silent?: boolean },
   ) {
     event?.preventDefault();
@@ -4102,7 +4106,7 @@ function AppInner() {
     )
       return;
     const timer = window.setTimeout(() => {
-      void runSearch(undefined, 0, { silent: true });
+      void runSearch(undefined, { silent: true });
     }, 200);
     return () => window.clearTimeout(timer);
     // Search execution reads the current scope and API from the same render;
@@ -5985,6 +5989,10 @@ function AppInner() {
     restoreDialog,
     selectedAsset,
     visibleAssets,
+    assetDiskDeleteIds,
+    diskDeleteTarget,
+    libraryDiskDeletePending,
+    selectionDiskDelete,
   ]);
 
   // macOS three-finger swipe while viewing → previous/next (same order as arrows).
@@ -6295,6 +6303,7 @@ function AppInner() {
   useEffect(() => {
     if (!appSettingsOpen || appSettingsCategory !== "ai") return;
     void loadAiConfig();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reload when AI settings surface opens
   }, [appSettingsOpen, appSettingsCategory]);
 
   const probeStoredAiConnection = useCallback(async () => {
@@ -6348,7 +6357,9 @@ function AppInner() {
     if (!shouldRunAiConnectionHeartbeat(aiHasKey)) {
       return;
     }
-    void probeStoredAiConnection();
+    queueMicrotask(() => {
+      void probeStoredAiConnection();
+    });
     const timer = window.setInterval(() => {
       void probeStoredAiConnection();
     }, AI_CONNECTION_HEARTBEAT_MS);

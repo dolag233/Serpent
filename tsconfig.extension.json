@@ -4,5 +4,6 @@
     "types": [],
     "noEmit": true
   },
-  "include": ["extension/**/*.ts"]
+  "include": ["extension/**/*.ts"],
+  "files": ["extension/chrome.d.ts"]
 }

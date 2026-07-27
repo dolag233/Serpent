@@ -32,7 +32,8 @@ export type ViewerChromeActivitySource =
   | "other";
 
 export function shouldWakeViewerChrome(
-  _source: ViewerChromeActivitySource,
+  source: ViewerChromeActivitySource,
 ): boolean {
+  void source;
   return true;
 }

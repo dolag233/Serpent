@@ -21,7 +21,6 @@ import {
   LibraryService,
   LibraryServiceError,
 } from '../../src/worker/library-service';
-import type { ImportCompletion } from '../../src/shared/protocol/responses';
 import { importNoConflict } from './import-no-conflict';
 
 const temporaryRoots: string[] = [];

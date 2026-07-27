@@ -168,7 +168,7 @@ export async function showOverlaySaveMenu(
     '保存到 Serpent',
   );
 
-  let connected = false;
+  let connected: boolean;
   try {
     const status = await sendRuntimeMessage<ConnectionStatusResponse>({
       type: 'serpent-connection-status',

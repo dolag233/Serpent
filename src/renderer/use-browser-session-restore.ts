@@ -117,7 +117,7 @@ export function useBrowserSessionRestore(
       setShowTrash(false);
       setTrashedAssets([]);
       if (activeLibrary) {
-        let restoredItems = (await loadContent(activeLibrary, "all")) ?? [];
+        const restoredItems = (await loadContent(activeLibrary, "all")) ?? [];
         const session = readBrowserSession(activeLibrary.libraryId);
         let restoredLocation: WorkspaceNavLocation = { kind: "all" };
         if (session) {

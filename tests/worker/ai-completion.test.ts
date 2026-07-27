@@ -90,7 +90,7 @@ describe('GeminiVendorAdapter', () => {
     };
     const adapter = new GeminiVendorAdapter('test-key', 'gemini-2.5-flash', mockFetch);
     await adapter.analyze({
-      filename: 'test.png', mime: 'image/png', language: 'en',
+      displayName: 'test.png', filename: 'test.png', mime: 'image/png', language: 'en',
       enabledFields: { description: true, tags: true, rating: false },
       existingTagNames: [], imageBase64: 'fakebase64',
     });
@@ -106,6 +106,7 @@ describe('GeminiVendorAdapter', () => {
     };
     const adapter = new GeminiVendorAdapter('test-key', 'gemini-2.5-flash', mockFetch as typeof fetch);
     const result = await adapter.analyze({
+      displayName: 'test.png',
       filename: 'test.png',
       mime: 'image/png',
       language: 'en',
@@ -123,14 +124,14 @@ describe('GeminiVendorAdapter', () => {
     const adapter = new GeminiVendorAdapter('bad-key', 'gemini-2.5-flash', mockFetch as typeof fetch);
     await expect(
       adapter.analyze({
-        filename: 'test.png', mime: 'image/png', language: 'en',
+        displayName: 'test.png', filename: 'test.png', mime: 'image/png', language: 'en',
         enabledFields: { description: false, tags: true, rating: false },
         existingTagNames: [],
       }),
     ).rejects.toThrow(VendorAdapterError);
     try {
       await adapter.analyze({
-        filename: 'test.png', mime: 'image/png', language: 'en',
+        displayName: 'test.png', filename: 'test.png', mime: 'image/png', language: 'en',
         enabledFields: { description: false, tags: true, rating: false },
         existingTagNames: [],
       });
@@ -145,7 +146,7 @@ describe('GeminiVendorAdapter', () => {
     const adapter = new GeminiVendorAdapter('key', 'gemini-2.5-flash', mockFetch as typeof fetch);
     try {
       await adapter.analyze({
-        filename: 'test.png', mime: 'image/png', language: 'en',
+        displayName: 'test.png', filename: 'test.png', mime: 'image/png', language: 'en',
         enabledFields: { description: false, tags: true, rating: false },
         existingTagNames: [],
       });
@@ -161,7 +162,7 @@ describe('GeminiVendorAdapter', () => {
     const adapter = new GeminiVendorAdapter('key', 'gemini-2.5-flash', mockFetch as typeof fetch);
     try {
       await adapter.analyze({
-        filename: 'test.png', mime: 'image/png', language: 'en',
+        displayName: 'test.png', filename: 'test.png', mime: 'image/png', language: 'en',
         enabledFields: { description: false, tags: true, rating: false },
         existingTagNames: [],
       });
@@ -177,7 +178,7 @@ describe('GeminiVendorAdapter', () => {
     const adapter = new GeminiVendorAdapter('key', 'gemini-2.5-flash', mockFetch as typeof fetch);
     try {
       await adapter.analyze({
-        filename: 'test.png', mime: 'image/png', language: 'en',
+        displayName: 'test.png', filename: 'test.png', mime: 'image/png', language: 'en',
         enabledFields: { description: false, tags: true, rating: false },
         existingTagNames: [],
       });
@@ -197,7 +198,7 @@ describe('GeminiVendorAdapter', () => {
     const adapter = new GeminiVendorAdapter('key', 'gemini-2.5-flash', mockFetch as typeof fetch);
     try {
       await adapter.analyze({
-        filename: 'test.png', mime: 'image/png', language: 'en',
+        displayName: 'test.png', filename: 'test.png', mime: 'image/png', language: 'en',
         enabledFields: { description: false, tags: true, rating: false },
         existingTagNames: [],
       });
@@ -222,7 +223,7 @@ describe('GeminiVendorAdapter', () => {
     const adapter = new GeminiVendorAdapter('key', 'gemini-2.5-flash', mockFetch as typeof fetch);
     try {
       await adapter.analyze({
-        filename: 'test.png', mime: 'image/png', language: 'en',
+        displayName: 'test.png', filename: 'test.png', mime: 'image/png', language: 'en',
         enabledFields: { description: false, tags: true, rating: false },
         existingTagNames: [],
       });
@@ -259,6 +260,7 @@ describe('AnthropicVendorAdapter', () => {
       new Response(JSON.stringify(anthropicSuccessBody), { status: 200 });
     const adapter = new AnthropicVendorAdapter('test-key', 'claude-sonnet-4-20250514', mockFetch as typeof fetch);
     const result = await adapter.analyze({
+      displayName: 'test.png',
       filename: 'test.png',
       mime: 'image/png',
       language: 'en',
@@ -276,7 +278,7 @@ describe('AnthropicVendorAdapter', () => {
     const adapter = new AnthropicVendorAdapter('bad-key', 'claude-sonnet-4-20250514', mockFetch as typeof fetch);
     try {
       await adapter.analyze({
-        filename: 'test.png', mime: 'image/png', language: 'en',
+        displayName: 'test.png', filename: 'test.png', mime: 'image/png', language: 'en',
         enabledFields: { description: false, tags: true, rating: false },
         existingTagNames: [],
       });
@@ -292,7 +294,7 @@ describe('AnthropicVendorAdapter', () => {
     const adapter = new AnthropicVendorAdapter('key', 'claude-sonnet-4-20250514', mockFetch as typeof fetch);
     try {
       await adapter.analyze({
-        filename: 'test.png', mime: 'image/png', language: 'en',
+        displayName: 'test.png', filename: 'test.png', mime: 'image/png', language: 'en',
         enabledFields: { description: false, tags: true, rating: false },
         existingTagNames: [],
       });
@@ -308,7 +310,7 @@ describe('AnthropicVendorAdapter', () => {
     const adapter = new AnthropicVendorAdapter('key', 'claude-sonnet-4-20250514', mockFetch as typeof fetch);
     try {
       await adapter.analyze({
-        filename: 'test.png', mime: 'image/png', language: 'en',
+        displayName: 'test.png', filename: 'test.png', mime: 'image/png', language: 'en',
         enabledFields: { description: false, tags: true, rating: false },
         existingTagNames: [],
       });
@@ -324,7 +326,7 @@ describe('AnthropicVendorAdapter', () => {
     const adapter = new AnthropicVendorAdapter('key', 'claude-sonnet-4-20250514', mockFetch as typeof fetch);
     try {
       await adapter.analyze({
-        filename: 'test.png', mime: 'image/png', language: 'en',
+        displayName: 'test.png', filename: 'test.png', mime: 'image/png', language: 'en',
         enabledFields: { description: false, tags: true, rating: false },
         existingTagNames: [],
       });
@@ -344,7 +346,7 @@ describe('AnthropicVendorAdapter', () => {
     const adapter = new AnthropicVendorAdapter('key', 'claude-sonnet-4-20250514', mockFetch as typeof fetch);
     try {
       await adapter.analyze({
-        filename: 'test.png', mime: 'image/png', language: 'en',
+        displayName: 'test.png', filename: 'test.png', mime: 'image/png', language: 'en',
         enabledFields: { description: false, tags: true, rating: false },
         existingTagNames: [],
       });
@@ -374,7 +376,7 @@ describe('AnthropicVendorAdapter', () => {
     const mockFetch = async () => new Response(JSON.stringify(body), { status: 200 });
     const adapter = new AnthropicVendorAdapter('key', 'claude-haiku-3-5-20250514', mockFetch as typeof fetch);
     const result = await adapter.analyze({
-      filename: 'test.png', mime: 'image/png', language: 'en',
+      displayName: 'test.png', filename: 'test.png', mime: 'image/png', language: 'en',
       enabledFields: { description: true, tags: true, rating: false },
       existingTagNames: [],
     });

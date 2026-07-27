@@ -11,6 +11,7 @@
  */
 
 import type { BrowserWindow } from "electron";
+import type * as Koffi from "koffi";
 
 type ImmApi = {
   ImmGetContext: (hwnd: bigint | number) => bigint | number;
@@ -55,7 +56,7 @@ function loadImmApi(): ImmApi | null {
   try {
     // Externalised in vite.main.config — resolved from node_modules at runtime.
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const koffi = require("koffi") as typeof import("koffi");
+    const koffi = require("koffi") as typeof Koffi;
     const imm32 = koffi.load("imm32.dll");
     const user32 = koffi.load("user32.dll");
     immApi = {
@@ -126,7 +127,7 @@ export function suspendWindowsIme(
     previousOpen = null;
   }
 
-  let previousHimc = 0n;
+  let previousHimc: bigint;
   try {
     // NULL HIMC detaches IME from this HWND so letter keys are not composed.
     previousHimc = asBigInt(api.ImmAssociateContext(hwnd, 0n));

@@ -55,7 +55,9 @@ export function useAiConnectionFailure({
     INITIAL_CONNECTION_FAILURE_GATE,
   );
   const gateRef = useRef(gate);
-  gateRef.current = gate;
+  useEffect(() => {
+    gateRef.current = gate;
+  }, [gate]);
   const busyRef = useRef(false);
 
   const notifyBatchStarted = useCallback((jobs: ReadonlyArray<AiJob>) => {
