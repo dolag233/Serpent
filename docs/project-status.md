@@ -1,7 +1,13 @@
 # Serpent 项目状态
 
-> 更新时间：2026-07-26
+> 更新时间：2026-07-27
 > 事实来源：`docs/implementation/mvp-roadmap.md` 与各切片开发/审查/QA 文档
+
+## 2026-07-27 画布精确锚点与序列图
+
+- `Serpent-32p` 的侧栏/窗口重排锚点已按用户硬性要求收口：拖动中冻结重排，松手后以拖动前同一资产内部点为锚，连续两帧稳定后结束补偿；macOS 冷启动真实源码实例双向拖动均保持 `clientY=125`，提交 `2fa3cd5`。
+- `Serpent-j8dl` 序列图形成待验候选：单文件/文件夹/链接目录自动识别连续编号图片，缺口拆段且至少三帧；支持解散、手动创建和 1–240 FPS；卡片/Inspector/查看页提供逐帧预览与播放；SQLite schema v23 持久化资产组关系。详见 [`0022 规格`](implementation/0022-image-sequences-and-viewer-transforms.md)。
+- 图片、视频和序列查看页新增仅影响显示的顺时针 90°、水平镜像、垂直镜像。相关 89 项定向单元/Worker 测试及 1 条生产式 file:// Electron E2E 通过；IMAGESEQ-001/002 与 VIEWER-024 已进入待人类验收。Windows、packaged 与完整主线仍未验证。
 
 ## 2026-07-25 产品待办入池与工单卫生
 

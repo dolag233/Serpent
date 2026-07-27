@@ -98,7 +98,7 @@ interface AssetContextMenuProps {
   onOpenFolderInFileManager: (folderId: string) => void;
   onCopyFolderPath: (folderId: string) => void;
   onCopyFolder: (folderId: string) => void;
-  onPasteIntoFolder: (folderId: string) => void;
+  onPasteIntoFolder: (folderId: string | null) => void;
   onCloneFolder: (folderId: string) => void;
   onMoveFolder: (folderIds: string[]) => void;
   onOpenLinkedRules: (folder: LinkedFolderSummary) => void;
@@ -136,6 +136,8 @@ interface AssetContextMenuProps {
   onOpenExternal: (assetId: string) => void;
   onViewAsset: (assetId: string) => void;
   onSetAssetColorSpace: (assetId: string, colorSpace: string | null) => void;
+  onCreateImageSequence: (assetIds: string[]) => void;
+  onDissolveImageSequence: (sequenceId: string) => void;
   onRevealInFolder: (assetId: string) => void;
   onCopyFilePath: (assetId: string) => void;
   /** OS file clipboard copy (Finder/Explorer interoperable). */
@@ -784,6 +786,15 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
             const processFolderIds = [...skipReport.trash.processFolderIds];
             const moveFolderIds = [...skipReport.move.processFolderIds];
             const allTrashed = skipReport.allTrashed;
+            const canCreateImageSequence =
+              targetAssets.length >= 3 &&
+              targetAssets.length === targetAssetIds.length &&
+              targetAssets.every(
+                (asset) =>
+                  asset.mediaType === "image" &&
+                  asset.availability === "available" &&
+                  !asset.sequence,
+              );
             const skipFooter = formatMultiAssetMenuSkipFooter(
               skipReport,
               locale,
@@ -936,6 +947,12 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
             )}
             {targetAssetIds.length > 0 && (
             <ContextMenuSection label={t("command.group.organize")}>
+              <ContextMenuItem
+                icon={<Icon name="collection" size={14} />}
+                label={t("menu.createImageSequence")}
+                disabled={!canCreateImageSequence}
+                onAction={() => props.onCreateImageSequence(targetAssetIds)}
+              />
             {tags.length > 0 && assignTagItem && removeTagItem && (
               <ContextMenuSection label={t("command.group.batchTags")}>
                 <TagPickerEntry
@@ -1243,6 +1260,17 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                   )}
                 </ContextMenuSection>
                 <ContextMenuSection label={t("command.group.organize")}>
+                  {singleAsset?.sequence ? (
+                    <ContextMenuItem
+                      icon={<Icon name="close" size={14} />}
+                      label={t("menu.dissolveImageSequence")}
+                      onAction={() =>
+                        props.onDissolveImageSequence(
+                          singleAsset.sequence!.sequenceId,
+                        )
+                      }
+                    />
+                  ) : null}
                   {removeFromCurrentCollectionItem && (
                     <ContextMenuItem
                       icon={<Icon name="close" size={14} />}

@@ -242,6 +242,15 @@ export interface SerpentLibraryApi {
     folderId?: string;
     recursive: boolean;
   }): Promise<LibraryApiResult<AssetSummary[]>>;
+  createImageSequence(input: {
+    libraryId: string;
+    assetIds: string[];
+    fps: number;
+  }): Promise<LibraryApiResult<AssetSummary>>;
+  dissolveImageSequence(input: {
+    libraryId: string;
+    sequenceId: string;
+  }): Promise<LibraryApiResult<{ sequenceId: string }>>;
   importFiles(input: {
     libraryId: string;
     targetFolderId?: string;

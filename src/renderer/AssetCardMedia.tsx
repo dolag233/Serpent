@@ -1,4 +1,8 @@
+import { useEffect, useState } from "react";
+
+import type { ImageSequenceSummary } from "../shared/asset-types";
 import type { PreviewResolution } from "../shared/library-api";
+import { coverSrc } from "./asset-card-hover-preview";
 import { resolveLivePreviewMedia } from "./asset-card-hover-preview";
 
 interface AssetCardMediaProps {
@@ -7,6 +11,8 @@ interface AssetCardMediaProps {
   coverUrl: string | null;
   isActive: boolean;
   preview: PreviewResolution | null;
+  libraryId?: string;
+  sequence?: ImageSequenceSummary | null;
 }
 
 /**
@@ -17,9 +23,31 @@ export function AssetCardMedia({
   alt,
   coverUrl,
   isActive,
+  libraryId,
   preview,
+  sequence,
 }: AssetCardMediaProps) {
   const live = resolveLivePreviewMedia(isActive, preview);
+  const [sequenceFrame, setSequenceFrame] = useState(0);
+  useEffect(() => {
+    if (!isActive || !sequence) return;
+    const timer = window.setInterval(
+      () =>
+        setSequenceFrame((current) => (current + 1) % sequence.frames.length),
+      1000 / sequence.fps,
+    );
+    return () => window.clearInterval(timer);
+  }, [isActive, sequence]);
+  const visibleSequenceFrame =
+    isActive && sequence ? sequenceFrame % sequence.frames.length : 0;
+  const sequenceArtifact =
+    isActive && sequence
+      ? sequence.frames[visibleSequenceFrame]?.thumbnailArtifactId
+      : null;
+  const sequenceUrl =
+    sequenceArtifact && libraryId
+      ? coverSrc(libraryId, sequenceArtifact)
+      : null;
 
   return (
     <div className="asset-card-media">
@@ -37,6 +65,14 @@ export function AssetCardMedia({
           className="asset-card-media-live"
           decoding="async"
           src={live.url}
+        />
+      ) : null}
+      {sequenceUrl ? (
+        <img
+          alt=""
+          className="asset-card-media-live"
+          decoding="async"
+          src={sequenceUrl}
         />
       ) : null}
       {live.kind === "video" && live.url ? (

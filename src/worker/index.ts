@@ -402,17 +402,42 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
     case 'asset.list':
       {
         const assets = libraryService.listAssets(request.command);
-        scheduleThumbnailScene(request.command.libraryId, 'visible', assets.map((asset) => asset.assetId));
+        scheduleThumbnailScene(
+          request.command.libraryId,
+          'visible',
+          assets.flatMap((asset) =>
+            asset.sequence?.frames.map((frame) => frame.assetId) ?? [asset.assetId],
+          ),
+        );
         return {
         ok: true,
         type: 'asset.list',
           assets,
         };
       }
+    case 'asset.sequence.create': {
+      const asset = libraryService.createImageSequence(request.command);
+      scheduleThumbnailScene(
+        request.command.libraryId,
+        'mutation',
+        asset.sequence?.frames.map((frame) => frame.assetId) ?? [asset.assetId],
+      );
+      return { ok: true, type: 'asset.sequence.created', asset };
+    }
+    case 'asset.sequence.dissolve': {
+      const sequenceId = libraryService.dissolveImageSequence(request.command);
+      return { ok: true, type: 'asset.sequence.dissolved', sequenceId };
+    }
     case 'asset.import.prepare': {
       const prepared = libraryService.prepareOrExecuteImport(request.command);
       if (!('importId' in prepared)) {
-        scheduleThumbnailScene(request.command.libraryId, 'mutation', prepared.assets.map((asset) => asset.assetId));
+        scheduleThumbnailScene(
+          request.command.libraryId,
+          'mutation',
+          prepared.assets.flatMap((asset) =>
+            asset.sequence?.frames.map((frame) => frame.assetId) ?? [asset.assetId],
+          ),
+        );
       }
       return 'importId' in prepared
         ? { ok: true, type: 'asset.import.conflicts', plan: prepared }
@@ -424,7 +449,13 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
         // The matching library already owns these opaque asset ids; schedule
         // through each open library without exposing paths to Main/Renderer.
         for (const library of libraryService.listLibraries()) {
-          scheduleThumbnailScene(library.libraryId, 'mutation', completion.assets.map((asset) => asset.assetId));
+          scheduleThumbnailScene(
+            library.libraryId,
+            'mutation',
+            completion.assets.flatMap((asset) =>
+              asset.sequence?.frames.map((frame) => frame.assetId) ?? [asset.assetId],
+            ),
+          );
         }
       }
       return {
@@ -572,7 +603,13 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
     }
     case 'collection.assets.list': {
       const assets = libraryService.listCollectionAssets(request.command);
-      scheduleThumbnailScene(request.command.libraryId, 'visible', assets.map((asset) => asset.assetId));
+      scheduleThumbnailScene(
+        request.command.libraryId,
+        'visible',
+        assets.flatMap((asset) =>
+          asset.sequence?.frames.map((frame) => frame.assetId) ?? [asset.assetId],
+        ),
+      );
       return { ok: true, type: 'collection.assets.list', assets };
     }
     case 'collection.assets.memberships': {
@@ -619,7 +656,9 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
       scheduleThumbnailScene(
         request.command.libraryId,
         'visible',
-        result.items.map((asset) => asset.assetId),
+        result.items.flatMap((asset) =>
+          asset.sequence?.frames.map((frame) => frame.assetId) ?? [asset.assetId],
+        ),
       );
       return {
         ok: true,

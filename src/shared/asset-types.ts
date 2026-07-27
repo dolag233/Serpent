@@ -94,6 +94,24 @@ export const linkedFolderRuleSchema = z.strictObject({
 
 export type LinkedFolderRule = z.infer<typeof linkedFolderRuleSchema>;
 
+export const imageSequenceFrameSummarySchema = z.strictObject({
+  assetId: nonBlankString,
+  displayName: nonBlankString,
+  relativeFilePath: portableRelativePathSchema,
+  currentRevisionId: nonBlankString,
+  frameNumber: z.number().int().nonnegative(),
+  thumbnailArtifactId: nonBlankString.nullable(),
+});
+
+export const imageSequenceSummarySchema = z.strictObject({
+  sequenceId: nonBlankString,
+  fps: z.number().min(1).max(240),
+  frameCount: z.number().int().min(3),
+  frames: z.array(imageSequenceFrameSummarySchema).min(3),
+});
+
+export type ImageSequenceSummary = z.infer<typeof imageSequenceSummarySchema>;
+
 export const assetSummarySchema = z.strictObject({
   assetId: nonBlankString,
   locationKind: z.enum(['managed', 'linked']),
@@ -117,6 +135,7 @@ export const assetSummarySchema = z.strictObject({
   width: z.number().int().positive().nullable(),
   height: z.number().int().positive().nullable(),
   durationMs: z.number().int().nonnegative().nullable().optional().default(null),
+  sequence: imageSequenceSummarySchema.nullable().optional(),
 });
 
 export type AssetSummary = z.infer<typeof assetSummarySchema>;

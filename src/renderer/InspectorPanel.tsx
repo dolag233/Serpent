@@ -153,7 +153,6 @@ function InspectorHeroSinglePreview({
   api?: SerpentLibraryApi | null;
   cardFeelEnabled?: boolean;
 }) {
-  const t = useT();
   const previewSrc = resolveInspectorPreviewSrc(asset, library);
   const [decoded, setDecoded] = useState(false);
   const live = resolveLivePreviewMedia(Boolean(livePreview), livePreview);
@@ -384,6 +383,25 @@ function InspectorHero({
 }) {
   const t = useT();
   const isMulti = selectionCount >= 2;
+  const sequenceAssets = useMemo(() => {
+    const frames = asset.sequence?.frames;
+    if (!frames || frames.length < 3) return null;
+    const picked = [
+      frames[0]!,
+      frames[Math.floor((frames.length - 1) / 2)]!,
+      frames.at(-1)!,
+    ];
+    return picked.map((frame) => ({
+      ...asset,
+      assetId: frame.assetId,
+      displayName: frame.displayName,
+      relativeFilePath: frame.relativeFilePath,
+      currentRevisionId: frame.currentRevisionId,
+      thumbnailStatus: frame.thumbnailArtifactId ? "ready" as const : null,
+      thumbnailArtifactId: frame.thumbnailArtifactId,
+      sequence: undefined,
+    }));
+  }, [asset]);
   const stackAssets = useMemo(
     () =>
       isMulti
@@ -408,6 +426,14 @@ function InspectorHero({
           library={library}
           primary={asset}
           stackAssets={stackAssets}
+          title={title}
+        />
+      ) : sequenceAssets ? (
+        <InspectorHeroMultiStack
+          key={asset.sequence!.sequenceId}
+          library={library}
+          primary={sequenceAssets[0]!}
+          stackAssets={sequenceAssets}
           title={title}
         />
       ) : (
@@ -761,6 +787,12 @@ export function InspectorPanel(props: InspectorPanelProps) {
     const unknownTime = t("common.unknownTime");
     const parts: string[] = [];
     parts.push(formatBytes(selectedAsset.byteSize ?? 0));
+    if (selectedAsset.sequence) {
+      parts.push(t("inspector.sequenceInfo", {
+        count: selectedAsset.sequence.frameCount,
+        fps: selectedAsset.sequence.fps,
+      }));
+    }
     if (selectedAsset.width !== null && selectedAsset.height !== null) {
       parts.push(`${selectedAsset.width} × ${selectedAsset.height}`);
     }

@@ -228,6 +228,17 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     recursive: z.boolean(),
   }),
   z.strictObject({
+    type: z.literal('asset.sequence.create.request'),
+    libraryId: identifierSchema,
+    assetIds: z.array(identifierSchema).min(3).max(10_000),
+    fps: z.number().min(1).max(240),
+  }),
+  z.strictObject({
+    type: z.literal('asset.sequence.dissolve.request'),
+    libraryId: identifierSchema,
+    sequenceId: identifierSchema,
+  }),
+  z.strictObject({
     type: z.literal('asset.import-files.request'),
     libraryId: identifierSchema,
     targetFolderId: optionalIdentifierSchema,
@@ -970,6 +981,17 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     libraryId: identifierSchema,
     folderId: optionalIdentifierSchema,
     recursive: z.boolean(),
+  }),
+  z.strictObject({
+    type: z.literal('asset.sequence.create'),
+    libraryId: identifierSchema,
+    assetIds: z.array(identifierSchema).min(3).max(10_000),
+    fps: z.number().min(1).max(240),
+  }),
+  z.strictObject({
+    type: z.literal('asset.sequence.dissolve'),
+    libraryId: identifierSchema,
+    sequenceId: identifierSchema,
   }),
   z.strictObject({
     type: z.literal('asset.import.prepare'),

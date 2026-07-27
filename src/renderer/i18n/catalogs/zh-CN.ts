@@ -417,6 +417,8 @@ export const zhCN = {
     }
   },
   menu: {
+    createImageSequence: "创建序列图…",
+    dissolveImageSequence: "解散序列图",
     batchAssetOps: "批量资产操作：{count} 项",
     assetOps: "资产操作：{name}",
     collectionOps: "合集操作：{name}",
@@ -442,6 +444,7 @@ export const zhCN = {
     removeFromCollectionAction: "从合集移除资产"
   },
   inspector: {
+    sequenceInfo: "{count} 帧 · {fps} FPS",
     description: "描述",
     author: "作者",
     authorPlaceholder: "输入作者…",
@@ -578,6 +581,14 @@ export const zhCN = {
       title: "永久删除确认",
       body: "确定要永久删除所选 {count} 项资产吗？文件将从回收站彻底移除，此操作不可撤销。",
       submit: "永久删除 {count} 项"
+    },
+    imageSequence: {
+      title: "创建序列图",
+      summary: "将所选 {count} 张连续编号图片作为一个序列播放。",
+      fps: "帧率（FPS）",
+      help: "可设置 1–240 FPS。序列只改变 Serpent 中的浏览与播放方式，不会修改源图片。",
+      create: "创建序列图",
+      creating: "正在创建…"
     },
     diskDelete: {
       title: "从硬盘中删除",
@@ -881,6 +892,12 @@ export const zhCN = {
     videoPlay: "播放",
     videoPause: "暂停",
     videoScrubAria: "拖动视频进度",
+    rotateClockwise: "顺时针旋转 90°",
+    flipHorizontal: "水平镜像",
+    flipVertical: "垂直镜像",
+    sequencePlay: "播放序列",
+    sequencePause: "暂停序列",
+    sequenceFrame: "序列帧",
     cannotOpen: "无法打开预览",
     cannotOpenNoResponse: "无法打开预览：桌面服务没有响应，请重试或重新启动应用。",
     proxyFailed: "无法生成兼容代理",

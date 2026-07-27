@@ -1624,6 +1624,19 @@ async function commandFor(
         libraryId: request.libraryId,
         assetIds: request.assetIds,
       };
+    case "asset.sequence.create.request":
+      return {
+        type: "asset.sequence.create",
+        libraryId: request.libraryId,
+        assetIds: request.assetIds,
+        fps: request.fps,
+      };
+    case "asset.sequence.dissolve.request":
+      return {
+        type: "asset.sequence.dissolve",
+        libraryId: request.libraryId,
+        sequenceId: request.sequenceId,
+      };
     case "asset.restore.request":
       return {
         type: "asset.restore",

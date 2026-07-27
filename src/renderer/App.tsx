@@ -99,6 +99,7 @@ import {
 import { MoveDialog } from "./MoveDialog";
 import { RestoreDialog } from "./RestoreDialog";
 import { UndoMoveDialog } from "./UndoMoveDialog";
+import { ImageSequenceDialog } from "./ImageSequenceDialog";
 import { NameConflictDialog } from "./NameConflictDialog";
 import { ContentDuplicateDialog } from "./ContentDuplicateDialog";
 import {
@@ -900,6 +901,12 @@ function AppInner() {
   const [undoMoveDialog, setUndoMoveDialog] = useState<{
     operationId: string;
     conflictStrategy: "keep-both" | "replace" | "skip";
+  } | null>(null);
+  const [imageSequenceDialog, setImageSequenceDialog] = useState<{
+    assetIds: string[];
+    fps: number;
+    submitting: boolean;
+    error: string | null;
   } | null>(null);
   const [batchRelinkPreview, setBatchRelinkPreview] =
     useState<BatchRelinkPreviewSession | null>(null);
@@ -2341,6 +2348,27 @@ function AppInner() {
       }
       setAssets((current) => {
         const asset = current.find((item) => item.assetId === event.assetId);
+        if (!asset && event.type === "asset.thumbnail.ready" && event.artifactId) {
+          const ownsSequenceFrame = current.some((item) =>
+            item.sequence?.frames.some((frame) => frame.assetId === event.assetId),
+          );
+          if (!ownsSequenceFrame) return current;
+          return current.map((item) =>
+            item.sequence?.frames.some((frame) => frame.assetId === event.assetId)
+              ? {
+                  ...item,
+                  sequence: {
+                    ...item.sequence,
+                    frames: item.sequence.frames.map((frame) =>
+                      frame.assetId === event.assetId
+                        ? { ...frame, thumbnailArtifactId: event.artifactId ?? null }
+                        : frame,
+                    ),
+                  },
+                }
+              : item,
+          );
+        }
         if (!asset) return current;
 
         if (event.type === "asset.thumbnail.failed") {
@@ -3704,6 +3732,44 @@ function AppInner() {
       discovery,
       searchScope: currentSearchScope(),
     });
+  }
+
+  async function createSelectedImageSequence() {
+    if (!api || !library || !imageSequenceDialog) return;
+    setImageSequenceDialog((current) =>
+      current ? { ...current, submitting: true, error: null } : current,
+    );
+    const result = await api.createImageSequence({
+      libraryId: library.libraryId,
+      assetIds: imageSequenceDialog.assetIds,
+      fps: imageSequenceDialog.fps,
+    });
+    if (!result.ok) {
+      setImageSequenceDialog((current) =>
+        current
+          ? { ...current, submitting: false, error: result.error.message }
+          : current,
+      );
+      return;
+    }
+    setImageSequenceDialog(null);
+    clearAssetSelection();
+    await reloadCurrentContent();
+    setSelectedAssetIds([result.value.assetId]);
+  }
+
+  async function dissolveSelectedImageSequence(sequenceId: string) {
+    if (!api || !library) return;
+    const result = await api.dissolveImageSequence({
+      libraryId: library.libraryId,
+      sequenceId,
+    });
+    if (!result.ok) {
+      setError(result.error.message);
+      return;
+    }
+    clearAssetSelection();
+    await reloadCurrentContent();
   }
   useEffect(() => {
     reloadCurrentContentRef.current = reloadCurrentContent;
@@ -5658,6 +5724,7 @@ function AppInner() {
       importLibraryChooserOpen ||
       appSettingsOpen ||
       Boolean(smartCollectionSettings) ||
+      Boolean(imageSequenceDialog) ||
       Boolean(fatalAlertMessage) ||
       aiConnectionFailureGate.open ||
       (mediaJobsOpen && library !== null) ||
@@ -7757,9 +7824,11 @@ function AppInner() {
                                   alt={asset.displayName}
                                   coverUrl={thumbCover}
                                   isActive={cardActive}
+                                  libraryId={library.libraryId}
                                   preview={
                                     cardActive ? activeResolution : null
                                   }
+                                  sequence={asset.sequence}
                                 />
                               );
                             }
@@ -7859,6 +7928,11 @@ function AppInner() {
                         {showDuration && asset.durationMs != null && (
                           <span className="asset-duration-badge">
                             {formatDuration(asset.durationMs)}
+                          </span>
+                        )}
+                        {asset.sequence && (
+                          <span className="asset-duration-badge asset-sequence-badge">
+                            {asset.sequence.frameCount}F · {asset.sequence.fps} FPS
                           </span>
                         )}
                         {showTypeBadge && typeBadge && (
@@ -8103,6 +8177,20 @@ function AppInner() {
         selectedAssets={selectedAssets}
         multiEdit={multiEdit}
         versionConflict={versionConflict}
+      />
+      <ImageSequenceDialog
+        count={imageSequenceDialog?.assetIds.length ?? 0}
+        error={imageSequenceDialog?.error}
+        fps={imageSequenceDialog?.fps ?? 24}
+        onCancel={() => setImageSequenceDialog(null)}
+        onFpsChange={(fps) =>
+          setImageSequenceDialog((current) =>
+            current ? { ...current, fps, error: null } : current,
+          )
+        }
+        onSubmit={() => void createSelectedImageSequence()}
+        open={imageSequenceDialog !== null}
+        submitting={imageSequenceDialog?.submitting}
       />
       {linkedRulesEditor && (
         <LinkedRulesDialog
@@ -8664,6 +8752,17 @@ function AppInner() {
         }}
         onSetAssetColorSpace={(assetId, colorSpace) => {
           void persistAssetColorSpace(assetId, colorSpace);
+        }}
+        onCreateImageSequence={(assetIds) =>
+          setImageSequenceDialog({
+            assetIds: [...assetIds],
+            fps: 24,
+            submitting: false,
+            error: null,
+          })
+        }
+        onDissolveImageSequence={(sequenceId) => {
+          void dissolveSelectedImageSequence(sequenceId);
         }}
         onRevealInFolder={(assetId) => { void handleRevealInFolder(assetId); }}
         onCopyFilePath={(assetId) => { void handleCopyFilePath(assetId); }}

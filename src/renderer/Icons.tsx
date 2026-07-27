@@ -38,6 +38,9 @@ export type IconName =
   | "menu"
   | "plus"
   | "refresh"
+  | "rotate-cw"
+  | "flip-horizontal"
+  | "flip-vertical"
   | "search"
   | "settings"
   | "sliders"
@@ -272,6 +275,25 @@ const iconPaths: Record<IconName, ReactNode> = {
     <>
       <path d="M20 7v5h-5" />
       <path d="M18.4 16a8 8 0 1 1 1.3-8.5L20 12" />
+    </>
+  ),
+  "rotate-cw": (
+    <>
+      <path d="M20 7v5h-5" />
+      <path d="M18.4 16a8 8 0 1 1 1.3-8.5L20 12" />
+      <path d="M12 8v8M8 12h8" opacity="0.45" />
+    </>
+  ),
+  "flip-horizontal": (
+    <>
+      <path d="M12 3v18" strokeDasharray="2 2" />
+      <path d="m10 6-6 6 6 6V6ZM14 6l6 6-6 6V6Z" />
+    </>
+  ),
+  "flip-vertical": (
+    <>
+      <path d="M3 12h18" strokeDasharray="2 2" />
+      <path d="m6 10 6-6 6 6H6ZM6 14l6 6 6-6H6Z" />
     </>
   ),
   search: (

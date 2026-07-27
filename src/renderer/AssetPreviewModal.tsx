@@ -25,6 +25,7 @@ import {
   shouldContinuePreviewPolling,
 } from "./preview-poll";
 import { Icon } from "./Icons";
+import { iconActionAttrs } from "./icon-action-attrs";
 import type { ViewerChromeActivitySource } from "./viewer-chrome-idle";
 import { resolveViewerPrimarySurface } from "./viewer-preview-policy";
 import {
@@ -38,6 +39,11 @@ import { useViewerVolume } from "./use-viewer-volume";
 import { ZoomableImage } from "./zoomable-preview-image";
 import { useViewerChromeContrast } from "./use-viewer-chrome-contrast";
 import { VIEWER_CHROME_TAB_INDEX } from "./viewer-focus-policy";
+import { ImageSequencePlayer } from "./ImageSequencePlayer";
+import {
+  IDENTITY_VIEWER_DISPLAY_TRANSFORM,
+  type ViewerDisplayTransform,
+} from "./viewer-display-transform";
 
 interface AssetPreviewModalProps {
   api: SerpentLibraryApi;
@@ -188,6 +194,8 @@ export const AssetPreviewModal = forwardRef<
   const [selectedExrPlane, setSelectedExrPlane] = useState(0);
   const [selectedColorSpace, setSelectedColorSpace] = useState<string | undefined>();
   const [directApproved, setDirectApproved] = useState(false);
+  const [displayTransform, setDisplayTransform] =
+    useState<ViewerDisplayTransform>(IDENTITY_VIEWER_DISPLAY_TRANSFORM);
   const resolutionRef = useRef<PreviewResolution | null>(null);
   const directApprovedRef = useRef(false);
   const directGateIdentityRef = useRef<string | null>(null);
@@ -280,6 +288,7 @@ export const AssetPreviewModal = forwardRef<
   useEffect(() => {
     setSelectedExrPlane(0);
     setSelectedColorSpace(undefined);
+    setDisplayTransform(IDENTITY_VIEWER_DISPLAY_TRANSFORM);
   }, [asset.assetId]);
 
   const ensureProxyFallback = useCallback(
@@ -648,8 +657,20 @@ export const AssetPreviewModal = forwardRef<
               className="preview-state is-silent"
               role="status"
             />
+          ) : asset.sequence ? (
+            <ImageSequencePlayer
+              api={api}
+              displayTransform={displayTransform}
+              isFullscreen={isFullscreen}
+              libraryId={libraryId}
+              onFullscreen={() => void toggleFullscreen()}
+              onSwipeNext={onNext}
+              onSwipePrevious={onPrevious}
+              sequence={asset.sequence}
+            />
           ) : ready && resolution?.mediaType === "video" && resolution.url ? (
             <VideoPlayerControls
+              displayTransform={displayTransform}
               isFullscreen={isFullscreen}
               muted={viewerMuted}
               onError={handlePlaybackError}
@@ -690,6 +711,7 @@ export const AssetPreviewModal = forwardRef<
           ) : showImage && imageSrc ? (
             <ZoomableImage
               alt={asset.displayName}
+              displayTransform={displayTransform}
               colorSpaceOptions={resolution?.colorSpace?.options}
               colorSpaceValue={
                 selectedColorSpace ?? resolution?.colorSpace?.id
@@ -777,6 +799,56 @@ export const AssetPreviewModal = forwardRef<
                 ))}
               </select>
             </label>
+          ) : null}
+          {(asset.sequence ||
+            asset.mediaType === "image" ||
+            asset.mediaType === "video") ? (
+            <div
+              aria-label={t("preview.rotateClockwise")}
+              className="preview-transform-controls preview-chrome-fade"
+            >
+              <button
+                onClick={() =>
+                  setDisplayTransform((current) => ({
+                    ...current,
+                    quarterTurns: current.quarterTurns + 1,
+                  }))
+                }
+                tabIndex={VIEWER_CHROME_TAB_INDEX}
+                type="button"
+                {...iconActionAttrs(t("preview.rotateClockwise"))}
+              >
+                <Icon name="rotate-cw" size={15} />
+              </button>
+              <button
+                className={displayTransform.flipHorizontal ? "is-active" : ""}
+                onClick={() =>
+                  setDisplayTransform((current) => ({
+                    ...current,
+                    flipHorizontal: !current.flipHorizontal,
+                  }))
+                }
+                tabIndex={VIEWER_CHROME_TAB_INDEX}
+                type="button"
+                {...iconActionAttrs(t("preview.flipHorizontal"))}
+              >
+                <Icon name="flip-horizontal" size={15} />
+              </button>
+              <button
+                className={displayTransform.flipVertical ? "is-active" : ""}
+                onClick={() =>
+                  setDisplayTransform((current) => ({
+                    ...current,
+                    flipVertical: !current.flipVertical,
+                  }))
+                }
+                tabIndex={VIEWER_CHROME_TAB_INDEX}
+                type="button"
+                {...iconActionAttrs(t("preview.flipVertical"))}
+              >
+                <Icon name="flip-vertical" size={15} />
+              </button>
+            </div>
           ) : null}
           {!isTextViewer ? (
             <>

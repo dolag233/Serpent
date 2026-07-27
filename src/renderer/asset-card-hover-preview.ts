@@ -7,9 +7,11 @@ export function isCardHoverPreviewable(asset: {
   displayName: string;
   availability?: "available" | "missing";
   deletedAt?: string | null;
+  sequence?: { frameCount: number } | null;
 }): boolean {
   if (asset.deletedAt) return false;
   if (asset.availability === "missing") return false;
+  if (asset.sequence && asset.sequence.frameCount >= 3) return true;
   if (asset.mediaType === "video") return true;
   return fileExtensionLabel(asset.displayName) === "GIF";
 }

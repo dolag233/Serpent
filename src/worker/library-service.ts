@@ -319,6 +319,7 @@ import {
 } from '../shared/text-media';
 import { canOverrideImageColorSpace } from '../shared/image-color-space';
 import { inferRelinkBatchRoot } from '../shared/infer-relink-batch-root';
+import { detectImageSequences, findImageSequenceContaining } from '../shared/image-sequence';
 import { assetSupportsThumbnail } from '../shared/thumbnail-support';
 import {
   extractZipStream,
@@ -1447,6 +1448,29 @@ const COLOR_SPACE_OVERRIDE_SCHEMA_CHECKSUM = createHash('sha256')
   .update(COLOR_SPACE_OVERRIDE_SCHEMA_SQL)
   .digest('hex');
 
+const IMAGE_SEQUENCE_SCHEMA_SQL = `
+  CREATE TABLE IF NOT EXISTS asset_sequences (
+    sequence_id TEXT PRIMARY KEY,
+    primary_asset_id TEXT NOT NULL UNIQUE REFERENCES assets(asset_id) ON DELETE CASCADE,
+    fps REAL NOT NULL CHECK(fps >= 1 AND fps <= 240),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS asset_sequence_frames (
+    sequence_id TEXT NOT NULL REFERENCES asset_sequences(sequence_id) ON DELETE CASCADE,
+    asset_id TEXT NOT NULL UNIQUE REFERENCES assets(asset_id) ON DELETE CASCADE,
+    frame_number INTEGER NOT NULL CHECK(frame_number >= 0),
+    position INTEGER NOT NULL CHECK(position >= 0),
+    PRIMARY KEY(sequence_id, position),
+    UNIQUE(sequence_id, frame_number)
+  );
+  CREATE INDEX IF NOT EXISTS idx_asset_sequence_frames_asset
+    ON asset_sequence_frames(asset_id);
+`;
+const IMAGE_SEQUENCE_SCHEMA_CHECKSUM = createHash('sha256')
+  .update(IMAGE_SEQUENCE_SCHEMA_SQL)
+  .digest('hex');
+
 const MIGRATIONS = [
   { version: 1, sql: INITIAL_SCHEMA_SQL, checksum: INITIAL_SCHEMA_CHECKSUM },
   { version: 2, sql: ASSET_SCHEMA_SQL, checksum: ASSET_SCHEMA_CHECKSUM },
@@ -1490,6 +1514,7 @@ const MIGRATIONS = [
   },
   { version: 21, sql: MEDIA_PROXY_SCHEMA_SQL, checksum: MEDIA_PROXY_SCHEMA_CHECKSUM },
   { version: 22, sql: COLOR_SPACE_OVERRIDE_SCHEMA_SQL, checksum: COLOR_SPACE_OVERRIDE_SCHEMA_CHECKSUM },
+  { version: 23, sql: IMAGE_SEQUENCE_SCHEMA_SQL, checksum: IMAGE_SEQUENCE_SCHEMA_CHECKSUM },
 ] as const;
 const SUPPORTED_SCHEMA_VERSION = MIGRATIONS.at(-1)!.version;
 
@@ -4438,6 +4463,35 @@ export class LibraryService {
     }
   }
 
+  private expandImageSequenceSourcePaths(sourcePaths: readonly string[]): string[] {
+    const expanded = new Map<string, string>();
+    for (const rawPath of sourcePaths) {
+      let selectedPath: string;
+      try {
+        selectedPath = normalizeAbsolutePath(rawPath);
+      } catch {
+        expanded.set(rawPath, rawPath);
+        continue;
+      }
+      expanded.set(selectedPath, selectedPath);
+      const directory = path.dirname(selectedPath);
+      let siblingPaths: string[];
+      try {
+        siblingPaths = readdirSync(directory, { withFileTypes: true })
+          .filter((entry) => entry.isFile() && !entry.isSymbolicLink())
+          .map((entry) => path.join(directory, entry.name));
+      } catch {
+        continue;
+      }
+      const sequence = findImageSequenceContaining(selectedPath, siblingPaths);
+      if (!sequence) continue;
+      for (const frame of sequence.frames) {
+        expanded.set(frame.value, frame.value);
+      }
+    }
+    return [...expanded.values()];
+  }
+
   private enumerateImportSources(input: {
     sourceKind: 'files' | 'folder';
     sourcePaths: string[];
@@ -4578,7 +4632,7 @@ export class LibraryService {
     };
 
     if (input.sourceKind === 'files') {
-      for (const rawSourcePath of input.sourcePaths) {
+      for (const rawSourcePath of this.expandImageSequenceSourcePaths(input.sourcePaths)) {
         let sourcePath: string;
         try {
           sourcePath = normalizeAbsolutePath(rawSourcePath);
@@ -5643,6 +5697,7 @@ export class LibraryService {
     }
 
     openLibrary.connection.transaction(() => {
+      this.dissolveImageSequencesForAssets(openLibrary, assetIds);
       for (const row of rows) {
         openLibrary.connection
           .prepare('DELETE FROM assets WHERE asset_id = ?')
@@ -6265,6 +6320,262 @@ export class LibraryService {
     }
   }
 
+  private insertImageSequence(
+    openLibrary: OpenLibrary,
+    frames: readonly { assetId: string; frameNumber: number }[],
+    fps: number,
+  ): string {
+    const sequenceId = randomUUID();
+    const now = new Date().toISOString();
+    openLibrary.connection.prepare(
+      `INSERT INTO asset_sequences
+         (sequence_id, primary_asset_id, fps, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?)`,
+    ).run(sequenceId, frames[0]!.assetId, fps, now, now);
+    const insertFrame = openLibrary.connection.prepare(
+      `INSERT INTO asset_sequence_frames
+         (sequence_id, asset_id, frame_number, position)
+       VALUES (?, ?, ?, ?)`,
+    );
+    frames.forEach((frame, position) => {
+      insertFrame.run(sequenceId, frame.assetId, frame.frameNumber, position);
+    });
+    return sequenceId;
+  }
+
+  private dissolveImageSequencesForAssets(
+    openLibrary: OpenLibrary,
+    assetIds: readonly string[],
+  ): void {
+    const uniqueIds = [...new Set(assetIds)];
+    if (uniqueIds.length === 0) return;
+    const placeholders = uniqueIds.map(() => '?').join(',');
+    openLibrary.connection.prepare(
+      `DELETE FROM asset_sequences
+        WHERE sequence_id IN (
+          SELECT sequence_id
+            FROM asset_sequence_frames
+           WHERE asset_id IN (${placeholders})
+        )`,
+    ).run(...uniqueIds);
+  }
+
+  private createDetectedImageSequences(
+    openLibrary: OpenLibrary,
+    assetIds: readonly string[],
+    fps = 24,
+  ): string[] {
+    const uniqueIds = [...new Set(assetIds)];
+    if (uniqueIds.length === 0) return [];
+    const placeholders = uniqueIds.map(() => '?').join(',');
+    const triggerRows = openLibrary.connection.prepare(
+      `SELECT a.relative_file_path
+         FROM assets a
+        WHERE a.asset_id IN (${placeholders})
+          AND a.deleted_at IS NULL`,
+    ).all(...uniqueIds) as Array<{ relative_file_path: string }>;
+    const directories = new Set(
+      triggerRows.map((row) => path.posix.dirname(row.relative_file_path)),
+    );
+    const rowsByDirectory = new Map<
+      string,
+      Array<{ asset_id: string; relative_file_path: string }>
+    >();
+    for (const directory of directories) {
+      const directoryRows = (
+        directory === "."
+          ? openLibrary.connection.prepare(
+              `SELECT a.asset_id, a.relative_file_path
+                 FROM assets a
+                WHERE a.deleted_at IS NULL
+                  AND instr(a.relative_file_path, '/') = 0
+                  AND NOT EXISTS (
+                    SELECT 1
+                      FROM asset_sequence_frames sf
+                     WHERE sf.asset_id = a.asset_id
+                  )`,
+            ).all()
+          : openLibrary.connection.prepare(
+              `SELECT a.asset_id, a.relative_file_path
+                 FROM assets a
+                WHERE a.deleted_at IS NULL
+                  AND a.relative_file_path LIKE ? ESCAPE '\\'
+                  AND NOT EXISTS (
+                    SELECT 1
+                      FROM asset_sequence_frames sf
+                     WHERE sf.asset_id = a.asset_id
+                  )`,
+            ).all(
+              `${directory.replaceAll("\\", "\\\\").replaceAll("%", "\\%").replaceAll("_", "\\_")}/%`,
+            )
+      ) as Array<{ asset_id: string; relative_file_path: string }>;
+      rowsByDirectory.set(
+        directory,
+        directoryRows.filter(
+          (row) => path.posix.dirname(row.relative_file_path) === directory,
+        ),
+      );
+    }
+    const created: string[] = [];
+    openLibrary.connection.transaction(() => {
+      for (const rows of rowsByDirectory.values()) {
+        const rowsByPath = new Map(
+          rows.map((row) => [row.relative_file_path, row]),
+        );
+        for (const candidate of detectImageSequences(
+          rows.map((row) => row.relative_file_path),
+        )) {
+          const frames = candidate.frames.map((frame) => ({
+            assetId: rowsByPath.get(frame.value)!.asset_id,
+            frameNumber: frame.frameNumber,
+          }));
+          created.push(this.insertImageSequence(openLibrary, frames, fps));
+        }
+      }
+    })();
+    return created;
+  }
+
+  private withImageSequenceSummaries(
+    openLibrary: OpenLibrary,
+    assets: readonly AssetSummary[],
+  ): AssetSummary[] {
+    if (assets.length === 0) return [];
+    const assetIds = assets.map((asset) => asset.assetId);
+    const membershipPlaceholders = assetIds.map(() => '?').join(',');
+    const memberships = openLibrary.connection.prepare(
+      `SELECT sf.asset_id, sf.position, sf.sequence_id
+         FROM asset_sequence_frames sf
+        WHERE sf.asset_id IN (${membershipPlaceholders})`,
+    ).all(...assetIds) as Array<{
+      asset_id: string;
+      position: number;
+      sequence_id: string;
+    }>;
+    const hiddenIds = new Set(
+      memberships
+        .filter((membership) => membership.position > 0)
+        .map((membership) => membership.asset_id),
+    );
+    const primaryMembershipIds = new Set(
+      memberships
+        .filter((membership) => membership.position === 0)
+        .map((membership) => membership.asset_id),
+    );
+    const visible = assets.filter((asset) => !hiddenIds.has(asset.assetId));
+    const primaryIds = visible
+      .filter((asset) => primaryMembershipIds.has(asset.assetId))
+      .map((asset) => asset.assetId);
+    if (primaryIds.length === 0) {
+      return visible.map((asset) => ({ ...asset, sequence: null }));
+    }
+    const primaryPlaceholders = primaryIds.map(() => '?').join(',');
+    const frameRows = openLibrary.connection.prepare(
+      `SELECT s.sequence_id, s.primary_asset_id, s.fps,
+              sf.asset_id, sf.frame_number, sf.position,
+              a.relative_file_path, a.current_revision_id
+         FROM asset_sequences s
+         JOIN asset_sequence_frames sf ON sf.sequence_id = s.sequence_id
+         JOIN assets a ON a.asset_id = sf.asset_id
+        WHERE s.primary_asset_id IN (${primaryPlaceholders})
+        ORDER BY s.sequence_id, sf.position`,
+    ).all(...primaryIds) as Array<{
+      sequence_id: string;
+      primary_asset_id: string;
+      fps: number;
+      asset_id: string;
+      frame_number: number;
+      position: number;
+      relative_file_path: string;
+      current_revision_id: string;
+    }>;
+    const artifacts = this.thumbnailArtifactMap(
+      openLibrary.summary.libraryId,
+      frameRows.map((row) => row.asset_id),
+    );
+    const sequences = new Map<string, AssetSummary['sequence']>();
+    for (const row of frameRows) {
+      const current = sequences.get(row.primary_asset_id) ?? {
+        sequenceId: row.sequence_id,
+        fps: row.fps,
+        frameCount: 0,
+        frames: [],
+      };
+      current.frames.push({
+        assetId: row.asset_id,
+        displayName: path.posix.basename(row.relative_file_path),
+        relativeFilePath: row.relative_file_path,
+        currentRevisionId: row.current_revision_id,
+        frameNumber: row.frame_number,
+        thumbnailArtifactId: artifacts.get(row.asset_id)?.artifactId ?? null,
+      });
+      current.frameCount = current.frames.length;
+      sequences.set(row.primary_asset_id, current);
+    }
+    return visible.map((asset) => ({
+      ...asset,
+      sequence: sequences.get(asset.assetId) ?? null,
+    }));
+  }
+
+  createImageSequence(input: {
+    libraryId: string;
+    assetIds: string[];
+    fps: number;
+  }): AssetSummary {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    if (!Number.isFinite(input.fps) || input.fps < 1 || input.fps > 240) {
+      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+    }
+    const uniqueIds = [...new Set(input.assetIds)];
+    if (uniqueIds.length < 3 || uniqueIds.length !== input.assetIds.length) {
+      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+    }
+    const placeholders = uniqueIds.map(() => '?').join(',');
+    const rows = openLibrary.connection.prepare(
+      `SELECT a.asset_id, a.relative_file_path
+         FROM assets a
+        WHERE a.asset_id IN (${placeholders})
+          AND a.deleted_at IS NULL
+          AND a.availability = 'available'
+          AND NOT EXISTS (
+            SELECT 1 FROM asset_sequence_frames sf WHERE sf.asset_id = a.asset_id
+          )`,
+    ).all(...uniqueIds) as Array<{ asset_id: string; relative_file_path: string }>;
+    if (rows.length !== uniqueIds.length) {
+      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+    }
+    const directories = new Set(rows.map((row) => path.posix.dirname(row.relative_file_path)));
+    if (directories.size !== 1) throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+    const candidate = detectImageSequences(rows.map((row) => row.relative_file_path))
+      .find((item) => item.frames.length === rows.length);
+    if (!candidate) throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+    const byPath = new Map(rows.map((row) => [row.relative_file_path, row.asset_id]));
+    const frames = candidate.frames.map((frame) => ({
+      assetId: byPath.get(frame.value)!,
+      frameNumber: frame.frameNumber,
+    }));
+    openLibrary.connection.transaction(() => {
+      this.insertImageSequence(openLibrary, frames, input.fps);
+    })();
+    const asset = this.listAssets({ libraryId: input.libraryId, recursive: true })
+      .find((item) => item.assetId === frames[0]!.assetId);
+    if (!asset) throw new LibraryServiceError('ASSET_NOT_FOUND');
+    return asset;
+  }
+
+  dissolveImageSequence(input: {
+    libraryId: string;
+    sequenceId: string;
+  }): string {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    const result = openLibrary.connection.prepare(
+      'DELETE FROM asset_sequences WHERE sequence_id = ?',
+    ).run(input.sequenceId);
+    if (result.changes !== 1) throw new LibraryServiceError('ASSET_NOT_FOUND');
+    return input.sequenceId;
+  }
+
   listAssets(input: {
     libraryId: string;
     folderId?: string;
@@ -6332,7 +6643,7 @@ export class LibraryService {
         artifact_duration_ms: number | null;
       }>;
 
-    return rows
+    const assets = rows
       .filter((row) => {
         if (managedFolder) {
           if (!input.recursive) return row.managed_folder_id === managedFolder.folder_id;
@@ -6361,6 +6672,7 @@ export class LibraryService {
           );
         })(),
       }));
+    return this.withImageSequenceSummaries(openLibrary, assets);
   }
 
   importFolderAsLinked(input: {
@@ -7435,7 +7747,10 @@ export class LibraryService {
         deleted_at: string | null;
         trashed_from_relative_path: string | null;
       }>;
-    return rows.map((row) => this.assetSummaryFromRow(row));
+    return this.withImageSequenceSummaries(
+      openLibrary,
+      rows.map((row) => this.assetSummaryFromRow(row)),
+    );
   }
 
   /**
@@ -12728,6 +13043,12 @@ export class LibraryService {
       ? 'a.deleted_at IS NOT NULL'
       : 'a.deleted_at IS NULL');
     whereParts.push('NOT EXISTS (SELECT 1 FROM linked_ignored_assets ignored WHERE ignored.asset_id = a.asset_id)');
+    whereParts.push(`NOT EXISTS (
+      SELECT 1
+        FROM asset_sequence_frames hidden_sequence_frame
+       WHERE hidden_sequence_frame.asset_id = a.asset_id
+         AND hidden_sequence_frame.position > 0
+    )`);
 
     if (filterWhere.length > 0) {
       whereParts.push(filterWhere);
@@ -12841,7 +13162,7 @@ export class LibraryService {
       input.libraryId,
       rows.map((row) => row.asset_id),
     );
-    const items: AssetSummary[] = rows.map((row) => {
+    const items = this.withImageSequenceSummaries(openLibrary, rows.map((row) => {
       const artifact = artifactMap.get(row.asset_id);
       const detectedMediaType = LibraryService.detectMediaType(row.relative_file_path);
       return this.assetSummaryFromRow({
@@ -12853,7 +13174,7 @@ export class LibraryService {
         artifact_duration_ms: artifact?.durationMs ?? null,
         media_type: LibraryService.toSummaryMediaType(detectedMediaType),
       });
-    });
+    }));
 
     const snippets: Array<{ assetId: string; text: string }> | undefined =
       useTrigramIndex
@@ -13707,6 +14028,7 @@ export class LibraryService {
           ? row.artifact_height
           : null,
       durationMs: row.artifact_duration_ms ?? null,
+      sequence: null,
     };
   }
 
@@ -14960,6 +15282,7 @@ export class LibraryService {
       const trashRelativePrefix = '__trash__';
 
       openLibrary.connection.transaction(() => {
+        this.dissolveImageSequencesForAssets(openLibrary, assetIds);
         const manifest: OperationManifest = {
           version: 1,
           files: rows.map((row) => ({
@@ -15574,6 +15897,7 @@ export class LibraryService {
     // Delete DB rows (cascades to revisions, metadata, tags, collections)
     if (deletedAssetIds.length > 0) {
       openLibrary.connection.transaction(() => {
+        this.dissolveImageSequencesForAssets(openLibrary, deletedAssetIds);
         for (const assetId of deletedAssetIds) {
           openLibrary.connection
             .prepare('DELETE FROM assets WHERE asset_id = ?')
@@ -16158,6 +16482,7 @@ export class LibraryService {
 
     if (!input.deleteSourceFile) {
       openLibrary.connection.transaction(() => {
+        this.dissolveImageSequencesForAssets(openLibrary, input.assetIds);
         for (const row of orderedRows) {
           openLibrary.connection
             .prepare('DELETE FROM assets WHERE asset_id = ?')
@@ -16277,6 +16602,10 @@ export class LibraryService {
 
     try {
       openLibrary.connection.transaction(() => {
+        this.dissolveImageSequencesForAssets(
+          openLibrary,
+          trashedRows.map((row) => row.asset_id),
+        );
         for (const row of trashedRows) {
           openLibrary.connection
             .prepare('DELETE FROM assets WHERE asset_id = ?')
@@ -18018,6 +18347,7 @@ export class LibraryService {
         .prepare("UPDATE file_operations SET status = 'committed', updated_at = ? WHERE operation_id = ?")
         .run(new Date().toISOString(), operationId);
       committed = true;
+      this.createDetectedImageSequences(openLibrary, affectedAssetIds);
 
       const affected = new Set([...affectedAssetIds, ...mergedAssetIds]);
       // The SQLite commit is the point of no return. Cleanup is recoverable from the
@@ -18057,6 +18387,7 @@ export class LibraryService {
           // Recovery can finalize a stale applying row on the next open.
         }
         committed = true;
+        this.createDetectedImageSequences(openLibrary, affectedAssetIds);
         const affected = new Set([...affectedAssetIds, ...mergedAssetIds]);
         let assets: AssetSummary[] = [];
         try {
@@ -18115,6 +18446,7 @@ export class LibraryService {
       }>;
     let changedCount = 0;
     let missingCount = 0;
+    const discoveredAssetIds: string[] = [];
 
     openLibrary.connection.transaction(() => {
       // Reconcile linked folder statuses: a folder whose root is gone flips to
@@ -18186,6 +18518,7 @@ export class LibraryService {
           setCurrentRevision.run(revisionId, folderNow, assetId);
           existingIdentities.add(pathIdentity);
           this.syncAssetSearchContent(openLibrary.connection, assetId);
+          discoveredAssetIds.push(assetId);
           changedCount += 1;
         }
       }
@@ -18288,6 +18621,7 @@ export class LibraryService {
         setManagedCurrentRevision.run(revisionId, folderNow, assetId);
         existingManagedIdentities.add(pathIdentity);
         this.syncAssetSearchContent(openLibrary.connection, assetId);
+        discoveredAssetIds.push(assetId);
         if (LibraryService.supportsThumbnail(entry.relativePath)) {
           openLibrary.connection
             .prepare(
@@ -18406,6 +18740,7 @@ export class LibraryService {
         }
       }
     })();
+    this.createDetectedImageSequences(openLibrary, discoveredAssetIds);
     this.reconcileLinkedWatchers(openLibrary);
 
     return {

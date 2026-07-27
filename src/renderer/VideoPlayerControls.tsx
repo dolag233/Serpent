@@ -27,6 +27,12 @@ import { VIEWER_CHROME_TAB_INDEX } from "./viewer-focus-policy";
 import { applyViewerVolumeToMedia } from "./viewer-volume-preferences";
 import type { SerpentShellApi } from "../shared/external-url";
 import type { ViewerVideoShortcutAction } from "../shared/viewer-video-shortcuts";
+import {
+  IDENTITY_VIEWER_DISPLAY_TRANSFORM,
+  viewerDisplaySize,
+  viewerDisplayTransformCss,
+  type ViewerDisplayTransform,
+} from "./viewer-display-transform";
 
 type RendererWindow = Window & {
   serpent?: { shell?: SerpentShellApi };
@@ -49,6 +55,7 @@ export interface VideoPlayerControlsProps {
   posterUrl?: string;
   src: string;
   volume: number;
+  displayTransform?: ViewerDisplayTransform;
 }
 
 const SCRUB_STEP_SECONDS = 5;
@@ -94,6 +101,7 @@ export function VideoPlayerControls({
   posterUrl,
   src,
   volume,
+  displayTransform = IDENTITY_VIEWER_DISPLAY_TRANSFORM,
 }: VideoPlayerControlsProps) {
   const t = useT();
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -103,7 +111,6 @@ export function VideoPlayerControls({
   const {
     fitToWindow,
     measureAndFit,
-    natural,
     view,
     viewportPointerHandlers,
     viewportRef,
@@ -130,6 +137,7 @@ export function VideoPlayerControls({
   const [paused, setPaused] = useState(true);
   const [duration, setDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
+  const [sourceNatural, setSourceNatural] = useState({ w: 0, h: 0 });
   const [scrubRatio, setScrubRatio] = useState<number | null>(null);
   const playbackRateRef = useRef(playbackRate);
   playbackRateRef.current = playbackRate;
@@ -334,8 +342,23 @@ export function VideoPlayerControls({
   const displayTime =
     scrubRatio !== null ? scrubTimeFromRatio(scrubRatio, duration) : currentTime;
 
-  const displayW = natural.w > 0 ? natural.w * view.scale : undefined;
-  const displayH = natural.h > 0 ? natural.h * view.scale : undefined;
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || video.videoWidth <= 0 || video.videoHeight <= 0) return;
+    const size = viewerDisplaySize(
+      video.videoWidth,
+      video.videoHeight,
+      displayTransform.quarterTurns,
+    );
+    measureAndFit("reset", { w: size.width, h: size.height });
+  }, [displayTransform.quarterTurns, measureAndFit]);
+
+  // The video keeps its source dimensions; rotation itself swaps the visual
+  // bounding box. The rotated dimensions are used only by the fit calculation.
+  const displayW =
+    sourceNatural.w > 0 ? sourceNatural.w * view.scale : undefined;
+  const displayH =
+    sourceNatural.h > 0 ? sourceNatural.h * view.scale : undefined;
   const videoStyle =
     displayW !== undefined && displayH !== undefined
       ? {
@@ -343,7 +366,7 @@ export function VideoPlayerControls({
           height: displayH,
           maxWidth: "none",
           maxHeight: "none",
-          transform: `translate(${view.x}px, ${view.y}px)`,
+          transform: `translate(${view.x}px, ${view.y}px) ${viewerDisplayTransformCss(displayTransform)}`,
           transformOrigin: "center center",
         }
       : undefined;
@@ -367,10 +390,13 @@ export function VideoPlayerControls({
             const video = event.currentTarget;
             video.playbackRate = playbackRate;
             setDuration(video.duration || 0);
-            measureAndFit("reset", {
-              w: video.videoWidth,
-              h: video.videoHeight,
-            });
+            setSourceNatural({ w: video.videoWidth, h: video.videoHeight });
+            const size = viewerDisplaySize(
+              video.videoWidth,
+              video.videoHeight,
+              displayTransform.quarterTurns,
+            );
+            measureAndFit("reset", { w: size.width, h: size.height });
             onReady?.();
           }}
           onPause={() => setPaused(true)}

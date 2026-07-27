@@ -393,6 +393,16 @@ const assetOperationSuccessSchemas = [
   }),
   z.strictObject({
     ok: z.literal(true),
+    type: z.literal('asset.sequence.created'),
+    asset: assetSummarySchema,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('asset.sequence.dissolved'),
+    sequenceId: nonBlankString,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
     type: z.literal('asset.import.conflicts'),
     plan: importConflictPlanSchema,
   }),

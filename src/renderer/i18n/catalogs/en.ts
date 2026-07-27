@@ -427,6 +427,8 @@ export const en = {
     }
   },
   menu: {
+    createImageSequence: "Create image sequence…",
+    dissolveImageSequence: "Dissolve image sequence",
     batchAssetOps: "Batch asset actions: {count}",
     assetOps: "Asset actions: {name}",
     collectionOps: "Collection actions: {name}",
@@ -452,6 +454,7 @@ export const en = {
     removeFromCollectionAction: "Remove asset from collection"
   },
   inspector: {
+    sequenceInfo: "{count} frames · {fps} FPS",
     description: "Description",
     author: "Author",
     authorPlaceholder: "Enter author…",
@@ -588,6 +591,14 @@ export const en = {
       title: "Confirm permanent delete",
       body: "Permanently delete the selected {count} assets? They will be removed from Trash and cannot be undone.",
       submit: "Delete {count} permanently"
+    },
+    imageSequence: {
+      title: "Create image sequence",
+      summary: "Play the selected {count} consecutively numbered images as one sequence.",
+      fps: "Frame rate (FPS)",
+      help: "Choose 1–240 FPS. This only changes browsing and playback in Serpent; source images are untouched.",
+      create: "Create sequence",
+      creating: "Creating…"
     },
     diskDelete: {
       title: "Delete from disk",
@@ -897,6 +908,12 @@ export const en = {
     videoPlay: "Play",
     videoPause: "Pause",
     videoScrubAria: "Seek video",
+    rotateClockwise: "Rotate 90° clockwise",
+    flipHorizontal: "Mirror horizontally",
+    flipVertical: "Mirror vertically",
+    sequencePlay: "Play sequence",
+    sequencePause: "Pause sequence",
+    sequenceFrame: "Sequence frame",
     cannotOpen: "Could not open preview",
     cannotOpenNoResponse: "Could not open preview: desktop service did not respond. Retry or restart the app.",
     proxyFailed: "Could not generate a compatible proxy",

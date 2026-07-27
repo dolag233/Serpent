@@ -377,6 +377,20 @@ const library: SerpentLibraryApi = Object.freeze({
     return { ok: true, value: result.assets };
   },
 
+  async createImageSequence({ libraryId, assetIds, fps }: { libraryId: string; assetIds: string[]; fps: number }): Promise<LibraryApiResult<AssetSummary>> {
+    const result = await request({ type: 'asset.sequence.create.request', libraryId, assetIds, fps });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'asset.sequence.created') throw new Error('Unexpected create-image-sequence response.');
+    return { ok: true, value: result.asset };
+  },
+
+  async dissolveImageSequence({ libraryId, sequenceId }: { libraryId: string; sequenceId: string }): Promise<LibraryApiResult<{ sequenceId: string }>> {
+    const result = await request({ type: 'asset.sequence.dissolve.request', libraryId, sequenceId });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'asset.sequence.dissolved') throw new Error('Unexpected dissolve-image-sequence response.');
+    return { ok: true, value: { sequenceId: result.sequenceId } };
+  },
+
   async importFiles(input: {
     libraryId: string;
     targetFolderId?: string;

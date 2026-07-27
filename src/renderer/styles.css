@@ -4043,6 +4043,76 @@ body.serpent-modal-open .app-shell {
   background: var(--hover);
   color: var(--text);
 }
+.preview-transform-controls {
+  position: absolute;
+  z-index: 3;
+  /* The workspace notice also occupies top-center. Keep viewer transforms on
+     their own row so an import/status notice can never cover the controls. */
+  top: 52px;
+  left: 50%;
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--divider);
+  border-radius: 8px;
+  background: var(--viewer-chrome-bg);
+  box-shadow: 0 1px 6px rgb(0 0 0 / 10%);
+  backdrop-filter: blur(10px);
+  transform: translateX(-50%);
+}
+.preview-transform-controls button,
+.preview-sequence-controls button {
+  display: grid;
+  width: 28px;
+  height: 26px;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+.preview-transform-controls button:hover,
+.preview-transform-controls button:focus-visible,
+.preview-transform-controls button.is-active,
+.preview-sequence-controls button:hover,
+.preview-sequence-controls button:focus-visible {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+.preview-transform-controls button.is-active {
+  color: var(--accent);
+}
+.preview-sequence-stage {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+}
+.preview-sequence-controls {
+  position: absolute;
+  z-index: 3;
+  bottom: 52px;
+  left: 50%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  border: 1px solid var(--divider);
+  border-radius: 9px;
+  background: var(--viewer-chrome-bg);
+  box-shadow: 0 1px 6px rgb(0 0 0 / 10%);
+  color: var(--secondary);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  backdrop-filter: blur(10px);
+  transform: translateX(-50%);
+}
+.preview-sequence-controls input[type="range"] {
+  width: min(220px, 30vw);
+  accent-color: var(--accent);
+}
 .preview-nav {
   position: absolute;
   z-index: 2;

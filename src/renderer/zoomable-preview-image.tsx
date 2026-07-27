@@ -16,6 +16,12 @@ import {
   isDecodedImage,
   resolveViewerImageDisplay,
 } from "./viewer-mip-upgrade";
+import {
+  IDENTITY_VIEWER_DISPLAY_TRANSFORM,
+  viewerDisplaySize,
+  viewerDisplayTransformCss,
+  type ViewerDisplayTransform,
+} from "./viewer-display-transform";
 
 export type ZoomableImageHandle = {
   fitToWindow: () => void;
@@ -44,6 +50,7 @@ export const ZoomableImage = forwardRef<
     colorSpaceOptions?: Array<{ id: string; label: string }>;
     colorSpaceValue?: string;
     onColorSpaceChange?: (colorSpace: string) => void;
+    displayTransform?: ViewerDisplayTransform;
     /**
      * Optional ready thumbnail / preview. Shown immediately; full `src`
      * upgrades quietly after decode (Serpent-eh07).
@@ -62,6 +69,7 @@ export const ZoomableImage = forwardRef<
     colorSpaceOptions,
     colorSpaceValue,
     onColorSpaceChange,
+    displayTransform = IDENTITY_VIEWER_DISPLAY_TRANSFORM,
     placeholderSrc,
     src,
   },
@@ -70,11 +78,11 @@ export const ZoomableImage = forwardRef<
   const t = useT();
   const imageRef = useRef<HTMLImageElement>(null);
   const [fullDecoded, setFullDecoded] = useState(false);
+  const [sourceNatural, setSourceNatural] = useState({ w: 0, h: 0 });
   const {
     fitScale,
     fitToWindow,
     measureAndFit,
-    natural,
     view,
     viewportPointerHandlers,
     viewportRef,
@@ -82,12 +90,16 @@ export const ZoomableImage = forwardRef<
   } = useViewerZoomPan({ onSwipeNext, onSwipePrevious });
 
   const measureFromImage = useCallback(
-    (image: HTMLImageElement) =>
-      measureAndFit("reset", {
-        w: image.naturalWidth,
-        h: image.naturalHeight,
-      }),
-    [measureAndFit],
+    (image: HTMLImageElement) => {
+      setSourceNatural({ w: image.naturalWidth, h: image.naturalHeight });
+      const size = viewerDisplaySize(
+        image.naturalWidth,
+        image.naturalHeight,
+        displayTransform.quarterTurns,
+      );
+      return measureAndFit("reset", { w: size.width, h: size.height });
+    },
+    [displayTransform.quarterTurns, measureAndFit],
   );
 
   useImperativeHandle(ref, () => ({ fitToWindow }), [fitToWindow]);
@@ -151,8 +163,13 @@ export const ZoomableImage = forwardRef<
   }, [fitKeybinds, fitToWindow]);
 
   const sliderMax = Math.max((fitScale || 1) * 4, 2);
-  const displayW = natural.w > 0 ? natural.w * view.scale : undefined;
-  const displayH = natural.h > 0 ? natural.h * view.scale : undefined;
+  // Keep the element itself in source orientation. CSS rotation swaps the
+  // rendered bounding box; swapping width/height here as well would stretch
+  // the bitmap and effectively swap the dimensions twice.
+  const displayW =
+    sourceNatural.w > 0 ? sourceNatural.w * view.scale : undefined;
+  const displayH =
+    sourceNatural.h > 0 ? sourceNatural.h * view.scale : undefined;
 
   return (
     <>
@@ -181,7 +198,7 @@ export const ZoomableImage = forwardRef<
           style={{
             width: displayW,
             height: displayH,
-            transform: `translate(${view.x}px, ${view.y}px)`,
+            transform: `translate(${view.x}px, ${view.y}px) ${viewerDisplayTransformCss(displayTransform)}`,
             transformOrigin: "center center",
           }}
         />
