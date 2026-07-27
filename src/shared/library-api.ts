@@ -20,6 +20,7 @@ import type {
 import type {
   ImportCompletion,
   ImportConflictPlan,
+  ImageSequenceImportOffer,
   AssetChangeEvent,
   ExtensionSaveCompletedEvent,
   RendererLibrarySummary,
@@ -251,10 +252,15 @@ export interface SerpentLibraryApi {
     libraryId: string;
     sequenceId: string;
   }): Promise<LibraryApiResult<{ sequenceId: string }>>;
+  setImageSequenceFps(input: {
+    libraryId: string;
+    sequenceId: string;
+    fps: number;
+  }): Promise<LibraryApiResult<{ sequenceId: string; fps: number }>>;
   importFiles(input: {
     libraryId: string;
     targetFolderId?: string;
-  }): Promise<LibraryApiResult<ImportCompletion | ImportConflictPlan>>;
+  }): Promise<LibraryApiResult<ImportCompletion | ImportConflictPlan | ImageSequenceImportOffer>>;
   importFolder(input: {
     libraryId: string;
     targetFolderId?: string;
@@ -266,11 +272,20 @@ export interface SerpentLibraryApi {
     files: File[];
     html?: string;
     uriList?: string;
-  }): Promise<LibraryApiResult<ImportCompletion | ImportConflictPlan>>;
+  }): Promise<LibraryApiResult<ImportCompletion | ImportConflictPlan | ImageSequenceImportOffer>>;
   pasteClipboardImage(input: {
     libraryId: string;
     targetFolderId?: string;
     targetCollectionId?: string;
+  }): Promise<LibraryApiResult<ImportCompletion | ImportConflictPlan>>;
+  confirmImageSequenceImport(input: {
+    libraryId: string;
+    offerId: string;
+    action: 'import-sequence' | 'import-selected';
+    sequenceIndex?: number;
+    firstFrame?: number;
+    lastFrame?: number;
+    fps?: number;
   }): Promise<LibraryApiResult<ImportCompletion | ImportConflictPlan>>;
   resolveImport(input: {
     importId: string;

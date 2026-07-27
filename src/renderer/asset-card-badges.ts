@@ -59,6 +59,32 @@ export function shouldShowDurationBadge(
   return fileExtensionLabel(displayName) === "GIF";
 }
 
+/** Display duration for an image sequence using its frame count and FPS. */
+export function formatSequenceDuration(
+  frameCount: number,
+  fps: number,
+): string {
+  if (
+    !Number.isFinite(frameCount) ||
+    frameCount <= 0 ||
+    !Number.isFinite(fps) ||
+    fps <= 0
+  ) {
+    return "0.00s";
+  }
+  const totalSeconds = frameCount / fps;
+  if (totalSeconds < 60) {
+    return `${totalSeconds.toFixed(totalSeconds < 10 ? 2 : 1)}s`;
+  }
+  const totalSecondsRounded = Math.round(totalSeconds);
+  const hours = Math.floor(totalSecondsRounded / 3_600);
+  const minutes = Math.floor((totalSecondsRounded % 3_600) / 60);
+  const seconds = totalSecondsRounded % 60;
+  return hours > 0
+    ? `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`
+    : `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
+
 /**
  * Type chip shares bottom-right with extension — prefer extension when both
  * would show (video MP4 beats generic VIDEO).

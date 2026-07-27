@@ -4090,6 +4090,24 @@ body.serpent-modal-open .app-shell {
   place-items: center;
   overflow: hidden;
 }
+.preview-sequence-play-stage {
+  position: absolute;
+  inset: 0;
+  background: var(--canvas);
+}
+.preview-sequence-frame {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  opacity: 0;
+  pointer-events: none;
+  user-select: none;
+}
+.preview-sequence-frame.is-visible {
+  opacity: 1;
+}
 .preview-sequence-controls {
   position: absolute;
   z-index: 3;
@@ -6488,6 +6506,115 @@ select.ai-config-input.ai-config-languages {
   pointer-events: none;
 }
 
+.image-sequence-dialog-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.image-sequence-dialog-section:first-of-type {
+  margin-top: 4px;
+}
+
+.image-sequence-dialog .field-label {
+  margin-bottom: 0;
+}
+
+.image-sequence-dialog .dialog-inline-fields {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.image-sequence-dialog .dialog-inline-fields .text-field {
+  flex: 1;
+  min-width: 0;
+}
+
+.image-sequence-dialog .field-help {
+  margin: 0;
+}
+
+.image-sequence-range-caption {
+  font-variant-numeric: tabular-nums;
+}
+
+.image-sequence-range-track {
+  position: relative;
+  height: 28px;
+  margin: 4px 0 2px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--divider) 70%, transparent);
+}
+
+.image-sequence-range-track::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: var(--range-start, 0%);
+  right: calc(100% - var(--range-end, 100%));
+  height: 6px;
+  transform: translateY(-50%);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 72%, var(--divider));
+  pointer-events: none;
+}
+
+.image-sequence-range-thumb {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  margin: 0;
+  background: transparent;
+  pointer-events: none;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.image-sequence-range-thumb::-webkit-slider-runnable-track {
+  height: 6px;
+  background: transparent;
+}
+
+.image-sequence-range-thumb::-moz-range-track {
+  height: 6px;
+  background: transparent;
+}
+
+.image-sequence-range-thumb::-webkit-slider-thumb {
+  pointer-events: auto;
+  appearance: none;
+  -webkit-appearance: none;
+  width: 16px;
+  height: 16px;
+  margin-top: -5px;
+  border: 2px solid var(--canvas);
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.28);
+  cursor: pointer;
+}
+
+.image-sequence-range-thumb::-moz-range-thumb {
+  pointer-events: auto;
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--canvas);
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.28);
+  cursor: pointer;
+}
+
+.image-sequence-range-thumb.is-start {
+  z-index: 2;
+}
+
+.image-sequence-range-thumb.is-end {
+  z-index: 3;
+}
+
 .asset-card-media .asset-thumbnail,
 .asset-card-media-live {
   position: absolute;
@@ -6503,6 +6630,51 @@ select.ai-config-input.ai-config-languages {
 .asset-card-media-live {
   z-index: 1;
 }
+
+.asset-card-media-live.is-sequence-front {
+  opacity: 1;
+  z-index: 2;
+}
+
+.asset-card-media-live.is-sequence-back {
+  opacity: 0;
+  z-index: 1;
+}
+
+.sequence-card-cover-hidden {
+  opacity: 0;
+}
+
+.sequence-frame-canvas {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  overflow: hidden;
+  border-radius: inherit;
+  pointer-events: none;
+}
+
+.sequence-frame-canvas-fallback,
+.sequence-frame-canvas-paint {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  border-radius: inherit;
+}
+
+.sequence-frame-canvas-paint {
+  pointer-events: none;
+}
+
+.asset-sequence-badge {
+  bottom: 8px;
+  left: 8px;
+  letter-spacing: 0.01em;
+}
+
 
 /* Floating badges on the preview use a frosted chip so they stay legible
    over any media (Eagle-style format/duration chips).

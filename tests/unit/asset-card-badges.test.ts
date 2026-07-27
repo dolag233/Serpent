@@ -3,6 +3,7 @@ import {
   ASSET_CARD_BADGE_MIN_SIZE,
   assetTypeBadgeLabel,
   fileExtensionLabel,
+  formatSequenceDuration,
   shouldShowAssetCardBadges,
   shouldShowDurationBadge,
   shouldShowExtensionBadge,
@@ -39,6 +40,12 @@ describe("asset-card-badges", () => {
     expect(shouldShowDurationBadge("image", "a.jpg", 1200)).toBe(false);
     expect(shouldShowDurationBadge("video", "a.mp4", null)).toBe(false);
     expect(shouldShowDurationBadge("video", "a.mp4", 0)).toBe(false);
+  });
+
+  it("formats sequence duration from frame count and FPS", () => {
+    expect(formatSequenceDuration(3, 13)).toBe("0.23s");
+    expect(formatSequenceDuration(151, 30)).toBe("5.03s");
+    expect(formatSequenceDuration(1_800, 30)).toBe("1:00");
   });
 
   it("hides corner badges when the card preview is too small (Serpent-7zt)", () => {

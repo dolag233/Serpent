@@ -429,6 +429,7 @@ export const en = {
   menu: {
     createImageSequence: "Create image sequence…",
     dissolveImageSequence: "Dissolve image sequence",
+    setImageSequenceFps: "Set sequence FPS…",
     batchAssetOps: "Batch asset actions: {count}",
     assetOps: "Asset actions: {name}",
     collectionOps: "Collection actions: {name}",
@@ -595,10 +596,28 @@ export const en = {
     imageSequence: {
       title: "Create image sequence",
       summary: "Play the selected {count} consecutively numbered images as one sequence.",
+      updateTitle: "Set sequence frame rate",
+      updateSummary: "Change playback rate for this {count}-frame sequence.",
       fps: "Frame rate (FPS)",
       help: "Choose 1–240 FPS. This only changes browsing and playback in Serpent; source images are untouched.",
       create: "Create sequence",
-      creating: "Creating…"
+      creating: "Creating…",
+      update: "Save frame rate",
+      updating: "Saving…"
+    },
+    imageSequenceImport: {
+      title: "Import image sequence?",
+      summary:
+        "Detected “{name}” ({count} frames, {width}×{height}). Confirm the frame range and playback rate.",
+      range: "Frame range",
+      rangeStart: "Start frame",
+      rangeEnd: "End frame",
+      rangeCaption: "Frames {first}–{last} ({count} frames)",
+      fps: "Frame rate (FPS)",
+      help: "Default is 30 FPS. Only frames with the same resolution stay in the sequence.",
+      importSelected: "Import selected file only",
+      importSequence: "Import {count} frames as sequence",
+      importing: "Importing…"
     },
     diskDelete: {
       title: "Delete from disk",

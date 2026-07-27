@@ -1,7 +1,7 @@
 import { fileExtensionLabel } from "./asset-card-badges";
 import type { PreviewResolution } from "../shared/library-api";
 
-/** GIF or video that can play in-place on the grid card. */
+/** GIF or video that can play in-place on the grid card via requestPreview. */
 export function isCardHoverPreviewable(asset: {
   mediaType: "image" | "video" | "audio" | "text" | "other";
   displayName: string;
@@ -11,9 +11,20 @@ export function isCardHoverPreviewable(asset: {
 }): boolean {
   if (asset.deletedAt) return false;
   if (asset.availability === "missing") return false;
-  if (asset.sequence && asset.sequence.frameCount >= 3) return true;
+  // Sequences animate from thumbnail artifacts in AssetCardMedia; do not also
+  // request client preview (that stacks a second layer and flickers).
+  if (asset.sequence && asset.sequence.frameCount >= 3) return false;
   if (asset.mediaType === "video") return true;
   return fileExtensionLabel(asset.displayName) === "GIF";
+}
+
+/** Whether the card should cycle sequence thumbnails on hover/selection. */
+export function isCardSequencePlayable(asset: {
+  availability?: "available" | "missing";
+  sequence?: { frameCount: number } | null;
+}): boolean {
+  if (asset.availability === "missing") return false;
+  return Boolean(asset.sequence && asset.sequence.frameCount >= 3);
 }
 
 /**

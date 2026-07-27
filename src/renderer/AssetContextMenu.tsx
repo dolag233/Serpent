@@ -137,6 +137,11 @@ interface AssetContextMenuProps {
   onViewAsset: (assetId: string) => void;
   onSetAssetColorSpace: (assetId: string, colorSpace: string | null) => void;
   onCreateImageSequence: (assetIds: string[]) => void;
+  onSetImageSequenceFps: (
+    sequenceId: string,
+    frameCount: number,
+    fps: number,
+  ) => void;
   onDissolveImageSequence: (sequenceId: string) => void;
   onRevealInFolder: (assetId: string) => void;
   onCopyFilePath: (assetId: string) => void;
@@ -1260,6 +1265,19 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                   )}
                 </ContextMenuSection>
                 <ContextMenuSection label={t("command.group.organize")}>
+                  {singleAsset?.sequence ? (
+                    <ContextMenuItem
+                      icon={<Icon name="sliders" size={14} />}
+                      label={t("menu.setImageSequenceFps")}
+                      onAction={() =>
+                        props.onSetImageSequenceFps(
+                          singleAsset.sequence!.sequenceId,
+                          singleAsset.sequence!.frameCount,
+                          singleAsset.sequence!.fps,
+                        )
+                      }
+                    />
+                  ) : null}
                   {singleAsset?.sequence ? (
                     <ContextMenuItem
                       icon={<Icon name="close" size={14} />}

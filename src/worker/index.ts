@@ -428,6 +428,29 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
       const sequenceId = libraryService.dissolveImageSequence(request.command);
       return { ok: true, type: 'asset.sequence.dissolved', sequenceId };
     }
+    case 'asset.sequence.set-fps': {
+      const result = libraryService.setImageSequenceFps(request.command);
+      return { ok: true, type: 'asset.sequence.fps-updated', ...result };
+    }
+    case 'asset.import.probe-sequences': {
+      const offer = await libraryService.probeImageSequenceImportOffer(request.command);
+      return {
+        ok: true,
+        type: 'asset.import.sequence-offer',
+        offer: offer ?? {
+          defaultFps: 30,
+          libraryId: request.command.libraryId,
+          selectedPaths: request.command.sourcePaths,
+          sequences: [],
+          ...(request.command.targetFolderId
+            ? { targetFolderId: request.command.targetFolderId }
+            : {}),
+          ...(request.command.targetCollectionId
+            ? { targetCollectionId: request.command.targetCollectionId }
+            : {}),
+        },
+      };
+    }
     case 'asset.import.prepare': {
       const prepared = libraryService.prepareOrExecuteImport(request.command);
       if (!('importId' in prepared)) {

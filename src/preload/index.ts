@@ -58,6 +58,7 @@ import {
   type RendererResult,
   type ImportCompletion,
   type ImportConflictPlan,
+  type ImageSequenceImportOffer,
   type AssetChangeEvent,
   parseAssetChangeEvent,
   type ExtensionSaveCompletedEvent,
@@ -73,6 +74,7 @@ import type {
   SuspectedDuplicateDecision,
 } from '../shared/protocol/requests';
 import { createPublicError } from '../shared/protocol/errors';
+import { isImageSequenceImportOffer } from '../shared/import-outcome';
 import { resolveDroppedFilePaths } from './dropped-files';
 import { extractWebMediaDrop } from './web-media-drop';
 
@@ -208,7 +210,15 @@ const library: SerpentLibraryApi = Object.freeze({
     libraryId: string;
     folderId?: string | null;
   }): Promise<LibraryApiResult<ImportCompletion | ImportConflictPlan>> {
-    return importRequest({ type: 'folder.paste.request', ...input });
+    const result = await importRequest({ type: 'folder.paste.request', ...input });
+    if (!result.ok) return { ok: false, error: result.error };
+    if (isImageSequenceImportOffer(result.value)) {
+      throw new Error('Unexpected sequence-offer response for folder paste.');
+    }
+    return {
+      ok: true,
+      value: result.value as ImportCompletion | ImportConflictPlan,
+    };
   },
 
   async cloneFolder(input: {
@@ -392,10 +402,17 @@ const library: SerpentLibraryApi = Object.freeze({
     return { ok: true, value: { sequenceId: result.sequenceId } };
   },
 
+  async setImageSequenceFps({ libraryId, sequenceId, fps }: { libraryId: string; sequenceId: string; fps: number }): Promise<LibraryApiResult<{ sequenceId: string; fps: number }>> {
+    const result = await request({ type: 'asset.sequence.set-fps.request', libraryId, sequenceId, fps });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'asset.sequence.fps-updated') throw new Error('Unexpected set-image-sequence-fps response.');
+    return { ok: true, value: { sequenceId: result.sequenceId, fps: result.fps } };
+  },
+
   async importFiles(input: {
     libraryId: string;
     targetFolderId?: string;
-  }): Promise<LibraryApiResult<ImportCompletion | ImportConflictPlan>> {
+  }): Promise<LibraryApiResult<ImportCompletion | ImportConflictPlan | ImageSequenceImportOffer>> {
     return importRequest({ type: 'asset.import-files.request', ...input });
   },
 
@@ -403,7 +420,15 @@ const library: SerpentLibraryApi = Object.freeze({
     libraryId: string;
     targetFolderId?: string;
   }): Promise<LibraryApiResult<ImportCompletion | ImportConflictPlan>> {
-    return importRequest({ type: 'asset.import-folder.request', ...input });
+    const result = await importRequest({ type: 'asset.import-folder.request', ...input });
+    if (!result.ok) return { ok: false, error: result.error };
+    if (isImageSequenceImportOffer(result.value)) {
+      throw new Error('Unexpected sequence-offer response for folder import.');
+    }
+    return {
+      ok: true,
+      value: result.value as ImportCompletion | ImportConflictPlan,
+    };
   },
 
   async importDropped(input: {
@@ -413,7 +438,7 @@ const library: SerpentLibraryApi = Object.freeze({
     files: File[];
     html?: string;
     uriList?: string;
-  }): Promise<LibraryApiResult<ImportCompletion | ImportConflictPlan>> {
+  }): Promise<LibraryApiResult<ImportCompletion | ImportConflictPlan | ImageSequenceImportOffer>> {
     // Native File handles always win. Browser drags can include text/html
     // beside Files; the secondary metadata must never turn a local import into
     // a network request.
@@ -469,7 +494,35 @@ const library: SerpentLibraryApi = Object.freeze({
     targetFolderId?: string;
     targetCollectionId?: string;
   }): Promise<LibraryApiResult<ImportCompletion | ImportConflictPlan>> {
-    return importRequest({ type: 'asset.import-clipboard.request', ...input });
+    const result = await importRequest({ type: 'asset.import-clipboard.request', ...input });
+    if (!result.ok) return { ok: false, error: result.error };
+    if (isImageSequenceImportOffer(result.value)) {
+      throw new Error('Unexpected sequence-offer response for clipboard import.');
+    }
+    return {
+      ok: true,
+      value: result.value as ImportCompletion | ImportConflictPlan,
+    };
+  },
+
+  async confirmImageSequenceImport(input: {
+    libraryId: string;
+    offerId: string;
+    action: 'import-sequence' | 'import-selected';
+    sequenceIndex?: number;
+    firstFrame?: number;
+    lastFrame?: number;
+    fps?: number;
+  }): Promise<LibraryApiResult<ImportCompletion | ImportConflictPlan>> {
+    const result = await importRequest({ type: 'asset.import-sequence.confirm', ...input });
+    if (!result.ok) return { ok: false, error: result.error };
+    if (isImageSequenceImportOffer(result.value)) {
+      throw new Error('Unexpected nested sequence-offer response.');
+    }
+    return {
+      ok: true,
+      value: result.value as ImportCompletion | ImportConflictPlan,
+    };
   },
 
   async resolveImport(input: {
@@ -1579,13 +1632,15 @@ async function importRequest(
       | 'asset.import-drop.request'
       | 'asset.import-web.request'
       | 'asset.import-clipboard.request'
+      | 'asset.import-sequence.confirm'
       | 'folder.paste.request';
   }>,
-): Promise<LibraryApiResult<ImportCompletion | ImportConflictPlan>> {
+): Promise<LibraryApiResult<ImportCompletion | ImportConflictPlan | ImageSequenceImportOffer>> {
   const result = await request(command);
   if (!result.ok) return failure(result);
   if (result.type === 'asset.import.completed') return { ok: true, value: result.completion };
   if (result.type === 'asset.import.conflicts') return { ok: true, value: result.plan };
+  if (result.type === 'asset.import.sequence-offer') return { ok: true, value: result.offer };
   if (result.type === 'extension.asset-saved') {
     return {
       ok: true,

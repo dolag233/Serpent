@@ -22,6 +22,7 @@ import {
 import {
   assetTypeBadgeLabel,
   fileExtensionLabel,
+  formatSequenceDuration,
   shouldShowAssetCardBadges,
   shouldShowDurationBadge,
   shouldShowExtensionBadge,
@@ -34,6 +35,7 @@ import {
 import {
   coverSrc,
   isCardHoverPreviewable,
+  isCardSequencePlayable,
 } from "./asset-card-hover-preview";
 import { shouldShowThumbnailFailureBadge } from "./thumbnail-failure-badge";
 import {
@@ -100,6 +102,12 @@ import { MoveDialog } from "./MoveDialog";
 import { RestoreDialog } from "./RestoreDialog";
 import { UndoMoveDialog } from "./UndoMoveDialog";
 import { ImageSequenceDialog } from "./ImageSequenceDialog";
+import { ImageSequenceImportDialog } from "./ImageSequenceImportDialog";
+import {
+  isImageSequenceImportOffer,
+  isImportConflictPlan,
+} from "../shared/import-outcome";
+import { DEFAULT_IMAGE_SEQUENCE_FPS } from "../shared/image-sequence";
 import { NameConflictDialog } from "./NameConflictDialog";
 import { ContentDuplicateDialog } from "./ContentDuplicateDialog";
 import {
@@ -272,6 +280,7 @@ import type {
 import type { SerpentShellApi } from "../shared/external-url";
 import type {
   ImportConflictPlan,
+  ImageSequenceImportOffer,
   RendererLibrarySummary,
   ExportProgressEvent,
   ImportProgressEvent,
@@ -609,6 +618,13 @@ function AppInner() {
   const hadLibraryRef = useRef(false);
   const [dialogValue, setDialogValue] = useState(() => t("shell.myLibrary"));
   const [conflicts, setConflicts] = useState<ImportConflictPlan | null>(null);
+  const [imageSequenceImportOffer, setImageSequenceImportOffer] =
+    useState<ImageSequenceImportOffer | null>(null);
+  const [imageSequenceImportError, setImageSequenceImportError] = useState<
+    string | null
+  >(null);
+  const [imageSequenceImportSubmitting, setImageSequenceImportSubmitting] =
+    useState(false);
   const [conflictPhase, setConflictPhase] = useState<ImportConflictPhase | null>(
     null,
   );
@@ -905,6 +921,9 @@ function AppInner() {
   } | null>(null);
   const [imageSequenceDialog, setImageSequenceDialog] = useState<{
     assetIds: string[];
+    mode: "create" | "update";
+    sequenceId?: string;
+    frameCount?: number;
     fps: number;
     submitting: boolean;
     error: string | null;
@@ -1546,6 +1565,7 @@ function AppInner() {
   );
 
   const {
+    hoveredAssetId,
     setHoveredAssetId,
     clearHoveredAssetId,
     activePreviewAssetId,
@@ -1618,6 +1638,15 @@ function AppInner() {
     masonryShiftSelection: assetViewMode === "masonry",
     selectedFolderIds,
     setSelectedFolderIds,
+    onSelectionCleared: () => {
+      setHoveredAssetId(null);
+      // An import reveal intentionally re-applies selection once its first
+      // content refresh settles. A deliberate blank-canvas click must cancel
+      // that pending action, otherwise a just-imported sequence is impossible
+      // to deselect for the next 280 ms.
+      pendingRevealRef.current = null;
+      pendingRestoredFocusRef.current = null;
+    },
   });
   const selectedFolderIdSet = useMemo(
     () => new Set(selectedFolderIds),
@@ -3763,6 +3792,36 @@ function AppInner() {
     setSelectedAssetIds([result.value.assetId]);
   }
 
+  async function updateImageSequenceFps() {
+    if (
+      !api ||
+      !library ||
+      !imageSequenceDialog ||
+      imageSequenceDialog.mode !== "update" ||
+      !imageSequenceDialog.sequenceId
+    ) {
+      return;
+    }
+    setImageSequenceDialog((current) =>
+      current ? { ...current, submitting: true, error: null } : current,
+    );
+    const result = await api.setImageSequenceFps({
+      libraryId: library.libraryId,
+      sequenceId: imageSequenceDialog.sequenceId,
+      fps: imageSequenceDialog.fps,
+    });
+    if (!result.ok) {
+      setImageSequenceDialog((current) =>
+        current
+          ? { ...current, submitting: false, error: result.error.message }
+          : current,
+      );
+      return;
+    }
+    setImageSequenceDialog(null);
+    await reloadCurrentContent();
+  }
+
   async function dissolveSelectedImageSequence(sequenceId: string) {
     if (!api || !library) return;
     const result = await api.dissolveImageSequence({
@@ -3933,6 +3992,7 @@ function AppInner() {
       if (plan === null) clearImportConflictsUi();
       else presentImportConflicts(plan);
     },
+    setImageSequenceImportOffer,
     onFoldersDroppedOnFolder: handleFoldersDroppedOnFolder,
   });
 
@@ -4295,8 +4355,12 @@ function AppInner() {
         if (result.error.code === "CANCELLED") return;
         throw new LibraryOperationError(result.error);
       }
-      if ("importId" in result.value) {
+      if (isImportConflictPlan(result.value)) {
         presentImportConflicts(result.value);
+        return;
+      }
+      if (isImageSequenceImportOffer(result.value)) {
+        setImageSequenceImportOffer(result.value);
         return;
       }
       setNotice(importSummaryMessage(result.value, locale));
@@ -4307,6 +4371,45 @@ function AppInner() {
         toMessage(caught, t("toast.importFailed"), locale),
       );
     } finally {
+      setUiState("ready");
+    }
+  }
+
+  async function confirmImageSequenceImportOffer(input: {
+    action: "import-sequence" | "import-selected";
+    firstFrame: number;
+    fps: number;
+    lastFrame: number;
+    sequenceIndex: number;
+  }) {
+    if (!api || !library || !imageSequenceImportOffer) return;
+    setImageSequenceImportSubmitting(true);
+    setImageSequenceImportError(null);
+    setUiState("importing");
+    try {
+      const result = await api.confirmImageSequenceImport({
+        libraryId: library.libraryId,
+        offerId: imageSequenceImportOffer.offerId!,
+        action: input.action,
+        sequenceIndex: input.sequenceIndex,
+        firstFrame: input.firstFrame,
+        lastFrame: input.lastFrame,
+        fps: input.fps,
+      });
+      if (!result.ok) throw new LibraryOperationError(result.error);
+      setImageSequenceImportOffer(null);
+      if (isImportConflictPlan(result.value)) {
+        presentImportConflicts(result.value);
+        return;
+      }
+      setNotice(importSummaryMessage(result.value, locale));
+      await revealAfterImport(result.value);
+    } catch (caught) {
+      setImageSequenceImportError(
+        toMessage(caught, t("toast.importFailed"), locale),
+      );
+    } finally {
+      setImageSequenceImportSubmitting(false);
       setUiState("ready");
     }
   }
@@ -7823,6 +7926,28 @@ function AppInner() {
                                   asset.thumbnailArtifactId,
                                 )
                               : null;
+                          if (isCardSequencePlayable(asset) && library) {
+                            const sequenceActive =
+                              hoveredAssetId === asset.assetId ||
+                              selectedAssetId === asset.assetId;
+                            if (
+                              thumbCover ||
+                              asset.sequence?.frames.some(
+                                (frame) => frame.thumbnailArtifactId,
+                              )
+                            ) {
+                              return (
+                                <AssetCardMedia
+                                  alt={asset.displayName}
+                                  coverUrl={thumbCover}
+                                  isActive={sequenceActive}
+                                  libraryId={library.libraryId}
+                                  preview={null}
+                                  sequence={asset.sequence}
+                                />
+                              );
+                            }
+                          }
                           const cardActive =
                             activePreviewAssetId === asset.assetId;
                           if (isCardHoverPreviewable(asset)) {
@@ -7839,7 +7964,6 @@ function AppInner() {
                                   preview={
                                     cardActive ? activeResolution : null
                                   }
-                                  sequence={asset.sequence}
                                 />
                               );
                             }
@@ -7943,7 +8067,11 @@ function AppInner() {
                         )}
                         {asset.sequence && (
                           <span className="asset-duration-badge asset-sequence-badge">
-                            {asset.sequence.frameCount}F · {asset.sequence.fps} FPS
+                            {asset.sequence.frameCount}F · {asset.sequence.fps} FPS ·{" "}
+                            {formatSequenceDuration(
+                              asset.sequence.frameCount,
+                              asset.sequence.fps,
+                            )}
                           </span>
                         )}
                         {showTypeBadge && typeBadge && (
@@ -8190,18 +8318,40 @@ function AppInner() {
         versionConflict={versionConflict}
       />
       <ImageSequenceDialog
-        count={imageSequenceDialog?.assetIds.length ?? 0}
+        count={
+          imageSequenceDialog?.mode === "update"
+            ? imageSequenceDialog.frameCount ?? 0
+            : imageSequenceDialog?.assetIds.length ?? 0
+        }
         error={imageSequenceDialog?.error}
-        fps={imageSequenceDialog?.fps ?? 24}
+        fps={imageSequenceDialog?.fps ?? DEFAULT_IMAGE_SEQUENCE_FPS}
+        mode={imageSequenceDialog?.mode}
         onCancel={() => setImageSequenceDialog(null)}
         onFpsChange={(fps) =>
           setImageSequenceDialog((current) =>
             current ? { ...current, fps, error: null } : current,
           )
         }
-        onSubmit={() => void createSelectedImageSequence()}
+        onSubmit={() =>
+          void (
+            imageSequenceDialog?.mode === "update"
+              ? updateImageSequenceFps()
+              : createSelectedImageSequence()
+          )
+        }
         open={imageSequenceDialog !== null}
         submitting={imageSequenceDialog?.submitting}
+      />
+      <ImageSequenceImportDialog
+        error={imageSequenceImportError}
+        offer={imageSequenceImportOffer}
+        onCancel={() => {
+          setImageSequenceImportOffer(null);
+          setImageSequenceImportError(null);
+        }}
+        onConfirm={(input) => void confirmImageSequenceImportOffer(input)}
+        open={imageSequenceImportOffer !== null}
+        submitting={imageSequenceImportSubmitting}
       />
       {linkedRulesEditor && (
         <LinkedRulesDialog
@@ -8767,11 +8917,23 @@ function AppInner() {
         onCreateImageSequence={(assetIds) =>
           setImageSequenceDialog({
             assetIds: [...assetIds],
-            fps: 24,
+            mode: "create",
+            fps: DEFAULT_IMAGE_SEQUENCE_FPS,
             submitting: false,
             error: null,
           })
         }
+        onSetImageSequenceFps={(sequenceId, frameCount, fps) => {
+          setImageSequenceDialog({
+            assetIds: [],
+            mode: "update",
+            sequenceId,
+            frameCount,
+            fps,
+            submitting: false,
+            error: null,
+          });
+        }}
         onDissolveImageSequence={(sequenceId) => {
           void dissolveSelectedImageSequence(sequenceId);
         }}

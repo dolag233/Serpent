@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -54,6 +54,8 @@ describe("image sequence persistence", () => {
       libraryId: library.libraryId,
       sourceKind: "files",
       sourcePaths: [frames[1]!],
+      expandImageSequences: true,
+      imageSequenceFps: 30,
     });
 
     expect("importId" in completion).toBe(false);
@@ -64,8 +66,9 @@ describe("image sequence persistence", () => {
       recursive: true,
     });
     expect(assets).toHaveLength(1);
+    expect(assets[0]!.displayName).toBe("shot_001~003");
     expect(assets[0]!.sequence).toMatchObject({
-      fps: 24,
+      fps: 30,
       frameCount: 3,
       frames: [
         { frameNumber: 1, displayName: "shot_001.png" },
@@ -73,6 +76,85 @@ describe("image sequence persistence", () => {
         { frameNumber: 3, displayName: "shot_003.png" },
       ],
     });
+  });
+
+  it("does not flag identical-byte sequence frames as content duplicates", () => {
+    const { library, root, service } = fixture();
+    const source = path.join(root, "source");
+    mkdirSync(source, { recursive: true });
+    const bytes = Buffer.from("same-particle-frame");
+    const frames = ["spark_000.png", "spark_001.png", "spark_002.png"].map(
+      (name) => {
+        const filePath = path.join(source, name);
+        writeFileSync(filePath, bytes);
+        return filePath;
+      },
+    );
+
+    const completion = service.prepareOrExecuteImport({
+      libraryId: library.libraryId,
+      sourceKind: "files",
+      sourcePaths: frames,
+      expandImageSequences: false,
+      imageSequenceFps: 30,
+    });
+    expect("importId" in completion).toBe(false);
+    if ("importId" in completion) return;
+    expect(completion.importedCount).toBe(3);
+    const assets = service.listAssets({
+      libraryId: library.libraryId,
+      recursive: true,
+    });
+    expect(assets).toHaveLength(1);
+    expect(assets[0]!.sequence?.frameCount).toBe(3);
+  });
+
+  it("trashes a sequence as one visible trash card and restores the group", () => {
+    const { library, root, service } = fixture();
+    const frames = writeFrames(path.join(root, "source"), [
+      "clip_001.png",
+      "clip_002.png",
+      "clip_003.png",
+    ]);
+    const completion = service.prepareOrExecuteImport({
+      libraryId: library.libraryId,
+      sourceKind: "files",
+      sourcePaths: frames,
+      expandImageSequences: false,
+      imageSequenceFps: 30,
+    });
+    expect("importId" in completion).toBe(false);
+    if ("importId" in completion) return;
+    const [primary] = service.listAssets({
+      libraryId: library.libraryId,
+      recursive: true,
+    });
+    expect(primary?.sequence?.frameCount).toBe(3);
+
+    service.trashAssets({
+      libraryId: library.libraryId,
+      assetIds: [primary!.assetId],
+    });
+    expect(
+      service
+        .listAssets({ libraryId: library.libraryId, recursive: true })
+        .filter((asset) => !asset.deletedAt),
+    ).toHaveLength(0);
+    const trash = service.listTrash(library.libraryId);
+    expect(trash).toHaveLength(1);
+    expect(trash[0]!.sequence?.frameCount).toBe(3);
+    expect(trash[0]!.displayName).toBe("clip_001~003");
+
+    service.restoreAssets({
+      libraryId: library.libraryId,
+      assetIds: [trash[0]!.assetId],
+    });
+    expect(service.listTrash(library.libraryId)).toHaveLength(0);
+    const restored = service
+      .listAssets({ libraryId: library.libraryId, recursive: true })
+      .filter((asset) => !asset.deletedAt);
+    expect(restored).toHaveLength(1);
+    expect(restored[0]!.sequence?.frameCount).toBe(3);
   });
 
   it("splits folder-import gaps into separate visible sequence cards", () => {
@@ -176,6 +258,45 @@ describe("image sequence persistence", () => {
     })).toHaveLength(3);
   });
 
+  it("reports total sequence bytes and updates playback FPS", () => {
+    const { library, root, service } = fixture();
+    const frames = writeFrames(path.join(root, "source"), [
+      "clip_001.png",
+      "clip_002.png",
+      "clip_003.png",
+    ]);
+    const completion = service.prepareOrExecuteImport({
+      libraryId: library.libraryId,
+      sourceKind: "files",
+      sourcePaths: frames,
+      expandImageSequences: false,
+      imageSequenceFps: 30,
+    });
+    expect("importId" in completion).toBe(false);
+    if ("importId" in completion) return;
+
+    const [primary] = service.listAssets({
+      libraryId: library.libraryId,
+      recursive: true,
+    });
+    expect(primary).toBeDefined();
+    expect(primary!.byteSize).toBe(
+      frames.reduce((total, frame) => total + statSync(frame).size, 0),
+    );
+
+    expect(
+      service.setImageSequenceFps({
+        libraryId: library.libraryId,
+        sequenceId: primary!.sequence!.sequenceId,
+        fps: 13,
+      }),
+    ).toEqual({ sequenceId: primary!.sequence!.sequenceId, fps: 13 });
+    expect(
+      service.listAssets({ libraryId: library.libraryId, recursive: true })[0]!
+        .sequence!.fps,
+    ).toBe(13);
+  });
+
   it("rejects manual non-consecutive selections", () => {
     const { library, root, service } = fixture();
     const frames = writeFrames(path.join(root, "source"), [
@@ -199,5 +320,78 @@ describe("image sequence persistence", () => {
       assetIds: assets.map((asset) => asset.assetId),
       fps: 24,
     })).toThrowError(LibraryServiceError);
+  });
+
+  it("disk-deletes an entire sequence without leaking remaining frames", () => {
+    const { library, root, service } = fixture();
+    const frames = writeFrames(path.join(root, "source"), [
+      "shot_001.png",
+      "shot_002.png",
+      "shot_003.png",
+    ]);
+    const completion = service.prepareOrExecuteImport({
+      libraryId: library.libraryId,
+      sourceKind: "files",
+      sourcePaths: frames,
+      expandImageSequences: false,
+      imageSequenceFps: 30,
+    });
+    expect("importId" in completion).toBe(false);
+    if ("importId" in completion) return;
+    const [primary] = service.listAssets({
+      libraryId: library.libraryId,
+      recursive: true,
+    });
+    expect(primary?.sequence?.frameCount).toBe(3);
+
+    const result = service.deleteAssetsFromDisk({
+      libraryId: library.libraryId,
+      assetIds: [primary!.assetId],
+    });
+    expect(result.deletedCount).toBe(1);
+    expect(
+      service.listAssets({ libraryId: library.libraryId, recursive: true }),
+    ).toHaveLength(0);
+  });
+
+  it("counts a trashed sequence as one toast unit and folder badge as one", () => {
+    const { library, root, service } = fixture();
+    const folder = service.createManagedFolder({
+      libraryId: library.libraryId,
+      name: "seq-folder",
+    });
+    const frames = writeFrames(path.join(root, "source"), [
+      "clip_001.png",
+      "clip_002.png",
+      "clip_003.png",
+    ]);
+    const completion = service.prepareOrExecuteImport({
+      libraryId: library.libraryId,
+      sourceKind: "files",
+      sourcePaths: frames,
+      targetFolderId: folder.folderId,
+      expandImageSequences: false,
+      imageSequenceFps: 30,
+    });
+    expect("importId" in completion).toBe(false);
+    if ("importId" in completion) return;
+
+    const folders = service.listManagedFolders(library.libraryId);
+    const seqFolder = folders.find((entry) => entry.folderId === folder.folderId);
+    expect(seqFolder?.directAssetCount).toBe(1);
+
+    const [primary] = service.listAssets({
+      libraryId: library.libraryId,
+      folderId: folder.folderId,
+      recursive: false,
+    });
+    const { trashedCount } = service.trashAssets({
+      libraryId: library.libraryId,
+      assetIds: [primary!.assetId],
+    });
+    expect(trashedCount).toBe(1);
+    const trash = service.listTrash(library.libraryId);
+    expect(trash).toHaveLength(1);
+    expect(trash[0]!.sequence?.frameCount).toBe(3);
   });
 });

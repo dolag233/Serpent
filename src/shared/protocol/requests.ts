@@ -239,6 +239,12 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     sequenceId: identifierSchema,
   }),
   z.strictObject({
+    type: z.literal('asset.sequence.set-fps.request'),
+    libraryId: identifierSchema,
+    sequenceId: identifierSchema,
+    fps: z.number().min(1).max(240),
+  }),
+  z.strictObject({
     type: z.literal('asset.import-files.request'),
     libraryId: identifierSchema,
     targetFolderId: optionalIdentifierSchema,
@@ -257,10 +263,29 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     targetFolderId: optionalIdentifierSchema,
     targetCollectionId: optionalIdentifierSchema,
     sourcePaths: z.array(selectedPathSchema).min(1).max(1_000),
+    imageSequenceDecision: z
+      .strictObject({
+        action: z.enum(['import-sequence', 'import-selected']),
+        firstFrame: z.number().int().nonnegative().optional(),
+        fps: z.number().int().min(1).max(240).optional(),
+        lastFrame: z.number().int().nonnegative().optional(),
+        sequenceIndex: z.number().int().nonnegative().optional(),
+      })
+      .optional(),
   }),
   z.strictObject({
     type: z.literal('asset.import-drop-invalid.report'),
     libraryId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('asset.import-sequence.confirm'),
+    libraryId: identifierSchema,
+    offerId: identifierSchema,
+    action: z.enum(['import-sequence', 'import-selected']),
+    sequenceIndex: z.number().int().nonnegative().optional(),
+    firstFrame: z.number().int().nonnegative().optional(),
+    lastFrame: z.number().int().nonnegative().optional(),
+    fps: z.number().int().min(1).max(240).optional(),
   }),
   z.strictObject({
     type: z.literal('asset.import-web.request'),
@@ -994,11 +1019,27 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     sequenceId: identifierSchema,
   }),
   z.strictObject({
+    type: z.literal('asset.sequence.set-fps'),
+    libraryId: identifierSchema,
+    sequenceId: identifierSchema,
+    fps: z.number().min(1).max(240),
+  }),
+  z.strictObject({
+    type: z.literal('asset.import.probe-sequences'),
+    libraryId: identifierSchema,
+    targetFolderId: optionalIdentifierSchema,
+    targetCollectionId: optionalIdentifierSchema,
+    sourcePaths: z.array(selectedPathSchema).min(1).max(1_000),
+  }),
+  z.strictObject({
     type: z.literal('asset.import.prepare'),
     libraryId: identifierSchema,
     targetFolderId: optionalIdentifierSchema,
     sourceKind: z.enum(['files', 'folder']),
     sourcePaths: z.array(selectedPathSchema).min(1),
+    imageSequenceFps: z.number().int().min(1).max(240).optional(),
+    /** When true, expand single selected frames to continuous sibling runs. */
+    expandImageSequences: z.boolean().optional(),
   }),
   z.strictObject({
     type: z.literal('asset.import.resolve'),

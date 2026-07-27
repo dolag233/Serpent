@@ -94,8 +94,17 @@ test("auto-detects, manually rebuilds, persists, plays, rotates and mirrors an i
     );
     await expect(primaryCard).toBeVisible({ timeout: 30_000 });
     await expect(window.locator(".asset-card")).toHaveCount(1);
-    await expect(primaryCard.getByText("3F · 24 FPS", { exact: true })).toBeVisible();
+    await expect(primaryCard.getByText("3F · 30 FPS · 0.10s", { exact: true })).toBeVisible();
     await expectDecodedImage(primaryCard.locator('img[alt="motion_000.png"]'));
+
+    const browseCanvas = window.locator(".workspace-canvas");
+    const browseCanvasBox = await browseCanvas.boundingBox();
+    if (!browseCanvasBox) throw new Error("Browse canvas is not measurable.");
+    await window.mouse.click(
+      browseCanvasBox.x + browseCanvasBox.width - 8,
+      browseCanvasBox.y + browseCanvasBox.height - 8,
+    );
+    await expect(window.locator(".asset-card.is-selected")).toHaveCount(0);
 
     // Dissolving restores the three independent frame assets.
     await primaryCard.click({ button: "right" });
@@ -124,7 +133,14 @@ test("auto-detects, manually rebuilds, persists, plays, rotates and mirrors an i
       .click();
 
     await expect(window.locator(".asset-card")).toHaveCount(1);
-    await expect(primaryCard.getByText("3F · 13 FPS", { exact: true })).toBeVisible();
+    await expect(primaryCard.getByText("3F · 13 FPS · 0.23s", { exact: true })).toBeVisible();
+    await primaryCard.click({ button: "right" });
+    await window.getByRole("menuitem", { name: "设置序列帧率…" }).click();
+    const fpsDialog = window.getByRole("dialog", { name: "设置序列帧率" });
+    await expect(fpsDialog).toBeVisible();
+    await fpsDialog.getByLabel("帧率（FPS）").fill("17");
+    await fpsDialog.getByRole("button", { name: "保存帧率", exact: true }).click();
+    await expect(primaryCard.getByText("3F · 17 FPS · 0.18s", { exact: true })).toBeVisible();
     await primaryCard.click();
     await expect(window.locator(".inspector-hero-stack")).toHaveAttribute(
       "data-layer-count",
@@ -140,7 +156,7 @@ test("auto-detects, manually rebuilds, persists, plays, rotates and mirrors an i
       name: "motion_000.png 查看页面",
     });
     await expect(viewer).toBeVisible();
-    await expect(viewer.getByText("1 / 3 · 13 FPS", { exact: true })).toBeVisible();
+    await expect(viewer.getByText("1 / 3 · 17 FPS", { exact: true })).toBeVisible();
     const previewImage = viewer.locator("img.preview-image");
     await expectDecodedImage(previewImage);
     await expect(window.getByRole("button", { name: "暂停序列" })).toBeVisible();
@@ -214,7 +230,7 @@ test("auto-detects, manually rebuilds, persists, plays, rotates and mirrors an i
     );
     await expect(restoredCard).toBeVisible({ timeout: 30_000 });
     await expect(window.locator(".asset-card")).toHaveCount(1);
-    await expect(restoredCard.getByText("3F · 13 FPS", { exact: true })).toBeVisible();
+    await expect(restoredCard.getByText("3F · 17 FPS · 0.18s", { exact: true })).toBeVisible();
   } finally {
     if (application) await application.close().catch(() => undefined);
     rmSync(temporaryRoot, { force: true, recursive: true });

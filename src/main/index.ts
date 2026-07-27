@@ -1,5 +1,6 @@
 import path from "node:path";
 import { tmpdir } from "node:os";
+import { randomUUID } from "node:crypto";
 import {
   readFileSync,
   writeFileSync,
@@ -108,6 +109,7 @@ import {
   type AiProgressEvent,
   type AiAnalysisCompletedEvent,
   type AiContentClearedEvent,
+  type ImageSequenceImportOffer,
   parseAiProgressEvent,
   parseAiAnalysisCompletedEvent,
   parseAiContentClearedEvent,
@@ -265,6 +267,47 @@ const pendingImportLibraries = new Map<string, string>();
 // Pending drop/paste collection destinations survive the conflict dialog. The
 // actual import is already durable in Worker staging before Main stores this.
 const pendingImportCollections = new Map<string, string>();
+
+type StoredImageSequenceOffer = ImageSequenceImportOffer;
+
+const pendingImageSequenceOffers = new Map<
+  string,
+  { offer: StoredImageSequenceOffer; expiresAt: number }
+>();
+
+function rememberImageSequenceOffer(
+  offer: StoredImageSequenceOffer,
+): StoredImageSequenceOffer {
+  const offerId = randomUUID();
+  pendingImageSequenceOffers.set(offerId, {
+    offer,
+    expiresAt: Date.now() + 10 * 60_000,
+  });
+  for (const [id, entry] of pendingImageSequenceOffers) {
+    if (entry.expiresAt <= Date.now()) pendingImageSequenceOffers.delete(id);
+  }
+  return {
+    defaultFps: offer.defaultFps,
+    libraryId: offer.libraryId,
+    offerId,
+    sequences: offer.sequences.map((sequence) => ({
+      displayName: sequence.displayName,
+      extension: sequence.extension,
+      firstFrame: sequence.firstFrame,
+      frameCount: sequence.frameCount,
+      height: sequence.height,
+      lastFrame: sequence.lastFrame,
+      numberStyle: sequence.numberStyle,
+      numericWidth: sequence.numericWidth,
+      prefix: sequence.prefix,
+      width: sequence.width,
+    })),
+    ...(offer.targetFolderId ? { targetFolderId: offer.targetFolderId } : {}),
+    ...(offer.targetCollectionId
+      ? { targetCollectionId: offer.targetCollectionId }
+      : {}),
+  };
+}
 
 // ── AI Config ────────────────────────────────────────────────────────────
 
@@ -1305,8 +1348,14 @@ async function commandFor(
             type: "asset.import.prepare",
             libraryId: request.libraryId,
             targetFolderId: request.targetFolderId,
-            sourceKind: "files",
+            sourceKind: "files" as const,
             sourcePaths,
+            expandImageSequences:
+              !app.isPackaged && process.env.SERPENT_E2E === "1",
+            imageSequenceFps:
+              !app.isPackaged && process.env.SERPENT_E2E === "1"
+                ? 30
+                : undefined,
           }
         : undefined;
     }
@@ -1325,6 +1374,9 @@ async function commandFor(
     case "asset.import-drop.request":
       // Classified in handleLibraryRequest because classification failures need
       // a renderer-safe, specific public error instead of an INTERNAL_ERROR.
+      return undefined;
+    case "asset.import-sequence.confirm":
+      // Resolved against Main-held offer paths in handleLibraryRequest.
       return undefined;
     case "asset.import-drop-invalid.report":
       return undefined;
@@ -1636,6 +1688,13 @@ async function commandFor(
         type: "asset.sequence.dissolve",
         libraryId: request.libraryId,
         sequenceId: request.sequenceId,
+      };
+    case "asset.sequence.set-fps.request":
+      return {
+        type: "asset.sequence.set-fps",
+        libraryId: request.libraryId,
+        sequenceId: request.sequenceId,
+        fps: request.fps,
       };
     case "asset.restore.request":
       return {
@@ -2596,13 +2655,174 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
               ),
         } satisfies RendererResult;
       }
-      command = {
-        type: "asset.import.prepare",
-        libraryId: request.libraryId,
-        targetFolderId: request.targetFolderId,
-        sourceKind,
-        sourcePaths: request.sourcePaths,
-      };
+      const e2eAutoExpand =
+        !app.isPackaged && process.env.SERPENT_E2E === "1";
+      if (
+        sourceKind === "files" &&
+        !request.imageSequenceDecision &&
+        !e2eAutoExpand
+      ) {
+        if (!workerClient) throw new Error("Library Worker is unavailable.");
+        const probeResult = await workerClient.request({
+          type: "asset.import.probe-sequences",
+          libraryId: request.libraryId,
+          targetFolderId: request.targetFolderId,
+          targetCollectionId: request.targetCollectionId,
+          sourcePaths: request.sourcePaths,
+        });
+        if (!probeResult.ok) {
+          return {
+            ok: false,
+            error: probeResult.error,
+          } satisfies RendererResult;
+        }
+        if (
+          probeResult.type === "asset.import.sequence-offer" &&
+          probeResult.offer.sequences.length > 0
+        ) {
+          return {
+            ok: true,
+            type: "asset.import.sequence-offer",
+            offer: rememberImageSequenceOffer(probeResult.offer),
+          } satisfies RendererResult;
+        }
+        command = {
+          type: "asset.import.prepare",
+          libraryId: request.libraryId,
+          targetFolderId: request.targetFolderId,
+          sourceKind,
+          sourcePaths: request.sourcePaths,
+          expandImageSequences: false,
+        };
+      } else if (
+        sourceKind === "files" &&
+        request.imageSequenceDecision?.action === "import-sequence"
+      ) {
+        if (!workerClient) throw new Error("Library Worker is unavailable.");
+        const probeResult = await workerClient.request({
+          type: "asset.import.probe-sequences",
+          libraryId: request.libraryId,
+          targetFolderId: request.targetFolderId,
+          targetCollectionId: request.targetCollectionId,
+          sourcePaths: request.sourcePaths,
+        });
+        if (!probeResult.ok) {
+          return {
+            ok: false,
+            error: probeResult.error,
+          } satisfies RendererResult;
+        }
+        if (
+          probeResult.type !== "asset.import.sequence-offer" ||
+          probeResult.offer.sequences.length === 0
+        ) {
+          command = {
+            type: "asset.import.prepare",
+            libraryId: request.libraryId,
+            targetFolderId: request.targetFolderId,
+            sourceKind,
+            sourcePaths: request.sourcePaths,
+            expandImageSequences: false,
+          };
+        } else {
+          const sequenceIndex = request.imageSequenceDecision.sequenceIndex ?? 0;
+          const sequence =
+            probeResult.offer.sequences[sequenceIndex] ??
+            probeResult.offer.sequences[0]!;
+          const firstFrame =
+            request.imageSequenceDecision.firstFrame ?? sequence.firstFrame;
+          const lastFrame =
+            request.imageSequenceDecision.lastFrame ?? sequence.lastFrame;
+          const rangedPaths: string[] = [];
+          const framePaths = sequence.framePaths ?? [];
+          for (let index = 0; index < framePaths.length; index += 1) {
+            const frameNumber = sequence.firstFrame + index;
+            if (frameNumber < firstFrame || frameNumber > lastFrame) continue;
+            rangedPaths.push(framePaths[index]!);
+          }
+          command = {
+            type: "asset.import.prepare",
+            libraryId: request.libraryId,
+            targetFolderId: request.targetFolderId,
+            sourceKind: "files",
+            sourcePaths: rangedPaths.length >= 3 ? rangedPaths : framePaths,
+            expandImageSequences: false,
+            imageSequenceFps:
+              request.imageSequenceDecision.fps ??
+              probeResult.offer.defaultFps,
+          };
+        }
+      } else {
+        command = {
+          type: "asset.import.prepare",
+          libraryId: request.libraryId,
+          targetFolderId: request.targetFolderId,
+          sourceKind,
+          sourcePaths: request.sourcePaths,
+          expandImageSequences: e2eAutoExpand && sourceKind === "files",
+          imageSequenceFps: e2eAutoExpand ? 30 : undefined,
+        };
+      }
+    } else if (request.type === "asset.import-sequence.confirm") {
+      const pending = pendingImageSequenceOffers.get(request.offerId);
+      if (!pending || pending.expiresAt <= Date.now()) {
+        pendingImageSequenceOffers.delete(request.offerId);
+        return {
+          ok: false,
+          error: createPublicError("IMPORT_NOT_FOUND"),
+        } satisfies RendererResult;
+      }
+      if (pending.offer.libraryId !== request.libraryId) {
+        return {
+          ok: false,
+          error: createPublicError("IMPORT_NOT_FOUND"),
+        } satisfies RendererResult;
+      }
+      pendingImageSequenceOffers.delete(request.offerId);
+      const stored = pending.offer;
+      if (request.action === "import-selected") {
+        command = {
+          type: "asset.import.prepare",
+          libraryId: request.libraryId,
+          targetFolderId: stored.targetFolderId,
+          sourceKind: "files",
+          sourcePaths: stored.selectedPaths ?? [],
+          expandImageSequences: false,
+        };
+      } else {
+        const sequenceIndex = request.sequenceIndex ?? 0;
+        const sequence =
+          stored.sequences[sequenceIndex] ?? stored.sequences[0];
+        if (!sequence?.framePaths || sequence.framePaths.length < 3) {
+          command = {
+            type: "asset.import.prepare",
+            libraryId: request.libraryId,
+            targetFolderId: stored.targetFolderId,
+            sourceKind: "files",
+            sourcePaths: stored.selectedPaths ?? [],
+            expandImageSequences: false,
+          };
+        } else {
+          const firstFrame = request.firstFrame ?? sequence.firstFrame;
+          const lastFrame = request.lastFrame ?? sequence.lastFrame;
+          const rangedPaths: string[] = [];
+          for (let index = 0; index < sequence.framePaths.length; index += 1) {
+            const frameNumber = sequence.firstFrame + index;
+            if (frameNumber < firstFrame || frameNumber > lastFrame) continue;
+            rangedPaths.push(sequence.framePaths[index]!);
+          }
+          command = {
+            type: "asset.import.prepare",
+            libraryId: request.libraryId,
+            targetFolderId: stored.targetFolderId,
+            sourceKind: "files",
+            sourcePaths:
+              rangedPaths.length >= 3 ? rangedPaths : sequence.framePaths,
+            expandImageSequences: false,
+            imageSequenceFps: request.fps ?? stored.defaultFps,
+          };
+        }
+      }
     } else if (request.type === "asset.import-clipboard.request") {
       let image;
       try {
@@ -2695,6 +2915,41 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
       command = await commandFor(request);
     }
     if (!command) return cancelled();
+    if (
+      command.type === "asset.import.prepare" &&
+      command.sourceKind === "files" &&
+      command.expandImageSequences !== true &&
+      request.type !== "asset.import-drop.request" &&
+      request.type !== "asset.import-sequence.confirm" &&
+      !(
+        !app.isPackaged &&
+        process.env.SERPENT_E2E === "1"
+      )
+    ) {
+      if (!workerClient) throw new Error("Library Worker is unavailable.");
+      const probeResult = await workerClient.request({
+        type: "asset.import.probe-sequences",
+        libraryId: command.libraryId,
+        targetFolderId: command.targetFolderId,
+        sourcePaths: command.sourcePaths,
+      });
+      if (!probeResult.ok) {
+        return {
+          ok: false,
+          error: probeResult.error,
+        } satisfies RendererResult;
+      }
+      if (
+        probeResult.type === "asset.import.sequence-offer" &&
+        probeResult.offer.sequences.length > 0
+      ) {
+        return {
+          ok: true,
+          type: "asset.import.sequence-offer",
+          offer: rememberImageSequenceOffer(probeResult.offer),
+        } satisfies RendererResult;
+      }
+    }
     if (
       (request.type === "asset.relink-batch.request" ||
         request.type === "asset.relink-batch.preview-at-root.request") &&

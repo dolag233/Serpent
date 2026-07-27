@@ -80,6 +80,40 @@ export const importCompletionSchema = z.strictObject({
 
 export type ImportCompletion = z.infer<typeof importCompletionSchema>;
 
+export const imageSequenceImportCandidateSchema = z.strictObject({
+  displayName: safeDisplayName,
+  extension: nonBlankString.max(16),
+  firstFrame: z.number().int().nonnegative(),
+  /** Absolute paths — Worker/Main only; stripped before Renderer. */
+  framePaths: z.array(nonBlankString).max(100_000).optional(),
+  frameCount: z.number().int().min(3).max(100_000),
+  height: z.number().int().positive().nullable(),
+  lastFrame: z.number().int().nonnegative(),
+  numberStyle: z.enum(['trailing', 'parens']),
+  numericWidth: z.number().int().nonnegative(),
+  prefix: z.string().max(1024),
+  width: z.number().int().positive().nullable(),
+});
+
+export type ImageSequenceImportCandidate = z.infer<
+  typeof imageSequenceImportCandidateSchema
+>;
+
+export const imageSequenceImportOfferSchema = z.strictObject({
+  defaultFps: z.number().int().min(1).max(240),
+  libraryId: nonBlankString,
+  /** Opaque Main-side handle; Renderer confirms with this id, not paths. */
+  offerId: nonBlankString.optional(),
+  selectedPaths: z.array(nonBlankString).min(1).max(1_000).optional(),
+  sequences: z.array(imageSequenceImportCandidateSchema).max(64),
+  targetCollectionId: nonBlankString.optional(),
+  targetFolderId: nonBlankString.optional(),
+});
+
+export type ImageSequenceImportOffer = z.infer<
+  typeof imageSequenceImportOfferSchema
+>;
+
 export const exportProgressEventSchema = z.strictObject({
   type: z.literal('export.progress'),
   exportId: nonBlankString,
@@ -403,8 +437,19 @@ const assetOperationSuccessSchemas = [
   }),
   z.strictObject({
     ok: z.literal(true),
+    type: z.literal('asset.sequence.fps-updated'),
+    sequenceId: nonBlankString,
+    fps: z.number().min(1).max(240),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
     type: z.literal('asset.import.conflicts'),
     plan: importConflictPlanSchema,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('asset.import.sequence-offer'),
+    offer: imageSequenceImportOfferSchema,
   }),
   z.strictObject({
     ok: z.literal(true),

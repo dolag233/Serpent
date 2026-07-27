@@ -26,13 +26,22 @@ describe("isCardHoverPreviewable", () => {
     ).toBe(true);
   });
 
-  it("rejects static images and unavailable assets", () => {
+  it("rejects static images, sequences, and unavailable assets", () => {
     expect(
       isCardHoverPreviewable({
         mediaType: "image",
         displayName: "still.jpg",
         availability: "available",
         deletedAt: null,
+      }),
+    ).toBe(false);
+    expect(
+      isCardHoverPreviewable({
+        mediaType: "image",
+        displayName: "clip_001.png",
+        availability: "available",
+        deletedAt: null,
+        sequence: { frameCount: 12 },
       }),
     ).toBe(false);
     expect(

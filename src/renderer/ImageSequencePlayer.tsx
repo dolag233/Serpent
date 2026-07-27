@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import type { ImageSequenceSummary } from "../shared/asset-types";
 import type { SerpentLibraryApi } from "../shared/library-api";
@@ -6,6 +6,7 @@ import { coverSrc } from "./asset-card-hover-preview";
 import { iconActionAttrs } from "./icon-action-attrs";
 import { Icon } from "./Icons";
 import { useT } from "./i18n";
+import { SequenceFrameCanvas } from "./SequenceFrameCanvas";
 import type { ViewerDisplayTransform } from "./viewer-display-transform";
 import { ZoomableImage } from "./zoomable-preview-image";
 
@@ -20,6 +21,11 @@ export interface ImageSequencePlayerProps {
   sequence: ImageSequenceSummary;
 }
 
+/**
+ * Sequence viewer: play from decoded thumbnails on a canvas. Pause/scrub may
+ * request client preview for the current frame. Space toggles playback
+ * (capture phase so it wins over parent keybinds).
+ */
 export function ImageSequencePlayer({
   api,
   displayTransform,
@@ -45,80 +51,100 @@ export function ImageSequencePlayer({
   );
   const [frameIndex, setFrameIndex] = useState(0);
   const [playing, setPlaying] = useState(true);
-  const lastTickRef = useRef<number | null>(null);
-
-  useEffect(() => {
-    for (const url of thumbnailUrls) {
-      if (!url) continue;
-      const image = new Image();
-      image.src = url;
-    }
-  }, [thumbnailUrls]);
 
   useEffect(() => {
     if (!playing) return;
-    let frame = 0;
-    const tick = (now: number) => {
-      const previous = lastTickRef.current ?? now;
-      const elapsed = now - previous;
-      const frameDuration = 1000 / sequence.fps;
-      if (elapsed >= frameDuration) {
-        const steps = Math.max(1, Math.floor(elapsed / frameDuration));
-        setFrameIndex((current) => (current + steps) % sequence.frames.length);
-        lastTickRef.current = now - (elapsed % frameDuration);
-      }
-      frame = requestAnimationFrame(tick);
-    };
-    lastTickRef.current = null;
-    frame = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(frame);
+    const timer = window.setInterval(
+      () =>
+        setFrameIndex((current) => (current + 1) % sequence.frames.length),
+      1000 / Math.max(1, sequence.fps),
+    );
+    return () => window.clearInterval(timer);
   }, [playing, sequence.fps, sequence.frames.length]);
 
   const currentFrame = sequence.frames[frameIndex]!;
+
   useEffect(() => {
-    if (playing && thumbnailUrls[frameIndex]) return;
+    if (playing) return;
     let cancelled = false;
-    void api.requestPreview({
-      libraryId,
-      assetId: currentFrame.assetId,
-      mode: "client",
-    }).then((result) => {
-      if (cancelled || !result.ok || !result.value.url) return;
-      setResolvedUrls((current) => {
-        const next = new Map(current);
-        next.set(currentFrame.assetId, result.value.url!);
-        return next;
+    void api
+      .requestPreview({
+        libraryId,
+        assetId: currentFrame.assetId,
+        mode: "client",
+      })
+      .then((result) => {
+        if (cancelled || !result.ok || !result.value.url) return;
+        setResolvedUrls((current) => {
+          if (current.has(currentFrame.assetId)) return current;
+          const next = new Map(current);
+          next.set(currentFrame.assetId, result.value.url!);
+          return next;
+        });
       });
-    });
     return () => {
       cancelled = true;
     };
-  }, [
-    api,
-    currentFrame.assetId,
-    frameIndex,
-    libraryId,
-    playing,
-    thumbnailUrls,
-  ]);
+  }, [api, currentFrame.assetId, libraryId, playing]);
 
-  const currentUrl =
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.repeat) return;
+      if (event.key !== " " && event.code !== "Space") return;
+      const target = event.target;
+      if (
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target instanceof HTMLSelectElement ||
+        (target instanceof HTMLElement && target.isContentEditable)
+      ) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      setPlaying((current) => !current);
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, []);
+
+  const pausedUrl =
     resolvedUrls.get(currentFrame.assetId) ??
     thumbnailUrls[frameIndex] ??
-    thumbnailUrls.find((url): url is string => Boolean(url));
+    thumbnailUrls.find((url): url is string => Boolean(url)) ??
+    null;
 
   return (
     <div className="preview-sequence-stage">
-      {currentUrl ? (
+      {playing ? (
+        <div className="preview-sequence-play-stage">
+          {thumbnailUrls.some(Boolean) ? (
+            <SequenceFrameCanvas
+              alt={currentFrame.displayName}
+              fallbackUrl={thumbnailUrls[0]}
+              frameIndex={frameIndex}
+              frames={sequence.frames}
+              libraryId={libraryId}
+            />
+          ) : (
+            <div
+              aria-busy="true"
+              className="preview-state is-silent"
+              role="status"
+            />
+          )}
+        </div>
+      ) : pausedUrl ? (
         <ZoomableImage
           alt={currentFrame.displayName}
           displayTransform={displayTransform}
+          fitKeybinds="f-only"
           isFullscreen={isFullscreen}
           onFullscreen={onFullscreen}
           onSwipeNext={onSwipeNext}
           onSwipePrevious={onSwipePrevious}
           placeholderSrc={thumbnailUrls[frameIndex] ?? undefined}
-          src={currentUrl}
+          src={pausedUrl}
         />
       ) : (
         <div aria-busy="true" className="preview-state is-silent" role="status" />

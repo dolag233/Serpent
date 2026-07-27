@@ -419,6 +419,7 @@ export const zhCN = {
   menu: {
     createImageSequence: "创建序列图…",
     dissolveImageSequence: "解散序列图",
+    setImageSequenceFps: "设置序列帧率…",
     batchAssetOps: "批量资产操作：{count} 项",
     assetOps: "资产操作：{name}",
     collectionOps: "合集操作：{name}",
@@ -585,10 +586,27 @@ export const zhCN = {
     imageSequence: {
       title: "创建序列图",
       summary: "将所选 {count} 张连续编号图片作为一个序列播放。",
+      updateTitle: "设置序列帧率",
+      updateSummary: "修改这套 {count} 帧序列的播放速度。",
       fps: "帧率（FPS）",
       help: "可设置 1–240 FPS。序列只改变 Serpent 中的浏览与播放方式，不会修改源图片。",
       create: "创建序列图",
-      creating: "正在创建…"
+      creating: "正在创建…",
+      update: "保存帧率",
+      updating: "正在保存…"
+    },
+    imageSequenceImport: {
+      title: "导入序列帧？",
+      summary: "检测到「{name}」（{count} 帧，{width}×{height}）。请确认导入范围与帧率。",
+      range: "帧范围",
+      rangeStart: "开始帧",
+      rangeEnd: "结束帧",
+      rangeCaption: "第 {first}–{last} 帧（共 {count} 帧）",
+      fps: "帧率（FPS）",
+      help: "默认 30 FPS。仅分辨率一致的帧会进入同一序列。",
+      importSelected: "只导入所选文件",
+      importSequence: "作为序列导入 {count} 帧",
+      importing: "正在导入…"
     },
     diskDelete: {
       title: "从硬盘中删除",

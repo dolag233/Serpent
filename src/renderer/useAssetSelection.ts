@@ -43,6 +43,8 @@ export interface UseAssetSelectionParams {
   selectedFolderIds?: string[];
   /** Setter for folder multi-select */
   setSelectedFolderIds?: React.Dispatch<React.SetStateAction<string[]>>;
+  /** Invoked after selection is cleared (blank click / Esc). */
+  onSelectionCleared?: () => void;
 }
 
 export interface UseAssetSelectionReturn {
@@ -89,6 +91,7 @@ export function useAssetSelection({
   masonryShiftSelection = false,
   selectedFolderIds = [],
   setSelectedFolderIds,
+  onSelectionCleared,
 }: UseAssetSelectionParams): UseAssetSelectionReturn {
   const selectionPlatform = useMemo(
     () => resolveSelectionPlatform(navigator.userAgent),
@@ -151,6 +154,7 @@ export function useAssetSelection({
       folderSelectionAnchorRef.current = null;
     }
     browseSelectionAnchorRef.current = null;
+    onSelectionCleared?.();
   }
 
   const assetIds = useMemo(

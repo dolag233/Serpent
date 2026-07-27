@@ -8,6 +8,7 @@ export interface ImageSequenceDialogProps {
   count: number;
   error?: string | null;
   fps: number;
+  mode?: "create" | "update";
   onCancel(): void;
   onFpsChange(fps: number): void;
   onSubmit(): void;
@@ -19,6 +20,7 @@ export function ImageSequenceDialog({
   count,
   error,
   fps,
+  mode = "create",
   onCancel,
   onFpsChange,
   onSubmit,
@@ -28,6 +30,7 @@ export function ImageSequenceDialog({
   const t = useT();
   if (!open) return null;
   const valid = Number.isFinite(fps) && fps >= 1 && fps <= 240;
+  const isUpdate = mode === "update";
 
   return (
     <div className="dialog-backdrop" role="presentation">
@@ -44,10 +47,19 @@ export function ImageSequenceDialog({
         <div className="dialog-heading">
           <div>
             <h2 id="image-sequence-dialog-title">
-              {t("dialog.imageSequence.title")}
+              {t(
+                isUpdate
+                  ? "dialog.imageSequence.updateTitle"
+                  : "dialog.imageSequence.title",
+              )}
             </h2>
             <p className="field-help">
-              {t("dialog.imageSequence.summary", { count })}
+              {t(
+                isUpdate
+                  ? "dialog.imageSequence.updateSummary"
+                  : "dialog.imageSequence.summary",
+                { count },
+              )}
             </p>
           </div>
           <button
@@ -92,8 +104,16 @@ export function ImageSequenceDialog({
             type="submit"
           >
             {submitting
-              ? t("dialog.imageSequence.creating")
-              : t("dialog.imageSequence.create")}
+              ? t(
+                  isUpdate
+                    ? "dialog.imageSequence.updating"
+                    : "dialog.imageSequence.creating",
+                )
+              : t(
+                  isUpdate
+                    ? "dialog.imageSequence.update"
+                    : "dialog.imageSequence.create",
+                )}
           </button>
         </div>
       </form>

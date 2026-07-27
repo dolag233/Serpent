@@ -11,8 +11,13 @@ import type { SerpentLibraryApi } from "../shared/library-api";
 import type {
   ImportCompletion,
   ImportConflictPlan,
+  ImageSequenceImportOffer,
   RendererLibrarySummary,
 } from "../shared/protocol/responses";
+import {
+  isImageSequenceImportOffer,
+  isImportConflictPlan,
+} from "../shared/import-outcome";
 import { LibraryOperationError, toMessage, shouldSuppressClipboardPasteFeedback } from "./error-utils";
 import {
   externalImportPayload,
@@ -41,6 +46,7 @@ export type UseExternalImportHandlersParams = {
   setError: (message: string | null) => void;
   setNotice: (message: string | null) => void;
   setConflicts: (plan: ImportConflictPlan | null) => void;
+  setImageSequenceImportOffer: (offer: ImageSequenceImportOffer | null) => void;
   onFoldersDroppedOnFolder?: (
     targetFolderId: string,
     folderIds: readonly string[],
@@ -65,6 +71,7 @@ export function useExternalImportHandlers({
   setError,
   setNotice,
   setConflicts,
+  setImageSequenceImportOffer,
   onFoldersDroppedOnFolder,
 }: UseExternalImportHandlersParams) {
   const t = useT();
@@ -96,14 +103,25 @@ export function useExternalImportHandlers({
         }
         throw new LibraryOperationError(result.error);
       }
-      if ("importId" in result.value) {
+      if (isImportConflictPlan(result.value)) {
         setConflicts(result.value);
+        return;
+      }
+      if (isImageSequenceImportOffer(result.value)) {
+        setImageSequenceImportOffer(result.value);
         return;
       }
       setNotice(importSummaryMessage(result.value, locale));
       await onImportCompleted(result.value);
     },
-    [locale, onImportCompleted, reloadCurrentContent, setConflicts, setNotice],
+    [
+      locale,
+      onImportCompleted,
+      reloadCurrentContent,
+      setConflicts,
+      setImageSequenceImportOffer,
+      setNotice,
+    ],
   );
 
   const importDroppedFiles = useCallback(
