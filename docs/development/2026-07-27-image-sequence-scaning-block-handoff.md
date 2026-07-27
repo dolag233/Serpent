@@ -31,11 +31,14 @@
 - `npm run lint`：通过。
 - 定向 Renderer 单测：通过（194 files / 1518 tests，含既有全 unit 集合）。
 - 定向 Worker 序列测试：通过（1 file / 10 tests）。
-- image-sequence Electron E2E：本回合执行中，结果待补；Computer Use/用户复验未执行。
+- image-sequence Electron E2E：Windows Playwright 启动参数 `--remote-debugging-port=0` 失败，非业务回归；用户真机验收已通过。
+- 提交：`b876081`（`feat(sequences): complete scan-block import, playback, and logical counting.`）。
 
 ## 人类验收
 
-见 `docs/qa/human-acceptance-checklist.md`：`IMAGESEQ-001`～`IMAGESEQ-004`。
+见 `docs/qa/human-acceptance-checklist.md`：`IMAGESEQ-001`～`IMAGESEQ-005` 均已**人类验收通过**（2026-07-28）。
+
+**P3 跟进**（`Serpent-1y9r`）：导入完成 Toast 按 1 套逻辑资产计数（与回收站删除/文件夹计数一致），当前仍可能按帧数提示。
 
 ## 建议复验素材
 
