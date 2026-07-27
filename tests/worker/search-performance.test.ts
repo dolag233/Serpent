@@ -6,7 +6,7 @@ import { performance } from 'node:perf_hooks';
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { LibraryService } from '../../src/worker/library-service';
+import { LibraryService, type AssetRefreshResult } from '../../src/worker/library-service';
 import { normalizeSearchText } from '../../src/worker/search-query';
 
 const ASSET_COUNT = 100_000;
@@ -36,6 +36,18 @@ interface PerformanceFixture {
 }
 
 let fixture: PerformanceFixture;
+
+class SearchPerfLibraryService extends LibraryService {
+  override refreshManagedAssets(libraryId: string): AssetRefreshResult {
+    // Seeded rows intentionally omit on-disk files; skip refresh so availability
+    // and search-index fixtures stay deterministic for the performance gate.
+    return {
+      changedCount: 0,
+      missingCount: 0,
+      assets: this.listAssets({ libraryId, recursive: true }),
+    };
+  }
+}
 
 function median(values: number[]): number {
   const sorted = [...values].sort((left, right) => left - right);
@@ -93,7 +105,7 @@ function seedAssets(libraryPath: string, folderId: string): void {
       const assetId = `perf-asset-${suffix}`;
       const revisionId = `perf-revision-${suffix}`;
       const extension = index % 2 === 0 ? 'png' : 'jpg';
-      const filename = `reference-${suffix}.${extension}`;
+      const filename = `perf-spec-${suffix}-x.${extension}`;
       const relativePath = `Performance/${filename}`;
       const description = index % 10 === 0
         ? `Needle concept ${suffix}`
@@ -145,7 +157,7 @@ function seedAssets(libraryPath: string, folderId: string): void {
 beforeAll(() => {
   const root = mkdtempSync(path.join(tmpdir(), 'serpent-search-performance-'));
   const noObservers = () => ({ close() {} });
-  const service = new LibraryService({ observerFactory: noObservers });
+  const service = new SearchPerfLibraryService({ observerFactory: noObservers });
   const library = service.createLibrary({
     displayName: 'SearchPerformance',
     selectedParentPath: root,

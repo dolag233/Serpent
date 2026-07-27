@@ -163,7 +163,13 @@ describe('local extracted palette artifact', () => {
 
     expect(service.enqueueThumbnailJobs(library.libraryId)).toBe(0);
     expect(service.listMediaJobs(library.libraryId).jobs.some((job) => job.kind === 'extract_palette')).toBe(true);
-    await service.processThumbnailQueue(library.libraryId, { maxJobs: 1 });
+    while (
+      service.getCurrentArtifact(library.libraryId, assetId, 'extracted_palette') === null &&
+      service.listMediaJobs(library.libraryId).jobs.some((job) =>
+        job.kind === 'extract_palette' && (job.status === 'queued' || job.status === 'running'))
+    ) {
+      await service.processThumbnailQueue(library.libraryId, { maxJobs: 1 });
+    }
     expect(service.getCurrentArtifact(library.libraryId, assetId, 'extracted_palette'))
       .toMatchObject({ status: 'ready' });
     service.closeAll();

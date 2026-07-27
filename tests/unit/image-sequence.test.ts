@@ -64,6 +64,26 @@ describe("detectImageSequences", () => {
       },
     ]);
   });
+
+  it("does not merge same basename pattern across directories", () => {
+    expect(detectImageSequences([
+      "file1.jpg",
+      "sub/file2.jpg",
+      "other/file3.jpg",
+      "deep/file1.jpg",
+      "deep/file2.jpg",
+      "deep/file3.jpg",
+    ])).toMatchObject([
+      {
+        prefix: "file",
+        frames: [
+          { frameNumber: 1, value: "deep/file1.jpg" },
+          { frameNumber: 2, value: "deep/file2.jpg" },
+          { frameNumber: 3, value: "deep/file3.jpg" },
+        ],
+      },
+    ]);
+  });
 });
 
 describe("findImageSequenceContaining", () => {

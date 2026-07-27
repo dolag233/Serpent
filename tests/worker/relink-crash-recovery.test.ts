@@ -43,6 +43,15 @@ import type { ImportCompletion } from '../../src/shared/protocol/responses';
 import { importNoConflict as sharedImportNoConflict } from './import-no-conflict';
 
 const temporaryRoots: string[] = [];
+const services: LibraryService[] = [];
+
+function newService(
+  ...args: ConstructorParameters<typeof LibraryService>
+): LibraryService {
+  const service = new LibraryService(...args);
+  services.push(service);
+  return service;
+}
 const require = createRequire(import.meta.url);
 
 interface TestDatabaseConnection {
@@ -90,7 +99,7 @@ function missingManagedAssetFixture(label: string): {
   root: string;
 } {
   const root = temporaryRoot();
-  const service = new LibraryService();
+  const service = newService();
   const created = service.createLibrary({ displayName: label, selectedParentPath: root });
   const sourcePath = path.join(root, 'orig.jpg');
   writeFileSync(sourcePath, 'original bytes');
@@ -113,8 +122,11 @@ function missingManagedAssetFixture(label: string): {
 }
 
 afterEach(() => {
+  for (const service of services.splice(0)) {
+    service.closeAll();
+  }
   for (const root of temporaryRoots.splice(0)) {
-    rmSync(root, { force: true, recursive: true });
+    rmSync(root, { force: true, recursive: true, maxRetries: 5, retryDelay: 200 });
   }
 });
 
@@ -122,7 +134,7 @@ describe('relinkAsset recovery on reopen', () => {
   it('preserves orphan placement after failpoint and cleans up on reopen', () => {
     // ---- SETUP ----
     const root = temporaryRoot();
-    const setup = new LibraryService();
+    const setup = newService();
     const created = setup.createLibrary({ displayName: 'Relink Crash', selectedParentPath: root });
 
     // Import a managed asset
@@ -142,7 +154,7 @@ describe('relinkAsset recovery on reopen', () => {
     writeFileSync(replacementPath, 'replacement bytes');
 
     // ---- CRASH EXECUTION ----
-    const crashing = new LibraryService({ failAt: 'crash-relink-after-filesystem' });
+    const crashing = newService({ failAt: 'crash-relink-after-filesystem' });
     const opened = crashing.openLibrary(created.libraryPath);
     expectServiceError(
       () => crashing.relinkAsset({
@@ -194,7 +206,7 @@ describe('relinkAsset recovery on reopen', () => {
 
     // ---- RECOVERY ----
     const diagnostics: Array<{ scope: string }> = [];
-    const recovered = new LibraryService({ onDiagnostic: (d) => diagnostics.push(d) });
+    const recovered = newService({ onDiagnostic: (d) => diagnostics.push(d) });
     recovered.openLibrary(created.libraryPath);
 
     // Assert recovery cleaned up the placed file
@@ -220,7 +232,7 @@ describe('relinkAsset recovery on reopen', () => {
     'crash-relink-after-manifest-before-placement',
   ] as const)('never removes a destination that was not durably placed at %s', (failAt) => {
     const fixture = missingManagedAssetFixture(`Relink ${failAt}`);
-    const crashing = new LibraryService({ failAt });
+    const crashing = newService({ failAt });
     crashing.openLibrary(fixture.libraryPath);
     expectServiceError(
       () => crashing.relinkAsset({
@@ -236,7 +248,7 @@ describe('relinkAsset recovery on reopen', () => {
     // interrupted operation. Recovery has no placed marker and must preserve it.
     writeFileSync(fixture.managedPath, 'external writer bytes');
     const diagnostics: Array<{ scope: string }> = [];
-    const recovered = new LibraryService({ onDiagnostic: (event) => diagnostics.push(event) });
+    const recovered = newService({ onDiagnostic: (event) => diagnostics.push(event) });
     recovered.openLibrary(fixture.libraryPath);
     expect(readFileSync(fixture.managedPath, 'utf8')).toBe('external writer bytes');
     if (failAt === 'crash-relink-after-manifest-before-placement') {
@@ -247,7 +259,7 @@ describe('relinkAsset recovery on reopen', () => {
 
   it('preserves the destination in the rename-to-placed-marker crash window', () => {
     const fixture = missingManagedAssetFixture('Relink rename marker window');
-    const crashing = new LibraryService({
+    const crashing = newService({
       failAt: 'crash-relink-after-placement-before-manifest-update',
     });
     crashing.openLibrary(fixture.libraryPath);
@@ -267,7 +279,7 @@ describe('relinkAsset recovery on reopen', () => {
     crashing.closeAll();
 
     const diagnostics: Array<{ scope: string }> = [];
-    const recovered = new LibraryService({ onDiagnostic: (event) => diagnostics.push(event) });
+    const recovered = newService({ onDiagnostic: (event) => diagnostics.push(event) });
     recovered.openLibrary(fixture.libraryPath);
     expect(readFileSync(fixture.managedPath, 'utf8')).toBe('replacement bytes');
     expect(diagnostics.some((event) => event.scope === 'asset.relink.recovery-ownership-unknown')).toBe(true);
@@ -277,7 +289,7 @@ describe('relinkAsset recovery on reopen', () => {
 
   it('rolls back an exactly-owned placement when interrupted before DB commit', () => {
     const fixture = missingManagedAssetFixture('Relink before commit');
-    const crashing = new LibraryService({ failAt: 'crash-relink-before-db-commit' });
+    const crashing = newService({ failAt: 'crash-relink-before-db-commit' });
     crashing.openLibrary(fixture.libraryPath);
     expectServiceError(
       () => crashing.relinkAsset({
@@ -289,7 +301,7 @@ describe('relinkAsset recovery on reopen', () => {
     );
     crashing.closeAll();
 
-    const recovered = new LibraryService();
+    const recovered = newService();
     recovered.openLibrary(fixture.libraryPath);
     expect(existsSync(fixture.managedPath)).toBe(false);
     expect(recovered.listAssets({ libraryId: fixture.libraryId, recursive: true })[0]!.availability).toBe('missing');
@@ -298,7 +310,7 @@ describe('relinkAsset recovery on reopen', () => {
 
   it('keeps a committed placement when interrupted after DB commit', () => {
     const fixture = missingManagedAssetFixture('Relink after commit');
-    const crashing = new LibraryService({ failAt: 'crash-relink-after-db-commit' });
+    const crashing = newService({ failAt: 'crash-relink-after-db-commit' });
     crashing.openLibrary(fixture.libraryPath);
     expectServiceError(
       () => crashing.relinkAsset({
@@ -311,7 +323,7 @@ describe('relinkAsset recovery on reopen', () => {
     crashing.closeAll();
 
     const diagnostics: Array<{ scope: string }> = [];
-    const recovered = new LibraryService({ onDiagnostic: (event) => diagnostics.push(event) });
+    const recovered = newService({ onDiagnostic: (event) => diagnostics.push(event) });
     recovered.openLibrary(fixture.libraryPath);
     expect(readFileSync(fixture.managedPath, 'utf8')).toBe('replacement bytes');
     expect(recovered.listAssets({ libraryId: fixture.libraryId, recursive: true })[0]!.availability).toBe('available');
@@ -321,7 +333,7 @@ describe('relinkAsset recovery on reopen', () => {
 
   it('preserves the destination when the immutable placed marker is corrupt', () => {
     const fixture = missingManagedAssetFixture('Relink corrupt marker');
-    const crashing = new LibraryService({ failAt: 'crash-relink-after-filesystem' });
+    const crashing = newService({ failAt: 'crash-relink-after-filesystem' });
     crashing.openLibrary(fixture.libraryPath);
     expectServiceError(
       () => crashing.relinkAsset({
@@ -337,7 +349,7 @@ describe('relinkAsset recovery on reopen', () => {
     crashing.closeAll();
 
     const diagnostics: Array<{ scope: string }> = [];
-    const recovered = new LibraryService({ onDiagnostic: (event) => diagnostics.push(event) });
+    const recovered = newService({ onDiagnostic: (event) => diagnostics.push(event) });
     recovered.openLibrary(fixture.libraryPath);
     expect(readFileSync(fixture.managedPath, 'utf8')).toBe('replacement bytes');
     expect(diagnostics.some((event) => event.scope === 'asset.relink.recovery-marker-invalid')).toBe(true);
@@ -363,7 +375,7 @@ describe('relinkAsset recovery on reopen', () => {
     ));
 
     const diagnostics: Array<{ scope: string }> = [];
-    const recovered = new LibraryService({ onDiagnostic: (event) => diagnostics.push(event) });
+    const recovered = newService({ onDiagnostic: (event) => diagnostics.push(event) });
     recovered.openLibrary(fixture.libraryPath);
     expect(readFileSync(fixture.managedPath, 'utf8')).toBe('external writer bytes');
     expect(diagnostics.some((event) => event.scope === 'asset.relink.recovery-ownership-unknown')).toBe(true);
@@ -375,25 +387,25 @@ describe('relinkBatchApply recovery on reopen', () => {
   it('preserves orphan placement after batch failpoint and cleans up on reopen', () => {
     // ---- SETUP: 3 managed assets with different paths ----
     const root = temporaryRoot();
-    const setup = new LibraryService();
+    const setup = newService();
     const created = setup.createLibrary({ displayName: 'Batch Crash', selectedParentPath: root });
 
     // Asset 1: root level
-    writeFileSync(path.join(root, 'file1.jpg'), 'bytes1');
-    void importNoConflict(setup, created.libraryId, path.join(root, 'file1.jpg'));
+    writeFileSync(path.join(root, 'alpha-one.jpg'), 'bytes1');
+    void importNoConflict(setup, created.libraryId, path.join(root, 'alpha-one.jpg'));
 
     // Asset 2: subfolder
     const sub = setup.createManagedFolder({ libraryId: created.libraryId, name: 'sub' });
-    writeFileSync(path.join(root, 'file2.jpg'), 'bytes2');
-    void importNoConflict(setup, created.libraryId, path.join(root, 'file2.jpg'), sub.folderId);
+    writeFileSync(path.join(root, 'bravo-two.jpg'), 'bytes2');
+    void importNoConflict(setup, created.libraryId, path.join(root, 'bravo-two.jpg'), sub.folderId);
 
     // Asset 3: deeper subfolder
     const deep = setup.createManagedFolder({ libraryId: created.libraryId, name: 'deep' });
-    writeFileSync(path.join(root, 'file3.jpg'), 'bytes3');
-    void importNoConflict(setup, created.libraryId, path.join(root, 'file3.jpg'), deep.folderId);
+    writeFileSync(path.join(root, 'charlie-three.jpg'), 'bytes3');
+    void importNoConflict(setup, created.libraryId, path.join(root, 'charlie-three.jpg'), deep.folderId);
 
     // Make all missing
-    rmSync(path.join(created.libraryPath, 'Assets', 'file1.jpg'));
+    rmSync(path.join(created.libraryPath, 'Assets', 'alpha-one.jpg'));
     rmSync(path.join(created.libraryPath, 'Assets', 'sub'), { recursive: true });
     rmSync(path.join(created.libraryPath, 'Assets', 'deep'), { recursive: true });
     setup.refreshManagedAssets(created.libraryId);
@@ -405,12 +417,12 @@ describe('relinkBatchApply recovery on reopen', () => {
     const newRoot = path.join(root, 'replacements');
     mkdirSync(path.join(newRoot, 'sub'), { recursive: true });
     mkdirSync(path.join(newRoot, 'deep'), { recursive: true });
-    writeFileSync(path.join(newRoot, 'file1.jpg'), 'new-bytes1');
-    writeFileSync(path.join(newRoot, 'sub', 'file2.jpg'), 'new-bytes2');
-    writeFileSync(path.join(newRoot, 'deep', 'file3.jpg'), 'new-bytes3');
+    writeFileSync(path.join(newRoot, 'alpha-one.jpg'), 'new-bytes1');
+    writeFileSync(path.join(newRoot, 'sub', 'bravo-two.jpg'), 'new-bytes2');
+    writeFileSync(path.join(newRoot, 'deep', 'charlie-three.jpg'), 'new-bytes3');
 
     // ---- CRASH EXECUTION ----
-    const crashing = new LibraryService({ failAt: 'crash-relink-batch-after-first-place' });
+    const crashing = newService({ failAt: 'crash-relink-batch-after-first-place' });
     const opened = crashing.openLibrary(created.libraryPath);
     expectServiceError(
       () => crashing.relinkBatchApply({
@@ -427,9 +439,9 @@ describe('relinkBatchApply recovery on reopen', () => {
     // deterministic but we verify based on the manifest rather than hardcoding the
     // first-position asset.
     const allExpectedPaths = [
-      path.join(created.libraryPath, 'Assets', 'file1.jpg'),
-      path.join(created.libraryPath, 'Assets', 'sub', 'file2.jpg'),
-      path.join(created.libraryPath, 'Assets', 'deep', 'file3.jpg'),
+      path.join(created.libraryPath, 'Assets', 'alpha-one.jpg'),
+      path.join(created.libraryPath, 'Assets', 'sub', 'bravo-two.jpg'),
+      path.join(created.libraryPath, 'Assets', 'deep', 'charlie-three.jpg'),
     ];
     const placedPaths = allExpectedPaths.filter((p) => existsSync(p));
     expect(placedPaths).toHaveLength(1);
@@ -487,7 +499,7 @@ describe('relinkBatchApply recovery on reopen', () => {
 
     // ---- RECOVERY ----
     const diagnostics: Array<{ scope: string }> = [];
-    const recovered = new LibraryService({ onDiagnostic: (d) => diagnostics.push(d) });
+    const recovered = newService({ onDiagnostic: (d) => diagnostics.push(d) });
     recovered.openLibrary(created.libraryPath);
 
     // Orphan file deleted
@@ -515,7 +527,7 @@ describe('relinkBatchApply recovery on reopen', () => {
   it('does not delete destination file when placedSnapshot mismatches after crash', () => {
     // ---- SETUP ----
     const root = temporaryRoot();
-    const setup = new LibraryService();
+    const setup = newService();
     const created = setup.createLibrary({ displayName: 'Relink Mismatch', selectedParentPath: root });
 
     // Import a managed asset
@@ -535,7 +547,7 @@ describe('relinkBatchApply recovery on reopen', () => {
     writeFileSync(replacementPath, 'replacement bytes');
 
     // ---- CRASH EXECUTION ----
-    const crashing = new LibraryService({ failAt: 'crash-relink-after-filesystem' });
+    const crashing = newService({ failAt: 'crash-relink-after-filesystem' });
     const opened = crashing.openLibrary(created.libraryPath);
     expectServiceError(
       () => crashing.relinkAsset({
@@ -567,7 +579,7 @@ describe('relinkBatchApply recovery on reopen', () => {
 
     // ---- RECOVERY ----
     const diagnostics: Array<{ scope: string; context?: Record<string, unknown> }> = [];
-    const recovered = new LibraryService({ onDiagnostic: (d) => diagnostics.push(d as { scope: string; context?: Record<string, unknown> }) });
+    const recovered = newService({ onDiagnostic: (d) => diagnostics.push(d as { scope: string; context?: Record<string, unknown> }) });
     recovered.openLibrary(created.libraryPath);
 
     // File should NOT be deleted because snapshot doesn't match

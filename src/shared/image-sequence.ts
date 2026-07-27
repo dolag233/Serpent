@@ -57,8 +57,9 @@ function splitFileName(value: string): {
 /**
  * Split filenames into maximal consecutive numbered image runs.
  *
- * Directory scoping belongs to the caller: every value passed here must be a
- * sibling filename/path from the same directory.
+ * Values may be bare filenames or relative paths. Grouping is always scoped by
+ * parent directory so `deep/file1.jpg` never merges with root `file2.jpg` even
+ * when a caller accidentally passes a mixed-directory list.
  */
 export function detectImageSequences(
   values: readonly string[],
@@ -71,8 +72,12 @@ export function detectImageSequences(
   for (const value of values) {
     const parsed = splitFileName(value);
     if (!parsed) continue;
-    const name = value.replaceAll("\\", "/").split("/").at(-1) ?? value;
+    const portable = value.replaceAll("\\", "/");
+    const slash = portable.lastIndexOf("/");
+    const directory = slash === -1 ? "." : portable.slice(0, slash);
+    const name = slash === -1 ? portable : portable.slice(slash + 1);
     const key = [
+      directory.normalize("NFC").toLocaleLowerCase("en-US"),
       parsed.prefix.normalize("NFC").toLocaleLowerCase("en-US"),
       parsed.extension,
       parsed.numericWidth,

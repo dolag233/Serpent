@@ -441,6 +441,7 @@ describe('createExtensionServer', () => {
           relativePath: '场景',
         },
       ],
+      recentBrowsedFolderIds: [],
     });
   });
 

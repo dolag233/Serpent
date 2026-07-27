@@ -1531,6 +1531,8 @@ interface MigrationRow {
 interface OpenLibrary {
   connection: DatabaseConnection;
   summary: InternalLibrarySummary;
+  /** Managed path identities whose on-disk file must not be auto-reconciled after relink recovery preserved them. */
+  preservedRelinkPathIdentities: Set<string>;
 }
 
 interface ManagedFolderRow {
@@ -13863,6 +13865,11 @@ export class LibraryService {
       preserveOperation = removal.preserveOperation;
     }
     if (!preserveOperation) rmSync(operationPath, { force: true, recursive: true });
+    if (destinationExists && !ownsDestination) {
+      openLibrary.preservedRelinkPathIdentities.add(
+        portablePathIdentity(destinationRelativePath),
+      );
+    }
     this.diagnose(
       databaseCommitted
         ? 'asset.relink.recovered-committed-placement'
@@ -18419,6 +18426,33 @@ export class LibraryService {
     }
   }
 
+  /** Reconcile linked folder statuses: a folder whose root is gone flips to
+   * offline; a folder whose root came back (e.g. a remounted volume) flips
+   * to available. Must run before file-operation recovery so linked-trash
+   * recovery can inspect in-flight sources against the current root state. */
+  private reconcileLinkedFolderStatuses(openLibrary: OpenLibrary): void {
+    const linkedFolders = openLibrary.connection
+      .prepare('SELECT folder_id, absolute_root_path, status FROM linked_folders')
+      .all() as Array<{
+        folder_id: string;
+        absolute_root_path: string;
+        status: 'available' | 'offline';
+      }>;
+    const folderNow = new Date().toISOString();
+    for (const folder of linkedFolders) {
+      const rootGone = this.linkedRootIsGone(folder.absolute_root_path);
+      if (rootGone && folder.status === 'available') {
+        openLibrary.connection
+          .prepare("UPDATE linked_folders SET status = 'offline', updated_at = ? WHERE folder_id = ?")
+          .run(folderNow, folder.folder_id);
+      } else if (!rootGone && folder.status === 'offline') {
+        openLibrary.connection
+          .prepare("UPDATE linked_folders SET status = 'available', updated_at = ? WHERE folder_id = ?")
+          .run(folderNow, folder.folder_id);
+      }
+    }
+  }
+
   refreshManagedAssets(libraryId: string): AssetRefreshResult {
     const openLibrary = this.requireOpenLibrary(libraryId);
     const before = openLibrary.connection
@@ -18446,29 +18480,16 @@ export class LibraryService {
     const discoveredAssetIds: string[] = [];
 
     openLibrary.connection.transaction(() => {
-      // Reconcile linked folder statuses: a folder whose root is gone flips to
-      // offline; a folder whose root came back (e.g. a remounted volume) flips
-      // to available. Asset-level reconciliation below handles the file rows.
-      const linkedFolders = openLibrary.connection
+      this.reconcileLinkedFolderStatuses(openLibrary);
+      const folderNow = new Date().toISOString();
+      for (const folder of openLibrary.connection
         .prepare('SELECT folder_id, absolute_root_path, status FROM linked_folders')
         .all() as Array<{
           folder_id: string;
           absolute_root_path: string;
           status: 'available' | 'offline';
-        }>;
-      const folderNow = new Date().toISOString();
-      for (const folder of linkedFolders) {
-        const rootGone = this.linkedRootIsGone(folder.absolute_root_path);
-        if (rootGone && folder.status === 'available') {
-          openLibrary.connection
-            .prepare("UPDATE linked_folders SET status = 'offline', updated_at = ? WHERE folder_id = ?")
-            .run(folderNow, folder.folder_id);
-        } else if (!rootGone && folder.status === 'offline') {
-          openLibrary.connection
-            .prepare("UPDATE linked_folders SET status = 'available', updated_at = ? WHERE folder_id = ?")
-            .run(folderNow, folder.folder_id);
-        }
-        if (rootGone) continue;
+        }>) {
+        if (this.linkedRootIsGone(folder.absolute_root_path)) continue;
 
         const existingIdentities = new Set(
           (openLibrary.connection
@@ -18633,6 +18654,14 @@ export class LibraryService {
       }
 
       for (const asset of before) {
+        if (
+          asset.location_kind === 'managed' &&
+          openLibrary.preservedRelinkPathIdentities.has(
+            portablePathIdentity(asset.relative_file_path),
+          )
+        ) {
+          continue;
+        }
         const assetPath =
           asset.location_kind === 'linked'
             ? this.linkedAssetPath(openLibrary, asset.linked_folder_id, asset.relative_file_path)
@@ -18877,9 +18906,14 @@ export class LibraryService {
         displayName: library.display_name,
         libraryPath: canonicalPath,
       };
-      const openLibrary = { connection, summary };
+      const openLibrary: OpenLibrary = {
+        connection,
+        summary,
+        preservedRelinkPathIdentities: new Set(),
+      };
       this.openById.set(summary.libraryId, openLibrary);
       this.openIdByPath.set(canonicalPath, summary.libraryId);
+      this.reconcileLinkedFolderStatuses(openLibrary);
       this.recoverFileOperations(openLibrary);
       this.recoverInterruptedAiJobs(openLibrary);
       this.recoverInterruptedThumbnailJobs(openLibrary);

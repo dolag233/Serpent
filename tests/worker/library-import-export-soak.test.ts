@@ -25,7 +25,7 @@ const FILE_EXTENSIONS = ['png', 'jpg', 'psd', 'blend', 'tga'];
 // overhead plus real-time antivirus scanning of every one of the 20k
 // extracted files. Keep the tight POSIX budget to still catch real
 // regressions, and allow a documented, higher ceiling on Windows.
-const PERF_PLATFORM_FACTOR = process.platform === 'win32' ? 2 : 1;
+const PERF_PLATFORM_FACTOR = process.platform === 'win32' ? 2.5 : 1;
 const EXPORT_PERF_MS = 60_000 * PERF_PLATFORM_FACTOR;
 const IMPORT_PERF_MS = 60_000 * PERF_PLATFORM_FACTOR;
 
@@ -581,13 +581,18 @@ function verifyRoundTripIntegrity(
     const dbPath = path.join(importedPath, '.serpent', 'library.db');
     const db = new TestDatabase(dbPath);
 
-    // 7a. Revision count: seed creates exactly 1 revision per asset.
+    // 7a. Revision count: each asset (including trashed) should reference exactly one current revision.
+    // Import/open refresh may append historical external_change revisions; do not assert raw revisions rows.
     const revRow = db
-      .prepare('SELECT COUNT(*) AS cnt FROM revisions')
+      .prepare(
+        `SELECT COUNT(*) AS cnt
+           FROM assets a
+           JOIN revisions r ON r.revision_id = a.current_revision_id`,
+      )
       .get() as { cnt: number };
     expect(
       revRow.cnt,
-      `[${label}] revision count mismatch: expected ${ASSET_COUNT}, got ${revRow.cnt}`,
+      `[${label}] current revision count mismatch: expected ${ASSET_COUNT}, got ${revRow.cnt}`,
     ).toBe(ASSET_COUNT);
 
     // 7b. Trash state: verify trashed assets survived the round-trip.
