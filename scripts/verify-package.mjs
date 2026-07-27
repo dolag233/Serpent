@@ -54,6 +54,13 @@ if (missingPaths.length > 0) {
 const mediaResourcesPath = path.join(resourcesPath, 'resources');
 const mediaPlatform = currentPlatformKey();
 verifyBundle({ root: mediaResourcesPath, platform: mediaPlatform });
-verifyReleaseProvenance({ root: mediaResourcesPath, platform: mediaPlatform });
+if (process.env.SERPENT_MEDIA_SKIP_PROVENANCE === '1') {
+  console.warn(
+    'Skipping packaged release provenance check (SERPENT_MEDIA_SKIP_PROVENANCE=1). ' +
+      'This is only valid for local build trials, not production release.',
+  );
+} else {
+  verifyReleaseProvenance({ root: mediaResourcesPath, platform: mediaPlatform });
+}
 
 console.log(`Verified packaged runtime files in ${resourcesPath}`);

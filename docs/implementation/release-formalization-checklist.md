@@ -49,9 +49,11 @@
 
 ## 五、GitHub 自动化
 
+发布流水线由 [`scripts/release/pipeline.mjs`](../../scripts/release/pipeline.mjs) 统一定义。本地与 [`.github/workflows/release.yml`](../../.github/workflows/release.yml) 调用同一组 `npm run release:*` 命令，避免两套步骤漂移。
+
 ### PR / main 测试
 
-macOS arm64 和 Windows x64 均执行：
+macOS arm64 和 Windows x64 均执行（与 `release:verify` 前半段一致，CI 目前仍分步调用）：
 
 ```text
 npm ci
@@ -64,16 +66,58 @@ npm run test:perf:search
 npm run test:e2e
 ```
 
-### Tag 发布
-
-推送 `v*` tag 或手动触发 workflow 后：
+等价快捷命令：
 
 ```text
-获取并校验媒体 bundle
-npm run package
-npm run verify:package
-npm run test:e2e:packaged
-npm run make
+npm run release:verify
+```
+
+### 本地发布试跑
+
+在对应平台本机（Windows x64 或 macOS arm64）依次执行：
+
+```text
+npm ci
+npm run release:verify          # 与 CI 相同的主线门禁
+npm run release:media           # 需要 bundle-lock 已晋升，否则会给出明确阻断说明
+npm run release:package
+npm run release:e2e:packaged    # 自动设置 SERPENT_E2E_PACKAGED_EXECUTABLE
+npm run release:make
+npm run release:checksums       # 为 out/make 产物写入 SHA-256 清单
+```
+
+一次性跑完全部阶段：
+
+```text
+npm run release:local
+```
+
+调试时可跳过部分阶段（**不能用于正式发布**）：
+
+```text
+npm run release:local -- --skip-verify --skip-media --skip-e2e
+```
+
+在 `bundle-lock.json` 尚未晋升、但已在本地跑过 `scripts/media-build/*` 时，可本地编译媒体并试跑后半段（自动设置 `SERPENT_MEDIA_SKIP_PROVENANCE=1`，**不能用于正式发布**）：
+
+```text
+npm run release:local -- --skip-verify --build-media-locally
+```
+
+当前已知阻断：`bundle-lock.json` 仍为 `build-required` 时，不带 `--build-media-locally` 的 `release:media` 会阻断；带该 flag 可本地编译媒体后继续 package/make，但正式 tag 发布仍需完成 bundle 晋升（见第六节）。
+
+### Tag 发布
+
+推送 `v*` tag 或手动触发 `Release` workflow 后，各平台 runner 执行：
+
+```text
+npm ci
+npm run release:verify
+npm run release:media
+npm run release:package
+npm run release:e2e:packaged
+npm run release:make
+npm run release:checksums
 ```
 
 然后自动创建 GitHub Release 并上传：
@@ -117,8 +161,8 @@ npm run make
 
 ## 当前已知正式化阻断
 
-- [`resources/media-binaries/bundle-lock.json`](../../resources/media-binaries/bundle-lock.json) 两个平台仍为 `build-required`。
-- [`ci.yml`](../../.github/workflows/ci.yml) 目前没有 package、make 和 packaged E2E 发布门禁。
-- 尚无 GitHub tag/release workflow。
+- [`resources/media-binaries/bundle-lock.json`](../../resources/media-binaries/bundle-lock.json) 两个平台仍为 `build-required`；`release:media` 会在此阻断并打印下一步指引。
+- [`.github/workflows/release.yml`](../../.github/workflows/release.yml) 已就位，但在媒体 bundle 晋升前 tag 发布会失败。
+- [`ci.yml`](../../.github/workflows/ci.yml) 尚未改为直接调用 `release:verify`（步骤等价，可后续合并以减少漂移）。
 - Windows/macOS 安装、卸载、重装和发布包平台证据尚未形成。
 

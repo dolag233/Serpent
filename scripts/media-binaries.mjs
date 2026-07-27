@@ -194,7 +194,14 @@ async function main() {
   }
   if (command === 'verify') {
     const { manifestPath } = verifyBundle({ root, platform });
-    verifyReleaseProvenance({ root, platform, lockPath });
+    if (process.env.SERPENT_MEDIA_SKIP_PROVENANCE === '1') {
+      console.warn(
+        'Skipping release provenance check (SERPENT_MEDIA_SKIP_PROVENANCE=1). ' +
+          'This is only valid for local build trials, not production release.',
+      );
+    } else {
+      verifyReleaseProvenance({ root, platform, lockPath });
+    }
     console.log(`Verified media bundle: ${manifestPath}`);
     return;
   }
