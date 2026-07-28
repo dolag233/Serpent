@@ -27,6 +27,8 @@ export const PUBLIC_ERROR_MESSAGES = {
   LIBRARY_CORRUPT: 'The library database or migration history is damaged.',
   LIBRARY_VERSION_TOO_NEW: 'This library was created by a newer version of Serpent.',
   LIBRARY_NOT_WRITABLE: 'Serpent cannot write to the selected location.',
+  RESOURCE_NOT_FOUND: 'The requested resource could not be found in this library.',
+  RESOURCE_PATH_CONFLICT: 'The resource path does not identify exactly one item.',
   LIBRARY_CLEANUP_FAILED: 'Library creation failed and temporary files could not be removed.',
   LIBRARY_NOT_OPEN: 'The library is not currently open.',
   ASSET_NOT_FOUND: 'The requested asset could not be found.',

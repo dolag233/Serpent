@@ -41,6 +41,7 @@ import { runLimitedAiRequest } from './ai/limited-request';
 import { AiProgressThrottler } from './ai/progress-throttler';
 import { DEFAULT_AI_ANALYSIS_CONCURRENCY } from '../shared/ai-concurrency';
 import { DEFAULT_AI_RELIABILITY_SETTINGS } from '../shared/ai-reliability';
+import { executeReadOnlyWorkerCommand } from './read-only-command-executor';
 
 const parentPort: ParentPort | undefined = process.parentPort;
 const aiJobAbortRegistry = new AiJobAbortRegistry();
@@ -271,6 +272,18 @@ function publishAiProgress(libraryId: string): void {
 }
 
 async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
+  const readOnlyResult = request.command.type === 'library.close'
+    ? undefined
+    : await executeReadOnlyWorkerCommand(
+        libraryService,
+        request.command,
+        {
+          onAssetsListed: (libraryId, assetIds) =>
+            scheduleThumbnailScene(libraryId, 'visible', assetIds),
+        },
+      );
+  if (readOnlyResult) return readOnlyResult;
+
   switch (request.command.type) {
     case 'library.list':
       return { ok: true, type: 'library.list', libraries: libraryService.listLibraries() };
@@ -284,6 +297,8 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
       scheduleThumbnailScene(library.libraryId, 'startup');
       return { ok: true, type: 'library.opened', library };
     }
+    case 'library.open-readonly':
+      throw new Error('Read-only library open was not dispatched.');
     case 'library.close':
       libraryService.cancelJobs(request.command.libraryId);
       publishAiProgress(request.command.libraryId);

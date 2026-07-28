@@ -920,6 +920,10 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     selectedLibraryPath: selectedPathSchema,
   }),
   z.strictObject({
+    type: z.literal('library.open-readonly'),
+    selectedLibraryPath: selectedPathSchema,
+  }),
+  z.strictObject({
     type: z.literal('library.close'),
     libraryId: identifierSchema,
   }),

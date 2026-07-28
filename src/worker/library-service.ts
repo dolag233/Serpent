@@ -370,7 +370,10 @@ interface DatabaseConnection {
 }
 
 interface DatabaseConstructor {
-  new (filename: string): DatabaseConnection;
+  new (filename: string, options?: {
+    readonly?: boolean;
+    fileMustExist?: boolean;
+  }): DatabaseConnection;
 }
 
 const Database = BetterSqlite3 as DatabaseConstructor;
@@ -1539,6 +1542,7 @@ interface MigrationRow {
 interface OpenLibrary {
   connection: DatabaseConnection;
   summary: InternalLibrarySummary;
+  readOnly: boolean;
   /** Managed path identities whose on-disk file must not be auto-reconciled after relink recovery preserved them. */
   preservedRelinkPathIdentities: Set<string>;
 }
@@ -19298,6 +19302,7 @@ export class LibraryService {
       const openLibrary: OpenLibrary = {
         connection,
         summary,
+        readOnly: false,
         preservedRelinkPathIdentities: new Set(),
       };
       this.openById.set(summary.libraryId, openLibrary);
@@ -19332,6 +19337,76 @@ export class LibraryService {
     } catch (error) {
       closeIgnoringFailure(connection);
       throw serviceError(error, 'LIBRARY_CORRUPT');
+    }
+  }
+
+  /**
+   * Opens a current-schema library without migrations, recovery, filesystem
+   * reconciliation, watchers, or background job scheduling. This is the only
+   * open mode available to read-only clients such as the CLI inspection
+   * process.
+   */
+  openLibraryReadOnly(selectedLibraryPath: string): InternalLibrarySummary {
+    let selectedPath: string;
+    try {
+      selectedPath = normalizeAbsolutePath(selectedLibraryPath);
+    } catch (error) {
+      throw serviceError(error, 'INVALID_LIBRARY_PATH');
+    }
+
+    if (!existsSync(selectedPath)) throw new LibraryServiceError('LIBRARY_NOT_FOUND');
+    if (!directoryExists(selectedPath)) throw new LibraryServiceError('NOT_A_LIBRARY');
+
+    let canonicalPath: string;
+    try {
+      canonicalPath = realpathSync(selectedPath);
+    } catch (error) {
+      throw serviceError(error, 'LIBRARY_NOT_FOUND');
+    }
+    const alreadyOpenId = this.openIdByPath.get(canonicalPath);
+    if (alreadyOpenId) return this.openById.get(alreadyOpenId)!.summary;
+
+    for (const directoryName of REQUIRED_DIRECTORIES) {
+      if (!realDirectoryExists(path.join(canonicalPath, directoryName))) {
+        throw new LibraryServiceError('NOT_A_LIBRARY');
+      }
+    }
+    const serpentPath = path.join(canonicalPath, '.serpent');
+    const filename = databasePath(canonicalPath);
+    if (!realDirectoryExists(serpentPath) || !realFileExists(filename)) {
+      throw new LibraryServiceError('NOT_A_LIBRARY');
+    }
+
+    let connection: DatabaseConnection | undefined;
+    try {
+      connection = new Database(filename, { readonly: true, fileMustExist: true });
+      connection.pragma('foreign_keys = ON');
+      connection.pragma('trusted_schema = ON');
+      connection.pragma('query_only = ON');
+      const library = verifyDatabase(connection);
+      const existingIdentity = this.openById.get(library.library_id);
+      if (existingIdentity) {
+        closeIgnoringFailure(connection);
+        throw new LibraryServiceError('LIBRARY_CORRUPT');
+      }
+
+      const summary: InternalLibrarySummary = {
+        libraryId: library.library_id,
+        displayName: library.display_name,
+        libraryPath: canonicalPath,
+      };
+      this.openById.set(summary.libraryId, {
+        connection,
+        summary,
+        readOnly: true,
+        preservedRelinkPathIdentities: new Set(),
+      });
+      this.openIdByPath.set(canonicalPath, summary.libraryId);
+      return summary;
+    } catch (error) {
+      closeIgnoringFailure(connection);
+      if (error instanceof LibraryServiceError) throw error;
+      throw error;
     }
   }
 
@@ -21243,19 +21318,22 @@ export class LibraryService {
     const openLibrary = this.openById.get(libraryId);
     if (!openLibrary) throw new LibraryServiceError('LIBRARY_NOT_OPEN');
 
-    // A deliberate close is not a crash recovery boundary. Persist queued,
-    // paused, and running AI work as cancelled before the connection closes so
-    // reopening the library cannot silently resume uploads the user stopped.
-    this.cancelJobs(libraryId);
-    this.abortActiveMediaJobs(libraryId);
-    this.stopAssetWatcher(libraryId);
-    this.stopLinkedWatchers(libraryId);
-    for (const [importId, pending] of this.pendingImports) {
-      if (pending.libraryId === libraryId) {
-        this.pendingImports.delete(importId);
-        this.cancelImportExpiry(pending);
-        this.updateImportOperation(pending, 'rolled_back', 'LIBRARY_CLOSED');
-        this.removeOperation(pending.operationPath);
+    if (!openLibrary.readOnly) {
+      // A deliberate close is not a crash recovery boundary. Persist queued,
+      // paused, and running AI work as cancelled before the connection closes
+      // so reopening the library cannot silently resume uploads the user
+      // stopped. Read-only CLI sessions never own or mutate those jobs.
+      this.cancelJobs(libraryId);
+      this.abortActiveMediaJobs(libraryId);
+      this.stopAssetWatcher(libraryId);
+      this.stopLinkedWatchers(libraryId);
+      for (const [importId, pending] of this.pendingImports) {
+        if (pending.libraryId === libraryId) {
+          this.pendingImports.delete(importId);
+          this.cancelImportExpiry(pending);
+          this.updateImportOperation(pending, 'rolled_back', 'LIBRARY_CLOSED');
+          this.removeOperation(pending.operationPath);
+        }
       }
     }
     openLibrary.connection.close();
