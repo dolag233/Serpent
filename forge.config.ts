@@ -63,6 +63,7 @@ const config: ForgeConfig = {
     },
   },
   packagerConfig: {
+    icon: path.join(projectRoot, 'assets', 'icon'),
     asar: {
       unpack: '**/node_modules/trash/lib/{macos-trash,windows-trash.exe}',
     },
@@ -81,7 +82,9 @@ const config: ForgeConfig = {
   },
   rebuildConfig: {},
   makers: [
-    new MakerSquirrel({}),
+    new MakerSquirrel({
+      setupIcon: path.join(projectRoot, 'assets', 'icon.ico'),
+    }),
     new MakerZIP({}, ['darwin', 'win32']),
     new MakerDMG({}),
   ],

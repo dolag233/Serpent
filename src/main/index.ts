@@ -22,6 +22,7 @@ import {
 } from "electron";
 
 import { installApplicationMenu } from "./application-menu";
+import { applyDevAppIcon, appIconImage } from "./app-icon";
 import {
   clearViewerVideoShortcutCapture,
   isViewerVideoShortcutContentsActive,
@@ -631,6 +632,8 @@ async function createMainWindow(): Promise<void> {
     height: defaultHeight,
   });
 
+  const devIcon = appIconImage();
+
   const window = new BrowserWindow({
     width: isolatedPlacement?.width ?? defaultWidth,
     height: isolatedPlacement?.height ?? defaultHeight,
@@ -641,6 +644,7 @@ async function createMainWindow(): Promise<void> {
     minHeight: 680,
     show: false,
     backgroundColor: "#111417",
+    ...(devIcon ? { icon: devIcon } : {}),
     ...(process.platform === "darwin"
       ? {
           titleBarStyle: "hiddenInset" as const,
@@ -3604,6 +3608,7 @@ async function startApplication(): Promise<void> {
   app.setAppLogsPath();
   appLogPath = path.join(app.getPath("logs"), "serpent.log");
   logger = new AppLogger(appLogPath);
+  applyDevAppIcon();
   const staleClipboardCount = cleanupStaleClipboardImages(app.getPath("temp"));
   if (staleClipboardCount > 0) {
     logger.info(

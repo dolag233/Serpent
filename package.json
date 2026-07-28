@@ -43,7 +43,8 @@
     "release:make": "node scripts/release/pipeline.mjs make",
     "release:checksums": "node scripts/release/pipeline.mjs checksums",
     "release:local": "node scripts/release/pipeline.mjs all",
-    "test:watch": "node scripts/run-vitest-with-electron.mjs --config vitest.config.ts"
+    "test:watch": "node scripts/run-vitest-with-electron.mjs --config vitest.config.ts",
+    "icons:generate": "node scripts/generate-app-icons.mjs"
   },
   "dependencies": {
     "@fontsource-variable/noto-sans-sc": "5.2.10",
@@ -82,6 +83,7 @@
     "eslint-plugin-react-hooks": "7.1.1",
     "globals": "17.7.0",
     "happy-dom": "^20.0.11",
+    "to-ico": "^1.1.5",
     "typescript": "6.0.3",
     "typescript-eslint": "8.63.0",
     "vite": "8.1.4",
