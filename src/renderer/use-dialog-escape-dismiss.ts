@@ -25,6 +25,7 @@ export type UseDialogEscapeDismissParams = {
   setExportDialogOpen: (open: boolean) => void;
   setImportLibraryChooserOpen: (open: boolean) => void;
   setAppSettingsOpen: (open: boolean) => void;
+  setAppLogOpen: (open: boolean) => void;
   setMediaJobsOpen: (open: boolean) => void;
   setLinkedRulesEditor: (value: null) => void;
   resetConvertLinkedDialog: () => void;
@@ -57,6 +58,7 @@ export function useDialogEscapeDismiss({
   setExportDialogOpen,
   setImportLibraryChooserOpen,
   setAppSettingsOpen,
+  setAppLogOpen,
   setMediaJobsOpen,
   setLinkedRulesEditor,
   resetConvertLinkedDialog,
@@ -122,6 +124,9 @@ export function useDialogEscapeDismiss({
         case "close-app-settings":
           setAppSettingsOpen(false);
           return;
+        case "close-app-log":
+          setAppLogOpen(false);
+          return;
         case "close-media-jobs":
           setMediaJobsOpen(false);
           return;
@@ -171,6 +176,7 @@ export function useDialogEscapeDismiss({
     setExportDialogOpen,
     setImportLibraryChooserOpen,
     setAppSettingsOpen,
+    setAppLogOpen,
     setMediaJobsOpen,
     setLinkedRulesEditor,
     resetConvertLinkedDialog,

@@ -29,6 +29,7 @@ export interface AppSettingsDialogProps {
   aiUiPrefs: AiUiPreferences;
   aiConfigPanel: ReactNode;
   onToggleShowAiBadges: () => void;
+  onOpenAppLog?: () => void;
 }
 
 /**
@@ -47,6 +48,7 @@ export function AppSettingsDialog({
   aiUiPrefs,
   aiConfigPanel,
   onToggleShowAiBadges,
+  onOpenAppLog,
 }: AppSettingsDialogProps): ReactNode {
   const t = useT();
   const activeCategoryDefinition = APP_SETTINGS_CATEGORIES.find(
@@ -98,7 +100,7 @@ export function AppSettingsDialog({
             <div className="app-settings-page-heading">
               <h3>{t(activeCategoryDefinition.labelKey)}</h3>
             </div>
-            {activeCategory === "general" ? <GeneralSettingsPage /> : null}
+            {activeCategory === "general" ? <GeneralSettingsPage onOpenAppLog={onOpenAppLog} /> : null}
             {activeCategory === "appearance" ? <AppearanceSettingsPage /> : null}
             {activeCategory === "browse" ? (
               <BrowseSettingsPage

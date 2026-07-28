@@ -22,3 +22,73 @@ test('persists an error and its cause as structured JSON lines', () => {
     rmSync(root, { force: true, recursive: true });
   }
 });
+
+test('reads recent entries and redacts credentials from messages and context', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'serpent-log-read-test-'));
+  try {
+    const logPath = path.join(root, 'serpent.log');
+    const logger = new AppLogger(logPath);
+    logger.info(
+      'ai.request.failed',
+      'HTTP 401 from https://example.test/v1?api_key=sk-secret-value',
+      { apiKey: 'sk-secret-value', reason: 'AI_AUTH' },
+    );
+
+    const entries = logger.readRecent();
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      level: 'info',
+      scope: 'ai.request.failed',
+      context: { apiKey: '[REDACTED_API_KEY]', reason: 'AI_AUTH' },
+    });
+    expect(JSON.stringify(entries[0])).not.toContain('sk-secret-value');
+    expect(JSON.stringify(entries[0])).toContain('AI_AUTH');
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test('normalizes structured Worker diagnostics so AI causes are readable in the viewer', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'serpent-log-worker-test-'));
+  try {
+    const logPath = path.join(root, 'serpent.log');
+    const logger = new AppLogger(logPath);
+    logger.worker(
+      'stderr',
+      JSON.stringify({
+        scope: 'worker.ai.queue.analysis',
+        context: { errorCode: 'AI_AUTH', jobId: 'job-1' },
+        error: {
+          name: 'Error',
+          message: 'AI queue analysis failed.',
+          cause: { message: 'Provider failure category: AI_AUTH; kind=auth; httpStatus=401' },
+        },
+      }),
+    );
+
+    const entries = logger.readRecent();
+    expect(entries[0]).toMatchObject({
+      level: 'error',
+      scope: 'worker.ai.queue.analysis',
+      context: { errorCode: 'AI_AUTH', jobId: 'job-1' },
+    });
+    expect(JSON.stringify(entries[0])).toContain('httpStatus=401');
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test('redacts local filesystem paths only for the in-app view', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'serpent-log-path-test-'));
+  try {
+    const logPath = path.join(root, 'serpent.log');
+    const logger = new AppLogger(logPath);
+    logger.error('media.failed', new Error(`Could not open ${root}/source.mp4`));
+
+    expect(JSON.stringify(logger.readRecent())).toContain(root);
+    expect(JSON.stringify(logger.readRecent(500, { redactPaths: true }))).not.toContain(root);
+    expect(JSON.stringify(logger.readRecent(500, { redactPaths: true }))).toContain('[PATH_REDACTED]');
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});

@@ -1485,6 +1485,12 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
         };
       } catch (error) {
         const failure = safeAiConnectionFailure(error);
+        const errorCode = `AI_${failure.errorKind.toUpperCase()}`;
+        libraryService.reportDiagnostic(
+          'ai.connection.test',
+          safeAiDiagnostic(errorCode, error),
+          { apiFormat, model, errorCode },
+        );
         return {
           ok: true,
           type: 'ai.test-connection.result' as const,

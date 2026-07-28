@@ -19,6 +19,7 @@ const empty: DialogEscapeSnapshot = {
   exportDialogOpen: false,
   importLibraryChooserOpen: false,
   appSettingsOpen: false,
+  appLogOpen: false,
   mediaJobsOpen: false,
   linkedRulesEditorOpen: false,
   convertLinkedOpen: false,
@@ -110,5 +111,15 @@ describe("dialog-escape-stack", () => {
         mediaJobsOpen: true,
       }),
     ).toEqual({ kind: "close-app-settings" });
+  });
+
+  it("closes diagnostics after settings but before background jobs", () => {
+    expect(
+      resolveDialogEscapeAction({
+        ...empty,
+        appLogOpen: true,
+        mediaJobsOpen: true,
+      }),
+    ).toEqual({ kind: "close-app-log" });
   });
 });

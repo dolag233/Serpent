@@ -455,7 +455,13 @@ test("video preview reports a specific generation failure and persists its diagn
       jobsDialog.getByText(/media component needed for video thumbnails is unavailable/).first(),
     ).toBeVisible();
     await expect(jobsDialog).not.toContainText(temporaryRoot);
-    await jobsDialog.getByRole("button", { name: "关闭后台任务" }).click();
+    await jobsDialog.getByRole("button", { name: "查看诊断日志" }).click();
+    const logDialog = window.getByRole("dialog", { name: "诊断日志" });
+    await expect(logDialog).toBeVisible();
+    await expect(logDialog).toContainText("worker.media-job.failed");
+    await expect(logDialog).toContainText("FFMPEG_REQUIRED");
+    await expect(logDialog).not.toContainText(temporaryRoot);
+    await logDialog.getByRole("button", { name: "关闭诊断日志" }).click();
     await closeLibraryViaSwitcher(window, libraryName);
     await window.getByRole("button", { name: "打开资源库" }).click();
     const reopenedCard = window

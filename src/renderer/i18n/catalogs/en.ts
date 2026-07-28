@@ -724,7 +724,19 @@ export const en = {
       resumeAi: "Resume AI",
       cancelAi: "Cancel AI",
       retryAiFailed: "Retry failed AI jobs",
-      revealLog: "Reveal app log"
+      revealLog: "Reveal app log",
+      viewLog: "View diagnostics"
+    },
+    appLog: {
+      title: "Diagnostics",
+      subtitle: "Recent app, background-job, and AI failures. Full details are also saved to serpent.log.",
+      closeAria: "Close diagnostics",
+      refresh: "Refresh",
+      refreshing: "Refreshing…",
+      reveal: "Show log file",
+      readFailed: "Could not read the application log. Try again or show the log file.",
+      empty: "No diagnostics have been recorded yet.",
+      details: "Technical details"
     },
     relinkPreview: {
       title: "Batch relink preview",
@@ -851,6 +863,9 @@ export const en = {
       "When the toolbar icon turns color, right-click an image or video and choose Save to Serpent.",
     browserExtensionNote:
       "Install copy will be formalized before release (see Serpent-999o). After code changes, rebuild and reload the extension.",
+    diagnosticsTitle: "Diagnostics",
+    diagnosticsHint: "See recent failures from the app, background jobs, and AI analysis. Sensitive values are redacted.",
+    viewDiagnostics: "View diagnostics",
     viewMode: "Browse view",
     canvasHint: "Controls how assets are arranged on the canvas. Changes apply immediately.",
     cardFields: "Card display fields",

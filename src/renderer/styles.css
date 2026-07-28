@@ -4353,6 +4353,96 @@ body.serpent-modal-open .app-shell {
   width: min(680px, calc(100vw - 40px));
 }
 
+.app-log-dialog {
+  display: flex;
+  width: min(820px, calc(100vw - 40px));
+  max-height: min(760px, calc(100vh - 40px));
+  flex-direction: column;
+}
+
+.app-log-subtitle {
+  margin: 7px 0 0;
+  color: var(--secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.app-log-actions {
+  margin: -6px 0 12px;
+}
+
+.app-log-state {
+  margin: 18px 0 0;
+}
+
+.app-log-list {
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid var(--divider);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--raised) 70%, var(--pane));
+}
+
+.app-log-entry {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--divider);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.app-log-entry:last-child {
+  border-bottom: 0;
+}
+
+.app-log-entry.is-error {
+  background: color-mix(in srgb, var(--warning-muted) 25%, transparent);
+}
+
+.app-log-entry-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 12px;
+  color: var(--secondary);
+}
+
+.app-log-entry-heading strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.app-log-entry p {
+  margin: 5px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.app-log-error-detail {
+  color: var(--warning-fg);
+}
+
+.app-log-entry details {
+  margin-top: 6px;
+}
+
+.app-log-entry summary {
+  color: var(--secondary);
+  cursor: pointer;
+}
+
+.app-log-entry pre {
+  max-height: 180px;
+  margin: 6px 0 0;
+  padding: 8px;
+  overflow: auto;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--canvas) 65%, var(--raised));
+  color: var(--secondary);
+  font: 10px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .create-dialog-wider {
   width: min(700px, calc(100vw - 40px));
 }

@@ -16,6 +16,7 @@ export type DialogEscapeSnapshot = {
   exportDialogOpen: boolean;
   importLibraryChooserOpen: boolean;
   appSettingsOpen: boolean;
+  appLogOpen: boolean;
   mediaJobsOpen: boolean;
   linkedRulesEditorOpen: boolean;
   convertLinkedOpen: boolean;
@@ -42,6 +43,7 @@ export type DialogEscapeAction =
   | { kind: "close-export" }
   | { kind: "close-import-library-chooser" }
   | { kind: "close-app-settings" }
+  | { kind: "close-app-log" }
   | { kind: "close-media-jobs" }
   | { kind: "close-linked-rules" }
   | { kind: "close-convert-linked" }
@@ -80,6 +82,7 @@ export function resolveDialogEscapeAction(
   if (snapshot.importLibraryChooserOpen)
     return { kind: "close-import-library-chooser" };
   if (snapshot.appSettingsOpen) return { kind: "close-app-settings" };
+  if (snapshot.appLogOpen) return { kind: "close-app-log" };
   if (snapshot.mediaJobsOpen) return { kind: "close-media-jobs" };
   if (snapshot.linkedRulesEditorOpen) return { kind: "close-linked-rules" };
   if (snapshot.convertLinkedOpen) return { kind: "close-convert-linked" };

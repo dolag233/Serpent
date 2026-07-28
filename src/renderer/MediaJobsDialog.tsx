@@ -19,6 +19,8 @@ export interface MediaJobsDialogProps {
   ) => void;
   /** Reveal main-process log (Serpent-iokf). */
   onRevealAppLog?: () => void;
+  /** Open the in-app, recent diagnostics view. */
+  onViewAppLog?: () => void;
 }
 
 export function MediaJobsDialog({
@@ -30,6 +32,7 @@ export function MediaJobsDialog({
   onControlMediaJobs,
   onControlAiJobs,
   onRevealAppLog,
+  onViewAppLog,
 }: MediaJobsDialogProps) {
   const t = useT();
   if (!open) return null;
@@ -236,6 +239,15 @@ export function MediaJobsDialog({
                       type="button"
                     >
                       {t("dialog.mediaJobs.revealLog")}
+                    </button>
+                  )}
+                  {onViewAppLog && (
+                    <button
+                      className="secondary-button"
+                      onClick={() => onViewAppLog()}
+                      type="button"
+                    >
+                      {t("dialog.mediaJobs.viewLog")}
                     </button>
                   )}
                 </div>

@@ -21,6 +21,7 @@ import {
   AI_CLEARED_CHANNEL,
   OPEN_EXTERNAL_URL_CHANNEL,
   REVEAL_APP_LOG_CHANNEL,
+  READ_APP_LOG_CHANNEL,
   SHOW_EDIT_CONTEXT_MENU_CHANNEL,
   SHELL_SWIPE_CHANNEL,
   WINDOW_FOCUS_CHANNEL,
@@ -38,6 +39,7 @@ import {
   type SerpentShellApi,
   type ShellSwipeDirection,
 } from '../shared/external-url';
+import { parseAppLogEntry, type ReadAppLogResult } from '../shared/app-log';
 import { parseShowEditContextMenuResult } from '../shared/edit-context-menu';
 import {
   parseWindowControlResult,
@@ -1682,6 +1684,27 @@ function parseRevealAppLogResult(input: unknown): RevealAppLogResult {
   return { ok: false, code: 'shell_failure' };
 }
 
+function parseReadAppLogResult(input: unknown): ReadAppLogResult {
+  if (typeof input === 'object' && input !== null && 'ok' in input && (input as { ok: unknown }).ok === true) {
+    const value = input as { entries?: unknown; fileName?: unknown };
+    if (value.fileName === 'serpent.log' && Array.isArray(value.entries)) {
+      const entries = value.entries.flatMap((entry) => {
+        const parsed = parseAppLogEntry(entry);
+        return parsed ? [parsed] : [];
+      });
+      return { ok: true, entries, fileName: 'serpent.log' };
+    }
+  }
+  const code =
+    typeof input === 'object' && input !== null && 'code' in input && typeof (input as { code: unknown }).code === 'string'
+      ? (input as { code: string }).code
+      : 'read_failure';
+  if (code === 'unauthorized_sender' || code === 'log_missing' || code === 'read_failure') {
+    return { ok: false, code };
+  }
+  return { ok: false, code: 'read_failure' };
+}
+
 const shell: SerpentShellApi = Object.freeze({
   async openExternalUrl(url: string) {
     const result: unknown = await ipcRenderer.invoke(OPEN_EXTERNAL_URL_CHANNEL, { url });
@@ -1690,6 +1713,10 @@ const shell: SerpentShellApi = Object.freeze({
   async revealAppLog() {
     const result: unknown = await ipcRenderer.invoke(REVEAL_APP_LOG_CHANNEL);
     return parseRevealAppLogResult(result);
+  },
+  async readAppLog() {
+    const result: unknown = await ipcRenderer.invoke(READ_APP_LOG_CHANNEL);
+    return parseReadAppLogResult(result);
   },
   setAppLocale(locale: 'zh-CN' | 'en'): void {
     ipcRenderer.send(APP_LOCALE_CHANNEL, { locale });

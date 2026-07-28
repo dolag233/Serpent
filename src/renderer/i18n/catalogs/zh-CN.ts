@@ -713,7 +713,19 @@ export const zhCN = {
       resumeAi: "继续 AI",
       cancelAi: "取消 AI",
       retryAiFailed: "重试 AI 失败项",
-      revealLog: "查看应用日志"
+      revealLog: "查看应用日志",
+      viewLog: "查看诊断日志"
+    },
+    appLog: {
+      title: "诊断日志",
+      subtitle: "显示应用、后台任务和 AI 分析的近期失败；完整信息也会保存到 serpent.log。",
+      closeAria: "关闭诊断日志",
+      refresh: "刷新",
+      refreshing: "刷新中…",
+      reveal: "显示日志文件",
+      readFailed: "无法读取应用日志，请重试或直接显示日志文件。",
+      empty: "暂时还没有诊断记录。",
+      details: "技术详情"
     },
     relinkPreview: {
       title: "批量重新定位预览",
@@ -836,6 +848,9 @@ export const zhCN = {
       "扩展图标变为彩色后，在网页图片或视频上右键选择「保存到 Serpent」。",
     browserExtensionNote:
       "正式发布前会改为商店或安装包说明（见工单 Serpent-999o）。代码更新后需重新构建并在扩展管理页点击重新加载。",
+    diagnosticsTitle: "诊断日志",
+    diagnosticsHint: "查看应用、后台任务和 AI 分析的近期失败原因；敏感信息会自动隐藏。",
+    viewDiagnostics: "查看诊断日志",
     viewMode: "浏览视图",
     canvasHint: "控制资产画布的排列方式；改后立即作用于画布。",
     cardFields: "卡片显示字段",

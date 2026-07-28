@@ -146,6 +146,7 @@ import {
   type AiAnalysisSettingsWire,
 } from "../shared/ai-analysis-settings";
 import { AppSettingsDialog } from "./AppSettingsDialog";
+import { AppLogDialog } from "./AppLogDialog";
 import { AppSettingsEntry } from "./AppSettingsEntry";
 import type { AppSettingsCategoryId } from "./app-settings-sections";
 import {
@@ -278,6 +279,7 @@ import type {
   AiJobStatus,
 } from "../shared/library-api";
 import type { SerpentShellApi } from "../shared/external-url";
+import type { AppLogEntry, ReadAppLogResult } from "../shared/app-log";
 import type {
   ImportConflictPlan,
   ImageSequenceImportOffer,
@@ -944,6 +946,41 @@ function AppInner() {
     useState<AppSettingsCategoryId>("general");
   const [smartCollectionSettings, setSmartCollectionSettings] =
     useState<SmartCollectionSettingsTarget | null>(null);
+  const [appLogOpen, setAppLogOpen] = useState(false);
+  const [appLogEntries, setAppLogEntries] = useState<AppLogEntry[]>([]);
+  const [appLogLoading, setAppLogLoading] = useState(false);
+  const [appLogErrorCode, setAppLogErrorCode] = useState<
+    Extract<ReadAppLogResult, { ok: false }>["code"] | null
+  >(null);
+
+  async function refreshAppLog(): Promise<void> {
+    const bridge = (window as RendererWindow).serpent?.shell;
+    if (!bridge?.readAppLog) {
+      setAppLogEntries([]);
+      setAppLogErrorCode("read_failure");
+      return;
+    }
+    setAppLogLoading(true);
+    try {
+      const result = await bridge.readAppLog();
+      if (result.ok) {
+        setAppLogEntries(result.entries);
+        setAppLogErrorCode(null);
+      } else {
+        setAppLogEntries([]);
+        setAppLogErrorCode(result.code);
+      }
+    } finally {
+      setAppLogLoading(false);
+    }
+  }
+
+  function openAppLog(): void {
+    setAppSettingsOpen(false);
+    setMediaJobsOpen(false);
+    setAppLogOpen(true);
+    void refreshAppLog();
+  }
 
   // AI analysis state
   const [aiApiFormat, setAiApiFormat] = useState<AiApiFormat>("dashscope_native");
@@ -5734,6 +5771,7 @@ function AppInner() {
       exportDialogOpen,
       importLibraryChooserOpen,
       appSettingsOpen,
+      appLogOpen,
       mediaJobsOpen: Boolean(mediaJobsOpen && library !== null),
       linkedRulesEditorOpen: Boolean(linkedRulesEditor),
       convertLinkedOpen: Boolean(convertLinkedDialog.folderId),
@@ -5758,6 +5796,7 @@ function AppInner() {
     exportDialogOpen,
     importLibraryChooserOpen,
     appSettingsOpen,
+    appLogOpen,
     mediaJobsOpen,
     library,
     linkedRulesEditor,
@@ -5788,6 +5827,7 @@ function AppInner() {
     setExportDialogOpen,
     setImportLibraryChooserOpen,
     setAppSettingsOpen,
+    setAppLogOpen,
     setMediaJobsOpen,
     setLinkedRulesEditor,
     resetConvertLinkedDialog: () => {
@@ -5830,6 +5870,7 @@ function AppInner() {
       exportDialogOpen ||
       importLibraryChooserOpen ||
       appSettingsOpen ||
+      appLogOpen ||
       Boolean(smartCollectionSettings) ||
       Boolean(imageSequenceDialog) ||
       Boolean(fatalAlertMessage) ||
@@ -8555,7 +8596,26 @@ function AppInner() {
         onToggleShowAiBadges={() => {
           setAiUiPrefs((p) => ({ ...p, showAiBadges: !p.showAiBadges }));
         }}
+        onOpenAppLog={openAppLog}
         open={appSettingsOpen}
+      />
+      <AppLogDialog
+        entries={appLogEntries}
+        errorCode={appLogErrorCode}
+        loading={appLogLoading}
+        onClose={() => setAppLogOpen(false)}
+        onRefresh={() => void refreshAppLog()}
+        onReveal={() => {
+          const bridge = (window as RendererWindow).serpent?.shell;
+          if (!bridge?.revealAppLog) {
+            setError(t("toast.aiRevealLogFailed"));
+            return;
+          }
+          void bridge.revealAppLog().then((result) => {
+            if (!result.ok) setError(t("toast.aiRevealLogFailed"));
+          });
+        }}
+        open={appLogOpen}
       />
       {smartCollectionSettings ? (
         <SmartCollectionSettingsDialog
@@ -8775,6 +8835,7 @@ function AppInner() {
             if (!result.ok) setError(t("toast.aiRevealLogFailed"));
           });
         }}
+        onViewAppLog={openAppLog}
       />
       {/* Unified context menu */}
       <AssetContextMenu

@@ -70,6 +70,7 @@ import {
   AI_CLEARED_CHANNEL,
   OPEN_EXTERNAL_URL_CHANNEL,
   REVEAL_APP_LOG_CHANNEL,
+  READ_APP_LOG_CHANNEL,
   SHOW_EDIT_CONTEXT_MENU_CHANNEL,
   SHELL_SWIPE_CHANNEL,
   WINDOW_FOCUS_CHANNEL,
@@ -83,6 +84,7 @@ import {
   type OpenExternalUrlResult,
   type RevealAppLogResult,
 } from "../shared/external-url";
+import type { ReadAppLogResult } from "../shared/app-log";
 import type { ShowEditContextMenuResult } from "../shared/edit-context-menu";
 import {
   createPublicError,
@@ -3873,6 +3875,36 @@ async function startApplication(): Promise<void> {
       } catch (error) {
         logger?.error("ipc.reveal-app-log", error, { code: "shell_failure" });
         return { ok: false, code: "shell_failure" };
+      }
+    },
+  );
+
+  // Read only the recent, already-redacted entries for the in-app diagnostics view.
+  // The absolute log path remains Main-owned and never crosses the bridge.
+  ipcMain.handle(
+    READ_APP_LOG_CHANNEL,
+    (event): ReadAppLogResult => {
+      if (!mainWindow || event.sender !== mainWindow.webContents) {
+        logger?.info("ipc.read-app-log", "Rejected read-app-log request.", {
+          code: "unauthorized_sender",
+        });
+        return { ok: false, code: "unauthorized_sender" };
+      }
+      if (!appLogPath || !existsSync(appLogPath)) {
+        logger?.info("ipc.read-app-log", "App log file missing.", {
+          code: "log_missing",
+        });
+        return { ok: false, code: "log_missing" };
+      }
+      try {
+        return {
+          ok: true,
+          entries: logger?.readRecent(500, { redactPaths: true }) ?? [],
+          fileName: "serpent.log",
+        };
+      } catch (error) {
+        logger?.error("ipc.read-app-log", error, { code: "read_failure" });
+        return { ok: false, code: "read_failure" };
       }
     },
   );

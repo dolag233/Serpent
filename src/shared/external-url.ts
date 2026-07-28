@@ -6,6 +6,7 @@ import type {
   WindowControlAction,
   WindowControlResult,
 } from './window-controls';
+import type { ReadAppLogResult } from './app-log';
 
 /**
  * 「在系统浏览器中打开外部链接」的共享规则与类型。
@@ -99,6 +100,8 @@ export interface SerpentShellApi {
    * Does not expose the path string to the renderer.
    */
   revealAppLog(): Promise<RevealAppLogResult>;
+  /** Read the recent, already-redacted entries from the Main-owned app log. */
+  readAppLog(): Promise<ReadAppLogResult>;
   /**
    * Sync the effective UI locale to Main for native file dialogs (Serpent-bwb).
    * Only `zh-CN` | `en` are accepted; malformed payloads are dropped in Main.
