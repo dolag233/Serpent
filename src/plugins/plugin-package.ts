@@ -57,6 +57,13 @@ export const pluginPackageLockSchema = z.strictObject({
   version: semverSchema,
   manifestSha256: pluginSha256Schema,
   packageHash: pluginSha256Schema,
+  /**
+   * Displayable, immutable provenance for this exact package.  The lock keeps
+   * the full GitHub tuple (rather than only its fingerprint) so users can make
+   * a meaningful trust/upgrade decision without exposing a local filesystem
+   * path to the Renderer.
+   */
+  source: pluginPackageSourceSchema,
   sourceFingerprint: z.string().min(1).max(1_024),
   files: z.array(pluginPackageFileSchema).min(1).max(10_000),
 });
@@ -122,6 +129,7 @@ export const defaultPluginPackageLimits: Readonly<PluginPackageLimits> = Object.
 const packageSnapshotSchema = z.strictObject({
   manifest: z.unknown(),
   manifestSha256: pluginSha256Schema,
+  source: pluginPackageSourceSchema.optional(),
   sourceFingerprint: z.string().min(1).max(1_024).optional(),
   archiveByteLength: z.number().int().nonnegative(),
   files: z.array(z.strictObject({
@@ -242,14 +250,19 @@ export function createPluginPackageLock(value: unknown): PluginPackageLock {
   const validation = validatePluginPackageSnapshot(value);
   if (!validation.ok) throw new TypeError(validation.message);
   const files = [...validation.files].sort(comparePackagePath);
+  const source = validation.snapshot.source ?? {
+    kind: 'local-directory' as const,
+    fingerprint: validation.snapshot.sourceFingerprint
+      ?? `unattributed:${validation.manifest.id}@${validation.manifest.version}`,
+  };
   return {
     lockVersion: PLUGIN_LOCK_VERSION,
     pluginId: validation.manifest.id,
     version: validation.manifest.version,
     manifestSha256: validation.snapshot.manifestSha256,
     packageHash: packageHash({ manifestSha256: validation.snapshot.manifestSha256, files }),
-    sourceFingerprint: validation.snapshot.sourceFingerprint
-      ?? `unattributed:${validation.manifest.id}@${validation.manifest.version}`,
+    source,
+    sourceFingerprint: source.fingerprint,
     files,
   };
 }
@@ -271,6 +284,7 @@ export function verifyPluginPackageLock(snapshot: unknown, lock: unknown): { ok:
     || expected.version !== actual.version
     || expected.manifestSha256 !== actual.manifestSha256
     || expected.packageHash !== actual.packageHash
+    || JSON.stringify(expected.source) !== JSON.stringify(actual.source)
     || expected.sourceFingerprint !== actual.sourceFingerprint
     || JSON.stringify(expected.files) !== JSON.stringify(actual.files)) {
     return failure('PLUGIN_PACKAGE_INTEGRITY_MISMATCH', 'The package no longer matches its verified lock.');

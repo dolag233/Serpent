@@ -5334,6 +5334,115 @@ select.ai-config-input.ai-config-languages {
   background: var(--divider);
 }
 
+.plugin-settings-page {
+  display: grid;
+  gap: 12px;
+}
+
+.plugin-settings-overview,
+.plugin-settings-install,
+.plugin-settings-package {
+  display: grid;
+  gap: 14px;
+}
+
+.plugin-settings-safe-mode {
+  padding-top: 13px;
+  border-top: 1px solid var(--divider);
+}
+
+.plugin-settings-scope {
+  width: fit-content;
+}
+
+.plugin-settings-install-actions,
+.plugin-settings-github-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.plugin-settings-github-field {
+  min-width: min(100%, 420px);
+  flex: 1 1 300px;
+}
+
+.plugin-settings-github-field .text-field {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.plugin-settings-error {
+  margin: 0;
+  color: var(--danger);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.plugin-settings-package-header,
+.plugin-settings-package-version,
+.plugin-settings-package-actions,
+.plugin-settings-resolution {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.plugin-settings-package-header {
+  justify-content: space-between;
+}
+
+.plugin-settings-status {
+  flex: 0 0 auto;
+  padding: 3px 7px;
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--divider));
+  border-radius: 999px;
+  color: var(--secondary);
+  font-size: 10px;
+  line-height: 1.2;
+}
+
+.plugin-settings-package-version {
+  align-items: flex-start;
+  justify-content: space-between;
+  padding-top: 12px;
+  border-top: 1px solid var(--divider);
+}
+
+.plugin-settings-package-meta {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.plugin-settings-package-meta strong {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 590;
+}
+
+.plugin-settings-package-meta span {
+  overflow-wrap: anywhere;
+  color: var(--secondary);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.plugin-settings-package-actions,
+.plugin-settings-resolution {
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.plugin-settings-resolution {
+  justify-content: flex-start;
+  padding-top: 2px;
+  color: var(--secondary);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
 .app-settings-toggle-row {
   cursor: pointer;
 }
@@ -5437,6 +5546,17 @@ select.ai-config-input.ai-config-languages {
     align-items: flex-start;
     flex-direction: column;
     gap: 12px;
+  }
+
+  .plugin-settings-install-actions,
+  .plugin-settings-github-field,
+  .plugin-settings-package-version {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .plugin-settings-package-actions {
+    justify-content: flex-start;
   }
 }
 

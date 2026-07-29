@@ -11,21 +11,25 @@
 - 资源库包写入 `.serpent/plugins/` 与 `.serpent/plugin-lock.json`；信任与 Resolution 写入每个设备的 `userData/plugin-device-state.json`，不随资源库复制。
 - 同 ID 用户级/资源库级冲突必须显式选择；同源、同运行模式且未增加权限的升级可继承选择，改变来源、模式或权限时返回重新确认状态；资源库包未信任时返回等待信任状态；Safe Mode 会禁用解析而不删除包。
 - 包按版本不可变存储；卸载先从 lock 脱离，再删除目录，崩溃最多留下不可激活的孤儿文件。
+- Package lock 现在也保存不可变来源元数据：GitHub 的仓库、tag、commit 与本地来源类型可安全显示给 Renderer；本地绝对路径仍只留在 Main 的原生选择器内。GitHub commit 不再被误当作“来源变化”，同仓库、同模式且未扩权的升级可沿用选择。
+- Main 创建每个 `userData` 独有的稳定 device ID；资源库 lock 永远不含此 ID、信任决定或 Resolution。Preload 只暴露有 Zod 校验的 `plugins.request`，不能访问路径、Node 或任意 IPC。
+- 设置中心新增“插件”页面：应用级/资源库级本地成品或 GitHub 安装、Safe Mode、包来源/权限/运行模式/完整性状态、资源库信任、冲突版本选择、风险升级确认入口与卸载均通过受限 Main IPC 完成。
 
 ## 本增量验证
 
 | 需求条目 | 实现位置 | 自动化测试 | 人工/平台证据 |
 | --- | --- | --- | --- |
-| 目录、ZIP、GitHub 安装与不执行脚本 | `src/main/plugin-package-manager.ts`、`plugin-package-archive.ts`、`plugin-github-client.ts` | `tests/unit/plugin-package-manager.test.ts` | 尚未接入界面 |
-| 同步代码而非同步信任 | 同上及 `plugin-device-state.json` | 双 userData + 同一 library fixture | 尚未接入界面 |
-| 冲突选择、升级重确认、Safe Mode、卸载 | `plugin-package-manager.ts` | 同上 | 尚未接入界面 |
+| 目录、ZIP、GitHub 安装与不执行脚本 | `src/main/plugin-package-manager.ts`、`plugin-package-archive.ts`、`plugin-github-client.ts` | `tests/unit/plugin-package-manager.test.ts` | 2026-07-30 Computer Use 在最新 `npm start` 打开插件页，未执行真实安装 |
+| 同步代码而非同步信任 | 同上及 `plugin-device-state.json`、`plugin-device-identity.ts` | 双 userData + 同一 library fixture；`plugin-device-identity.test.ts` | 暂无两真实设备证据 |
+| 冲突选择、升级重确认、Safe Mode、卸载 | `plugin-package-manager.ts`、`plugin-package-ipc.ts`、`PluginSettingsPage.tsx` | `plugin-package-ipc.test.ts`；隔离 Electron E2E 安装→信任→Safe Mode | 2026-07-30 Computer Use 已检查空状态和控件布局 |
 
-- `npm run test:unit -- tests/unit/plugin-package-manager.test.ts`：203 个测试文件通过，1,616 个测试通过，1 个跳过。
+- `npm run test:unit -- tests/unit/plugin-package-manager.test.ts tests/unit/plugin-package-ipc.test.ts tests/unit/plugin-device-identity.test.ts`：205 个测试文件通过，1,621 个测试通过，1 个跳过。
 - `npm run typecheck`：通过。
+- `node scripts/run-e2e-isolated.mjs tests/e2e/plugin-management.test.ts`：1 passed。测试为临时 userData、临时库和临时成品包，覆盖设置页安装资源库插件、per-device 信任与 Safe Mode 切换；macOS 运行器报告使用副屏或主屏 fallback，未把平台隔离写成已完全证明。
 - 定向 lint：通过（仅仓库既有 `library-service.ts` Babel 体积提示）。
 
 ## 尚未完成（不得作为已交付宣称）
 
-1. Main/Preload 的受限安装、信任、选择和管理 IPC；Renderer 插件管理页面与 Safe Mode 控件。
-2. 真实 Electron/packaged 两设备同步、文件选择器和网络 GitHub 路径证据。
-3. Phase C 的 Package 激活、崩溃隔离与 Host；当前安装器永远不执行插件入口。
+1. 真实 packaged、Windows 与两台独立设备复制同一资源库的证据；网络 GitHub 路径也尚未做人工验收。
+2. Phase C 的 Package 激活、崩溃隔离、健康窗口回滚和 quarantine；当前安装器仍永远不执行插件入口。
+3. 插件设置/命名空间存储和资源库级非秘密设置同步属于后续 Host 生命周期工作，尚未作为已完成能力宣称。

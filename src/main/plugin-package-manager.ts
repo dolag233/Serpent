@@ -129,7 +129,7 @@ export class PluginPackageManager {
 
   async installFromDirectory(input: PluginInstallFromDirectoryInput): Promise<PluginInstallResult> {
     const root = this.#packageStoreRoot(input.scope, input.libraryDirectory);
-    const inspectedSource = await inspectPluginDirectory(input.directory, input.source.fingerprint, this.#limits);
+    const inspectedSource = await inspectPluginDirectory(input.directory, input.source, this.#limits);
     this.#assertCompatible(inspectedSource.manifest);
 
     await mkdir(root, { recursive: true });
@@ -149,7 +149,7 @@ export class PluginPackageManager {
     try {
       await mkdir(stagingDirectory, { recursive: false });
       await copyInspectedPluginFiles(input.directory, stagingDirectory, inspectedSource.snapshot.files);
-      const staged = await inspectPluginDirectory(stagingDirectory, input.source.fingerprint, this.#limits);
+      const staged = await inspectPluginDirectory(stagingDirectory, input.source, this.#limits);
       if (staged.lock.packageHash !== inspectedSource.lock.packageHash
         || staged.lock.manifestSha256 !== inspectedSource.lock.manifestSha256) {
         throw new PluginPackageManagerError(
@@ -246,7 +246,11 @@ export class PluginPackageManager {
             repository,
             ref: candidate.ref,
             commitSha: downloaded.commitSha,
-            fingerprint: `github:${repository}@${downloaded.commitSha}`,
+            // A commit identifies this immutable archive, but the repository
+            // is the upgrade source. Keeping those concepts distinct lets an
+            // ordinary same-repository update preserve its selected scope
+            // while a different repository still requires confirmation.
+            fingerprint: `github:${repository}`,
           },
         });
       } catch (error) {
@@ -277,6 +281,7 @@ export class PluginPackageManager {
         installed.push({
           status: 'invalid',
           package: lock,
+          scope: input.scope,
           errorCode: 'PLUGIN_PACKAGE_INTEGRITY_MISMATCH',
           message: 'The package directory recorded in the plugin lock is missing.',
         });
@@ -580,10 +585,16 @@ export class PluginPackageManager {
   ): Promise<PluginInstalledPackageStatus | undefined> {
     try {
       await lstat(packageDirectory);
-      const inspection = await inspectPluginDirectory(packageDirectory, lock.sourceFingerprint, this.#limits);
+      const inspection = await inspectPluginDirectory(packageDirectory, lock.source, this.#limits);
       const integrity = verifyPluginPackageLock(inspection.snapshot, lock);
       if (!integrity.ok) {
-        return { status: 'invalid', package: lock, errorCode: integrity.code, message: integrity.message };
+        return {
+          status: 'invalid',
+          package: lock,
+          scope,
+          errorCode: integrity.code,
+          message: integrity.message,
+        };
       }
       return {
         status: 'valid',
@@ -595,6 +606,7 @@ export class PluginPackageManager {
       return {
         status: 'invalid',
         package: lock,
+        scope,
         errorCode: error instanceof PluginPackageManagerError ? error.code : 'PLUGIN_PACKAGE_INTEGRITY_MISMATCH',
         message: error instanceof Error ? error.message : 'The installed plugin package could not be verified.',
       };

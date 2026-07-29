@@ -282,6 +282,7 @@ import type {
 } from "../shared/library-api";
 import type { SerpentShellApi } from "../shared/external-url";
 import type { SerpentAutomationScriptApi } from '../shared/automation-script-api';
+import type { SerpentPluginManagerApi } from '../shared/plugin-manager-api';
 import type { AppLogEntry, ReadAppLogResult } from "../shared/app-log";
 import type {
   ImportConflictPlan,
@@ -369,6 +370,7 @@ type RendererWindow = Window & {
     library?: SerpentLibraryApi;
     shell?: SerpentShellApi;
     automation?: SerpentAutomationScriptApi;
+    plugins?: SerpentPluginManagerApi;
   };
 };
 type UiState =
@@ -8626,6 +8628,8 @@ function AppInner() {
           setAiUiPrefs((p) => ({ ...p, showAiBadges: !p.showAiBadges }));
         }}
         onOpenAppLog={openAppLog}
+        pluginApi={(window as RendererWindow).serpent?.plugins}
+        libraryId={library?.libraryId}
         open={appSettingsOpen}
       />
       <AppLogDialog

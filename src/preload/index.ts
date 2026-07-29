@@ -36,6 +36,7 @@ import {
   AUTOMATION_SCRIPT_COMMAND_CHANNEL,
   AUTOMATION_SCRIPT_COMPLETE_CHANNEL,
   AUTOMATION_SCRIPT_CANCEL_CHANNEL,
+  PLUGIN_MANAGER_CHANNEL,
 } from '../shared/protocol/channels';
 import {
   automationScriptStartResultSchema,
@@ -46,6 +47,11 @@ import {
   type AutomationScriptStartInput,
   type SerpentAutomationScriptApi,
 } from '../shared/automation-script-api';
+import {
+  parsePluginManagerResponse,
+  type PluginManagerRequest,
+  type SerpentPluginManagerApi,
+} from '../shared/plugin-manager-api';
 import {
   parseOpenExternalUrlResult,
   type RevealAppLogResult,
@@ -1859,12 +1865,21 @@ const automation: SerpentAutomationScriptApi = Object.freeze({
   },
 });
 
+const plugins: SerpentPluginManagerApi = Object.freeze({
+  async request(input: PluginManagerRequest) {
+    return parsePluginManagerResponse(
+      await ipcRenderer.invoke(PLUGIN_MANAGER_CHANNEL, input),
+    );
+  },
+});
+
 contextBridge.exposeInMainWorld(
   'serpent',
   Object.freeze({
     library,
     shell,
     automation,
+    plugins,
     ...(e2eEnabled ? { e2e: e2eDiagnostics } : {}),
   }),
 );

@@ -10,6 +10,7 @@ import {
   type PluginPackageFile,
   type PluginPackageLimits,
   type PluginPackageLock,
+  type PluginPackageSource,
   validatePluginPackageSnapshot,
 } from '../plugins/plugin-package';
 import { PluginPackageManagerError } from './plugin-package-manager-types';
@@ -18,7 +19,7 @@ export type InspectedPluginDirectory = {
   snapshot: {
     manifest: unknown;
     manifestSha256: string;
-    sourceFingerprint: string;
+    source: PluginPackageSource;
     archiveByteLength: number;
     files: Array<PluginPackageFile & { kind: 'file' }>;
   };
@@ -41,7 +42,7 @@ function safeContainedPath(root: string, relativePath: string): string {
 
 export async function inspectPluginDirectory(
   directory: string,
-  sourceFingerprint: string,
+  source: PluginPackageSource,
   limits: PluginPackageLimits,
 ): Promise<InspectedPluginDirectory> {
   const rootStats = await lstat(directory).catch((error: unknown) => {
@@ -106,7 +107,7 @@ export async function inspectPluginDirectory(
   const snapshot = {
     manifest: manifestValue,
     manifestSha256: sha256(manifestBytes),
-    sourceFingerprint,
+    source,
     archiveByteLength: 0,
     files,
   };

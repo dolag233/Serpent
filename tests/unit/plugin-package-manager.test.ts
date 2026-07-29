@@ -194,7 +194,64 @@ describe('PluginPackageManager installation and integrity', () => {
 
     expect(downloadedRefs).toEqual(['v1.3.0']);
     expect(installed.package.lock.version).toBe('1.3.0');
-    expect(installed.package.lock.sourceFingerprint).toContain('@bbbbbbbb');
+    expect(installed.package.lock.sourceFingerprint).toBe(
+      'github:https://github.com/example/serpent-palette-tools',
+    );
+    expect(installed.package.lock.source).toMatchObject({
+      kind: 'github',
+      ref: 'v1.3.0',
+      commitSha: 'b'.repeat(40),
+    });
+  });
+
+  it('treats a newer immutable commit from the same GitHub repository as an ordinary source-stable upgrade', async () => {
+    const oldSource = temporaryRoot('serpent-plugin-github-old-');
+    const newSource = temporaryRoot('serpent-plugin-github-new-');
+    const userData = temporaryRoot('serpent-plugin-github-user-');
+    const library = temporaryRoot('serpent-plugin-github-library-');
+    writePlugin(oldSource, { version: '1.2.0' });
+    writePlugin(newSource, { version: '1.3.0' });
+    const oldArchive = new AdmZip();
+    oldArchive.addLocalFolder(oldSource, 'palette-tools-1.2.0');
+    const newArchive = new AdmZip();
+    newArchive.addLocalFolder(newSource, 'palette-tools-1.3.0');
+    const manager = createManager(userData);
+    const repository = 'https://github.com/example/serpent-palette-tools';
+
+    const first = await manager.installFromGitHub({
+      repository,
+      scope: 'user',
+      client: {
+        async listTags() { return [{ name: 'v1.2.0', commitSha: 'a'.repeat(40) }]; },
+        async defaultBranch() { return { name: 'main', commitSha: 'a'.repeat(40) }; },
+        async downloadArchive() { return { archive: oldArchive.toBuffer(), commitSha: 'a'.repeat(40) }; },
+      },
+    });
+    await manager.chooseResolution({
+      libraryId: 'library-a',
+      pluginId: first.package.lock.pluginId,
+      selection: 'use-global',
+      packageHash: first.package.lock.packageHash,
+    });
+    const upgraded = await manager.installFromGitHub({
+      repository,
+      scope: 'user',
+      client: {
+        async listTags() { return [{ name: 'v1.3.0', commitSha: 'b'.repeat(40) }]; },
+        async defaultBranch() { return { name: 'main', commitSha: 'b'.repeat(40) }; },
+        async downloadArchive() { return { archive: newArchive.toBuffer(), commitSha: 'b'.repeat(40) }; },
+      },
+    });
+
+    expect(upgraded.package.lock.sourceFingerprint).toBe(first.package.lock.sourceFingerprint);
+    await expect(manager.resolve({
+      libraryId: 'library-a',
+      libraryDirectory: library,
+      pluginId: first.package.lock.pluginId,
+    })).resolves.toMatchObject({
+      status: 'resolved',
+      package: { lock: { packageHash: upgraded.package.lock.packageHash, version: '1.3.0' } },
+    });
   });
 });
 

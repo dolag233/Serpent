@@ -94,6 +94,7 @@ export type PluginInstalledPackageStatus =
   | {
     status: 'invalid';
     package: PluginPackageLock;
+    scope: PluginInstallationScope;
     errorCode: string;
     message: string;
   };

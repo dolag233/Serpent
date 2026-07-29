@@ -4,9 +4,11 @@ import path from 'node:path';
 
 import {
   type PluginManagerPackageSummary,
-  type PluginManagerRequest,
+  type PluginManagerResolutionCandidate,
   type PluginManagerResolutionSummary,
   type PluginManagerResponse,
+  type PluginManagerSourceSummary,
+  type PluginManagerRequest,
   pluginManagerRequestSchema,
 } from '../shared/plugin-manager-api';
 import {
@@ -20,8 +22,30 @@ import type { PluginPackageManager } from './plugin-package-manager';
 export interface PluginPackageIpcOptions {
   manager: PluginPackageManager;
   resolveLibraryDirectory(libraryId: string): Promise<string | undefined>;
+  /** Main-owned native picker. It must never return a value to Renderer. */
   chooseLocalPackage(): Promise<string | undefined>;
   logger?: { error(scope: string, error: unknown, context?: Record<string, unknown>): void };
+}
+
+function sourceSummary(source: InstalledPluginPackage['lock']['source']): PluginManagerSourceSummary {
+  if (source.kind === 'github') {
+    return {
+      kind: source.kind,
+      repository: source.repository,
+      ref: source.ref,
+      commitSha: source.commitSha,
+    };
+  }
+  return { kind: source.kind };
+}
+
+function packageTrust(entry: PluginInstalledPackageStatus): 'trusted' | 'denied' | 'untrusted' {
+  if (entry.status === 'invalid') return 'untrusted';
+  // User-scope code is installed by the local user and does not undergo the
+  // cross-device library trust gate. Library packages still require a device
+  // decision before resolution can activate them.
+  if (entry.package.scope === 'user') return 'trusted';
+  return entry.trust?.decision ?? 'untrusted';
 }
 
 function summary(entry: PluginInstalledPackageStatus): PluginManagerPackageSummary {
@@ -31,10 +55,11 @@ function summary(entry: PluginInstalledPackageStatus): PluginManagerPackageSumma
       version: entry.package.version,
       name: entry.package.pluginId,
       description: 'Package verification failed.',
+      packageHash: entry.package.packageHash,
       runtimeMode: 'standard',
       permissions: [],
-      sourceFingerprint: entry.package.sourceFingerprint,
-      scope: 'user',
+      source: sourceSummary(entry.package.source),
+      scope: entry.scope,
       status: 'invalid',
       trust: 'untrusted',
       errorCode: entry.errorCode,
@@ -45,35 +70,84 @@ function summary(entry: PluginInstalledPackageStatus): PluginManagerPackageSumma
     version: entry.package.lock.version,
     name: entry.package.manifest.name,
     description: entry.package.manifest.description,
+    packageHash: entry.package.lock.packageHash,
     runtimeMode: entry.package.manifest.runtime.mode,
     permissions: [...entry.package.manifest.permissions],
-    sourceFingerprint: entry.package.lock.sourceFingerprint,
+    source: sourceSummary(entry.package.lock.source),
     scope: entry.package.scope,
     status: 'valid',
-    trust: entry.trust?.decision ?? 'untrusted',
+    trust: packageTrust(entry),
   };
+}
+
+function candidateSummary(
+  pluginPackage: InstalledPluginPackage,
+  trust: 'trusted' | 'denied' | 'untrusted',
+): PluginManagerResolutionCandidate {
+  return {
+    scope: pluginPackage.scope,
+    version: pluginPackage.lock.version,
+    packageHash: pluginPackage.lock.packageHash,
+    runtimeMode: pluginPackage.manifest.runtime.mode,
+    permissions: [...pluginPackage.manifest.permissions],
+    source: sourceSummary(pluginPackage.lock.source),
+    trust,
+  };
+}
+
+function trustForPackage(
+  pluginPackage: InstalledPluginPackage,
+  packageSummaries: readonly PluginManagerPackageSummary[],
+): 'trusted' | 'denied' | 'untrusted' {
+  return packageSummaries.find((entry) => entry.packageHash === pluginPackage.lock.packageHash
+    && entry.scope === pluginPackage.scope)?.trust
+    ?? (pluginPackage.scope === 'user' ? 'trusted' : 'untrusted');
 }
 
 function resolutionSummary(
   result: Awaited<ReturnType<PluginPackageManager['resolve']>>,
+  packageSummaries: readonly PluginManagerPackageSummary[],
+  requestedPluginId: string,
 ): PluginManagerResolutionSummary {
-  if (result.status === 'not-installed') return { status: 'not-installed' };
-  if (result.status === 'disabled') return { status: 'disabled' };
-  if (result.status === 'conflict') return { status: 'conflict' };
-  if (result.status === 'resolved' || result.status === 'awaiting-trust') {
+  if (result.status === 'not-installed') return { status: 'not-installed', pluginId: requestedPluginId };
+  if (result.status === 'disabled') return { status: 'disabled', pluginId: requestedPluginId, reason: result.reason };
+  if (result.status === 'conflict') {
     return {
-      status: result.status,
+      status: 'conflict',
+      pluginId: requestedPluginId,
+      candidates: [
+        candidateSummary(result.global, trustForPackage(result.global, packageSummaries)),
+        candidateSummary(result.library, trustForPackage(result.library, packageSummaries)),
+      ],
+    };
+  }
+  if (result.status === 'resolved') {
+    return {
+      status: 'resolved',
       pluginId: result.package.lock.pluginId,
       version: result.package.lock.version,
+      packageHash: result.package.lock.packageHash,
       selection: result.selection,
-      ...(result.status === 'awaiting-trust' ? { reason: result.reason } : {}),
+    };
+  }
+  if (result.status === 'awaiting-trust') {
+    return {
+      status: 'awaiting-trust',
+      pluginId: result.package.lock.pluginId,
+      version: result.package.lock.version,
+      packageHash: result.package.lock.packageHash,
+      selection: result.selection,
+      reason: result.reason,
     };
   }
   return {
     status: 'requires-confirmation',
     pluginId: result.current.lock.pluginId,
-    version: result.current.lock.version,
     reason: result.reason,
+    current: candidateSummary(result.current, trustForPackage(result.current, packageSummaries)),
+    ...(result.candidate === undefined ? {} : {
+      candidate: candidateSummary(result.candidate, trustForPackage(result.candidate, packageSummaries)),
+    }),
   };
 }
 
@@ -100,31 +174,46 @@ async function packageForTrust(
   return match?.status === 'valid' ? match.package : undefined;
 }
 
+/** Returns false for a deliberately cancelled native picker. */
 async function installLocal(
   request: Extract<PluginManagerRequest, { type: 'plugin-manager.install-local' }>,
   libraryDirectory: string | undefined,
   options: PluginPackageIpcOptions,
-): Promise<void> {
+): Promise<boolean> {
   const selected = await options.chooseLocalPackage();
-  if (selected === undefined) throw new PluginPackageManagerError('PLUGIN_SOURCE_READ_FAILED', 'selection-cancelled');
+  if (selected === undefined) return false;
   const source = {
     kind: 'local-directory' as const,
+    // A lock never records the local path. The hash keeps ordinary updates
+    // source-stable without disclosing it through a Renderer-facing response.
     fingerprint: `local:${createHash('sha256').update(selected).digest('hex')}`,
   };
   const selectedStats = await stat(selected);
   if (selectedStats.isDirectory()) {
-    await options.manager.installFromDirectory({ ...request, directory: selected, libraryDirectory, source });
-    return;
+    await options.manager.installFromDirectory({
+      directory: selected,
+      scope: request.scope,
+      libraryDirectory,
+      source,
+    });
+    return true;
   }
   if (path.extname(selected).toLowerCase() !== '.zip') {
     throw new PluginPackageManagerError('PLUGIN_ARCHIVE_INVALID', 'Select a plugin directory or ZIP package.');
   }
   await options.manager.installFromArchive({
-    ...request,
     archive: await readFile(selected),
+    scope: request.scope,
     libraryDirectory,
     source: { kind: 'local-package', fingerprint: source.fingerprint },
   });
+  return true;
+}
+
+function libraryIdFor(request: PluginManagerRequest): string | undefined {
+  return request.type === 'plugin-manager.resolve'
+    ? request.libraryId
+    : 'libraryId' in request ? request.libraryId : undefined;
 }
 
 export function createPluginPackageRequestHandler(options: PluginPackageIpcOptions) {
@@ -133,18 +222,23 @@ export function createPluginPackageRequestHandler(options: PluginPackageIpcOptio
     if (!parsed.success) return { ok: false, code: 'invalid-request' };
     const request = parsed.data;
     try {
-      const requiresLibrary = ('scope' in request && request.scope === 'library')
-        || ('libraryId' in request && request.libraryId !== undefined && request.type === 'plugin-manager.list');
+      const libraryId = libraryIdFor(request);
+      const requiresLibrary = request.type === 'plugin-manager.resolve'
+        || ('scope' in request && request.scope === 'library')
+        || (request.type === 'plugin-manager.list' && libraryId !== undefined);
       const libraryDirectory = requiresLibrary
         ? await libraryDirectoryFor(request, options)
         : undefined;
       if (requiresLibrary && libraryDirectory === undefined) return { ok: false, code: 'library-not-open' };
 
       if (request.type === 'plugin-manager.install-local') {
-        await installLocal(request, libraryDirectory, options);
+        if (!await installLocal(request, libraryDirectory, options)) {
+          return { ok: false, code: 'selection-cancelled' };
+        }
       } else if (request.type === 'plugin-manager.install-github') {
         await options.manager.installFromGitHub({
-          ...request,
+          repository: request.repository,
+          scope: request.scope,
           libraryDirectory,
           client: createGitHubPluginClient(),
         });
@@ -159,46 +253,47 @@ export function createPluginPackageRequestHandler(options: PluginPackageIpcOptio
         if (pluginPackage === undefined) return { ok: false, code: 'operation-failed' };
         await options.manager.recordTrust({ package: pluginPackage, decision: request.decision });
       } else if (request.type === 'plugin-manager.resolve') {
-        const resolvedLibraryDirectory = await options.resolveLibraryDirectory(request.libraryId);
-        if (resolvedLibraryDirectory === undefined) return { ok: false, code: 'library-not-open' };
-        await options.manager.chooseResolution(request);
+        await options.manager.chooseResolution({
+          libraryId: request.libraryId,
+          pluginId: request.pluginId,
+          selection: request.selection,
+          ...(request.packageHash === undefined ? {} : { packageHash: request.packageHash }),
+        });
       } else if (request.type === 'plugin-manager.safe-mode') {
         await options.manager.setSafeMode(request.enabled);
       } else if (request.type === 'plugin-manager.uninstall') {
-        await options.manager.uninstall({ ...request, libraryDirectory });
+        await options.manager.uninstall({
+          scope: request.scope,
+          libraryDirectory,
+          libraryId,
+          pluginId: request.pluginId,
+          version: request.version,
+        });
       }
 
-      const user = await options.manager.listInstalled({ scope: 'user' });
-      const library = libraryDirectory === undefined
+      const [user, library] = await Promise.all([
+        options.manager.listInstalled({ scope: 'user' }),
+        libraryDirectory === undefined
+          ? Promise.resolve([])
+          : options.manager.listInstalled({ scope: 'library', libraryDirectory }),
+      ]);
+      const packages = [...user, ...library].map(summary);
+      const pluginIds = [...new Set(packages.map((entry) => entry.pluginId))];
+      const resolutions = libraryId === undefined || libraryDirectory === undefined
         ? []
-        : await options.manager.listInstalled({ scope: 'library', libraryDirectory });
-      const pluginIds = [...new Set([...user, ...library].map((entry) => entry.status === 'valid'
-        ? entry.package.lock.pluginId
-        : entry.package.pluginId))];
-      const resolutions = request.type === 'plugin-manager.resolve'
-        ? [resolutionSummary(await options.manager.resolve({
-          libraryId: request.libraryId,
-          libraryDirectory: (await options.resolveLibraryDirectory(request.libraryId))!,
-          pluginId: request.pluginId,
-        }))]
-        : libraryDirectory === undefined || !('libraryId' in request) || request.libraryId === undefined
-          ? []
-          : await Promise.all(pluginIds.map(async (pluginId) => resolutionSummary(await options.manager.resolve({
-            libraryId: request.libraryId!,
-            libraryDirectory,
-            pluginId,
-          }))));
+        : await Promise.all(pluginIds.map(async (pluginId) => resolutionSummary(await options.manager.resolve({
+          libraryId,
+          libraryDirectory,
+          pluginId,
+        }), packages, pluginId)));
       return {
         ok: true,
-        packages: [...user, ...library].map(summary),
+        packages,
         resolutions,
         safeMode: await options.manager.getSafeMode(),
       };
     } catch (error) {
-      if (error instanceof PluginPackageManagerError && error.message === 'selection-cancelled') {
-        return { ok: false, code: 'selection-cancelled' };
-      }
-      options.logger?.error('plugin.ipc', error, { requestType: parsed.data.type });
+      options.logger?.error('plugin.ipc', error, { requestType: request.type });
       return { ok: false, code: 'operation-failed' };
     }
   };

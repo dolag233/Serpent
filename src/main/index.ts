@@ -76,6 +76,7 @@ import {
   SHELL_SWIPE_CHANNEL,
   WINDOW_FOCUS_CHANNEL,
   NATIVE_EDIT_COPY_CHANNEL,
+  PLUGIN_MANAGER_CHANNEL,
   VIEWER_VIDEO_SHORTCUTS_ACTIVE_CHANNEL,
 } from "../shared/protocol/channels";
 import {
@@ -92,6 +93,10 @@ import {
   createJsonFileAutomationExecutionStore,
 } from './automation-execution-journal';
 import { registerAutomationScriptIpc } from './automation-script-ipc';
+import { loadOrCreatePluginDeviceId } from './plugin-device-identity';
+import { createPluginPackageRequestHandler } from './plugin-package-ipc';
+import { PluginPackageManager } from './plugin-package-manager';
+import { PLUGIN_API_VERSION } from '../plugins/plugin-manifest';
 import { shouldUseFramelessTitleBar } from "../shared/window-controls";
 import { matchViewerVideoLetterShortcut } from "../shared/viewer-video-shortcuts";
 import {
@@ -240,9 +245,22 @@ let logger: AppLogger | undefined;
 let appLogPath: string | undefined;
 let automationExecutionJournal: AutomationExecutionJournal | undefined;
 let automationCommandGateway: AutomationCommandGateway | undefined;
+let pluginPackageManager: PluginPackageManager | undefined;
 
 function recentLibraryPath(): string {
   return path.join(app.getPath("userData"), "recent-library.json");
+}
+
+function currentPluginCompatibilityPlatform():
+  | { platform: 'darwin' | 'win32' | 'linux'; arch: 'arm64' | 'x64' | 'ia32' }
+  | undefined {
+  const platform = process.platform;
+  const arch = process.arch;
+  if ((platform !== 'darwin' && platform !== 'win32' && platform !== 'linux')
+    || (arch !== 'arm64' && arch !== 'x64' && arch !== 'ia32')) {
+    return undefined;
+  }
+  return { platform, arch };
 }
 
 function rememberOpenedLibrary(libraryPath: string, displayName: string): void {
@@ -1227,6 +1245,30 @@ async function selectDirectory(
   dialogId: "createLibrary" | "openLibrary",
 ): Promise<string | undefined> {
   return selectLibraryDirectory(createNativeDialogHost(), dialogId);
+}
+
+async function selectPluginPackage(): Promise<string | undefined> {
+  // Isolated Electron E2E injects a disposable package path. Production and
+  // normal development always use the native picker, so Renderer never gains
+  // path selection capability.
+  if (!app.isPackaged && process.env.SERPENT_E2E === '1') {
+    const e2ePackage = process.env.SERPENT_E2E_PLUGIN_PACKAGE;
+    return e2ePackage && path.isAbsolute(e2ePackage) ? e2ePackage : undefined;
+  }
+  const result = mainWindow
+    ? await dialog.showOpenDialog(mainWindow, {
+      title: 'Install a Serpent plugin',
+      buttonLabel: 'Choose plugin',
+      properties: ['openFile', 'openDirectory'],
+      filters: [{ name: 'Serpent plugin package', extensions: ['zip'] }],
+    })
+    : await dialog.showOpenDialog({
+      title: 'Install a Serpent plugin',
+      buttonLabel: 'Choose plugin',
+      properties: ['openFile', 'openDirectory'],
+      filters: [{ name: 'Serpent plugin package', extensions: ['zip'] }],
+    });
+  return result.canceled || result.filePaths.length === 0 ? undefined : result.filePaths[0];
 }
 
 async function commandFor(
@@ -3724,6 +3766,25 @@ async function startApplication(): Promise<void> {
       }),
     },
   );
+  const pluginCompatibility = currentPluginCompatibilityPlatform();
+  const nodeAbi = Number(process.versions.modules);
+  if (pluginCompatibility === undefined || !Number.isSafeInteger(nodeAbi) || nodeAbi <= 0) {
+    logger.error('plugin.platform', new Error('This platform cannot run the plugin package manager.'), {
+      platform: process.platform,
+      arch: process.arch,
+      nodeAbi: process.versions.modules,
+    });
+  } else {
+    pluginPackageManager = new PluginPackageManager({
+      userDataDirectory: app.getPath('userData'),
+      deviceId: await loadOrCreatePluginDeviceId(app.getPath('userData')),
+      serpentVersion: app.getVersion(),
+      pluginApiVersion: PLUGIN_API_VERSION,
+      ...pluginCompatibility,
+      nodeAbi,
+      logger,
+    });
+  }
   workerClient.onAssetsChanged(publishAssetChange);
   workerClient.onProgress(publishProgress);
   workerClient.onAiProgress(publishAiProgress);
@@ -3938,6 +3999,30 @@ async function startApplication(): Promise<void> {
     gateway: () => automationCommandGateway,
     confirmDesktopWrite: confirmDesktopAutomationWrite,
     logger: () => logger,
+  });
+
+  const pluginPackageRequest = pluginPackageManager === undefined
+    ? undefined
+    : createPluginPackageRequestHandler({
+      manager: pluginPackageManager,
+      resolveLibraryDirectory: async (libraryId) => {
+        const client = workerClient;
+        if (client === undefined) return undefined;
+        const result = await client.request({ type: 'library.list' });
+        if (!result.ok || result.type !== 'library.list') return undefined;
+        return result.libraries.find((library) => library.libraryId === libraryId)?.libraryPath;
+      },
+      chooseLocalPackage: selectPluginPackage,
+      logger,
+    });
+  ipcMain.handle(PLUGIN_MANAGER_CHANNEL, (event, input: unknown) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents || pluginPackageRequest === undefined) {
+      logger?.info('plugin.ipc', 'Rejected plugin manager request.', {
+        reason: pluginPackageRequest === undefined ? 'unavailable' : 'unauthorized-sender',
+      });
+      return { ok: false, code: 'operation-failed' };
+    }
+    return pluginPackageRequest(input);
   });
 
   // 渲染进程请求在系统浏览器打开外部链接（检查器「源链接」跳转）。

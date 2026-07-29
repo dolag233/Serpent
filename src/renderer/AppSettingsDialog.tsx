@@ -8,6 +8,7 @@ import {
   GeneralSettingsPage,
   SafetySettingsPage,
 } from "./AppSettingsPages";
+import { PluginSettingsPage } from "./PluginSettingsPage";
 import {
   APP_SETTINGS_CATEGORIES,
   type AppSettingsCategoryId,
@@ -17,6 +18,7 @@ import type { CanvasPreferences } from "./canvas-preferences";
 import { Icon } from "./Icons";
 import { iconActionAttrs } from "./icon-action-attrs";
 import { useT } from "./i18n";
+import type { SerpentPluginManagerApi } from "../shared/plugin-manager-api";
 
 export interface AppSettingsDialogProps {
   open: boolean;
@@ -30,6 +32,8 @@ export interface AppSettingsDialogProps {
   aiConfigPanel: ReactNode;
   onToggleShowAiBadges: () => void;
   onOpenAppLog?: () => void;
+  pluginApi?: SerpentPluginManagerApi;
+  libraryId?: string;
 }
 
 /**
@@ -49,6 +53,8 @@ export function AppSettingsDialog({
   aiConfigPanel,
   onToggleShowAiBadges,
   onOpenAppLog,
+  pluginApi,
+  libraryId,
 }: AppSettingsDialogProps): ReactNode {
   const t = useT();
   const activeCategoryDefinition = APP_SETTINGS_CATEGORIES.find(
@@ -115,6 +121,9 @@ export function AppSettingsDialog({
                 aiConfigPanel={aiConfigPanel}
                 onToggleShowAiBadges={onToggleShowAiBadges}
               />
+            ) : null}
+            {activeCategory === "plugins" ? (
+              <PluginSettingsPage api={pluginApi} libraryId={libraryId} />
             ) : null}
             {activeCategory === "safety" ? <SafetySettingsPage /> : null}
           </main>
