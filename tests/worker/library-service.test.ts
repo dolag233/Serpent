@@ -21,6 +21,8 @@ import {
   LibraryService,
   LibraryServiceError,
 } from '../../src/worker/library-service';
+import { LibraryWriteCoordinatorError } from '../../src/worker/library-write-coordinator';
+import { publicErrorForWorkerFailure } from '../../src/worker/public-error';
 
 const temporaryRoots: string[] = [];
 
@@ -54,8 +56,30 @@ const TestDatabase = require('better-sqlite3') as new (
   filename: string,
 ) => TestDatabaseConnection;
 
+function removeWriteCoordinationSchema(database: TestDatabaseConnection): void {
+  const triggers = database.prepare(
+    `SELECT name FROM sqlite_master
+      WHERE type = 'trigger'
+        AND (name LIKE 'library_change_on_%' OR name = 'library_change_sequence_seed')`,
+  ).all() as Array<{ name: string }>;
+  for (const trigger of triggers) {
+    if (
+      trigger.name !== 'library_change_sequence_seed' &&
+      !/^library_change_on_[a-z_]+_(?:insert|update|delete)$/u.test(trigger.name)
+    ) {
+      throw new Error('Unexpected write-coordination trigger name in test fixture.');
+    }
+    database.exec(`DROP TRIGGER "${trigger.name}"`);
+  }
+  database.exec(`
+    DROP TABLE IF EXISTS library_write_leases;
+    DROP TABLE IF EXISTS library_change_sequence;
+  `);
+}
+
 function downgradeLibraryToV1(libraryPath: string, createMigrationBlocker = false): void {
   const database = new TestDatabase(path.join(libraryPath, '.serpent', 'library.db'));
+  removeWriteCoordinationSchema(database);
   database.exec(`
     -- Reverse v6: drop FTS5 tables and triggers.
     DROP TABLE IF EXISTS asset_search;
@@ -95,6 +119,7 @@ function downgradeLibraryToV1(libraryPath: string, createMigrationBlocker = fals
 
 function downgradeLibraryToV2(libraryPath: string): void {
   const database = new TestDatabase(path.join(libraryPath, '.serpent', 'library.db'));
+  removeWriteCoordinationSchema(database);
   database.exec(`
     -- better-sqlite3 defaults foreign_keys = ON (unlike SQLite's default OFF);
     -- disable during this raw downgrade so DROP TABLE assets does not cascade
@@ -216,12 +241,164 @@ describe('LibraryService lifecycle', () => {
     expect(service.listLibraries()).toEqual([created]);
 
     const database = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
-    expect(database.pragma('user_version')).toEqual([{ user_version: 23 }]);
+    expect(database.pragma('user_version')).toEqual([{ user_version: 24 }]);
     database.close();
 
     expect(service.openLibrary(created.libraryPath)).toEqual(created);
     expect(service.listLibraries()).toEqual([created]);
     service.closeAll();
+  });
+
+  it('persists a change sequence with committed library mutations and rolls it back with aborted work', () => {
+    const root = temporaryRoot();
+    const service = newService();
+    const created = service.createLibrary({ displayName: 'Change sequence', selectedParentPath: root });
+
+    expect(service.getChangeSequence(created.libraryId)).toBe(0);
+    service.createTag({ libraryId: created.libraryId, name: 'sequence-tag' });
+    expect(service.getChangeSequence(created.libraryId)).toBe(1);
+
+    const database = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    database.exec(`
+      BEGIN;
+      UPDATE tags SET name = name WHERE library_id = '${created.libraryId}';
+      ROLLBACK;
+    `);
+    database.close();
+    expect(service.getChangeSequence(created.libraryId)).toBe(1);
+  });
+
+  it('exposes the same per-library write lease to independently opened service instances', async () => {
+    const root = temporaryRoot();
+    const first = newService();
+    const created = first.createLibrary({ displayName: 'Shared writer', selectedParentPath: root });
+    const second = newService();
+    second.openLibrary(created.libraryPath);
+
+    const lease = await first.acquireWriteLease(created.libraryId, { timeoutMs: 0 });
+    await expect(second.acquireWriteLease(created.libraryId, { timeoutMs: 0 })).rejects
+      .toBeInstanceOf(LibraryWriteCoordinatorError);
+    lease.release();
+    const recovered = await second.acquireWriteLease(created.libraryId, { timeoutMs: 0 });
+    recovered.release();
+  });
+
+  it('holds SQLite’s real writer mutex for the entire bounded write callback', async () => {
+    const root = temporaryRoot();
+    const service = newService();
+    const created = service.createLibrary({ displayName: 'Bounded writer', selectedParentPath: root });
+    const databasePath = path.join(created.libraryPath, '.serpent', 'library.db');
+
+    const result = await service.runBoundedWrite(created.libraryId, () => {
+      const contender = new TestDatabase(databasePath);
+      try {
+        contender.pragma('busy_timeout = 0');
+        let contentionError: unknown;
+        try {
+          contender.prepare(
+            `INSERT INTO library_write_leases
+              (library_id, owner_id, acquired_at_ms, expires_at_ms)
+             VALUES (?, 'contender', 0, 1)
+             ON CONFLICT(library_id) DO UPDATE SET owner_id = excluded.owner_id`,
+          ).run(created.libraryId);
+        } catch (error) {
+          contentionError = error;
+        }
+        expect(contentionError).toMatchObject({ code: 'SQLITE_BUSY' });
+      } finally {
+        contender.close();
+      }
+      return 'committed';
+    });
+
+    expect(result).toBe('committed');
+  });
+
+  it('waits for the lease timeout and exposes an occupied lease as LIBRARY_BUSY', async () => {
+    const root = temporaryRoot();
+    const first = newService();
+    const created = first.createLibrary({ displayName: 'Bounded lease wait', selectedParentPath: root });
+    const second = newService();
+    second.openLibrary(created.libraryPath);
+
+    const lease = await first.acquireWriteLease(created.libraryId, { timeoutMs: 0 });
+    try {
+      let failure: unknown;
+      try {
+        await second.runBoundedWrite(created.libraryId, () => 'unreachable', { timeoutMs: 0 });
+      } catch (error) {
+        failure = error;
+      }
+      expect(failure).toBeInstanceOf(LibraryWriteCoordinatorError);
+      expect(publicErrorForWorkerFailure(failure)).toEqual({
+        code: 'LIBRARY_BUSY',
+        message: 'This library is being updated by another Serpent session. Try again in a moment.',
+      });
+    } finally {
+      lease.release();
+    }
+  });
+
+  it('translates writer-mutex contention after lease acquisition to LIBRARY_BUSY', async () => {
+    const root = temporaryRoot();
+    const creatingService = newService();
+    const created = creatingService.createLibrary({ displayName: 'Mutex writer', selectedParentPath: root });
+    const databaseFilename = path.join(created.libraryPath, '.serpent', 'library.db');
+    let contender: TestDatabaseConnection | undefined;
+    const service = newService({
+      sqliteBusyTimeoutMsForTests: 0,
+      beforeBoundedWriteTransaction: () => {
+        contender = new TestDatabase(databaseFilename);
+        contender.pragma('busy_timeout = 0');
+        contender.exec('BEGIN IMMEDIATE');
+      },
+    });
+    service.openLibrary(created.libraryPath);
+
+    try {
+      let failure: unknown;
+      try {
+        await service.runBoundedWrite(created.libraryId, () => 'unreachable');
+      } catch (error) {
+        failure = error;
+      }
+      expect(failure).toBeInstanceOf(LibraryWriteCoordinatorError);
+      expect(publicErrorForWorkerFailure(failure)).toEqual({
+        code: 'LIBRARY_BUSY',
+        message: 'This library is being updated by another Serpent session. Try again in a moment.',
+      });
+    } finally {
+      contender?.exec('ROLLBACK');
+      contender?.close();
+    }
+  });
+
+  it('serializes the v23-to-v24 coordination migration before verifying schema history', () => {
+    const root = temporaryRoot();
+    const creatingService = newService();
+    const created = creatingService.createLibrary({ displayName: 'Migration writer', selectedParentPath: root });
+    creatingService.closeAll();
+
+    const database = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    removeWriteCoordinationSchema(database);
+    database.exec(`
+      DELETE FROM schema_migrations WHERE version = 24;
+      PRAGMA user_version = 23;
+    `);
+    database.close();
+
+    const first = newService();
+    const second = newService();
+    expect(first.openLibrary(created.libraryPath)).toMatchObject({ libraryId: created.libraryId });
+    expect(second.openLibrary(created.libraryPath)).toMatchObject({ libraryId: created.libraryId });
+
+    const verification = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    expect(verification.pragma('user_version')).toEqual([{ user_version: 24 }]);
+    expect(
+      verification.prepare('SELECT sequence FROM library_change_sequence WHERE library_id = ?')
+        .get(created.libraryId),
+    ).toEqual({ sequence: 0 });
+    verification.close();
   });
 
   it('migrates v13 Label data to v14 without changing unrelated metadata', () => {
@@ -265,6 +442,7 @@ describe('LibraryService lifecycle', () => {
 
     const databasePath = path.join(created.libraryPath, '.serpent', 'library.db');
     const database = new TestDatabase(databasePath);
+    removeWriteCoordinationSchema(database);
     database.exec(`
       PRAGMA foreign_keys = OFF;
 
@@ -384,7 +562,7 @@ describe('LibraryService lifecycle', () => {
     migratedService.closeAll();
 
     const migratedDatabase = new TestDatabase(databasePath);
-    expect(migratedDatabase.pragma('user_version')).toEqual([{ user_version: 23 }]);
+    expect(migratedDatabase.pragma('user_version')).toEqual([{ user_version: 24 }]);
     expect(migratedDatabase.prepare("PRAGMA table_info('asset_metadata')").all())
       .not.toEqual(expect.arrayContaining([expect.objectContaining({ name: 'label' })]));
     expect(migratedDatabase.prepare("PRAGMA table_info('asset_search_index')").all())
@@ -502,7 +680,7 @@ describe('LibraryService lifecycle', () => {
     service.openLibrary(created.libraryPath);
 
     const database = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
-    expect(database.pragma('user_version')).toEqual([{ user_version: 23 }]);
+    expect(database.pragma('user_version')).toEqual([{ user_version: 24 }]);
     expect(
       database
         .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'assets'")
@@ -530,7 +708,7 @@ describe('LibraryService lifecycle', () => {
     expect(service.listAssets({ libraryId: reopened.libraryId, recursive: true })[0])
       .toMatchObject({ relativeFilePath: 'Café.PNG' });
     const database = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
-    expect(database.pragma('user_version')).toEqual([{ user_version: 23 }]);
+    expect(database.pragma('user_version')).toEqual([{ user_version: 24 }]);
     expect(database.prepare('SELECT path_identity FROM assets').all()).toEqual([
       { path_identity: 'café.png' },
     ]);

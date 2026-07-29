@@ -48,6 +48,13 @@ import {
   type RepresentativeColor,
 } from './palette-extractor';
 import { pathIsWithin } from './path-utils';
+import {
+  LibraryWriteCoordinator,
+  LibraryWriteCoordinatorError,
+  isSQLiteWriteContention,
+  type AcquireLibraryWriteLeaseOptions,
+  type LibraryWriteLease,
+} from './library-write-coordinator';
 
 import { sanitizeAiDescription } from '../shared/ai-analysis-settings';
 import { smartCollectionQueryDefinitionSchema, extractedVideoMetadataSchema, type AssetMetadataResult, type ExtractedMetadataResult, type ExtractedVideoMetadata, type AssetSummary, type CollectionSummary, type FilterClause, type FolderBrowseEntry, type LinkedFolderRule, type LinkedFolderSummary, type ManagedFolderSummary, type SearchScope, type SmartCollectionQueryDefinition, type SmartCollectionSummary, type TagCooccurrenceGraph, type TagSummary, type TrashedFolderSummary } from '../shared/asset-types';
@@ -366,14 +373,16 @@ interface DatabaseConnection {
   exec(sql: string): void;
   pragma(source: string, options?: { simple?: boolean }): unknown;
   prepare(sql: string): Statement;
-  transaction<T>(operation: () => T): () => T;
+  transaction<T>(operation: () => T): DatabaseTransaction<T>;
+}
+
+interface DatabaseTransaction<T> {
+  (): T;
+  immediate(): T;
 }
 
 interface DatabaseConstructor {
-  new (filename: string, options?: {
-    readonly?: boolean;
-    fileMustExist?: boolean;
-  }): DatabaseConnection;
+  new (filename: string): DatabaseConnection;
 }
 
 const Database = BetterSqlite3 as DatabaseConstructor;
@@ -1482,6 +1491,230 @@ const IMAGE_SEQUENCE_SCHEMA_CHECKSUM = createHash('sha256')
   .update(IMAGE_SEQUENCE_SCHEMA_SQL)
   .digest('hex');
 
+/**
+ * Cross-process writers coordinate through these two durable tables.  The
+ * sequence is maintained by SQLite triggers, so it commits or rolls back with
+ * the mutation that caused it; it is never a best-effort notification emitted
+ * after the fact.  Every library database contains exactly one library row,
+ * which keeps the trigger body independent from the mutated table's shape.
+ */
+const WRITE_COORDINATION_SCHEMA_SQL = `
+  CREATE TABLE library_write_leases (
+    library_id TEXT PRIMARY KEY REFERENCES library(library_id) ON DELETE CASCADE,
+    owner_id TEXT NOT NULL,
+    acquired_at_ms INTEGER NOT NULL CHECK(acquired_at_ms >= 0),
+    expires_at_ms INTEGER NOT NULL CHECK(expires_at_ms > acquired_at_ms)
+  );
+
+  CREATE TABLE library_change_sequence (
+    library_id TEXT PRIMARY KEY REFERENCES library(library_id) ON DELETE CASCADE,
+    sequence INTEGER NOT NULL DEFAULT 0 CHECK(sequence >= 0)
+  );
+
+  INSERT INTO library_change_sequence (library_id, sequence)
+    SELECT library_id, 0 FROM library;
+
+  -- Fresh libraries insert their single library row after all migrations have
+  -- run, so seed that row as well as pre-existing libraries migrated to v24.
+  CREATE TRIGGER library_change_sequence_seed AFTER INSERT ON library BEGIN
+    INSERT OR IGNORE INTO library_change_sequence (library_id, sequence)
+      VALUES (NEW.library_id, 0);
+  END;
+
+  CREATE TRIGGER library_change_on_assets_insert AFTER INSERT ON assets BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_assets_update AFTER UPDATE ON assets BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_assets_delete AFTER DELETE ON assets BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_revisions_insert AFTER INSERT ON revisions BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_revisions_update AFTER UPDATE ON revisions BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_revisions_delete AFTER DELETE ON revisions BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_managed_folders_insert AFTER INSERT ON managed_folders BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_managed_folders_update AFTER UPDATE ON managed_folders BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_managed_folders_delete AFTER DELETE ON managed_folders BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_linked_folders_insert AFTER INSERT ON linked_folders BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_linked_folders_update AFTER UPDATE ON linked_folders BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_linked_folders_delete AFTER DELETE ON linked_folders BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_linked_ignored_assets_insert AFTER INSERT ON linked_ignored_assets BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_linked_ignored_assets_update AFTER UPDATE ON linked_ignored_assets BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_linked_ignored_assets_delete AFTER DELETE ON linked_ignored_assets BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_linked_folder_rules_insert AFTER INSERT ON linked_folder_rules BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_linked_folder_rules_update AFTER UPDATE ON linked_folder_rules BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_linked_folder_rules_delete AFTER DELETE ON linked_folder_rules BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_asset_metadata_insert AFTER INSERT ON asset_metadata BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_asset_metadata_update AFTER UPDATE ON asset_metadata BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_asset_metadata_delete AFTER DELETE ON asset_metadata BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_asset_color_space_overrides_insert AFTER INSERT ON asset_color_space_overrides BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_asset_color_space_overrides_update AFTER UPDATE ON asset_color_space_overrides BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_asset_color_space_overrides_delete AFTER DELETE ON asset_color_space_overrides BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_tags_insert AFTER INSERT ON tags BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_tags_update AFTER UPDATE ON tags BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_tags_delete AFTER DELETE ON tags BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_human_asset_tags_insert AFTER INSERT ON human_asset_tags BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_human_asset_tags_update AFTER UPDATE ON human_asset_tags BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_human_asset_tags_delete AFTER DELETE ON human_asset_tags BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_ai_asset_tags_insert AFTER INSERT ON ai_asset_tags BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_ai_asset_tags_update AFTER UPDATE ON ai_asset_tags BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_ai_asset_tags_delete AFTER DELETE ON ai_asset_tags BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_collections_insert AFTER INSERT ON collections BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_collections_update AFTER UPDATE ON collections BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_collections_delete AFTER DELETE ON collections BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_collection_assets_insert AFTER INSERT ON collection_assets BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_collection_assets_update AFTER UPDATE ON collection_assets BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_collection_assets_delete AFTER DELETE ON collection_assets BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_smart_collections_insert AFTER INSERT ON smart_collections BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_smart_collections_update AFTER UPDATE ON smart_collections BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_smart_collections_delete AFTER DELETE ON smart_collections BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_ai_content_insert AFTER INSERT ON ai_content BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_ai_content_update AFTER UPDATE ON ai_content BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_ai_content_delete AFTER DELETE ON ai_content BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_revision_artifacts_insert AFTER INSERT ON revision_artifacts BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_revision_artifacts_update AFTER UPDATE ON revision_artifacts BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_revision_artifacts_delete AFTER DELETE ON revision_artifacts BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_jobs_insert AFTER INSERT ON jobs BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_jobs_update AFTER UPDATE ON jobs BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_jobs_delete AFTER DELETE ON jobs BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_file_operations_insert AFTER INSERT ON file_operations BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_file_operations_update AFTER UPDATE ON file_operations BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_file_operations_delete AFTER DELETE ON file_operations BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_trashed_managed_folders_insert AFTER INSERT ON trashed_managed_folders BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_trashed_managed_folders_update AFTER UPDATE ON trashed_managed_folders BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_trashed_managed_folders_delete AFTER DELETE ON trashed_managed_folders BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_asset_sequences_insert AFTER INSERT ON asset_sequences BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_asset_sequences_update AFTER UPDATE ON asset_sequences BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_asset_sequences_delete AFTER DELETE ON asset_sequences BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_asset_sequence_frames_insert AFTER INSERT ON asset_sequence_frames BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_asset_sequence_frames_update AFTER UPDATE ON asset_sequence_frames BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_asset_sequence_frames_delete AFTER DELETE ON asset_sequence_frames BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+`;
+const WRITE_COORDINATION_SCHEMA_CHECKSUM = createHash('sha256')
+  .update(WRITE_COORDINATION_SCHEMA_SQL)
+  .digest('hex');
+
 const MIGRATIONS = [
   { version: 1, sql: INITIAL_SCHEMA_SQL, checksum: INITIAL_SCHEMA_CHECKSUM },
   { version: 2, sql: ASSET_SCHEMA_SQL, checksum: ASSET_SCHEMA_CHECKSUM },
@@ -1526,6 +1759,11 @@ const MIGRATIONS = [
   { version: 21, sql: MEDIA_PROXY_SCHEMA_SQL, checksum: MEDIA_PROXY_SCHEMA_CHECKSUM },
   { version: 22, sql: COLOR_SPACE_OVERRIDE_SCHEMA_SQL, checksum: COLOR_SPACE_OVERRIDE_SCHEMA_CHECKSUM },
   { version: 23, sql: IMAGE_SEQUENCE_SCHEMA_SQL, checksum: IMAGE_SEQUENCE_SCHEMA_CHECKSUM },
+  {
+    version: 24,
+    sql: WRITE_COORDINATION_SCHEMA_SQL,
+    checksum: WRITE_COORDINATION_SCHEMA_CHECKSUM,
+  },
 ] as const;
 const SUPPORTED_SCHEMA_VERSION = MIGRATIONS.at(-1)!.version;
 
@@ -1542,7 +1780,6 @@ interface MigrationRow {
 interface OpenLibrary {
   connection: DatabaseConnection;
   summary: InternalLibrarySummary;
-  readOnly: boolean;
   /** Managed path identities whose on-disk file must not be auto-reconciled after relink recovery preserved them. */
   preservedRelinkPathIdentities: Set<string>;
 }
@@ -2038,6 +2275,10 @@ export interface LibraryServiceOptions {
   spawnFn?: SpawnFunction;
   /** Moves one absolute source path to the OS system trash. */
   trashItem?: (sourcePath: string) => Promise<void>;
+  /** Test-only seam invoked after bounded-write lease acquisition. */
+  beforeBoundedWriteTransaction?: (libraryId: string) => void;
+  /** Test-only override for deterministic SQLite writer-contention tests. */
+  sqliteBusyTimeoutMsForTests?: number;
   /** Removes one Serpent trash directory; injectable for platform-error tests. */
   removeTrashPath?: (trashPath: string) => void;
   /**
@@ -2432,17 +2673,29 @@ function databasePath(libraryPath: string): string {
   return path.join(libraryPath, '.serpent', 'library.db');
 }
 
-export function openConfiguredDatabase(filename: string): DatabaseConnection {
+export function openConfiguredDatabase(
+  filename: string,
+  busyTimeoutMs = 5_000,
+): DatabaseConnection {
+  if (!Number.isSafeInteger(busyTimeoutMs) || busyTimeoutMs < 0 || busyTimeoutMs > 60_000) {
+    throw new Error('SQLite busy timeout must be an integer between 0 and 60000 milliseconds.');
+  }
   const connection = new Database(filename);
   try {
     connection.pragma('foreign_keys = ON');
     connection.pragma('trusted_schema = ON');
+    // A second Serpent process may be finishing a short SQLite transaction
+    // while the durable lease is being acquired. Let SQLite wait briefly for
+    // that kernel-level lock instead of turning normal contention into an
+    // opaque SQLITE_BUSY/INTERNAL_ERROR before our public LIBRARY_BUSY path.
+    connection.pragma(`busy_timeout = ${busyTimeoutMs}`);
     const journalMode = connection.pragma('journal_mode = WAL', { simple: true });
     connection.pragma('synchronous = FULL');
     if (
       journalMode !== 'wal' ||
       connection.pragma('foreign_keys', { simple: true }) !== 1 ||
-      connection.pragma('synchronous', { simple: true }) !== 2
+      connection.pragma('synchronous', { simple: true }) !== 2 ||
+      connection.pragma('busy_timeout', { simple: true }) !== busyTimeoutMs
     ) {
       throw new Error('Required SQLite safety pragmas could not be enabled.');
     }
@@ -2927,7 +3180,32 @@ function buildContextualSearchRank(groups: SearchGroup[]): {
   };
 }
 
+/**
+ * Schema v24 is the first migration opened routinely by two independent
+ * Serpent processes: an existing library can be opened by Desktop while a
+ * future MCP host connects to the same database.  Serialize the v23 -> v24
+ * boundary with SQLite's writer mutex, then re-read the version *inside* the
+ * transaction.  The second opener therefore observes the committed v24
+ * history instead of both trying to create the coordination tables/triggers.
+ *
+ * Older migrations rebuild tables while temporarily changing `foreign_keys`.
+ * SQLite forbids that PRAGMA inside a transaction, so they intentionally keep
+ * their established per-migration transaction model below.  Every released
+ * v0.1 library is v23 before this change, which is the upgrade boundary that
+ * needs cross-process protection now.
+ */
 function migrateDatabase(connection: DatabaseConnection, allowFresh: boolean): void {
+  const versionBeforeMigration = schemaVersion(connection);
+  if (versionBeforeMigration >= 23 && versionBeforeMigration <= SUPPORTED_SCHEMA_VERSION) {
+    connection.transaction(() => {
+      migrateDatabaseUnserialized(connection, allowFresh);
+    }).immediate();
+    return;
+  }
+  migrateDatabaseUnserialized(connection, allowFresh);
+}
+
+function migrateDatabaseUnserialized(connection: DatabaseConnection, allowFresh: boolean): void {
   const currentVersion = schemaVersion(connection);
   if (currentVersion > SUPPORTED_SCHEMA_VERSION) {
     throw new LibraryServiceError('LIBRARY_VERSION_TOO_NEW');
@@ -4243,6 +4521,207 @@ export class LibraryService {
     const openLibrary = this.openById.get(libraryId);
     if (!openLibrary) throw new LibraryServiceError('LIBRARY_NOT_OPEN');
     return openLibrary;
+  }
+
+  /**
+   * Acquire the durable, per-library writer lease used by Desktop, scripts and
+   * MCP. Callers must release the returned handle in a `finally` block.
+   * Read-only operations intentionally do not take this lease.
+   */
+  acquireWriteLease(
+    libraryId: string,
+    options?: AcquireLibraryWriteLeaseOptions,
+  ): Promise<LibraryWriteLease> {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    return new LibraryWriteCoordinator(openLibrary.connection, libraryId).acquire(options);
+  }
+
+  /**
+   * Execute a synchronous, metadata-only command inside a real SQLite
+   * `BEGIN IMMEDIATE` transaction and an observable per-library lease.
+   *
+   * The transaction is the fencing boundary: while it is open no second
+   * database connection can replace the lease and then interleave a write if
+   * this operation outlives its nominal lease duration. File/network/media
+   * work must never use this helper; those paths need their own recoverable
+   * job phases.
+   */
+  async runBoundedWrite<T>(
+    libraryId: string,
+    operation: () => T,
+    options?: AcquireLibraryWriteLeaseOptions,
+  ): Promise<T> {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    const coordinator = new LibraryWriteCoordinator(openLibrary.connection, libraryId);
+    const lease = await coordinator.acquire(options);
+    try {
+      this.options.beforeBoundedWriteTransaction?.(libraryId);
+      const transaction = openLibrary.connection.transaction(() => {
+        // Acquisition happens before BEGIN IMMEDIATE so the caller can wait
+        // until its configurable timeout for a live owner to finish. Renew
+        // again inside SQLite's writer mutex to prove this owner is still
+        // current and to keep the lease alive for the fenced mutation.
+        lease.renew();
+        return operation();
+      });
+      return transaction.immediate();
+    } catch (error) {
+      if (isSQLiteWriteContention(error)) {
+        throw new LibraryWriteCoordinatorError(
+          'Another Serpent session is updating this library.',
+          'timed-out',
+        );
+      }
+      throw error;
+    } finally {
+      // Release after COMMIT/ROLLBACK. Releasing inside the transaction would
+      // make the persisted lease invisible before the database write lock is
+      // released, reopening a small cross-process race at the boundary.
+      try {
+        lease.release();
+      } catch (error) {
+        // Never let best-effort cleanup replace the operation's public
+        // outcome. If a non-cooperating legacy writer grabbed SQLite between
+        // COMMIT/ROLLBACK and this DELETE, the persisted expiry remains the
+        // crash-recovery fallback; record the precise cause for diagnostics.
+        this.diagnose('write-lease.release', error, { libraryId });
+      }
+    }
+  }
+
+  /** Return the durable mutation sequence for cross-process refresh cursors. */
+  getChangeSequence(libraryId: string): number {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    try {
+      return new LibraryWriteCoordinator(openLibrary.connection, libraryId).currentChangeSequence();
+    } catch (error) {
+      throw serviceError(error, 'LIBRARY_CORRUPT');
+    }
+  }
+
+  /**
+   * Side-effect-free preflight for an Automation Gateway file-operation plan.
+   * The result contains only opaque state tokens; source paths and filenames
+   * remain inside the Worker. The execution command later validates both the
+   * durable change sequence and every token before touching the filesystem.
+   */
+  previewAutomationFileOperation(input: {
+    libraryId: string;
+    operation: 'trash' | 'rename-file' | 'rename-files' | 'restore-if-original-vacant';
+    assetIds: string[];
+    newBaseName?: string;
+  }): {
+    libraryId: string;
+    operation: 'trash' | 'rename-file' | 'rename-files' | 'restore-if-original-vacant';
+    changeSequence: number;
+    targetCount: number;
+    executableCount: number;
+    blockedCount: number;
+    undoSupported: boolean;
+    assetStates: Array<{ assetId: string; stateToken: string }>;
+  } {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    if (input.assetIds.length === 0 || new Set(input.assetIds).size !== input.assetIds.length) {
+      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+    }
+    const rows = openLibrary.connection.prepare(
+      `SELECT asset_id, current_revision_id, relative_file_path, deleted_at,
+              availability, location_kind
+         FROM assets
+        WHERE asset_id IN (${input.assetIds.map(() => '?').join(',')})`,
+    ).all(...input.assetIds) as Array<{
+      asset_id: string;
+      current_revision_id: string;
+      relative_file_path: string;
+      deleted_at: string | null;
+      availability: 'available' | 'missing';
+      location_kind: 'managed' | 'linked';
+    }>;
+    const rowById = new Map(rows.map((row) => [row.asset_id, row]));
+    const assetStates: Array<{ assetId: string; stateToken: string }> = [];
+    let executableCount = 0;
+    for (const assetId of input.assetIds) {
+      const row = rowById.get(assetId);
+      if (!row) {
+        assetStates.push({
+          assetId,
+          stateToken: createHash('sha256').update(`missing:${assetId}`, 'utf8').digest('hex'),
+        });
+        continue;
+      }
+      assetStates.push({
+        assetId,
+        stateToken: this.automationAssetStateToken(row),
+      });
+      const executable = input.operation === 'trash'
+        ? row.location_kind === 'managed' && row.deleted_at === null
+        : input.operation === 'rename-file'
+          ? row.deleted_at === null && row.availability === 'available' && typeof input.newBaseName === 'string'
+          : input.operation === 'rename-files'
+            ? row.deleted_at === null && row.availability === 'available'
+          : row.location_kind === 'managed' && row.deleted_at !== null;
+      if (executable) executableCount++;
+    }
+    return {
+      libraryId: input.libraryId,
+      operation: input.operation,
+      changeSequence: this.getChangeSequence(input.libraryId),
+      targetCount: input.assetIds.length,
+      executableCount,
+      blockedCount: input.assetIds.length - executableCount,
+      undoSupported: input.operation === 'trash',
+      assetStates,
+    };
+  }
+
+  validateAutomationFileOperationPlan(input: {
+    libraryId: string;
+    expectedChangeSequence: number;
+    assetStates: Array<{ assetId: string; stateToken: string }>;
+  }): void {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    const currentSequence = this.getChangeSequence(input.libraryId);
+    if (currentSequence !== input.expectedChangeSequence) {
+      throw new LibraryServiceError('VERSION_CONFLICT', { currentEntityVersion: currentSequence });
+    }
+    if (input.assetStates.length === 0 || new Set(input.assetStates.map((state) => state.assetId)).size !== input.assetStates.length) {
+      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+    }
+    const rows = openLibrary.connection.prepare(
+      `SELECT asset_id, current_revision_id, relative_file_path, deleted_at,
+              availability, location_kind
+         FROM assets
+        WHERE asset_id IN (${input.assetStates.map(() => '?').join(',')})`,
+    ).all(...input.assetStates.map((state) => state.assetId)) as Array<{
+      asset_id: string;
+      current_revision_id: string;
+      relative_file_path: string;
+      deleted_at: string | null;
+      availability: 'available' | 'missing';
+      location_kind: 'managed' | 'linked';
+    }>;
+    const tokens = new Map(rows.map((row) => [row.asset_id, this.automationAssetStateToken(row)]));
+    if (input.assetStates.some((state) => tokens.get(state.assetId) !== state.stateToken)) {
+      throw new LibraryServiceError('VERSION_CONFLICT', { currentEntityVersion: currentSequence });
+    }
+  }
+
+  private automationAssetStateToken(row: {
+    asset_id: string;
+    current_revision_id: string;
+    relative_file_path: string;
+    deleted_at: string | null;
+    availability: 'available' | 'missing';
+    location_kind: 'managed' | 'linked';
+  }): string {
+    return createHash('sha256').update(JSON.stringify([
+      row.asset_id,
+      row.current_revision_id,
+      row.relative_file_path,
+      row.deleted_at,
+      row.availability,
+      row.location_kind,
+    ]), 'utf8').digest('hex');
   }
 
   private folderPath(openLibrary: OpenLibrary, relativePath: string): string {
@@ -8093,6 +8572,90 @@ export class LibraryService {
       };
     }
     return { automaticPalette: [], effectivePalette: [], paletteSource: null };
+  }
+
+  /**
+   * Produce a compact, deterministic palette for assets added during a recent
+   * time window. This is intentionally a read-only aggregation over completed
+   * `extracted_palette` artifacts: the request never schedules extraction or
+   * mutates metadata, so an automation script cannot create hidden background
+   * work merely by asking for a colour summary.
+   */
+  aggregateRecentAssetPalette(input: {
+    libraryId: string;
+    days: number;
+    limit: number;
+  }): {
+    days: number;
+    assetCount: number;
+    paletteAssetCount: number;
+    colors: Array<{ hex: string; weight: number; assetCount: number }>;
+  } {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    const days = Math.max(1, Math.min(3_650, Math.floor(input.days)));
+    const limit = Math.max(1, Math.min(24, Math.floor(input.limit)));
+    const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+    const assetCount = (openLibrary.connection.prepare(
+      `SELECT COUNT(*) AS count
+         FROM assets
+        WHERE deleted_at IS NULL AND created_at >= ?`,
+    ).get(cutoff) as { count: number }).count;
+    const rows = openLibrary.connection.prepare(
+      `SELECT a.asset_id, ra.artifact_id
+         FROM assets a
+         JOIN revision_artifacts ra ON ra.revision_id = a.current_revision_id
+        WHERE a.deleted_at IS NULL
+          AND a.created_at >= ?
+          AND ra.kind = 'extracted_palette'
+          AND ra.status = 'ready'
+          AND ra.invalidated_at IS NULL
+        ORDER BY a.asset_id ASC, ra.artifact_id ASC`,
+    ).all(cutoff) as Array<{ asset_id: string; artifact_id: string }>;
+
+    const totals = new Map<string, { weight: number; assetIds: Set<string> }>();
+    const paletteAssetIds = new Set<string>();
+    for (const row of rows) {
+      try {
+        const parsed = JSON.parse(readFileSync(
+          this.getArtifactAbsolutePath(input.libraryId, row.artifact_id),
+          'utf8',
+        )) as unknown;
+        if (!Array.isArray(parsed)) throw new Error('Palette artifact must contain an array.');
+        let validEntries = 0;
+        for (const entry of parsed) {
+          if (
+            typeof entry !== 'object' || entry === null
+            || !('hex' in entry) || typeof entry.hex !== 'string'
+            || !/^#[0-9A-F]{6}$/u.test(entry.hex)
+            || !('ratio' in entry) || typeof entry.ratio !== 'number'
+            || !Number.isFinite(entry.ratio) || entry.ratio < 0 || entry.ratio > 1
+          ) {
+            throw new Error('Palette artifact contains an invalid colour entry.');
+          }
+          const existing = totals.get(entry.hex) ?? { weight: 0, assetIds: new Set<string>() };
+          existing.weight += entry.ratio;
+          existing.assetIds.add(row.asset_id);
+          totals.set(entry.hex, existing);
+          validEntries++;
+        }
+        if (validEntries > 0) paletteAssetIds.add(row.asset_id);
+      } catch (error) {
+        this.diagnose('palette.aggregate-recent.artifact-read', error, {
+          assetId: row.asset_id,
+          artifactId: row.artifact_id,
+        });
+      }
+    }
+    const totalWeight = [...totals.values()].reduce((sum, entry) => sum + entry.weight, 0);
+    const colors = [...totals.entries()]
+      .map(([hex, entry]) => ({
+        hex,
+        weight: totalWeight === 0 ? 0 : entry.weight / totalWeight,
+        assetCount: entry.assetIds.size,
+      }))
+      .sort((left, right) => right.weight - left.weight || right.assetCount - left.assetCount || left.hex.localeCompare(right.hex))
+      .slice(0, limit);
+    return { days, assetCount, paletteAssetCount: paletteAssetIds.size, colors };
   }
 
   setAssetColorSpaceOverride(input: {
@@ -15462,6 +16025,62 @@ export class LibraryService {
     return { asset };
   }
 
+  /**
+   * Batch convenience over the crash-safe single-file rename primitive.
+   * Every successful item has the same disk-first / DB-rollback protection as
+   * `renameAssetFile`; failures that are local to one item are returned for
+   * the script to inspect, while an infrastructure failure stops the batch so
+   * it cannot be mistaken for a normal name conflict.
+   */
+  renameAssetFiles(input: {
+    libraryId: string;
+    items: Array<{ assetId: string; newBaseName: string }>;
+  }): {
+    renamedCount: number;
+    skipped: Array<{
+      assetId: string;
+      reason: 'asset_not_found' | 'asset_unavailable' | 'name_conflict' | 'invalid_name';
+    }>;
+    assets: AssetSummary[];
+  } {
+    if (input.items.length === 0 || new Set(input.items.map((item) => item.assetId)).size !== input.items.length) {
+      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+    }
+    const assets: AssetSummary[] = [];
+    const skipped: Array<{
+      assetId: string;
+      reason: 'asset_not_found' | 'asset_unavailable' | 'name_conflict' | 'invalid_name';
+    }> = [];
+    for (const item of input.items) {
+      try {
+        assets.push(this.renameAssetFile({
+          libraryId: input.libraryId,
+          assetId: item.assetId,
+          newBaseName: item.newBaseName,
+        }).asset);
+      } catch (error) {
+        if (!(error instanceof LibraryServiceError)) throw error;
+        if (error.code === 'ASSET_FILE_NAME_CONFLICT') {
+          skipped.push({ assetId: item.assetId, reason: 'name_conflict' });
+          continue;
+        }
+        if (error.code === 'INVALID_ASSET_FILE_NAME') {
+          skipped.push({ assetId: item.assetId, reason: 'invalid_name' });
+          continue;
+        }
+        if (error.code === 'ASSET_NOT_FOUND') {
+          skipped.push({
+            assetId: item.assetId,
+            reason: error.reason === 'SOURCE_NOT_FOUND' ? 'asset_unavailable' : 'asset_not_found',
+          });
+          continue;
+        }
+        throw error;
+      }
+    }
+    return { renamedCount: assets.length, skipped, assets };
+  }
+
   private expandAssetIdsToSequenceMembers(
     openLibrary: OpenLibrary,
     assetIds: readonly string[],
@@ -15519,6 +16138,9 @@ export class LibraryService {
     assetIds: string[];
   }): { trashedCount: number } {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
+    if (input.assetIds.length === 0 || new Set(input.assetIds).size !== input.assetIds.length) {
+      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+    }
     const logicalCount = this.countLogicalAssetUnits(
       openLibrary,
       input.assetIds,
@@ -15754,10 +16376,9 @@ export class LibraryService {
     conflictStrategy?: 'keep-both' | 'replace' | 'skip';
   }): { restoredCount: number; assets: AssetSummary[] } {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
-    const logicalCount = this.countLogicalAssetUnits(
-      openLibrary,
-      input.assetIds,
-    );
+    if (input.assetIds.length === 0 || new Set(input.assetIds).size !== input.assetIds.length) {
+      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+    }
     const assetIds = this.expandAssetIdsToSequenceMembers(
       openLibrary,
       input.assetIds,
@@ -16093,12 +16714,127 @@ export class LibraryService {
       );
 
       return {
-        restoredCount: logicalCount,
+        // `skip` can remove every planned file (or only a subset of a
+        // sequence). Report the logical units actually restored, never the
+        // originally requested count.
+        restoredCount: this.countLogicalAssetUnits(openLibrary, plans.map((plan) => plan.assetId)),
         assets: this.withImageSequenceSummaries(openLibrary, restoredAssets),
       };
     } catch (error) {
       throw serviceError(error, 'LIBRARY_NOT_WRITABLE');
     }
+  }
+
+  /**
+   * Conservative recovery helper for Automation. Unlike the normal Restore
+   * UI, it never falls back to another folder, adds a suffix, or replaces a
+   * collision. Each selected asset must still have its original managed
+   * folder and its exact original path must be vacant at execution time.
+   */
+  restoreAssetsIfOriginalVacant(input: {
+    libraryId: string;
+    assetIds: string[];
+  }): {
+    restoredCount: number;
+    skippedCount: number;
+    skipped: Array<{
+      assetId: string;
+      reason: 'original_folder_missing' | 'name_conflict' | 'trash_file_missing';
+    }>;
+    assets: AssetSummary[];
+  } {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    if (input.assetIds.length === 0 || new Set(input.assetIds).size !== input.assetIds.length) {
+      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+    }
+    const assetIds = this.expandAssetIdsToSequenceMembers(openLibrary, input.assetIds);
+    if (assetIds.length === 0 || new Set(assetIds).size !== assetIds.length) {
+      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+    }
+    const rows = openLibrary.connection.prepare(
+      `SELECT asset_id, relative_file_path, deleted_at,
+              trashed_from_relative_path, trashed_from_folder_id
+         FROM assets
+        WHERE asset_id IN (${assetIds.map(() => '?').join(',')})
+          AND deleted_at IS NOT NULL`,
+    ).all(...assetIds) as Array<{
+      asset_id: string;
+      relative_file_path: string;
+      deleted_at: string;
+      trashed_from_relative_path: string;
+      trashed_from_folder_id: string | null;
+    }>;
+    const rowById = new Map(rows.map((row) => [row.asset_id, row]));
+    for (const assetId of assetIds) {
+      if (rowById.has(assetId)) continue;
+      const existing = openLibrary.connection.prepare('SELECT asset_id FROM assets WHERE asset_id = ?').get(assetId);
+      if (!existing) throw new LibraryServiceError('ASSET_NOT_FOUND');
+      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+    }
+
+    const accepted: string[] = [];
+    const skipped: Array<{
+      assetId: string;
+      reason: 'original_folder_missing' | 'name_conflict' | 'trash_file_missing';
+    }> = [];
+    const plannedDestinations = new Set<string>();
+    for (const assetId of assetIds) {
+      const row = rowById.get(assetId)!;
+      const originalDirectory = path.posix.dirname(row.trashed_from_relative_path);
+      if (row.trashed_from_folder_id !== null) {
+        const originalFolder = openLibrary.connection.prepare(
+          'SELECT relative_path FROM managed_folders WHERE folder_id = ?',
+        ).get(row.trashed_from_folder_id) as { relative_path: string } | undefined;
+        if (!originalFolder || originalFolder.relative_path !== originalDirectory) {
+          skipped.push({ assetId, reason: 'original_folder_missing' });
+          continue;
+        }
+      } else if (originalDirectory !== '.') {
+        // A non-root file with no surviving managed-folder mapping cannot be
+        // restored to its actual original location safely.
+        skipped.push({ assetId, reason: 'original_folder_missing' });
+        continue;
+      }
+
+      const trashFilename = path.posix.basename(row.relative_file_path);
+      const trashFilePath = this.trashPath(openLibrary, assetId, trashFilename);
+      if (!realFileExists(trashFilePath)) {
+        skipped.push({ assetId, reason: 'trash_file_missing' });
+        continue;
+      }
+
+      const destinationIdentity = portablePathIdentity(row.trashed_from_relative_path);
+      const activeConflict = openLibrary.connection.prepare(
+        `SELECT asset_id FROM assets
+          WHERE path_identity = ? AND location_kind = 'managed'
+            AND deleted_at IS NULL AND asset_id != ?`,
+      ).get(destinationIdentity, assetId);
+      if (
+        activeConflict
+        || plannedDestinations.has(destinationIdentity)
+        || this.portableDiskDestination(openLibrary, row.trashed_from_relative_path) !== undefined
+      ) {
+        skipped.push({ assetId, reason: 'name_conflict' });
+        continue;
+      }
+      plannedDestinations.add(destinationIdentity);
+      accepted.push(assetId);
+    }
+
+    if (accepted.length === 0) {
+      return { restoredCount: 0, skippedCount: skipped.length, skipped, assets: [] };
+    }
+    const restored = this.restoreAssets({
+      libraryId: input.libraryId,
+      assetIds: accepted,
+      conflictStrategy: 'skip',
+    });
+    return {
+      restoredCount: restored.restoredCount,
+      skippedCount: skipped.length,
+      skipped,
+      assets: restored.assets,
+    };
   }
 
   /**
@@ -19197,7 +19933,10 @@ export class LibraryService {
     try {
       mkdirSync(partialPath);
       createDirectoryLayout(partialPath);
-      connection = openConfiguredDatabase(databasePath(partialPath));
+      connection = openConfiguredDatabase(
+        databasePath(partialPath),
+        this.options.sqliteBusyTimeoutMsForTests,
+      );
       migrateDatabase(connection, true);
       connection
         .prepare('INSERT INTO library (library_id, display_name, created_at) VALUES (?, ?, ?)')
@@ -19206,7 +19945,10 @@ export class LibraryService {
       connection.close();
       connection = undefined;
 
-      const verificationConnection = openConfiguredDatabase(databasePath(partialPath));
+      const verificationConnection = openConfiguredDatabase(
+        databasePath(partialPath),
+        this.options.sqliteBusyTimeoutMsForTests,
+      );
       try {
         verifyDatabase(verificationConnection);
       } finally {
@@ -19277,7 +20019,10 @@ export class LibraryService {
 
     let connection: DatabaseConnection | undefined;
     try {
-      connection = openConfiguredDatabase(databasePath(canonicalPath));
+      connection = openConfiguredDatabase(
+        databasePath(canonicalPath),
+        this.options.sqliteBusyTimeoutMsForTests,
+      );
       migrateDatabase(connection, false);
       backfillTrashedFromTombstoneIds(connection);
       const library = verifyDatabase(connection);
@@ -19302,7 +20047,6 @@ export class LibraryService {
       const openLibrary: OpenLibrary = {
         connection,
         summary,
-        readOnly: false,
         preservedRelinkPathIdentities: new Set(),
       };
       this.openById.set(summary.libraryId, openLibrary);
@@ -19337,76 +20081,6 @@ export class LibraryService {
     } catch (error) {
       closeIgnoringFailure(connection);
       throw serviceError(error, 'LIBRARY_CORRUPT');
-    }
-  }
-
-  /**
-   * Opens a current-schema library without migrations, recovery, filesystem
-   * reconciliation, watchers, or background job scheduling. This is the only
-   * open mode available to read-only clients such as the CLI inspection
-   * process.
-   */
-  openLibraryReadOnly(selectedLibraryPath: string): InternalLibrarySummary {
-    let selectedPath: string;
-    try {
-      selectedPath = normalizeAbsolutePath(selectedLibraryPath);
-    } catch (error) {
-      throw serviceError(error, 'INVALID_LIBRARY_PATH');
-    }
-
-    if (!existsSync(selectedPath)) throw new LibraryServiceError('LIBRARY_NOT_FOUND');
-    if (!directoryExists(selectedPath)) throw new LibraryServiceError('NOT_A_LIBRARY');
-
-    let canonicalPath: string;
-    try {
-      canonicalPath = realpathSync(selectedPath);
-    } catch (error) {
-      throw serviceError(error, 'LIBRARY_NOT_FOUND');
-    }
-    const alreadyOpenId = this.openIdByPath.get(canonicalPath);
-    if (alreadyOpenId) return this.openById.get(alreadyOpenId)!.summary;
-
-    for (const directoryName of REQUIRED_DIRECTORIES) {
-      if (!realDirectoryExists(path.join(canonicalPath, directoryName))) {
-        throw new LibraryServiceError('NOT_A_LIBRARY');
-      }
-    }
-    const serpentPath = path.join(canonicalPath, '.serpent');
-    const filename = databasePath(canonicalPath);
-    if (!realDirectoryExists(serpentPath) || !realFileExists(filename)) {
-      throw new LibraryServiceError('NOT_A_LIBRARY');
-    }
-
-    let connection: DatabaseConnection | undefined;
-    try {
-      connection = new Database(filename, { readonly: true, fileMustExist: true });
-      connection.pragma('foreign_keys = ON');
-      connection.pragma('trusted_schema = ON');
-      connection.pragma('query_only = ON');
-      const library = verifyDatabase(connection);
-      const existingIdentity = this.openById.get(library.library_id);
-      if (existingIdentity) {
-        closeIgnoringFailure(connection);
-        throw new LibraryServiceError('LIBRARY_CORRUPT');
-      }
-
-      const summary: InternalLibrarySummary = {
-        libraryId: library.library_id,
-        displayName: library.display_name,
-        libraryPath: canonicalPath,
-      };
-      this.openById.set(summary.libraryId, {
-        connection,
-        summary,
-        readOnly: true,
-        preservedRelinkPathIdentities: new Set(),
-      });
-      this.openIdByPath.set(canonicalPath, summary.libraryId);
-      return summary;
-    } catch (error) {
-      closeIgnoringFailure(connection);
-      if (error instanceof LibraryServiceError) throw error;
-      throw error;
     }
   }
 
@@ -21318,22 +21992,19 @@ export class LibraryService {
     const openLibrary = this.openById.get(libraryId);
     if (!openLibrary) throw new LibraryServiceError('LIBRARY_NOT_OPEN');
 
-    if (!openLibrary.readOnly) {
-      // A deliberate close is not a crash recovery boundary. Persist queued,
-      // paused, and running AI work as cancelled before the connection closes
-      // so reopening the library cannot silently resume uploads the user
-      // stopped. Read-only CLI sessions never own or mutate those jobs.
-      this.cancelJobs(libraryId);
-      this.abortActiveMediaJobs(libraryId);
-      this.stopAssetWatcher(libraryId);
-      this.stopLinkedWatchers(libraryId);
-      for (const [importId, pending] of this.pendingImports) {
-        if (pending.libraryId === libraryId) {
-          this.pendingImports.delete(importId);
-          this.cancelImportExpiry(pending);
-          this.updateImportOperation(pending, 'rolled_back', 'LIBRARY_CLOSED');
-          this.removeOperation(pending.operationPath);
-        }
+    // A deliberate close is not a crash recovery boundary. Persist queued,
+    // paused, and running AI work as cancelled before the connection closes so
+    // reopening the library cannot silently resume uploads the user stopped.
+    this.cancelJobs(libraryId);
+    this.abortActiveMediaJobs(libraryId);
+    this.stopAssetWatcher(libraryId);
+    this.stopLinkedWatchers(libraryId);
+    for (const [importId, pending] of this.pendingImports) {
+      if (pending.libraryId === libraryId) {
+        this.pendingImports.delete(importId);
+        this.cancelImportExpiry(pending);
+        this.updateImportOperation(pending, 'rolled_back', 'LIBRARY_CLOSED');
+        this.removeOperation(pending.operationPath);
       }
     }
     openLibrary.connection.close();

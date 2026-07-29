@@ -1,13 +1,42 @@
 # Serpent 项目状态
 
-> 更新时间：2026-07-27
+> 更新时间：2026-07-29
 > 事实来源：`docs/implementation/mvp-roadmap.md` 与各切片开发/审查/QA 文档
+
+## 2026-07-29 脚本—插件平台设计
+
+- 产品负责人确认 0024 顶层设计：插件与脚本共享 Automation Command Gateway 和
+  `serpent` SDK，但插件拥有安装、生命周期、UI、Hook、Provider、输入捕获和后台任务。
+- 插件一等语言为 TypeScript/JavaScript，不建设 Serpent Python 运行时。标准插件使用受控
+  JS Host；可信插件使用独立 Node.js UtilityProcess，并明确其权限清单无法完全拦截直接
+  系统行为。
+- 同时支持用户级和资源库级安装。资源库插件代码/配置随库同步，但每台设备独立信任；
+  同 ID 的用户级/资源库级版本冲突时由用户选择，不设隐式优先级。
+- 第一阶段支持本地包、本地目录和规范 GitHub 仓库 URL，不依赖 GitHub Release，不运行
+  远程构建/安装脚本，不建设插件社区或协作权限。
+- 完整规格见 [`0024-script-plugin-platform.md`](implementation/0024-script-plugin-platform.md)，
+  架构决策见 [ADR-0026](adr/0026-plugin-runtime-installation-and-trust.md)。设计不表示插件
+  运行时已经实现，也不进入 v0.1.0 发布完成度。实施 Epic 为 `Serpent-upsn`
+  （`Serpent-upsn.1`–`.9`）。
+
+## 2026-07-28 发布准备评估
+
+- 后续收口统一跟踪于 Beads epic `Serpent-d112`（同步受影响测试、媒体 bundle、packaged 与双平台安装流程）。
+- 当前工作树为 `codex/slice-002-asset-ingestion`，与对应远端分支一致，但尚未合入 `main`；仓库仍为 Private，尚无发布 tag 或当前 HEAD 的可交付安装包。
+- 静态门禁和搜索性能门禁已通过；完整测试与开发态 Electron E2E 仍有红灯。部分 E2E 失败来自序列图折叠、离散滑块、代理视频和近期 UI 变化造成的旧 fixture/断言失配，必须同步更新测试并重新验证，不能直接归类为无关失败。
+- 用户已明确：Inspector 描述切换、标签管理 Ctrl/Command 多选目前未复现问题；Shell 顶部坐标、普通选择、回收站和媒体播放不作为本轮已确认缺陷。它们只保留为测试规格核对项，除非后续出现可复现用户反馈。
+- 人类验收队列保持较大规模，因人力有限不要求全部清空；发布前按首发范围挑选核心旅程并记录其验收证据。
+- 发布主线仍被媒体 bundle 晋升、packaged 验证、macOS/Windows 安装卸载重装证据、测试同步和 `main` 合流阻断。
+- 新增 MVP 后路线图：优先研究 FBX/OBJ 模型预览与 PBR 渲染，其次是 PBR 贴图和 HDRI 预览；Blend/Maya/3ds Max/Cinema 4D 先做可行性研究，不承诺首版支持。详见 [`mvp-roadmap.md`](implementation/mvp-roadmap.md)。
+- 产品负责人确认脚本化 + MCP 比 3D/PBR 更重要。通用 CLI 与其只读实现已撤回；现在启动共享 Automation Registry/Gateway、Desktop Console 脚本和只读 MCP。写入、多进程租约、detached job 与双平台打包仍等待 v0.1.0 领域/发布收口。完整规范见 [`0023-automation-scripting-mcp-framework.md`](implementation/0023-automation-scripting-mcp-framework.md)。
+- 自动化分阶段工作记录为 Beads epic `Serpent-y51c`：先做 Registry/Gateway 和沙箱原型，再做 Desktop Console 与只读 MCP，之后才是写租约、计划批准和打包。
+- `Serpent-bb56.1` 的旧 CLI 基础层及 `CLI-001/002` 验收项已随用户决定撤回；不得用其历史冒烟或数据库哈希结果证明当前自动化实现。
 
 ## 2026-07-27 画布精确锚点与序列图
 
 - `Serpent-32p` 的侧栏/窗口重排锚点已按用户硬性要求收口：拖动中冻结重排，松手后以拖动前同一资产内部点为锚，连续两帧稳定后结束补偿；macOS 冷启动真实源码实例双向拖动均保持 `clientY=125`，提交 `2fa3cd5`。
-- `Serpent-j8dl` 序列图形成待验候选：单文件/文件夹/链接目录自动识别连续编号图片，缺口拆段且至少三帧；支持解散、手动创建和 1–240 FPS；卡片/Inspector/查看页提供逐帧预览与播放；SQLite schema v23 持久化资产组关系。详见 [`0022 规格`](implementation/0022-image-sequences-and-viewer-transforms.md)。
-- 图片、视频和序列查看页新增仅影响显示的顺时针 90°、水平镜像、垂直镜像。相关 89 项定向单元/Worker 测试及 1 条生产式 file:// Electron E2E 通过；IMAGESEQ-001/002 与 VIEWER-024 已进入待人类验收。Windows、packaged 与完整主线仍未验证。
+- `Serpent-j8dl` 序列图已完成用户验收：单文件/文件夹/链接目录自动识别连续编号图片，缺口拆段且至少三帧；支持解散、手动创建和 1–240 FPS；卡片/Inspector/查看页提供逐帧预览与播放；SQLite schema v23 持久化资产组关系。详见 [`0022 规格`](implementation/0022-image-sequences-and-viewer-transforms.md)。
+- 图片、视频和序列查看页新增仅影响显示的顺时针 90°、水平镜像、垂直镜像。定向单元/Worker 测试及生产式 Electron E2E 已通过；Windows、packaged 与完整主线仍未验证。相关人类验收记录见 `e064e91`。
 
 ## 2026-07-25 产品待办入池与工单卫生
 
@@ -35,7 +64,7 @@
 
 ## 当前方向
 
-v0.1.0 继续收口 0001–0010 的桌面主线，并纳入真实使用反馈确认的 0013–0019 产品化范围。0011 CLI 仍排入 v0.2.0，这只表达领域语义与运行时依赖。0012 已完成 macOS 开发态验收；0014 形成候选 `f1330a7`，但新反馈确认 Inspector、框选修饰键、瀑布流、完整文件菜单、应用壳、目录浏览、标签、双语和主题仍属于 MVP 待办。
+v0.1.0 继续收口 0001–0010 的桌面主线，并纳入真实使用反馈确认的 0013–0019 产品化范围。0011 CLI 已撤回；后续自动化以 0023 的 Desktop Console 脚本与本地 MCP 为准，仍需遵守领域语义与跨进程写入依赖。0012 已完成 macOS 开发态验收；0014 形成候选 `f1330a7`，但新反馈确认 Inspector、框选修饰键、瀑布流、完整文件菜单、应用壳、目录浏览、标签、双语和主题仍属于 MVP 待办。
 
 ## 当前前沿
 

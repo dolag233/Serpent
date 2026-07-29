@@ -32,7 +32,20 @@ import {
   WINDOW_MAXIMIZED_CHANNEL,
   VIEWER_VIDEO_SHORTCUTS_ACTIVE_CHANNEL,
   VIEWER_VIDEO_SHORTCUT_CHANNEL,
+  AUTOMATION_SCRIPT_START_CHANNEL,
+  AUTOMATION_SCRIPT_COMMAND_CHANNEL,
+  AUTOMATION_SCRIPT_COMPLETE_CHANNEL,
+  AUTOMATION_SCRIPT_CANCEL_CHANNEL,
 } from '../shared/protocol/channels';
+import {
+  automationScriptStartResultSchema,
+  type AutomationScriptCommandInput,
+  type AutomationScriptCommandResult,
+  type AutomationScriptCompleteInput,
+  type AutomationScriptCancelInput,
+  type AutomationScriptStartInput,
+  type SerpentAutomationScriptApi,
+} from '../shared/automation-script-api';
 import {
   parseOpenExternalUrlResult,
   type RevealAppLogResult,
@@ -1825,11 +1838,33 @@ const shell: SerpentShellApi = Object.freeze({
   },
 });
 
+const automation: SerpentAutomationScriptApi = Object.freeze({
+  async start(input: AutomationScriptStartInput) {
+    return automationScriptStartResultSchema.parse(
+      await ipcRenderer.invoke(AUTOMATION_SCRIPT_START_CHANNEL, input),
+    );
+  },
+  async command(input: AutomationScriptCommandInput): Promise<AutomationScriptCommandResult> {
+    const result = await ipcRenderer.invoke(AUTOMATION_SCRIPT_COMMAND_CHANNEL, input);
+    if (typeof result !== 'object' || result === null || typeof (result as { ok?: unknown }).ok !== 'boolean') {
+      throw new Error('Main returned an invalid automation command result.');
+    }
+    return result as AutomationScriptCommandResult;
+  },
+  async complete(input: AutomationScriptCompleteInput): Promise<void> {
+    await ipcRenderer.invoke(AUTOMATION_SCRIPT_COMPLETE_CHANNEL, input);
+  },
+  async cancel(input: AutomationScriptCancelInput): Promise<void> {
+    await ipcRenderer.invoke(AUTOMATION_SCRIPT_CANCEL_CHANNEL, input);
+  },
+});
+
 contextBridge.exposeInMainWorld(
   'serpent',
   Object.freeze({
     library,
     shell,
+    automation,
     ...(e2eEnabled ? { e2e: e2eDiagnostics } : {}),
   }),
 );

@@ -14,8 +14,8 @@
 - 以 `docs/product-brief.md` 为产品范围，以 `docs/development-process.md` 为完成定义。
 - 用户明确要求地图同时承载执行，不在完成规划后停下；每个切片仍按规格 → 实现 → 自动验证 →
   双轴审查 → QA → 提交流转。
-- 优先级按 MVP 用户主线、数据安全和依赖排序，不因最近讨论 CLI 就提高 0011 优先级。
-- CLI 复用 0001–0010 的领域命令与 schema，目标版本为 v0.2.0，在 v0.1.0 MVP 验收后实施。
+- 优先级按 MVP 用户主线、数据安全和依赖排序；2026-07-28 产品负责人将脚本化 + MCP 列为高于 3D/PBR 预览的后续能力。
+- 通用 CLI 已撤回。0023 的 Registry/Gateway、脚本沙箱与只读 MCP 可在 v0.1.0 收口期间前置实施；写入和打包仍需按依赖分阶段推进。
 - Windows QA 需要真实 Windows runner；本地不能把未执行写成通过。
 
 ## Decisions so far
@@ -26,7 +26,7 @@
 - [标签、合集与资产元数据](0004-tags-collections-metadata-vertical-slice.md) — 批量标签、子合集、树/成员排序、详情/封面和人工色卡均已进入当前树；剩余重启/冲突证据与复审。
 - [回收站、手动找回与批量重新定位](0007-trash-relink-batch-relocate-vertical-slice.md) — 链接源系统回收站删除、恢复位置/冲突策略、多选恢复和 `keepMetadata=false` 已实现；剩余公共 E2E 与平台证据。
 - [资源库导入导出](0010-library-import-export-vertical-slice.md) — 自动化安全主线已实现，仍需大库/打包 UI/跨平台证据。
-- [一等命令行客户端与 Agent 原生操作面](0011-agent-native-cli-vertical-slice.md) — 需求已确认；目标版本定为 v0.2.0，不作为 v0.1.0 发布阻断。
+- [脚本自动化与 Agent MCP](0023-automation-scripting-mcp-framework.md) — 当前自动化主线；CLI 0011 已撤回，不作为 v0.1.0 发布阻断。
 - [资产画布视图与卡片信息配置](0012-asset-canvas-views-and-card-display-vertical-slice.md) — 核心浏览 UX 进入 v0.1.0；字段开关在 0006 正确性后、最终 QA 前实施。
 - [资产查看页面导航与手势体验](0013-asset-viewer-navigation-and-gestures-vertical-slice.md) — 已记录默认适配、返回语义、精简控件、灵敏缩放、平移和范围切换规则；暂不实施，0006 稳定后先做竞品研究与原型。
 
@@ -46,7 +46,7 @@
 5. **最终审计**：跨资源库复制、视频/GIF 悬停预览、NAS 断线只读、10 万资产冷启动 3 秒，
    以及跨切片 packaged/Windows 用户主线。
 
-v0.1.0 验收后立即进入 [0011](0011-agent-native-cli-vertical-slice.md) 的 v0.2.0 实施。
+v0.1.0 收口期间可先启动 [0023](0023-automation-scripting-mcp-framework.md) 的 Registry/Gateway 与沙箱前置层；v0.1.0 验收后按其写入、打包依赖继续实施。
 
 ## Cross-slice completion items
 

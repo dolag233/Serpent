@@ -26,6 +26,7 @@ export type UseDialogEscapeDismissParams = {
   setImportLibraryChooserOpen: (open: boolean) => void;
   setAppSettingsOpen: (open: boolean) => void;
   setAppLogOpen: (open: boolean) => void;
+  setScriptSandboxPreviewOpen: (open: boolean) => void;
   setMediaJobsOpen: (open: boolean) => void;
   setLinkedRulesEditor: (value: null) => void;
   resetConvertLinkedDialog: () => void;
@@ -59,6 +60,7 @@ export function useDialogEscapeDismiss({
   setImportLibraryChooserOpen,
   setAppSettingsOpen,
   setAppLogOpen,
+  setScriptSandboxPreviewOpen,
   setMediaJobsOpen,
   setLinkedRulesEditor,
   resetConvertLinkedDialog,
@@ -127,6 +129,9 @@ export function useDialogEscapeDismiss({
         case "close-app-log":
           setAppLogOpen(false);
           return;
+        case "close-script-sandbox-preview":
+          setScriptSandboxPreviewOpen(false);
+          return;
         case "close-media-jobs":
           setMediaJobsOpen(false);
           return;
@@ -177,6 +182,7 @@ export function useDialogEscapeDismiss({
     setImportLibraryChooserOpen,
     setAppSettingsOpen,
     setAppLogOpen,
+    setScriptSandboxPreviewOpen,
     setMediaJobsOpen,
     setLinkedRulesEditor,
     resetConvertLinkedDialog,

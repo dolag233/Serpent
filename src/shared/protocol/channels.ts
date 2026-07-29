@@ -36,6 +36,12 @@ export const VIEWER_VIDEO_SHORTCUTS_ACTIVE_CHANNEL =
 export const VIEWER_VIDEO_SHORTCUT_CHANNEL =
   'serpent:viewer:video-shortcut' as const;
 
+/** Renderer Desktop Console → Main-owned Automation Execution/Gateway bridge. */
+export const AUTOMATION_SCRIPT_START_CHANNEL = 'serpent:automation:script-start' as const;
+export const AUTOMATION_SCRIPT_COMMAND_CHANNEL = 'serpent:automation:script-command' as const;
+export const AUTOMATION_SCRIPT_COMPLETE_CHANNEL = 'serpent:automation:script-complete' as const;
+export const AUTOMATION_SCRIPT_CANCEL_CHANNEL = 'serpent:automation:script-cancel' as const;
+
 export const WORKER_READY_MESSAGE_TYPE = 'worker.ready' as const;
 export const WORKER_SHUTDOWN_MESSAGE_TYPE = 'worker.shutdown' as const;
 export const WORKER_SHUTDOWN_ACK_MESSAGE_TYPE = 'worker.shutdown.ack' as const;

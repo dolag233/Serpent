@@ -41,7 +41,11 @@ import { runLimitedAiRequest } from './ai/limited-request';
 import { AiProgressThrottler } from './ai/progress-throttler';
 import { DEFAULT_AI_ANALYSIS_CONCURRENCY } from '../shared/ai-concurrency';
 import { DEFAULT_AI_RELIABILITY_SETTINGS } from '../shared/ai-reliability';
-import { executeReadOnlyWorkerCommand } from './read-only-command-executor';
+import { dispatchAutomationReadOnlyRequest } from './automation-readonly-dispatch';
+import {
+  boundedWriteLibraryId,
+  executeBoundedWriteWorkerCommand,
+} from './bounded-write-command';
 
 const parentPort: ParentPort | undefined = process.parentPort;
 const aiJobAbortRegistry = new AiJobAbortRegistry();
@@ -272,18 +276,31 @@ function publishAiProgress(libraryId: string): void {
 }
 
 async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
-  const readOnlyResult = request.command.type === 'library.close'
-    ? undefined
-    : await executeReadOnlyWorkerCommand(
-        libraryService,
-        request.command,
-        {
-          onAssetsListed: (libraryId, assetIds) =>
-            scheduleThumbnailScene(libraryId, 'visible', assetIds),
-        },
-      );
-  if (readOnlyResult) return readOnlyResult;
+  const automationResult = dispatchAutomationReadOnlyRequest(libraryService, request);
+  if (automationResult) return automationResult;
 
+  const libraryId = boundedWriteLibraryId(request.command);
+  if (!libraryId) return handleRequestWithoutWriteLease(request);
+
+  try {
+    const result = await libraryService.runBoundedWrite(
+      libraryId,
+      () => executeBoundedWriteWorkerCommand(libraryService, request.command),
+    );
+    if (result === undefined) {
+      throw new Error(`Bounded write command ${request.command.type} has no executor.`);
+    }
+    return result;
+  } catch (error) {
+    libraryService.reportDiagnostic('write-lease.execute', error, {
+      libraryId,
+      commandType: request.command.type,
+    });
+    throw error;
+  }
+}
+
+async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<WorkerResult> {
   switch (request.command.type) {
     case 'library.list':
       return { ok: true, type: 'library.list', libraries: libraryService.listLibraries() };
@@ -297,8 +314,6 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
       scheduleThumbnailScene(library.libraryId, 'startup');
       return { ok: true, type: 'library.opened', library };
     }
-    case 'library.open-readonly':
-      throw new Error('Read-only library open was not dispatched.');
     case 'library.close':
       libraryService.cancelJobs(request.command.libraryId);
       publishAiProgress(request.command.libraryId);
@@ -676,10 +691,11 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
       const { backfilledCount } = libraryService.backfillAssetMetadata(request.command.libraryId);
       return { ok: true, type: 'asset.metadata.backfilled', backfilledCount };
     }
-    case 'asset.rating.set': {
-      const { updatedCount, skipped } = libraryService.setAssetsRating(request.command);
-      return { ok: true, type: 'asset.rating.updated', updatedCount, skipped };
-    }
+    case 'asset.rating.set':
+      // `handleRequest` routes this command through runBoundedWrite before
+      // this legacy desktop switch. Keep the exhaustiveness case explicit so
+      // a future dispatcher change cannot silently restore an unfenced path.
+      throw new Error('Bounded rating write was not dispatched through its transaction fence.');
     case 'asset.search': {
       const result = libraryService.searchAssets({
         libraryId: request.command.libraryId,
@@ -743,6 +759,13 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
       };
     }
     case 'asset.trash': {
+      if (request.command.automationPlan) {
+        libraryService.validateAutomationFileOperationPlan({
+          libraryId: request.command.libraryId,
+          expectedChangeSequence: request.command.automationPlan.expectedChangeSequence,
+          assetStates: request.command.automationPlan.assetStates,
+        });
+      }
       const { trashedCount } = libraryService.trashAssets(request.command);
       return { ok: true, type: 'asset.trashed', trashedCount };
     }
@@ -776,8 +799,42 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
       return { ok: true, type: 'asset.copy-undone', undoneCount, skippedCount, assets };
     }
     case 'asset.rename-file': {
+      if (request.command.automationPlan) {
+        libraryService.validateAutomationFileOperationPlan({
+          libraryId: request.command.libraryId,
+          expectedChangeSequence: request.command.automationPlan.expectedChangeSequence,
+          assetStates: request.command.automationPlan.assetStates,
+        });
+      }
       const { asset } = libraryService.renameAssetFile(request.command);
       return { ok: true, type: 'asset.file-renamed', asset };
+    }
+    case 'asset.rename-files': {
+      if (request.command.automationPlan) {
+        libraryService.validateAutomationFileOperationPlan({
+          libraryId: request.command.libraryId,
+          expectedChangeSequence: request.command.automationPlan.expectedChangeSequence,
+          assetStates: request.command.automationPlan.assetStates,
+        });
+      }
+      const result = libraryService.renameAssetFiles(request.command);
+      return { ok: true, type: 'asset.files-renamed', ...result };
+    }
+    case 'asset.restore-if-original-vacant': {
+      if (request.command.automationPlan) {
+        libraryService.validateAutomationFileOperationPlan({
+          libraryId: request.command.libraryId,
+          expectedChangeSequence: request.command.automationPlan.expectedChangeSequence,
+          assetStates: request.command.automationPlan.assetStates,
+        });
+      }
+      const result = libraryService.restoreAssetsIfOriginalVacant(request.command);
+      scheduleThumbnailScene(request.command.libraryId, 'restore', result.assets.map((asset) => asset.assetId));
+      return { ok: true, type: 'asset.restored-if-original-vacant', ...result };
+    }
+    case 'asset.palette.aggregate-recent': {
+      const result = libraryService.aggregateRecentAssetPalette(request.command);
+      return { ok: true, type: 'asset.palette.aggregated-recent', ...result };
     }
     case 'asset.text.read': {
       const result = libraryService.readTextAsset(request.command);
@@ -1749,6 +1806,11 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
         ...status,
       };
     }
+    case 'automation.file-operation-plan':
+      // This preflight is deliberately accepted only through the fail-closed
+      // automation-readonly dispatcher above. A normal desktop request must
+      // not be able to manufacture a plan outside Main approval.
+      throw new Error('Automation file-operation planning requires automation-readonly dispatch.');
     default:
       return assertNever(request.command);
   }

@@ -147,6 +147,7 @@ import {
 } from "../shared/ai-analysis-settings";
 import { AppSettingsDialog } from "./AppSettingsDialog";
 import { AppLogDialog } from "./AppLogDialog";
+import { ScriptSandboxPreviewDialog } from "./ScriptSandboxPreviewDialog";
 import { AppSettingsEntry } from "./AppSettingsEntry";
 import type { AppSettingsCategoryId } from "./app-settings-sections";
 import {
@@ -206,6 +207,7 @@ import { useDialogEscapeDismiss } from "./use-dialog-escape-dismiss";
 import { useExternalImportHandlers } from "./use-external-import-handlers";
 import { useFolderDragDropHandlers } from "./use-folder-drag-drop-handlers";
 import { WorkspaceNoticeBanner } from "./WorkspaceNoticeBanner";
+import { WorkspaceToolsOverflow } from "./WorkspaceToolsOverflow";
 import {
   MANAGED_FOLDERS_DRAG_TYPE,
   resolveDraggedFolderIds,
@@ -279,6 +281,7 @@ import type {
   AiJobStatus,
 } from "../shared/library-api";
 import type { SerpentShellApi } from "../shared/external-url";
+import type { SerpentAutomationScriptApi } from '../shared/automation-script-api';
 import type { AppLogEntry, ReadAppLogResult } from "../shared/app-log";
 import type {
   ImportConflictPlan,
@@ -365,6 +368,7 @@ type RendererWindow = Window & {
   serpent?: {
     library?: SerpentLibraryApi;
     shell?: SerpentShellApi;
+    automation?: SerpentAutomationScriptApi;
   };
 };
 type UiState =
@@ -947,6 +951,7 @@ function AppInner() {
   const [smartCollectionSettings, setSmartCollectionSettings] =
     useState<SmartCollectionSettingsTarget | null>(null);
   const [appLogOpen, setAppLogOpen] = useState(false);
+  const [scriptSandboxPreviewOpen, setScriptSandboxPreviewOpen] = useState(false);
   const [appLogEntries, setAppLogEntries] = useState<AppLogEntry[]>([]);
   const [appLogLoading, setAppLogLoading] = useState(false);
   const [appLogErrorCode, setAppLogErrorCode] = useState<
@@ -1084,6 +1089,7 @@ function AppInner() {
     loadMetadata,
     loadAiContentForAsset,
     saveMetadata,
+    applyLoadedMetadata,
   } = useInspectorAssetMetadata({
     api: api ?? null,
     library,
@@ -3199,10 +3205,10 @@ function AppInner() {
     if (!tagResult.ok) throw new LibraryOperationError(tagResult.error);
     if (!metadataResult.ok) throw new LibraryOperationError(metadataResult.error);
     setTags(tagResult.value);
-    metadataByAssetRef.current.set(assetId, metadataResult.value);
-    if (selectedAssetIdRef.current === assetId) {
-      setAssetMetadata(metadataResult.value);
-    }
+    // Keep cache and Inspector editor fields coherent. Updating only
+    // `assetMetadata` leaves editRating/editFavorite stale, which made a
+    // completed script look as though its metadata write had not applied.
+    applyLoadedMetadata(assetId, metadataResult.value);
   }
 
   // REQ-MENU-007: Inspector tag operations apply to the whole multi-selection.
@@ -3875,6 +3881,19 @@ function AppInner() {
   useEffect(() => {
     reloadCurrentContentRef.current = reloadCurrentContent;
   });
+
+  async function refreshAfterAutomationScript() {
+    try {
+      // A script may issue hundreds of write commands. Refresh once after the
+      // execution settles so cards retain the current browse scope/selection
+      // and Inspector reflects committed metadata without a reload per batch.
+      await reloadCurrentContent();
+      const selected = selectedAssetIdRef.current;
+      if (selected) await refreshTagAndMetadataState(selected);
+    } catch (caught) {
+      setError(toMessage(caught, t("toast.diskChangedRefreshFailed"), locale));
+    }
+  }
 
   const {
     batchAssignTagToSelection,
@@ -5698,10 +5717,7 @@ function AppInner() {
               assetId: selectedAssetId,
             });
             if (metadata.ok) {
-              metadataByAssetRef.current.set(selectedAssetId, metadata.value);
-              metadataConflictAssetIdsRef.current.delete(selectedAssetId);
-              if (selectedAssetIdRef.current === selectedAssetId)
-                setAssetMetadata(metadata.value);
+              applyLoadedMetadata(selectedAssetId, metadata.value);
             }
           }
           if (event.source === "text-save") {
@@ -5727,7 +5743,7 @@ function AppInner() {
       if (reloadTimer !== undefined) window.clearTimeout(reloadTimer);
       unsubscribe();
     };
-  }, [api, library, locale, selectedAssetId, setError, setNotice, t]);
+  }, [api, applyLoadedMetadata, library, locale, selectedAssetId, setError, setNotice, t]);
 
   useEffect(() => {
     if (!api) return;
@@ -5772,6 +5788,7 @@ function AppInner() {
       importLibraryChooserOpen,
       appSettingsOpen,
       appLogOpen,
+      scriptSandboxPreviewOpen,
       mediaJobsOpen: Boolean(mediaJobsOpen && library !== null),
       linkedRulesEditorOpen: Boolean(linkedRulesEditor),
       convertLinkedOpen: Boolean(convertLinkedDialog.folderId),
@@ -5797,6 +5814,7 @@ function AppInner() {
     importLibraryChooserOpen,
     appSettingsOpen,
     appLogOpen,
+    scriptSandboxPreviewOpen,
     mediaJobsOpen,
     library,
     linkedRulesEditor,
@@ -5828,6 +5846,7 @@ function AppInner() {
     setImportLibraryChooserOpen,
     setAppSettingsOpen,
     setAppLogOpen,
+    setScriptSandboxPreviewOpen,
     setMediaJobsOpen,
     setLinkedRulesEditor,
     resetConvertLinkedDialog: () => {
@@ -5871,6 +5890,7 @@ function AppInner() {
       importLibraryChooserOpen ||
       appSettingsOpen ||
       appLogOpen ||
+      scriptSandboxPreviewOpen ||
       Boolean(smartCollectionSettings) ||
       Boolean(imageSequenceDialog) ||
       Boolean(fatalAlertMessage) ||
@@ -7328,6 +7348,15 @@ function AppInner() {
               onCardSizeChange={resizeAssetCards}
               platform={SHORTCUT_PLATFORM}
             />
+            <WorkspaceToolsOverflow
+              items={[
+                {
+                  id: "script-sandbox-preview",
+                  label: t("automation.preview.open"),
+                  onSelect: () => setScriptSandboxPreviewOpen(true),
+                },
+              ]}
+            />
           </div>
         </div>
         {!showTagManagement && (
@@ -8616,6 +8645,13 @@ function AppInner() {
           });
         }}
         open={appLogOpen}
+      />
+      <ScriptSandboxPreviewDialog
+        automation={(window as RendererWindow).serpent?.automation}
+        libraryId={library?.libraryId ?? null}
+        onClose={() => setScriptSandboxPreviewOpen(false)}
+        onExecutionSettled={() => refreshAfterAutomationScript()}
+        open={scriptSandboxPreviewOpen}
       />
       {smartCollectionSettings ? (
         <SmartCollectionSettingsDialog

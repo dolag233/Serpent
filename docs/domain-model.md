@@ -1,7 +1,7 @@
 # Serpent 领域模型
 
 > 状态：生效，持续演进
-> 日期：2026-07-11；最后校准：2026-07-16
+> 日期：2026-07-11；最后校准：2026-07-29
 
 ## 核心关系
 
@@ -19,11 +19,46 @@ Library
 └─ Job*                      # 可恢复后台任务
 ```
 
-## 一等客户端
+## 自动化访问面
 
-桌面客户端与命令行客户端是平等的一等访问面：二者调用相同的领域命令并遵守相同的不变量，不存在“GUI 优先”或“agent 优先”。CLI 同时面向人类和软件 agent，易用性与机器可调用性都属于产品要求。
+Desktop、脚本与 MCP 都是第一方访问面，但 `Automation Command Gateway` 才是规范能力边界。所有入口调用相同的领域命令并遵守相同不变量，不得各自拥有 SQLite、文件操作或后台任务实现。JS/TS 脚本是复杂控制流的主要编程表面；MCP 是 Agent 的精选结构化工具表面。通用 CLI 已撤出当前产品范围，未来若重新讨论也只能是 Gateway 的薄适配器。
 
-CLI 只公开语义化领域能力，不公开任意 SQL、数据库连接或绕过领域规则的文件系统接口。领域实体以稳定 ID 作为底层身份。精确定位单一实体时，客户端只接受稳定 ID 或该实体在显式资源库中的唯一资源库路径，并解析为稳定 ID；标签、合集和其他结构化条件属于过滤，全文表达式属于搜索，二者都不冒充精确资源引用。
+自动化入口只公开语义化领域能力，不公开任意 SQL、数据库连接、Node.js、Shell 或绕过领域规则的文件系统接口。领域实体以稳定 ID 作为底层身份。精确定位单一实体时，入口只接受稳定 ID 或该实体在显式资源库中的唯一资源库路径，并解析为稳定 ID；标签、合集和其他结构化条件属于过滤，全文表达式属于搜索，二者都不冒充精确资源引用。
+
+每次脚本或 MCP 自动化运行形成 Automation Execution，并在第一版显式绑定一个资源库。Execution 持有能力授权、取消与资源预算，记录命令轨迹和日志关联；脚本代码本身不直接接触 Library Worker。高风险文件写入还需形成绑定实体版本和资源库变更序号的 Execution Plan，再按批准策略执行。
+
+## 插件扩展面
+
+插件和自动化脚本共享 Automation Command Gateway 与 `serpent` 领域 API，但生命周期不同：
+脚本是一次 Automation Execution；插件是可安装、激活和停用的扩展，能够注册 UI
+Contribution、领域 Hook、Provider、输入捕获和后台 Job handler。
+
+```text
+PluginPackage
+├─ manifest + immutable files + integrity
+└─ runtime_mode = standard | trusted
+
+PluginInstallation
+├─ scope = user | library
+├─ package
+└─ enabled intent
+
+PluginTrustDecision             # 当前设备本地
+PluginResolution                # 当前设备为当前资源库选择 user/library/disabled
+PluginInstance                  # 一个资源库中实际激活的确定版本
+```
+
+不变量：
+
+- 用户级安装位于应用用户数据；资源库级安装位于 `.serpent/plugins/` 并可以随资源库同步。
+- 资源库级 Package 同步不包含本机信任。每台设备首次运行前都必须显式信任。
+- 同一插件 ID 的用户级和资源库级版本发生冲突时由用户选择；两者不得同时激活。
+- 标准插件只能通过声明并授权的 Host API 行动。可信插件具有完整 Node.js 能力，其权限清单
+  不能被描述为完整系统沙箱。
+- 插件通过 Gateway 发起的领域命令继续遵守实体版本、Execution Plan、文件恢复和 Library
+  Worker 所有权；可信插件绕过 Gateway 的直接系统行为不享受这些保证。
+- 插件 Hook 不得在数据库事务或文件锁内执行；搜索、过滤和排序 Provider 不得在 Renderer
+  中逐资产同步求值。
 
 ## 聚合与实体
 

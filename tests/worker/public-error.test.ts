@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { parseRendererResult, parseWorkerResponse } from '../../src/shared/protocol/responses';
 import { LibraryServiceError } from '../../src/worker/library-service';
+import { LibraryWriteCoordinatorError } from '../../src/worker/library-write-coordinator';
 import { publicErrorForWorkerFailure } from '../../src/worker/public-error';
 
 describe('Library Worker public error boundary', () => {
@@ -39,6 +40,15 @@ describe('Library Worker public error boundary', () => {
     )).toEqual({
       code: 'INVALID_ASSET_METADATA',
       message: 'Choose valid asset metadata values, including six-digit hex colors and an HTTP(S) source page URL.',
+    });
+  });
+
+  it('exposes a lease conflict as a retryable library-busy result without filesystem details', () => {
+    expect(publicErrorForWorkerFailure(
+      new LibraryWriteCoordinatorError('Another process owns /private/Library/.serpent/library.db', 'timed-out'),
+    )).toEqual({
+      code: 'LIBRARY_BUSY',
+      message: 'This library is being updated by another Serpent session. Try again in a moment.',
     });
   });
 

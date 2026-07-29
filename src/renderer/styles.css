@@ -4447,6 +4447,113 @@ body.serpent-modal-open .app-shell {
   width: min(700px, calc(100vw - 40px));
 }
 
+.script-sandbox-preview-dialog {
+  display: flex;
+  width: min(900px, calc(100vw - 40px));
+  max-height: min(760px, calc(100vh - 40px));
+  flex-direction: column;
+}
+
+.script-sandbox-preview-heading {
+  flex: 0 0 auto;
+  margin-bottom: 14px;
+}
+
+.script-sandbox-preview-heading .micro-label {
+  margin: 0 0 4px;
+}
+
+.script-sandbox-preview-heading h2 {
+  margin-top: 0;
+}
+
+.script-sandbox-preview-description {
+  max-width: 58rem;
+  margin: 8px 0 0;
+  color: var(--secondary);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.script-sandbox-preview-label,
+.script-sandbox-preview-output-label,
+.script-sandbox-preview-result-title {
+  margin: 0 0 7px;
+  color: var(--secondary);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.script-sandbox-preview-editor,
+.script-sandbox-preview-result pre {
+  width: 100%;
+  min-height: 220px;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--divider);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--canvas) 72%, var(--raised));
+  color: var(--text);
+  font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  tab-size: 2;
+}
+
+.script-sandbox-preview-editor {
+  resize: vertical;
+}
+
+.script-sandbox-preview-editor:focus {
+  border-color: color-mix(in srgb, var(--accent) 62%, var(--divider));
+  box-shadow: 0 0 0 3px var(--accent-soft);
+  outline: 0;
+}
+
+.script-sandbox-preview-help {
+  flex: 0 0 auto;
+  margin-bottom: 12px;
+  line-height: 1.5;
+}
+
+.script-sandbox-preview-result {
+  min-height: 0;
+  flex: 1 1 124px;
+  margin-top: 2px;
+  padding: 11px 12px;
+  overflow: auto;
+  border: 1px solid var(--divider-soft);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--raised) 72%, var(--pane));
+  color: var(--secondary);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.script-sandbox-preview-result[data-state="running"] {
+  color: var(--accent-soft-fg);
+}
+
+.script-sandbox-preview-result[data-state="failed"] {
+  border-color: color-mix(in srgb, var(--warning) 45%, var(--divider));
+  color: var(--warning-fg);
+}
+
+.script-sandbox-preview-result p {
+  margin: 0;
+}
+
+.script-sandbox-preview-result pre {
+  min-height: 0;
+  max-height: 150px;
+  margin-top: 6px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.script-sandbox-preview-output-label {
+  margin-top: 12px !important;
+}
+
 .dialog-actions-start {
   justify-content: flex-start;
 }

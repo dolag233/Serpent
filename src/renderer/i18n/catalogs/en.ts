@@ -240,6 +240,37 @@ export const en = {
     batchRelink: "Batch relink",
     importingProgress: "Safely copying and registering assets…"
   },
+  automation: {
+    preview: {
+      open: "Automation script",
+      badge: "RESTRICTED AUTOMATION",
+      title: "Automation script",
+      description: "Run a small JS or TypeScript snippet against the current Library. Scripts can call only restricted asset APIs; they have no Node, network, arbitrary-file, or MCP permission. Real file operations ask for another confirmation before they run. Closing or stopping terminates this run.",
+      sourceLabel: "Script",
+      sourcePlaceholder: "Enter JavaScript or TypeScript…",
+      bridgeHint: "The example finds assets whose name or tag contains Ser and sets them to four stars. Ratings, path copies, Trash, and renames are protected by authorization and plan confirmation. Press ⌘/Ctrl + Enter to run.",
+      ready: "Ready to run.",
+      running: "Running in the restricted sandbox…",
+      completed: "Return value",
+      output: "Console output",
+      emptySource: "Enter a script first.",
+      errors: {
+        SOURCE_NOT_ALLOWED: "Scripts cannot use imported modules or syntax that this preview does not support. Use standalone JavaScript or TypeScript.",
+        SOURCE_TOO_LARGE: "The script exceeds this preview's 64 KB limit. Split it into smaller pieces and try again.",
+        CPU_TIMEOUT: "The script took too long to calculate and was stopped safely. Check for a loop that cannot finish.",
+        WALL_TIMEOUT: "The script waited too long and was stopped. Use a shorter wait or smaller steps.",
+        CANCELLED: "This run was stopped.",
+        MEMORY_LIMIT: "The script used too much memory and was stopped safely. Process less data at once.",
+        OUTPUT_LIMIT: "The script produced too much output and was stopped. Reduce console output or the returned value.",
+        HOST_CALL_LIMIT: "The script started too many asset requests at once and was stopped.",
+        PROMISE_LIMIT: "The script created too many unfinished Promises and was stopped.",
+        RUNTIME_ERROR: "The script had a runtime error. Check the code and try again."
+      },
+      reset: "Restore example",
+      stop: "Stop",
+      run: "Run"
+    }
+  },
   filter: {
     format: "Format filter",
     formatField: "Format",

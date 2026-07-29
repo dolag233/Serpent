@@ -63,6 +63,22 @@ export const assetAuthorSchema = z.union([
 export const suspectedDuplicateDecisionSchema = z.enum(['skip', 'merge', 'create-copy']);
 export const nameConflictDecisionSchema = z.enum(['keep-both', 'replace', 'skip']);
 
+const automationFileOperationSchema = z.enum([
+  'trash',
+  'rename-file',
+  'rename-files',
+  'restore-if-original-vacant',
+]);
+const automationFilePlanAssetStateSchema = z.strictObject({
+  assetId: identifierSchema,
+  stateToken: z.string().regex(/^[a-f0-9]{64}$/u),
+});
+const automationFilePlanProofSchema = z.strictObject({
+  planHash: z.string().regex(/^[a-f0-9]{64}$/u),
+  expectedChangeSequence: z.number().int().nonnegative(),
+  assetStates: z.array(automationFilePlanAssetStateSchema).min(1).max(10_000),
+});
+
 
 const aiApiFormatSchema = z.enum([
   'dashscope_native',
@@ -920,10 +936,6 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     selectedLibraryPath: selectedPathSchema,
   }),
   z.strictObject({
-    type: z.literal('library.open-readonly'),
-    selectedLibraryPath: selectedPathSchema,
-  }),
-  z.strictObject({
     type: z.literal('library.close'),
     libraryId: identifierSchema,
   }),
@@ -1294,6 +1306,7 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     type: z.literal('asset.trash'),
     libraryId: identifierSchema,
     assetIds: z.array(identifierSchema).min(1),
+    automationPlan: automationFilePlanProofSchema.optional(),
   }),
   z.strictObject({
     type: z.literal('asset.restore'),
@@ -1345,6 +1358,49 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     libraryId: identifierSchema,
     assetId: identifierSchema,
     newBaseName: assetFileBaseNameSchema,
+    automationPlan: automationFilePlanProofSchema.optional(),
+  }),
+  z.strictObject({
+    type: z.literal('asset.rename-files'),
+    libraryId: identifierSchema,
+    items: z.array(z.strictObject({
+      assetId: identifierSchema,
+      newBaseName: assetFileBaseNameSchema,
+    })).min(1).max(10_000).refine(
+      (items) => new Set(items.map((item) => item.assetId)).size === items.length,
+      { message: 'items must not contain duplicate assetIds.' },
+    ),
+    automationPlan: automationFilePlanProofSchema.optional(),
+  }),
+  // Automation-only recovery operation: restore only assets whose original
+  // managed folder still exists and whose original destination is vacant.
+  // It intentionally has no target-folder or overwrite option.
+  z.strictObject({
+    type: z.literal('asset.restore-if-original-vacant'),
+    libraryId: identifierSchema,
+    assetIds: z.array(identifierSchema).min(1).max(10_000).refine(
+      (assetIds) => new Set(assetIds).size === assetIds.length,
+      { message: 'assetIds must not contain duplicates.' },
+    ),
+    automationPlan: automationFilePlanProofSchema.optional(),
+  }),
+  // Main-only preflight used by the Automation Gateway before a file write.
+  // It returns opaque state tokens rather than paths and has no side effects.
+  z.strictObject({
+    type: z.literal('automation.file-operation-plan'),
+    libraryId: identifierSchema,
+    operation: automationFileOperationSchema,
+    assetIds: z.array(identifierSchema).min(1).max(10_000).refine(
+      (assetIds) => new Set(assetIds).size === assetIds.length,
+      { message: 'assetIds must not contain duplicates.' },
+    ),
+    newBaseName: assetFileBaseNameSchema.optional(),
+  }),
+  z.strictObject({
+    type: z.literal('asset.palette.aggregate-recent'),
+    libraryId: identifierSchema,
+    days: z.number().int().min(1).max(3_650).default(2),
+    limit: z.number().int().min(1).max(24).default(12),
   }),
   z.strictObject({
     type: z.literal('asset.text.read'),
@@ -1656,6 +1712,12 @@ export type NameConflictDecision = z.infer<typeof nameConflictDecisionSchema>;
 export const workerRequestSchema = z.strictObject({
   requestId: identifierSchema,
   command: workerCommandSchema,
+  /**
+   * Automation reads share the Worker protocol but must not inherit desktop
+   * side effects such as thumbnail scheduling. Only Main-owned transports can
+   * construct this envelope; Renderer requests remain on their existing path.
+   */
+  dispatch: z.enum(['automation-readonly']).optional(),
 });
 
 export type WorkerRequest = z.infer<typeof workerRequestSchema>;

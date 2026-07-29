@@ -78,6 +78,20 @@ import {
   NATIVE_EDIT_COPY_CHANNEL,
   VIEWER_VIDEO_SHORTCUTS_ACTIVE_CHANNEL,
 } from "../shared/protocol/channels";
+import {
+  createAutomationCommandGateway,
+  type AutomationCommandGateway,
+} from '../automation/command-gateway';
+import { AutomationLibraryWorkerAdapter } from './automation-worker-adapter';
+import {
+  createDesktopAutomationFilePlanApprovalHandler,
+  type DesktopAutomationFilePlanSummary,
+} from './automation-file-plan-approval';
+import {
+  AutomationExecutionJournal,
+  createJsonFileAutomationExecutionStore,
+} from './automation-execution-journal';
+import { registerAutomationScriptIpc } from './automation-script-ipc';
 import { shouldUseFramelessTitleBar } from "../shared/window-controls";
 import { matchViewerVideoLetterShortcut } from "../shared/viewer-video-shortcuts";
 import {
@@ -224,6 +238,8 @@ let quitAfterShutdown = false;
 let startupComplete = false;
 let logger: AppLogger | undefined;
 let appLogPath: string | undefined;
+let automationExecutionJournal: AutomationExecutionJournal | undefined;
+let automationCommandGateway: AutomationCommandGateway | undefined;
 
 function recentLibraryPath(): string {
   return path.join(app.getPath("userData"), "recent-library.json");
@@ -3604,6 +3620,59 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
   }
 }
 
+async function confirmDesktopAutomationWrite(): Promise<boolean> {
+  if (!mainWindow || mainWindow.isDestroyed()) return false;
+  // Native modal dialogs are not controllable through Playwright. Restrict
+  // this deterministic test seam to an unpackaged, isolated E2E process; it
+  // can never be enabled by a shipped build or normal `npm start` session.
+  if (!app.isPackaged
+    && process.env.SERPENT_E2E === '1'
+    && process.env.SERPENT_E2E_AUTOMATION_CONFIRM === '1') {
+    return true;
+  }
+  const response = await dialog.showMessageBox(mainWindow, {
+    type: 'warning',
+    buttons: ['取消', '运行脚本'],
+    defaultId: 1,
+    cancelId: 0,
+    title: '运行自动化脚本',
+    message: '此脚本可以读取资产、修改评分、复制文件路径，以及重命名或移入回收站。',
+    detail: '脚本只会获得当前资源库的受限自动化能力；不会获得磁盘、网络、数据库或永久删除权限。每次运行都会记录到应用日志。',
+  });
+  return response.response === 1;
+}
+
+async function confirmDesktopAutomationFilePlan(plan: DesktopAutomationFilePlanSummary): Promise<boolean> {
+  if (!mainWindow || mainWindow.isDestroyed()) return false;
+  // See confirmDesktopAutomationWrite: this is an isolated, unpackaged E2E
+  // seam only. Production builds always display the fresh plan confirmation.
+  if (!app.isPackaged
+    && process.env.SERPENT_E2E === '1'
+    && process.env.SERPENT_E2E_AUTOMATION_CONFIRM === '1') {
+    return true;
+  }
+  const action = plan.operation === 'trash'
+    ? '移入回收站'
+    : plan.operation === 'rename-file'
+      ? '重命名文件'
+      : '恢复回原始位置';
+  const response = await dialog.showMessageBox(mainWindow, {
+    type: 'warning',
+    buttons: ['取消', `确认${action}`],
+    defaultId: 1,
+    cancelId: 0,
+    title: '确认文件操作',
+    message: `准备${action} ${plan.executableCount} 项资产。`,
+    detail: [
+      `本次选中 ${plan.targetCount} 项；${plan.blockedCount} 项因当前状态或冲突不会处理。`,
+      plan.undoSupported
+        ? '移入回收站后可在回收站中恢复。'
+        : '执行前会再次确认这些资产没有变化。',
+    ].join('\n'),
+  });
+  return response.response === 1;
+}
+
 async function startApplication(): Promise<void> {
   app.setAppLogsPath();
   appLogPath = path.join(app.getPath("logs"), "serpent.log");
@@ -3624,6 +3693,37 @@ async function startApplication(): Promise<void> {
     logger,
   );
   await workerClient.start();
+  automationExecutionJournal = new AutomationExecutionJournal({
+    store: createJsonFileAutomationExecutionStore(
+      path.join(app.getPath('userData'), 'automation-executions.json'),
+    ),
+    logger,
+  });
+  automationCommandGateway = createAutomationCommandGateway(
+    new AutomationLibraryWorkerAdapter(workerClient),
+    automationExecutionJournal,
+    {
+      auditSink: automationExecutionJournal,
+      auditLogger: logger,
+      externalEffectHandler: {
+        apply: ({ commandId, workerResult }) => {
+          // The only current external automation effect is intentionally
+          // consumed in Main: scripts receive the copied count, never an
+          // absolute asset path or an Electron clipboard handle.
+          if (commandId !== 'asset.paths.copy'
+            || !workerResult.ok
+            || workerResult.type !== 'media.asset-paths') {
+            throw new Error(`Unexpected automation external effect: ${commandId}`);
+          }
+          clipboard.writeText(workerResult.absolutePaths.join('\n'));
+        },
+      },
+      filePlanApprovalHandler: createDesktopAutomationFilePlanApprovalHandler({
+        workerClient: new AutomationLibraryWorkerAdapter(workerClient),
+        confirm: confirmDesktopAutomationFilePlan,
+      }),
+    },
+  );
   workerClient.onAssetsChanged(publishAssetChange);
   workerClient.onProgress(publishProgress);
   workerClient.onAiProgress(publishAiProgress);
@@ -3828,6 +3928,16 @@ async function startApplication(): Promise<void> {
       } satisfies RendererResult;
     }
     return handleLibraryRequest(input);
+  });
+
+  registerAutomationScriptIpc({
+    ipcMain,
+    isAuthorizedSender: (sender) => Boolean(mainWindow && sender === mainWindow.webContents),
+    workerClient: () => workerClient,
+    journal: () => automationExecutionJournal,
+    gateway: () => automationCommandGateway,
+    confirmDesktopWrite: confirmDesktopAutomationWrite,
+    logger: () => logger,
   });
 
   // 渲染进程请求在系统浏览器打开外部链接（检查器「源链接」跳转）。

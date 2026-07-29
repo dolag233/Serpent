@@ -178,6 +178,46 @@ describe('asset file rename (REQ-MENU-002)', () => {
     service.closeAll();
   });
 
+  it('batch-renames independent assets and reports local naming conflicts without rolling back prior successes', () => {
+    const temp = root();
+    const service = newService();
+    const library = service.createLibrary({ displayName: 'Batch Rename', selectedParentPath: temp });
+    const firstSource = path.join(temp, 'first.png');
+    const secondSource = path.join(temp, 'second.png');
+    const occupiedSource = path.join(temp, 'occupied.png');
+    writeFileSync(firstSource, 'first');
+    writeFileSync(secondSource, 'second');
+    writeFileSync(occupiedSource, 'occupied');
+    const first = importFile(service, library.libraryId, firstSource).assets[0]!;
+    const second = importFile(service, library.libraryId, secondSource).assets[0]!;
+    importFile(service, library.libraryId, occupiedSource);
+
+    const result = service.renameAssetFiles({
+      libraryId: library.libraryId,
+      items: [
+        { assetId: first.assetId, newBaseName: 'first-concept' },
+        { assetId: second.assetId, newBaseName: 'occupied' },
+        { assetId: 'missing-asset', newBaseName: 'unused' },
+      ],
+    });
+
+    expect(result).toMatchObject({
+      renamedCount: 1,
+      skipped: [
+        { assetId: second.assetId, reason: 'name_conflict' },
+        { assetId: 'missing-asset', reason: 'asset_not_found' },
+      ],
+      assets: [{ assetId: first.assetId, displayName: 'first-concept.png' }],
+    });
+    expect(readFileSync(path.join(library.libraryPath, 'Assets', 'first-concept.png'), 'utf8')).toBe('first');
+    expect(existsSync(path.join(library.libraryPath, 'Assets', 'second.png'))).toBe(true);
+    expect(service.searchAssets({
+      libraryId: library.libraryId,
+      query: { clauses: [{ field: 'filename', values: ['first-concept'], exclude: false }] },
+    }).total).toBe(1);
+    service.closeAll();
+  });
+
   it('rejects renames onto tracked, case-variant, and untracked conflicting names', () => {
     const temp = root();
     const service = newService();

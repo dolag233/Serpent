@@ -85,8 +85,6 @@
 | ---------- | -------------------------------- | ------------ | ------------------------------------------------------ | ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
 | LIB-001 | 创建、关闭并重新打开资源库 | 待人类验收 | 创建临时资源库，关闭后从起始页重新打开 | 名称、目录和资产保持一致；失败时显示具体原因 | [0001 QA](0001-library-shell-qa-report.md) / [生命周期 E2E](../../tests/e2e/library-lifecycle.test.ts) | — |
 | LIB-002 | 完整退出后恢复最近资源库 | 待人类验收 | 打开一个资源库，完全退出 Serpent 后重新启动 | 自动打开刚才使用的资源库 | [生命周期 E2E](../../tests/e2e/library-lifecycle.test.ts) | — |
-| CLI-001 | 只读 CLI 显式资源库与机器输出 | 待人类验收 | 在仓库根先运行一次 `npm run cli:build`，再运行 `npm run --silent cli -- --library "<资源库根目录>" library inspect --json`；随后运行 `asset list --recursive --json`、`tag list --json` 与 `commands --json` | 每条资源库命令都要求显式 `--library`；stdout 只有一行稳定 JSON；可列出资源库、资产和标签；`commands --json` 含命令 ID、用法、输入/结果 schema 与只读标记 | [0011 规格](../implementation/0011-agent-native-cli-vertical-slice.md) / [CLI parser 单测](../../tests/unit/cli-argv.test.ts) / [只读 Worker 测试](../../tests/worker/cli-readonly.test.ts) / [开发日志](../development/2026-07-28-cli-readonly-foundation-development-log.md) | 2026-07-28 第一阶段实现；独立安装包与写命令不在本条范围。 |
-| CLI-002 | CLI 搜索、任务查询与安全失败 | 待人类验收 | 运行 `npm run --silent cli -- --library "<资源库根目录>" search "<已知关键词>" --json` 与 `job list --kind all --json`；再把资源库路径改成不存在路径，观察 stderr 和退出码 | 搜索与桌面共用同一表达式/Worker 查询；任务结果区分 media/AI；无效资源库只写 stderr、返回退出码 3，并含稳定错误码与日志编号；资源库数据库内容不变化 | 同上 / [共享搜索表达式](../../src/shared/search-expression.ts) / [共享只读执行器](../../src/worker/read-only-command-executor.ts) | 真实 158 项资源库冒烟：inspect/list/tag/job 成功，数据库 SHA-256 前后不变；Windows 与 packaged CLI 未验证。 |
 | LIB-003 | 完整退出后恢复上次浏览资产 | 人类验收通过 | 选中一项资产，完全退出后重新启动 | 恢复到原浏览范围，并将原资产带回视野和焦点 | [生命周期 E2E](../../tests/e2e/library-lifecycle.test.ts) | 2026-07-17 用户手动验收：“LIB-003通过”。 |
 | IMPORT-001 | 导入单个文件 | 待人类验收 | 在资源库根目录或指定文件夹执行“导入文件”并选择一个文件 | 文件复制到 `Assets/` 对应位置并出现在画布；原文件保留 | [0002 QA](0002-asset-ingestion-qa-report.md) / [导入 E2E](../../tests/e2e/asset-ingestion.test.ts) | — |
 | IMPORT-002 | 一次导入多个文件 | 待人类验收 | 在“导入文件”中一次选择多个文件 | 所有选中文件均导入，且没有重复或遗漏 | [0002 QA](0002-asset-ingestion-qa-report.md) / [导入 E2E](../../tests/e2e/asset-ingestion.test.ts) | — |
@@ -390,6 +388,12 @@
 | ------------ | ------------------------ | ---------- | -------------------------------------------- | -------------------------------------------------------- | -------------------------------------------------- | --------- |
 | TRANSFER-001 | 文件夹格式导出并重新导入 | 待人类验收 | 导出临时资源库为文件夹，再从导出目录导入副本 | 副本可打开；资产数量一致，抽查文件内容一致；原库不受影响 | [0010 QA](0010-library-import-export-qa-report.md) | — |
 | TRANSFER-002 | ZIP 格式导出并重新导入 | 待人类验收 | 导出 ZIP，再导入到新位置 | 新资源库可打开；资产数量一致，抽查文件内容一致 | [0010 QA](0010-library-import-export-qa-report.md) | — |
+
+### 自动化开发预览
+
+| ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
+| --- | --- | --- | --- | --- | --- | --- |
+| AUT-006 | 受限自动化脚本：评分与可恢复文件操作 | 待人类验收 | 按 [AUT-006 测试说明](automation-foundation-test-guide.md#aut-006受限自动化脚本开发态手动测试) 启动 `npm start`，打开一个测试资源库，在“更多工具”打开“自动化脚本”；运行默认脚本并确认授权；核对名称或标签包含 `Ser` 的资产变为 4 星；再按[脚本使用说明](../automation-scripting-guide.md)试一次批量重命名或移入回收站，确认计划后检查结果；再试取消授权、`import('node:fs')` 拒绝、停止/Escape/关闭与亮暗/窄窗。 | 授权前不写入；评分后仅匹配资产变为 4 星；文件计划只显示数量、确认后仅处理计划内资产，回收站操作可恢复；无文件、网络、Node、任意 IPC 或 MCP 权限；停止/关闭取消尚未开始的命令，下一次运行正常；错误为中文可理解的稳定错误码。 | [开发日志](../development/2026-07-29-automation-asset-operations-development-log.md) / [自动化脚本说明](../automation-scripting-guide.md) / [Gateway 测试](../../tests/unit/automation-command-gateway.test.ts) / [文件计划测试](../../tests/unit/automation-file-plan-approval.test.ts) / [Worker 文件操作测试](../../tests/worker/asset-rename.test.ts) / [文件操作 Electron E2E](../../tests/e2e/automation-script-file-operations.test.ts)（1 passed）/ Computer Use 未执行（macOS 锁屏） | 2026-07-29 将 Console 从评分最小路径扩展为分页读取、受限元数据、路径复制、回收站、批量重命名及自动色卡聚合。真实文件操作由 Main 预检、原生计划确认和 Worker change-sequence/state-token 复核绑定；过期计划必须拒绝。隔离 Electron 已覆盖批量改名；原生确认的取消、剪贴板、回收站恢复、色卡、视觉与完整脚本示例仍须人类确认；不包括保存脚本、MCP、UtilityProcess 或安装包。 |
 
 ## 暂不可验收
 

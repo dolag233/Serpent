@@ -20,6 +20,7 @@ const empty: DialogEscapeSnapshot = {
   importLibraryChooserOpen: false,
   appSettingsOpen: false,
   appLogOpen: false,
+  scriptSandboxPreviewOpen: false,
   mediaJobsOpen: false,
   linkedRulesEditorOpen: false,
   convertLinkedOpen: false,
@@ -121,5 +122,15 @@ describe("dialog-escape-stack", () => {
         mediaJobsOpen: true,
       }),
     ).toEqual({ kind: "close-app-log" });
+  });
+
+  it("closes the script sandbox preview above background jobs", () => {
+    expect(
+      resolveDialogEscapeAction({
+        ...empty,
+        scriptSandboxPreviewOpen: true,
+        mediaJobsOpen: true,
+      }),
+    ).toEqual({ kind: "close-script-sandbox-preview" });
   });
 });

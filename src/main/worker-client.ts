@@ -155,7 +155,10 @@ export class LibraryWorkerClient {
 
   }
 
-  request(command: WorkerCommand): Promise<WorkerResult> {
+  request(
+    command: WorkerCommand,
+    options: { dispatch?: 'automation-readonly' } = {},
+  ): Promise<WorkerResult> {
     const child = this.#child;
     if (!child || !this.#ready) return Promise.reject(new Error('Library Worker is unavailable.'));
 
@@ -174,7 +177,11 @@ export class LibraryWorkerClient {
       }, timeout);
 
       this.#pending.set(requestId, { resolve, reject, timer });
-      child.postMessage({ requestId, command });
+      child.postMessage({
+        requestId,
+        command,
+        ...(options.dispatch === undefined ? {} : { dispatch: options.dispatch }),
+      });
     });
   }
 

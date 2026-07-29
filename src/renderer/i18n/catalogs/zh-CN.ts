@@ -230,6 +230,37 @@ export const zhCN = {
     batchRelink: "批量重新定位",
     importingProgress: "正在安全复制与登记资产…"
   },
+  automation: {
+    preview: {
+      open: "自动化脚本",
+      badge: "受限自动化",
+      title: "自动化脚本",
+      description: "在当前资源库运行一小段 JS 或 TypeScript。脚本只可调用受限资产 API；没有 Node、网络、任意文件或 MCP 权限。真实文件操作会在执行前再次确认。关闭或停止会直接终止本次运行。",
+      sourceLabel: "脚本",
+      sourcePlaceholder: "输入 JS 或 TypeScript…",
+      bridgeHint: "示例会搜索名称或标签包含 Ser 的资产，并将它们设为 4 星。评分、路径复制、回收站和重命名均受权限与计划确认保护；按 ⌘/Ctrl + Enter 运行。",
+      ready: "准备就绪。",
+      running: "正在受限沙箱中运行…",
+      completed: "返回结果",
+      output: "console 输出",
+      emptySource: "请先输入一段脚本。",
+      errors: {
+        SOURCE_NOT_ALLOWED: "脚本不能使用导入的模块或当前不支持的语法。请仅使用独立的 JS / TypeScript 代码。",
+        SOURCE_TOO_LARGE: "脚本超过 64 KB 的开发预览上限。请拆分后再试。",
+        CPU_TIMEOUT: "脚本计算时间过长，已安全停止。请检查是否有无法结束的循环。",
+        WALL_TIMEOUT: "脚本等待时间过长，已停止。请缩短等待或分成更小的步骤。",
+        CANCELLED: "本次运行已停止。",
+        MEMORY_LIMIT: "脚本占用的内存过多，已安全停止。请减少一次处理的数据量。",
+        OUTPUT_LIMIT: "脚本输出过多，已停止。请减少 console 输出或返回内容。",
+        HOST_CALL_LIMIT: "脚本同时发起的资产请求过多，已停止。",
+        PROMISE_LIMIT: "脚本创建了过多未完成的 Promise，已停止。",
+        RUNTIME_ERROR: "脚本运行时出错。请检查代码后重试。"
+      },
+      reset: "恢复示例",
+      stop: "停止",
+      run: "运行"
+    }
+  },
   filter: {
     format: "格式过滤",
     formatField: "格式",
