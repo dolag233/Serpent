@@ -4,6 +4,7 @@ import type {
   PluginPackageLock,
   PluginPackageLimits,
   PluginPackageSource,
+  PluginQuarantineRecord,
   PluginResolution,
   PluginTrustDecision,
 } from '../plugins/plugin-package';
@@ -101,6 +102,7 @@ export type PluginInstalledPackageStatus =
 
 export type PluginResolutionResult =
   | { status: 'disabled'; reason: 'safe-mode' | 'user-disabled' }
+  | { status: 'disabled'; reason: 'quarantined'; package: InstalledPluginPackage; quarantine: PluginQuarantineRecord }
   | { status: 'not-installed' }
   | {
     status: 'conflict';

@@ -43,9 +43,10 @@ function resolutionLabel(resolution: PluginManagerResolutionSummary | undefined,
       : t('settings.pluginStatusAwaitingTrust');
     case 'conflict': return t('settings.pluginStatusChooseVersion');
     case 'requires-confirmation': return t('settings.pluginStatusConfirmUpdate');
-    case 'disabled': return resolution.reason === 'safe-mode'
-      ? t('settings.pluginStatusSafeMode')
-      : t('settings.pluginStatusDisabled');
+    case 'disabled':
+      if (resolution.reason === 'safe-mode') return t('settings.pluginStatusSafeMode');
+      if (resolution.reason === 'quarantined') return t('settings.pluginStatusQuarantined');
+      return t('settings.pluginStatusDisabled');
     case 'not-installed': return t('settings.pluginStatusNotInstalled');
   }
 }
@@ -323,6 +324,24 @@ export function PluginSettingsPage({ api, libraryId }: PluginSettingsPageProps):
                   type="button"
                 >
                   {t('settings.pluginRollback')}
+                </button>
+              </div>
+            ) : null}
+            {resolution?.status === 'disabled' && resolution.reason === 'quarantined' ? (
+              <div className="plugin-settings-resolution">
+                <span>{t('settings.pluginQuarantineHint')}</span>
+                <button
+                  className="secondary-button"
+                  disabled={busy}
+                  onClick={() => void execute({
+                    type: 'plugin-manager.clear-quarantine',
+                    libraryId: libraryId!,
+                    pluginId,
+                    packageHash: resolution.packageHash,
+                  })}
+                  type="button"
+                >
+                  {t('settings.pluginReenable')}
                 </button>
               </div>
             ) : null}

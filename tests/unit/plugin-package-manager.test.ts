@@ -411,6 +411,72 @@ describe('PluginPackageManager selection, updates and Safe Mode', () => {
     await expect(manager.listInstalled({ scope: 'user' })).resolves.toHaveLength(1);
   });
 
+  it('quarantines three consecutive supervised crashes only for this library and lets the user explicitly re-enable it', async () => {
+    const source = temporaryRoot('serpent-plugin-quarantine-source-');
+    const userData = temporaryRoot('serpent-plugin-quarantine-user-');
+    const library = temporaryRoot('serpent-plugin-quarantine-library-');
+    writePlugin(source);
+    const manager = createManager(userData);
+    const installed = await manager.installFromDirectory({
+      directory: source,
+      scope: 'user',
+      source: { kind: 'local-directory', fingerprint: 'local:palette-tools' },
+    });
+    await manager.chooseResolution({
+      libraryId: 'library-a',
+      pluginId: installed.package.lock.pluginId,
+      selection: 'use-global',
+      packageHash: installed.package.lock.packageHash,
+    });
+
+    const firstCrashAt = new Date('2026-07-30T00:00:00.000Z');
+    for (const minute of [0, 1]) {
+      await manager.recordRuntimeCrash({
+        libraryId: 'library-a',
+        libraryDirectory: library,
+        pluginId: installed.package.lock.pluginId,
+        packageHash: installed.package.lock.packageHash,
+        failureCode: 'PLUGIN_RUNTIME_CRASH',
+        occurredAt: new Date(firstCrashAt.getTime() + minute * 60_000),
+      });
+    }
+    await expect(manager.resolve({
+      libraryId: 'library-a',
+      libraryDirectory: library,
+      pluginId: installed.package.lock.pluginId,
+    })).resolves.toMatchObject({ status: 'resolved' });
+
+    const quarantined = await manager.recordRuntimeCrash({
+      libraryId: 'library-a',
+      libraryDirectory: library,
+      pluginId: installed.package.lock.pluginId,
+      packageHash: installed.package.lock.packageHash,
+      failureCode: 'PLUGIN_RUNTIME_CRASH',
+      occurredAt: new Date(firstCrashAt.getTime() + 2 * 60_000),
+    });
+    expect(quarantined).toMatchObject({ failureCount: 3, quarantinedAt: '2026-07-30T00:02:00.000Z' });
+    await expect(manager.resolve({
+      libraryId: 'library-a',
+      libraryDirectory: library,
+      pluginId: installed.package.lock.pluginId,
+    })).resolves.toMatchObject({
+      status: 'disabled',
+      reason: 'quarantined',
+      package: { lock: { packageHash: installed.package.lock.packageHash } },
+    });
+
+    await manager.clearRuntimeQuarantine({
+      libraryId: 'library-a',
+      pluginId: installed.package.lock.pluginId,
+      packageHash: installed.package.lock.packageHash,
+    });
+    await expect(manager.resolve({
+      libraryId: 'library-a',
+      libraryDirectory: library,
+      pluginId: installed.package.lock.pluginId,
+    })).resolves.toMatchObject({ status: 'resolved' });
+  });
+
   it('detaches an uninstalled version from its lock before deleting its package bytes', async () => {
     const source = temporaryRoot('serpent-plugin-source-');
     const userData = temporaryRoot('serpent-plugin-user-');

@@ -17,12 +17,14 @@ import {
   PLUGIN_LOCK_VERSION,
   defaultPluginPackageLimits,
   pluginLibraryLockSchema,
+  pluginQuarantineRecordSchema,
   pluginResolutionSchema,
   pluginTrustDecisionSchema,
   type PluginInstallationScope,
   type PluginPackageLimits,
   type PluginPackageLock,
   type PluginResolution,
+  type PluginQuarantineRecord,
   type PluginTrustDecision,
   verifyPluginPackageLock,
 } from '../plugins/plugin-package';
@@ -69,12 +71,15 @@ export {
 const DEVICE_STATE_FILE_NAME = 'plugin-device-state.json';
 const USER_PLUGIN_LOCK_FILE_NAME = 'plugin-lock.json';
 const DEVICE_STATE_VERSION = 1 as const;
+const PLUGIN_CRASH_QUARANTINE_THRESHOLD = 3;
+const PLUGIN_CRASH_QUARANTINE_WINDOW_MS = 5 * 60 * 1_000;
 
 const deviceStateSchema = z.strictObject({
   version: z.literal(DEVICE_STATE_VERSION),
   safeMode: z.boolean(),
   trustDecisions: z.array(pluginTrustDecisionSchema).max(20_000),
   resolutions: z.array(pluginResolutionSchema).max(20_000),
+  quarantines: z.array(pluginQuarantineRecordSchema).max(20_000).default([]),
 });
 type PluginDeviceState = z.infer<typeof deviceStateSchema>;
 
@@ -84,6 +89,7 @@ function emptyDeviceState(): PluginDeviceState {
     safeMode: false,
     trustDecisions: [],
     resolutions: [],
+    quarantines: [],
   };
 }
 
@@ -356,6 +362,92 @@ export class PluginPackageManager {
   }
 
   /**
+   * Records a supervised plugin-process crash. The supervisor is the only
+   * caller: this API deliberately is not exposed to Renderer or plugin code.
+   * Three crashes in a short window quarantine only this package for this
+   * library on this device, so opening another library remains possible.
+   */
+  async recordRuntimeCrash(input: {
+    libraryId: string;
+    libraryDirectory: string;
+    pluginId: string;
+    packageHash: string;
+    failureCode: string;
+    occurredAt?: Date;
+  }): Promise<PluginQuarantineRecord> {
+    const occurredAt = input.occurredAt ?? new Date();
+    const occurredAtIso = occurredAt.toISOString();
+    const failureCode = input.failureCode.trim().toUpperCase();
+    const validFailureCode = z.string().min(1).max(128).regex(/^[A-Z0-9_:-]+$/u).safeParse(failureCode);
+    if (!validFailureCode.success) {
+      throw new PluginPackageManagerError('PLUGIN_RESOLUTION_INVALID', 'Plugin crash reports require a stable error code.');
+    }
+    const packages = await Promise.all([
+      this.#validPackages('user'),
+      this.#validPackages('library', input.libraryDirectory),
+    ]);
+    if (!packages.flat().some((pluginPackage) => pluginPackage.lock.pluginId === input.pluginId
+      && pluginPackage.lock.packageHash === input.packageHash)) {
+      throw new PluginPackageManagerError('PLUGIN_RESOLUTION_INVALID', 'Cannot quarantine a package that is not installed and verified.');
+    }
+
+    const state = await this.#readDeviceState();
+    const previous = state.quarantines.find((record) => record.libraryId === input.libraryId
+      && record.pluginId === input.pluginId
+      && record.packageHash === input.packageHash);
+    const previousFailureAt = previous === undefined ? undefined : Date.parse(previous.lastFailureAt);
+    const continuingRecord = previous !== undefined && previousFailureAt !== undefined
+      && Number.isFinite(previousFailureAt)
+      && occurredAt.getTime() >= previousFailureAt
+      && occurredAt.getTime() - previousFailureAt <= PLUGIN_CRASH_QUARANTINE_WINDOW_MS
+      ? previous
+      : undefined;
+    const failureCount = continuingRecord === undefined ? 1 : continuingRecord.failureCount + 1;
+    const record = pluginQuarantineRecordSchema.parse({
+      deviceId: this.options.deviceId,
+      libraryId: input.libraryId,
+      pluginId: input.pluginId,
+      packageHash: input.packageHash,
+      failureCount,
+      firstFailureAt: continuingRecord?.firstFailureAt ?? occurredAtIso,
+      lastFailureAt: occurredAtIso,
+      lastFailureCode: validFailureCode.data,
+      ...(failureCount >= PLUGIN_CRASH_QUARANTINE_THRESHOLD ? { quarantinedAt: occurredAtIso } : {}),
+    });
+    state.quarantines = state.quarantines.filter((candidate) => !(candidate.libraryId === record.libraryId
+      && candidate.pluginId === record.pluginId
+      && candidate.packageHash === record.packageHash));
+    state.quarantines.push(record);
+    await this.#writeDeviceState(state);
+    this.#logger?.error('plugin.quarantine', new Error('Plugin runtime crashed.'), {
+      libraryId: input.libraryId,
+      pluginId: input.pluginId,
+      packageHash: input.packageHash,
+      failureCode: validFailureCode.data,
+      failureCount,
+      quarantined: record.quarantinedAt !== undefined,
+    });
+    return record;
+  }
+
+  async clearRuntimeQuarantine(input: {
+    libraryId: string;
+    pluginId: string;
+    packageHash?: string;
+  }): Promise<void> {
+    const state = await this.#readDeviceState();
+    state.quarantines = state.quarantines.filter((record) => !(record.libraryId === input.libraryId
+      && record.pluginId === input.pluginId
+      && (input.packageHash === undefined || record.packageHash === input.packageHash)));
+    await this.#writeDeviceState(state);
+    this.#logger?.info('plugin.quarantine-cleared', 'Cleared the local plugin crash quarantine.', {
+      libraryId: input.libraryId,
+      pluginId: input.pluginId,
+      ...(input.packageHash === undefined ? {} : { packageHash: input.packageHash }),
+    });
+  }
+
+  /**
    * Pins the current scope to its immediately preceding verified package.
    * Package bytes remain immutable; rollback only changes this device's
    * resolution and never edits the synchronized library lock.
@@ -488,7 +580,7 @@ export class PluginPackageManager {
     }
     if (current.lock.packageHash !== latest.lock.packageHash) {
       if (saved?.updatePolicy === 'pinned') {
-        return this.#resolvedOrAwaitingTrust(state, selection, current);
+        return this.#resolvedOrAwaitingTrust(state, input.libraryId, selection, current);
       }
       const reason = packageOriginChanged(current, latest);
       if (reason !== undefined) return { status: 'requires-confirmation', reason, current, candidate: latest };
@@ -498,9 +590,9 @@ export class PluginPackageManager {
         selection,
         packageHash: latest.lock.packageHash,
       });
-      return this.#resolvedOrAwaitingTrust(state, selection, latest);
+      return this.#resolvedOrAwaitingTrust(state, input.libraryId, selection, latest);
     }
-    return this.#resolvedOrAwaitingTrust(state, selection, current);
+    return this.#resolvedOrAwaitingTrust(state, input.libraryId, selection, current);
   }
 
   #packageStoreRoot(scope: PluginInstallationScope, libraryDirectory?: string): string {
@@ -606,9 +698,17 @@ export class PluginPackageManager {
 
   #resolvedOrAwaitingTrust(
     state: PluginDeviceState,
+    libraryId: string,
     selection: 'use-global' | 'use-library',
     pluginPackage: InstalledPluginPackage,
   ): PluginResolutionResult {
+    const quarantine = state.quarantines.find((record) => record.libraryId === libraryId
+      && record.pluginId === pluginPackage.lock.pluginId
+      && record.packageHash === pluginPackage.lock.packageHash
+      && record.quarantinedAt !== undefined);
+    if (quarantine !== undefined) {
+      return { status: 'disabled', reason: 'quarantined', package: pluginPackage, quarantine };
+    }
     if (selection === 'use-global') return { status: 'resolved', selection, package: pluginPackage };
     const trust = state.trustDecisions.find((decision) => decision.pluginId === pluginPackage.lock.pluginId
       && decision.packageHash === pluginPackage.lock.packageHash

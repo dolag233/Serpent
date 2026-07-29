@@ -95,6 +95,23 @@ export const pluginTrustDecisionSchema = z.strictObject({
 });
 export type PluginTrustDecision = z.infer<typeof pluginTrustDecisionSchema>;
 
+/**
+ * Per-device crash state for one resolved package in one library. It contains
+ * only a stable error code, never an error stack, filesystem path or secret.
+ */
+export const pluginQuarantineRecordSchema = z.strictObject({
+  deviceId: nonBlankIdSchema,
+  libraryId: nonBlankIdSchema,
+  pluginId: pluginIdSchema,
+  packageHash: pluginSha256Schema,
+  failureCount: z.number().int().min(1).max(10_000),
+  firstFailureAt: z.string().datetime(),
+  lastFailureAt: z.string().datetime(),
+  lastFailureCode: z.string().min(1).max(128).regex(/^[A-Z0-9_:-]+$/u),
+  quarantinedAt: z.string().datetime().optional(),
+});
+export type PluginQuarantineRecord = z.infer<typeof pluginQuarantineRecordSchema>;
+
 export const pluginResolutionSchema = z.strictObject({
   deviceId: nonBlankIdSchema,
   libraryId: nonBlankIdSchema,

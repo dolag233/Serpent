@@ -110,7 +110,17 @@ function resolutionSummary(
   requestedPluginId: string,
 ): PluginManagerResolutionSummary {
   if (result.status === 'not-installed') return { status: 'not-installed', pluginId: requestedPluginId };
-  if (result.status === 'disabled') return { status: 'disabled', pluginId: requestedPluginId, reason: result.reason };
+  if (result.status === 'disabled') {
+    return result.reason === 'quarantined'
+      ? {
+        status: 'disabled',
+        pluginId: requestedPluginId,
+        reason: result.reason,
+        version: result.package.lock.version,
+        packageHash: result.package.lock.packageHash,
+      }
+      : { status: 'disabled', pluginId: requestedPluginId, reason: result.reason };
+  }
   if (result.status === 'conflict') {
     return {
       status: 'conflict',
@@ -223,7 +233,9 @@ export function createPluginPackageRequestHandler(options: PluginPackageIpcOptio
     const request = parsed.data;
     try {
       const libraryId = libraryIdFor(request);
-      const requiresLibrary = (request.type === 'plugin-manager.resolve' || request.type === 'plugin-manager.rollback')
+      const requiresLibrary = (request.type === 'plugin-manager.resolve'
+        || request.type === 'plugin-manager.rollback'
+        || request.type === 'plugin-manager.clear-quarantine')
         || ('scope' in request && request.scope === 'library')
         || (request.type === 'plugin-manager.list' && libraryId !== undefined);
       const libraryDirectory = requiresLibrary
@@ -261,6 +273,12 @@ export function createPluginPackageRequestHandler(options: PluginPackageIpcOptio
         });
       } else if (request.type === 'plugin-manager.safe-mode') {
         await options.manager.setSafeMode(request.enabled);
+      } else if (request.type === 'plugin-manager.clear-quarantine') {
+        await options.manager.clearRuntimeQuarantine({
+          libraryId: request.libraryId,
+          pluginId: request.pluginId,
+          ...(request.packageHash === undefined ? {} : { packageHash: request.packageHash }),
+        });
       } else if (request.type === 'plugin-manager.rollback') {
         await options.manager.rollback({
           libraryId: request.libraryId,

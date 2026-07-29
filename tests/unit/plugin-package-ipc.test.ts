@@ -200,4 +200,53 @@ describe('Plugin package IPC bridge', () => {
       pluginId: firstPackage.pluginId,
     })).resolves.toMatchObject({ ok: true, resolutions: [{ status: 'resolved', version: '1.2.0' }] });
   });
+
+  it('exposes a quarantined package safely and lets the management bridge clear only its local quarantine', async () => {
+    const source = temporaryRoot('serpent-plugin-ipc-quarantine-source-');
+    const userData = temporaryRoot('serpent-plugin-ipc-quarantine-user-');
+    const library = temporaryRoot('serpent-plugin-ipc-quarantine-library-');
+    writePlugin(source);
+    const manager = createManager(userData);
+    const installed = await manager.installFromDirectory({
+      directory: source,
+      scope: 'user',
+      source: { kind: 'local-directory', fingerprint: 'source:stable' },
+    });
+    await manager.chooseResolution({
+      libraryId: 'library-a',
+      pluginId: installed.package.lock.pluginId,
+      selection: 'use-global',
+      packageHash: installed.package.lock.packageHash,
+    });
+    for (const minute of [0, 1, 2]) {
+      await manager.recordRuntimeCrash({
+        libraryId: 'library-a',
+        libraryDirectory: library,
+        pluginId: installed.package.lock.pluginId,
+        packageHash: installed.package.lock.packageHash,
+        failureCode: 'PLUGIN_RUNTIME_CRASH',
+        occurredAt: new Date(Date.UTC(2026, 6, 30, 0, minute, 0)),
+      });
+    }
+    const handler = createPluginPackageRequestHandler({
+      manager,
+      resolveLibraryDirectory: async (libraryId) => libraryId === 'library-a' ? library : undefined,
+      chooseLocalPackage: async () => undefined,
+    });
+
+    await expect(handler({ type: 'plugin-manager.list', libraryId: 'library-a' })).resolves.toMatchObject({
+      ok: true,
+      resolutions: [{
+        status: 'disabled',
+        reason: 'quarantined',
+        packageHash: installed.package.lock.packageHash,
+      }],
+    });
+    await expect(handler({
+      type: 'plugin-manager.clear-quarantine',
+      libraryId: 'library-a',
+      pluginId: installed.package.lock.pluginId,
+      packageHash: installed.package.lock.packageHash,
+    })).resolves.toMatchObject({ ok: true, resolutions: [{ status: 'resolved' }] });
+  });
 });

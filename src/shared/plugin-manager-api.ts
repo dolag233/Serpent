@@ -61,6 +61,12 @@ export const pluginManagerRequestSchema = z.discriminatedUnion('type', [
   }),
   z.strictObject({ type: z.literal('plugin-manager.safe-mode'), enabled: z.boolean() }),
   z.strictObject({
+    type: z.literal('plugin-manager.clear-quarantine'),
+    libraryId: libraryIdSchema,
+    pluginId: pluginIdSchema,
+    packageHash: packageHashSchema.optional(),
+  }),
+  z.strictObject({
     type: z.literal('plugin-manager.rollback'),
     libraryId: libraryIdSchema,
     pluginId: pluginIdSchema,
@@ -107,6 +113,13 @@ export const pluginManagerResolutionSummarySchema = z.discriminatedUnion('status
     status: z.literal('disabled'),
     pluginId: pluginIdSchema,
     reason: z.enum(['safe-mode', 'user-disabled']),
+  }),
+  z.strictObject({
+    status: z.literal('disabled'),
+    pluginId: pluginIdSchema,
+    reason: z.literal('quarantined'),
+    version: versionSchema,
+    packageHash: packageHashSchema,
   }),
   z.strictObject({
     status: z.literal('conflict'),
