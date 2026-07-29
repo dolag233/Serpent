@@ -14,8 +14,8 @@ import { useT } from './i18n';
 import { DEFAULT_AUTOMATION_RATING_SCRIPT } from './script-sandbox-preview-default';
 
 type PreviewResult =
-  | { kind: 'completed'; value: unknown; output: string[] }
-  | { kind: 'failed'; code: AutomationScriptRuntimeFailureCode; message: string }
+  | { kind: 'completed'; value: unknown; output: string[]; logId: string }
+  | { kind: 'failed'; code: AutomationScriptRuntimeFailureCode; message: string; logId?: string }
   | null;
 
 function formatValue(value: unknown): string {
@@ -40,6 +40,7 @@ export function ScriptSandboxPreviewDialog({
   open,
   onClose,
   onExecutionSettled,
+  onOpenExecutionLog,
   libraryId,
   automation,
 }: {
@@ -51,6 +52,8 @@ export function ScriptSandboxPreviewDialog({
    * reloading for every command/batch inside the script.
    */
   onExecutionSettled?(): void | Promise<void>;
+  /** Opens the existing diagnostics surface scoped to this run's log ID. */
+  onOpenExecutionLog?(logId: string): void;
   libraryId: string | null;
   automation: SerpentAutomationScriptApi | undefined;
 }): ReactNode {
@@ -117,15 +120,26 @@ export function ScriptSandboxPreviewDialog({
     try {
       const executed = await automation.execute({ executionId: started.executionId });
       if (!executed.ok) {
-        setResult({ kind: 'failed', code: executed.error.code, message: executed.error.message });
+        setResult({
+          kind: 'failed',
+          code: executed.error.code,
+          message: executed.error.message,
+          logId: started.logId,
+        });
       } else {
-        setResult({ kind: 'completed', value: executed.value, output: executed.output });
+        setResult({
+          kind: 'completed',
+          value: executed.value,
+          output: executed.output,
+          logId: started.logId,
+        });
       }
     } catch {
       setResult({
         kind: 'failed',
         code: 'RUNTIME_ERROR',
         message: 'The isolated script runtime could not complete.',
+        logId: started.logId,
       });
     } finally {
       if (executionIdRef.current === started.executionId) {
@@ -148,6 +162,7 @@ export function ScriptSandboxPreviewDialog({
     const executionId = executionIdRef.current;
     if (executionId) void automation?.cancel({ executionId });
   };
+  const resultLogId = result?.logId;
 
   return (
     <div
@@ -252,6 +267,11 @@ export function ScriptSandboxPreviewDialog({
           {running ? (
             <button className="secondary-button" onClick={stop} type="button">
               {t('automation.preview.stop')}
+            </button>
+          ) : null}
+          {!running && resultLogId && onOpenExecutionLog ? (
+            <button className="secondary-button" onClick={() => onOpenExecutionLog(resultLogId)} type="button">
+              {t('automation.preview.openRunLog')}
             </button>
           ) : null}
           <button className="primary-button" disabled={running} onClick={() => void run()} type="button">

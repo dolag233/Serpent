@@ -7,10 +7,12 @@ import { useT } from "./i18n";
 
 export type AppLogDialogProps = {
   open: boolean;
+  automationCorrelationId: string;
   entries: AppLogEntry[];
   loading: boolean;
   errorCode: Extract<ReadAppLogResult, { ok: false }>["code"] | null;
   onClose: () => void;
+  onAutomationCorrelationIdChange: (value: string) => void;
   onRefresh: () => void;
   onReveal: () => void;
 };
@@ -40,10 +42,12 @@ function contextText(entry: AppLogEntry): string | null {
 
 export function AppLogDialog({
   open,
+  automationCorrelationId,
   entries,
   loading,
   errorCode,
   onClose,
+  onAutomationCorrelationIdChange,
   onRefresh,
   onReveal,
 }: AppLogDialogProps): ReactNode {
@@ -79,6 +83,31 @@ export function AppLogDialog({
           </button>
         </div>
         <div className="dialog-actions dialog-actions-start app-log-actions">
+          <form
+            className="app-log-filter"
+            onSubmit={(event) => {
+              event.preventDefault();
+              onRefresh();
+            }}
+          >
+            <label className="visually-hidden" htmlFor="app-log-automation-correlation">
+              {t("dialog.appLog.filterLabel")}
+            </label>
+            <input
+              autoComplete="off"
+              className="text-field"
+              id="app-log-automation-correlation"
+              maxLength={255}
+              onChange={(event) => onAutomationCorrelationIdChange(event.target.value)}
+              placeholder={t("dialog.appLog.filterPlaceholder")}
+              spellCheck={false}
+              type="text"
+              value={automationCorrelationId}
+            />
+            <button className="secondary-button" disabled={loading} type="submit">
+              {t("dialog.appLog.filter")}
+            </button>
+          </form>
           <button className="secondary-button" disabled={loading} onClick={onRefresh} type="button">
             {loading ? t("dialog.appLog.refreshing") : t("dialog.appLog.refresh")}
           </button>

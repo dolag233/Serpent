@@ -956,11 +956,12 @@ function AppInner() {
   const [scriptSandboxPreviewOpen, setScriptSandboxPreviewOpen] = useState(false);
   const [appLogEntries, setAppLogEntries] = useState<AppLogEntry[]>([]);
   const [appLogLoading, setAppLogLoading] = useState(false);
+  const [appLogAutomationCorrelationId, setAppLogAutomationCorrelationId] = useState("");
   const [appLogErrorCode, setAppLogErrorCode] = useState<
     Extract<ReadAppLogResult, { ok: false }>["code"] | null
   >(null);
 
-  async function refreshAppLog(): Promise<void> {
+  async function refreshAppLog(automationCorrelationId = appLogAutomationCorrelationId): Promise<void> {
     const bridge = (window as RendererWindow).serpent?.shell;
     if (!bridge?.readAppLog) {
       setAppLogEntries([]);
@@ -969,7 +970,8 @@ function AppInner() {
     }
     setAppLogLoading(true);
     try {
-      const result = await bridge.readAppLog();
+      const correlationId = automationCorrelationId.trim();
+      const result = await bridge.readAppLog(correlationId === "" ? undefined : correlationId);
       if (result.ok) {
         setAppLogEntries(result.entries);
         setAppLogErrorCode(null);
@@ -982,11 +984,12 @@ function AppInner() {
     }
   }
 
-  function openAppLog(): void {
+  function openAppLog(automationCorrelationId = ""): void {
     setAppSettingsOpen(false);
     setMediaJobsOpen(false);
+    setAppLogAutomationCorrelationId(automationCorrelationId);
     setAppLogOpen(true);
-    void refreshAppLog();
+    void refreshAppLog(automationCorrelationId);
   }
 
   // AI analysis state
@@ -8633,10 +8636,12 @@ function AppInner() {
         open={appSettingsOpen}
       />
       <AppLogDialog
+        automationCorrelationId={appLogAutomationCorrelationId}
         entries={appLogEntries}
         errorCode={appLogErrorCode}
         loading={appLogLoading}
         onClose={() => setAppLogOpen(false)}
+        onAutomationCorrelationIdChange={setAppLogAutomationCorrelationId}
         onRefresh={() => void refreshAppLog()}
         onReveal={() => {
           const bridge = (window as RendererWindow).serpent?.shell;
@@ -8655,6 +8660,10 @@ function AppInner() {
         libraryId={library?.libraryId ?? null}
         onClose={() => setScriptSandboxPreviewOpen(false)}
         onExecutionSettled={() => refreshAfterAutomationScript()}
+        onOpenExecutionLog={(logId) => {
+          setScriptSandboxPreviewOpen(false);
+          openAppLog(logId);
+        }}
         open={scriptSandboxPreviewOpen}
       />
       {smartCollectionSettings ? (

@@ -61,7 +61,12 @@ import {
   type SerpentShellApi,
   type ShellSwipeDirection,
 } from '../shared/external-url';
-import { parseAppLogEntry, type ReadAppLogResult } from '../shared/app-log';
+import {
+  appLogAutomationCorrelationIdSchema,
+  parseAppLogEntry,
+  type AppLogAutomationCorrelationId,
+  type ReadAppLogResult,
+} from '../shared/app-log';
 import { parseShowEditContextMenuResult } from '../shared/edit-context-menu';
 import {
   parseWindowControlResult,
@@ -1721,7 +1726,7 @@ function parseReadAppLogResult(input: unknown): ReadAppLogResult {
     typeof input === 'object' && input !== null && 'code' in input && typeof (input as { code: unknown }).code === 'string'
       ? (input as { code: string }).code
       : 'read_failure';
-  if (code === 'unauthorized_sender' || code === 'log_missing' || code === 'read_failure') {
+  if (code === 'unauthorized_sender' || code === 'malformed_request' || code === 'log_missing' || code === 'read_failure') {
     return { ok: false, code };
   }
   return { ok: false, code: 'read_failure' };
@@ -1736,8 +1741,17 @@ const shell: SerpentShellApi = Object.freeze({
     const result: unknown = await ipcRenderer.invoke(REVEAL_APP_LOG_CHANNEL);
     return parseRevealAppLogResult(result);
   },
-  async readAppLog() {
-    const result: unknown = await ipcRenderer.invoke(READ_APP_LOG_CHANNEL);
+  async readAppLog(automationCorrelationId?: AppLogAutomationCorrelationId): Promise<ReadAppLogResult> {
+    const parsedCorrelationId = automationCorrelationId === undefined
+      ? undefined
+      : appLogAutomationCorrelationIdSchema.safeParse(automationCorrelationId);
+    if (parsedCorrelationId !== undefined && !parsedCorrelationId.success) {
+      return { ok: false, code: 'malformed_request' };
+    }
+    const result: unknown = await ipcRenderer.invoke(
+      READ_APP_LOG_CHANNEL,
+      parsedCorrelationId === undefined ? undefined : { automationCorrelationId: parsedCorrelationId.data },
+    );
     return parseReadAppLogResult(result);
   },
   setAppLocale(locale: 'zh-CN' | 'en'): void {

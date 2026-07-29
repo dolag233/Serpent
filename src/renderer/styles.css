@@ -4371,6 +4371,18 @@ body.serpent-modal-open .app-shell {
   margin: -6px 0 12px;
 }
 
+.app-log-filter {
+  display: flex;
+  min-width: min(100%, 360px);
+  flex: 1 1 280px;
+  gap: 6px;
+}
+
+.app-log-filter .text-field {
+  min-width: 0;
+  flex: 1;
+}
+
 .app-log-state {
   margin: 18px 0 0;
 }

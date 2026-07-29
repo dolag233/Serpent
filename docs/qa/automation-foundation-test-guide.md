@@ -21,7 +21,7 @@
 
 - 保存/打开/复用脚本，或运行超出搜索和评分的真实资源库自动化；
 - 让 Agent 通过 MCP 连接 Serpent；
-- 完整的执行历史、授权审计 UI 或面向用户的脚本日志浏览；
+- 完整的执行历史、授权审计 UI 或跨运行的脚本日志浏览（当前仅可从一次运行结果打开其已脱敏的关联诊断）；
 - 打包后的 macOS/Windows 沙箱与 MCP 行为。
 
 以上未实现项目不是测试失败；它们属于后续 `Serpent-y51c.3/.4/.5`。`Serpent-y51c.6` 的 Main-owned Execution journal 与授权基础已由本受限 Console 使用，但 MCP 仍没有用户入口。
@@ -166,9 +166,9 @@ npx vitest run --config vitest.config.ts tests/unit/automation-execution-journal
 - MCP client 没有可伪造的 `actor` 输入，不能向自己授予能力；只有 Main Desktop/TTY 入口可以为一个 MCP 连接授予会话能力。
 - 运行中的 execution 遇到应用重启会收口为 `AUTOMATION_INTERRUPTED_BY_RESTART`；journal 和日志不保存脚本正文或 API Key，路径形 library ID 与任意 session ID 会被拒绝。
 - 每次 execution 会记录受限资源预算与 deadline。会话结束、手动取消或 deadline 超时会取消尚未开始的 Gateway 命令，并中止等待中的 Gateway 请求；`maxConcurrentCommands` 在 Gateway 按 execution 原子执行，超额请求不会触达 Worker。已经进入领域写入的收口语义仍由后续写租约/恢复切片负责。
-- Gateway 会把命令成功/失败的数量记录在 execution history，同时不允许审计记录失败改变领域命令的结果；若 history 文件不可写，会单独写出带 execution/command ID 的应用日志诊断。
+- Gateway 会把命令成功/失败的数量记录在 execution history，同时不允许审计记录失败改变领域命令的结果；若 history 文件不可写，会单独写出带 execution/command ID 的应用日志诊断。诊断窗口接受一个 opaque execution/log ID，只显示这次运行的已脱敏条目，不接受自由文本或路径查询。
 
-此项仍是开发者验证，不会在应用 UI 中显示。真实授权窗口、执行历史和日志定位留给正式 Desktop Console。
+此项仍是开发者验证；当前开发态 Console 可从完成/失败结果打开本次运行的日志，但完整执行历史、授权管理和跨运行检索仍留给正式自动化中心。
 
 ## AUT-006：受限自动化脚本（开发态手动测试）
 
@@ -209,7 +209,7 @@ console.log(result);
 return result;
 ```
 
-预期：点击运行后先出现“可读取资产并修改评分”的授权确认。确认后，脚本在独立 UtilityProcess 中运行，每页最多读取 200 项，以 500 项一批写入评分；结果显示 `matched`、`updatedCount` 和 `skipped`，所有匹配资产评分变为 4。取消确认时不应创建写入。真实文件操作还会出现与目标数量绑定的第二次计划确认；若资源库在确认后变化，执行必须拒绝过期计划。
+预期：点击运行后先出现“可读取资产并修改评分”的授权确认。确认后，脚本在独立 UtilityProcess 中运行，每页最多读取 200 项，以 500 项一批写入评分；结果显示 `matched`、`updatedCount` 和 `skipped`，所有匹配资产评分变为 4。随后点击“查看此次运行日志”，诊断窗口应只显示该 run 的 `automation.execution.*` 条目，并对路径与凭据脱敏。取消确认时不应创建写入。真实文件操作还会出现与目标数量绑定的第二次计划确认；若资源库在确认后变化，执行必须拒绝过期计划。
 
 `search()` 返回 `{ items, total, offset, limit, hasMore }`。可以使用循环继续请求下一页；`limit` 最大为 200。脚本只得到 `id`、`name` 和 `rating`，不会得到绝对路径或桌面内部搜索状态。
 

@@ -56,6 +56,38 @@ function createJournal(
 }
 
 describe('AutomationExecutionJournal', () => {
+  it('persists every terminal outcome with a stable status and failure code', () => {
+    const journal = createJournal();
+    const start = (): string => {
+      const execution = journal.create({
+        source: 'mcp',
+        libraryId: libraryOne,
+        sessionId: mcpSessionOne,
+        declaredCapabilities: ['asset.read'],
+      });
+      journal.start(execution.executionId);
+      journal.authorizeFromDesktop({ executionId: execution.executionId, persistence: 'session' });
+      return execution.executionId;
+    };
+
+    const succeeded = start();
+    const partiallySucceeded = start();
+    const failed = start();
+    const cancelled = start();
+    const timedOut = start();
+    journal.complete(succeeded, { status: 'succeeded', summary: { succeeded: 1 } });
+    journal.complete(partiallySucceeded, { status: 'partially-succeeded', summary: { succeeded: 1, failed: 1 } });
+    journal.complete(failed, { status: 'failed' });
+    journal.cancel(cancelled);
+    journal.timeout(timedOut);
+
+    expect(journal.get(succeeded)).toMatchObject({ status: 'succeeded', failureCode: null, finishedAt: expect.any(String) });
+    expect(journal.get(partiallySucceeded)).toMatchObject({ status: 'partially-succeeded', failureCode: null, finishedAt: expect.any(String) });
+    expect(journal.get(failed)).toMatchObject({ status: 'failed', failureCode: 'AUTOMATION_COMMAND_FAILED' });
+    expect(journal.get(cancelled)).toMatchObject({ status: 'cancelled', failureCode: 'AUTOMATION_CANCELLED' });
+    expect(journal.get(timedOut)).toMatchObject({ status: 'timed-out', failureCode: 'AUTOMATION_TIMED_OUT' });
+  });
+
   it('requires a Desktop Console session grant before exposing its bound library capabilities', () => {
     const journal = createJournal();
     const execution = journal.create({

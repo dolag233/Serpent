@@ -268,6 +268,7 @@ export const en = {
       },
       reset: "Restore example",
       stop: "Stop",
+      openRunLog: "View this run's log",
       run: "Run"
     }
   },
@@ -762,6 +763,9 @@ export const en = {
       title: "Diagnostics",
       subtitle: "Recent app, background-job, and AI failures. Full details are also saved to serpent.log.",
       closeAria: "Close diagnostics",
+      filterLabel: "Filter by automation execution or log ID",
+      filterPlaceholder: "Execution or log ID",
+      filter: "Filter",
       refresh: "Refresh",
       refreshing: "Refreshing…",
       reveal: "Show log file",

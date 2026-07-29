@@ -64,8 +64,16 @@ test('runs the default Desktop Console script and rates only its matching assets
     await expect(dialog.getByText('返回结果', { exact: true })).toBeVisible();
     await expect(dialog.locator('pre').first()).toContainText('"matched": 1');
     await expect(dialog.locator('pre').first()).toContainText('"updatedCount": 1');
-    await dialog.getByRole('button', { name: '关闭' }).click();
+    await dialog.getByRole('button', { name: '查看此次运行日志' }).click();
     await expect(dialog).toBeHidden();
+    const logDialog = window.getByRole('dialog', { name: '诊断日志' });
+    await expect(logDialog).toBeVisible();
+    await expect(logDialog).toContainText('automation.execution.completed');
+    // The run-log button scopes by the Main-issued log ID. Generic runtime
+    // records have only executionId and must not leak into this filtered view.
+    await expect(logDialog).not.toContainText('automation.runtime.spawn');
+    await logDialog.getByRole('button', { name: '关闭诊断日志' }).click();
+    await expect(logDialog).toBeHidden();
 
     const rating = window.getByRole('group', { name: '评分' });
     await expect(rating.getByRole('button', { name: '4 星' })).toHaveAttribute('data-active', 'true');

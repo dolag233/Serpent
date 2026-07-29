@@ -258,6 +258,7 @@ export const zhCN = {
       },
       reset: "恢复示例",
       stop: "停止",
+      openRunLog: "查看此次运行日志",
       run: "运行"
     }
   },
@@ -751,6 +752,9 @@ export const zhCN = {
       title: "诊断日志",
       subtitle: "显示应用、后台任务和 AI 分析的近期失败；完整信息也会保存到 serpent.log。",
       closeAria: "关闭诊断日志",
+      filterLabel: "按自动化执行或日志编号筛选",
+      filterPlaceholder: "执行编号或日志编号",
+      filter: "筛选",
       refresh: "刷新",
       refreshing: "刷新中…",
       reveal: "显示日志文件",

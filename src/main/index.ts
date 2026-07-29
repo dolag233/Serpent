@@ -106,7 +106,7 @@ import {
   type OpenExternalUrlResult,
   type RevealAppLogResult,
 } from "../shared/external-url";
-import type { ReadAppLogResult } from "../shared/app-log";
+import { parseReadAppLogRequest, type ReadAppLogResult } from "../shared/app-log";
 import type { ShowEditContextMenuResult } from "../shared/edit-context-menu";
 import {
   createPublicError,
@@ -4095,12 +4095,19 @@ async function startApplication(): Promise<void> {
   // The absolute log path remains Main-owned and never crosses the bridge.
   ipcMain.handle(
     READ_APP_LOG_CHANNEL,
-    (event): ReadAppLogResult => {
+    (event, input: unknown): ReadAppLogResult => {
       if (!mainWindow || event.sender !== mainWindow.webContents) {
         logger?.info("ipc.read-app-log", "Rejected read-app-log request.", {
           code: "unauthorized_sender",
         });
         return { ok: false, code: "unauthorized_sender" };
+      }
+      const request = parseReadAppLogRequest(input);
+      if (!request) {
+        logger?.info("ipc.read-app-log", "Rejected malformed app-log filter.", {
+          code: "malformed_request",
+        });
+        return { ok: false, code: "malformed_request" };
       }
       if (!appLogPath || !existsSync(appLogPath)) {
         logger?.info("ipc.read-app-log", "App log file missing.", {
@@ -4111,7 +4118,10 @@ async function startApplication(): Promise<void> {
       try {
         return {
           ok: true,
-          entries: logger?.readRecent(500, { redactPaths: true }) ?? [],
+          entries: logger?.readRecent(500, {
+            redactPaths: true,
+            automationCorrelationId: request.automationCorrelationId,
+          }) ?? [],
           fileName: "serpent.log",
         };
       } catch (error) {
