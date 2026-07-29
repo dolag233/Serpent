@@ -5,10 +5,15 @@ import { fileURLToPath } from 'node:url';
 import sharp from 'sharp';
 import { build } from 'vite';
 
+import {
+  extensionIconSizes,
+  iconSources,
+} from './icon-assets.mjs';
+
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const sourceDir = path.join(rootDir, 'extension');
 const outDir = path.join(rootDir, 'dist', 'extension');
-const iconSizes = [16, 32, 48, 128];
+const iconSizes = extensionIconSizes;
 
 async function assertFile(relativePath) {
   const absolutePath = path.join(outDir, relativePath);
@@ -38,7 +43,7 @@ async function validateBuild() {
   if (!manifest.permissions?.includes('alarms')) {
     throw new Error('Extension manifest must request alarms permission for connection checks');
   }
-  if (!manifest.action?.default_icon?.['16']?.includes('icon-gray-16.png')) {
+  if (!manifest.action?.default_icon?.['32']?.includes('icon-gray-32.png')) {
     throw new Error('Extension action must default to the gray toolbar icon');
   }
   if (manifest.options_page !== 'options.html') {
@@ -136,15 +141,13 @@ async function buildExtension() {
   await copyFile(path.join(sourceDir, 'options.css'), path.join(outDir, 'options.css'));
   await mkdir(path.join(outDir, 'icons'), { recursive: true });
 
-  const iconSource = path.join(sourceDir, 'icon.svg');
-  const iconGraySource = path.join(sourceDir, 'icon-gray.svg');
   await Promise.all(iconSizes.flatMap((size) => [
-    sharp(iconSource)
-      .resize(size, size)
+    sharp(iconSources.extensionActive)
+      .resize(size, size, { fit: 'cover' })
       .png()
       .toFile(path.join(outDir, 'icons', `icon-${size}.png`)),
-    sharp(iconGraySource)
-      .resize(size, size)
+    sharp(iconSources.extensionInactive)
+      .resize(size, size, { fit: 'cover' })
       .png()
       .toFile(path.join(outDir, 'icons', `icon-gray-${size}.png`)),
   ]));

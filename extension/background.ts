@@ -25,7 +25,7 @@ import {
 const MENU_ROOT_ID = 'serpent-save';
 const MENU_ROOT_FOLDER_ID = 'serpent-save-root';
 const CONNECTION_ALARM = 'serpent-connection-check';
-const ICON_SIZES = [16, 32, 48, 128] as const;
+const ICON_SIZES = [32, 48, 64, 128] as const;
 
 let notificationSequence = 0;
 let connectionState: 'connected' | 'disconnected' = 'disconnected';

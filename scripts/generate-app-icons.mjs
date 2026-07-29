@@ -1,23 +1,17 @@
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 
 import sharp from 'sharp';
 import toIco from 'to-ico';
 
-const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const assetsDir = path.join(projectRoot, 'assets');
-const defaultSource = path.join(assetsDir, 'icon-source.png');
+import {
+  generatedAppIcons,
+  iconAssetsDir,
+  iconSources,
+} from './icon-assets.mjs';
 
-const sourcePath = process.argv[2]
-  ? path.resolve(process.argv[2])
-  : defaultSource;
-
-const iconsetDir = path.join(assetsDir, 'icon.iconset');
-const icnsPath = path.join(assetsDir, 'icon.icns');
-const icoPath = path.join(assetsDir, 'icon.ico');
-const pngPath = path.join(assetsDir, 'icon.png');
+const iconsetDir = path.join(iconAssetsDir, 'app.iconset');
 
 const iconsetEntries = [
   ['icon_16x16.png', 16],
@@ -35,27 +29,27 @@ const iconsetEntries = [
 const icoSizes = [16, 24, 32, 48, 64, 128, 256];
 
 async function resizePng(size) {
-  return sharp(sourcePath)
+  return sharp(iconSources.app)
     .resize(size, size, { fit: 'cover' })
     .png()
     .toBuffer();
 }
 
 async function writeMasterPng() {
-  await sharp(sourcePath)
+  await sharp(iconSources.app)
     .resize(1024, 1024, { fit: 'cover' })
     .png()
-    .toFile(pngPath);
+    .toFile(generatedAppIcons.png);
 }
 
 async function writeIco() {
   const buffers = await Promise.all(icoSizes.map((size) => resizePng(size)));
-  await writeFile(icoPath, await toIco(buffers));
+  await writeFile(generatedAppIcons.ico, await toIco(buffers));
 }
 
 async function writeIcns() {
   if (process.platform !== 'darwin') {
-    console.warn('[icons] skipping icon.icns generation (iconutil is macOS-only)');
+    console.warn('[icons] skipping app.icns generation (iconutil is macOS-only)');
     return;
   }
 
@@ -64,16 +58,18 @@ async function writeIcns() {
 
   await Promise.all(
     iconsetEntries.map(async ([filename, size]) => {
-      await sharp(sourcePath)
+      await sharp(iconSources.app)
         .resize(size, size, { fit: 'cover' })
         .png()
         .toFile(path.join(iconsetDir, filename));
     }),
   );
 
-  const result = spawnSync('iconutil', ['-c', 'icns', iconsetDir, '-o', icnsPath], {
-    stdio: 'inherit',
-  });
+  const result = spawnSync(
+    'iconutil',
+    ['-c', 'icns', iconsetDir, '-o', generatedAppIcons.icns],
+    { stdio: 'inherit' },
+  );
   if (result.error) throw result.error;
   if (result.status !== 0) {
     throw new Error(`iconutil failed with exit code ${String(result.status)}`);
@@ -83,23 +79,16 @@ async function writeIcns() {
 }
 
 async function main() {
-  await mkdir(assetsDir, { recursive: true });
-  if (process.argv[2]) {
-    await sharp(sourcePath)
-      .png()
-      .toFile(defaultSource);
-    console.log(`[icons] saved source copy to ${path.relative(projectRoot, defaultSource)}`);
-  }
-
+  await mkdir(iconAssetsDir, { recursive: true });
   await writeMasterPng();
   await writeIco();
   await writeIcns();
 
-  console.log('[icons] generated:');
-  console.log(`  - ${path.relative(projectRoot, pngPath)}`);
-  console.log(`  - ${path.relative(projectRoot, icoPath)}`);
+  console.log('[icons] generated from assets/icons/source-app.png:');
+  console.log(`  - assets/icons/app.png`);
+  console.log(`  - assets/icons/app.ico`);
   if (process.platform === 'darwin') {
-    console.log(`  - ${path.relative(projectRoot, icnsPath)}`);
+    console.log(`  - assets/icons/app.icns`);
   }
 }
 

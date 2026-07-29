@@ -5,7 +5,7 @@ import { app, nativeImage, type NativeImage } from "electron";
 
 export function appIconImage(): NativeImage | undefined {
   if (app.isPackaged) return undefined;
-  const png = path.join(process.cwd(), "assets", "icon.png");
+  const png = path.join(process.cwd(), "assets", "icons", "app.png");
   if (!existsSync(png)) return undefined;
   const image = nativeImage.createFromPath(png);
   return image.isEmpty() ? undefined : image;

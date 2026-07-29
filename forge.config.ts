@@ -9,6 +9,7 @@ import { AutoUnpackNativesPlugin } from '@electron-forge/plugin-auto-unpack-nati
 import { VitePlugin } from '@electron-forge/plugin-vite';
 
 const projectRoot = import.meta.dirname;
+const appIconBase = path.join(projectRoot, 'assets', 'icons', 'app');
 
 function nativeMediaPlatform(platform: string, arch: string): string {
   const expectedHost = `${process.platform}-${process.arch}`;
@@ -63,7 +64,7 @@ const config: ForgeConfig = {
     },
   },
   packagerConfig: {
-    icon: path.join(projectRoot, 'assets', 'icon'),
+    icon: appIconBase,
     asar: {
       unpack: '**/node_modules/trash/lib/{macos-trash,windows-trash.exe}',
     },
@@ -83,7 +84,7 @@ const config: ForgeConfig = {
   rebuildConfig: {},
   makers: [
     new MakerSquirrel({
-      setupIcon: path.join(projectRoot, 'assets', 'icon.ico'),
+      setupIcon: `${appIconBase}.ico`,
     }),
     new MakerZIP({}, ['darwin', 'win32']),
     new MakerDMG({}),
