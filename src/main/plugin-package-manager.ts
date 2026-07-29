@@ -341,6 +341,10 @@ export class PluginPackageManager {
     await this.#writeDeviceState(state);
   }
 
+  async getSafeMode(): Promise<boolean> {
+    return (await this.#readDeviceState()).safeMode;
+  }
+
   /**
    * Removal first detaches the package from the lock, so a crash can leave only
    * harmless orphan bytes. It never leaves a lock that activates missing code.

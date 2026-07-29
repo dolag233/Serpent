@@ -41,6 +41,8 @@ export const AUTOMATION_SCRIPT_START_CHANNEL = 'serpent:automation:script-start'
 export const AUTOMATION_SCRIPT_COMMAND_CHANNEL = 'serpent:automation:script-command' as const;
 export const AUTOMATION_SCRIPT_COMPLETE_CHANNEL = 'serpent:automation:script-complete' as const;
 export const AUTOMATION_SCRIPT_CANCEL_CHANNEL = 'serpent:automation:script-cancel' as const;
+/** Renderer plugin manager → Main. File paths remain Main-owned. */
+export const PLUGIN_MANAGER_CHANNEL = 'serpent:plugin-manager:request' as const;
 
 export const WORKER_READY_MESSAGE_TYPE = 'worker.ready' as const;
 export const WORKER_SHUTDOWN_MESSAGE_TYPE = 'worker.shutdown' as const;
