@@ -19,6 +19,7 @@ import {
   screen,
   shell,
   nativeImage,
+  utilityProcess,
 } from "electron";
 
 import { installApplicationMenu } from "./application-menu";
@@ -93,6 +94,7 @@ import {
   createJsonFileAutomationExecutionStore,
 } from './automation-execution-journal';
 import { registerAutomationScriptIpc } from './automation-script-ipc';
+import { ScriptRuntimeSupervisor } from './script-runtime-supervisor';
 import { loadOrCreatePluginDeviceId } from './plugin-device-identity';
 import { createPluginPackageRequestHandler } from './plugin-package-ipc';
 import { PluginPackageManager } from './plugin-package-manager';
@@ -245,6 +247,7 @@ let logger: AppLogger | undefined;
 let appLogPath: string | undefined;
 let automationExecutionJournal: AutomationExecutionJournal | undefined;
 let automationCommandGateway: AutomationCommandGateway | undefined;
+let scriptRuntimeSupervisor: ScriptRuntimeSupervisor | undefined;
 let pluginPackageManager: PluginPackageManager | undefined;
 
 function recentLibraryPath(): string {
@@ -3766,6 +3769,14 @@ async function startApplication(): Promise<void> {
       }),
     },
   );
+  scriptRuntimeSupervisor = new ScriptRuntimeSupervisor({
+    modulePath: path.join(__dirname, 'script_runtime_utility.js'),
+    fork: (modulePath) => utilityProcess.fork(modulePath, [], {
+      serviceName: 'Serpent Script Runtime',
+      stdio: 'pipe',
+    }),
+    logger,
+  });
   const pluginCompatibility = currentPluginCompatibilityPlatform();
   const nodeAbi = Number(process.versions.modules);
   if (pluginCompatibility === undefined || !Number.isSafeInteger(nodeAbi) || nodeAbi <= 0) {
@@ -3997,6 +4008,7 @@ async function startApplication(): Promise<void> {
     workerClient: () => workerClient,
     journal: () => automationExecutionJournal,
     gateway: () => automationCommandGateway,
+    runtime: () => scriptRuntimeSupervisor,
     confirmDesktopWrite: confirmDesktopAutomationWrite,
     logger: () => logger,
   });

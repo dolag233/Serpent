@@ -41,9 +41,9 @@ npx eslint src/scripting/quickjs-sandbox-prototype.ts tests/unit/quickjs-sandbox
 - 该依赖的 release 变体带独立 `.wasm` 文件；Forge 当前会复制生产 `node_modules`，但尚未把本模块接入 Main/UtilityProcess entry，也没有运行 macOS packaged 或 Windows 实机包。
 - 因而**不能**把“开发态 Vitest 能加载 WASM”写成“安装包已验证”。`Serpent-y51c.10` 必须在真正的 Script Runtime 接入后验证：ASAR 内 WASM 解析、macOS arm64 安装包，以及 Windows x64 安装包。
 
-## 尚未成为生产运行时的部分
+## 后续运行时范围（2026-07-30 更新）
 
-1. 原型目前运行在调用者进程；它证明 QuickJS 的语言/资源边界，**不**满足“执行器崩溃绝不带走 Main/Library Worker”的进程隔离要求。`Serpent-y51c.4` 必须把它放进可强制终止的 UtilityProcess 或等价隔离执行器，并为执行器异常退出建立 IPC 对账测试。
+1. 原型现在已由 Main 监督的短生命周期 UtilityProcess 使用；接入、消息协议、取消和两条真实 Electron 路径的证据见 [2026-07-30 UtilityProcess 运行时开发日志](2026-07-30-utilityprocess-script-runtime-development-log.md)。macOS/Windows packaged 与崩溃恢复的完整平台证据仍未完成。
 2. QuickJS interrupt 能中断正在运行的 guest CPU；但若 host JS 主线程被同步 guest 执行占住，外部 `AbortSignal` 不能在那一刻被事件循环递送。这进一步说明不能在 Main 或 Worker 内直接运行它。
 3. 当前 TypeScript 使用 `transpileModule`，因此已验证类型擦除与 ES2022 输出执行；尚未提供保存脚本的 `export default async function` 包装、类型声明、source map 栈回映或 API 版本协商。
 4. `readText` 是原型桥，不经过 Zod、授权、Execution journal、AppLogger 或 Automation Gateway；后续不得把它扩大为任意 RPC。
@@ -51,4 +51,4 @@ npx eslint src/scripting/quickjs-sandbox-prototype.ts tests/unit/quickjs-sandbox
 
 ## 决策
 
-QuickJS/WASM 保留为 `Serpent-y51c.4` 的默认候选，而非最终锁定的生产依赖。它通过了本工单要求的引擎层对抗门禁，且没有使用 `node:vm`；是否正式采用取决于隔离执行器、真实 Gateway RPC、日志/授权、macOS packaged 和 Windows packaged 的后续证据。
+QuickJS/WASM 保留为当前独立 Runtime 的默认候选，而非最终锁定的生产依赖。它通过了本工单要求的引擎层对抗门禁，且没有使用 `node:vm`；现已接入隔离执行器和真实 Gateway RPC。是否正式锁定仍取决于完整日志/授权 UI、macOS packaged 和 Windows packaged 证据。

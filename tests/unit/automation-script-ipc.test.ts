@@ -10,9 +10,11 @@ import {
   createJsonFileAutomationExecutionStore,
 } from '../../src/main/automation-execution-journal';
 import { registerAutomationScriptIpc } from '../../src/main/automation-script-ipc';
+import type { ScriptRuntimeExecutor } from '../../src/main/script-runtime-supervisor';
 import {
   AUTOMATION_SCRIPT_COMMAND_CHANNEL,
   AUTOMATION_SCRIPT_COMPLETE_CHANNEL,
+  AUTOMATION_SCRIPT_EXECUTE_CHANNEL,
   AUTOMATION_SCRIPT_START_CHANNEL,
 } from '../../src/shared/protocol/channels';
 import type { WorkerCommand } from '../../src/shared/protocol/requests';
@@ -54,6 +56,69 @@ class FakeAutomationWorker implements AutomationWorkerClient {
 }
 
 describe('Desktop Console automation IPC', () => {
+  it('runs the Main-authorized source in the isolated runtime and brokers its Gateway calls', async () => {
+    const handlers = new Map<string, (event: { sender: { id: number; once: (event: 'destroyed', listener: () => void) => void } }, input: unknown) => Promise<unknown> | unknown>();
+    const fakeIpcMain = { handle: (channel: string, handler: (event: { sender: { id: number; once: (event: 'destroyed', listener: () => void) => void } }, input: unknown) => unknown) => {
+      handlers.set(channel, handler);
+    } };
+    const root = mkdtempSync(path.join(tmpdir(), 'serpent-automation-ipc-'));
+    roots.push(root);
+    const journal = new AutomationExecutionJournal({
+      store: createJsonFileAutomationExecutionStore(path.join(root, 'execution.json')),
+      logger: { info: () => undefined, error: () => undefined },
+      newId: (() => {
+        let value = 0;
+        return (prefix) => `${prefix}-${++value}`;
+      })(),
+    });
+    const worker = new FakeAutomationWorker();
+    const gateway = createAutomationCommandGateway(worker, journal, {
+      auditSink: journal,
+      auditLogger: { error: () => undefined },
+    });
+    const runtime: ScriptRuntimeExecutor = {
+      run: async (input) => {
+        expect(input.source).toBe("const matches = await serpent.assets.search({ query: 'Ser' });");
+        const matches = await input.host.execute('asset.search', { query: 'Ser' });
+        const updated = await input.host.execute('asset.rating.set', { assetIds: ['asset-1'], rating: 4 });
+        return { ok: true, value: { matches, updated }, output: ['Updated 1 asset.'], transpiledJavaScript: '/* isolated */' };
+      },
+    };
+    registerAutomationScriptIpc({
+      ipcMain: fakeIpcMain as never,
+      isAuthorizedSender: () => true,
+      workerClient: () => worker as never,
+      journal: () => journal,
+      gateway: () => gateway,
+      runtime: () => runtime,
+      confirmDesktopWrite: async () => true,
+      logger: () => undefined,
+    });
+
+    const event = { sender: { id: 6, once: () => undefined } };
+    const start = await handlers.get(AUTOMATION_SCRIPT_START_CHANNEL)!(event, {
+      libraryId,
+      source: "const matches = await serpent.assets.search({ query: 'Ser' });",
+    });
+    expect(start).toMatchObject({ ok: true, executionId: 'execution-1' });
+    if (!start || typeof start !== 'object' || !('executionId' in start)) throw new Error('Expected an execution.');
+
+    await expect(handlers.get(AUTOMATION_SCRIPT_EXECUTE_CHANNEL)!(event, {
+      executionId: start.executionId,
+    })).resolves.toMatchObject({
+      ok: true,
+      value: { updated: { updatedCount: 1, skipped: [] } },
+      output: ['Updated 1 asset.'],
+    });
+    expect(worker.commands.slice(-2)).toEqual([
+      expect.objectContaining({ type: 'asset.search', libraryId }),
+      { type: 'asset.rating.set', libraryId, assetIds: ['asset-1'], rating: 4 },
+    ]);
+    expect(journal.get('execution-1')).toMatchObject({
+      status: 'succeeded', commandCount: 2, succeededCommandCount: 2,
+    });
+  });
+
   it('creates a Main-owned execution, routes a rating write through Gateway, and records completion', async () => {
     const handlers = new Map<string, (event: { sender: { id: number; once: (event: 'destroyed', listener: () => void) => void } }, input: unknown) => Promise<unknown> | unknown>();
     const fakeIpcMain = { handle: (channel: string, handler: (event: { sender: { id: number; once: (event: 'destroyed', listener: () => void) => void } }, input: unknown) => unknown) => {
@@ -80,6 +145,7 @@ describe('Desktop Console automation IPC', () => {
       workerClient: () => worker as never,
       journal: () => journal,
       gateway: () => gateway,
+      runtime: () => ({ run: async () => ({ ok: true, value: undefined, output: [], transpiledJavaScript: '' }) }) satisfies ScriptRuntimeExecutor,
       confirmDesktopWrite: async () => true,
       logger: () => undefined,
     });
@@ -162,6 +228,7 @@ describe('Desktop Console automation IPC', () => {
       workerClient: () => worker as never,
       journal: () => journal,
       gateway: () => gateway,
+      runtime: () => ({ run: async () => ({ ok: true, value: undefined, output: [], transpiledJavaScript: '' }) }) satisfies ScriptRuntimeExecutor,
       confirmDesktopWrite: async () => true,
       logger: () => undefined,
     });

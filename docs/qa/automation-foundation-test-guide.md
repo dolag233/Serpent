@@ -1,6 +1,6 @@
 # Automation Foundation 测试说明（当前开发态）
 
-> 适用范围：2026-07-28–29 的 Automation Command Gateway、QuickJS/WASM 脚本沙箱和受限 Desktop Console。
+> 适用范围：2026-07-28–30 的 Automation Command Gateway、QuickJS/WASM 独立脚本运行时和受限 Desktop Console。
 >
 > 这不是最终的「脚本功能使用指南」。当前“自动化脚本”窗口已提供受限的真实能力：分页搜索/列出资产和文件夹、读取元数据、批量评分、将真实路径复制到剪贴板、移入回收站、单项或批量重命名、严格条件的回收站恢复，以及近期自动色卡汇总。完整示例见 [自动化脚本使用说明](../automation-scripting-guide.md)。它仍不提供保存/打开 `.serpent.ts`、独立发布的类型文件、任意资源库 API 或本地 MCP server。请不要尝试在终端或 Claude/Codex 中寻找 `serpent run`、`serpent repl` 或 `serpent-mcp`：通用 CLI 已撤回，MCP 启动器尚未实现。
 
@@ -15,7 +15,7 @@
 - 调用者不能伪造资源库、来源或能力授权；
 - 只读自动化请求不能回落到桌面写入路径；
 - QuickJS 原型能够执行 TypeScript 和受限异步桥接，并拒绝 Node、文件系统、网络、导入、无限循环和资源滥用。
-- 在应用中运行 `search` + `setRating` 的最小脚本，经过 Main-owned Execution、一次明确授权与有界评分写路径后，只修改当前资源库的匹配资产。
+- 在应用中运行 `search` + `setRating` 的最小脚本，经过 Main-owned Execution、一次明确授权、独立 UtilityProcess 与有界评分写路径后，只修改当前资源库的匹配资产。
 
 当前阶段**不能**验证：
 
@@ -129,7 +129,7 @@ npx vitest run --config vitest.config.ts tests/unit/quickjs-sandbox-prototype.te
 npx vitest run --config vitest.config.ts tests/unit/quickjs-sandbox-prototype.test.ts -t "interrupts an infinite loop"
 ```
 
-注意：该原型当前在测试调用进程中运行。它尚不能证明“脚本执行器崩溃不会影响 Main/Library Worker”；生产接入前必须迁移到可终止的隔离进程。
+注意：该项只验证引擎原型本身。Desktop Console 已接入可终止的 UtilityProcess；实际进程路径证据见下方 AUT-006 和 [运行时开发日志](../development/2026-07-30-utilityprocess-script-runtime-development-log.md)，但 packaged/Windows 仍未验证。
 
 ## AUT-005：组合回归检查
 
@@ -209,7 +209,7 @@ console.log(result);
 return result;
 ```
 
-预期：点击运行后先出现“可读取资产并修改评分”的授权确认。确认后，脚本每页最多读取 200 项，以 500 项一批写入评分；结果显示 `matched`、`updatedCount` 和 `skipped`，所有匹配资产评分变为 4。取消确认时不应创建写入。真实文件操作还会出现与目标数量绑定的第二次计划确认；若资源库在确认后变化，执行必须拒绝过期计划。
+预期：点击运行后先出现“可读取资产并修改评分”的授权确认。确认后，脚本在独立 UtilityProcess 中运行，每页最多读取 200 项，以 500 项一批写入评分；结果显示 `matched`、`updatedCount` 和 `skipped`，所有匹配资产评分变为 4。取消确认时不应创建写入。真实文件操作还会出现与目标数量绑定的第二次计划确认；若资源库在确认后变化，执行必须拒绝过期计划。
 
 `search()` 返回 `{ items, total, offset, limit, hasMore }`。可以使用循环继续请求下一页；`limit` 最大为 200。脚本只得到 `id`、`name` 和 `rating`，不会得到绝对路径或桌面内部搜索状态。
 

@@ -1,28 +1,21 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 
-import type { QuickJsSandboxPrototypeErrorCode } from '../scripting/quickjs-sandbox-prototype';
 import {
   SCRIPT_SANDBOX_PREVIEW_MAX_SOURCE_BYTES,
   utf8ByteLength,
 } from '../shared/script-sandbox-limits';
-import type { SerpentAutomationScriptApi } from '../shared/automation-script-api';
+import type {
+  AutomationScriptRuntimeFailureCode,
+  SerpentAutomationScriptApi,
+} from '../shared/automation-script-api';
 import { Icon } from './Icons';
 import { iconActionAttrs } from './icon-action-attrs';
 import { useT } from './i18n';
 import { DEFAULT_AUTOMATION_RATING_SCRIPT } from './script-sandbox-preview-default';
-import {
-  createScriptSandboxPreviewController,
-  type ScriptSandboxPreviewController,
-  type ScriptSandboxPreviewWorker,
-} from './script-sandbox-preview-controller';
-import type {
-  ScriptSandboxPreviewWorkerCompleted,
-  ScriptSandboxPreviewWorkerFailed,
-} from './script-sandbox-preview-protocol';
 
 type PreviewResult =
-  | { kind: 'completed'; message: ScriptSandboxPreviewWorkerCompleted }
-  | { kind: 'failed'; message: ScriptSandboxPreviewWorkerFailed }
+  | { kind: 'completed'; value: unknown; output: string[] }
+  | { kind: 'failed'; code: AutomationScriptRuntimeFailureCode; message: string }
   | null;
 
 function formatValue(value: unknown): string {
@@ -39,15 +32,8 @@ function formatValue(value: unknown): string {
   return serialized === undefined ? String(value) : serialized;
 }
 
-function errorMessageKey(code: QuickJsSandboxPrototypeErrorCode): string {
+function errorMessageKey(code: AutomationScriptRuntimeFailureCode): string {
   return `automation.preview.errors.${code}`;
-}
-
-function createPreviewWorker(): ScriptSandboxPreviewWorker {
-  return new Worker(
-    new URL('./script-sandbox-preview.worker.ts', import.meta.url),
-    { type: 'module' },
-  ) as unknown as ScriptSandboxPreviewWorker;
 }
 
 export function ScriptSandboxPreviewDialog({
@@ -69,7 +55,6 @@ export function ScriptSandboxPreviewDialog({
   automation: SerpentAutomationScriptApi | undefined;
 }): ReactNode {
   const t = useT();
-  const controllerRef = useRef<ScriptSandboxPreviewController | null>(null);
   const executionIdRef = useRef<string | null>(null);
   const onExecutionSettledRef = useRef(onExecutionSettled);
   const [source, setSource] = useState(DEFAULT_AUTOMATION_RATING_SCRIPT);
@@ -80,82 +65,30 @@ export function ScriptSandboxPreviewDialog({
     onExecutionSettledRef.current = onExecutionSettled;
   }, [onExecutionSettled]);
 
-  useEffect(() => {
-    if (!open) return;
-    const controller = createScriptSandboxPreviewController({
-      createWorker: createPreviewWorker,
-      newRunId: () => crypto.randomUUID(),
-      onCompleted: (message) => {
-        const executionId = executionIdRef.current;
-        executionIdRef.current = null;
-        if (executionId) void automation?.complete({ executionId, succeeded: true });
-        setResult({ kind: 'completed', message });
-        void onExecutionSettledRef.current?.();
-      },
-      onFailed: (message) => {
-        const executionId = executionIdRef.current;
-        executionIdRef.current = null;
-        if (executionId) void automation?.complete({ executionId, succeeded: false });
-        setResult({ kind: 'failed', message });
-        // A timeout or runtime error can occur after an earlier script command
-        // mutated the library, so stale cards and Inspector state must refresh
-        // on every terminal outcome, not only a successful return.
-        void onExecutionSettledRef.current?.();
-      },
-      onStateChange: (state) => setRunning(state === 'running'),
-      onAutomationCommand: async (message) => {
-        const executionId = executionIdRef.current;
-        if (!automation || !executionId) {
-          return { ok: false, error: { code: 'INTERNAL_ERROR', message: 'The automation execution is unavailable.' } };
-        }
-        return automation.command({
-          executionId,
-          commandId: message.commandId,
-          input: message.input,
-        });
-      },
-    });
-    controllerRef.current = controller;
-    return () => {
-      controller.dispose();
-      if (controllerRef.current === controller) controllerRef.current = null;
-    };
-  }, [automation, open]);
-
   if (!open) return null;
 
   const run = async (): Promise<void> => {
     if (source.trim() === '') {
       setResult({
         kind: 'failed',
-        message: {
-          type: 'failed',
-          runId: 'local',
-          code: 'SOURCE_NOT_ALLOWED',
-          message: t('automation.preview.emptySource'),
-        },
+        code: 'SOURCE_NOT_ALLOWED',
+        message: t('automation.preview.emptySource'),
       });
       return;
     }
     if (utf8ByteLength(source) > SCRIPT_SANDBOX_PREVIEW_MAX_SOURCE_BYTES) {
       setResult({
         kind: 'failed',
-        message: {
-          type: 'failed',
-          runId: 'local',
-          code: 'SOURCE_TOO_LARGE',
-          message: t('automation.preview.errors.SOURCE_TOO_LARGE'),
-        },
+        code: 'SOURCE_TOO_LARGE',
+        message: t('automation.preview.errors.SOURCE_TOO_LARGE'),
       });
       return;
     }
     if (!libraryId || !automation) {
       setResult({
         kind: 'failed',
-        message: {
-          type: 'failed', runId: 'local', code: 'RUNTIME_ERROR',
-          message: 'Open a library before running an automation script.',
-        },
+        code: 'RUNTIME_ERROR',
+        message: 'Open a library before running an automation script.',
       });
       return;
     }
@@ -166,37 +99,54 @@ export function ScriptSandboxPreviewDialog({
     } catch {
       setResult({
         kind: 'failed',
-        message: {
-          type: 'failed', runId: 'local', code: 'RUNTIME_ERROR',
-          message: 'The automation service could not start this script.',
-        },
+        code: 'RUNTIME_ERROR',
+        message: 'The automation service could not start this script.',
       });
       return;
     }
     if (!started.ok) {
       setResult({
         kind: 'failed',
-        message: { type: 'failed', runId: 'local', code: 'RUNTIME_ERROR', message: started.error.message },
+        code: 'RUNTIME_ERROR',
+        message: started.error.message,
       });
       return;
     }
     executionIdRef.current = started.executionId;
-    controllerRef.current?.run(source);
+    setRunning(true);
+    try {
+      const executed = await automation.execute({ executionId: started.executionId });
+      if (!executed.ok) {
+        setResult({ kind: 'failed', code: executed.error.code, message: executed.error.message });
+      } else {
+        setResult({ kind: 'completed', value: executed.value, output: executed.output });
+      }
+    } catch {
+      setResult({
+        kind: 'failed',
+        code: 'RUNTIME_ERROR',
+        message: 'The isolated script runtime could not complete.',
+      });
+    } finally {
+      if (executionIdRef.current === started.executionId) {
+        executionIdRef.current = null;
+        setRunning(false);
+      }
+      // A timeout, crash, or cancellation may follow an earlier write. Refresh
+      // once after every terminal UtilityProcess outcome, not only success.
+      void onExecutionSettledRef.current?.();
+    }
   };
 
   const close = (): void => {
     const executionId = executionIdRef.current;
-    executionIdRef.current = null;
     if (executionId) void automation?.cancel({ executionId });
-    controllerRef.current?.stop();
     onClose();
   };
 
   const stop = (): void => {
     const executionId = executionIdRef.current;
-    executionIdRef.current = null;
     if (executionId) void automation?.cancel({ executionId });
-    controllerRef.current?.stop();
   };
 
   return (
@@ -269,19 +219,19 @@ export function ScriptSandboxPreviewDialog({
           {!running && result?.kind === 'completed' ? (
             <>
               <p className="script-sandbox-preview-result-title">{t('automation.preview.completed')}</p>
-              <pre>{formatValue(result.message.value)}</pre>
-              {result.message.output.length > 0 ? (
+              <pre>{formatValue(result.value)}</pre>
+              {result.output.length > 0 ? (
                 <>
                   <p className="script-sandbox-preview-output-label">{t('automation.preview.output')}</p>
-                  <pre>{result.message.output.join('\n')}</pre>
+                  <pre>{result.output.join('\n')}</pre>
                 </>
               ) : null}
             </>
           ) : null}
           {!running && result?.kind === 'failed' ? (
             <>
-              <p className="script-sandbox-preview-result-title">{result.message.code}</p>
-              <pre>{t(errorMessageKey(result.message.code))}</pre>
+              <p className="script-sandbox-preview-result-title">{result.code}</p>
+              <pre>{result.message || t(errorMessageKey(result.code))}</pre>
             </>
           ) : null}
           {!running && !result ? <p>{t('automation.preview.ready')}</p> : null}

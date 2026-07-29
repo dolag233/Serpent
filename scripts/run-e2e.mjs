@@ -83,6 +83,22 @@ await build({
   },
 });
 
+// Desktop Console scripts now execute in a separate UtilityProcess. The E2E
+// application uses the same `.vite/build` directory as Forge, so this entry
+// must be rebuilt alongside Main/Preload/Library Worker; otherwise an old
+// runtime artifact could make a current Console test exercise stale code.
+await build({
+  configFile: path.join(projectRoot, 'vite.script-runtime.config.ts'),
+  resolve: nodeResolve,
+  build: {
+    emptyOutDir: false,
+    outDir: mainBuildDirectory,
+    rollupOptions: {
+      external: electronExternals,
+    },
+  },
+});
+
 await build({
   base: './',
   configFile: path.join(projectRoot, 'vite.renderer.config.ts'),

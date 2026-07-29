@@ -45,6 +45,48 @@ export const automationScriptStartResultSchema = z.union([
 ]);
 export type AutomationScriptStartResult = z.infer<typeof automationScriptStartResultSchema>;
 
+/**
+ * Source is deliberately absent: Main binds the approved source hash to the
+ * execution at `start`, so a renderer cannot swap code after authorization.
+ */
+export const automationScriptExecuteInputSchema = z.strictObject({
+  executionId: z.string().min(1),
+});
+export type AutomationScriptExecuteInput = z.infer<typeof automationScriptExecuteInputSchema>;
+
+export const automationScriptRuntimeFailureCodeSchema = z.enum([
+  'SOURCE_NOT_ALLOWED',
+  'SOURCE_TOO_LARGE',
+  'CPU_TIMEOUT',
+  'WALL_TIMEOUT',
+  'CANCELLED',
+  'MEMORY_LIMIT',
+  'OUTPUT_LIMIT',
+  'HOST_CALL_LIMIT',
+  'PROMISE_LIMIT',
+  'RUNTIME_ERROR',
+  'RUNTIME_PROCESS_EXITED',
+  'RUNTIME_PROTOCOL_ERROR',
+]);
+export type AutomationScriptRuntimeFailureCode = z.infer<typeof automationScriptRuntimeFailureCodeSchema>;
+
+export const automationScriptExecuteResultSchema = z.union([
+  z.strictObject({
+    ok: z.literal(true),
+    value: z.unknown(),
+    output: z.array(z.string().max(16 * 1024)).max(8_192),
+  }),
+  z.strictObject({
+    ok: z.literal(false),
+    error: z.strictObject({
+      code: automationScriptRuntimeFailureCodeSchema,
+      message: z.string().min(1).max(4_096),
+      guestStack: z.string().max(32 * 1024).optional(),
+    }),
+  }),
+]);
+export type AutomationScriptExecuteResult = z.infer<typeof automationScriptExecuteResultSchema>;
+
 export const automationScriptCommandInputSchema = z.strictObject({
   executionId: z.string().min(1),
   commandId: automationScriptCommandIdSchema,
@@ -70,6 +112,7 @@ export type AutomationScriptCancelInput = z.infer<typeof automationScriptCancelI
 
 export interface SerpentAutomationScriptApi {
   start(input: AutomationScriptStartInput): Promise<AutomationScriptStartResult>;
+  execute(input: AutomationScriptExecuteInput): Promise<AutomationScriptExecuteResult>;
   command(input: AutomationScriptCommandInput): Promise<AutomationScriptCommandResult>;
   complete(input: AutomationScriptCompleteInput): Promise<void>;
   cancel(input: AutomationScriptCancelInput): Promise<void>;

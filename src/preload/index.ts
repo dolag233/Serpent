@@ -33,6 +33,7 @@ import {
   VIEWER_VIDEO_SHORTCUTS_ACTIVE_CHANNEL,
   VIEWER_VIDEO_SHORTCUT_CHANNEL,
   AUTOMATION_SCRIPT_START_CHANNEL,
+  AUTOMATION_SCRIPT_EXECUTE_CHANNEL,
   AUTOMATION_SCRIPT_COMMAND_CHANNEL,
   AUTOMATION_SCRIPT_COMPLETE_CHANNEL,
   AUTOMATION_SCRIPT_CANCEL_CHANNEL,
@@ -40,6 +41,8 @@ import {
 } from '../shared/protocol/channels';
 import {
   automationScriptStartResultSchema,
+  automationScriptExecuteResultSchema,
+  type AutomationScriptExecuteInput,
   type AutomationScriptCommandInput,
   type AutomationScriptCommandResult,
   type AutomationScriptCompleteInput,
@@ -1848,6 +1851,11 @@ const automation: SerpentAutomationScriptApi = Object.freeze({
   async start(input: AutomationScriptStartInput) {
     return automationScriptStartResultSchema.parse(
       await ipcRenderer.invoke(AUTOMATION_SCRIPT_START_CHANNEL, input),
+    );
+  },
+  async execute(input: AutomationScriptExecuteInput) {
+    return automationScriptExecuteResultSchema.parse(
+      await ipcRenderer.invoke(AUTOMATION_SCRIPT_EXECUTE_CHANNEL, input),
     );
   },
   async command(input: AutomationScriptCommandInput): Promise<AutomationScriptCommandResult> {
