@@ -94,6 +94,7 @@ import {
   createJsonFileAutomationExecutionStore,
 } from './automation-execution-journal';
 import { registerAutomationScriptIpc } from './automation-script-ipc';
+import { AutomationScriptFileService } from './automation-script-file-service';
 import { ScriptRuntimeSupervisor } from './script-runtime-supervisor';
 import { loadOrCreatePluginDeviceId } from './plugin-device-identity';
 import { createPluginPackageRequestHandler } from './plugin-package-ipc';
@@ -248,6 +249,7 @@ let appLogPath: string | undefined;
 let automationExecutionJournal: AutomationExecutionJournal | undefined;
 let automationCommandGateway: AutomationCommandGateway | undefined;
 let scriptRuntimeSupervisor: ScriptRuntimeSupervisor | undefined;
+let automationScriptFiles: AutomationScriptFileService | undefined;
 let pluginPackageManager: PluginPackageManager | undefined;
 
 function recentLibraryPath(): string {
@@ -1236,6 +1238,27 @@ function createNativeDialogHost(): NativeDialogHost {
     getMainWindow: () => mainWindow ?? null,
     isE2e: () => !app.isPackaged && process.env.SERPENT_E2E === "1",
   };
+}
+
+async function selectAutomationScriptToOpen(): Promise<string | undefined> {
+  return selectOpenFile(
+    createNativeDialogHost(),
+    'openAutomationScript',
+    process.env.SERPENT_E2E_OPEN_AUTOMATION_SCRIPT,
+    [{ name: 'Serpent scripts', extensions: ['serpent.js', 'serpent.ts'] }],
+  );
+}
+
+async function selectAutomationScriptToSave(): Promise<string | undefined> {
+  return selectSavePath(
+    createNativeDialogHost(),
+    'saveAutomationScript',
+    process.env.SERPENT_E2E_SAVE_AUTOMATION_SCRIPT,
+    {
+      defaultPath: 'Untitled.serpent.ts',
+      filters: [{ name: 'Serpent scripts', extensions: ['serpent.js', 'serpent.ts'] }],
+    },
+  );
 }
 
 async function selectImportSources(
@@ -3744,6 +3767,10 @@ async function startApplication(): Promise<void> {
     ),
     logger,
   });
+  automationScriptFiles = new AutomationScriptFileService({
+    selectOpenScript: selectAutomationScriptToOpen,
+    selectSaveScript: selectAutomationScriptToSave,
+  });
   automationCommandGateway = createAutomationCommandGateway(
     new AutomationLibraryWorkerAdapter(workerClient),
     automationExecutionJournal,
@@ -4009,6 +4036,7 @@ async function startApplication(): Promise<void> {
     journal: () => automationExecutionJournal,
     gateway: () => automationCommandGateway,
     runtime: () => scriptRuntimeSupervisor,
+    scriptFiles: () => automationScriptFiles,
     confirmDesktopWrite: confirmDesktopAutomationWrite,
     logger: () => logger,
   });

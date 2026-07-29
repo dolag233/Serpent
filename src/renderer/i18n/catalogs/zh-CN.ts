@@ -238,12 +238,21 @@ export const zhCN = {
       description: "在当前资源库运行一小段 JS 或 TypeScript。脚本只可调用受限资产 API；没有 Node、网络、任意文件或 MCP 权限。真实文件操作会在执行前再次确认。关闭或停止会直接终止本次运行。",
       sourceLabel: "脚本",
       sourcePlaceholder: "输入 JS 或 TypeScript…",
+      savedFile: "已保存脚本：",
+      openScript: "打开脚本",
+      saveScript: "保存脚本",
       bridgeHint: "示例会搜索名称或标签包含 Ser 的资产，并将它们设为 4 星。评分、路径复制、回收站和重命名均受权限与计划确认保护；按 ⌘/Ctrl + Enter 运行。",
       ready: "准备就绪。",
       running: "正在受限沙箱中运行…",
       completed: "返回结果",
       output: "console 输出",
       emptySource: "请先输入一段脚本。",
+      fileErrors: {
+        cancelled: "没有打开或保存脚本。",
+        "invalid-script-file": "请选择扩展名为 .serpent.js 或 .serpent.ts 的脚本文件。",
+        "source-too-large": "脚本超过 64 KB 上限，请拆分后再试。",
+        "io-failed": "无法读取或保存脚本文件，请检查文件是否可访问。"
+      },
       errors: {
         SOURCE_NOT_ALLOWED: "脚本不能使用导入的模块或当前不支持的语法。请仅使用独立的 JS / TypeScript 代码。",
         SOURCE_TOO_LARGE: "脚本超过 64 KB 的开发预览上限。请拆分后再试。",

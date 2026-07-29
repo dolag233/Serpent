@@ -8,6 +8,7 @@ import {
   automationScriptCommandInputSchema,
   automationScriptCompleteInputSchema,
   automationScriptExecuteInputSchema,
+  automationScriptSaveInputSchema,
   automationScriptStartInputSchema,
   type AutomationScriptCommandResult,
   type AutomationScriptCommandId,
@@ -18,6 +19,8 @@ import { parseSearchExpression } from '../shared/search-expression';
 import { createPublicError, toPublicError } from '../shared/protocol/errors';
 import type { PublicError } from '../shared/protocol/errors';
 import {
+  AUTOMATION_SCRIPT_OPEN_CHANNEL,
+  AUTOMATION_SCRIPT_SAVE_CHANNEL,
   AUTOMATION_SCRIPT_CANCEL_CHANNEL,
   AUTOMATION_SCRIPT_COMMAND_CHANNEL,
   AUTOMATION_SCRIPT_COMPLETE_CHANNEL,
@@ -27,6 +30,7 @@ import {
 import type { LibraryWorkerClient } from './worker-client';
 import type { AutomationExecutionJournal } from './automation-execution-journal';
 import type { ScriptRuntimeExecutor } from './script-runtime-supervisor';
+import type { AutomationScriptFileService } from './automation-script-file-service';
 
 type AppLogger = {
   error(scope: string, error: unknown, context?: Record<string, unknown>): void;
@@ -40,6 +44,7 @@ export interface AutomationScriptIpcOptions {
   journal(): AutomationExecutionJournal | undefined;
   gateway(): AutomationCommandGateway | undefined;
   runtime(): ScriptRuntimeExecutor | undefined;
+  scriptFiles?(): AutomationScriptFileService | undefined;
   confirmDesktopWrite(): Promise<boolean>;
   logger(): AppLogger | undefined;
 }
@@ -50,7 +55,7 @@ export interface AutomationScriptIpcOptions {
  * its real library/capabilities before the Gateway builds a Worker request.
  */
 export function registerAutomationScriptIpc(options: AutomationScriptIpcOptions): void {
-  const owners = new Map<string, { senderId: number; sessionId: string; source: string }>();
+  const owners = new Map<string, { senderId: number; source: string }>();
   const sessionsBySender = new Map<number, string>();
   const observedSenders = new Set<number>();
   const runningRuntimeExecutionIds = new Set<string>();
@@ -65,6 +70,7 @@ export function registerAutomationScriptIpc(options: AutomationScriptIpcOptions)
   const endSenderSession = (senderId: number): void => {
     sessionsBySender.delete(senderId);
     observedSenders.delete(senderId);
+    options.scriptFiles?.()?.releaseSender(senderId);
     const journal = options.journal();
     for (const [executionId, owner] of owners) {
       if (owner.senderId !== senderId) continue;
@@ -88,6 +94,22 @@ export function registerAutomationScriptIpc(options: AutomationScriptIpcOptions)
   };
 
   const owned = (executionId: string, senderId: number): boolean => owners.get(executionId)?.senderId === senderId;
+
+  options.ipcMain.handle(AUTOMATION_SCRIPT_OPEN_CHANNEL, async (event): Promise<unknown> => {
+    if (!options.isAuthorizedSender(event.sender)) return { ok: false, code: 'io-failed' };
+    observeSender(event.sender);
+    const files = options.scriptFiles?.();
+    return files ? files.open(event.sender.id) : { ok: false, code: 'io-failed' };
+  });
+
+  options.ipcMain.handle(AUTOMATION_SCRIPT_SAVE_CHANNEL, async (event, input: unknown): Promise<unknown> => {
+    if (!options.isAuthorizedSender(event.sender)) return { ok: false, code: 'io-failed' };
+    observeSender(event.sender);
+    const parsed = automationScriptSaveInputSchema.safeParse(input);
+    const files = options.scriptFiles?.();
+    if (!parsed.success || !files) return { ok: false, code: 'io-failed' };
+    return files.save({ senderId: event.sender.id, source: parsed.data.source });
+  });
 
   /**
    * Every Sandbox → host call still goes through the same renderer-facing
@@ -150,16 +172,23 @@ export function registerAutomationScriptIpc(options: AutomationScriptIpcOptions)
         || !libraries.libraries.some((library) => library.libraryId === parsed.data.libraryId)) {
         return { ok: false, error: createPublicError('LIBRARY_NOT_OPEN') };
       }
-      // Console consent is per run. The sandbox cannot create an execution or
-      // grant itself any capability; Main records the entire bounded surface
-      // before the first command reaches the Gateway.
-      if (!await options.confirmDesktopWrite()) return { ok: false, error: createPublicError('CANCELLED') };
-      const sessionId = sessionFor(event.sender.id);
+      const savedScript = parsed.data.scriptId === undefined
+        ? undefined
+        : options.scriptFiles?.()?.resolveForExecution({
+          senderId: event.sender.id,
+          scriptId: parsed.data.scriptId,
+          source: parsed.data.source,
+        });
+      if (parsed.data.scriptId !== undefined && savedScript === undefined) {
+        return { ok: false, error: createPublicError('INTERNAL_ERROR') };
+      }
+      const source = savedScript === undefined ? 'desktop-console' : 'script';
+      const sessionId = source === 'desktop-console' ? sessionFor(event.sender.id) : undefined;
       const created = journal.create({
-        source: 'desktop-console',
+        source,
         libraryId: parsed.data.libraryId,
         scriptSource: parsed.data.source,
-        sessionId,
+        ...(sessionId === undefined ? {} : { sessionId }),
         declaredCapabilities: [
           'library.read',
           'folder.read',
@@ -171,10 +200,25 @@ export function registerAutomationScriptIpc(options: AutomationScriptIpcOptions)
           'clipboard.write',
         ],
       });
-      journal.start(created.executionId);
-      const authorized = journal.authorizeFromDesktop({ executionId: created.executionId, persistence: 'session' });
-      if (!authorized.ok) return { ok: false, error: createPublicError('INTERNAL_ERROR') };
-      owners.set(created.executionId, { senderId: event.sender.id, sessionId, source: parsed.data.source });
+      const started = journal.start(created.executionId);
+      if (started?.status === 'awaiting-authorization') {
+        // Main creates an auditable execution before asking the user. If the
+        // dialog is declined it is explicitly cancelled rather than silently
+        // vanishing; saved scripts retain a grant only after this confirmation.
+        if (!await options.confirmDesktopWrite()) {
+          journal.cancel(created.executionId);
+          return { ok: false, error: createPublicError('CANCELLED') };
+        }
+        const authorized = journal.authorizeFromDesktop({
+          executionId: created.executionId,
+          persistence: source === 'script' ? 'saved-script' : 'session',
+        });
+        if (!authorized.ok) return { ok: false, error: createPublicError('INTERNAL_ERROR') };
+      }
+      if (journal.get(created.executionId)?.status !== 'running') {
+        return { ok: false, error: createPublicError('INTERNAL_ERROR') };
+      }
+      owners.set(created.executionId, { senderId: event.sender.id, source: parsed.data.source });
       return { ok: true, executionId: created.executionId, logId: created.logId };
     } catch (error) {
       options.logger()?.error('automation.script.start-failed', error, { senderId: event.sender.id });

@@ -5,6 +5,7 @@ import {
   utf8ByteLength,
 } from '../shared/script-sandbox-limits';
 import type {
+  AutomationScriptFileResult,
   AutomationScriptRuntimeFailureCode,
   SerpentAutomationScriptApi,
 } from '../shared/automation-script-api';
@@ -17,6 +18,8 @@ type PreviewResult =
   | { kind: 'completed'; value: unknown; output: string[]; logId: string }
   | { kind: 'failed'; code: AutomationScriptRuntimeFailureCode; message: string; logId?: string }
   | null;
+
+type SavedScript = Extract<AutomationScriptFileResult, { ok: true }>;
 
 function formatValue(value: unknown): string {
   if (typeof value === 'bigint') return `${value}n`;
@@ -61,8 +64,10 @@ export function ScriptSandboxPreviewDialog({
   const executionIdRef = useRef<string | null>(null);
   const onExecutionSettledRef = useRef(onExecutionSettled);
   const [source, setSource] = useState(DEFAULT_AUTOMATION_RATING_SCRIPT);
+  const [savedScript, setSavedScript] = useState<SavedScript | null>(null);
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<PreviewResult>(null);
+  const [scriptFileMessage, setScriptFileMessage] = useState<string | null>(null);
 
   useEffect(() => {
     onExecutionSettledRef.current = onExecutionSettled;
@@ -96,9 +101,14 @@ export function ScriptSandboxPreviewDialog({
       return;
     }
     setResult(null);
+    setScriptFileMessage(null);
     let started;
     try {
-      started = await automation.start({ libraryId, source });
+      started = await automation.start({
+        libraryId,
+        source,
+        ...(savedScript === null ? {} : { scriptId: savedScript.scriptId }),
+      });
     } catch {
       setResult({
         kind: 'failed',
@@ -164,6 +174,45 @@ export function ScriptSandboxPreviewDialog({
   };
   const resultLogId = result?.logId;
 
+  const reportScriptFileResult = (file: AutomationScriptFileResult): SavedScript | null => {
+    if (file.ok) {
+      setScriptFileMessage(null);
+      return file;
+    }
+    const messageKey = `automation.preview.fileErrors.${file.code}`;
+    setScriptFileMessage(t(messageKey));
+    return null;
+  };
+
+  const openScript = async (): Promise<void> => {
+    if (!automation || running) return;
+    try {
+      const opened = reportScriptFileResult(await automation.open());
+      if (!opened) return;
+      setSource(opened.source);
+      setSavedScript(opened);
+      setResult(null);
+    } catch {
+      setScriptFileMessage(t('automation.preview.fileErrors.io-failed'));
+    }
+  };
+
+  const saveScript = async (): Promise<void> => {
+    if (!automation || running) return;
+    if (source.trim() === '') {
+      setScriptFileMessage(t('automation.preview.emptySource'));
+      return;
+    }
+    try {
+      const saved = reportScriptFileResult(await automation.save({ source }));
+      if (!saved) return;
+      setSource(saved.source);
+      setSavedScript(saved);
+    } catch {
+      setScriptFileMessage(t('automation.preview.fileErrors.io-failed'));
+    }
+  };
+
   return (
     <div
       className="dialog-backdrop"
@@ -211,12 +260,21 @@ export function ScriptSandboxPreviewDialog({
         <label className="script-sandbox-preview-label" htmlFor="script-sandbox-preview-source">
           {t('automation.preview.sourceLabel')}
         </label>
+        {savedScript ? (
+          <p className="field-help script-sandbox-preview-file-name">
+            {t('automation.preview.savedFile')}{savedScript.displayName}
+          </p>
+        ) : null}
         <textarea
           autoCapitalize="off"
           autoCorrect="off"
           className="script-sandbox-preview-editor"
           id="script-sandbox-preview-source"
-          onChange={(event) => setSource(event.target.value)}
+          onChange={(event) => {
+            setSource(event.target.value);
+            setSavedScript(null);
+            setScriptFileMessage(null);
+          }}
           placeholder={t('automation.preview.sourcePlaceholder')}
           spellCheck={false}
           value={source}
@@ -224,6 +282,7 @@ export function ScriptSandboxPreviewDialog({
         <p className="field-help script-sandbox-preview-help">
           {t('automation.preview.bridgeHint')}
         </p>
+        {scriptFileMessage ? <p className="field-help script-sandbox-preview-file-error">{scriptFileMessage}</p> : null}
 
         <div
           aria-live="polite"
@@ -253,12 +312,20 @@ export function ScriptSandboxPreviewDialog({
         </div>
 
         <div className="dialog-actions">
+          <button className="secondary-button" disabled={running} onClick={() => void openScript()} type="button">
+            {t('automation.preview.openScript')}
+          </button>
+          <button className="secondary-button" disabled={running} onClick={() => void saveScript()} type="button">
+            {t('automation.preview.saveScript')}
+          </button>
           <button
             className="secondary-button"
             disabled={running}
             onClick={() => {
               setSource(DEFAULT_AUTOMATION_RATING_SCRIPT);
+              setSavedScript(null);
               setResult(null);
+              setScriptFileMessage(null);
             }}
             type="button"
           >

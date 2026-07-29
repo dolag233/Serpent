@@ -2,7 +2,7 @@
 
 > 适用范围：2026-07-28–30 的 Automation Command Gateway、QuickJS/WASM 独立脚本运行时和受限 Desktop Console。
 >
-> 这不是最终的「脚本功能使用指南」。当前“自动化脚本”窗口已提供受限的真实能力：分页搜索/列出资产和文件夹、读取元数据、批量评分、将真实路径复制到剪贴板、移入回收站、单项或批量重命名、严格条件的回收站恢复，以及近期自动色卡汇总。完整示例见 [自动化脚本使用说明](../automation-scripting-guide.md)。它仍不提供保存/打开 `.serpent.ts`、独立发布的类型文件、任意资源库 API 或本地 MCP server。请不要尝试在终端或 Claude/Codex 中寻找 `serpent run`、`serpent repl` 或 `serpent-mcp`：通用 CLI 已撤回，MCP 启动器尚未实现。
+> 这不是最终的「脚本功能使用指南」。当前“自动化脚本”窗口已提供受限的真实能力：分页搜索/列出资产和文件夹、读取元数据、批量评分、将真实路径复制到剪贴板、移入回收站、单项或批量重命名、严格条件的回收站恢复、近期自动色卡汇总，以及保存/打开 `.serpent.js` / `.serpent.ts` Console 代码。完整示例见 [自动化脚本使用说明](../automation-scripting-guide.md)。它仍不提供独立发布的类型文件、任意资源库 API 或本地 MCP server。请不要尝试在终端或 Claude/Codex 中寻找 `serpent run`、`serpent repl` 或 `serpent-mcp`：通用 CLI 已撤回，MCP 启动器尚未实现。
 
 相关规格：[0023 脚本化与 MCP 框架](../implementation/0023-automation-scripting-mcp-framework.md)、[ADR-0025](../adr/0025-automation-core-script-runtime-and-mcp.md)。代码审查结论见 [自动化基础审查](../reviews/2026-07-28-automation-foundation-code-review.md)。
 
@@ -19,7 +19,7 @@
 
 当前阶段**不能**验证：
 
-- 保存/打开/复用脚本，或运行超出搜索和评分的真实资源库自动化；
+- 独立类型文件、模块式脚本入口或正式执行历史；
 - 让 Agent 通过 MCP 连接 Serpent；
 - 完整的执行历史、授权审计 UI 或跨运行的脚本日志浏览（当前仅可从一次运行结果打开其已脱敏的关联诊断）；
 - 打包后的 macOS/Windows 沙箱与 MCP 行为。
@@ -257,6 +257,12 @@ return page.items;
 - 用 Escape、右上角关闭按钮和点击遮罩分别关闭窗口；运行中的脚本应被终止。
 - 用亮色与暗色主题各打开一次，确认代码区、结果区、错误信息和按钮文字清晰可读。
 - 缩小应用窗口后，窗口应保持在视口内，代码区和结果区可滚动，不遮挡关闭或运行按钮。
+
+### 5. 保存并重新打开脚本
+
+在默认脚本仍可运行时，点击“保存脚本”，选择 `.serpent.ts` 或 `.serpent.js` 文件名。保存后应显示“已保存脚本：文件名”，不得显示父目录或绝对路径。把编辑器替换为 `return { changed: true };`，再点击“打开脚本”并选择刚保存的文件。
+
+预期：原始脚本内容恢复，保存后的首次执行显示授权确认；修改文本后运行被视为新的临时 Console 内容，不继承保存脚本授权。关闭脚本窗口后重新打开同一个文件仍可运行，但应由持久 grant 的哈希、资源库和能力匹配决定是否需要重新确认。
 
 该测试通过只证明当前受限 Desktop Console 的评分路径可用。文件回收、批量重命名、路径复制、严格恢复和色卡聚合的完整用法及附加验收步骤见 [自动化脚本使用说明](../automation-scripting-guide.md)；它不代表保存/打开脚本、MCP、UtilityProcess 隔离或安装包已经通过验收。
 

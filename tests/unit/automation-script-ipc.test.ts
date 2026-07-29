@@ -9,12 +9,14 @@ import {
   AutomationExecutionJournal,
   createJsonFileAutomationExecutionStore,
 } from '../../src/main/automation-execution-journal';
+import { AutomationScriptFileService } from '../../src/main/automation-script-file-service';
 import { registerAutomationScriptIpc } from '../../src/main/automation-script-ipc';
 import type { ScriptRuntimeExecutor } from '../../src/main/script-runtime-supervisor';
 import {
   AUTOMATION_SCRIPT_COMMAND_CHANNEL,
   AUTOMATION_SCRIPT_COMPLETE_CHANNEL,
   AUTOMATION_SCRIPT_EXECUTE_CHANNEL,
+  AUTOMATION_SCRIPT_SAVE_CHANNEL,
   AUTOMATION_SCRIPT_START_CHANNEL,
 } from '../../src/shared/protocol/channels';
 import type { WorkerCommand } from '../../src/shared/protocol/requests';
@@ -244,5 +246,68 @@ describe('Desktop Console automation IPC', () => {
     destroyed?.();
 
     expect(journal.get('execution-1')).toMatchObject({ status: 'cancelled' });
+  });
+
+  it('uses a Main-issued saved-script handle for persistent grants and rejects a forged source', async () => {
+    const handlers = new Map<string, (event: { sender: { id: number; once: (event: 'destroyed', listener: () => void) => void } }, input: unknown) => Promise<unknown> | unknown>();
+    const fakeIpcMain = { handle: (channel: string, handler: (event: { sender: { id: number; once: (event: 'destroyed', listener: () => void) => void } }, input: unknown) => unknown) => {
+      handlers.set(channel, handler);
+    } };
+    const root = mkdtempSync(path.join(tmpdir(), 'serpent-automation-ipc-'));
+    roots.push(root);
+    const journal = new AutomationExecutionJournal({
+      store: createJsonFileAutomationExecutionStore(path.join(root, 'execution.json')),
+      logger: { info: () => undefined, error: () => undefined },
+      newId: (() => {
+        let value = 0;
+        return (prefix) => `${prefix}-${++value}`;
+      })(),
+    });
+    const worker = new FakeAutomationWorker();
+    const gateway = createAutomationCommandGateway(worker, journal, {
+      auditSink: journal,
+      auditLogger: { error: () => undefined },
+    });
+    const scriptFile = path.join(root, 'rating.serpent.ts');
+    const scriptFiles = new AutomationScriptFileService({
+      selectOpenScript: async () => undefined,
+      selectSaveScript: async () => scriptFile,
+      newScriptId: () => 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    });
+    let confirmations = 0;
+    registerAutomationScriptIpc({
+      ipcMain: fakeIpcMain as never,
+      isAuthorizedSender: () => true,
+      workerClient: () => worker as never,
+      journal: () => journal,
+      gateway: () => gateway,
+      runtime: () => ({ run: async () => ({ ok: true, value: undefined, output: [], transpiledJavaScript: '' }) }) satisfies ScriptRuntimeExecutor,
+      scriptFiles: () => scriptFiles,
+      confirmDesktopWrite: async () => {
+        confirmations += 1;
+        return true;
+      },
+      logger: () => undefined,
+    });
+
+    const event = { sender: { id: 9, once: () => undefined } };
+    const source = "return await serpent.assets.search({ query: 'Ser' });";
+    const saved = await handlers.get(AUTOMATION_SCRIPT_SAVE_CHANNEL)!(event, { source });
+    expect(saved).toMatchObject({ ok: true, scriptId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', source });
+    if (!saved || typeof saved !== 'object' || !('scriptId' in saved) || typeof saved.scriptId !== 'string') {
+      throw new Error('Expected a saved script handle.');
+    }
+
+    const first = await handlers.get(AUTOMATION_SCRIPT_START_CHANNEL)!(event, { libraryId, source, scriptId: saved.scriptId });
+    expect(first).toMatchObject({ ok: true, executionId: 'execution-1' });
+    expect(confirmations).toBe(1);
+    const second = await handlers.get(AUTOMATION_SCRIPT_START_CHANNEL)!(event, { libraryId, source, scriptId: saved.scriptId });
+    expect(second).toMatchObject({ ok: true, executionId: 'execution-3' });
+    expect(confirmations).toBe(1);
+    await expect(handlers.get(AUTOMATION_SCRIPT_START_CHANNEL)!(event, {
+      libraryId,
+      scriptId: saved.scriptId,
+      source: `${source}\n// changed`,
+    })).resolves.toMatchObject({ ok: false });
   });
 });

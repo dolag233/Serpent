@@ -56,6 +56,8 @@ export type NativeDialogId =
   | "importZip"
   | "importZipDestination"
   | "importCopyDestination"
+  | "openAutomationScript"
+  | "saveAutomationScript"
   /** macOS application picker for "Open With…" (Serpent-w29). */
   | "chooseApplication";
 
@@ -114,6 +116,16 @@ const EN: DialogCatalog = {
   importCopyDestination: {
     title: "Choose where to copy the library",
     buttonLabel: "Copy here",
+  },
+  openAutomationScript: {
+    title: "Open Automation Script",
+    buttonLabel: "Open Script",
+    filterName: "Serpent scripts",
+  },
+  saveAutomationScript: {
+    title: "Save Automation Script",
+    buttonLabel: "Save Script",
+    filterName: "Serpent scripts",
   },
   chooseApplication: {
     title: "Choose Application",
@@ -179,6 +191,16 @@ const ZH_CN: DialogCatalog = {
     title:
       "\u9009\u62e9\u5bfc\u5165\u76ee\u6807\u4f4d\u7f6e\uff08\u8d44\u6e90\u5e93\u5c06\u590d\u5236\u5230\u6b64\u6587\u4ef6\u5939\u5185\uff09",
     buttonLabel: "\u590d\u5236\u5230\u6b64\u5904",
+  },
+  openAutomationScript: {
+    title: "\u6253\u5f00\u81ea\u52a8\u5316\u811a\u672c",
+    buttonLabel: "\u6253\u5f00\u811a\u672c",
+    filterName: "Serpent \u811a\u672c",
+  },
+  saveAutomationScript: {
+    title: "\u4fdd\u5b58\u81ea\u52a8\u5316\u811a\u672c",
+    buttonLabel: "\u4fdd\u5b58\u811a\u672c",
+    filterName: "Serpent \u811a\u672c",
   },
   chooseApplication: {
     title: "\u9009\u62e9\u5e94\u7528",

@@ -1,10 +1,12 @@
-# 2026-07-30：独立 UtilityProcess Script Runtime（Serpent-y51c.3）
+# 2026-07-30：独立 UtilityProcess Script Runtime 与保存脚本接缝（Serpent-y51c.3/.4）
 
 ## 本次增量
 
 Desktop Console 不再在 Renderer Web Worker 中执行用户脚本。每次已授权的 Execution 由 Main 创建一个短生命周期 Electron UtilityProcess，QuickJS 只在该子进程中执行；子进程通过严格的消息协议请求固定 Automation Gateway 命令。Renderer 只能得到终态结果、受限 console 输出和稳定错误码。
 
 该改动不扩大脚本能力：仍不得访问 Node、文件、网络、环境变量、任意 IPC、SQL 或 Library Worker；脚本源在授权时绑定到 Execution，随后 `execute` IPC 不接受新的 source，因此不能在授权后替换代码。
+
+本轮补入保存和打开 `.serpent.js` / `.serpent.ts` 的最小闭环。原生文件选择和读写只在 Main；Renderer 仅得到脚本文本、文件名和 Main 签发的 opaque `scriptId`，绝不得到绝对路径。`scriptId` 与 `WebContents` 和精确文本绑定，编辑后不能将任意新代码伪装成已保存脚本以继承持久授权。保存脚本的 grant 仍由 execution journal 以脚本哈希、资源库和能力集合精确匹配。
 
 ## 四列证据
 
@@ -14,6 +16,7 @@ Desktop Console 不再在 Renderer Web Worker 中执行用户脚本。每次已�
 | 子进程只可调用声明过的 Gateway 命令 | `src/scripting/script-runtime-utility.ts`、`src/shared/script-runtime-utility-protocol.ts`、`automation-script-ipc.ts` | Utility handler 测试只产生 `asset.search` 等注册命令；IPC 测试验证执行时仍经 Main/Gateway、搜索语法转换与 journal 计数 | 两条 Electron E2E 在临时库真实执行，评分和改名均经现有授权/计划路径。 |
 | 取消、超时、进程异常不会留下悬挂执行 | `ScriptRuntimeSupervisor`、`AutomationExecutionJournal`、`automation-script-ipc.ts` | Supervisor 取消测试、Utility 等待 host 的取消测试；journal 终态由 Main 收口 | Electron 评分/改名成功路径已验证；手动停止、崩溃和 packaged/Windows 仍待人类/平台验证。 |
 | E2E 使用当前 UtilityProcess 产物 | `scripts/run-e2e.mjs` | 每次 E2E 同时构建 `script_runtime_utility.js`，避免复用旧产物 | 2026-07-30 执行两条实际 Electron 旅程。 |
+| 保存/打开脚本不泄露路径且不放大授权 | `src/main/automation-script-file-service.ts`、`automation-script-ipc.ts`、`ScriptSandboxPreviewDialog.tsx` | `automation-script-file-service.test.ts` 验证扩展名/大小、sender/text 绑定；`automation-script-ipc.test.ts` 拒绝伪造或改写后的 handle | 2026-07-30 隔离 Electron E2E 保存 `rating.serpent.ts`、编辑后重新打开并执行通过；原生对话框与持久授权的人类观察仍待验。 |
 
 ## 事故与修复
 
@@ -29,10 +32,19 @@ node scripts/run-e2e-isolated.mjs tests/e2e/automation-script-rating.test.ts
 node scripts/run-e2e-isolated.mjs tests/e2e/automation-script-file-operations.test.ts
 ```
 
-2026-07-30 结果：Unit 208 files、1632 passed、1 skipped；typecheck/lint 通过；上述两个 Electron E2E 均各 1 passed。
+2026-07-30 第一轮结果：Unit 208 files、1632 passed、1 skipped；typecheck/lint 通过；评分和文件操作 Electron E2E 均各 1 passed。
+
+保存/打开增量定向验证：
+
+```bash
+npx vitest run --config vitest.config.ts tests/unit/automation-script-file-service.test.ts tests/unit/automation-script-ipc.test.ts
+node scripts/run-e2e-isolated.mjs tests/e2e/automation-script-rating.test.ts
+```
+
+2026-07-30 结果：25 个定向单测通过；评分 Electron E2E 1 passed，测试实际保存脚本、修改编辑器文本、重新打开并验证恢复内容，再执行默认评分脚本和运行日志筛选。
 
 ## 未验证/未完成
 
 - macOS packaged、Windows packaged 和 Windows 实机尚未验证，不能据此关闭跨平台打包门禁。
-- 当前 Console 仍不包含保存/打开脚本、类型文件、source-map 栈回映、执行历史 UI 或 MCP transport。
+- 当前 Console 已包含保存/打开脚本；仍不包含独立类型文件、模块式脚本入口、source-map 栈回映、执行历史 UI 或 MCP transport。
 - 因终端没有第二显示器，隔离 E2E 会按现有机制回退主显示器；它是自动化行为证据，不是 Computer Use 视觉验收。AUT-006 保持待人类验收。

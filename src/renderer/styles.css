@@ -4526,6 +4526,16 @@ body.serpent-modal-open .app-shell {
   line-height: 1.5;
 }
 
+.script-sandbox-preview-file-name {
+  margin: -3px 0 7px;
+  color: var(--secondary);
+}
+
+.script-sandbox-preview-file-error {
+  margin: -5px 0 10px;
+  color: var(--warning-fg);
+}
+
 .script-sandbox-preview-result {
   min-height: 0;
   flex: 1 1 124px;

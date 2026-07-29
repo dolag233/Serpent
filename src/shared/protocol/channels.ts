@@ -37,6 +37,8 @@ export const VIEWER_VIDEO_SHORTCUT_CHANNEL =
   'serpent:viewer:video-shortcut' as const;
 
 /** Renderer Desktop Console → Main-owned Automation Execution/Gateway bridge. */
+export const AUTOMATION_SCRIPT_OPEN_CHANNEL = 'serpent:automation:script-open' as const;
+export const AUTOMATION_SCRIPT_SAVE_CHANNEL = 'serpent:automation:script-save' as const;
 export const AUTOMATION_SCRIPT_START_CHANNEL = 'serpent:automation:script-start' as const;
 /** Renderer Desktop Console → Main: run an already Main-authorized execution. */
 export const AUTOMATION_SCRIPT_EXECUTE_CHANNEL = 'serpent:automation:script-execute' as const;

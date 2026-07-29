@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -13,6 +13,7 @@ test('runs the default Desktop Console script and rates only its matching assets
   const sourceRoot = path.join(temporaryRoot, 'sources');
   const matchingSource = path.join(sourceRoot, 'Ser-reference.png');
   const otherSource = path.join(sourceRoot, 'other-reference.png');
+  const savedScript = path.join(temporaryRoot, 'rating.serpent.ts');
   const libraryName = '自动化评分验收';
   mkdirSync(sourceRoot);
   writeFileSync(matchingSource, 'matching asset');
@@ -32,6 +33,8 @@ test('runs the default Desktop Console script and rates only its matching assets
       SERPENT_E2E_CREATE_PARENT_PATH: temporaryRoot,
       SERPENT_E2E_OPEN_LIBRARY_PATH: path.join(temporaryRoot, libraryName),
       SERPENT_E2E_IMPORT_FILES: [matchingSource, otherSource].join(path.delimiter),
+      SERPENT_E2E_OPEN_AUTOMATION_SCRIPT: savedScript,
+      SERPENT_E2E_SAVE_AUTOMATION_SCRIPT: savedScript,
     },
   });
 
@@ -60,6 +63,13 @@ test('runs the default Desktop Console script and rates only its matching assets
     await window.getByRole('menuitem', { name: '自动化脚本' }).click();
     const dialog = window.getByRole('dialog', { name: '自动化脚本' });
     await expect(dialog).toBeVisible();
+    await dialog.getByRole('button', { name: '保存脚本' }).click();
+    await expect(dialog).toContainText('已保存脚本：rating.serpent.ts');
+    expect(readFileSync(savedScript, 'utf8')).toContain('serpent.assets.setRating');
+    await dialog.getByRole('textbox', { name: '脚本' }).fill('return { changed: true };');
+    await dialog.getByRole('button', { name: '打开脚本' }).click();
+    await expect(dialog.getByRole('textbox', { name: '脚本' })).toHaveValue(/serpent\.assets\.setRating/);
+    await expect(dialog).not.toContainText(temporaryRoot);
     await dialog.getByRole('button', { name: '运行', exact: true }).click();
     await expect(dialog.getByText('返回结果', { exact: true })).toBeVisible();
     await expect(dialog.locator('pre').first()).toContainText('"matched": 1');

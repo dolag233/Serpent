@@ -32,6 +32,8 @@ import {
   WINDOW_MAXIMIZED_CHANNEL,
   VIEWER_VIDEO_SHORTCUTS_ACTIVE_CHANNEL,
   VIEWER_VIDEO_SHORTCUT_CHANNEL,
+  AUTOMATION_SCRIPT_OPEN_CHANNEL,
+  AUTOMATION_SCRIPT_SAVE_CHANNEL,
   AUTOMATION_SCRIPT_START_CHANNEL,
   AUTOMATION_SCRIPT_EXECUTE_CHANNEL,
   AUTOMATION_SCRIPT_COMMAND_CHANNEL,
@@ -40,6 +42,8 @@ import {
   PLUGIN_MANAGER_CHANNEL,
 } from '../shared/protocol/channels';
 import {
+  automationScriptFileResultSchema,
+  automationScriptSaveInputSchema,
   automationScriptStartResultSchema,
   automationScriptExecuteResultSchema,
   type AutomationScriptExecuteInput,
@@ -47,6 +51,7 @@ import {
   type AutomationScriptCommandResult,
   type AutomationScriptCompleteInput,
   type AutomationScriptCancelInput,
+  type AutomationScriptSaveInput,
   type AutomationScriptStartInput,
   type SerpentAutomationScriptApi,
 } from '../shared/automation-script-api';
@@ -1862,6 +1867,16 @@ const shell: SerpentShellApi = Object.freeze({
 });
 
 const automation: SerpentAutomationScriptApi = Object.freeze({
+  async open() {
+    return automationScriptFileResultSchema.parse(
+      await ipcRenderer.invoke(AUTOMATION_SCRIPT_OPEN_CHANNEL),
+    );
+  },
+  async save(input: AutomationScriptSaveInput) {
+    return automationScriptFileResultSchema.parse(
+      await ipcRenderer.invoke(AUTOMATION_SCRIPT_SAVE_CHANNEL, automationScriptSaveInputSchema.parse(input)),
+    );
+  },
   async start(input: AutomationScriptStartInput) {
     return automationScriptStartResultSchema.parse(
       await ipcRenderer.invoke(AUTOMATION_SCRIPT_START_CHANNEL, input),

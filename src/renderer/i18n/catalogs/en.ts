@@ -248,12 +248,21 @@ export const en = {
       description: "Run a small JS or TypeScript snippet against the current Library. Scripts can call only restricted asset APIs; they have no Node, network, arbitrary-file, or MCP permission. Real file operations ask for another confirmation before they run. Closing or stopping terminates this run.",
       sourceLabel: "Script",
       sourcePlaceholder: "Enter JavaScript or TypeScript…",
+      savedFile: "Saved script: ",
+      openScript: "Open script",
+      saveScript: "Save script",
       bridgeHint: "The example finds assets whose name or tag contains Ser and sets them to four stars. Ratings, path copies, Trash, and renames are protected by authorization and plan confirmation. Press ⌘/Ctrl + Enter to run.",
       ready: "Ready to run.",
       running: "Running in the restricted sandbox…",
       completed: "Return value",
       output: "Console output",
       emptySource: "Enter a script first.",
+      fileErrors: {
+        cancelled: "No script was opened or saved.",
+        "invalid-script-file": "Choose a .serpent.js or .serpent.ts script file.",
+        "source-too-large": "The script exceeds the 64 KB limit. Split it into smaller pieces and try again.",
+        "io-failed": "The script file could not be read or saved. Check that it is accessible."
+      },
       errors: {
         SOURCE_NOT_ALLOWED: "Scripts cannot use imported modules or syntax that this preview does not support. Use standalone JavaScript or TypeScript.",
         SOURCE_TOO_LARGE: "The script exceeds this preview's 64 KB limit. Split it into smaller pieces and try again.",

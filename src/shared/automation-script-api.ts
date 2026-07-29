@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { publicErrorSchema, type PublicError } from './protocol/errors';
 
 const identifier = z.string().uuid();
-const source = z.string().min(1).max(64 * 1024);
+export const automationScriptSourceSchema = z.string().min(1).max(64 * 1024);
 
 /** Text syntax is parsed in Main with the same grammar as the desktop toolbar. */
 export const automationScriptAssetSearchInputSchema = z.strictObject({
@@ -31,7 +31,9 @@ export type AutomationScriptCommandId = z.infer<typeof automationScriptCommandId
 
 export const automationScriptStartInputSchema = z.strictObject({
   libraryId: identifier,
-  source,
+  source: automationScriptSourceSchema,
+  /** Main-issued handle for exact text loaded from or saved to a script file. */
+  scriptId: identifier.optional(),
 });
 export type AutomationScriptStartInput = z.infer<typeof automationScriptStartInputSchema>;
 
@@ -44,6 +46,25 @@ export const automationScriptStartResultSchema = z.union([
   z.strictObject({ ok: z.literal(false), error: publicErrorSchema }),
 ]);
 export type AutomationScriptStartResult = z.infer<typeof automationScriptStartResultSchema>;
+
+export const automationScriptFileResultSchema = z.union([
+  z.strictObject({
+    ok: z.literal(true),
+    scriptId: identifier,
+    displayName: z.string().min(1).max(255),
+    source: automationScriptSourceSchema,
+  }),
+  z.strictObject({
+    ok: z.literal(false),
+    code: z.enum(['cancelled', 'invalid-script-file', 'source-too-large', 'io-failed']),
+  }),
+]);
+export type AutomationScriptFileResult = z.infer<typeof automationScriptFileResultSchema>;
+
+export const automationScriptSaveInputSchema = z.strictObject({
+  source: automationScriptSourceSchema,
+});
+export type AutomationScriptSaveInput = z.infer<typeof automationScriptSaveInputSchema>;
 
 /**
  * Source is deliberately absent: Main binds the approved source hash to the
@@ -111,6 +132,8 @@ export const automationScriptCancelInputSchema = z.strictObject({
 export type AutomationScriptCancelInput = z.infer<typeof automationScriptCancelInputSchema>;
 
 export interface SerpentAutomationScriptApi {
+  open(): Promise<AutomationScriptFileResult>;
+  save(input: AutomationScriptSaveInput): Promise<AutomationScriptFileResult>;
   start(input: AutomationScriptStartInput): Promise<AutomationScriptStartResult>;
   execute(input: AutomationScriptExecuteInput): Promise<AutomationScriptExecuteResult>;
   command(input: AutomationScriptCommandInput): Promise<AutomationScriptCommandResult>;
