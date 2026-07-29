@@ -904,6 +904,8 @@ export const en = {
     pluginTrust: "Trust",
     pluginDeny: "Do not trust",
     pluginUninstall: "Uninstall",
+    pluginRollback: "Roll back",
+    pluginRollbackHint: "Use the previous verified version on this device until you explicitly choose an update again.",
     pluginConflictHint: "Both this app and this library have a version. Choose the one this device should use.",
     pluginUseUserVersion: "Use app version {version}",
     pluginUseLibraryVersion: "Use library version {version}",

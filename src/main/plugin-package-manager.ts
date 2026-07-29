@@ -42,6 +42,7 @@ import {
   type PluginInstalledPackageStatus,
   type PluginPackageManagerLogger,
   type PluginPackageManagerOptions,
+  type PluginManagerResolutionChoice,
   type PluginResolutionResult,
   PluginPackageManagerError,
 } from './plugin-package-manager-types';
@@ -330,8 +331,12 @@ export class PluginPackageManager {
     return record;
   }
 
-  async chooseResolution(input: Omit<PluginResolution, 'deviceId'>): Promise<PluginResolution> {
-    const resolution = pluginResolutionSchema.parse({ ...input, deviceId: this.options.deviceId });
+  async chooseResolution(input: PluginManagerResolutionChoice): Promise<PluginResolution> {
+    const resolution = pluginResolutionSchema.parse({
+      ...input,
+      deviceId: this.options.deviceId,
+      updatePolicy: input.updatePolicy ?? 'follow-latest',
+    });
     const state = await this.#readDeviceState();
     state.resolutions = state.resolutions.filter((candidate) => !(candidate.libraryId === resolution.libraryId
       && candidate.pluginId === resolution.pluginId));
@@ -348,6 +353,55 @@ export class PluginPackageManager {
 
   async getSafeMode(): Promise<boolean> {
     return (await this.#readDeviceState()).safeMode;
+  }
+
+  /**
+   * Pins the current scope to its immediately preceding verified package.
+   * Package bytes remain immutable; rollback only changes this device's
+   * resolution and never edits the synchronized library lock.
+   */
+  async rollback(input: {
+    libraryId: string;
+    libraryDirectory: string;
+    pluginId: string;
+  }): Promise<InstalledPluginPackage> {
+    const state = await this.#readDeviceState();
+    const [globalPackages, libraryPackages] = await Promise.all([
+      this.#validPackages('user'),
+      this.#validPackages('library', input.libraryDirectory),
+    ]);
+    const saved = state.resolutions.find((resolution) => resolution.libraryId === input.libraryId
+      && resolution.pluginId === input.pluginId);
+    const selection = saved?.selection ?? (globalPackages.some((candidate) => candidate.lock.pluginId === input.pluginId)
+      ? 'use-global'
+      : 'use-library');
+    if (selection === 'disabled') {
+      throw new PluginPackageManagerError('PLUGIN_RESOLUTION_INVALID', 'A disabled plugin does not have a version to roll back.');
+    }
+    const candidates = (selection === 'use-global' ? globalPackages : libraryPackages)
+      .filter((candidate) => candidate.lock.pluginId === input.pluginId)
+      .sort(compareVersions);
+    const currentIndex = saved?.packageHash === undefined
+      ? 0
+      : candidates.findIndex((candidate) => candidate.lock.packageHash === saved.packageHash);
+    const target = candidates[(currentIndex < 0 ? 0 : currentIndex) + 1];
+    if (target === undefined) {
+      throw new PluginPackageManagerError('PLUGIN_RESOLUTION_INVALID', 'No previous verified plugin version is available to roll back to.');
+    }
+    await this.chooseResolution({
+      libraryId: input.libraryId,
+      pluginId: input.pluginId,
+      selection,
+      packageHash: target.lock.packageHash,
+      updatePolicy: 'pinned',
+    });
+    this.#logger?.info('plugin.rollback', 'Pinned plugin resolution to its previous verified package.', {
+      libraryId: input.libraryId,
+      pluginId: input.pluginId,
+      version: target.lock.version,
+      scope: target.scope,
+    });
+    return target;
   }
 
   /**
@@ -379,7 +433,12 @@ export class PluginPackageManager {
       state.resolutions = state.resolutions.map((resolution) => resolution.libraryId === input.libraryId
         && resolution.pluginId === input.pluginId
         && resolution.packageHash === removed.packageHash
-        ? { ...resolution, selection: 'disabled' as const, packageHash: undefined }
+        ? {
+          ...resolution,
+          selection: 'disabled' as const,
+          packageHash: undefined,
+          updatePolicy: 'follow-latest' as const,
+        }
         : resolution);
     }
     await this.#writeDeviceState(state);
@@ -428,6 +487,9 @@ export class PluginPackageManager {
       return { status: 'requires-confirmation', reason: 'selected-package-unavailable', current: latest };
     }
     if (current.lock.packageHash !== latest.lock.packageHash) {
+      if (saved?.updatePolicy === 'pinned') {
+        return this.#resolvedOrAwaitingTrust(state, selection, current);
+      }
       const reason = packageOriginChanged(current, latest);
       if (reason !== undefined) return { status: 'requires-confirmation', reason, current, candidate: latest };
       await this.chooseResolution({

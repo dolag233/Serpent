@@ -890,6 +890,8 @@ export const zhCN = {
     pluginTrust: "信任",
     pluginDeny: "不信任",
     pluginUninstall: "卸载",
+    pluginRollback: "回退到上一版本",
+    pluginRollbackHint: "在此设备上固定使用前一个已校验版本，直到你再次明确选择更新版本。",
     pluginConflictHint: "本应用与此资源库各有一个版本，请选择此设备实际使用的版本。",
     pluginUseUserVersion: "使用本应用版本 {version}",
     pluginUseLibraryVersion: "使用资源库版本 {version}",

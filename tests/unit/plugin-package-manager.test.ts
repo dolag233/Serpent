@@ -332,6 +332,62 @@ describe('PluginPackageManager selection, updates and Safe Mode', () => {
       .resolves.toMatchObject({ status: 'requires-confirmation', reason: 'permissions-increased' });
   });
 
+  it('rolls back to the prior immutable package and pins it until the user chooses to follow updates again', async () => {
+    const sourceOne = temporaryRoot('serpent-plugin-rollback-one-');
+    const sourceTwo = temporaryRoot('serpent-plugin-rollback-two-');
+    const library = temporaryRoot('serpent-plugin-rollback-library-');
+    const userData = temporaryRoot('serpent-plugin-rollback-user-');
+    writePlugin(sourceOne, { version: '1.2.0' });
+    writePlugin(sourceTwo, { version: '1.3.0' });
+    const manager = createManager(userData);
+    const first = await manager.installFromDirectory({
+      directory: sourceOne,
+      scope: 'user',
+      source: { kind: 'local-directory', fingerprint: 'source:stable' },
+    });
+    await manager.chooseResolution({
+      libraryId: 'library-a',
+      pluginId: first.package.lock.pluginId,
+      selection: 'use-global',
+      packageHash: first.package.lock.packageHash,
+    });
+    await manager.installFromDirectory({
+      directory: sourceTwo,
+      scope: 'user',
+      source: { kind: 'local-directory', fingerprint: 'source:stable' },
+    });
+    await expect(manager.resolve({
+      libraryId: 'library-a',
+      libraryDirectory: library,
+      pluginId: first.package.lock.pluginId,
+    })).resolves.toMatchObject({ status: 'resolved', package: { lock: { version: '1.3.0' } } });
+
+    const rolledBack = await manager.rollback({
+      libraryId: 'library-a',
+      libraryDirectory: library,
+      pluginId: first.package.lock.pluginId,
+    });
+    expect(rolledBack.lock.version).toBe('1.2.0');
+    await expect(manager.resolve({
+      libraryId: 'library-a',
+      libraryDirectory: library,
+      pluginId: first.package.lock.pluginId,
+    })).resolves.toMatchObject({ status: 'resolved', package: { lock: { version: '1.2.0' } } });
+
+    await manager.chooseResolution({
+      libraryId: 'library-a',
+      pluginId: first.package.lock.pluginId,
+      selection: 'use-global',
+      packageHash: rolledBack.lock.packageHash,
+      updatePolicy: 'follow-latest',
+    });
+    await expect(manager.resolve({
+      libraryId: 'library-a',
+      libraryDirectory: library,
+      pluginId: first.package.lock.pluginId,
+    })).resolves.toMatchObject({ status: 'resolved', package: { lock: { version: '1.3.0' } } });
+  });
+
   it('uses Safe Mode to suppress all third-party resolution without deleting installed packages', async () => {
     const source = temporaryRoot('serpent-plugin-source-');
     const userData = temporaryRoot('serpent-plugin-user-');

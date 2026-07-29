@@ -61,6 +61,11 @@ export const pluginManagerRequestSchema = z.discriminatedUnion('type', [
   }),
   z.strictObject({ type: z.literal('plugin-manager.safe-mode'), enabled: z.boolean() }),
   z.strictObject({
+    type: z.literal('plugin-manager.rollback'),
+    libraryId: libraryIdSchema,
+    pluginId: pluginIdSchema,
+  }),
+  z.strictObject({
     type: z.literal('plugin-manager.uninstall'),
     ...scopedRequestFields,
     pluginId: pluginIdSchema,

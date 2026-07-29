@@ -125,4 +125,6 @@ export type PluginResolutionResult =
     package: InstalledPluginPackage;
   };
 
-export type PluginManagerResolutionChoice = Omit<PluginResolution, 'deviceId'>;
+export type PluginManagerResolutionChoice = Omit<PluginResolution, 'deviceId' | 'updatePolicy'> & {
+  updatePolicy?: 'follow-latest' | 'pinned';
+};

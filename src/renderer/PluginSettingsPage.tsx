@@ -235,6 +235,11 @@ export function PluginSettingsPage({ api, libraryId }: PluginSettingsPageProps):
 
       {packageGroups.map(([pluginId, packages]) => {
         const resolution = resolutionByPluginId.get(pluginId);
+        const selectedScope = resolution?.status === 'resolved'
+          ? resolution.selection === 'use-global' ? 'user' : 'library'
+          : undefined;
+        const canRollback = selectedScope !== undefined
+          && packages.filter((pluginPackage) => pluginPackage.scope === selectedScope).length > 1;
         return (
           <section className="app-settings-card plugin-settings-package" key={pluginId}>
             <div className="plugin-settings-package-header">
@@ -304,6 +309,23 @@ export function PluginSettingsPage({ api, libraryId }: PluginSettingsPageProps):
                 </div>
               </div>
             ))}
+            {canRollback ? (
+              <div className="plugin-settings-resolution">
+                <span>{t('settings.pluginRollbackHint')}</span>
+                <button
+                  className="secondary-button"
+                  disabled={busy}
+                  onClick={() => void execute({
+                    type: 'plugin-manager.rollback',
+                    libraryId: libraryId!,
+                    pluginId,
+                  })}
+                  type="button"
+                >
+                  {t('settings.pluginRollback')}
+                </button>
+              </div>
+            ) : null}
             {resolution?.status === 'conflict' ? (
               <div className="plugin-settings-resolution">
                 <span>{t('settings.pluginConflictHint')}</span>

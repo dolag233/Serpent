@@ -223,7 +223,7 @@ export function createPluginPackageRequestHandler(options: PluginPackageIpcOptio
     const request = parsed.data;
     try {
       const libraryId = libraryIdFor(request);
-      const requiresLibrary = request.type === 'plugin-manager.resolve'
+      const requiresLibrary = (request.type === 'plugin-manager.resolve' || request.type === 'plugin-manager.rollback')
         || ('scope' in request && request.scope === 'library')
         || (request.type === 'plugin-manager.list' && libraryId !== undefined);
       const libraryDirectory = requiresLibrary
@@ -261,6 +261,12 @@ export function createPluginPackageRequestHandler(options: PluginPackageIpcOptio
         });
       } else if (request.type === 'plugin-manager.safe-mode') {
         await options.manager.setSafeMode(request.enabled);
+      } else if (request.type === 'plugin-manager.rollback') {
+        await options.manager.rollback({
+          libraryId: request.libraryId,
+          libraryDirectory: libraryDirectory!,
+          pluginId: request.pluginId,
+        });
       } else if (request.type === 'plugin-manager.uninstall') {
         await options.manager.uninstall({
           scope: request.scope,

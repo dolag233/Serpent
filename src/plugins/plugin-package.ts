@@ -101,6 +101,8 @@ export const pluginResolutionSchema = z.strictObject({
   pluginId: pluginIdSchema,
   selection: z.enum(['use-global', 'use-library', 'disabled']),
   packageHash: pluginSha256Schema.optional(),
+  /** Follow compatible upgrades unless the user explicitly rolled back. */
+  updatePolicy: z.enum(['follow-latest', 'pinned']).default('follow-latest'),
 }).superRefine((value, context) => {
   const requiresPackage = value.selection === 'use-global' || value.selection === 'use-library';
   if (requiresPackage && value.packageHash === undefined) {
@@ -108,6 +110,9 @@ export const pluginResolutionSchema = z.strictObject({
   }
   if (!requiresPackage && value.packageHash !== undefined) {
     context.addIssue({ code: 'custom', path: ['packageHash'], message: 'A disabled plugin resolution must not select a package.' });
+  }
+  if (!requiresPackage && value.updatePolicy !== 'follow-latest') {
+    context.addIssue({ code: 'custom', path: ['updatePolicy'], message: 'A disabled resolution cannot pin a package version.' });
   }
 });
 export type PluginResolution = z.infer<typeof pluginResolutionSchema>;

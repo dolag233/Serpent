@@ -161,4 +161,43 @@ describe('Plugin package IPC bridge', () => {
       }],
     });
   });
+
+  it('rolls back through the typed bridge and keeps the previous verified package selected', async () => {
+    const firstSource = temporaryRoot('serpent-plugin-ipc-rollback-first-');
+    const userData = temporaryRoot('serpent-plugin-ipc-rollback-user-');
+    const library = temporaryRoot('serpent-plugin-ipc-rollback-library-');
+    writePlugin(firstSource, { version: '1.2.0' });
+    const selected = firstSource;
+    const handler = createPluginPackageRequestHandler({
+      manager: createManager(userData),
+      resolveLibraryDirectory: async (libraryId) => libraryId === 'library-a' ? library : undefined,
+      chooseLocalPackage: async () => selected,
+    });
+
+    const firstInstall = await handler({ type: 'plugin-manager.install-local', scope: 'user' });
+    expect(firstInstall).toMatchObject({ ok: true, packages: [{ version: '1.2.0' }] });
+    if (!firstInstall.ok) throw new Error('Expected the first plugin install to succeed.');
+    const firstPackage = firstInstall.packages[0];
+    if (firstPackage === undefined) throw new Error('Expected an installed package.');
+    await expect(handler({
+      type: 'plugin-manager.resolve',
+      libraryId: 'library-a',
+      pluginId: firstPackage.pluginId,
+      selection: 'use-global',
+      packageHash: firstPackage.packageHash,
+    })).resolves.toMatchObject({ ok: true, resolutions: [{ status: 'resolved', version: '1.2.0' }] });
+
+    // An in-place edit is the same local source. A different picker location
+    // is deliberately a source change and therefore requires confirmation.
+    writePlugin(firstSource, { version: '1.3.0' });
+    await expect(handler({ type: 'plugin-manager.install-local', scope: 'user' }))
+      .resolves.toMatchObject({ ok: true, packages: [{ version: '1.2.0' }, { version: '1.3.0' }] });
+    await expect(handler({ type: 'plugin-manager.list', libraryId: 'library-a' }))
+      .resolves.toMatchObject({ ok: true, resolutions: [{ status: 'resolved', version: '1.3.0' }] });
+    await expect(handler({
+      type: 'plugin-manager.rollback',
+      libraryId: 'library-a',
+      pluginId: firstPackage.pluginId,
+    })).resolves.toMatchObject({ ok: true, resolutions: [{ status: 'resolved', version: '1.2.0' }] });
+  });
 });
