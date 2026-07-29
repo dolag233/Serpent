@@ -1,0 +1,283 @@
+import { describe, expect, it } from 'vitest';
+
+import validManifestFixture from '../fixtures/plugin-manifests/palette-tools.serpent-plugin.json';
+
+import {
+  PLUGIN_API_VERSION,
+  PLUGIN_MANIFEST_VERSION,
+  describePluginApi,
+  generatePluginSdkTypeDeclaration,
+} from '../../src/plugins/plugin-sdk';
+import {
+  pluginManifestSchema,
+  validatePluginManifestCompatibility,
+} from '../../src/plugins/plugin-manifest';
+import {
+  createPluginPackageLock,
+  defaultPluginPackageLimits,
+  pluginLibraryLockSchema,
+  pluginResolutionSchema,
+  pluginTrustDecisionSchema,
+  validatePluginPackageSnapshot,
+  verifyPluginPackageLock,
+} from '../../src/plugins/plugin-package';
+import {
+  createContributionRegistry,
+  createPluginContributionId,
+} from '../../src/plugins/plugin-contributions';
+
+const validManifest = validManifestFixture;
+
+const digest = (letter: string) => letter.repeat(64);
+
+function validSnapshot() {
+  return {
+    manifest: validManifest,
+    manifestSha256: digest('a'),
+    archiveByteLength: 1_024,
+    files: [
+      { path: 'serpent-plugin.json', byteLength: 1_000, sha256: digest('a'), kind: 'file' },
+      { path: 'dist/main.js', byteLength: 10_000, sha256: digest('b'), kind: 'file' },
+      { path: 'dist/ui/index.html', byteLength: 1_000, sha256: digest('c'), kind: 'file' },
+      { path: 'README.md', byteLength: 500, sha256: digest('d'), kind: 'file' },
+      { path: 'LICENSE', byteLength: 1_000, sha256: digest('e'), kind: 'file' },
+    ],
+  } as const;
+}
+
+describe('Plugin v1 manifest contract', () => {
+  it('exports a JSON schema and accepts the documented standard-plugin manifest', () => {
+    const parsed = pluginManifestSchema.parse(validManifest);
+
+    expect(parsed.id).toBe('com.example.palette-tools');
+    expect(parsed.runtime.mode).toBe('standard');
+    expect(pluginManifestSchema.toJSONSchema()).toMatchObject({ type: 'object' });
+  });
+
+  it.each([
+    ['bad identifier', { ...validManifest, id: 'Com.Example' }],
+    ['non-semver version', { ...validManifest, version: 'v1.2' }],
+    ['non-semver prerelease', { ...validManifest, version: '1.2.3-01' }],
+    ['traversing runtime entry', {
+      ...validManifest,
+      runtime: { ...validManifest.runtime, entry: '../main.js' },
+    }],
+    ['absolute UI entry', {
+      ...validManifest,
+      ui: { entry: '/tmp/index.html' },
+    }],
+    ['standard plugin with native modules', {
+      ...validManifest,
+      runtime: {
+        ...validManifest.runtime,
+        nativeModules: [{ platform: 'darwin', arch: 'arm64', nodeAbi: 140 }],
+      },
+    }],
+    ['menu command absent from the manifest', {
+      ...validManifest,
+      contributes: {
+        ...validManifest.contributes,
+        menus: { asset: [{ command: 'not-declared' }] },
+      },
+    }],
+  ])('rejects a %s', (_label, manifest) => {
+    expect(pluginManifestSchema.safeParse(manifest).success).toBe(false);
+  });
+
+  it('checks Serpent version, Plugin API and declared native platform before activation', () => {
+    const manifest = pluginManifestSchema.parse({
+      ...validManifest,
+      runtime: {
+        mode: 'trusted',
+        entry: 'dist/main.js',
+        nativeModules: [{ platform: 'darwin', arch: 'arm64', nodeAbi: 140 }],
+      },
+    });
+
+    expect(validatePluginManifestCompatibility(manifest, {
+      serpentVersion: '0.2.4',
+      pluginApiVersion: 1,
+      platform: 'darwin',
+      arch: 'arm64',
+      nodeAbi: 140,
+    })).toEqual({ ok: true });
+    expect(validatePluginManifestCompatibility(manifest, {
+      serpentVersion: '0.2.4',
+      pluginApiVersion: 1,
+      platform: 'win32',
+      arch: 'x64',
+      nodeAbi: 140,
+    })).toMatchObject({ ok: false, code: 'PLUGIN_PLATFORM_UNSUPPORTED' });
+    expect(validatePluginManifestCompatibility(manifest, {
+      serpentVersion: '1.0.0',
+      pluginApiVersion: 1,
+      platform: 'darwin',
+      arch: 'arm64',
+      nodeAbi: 140,
+    })).toMatchObject({ ok: false, code: 'PLUGIN_SERPENT_VERSION_UNSUPPORTED' });
+  });
+});
+
+describe('Plugin package, installation, trust and resolution contracts', () => {
+  it('creates a deterministic lock that covers the manifest and every packaged file', () => {
+    const snapshot = validSnapshot();
+    const lock = createPluginPackageLock(snapshot);
+
+    expect(lock.pluginId).toBe(validManifest.id);
+    expect(lock.version).toBe(validManifest.version);
+    expect(lock.files.map((file) => file.path)).toEqual([
+      'LICENSE',
+      'README.md',
+      'dist/main.js',
+      'dist/ui/index.html',
+      'serpent-plugin.json',
+    ]);
+    expect(verifyPluginPackageLock(snapshot, lock)).toEqual({ ok: true });
+    expect(pluginLibraryLockSchema.parse({ lockVersion: 1, packages: [lock] })).toBeTruthy();
+  });
+
+  it('fails closed when a digest, package path, symlink or lock digest changes', () => {
+    const snapshot = validSnapshot();
+    const lock = createPluginPackageLock(snapshot);
+    const modified = {
+      ...snapshot,
+      files: snapshot.files.map((file) => file.path === 'dist/main.js'
+        ? { ...file, sha256: digest('f') }
+        : file),
+    };
+
+    expect(verifyPluginPackageLock(modified, lock)).toMatchObject({
+      ok: false,
+      code: 'PLUGIN_PACKAGE_INTEGRITY_MISMATCH',
+    });
+    expect(validatePluginPackageSnapshot({
+      ...snapshot,
+      files: [...snapshot.files, {
+        path: 'dist/linked.js',
+        byteLength: 1,
+        sha256: digest('f'),
+        kind: 'symlink',
+      }],
+    })).toMatchObject({ ok: false, code: 'PLUGIN_PACKAGE_SYMLINK_FORBIDDEN' });
+    expect(validatePluginPackageSnapshot({
+      ...snapshot,
+      files: [...snapshot.files, {
+        path: '../escape.js',
+        byteLength: 1,
+        sha256: digest('f'),
+        kind: 'file',
+      }],
+    })).toMatchObject({ ok: false, code: 'PLUGIN_PACKAGE_INVALID_PATH' });
+  });
+
+  it('applies archive, file-count, per-file and expanded-size limits before installation', () => {
+    const snapshot = validSnapshot();
+
+    expect(validatePluginPackageSnapshot({
+      ...snapshot,
+      archiveByteLength: defaultPluginPackageLimits.maxArchiveBytes + 1,
+    })).toMatchObject({ ok: false, code: 'PLUGIN_PACKAGE_ARCHIVE_TOO_LARGE' });
+    expect(validatePluginPackageSnapshot({
+      ...snapshot,
+      files: Array.from({ length: defaultPluginPackageLimits.maxFileCount + 1 }, (_, index) => ({
+        path: `dist/file-${index}.js`,
+        byteLength: 1,
+        sha256: digest('f'),
+        kind: 'file' as const,
+      })),
+    })).toMatchObject({ ok: false, code: 'PLUGIN_PACKAGE_TOO_MANY_FILES' });
+    expect(validatePluginPackageSnapshot({
+      ...snapshot,
+      files: snapshot.files.map((file) => file.path === 'dist/main.js'
+        ? { ...file, byteLength: defaultPluginPackageLimits.maxSingleFileBytes + 1 }
+        : file),
+    })).toMatchObject({ ok: false, code: 'PLUGIN_PACKAGE_FILE_TOO_LARGE' });
+    expect(validatePluginPackageSnapshot({
+      ...snapshot,
+      files: snapshot.files.map((file) => file.path === 'dist/main.js'
+        ? { ...file, byteLength: defaultPluginPackageLimits.maxExtractedBytes }
+        : file),
+    }, {
+      ...defaultPluginPackageLimits,
+      maxSingleFileBytes: defaultPluginPackageLimits.maxExtractedBytes + 1,
+    })).toMatchObject({ ok: false, code: 'PLUGIN_PACKAGE_EXPANDED_TOO_LARGE' });
+  });
+
+  it('keeps trust and version choice device-local and explicit', () => {
+    expect(pluginTrustDecisionSchema.parse({
+      deviceId: 'device-a',
+      pluginId: validManifest.id,
+      packageHash: digest('a'),
+      sourceFingerprint: 'github:example/serpent-palette-tools@v1.2.0',
+      runtimeMode: 'standard',
+      permissions: validManifest.permissions,
+      decision: 'trusted',
+      decidedAt: '2026-07-29T00:00:00.000Z',
+    })).toMatchObject({ decision: 'trusted' });
+    expect(pluginResolutionSchema.parse({
+      deviceId: 'device-a',
+      libraryId: 'library-a',
+      pluginId: validManifest.id,
+      selection: 'use-library',
+      packageHash: digest('a'),
+    })).toMatchObject({ selection: 'use-library' });
+    expect(pluginResolutionSchema.safeParse({
+      deviceId: 'device-a',
+      libraryId: 'library-a',
+      pluginId: validManifest.id,
+      selection: 'use-library',
+    }).success).toBe(false);
+  });
+});
+
+describe('Plugin contribution registry and generated SDK', () => {
+  it('namespaces stable contribution IDs and revokes all active contributions on deactivation', () => {
+    expect(createPluginContributionId(validManifest.id, 'extract-palette'))
+      .toBe('com.example.palette-tools.extract-palette');
+
+    const registry = createContributionRegistry();
+    registry.register({
+      pluginInstanceId: 'instance-a',
+      pluginId: validManifest.id,
+      localId: 'extract-palette',
+      kind: 'command',
+      target: 'commands',
+      title: 'Extract palette',
+    });
+    registry.register({
+      pluginInstanceId: 'instance-a',
+      pluginId: validManifest.id,
+      localId: 'palette-board',
+      kind: 'view',
+      target: 'workspace.views',
+      title: 'Palette board',
+    });
+
+    expect(registry.list()).toHaveLength(2);
+    expect(() => registry.register({
+      pluginInstanceId: 'instance-b',
+      pluginId: validManifest.id,
+      localId: 'extract-palette',
+      kind: 'command',
+      target: 'commands',
+      title: 'Duplicate',
+    })).toThrow(/already registered/u);
+    expect(registry.revokePluginInstance('instance-a')).toBe(2);
+    expect(registry.list()).toEqual([]);
+  });
+
+  it('generates a standalone Plugin API v1 declaration and transport-safe description', () => {
+    const declaration = generatePluginSdkTypeDeclaration('@serpent/plugin-api');
+    const description = describePluginApi();
+
+    expect(PLUGIN_MANIFEST_VERSION).toBe(1);
+    expect(PLUGIN_API_VERSION).toBe(1);
+    expect(description.apiVersion).toBe(1);
+    expect(description.manifestSchema).toMatchObject({ type: 'object' });
+    expect(declaration).toContain('interface SerpentPluginApi');
+    expect(declaration).toContain("'asset.read'");
+    expect(declaration).toContain('registerContribution');
+    expect(declaration).not.toContain('zod');
+    expect(declaration).not.toContain('node:');
+  });
+});

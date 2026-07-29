@@ -1,0 +1,78 @@
+import {
+  PLUGIN_API_VERSION,
+  PLUGIN_MANIFEST_VERSION,
+  pluginContributesSchema,
+  pluginManifestSchema,
+  pluginPermissionSchema,
+} from './plugin-manifest';
+import { pluginContributionTargetSchema } from './plugin-contributions';
+
+export { PLUGIN_API_VERSION, PLUGIN_MANIFEST_VERSION } from './plugin-manifest';
+
+/**
+ * Transport-safe contract used by the package manager, the future Plugin Host
+ * and generated SDK distribution. It deliberately excludes internal IPC,
+ * filesystem paths and database details.
+ */
+export function describePluginApi(): {
+  apiVersion: typeof PLUGIN_API_VERSION;
+  manifestVersion: typeof PLUGIN_MANIFEST_VERSION;
+  manifestSchema: object;
+  contributionSchema: object;
+  permissions: readonly string[];
+  contributionTargets: readonly string[];
+} {
+  return {
+    apiVersion: PLUGIN_API_VERSION,
+    manifestVersion: PLUGIN_MANIFEST_VERSION,
+    manifestSchema: pluginManifestSchema.toJSONSchema(),
+    contributionSchema: pluginContributesSchema.toJSONSchema(),
+    permissions: pluginPermissionSchema.options,
+    contributionTargets: pluginContributionTargetSchema.options,
+  };
+}
+
+function unionLiteral(values: readonly string[]): string {
+  return values.map((value) => `'${value}'`).join(' | ');
+}
+
+/**
+ * Generate a standalone declaration rather than importing host code into a
+ * third-party package. Later SDK releases can add methods without exposing
+ * Renderer, Main, Worker, Node or Zod implementation details.
+ */
+export function generatePluginSdkTypeDeclaration(_moduleSpecifier = '@serpent/plugin-api'): string {
+  void _moduleSpecifier;
+  const permissions = unionLiteral(pluginPermissionSchema.options);
+  const targets = unionLiteral(pluginContributionTargetSchema.options);
+  return [
+    'export {};',
+    '',
+    'declare global {',
+    `  type SerpentPluginPermission = ${permissions};`,
+    `  type SerpentPluginContributionTarget = ${targets};`,
+    '',
+    '  interface SerpentPluginContribution {',
+    '    readonly id: string;',
+    '    readonly target: SerpentPluginContributionTarget;',
+    '    readonly title: string;',
+    '  }',
+    '',
+    '  interface SerpentPluginApi {',
+    '    readonly apiVersion: 1;',
+    '    readonly assets: {',
+    '      search(input: { readonly query: string; readonly limit?: number; readonly offset?: number }): Promise<unknown>;',
+    '    };',
+    '    readonly commands: {',
+    '      register(id: string, handler: () => void | Promise<void>): void;',
+    '    };',
+    '    readonly contributions: {',
+    '      registerContribution(contribution: SerpentPluginContribution): void;',
+    '    };',
+    '  }',
+    '',
+    '  const serpent: SerpentPluginApi;',
+    '}',
+    '',
+  ].join('\n');
+}
