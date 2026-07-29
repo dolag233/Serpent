@@ -16,6 +16,7 @@ import {
 
 export const PLUGIN_LIBRARY_DIRECTORY = '.serpent/plugins';
 export const PLUGIN_LIBRARY_LOCK_FILE = '.serpent/plugin-lock.json';
+export const PLUGIN_LIBRARY_SETTINGS_DIRECTORY = '.serpent/plugin-settings';
 export const PLUGIN_LOCK_VERSION = 1 as const;
 
 const nonBlankIdSchema = z.string().min(1).max(255).refine((value) => value.trim().length > 0, {

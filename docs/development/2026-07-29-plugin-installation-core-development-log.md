@@ -16,6 +16,7 @@
 - 设置中心新增“插件”页面：应用级/资源库级本地成品或 GitHub 安装、Safe Mode、包来源/权限/运行模式/完整性状态、资源库信任、冲突版本选择、风险升级确认入口与卸载均通过受限 Main IPC 完成。
 - 已验证的同源升级可显式回退：回退只在本设备的 Resolution 中固定到紧邻的上一个不可变包，不删除包、不改资源库 lock、也不会让后续自动升级覆盖该选择；再次明确选择版本后才恢复自动跟随最新兼容包。
 - 已建立 crash quarantine 基础：未来的 Plugin Supervisor 可报告某资源库中某确定包的稳定崩溃码；五分钟内连续三次会仅在本机隔离该包，解析和管理页显示可操作原因，用户可显式清除隔离。计数、隔离和原因码只写入 `userData`；当前尚无第三方入口执行，所以这不是实际 Host 崩溃已验证的宣称。
+- `PluginSettingsStore` 提供非秘密设置的三层原子 JSON 存储：用户默认值、资源库 `.serpent/plugin-settings/` 值与按资源库哈希分区的本机覆盖值按顺序合并。它只接受清单已声明且类型匹配的基础设置值；信任、隔离、设备 ID 与本机覆盖永远不写入资源库。生成设置 UI、Plugin SDK 的 Storage/Secrets API 仍留给 Phase C。
 
 ## 本增量验证
 
@@ -25,8 +26,9 @@
 | 同步代码而非同步信任 | 同上及 `plugin-device-state.json`、`plugin-device-identity.ts` | 双 userData + 同一 library fixture；`plugin-device-identity.test.ts` | 暂无两真实设备证据 |
 | 冲突选择、升级重确认、回退、Safe Mode、卸载 | `plugin-package-manager.ts`、`plugin-package-ipc.ts`、`PluginSettingsPage.tsx` | `plugin-package-manager.test.ts`；`plugin-package-ipc.test.ts`；隔离 Electron E2E 安装→信任→Safe Mode | 2026-07-30 Computer Use 已检查空状态和控件布局；回退 UI 尚待人类操作 |
 | 连续崩溃本机隔离与显式恢复 | `plugin-package-manager.ts`、`plugin-package-ipc.ts`、`PluginSettingsPage.tsx` | `plugin-package-manager.test.ts`（阈值/恢复）；`plugin-package-ipc.test.ts`（受限 bridge） | 运行时尚未加载第三方入口，不能提供真实崩溃或 UI 人工证据 |
+| 复制资源库的设置同步、信任不传播 | `plugin-settings-store.ts`、`.serpent/plugin-settings/` | `plugin-settings-store.test.ts`（两份 userData + 复制库 + 已安装包） | 无真实两设备平台证据；测试不读取真实用户库 |
 
-- `npm run test:unit -- tests/unit/plugin-package-manager.test.ts tests/unit/plugin-package-ipc.test.ts`：205 个测试文件通过，1,625 个测试通过，1 个跳过。
+- `npm run test:unit -- tests/unit/plugin-settings-store.test.ts`：206 个测试文件通过，1,627 个测试通过，1 个跳过。
 - `npm run typecheck`：通过。
 - `node scripts/run-e2e-isolated.mjs tests/e2e/plugin-management.test.ts`：1 passed。测试为临时 userData、临时库和临时成品包，覆盖设置页安装资源库插件、per-device 信任与 Safe Mode 切换；macOS 运行器报告使用副屏或主屏 fallback，未把平台隔离写成已完全证明。
 - 定向 lint：通过（仅仓库既有 `library-service.ts` Babel 体积提示）。
@@ -35,4 +37,4 @@
 
 1. 真实 packaged、Windows 与两台独立设备复制同一资源库的证据；网络 GitHub 路径也尚未做人工验收。
 2. Phase C 的 Package 激活、真实崩溃上报、健康窗口回滚和运行时 quarantine；当前安装器仍永远不执行插件入口。Phase B 仅已提供本机 quarantine 状态机和管理恢复入口。
-3. 插件设置/命名空间存储和资源库级非秘密设置同步属于后续 Host 生命周期工作，尚未作为已完成能力宣称。
+3. Host 生命周期中的生成设置 UI、命名空间 Storage 与系统凭据库 Secrets API 尚未实现；当前仅完成由 Host 调用的非秘密设置存储与同步边界。
