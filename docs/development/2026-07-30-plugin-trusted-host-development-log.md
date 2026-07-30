@@ -14,6 +14,7 @@
 
 - 设置页 i18n：`pluginRuntimeTrustedHint` / `pluginRuntimeStandardHint` / `pluginTrustTrustedConfirmHint`，明确可信模式 = 完整本机能力，权限不是系统沙箱。
 - 激活时用 `validatePluginManifestCompatibility` 复核 engines 与 `nativeModules` OS/arch/ABI（安装后 Electron ABI 变更时跳过不匹配包）。
+- Host 心跳：`plugin-trusted.heartbeat`；Main 失联后 `HEARTBEAT_TIMEOUT` 终止该进程并计入 quarantine。
 
 ## 明确说明
 

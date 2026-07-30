@@ -21,6 +21,7 @@ export const pluginRuntimeActivationFailureCodeSchema = z.enum([
   'CPU_TIMEOUT',
   'RUNTIME_PROCESS_EXITED',
   'RUNTIME_PROTOCOL_ERROR',
+  'HEARTBEAT_TIMEOUT',
 ]);
 export type PluginRuntimeActivationFailureCode = z.infer<typeof pluginRuntimeActivationFailureCodeSchema>;
 
@@ -77,6 +78,7 @@ export type PluginRuntimeParentMessage = z.infer<typeof pluginRuntimeParentMessa
 
 export const pluginRuntimeChildMessageSchema = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('plugin-runtime.ready') }),
+  z.strictObject({ type: z.literal('plugin-runtime.heartbeat') }),
   z.strictObject({
     type: z.literal('plugin-runtime.activated'),
     instanceId: instanceIdSchema,

@@ -52,6 +52,7 @@ describe('Plugin Trusted Host handler', () => {
       postMessage: (message) => {
         posted.push(message);
       },
+      heartbeatIntervalMs: 60_000,
     });
     const instanceId = '11111111-1111-4111-8111-111111111111';
     handler.handle({

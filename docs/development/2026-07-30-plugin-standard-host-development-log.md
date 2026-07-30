@@ -20,6 +20,7 @@
 ## 后续增量
 
 - 插件管理 IPC `afterMutation`：信任 / Safe Mode / 安装卸载后刷新已打开资源库的 Host 激活（无需重开库）。
+- Host 心跳：`plugin-runtime.heartbeat`；Main 失联后 `HEARTBEAT_TIMEOUT` 终止 Host 并计入 quarantine。
 
 ## 验证
 

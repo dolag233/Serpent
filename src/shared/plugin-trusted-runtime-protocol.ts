@@ -61,6 +61,7 @@ export type PluginTrustedParentMessage = z.infer<typeof pluginTrustedParentMessa
 
 export const pluginTrustedChildMessageSchema = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('plugin-trusted.ready') }),
+  z.strictObject({ type: z.literal('plugin-trusted.heartbeat') }),
   z.strictObject({
     type: z.literal('plugin-trusted.activated'),
     instanceId: instanceIdSchema,

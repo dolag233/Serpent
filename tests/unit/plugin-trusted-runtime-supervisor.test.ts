@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { PluginTrustedRuntimeSupervisor } from '../../src/main/plugin-trusted-runtime-supervisor';
 import type { PluginTrustedChildMessage } from '../../src/shared/plugin-trusted-runtime-protocol';
@@ -95,5 +95,46 @@ describe('PluginTrustedRuntimeSupervisor', () => {
 
     supervisor.deactivate('11111111-1111-4111-8111-111111111111', 'library-closed');
     expect(child.killCount).toBe(1);
+  });
+
+  it('kills a trusted host and records HEARTBEAT_TIMEOUT when heartbeats stop', async () => {
+    vi.useFakeTimers();
+    try {
+      const child = new FakeRuntimeChild();
+      const crashes: Array<{ pluginId: string; failureCode: string }> = [];
+      let now = 1_000;
+      const supervisor = new PluginTrustedRuntimeSupervisor({
+        modulePath: '/safe/plugin_trusted_host.js',
+        fork: () => child,
+        executeHostCommand: async () => ({}),
+        onCrash: (crash) => {
+          crashes.push({ pluginId: crash.pluginId, failureCode: crash.failureCode });
+        },
+        heartbeatTimeoutMs: 100,
+        heartbeatCheckIntervalMs: 50,
+        now: () => now,
+      });
+
+      const activation = supervisor.activate({
+        instanceId: '11111111-1111-4111-8111-111111111111',
+        libraryId: 'library-1',
+        libraryDirectory: '/tmp/library',
+        pluginId: 'com.example.trusted',
+        version: '1.0.0',
+        packageHash: 'a'.repeat(64),
+        packageDirectory: '/plugins/trusted',
+        entryRelativePath: 'dist/main.js',
+        permissions: ['library.read'],
+      });
+      child.emit('message', { type: 'plugin-trusted.ready' } as never);
+      await activation;
+
+      now = 1_200;
+      await vi.advanceTimersByTimeAsync(60);
+      expect(child.killCount).toBe(1);
+      expect(crashes).toEqual([{ pluginId: 'com.example.trusted', failureCode: 'HEARTBEAT_TIMEOUT' }]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

@@ -8,6 +8,8 @@ import type { AutomationScriptCommandId } from '../shared/automation-script-api'
 import type { PluginPermission } from '../plugins/plugin-manifest';
 
 const READY_TIMEOUT_MS = 5_000;
+const DEFAULT_HEARTBEAT_TIMEOUT_MS = 15_000;
+const DEFAULT_HEARTBEAT_CHECK_INTERVAL_MS = 5_000;
 
 type RuntimeChildListener = (...args: unknown[]) => void;
 
@@ -54,6 +56,8 @@ export class PluginRuntimeSupervisor {
   #ready = false;
   #readyWaiters: Array<{ resolve(): void; reject(error: Error): void }> = [];
   #readyTimer: ReturnType<typeof setTimeout> | undefined;
+  #lastHeartbeatAt = 0;
+  #heartbeatWatch: ReturnType<typeof setInterval> | undefined;
   #instances = new Map<string, {
     libraryId: string;
     libraryDirectory: string;
@@ -76,6 +80,9 @@ export class PluginRuntimeSupervisor {
         failureCode: string;
       }) => void;
       logger?: PluginRuntimeSupervisorLogger;
+      heartbeatTimeoutMs?: number;
+      heartbeatCheckIntervalMs?: number;
+      now?: () => number;
     },
   ) {}
 
@@ -152,6 +159,7 @@ export class PluginRuntimeSupervisor {
   }
 
   shutdown(): void {
+    this.#stopHeartbeatWatch();
     const child = this.#child;
     if (child === undefined) return;
     try {
@@ -164,6 +172,49 @@ export class PluginRuntimeSupervisor {
     this.#ready = false;
     this.#instances.clear();
     if (this.#readyTimer !== undefined) clearTimeout(this.#readyTimer);
+  }
+
+  #now(): number {
+    return this.options.now?.() ?? Date.now();
+  }
+
+  #startHeartbeatWatch(): void {
+    this.#stopHeartbeatWatch();
+    this.#lastHeartbeatAt = this.#now();
+    const checkIntervalMs = this.options.heartbeatCheckIntervalMs ?? DEFAULT_HEARTBEAT_CHECK_INTERVAL_MS;
+    this.#heartbeatWatch = setInterval(() => this.#checkHeartbeat(), checkIntervalMs);
+  }
+
+  #stopHeartbeatWatch(): void {
+    if (this.#heartbeatWatch !== undefined) {
+      clearInterval(this.#heartbeatWatch);
+      this.#heartbeatWatch = undefined;
+    }
+  }
+
+  #checkHeartbeat(): void {
+    if (this.#child === undefined || !this.#ready) return;
+    const timeoutMs = this.options.heartbeatTimeoutMs ?? DEFAULT_HEARTBEAT_TIMEOUT_MS;
+    if (this.#now() - this.#lastHeartbeatAt <= timeoutMs) return;
+    this.options.logger?.error(
+      'plugin.runtime.heartbeat',
+      new Error('The standard plugin host stopped sending heartbeats.'),
+    );
+    const instances = [...this.#instances.values()];
+    this.#child.kill();
+    this.#child = undefined;
+    this.#ready = false;
+    this.#instances.clear();
+    this.#stopHeartbeatWatch();
+    for (const instance of instances) {
+      this.options.onCrash?.({
+        libraryId: instance.libraryId,
+        libraryDirectory: instance.libraryDirectory,
+        pluginId: instance.pluginId,
+        packageHash: instance.packageHash,
+        failureCode: 'HEARTBEAT_TIMEOUT',
+      });
+    }
   }
 
   #waitUntilReady(): Promise<void> {
@@ -184,6 +235,7 @@ export class PluginRuntimeSupervisor {
     if (this.#readyTimer !== undefined) clearTimeout(this.#readyTimer);
     const waiters = this.#readyWaiters.splice(0);
     for (const waiter of waiters) waiter.resolve();
+    this.#startHeartbeatWatch();
   }
 
   #post(message: PluginRuntimeParentMessage): void {
@@ -191,6 +243,7 @@ export class PluginRuntimeSupervisor {
   }
 
   #onExit(code: unknown): void {
+    this.#stopHeartbeatWatch();
     const instances = [...this.#instances.values()];
     this.#child = undefined;
     this.#ready = false;
@@ -222,6 +275,10 @@ export class PluginRuntimeSupervisor {
     const message = parsed.data;
     if (message.type === 'plugin-runtime.ready') {
       this.#markReady();
+      return;
+    }
+    if (message.type === 'plugin-runtime.heartbeat') {
+      this.#lastHeartbeatAt = this.#now();
       return;
     }
     if (!this.#ready) return;

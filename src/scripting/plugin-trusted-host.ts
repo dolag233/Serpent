@@ -108,14 +108,22 @@ function createSerpentBridge(
   };
 }
 
+const DEFAULT_HEARTBEAT_INTERVAL_MS = 5_000;
+
 /**
  * Trusted plugins run with full Node in this UtilityProcess. Permissions are
  * advisory for Gateway RPC only — they do not sandbox Node itself.
  */
 export function createPluginTrustedHostHandler(options: {
   postMessage(message: PluginTrustedChildMessage): void;
+  heartbeatIntervalMs?: number;
 }): PluginTrustedHostHandler {
   const instances = new Map<string, ActiveInstance>();
+  const heartbeatIntervalMs = options.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS;
+  const heartbeatTimer = setInterval(() => {
+    options.postMessage({ type: 'plugin-trusted.heartbeat' });
+  }, heartbeatIntervalMs);
+  options.postMessage({ type: 'plugin-trusted.heartbeat' });
 
   const finish = (instanceId: string): void => {
     const current = instances.get(instanceId);
@@ -252,6 +260,7 @@ export function createPluginTrustedHostHandler(options: {
       else pending.reject(new Error(message.error?.message ?? 'The host request failed.'));
     },
     dispose(): void {
+      clearInterval(heartbeatTimer);
       for (const instanceId of [...instances.keys()]) {
         deactivate({
           type: 'plugin-trusted.deactivate',

@@ -50,10 +50,19 @@ function mapFailureCode(code: string): PluginRuntimeActivationFailureCode {
   }
 }
 
+const DEFAULT_HEARTBEAT_INTERVAL_MS = 5_000;
+
 export function createPluginStandardHostHandler(options: {
   postMessage(message: PluginRuntimeChildMessage): void;
+  heartbeatIntervalMs?: number;
 }): PluginStandardHostHandler {
   const instances = new Map<string, ActiveInstance>();
+  const heartbeatIntervalMs = options.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS;
+  const heartbeatTimer = setInterval(() => {
+    options.postMessage({ type: 'plugin-runtime.heartbeat' });
+  }, heartbeatIntervalMs);
+  // UtilityProcess keep-alive + Main liveness signal.
+  options.postMessage({ type: 'plugin-runtime.heartbeat' });
 
   const finishInstance = (instanceId: string): void => {
     const current = instances.get(instanceId);
@@ -206,6 +215,7 @@ export function createPluginStandardHostHandler(options: {
       else pending.reject(new Error(message.error?.message ?? 'The host request failed.'));
     },
     dispose(): void {
+      clearInterval(heartbeatTimer);
       for (const instanceId of [...instances.keys()]) {
         deactivate({
           type: 'plugin-runtime.deactivate',

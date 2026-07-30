@@ -8,6 +8,8 @@ import type { AutomationScriptCommandId } from '../shared/automation-script-api'
 import type { PluginPermission } from '../plugins/plugin-manifest';
 
 const READY_TIMEOUT_MS = 5_000;
+const DEFAULT_HEARTBEAT_TIMEOUT_MS = 15_000;
+const DEFAULT_HEARTBEAT_CHECK_INTERVAL_MS = 5_000;
 
 type RuntimeChildListener = (...args: unknown[]) => void;
 
@@ -47,6 +49,7 @@ export type PluginTrustedHostCommandHandler = (
 ) => Promise<unknown>;
 
 type TrackedInstance = {
+  instanceId: string;
   child: RuntimeChild;
   ready: boolean;
   libraryId: string;
@@ -56,6 +59,8 @@ type TrackedInstance = {
   permissions: readonly PluginPermission[];
   readyWaiters: Array<{ resolve(): void; reject(error: Error): void }>;
   readyTimer: ReturnType<typeof setTimeout> | undefined;
+  lastHeartbeatAt: number;
+  heartbeatWatch: ReturnType<typeof setInterval> | undefined;
 };
 
 /**
@@ -78,6 +83,9 @@ export class PluginTrustedRuntimeSupervisor {
         failureCode: string;
       }) => void;
       logger?: PluginTrustedRuntimeSupervisorLogger;
+      heartbeatTimeoutMs?: number;
+      heartbeatCheckIntervalMs?: number;
+      now?: () => number;
     },
   ) {}
 
@@ -87,6 +95,7 @@ export class PluginTrustedRuntimeSupervisor {
     }
     const child = this.options.fork(this.options.modulePath);
     const tracked: TrackedInstance = {
+      instanceId: input.instanceId,
       child,
       ready: false,
       libraryId: input.libraryId,
@@ -96,6 +105,8 @@ export class PluginTrustedRuntimeSupervisor {
       permissions: input.permissions,
       readyWaiters: [],
       readyTimer: undefined,
+      lastHeartbeatAt: 0,
+      heartbeatWatch: undefined,
     };
     this.#instances.set(input.instanceId, tracked);
     child.stdout?.on('data', (chunk) => {
@@ -168,6 +179,44 @@ export class PluginTrustedRuntimeSupervisor {
       .map(([instanceId]) => instanceId);
   }
 
+  #now(): number {
+    return this.options.now?.() ?? Date.now();
+  }
+
+  #startHeartbeatWatch(tracked: TrackedInstance): void {
+    this.#stopHeartbeatWatch(tracked);
+    tracked.lastHeartbeatAt = this.#now();
+    const checkIntervalMs = this.options.heartbeatCheckIntervalMs ?? DEFAULT_HEARTBEAT_CHECK_INTERVAL_MS;
+    tracked.heartbeatWatch = setInterval(() => this.#checkHeartbeat(tracked), checkIntervalMs);
+  }
+
+  #stopHeartbeatWatch(tracked: TrackedInstance): void {
+    if (tracked.heartbeatWatch !== undefined) {
+      clearInterval(tracked.heartbeatWatch);
+      tracked.heartbeatWatch = undefined;
+    }
+  }
+
+  #checkHeartbeat(tracked: TrackedInstance): void {
+    if (!this.#instances.has(tracked.instanceId) || !tracked.ready) return;
+    const timeoutMs = this.options.heartbeatTimeoutMs ?? DEFAULT_HEARTBEAT_TIMEOUT_MS;
+    if (this.#now() - tracked.lastHeartbeatAt <= timeoutMs) return;
+    this.options.logger?.error(
+      'plugin.trusted.heartbeat',
+      new Error('The trusted plugin host stopped sending heartbeats.'),
+      { pluginId: tracked.pluginId },
+    );
+    this.options.onCrash?.({
+      libraryId: tracked.libraryId,
+      libraryDirectory: tracked.libraryDirectory,
+      pluginId: tracked.pluginId,
+      packageHash: tracked.packageHash,
+      failureCode: 'HEARTBEAT_TIMEOUT',
+    });
+    tracked.child.kill();
+    this.#clearTracked(tracked.instanceId);
+  }
+
   #waitReady(tracked: TrackedInstance): Promise<void> {
     if (tracked.ready) return Promise.resolve();
     return new Promise((resolve, reject) => {
@@ -186,6 +235,7 @@ export class PluginTrustedRuntimeSupervisor {
     if (tracked.readyTimer !== undefined) clearTimeout(tracked.readyTimer);
     const waiters = tracked.readyWaiters.splice(0);
     for (const waiter of waiters) waiter.resolve();
+    this.#startHeartbeatWatch(tracked);
   }
 
   #post(tracked: TrackedInstance, message: PluginTrustedParentMessage): void {
@@ -195,6 +245,7 @@ export class PluginTrustedRuntimeSupervisor {
   #clearTracked(instanceId: string): void {
     const tracked = this.#instances.get(instanceId);
     if (tracked === undefined) return;
+    this.#stopHeartbeatWatch(tracked);
     if (tracked.readyTimer !== undefined) clearTimeout(tracked.readyTimer);
     this.#instances.delete(instanceId);
   }
@@ -231,6 +282,10 @@ export class PluginTrustedRuntimeSupervisor {
     const message = parsed.data;
     if (message.type === 'plugin-trusted.ready') {
       this.#markReady(tracked);
+      return;
+    }
+    if (message.type === 'plugin-trusted.heartbeat') {
+      tracked.lastHeartbeatAt = this.#now();
       return;
     }
     if (!tracked.ready) return;

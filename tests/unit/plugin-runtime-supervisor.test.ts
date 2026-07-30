@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { PluginRuntimeSupervisor } from '../../src/main/plugin-runtime-supervisor';
 import type { PluginRuntimeChildMessage } from '../../src/shared/plugin-runtime-utility-protocol';
@@ -103,5 +103,46 @@ describe('PluginRuntimeSupervisor', () => {
 
     supervisor.shutdown();
     expect(child.killCount).toBe(1);
+  });
+
+  it('kills the host and records HEARTBEAT_TIMEOUT when heartbeats stop', async () => {
+    vi.useFakeTimers();
+    try {
+      const child = new FakeRuntimeChild();
+      const crashes: Array<{ pluginId: string; failureCode: string }> = [];
+      let now = 1_000;
+      const supervisor = new PluginRuntimeSupervisor({
+        modulePath: '/safe/plugin_standard_host.js',
+        fork: () => child,
+        executeHostCommand: async () => ({}),
+        onCrash: (crash) => {
+          crashes.push({ pluginId: crash.pluginId, failureCode: crash.failureCode });
+        },
+        heartbeatTimeoutMs: 100,
+        heartbeatCheckIntervalMs: 50,
+        now: () => now,
+      });
+
+      const ready = supervisor.ensureHostRunning();
+      child.emit('message', { type: 'plugin-runtime.ready' } as never);
+      await ready;
+      await supervisor.activate({
+        instanceId: '11111111-1111-4111-8111-111111111111',
+        libraryId: 'library-1',
+        libraryDirectory: '/tmp/library',
+        pluginId: 'com.example.demo',
+        version: '1.0.0',
+        packageHash: 'a'.repeat(64),
+        entryJavaScript: 'async function activate() {}',
+        permissions: ['library.read'],
+      });
+
+      now = 1_200;
+      await vi.advanceTimersByTimeAsync(60);
+      expect(child.killCount).toBe(1);
+      expect(crashes).toEqual([{ pluginId: 'com.example.demo', failureCode: 'HEARTBEAT_TIMEOUT' }]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
