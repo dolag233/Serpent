@@ -12,7 +12,7 @@
   },
   "runtime": {
     "mode": "standard",
-    "entry": "dist/main.js"
+    "entry": "entry/main.js"
   },
   "permissions": [
     "asset.read",

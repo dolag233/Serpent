@@ -47,7 +47,7 @@ describe('fixed standard Host probe fixture', () => {
     expect(installed.package.manifest.id).toBe('com.serpent.standard-host-probe');
 
     const storage = new PluginStorageStore(userData);
-    const entryAbsolute = path.join(installed.package.packageDirectory, 'dist/main.js');
+    const entryAbsolute = path.join(installed.package.packageDirectory, 'entry/main.js');
     const entryJavaScript = readFileSync(entryAbsolute, 'utf8');
 
     const result = await runPluginGuestActivate({
