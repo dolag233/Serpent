@@ -3704,8 +3704,8 @@ async function confirmDesktopAutomationWrite(): Promise<boolean> {
     defaultId: 1,
     cancelId: 0,
     title: '运行自动化脚本',
-    message: '此脚本可以读取资产、修改评分、复制文件路径，以及重命名或移入回收站。',
-    detail: '脚本只会获得当前资源库的受限自动化能力；不会获得磁盘、网络、数据库或永久删除权限。每次运行都会记录到应用日志。',
+    message: '此脚本可以读取资产、标签与合集，修改评分，创建标签或空文件夹，复制文件路径，以及重命名或移入回收站。',
+    detail: '脚本只会获得当前资源库的受限自动化能力；不会获得网络下载、新建资源库、批量导入、磁盘直读、数据库或永久删除权限。每次运行都会记录到应用日志。',
   });
   return response.response === 1;
 }

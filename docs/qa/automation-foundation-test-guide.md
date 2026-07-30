@@ -11,7 +11,7 @@
 当前阶段是开发基础设施加受限 Desktop Console 验收。可验证的是：
 
 - 旧的通用 CLI 已被移除；
-- 13 个只读资源库命令只能通过统一 Gateway 分发；
+- 已注册的只读与整理类写命令只能通过统一 Gateway 分发；
 - 调用者不能伪造资源库、来源或能力授权；
 - 只读自动化请求不能回落到桌面写入路径；
 - QuickJS 原型能够执行 TypeScript 和受限异步桥接，并拒绝 Node、文件系统、网络、导入、无限循环和资源滥用。
@@ -66,7 +66,7 @@ node scripts/run-vitest-with-electron.mjs run --config vitest.config.ts tests/un
 
 | 检查 | 预期 |
 | --- | --- |
-| 命令注册表 | 只有 13 个只读命令；没有 `tag.create` 等写命令 |
+| 命令注册表 | 只读命令加上评分/标签/空文件夹等整理写入；网络导入与资源库生命周期仍不在脚本面 |
 | API 契约 | 每项命令都带 API 版本、能力要求、JSON Schema 与 MCP 描述 |
 | 分页 | 集合命令默认 50 条，最大 200 条，并返回 `items`、`total`、`offset`、`limit`、`hasMore` |
 | 三个调用来源 | `desktop-console`、`script`、`mcp` 对同一注册命令得到同样的领域结果 |

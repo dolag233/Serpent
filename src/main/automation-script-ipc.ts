@@ -192,8 +192,13 @@ export function registerAutomationScriptIpc(options: AutomationScriptIpcOptions)
         declaredCapabilities: [
           'library.read',
           'folder.read',
+          'folder.write',
           'asset.read',
           'metadata.read',
+          'tag.read',
+          'tag.write',
+          'collection.read',
+          'job.read',
           'metadata.write',
           'file.rename',
           'trash.write',

@@ -6,8 +6,8 @@
 
 ## 运行与确认
 
-- 未保存的 Console 代码每次点击“运行”都会先确认它可读取资产、修改评分、复制路径、重命名或移入回收站。保存脚本首次运行也会确认；之后仅当脚本文本、目标资源库或所需能力改变时才会再次确认。
-- 评分和复制路径在本次运行授权后执行。
+- 未保存的 Console 代码每次点击“运行”都会先确认它可读取资产/标签/合集、修改评分、创建标签或空文件夹、复制路径、重命名或移入回收站。保存脚本首次运行也会确认；之后仅当脚本文本、目标资源库或所需能力改变时才会再次确认。
+- 评分、标签整理和空文件夹创建在本次运行授权后执行。
 - 每一条真实文件操作会再显示一次**计划确认**。计划只显示数量、冲突/不可执行数量和能否撤销，不泄露文件绝对路径；确认后如果资源库发生变化，Worker 会拒绝过期计划，而不是继续操作旧目标。
 - “移入回收站”可从 Serpent 回收站恢复；自动化不会永久删除任何文件。
 - 脚本运行、拒绝和失败会记录到应用日志；脚本不会得到绝对路径。复制路径是唯一例外：路径由 Main 直接写入系统剪贴板，脚本只收到复制数量。
@@ -18,8 +18,29 @@
 ## 可用 API
 
 ```ts
+serpent.library.inspect()
+// -> { id, displayName }（不含资源库路径）
+
 serpent.folders.list({ limit?, offset? })
 // -> { items: [{ id, parentId, name }], total, offset, limit, hasMore }
+serpent.folders.create(name, parentFolderId?)
+// -> { id, parentId, name }
+
+serpent.linkedFolders.list({ limit?, offset? })
+// -> { items: [{ id, name, status, assetCount }], ... }（不含绝对路径）
+
+serpent.tags.list({ limit?, offset? })
+serpent.tags.create(name)
+serpent.tags.assign(assetIds, tagIds)
+serpent.tags.remove(assetIds, tagIds)
+
+serpent.collections.list({ limit?, offset? })
+serpent.collections.getMemberships(assetIds, { limit?, offset? })
+
+serpent.smartCollections.list({ limit?, offset? })
+
+serpent.jobs.media.list({ limit?, offset? })
+serpent.jobs.ai.status({ jobIds?, limit?, offset? })
 
 serpent.assets.search({ query, limit?, offset? })
 serpent.assets.list({ folderId?, recursive?, limit?, offset? })
@@ -27,6 +48,7 @@ serpent.assets.list({ folderId?, recursive?, limit?, offset? })
 
 serpent.assets.getMetadata(assetId)
 // -> { tags, rating, favorite, automaticPalette, ... }
+serpent.assets.getExtractedMetadata(assetId)
 
 serpent.assets.setRating(assetIds, 0 | 1 | 2 | 3 | 4 | 5)
 serpent.assets.copyFilePaths(assetIds)
@@ -165,8 +187,36 @@ return result;
 
 它只在原始托管文件夹仍存在、原始名字没有被占用且回收站文件仍存在时恢复。否则保持在回收站，并在 `skipped` 中返回 `original_folder_missing`、`name_conflict` 或 `trash_file_missing`。
 
+### 7. 创建标签并批量打到搜索结果
+
+```ts
+const tag = await serpent.tags.create('天气-雨');
+const assets = await allSearch(null);
+const batch = assets.slice(0, 100).map((asset) => asset.id);
+const result = batch.length === 0
+  ? { assignedCount: 0, skipped: [] }
+  : await serpent.tags.assign(batch, [tag.id]);
+return { tag, matched: assets.length, ...result };
+```
+
+标签创建与分配在运行授权后立即执行，不走文件计划确认。
+
 ## 当前边界
 
+### 脚本 / Desktop Console 可用（0023 Phase D 整理切片）
+
+- 只读：资源库检查、文件夹/链接文件夹/标签/合集/智能合集列表、资产搜索与元数据、提取元数据、媒体与 AI 任务状态。
+- 写入（执行级授权，无 plan）：评分、标签创建/分配/移除、空文件夹创建。
+- 写入（plan 确认）：复制路径、重命名、移入/恢复回收站。
+
+### 明确不在脚本 API（插件 / 可信边界，见 0024）
+
+- `library.create` / `library.delete-from-disk` — 资源库生命周期，仅 Main UI / 可信插件。
+- `file.import` / `net.fetch` / `storage.*` — 外部 I/O 与网络，仅插件 manifest 声明 + 宿主审批。
+- `ai.enqueue` / `job.manage` — AI 入队与任务管理，后续插件切片开放。
+- 任意 Shell、SQL、环境变量、Node 内置模块。
+
+MCP 第一阶段同样不公开上述写操作与脚本执行；复杂工作流应生成 `.serpent.ts` 供 Desktop Console 审阅授权。
+
 - 已支持保存和重新打开 Console 代码，但尚未提供独立 `.d.ts` 类型包、模块式 `export default async function` 脚本入口、执行历史 UI、安装包验证或 MCP transport。
-- 脚本不能创建/修改标签、喜欢状态、描述、AI 设置或资源库配置；它只能使用上表的受限 API。
 - 单次脚本执行有 CPU、内存、输出、待处理 Promise 和 60 秒墙钟限制。可用“停止”或关闭窗口取消未开始的命令。

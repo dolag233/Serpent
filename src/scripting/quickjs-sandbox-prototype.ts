@@ -610,6 +610,186 @@ function scriptFolderPageResult(value: unknown): unknown {
   };
 }
 
+/** Library inspect must never expose absolute libraryPath to the guest. */
+function scriptLibraryInspectResult(value: unknown): unknown {
+  if (!value || typeof value !== 'object') return value;
+  const library = value as Record<string, unknown>;
+  if (typeof library.libraryId !== 'string') return value;
+  return {
+    id: library.libraryId,
+    displayName: typeof library.displayName === 'string' ? library.displayName : library.libraryId,
+  };
+}
+
+function scriptFolderSummary(value: unknown): unknown {
+  if (!value || typeof value !== 'object') return value;
+  const folder = value as Record<string, unknown>;
+  if (typeof folder.id === 'string') {
+    return {
+      id: folder.id,
+      parentId: typeof folder.parentId === 'string' ? folder.parentId : null,
+      name: typeof folder.name === 'string' ? folder.name : folder.id,
+    };
+  }
+  if (typeof folder.folderId !== 'string') return value;
+  return {
+    id: folder.folderId,
+    parentId: typeof folder.parentFolderId === 'string' ? folder.parentFolderId : null,
+    name: typeof folder.name === 'string' ? folder.name : folder.folderId,
+  };
+}
+
+function scriptTagPageResult(value: unknown): unknown {
+  if (!value || typeof value !== 'object' || !Array.isArray((value as { items?: unknown }).items)) {
+    return value;
+  }
+  const page = value as {
+    items: unknown[];
+    total?: unknown;
+    offset?: unknown;
+    limit?: unknown;
+    hasMore?: unknown;
+  };
+  return {
+    items: page.items.map((item) => {
+      if (!item || typeof item !== 'object') return item;
+      const tag = item as Record<string, unknown>;
+      if (typeof tag.id === 'string') {
+        return {
+          id: tag.id,
+          name: typeof tag.name === 'string' ? tag.name : tag.id,
+          assetCount: typeof tag.assetCount === 'number' ? tag.assetCount : 0,
+        };
+      }
+      if (typeof tag.tagId !== 'string') return item;
+      return {
+        id: tag.tagId,
+        name: typeof tag.name === 'string' ? tag.name : tag.tagId,
+        assetCount: typeof tag.assetCount === 'number' ? tag.assetCount : 0,
+      };
+    }),
+    total: typeof page.total === 'number' ? page.total : page.items.length,
+    offset: typeof page.offset === 'number' ? page.offset : 0,
+    limit: typeof page.limit === 'number' ? page.limit : page.items.length,
+    hasMore: page.hasMore === true,
+  };
+}
+
+function scriptCollectionPageResult(value: unknown): unknown {
+  if (!value || typeof value !== 'object' || !Array.isArray((value as { items?: unknown }).items)) {
+    return value;
+  }
+  const page = value as {
+    items: unknown[];
+    total?: unknown;
+    offset?: unknown;
+    limit?: unknown;
+    hasMore?: unknown;
+  };
+  return {
+    items: page.items.map((item) => {
+      if (!item || typeof item !== 'object' || typeof (item as { collectionId?: unknown }).collectionId !== 'string') {
+        return item;
+      }
+      const collection = item as Record<string, unknown> & { collectionId: string };
+      return {
+        id: collection.collectionId,
+        parentId: typeof collection.parentId === 'string' ? collection.parentId : null,
+        name: typeof collection.name === 'string' ? collection.name : collection.collectionId,
+        description: typeof collection.description === 'string' ? collection.description : null,
+        assetCount: typeof collection.assetCount === 'number' ? collection.assetCount : 0,
+        childCollectionCount: typeof collection.childCollectionCount === 'number'
+          ? collection.childCollectionCount
+          : 0,
+      };
+    }),
+    total: typeof page.total === 'number' ? page.total : page.items.length,
+    offset: typeof page.offset === 'number' ? page.offset : 0,
+    limit: typeof page.limit === 'number' ? page.limit : page.items.length,
+    hasMore: page.hasMore === true,
+  };
+}
+
+function scriptSmartCollectionPageResult(value: unknown): unknown {
+  if (!value || typeof value !== 'object' || !Array.isArray((value as { items?: unknown }).items)) {
+    return value;
+  }
+  const page = value as {
+    items: unknown[];
+    total?: unknown;
+    offset?: unknown;
+    limit?: unknown;
+    hasMore?: unknown;
+  };
+  return {
+    items: page.items.map((item) => {
+      if (!item || typeof item !== 'object' || typeof (item as { collectionId?: unknown }).collectionId !== 'string') {
+        return item;
+      }
+      const collection = item as Record<string, unknown> & { collectionId: string };
+      return {
+        id: collection.collectionId,
+        name: typeof collection.name === 'string' ? collection.name : collection.collectionId,
+        queryDefinition: typeof collection.queryDefinition === 'string' ? collection.queryDefinition : '',
+        assetCount: typeof collection.assetCount === 'number' ? collection.assetCount : 0,
+      };
+    }),
+    total: typeof page.total === 'number' ? page.total : page.items.length,
+    offset: typeof page.offset === 'number' ? page.offset : 0,
+    limit: typeof page.limit === 'number' ? page.limit : page.items.length,
+    hasMore: page.hasMore === true,
+  };
+}
+
+/** Linked folder absoluteRootPath must never reach the guest. */
+function scriptLinkedFolderPageResult(value: unknown): unknown {
+  if (!value || typeof value !== 'object' || !Array.isArray((value as { items?: unknown }).items)) {
+    return value;
+  }
+  const page = value as {
+    items: unknown[];
+    total?: unknown;
+    offset?: unknown;
+    limit?: unknown;
+    hasMore?: unknown;
+  };
+  return {
+    items: page.items.map((item) => {
+      if (!item || typeof item !== 'object' || typeof (item as { folderId?: unknown }).folderId !== 'string') {
+        return item;
+      }
+      const folder = item as Record<string, unknown> & { folderId: string };
+      return {
+        id: folder.folderId,
+        name: typeof folder.displayName === 'string' ? folder.displayName : folder.folderId,
+        status: folder.status === 'offline' ? 'offline' : 'available',
+        assetCount: typeof folder.assetCount === 'number' ? folder.assetCount : 0,
+      };
+    }),
+    total: typeof page.total === 'number' ? page.total : page.items.length,
+    offset: typeof page.offset === 'number' ? page.offset : 0,
+    limit: typeof page.limit === 'number' ? page.limit : page.items.length,
+    hasMore: page.hasMore === true,
+  };
+}
+
+function scriptExtractedMetadataResult(value: unknown): unknown {
+  if (!value || typeof value !== 'object') return value;
+  const wrapper = value as Record<string, unknown>;
+  const payload = wrapper.result && typeof wrapper.result === 'object'
+    ? wrapper.result as Record<string, unknown>
+    : wrapper;
+  if (typeof payload.assetId !== 'string') return value;
+  return {
+    assetId: payload.assetId,
+    status: payload.status === 'pending' || payload.status === 'failed' || payload.status === 'missing'
+      ? payload.status
+      : 'ready',
+    metadata: payload.metadata ?? null,
+    errorCode: typeof payload.errorCode === 'string' ? payload.errorCode : null,
+  };
+}
+
 async function waitForGuestPromise(
   context: QuickJSContext,
   promiseHandle: QuickJSHandle,
@@ -884,12 +1064,103 @@ export async function runQuickJsSandboxPrototype(
     if (host.executeAutomationCommand !== undefined) {
       const assets = context.newObject();
       const folders = context.newObject();
+      const library = context.newObject();
+      const linkedFolders = context.newObject();
+      const tags = context.newObject();
+      const collections = context.newObject();
+      const smartCollections = context.newObject();
+      const jobs = context.newObject();
+      const mediaJobs = context.newObject();
+      const aiJobs = context.newObject();
       const listFolders = context.newFunction('list', (inputHandle) => createDeferredHostCall(
         host.executeAutomationCommand!(
           'folder.list',
           inputHandle === undefined ? {} : context.dump(inputHandle),
         ),
         (value) => newQuickJsJsonValue(context, scriptFolderPageResult(value)),
+      ));
+      const createFolder = context.newFunction('create', (nameHandle, parentFolderIdHandle) => createDeferredHostCall(
+        host.executeAutomationCommand!('folder.create', {
+          name: context.dump(nameHandle),
+          ...(parentFolderIdHandle === undefined
+            ? {}
+            : { parentFolderId: context.dump(parentFolderIdHandle) }),
+        }),
+        (value) => newQuickJsJsonValue(context, scriptFolderSummary(value)),
+      ));
+      const inspectLibrary = context.newFunction('inspect', () => createDeferredHostCall(
+        host.executeAutomationCommand!('library.inspect', {}),
+        (value) => newQuickJsJsonValue(context, scriptLibraryInspectResult(value)),
+      ));
+      const listLinkedFolders = context.newFunction('list', (inputHandle) => createDeferredHostCall(
+        host.executeAutomationCommand!(
+          'linked-folder.list',
+          inputHandle === undefined ? {} : context.dump(inputHandle),
+        ),
+        (value) => newQuickJsJsonValue(context, scriptLinkedFolderPageResult(value)),
+      ));
+      const listTags = context.newFunction('list', (inputHandle) => createDeferredHostCall(
+        host.executeAutomationCommand!(
+          'tag.list',
+          inputHandle === undefined ? {} : context.dump(inputHandle),
+        ),
+        (value) => newQuickJsJsonValue(context, scriptTagPageResult(value)),
+      ));
+      const createTag = context.newFunction('create', (nameHandle) => createDeferredHostCall(
+        host.executeAutomationCommand!('tag.create', { name: context.dump(nameHandle) }),
+        newQuickJsJsonValue.bind(undefined, context),
+      ));
+      const assignTags = context.newFunction('assign', (assetIdsHandle, tagIdsHandle) => createDeferredHostCall(
+        host.executeAutomationCommand!('tag.assign', {
+          assetIds: context.dump(assetIdsHandle),
+          tagIds: context.dump(tagIdsHandle),
+        }),
+        newQuickJsJsonValue.bind(undefined, context),
+      ));
+      const removeTags = context.newFunction('remove', (assetIdsHandle, tagIdsHandle) => createDeferredHostCall(
+        host.executeAutomationCommand!('tag.remove', {
+          assetIds: context.dump(assetIdsHandle),
+          tagIds: context.dump(tagIdsHandle),
+        }),
+        newQuickJsJsonValue.bind(undefined, context),
+      ));
+      const listCollections = context.newFunction('list', (inputHandle) => createDeferredHostCall(
+        host.executeAutomationCommand!(
+          'collection.list',
+          inputHandle === undefined ? {} : context.dump(inputHandle),
+        ),
+        (value) => newQuickJsJsonValue(context, scriptCollectionPageResult(value)),
+      ));
+      const getCollectionMemberships = context.newFunction('getMemberships', (assetIdsHandle, inputHandle) => {
+        const pagination = inputHandle === undefined ? {} : context.dump(inputHandle);
+        return createDeferredHostCall(
+          host.executeAutomationCommand!('collection.assets.memberships', {
+            assetIds: context.dump(assetIdsHandle),
+            ...(pagination && typeof pagination === 'object' ? pagination as Record<string, unknown> : {}),
+          }),
+          newQuickJsJsonValue.bind(undefined, context),
+        );
+      });
+      const listSmartCollections = context.newFunction('list', (inputHandle) => createDeferredHostCall(
+        host.executeAutomationCommand!(
+          'smart-collection.list',
+          inputHandle === undefined ? {} : context.dump(inputHandle),
+        ),
+        (value) => newQuickJsJsonValue(context, scriptSmartCollectionPageResult(value)),
+      ));
+      const listMediaJobs = context.newFunction('list', (inputHandle) => createDeferredHostCall(
+        host.executeAutomationCommand!(
+          'media.jobs.list',
+          inputHandle === undefined ? {} : context.dump(inputHandle),
+        ),
+        newQuickJsJsonValue.bind(undefined, context),
+      ));
+      const getAiJobStatus = context.newFunction('status', (inputHandle) => createDeferredHostCall(
+        host.executeAutomationCommand!(
+          'ai.jobs.status',
+          inputHandle === undefined ? {} : context.dump(inputHandle),
+        ),
+        newQuickJsJsonValue.bind(undefined, context),
       ));
       const search = context.newFunction('search', (inputHandle) => createDeferredHostCall(
         host.executeAutomationCommand!('asset.search', context.dump(inputHandle)),
@@ -904,6 +1175,12 @@ export async function runQuickJsSandboxPrototype(
           assetId: context.dump(assetIdHandle),
         }),
         newQuickJsJsonValue.bind(undefined, context),
+      ));
+      const getExtractedMetadata = context.newFunction('getExtractedMetadata', (assetIdHandle) => createDeferredHostCall(
+        host.executeAutomationCommand!('asset.extracted-metadata.get', {
+          assetId: context.dump(assetIdHandle),
+        }),
+        (value) => newQuickJsJsonValue(context, scriptExtractedMetadataResult(value)),
       ));
       const setRating = context.newFunction('setRating', (assetIdsHandle, ratingHandle) => createDeferredHostCall(
         host.executeAutomationCommand!('asset.rating.set', {
@@ -959,6 +1236,7 @@ export async function runQuickJsSandboxPrototype(
       context.setProp(assets, 'search', search);
       context.setProp(assets, 'list', list);
       context.setProp(assets, 'getMetadata', getMetadata);
+      context.setProp(assets, 'getExtractedMetadata', getExtractedMetadata);
       context.setProp(assets, 'setRating', setRating);
       context.setProp(assets, 'copyFilePaths', copyFilePaths);
       context.setProp(assets, 'moveToTrash', moveToTrash);
@@ -968,17 +1246,46 @@ export async function runQuickJsSandboxPrototype(
       context.setProp(trash, 'restoreIfOriginalVacant', restoreIfOriginalVacant);
       context.setProp(palettes, 'mostFrequent', mostFrequent);
       context.setProp(folders, 'list', listFolders);
+      context.setProp(folders, 'create', createFolder);
+      context.setProp(library, 'inspect', inspectLibrary);
+      context.setProp(linkedFolders, 'list', listLinkedFolders);
+      context.setProp(tags, 'list', listTags);
+      context.setProp(tags, 'create', createTag);
+      context.setProp(tags, 'assign', assignTags);
+      context.setProp(tags, 'remove', removeTags);
+      context.setProp(collections, 'list', listCollections);
+      context.setProp(collections, 'getMemberships', getCollectionMemberships);
+      context.setProp(smartCollections, 'list', listSmartCollections);
+      context.setProp(mediaJobs, 'list', listMediaJobs);
+      context.setProp(aiJobs, 'status', getAiJobStatus);
+      context.setProp(jobs, 'media', mediaJobs);
+      context.setProp(jobs, 'ai', aiJobs);
       context.setProp(serpent, 'assets', assets);
       context.setProp(serpent, 'folders', folders);
+      context.setProp(serpent, 'library', library);
+      context.setProp(serpent, 'linkedFolders', linkedFolders);
+      context.setProp(serpent, 'tags', tags);
+      context.setProp(serpent, 'collections', collections);
+      context.setProp(serpent, 'smartCollections', smartCollections);
+      context.setProp(serpent, 'jobs', jobs);
       context.setProp(serpent, 'trash', trash);
       context.setProp(serpent, 'palettes', palettes);
       assets.dispose();
       folders.dispose();
+      library.dispose();
+      linkedFolders.dispose();
+      tags.dispose();
+      collections.dispose();
+      smartCollections.dispose();
+      jobs.dispose();
+      mediaJobs.dispose();
+      aiJobs.dispose();
       trash.dispose();
       palettes.dispose();
       search.dispose();
       list.dispose();
       getMetadata.dispose();
+      getExtractedMetadata.dispose();
       setRating.dispose();
       copyFilePaths.dispose();
       moveToTrash.dispose();
@@ -988,6 +1295,18 @@ export async function runQuickJsSandboxPrototype(
       restoreIfOriginalVacant.dispose();
       mostFrequent.dispose();
       listFolders.dispose();
+      createFolder.dispose();
+      inspectLibrary.dispose();
+      listLinkedFolders.dispose();
+      listTags.dispose();
+      createTag.dispose();
+      assignTags.dispose();
+      removeTags.dispose();
+      listCollections.dispose();
+      getCollectionMemberships.dispose();
+      listSmartCollections.dispose();
+      listMediaJobs.dispose();
+      getAiJobStatus.dispose();
     }
     context.setProp(consoleObject, 'log', log);
     context.setProp(context.global, 'serpent', serpent);

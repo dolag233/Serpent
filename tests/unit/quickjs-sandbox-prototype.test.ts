@@ -65,6 +65,92 @@ describe('QuickJS/WASM sandbox engine prototype', () => {
     ]);
   });
 
+  it('exposes organize automation without leaking library or linked-folder paths to the script guest', async () => {
+    const commands: Array<{ commandId: string; input: unknown }> = [];
+    const result = await runQuickJsSandboxPrototype(
+      `
+        const library = await serpent.library.inspect();
+        const linked = await serpent.linkedFolders.list();
+        const tags = await serpent.tags.list();
+        const created = await serpent.tags.create('天气-云');
+        const assigned = await serpent.tags.assign(['asset-a'], [created.id]);
+        const folder = await serpent.folders.create('天气');
+        return {
+          library,
+          linked: linked.items[0],
+          tag: tags.items[0],
+          created,
+          assigned,
+          folder,
+          hasLibraryPath: 'libraryPath' in library,
+          hasAbsoluteRoot: 'absoluteRootPath' in linked.items[0],
+        };
+      `,
+      {
+        executeAutomationCommand: async (commandId, input) => {
+          commands.push({ commandId, input });
+          switch (commandId) {
+            case 'library.inspect':
+              return {
+                libraryId: 'library-1',
+                displayName: 'Temp',
+                libraryPath: '/must-not-reach-script/Temp.serpentlibrary',
+              };
+            case 'linked-folder.list':
+              return {
+                items: [{
+                  folderId: 'linked-a',
+                  displayName: 'External',
+                  status: 'available',
+                  assetCount: 3,
+                  absoluteRootPath: '/must-not-reach-script/external',
+                }],
+                total: 1,
+                offset: 0,
+                limit: 50,
+                hasMore: false,
+              };
+            case 'tag.list':
+              return {
+                items: [{ tagId: 'tag-a', name: '概念', assetCount: 2 }],
+                total: 1,
+                offset: 0,
+                limit: 50,
+                hasMore: false,
+              };
+            case 'tag.create':
+              return { id: 'tag-new', name: '天气-云', assetCount: 0 };
+            case 'tag.assign':
+              return { assignedCount: 1, skipped: [] };
+            case 'folder.create':
+              return { id: 'folder-new', parentId: null, name: '天气' };
+            default:
+              throw new Error(`Unexpected command ${commandId}`);
+          }
+        },
+      },
+    );
+
+    expect(result.value).toEqual({
+      library: { id: 'library-1', displayName: 'Temp' },
+      linked: { id: 'linked-a', name: 'External', status: 'available', assetCount: 3 },
+      tag: { id: 'tag-a', name: '概念', assetCount: 2 },
+      created: { id: 'tag-new', name: '天气-云', assetCount: 0 },
+      assigned: { assignedCount: 1, skipped: [] },
+      folder: { id: 'folder-new', parentId: null, name: '天气' },
+      hasLibraryPath: false,
+      hasAbsoluteRoot: false,
+    });
+    expect(commands.map((entry) => entry.commandId)).toEqual([
+      'library.inspect',
+      'linked-folder.list',
+      'tag.list',
+      'tag.create',
+      'tag.assign',
+      'folder.create',
+    ]);
+  });
+
   it('exposes asset automation without leaking relative or absolute paths to the script guest', async () => {
     const commands: Array<{ commandId: string; input: unknown }> = [];
     const result = await runQuickJsSandboxPrototype(

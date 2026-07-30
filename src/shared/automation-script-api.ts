@@ -15,8 +15,10 @@ export type AutomationScriptAssetSearchInput = z.infer<typeof automationScriptAs
 
 export const automationScriptCommandIdSchema = z.enum([
   'folder.list',
+  'folder.create',
   'asset.list',
   'asset.metadata.get',
+  'asset.extracted-metadata.get',
   'asset.search',
   'asset.rating.set',
   'asset.paths.copy',
@@ -26,6 +28,17 @@ export const automationScriptCommandIdSchema = z.enum([
   'asset.list-trash',
   'asset.restore-if-original-vacant',
   'asset.palette.aggregate-recent',
+  'library.inspect',
+  'linked-folder.list',
+  'tag.list',
+  'tag.create',
+  'tag.assign',
+  'tag.remove',
+  'collection.list',
+  'collection.assets.memberships',
+  'smart-collection.list',
+  'media.jobs.list',
+  'ai.jobs.status',
 ]);
 export type AutomationScriptCommandId = z.infer<typeof automationScriptCommandIdSchema>;
 

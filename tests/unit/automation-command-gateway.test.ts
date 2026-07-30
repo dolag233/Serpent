@@ -126,7 +126,7 @@ class RecordingWorker implements AutomationWorkerClient {
 
 describe('Automation Command Registry', () => {
   it('contains complete read/write descriptors and exports JSON/TypeScript contracts', () => {
-    expect(automationCommandRegistry).toHaveLength(21);
+    expect(automationCommandRegistry).toHaveLength(25);
     expect(new Set(automationCommandRegistry.map((command) => command.commandId)).size)
       .toBe(automationCommandRegistry.length);
     const registryIds = new Set(automationCommandRegistry.map((command) => command.commandId));
@@ -135,12 +135,19 @@ describe('Automation Command Registry', () => {
     }
     for (const command of automationCommandRegistry) {
       expect(command.apiVersion).toBe(1);
-      if (command.commandId === 'asset.rating.set') {
+      if (command.commandId === 'asset.rating.set'
+        || command.commandId === 'tag.create'
+        || command.commandId === 'tag.assign'
+        || command.commandId === 'tag.remove') {
         expect(command.impact).toBe('metadata-write');
         expect(command.approvalPolicy).toBe('execution');
         expect(command.mcp.public).toBe(false);
       } else if (command.commandId === 'asset.paths.copy') {
         expect(command.impact).not.toBe('read');
+        expect(command.approvalPolicy).toBe('execution');
+        expect(command.mcp.public).toBe(false);
+      } else if (command.commandId === 'folder.create') {
+        expect(command.impact).toBe('file-write');
         expect(command.approvalPolicy).toBe('execution');
         expect(command.mcp.public).toBe(false);
       } else if (['asset.trash', 'asset.rename-file', 'asset.rename-files', 'asset.restore-if-original-vacant'].includes(command.commandId)) {
@@ -161,7 +168,8 @@ describe('Automation Command Registry', () => {
     const description = describeAutomationCommands();
     expect(description.apiVersion).toBe(1);
     expect(description.commands.map((command) => command.commandId)).toContain('asset.search');
-    expect(description.commands.some((command) => command.commandId === ('tag.create' as never))).toBe(false);
+    expect(description.commands.map((command) => command.commandId)).toContain('tag.create');
+    expect(description.commands.map((command) => command.commandId)).toContain('folder.create');
 
     const declaration = generateAutomationTypeDeclaration('@serpent/test-api');
     expect(declaration).toContain('const serpent: SerpentAutomationApi');
@@ -171,6 +179,10 @@ describe('Automation Command Registry', () => {
     expect(declaration).toContain('copyFilePaths(assetIds: readonly string[]');
     expect(declaration).toContain('renameFiles(items: readonly');
     expect(declaration).toContain('restoreIfOriginalVacant(assetIds: readonly string[]');
+    expect(declaration).toContain('tags: {');
+    expect(declaration).toContain('create(name: string): Promise<SerpentScriptTag>');
+    expect(declaration).toContain('folders: {');
+    expect(declaration).toContain('create(name: string, parentFolderId?: string | null)');
     expect(declaration).not.toContain('zod');
     expect(declaration).not.toContain('cli');
   });
@@ -232,6 +244,77 @@ describe('Automation Command Gateway', () => {
       libraryId: 'library-1',
       assetIds: ['asset-1', 'asset-2', 'missing'],
       rating: 4,
+    }]);
+  });
+
+  it('routes tag create/assign and folder create through metadata/file-write Gateway contracts', async () => {
+    const tagWorker = new RecordingWorker({
+      ok: true,
+      type: 'tag.created',
+      tag: { tagId: 'tag-new', name: '天气-雨', assetCount: 0 },
+    });
+    const tagGateway = gateway(tagWorker, {
+      grantedCapabilities: [...allReadCapabilities, 'tag.write'],
+    });
+    await expect(tagGateway.execute(request('tag.create', { name: '天气-雨' }))).resolves.toEqual({
+      ok: true,
+      apiVersion: 1,
+      commandId: 'tag.create',
+      executionId: 'execution-1',
+      result: { id: 'tag-new', name: '天气-雨', assetCount: 0 },
+    });
+    expect(tagWorker.commands).toEqual([{
+      type: 'tag.create',
+      libraryId: 'library-1',
+      name: '天气-雨',
+    }]);
+
+    const assignWorker = new RecordingWorker({
+      ok: true,
+      type: 'tag.assigned',
+      assignedCount: 1,
+      skipped: [],
+    });
+    const assignGateway = gateway(assignWorker, {
+      grantedCapabilities: [...allReadCapabilities, 'tag.write'],
+    });
+    await expect(assignGateway.execute(request('tag.assign', {
+      assetIds: ['asset-1'],
+      tagIds: ['tag-new'],
+    }))).resolves.toEqual({
+      ok: true,
+      apiVersion: 1,
+      commandId: 'tag.assign',
+      executionId: 'execution-1',
+      result: { assignedCount: 1, skipped: [] },
+    });
+
+    const folderWorker = new RecordingWorker({
+      ok: true,
+      type: 'folder.created',
+      folder: {
+        folderId: 'folder-new',
+        parentFolderId: null,
+        name: '天气',
+        relativePath: '天气',
+        directAssetCount: 0,
+        childFolderCount: 0,
+      },
+    });
+    const folderGateway = gateway(folderWorker, {
+      grantedCapabilities: [...allReadCapabilities, 'folder.write'],
+    });
+    await expect(folderGateway.execute(request('folder.create', { name: '天气' }))).resolves.toEqual({
+      ok: true,
+      apiVersion: 1,
+      commandId: 'folder.create',
+      executionId: 'execution-1',
+      result: { id: 'folder-new', parentId: null, name: '天气' },
+    });
+    expect(folderWorker.commands).toEqual([{
+      type: 'folder.create',
+      libraryId: 'library-1',
+      name: '天气',
     }]);
   });
 
@@ -571,6 +654,10 @@ describe('Automation Command Gateway', () => {
       error: { code: 'AUTOMATION_API_VERSION_UNSUPPORTED' },
     });
     await expect(commandGateway.execute(request('tag.create'))).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'AUTOMATION_CAPABILITY_DENIED' },
+    });
+    await expect(commandGateway.execute(request('library.destroy'))).resolves.toMatchObject({
       ok: false,
       error: { code: 'AUTOMATION_COMMAND_NOT_FOUND' },
     });

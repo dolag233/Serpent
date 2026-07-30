@@ -147,6 +147,7 @@ export const semverRangeSchema = z.string().min(1).max(256).superRefine((value, 
 export const pluginPermissionSchema = z.enum([
   'library.read',
   'folder.read',
+  'folder.write',
   'asset.read',
   'metadata.read',
   'tag.read',
