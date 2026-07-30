@@ -55,6 +55,13 @@ export async function runPluginGuestActivate(input: {
   waitUntilDeactivate: () => Promise<void>;
   signal?: AbortSignal;
   wallTimeoutMs?: number;
+  /** Test/host overrides for QuickJS resource limits. */
+  sandboxLimits?: Partial<{
+    cpuTimeoutMs: number;
+    memoryLimitBytes: number;
+    maxOutputBytes: number;
+    maxPendingHostCalls: number;
+  }>;
   onActivated?: () => void;
 }): Promise<PluginGuestActivateResult> {
   if (input.entryJavaScript.trim().length === 0) {
@@ -83,6 +90,7 @@ export async function runPluginGuestActivate(input: {
       {
         signal: input.signal,
         ...(input.wallTimeoutMs === undefined ? {} : { wallTimeoutMs: input.wallTimeoutMs }),
+        ...(input.sandboxLimits ?? {}),
         // Plugin entries are already compiled; skip TS transpile cost by keeping
         // the source JS-compatible. The prototype still runs transpile which is
         // a no-op for plain JS.

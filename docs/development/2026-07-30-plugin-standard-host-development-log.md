@@ -21,6 +21,7 @@
 
 - 插件管理 IPC `afterMutation`：信任 / Safe Mode / 安装卸载后刷新已打开资源库的 Host 激活（无需重开库）。
 - Host 心跳：`plugin-runtime.heartbeat`；Main 失联后 `HEARTBEAT_TIMEOUT` 终止 Host 并计入 quarantine。
+- 隔离对抗单测：`plugin-standard-host-isolation.test.ts` 覆盖 process/require/import/fs/network 不可见，以及 CPU/内存/输出洪水可终止；Supervisor.activate 不阻塞等待 guest 完成。
 
 ## 验证
 
@@ -29,6 +30,7 @@ npm run typecheck
 node scripts/run-vitest-with-electron.mjs run --config vitest.config.ts \
   tests/unit/plugin-runtime-utility-protocol.test.ts \
   tests/unit/plugin-standard-host.test.ts \
+  tests/unit/plugin-standard-host-isolation.test.ts \
   tests/unit/plugin-runtime-supervisor.test.ts \
   tests/unit/plugin-activation-coordinator.test.ts
 ```
