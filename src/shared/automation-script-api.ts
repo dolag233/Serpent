@@ -18,6 +18,7 @@ export const automationScriptCommandIdSchema = z.enum([
   'folder.create',
   'asset.list',
   'asset.metadata.get',
+  'asset.metadata.set',
   'asset.extracted-metadata.get',
   'asset.search',
   'asset.rating.set',
@@ -35,10 +36,14 @@ export const automationScriptCommandIdSchema = z.enum([
   'tag.assign',
   'tag.remove',
   'collection.list',
+  'collection.create',
+  'collection.assets.add',
+  'collection.assets.remove',
   'collection.assets.memberships',
   'smart-collection.list',
   'media.jobs.list',
   'ai.jobs.status',
+  'ai.enqueue',
 ]);
 export type AutomationScriptCommandId = z.infer<typeof automationScriptCommandIdSchema>;
 
@@ -144,6 +149,35 @@ export const automationScriptCancelInputSchema = z.strictObject({
 });
 export type AutomationScriptCancelInput = z.infer<typeof automationScriptCancelInputSchema>;
 
+export const automationScriptHistoryInputSchema = z.strictObject({
+  libraryId: identifier,
+  limit: z.number().int().min(1).max(100).default(20),
+});
+export type AutomationScriptHistoryInput = z.infer<typeof automationScriptHistoryInputSchema>;
+
+export const automationScriptHistoryEntrySchema = z.strictObject({
+  executionId: z.string().min(1),
+  logId: z.string().min(1),
+  source: z.enum(['desktop-console', 'script', 'mcp', 'test', 'plugin']),
+  status: z.string().min(1).max(64),
+  commandCount: z.number().int().nonnegative(),
+  succeededCommandCount: z.number().int().nonnegative(),
+  failedCommandCount: z.number().int().nonnegative(),
+  failureCode: z.string().max(128).nullable(),
+  createdAt: z.string().min(1),
+  finishedAt: z.string().nullable(),
+});
+export type AutomationScriptHistoryEntry = z.infer<typeof automationScriptHistoryEntrySchema>;
+
+export const automationScriptHistoryResultSchema = z.union([
+  z.strictObject({
+    ok: z.literal(true),
+    entries: z.array(automationScriptHistoryEntrySchema).max(100),
+  }),
+  z.strictObject({ ok: z.literal(false), error: publicErrorSchema }),
+]);
+export type AutomationScriptHistoryResult = z.infer<typeof automationScriptHistoryResultSchema>;
+
 export interface SerpentAutomationScriptApi {
   open(): Promise<AutomationScriptFileResult>;
   save(input: AutomationScriptSaveInput): Promise<AutomationScriptFileResult>;
@@ -152,4 +186,5 @@ export interface SerpentAutomationScriptApi {
   command(input: AutomationScriptCommandInput): Promise<AutomationScriptCommandResult>;
   complete(input: AutomationScriptCompleteInput): Promise<void>;
   cancel(input: AutomationScriptCancelInput): Promise<void>;
+  history(input: AutomationScriptHistoryInput): Promise<AutomationScriptHistoryResult>;
 }

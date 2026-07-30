@@ -95,12 +95,19 @@ import {
 } from './automation-execution-journal';
 import { registerAutomationScriptIpc } from './automation-script-ipc';
 import { AutomationScriptFileService } from './automation-script-file-service';
+import {
+  maybeStartAutomationMcpMode,
+  redirectConsoleToStderrForMcp,
+} from './automation-mcp-bootstrap';
+import type { AutomationMcpHostHandle } from './automation-mcp-host';
 import { ScriptRuntimeSupervisor } from './script-runtime-supervisor';
 import { PluginRuntimeSupervisor, type PluginRuntimeHostCommandHandler, type PluginRuntimeStorageHandler } from './plugin-runtime-supervisor';
+import { normalizeAutomationAssetSearchInput } from './normalize-automation-asset-search-input';
 import { PluginTrustedRuntimeSupervisor } from './plugin-trusted-runtime-supervisor';
 import { PluginActivationCoordinator } from './plugin-activation-coordinator';
 import { PluginStorageStore, PluginStorageStoreError } from './plugin-storage-store';
 import { automationCapabilitiesFromPluginPermissions } from '../plugins/plugin-permission-capabilities';
+import { createContributionRegistry } from '../plugins/plugin-contributions';
 import { loadOrCreatePluginDeviceId } from './plugin-device-identity';
 import { createPluginPackageRequestHandler } from './plugin-package-ipc';
 import { PluginPackageManager } from './plugin-package-manager';
@@ -223,12 +230,25 @@ if (process.env.SERPENT_E2E === "1") {
   );
 }
 
+// Headless MCP stdio host (0023 Phase C). Isolate userData and keep JSON-RPC
+// frames off console helpers before Forge/Vite noise is considered separately.
+const mcpModeEnabled = process.env.SERPENT_MCP === "1";
+if (mcpModeEnabled) {
+  const mcpUserData = process.env.SERPENT_MCP_USER_DATA_PATH;
+  app.setPath(
+    "userData",
+    mcpUserData && path.isAbsolute(mcpUserData)
+      ? mcpUserData
+      : path.join(tmpdir(), "serpent-mcp-user-data", String(process.pid)),
+  );
+}
+
 // Dev multi-instance (Serpent-i6xg): isolate userData so SingletonLock / prefs
 // do not collide. Prefer `npm run start:multi`. Do not open the same library
 // for writes from two GUIs — SQLite write coordination is CLI/desktop lease
 // territory (ADR-0021), not dual-GUI.
 const allowMultiInstance = process.env.SERPENT_ALLOW_MULTI_INSTANCE === "1";
-if (allowMultiInstance && process.env.SERPENT_E2E !== "1") {
+if (allowMultiInstance && process.env.SERPENT_E2E !== "1" && !mcpModeEnabled) {
   app.setPath(
     "userData",
     path.join(app.getPath("userData"), "dev-instances", `pid-${process.pid}`),
@@ -254,6 +274,7 @@ let startupComplete = false;
 let logger: AppLogger | undefined;
 let appLogPath: string | undefined;
 let automationExecutionJournal: AutomationExecutionJournal | undefined;
+let automationMcpHost: AutomationMcpHostHandle | undefined;
 let automationCommandGateway: AutomationCommandGateway | undefined;
 let scriptRuntimeSupervisor: ScriptRuntimeSupervisor | undefined;
 let pluginRuntimeSupervisor: PluginRuntimeSupervisor | undefined;
@@ -3735,7 +3756,7 @@ async function confirmDesktopAutomationWrite(): Promise<boolean> {
     defaultId: 1,
     cancelId: 0,
     title: '运行自动化脚本',
-    message: '此脚本可以读取资产、标签与合集，修改评分，创建标签或空文件夹，复制文件路径，以及重命名或移入回收站。',
+    message: '此脚本可以读取资产、标签与合集，修改评分与元数据，创建标签或空文件夹，整理合集，入队 AI 分析，复制文件路径，以及重命名或移入回收站。',
     detail: '脚本只会获得当前资源库的受限自动化能力；不会获得网络下载、新建资源库、批量导入、磁盘直读、数据库或永久删除权限。每次运行都会记录到应用日志。',
   });
   return response.response === 1;
@@ -3850,11 +3871,17 @@ async function startApplication(): Promise<void> {
       libraryId: context.libraryId,
       grantedCapabilities: automationCapabilitiesFromPluginPermissions(context.permissions),
     });
+    const commandInput = commandId === 'asset.search'
+      ? normalizeAutomationAssetSearchInput(input)
+      : input;
+    if (commandInput === undefined) {
+      throw new Error('Invalid search query.');
+    }
     const result = await gateway.execute({
       apiVersion: AUTOMATION_API_VERSION,
       commandId,
       executionId: context.instanceId,
-      input,
+      input: commandInput,
     });
     if (!result.ok) {
       throw new Error(result.error.message ?? result.error.code);
@@ -3940,6 +3967,7 @@ async function startApplication(): Promise<void> {
       packageManager: pluginPackageManager,
       supervisor: pluginRuntimeSupervisor,
       trustedSupervisor: pluginTrustedRuntimeSupervisor,
+      contributions: createContributionRegistry(),
       compatibility: {
         serpentVersion: app.getVersion(),
         pluginApiVersion: PLUGIN_API_VERSION,
@@ -4407,6 +4435,24 @@ async function startApplication(): Promise<void> {
     logger,
   });
 
+  if (mcpModeEnabled) {
+    if (!automationExecutionJournal || !automationCommandGateway || !workerClient || !logger) {
+      throw new Error('MCP mode requires journal, gateway, worker, and logger.');
+    }
+    redirectConsoleToStderrForMcp();
+    automationMcpHost = await maybeStartAutomationMcpMode({
+      journal: automationExecutionJournal,
+      gateway: automationCommandGateway,
+      request: (command) => workerClient!.request(command),
+      logger,
+    });
+    if (automationMcpHost === null) {
+      throw new Error('SERPENT_MCP=1 but MCP host did not start.');
+    }
+    startupComplete = true;
+    return;
+  }
+
   await createMainWindow();
 
   extensionBrowseFoldersStorePath = path.join(
@@ -4454,7 +4500,7 @@ if (!hasSingleInstanceLock) {
     });
 
   app.on("activate", () => {
-    if (!startupComplete) return;
+    if (!startupComplete || mcpModeEnabled) return;
     if (BrowserWindow.getAllWindows().length === 0) void createMainWindow();
     else focusMainWindow();
   });
@@ -4476,9 +4522,15 @@ if (!hasSingleInstanceLock) {
       // Best effort.
     }
 
-    void workerClient.shutdown().finally(() => {
-      quitAfterShutdown = true;
-      app.quit();
-    });
+    const mcpClose = automationMcpHost?.close() ?? Promise.resolve();
+    void mcpClose
+      .catch((error: unknown) => {
+        logger?.error("automation.mcp.close", error);
+      })
+      .then(() => workerClient?.shutdown())
+      .finally(() => {
+        quitAfterShutdown = true;
+        app.quit();
+      });
   });
 }

@@ -126,7 +126,7 @@ class RecordingWorker implements AutomationWorkerClient {
 
 describe('Automation Command Registry', () => {
   it('contains complete read/write descriptors and exports JSON/TypeScript contracts', () => {
-    expect(automationCommandRegistry).toHaveLength(25);
+    expect(automationCommandRegistry).toHaveLength(30);
     expect(new Set(automationCommandRegistry.map((command) => command.commandId)).size)
       .toBe(automationCommandRegistry.length);
     const registryIds = new Set(automationCommandRegistry.map((command) => command.commandId));
@@ -136,9 +136,14 @@ describe('Automation Command Registry', () => {
     for (const command of automationCommandRegistry) {
       expect(command.apiVersion).toBe(1);
       if (command.commandId === 'asset.rating.set'
+        || command.commandId === 'asset.metadata.set'
         || command.commandId === 'tag.create'
         || command.commandId === 'tag.assign'
-        || command.commandId === 'tag.remove') {
+        || command.commandId === 'tag.remove'
+        || command.commandId === 'collection.create'
+        || command.commandId === 'collection.assets.add'
+        || command.commandId === 'collection.assets.remove'
+        || command.commandId === 'ai.enqueue') {
         expect(command.impact).toBe('metadata-write');
         expect(command.approvalPolicy).toBe('execution');
         expect(command.mcp.public).toBe(false);
@@ -183,6 +188,10 @@ describe('Automation Command Registry', () => {
     expect(declaration).toContain('create(name: string): Promise<SerpentScriptTag>');
     expect(declaration).toContain('folders: {');
     expect(declaration).toContain('create(name: string, parentFolderId?: string | null)');
+    expect(declaration).toContain('setMetadata(input: { assetId: string');
+    expect(declaration).toContain('create(name: string, parentId?: string | null)');
+    expect(declaration).toContain('addAssets(collectionId: string, assetIds: readonly string[])');
+    expect(declaration).toContain('enqueue(input?: { assetIds?: readonly string[]');
     expect(declaration).not.toContain('zod');
     expect(declaration).not.toContain('cli');
   });
@@ -315,6 +324,131 @@ describe('Automation Command Gateway', () => {
       type: 'folder.create',
       libraryId: 'library-1',
       name: '天气',
+    }]);
+  });
+
+  it('routes collection.create, asset.metadata.set, and ai.enqueue through Gateway contracts', async () => {
+    const collectionWorker = new RecordingWorker({
+      ok: true,
+      type: 'collection.created',
+      collection: {
+        collectionId: 'collection-new',
+        parentId: null,
+        name: '灵感',
+        description: null,
+        coverAssetId: null,
+        position: 0,
+        assetCount: 0,
+        childCollectionCount: 0,
+      },
+    });
+    const collectionGateway = gateway(collectionWorker, {
+      grantedCapabilities: [...allReadCapabilities, 'collection.write'],
+    });
+    await expect(collectionGateway.execute(request('collection.create', { name: '灵感' }))).resolves.toEqual({
+      ok: true,
+      apiVersion: 1,
+      commandId: 'collection.create',
+      executionId: 'execution-1',
+      result: { id: 'collection-new', parentId: null, name: '灵感', assetCount: 0 },
+    });
+    expect(collectionWorker.commands).toEqual([{
+      type: 'collection.create',
+      libraryId: 'library-1',
+      name: '灵感',
+    }]);
+
+    const metadataWorker = new RecordingWorker({
+      ok: true,
+      type: 'asset.metadata.updated',
+      metadata: {
+        assetId: 'asset-1',
+        description: '雨后',
+        rating: 4,
+        favorite: true,
+        palette: null,
+        automaticPalette: [],
+        effectivePalette: [],
+        paletteSource: null,
+        sourcePageUrl: null,
+        author: null,
+        tags: [],
+        entityVersion: 2,
+        updatedAt: '2026-07-28T00:00:00.000Z',
+      },
+    });
+    const metadataGateway = gateway(metadataWorker, {
+      grantedCapabilities: [...allReadCapabilities, 'metadata.write'],
+    });
+    await expect(metadataGateway.execute(request('asset.metadata.set', {
+      assetId: 'asset-1',
+      expectedVersion: 1,
+      description: '雨后',
+      rating: 4,
+      favorite: true,
+    }))).resolves.toEqual({
+      ok: true,
+      apiVersion: 1,
+      commandId: 'asset.metadata.set',
+      executionId: 'execution-1',
+      result: {
+        assetId: 'asset-1',
+        description: '雨后',
+        rating: 4,
+        favorite: true,
+        palette: null,
+        automaticPalette: [],
+        effectivePalette: [],
+        paletteSource: null,
+        sourcePageUrl: null,
+        author: null,
+        tags: [],
+        entityVersion: 2,
+        updatedAt: '2026-07-28T00:00:00.000Z',
+      },
+    });
+    expect(metadataWorker.commands).toEqual([{
+      type: 'asset.metadata.set',
+      libraryId: 'library-1',
+      assetId: 'asset-1',
+      expectedVersion: 1,
+      description: '雨后',
+      rating: 4,
+      favorite: true,
+    }]);
+
+    const aiWorker = new RecordingWorker({
+      ok: true,
+      type: 'ai.jobs.enqueued',
+      libraryId: 'library-1',
+      enqueued: 2,
+      jobIds: ['job-1', 'job-2'],
+      alreadyPendingJobIds: ['job-pending'],
+      skippedAssetIds: ['asset-missing'],
+    });
+    const aiGateway = gateway(aiWorker, {
+      grantedCapabilities: [...allReadCapabilities, 'ai.enqueue'],
+    });
+    await expect(aiGateway.execute(request('ai.enqueue', {
+      assetIds: ['asset-1', 'asset-2'],
+      resumePaused: true,
+    }))).resolves.toEqual({
+      ok: true,
+      apiVersion: 1,
+      commandId: 'ai.enqueue',
+      executionId: 'execution-1',
+      result: {
+        enqueued: 2,
+        jobIds: ['job-1', 'job-2'],
+        alreadyPendingJobIds: ['job-pending'],
+        skippedAssetIds: ['asset-missing'],
+      },
+    });
+    expect(aiWorker.commands).toEqual([{
+      type: 'ai.enqueue-analysis',
+      libraryId: 'library-1',
+      assetIds: ['asset-1', 'asset-2'],
+      resumePaused: true,
     }]);
   });
 

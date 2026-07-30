@@ -9,11 +9,14 @@
 - 新增能力 `folder.write`（自动化 capability 与插件 permission 同步）。
 - QuickJS `serpent` 绑定、类型声明、授权对话框文案、脚本使用说明与人类验收条目 `AUT-007`。
 
-## 明确不做（属插件 / 可信宿主）
+## 明确不做（本切片）
 
-- `net.fetch` / 外网下载
-- `library.create`
-- `file.import`
+- 本切片未接通 `library.create` / `file.import`（**产品上属于脚本/MCP Action**，见 2026-07-30 对 ADR-0025/0023 的修订；后续 Phase E 实施）。
+- 本切片未接通原始 `net.fetch`、插件 `storage.*`、Contribution API。
+
+## 2026-07-30 边界更正
+
+产品负责人确认：Console 与 MCP 同一 Action 面；`library.create` / `file.import` 不是“仅插件”。本日志上文“明确不做属插件”的旧表述作废，以 ADR-0025 修订为准。
 
 ## 证据
 

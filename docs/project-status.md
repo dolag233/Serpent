@@ -3,6 +3,13 @@
 > 更新时间：2026-07-29
 > 事实来源：`docs/implementation/mvp-roadmap.md` 与各切片开发/审查/QA 文档
 
+## 2026-07-30 脚本优先于插件
+
+- 产品负责人确认：插件建立在脚本/Gateway Action 之上，**先完成脚本化既定目标，再推进插件切片**。
+- Phase C（MCP stdio）与 Phase D（低风险写入 + 执行历史）已实现到可人类验收；下一规格阶段为 Phase E（`library.create` / `file.import` 计划批准）。
+- 当前执行焦点：`Serpent-y51c.8`（Phase E）在 `y51c.7` 关闭后；`bb56.2` 长 Job fencing 仍开放。
+- 插件 Epic `Serpent-upsn` 暂停加宽，直至 Phase E 收口或产品另行调整。
+
 ## 2026-07-29 脚本—插件平台设计
 
 - 产品负责人确认 0024 顶层设计：插件与脚本共享 Automation Command Gateway 和
@@ -28,8 +35,8 @@
 - 人类验收队列保持较大规模，因人力有限不要求全部清空；发布前按首发范围挑选核心旅程并记录其验收证据。
 - 发布主线仍被媒体 bundle 晋升、packaged 验证、macOS/Windows 安装卸载重装证据、测试同步和 `main` 合流阻断。
 - 新增 MVP 后路线图：优先研究 FBX/OBJ 模型预览与 PBR 渲染，其次是 PBR 贴图和 HDRI 预览；Blend/Maya/3ds Max/Cinema 4D 先做可行性研究，不承诺首版支持。详见 [`mvp-roadmap.md`](implementation/mvp-roadmap.md)。
-- 产品负责人确认脚本化 + MCP 比 3D/PBR 更重要。通用 CLI 与其只读实现已撤回；现在启动共享 Automation Registry/Gateway、Desktop Console 脚本和只读 MCP。写入、多进程租约、detached job 与双平台打包仍等待 v0.1.0 领域/发布收口。完整规范见 [`0023-automation-scripting-mcp-framework.md`](implementation/0023-automation-scripting-mcp-framework.md)。
-- 自动化分阶段工作记录为 Beads epic `Serpent-y51c`：先做 Registry/Gateway 和沙箱原型，再做 Desktop Console 与只读 MCP，之后才是写租约、计划批准和打包。
+- 产品负责人确认脚本化 + MCP 比 3D/PBR 更重要。通用 CLI 与其只读实现已撤回；共享 Automation Registry/Gateway，Desktop Console 与 MCP **同一领域 Action 面**（差别仅调用者）。2026-07-30 对齐：`library.create` / `file.import` 等属脚本/MCP Action；菜单/Hook/UI 属插件；高风险操作对本机用户与 Agent 同等批准且禁止自提权；脚本可 headless 无库建库。完整规范见 [`0023`](implementation/0023-automation-scripting-mcp-framework.md) 与 [`ADR-0025`](adr/0025-automation-core-script-runtime-and-mcp.md)。
+- 自动化分阶段工作记录为 Beads epic `Serpent-y51c`：先做 Registry/Gateway 和沙箱原型，再做 Desktop Console 与 MCP 适配器，之后是写租约、导入/建库计划批准和打包。
 - `Serpent-bb56.1` 的旧 CLI 基础层及 `CLI-001/002` 验收项已随用户决定撤回；不得用其历史冒烟或数据库哈希结果证明当前自动化实现。
 
 ## 2026-07-27 画布精确锚点与序列图

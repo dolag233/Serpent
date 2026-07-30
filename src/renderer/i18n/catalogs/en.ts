@@ -278,6 +278,8 @@ export const en = {
       reset: "Restore example",
       stop: "Stop",
       openRunLog: "View this run's log",
+      historyTitle: "Recent automation runs",
+      historyEmpty: "No recorded runs for this library yet.",
       run: "Run"
     }
   },

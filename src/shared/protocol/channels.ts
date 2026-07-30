@@ -45,6 +45,7 @@ export const AUTOMATION_SCRIPT_EXECUTE_CHANNEL = 'serpent:automation:script-exec
 export const AUTOMATION_SCRIPT_COMMAND_CHANNEL = 'serpent:automation:script-command' as const;
 export const AUTOMATION_SCRIPT_COMPLETE_CHANNEL = 'serpent:automation:script-complete' as const;
 export const AUTOMATION_SCRIPT_CANCEL_CHANNEL = 'serpent:automation:script-cancel' as const;
+export const AUTOMATION_SCRIPT_HISTORY_CHANNEL = 'serpent:automation:script-history' as const;
 /** Renderer plugin manager → Main. File paths remain Main-owned. */
 export const PLUGIN_MANAGER_CHANNEL = 'serpent:plugin-manager:request' as const;
 

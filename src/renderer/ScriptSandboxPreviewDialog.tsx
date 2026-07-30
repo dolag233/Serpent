@@ -6,6 +6,7 @@ import {
 } from '../shared/script-sandbox-limits';
 import type {
   AutomationScriptFileResult,
+  AutomationScriptHistoryEntry,
   AutomationScriptRuntimeFailureCode,
   SerpentAutomationScriptApi,
 } from '../shared/automation-script-api';
@@ -68,10 +69,25 @@ export function ScriptSandboxPreviewDialog({
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<PreviewResult>(null);
   const [scriptFileMessage, setScriptFileMessage] = useState<string | null>(null);
+  const [historyEntries, setHistoryEntries] = useState<AutomationScriptHistoryEntry[]>([]);
 
   useEffect(() => {
     onExecutionSettledRef.current = onExecutionSettled;
   }, [onExecutionSettled]);
+
+  useEffect(() => {
+    if (!open || !libraryId || !automation) return;
+    let cancelled = false;
+    void automation.history({ libraryId, limit: 12 }).then((history) => {
+      if (cancelled || !history.ok) return;
+      setHistoryEntries(history.entries);
+    }).catch(() => {
+      if (!cancelled) setHistoryEntries([]);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, libraryId, automation, result]);
 
   if (!open) return null;
 
@@ -309,6 +325,32 @@ export function ScriptSandboxPreviewDialog({
             </>
           ) : null}
           {!running && !result ? <p>{t('automation.preview.ready')}</p> : null}
+        </div>
+
+        <div className="script-sandbox-preview-history">
+          <p className="script-sandbox-preview-result-title">{t('automation.preview.historyTitle')}</p>
+          {historyEntries.length === 0 ? (
+            <p className="field-help">{t('automation.preview.historyEmpty')}</p>
+          ) : (
+            <ul className="script-sandbox-preview-history-list">
+              {historyEntries.map((entry) => (
+                <li key={entry.executionId}>
+                  <span>{entry.status}</span>
+                  <span>{entry.source}</span>
+                  <span>{entry.succeededCommandCount}/{entry.commandCount}</span>
+                  {onOpenExecutionLog ? (
+                    <button
+                      className="linkish-button"
+                      onClick={() => onOpenExecutionLog(entry.logId)}
+                      type="button"
+                    >
+                      {t('automation.preview.openRunLog')}
+                    </button>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
 
         <div className="dialog-actions">

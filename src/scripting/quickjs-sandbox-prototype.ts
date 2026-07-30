@@ -1220,6 +1220,27 @@ export async function runQuickJsSandboxPrototype(
           newQuickJsJsonValue.bind(undefined, context),
         );
       });
+      const createCollection = context.newFunction('create', (nameHandle, parentIdHandle) => createDeferredHostCall(
+        host.executeAutomationCommand!('collection.create', {
+          name: context.dump(nameHandle),
+          ...(parentIdHandle === undefined ? {} : { parentId: context.dump(parentIdHandle) }),
+        }),
+        newQuickJsJsonValue.bind(undefined, context),
+      ));
+      const addCollectionAssets = context.newFunction('addAssets', (collectionIdHandle, assetIdsHandle) => createDeferredHostCall(
+        host.executeAutomationCommand!('collection.assets.add', {
+          collectionId: context.dump(collectionIdHandle),
+          assetIds: context.dump(assetIdsHandle),
+        }),
+        newQuickJsJsonValue.bind(undefined, context),
+      ));
+      const removeCollectionAssets = context.newFunction('removeAssets', (collectionIdHandle, assetIdsHandle) => createDeferredHostCall(
+        host.executeAutomationCommand!('collection.assets.remove', {
+          collectionId: context.dump(collectionIdHandle),
+          assetIds: context.dump(assetIdsHandle),
+        }),
+        newQuickJsJsonValue.bind(undefined, context),
+      ));
       const listSmartCollections = context.newFunction('list', (inputHandle) => createDeferredHostCall(
         host.executeAutomationCommand!(
           'smart-collection.list',
@@ -1241,6 +1262,13 @@ export async function runQuickJsSandboxPrototype(
         ),
         newQuickJsJsonValue.bind(undefined, context),
       ));
+      const enqueueAi = context.newFunction('enqueue', (inputHandle) => createDeferredHostCall(
+        host.executeAutomationCommand!(
+          'ai.enqueue',
+          inputHandle === undefined ? {} : context.dump(inputHandle),
+        ),
+        newQuickJsJsonValue.bind(undefined, context),
+      ));
       const search = context.newFunction('search', (inputHandle) => createDeferredHostCall(
         host.executeAutomationCommand!('asset.search', context.dump(inputHandle)),
         (value) => newQuickJsJsonValue(context, scriptAssetPageResult(value)),
@@ -1253,6 +1281,10 @@ export async function runQuickJsSandboxPrototype(
         host.executeAutomationCommand!('asset.metadata.get', {
           assetId: context.dump(assetIdHandle),
         }),
+        newQuickJsJsonValue.bind(undefined, context),
+      ));
+      const setMetadata = context.newFunction('setMetadata', (inputHandle) => createDeferredHostCall(
+        host.executeAutomationCommand!('asset.metadata.set', context.dump(inputHandle)),
         newQuickJsJsonValue.bind(undefined, context),
       ));
       const getExtractedMetadata = context.newFunction('getExtractedMetadata', (assetIdHandle) => createDeferredHostCall(
@@ -1315,6 +1347,7 @@ export async function runQuickJsSandboxPrototype(
       context.setProp(assets, 'search', search);
       context.setProp(assets, 'list', list);
       context.setProp(assets, 'getMetadata', getMetadata);
+      context.setProp(assets, 'setMetadata', setMetadata);
       context.setProp(assets, 'getExtractedMetadata', getExtractedMetadata);
       context.setProp(assets, 'setRating', setRating);
       context.setProp(assets, 'copyFilePaths', copyFilePaths);
@@ -1334,9 +1367,13 @@ export async function runQuickJsSandboxPrototype(
       context.setProp(tags, 'remove', removeTags);
       context.setProp(collections, 'list', listCollections);
       context.setProp(collections, 'getMemberships', getCollectionMemberships);
+      context.setProp(collections, 'create', createCollection);
+      context.setProp(collections, 'addAssets', addCollectionAssets);
+      context.setProp(collections, 'removeAssets', removeCollectionAssets);
       context.setProp(smartCollections, 'list', listSmartCollections);
       context.setProp(mediaJobs, 'list', listMediaJobs);
       context.setProp(aiJobs, 'status', getAiJobStatus);
+      context.setProp(aiJobs, 'enqueue', enqueueAi);
       context.setProp(jobs, 'media', mediaJobs);
       context.setProp(jobs, 'ai', aiJobs);
       context.setProp(serpent, 'assets', assets);
@@ -1364,6 +1401,7 @@ export async function runQuickJsSandboxPrototype(
       search.dispose();
       list.dispose();
       getMetadata.dispose();
+      setMetadata.dispose();
       getExtractedMetadata.dispose();
       setRating.dispose();
       copyFilePaths.dispose();
@@ -1383,9 +1421,13 @@ export async function runQuickJsSandboxPrototype(
       removeTags.dispose();
       listCollections.dispose();
       getCollectionMemberships.dispose();
+      createCollection.dispose();
+      addCollectionAssets.dispose();
+      removeCollectionAssets.dispose();
       listSmartCollections.dispose();
       listMediaJobs.dispose();
       getAiJobStatus.dispose();
+      enqueueAi.dispose();
     }
     context.setProp(consoleObject, 'log', log);
     context.setProp(context.global, 'serpent', serpent);

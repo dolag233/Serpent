@@ -21,11 +21,13 @@ Library
 
 ## 自动化访问面
 
-Desktop、脚本与 MCP 都是第一方访问面，但 `Automation Command Gateway` 才是规范能力边界。所有入口调用相同的领域命令并遵守相同不变量，不得各自拥有 SQLite、文件操作或后台任务实现。JS/TS 脚本是复杂控制流的主要编程表面；MCP 是 Agent 的精选结构化工具表面。通用 CLI 已撤出当前产品范围，未来若重新讨论也只能是 Gateway 的薄适配器。
+Desktop、脚本与 MCP 都是第一方访问面，但 `Automation Command Gateway` 才是规范能力边界。所有入口调用相同的领域命令并遵守相同不变量，不得各自拥有 SQLite、文件操作或后台任务实现。JS/TS 脚本与 MCP 共享**同一领域 Action 面**；差别是调用者（人 vs Agent）与 transport，不是命令子集。通用 CLI 已撤出当前产品范围。
 
-自动化入口只公开语义化领域能力，不公开任意 SQL、数据库连接、Node.js、Shell 或绕过领域规则的文件系统接口。领域实体以稳定 ID 作为底层身份。精确定位单一实体时，入口只接受稳定 ID 或该实体在显式资源库中的唯一资源库路径，并解析为稳定 ID；标签、合集和其他结构化条件属于过滤，全文表达式属于搜索，二者都不冒充精确资源引用。
+自动化入口只公开语义化领域 Action，不公开任意 SQL、数据库连接、Node.js、Shell、原始网络或绕过领域规则的文件系统接口。领域实体以稳定 ID 作为底层身份。精确定位单一实体时，入口只接受稳定 ID 或该实体在显式资源库中的唯一资源库路径，并解析为稳定 ID；标签、合集和其他结构化条件属于过滤，全文表达式属于搜索，二者都不冒充精确资源引用。
 
-每次脚本或 MCP 自动化运行形成 Automation Execution，并在第一版显式绑定一个资源库。Execution 持有能力授权、取消与资源预算，记录命令轨迹和日志关联；脚本代码本身不直接接触 Library Worker。高风险文件写入还需形成绑定实体版本和资源库变更序号的 Execution Plan，再按批准策略执行。
+每次脚本或 MCP 自动化运行形成 Automation Execution。Execution **可以没有当前资源库**（headless），以便先执行 `library.create` 等 Action，再绑定新建或显式指定的目标库。Execution 持有能力授权、取消与资源预算，记录命令轨迹和日志关联；脚本代码本身不直接接触 Library Worker。高风险文件与资源库生命周期写入还需形成 Execution Plan，并由本机人类批准（Console 与 MCP 同等；禁止自提权）。
+
+插件 Contribution（菜单、Hook、UI、输入捕获、Provider）不属于脚本/MCP Action 面。
 
 ## 插件扩展面
 

@@ -15,6 +15,7 @@ import {
   tagSummarySchema,
 } from '../shared/asset-types';
 import type { WorkerCommand, WorkerRequest } from '../shared/protocol/requests';
+import { assetAuthorSchema, sourcePageUrlSchema } from '../shared/protocol/requests';
 import {
   aiJobSchema,
   internalLibrarySummarySchema,
@@ -141,6 +142,15 @@ export const automationCommandInputSchemas = {
     recursive: z.boolean().default(false),
   }),
   'asset.metadata.get': z.strictObject({ assetId: nonBlankString }),
+  'asset.metadata.set': z.strictObject({
+    assetId: nonBlankString,
+    expectedVersion: z.number().int().min(0),
+    description: z.string().max(10_000).nullable().optional(),
+    rating: z.number().int().min(0).max(5).optional(),
+    favorite: z.boolean().optional(),
+    sourcePageUrl: sourcePageUrlSchema.nullable().optional(),
+    author: assetAuthorSchema.nullable().optional(),
+  }),
   'asset.extracted-metadata.get': z.strictObject({ assetId: nonBlankString }),
   'asset.search': paginatedInputSchema({
     query: searchQuerySchema,
@@ -196,6 +206,18 @@ export const automationCommandInputSchemas = {
     parentFolderId: z.string().uuid().nullable().optional(),
   }),
   'collection.list': paginatedInputSchema({}),
+  'collection.create': z.strictObject({
+    name: nonBlankString.max(255),
+    parentId: nonBlankString.nullable().optional(),
+  }),
+  'collection.assets.add': z.strictObject({
+    collectionId: nonBlankString,
+    assetIds: z.array(nonBlankString).min(1).max(10_000),
+  }),
+  'collection.assets.remove': z.strictObject({
+    collectionId: nonBlankString,
+    assetIds: z.array(nonBlankString).min(1).max(10_000),
+  }),
   'collection.assets.memberships': paginatedInputSchema({
     assetIds: z.array(nonBlankString).min(1).max(10_000),
   }),
@@ -203,6 +225,11 @@ export const automationCommandInputSchemas = {
   'media.jobs.list': paginatedInputSchema({}),
   'ai.jobs.status': paginatedInputSchema({
     jobIds: z.array(nonBlankString).min(1).max(10_000).optional(),
+  }),
+  'ai.enqueue': z.strictObject({
+    assetIds: z.array(nonBlankString).min(1).max(10_000).optional(),
+    folderId: nonBlankString.optional(),
+    resumePaused: z.boolean().optional(),
   }),
 } as const;
 
@@ -428,6 +455,40 @@ const folderCreateWorkerResultSchema = z.strictObject({
   folder: managedFolderSummarySchema,
 });
 
+const assetMetadataSetWorkerResultSchema = z.strictObject({
+  ok: z.literal(true),
+  type: z.literal('asset.metadata.updated'),
+  metadata: assetMetadataResultSchema,
+});
+
+const collectionCreateWorkerResultSchema = z.strictObject({
+  ok: z.literal(true),
+  type: z.literal('collection.created'),
+  collection: collectionSummarySchema,
+});
+
+const collectionAssetsAddWorkerResultSchema = z.strictObject({
+  ok: z.literal(true),
+  type: z.literal('collection.assets.added'),
+  collectionId: nonBlankString,
+});
+
+const collectionAssetsRemoveWorkerResultSchema = z.strictObject({
+  ok: z.literal(true),
+  type: z.literal('collection.assets.removed'),
+  collectionId: nonBlankString,
+});
+
+const aiEnqueueWorkerResultSchema = z.strictObject({
+  ok: z.literal(true),
+  type: z.literal('ai.jobs.enqueued'),
+  libraryId: nonBlankString,
+  enqueued: z.number().int().nonnegative(),
+  jobIds: z.array(nonBlankString),
+  alreadyPendingJobIds: z.array(nonBlankString),
+  skippedAssetIds: z.array(nonBlankString),
+});
+
 const assetSearchAutomationResultSchema = paginatedResultSchema(automationAssetSummarySchema).extend({
   snippets: z.array(z.strictObject({
     assetId: nonBlankString,
@@ -450,6 +511,7 @@ export const automationCommandResultSchemas = {
   'linked-folder.list': paginatedResultSchema(linkedFolderSummarySchema),
   'asset.list': paginatedResultSchema(automationAssetSummarySchema),
   'asset.metadata.get': assetMetadataWorkerResultSchema,
+  'asset.metadata.set': assetMetadataResultSchema,
   'asset.extracted-metadata.get': assetExtractedMetadataWorkerResultSchema,
   'asset.search': assetSearchAutomationResultSchema,
   'asset.rating.set': z.strictObject({
@@ -508,6 +570,18 @@ export const automationCommandResultSchemas = {
     name: nonBlankString,
   }),
   'collection.list': paginatedResultSchema(collectionSummarySchema),
+  'collection.create': z.strictObject({
+    id: nonBlankString,
+    parentId: nonBlankString.nullable(),
+    name: nonBlankString,
+    assetCount: z.number().int().nonnegative(),
+  }),
+  'collection.assets.add': z.strictObject({
+    collectionId: nonBlankString,
+  }),
+  'collection.assets.remove': z.strictObject({
+    collectionId: nonBlankString,
+  }),
   'collection.assets.memberships': paginatedResultSchema(z.strictObject({
     assetId: nonBlankString,
     collectionId: nonBlankString,
@@ -515,6 +589,12 @@ export const automationCommandResultSchemas = {
   'smart-collection.list': paginatedResultSchema(smartCollectionSummarySchema),
   'media.jobs.list': mediaJobsAutomationResultSchema,
   'ai.jobs.status': paginatedResultSchema(aiJobSchema),
+  'ai.enqueue': z.strictObject({
+    enqueued: z.number().int().nonnegative(),
+    jobIds: z.array(nonBlankString),
+    alreadyPendingJobIds: z.array(nonBlankString),
+    skippedAssetIds: z.array(nonBlankString),
+  }),
 } as const;
 
 export type AutomationCommandId = keyof typeof automationCommandInputSchemas;
@@ -957,6 +1037,49 @@ export const automationCommandRegistry = [
     toWorkerCommand: (libraryId, input) => ({ type: 'asset.metadata.get', libraryId, assetId: input.assetId }),
     projectResult: (result) => assetMetadataWorkerResultSchema.safeParse(result).data,
   }),
+  {
+    commandId: 'asset.metadata.set',
+    apiVersion: AUTOMATION_API_VERSION,
+    summary: '更新一项资产的用户元数据（描述、评分、收藏、来源页与作者）。',
+    deprecated: false,
+    inputSchema: automationCommandInputSchemas['asset.metadata.set'],
+    resultSchema: automationCommandResultSchemas['asset.metadata.set'],
+    workerResultSchema: assetMetadataSetWorkerResultSchema,
+    requiredCapabilities: ['library.read', 'asset.read', 'metadata.read', 'metadata.write'],
+    allowedSources: allInteractiveSources,
+    impact: 'metadata-write',
+    targetScope: 'asset',
+    supportsBatch: false,
+    supportsDryRun: false,
+    supportsIdempotencyKey: false,
+    supportsCancellation: false,
+    supportsDetach: false,
+    supportsUndo: false,
+    atomicity: 'single-transaction',
+    approvalPolicy: 'execution',
+    mcp: { public: false, toolName: 'serpent_asset_metadata_set', outputLimit: 1 },
+    toWorkerCommand: (libraryId, input: AutomationCommandInput<'asset.metadata.set'>) => ({
+      type: 'asset.metadata.set',
+      libraryId,
+      assetId: input.assetId,
+      expectedVersion: input.expectedVersion,
+      ...(input.description === undefined
+        ? {}
+        : { description: input.description === null ? '' : input.description }),
+      ...(input.rating === undefined ? {} : { rating: input.rating }),
+      ...(input.favorite === undefined ? {} : { favorite: input.favorite }),
+      ...(input.sourcePageUrl === undefined
+        ? {}
+        : { sourcePageUrl: input.sourcePageUrl === null ? '' : input.sourcePageUrl }),
+      ...(input.author === undefined
+        ? {}
+        : { author: input.author === null ? '' : input.author }),
+    }),
+    projectResult: (result) => {
+      const parsed = assetMetadataSetWorkerResultSchema.safeParse(result);
+      return parsed.success ? parsed.data.metadata : undefined;
+    },
+  },
   readDescriptor({
     commandId: 'asset.extracted-metadata.get',
     summary: '读取一项资产的已提取技术元数据。',
@@ -1149,6 +1272,111 @@ export const automationCommandRegistry = [
       return parsed.success ? pageFromCompleteList(parsed.data.collections, input) : undefined;
     },
   }),
+  {
+    commandId: 'collection.create',
+    apiVersion: AUTOMATION_API_VERSION,
+    summary: '创建普通合集。',
+    deprecated: false,
+    inputSchema: automationCommandInputSchemas['collection.create'],
+    resultSchema: automationCommandResultSchemas['collection.create'],
+    workerResultSchema: collectionCreateWorkerResultSchema,
+    requiredCapabilities: ['library.read', 'collection.read', 'collection.write'],
+    allowedSources: allInteractiveSources,
+    impact: 'metadata-write',
+    targetScope: 'library',
+    supportsBatch: false,
+    supportsDryRun: false,
+    supportsIdempotencyKey: false,
+    supportsCancellation: false,
+    supportsDetach: false,
+    supportsUndo: false,
+    atomicity: 'single-transaction',
+    approvalPolicy: 'execution',
+    mcp: { public: false, toolName: 'serpent_collection_create', outputLimit: 1 },
+    toWorkerCommand: (libraryId, input: AutomationCommandInput<'collection.create'>) => ({
+      type: 'collection.create',
+      libraryId,
+      name: input.name,
+      ...(input.parentId === undefined || input.parentId === null
+        ? {}
+        : { parentId: input.parentId }),
+    }),
+    projectResult: (result) => {
+      const parsed = collectionCreateWorkerResultSchema.safeParse(result);
+      return parsed.success
+        ? {
+          id: parsed.data.collection.collectionId,
+          parentId: parsed.data.collection.parentId,
+          name: parsed.data.collection.name,
+          assetCount: parsed.data.collection.assetCount,
+        }
+        : undefined;
+    },
+  },
+  {
+    commandId: 'collection.assets.add',
+    apiVersion: AUTOMATION_API_VERSION,
+    summary: '将资产加入普通合集。',
+    deprecated: false,
+    inputSchema: automationCommandInputSchemas['collection.assets.add'],
+    resultSchema: automationCommandResultSchemas['collection.assets.add'],
+    workerResultSchema: collectionAssetsAddWorkerResultSchema,
+    requiredCapabilities: ['library.read', 'asset.read', 'collection.read', 'collection.write'],
+    allowedSources: allInteractiveSources,
+    impact: 'metadata-write',
+    targetScope: 'asset-set',
+    supportsBatch: true,
+    supportsDryRun: false,
+    supportsIdempotencyKey: false,
+    supportsCancellation: false,
+    supportsDetach: false,
+    supportsUndo: false,
+    atomicity: 'single-transaction',
+    approvalPolicy: 'execution',
+    mcp: { public: false, toolName: 'serpent_collection_assets_add', outputLimit: 1 },
+    toWorkerCommand: (libraryId, input: AutomationCommandInput<'collection.assets.add'>) => ({
+      type: 'collection.assets.add',
+      libraryId,
+      collectionId: input.collectionId,
+      assetIds: input.assetIds,
+    }),
+    projectResult: (result) => {
+      const parsed = collectionAssetsAddWorkerResultSchema.safeParse(result);
+      return parsed.success ? { collectionId: parsed.data.collectionId } : undefined;
+    },
+  },
+  {
+    commandId: 'collection.assets.remove',
+    apiVersion: AUTOMATION_API_VERSION,
+    summary: '从普通合集移除资产。',
+    deprecated: false,
+    inputSchema: automationCommandInputSchemas['collection.assets.remove'],
+    resultSchema: automationCommandResultSchemas['collection.assets.remove'],
+    workerResultSchema: collectionAssetsRemoveWorkerResultSchema,
+    requiredCapabilities: ['library.read', 'asset.read', 'collection.read', 'collection.write'],
+    allowedSources: allInteractiveSources,
+    impact: 'metadata-write',
+    targetScope: 'asset-set',
+    supportsBatch: true,
+    supportsDryRun: false,
+    supportsIdempotencyKey: false,
+    supportsCancellation: false,
+    supportsDetach: false,
+    supportsUndo: false,
+    atomicity: 'single-transaction',
+    approvalPolicy: 'execution',
+    mcp: { public: false, toolName: 'serpent_collection_assets_remove', outputLimit: 1 },
+    toWorkerCommand: (libraryId, input: AutomationCommandInput<'collection.assets.remove'>) => ({
+      type: 'collection.assets.remove',
+      libraryId,
+      collectionId: input.collectionId,
+      assetIds: input.assetIds,
+    }),
+    projectResult: (result) => {
+      const parsed = collectionAssetsRemoveWorkerResultSchema.safeParse(result);
+      return parsed.success ? { collectionId: parsed.data.collectionId } : undefined;
+    },
+  },
   readDescriptor({
     commandId: 'collection.assets.memberships',
     summary: '读取一组资产所属的合集关系。',
@@ -1230,6 +1458,46 @@ export const automationCommandRegistry = [
       return parsed.success ? pageFromCompleteList(parsed.data.jobs, input) : undefined;
     },
   }),
+  {
+    commandId: 'ai.enqueue',
+    apiVersion: AUTOMATION_API_VERSION,
+    summary: '将 AI 分析任务加入队列（可按资产、文件夹或整库范围）。',
+    deprecated: false,
+    inputSchema: automationCommandInputSchemas['ai.enqueue'],
+    resultSchema: automationCommandResultSchemas['ai.enqueue'],
+    workerResultSchema: aiEnqueueWorkerResultSchema,
+    requiredCapabilities: ['library.read', 'asset.read', 'ai.enqueue'],
+    allowedSources: allInteractiveSources,
+    impact: 'metadata-write',
+    targetScope: 'library',
+    supportsBatch: true,
+    supportsDryRun: false,
+    supportsIdempotencyKey: false,
+    supportsCancellation: false,
+    supportsDetach: false,
+    supportsUndo: false,
+    atomicity: 'single-transaction',
+    approvalPolicy: 'execution',
+    mcp: { public: false, toolName: 'serpent_ai_enqueue', outputLimit: AUTOMATION_MAX_PAGE_SIZE },
+    toWorkerCommand: (libraryId, input: AutomationCommandInput<'ai.enqueue'>) => ({
+      type: 'ai.enqueue-analysis',
+      libraryId,
+      ...(input.assetIds === undefined ? {} : { assetIds: input.assetIds }),
+      ...(input.folderId === undefined ? {} : { folderId: input.folderId }),
+      ...(input.resumePaused === undefined ? {} : { resumePaused: input.resumePaused }),
+    }),
+    projectResult: (result) => {
+      const parsed = aiEnqueueWorkerResultSchema.safeParse(result);
+      return parsed.success
+        ? {
+          enqueued: parsed.data.enqueued,
+          jobIds: parsed.data.jobIds,
+          alreadyPendingJobIds: parsed.data.alreadyPendingJobIds,
+          skippedAssetIds: parsed.data.skippedAssetIds,
+        }
+        : undefined;
+    },
+  },
 ] as const satisfies readonly AutomationCommandDescriptor[];
 
 const descriptorsById = new Map<string, AutomationCommandDescriptor>(
@@ -1335,10 +1603,15 @@ export function generateAutomationTypeDeclaration(
     '',
     '  interface SerpentScriptAssetMetadata {',
     '    readonly assetId: string;',
+    '    readonly description: string | null;',
     '    readonly rating: number;',
     '    readonly favorite: boolean;',
     "    readonly tags: readonly { readonly id: string; readonly name: string; readonly source: 'user' | 'ai' }[];",
     "    readonly automaticPalette: readonly { readonly hex: string; readonly ratio: number }[];",
+    '    readonly sourcePageUrl: string | null;',
+    '    readonly author: string | null;',
+    '    readonly entityVersion: number;',
+    '    readonly updatedAt: string;',
     '  }',
     '',
     '  interface SerpentRecentPalette {',
@@ -1446,6 +1719,9 @@ export function generateAutomationTypeDeclaration(
     '        readonly items: readonly { readonly assetId: string; readonly collectionId: string }[];',
     '        readonly total: number; readonly offset: number; readonly limit: number; readonly hasMore: boolean;',
     '      }>;',
+    '      create(name: string, parentId?: string | null): Promise<{ readonly id: string; readonly parentId: string | null; readonly name: string; readonly assetCount: number }>;',
+    '      addAssets(collectionId: string, assetIds: readonly string[]): Promise<{ readonly collectionId: string }>;',
+    '      removeAssets(collectionId: string, assetIds: readonly string[]): Promise<{ readonly collectionId: string }>;',
     '    };',
     '    readonly smartCollections: {',
     '      list(input?: { limit?: number; offset?: number }): Promise<{',
@@ -1459,12 +1735,14 @@ export function generateAutomationTypeDeclaration(
     '      };',
     '      readonly ai: {',
     '        status(input?: { jobIds?: readonly string[]; limit?: number; offset?: number }): Promise<unknown>;',
+    '        enqueue(input?: { assetIds?: readonly string[]; folderId?: string; resumePaused?: boolean }): Promise<{ readonly enqueued: number; readonly jobIds: readonly string[]; readonly alreadyPendingJobIds: readonly string[]; readonly skippedAssetIds: readonly string[] }>;',
     '      };',
     '    };',
     '    readonly assets: {',
     '      search(input: { query: string | null; limit?: number; offset?: number }): Promise<SerpentScriptAssetSearchPage>;',
     '      list(input?: { folderId?: string; recursive?: boolean; limit?: number; offset?: number }): Promise<SerpentScriptAssetSearchPage>;',
     '      getMetadata(assetId: string): Promise<SerpentScriptAssetMetadata>;',
+    '      setMetadata(input: { assetId: string; expectedVersion: number; description?: string | null; rating?: 0 | 1 | 2 | 3 | 4 | 5; favorite?: boolean; sourcePageUrl?: string | null; author?: string | null }): Promise<SerpentScriptAssetMetadata>;',
     '      getExtractedMetadata(assetId: string): Promise<SerpentScriptExtractedMetadata>;',
     '      setRating(assetIds: readonly string[], rating: 0 | 1 | 2 | 3 | 4 | 5): Promise<SerpentRatingUpdateResult>;',
     '      copyFilePaths(assetIds: readonly string[]): Promise<{ readonly copiedCount: number }>;',

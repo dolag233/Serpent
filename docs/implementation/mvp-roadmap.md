@@ -20,7 +20,7 @@
 | 0009 | 云端 AI 自动分类（BYOK） | 🔧 队列/并发/输入/任务 UI 已存在；待范围分析/清空 UI、密钥边界决定及真实供应商 QA |
 | 0010 | 资源库导入导出 | 🔍 自动化数据安全主线通过；待大库 soak、packaged UI 与跨平台往返 |
 | 0011 | 一等命令行客户端与 Agent 原生操作面 | ↩️ 已撤回；由 0023 的脚本自动化与 MCP 框架取代 |
-| 0023 | 脚本自动化与 Agent MCP | 🚧 Phase A Registry/Gateway 与沙箱原型可并行；Desktop Console 与只读 MCP 随后实施 |
+| 0023 | 脚本自动化与 Agent MCP | 🚧 Registry/Gateway 与 Console 已推进；MCP 与脚本同一 Action 面（实现分期）；导入/建库计划批准待 Phase E |
 | 0024 | 脚本—插件扩展平台 | 📐 顶层设计已确认；依赖 0023 公共 Gateway/SDK，等待按 Beads 阶段实施 |
 | 0012 | 资产画布视图与卡片信息配置 | ✅ macOS 自动化、双轴审查与 Computer Use 截图验收通过；待 10 万帧率与 Windows QA |
 | 0013 | 资产查看页面导航与手势体验 | 🔍 P0 深滚动查看错位已修并完成 macOS Computer Use；完整 UX 待竞品研究、原型与实施，Windows 待验证 |
@@ -98,7 +98,7 @@ Beads 跟踪：`Serpent-y51c`，子项 `Serpent-y51c.2`–`.10`；跨进程写�
 
 1. 把领域命令、Zod 输入/结果 schema、稳定错误码和能力/副作用元数据抽成 Desktop、脚本与 MCP 共享的公共契约。
 2. 设计并锁定显式资源库选择、稳定 ID/唯一资源库路径引用、Execution 日志和能力授权；不得依赖 GUI 当前选中项。
-3. 先做不修改资源库的 Desktop Console 脚本和只读 MCP：资源库检查、资产/文件夹/标签/合集列出、搜索和任务查询。
+3. 先做 Desktop Console 脚本与同源 MCP Action：资源库检查、资产/文件夹/标签/合集列出、搜索和任务查询；再按风险分层接通写入、`library.create` / `file.import` 与本机批准。
 4. 为上述契约补 Registry、Gateway、沙箱、MCP schema 和独立进程测试；不得直接访问 SQLite、复刻文件操作或绕过 Library Worker。
 
 ### 需要等待领域语义稳定后再做的部分

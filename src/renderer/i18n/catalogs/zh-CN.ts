@@ -268,6 +268,8 @@ export const zhCN = {
       reset: "恢复示例",
       stop: "停止",
       openRunLog: "查看此次运行日志",
+      historyTitle: "最近自动化运行",
+      historyEmpty: "此资源库尚无运行记录。",
       run: "运行"
     }
   },

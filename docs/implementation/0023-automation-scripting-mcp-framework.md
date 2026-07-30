@@ -1,8 +1,10 @@
 # 第0023框架规格：脚本自动化与 Agent MCP
 
-> 状态：顶层设计已确认，等待按 Beads 子工单分阶段实施
+> 状态：顶层设计已确认（2026-07-30 对齐 Console/MCP Action 面与 headless 建库）
 >
 > 日期：2026-07-28
+>
+> 修订：2026-07-30
 >
 > 上位决策：[ADR-0025](../adr/0025-automation-core-script-runtime-and-mcp.md)
 >
@@ -20,11 +22,11 @@ Serpent 需要让人类和软件 Agent 自动化资产管理。复杂工作流�
 
 建立一个共享 `Automation Command Gateway`，把领域命令注册表、运行时校验、能力、影响等级、预演、幂等、取消、Undo、长任务和错误契约统一起来。Desktop、脚本、MCP 和测试都只调用该 Gateway。
 
-第一等复杂自动化表面是受控 JS/TS：Desktop 自动化中心提供无需先建文件的 Console，并允许把验证过的代码保存为 `.serpent.js` / `.serpent.ts`。脚本运行在独立沙箱执行器中，只获得注入的 `serpent` API。语言提供循环、条件、函数、对象和 Promise；Serpent 负责资源库能力、授权、日志和安全边界。
+第一等复杂自动化表面是受控 JS/TS：Desktop 自动化中心提供无需先建文件的 Console，并允许把验证过的代码保存为 `.serpent.js` / `.serpent.ts`。同一套脚本也可在 headless 宿主中运行（例如 MCP 连接生命周期内的 process-local host）。脚本运行在独立沙箱执行器中，只获得注入的 `serpent` API。语言提供循环、条件、函数、对象和 Promise；Serpent 负责领域 Action、授权、计划批准、日志和安全边界。
 
-Agent 默认通过本地 stdio MCP 调用精选结构化工具。高频查询和受控操作使用稳定工具；复杂长尾工作由 Agent 生成脚本，再通过受控脚本运行入口执行。MCP 第一阶段不提供任意代码执行工具。
+Agent 通过本地 stdio MCP 调用与 Console **同一套**领域 Action 工具（由 Registry 映射）。差别是调用者（人 vs Agent）与 transport，不是能力子集。MCP 不提供任意代码 `eval`、Shell、SQL 或秘密配置；复杂长尾可由 Agent 生成可审查脚本，在人类授权后于受控执行器中运行。
 
-本阶段不提供通用 CLI、终端 REPL 或脚本命令。MCP 的 stdio 启动器只承载 MCP 协议，不构成面向用户的领域 CLI；将来若需要无界面脚本运行，必须另行决策其权限、分发和兼容性。
+本阶段不提供通用 CLI 或面向用户的 `serpent run`/`repl` 领域命令行。MCP 的 stdio 启动器只承载 MCP 协议。
 
 ## User Stories
 
@@ -32,7 +34,7 @@ Agent 默认通过本地 stdio MCP 调用精选结构化工具。高频查询和
 2. 作为资产管理员，我希望把验证过的代码保存为脚本，以便以后重复运行。
 3. 作为脚本作者，我希望使用循环、条件、函数、对象和异步调用，以便自然表达复杂资产工作流。
 4. 作为脚本作者，我希望获得自动补全和 TypeScript 类型，以便知道 Serpent API 的参数和返回值。
-5. 作为脚本作者，我希望脚本显式指定目标资源库，以免意外操作最近打开或当前聚焦的其他资源库。
+5. 作为脚本作者，我希望显式指定目标资源库，或在尚无资源库时先创建资源库，再继续导入与整理，以便支持 headless 采集工作流。
 6. 作为脚本作者，我希望搜索、列出、读取标签、合集和任务状态，以便先理解资源库再采取行动。
 7. 作为脚本作者，我希望一次提交批量元数据或标签修改，以免逐资产调用造成低性能和部分失败噪声。
 8. 作为脚本作者，我希望每项失败都有稳定代码、对象引用和日志 ID，以便编写可恢复的错误处理。
@@ -94,17 +96,17 @@ Desktop Console 帮助、JSON Schema、TypeScript 声明和 MCP 工具 Schema �
 
 ### 3. 执行上下文与范围
 
-每个 Automation Execution 第一版只能绑定一个显式资源库。调用方必须提供资源库根路径或已解析的 Library ID；不得从当前目录、最近打开记录、GUI 焦点或模型猜测隐式选择。
+Automation Execution **可以没有当前资源库**（headless）。不依赖已打开库的 Action（例如 `library.create`）可以在绑定目标库之前执行；创建或显式指定之后，后续命令绑定到该资源库。已打开 Desktop 时，调用方仍必须显式提供目标库或先建库，不得从当前目录、最近打开记录、GUI 焦点或模型猜测隐式选择。
 
 执行上下文包含：
 
 - `executionId`、来源类型、脚本内容哈希或 MCP client 信息。
-- 目标资源库、API 主版本和 locale。
+- 可选的目标资源库、API 主版本和 locale。
 - 已授予能力、执行模式和批准凭据。
 - AbortSignal、截止时间、资源预算和日志关联 ID。
-- 对当前调用可见的变更序号。
+- 对当前调用可见的变更序号（已绑定资源库时）。
 
-跨资源库自动化拆为多个独立 Execution。第一版不承诺跨库原子提交或联合搜索。
+跨资源库自动化拆为多个独立 Execution，或在同一 Execution 内显式切换目标库。第一版不承诺跨库原子提交或联合搜索。
 
 ### 4. Script Runtime
 
@@ -122,25 +124,24 @@ Desktop Console 帮助、JSON Schema、TypeScript 声明和 MCP 工具 Schema �
 
 `node:vm` 不能被当作安全沙箱。首个实现任务先验证 QuickJS/WASM 或等价隔离引擎；只有宿主能力泄露、异步 RPC、TypeScript 转换、超时、内存、错误栈和跨平台打包门禁通过后才能确定运行时依赖。
 
-### 5. Script API
+### 5. Script API（领域 Action 面）
 
-脚本 API 按领域组织，不暴露 transport 或数据库概念。首个只读切片包含：
+脚本 API 按领域组织，不暴露 transport 或数据库概念。Console 与 MCP 共用这一 Action 面。
 
-- 资源库检查。
-- 文件夹、资产、标签、合集、智能合集列表。
-- 与 Desktop 相同的搜索表达式和分页。
-- 资产与元数据读取。
-- 媒体及 AI Job 状态查询。
-- Execution 日志与取消状态。
+**属于脚本/MCP Action（示例，非穷尽）：**
 
-后续写入按风险分层：
+- 只读：资源库检查、文件夹/链接文件夹/标签/合集/智能合集列表、搜索与元数据、媒体及 AI Job 状态、Execution 日志引用。
+- 低风险写入：评分、喜欢、标签创建/分配/移除、合集整理、空文件夹创建（已授予能力后可直接执行）。
+- 高风险 Action：`library.create`、`file.import`、移动、重命名、回收站等——依赖写租约、预检、不可变计划摘要与**本机人类批准**（Console 与 MCP 同等；类比操作系统管理员权限提示）。
+- AI：入队、查询、取消和重试；实际请求继续走持久 Job 与全局并发上限。
 
-- 元数据、评分、喜欢、标签、合集：获得对应能力后使用语义化批量命令。
-- AI：只允许入队、查询、取消和重试；实际请求继续走持久 Job 与全局并发上限。
-- 导入、移动、重命名、回收站：依赖写租约、预检和计划批准。
-- 永久删除、资源库删除、任意外部程序、任意外部路径写入：第一版禁止。
+**不属于脚本/MCP（属插件 Contribution / 宿主，见 0024）：**
 
-API 优先提供批量方法，避免脚本对每个资产产生一次进程或 IPC 往返。单项方法可作为批量方法的便利包装，但仍经过同一 Gateway。
+- 注册右键菜单、工具栏、面板、自定义工作区 UI。
+- 注册领域 Hook、输入捕获、Provider。
+- `storage.*` 插件命名空间存储、原始 `net.fetch`、任意 Shell/SQL/Node、永久删除与整库删除（首版仍禁止）。
+
+API 优先提供批量方法。单项方法可作为批量便利包装，但仍经过同一 Gateway。
 
 ### 6. Automation Execution
 
@@ -157,7 +158,7 @@ created
 
 Execution 记录：
 
-- 来源、代码哈希、API 版本、目标资源库和能力集合。
+- 来源、代码哈希、API 版本、可选目标资源库和能力集合。
 - 开始/结束时间、资源使用和最终状态。
 - 已调用命令的稳定 ID、对象数量、结果摘要和日志 ID。
 - Job ID、Undo/恢复引用、失败代码和取消阶段。
@@ -169,10 +170,12 @@ Execution 记录不保存 API Key、Authorization header、完整秘密配置、
 能力名称使用稳定、可组合的领域词汇，例如：
 
 - `library.read`
+- `library.create`（或等价资源库生命周期能力，实现时与 Registry 对齐）
 - `asset.read`
 - `metadata.write`
 - `tag.write`
 - `collection.write`
+- `folder.write`
 - `ai.enqueue`
 - `job.manage`
 - `file.import`
@@ -180,48 +183,42 @@ Execution 记录不保存 API Key、Authorization header、完整秘密配置、
 - `file.rename`
 - `trash.write`
 
-保存脚本静态声明最大能力。授权绑定脚本内容哈希、目标资源库和能力集合；脚本、目标库或能力变化即重新授权。授权记录存放在 Agent 无法通过 Serpent API 修改的本地应用配置中。
+保存脚本静态声明最大能力。授权绑定脚本内容哈希、能力集合以及（若已选定）目标资源库；脚本、目标库或能力变化即重新授权。授权记录存放在 Agent 无法通过 Serpent API 修改的本地应用配置中。
 
-REPL 和 Desktop Console 使用会话级授权。非交互 MCP 连接和 CI 不得自行创建授权；写授权由 Desktop UI 或真实 TTY 的人类流程签发。MCP 不提供“授予自己权限”的工具。
+REPL 和 Desktop Console 使用会话级授权。非交互 MCP 连接和 CI **不得自行创建或扩大写授权**；写授权与高风险计划批准均由本机人类 UI（或真实 TTY）签发。MCP 不提供“授予自己权限”的工具。
+
+高风险 Action 的计划批准对 Console 用户与 MCP Agent 一视同仁：即使用户亲自运行脚本，导入/建库/批量文件变更仍须展示影响摘要并等待确认，不得静默执行。
 
 能力不是领域校验的替代品。即使拥有 `file.move`，命令仍需执行路径、冲突、实体版本、资源库状态和写租约校验。
 
 ### 8. 写入计划与批准
 
-只读、普通元数据写入与真实文件操作采用不同策略：
+只读、普通元数据写入与真实文件/资源库生命周期操作采用不同策略：
 
 - 只读命令无需批准。
-- 已持久授权的元数据、标签和合集批量写入可直接执行，并返回逐项结果。
-- 文件写入必须先产生不可变计划摘要，至少包含目标数量、源/目标范围、冲突、不可执行项、可撤销性和预计后台任务。
-- 计划以内容哈希绑定参数、当前实体版本和资源库变更序号；批准后若任一前提变化，计划失效并重新预检。
+- 已持久/会话授权的元数据、标签、合集、空文件夹创建等低风险写入可直接执行，并返回逐项结果。
+- 高风险 Action（含 `file.import`、`library.create`、移动、重命名、回收站等）必须先产生不可变计划摘要，至少包含目标数量、源/目标范围、冲突、不可执行项、可撤销性和预计后台任务；再由本机人类批准（Console 与 MCP 相同交互等级）。
+- 计划以内容哈希绑定参数、当前实体版本和资源库变更序号（已绑定库时）；批准后若任一前提变化，计划失效并重新预检。
 - 不保证跨多条领域命令全局事务。每个命令按其声明的单事务、可恢复文件操作或 best-effort 语义执行，Execution 明确报告部分成功。
 
-Agent Host 的确认 UI 可以作为额外批准层，但不能代替 Serpent 的能力授权和计划前提校验。
+Agent Host 侧的额外确认不能代替 Serpent 的能力授权和计划前提校验，也不能让 Agent 自行提权。
 
 ### 9. MCP Adapter
 
-第一阶段使用本地 stdio transport，由 Agent Host 以 `serpent mcp` 启动。它是连接生命周期内的 headless 进程，不注册系统服务，不监听公网，也不要求 Desktop 正在运行。
+使用本地 stdio transport，由 Agent Host 以 `serpent mcp`（或等价启动器）启动。它是连接生命周期内的 headless 进程，不注册系统服务，不监听公网，也不要求 Desktop GUI 正在运行。
 
-首批 MCP 工具保持少而稳定，候选分组为：
+MCP 工具面与脚本 `serpent` Action 面同源：只读与写入工具均由同一 Registry 的 MCP 元数据映射，结果、错误码与计划批准语义与 Console 一致。大结果必须分页或返回游标 / Resource URI。
 
-- 能力与版本。
-- 资源库检查。
-- 文件夹、标签和合集列表。
-- 资产列表、搜索和单项详情。
-- 媒体/AI Job 查询。
-- Execution/日志引用查询。
+MCP **不**公开：
 
-工具命名和参数来自 Registry 的 MCP 元数据。返回结果必须分页并限制大小；大结果返回游标、Execution artifact 或 MCP Resource URI，而不是无限截断文本。错误同时保留机器代码、人类说明和日志 ID。
-
-第一阶段 MCP 不公开：
-
-- 任意 JavaScript/TypeScript 执行。
-- Shell、SQL、任意文件系统、任意网络请求。
+- 任意 JavaScript/TypeScript `eval` 或未授权的脚本执行旁路。
+- Shell、SQL、任意文件系统、原始网络请求。
 - API Key 或完整 AI 配置。
-- 永久删除和资源库删除。
-- GUI 鼠标键盘控制、当前选区或隐式当前资源库。
+- 永久删除和整库删除（首版）。
+- GUI 鼠标键盘控制、当前选区或隐式“焦点资源库”。
+- 插件 Contribution API（注册菜单/Hook/UI）。
 
-复杂工作流由 Agent 生成为可审查脚本，再由用户在 Desktop Console 审阅、授权和执行。只有脚本授权、计划和沙箱证据成熟后，才评估是否向 MCP 增加 `script.validate` / `script.plan`；不得直接增加通用 `eval` 或脚本执行工具。
+复杂工作流仍可由 Agent 生成 `.serpent.ts`，在 Desktop 或受控执行器中审阅授权后运行；不得用通用 `eval` 工具绕过 Gateway。
 
 ### 10. Process Architecture
 
@@ -279,23 +276,25 @@ Script Sandbox 不能直接连接 Library Worker。所有调用先到 host 中�
 - 实现 Desktop Console、保存脚本、只读 `serpent` API、超时/取消和 Execution 日志。
 - 在真实资源库验证数据库哈希不变。
 
-#### Phase C：只读 MCP
+#### Phase C：MCP 适配器（与脚本同一 Action 面）
 
-- 实现 stdio server、精选工具、分页、错误和日志引用。
+- 实现 stdio server；工具由 Registry 映射，与脚本 Action 对照校验。
 - 使用至少两个 MCP Host 做连接冒烟，但不宣称 Windows 通过直至实机。
-- 证明 MCP、Script 和 Desktop 对同一只读命令结果一致。
+- 证明 MCP 与 Script 对同一命令的结果、错误与计划批准语义一致。
+- 实现上可先接通只读工具，但不得把“只读”写成 MCP 产品终态。
 
 #### Phase D：授权与低风险写入
 
 - 依赖 `Serpent-bb56.2` 的写租约、变更序号和 Job 领取。
-- 实现能力声明、授权、元数据/标签/合集批量写入和部分失败报告。
+- 实现能力声明、授权、元数据/标签/合集/空文件夹等批量写入和部分失败报告。
 - Desktop 自动化中心显示脚本、授权和执行历史。
 
-#### Phase E：文件计划与高风险操作
+#### Phase E：文件计划、导入与建库
 
-- 增加导入、移动、重命名和回收站预检计划。
-- 计划哈希绑定实体版本和变更序号；批准后执行。
-- 永久删除继续后置，直到恢复、Undo 和跨平台证据充分。
+- 增加 `file.import`、`library.create`、移动、重命名和回收站预检计划。
+- Console 与 MCP 对高风险 Action 使用同等本机批准 UI；禁止 Agent 自提权。
+- 支持无当前库的 headless `library.create`，再建库后绑定后续命令。
+- 永久删除与整库删除继续后置，直到恢复、Undo 和跨平台证据充分。
 
 #### Phase F：打包、Skills 与扩展
 
@@ -327,21 +326,21 @@ Script Sandbox 不能直接连接 Library Worker。所有调用先到 host 中�
 
 ### 人工与真实 Agent 验证
 
-- Desktop Console 视觉、授权文案、执行历史和停止操作使用 Computer Use 验证。
-- 用 Desktop Console 运行一个含循环的脚本，并用两个 MCP Host 调用同一只读工具。
-- Agent 生成一个含循环的真实整理脚本，与等价批量命令结果对账。
+- Desktop Console 视觉、授权文案、高风险批准弹窗、执行历史和停止操作使用 Computer Use 验证。
+- 用 Desktop Console 与 MCP Host 各调用同一组 Action（含至少一条高风险计划路径），核对结果等价。
+- Agent 驱动「建库 → 导入/整理」类工作流时，必须出现本机批准，且 Agent 无法自提权。
 - 写入验收必须使用测试资源库；永久删除在进入范围前不提供验收入口。
 
 ## Out of Scope
 
-- 第一阶段任意 Node.js、npm/pip 依赖、Shell、SQL、环境变量、任意文件系统或网络。
-- 第一阶段 MCP 任意脚本执行工具。
+- 任意 Node.js、npm/pip 依赖、Shell、SQL、环境变量、任意文件系统或原始网络（`net.fetch` 原始出口）。
+- MCP / 脚本旁路 Gateway 的任意 `eval`。
 - 跨资源库事务、联合搜索和跨机并发。
 - 云端远程 MCP、开放公网端口和团队身份授权。
 - 第三方脚本市场、签名、自动更新和供应链信任。
-- 定时任务、文件事件触发器和应用关闭后通用脚本常驻。
-- 插件 API、插件 UI 和第三方原生二进制。
-- 永久删除与整个资源库删除。
+- 定时任务、文件事件触发器和应用关闭后通用脚本常驻（常驻扩展走插件 Job/Hook）。
+- 插件 Contribution API（菜单/Hook/UI/输入捕获）作为脚本或 MCP 工具。
+- 永久删除与整个资源库删除（首版）。
 - GUI 鼠标键盘自动化和当前选区控制。
 - Python SDK；先验证 JS/TS 模型，再根据 DCC 集成需求决定。
 

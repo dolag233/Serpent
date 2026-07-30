@@ -2,7 +2,7 @@
 
 > 入口：打开资源库后，在工作区右上角的“更多工具”中选择“自动化脚本”。
 >
-> 这是交互式 JavaScript / TypeScript Console，不需要先创建脚本文件。可以把已验证的 Console 代码保存为 `.serpent.js` 或 `.serpent.ts`，也可以重新打开它。脚本只作用于本次运行时 Main 绑定的资源库；没有 Node、文件系统、网络、环境变量、SQL 或任意 IPC 权限。
+> 这是交互式 JavaScript / TypeScript Console，不需要先创建脚本文件。可以把已验证的 Console 代码保存为 `.serpent.js` 或 `.serpent.ts`，也可以重新打开它。脚本按 **headless 可运行** 理解：可以没有已打开的资源库（例如先 `library.create` 再建文件夹并导入）。脚本只通过注入的 `serpent` 领域 Action 调用 Gateway；没有 Node、任意文件系统、原始网络、环境变量、SQL 或任意 IPC 权限。MCP 暴露的领域 Action 与 Console 相同，差别只在调用者（人 vs Agent）。
 
 ## 运行与确认
 
@@ -203,20 +203,24 @@ return { tag, matched: assets.length, ...result };
 
 ## 当前边界
 
-### 脚本 / Desktop Console 可用（0023 Phase D 整理切片）
+### 产品边界（Console = MCP Action 面）
 
-- 只读：资源库检查、文件夹/链接文件夹/标签/合集/智能合集列表、资产搜索与元数据、提取元数据、媒体与 AI 任务状态。
-- 写入（执行级授权，无 plan）：评分、标签创建/分配/移除、空文件夹创建。
-- 写入（plan 确认）：复制路径、重命名、移入/恢复回收站。
+属于脚本 / MCP 的领域 Action（实现按切片推进，但规格上不划给“仅插件”）：
 
-### 明确不在脚本 API（插件 / 可信边界，见 0024）
+- 只读查询与任务状态。
+- 低风险写入：评分、标签、空文件夹创建等（执行级授权）。
+- 高风险 Action：`library.create`、`file.import`、移动/重命名、回收站等——Console 与 MCP 均需本机计划摘要与人类批准（类比管理员权限弹窗）；**禁止 Agent 或脚本自行提权**。
 
-- `library.create` / `library.delete-from-disk` — 资源库生命周期，仅 Main UI / 可信插件。
-- `file.import` / `net.fetch` / `storage.*` — 外部 I/O 与网络，仅插件 manifest 声明 + 宿主审批。
-- `ai.enqueue` / `job.manage` — AI 入队与任务管理，后续插件切片开放。
-- 任意 Shell、SQL、环境变量、Node 内置模块。
+不属于脚本 / MCP（属插件 Contribution / 可信宿主，见 0024）：
 
-MCP 第一阶段同样不公开上述写操作与脚本执行；复杂工作流应生成 `.serpent.ts` 供 Desktop Console 审阅授权。
+- 注册右键菜单、工具栏、面板、自定义 UI、Hook、输入捕获、Provider。
+- `storage.*` 插件命名空间存储、原始 `net.fetch`、任意 Shell / SQL / Node。
+- 永久删除与整库删除（首版仍禁止）。
 
-- 已支持保存和重新打开 Console 代码，但尚未提供独立 `.d.ts` 类型包、模块式 `export default async function` 脚本入口、执行历史 UI、安装包验证或 MCP transport。
-- 单次脚本执行有 CPU、内存、输出、待处理 Promise 和 60 秒墙钟限制。可用“停止”或关闭窗口取消未开始的命令。
+### 当前实现进度（会落后于产品边界）
+
+- 已支持：只读表面、评分、元数据（含喜欢）、标签 create/assign/remove、空文件夹 create、合集 create/add/remove、AI enqueue、部分文件 plan（复制路径/重命名/回收站）。
+- MCP：`npm run mcp -- --library <绝对路径>`；可选 `--write-access`。工具由 Registry 映射。详见 [stdio MCP 开发日志](development/2026-07-30-stdio-mcp-adapter-development-log.md) 与 [Phase D 开发日志](development/2026-07-30-phase-d-low-risk-writes-development-log.md)。
+- Console 显示最近执行历史，并可跳转单次运行日志。
+- 尚未接通：`library.create`、`file.import`、真实双 MCP Host 冒烟与 packaged 启动器、独立 `.d.ts` 包。
+- 单次脚本执行仍有 CPU、内存、输出、待处理 Promise 和墙钟限制。可用“停止”或关闭窗口取消未开始的命令。

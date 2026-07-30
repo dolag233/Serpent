@@ -3,19 +3,19 @@ import { randomUUID } from 'node:crypto';
 
 import type { AutomationCommandGateway } from '../automation/command-gateway';
 import {
-  automationScriptAssetSearchInputSchema,
   automationScriptCancelInputSchema,
   automationScriptCommandInputSchema,
   automationScriptCompleteInputSchema,
   automationScriptExecuteInputSchema,
+  automationScriptHistoryInputSchema,
   automationScriptSaveInputSchema,
   automationScriptStartInputSchema,
   type AutomationScriptCommandResult,
   type AutomationScriptCommandId,
   type AutomationScriptExecuteResult,
+  type AutomationScriptHistoryResult,
   type AutomationScriptStartResult,
 } from '../shared/automation-script-api';
-import { parseSearchExpression } from '../shared/search-expression';
 import { createPublicError, toPublicError } from '../shared/protocol/errors';
 import type { PublicError } from '../shared/protocol/errors';
 import {
@@ -25,12 +25,14 @@ import {
   AUTOMATION_SCRIPT_COMMAND_CHANNEL,
   AUTOMATION_SCRIPT_COMPLETE_CHANNEL,
   AUTOMATION_SCRIPT_EXECUTE_CHANNEL,
+  AUTOMATION_SCRIPT_HISTORY_CHANNEL,
   AUTOMATION_SCRIPT_START_CHANNEL,
 } from '../shared/protocol/channels';
 import type { LibraryWorkerClient } from './worker-client';
 import type { AutomationExecutionJournal } from './automation-execution-journal';
 import type { ScriptRuntimeExecutor } from './script-runtime-supervisor';
 import type { AutomationScriptFileService } from './automation-script-file-service';
+import { normalizeAutomationAssetSearchInput } from './normalize-automation-asset-search-input';
 
 type AppLogger = {
   error(scope: string, error: unknown, context?: Record<string, unknown>): void;
@@ -125,14 +127,7 @@ export function registerAutomationScriptIpc(options: AutomationScriptIpcOptions)
     const gateway = options.gateway();
     if (!gateway) return { ok: false, error: createPublicError('INTERNAL_ERROR') };
     const commandInput = commandId === 'asset.search'
-      ? (() => {
-        const search = automationScriptAssetSearchInputSchema.safeParse(rawInput);
-        if (!search.success) return undefined;
-        return {
-          ...search.data,
-          query: search.data.query === null ? null : parseSearchExpression(search.data.query),
-        };
-      })()
+      ? normalizeAutomationAssetSearchInput(rawInput)
       : rawInput;
     if (commandInput === undefined) {
       return { ok: false, error: createPublicError('INVALID_SEARCH_QUERY') };
@@ -198,7 +193,9 @@ export function registerAutomationScriptIpc(options: AutomationScriptIpcOptions)
           'tag.read',
           'tag.write',
           'collection.read',
+          'collection.write',
           'job.read',
+          'ai.enqueue',
           'metadata.write',
           'file.rename',
           'trash.write',
@@ -348,4 +345,35 @@ export function registerAutomationScriptIpc(options: AutomationScriptIpcOptions)
     journal.cancel(parsed.data.executionId);
     owners.delete(parsed.data.executionId);
   });
+
+  options.ipcMain.handle(
+    AUTOMATION_SCRIPT_HISTORY_CHANNEL,
+    (event, input: unknown): AutomationScriptHistoryResult => {
+      if (!options.isAuthorizedSender(event.sender)) {
+        return { ok: false, error: createPublicError('INTERNAL_ERROR') };
+      }
+      const parsed = automationScriptHistoryInputSchema.safeParse(input);
+      const journal = options.journal();
+      if (!parsed.success || !journal) {
+        return { ok: false, error: createPublicError('INTERNAL_ERROR') };
+      }
+      const entries = journal.list(parsed.data.libraryId)
+        .slice()
+        .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+        .slice(0, parsed.data.limit)
+        .map((record) => ({
+          executionId: record.executionId,
+          logId: record.logId,
+          source: record.source,
+          status: record.status,
+          commandCount: record.commandCount,
+          succeededCommandCount: record.succeededCommandCount,
+          failedCommandCount: record.failedCommandCount,
+          failureCode: record.failureCode,
+          createdAt: record.createdAt,
+          finishedAt: record.finishedAt,
+        }));
+      return { ok: true, entries };
+    },
+  );
 }

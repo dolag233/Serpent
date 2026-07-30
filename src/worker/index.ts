@@ -333,10 +333,9 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
         libraryPath: deleted.libraryPath,
       };
     }
-    case 'folder.create': {
-      const folder = libraryService.createManagedFolder(request.command);
-      return { ok: true, type: 'folder.created', folder };
-    }
+    case 'folder.create':
+      // Routed through runBoundedWrite / executeBoundedWriteWorkerCommand.
+      throw new Error('Bounded folder.create write was not dispatched through its transaction fence.');
     case 'folder.rename': {
       const folder = libraryService.renameManagedFolder(request.command);
       return { ok: true, type: 'folder.renamed', folder };
@@ -577,10 +576,8 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
         type: 'tag.list',
         tags: libraryService.listTags(request.command.libraryId),
       };
-    case 'tag.create': {
-      const tag = libraryService.createTag(request.command);
-      return { ok: true, type: 'tag.created', tag };
-    }
+    case 'tag.create':
+      throw new Error('Bounded tag.create write was not dispatched through its transaction fence.');
     case 'tag.rename': {
       const tag = libraryService.renameTag(request.command);
       return { ok: true, type: 'tag.renamed', tag };
@@ -610,24 +607,18 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
         type: 'tag.cooccurrence',
         graph: libraryService.getTagCooccurrenceGraph(request.command),
       };
-    case 'tag.assign': {
-      const { assignedCount, skipped } = libraryService.assignTags(request.command);
-      return { ok: true, type: 'tag.assigned', assignedCount, skipped };
-    }
-    case 'tag.remove': {
-      const { removedCount, skipped } = libraryService.removeTags(request.command);
-      return { ok: true, type: 'tag.removed', removedCount, skipped };
-    }
+    case 'tag.assign':
+      throw new Error('Bounded tag.assign write was not dispatched through its transaction fence.');
+    case 'tag.remove':
+      throw new Error('Bounded tag.remove write was not dispatched through its transaction fence.');
     case 'collection.list':
       return {
         ok: true,
         type: 'collection.list',
         collections: libraryService.listCollections(request.command.libraryId),
       };
-    case 'collection.create': {
-      const collection = libraryService.createCollection(request.command);
-      return { ok: true, type: 'collection.created', collection };
-    }
+    case 'collection.create':
+      throw new Error('Bounded collection.create write was not dispatched through its transaction fence.');
     case 'collection.update': {
       const collection = libraryService.updateCollection(request.command);
       return { ok: true, type: 'collection.updated', collection };
@@ -642,14 +633,10 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
         type: 'collection.deleted',
         collectionId: libraryService.deleteCollection(request.command),
       };
-    case 'collection.assets.add': {
-      const { collectionId } = libraryService.addCollectionAssets(request.command);
-      return { ok: true, type: 'collection.assets.added', collectionId };
-    }
-    case 'collection.assets.remove': {
-      const { collectionId } = libraryService.removeCollectionAssets(request.command);
-      return { ok: true, type: 'collection.assets.removed', collectionId };
-    }
+    case 'collection.assets.add':
+      throw new Error('Bounded collection.assets.add write was not dispatched through its transaction fence.');
+    case 'collection.assets.remove':
+      throw new Error('Bounded collection.assets.remove write was not dispatched through its transaction fence.');
     case 'collection.assets.reorder': {
       const { collectionId } = libraryService.reorderCollectionAssets(request.command);
       return { ok: true, type: 'collection.assets.reordered', collectionId };
@@ -683,10 +670,8 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       const result = libraryService.setAssetColorSpaceOverride(request.command);
       return { ok: true, type: 'asset.color-space.updated', ...result };
     }
-    case 'asset.metadata.set': {
-      const metadata = libraryService.setAssetMetadata(request.command);
-      return { ok: true, type: 'asset.metadata.updated', metadata };
-    }
+    case 'asset.metadata.set':
+      throw new Error('Bounded asset.metadata.set write was not dispatched through its transaction fence.');
     case 'asset.metadata.backfill': {
       const { backfilledCount } = libraryService.backfillAssetMetadata(request.command.libraryId);
       return { ok: true, type: 'asset.metadata.backfilled', backfilledCount };

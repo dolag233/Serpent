@@ -39,6 +39,7 @@ import {
   AUTOMATION_SCRIPT_COMMAND_CHANNEL,
   AUTOMATION_SCRIPT_COMPLETE_CHANNEL,
   AUTOMATION_SCRIPT_CANCEL_CHANNEL,
+  AUTOMATION_SCRIPT_HISTORY_CHANNEL,
   PLUGIN_MANAGER_CHANNEL,
 } from '../shared/protocol/channels';
 import {
@@ -46,11 +47,14 @@ import {
   automationScriptSaveInputSchema,
   automationScriptStartResultSchema,
   automationScriptExecuteResultSchema,
+  automationScriptHistoryInputSchema,
+  automationScriptHistoryResultSchema,
   type AutomationScriptExecuteInput,
   type AutomationScriptCommandInput,
   type AutomationScriptCommandResult,
   type AutomationScriptCompleteInput,
   type AutomationScriptCancelInput,
+  type AutomationScriptHistoryInput,
   type AutomationScriptSaveInput,
   type AutomationScriptStartInput,
   type SerpentAutomationScriptApi,
@@ -1900,13 +1904,25 @@ const automation: SerpentAutomationScriptApi = Object.freeze({
   async cancel(input: AutomationScriptCancelInput): Promise<void> {
     await ipcRenderer.invoke(AUTOMATION_SCRIPT_CANCEL_CHANNEL, input);
   },
+  async history(input: AutomationScriptHistoryInput) {
+    return automationScriptHistoryResultSchema.parse(
+      await ipcRenderer.invoke(
+        AUTOMATION_SCRIPT_HISTORY_CHANNEL,
+        automationScriptHistoryInputSchema.parse(input),
+      ),
+    );
+  },
 });
 
 const plugins: SerpentPluginManagerApi = Object.freeze({
   async request(input: PluginManagerRequest) {
-    return parsePluginManagerResponse(
-      await ipcRenderer.invoke(PLUGIN_MANAGER_CHANNEL, input),
-    );
+    const raw = await ipcRenderer.invoke(PLUGIN_MANAGER_CHANNEL, input);
+    try {
+      return parsePluginManagerResponse(raw);
+    } catch (error) {
+      console.error('plugin-manager.response-invalid', error, raw);
+      return { ok: false, code: 'operation-failed' };
+    }
   },
 });
 
