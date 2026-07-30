@@ -48,6 +48,20 @@ export type PluginTrustedHostCommandHandler = (
   context: { instanceId: string; libraryId: string; pluginId: string; permissions: readonly PluginPermission[] },
 ) => Promise<unknown>;
 
+export type PluginTrustedStorageHandler = (input: {
+  operation: 'get' | 'set' | 'delete' | 'list';
+  scope: 'library' | 'user';
+  key?: string;
+  value?: unknown;
+  context: {
+    instanceId: string;
+    libraryId: string;
+    libraryDirectory: string;
+    pluginId: string;
+    permissions: readonly PluginPermission[];
+  };
+}) => Promise<unknown>;
+
 type TrackedInstance = {
   instanceId: string;
   child: RuntimeChild;
@@ -75,6 +89,7 @@ export class PluginTrustedRuntimeSupervisor {
       fork(modulePath: string): RuntimeChild;
       modulePath: string;
       executeHostCommand: PluginTrustedHostCommandHandler;
+      executeStorage?: PluginTrustedStorageHandler;
       onCrash?: (input: {
         libraryId: string;
         libraryDirectory: string;
@@ -293,6 +308,10 @@ export class PluginTrustedRuntimeSupervisor {
       void this.#respondHostCommand(tracked, message);
       return;
     }
+    if (message.type === 'plugin-trusted.storage-request') {
+      void this.#respondStorage(tracked, message);
+      return;
+    }
     if (message.type === 'plugin-trusted.activation-failed') {
       this.options.onCrash?.({
         libraryId: tracked.libraryId,
@@ -347,6 +366,60 @@ export class PluginTrustedRuntimeSupervisor {
         requestId: message.requestId,
         ok: false,
         error: { code: 'HOST_COMMAND_FAILED', message: 'The automation command could not complete.' },
+      });
+    }
+  }
+
+  async #respondStorage(
+    tracked: TrackedInstance,
+    message: Extract<PluginTrustedChildMessage, { type: 'plugin-trusted.storage-request' }>,
+  ): Promise<void> {
+    if (this.options.executeStorage === undefined) {
+      this.#post(tracked, {
+        type: 'plugin-trusted.storage-result',
+        instanceId: message.instanceId,
+        requestId: message.requestId,
+        ok: false,
+        error: { code: 'STORAGE_UNAVAILABLE', message: 'Plugin storage is unavailable in this session.' },
+      });
+      return;
+    }
+    try {
+      const result = await this.options.executeStorage({
+        operation: message.operation,
+        scope: message.scope,
+        ...(message.key === undefined ? {} : { key: message.key }),
+        ...(message.value === undefined ? {} : { value: message.value }),
+        context: {
+          instanceId: message.instanceId,
+          libraryId: tracked.libraryId,
+          libraryDirectory: tracked.libraryDirectory,
+          pluginId: tracked.pluginId,
+          permissions: tracked.permissions,
+        },
+      });
+      this.#post(tracked, {
+        type: 'plugin-trusted.storage-result',
+        instanceId: message.instanceId,
+        requestId: message.requestId,
+        ok: true,
+        result,
+      });
+    } catch (error) {
+      const code = error instanceof Error && 'code' in error && typeof error.code === 'string'
+        ? error.code
+        : 'STORAGE_FAILED';
+      const messageText = error instanceof Error ? error.message : 'Plugin storage request failed.';
+      this.options.logger?.error('plugin.trusted.storage-failed', error, {
+        instanceId: message.instanceId,
+        operation: message.operation,
+      });
+      this.#post(tracked, {
+        type: 'plugin-trusted.storage-result',
+        instanceId: message.instanceId,
+        requestId: message.requestId,
+        ok: false,
+        error: { code, message: messageText.slice(0, 1_024) },
       });
     }
   }

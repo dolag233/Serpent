@@ -126,9 +126,36 @@ export function createPluginStandardHostHandler(options: {
       })
     );
 
+    const callStorage = (input: {
+      operation: 'get' | 'set' | 'delete' | 'list';
+      scope?: 'library' | 'user';
+      key?: string;
+      value?: unknown;
+    }): Promise<unknown> => (
+      new Promise((resolve, reject) => {
+        const current = instances.get(request.instanceId);
+        if (current === undefined || current.abortController.signal.aborted) {
+          reject(new Error('The plugin instance was deactivated.'));
+          return;
+        }
+        const requestId = globalThis.crypto.randomUUID();
+        current.pendingHostRequests.set(requestId, { resolve, reject });
+        options.postMessage({
+          type: 'plugin-runtime.storage-request',
+          instanceId: request.instanceId,
+          requestId,
+          operation: input.operation,
+          scope: input.scope ?? 'library',
+          ...(input.key === undefined ? {} : { key: input.key }),
+          ...(input.value === undefined ? {} : { value: input.value }),
+        });
+      })
+    );
+
     const result = await runPluginGuestActivate({
       entryJavaScript: request.entryJavaScript,
       executeAutomationCommand: callHost,
+      executeStorageOperation: callStorage,
       waitUntilDeactivate: () => active.deactivatePromise,
       signal: abortController.signal,
       wallTimeoutMs: Math.max(request.activateDeadlineMs, 60_000),
@@ -206,13 +233,15 @@ export function createPluginStandardHostHandler(options: {
         deactivate(message);
         return;
       }
-      const current = instances.get(message.instanceId);
-      if (current === undefined) return;
-      const pending = current.pendingHostRequests.get(message.requestId);
-      if (pending === undefined) return;
-      current.pendingHostRequests.delete(message.requestId);
-      if (message.ok) pending.resolve(message.result);
-      else pending.reject(new Error(message.error?.message ?? 'The host request failed.'));
+      if (message.type === 'plugin-runtime.host-result' || message.type === 'plugin-runtime.storage-result') {
+        const current = instances.get(message.instanceId);
+        if (current === undefined) return;
+        const pending = current.pendingHostRequests.get(message.requestId);
+        if (pending === undefined) return;
+        current.pendingHostRequests.delete(message.requestId);
+        if (message.ok) pending.resolve(message.result);
+        else pending.reject(new Error(message.error?.message ?? 'The host request failed.'));
+      }
     },
     dispose(): void {
       clearInterval(heartbeatTimer);

@@ -47,6 +47,20 @@ export type PluginRuntimeHostCommandHandler = (
   context: { instanceId: string; libraryId: string; pluginId: string; permissions: readonly PluginPermission[] },
 ) => Promise<unknown>;
 
+export type PluginRuntimeStorageHandler = (input: {
+  operation: 'get' | 'set' | 'delete' | 'list';
+  scope: 'library' | 'user';
+  key?: string;
+  value?: unknown;
+  context: {
+    instanceId: string;
+    libraryId: string;
+    libraryDirectory: string;
+    pluginId: string;
+    permissions: readonly PluginPermission[];
+  };
+}) => Promise<unknown>;
+
 /**
  * Main-owned long-lived Standard Plugin Host. One UtilityProcess hosts many
  * plugin instances; Main never evaluates entry JavaScript itself.
@@ -72,6 +86,7 @@ export class PluginRuntimeSupervisor {
       fork(modulePath: string): RuntimeChild;
       modulePath: string;
       executeHostCommand: PluginRuntimeHostCommandHandler;
+      executeStorage?: PluginRuntimeStorageHandler;
       onCrash?: (input: {
         libraryId: string;
         libraryDirectory: string;
@@ -287,6 +302,10 @@ export class PluginRuntimeSupervisor {
       void this.#respondHostCommand(message);
       return;
     }
+    if (message.type === 'plugin-runtime.storage-request') {
+      void this.#respondStorage(message);
+      return;
+    }
     if (message.type === 'plugin-runtime.activated') {
       const instance = this.#instances.get(message.instanceId);
       if (instance !== undefined) instance.activated = true;
@@ -357,6 +376,70 @@ export class PluginRuntimeSupervisor {
         requestId: message.requestId,
         ok: false,
         error: { code: 'HOST_COMMAND_FAILED', message: 'The automation command could not complete.' },
+      });
+    }
+  }
+
+  async #respondStorage(
+    message: Extract<PluginRuntimeChildMessage, { type: 'plugin-runtime.storage-request' }>,
+  ): Promise<void> {
+    const instance = this.#instances.get(message.instanceId);
+    if (instance === undefined) {
+      this.#post({
+        type: 'plugin-runtime.storage-result',
+        instanceId: message.instanceId,
+        requestId: message.requestId,
+        ok: false,
+        error: { code: 'INSTANCE_GONE', message: 'The plugin instance is no longer active.' },
+      });
+      return;
+    }
+    if (this.options.executeStorage === undefined) {
+      this.#post({
+        type: 'plugin-runtime.storage-result',
+        instanceId: message.instanceId,
+        requestId: message.requestId,
+        ok: false,
+        error: { code: 'STORAGE_UNAVAILABLE', message: 'Plugin storage is unavailable in this session.' },
+      });
+      return;
+    }
+    try {
+      const result = await this.options.executeStorage({
+        operation: message.operation,
+        scope: message.scope,
+        ...(message.key === undefined ? {} : { key: message.key }),
+        ...(message.value === undefined ? {} : { value: message.value }),
+        context: {
+          instanceId: message.instanceId,
+          libraryId: instance.libraryId,
+          libraryDirectory: instance.libraryDirectory,
+          pluginId: instance.pluginId,
+          permissions: instance.permissions,
+        },
+      });
+      this.#post({
+        type: 'plugin-runtime.storage-result',
+        instanceId: message.instanceId,
+        requestId: message.requestId,
+        ok: true,
+        result,
+      });
+    } catch (error) {
+      const code = error instanceof Error && 'code' in error && typeof error.code === 'string'
+        ? error.code
+        : 'STORAGE_FAILED';
+      const messageText = error instanceof Error ? error.message : 'Plugin storage request failed.';
+      this.options.logger?.error('plugin.runtime.storage-failed', error, {
+        instanceId: message.instanceId,
+        operation: message.operation,
+      });
+      this.#post({
+        type: 'plugin-runtime.storage-result',
+        instanceId: message.instanceId,
+        requestId: message.requestId,
+        ok: false,
+        error: { code, message: messageText.slice(0, 1_024) },
       });
     }
   }

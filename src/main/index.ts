@@ -96,9 +96,10 @@ import {
 import { registerAutomationScriptIpc } from './automation-script-ipc';
 import { AutomationScriptFileService } from './automation-script-file-service';
 import { ScriptRuntimeSupervisor } from './script-runtime-supervisor';
-import { PluginRuntimeSupervisor, type PluginRuntimeHostCommandHandler } from './plugin-runtime-supervisor';
+import { PluginRuntimeSupervisor, type PluginRuntimeHostCommandHandler, type PluginRuntimeStorageHandler } from './plugin-runtime-supervisor';
 import { PluginTrustedRuntimeSupervisor } from './plugin-trusted-runtime-supervisor';
 import { PluginActivationCoordinator } from './plugin-activation-coordinator';
+import { PluginStorageStore, PluginStorageStoreError } from './plugin-storage-store';
 import { automationCapabilitiesFromPluginPermissions } from '../plugins/plugin-permission-capabilities';
 import { loadOrCreatePluginDeviceId } from './plugin-device-identity';
 import { createPluginPackageRequestHandler } from './plugin-package-ipc';
@@ -3877,6 +3878,24 @@ async function startApplication(): Promise<void> {
       logger?.error('plugin.runtime.crash-record', error, crash);
     });
   };
+  const pluginStorageStore = new PluginStorageStore(app.getPath('userData'));
+  const executePluginStorage: PluginRuntimeStorageHandler = async (input) => {
+    try {
+      return await pluginStorageStore.execute({
+        operation: input.operation,
+        scope: input.scope,
+        pluginId: input.context.pluginId,
+        libraryId: input.context.libraryId,
+        libraryDirectory: input.context.libraryDirectory,
+        permissions: input.context.permissions,
+        ...(input.key === undefined ? {} : { key: input.key }),
+        ...(input.value === undefined ? {} : { value: input.value }),
+      });
+    } catch (error) {
+      if (error instanceof PluginStorageStoreError) throw error;
+      throw error;
+    }
+  };
   pluginRuntimeSupervisor = new PluginRuntimeSupervisor({
     modulePath: path.join(__dirname, 'plugin_standard_host.js'),
     fork: (modulePath) => utilityProcess.fork(modulePath, [], {
@@ -3884,6 +3903,7 @@ async function startApplication(): Promise<void> {
       stdio: 'pipe',
     }),
     executeHostCommand: executePluginHostCommand,
+    executeStorage: executePluginStorage,
     onCrash: recordPluginRuntimeCrash,
     logger,
   });
@@ -3894,6 +3914,7 @@ async function startApplication(): Promise<void> {
       stdio: 'pipe',
     }),
     executeHostCommand: executePluginHostCommand,
+    executeStorage: executePluginStorage,
     onCrash: recordPluginRuntimeCrash,
     logger,
   });

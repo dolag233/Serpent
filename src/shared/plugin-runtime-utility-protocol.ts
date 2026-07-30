@@ -8,6 +8,11 @@ const requestIdSchema = z.string().uuid();
 const packageHashSchema = z.string().regex(/^[a-f0-9]{64}$/u);
 const pluginIdSchema = z.string().min(1).max(255);
 
+export const pluginStorageScopeSchema = z.enum(['library', 'user']);
+export type PluginStorageScopeMessage = z.infer<typeof pluginStorageScopeSchema>;
+export const pluginStorageOperationSchema = z.enum(['get', 'set', 'delete', 'list']);
+export type PluginStorageOperation = z.infer<typeof pluginStorageOperationSchema>;
+
 export const pluginRuntimeActivationFailureCodeSchema = z.enum([
   'ENTRY_INVALID',
   'ACTIVATE_REJECTED',
@@ -73,6 +78,24 @@ export const pluginRuntimeParentMessageSchema = z.discriminatedUnion('type', [
   z.strictObject({
     type: z.literal('plugin-runtime.shutdown'),
   }),
+  z.strictObject({
+    type: z.literal('plugin-runtime.storage-result'),
+    instanceId: instanceIdSchema,
+    requestId: requestIdSchema,
+    ok: z.boolean(),
+    result: z.unknown().optional(),
+    error: z.strictObject({
+      code: z.string().min(1).max(128),
+      message: z.string().min(1).max(1_024),
+    }).optional(),
+  }).superRefine((value, context) => {
+    if (value.ok && value.error !== undefined) {
+      context.addIssue({ code: 'custom', path: ['error'], message: 'Successful storage results cannot contain an error.' });
+    }
+    if (!value.ok && value.error === undefined) {
+      context.addIssue({ code: 'custom', path: ['error'], message: 'Failed storage results need an error.' });
+    }
+  }),
 ]);
 export type PluginRuntimeParentMessage = z.infer<typeof pluginRuntimeParentMessageSchema>;
 
@@ -102,6 +125,15 @@ export const pluginRuntimeChildMessageSchema = z.discriminatedUnion('type', [
     requestId: requestIdSchema,
     commandId: automationScriptCommandIdSchema,
     input: z.unknown(),
+  }),
+  z.strictObject({
+    type: z.literal('plugin-runtime.storage-request'),
+    instanceId: instanceIdSchema,
+    requestId: requestIdSchema,
+    operation: pluginStorageOperationSchema,
+    scope: pluginStorageScopeSchema.default('library'),
+    key: z.string().min(1).max(128).optional(),
+    value: z.unknown().optional(),
   }),
   z.strictObject({
     type: z.literal('plugin-runtime.console'),

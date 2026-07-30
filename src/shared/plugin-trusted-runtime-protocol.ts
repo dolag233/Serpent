@@ -5,6 +5,8 @@ import { pluginPermissionSchema } from '../plugins/plugin-manifest';
 import {
   pluginRuntimeActivationFailureCodeSchema,
   pluginRuntimeDeactivateReasonSchema,
+  pluginStorageOperationSchema,
+  pluginStorageScopeSchema,
 } from './plugin-runtime-utility-protocol';
 
 const instanceIdSchema = z.string().uuid();
@@ -54,6 +56,24 @@ export const pluginTrustedParentMessageSchema = z.discriminatedUnion('type', [
     }
   }),
   z.strictObject({
+    type: z.literal('plugin-trusted.storage-result'),
+    instanceId: instanceIdSchema,
+    requestId: requestIdSchema,
+    ok: z.boolean(),
+    result: z.unknown().optional(),
+    error: z.strictObject({
+      code: z.string().min(1).max(128),
+      message: z.string().min(1).max(1_024),
+    }).optional(),
+  }).superRefine((value, context) => {
+    if (value.ok && value.error !== undefined) {
+      context.addIssue({ code: 'custom', path: ['error'], message: 'Successful storage results cannot contain an error.' });
+    }
+    if (!value.ok && value.error === undefined) {
+      context.addIssue({ code: 'custom', path: ['error'], message: 'Failed storage results need an error.' });
+    }
+  }),
+  z.strictObject({
     type: z.literal('plugin-trusted.shutdown'),
   }),
 ]);
@@ -85,6 +105,15 @@ export const pluginTrustedChildMessageSchema = z.discriminatedUnion('type', [
     requestId: requestIdSchema,
     commandId: automationScriptCommandIdSchema,
     input: z.unknown(),
+  }),
+  z.strictObject({
+    type: z.literal('plugin-trusted.storage-request'),
+    instanceId: instanceIdSchema,
+    requestId: requestIdSchema,
+    operation: pluginStorageOperationSchema,
+    scope: pluginStorageScopeSchema.default('library'),
+    key: z.string().min(1).max(128).optional(),
+    value: z.unknown().optional(),
   }),
   z.strictObject({
     type: z.literal('plugin-trusted.console'),

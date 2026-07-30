@@ -27,6 +27,15 @@ export interface QuickJsSandboxPrototypeHost {
    */
   executeAutomationCommand?(commandId: AutomationScriptCommandId, input: unknown): Promise<unknown>;
   /**
+   * Plugin Host namespaced KV storage. Not available to Desktop Scripts.
+   */
+  executeStorageOperation?(input: {
+    operation: 'get' | 'set' | 'delete' | 'list';
+    scope?: 'library' | 'user';
+    key?: string;
+    value?: unknown;
+  }): Promise<unknown>;
+  /**
    * Long-lived plugin Host sessions park activate() on this bridge until Main
    * requests deactivate. Scripts never receive this surface.
    */
@@ -1073,6 +1082,63 @@ export async function runQuickJsSandboxPrototype(
       ));
       context.setProp(serpent, '__waitUntilDeactivate', waitUntilDeactivate);
       waitUntilDeactivate.dispose();
+    }
+    if (host.executeStorageOperation !== undefined) {
+      const storage = context.newObject();
+      const get = context.newFunction('get', (keyHandle, optionsHandle) => {
+        const options = optionsHandle === undefined ? undefined : context.dump(optionsHandle) as { scope?: 'library' | 'user' };
+        return createDeferredHostCall(
+          host.executeStorageOperation!({
+            operation: 'get',
+            key: String(context.dump(keyHandle)),
+            scope: options?.scope ?? 'library',
+          }),
+          (value) => newQuickJsJsonValue(context, value),
+        );
+      });
+      const set = context.newFunction('set', (keyHandle, valueHandle, optionsHandle) => {
+        const options = optionsHandle === undefined ? undefined : context.dump(optionsHandle) as { scope?: 'library' | 'user' };
+        return createDeferredHostCall(
+          host.executeStorageOperation!({
+            operation: 'set',
+            key: String(context.dump(keyHandle)),
+            value: context.dump(valueHandle),
+            scope: options?.scope ?? 'library',
+          }),
+          (value) => newQuickJsJsonValue(context, value),
+        );
+      });
+      const deleteKey = context.newFunction('delete', (keyHandle, optionsHandle) => {
+        const options = optionsHandle === undefined ? undefined : context.dump(optionsHandle) as { scope?: 'library' | 'user' };
+        return createDeferredHostCall(
+          host.executeStorageOperation!({
+            operation: 'delete',
+            key: String(context.dump(keyHandle)),
+            scope: options?.scope ?? 'library',
+          }),
+          (value) => newQuickJsJsonValue(context, value),
+        );
+      });
+      const listKeys = context.newFunction('listKeys', (optionsHandle) => {
+        const options = optionsHandle === undefined ? undefined : context.dump(optionsHandle) as { scope?: 'library' | 'user' };
+        return createDeferredHostCall(
+          host.executeStorageOperation!({
+            operation: 'list',
+            scope: options?.scope ?? 'library',
+          }),
+          (value) => newQuickJsJsonValue(context, value),
+        );
+      });
+      context.setProp(storage, 'get', get);
+      context.setProp(storage, 'set', set);
+      context.setProp(storage, 'delete', deleteKey);
+      context.setProp(storage, 'listKeys', listKeys);
+      context.setProp(serpent, 'storage', storage);
+      get.dispose();
+      set.dispose();
+      deleteKey.dispose();
+      listKeys.dispose();
+      storage.dispose();
     }
     if (host.executeAutomationCommand !== undefined) {
       const assets = context.newObject();

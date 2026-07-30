@@ -85,6 +85,26 @@ function createSerpentBridge(
       });
     })
   );
+  const callStorage = (input: {
+    operation: 'get' | 'set' | 'delete' | 'list';
+    scope: 'library' | 'user';
+    key?: string;
+    value?: unknown;
+  }): Promise<unknown> => (
+    new Promise((resolve, reject) => {
+      const requestId = globalThis.crypto.randomUUID();
+      instance.pendingHostRequests.set(requestId, { resolve, reject });
+      postMessage({
+        type: 'plugin-trusted.storage-request',
+        instanceId: instance.instanceId,
+        requestId,
+        operation: input.operation,
+        scope: input.scope,
+        ...(input.key === undefined ? {} : { key: input.key }),
+        ...(input.value === undefined ? {} : { value: input.value }),
+      });
+    })
+  );
 
   return {
     assets: {
@@ -94,6 +114,28 @@ function createSerpentBridge(
     },
     library: {
       inspect: () => callHost('library.inspect', {}),
+    },
+    storage: {
+      get: (key: unknown, options?: { scope?: 'library' | 'user' }) => callStorage({
+        operation: 'get',
+        key: String(key),
+        scope: options?.scope ?? 'library',
+      }),
+      set: (key: unknown, value: unknown, options?: { scope?: 'library' | 'user' }) => callStorage({
+        operation: 'set',
+        key: String(key),
+        value,
+        scope: options?.scope ?? 'library',
+      }),
+      delete: (key: unknown, options?: { scope?: 'library' | 'user' }) => callStorage({
+        operation: 'delete',
+        key: String(key),
+        scope: options?.scope ?? 'library',
+      }),
+      listKeys: (options?: { scope?: 'library' | 'user' }) => callStorage({
+        operation: 'list',
+        scope: options?.scope ?? 'library',
+      }),
     },
     console: {
       log: (...args: unknown[]) => {
@@ -251,13 +293,15 @@ export function createPluginTrustedHostHandler(options: {
         deactivate(message);
         return;
       }
-      const current = instances.get(message.instanceId);
-      if (current === undefined) return;
-      const pending = current.pendingHostRequests.get(message.requestId);
-      if (pending === undefined) return;
-      current.pendingHostRequests.delete(message.requestId);
-      if (message.ok) pending.resolve(message.result);
-      else pending.reject(new Error(message.error?.message ?? 'The host request failed.'));
+      if (message.type === 'plugin-trusted.host-result' || message.type === 'plugin-trusted.storage-result') {
+        const current = instances.get(message.instanceId);
+        if (current === undefined) return;
+        const pending = current.pendingHostRequests.get(message.requestId);
+        if (pending === undefined) return;
+        current.pendingHostRequests.delete(message.requestId);
+        if (message.ok) pending.resolve(message.result);
+        else pending.reject(new Error(message.error?.message ?? 'The host request failed.'));
+      }
     },
     dispose(): void {
       clearInterval(heartbeatTimer);

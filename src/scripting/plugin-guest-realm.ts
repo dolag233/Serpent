@@ -46,6 +46,12 @@ export type PluginGuestActivateResult =
 export async function runPluginGuestActivate(input: {
   entryJavaScript: string;
   executeAutomationCommand: (commandId: AutomationScriptCommandId, commandInput: unknown) => Promise<unknown>;
+  executeStorageOperation?: (input: {
+    operation: 'get' | 'set' | 'delete' | 'list';
+    scope?: 'library' | 'user';
+    key?: string;
+    value?: unknown;
+  }) => Promise<unknown>;
   waitUntilDeactivate: () => Promise<void>;
   signal?: AbortSignal;
   wallTimeoutMs?: number;
@@ -58,6 +64,9 @@ export async function runPluginGuestActivate(input: {
   let activatedNotified = false;
   const host: QuickJsSandboxPrototypeHost = {
     executeAutomationCommand: input.executeAutomationCommand,
+    ...(input.executeStorageOperation === undefined
+      ? {}
+      : { executeStorageOperation: input.executeStorageOperation }),
     waitUntilDeactivate: async () => {
       if (!activatedNotified) {
         activatedNotified = true;
