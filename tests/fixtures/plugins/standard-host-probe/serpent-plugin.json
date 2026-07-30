@@ -1,0 +1,30 @@
+{
+  "manifestVersion": 1,
+  "id": "com.serpent.standard-host-probe",
+  "version": "1.0.0",
+  "name": "Standard Host Probe",
+  "description": "Fixed test plugin that activates through the standard QuickJS Host and writes namespaced storage.",
+  "author": "Serpent",
+  "license": "MIT",
+  "engines": {
+    "serpent": ">=0.1.0 <1.0.0",
+    "pluginApi": 1
+  },
+  "runtime": {
+    "mode": "standard",
+    "entry": "dist/main.js"
+  },
+  "permissions": [
+    "asset.read",
+    "storage.read",
+    "storage.write"
+  ],
+  "contributes": {
+    "commands": [],
+    "menus": {},
+    "views": [],
+    "settings": [],
+    "hooks": [],
+    "providers": []
+  }
+}

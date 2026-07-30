@@ -100,6 +100,30 @@ await build({
 });
 
 await build({
+  configFile: path.join(projectRoot, 'vite.plugin-runtime.config.ts'),
+  resolve: nodeResolve,
+  build: {
+    emptyOutDir: false,
+    outDir: mainBuildDirectory,
+    rollupOptions: {
+      external: electronExternals,
+    },
+  },
+});
+
+await build({
+  configFile: path.join(projectRoot, 'vite.plugin-trusted-runtime.config.ts'),
+  resolve: nodeResolve,
+  build: {
+    emptyOutDir: false,
+    outDir: mainBuildDirectory,
+    rollupOptions: {
+      external: electronExternals,
+    },
+  },
+});
+
+await build({
   base: './',
   configFile: path.join(projectRoot, 'vite.renderer.config.ts'),
   build: {
