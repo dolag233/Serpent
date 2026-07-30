@@ -3919,6 +3919,12 @@ async function startApplication(): Promise<void> {
       packageManager: pluginPackageManager,
       supervisor: pluginRuntimeSupervisor,
       trustedSupervisor: pluginTrustedRuntimeSupervisor,
+      compatibility: {
+        serpentVersion: app.getVersion(),
+        pluginApiVersion: PLUGIN_API_VERSION,
+        ...pluginCompatibility,
+        nodeAbi,
+      },
       logger,
     });
   }

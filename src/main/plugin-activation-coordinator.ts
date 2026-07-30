@@ -2,6 +2,10 @@ import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
+import {
+  validatePluginManifestCompatibility,
+  type PluginCompatibilityTarget,
+} from '../plugins/plugin-manifest';
 import type { PluginPackageManager } from './plugin-package-manager';
 import type { PluginRuntimeSupervisor } from './plugin-runtime-supervisor';
 import type { PluginTrustedRuntimeSupervisor } from './plugin-trusted-runtime-supervisor';
@@ -17,6 +21,8 @@ export interface PluginActivationCoordinatorOptions {
   packageManager: PluginPackageManager;
   supervisor: PluginRuntimeSupervisor;
   trustedSupervisor?: PluginTrustedRuntimeSupervisor;
+  /** Re-check engines / native OS·arch·ABI at activate time (Electron ABI may change after install). */
+  compatibility?: PluginCompatibilityTarget;
   readEntryFile?: (absolutePath: string) => Promise<string>;
   logger?: PluginActivationCoordinatorLogger;
 }
@@ -75,6 +81,21 @@ export class PluginActivationCoordinator {
       const mode = resolution.package.manifest.runtime.mode;
       if (mode !== 'standard' && mode !== 'trusted') continue;
       if (mode === 'trusted' && this.options.trustedSupervisor === undefined) continue;
+
+      if (this.options.compatibility !== undefined) {
+        const compatibility = validatePluginManifestCompatibility(
+          resolution.package.manifest,
+          this.options.compatibility,
+        );
+        if (!compatibility.ok) {
+          this.options.logger?.error(
+            'plugin.activation.compatibility',
+            new Error(compatibility.message),
+            { pluginId, code: compatibility.code, mode },
+          );
+          continue;
+        }
+      }
 
       const entryRelative = resolution.package.manifest.runtime.entry;
       const entryAbsolute = path.join(resolution.package.packageDirectory, entryRelative);

@@ -256,6 +256,17 @@ export function PluginSettingsPage({ api, libraryId }: PluginSettingsPageProps):
                   <strong>{pluginPackage.version} · {pluginPackage.scope === 'user' ? t('settings.pluginScopeUser') : t('settings.pluginScopeLibrary')}</strong>
                   <span>{sourceLabel(pluginPackage, t)}</span>
                   <span>{pluginPackage.runtimeMode === 'trusted' ? t('settings.pluginRuntimeTrusted') : t('settings.pluginRuntimeStandard')} · {pluginPackage.permissions.join(', ') || t('settings.pluginNoPermissions')}</span>
+                  <span className="app-settings-hint">
+                    {pluginPackage.runtimeMode === 'trusted'
+                      ? t('settings.pluginRuntimeTrustedHint')
+                      : t('settings.pluginRuntimeStandardHint')}
+                  </span>
+                  {pluginPackage.scope === 'library'
+                    && pluginPackage.status === 'valid'
+                    && pluginPackage.trust !== 'trusted'
+                    && pluginPackage.runtimeMode === 'trusted'
+                    ? <span className="app-settings-hint">{t('settings.pluginTrustTrustedConfirmHint')}</span>
+                    : null}
                   {pluginPackage.status === 'invalid' ? <span>{t('settings.pluginInvalid', { code: pluginPackage.errorCode ?? 'unknown' })}</span> : null}
                 </div>
                 <div className="plugin-settings-package-actions">

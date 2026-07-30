@@ -120,6 +120,10 @@ describe('PluginActivationCoordinator', () => {
           package: {
             lock: { pluginId: 'com.example.trusted-node', version: '1.0.0', packageHash: 'd'.repeat(64) },
             manifest: {
+              id: 'com.example.trusted-node',
+              name: 'Trusted',
+              version: '1.0.0',
+              engines: { serpent: '>=0.1.0', pluginApi: 1 },
               runtime: { mode: 'trusted', entry: 'dist/main.js' },
               permissions: ['library.read', 'asset.read', 'net.fetch'],
             },
@@ -132,6 +136,10 @@ describe('PluginActivationCoordinator', () => {
           package: {
             lock: { pluginId: 'com.example.trusted-node', version: '1.0.0', packageHash: 'd'.repeat(64) },
             manifest: {
+              id: 'com.example.trusted-node',
+              name: 'Trusted',
+              version: '1.0.0',
+              engines: { serpent: '>=0.1.0', pluginApi: 1 },
               runtime: { mode: 'trusted', entry: 'dist/main.js' },
               permissions: ['library.read', 'asset.read', 'net.fetch'],
             },
@@ -149,6 +157,13 @@ describe('PluginActivationCoordinator', () => {
         deactivate: vi.fn(),
         deactivateLibrary: vi.fn(),
       } as never,
+      compatibility: {
+        serpentVersion: '0.2.0',
+        pluginApiVersion: 1,
+        platform: 'darwin',
+        arch: 'arm64',
+        nodeAbi: 135,
+      },
     });
 
     await coordinator.onLibraryOpened({
@@ -161,6 +176,88 @@ describe('PluginActivationCoordinator', () => {
       packageDirectory: '/plugins/trusted-node',
       entryRelativePath: 'dist/main.js',
     }));
+  });
+
+  it('skips trusted plugins whose native modules do not match the current ABI', async () => {
+    const trustedActivate = vi.fn(async () => undefined);
+    const logger = { info: vi.fn(), error: vi.fn() };
+    const coordinator = new PluginActivationCoordinator({
+      packageManager: {
+        getSafeMode: async () => false,
+        listInstalled: async () => [{
+          status: 'valid',
+          package: {
+            lock: { pluginId: 'com.example.native', version: '1.0.0', packageHash: 'e'.repeat(64) },
+            manifest: {
+              id: 'com.example.native',
+              name: 'Native',
+              version: '1.0.0',
+              engines: { serpent: '>=0.1.0', pluginApi: 1 },
+              runtime: {
+                mode: 'trusted',
+                entry: 'dist/main.js',
+                nativeModules: [{ platform: 'darwin', arch: 'arm64', nodeAbi: 120 }],
+              },
+              permissions: ['library.read'],
+            },
+            packageDirectory: '/plugins/native',
+          },
+        }],
+        resolve: async () => ({
+          status: 'resolved',
+          selection: 'use-global',
+          package: {
+            lock: { pluginId: 'com.example.native', version: '1.0.0', packageHash: 'e'.repeat(64) },
+            manifest: {
+              id: 'com.example.native',
+              name: 'Native',
+              version: '1.0.0',
+              engines: { serpent: '>=0.1.0', pluginApi: 1 },
+              runtime: {
+                mode: 'trusted',
+                entry: 'dist/main.js',
+                nativeModules: [{ platform: 'darwin', arch: 'arm64', nodeAbi: 120 }],
+              },
+              permissions: ['library.read'],
+            },
+            packageDirectory: '/plugins/native',
+          },
+        }),
+      } as never,
+      supervisor: {
+        activate: vi.fn(),
+        deactivate: vi.fn(),
+        deactivateLibrary: vi.fn(),
+      } as never,
+      trustedSupervisor: {
+        activate: trustedActivate,
+        deactivate: vi.fn(),
+        deactivateLibrary: vi.fn(),
+      } as never,
+      compatibility: {
+        serpentVersion: '0.2.0',
+        pluginApiVersion: 1,
+        platform: 'darwin',
+        arch: 'arm64',
+        nodeAbi: 135,
+      },
+      logger,
+    });
+
+    await coordinator.onLibraryOpened({
+      libraryId: 'library-1',
+      libraryDirectory: '/libraries/one',
+    });
+
+    expect(trustedActivate).not.toHaveBeenCalled();
+    expect(logger.error).toHaveBeenCalledWith(
+      'plugin.activation.compatibility',
+      expect.any(Error),
+      expect.objectContaining({
+        pluginId: 'com.example.native',
+        code: 'PLUGIN_PLATFORM_UNSUPPORTED',
+      }),
+    );
   });
 
   it('refreshOpenLibraries only touches libraries that were opened', async () => {
