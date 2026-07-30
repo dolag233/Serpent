@@ -4,7 +4,9 @@ import path from 'node:path';
 
 import type { PluginPackageManager } from './plugin-package-manager';
 import type { PluginRuntimeSupervisor } from './plugin-runtime-supervisor';
+import type { PluginTrustedRuntimeSupervisor } from './plugin-trusted-runtime-supervisor';
 import type { InstalledPluginPackage } from './plugin-package-manager-types';
+import type { PluginRuntimeDeactivateReason } from '../shared/plugin-runtime-utility-protocol';
 
 export interface PluginActivationCoordinatorLogger {
   info(scope: string, message: string, context?: Record<string, unknown>): void;
@@ -14,17 +16,23 @@ export interface PluginActivationCoordinatorLogger {
 export interface PluginActivationCoordinatorOptions {
   packageManager: PluginPackageManager;
   supervisor: PluginRuntimeSupervisor;
+  trustedSupervisor?: PluginTrustedRuntimeSupervisor;
   readEntryFile?: (absolutePath: string) => Promise<string>;
   logger?: PluginActivationCoordinatorLogger;
 }
 
+type ActiveRecord = {
+  instanceId: string;
+  mode: 'standard' | 'trusted';
+};
+
 /**
- * Enumerates resolved standard plugins for an open library, reads entry bytes
- * in Main, and asks the supervisor to activate them in the isolated Host.
- * Main never evaluates plugin JavaScript.
+ * Enumerates resolved plugins for an open library and activates them on the
+ * matching Host. Standard plugins receive entry bytes; trusted plugins receive
+ * a verified package directory for Node loading. Main never evaluates plugin code.
  */
 export class PluginActivationCoordinator {
-  #activeByLibrary = new Map<string, Map<string, string>>();
+  #activeByLibrary = new Map<string, Map<string, ActiveRecord>>();
   #openLibraries = new Map<string, string>();
 
   constructor(private readonly options: PluginActivationCoordinatorOptions) {}
@@ -35,7 +43,7 @@ export class PluginActivationCoordinator {
   }): Promise<void> {
     const safeMode = await this.options.packageManager.getSafeMode();
     if (safeMode) {
-      this.options.supervisor.deactivateLibrary(input.libraryId, 'safe-mode');
+      this.#deactivateLibraryHosts(input.libraryId, 'safe-mode');
       this.#activeByLibrary.delete(input.libraryId);
       return;
     }
@@ -52,7 +60,11 @@ export class PluginActivationCoordinator {
       if (entry.status === 'valid') pluginIds.add(entry.package.lock.pluginId);
     }
 
-    const desired = new Map<string, { pluginPackage: InstalledPluginPackage; entryJavaScript: string }>();
+    const desired = new Map<string, {
+      pluginPackage: InstalledPluginPackage;
+      mode: 'standard' | 'trusted';
+      entryJavaScript?: string;
+    }>();
     for (const pluginId of pluginIds) {
       const resolution = await this.options.packageManager.resolve({
         libraryId: input.libraryId,
@@ -60,7 +72,10 @@ export class PluginActivationCoordinator {
         pluginId,
       });
       if (resolution.status !== 'resolved') continue;
-      if (resolution.package.manifest.runtime.mode !== 'standard') continue;
+      const mode = resolution.package.manifest.runtime.mode;
+      if (mode !== 'standard' && mode !== 'trusted') continue;
+      if (mode === 'trusted' && this.options.trustedSupervisor === undefined) continue;
+
       const entryRelative = resolution.package.manifest.runtime.entry;
       const entryAbsolute = path.join(resolution.package.packageDirectory, entryRelative);
       const relative = path.relative(resolution.package.packageDirectory, entryAbsolute);
@@ -72,19 +87,26 @@ export class PluginActivationCoordinator {
         );
         continue;
       }
-      try {
-        const readEntry = this.options.readEntryFile ?? ((absolutePath: string) => readFile(absolutePath, 'utf8'));
-        const entryJavaScript = await readEntry(entryAbsolute);
-        desired.set(pluginId, { pluginPackage: resolution.package, entryJavaScript });
-      } catch (error) {
-        this.options.logger?.error('plugin.activation.read-entry', error, { pluginId, entryAbsolute });
+
+      if (mode === 'standard') {
+        try {
+          const readEntry = this.options.readEntryFile ?? ((absolutePath: string) => readFile(absolutePath, 'utf8'));
+          const entryJavaScript = await readEntry(entryAbsolute);
+          desired.set(pluginId, { pluginPackage: resolution.package, mode, entryJavaScript });
+        } catch (error) {
+          this.options.logger?.error('plugin.activation.read-entry', error, { pluginId, entryAbsolute });
+        }
+        continue;
       }
+
+      desired.set(pluginId, { pluginPackage: resolution.package, mode: 'trusted' });
     }
 
-    const previous = this.#activeByLibrary.get(input.libraryId) ?? new Map<string, string>();
-    for (const [pluginId, instanceId] of previous) {
-      if (!desired.has(pluginId)) {
-        this.options.supervisor.deactivate(instanceId, 'resolution-changed');
+    const previous = this.#activeByLibrary.get(input.libraryId) ?? new Map<string, ActiveRecord>();
+    for (const [pluginId, record] of previous) {
+      const next = desired.get(pluginId);
+      if (next === undefined || next.mode !== record.mode) {
+        this.#deactivateInstance(record, 'resolution-changed');
         previous.delete(pluginId);
       }
     }
@@ -92,21 +114,39 @@ export class PluginActivationCoordinator {
     for (const [pluginId, candidate] of desired) {
       if (previous.has(pluginId)) continue;
       const instanceId = randomUUID();
-      previous.set(pluginId, instanceId);
+      previous.set(pluginId, { instanceId, mode: candidate.mode });
       try {
-        await this.options.supervisor.activate({
-          instanceId,
-          libraryId: input.libraryId,
-          libraryDirectory: input.libraryDirectory,
-          pluginId,
-          version: candidate.pluginPackage.lock.version,
-          packageHash: candidate.pluginPackage.lock.packageHash,
-          entryJavaScript: candidate.entryJavaScript,
-          permissions: candidate.pluginPackage.manifest.permissions,
-        });
+        if (candidate.mode === 'standard') {
+          await this.options.supervisor.activate({
+            instanceId,
+            libraryId: input.libraryId,
+            libraryDirectory: input.libraryDirectory,
+            pluginId,
+            version: candidate.pluginPackage.lock.version,
+            packageHash: candidate.pluginPackage.lock.packageHash,
+            entryJavaScript: candidate.entryJavaScript ?? '',
+            permissions: candidate.pluginPackage.manifest.permissions,
+          });
+        } else {
+          await this.options.trustedSupervisor!.activate({
+            instanceId,
+            libraryId: input.libraryId,
+            libraryDirectory: input.libraryDirectory,
+            pluginId,
+            version: candidate.pluginPackage.lock.version,
+            packageHash: candidate.pluginPackage.lock.packageHash,
+            packageDirectory: candidate.pluginPackage.packageDirectory,
+            entryRelativePath: candidate.pluginPackage.manifest.runtime.entry,
+            permissions: candidate.pluginPackage.manifest.permissions,
+          });
+        }
       } catch (error) {
         previous.delete(pluginId);
-        this.options.logger?.error('plugin.activation.activate', error, { pluginId, libraryId: input.libraryId });
+        this.options.logger?.error('plugin.activation.activate', error, {
+          pluginId,
+          libraryId: input.libraryId,
+          mode: candidate.mode,
+        });
       }
     }
 
@@ -123,7 +163,7 @@ export class PluginActivationCoordinator {
   }
 
   onLibraryClosed(libraryId: string): void {
-    this.options.supervisor.deactivateLibrary(libraryId, 'library-closed');
+    this.#deactivateLibraryHosts(libraryId, 'library-closed');
     this.#activeByLibrary.delete(libraryId);
     this.#openLibraries.delete(libraryId);
   }
@@ -132,5 +172,18 @@ export class PluginActivationCoordinator {
     for (const [libraryId, libraryDirectory] of this.#openLibraries) {
       await this.refreshLibrary({ libraryId, libraryDirectory });
     }
+  }
+
+  #deactivateInstance(record: ActiveRecord, reason: PluginRuntimeDeactivateReason): void {
+    if (record.mode === 'standard') {
+      this.options.supervisor.deactivate(record.instanceId, reason);
+      return;
+    }
+    this.options.trustedSupervisor?.deactivate(record.instanceId, reason);
+  }
+
+  #deactivateLibraryHosts(libraryId: string, reason: PluginRuntimeDeactivateReason): void {
+    this.options.supervisor.deactivateLibrary(libraryId, reason);
+    this.options.trustedSupervisor?.deactivateLibrary(libraryId, reason);
   }
 }

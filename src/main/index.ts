@@ -96,7 +96,8 @@ import {
 import { registerAutomationScriptIpc } from './automation-script-ipc';
 import { AutomationScriptFileService } from './automation-script-file-service';
 import { ScriptRuntimeSupervisor } from './script-runtime-supervisor';
-import { PluginRuntimeSupervisor } from './plugin-runtime-supervisor';
+import { PluginRuntimeSupervisor, type PluginRuntimeHostCommandHandler } from './plugin-runtime-supervisor';
+import { PluginTrustedRuntimeSupervisor } from './plugin-trusted-runtime-supervisor';
 import { PluginActivationCoordinator } from './plugin-activation-coordinator';
 import { automationCapabilitiesFromPluginPermissions } from '../plugins/plugin-permission-capabilities';
 import { loadOrCreatePluginDeviceId } from './plugin-device-identity';
@@ -255,6 +256,7 @@ let automationExecutionJournal: AutomationExecutionJournal | undefined;
 let automationCommandGateway: AutomationCommandGateway | undefined;
 let scriptRuntimeSupervisor: ScriptRuntimeSupervisor | undefined;
 let pluginRuntimeSupervisor: PluginRuntimeSupervisor | undefined;
+let pluginTrustedRuntimeSupervisor: PluginTrustedRuntimeSupervisor | undefined;
 let pluginActivationCoordinator: PluginActivationCoordinator | undefined;
 let automationScriptFiles: AutomationScriptFileService | undefined;
 let pluginPackageManager: PluginPackageManager | undefined;
@@ -3838,43 +3840,61 @@ async function startApplication(): Promise<void> {
     }),
     logger,
   });
+  const executePluginHostCommand: PluginRuntimeHostCommandHandler = async (commandId, input, context) => {
+    const gateway = automationCommandGateway;
+    if (gateway === undefined) throw new Error('Automation Gateway is unavailable.');
+    pluginAutomationContexts.set(context.instanceId, {
+      executionId: context.instanceId,
+      source: 'plugin',
+      libraryId: context.libraryId,
+      grantedCapabilities: automationCapabilitiesFromPluginPermissions(context.permissions),
+    });
+    const result = await gateway.execute({
+      apiVersion: AUTOMATION_API_VERSION,
+      commandId,
+      executionId: context.instanceId,
+      input,
+    });
+    if (!result.ok) {
+      throw new Error(result.error.message ?? result.error.code);
+    }
+    return result.result;
+  };
+  const recordPluginRuntimeCrash = (crash: {
+    libraryId: string;
+    libraryDirectory: string;
+    pluginId: string;
+    packageHash: string;
+    failureCode: string;
+  }): void => {
+    void pluginPackageManager?.recordRuntimeCrash({
+      libraryId: crash.libraryId,
+      libraryDirectory: crash.libraryDirectory,
+      pluginId: crash.pluginId,
+      packageHash: crash.packageHash,
+      failureCode: crash.failureCode,
+    }).catch((error) => {
+      logger?.error('plugin.runtime.crash-record', error, crash);
+    });
+  };
   pluginRuntimeSupervisor = new PluginRuntimeSupervisor({
     modulePath: path.join(__dirname, 'plugin_standard_host.js'),
     fork: (modulePath) => utilityProcess.fork(modulePath, [], {
       serviceName: 'Serpent Plugin Standard Host',
       stdio: 'pipe',
     }),
-    executeHostCommand: async (commandId, input, context) => {
-      const gateway = automationCommandGateway;
-      if (gateway === undefined) throw new Error('Automation Gateway is unavailable.');
-      pluginAutomationContexts.set(context.instanceId, {
-        executionId: context.instanceId,
-        source: 'plugin',
-        libraryId: context.libraryId,
-        grantedCapabilities: automationCapabilitiesFromPluginPermissions(context.permissions),
-      });
-      const result = await gateway.execute({
-        apiVersion: AUTOMATION_API_VERSION,
-        commandId,
-        executionId: context.instanceId,
-        input,
-      });
-      if (!result.ok) {
-        throw new Error(result.error.message ?? result.error.code);
-      }
-      return result.result;
-    },
-    onCrash: (crash) => {
-      void pluginPackageManager?.recordRuntimeCrash({
-        libraryId: crash.libraryId,
-        libraryDirectory: crash.libraryDirectory,
-        pluginId: crash.pluginId,
-        packageHash: crash.packageHash,
-        failureCode: crash.failureCode,
-      }).catch((error) => {
-        logger?.error('plugin.runtime.crash-record', error, crash);
-      });
-    },
+    executeHostCommand: executePluginHostCommand,
+    onCrash: recordPluginRuntimeCrash,
+    logger,
+  });
+  pluginTrustedRuntimeSupervisor = new PluginTrustedRuntimeSupervisor({
+    modulePath: path.join(__dirname, 'plugin_trusted_host.js'),
+    fork: (modulePath) => utilityProcess.fork(modulePath, [], {
+      serviceName: 'Serpent Plugin Trusted Host',
+      stdio: 'pipe',
+    }),
+    executeHostCommand: executePluginHostCommand,
+    onCrash: recordPluginRuntimeCrash,
     logger,
   });
   const pluginCompatibility = currentPluginCompatibilityPlatform();
@@ -3898,6 +3918,7 @@ async function startApplication(): Promise<void> {
     pluginActivationCoordinator = new PluginActivationCoordinator({
       packageManager: pluginPackageManager,
       supervisor: pluginRuntimeSupervisor,
+      trustedSupervisor: pluginTrustedRuntimeSupervisor,
       logger,
     });
   }

@@ -110,6 +110,59 @@ describe('PluginActivationCoordinator', () => {
     expect(deactivateLibrary).toHaveBeenCalledWith('library-1', 'safe-mode');
   });
 
+  it('activates trusted plugins through the dedicated supervisor', async () => {
+    const trustedActivate = vi.fn(async () => undefined);
+    const coordinator = new PluginActivationCoordinator({
+      packageManager: {
+        getSafeMode: async () => false,
+        listInstalled: async () => [{
+          status: 'valid',
+          package: {
+            lock: { pluginId: 'com.example.trusted-node', version: '1.0.0', packageHash: 'd'.repeat(64) },
+            manifest: {
+              runtime: { mode: 'trusted', entry: 'dist/main.js' },
+              permissions: ['library.read', 'asset.read', 'net.fetch'],
+            },
+            packageDirectory: '/plugins/trusted-node',
+          },
+        }],
+        resolve: async () => ({
+          status: 'resolved',
+          selection: 'use-global',
+          package: {
+            lock: { pluginId: 'com.example.trusted-node', version: '1.0.0', packageHash: 'd'.repeat(64) },
+            manifest: {
+              runtime: { mode: 'trusted', entry: 'dist/main.js' },
+              permissions: ['library.read', 'asset.read', 'net.fetch'],
+            },
+            packageDirectory: '/plugins/trusted-node',
+          },
+        }),
+      } as never,
+      supervisor: {
+        activate: vi.fn(),
+        deactivate: vi.fn(),
+        deactivateLibrary: vi.fn(),
+      } as never,
+      trustedSupervisor: {
+        activate: trustedActivate,
+        deactivate: vi.fn(),
+        deactivateLibrary: vi.fn(),
+      } as never,
+    });
+
+    await coordinator.onLibraryOpened({
+      libraryId: 'library-1',
+      libraryDirectory: '/libraries/one',
+    });
+
+    expect(trustedActivate).toHaveBeenCalledWith(expect.objectContaining({
+      pluginId: 'com.example.trusted-node',
+      packageDirectory: '/plugins/trusted-node',
+      entryRelativePath: 'dist/main.js',
+    }));
+  });
+
   it('refreshOpenLibraries only touches libraries that were opened', async () => {
     const activate = vi.fn(async () => undefined);
     const coordinator = new PluginActivationCoordinator({
@@ -158,7 +211,6 @@ describe('PluginActivationCoordinator', () => {
 
     activate.mockClear();
     await coordinator.refreshOpenLibraries();
-    // Already-active plugin ids are left running; refresh still walks open libraries.
     expect(activate).toHaveBeenCalledTimes(0);
 
     coordinator.onLibraryClosed('library-1');

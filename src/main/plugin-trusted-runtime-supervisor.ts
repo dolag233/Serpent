@@ -1,0 +1,298 @@
+import {
+  pluginTrustedChildMessageSchema,
+  type PluginTrustedChildMessage,
+  type PluginTrustedParentMessage,
+} from '../shared/plugin-trusted-runtime-protocol';
+import type { PluginRuntimeDeactivateReason } from '../shared/plugin-runtime-utility-protocol';
+import type { AutomationScriptCommandId } from '../shared/automation-script-api';
+import type { PluginPermission } from '../plugins/plugin-manifest';
+
+const READY_TIMEOUT_MS = 5_000;
+
+type RuntimeChildListener = (...args: unknown[]) => void;
+
+type RuntimeChild = {
+  readonly pid?: number;
+  readonly stdout?: { on(event: 'data', listener: (chunk: unknown) => void): unknown } | null;
+  readonly stderr?: { on(event: 'data', listener: (chunk: unknown) => void): unknown } | null;
+  postMessage(message: unknown): void;
+  kill(): boolean;
+  on(event: string, listener: RuntimeChildListener): unknown;
+  off(event: string, listener: RuntimeChildListener): unknown;
+  once(event: string, listener: RuntimeChildListener): unknown;
+};
+
+export interface PluginTrustedRuntimeSupervisorLogger {
+  info(scope: string, message: string, context?: Record<string, unknown>): void;
+  error(scope: string, error: unknown, context?: Record<string, unknown>): void;
+}
+
+export interface PluginTrustedActivateInput {
+  instanceId: string;
+  libraryId: string;
+  libraryDirectory: string;
+  pluginId: string;
+  version: string;
+  packageHash: string;
+  packageDirectory: string;
+  entryRelativePath: string;
+  permissions: readonly PluginPermission[];
+  activateDeadlineMs?: number;
+}
+
+export type PluginTrustedHostCommandHandler = (
+  commandId: AutomationScriptCommandId,
+  input: unknown,
+  context: { instanceId: string; libraryId: string; pluginId: string; permissions: readonly PluginPermission[] },
+) => Promise<unknown>;
+
+type TrackedInstance = {
+  child: RuntimeChild;
+  ready: boolean;
+  libraryId: string;
+  libraryDirectory: string;
+  pluginId: string;
+  packageHash: string;
+  permissions: readonly PluginPermission[];
+  readyWaiters: Array<{ resolve(): void; reject(error: Error): void }>;
+  readyTimer: ReturnType<typeof setTimeout> | undefined;
+};
+
+/**
+ * One UtilityProcess per trusted plugin instance. Crash isolation is per child;
+ * permissions do not constrain Node inside the child.
+ */
+export class PluginTrustedRuntimeSupervisor {
+  #instances = new Map<string, TrackedInstance>();
+
+  constructor(
+    private readonly options: {
+      fork(modulePath: string): RuntimeChild;
+      modulePath: string;
+      executeHostCommand: PluginTrustedHostCommandHandler;
+      onCrash?: (input: {
+        libraryId: string;
+        libraryDirectory: string;
+        pluginId: string;
+        packageHash: string;
+        failureCode: string;
+      }) => void;
+      logger?: PluginTrustedRuntimeSupervisorLogger;
+    },
+  ) {}
+
+  async activate(input: PluginTrustedActivateInput): Promise<void> {
+    if (this.#instances.has(input.instanceId)) {
+      throw new Error('Trusted plugin instance already exists.');
+    }
+    const child = this.options.fork(this.options.modulePath);
+    const tracked: TrackedInstance = {
+      child,
+      ready: false,
+      libraryId: input.libraryId,
+      libraryDirectory: input.libraryDirectory,
+      pluginId: input.pluginId,
+      packageHash: input.packageHash,
+      permissions: input.permissions,
+      readyWaiters: [],
+      readyTimer: undefined,
+    };
+    this.#instances.set(input.instanceId, tracked);
+    child.stdout?.on('data', (chunk) => {
+      this.options.logger?.info('plugin.trusted.stdout', String(chunk).trim(), {
+        pluginId: input.pluginId,
+      });
+    });
+    child.stderr?.on('data', (chunk) => {
+      this.options.logger?.error('plugin.trusted.stderr', new Error(String(chunk).trim()), {
+        pluginId: input.pluginId,
+      });
+    });
+    child.on('message', (raw) => this.#onMessage(input.instanceId, raw));
+    child.on('exit', () => this.#onExit(input.instanceId));
+    child.on('error', (error) => {
+      this.options.logger?.error('plugin.trusted.fatal', error, { pluginId: input.pluginId });
+      this.#failReady(tracked, new Error('The trusted plugin host could not start.'));
+    });
+    tracked.readyTimer = setTimeout(() => {
+      this.#failReady(tracked, new Error('Trusted plugin host ready handshake timed out.'));
+      this.deactivate(input.instanceId, 'supervisor-shutdown');
+    }, READY_TIMEOUT_MS);
+
+    await this.#waitReady(tracked);
+    this.#post(tracked, {
+      type: 'plugin-trusted.activate',
+      instanceId: input.instanceId,
+      libraryId: input.libraryId,
+      pluginId: input.pluginId,
+      version: input.version,
+      packageHash: input.packageHash,
+      packageDirectory: input.packageDirectory,
+      entryRelativePath: input.entryRelativePath,
+      permissions: [...input.permissions],
+      activateDeadlineMs: input.activateDeadlineMs ?? 15_000,
+    });
+  }
+
+  deactivate(instanceId: string, reason: PluginRuntimeDeactivateReason): void {
+    const tracked = this.#instances.get(instanceId);
+    if (tracked === undefined) return;
+    try {
+      tracked.child.postMessage({
+        type: 'plugin-trusted.deactivate',
+        instanceId,
+        reason,
+      } satisfies PluginTrustedParentMessage);
+    } catch {
+      // Child may already be gone.
+    }
+    tracked.child.kill();
+    this.#clearTracked(instanceId);
+  }
+
+  deactivateLibrary(libraryId: string, reason: PluginRuntimeDeactivateReason): void {
+    for (const [instanceId, tracked] of this.#instances) {
+      if (tracked.libraryId === libraryId) this.deactivate(instanceId, reason);
+    }
+  }
+
+  shutdown(): void {
+    for (const instanceId of [...this.#instances.keys()]) {
+      this.deactivate(instanceId, 'supervisor-shutdown');
+    }
+  }
+
+  listActiveInstanceIds(libraryId?: string): string[] {
+    return [...this.#instances.entries()]
+      .filter(([, tracked]) => libraryId === undefined || tracked.libraryId === libraryId)
+      .map(([instanceId]) => instanceId);
+  }
+
+  #waitReady(tracked: TrackedInstance): Promise<void> {
+    if (tracked.ready) return Promise.resolve();
+    return new Promise((resolve, reject) => {
+      tracked.readyWaiters.push({ resolve, reject });
+    });
+  }
+
+  #failReady(tracked: TrackedInstance, error: Error): void {
+    if (tracked.readyTimer !== undefined) clearTimeout(tracked.readyTimer);
+    const waiters = tracked.readyWaiters.splice(0);
+    for (const waiter of waiters) waiter.reject(error);
+  }
+
+  #markReady(tracked: TrackedInstance): void {
+    tracked.ready = true;
+    if (tracked.readyTimer !== undefined) clearTimeout(tracked.readyTimer);
+    const waiters = tracked.readyWaiters.splice(0);
+    for (const waiter of waiters) waiter.resolve();
+  }
+
+  #post(tracked: TrackedInstance, message: PluginTrustedParentMessage): void {
+    tracked.child.postMessage(message);
+  }
+
+  #clearTracked(instanceId: string): void {
+    const tracked = this.#instances.get(instanceId);
+    if (tracked === undefined) return;
+    if (tracked.readyTimer !== undefined) clearTimeout(tracked.readyTimer);
+    this.#instances.delete(instanceId);
+  }
+
+  #onExit(instanceId: string): void {
+    const tracked = this.#instances.get(instanceId);
+    if (tracked === undefined) return;
+    this.#failReady(tracked, new Error('Trusted plugin host exited unexpectedly.'));
+    this.options.onCrash?.({
+      libraryId: tracked.libraryId,
+      libraryDirectory: tracked.libraryDirectory,
+      pluginId: tracked.pluginId,
+      packageHash: tracked.packageHash,
+      failureCode: 'RUNTIME_PROCESS_EXITED',
+    });
+    this.#clearTracked(instanceId);
+  }
+
+  #onMessage(instanceId: string, raw: unknown): void {
+    const tracked = this.#instances.get(instanceId);
+    if (tracked === undefined) return;
+    const payload = typeof raw === 'object' && raw !== null && 'data' in raw
+      ? (raw as { data: unknown }).data
+      : raw;
+    const parsed = pluginTrustedChildMessageSchema.safeParse(payload);
+    if (!parsed.success) {
+      this.options.logger?.error(
+        'plugin.trusted.protocol',
+        new Error('Invalid plugin-trusted child message.'),
+        { instanceId },
+      );
+      return;
+    }
+    const message = parsed.data;
+    if (message.type === 'plugin-trusted.ready') {
+      this.#markReady(tracked);
+      return;
+    }
+    if (!tracked.ready) return;
+    if (message.type === 'plugin-trusted.host-command') {
+      void this.#respondHostCommand(tracked, message);
+      return;
+    }
+    if (message.type === 'plugin-trusted.activation-failed') {
+      this.options.onCrash?.({
+        libraryId: tracked.libraryId,
+        libraryDirectory: tracked.libraryDirectory,
+        pluginId: tracked.pluginId,
+        packageHash: tracked.packageHash,
+        failureCode: message.code,
+      });
+      tracked.child.kill();
+      this.#clearTracked(instanceId);
+      return;
+    }
+    if (message.type === 'plugin-trusted.deactivated') {
+      tracked.child.kill();
+      this.#clearTracked(instanceId);
+      return;
+    }
+    if (message.type === 'plugin-trusted.console') {
+      this.options.logger?.info('plugin.trusted.console', message.message, {
+        instanceId,
+        level: message.level,
+      });
+    }
+  }
+
+  async #respondHostCommand(
+    tracked: TrackedInstance,
+    message: Extract<PluginTrustedChildMessage, { type: 'plugin-trusted.host-command' }>,
+  ): Promise<void> {
+    try {
+      const result = await this.options.executeHostCommand(message.commandId, message.input, {
+        instanceId: message.instanceId,
+        libraryId: tracked.libraryId,
+        pluginId: tracked.pluginId,
+        permissions: tracked.permissions,
+      });
+      this.#post(tracked, {
+        type: 'plugin-trusted.host-result',
+        instanceId: message.instanceId,
+        requestId: message.requestId,
+        ok: true,
+        result,
+      });
+    } catch (error) {
+      this.options.logger?.error('plugin.trusted.host-command-failed', error, {
+        instanceId: message.instanceId,
+        commandId: message.commandId,
+      });
+      this.#post(tracked, {
+        type: 'plugin-trusted.host-result',
+        instanceId: message.instanceId,
+        requestId: message.requestId,
+        ok: false,
+        error: { code: 'HOST_COMMAND_FAILED', message: 'The automation command could not complete.' },
+      });
+    }
+  }
+}

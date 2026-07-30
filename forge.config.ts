@@ -118,6 +118,11 @@ const config: ForgeConfig = {
           config: 'vite.plugin-runtime.config.ts',
           target: 'main',
         },
+        {
+          entry: 'src/scripting/plugin-trusted-host-entry.ts',
+          config: 'vite.plugin-trusted-runtime.config.ts',
+          target: 'main',
+        },
       ],
       renderer: [
         {
