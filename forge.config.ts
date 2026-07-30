@@ -113,6 +113,11 @@ const config: ForgeConfig = {
           config: 'vite.script-runtime.config.ts',
           target: 'main',
         },
+        {
+          entry: 'src/scripting/plugin-standard-host-entry.ts',
+          config: 'vite.plugin-runtime.config.ts',
+          target: 'main',
+        },
       ],
       renderer: [
         {

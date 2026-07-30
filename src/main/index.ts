@@ -96,10 +96,15 @@ import {
 import { registerAutomationScriptIpc } from './automation-script-ipc';
 import { AutomationScriptFileService } from './automation-script-file-service';
 import { ScriptRuntimeSupervisor } from './script-runtime-supervisor';
+import { PluginRuntimeSupervisor } from './plugin-runtime-supervisor';
+import { PluginActivationCoordinator } from './plugin-activation-coordinator';
+import { automationCapabilitiesFromPluginPermissions } from '../plugins/plugin-permission-capabilities';
 import { loadOrCreatePluginDeviceId } from './plugin-device-identity';
 import { createPluginPackageRequestHandler } from './plugin-package-ipc';
 import { PluginPackageManager } from './plugin-package-manager';
 import { PLUGIN_API_VERSION } from '../plugins/plugin-manifest';
+import type { AutomationExecutionContext } from '../automation/command-gateway';
+import { AUTOMATION_API_VERSION } from '../automation/command-registry';
 import { shouldUseFramelessTitleBar } from "../shared/window-controls";
 import { matchViewerVideoLetterShortcut } from "../shared/viewer-video-shortcuts";
 import {
@@ -249,8 +254,11 @@ let appLogPath: string | undefined;
 let automationExecutionJournal: AutomationExecutionJournal | undefined;
 let automationCommandGateway: AutomationCommandGateway | undefined;
 let scriptRuntimeSupervisor: ScriptRuntimeSupervisor | undefined;
+let pluginRuntimeSupervisor: PluginRuntimeSupervisor | undefined;
+let pluginActivationCoordinator: PluginActivationCoordinator | undefined;
 let automationScriptFiles: AutomationScriptFileService | undefined;
 let pluginPackageManager: PluginPackageManager | undefined;
+const pluginAutomationContexts = new Map<string, AutomationExecutionContext>();
 
 function recentLibraryPath(): string {
   return path.join(app.getPath("userData"), "recent-library.json");
@@ -3140,7 +3148,27 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
         workerResult.type === "library.opened"
           ? workerResult.library.libraryId
           : workerResult.libraryId;
+      const openedLibraryPath =
+        workerResult.type === "library.opened"
+          ? workerResult.library.libraryPath
+          : workerResult.libraryPath;
       void processAiQueue(openedLibraryId);
+      void pluginActivationCoordinator?.onLibraryOpened({
+        libraryId: openedLibraryId,
+        libraryDirectory: openedLibraryPath,
+      }).catch((error) => {
+        logger?.error('plugin.activation.library-opened', error, {
+          libraryId: openedLibraryId,
+        });
+      });
+    }
+    if (workerResult.ok && workerResult.type === "library.closed") {
+      pluginActivationCoordinator?.onLibraryClosed(workerResult.libraryId);
+      for (const [executionId, context] of pluginAutomationContexts) {
+        if (context.libraryId === workerResult.libraryId) {
+          pluginAutomationContexts.delete(executionId);
+        }
+      }
     }
 
     // Post-process preview and open-external requests
@@ -3773,7 +3801,13 @@ async function startApplication(): Promise<void> {
   });
   automationCommandGateway = createAutomationCommandGateway(
     new AutomationLibraryWorkerAdapter(workerClient),
-    automationExecutionJournal,
+    {
+      resolve: (executionId) => {
+        const pluginContext = pluginAutomationContexts.get(executionId);
+        if (pluginContext !== undefined) return pluginContext;
+        return automationExecutionJournal?.resolve(executionId);
+      },
+    },
     {
       auditSink: automationExecutionJournal,
       auditLogger: logger,
@@ -3804,6 +3838,45 @@ async function startApplication(): Promise<void> {
     }),
     logger,
   });
+  pluginRuntimeSupervisor = new PluginRuntimeSupervisor({
+    modulePath: path.join(__dirname, 'plugin_standard_host.js'),
+    fork: (modulePath) => utilityProcess.fork(modulePath, [], {
+      serviceName: 'Serpent Plugin Standard Host',
+      stdio: 'pipe',
+    }),
+    executeHostCommand: async (commandId, input, context) => {
+      const gateway = automationCommandGateway;
+      if (gateway === undefined) throw new Error('Automation Gateway is unavailable.');
+      pluginAutomationContexts.set(context.instanceId, {
+        executionId: context.instanceId,
+        source: 'plugin',
+        libraryId: context.libraryId,
+        grantedCapabilities: automationCapabilitiesFromPluginPermissions(context.permissions),
+      });
+      const result = await gateway.execute({
+        apiVersion: AUTOMATION_API_VERSION,
+        commandId,
+        executionId: context.instanceId,
+        input,
+      });
+      if (!result.ok) {
+        throw new Error(result.error.message ?? result.error.code);
+      }
+      return result.result;
+    },
+    onCrash: (crash) => {
+      void pluginPackageManager?.recordRuntimeCrash({
+        libraryId: crash.libraryId,
+        libraryDirectory: crash.libraryDirectory,
+        pluginId: crash.pluginId,
+        packageHash: crash.packageHash,
+        failureCode: crash.failureCode,
+      }).catch((error) => {
+        logger?.error('plugin.runtime.crash-record', error, crash);
+      });
+    },
+    logger,
+  });
   const pluginCompatibility = currentPluginCompatibilityPlatform();
   const nodeAbi = Number(process.versions.modules);
   if (pluginCompatibility === undefined || !Number.isSafeInteger(nodeAbi) || nodeAbi <= 0) {
@@ -3820,6 +3893,11 @@ async function startApplication(): Promise<void> {
       pluginApiVersion: PLUGIN_API_VERSION,
       ...pluginCompatibility,
       nodeAbi,
+      logger,
+    });
+    pluginActivationCoordinator = new PluginActivationCoordinator({
+      packageManager: pluginPackageManager,
+      supervisor: pluginRuntimeSupervisor,
       logger,
     });
   }

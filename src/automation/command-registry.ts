@@ -95,6 +95,7 @@ export const automationSourceSchema = z.enum([
   'script',
   'mcp',
   'test',
+  'plugin',
 ]);
 export type AutomationSource = z.infer<typeof automationSourceSchema>;
 
@@ -581,7 +582,8 @@ function readDescriptor<Id extends AutomationCommandId>(
   };
 }
 
-const allReadSources = ['desktop-console', 'script', 'mcp', 'test'] as const;
+const allReadSources = ['desktop-console', 'script', 'mcp', 'test', 'plugin'] as const;
+const allInteractiveSources = ['desktop-console', 'script', 'mcp', 'test', 'plugin'] as const;
 
 export const automationCommandRegistry = [
   readDescriptor({
@@ -612,7 +614,7 @@ export const automationCommandRegistry = [
     resultSchema: automationCommandResultSchemas['asset.rating.set'],
     workerResultSchema: assetRatingWorkerResultSchema,
     requiredCapabilities: ['library.read', 'asset.read', 'metadata.write'],
-    allowedSources: ['desktop-console', 'script', 'mcp', 'test'],
+    allowedSources: allInteractiveSources,
     impact: 'metadata-write',
     targetScope: 'asset-set',
     supportsBatch: true,
@@ -646,7 +648,7 @@ export const automationCommandRegistry = [
     resultSchema: automationCommandResultSchemas['asset.paths.copy'],
     workerResultSchema: mediaAssetPathsWorkerResultSchema,
     requiredCapabilities: ['library.read', 'asset.read', 'clipboard.write'],
-    allowedSources: ['desktop-console', 'script', 'mcp', 'test'],
+    allowedSources: allInteractiveSources,
     impact: 'external-effect',
     targetScope: 'asset-set',
     supportsBatch: true,
@@ -675,7 +677,7 @@ export const automationCommandRegistry = [
     resultSchema: automationCommandResultSchemas['asset.trash'],
     workerResultSchema: assetTrashWorkerResultSchema,
     requiredCapabilities: ['library.read', 'asset.read', 'trash.write'],
-    allowedSources: ['desktop-console', 'script', 'mcp', 'test'],
+    allowedSources: allInteractiveSources,
     impact: 'file-write',
     targetScope: 'asset-set',
     supportsBatch: true,
@@ -707,7 +709,7 @@ export const automationCommandRegistry = [
     resultSchema: automationCommandResultSchemas['asset.rename-file'],
     workerResultSchema: assetRenameWorkerResultSchema,
     requiredCapabilities: ['library.read', 'asset.read', 'file.rename'],
-    allowedSources: ['desktop-console', 'script', 'mcp', 'test'],
+    allowedSources: allInteractiveSources,
     impact: 'file-write',
     targetScope: 'asset',
     supportsBatch: false,
@@ -739,7 +741,7 @@ export const automationCommandRegistry = [
     resultSchema: automationCommandResultSchemas['asset.rename-files'],
     workerResultSchema: assetRenameFilesWorkerResultSchema,
     requiredCapabilities: ['library.read', 'asset.read', 'file.rename'],
-    allowedSources: ['desktop-console', 'script', 'mcp', 'test'],
+    allowedSources: allInteractiveSources,
     impact: 'file-write',
     targetScope: 'asset-set',
     supportsBatch: true,
@@ -790,7 +792,7 @@ export const automationCommandRegistry = [
     resultSchema: automationCommandResultSchemas['asset.restore-if-original-vacant'],
     workerResultSchema: assetRestoreIfOriginalVacantWorkerResultSchema,
     requiredCapabilities: ['library.read', 'asset.read', 'trash.write'],
-    allowedSources: ['desktop-console', 'script', 'mcp', 'test'],
+    allowedSources: allInteractiveSources,
     impact: 'file-write',
     targetScope: 'asset-set',
     supportsBatch: true,
@@ -869,7 +871,7 @@ export const automationCommandRegistry = [
     resultSchema: automationCommandResultSchemas['folder.create'],
     workerResultSchema: folderCreateWorkerResultSchema,
     requiredCapabilities: ['library.read', 'folder.read', 'folder.write'],
-    allowedSources: ['desktop-console', 'script', 'mcp', 'test'],
+    allowedSources: allInteractiveSources,
     impact: 'file-write',
     targetScope: 'library',
     supportsBatch: false,
@@ -1034,7 +1036,7 @@ export const automationCommandRegistry = [
     resultSchema: automationCommandResultSchemas['tag.create'],
     workerResultSchema: tagCreateWorkerResultSchema,
     requiredCapabilities: ['library.read', 'tag.read', 'tag.write'],
-    allowedSources: ['desktop-console', 'script', 'mcp', 'test'],
+    allowedSources: allInteractiveSources,
     impact: 'metadata-write',
     targetScope: 'library',
     supportsBatch: false,
@@ -1071,7 +1073,7 @@ export const automationCommandRegistry = [
     resultSchema: automationCommandResultSchemas['tag.assign'],
     workerResultSchema: tagAssignWorkerResultSchema,
     requiredCapabilities: ['library.read', 'asset.read', 'tag.read', 'tag.write'],
-    allowedSources: ['desktop-console', 'script', 'mcp', 'test'],
+    allowedSources: allInteractiveSources,
     impact: 'metadata-write',
     targetScope: 'asset-set',
     supportsBatch: true,
@@ -1105,7 +1107,7 @@ export const automationCommandRegistry = [
     resultSchema: automationCommandResultSchemas['tag.remove'],
     workerResultSchema: tagRemoveWorkerResultSchema,
     requiredCapabilities: ['library.read', 'asset.read', 'tag.read', 'tag.write'],
-    allowedSources: ['desktop-console', 'script', 'mcp', 'test'],
+    allowedSources: allInteractiveSources,
     impact: 'metadata-write',
     targetScope: 'asset-set',
     supportsBatch: true,

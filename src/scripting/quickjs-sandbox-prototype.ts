@@ -26,6 +26,11 @@ export interface QuickJsSandboxPrototypeHost {
    * binds the two public asset methods below to fixed command IDs.
    */
   executeAutomationCommand?(commandId: AutomationScriptCommandId, input: unknown): Promise<unknown>;
+  /**
+   * Long-lived plugin Host sessions park activate() on this bridge until Main
+   * requests deactivate. Scripts never receive this surface.
+   */
+  waitUntilDeactivate?(): Promise<void>;
 }
 
 export interface QuickJsSandboxPrototypeLimits {
@@ -1060,6 +1065,14 @@ export async function runQuickJsSandboxPrototype(
       ));
       context.setProp(serpent, 'readText', readText);
       readText.dispose();
+    }
+    if (host.waitUntilDeactivate !== undefined) {
+      const waitUntilDeactivate = context.newFunction('__waitUntilDeactivate', () => createDeferredHostCall(
+        host.waitUntilDeactivate!(),
+        () => context.undefined,
+      ));
+      context.setProp(serpent, '__waitUntilDeactivate', waitUntilDeactivate);
+      waitUntilDeactivate.dispose();
     }
     if (host.executeAutomationCommand !== undefined) {
       const assets = context.newObject();
