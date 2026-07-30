@@ -15,8 +15,11 @@
 
 - 可信 Node Host（`Serpent-upsn.4`）
 - UI contributions / Hook / Provider
-- 信任变更即时 refresh（当前依赖重开库或后续 IPC 钩子）
 - packaged / Windows 证据
+
+## 后续增量
+
+- 插件管理 IPC `afterMutation`：信任 / Safe Mode / 安装卸载后刷新已打开资源库的 Host 激活（无需重开库）。
 
 ## 验证
 

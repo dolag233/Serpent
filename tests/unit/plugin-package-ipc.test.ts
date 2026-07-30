@@ -162,6 +162,52 @@ describe('Plugin package IPC bridge', () => {
     });
   });
 
+  it('notifies Main after trust and safe-mode mutations so the Host can refresh', async () => {
+    const source = temporaryRoot('serpent-plugin-ipc-refresh-source-');
+    const userData = temporaryRoot('serpent-plugin-ipc-refresh-user-');
+    const library = temporaryRoot('serpent-plugin-ipc-refresh-library-');
+    writePlugin(source);
+    const mutations: Array<{ requestType: string; libraryId?: string }> = [];
+    const handler = createPluginPackageRequestHandler({
+      manager: createManager(userData),
+      resolveLibraryDirectory: async (libraryId) => libraryId === 'library-a' ? library : undefined,
+      chooseLocalPackage: async () => source,
+      afterMutation: async (context) => {
+        mutations.push({
+          requestType: context.requestType,
+          ...(context.libraryId === undefined ? {} : { libraryId: context.libraryId }),
+        });
+      },
+    });
+
+    const installed = await handler({
+      type: 'plugin-manager.install-local',
+      scope: 'library',
+      libraryId: 'library-a',
+    });
+    expect(installed).toMatchObject({ ok: true });
+    if (!installed.ok) throw new Error('expected install');
+    const packageHash = installed.packages[0]?.packageHash;
+    expect(packageHash).toBeTypeOf('string');
+
+    await handler({
+      type: 'plugin-manager.trust',
+      scope: 'library',
+      libraryId: 'library-a',
+      pluginId: 'com.example.palette-tools',
+      packageHash: packageHash!,
+      decision: 'trusted',
+    });
+    await handler({ type: 'plugin-manager.safe-mode', enabled: true });
+
+    expect(mutations).toEqual(expect.arrayContaining([
+      { requestType: 'plugin-manager.install-local', libraryId: 'library-a' },
+      { requestType: 'plugin-manager.trust', libraryId: 'library-a' },
+      { requestType: 'plugin-manager.safe-mode' },
+    ]));
+    expect(mutations.some((entry) => entry.requestType === 'plugin-manager.list')).toBe(false);
+  });
+
   it('rolls back through the typed bridge and keeps the previous verified package selected', async () => {
     const firstSource = temporaryRoot('serpent-plugin-ipc-rollback-first-');
     const userData = temporaryRoot('serpent-plugin-ipc-rollback-user-');

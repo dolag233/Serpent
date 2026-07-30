@@ -25,6 +25,7 @@ export interface PluginActivationCoordinatorOptions {
  */
 export class PluginActivationCoordinator {
   #activeByLibrary = new Map<string, Map<string, string>>();
+  #openLibraries = new Map<string, string>();
 
   constructor(private readonly options: PluginActivationCoordinatorOptions) {}
 
@@ -117,11 +118,19 @@ export class PluginActivationCoordinator {
     libraryId: string;
     libraryDirectory: string;
   }): Promise<void> {
+    this.#openLibraries.set(input.libraryId, input.libraryDirectory);
     await this.refreshLibrary(input);
   }
 
   onLibraryClosed(libraryId: string): void {
     this.options.supervisor.deactivateLibrary(libraryId, 'library-closed');
     this.#activeByLibrary.delete(libraryId);
+    this.#openLibraries.delete(libraryId);
+  }
+
+  async refreshOpenLibraries(): Promise<void> {
+    for (const [libraryId, libraryDirectory] of this.#openLibraries) {
+      await this.refreshLibrary({ libraryId, libraryDirectory });
+    }
   }
 }

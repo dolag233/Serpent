@@ -24,6 +24,16 @@ export interface PluginPackageIpcOptions {
   resolveLibraryDirectory(libraryId: string): Promise<string | undefined>;
   /** Main-owned native picker. It must never return a value to Renderer. */
   chooseLocalPackage(): Promise<string | undefined>;
+  /**
+   * Called after a successful mutation that can change which packages should
+   * be active. Main uses this to refresh the Standard Plugin Host without
+   * requiring a full library reopen.
+   */
+  afterMutation?: (context: {
+    requestType: PluginManagerRequest['type'];
+    libraryId?: string;
+    libraryDirectory?: string;
+  }) => Promise<void>;
   logger?: { error(scope: string, error: unknown, context?: Record<string, unknown>): void };
 }
 
@@ -292,6 +302,15 @@ export function createPluginPackageRequestHandler(options: PluginPackageIpcOptio
           libraryId,
           pluginId: request.pluginId,
           version: request.version,
+        });
+      }
+
+      if (options.afterMutation !== undefined
+        && request.type !== 'plugin-manager.list') {
+        await options.afterMutation({
+          requestType: request.type,
+          ...(libraryId === undefined ? {} : { libraryId }),
+          ...(libraryDirectory === undefined ? {} : { libraryDirectory }),
         });
       }
 

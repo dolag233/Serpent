@@ -4131,6 +4131,26 @@ async function startApplication(): Promise<void> {
         return result.libraries.find((library) => library.libraryId === libraryId)?.libraryPath;
       },
       chooseLocalPackage: selectPluginPackage,
+      afterMutation: async ({ requestType, libraryId, libraryDirectory }) => {
+        const coordinator = pluginActivationCoordinator;
+        if (coordinator === undefined) return;
+        try {
+          if (libraryId !== undefined && libraryDirectory !== undefined) {
+            await coordinator.refreshLibrary({ libraryId, libraryDirectory });
+            return;
+          }
+          // Safe Mode and user-scope package changes can affect every open library.
+          if (requestType === 'plugin-manager.safe-mode'
+            || requestType === 'plugin-manager.install-local'
+            || requestType === 'plugin-manager.install-github'
+            || requestType === 'plugin-manager.uninstall'
+            || requestType === 'plugin-manager.trust') {
+            await coordinator.refreshOpenLibraries();
+          }
+        } catch (error) {
+          logger?.error('plugin.activation.after-mutation', error, { requestType, libraryId });
+        }
+      },
       logger,
     });
   ipcMain.handle(PLUGIN_MANAGER_CHANNEL, (event, input: unknown) => {

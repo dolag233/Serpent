@@ -109,4 +109,61 @@ describe('PluginActivationCoordinator', () => {
     });
     expect(deactivateLibrary).toHaveBeenCalledWith('library-1', 'safe-mode');
   });
+
+  it('refreshOpenLibraries only touches libraries that were opened', async () => {
+    const activate = vi.fn(async () => undefined);
+    const coordinator = new PluginActivationCoordinator({
+      packageManager: {
+        getSafeMode: async () => false,
+        listInstalled: async () => [{
+          status: 'valid',
+          package: {
+            lock: { pluginId: 'com.example.trusted', version: '1.0.0', packageHash: 'b'.repeat(64) },
+            manifest: {
+              runtime: { mode: 'standard', entry: 'dist/main.js' },
+              permissions: ['library.read'],
+            },
+            packageDirectory: '/plugins/trusted',
+          },
+        }],
+        resolve: async () => ({
+          status: 'resolved',
+          selection: 'use-global',
+          package: {
+            lock: { pluginId: 'com.example.trusted', version: '1.0.0', packageHash: 'b'.repeat(64) },
+            manifest: {
+              runtime: { mode: 'standard', entry: 'dist/main.js' },
+              permissions: ['library.read'],
+            },
+            packageDirectory: '/plugins/trusted',
+          },
+        }),
+      } as never,
+      supervisor: {
+        activate,
+        deactivate: vi.fn(),
+        deactivateLibrary: vi.fn(),
+      } as never,
+      readEntryFile: async () => 'async function activate() {}',
+    });
+
+    await coordinator.refreshOpenLibraries();
+    expect(activate).not.toHaveBeenCalled();
+
+    await coordinator.onLibraryOpened({
+      libraryId: 'library-1',
+      libraryDirectory: '/libraries/one',
+    });
+    expect(activate).toHaveBeenCalledTimes(1);
+
+    activate.mockClear();
+    await coordinator.refreshOpenLibraries();
+    // Already-active plugin ids are left running; refresh still walks open libraries.
+    expect(activate).toHaveBeenCalledTimes(0);
+
+    coordinator.onLibraryClosed('library-1');
+    activate.mockClear();
+    await coordinator.refreshOpenLibraries();
+    expect(activate).toHaveBeenCalledTimes(0);
+  });
 });
