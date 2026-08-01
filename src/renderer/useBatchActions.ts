@@ -48,6 +48,12 @@ export function useBatchActions({
 }: UseBatchActionsParams): UseBatchActionsResult {
   const { locale } = useLocale();
 
+  async function refreshCollections() {
+    if (!api || !library) return;
+    const result = await api.listCollections({ libraryId: library.libraryId });
+    if (result.ok) setCollections(result.value);
+  }
+
   async function batchAssignTagToSelection(tagId: string, assetIds: string[]) {
     if (!api || !library || assetIds.length === 0) return;
     setUiState("loading");
@@ -220,6 +226,7 @@ export function useBatchActions({
           count: result.value.trashedCount,
         }),
       );
+      await refreshCollections();
       clearAssetSelection();
       await reloadCurrentContent();
     } catch (caught) {
@@ -249,6 +256,7 @@ export function useBatchActions({
           count: result.value.deletedCount,
         }),
       );
+      await refreshCollections();
       clearAssetSelection();
       await reloadCurrentContent();
     } catch (caught) {

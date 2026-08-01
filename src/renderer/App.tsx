@@ -5113,6 +5113,10 @@ function AppInner() {
         });
         if (!result.ok) throw new LibraryOperationError(result.error);
         deletedAssets = result.value.deletedCount;
+        const collectionResult = await api.listCollections({
+          libraryId: library.libraryId,
+        });
+        if (collectionResult.ok) setCollections(collectionResult.value);
       }
       for (const folderId of folderIds) {
         const result = await api.deleteFolderFromDisk({
@@ -5159,6 +5163,10 @@ function AppInner() {
         });
         if (!result.ok) throw new LibraryOperationError(result.error);
         trashedAssets = result.value.trashedCount;
+        const collectionResult = await api.listCollections({
+          libraryId: library.libraryId,
+        });
+        if (collectionResult.ok) setCollections(collectionResult.value);
       }
       for (const folderId of folderIds) {
         const result = await api.trashFolder({
