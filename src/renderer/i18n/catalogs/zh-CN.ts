@@ -116,6 +116,7 @@ export const zhCN = {
     addSection: "添加{title}",
     secondaryAction: "次要操作{title}",
     includeChildCollections: "包含子合集",
+    childCollectionCount: "子合集 {count} 个",
     includeChildFolders: "包含子文件夹",
     emptyFolders: "尚无文件夹",
     emptyManagedOrLinked: "尚无托管或链接文件夹",

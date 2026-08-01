@@ -63,6 +63,8 @@ function NavRow({
   icon,
   label,
   count,
+  childCount,
+  childCountLabel,
   active,
   onClick,
   onContextMenu,
@@ -84,6 +86,9 @@ function NavRow({
   icon: IconName;
   label: string;
   count?: number;
+  /** Optional secondary count, used for collection children. */
+  childCount?: number;
+  childCountLabel?: string;
   active?: boolean;
   onClick?: () => void;
   onContextMenu?: (e: React.MouseEvent) => void;
@@ -132,6 +137,15 @@ function NavRow({
       >
         <Icon name={icon} size={15} color={iconColor} />
         <span className="nav-row-label">{label}</span>
+        {childCount !== undefined && childCount > 0 && (
+          <span
+            aria-label={childCountLabel}
+            className="nav-count nav-child-count"
+            title={childCountLabel}
+          >
+            {childCount}
+          </span>
+        )}
         {count !== undefined && <span className="nav-count">{count}</span>}
       </button>
     </div>
@@ -359,9 +373,6 @@ export interface NavigationSidebarProps {
   showCollectionInput: boolean;
   collectionInputValue: string;
   newCollectionParentId: string | null;
-  collectionRecursive: boolean;
-  collectionRecursiveRef: React.MutableRefObject<boolean>;
-
   // --- Collection drag state ---
   draggedCollectionId: string | null;
   onSetDraggedCollectionId: (id: string | null) => void;
@@ -421,8 +432,6 @@ export interface NavigationSidebarProps {
   onCollectionInputKeyDown: (
     e: React.KeyboardEvent<HTMLInputElement>,
   ) => void;
-  onSetCollectionRecursive: (recursive: boolean) => void;
-
   // --- Folder creation entry (sidebar 「+」; opens the inline edit row) ---
   onAddFolder: () => void;
   /** SMART-007: open sidebar inline smart-collection name row. */
@@ -488,8 +497,6 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
     showCollectionInput,
     collectionInputValue,
     newCollectionParentId,
-    collectionRecursive,
-    collectionRecursiveRef,
     draggedCollectionId,
     onSetDraggedCollectionId,
     onChooseAllAssets,
@@ -515,7 +522,6 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
     onSetCollectionInputValue,
     onSetNewCollectionParentId,
     onCollectionInputKeyDown,
-    onSetCollectionRecursive,
     onAddFolder,
     onAddSmartCollection,
     inlineFolderEdit,
@@ -932,6 +938,10 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
           icon="collection"
           label={c.name}
           count={c.assetCount}
+          childCount={c.childCollectionCount}
+          childCountLabel={t("nav.childCollectionCount", {
+            count: c.childCollectionCount,
+          })}
           active={activeCollectionId === c.collectionId && !activeTagId}
           depth={depth}
           dropActive={assetDropTarget === `collection:${c.collectionId}`}
@@ -1106,33 +1116,6 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
                       value={collectionInputValue}
                     />
                   </div>
-                </div>
-              )}
-              {activeCollectionId && (
-                <div style={{ padding: "0 5px 2px" }}>
-                  <label
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 5,
-                      fontSize: 10,
-                      color: "var(--tertiary)",
-                      cursor: "pointer",
-                    }}
-                  >
-                    <input
-                      checked={collectionRecursive}
-                      onChange={(e) => {
-                        const recursive = e.target.checked;
-                        collectionRecursiveRef.current = recursive;
-                        onSetCollectionRecursive(recursive);
-                        if (activeCollectionId)
-                          void onChooseCollection(activeCollectionId, recursive);
-                      }}
-                      type="checkbox"
-                    />
-                    {t("nav.includeChildCollections")}
-                  </label>
                 </div>
               )}
               {collections.length ? (

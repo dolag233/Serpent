@@ -348,7 +348,14 @@ test('multi-select performs batch organization, trash, restore, and permanent de
     await expect(window.locator('.asset-card')).toHaveCount(0);
 
     await window.getByRole('button', { name: /批量合集/ }).first().click();
-    await window.getByLabel('包含子合集').uncheck();
+    const batchCollectionScopeToggle = window.getByRole('button', {
+      name: '包含子合集',
+    });
+    await batchCollectionScopeToggle.click();
+    await expect(batchCollectionScopeToggle).toHaveAttribute(
+      'aria-pressed',
+      'false',
+    );
     const firstMember = window.getByRole('button', { name: /first\.txt/i });
     const secondMember = window.getByRole('button', { name: /second\.txt/i });
     await firstMember.dragTo(secondMember);
@@ -448,6 +455,11 @@ test('collection recursion toggle immediately refreshes the visible collection s
     await window.getByRole('button', { name: '添加合集' }).click();
     await window.getByPlaceholder('输入子合集名称，回车创建').fill('子合集');
     await window.getByPlaceholder('输入子合集名称，回车创建').press('Enter');
+    const parentCollectionRow = window
+      .locator('.nav-row')
+      .filter({ hasText: '父合集' })
+      .first();
+    await expect(parentCollectionRow.locator('.nav-child-count')).toHaveText('1');
 
     await window.getByRole('button', { name: /所有资产/ }).click();
     await window.getByRole('button', { name: '添加合集' }).click();
@@ -517,7 +529,14 @@ test('collection recursion toggle immediately refreshes the visible collection s
 
     await window.getByRole('button', { name: /父合集/ }).click();
 
-    await window.getByLabel('包含子合集').uncheck();
+    const parentCollectionScopeToggle = window.getByRole('button', {
+      name: '包含子合集',
+    });
+    await parentCollectionScopeToggle.click();
+    await expect(parentCollectionScopeToggle).toHaveAttribute(
+      'aria-pressed',
+      'false',
+    );
     await expect(window.getByRole('button', { name: /child-only\.txt/i })).toHaveCount(0);
   } finally {
     await application.close();

@@ -383,6 +383,7 @@ export function VideoPlayerControls({
         <video
           autoPlay
           className="preview-video"
+          loop
           onDurationChange={(event) =>
             setDuration(event.currentTarget.duration || 0)
           }

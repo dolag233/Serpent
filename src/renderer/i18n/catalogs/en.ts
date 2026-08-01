@@ -125,6 +125,7 @@ export const en = {
     addSection: "Add {title}",
     secondaryAction: "Secondary action {title}",
     includeChildCollections: "Include subcollections",
+    childCollectionCount: "{count} subcollections",
     includeChildFolders: "Include subfolders",
     emptyFolders: "No folders yet",
     emptyManagedOrLinked: "No managed or linked folders yet",

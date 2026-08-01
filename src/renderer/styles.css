@@ -1983,6 +1983,10 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
   white-space: nowrap;
 }
 
+.nav-child-count {
+  color: var(--secondary);
+}
+
 .nav-empty {
   margin: 2px 6px 0 29px;
   color: var(--tertiary);

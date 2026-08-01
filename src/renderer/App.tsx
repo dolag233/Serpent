@@ -7112,8 +7112,6 @@ function AppInner() {
         showCollectionInput={showCollectionInput}
         collectionInputValue={collectionInputValue}
         newCollectionParentId={newCollectionParentId}
-        collectionRecursive={collectionRecursive}
-        collectionRecursiveRef={collectionRecursiveRef}
         draggedCollectionId={draggedCollectionId}
         onSetDraggedCollectionId={setDraggedCollectionId}
         onChooseAllAssets={() => void chooseFolder("all")}
@@ -7162,7 +7160,6 @@ function AppInner() {
         onSetCollectionInputValue={setCollectionInputValue}
         onSetNewCollectionParentId={setNewCollectionParentId}
         onCollectionInputKeyDown={handleCollectionInputKeyDown}
-        onSetCollectionRecursive={setCollectionRecursive}
         onAddFolder={() => {
           cancelInlineSmartCollectionEdit();
           openInlineFolderCreate(selectedFolderId ?? null);
@@ -7239,6 +7236,30 @@ function AppInner() {
                   }}
                   type="button"
                   {...iconActionAttrs(t("nav.includeChildFolders"))}
+                >
+                  <Icon name="folders" size={14} />
+                </button>
+              )}
+            {library &&
+              !showTrash &&
+              !showTagManagement &&
+              !activeTagId &&
+              activeCollectionId &&
+              !activeSmartCollectionId && (
+                <button
+                  aria-pressed={collectionRecursive}
+                  className="workspace-include-subfolders"
+                  onClick={() => {
+                    // Collection scope uses the same explicit recursive toggle
+                    // as folder scope, but the control lives beside its title.
+                    void closeAssetPreview(false);
+                    const next = !collectionRecursiveRef.current;
+                    collectionRecursiveRef.current = next;
+                    setCollectionRecursive(next);
+                    void chooseCollection(activeCollectionId, next);
+                  }}
+                  type="button"
+                  {...iconActionAttrs(t("nav.includeChildCollections"))}
                 >
                   <Icon name="folders" size={14} />
                 </button>
@@ -8658,7 +8679,11 @@ function AppInner() {
           setCreateLibraryPhase("start");
         }}
         onOpenExisting={() => {
-          setDialog(null);
+          // Keep the required no-library surface mounted while the native
+          // picker is open. This avoids the auto-open effect racing a cancel
+          // and makes the action visibly await the selected library. When a
+          // library is already open, the menu dialog can close immediately.
+          if (library) setDialog(null);
           void runLibraryOperation("open");
         }}
         onImportLibrary={() => {
