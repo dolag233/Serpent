@@ -19,7 +19,7 @@
 - **2026-07-25 晚**：工具栏后台任务直出（`9gt2`）、浏览总数量/全选全部+重数据懒加载（`6w7n` P1）、type-ahead 跳转（`lfo1` P3）、视频倍速样式（`gplm`）、全屏隐藏光标（`c3lf`）。见 backlog「2026-07-25 补充」。
 - **2026-07-25 快捷键与 Inspector**：筛选后快捷键收口 epic（`Serpent-x78x` / REQ-COMMAND-004）；视频 D/F 逐帧 + X/C 倍速档（`Serpent-soii`）；**全局音量 P1**（`Serpent-8w6x` / REQ-VIEW-017）；Windows 文案「在文件浏览器中显示」（`Serpent-a74i`）；AI 描述 textarea（`Serpent-vo24`）。原则文档 [`docs/ui/0003-keyboard-shortcut-ux-principles.md`](ui/0003-keyboard-shortcut-ux-principles.md)。均未实现。
 - **2026-08-01 最新验收反馈**：合集创建输入焦点偶发失效为 P0（`Serpent-to9y`）；合集 F2/Delete 与非空删除确认（`Serpent-b7uy`）；硬盘删除确认/Shift+Delete 回归（`Serpent-wuma`）；瀑布流 Tab 单选与 Shift 连续选择（`Serpent-xzmz`）；文件夹卡片圆角（`Serpent-kttg`）、标签 hover 二级定位（`Serpent-hn9u`）和通知按钮视觉（`Serpent-agyz`）已完成代码收口。合集资产跳转来源文件夹（`Serpent-udj5`）按用户要求暂记后续；本轮硬盘删除、媒体句柄释放与瀑布流恢复已获用户验收，通知撤销入口继续收口为无边框回撤图标。
-- **2026-08-01 复验结果**：合集创建焦点、合集删除语义、合集 inline 重命名、文件夹卡片圆角、标签 hover 基础行为、合集递归、submenu 生命周期、Windows 硬盘删除与删除前释放媒体句柄、瀑布流原布局恢复均已通过用户验收。删除通知恢复后刷新当前范围已通过；`Serpent-mxxc` 继续收口为无边框回撤图标，等待图标外观复验。
+- **2026-08-01 复验结果**：合集创建焦点、合集删除语义、合集 inline 重命名、文件夹卡片圆角、标签 hover 基础行为、合集递归、submenu 生命周期、Windows 硬盘删除与删除前释放媒体句柄、瀑布流原布局恢复、删除通知无边框回撤图标与恢复后刷新均已通过用户验收。
 
 ## 2026-07-18 MVP 循环前沿
 
@@ -98,7 +98,7 @@ v0.1.0 继续收口 0001–0010 的桌面主线，并纳入真实使用反馈确
 - 验证：typecheck/lint、unit 391 passed；E2E 16/17 文件当次全绿（含新选择器交互用例，context-menu 10/10）。双轴审查：Standards 通过、Spec 有条件通过（HARD-1/MEDIUM-1 已本回合修复复验）。
 - **Computer Use 未执行**（当前环境无桌面控制能力）：TAG-004/TAG-005 保持不通过、待补截图证据后重新验收；SHELL-004/005/006 与 NAV-002 的 0016-A 修复已按用户指示重新进入待验收。
 - **known-red 移交**：`tests/e2e/linked-folders.test.ts` 为另一 agent 未提交改动，其 `.empty-actions` 作用域下不存在「导入链接文件夹」按钮（该按钮在 `.tool-group-import` 与侧栏 secondaryAction），3/3 红；本回合未触碰该文件，修正方向已记录在开发日志。
-- **2026-08-01 验收反馈跟进**：合集 inline 重命名/快捷键展示与右键二级菜单互斥已按用户反馈通过；删除通知已改为“撤销”并在恢复后刷新当前范围，本轮改为无边框回撤图标。Windows 硬盘删除真实权限错误与删除前媒体句柄释放已获用户验收通过，`Serpent-cwor` 关闭；瀑布流已用 `git diff` 恢复原有显式列布局并获用户验收通过，`SELECT-014/015` 与 `Serpent-6b3i` 关闭。
+- **2026-08-01 验收反馈跟进**：合集 inline 重命名/快捷键展示与右键二级菜单互斥已按用户反馈通过；删除通知已改为“撤销”并在恢复后刷新当前范围，无边框回撤图标也已验收通过，`Serpent-mxxc` 关闭。Windows 硬盘删除真实权限错误与删除前媒体句柄释放已获用户验收通过，`Serpent-cwor` 关闭；瀑布流已用 `git diff` 恢复原有显式列布局并获用户验收通过，`SELECT-014/015` 与 `Serpent-6b3i` 关闭。
 - 详见 `docs/development/0017-0018-searchable-tag-picker-and-file-commands-development-log.md`。
 
 ## 2026-07-16 新增 MVP UI/UX 与文件管理需求
