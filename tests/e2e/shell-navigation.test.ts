@@ -79,10 +79,23 @@ test("library switcher, breadcrumbs, and workspace history", async () => {
         ).toBeVisible();
       }
       await window.getByRole("menuitem", { name: "文件", exact: true }).hover();
-      await expect(window.locator(".main-menu-submenu")).toBeVisible();
+      const mainSubmenu = window.locator(".main-menu-submenu");
+      await expect(mainSubmenu).toBeVisible();
       await expect(
         window.getByRole("menuitem", { name: "导入文件", exact: true }),
       ).toBeVisible();
+      const fileSection = window.getByRole("menuitem", {
+        name: "文件",
+        exact: true,
+      });
+      const fileBox = await fileSection.boundingBox();
+      const submenuBox = await mainSubmenu.boundingBox();
+      expect(fileBox).not.toBeNull();
+      expect(submenuBox).not.toBeNull();
+      expect(submenuBox!.y).toBeCloseTo(fileBox!.y, 0);
+      expect(submenuBox!.x).toBeCloseTo(fileBox!.x + fileBox!.width, 0);
+      await window.getByRole("menuitem", { name: "设置", exact: true }).hover();
+      await expect(mainSubmenu).toHaveCount(0);
       await window.getByRole("menuitem", { name: "设置", exact: true }).click();
       await expect(window.getByRole("dialog")).toBeVisible();
       await window.keyboard.press("Escape");

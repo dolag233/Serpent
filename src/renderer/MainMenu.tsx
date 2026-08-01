@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useRef,
   useState,
   type KeyboardEvent,
@@ -67,6 +68,7 @@ export function MainMenu({
   const t = useT();
   const [open, setOpen] = useState(false);
   const [activeSectionId, setActiveSectionId] = useState<string | null>(null);
+  const [submenuPosition, setSubmenuPosition] = useState({ left: 0, top: 5 });
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const surfaceRef = useRef<HTMLDivElement>(null);
@@ -160,6 +162,23 @@ export function MainMenu({
   );
 
   const activeSection = sections.find((section) => section.id === activeSectionId);
+
+  useLayoutEffect(() => {
+    if (!open || !activeSection?.items?.length) return;
+    const surface = surfaceRef.current;
+    const trigger = surface?.querySelector<HTMLElement>(
+      `[data-main-menu-section-id="${activeSection.id}"]`,
+    );
+    if (!surface || !trigger) return;
+    const surfaceRect = surface.getBoundingClientRect();
+    const triggerRect = trigger.getBoundingClientRect();
+    const originLeft = surfaceRect.left + surface.clientLeft;
+    const originTop = surfaceRect.top + surface.clientTop;
+    setSubmenuPosition({
+      left: triggerRect.right - originLeft,
+      top: triggerRect.top - originTop,
+    });
+  }, [activeSection, activeSectionId, open]);
 
   function runSection(section: MainMenuSection) {
     if (!section.onSelect) return;
@@ -256,10 +275,10 @@ export function MainMenu({
                     else runSection(section);
                   }}
                   onFocus={() => {
-                    if (hasSubmenu && !section.disabled) openMenu(section.id);
+                    if (!section.disabled) openMenu(hasSubmenu ? section.id : undefined);
                   }}
                   onMouseEnter={() => {
-                    if (hasSubmenu && !section.disabled) openMenu(section.id);
+                    if (!section.disabled) openMenu(hasSubmenu ? section.id : undefined);
                   }}
                   role="menuitem"
                   tabIndex={-1}
@@ -282,6 +301,7 @@ export function MainMenu({
               className="main-menu-submenu"
               data-main-menu-submenu={activeSection.id}
               role="menu"
+              style={submenuPosition}
             >
               {activeSection.items.map((item) => (
                 <MenuItemButton item={item} key={item.id} onSelect={() => runItem(item)} />

@@ -2093,8 +2093,6 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
 
 .main-menu-submenu {
   position: absolute;
-  top: 5px;
-  left: calc(100% + 5px);
   z-index: 43;
   display: grid;
   width: 278px;
