@@ -239,7 +239,7 @@ function InlineCollectionEditRow({
   depth: number;
   value: string;
   onChange: (value: string) => void;
-  onCommit: () => void;
+  onCommit: () => void | Promise<void>;
   onCancel: () => void;
 }) {
   const t = useT();
@@ -249,7 +249,9 @@ function InlineCollectionEditRow({
   const commitOnce = () => {
     if (committingRef.current) return;
     committingRef.current = true;
-    onCommit();
+    void Promise.resolve(onCommit()).finally(() => {
+      committingRef.current = false;
+    });
   };
 
   useEffect(() => {
@@ -490,7 +492,7 @@ export interface NavigationSidebarProps {
   onSetShowCollectionInput: (show: boolean) => void;
   onSetCollectionInputValue: (value: string) => void;
   onSetNewCollectionParentId: (id: string | null) => void;
-  onCollectionInputCommit: () => void;
+  onCollectionInputCommit: () => void | Promise<void>;
   // --- Folder creation entry (sidebar 「+」; opens the inline edit row) ---
   onAddFolder: () => void;
   /** SMART-007: open sidebar inline smart-collection name row. */

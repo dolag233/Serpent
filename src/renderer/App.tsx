@@ -7187,7 +7187,7 @@ function AppInner() {
         onSetShowCollectionInput={setShowCollectionInput}
         onSetCollectionInputValue={setCollectionInputValue}
         onSetNewCollectionParentId={setNewCollectionParentId}
-        onCollectionInputCommit={() => void createCollection()}
+        onCollectionInputCommit={() => createCollection()}
         onAddFolder={() => {
           cancelInlineSmartCollectionEdit();
           openInlineFolderCreate(selectedFolderId ?? null);
