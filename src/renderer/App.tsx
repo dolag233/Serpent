@@ -173,6 +173,7 @@ import { resolveBrowseContextMenuIntent } from "./browse-selection-menu";
 import { buildMultiAssetMenuSkipReport } from "./menu-skip-report";
 import { useAssetSelection } from "./useAssetSelection";
 import { useDesktopAutomationSelection } from "./use-desktop-automation-selection";
+import { useDesktopAutomationBrowse } from "./use-desktop-automation-browse";
 import { useSelectionKeyboard } from "./use-selection-keyboard";
 import { useBrowseCommandKeyboard } from "./use-browse-command-keyboard";
 import { resolveBrowsePasteDestination } from "./browse-paste-target";
@@ -191,6 +192,21 @@ import {
 import { useExtensionActiveContext } from "./use-extension-active-context";
 import { useExtensionSaveReveal } from "./use-extension-save-reveal";
 import { usePendingAssetReveal } from "./use-pending-asset-reveal";
+import {
+  resolveDesktopReveal,
+} from "./desktop-browse-reveal";
+import type {
+  DesktopBrowseAction,
+  DesktopBrowseResult,
+  DesktopBrowseState,
+  DesktopDiscoveryFilterFields,
+  DesktopRevealPosition,
+  DesktopViewerNavigateDirection,
+} from "../shared/desktop-control";
+import {
+  applyDesktopDiscoveryFilterPatch,
+  resolveDesktopViewerNeighbor,
+} from "../shared/desktop-control";
 import {
   currentScopeShowsRevealAssets,
   pendingRevealFromAssets,
@@ -1747,6 +1763,332 @@ function AppInner() {
     setSelectedAssetId,
     setAssetSelectionAnchor,
     setSelectedFolderIds,
+  });
+
+  const applyDesktopBrowseDiscovery = async (
+    input: Omit<
+      Extract<DesktopBrowseAction, { type: "set-discovery" }>,
+      "type" | "requestId" | "libraryId"
+    >,
+  ) => {
+    if (!library || !desktopBrowseState) {
+      throw new Error("Desktop browse is unavailable without a library.");
+    }
+    const nextSearch = input.search === undefined ? searchValue : input.search ?? "";
+    const nextColorFilter =
+      input.colorFilter === undefined ? colorFilter : input.colorFilter ?? "";
+    const nextExcludeColorFilter =
+      input.excludeColorFilter ?? excludeColorFilter;
+    const nextIncludeSubfolders =
+      input.includeSubfolders ?? folderRecursive;
+    if (
+      input.includeSubfolders !== undefined
+      && desktopBrowseState.browseTarget !== "folder"
+    ) {
+      throw new Error("Subfolder scope is only available for a managed folder.");
+    }
+    const nextSortField = input.sortField ?? sortField;
+    const nextSortOrder = input.sortOrder ?? sortOrder;
+    const nextFilters = applyDesktopDiscoveryFilterPatch(
+      {
+        formatFilter,
+        excludeFormatFilter,
+        tagFilter,
+        excludeTagFilter,
+        tagFilterMatch,
+        ratingFilter,
+        excludeRatingFilter,
+        favoriteFilter,
+        sourceUrlFilter,
+        availabilityFilter,
+        excludeAvailabilityFilter,
+        widthRange,
+        heightRange,
+        aspectRatioRange,
+        longEdgeRange,
+        durationRange,
+      },
+      input,
+    );
+    setSearchValue(nextSearch);
+    setColorFilter(nextColorFilter);
+    setExcludeColorFilter(nextExcludeColorFilter);
+    setFormatFilter(nextFilters.formatFilter);
+    setExcludeFormatFilter(nextFilters.excludeFormatFilter);
+    setTagFilter(nextFilters.tagFilter);
+    setExcludeTagFilter(nextFilters.excludeTagFilter);
+    setTagFilterMatch(nextFilters.tagFilterMatch);
+    setRatingFilter(nextFilters.ratingFilter);
+    setExcludeRatingFilter(nextFilters.excludeRatingFilter);
+    setFavoriteFilter(nextFilters.favoriteFilter);
+    setSourceUrlFilter(nextFilters.sourceUrlFilter);
+    setAvailabilityFilter(nextFilters.availabilityFilter);
+    setExcludeAvailabilityFilter(nextFilters.excludeAvailabilityFilter);
+    setWidthRange(nextFilters.widthRange);
+    setHeightRange(nextFilters.heightRange);
+    setAspectRatioRange(nextFilters.aspectRatioRange);
+    setAspectRatioRanges([]);
+    setLongEdgeRange(nextFilters.longEdgeRange);
+    setDurationRange(nextFilters.durationRange);
+    if (desktopBrowseState.browseTarget === "folder") {
+      folderRecursiveRef.current = nextIncludeSubfolders;
+      setFolderRecursive(nextIncludeSubfolders);
+      const nextPrefs = withFolderRecursiveEnabled(
+        folderRecursivePrefs,
+        library.libraryId,
+        desktopBrowseState.folderId!,
+        nextIncludeSubfolders,
+      );
+      setFolderRecursivePrefs(nextPrefs);
+      saveFolderRecursivePreferences(nextPrefs);
+    }
+    setSortField(nextSortField);
+    setSortOrder(nextSortOrder);
+    setUiState("loading");
+    try {
+      await loadContent(library, assetScope, {
+        discovery: currentQueryDefinition({
+          searchValue: nextSearch,
+          colorFilter: nextColorFilter,
+          excludeColorFilter: nextExcludeColorFilter,
+          sortField: nextSortField,
+          sortOrder: nextSortOrder,
+          filtersSnapshot: nextFilters,
+        }),
+        searchScope:
+          desktopBrowseState.browseTarget === "folder"
+            ? {
+                kind: "folder",
+                folderId: desktopBrowseState.folderId,
+                recursive: nextIncludeSubfolders,
+              }
+            : currentSearchScope(),
+      });
+      return {
+        ...desktopBrowseState,
+        search: nextSearch,
+        colorFilter: nextColorFilter,
+        excludeColorFilter: nextExcludeColorFilter,
+        includeSubfolders: nextIncludeSubfolders,
+        sortField: nextSortField,
+        sortOrder: nextSortOrder,
+        ...nextFilters,
+      };
+    } finally {
+      setUiState("ready");
+    }
+  };
+
+  const revealDesktopAsset = async (
+    assetId: string,
+    position: DesktopRevealPosition,
+  ): Promise<Omit<
+    Extract<DesktopBrowseResult, { type: "reveal-applied" }>,
+    "type" | "requestId" | "ok"
+  >> => {
+    if (!api || !library || !desktopBrowseState) {
+      throw new Error("DESKTOP_BROWSE_UNAVAILABLE: Desktop browse is unavailable.");
+    }
+    const listed = await api.listAssets({
+      libraryId: library.libraryId,
+      recursive: true,
+    });
+    if (!listed.ok) {
+      throw new Error("DESKTOP_BROWSE_UNAVAILABLE: Asset location is unavailable.");
+    }
+    const resolution = resolveDesktopReveal({
+      assetId,
+      currentBrowseTarget: desktopBrowseState.browseTarget,
+      currentFolderId: desktopBrowseState.folderId,
+      assets: listed.value.map((asset) => ({
+        assetId: asset.assetId,
+        locationKind: asset.locationKind,
+        managedFolderId: asset.managedFolderId,
+        available: asset.availability === "available",
+      })),
+    });
+    if (resolution.status === "not-found") {
+      throw new Error("DESKTOP_BROWSE_ASSET_NOT_FOUND: Asset was not found.");
+    }
+    if (resolution.status === "unavailable") {
+      throw new Error("DESKTOP_BROWSE_ASSET_UNAVAILABLE: Asset is unavailable.");
+    }
+    if (resolution.status === "unsupported-scope") {
+      throw new Error(
+        "DESKTOP_BROWSE_ASSET_SCOPE_UNSUPPORTED: Asset scope is unsupported.",
+      );
+    }
+    if (resolution.status === "switch-folder") {
+      // chooseFolder clears selection and runs onSelectionCleared, which drops
+      // pendingRevealRef. Apply selection after the scope switch settles.
+      await chooseFolderRef.current(resolution.folderId);
+      setSelectedAssetIds([assetId]);
+      setSelectedAssetId(assetId);
+      setAssetSelectionAnchor(assetId);
+      pendingRestoredFocusRef.current = assetId;
+      return {
+        assetId,
+        position,
+        status: "switched-folder",
+        folderId: resolution.folderId,
+        state: {
+          ...desktopBrowseState,
+          browseTarget: "folder",
+          folderId: resolution.folderId,
+          organizationId: null,
+        },
+      };
+    }
+    setSelectedAssetIds([assetId]);
+    setSelectedAssetId(assetId);
+    setAssetSelectionAnchor(assetId);
+    pendingRestoredFocusRef.current = assetId;
+    return {
+      assetId,
+      position,
+      status: "visible",
+      folderId: desktopBrowseState.folderId,
+      state: desktopBrowseState,
+    };
+  };
+
+  const openDesktopViewer = async (assetId: string): Promise<DesktopBrowseState> => {
+    if (!api || !library || !desktopBrowseState) {
+      throw new Error("DESKTOP_BROWSE_UNAVAILABLE: Desktop viewer is unavailable.");
+    }
+    const listed = await api.listAssets({
+      libraryId: library.libraryId,
+      recursive: true,
+    });
+    if (!listed.ok) {
+      throw new Error("DESKTOP_BROWSE_UNAVAILABLE: Asset list is unavailable.");
+    }
+    const asset = listed.value.find((candidate) => candidate.assetId === assetId);
+    if (!asset) {
+      throw new Error("DESKTOP_BROWSE_ASSET_NOT_FOUND: Asset was not found.");
+    }
+    if (asset.availability !== "available" || asset.deletedAt !== null) {
+      throw new Error("DESKTOP_BROWSE_ASSET_UNAVAILABLE: Asset is unavailable.");
+    }
+    openAssetPreview(asset);
+    return {
+      ...desktopBrowseState,
+      viewerAssetId: assetId,
+      selectedAssetIds: [assetId],
+      primaryAssetId: assetId,
+    };
+  };
+
+  const closeDesktopViewer = async (): Promise<DesktopBrowseState> => {
+    if (!desktopBrowseState) {
+      throw new Error("DESKTOP_BROWSE_UNAVAILABLE: Desktop viewer is unavailable.");
+    }
+    await closeAssetPreview(false);
+    return {
+      ...desktopBrowseState,
+      viewerAssetId: null,
+    };
+  };
+
+  const navigateDesktopViewer = async (
+    direction: DesktopViewerNavigateDirection,
+  ): Promise<DesktopBrowseState> => {
+    if (!desktopBrowseState || !previewAsset) {
+      throw new Error("DESKTOP_BROWSE_VIEWER_CLOSED: Desktop viewer is not open.");
+    }
+    const resolution = resolveDesktopViewerNeighbor({
+      direction,
+      viewerAssetId: previewAsset.assetId,
+      visibleAssetIds: visibleAssets.map((asset) => asset.assetId),
+    });
+    if (resolution.status === "viewer-closed") {
+      throw new Error("DESKTOP_BROWSE_VIEWER_CLOSED: Desktop viewer is not open.");
+    }
+    if (resolution.status === "boundary") {
+      throw new Error(
+        "DESKTOP_BROWSE_VIEWER_BOUNDARY: Desktop viewer has no neighbor in that direction.",
+      );
+    }
+    const nextAsset = visibleAssets.find(
+      (asset) => asset.assetId === resolution.assetId,
+    );
+    if (!nextAsset) {
+      throw new Error("DESKTOP_BROWSE_VIEWER_BOUNDARY: Desktop viewer has no neighbor in that direction.");
+    }
+    navigateAssetPreview(nextAsset);
+    return {
+      ...desktopBrowseState,
+      viewerAssetId: nextAsset.assetId,
+      selectedAssetIds: [nextAsset.assetId],
+      primaryAssetId: nextAsset.assetId,
+    };
+  };
+
+  const desktopBrowseState = library === null
+    ? null
+    : {
+        libraryId: library.libraryId,
+        browseTarget: showTrash
+          ? ("trash" as const)
+          : activeSmartCollectionId
+            ? ("smart-collection" as const)
+            : activeCollectionId
+              ? ("collection" as const)
+              : activeTagId
+                ? ("tag" as const)
+                : assetScope === "all"
+                  ? ("all" as const)
+                  : assetScope === "root"
+                    ? ("root" as const)
+                    : ("folder" as const),
+        folderId:
+          assetScope !== "all" && assetScope !== "root" && !showTrash
+            ? assetScope
+            : null,
+        organizationId:
+          activeSmartCollectionId ??
+          activeCollectionId ??
+          activeTagId ??
+          null,
+        showTrash,
+        includeSubfolders: folderRecursive,
+        search: searchValue,
+        colorFilter,
+        excludeColorFilter,
+        formatFilter,
+        excludeFormatFilter,
+        tagFilter,
+        excludeTagFilter,
+        tagFilterMatch,
+        ratingFilter,
+        excludeRatingFilter,
+        favoriteFilter,
+        sourceUrlFilter,
+        availabilityFilter,
+        excludeAvailabilityFilter,
+        widthRange,
+        heightRange,
+        aspectRatioRange,
+        longEdgeRange,
+        durationRange,
+        sortField,
+        sortOrder,
+        viewMode: assetViewMode,
+        selectedAssetIds,
+        primaryAssetId: selectedAssetId ?? null,
+        viewerAssetId: previewAsset?.assetId ?? null,
+      };
+  useDesktopAutomationBrowse({
+    shellApi,
+    state: desktopBrowseState,
+    folderIds: folders.map((folder) => folder.folderId),
+    chooseFolder: chooseFolderRef.current,
+    setDiscovery: applyDesktopBrowseDiscovery,
+    revealAsset: revealDesktopAsset,
+    openViewer: openDesktopViewer,
+    closeViewer: closeDesktopViewer,
+    navigateViewer: navigateDesktopViewer,
+    previewOpen: Boolean(previewAsset),
   });
 
   useEffect(() => {
@@ -3688,24 +4030,54 @@ function AppInner() {
   }
 
   function currentQueryDefinition(
-    overrides: { tagFilter?: string; tagFilterMatch?: "any" | "all" } = {},
+    overrides: {
+      tagFilter?: string;
+      tagFilterMatch?: "any" | "all";
+      searchValue?: string | null;
+      colorFilter?: string | null;
+      excludeColorFilter?: boolean;
+      sortField?: SortDefinition["field"];
+      sortOrder?: SortDefinition["order"];
+      filtersSnapshot?: DesktopDiscoveryFilterFields;
+    } = {},
   ): SearchDefinition {
+    const filtersState = overrides.filtersSnapshot ?? {
+      formatFilter,
+      excludeFormatFilter,
+      tagFilter,
+      excludeTagFilter,
+      tagFilterMatch,
+      ratingFilter,
+      excludeRatingFilter,
+      favoriteFilter,
+      sourceUrlFilter,
+      availabilityFilter,
+      excludeAvailabilityFilter,
+      widthRange,
+      heightRange,
+      aspectRatioRange,
+      longEdgeRange,
+      durationRange,
+    };
     const filters: FilterClause[] = [];
     const formats = expandFormatFilterTokens(
-      formatFilter
+      filtersState.formatFilter
         .split(",")
         .map((value) => value.trim().replace(/^\./, ""))
         .filter(Boolean),
     );
-    const selectedTags = (overrides.tagFilter ?? tagFilter)
+    const selectedTags = (overrides.tagFilter ?? filtersState.tagFilter)
       .split(",")
       .map((value) => value.trim())
       .filter(Boolean);
-    const ratings = ratingFilter
+    const ratings = filtersState.ratingFilter
       .split(",")
       .map((value) => value.trim())
       .filter((value) => /^[0-5]$/.test(value));
-    const colors = colorFilter
+    const effectiveColorFilter = overrides.colorFilter === undefined
+      ? colorFilter
+      : overrides.colorFilter ?? "";
+    const colors = effectiveColorFilter
       .split(",")
       .map((value) => value.trim())
       .filter(Boolean);
@@ -3713,29 +4085,33 @@ function AppInner() {
       filters.push({
         field: "color",
         values: colors,
-        exclude: excludeColorFilter,
+        exclude: overrides.excludeColorFilter ?? excludeColorFilter,
       });
     if (formats.length > 0)
       filters.push({
         field: "format",
         values: formats,
-        exclude: excludeFormatFilter,
+        exclude: filtersState.excludeFormatFilter,
       });
     if (selectedTags.length > 0) {
       const matchAll =
-        (overrides.tagFilterMatch ?? tagFilterMatch) === "all" &&
+        (overrides.tagFilterMatch ?? filtersState.tagFilterMatch) === "all" &&
         selectedTags.length > 1;
       // AND semantics ("包含 N 个标签"): one clause per tag — separate
       // clauses are ANDed, values within a clause are ORed.
       if (matchAll) {
         for (const tag of selectedTags) {
-          filters.push({ field: "tag", values: [tag], exclude: excludeTagFilter });
+          filters.push({
+            field: "tag",
+            values: [tag],
+            exclude: filtersState.excludeTagFilter,
+          });
         }
       } else {
         filters.push({
           field: "tag",
           values: selectedTags,
-          exclude: excludeTagFilter,
+          exclude: filtersState.excludeTagFilter,
         });
       }
     }
@@ -3743,25 +4119,25 @@ function AppInner() {
       filters.push({
         field: "rating",
         values: ratings,
-        exclude: excludeRatingFilter,
+        exclude: filtersState.excludeRatingFilter,
       });
-    if (favoriteFilter !== "any")
+    if (filtersState.favoriteFilter !== "any")
       filters.push({
         field: "favorite",
         values: [],
-        exclude: favoriteFilter === "no",
+        exclude: filtersState.favoriteFilter === "no",
       });
-    if (sourceUrlFilter !== "any")
+    if (filtersState.sourceUrlFilter !== "any")
       filters.push({
         field: "source_url",
         values: [],
-        exclude: sourceUrlFilter === "no",
+        exclude: filtersState.sourceUrlFilter === "no",
       });
-    if (availabilityFilter !== "any")
+    if (filtersState.availabilityFilter !== "any")
       filters.push({
         field: "availability",
-        values: [availabilityFilter],
-        exclude: excludeAvailabilityFilter,
+        values: [filtersState.availabilityFilter],
+        exclude: filtersState.excludeAvailabilityFilter,
       });
     const technicalRanges: Array<{
       field: "width" | "height" | "aspect_ratio" | "duration_ms" | "long_edge";
@@ -3769,17 +4145,29 @@ function AppInner() {
       scale?: number;
       integer?: boolean;
     }> = [
-      { field: "width", input: widthRange },
-      { field: "height", input: heightRange },
-      { field: "long_edge", input: longEdgeRange },
-      { field: "duration_ms", input: durationRange, scale: 1_000 },
+      { field: "width", input: filtersState.widthRange },
+      { field: "height", input: filtersState.heightRange },
+      { field: "long_edge", input: filtersState.longEdgeRange },
+      { field: "duration_ms", input: filtersState.durationRange, scale: 1_000 },
     ];
     const aspectInputs =
-      aspectRatioRanges.length > 0
-        ? aspectRatioRanges
-        : aspectRatioRange.min || aspectRatioRange.max
-          ? [{ min: aspectRatioRange.min, max: aspectRatioRange.max }]
-          : [];
+      overrides.filtersSnapshot
+        ? (
+          filtersState.aspectRatioRange.min || filtersState.aspectRatioRange.max
+            ? [{
+              min: filtersState.aspectRatioRange.min,
+              max: filtersState.aspectRatioRange.max,
+            }]
+            : []
+        )
+        : aspectRatioRanges.length > 0
+          ? aspectRatioRanges
+          : aspectRatioRange.min || aspectRatioRange.max
+            ? [{ min: aspectRatioRange.min, max: aspectRatioRange.max }]
+            : [];
+    const aspectExclude = overrides.filtersSnapshot
+      ? filtersState.aspectRatioRange.exclude
+      : aspectRatioRange.exclude;
     const aspectParsed = aspectInputs
       .map((input) => parseNumericRange(input.min, input.max, 1, false))
       .filter((range): range is NonNullable<typeof range> => range !== null);
@@ -3787,7 +4175,7 @@ function AppInner() {
       filters.push({
         field: "aspect_ratio",
         ranges: aspectParsed,
-        exclude: aspectRatioRange.exclude,
+        exclude: aspectExclude,
       });
     }
     for (const { field, input, scale = 1, integer = true } of technicalRanges) {
@@ -3796,13 +4184,22 @@ function AppInner() {
         filters.push({ field, ranges: [range], exclude: input.exclude });
     }
     return {
-      ...(searchValue.trim()
+      ...((overrides.searchValue === undefined
+        ? searchValue
+        : overrides.searchValue ?? "").trim()
         ? {
-            search: parseSearchExpression(searchValue),
+            search: parseSearchExpression(
+              overrides.searchValue === undefined
+                ? searchValue
+                : overrides.searchValue ?? "",
+            ),
           }
         : {}),
       ...(filters.length > 0 ? { filters } : {}),
-      sort: { field: sortField, order: sortOrder },
+      sort: {
+        field: overrides.sortField ?? sortField,
+        order: overrides.sortOrder ?? sortOrder,
+      },
     };
   }
 
@@ -7405,7 +7802,6 @@ function AppInner() {
               )
             )}
             <CanvasToolbarControls
-              backgroundJobsActive={backgroundJobsActive}
               actions={{
                 refresh: () => {
                   void refreshAssets();
@@ -7419,7 +7815,6 @@ function AppInner() {
                     fields: { ...p.fields, [field]: !p.fields[field] },
                   }));
                 },
-                openBackgroundJobs: () => setMediaJobsOpen(true),
                 openAiSettings: () => {
                   setAppSettingsCategory("ai");
                   setAppSettingsOpen(true);
@@ -7440,6 +7835,13 @@ function AppInner() {
             />
             <WorkspaceToolsOverflow
               items={[
+                {
+                  active: backgroundJobsActive,
+                  disabled: library === null,
+                  id: "background-jobs",
+                  label: t("toolbar.backgroundJobs"),
+                  onSelect: () => setMediaJobsOpen(true),
+                },
                 {
                   id: "script-sandbox-preview",
                   label: t("automation.preview.open"),

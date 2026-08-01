@@ -119,14 +119,33 @@ MCP 客户端可以继续轮询 `serpent_library_change_sequence` 获取当前�
 
 `npm run mcp` 默认连接当前用户已经打开的 Serpent Desktop；如果没有运行实例，会先启动一个可见的 Desktop，再请求本机附着确认。连接使用当前 Desktop 的 Main/Library Worker 和当前激活资源库，不会另开一个与界面隔离的 Worker。显式使用 `npm run mcp -- --headless` 保留原来的无界面 MCP 行为，适用于 CI、指定 `--library` 和 `--unbound` 流程。
 
-附着确认通过后，只有两个 Desktop 专用工具可用：
+多步 Agent 工作流应**只附着一次**，后续工具调用复用同一会话，不要每个脚本都重新 `run-mcp` / 重新确认：
+
+```bash
+node scripts/mcp-session.mjs --write-access start
+node scripts/mcp-session.mjs call serpent_desktop_get_state '{}'
+node scripts/mcp-session.mjs call serpent_asset_search '{"query":null,"limit":20}'
+node scripts/mcp-session.mjs status
+node scripts/mcp-session.mjs stop
+```
+
+会话套接字默认在当前 userData 下的 `agent-mcp-session.sock`。换库或 Desktop 退出后需重新 `start`。
+
+附着确认通过后，Desktop 专用工具包括：
 
 ```text
 serpent_desktop_focus()
 serpent_desktop_select_assets({ assetIds, mode: "replace" | "add" | "remove" })
+serpent_desktop_get_state()
+serpent_desktop_open_folder({ folderId })
+serpent_desktop_set_discovery({ includeSubfolders?, search?, colorFilter?, sortField?, sortOrder?, favoriteFilter?, formatFilter?, ratingFilter?, … })
+serpent_desktop_reveal_asset({ assetId, position: "nearest" | "center" })
+serpent_desktop_open_viewer({ assetId })
+serpent_desktop_close_viewer()
+serpent_desktop_navigate_viewer({ direction: "next" | "previous" })
 ```
 
-`serpent_desktop_focus` 只恢复、显示并聚焦 Serpent 主窗口。`serpent_desktop_select_assets` 只改变当前 Renderer 的资产选中状态，不写入数据库、不递增 `entity_version`/内容 `revision`、不创建文件计划或 Undo Group；网格中当前已加载的对应卡片会使用正常的选中高亮。附着 MCP 不提供任意窗口控制、DOM 注入、键鼠模拟、Shell、SQL、网络或文件系统能力。附着会话随 Desktop 退出而结束，拒绝确认不会产生库或 UI 副作用。
+`serpent_desktop_focus` 只恢复、显示并聚焦 Serpent 主窗口。`serpent_desktop_select_assets` 只改变当前 Renderer 的资产选中状态，不写入数据库、不递增 `entity_version`/内容 `revision`、不创建文件计划或 Undo Group；网格中当前已加载的对应卡片会使用正常的选中高亮。浏览/查看工具只驱动当前已附着 Desktop 的语义状态（文件夹范围、Discovery 过滤与排序、reveal、Viewer），不接受 DOM、像素滚动、Shell、SQL、网络或任意文件系统参数；结果不含绝对路径。`--headless` 不暴露上述 Desktop-only 工具。附着会话随 Desktop 退出而结束，拒绝确认不会产生库或 UI 副作用。
 
 ## Undo Group
 

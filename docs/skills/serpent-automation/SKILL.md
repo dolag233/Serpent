@@ -49,21 +49,14 @@
 
 ## MCP 启动器
 
-- 默认使用 `npm run mcp` 附着当前已打开的 Desktop；通过本机确认后可调用
-  `serpent_desktop_focus` 与 `serpent_desktop_select_assets`。这两个工具只改变窗口和
-  Renderer 选中状态，不写库、不产生 revision/entity_version 变化；不提供任意 UI、Shell、
-  SQL、网络或文件系统控制。
+- 默认使用 `npm run mcp` 附着当前已打开的 Desktop；通过本机确认后可调用 Desktop 专用工具（见下）。这些工具只改变窗口、选中或浏览/查看语义状态，不写库、不产生 revision/entity_version 变化；不提供任意 UI、Shell、SQL、网络或文件系统控制。
+- Desktop 专用工具：`serpent_desktop_focus`、`serpent_desktop_select_assets`、`serpent_desktop_get_state`、`serpent_desktop_open_folder`、`serpent_desktop_set_discovery`、`serpent_desktop_reveal_asset`、`serpent_desktop_open_viewer`、`serpent_desktop_close_viewer`、`serpent_desktop_navigate_viewer`。
+- 多步 Agent 工作流应只附着一次。推荐用 `node scripts/mcp-session.mjs --write-access start` 建立长连接，再用 `call` 复用同一会话；`status` / `stop` 查看或结束。不要为每次工具调用重新 `npm run mcp` 或重复本机确认。
 - 需要隔离/无界面流程时使用 `npm run mcp -- --headless --library <绝对路径>`，或使用 `--unbound` 先暴露
-  `library.create`；`--write-access` 只表示本机已配置写入能力，不能由 Agent 自行提升。
+  `library.create`；`--write-access` 只表示本机已配置写入能力，不能由 Agent 自行提升。headless 不暴露 Desktop-only 工具。
 - `serpent-mcp` 是 stdio 协议启动器，不是通用 CLI；诊断写 stderr，stdout 只保留 MCP
-  JSON-RPC。未绑定执行不能调用资源库范围 Action；headless 模式不暴露 Desktop-only 工具。
-- Agent 应为一个连续任务或工作会话建立一个长期 MCP stdio 连接，并在该连接上连续执行
-  `tools/list`、只读查询、用户筛选后的写入和结果复核；任务完成不应主动断开，只有 Agent
-  会话结束、Desktop 退出或显式取消时才关闭。不得为每一次工具调用重新启动
-  `npm run mcp`、重复附着或重复请求本机确认。
-- MCP stdio 本身就是交互式请求/响应通道，不要求每次调用都编写一次性脚本。若使用命令行
-  包装器，包装器必须持有同一个 MCP Client 和传输连接，把“连接 → 查询 → 用户筛选 →
-  执行 → 复核”作为同一会话；一次性脚本只允许用于诊断，不作为正常 Agent 调用方式。
+  JSON-RPC。未绑定执行不能调用资源库范围 Action。
+- MCP stdio 本身就是交互式请求/响应通道。若使用命令行包装器，包装器必须持有同一个 MCP Client 和传输连接，把“连接 → 查询 → 用户筛选 → 执行 → 复核”作为同一会话；一次性脚本只允许用于诊断。
 
 独立类型声明见 `docs/skills/serpent-automation/automation-api.d.ts`。它由当前
 Registry 的公开命令与 `AUTOMATION_API_VERSION` 维护，不能声明 Registry 之外的 API。

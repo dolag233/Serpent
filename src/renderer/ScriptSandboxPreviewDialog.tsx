@@ -14,7 +14,6 @@ import type {
 import { Icon } from './Icons';
 import { iconActionAttrs } from './icon-action-attrs';
 import { useT } from './i18n';
-import { DEFAULT_AUTOMATION_RATING_SCRIPT } from './script-sandbox-preview-default';
 
 type PreviewResult =
   | { kind: 'completed'; value: unknown; output: string[]; logId: string }
@@ -41,6 +40,48 @@ function errorMessageKey(code: AutomationScriptRuntimeFailureCode): string {
   return `automation.preview.errors.${code}`;
 }
 
+function historyStatusLabel(
+  status: string,
+  t: ReturnType<typeof useT>,
+): string {
+  switch (status) {
+    case 'succeeded':
+      return t('automation.preview.historyStatus.succeeded');
+    case 'failed':
+      return t('automation.preview.historyStatus.failed');
+    case 'cancelled':
+      return t('automation.preview.historyStatus.cancelled');
+    case 'timed-out':
+      return t('automation.preview.historyStatus.timedOut');
+    case 'running':
+      return t('automation.preview.historyStatus.running');
+    case 'awaiting-authorization':
+      return t('automation.preview.historyStatus.awaitingAuthorization');
+    case 'awaiting-approval':
+      return t('automation.preview.historyStatus.awaitingApproval');
+    default:
+      return status;
+  }
+}
+
+function historySourceLabel(
+  source: AutomationScriptHistoryEntry['source'],
+  t: ReturnType<typeof useT>,
+): string {
+  switch (source) {
+    case 'desktop-console':
+      return t('automation.preview.historySource.console');
+    case 'script':
+      return t('automation.preview.historySource.script');
+    case 'mcp':
+      return t('automation.preview.historySource.mcp');
+    case 'plugin':
+      return t('automation.preview.historySource.plugin');
+    default:
+      return t('automation.preview.historySource.test');
+  }
+}
+
 export function ScriptSandboxPreviewDialog({
   open,
   onClose,
@@ -65,7 +106,7 @@ export function ScriptSandboxPreviewDialog({
   const t = useT();
   const executionIdRef = useRef<string | null>(null);
   const onExecutionSettledRef = useRef(onExecutionSettled);
-  const [source, setSource] = useState(DEFAULT_AUTOMATION_RATING_SCRIPT);
+  const [source, setSource] = useState('');
   const [savedScript, setSavedScript] = useState<SavedScript | null>(null);
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<PreviewResult>(null);
@@ -298,7 +339,6 @@ export function ScriptSandboxPreviewDialog({
       role="presentation"
     >
       <section
-        aria-describedby="script-sandbox-preview-description"
         aria-labelledby="script-sandbox-preview-title"
         aria-modal="true"
         className="create-dialog script-sandbox-preview-dialog"
@@ -330,9 +370,6 @@ export function ScriptSandboxPreviewDialog({
           <div>
             <p className="micro-label">{t('automation.preview.badge')}</p>
             <h2 id="script-sandbox-preview-title">{t('automation.preview.title')}</h2>
-            <p className="script-sandbox-preview-description" id="script-sandbox-preview-description">
-              {t('automation.preview.description')}
-            </p>
           </div>
           <button
             className="dialog-close"
@@ -366,17 +403,17 @@ export function ScriptSandboxPreviewDialog({
           spellCheck={false}
           value={source}
         />
-        <p className="field-help script-sandbox-preview-help">
-          {t('automation.preview.bridgeHint')}
-        </p>
         <p className="field-help script-sandbox-preview-scope">
           {libraryId === null
             ? t('automation.preview.unboundLibrary')
             : t('automation.preview.boundLibrary')}
         </p>
         {capabilities.length > 0 ? (
-          <p className="field-help script-sandbox-preview-capabilities">
-            {t('automation.preview.capabilities')}{capabilities.join(', ')}
+          <p
+            className="field-help script-sandbox-preview-capabilities"
+            title={capabilities.join(', ')}
+          >
+            {t('automation.preview.capabilities')}{capabilities.length}
           </p>
         ) : null}
         {scriptFileMessage ? <p className="field-help script-sandbox-preview-file-error">{scriptFileMessage}</p> : null}
@@ -447,12 +484,18 @@ export function ScriptSandboxPreviewDialog({
             <ul className="script-sandbox-preview-history-list">
               {historyEntries.map((entry) => (
                 <li key={entry.executionId}>
-                  <span>{entry.status}</span>
-                  <span>{entry.source}</span>
-                  <span>{entry.succeededCommandCount}/{entry.commandCount}</span>
+                  <span className="script-sandbox-preview-history-status">
+                    {historyStatusLabel(entry.status, t)}
+                  </span>
+                  <span className="script-sandbox-preview-history-source">
+                    {historySourceLabel(entry.source, t)}
+                  </span>
+                  <span className="script-sandbox-preview-history-count">
+                    {entry.succeededCommandCount}/{entry.commandCount}
+                  </span>
                   {onOpenExecutionLog ? (
                     <button
-                      className="linkish-button"
+                      className="script-sandbox-preview-history-action"
                       onClick={() => onOpenExecutionLog(entry.logId)}
                       type="button"
                     >
@@ -471,19 +514,6 @@ export function ScriptSandboxPreviewDialog({
           </button>
           <button className="secondary-button" disabled={running} onClick={() => void saveScript()} type="button">
             {t('automation.preview.saveScript')}
-          </button>
-          <button
-            className="secondary-button"
-            disabled={running}
-            onClick={() => {
-              setSource(DEFAULT_AUTOMATION_RATING_SCRIPT);
-              setSavedScript(null);
-              setResult(null);
-              setScriptFileMessage(null);
-            }}
-            type="button"
-          >
-            {t('automation.preview.reset')}
           </button>
           {running ? (
             <button className="secondary-button" onClick={stop} type="button">

@@ -31,28 +31,23 @@ function ToolButton({
   onClick,
   pressed,
   disabled,
-  showBadge,
 }: {
   label: string;
   icon: IconName;
   onClick?: () => void;
   pressed?: boolean;
   disabled?: boolean;
-  showBadge?: boolean;
 }) {
   return (
     <button
       aria-pressed={pressed}
-      className={`tool-button${showBadge ? " has-badge" : ""}`}
+      className="tool-button"
       disabled={disabled}
       onClick={onClick}
       type="button"
       {...iconActionAttrs(label)}
     >
       <Icon name={icon} />
-      {showBadge ? (
-        <span aria-hidden="true" className="tool-button-badge-dot" />
-      ) : null}
     </button>
   );
 }
@@ -79,8 +74,8 @@ function translateCardSizeLabel(locale: CommandLocale): string {
 }
 
 /**
- * 工作区常驻画布控件 + 后台任务直出按钮。按钮文案/禁用/执行均经
- * toolbar-commands 注册表，与后续命令盘/快捷键共用同一份 handler。
+ * 工作区常驻画布控件。按钮文案/禁用/执行均经 toolbar-commands 注册表，
+ * 与后续命令盘/快捷键共用同一份 handler。
  */
 export function CanvasToolbarControls({
   libraryOpen,
@@ -92,7 +87,6 @@ export function CanvasToolbarControls({
   platform,
   actions,
   onCardSizeChange,
-  backgroundJobsActive = false,
 }: {
   libraryOpen: boolean;
   busy: boolean;
@@ -104,8 +98,6 @@ export function CanvasToolbarControls({
   platform: CommandPlatform;
   actions: ToolbarCommandActions;
   onCardSizeChange: (size: number) => void;
-  /** Accent dot on the background-jobs toolbar icon while work is in flight. */
-  backgroundJobsActive?: boolean;
 }): ReactNode {
   const ctx: ToolbarCommandContext = {
     surface: "canvas",
@@ -125,9 +117,6 @@ export function CanvasToolbarControls({
   const refresh = resolveItem(ctx, "canvas.refresh");
   const grid = resolveItem(ctx, "canvas.view.grid");
   const masonry = resolveItem(ctx, "canvas.view.masonry");
-  const backgroundJobs = libraryOpen
-    ? resolveItem(ctx, "workspace.background-jobs")
-    : null;
 
   return (
     <span className="tool-group-view">
@@ -180,18 +169,6 @@ export function CanvasToolbarControls({
             />
           );
         })}
-        {backgroundJobs ? (
-          <>
-            <span className="tool-separator" />
-            <ToolButton
-              disabled={backgroundJobs.disabled}
-              icon="loader"
-              label={backgroundJobs.label}
-              onClick={backgroundJobs.run}
-              showBadge={backgroundJobsActive}
-            />
-          </>
-        ) : null}
       </div>
     </span>
   );

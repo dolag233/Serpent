@@ -33,6 +33,11 @@ export const WINDOW_FOCUS_CHANNEL = 'serpent:shell:window-focus' as const;
 /** Main → Renderer: apply a selection requested by an attached local Agent. */
 export const DESKTOP_AUTOMATION_SELECTION_CHANNEL =
   'serpent:desktop-automation:selection' as const;
+/** Main ↔ Renderer: typed browse commands and responses for Attached MCP. */
+export const DESKTOP_AUTOMATION_BROWSE_CHANNEL =
+  'serpent:desktop-automation:browse' as const;
+export const DESKTOP_AUTOMATION_BROWSE_RESULT_CHANNEL =
+  'serpent:desktop-automation:browse-result' as const;
 /** Renderer → Main: enable Main before-input capture for video letter keys. */
 export const VIEWER_VIDEO_SHORTCUTS_ACTIVE_CHANNEL =
   'serpent:viewer:video-shortcuts-active' as const;

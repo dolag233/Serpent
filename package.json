@@ -16,6 +16,7 @@
     "cli:build": "vite build --config vite.cli-worker.config.ts && vite build --config vite.cli.config.ts",
     "cli": "node scripts/run-cli.mjs",
     "mcp": "node scripts/run-mcp.mjs",
+    "mcp:session": "node scripts/mcp-session.mjs",
     "prepackage": "node scripts/media-binaries.mjs verify",
     "package": "electron-forge package",
     "verify:package": "node scripts/verify-package.mjs",

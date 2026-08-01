@@ -79,6 +79,7 @@ import {
   SHELL_SWIPE_CHANNEL,
   WINDOW_FOCUS_CHANNEL,
   DESKTOP_AUTOMATION_SELECTION_CHANNEL,
+  DESKTOP_AUTOMATION_BROWSE_RESULT_CHANNEL,
   NATIVE_EDIT_COPY_CHANNEL,
   PLUGIN_MANAGER_CHANNEL,
   VIEWER_VIDEO_SHORTCUTS_ACTIVE_CHANNEL,
@@ -112,7 +113,14 @@ import {
   startDesktopAttachedMcp,
   type DesktopAttachedMcpHandle,
 } from './desktop-attached-mcp';
-import type { DesktopSelectionRequest, DesktopSelectionResult } from '../shared/desktop-control';
+import {
+  type DesktopSelectionRequest,
+  type DesktopSelectionResult,
+} from '../shared/desktop-control';
+import {
+  createDesktopBrowseControl,
+  type DesktopBrowseControl,
+} from './desktop-browse-control';
 import { ScriptRuntimeSupervisor } from './script-runtime-supervisor';
 import { PluginRuntimeSupervisor, type PluginRuntimeHostCommandHandler, type PluginRuntimeStorageHandler } from './plugin-runtime-supervisor';
 import { normalizeAutomationAssetSearchInput } from './normalize-automation-asset-search-input';
@@ -294,6 +302,7 @@ let appLogPath: string | undefined;
 let automationExecutionJournal: AutomationExecutionJournal | undefined;
 let automationMcpHost: AutomationMcpHostHandle | undefined;
 let desktopAttachedMcp: DesktopAttachedMcpHandle | undefined;
+let desktopBrowseControl: DesktopBrowseControl | undefined;
 let automationCommandGateway: AutomationCommandGateway | undefined;
 let scriptRuntimeSupervisor: ScriptRuntimeSupervisor | undefined;
 let pluginRuntimeSupervisor: PluginRuntimeSupervisor | undefined;
@@ -3930,13 +3939,19 @@ async function startApplication(): Promise<void> {
   automationRecentScripts = createJsonFileAutomationRecentScriptsStore(
     path.join(app.getPath('userData'), 'automation-recent-scripts.json'),
   );
+  const automationWorkerAdapter = new AutomationLibraryWorkerAdapter(workerClient, {
+    onAiEnqueued: (libraryId) => processAiQueue(libraryId),
+    onAiEnqueueError: (error, libraryId) => {
+      logger?.error('automation.ai-queue.trigger-failed', error, { libraryId });
+    },
+  });
   automationScriptFiles = new AutomationScriptFileService({
     selectOpenScript: selectAutomationScriptToOpen,
     selectSaveScript: selectAutomationScriptToSave,
     recentScripts: automationRecentScripts,
   });
   automationCommandGateway = createAutomationCommandGateway(
-    new AutomationLibraryWorkerAdapter(workerClient),
+    automationWorkerAdapter,
     {
       resolve: (executionId) => {
         const pluginContext = pluginAutomationContexts.get(executionId);
@@ -3961,7 +3976,7 @@ async function startApplication(): Promise<void> {
         },
       },
       filePlanApprovalHandler: createDesktopAutomationFilePlanApprovalHandler({
-        workerClient: new AutomationLibraryWorkerAdapter(workerClient),
+        workerClient: automationWorkerAdapter,
         confirm: confirmDesktopAutomationFilePlan,
       }),
       libraryBindingHandler: {
@@ -4626,6 +4641,16 @@ async function startApplication(): Promise<void> {
     }
   });
 
+  ipcMain.on(DESKTOP_AUTOMATION_BROWSE_RESULT_CHANNEL, (event, payload: unknown) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents) {
+      logger?.info('ipc.desktop-browse', 'Rejected Desktop browse response.', {
+        code: 'unauthorized_sender',
+      });
+      return;
+    }
+    desktopBrowseControl?.handleResult(event.sender, payload);
+  });
+
   ipcMain.on(VIEWER_VIDEO_SHORTCUTS_ACTIVE_CHANNEL, (event, input: unknown) => {
     const active =
       typeof input === "object" &&
@@ -4666,6 +4691,10 @@ async function startApplication(): Promise<void> {
   }
 
   await createMainWindow();
+  desktopBrowseControl = createDesktopBrowseControl({
+    getWebContents: () =>
+      mainWindow && !mainWindow.isDestroyed() ? mainWindow.webContents : null,
+  });
 
   if (desktopControlEnabled) {
     if (!automationExecutionJournal || !automationCommandGateway || !workerClient || !logger) {
@@ -4690,6 +4719,7 @@ async function startApplication(): Promise<void> {
       confirmAttach: confirmDesktopMcpAttach,
       focusMainWindow,
       applySelection: applyDesktopAutomationSelection,
+      browseControl: desktopBrowseControl,
       logger,
     }).then((handle) => {
       desktopAttachedMcp = handle;
@@ -4767,6 +4797,7 @@ if (!hasSingleInstanceLock) {
 
     const mcpClose = automationMcpHost?.close() ?? Promise.resolve();
     const desktopAttachedMcpClose = desktopAttachedMcp?.close() ?? Promise.resolve();
+    desktopBrowseControl?.close();
     void Promise.all([mcpClose, desktopAttachedMcpClose])
       .catch((error: unknown) => {
         logger?.error("automation.mcp.close", error);

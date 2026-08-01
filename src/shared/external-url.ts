@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 import type { ShowEditContextMenuResult } from './edit-context-menu';
 import type { ViewerVideoShortcutAction } from './viewer-video-shortcuts';
+import type { DesktopBrowseAction, DesktopBrowseResult } from './desktop-control';
 import type {
   WindowControlAction,
   WindowControlResult,
@@ -136,6 +137,12 @@ export interface SerpentShellApi {
   onDesktopAutomationSelection(
     listener: (event: DesktopControlSelectionEvent) => void,
   ): () => void;
+  /** Main → Renderer: typed browse intent from an attached local Agent. */
+  onDesktopAutomationBrowse(
+    listener: (action: DesktopBrowseAction) => void,
+  ): () => void;
+  /** Renderer → Main: response to a typed browse intent. */
+  respondDesktopAutomationBrowse(result: DesktopBrowseResult): void;
   /** macOS Edit 菜单反选（Serpent-te8p）；与 ⌘I / Ctrl+I 等价。 */
   onInvertSelection(listener: () => void): () => void;
   /** macOS Edit 菜单「复制」（Serpent-166q）。有选中资产时复制文件到系统剪贴板；

@@ -27,6 +27,8 @@ import {
   SHELL_SWIPE_CHANNEL,
   WINDOW_FOCUS_CHANNEL,
   DESKTOP_AUTOMATION_SELECTION_CHANNEL,
+  DESKTOP_AUTOMATION_BROWSE_CHANNEL,
+  DESKTOP_AUTOMATION_BROWSE_RESULT_CHANNEL,
   INVERT_SELECTION_CHANNEL,
   COPY_SELECTION_CHANNEL,
   NATIVE_EDIT_COPY_CHANNEL,
@@ -84,7 +86,11 @@ import {
 } from '../shared/external-url';
 import {
   desktopControlSelectionEventSchema,
+  desktopBrowseActionSchema,
+  desktopBrowseResultSchema,
   type DesktopControlSelectionEvent,
+  type DesktopBrowseAction,
+  type DesktopBrowseResult,
 } from '../shared/desktop-control';
 import {
   appLogAutomationCorrelationIdSchema,
@@ -1868,6 +1874,22 @@ const shell: SerpentShellApi = Object.freeze({
     return () => {
       ipcRenderer.removeListener(DESKTOP_AUTOMATION_SELECTION_CHANNEL, handler);
     };
+  },
+  onDesktopAutomationBrowse(
+    listener: (action: DesktopBrowseAction) => void,
+  ) {
+    const handler = (_event: Electron.IpcRendererEvent, payload: unknown) => {
+      const parsed = desktopBrowseActionSchema.safeParse(payload);
+      if (parsed.success) listener(parsed.data);
+    };
+    ipcRenderer.on(DESKTOP_AUTOMATION_BROWSE_CHANNEL, handler);
+    return () => {
+      ipcRenderer.removeListener(DESKTOP_AUTOMATION_BROWSE_CHANNEL, handler);
+    };
+  },
+  respondDesktopAutomationBrowse(result: DesktopBrowseResult): void {
+    const parsed = desktopBrowseResultSchema.safeParse(result);
+    if (parsed.success) ipcRenderer.send(DESKTOP_AUTOMATION_BROWSE_RESULT_CHANNEL, parsed.data);
   },
   onInvertSelection(listener: () => void): () => void {
     const handler = () => {

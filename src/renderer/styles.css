@@ -2227,6 +2227,15 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
   box-shadow: var(--shadow-menu);
 }
 
+.workspace-tools-overflow-item-indicator {
+  width: 6px;
+  height: 6px;
+  margin-right: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
 .tool-group-utility {
   display: flex;
   flex: 0 0 auto;
@@ -4462,7 +4471,7 @@ body.serpent-modal-open .app-shell {
 .script-sandbox-preview-dialog {
   display: flex;
   width: min(900px, calc(100vw - 40px));
-  max-height: min(760px, calc(100vh - 40px));
+  max-height: min(860px, calc(100vh - 32px));
   flex-direction: column;
 }
 
@@ -4480,11 +4489,7 @@ body.serpent-modal-open .app-shell {
 }
 
 .script-sandbox-preview-description {
-  max-width: 58rem;
-  margin: 8px 0 0;
-  color: var(--secondary);
-  font-size: 12px;
-  line-height: 1.55;
+  display: none;
 }
 
 .script-sandbox-preview-label,
@@ -4521,9 +4526,7 @@ body.serpent-modal-open .app-shell {
 }
 
 .script-sandbox-preview-help {
-  flex: 0 0 auto;
-  margin-bottom: 12px;
-  line-height: 1.5;
+  display: none;
 }
 
 .script-sandbox-preview-file-name {
@@ -4538,10 +4541,11 @@ body.serpent-modal-open .app-shell {
 
 .script-sandbox-preview-result {
   min-height: 0;
-  flex: 1 1 124px;
+  flex: 1 1 280px;
   margin-top: 2px;
   padding: 11px 12px;
   overflow: auto;
+  min-height: 260px;
   border: 1px solid var(--divider-soft);
   border-radius: 8px;
   background: color-mix(in srgb, var(--raised) 72%, var(--pane));
@@ -4565,7 +4569,7 @@ body.serpent-modal-open .app-shell {
 
 .script-sandbox-preview-result pre {
   min-height: 0;
-  max-height: 150px;
+  max-height: none;
   margin-top: 6px;
   overflow: auto;
   white-space: pre-wrap;
@@ -4584,8 +4588,8 @@ body.serpent-modal-open .app-shell {
 .script-sandbox-preview-recent-list,
 .script-sandbox-preview-history-list {
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px 12px;
+  flex-direction: column;
+  gap: 4px;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -4594,6 +4598,63 @@ body.serpent-modal-open .app-shell {
 .script-sandbox-preview-history {
   flex: 0 0 auto;
   margin-bottom: 12px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.script-sandbox-preview-history-list li {
+  display: grid;
+  grid-template-columns: minmax(76px, auto) minmax(70px, auto) 1fr auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 5px 8px;
+  border: 1px solid var(--divider-soft);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--raised) 70%, transparent);
+  color: var(--secondary);
+}
+
+.script-sandbox-preview-history-status {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.script-sandbox-preview-history-source,
+.script-sandbox-preview-history-count {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.script-sandbox-preview-history-action {
+  min-height: 26px;
+  padding: 3px 8px;
+  border: 1px solid var(--divider);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--secondary);
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.script-sandbox-preview-history-action:hover {
+  border-color: color-mix(in srgb, var(--accent) 48%, var(--divider));
+  background: var(--accent-soft);
+  color: var(--accent-soft-fg);
+}
+
+.script-sandbox-preview-dialog .dialog-actions {
+  gap: 8px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--divider-soft);
+}
+
+.script-sandbox-preview-dialog .dialog-actions > button {
+  min-height: 32px;
+  border-radius: 6px;
+  font-size: 12px;
 }
 
 .dialog-actions-start {

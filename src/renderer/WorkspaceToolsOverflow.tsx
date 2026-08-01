@@ -5,6 +5,7 @@ import { useT } from "./i18n";
 export type WorkspaceOverflowItem = {
   id: string;
   label: string;
+  active?: boolean;
   disabled?: boolean;
   onSelect: () => void;
 };
@@ -70,6 +71,7 @@ export function WorkspaceToolsOverflow({
               role="menuitem"
               type="button"
             >
+              {item.active ? <span aria-hidden="true" className="workspace-tools-overflow-item-indicator" /> : null}
               {item.label}
             </button>
           ))}

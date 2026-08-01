@@ -9,6 +9,16 @@ export interface AutomationWorkerRequester {
   ): Promise<WorkerResult>;
 }
 
+export interface AutomationLibraryWorkerAdapterOptions {
+  /**
+   * Main-owned callback for starting the AI queue after a successful enqueue.
+   * The callback is deliberately fire-and-forget: a scheduler failure cannot
+   * turn an already committed enqueue into a failed automation result.
+   */
+  readonly onAiEnqueued?: (libraryId: string) => void | Promise<void>;
+  readonly onAiEnqueueError?: (error: unknown, libraryId: string) => void;
+}
+
 /**
  * The only production bridge from Gateway to the Library Worker. Read commands
  * use the fail-closed automation dispatcher, so list/search cannot trigger
@@ -17,7 +27,47 @@ export interface AutomationWorkerRequester {
  * bounded-write lease and transaction fence are already enforced.
  */
 export class AutomationLibraryWorkerAdapter implements AutomationWorkerClient {
-  constructor(private readonly workerClient: AutomationWorkerRequester) {}
+  constructor(
+    private readonly workerClient: AutomationWorkerRequester,
+    private readonly options: AutomationLibraryWorkerAdapterOptions = {},
+  ) {}
+
+  private reportAiEnqueueError(error: unknown, libraryId: string): void {
+    try {
+      this.options.onAiEnqueueError?.(error, libraryId);
+    } catch {
+      // Error reporting must not turn an already committed enqueue into a
+      // rejected automation result.
+    }
+  }
+
+  private observeAiEnqueue(
+    command: WorkerCommand,
+    result: WorkerResult,
+    options: { signal?: AbortSignal; readonly?: boolean },
+  ): void {
+    if (
+      options.readonly
+      || options.signal?.aborted
+      || command.type !== 'ai.enqueue-analysis'
+      || !result.ok
+      || result.type !== 'ai.jobs.enqueued'
+      || (result.enqueued === 0 && result.alreadyPendingJobIds.length === 0)
+      || this.options.onAiEnqueued === undefined
+    ) {
+      return;
+    }
+    try {
+      const pending = this.options.onAiEnqueued(command.libraryId);
+      if (pending !== undefined) {
+        void pending.catch((error: unknown) => {
+          this.reportAiEnqueueError(error, command.libraryId);
+        });
+      }
+    } catch (error) {
+      this.reportAiEnqueueError(error, command.libraryId);
+    }
+  }
 
   request(
     command: WorkerCommand,
@@ -27,7 +77,12 @@ export class AutomationLibraryWorkerAdapter implements AutomationWorkerClient {
     const request = options.readonly
       ? this.workerClient.request(command, { dispatch: 'automation-readonly' })
       : this.workerClient.request(command);
-    if (options.signal === undefined) return request;
+    if (options.signal === undefined) {
+      return request.then((result) => {
+        this.observeAiEnqueue(command, result, options);
+        return result;
+      });
+    }
 
     return new Promise<WorkerResult>((resolve, reject) => {
       const abort = () => reject(new Error('Automation execution cancelled while awaiting Worker response.'));
@@ -35,6 +90,7 @@ export class AutomationLibraryWorkerAdapter implements AutomationWorkerClient {
       request.then(
         (result) => {
           options.signal?.removeEventListener('abort', abort);
+          this.observeAiEnqueue(command, result, options);
           resolve(result);
         },
         (error: unknown) => {
