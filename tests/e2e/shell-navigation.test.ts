@@ -94,6 +94,7 @@ test("library switcher, breadcrumbs, and workspace history", async () => {
       expect(submenuBox).not.toBeNull();
       expect(submenuBox!.y).toBeCloseTo(fileBox!.y, 0);
       expect(submenuBox!.x).toBeCloseTo(fileBox!.x + fileBox!.width, 0);
+      expect(submenuBox!.width).toBeLessThan(278);
       await window.getByRole("menuitem", { name: "设置", exact: true }).hover();
       await expect(mainSubmenu).toHaveCount(0);
       await window.getByRole("menuitem", { name: "设置", exact: true }).click();

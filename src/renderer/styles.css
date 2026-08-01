@@ -2095,8 +2095,9 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
   position: absolute;
   z-index: 43;
   display: grid;
-  width: 278px;
-  min-width: 0;
+  width: max-content;
+  min-width: 180px;
+  max-width: min(360px, calc(100vw - 12px));
   align-content: start;
   padding: 5px;
   border: 1px solid color-mix(in srgb, var(--divider) 82%, transparent);

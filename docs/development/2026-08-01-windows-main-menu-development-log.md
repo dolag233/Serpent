@@ -39,5 +39,6 @@ Windows 真机视觉与 macOS 对照仍需产品负责人验收；本记录不�
 - 一级项 hover/focus 到无子菜单项时主动清空 `activeSectionId`，确保前一个二级面板立即卸载，不会残留。
 - 新增壳层 E2E 断言覆盖上述位置对齐和互斥行为。
 - 设置项移动到顶层菜单末尾；关于界面移除底部操作按钮和分割线，改为版本下方居中的 GitHub 图标入口。
+- 二级菜单宽度改为按内容自适应，保留 180px 最小宽度与视口边界，避免短菜单出现大片空白。
 
 验证：`npm run typecheck`、`npm run lint`、`npx vitest run tests/unit/main-menu-items.test.ts`（3 个测试通过），以及后台 `node scripts/run-e2e.mjs tests/e2e/shell-navigation.test.ts --workers=1`（1 个测试通过）。
