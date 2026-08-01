@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import type {
   TagSummary,
   CollectionSummary,
@@ -16,6 +16,7 @@ import {
 } from "./context-menu";
 import { Icon } from "./Icons";
 import { TagPickerEntry, TagPickerMenu } from "./TagPickerMenu";
+import { CollectionPickerMenu } from "./CollectionPickerMenu";
 import { ColorSpaceSubmenuItems } from "./ColorSpacePickerMenu";
 import { isMacPlatform } from "./commands/command-types";
 import { createCommandRegistry } from "./commands/command-registry";
@@ -897,6 +898,34 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
             const clearSelectionItem = resolvedById.get(
               "assets.clear-selection",
             );
+            const addableCollectionIds = memberIdsByCollection
+              ? new Set(
+                  collections
+                    .filter(
+                      (collection) =>
+                        resolveCollectionMenuForSelection(
+                          targetAssetIds,
+                          collection.collectionId,
+                          memberIdsByCollection,
+                        ).showAdd,
+                    )
+                    .map((collection) => collection.collectionId),
+                )
+              : null;
+            const removableCollectionIds = memberIdsByCollection
+              ? new Set(
+                  collections
+                    .filter(
+                      (collection) =>
+                        resolveCollectionMenuForSelection(
+                          targetAssetIds,
+                          collection.collectionId,
+                          memberIdsByCollection,
+                        ).showRemove,
+                    )
+                    .map((collection) => collection.collectionId),
+                )
+              : null;
 
             return (
               <>
@@ -992,46 +1021,50 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
             )}
             {collections.length > 0 && memberIdsByCollection && (
               <ContextMenuSection label={t("command.group.batchCollections")}>
-                {collections.map((collection) => {
-                  const actions = resolveCollectionMenuForSelection(
-                    targetAssetIds,
-                    collection.collectionId,
-                    memberIdsByCollection,
-                  );
-                  if (!actions.showAdd && !actions.showRemove) return null;
-                  return (
-                    <Fragment key={`batch-col-${collection.collectionId}`}>
-                      {actions.showAdd && (
-                        <ContextMenuItem
-                          icon={<Icon name="collection" size={14} />}
-                          label={t("command.collection.addTo", {
-                            name: collection.name,
-                          })}
-                          onAction={() => {
-                            onBatchAddToCollection(
-                              collection.collectionId,
-                              targetAssetIds,
-                            );
-                          }}
-                        />
+                {addableCollectionIds && addableCollectionIds.size > 0 && (
+                  <ContextMenuSubmenu
+                    icon={<Icon name="collection" size={14} />}
+                    label={t("menu.addToCollection")}
+                  >
+                    <CollectionPickerMenu
+                      collections={collections}
+                      excludedCollectionIds={new Set(
+                        collections
+                          .filter(
+                            (collection) =>
+                              !addableCollectionIds.has(collection.collectionId),
+                          )
+                          .map((collection) => collection.collectionId),
                       )}
-                      {actions.showRemove && (
-                        <ContextMenuItem
-                          icon={<Icon name="close" size={14} />}
-                          label={t("command.collection.removeFrom", {
-                            name: collection.name,
-                          })}
-                          onAction={() => {
-                            onBatchRemoveFromCollection(
-                              collection.collectionId,
-                              targetAssetIds,
-                            );
-                          }}
-                        />
+                      onPick={(collectionId) =>
+                        onBatchAddToCollection(collectionId, targetAssetIds)
+                      }
+                      title={t("menu.addToCollection")}
+                    />
+                  </ContextMenuSubmenu>
+                )}
+                {removableCollectionIds && removableCollectionIds.size > 0 && (
+                  <ContextMenuSubmenu
+                    icon={<Icon name="close" size={14} />}
+                    label={t("menu.removeFromCollection")}
+                  >
+                    <CollectionPickerMenu
+                      collections={collections}
+                      excludedCollectionIds={new Set(
+                        collections
+                          .filter(
+                            (collection) =>
+                              !removableCollectionIds.has(collection.collectionId),
+                          )
+                          .map((collection) => collection.collectionId),
                       )}
-                    </Fragment>
-                  );
-                })}
+                      onPick={(collectionId) =>
+                        onBatchRemoveFromCollection(collectionId, targetAssetIds)
+                      }
+                      title={t("menu.removeFromCollection")}
+                    />
+                  </ContextMenuSubmenu>
+                )}
               </ContextMenuSection>
             )}
               {moveToFolderItem && (
@@ -1206,6 +1239,34 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
               "asset.delete-from-disk",
             );
             const deleteLinkedItem = resolvedById.get("asset.delete-linked");
+            const addableCollectionIds = memberIdsByCollection
+              ? new Set(
+                  collections
+                    .filter(
+                      (collection) =>
+                        resolveCollectionMenuForSelection(
+                          [assetId],
+                          collection.collectionId,
+                          memberIdsByCollection,
+                        ).showAdd,
+                    )
+                    .map((collection) => collection.collectionId),
+                )
+              : null;
+            const removableCollectionIds = memberIdsByCollection
+              ? new Set(
+                  collections
+                    .filter(
+                      (collection) =>
+                        resolveCollectionMenuForSelection(
+                          [assetId],
+                          collection.collectionId,
+                          memberIdsByCollection,
+                        ).showRemove,
+                    )
+                    .map((collection) => collection.collectionId),
+                )
+              : null;
             return (
               <>
                 <div className="context-menu-selection-summary">
@@ -1384,47 +1445,50 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                         }
                       />
                     ))}
-                  {memberIdsByCollection &&
-                    collections.map((collection) => {
-                      const actions = resolveCollectionMenuForSelection(
-                        [assetId],
-                        collection.collectionId,
-                        memberIdsByCollection,
-                      );
-                      if (!actions.showAdd && !actions.showRemove) return null;
-                      return (
-                        <Fragment key={`collection-${collection.collectionId}`}>
-                          {actions.showRemove && (
-                            <ContextMenuItem
-                              icon={<Icon name="close" size={14} />}
-                              label={t("command.collection.removeFrom", {
-                                name: collection.name,
-                              })}
-                              onAction={() => {
-                                onRemoveFromCollection(
-                                  assetId,
-                                  collection.collectionId,
-                                );
-                              }}
-                            />
-                          )}
-                          {actions.showAdd && (
-                            <ContextMenuItem
-                              icon={<Icon name="collection" size={14} />}
-                              label={t("command.collection.addTo", {
-                                name: collection.name,
-                              })}
-                              onAction={() => {
-                                onAddToCollection(
-                                  assetId,
-                                  collection.collectionId,
-                                );
-                              }}
-                            />
-                          )}
-                        </Fragment>
-                      );
-                    })}
+                  {addableCollectionIds && addableCollectionIds.size > 0 && (
+                    <ContextMenuSubmenu
+                      icon={<Icon name="collection" size={14} />}
+                      label={t("menu.addToCollection")}
+                    >
+                      <CollectionPickerMenu
+                        collections={collections}
+                        excludedCollectionIds={new Set(
+                          collections
+                            .filter(
+                              (collection) =>
+                                !addableCollectionIds.has(collection.collectionId),
+                            )
+                            .map((collection) => collection.collectionId),
+                        )}
+                        onPick={(collectionId) =>
+                          onAddToCollection(assetId, collectionId)
+                        }
+                        title={t("menu.addToCollection")}
+                      />
+                    </ContextMenuSubmenu>
+                  )}
+                  {removableCollectionIds && removableCollectionIds.size > 0 && (
+                    <ContextMenuSubmenu
+                      icon={<Icon name="close" size={14} />}
+                      label={t("menu.removeFromCollection")}
+                    >
+                      <CollectionPickerMenu
+                        collections={collections}
+                        excludedCollectionIds={new Set(
+                          collections
+                            .filter(
+                              (collection) =>
+                                !removableCollectionIds.has(collection.collectionId),
+                            )
+                            .map((collection) => collection.collectionId),
+                        )}
+                        onPick={(collectionId) =>
+                          onRemoveFromCollection(assetId, collectionId)
+                        }
+                        title={t("menu.removeFromCollection")}
+                      />
+                    </ContextMenuSubmenu>
+                  )}
                   {tags.length > 0 && (
                     <TagPickerEntry
                       icon={<Icon name="tag" size={14} />}

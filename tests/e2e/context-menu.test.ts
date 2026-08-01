@@ -166,8 +166,8 @@ test("context menu clamps at viewport edges", async () => {
     // Second Escape: clear the selection so the sidebar is unambiguous
     await window.keyboard.press("Escape");
     await window.getByRole("button", { name: "添加合集" }).click();
-    await window.getByPlaceholder("输入合集名称，回车创建").fill("Clamp Collection");
-    await window.getByPlaceholder("输入合集名称，回车创建").press("Enter");
+    await window.getByPlaceholder("新建合集").fill("Clamp Collection");
+    await window.getByPlaceholder("新建合集").press("Enter");
     await expect(window.getByRole("button", { name: /Clamp Collection/ })).toBeVisible();
 
     // Open organization context menu on the collection
@@ -224,8 +224,8 @@ test("single-menu enforcement — opening new context menu closes existing one",
     // (The sidebar no longer enumerates tags — REQ-TAG-001 — so the
     // collection row is the remaining organization menu entry.)
     await window.getByRole("button", { name: "添加合集" }).click();
-    await window.getByPlaceholder("输入合集名称，回车创建").fill("Single Test Collection");
-    await window.getByPlaceholder("输入合集名称，回车创建").press("Enter");
+    await window.getByPlaceholder("新建合集").fill("Single Test Collection");
+    await window.getByPlaceholder("新建合集").press("Enter");
     await expect(window.getByRole("button", { name: /Single Test Collection/ })).toBeVisible();
 
     // Step 1: Open context menu on the asset card

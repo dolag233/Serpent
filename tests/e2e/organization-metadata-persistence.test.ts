@@ -84,20 +84,20 @@ test("persists organization and metadata across restart and surfaces optimistic-
 
     await window.getByRole("button", { name: "添加合集" }).click();
     await window
-      .getByPlaceholder("输入合集名称，回车创建")
+      .getByPlaceholder("新建合集")
       .fill("持久合集");
     await window
-      .getByPlaceholder("输入合集名称，回车创建")
+      .getByPlaceholder("新建合集")
       .press("Enter");
     await expect(window.getByRole("button", { name: /持久合集/ })).toBeVisible();
 
     await window.getByRole("button", { name: /持久合集/ }).click();
     await window.getByRole("button", { name: "添加合集" }).click();
     await window
-      .getByPlaceholder("输入子合集名称，回车创建")
+      .getByPlaceholder("新建合集")
       .fill("持久子合集");
     await window
-      .getByPlaceholder("输入子合集名称，回车创建")
+      .getByPlaceholder("新建合集")
       .press("Enter");
     await expect(
       window.getByRole("button", { name: /持久子合集/ }),
@@ -112,9 +112,8 @@ test("persists organization and metadata across restart and surfaces optimistic-
     await expect(window.locator(".workspace-notice")).toContainText("标签已添加");
     await expect(window.locator(".tag-chip-name")).toContainText("持久标签");
     await assetCard.click({ button: "right" });
-    await window
-      .getByRole("menuitem", { name: "加入合集：持久子合集" })
-      .click();
+    await window.getByRole("menuitem", { name: "添加到合集" }).hover();
+    await window.getByRole("option", { name: "持久子合集" }).click();
     await expect(window.locator(".workspace-notice")).toContainText("资产已加入合集");
 
     await assetCard.click();

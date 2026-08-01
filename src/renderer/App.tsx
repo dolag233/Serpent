@@ -6926,19 +6926,6 @@ function AppInner() {
   }
   controlAiJobsRef.current = controlAiJobs;
 
-  // Handle inline input keydown for collection creation
-  function handleCollectionInputKeyDown(
-    e: React.KeyboardEvent<HTMLInputElement>,
-  ) {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      void createCollection();
-    } else if (e.key === "Escape") {
-      setShowCollectionInput(false);
-      setCollectionInputValue("");
-    }
-  }
-
   return (
     <>
     <HoverTipHost />
@@ -7160,7 +7147,6 @@ function AppInner() {
         onSetCollectionInputValue={setCollectionInputValue}
         onSetNewCollectionParentId={setNewCollectionParentId}
         onCollectionInputCommit={() => void createCollection()}
-        onCollectionInputKeyDown={handleCollectionInputKeyDown}
         onAddFolder={() => {
           cancelInlineSmartCollectionEdit();
           openInlineFolderCreate(selectedFolderId ?? null);

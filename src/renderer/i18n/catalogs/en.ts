@@ -388,7 +388,7 @@ export const en = {
       removeFromLibrary: "Remove from library",
       removeFromLibraryConfirm: "Remove linked folder \"{name}\" from the library?\nThe external source folder will not be deleted."
     },
-    collection: {
+  collection: {
       newSubcollection: "New subcollection",
       rename: "Rename collection",
       editDetails: "Edit collection details",
@@ -429,7 +429,15 @@ export const en = {
       folders: "Folders"
     }
   },
+  collectionPicker: {
+    search: "Search collections",
+    searchPlaceholder: "Search collections",
+    recent: "Recently used",
+    noMatch: "No matching collections",
+  },
   menu: {
+    addToCollection: "Add to collection",
+    removeFromCollection: "Remove from collection",
     createImageSequence: "Create image sequence…",
     dissolveImageSequence: "Dissolve image sequence",
     setImageSequenceFps: "Set sequence FPS…",

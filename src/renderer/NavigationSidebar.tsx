@@ -484,9 +484,6 @@ export interface NavigationSidebarProps {
   onSetCollectionInputValue: (value: string) => void;
   onSetNewCollectionParentId: (id: string | null) => void;
   onCollectionInputCommit: () => void;
-  onCollectionInputKeyDown: (
-    e: React.KeyboardEvent<HTMLInputElement>,
-  ) => void;
   // --- Folder creation entry (sidebar 「+」; opens the inline edit row) ---
   onAddFolder: () => void;
   /** SMART-007: open sidebar inline smart-collection name row. */
@@ -577,7 +574,6 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
     onSetCollectionInputValue,
     onSetNewCollectionParentId,
     onCollectionInputCommit,
-    onCollectionInputKeyDown,
     onAddFolder,
     onAddSmartCollection,
     inlineFolderEdit,

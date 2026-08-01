@@ -378,7 +378,7 @@ export const zhCN = {
       removeFromLibrary: "从库中移除",
       removeFromLibraryConfirm: "从资源库移除链接文件夹「{name}」？\n外部源目录不会被删除。"
     },
-    collection: {
+  collection: {
       newSubcollection: "新建子合集",
       rename: "重命名合集",
       editDetails: "编辑合集详情",
@@ -419,7 +419,15 @@ export const zhCN = {
       folders: "文件夹"
     }
   },
+  collectionPicker: {
+    search: "搜索合集",
+    searchPlaceholder: "搜索合集",
+    recent: "最近使用",
+    noMatch: "没有匹配的合集",
+  },
   menu: {
+    addToCollection: "添加到合集",
+    removeFromCollection: "从合集移除",
     createImageSequence: "创建序列图…",
     dissolveImageSequence: "解散序列图",
     setImageSequenceFps: "设置序列帧率…",

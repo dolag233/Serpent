@@ -59,8 +59,8 @@ test('pastes a Main-owned clipboard image into the current folder and collection
     await sidebarFolderRow(window, '项目').click();
 
     await window.getByRole('button', { name: '添加合集' }).click();
-    await window.getByPlaceholder('输入合集名称，回车创建').fill('情绪板');
-    await window.getByPlaceholder('输入合集名称，回车创建').press('Enter');
+    await window.getByPlaceholder('新建合集').fill('情绪板');
+    await window.getByPlaceholder('新建合集').press('Enter');
     await window.getByRole('button', { name: '情绪板' }).click();
 
     await window.getByRole('button', { name: /当前资源库/ }).click();
