@@ -1403,7 +1403,7 @@ export const en = {
     removeAsset: "Remove asset",
     undoMove: "Undo move",
     undoCopy: "Undo copy",
-    undoTrash: "Undo delete",
+    undoTrash: "Undo",
     undoTagDelete: "Undo"
   }
 } as CatalogMessages<typeof zhCN>;

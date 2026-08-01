@@ -387,7 +387,7 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
       };
     }
     case 'folder.delete-from-disk': {
-      const result = libraryService.deleteManagedFolderFromDisk(request.command);
+      const result = await libraryService.deleteManagedFolderFromDiskAsync(request.command);
       return {
         ok: true,
         type: 'folder.deleted-from-disk',
@@ -792,7 +792,7 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
       return { ok: true, type: 'asset.deleted-permanent', deletedCount, skippedCount, skippedReasons };
     }
     case 'asset.delete-from-disk': {
-      const { deletedCount } = libraryService.deleteAssetsFromDisk(request.command);
+      const { deletedCount } = await libraryService.deleteAssetsFromDiskAsync(request.command);
       return { ok: true, type: 'asset.deleted-from-disk', deletedCount };
     }
     case 'asset.delete-linked': {

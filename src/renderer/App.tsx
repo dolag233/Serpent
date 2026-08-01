@@ -321,9 +321,13 @@ import {
 import {
   assetGridLayoutStyle,
   countFittingColumns,
+  distributeMasonryItems,
 } from "./asset-grid-layout";
 import { JustifiedAssetRows } from "./justified-asset-rows";
-import { resolveMasonryPreviewStyle } from "./masonry-preview-frame";
+import {
+  estimateMasonryPreviewHeightPx,
+  resolveMasonryPreviewStyle,
+} from "./masonry-preview-frame";
 import {
   captureAnchor,
   pickNearestCard,
@@ -420,10 +424,12 @@ function MasonryColumns({
   assets,
   cardSize,
   children,
+  showCaption,
 }: {
   assets: AssetSummary[];
   cardSize: number;
   children: ReactNode[];
+  showCaption: boolean;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [availableWidth, setAvailableWidth] = useState(0);
@@ -486,15 +492,34 @@ function MasonryColumns({
   }, []);
 
   const columnCount = countFittingColumns(availableWidth, cardSize);
+  const distributed = distributeMasonryItems(
+    assets.map((asset, index) => ({ asset, child: children[index] })),
+    columnCount,
+    ({ asset }) => {
+      // Serpent-5p45: keep column packing consistent with the natural preview
+      // height; a fixed cap would create a wider contain-fit letterbox.
+      const previewHeight = estimateMasonryPreviewHeightPx(
+        asset.width,
+        asset.height,
+        cardSize,
+      );
+      return previewHeight + (showCaption ? 42 : 0) + 12;
+    },
+  );
+
   return (
     <div
       className="masonry-columns"
       ref={containerRef}
       style={{ gridTemplateColumns: `repeat(${columnCount}, minmax(0, 1fr))` }}
     >
-      {assets.map((asset, index) => (
-        <div className="masonry-card-slot" key={asset.assetId}>
-          {children[index]}
+      {distributed.map((column, index) => (
+        <div className="masonry-column" key={`masonry-column-${index}`}>
+          {column.items.map(({ asset, child }) => (
+            <div className="masonry-card-slot" key={asset.assetId}>
+              {child}
+            </div>
+          ))}
         </div>
       ))}
     </div>
@@ -3987,7 +4012,7 @@ function AppInner() {
     setNotice,
     setError,
     setUiState,
-    closePreview: () => closeAssetPreview(false),
+    closePreview: releaseAssetPreviewsBeforeDiskDelete,
     reloadCurrentContent,
     onDeletedCurrentScope: () => {
       void chooseFolder("root");
@@ -4911,7 +4936,11 @@ function AppInner() {
       );
       clearAssetSelection();
       await refreshCollectionSummaries();
-      await loadContent(library, "all", { trashMode: true });
+      if (showTrash) {
+        await loadContent(library, "all", { trashMode: true });
+      } else {
+        await reloadCurrentContent();
+      }
     } catch (caught) {
       setError(toMessage(caught, t("toast.restoreFailed"), locale));
     } finally {
@@ -5156,8 +5185,24 @@ function AppInner() {
   async function deleteManagedAssetsFromDiskAfterClosingPreview(
     assetIds: string[],
   ) {
-    await closeAssetPreview(false);
+    await releaseAssetPreviewsBeforeDiskDelete();
     await deleteManagedAssetsFromDisk(assetIds);
+  }
+
+  /**
+   * Chromium can keep a source stream open for a card hover/selection even
+   * after the full viewer closes.  Clear every source-backed card first and
+   * give React two frames to unmount the media elements before Windows sees
+   * the filesystem delete request.
+   */
+  async function releaseAssetPreviewsBeforeDiskDelete() {
+    await closeAssetPreview(false);
+    clearAssetSelection();
+    await new Promise<void>((resolve) => {
+      window.requestAnimationFrame(() => {
+        window.requestAnimationFrame(() => resolve());
+      });
+    });
   }
 
   async function confirmAssetDiskDelete(dontShowAgain: boolean) {
@@ -5208,7 +5253,7 @@ function AppInner() {
   ) {
     if (!api || !library) return;
     if (assetIds.length === 0 && folderIds.length === 0) return;
-    await closeAssetPreview(false);
+    await releaseAssetPreviewsBeforeDiskDelete();
     setUiState("loading");
     try {
       let deletedAssets = 0;
@@ -8400,6 +8445,11 @@ function AppInner() {
                           <MasonryColumns
                             assets={section.assets}
                             cardSize={assetCardSize}
+                            showCaption={
+                              canvasPrefs.fields.name ||
+                              canvasPrefs.fields.size ||
+                              canvasPrefs.fields.date
+                            }
                           >
                             {section.assets.map(renderAssetCard)}
                           </MasonryColumns>

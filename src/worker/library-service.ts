@@ -25,6 +25,7 @@ import {
   type BigIntStats,
   type Stats,
 } from 'node:fs';
+import { rm as rmAsync } from 'node:fs/promises';
 import path from 'node:path';
 import {
   execFile,
@@ -2193,6 +2194,42 @@ function isMissingPathError(error: unknown): boolean {
   );
 }
 
+const DISK_DELETE_RETRY_LIMIT = 12;
+const DISK_DELETE_RETRY_DELAY_MS = 125;
+
+function isRetryableDiskDeleteError(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null || !('code' in error)) {
+    return false;
+  }
+  return error.code === 'EBUSY' || error.code === 'EPERM' || error.code === 'EACCES';
+}
+
+/**
+ * Windows keeps delete-pending files unavailable until the last decoder or
+ * Chromium stream closes.  `fs.rm`'s built-in retry is only applied to
+ * recursive removals, so asset-file deletes need an asynchronous retry loop
+ * of their own.  Waiting asynchronously lets abort handlers and stream close
+ * events actually run between attempts.
+ */
+async function removePathWithRetry(
+  targetPath: string,
+  recursive: boolean,
+): Promise<void> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      await rmAsync(targetPath, { force: true, recursive, maxRetries: 0 });
+      return;
+    } catch (error) {
+      if (!isRetryableDiskDeleteError(error) || attempt >= DISK_DELETE_RETRY_LIMIT) {
+        throw error;
+      }
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, DISK_DELETE_RETRY_DELAY_MS * (attempt + 1));
+      });
+    }
+  }
+}
+
 const FS_NAME_COMPONENT_LIMIT = 255;
 
 /**
@@ -3069,6 +3106,8 @@ export class LibraryService {
   private readonly activeMediaJobs = new Map<string, {
     controller: AbortController;
     libraryId: string;
+    assetId: string;
+    settled: Promise<void>;
   }>();
   /**
    * A missing component can be repaired while a library remains open. Once a
@@ -5625,6 +5664,33 @@ export class LibraryService {
   }
 
   /**
+   * Hard-delete entry point used by the Worker request handler.  Media
+   * generators can still have a decoder process reading a managed source
+   * while the UI asks for deletion.  Cancel those jobs and wait for their
+   * finally blocks before touching the source paths; otherwise Windows can
+   * report the transient handle as a misleading permission failure.
+   */
+  async deleteManagedFolderFromDiskAsync(input: {
+    libraryId: string;
+    folderId: string;
+  }): Promise<{ deletedAssetCount: number; removedFolderCount: number }> {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    const { folder, descendantFolders, assetIds } =
+      this.collectManagedFolderSubtree(openLibrary, input.folderId);
+    await this.cancelMediaJobsForAssets(openLibrary, assetIds);
+    const deletedAssetCount =
+      assetIds.length === 0
+        ? 0
+        : await this.deleteActiveManagedAssetsFromDiskAsync(openLibrary, assetIds);
+    const removedFolderCount = await this.removeManagedFolderRowsAndDirectoryAsync(
+      openLibrary,
+      folder,
+      descendantFolders,
+    );
+    return { deletedAssetCount, removedFolderCount };
+  }
+
+  /**
    * Clarification #7: remove a linked folder root from the library index.
    * Source files on disk are never touched. Linked child paths use
    * trashLinkedFolderSubtree / deleteLinkedFolderSubtreeFromDisk instead.
@@ -5846,6 +5912,33 @@ export class LibraryService {
     return ordered.length;
   }
 
+  private async removeManagedFolderRowsAndDirectoryAsync(
+    openLibrary: OpenLibrary,
+    folder: ManagedFolderRow,
+    descendantFolders: ManagedFolderRow[],
+  ): Promise<number> {
+    const ordered = [...descendantFolders, folder];
+    const directoryPath = this.folderPath(openLibrary, folder.relative_path);
+    try {
+      await removePathWithRetry(directoryPath, true);
+    } catch (error) {
+      throw serviceError(error, 'LIBRARY_NOT_WRITABLE');
+    }
+
+    openLibrary.connection.transaction(() => {
+      for (const row of ordered) {
+        const result = openLibrary.connection
+          .prepare('DELETE FROM managed_folders WHERE folder_id = ?')
+          .run(row.folder_id);
+        if (result.changes !== 1) {
+          throw new LibraryServiceError('FOLDER_NOT_FOUND', { reason: 'SOURCE_CHANGED' });
+        }
+      }
+    })();
+
+    return ordered.length;
+  }
+
   private deleteActiveManagedAssetsFromDisk(
     openLibrary: OpenLibrary,
     assetIds: string[],
@@ -5896,6 +5989,98 @@ export class LibraryService {
     })();
 
     return rows.length;
+  }
+
+  private async deleteActiveManagedAssetsFromDiskAsync(
+    openLibrary: OpenLibrary,
+    assetIds: string[],
+  ): Promise<number> {
+    if (assetIds.length === 0) return 0;
+    const placeholders = assetIds.map(() => '?').join(', ');
+    const rows = openLibrary.connection
+      .prepare(
+        `SELECT asset_id, relative_file_path FROM assets
+          WHERE asset_id IN (${placeholders})
+            AND location_kind = 'managed'
+            AND deleted_at IS NULL`,
+      )
+      .all(...assetIds) as Array<{ asset_id: string; relative_file_path: string }>;
+
+    if (rows.length !== assetIds.length) {
+      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+    }
+
+    for (const row of rows) {
+      const filePath = this.folderPath(openLibrary, row.relative_file_path);
+      try {
+        await removePathWithRetry(filePath, false);
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code === 'EBUSY' || code === 'EPERM' || code === 'EACCES') {
+          throw new LibraryServiceError('LIBRARY_NOT_WRITABLE', {
+            reason: code === 'EBUSY' ? 'FILE_BUSY' : 'PERMISSION_DENIED',
+            cause: error,
+          });
+        }
+        if (!isMissingPathError(error)) {
+          throw serviceError(error, 'LIBRARY_NOT_WRITABLE');
+        }
+      }
+    }
+
+    openLibrary.connection.transaction(() => {
+      this.dissolveImageSequencesForAssets(openLibrary, assetIds);
+      for (const row of rows) {
+        openLibrary.connection
+          .prepare('DELETE FROM assets WHERE asset_id = ?')
+          .run(row.asset_id);
+      }
+    })();
+
+    return rows.length;
+  }
+
+  /** Async hard-delete path used by direct disk-delete commands. */
+  async deleteAssetsFromDiskAsync(input: {
+    libraryId: string;
+    assetIds: string[];
+  }): Promise<{ deletedCount: number }> {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    if (input.assetIds.length === 0 || new Set(input.assetIds).size !== input.assetIds.length) {
+      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+    }
+    const logicalCount = this.countLogicalAssetUnits(
+      openLibrary,
+      input.assetIds,
+    );
+    const assetIds = this.expandAssetIdsToSequenceMembers(openLibrary, input.assetIds);
+    const rows = openLibrary.connection
+      .prepare(
+        `SELECT asset_id, location_kind, deleted_at
+           FROM assets
+          WHERE asset_id IN (${assetIds.map(() => '?').join(',')})`,
+      )
+      .all(...assetIds) as Array<{
+        asset_id: string;
+        location_kind: string;
+        deleted_at: string | null;
+      }>;
+    if (rows.length !== assetIds.length) {
+      for (const id of assetIds) {
+        const row = rows.find((candidate) => candidate.asset_id === id);
+        if (!row) throw new LibraryServiceError('ASSET_NOT_FOUND');
+        if (row.location_kind !== 'managed' || row.deleted_at !== null) {
+          throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+        }
+      }
+      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+    }
+    if (rows.some((row) => row.location_kind !== 'managed' || row.deleted_at !== null)) {
+      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+    }
+    await this.cancelMediaJobsForAssets(openLibrary, assetIds);
+    await this.deleteActiveManagedAssetsFromDiskAsync(openLibrary, assetIds);
+    return { deletedCount: logicalCount };
   }
 
 
@@ -9856,6 +10041,55 @@ export class LibraryService {
     }
   }
 
+  /**
+   * Stop thumbnail/proxy work that may still hold a managed source file open.
+   * The queue is concurrent, so aborting the controller alone is not enough:
+   * wait for each active job's finally block to run before deleting on disk.
+   */
+  private async cancelMediaJobsForAssets(
+    openLibrary: OpenLibrary,
+    assetIds: readonly string[],
+  ): Promise<void> {
+    const selectedAssetIds = [...new Set(assetIds)];
+    if (selectedAssetIds.length === 0) return;
+    const placeholders = selectedAssetIds.map(() => '?').join(', ');
+    const rows = openLibrary.connection
+      .prepare(
+        `SELECT job_id FROM jobs
+          WHERE library_id = ?
+            AND asset_id IN (${placeholders})
+            AND kind IN (${MEDIA_JOB_KINDS.map(() => '?').join(',')})
+            AND status IN ('queued', 'running', 'paused')`,
+      )
+      .all(
+        openLibrary.summary.libraryId,
+        ...selectedAssetIds,
+        ...MEDIA_JOB_KINDS,
+      ) as Array<{ job_id: string }>;
+    if (rows.length === 0) return;
+
+    const jobIds = rows.map((row) => row.job_id);
+    this.updateMediaJobStatus(
+      openLibrary.summary.libraryId,
+      ['queued', 'running', 'paused'],
+      'cancelled',
+      jobIds,
+    );
+    this.abortActiveMediaJobs(openLibrary.summary.libraryId, jobIds);
+
+    const active = jobIds
+      .map((jobId) => this.activeMediaJobs.get(jobId))
+      .filter(
+        (job): job is {
+          controller: AbortController;
+          libraryId: string;
+          assetId: string;
+          settled: Promise<void>;
+        } => Boolean(job),
+      );
+    await Promise.all(active.map((job) => job.settled));
+  }
+
   private mediaJobState(libraryId: string, jobId: string): string | null {
     const openLibrary = this.requireOpenLibrary(libraryId);
     const row = openLibrary.connection.prepare(
@@ -12732,8 +12966,17 @@ export class LibraryService {
       if (claimed.changes === 0) continue;
 
       const controller = new AbortController();
-      this.activeMediaJobs.set(job.job_id, { controller, libraryId });
       const previousArtifacts = this.mediaArtifactSnapshot(openLibrary, job.revision_id);
+      let settleActiveJob!: () => void;
+      const settled = new Promise<void>((resolve) => {
+        settleActiveJob = resolve;
+      });
+      this.activeMediaJobs.set(job.job_id, {
+        controller,
+        libraryId,
+        assetId: job.asset_id,
+        settled,
+      });
 
       try {
         if (job.kind === 'generate_thumbnail' || job.kind === 'generate_video_poster') {
@@ -12884,6 +13127,7 @@ export class LibraryService {
         }
       } finally {
         this.activeMediaJobs.delete(job.job_id);
+        settleActiveJob();
       }
       processed += 1;
     }

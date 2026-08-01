@@ -680,10 +680,10 @@ FolderBrowseEntry
 | 需求/缺陷 | 说明 | 优先级 | 工单 |
 | --- | --- | --- | --- |
 | BUG-COLLECTION-INLINE-RENAME-001 | 合集重命名必须与文件夹一致，使用 inline 编辑；同时审计命令注册表中已有快捷键但右键菜单未显示 `shortcutLabel` 的所有资产、文件夹、合集菜单项。 | P1 | `Serpent-i1h0` |
-| BUG-DISK-DELETE-CONFIRM-002 | 资产强制从硬盘删除缺少确认；文件夹强制删除进入错误权限路径。统一核查右键、单选、多选、Shift+Delete 与确认偏好。 | P1 | `Serpent-cwor` |
+| BUG-DISK-DELETE-CONFIRM-002 | **Windows 硬盘删除真实故障**：任何包含资产的文件夹以及资产本身执行强制删除时都高概率提示“Serpent 无法写入所选位置。原因：当前用户没有读取源文件或写入目标位置的权限”。不能把问题改写为仅关闭查看器；需覆盖右键、单选、多选、Shift+Delete，保证磁盘与数据库一致。 | P1 | `Serpent-cwor`（重新打开，当前修复中） |
 | BUG-CONTEXT-SUBMENU-LIFECYCLE-001 | hover 切换两个二级菜单时旧菜单短暂残留；移除标签选择器返回按钮，并保持 hover 菜单实时互斥。 | P2 | `Serpent-4joy` |
-| BUG-DELETE-UNDO-NOTICE-001 | 删除资产后通知面板缺少直接撤销按钮；恢复删除通知的 undo action、计数与状态一致性。 | P1 | `Serpent-mxxc` |
-| BUG-MASONRY-ORDER-002 | 撤回上一轮瀑布流 Tab/Shift 选择改动；重新定位瀑布流从左到右、从上到下排列的布局根因，避免继续局部反复修补。 | P1 | `Serpent-6b3i` |
+| BUG-DELETE-UNDO-NOTICE-001 | 删除资产后通知面板提供“撤销”（不使用“撤销删除”长文案）；点击后必须刷新当前浏览范围，不能只恢复数据库而让画面看起来未变化。 | P1 | `Serpent-mxxc` |
+| BUG-MASONRY-ORDER-002 | 用户拒绝 CSS Grid 重做导致的瀑布流视觉变化。必须用 `git diff` 恢复原有显式列分配/自然高度布局，同时保留 Tab 只移动焦点、Shift+点击几何范围连续选择；不得以另一种布局替代原效果。 | P1 | `Serpent-6b3i` |
 
 ## 验收与证据要求
 

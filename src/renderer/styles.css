@@ -6159,11 +6159,6 @@ select.ai-config-input.ai-config-languages {
   display: grid;
   width: 100%;
   align-items: start;
-  /* Keep DOM order and visual order identical: left-to-right, then
-     top-to-bottom.  Direct grid children let CSS establish row baselines;
-     nested independently-flowing columns made short cards expose later
-     items above earlier cards when card heights differed. */
-  grid-auto-flow: row;
   gap: 14px;
 }
 
