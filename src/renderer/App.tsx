@@ -250,6 +250,7 @@ import {
 import { invertSelection } from "./invert-selection";
 import { trashedFoldersToBrowseEntries } from "./trashed-folder-entries";
 import { computeMasonrySelectionAssetIds } from "./masonry-selection-order";
+import { resolveMasonryTabTarget } from "./masonry-focus-order";
 import { shuffleArray } from "./client-shuffle";
 import { toMessage, LibraryOperationError } from "./error-utils";
 
@@ -7873,6 +7874,27 @@ function AppInner() {
                       onClick={(event) => {
                         if (renamingThisAsset) return;
                         handleCardClick(asset.assetId, event);
+                      }}
+                      onKeyDown={(event) => {
+                        if (
+                          renamingThisAsset ||
+                          assetViewMode !== "masonry" ||
+                          event.key !== "Tab"
+                        ) {
+                          return;
+                        }
+                        const nextAssetId = resolveMasonryTabTarget(
+                          selectionAssetIds ?? [],
+                          asset.assetId,
+                          event.shiftKey,
+                        );
+                        if (!nextAssetId) return;
+                        const nextCard = workspaceCanvasRef.current?.querySelector<HTMLElement>(
+                          `.asset-card[data-asset-id="${CSS.escape(nextAssetId)}"]`,
+                        );
+                        if (!nextCard) return;
+                        event.preventDefault();
+                        nextCard.focus();
                       }}
                       onDoubleClick={() => {
                         if (renamingThisAsset) return;
