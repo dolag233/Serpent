@@ -248,13 +248,6 @@ export function buildMainMenuSections({
       ],
     },
     {
-      id: "settings",
-      label: label(locale, "shell.mainMenuSettings"),
-      icon: "settings",
-      disabled: appDisabled,
-      onSelect: actions.openSettings,
-    },
-    {
       id: "about",
       label: label(locale, "shell.mainMenuAbout"),
       icon: "info",
@@ -283,6 +276,13 @@ export function buildMainMenuSections({
           onSelect: () => undefined,
         },
       ],
+    },
+    {
+      id: "settings",
+      label: label(locale, "shell.mainMenuSettings"),
+      icon: "settings",
+      disabled: appDisabled,
+      onSelect: actions.openSettings,
     },
   ];
 }

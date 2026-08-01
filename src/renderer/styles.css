@@ -6151,8 +6151,34 @@ select.ai-config-input.ai-config-languages {
   font-weight: 600;
 }
 
+.about-dialog-socials {
+  display: flex;
+  justify-content: center;
+  margin-top: 8px;
+}
+
+.about-dialog-social-button {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--secondary);
+  cursor: pointer;
+}
+
+.about-dialog-social-button:hover,
+.about-dialog-social-button:focus-visible {
+  background: var(--hover);
+  color: var(--text);
+  outline: none;
+}
+
 .about-dialog-copy {
-  padding: 22px 32px 8px;
+  padding: 20px 32px 24px;
   text-align: center;
 }
 
@@ -6161,14 +6187,6 @@ select.ai-config-input.ai-config-languages {
   color: var(--secondary);
   font-size: 12px;
   line-height: 1.65;
-}
-
-.about-dialog-actions {
-  display: flex;
-  justify-content: center;
-  gap: 8px;
-  padding: 16px 24px 22px;
-  border-top: 1px solid var(--divider-soft);
 }
 
 .open-source-dialog {

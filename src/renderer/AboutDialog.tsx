@@ -48,18 +48,19 @@ export function AboutDialog({
           <h2 id="about-dialog-title">{t("dialog.about.productName")}</h2>
           <p>{t("dialog.about.tagline")}</p>
           <span>{t("dialog.about.version", { version })}</span>
+          <div className="about-dialog-socials">
+            <button
+              className="about-dialog-social-button"
+              onClick={onOpenGitHub}
+              type="button"
+              {...iconActionAttrs(t("dialog.about.github"))}
+            >
+              <Icon name="github" size={20} />
+            </button>
+          </div>
         </div>
         <div className="about-dialog-copy">
           <p>{t("dialog.about.description")}</p>
-        </div>
-        <div className="about-dialog-actions">
-          <button className="secondary-button" onClick={onOpenGitHub} type="button">
-            <Icon name="globe" size={14} />
-            {t("dialog.about.github")}
-          </button>
-          <button className="primary-button" onClick={onClose} type="button">
-            {t("dialog.about.close")}
-          </button>
         </div>
       </div>
     </div>

@@ -15,8 +15,8 @@ Windows frameless shell 不显示原生顶部 menu bar，因此原工具栏设�
 - 编辑：撤销、复制/粘贴、选择、反选和清除选择，并显示 Windows 快捷键；
 - 资源库：创建、打开、关闭、移除、从硬盘删除以及库导入/导出；
 - 窗口：后台任务、诊断日志；不重复承载 Windows 最小化/最大化/关闭控件；
-- 设置：直接执行原设置按钮行为，不展开二级菜单；
 - 关于：分别提供「关于 Serpent」（产品信息、版本与 GitHub 入口）和「开源组件与许可」（依赖组件及许可证说明）。
+- 设置：固定为顶层菜单最后一项，直接执行原设置按钮行为，不展开二级菜单；
 
 `src/renderer/MainMenu.tsx` 只负责交互：打开主菜单时仅显示顶层分组，二级菜单只在悬停或键盘进入带子项的分组后出现；设置是直接动作；Escape、外点、焦点恢复和禁用态保持一致。
 
@@ -38,5 +38,6 @@ Windows 真机视觉与 macOS 对照仍需产品负责人验收；本记录不�
 - 主菜单二级面板改为读取当前一级项的实际矩形位置：顶部与触发项对齐，左边缘直接贴合触发项右边缘，不再使用固定顶部或间隙。
 - 一级项 hover/focus 到无子菜单项时主动清空 `activeSectionId`，确保前一个二级面板立即卸载，不会残留。
 - 新增壳层 E2E 断言覆盖上述位置对齐和互斥行为。
+- 设置项移动到顶层菜单末尾；关于界面移除底部操作按钮和分割线，改为版本下方居中的 GitHub 图标入口。
 
 验证：`npm run typecheck`、`npm run lint`、`npx vitest run tests/unit/main-menu-items.test.ts`（3 个测试通过），以及后台 `node scripts/run-e2e.mjs tests/e2e/shell-navigation.test.ts --workers=1`（1 个测试通过）。

@@ -28,6 +28,7 @@ export type IconName =
   | "folders"
   | "fullscreen"
   | "fullscreen-exit"
+  | "github"
   | "globe"
   | "grid"
   | "heart"
@@ -276,6 +277,12 @@ const iconPaths: Record<IconName, ReactNode> = {
     <>
       <path d="M20 7v5h-5" />
       <path d="M18.4 16a8 8 0 1 1 1.3-8.5L20 12" />
+    </>
+  ),
+  github: (
+    <>
+      <path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3.3-.4 6.7-1.6 6.7-7A5.4 5.4 0 0 0 19.3 3 5 5 0 0 0 19.2 1S18 0.6 15 2.5a13.4 13.4 0 0 0-6 0C6 .6 4.8 1 4.8 1a5 5 0 0 0-.1 2A5.4 5.4 0 0 0 3.3 7.5c0 5.4 3.4 6.6 6.7 7A4.8 4.8 0 0 0 9 18v4" />
+      <path d="M9 18c-4.5 2-5-2-7-2" />
     </>
   ),
   undo: (

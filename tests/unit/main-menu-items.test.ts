@@ -59,16 +59,16 @@ describe("main-menu-items (Serpent-bnah)", () => {
       "edit",
       "library",
       "window",
-      "settings",
       "about",
+      "settings",
     ]);
     expect(sections.map((section) => section.label)).toEqual([
       "文件",
       "编辑",
       "资源库",
       "窗口",
-      "设置",
       "关于",
+      "设置",
     ]);
     expect(sections[1]?.items?.find((item) => item.id === "edit.select-all")?.shortcut).toBe(
       "Ctrl+A",
