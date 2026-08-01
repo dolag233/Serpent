@@ -55,14 +55,57 @@ test("library switcher, breadcrumbs, and workspace history", async () => {
     await expect(window.locator(".brand-glyph")).toHaveCount(0);
     await expect(window.getByText("SERPENT / LOCAL WORKSPACE")).toHaveCount(0);
 
-    // History controls live in the browse column: settings and nav toggle sit
-    // in the nav column to their left; breadcrumbs trail to their right.
+    // History controls live in the browse column: the nav toggle is in the
+    // leading shell cluster, followed by history, the Windows main menu (or
+    // the macOS settings entry), and then the breadcrumbs trail.
     const backButton = window.getByRole("button", { name: "后退" });
     const forwardButton = window.getByRole("button", { name: "前进" });
-    const settingsButton = window.getByRole("button", { name: "设置" });
+    const settingsButton =
+      process.platform === "win32"
+        ? window.locator(".main-menu-trigger")
+        : window.getByRole("button", { name: /主菜单|设置/ });
     await expect(backButton).toBeVisible();
     await expect(forwardButton).toBeVisible();
     await expect(settingsButton).toBeVisible();
+    if (process.platform === "win32") {
+      await settingsButton.hover();
+      await expect(
+        window.getByRole("menu", { name: "主菜单" }),
+      ).toBeVisible();
+      await expect(window.locator(".main-menu-submenu")).toHaveCount(0);
+      for (const label of ["文件", "编辑", "资源库", "窗口", "设置", "关于"]) {
+        await expect(
+          window.getByRole("menuitem", { name: label, exact: true }),
+        ).toBeVisible();
+      }
+      await window.getByRole("menuitem", { name: "文件", exact: true }).hover();
+      await expect(window.locator(".main-menu-submenu")).toBeVisible();
+      await expect(
+        window.getByRole("menuitem", { name: "导入文件", exact: true }),
+      ).toBeVisible();
+      await window.getByRole("menuitem", { name: "设置", exact: true }).click();
+      await expect(window.getByRole("dialog")).toBeVisible();
+      await window.keyboard.press("Escape");
+      await expect(window.getByRole("dialog")).toHaveCount(0);
+
+      await settingsButton.hover();
+      await window.getByRole("menuitem", { name: "关于", exact: true }).hover();
+      await expect(window.locator(".main-menu-submenu")).toBeVisible();
+      await window
+        .getByRole("menuitem", { name: "开源组件与许可", exact: true })
+        .click();
+      await expect(
+        window.getByRole("dialog", { name: "开源组件与许可" }),
+      ).toBeVisible();
+      await window.keyboard.press("Escape");
+
+      await settingsButton.hover();
+      await window.getByRole("menuitem", { name: "关于", exact: true }).hover();
+      await window.getByRole("menuitem", { name: "关于 Serpent", exact: true }).click();
+      await expect(window.getByRole("dialog", { name: "Serpent" })).toBeVisible();
+      await expect(window.getByText("版本 0.1.0", { exact: true })).toBeVisible();
+      await window.keyboard.press("Escape");
+    }
     await expect(
       window.locator(".toolbar-workspace-cluster .scope-history"),
     ).toBeVisible();
@@ -82,8 +125,8 @@ test("library switcher, breadcrumbs, and workspace history", async () => {
     expect(toggleBox).not.toBeNull();
     expect(crumbsBox).not.toBeNull();
     expect(workspaceBox).not.toBeNull();
-    expect(settingsBox!.x).toBeLessThan(toggleBox!.x);
     expect(toggleBox!.x).toBeLessThan(backBox!.x);
+    expect(backBox!.x).toBeLessThan(settingsBox!.x);
     expect(backBox!.x).toBeLessThan(crumbsBox!.x);
     expect(backBox!.x - workspaceBox!.x).toBeCloseTo(14, 0);
 

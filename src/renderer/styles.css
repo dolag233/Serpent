@@ -1983,6 +1983,160 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
   white-space: nowrap;
 }
 
+/* Serpent-bnah: Windows replaces the hidden native menu bar with a compact
+   hover-first in-app menu. The trigger stays toolbar-sized; the two-column
+   surface keeps categories and their actions visible without stretching the
+   browse toolbar. */
+.main-menu {
+  position: relative;
+  flex: 0 0 auto;
+  width: var(--shell-control-height);
+  height: var(--shell-control-height);
+  overflow: visible;
+}
+
+.main-menu-trigger {
+  display: grid;
+  width: var(--shell-control-height);
+  height: var(--shell-control-height);
+  place-items: center;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--secondary);
+  cursor: pointer;
+}
+
+.main-menu-trigger:hover:not(:disabled),
+.main-menu-trigger[aria-expanded="true"]:not(:disabled) {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.main-menu-trigger:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.main-menu-surface {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 42;
+  display: block;
+  min-width: 148px;
+  width: 148px;
+  overflow: visible;
+  padding: 5px;
+  border: 1px solid color-mix(in srgb, var(--divider) 82%, transparent);
+  border-radius: 10px;
+  background: var(--raised);
+  box-shadow: var(--shadow-menu);
+}
+
+.main-menu-sections {
+  display: grid;
+  width: 100%;
+}
+
+.main-menu-section,
+.main-menu-item {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 30px;
+  gap: 8px;
+  padding: 6px 9px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12.5px;
+  line-height: 1.35;
+  text-align: left;
+  white-space: nowrap;
+  cursor: default;
+}
+
+.main-menu-section:hover,
+.main-menu-section:focus-visible,
+.main-menu-section.is-active,
+.main-menu-item:hover:not(:disabled),
+.main-menu-item:focus-visible {
+  background: var(--raised-2);
+  outline: none;
+}
+
+.main-menu-section:disabled,
+.main-menu-section[aria-disabled="true"] {
+  color: var(--tertiary);
+  opacity: 0.48;
+  cursor: not-allowed;
+}
+
+.main-menu-section .icon {
+  flex: 0 0 auto;
+  color: var(--secondary);
+}
+
+.main-menu-section span:nth-child(2) {
+  flex: 1 1 auto;
+}
+
+.main-menu-chevron {
+  color: var(--tertiary);
+  font-size: 18px;
+  line-height: 12px;
+}
+
+.main-menu-submenu {
+  position: absolute;
+  top: 5px;
+  left: calc(100% + 5px);
+  z-index: 43;
+  display: grid;
+  width: 278px;
+  min-width: 0;
+  align-content: start;
+  padding: 5px;
+  border: 1px solid color-mix(in srgb, var(--divider) 82%, transparent);
+  border-radius: 10px;
+  background: var(--raised);
+  box-shadow: var(--shadow-menu);
+}
+
+.main-menu-item-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.main-menu-item-shortcut {
+  margin-left: auto;
+  color: var(--tertiary);
+  font-size: 11px;
+}
+
+.main-menu-item.is-disabled,
+.main-menu-item:disabled {
+  color: var(--tertiary);
+  opacity: 0.48;
+  cursor: not-allowed;
+}
+
+.main-menu-item.is-danger {
+  color: color-mix(in srgb, var(--danger) 78%, var(--text));
+}
+
+.main-menu-item.is-danger:hover:not(:disabled),
+.main-menu-item.is-danger:focus-visible {
+  background: color-mix(in srgb, var(--danger) 14%, var(--hover));
+  color: var(--danger);
+}
+
 .nav-child-count {
   color: var(--secondary);
 }
@@ -5921,6 +6075,144 @@ select.ai-config-input.ai-config-languages {
 .workspace-notice.is-warning .workspace-notice-undo,
 .workspace-notice.is-warning .workspace-notice-dismiss {
   color: var(--warning-fg);
+}
+
+.about-dialog {
+  position: relative;
+  display: flex;
+  width: min(440px, calc(100vw - 40px));
+  flex-direction: column;
+  overflow: hidden;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--accent) 16%, var(--divider));
+  background: var(--raised);
+  box-shadow: var(--shadow-elevated);
+}
+
+.about-dialog-close {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  z-index: 1;
+  display: inline-grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--tertiary);
+  cursor: pointer;
+}
+
+.about-dialog-close:hover,
+.about-dialog-close:focus-visible {
+  background: var(--hover);
+  color: var(--text);
+  outline: none;
+}
+
+.about-dialog-brand {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  padding: 34px 32px 24px;
+  background: linear-gradient(145deg, color-mix(in srgb, var(--accent-soft) 72%, var(--raised)), var(--raised));
+  border-bottom: 1px solid var(--divider-soft);
+}
+
+.about-dialog-brand img {
+  width: 76px;
+  height: 76px;
+  margin-bottom: 4px;
+  border: 1px solid color-mix(in srgb, var(--divider) 72%, transparent);
+  border-radius: 18px;
+  box-shadow: var(--shadow-panel);
+  object-fit: cover;
+}
+
+.about-dialog-brand h2 {
+  margin: 0;
+  color: var(--text);
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+}
+
+.about-dialog-brand p {
+  margin: 0;
+  color: var(--secondary);
+  font-size: 12px;
+}
+
+.about-dialog-brand span {
+  margin-top: 3px;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.about-dialog-copy {
+  padding: 22px 32px 8px;
+  text-align: center;
+}
+
+.about-dialog-copy p {
+  margin: 0;
+  color: var(--secondary);
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+.about-dialog-actions {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  padding: 16px 24px 22px;
+  border-top: 1px solid var(--divider-soft);
+}
+
+.open-source-dialog {
+  display: flex;
+  width: min(560px, calc(100vw - 40px));
+  max-height: min(680px, calc(100vh - 40px));
+  flex-direction: column;
+}
+
+.open-source-dialog-content {
+  display: grid;
+  gap: 16px;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 22px 26px 8px;
+}
+
+.open-source-dialog-content ul {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.open-source-dialog-content li {
+  display: grid;
+  gap: 3px;
+  padding: 10px 12px;
+  border: 1px solid var(--divider-soft);
+  border-radius: 8px;
+  background: var(--raised-2);
+}
+
+.open-source-dialog-content li strong {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.open-source-dialog-content li span {
+  color: var(--secondary);
+  font-size: 11px;
 }
 
 /* Serpent-2wu4 / fvto: dismiss is a glyph, vertically centered with text. */

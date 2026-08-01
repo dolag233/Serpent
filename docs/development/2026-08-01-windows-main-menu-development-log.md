@@ -1,0 +1,34 @@
+# Windows 主菜单与菜单项拆分开发记录
+
+日期：2026-08-01  
+工单：`Serpent-bnah`
+
+## 范围
+
+Windows frameless shell 不显示原生顶部 menu bar，因此原工具栏设置按钮替换为 hover 优先的「主菜单」。macOS 继续使用原生 menu bar 与原设置入口。
+
+## 信息架构
+
+菜单项由 `src/renderer/main-menu-items.ts` 以纯 builder 统一拆分：
+
+- 文件：导入文件、文件夹和链接文件夹；
+- 编辑：撤销、复制/粘贴、选择、反选和清除选择，并显示 Windows 快捷键；
+- 资源库：创建、打开、关闭、移除、从硬盘删除以及库导入/导出；
+- 窗口：后台任务、诊断日志；不重复承载 Windows 最小化/最大化/关闭控件；
+- 设置：直接执行原设置按钮行为，不展开二级菜单；
+- 关于：分别提供「关于 Serpent」（产品信息、版本与 GitHub 入口）和「开源组件与许可」（依赖组件及许可证说明）。
+
+`src/renderer/MainMenu.tsx` 只负责交互：打开主菜单时仅显示顶层分组，二级菜单只在悬停或键盘进入带子项的分组后出现；设置是直接动作；Escape、外点、焦点恢复和禁用态保持一致。
+
+## 关于信息
+
+新增 `AboutDialog`，以独立的品牌信息卡展示 Serpent 图标、产品说明、版本和 GitHub 入口；新增 `OpenSourceLicensesDialog`，单独展示 Electron/React/SQLite/媒体组件及许可证说明。外部 URL 仍通过现有 preload shell bridge 校验后打开。
+
+## 验证
+
+- `npm run typecheck`
+- `npm run lint`
+- `npx vitest run tests/unit/main-menu-items.test.ts tests/unit/dialog-escape-stack.test.ts tests/unit/application-menu.test.ts`
+- 后台运行 `node scripts/run-e2e.mjs tests/e2e/shell-navigation.test.ts --workers=1`，覆盖入口、顶层分组、默认不展开二级菜单、文件分组 hover 展开和 Escape 关闭。
+
+Windows 真机视觉与 macOS 对照仍需产品负责人验收；本记录不把自动化结果写成人类验收通过。

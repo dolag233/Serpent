@@ -26,6 +26,8 @@ export type UseDialogEscapeDismissParams = {
   setImportLibraryChooserOpen: (open: boolean) => void;
   setAppSettingsOpen: (open: boolean) => void;
   setAppLogOpen: (open: boolean) => void;
+  setAboutOpen: (open: boolean) => void;
+  setOpenSourceLicensesOpen: (open: boolean) => void;
   setMediaJobsOpen: (open: boolean) => void;
   setLinkedRulesEditor: (value: null) => void;
   resetConvertLinkedDialog: () => void;
@@ -59,6 +61,8 @@ export function useDialogEscapeDismiss({
   setImportLibraryChooserOpen,
   setAppSettingsOpen,
   setAppLogOpen,
+  setAboutOpen,
+  setOpenSourceLicensesOpen,
   setMediaJobsOpen,
   setLinkedRulesEditor,
   resetConvertLinkedDialog,
@@ -127,6 +131,12 @@ export function useDialogEscapeDismiss({
         case "close-app-log":
           setAppLogOpen(false);
           return;
+        case "close-about":
+          setAboutOpen(false);
+          return;
+        case "close-open-source-licenses":
+          setOpenSourceLicensesOpen(false);
+          return;
         case "close-media-jobs":
           setMediaJobsOpen(false);
           return;
@@ -177,6 +187,8 @@ export function useDialogEscapeDismiss({
     setImportLibraryChooserOpen,
     setAppSettingsOpen,
     setAppLogOpen,
+    setAboutOpen,
+    setOpenSourceLicensesOpen,
     setMediaJobsOpen,
     setLinkedRulesEditor,
     resetConvertLinkedDialog,

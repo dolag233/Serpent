@@ -67,6 +67,11 @@ import {
   NavigationSidebar,
 } from "./NavigationSidebar";
 import { LibrarySwitcher, buildRecentLibraryMenuEntries, type RecentLibraryMenuEntry } from "./LibrarySwitcher";
+import { MainMenu } from "./MainMenu";
+import {
+  buildMainMenuSections,
+  SERPENT_VERSION,
+} from "./main-menu-items";
 import { CanvasToolbarControls } from "./CanvasToolbarControls";
 import { ScopeHistoryButtons } from "./ScopeHistoryButtons";
 import {
@@ -148,6 +153,8 @@ import {
 } from "../shared/ai-analysis-settings";
 import { AppSettingsDialog } from "./AppSettingsDialog";
 import { AppLogDialog } from "./AppLogDialog";
+import { AboutDialog } from "./AboutDialog";
+import { OpenSourceLicensesDialog } from "./OpenSourceLicensesDialog";
 import { AppSettingsEntry } from "./AppSettingsEntry";
 import type { AppSettingsCategoryId } from "./app-settings-sections";
 import {
@@ -953,6 +960,8 @@ function AppInner() {
   const [smartCollectionSettings, setSmartCollectionSettings] =
     useState<SmartCollectionSettingsTarget | null>(null);
   const [appLogOpen, setAppLogOpen] = useState(false);
+  const [aboutOpen, setAboutOpen] = useState(false);
+  const [openSourceLicensesOpen, setOpenSourceLicensesOpen] = useState(false);
   const [appLogEntries, setAppLogEntries] = useState<AppLogEntry[]>([]);
   const [appLogLoading, setAppLogLoading] = useState(false);
   const [appLogErrorCode, setAppLogErrorCode] = useState<
@@ -5937,6 +5946,8 @@ function AppInner() {
       importLibraryChooserOpen,
       appSettingsOpen,
       appLogOpen,
+      aboutOpen,
+      openSourceLicensesOpen,
       mediaJobsOpen: Boolean(mediaJobsOpen && library !== null),
       linkedRulesEditorOpen: Boolean(linkedRulesEditor),
       convertLinkedOpen: Boolean(convertLinkedDialog.folderId),
@@ -5962,6 +5973,8 @@ function AppInner() {
     importLibraryChooserOpen,
     appSettingsOpen,
     appLogOpen,
+    aboutOpen,
+    openSourceLicensesOpen,
     mediaJobsOpen,
     library,
     linkedRulesEditor,
@@ -5993,6 +6006,8 @@ function AppInner() {
     setImportLibraryChooserOpen,
     setAppSettingsOpen,
     setAppLogOpen,
+    setAboutOpen,
+    setOpenSourceLicensesOpen,
     setMediaJobsOpen,
     setLinkedRulesEditor,
     resetConvertLinkedDialog: () => {
@@ -6036,6 +6051,8 @@ function AppInner() {
       importLibraryChooserOpen ||
       appSettingsOpen ||
       appLogOpen ||
+      aboutOpen ||
+      openSourceLicensesOpen ||
       Boolean(smartCollectionSettings) ||
       Boolean(imageSequenceDialog) ||
       Boolean(fatalAlertMessage) ||
@@ -7097,6 +7114,70 @@ function AppInner() {
   }
   controlAiJobsRef.current = controlAiJobs;
 
+  const mainMenuSections = buildMainMenuSections({
+    locale,
+    platform: SHORTCUT_PLATFORM,
+    state: {
+      libraryOpen: Boolean(library),
+      busy,
+      hasUndoableOperation: lastUndoableOp !== null,
+      hasSelectedAssets: selectedAssetIds.length > 0,
+      hasPasteTarget: browsePasteDestination !== undefined,
+      hasBrowseAssets: browseScopeAssetIds.length > 0,
+    },
+    actions: {
+      createLibrary: () => {
+        setDialogValue(t("shell.myLibrary"));
+        setCreateLibraryPhase("start");
+        setDialog("library");
+      },
+      openLibrary: () => void runLibraryOperation("open"),
+      closeLibrary: () => void closeLibrary(),
+      removeLibrary: () => void removeLibrary(),
+      deleteLibraryFromDisk: requestDeleteLibraryFromDisk,
+      importFiles: () => void importAssets("files"),
+      importFolder: () => void importAssets("folder"),
+      importLinkedFolder: () => void importFolderAsLinked(),
+      importLibrary: () => setImportLibraryChooserOpen(true),
+      exportLibrary: () => setExportDialogOpen(true),
+      undo: () => void undoLastFileOp(),
+      copySelection: () => {
+        const copyIds = selectedAssets
+          .filter((asset) => asset.availability === "available" && !asset.deletedAt)
+          .map((asset) => asset.assetId);
+        if (copyIds.length > 0) void handleCopyAssetFiles(copyIds);
+      },
+      paste: () => {
+        if (browsePasteDestination !== undefined) {
+          pasteOsClipboardFiles(browsePasteDestination);
+        }
+      },
+      selectAll: () => {
+        setSelectedAssetIds([...browseScopeAssetIds]);
+        setSelectedAssetId(browseScopeAssetIds.at(-1));
+        setAssetSelectionAnchor(browseScopeAssetIds[0] ?? null);
+      },
+      invertSelection: () => {
+        const next = invertSelection(browseScopeAssetIds, selectedAssetIds);
+        setSelectedAssetIds(next);
+        setSelectedAssetId(next.at(-1));
+        setAssetSelectionAnchor(next[0] ?? null);
+      },
+      clearSelection: clearAssetSelection,
+      openSettings: () => {
+        setAppSettingsCategory("general");
+        setAppSettingsOpen(true);
+      },
+      openBackgroundJobs: () => setMediaJobsOpen(true),
+      openAppLog,
+      openAbout: () => setAboutOpen(true),
+      openGitHub: () => {
+        void shellApi?.openExternalUrl("https://github.com/dolag233/Serpent");
+      },
+      openOpenSourceLicenses: () => setOpenSourceLicensesOpen(true),
+    },
+  });
+
   return (
     <>
     <HoverTipHost />
@@ -7122,13 +7203,17 @@ function AppInner() {
               onBack={() => void goWorkspaceBack()}
               onForward={() => void goWorkspaceForward()}
             />
-            <AppSettingsEntry
-              disabled={busy}
-              onOpen={() => {
-                setAppSettingsCategory("general");
-                setAppSettingsOpen(true);
-              }}
-            />
+            {IS_WINDOWS_PLATFORM ? (
+              <MainMenu disabled={busy} sections={mainMenuSections} />
+            ) : (
+              <AppSettingsEntry
+                disabled={busy}
+                onOpen={() => {
+                  setAppSettingsCategory("general");
+                  setAppSettingsOpen(true);
+                }}
+              />
+            )}
             <LibrarySwitcher
               busy={busy}
               disabled={busy}
@@ -8826,6 +8911,20 @@ function AppInner() {
           });
         }}
         open={appLogOpen}
+      />
+      <AboutDialog
+        open={aboutOpen}
+        version={SERPENT_VERSION}
+        onClose={() => setAboutOpen(false)}
+        onOpenGitHub={() => {
+          const bridge = (window as RendererWindow).serpent?.shell;
+          if (!bridge?.openExternalUrl) return;
+          void bridge.openExternalUrl("https://github.com/dolag233/Serpent");
+        }}
+      />
+      <OpenSourceLicensesDialog
+        open={openSourceLicensesOpen}
+        onClose={() => setOpenSourceLicensesOpen(false)}
       />
       {smartCollectionSettings ? (
         <SmartCollectionSettingsDialog

@@ -20,6 +20,8 @@ const empty: DialogEscapeSnapshot = {
   importLibraryChooserOpen: false,
   appSettingsOpen: false,
   appLogOpen: false,
+  aboutOpen: false,
+  openSourceLicensesOpen: false,
   mediaJobsOpen: false,
   linkedRulesEditorOpen: false,
   convertLinkedOpen: false,

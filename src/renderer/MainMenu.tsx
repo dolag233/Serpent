@@ -1,0 +1,295 @@
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type ReactNode,
+} from "react";
+
+import { Icon } from "./Icons";
+import { iconActionAttrs } from "./icon-action-attrs";
+import { useT } from "./i18n";
+import type { MainMenuItem, MainMenuSection } from "./main-menu-items";
+
+const MENU_ITEM_SELECTOR = '[role="menuitem"]:not([aria-disabled="true"])';
+
+function nextEnabledIndex(items: readonly HTMLElement[], current: number, step: number): number {
+  if (items.length === 0) return -1;
+  let index = current;
+  for (let count = 0; count < items.length; count += 1) {
+    index = (index + step + items.length) % items.length;
+    if (items[index]?.getAttribute("aria-disabled") !== "true") return index;
+  }
+  return -1;
+}
+
+function MenuItemButton({
+  item,
+  onSelect,
+}: {
+  readonly item: MainMenuItem;
+  readonly onSelect: () => void;
+}) {
+  return (
+    <button
+      aria-disabled={item.disabled || undefined}
+      className={`main-menu-item${item.danger ? " is-danger" : ""}${item.disabled ? " is-disabled" : ""}`}
+      data-menu-item-id={item.id}
+      disabled={item.disabled}
+      onClick={() => {
+        if (!item.disabled) {
+          onSelect();
+        }
+      }}
+      role="menuitem"
+      tabIndex={-1}
+      type="button"
+    >
+      <span className="main-menu-item-label">{item.label}</span>
+      {item.shortcut ? (
+        <span aria-hidden="true" className="main-menu-item-shortcut">
+          {item.shortcut}
+        </span>
+      ) : null}
+    </button>
+  );
+}
+
+export function MainMenu({
+  sections,
+  disabled = false,
+}: {
+  readonly sections: readonly MainMenuSection[];
+  readonly disabled?: boolean;
+}): ReactNode {
+  const t = useT();
+  const [open, setOpen] = useState(false);
+  const [activeSectionId, setActiveSectionId] = useState<string | null>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const surfaceRef = useRef<HTMLDivElement>(null);
+  const closeTimerRef = useRef<number | null>(null);
+  const suppressFocusOpenRef = useRef(false);
+  const menuId = useId();
+
+  const cancelClose = useCallback(() => {
+    if (closeTimerRef.current !== null) {
+      window.clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = null;
+    }
+  }, []);
+
+  const closeMenu = useCallback(
+    (restoreFocus: boolean) => {
+      cancelClose();
+      setOpen(false);
+      setActiveSectionId(null);
+      if (restoreFocus) {
+        suppressFocusOpenRef.current = true;
+        requestAnimationFrame(() => triggerRef.current?.focus());
+      }
+    },
+    [cancelClose],
+  );
+
+  const scheduleClose = useCallback(() => {
+    cancelClose();
+    closeTimerRef.current = window.setTimeout(() => {
+      setOpen(false);
+      setActiveSectionId(null);
+    }, 140);
+  }, [cancelClose]);
+
+  const openMenu = useCallback(
+    (sectionId?: string) => {
+      cancelClose();
+      setOpen(true);
+      setActiveSectionId(sectionId ?? null);
+    },
+    [cancelClose],
+  );
+
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) closeMenu(false);
+    };
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeMenu(true);
+        return;
+      }
+      const surface = surfaceRef.current;
+      if (!surface || !["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
+        return;
+      }
+      const items = Array.from(
+        surface.querySelectorAll<HTMLElement>(MENU_ITEM_SELECTOR),
+      );
+      if (items.length === 0) return;
+      event.preventDefault();
+      const current = items.indexOf(document.activeElement as HTMLElement);
+      const next =
+        event.key === "Home"
+          ? 0
+          : event.key === "End"
+            ? items.length - 1
+            : nextEnabledIndex(
+                items,
+                current < 0 ? (event.key === "ArrowUp" ? 0 : -1) : current,
+                event.key === "ArrowUp" ? -1 : 1,
+              );
+      items[next]?.focus();
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [closeMenu, open]);
+
+  useEffect(
+    () => () => {
+      cancelClose();
+    },
+    [cancelClose],
+  );
+
+  const activeSection = sections.find((section) => section.id === activeSectionId);
+
+  function runSection(section: MainMenuSection) {
+    if (!section.onSelect) return;
+    closeMenu(true);
+    section.onSelect();
+  }
+
+  function runItem(item: MainMenuItem) {
+    if (item.disabled) return;
+    closeMenu(true);
+    item.onSelect();
+  }
+
+  function onSurfaceKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (event.key === "ArrowRight") {
+      const section = sections.find((candidate) => candidate.id === activeSectionId);
+      const firstItem = surfaceRef.current?.querySelector<HTMLElement>(
+        `[data-main-menu-submenu="${section?.id ?? ""}"] ${MENU_ITEM_SELECTOR}`,
+      );
+      if (section && section.items && firstItem) {
+        event.preventDefault();
+        firstItem.focus();
+      }
+    } else if (event.key === "ArrowLeft") {
+      const section = sections.find((candidate) =>
+        candidate.items?.some(
+          (item) =>
+            item.id === (document.activeElement as HTMLElement)?.dataset.menuItemId,
+        ),
+      );
+      const target = surfaceRef.current?.querySelector<HTMLElement>(
+        `[data-main-menu-section-id="${section?.id ?? activeSectionId ?? ""}"]`,
+      );
+      if (target) {
+        event.preventDefault();
+        target.focus();
+      }
+    }
+  }
+
+  return (
+    <div
+      className="main-menu"
+      onMouseEnter={() => openMenu()}
+      onMouseLeave={scheduleClose}
+      ref={rootRef}
+    >
+      <button
+        aria-controls={menuId}
+        aria-expanded={open}
+        aria-haspopup="menu"
+        className="main-menu-trigger"
+        disabled={disabled}
+        onClick={() => (open ? closeMenu(true) : openMenu())}
+        onFocus={() => {
+          if (suppressFocusOpenRef.current) {
+            suppressFocusOpenRef.current = false;
+            return;
+          }
+          openMenu();
+        }}
+        ref={triggerRef}
+        type="button"
+        {...iconActionAttrs(t("shell.mainMenu"))}
+      >
+        <Icon name="menu" size={15} />
+      </button>
+      {open ? (
+        <div
+          aria-label={t("shell.mainMenu")}
+          className="main-menu-surface"
+          id={menuId}
+          onKeyDown={onSurfaceKeyDown}
+          onMouseEnter={cancelClose}
+          ref={surfaceRef}
+          role="menu"
+        >
+          <div className="main-menu-sections" role="group">
+            {sections.map((section) => {
+              const active = activeSection?.id === section.id;
+              const hasSubmenu = Boolean(section.items?.length);
+              return (
+                <button
+                  aria-expanded={hasSubmenu ? active : undefined}
+                  aria-haspopup={hasSubmenu ? "menu" : undefined}
+                  aria-disabled={section.disabled || undefined}
+                  className={`main-menu-section${active ? " is-active" : ""}`}
+                  data-main-menu-section="true"
+                  data-main-menu-section-id={section.id}
+                  disabled={section.disabled}
+                  onClick={() => {
+                    if (section.disabled) return;
+                    if (hasSubmenu) openMenu(section.id);
+                    else runSection(section);
+                  }}
+                  onFocus={() => {
+                    if (hasSubmenu && !section.disabled) openMenu(section.id);
+                  }}
+                  onMouseEnter={() => {
+                    if (hasSubmenu && !section.disabled) openMenu(section.id);
+                  }}
+                  role="menuitem"
+                  tabIndex={-1}
+                  type="button"
+                >
+                  <Icon name={section.icon} size={14} />
+                  <span>{section.label}</span>
+                  {hasSubmenu ? (
+                    <span aria-hidden="true" className="main-menu-chevron">
+                      ›
+                    </span>
+                  ) : null}
+                </button>
+              );
+            })}
+          </div>
+          {activeSection?.items ? (
+            <div
+              aria-label={activeSection.label}
+              className="main-menu-submenu"
+              data-main-menu-submenu={activeSection.id}
+              role="menu"
+            >
+              {activeSection.items.map((item) => (
+                <MenuItemButton item={item} key={item.id} onSelect={() => runItem(item)} />
+              ))}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
