@@ -46,6 +46,7 @@ export const PUBLIC_ERROR_MESSAGES = {
   AUTOMATION_UNDO_GROUP_NOT_FOUND: 'The automation undo group is no longer available.',
   AUTOMATION_UNDO_NOT_AVAILABLE: 'This automation result cannot be undone.',
   AUTOMATION_UNDO_STALE: 'The files changed, so this automation result can no longer be undone safely.',
+  PLUGIN_HOOK_BLOCKED: 'A plugin blocked this operation before it could run.',
 } as const;
 
 export type PublicErrorCode = keyof typeof PUBLIC_ERROR_MESSAGES;

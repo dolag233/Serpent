@@ -34,6 +34,8 @@ export type UseDialogEscapeDismissParams = {
   setShowCollectionInput: (open: boolean) => void;
   setConflicts: (value: ImportConflictPlan | null) => void;
   setError: (message: string | null) => void;
+  /** Serpent-c2rm: Escape dismisses the pending library-plugin trust prompt as Later. */
+  onDismissPluginTrustPrompt?: () => void;
   /** Serpent-99lv: Escape dismisses the blocking fatal alert. */
   onDismissFatalAlert?: () => void;
   /** Serpent-kdnm: Escape on connection-failure dialog aborts remaining AI jobs. */
@@ -68,6 +70,7 @@ export function useDialogEscapeDismiss({
   setShowCollectionInput,
   setConflicts,
   setError,
+  onDismissPluginTrustPrompt,
   onDismissFatalAlert,
   onAbortAiConnectionFailure,
 }: UseDialogEscapeDismissParams): void {
@@ -145,6 +148,9 @@ export function useDialogEscapeDismiss({
           setDialog(null);
           setShowCollectionInput(false);
           return;
+        case "dismiss-plugin-trust-prompt":
+          onDismissPluginTrustPrompt?.();
+          return;
         case "abandon-import": {
           if (!api) return;
           const importId = action.importId;
@@ -190,6 +196,7 @@ export function useDialogEscapeDismiss({
     setShowCollectionInput,
     setConflicts,
     setError,
+    onDismissPluginTrustPrompt,
     onDismissFatalAlert,
     onAbortAiConnectionFailure,
     locale,

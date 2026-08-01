@@ -221,6 +221,8 @@ import { useInspectorAssetMetadata } from "./use-inspector-asset-metadata";
 import { useInspectorFieldHandlers } from "./use-inspector-field-handlers";
 import { useAssetDragDropHandlers, type UndoableFileOp } from "./use-asset-drag-drop-handlers";
 import { useDialogEscapeDismiss } from "./use-dialog-escape-dismiss";
+import { PluginTrustPromptDialog } from "./PluginTrustPromptDialog";
+import { usePluginTrustPrompt } from "./use-plugin-trust-prompt";
 import { useExternalImportHandlers } from "./use-external-import-handlers";
 import { useFolderDragDropHandlers } from "./use-folder-drag-drop-handlers";
 import { WorkspaceNoticeBanner } from "./WorkspaceNoticeBanner";
@@ -968,6 +970,11 @@ function AppInner() {
   const [appSettingsOpen, setAppSettingsOpen] = useState(false);
   const [appSettingsCategory, setAppSettingsCategory] =
     useState<AppSettingsCategoryId>("general");
+  const pluginTrustPrompt = usePluginTrustPrompt({
+    api: (window as RendererWindow).serpent?.plugins,
+    libraryId: library?.libraryId,
+    suppressWhileSettingsOpen: appSettingsOpen && appSettingsCategory === "plugins",
+  });
   const [smartCollectionSettings, setSmartCollectionSettings] =
     useState<SmartCollectionSettingsTarget | null>(null);
   const [appLogOpen, setAppLogOpen] = useState(false);
@@ -6275,6 +6282,7 @@ function AppInner() {
       linkedRulesEditorOpen: Boolean(linkedRulesEditor),
       convertLinkedOpen: Boolean(convertLinkedDialog.folderId),
       dialogOpen: Boolean(dialog),
+      pluginTrustPromptOpen: Boolean(pluginTrustPrompt.pending),
       fatalAlertOpen: Boolean(fatalAlertMessage),
       aiConnectionFailureOpen: aiConnectionFailureGate.open,
       conflictsImportId: conflictPhase ? (conflicts?.importId ?? null) : null,
@@ -6302,6 +6310,7 @@ function AppInner() {
     linkedRulesEditor,
     convertLinkedDialog.folderId,
     dialog,
+    pluginTrustPrompt.pending,
     fatalAlertMessage,
     aiConnectionFailureGate.open,
     conflicts?.importId,
@@ -6354,6 +6363,7 @@ function AppInner() {
       else presentImportConflicts(value);
     },
     setError,
+    onDismissPluginTrustPrompt: pluginTrustPrompt.dismissLater,
     onDismissFatalAlert: dismissFatalAlert,
     onAbortAiConnectionFailure: onAiConnectionFailureAbort,
   });
@@ -6382,6 +6392,7 @@ function AppInner() {
       Boolean(imageSequenceDialog) ||
       Boolean(fatalAlertMessage) ||
       aiConnectionFailureGate.open ||
+      Boolean(pluginTrustPrompt.pending) ||
       (mediaJobsOpen && library !== null) ||
       linkedRulesEditor ||
       convertLinkedDialog.folderId,
@@ -9122,6 +9133,21 @@ function AppInner() {
         libraryId={library?.libraryId}
         open={appSettingsOpen}
       />
+      {pluginTrustPrompt.pending ? (
+        <PluginTrustPromptDialog
+          busy={pluginTrustPrompt.busy}
+          onLater={pluginTrustPrompt.dismissLater}
+          onOpenSettings={() => {
+            pluginTrustPrompt.hidePrompt();
+            setAppSettingsCategory("plugins");
+            setAppSettingsOpen(true);
+          }}
+          onTrustAll={() => {
+            void pluginTrustPrompt.trustAll();
+          }}
+          plugins={pluginTrustPrompt.pending}
+        />
+      ) : null}
       <AppLogDialog
         automationCorrelationId={appLogAutomationCorrelationId}
         entries={appLogEntries}

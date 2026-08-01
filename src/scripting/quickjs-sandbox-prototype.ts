@@ -50,6 +50,18 @@ export interface QuickJsSandboxPrototypeHost {
    */
   waitForDomainEvent?(): Promise<import('../plugins/plugin-domain-events').PluginDomainEvent | null>;
   /**
+   * Plugin Host onWill hook invoke pull. Resolves with the next invoke or null
+   * when the instance is deactivating.
+   */
+  waitForHookInvoke?(): Promise<import('../plugins/plugin-hooks').PluginHookInvoke | null>;
+  /**
+   * Posts an onWill decision back to Main for a pending hook invoke.
+   */
+  respondHookDecision?(
+    invokeId: string,
+    decision: import('../plugins/plugin-hooks').PluginHookDecision,
+  ): Promise<void>;
+  /**
    * Sets the cause chain inherited by subsequent host commands until cleared.
    */
   setActiveCauseChain?(causeChain: readonly string[]): void;
@@ -1118,6 +1130,26 @@ export async function runQuickJsSandboxPrototype(
       }
       context.setProp(serpent, 'events', events);
       events.dispose();
+    }
+    if (host.waitForHookInvoke !== undefined && host.respondHookDecision !== undefined) {
+      const hooks = context.newObject();
+      const nextInvoke = context.newFunction('__nextInvoke', () => createDeferredHostCall(
+        host.waitForHookInvoke!(),
+        (value) => (value === null ? context.null : newQuickJsJsonValue(context, value)),
+      ));
+      context.setProp(hooks, '__nextInvoke', nextInvoke);
+      nextInvoke.dispose();
+      const respond = context.newFunction('__respond', (invokeIdHandle, decisionHandle) => createDeferredHostCall(
+        host.respondHookDecision!(
+          String(context.dump(invokeIdHandle)),
+          context.dump(decisionHandle) as import('../plugins/plugin-hooks').PluginHookDecision,
+        ),
+        () => context.undefined,
+      ));
+      context.setProp(hooks, '__respond', respond);
+      respond.dispose();
+      context.setProp(serpent, 'hooks', hooks);
+      hooks.dispose();
     }
     if (host.executeStorageOperation !== undefined) {
       const storage = context.newObject();

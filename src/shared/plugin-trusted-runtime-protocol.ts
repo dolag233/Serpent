@@ -7,6 +7,10 @@ import {
   pluginDomainEventSchema,
 } from '../plugins/plugin-domain-events';
 import {
+  pluginHookDecisionSchema,
+  pluginHookInvokeSchema,
+} from '../plugins/plugin-hooks';
+import {
   pluginRuntimeActivationFailureCodeSchema,
   pluginRuntimeDeactivateReasonSchema,
   pluginStorageOperationSchema,
@@ -85,6 +89,11 @@ export const pluginTrustedParentMessageSchema = z.discriminatedUnion('type', [
     instanceId: instanceIdSchema,
     event: pluginDomainEventSchema,
   }),
+  z.strictObject({
+    type: z.literal('plugin-trusted.hook-invoke'),
+    instanceId: instanceIdSchema,
+    invoke: pluginHookInvokeSchema,
+  }),
 ]);
 export type PluginTrustedParentMessage = z.infer<typeof pluginTrustedParentMessageSchema>;
 
@@ -130,6 +139,12 @@ export const pluginTrustedChildMessageSchema = z.discriminatedUnion('type', [
     instanceId: instanceIdSchema,
     level: z.enum(['log', 'warn', 'error']),
     message: z.string().max(4_096),
+  }),
+  z.strictObject({
+    type: z.literal('plugin-trusted.hook-decision'),
+    instanceId: instanceIdSchema,
+    invokeId: requestIdSchema,
+    decision: pluginHookDecisionSchema,
   }),
 ]);
 export type PluginTrustedChildMessage = z.infer<typeof pluginTrustedChildMessageSchema>;

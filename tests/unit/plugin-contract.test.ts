@@ -290,6 +290,8 @@ describe('Plugin contribution registry and generated SDK', () => {
     expect(declaration).toContain('interface SerpentPluginApi');
     expect(declaration).toContain("'asset.read'");
     expect(declaration).toContain('registerContribution');
+    expect(declaration).toContain('hooks');
+    expect(declaration).toContain('onWill');
     expect(declaration).not.toContain('zod');
     expect(declaration).not.toContain('node:');
   });

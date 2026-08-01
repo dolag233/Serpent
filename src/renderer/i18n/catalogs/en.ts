@@ -682,6 +682,13 @@ export const en = {
       dontShowAgain: "Don't show this again",
       submit: "Delete from disk"
     },
+    pluginTrustPrompt: {
+      title: "New library plugins",
+      body: "{count} plugin(s) in this library are not trusted on this device yet. Trust them to enable, or review later in Settings.",
+      trustAll: "Trust and enable",
+      later: "Later",
+      openSettings: "Review in Settings"
+    },
     aiConnectionFailure: {
       title: "AI analysis failed",
       body: "Could not reach the AI provider after several retries ({count} job(s) failed). Retry the failed jobs, or abort the remaining queue.",

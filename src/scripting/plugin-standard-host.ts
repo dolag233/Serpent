@@ -3,6 +3,11 @@ import {
   createPluginDomainEventQueue,
 } from '../plugins/plugin-domain-events';
 import {
+  createPluginHookInvokeQueue,
+  normalizePluginHookDecision,
+  type PluginHookDecision,
+} from '../plugins/plugin-hooks';
+import {
   pluginRuntimeParentMessageSchema,
   type PluginRuntimeActivationFailureCode,
   type PluginRuntimeChildMessage,
@@ -30,6 +35,7 @@ type ActiveInstance = {
   resolveDeactivatePark(): void;
   activated: boolean;
   eventQueue: ReturnType<typeof createPluginDomainEventQueue>;
+  hookQueue: ReturnType<typeof createPluginHookInvokeQueue>;
   activeCauseChain: string[];
 };
 
@@ -76,6 +82,7 @@ export function createPluginStandardHostHandler(options: {
     if (current === undefined) return;
     instances.delete(instanceId);
     current.eventQueue.close();
+    current.hookQueue.close();
     for (const pending of current.pendingHostRequests.values()) {
       pending.reject(new Error('The plugin instance ended.'));
     }
@@ -113,6 +120,7 @@ export function createPluginStandardHostHandler(options: {
       resolveDeactivatePark,
       activated: false,
       eventQueue: createPluginDomainEventQueue(),
+      hookQueue: createPluginHookInvokeQueue(),
       activeCauseChain: [],
     };
     instances.set(request.instanceId, active);
@@ -168,12 +176,24 @@ export function createPluginStandardHostHandler(options: {
       })
     );
 
+    const respondHookDecision = (invokeId: string, decision: PluginHookDecision): Promise<void> => {
+      options.postMessage({
+        type: 'plugin-runtime.hook-decision',
+        instanceId: request.instanceId,
+        invokeId,
+        decision: normalizePluginHookDecision(decision),
+      });
+      return Promise.resolve();
+    };
+
     const result = await runPluginGuestActivate({
       entryJavaScript: request.entryJavaScript,
       executeAutomationCommand: callHost,
       executeStorageOperation: callStorage,
       waitUntilDeactivate: () => active.deactivatePromise,
       waitForDomainEvent: () => active.eventQueue.next(),
+      waitForHookInvoke: () => active.hookQueue.next(),
+      respondHookDecision,
       setActiveCauseChain: (causeChain) => {
         active.activeCauseChain = [...causeChain];
       },
@@ -224,6 +244,7 @@ export function createPluginStandardHostHandler(options: {
     current.deactivate = { reason: request.reason, resolve: current.resolveDeactivatePark };
     current.abortController.abort();
     current.eventQueue.close();
+    current.hookQueue.close();
     for (const pending of current.pendingHostRequests.values()) {
       pending.reject(new Error('The plugin instance was deactivated.'));
     }
@@ -258,6 +279,12 @@ export function createPluginStandardHostHandler(options: {
         const current = instances.get(message.instanceId);
         if (current === undefined) return;
         current.eventQueue.push(message.event);
+        return;
+      }
+      if (message.type === 'plugin-runtime.hook-invoke') {
+        const current = instances.get(message.instanceId);
+        if (current === undefined) return;
+        current.hookQueue.push(message.invoke);
         return;
       }
       if (message.type === 'plugin-runtime.host-result' || message.type === 'plugin-runtime.storage-result') {

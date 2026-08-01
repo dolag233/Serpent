@@ -20,11 +20,23 @@ export interface DesktopAutomationFilePlanSummary {
   executableCount: number;
   blockedCount: number;
   undoSupported: boolean;
+  /** Optional plugin onWill warnings to show before confirmation. */
+  hookWarnings?: readonly string[];
 }
 
 export interface DesktopAutomationFilePlanApprovalOptions {
   workerClient: AutomationWorkerClient;
   confirm(summary: DesktopAutomationFilePlanSummary): Promise<boolean>;
+  /**
+   * Optional Phase D onWill runner. Invoked after the readonly Worker plan and
+   * before desktop confirmation. Must not touch SQLite write locks.
+   */
+  runWillHooks?: (input: {
+    commandId: AutomationCommandId;
+    libraryId: string;
+    commandInput: unknown;
+    planSummary: DesktopAutomationFilePlanSummary;
+  }) => Promise<{ warnings: readonly string[] }>;
 }
 
 function planCommandFor(
@@ -198,12 +210,26 @@ export function createDesktopAutomationFilePlanApprovalHandler(
         throw new Error('Worker returned a plan for another library.');
       }
       assertPlanCoversCommand(command, planned);
-      const approved = await options.confirm({
+      const planSummary: DesktopAutomationFilePlanSummary = {
         operation: planned.operation,
         targetCount: planned.targetCount,
         executableCount: planned.executableCount,
         blockedCount: planned.blockedCount,
         undoSupported: planned.undoSupported,
+      };
+      let hookWarnings: readonly string[] = [];
+      if (options.runWillHooks !== undefined) {
+        const hookResult = await options.runWillHooks({
+          commandId,
+          libraryId,
+          commandInput,
+          planSummary,
+        });
+        hookWarnings = hookResult.warnings;
+      }
+      const approved = await options.confirm({
+        ...planSummary,
+        ...(hookWarnings.length > 0 ? { hookWarnings } : {}),
       });
       if (!approved) return undefined;
 

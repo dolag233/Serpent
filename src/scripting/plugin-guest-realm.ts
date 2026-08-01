@@ -5,6 +5,7 @@ import {
 } from './quickjs-sandbox-prototype';
 import type { AutomationScriptCommandId } from '../shared/automation-script-api';
 import type { PluginDomainEvent } from '../plugins/plugin-domain-events';
+import type { PluginHookDecision, PluginHookInvoke } from '../plugins/plugin-hooks';
 
 /**
  * Standard plugin entries may use ESM `export` forms or plain function
@@ -20,8 +21,9 @@ export function normalizePluginEntryJavaScript(entryJavaScript: string): string 
 }
 
 /**
- * Injects `serpent.events.on` as guest JS over host `events.next`, so QuickJS
- * never has to retain raw guest function handles across Host messages.
+ * Injects `serpent.events.on` and `serpent.hooks.onWill` as guest JS over host
+ * pull bridges, so QuickJS never retains raw guest function handles across
+ * Host messages.
  */
 export function buildPluginActivateSource(entryJavaScript: string): string {
   return [
@@ -46,6 +48,29 @@ export function buildPluginActivateSource(entryJavaScript: string): string {
     '      }',
     '    })();',
     '  };',
+    '}',
+    'if (serpent.hooks && typeof serpent.hooks.__nextInvoke === "function") {',
+    '  const __hookHandlers = Object.create(null);',
+    '  serpent.hooks.onWill = function(event, handler) {',
+    '    __hookHandlers[String(event)] = handler;',
+    '  };',
+    '  void (async function() {',
+    '    for (;;) {',
+    '      const invoke = await serpent.hooks.__nextInvoke();',
+    '      if (invoke === null) return;',
+    '      const handler = __hookHandlers[invoke.event];',
+    '      let decision = { action: "allow" };',
+    '      if (typeof handler === "function") {',
+    '        try {',
+    '          const result = await handler(invoke.context);',
+    '          if (result && typeof result.action === "string") decision = result;',
+    '        } catch (_error) {',
+    '          decision = { action: "allow" };',
+    '        }',
+    '      }',
+    '      await serpent.hooks.__respond(invoke.invokeId, decision);',
+    '    }',
+    '  })();',
     '}',
     'await activate(serpent);',
     'if (typeof serpent.__waitUntilDeactivate === "function") {',
@@ -81,6 +106,8 @@ export async function runPluginGuestActivate(input: {
   }) => Promise<unknown>;
   waitUntilDeactivate: () => Promise<void>;
   waitForDomainEvent?: () => Promise<PluginDomainEvent | null>;
+  waitForHookInvoke?: () => Promise<PluginHookInvoke | null>;
+  respondHookDecision?: (invokeId: string, decision: PluginHookDecision) => Promise<void>;
   setActiveCauseChain?: (causeChain: readonly string[]) => void;
   signal?: AbortSignal;
   wallTimeoutMs?: number;
@@ -113,6 +140,12 @@ export async function runPluginGuestActivate(input: {
     ...(input.waitForDomainEvent === undefined
       ? {}
       : { waitForDomainEvent: input.waitForDomainEvent }),
+    ...(input.waitForHookInvoke === undefined
+      ? {}
+      : { waitForHookInvoke: input.waitForHookInvoke }),
+    ...(input.respondHookDecision === undefined
+      ? {}
+      : { respondHookDecision: input.respondHookDecision }),
     ...(input.setActiveCauseChain === undefined
       ? {}
       : { setActiveCauseChain: input.setActiveCauseChain }),

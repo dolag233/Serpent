@@ -25,6 +25,7 @@ const empty: DialogEscapeSnapshot = {
   linkedRulesEditorOpen: false,
   convertLinkedOpen: false,
   dialogOpen: false,
+  pluginTrustPromptOpen: false,
   fatalAlertOpen: false,
   aiConnectionFailureOpen: false,
   conflictsImportId: null,
@@ -132,5 +133,21 @@ describe("dialog-escape-stack", () => {
         mediaJobsOpen: true,
       }),
     ).toEqual({ kind: "close-script-sandbox-preview" });
+  });
+
+  it("dismisses the plugin trust prompt below ordinary dialogs", () => {
+    expect(
+      resolveDialogEscapeAction({
+        ...empty,
+        pluginTrustPromptOpen: true,
+      }),
+    ).toEqual({ kind: "dismiss-plugin-trust-prompt" });
+    expect(
+      resolveDialogEscapeAction({
+        ...empty,
+        dialogOpen: true,
+        pluginTrustPromptOpen: true,
+      }),
+    ).toEqual({ kind: "close-dialog" });
   });
 });

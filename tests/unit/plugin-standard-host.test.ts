@@ -178,4 +178,81 @@ describe('Plugin Standard Host handler', () => {
     expect(posted.some((message) => message.type === 'plugin-runtime.deactivated')).toBe(true);
     handler.dispose();
   }, 20_000);
+
+  it('invokes onWill hooks and posts hook-decision responses', async () => {
+    const posted: PluginRuntimeChildMessage[] = [];
+    const handler = createPluginStandardHostHandler({
+      postMessage: (message) => {
+        posted.push(message);
+      },
+      heartbeatIntervalMs: 60_000,
+    });
+    const instanceId = '44444444-4444-4444-8444-444444444444';
+    const invokeId = '55555555-5555-4555-8555-555555555555';
+
+    handler.handle({
+      type: 'plugin-runtime.activate',
+      instanceId,
+      libraryId: 'library-1',
+      pluginId: 'com.example.hooks',
+      version: '1.0.0',
+      packageHash: 'c'.repeat(64),
+      permissions: ['library.read', 'asset.read', 'hook.blocking'],
+      entryJavaScript: `
+        export async function activate(serpent) {
+          serpent.hooks.onWill('asset.trash', async () => ({
+            action: 'block',
+            code: 'DEMO_BLOCK',
+            message: 'refused',
+          }));
+        }
+        export async function deactivate() {}
+      `,
+      activateDeadlineMs: 15_000,
+    });
+
+    for (let attempt = 0; attempt < 200 && !posted.some((message) => message.type === 'plugin-runtime.activated'); attempt += 1) {
+      await flush(10);
+    }
+    expect(posted.some((message) => message.type === 'plugin-runtime.activated')).toBe(true);
+
+    handler.handle({
+      type: 'plugin-runtime.hook-invoke',
+      instanceId,
+      invoke: {
+        invokeId,
+        event: 'asset.trash',
+        context: {
+          event: 'asset.trash',
+          libraryId: 'library-1',
+          summary: { assetIds: ['asset-1'] },
+          causeChain: [],
+        },
+      },
+    });
+
+    for (let attempt = 0; attempt < 200 && !posted.some((message) => message.type === 'plugin-runtime.hook-decision'); attempt += 1) {
+      await flush(10);
+    }
+    expect(posted).toContainEqual({
+      type: 'plugin-runtime.hook-decision',
+      instanceId,
+      invokeId,
+      decision: {
+        action: 'block',
+        code: 'DEMO_BLOCK',
+        message: 'refused',
+      },
+    });
+
+    handler.handle({
+      type: 'plugin-runtime.deactivate',
+      instanceId,
+      reason: 'library-closed',
+    });
+    for (let attempt = 0; attempt < 200 && !posted.some((message) => message.type === 'plugin-runtime.deactivated'); attempt += 1) {
+      await flush(10);
+    }
+    handler.dispose();
+  }, 20_000);
 });

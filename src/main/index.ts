@@ -3862,6 +3862,9 @@ async function confirmDesktopAutomationFilePlan(plan: DesktopAutomationFilePlanS
       plan.undoSupported
         ? '移入回收站后可在回收站中恢复。'
         : '执行前会再次确认这些资产没有变化。',
+      ...(plan.hookWarnings !== undefined && plan.hookWarnings.length > 0
+        ? [`插件提示：${plan.hookWarnings.join('；')}`]
+        : []),
     ].join('\n'),
   };
   const response = mainWindow && !mainWindow.isDestroyed()
@@ -4000,6 +4003,24 @@ async function startApplication(): Promise<void> {
       filePlanApprovalHandler: createDesktopAutomationFilePlanApprovalHandler({
         workerClient: automationWorkerAdapter,
         confirm: confirmDesktopAutomationFilePlan,
+        runWillHooks: async ({ commandId, libraryId, commandInput, planSummary }) => {
+          if (commandId !== 'asset.trash' || pluginActivationCoordinator === undefined) {
+            return { warnings: [] };
+          }
+          const input = commandInput as { assetIds?: readonly string[] };
+          const result = await pluginActivationCoordinator.runWillHooks({
+            event: 'asset.trash',
+            libraryId,
+            summary: {
+              operation: planSummary.operation,
+              targetCount: planSummary.targetCount,
+              executableCount: planSummary.executableCount,
+              blockedCount: planSummary.blockedCount,
+              assetIds: Array.isArray(input.assetIds) ? [...input.assetIds] : [],
+            },
+          });
+          return { warnings: result.warnings };
+        },
       }),
       libraryBindingHandler: {
         bindLibrary: async ({ executionId, libraryId }) => {

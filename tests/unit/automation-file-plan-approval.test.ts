@@ -93,6 +93,61 @@ describe('Desktop automation file-plan approval', () => {
     }]);
   });
 
+  it('runs onWill hooks after the readonly plan and before confirmation', async () => {
+    const worker = new RecordingWorker({ ...plannedResult, operation: 'trash', undoSupported: true });
+    const order: string[] = [];
+    const handler = createDesktopAutomationFilePlanApprovalHandler({
+      workerClient: worker,
+      runWillHooks: async () => {
+        order.push('hooks');
+        return { warnings: ['[com.example] check tags'] };
+      },
+      confirm: async (summary) => {
+        order.push('confirm');
+        expect(summary.hookWarnings).toEqual(['[com.example] check tags']);
+        return true;
+      },
+    });
+
+    const proof = await handler.prepareAndApprove({
+      commandId: 'asset.trash',
+      executionId: 'execution-1',
+      libraryId: 'library-1',
+      commandInput: { assetIds: ['asset-1'] },
+    });
+
+    expect(order).toEqual(['hooks', 'confirm']);
+    expect(proof?.expectedChangeSequence).toBe(17);
+  });
+
+  it('propagates PluginHookBlockedError before confirmation', async () => {
+    const { PluginHookBlockedError } = await import('../../src/plugins/plugin-hooks');
+    const worker = new RecordingWorker({ ...plannedResult, operation: 'trash', undoSupported: true });
+    let confirmed = false;
+    const handler = createDesktopAutomationFilePlanApprovalHandler({
+      workerClient: worker,
+      runWillHooks: async () => {
+        throw new PluginHookBlockedError({
+          pluginId: 'com.example',
+          hookCode: 'DEMO_BLOCK',
+          message: 'blocked',
+        });
+      },
+      confirm: async () => {
+        confirmed = true;
+        return true;
+      },
+    });
+
+    await expect(handler.prepareAndApprove({
+      commandId: 'asset.trash',
+      executionId: 'execution-1',
+      libraryId: 'library-1',
+      commandInput: { assetIds: ['asset-1'] },
+    })).rejects.toBeInstanceOf(PluginHookBlockedError);
+    expect(confirmed).toBe(false);
+  });
+
   it('preflights imports through the readonly Worker path and returns source-state proof', async () => {
     const worker = new RecordingWorker({
       ok: true,

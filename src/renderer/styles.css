@@ -6048,6 +6048,32 @@ select.ai-config-input.ai-config-languages {
   line-height: 1.6;
 }
 
+.plugin-trust-prompt-dialog {
+  max-width: 28rem;
+}
+
+.plugin-trust-prompt-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin: 0 0 1rem;
+  padding: 0;
+  list-style: none;
+}
+
+.plugin-trust-prompt-list li {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 0.65rem 0.75rem;
+  border-radius: 0.5rem;
+  background: color-mix(in srgb, var(--surface-elevated, var(--surface)) 88%, var(--border));
+}
+
+.plugin-trust-prompt-list strong {
+  font-size: 0.95rem;
+}
+
 .dialog-checkbox-row {
   display: flex;
   align-items: flex-start;

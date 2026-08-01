@@ -86,6 +86,10 @@ export class PluginRuntimeSupervisor {
     permissions: readonly PluginPermission[];
     activated: boolean;
   }>();
+  #pendingHookDecisions = new Map<string, {
+    resolve(decision: import('../plugins/plugin-hooks').PluginHookDecision): void;
+    timer: ReturnType<typeof setTimeout>;
+  }>();
 
   constructor(
     private readonly options: {
@@ -190,6 +194,44 @@ export class PluginRuntimeSupervisor {
         event,
       });
     }
+  }
+
+  /**
+   * Ask one activated instance for an onWill decision. Times out to allow
+   * (caller treats timeout as fail-open).
+   */
+  invokeHook(input: {
+    instanceId: string;
+    invoke: import('../plugins/plugin-hooks').PluginHookInvoke;
+    timeoutMs: number;
+  }): Promise<{
+    decision: import('../plugins/plugin-hooks').PluginHookDecision;
+    timedOut: boolean;
+  }> {
+    const instance = this.#instances.get(input.instanceId);
+    if (
+      this.#child === undefined
+      || !this.#ready
+      || instance === undefined
+      || !instance.activated
+    ) {
+      return Promise.resolve({ decision: { action: 'allow' }, timedOut: false });
+    }
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        this.#pendingHookDecisions.delete(input.invoke.invokeId);
+        resolve({ decision: { action: 'allow' }, timedOut: true });
+      }, input.timeoutMs);
+      this.#pendingHookDecisions.set(input.invoke.invokeId, {
+        resolve: (decision) => resolve({ decision, timedOut: false }),
+        timer,
+      });
+      this.#post({
+        type: 'plugin-runtime.hook-invoke',
+        instanceId: input.instanceId,
+        invoke: input.invoke,
+      });
+    });
   }
 
   listActiveInstanceIds(libraryId?: string): string[] {
@@ -359,6 +401,14 @@ export class PluginRuntimeSupervisor {
         instanceId: message.instanceId,
         level: message.level,
       });
+      return;
+    }
+    if (message.type === 'plugin-runtime.hook-decision') {
+      const pending = this.#pendingHookDecisions.get(message.invokeId);
+      if (pending === undefined) return;
+      clearTimeout(pending.timer);
+      this.#pendingHookDecisions.delete(message.invokeId);
+      pending.resolve(message.decision);
     }
   }
 

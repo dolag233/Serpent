@@ -8,6 +8,11 @@ import {
   type PluginDomainEvent,
 } from '../plugins/plugin-domain-events';
 import {
+  normalizePluginHookDecision,
+  type PluginHookContext,
+  type PluginHookDecision,
+} from '../plugins/plugin-hooks';
+import {
   pluginTrustedParentMessageSchema,
   type PluginTrustedChildMessage,
   type PluginTrustedParentMessage,
@@ -36,6 +41,7 @@ type ActiveInstance = {
   activated: boolean;
   exports: TrustedExports | undefined;
   eventQueue: ReturnType<typeof createPluginDomainEventQueue>;
+  hookHandlers: Map<string, (context: PluginHookContext) => PluginHookDecision | Promise<PluginHookDecision>>;
   activeCauseChain: string[];
 };
 
@@ -138,6 +144,18 @@ function createSerpentBridge(
     },
   };
 
+  const hooks = {
+    onWill: (event: unknown, handler: unknown): void => {
+      if (typeof handler !== 'function') {
+        throw new Error('serpent.hooks.onWill requires a handler function.');
+      }
+      instance.hookHandlers.set(
+        String(event),
+        handler as (context: PluginHookContext) => PluginHookDecision | Promise<PluginHookDecision>,
+      );
+    },
+  };
+
   return {
     assets: {
       search: (input: unknown) => callHost('asset.search', input ?? {}),
@@ -171,6 +189,7 @@ function createSerpentBridge(
       }),
     },
     events,
+    hooks,
     console: {
       log: (...args: unknown[]) => {
         postMessage({
@@ -241,6 +260,7 @@ export function createPluginTrustedHostHandler(options: {
       activated: false,
       exports: undefined,
       eventQueue: createPluginDomainEventQueue(),
+      hookHandlers: new Map(),
       activeCauseChain: [],
     };
     instances.set(request.instanceId, active);
@@ -335,6 +355,28 @@ export function createPluginTrustedHostHandler(options: {
         const current = instances.get(message.instanceId);
         if (current === undefined) return;
         current.eventQueue.push(message.event);
+        return;
+      }
+      if (message.type === 'plugin-trusted.hook-invoke') {
+        const current = instances.get(message.instanceId);
+        if (current === undefined) return;
+        void (async () => {
+          const handler = current.hookHandlers.get(message.invoke.event);
+          let decision: PluginHookDecision = { action: 'allow' };
+          if (handler !== undefined) {
+            try {
+              decision = normalizePluginHookDecision(await handler(message.invoke.context));
+            } catch {
+              decision = { action: 'allow' };
+            }
+          }
+          options.postMessage({
+            type: 'plugin-trusted.hook-decision',
+            instanceId: message.instanceId,
+            invokeId: message.invoke.invokeId,
+            decision,
+          });
+        })();
         return;
       }
       if (message.type === 'plugin-trusted.host-result' || message.type === 'plugin-trusted.storage-result') {

@@ -6,6 +6,10 @@ import {
   pluginCauseChainSchema,
   pluginDomainEventSchema,
 } from '../plugins/plugin-domain-events';
+import {
+  pluginHookDecisionSchema,
+  pluginHookInvokeSchema,
+} from '../plugins/plugin-hooks';
 
 const instanceIdSchema = z.string().uuid();
 const requestIdSchema = z.string().uuid();
@@ -105,6 +109,11 @@ export const pluginRuntimeParentMessageSchema = z.discriminatedUnion('type', [
     instanceId: instanceIdSchema,
     event: pluginDomainEventSchema,
   }),
+  z.strictObject({
+    type: z.literal('plugin-runtime.hook-invoke'),
+    instanceId: instanceIdSchema,
+    invoke: pluginHookInvokeSchema,
+  }),
 ]);
 export type PluginRuntimeParentMessage = z.infer<typeof pluginRuntimeParentMessageSchema>;
 
@@ -150,6 +159,12 @@ export const pluginRuntimeChildMessageSchema = z.discriminatedUnion('type', [
     instanceId: instanceIdSchema,
     level: z.enum(['log', 'warn', 'error']),
     message: z.string().max(4_096),
+  }),
+  z.strictObject({
+    type: z.literal('plugin-runtime.hook-decision'),
+    instanceId: instanceIdSchema,
+    invokeId: requestIdSchema,
+    decision: pluginHookDecisionSchema,
   }),
 ]);
 export type PluginRuntimeChildMessage = z.infer<typeof pluginRuntimeChildMessageSchema>;

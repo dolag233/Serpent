@@ -671,6 +671,13 @@ export const zhCN = {
       dontShowAgain: "不再显示此提示",
       submit: "从硬盘中删除"
     },
+    pluginTrustPrompt: {
+      title: "新的资源库插件",
+      body: "此资源库中有 {count} 个插件尚未在本机信任。信任后才会启用；也可稍后在设置中处理。",
+      trustAll: "信任并启用",
+      later: "稍后",
+      openSettings: "在设置中查看"
+    },
     aiConnectionFailure: {
       title: "AI 分析失败",
       body: "多次重试后仍无法连接 AI 供应商（已失败 {count} 项）。可重试失败任务，或终止队列中剩余任务。",

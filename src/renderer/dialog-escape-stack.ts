@@ -22,6 +22,8 @@ export type DialogEscapeSnapshot = {
   linkedRulesEditorOpen: boolean;
   convertLinkedOpen: boolean;
   dialogOpen: boolean;
+  /** Calm prompt when library plugins appear that still need per-device trust. */
+  pluginTrustPromptOpen: boolean;
   /** Serpent-99lv: blocking fatal alert — Escape acknowledges/dismisses. */
   fatalAlertOpen: boolean;
   /** Serpent-kdnm: AI connection lost — Escape aborts remaining jobs. */
@@ -50,6 +52,7 @@ export type DialogEscapeAction =
   | { kind: "close-linked-rules" }
   | { kind: "close-convert-linked" }
   | { kind: "close-dialog" }
+  | { kind: "dismiss-plugin-trust-prompt" }
   | { kind: "dismiss-fatal-alert" }
   | { kind: "abort-ai-connection-failure" }
   | { kind: "abandon-import"; importId: string };
@@ -92,6 +95,9 @@ export function resolveDialogEscapeAction(
   if (snapshot.linkedRulesEditorOpen) return { kind: "close-linked-rules" };
   if (snapshot.convertLinkedOpen) return { kind: "close-convert-linked" };
   if (snapshot.dialogOpen) return { kind: "close-dialog" };
+  if (snapshot.pluginTrustPromptOpen) {
+    return { kind: "dismiss-plugin-trust-prompt" };
+  }
   if (snapshot.conflictsImportId) {
     return { kind: "abandon-import", importId: snapshot.conflictsImportId };
   }

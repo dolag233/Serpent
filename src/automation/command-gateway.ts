@@ -15,6 +15,7 @@ import {
 } from './command-registry';
 import type { PublicError } from '../shared/protocol/errors';
 import { createPublicError, toPublicError } from '../shared/protocol/errors';
+import { PluginHookBlockedError } from '../plugins/plugin-hooks';
 import type { WorkerCommand } from '../shared/protocol/requests';
 import type { WorkerResult } from '../shared/protocol/responses';
 
@@ -466,6 +467,12 @@ export function createAutomationCommandGateway(
             executionId,
             commandId: descriptor.commandId,
           });
+          if (error instanceof PluginHookBlockedError) {
+            return recordIdempotentOutcome({
+              ok: false,
+              error: createPublicError('PLUGIN_HOOK_BLOCKED'),
+            });
+          }
           return recordIdempotentOutcome({ ok: false, error: toPublicError(error) });
         }
         // Cancellation is not an error: the script receives a stable public
