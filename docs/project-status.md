@@ -19,6 +19,7 @@
 - **2026-07-25 晚**：工具栏后台任务直出（`9gt2`）、浏览总数量/全选全部+重数据懒加载（`6w7n` P1）、type-ahead 跳转（`lfo1` P3）、视频倍速样式（`gplm`）、全屏隐藏光标（`c3lf`）。见 backlog「2026-07-25 补充」。
 - **2026-07-25 快捷键与 Inspector**：筛选后快捷键收口 epic（`Serpent-x78x` / REQ-COMMAND-004）；视频 D/F 逐帧 + X/C 倍速档（`Serpent-soii`）；**全局音量 P1**（`Serpent-8w6x` / REQ-VIEW-017）；Windows 文案「在文件浏览器中显示」（`Serpent-a74i`）；AI 描述 textarea（`Serpent-vo24`）。原则文档 [`docs/ui/0003-keyboard-shortcut-ux-principles.md`](ui/0003-keyboard-shortcut-ux-principles.md)。均未实现。
 - **2026-08-01 最新验收反馈**：合集创建输入焦点偶发失效为 P0（`Serpent-to9y`）；合集 F2/Delete 与非空删除确认（`Serpent-b7uy`）；硬盘删除确认/Shift+Delete 回归（`Serpent-wuma`）；瀑布流 Tab 单选与 Shift 连续选择（`Serpent-xzmz`）；文件夹卡片圆角（`Serpent-kttg`）、标签 hover 二级定位（`Serpent-hn9u`）和通知按钮视觉（`Serpent-agyz`）已完成代码收口，见 [`2026-08-01 反馈收口开发记录`](development/2026-08-01-feedback-closeout-development-log.md)，等待人类复验。合集资产跳转来源文件夹（`Serpent-udj5`）按用户要求暂记后续；清单已按用户原话撤回受影响条目的“通过”状态。
+- **2026-08-01 复验结果**：合集创建焦点、合集删除语义、文件夹卡片圆角、标签 hover 基础行为和合集递归已通过；合集 inline 重命名/快捷键展示（`Serpent-i1h0`）、硬盘删除确认与权限错误（`Serpent-cwor`）、submenu 生命周期（`Serpent-4joy`）、删除撤销通知（`Serpent-mxxc`）和瀑布流回退/布局（`Serpent-6b3i`）重新进入修复队列。
 
 ## 2026-07-18 MVP 循环前沿
 
@@ -97,6 +98,7 @@ v0.1.0 继续收口 0001–0010 的桌面主线，并纳入真实使用反馈确
 - 验证：typecheck/lint、unit 391 passed；E2E 16/17 文件当次全绿（含新选择器交互用例，context-menu 10/10）。双轴审查：Standards 通过、Spec 有条件通过（HARD-1/MEDIUM-1 已本回合修复复验）。
 - **Computer Use 未执行**（当前环境无桌面控制能力）：TAG-004/TAG-005 保持不通过、待补截图证据后重新验收；SHELL-004/005/006 与 NAV-002 的 0016-A 修复已按用户指示重新进入待验收。
 - **known-red 移交**：`tests/e2e/linked-folders.test.ts` 为另一 agent 未提交改动，其 `.empty-actions` 作用域下不存在「导入链接文件夹」按钮（该按钮在 `.tool-group-import` 与侧栏 secondaryAction），3/3 红；本回合未触碰该文件，修正方向已记录在开发日志。
+- **2026-08-01 验收反馈跟进**：已完成合集 inline 重命名/快捷键展示、硬盘删除句柄处理、右键二级菜单互斥、删除通知直接撤销，以及瀑布流行优先布局与键盘行为回退；相关条目待 Windows 人工复验。合集资产“跳转到文件夹”保持在 `Serpent-udj5` 后续工单。
 - 详见 `docs/development/0017-0018-searchable-tag-picker-and-file-commands-development-log.md`。
 
 ## 2026-07-16 新增 MVP UI/UX 与文件管理需求

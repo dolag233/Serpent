@@ -86,6 +86,12 @@ interface ContextMenuContextValue {
 
 const ContextMenuContext = createContext<ContextMenuContextValue | null>(null);
 
+// Only one submenu may own the floating submenu surface at a time. Pointer
+// leave keeps a short grace period so the pointer can cross the gap, but a
+// new hover must close the previous submenu synchronously instead of waiting
+// for that timer and briefly rendering two panels.
+let activeSubmenuClose: (() => void) | null = null;
+
 export function useContextMenu() {
   const ctx = useContext(ContextMenuContext);
   if (!ctx) throw new Error("useContextMenu must be used within a <ContextMenuProvider>");
@@ -404,27 +410,35 @@ export function ContextMenuSubmenu({
   const closeTimer = useRef<number | null>(null);
   const suppressFocusOpenRef = useRef(false);
 
-  const cancelClose = () => {
+  const cancelClose = useCallback(() => {
     if (closeTimer.current !== null) {
       window.clearTimeout(closeTimer.current);
       closeTimer.current = null;
     }
-  };
-  const scheduleClose = () => {
+  }, []);
+  const closeImmediately = useCallback(() => {
+    cancelClose();
+    setOpen(false);
+  }, [cancelClose]);
+  const scheduleClose = useCallback(() => {
     cancelClose();
     closeTimer.current = window.setTimeout(() => setOpen(false), 140);
-  };
-  const closeSubmenu = () => {
-    cancelClose();
+  }, [cancelClose]);
+  const closeSubmenu = useCallback(() => {
+    closeImmediately();
+    if (activeSubmenuClose === closeImmediately) activeSubmenuClose = null;
     suppressFocusOpenRef.current = true;
-    setOpen(false);
     window.setTimeout(() => triggerRef.current?.focus(), 0);
-  };
-  const openSubmenu = () => {
+  }, [closeImmediately]);
+  const openSubmenu = useCallback(() => {
     if (suppressFocusOpenRef.current) {
       suppressFocusOpenRef.current = false;
       return;
     }
+    if (activeSubmenuClose && activeSubmenuClose !== closeImmediately) {
+      activeSubmenuClose();
+    }
+    activeSubmenuClose = closeImmediately;
     cancelClose();
     const rect = triggerRef.current?.getBoundingClientRect();
     if (rect) {
@@ -440,7 +454,7 @@ export function ContextMenuSubmenu({
       setPosition({ left, top });
     }
     setOpen(true);
-  };
+  }, [cancelClose, closeImmediately]);
 
   useLayoutEffect(() => {
     if (!open) return;
@@ -459,7 +473,13 @@ export function ContextMenuSubmenu({
     setPosition({ left, top });
   }, [open]);
 
-  useEffect(() => () => cancelClose(), []);
+  useEffect(
+    () => () => {
+      if (activeSubmenuClose === closeImmediately) activeSubmenuClose = null;
+      cancelClose();
+    },
+    [cancelClose, closeImmediately],
+  );
 
   return (
     <div

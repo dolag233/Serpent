@@ -321,13 +321,9 @@ import {
 import {
   assetGridLayoutStyle,
   countFittingColumns,
-  distributeMasonryItems,
 } from "./asset-grid-layout";
 import { JustifiedAssetRows } from "./justified-asset-rows";
-import {
-  estimateMasonryPreviewHeightPx,
-  resolveMasonryPreviewStyle,
-} from "./masonry-preview-frame";
+import { resolveMasonryPreviewStyle } from "./masonry-preview-frame";
 import {
   captureAnchor,
   pickNearestCard,
@@ -424,12 +420,10 @@ function MasonryColumns({
   assets,
   cardSize,
   children,
-  showCaption,
 }: {
   assets: AssetSummary[];
   cardSize: number;
   children: ReactNode[];
-  showCaption: boolean;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [availableWidth, setAvailableWidth] = useState(0);
@@ -492,34 +486,15 @@ function MasonryColumns({
   }, []);
 
   const columnCount = countFittingColumns(availableWidth, cardSize);
-  const distributed = distributeMasonryItems(
-    assets.map((asset, index) => ({ asset, child: children[index] })),
-    columnCount,
-    ({ asset }) => {
-      // Serpent-5p45: keep column packing consistent with the natural preview
-      // height; a fixed cap would create a wider contain-fit letterbox.
-      const previewHeight = estimateMasonryPreviewHeightPx(
-        asset.width,
-        asset.height,
-        cardSize,
-      );
-      return previewHeight + (showCaption ? 42 : 0) + 12;
-    },
-  );
-
   return (
     <div
       className="masonry-columns"
       ref={containerRef}
       style={{ gridTemplateColumns: `repeat(${columnCount}, minmax(0, 1fr))` }}
     >
-      {distributed.map((column, index) => (
-        <div className="masonry-column" key={`masonry-column-${index}`}>
-          {column.items.map(({ asset, child }) => (
-            <div className="masonry-card-slot" key={asset.assetId}>
-              {child}
-            </div>
-          ))}
+      {assets.map((asset, index) => (
+        <div className="masonry-card-slot" key={asset.assetId}>
+          {children[index]}
         </div>
       ))}
     </div>
@@ -842,6 +817,10 @@ function AppInner() {
   const [newCollectionParentId, setNewCollectionParentId] = useState<
     string | null
   >(null);
+  const [inlineCollectionRename, setInlineCollectionRename] = useState<{
+    collectionId: string;
+    value: string;
+  } | null>(null);
   const [renameTarget, setRenameTarget] =
     useState<OrganizationRenameTarget | null>(null);
 
@@ -1659,7 +1638,6 @@ function AppInner() {
     selectionAnchorRef,
     setAssetSelectionAnchor,
     handleCardClick,
-    selectSingleAsset,
     handleFolderCardClick,
     cardMouseDownRef,
     marqueeBox,
@@ -3815,6 +3793,49 @@ function AppInner() {
     });
   }
 
+  function openInlineCollectionRename(collectionId: string, currentName: string) {
+    setShowCollectionInput(false);
+    setCollectionInputValue("");
+    setNewCollectionParentId(null);
+    setRenameTarget(null);
+    setInlineCollectionRename({ collectionId, value: currentName });
+  }
+
+  function cancelInlineCollectionRename() {
+    setInlineCollectionRename(null);
+  }
+
+  async function commitInlineCollectionRename() {
+    const session = inlineCollectionRename;
+    if (!session) return;
+    const name = session.value.trim();
+    if (!name) {
+      setInlineCollectionRename(null);
+      return;
+    }
+    if (!api || !library) return;
+    try {
+      const result = await api.updateCollection({
+        libraryId: library.libraryId,
+        collectionId: session.collectionId,
+        name,
+      });
+      if (!result.ok) throw new LibraryOperationError(result.error);
+      setCollections((current) =>
+        current.map((collection) =>
+          collection.collectionId === result.value.collectionId
+            ? result.value
+            : collection,
+        ),
+      );
+      setInlineCollectionRename(null);
+      setError(null);
+      setNotice(t("toast.collectionRenamed"));
+    } catch (caught) {
+      setError(toOrganizationMessage(caught, "collection", "rename", locale));
+    }
+  }
+
   function requestDeleteCollection(collectionId: string, name: string) {
     const collection = collections.find(
       (candidate) => candidate.collectionId === collectionId,
@@ -3946,6 +3967,7 @@ function AppInner() {
     clearAssetSelection,
     activeTagId,
     activeCollectionId,
+    setLastUndoableOp,
   });
 
   const {
@@ -3965,6 +3987,7 @@ function AppInner() {
     setNotice,
     setError,
     setUiState,
+    closePreview: () => closeAssetPreview(false),
     reloadCurrentContent,
     onDeletedCurrentScope: () => {
       void chooseFolder("root");
@@ -4180,7 +4203,7 @@ function AppInner() {
     previewOpen: Boolean(previewAsset),
     renameCollection: (collectionId, currentName) => {
       cancelInlineSmartCollectionEdit();
-      setRenameTarget({ kind: "collection", id: collectionId, name: currentName });
+      openInlineCollectionRename(collectionId, currentName);
     },
     deleteCollection: requestDeleteCollection,
   });
@@ -4877,6 +4900,7 @@ function AppInner() {
         conflictStrategy,
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
+      setLastUndoableOp(null);
       const skippedCount = assetIds.length - result.value.restoredCount;
       setNotice(
         t("toast.restoredCount", { count: result.value.restoredCount }) +
@@ -5069,6 +5093,10 @@ function AppInner() {
 
   async function undoLastFileOp() {
     if (!lastUndoableOp) return;
+    if (lastUndoableOp.kind === "trash") {
+      await requestRestoreTrashedAssets([...lastUndoableOp.assetIds]);
+      return;
+    }
     if (lastUndoableOp.kind === "copy") {
       await undoManagedCopy(lastUndoableOp.operationId);
       return;
@@ -5119,10 +5147,17 @@ function AppInner() {
   function requestAssetDiskDelete(assetIds: string[]) {
     if (assetIds.length === 0) return;
     if (!isDiskDeletePromptEnabled()) {
-      void deleteManagedAssetsFromDisk(assetIds);
+      void deleteManagedAssetsFromDiskAfterClosingPreview(assetIds);
       return;
     }
     setAssetDiskDeleteIds(assetIds);
+  }
+
+  async function deleteManagedAssetsFromDiskAfterClosingPreview(
+    assetIds: string[],
+  ) {
+    await closeAssetPreview(false);
+    await deleteManagedAssetsFromDisk(assetIds);
   }
 
   async function confirmAssetDiskDelete(dontShowAgain: boolean) {
@@ -5130,7 +5165,7 @@ function AppInner() {
     if (dontShowAgain) setDiskDeletePromptEnabled(false);
     const assetIds = assetDiskDeleteIds;
     setAssetDiskDeleteIds(null);
-    await deleteManagedAssetsFromDisk(assetIds);
+    await deleteManagedAssetsFromDiskAfterClosingPreview(assetIds);
   }
 
   function requestSelectionDiskDelete(
@@ -5173,6 +5208,7 @@ function AppInner() {
   ) {
     if (!api || !library) return;
     if (assetIds.length === 0 && folderIds.length === 0) return;
+    await closeAssetPreview(false);
     setUiState("loading");
     try {
       let deletedAssets = 0;
@@ -7189,6 +7225,7 @@ function AppInner() {
         showCollectionInput={showCollectionInput}
         collectionInputValue={collectionInputValue}
         newCollectionParentId={newCollectionParentId}
+        inlineCollectionRename={inlineCollectionRename}
         draggedCollectionId={draggedCollectionId}
         onSetDraggedCollectionId={setDraggedCollectionId}
         onChooseAllAssets={() => void chooseFolder("all")}
@@ -7237,6 +7274,13 @@ function AppInner() {
         onSetCollectionInputValue={setCollectionInputValue}
         onSetNewCollectionParentId={setNewCollectionParentId}
         onCollectionInputCommit={() => createCollection()}
+        onInlineCollectionRenameChange={(value) =>
+          setInlineCollectionRename((current) =>
+            current ? { ...current, value } : current,
+          )
+        }
+        onInlineCollectionRenameCommit={() => commitInlineCollectionRename()}
+        onInlineCollectionRenameCancel={cancelInlineCollectionRename}
         onAddFolder={() => {
           cancelInlineSmartCollectionEdit();
           openInlineFolderCreate(selectedFolderId ?? null);
@@ -7600,7 +7644,9 @@ function AppInner() {
                 lastUndoableOp && renderedToast.kind === "notice"
                   ? lastUndoableOp.kind === "copy"
                     ? t("action.undoCopy")
-                    : t("action.undoMove")
+                    : lastUndoableOp.kind === "move"
+                      ? t("action.undoMove")
+                      : t("action.undoTrash")
                   : undefined
               }
             />
@@ -7942,7 +7988,6 @@ function AppInner() {
                         );
                         if (!nextCard) return;
                         event.preventDefault();
-                        selectSingleAsset(nextAssetId);
                         nextCard.focus();
                       }}
                       onDoubleClick={() => {
@@ -8355,11 +8400,6 @@ function AppInner() {
                           <MasonryColumns
                             assets={section.assets}
                             cardSize={assetCardSize}
-                            showCaption={
-                              canvasPrefs.fields.name ||
-                              canvasPrefs.fields.size ||
-                              canvasPrefs.fields.date
-                            }
                           >
                             {section.assets.map(renderAssetCard)}
                           </MasonryColumns>
@@ -8971,7 +9011,10 @@ function AppInner() {
         onRenameSmartCollection={(id, name) => setRenameTarget({ kind: "smart", id, name })}
         onUpdateSmartCollection={(id) => { void updateSmartCollectionQuery(id); }}
         onDeleteSmartCollection={(id) => { void deleteSmartCollection(id); }}
-        onRenameOrganization={(id, name) => setRenameTarget({ kind: "collection", id, name })}
+        onRenameOrganization={(id, name) => {
+          cancelInlineSmartCollectionEdit();
+          openInlineCollectionRename(id, name);
+        }}
         onCreateSubcollection={(parentId) => {
           cancelInlineSmartCollectionEdit();
           setShowCollectionInput(true);

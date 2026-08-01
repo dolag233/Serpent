@@ -1383,6 +1383,7 @@ export const zhCN = {
     removeAsset: "移除资产",
     undoMove: "撤销移动",
     undoCopy: "撤销复制",
+    undoTrash: "撤销删除",
     undoTagDelete: "撤销"
   }
 } as const satisfies MessageTree;

@@ -665,11 +665,11 @@ test("multi-asset menu shows a visible count and mixed-selection skip reasons", 
 });
 
 // ---------------------------------------------------------------------------
-// Test — Tag picker: search filter, in-menu scroll must not dismiss, back
-// restores entry focus, Escape closes (REQ-TAG-004)
+// Test — Tag picker: search filter, in-menu scroll must not dismiss, no
+// secondary back button, Escape closes (REQ-TAG-004)
 // ---------------------------------------------------------------------------
 
-test("tag picker searches, survives in-menu scroll, restores focus on back, and closes on Escape", async () => {
+test("tag picker searches, survives in-menu scroll, has no back button, and closes on Escape", async () => {
   const temporaryRoot = mkdtempSync(path.join(tmpdir(), "serpent-cm-tagpicker-"));
   const libraryPath = path.join(temporaryRoot, "CM-TagPicker");
   const sourcePath = path.join(temporaryRoot, "tagpicker-test.png");
@@ -744,21 +744,10 @@ test("tag picker searches, survives in-menu scroll, restores focus on back, and 
     await expect(window.getByRole("option", { name: "甲标签" })).toBeVisible();
     await expect(window.getByRole("option", { name: "乙标签" })).toHaveCount(0);
 
-    // Back returns to the parent menu and restores focus to the entry item
-    await window.getByRole("button", { name: "返回上一级菜单" }).click();
+    // The picker has no secondary Back button; Escape closes the whole menu.
     await expect(
-      window.getByRole("menuitem", { name: "添加标签…" }),
-    ).toBeVisible();
-    await expect
-      .poll(() =>
-        window.evaluate(
-          () =>
-            (document.activeElement as HTMLElement | null)?.getAttribute(
-              "aria-label",
-            ) ?? null,
-        ),
-      )
-      .toBe("添加标签…");
+      window.getByRole("button", { name: "返回上一级菜单" }),
+    ).toHaveCount(0);
 
     // Escape closes the whole menu
     await window.keyboard.press("Escape");

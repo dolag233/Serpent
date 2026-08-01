@@ -242,12 +242,16 @@ function InlineFolderEditRow({
 function InlineCollectionEditRow({
   depth,
   value,
+  ariaLabel,
+  placeholder,
   onChange,
   onCommit,
   onCancel,
 }: {
   depth: number;
   value: string;
+  ariaLabel?: string;
+  placeholder?: string;
   onChange: (value: string) => void;
   onCommit: () => void | Promise<void>;
   onCancel: () => void;
@@ -303,7 +307,7 @@ function InlineCollectionEditRow({
       <div className="nav-inline-edit" style={{ paddingLeft: 7 + depth * 14 }}>
         <Icon name="collection" size={15} />
         <input
-          aria-label={t("nav.newCollection")}
+          aria-label={ariaLabel ?? t("nav.newCollection")}
           className="text-field"
           maxLength={255}
           onBlur={() => {
@@ -325,7 +329,7 @@ function InlineCollectionEditRow({
               onCancel();
             }
           }}
-          placeholder={t("nav.newCollection")}
+          placeholder={placeholder ?? t("nav.newCollection")}
           ref={inputRef}
           value={value}
         />
@@ -479,6 +483,10 @@ export interface NavigationSidebarProps {
   showCollectionInput: boolean;
   collectionInputValue: string;
   newCollectionParentId: string | null;
+  inlineCollectionRename: {
+    collectionId: string;
+    value: string;
+  } | null;
   // --- Collection drag state ---
   draggedCollectionId: string | null;
   onSetDraggedCollectionId: (id: string | null) => void;
@@ -536,6 +544,9 @@ export interface NavigationSidebarProps {
   onSetCollectionInputValue: (value: string) => void;
   onSetNewCollectionParentId: (id: string | null) => void;
   onCollectionInputCommit: () => void | Promise<void>;
+  onInlineCollectionRenameChange: (value: string) => void;
+  onInlineCollectionRenameCommit: () => void | Promise<void>;
+  onInlineCollectionRenameCancel: () => void;
   // --- Folder creation entry (sidebar 「+」; opens the inline edit row) ---
   onAddFolder: () => void;
   /** SMART-007: open sidebar inline smart-collection name row. */
@@ -601,6 +612,7 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
     showCollectionInput,
     collectionInputValue,
     newCollectionParentId,
+    inlineCollectionRename,
     draggedCollectionId,
     onSetDraggedCollectionId,
     onChooseAllAssets,
@@ -626,6 +638,9 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
     onSetCollectionInputValue,
     onSetNewCollectionParentId,
     onCollectionInputCommit,
+    onInlineCollectionRenameChange,
+    onInlineCollectionRenameCommit,
+    onInlineCollectionRenameCancel,
     onAddFolder,
     onAddSmartCollection,
     inlineFolderEdit,
@@ -1010,7 +1025,7 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
     rows.push(...children.map((c) => (
       <div
         className="collection-drop-target"
-        draggable
+        draggable={inlineCollectionRename?.collectionId !== c.collectionId}
         key={c.collectionId}
         onDragEnd={() => onSetDraggedCollectionId(null)}
         onDragOver={(event) => {
@@ -1055,60 +1070,72 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
           }
         }}
       >
-        <NavRow
-          icon="collection"
-          label={c.name}
-          count={c.assetCount}
-          childCount={c.childCollectionCount}
-          childCountLabel={t("nav.childCollectionCount", {
-            count: c.childCollectionCount,
-          })}
-          active={activeCollectionId === c.collectionId && !activeTagId}
-          depth={depth}
-          navCollectionId={c.collectionId}
-          dropActive={assetDropTarget === `collection:${c.collectionId}`}
-          onDragEnter={(event) => {
-            if (supportsManagedAssetDrag(event.dataTransfer)) {
-              setAssetDropTarget(`collection:${c.collectionId}`);
-            }
-          }}
-          onDragLeave={(event) => {
-            if (event.currentTarget.contains(event.relatedTarget as Node | null))
-              return;
-            setAssetDropTarget((current) =>
-              current === `collection:${c.collectionId}` ? null : current,
-            );
-          }}
-          onDragOver={(event) => {
-            if (supportsManagedAssetDrag(event.dataTransfer)) {
-              applyManagedAssetDragOver(event);
-            }
-          }}
-          onDrop={(event) => {
-            const assetIds = parseManagedAssetDrag(event.dataTransfer);
-            if (!assetIds || assetIds.length === 0) return;
-            event.preventDefault();
-            event.stopPropagation();
-            setAssetDropTarget(null);
-            onAssetsDroppedOnCollection(
-              c.collectionId,
-              assetIds,
-              resolveDragDropMode({ altKey: event.altKey }),
-            );
-          }}
-          onContextMenu={(e) => {
-            e.preventDefault();
-            onOpenContextMenu(
-              {
-                type: "organization",
-                id: c.collectionId,
-                name: c.name,
-              },
-              { x: e.clientX, y: e.clientY },
-            );
-          }}
-          onClick={() => void onChooseCollection(c.collectionId)}
-        />
+        {inlineCollectionRename?.collectionId === c.collectionId ? (
+          <InlineCollectionEditRow
+            ariaLabel={t("nav.renameCollection")}
+            depth={depth}
+            onCancel={onInlineCollectionRenameCancel}
+            onChange={onInlineCollectionRenameChange}
+            onCommit={onInlineCollectionRenameCommit}
+            placeholder={c.name}
+            value={inlineCollectionRename.value}
+          />
+        ) : (
+          <NavRow
+            icon="collection"
+            label={c.name}
+            count={c.assetCount}
+            childCount={c.childCollectionCount}
+            childCountLabel={t("nav.childCollectionCount", {
+              count: c.childCollectionCount,
+            })}
+            active={activeCollectionId === c.collectionId && !activeTagId}
+            depth={depth}
+            navCollectionId={c.collectionId}
+            dropActive={assetDropTarget === `collection:${c.collectionId}`}
+            onDragEnter={(event) => {
+              if (supportsManagedAssetDrag(event.dataTransfer)) {
+                setAssetDropTarget(`collection:${c.collectionId}`);
+              }
+            }}
+            onDragLeave={(event) => {
+              if (event.currentTarget.contains(event.relatedTarget as Node | null))
+                return;
+              setAssetDropTarget((current) =>
+                current === `collection:${c.collectionId}` ? null : current,
+              );
+            }}
+            onDragOver={(event) => {
+              if (supportsManagedAssetDrag(event.dataTransfer)) {
+                applyManagedAssetDragOver(event);
+              }
+            }}
+            onDrop={(event) => {
+              const assetIds = parseManagedAssetDrag(event.dataTransfer);
+              if (!assetIds || assetIds.length === 0) return;
+              event.preventDefault();
+              event.stopPropagation();
+              setAssetDropTarget(null);
+              onAssetsDroppedOnCollection(
+                c.collectionId,
+                assetIds,
+                resolveDragDropMode({ altKey: event.altKey }),
+              );
+            }}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              onOpenContextMenu(
+                {
+                  type: "organization",
+                  id: c.collectionId,
+                  name: c.name,
+                },
+                { x: e.clientX, y: e.clientY },
+              );
+            }}
+            onClick={() => void onChooseCollection(c.collectionId)}
+          />
+        )}
         {renderCollectionNodes(c.collectionId, depth + 1)}
       </div>
     )));

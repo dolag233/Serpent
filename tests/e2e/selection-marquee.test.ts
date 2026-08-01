@@ -106,11 +106,13 @@ test("masonry Tab follows the left-to-right reading order", async () => {
 
     const firstCard = window.locator('.asset-card[title="marquee-00.txt"]');
     const secondCard = window.locator('.asset-card[title="marquee-01.txt"]');
+    await firstCard.click();
+    await expect(firstCard).toHaveClass(/is-selected/);
     await firstCard.focus();
     await window.keyboard.press("Tab");
     await expect(secondCard).toBeFocused();
-    await expect(secondCard).toHaveClass(/is-selected/);
-    await expect(firstCard).not.toHaveClass(/is-selected/);
+    await expect(firstCard).toHaveClass(/is-selected/);
+    await expect(secondCard).not.toHaveClass(/is-selected/);
     await window.keyboard.press("Shift+Tab");
     await expect(firstCard).toBeFocused();
     await expect(firstCard).toHaveClass(/is-selected/);

@@ -4,6 +4,7 @@ import type { RendererLibrarySummary } from "../shared/protocol/responses";
 import { LibraryOperationError, toMessage } from "./error-utils";
 import { formatBatchTagNotice } from "./batch-tag-notice";
 import { translateForLocale, useLocale } from "./i18n";
+import type { UndoableFileOp } from "./use-asset-drag-drop-handlers";
 
 export interface UseBatchActionsParams {
   api: SerpentLibraryApi | null;
@@ -19,6 +20,7 @@ export interface UseBatchActionsParams {
   clearAssetSelection: () => void;
   activeTagId: string | null;
   activeCollectionId: string | null;
+  setLastUndoableOp: (op: UndoableFileOp | null) => void;
 }
 
 export interface UseBatchActionsResult {
@@ -45,6 +47,7 @@ export function useBatchActions({
   clearAssetSelection,
   activeTagId,
   activeCollectionId,
+  setLastUndoableOp,
 }: UseBatchActionsParams): UseBatchActionsResult {
   const { locale } = useLocale();
 
@@ -221,6 +224,7 @@ export function useBatchActions({
         assetIds,
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
+      setLastUndoableOp({ kind: "trash", assetIds: [...assetIds] });
       setNotice(
         translateForLocale(locale, "toast.batchTrashed", {
           count: result.value.trashedCount,
@@ -251,6 +255,8 @@ export function useBatchActions({
         assetIds,
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
+      // Disk deletion is irreversible, so it must invalidate any prior undo.
+      setLastUndoableOp(null);
       setNotice(
         translateForLocale(locale, "toast.assetsDeletedFromDisk", {
           count: result.value.deletedCount,

@@ -5816,6 +5816,21 @@ export class LibraryService {
   ): number {
     const ordered = [...descendantFolders, folder];
     const directoryPath = this.folderPath(openLibrary, folder.relative_path);
+    // Remove the filesystem tree before dropping its index rows. If Windows
+    // still has a handle open, the operation must fail without leaving a
+    // half-deleted database entry that can no longer be retried from the UI.
+    try {
+      if (existsSync(directoryPath)) {
+        rmSync(directoryPath, {
+          force: true,
+          recursive: true,
+          maxRetries: 5,
+          retryDelay: 100,
+        });
+      }
+    } catch (error) {
+      throw serviceError(error, 'LIBRARY_NOT_WRITABLE');
+    }
 
     openLibrary.connection.transaction(() => {
       for (const row of ordered) {
@@ -5827,14 +5842,6 @@ export class LibraryService {
         }
       }
     })();
-
-    try {
-      if (existsSync(directoryPath)) {
-        rmSync(directoryPath, { force: true, recursive: true });
-      }
-    } catch (error) {
-      throw serviceError(error, 'LIBRARY_NOT_WRITABLE');
-    }
 
     return ordered.length;
   }
@@ -5862,7 +5869,7 @@ export class LibraryService {
       const filePath = this.folderPath(openLibrary, row.relative_file_path);
       try {
         if (existsSync(filePath)) {
-          rmSync(filePath, { force: true });
+          rmSync(filePath, { force: true, maxRetries: 5, retryDelay: 100 });
         }
       } catch (error) {
         const code = (error as NodeJS.ErrnoException).code;

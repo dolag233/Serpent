@@ -30,8 +30,7 @@ import {
 // role="option" (not role="menuitem") and ContextMenu's focus/arrow handling
 // does not see them. A single `is-active` option follows pointer hover and
 // ArrowUp/ArrowDown, mirroring the menu's one-highlight rule. Escape is left
-// to ContextMenuBackdrop and closes the whole menu; the back button is the
-// explicit return path.
+// to ContextMenuBackdrop and closes the whole menu.
 // ---------------------------------------------------------------------------
 
 interface TagPickerMenuProps {
@@ -39,7 +38,6 @@ interface TagPickerMenuProps {
   tags: TagSummary[];
   /** Tags to hide from the assign picker (e.g. already on the asset). */
   excludedTagIds?: ReadonlySet<string>;
-  onBack?: () => void;
   onPick: (tagId: string) => void;
 }
 
@@ -47,7 +45,6 @@ export function TagPickerMenu({
   mode,
   tags,
   excludedTagIds,
-  onBack,
   onPick,
 }: TagPickerMenuProps) {
   const t = useT();
@@ -125,18 +122,6 @@ export function TagPickerMenu({
   return (
     <div className="tag-picker">
       <div className="tag-picker-header">
-        {onBack ? (
-          <button
-            aria-label={t("tagPicker.backAria")}
-            title={t("tagPicker.backAria")}
-            className="tag-picker-back"
-            onClick={onBack}
-            type="button"
-          >
-            <Icon name="chevron-left" size={12} />
-            <span>{t("tagPicker.back")}</span>
-          </button>
-        ) : null}
         <span className="tag-picker-title">{title}</span>
       </div>
       <div className="tag-picker-search">

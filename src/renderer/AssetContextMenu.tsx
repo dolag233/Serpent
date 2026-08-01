@@ -320,23 +320,6 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
         {tagPicker ? (
           <TagPickerMenu
             mode={tagPicker.mode}
-            onBack={() => {
-              const entryLabel =
-                tagPicker.mode === "assign"
-                  ? t("command.asset.addTags")
-                  : t("command.asset.removeTags");
-              setTagPicker(null);
-              // The menu's initial-focus effect does not re-run when the body
-              // swaps back; return keyboard focus to the entry that opened
-              // the picker so arrow-key navigation keeps working.
-              requestAnimationFrame(() => {
-                document
-                  .querySelector<HTMLElement>(
-                    `.context-menu [role="menuitem"][aria-label="${entryLabel}"]`,
-                  )
-                  ?.focus();
-              });
-            }}
             onPick={(tagId) => {
               if (tagPicker.mode === "assign") {
                 const [singleAssetId] = tagPicker.assetIds;
@@ -456,6 +439,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                 <ContextMenuItem
                   icon={<Icon name="smart" size={14} />}
                   label={renameItem.label}
+                  shortcut={renameItem.shortcutLabel ?? undefined}
                   onAction={() => runSidebarCommand("smart-collection.rename")}
                 />
               )}
@@ -472,6 +456,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                 <ContextMenuItem
                   icon={<Icon name="trash" size={14} />}
                   label={deleteItem.label}
+                  shortcut={deleteItem.shortcutLabel ?? undefined}
                   danger
                   onAction={() => runSidebarCommand("smart-collection.delete")}
                 />
@@ -556,6 +541,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                 <ContextMenuItem
                   icon={<Icon name="collection" size={14} />}
                   label={renameItem.label}
+                  shortcut={renameItem.shortcutLabel ?? undefined}
                   onAction={() => runSidebarCommand("collection.rename")}
                 />
               )}
@@ -570,6 +556,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                 <ContextMenuItem
                   icon={<Icon name="trash" size={14} />}
                   label={deleteItem.label}
+                  shortcut={deleteItem.shortcutLabel ?? undefined}
                   danger
                   onAction={() => runSidebarCommand("collection.delete")}
                 />
@@ -689,6 +676,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                   <ContextMenuItem
                     icon={<Icon name="folder" size={14} />}
                     label={createSubfolderItem.label}
+                    shortcut={createSubfolderItem.shortcutLabel ?? undefined}
                     onAction={() =>
                       runSidebarCommand("folder.create-subfolder")
                     }
@@ -698,6 +686,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                   <ContextMenuItem
                     icon={<Icon name="edit" size={14} />}
                     label={renameItem.label}
+                    shortcut={renameItem.shortcutLabel ?? undefined}
                     onAction={() => runSidebarCommand("folder.rename")}
                   />
                 )}
@@ -749,6 +738,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                     <ContextMenuItem
                       icon={<Icon name="trash" size={14} />}
                       label={trashItem.label}
+                      shortcut={trashItem.shortcutLabel ?? undefined}
                       danger
                       disabled={trashItem.disabled}
                       disabledReason={trashItem.disabledReason ?? undefined}
@@ -1012,10 +1002,9 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                   icon={<Icon name="tag" size={14} />}
                   label={assignTagItem.label}
                 >
-                  {(closeSubmenu) => (
+                  {() => (
                     <TagPickerMenu
                       mode="assign"
-                      onBack={closeSubmenu}
                       onPick={(tagId) => onBatchAssignTag(tagId, targetAssetIds)}
                       tags={tags}
                     />
@@ -1025,10 +1014,9 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                   icon={<Icon name="close" size={14} />}
                   label={removeTagItem.label}
                 >
-                  {(closeSubmenu) => (
+                  {() => (
                     <TagPickerMenu
                       mode="remove"
-                      onBack={closeSubmenu}
                       onPick={(tagId) => onBatchRemoveTag(tagId, targetAssetIds)}
                       tags={tags}
                     />
@@ -1148,6 +1136,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                 <ContextMenuItem
                   icon={<Icon name="trash" size={14} />}
                   label={deleteFromDiskItem.label}
+                  shortcut={deleteFromDiskItem.shortcutLabel ?? undefined}
                   danger
                   disabled={deleteFromDiskItem.disabled}
                   disabledReason={
@@ -1350,6 +1339,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                     <ContextMenuItem
                       icon={<Icon name="folder" size={14} />}
                       label={revealInFolderItem.label}
+                      shortcut={revealInFolderItem.shortcutLabel ?? undefined}
                       disabled={revealInFolderItem.disabled}
                       disabledReason={
                         revealInFolderItem.disabledReason ?? undefined
@@ -1441,6 +1431,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                     <ContextMenuItem
                       icon={<Icon name="edit" size={14} />}
                       label={renameItem.label}
+                      shortcut={renameItem.shortcutLabel ?? undefined}
                       disabled={renameItem.disabled}
                       disabledReason={renameItem.disabledReason ?? undefined}
                       onAction={() => runAssetCommand("asset.rename")}
@@ -1511,10 +1502,9 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                       icon={<Icon name="tag" size={14} />}
                       label={t("command.asset.addTags")}
                     >
-                      {(closeSubmenu) => (
+                      {() => (
                         <TagPickerMenu
                           mode="assign"
-                          onBack={closeSubmenu}
                           onPick={(tagId) => onAssignTag(assetId, tagId)}
                           tags={tags}
                         />
@@ -1573,6 +1563,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                     <ContextMenuItem
                       icon={<Icon name="trash" size={14} />}
                       label={deleteFromDiskItem.label}
+                      shortcut={deleteFromDiskItem.shortcutLabel ?? undefined}
                       danger
                       disabled={deleteFromDiskItem.disabled}
                       disabledReason={

@@ -673,7 +673,17 @@ FolderBrowseEntry
 | BUG-DISK-DELETE-CONFIRM-001 | 从硬盘删除资产或文件夹必须显示不可恢复确认；设置中的“不再提示”仍可关闭并重新开启；Windows 支持 Shift+Delete（macOS 使用平台对应快捷键）。 | P1 | `Serpent-wuma` |
 | BUG-TAG-SUBMENU-HOVER-001 | 资产右键添加标签改为 hover 立即打开二级可搜索菜单，定位使用统一 viewport clamp/flip，键盘导航保持可用。 | P1 | `Serpent-hn9u` |
 | BUG-NOTICE-ACTION-STYLE-001 | 通知面板的撤销等操作按钮与周围 UI 统一 token、尺寸、圆角、边框、hover/focus 状态，亮暗主题一致。 | P2 | `Serpent-agyz` |
-| BUG-MASONRY-KEYBOARD-SELECTION-001 | 瀑布流 Tab/Shift+Tab 保持行优先，但 Tab 将选择替换为下一个资产；Shift 实现连续范围选择，统一 selection anchor，不再以框选模拟。 | P1 | `Serpent-xzmz` |
+| BUG-MASONRY-KEYBOARD-SELECTION-001 | 原需求曾要求瀑布流 Tab 改变选中项、Shift 连续选择；2026-08-01 用户撤回该交互变更，恢复 Tab/Shift+Tab 只移动焦点、Shift+点击按几何范围选择，并单独收口行优先布局。 | P1 | `Serpent-xzmz` / `Serpent-6b3i` |
+
+### 2026-08-01 验收复验反馈
+
+| 需求/缺陷 | 说明 | 优先级 | 工单 |
+| --- | --- | --- | --- |
+| BUG-COLLECTION-INLINE-RENAME-001 | 合集重命名必须与文件夹一致，使用 inline 编辑；同时审计命令注册表中已有快捷键但右键菜单未显示 `shortcutLabel` 的所有资产、文件夹、合集菜单项。 | P1 | `Serpent-i1h0` |
+| BUG-DISK-DELETE-CONFIRM-002 | 资产强制从硬盘删除缺少确认；文件夹强制删除进入错误权限路径。统一核查右键、单选、多选、Shift+Delete 与确认偏好。 | P1 | `Serpent-cwor` |
+| BUG-CONTEXT-SUBMENU-LIFECYCLE-001 | hover 切换两个二级菜单时旧菜单短暂残留；移除标签选择器返回按钮，并保持 hover 菜单实时互斥。 | P2 | `Serpent-4joy` |
+| BUG-DELETE-UNDO-NOTICE-001 | 删除资产后通知面板缺少直接撤销按钮；恢复删除通知的 undo action、计数与状态一致性。 | P1 | `Serpent-mxxc` |
+| BUG-MASONRY-ORDER-002 | 撤回上一轮瀑布流 Tab/Shift 选择改动；重新定位瀑布流从左到右、从上到下排列的布局根因，避免继续局部反复修补。 | P1 | `Serpent-6b3i` |
 
 ## 验收与证据要求
 
