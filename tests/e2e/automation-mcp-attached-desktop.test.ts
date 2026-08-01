@@ -367,7 +367,7 @@ test('attached MCP focuses Desktop and applies real grid selection', async () =>
     });
     await expect
       .poll(async () => {
-        const state = readToolEnvelope(await client.callTool({
+        const state = readToolEnvelope(await client!.callTool({
           name: 'serpent_desktop_get_state',
           arguments: {},
         }));
