@@ -4,6 +4,7 @@ import {
   type QuickJsSandboxPrototypeHost,
 } from './quickjs-sandbox-prototype';
 import type { AutomationScriptCommandId } from '../shared/automation-script-api';
+import type { PluginDomainEvent } from '../plugins/plugin-domain-events';
 
 /**
  * Standard plugin entries may use ESM `export` forms or plain function
@@ -18,11 +19,33 @@ export function normalizePluginEntryJavaScript(entryJavaScript: string): string 
     .replace(/\bexport\s+default\s+/gu, '');
 }
 
+/**
+ * Injects `serpent.events.on` as guest JS over host `events.next`, so QuickJS
+ * never has to retain raw guest function handles across Host messages.
+ */
 export function buildPluginActivateSource(entryJavaScript: string): string {
   return [
     normalizePluginEntryJavaScript(entryJavaScript),
     'if (typeof activate !== "function") {',
     '  throw new Error("Plugin entry must define async function activate(serpent).");',
+    '}',
+    'if (serpent.events && typeof serpent.events.next === "function") {',
+    '  serpent.events.on = function(kind, handler) {',
+    '    void (async function() {',
+    '      for (;;) {',
+    '        const event = await serpent.events.next();',
+    '        if (event === null) return;',
+    '        if (kind !== "*" && event.kind !== kind) continue;',
+    '        const chain = (event.causeChain || []).concat([event.eventId]);',
+    '        if (typeof serpent.events.__setCause === "function") serpent.events.__setCause(chain);',
+    '        try {',
+    '          await handler(event);',
+    '        } finally {',
+    '          if (typeof serpent.events.__setCause === "function") serpent.events.__setCause([]);',
+    '        }',
+    '      }',
+    '    })();',
+    '  };',
     '}',
     'await activate(serpent);',
     'if (typeof serpent.__waitUntilDeactivate === "function") {',
@@ -45,7 +68,11 @@ export type PluginGuestActivateResult =
 
 export async function runPluginGuestActivate(input: {
   entryJavaScript: string;
-  executeAutomationCommand: (commandId: AutomationScriptCommandId, commandInput: unknown) => Promise<unknown>;
+  executeAutomationCommand: (
+    commandId: AutomationScriptCommandId,
+    commandInput: unknown,
+    options?: { causeChain?: readonly string[] },
+  ) => Promise<unknown>;
   executeStorageOperation?: (input: {
     operation: 'get' | 'set' | 'delete' | 'list';
     scope?: 'library' | 'user';
@@ -53,6 +80,8 @@ export async function runPluginGuestActivate(input: {
     value?: unknown;
   }) => Promise<unknown>;
   waitUntilDeactivate: () => Promise<void>;
+  waitForDomainEvent?: () => Promise<PluginDomainEvent | null>;
+  setActiveCauseChain?: (causeChain: readonly string[]) => void;
   signal?: AbortSignal;
   wallTimeoutMs?: number;
   /** Test/host overrides for QuickJS resource limits. */
@@ -81,6 +110,12 @@ export async function runPluginGuestActivate(input: {
       }
       await input.waitUntilDeactivate();
     },
+    ...(input.waitForDomainEvent === undefined
+      ? {}
+      : { waitForDomainEvent: input.waitForDomainEvent }),
+    ...(input.setActiveCauseChain === undefined
+      ? {}
+      : { setActiveCauseChain: input.setActiveCauseChain }),
   };
 
   try {

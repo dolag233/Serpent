@@ -208,6 +208,17 @@ export class PluginActivationCoordinator {
     }
   }
 
+  /**
+   * Deliver a committed domain event to every active Host instance for the library.
+   */
+  fanOutDomainEvent(
+    event: import('../plugins/plugin-domain-events').PluginDomainEvent,
+  ): void {
+    if (!this.#openLibraries.has(event.libraryId)) return;
+    this.options.supervisor.deliverDomainEvent(event.libraryId, event);
+    this.options.trustedSupervisor?.deliverDomainEvent(event.libraryId, event);
+  }
+
   #registerContributions(
     instanceId: string,
     pluginId: string,

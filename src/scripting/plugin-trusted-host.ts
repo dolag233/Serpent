@@ -4,6 +4,10 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
 import {
+  createPluginDomainEventQueue,
+  type PluginDomainEvent,
+} from '../plugins/plugin-domain-events';
+import {
   pluginTrustedParentMessageSchema,
   type PluginTrustedChildMessage,
   type PluginTrustedParentMessage,
@@ -31,6 +35,8 @@ type ActiveInstance = {
   parkPromise: Promise<void>;
   activated: boolean;
   exports: TrustedExports | undefined;
+  eventQueue: ReturnType<typeof createPluginDomainEventQueue>;
+  activeCauseChain: string[];
 };
 
 export type PluginTrustedHostHandler = {
@@ -76,12 +82,14 @@ function createSerpentBridge(
     new Promise((resolve, reject) => {
       const requestId = globalThis.crypto.randomUUID();
       instance.pendingHostRequests.set(requestId, { resolve, reject });
+      const causeChain = instance.activeCauseChain;
       postMessage({
         type: 'plugin-trusted.host-command',
         instanceId: instance.instanceId,
         requestId,
         commandId,
         input,
+        ...(causeChain.length > 0 ? { causeChain: [...causeChain] } : {}),
       });
     })
   );
@@ -105,6 +113,30 @@ function createSerpentBridge(
       });
     })
   );
+
+  const events = {
+    next: (): Promise<PluginDomainEvent | null> => instance.eventQueue.next(),
+    on: (kind: unknown, handler: unknown): void => {
+      if (typeof handler !== 'function') {
+        throw new Error('serpent.events.on requires a handler function.');
+      }
+      const kindName = String(kind);
+      void (async () => {
+        for (;;) {
+          const event = await instance.eventQueue.next();
+          if (event === null) return;
+          if (kindName !== '*' && event.kind !== kindName) continue;
+          const previous = instance.activeCauseChain;
+          instance.activeCauseChain = [...event.causeChain, event.eventId];
+          try {
+            await (handler as (value: PluginDomainEvent) => unknown)(event);
+          } finally {
+            instance.activeCauseChain = previous;
+          }
+        }
+      })();
+    },
+  };
 
   return {
     assets: {
@@ -138,6 +170,7 @@ function createSerpentBridge(
         scope: options?.scope ?? 'library',
       }),
     },
+    events,
     console: {
       log: (...args: unknown[]) => {
         postMessage({
@@ -172,6 +205,7 @@ export function createPluginTrustedHostHandler(options: {
     const current = instances.get(instanceId);
     if (current === undefined) return;
     instances.delete(instanceId);
+    current.eventQueue.close();
     for (const pending of current.pendingHostRequests.values()) {
       pending.reject(new Error('The trusted plugin instance ended.'));
     }
@@ -206,6 +240,8 @@ export function createPluginTrustedHostHandler(options: {
       parkPromise,
       activated: false,
       exports: undefined,
+      eventQueue: createPluginDomainEventQueue(),
+      activeCauseChain: [],
     };
     instances.set(request.instanceId, active);
 
@@ -264,6 +300,7 @@ export function createPluginTrustedHostHandler(options: {
     const current = instances.get(request.instanceId);
     if (current === undefined) return;
     current.deactivateReason = request.reason;
+    current.eventQueue.close();
     for (const pending of current.pendingHostRequests.values()) {
       pending.reject(new Error('The trusted plugin instance was deactivated.'));
     }
@@ -292,6 +329,12 @@ export function createPluginTrustedHostHandler(options: {
       }
       if (message.type === 'plugin-trusted.deactivate') {
         deactivate(message);
+        return;
+      }
+      if (message.type === 'plugin-trusted.domain-event') {
+        const current = instances.get(message.instanceId);
+        if (current === undefined) return;
+        current.eventQueue.push(message.event);
         return;
       }
       if (message.type === 'plugin-trusted.host-result' || message.type === 'plugin-trusted.storage-result') {

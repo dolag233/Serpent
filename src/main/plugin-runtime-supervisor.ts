@@ -44,7 +44,13 @@ export interface PluginRuntimeActivateInput {
 export type PluginRuntimeHostCommandHandler = (
   commandId: AutomationScriptCommandId,
   input: unknown,
-  context: { instanceId: string; libraryId: string; pluginId: string; permissions: readonly PluginPermission[] },
+  context: {
+    instanceId: string;
+    libraryId: string;
+    pluginId: string;
+    permissions: readonly PluginPermission[];
+    causeChain: readonly string[];
+  },
 ) => Promise<unknown>;
 
 export type PluginRuntimeStorageHandler = (input: {
@@ -164,6 +170,25 @@ export class PluginRuntimeSupervisor {
   deactivateLibrary(libraryId: string, reason: PluginRuntimeDeactivateReason): void {
     for (const [instanceId, instance] of this.#instances) {
       if (instance.libraryId === libraryId) this.deactivate(instanceId, reason);
+    }
+  }
+
+  /**
+   * Fan-out a committed domain event to every active instance for the library.
+   * Delivery is at-least-once; guests dedupe with `eventId`.
+   */
+  deliverDomainEvent(
+    libraryId: string,
+    event: import('../plugins/plugin-domain-events').PluginDomainEvent,
+  ): void {
+    if (this.#child === undefined || !this.#ready) return;
+    for (const [instanceId, instance] of this.#instances) {
+      if (instance.libraryId !== libraryId || !instance.activated) continue;
+      this.#post({
+        type: 'plugin-runtime.domain-event',
+        instanceId,
+        event,
+      });
     }
   }
 
@@ -357,6 +382,7 @@ export class PluginRuntimeSupervisor {
         libraryId: instance.libraryId,
         pluginId: instance.pluginId,
         permissions: instance.permissions,
+        causeChain: message.causeChain ?? [],
       });
       this.#post({
         type: 'plugin-runtime.host-result',

@@ -133,6 +133,10 @@ import { loadOrCreatePluginDeviceId } from './plugin-device-identity';
 import { createPluginPackageRequestHandler } from './plugin-package-ipc';
 import { PluginPackageManager } from './plugin-package-manager';
 import { PLUGIN_API_VERSION } from '../plugins/plugin-manifest';
+import {
+  createPluginDomainEvent,
+  validatePluginCauseChain,
+} from '../plugins/plugin-domain-events';
 import type { AutomationExecutionContext } from '../automation/command-gateway';
 import { AUTOMATION_API_VERSION } from '../automation/command-registry';
 import { shouldUseFramelessTitleBar } from "../shared/window-controls";
@@ -1103,18 +1107,36 @@ function publishLifecycle(event: RendererLifecycleEvent): void {
 }
 
 function publishAssetChange(event: AssetChangeEvent): void {
+  const parsed = parseAssetChangeEvent(event);
+  pluginActivationCoordinator?.fanOutDomainEvent(createPluginDomainEvent({
+    kind: 'asset.changed',
+    libraryId: parsed.libraryId,
+    summary: {
+      changedCount: parsed.changedCount,
+      missingCount: parsed.missingCount,
+      ...(parsed.source === undefined ? {} : { source: parsed.source }),
+    },
+  }));
   if (!mainWindow || mainWindow.isDestroyed()) return;
   mainWindow.webContents.send(
     ASSET_CHANGE_CHANNEL,
-    parseAssetChangeEvent(event),
+    parsed,
   );
 }
 
 function publishLibraryChanged(event: LibraryChangedEvent): void {
+  const parsed = parseLibraryChangedEvent(event);
+  pluginActivationCoordinator?.fanOutDomainEvent(createPluginDomainEvent({
+    kind: 'library.changed',
+    libraryId: parsed.libraryId,
+    summary: {
+      changeSequence: parsed.changeSequence,
+    },
+  }));
   if (!mainWindow || mainWindow.isDestroyed()) return;
   mainWindow.webContents.send(
     LIBRARY_CHANGED_CHANNEL,
-    parseLibraryChangedEvent(event),
+    parsed,
   );
 }
 
@@ -4054,6 +4076,10 @@ async function startApplication(): Promise<void> {
   const executePluginHostCommand: PluginRuntimeHostCommandHandler = async (commandId, input, context) => {
     const gateway = automationCommandGateway;
     if (gateway === undefined) throw new Error('Automation Gateway is unavailable.');
+    const cause = validatePluginCauseChain(context.causeChain);
+    if (!cause.ok) {
+      throw new Error(cause.message);
+    }
     pluginAutomationContexts.set(context.instanceId, {
       executionId: context.instanceId,
       source: 'plugin',

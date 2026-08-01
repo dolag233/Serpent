@@ -25,7 +25,11 @@ export interface QuickJsSandboxPrototypeHost {
    * not a generic IPC, filesystem, SQL, or network function: the sandbox only
    * binds the two public asset methods below to fixed command IDs.
    */
-  executeAutomationCommand?(commandId: AutomationScriptCommandId, input: unknown): Promise<unknown>;
+  executeAutomationCommand?(
+    commandId: AutomationScriptCommandId,
+    input: unknown,
+    options?: { causeChain?: readonly string[] },
+  ): Promise<unknown>;
   /**
    * Plugin Host namespaced KV storage. Not available to Desktop Scripts.
    */
@@ -40,6 +44,15 @@ export interface QuickJsSandboxPrototypeHost {
    * requests deactivate. Scripts never receive this surface.
    */
   waitUntilDeactivate?(): Promise<void>;
+  /**
+   * Plugin Host domain-event pull. Resolves with the next event or null when
+   * the instance is deactivating.
+   */
+  waitForDomainEvent?(): Promise<import('../plugins/plugin-domain-events').PluginDomainEvent | null>;
+  /**
+   * Sets the cause chain inherited by subsequent host commands until cleared.
+   */
+  setActiveCauseChain?(causeChain: readonly string[]): void;
 }
 
 export interface QuickJsSandboxPrototypeLimits {
@@ -1082,6 +1095,29 @@ export async function runQuickJsSandboxPrototype(
       ));
       context.setProp(serpent, '__waitUntilDeactivate', waitUntilDeactivate);
       waitUntilDeactivate.dispose();
+    }
+    if (host.waitForDomainEvent !== undefined) {
+      const events = context.newObject();
+      const next = context.newFunction('next', () => createDeferredHostCall(
+        host.waitForDomainEvent!(),
+        (value) => (value === null ? context.null : newQuickJsJsonValue(context, value)),
+      ));
+      context.setProp(events, 'next', next);
+      next.dispose();
+      if (host.setActiveCauseChain !== undefined) {
+        const setCause = context.newFunction('__setCause', (chainHandle) => {
+          const dumped = context.dump(chainHandle);
+          const causeChain = Array.isArray(dumped)
+            ? dumped.map((entry) => String(entry))
+            : [];
+          host.setActiveCauseChain!(causeChain);
+          return context.undefined;
+        });
+        context.setProp(events, '__setCause', setCause);
+        setCause.dispose();
+      }
+      context.setProp(serpent, 'events', events);
+      events.dispose();
     }
     if (host.executeStorageOperation !== undefined) {
       const storage = context.newObject();

@@ -45,7 +45,13 @@ export interface PluginTrustedActivateInput {
 export type PluginTrustedHostCommandHandler = (
   commandId: AutomationScriptCommandId,
   input: unknown,
-  context: { instanceId: string; libraryId: string; pluginId: string; permissions: readonly PluginPermission[] },
+  context: {
+    instanceId: string;
+    libraryId: string;
+    pluginId: string;
+    permissions: readonly PluginPermission[];
+    causeChain: readonly string[];
+  },
 ) => Promise<unknown>;
 
 export type PluginTrustedStorageHandler = (input: {
@@ -179,6 +185,24 @@ export class PluginTrustedRuntimeSupervisor {
   deactivateLibrary(libraryId: string, reason: PluginRuntimeDeactivateReason): void {
     for (const [instanceId, tracked] of this.#instances) {
       if (tracked.libraryId === libraryId) this.deactivate(instanceId, reason);
+    }
+  }
+
+  deliverDomainEvent(
+    libraryId: string,
+    event: import('../plugins/plugin-domain-events').PluginDomainEvent,
+  ): void {
+    for (const [instanceId, tracked] of this.#instances) {
+      if (tracked.libraryId !== libraryId || !tracked.ready) continue;
+      try {
+        tracked.child.postMessage({
+          type: 'plugin-trusted.domain-event',
+          instanceId,
+          event,
+        });
+      } catch (error) {
+        this.options.logger?.error('plugin.trusted.domain-event', error, { instanceId });
+      }
     }
   }
 
@@ -347,6 +371,7 @@ export class PluginTrustedRuntimeSupervisor {
         libraryId: tracked.libraryId,
         pluginId: tracked.pluginId,
         permissions: tracked.permissions,
+        causeChain: message.causeChain ?? [],
       });
       this.#post(tracked, {
         type: 'plugin-trusted.host-result',

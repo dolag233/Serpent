@@ -5443,10 +5443,23 @@ select.ai-config-input.ai-config-languages {
 }
 
 .plugin-settings-overview,
-.plugin-settings-install,
+.plugin-settings-scope-card,
+.plugin-settings-install-panel,
 .plugin-settings-package {
   display: grid;
   gap: 14px;
+}
+
+.plugin-settings-scope-header,
+.plugin-settings-install-panel-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.plugin-settings-install-panel-header {
+  align-items: center;
 }
 
 .plugin-settings-safe-mode {
@@ -5454,25 +5467,49 @@ select.ai-config-input.ai-config-languages {
   border-top: 1px solid var(--divider);
 }
 
-.plugin-settings-scope {
-  width: fit-content;
-}
-
-.plugin-settings-install-actions,
-.plugin-settings-github-field {
+.plugin-settings-install-local,
+.plugin-settings-install-github {
   display: flex;
   align-items: center;
   gap: 8px;
 }
 
-.plugin-settings-github-field {
-  min-width: min(100%, 420px);
-  flex: 1 1 300px;
+.plugin-settings-install-github {
+  min-width: 0;
 }
 
-.plugin-settings-github-field .text-field {
+.plugin-settings-install-github .text-field {
   min-width: 0;
   flex: 1 1 auto;
+}
+
+.plugin-settings-github-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  min-width: 36px;
+  padding-inline: 0;
+  flex: 0 0 auto;
+}
+
+.plugin-install-dialog-backdrop {
+  z-index: 60;
+}
+
+.plugin-install-dialog {
+  display: grid;
+  gap: 12px;
+  width: min(440px, calc(100vw - 40px));
+}
+
+.plugin-install-scope-field {
+  display: grid;
+  gap: 6px;
+}
+
+.plugin-install-scope-field .text-field {
+  width: 100%;
 }
 
 .plugin-settings-error {
@@ -5482,9 +5519,15 @@ select.ai-config-input.ai-config-languages {
   line-height: 1.45;
 }
 
+.plugin-settings-package {
+  padding-top: 12px;
+  border-top: 1px solid var(--divider);
+}
+
 .plugin-settings-package-header,
 .plugin-settings-package-version,
 .plugin-settings-package-actions,
+.plugin-settings-package-controls,
 .plugin-settings-resolution {
   display: flex;
   align-items: center;
@@ -5493,6 +5536,14 @@ select.ai-config-input.ai-config-languages {
 
 .plugin-settings-package-header {
   justify-content: space-between;
+}
+
+.plugin-settings-package-controls {
+  flex: 0 0 auto;
+}
+
+.plugin-settings-enable-toggle {
+  margin: 0;
 }
 
 .plugin-settings-status {
@@ -5509,7 +5560,7 @@ select.ai-config-input.ai-config-languages {
   align-items: flex-start;
   justify-content: space-between;
   padding-top: 12px;
-  border-top: 1px solid var(--divider);
+  border-top: 1px solid color-mix(in srgb, var(--divider) 70%, transparent);
 }
 
 .plugin-settings-package-meta {
@@ -5651,11 +5702,17 @@ select.ai-config-input.ai-config-languages {
     gap: 12px;
   }
 
-  .plugin-settings-install-actions,
-  .plugin-settings-github-field,
+  .plugin-settings-scope-header,
+  .plugin-settings-install-panel-header,
+  .plugin-settings-install-local,
+  .plugin-settings-install-github,
   .plugin-settings-package-version {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .plugin-settings-github-button {
+    width: 100%;
   }
 
   .plugin-settings-package-actions {

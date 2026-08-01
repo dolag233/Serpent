@@ -3,6 +3,10 @@ import { z } from 'zod';
 import { automationScriptCommandIdSchema } from './automation-script-api';
 import { pluginPermissionSchema } from '../plugins/plugin-manifest';
 import {
+  pluginCauseChainSchema,
+  pluginDomainEventSchema,
+} from '../plugins/plugin-domain-events';
+import {
   pluginRuntimeActivationFailureCodeSchema,
   pluginRuntimeDeactivateReasonSchema,
   pluginStorageOperationSchema,
@@ -76,6 +80,11 @@ export const pluginTrustedParentMessageSchema = z.discriminatedUnion('type', [
   z.strictObject({
     type: z.literal('plugin-trusted.shutdown'),
   }),
+  z.strictObject({
+    type: z.literal('plugin-trusted.domain-event'),
+    instanceId: instanceIdSchema,
+    event: pluginDomainEventSchema,
+  }),
 ]);
 export type PluginTrustedParentMessage = z.infer<typeof pluginTrustedParentMessageSchema>;
 
@@ -105,6 +114,7 @@ export const pluginTrustedChildMessageSchema = z.discriminatedUnion('type', [
     requestId: requestIdSchema,
     commandId: automationScriptCommandIdSchema,
     input: z.unknown(),
+    causeChain: pluginCauseChainSchema.optional(),
   }),
   z.strictObject({
     type: z.literal('plugin-trusted.storage-request'),

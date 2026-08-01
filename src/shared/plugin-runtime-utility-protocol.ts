@@ -2,6 +2,10 @@ import { z } from 'zod';
 
 import { automationScriptCommandIdSchema } from './automation-script-api';
 import { pluginPermissionSchema } from '../plugins/plugin-manifest';
+import {
+  pluginCauseChainSchema,
+  pluginDomainEventSchema,
+} from '../plugins/plugin-domain-events';
 
 const instanceIdSchema = z.string().uuid();
 const requestIdSchema = z.string().uuid();
@@ -96,6 +100,11 @@ export const pluginRuntimeParentMessageSchema = z.discriminatedUnion('type', [
       context.addIssue({ code: 'custom', path: ['error'], message: 'Failed storage results need an error.' });
     }
   }),
+  z.strictObject({
+    type: z.literal('plugin-runtime.domain-event'),
+    instanceId: instanceIdSchema,
+    event: pluginDomainEventSchema,
+  }),
 ]);
 export type PluginRuntimeParentMessage = z.infer<typeof pluginRuntimeParentMessageSchema>;
 
@@ -125,6 +134,7 @@ export const pluginRuntimeChildMessageSchema = z.discriminatedUnion('type', [
     requestId: requestIdSchema,
     commandId: automationScriptCommandIdSchema,
     input: z.unknown(),
+    causeChain: pluginCauseChainSchema.optional(),
   }),
   z.strictObject({
     type: z.literal('plugin-runtime.storage-request'),

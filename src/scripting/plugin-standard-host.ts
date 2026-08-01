@@ -1,5 +1,8 @@
 import { runPluginGuestActivate } from './plugin-guest-realm';
 import {
+  createPluginDomainEventQueue,
+} from '../plugins/plugin-domain-events';
+import {
   pluginRuntimeParentMessageSchema,
   type PluginRuntimeActivationFailureCode,
   type PluginRuntimeChildMessage,
@@ -26,6 +29,8 @@ type ActiveInstance = {
   deactivatePromise: Promise<void>;
   resolveDeactivatePark(): void;
   activated: boolean;
+  eventQueue: ReturnType<typeof createPluginDomainEventQueue>;
+  activeCauseChain: string[];
 };
 
 export type PluginStandardHostHandler = {
@@ -51,6 +56,8 @@ function mapFailureCode(code: string): PluginRuntimeActivationFailureCode {
 }
 
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 5_000;
+/** Plugin sessions are long-lived; deactivate is the lifetime bound, not wall clock. */
+const PLUGIN_SESSION_WALL_TIMEOUT_MS = 7 * 24 * 60 * 60 * 1_000;
 
 export function createPluginStandardHostHandler(options: {
   postMessage(message: PluginRuntimeChildMessage): void;
@@ -68,6 +75,7 @@ export function createPluginStandardHostHandler(options: {
     const current = instances.get(instanceId);
     if (current === undefined) return;
     instances.delete(instanceId);
+    current.eventQueue.close();
     for (const pending of current.pendingHostRequests.values()) {
       pending.reject(new Error('The plugin instance ended.'));
     }
@@ -104,10 +112,16 @@ export function createPluginStandardHostHandler(options: {
       deactivatePromise,
       resolveDeactivatePark,
       activated: false,
+      eventQueue: createPluginDomainEventQueue(),
+      activeCauseChain: [],
     };
     instances.set(request.instanceId, active);
 
-    const callHost = (commandId: AutomationScriptCommandId, input: unknown): Promise<unknown> => (
+    const callHost = (
+      commandId: AutomationScriptCommandId,
+      input: unknown,
+      commandOptions?: { causeChain?: readonly string[] },
+    ): Promise<unknown> => (
       new Promise((resolve, reject) => {
         const current = instances.get(request.instanceId);
         if (current === undefined || current.abortController.signal.aborted) {
@@ -116,12 +130,14 @@ export function createPluginStandardHostHandler(options: {
         }
         const requestId = globalThis.crypto.randomUUID();
         current.pendingHostRequests.set(requestId, { resolve, reject });
+        const causeChain = commandOptions?.causeChain ?? current.activeCauseChain;
         options.postMessage({
           type: 'plugin-runtime.host-command',
           instanceId: request.instanceId,
           requestId,
           commandId,
           input,
+          ...(causeChain.length > 0 ? { causeChain: [...causeChain] } : {}),
         });
       })
     );
@@ -157,8 +173,12 @@ export function createPluginStandardHostHandler(options: {
       executeAutomationCommand: callHost,
       executeStorageOperation: callStorage,
       waitUntilDeactivate: () => active.deactivatePromise,
+      waitForDomainEvent: () => active.eventQueue.next(),
+      setActiveCauseChain: (causeChain) => {
+        active.activeCauseChain = [...causeChain];
+      },
       signal: abortController.signal,
-      wallTimeoutMs: Math.max(request.activateDeadlineMs, 60_000),
+      wallTimeoutMs: PLUGIN_SESSION_WALL_TIMEOUT_MS,
       onActivated: () => {
         if (active.activated) return;
         active.activated = true;
@@ -203,6 +223,7 @@ export function createPluginStandardHostHandler(options: {
     if (current === undefined) return;
     current.deactivate = { reason: request.reason, resolve: current.resolveDeactivatePark };
     current.abortController.abort();
+    current.eventQueue.close();
     for (const pending of current.pendingHostRequests.values()) {
       pending.reject(new Error('The plugin instance was deactivated.'));
     }
@@ -231,6 +252,12 @@ export function createPluginStandardHostHandler(options: {
       }
       if (message.type === 'plugin-runtime.deactivate') {
         deactivate(message);
+        return;
+      }
+      if (message.type === 'plugin-runtime.domain-event') {
+        const current = instances.get(message.instanceId);
+        if (current === undefined) return;
+        current.eventQueue.push(message.event);
         return;
       }
       if (message.type === 'plugin-runtime.host-result' || message.type === 'plugin-runtime.storage-result') {

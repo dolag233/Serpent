@@ -50,15 +50,29 @@ test('installs a library plugin through the settings bridge, then trusts and Saf
     await window.getByRole('button', { name: '设置' }).click();
     const dialog = window.getByRole('dialog', { name: '通用设置' });
     await dialog.getByRole('tab', { name: '插件' }).click();
-    await expect(dialog.getByText('暂未安装插件。', { exact: true })).toBeVisible();
-    await dialog.getByRole('radio', { name: '此资源库' }).click();
-    await expect(dialog.getByText('暂未安装插件。', { exact: true })).toBeVisible();
-    await dialog.getByRole('button', { name: '选择本地插件…' }).click();
+    await expect(dialog.getByText('暂未安装插件。', { exact: true }).first()).toBeVisible();
+    await dialog.getByRole('button', { name: '安装插件' }).click();
+    const installDialog = window.getByRole('dialog', { name: '安装插件' });
+    await expect(installDialog).toBeVisible();
+    await installDialog.getByLabel('安装范围').selectOption('library');
+    await installDialog.getByRole('button', { name: '安装本地插件' }).click();
+
+    const libraryCard = dialog.locator('.plugin-settings-scope-card').filter({ hasText: '资源库插件' });
 
     await expect(dialog.getByText('Palette Tools', { exact: true })).toBeVisible({ timeout: 30_000 });
     await expect(dialog.getByText('等待在此设备上信任', { exact: true })).toBeVisible();
     await expect(dialog.getByText('本地文件夹', { exact: true })).toBeVisible();
     await dialog.getByRole('button', { name: '信任', exact: true }).click();
+    await expect(dialog.getByText('已启用', { exact: true })).toBeVisible();
+
+    const enableToggle = libraryCard.getByRole('checkbox', { name: '启用插件' });
+    await expect(enableToggle).toBeChecked();
+    await expect(enableToggle).toBeEnabled();
+    await libraryCard.locator('.plugin-settings-enable-toggle').click();
+    await expect(enableToggle).not.toBeChecked();
+    await expect(dialog.getByText('已停用', { exact: true })).toBeVisible();
+    await libraryCard.locator('.plugin-settings-enable-toggle').click();
+    await expect(enableToggle).toBeChecked();
     await expect(dialog.getByText('已启用', { exact: true })).toBeVisible();
 
     const safeModeRow = dialog.locator('.plugin-settings-safe-mode');
