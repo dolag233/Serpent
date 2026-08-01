@@ -776,7 +776,8 @@ export const en = {
       close: "Close",
       version: "Version {version}",
       description: "Keep asset organization, preview, and retrieval fast, clear, and controllable. Serpent is released under the MIT license.",
-      github: "Visit GitHub repository"
+      github: "Visit GitHub repository",
+      etymology: "serpent noun /ˈsɝː.pənt/ a mythic serpent, named after Jörmungandr"
     },
     openSource: {
       title: "Open-source components & licenses",

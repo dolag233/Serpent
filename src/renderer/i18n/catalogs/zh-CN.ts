@@ -765,7 +765,8 @@ export const zhCN = {
       close: "关闭",
       version: "版本 {version}",
       description: "让素材整理、预览与检索保持快速、清晰和可控。Serpent 使用 MIT 许可证发布。",
-      github: "访问 GitHub 仓库"
+      github: "访问 GitHub 仓库",
+      etymology: "serpent noun /ˈsɝː.pənt/ 神话中的蛇，取自尘世巨蟒耶梦加得"
     },
     openSource: {
       title: "开源组件与许可",

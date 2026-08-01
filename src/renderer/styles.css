@@ -6159,13 +6159,13 @@ select.ai-config-input.ai-config-languages {
 
 .about-dialog-social-button {
   display: grid;
-  width: 32px;
-  height: 32px;
+  width: 34px;
+  height: 34px;
   place-items: center;
   padding: 0;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
+  border: 1px solid var(--divider-soft);
+  border-radius: 50%;
+  background: var(--raised-2);
   color: var(--secondary);
   cursor: pointer;
 }
@@ -6187,6 +6187,14 @@ select.ai-config-input.ai-config-languages {
   color: var(--secondary);
   font-size: 12px;
   line-height: 1.65;
+}
+
+.about-dialog-etymology {
+  margin-top: 12px !important;
+  color: var(--tertiary) !important;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 10px !important;
+  letter-spacing: 0.01em;
 }
 
 .open-source-dialog {

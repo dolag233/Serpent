@@ -61,6 +61,7 @@ export function AboutDialog({
         </div>
         <div className="about-dialog-copy">
           <p>{t("dialog.about.description")}</p>
+          <p className="about-dialog-etymology">{t("dialog.about.etymology")}</p>
         </div>
       </div>
     </div>
