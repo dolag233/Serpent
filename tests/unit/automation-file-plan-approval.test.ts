@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { createDesktopAutomationFilePlanApprovalHandler } from '../../src/main/automation-file-plan-approval';
+import {
+  createDesktopAutomationFilePlanApprovalHandler,
+  type DesktopAutomationFilePlanSummary,
+} from '../../src/main/automation-file-plan-approval';
 import type { WorkerCommand } from '../../src/shared/protocol/requests';
 import type { WorkerResult } from '../../src/shared/protocol/responses';
 
@@ -90,6 +93,73 @@ describe('Desktop automation file-plan approval', () => {
     }]);
   });
 
+  it('preflights imports through the readonly Worker path and returns source-state proof', async () => {
+    const worker = new RecordingWorker({
+      ok: true,
+      type: 'automation.file-import-planned',
+      plan: {
+        libraryId: 'library-1',
+        changeSequence: 21,
+        fileCount: 2,
+        totalBytes: 2048,
+        suspectedDuplicateCount: 1,
+        libraryDuplicateCount: 1,
+        nameConflictCount: 0,
+        sourceStates: [{
+          sourcePath: '/tmp/one.png',
+          stateToken: 'a'.repeat(64),
+        }, {
+          sourcePath: '/tmp/two.png',
+          stateToken: 'b'.repeat(64),
+        }],
+      },
+    });
+    const summaries: DesktopAutomationFilePlanSummary[] = [];
+    const handler = createDesktopAutomationFilePlanApprovalHandler({
+      workerClient: worker,
+      confirm: async (summary) => {
+        summaries.push(summary);
+        return true;
+      },
+    });
+
+    const proof = await handler.prepareAndApprove({
+      commandId: 'file.import',
+      executionId: 'execution-1',
+      libraryId: 'library-1',
+      commandInput: {
+        sourceKind: 'files',
+        sourcePaths: ['/tmp/one.png', '/tmp/two.png'],
+      },
+    });
+
+    expect(worker.commands).toEqual([{
+      type: 'automation.file-import-plan',
+      libraryId: 'library-1',
+      sourceKind: 'files',
+      sourcePaths: ['/tmp/one.png', '/tmp/two.png'],
+    }]);
+    expect(summaries).toEqual([{
+      operation: 'import',
+      targetCount: 2,
+      executableCount: 1,
+      blockedCount: 1,
+      undoSupported: true,
+    }]);
+    expect(proof).toMatchObject({
+      planHash: expect.stringMatching(/^[a-f0-9]{64}$/u),
+      expectedChangeSequence: 21,
+      assetStates: [],
+      importPlan: {
+        expectedChangeSequence: 21,
+        sourceStates: [
+          { sourcePath: '/tmp/one.png', stateToken: 'a'.repeat(64) },
+          { sourcePath: '/tmp/two.png', stateToken: 'b'.repeat(64) },
+        ],
+      },
+    });
+  });
+
   it('plans a batch rename once for all asset ids', async () => {
     const worker = new RecordingWorker({
       ...plannedResult,
@@ -123,6 +193,55 @@ describe('Desktop automation file-plan approval', () => {
       operation: 'rename-files',
       assetIds: ['asset-1', 'asset-2'],
     }]);
+  });
+
+  it('plans a move with target folder and conflict strategy', async () => {
+    const worker = new RecordingWorker({
+      ...plannedResult,
+      operation: 'move',
+      targetCount: 2,
+      executableCount: 2,
+      undoSupported: true,
+      assetStates: [
+        { assetId: 'asset-1', stateToken: 'a'.repeat(64) },
+        { assetId: 'asset-2', stateToken: 'b'.repeat(64) },
+      ],
+    });
+    const summaries: DesktopAutomationFilePlanSummary[] = [];
+    const handler = createDesktopAutomationFilePlanApprovalHandler({
+      workerClient: worker,
+      confirm: async (summary) => {
+        summaries.push(summary);
+        return true;
+      },
+    });
+
+    const proof = await handler.prepareAndApprove({
+      commandId: 'asset.move',
+      executionId: 'execution-1',
+      libraryId: 'library-1',
+      commandInput: {
+        assetIds: ['asset-1', 'asset-2'],
+        targetFolderId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+        conflictStrategy: 'skip',
+      },
+    });
+    expect(worker.commands).toEqual([{
+      type: 'automation.file-operation-plan',
+      libraryId: 'library-1',
+      operation: 'move',
+      assetIds: ['asset-1', 'asset-2'],
+      targetFolderId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+      conflictStrategy: 'skip',
+    }]);
+    expect(summaries).toEqual([{
+      operation: 'move',
+      targetCount: 2,
+      executableCount: 2,
+      blockedCount: 0,
+      undoSupported: true,
+    }]);
+    expect(proof?.assetStates).toHaveLength(2);
   });
 
   it('rejects a preflight that does not cover every requested asset', async () => {

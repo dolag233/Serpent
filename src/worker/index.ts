@@ -68,6 +68,7 @@ if (!parentPort) {
 
 const libraryService = new LibraryService({
   onAssetsChanged: (event) => parentPort.postMessage(event),
+  onLibraryChanged: (event) => parentPort.postMessage(event),
   onProgress: (event) => parentPort.postMessage(event),
   onDiagnostic: ({ scope, error, context }) => {
     try {
@@ -304,6 +305,13 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
   switch (request.command.type) {
     case 'library.list':
       return { ok: true, type: 'library.list', libraries: libraryService.listLibraries() };
+    case 'library.change-sequence':
+      return {
+        ok: true,
+        type: 'library.change-sequence',
+        libraryId: request.command.libraryId,
+        changeSequence: libraryService.getChangeSequence(request.command.libraryId),
+      };
     case 'library.create': {
       const library = libraryService.createLibrary(request.command);
       scheduleThumbnailScene(library.libraryId, 'startup');
@@ -751,8 +759,8 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
           assetStates: request.command.automationPlan.assetStates,
         });
       }
-      const { trashedCount } = libraryService.trashAssets(request.command);
-      return { ok: true, type: 'asset.trashed', trashedCount };
+      const { trashedCount, operationId } = libraryService.trashAssets(request.command);
+      return { ok: true, type: 'asset.trashed', trashedCount, operationId };
     }
     case 'asset.restore': {
       const { restoredCount, assets } = libraryService.restoreAssets(request.command);
@@ -764,6 +772,13 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       return { ok: true, type: 'asset.restore-previewed', ...preview };
     }
     case 'asset.move': {
+      if (request.command.automationPlan) {
+        libraryService.validateAutomationFileOperationPlan({
+          libraryId: request.command.libraryId,
+          expectedChangeSequence: request.command.automationPlan.expectedChangeSequence,
+          assetStates: request.command.automationPlan.assetStates,
+        });
+      }
       const { movedCount, skippedCount, operationId, assets } = libraryService.moveAssets(request.command);
       scheduleThumbnailScene(request.command.libraryId, 'visible', assets.map((asset) => asset.assetId));
       return { ok: true, type: 'asset.moved', movedCount, skippedCount, operationId, assets };
@@ -772,6 +787,11 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       const { undoneCount, skippedCount, assets } = libraryService.undoMoveAssets(request.command);
       scheduleThumbnailScene(request.command.libraryId, 'visible', assets.map((asset) => asset.assetId));
       return { ok: true, type: 'asset.move-undone', undoneCount, skippedCount, assets };
+    }
+    case 'asset.trash-undo': {
+      const { restoredCount, skippedCount, assets } = libraryService.undoTrashAssets(request.command);
+      scheduleThumbnailScene(request.command.libraryId, 'restore', assets.map((asset) => asset.assetId));
+      return { ok: true, type: 'asset.trash-undone', restoredCount, skippedCount, assets };
     }
     case 'asset.copy': {
       const { copiedCount, skippedCount, operationId, assets } = libraryService.copyAssets(request.command);
@@ -1796,6 +1816,8 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       // automation-readonly dispatcher above. A normal desktop request must
       // not be able to manufacture a plan outside Main approval.
       throw new Error('Automation file-operation planning requires automation-readonly dispatch.');
+    case 'automation.file-import-plan':
+      throw new Error('Automation import planning requires automation-readonly dispatch.');
     default:
       return assertNever(request.command);
   }

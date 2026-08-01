@@ -62,7 +62,7 @@ describe('fixed standard Host probe fixture', () => {
         pluginId: 'com.serpent.standard-host-probe',
         libraryId: 'library-probe',
         libraryDirectory: library,
-        permissions: ['storage.read', 'storage.write', 'asset.read'],
+        permissions: ['library.read', 'storage.read', 'storage.write', 'asset.read'],
         ...(input.key === undefined ? {} : { key: input.key }),
         ...(input.value === undefined ? {} : { value: input.value }),
       }),

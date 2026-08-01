@@ -15,6 +15,7 @@
     "entry": "entry/main.js"
   },
   "permissions": [
+    "library.read",
     "asset.read",
     "storage.read",
     "storage.write"

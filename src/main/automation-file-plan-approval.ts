@@ -12,7 +12,7 @@ import {
 import type { WorkerCommand } from '../shared/protocol/requests';
 import type { WorkerResult } from '../shared/protocol/responses';
 
-type FileOperation = 'trash' | 'rename-file' | 'rename-files' | 'restore-if-original-vacant';
+type FileOperation = 'create' | 'import' | 'trash' | 'move' | 'rename-file' | 'rename-files' | 'restore-if-original-vacant';
 
 export interface DesktopAutomationFilePlanSummary {
   operation: FileOperation;
@@ -40,6 +40,17 @@ function planCommandFor(
         libraryId,
         operation: 'trash',
         assetIds: input.assetIds,
+      };
+    }
+    case 'asset.move': {
+      const input = automationCommandInputSchemas['asset.move'].parse(commandInput);
+      return {
+        type: 'automation.file-operation-plan',
+        libraryId,
+        operation: 'move',
+        assetIds: input.assetIds,
+        targetFolderId: input.targetFolderId,
+        ...(input.conflictStrategy === undefined ? {} : { conflictStrategy: input.conflictStrategy }),
       };
     }
     case 'asset.rename-file': {
@@ -112,6 +123,75 @@ export function createDesktopAutomationFilePlanApprovalHandler(
 ): AutomationFilePlanApprovalHandler {
   return {
     async prepareAndApprove({ commandId, executionId, libraryId, commandInput }): Promise<AutomationFileOperationPlanProof | undefined> {
+      if (commandId === 'library.create') {
+        const input = automationCommandInputSchemas['library.create'].parse(commandInput);
+        const approved = await options.confirm({
+          operation: 'create',
+          targetCount: 1,
+          executableCount: 1,
+          blockedCount: 0,
+          undoSupported: false,
+        });
+        if (!approved) return undefined;
+        return {
+          planHash: createHash('sha256').update(JSON.stringify({
+            executionId,
+            commandId,
+            displayName: input.displayName,
+            selectedParentPath: input.selectedParentPath,
+          }), 'utf8').digest('hex'),
+          expectedChangeSequence: 0,
+          assetStates: [],
+        };
+      }
+      if (commandId === 'file.import') {
+        if (libraryId === null) throw new Error('A library must be bound before planning this file operation.');
+        const input = automationCommandInputSchemas['file.import'].parse(commandInput);
+        const planned = await options.workerClient.request({
+          type: 'automation.file-import-plan',
+          libraryId,
+          sourceKind: input.sourceKind,
+          sourcePaths: input.sourcePaths,
+          ...(input.targetFolderId === undefined ? {} : { targetFolderId: input.targetFolderId }),
+          ...(input.imageSequenceFps === undefined ? {} : { imageSequenceFps: input.imageSequenceFps }),
+          ...(input.expandImageSequences === undefined ? {} : { expandImageSequences: input.expandImageSequences }),
+        }, { readonly: true });
+        if (
+          !planned.ok
+          || planned.type !== 'automation.file-import-planned'
+          || planned.plan.libraryId !== libraryId
+        ) {
+          throw new Error('Worker returned an unexpected automation import plan result.');
+        }
+        const parsedPlan = planned.plan;
+        const blockedCount = parsedPlan.suspectedDuplicateCount + parsedPlan.nameConflictCount;
+        const approved = await options.confirm({
+          operation: 'import',
+          targetCount: parsedPlan.fileCount,
+          executableCount: parsedPlan.fileCount - blockedCount,
+          blockedCount,
+          undoSupported: true,
+        });
+        if (!approved) return undefined;
+        const planHash = createHash('sha256').update(JSON.stringify({
+          executionId,
+          commandId,
+          libraryId,
+          commandInput: input,
+          plan: parsedPlan,
+        }), 'utf8').digest('hex');
+        return {
+          planHash,
+          expectedChangeSequence: parsedPlan.changeSequence,
+          assetStates: [],
+          importPlan: {
+            planHash,
+            expectedChangeSequence: parsedPlan.changeSequence,
+            sourceStates: parsedPlan.sourceStates,
+          },
+        };
+      }
+      if (libraryId === null) throw new Error('A library must be bound before planning this file operation.');
       const command = planCommandFor(commandId, libraryId, commandInput);
       const planned = parsePlanResult(await options.workerClient.request(command, { readonly: true }));
       if (planned.libraryId !== libraryId) {

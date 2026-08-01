@@ -6,6 +6,10 @@ import {
   validatePluginManifestCompatibility,
   type PluginCompatibilityTarget,
 } from '../plugins/plugin-manifest';
+import {
+  registerManifestContributions,
+  type PluginContributionRegistry,
+} from '../plugins/plugin-contributions';
 import type { PluginPackageManager } from './plugin-package-manager';
 import type { PluginRuntimeSupervisor } from './plugin-runtime-supervisor';
 import type { PluginTrustedRuntimeSupervisor } from './plugin-trusted-runtime-supervisor';
@@ -21,6 +25,8 @@ export interface PluginActivationCoordinatorOptions {
   packageManager: PluginPackageManager;
   supervisor: PluginRuntimeSupervisor;
   trustedSupervisor?: PluginTrustedRuntimeSupervisor;
+  /** Descriptor-only Contribution store; revoked whenever a Host instance ends. */
+  contributions?: PluginContributionRegistry;
   /** Re-check engines / native OS·arch·ABI at activate time (Electron ABI may change after install). */
   compatibility?: PluginCompatibilityTarget;
   readEntryFile?: (absolutePath: string) => Promise<string>;
@@ -161,7 +167,14 @@ export class PluginActivationCoordinator {
             permissions: candidate.pluginPackage.manifest.permissions,
           });
         }
+        this.#registerContributions(instanceId, pluginId, candidate.pluginPackage);
       } catch (error) {
+        this.#revokeContributions(instanceId);
+        if (candidate.mode === 'standard') {
+          this.options.supervisor.deactivate(instanceId, 'resolution-changed');
+        } else {
+          this.options.trustedSupervisor?.deactivate(instanceId, 'resolution-changed');
+        }
         previous.delete(pluginId);
         this.options.logger?.error('plugin.activation.activate', error, {
           pluginId,
@@ -195,7 +208,32 @@ export class PluginActivationCoordinator {
     }
   }
 
+  #registerContributions(
+    instanceId: string,
+    pluginId: string,
+    pluginPackage: InstalledPluginPackage,
+  ): void {
+    const registry = this.options.contributions;
+    if (registry === undefined) return;
+    try {
+      registerManifestContributions(registry, {
+        pluginInstanceId: instanceId,
+        pluginId,
+        contributes: pluginPackage.manifest.contributes,
+      });
+    } catch (error) {
+      this.options.logger?.error('plugin.activation.contributions', error, { pluginId, instanceId });
+      this.#revokeContributions(instanceId);
+      throw error;
+    }
+  }
+
+  #revokeContributions(instanceId: string): void {
+    this.options.contributions?.revokePluginInstance(instanceId);
+  }
+
   #deactivateInstance(record: ActiveRecord, reason: PluginRuntimeDeactivateReason): void {
+    this.#revokeContributions(record.instanceId);
     if (record.mode === 'standard') {
       this.options.supervisor.deactivate(record.instanceId, reason);
       return;
@@ -204,6 +242,12 @@ export class PluginActivationCoordinator {
   }
 
   #deactivateLibraryHosts(libraryId: string, reason: PluginRuntimeDeactivateReason): void {
+    const active = this.#activeByLibrary.get(libraryId);
+    if (active !== undefined) {
+      for (const record of active.values()) {
+        this.#revokeContributions(record.instanceId);
+      }
+    }
     this.options.supervisor.deactivateLibrary(libraryId, reason);
     this.options.trustedSupervisor?.deactivateLibrary(libraryId, reason);
   }

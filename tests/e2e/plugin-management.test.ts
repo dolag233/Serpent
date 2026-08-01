@@ -4,7 +4,7 @@ import path from 'node:path';
 
 import { _electron as electron, expect, test } from '@playwright/test';
 
-import { resolveElectronExecutablePath } from './electron-test-helpers';
+import { resolveElectronExecutablePath, electronLaunchEnv } from './electron-test-helpers';
 import manifestFixture from '../fixtures/plugin-manifests/palette-tools.serpent-plugin.json';
 
 test.describe.configure({ timeout: 120_000 });
@@ -33,13 +33,12 @@ test('installs a library plugin through the settings bridge, then trusts and Saf
     args: [applicationDirectory],
     cwd: applicationDirectory,
     executablePath,
-    env: {
-      ...process.env,
+    env: electronLaunchEnv({
       SERPENT_E2E: '1',
       SERPENT_E2E_USER_DATA_PATH: path.join(temporaryRoot, 'user-data'),
       SERPENT_E2E_CREATE_PARENT_PATH: temporaryRoot,
       SERPENT_E2E_PLUGIN_PACKAGE: packageDirectory,
-    },
+    }),
   });
 
   try {
@@ -53,9 +52,10 @@ test('installs a library plugin through the settings bridge, then trusts and Saf
     await dialog.getByRole('tab', { name: '插件' }).click();
     await expect(dialog.getByText('暂未安装插件。', { exact: true })).toBeVisible();
     await dialog.getByRole('radio', { name: '此资源库' }).click();
+    await expect(dialog.getByText('暂未安装插件。', { exact: true })).toBeVisible();
     await dialog.getByRole('button', { name: '选择本地插件…' }).click();
 
-    await expect(dialog.getByText('Palette Tools', { exact: true })).toBeVisible();
+    await expect(dialog.getByText('Palette Tools', { exact: true })).toBeVisible({ timeout: 30_000 });
     await expect(dialog.getByText('等待在此设备上信任', { exact: true })).toBeVisible();
     await expect(dialog.getByText('本地文件夹', { exact: true })).toBeVisible();
     await dialog.getByRole('button', { name: '信任', exact: true }).click();

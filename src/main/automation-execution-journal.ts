@@ -24,7 +24,7 @@ import type {
   AutomationExecutionResolver,
 } from '../automation/command-gateway';
 
-const automationExecutionStatusSchema = z.enum([
+export const automationExecutionStatusSchema = z.enum([
   'created',
   'validating',
   'awaiting-authorization',
@@ -38,6 +38,8 @@ const automationExecutionStatusSchema = z.enum([
 ]);
 
 export type AutomationExecutionStatus = z.infer<typeof automationExecutionStatusSchema>;
+
+const MCP_EXECUTION_MAX_WALL_TIME_MS = 30 * 60_000;
 
 const nonBlankString = z.string().min(1).max(255).refine((value) => value.trim().length > 0, {
   message: 'Value must not be blank.',
@@ -58,6 +60,8 @@ const automationExecutionFailureCodes = [
   'AUTOMATION_EXECUTION_NOT_FOUND',
   'AUTOMATION_SOURCE_NOT_ALLOWED',
   'AUTOMATION_CAPABILITY_DENIED',
+  'AUTOMATION_LIBRARY_NOT_BOUND',
+  'AUTOMATION_LIBRARY_OPEN_FAILED',
   'AUTOMATION_CONCURRENCY_LIMIT_REACHED',
   'AUTOMATION_RESULT_INVALID',
   'AUTOMATION_GRANT_NOT_ALLOWED',
@@ -114,11 +118,46 @@ const executionSummarySchema = z.strictObject({
 
 export type AutomationExecutionSummary = z.infer<typeof executionSummarySchema>;
 
+export const automationExecutionStatusProjectionSchema = z.strictObject({
+  executionId: nonBlankString,
+  status: automationExecutionStatusSchema,
+  commandCount: z.number().int().nonnegative(),
+  succeededCommandCount: z.number().int().nonnegative(),
+  failedCommandCount: z.number().int().nonnegative(),
+  lastCommandId: nonBlankString.nullable(),
+  failureCode: automationExecutionFailureCodeSchema.nullable(),
+  deadlineAt: z.string().datetime(),
+  createdAt: z.string().datetime(),
+  finishedAt: z.string().datetime().nullable(),
+  summary: executionSummarySchema.nullable(),
+});
+
+export type AutomationExecutionStatusProjection = z.infer<typeof automationExecutionStatusProjectionSchema>;
+
+/** Path-free execution observability projection aligned with Console history fields. */
+export function projectAutomationExecutionStatus(
+  record: AutomationExecutionRecord,
+): AutomationExecutionStatusProjection {
+  return {
+    executionId: record.executionId,
+    status: record.status,
+    commandCount: record.commandCount,
+    succeededCommandCount: record.succeededCommandCount,
+    failedCommandCount: record.failedCommandCount,
+    lastCommandId: record.lastCommandId,
+    failureCode: record.failureCode,
+    deadlineAt: record.deadlineAt,
+    createdAt: record.createdAt,
+    finishedAt: record.finishedAt,
+    summary: record.summary === null ? null : { ...record.summary },
+  };
+}
+
 const automationExecutionRecordSchema = z.strictObject({
   executionId: nonBlankString,
   logId: nonBlankString,
   source: automationSourceSchema,
-  libraryId: automationLibraryIdSchema,
+  libraryId: automationLibraryIdSchema.nullable(),
   apiVersion: z.literal(AUTOMATION_API_VERSION),
   scriptHash: z.string().regex(/^[a-f0-9]{64}$/u).nullable(),
   sessionId: automationSessionIdSchema.nullable(),
@@ -149,10 +188,46 @@ const automationPersistentGrantSchema = z.strictObject({
 
 export type AutomationPersistentGrant = z.infer<typeof automationPersistentGrantSchema>;
 
+const automationUndoGroupStatusSchema = z.enum([
+  'open',
+  'succeeded',
+  'partially-succeeded',
+  'failed',
+  'cancelled',
+  'interrupted',
+]);
+
+export type AutomationUndoGroupStatus = z.infer<typeof automationUndoGroupStatusSchema>;
+
+const automationUndoItemSchema = z.strictObject({
+  itemId: nonBlankString,
+  kind: nonBlankString,
+  reference: nonBlankString,
+  reversible: z.boolean(),
+});
+
+export type AutomationUndoItem = z.infer<typeof automationUndoItemSchema>;
+
+const automationUndoGroupSchema = z.strictObject({
+  undoGroupId: nonBlankString,
+  executionId: nonBlankString,
+  libraryId: automationLibraryIdSchema,
+  status: automationUndoGroupStatusSchema,
+  items: z.array(automationUndoItemSchema).max(10_000),
+  undoable: z.boolean(),
+  failureReason: nonBlankString.nullable(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+  finishedAt: z.string().datetime().nullable(),
+});
+
+export type AutomationUndoGroup = z.infer<typeof automationUndoGroupSchema>;
+
 const automationExecutionJournalSnapshotSchema = z.strictObject({
   version: z.literal(1),
   executions: z.array(automationExecutionRecordSchema).max(2_000),
   persistentGrants: z.array(automationPersistentGrantSchema).max(2_000),
+  undoGroups: z.array(automationUndoGroupSchema).max(2_000).default([]),
 });
 
 type AutomationExecutionJournalSnapshot = z.infer<typeof automationExecutionJournalSnapshotSchema>;
@@ -166,7 +241,7 @@ const terminalStatuses = new Set<AutomationExecutionStatus>([
 ]);
 
 function defaultSnapshot(): AutomationExecutionJournalSnapshot {
-  return { version: 1, executions: [], persistentGrants: [] };
+  return { version: 1, executions: [], persistentGrants: [], undoGroups: [] };
 }
 
 function normalizeCapabilities(capabilities: readonly AutomationCapability[]): AutomationCapability[] {
@@ -198,6 +273,13 @@ function safeRecord(record: AutomationExecutionRecord): AutomationExecutionRecor
     grantedCapabilities: [...record.grantedCapabilities],
     resourceBudget: { ...record.resourceBudget },
     summary: record.summary === null ? null : { ...record.summary },
+  };
+}
+
+function safeUndoGroup(group: AutomationUndoGroup): AutomationUndoGroup {
+  return {
+    ...group,
+    items: group.items.map((item) => ({ ...item })),
   };
 }
 
@@ -236,7 +318,7 @@ export type AutomationAuthorizationPersistence = 'session' | 'saved-script';
 
 export interface CreateAutomationExecutionInput {
   source: AutomationSource;
-  libraryId: string;
+  libraryId: string | null;
   scriptSource?: string;
   sessionId?: string;
   declaredCapabilities: readonly AutomationCapability[];
@@ -255,6 +337,17 @@ export interface CompleteAutomationExecutionInput {
   status: Extract<AutomationExecutionStatus, 'succeeded' | 'partially-succeeded' | 'failed' | 'cancelled' | 'timed-out'>;
   summary?: AutomationExecutionSummary;
   failureCode?: AutomationExecutionFailureCode;
+}
+
+export interface CreateAutomationUndoGroupInput {
+  executionId: string;
+  libraryId: string;
+  undoGroupId?: string;
+}
+
+export interface CompleteAutomationUndoGroupInput {
+  status: Exclude<AutomationUndoGroupStatus, 'open' | 'interrupted'>;
+  failureReason?: string | null;
 }
 
 export interface AutomationExecutionJournalOptions {
@@ -321,11 +414,12 @@ export class AutomationExecutionJournal implements AutomationExecutionResolver {
     this.#resourceBudget = automationExecutionResourceBudgetSchema.parse(resourceBudget);
     this.#snapshot = this.#store.load();
     this.#recoverInterruptedExecutions();
+    this.#recoverInterruptedUndoGroups();
   }
 
   create(input: CreateAutomationExecutionInput): AutomationExecutionRecord {
     const source = automationSourceSchema.parse(input.source);
-    const libraryId = automationLibraryIdSchema.parse(input.libraryId);
+    const libraryId = input.libraryId === null ? null : automationLibraryIdSchema.parse(input.libraryId);
     const declaredCapabilities = normalizeCapabilities(z.array(automationCapabilitySchema).max(64).parse(input.declaredCapabilities));
     const scriptSource = input.scriptSource;
     if ((source === 'desktop-console' || source === 'script') && typeof scriptSource !== 'string') {
@@ -347,6 +441,9 @@ export class AutomationExecutionJournal implements AutomationExecutionResolver {
     const nowDate = this.#clock();
     const now = nowDate.toISOString();
     const scriptHash = scriptSource === undefined ? null : hashScript(scriptSource);
+    const resourceBudget = source === 'mcp'
+      ? { ...this.#resourceBudget, maxWallTimeMs: MCP_EXECUTION_MAX_WALL_TIME_MS }
+      : { ...this.#resourceBudget };
     const record: AutomationExecutionRecord = {
       executionId: this.#nextUniqueId('execution'),
       logId: this.#nextUniqueId('log'),
@@ -355,8 +452,8 @@ export class AutomationExecutionJournal implements AutomationExecutionResolver {
       apiVersion: AUTOMATION_API_VERSION,
       scriptHash,
       sessionId,
-      deadlineAt: new Date(nowDate.getTime() + this.#resourceBudget.maxWallTimeMs).toISOString(),
-      resourceBudget: { ...this.#resourceBudget },
+      deadlineAt: new Date(nowDate.getTime() + resourceBudget.maxWallTimeMs).toISOString(),
+      resourceBudget,
       declaredCapabilities,
       grantedCapabilities: [],
       status: 'created',
@@ -399,6 +496,7 @@ export class AutomationExecutionJournal implements AutomationExecutionResolver {
     if (!record || record.status !== 'validating') return record === undefined ? undefined : safeRecord(record);
     const preAuthorized = record.source === 'script'
       && record.scriptHash !== null
+      && record.libraryId !== null
       && this.#hasPersistentGrant(record.scriptHash, record.libraryId, record.declaredCapabilities);
     record.grantedCapabilities = preAuthorized ? [...record.declaredCapabilities] : [];
     record.status = preAuthorized ? 'running' : 'awaiting-authorization';
@@ -434,7 +532,7 @@ export class AutomationExecutionJournal implements AutomationExecutionResolver {
     const mcpSessionGrant = record.source === 'mcp' && input.persistence === 'session';
     if (!allowed && !mcpSessionGrant) return { ok: false, code: 'AUTOMATION_GRANT_NOT_ALLOWED' };
 
-    if (input.persistence === 'saved-script' && record.scriptHash !== null) {
+    if (input.persistence === 'saved-script' && record.scriptHash !== null && record.libraryId !== null) {
       this.#upsertPersistentGrant({
         scriptHash: record.scriptHash,
         libraryId: record.libraryId,
@@ -485,6 +583,26 @@ export class AutomationExecutionJournal implements AutomationExecutionResolver {
     };
   }
 
+  /**
+   * Main calls this only after a headless `library.create` has completed the
+   * actual open/initialization handshake.  The execution cannot be rebound to
+   * another library after it becomes bound.
+   */
+  bindLibrary(executionId: string, libraryId: string): AutomationExecutionRecord | undefined {
+    const record = this.#find(executionId);
+    if (!record || terminalStatus(record.status)) {
+      return record === undefined ? undefined : safeRecord(record);
+    }
+    if (record.libraryId !== null) {
+      throw new Error('Automation execution is already bound to a library.');
+    }
+    record.libraryId = automationLibraryIdSchema.parse(libraryId);
+    record.updatedAt = this.#now();
+    this.#persist();
+    this.#info('library-bound', record, 'Automation execution bound to an opened library.');
+    return safeRecord(record);
+  }
+
   get(executionId: string): AutomationExecutionRecord | undefined {
     const record = this.#find(executionId);
     return record === undefined ? undefined : safeRecord(record);
@@ -494,6 +612,121 @@ export class AutomationExecutionJournal implements AutomationExecutionResolver {
     return this.#snapshot.executions
       .filter((record) => libraryId === undefined || record.libraryId === libraryId)
       .map(safeRecord);
+  }
+
+  createUndoGroup(input: CreateAutomationUndoGroupInput): AutomationUndoGroup {
+    const executionId = nonBlankString.parse(input.executionId);
+    const libraryId = automationLibraryIdSchema.parse(input.libraryId);
+    const execution = this.#find(executionId);
+    if (!execution || execution.libraryId !== libraryId) {
+      throw new Error('An undo group must belong to its execution library.');
+    }
+    const undoGroupId = nonBlankString.parse(input.undoGroupId ?? randomUUID());
+    if (this.#snapshot.undoGroups.some((group) => group.undoGroupId === undoGroupId)) {
+      throw new Error('The undo group ID is already in use.');
+    }
+    const now = this.#now();
+    const group: AutomationUndoGroup = {
+      undoGroupId,
+      executionId,
+      libraryId,
+      status: 'open',
+      items: [],
+      undoable: false,
+      failureReason: null,
+      createdAt: now,
+      updatedAt: now,
+      finishedAt: null,
+    };
+    this.#snapshot.undoGroups.push(group);
+    this.#trimUndoGroups();
+    this.#persist();
+    this.#logger.info('automation.undo-group.created', 'Automation undo group created.', {
+      undoGroupId,
+      executionId,
+      libraryId,
+    });
+    return safeUndoGroup(group);
+  }
+
+  appendUndoGroupItems(
+    undoGroupId: string,
+    items: readonly AutomationUndoItem[],
+  ): AutomationUndoGroup | undefined {
+    const group = this.#snapshot.undoGroups.find((candidate) => candidate.undoGroupId === undoGroupId);
+    if (!group) return undefined;
+    if (group.status !== 'open') throw new Error('Only an open undo group can receive items.');
+    const parsedItems = z.array(automationUndoItemSchema).max(10_000).parse(items);
+    const knownItemIds = new Set(group.items.map((item) => item.itemId));
+    for (const item of parsedItems) {
+      if (knownItemIds.has(item.itemId)) throw new Error('An undo item ID is already in use in this group.');
+      knownItemIds.add(item.itemId);
+    }
+    group.items.push(...parsedItems.map((item) => ({ ...item })));
+    group.updatedAt = this.#now();
+    this.#persist();
+    return safeUndoGroup(group);
+  }
+
+  completeUndoGroup(
+    undoGroupId: string,
+    input: CompleteAutomationUndoGroupInput,
+  ): AutomationUndoGroup | undefined {
+    const group = this.#snapshot.undoGroups.find((candidate) => candidate.undoGroupId === undoGroupId);
+    if (!group) return undefined;
+    if (group.status !== 'open') throw new Error('Only an open undo group can be completed.');
+    const status = automationUndoGroupStatusSchema.parse(input.status);
+    if (status === 'open' || status === 'interrupted') {
+      throw new Error('An undo group must be completed with a terminal status.');
+    }
+    const failureReason = input.failureReason === undefined || input.failureReason === null
+      ? null
+      : nonBlankString.parse(input.failureReason);
+    const now = this.#now();
+    group.status = status;
+    group.failureReason = failureReason;
+    group.undoable = status === 'succeeded'
+      && group.items.length > 0
+      && group.items.every((item) => item.reversible);
+    group.updatedAt = now;
+    group.finishedAt = now;
+    this.#persist();
+    this.#logger.info('automation.undo-group.completed', 'Automation undo group completed.', {
+      undoGroupId,
+      executionId: group.executionId,
+      libraryId: group.libraryId,
+      status,
+      undoable: group.undoable,
+      failureReason,
+    });
+    return safeUndoGroup(group);
+  }
+
+  getUndoGroup(undoGroupId: string): AutomationUndoGroup | undefined {
+    const group = this.#snapshot.undoGroups.find((candidate) => candidate.undoGroupId === undoGroupId);
+    return group === undefined ? undefined : safeUndoGroup(group);
+  }
+
+  consumeUndoGroup(undoGroupId: string): AutomationUndoGroup | undefined {
+    const group = this.#snapshot.undoGroups.find((candidate) => candidate.undoGroupId === undoGroupId);
+    if (!group) return undefined;
+    if (!group.undoable) return safeUndoGroup(group);
+    group.undoable = false;
+    group.failureReason = 'This undo group has already been applied.';
+    group.updatedAt = this.#now();
+    this.#persist();
+    this.#logger.info('automation.undo-group.consumed', 'Automation undo group was applied.', {
+      undoGroupId,
+      executionId: group.executionId,
+      libraryId: group.libraryId,
+    });
+    return safeUndoGroup(group);
+  }
+
+  listUndoGroups(libraryId?: string): AutomationUndoGroup[] {
+    return this.#snapshot.undoGroups
+      .filter((group) => libraryId === undefined || group.libraryId === libraryId)
+      .map(safeUndoGroup);
   }
 
   complete(executionId: string, input: CompleteAutomationExecutionInput): AutomationExecutionRecord | undefined {
@@ -626,6 +859,25 @@ export class AutomationExecutionJournal implements AutomationExecutionResolver {
     if (changed) this.#persist();
   }
 
+  #recoverInterruptedUndoGroups(): void {
+    let changed = false;
+    for (const group of this.#snapshot.undoGroups) {
+      if (group.status !== 'open') continue;
+      group.status = 'interrupted';
+      group.undoable = false;
+      group.failureReason = 'Automation execution was interrupted by app restart.';
+      group.updatedAt = this.#now();
+      group.finishedAt = group.updatedAt;
+      changed = true;
+      this.#logger.info('automation.undo-group.interrupted', 'Automation undo group was interrupted by app restart.', {
+        undoGroupId: group.undoGroupId,
+        executionId: group.executionId,
+        libraryId: group.libraryId,
+      });
+    }
+    if (changed) this.#persist();
+  }
+
   #find(executionId: string): AutomationExecutionRecord | undefined {
     return this.#snapshot.executions.find((record) => record.executionId === executionId);
   }
@@ -644,6 +896,11 @@ export class AutomationExecutionJournal implements AutomationExecutionResolver {
     if (this.#snapshot.persistentGrants.length <= this.#persistentGrantLimit) return;
     this.#snapshot.persistentGrants.sort((left, right) => left.grantedAt.localeCompare(right.grantedAt));
     this.#snapshot.persistentGrants = this.#snapshot.persistentGrants.slice(-this.#persistentGrantLimit);
+  }
+
+  #trimUndoGroups(): void {
+    if (this.#snapshot.undoGroups.length <= 2_000) return;
+    this.#snapshot.undoGroups = this.#snapshot.undoGroups.slice(-2_000);
   }
 
   #activeExecutionCount(): number {

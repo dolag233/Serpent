@@ -204,6 +204,10 @@ AssetMetadata
   updated_at
 ```
 
+`entity_version` 仅是 `AssetMetadata` 行的乐观并发控制 token，不是文件内容版本，也不要求
+在用户界面展示。文件内容修订由 `Asset.current_revision_id` 指向 `Revision`；导入、替换或
+接受外部内容变化时切换到新的修订，元数据和组织操作不改变该指针。
+
 `author`（Serpent-7x0）是用户可编辑的创作者/作者字段，与 `source_page_url` 共用清空语义（保存空字符串即清空为 `null`）。图片首次生成缩略图时，若 `author` 为空，Worker 会尝试从文件的 EXIF/IPTC/XMP 元数据中提取创作者信息（优先级：XMP `dc:creator` > IPTC By-line/Creator > EXIF `Artist`）并回填，但不覆盖用户已填写或此前已提取过的非空值；这是尽力而为的增强，提取失败或没有相关字段时保持为空，不阻塞缩略图生成。视频等不支持 EXIF 的格式不做自动提取。
 
 AI 生成的单值或结构化内容单独保存：

@@ -208,7 +208,6 @@ describe('LibraryService export', () => {
     expect(
       existsSync(path.join(destPath, '.serpent', 'artifacts', `${thumb.artifactId}.webp`)),
     ).toBe(true);
-
     service.closeAll();
 
     const service2 = newService();

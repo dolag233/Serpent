@@ -71,8 +71,27 @@ export const importConflictPlanSchema = z.strictObject({
 
 export type ImportConflictPlan = z.infer<typeof importConflictPlanSchema>;
 
+export const automationImportPlanSchema = z.strictObject({
+  libraryId: nonBlankString,
+  planHash: z.string().regex(/^[a-f0-9]{64}$/u).optional(),
+  changeSequence: z.number().int().nonnegative(),
+  fileCount: z.number().int().nonnegative(),
+  totalBytes: z.number().int().nonnegative(),
+  suspectedDuplicateCount: z.number().int().nonnegative(),
+  libraryDuplicateCount: z.number().int().nonnegative(),
+  nameConflictCount: z.number().int().nonnegative(),
+  sourceStates: z.array(z.strictObject({
+    sourcePath: nonBlankString,
+    stateToken: z.string().regex(/^[a-f0-9]{64}$/u),
+  })).max(1_000),
+});
+
+export type AutomationImportPlan = z.infer<typeof automationImportPlanSchema>;
+
 export const importCompletionSchema = z.strictObject({
   importedCount: z.number().int().nonnegative(),
+  fileCount: z.number().int().nonnegative(),
+  assetCount: z.number().int().nonnegative(),
   skippedCount: z.number().int().nonnegative(),
   replacedCount: z.number().int().nonnegative(),
   assets: z.array(assetSummarySchema),
@@ -174,6 +193,18 @@ export type AssetChangeEvent = z.infer<typeof assetChangeEventSchema>;
 
 export function parseAssetChangeEvent(input: unknown): AssetChangeEvent {
   return assetChangeEventSchema.parse(input);
+}
+
+export const libraryChangedEventSchema = z.strictObject({
+  type: z.literal('library.changed'),
+  libraryId: nonBlankString,
+  changeSequence: z.number().int().nonnegative(),
+});
+
+export type LibraryChangedEvent = z.infer<typeof libraryChangedEventSchema>;
+
+export function parseLibraryChangedEvent(input: unknown): LibraryChangedEvent {
+  return libraryChangedEventSchema.parse(input);
 }
 
 export const extensionSaveCompletedEventSchema = z.strictObject({
@@ -690,6 +721,7 @@ const assetOperationSuccessSchemas = [
     ok: z.literal(true),
     type: z.literal('asset.trashed'),
     trashedCount: z.number().int().nonnegative(),
+    operationId: nonBlankString,
   }),
   z.strictObject({
     ok: z.literal(true),
@@ -714,6 +746,13 @@ const assetOperationSuccessSchemas = [
     ok: z.literal(true),
     type: z.literal('asset.move-undone'),
     undoneCount: z.number().int().nonnegative(),
+    skippedCount: z.number().int().nonnegative(),
+    assets: z.array(assetSummarySchema),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('asset.trash-undone'),
+    restoredCount: z.number().int().nonnegative(),
     skippedCount: z.number().int().nonnegative(),
     assets: z.array(assetSummarySchema),
   }),
@@ -774,7 +813,7 @@ const assetOperationSuccessSchemas = [
     ok: z.literal(true),
     type: z.literal('automation.file-operation-planned'),
     libraryId: nonBlankString,
-    operation: z.enum(['trash', 'rename-file', 'rename-files', 'restore-if-original-vacant']),
+    operation: z.enum(['trash', 'move', 'rename-file', 'rename-files', 'restore-if-original-vacant']),
     changeSequence: z.number().int().nonnegative(),
     targetCount: z.number().int().positive(),
     executableCount: z.number().int().nonnegative(),
@@ -784,6 +823,11 @@ const assetOperationSuccessSchemas = [
       assetId: nonBlankString,
       stateToken: z.string().regex(/^[a-f0-9]{64}$/u),
     })).min(1),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('automation.file-import-planned'),
+    plan: automationImportPlanSchema,
   }),
   z.strictObject({
     ok: z.literal(true),
@@ -1059,6 +1103,12 @@ const workerSuccessResultSchema = z.discriminatedUnion('type', [
     ok: z.literal(true),
     type: z.literal('library.list'),
     libraries: z.array(internalLibrarySummarySchema),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('library.change-sequence'),
+    libraryId: nonBlankString,
+    changeSequence: z.number().int().nonnegative(),
   }),
   z.strictObject({
     ok: z.literal(true),

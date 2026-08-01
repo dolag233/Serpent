@@ -2,7 +2,7 @@
 
 > 入口：打开资源库后，在工作区右上角的“更多工具”中选择“自动化脚本”。
 >
-> 这是交互式 JavaScript / TypeScript Console，不需要先创建脚本文件。可以把已验证的 Console 代码保存为 `.serpent.js` 或 `.serpent.ts`，也可以重新打开它。脚本按 **headless 可运行** 理解：可以没有已打开的资源库（例如先 `library.create` 再建文件夹并导入）。脚本只通过注入的 `serpent` 领域 Action 调用 Gateway；没有 Node、任意文件系统、原始网络、环境变量、SQL 或任意 IPC 权限。MCP 暴露的领域 Action 与 Console 相同，差别只在调用者（人 vs Agent）。
+> 这是交互式 JavaScript / TypeScript Console，不需要先创建脚本文件。可以把已验证的 Console 代码保存为 `.serpent.js` 或 `.serpent.ts`，也可以重新打开它。脚本按 **headless 可运行** 理解：可以没有已打开的资源库（例如先 `library.create` 再建文件夹并导入）。脚本只通过注入的 `serpent` 领域 Action 调用 Gateway；没有 Node、任意文件系统、原始网络、环境变量、SQL 或任意 IPC 权限。MCP 暴露的领域 Action 与 Console 相同，差别只在调用者（人 vs Agent）。需要控制已打开 Desktop 的窗口或网格选中状态时，使用附着 MCP；这不是脚本 API。
 
 ## 运行与确认
 
@@ -19,12 +19,26 @@
 
 ```ts
 serpent.library.inspect()
-// -> { id, displayName }（不含资源库路径）
+// -> { libraryId, displayName }（不含资源库路径）
+
+serpent.library.create({ displayName, selectedParentPath })
+// -> { libraryId, displayName }；仅未绑定 headless 执行可调用
+
+serpent.files.import({
+  sourceKind: 'files' | 'folder',
+  sourcePaths,
+  targetFolderId?,
+  imageSequenceFps?,
+  expandImageSequences?, // 仅控制导入时是否按序列展开源文件；默认 false
+})
+// -> { status: 'conflicts', plan } 或 { status: 'completed', completion }
+// completion.fileCount / assetCount 分别表示导入文件和逻辑资产
 
 serpent.folders.list({ limit?, offset? })
 // -> { items: [{ id, parentId, name }], total, offset, limit, hasMore }
 serpent.folders.create(name, parentFolderId?)
 // -> { id, parentId, name }
+// 注意：当前没有「把已有资产移动到文件夹」的脚本/MCP Action；创建文件夹 ≠ 完成分类
 
 serpent.linkedFolders.list({ limit?, offset? })
 // -> { items: [{ id, name, status, assetCount }], ... }（不含绝对路径）
@@ -36,23 +50,44 @@ serpent.tags.remove(assetIds, tagIds)
 
 serpent.collections.list({ limit?, offset? })
 serpent.collections.getMemberships(assetIds, { limit?, offset? })
+serpent.collections.create(name, parentId?)
+serpent.collections.addAssets(collectionId, assetIds)
+serpent.collections.removeAssets(collectionId, assetIds)
 
 serpent.smartCollections.list({ limit?, offset? })
 
 serpent.jobs.media.list({ limit?, offset? })
 serpent.jobs.ai.status({ jobIds?, limit?, offset? })
+serpent.jobs.ai.enqueue({ assetIds?, folderId?, resumePaused? })
+// AI 只负责理解/建议（描述、标签等）；不直接移动文件夹或静默改磁盘位置
 
 serpent.assets.search({ query, limit?, offset? })
+// Console / 脚本：query 为工具栏同款字符串或 null，例如 'tag:抽象'、'name:Ser | tag:Ser'
+// MCP：可同样传字符串；也可直接传结构化 SearchQuery（field 用 filename，不是 name）
+// 结构化示例：{ query: { clauses: [{ field: 'filename', values: ['sunny'], exclude: false }] } }
+// name: 是 UI 别名，会归一到 filename；子串匹配可能让 rain 命中 rainbow
 serpent.assets.list({ folderId?, recursive?, limit?, offset? })
-// -> { items: [{ id, name, rating, favorite, locationKind, folderId }], ... }
+// -> { items: [{ id, name, currentRevisionId, rating, favorite, locationKind, folderId }], ... }
 
 serpent.assets.getMetadata(assetId)
-// -> { tags, rating, favorite, automaticPalette, ... }
+// -> { tags, rating, favorite, automaticPalette, entityVersion, ... }
+serpent.assets.getAiContent(assetId)
+// -> { assetId, description, tags, rating, modelVersion }
+// 读取当前 AI 层结果；不会把 AI 建议混入人工 metadata，也不会修改资源库
 serpent.assets.getExtractedMetadata(assetId)
+const metadata = await serpent.assets.getMetadata(assetId)
+serpent.assets.setMetadata({
+  assetId,
+  expectedVersion: metadata.entityVersion,
+  description?, rating?, favorite?, sourcePageUrl?, author?
+})
 
 serpent.assets.setRating(assetIds, 0 | 1 | 2 | 3 | 4 | 5)
 serpent.assets.copyFilePaths(assetIds)
 serpent.assets.moveToTrash(assetIds)
+// -> { trashedCount, operationId }；operationId 是 Main/Worker 内部恢复引用
+serpent.assets.moveToFolder(assetIds, targetFolderId, { conflictStrategy? })
+// -> { movedCount, skippedCount, operationId }；需本机计划确认；保留标签/合集/评分/元数据
 serpent.assets.renameFile(assetId, newBaseName)
 serpent.assets.renameFiles([{ assetId, newBaseName }, ...])
 
@@ -62,7 +97,43 @@ serpent.trash.restoreIfOriginalVacant(assetIds)
 serpent.palettes.mostFrequent({ days?: 2, limit?: 12 })
 ```
 
-`rating` 是用户手动评分；AI 分析评分不会覆盖它。`search({ query: null })` 搜索当前资源库所有非回收站资产。搜索语法与顶部搜索一致，例如 `tag:抽象`、`name:Ser | tag:Ser`。
+`rating` 是用户手动评分；AI 分析评分不会覆盖它。`search({ query: null })` 搜索当前资源库所有非回收站资产。UI 搜索字段别名：`name`→`filename`，`tag`→`tags`。
+
+`currentRevisionId` 是文件内容修订的稳定 ID：导入新文件、替换托管文件或接受链接文件的外部内容变化时切换为新的 ID；移动、重命名、回收站、恢复、评分、喜欢、标签和其他元数据修改不会改变它。`entityVersion` 只属于资产元数据行的乐观并发控制，供 `setMetadata({ expectedVersion })` 防止陈旧写入；它不是文件版本，也不应在脚本结果或 UI 中当作内容版本展示。
+
+## 资源库变更推送（MCP）
+
+MCP 客户端可以继续轮询 `serpent_library_change_sequence` 获取当前序号，也可以监听标准 MCP `notifications/message`。资源库发生变更且该 MCP 执行已绑定该资源库时，通知的 `data` 为：
+
+```json
+{
+  "type": "library.changed",
+  "libraryId": "library-id",
+  "changeSequence": 42
+}
+```
+
+未绑定的 MCP 执行不会收到资源库变更推送。通知不包含资源库路径或其他文件系统路径。
+
+## 已打开 Desktop 的附着 MCP
+
+`npm run mcp` 默认连接当前用户已经打开的 Serpent Desktop；如果没有运行实例，会先启动一个可见的 Desktop，再请求本机附着确认。连接使用当前 Desktop 的 Main/Library Worker 和当前激活资源库，不会另开一个与界面隔离的 Worker。显式使用 `npm run mcp -- --headless` 保留原来的无界面 MCP 行为，适用于 CI、指定 `--library` 和 `--unbound` 流程。
+
+附着确认通过后，只有两个 Desktop 专用工具可用：
+
+```text
+serpent_desktop_focus()
+serpent_desktop_select_assets({ assetIds, mode: "replace" | "add" | "remove" })
+```
+
+`serpent_desktop_focus` 只恢复、显示并聚焦 Serpent 主窗口。`serpent_desktop_select_assets` 只改变当前 Renderer 的资产选中状态，不写入数据库、不递增 `entity_version`/内容 `revision`、不创建文件计划或 Undo Group；网格中当前已加载的对应卡片会使用正常的选中高亮。附着 MCP 不提供任意窗口控制、DOM 注入、键鼠模拟、Shell、SQL、网络或文件系统能力。附着会话随 Desktop 退出而结束，拒绝确认不会产生库或 UI 副作用。
+
+## Undo Group
+
+可撤销的文件操作返回 `undoGroupId`，同一用户意图中的连续变更共享一个组。Desktop Console
+可以从执行完成状态发起撤销；MCP 和脚本应保存该 ID，并把撤销结果中的
+`undoneCount`、`skippedCount` 视为最终结果。部分成功或组内存在不可逆成员时，不得报告为“全部已撤销”。
+重复使用已经消费的组会被拒绝。Undo Group 不提供永久删除能力，也不绕过本机计划确认。
 
 ## 常用辅助函数
 
@@ -219,8 +290,18 @@ return { tag, matched: assets.length, ...result };
 
 ### 当前实现进度（会落后于产品边界）
 
-- 已支持：只读表面、评分、元数据（含喜欢）、标签 create/assign/remove、空文件夹 create、合集 create/add/remove、AI enqueue、部分文件 plan（复制路径/重命名/回收站）。
-- MCP：`npm run mcp -- --library <绝对路径>`；可选 `--write-access`。工具由 Registry 映射。详见 [stdio MCP 开发日志](development/2026-07-30-stdio-mcp-adapter-development-log.md) 与 [Phase D 开发日志](development/2026-07-30-phase-d-low-risk-writes-development-log.md)。
+- 已支持：只读表面、评分、元数据（含喜欢）、标签 create/assign/remove、空文件夹 create、合集 create/add/remove、AI enqueue、文件 plan（复制路径/重命名/回收站）、headless `library.create` 与 `file.import` readonly 预览及陈旧源拒绝。
+- MCP：默认 `npm run mcp` 附着已打开 Desktop；无界面/指定资源库流程使用 `npm run mcp -- --headless --library <绝对路径>`，无预绑定资源库时使用 `--unbound`，写工具使用 `--write-access`。工具由 Registry 映射，plan 工具始终经 Main 本机确认；附着模式额外列出 `serpent_desktop_focus` 与 `serpent_desktop_select_assets`，headless 模式不列出 Desktop-only 工具。
 - Console 显示最近执行历史，并可跳转单次运行日志。
-- 尚未接通：`library.create`、`file.import`、真实双 MCP Host 冒烟与 packaged 启动器、独立 `.d.ts` 包。
+- 文件移动和回收站写入已记录 `operationId` 并进入持久化 Undo Group；Console 的应用级
+  `Ctrl/Cmd+Z` 会按 `executionId` / `undoGroupId` 请求 Main/Worker 恢复，脚本和 MCP
+  仍只能消费返回的组结果，不能自行修改文件。
+- **已知缺口（2026-07-31 天气图片 Agent 反馈）**：
+  - 高风险本机确认若超过 MCP **客户端**默认超时，客户端会报超时而后台可能仍完成。MCP 会话墙钟上限已提高到 30 分钟；长写操作（`library.create`、计划预览）在 Main→Worker 侧使用 5 分钟请求超时。客户端应把工具调用超时设得足够长，并在超时或轮询间隙调用 `serpent_execution_status`（Registry `execution.status`）确认执行是否仍在进行或已结束，再决定是否重试。
+  - `library.create` 与 `file.import` 支持可选的 `idempotencyKey`（非空白字符串，最长 128 个字符）。客户端超时后先轮询 `serpent_execution_status`；确需重试时，必须使用相同 key 和完全相同的命令参数。相同执行、命令和 key 会复用进行中的或已成功的结果；复用同一 key 但修改参数会被 `AUTOMATION_INVALID_REQUEST` 拒绝。不要为同一次未确认的写入生成新 key。
+  - AI 入队已暴露；文件夹移动已接计划确认（`asset.move` / `moveToFolder`），可与 AI 分类流程组合使用。
+- 已支持：计划确认的 `asset.move`（MCP `serpent_asset_move`，脚本 `serpent.assets.moveToFolder`）。
+- 尚未验证：真实双 MCP Host 冒烟、当前 HEAD 的 packaged 应用脚本/MCP smoke 和 Windows。
+  类型声明位于 `docs/skills/serpent-automation/automation-api.d.ts`，由 Registry
+  命令 ID 与 `AUTOMATION_API_VERSION` 的打包门禁校验；文档和声明留在仓库，不强制进入 ASAR。
 - 单次脚本执行仍有 CPU、内存、输出、待处理 Promise 和墙钟限制。可用“停止”或关闭窗口取消未开始的命令。

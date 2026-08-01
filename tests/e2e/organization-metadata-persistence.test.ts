@@ -118,6 +118,45 @@ test("persists organization and metadata across restart and surfaces optimistic-
     await expect(window.locator(".workspace-notice")).toContainText("资产已加入合集");
 
     await assetCard.click();
+    await expect(window.locator(".inspector-version-line")).toHaveCount(0);
+    const initialAssetId = await assetCard.getAttribute("data-asset-id");
+    expect(initialAssetId).toBeTruthy();
+    if (!initialAssetId) throw new Error("Initial asset has no asset id");
+    const readInitialMetadata = async () =>
+      window.evaluate(async (targetAssetId) => {
+        const api = (
+          globalThis as typeof globalThis & {
+            serpent: {
+              library: {
+                listOpen(): Promise<{
+                  ok: boolean;
+                  value?: Array<{ libraryId: string }>;
+                }>;
+                getAssetMetadata(input: {
+                  libraryId: string;
+                  assetId: string;
+                }): Promise<{
+                  ok: boolean;
+                  value?: {
+                    description: string | null;
+                    sourcePageUrl: string | null;
+                    rating: number;
+                    favorite: boolean;
+                  };
+                }>;
+              };
+            };
+          }
+        ).serpent.library;
+        const open = await api.listOpen();
+        const libraryId = open.value?.[0]?.libraryId;
+        if (!open.ok || !libraryId) return null;
+        const result = await api.getAssetMetadata({
+          libraryId,
+          assetId: targetAssetId,
+        });
+        return result.ok ? result.value ?? null : null;
+      }, initialAssetId);
     const descriptionInput = window.getByLabel("描述");
     const sourceUrlInput = window.getByRole("textbox", {
       name: "源链接",
@@ -126,15 +165,17 @@ test("persists organization and metadata across restart and surfaces optimistic-
 
     await descriptionInput.fill("跨重启保存的资产描述");
     await descriptionInput.blur();
-    await expect(window.getByText(/版本 1/)).toBeVisible();
     await sourceUrlInput.fill("https://example.com/persistent-asset");
     await sourceUrlInput.press("Enter");
-    await expect(window.getByText(/版本 2/)).toBeVisible();
     await window.getByRole("button", { name: "4 星" }).click();
-    await expect(window.getByText(/版本 3/)).toBeVisible();
     await window.getByRole("button", { name: "标记喜欢" }).click();
-    await expect(window.getByText(/版本 4/)).toBeVisible();
     await expect(window.getByRole("button", { name: "取消喜欢" })).toBeVisible();
+    await expect.poll(readInitialMetadata).toMatchObject({
+      description: "跨重启保存的资产描述",
+      sourcePageUrl: "https://example.com/persistent-asset",
+      rating: 4,
+      favorite: true,
+    });
 
     await application.close();
 
@@ -177,7 +218,7 @@ test("persists organization and metadata across restart and surfaces optimistic-
     await expect(restoredSourceUrlInput).toHaveValue(
       "https://example.com/persistent-asset",
     );
-    await expect(window.getByText(/版本 4/)).toBeVisible();
+    await expect(window.locator(".inspector-version-line")).toHaveCount(0);
     await expect(window.getByRole("button", { name: "取消喜欢" })).toBeVisible();
 
     const assetId = await restoredCard.getAttribute("data-asset-id");
@@ -354,7 +395,7 @@ test("persists organization and metadata across restart and surfaces optimistic-
     await expect(restoredSourceUrlInput).toHaveValue(
       "https://example.com/competing-write",
     );
-    await expect(window.getByText(/版本 5/)).toBeVisible();
+    await expect(window.locator(".inspector-version-line")).toHaveCount(0);
     await expect(window.getByText("版本冲突", { exact: true })).toHaveCount(0);
   } finally {
     await application.close();
@@ -417,19 +458,67 @@ test("switches Inspector assets without connection flashes or mixed metadata", a
     await expect(betaCard).toBeVisible();
 
     const description = window.getByLabel("描述");
+    const readMetadataDescription = async (assetId: string) =>
+      window.evaluate(async (targetAssetId) => {
+        const api = (
+          globalThis as typeof globalThis & {
+            serpent: {
+              library: {
+                listOpen(): Promise<{
+                  ok: boolean;
+                  value?: Array<{ libraryId: string }>;
+                }>;
+                getAssetMetadata(input: {
+                  libraryId: string;
+                  assetId: string;
+                }): Promise<{
+                  ok: boolean;
+                  value?: { description: string | null };
+                }>;
+              };
+            };
+          }
+        ).serpent.library;
+        const open = await api.listOpen();
+        const libraryId = open.value?.[0]?.libraryId;
+        if (!open.ok || !libraryId) return null;
+        const result = await api.getAssetMetadata({
+          libraryId,
+          assetId: targetAssetId,
+        });
+        return result.ok ? result.value?.description ?? null : null;
+      }, assetId);
+
+    const alphaAssetId = await alphaCard.getAttribute("data-asset-id");
+    const betaAssetId = await betaCard.getAttribute("data-asset-id");
+    expect(alphaAssetId).toBeTruthy();
+    expect(betaAssetId).toBeTruthy();
+    if (!alphaAssetId || !betaAssetId) {
+      throw new Error("Inspector test assets have no asset IDs.");
+    }
+
     await alphaCard.click();
     await expect(description).toBeVisible();
     await description.fill("ALPHA_METADATA_SENTINEL");
     await description.blur();
-    await expect(window.getByText(/版本 1/)).toBeVisible();
+    await expect.poll(() => readMetadataDescription(alphaAssetId)).toBe(
+      "ALPHA_METADATA_SENTINEL",
+    );
+    await expect(window.locator(".inspector-version-line")).toHaveCount(0);
 
     await betaCard.click();
     await expect(description).toBeVisible();
     await description.fill("BETA_METADATA_SENTINEL");
     await description.blur();
-    await expect(window.getByText(/版本 1/)).toBeVisible();
+    await expect.poll(() => readMetadataDescription(betaAssetId)).toBe(
+      "BETA_METADATA_SENTINEL",
+    );
+    await expect(window.locator(".inspector-version-line")).toHaveCount(0);
 
     await alphaCard.click();
+    await expect(window.locator(".inspector-hero-title")).toHaveText(
+      "alpha-inspector.txt",
+    );
     await expect(description).toHaveValue("ALPHA_METADATA_SENTINEL");
 
     await window.evaluate(() => {

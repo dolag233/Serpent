@@ -15,6 +15,7 @@
 - 设置页 i18n：`pluginRuntimeTrustedHint` / `pluginRuntimeStandardHint` / `pluginTrustTrustedConfirmHint`，明确可信模式 = 完整本机能力，权限不是系统沙箱。
 - 激活时用 `validatePluginManifestCompatibility` 复核 engines 与 `nativeModules` OS/arch/ABI（安装后 Electron ABI 变更时跳过不匹配包）。
 - Host 心跳：`plugin-trusted.heartbeat`；Main 失联后 `HEARTBEAT_TIMEOUT` 终止该进程并计入 quarantine。
+- 固定探测插件：`tests/fixtures/plugins/trusted-host-probe/`（CJS `entry/main.js`，避开 gitignore 的 `dist/`）；安装+Host 激活写 storage 单测；E2E `plugin-trusted-host-activation.test.ts` 已接入 `test:e2e`（1 passed）。
 
 ## 明确说明
 
@@ -28,5 +29,7 @@ npm run typecheck
 node scripts/run-vitest-with-electron.mjs run --config vitest.config.ts \
   tests/unit/plugin-trusted-host.test.ts \
   tests/unit/plugin-trusted-runtime-supervisor.test.ts \
+  tests/unit/plugin-trusted-host-probe-fixture.test.ts \
   tests/unit/plugin-activation-coordinator.test.ts
+node scripts/run-e2e.mjs tests/e2e/plugin-trusted-host-activation.test.ts
 ```

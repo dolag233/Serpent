@@ -74,7 +74,7 @@ test('runs the default Desktop Console script and rates only its matching assets
     await expect(dialog.getByText('返回结果', { exact: true })).toBeVisible();
     await expect(dialog.locator('pre').first()).toContainText('"matched": 1');
     await expect(dialog.locator('pre').first()).toContainText('"updatedCount": 1');
-    await dialog.getByRole('button', { name: '查看此次运行日志' }).click();
+    await dialog.getByRole('button', { name: '查看此次运行日志' }).last().click();
     await expect(dialog).toBeHidden();
     const logDialog = window.getByRole('dialog', { name: '诊断日志' });
     await expect(logDialog).toBeVisible();

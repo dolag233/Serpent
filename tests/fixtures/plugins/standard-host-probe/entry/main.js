@@ -4,3 +4,6 @@ async function activate(serpent) {
 }
 
 async function deactivate() {}
+
+void activate;
+void deactivate;

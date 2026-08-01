@@ -23,6 +23,7 @@ import type {
   ImageSequenceImportOffer,
   AssetChangeEvent,
   ExtensionSaveCompletedEvent,
+  LibraryChangedEvent,
   RendererLibrarySummary,
   RendererLifecycleEvent,
   ExportProgressEvent,
@@ -315,6 +316,7 @@ export interface SerpentLibraryApi {
   convertLinkedFolderToManaged(input: { libraryId: string; folderId: string; targetFolderId?: string }): Promise<LibraryApiResult<{ managedFolderId: string; convertedCount: number; assets: AssetSummary[] }>>;
   onLifecycle(listener: (event: RendererLifecycleEvent) => void): () => void;
   onAssetsChanged(listener: (event: AssetChangeEvent) => void): () => void;
+  onLibraryChanged(listener: (event: LibraryChangedEvent) => void): () => void;
   onExtensionSaveCompleted(
     listener: (event: ExtensionSaveCompletedEvent) => void,
   ): () => void;

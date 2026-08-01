@@ -107,20 +107,36 @@ export const pluginManagerResolutionCandidateSchema = z.strictObject({
 });
 export type PluginManagerResolutionCandidate = z.infer<typeof pluginManagerResolutionCandidateSchema>;
 
+/**
+ * Zod 4 discriminatedUnion forbids duplicate discriminator literals, so the
+ * three disabled reasons share one object shape. Quarantine still carries the
+ * package identity fields; other disable reasons leave them unset.
+ */
+const pluginManagerDisabledResolutionSchema = z.strictObject({
+  status: z.literal('disabled'),
+  pluginId: pluginIdSchema,
+  reason: z.enum(['safe-mode', 'user-disabled', 'quarantined']),
+  version: versionSchema.optional(),
+  packageHash: packageHashSchema.optional(),
+}).superRefine((value, context) => {
+  const quarantined = value.reason === 'quarantined';
+  if (quarantined && (value.version === undefined || value.packageHash === undefined)) {
+    context.addIssue({
+      code: 'custom',
+      message: 'A quarantined plugin resolution requires version and packageHash.',
+    });
+  }
+  if (!quarantined && (value.version !== undefined || value.packageHash !== undefined)) {
+    context.addIssue({
+      code: 'custom',
+      message: 'Only quarantined plugin resolutions may include version and packageHash.',
+    });
+  }
+});
+
 export const pluginManagerResolutionSummarySchema = z.discriminatedUnion('status', [
   z.strictObject({ status: z.literal('not-installed'), pluginId: pluginIdSchema }),
-  z.strictObject({
-    status: z.literal('disabled'),
-    pluginId: pluginIdSchema,
-    reason: z.enum(['safe-mode', 'user-disabled']),
-  }),
-  z.strictObject({
-    status: z.literal('disabled'),
-    pluginId: pluginIdSchema,
-    reason: z.literal('quarantined'),
-    version: versionSchema,
-    packageHash: packageHashSchema,
-  }),
+  pluginManagerDisabledResolutionSchema,
   z.strictObject({
     status: z.literal('conflict'),
     pluginId: pluginIdSchema,

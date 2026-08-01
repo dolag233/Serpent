@@ -252,6 +252,9 @@ export const en = {
       openScript: "Open script",
       saveScript: "Save script",
       bridgeHint: "The example finds assets whose name or tag contains Ser and sets them to four stars. Ratings, path copies, Trash, and renames are protected by authorization and plan confirmation. Press ⌘/Ctrl + Enter to run.",
+      unboundLibrary: "No library is bound. Run library.create first to create and open one before other library-scoped actions.",
+      boundLibrary: "A library is bound. The script remains protected by Automation Gateway capabilities and local approval.",
+      capabilities: "Execution capabilities: ",
       ready: "Ready to run.",
       running: "Running in the restricted sandbox…",
       completed: "Return value",
@@ -261,7 +264,8 @@ export const en = {
         cancelled: "No script was opened or saved.",
         "invalid-script-file": "Choose a .serpent.js or .serpent.ts script file.",
         "source-too-large": "The script exceeds the 64 KB limit. Split it into smaller pieces and try again.",
-        "io-failed": "The script file could not be read or saved. Check that it is accessible."
+        "io-failed": "The script file could not be read or saved. Check that it is accessible.",
+        "recent-script-not-found": "That script could not be found. It may have been moved or deleted."
       },
       errors: {
         SOURCE_NOT_ALLOWED: "Scripts cannot use imported modules or syntax that this preview does not support. Use standalone JavaScript or TypeScript.",
@@ -280,6 +284,11 @@ export const en = {
       openRunLog: "View this run's log",
       historyTitle: "Recent automation runs",
       historyEmpty: "No recorded runs for this library yet.",
+      recentScriptsTitle: "Recent scripts",
+      recentScriptsEmpty: "Saved or opened scripts appear here.",
+      undoAvailable: "This run can be undone.",
+      undo: "Undo automation",
+      undoDone: "Undid {count} file operation(s).",
       run: "Run"
     }
   },
@@ -563,8 +572,7 @@ export const en = {
     folders: "Folders",
     location: "Location",
     noActiveLibrary: "No active library",
-    openLibraryHint: "Open a library to see the current scope and asset details.",
-    versionLine: "Version {version}"
+    openLibraryHint: "Open a library to see the current scope and asset details."
   },
   dialog: {
     createLibrary: {

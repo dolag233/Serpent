@@ -7,6 +7,7 @@ import {
 import type {
   AutomationScriptFileResult,
   AutomationScriptHistoryEntry,
+  AutomationRecentScriptEntry,
   AutomationScriptRuntimeFailureCode,
   SerpentAutomationScriptApi,
 } from '../shared/automation-script-api';
@@ -70,10 +71,28 @@ export function ScriptSandboxPreviewDialog({
   const [result, setResult] = useState<PreviewResult>(null);
   const [scriptFileMessage, setScriptFileMessage] = useState<string | null>(null);
   const [historyEntries, setHistoryEntries] = useState<AutomationScriptHistoryEntry[]>([]);
+  const [recentScripts, setRecentScripts] = useState<AutomationRecentScriptEntry[]>([]);
+  const [capabilities, setCapabilities] = useState<string[]>([]);
+  const [completedExecutionId, setCompletedExecutionId] = useState<string | null>(null);
+  const [undoMessage, setUndoMessage] = useState<string | null>(null);
 
   useEffect(() => {
     onExecutionSettledRef.current = onExecutionSettled;
   }, [onExecutionSettled]);
+
+  useEffect(() => {
+    if (!open || !automation) return;
+    let cancelled = false;
+    void automation.recentList().then((recent) => {
+      if (cancelled || !recent.ok) return;
+      setRecentScripts(recent.entries);
+    }).catch(() => {
+      if (!cancelled) setRecentScripts([]);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, automation, savedScript]);
 
   useEffect(() => {
     if (!open || !libraryId || !automation) return;
@@ -108,15 +127,17 @@ export function ScriptSandboxPreviewDialog({
       });
       return;
     }
-    if (!libraryId || !automation) {
+    if (!automation) {
       setResult({
         kind: 'failed',
         code: 'RUNTIME_ERROR',
-        message: 'Open a library before running an automation script.',
+        message: 'The automation service is unavailable.',
       });
       return;
     }
     setResult(null);
+    setCompletedExecutionId(null);
+    setUndoMessage(null);
     setScriptFileMessage(null);
     let started;
     try {
@@ -134,6 +155,7 @@ export function ScriptSandboxPreviewDialog({
       return;
     }
     if (!started.ok) {
+      setCapabilities([]);
       setResult({
         kind: 'failed',
         code: 'RUNTIME_ERROR',
@@ -142,6 +164,7 @@ export function ScriptSandboxPreviewDialog({
       return;
     }
     executionIdRef.current = started.executionId;
+    setCapabilities(started.capabilities);
     setRunning(true);
     try {
       const executed = await automation.execute({ executionId: started.executionId });
@@ -153,6 +176,7 @@ export function ScriptSandboxPreviewDialog({
           logId: started.logId,
         });
       } else {
+        setCompletedExecutionId(started.executionId);
         setResult({
           kind: 'completed',
           value: executed.value,
@@ -188,6 +212,17 @@ export function ScriptSandboxPreviewDialog({
     const executionId = executionIdRef.current;
     if (executionId) void automation?.cancel({ executionId });
   };
+  const undo = async (): Promise<void> => {
+    if (!automation || !completedExecutionId) return;
+    const undone = await automation.undo({ executionId: completedExecutionId });
+    if (!undone.ok) {
+      setUndoMessage(undone.error.message);
+      return;
+    }
+    setCompletedExecutionId(null);
+    setUndoMessage(t('automation.preview.undoDone', { count: undone.undoneCount }));
+    void onExecutionSettledRef.current?.();
+  };
   const resultLogId = result?.logId;
 
   const reportScriptFileResult = (file: AutomationScriptFileResult): SavedScript | null => {
@@ -200,14 +235,38 @@ export function ScriptSandboxPreviewDialog({
     return null;
   };
 
+  const refreshRecentScripts = async (): Promise<void> => {
+    if (!automation) return;
+    const recent = await automation.recentList();
+    if (recent.ok) setRecentScripts(recent.entries);
+  };
+
+  const applyOpenedScript = (opened: SavedScript): void => {
+    setSource(opened.source);
+    setSavedScript(opened);
+    setResult(null);
+    setScriptFileMessage(null);
+  };
+
   const openScript = async (): Promise<void> => {
     if (!automation || running) return;
     try {
       const opened = reportScriptFileResult(await automation.open());
       if (!opened) return;
-      setSource(opened.source);
-      setSavedScript(opened);
-      setResult(null);
+      applyOpenedScript(opened);
+      await refreshRecentScripts();
+    } catch {
+      setScriptFileMessage(t('automation.preview.fileErrors.io-failed'));
+    }
+  };
+
+  const openRecentScript = async (handle: string): Promise<void> => {
+    if (!automation || running) return;
+    try {
+      const opened = reportScriptFileResult(await automation.openRecent({ handle }));
+      if (!opened) return;
+      applyOpenedScript(opened);
+      await refreshRecentScripts();
     } catch {
       setScriptFileMessage(t('automation.preview.fileErrors.io-failed'));
     }
@@ -224,6 +283,7 @@ export function ScriptSandboxPreviewDialog({
       if (!saved) return;
       setSource(saved.source);
       setSavedScript(saved);
+      await refreshRecentScripts();
     } catch {
       setScriptFileMessage(t('automation.preview.fileErrors.io-failed'));
     }
@@ -251,6 +311,17 @@ export function ScriptSandboxPreviewDialog({
           if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
             event.preventDefault();
             void run();
+          }
+          if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'z') {
+            const target = event.target as HTMLElement;
+            const editable = target.isContentEditable
+              || target.tagName === 'INPUT'
+              || target.tagName === 'TEXTAREA'
+              || target.tagName === 'SELECT';
+            if (!editable && completedExecutionId) {
+              event.preventDefault();
+              void undo();
+            }
           }
         }}
         role="dialog"
@@ -298,7 +369,39 @@ export function ScriptSandboxPreviewDialog({
         <p className="field-help script-sandbox-preview-help">
           {t('automation.preview.bridgeHint')}
         </p>
+        <p className="field-help script-sandbox-preview-scope">
+          {libraryId === null
+            ? t('automation.preview.unboundLibrary')
+            : t('automation.preview.boundLibrary')}
+        </p>
+        {capabilities.length > 0 ? (
+          <p className="field-help script-sandbox-preview-capabilities">
+            {t('automation.preview.capabilities')}{capabilities.join(', ')}
+          </p>
+        ) : null}
         {scriptFileMessage ? <p className="field-help script-sandbox-preview-file-error">{scriptFileMessage}</p> : null}
+
+        <div className="script-sandbox-preview-recent">
+          <p className="script-sandbox-preview-result-title">{t('automation.preview.recentScriptsTitle')}</p>
+          {recentScripts.length === 0 ? (
+            <p className="field-help">{t('automation.preview.recentScriptsEmpty')}</p>
+          ) : (
+            <ul className="script-sandbox-preview-recent-list">
+              {recentScripts.map((entry) => (
+                <li key={entry.handle}>
+                  <button
+                    className="linkish-button"
+                    disabled={running}
+                    onClick={() => void openRecentScript(entry.handle)}
+                    type="button"
+                  >
+                    {entry.displayName}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
 
         <div
           aria-live="polite"
@@ -318,6 +421,15 @@ export function ScriptSandboxPreviewDialog({
               ) : null}
             </>
           ) : null}
+          {!running && result?.kind === 'completed' && completedExecutionId ? (
+            <div className="script-sandbox-preview-undo">
+              <p>{t('automation.preview.undoAvailable')}</p>
+              <button className="secondary-button" onClick={() => void undo()} type="button">
+                {t('automation.preview.undo')}
+              </button>
+            </div>
+          ) : null}
+          {undoMessage ? <p className="field-help">{undoMessage}</p> : null}
           {!running && result?.kind === 'failed' ? (
             <>
               <p className="script-sandbox-preview-result-title">{result.code}</p>

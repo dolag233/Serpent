@@ -12,8 +12,11 @@ import {
   AutomationExecutionJournal,
   AutomationExecutionJournalError,
   DEFAULT_AUTOMATION_EXECUTION_RESOURCE_BUDGET,
+  automationExecutionStatusProjectionSchema,
   createJsonFileAutomationExecutionStore,
+  projectAutomationExecutionStatus,
   type AutomationExecutionAuditLogger,
+  type AutomationExecutionRecord,
 } from '../../src/main/automation-execution-journal';
 import { AppLogger } from '../../src/main/app-logger';
 
@@ -56,6 +59,125 @@ function createJournal(
 }
 
 describe('AutomationExecutionJournal', () => {
+  it('keeps a headless execution unbound until Main opens and binds its created library', () => {
+    const journal = createJournal();
+    const execution = journal.create({
+      source: 'mcp',
+      libraryId: null as never,
+      sessionId: mcpSessionOne,
+      declaredCapabilities: ['asset.read'],
+    });
+
+    expect(execution).toMatchObject({ libraryId: null, status: 'created' });
+    expect(journal.start(execution.executionId)).toMatchObject({
+      status: 'awaiting-authorization',
+      libraryId: null,
+    });
+    expect(journal.authorizeFromDesktop({
+      executionId: execution.executionId,
+      persistence: 'session',
+    })).toMatchObject({ ok: true, execution: { status: 'running', libraryId: null } });
+    expect(journal.resolve(execution.executionId)).toMatchObject({
+      executionId: execution.executionId,
+      libraryId: null,
+    });
+
+    const bound = (journal as unknown as {
+      bindLibrary(executionId: string, libraryId: string): AutomationExecutionRecord | undefined;
+    }).bindLibrary(execution.executionId, libraryOne);
+
+    expect(bound).toMatchObject({ status: 'running', libraryId: libraryOne });
+    expect(journal.resolve(execution.executionId)).toMatchObject({
+      executionId: execution.executionId,
+      libraryId: libraryOne,
+    });
+  });
+
+  it('persists a fully reversible undo group and rejects reuse after terminalization', () => {
+    const filename = journalFile();
+    const journal = createJournal(filename);
+    const execution = journal.create({
+      source: 'mcp',
+      libraryId: libraryOne,
+      sessionId: mcpSessionOne,
+      declaredCapabilities: ['asset.read'],
+    });
+    const group = journal.createUndoGroup({
+      executionId: execution.executionId,
+      libraryId: libraryOne,
+      undoGroupId: 'undo-group-1',
+    });
+
+    journal.appendUndoGroupItems(group.undoGroupId, [{
+      itemId: 'item-1',
+      kind: 'asset-trash',
+      reference: 'operation-1',
+      reversible: true,
+    }]);
+    const completed = journal.completeUndoGroup(group.undoGroupId, { status: 'succeeded' });
+
+    expect(completed).toMatchObject({
+      undoGroupId: 'undo-group-1',
+      status: 'succeeded',
+      undoable: true,
+      items: [{ itemId: 'item-1', reference: 'operation-1' }],
+    });
+    expect(() => journal.appendUndoGroupItems(group.undoGroupId, [])).toThrow(/open undo group/u);
+    expect(() => journal.createUndoGroup({
+      executionId: execution.executionId,
+      libraryId: libraryOne,
+      undoGroupId: 'undo-group-1',
+    })).toThrow(/already in use/u);
+    const partialGroup = journal.createUndoGroup({
+      executionId: execution.executionId,
+      libraryId: libraryOne,
+      undoGroupId: 'undo-group-partial',
+    });
+    expect(journal.completeUndoGroup(partialGroup.undoGroupId, {
+      status: 'partially-succeeded',
+      failureReason: 'One file could not be restored.',
+    })).toMatchObject({
+      status: 'partially-succeeded',
+      undoable: false,
+      failureReason: 'One file could not be restored.',
+    });
+    expect(createJournal(filename).getUndoGroup(group.undoGroupId)).toMatchObject({
+      status: 'succeeded',
+      undoable: true,
+    });
+  });
+
+  it('marks an open undo group interrupted after restart and never reports it fully undoable', () => {
+    const filename = journalFile();
+    const journal = createJournal(filename);
+    const execution = journal.create({
+      source: 'mcp',
+      libraryId: libraryOne,
+      sessionId: mcpSessionTwo,
+      declaredCapabilities: ['asset.read'],
+    });
+    const group = journal.createUndoGroup({
+      executionId: execution.executionId,
+      libraryId: libraryOne,
+      undoGroupId: 'undo-group-interrupted',
+    });
+    journal.appendUndoGroupItems(group.undoGroupId, [{
+      itemId: 'item-1',
+      kind: 'asset-move',
+      reference: 'operation-2',
+      reversible: true,
+    }]);
+
+    const recovered = createJournal(filename).getUndoGroup(group.undoGroupId);
+
+    expect(recovered).toMatchObject({
+      status: 'interrupted',
+      undoable: false,
+      failureReason: 'Automation execution was interrupted by app restart.',
+      finishedAt: '2026-07-29T12:00:00.000Z',
+    });
+  });
+
   it('persists every terminal outcome with a stable status and failure code', () => {
     const journal = createJournal();
     const start = (): string => {
@@ -86,6 +208,48 @@ describe('AutomationExecutionJournal', () => {
     expect(journal.get(failed)).toMatchObject({ status: 'failed', failureCode: 'AUTOMATION_COMMAND_FAILED' });
     expect(journal.get(cancelled)).toMatchObject({ status: 'cancelled', failureCode: 'AUTOMATION_CANCELLED' });
     expect(journal.get(timedOut)).toMatchObject({ status: 'timed-out', failureCode: 'AUTOMATION_TIMED_OUT' });
+  });
+
+  it('extends MCP execution wall time to 30 minutes', () => {
+    const journal = createJournal();
+    const execution = journal.create({
+      source: 'mcp',
+      libraryId: libraryOne,
+      sessionId: mcpSessionOne,
+      declaredCapabilities: ['asset.read'],
+    });
+
+    expect(execution.resourceBudget.maxWallTimeMs).toBe(30 * 60_000);
+    expect(execution.deadlineAt).toBe('2026-07-29T12:30:00.000Z');
+  });
+
+  it('projects execution status without filesystem paths', () => {
+    const journal = createJournal();
+    const execution = journal.create({
+      source: 'mcp',
+      libraryId: libraryOne,
+      sessionId: mcpSessionOne,
+      declaredCapabilities: ['asset.read'],
+    });
+    journal.start(execution.executionId);
+    journal.authorizeFromDesktop({ executionId: execution.executionId, persistence: 'session' });
+    journal.recordCommandResult(execution.executionId, 'asset.search', 'succeeded');
+    journal.complete(execution.executionId, { status: 'succeeded', summary: { succeeded: 1 } });
+
+    const record = journal.get(execution.executionId);
+    expect(record).toBeDefined();
+    const projection = projectAutomationExecutionStatus(record!);
+    expect(automationExecutionStatusProjectionSchema.parse(projection)).toEqual(projection);
+    expect(projection).toMatchObject({
+      executionId: execution.executionId,
+      status: 'succeeded',
+      commandCount: 1,
+      succeededCommandCount: 1,
+      failedCommandCount: 0,
+      lastCommandId: 'asset.search',
+      summary: { succeeded: 1 },
+    });
+    expect(JSON.stringify(projection)).not.toMatch(/libraryPath|\/Users\//u);
   });
 
   it('requires a Desktop Console session grant before exposing its bound library capabilities', () => {
@@ -398,9 +562,10 @@ describe('AutomationExecutionJournal', () => {
       },
     });
     const execution = journal.create({
-      source: 'mcp',
+      source: 'desktop-console',
       libraryId: libraryOne,
-      sessionId: mcpSessionOne,
+      sessionId: consoleSessionOne,
+      scriptSource: 'return 1;',
       declaredCapabilities: ['asset.read'],
     });
     journal.start(execution.executionId);

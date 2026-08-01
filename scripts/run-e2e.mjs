@@ -133,9 +133,14 @@ await build({
 });
 
 const playwrightPath = require.resolve('@playwright/test/cli');
+// Cursor/agent shells often inherit ELECTRON_RUN_AS_NODE=1 so Electron behaves
+// like plain Node and rejects Playwright's --remote-debugging-port. Strip it
+// for the Playwright child and every Electron process it launches.
+const playwrightEnv = { ...process.env };
+delete playwrightEnv.ELECTRON_RUN_AS_NODE;
 const child = spawn(process.execPath, [playwrightPath, 'test', ...process.argv.slice(2)], {
   cwd: projectRoot,
-  env: process.env,
+  env: playwrightEnv,
   stdio: 'inherit',
 });
 

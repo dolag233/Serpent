@@ -4,12 +4,14 @@ import type { AutomationCommandGateway } from '../automation/command-gateway';
 import type { AutomationCapability } from '../automation/command-registry';
 import type { AutomationExecutionJournal } from './automation-execution-journal';
 import type { SerpentMcpToolExposure } from '../mcp/tool-catalog';
+import type { LibraryChangedEvent } from '../shared/protocol/responses';
 import {
   connectSerpentMcpStdio,
   createSerpentMcpServer,
 } from '../mcp/create-serpent-mcp-server';
 
 const DEFAULT_READ_CAPABILITIES = [
+  'library.create',
   'library.read',
   'folder.read',
   'asset.read',
@@ -26,17 +28,19 @@ const DEFAULT_WRITE_CAPABILITIES = [
   'collection.write',
   'metadata.write',
   'ai.enqueue',
+  'file.import',
+  'file.move',
+  'file.rename',
+  'trash.write',
+  'clipboard.write',
 ] as const satisfies readonly AutomationCapability[];
 
 export type AutomationMcpHostOptions = {
   journal: AutomationExecutionJournal;
   gateway: AutomationCommandGateway;
-  /**
-   * Bound library for this MCP connection. Headless `library.create` without a
-   * prior libraryId remains a later Phase D/E item once journal allows unset
-   * library binding.
-   */
-  libraryId: string;
+  /** Optional initial library binding; null hosts may call library.create first. */
+  libraryId: string | null;
+  onLibraryChanged?: (listener: (event: LibraryChangedEvent) => void) => () => void;
   writeAccessGranted?: boolean;
   declaredCapabilities?: readonly AutomationCapability[];
 };
@@ -101,12 +105,30 @@ export async function startAutomationMcpHost(
     getExposure: () => exposure,
   });
   await connectSerpentMcpStdio(server);
+  const unsubscribeLibraryChanged = options.onLibraryChanged?.((event) => {
+    const boundLibraryId = options.journal.get(started.executionId)?.libraryId;
+    if (boundLibraryId === undefined || boundLibraryId === null || boundLibraryId !== event.libraryId) {
+      return;
+    }
+    void server.sendLoggingMessage({
+      level: 'info',
+      logger: 'serpent.library',
+      data: {
+        type: 'library.changed',
+        libraryId: event.libraryId,
+        changeSequence: event.changeSequence,
+      },
+    }).catch(() => {
+      // A disconnected MCP client cannot receive a push; close() owns cleanup.
+    });
+  });
 
   return {
     executionId: started.executionId,
     sessionId,
     exposure,
     close: async () => {
+      unsubscribeLibraryChanged?.();
       options.journal.cancel(started.executionId);
       await server.close();
     },

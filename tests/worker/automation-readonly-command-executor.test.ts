@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -109,6 +109,57 @@ describe('Automation read-only Worker dispatch', () => {
       executableCount: 0,
       blockedCount: 1,
       undoSupported: true,
+    });
+    expect(digest(databasePath)).toBe(before);
+  });
+
+  it('reads the current AI layer without mutating the library', () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'serpent-automation-ai-readonly-'));
+    roots.push(root);
+    const sourcePath = path.join(root, 'asset.txt');
+    writeFileSync(sourcePath, 'AI result fixture');
+    const service = new LibraryService();
+    services.push(service);
+    const library = service.createLibrary({
+      displayName: 'Automation AI read only',
+      selectedParentPath: root,
+    });
+    const imported = service.prepareOrExecuteImport({
+      libraryId: library.libraryId,
+      sourceKind: 'files',
+      sourcePaths: [sourcePath],
+    });
+    if (!('assets' in imported) || imported.assets.length !== 1) {
+      throw new Error('Expected one imported asset.');
+    }
+    const assetId = imported.assets[0]!.assetId;
+    service.writeAiAnalysisResult({
+      libraryId: library.libraryId,
+      assetId,
+      description: 'AI generated description',
+      tags: ['cloud', 'cumulus'],
+      rating: 4,
+      modelId: 'test-model',
+      modelVersion: 'test-model-v1',
+      enabledFields: { description: true, tags: true, rating: true },
+    });
+
+    const databasePath = path.join(library.libraryPath, '.serpent', 'library.db');
+    const before = digest(databasePath);
+    const result = executeAutomationReadOnlyWorkerCommand(service, {
+      type: 'ai.content.get',
+      libraryId: library.libraryId,
+      assetId,
+    });
+
+    expect(result).toEqual({
+      ok: true,
+      type: 'ai.content.got',
+      assetId,
+      description: 'AI generated description',
+      tags: ['cloud', 'cumulus'],
+      rating: 4,
+      modelVersion: 'test-model-v1',
     });
     expect(digest(databasePath)).toBe(before);
   });

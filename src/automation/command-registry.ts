@@ -15,9 +15,11 @@ import {
   tagSummarySchema,
 } from '../shared/asset-types';
 import type { WorkerCommand, WorkerRequest } from '../shared/protocol/requests';
-import { assetAuthorSchema, sourcePageUrlSchema } from '../shared/protocol/requests';
+import { assetAuthorSchema, nameConflictDecisionSchema, sourcePageUrlSchema } from '../shared/protocol/requests';
 import {
   aiJobSchema,
+  importCompletionSchema,
+  importConflictPlanSchema,
   internalLibrarySummarySchema,
   tagOperationSkipSchema,
   mediaJobSchema,
@@ -37,6 +39,7 @@ export const AUTOMATION_MAX_PAGE_SIZE = 200;
 const nonBlankString = z.string().min(1).refine((value) => value.trim().length > 0, {
   message: 'Value must not be blank.',
 });
+const idempotencyKeySchema = nonBlankString.max(128);
 
 const noInputSchema = z.strictObject({});
 
@@ -101,6 +104,7 @@ export const automationSourceSchema = z.enum([
 export type AutomationSource = z.infer<typeof automationSourceSchema>;
 
 export const automationCapabilitySchema = z.enum([
+  'library.create',
   'library.read',
   'folder.read',
   'folder.write',
@@ -127,6 +131,11 @@ export interface AutomationFileOperationPlanProof {
   planHash: string;
   expectedChangeSequence: number;
   assetStates: Array<{ assetId: string; stateToken: string }>;
+  importPlan?: {
+    planHash: string;
+    expectedChangeSequence: number;
+    sourceStates: Array<{ sourcePath: string; stateToken: string }>;
+  };
 }
 
 export type AutomationImpact = 'read' | 'metadata-write' | 'file-write' | 'destructive' | 'external-effect';
@@ -134,7 +143,24 @@ export type AutomationApprovalPolicy = 'none' | 'execution' | 'plan' | 'forbidde
 export type AutomationAtomicity = 'single-transaction' | 'recoverable-file-operation' | 'best-effort';
 
 export const automationCommandInputSchemas = {
+  'library.create': z.strictObject({
+    displayName: nonBlankString.max(255),
+    selectedParentPath: nonBlankString,
+    idempotencyKey: idempotencyKeySchema.optional(),
+  }),
+  'file.import': z.strictObject({
+    sourceKind: z.enum(['files', 'folder']),
+    sourcePaths: z.array(nonBlankString).min(1).max(1_000),
+    targetFolderId: nonBlankString.optional(),
+    imageSequenceFps: z.number().int().min(1).max(240).optional(),
+    expandImageSequences: z.boolean().optional(),
+    idempotencyKey: idempotencyKeySchema.optional(),
+  }),
   'library.inspect': noInputSchema,
+  'library.change-sequence': noInputSchema,
+  'execution.status': z.strictObject({
+    executionId: nonBlankString.optional(),
+  }),
   'folder.list': paginatedInputSchema({}),
   'linked-folder.list': paginatedInputSchema({}),
   'asset.list': paginatedInputSchema({
@@ -142,6 +168,7 @@ export const automationCommandInputSchemas = {
     recursive: z.boolean().default(false),
   }),
   'asset.metadata.get': z.strictObject({ assetId: nonBlankString }),
+  'asset.ai-content.get': z.strictObject({ assetId: nonBlankString }),
   'asset.metadata.set': z.strictObject({
     assetId: nonBlankString,
     expectedVersion: z.number().int().min(0),
@@ -167,6 +194,11 @@ export const automationCommandInputSchemas = {
   }),
   'asset.trash': z.strictObject({
     assetIds: z.array(nonBlankString).min(1).max(10_000),
+  }),
+  'asset.move': z.strictObject({
+    assetIds: z.array(nonBlankString).min(1).max(10_000),
+    targetFolderId: z.string().uuid().nullable(),
+    conflictStrategy: nameConflictDecisionSchema.optional(),
   }),
   'asset.rename-file': z.strictObject({
     assetId: nonBlankString,
@@ -233,10 +265,36 @@ export const automationCommandInputSchemas = {
   }),
 } as const;
 
+const libraryCreateWorkerResultSchema = z.strictObject({
+  ok: z.literal(true),
+  type: z.literal('library.opened'),
+  library: internalLibrarySummarySchema,
+});
+
+const fileImportWorkerResultSchema = z.union([
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('asset.import.conflicts'),
+    plan: importConflictPlanSchema,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('asset.import.completed'),
+    completion: importCompletionSchema,
+  }),
+]);
+
 const libraryListWorkerResultSchema = z.strictObject({
   ok: z.literal(true),
   type: z.literal('library.list'),
   libraries: z.array(internalLibrarySummarySchema),
+});
+
+const libraryChangeSequenceWorkerResultSchema = z.strictObject({
+  ok: z.literal(true),
+  type: z.literal('library.change-sequence'),
+  libraryId: nonBlankString,
+  changeSequence: z.number().int().nonnegative(),
 });
 
 const folderListWorkerResultSchema = z.strictObject({
@@ -296,6 +354,16 @@ const assetMetadataWorkerResultSchema = z.strictObject({
   metadata: assetMetadataResultSchema,
 });
 
+const assetAiContentWorkerResultSchema = z.strictObject({
+  ok: z.literal(true),
+  type: z.literal('ai.content.got'),
+  assetId: nonBlankString,
+  description: z.string().nullable(),
+  tags: z.array(nonBlankString),
+  rating: z.number().int().min(1).max(5).nullable(),
+  modelVersion: nonBlankString.nullable(),
+});
+
 const assetExtractedMetadataWorkerResultSchema = z.strictObject({
   ok: z.literal(true),
   type: z.literal('asset.extracted-metadata.got'),
@@ -332,6 +400,16 @@ const assetTrashWorkerResultSchema = z.strictObject({
   ok: z.literal(true),
   type: z.literal('asset.trashed'),
   trashedCount: z.number().int().nonnegative(),
+  operationId: nonBlankString,
+});
+
+const assetMoveWorkerResultSchema = z.strictObject({
+  ok: z.literal(true),
+  type: z.literal('asset.moved'),
+  movedCount: z.number().int().nonnegative(),
+  skippedCount: z.number().int().nonnegative(),
+  operationId: nonBlankString.nullable(),
+  assets: z.array(assetSummarySchema),
 });
 
 const assetRenameWorkerResultSchema = z.strictObject({
@@ -506,11 +584,57 @@ const mediaJobsAutomationResultSchema = paginatedResultSchema(mediaJobSchema).ex
 });
 
 export const automationCommandResultSchemas = {
-  'library.inspect': internalLibrarySummarySchema,
+  'library.create': z.strictObject({
+    libraryId: nonBlankString,
+    displayName: nonBlankString,
+  }),
+  'file.import': z.union([
+    z.strictObject({ status: z.literal('conflicts'), plan: importConflictPlanSchema }),
+    z.strictObject({ status: z.literal('completed'), completion: importCompletionSchema }),
+  ]),
+  'library.inspect': z.strictObject({
+    libraryId: nonBlankString,
+    displayName: nonBlankString,
+  }),
+  'library.change-sequence': z.strictObject({
+    changeSequence: z.number().int().nonnegative(),
+  }),
+  'execution.status': z.strictObject({
+    executionId: nonBlankString,
+    status: z.enum([
+      'created',
+      'validating',
+      'awaiting-authorization',
+      'running',
+      'awaiting-approval',
+      'succeeded',
+      'partially-succeeded',
+      'failed',
+      'cancelled',
+      'timed-out',
+    ]),
+    commandCount: z.number().int().nonnegative(),
+    succeededCommandCount: z.number().int().nonnegative(),
+    failedCommandCount: z.number().int().nonnegative(),
+    lastCommandId: nonBlankString.nullable(),
+    failureCode: z.string().nullable(),
+    deadlineAt: z.string().datetime(),
+    createdAt: z.string().datetime(),
+    finishedAt: z.string().datetime().nullable(),
+    summary: z.strictObject({
+      created: z.number().int().nonnegative().optional(),
+      updated: z.number().int().nonnegative().optional(),
+      succeeded: z.number().int().nonnegative().optional(),
+      failed: z.number().int().nonnegative().optional(),
+      skipped: z.number().int().nonnegative().optional(),
+      jobs: z.number().int().nonnegative().optional(),
+    }).nullable(),
+  }),
   'folder.list': paginatedResultSchema(managedFolderSummarySchema),
   'linked-folder.list': paginatedResultSchema(linkedFolderSummarySchema),
   'asset.list': paginatedResultSchema(automationAssetSummarySchema),
   'asset.metadata.get': assetMetadataWorkerResultSchema,
+  'asset.ai-content.get': assetAiContentWorkerResultSchema,
   'asset.metadata.set': assetMetadataResultSchema,
   'asset.extracted-metadata.get': assetExtractedMetadataWorkerResultSchema,
   'asset.search': assetSearchAutomationResultSchema,
@@ -519,7 +643,15 @@ export const automationCommandResultSchemas = {
     skipped: z.array(tagOperationSkipSchema),
   }),
   'asset.paths.copy': z.strictObject({ copiedCount: z.number().int().nonnegative() }),
-  'asset.trash': z.strictObject({ trashedCount: z.number().int().nonnegative() }),
+  'asset.trash': z.strictObject({
+    trashedCount: z.number().int().nonnegative(),
+    operationId: nonBlankString,
+  }),
+  'asset.move': z.strictObject({
+    movedCount: z.number().int().nonnegative(),
+    skippedCount: z.number().int().nonnegative(),
+    operationId: nonBlankString.nullable(),
+  }),
   'asset.rename-file': z.strictObject({
     assetId: nonBlankString,
     name: nonBlankString,
@@ -666,6 +798,81 @@ const allReadSources = ['desktop-console', 'script', 'mcp', 'test', 'plugin'] as
 const allInteractiveSources = ['desktop-console', 'script', 'mcp', 'test', 'plugin'] as const;
 
 export const automationCommandRegistry = [
+  {
+    commandId: 'library.create',
+    apiVersion: AUTOMATION_API_VERSION,
+    summary: '创建并打开一个资源库，然后将其绑定到当前 headless 执行。',
+    deprecated: false,
+    inputSchema: automationCommandInputSchemas['library.create'],
+    resultSchema: automationCommandResultSchemas['library.create'],
+    workerResultSchema: libraryCreateWorkerResultSchema,
+    requiredCapabilities: ['library.create'],
+    allowedSources: ['desktop-console', 'script', 'mcp', 'test'],
+    impact: 'file-write',
+    targetScope: 'library',
+    supportsBatch: false,
+    supportsDryRun: true,
+    supportsIdempotencyKey: true,
+    supportsCancellation: false,
+    supportsDetach: false,
+    supportsUndo: false,
+    atomicity: 'recoverable-file-operation',
+    approvalPolicy: 'plan',
+    mcp: { public: false, toolName: 'serpent_library_create', outputLimit: 1 },
+    toWorkerCommand: (_libraryId, input: AutomationCommandInput<'library.create'>) => ({
+      type: 'library.create',
+      displayName: input.displayName,
+      selectedParentPath: input.selectedParentPath,
+    }),
+    projectResult: (result) => {
+      const parsed = libraryCreateWorkerResultSchema.safeParse(result);
+      return parsed.success
+        ? { libraryId: parsed.data.library.libraryId, displayName: parsed.data.library.displayName }
+        : undefined;
+    },
+  },
+  {
+    commandId: 'file.import',
+    apiVersion: AUTOMATION_API_VERSION,
+    summary: '将文件或目录复制导入当前资源库。',
+    deprecated: false,
+    inputSchema: automationCommandInputSchemas['file.import'],
+    resultSchema: automationCommandResultSchemas['file.import'],
+    workerResultSchema: fileImportWorkerResultSchema,
+    requiredCapabilities: ['library.read', 'asset.read', 'file.import'],
+    allowedSources: ['desktop-console', 'script', 'mcp', 'test'],
+    impact: 'file-write',
+    targetScope: 'library',
+    supportsBatch: true,
+    supportsDryRun: true,
+    supportsIdempotencyKey: true,
+    supportsCancellation: true,
+    supportsDetach: true,
+    // Import recovery references / Worker operationId are not wired yet.
+    // Advertising supportsUndo without reversible refs always produces
+    // partially-succeeded Undo Groups; keep false until that seam exists.
+    supportsUndo: false,
+    atomicity: 'recoverable-file-operation',
+    approvalPolicy: 'plan',
+    mcp: { public: false, toolName: 'serpent_file_import', outputLimit: AUTOMATION_MAX_PAGE_SIZE },
+    toWorkerCommand: (libraryId, input: AutomationCommandInput<'file.import'>, plan) => ({
+      type: 'asset.import.prepare',
+      libraryId,
+      sourceKind: input.sourceKind,
+      sourcePaths: input.sourcePaths,
+      ...(input.targetFolderId === undefined ? {} : { targetFolderId: input.targetFolderId }),
+      ...(input.imageSequenceFps === undefined ? {} : { imageSequenceFps: input.imageSequenceFps }),
+      ...(input.expandImageSequences === undefined ? {} : { expandImageSequences: input.expandImageSequences }),
+      ...(plan?.importPlan === undefined ? {} : { automationPlan: plan.importPlan }),
+    }),
+    projectResult: (result) => {
+      const parsed = fileImportWorkerResultSchema.safeParse(result);
+      if (!parsed.success) return undefined;
+      return parsed.data.type === 'asset.import.conflicts'
+        ? { status: 'conflicts', plan: parsed.data.plan }
+        : { status: 'completed', completion: parsed.data.completion };
+    },
+  },
   readDescriptor({
     commandId: 'library.inspect',
     summary: '读取当前执行绑定资源库的摘要。',
@@ -680,10 +887,45 @@ export const automationCommandRegistry = [
     toWorkerCommand: () => ({ type: 'library.list' }),
     projectResult: (result, libraryId) => {
       const parsed = libraryListWorkerResultSchema.safeParse(result);
-      return parsed.success
-        ? parsed.data.libraries.find((library) => library.libraryId === libraryId)
+      const library = parsed.success
+        ? parsed.data.libraries.find((entry) => entry.libraryId === libraryId)
         : undefined;
+      if (library === undefined) return undefined;
+      return { libraryId: library.libraryId, displayName: library.displayName };
     },
+  }),
+  readDescriptor({
+    commandId: 'library.change-sequence',
+    summary: '读取当前绑定资源库的持久变更序号，供跨进程刷新与计划过期检测。',
+    inputSchema: automationCommandInputSchemas['library.change-sequence'],
+    resultSchema: automationCommandResultSchemas['library.change-sequence'],
+    workerResultSchema: libraryChangeSequenceWorkerResultSchema,
+    requiredCapabilities: ['library.read'],
+    allowedSources: allReadSources,
+    targetScope: 'library',
+    supportsBatch: false,
+    mcp: { public: true, toolName: 'serpent_library_change_sequence', outputLimit: 1 },
+    toWorkerCommand: (libraryId) => ({ type: 'library.change-sequence', libraryId }),
+    projectResult: (result) => {
+      const parsed = libraryChangeSequenceWorkerResultSchema.safeParse(result);
+      return parsed.success ? { changeSequence: parsed.data.changeSequence } : undefined;
+    },
+  }),
+  readDescriptor({
+    commandId: 'execution.status',
+    summary: '读取当前自动化执行的状态与命令统计（不含路径）。',
+    inputSchema: automationCommandInputSchemas['execution.status'],
+    resultSchema: automationCommandResultSchemas['execution.status'],
+    workerResultSchema: z.never(),
+    requiredCapabilities: [],
+    allowedSources: allReadSources,
+    targetScope: 'library',
+    supportsBatch: false,
+    mcp: { public: true, toolName: 'serpent_execution_status', outputLimit: 1 },
+    toWorkerCommand: () => {
+      throw new Error('execution.status is resolved by Main and does not dispatch to the Worker.');
+    },
+    projectResult: () => undefined,
   }),
   {
     commandId: 'asset.rating.set',
@@ -777,7 +1019,49 @@ export const automationCommandRegistry = [
     }),
     projectResult: (result) => {
       const parsed = assetTrashWorkerResultSchema.safeParse(result);
-      return parsed.success ? { trashedCount: parsed.data.trashedCount } : undefined;
+      return parsed.success
+        ? { trashedCount: parsed.data.trashedCount, operationId: parsed.data.operationId }
+        : undefined;
+    },
+  },
+  {
+    commandId: 'asset.move',
+    apiVersion: AUTOMATION_API_VERSION,
+    summary: '将托管资产移动到目标文件夹；需本机计划确认。',
+    deprecated: false,
+    inputSchema: automationCommandInputSchemas['asset.move'],
+    resultSchema: automationCommandResultSchemas['asset.move'],
+    workerResultSchema: assetMoveWorkerResultSchema,
+    requiredCapabilities: ['library.read', 'asset.read', 'folder.read', 'file.move'],
+    allowedSources: allInteractiveSources,
+    impact: 'file-write',
+    targetScope: 'asset-set',
+    supportsBatch: true,
+    supportsDryRun: false,
+    supportsIdempotencyKey: false,
+    supportsCancellation: false,
+    supportsDetach: false,
+    supportsUndo: true,
+    atomicity: 'recoverable-file-operation',
+    approvalPolicy: 'plan',
+    mcp: { public: false, toolName: 'serpent_asset_move', outputLimit: 1 },
+    toWorkerCommand: (libraryId, input: AutomationCommandInput<'asset.move'>, plan) => ({
+      type: 'asset.move',
+      libraryId,
+      assetIds: input.assetIds,
+      targetFolderId: input.targetFolderId,
+      ...(input.conflictStrategy === undefined ? {} : { conflictStrategy: input.conflictStrategy }),
+      ...(plan === undefined ? {} : { automationPlan: plan }),
+    }),
+    projectResult: (result) => {
+      const parsed = assetMoveWorkerResultSchema.safeParse(result);
+      return parsed.success
+        ? {
+            movedCount: parsed.data.movedCount,
+            skippedCount: parsed.data.skippedCount,
+            operationId: parsed.data.operationId,
+          }
+        : undefined;
     },
   },
   {
@@ -1036,6 +1320,20 @@ export const automationCommandRegistry = [
     mcp: { public: true, toolName: 'serpent_asset_metadata_get', outputLimit: 1 },
     toWorkerCommand: (libraryId, input) => ({ type: 'asset.metadata.get', libraryId, assetId: input.assetId }),
     projectResult: (result) => assetMetadataWorkerResultSchema.safeParse(result).data,
+  }),
+  readDescriptor({
+    commandId: 'asset.ai-content.get',
+    summary: '读取一项资产当前的 AI 分析结果（描述、标签和建议评分）。',
+    inputSchema: automationCommandInputSchemas['asset.ai-content.get'],
+    resultSchema: automationCommandResultSchemas['asset.ai-content.get'],
+    workerResultSchema: assetAiContentWorkerResultSchema,
+    requiredCapabilities: ['library.read', 'asset.read'],
+    allowedSources: allReadSources,
+    targetScope: 'asset',
+    supportsBatch: false,
+    mcp: { public: true, toolName: 'serpent_asset_ai_content_get', outputLimit: 1 },
+    toWorkerCommand: (libraryId, input) => ({ type: 'ai.content.get', libraryId, assetId: input.assetId }),
+    projectResult: (result) => assetAiContentWorkerResultSchema.safeParse(result).data,
   }),
   {
     commandId: 'asset.metadata.set',
@@ -1582,6 +1880,8 @@ export function generateAutomationTypeDeclaration(
     '  interface SerpentScriptAsset {',
     '    readonly id: string;',
     '    readonly name: string;',
+    '    /** Stable file-content revision; metadata edits do not change it. */',
+    '    readonly currentRevisionId: string;',
     '    readonly rating: number;',
     '    readonly favorite: boolean;',
     "    readonly locationKind: 'managed' | 'linked';",
@@ -1610,8 +1910,17 @@ export function generateAutomationTypeDeclaration(
     "    readonly automaticPalette: readonly { readonly hex: string; readonly ratio: number }[];",
     '    readonly sourcePageUrl: string | null;',
     '    readonly author: string | null;',
+    '    /** Optimistic-concurrency token for the metadata row, not a file revision. */',
     '    readonly entityVersion: number;',
     '    readonly updatedAt: string;',
+    '  }',
+    '',
+    '  interface SerpentAiContent {',
+    '    readonly assetId: string;',
+    '    readonly description: string | null;',
+    '    readonly tags: readonly string[];',
+    '    readonly rating: number | null;',
+    '    readonly modelVersion: string | null;',
     '  }',
     '',
     '  interface SerpentRecentPalette {',
@@ -1638,6 +1947,12 @@ export function generateAutomationTypeDeclaration(
     '  interface SerpentScriptLibrary {',
     '    readonly id: string;',
     '    readonly displayName: string;',
+    '  }',
+    '',
+    '  interface SerpentScriptImportResult {',
+    "    readonly status: 'conflicts' | 'completed';",
+    '    readonly plan?: { readonly importId: string; readonly fileCount: number; readonly totalBytes: number; readonly suspectedDuplicateCount: number; readonly libraryDuplicateCount: number; readonly nameConflictCount: number };',
+    '    readonly completion?: { readonly importedCount: number; readonly fileCount: number; readonly assetCount: number; readonly skippedCount: number; readonly replacedCount: number; readonly assets: readonly SerpentScriptAsset[] };',
     '  }',
     '',
     '  interface SerpentScriptTag {',
@@ -1693,6 +2008,11 @@ export function generateAutomationTypeDeclaration(
     '  interface SerpentAutomationApi {',
     '    readonly library: {',
     '      inspect(): Promise<SerpentScriptLibrary>;',
+    '      changeSequence(): Promise<{ readonly changeSequence: number }>;',
+    '      create(input: { displayName: string; selectedParentPath: string; idempotencyKey?: string }): Promise<{ readonly libraryId: string; readonly displayName: string }>;',
+    '    };',
+    '    readonly files: {',
+    `      import(input: { sourceKind: 'files' | 'folder'; sourcePaths: readonly string[]; targetFolderId?: string; imageSequenceFps?: number; expandImageSequences?: boolean; idempotencyKey?: string }): Promise<SerpentScriptImportResult>;`,
     '    };',
     '    readonly folders: {',
     '      list(input?: { limit?: number; offset?: number }): Promise<SerpentScriptFolderPage>;',
@@ -1742,11 +2062,13 @@ export function generateAutomationTypeDeclaration(
     '      search(input: { query: string | null; limit?: number; offset?: number }): Promise<SerpentScriptAssetSearchPage>;',
     '      list(input?: { folderId?: string; recursive?: boolean; limit?: number; offset?: number }): Promise<SerpentScriptAssetSearchPage>;',
     '      getMetadata(assetId: string): Promise<SerpentScriptAssetMetadata>;',
+    '      getAiContent(assetId: string): Promise<SerpentAiContent>;',
     '      setMetadata(input: { assetId: string; expectedVersion: number; description?: string | null; rating?: 0 | 1 | 2 | 3 | 4 | 5; favorite?: boolean; sourcePageUrl?: string | null; author?: string | null }): Promise<SerpentScriptAssetMetadata>;',
     '      getExtractedMetadata(assetId: string): Promise<SerpentScriptExtractedMetadata>;',
     '      setRating(assetIds: readonly string[], rating: 0 | 1 | 2 | 3 | 4 | 5): Promise<SerpentRatingUpdateResult>;',
     '      copyFilePaths(assetIds: readonly string[]): Promise<{ readonly copiedCount: number }>;',
-    '      moveToTrash(assetIds: readonly string[]): Promise<{ readonly trashedCount: number }>;',
+    '      moveToTrash(assetIds: readonly string[]): Promise<{ readonly trashedCount: number; readonly operationId: string }>;',
+    "      moveToFolder(assetIds: readonly string[], targetFolderId: string | null, options?: { readonly conflictStrategy?: 'keep-both' | 'replace' | 'skip' }): Promise<{ readonly movedCount: number; readonly skippedCount: number; readonly operationId: string | null }>;",
     '      renameFile(assetId: string, newBaseName: string): Promise<{ readonly assetId: string; readonly name: string }>;',
     "      renameFiles(items: readonly { readonly assetId: string; readonly newBaseName: string }[]): Promise<{ readonly renamedCount: number; readonly skipped: readonly { readonly assetId: string; readonly reason: 'asset_not_found' | 'asset_unavailable' | 'name_conflict' | 'invalid_name' }[] }>;",
     '    };',

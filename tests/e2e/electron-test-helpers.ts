@@ -17,6 +17,22 @@ export function resolveElectronExecutablePath(): string {
   return executablePath;
 }
 
+/**
+ * Environment for `_electron.launch`. Must omit ELECTRON_RUN_AS_NODE — when set,
+ * Electron acts as Node and rejects Playwright's --remote-debugging-port.
+ * Only string values are kept: undefined env entries can break Electron/Playwright.
+ */
+export function electronLaunchEnv(
+  extra: NodeJS.ProcessEnv = {},
+): Record<string, string> {
+  const { ELECTRON_RUN_AS_NODE: _ignored, ...clean } = process.env;
+  void _ignored;
+  const merged: NodeJS.ProcessEnv = { ...clean, ...extra };
+  return Object.fromEntries(
+    Object.entries(merged).filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
+  );
+}
+
 /** Close via top-left library switcher (Inspector no longer exposes close/path). */
 export async function closeLibraryViaSwitcher(
   window: Page,

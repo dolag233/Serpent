@@ -117,7 +117,7 @@ describe('schema v8->v9 migration', () => {
     });
 
     const database = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
-    expect(database.pragma('user_version')).toEqual([{ user_version: 24 }]);
+    expect(database.pragma('user_version')).toEqual([{ user_version: 26 }]);
 
     const columns = database.prepare("PRAGMA table_info('assets')").all() as Array<{
       cid: number; name: string; type: string;
@@ -175,7 +175,7 @@ describe('schema v8->v9 migration', () => {
     service.openLibrary(created.libraryPath);
 
     const db2 = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
-    expect(db2.pragma('user_version')).toEqual([{ user_version: 24 }]);
+    expect(db2.pragma('user_version')).toEqual([{ user_version: 26 }]);
     const migrationRows = db2.prepare('SELECT version FROM schema_migrations ORDER BY version').all() as Array<{ version: number }>;
     expect(migrationRows.map((r) => r.version)).toContain(9);
     db2.close();
@@ -189,7 +189,7 @@ describe('schema v8->v9 migration', () => {
     service.closeAll();
     service.openLibrary(created.libraryPath);
     const db = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
-    expect(db.pragma('user_version')).toEqual([{ user_version: 24 }]);
+    expect(db.pragma('user_version')).toEqual([{ user_version: 26 }]);
     service.closeAll();
     service.openLibrary(created.libraryPath);
     const migrationCount = db.prepare(
@@ -247,7 +247,7 @@ describe('downgrade helpers still work with v9', () => {
 
     service.openLibrary(created.libraryPath);
     const db = new TestDatabase(dbPath);
-    expect(db.pragma('user_version')).toEqual([{ user_version: 24 }]);
+    expect(db.pragma('user_version')).toEqual([{ user_version: 26 }]);
     db.close();
     service.closeAll();
   });
@@ -265,8 +265,9 @@ describe('trashAssets (soft delete)', () => {
 
     expect(existsSync(path.join(created.libraryPath, 'Assets', 'photo.jpg'))).toBe(true);
 
-    const { trashedCount } = service.trashAssets({ libraryId: created.libraryId, assetIds: [assetId] });
+    const { trashedCount, operationId } = service.trashAssets({ libraryId: created.libraryId, assetIds: [assetId] });
     expect(trashedCount).toBe(1);
+    expect(operationId).toMatch(/^[0-9a-f-]{36}$/u);
 
     expect(existsSync(path.join(created.libraryPath, 'Assets', 'photo.jpg'))).toBe(false);
     expect(existsSync(path.join(created.libraryPath, '.serpent', 'trash', assetId, 'photo.jpg'))).toBe(true);

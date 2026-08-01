@@ -7,6 +7,7 @@ import type {
   AutomationCommandGateway,
   AutomationGatewayResult,
 } from '../automation/command-gateway';
+import { normalizeAutomationAssetSearchInput } from '../main/normalize-automation-asset-search-input';
 import { resolveSerpentMcpTool, type SerpentMcpToolExposure } from './tool-catalog';
 
 export type SerpentMcpCallToolSuccess = {
@@ -14,6 +15,7 @@ export type SerpentMcpCallToolSuccess = {
   toolName: string;
   commandId: AutomationCommandId;
   result: unknown;
+  undoGroupId?: string;
   truncated: boolean;
 };
 
@@ -70,11 +72,16 @@ export async function callSerpentMcpTool(
     };
   }
 
+  const rawArguments = input.arguments ?? {};
+  const commandInput = tool.commandId === 'asset.search'
+    ? (normalizeAutomationAssetSearchInput(rawArguments) ?? rawArguments)
+    : rawArguments;
+
   const envelope: AutomationCommandEnvelope = {
     apiVersion: AUTOMATION_API_VERSION,
     commandId: tool.commandId,
     executionId: input.executionId,
-    input: input.arguments ?? {},
+    input: commandInput,
   };
 
   const gatewayResult = await input.gateway.execute(envelope);
@@ -92,6 +99,7 @@ export async function callSerpentMcpTool(
     toolName: tool.name,
     commandId: tool.commandId,
     result: gatewayResult.result,
+    ...(gatewayResult.undoGroupId === undefined ? {} : { undoGroupId: gatewayResult.undoGroupId }),
     truncated: false,
   };
 }

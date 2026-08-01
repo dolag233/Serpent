@@ -6,8 +6,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import {
   PluginStorageStore,
-  PluginStorageStoreError,
 } from '../../src/main/plugin-storage-store';
+import type { PluginStorageStoreError } from '../../src/main/plugin-storage-store';
 import { PLUGIN_LIBRARY_DATA_DIRECTORY } from '../../src/plugins/plugin-package';
 
 const roots: string[] = [];

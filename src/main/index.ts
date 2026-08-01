@@ -21,6 +21,7 @@ import {
   nativeImage,
   utilityProcess,
 } from "electron";
+import type { MessageBoxOptions } from "electron";
 
 import { installApplicationMenu } from "./application-menu";
 import { applyDevAppIcon, appIconImage } from "./app-icon";
@@ -65,6 +66,7 @@ import {
   ACTIVE_CONTEXT_CHANNEL,
   APP_LOCALE_CHANNEL,
   LIBRARY_LIFECYCLE_CHANNEL,
+  LIBRARY_CHANGED_CHANNEL,
   LIBRARY_REQUEST_CHANNEL,
   PROGRESS_CHANNEL,
   AI_PROGRESS_CHANNEL,
@@ -76,6 +78,7 @@ import {
   SHOW_EDIT_CONTEXT_MENU_CHANNEL,
   SHELL_SWIPE_CHANNEL,
   WINDOW_FOCUS_CHANNEL,
+  DESKTOP_AUTOMATION_SELECTION_CHANNEL,
   NATIVE_EDIT_COPY_CHANNEL,
   PLUGIN_MANAGER_CHANNEL,
   VIEWER_VIDEO_SHORTCUTS_ACTIVE_CHANNEL,
@@ -92,14 +95,24 @@ import {
 import {
   AutomationExecutionJournal,
   createJsonFileAutomationExecutionStore,
+  projectAutomationExecutionStatus,
 } from './automation-execution-journal';
 import { registerAutomationScriptIpc } from './automation-script-ipc';
 import { AutomationScriptFileService } from './automation-script-file-service';
+import {
+  createJsonFileAutomationRecentScriptsStore,
+  type AutomationRecentScriptsStore,
+} from './automation-recent-scripts-store';
 import {
   maybeStartAutomationMcpMode,
   redirectConsoleToStderrForMcp,
 } from './automation-mcp-bootstrap';
 import type { AutomationMcpHostHandle } from './automation-mcp-host';
+import {
+  startDesktopAttachedMcp,
+  type DesktopAttachedMcpHandle,
+} from './desktop-attached-mcp';
+import type { DesktopSelectionRequest, DesktopSelectionResult } from '../shared/desktop-control';
 import { ScriptRuntimeSupervisor } from './script-runtime-supervisor';
 import { PluginRuntimeSupervisor, type PluginRuntimeHostCommandHandler, type PluginRuntimeStorageHandler } from './plugin-runtime-supervisor';
 import { normalizeAutomationAssetSearchInput } from './normalize-automation-asset-search-input';
@@ -142,6 +155,8 @@ import {
   type WorkerResult,
   type AssetChangeEvent,
   parseAssetChangeEvent,
+  type LibraryChangedEvent,
+  parseLibraryChangedEvent,
   type ExtensionSaveCompletedEvent,
   parseExtensionSaveCompletedEvent,
   type ProgressEvent,
@@ -233,7 +248,10 @@ if (process.env.SERPENT_E2E === "1") {
 // Headless MCP stdio host (0023 Phase C). Isolate userData and keep JSON-RPC
 // frames off console helpers before Forge/Vite noise is considered separately.
 const mcpModeEnabled = process.env.SERPENT_MCP === "1";
-if (mcpModeEnabled) {
+const mcpAttachBootstrapEnabled = process.env.SERPENT_MCP_ATTACH_BOOTSTRAP === "1";
+const desktopControlEnabled =
+  process.env.SERPENT_E2E !== '1' || process.env.SERPENT_E2E_DESKTOP_CONTROL === '1';
+if (mcpModeEnabled || mcpAttachBootstrapEnabled) {
   const mcpUserData = process.env.SERPENT_MCP_USER_DATA_PATH;
   app.setPath(
     "userData",
@@ -275,14 +293,17 @@ let logger: AppLogger | undefined;
 let appLogPath: string | undefined;
 let automationExecutionJournal: AutomationExecutionJournal | undefined;
 let automationMcpHost: AutomationMcpHostHandle | undefined;
+let desktopAttachedMcp: DesktopAttachedMcpHandle | undefined;
 let automationCommandGateway: AutomationCommandGateway | undefined;
 let scriptRuntimeSupervisor: ScriptRuntimeSupervisor | undefined;
 let pluginRuntimeSupervisor: PluginRuntimeSupervisor | undefined;
 let pluginTrustedRuntimeSupervisor: PluginTrustedRuntimeSupervisor | undefined;
 let pluginActivationCoordinator: PluginActivationCoordinator | undefined;
 let automationScriptFiles: AutomationScriptFileService | undefined;
+let automationRecentScripts: AutomationRecentScriptsStore | undefined;
 let pluginPackageManager: PluginPackageManager | undefined;
 const pluginAutomationContexts = new Map<string, AutomationExecutionContext>();
+const desktopAutomationSelections = new Map<string, string[]>();
 
 function recentLibraryPath(): string {
   return path.join(app.getPath("userData"), "recent-library.json");
@@ -518,8 +539,8 @@ function saveEncryptedApiKey(apiKey: string): void {
   writeFileSync(aiKeyPath(), encrypted);
 }
 
-function focusMainWindow(): void {
-  focusSerpentWindow(
+function focusMainWindow(): boolean {
+  return focusSerpentWindow(
     mainWindow && !mainWindow.isDestroyed() ? mainWindow.id : undefined,
   );
 }
@@ -539,15 +560,16 @@ function handleSecondInstance(): void {
   focusMainWindow();
 }
 
-function focusSerpentWindow(windowId?: number): void {
+function focusSerpentWindow(windowId?: number): boolean {
   const target =
     windowId === undefined
       ? mainWindow
       : BrowserWindow.getAllWindows().find((window) => window.id === windowId);
-  if (!target || target.isDestroyed()) return;
+  if (!target || target.isDestroyed()) return false;
   if (target.isMinimized()) target.restore();
   target.show();
   target.focus();
+  return true;
 }
 
 /**
@@ -1076,6 +1098,14 @@ function publishAssetChange(event: AssetChangeEvent): void {
   mainWindow.webContents.send(
     ASSET_CHANGE_CHANNEL,
     parseAssetChangeEvent(event),
+  );
+}
+
+function publishLibraryChanged(event: LibraryChangedEvent): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.send(
+    LIBRARY_CHANGED_CHANNEL,
+    parseLibraryChangedEvent(event),
   );
 }
 
@@ -3757,15 +3787,22 @@ async function confirmDesktopAutomationWrite(): Promise<boolean> {
     cancelId: 0,
     title: '运行自动化脚本',
     message: '此脚本可以读取资产、标签与合集，修改评分与元数据，创建标签或空文件夹，整理合集，入队 AI 分析，复制文件路径，以及重命名或移入回收站。',
-    detail: '脚本只会获得当前资源库的受限自动化能力；不会获得网络下载、新建资源库、批量导入、磁盘直读、数据库或永久删除权限。每次运行都会记录到应用日志。',
+    detail: '脚本只会获得受限自动化能力；新建资源库和批量导入仍需单独的本机计划确认，不会获得网络下载、磁盘直读、数据库或永久删除权限。每次运行都会记录到应用日志。',
   });
   return response.response === 1;
 }
 
+let e2eAutomationFilePlanConfirmationCount = 0;
+
 async function confirmDesktopAutomationFilePlan(plan: DesktopAutomationFilePlanSummary): Promise<boolean> {
-  if (!mainWindow || mainWindow.isDestroyed()) return false;
   // See confirmDesktopAutomationWrite: this is an isolated, unpackaged E2E
   // seam only. Production builds always display the fresh plan confirmation.
+  if (!app.isPackaged
+    && process.env.SERPENT_E2E === '1'
+    && process.env.SERPENT_E2E_AUTOMATION_CANCEL_ONCE === '1') {
+    e2eAutomationFilePlanConfirmationCount += 1;
+    if (e2eAutomationFilePlanConfirmationCount === 1) return false;
+  }
   if (!app.isPackaged
     && process.env.SERPENT_E2E === '1'
     && process.env.SERPENT_E2E_AUTOMATION_CONFIRM === '1') {
@@ -3773,10 +3810,16 @@ async function confirmDesktopAutomationFilePlan(plan: DesktopAutomationFilePlanS
   }
   const action = plan.operation === 'trash'
     ? '移入回收站'
-    : plan.operation === 'rename-file'
-      ? '重命名文件'
-      : '恢复回原始位置';
-  const response = await dialog.showMessageBox(mainWindow, {
+    : plan.operation === 'move'
+      ? '移动到文件夹'
+      : plan.operation === 'rename-file' || plan.operation === 'rename-files'
+        ? '重命名文件'
+        : plan.operation === 'import'
+          ? '导入文件'
+          : plan.operation === 'create'
+            ? '创建资源库'
+            : '恢复回原始位置';
+  const dialogOptions: MessageBoxOptions = {
     type: 'warning',
     buttons: ['取消', `确认${action}`],
     defaultId: 1,
@@ -3789,8 +3832,72 @@ async function confirmDesktopAutomationFilePlan(plan: DesktopAutomationFilePlanS
         ? '移入回收站后可在回收站中恢复。'
         : '执行前会再次确认这些资产没有变化。',
     ].join('\n'),
+  };
+  const response = mainWindow && !mainWindow.isDestroyed()
+    ? await dialog.showMessageBox(mainWindow, dialogOptions)
+    : await dialog.showMessageBox(dialogOptions);
+  return response.response === 1;
+}
+
+async function confirmDesktopMcpAttach(input: {
+  displayName: string;
+  requestWriteAccess: boolean;
+  clientName: string;
+}): Promise<boolean> {
+  if (!mainWindow || mainWindow.isDestroyed()) return false;
+  if (
+    !app.isPackaged
+    && process.env.SERPENT_E2E === '1'
+    && process.env.SERPENT_E2E_AUTOMATION_ATTACH_CONFIRM === '1'
+  ) {
+    return true;
+  }
+
+  const access = input.requestWriteAccess ? '读写能力' : '只读能力';
+  const response = await dialog.showMessageBox(mainWindow, {
+    type: 'question',
+    buttons: ['拒绝', '允许附着'],
+    defaultId: 1,
+    cancelId: 0,
+    title: '允许 Agent 连接 Serpent',
+    message: `Agent “${input.clientName}”请求连接资源库“${input.displayName}”。`,
+    detail: `本次会话申请${access}。允许后，Agent 可以通过 Serpent 的受限自动化接口执行操作；不会获得任意文件系统、Shell、SQL 或网络权限。`,
   });
   return response.response === 1;
+}
+
+function applyDesktopAutomationSelection(
+  libraryId: string,
+  request: DesktopSelectionRequest,
+): DesktopSelectionResult {
+  const current = desktopAutomationSelections.get(libraryId) ?? [];
+  const requested = [...new Set(request.assetIds)];
+  let selectedAssetIds: string[];
+  if (request.mode === 'replace') {
+    selectedAssetIds = requested;
+  } else if (request.mode === 'add') {
+    selectedAssetIds = [...new Set([...current, ...requested])];
+  } else {
+    const removed = new Set(requested);
+    selectedAssetIds = current.filter((assetId) => !removed.has(assetId));
+  }
+  desktopAutomationSelections.set(libraryId, selectedAssetIds);
+  const primaryAssetId = selectedAssetIds.at(-1) ?? null;
+  const window = mainWindow;
+  if (window && !window.isDestroyed()) {
+    window.webContents.send(DESKTOP_AUTOMATION_SELECTION_CHANNEL, {
+      libraryId,
+      assetIds: requested,
+      mode: request.mode,
+    });
+  }
+  return {
+    libraryId,
+    mode: request.mode,
+    selectedAssetIds,
+    primaryAssetId,
+    ignoredAssetIds: [],
+  };
 }
 
 async function startApplication(): Promise<void> {
@@ -3813,15 +3920,20 @@ async function startApplication(): Promise<void> {
     logger,
   );
   await workerClient.start();
+  const activeWorkerClient = workerClient;
   automationExecutionJournal = new AutomationExecutionJournal({
     store: createJsonFileAutomationExecutionStore(
       path.join(app.getPath('userData'), 'automation-executions.json'),
     ),
     logger,
   });
+  automationRecentScripts = createJsonFileAutomationRecentScriptsStore(
+    path.join(app.getPath('userData'), 'automation-recent-scripts.json'),
+  );
   automationScriptFiles = new AutomationScriptFileService({
     selectOpenScript: selectAutomationScriptToOpen,
     selectSaveScript: selectAutomationScriptToSave,
+    recentScripts: automationRecentScripts,
   });
   automationCommandGateway = createAutomationCommandGateway(
     new AutomationLibraryWorkerAdapter(workerClient),
@@ -3852,6 +3964,68 @@ async function startApplication(): Promise<void> {
         workerClient: new AutomationLibraryWorkerAdapter(workerClient),
         confirm: confirmDesktopAutomationFilePlan,
       }),
+      libraryBindingHandler: {
+        bindLibrary: async ({ executionId, libraryId }) => {
+          const libraries = await activeWorkerClient.request({ type: 'library.list' });
+          if (!libraries.ok || libraries.type !== 'library.list') {
+            throw new Error('The created library is not open in the Library Worker.');
+          }
+          const boundLibrary = libraries.libraries.find((library) => library.libraryId === libraryId);
+          if (!boundLibrary) {
+            throw new Error('The created library is not open in the Library Worker.');
+          }
+          const bound = automationExecutionJournal?.bindLibrary(executionId, libraryId);
+          if (bound === undefined || bound.libraryId !== libraryId) {
+            throw new Error('The automation execution could not bind the created library.');
+          }
+          rememberOpenedLibrary(boundLibrary.libraryPath, boundLibrary.displayName);
+          publishLifecycle({
+            type: 'library.opened',
+            library: {
+              libraryId: boundLibrary.libraryId,
+              displayName: boundLibrary.displayName,
+              displayPath: boundLibrary.libraryPath,
+            },
+          });
+        },
+      },
+      undoGroupHandler: {
+        create: ({ executionId, libraryId }) => {
+          if (!automationExecutionJournal) {
+            throw new Error('The automation execution journal is unavailable.');
+          }
+          const group = automationExecutionJournal.createUndoGroup({ executionId, libraryId });
+          return { undoGroupId: group.undoGroupId };
+        },
+        append: ({ undoGroupId, item }) => {
+          if (!automationExecutionJournal) {
+            throw new Error('The automation execution journal is unavailable.');
+          }
+          const group = automationExecutionJournal.appendUndoGroupItems(undoGroupId, [item]);
+          if (!group) {
+            throw new Error(`Undo group ${undoGroupId} was not found while appending recovery items.`);
+          }
+        },
+        complete: ({ undoGroupId, status, failureReason }) => {
+          if (!automationExecutionJournal) {
+            throw new Error('The automation execution journal is unavailable.');
+          }
+          const group = automationExecutionJournal.completeUndoGroup(undoGroupId, { status, failureReason });
+          if (!group) {
+            throw new Error(`Undo group ${undoGroupId} was not found while completing the group.`);
+          }
+        },
+      },
+      executionStatusHandler: {
+        getStatus: (executionId) => {
+          const record = automationExecutionJournal?.get(executionId);
+          if (!record) return undefined;
+          return {
+            projection: projectAutomationExecutionStatus(record),
+            source: record.source,
+          };
+        },
+      },
     },
   );
   scriptRuntimeSupervisor = new ScriptRuntimeSupervisor({
@@ -3978,6 +4152,7 @@ async function startApplication(): Promise<void> {
     });
   }
   workerClient.onAssetsChanged(publishAssetChange);
+  workerClient.onLibraryChanged(publishLibraryChanged);
   workerClient.onProgress(publishProgress);
   workerClient.onAiProgress(publishAiProgress);
   workerClient.onAiAnalysisCompleted(publishAiCompleted);
@@ -4193,6 +4368,41 @@ async function startApplication(): Promise<void> {
     scriptFiles: () => automationScriptFiles,
     confirmDesktopWrite: confirmDesktopAutomationWrite,
     logger: () => logger,
+    undoGroup: () => ({
+      recover: async ({ libraryId, items }) => {
+        let undoneCount = 0;
+        let skippedCount = 0;
+        for (const item of [...items].reverse()) {
+          if (!item.reversible) throw new Error('This automation undo item is not reversible.');
+          const result = item.kind === 'asset.move'
+            ? await activeWorkerClient.request({
+              type: 'asset.move-undo',
+              libraryId,
+              operationId: item.reference,
+              conflictStrategy: 'error',
+            })
+            : item.kind === 'asset.trash'
+              ? await activeWorkerClient.request({
+                type: 'asset.trash-undo',
+                libraryId,
+                operationId: item.reference,
+              })
+              : undefined;
+          if (!result) throw new Error(`Automation undo is not supported for ${item.kind}.`);
+          if (!result.ok) throw new Error('Automation undo failed.');
+          if (result.type === 'asset.move-undone') {
+            undoneCount += result.undoneCount;
+            skippedCount += result.skippedCount;
+          } else if (result.type === 'asset.trash-undone') {
+            undoneCount += result.restoredCount;
+            skippedCount += result.skippedCount;
+          } else {
+            throw new Error('Automation undo returned an unexpected result.');
+          }
+        }
+        return { undoneCount, skippedCount };
+      },
+    }),
   });
 
   const pluginPackageRequest = pluginPackageManager === undefined
@@ -4440,20 +4650,53 @@ async function startApplication(): Promise<void> {
       throw new Error('MCP mode requires journal, gateway, worker, and logger.');
     }
     redirectConsoleToStderrForMcp();
-    automationMcpHost = await maybeStartAutomationMcpMode({
+    const startedMcpHost = await maybeStartAutomationMcpMode({
       journal: automationExecutionJournal,
       gateway: automationCommandGateway,
       request: (command) => workerClient!.request(command),
+      onLibraryChanged: (listener) => workerClient!.onLibraryChanged(listener),
       logger,
     });
-    if (automationMcpHost === null) {
+    if (startedMcpHost === null) {
       throw new Error('SERPENT_MCP=1 but MCP host did not start.');
     }
+    automationMcpHost = startedMcpHost;
     startupComplete = true;
     return;
   }
 
   await createMainWindow();
+
+  if (desktopControlEnabled) {
+    if (!automationExecutionJournal || !automationCommandGateway || !workerClient || !logger) {
+      throw new Error('Desktop attached MCP requires journal, gateway, worker, and logger.');
+    }
+    void startDesktopAttachedMcp({
+      userDataPath: app.getPath('userData'),
+      journal: automationExecutionJournal,
+      gateway: automationCommandGateway,
+      getActiveLibraryId: () => {
+        if (!mainWindow || mainWindow.isDestroyed()) return null;
+        return focusedContexts.get(mainWindow.id)?.libraryId ?? null;
+      },
+      getLibrarySummary: async (libraryId) => {
+        const result = await workerClient!.request({ type: 'library.list' });
+        if (!result.ok || result.type !== 'library.list') return null;
+        const library = result.libraries.find((entry) => entry.libraryId === libraryId);
+        return library === undefined
+          ? null
+          : { libraryId: library.libraryId, displayName: library.displayName };
+      },
+      confirmAttach: confirmDesktopMcpAttach,
+      focusMainWindow,
+      applySelection: applyDesktopAutomationSelection,
+      logger,
+    }).then((handle) => {
+      desktopAttachedMcp = handle;
+    }).catch((error: unknown) => {
+      logger?.error('desktop.attached-mcp.start', error);
+    });
+  }
 
   extensionBrowseFoldersStorePath = path.join(
     app.getPath("userData"),
@@ -4523,7 +4766,8 @@ if (!hasSingleInstanceLock) {
     }
 
     const mcpClose = automationMcpHost?.close() ?? Promise.resolve();
-    void mcpClose
+    const desktopAttachedMcpClose = desktopAttachedMcp?.close() ?? Promise.resolve();
+    void Promise.all([mcpClose, desktopAttachedMcpClose])
       .catch((error: unknown) => {
         logger?.error("automation.mcp.close", error);
       })

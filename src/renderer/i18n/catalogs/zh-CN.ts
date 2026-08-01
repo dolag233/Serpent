@@ -242,6 +242,9 @@ export const zhCN = {
       openScript: "打开脚本",
       saveScript: "保存脚本",
       bridgeHint: "示例会搜索名称或标签包含 Ser 的资产，并将它们设为 4 星。评分、路径复制、回收站和重命名均受权限与计划确认保护；按 ⌘/Ctrl + Enter 运行。",
+      unboundLibrary: "当前未绑定资源库；可先运行 library.create，创建并打开资源库后再执行其他库级操作。",
+      boundLibrary: "当前已绑定资源库；脚本仍受 Automation Gateway 能力与本机审批保护。",
+      capabilities: "本次执行能力：",
       ready: "准备就绪。",
       running: "正在受限沙箱中运行…",
       completed: "返回结果",
@@ -251,7 +254,8 @@ export const zhCN = {
         cancelled: "没有打开或保存脚本。",
         "invalid-script-file": "请选择扩展名为 .serpent.js 或 .serpent.ts 的脚本文件。",
         "source-too-large": "脚本超过 64 KB 上限，请拆分后再试。",
-        "io-failed": "无法读取或保存脚本文件，请检查文件是否可访问。"
+        "io-failed": "无法读取或保存脚本文件，请检查文件是否可访问。",
+        "recent-script-not-found": "找不到该脚本，可能已被移动或删除。"
       },
       errors: {
         SOURCE_NOT_ALLOWED: "脚本不能使用导入的模块或当前不支持的语法。请仅使用独立的 JS / TypeScript 代码。",
@@ -270,6 +274,11 @@ export const zhCN = {
       openRunLog: "查看此次运行日志",
       historyTitle: "最近自动化运行",
       historyEmpty: "此资源库尚无运行记录。",
+      recentScriptsTitle: "最近脚本",
+      recentScriptsEmpty: "保存或打开脚本后会显示在这里。",
+      undoAvailable: "本次运行支持撤销。",
+      undo: "撤销自动化操作",
+      undoDone: "已撤销 {count} 项文件操作。",
       run: "运行"
     }
   },
@@ -553,8 +562,7 @@ export const zhCN = {
     folders: "文件夹",
     location: "位置",
     noActiveLibrary: "没有活动资源库",
-    openLibraryHint: "打开资源库后查看当前范围与资产详情。",
-    versionLine: "版本 {version}"
+    openLibraryHint: "打开资源库后查看当前范围与资产详情。"
   },
   dialog: {
     createLibrary: {

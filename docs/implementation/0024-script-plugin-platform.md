@@ -1,8 +1,10 @@
 # 第0024框架规格：脚本—插件扩展平台
 
-> 状态：顶层设计已确认，等待按 Beads 子工单分阶段实施
+> 状态：顶层设计已确认（2026-07-30 与 ADR-0025 对齐：Action vs Contribution）
 >
 > 日期：2026-07-29
+>
+> 修订：2026-07-30
 >
 > 上位决策：[ADR-0025](../adr/0025-automation-core-script-runtime-and-mcp.md)、[ADR-0026](../adr/0026-plugin-runtime-installation-and-trust.md)
 >
@@ -44,22 +46,24 @@ Serpent 需要一个足够强的 TypeScript/JavaScript 插件系统，使第三�
                          /          |           \
                         /           |            \
         Automation Script      Plugin Host       MCP Adapter
-        单次/显式运行           安装/生命周期       Agent 精选工具
-        循环与批处理            UI/Hook/Provider    结构化调用
+        领域 Action 面          安装/生命周期       同一 Action 面
+        人用 Console            UI/Hook/Provider    Agent 调用
+        可 headless 执行
 ```
 
-三者共享的是领域能力，不共享产品生命周期：
+三者共享的是领域 Action，不共享产品生命周期：
 
 | 维度 | 自动化脚本 | 插件 | MCP |
 | --- | --- | --- | --- |
-| 主要用途 | 一次性或保存的复杂批处理 | 长期扩展应用行为与 UI | Agent 的精选结构化工具 |
-| 生命周期 | 每次运行形成 Execution，完成即结束 | 安装、激活、停用、升级、卸载 | MCP 连接生命周期 |
-| UI | Console 输出、计划和结果 | 菜单、面板、完整工作区、设置 | 无应用内自定义 UI |
-| Hook / 输入捕获 | 不支持长期注册 | 支持 | 不支持 GUI 输入 |
-| 领域操作 | `serpent` SDK → Gateway | 同一 SDK → Gateway | Registry 映射 → Gateway |
+| 主要用途 | 复杂批处理与编排（含建库/导入等 Action） | 长期扩展应用行为与 UI | 与脚本相同的领域 Action，供 Agent 调用 |
+| 生命周期 | 每次运行形成 Execution，完成即结束 | 安装、激活、停用、升级、卸载 | MCP 连接生命周期（可挂 headless host） |
+| UI Contribution | 不支持注册菜单/Hook/界面 | 支持 | 不支持 GUI Contribution |
+| 领域操作 | `serpent` SDK → Gateway | 同一 SDK → Gateway | Registry 映射 → Gateway（与脚本同面） |
 | 运行时 | QuickJS 隔离执行 | 标准 QuickJS / 可信 Node | 本地 stdio host |
 
-标准插件可以复用 Script Runtime 的 QuickJS 引擎、TypeScript 转换、RPC 和资源预算实现，但必须使用独立的 `Plugin Runtime Contract`。不能通过“永不结束的脚本”模拟插件，也不能让保存脚本注册常驻 Hook、UI 或输入监听。
+标准插件可以复用 Script Runtime 的 QuickJS 引擎、TypeScript 转换、RPC 和资源预算实现，但必须使用独立的 `Plugin Runtime Contract`。不能通过“永不结束的脚本”模拟插件 Contribution，也不能让保存脚本注册常驻 Hook、UI 或输入监听。
+
+`library.create`、`file.import` 等**领域 Action** 属于脚本/MCP，不属于“仅插件”。插件通过 Gateway 调用这些 Action 时与脚本遵循同一授权与计划批准规则。
 
 插件可以注册命名空间命令。脚本只能在目标插件已激活并被授权时调用这些命令：
 

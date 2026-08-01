@@ -151,6 +151,26 @@ describe('QuickJS/WASM sandbox engine prototype', () => {
     ]);
   });
 
+  it('exposes library.changeSequence for cross-process plan fencing without extra input', async () => {
+    const commands: Array<{ commandId: string; input: unknown }> = [];
+    const result = await runQuickJsSandboxPrototype(
+      `
+        const sequence = await serpent.library.changeSequence();
+        return sequence;
+      `,
+      {
+        executeAutomationCommand: async (commandId, input) => {
+          commands.push({ commandId, input });
+          expect(commandId).toBe('library.change-sequence');
+          return { changeSequence: 7 };
+        },
+      },
+    );
+
+    expect(result.value).toEqual({ changeSequence: 7 });
+    expect(commands).toEqual([{ commandId: 'library.change-sequence', input: {} }]);
+  });
+
   it('exposes asset automation without leaking relative or absolute paths to the script guest', async () => {
     const commands: Array<{ commandId: string; input: unknown }> = [];
     const result = await runQuickJsSandboxPrototype(
@@ -158,6 +178,7 @@ describe('QuickJS/WASM sandbox engine prototype', () => {
         const folders = await serpent.folders.list();
         const assets = await serpent.assets.list();
         const metadata = await serpent.assets.getMetadata(assets.items[0].id);
+        const aiContent = await serpent.assets.getAiContent(assets.items[0].id);
         const copied = await serpent.assets.copyFilePaths(assets.items.map((asset) => asset.id));
         const renamed = await serpent.assets.renameFile(assets.items[0].id, 'first-tagged');
         const batchRenamed = await serpent.assets.renameFiles([{ assetId: assets.items[0].id, newBaseName: 'first-concept' }]);
@@ -170,6 +191,8 @@ describe('QuickJS/WASM sandbox engine prototype', () => {
           folder: folders.items[0],
           hasRelativePath: 'relativeFilePath' in assets.items[0],
           tag: metadata.tags[0].name,
+          aiDescription: aiContent.description,
+          aiTag: aiContent.tags[0],
           copied: copied.copiedCount,
           renamed: renamed.name,
           batchRenamed: batchRenamed.renamedCount,
@@ -216,6 +239,14 @@ describe('QuickJS/WASM sandbox engine prototype', () => {
               };
             case 'asset.metadata.get':
               return { assetId: 'asset-a', tags: [{ id: 'tag-a', name: 'concept', source: 'user' }] };
+            case 'asset.ai-content.get':
+              return {
+                assetId: 'asset-a',
+                description: 'AI description',
+                tags: ['generated'],
+                rating: 4,
+                modelVersion: 'test-model',
+              };
             case 'asset.paths.copy':
               return { copiedCount: 1 };
             case 'asset.rename-file':
@@ -247,6 +278,8 @@ describe('QuickJS/WASM sandbox engine prototype', () => {
       folder: { id: 'folder-a', parentId: null, name: 'References' },
       hasRelativePath: false,
       tag: 'concept',
+      aiDescription: 'AI description',
+      aiTag: 'generated',
       copied: 1,
       renamed: 'first-tagged.png',
       batchRenamed: 1,
@@ -258,6 +291,7 @@ describe('QuickJS/WASM sandbox engine prototype', () => {
       { commandId: 'folder.list', input: {} },
       { commandId: 'asset.list', input: {} },
       { commandId: 'asset.metadata.get', input: { assetId: 'asset-a' } },
+      { commandId: 'asset.ai-content.get', input: { assetId: 'asset-a' } },
       { commandId: 'asset.paths.copy', input: { assetIds: ['asset-a'] } },
       { commandId: 'asset.rename-file', input: { assetId: 'asset-a', newBaseName: 'first-tagged' } },
       { commandId: 'asset.rename-files', input: { items: [{ assetId: 'asset-a', newBaseName: 'first-concept' }] } },
@@ -265,6 +299,40 @@ describe('QuickJS/WASM sandbox engine prototype', () => {
       { commandId: 'asset.list-trash', input: {} },
       { commandId: 'asset.restore-if-original-vacant', input: { assetIds: ['asset-a'] } },
       { commandId: 'asset.palette.aggregate-recent', input: { days: 2, limit: 3 } },
+    ]);
+  });
+
+  it('exposes headless library creation and file import through the same automation bridge', async () => {
+    const commands: Array<{ commandId: string; input: unknown }> = [];
+    const result = await runQuickJsSandboxPrototype(
+      `
+        const created = await serpent.library.create({
+          displayName: 'Headless',
+          selectedParentPath: '/private/parent',
+        });
+        const imported = await serpent.files.import({
+          sourceKind: 'files',
+          sourcePaths: ['/private/source.png'],
+        });
+        return { created, imported };
+      `,
+      {
+        executeAutomationCommand: async (commandId, input) => {
+          commands.push({ commandId, input });
+          return commandId === 'library.create'
+            ? { libraryId: 'library-1', displayName: 'Headless' }
+            : { status: 'completed', completion: { importedCount: 1, skippedCount: 0, replacedCount: 0, assets: [] } };
+        },
+      },
+    );
+
+    expect(result.value).toEqual({
+      created: { libraryId: 'library-1', displayName: 'Headless' },
+      imported: { status: 'completed', completion: { importedCount: 1, skippedCount: 0, replacedCount: 0, assets: [] } },
+    });
+    expect(commands).toEqual([
+      { commandId: 'library.create', input: { displayName: 'Headless', selectedParentPath: '/private/parent' } },
+      { commandId: 'file.import', input: { sourceKind: 'files', sourcePaths: ['/private/source.png'] } },
     ]);
   });
 

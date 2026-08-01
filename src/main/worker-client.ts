@@ -8,6 +8,7 @@ import { mediaBinaryWorkerEnv } from './media-binary-env';
 import {
   parseWorkerControlMessage,
   parseAssetChangeEvent,
+  parseLibraryChangedEvent,
   parseWorkerReadyMessage,
   parseWorkerResponse,
   parseProgressEvent,
@@ -17,6 +18,7 @@ import {
   parseAiContentClearedEvent,
   type WorkerResult,
   type AssetChangeEvent,
+  type LibraryChangedEvent,
   type ProgressEvent,
   type ThumbnailEvent,
   type AiProgressEvent,
@@ -69,6 +71,9 @@ export function requestTimeoutForCommand(
   if (
     commandType.startsWith('asset.import.')
     || commandType === 'asset.refresh'
+    || commandType === 'library.create'
+    || commandType === 'automation.file-import-plan'
+    || commandType === 'automation.file-operation-plan'
     || commandType === 'extension.save-from-url'
     || commandType === 'extension.save-from-file'
   ) return FILE_OPERATION_TIMEOUT_MS;
@@ -84,6 +89,7 @@ export class LibraryWorkerClient {
   #shutdownAck: (() => void) | undefined;
   #shuttingDown = false;
   #assetChangeListeners = new Set<(event: AssetChangeEvent) => void>();
+  #libraryChangedListeners = new Set<(event: LibraryChangedEvent) => void>();
   #progressListeners = new Set<(event: ProgressEvent) => void>();
   #thumbnailListeners = new Set<(event: ThumbnailEvent) => void>();
   #aiProgressListeners = new Set<(event: AiProgressEvent) => void>();
@@ -190,6 +196,11 @@ export class LibraryWorkerClient {
     return () => this.#assetChangeListeners.delete(listener);
   }
 
+  onLibraryChanged(listener: (event: LibraryChangedEvent) => void): () => void {
+    this.#libraryChangedListeners.add(listener);
+    return () => this.#libraryChangedListeners.delete(listener);
+  }
+
   onProgress(listener: (event: ProgressEvent) => void): () => void {
     this.#progressListeners.add(listener);
     return () => this.#progressListeners.delete(listener);
@@ -277,6 +288,14 @@ export class LibraryWorkerClient {
       return;
     } catch {
       // Not an AI cleared event.
+    }
+
+    try {
+      const libraryChanged = parseLibraryChangedEvent(message);
+      for (const listener of this.#libraryChangedListeners) listener(libraryChanged);
+      return;
+    } catch {
+      // Not a library change event; continue parsing worker messages.
     }
 
     try {

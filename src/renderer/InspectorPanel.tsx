@@ -69,16 +69,6 @@ function formatDateFull(value: string, unknownLabel: string) {
       }).format(date);
 }
 
-function formatDateShort(value: string, unknownLabel: string) {
-  const date = new Date(value);
-  return Number.isNaN(date.valueOf())
-    ? unknownLabel
-    : new Intl.DateTimeFormat("zh-CN", {
-        month: "2-digit",
-        day: "2-digit",
-      }).format(date);
-}
-
 // --- Types ---
 
 export interface AiContent {
@@ -1324,19 +1314,6 @@ export function InspectorPanel(props: InspectorPanelProps) {
                 );
               })()}
 
-              {assetMetadata && assetMetadata.entityVersion > 0 && (
-
-                <div className="inspector-version-line">
-                  {t("inspector.versionLine", {
-                    version: assetMetadata.entityVersion,
-                  })}{" "}
-                  ·{" "}
-                  {formatDateShort(
-                    assetMetadata.updatedAt,
-                    t("common.unknownTime"),
-                  )}
-                </div>
-              )}
             </>
           ) : (
             <div className="inspector-metadata-placeholder" aria-hidden="true" />

@@ -1144,6 +1144,7 @@ export async function runQuickJsSandboxPrototype(
       const assets = context.newObject();
       const folders = context.newObject();
       const library = context.newObject();
+      const files = context.newObject();
       const linkedFolders = context.newObject();
       const tags = context.newObject();
       const collections = context.newObject();
@@ -1170,6 +1171,18 @@ export async function runQuickJsSandboxPrototype(
       const inspectLibrary = context.newFunction('inspect', () => createDeferredHostCall(
         host.executeAutomationCommand!('library.inspect', {}),
         (value) => newQuickJsJsonValue(context, scriptLibraryInspectResult(value)),
+      ));
+      const changeSequence = context.newFunction('changeSequence', () => createDeferredHostCall(
+        host.executeAutomationCommand!('library.change-sequence', {}),
+        newQuickJsJsonValue.bind(undefined, context),
+      ));
+      const createLibrary = context.newFunction('create', (inputHandle) => createDeferredHostCall(
+        host.executeAutomationCommand!('library.create', context.dump(inputHandle)),
+        newQuickJsJsonValue.bind(undefined, context),
+      ));
+      const importFiles = context.newFunction('import', (inputHandle) => createDeferredHostCall(
+        host.executeAutomationCommand!('file.import', context.dump(inputHandle)),
+        newQuickJsJsonValue.bind(undefined, context),
       ));
       const listLinkedFolders = context.newFunction('list', (inputHandle) => createDeferredHostCall(
         host.executeAutomationCommand!(
@@ -1283,6 +1296,12 @@ export async function runQuickJsSandboxPrototype(
         }),
         newQuickJsJsonValue.bind(undefined, context),
       ));
+      const getAiContent = context.newFunction('getAiContent', (assetIdHandle) => createDeferredHostCall(
+        host.executeAutomationCommand!('asset.ai-content.get', {
+          assetId: context.dump(assetIdHandle),
+        }),
+        newQuickJsJsonValue.bind(undefined, context),
+      ));
       const setMetadata = context.newFunction('setMetadata', (inputHandle) => createDeferredHostCall(
         host.executeAutomationCommand!('asset.metadata.set', context.dump(inputHandle)),
         newQuickJsJsonValue.bind(undefined, context),
@@ -1312,6 +1331,21 @@ export async function runQuickJsSandboxPrototype(
         }),
         newQuickJsJsonValue.bind(undefined, context),
       ));
+      const moveToFolder = context.newFunction('moveToFolder', (assetIdsHandle, targetFolderIdHandle, optionsHandle) => {
+        const options = optionsHandle === undefined ? {} : context.dump(optionsHandle) as {
+          conflictStrategy?: 'keep-both' | 'replace' | 'skip';
+        };
+        return createDeferredHostCall(
+          host.executeAutomationCommand!('asset.move', {
+            assetIds: context.dump(assetIdsHandle),
+            targetFolderId: context.dump(targetFolderIdHandle),
+            ...(options.conflictStrategy === undefined
+              ? {}
+              : { conflictStrategy: options.conflictStrategy }),
+          }),
+          newQuickJsJsonValue.bind(undefined, context),
+        );
+      });
       const renameFile = context.newFunction('renameFile', (assetIdHandle, newBaseNameHandle) => createDeferredHostCall(
         host.executeAutomationCommand!('asset.rename-file', {
           assetId: context.dump(assetIdHandle),
@@ -1347,11 +1381,13 @@ export async function runQuickJsSandboxPrototype(
       context.setProp(assets, 'search', search);
       context.setProp(assets, 'list', list);
       context.setProp(assets, 'getMetadata', getMetadata);
+      context.setProp(assets, 'getAiContent', getAiContent);
       context.setProp(assets, 'setMetadata', setMetadata);
       context.setProp(assets, 'getExtractedMetadata', getExtractedMetadata);
       context.setProp(assets, 'setRating', setRating);
       context.setProp(assets, 'copyFilePaths', copyFilePaths);
       context.setProp(assets, 'moveToTrash', moveToTrash);
+      context.setProp(assets, 'moveToFolder', moveToFolder);
       context.setProp(assets, 'renameFile', renameFile);
       context.setProp(assets, 'renameFiles', renameFiles);
       context.setProp(trash, 'list', listTrash);
@@ -1360,6 +1396,9 @@ export async function runQuickJsSandboxPrototype(
       context.setProp(folders, 'list', listFolders);
       context.setProp(folders, 'create', createFolder);
       context.setProp(library, 'inspect', inspectLibrary);
+      context.setProp(library, 'changeSequence', changeSequence);
+      context.setProp(library, 'create', createLibrary);
+      context.setProp(files, 'import', importFiles);
       context.setProp(linkedFolders, 'list', listLinkedFolders);
       context.setProp(tags, 'list', listTags);
       context.setProp(tags, 'create', createTag);
@@ -1379,6 +1418,7 @@ export async function runQuickJsSandboxPrototype(
       context.setProp(serpent, 'assets', assets);
       context.setProp(serpent, 'folders', folders);
       context.setProp(serpent, 'library', library);
+      context.setProp(serpent, 'files', files);
       context.setProp(serpent, 'linkedFolders', linkedFolders);
       context.setProp(serpent, 'tags', tags);
       context.setProp(serpent, 'collections', collections);
@@ -1389,6 +1429,7 @@ export async function runQuickJsSandboxPrototype(
       assets.dispose();
       folders.dispose();
       library.dispose();
+      files.dispose();
       linkedFolders.dispose();
       tags.dispose();
       collections.dispose();
@@ -1401,11 +1442,13 @@ export async function runQuickJsSandboxPrototype(
       search.dispose();
       list.dispose();
       getMetadata.dispose();
+      getAiContent.dispose();
       setMetadata.dispose();
       getExtractedMetadata.dispose();
       setRating.dispose();
       copyFilePaths.dispose();
       moveToTrash.dispose();
+      moveToFolder.dispose();
       renameFile.dispose();
       renameFiles.dispose();
       listTrash.dispose();
@@ -1414,6 +1457,9 @@ export async function runQuickJsSandboxPrototype(
       listFolders.dispose();
       createFolder.dispose();
       inspectLibrary.dispose();
+      changeSequence.dispose();
+      createLibrary.dispose();
+      importFiles.dispose();
       listLinkedFolders.dispose();
       listTags.dispose();
       createTag.dispose();

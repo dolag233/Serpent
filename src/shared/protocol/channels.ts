@@ -1,6 +1,7 @@
 export const LIBRARY_REQUEST_CHANNEL = 'serpent:library:request' as const;
 export const LIBRARY_LIFECYCLE_CHANNEL = 'serpent:library:lifecycle' as const;
 export const ASSET_CHANGE_CHANNEL = 'serpent:asset:changed' as const;
+export const LIBRARY_CHANGED_CHANNEL = 'serpent:library:changed' as const;
 export const THUMBNAIL_CHANNEL = 'serpent:thumbnail' as const;
 export const PROGRESS_CHANNEL = 'serpent:progress' as const;
 export const AI_PROGRESS_CHANNEL = 'serpent:ai:progress' as const;
@@ -29,6 +30,9 @@ export const WINDOW_MAXIMIZED_CHANNEL =
   'serpent:shell:window-maximized' as const;
 /** Main → Renderer: BrowserWindow focus state (macOS traffic lights / shell chrome). */
 export const WINDOW_FOCUS_CHANNEL = 'serpent:shell:window-focus' as const;
+/** Main → Renderer: apply a selection requested by an attached local Agent. */
+export const DESKTOP_AUTOMATION_SELECTION_CHANNEL =
+  'serpent:desktop-automation:selection' as const;
 /** Renderer → Main: enable Main before-input capture for video letter keys. */
 export const VIEWER_VIDEO_SHORTCUTS_ACTIVE_CHANNEL =
   'serpent:viewer:video-shortcuts-active' as const;
@@ -46,6 +50,9 @@ export const AUTOMATION_SCRIPT_COMMAND_CHANNEL = 'serpent:automation:script-comm
 export const AUTOMATION_SCRIPT_COMPLETE_CHANNEL = 'serpent:automation:script-complete' as const;
 export const AUTOMATION_SCRIPT_CANCEL_CHANNEL = 'serpent:automation:script-cancel' as const;
 export const AUTOMATION_SCRIPT_HISTORY_CHANNEL = 'serpent:automation:script-history' as const;
+export const AUTOMATION_SCRIPT_UNDO_CHANNEL = 'serpent:automation:script-undo' as const;
+export const AUTOMATION_SCRIPT_RECENT_LIST_CHANNEL = 'serpent:automation:script-recent-list' as const;
+export const AUTOMATION_SCRIPT_RECENT_OPEN_CHANNEL = 'serpent:automation:script-recent-open' as const;
 /** Renderer plugin manager → Main. File paths remain Main-owned. */
 export const PLUGIN_MANAGER_CHANNEL = 'serpent:plugin-manager:request' as const;
 

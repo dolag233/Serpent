@@ -4576,6 +4576,26 @@ body.serpent-modal-open .app-shell {
   margin-top: 12px !important;
 }
 
+.script-sandbox-preview-recent {
+  flex: 0 0 auto;
+  margin-bottom: 12px;
+}
+
+.script-sandbox-preview-recent-list,
+.script-sandbox-preview-history-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.script-sandbox-preview-history {
+  flex: 0 0 auto;
+  margin-bottom: 12px;
+}
+
 .dialog-actions-start {
   justify-content: flex-start;
 }
@@ -7886,13 +7906,6 @@ select.ai-config-input.ai-config-languages {
   margin-top: 7px;
   font-family: "IBM Plex Mono", monospace;
   font-size: 10.5px;
-}
-
-.inspector-version-line {
-  margin-top: 12px;
-  color: var(--tertiary);
-  font-family: "IBM Plex Mono", monospace;
-  font-size: 9px;
 }
 
 .inspector-version-conflict {

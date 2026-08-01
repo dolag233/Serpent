@@ -19,6 +19,7 @@ import {
   rmdirSync,
   rmSync,
   statSync,
+  utimesSync,
   watch,
   writeFileSync,
   writeSync,
@@ -53,7 +54,10 @@ import {
   LibraryWriteCoordinatorError,
   isSQLiteWriteContention,
   type AcquireLibraryWriteLeaseOptions,
+  type LibraryChangeSubscription,
+  type LibraryJobLease,
   type LibraryWriteLease,
+  type LibraryWriteLeaseHeartbeat,
 } from './library-write-coordinator';
 
 import { sanitizeAiDescription } from '../shared/ai-analysis-settings';
@@ -64,7 +68,7 @@ import {
   colorFilterSql,
   parseColorFilterIds,
 } from '../shared/color-filter-presets';
-import type { TagOperationSkip } from '../shared/protocol/responses';
+import type { LibraryChangedEvent, TagOperationSkip } from '../shared/protocol/responses';
 
 // sharp is an optional N-API dependency (no rebuild needed for Electron).
 // The Worker loads it lazily so it can still start if sharp is missing.
@@ -256,6 +260,7 @@ import { extractAuthorFromExif } from './author-from-exif';
 import type {
   ImportCompletion,
   ImportConflictPlan,
+  AutomationImportPlan,
   InternalLibrarySummary,
   ExportProgressEvent,
   ImportProgressEvent,
@@ -1715,6 +1720,38 @@ const WRITE_COORDINATION_SCHEMA_CHECKSUM = createHash('sha256')
   .update(WRITE_COORDINATION_SCHEMA_SQL)
   .digest('hex');
 
+// Migration v25: durable ownership for long-running, detached Jobs. The
+// lease is separate from the library writer lease so a Job can heartbeat
+// while filesystem/media work remains outside a SQLite transaction.
+const JOB_LEASE_SCHEMA_SQL = `
+  CREATE TABLE IF NOT EXISTS library_job_leases (
+    library_id TEXT NOT NULL REFERENCES library(library_id) ON DELETE CASCADE,
+    job_id TEXT NOT NULL,
+    owner_id TEXT NOT NULL,
+    fencing_token INTEGER NOT NULL CHECK(fencing_token > 0),
+    acquired_at_ms INTEGER NOT NULL CHECK(acquired_at_ms >= 0),
+    expires_at_ms INTEGER NOT NULL CHECK(expires_at_ms > acquired_at_ms),
+    PRIMARY KEY(library_id, job_id)
+  );
+`;
+const JOB_LEASE_SCHEMA_CHECKSUM = createHash('sha256')
+  .update(JOB_LEASE_SCHEMA_SQL)
+  .digest('hex');
+
+// Migration v26: the thumbnail queue asks whether a job already exists for a
+// revision. Without a matching index, opening a large library performs a
+// quadratic NOT EXISTS scan over the jobs table before the visible batch is
+// queued.
+const THUMBNAIL_QUEUE_INDEX_SCHEMA_SQL = `
+  CREATE INDEX IF NOT EXISTS jobs_asset_kind_status
+    ON jobs(asset_id, kind, status);
+  CREATE INDEX IF NOT EXISTS revision_artifacts_revision_kind_status
+    ON revision_artifacts(revision_id, kind, status, invalidated_at);
+`;
+const THUMBNAIL_QUEUE_INDEX_SCHEMA_CHECKSUM = createHash('sha256')
+  .update(THUMBNAIL_QUEUE_INDEX_SCHEMA_SQL)
+  .digest('hex');
+
 const MIGRATIONS = [
   { version: 1, sql: INITIAL_SCHEMA_SQL, checksum: INITIAL_SCHEMA_CHECKSUM },
   { version: 2, sql: ASSET_SCHEMA_SQL, checksum: ASSET_SCHEMA_CHECKSUM },
@@ -1764,6 +1801,12 @@ const MIGRATIONS = [
     sql: WRITE_COORDINATION_SCHEMA_SQL,
     checksum: WRITE_COORDINATION_SCHEMA_CHECKSUM,
   },
+  { version: 25, sql: JOB_LEASE_SCHEMA_SQL, checksum: JOB_LEASE_SCHEMA_CHECKSUM },
+  {
+    version: 26,
+    sql: THUMBNAIL_QUEUE_INDEX_SCHEMA_SQL,
+    checksum: THUMBNAIL_QUEUE_INDEX_SCHEMA_CHECKSUM,
+  },
 ] as const;
 const SUPPORTED_SCHEMA_VERSION = MIGRATIONS.at(-1)!.version;
 
@@ -1780,6 +1823,7 @@ interface MigrationRow {
 interface OpenLibrary {
   connection: DatabaseConnection;
   summary: InternalLibrarySummary;
+  changeSubscription: LibraryChangeSubscription;
   /** Managed path identities whose on-disk file must not be auto-reconciled after relink recovery preserved them. */
   preservedRelinkPathIdentities: Set<string>;
 }
@@ -1974,6 +2018,8 @@ type PersistedOperationManifest =
 
 interface OperationRow {
   error_code: string | null;
+  /** Present when selected; recoverFileOperations requires it for import lease skips. */
+  kind?: string;
   manifest_json: string;
   operation_id: string;
   status: string;
@@ -2001,6 +2047,11 @@ export type ImportFailurePoint =
   | 'crash-move-after-filesystem'
   | 'crash-move-before-db-commit'
   | 'crash-move-after-db-commit'
+  | 'crash-copy-before-filesystem'
+  | 'crash-copy-after-conflict'
+  | 'crash-copy-after-filesystem'
+  | 'crash-copy-before-db-commit'
+  | 'crash-copy-after-db-commit'
   | 'crash-linked-convert-after-filesystem'
   | 'crash-relink-before-manifest-write'
   | 'crash-relink-after-manifest-before-placement'
@@ -2258,6 +2309,7 @@ export interface LibraryServiceOptions {
   importClock?: ImportExpiryClock;
   importTtlMs?: number;
   onAssetsChanged?: (event: AssetsChangedEvent) => void;
+  onLibraryChanged?: (event: LibraryChangedEvent) => void;
   onDiagnostic?: (diagnostic: LibraryServiceDiagnostic) => void;
   onProgress?: (event: ExportProgressEvent | ImportProgressEvent) => void;
   observerFactory?: AssetObserverFactory;
@@ -2277,6 +2329,10 @@ export interface LibraryServiceOptions {
   trashItem?: (sourcePath: string) => Promise<void>;
   /** Test-only seam invoked after bounded-write lease acquisition. */
   beforeBoundedWriteTransaction?: (libraryId: string) => void;
+  /** Test-only seam invoked immediately before the v23+ migration transaction. */
+  beforeSchemaMigrationTransaction?: () => void;
+  /** Test-only seam invoked after BEGIN IMMEDIATE acquires the migration mutex. */
+  afterSchemaMigrationTransactionBegin?: () => void;
   /** Test-only override for deterministic SQLite writer-contention tests. */
   sqliteBusyTimeoutMsForTests?: number;
   /** Removes one Serpent trash directory; injectable for platform-error tests. */
@@ -3194,10 +3250,19 @@ function buildContextualSearchRank(groups: SearchGroup[]): {
  * v0.1 library is v23 before this change, which is the upgrade boundary that
  * needs cross-process protection now.
  */
-function migrateDatabase(connection: DatabaseConnection, allowFresh: boolean): void {
+function migrateDatabase(
+  connection: DatabaseConnection,
+  allowFresh: boolean,
+  options?: Pick<
+    LibraryServiceOptions,
+    'afterSchemaMigrationTransactionBegin' | 'beforeSchemaMigrationTransaction'
+  >,
+): void {
   const versionBeforeMigration = schemaVersion(connection);
   if (versionBeforeMigration >= 23 && versionBeforeMigration <= SUPPORTED_SCHEMA_VERSION) {
+    options?.beforeSchemaMigrationTransaction?.();
     connection.transaction(() => {
+      options?.afterSchemaMigrationTransactionBegin?.();
       migrateDatabaseUnserialized(connection, allowFresh);
     }).immediate();
     return;
@@ -4348,7 +4413,7 @@ export class LibraryService {
   private recoverFileOperations(openLibrary: OpenLibrary): void {
     const rows = openLibrary.connection
       .prepare(
-        `SELECT operation_id, status, manifest_json, error_code
+        `SELECT operation_id, kind, status, manifest_json, error_code
            FROM file_operations
           ORDER BY created_at`,
       )
@@ -4396,6 +4461,25 @@ export class LibraryService {
         row.error_code !== 'COPY_APPLY_FAILED'
       ) {
         this.removeOperation(operationPath);
+        continue;
+      }
+      // Another Serpent process is still applying under a live Job lease.
+      // Do not roll back its filesystem or clear the operation directory.
+      const JOB_LEASE_APPLYING_KINDS = new Set([
+        'import',
+        'managed-move',
+        'managed-move-undo',
+        'managed-copy',
+        'restore',
+      ]);
+      if (
+        row.status === 'applying'
+        && row.kind !== undefined
+        && JOB_LEASE_APPLYING_KINDS.has(row.kind)
+        && new LibraryWriteCoordinator(openLibrary.connection, openLibrary.summary.libraryId)
+          .hasLiveJobLease(row.operation_id)
+      ) {
+        retainedOperationIds.add(row.operation_id);
         continue;
       }
       this.assertSafeOperationPath(operationPath);
@@ -4537,6 +4621,20 @@ export class LibraryService {
   }
 
   /**
+   * Claim a long-running Job with a durable owner/fencing token. The caller
+   * must heartbeat while external work is in progress and assert ownership
+   * before every persisted state transition.
+   */
+  acquireJobLease(
+    libraryId: string,
+    jobId: string,
+    options?: AcquireLibraryWriteLeaseOptions,
+  ): Promise<LibraryJobLease> {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    return new LibraryWriteCoordinator(openLibrary.connection, libraryId).claimJob(jobId, options);
+  }
+
+  /**
    * Execute a synchronous, metadata-only command inside a real SQLite
    * `BEGIN IMMEDIATE` transaction and an observable per-library lease.
    *
@@ -4600,6 +4698,21 @@ export class LibraryService {
   }
 
   /**
+   * Polls the durable sequence from the open library connection so a Worker
+   * can observe commits made by another Serpent process. The subscription
+   * owns no write lease and must be stopped when the library closes.
+   */
+  subscribeToChangeSequence(
+    libraryId: string,
+    onChange: (sequence: number) => void,
+    intervalMs = 250,
+  ): LibraryChangeSubscription {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    return new LibraryWriteCoordinator(openLibrary.connection, libraryId)
+      .subscribeToChangeSequence({ intervalMs, onChange });
+  }
+
+  /**
    * Side-effect-free preflight for an Automation Gateway file-operation plan.
    * The result contains only opaque state tokens; source paths and filenames
    * remain inside the Worker. The execution command later validates both the
@@ -4607,12 +4720,13 @@ export class LibraryService {
    */
   previewAutomationFileOperation(input: {
     libraryId: string;
-    operation: 'trash' | 'rename-file' | 'rename-files' | 'restore-if-original-vacant';
+    operation: 'trash' | 'move' | 'rename-file' | 'rename-files' | 'restore-if-original-vacant';
     assetIds: string[];
     newBaseName?: string;
+    targetFolderId?: string | null;
   }): {
     libraryId: string;
-    operation: 'trash' | 'rename-file' | 'rename-files' | 'restore-if-original-vacant';
+    operation: 'trash' | 'move' | 'rename-file' | 'rename-files' | 'restore-if-original-vacant';
     changeSequence: number;
     targetCount: number;
     executableCount: number;
@@ -4623,6 +4737,15 @@ export class LibraryService {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     if (input.assetIds.length === 0 || new Set(input.assetIds).size !== input.assetIds.length) {
       throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+    }
+    if (input.operation === 'move') {
+      // Validate target folder exists when moving into a non-root folder.
+      if (input.targetFolderId) {
+        const folder = openLibrary.connection.prepare(
+          'SELECT folder_id FROM managed_folders WHERE folder_id = ?',
+        ).get(input.targetFolderId);
+        if (!folder) throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+      }
     }
     const rows = openLibrary.connection.prepare(
       `SELECT asset_id, current_revision_id, relative_file_path, deleted_at,
@@ -4655,11 +4778,15 @@ export class LibraryService {
       });
       const executable = input.operation === 'trash'
         ? row.location_kind === 'managed' && row.deleted_at === null
-        : input.operation === 'rename-file'
-          ? row.deleted_at === null && row.availability === 'available' && typeof input.newBaseName === 'string'
-          : input.operation === 'rename-files'
-            ? row.deleted_at === null && row.availability === 'available'
-          : row.location_kind === 'managed' && row.deleted_at !== null;
+        : input.operation === 'move'
+          ? row.location_kind === 'managed'
+            && row.deleted_at === null
+            && row.availability === 'available'
+          : input.operation === 'rename-file'
+            ? row.deleted_at === null && row.availability === 'available' && typeof input.newBaseName === 'string'
+            : input.operation === 'rename-files'
+              ? row.deleted_at === null && row.availability === 'available'
+            : row.location_kind === 'managed' && row.deleted_at !== null;
       if (executable) executableCount++;
     }
     return {
@@ -4669,7 +4796,7 @@ export class LibraryService {
       targetCount: input.assetIds.length,
       executableCount,
       blockedCount: input.assetIds.length - executableCount,
-      undoSupported: input.operation === 'trash',
+      undoSupported: input.operation === 'trash' || input.operation === 'move',
       assetStates,
     };
   }
@@ -9985,23 +10112,37 @@ export class LibraryService {
   }
 
   private recoverInterruptedAiJobs(openLibrary: OpenLibrary): void {
+    const nowMs = Date.now();
     openLibrary.connection.prepare(
       `UPDATE jobs SET status = 'queued', progress = 0.0,
         error_code = 'PROCESS_INTERRUPTED', error_detail = NULL, updated_at = ?
         WHERE library_id = ? AND status = 'running'
-          AND kind IN ('ai.image.analysis', 'ai.video.analysis')`,
-    ).run(new Date().toISOString(), openLibrary.summary.libraryId);
+          AND kind IN ('ai.image.analysis', 'ai.video.analysis')
+          AND NOT EXISTS (
+            SELECT 1 FROM library_job_leases
+             WHERE library_job_leases.library_id = jobs.library_id
+               AND library_job_leases.job_id = jobs.job_id
+               AND library_job_leases.expires_at_ms > ?
+          )`,
+    ).run(new Date().toISOString(), openLibrary.summary.libraryId, nowMs);
   }
 
   private recoverInterruptedThumbnailJobs(openLibrary: OpenLibrary): void {
+    const nowMs = Date.now();
     openLibrary.connection.prepare(
       `UPDATE jobs SET status = 'queued', progress = 0.0,
         error_code = 'PROCESS_INTERRUPTED', error_detail = NULL, updated_at = ?
         WHERE library_id = ? AND status = 'running'
           AND kind IN ('generate_thumbnail', 'generate_video_poster',
                        'generate_contact_sheet', 'generate_webm_proxy', 'generate_audio_proxy',
-                       'extract_palette')`,
-    ).run(new Date().toISOString(), openLibrary.summary.libraryId);
+                       'extract_palette')
+          AND NOT EXISTS (
+            SELECT 1 FROM library_job_leases
+             WHERE library_job_leases.library_id = jobs.library_id
+               AND library_job_leases.job_id = jobs.job_id
+               AND library_job_leases.expires_at_ms > ?
+          )`,
+    ).run(new Date().toISOString(), openLibrary.summary.libraryId, nowMs);
   }
 
   // ── AI Job Queue Management ──────────────────────────────────────
@@ -13251,6 +13392,19 @@ export class LibraryService {
         .run(job.attempt_count + 1, now, job.job_id);
       if (claimed.changes === 0) continue;
 
+      let jobLease: LibraryJobLease;
+      try {
+        jobLease = await this.acquireJobLease(libraryId, job.job_id, {
+          timeoutMs: 0,
+        });
+      } catch (error) {
+        if (!(error instanceof LibraryWriteCoordinatorError)) throw error;
+        openLibrary.connection.prepare(
+          "UPDATE jobs SET status = 'queued', error_code = 'JOB_LEASE_BUSY', updated_at = ? WHERE job_id = ? AND status = 'running'",
+        ).run(new Date().toISOString(), job.job_id);
+        continue;
+      }
+      const jobHeartbeat = jobLease.startHeartbeat();
       const controller = new AbortController();
       this.activeMediaJobs.set(job.job_id, { controller, libraryId });
       const previousArtifacts = this.mediaArtifactSnapshot(openLibrary, job.revision_id);
@@ -13332,10 +13486,31 @@ export class LibraryService {
           processed += 1;
           continue;
         }
+          jobLease.assertCurrent();
         openLibrary.connection
           .prepare("UPDATE jobs SET status = 'succeeded', progress = 1.0, error_code = NULL, error_detail = NULL, updated_at = ? WHERE job_id = ? AND status = 'running'")
           .run(new Date().toISOString(), job.job_id);
       } catch (error) {
+        if (jobHeartbeat.error !== undefined || error instanceof LibraryWriteCoordinatorError) {
+          this.discardLateMediaArtifacts(openLibrary, job.revision_id, previousArtifacts, {
+            libraryId,
+            jobId: job.job_id,
+            assetId: job.asset_id,
+          });
+          // Lease loss must not leave the job stuck in `running`; requeue so a
+          // later wave (or process restart recovery) can claim it again.
+          openLibrary.connection.prepare(
+            "UPDATE jobs SET status = 'queued', error_code = 'JOB_LEASE_LOST', updated_at = ? WHERE job_id = ? AND status = 'running'",
+          ).run(new Date().toISOString(), job.job_id);
+          this.diagnose('media-job.lease-lost', error, {
+            libraryId,
+            jobId: job.job_id,
+            assetId: job.asset_id,
+            kind: job.kind,
+          });
+          processed += 1;
+          continue;
+        }
         const state = this.mediaJobState(libraryId, job.job_id);
         if (controller.signal.aborted || state === 'paused' || state === 'cancelled') {
           this.discardLateMediaArtifacts(openLibrary, job.revision_id, previousArtifacts, {
@@ -13403,6 +13578,8 @@ export class LibraryService {
           });
         }
       } finally {
+        jobHeartbeat.stop();
+        jobLease.release();
         this.activeMediaJobs.delete(job.job_id);
       }
       processed += 1;
@@ -14885,6 +15062,27 @@ export class LibraryService {
        VALUES (?, ?, 'preparing', ?, NULL, ?, ?)`,
     ).run(operationId, manifest.kind, JSON.stringify(manifest), now, now);
 
+    let jobLease: LibraryJobLease;
+    try {
+      jobLease = new LibraryWriteCoordinator(openLibrary.connection, openLibrary.summary.libraryId)
+        .claimJobOnce(operationId);
+    } catch (error) {
+      this.removeOperation(operationPath);
+      if (error instanceof LibraryWriteCoordinatorError) {
+        try {
+          openLibrary.connection.prepare(
+            `UPDATE file_operations
+                SET status = 'failed', error_code = 'JOB_LEASE_BUSY', updated_at = ?
+              WHERE operation_id = ? AND status = 'preparing'`,
+          ).run(new Date().toISOString(), operationId);
+        } catch {
+          // Best-effort status update.
+        }
+      }
+      throw serviceError(error, 'LIBRARY_NOT_WRITABLE');
+    }
+    const jobHeartbeat: LibraryWriteLeaseHeartbeat = jobLease.startHeartbeat();
+
     try {
       this.failAt('crash-move-before-filesystem');
       const applying = openLibrary.connection.prepare(
@@ -14960,6 +15158,7 @@ export class LibraryService {
           if (consumed.changes !== 1) throw new LibraryServiceError('ASSET_MOVE_CONFLICT', { reason: 'SOURCE_CHANGED' });
         }
         this.failAt('crash-move-before-db-commit');
+        jobLease.assertCurrent();
         openLibrary.connection.prepare(
           "UPDATE file_operations SET status = 'committed', updated_at = ? WHERE operation_id = ?",
         ).run(new Date().toISOString(), operationId);
@@ -14990,6 +15189,16 @@ export class LibraryService {
         }
       }
       throw serviceError(error, 'LIBRARY_NOT_WRITABLE');
+    } finally {
+      jobHeartbeat.stop();
+      try {
+        jobLease.release();
+      } catch (releaseError) {
+        this.diagnose('asset.move.lease-release', releaseError, {
+          libraryId: openLibrary.summary.libraryId,
+          operationId,
+        });
+      }
     }
   }
 
@@ -15422,8 +15631,29 @@ export class LibraryService {
        VALUES (?, ?, 'preparing', ?, NULL, ?, ?)`,
     ).run(operationId, manifest.kind, JSON.stringify(manifest), now, now);
 
-    const copiedPaths: string[] = [];
+    let jobLease: LibraryJobLease;
     try {
+      jobLease = new LibraryWriteCoordinator(openLibrary.connection, openLibrary.summary.libraryId)
+        .claimJobOnce(operationId);
+    } catch (error) {
+      this.removeOperation(operationPath);
+      if (error instanceof LibraryWriteCoordinatorError) {
+        try {
+          openLibrary.connection.prepare(
+            `UPDATE file_operations
+                SET status = 'failed', error_code = 'JOB_LEASE_BUSY', updated_at = ?
+              WHERE operation_id = ? AND status = 'preparing'`,
+          ).run(new Date().toISOString(), operationId);
+        } catch {
+          // Best-effort status update.
+        }
+      }
+      throw serviceError(error, 'LIBRARY_NOT_WRITABLE');
+    }
+    const jobHeartbeat: LibraryWriteLeaseHeartbeat = jobLease.startHeartbeat();
+
+    try {
+      this.failAt('crash-copy-before-filesystem');
       const applying = openLibrary.connection.prepare(
         "UPDATE file_operations SET status = 'applying', updated_at = ? WHERE operation_id = ? AND status = 'preparing'",
       ).run(new Date().toISOString(), operationId);
@@ -15436,14 +15666,15 @@ export class LibraryService {
         mkdirSync(path.dirname(holdingPath), { recursive: true });
         renameSync(destinationPath, holdingPath);
       }
+      this.failAt('crash-copy-after-conflict');
 
       for (const file of manifest.files) {
         const sourcePath = this.folderPath(openLibrary, file.sourceRelativePath);
         const destinationPath = this.folderPath(openLibrary, file.destinationRelativePath);
         mkdirSync(path.dirname(destinationPath), { recursive: true });
         copyFileSync(sourcePath, destinationPath, constants.COPYFILE_EXCL);
-        copiedPaths.push(file.destinationRelativePath);
       }
+      this.failAt('crash-copy-after-filesystem');
 
       openLibrary.connection.transaction(() => {
         for (const file of manifest.files) {
@@ -15555,31 +15786,51 @@ export class LibraryService {
           this.syncAssetSearchContent(openLibrary.connection, file.newAssetId);
         }
 
+        this.failAt('crash-copy-before-db-commit');
+        jobLease.assertCurrent();
         openLibrary.connection.prepare(
           "UPDATE file_operations SET status = 'committed', updated_at = ? WHERE operation_id = ?",
         ).run(new Date().toISOString(), operationId);
       })();
+      this.failAt('crash-copy-after-db-commit');
     } catch (error) {
-      for (const relativePath of copiedPaths.reverse()) {
-        rmSync(this.folderPath(openLibrary, relativePath), { force: true });
+      if (error instanceof SimulatedCrashError) {
+        throw new LibraryServiceError('LIBRARY_NOT_WRITABLE', { cause: error });
       }
-      for (const file of manifest.files) {
-        if (!file.destinationConflict) continue;
-        const holdingPath = this.moveConflictHoldingPath(openLibrary, file.destinationConflict);
-        const restorePath = this.folderPath(openLibrary, file.destinationConflict.relativePath);
-        if (existsSync(holdingPath) && !existsSync(restorePath)) {
-          mkdirSync(path.dirname(restorePath), { recursive: true });
-          renameSync(holdingPath, restorePath);
+      const row = openLibrary.connection.prepare(
+        'SELECT status, manifest_json, error_code, operation_id FROM file_operations WHERE operation_id = ?',
+      ).get(operationId) as OperationRow | undefined;
+      if (row?.status === 'committed') {
+        this.diagnose('asset.copy.post-commit', error, {
+          operationId,
+          libraryId: openLibrary.summary.libraryId,
+        });
+        return;
+      }
+      if (row) {
+        try {
+          this.recoverManagedCopyOperation(openLibrary, row, manifest, operationPath);
+        } catch (recoveryError) {
+          openLibrary.connection.prepare(
+            "UPDATE file_operations SET status = 'failed', error_code = 'COPY_APPLY_FAILED', updated_at = ? WHERE operation_id = ?",
+          ).run(new Date().toISOString(), operationId);
+          this.diagnose('asset.copy.rollback', recoveryError, {
+            operationId,
+            libraryId: openLibrary.summary.libraryId,
+          });
         }
       }
-      openLibrary.connection.prepare(
-        "UPDATE file_operations SET status = 'failed', error_code = 'COPY_APPLY_FAILED', updated_at = ? WHERE operation_id = ?",
-      ).run(new Date().toISOString(), operationId);
-      this.diagnose('asset.copy.rollback', error, {
-        operationId,
-        libraryId: openLibrary.summary.libraryId,
-      });
       throw serviceError(error, 'LIBRARY_NOT_WRITABLE');
+    } finally {
+      jobHeartbeat.stop();
+      try {
+        jobLease.release();
+      } catch (releaseError) {
+        this.diagnose('asset.copy.lease-release', releaseError, {
+          libraryId: openLibrary.summary.libraryId,
+          operationId,
+        });
+      }
     }
   }
 
@@ -16136,7 +16387,7 @@ export class LibraryService {
   trashAssets(input: {
     libraryId: string;
     assetIds: string[];
-  }): { trashedCount: number } {
+  }): { trashedCount: number; operationId: string } {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     if (input.assetIds.length === 0 || new Set(input.assetIds).size !== input.assetIds.length) {
       throw new LibraryServiceError('INVALID_IMPORT_DECISION');
@@ -16268,7 +16519,7 @@ export class LibraryService {
         }
       })();
 
-      return { trashedCount: logicalCount };
+      return { trashedCount: logicalCount, operationId };
     } catch (error) {
       // Rollback filesystem: move trashed files back
       for (const entry of [...movedEntries].reverse()) {
@@ -16374,7 +16625,7 @@ export class LibraryService {
     assetIds: string[];
     targetFolderId?: string | null;
     conflictStrategy?: 'keep-both' | 'replace' | 'skip';
-  }): { restoredCount: number; assets: AssetSummary[] } {
+  }): { restoredCount: number; assets: AssetSummary[]; operationId: string } {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     if (input.assetIds.length === 0 || new Set(input.assetIds).size !== input.assetIds.length) {
       throw new LibraryServiceError('INVALID_IMPORT_DECISION');
@@ -16587,6 +16838,27 @@ export class LibraryService {
         )
         .run(operationId, JSON.stringify(manifest), now, now);
 
+      let jobLease: LibraryJobLease;
+      try {
+        jobLease = new LibraryWriteCoordinator(openLibrary.connection, openLibrary.summary.libraryId)
+          .claimJobOnce(operationId);
+      } catch (error) {
+        this.removeOperation(operationPath);
+        if (error instanceof LibraryWriteCoordinatorError) {
+          try {
+            openLibrary.connection.prepare(
+              `UPDATE file_operations
+                  SET status = 'failed', error_code = 'JOB_LEASE_BUSY', updated_at = ?
+                WHERE operation_id = ? AND status = 'preparing'`,
+            ).run(new Date().toISOString(), operationId);
+          } catch {
+            // Best-effort status update.
+          }
+        }
+        throw serviceError(error, 'LIBRARY_NOT_WRITABLE');
+      }
+      const jobHeartbeat: LibraryWriteLeaseHeartbeat = jobLease.startHeartbeat();
+
       try {
         this.failAt('crash-restore-before-filesystem');
         const applying = openLibrary.connection
@@ -16643,6 +16915,7 @@ export class LibraryService {
             this.syncAssetSearchContent(openLibrary.connection, plan.assetId);
           }
           this.failAt('crash-restore-before-db-commit');
+          jobLease.assertCurrent();
           openLibrary.connection
             .prepare("UPDATE file_operations SET status = 'committed', updated_at = ? WHERE operation_id = ?")
             .run(new Date().toISOString(), operationId);
@@ -16686,6 +16959,16 @@ export class LibraryService {
         } else {
           throw serviceError(error, 'LIBRARY_NOT_WRITABLE');
         }
+      } finally {
+        jobHeartbeat.stop();
+        try {
+          jobLease.release();
+        } catch (releaseError) {
+          this.diagnose('asset.restore.lease-release', releaseError, {
+            libraryId: input.libraryId,
+            operationId,
+          });
+        }
       }
 
       const restoredAssets: AssetSummary[] = [];
@@ -16719,10 +17002,64 @@ export class LibraryService {
         // originally requested count.
         restoredCount: this.countLogicalAssetUnits(openLibrary, plans.map((plan) => plan.assetId)),
         assets: this.withImageSequenceSummaries(openLibrary, restoredAssets),
+        operationId,
       };
     } catch (error) {
       throw serviceError(error, 'LIBRARY_NOT_WRITABLE');
     }
+  }
+
+  undoTrashAssets(input: {
+    libraryId: string;
+    operationId: string;
+  }): {
+    restoredCount: number;
+    skippedCount: number;
+    assets: AssetSummary[];
+  } {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    const operation = openLibrary.connection.prepare(
+      `SELECT operation_id, status, manifest_json, error_code FROM file_operations
+        WHERE operation_id = ? AND kind = 'trash'`,
+    ).get(input.operationId) as OperationRow | undefined;
+    if (!operation || operation.status !== 'committed' || operation.error_code !== null) {
+      throw new LibraryServiceError('ASSET_MOVE_CONFLICT', { reason: 'SOURCE_CHANGED' });
+    }
+    let manifest: unknown;
+    try {
+      manifest = JSON.parse(operation.manifest_json);
+    } catch (error) {
+      throw new LibraryServiceError('LIBRARY_CORRUPT', { cause: error });
+    }
+    if (
+      typeof manifest !== 'object'
+      || manifest === null
+      || !Array.isArray((manifest as { files?: unknown }).files)
+    ) {
+      throw new LibraryServiceError('LIBRARY_CORRUPT');
+    }
+    const assetIds = (manifest as { files: unknown[] }).files.map((file) => (
+      typeof file === 'object' && file !== null && typeof (file as { backupName?: unknown }).backupName === 'string'
+        ? (file as { backupName: string }).backupName
+        : null
+    ));
+    if (assetIds.some((assetId) => assetId === null) || assetIds.length === 0) {
+      throw new LibraryServiceError('LIBRARY_CORRUPT');
+    }
+    const restored = this.restoreAssetsIfOriginalVacant({
+      libraryId: input.libraryId,
+      assetIds: assetIds as string[],
+    });
+    if (restored.skippedCount === 0) {
+      openLibrary.connection.prepare(
+        "UPDATE file_operations SET status = 'rolled_back', updated_at = ? WHERE operation_id = ?",
+      ).run(new Date().toISOString(), input.operationId);
+    }
+    return {
+      restoredCount: restored.restoredCount,
+      skippedCount: restored.skippedCount,
+      assets: restored.assets,
+    };
   }
 
   /**
@@ -18631,6 +18968,8 @@ export class LibraryService {
     );
     return {
       importedCount: assets.length,
+      fileCount: assets.length,
+      assetCount: assets.length,
       skippedCount: Math.max(0, entries.length - assets.length),
       replacedCount: 0,
       assets,
@@ -18741,6 +19080,130 @@ export class LibraryService {
     }
 
     return 'none';
+  }
+
+  previewAutomationImport(input: {
+    libraryId: string;
+    targetFolderId?: string;
+    sourceKind: 'files' | 'folder';
+    sourcePaths: string[];
+    expandImageSequences?: boolean;
+    imageSequenceFps?: number;
+  }): AutomationImportPlan {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    if (this.linkedFolderRowForImport(openLibrary, input.targetFolderId)) {
+      throw new LibraryServiceError('INVALID_IMPORT_SOURCE', {
+        reason: 'SOURCE_NOT_FOUND',
+      });
+    }
+    const targetFolder = this.targetFolder(openLibrary, input.targetFolderId);
+    const { entries } = this.enumerateImportSources({
+      sourceKind: input.sourceKind,
+      sourcePaths: input.sourcePaths,
+      targetPrefix: targetFolder?.relative_path ?? '',
+      expandImageSequences: input.expandImageSequences === true,
+    });
+    const seenDestinations = new Map<string, number>();
+    const contentHashCache = new Map<string, string>();
+    const seenContentHashes = new Set<string>();
+    const sequenceBatchPaths = new Set<string>();
+    for (const candidate of detectImageSequences(
+      entries.map((entry) => entry.destinationRelativePath),
+    )) {
+      for (const frame of candidate.frames) sequenceBatchPaths.add(frame.value);
+    }
+    const sourceStates: AutomationImportPlan['sourceStates'] = [];
+    let suspectedDuplicateCount = 0;
+    let libraryDuplicateCount = 0;
+    let nameConflictCount = 0;
+    let totalBytes = 0;
+
+    for (const entry of entries) {
+      const entrySha256 = sha256FileAtPath(entry.sourcePath);
+      contentHashCache.set(entry.sourcePath, entrySha256);
+      sourceStates.push({
+        sourcePath: entry.sourcePath,
+        stateToken: createHash('sha256')
+          .update(`${entry.sourcePath}\0${entry.byteSize}\0${entrySha256}`, 'utf8')
+          .digest('hex'),
+      });
+      totalBytes += entry.byteSize;
+      const identity = portablePathIdentity(entry.destinationRelativePath);
+      let existingSize = seenDestinations.get(identity);
+      let existingAbsolutePath: string | undefined;
+      if (existingSize === undefined) {
+        const destination = this.portableDiskDestination(
+          openLibrary,
+          entry.destinationRelativePath,
+        );
+        existingSize = destination?.size;
+        if (destination && destination.size !== -1) {
+          existingAbsolutePath = this.folderPath(openLibrary, destination.actualRelativePath);
+        }
+      }
+      const conflictKind = this.classifyImportEntryConflict({
+        openLibrary,
+        entry,
+        entrySha256,
+        existingSize,
+        existingAbsolutePath,
+        contentHashCache,
+        seenContentHashes,
+        ignoreBatchContentHash: sequenceBatchPaths.has(entry.destinationRelativePath),
+      });
+      if (conflictKind === 'suspected-duplicate') {
+        suspectedDuplicateCount += 1;
+        if (existingSize === undefined) libraryDuplicateCount += 1;
+      } else if (conflictKind === 'name-conflict') {
+        nameConflictCount += 1;
+      } else {
+        seenContentHashes.add(entrySha256);
+        seenDestinations.set(identity, entry.byteSize);
+      }
+    }
+    return {
+      libraryId: input.libraryId,
+      changeSequence: this.getChangeSequence(input.libraryId),
+      fileCount: entries.length,
+      totalBytes,
+      suspectedDuplicateCount,
+      libraryDuplicateCount,
+      nameConflictCount,
+      sourceStates,
+    };
+  }
+
+  validateAutomationImportPlan(input: {
+    libraryId: string;
+    targetFolderId?: string;
+    sourceKind: 'files' | 'folder';
+    sourcePaths: string[];
+    expandImageSequences?: boolean;
+    imageSequenceFps?: number;
+    automationPlan?: {
+      expectedChangeSequence: number;
+      sourceStates: Array<{ sourcePath: string; stateToken: string }>;
+    };
+  }): void {
+    if (input.automationPlan === undefined) return;
+    const plan = this.previewAutomationImport(input);
+    if (plan.changeSequence !== input.automationPlan.expectedChangeSequence) {
+      throw new LibraryServiceError('VERSION_CONFLICT', {
+        currentEntityVersion: plan.changeSequence,
+      });
+    }
+    const expected = new Map(input.automationPlan.sourceStates.map((state) => [
+      state.sourcePath,
+      state.stateToken,
+    ]));
+    if (
+      expected.size !== plan.sourceStates.length
+      || plan.sourceStates.some((state) => expected.get(state.sourcePath) !== state.stateToken)
+    ) {
+      throw new LibraryServiceError('VERSION_CONFLICT', {
+        currentEntityVersion: plan.changeSequence,
+      });
+    }
   }
 
   prepareImport(input: {
@@ -18937,7 +19400,14 @@ export class LibraryService {
     sourcePaths: string[];
     expandImageSequences?: boolean;
     imageSequenceFps?: number;
+    automationPlan?: {
+      expectedChangeSequence: number;
+      sourceStates: Array<{ sourcePath: string; stateToken: string }>;
+    };
   }): ImportConflictPlan | ImportCompletion {
+    if (input.automationPlan !== undefined) {
+      this.validateAutomationImportPlan(input);
+    }
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     const linked = this.linkedFolderRowForImport(
       openLibrary,
@@ -19225,6 +19695,29 @@ export class LibraryService {
       })),
     };
 
+    let jobLease: LibraryJobLease;
+    try {
+      jobLease = new LibraryWriteCoordinator(openLibrary.connection, pending.libraryId)
+        .claimJobOnce(operationId);
+    } catch (error) {
+      this.removeOperation(operationPath);
+      if (error instanceof LibraryWriteCoordinatorError) {
+        try {
+          openLibrary.connection
+            .prepare(
+              `UPDATE file_operations
+                  SET status = 'failed', error_code = 'JOB_LEASE_BUSY', updated_at = ?
+                WHERE operation_id = ? AND status = 'preparing'`,
+            )
+            .run(new Date().toISOString(), operationId);
+        } catch {
+          // Best-effort status update; the caller still receives IMPORT_APPLY_FAILED.
+        }
+      }
+      throw serviceError(error, 'IMPORT_APPLY_FAILED');
+    }
+    const jobHeartbeat: LibraryWriteLeaseHeartbeat = jobLease.startHeartbeat();
+
     try {
       const now = new Date().toISOString();
       const updated = openLibrary.connection
@@ -19236,6 +19729,15 @@ export class LibraryService {
         .run(JSON.stringify(manifest), now, operationId);
       if (updated.changes !== 1) throw new Error('Pending operation is not preparing.');
     } catch (error) {
+      jobHeartbeat.stop();
+      try {
+        jobLease.release();
+      } catch (releaseError) {
+        this.diagnose('import-apply.lease-release', releaseError, {
+          libraryId: pending.libraryId,
+          operationId,
+        });
+      }
       this.removeOperation(operationPath);
       throw serviceError(error, 'IMPORT_APPLY_FAILED');
     }
@@ -19469,6 +19971,7 @@ export class LibraryService {
         }
       }
 
+      jobLease.assertCurrent();
       openLibrary.connection
         .prepare("UPDATE file_operations SET status = 'committed', updated_at = ? WHERE operation_id = ?")
         .run(new Date().toISOString(), operationId);
@@ -19498,13 +20001,22 @@ export class LibraryService {
       }
       return {
         importedCount,
+        fileCount: importedCount,
+        assetCount: this.countLogicalAssetUnits(openLibrary, affectedAssetIds),
         skippedCount,
         replacedCount,
         assets,
       };
     } catch (error) {
       if (committed) {
-        return { importedCount, skippedCount, replacedCount, assets: [] };
+        return {
+          importedCount,
+          fileCount: importedCount,
+          assetCount: this.countLogicalAssetUnits(openLibrary, affectedAssetIds),
+          skippedCount,
+          replacedCount,
+          assets: [],
+        };
       }
       if (affectedAssetIds.length > 0) {
         // Partial durable import: keep committed rows/files and finish the op.
@@ -19531,6 +20043,8 @@ export class LibraryService {
         }
         return {
           importedCount,
+          fileCount: importedCount,
+          assetCount: this.countLogicalAssetUnits(openLibrary, affectedAssetIds),
           skippedCount,
           replacedCount,
           assets,
@@ -19552,6 +20066,16 @@ export class LibraryService {
         // The filesystem rollback is authoritative; recovery can retry a stale applying row.
       }
       throw serviceError(error, 'IMPORT_APPLY_FAILED');
+    } finally {
+      jobHeartbeat.stop();
+      try {
+        jobLease.release();
+      } catch (releaseError) {
+        this.diagnose('import-apply.lease-release', releaseError, {
+          libraryId: pending.libraryId,
+          operationId,
+        });
+      }
     }
   }
 
@@ -19833,10 +20357,14 @@ export class LibraryService {
         // used to create a phantom revision when a missing file reappeared. Only
         // tolerate that one-millisecond representation edge while restoring a
         // missing asset; available-file refreshes retain exact change detection.
-        const reappearanceTimestampEquivalent = asset.availability === 'missing'
-          && Math.abs(Date.parse(modifiedAt) - Date.parse(asset.modified_at)) <= 1;
+        // Files copied from an exported library can round an ISO millisecond
+        // timestamp by one millisecond on APFS/NTFS. Treat that representation
+        // edge as equivalent for both available and reappearing assets; a
+        // genuine source edit is still represented by a larger timestamp or
+        // byte-size change.
+        const timestampEquivalent = Math.abs(Date.parse(modifiedAt) - Date.parse(asset.modified_at)) <= 1;
         const statChanged = byteSize !== asset.byte_size
-          || (modifiedAt !== asset.modified_at && !reappearanceTimestampEquivalent);
+          || (modifiedAt !== asset.modified_at && !timestampEquivalent);
         const now = new Date().toISOString();
         if (statChanged) {
           const revisionId = randomUUID();
@@ -19937,7 +20465,7 @@ export class LibraryService {
         databasePath(partialPath),
         this.options.sqliteBusyTimeoutMsForTests,
       );
-      migrateDatabase(connection, true);
+      migrateDatabase(connection, true, this.options);
       connection
         .prepare('INSERT INTO library (library_id, display_name, created_at) VALUES (?, ?, ?)')
         .run(randomUUID(), displayName, new Date().toISOString());
@@ -20023,7 +20551,7 @@ export class LibraryService {
         databasePath(canonicalPath),
         this.options.sqliteBusyTimeoutMsForTests,
       );
-      migrateDatabase(connection, false);
+      migrateDatabase(connection, false, this.options);
       backfillTrashedFromTombstoneIds(connection);
       const library = verifyDatabase(connection);
       try {
@@ -20047,6 +20575,14 @@ export class LibraryService {
       const openLibrary: OpenLibrary = {
         connection,
         summary,
+        changeSubscription: new LibraryWriteCoordinator(connection, summary.libraryId)
+          .subscribeToChangeSequence({
+            onChange: (changeSequence) => this.options.onLibraryChanged?.({
+              type: 'library.changed',
+              libraryId: summary.libraryId,
+              changeSequence,
+            }),
+          }),
         preservedRelinkPathIdentities: new Set(),
       };
       this.openById.set(summary.libraryId, openLibrary);
@@ -21084,6 +21620,18 @@ export class LibraryService {
         }
       }
 
+      const managedAssetMtimes = new Map<string, Date>(
+        (openLibrary.connection
+          .prepare(
+            `SELECT a.relative_file_path, r.modified_at
+               FROM assets a
+               JOIN revisions r ON r.revision_id = a.current_revision_id
+              WHERE a.location_kind = 'managed'
+                AND a.deleted_at IS NULL`,
+          )
+          .all() as Array<{ relative_file_path: string; modified_at: string }>)
+          .map((row) => [row.relative_file_path, new Date(row.modified_at)]),
+      );
       const totalFiles = entries.length;
       let totalBytes = 0;
       for (const entry of entries) {
@@ -21110,6 +21658,20 @@ export class LibraryService {
         const destPath = path.join(canonicalDest, ...entry.relativePath.split('/'));
         mkdirSync(path.dirname(destPath), { recursive: true });
         copyFileSync(entry.sourcePath, destPath);
+        // Preserve managed-asset timestamps so reopening an exported library
+        // does not mistake the copy for an external revision and invalidate
+        // the ready artifact rows from the consistent DB snapshot.
+        const sourceStat = statSync(entry.sourcePath);
+        const managedRelativePath = entry.relativePath.startsWith('Assets/')
+          ? entry.relativePath.slice('Assets/'.length)
+          : undefined;
+        utimesSync(
+          destPath,
+          sourceStat.atime,
+          (managedRelativePath === undefined
+            ? undefined
+            : managedAssetMtimes.get(managedRelativePath)) ?? sourceStat.mtime,
+        );
         filesProcessed += 1;
         bytesProcessed += entry.byteSize;
 
@@ -22007,6 +22569,7 @@ export class LibraryService {
         this.removeOperation(pending.operationPath);
       }
     }
+    openLibrary.changeSubscription.stop();
     openLibrary.connection.close();
     this.openById.delete(libraryId);
     this.openIdByPath.delete(openLibrary.summary.libraryPath);

@@ -72,7 +72,7 @@ describe('schema v9 migration', () => {
     const created = service.createLibrary({ displayName: 'V9', selectedParentPath: root });
 
     const db = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
-    expect(db.pragma('user_version', { simple: true })).toBe(24);
+    expect(db.pragma('user_version', { simple: true })).toBe(26);
 
     const revArtifactCols = (db.prepare("PRAGMA table_info('revision_artifacts')").all() as Array<{ name: string }>).map((c) => c.name);
     expect(revArtifactCols).toContain('artifact_id');
@@ -591,7 +591,7 @@ describe('enqueueThumbnailJobs', () => {
 
     const assetIds: string[] = [];
     for (let index = 0; index < 6; index += 1) {
-      const source = path.join(root, `image-${index}.png`);
+      const source = path.join(root, `image-${String.fromCharCode(97 + index)}.png`);
       createTestImage(source);
       importNoConflict(service, created.libraryId, source);
     }

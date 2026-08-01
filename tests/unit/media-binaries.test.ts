@@ -195,6 +195,17 @@ describe.skipIf(process.platform === 'win32')('media binary release gate', () =>
       );
       const asarSource = path.join(packageRoot, 'asar-source');
       writeFixtureFile(path.join(asarSource, 'package.json'), '{"name":"fixture"}\n');
+      writeFixtureFile(
+        path.join(asarSource, '.vite', 'build', 'main.js'),
+        'const AUTOMATION_API_VERSION = 1;\n',
+      );
+      for (const utility of [
+        'plugin_standard_host.js',
+        'plugin_trusted_host.js',
+        'script_runtime_utility.js',
+      ]) {
+        writeFixtureFile(path.join(asarSource, utility), '// packaged utility fixture\n');
+      }
       await createPackage(asarSource, path.join(packagedResources, 'app.asar'));
       writeFixtureFile(path.join(
         packagedResources,

@@ -1,0 +1,31 @@
+{
+  "manifestVersion": 1,
+  "id": "com.serpent.trusted-host-probe",
+  "version": "1.0.0",
+  "name": "Trusted Host Probe",
+  "description": "Fixed test plugin that activates through the trusted Node Host and writes namespaced storage.",
+  "author": "Serpent",
+  "license": "MIT",
+  "engines": {
+    "serpent": ">=0.1.0 <1.0.0",
+    "pluginApi": 1
+  },
+  "runtime": {
+    "mode": "trusted",
+    "entry": "entry/main.js"
+  },
+  "permissions": [
+    "library.read",
+    "asset.read",
+    "storage.read",
+    "storage.write"
+  ],
+  "contributes": {
+    "commands": [],
+    "menus": {},
+    "views": [],
+    "settings": [],
+    "hooks": [],
+    "providers": []
+  }
+}

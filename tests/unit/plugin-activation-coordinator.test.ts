@@ -315,4 +315,75 @@ describe('PluginActivationCoordinator', () => {
     await coordinator.refreshOpenLibraries();
     expect(activate).toHaveBeenCalledTimes(0);
   });
+
+  it('registers manifest contributions on activate and revokes them on library close', async () => {
+    const { createContributionRegistry } = await import('../../src/plugins/plugin-contributions');
+    const contributions = createContributionRegistry();
+    const deactivateLibrary = vi.fn();
+    const coordinator = new PluginActivationCoordinator({
+      packageManager: {
+        getSafeMode: async () => false,
+        listInstalled: async () => [{
+          status: 'valid',
+          package: {
+            lock: { pluginId: 'com.example.contrib', version: '1.0.0', packageHash: 'f'.repeat(64) },
+            manifest: {
+              runtime: { mode: 'standard', entry: 'dist/main.js' },
+              permissions: ['library.read', 'asset.read'],
+              contributes: {
+                commands: [{ id: 'do-thing', title: 'Do thing' }],
+                menus: { asset: [{ command: 'do-thing' }] },
+                views: [{ id: 'board', title: 'Board', location: 'workspace' }],
+                settings: [],
+                hooks: [],
+                providers: [],
+              },
+            },
+            packageDirectory: '/plugins/contrib',
+          },
+        }],
+        resolve: async () => ({
+          status: 'resolved',
+          selection: 'use-library',
+          package: {
+            lock: { pluginId: 'com.example.contrib', version: '1.0.0', packageHash: 'f'.repeat(64) },
+            manifest: {
+              runtime: { mode: 'standard', entry: 'dist/main.js' },
+              permissions: ['library.read', 'asset.read'],
+              contributes: {
+                commands: [{ id: 'do-thing', title: 'Do thing' }],
+                menus: { asset: [{ command: 'do-thing' }] },
+                views: [{ id: 'board', title: 'Board', location: 'workspace' }],
+                settings: [],
+                hooks: [],
+                providers: [],
+              },
+            },
+            packageDirectory: '/plugins/contrib',
+          },
+        }),
+      } as never,
+      supervisor: {
+        activate: vi.fn(async () => undefined),
+        deactivate: vi.fn(),
+        deactivateLibrary,
+      } as never,
+      contributions,
+      readEntryFile: async () => 'async function activate() {}',
+    });
+
+    await coordinator.onLibraryOpened({
+      libraryId: 'library-1',
+      libraryDirectory: '/libraries/one',
+    });
+    expect(contributions.list().map((entry) => entry.id).sort()).toEqual([
+      'com.example.contrib.board',
+      'com.example.contrib.do-thing',
+      'com.example.contrib.menu.asset.do-thing',
+    ]);
+
+    coordinator.onLibraryClosed('library-1');
+    expect(contributions.list()).toEqual([]);
+    expect(deactivateLibrary).toHaveBeenCalledWith('library-1', 'library-closed');
+  });
 });

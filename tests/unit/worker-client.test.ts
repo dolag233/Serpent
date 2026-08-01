@@ -11,6 +11,22 @@ describe('requestTimeoutForCommand', () => {
     expect(requestTimeoutForCommand('asset.list')).toBe(15_000);
   });
 
+  it('allows library create and automation plan previews to finish before Main times out', () => {
+    expect(requestTimeoutForCommand('library.create')).toBe(5 * 60_000);
+    expect(requestTimeoutForCommand({
+      type: 'automation.file-import-plan',
+      libraryId: 'library-1',
+      sourceKind: 'files',
+      sourcePaths: ['/tmp/a.png'],
+    })).toBe(5 * 60_000);
+    expect(requestTimeoutForCommand({
+      type: 'automation.file-operation-plan',
+      libraryId: 'library-1',
+      operation: 'trash',
+      assetIds: ['asset-1'],
+    })).toBe(5 * 60_000);
+  });
+
   it('gives AI queue processing a long timeout (Serpent-iokf)', () => {
     expect(requestTimeoutForCommand('ai.process-queue')).toBe(10 * 60_000);
     expect(requestTimeoutForCommand('asset.analyze')).toBe(10 * 60_000);

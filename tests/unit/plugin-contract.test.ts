@@ -26,7 +26,7 @@ import {
   createPluginContributionId,
 } from '../../src/plugins/plugin-contributions';
 
-const validManifest = validManifestFixture;
+const validManifest = pluginManifestSchema.parse(validManifestFixture);
 
 const digest = (letter: string) => letter.repeat(64);
 
@@ -264,6 +264,19 @@ describe('Plugin contribution registry and generated SDK', () => {
     })).toThrow(/already registered/u);
     expect(registry.revokePluginInstance('instance-a')).toBe(2);
     expect(registry.list()).toEqual([]);
+  });
+
+  it('registers descriptor Contributions from a verified manifest', async () => {
+    const { registerManifestContributions } = await import('../../src/plugins/plugin-contributions');
+    const registry = createContributionRegistry();
+    const count = registerManifestContributions(registry, {
+      pluginInstanceId: 'instance-manifest',
+      pluginId: validManifest.id,
+      contributes: validManifest.contributes,
+    });
+    expect(count).toBeGreaterThan(0);
+    expect(registry.list().some((entry) => entry.id.endsWith('.extract-palette'))).toBe(true);
+    expect(registry.revokePluginInstance('instance-manifest')).toBe(count);
   });
 
   it('generates a standalone Plugin API v1 declaration and transport-safe description', () => {

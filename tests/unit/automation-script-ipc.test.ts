@@ -10,6 +10,7 @@ import {
   createJsonFileAutomationExecutionStore,
 } from '../../src/main/automation-execution-journal';
 import { AutomationScriptFileService } from '../../src/main/automation-script-file-service';
+import { createJsonFileAutomationRecentScriptsStore } from '../../src/main/automation-recent-scripts-store';
 import { registerAutomationScriptIpc } from '../../src/main/automation-script-ipc';
 import type { ScriptRuntimeExecutor } from '../../src/main/script-runtime-supervisor';
 import {
@@ -18,6 +19,8 @@ import {
   AUTOMATION_SCRIPT_EXECUTE_CHANNEL,
   AUTOMATION_SCRIPT_SAVE_CHANNEL,
   AUTOMATION_SCRIPT_START_CHANNEL,
+  AUTOMATION_SCRIPT_RECENT_LIST_CHANNEL,
+  AUTOMATION_SCRIPT_RECENT_OPEN_CHANNEL,
 } from '../../src/shared/protocol/channels';
 import type { WorkerCommand } from '../../src/shared/protocol/requests';
 import type { WorkerResult } from '../../src/shared/protocol/responses';
@@ -102,7 +105,11 @@ describe('Desktop Console automation IPC', () => {
       libraryId,
       source: "const matches = await serpent.assets.search({ query: 'Ser' });",
     });
-    expect(start).toMatchObject({ ok: true, executionId: 'execution-1' });
+    expect(start).toMatchObject({
+      ok: true,
+      executionId: 'execution-1',
+      capabilities: expect.arrayContaining(['library.read', 'library.create', 'file.import']),
+    });
     if (!start || typeof start !== 'object' || !('executionId' in start)) throw new Error('Expected an execution.');
 
     await expect(handlers.get(AUTOMATION_SCRIPT_EXECUTE_CHANNEL)!(event, {
@@ -309,5 +316,73 @@ describe('Desktop Console automation IPC', () => {
       scriptId: saved.scriptId,
       source: `${source}\n// changed`,
     })).resolves.toMatchObject({ ok: false });
+  });
+
+  it('lists recent scripts without paths and opens them through Main-owned handles', async () => {
+    const handlers = new Map<string, (event: { sender: { id: number; once: (event: 'destroyed', listener: () => void) => void } }, input: unknown) => Promise<unknown> | unknown>();
+    const fakeIpcMain = { handle: (channel: string, handler: (event: { sender: { id: number; once: (event: 'destroyed', listener: () => void) => void } }, input: unknown) => unknown) => {
+      handlers.set(channel, handler);
+    } };
+    const root = mkdtempSync(path.join(tmpdir(), 'serpent-automation-ipc-recent-'));
+    roots.push(root);
+    const scriptFile = path.join(root, 'recent.serpent.ts');
+    const source = "return await serpent.assets.search({ query: 'Ser' });";
+    const recentScripts = createJsonFileAutomationRecentScriptsStore(path.join(root, 'recent.json'), {
+      newHandle: () => 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+    });
+    recentScripts.record('recent.serpent.ts', scriptFile);
+    const scriptFiles = new AutomationScriptFileService({
+      selectOpenScript: async () => undefined,
+      selectSaveScript: async () => undefined,
+      recentScripts,
+      newScriptId: () => 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    });
+    registerAutomationScriptIpc({
+      ipcMain: fakeIpcMain as never,
+      isAuthorizedSender: () => true,
+      workerClient: () => undefined,
+      journal: () => undefined,
+      gateway: () => undefined,
+      runtime: () => undefined,
+      scriptFiles: () => scriptFiles,
+      confirmDesktopWrite: async () => true,
+      logger: () => undefined,
+    });
+
+    const event = { sender: { id: 10, once: () => undefined } };
+    const listed = handlers.get(AUTOMATION_SCRIPT_RECENT_LIST_CHANNEL)!(event, undefined);
+    expect(listed).toEqual({
+      ok: true,
+      entries: [{
+        handle: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+        displayName: 'recent.serpent.ts',
+        lastOpenedAt: expect.any(String),
+      }],
+    });
+    expect(JSON.stringify(listed)).not.toContain(scriptFile);
+
+    const opened = await handlers.get(AUTOMATION_SCRIPT_RECENT_OPEN_CHANNEL)!(event, {
+      handle: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+    });
+    expect(opened).toMatchObject({ ok: false, code: 'io-failed' });
+
+    const { writeFileSync } = await import('node:fs');
+    writeFileSync(scriptFile, source);
+    const reopened = await handlers.get(AUTOMATION_SCRIPT_RECENT_OPEN_CHANNEL)!(event, {
+      handle: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+    });
+    expect(reopened).toMatchObject({
+      ok: true,
+      displayName: 'recent.serpent.ts',
+      source,
+    });
+    expect(JSON.stringify(reopened)).not.toContain(scriptFile);
+
+    await expect(handlers.get(AUTOMATION_SCRIPT_RECENT_OPEN_CHANNEL)!(event, {
+      handle: 'not-a-uuid',
+    })).resolves.toEqual({ ok: false, code: 'io-failed' });
+    await expect(handlers.get(AUTOMATION_SCRIPT_RECENT_OPEN_CHANNEL)!(event, {
+      handle: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+    })).resolves.toEqual({ ok: false, code: 'recent-script-not-found' });
   });
 });

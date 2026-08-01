@@ -41,9 +41,163 @@
 
 ## 未完成范围
 
-- 除评分外的既有 Desktop 写入（元数据、标签、合集、导入、文件操作及 Job 状态）仍在旧路径中，必须逐条评估为短 transaction executor 或可恢复 job phase 后才可迁入；本阶段不把它们错误地套入 15 秒 lease。
-- 运行中的长 Job 仍需增补 owner/heartbeat/fencing 后才能在另一个进程打开同一库时精确判断“活跃”与“崩溃遗留”；现有 `status='running'` 原子 claim 不能单独满足这个跨进程恢复语义。
-- 跨进程变更通知目前提供可读取的持久 sequence；Desktop/MCP 的订阅或轮询事件接入尚未实现。
-- v23→v24 的实现已在 SQLite immediate transaction 内重读版本；当前回归证明迁移后第二次打开可验证 v24，但尚未构造两个独立进程重叠迁移的时序证据，不将其写作“并发迁移已验证”。
-- 文件树操作和导入必须把既有恢复日志分段接到 lease/job ownership，不能用长时间持锁的快捷方案。
-- `Serpent-y51c.7` 仍需把 Gateway Registry 的低风险写命令映射到上述 Worker 路径，并返回逐项成功/跳过/失败结果；本增量没有提前开放未授权脚本写入。
+- 运行中的长 Job 中，媒体缩略图队列已接 job lease/heartbeat（丢失时 `JOB_LEASE_LOST` 回队列）；**import**、**managed-move / managed-move-undo**、**managed-copy** 与 **restore** applying 已用 `operation_id` 作为 job lease。
+- Desktop Renderer 已通过 `LIBRARY_CHANGED_CHANNEL` 接收 `library.changed`；MCP host 尚未主动订阅推送事件（可轮询 Gateway `library.change-sequence`）。
+- Worker / Registry / MCP / 脚本宿主已暴露只读 `library.change-sequence`。
+- v23→v24 的实现已在 SQLite immediate transaction 内重读版本；当前回归证明迁移后第二次打开可验证 schema，但尚未构造两个独立进程重叠迁移的时序证据，不将其写作“并发迁移已验证”。
+- `Serpent-bb56.2` 已关闭（MCP `library.changed` 推送与并发迁移时序证据已完成）；真实双 Host 旅程和人类验收仍开放。
+
+## 2026-07-31 追加：change-sequence 拉取与跨进程 fencing 集成测试
+
+### 实现
+
+- Worker 协议新增只读命令 `library.change-sequence`（`libraryId` → `{ changeSequence }`），不占用 write lease。
+- `automation-readonly` 与 desktop Worker switch 均分发该命令，内部复用 `LibraryService.getChangeSequence`。
+- 新增 `tests/worker/automation-write-fencing.test.ts`：覆盖命令可读序号、双 `LibraryService` 实例跨连接 `library.changed` 通知、lease busy、过期 owner 无法 renew。
+
+### 验证
+
+```text
+node scripts/run-vitest-with-electron.mjs run --config vitest.config.ts \
+  tests/worker/automation-write-fencing.test.ts \
+  tests/worker/automation-readonly-command-executor.test.ts \
+  tests/worker/library-write-coordinator.test.ts
+```
+
+结果：3 files、14 tests 通过。`tsc --noEmit` 通过。
+
+## 2026-07-31 追加：Registry/Gateway 映射 library.change-sequence
+
+### 实现
+
+- Registry 新增只读命令 `library.change-sequence`（`library.read`，MCP public `serpent_library_change_sequence`）。
+- 脚本 API / QuickJS / 类型声明暴露 `serpent.library.changeSequence()`。
+- Gateway 单元测试覆盖绑定读取、未绑定拒绝、错误 Worker 结果。
+
+### 验证
+
+```text
+node scripts/run-vitest-with-electron.mjs run --config vitest.config.ts \
+  tests/unit/automation-command-gateway.test.ts \
+  tests/unit/serpent-mcp-adapter.test.ts \
+  tests/unit/quickjs-sandbox-prototype.test.ts
+```
+
+结果：3 files、58 tests 通过。`tsc --noEmit` 通过。
+
+## 2026-07-31 追加：import applying Job lease fencing
+
+### 实现
+
+- `LibraryWriteCoordinator.claimJobOnce` / `hasLiveJobLease`：同步单次 claim，供 import apply 使用。
+- `resolveImport` 在进入 `applying` 前以 `operation_id` claim Job lease 并 heartbeat；`finally` 释放；commit 前 `assertCurrent`。
+- `recoverFileOperations` 对仍持有 live lease 的 applying import 跳过回滚并保留 operation 目录。
+
+### 验证
+
+```text
+node scripts/run-vitest-with-electron.mjs run --config vitest.config.ts \
+  tests/worker/automation-write-fencing.test.ts \
+  tests/worker/import-planning.test.ts \
+  tests/worker/library-write-coordinator.test.ts
+```
+
+结果：3 files、50 tests 通过。
+
+## 2026-07-31 追加：managed-move applying Job lease fencing
+
+### 实现
+
+- `applyManagedMoveOperation`（含 undo）在 applying 前 `claimJobOnce` + heartbeat；commit 前 `assertCurrent`；`finally` 释放。
+- `recoverFileOperations` live-lease skip 白名单扩展为 `import` / `managed-move` / `managed-move-undo`。
+
+### 验证
+
+```text
+node scripts/run-vitest-with-electron.mjs run --config vitest.config.ts \
+  tests/worker/automation-write-fencing.test.ts \
+  tests/worker/managed-move.test.ts
+```
+
+结果：2 files、16 tests 通过。
+
+## 2026-07-31 追加：managed-copy applying Job lease fencing
+
+### 实现
+
+- `applyManagedCopyOperation` 在 applying 前 `claimJobOnce` + heartbeat；commit 前 `assertCurrent`；`finally` 释放。
+- 注入 `crash-copy-*` failpoints；`SimulatedCrashError` 不内联回滚，保留 `applying` 供 reopen/`recoverManagedCopyOperation` 处理。
+- `recoverFileOperations` live-lease skip 白名单加入 `managed-copy`（不含 undo）。
+
+### 验证
+
+```text
+node scripts/run-vitest-with-electron.mjs run --config vitest.config.ts \
+  tests/worker/automation-write-fencing.test.ts \
+  tests/worker/managed-copy.test.ts
+```
+
+结果：2 files、13 tests 通过。
+
+## 2026-07-31 追加：restore applying Job lease fencing
+
+### 实现
+
+- `restoreAssets` 在 applying 前 `claimJobOnce` + heartbeat；commit 前 `assertCurrent`；`finally` 释放。
+- `recoverFileOperations` live-lease skip 白名单加入 `restore`。
+- 成功路径返回 `operationId`（供租约对账测试使用；Worker IPC 响应形状未改）。
+
+### 验证
+
+```text
+node scripts/run-vitest-with-electron.mjs run --config vitest.config.ts \
+  tests/worker/automation-write-fencing.test.ts \
+  tests/worker/trash-relink.test.ts
+```
+
+结果：2 files、93 tests 通过、1 skipped。
+
+## 2026-07-31 追加：MCP `library.changed` 推送
+
+### 实现
+
+- MCP Host 订阅 Main 的 Worker `onLibraryChanged`，按执行记录当前绑定的 `libraryId` 过滤事件；未绑定执行或其他资源库的事件不推送。
+- 使用 MCP 标准 `notifications/message`，启用 Server `logging` capability。通知 `data` 仅含 `type: "library.changed"`、`libraryId` 和 `changeSequence`，不含文件系统路径。
+- MCP 客户端仍可轮询 `serpent_library_change_sequence`；推送作为低延迟补充，不改变变更序号的读取语义。
+
+### 验证
+
+```text
+node scripts/run-vitest-with-electron.mjs run --config vitest.config.ts \
+  tests/unit/automation-mcp-host.test.ts \
+  tests/unit/automation-mcp-bootstrap.test.ts \
+  tests/unit/serpent-mcp-adapter.test.ts
+```
+
+结果：3 files、14 tests 通过；新增测试覆盖匹配资源库推送、未绑定/不匹配 no-op、关闭时取消订阅及路径不泄露。`npm run typecheck` 待本回合执行。
+
+### 并发 v23→v24 迁移时序证据
+
+- 新增 `tests/worker/library-migration-opener.ts` 子进程 fixture，并在
+  `tests/worker/library-service.test.ts` 中用 Vite SSR bundle 启动两个独立
+  Electron Node 子进程。
+- 两个 opener 先并发进入迁移前接缝；第一个在 `BEGIN IMMEDIATE` 已取得
+  writer mutex 后受控等待，第二个已进入 `openLibrary` 并等待同一 SQLite 锁。
+  释放第一个后，两个 opener 均成功完成，证明第二个在锁内重读版本而不会
+  重复创建 v24 coordination tables/triggers。
+- 测试同时核对 `user_version = 26`、`quick_check(1) = ok`、`schema_migrations`
+  为 1–26 且无重复、`library_change_sequence` seed 为 0，以及 coordination
+  trigger 名称唯一。
+
+### 验证
+
+```text
+node scripts/run-vitest-with-electron.mjs run --config vitest.config.ts \
+  tests/worker/library-service.test.ts
+```
+
+结果：1 file、26 tests 通过；包含两个独立 Electron 子进程的重叠迁移时序。
+
+### 未完成范围
+
+- 当前 MCP push 尚无稳定的独立 Electron/MCP 客户端人类验收旅程；见 `AUT-013`。

@@ -23,6 +23,8 @@
 - Host 心跳：`plugin-runtime.heartbeat`；Main 失联后 `HEARTBEAT_TIMEOUT` 终止 Host 并计入 quarantine。
 - 隔离对抗单测：`plugin-standard-host-isolation.test.ts` 覆盖 process/require/import/fs/network 不可见，以及 CPU/内存/输出洪水可终止；Supervisor.activate 不阻塞等待 guest 完成。
 - 固定探测插件：`tests/fixtures/plugins/standard-host-probe/`；guest 激活写 `.serpent/plugin-data` 单测；E2E `plugin-standard-host-activation.test.ts`；`run-e2e.mjs` 补建 `plugin_standard_host.js` / `plugin_trusted_host.js`；`verify:package` 校验 ASAR 内 Host 产物。
+- E2E 修复：剥离 `ELECTRON_RUN_AS_NODE`；Zod 4 禁止重复 `disabled` 判别导致安装响应在 preload 失败；探测清单补 `library.read`；Host `asset.search` 与脚本共用 `normalizeAutomationAssetSearchInput`。`plugin-management` 与 `plugin-standard-host-activation` E2E 均 1 passed。
+- Contribution 描述符：激活后从 manifest 写入 `createContributionRegistry()`；关库 / Safe Mode / 解析变更时按 instance 完整撤销（UI 路由仍属 Phase E）。
 
 ## 验证
 
@@ -30,6 +32,8 @@
 npm run typecheck
 node scripts/run-vitest-with-electron.mjs run --config vitest.config.ts \
   tests/unit/plugin-standard-host-isolation.test.ts \
-  tests/unit/plugin-standard-host-probe-fixture.test.ts
+  tests/unit/plugin-standard-host-probe-fixture.test.ts \
+  tests/unit/plugin-manager-response-parse.test.ts
+node scripts/run-e2e.mjs tests/e2e/plugin-management.test.ts
 node scripts/run-e2e.mjs tests/e2e/plugin-standard-host-activation.test.ts
 ```

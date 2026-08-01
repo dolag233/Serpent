@@ -14,6 +14,7 @@ import {
   ACTIVE_CONTEXT_CHANNEL,
   APP_LOCALE_CHANNEL,
   LIBRARY_LIFECYCLE_CHANNEL,
+  LIBRARY_CHANGED_CHANNEL,
   LIBRARY_REQUEST_CHANNEL,
   PROGRESS_CHANNEL,
   AI_PROGRESS_CHANNEL,
@@ -25,6 +26,7 @@ import {
   SHOW_EDIT_CONTEXT_MENU_CHANNEL,
   SHELL_SWIPE_CHANNEL,
   WINDOW_FOCUS_CHANNEL,
+  DESKTOP_AUTOMATION_SELECTION_CHANNEL,
   INVERT_SELECTION_CHANNEL,
   COPY_SELECTION_CHANNEL,
   NATIVE_EDIT_COPY_CHANNEL,
@@ -40,6 +42,9 @@ import {
   AUTOMATION_SCRIPT_COMPLETE_CHANNEL,
   AUTOMATION_SCRIPT_CANCEL_CHANNEL,
   AUTOMATION_SCRIPT_HISTORY_CHANNEL,
+  AUTOMATION_SCRIPT_UNDO_CHANNEL,
+  AUTOMATION_SCRIPT_RECENT_LIST_CHANNEL,
+  AUTOMATION_SCRIPT_RECENT_OPEN_CHANNEL,
   PLUGIN_MANAGER_CHANNEL,
 } from '../shared/protocol/channels';
 import {
@@ -49,12 +54,18 @@ import {
   automationScriptExecuteResultSchema,
   automationScriptHistoryInputSchema,
   automationScriptHistoryResultSchema,
+  automationScriptUndoInputSchema,
+  automationScriptUndoResultSchema,
+  automationRecentScriptOpenInputSchema,
+  automationRecentScriptsListResultSchema,
+  type AutomationRecentScriptOpenInput,
   type AutomationScriptExecuteInput,
   type AutomationScriptCommandInput,
   type AutomationScriptCommandResult,
   type AutomationScriptCompleteInput,
   type AutomationScriptCancelInput,
   type AutomationScriptHistoryInput,
+  type AutomationScriptUndoInput,
   type AutomationScriptSaveInput,
   type AutomationScriptStartInput,
   type SerpentAutomationScriptApi,
@@ -62,6 +73,7 @@ import {
 import {
   parsePluginManagerResponse,
   type PluginManagerRequest,
+  type PluginManagerResponse,
   type SerpentPluginManagerApi,
 } from '../shared/plugin-manager-api';
 import {
@@ -70,6 +82,10 @@ import {
   type SerpentShellApi,
   type ShellSwipeDirection,
 } from '../shared/external-url';
+import {
+  desktopControlSelectionEventSchema,
+  type DesktopControlSelectionEvent,
+} from '../shared/desktop-control';
 import {
   appLogAutomationCorrelationIdSchema,
   parseAppLogEntry,
@@ -99,6 +115,8 @@ import {
   type ImageSequenceImportOffer,
   type AssetChangeEvent,
   parseAssetChangeEvent,
+  type LibraryChangedEvent,
+  parseLibraryChangedEvent,
   type ExtensionSaveCompletedEvent,
   parseExtensionSaveCompletedEvent,
   type ExportProgressEvent,
@@ -1131,6 +1149,14 @@ const library: SerpentLibraryApi = Object.freeze({
     return () => ipcRenderer.removeListener(ASSET_CHANGE_CHANNEL, subscription);
   },
 
+  onLibraryChanged(listener: (event: LibraryChangedEvent) => void) {
+    const subscription = (_event: Electron.IpcRendererEvent, input: unknown) => {
+      listener(parseLibraryChangedEvent(input));
+    };
+    ipcRenderer.on(LIBRARY_CHANGED_CHANNEL, subscription);
+    return () => ipcRenderer.removeListener(LIBRARY_CHANGED_CHANNEL, subscription);
+  },
+
   onExtensionSaveCompleted(listener: (event: ExtensionSaveCompletedEvent) => void) {
     const subscription = (_event: Electron.IpcRendererEvent, input: unknown) => {
       listener(parseExtensionSaveCompletedEvent(input));
@@ -1682,7 +1708,14 @@ async function importRequest(
   if (result.type === 'extension.asset-saved') {
     return {
       ok: true,
-      value: { importedCount: 1, skippedCount: 0, replacedCount: 0, assets: [result.asset] },
+      value: {
+        importedCount: 1,
+        fileCount: 1,
+        assetCount: 1,
+        skippedCount: 0,
+        replacedCount: 0,
+        assets: [result.asset],
+      },
     };
   }
   throw new Error('Unexpected prepare-import response.');
@@ -1824,6 +1857,18 @@ const shell: SerpentShellApi = Object.freeze({
       ipcRenderer.removeListener(WINDOW_FOCUS_CHANNEL, handler);
     };
   },
+  onDesktopAutomationSelection(
+    listener: (event: DesktopControlSelectionEvent) => void,
+  ) {
+    const handler = (_event: Electron.IpcRendererEvent, payload: unknown) => {
+      const parsed = desktopControlSelectionEventSchema.safeParse(payload);
+      if (parsed.success) listener(parsed.data);
+    };
+    ipcRenderer.on(DESKTOP_AUTOMATION_SELECTION_CHANNEL, handler);
+    return () => {
+      ipcRenderer.removeListener(DESKTOP_AUTOMATION_SELECTION_CHANNEL, handler);
+    };
+  },
   onInvertSelection(listener: () => void): () => void {
     const handler = () => {
       listener();
@@ -1881,6 +1926,19 @@ const automation: SerpentAutomationScriptApi = Object.freeze({
       await ipcRenderer.invoke(AUTOMATION_SCRIPT_SAVE_CHANNEL, automationScriptSaveInputSchema.parse(input)),
     );
   },
+  async recentList() {
+    return automationRecentScriptsListResultSchema.parse(
+      await ipcRenderer.invoke(AUTOMATION_SCRIPT_RECENT_LIST_CHANNEL),
+    );
+  },
+  async openRecent(input: AutomationRecentScriptOpenInput) {
+    return automationScriptFileResultSchema.parse(
+      await ipcRenderer.invoke(
+        AUTOMATION_SCRIPT_RECENT_OPEN_CHANNEL,
+        automationRecentScriptOpenInputSchema.parse(input),
+      ),
+    );
+  },
   async start(input: AutomationScriptStartInput) {
     return automationScriptStartResultSchema.parse(
       await ipcRenderer.invoke(AUTOMATION_SCRIPT_START_CHANNEL, input),
@@ -1912,10 +1970,18 @@ const automation: SerpentAutomationScriptApi = Object.freeze({
       ),
     );
   },
+  async undo(input: AutomationScriptUndoInput) {
+    return automationScriptUndoResultSchema.parse(
+      await ipcRenderer.invoke(
+        AUTOMATION_SCRIPT_UNDO_CHANNEL,
+        automationScriptUndoInputSchema.parse(input),
+      ),
+    );
+  },
 });
 
 const plugins: SerpentPluginManagerApi = Object.freeze({
-  async request(input: PluginManagerRequest) {
+  async request(input: PluginManagerRequest): Promise<PluginManagerResponse> {
     const raw = await ipcRenderer.invoke(PLUGIN_MANAGER_CHANNEL, input);
     try {
       return parsePluginManagerResponse(raw);

@@ -5,6 +5,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { AutomationScriptFileService } from '../../src/main/automation-script-file-service';
+import { createJsonFileAutomationRecentScriptsStore } from '../../src/main/automation-recent-scripts-store';
 
 const roots: string[] = [];
 const scriptId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
@@ -65,6 +66,35 @@ describe('AutomationScriptFileService', () => {
     expect(service.resolveForExecution({ senderId: 17, scriptId, source })).toEqual({
       displayName: 'rename.serpent.js',
       source,
+    });
+  });
+
+  it('opens a recent script by opaque handle without exposing its path', async () => {
+    const directory = root();
+    const filename = path.join(directory, 'recent.serpent.ts');
+    const source = "return await serpent.assets.search({ query: 'name:Ser' });";
+    writeFileSync(filename, source);
+    const recentFilename = path.join(directory, 'automation-recent-scripts.json');
+    const recentScripts = createJsonFileAutomationRecentScriptsStore(recentFilename, {
+      newHandle: () => 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+    });
+    recentScripts.record('recent.serpent.ts', filename);
+    const service = new AutomationScriptFileService({
+      selectOpenScript: async () => undefined,
+      selectSaveScript: async () => undefined,
+      recentScripts,
+      newScriptId: () => scriptId,
+    });
+
+    await expect(service.openRecent(17, 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb')).resolves.toEqual({
+      ok: true,
+      scriptId,
+      displayName: 'recent.serpent.ts',
+      source,
+    });
+    await expect(service.openRecent(17, 'cccccccc-cccc-4ccc-8ccc-cccccccccccc')).resolves.toEqual({
+      ok: false,
+      code: 'recent-script-not-found',
     });
   });
 

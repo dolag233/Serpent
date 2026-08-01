@@ -172,6 +172,7 @@ import {
 import { resolveBrowseContextMenuIntent } from "./browse-selection-menu";
 import { buildMultiAssetMenuSkipReport } from "./menu-skip-report";
 import { useAssetSelection } from "./useAssetSelection";
+import { useDesktopAutomationSelection } from "./use-desktop-automation-selection";
 import { useSelectionKeyboard } from "./use-selection-keyboard";
 import { useBrowseCommandKeyboard } from "./use-browse-command-keyboard";
 import { resolveBrowsePasteDestination } from "./browse-paste-target";
@@ -624,6 +625,7 @@ function AppInner() {
   const [createLibraryPhase, setCreateLibraryPhase] =
     useState<CreateLibraryPhase>("start");
   const hadLibraryRef = useRef(false);
+  const allowRequiredDialogDismissRef = useRef(false);
   const [dialogValue, setDialogValue] = useState(() => t("shell.myLibrary"));
   const [conflicts, setConflicts] = useState<ImportConflictPlan | null>(null);
   const [imageSequenceImportOffer, setImageSequenceImportOffer] =
@@ -1735,6 +1737,18 @@ function AppInner() {
     clearAssetSelection,
   });
 
+  useDesktopAutomationSelection({
+    shellApi,
+    libraryId: library?.libraryId,
+    previewOpen: Boolean(previewAsset),
+    selectedAssetIds,
+    selectedAssetId,
+    setSelectedAssetIds,
+    setSelectedAssetId,
+    setAssetSelectionAnchor,
+    setSelectedFolderIds,
+  });
+
   useEffect(() => {
     if (!shellApi) return;
     return shellApi.onInvertSelection(() => {
@@ -2368,6 +2382,7 @@ function AppInner() {
   // full-window centered with backdrop — not a card inside the canvas.
   useEffect(() => {
     if (library) return;
+    if (scriptSandboxPreviewOpen) return;
     if (importLibraryChooserOpen || appSettingsOpen || busy) return;
     if (dialog === "library") return;
     queueMicrotask(() => {
@@ -2381,6 +2396,7 @@ function AppInner() {
     importLibraryChooserOpen,
     appSettingsOpen,
     busy,
+    scriptSandboxPreviewOpen,
     t,
   ]);
   // Yield the required create surface while another full-window modal is up.
@@ -2404,6 +2420,44 @@ function AppInner() {
     }
     hadLibraryRef.current = true;
   }, [library, dialog]);
+  // A headless Console execution can create and bind a library without going
+  // through the renderer's library request pipeline. Consume that Main-owned
+  // lifecycle event so the welcome shell transitions into the opened library.
+  useEffect(() => {
+    if (!api || !scriptSandboxPreviewOpen || library) return;
+    return api.onLifecycle((event) => {
+      if (event.type !== "library.opened") return;
+      void (async () => {
+        try {
+          await closeAssetPreview(false);
+          setLibrary(event.library);
+          setAssetScope("all");
+          setActiveTagId(null);
+          setActiveCollectionId(null);
+          setActiveSmartCollectionId(null);
+          resetNavHistory({ kind: "all" });
+          api.setActiveContext(event.library.libraryId);
+          await loadContent(event.library, "all");
+          await refreshRecentLibraries(event.library.displayPath);
+        } catch (caught) {
+          setError(toMessage(caught, t("toast.readAssetsFailed"), locale));
+        }
+      })();
+    });
+    // loadContent is intentionally read from the current render; adding its
+    // per-render function identity would resubscribe the lifecycle bridge.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    api,
+    closeAssetPreview,
+    library,
+    locale,
+    refreshRecentLibraries,
+    resetNavHistory,
+    scriptSandboxPreviewOpen,
+    setError,
+    t,
+  ]);
   useEffect(() => {
     if (!api) return;
     return api.onThumbnailEvent((event) => {
@@ -5744,9 +5798,35 @@ function AppInner() {
         }
       });
     });
+    const unsubscribeLibraryChanged = api.onLibraryChanged((event) => {
+      if (event.libraryId !== library.libraryId) return;
+      // Cross-process change-sequence bumps are not asset mutation counts.
+      // Refresh silently without forging an asset.changed payload.
+      if (uiStateRef.current === "importing") {
+        scheduleSilentReload();
+        return;
+      }
+      void Promise.resolve().then(async () => {
+        try {
+          await reloadCurrentContentRef.current();
+          if (selectedAssetId) {
+            const metadata = await api.getAssetMetadata({
+              libraryId: library.libraryId,
+              assetId: selectedAssetId,
+            });
+            if (metadata.ok) {
+              applyLoadedMetadata(selectedAssetId, metadata.value);
+            }
+          }
+        } catch (caught) {
+          setError(toMessage(caught, t("toast.diskChangedRefreshFailed"), locale));
+        }
+      });
+    });
     return () => {
       if (reloadTimer !== undefined) window.clearTimeout(reloadTimer);
       unsubscribe();
+      unsubscribeLibraryChanged();
     };
   }, [api, applyLoadedMetadata, library, locale, selectedAssetId, setError, setNotice, t]);
 
@@ -5861,6 +5941,11 @@ function AppInner() {
       // Serpent-kipk: required no-library surface cannot dismiss; Escape returns
       // to the start phase instead of leaving an empty canvas.
       if (value === null && !library) {
+        if (allowRequiredDialogDismissRef.current) {
+          allowRequiredDialogDismissRef.current = false;
+          setDialog(value);
+          return;
+        }
         setCreateLibraryPhase("start");
         return;
       }
@@ -8658,9 +8743,13 @@ function AppInner() {
       <ScriptSandboxPreviewDialog
         automation={(window as RendererWindow).serpent?.automation}
         libraryId={library?.libraryId ?? null}
-        onClose={() => setScriptSandboxPreviewOpen(false)}
+        onClose={() => {
+          allowRequiredDialogDismissRef.current = false;
+          setScriptSandboxPreviewOpen(false);
+        }}
         onExecutionSettled={() => refreshAfterAutomationScript()}
         onOpenExecutionLog={(logId) => {
+          allowRequiredDialogDismissRef.current = false;
           setScriptSandboxPreviewOpen(false);
           openAppLog(logId);
         }}
@@ -8713,6 +8802,11 @@ function AppInner() {
         onImportLibrary={() => {
           setDialog(null);
           setImportLibraryChooserOpen(true);
+        }}
+        onOpenAutomation={() => {
+          allowRequiredDialogDismissRef.current = true;
+          setDialog(null);
+          setScriptSandboxPreviewOpen(true);
         }}
         onOpenRecent={(path) => {
           setDialog(null);

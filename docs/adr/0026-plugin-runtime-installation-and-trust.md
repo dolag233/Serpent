@@ -12,7 +12,7 @@ Serpent 插件既需要安全地扩展菜单、工作区、搜索和资产领域
 ## 决策
 
 - 标准插件运行在可终止的受控 JS 环境中，只能通过声明并授权的 Plugin SDK 调用 Serpent；可信插件运行在独立 Node.js UtilityProcess 中，获得完整系统能力。可信插件的权限清单用于风险披露和 Serpent API 管理，不承诺拦截其直接 Node 行为。
-- 脚本与标准插件可以复用 QuickJS、TypeScript 转换和 Automation Command Gateway，但脚本是单次 Automation Execution，插件拥有安装、激活、UI、Hook、Provider、输入捕获和后台任务生命周期；不得用常驻脚本代替插件。
+- 脚本与标准插件可以复用 QuickJS、TypeScript 转换和 Automation Command Gateway。脚本是 Automation Execution（可 headless、完成即结束），通过领域 Action 操作软件；插件拥有安装、激活、UI Contribution、Hook、Provider、输入捕获和后台任务生命周期。不得用常驻脚本代替插件 Contribution；也不得把 `library.create` / `file.import` 等 Action 划成“仅插件”。Console 与 MCP 共享同一 Action 面（见 ADR-0025 2026-07-30 修订）。
 - 插件可以安装为用户级，也可以作为不可变成品放入资源库 `.serpent/plugins/` 并随库同步。资源库插件在每台设备首次出现时必须显式信任；信任、密钥和本机路径只保存在当前设备。
 - 同一插件 ID 同时存在用户级和资源库级版本时，Serpent 不设置隐式优先级，而是提示用户选择使用哪个版本或禁用。选择在当前设备按资源库记忆；普通同源升级沿用，权限、模式或来源变化时重新确认。
 - 插件一等开发语言为 TypeScript/JavaScript。Serpent 不维护 Python 运行时；可信插件如确有需要，可以自行调用用户环境中的外部程序。

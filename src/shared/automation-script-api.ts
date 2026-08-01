@@ -14,22 +14,27 @@ export const automationScriptAssetSearchInputSchema = z.strictObject({
 export type AutomationScriptAssetSearchInput = z.infer<typeof automationScriptAssetSearchInputSchema>;
 
 export const automationScriptCommandIdSchema = z.enum([
+  'library.create',
+  'file.import',
   'folder.list',
   'folder.create',
   'asset.list',
   'asset.metadata.get',
   'asset.metadata.set',
+  'asset.ai-content.get',
   'asset.extracted-metadata.get',
   'asset.search',
   'asset.rating.set',
   'asset.paths.copy',
   'asset.trash',
+  'asset.move',
   'asset.rename-file',
   'asset.rename-files',
   'asset.list-trash',
   'asset.restore-if-original-vacant',
   'asset.palette.aggregate-recent',
   'library.inspect',
+  'library.change-sequence',
   'linked-folder.list',
   'tag.list',
   'tag.create',
@@ -48,7 +53,7 @@ export const automationScriptCommandIdSchema = z.enum([
 export type AutomationScriptCommandId = z.infer<typeof automationScriptCommandIdSchema>;
 
 export const automationScriptStartInputSchema = z.strictObject({
-  libraryId: identifier,
+  libraryId: identifier.nullable(),
   source: automationScriptSourceSchema,
   /** Main-issued handle for exact text loaded from or saved to a script file. */
   scriptId: identifier.optional(),
@@ -60,6 +65,7 @@ export const automationScriptStartResultSchema = z.union([
     ok: z.literal(true),
     executionId: z.string().min(1),
     logId: z.string().min(1),
+    capabilities: z.array(z.string().min(1)).max(128),
   }),
   z.strictObject({ ok: z.literal(false), error: publicErrorSchema }),
 ]);
@@ -74,10 +80,34 @@ export const automationScriptFileResultSchema = z.union([
   }),
   z.strictObject({
     ok: z.literal(false),
-    code: z.enum(['cancelled', 'invalid-script-file', 'source-too-large', 'io-failed']),
+    code: z.enum(['cancelled', 'invalid-script-file', 'source-too-large', 'io-failed', 'recent-script-not-found']),
   }),
 ]);
 export type AutomationScriptFileResult = z.infer<typeof automationScriptFileResultSchema>;
+
+export const automationRecentScriptEntrySchema = z.strictObject({
+  handle: identifier,
+  displayName: z.string().min(1).max(255),
+  lastOpenedAt: z.string().min(1),
+});
+export type AutomationRecentScriptEntry = z.infer<typeof automationRecentScriptEntrySchema>;
+
+export const automationRecentScriptsListResultSchema = z.union([
+  z.strictObject({
+    ok: z.literal(true),
+    entries: z.array(automationRecentScriptEntrySchema).max(12),
+  }),
+  z.strictObject({
+    ok: z.literal(false),
+    code: z.enum(['io-failed']),
+  }),
+]);
+export type AutomationRecentScriptsListResult = z.infer<typeof automationRecentScriptsListResultSchema>;
+
+export const automationRecentScriptOpenInputSchema = z.strictObject({
+  handle: identifier,
+});
+export type AutomationRecentScriptOpenInput = z.infer<typeof automationRecentScriptOpenInputSchema>;
 
 export const automationScriptSaveInputSchema = z.strictObject({
   source: automationScriptSourceSchema,
@@ -134,7 +164,7 @@ export const automationScriptCommandInputSchema = z.strictObject({
 export type AutomationScriptCommandInput = z.infer<typeof automationScriptCommandInputSchema>;
 
 export type AutomationScriptCommandResult =
-  | { ok: true; result: unknown }
+  | { ok: true; result: unknown; undoGroupId?: string }
   | { ok: false; error: PublicError };
 
 export const automationScriptCompleteInputSchema = z.strictObject({
@@ -178,13 +208,33 @@ export const automationScriptHistoryResultSchema = z.union([
 ]);
 export type AutomationScriptHistoryResult = z.infer<typeof automationScriptHistoryResultSchema>;
 
+export const automationScriptUndoInputSchema = z.strictObject({
+  executionId: z.string().min(1),
+  undoGroupId: z.string().min(1).optional(),
+});
+export type AutomationScriptUndoInput = z.infer<typeof automationScriptUndoInputSchema>;
+
+export const automationScriptUndoResultSchema = z.union([
+  z.strictObject({
+    ok: z.literal(true),
+    undoGroupId: z.string().min(1),
+    undoneCount: z.number().int().nonnegative(),
+    skippedCount: z.number().int().nonnegative(),
+  }),
+  z.strictObject({ ok: z.literal(false), error: publicErrorSchema }),
+]);
+export type AutomationScriptUndoResult = z.infer<typeof automationScriptUndoResultSchema>;
+
 export interface SerpentAutomationScriptApi {
   open(): Promise<AutomationScriptFileResult>;
   save(input: AutomationScriptSaveInput): Promise<AutomationScriptFileResult>;
+  recentList(): Promise<AutomationRecentScriptsListResult>;
+  openRecent(input: AutomationRecentScriptOpenInput): Promise<AutomationScriptFileResult>;
   start(input: AutomationScriptStartInput): Promise<AutomationScriptStartResult>;
   execute(input: AutomationScriptExecuteInput): Promise<AutomationScriptExecuteResult>;
   command(input: AutomationScriptCommandInput): Promise<AutomationScriptCommandResult>;
   complete(input: AutomationScriptCompleteInput): Promise<void>;
   cancel(input: AutomationScriptCancelInput): Promise<void>;
   history(input: AutomationScriptHistoryInput): Promise<AutomationScriptHistoryResult>;
+  undo(input: AutomationScriptUndoInput): Promise<AutomationScriptUndoResult>;
 }

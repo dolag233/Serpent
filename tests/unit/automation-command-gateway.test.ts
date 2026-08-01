@@ -35,24 +35,27 @@ function request(
   commandId: string,
   input: unknown = {},
   executionId = 'execution-1',
+  idempotencyKey?: string,
 ): AutomationCommandEnvelope {
   return {
     apiVersion: 1,
     commandId,
     executionId,
-    input,
+    input: idempotencyKey === undefined || typeof input !== 'object' || input === null
+      ? input
+      : { ...(input as Record<string, unknown>), idempotencyKey },
   };
 }
 
 function resolver(overrides: Partial<{
   source: 'desktop-console' | 'script' | 'mcp' | 'test';
-  libraryId: string;
+  libraryId: string | null;
   grantedCapabilities: readonly AutomationCapability[];
 }> = {}): AutomationExecutionResolver {
   const context = {
     executionId: 'execution-1',
     source: overrides.source ?? 'test',
-    libraryId: overrides.libraryId ?? 'library-1',
+    libraryId: overrides.libraryId === undefined ? 'library-1' : overrides.libraryId,
     grantedCapabilities: overrides.grantedCapabilities === undefined
       ? [...allReadCapabilities]
       : [...overrides.grantedCapabilities],
@@ -126,7 +129,7 @@ class RecordingWorker implements AutomationWorkerClient {
 
 describe('Automation Command Registry', () => {
   it('contains complete read/write descriptors and exports JSON/TypeScript contracts', () => {
-    expect(automationCommandRegistry).toHaveLength(30);
+    expect(automationCommandRegistry).toHaveLength(36);
     expect(new Set(automationCommandRegistry.map((command) => command.commandId)).size)
       .toBe(automationCommandRegistry.length);
     const registryIds = new Set(automationCommandRegistry.map((command) => command.commandId));
@@ -155,7 +158,15 @@ describe('Automation Command Registry', () => {
         expect(command.impact).toBe('file-write');
         expect(command.approvalPolicy).toBe('execution');
         expect(command.mcp.public).toBe(false);
-      } else if (['asset.trash', 'asset.rename-file', 'asset.rename-files', 'asset.restore-if-original-vacant'].includes(command.commandId)) {
+      } else if ([
+        'asset.trash',
+        'asset.move',
+        'asset.rename-file',
+        'asset.rename-files',
+        'asset.restore-if-original-vacant',
+        'library.create',
+        'file.import',
+      ].includes(command.commandId)) {
         expect(command.impact).toBe('file-write');
         expect(command.approvalPolicy).toBe('plan');
         expect(command.mcp.public).toBe(false);
@@ -163,7 +174,19 @@ describe('Automation Command Registry', () => {
         expect(command.impact).toBe('read');
         expect(command.approvalPolicy).toBe('none');
       }
-      expect(command.requiredCapabilities.length).toBeGreaterThan(0);
+      if (command.commandId === 'asset.trash' || command.commandId === 'asset.move') {
+        expect(command.supportsUndo).toBe(true);
+      }
+      if (command.commandId === 'file.import') {
+        // Import recovery refs are not wired; do not advertise undo yet.
+        expect(command.supportsUndo).toBe(false);
+      }
+      if (command.commandId === 'library.create' || command.commandId === 'file.import') {
+        expect(command.supportsIdempotencyKey).toBe(true);
+      }
+      if (command.commandId !== 'execution.status') {
+        expect(command.requiredCapabilities.length).toBeGreaterThan(0);
+      }
       expect(command.mcp.toolName).toMatch(/^serpent_/u);
       expect(command.mcp.outputLimit).toBeLessThanOrEqual(AUTOMATION_MAX_PAGE_SIZE);
       expect(command.inputSchema.toJSONSchema()).toBeTypeOf('object');
@@ -175,11 +198,15 @@ describe('Automation Command Registry', () => {
     expect(description.commands.map((command) => command.commandId)).toContain('asset.search');
     expect(description.commands.map((command) => command.commandId)).toContain('tag.create');
     expect(description.commands.map((command) => command.commandId)).toContain('folder.create');
+    expect(description.commands.map((command) => command.commandId)).toContain('library.change-sequence');
+    expect(description.commands.map((command) => command.commandId)).toContain('asset.ai-content.get');
 
     const declaration = generateAutomationTypeDeclaration('@serpent/test-api');
     expect(declaration).toContain('const serpent: SerpentAutomationApi');
     expect(declaration).toContain('interface SerpentScriptAssetSearchPage');
+    expect(declaration).toContain('readonly currentRevisionId: string;');
     expect(declaration).toContain('search(input: { query: string | null; limit?: number; offset?: number })');
+    expect(declaration).toContain('changeSequence(): Promise<{ readonly changeSequence: number }>');
     expect(declaration).toContain('setRating(assetIds: readonly string[]');
     expect(declaration).toContain('copyFilePaths(assetIds: readonly string[]');
     expect(declaration).toContain('renameFiles(items: readonly');
@@ -189,6 +216,7 @@ describe('Automation Command Registry', () => {
     expect(declaration).toContain('folders: {');
     expect(declaration).toContain('create(name: string, parentFolderId?: string | null)');
     expect(declaration).toContain('setMetadata(input: { assetId: string');
+    expect(declaration).toContain('getAiContent(assetId: string): Promise<SerpentAiContent>');
     expect(declaration).toContain('create(name: string, parentId?: string | null)');
     expect(declaration).toContain('addAssets(collectionId: string, assetIds: readonly string[])');
     expect(declaration).toContain('enqueue(input?: { assetIds?: readonly string[]');
@@ -198,6 +226,29 @@ describe('Automation Command Registry', () => {
 });
 
 describe('Automation Command Gateway', () => {
+  it('rejects library-scoped commands before Worker dispatch when a headless execution is unbound', async () => {
+    const worker = new RecordingWorker({
+      ok: true,
+      type: 'tag.list',
+      tags: [],
+    });
+    const unboundResolver: AutomationExecutionResolver = {
+      resolve: () => ({
+        executionId: 'execution-1',
+        source: 'test',
+        libraryId: null,
+        grantedCapabilities: [...allReadCapabilities],
+      }),
+    };
+    const commandGateway = createAutomationCommandGateway(worker, unboundResolver);
+
+    await expect(commandGateway.execute(request('tag.list'))).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'AUTOMATION_LIBRARY_NOT_BOUND' },
+    });
+    expect(worker.commands).toEqual([]);
+  });
+
   it('validates input, injects the bound library id, and preserves the Worker result', async () => {
     const worker = new RecordingWorker({
       ok: true,
@@ -222,6 +273,41 @@ describe('Automation Command Gateway', () => {
         hasMore: false,
       },
     });
+  });
+
+  it('routes AI content reads through the bound library without exposing paths', async () => {
+    const worker = new RecordingWorker({
+      ok: true,
+      type: 'ai.content.got',
+      assetId: 'asset-1',
+      description: 'AI generated description',
+      tags: ['cloud', 'cumulus'],
+      rating: 4,
+      modelVersion: 'test-model',
+    });
+    const commandGateway = gateway(worker);
+
+    const result = await commandGateway.execute(
+      request('asset.ai-content.get', { assetId: 'asset-1' }),
+    );
+
+    expect(worker.commands).toEqual([{
+      type: 'ai.content.get',
+      libraryId: 'library-1',
+      assetId: 'asset-1',
+    }]);
+    expect(result).toMatchObject({
+      ok: true,
+      commandId: 'asset.ai-content.get',
+      result: {
+        assetId: 'asset-1',
+        description: 'AI generated description',
+        tags: ['cloud', 'cumulus'],
+        rating: 4,
+        modelVersion: 'test-model',
+      },
+    });
+    expect(JSON.stringify(result)).not.toContain('libraryPath');
   });
 
   it('routes an approved batch rating write through the same Gateway contract', async () => {
@@ -488,7 +574,12 @@ describe('Automation Command Gateway', () => {
   });
 
   it('requires a fresh approved file plan before dispatching a recoverable filesystem write', async () => {
-    const worker = new RecordingWorker({ ok: true, type: 'asset.trashed', trashedCount: 2 });
+    const worker = new RecordingWorker({
+      ok: true,
+      type: 'asset.trashed',
+      trashedCount: 2,
+      operationId: 'operation-1',
+    });
     const plan = {
       planHash: 'a'.repeat(64),
       expectedChangeSequence: 42,
@@ -529,8 +620,251 @@ describe('Automation Command Gateway', () => {
     }]);
   });
 
+  it('requires a fresh approved file plan before dispatching asset.move', async () => {
+    const worker = new RecordingWorker({
+      ok: true,
+      type: 'asset.moved',
+      movedCount: 1,
+      skippedCount: 0,
+      operationId: 'operation-move-1',
+      assets: [],
+    });
+    const plan = {
+      planHash: 'd'.repeat(64),
+      expectedChangeSequence: 7,
+      assetStates: [
+        { assetId: 'asset-1', stateToken: 'e'.repeat(64) },
+      ],
+    };
+    const approvals: unknown[] = [];
+    const commandGateway = createAutomationCommandGateway(worker, resolver({
+      grantedCapabilities: ['library.read', 'asset.read', 'folder.read', 'file.move'],
+    }), {
+      filePlanApprovalHandler: {
+        prepareAndApprove: async (input) => {
+          approvals.push(input);
+          return plan;
+        },
+      },
+    });
+
+    await expect(commandGateway.execute(request('asset.move', {
+      assetIds: ['asset-1'],
+      targetFolderId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+      conflictStrategy: 'keep-both',
+    }))).resolves.toMatchObject({
+      ok: true,
+      result: { movedCount: 1, skippedCount: 0, operationId: 'operation-move-1' },
+    });
+    expect(approvals).toEqual([{
+      commandId: 'asset.move',
+      executionId: 'execution-1',
+      libraryId: 'library-1',
+      commandInput: {
+        assetIds: ['asset-1'],
+        targetFolderId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+        conflictStrategy: 'keep-both',
+      },
+    }]);
+    expect(worker.commands).toEqual([{
+      type: 'asset.move',
+      libraryId: 'library-1',
+      assetIds: ['asset-1'],
+      targetFolderId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+      conflictStrategy: 'keep-both',
+      automationPlan: plan,
+    }]);
+  });
+
+  it('records a recovery reference in an undo group for a successful trash command', async () => {
+    const worker = new RecordingWorker({
+      ok: true,
+      type: 'asset.trashed',
+      trashedCount: 1,
+      operationId: 'operation-trash-1',
+    });
+    const undoEvents: unknown[] = [];
+    const commandGateway = createAutomationCommandGateway(worker, resolver({
+      grantedCapabilities: ['library.read', 'asset.read', 'trash.write'],
+    }), {
+      filePlanApprovalHandler: {
+        prepareAndApprove: async () => ({
+          planHash: 'a'.repeat(64),
+          expectedChangeSequence: 42,
+          assetStates: [{ assetId: 'asset-1', stateToken: 'b'.repeat(64) }],
+        }),
+      },
+      undoGroupHandler: {
+        create: (input) => {
+          undoEvents.push(['create', input]);
+          return { undoGroupId: 'undo-group-1' };
+        },
+        append: (input) => undoEvents.push(['append', input]),
+        complete: (input) => undoEvents.push(['complete', input]),
+      },
+    });
+
+    await expect(commandGateway.execute(request('asset.trash', { assetIds: ['asset-1'] }))).resolves.toMatchObject({
+      ok: true,
+      undoGroupId: 'undo-group-1',
+      result: { trashedCount: 1, operationId: 'operation-trash-1' },
+    });
+    expect(undoEvents).toEqual([
+      ['create', { executionId: 'execution-1', libraryId: 'library-1' }],
+      ['append', {
+        undoGroupId: 'undo-group-1',
+        item: {
+          itemId: 'operation-trash-1',
+          kind: 'asset.trash',
+          reference: 'operation-trash-1',
+          reversible: true,
+        },
+      }],
+      ['complete', { undoGroupId: 'undo-group-1', status: 'succeeded' }],
+    ]);
+  });
+
+  it('surfaces INTERNAL_ERROR when undo group finalization fails after a successful Worker write', async () => {
+    const worker = new RecordingWorker({
+      ok: true,
+      type: 'asset.trashed',
+      trashedCount: 1,
+      operationId: 'operation-trash-1',
+    });
+    const commandGateway = createAutomationCommandGateway(worker, resolver({
+      grantedCapabilities: ['library.read', 'asset.read', 'trash.write'],
+    }), {
+      filePlanApprovalHandler: {
+        prepareAndApprove: async () => ({
+          planHash: 'a'.repeat(64),
+          expectedChangeSequence: 42,
+          assetStates: [{ assetId: 'asset-1', stateToken: 'b'.repeat(64) }],
+        }),
+      },
+      undoGroupHandler: {
+        create: () => ({ undoGroupId: 'undo-group-1' }),
+        append: () => {
+          throw new Error('journal missing');
+        },
+        complete: () => undefined,
+      },
+    });
+
+    await expect(commandGateway.execute(request('asset.trash', { assetIds: ['asset-1'] }))).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'INTERNAL_ERROR' },
+    });
+  });
+
+  it('rejects library.create without a binding handler as INTERNAL_ERROR', async () => {
+    const worker = new RecordingWorker({
+      ok: true,
+      type: 'library.opened',
+      library: {
+        libraryId: 'library-new',
+        displayName: 'New',
+        libraryPath: '/libraries/new',
+      },
+    });
+    const commandGateway = createAutomationCommandGateway(worker, resolver({
+      libraryId: null,
+      grantedCapabilities: ['library.create'],
+    }));
+
+    await expect(commandGateway.execute(request('library.create', {
+      displayName: 'New',
+      selectedParentPath: '/tmp',
+    }))).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'INTERNAL_ERROR' },
+    });
+    expect(worker.commands).toEqual([]);
+  });
+
+  it('replays an idempotent library.create result without redispatching the Worker', async () => {
+    const worker = new RecordingWorker({
+      ok: true,
+      type: 'library.opened',
+      library: {
+        libraryId: 'library-new',
+        displayName: 'New',
+        libraryPath: '/libraries/new',
+      },
+    });
+    const commandGateway = createAutomationCommandGateway(worker, resolver({
+      libraryId: null,
+      grantedCapabilities: ['library.create'],
+    }), {
+      filePlanApprovalHandler: {
+        prepareAndApprove: async () => ({
+          planHash: 'a'.repeat(64),
+          expectedChangeSequence: 0,
+          assetStates: [{ assetId: 'library-create', stateToken: 'b'.repeat(64) }],
+        }),
+      },
+      libraryBindingHandler: {
+        bindLibrary: () => undefined,
+      },
+    });
+    const firstRequest = request('library.create', {
+      displayName: 'New',
+      selectedParentPath: '/tmp',
+    }, 'execution-1', 'create-key');
+
+    const first = await commandGateway.execute(firstRequest);
+    const second = await commandGateway.execute(firstRequest);
+
+    expect(first).toEqual(second);
+    expect(worker.commands).toHaveLength(1);
+  });
+
+  it('rejects an idempotency key reused with a different payload', async () => {
+    const worker = new RecordingWorker({
+      ok: true,
+      type: 'library.opened',
+      library: {
+        libraryId: 'library-new',
+        displayName: 'New',
+        libraryPath: '/libraries/new',
+      },
+    });
+    const commandGateway = createAutomationCommandGateway(worker, resolver({
+      libraryId: null,
+      grantedCapabilities: ['library.create'],
+    }), {
+      filePlanApprovalHandler: {
+        prepareAndApprove: async () => ({
+          planHash: 'a'.repeat(64),
+          expectedChangeSequence: 0,
+          assetStates: [{ assetId: 'library-create', stateToken: 'b'.repeat(64) }],
+        }),
+      },
+      libraryBindingHandler: {
+        bindLibrary: () => undefined,
+      },
+    });
+
+    await commandGateway.execute(request('library.create', {
+      displayName: 'New',
+      selectedParentPath: '/tmp',
+    }, 'execution-1', 'create-key'));
+    await expect(commandGateway.execute(request('library.create', {
+      displayName: 'Different',
+      selectedParentPath: '/tmp',
+    }, 'execution-1', 'create-key'))).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'AUTOMATION_INVALID_REQUEST' },
+    });
+    expect(worker.commands).toHaveLength(1);
+  });
+
   it('does not dispatch a file write when no desktop plan approver is available or the plan is cancelled', async () => {
-    const worker = new RecordingWorker({ ok: true, type: 'asset.trashed', trashedCount: 1 });
+    const worker = new RecordingWorker({
+      ok: true,
+      type: 'asset.trashed',
+      trashedCount: 1,
+      operationId: 'operation-1',
+    });
     const noApprover = createAutomationCommandGateway(worker, resolver({
       grantedCapabilities: ['library.read', 'asset.read', 'trash.write'],
     }));
@@ -823,6 +1157,68 @@ describe('Automation Command Gateway', () => {
       ok: true,
       result: { libraryId: 'library-1', displayName: 'Selected' },
     });
+    const inspected = await commandGateway.execute(request('library.inspect'));
+    expect(inspected.ok && inspected.result).toEqual({
+      libraryId: 'library-1',
+      displayName: 'Selected',
+    });
+  });
+
+  it('reads library.change-sequence as a readonly Worker command for the bound library', async () => {
+    const worker = new RecordingWorker({
+      ok: true,
+      type: 'library.change-sequence',
+      libraryId: 'library-1',
+      changeSequence: 3,
+    });
+    const commandGateway = gateway(worker);
+
+    await expect(commandGateway.execute(request('library.change-sequence'))).resolves.toMatchObject({
+      ok: true,
+      result: { changeSequence: 3 },
+    });
+    expect(worker.commands).toEqual([{
+      type: 'library.change-sequence',
+      libraryId: 'library-1',
+    }]);
+  });
+
+  it('rejects library.change-sequence before Worker dispatch when the execution is unbound', async () => {
+    const worker = new RecordingWorker({
+      ok: true,
+      type: 'library.change-sequence',
+      libraryId: 'library-1',
+      changeSequence: 0,
+    });
+    const unboundResolver: AutomationExecutionResolver = {
+      resolve: () => ({
+        executionId: 'execution-1',
+        source: 'test',
+        libraryId: null,
+        grantedCapabilities: [...allReadCapabilities],
+      }),
+    };
+    const commandGateway = createAutomationCommandGateway(worker, unboundResolver);
+
+    await expect(commandGateway.execute(request('library.change-sequence'))).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'AUTOMATION_LIBRARY_NOT_BOUND' },
+    });
+    expect(worker.commands).toEqual([]);
+  });
+
+  it('rejects a Worker response that does not match library.change-sequence', async () => {
+    const worker = new RecordingWorker({
+      ok: true,
+      type: 'library.list',
+      libraries: [],
+    });
+    const commandGateway = gateway(worker);
+
+    await expect(commandGateway.execute(request('library.change-sequence'))).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'AUTOMATION_RESULT_INVALID' },
+    });
   });
 
   it('uses only Main-owned execution state and rejects caller-supplied grants or library context', async () => {
@@ -949,6 +1345,85 @@ describe('Automation Command Gateway', () => {
       ok: false,
       error: { code: 'AUTOMATION_INVALID_REQUEST' },
     });
+  });
+
+  it('returns execution.status from the Main journal without dispatching to the Worker', async () => {
+    const worker = new RecordingWorker({ ok: true, type: 'tag.list', tags: [] });
+    const commandGateway = createAutomationCommandGateway(worker, resolver({ source: 'mcp' }), {
+      executionStatusHandler: {
+        getStatus: (executionId) => executionId === 'execution-1'
+          ? {
+              source: 'mcp',
+              projection: {
+                executionId: 'execution-1',
+                status: 'running',
+                commandCount: 2,
+                succeededCommandCount: 1,
+                failedCommandCount: 1,
+                lastCommandId: 'asset.search',
+                failureCode: 'AUTOMATION_COMMAND_FAILED',
+                deadlineAt: '2026-07-31T12:30:00.000Z',
+                createdAt: '2026-07-31T12:00:00.000Z',
+                finishedAt: null,
+                summary: { succeeded: 1, failed: 1 },
+              },
+            }
+          : undefined,
+      },
+    });
+
+    await expect(commandGateway.execute(request('execution.status', {}, 'execution-1'))).resolves.toMatchObject({
+      ok: true,
+      commandId: 'execution.status',
+      result: {
+        executionId: 'execution-1',
+        status: 'running',
+        commandCount: 2,
+        succeededCommandCount: 1,
+        failedCommandCount: 1,
+        lastCommandId: 'asset.search',
+        failureCode: 'AUTOMATION_COMMAND_FAILED',
+        deadlineAt: '2026-07-31T12:30:00.000Z',
+        createdAt: '2026-07-31T12:00:00.000Z',
+        finishedAt: null,
+        summary: { succeeded: 1, failed: 1 },
+      },
+    });
+    expect(worker.commands).toHaveLength(0);
+  });
+
+  it('rejects cross-session execution.status peek', async () => {
+    const worker = new RecordingWorker({ ok: true, type: 'tag.list', tags: [] });
+    const commandGateway = createAutomationCommandGateway(worker, resolver({ source: 'mcp' }), {
+      executionStatusHandler: {
+        getStatus: () => ({
+          source: 'mcp',
+          projection: {
+            executionId: 'execution-other',
+            status: 'succeeded',
+            commandCount: 0,
+            succeededCommandCount: 0,
+            failedCommandCount: 0,
+            lastCommandId: null,
+            failureCode: null,
+            deadlineAt: '2026-07-31T12:30:00.000Z',
+            createdAt: '2026-07-31T12:00:00.000Z',
+            finishedAt: '2026-07-31T12:05:00.000Z',
+            summary: null,
+          },
+        }),
+      },
+    });
+
+    await expect(commandGateway.execute(request(
+      'execution.status',
+      { executionId: 'execution-other' },
+      'execution-1',
+    ))).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'AUTOMATION_EXECUTION_NOT_FOUND' },
+    });
+    expect(worker.commands).toHaveLength(0);
   });
 });
 

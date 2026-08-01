@@ -114,6 +114,7 @@ function createSerpentBridge(
     },
     library: {
       inspect: () => callHost('library.inspect', {}),
+      changeSequence: () => callHost('library.change-sequence', {}),
     },
     storage: {
       get: (key: unknown, options?: { scope?: 'library' | 'user' }) => callStorage({

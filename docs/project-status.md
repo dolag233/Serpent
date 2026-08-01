@@ -1,14 +1,23 @@
 # Serpent 项目状态
 
-> 更新时间：2026-07-29
+> 更新时间：2026-08-01
 > 事实来源：`docs/implementation/mvp-roadmap.md` 与各切片开发/审查/QA 文档
 
 ## 2026-07-30 脚本优先于插件
 
 - 产品负责人确认：插件建立在脚本/Gateway Action 之上，**先完成脚本化既定目标，再推进插件切片**。
-- Phase C（MCP stdio）与 Phase D（低风险写入 + 执行历史）已实现到可人类验收；下一规格阶段为 Phase E（`library.create` / `file.import` 计划批准）。
-- 当前执行焦点：`Serpent-y51c.8`（Phase E）在 `y51c.7` 关闭后；`bb56.2` 长 Job fencing 仍开放。
+- Phase C（MCP stdio）、Phase D（低风险写入 + 执行历史）与 Phase E 的建库/导入计划接缝已实现；Desktop Console 建库/导入、计划取消后重试、asset.move Electron E2E 已通过，真实 headless MCP stdio create/inspect/import/绑定重开 E2E 已补；Console 无库 headless UI 的隔离 Electron E2E 现已通过并接入 AUT-010，双 Host 已有真实 stdio E2E 证据，Computer Use、packaged/Windows 仍未验证。
+- 当前执行焦点：`Serpent-y51c.8` / `.9` / `.10` 的 Computer Use、packaged、Windows 收口；Phase E/Console/MCP 自动化证据（含计划取消、幂等、双 Host、`library.changed`、Undo、最近脚本）已齐，AUT-009–017 待人类验收。`npm run package` 仍被 `media:verify` 阻断（darwin-arm64 未晋升不可变 HTTPS artifact）。`bb56.2` 已关闭；20k 导入 soak 已通过 53.07 秒门槛。
+- Desktop 附着 MCP 已开始实现：本机控制面、附着确认、`serpent_desktop_focus` 与 `serpent_desktop_select_assets` 的协议/Main/Renderer/MCP 代理接缝已加入；仍需当前 HEAD 的真实 Desktop E2E、Computer Use、packaged 和 Windows 验证。规格 [`2026-07-31-desktop-attached-mcp-design.md`](superpowers/specs/2026-07-31-desktop-attached-mcp-design.md)，实施工单 `Serpent-lq5y.1`（父 Epic `Serpent-lq5y`）。
+- 2026-07-31 天气图片 Agent 反馈已吸收：即时修 `run-mcp.mjs` 语法、MCP 搜索字符串归一、`library.inspect` 去路径；产品缺口 epic `Serpent-b2qv`（`file.move`=`Serpent-7v2i` 已关闭、序列显式=`Serpent-rvw3` 延后至主线、MCP 超时/幂等=`Serpent-3d32` 进行中）。详见 [`2026-07-31-weather-agent-automation-feedback.md`](development/2026-07-31-weather-agent-automation-feedback.md)。
+- 当前脚本推进：`Serpent-3d32` Slice A（`serpent_execution_status` + MCP/plan 超时对齐）与 Slice B（`library.create` / `file.import` 幂等键）已实现并关闭；`bb56.2` 已关闭，MCP `notifications/message` 形式的 `library.changed` 推送、绑定库过滤和并发迁移时序证据已保留。真实绑定 MCP 推送旅程已由 `tests/e2e/automation-mcp-library-changed.test.ts` 覆盖并通过；未绑定/不同库过滤与双 Host 真实 stdio E2E 已由 `tests/e2e/automation-mcp-dual-host.test.ts` 覆盖并通过；AUT-012 的真实 MCP 状态查询/幂等重试 E2E 已由 `tests/e2e/automation-mcp-idempotency.test.ts` 覆盖并通过，AUT-012/AUT-013/AUT-017 均进入待人类验收；自动化脚本轨道可编码增量基本收完，剩余为 Computer Use、media 晋升后的 packaged smoke、Windows。
+- `Serpent-b2qv.1` 已完成 AI 结果读取 Action：`asset.ai-content.get` / `serpent_asset_ai_content_get` / `serpent.assets.getAiContent(assetId)` 复用 Worker 只读 `ai.content.get`，返回 AI 描述、AI 标签、建议评分和模型版本；无 AI 结果返回空值，不混入人工 metadata，不返回路径或密钥。AUT-020 已加入待人类验收；真实供应商、Computer Use、packaged、Windows 未验证。
+- 交叉分析发现 `ai.enqueue` 成功入队后仍缺少 Gateway → Main `AiQueueScheduler` 触发接缝；已拆为后续 P1 `Serpent-b2qv.2`，在完成前不把“入队后自动完成 AI 分析”写成已验证。
 - 插件 Epic `Serpent-upsn` 暂停加宽，直至 Phase E 收口或产品另行调整。
+- `Serpent-jftz` 已完成 entity_version / Revision 语义澄清：Inspector 不再把元数据并发
+  token 显示为“版本”，自动化资产声明补充 `currentRevisionId`，并以 Worker 回归与专用
+  Electron E2E 锁定元数据写入不改变内容修订。组织元数据旧 E2E 仍有跨进程冲突和多选
+  fixture 红灯，未将其归入本增量通过；Computer Use、packaged、Windows 未验证。
 
 ## 2026-07-29 脚本—插件平台设计
 

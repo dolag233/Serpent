@@ -8,13 +8,17 @@ import {
   automationScriptCompleteInputSchema,
   automationScriptExecuteInputSchema,
   automationScriptHistoryInputSchema,
+  automationScriptUndoInputSchema,
   automationScriptSaveInputSchema,
   automationScriptStartInputSchema,
+  automationRecentScriptOpenInputSchema,
   type AutomationScriptCommandResult,
   type AutomationScriptCommandId,
   type AutomationScriptExecuteResult,
   type AutomationScriptHistoryResult,
   type AutomationScriptStartResult,
+  type AutomationScriptUndoResult,
+  type AutomationRecentScriptsListResult,
 } from '../shared/automation-script-api';
 import { createPublicError, toPublicError } from '../shared/protocol/errors';
 import type { PublicError } from '../shared/protocol/errors';
@@ -27,6 +31,9 @@ import {
   AUTOMATION_SCRIPT_EXECUTE_CHANNEL,
   AUTOMATION_SCRIPT_HISTORY_CHANNEL,
   AUTOMATION_SCRIPT_START_CHANNEL,
+  AUTOMATION_SCRIPT_UNDO_CHANNEL,
+  AUTOMATION_SCRIPT_RECENT_LIST_CHANNEL,
+  AUTOMATION_SCRIPT_RECENT_OPEN_CHANNEL,
 } from '../shared/protocol/channels';
 import type { LibraryWorkerClient } from './worker-client';
 import type { AutomationExecutionJournal } from './automation-execution-journal';
@@ -49,6 +56,15 @@ export interface AutomationScriptIpcOptions {
   scriptFiles?(): AutomationScriptFileService | undefined;
   confirmDesktopWrite(): Promise<boolean>;
   logger(): AppLogger | undefined;
+  undoGroup?(): AutomationUndoRecoveryHandler | undefined;
+}
+
+export interface AutomationUndoRecoveryHandler {
+  recover(input: {
+    undoGroupId: string;
+    libraryId: string;
+    items: readonly { kind: string; reference: string; reversible: boolean }[];
+  }): Promise<{ undoneCount: number; skippedCount: number }>;
 }
 
 /**
@@ -58,6 +74,7 @@ export interface AutomationScriptIpcOptions {
  */
 export function registerAutomationScriptIpc(options: AutomationScriptIpcOptions): void {
   const owners = new Map<string, { senderId: number; source: string }>();
+  const completedOwners = new Map<string, number>();
   const sessionsBySender = new Map<number, string>();
   const observedSenders = new Set<number>();
   const runningRuntimeExecutionIds = new Set<string>();
@@ -78,6 +95,9 @@ export function registerAutomationScriptIpc(options: AutomationScriptIpcOptions)
       if (owner.senderId !== senderId) continue;
       journal?.cancel(executionId);
       owners.delete(executionId);
+    }
+    for (const [executionId, ownerSenderId] of completedOwners) {
+      if (ownerSenderId === senderId) completedOwners.delete(executionId);
     }
   };
 
@@ -111,6 +131,23 @@ export function registerAutomationScriptIpc(options: AutomationScriptIpcOptions)
     const files = options.scriptFiles?.();
     if (!parsed.success || !files) return { ok: false, code: 'io-failed' };
     return files.save({ senderId: event.sender.id, source: parsed.data.source });
+  });
+
+  options.ipcMain.handle(AUTOMATION_SCRIPT_RECENT_LIST_CHANNEL, (event): AutomationRecentScriptsListResult => {
+    if (!options.isAuthorizedSender(event.sender)) return { ok: false, code: 'io-failed' };
+    observeSender(event.sender);
+    const files = options.scriptFiles?.();
+    if (!files) return { ok: false, code: 'io-failed' };
+    return { ok: true, entries: files.listRecent() };
+  });
+
+  options.ipcMain.handle(AUTOMATION_SCRIPT_RECENT_OPEN_CHANNEL, async (event, input: unknown): Promise<unknown> => {
+    if (!options.isAuthorizedSender(event.sender)) return { ok: false, code: 'io-failed' };
+    observeSender(event.sender);
+    const parsed = automationRecentScriptOpenInputSchema.safeParse(input);
+    const files = options.scriptFiles?.();
+    if (!parsed.success || !files) return { ok: false, code: 'io-failed' };
+    return files.openRecent(event.sender.id, parsed.data.handle);
   });
 
   /**
@@ -149,7 +186,11 @@ export function registerAutomationScriptIpc(options: AutomationScriptIpcOptions)
       }
       return { ok: false, error: result.error as PublicError };
     }
-    return { ok: true, result: result.result };
+    return {
+      ok: true,
+      result: result.result,
+      ...(result.undoGroupId === undefined ? {} : { undoGroupId: result.undoGroupId }),
+    };
   };
 
   options.ipcMain.handle(AUTOMATION_SCRIPT_START_CHANNEL, async (event, input: unknown): Promise<AutomationScriptStartResult> => {
@@ -162,10 +203,12 @@ export function registerAutomationScriptIpc(options: AutomationScriptIpcOptions)
       return { ok: false, error: createPublicError('INTERNAL_ERROR') };
     }
     try {
-      const libraries = await worker.request({ type: 'library.list' });
-      if (!libraries.ok || libraries.type !== 'library.list'
-        || !libraries.libraries.some((library) => library.libraryId === parsed.data.libraryId)) {
-        return { ok: false, error: createPublicError('LIBRARY_NOT_OPEN') };
+      if (parsed.data.libraryId !== null) {
+        const libraries = await worker.request({ type: 'library.list' });
+        if (!libraries.ok || libraries.type !== 'library.list'
+          || !libraries.libraries.some((library) => library.libraryId === parsed.data.libraryId)) {
+          return { ok: false, error: createPublicError('LIBRARY_NOT_OPEN') };
+        }
       }
       const savedScript = parsed.data.scriptId === undefined
         ? undefined
@@ -179,28 +222,32 @@ export function registerAutomationScriptIpc(options: AutomationScriptIpcOptions)
       }
       const source = savedScript === undefined ? 'desktop-console' : 'script';
       const sessionId = source === 'desktop-console' ? sessionFor(event.sender.id) : undefined;
+      const declaredCapabilities = [
+        'library.read',
+        'folder.read',
+        'folder.write',
+        'asset.read',
+        'metadata.read',
+        'tag.read',
+        'tag.write',
+        'collection.read',
+        'collection.write',
+        'job.read',
+        'ai.enqueue',
+        'metadata.write',
+        'file.rename',
+        'file.move',
+        'trash.write',
+        'clipboard.write',
+        'library.create',
+        'file.import',
+      ] as const;
       const created = journal.create({
         source,
         libraryId: parsed.data.libraryId,
         scriptSource: parsed.data.source,
         ...(sessionId === undefined ? {} : { sessionId }),
-        declaredCapabilities: [
-          'library.read',
-          'folder.read',
-          'folder.write',
-          'asset.read',
-          'metadata.read',
-          'tag.read',
-          'tag.write',
-          'collection.read',
-          'collection.write',
-          'job.read',
-          'ai.enqueue',
-          'metadata.write',
-          'file.rename',
-          'trash.write',
-          'clipboard.write',
-        ],
+        declaredCapabilities,
       });
       const started = journal.start(created.executionId);
       if (started?.status === 'awaiting-authorization') {
@@ -221,7 +268,12 @@ export function registerAutomationScriptIpc(options: AutomationScriptIpcOptions)
         return { ok: false, error: createPublicError('INTERNAL_ERROR') };
       }
       owners.set(created.executionId, { senderId: event.sender.id, source: parsed.data.source });
-      return { ok: true, executionId: created.executionId, logId: created.logId };
+      return {
+        ok: true,
+        executionId: created.executionId,
+        logId: created.logId,
+        capabilities: [...declaredCapabilities],
+      };
     } catch (error) {
       options.logger()?.error('automation.script.start-failed', error, { senderId: event.sender.id });
       return { ok: false, error: toPublicError(error) };
@@ -306,6 +358,7 @@ export function registerAutomationScriptIpc(options: AutomationScriptIpcOptions)
       return { ok: false, error: { code: 'RUNTIME_ERROR', message: 'The isolated script runtime could not complete.' } };
     } finally {
       runningRuntimeExecutionIds.delete(executionId);
+      completedOwners.set(executionId, event.sender.id);
       owners.delete(executionId);
     }
   });
@@ -334,6 +387,7 @@ export function registerAutomationScriptIpc(options: AutomationScriptIpcOptions)
         failed: record.failedCommandCount,
       },
     });
+    completedOwners.set(parsed.data.executionId, event.sender.id);
     owners.delete(parsed.data.executionId);
   });
 
@@ -345,6 +399,52 @@ export function registerAutomationScriptIpc(options: AutomationScriptIpcOptions)
     journal.cancel(parsed.data.executionId);
     owners.delete(parsed.data.executionId);
   });
+
+  options.ipcMain.handle(
+    AUTOMATION_SCRIPT_UNDO_CHANNEL,
+    async (event, input: unknown): Promise<AutomationScriptUndoResult> => {
+      if (!options.isAuthorizedSender(event.sender)) {
+        return { ok: false, error: createPublicError('INTERNAL_ERROR') };
+      }
+      const parsed = automationScriptUndoInputSchema.safeParse(input);
+      const journal = options.journal();
+      const recovery = options.undoGroup?.();
+      if (!parsed.success || !journal || !recovery) {
+        return { ok: false, error: createPublicError('INTERNAL_ERROR') };
+      }
+      const senderId = owners.get(parsed.data.executionId)?.senderId
+        ?? completedOwners.get(parsed.data.executionId);
+      if (senderId !== event.sender.id) {
+        return { ok: false, error: createPublicError('AUTOMATION_UNDO_GROUP_NOT_FOUND') };
+      }
+      const group = parsed.data.undoGroupId === undefined
+        ? journal.listUndoGroups()
+          .filter((candidate) => candidate.executionId === parsed.data.executionId)
+          .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0]
+        : journal.getUndoGroup(parsed.data.undoGroupId);
+      if (!group || group.executionId !== parsed.data.executionId) {
+        return { ok: false, error: createPublicError('AUTOMATION_UNDO_GROUP_NOT_FOUND') };
+      }
+      if (!group.undoable) {
+        return { ok: false, error: createPublicError('AUTOMATION_UNDO_NOT_AVAILABLE') };
+      }
+      try {
+        const result = await recovery.recover({
+          undoGroupId: group.undoGroupId,
+          libraryId: group.libraryId,
+          items: group.items,
+        });
+        journal.consumeUndoGroup(group.undoGroupId);
+        return { ok: true, undoGroupId: group.undoGroupId, ...result };
+      } catch (error) {
+        options.logger()?.error('automation.undo.failed', error, {
+          executionId: group.executionId,
+          undoGroupId: group.undoGroupId,
+        });
+        return { ok: false, error: createPublicError('AUTOMATION_UNDO_STALE') };
+      }
+    },
+  );
 
   options.ipcMain.handle(
     AUTOMATION_SCRIPT_HISTORY_CHANNEL,

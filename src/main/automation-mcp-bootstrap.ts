@@ -2,6 +2,7 @@ import type { AutomationCommandGateway } from '../automation/command-gateway';
 import type { AutomationExecutionJournal } from './automation-execution-journal';
 import type { WorkerCommand } from '../shared/protocol/requests';
 import type { WorkerResult } from '../shared/protocol/responses';
+import type { LibraryChangedEvent } from '../shared/protocol/responses';
 import {
   startAutomationMcpHost,
   type AutomationMcpHostHandle,
@@ -16,12 +17,13 @@ export type AutomationMcpBootstrapDeps = {
   journal: AutomationExecutionJournal;
   gateway: AutomationCommandGateway;
   request(command: WorkerCommand): Promise<WorkerResult>;
+  onLibraryChanged?: (listener: (event: LibraryChangedEvent) => void) => () => void;
   logger: AutomationMcpBootstrapLogger;
   env?: NodeJS.ProcessEnv;
 };
 
 /**
- * Opens the configured library and attaches stdio MCP. Returns null when
+ * Opens the configured library, or starts unbound for library.create, and attaches stdio MCP. Returns null when
  * `SERPENT_MCP` is not enabled so Desktop startup stays unchanged.
  */
 export async function maybeStartAutomationMcpMode(
@@ -31,8 +33,8 @@ export async function maybeStartAutomationMcpMode(
   if (env.SERPENT_MCP !== '1') return null;
 
   const libraryPath = env.SERPENT_MCP_LIBRARY_PATH?.trim();
-  if (!libraryPath) {
-    throw new Error('SERPENT_MCP=1 requires SERPENT_MCP_LIBRARY_PATH.');
+  if (!libraryPath && env.SERPENT_MCP_ALLOW_UNBOUND !== '1') {
+    throw new Error('SERPENT_MCP=1 requires SERPENT_MCP_LIBRARY_PATH or SERPENT_MCP_ALLOW_UNBOUND=1.');
   }
 
   const writeAccessGranted = env.SERPENT_MCP_WRITE_ACCESS === '1';
@@ -40,23 +42,28 @@ export async function maybeStartAutomationMcpMode(
     writeAccessGranted,
   });
 
-  const opened = await deps.request({
-    type: 'library.open',
-    selectedLibraryPath: libraryPath,
-  });
-  if (!opened.ok || opened.type !== 'library.opened') {
-    throw new Error('MCP host failed to open the configured library.');
+  let libraryId: string | null = null;
+  if (libraryPath) {
+    const opened = await deps.request({
+      type: 'library.open',
+      selectedLibraryPath: libraryPath,
+    });
+    if (!opened.ok || opened.type !== 'library.opened') {
+      throw new Error('MCP host failed to open the configured library.');
+    }
+    libraryId = opened.library.libraryId;
   }
 
   const handle = await startAutomationMcpHost({
     journal: deps.journal,
     gateway: deps.gateway,
-    libraryId: opened.library.libraryId,
+    libraryId,
+    onLibraryChanged: deps.onLibraryChanged,
     writeAccessGranted,
   });
   deps.logger.info('automation.mcp', 'MCP stdio server connected.', {
     executionId: handle.executionId,
-    libraryId: opened.library.libraryId,
+    libraryId: libraryId ?? 'unbound',
   });
   return handle;
 }

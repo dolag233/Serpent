@@ -44,9 +44,10 @@ function shouldExpose(
   if (!isMcpEligible(descriptor)) return false;
   if (descriptor.mcp.public) return true;
   if (!exposure.writeAccessGranted) return false;
-  // Phase D MCP write grant exposes execution-approved low-risk Actions only.
-  // Plan-gated file ops (trash/rename/restore) stay hidden until Phase E.
-  return descriptor.approvalPolicy === 'execution';
+  // Execution-approved low-risk Actions require a connection write grant.
+  // Public plan-gated tools remain visible and always open Main's approval
+  // boundary; the MCP caller cannot bypass that boundary.
+  return descriptor.approvalPolicy === 'execution' || descriptor.approvalPolicy === 'plan';
 }
 
 function asJsonSchemaObject(schema: object): Record<string, unknown> {

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { z } from 'zod';
 
 import {
@@ -7,6 +8,7 @@ import {
   getAutomationCommandDescriptor,
   type AutomationCapability,
   type AutomationCommandId,
+  type AutomationCommandInput,
   type AutomationCommandResult,
   type AutomationFileOperationPlanProof,
   type AutomationSource,
@@ -19,11 +21,12 @@ import type { WorkerResult } from '../shared/protocol/responses';
 const nonBlankString = z.string().min(1).refine((value) => value.trim().length > 0, {
   message: 'Value must not be blank.',
 });
+const idempotencyKeySchema = nonBlankString.max(128);
 
 export const automationExecutionContextSchema = z.strictObject({
   executionId: nonBlankString.max(255),
   source: automationSourceSchema,
-  libraryId: nonBlankString.max(255),
+  libraryId: nonBlankString.max(255).nullable(),
   grantedCapabilities: z.array(automationCapabilitySchema).max(64),
   logId: nonBlankString.max(255).optional(),
   deadlineAt: z.string().datetime().optional(),
@@ -56,6 +59,8 @@ export type AutomationGatewayErrorCode =
   | 'AUTOMATION_EXECUTION_NOT_FOUND'
   | 'AUTOMATION_SOURCE_NOT_ALLOWED'
   | 'AUTOMATION_CAPABILITY_DENIED'
+  | 'AUTOMATION_LIBRARY_NOT_BOUND'
+  | 'AUTOMATION_LIBRARY_OPEN_FAILED'
   | 'AUTOMATION_CONCURRENCY_LIMIT_REACHED'
   | 'AUTOMATION_EXECUTION_CANCELLED'
   | 'AUTOMATION_EXECUTION_TIMED_OUT'
@@ -77,6 +82,7 @@ export type AutomationGatewaySuccess<Id extends AutomationCommandId = Automation
   commandId: Id;
   executionId: string;
   result: AutomationCommandResult<Id>;
+  undoGroupId?: string;
 };
 
 export type AutomationGatewayResult = AutomationGatewaySuccess | AutomationGatewayFailure;
@@ -152,9 +158,37 @@ export interface AutomationFilePlanApprovalHandler {
   prepareAndApprove(input: {
     commandId: AutomationCommandId;
     executionId: string;
-    libraryId: string;
+    libraryId: string | null;
     commandInput: unknown;
   }): Promise<AutomationFileOperationPlanProof | undefined>;
+}
+
+export interface AutomationLibraryBindingHandler {
+  bindLibrary(input: { executionId: string; libraryId: string }): void | Promise<void>;
+}
+
+/**
+ * Main-owned journal read for `execution.status`. The Gateway never forwards
+ * this command to the Worker; the handler must return a path-free projection.
+ */
+export interface AutomationExecutionStatusHandler {
+  getStatus(executionId: string): {
+    projection: AutomationCommandResult<'execution.status'>;
+    source: AutomationSource;
+  } | undefined;
+}
+
+export interface AutomationUndoGroupHandler {
+  create(input: { executionId: string; libraryId: string }): { undoGroupId: string };
+  append(input: {
+    undoGroupId: string;
+    item: { itemId: string; kind: string; reference: string; reversible: boolean };
+  }): void;
+  complete(input: {
+    undoGroupId: string;
+    status: 'succeeded' | 'partially-succeeded' | 'failed' | 'cancelled';
+    failureReason?: string | null;
+  }): void;
 }
 
 export interface AutomationCommandGatewayOptions {
@@ -162,6 +196,9 @@ export interface AutomationCommandGatewayOptions {
   auditLogger?: AutomationGatewayAuditLogger;
   externalEffectHandler?: AutomationExternalEffectHandler;
   filePlanApprovalHandler?: AutomationFilePlanApprovalHandler;
+  libraryBindingHandler?: AutomationLibraryBindingHandler;
+  executionStatusHandler?: AutomationExecutionStatusHandler;
+  undoGroupHandler?: AutomationUndoGroupHandler;
 }
 
 export interface AutomationCommandGateway {
@@ -175,6 +212,8 @@ const errorMessages: Record<AutomationGatewayErrorCode, string> = {
   AUTOMATION_EXECUTION_NOT_FOUND: 'This automation execution is no longer available.',
   AUTOMATION_SOURCE_NOT_ALLOWED: 'This automation source cannot call the requested command.',
   AUTOMATION_CAPABILITY_DENIED: 'The automation execution has not been granted the required capability.',
+  AUTOMATION_LIBRARY_NOT_BOUND: 'This automation execution must open and bind a library before calling this command.',
+  AUTOMATION_LIBRARY_OPEN_FAILED: 'The created library could not be opened and bound to this automation execution.',
   AUTOMATION_CONCURRENCY_LIMIT_REACHED: 'This automation execution has reached its concurrent command limit.',
   AUTOMATION_EXECUTION_CANCELLED: 'This automation execution has been cancelled.',
   AUTOMATION_EXECUTION_TIMED_OUT: 'This automation execution timed out.',
@@ -206,13 +245,41 @@ function isSourceAllowed(
   return allowedSources.includes(source);
 }
 
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  if (value !== null && typeof value === 'object') {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, entry]) => `${JSON.stringify(key)}:${canonicalJson(entry)}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function idempotencyFingerprint(input: unknown): string {
+  return createHash('sha256').update(canonicalJson(input), 'utf8').digest('hex');
+}
+
 export function createAutomationCommandGateway(
   workerClient: AutomationWorkerClient,
   executionResolver: AutomationExecutionResolver,
   options: AutomationCommandGatewayOptions = {},
 ): AutomationCommandGateway {
-  const { auditSink, auditLogger, externalEffectHandler, filePlanApprovalHandler } = options;
+  const {
+    auditSink,
+    auditLogger,
+    externalEffectHandler,
+    filePlanApprovalHandler,
+    libraryBindingHandler,
+    executionStatusHandler,
+    undoGroupHandler,
+  } = options;
   const inFlightCommandCounts = new Map<string, number>();
+  const idempotencyEntries = new Map<string, {
+    fingerprint: string;
+    promise: Promise<AutomationGatewayResult>;
+    resolve: (result: AutomationGatewayResult) => void;
+  }>();
   if (auditSink !== undefined && auditLogger === undefined) {
     throw new TypeError('Automation Gateway requires an AppLogger when execution auditing is enabled.');
   }
@@ -245,6 +312,35 @@ export function createAutomationCommandGateway(
 
       const descriptor = getAutomationCommandDescriptor(commandId);
       if (!descriptor) return gatewayFailure('AUTOMATION_COMMAND_NOT_FOUND');
+
+      if (descriptor.commandId === 'execution.status') {
+        if (!executionStatusHandler) {
+          return { ok: false, error: createPublicError('INTERNAL_ERROR') };
+        }
+        const parsedInput = descriptor.inputSchema.safeParse(input);
+        if (!parsedInput.success) return gatewayFailure('AUTOMATION_INVALID_REQUEST');
+        const statusInput = parsedInput.data as AutomationCommandInput<'execution.status'>;
+        const targetExecutionId = statusInput.executionId ?? executionId;
+        if (targetExecutionId !== executionId) {
+          return gatewayFailure('AUTOMATION_EXECUTION_NOT_FOUND');
+        }
+        const statusRecord = executionStatusHandler.getStatus(targetExecutionId);
+        if (!statusRecord) return gatewayFailure('AUTOMATION_EXECUTION_NOT_FOUND');
+        if (!isSourceAllowed(statusRecord.source, descriptor.allowedSources)) {
+          return gatewayFailure('AUTOMATION_SOURCE_NOT_ALLOWED');
+        }
+        if (!descriptor.resultSchema.safeParse(statusRecord.projection).success) {
+          return gatewayFailure('AUTOMATION_RESULT_INVALID');
+        }
+        return {
+          ok: true,
+          apiVersion: AUTOMATION_API_VERSION,
+          commandId: 'execution.status',
+          executionId,
+          result: statusRecord.projection,
+        };
+      }
+
       let context: AutomationExecutionContext | undefined;
       try {
         context = await executionResolver.resolve(executionId);
@@ -289,17 +385,80 @@ export function createAutomationCommandGateway(
 
       const parsedInput = descriptor.inputSchema.safeParse(input);
       if (!parsedInput.success) return recordOutcome(gatewayFailure('AUTOMATION_INVALID_REQUEST'));
+      const parsedCommandInput = parsedInput.data as Record<string, unknown>;
+      const idempotencyKey = descriptor.supportsIdempotencyKey
+        ? idempotencyKeySchema.safeParse(parsedCommandInput.idempotencyKey).success
+          ? parsedCommandInput.idempotencyKey as string
+          : undefined
+        : undefined;
+      if (parsedCommandInput.idempotencyKey !== undefined && !descriptor.supportsIdempotencyKey) {
+        return recordOutcome(gatewayFailure('AUTOMATION_INVALID_REQUEST'));
+      }
+      if (descriptor.supportsIdempotencyKey && parsedCommandInput.idempotencyKey !== undefined
+        && idempotencyKey === undefined) {
+        return recordOutcome(gatewayFailure('AUTOMATION_INVALID_REQUEST'));
+      }
+      const idempotencyPayload = { ...parsedCommandInput };
+      delete idempotencyPayload.idempotencyKey;
+      const idempotencyEntryKey = idempotencyKey === undefined
+        ? undefined
+        : `${executionId}\u0000${descriptor.commandId}\u0000${idempotencyKey}`;
+      if (context.libraryId === null && descriptor.commandId !== 'library.create') {
+        return recordOutcome(gatewayFailure('AUTOMATION_LIBRARY_NOT_BOUND'));
+      }
+      if (descriptor.commandId === 'library.create' && libraryBindingHandler === undefined) {
+        // Host misconfiguration — not an open/bind failure of a created library.
+        return recordOutcome({ ok: false, error: createPublicError('INTERNAL_ERROR') });
+      }
+      let idempotencyEntry: {
+        fingerprint: string;
+        promise: Promise<AutomationGatewayResult>;
+        resolve: (result: AutomationGatewayResult) => void;
+      } | undefined;
+      if (idempotencyEntryKey !== undefined) {
+        const fingerprint = idempotencyFingerprint(idempotencyPayload);
+        const existing = idempotencyEntries.get(idempotencyEntryKey);
+        if (existing !== undefined) {
+          if (existing.fingerprint !== fingerprint) {
+            return recordOutcome(gatewayFailure('AUTOMATION_INVALID_REQUEST'));
+          }
+          return existing.promise;
+        }
+        if (descriptor.commandId === 'library.create' && context.libraryId !== null) {
+          return recordOutcome(gatewayFailure('AUTOMATION_INVALID_REQUEST'));
+        }
+        let resolveEntry!: (result: AutomationGatewayResult) => void;
+        const promise = new Promise<AutomationGatewayResult>((resolve) => {
+          resolveEntry = resolve;
+        });
+        idempotencyEntry = { fingerprint, promise, resolve: resolveEntry };
+        idempotencyEntries.set(idempotencyEntryKey, idempotencyEntry);
+      }
+      if (descriptor.commandId === 'library.create' && context.libraryId !== null) {
+        return recordOutcome(gatewayFailure('AUTOMATION_INVALID_REQUEST'));
+      }
+      const completeIdempotency = (result: AutomationGatewayResult): void => {
+        if (idempotencyEntry === undefined || idempotencyEntryKey === undefined) return;
+        if (!result.ok) idempotencyEntries.delete(idempotencyEntryKey);
+        idempotencyEntry.resolve(result);
+      };
+      const recordIdempotentOutcome = async (result: AutomationGatewayResult): Promise<AutomationGatewayResult> => {
+        const completed = await recordOutcome(result);
+        completeIdempotency(completed);
+        return completed;
+      };
+      const boundLibraryId = context.libraryId;
 
       let approvedPlan: AutomationFileOperationPlanProof | undefined;
       if (descriptor.approvalPolicy === 'plan') {
         if (!filePlanApprovalHandler) {
-          return recordOutcome({ ok: false, error: createPublicError('INTERNAL_ERROR') });
+          return recordIdempotentOutcome({ ok: false, error: createPublicError('INTERNAL_ERROR') });
         }
         try {
           approvedPlan = await filePlanApprovalHandler.prepareAndApprove({
             commandId: descriptor.commandId,
             executionId,
-            libraryId: context.libraryId,
+            libraryId: boundLibraryId,
             commandInput: parsedInput.data,
           });
         } catch (error) {
@@ -307,22 +466,82 @@ export function createAutomationCommandGateway(
             executionId,
             commandId: descriptor.commandId,
           });
-          return recordOutcome({ ok: false, error: toPublicError(error) });
+          return recordIdempotentOutcome({ ok: false, error: toPublicError(error) });
         }
         // Cancellation is not an error: the script receives a stable public
         // result and no Worker mutation is dispatched.
         if (approvedPlan === undefined) {
-          return recordOutcome({ ok: false, error: createPublicError('CANCELLED') });
+          return recordIdempotentOutcome({ ok: false, error: createPublicError('CANCELLED') });
         }
-        if (context.abortSignal?.aborted) return recordOutcome(cancellationFailure(context.abortSignal));
+        if (context.abortSignal?.aborted) return recordIdempotentOutcome(cancellationFailure(context.abortSignal));
       }
       if (!reserveCommandSlot(context)) {
-        return recordOutcome(gatewayFailure('AUTOMATION_CONCURRENCY_LIMIT_REACHED'));
+        return recordIdempotentOutcome(gatewayFailure('AUTOMATION_CONCURRENCY_LIMIT_REACHED'));
+      }
+      let undoGroupId: string | undefined;
+      if (descriptor.supportsUndo && undoGroupHandler !== undefined) {
+        if (boundLibraryId === null) {
+          releaseCommandSlot(context);
+          return recordIdempotentOutcome(gatewayFailure('AUTOMATION_LIBRARY_NOT_BOUND'));
+        }
+        try {
+          undoGroupId = undoGroupHandler.create({ executionId, libraryId: boundLibraryId }).undoGroupId;
+        } catch (error) {
+          auditLogger?.error('automation.undo-group.create-failed', error, { executionId, commandId });
+          releaseCommandSlot(context);
+          return recordIdempotentOutcome({ ok: false, error: createPublicError('INTERNAL_ERROR') });
+        }
       }
       const recordOutcomeAndReleaseSlot = async (
         result: AutomationGatewayResult,
       ): Promise<AutomationGatewayResult> => {
         try {
+          if (undoGroupId !== undefined) {
+            if (undoGroupHandler === undefined) {
+              throw new Error('Undo group handler disappeared after creating an undo group.');
+            }
+            if (result.ok) {
+              const operationId = typeof result.result === 'object'
+                && result.result !== null
+                && 'operationId' in result.result
+                && typeof result.result.operationId === 'string'
+                ? result.result.operationId
+                : undefined;
+              undoGroupHandler.append({
+                undoGroupId,
+                item: {
+                  itemId: operationId ?? `${executionId}:${descriptor.commandId}:${Date.now()}`,
+                  kind: descriptor.commandId,
+                  reference: operationId === undefined ? `execution:${executionId}` : operationId,
+                  reversible: operationId !== undefined,
+                },
+              });
+              undoGroupHandler.complete({
+                undoGroupId,
+                status: operationId === undefined ? 'partially-succeeded' : 'succeeded',
+                ...(operationId === undefined ? { failureReason: 'Worker returned no recovery reference.' } : {}),
+              });
+            }
+            else {
+              undoGroupHandler.complete({
+                undoGroupId,
+                status: 'failed',
+                failureReason: result.error.message,
+              });
+            }
+          }
+        return await recordIdempotentOutcome(result);
+        } catch (error) {
+          auditLogger?.error('automation.undo-group.finalize-failed', error, {
+            executionId,
+            commandId: descriptor.commandId,
+            undoGroupId,
+          });
+          if (result.ok) {
+            // Worker mutation already committed; surface journal failure instead of
+            // silently claiming a durable undo group.
+            return await recordOutcome({ ok: false, error: createPublicError('INTERNAL_ERROR') });
+          }
           return await recordOutcome(result);
         } finally {
           // The slot represents the entire Gateway request, including schema
@@ -334,7 +553,7 @@ export function createAutomationCommandGateway(
       let workerResult: WorkerResult;
       try {
         workerResult = await workerClient.request(
-          descriptor.toWorkerCommand(context.libraryId, parsedInput.data, approvedPlan),
+          descriptor.toWorkerCommand(boundLibraryId ?? '', parsedInput.data, approvedPlan),
           { signal: context.abortSignal, readonly: descriptor.impact === 'read' },
         );
       } catch (error) {
@@ -357,7 +576,7 @@ export function createAutomationCommandGateway(
           await externalEffectHandler.apply({
             commandId: descriptor.commandId,
             executionId,
-            libraryId: context.libraryId,
+            libraryId: boundLibraryId!,
             commandInput: parsedInput.data,
             workerResult,
           });
@@ -373,7 +592,7 @@ export function createAutomationCommandGateway(
         }
       }
 
-      const result = descriptor.projectResult(workerResult, context.libraryId, parsedInput.data);
+      const result = descriptor.projectResult(workerResult, boundLibraryId ?? '', parsedInput.data);
       if (result === undefined || !descriptor.resultSchema.safeParse(result).success) {
         // library.inspect projects library.list down to the one library bound
         // to this execution. A missing entry is the same public state as a
@@ -384,12 +603,32 @@ export function createAutomationCommandGateway(
         return recordOutcomeAndReleaseSlot(gatewayFailure('AUTOMATION_RESULT_INVALID'));
       }
 
+      if (descriptor.commandId === 'library.create') {
+        const createdLibrary = result as { libraryId?: unknown };
+        if (typeof createdLibrary.libraryId !== 'string') {
+          return recordOutcomeAndReleaseSlot(gatewayFailure('AUTOMATION_RESULT_INVALID'));
+        }
+        if (libraryBindingHandler === undefined) {
+          return recordOutcomeAndReleaseSlot({ ok: false, error: createPublicError('INTERNAL_ERROR') });
+        }
+        try {
+          await libraryBindingHandler.bindLibrary({
+            executionId,
+            libraryId: createdLibrary.libraryId,
+          });
+        } catch (error) {
+          auditLogger?.error('automation.library-bind.failed', error, { executionId });
+          return recordOutcomeAndReleaseSlot(gatewayFailure('AUTOMATION_LIBRARY_OPEN_FAILED'));
+        }
+      }
+
       return recordOutcomeAndReleaseSlot({
         ok: true,
         apiVersion: AUTOMATION_API_VERSION,
         commandId: descriptor.commandId,
         executionId,
         result,
+        ...(undoGroupId === undefined ? {} : { undoGroupId }),
       });
     },
   };

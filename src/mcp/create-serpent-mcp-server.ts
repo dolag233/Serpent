@@ -52,6 +52,7 @@ export function createSerpentMcpServer(options: SerpentMcpServerOptions): Server
     {
       capabilities: {
         tools: {},
+        logging: {},
       },
     },
   );
@@ -97,6 +98,7 @@ export function createSerpentMcpServer(options: SerpentMcpServerOptions): Server
       toolName: result.toolName,
       commandId: result.commandId,
       result: result.result,
+      ...(result.undoGroupId === undefined ? {} : { undoGroupId: result.undoGroupId }),
       truncated: result.truncated,
     });
   });

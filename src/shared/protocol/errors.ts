@@ -43,6 +43,9 @@ export const PUBLIC_ERROR_MESSAGES = {
   VERSION_CONFLICT: 'The metadata has been modified by another operation. Please refresh and try again.',
   ZIP_TOO_LARGE: 'The library is too large for standard ZIP. Export as a folder instead.',
   TRANSFER_IN_PROGRESS: 'Another library transfer is already using the same library or path.',
+  AUTOMATION_UNDO_GROUP_NOT_FOUND: 'The automation undo group is no longer available.',
+  AUTOMATION_UNDO_NOT_AVAILABLE: 'This automation result cannot be undone.',
+  AUTOMATION_UNDO_STALE: 'The files changed, so this automation result can no longer be undone safely.',
 } as const;
 
 export type PublicErrorCode = keyof typeof PUBLIC_ERROR_MESSAGES;

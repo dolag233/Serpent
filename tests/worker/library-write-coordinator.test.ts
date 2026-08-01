@@ -3,7 +3,7 @@ import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   LibraryWriteCoordinator,
@@ -41,6 +41,15 @@ function createDatabase(filename: string): InstanceType<typeof Database> {
     CREATE TABLE library_change_sequence (
       library_id TEXT PRIMARY KEY,
       sequence INTEGER NOT NULL CHECK(sequence >= 0)
+    );
+    CREATE TABLE library_job_leases (
+      library_id TEXT NOT NULL,
+      job_id TEXT NOT NULL,
+      owner_id TEXT NOT NULL,
+      fencing_token INTEGER NOT NULL,
+      acquired_at_ms INTEGER NOT NULL,
+      expires_at_ms INTEGER NOT NULL,
+      PRIMARY KEY(library_id, job_id)
     );
     INSERT INTO library_change_sequence (library_id, sequence)
       VALUES ('library-1', 0);
@@ -135,6 +144,106 @@ describe('LibraryWriteCoordinator', () => {
     lease.release();
 
     expectBusy(() => lease.bumpChangeSequence());
+    firstDatabase.close();
+    secondDatabase.close();
+  });
+
+  it('renews a long-running lease through a heartbeat and reports fencing loss', async () => {
+    vi.useFakeTimers();
+    const filename = databasePath();
+    const firstDatabase = createDatabase(filename);
+    const secondDatabase = new Database(filename);
+    let now = 1_000;
+    const first = new LibraryWriteCoordinator(firstDatabase, 'library-1', {
+      now: () => now,
+      newOwnerId: () => 'first-owner',
+    });
+    const second = new LibraryWriteCoordinator(secondDatabase, 'library-1', {
+      now: () => now,
+      newOwnerId: () => 'second-owner',
+    });
+
+    const firstLease = await first.acquire({ timeoutMs: 0, leaseDurationMs: 30 });
+    now = 1_005;
+    const heartbeat = firstLease.startHeartbeat({ intervalMs: 5, leaseDurationMs: 30 });
+    await vi.advanceTimersByTimeAsync(5);
+    expect(firstDatabase.prepare(
+      'SELECT expires_at_ms FROM library_write_leases WHERE library_id = ?',
+    ).get('library-1')).toEqual({ expires_at_ms: 1_035 });
+
+    now = 1_040;
+    const secondLease = await second.acquire({ timeoutMs: 0, leaseDurationMs: 30 });
+    const lost = vi.fn();
+    const staleHeartbeat = firstLease.startHeartbeat({ intervalMs: 5, leaseDurationMs: 30, onLost: lost });
+    await vi.advanceTimersByTimeAsync(5);
+    expect(staleHeartbeat.error).toMatchObject({ code: 'LIBRARY_BUSY', reason: 'lost' });
+    expect(lost).toHaveBeenCalledOnce();
+    expect(() => firstLease.assertCurrent()).toThrowError(LibraryWriteCoordinatorError);
+
+    heartbeat.stop();
+    staleHeartbeat.stop();
+    secondLease.release();
+    firstDatabase.close();
+    secondDatabase.close();
+    vi.useRealTimers();
+  });
+
+  it('observes change-sequence commits made through an independent connection', async () => {
+    vi.useFakeTimers();
+    const filename = databasePath();
+    const firstDatabase = createDatabase(filename);
+    const secondDatabase = new Database(filename);
+    const first = new LibraryWriteCoordinator(firstDatabase, 'library-1', {
+      newOwnerId: () => 'first-owner',
+    });
+    const second = new LibraryWriteCoordinator(secondDatabase, 'library-1', {
+      newOwnerId: () => 'second-owner',
+    });
+    const changes: number[] = [];
+    const subscription = first.subscribeToChangeSequence({
+      intervalMs: 10,
+      onChange: (sequence) => changes.push(sequence),
+    });
+    const lease = await second.acquire({ timeoutMs: 0 });
+    expect(subscription.lastSequence).toBe(0);
+    expect(lease.bumpChangeSequence()).toBe(1);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(changes).toEqual([1]);
+    expect(subscription.lastSequence).toBe(1);
+    subscription.stop();
+    lease.release();
+    firstDatabase.close();
+    secondDatabase.close();
+    vi.useRealTimers();
+  });
+
+  it('atomically claims a detached Job and fences a stale owner after recovery', async () => {
+    const filename = databasePath();
+    const firstDatabase = createDatabase(filename);
+    const secondDatabase = new Database(filename);
+    let now = 1_000;
+    const first = new LibraryWriteCoordinator(firstDatabase, 'library-1', {
+      now: () => now,
+      newOwnerId: () => 'first-owner',
+    });
+    const second = new LibraryWriteCoordinator(secondDatabase, 'library-1', {
+      now: () => now,
+      newOwnerId: () => 'second-owner',
+    });
+
+    const firstJob = await first.claimJob('job-1', { timeoutMs: 0, leaseDurationMs: 25 });
+    await expect(second.claimJob('job-1', { timeoutMs: 0 })).rejects.toMatchObject({
+      code: 'LIBRARY_BUSY',
+      reason: 'timed-out',
+    });
+    now = 1_026;
+    const secondJob = await second.claimJob('job-1', { timeoutMs: 0, leaseDurationMs: 25 });
+    expect(secondJob.fencingToken).toBe(firstJob.fencingToken + 1);
+    expect(() => firstJob.assertCurrent()).toThrowError(LibraryWriteCoordinatorError);
+    expect(() => firstJob.renew()).toThrowError(LibraryWriteCoordinatorError);
+
+    firstJob.release();
+    secondJob.release();
     firstDatabase.close();
     secondDatabase.close();
   });

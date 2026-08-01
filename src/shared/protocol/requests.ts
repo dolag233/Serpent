@@ -65,6 +65,7 @@ export const nameConflictDecisionSchema = z.enum(['keep-both', 'replace', 'skip'
 
 const automationFileOperationSchema = z.enum([
   'trash',
+  'move',
   'rename-file',
   'rename-files',
   'restore-if-original-vacant',
@@ -77,6 +78,14 @@ const automationFilePlanProofSchema = z.strictObject({
   planHash: z.string().regex(/^[a-f0-9]{64}$/u),
   expectedChangeSequence: z.number().int().nonnegative(),
   assetStates: z.array(automationFilePlanAssetStateSchema).min(1).max(10_000),
+});
+export const automationImportPlanProofSchema = z.strictObject({
+  planHash: z.string().regex(/^[a-f0-9]{64}$/u),
+  expectedChangeSequence: z.number().int().nonnegative(),
+  sourceStates: z.array(z.strictObject({
+    sourcePath: selectedPathSchema,
+    stateToken: z.string().regex(/^[a-f0-9]{64}$/u),
+  })).max(1_000),
 });
 
 
@@ -947,6 +956,10 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     type: z.literal('library.list'),
   }),
   z.strictObject({
+    type: z.literal('library.change-sequence'),
+    libraryId: identifierSchema,
+  }),
+  z.strictObject({
     type: z.literal('folder.create'),
     libraryId: identifierSchema,
     parentFolderId: optionalIdentifierSchema,
@@ -1056,6 +1069,7 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     imageSequenceFps: z.number().int().min(1).max(240).optional(),
     /** When true, expand single selected frames to continuous sibling runs. */
     expandImageSequences: z.boolean().optional(),
+    automationPlan: automationImportPlanProofSchema.optional(),
   }),
   z.strictObject({
     type: z.literal('asset.import.resolve'),
@@ -1330,12 +1344,18 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     ),
     targetFolderId: identifierSchema.nullable(),
     conflictStrategy: nameConflictDecisionSchema.optional(),
+    automationPlan: automationFilePlanProofSchema.optional(),
   }),
   z.strictObject({
     type: z.literal('asset.move-undo'),
     libraryId: identifierSchema,
     operationId: identifierSchema,
     conflictStrategy: z.enum(['error', 'keep-both', 'replace', 'skip']).optional(),
+  }),
+  z.strictObject({
+    type: z.literal('asset.trash-undo'),
+    libraryId: identifierSchema,
+    operationId: identifierSchema,
   }),
   z.strictObject({
     type: z.literal('asset.copy'),
@@ -1395,6 +1415,17 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
       { message: 'assetIds must not contain duplicates.' },
     ),
     newBaseName: assetFileBaseNameSchema.optional(),
+    targetFolderId: identifierSchema.nullable().optional(),
+    conflictStrategy: nameConflictDecisionSchema.optional(),
+  }),
+  z.strictObject({
+    type: z.literal('automation.file-import-plan'),
+    libraryId: identifierSchema,
+    sourceKind: z.enum(['files', 'folder']),
+    sourcePaths: z.array(selectedPathSchema).min(1).max(1_000),
+    targetFolderId: optionalIdentifierSchema,
+    imageSequenceFps: z.number().int().min(1).max(240).optional(),
+    expandImageSequences: z.boolean().optional(),
   }),
   z.strictObject({
     type: z.literal('asset.palette.aggregate-recent'),

@@ -7,6 +7,7 @@ import type {
   WindowControlResult,
 } from './window-controls';
 import type { AppLogAutomationCorrelationId, ReadAppLogResult } from './app-log';
+import type { DesktopControlSelectionEvent } from './desktop-control';
 
 /**
  * 「在系统浏览器中打开外部链接」的共享规则与类型。
@@ -131,6 +132,10 @@ export interface SerpentShellApi {
   onSwipe(listener: (direction: ShellSwipeDirection) => void): () => void;
   /** BrowserWindow 聚焦态（Serpent-oy07）；macOS 原生红绿灯失焦变灰由系统负责。 */
   onWindowFocusChanged(listener: (focused: boolean) => void): () => void;
+  /** Main → Renderer: apply a selection requested by an attached local Agent. */
+  onDesktopAutomationSelection(
+    listener: (event: DesktopControlSelectionEvent) => void,
+  ): () => void;
   /** macOS Edit 菜单反选（Serpent-te8p）；与 ⌘I / Ctrl+I 等价。 */
   onInvertSelection(listener: () => void): () => void;
   /** macOS Edit 菜单「复制」（Serpent-166q）。有选中资产时复制文件到系统剪贴板；

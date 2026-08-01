@@ -9,6 +9,7 @@ import type { LibraryService } from './library-service';
  */
 export const AUTOMATION_READ_ONLY_WORKER_COMMAND_TYPES = [
   'library.list',
+  'library.change-sequence',
   'folder.list',
   'linked-folder.list',
   'asset.list',
@@ -24,6 +25,8 @@ export const AUTOMATION_READ_ONLY_WORKER_COMMAND_TYPES = [
   'smart-collection.list',
   'media.list-jobs',
   'ai.status',
+  'ai.content.get',
+  'automation.file-import-plan',
 ] as const satisfies readonly WorkerCommand['type'][];
 
 export type AutomationReadOnlyWorkerCommandType =
@@ -51,6 +54,13 @@ export function executeAutomationReadOnlyWorkerCommand(
   switch (command.type) {
     case 'library.list':
       return { ok: true, type: 'library.list', libraries: libraryService.listLibraries() };
+    case 'library.change-sequence':
+      return {
+        ok: true,
+        type: 'library.change-sequence',
+        libraryId: command.libraryId,
+        changeSequence: libraryService.getChangeSequence(command.libraryId),
+      };
     case 'folder.list':
       return {
         ok: true,
@@ -115,6 +125,12 @@ export function executeAutomationReadOnlyWorkerCommand(
         type: 'automation.file-operation-planned',
         ...libraryService.previewAutomationFileOperation(command),
       };
+    case 'automation.file-import-plan':
+      return {
+        ok: true,
+        type: 'automation.file-import-planned',
+        plan: libraryService.previewAutomationImport(command),
+      };
     case 'tag.list':
       return { ok: true, type: 'tag.list', tags: libraryService.listTags(command.libraryId) };
     case 'collection.list':
@@ -149,5 +165,34 @@ export function executeAutomationReadOnlyWorkerCommand(
         libraryId: command.libraryId,
         ...libraryService.getAiJobStatus(command.libraryId, command.jobIds),
       };
+    case 'ai.content.get': {
+      const rows = libraryService.getAiContent(command.libraryId, command.assetId);
+      const tags = libraryService.listAiTagNames(command.libraryId, command.assetId);
+      let description: string | null = null;
+      let rating: number | null = null;
+      let modelVersion: string | null = null;
+      for (const row of rows) {
+        modelVersion = row.modelVersion;
+        if (row.fieldName === 'description') description = row.value;
+        if (row.fieldName === 'rating') {
+          const parsed = Number.parseInt(row.value, 10);
+          if (Number.isInteger(parsed) && parsed >= 1 && parsed <= 5) {
+            rating = parsed;
+          }
+        }
+      }
+      if (!modelVersion) {
+        modelVersion = libraryService.getAiTagModelVersion(command.libraryId, command.assetId);
+      }
+      return {
+        ok: true,
+        type: 'ai.content.got',
+        assetId: command.assetId,
+        description,
+        tags,
+        rating,
+        modelVersion,
+      };
+    }
   }
 }

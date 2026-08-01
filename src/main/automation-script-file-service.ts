@@ -3,13 +3,14 @@ import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { utf8ByteLength } from '../shared/script-sandbox-limits';
+import type { AutomationRecentScriptsStore } from './automation-recent-scripts-store';
 
 const MAX_SCRIPT_SOURCE_BYTES = 64 * 1024;
 const scriptFilenamePattern = /\.serpent\.(?:js|ts)$/iu;
 
 export type AutomationScriptFileResult =
   | { ok: true; scriptId: string; displayName: string; source: string }
-  | { ok: false; code: 'cancelled' | 'invalid-script-file' | 'source-too-large' | 'io-failed' };
+  | { ok: false; code: 'cancelled' | 'invalid-script-file' | 'source-too-large' | 'io-failed' | 'recent-script-not-found' };
 
 type StoredScript = {
   senderId: number;
@@ -20,6 +21,7 @@ type StoredScript = {
 export interface AutomationScriptFileServiceOptions {
   selectOpenScript(): Promise<string | undefined>;
   selectSaveScript(): Promise<string | undefined>;
+  recentScripts?: AutomationRecentScriptsStore;
   newScriptId?(): string;
 }
 
@@ -42,17 +44,13 @@ export class AutomationScriptFileService {
   async open(senderId: number): Promise<AutomationScriptFileResult> {
     const filename = await this.options.selectOpenScript();
     if (filename === undefined) return { ok: false, code: 'cancelled' };
-    if (!isSupportedScriptFilename(filename)) return { ok: false, code: 'invalid-script-file' };
-    let source: string;
-    try {
-      source = await readFile(filename, 'utf8');
-    } catch {
-      return { ok: false, code: 'io-failed' };
-    }
-    if (utf8ByteLength(source) > MAX_SCRIPT_SOURCE_BYTES) {
-      return { ok: false, code: 'source-too-large' };
-    }
-    return this.#store(senderId, filename, source);
+    return this.#readAndStore(senderId, filename);
+  }
+
+  async openRecent(senderId: number, handle: string): Promise<AutomationScriptFileResult> {
+    const filename = this.options.recentScripts?.resolvePath(handle);
+    if (filename === undefined) return { ok: false, code: 'recent-script-not-found' };
+    return this.#readAndStore(senderId, filename);
   }
 
   async save(input: { senderId: number; source: string }): Promise<AutomationScriptFileResult> {
@@ -70,6 +68,10 @@ export class AutomationScriptFileService {
     return this.#store(input.senderId, filename, input.source);
   }
 
+  listRecent() {
+    return this.options.recentScripts?.list() ?? [];
+  }
+
   resolveForExecution(input: { senderId: number; scriptId: string; source: string }): Pick<StoredScript, 'displayName' | 'source'> | undefined {
     const script = this.#scripts.get(input.scriptId);
     if (!script || script.senderId !== input.senderId || script.source !== input.source) return undefined;
@@ -82,10 +84,25 @@ export class AutomationScriptFileService {
     }
   }
 
+  async #readAndStore(senderId: number, filename: string): Promise<AutomationScriptFileResult> {
+    if (!isSupportedScriptFilename(filename)) return { ok: false, code: 'invalid-script-file' };
+    let source: string;
+    try {
+      source = await readFile(filename, 'utf8');
+    } catch {
+      return { ok: false, code: 'io-failed' };
+    }
+    if (utf8ByteLength(source) > MAX_SCRIPT_SOURCE_BYTES) {
+      return { ok: false, code: 'source-too-large' };
+    }
+    return this.#store(senderId, filename, source);
+  }
+
   #store(senderId: number, filename: string, source: string): AutomationScriptFileResult {
     const scriptId = this.#newScriptId();
     const displayName = path.basename(filename);
     this.#scripts.set(scriptId, { senderId, displayName, source });
+    this.options.recentScripts?.record(displayName, filename);
     return { ok: true, scriptId, displayName, source };
   }
 }
