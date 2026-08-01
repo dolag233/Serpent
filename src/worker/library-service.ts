@@ -7693,11 +7693,11 @@ export class LibraryService {
 
   listCollections(libraryId: string): CollectionSummary[] {
     const openLibrary = this.requireOpenLibrary(libraryId);
+    const recursiveAssetCounts = this.collectionRecursiveAssetCounts(openLibrary);
     const rows = openLibrary.connection
       .prepare(
         `SELECT c.collection_id, c.parent_id, c.name, c.description,
                 c.cover_asset_id, c.position,
-                (SELECT COUNT(*) FROM collection_assets ca WHERE ca.collection_id = c.collection_id) AS asset_count,
                 (SELECT COUNT(*) FROM collections ch WHERE ch.parent_id = c.collection_id) AS child_count
            FROM collections c
           WHERE c.library_id = ?
@@ -7710,7 +7710,6 @@ export class LibraryService {
         description: string | null;
         cover_asset_id: string | null;
         position: number;
-        asset_count: number;
         child_count: number;
       }>;
     return rows.map((row) => ({
@@ -7720,9 +7719,46 @@ export class LibraryService {
       description: row.description,
       coverAssetId: row.cover_asset_id,
       position: row.position,
-      assetCount: row.asset_count,
+      // Recursive collection scope is a set union, not a sum: an asset can
+      // be directly assigned to both a parent and one of its descendants.
+      assetCount: recursiveAssetCounts.get(row.collection_id) ?? 0,
       childCollectionCount: row.child_count,
     }));
+  }
+
+  /**
+   * Returns the visible asset union for every collection and its descendants.
+   * Collections are allowed to overlap, so COUNT(DISTINCT) is required here;
+   * the folder count implementation can sum disjoint subtrees instead.
+   */
+  private collectionRecursiveAssetCounts(
+    openLibrary: OpenLibrary,
+  ): Map<string, number> {
+    const rows = openLibrary.connection
+      .prepare(
+        `WITH RECURSIVE collection_tree(root_collection_id, collection_id) AS (
+           SELECT c.collection_id, c.collection_id
+             FROM collections c
+            WHERE c.library_id = ?
+           UNION ALL
+           SELECT tree.root_collection_id, child.collection_id
+             FROM collection_tree tree
+             JOIN collections child ON child.parent_id = tree.collection_id
+            WHERE child.library_id = ?
+         )
+         SELECT tree.root_collection_id AS collection_id,
+                COUNT(DISTINCT ca.asset_id) AS asset_count
+           FROM collection_tree tree
+           JOIN collection_assets ca ON ca.collection_id = tree.collection_id
+           JOIN assets a ON a.asset_id = ca.asset_id
+          WHERE a.deleted_at IS NULL
+          GROUP BY tree.root_collection_id`,
+      )
+      .all(openLibrary.summary.libraryId, openLibrary.summary.libraryId) as Array<{
+      collection_id: string;
+      asset_count: number;
+    }>;
+    return new Map(rows.map((row) => [row.collection_id, row.asset_count]));
   }
 
   updateCollection(input: {
@@ -7774,16 +7810,12 @@ export class LibraryService {
         input.collectionId,
       );
 
+    const recursiveAssetCounts = this.collectionRecursiveAssetCounts(openLibrary);
     const countRows = openLibrary.connection
       .prepare(
-        `SELECT
-           (SELECT COUNT(*) FROM collection_assets WHERE collection_id = ?) AS asset_count,
-           (SELECT COUNT(*) FROM collections WHERE parent_id = ?) AS child_count`,
+        'SELECT COUNT(*) AS child_count FROM collections WHERE parent_id = ?',
       )
-      .get(input.collectionId, input.collectionId) as {
-        asset_count: number;
-        child_count: number;
-      };
+      .get(input.collectionId) as { child_count: number };
 
     return {
       collectionId: input.collectionId,
@@ -7792,7 +7824,7 @@ export class LibraryService {
       description: newDescription,
       coverAssetId: newCoverAssetId,
       position: newPosition,
-      assetCount: countRows.asset_count,
+      assetCount: recursiveAssetCounts.get(input.collectionId) ?? 0,
       childCollectionCount: countRows.child_count,
     };
   }
