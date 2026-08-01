@@ -59,6 +59,7 @@ import { DeleteLinkedDialog } from "./DeleteLinkedDialog";
 import { useFolderDeleteActions } from "./use-folder-delete-actions";
 import { useFolderOrganizeActions } from "./use-folder-organize-actions";
 import { useFolderCommandShortcuts } from "./use-folder-command-shortcuts";
+import { useCollectionCommandShortcuts } from "./use-collection-command-shortcuts";
 import { ExportDialog } from "./ExportDialog";
 import { ImportDialog } from "./ImportDialog";
 import { ImportLibraryChooserDialog } from "./ImportLibraryChooserDialog";
@@ -1658,6 +1659,7 @@ function AppInner() {
     selectionAnchorRef,
     setAssetSelectionAnchor,
     handleCardClick,
+    selectSingleAsset,
     handleFolderCardClick,
     cardMouseDownRef,
     marqueeBox,
@@ -3813,6 +3815,38 @@ function AppInner() {
     });
   }
 
+  function requestDeleteCollection(collectionId: string, name: string) {
+    const collection = collections.find(
+      (candidate) => candidate.collectionId === collectionId,
+    );
+    const hasContents =
+      (collection?.assetCount ?? 0) > 0 ||
+      (collection?.childCollectionCount ?? 0) > 0;
+    if (
+      hasContents &&
+      !window.confirm(
+        t("command.collection.deleteConfirm", { name }),
+      )
+    ) {
+      return;
+    }
+    void deleteCollection(collectionId);
+  }
+
+  function requestTrashManagedFolder(folderId: string, name: string) {
+    const folder = folders.find((candidate) => candidate.folderId === folderId);
+    const hasContents =
+      (folder?.directAssetCount ?? 0) > 0 ||
+      (folder?.childFolderCount ?? 0) > 0;
+    if (
+      hasContents &&
+      !window.confirm(t("command.folder.moveToTrashConfirm", { name }))
+    ) {
+      return;
+    }
+    void trashManagedFolder(folderId, name);
+  }
+
   async function refreshCollectionSummaries() {
     if (!api || !library) return;
     const result = await api.listCollections({ libraryId: library.libraryId });
@@ -4133,8 +4167,22 @@ function AppInner() {
       openInlineFolderRename(folderId, currentName);
     },
     trashManagedFolder: (folderId, name) => {
-      void trashManagedFolder(folderId, name);
+      requestTrashManagedFolder(folderId, name);
     },
+    deleteFolderFromDisk: (folderId, name) => {
+      openDiskDelete({ kind: "managed", folderId, name });
+    },
+  });
+
+  useCollectionCommandShortcuts({
+    enabled: Boolean(library) && !showTrash,
+    platform: SHORTCUT_PLATFORM,
+    previewOpen: Boolean(previewAsset),
+    renameCollection: (collectionId, currentName) => {
+      cancelInlineSmartCollectionEdit();
+      setRenameTarget({ kind: "collection", id: collectionId, name: currentName });
+    },
+    deleteCollection: requestDeleteCollection,
   });
 
   async function executeSearchDefinition(definition: SearchDefinition) {
@@ -7894,6 +7942,7 @@ function AppInner() {
                         );
                         if (!nextCard) return;
                         event.preventDefault();
+                        selectSingleAsset(nextAssetId);
                         nextCard.focus();
                       }}
                       onDoubleClick={() => {
@@ -8938,8 +8987,8 @@ function AppInner() {
               coverAssetId: collection.coverAssetId ?? "",
             });
         }}
-        onDeleteOrganization={(id) => {
-          void deleteCollection(id);
+        onDeleteOrganization={(id, name) => {
+          requestDeleteCollection(id, name);
         }}
         onCreateSubfolder={(folderId) => {
           cancelInlineSmartCollectionEdit();
@@ -8974,7 +9023,7 @@ function AppInner() {
         }
         onOpenLinkedRules={(folder) => void openLinkedRules(folder)}
         onTrashManagedFolder={(folderId, name) => {
-          void trashManagedFolder(folderId, name);
+          requestTrashManagedFolder(folderId, name);
         }}
         onDeleteFolderFromDisk={({ folderId, name, locationKind, linkedRelativePath }) => {
           if (locationKind === "managed") {

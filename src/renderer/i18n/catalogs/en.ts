@@ -384,6 +384,7 @@ export const en = {
       moveTo: "Move to…",
       linkedRules: "Linked rules…",
       moveToTrash: "Move to Trash",
+      moveToTrashConfirm: "Move folder \"{name}\" to Trash?\nIts contents will be moved to Trash too.",
       deleteFromDisk: "Delete from disk…",
       removeFromLibrary: "Remove from library",
       removeFromLibraryConfirm: "Remove linked folder \"{name}\" from the library?\nThe external source folder will not be deleted."

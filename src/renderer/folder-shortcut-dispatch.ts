@@ -9,7 +9,8 @@
 export type FolderShortcutCommandId =
   | "folder.create-subfolder"
   | "folder.rename"
-  | "folder.move-to-trash";
+  | "folder.move-to-trash"
+  | "folder.delete-from-disk";
 
 export type FocusedNavFolder = {
   readonly folderId: string;
@@ -25,6 +26,11 @@ export type FolderShortcutAction =
     }
   | {
       readonly type: "move-to-trash";
+      readonly folderId: string;
+      readonly name: string;
+    }
+  | {
+      readonly type: "delete-from-disk";
       readonly folderId: string;
       readonly name: string;
     }
@@ -115,6 +121,13 @@ export function resolveFolderShortcutAction(
         currentName: name,
       };
     }
+    if (commandId === "folder.delete-from-disk") {
+      return {
+        type: "delete-from-disk",
+        folderId: focusedNav.folderId,
+        name,
+      };
+    }
     return {
       type: "move-to-trash",
       folderId: focusedNav.folderId,
@@ -134,9 +147,7 @@ export function resolveFolderShortcutAction(
       currentName: card.name,
     };
   }
-  return {
-    type: "move-to-trash",
-    folderId: card.folderId,
-    name: card.name,
-  };
+  return commandId === "folder.delete-from-disk"
+    ? { type: "delete-from-disk", folderId: card.folderId, name: card.name }
+    : { type: "move-to-trash", folderId: card.folderId, name: card.name };
 }

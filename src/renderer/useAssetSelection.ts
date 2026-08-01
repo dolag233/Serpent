@@ -7,7 +7,6 @@ import {
 } from "./browse-selection-order";
 import { resolveFolderCardClickIntent } from "./folder-card-click";
 import { computeMarqueeSelection, isMarqueeAdditive } from "./marquee-selection";
-import { resolveMasonryCenterRange } from "./masonry-selection-range";
 import {
   isToggleSelectionModifier,
   resolveSelectionPlatform,
@@ -63,6 +62,8 @@ export interface UseAssetSelectionReturn {
   folderSelectionAnchorRef: React.MutableRefObject<string | null>;
   /** Attach to individual asset cards: onMouseDown sets the button, onClick calls this */
   handleCardClick: (assetId: string, event: React.MouseEvent) => void;
+  /** Replace the selection with one keyboard-focused asset and update anchors. */
+  selectSingleAsset: (assetId: string) => void;
   /**
    * Attach to folder cards' onClick. Plain click selects (Serpent-829);
    * Cmd/Ctrl toggles; Shift extends a range. Entering the folder is
@@ -206,22 +207,13 @@ export function useAssetSelection({
   ): boolean {
     if (!masonryShiftSelection || !event.shiftKey) return false;
     const anchorId = selectionAnchorRef.current;
-    const canvas = workspaceCanvasRef.current;
-    if (!anchorId || !canvas) return false;
-    const items = [...canvas.querySelectorAll<HTMLElement>(".asset-card[data-asset-id]")].flatMap(
-      (card) => {
-        const id = card.dataset.assetId;
-        if (!id) return [];
-        const rect = card.getBoundingClientRect();
-        return [{ id, x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }];
-      },
-    );
-    const range = resolveMasonryCenterRange({
-      items,
-      browseOrder: assetIds,
-      anchorId,
-      targetId: assetId,
-    });
+    if (!anchorId) return false;
+    const anchorIndex = assetIds.indexOf(anchorId);
+    const targetIndex = assetIds.indexOf(assetId);
+    if (anchorIndex < 0 || targetIndex < 0) return false;
+    const start = Math.min(anchorIndex, targetIndex);
+    const end = Math.max(anchorIndex, targetIndex);
+    const range = assetIds.slice(start, end + 1);
     if (range.length === 0) return false;
     const nextAssetIds = isToggleSelectionModifier(event, selectionPlatform)
       ? [...new Set([...selectedAssetIds, ...range])]
@@ -332,6 +324,18 @@ export function useAssetSelection({
       folderSelectionAnchorRef.current = null;
     }
   }
+
+  const selectSingleAsset = useCallback(
+    (assetId: string) => {
+      setSelectedAssetIds([assetId]);
+      setSelectedAssetId(assetId);
+      selectionAnchorRef.current = assetId;
+      browseSelectionAnchorRef.current = { kind: "asset", id: assetId };
+      setSelectedFolderIds?.([]);
+      folderSelectionAnchorRef.current = null;
+    },
+    [setSelectedAssetId, setSelectedAssetIds, setSelectedFolderIds],
+  );
 
   // ── handleCanvasMouseDown ──────────────────────────────────────────────
   const handleCanvasMouseDown = useCallback(
@@ -659,6 +663,7 @@ export function useAssetSelection({
     setAssetSelectionAnchor,
     folderSelectionAnchorRef,
     handleCardClick,
+    selectSingleAsset,
     handleFolderCardClick,
     cardMouseDownRef,
     marqueeBox,

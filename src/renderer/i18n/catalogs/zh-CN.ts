@@ -374,6 +374,7 @@ export const zhCN = {
       moveTo: "移动到…",
       linkedRules: "链接规则…",
       moveToTrash: "移入回收站",
+      moveToTrashConfirm: "将文件夹「{name}」移入回收站？\n其中内容会一并移入回收站。",
       deleteFromDisk: "从硬盘中删除…",
       removeFromLibrary: "从库中移除",
       removeFromLibraryConfirm: "从资源库移除链接文件夹「{name}」？\n外部源目录不会被删除。"

@@ -1,6 +1,6 @@
 # Serpent 项目状态
 
-> 更新时间：2026-07-27
+> 更新时间：2026-08-01
 > 事实来源：`docs/implementation/mvp-roadmap.md` 与各切片开发/审查/QA 文档
 
 ## 2026-07-27 画布精确锚点与序列图
@@ -18,6 +18,7 @@
 - **Inspector AI 刷新**（`Serpent-c9r3` / REQ-INSPECT-006）：清除或生成 AI 信息后右侧信息栏须立即更新，未实现。
 - **2026-07-25 晚**：工具栏后台任务直出（`9gt2`）、浏览总数量/全选全部+重数据懒加载（`6w7n` P1）、type-ahead 跳转（`lfo1` P3）、视频倍速样式（`gplm`）、全屏隐藏光标（`c3lf`）。见 backlog「2026-07-25 补充」。
 - **2026-07-25 快捷键与 Inspector**：筛选后快捷键收口 epic（`Serpent-x78x` / REQ-COMMAND-004）；视频 D/F 逐帧 + X/C 倍速档（`Serpent-soii`）；**全局音量 P1**（`Serpent-8w6x` / REQ-VIEW-017）；Windows 文案「在文件浏览器中显示」（`Serpent-a74i`）；AI 描述 textarea（`Serpent-vo24`）。原则文档 [`docs/ui/0003-keyboard-shortcut-ux-principles.md`](ui/0003-keyboard-shortcut-ux-principles.md)。均未实现。
+- **2026-08-01 最新验收反馈**：合集创建输入焦点偶发失效为 P0（`Serpent-to9y`）；合集 F2/Delete 与非空删除确认（`Serpent-b7uy`）；硬盘删除确认/Shift+Delete 回归（`Serpent-wuma`）；瀑布流 Tab 单选与 Shift 连续选择（`Serpent-xzmz`）；文件夹卡片圆角（`Serpent-kttg`）、标签 hover 二级定位（`Serpent-hn9u`）和通知按钮视觉（`Serpent-agyz`）已完成代码收口，见 [`2026-08-01 反馈收口开发记录`](development/2026-08-01-feedback-closeout-development-log.md)，等待人类复验。合集资产跳转来源文件夹（`Serpent-udj5`）按用户要求暂记后续；清单已按用户原话撤回受影响条目的“通过”状态。
 
 ## 2026-07-18 MVP 循环前沿
 

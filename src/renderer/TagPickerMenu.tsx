@@ -8,7 +8,11 @@ import {
   type ReactNode,
 } from "react";
 import type { TagSummary } from "../shared/asset-types";
-import { useContextMenu } from "./context-menu";
+import {
+  ContextMenuSubmenu,
+  useContextMenu,
+  type ContextMenuSubmenuChildren,
+} from "./context-menu";
 import { Icon } from "./Icons";
 import { useT } from "./i18n";
 import { moveTagSuggestionIndex } from "./tag-suggestions";
@@ -35,7 +39,7 @@ interface TagPickerMenuProps {
   tags: TagSummary[];
   /** Tags to hide from the assign picker (e.g. already on the asset). */
   excludedTagIds?: ReadonlySet<string>;
-  onBack: () => void;
+  onBack?: () => void;
   onPick: (tagId: string) => void;
 }
 
@@ -121,16 +125,18 @@ export function TagPickerMenu({
   return (
     <div className="tag-picker">
       <div className="tag-picker-header">
-        <button
-          aria-label={t("tagPicker.backAria")}
-          title={t("tagPicker.backAria")}
-          className="tag-picker-back"
-          onClick={onBack}
-          type="button"
-        >
-          <Icon name="chevron-left" size={12} />
-          <span>{t("tagPicker.back")}</span>
-        </button>
+        {onBack ? (
+          <button
+            aria-label={t("tagPicker.backAria")}
+            title={t("tagPicker.backAria")}
+            className="tag-picker-back"
+            onClick={onBack}
+            type="button"
+          >
+            <Icon name="chevron-left" size={12} />
+            <span>{t("tagPicker.back")}</span>
+          </button>
+        ) : null}
         <span className="tag-picker-title">{title}</span>
       </div>
       <div className="tag-picker-search">
@@ -209,11 +215,25 @@ export function TagPickerMenu({
 interface TagPickerEntryProps {
   icon: ReactNode;
   label: string;
-  onOpen: () => void;
+  onOpen?: () => void;
+  children?: ContextMenuSubmenuChildren;
 }
 
-export function TagPickerEntry({ icon, label, onOpen }: TagPickerEntryProps) {
+export function TagPickerEntry({
+  icon,
+  label,
+  onOpen,
+  children,
+}: TagPickerEntryProps) {
   const buttonRef = useRef<HTMLButtonElement>(null);
+
+  if (children !== undefined) {
+    return (
+      <ContextMenuSubmenu icon={icon} label={label}>
+        {children}
+      </ContextMenuSubmenu>
+    );
+  }
 
   return (
     <button

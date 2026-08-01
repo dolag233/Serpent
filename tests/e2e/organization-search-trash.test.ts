@@ -58,6 +58,7 @@ test('organizes, finds, trashes, and restores an imported asset through the UI',
     await window.getByRole('button', { name: /所有资产/ }).click();
 
     await window.getByRole('button', { name: '添加合集' }).click();
+    await expect(window.getByPlaceholder('新建合集')).toBeFocused();
     await window.getByPlaceholder('新建合集').fill('精选');
     await window.getByPlaceholder('新建合集').press('Enter');
     await expect(window.getByRole('button', { name: /精选/ })).toBeVisible();
@@ -525,6 +526,7 @@ test('collection recursion toggle immediately refreshes the visible collection s
     await window.getByPlaceholder('新建合集').press('Enter');
     await window.getByRole('button', { name: /父合集/ }).click();
     await window.getByRole('button', { name: '添加合集' }).click();
+    await expect(window.getByPlaceholder('新建合集')).toBeFocused();
     await window.getByPlaceholder('新建合集').fill('子合集');
     await window.getByPlaceholder('新建合集').press('Enter');
     const parentCollectionRow = window

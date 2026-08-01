@@ -1,4 +1,10 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { Icon, type IconName } from "./Icons";
 import { IconActionButton } from "./icon-action-button";
 import {
@@ -82,6 +88,7 @@ function NavRow({
   disclosure,
   navFolderId,
   navFolderKind,
+  navCollectionId,
 }: {
   icon: IconName;
   label: string;
@@ -109,6 +116,8 @@ function NavRow({
   /** Serpent-vf8x: focus target for folder keyboard shortcuts. */
   navFolderId?: string;
   navFolderKind?: "managed" | "linked";
+  /** Focus target for collection keyboard shortcuts. */
+  navCollectionId?: string;
 }) {
   // CU-D9: always expose the full label on hover; when a status title is also
   // provided (e.g. offline linked folder), append it after the name.
@@ -122,6 +131,7 @@ function NavRow({
         className={`nav-row${active ? " is-active" : ""}${dropActive ? " is-drop-target" : ""}`}
         data-nav-folder-id={navFolderId}
         data-nav-folder-kind={navFolderKind}
+        data-nav-collection-id={navCollectionId}
         disabled={disabled}
         draggable={draggable}
         onClick={onClick}
@@ -245,8 +255,16 @@ function InlineCollectionEditRow({
   const t = useT();
   const inputRef = useRef<HTMLInputElement>(null);
   const committingRef = useRef(false);
+  const blurCommitTimerRef = useRef<number | null>(null);
+
+  const cancelScheduledBlurCommit = () => {
+    if (blurCommitTimerRef.current === null) return;
+    window.clearTimeout(blurCommitTimerRef.current);
+    blurCommitTimerRef.current = null;
+  };
 
   const commitOnce = () => {
+    cancelScheduledBlurCommit();
     if (committingRef.current) return;
     committingRef.current = true;
     void Promise.resolve(onCommit()).finally(() => {
@@ -254,11 +272,29 @@ function InlineCollectionEditRow({
     });
   };
 
+  // Context-menu dismissal and row insertion happen in the same interaction
+  // for “new subcollection”. Layout focus handles the initial mount before
+  // paint; the frame retry covers a menu teardown that briefly reclaims focus.
+  useLayoutEffect(() => {
+    const focusInput = () => {
+      const input = inputRef.current;
+      if (!input) return;
+      input.focus({ preventScroll: true });
+      input.select();
+    };
+    focusInput();
+    const frame = window.requestAnimationFrame(() => {
+      if (document.activeElement !== inputRef.current) focusInput();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, []);
+
   useEffect(() => {
-    const input = inputRef.current;
-    if (!input) return;
-    input.focus();
-    input.select();
+    return () => {
+      if (blurCommitTimerRef.current !== null) {
+        window.clearTimeout(blurCommitTimerRef.current);
+      }
+    };
   }, []);
 
   return (
@@ -270,8 +306,15 @@ function InlineCollectionEditRow({
           aria-label={t("nav.newCollection")}
           className="text-field"
           maxLength={255}
-          onBlur={commitOnce}
+          onBlur={() => {
+            cancelScheduledBlurCommit();
+            blurCommitTimerRef.current = window.setTimeout(() => {
+              blurCommitTimerRef.current = null;
+              if (document.activeElement !== inputRef.current) commitOnce();
+            }, 0);
+          }}
           onChange={(event) => onChange(event.target.value)}
+          onFocus={cancelScheduledBlurCommit}
           onKeyDown={(event) => {
             if (event.key === "Enter") {
               event.preventDefault();
@@ -1022,6 +1065,7 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
           })}
           active={activeCollectionId === c.collectionId && !activeTagId}
           depth={depth}
+          navCollectionId={c.collectionId}
           dropActive={assetDropTarget === `collection:${c.collectionId}`}
           onDragEnter={(event) => {
             if (supportsManagedAssetDrag(event.dataTransfer)) {

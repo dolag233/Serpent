@@ -662,6 +662,19 @@ FolderBrowseEntry
 
 **REQ-EXT-005 设计决策（2026-07-25，`Serpent-6llg`）**：① 可展开项手势 = 松开保存进该文件夹、按住穿越外环展开下一级（否决：松开展开+中心确认、悬停停留展开）；② 轮盘只做拖拽触发，右键两套 UI 不动；③ 先可交互 HTML 原型验证手感再接入扩展。规格与视觉稿：`docs/ui/0002-extension-drag-radial-save-menu.md`；原型：`docs/ui/prototypes/radial-save-menu.html`；验收：EXT-009。
 
+### 2026-08-01 反馈（合集、删除、选择与通知）
+
+| 需求/缺陷 | 说明 | 优先级 | 工单 |
+| --- | --- | --- | --- |
+| BUG-COLLECTION-FOCUS-001 | **合集创建输入焦点竞态**：创建根合集或子合集时输入行必须稳定获得焦点并可输入；Enter 提交、Escape 取消、空白失焦取消，不能被菜单关闭或 blur 提交竞态打断。 | P0 | `Serpent-to9y` |
+| REQ-COLLECTION-KEYBOARD-001 | **合集操作对齐文件夹**：合集支持 F2 重命名与 Delete 删除；空合集可直接删，包含资产或子合集时先确认；删除合集不删除成员资产。 | P1 | `Serpent-b7uy` |
+| REQ-COLLECTION-REVEAL-001 | 合集资产右键提供“跳转到文件夹”，跳转到原始 Serpent 文件夹，刷新并选中、滚动到可见且 focus；依赖现有文件 focus/reveal 分支合流后实施。 | P2 | `Serpent-udj5` |
+| BUG-FOLDER-CARD-RADIUS-001 | 文件夹卡片内部图标/预览层圆角与后层 card 外框统一，覆盖空/非空卡片及亮暗主题。 | P2 | `Serpent-kttg` |
+| BUG-DISK-DELETE-CONFIRM-001 | 从硬盘删除资产或文件夹必须显示不可恢复确认；设置中的“不再提示”仍可关闭并重新开启；Windows 支持 Shift+Delete（macOS 使用平台对应快捷键）。 | P1 | `Serpent-wuma` |
+| BUG-TAG-SUBMENU-HOVER-001 | 资产右键添加标签改为 hover 立即打开二级可搜索菜单，定位使用统一 viewport clamp/flip，键盘导航保持可用。 | P1 | `Serpent-hn9u` |
+| BUG-NOTICE-ACTION-STYLE-001 | 通知面板的撤销等操作按钮与周围 UI 统一 token、尺寸、圆角、边框、hover/focus 状态，亮暗主题一致。 | P2 | `Serpent-agyz` |
+| BUG-MASONRY-KEYBOARD-SELECTION-001 | 瀑布流 Tab/Shift+Tab 保持行优先，但 Tab 将选择替换为下一个资产；Shift 实现连续范围选择，统一 selection anchor，不再以框选模拟。 | P1 | `Serpent-xzmz` |
+
 ## 验收与证据要求
 
 - 每个切片先完成可操作原型或真实应用路径，再进入实现；Eagle 只作为方向参考。

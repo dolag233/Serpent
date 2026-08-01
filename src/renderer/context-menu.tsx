@@ -384,6 +384,10 @@ export function ContextMenuItem({
 }
 
 /** A Windows-style submenu that opens as soon as the pointer hovers its row. */
+export type ContextMenuSubmenuChildren =
+  | ReactNode
+  | ((close: () => void) => ReactNode);
+
 export function ContextMenuSubmenu({
   icon,
   label,
@@ -391,12 +395,14 @@ export function ContextMenuSubmenu({
 }: {
   icon?: ReactNode;
   label: string;
-  children: ReactNode;
+  children: ContextMenuSubmenuChildren;
 }) {
   const [open, setOpen] = useState(false);
   const [position, setPosition] = useState({ left: 0, top: 0 });
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const submenuRef = useRef<HTMLDivElement>(null);
   const closeTimer = useRef<number | null>(null);
+  const suppressFocusOpenRef = useRef(false);
 
   const cancelClose = () => {
     if (closeTimer.current !== null) {
@@ -408,7 +414,17 @@ export function ContextMenuSubmenu({
     cancelClose();
     closeTimer.current = window.setTimeout(() => setOpen(false), 140);
   };
+  const closeSubmenu = () => {
+    cancelClose();
+    suppressFocusOpenRef.current = true;
+    setOpen(false);
+    window.setTimeout(() => triggerRef.current?.focus(), 0);
+  };
   const openSubmenu = () => {
+    if (suppressFocusOpenRef.current) {
+      suppressFocusOpenRef.current = false;
+      return;
+    }
     cancelClose();
     const rect = triggerRef.current?.getBoundingClientRect();
     if (rect) {
@@ -425,6 +441,23 @@ export function ContextMenuSubmenu({
     }
     setOpen(true);
   };
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    const trigger = triggerRef.current?.getBoundingClientRect();
+    const submenu = submenuRef.current?.getBoundingClientRect();
+    if (!trigger || !submenu) return;
+    const gap = 4;
+    const left =
+      trigger.right + gap + submenu.width <= window.innerWidth - gap
+        ? trigger.right + gap
+        : Math.max(gap, trigger.left - submenu.width - gap);
+    const top = Math.min(
+      Math.max(gap, trigger.top),
+      Math.max(gap, window.innerHeight - submenu.height - gap),
+    );
+    setPosition({ left, top });
+  }, [open]);
 
   useEffect(() => () => cancelClose(), []);
 
@@ -443,6 +476,7 @@ export function ContextMenuSubmenu({
         role="menuitem"
         tabIndex={-1}
         type="button"
+        onClick={openSubmenu}
         onFocus={openSubmenu}
       >
         {icon && <span className="context-menu-item-icon">{icon}</span>}
@@ -455,12 +489,15 @@ export function ContextMenuSubmenu({
         <div
           aria-label={label}
           className="context-menu context-menu-submenu"
+          ref={submenuRef}
           role="menu"
           style={{ left: position.left, top: position.top }}
           onMouseEnter={cancelClose}
           onMouseLeave={scheduleClose}
         >
-          {children}
+          {/* The render prop receives an event callback; it is not invoked here. */}
+          {/* eslint-disable-next-line react-hooks/refs */}
+          {typeof children === "function" ? children(closeSubmenu) : children}
         </div>
       ) : null}
     </div>

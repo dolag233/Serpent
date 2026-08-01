@@ -109,8 +109,12 @@ test("masonry Tab follows the left-to-right reading order", async () => {
     await firstCard.focus();
     await window.keyboard.press("Tab");
     await expect(secondCard).toBeFocused();
+    await expect(secondCard).toHaveClass(/is-selected/);
+    await expect(firstCard).not.toHaveClass(/is-selected/);
     await window.keyboard.press("Shift+Tab");
     await expect(firstCard).toBeFocused();
+    await expect(firstCard).toHaveClass(/is-selected/);
+    await expect(secondCard).not.toHaveClass(/is-selected/);
   } finally {
     await application.close();
     rmSync(temporaryRoot, { force: true, recursive: true });

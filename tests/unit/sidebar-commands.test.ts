@@ -470,10 +470,8 @@ describe('run 委托到 actions 回调包', () => {
   });
 });
 
-describe('删除确认：window.confirm 保留在 run 内', () => {
-  it('collection.delete：confirm 通过 → 删除；文案与历史一致', () => {
-    const confirm = vi.fn(() => true);
-    vi.stubGlobal('window', { confirm });
+describe('删除命令的确认由界面动作统一处理', () => {
+  it('collection.delete：直接委托到界面动作', () => {
     const { ctx, calls } = makeCtx({
       menuKind: 'organization',
       subjectId: 'col-1',
@@ -481,16 +479,12 @@ describe('删除确认：window.confirm 保留在 run 内', () => {
       locationKind: undefined,
     });
     void registry.get('collection.delete')?.run(ctx);
-    expect(confirm).toHaveBeenCalledWith(
-      '删除合集"年度合集"？\n（仅删除合集结构，不删除资产）',
-    );
     expect(calls).toEqual([
       { action: 'deleteOrganization', args: ['col-1', '年度合集'] },
     ]);
   });
 
-  it('collection.delete：confirm 取消 → 不调用任何 action', () => {
-    vi.stubGlobal('window', { confirm: vi.fn(() => false) });
+  it('collection.delete：不在命令层读取 window.confirm', () => {
     const { ctx, calls } = makeCtx({
       menuKind: 'organization',
       subjectId: 'col-1',
@@ -498,7 +492,9 @@ describe('删除确认：window.confirm 保留在 run 内', () => {
       locationKind: undefined,
     });
     void registry.get('collection.delete')?.run(ctx);
-    expect(calls).toEqual([]);
+    expect(calls).toEqual([
+      { action: 'deleteOrganization', args: ['col-1', '年度合集'] },
+    ]);
   });
 
   it('smart-collection.delete：confirm 通过 → 删除；文案与历史一致', () => {

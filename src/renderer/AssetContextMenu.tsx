@@ -759,6 +759,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                     <ContextMenuItem
                       icon={<Icon name="trash" size={14} />}
                       label={deleteFromDiskItem.label}
+                      shortcut={deleteFromDiskItem.shortcutLabel ?? undefined}
                       danger
                       disabled={deleteFromDiskItem.disabled}
                       disabledReason={
@@ -1010,13 +1011,29 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                 <TagPickerEntry
                   icon={<Icon name="tag" size={14} />}
                   label={assignTagItem.label}
-                  onOpen={() => runMultiCommand("assets.assign-tag")}
-                />
+                >
+                  {(closeSubmenu) => (
+                    <TagPickerMenu
+                      mode="assign"
+                      onBack={closeSubmenu}
+                      onPick={(tagId) => onBatchAssignTag(tagId, targetAssetIds)}
+                      tags={tags}
+                    />
+                  )}
+                </TagPickerEntry>
                 <TagPickerEntry
                   icon={<Icon name="close" size={14} />}
                   label={removeTagItem.label}
-                  onOpen={() => runMultiCommand("assets.remove-tag")}
-                />
+                >
+                  {(closeSubmenu) => (
+                    <TagPickerMenu
+                      mode="remove"
+                      onBack={closeSubmenu}
+                      onPick={(tagId) => onBatchRemoveTag(tagId, targetAssetIds)}
+                      tags={tags}
+                    />
+                  )}
+                </TagPickerEntry>
               </ContextMenuSection>
             )}
             {collections.length > 0 && memberIdsByCollection && (
@@ -1493,14 +1510,16 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                     <TagPickerEntry
                       icon={<Icon name="tag" size={14} />}
                       label={t("command.asset.addTags")}
-                      onOpen={() =>
-                        setTagPicker({
-                          mode: "assign",
-                          assetIds: [assetId],
-                          single: true,
-                        })
-                      }
-                    />
+                    >
+                      {(closeSubmenu) => (
+                        <TagPickerMenu
+                          mode="assign"
+                          onBack={closeSubmenu}
+                          onPick={(tagId) => onAssignTag(assetId, tagId)}
+                          tags={tags}
+                        />
+                      )}
+                    </TagPickerEntry>
                   )}
                 </ContextMenuSection>
                 <ContextMenuSection label={t("command.group.metadata")}>
