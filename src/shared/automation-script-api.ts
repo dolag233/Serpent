@@ -27,6 +27,8 @@ export const automationScriptCommandIdSchema = z.enum([
   'asset.rating.set',
   'asset.paths.copy',
   'asset.trash',
+  'asset.content.read',
+  'asset.content.replace',
   'asset.move',
   'asset.rename-file',
   'asset.rename-files',

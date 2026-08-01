@@ -12,23 +12,88 @@ import {
   type PluginHookContext,
   type PluginHookDecision,
 } from '../plugins/plugin-hooks';
+import type { PluginJobComplete, PluginJobRecord } from '../plugins/plugin-jobs';
+import type { PluginCommandComplete, PluginCommandContext } from '../plugins/plugin-commands';
+import type {
+  PluginProviderBatchResult,
+  PluginProviderInvoke,
+} from '../plugins/plugin-providers';
+import {
+  pluginSearchResultSchema,
+  type PluginSearchComplete,
+  type PluginSearchHandlerRequest,
+  type PluginSearchResult,
+} from '../plugins/plugin-search';
 import {
   pluginTrustedParentMessageSchema,
   type PluginTrustedChildMessage,
   type PluginTrustedParentMessage,
 } from '../shared/plugin-trusted-runtime-protocol';
 import type { PluginRuntimeDeactivateReason } from '../shared/plugin-runtime-utility-protocol';
+import {
+  createSerpentGuestApi,
+} from './serpent-guest-api';
 import type { AutomationScriptCommandId } from '../shared/automation-script-api';
+import type {
+  PluginInputCaptureEvent,
+  PluginInputCaptureOptions,
+} from '../shared/plugin-input-capture';
 
 type PendingHostRequest = {
   resolve(value: unknown): void;
   reject(error: Error): void;
 };
 
+type InputCaptureQueue = {
+  values: PluginInputCaptureEvent[];
+  waiters: Array<(value: PluginInputCaptureEvent | null) => void>;
+  closed: boolean;
+  push(value: PluginInputCaptureEvent): void;
+  end(): void;
+  next(): Promise<PluginInputCaptureEvent | null>;
+};
+
+function createInputCaptureQueue(): InputCaptureQueue {
+  const queue: InputCaptureQueue = {
+    values: [],
+    waiters: [],
+    closed: false,
+    push(value) {
+      const waiter = queue.waiters.shift();
+      if (waiter !== undefined) waiter(value);
+      else if (!queue.closed) queue.values.push(value);
+    },
+    end() {
+      if (queue.closed) return;
+      queue.closed = true;
+      for (const waiter of queue.waiters.splice(0)) waiter(null);
+    },
+    next() {
+      const value = queue.values.shift();
+      if (value !== undefined) return Promise.resolve(value);
+      if (queue.closed) return Promise.resolve(null);
+      return new Promise((resolve) => queue.waiters.push(resolve));
+    },
+  };
+  return queue;
+}
+
 type TrustedExports = {
   activate?: (serpent: unknown) => unknown;
   deactivate?: () => unknown;
 };
+
+type PluginTrustedHostActiveProvider = {
+  compute: (
+    batch: PluginProviderInvoke['batch'],
+    context: { deadlineAt: number; maxResults: number },
+  ) => unknown | Promise<unknown>;
+};
+
+type PluginTrustedHostActiveSearch = (
+  request: PluginSearchHandlerRequest,
+  signal: AbortSignal,
+) => unknown | Promise<unknown>;
 
 type ActiveInstance = {
   instanceId: string;
@@ -42,6 +107,18 @@ type ActiveInstance = {
   exports: TrustedExports | undefined;
   eventQueue: ReturnType<typeof createPluginDomainEventQueue>;
   hookHandlers: Map<string, (context: PluginHookContext) => PluginHookDecision | Promise<PluginHookDecision>>;
+  jobHandlers: Map<string, (payload: Record<string, unknown>, job: PluginJobRecord) => unknown | Promise<unknown>>;
+  providerHandlers: Map<string, {
+    kind: string;
+    compute: (batch: PluginProviderInvoke['batch'], context: {
+      deadlineAt: number;
+      maxResults: number;
+    }) => unknown | Promise<unknown>;
+  }>;
+  searchHandlers: Map<string, PluginTrustedHostActiveSearch>;
+  searchControllers: Map<string, AbortController>;
+  commandHandlers: Map<string, (context: PluginCommandContext) => unknown | Promise<unknown>>;
+  inputCaptureQueues: Map<string, InputCaptureQueue>;
   activeCauseChain: string[];
 };
 
@@ -100,8 +177,8 @@ function createSerpentBridge(
     })
   );
   const callStorage = (input: {
-    operation: 'get' | 'set' | 'delete' | 'list';
-    scope: 'library' | 'user';
+    operation: 'get' | 'set' | 'delete' | 'list' | 'get-directory';
+    scope?: 'library' | 'user';
     key?: string;
     value?: unknown;
   }): Promise<unknown> => (
@@ -113,7 +190,7 @@ function createSerpentBridge(
         instanceId: instance.instanceId,
         requestId,
         operation: input.operation,
-        scope: input.scope,
+        ...(input.scope === undefined ? {} : { scope: input.scope }),
         ...(input.key === undefined ? {} : { key: input.key }),
         ...(input.value === undefined ? {} : { value: input.value }),
       });
@@ -156,16 +233,109 @@ function createSerpentBridge(
     },
   };
 
+  const jobs = {
+    registerHandler: (id: unknown, handler: unknown): void => {
+      if (typeof handler !== 'function') {
+        throw new Error('serpent.jobs.registerHandler requires a handler function.');
+      }
+      instance.jobHandlers.set(
+        String(id),
+        handler as (payload: Record<string, unknown>, job: PluginJobRecord) => unknown | Promise<unknown>,
+      );
+    },
+    enqueue: (input: {
+      handlerId: string;
+      payload?: Record<string, unknown>;
+      recoveryStrategy?: 'idempotent' | 'checkpoint';
+    }): Promise<unknown> => (
+      new Promise((resolve, reject) => {
+        const requestId = globalThis.crypto.randomUUID();
+        instance.pendingHostRequests.set(requestId, { resolve, reject });
+        postMessage({
+          type: 'plugin-trusted.job-enqueue',
+          instanceId: instance.instanceId,
+          requestId,
+          handlerId: input.handlerId,
+          payload: input.payload ?? {},
+          ...(input.recoveryStrategy === undefined ? {} : { recoveryStrategy: input.recoveryStrategy }),
+        });
+      })
+    ),
+  };
+  const providers = {
+    register: (kind: unknown, provider: unknown): void => {
+      if (typeof provider !== 'object' || provider === null
+        || typeof (provider as { id?: unknown }).id !== 'string'
+        || typeof (provider as { compute?: unknown }).compute !== 'function') {
+        throw new Error('serpent.providers.register requires { id, compute }.');
+      }
+      const candidate = provider as {
+        id: string;
+        compute: PluginTrustedHostActiveProvider['compute'];
+      };
+      instance.providerHandlers.set(candidate.id, {
+        kind: String(kind),
+        compute: candidate.compute,
+      });
+    },
+    registerSearch: (provider: unknown): void => {
+      if (typeof provider !== 'object' || provider === null
+        || typeof (provider as { id?: unknown }).id !== 'string'
+        || typeof (provider as { search?: unknown }).search !== 'function') {
+        throw new Error('serpent.providers.registerSearch requires { id, search }.');
+      }
+      const candidate = provider as { id: string; search: PluginTrustedHostActiveSearch };
+      instance.searchHandlers.set(candidate.id, candidate.search);
+    },
+  };
+  const commands = {
+    register: (id: unknown, handler: unknown): void => {
+      if (typeof handler !== 'function') {
+        throw new Error('serpent.commands.register requires a handler function.');
+      }
+      instance.commandHandlers.set(
+        String(id),
+        handler as (context: PluginCommandContext) => unknown | Promise<unknown>,
+      );
+    },
+  };
+  const input = {
+    capture: (options: PluginInputCaptureOptions): Promise<{
+      sessionId: string;
+      events: InputCaptureQueue;
+      release: () => void;
+    }> => new Promise((resolve, reject) => {
+      const requestId = globalThis.crypto.randomUUID();
+      instance.pendingHostRequests.set(requestId, {
+        resolve: (value) => {
+          const sessionId = (value as { sessionId: string }).sessionId;
+          const queue = createInputCaptureQueue();
+          instance.inputCaptureQueues.set(sessionId, queue);
+          resolve({
+            sessionId,
+            events: queue,
+            release: () => {
+              postMessage({
+                type: 'plugin-trusted.input-capture.release',
+                instanceId: instance.instanceId,
+                sessionId,
+              });
+            },
+          });
+        },
+        reject,
+      });
+      postMessage({
+        type: 'plugin-trusted.input-capture.start',
+        instanceId: instance.instanceId,
+        requestId,
+        options,
+      });
+    }),
+  };
+
   return {
-    assets: {
-      search: (input: unknown) => callHost('asset.search', input ?? {}),
-      list: (input: unknown) => callHost('asset.list', input ?? {}),
-      getMetadata: (assetId: unknown) => callHost('asset.metadata.get', { assetId }),
-    },
-    library: {
-      inspect: () => callHost('library.inspect', {}),
-      changeSequence: () => callHost('library.change-sequence', {}),
-    },
+    ...createSerpentGuestApi({ executeCommand: callHost }),
     storage: {
       get: (key: unknown, options?: { scope?: 'library' | 'user' }) => callStorage({
         operation: 'get',
@@ -188,8 +358,18 @@ function createSerpentBridge(
         scope: options?.scope ?? 'library',
       }),
     },
+    data: {
+      getDirectory: (options?: { scope?: 'library' | 'user' }) => callStorage({
+        operation: 'get-directory',
+        ...(options?.scope === undefined ? {} : { scope: options.scope }),
+      }),
+    },
     events,
     hooks,
+    jobs,
+    commands,
+    providers,
+    input,
     console: {
       log: (...args: unknown[]) => {
         postMessage({
@@ -225,6 +405,10 @@ export function createPluginTrustedHostHandler(options: {
     if (current === undefined) return;
     instances.delete(instanceId);
     current.eventQueue.close();
+    for (const controller of current.searchControllers.values()) controller.abort();
+    current.searchControllers.clear();
+    for (const queue of current.inputCaptureQueues.values()) queue.end();
+    current.inputCaptureQueues.clear();
     for (const pending of current.pendingHostRequests.values()) {
       pending.reject(new Error('The trusted plugin instance ended.'));
     }
@@ -261,6 +445,12 @@ export function createPluginTrustedHostHandler(options: {
       exports: undefined,
       eventQueue: createPluginDomainEventQueue(),
       hookHandlers: new Map(),
+      jobHandlers: new Map(),
+      providerHandlers: new Map(),
+      searchHandlers: new Map(),
+      searchControllers: new Map(),
+      commandHandlers: new Map(),
+      inputCaptureQueues: new Map(),
       activeCauseChain: [],
     };
     instances.set(request.instanceId, active);
@@ -321,6 +511,9 @@ export function createPluginTrustedHostHandler(options: {
     if (current === undefined) return;
     current.deactivateReason = request.reason;
     current.eventQueue.close();
+    for (const controller of current.searchControllers.values()) controller.abort();
+    current.searchControllers.clear();
+    for (const queue of current.inputCaptureQueues.values()) queue.end();
     for (const pending of current.pendingHostRequests.values()) {
       pending.reject(new Error('The trusted plugin instance was deactivated.'));
     }
@@ -379,7 +572,253 @@ export function createPluginTrustedHostHandler(options: {
         })();
         return;
       }
-      if (message.type === 'plugin-trusted.host-result' || message.type === 'plugin-trusted.storage-result') {
+      if (message.type === 'plugin-trusted.job-invoke') {
+        const current = instances.get(message.instanceId);
+        if (current === undefined) return;
+        void (async () => {
+          const handler = current.jobHandlers.get(message.job.pluginHandlerId);
+          let complete: PluginJobComplete = { jobId: message.job.jobId, status: 'succeeded' };
+          if (handler === undefined) {
+            complete = {
+              jobId: message.job.jobId,
+              status: 'failed',
+              errorCode: 'PLUGIN_JOB_HANDLER_MISSING',
+              errorDetail: 'No handler registered for this job.',
+            };
+          } else {
+            try {
+              await handler(message.job.payload, message.job);
+            } catch (error) {
+              complete = {
+                jobId: message.job.jobId,
+                status: 'failed',
+                errorCode: 'PLUGIN_JOB_HANDLER_FAILED',
+                errorDetail: error instanceof Error
+                  ? error.message.slice(0, 4_096)
+                  : 'Job handler failed.',
+              };
+            }
+          }
+          options.postMessage({
+            type: 'plugin-trusted.job-complete',
+            instanceId: message.instanceId,
+            jobId: complete.jobId,
+            status: complete.status,
+            ...(complete.errorCode === undefined ? {} : { errorCode: complete.errorCode }),
+            ...(complete.errorDetail === undefined ? {} : { errorDetail: complete.errorDetail }),
+            ...(complete.progress === undefined ? {} : { progress: complete.progress }),
+          });
+        })();
+        return;
+      }
+      if (message.type === 'plugin-trusted.provider-invoke') {
+        const current = instances.get(message.instanceId);
+        if (current === undefined) return;
+        void (async () => {
+          const registered = current.providerHandlers.get(message.invoke.providerId);
+          let result: PluginProviderBatchResult = {
+            invokeId: message.invoke.invokeId,
+            status: 'succeeded',
+            values: [],
+          };
+          if (registered === undefined || registered.kind !== message.invoke.kind) {
+            result = {
+              ...result,
+              status: 'failed',
+              errorCode: 'PROVIDER_HANDLER_MISSING',
+              errorDetail: 'No provider handler is registered.',
+            };
+          } else if (Date.now() >= message.invoke.deadlineAt) {
+            result = {
+              ...result,
+              status: 'cancelled',
+              errorCode: 'PROVIDER_DEADLINE_EXCEEDED',
+              errorDetail: 'The provider deadline elapsed before invocation.',
+            };
+          } else {
+            try {
+              const values = await registered.compute(message.invoke.batch, {
+                deadlineAt: message.invoke.deadlineAt,
+                maxResults: message.invoke.maxResults,
+              });
+              result.values = Array.isArray(values) ? values.slice(0, message.invoke.maxResults) as PluginProviderBatchResult['values'] : [];
+            } catch (error) {
+              result = {
+                ...result,
+                status: 'failed',
+                errorCode: 'PROVIDER_HANDLER_FAILED',
+                errorDetail: error instanceof Error ? error.message.slice(0, 4_096) : 'Provider handler failed.',
+              };
+            }
+          }
+          options.postMessage({
+            type: 'plugin-trusted.provider-complete',
+            instanceId: message.instanceId,
+            ...result,
+          });
+        })();
+        return;
+      }
+      if (message.type === 'plugin-trusted.search-cancel') {
+        const current = instances.get(message.instanceId);
+        if (current === undefined) return;
+        current.searchControllers.get(message.cancel.invokeId)?.abort();
+        return;
+      }
+      if (message.type === 'plugin-trusted.search-request') {
+        const current = instances.get(message.instanceId);
+        if (current === undefined) return;
+        void (async () => {
+          const controller = new AbortController();
+          current.searchControllers.set(message.request.invokeId, controller);
+          let status: PluginSearchComplete['status'] = 'succeeded';
+          let errorCode: string | undefined;
+          let errorDetail: string | undefined;
+          let sent = 0;
+          const emit = async (value: unknown): Promise<void> => {
+            if (controller.signal.aborted || Date.now() >= message.request.deadlineAt) {
+              status = 'cancelled';
+              errorCode = controller.signal.aborted ? 'PROVIDER_CANCELLED' : 'PROVIDER_DEADLINE_EXCEEDED';
+              return;
+            }
+            const values = (Array.isArray(value) ? value : [value])
+              .map((item) => pluginSearchResultSchema.safeParse(item))
+              .filter((item): item is { success: true; data: PluginSearchResult } => item.success)
+              .map((item) => item.data)
+              .slice(0, Math.max(0, message.request.maxResults - sent));
+            for (let offset = 0; offset < values.length; offset += 64) {
+              options.postMessage({
+                type: 'plugin-trusted.search-chunk',
+                instanceId: message.instanceId,
+                invokeId: message.request.invokeId,
+                items: values.slice(offset, offset + 64),
+              });
+            }
+            sent += values.length;
+          };
+          try {
+            const handler = current.searchHandlers.get(message.request.providerId);
+            if (handler === undefined) {
+              status = 'failed';
+              errorCode = 'PROVIDER_HANDLER_MISSING';
+              errorDetail = 'No search provider handler is registered.';
+            } else if (Date.now() >= message.request.deadlineAt) {
+              status = 'cancelled';
+              errorCode = 'PROVIDER_DEADLINE_EXCEEDED';
+              errorDetail = 'The provider deadline elapsed before invocation.';
+            } else {
+              const output = await handler(message.request, controller.signal);
+              if (output !== null && typeof output === 'object'
+                && typeof (output as { next?: unknown }).next === 'function') {
+                const iterator = output as { next(): Promise<{ done?: boolean; value?: unknown }> };
+                while (!controller.signal.aborted && sent < message.request.maxResults) {
+                  const step = await iterator.next();
+                  if (step.done) break;
+                  await emit(step.value);
+                }
+              } else {
+                await emit(output);
+              }
+              if (controller.signal.aborted && status === 'succeeded') {
+                status = 'cancelled';
+                errorCode = 'PROVIDER_CANCELLED';
+              }
+            }
+          } catch (error) {
+            status = controller.signal.aborted ? 'cancelled' : 'failed';
+            errorCode = controller.signal.aborted ? 'PROVIDER_CANCELLED' : 'PROVIDER_HANDLER_FAILED';
+            errorDetail = error instanceof Error ? error.message.slice(0, 4_096) : 'Search provider failed.';
+          } finally {
+            current.searchControllers.delete(message.request.invokeId);
+            options.postMessage({
+              type: 'plugin-trusted.search-complete',
+              instanceId: message.instanceId,
+              invokeId: message.request.invokeId,
+              status,
+              nextOffset: message.request.offset + sent,
+              ...(errorCode === undefined ? {} : { errorCode }),
+              ...(errorDetail === undefined ? {} : { errorDetail }),
+            });
+          }
+        })();
+        return;
+      }
+      if (message.type === 'plugin-trusted.command-invoke') {
+        const current = instances.get(message.instanceId);
+        if (current === undefined) return;
+        void (async () => {
+          const handler = current.commandHandlers.get(message.invoke.commandId);
+          let complete: PluginCommandComplete = {
+            invokeId: message.invoke.invokeId,
+            status: 'succeeded',
+          };
+          if (handler === undefined) {
+            complete = {
+              invokeId: message.invoke.invokeId,
+              status: 'failed',
+              errorCode: 'PLUGIN_COMMAND_HANDLER_MISSING',
+              errorDetail: 'No handler registered for this command.',
+            };
+          } else {
+            try {
+              await handler(message.invoke.context);
+            } catch (error) {
+              complete = {
+                invokeId: message.invoke.invokeId,
+                status: 'failed',
+                errorCode: 'PLUGIN_COMMAND_HANDLER_FAILED',
+                errorDetail: error instanceof Error
+                  ? error.message.slice(0, 4_096)
+                  : 'Command handler failed.',
+              };
+            }
+          }
+          options.postMessage({
+            type: 'plugin-trusted.command-complete',
+            instanceId: message.instanceId,
+            invokeId: complete.invokeId,
+            status: complete.status,
+            ...(complete.errorCode === undefined ? {} : { errorCode: complete.errorCode }),
+            ...(complete.errorDetail === undefined ? {} : { errorDetail: complete.errorDetail }),
+          });
+        })();
+        return;
+      }
+      if (message.type === 'plugin-trusted.input-capture.started') {
+        const current = instances.get(message.instanceId);
+        if (current === undefined) return;
+        const pending = current.pendingHostRequests.get(message.requestId);
+        if (pending === undefined) return;
+        current.pendingHostRequests.delete(message.requestId);
+        pending.resolve({ sessionId: message.sessionId });
+        return;
+      }
+      if (message.type === 'plugin-trusted.input-capture.event') {
+        const current = instances.get(message.instanceId);
+        if (current === undefined) return;
+        const queue = current.inputCaptureQueues.get(message.sessionId) ?? createInputCaptureQueue();
+        current.inputCaptureQueues.set(message.sessionId, queue);
+        queue.push(message.event);
+        return;
+      }
+      if (message.type === 'plugin-trusted.input-capture.end') {
+        const current = instances.get(message.instanceId);
+        if (current === undefined) return;
+        current.inputCaptureQueues.get(message.sessionId)?.end();
+        return;
+      }
+      if (message.type === 'plugin-trusted.input-capture.error') {
+        const current = instances.get(message.instanceId);
+        if (current === undefined) return;
+        const pending = current.pendingHostRequests.get(message.requestId);
+        if (pending === undefined) return;
+        current.pendingHostRequests.delete(message.requestId);
+        pending.reject(new Error(`${message.code}: ${message.message}`));
+        return;
+      }
+      if (message.type === 'plugin-trusted.host-result'
+        || message.type === 'plugin-trusted.storage-result'
+        || message.type === 'plugin-trusted.job-enqueue-result') {
         const current = instances.get(message.instanceId);
         if (current === undefined) return;
         const pending = current.pendingHostRequests.get(message.requestId);

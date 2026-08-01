@@ -1,6 +1,7 @@
 import { Icon } from './Icons';
 import { iconActionAttrs } from './icon-action-attrs';
 import { useT } from './i18n';
+import { pluginRequiresTrustedCssDisclosure } from '../plugins/plugin-themes';
 import type { PendingLibraryPluginTrust } from './plugin-trust-prompt';
 
 export type PluginTrustPromptDialogProps = {
@@ -50,10 +51,10 @@ export function PluginTrustPromptDialog({
           {plugins.map((plugin) => (
             <li key={`${plugin.pluginId}:${plugin.packageHash}`}>
               <strong>{plugin.name}</strong>
-              <span>
+              <span className={plugin.runtimeMode === 'unrestricted' ? 'plugin-runtime-mode-unrestricted' : undefined}>
                 {plugin.version}
                 {' · '}
-                {plugin.runtimeMode === 'trusted'
+                {plugin.runtimeMode === 'unrestricted'
                   ? t('settings.pluginRuntimeTrusted')
                   : t('settings.pluginRuntimeStandard')}
               </span>
@@ -62,9 +63,14 @@ export function PluginTrustPromptDialog({
                   ? plugin.permissions.join(', ')
                   : t('settings.pluginNoPermissions')}
               </span>
-              {plugin.runtimeMode === 'trusted' ? (
-                <span className="app-settings-hint">
+              {plugin.runtimeMode === 'unrestricted' ? (
+                <span className="app-settings-hint plugin-runtime-mode-unrestricted-hint">
                   {t('settings.pluginTrustTrustedConfirmHint')}
+                </span>
+              ) : null}
+              {pluginRequiresTrustedCssDisclosure(plugin.permissions) ? (
+                <span className="app-settings-hint">
+                  {t('settings.pluginThemeTrustedCssTrustHint')}
                 </span>
               ) : null}
             </li>

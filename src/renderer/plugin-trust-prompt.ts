@@ -14,7 +14,7 @@ export type PendingLibraryPluginTrust = {
   description: string;
   version: string;
   packageHash: string;
-  runtimeMode: 'standard' | 'trusted';
+  runtimeMode: 'restricted' | 'unrestricted';
   permissions: readonly string[];
 };
 

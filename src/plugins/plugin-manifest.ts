@@ -1,5 +1,12 @@
 import { z } from 'zod';
 
+import { isValidPluginAccelerator } from '../shared/plugin-accelerator';
+import {
+  normalizePluginRuntimeMode,
+  pluginRuntimeModeSchema,
+  type PluginRuntimeMode,
+} from './plugin-runtime-mode';
+
 export const PLUGIN_MANIFEST_VERSION = 1 as const;
 export const PLUGIN_API_VERSION = 1 as const;
 export const PLUGIN_MANIFEST_FILE_NAME = 'serpent-plugin.json';
@@ -165,9 +172,11 @@ export const pluginPermissionSchema = z.enum([
   'clipboard.read',
   'clipboard.write',
   'content.read',
+  'content.write',
   'net.fetch',
   'storage.read',
   'storage.write',
+  'data.files',
   'secrets.read',
   'secrets.write',
   'ui.workspace',
@@ -200,32 +209,75 @@ const nativeModuleSchema = z.strictObject({
   nodeAbi: z.number().int().positive(),
 });
 
-const standardRuntimeSchema = z.strictObject({
-  mode: z.literal('standard'),
+const restrictedRuntimeSchema = z.strictObject({
+  mode: z.literal('restricted'),
   entry: pluginPackagePathSchema,
 });
 
-const trustedRuntimeSchema = z.strictObject({
-  mode: z.literal('trusted'),
+const unrestrictedRuntimeSchema = z.strictObject({
+  mode: z.literal('unrestricted'),
   entry: pluginPackagePathSchema,
   nativeModules: z.array(nativeModuleSchema).min(1).max(32).optional(),
 });
 
-export const pluginRuntimeSchema = z.discriminatedUnion('mode', [standardRuntimeSchema, trustedRuntimeSchema]);
-export type PluginRuntime = z.infer<typeof pluginRuntimeSchema>;
+const pluginRuntimeCanonicalSchema = z.discriminatedUnion('mode', [
+  restrictedRuntimeSchema,
+  unrestrictedRuntimeSchema,
+]);
+
+/** Accepts legacy `standard`/`trusted` aliases and normalizes to restricted/unrestricted. */
+export const pluginRuntimeSchema = z.preprocess((value) => {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return value;
+  const record = value as Record<string, unknown>;
+  if (typeof record.mode !== 'string') return value;
+  try {
+    return { ...record, mode: normalizePluginRuntimeMode(record.mode) };
+  } catch {
+    return value;
+  }
+}, pluginRuntimeCanonicalSchema);
+
+export type PluginRuntime = z.infer<typeof pluginRuntimeCanonicalSchema>;
+export type { PluginRuntimeMode };
+export { pluginRuntimeModeSchema, normalizePluginRuntimeMode };
 
 const contributionCommandSchema = z.strictObject({
   id: pluginLocalIdSchema,
   title: z.string().min(1).max(160),
+  mcp: z.strictObject({
+    export: z.literal(true),
+  }).optional(),
 });
 const contributionMenuItemSchema = z.strictObject({
   command: pluginLocalIdSchema,
   group: z.string().min(1).max(64).optional(),
 });
+const contributionToolbarItemSchema = z.strictObject({
+  id: pluginLocalIdSchema,
+  command: pluginLocalIdSchema,
+  title: z.string().min(1).max(160).optional(),
+});
+const contributionInspectorSectionSchema = z.strictObject({
+  id: pluginLocalIdSchema,
+  command: pluginLocalIdSchema,
+  title: z.string().min(1).max(160).optional(),
+});
+const contributionViewerActionSchema = z.strictObject({
+  id: pluginLocalIdSchema,
+  command: pluginLocalIdSchema,
+  title: z.string().min(1).max(160).optional(),
+});
+const contributionShortcutSchema = z.strictObject({
+  id: pluginLocalIdSchema,
+  command: pluginLocalIdSchema,
+  accelerator: z.string().min(1).max(64),
+});
 const contributionViewSchema = z.strictObject({
   id: pluginLocalIdSchema,
   title: z.string().min(1).max(160),
   location: z.enum(['sidebar', 'workspace', 'inspector', 'viewer', 'settings']),
+  /** Relative HTML entry for a sandboxed custom UI view. */
+  entry: pluginPackagePathSchema.optional(),
 });
 const contributionSettingSchema = z.strictObject({
   id: pluginLocalIdSchema,
@@ -237,6 +289,23 @@ const contributionHookSchema = z.strictObject({
   event: z.string().min(1).max(128),
   blocking: z.boolean().default(false),
 });
+const contributionJobSchema = z.strictObject({
+  id: pluginLocalIdSchema,
+  title: z.string().min(1).max(160),
+  recovery: z.enum(['idempotent', 'checkpoint']).default('idempotent'),
+});
+const providerFieldIdSchema = z.string().min(1).max(128).regex(
+  /^[A-Za-z][A-Za-z0-9._-]*$/u,
+  'Provider field identifiers must start with a letter and contain only letters, numbers, dots, hyphens, and underscores.',
+);
+const providerExtensionSchema = z.string().min(1).max(32).regex(
+  /^\.?[A-Za-z0-9][A-Za-z0-9+_-]*$/u,
+  'Provider extensions must be simple extension names such as ".probe" or "png".',
+);
+const providerMimeTypeSchema = z.string().min(3).max(128).regex(
+  /^[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*\/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*$/u,
+  'Provider MIME types must use a type/subtype pair such as "image/png".',
+);
 const contributionProviderSchema = z.strictObject({
   id: pluginLocalIdSchema,
   kind: z.enum([
@@ -249,15 +318,118 @@ const contributionProviderSchema = z.strictObject({
     'derived-field',
     'search',
   ]),
+  extensions: z.array(providerExtensionSchema).max(64).optional(),
+  mimeTypes: z.array(providerMimeTypeSchema).max(64).optional(),
+  fieldId: providerFieldIdSchema.optional(),
+  fieldType: z.enum(['string', 'number', 'boolean', 'date', 'json']).optional(),
+}).superRefine((provider, context) => {
+  if ((provider.kind === 'preview' || provider.kind === 'thumbnail' || provider.kind === 'metadata')
+    && (provider.extensions === undefined || provider.extensions.length === 0)) {
+    context.addIssue({
+      code: 'custom',
+      path: ['extensions'],
+      message: 'Preview, thumbnail, and metadata providers must declare at least one extension.',
+    });
+  }
+  if (provider.kind === 'import'
+    && (provider.extensions === undefined || provider.extensions.length === 0)
+    && (provider.mimeTypes === undefined || provider.mimeTypes.length === 0)) {
+    context.addIssue({
+      code: 'custom',
+      path: ['extensions'],
+      message: 'Import providers must declare at least one extension or MIME type.',
+    });
+  }
+  if ((provider.kind === 'export' || provider.kind === 'ai')
+    && (provider.extensions === undefined || provider.extensions.length === 0)) {
+    context.addIssue({
+      code: 'custom',
+      path: ['extensions'],
+      message: 'Export and AI providers must declare at least one extension.',
+    });
+  }
+  if (provider.kind !== 'derived-field') return;
+  if (provider.fieldId === undefined) {
+    context.addIssue({ code: 'custom', path: ['fieldId'], message: 'Derived-field providers must declare fieldId.' });
+  }
+  if (provider.fieldType === undefined) {
+    context.addIssue({ code: 'custom', path: ['fieldType'], message: 'Derived-field providers must declare fieldType.' });
+  }
 });
+
+/** Host design tokens that sandboxed plugin iframes may override via theme packages. */
+export const PLUGIN_UI_THEME_TOKEN_NAMES = [
+  '--canvas',
+  '--pane',
+  '--raised',
+  '--divider',
+  '--text',
+  '--secondary',
+  '--tertiary',
+  '--accent',
+  '--warning',
+  '--danger',
+  '--success',
+  '--font-ui',
+] as const;
+
+const PLUGIN_UI_THEME_TOKEN_ALLOWLIST = new Set<string>(PLUGIN_UI_THEME_TOKEN_NAMES);
+
+const pluginThemeTokenMapSchema = z.record(
+  z.string().regex(/^--[a-z0-9-]+$/u),
+  z.string().max(512),
+).superRefine((tokens, context) => {
+  if (Object.keys(tokens).length > 32) {
+    context.addIssue({
+      code: 'custom',
+      message: 'Theme token overrides must stay within the bounded token map size.',
+    });
+  }
+  for (const key of Object.keys(tokens)) {
+    if (!PLUGIN_UI_THEME_TOKEN_ALLOWLIST.has(key)) {
+      context.addIssue({
+        code: 'custom',
+        path: [key],
+        message: 'Theme token overrides must use supported Serpent design tokens.',
+      });
+    }
+  }
+});
+
+export const contributionThemeSchema = z.strictObject({
+  id: pluginLocalIdSchema,
+  light: pluginThemeTokenMapSchema.optional(),
+  dark: pluginThemeTokenMapSchema.optional(),
+}).superRefine((theme, context) => {
+  if ((theme.light === undefined || Object.keys(theme.light).length === 0)
+    && (theme.dark === undefined || Object.keys(theme.dark).length === 0)) {
+    context.addIssue({
+      code: 'custom',
+      message: 'Theme packages must declare at least one light or dark token override.',
+    });
+  }
+});
+export type PluginContributionTheme = z.infer<typeof contributionThemeSchema>;
+
+export const pluginThemePackageSchema = z.strictObject({
+  light: pluginThemeTokenMapSchema.default({}),
+  dark: pluginThemeTokenMapSchema.default({}),
+});
+export type PluginThemePackage = z.infer<typeof pluginThemePackageSchema>;
 
 export const pluginContributesSchema = z.strictObject({
   commands: z.array(contributionCommandSchema).max(256).default([]),
   menus: z.record(z.string().min(1).max(128), z.array(contributionMenuItemSchema).max(256)).default({}),
+  toolbar: z.array(contributionToolbarItemSchema).max(64).default([]),
+  inspector: z.array(contributionInspectorSectionSchema).max(64).default([]),
+  viewerActions: z.array(contributionViewerActionSchema).max(64).default([]),
+  shortcuts: z.array(contributionShortcutSchema).max(64).default([]),
   views: z.array(contributionViewSchema).max(128).default([]),
   settings: z.array(contributionSettingSchema).max(128).default([]),
   hooks: z.array(contributionHookSchema).max(128).default([]),
+  jobs: z.array(contributionJobSchema).max(128).default([]),
   providers: z.array(contributionProviderSchema).max(128).default([]),
+  themes: z.array(contributionThemeSchema).max(8).default([]),
 });
 
 const repositorySchema = z.url().refine((value) => {
@@ -297,10 +469,16 @@ const pluginManifestObjectSchema = z.strictObject({
 export const pluginManifestSchema = pluginManifestObjectSchema.superRefine((manifest, context) => {
   const contributionIds = [
     ...manifest.contributes.commands.map((contribution) => contribution.id),
+    ...manifest.contributes.toolbar.map((contribution) => contribution.id),
+    ...manifest.contributes.inspector.map((contribution) => contribution.id),
+    ...manifest.contributes.viewerActions.map((contribution) => contribution.id),
+    ...manifest.contributes.shortcuts.map((contribution) => contribution.id),
     ...manifest.contributes.views.map((contribution) => contribution.id),
     ...manifest.contributes.settings.map((contribution) => contribution.id),
     ...manifest.contributes.hooks.map((contribution) => contribution.id),
+    ...manifest.contributes.jobs.map((contribution) => contribution.id),
     ...manifest.contributes.providers.map((contribution) => contribution.id),
+    ...manifest.contributes.themes.map((contribution) => contribution.id),
   ];
   if (new Set(contributionIds).size !== contributionIds.length) {
     context.addIssue({ code: 'custom', path: ['contributes'], message: 'Contribution identifiers must be unique within a plugin.' });
@@ -318,6 +496,49 @@ export const pluginManifestSchema = pluginManifestObjectSchema.superRefine((mani
       }
     }
   }
+  for (const [index, item] of manifest.contributes.toolbar.entries()) {
+    if (!commandIds.has(item.command)) {
+      context.addIssue({
+        code: 'custom',
+        path: ['contributes', 'toolbar', index, 'command'],
+        message: 'Toolbar items must reference a command declared by this manifest.',
+      });
+    }
+  }
+  for (const [index, item] of manifest.contributes.inspector.entries()) {
+    if (!commandIds.has(item.command)) {
+      context.addIssue({
+        code: 'custom',
+        path: ['contributes', 'inspector', index, 'command'],
+        message: 'Inspector sections must reference a command declared by this manifest.',
+      });
+    }
+  }
+  for (const [index, item] of manifest.contributes.viewerActions.entries()) {
+    if (!commandIds.has(item.command)) {
+      context.addIssue({
+        code: 'custom',
+        path: ['contributes', 'viewerActions', index, 'command'],
+        message: 'Viewer actions must reference a command declared by this manifest.',
+      });
+    }
+  }
+  for (const [index, item] of manifest.contributes.shortcuts.entries()) {
+    if (!commandIds.has(item.command)) {
+      context.addIssue({
+        code: 'custom',
+        path: ['contributes', 'shortcuts', index, 'command'],
+        message: 'Shortcuts must reference a command declared by this manifest.',
+      });
+    }
+    if (!isValidPluginAccelerator(item.accelerator)) {
+      context.addIssue({
+        code: 'custom',
+        path: ['contributes', 'shortcuts', index, 'accelerator'],
+        message: 'Shortcut accelerators must use Electron accelerator syntax (for example F9 or CmdOrCtrl+Shift+K).',
+      });
+    }
+  }
   for (const [index, commandId] of (manifest.mcp?.expose ?? []).entries()) {
     if (!commandIds.has(commandId)) {
       context.addIssue({
@@ -329,6 +550,18 @@ export const pluginManifestSchema = pluginManifestObjectSchema.superRefine((mani
   }
 });
 export type PluginManifest = z.infer<typeof pluginManifestSchema>;
+
+/**
+ * Manifest declaration is only one half of MCP exposure. The local user must
+ * separately enable each returned command in Main-owned settings.
+ */
+export function getPluginMcpExportedCommandIds(manifest: PluginManifest): Set<string> {
+  const exported = new Set(manifest.mcp?.expose ?? []);
+  for (const command of manifest.contributes.commands) {
+    if (command.mcp?.export === true) exported.add(command.id);
+  }
+  return exported;
+}
 
 export interface PluginCompatibilityTarget {
   serpentVersion: string;
@@ -364,7 +597,7 @@ export function validatePluginManifestCompatibility(
       message: 'This plugin requires a different Plugin API version.',
     };
   }
-  if (manifest.runtime.mode === 'trusted' && manifest.runtime.nativeModules !== undefined
+  if (manifest.runtime.mode === 'unrestricted' && manifest.runtime.nativeModules !== undefined
     && !manifest.runtime.nativeModules.some((nativeModule) => nativeModule.platform === target.platform
       && nativeModule.arch === target.arch
       && nativeModule.nodeAbi === target.nodeAbi)) {

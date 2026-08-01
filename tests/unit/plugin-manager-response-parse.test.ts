@@ -21,7 +21,7 @@ describe('plugin manager response parse', () => {
         name: 'Palette Tools',
         description: 'Extract and organize asset palettes.',
         packageHash: hash,
-        runtimeMode: 'standard',
+        runtimeMode: 'restricted',
         permissions: ['asset.read'],
         source: { kind: 'local-directory' },
         scope: 'library',

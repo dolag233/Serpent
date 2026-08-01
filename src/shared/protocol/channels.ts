@@ -60,6 +60,15 @@ export const AUTOMATION_SCRIPT_RECENT_LIST_CHANNEL = 'serpent:automation:script-
 export const AUTOMATION_SCRIPT_RECENT_OPEN_CHANNEL = 'serpent:automation:script-recent-open' as const;
 /** Renderer plugin manager → Main. File paths remain Main-owned. */
 export const PLUGIN_MANAGER_CHANNEL = 'serpent:plugin-manager:request' as const;
+/** Main → Renderer: active plugin input capture sessions for fan-in gating. */
+export const PLUGIN_INPUT_CAPTURE_SESSIONS_CHANNEL =
+  'serpent:plugin:input-capture-sessions' as const;
+/** Renderer → Main: DOM input capture fan-in event. */
+export const PLUGIN_INPUT_CAPTURE_EVENT_CHANNEL =
+  'serpent:plugin:input-capture-event' as const;
+/** Renderer → Main: system modal pause seam (dialogs outrank plugins). */
+export const PLUGIN_INPUT_CAPTURE_SYSTEM_MODAL_CHANNEL =
+  'serpent:plugin:input-capture-system-modal' as const;
 
 export const WORKER_READY_MESSAGE_TYPE = 'worker.ready' as const;
 export const WORKER_SHUTDOWN_MESSAGE_TYPE = 'worker.shutdown' as const;

@@ -17,7 +17,7 @@ describe('PluginActivationCoordinator', () => {
               package: {
                 lock: { pluginId: 'com.example.trusted', version: '1.0.0', packageHash: 'b'.repeat(64) },
                 manifest: {
-                  runtime: { mode: 'standard', entry: 'dist/main.js' },
+                  runtime: { mode: 'restricted', entry: 'dist/main.js' },
                   permissions: ['library.read', 'asset.read'],
                 },
                 packageDirectory: '/plugins/trusted',
@@ -29,7 +29,7 @@ describe('PluginActivationCoordinator', () => {
             package: {
               lock: { pluginId: 'com.example.waiting', version: '1.0.0', packageHash: 'c'.repeat(64) },
               manifest: {
-                runtime: { mode: 'standard', entry: 'dist/main.js' },
+                runtime: { mode: 'restricted', entry: 'dist/main.js' },
                 permissions: ['library.read'],
               },
               packageDirectory: '/plugins/waiting',
@@ -44,7 +44,7 @@ describe('PluginActivationCoordinator', () => {
               package: {
                 lock: { pluginId, version: '1.0.0', packageHash: 'b'.repeat(64) },
                 manifest: {
-                  runtime: { mode: 'standard', entry: 'dist/main.js' },
+                  runtime: { mode: 'restricted', entry: 'dist/main.js' },
                   permissions: ['library.read', 'asset.read'],
                 },
                 packageDirectory: '/plugins/trusted',
@@ -57,7 +57,7 @@ describe('PluginActivationCoordinator', () => {
             package: {
               lock: { pluginId, version: '1.0.0', packageHash: 'c'.repeat(64) },
               manifest: {
-                runtime: { mode: 'standard', entry: 'dist/main.js' },
+                runtime: { mode: 'restricted', entry: 'dist/main.js' },
                 permissions: ['library.read'],
               },
               packageDirectory: '/plugins/waiting',
@@ -88,26 +88,115 @@ describe('PluginActivationCoordinator', () => {
     expect(deactivate).not.toHaveBeenCalled();
   });
 
-  it('deactivates the library when Safe Mode is enabled', async () => {
-    const deactivateLibrary = vi.fn();
+  it('deactivates unrestricted plugins under Safe Mode while keeping restricted activation available', async () => {
+    const trustedDeactivate = vi.fn();
+    const trustedActivate = vi.fn(async () => undefined);
+    const standardActivate = vi.fn(async () => undefined);
+    let safeMode = false;
     const coordinator = new PluginActivationCoordinator({
       packageManager: {
-        getSafeMode: async () => true,
-        listInstalled: async () => [],
-        resolve: async () => ({ status: 'not-installed' }),
+        getSafeMode: async () => safeMode,
+        listInstalled: async () => [{
+          status: 'valid',
+          package: {
+            lock: { pluginId: 'com.example.mixed', version: '1.0.0', packageHash: 'a'.repeat(64) },
+            manifest: {
+              id: 'com.example.mixed',
+              name: 'Mixed',
+              version: '1.0.0',
+              engines: { serpent: '>=0.1.0', pluginApi: 1 },
+              runtime: { mode: 'unrestricted', entry: 'dist/main.js' },
+              permissions: ['library.read'],
+            },
+            packageDirectory: '/plugins/trusted',
+          },
+        }, {
+          status: 'valid',
+          package: {
+            lock: { pluginId: 'com.example.restricted', version: '1.0.0', packageHash: 'b'.repeat(64) },
+            manifest: {
+              id: 'com.example.restricted',
+              name: 'Restricted',
+              version: '1.0.0',
+              engines: { serpent: '>=0.1.0', pluginApi: 1 },
+              runtime: { mode: 'restricted', entry: 'dist/main.js' },
+              permissions: ['library.read'],
+            },
+            packageDirectory: '/plugins/standard',
+          },
+        }],
+        resolve: async ({ pluginId }: { pluginId: string }) => {
+          if (pluginId === 'com.example.mixed') {
+            if (safeMode) return { status: 'disabled', reason: 'safe-mode' };
+            return {
+              status: 'resolved',
+              selection: 'use-global',
+              package: {
+                lock: { pluginId: 'com.example.mixed', version: '1.0.0', packageHash: 'a'.repeat(64) },
+                manifest: {
+                  id: 'com.example.mixed',
+                  name: 'Mixed',
+                  version: '1.0.0',
+                  engines: { serpent: '>=0.1.0', pluginApi: 1 },
+                  runtime: { mode: 'unrestricted', entry: 'dist/main.js' },
+                  permissions: ['library.read'],
+                },
+                packageDirectory: '/plugins/trusted',
+              },
+            };
+          }
+          return {
+            status: 'resolved',
+            selection: 'use-global',
+            package: {
+              lock: { pluginId: 'com.example.restricted', version: '1.0.0', packageHash: 'b'.repeat(64) },
+              manifest: {
+                id: 'com.example.restricted',
+                name: 'Restricted',
+                version: '1.0.0',
+                engines: { serpent: '>=0.1.0', pluginApi: 1 },
+                runtime: { mode: 'restricted', entry: 'dist/main.js' },
+                permissions: ['library.read'],
+              },
+              packageDirectory: '/plugins/standard',
+            },
+          };
+        },
       } as never,
       supervisor: {
-        activate: vi.fn(),
+        activate: standardActivate,
         deactivate: vi.fn(),
-        deactivateLibrary,
+        deactivateLibrary: vi.fn(),
       } as never,
+      trustedSupervisor: {
+        activate: trustedActivate,
+        deactivate: trustedDeactivate,
+        deactivateLibrary: vi.fn(),
+      } as never,
+      readEntryFile: async () => 'async function activate() {}',
+      compatibility: {
+        serpentVersion: '0.2.0',
+        pluginApiVersion: 1,
+        platform: 'darwin',
+        arch: 'arm64',
+        nodeAbi: 135,
+      },
     });
 
+    await coordinator.onLibraryOpened({
+      libraryId: 'library-1',
+      libraryDirectory: '/libraries/one',
+    });
+    expect(trustedActivate).toHaveBeenCalledTimes(1);
+    expect(standardActivate).toHaveBeenCalledTimes(1);
+
+    safeMode = true;
     await coordinator.refreshLibrary({
       libraryId: 'library-1',
       libraryDirectory: '/libraries/one',
     });
-    expect(deactivateLibrary).toHaveBeenCalledWith('library-1', 'safe-mode');
+    expect(trustedDeactivate).toHaveBeenCalledWith(expect.any(String), 'safe-mode');
+    expect(standardActivate).toHaveBeenCalledTimes(1);
   });
 
   it('activates trusted plugins through the dedicated supervisor', async () => {
@@ -124,7 +213,7 @@ describe('PluginActivationCoordinator', () => {
               name: 'Trusted',
               version: '1.0.0',
               engines: { serpent: '>=0.1.0', pluginApi: 1 },
-              runtime: { mode: 'trusted', entry: 'dist/main.js' },
+              runtime: { mode: 'unrestricted', entry: 'dist/main.js' },
               permissions: ['library.read', 'asset.read', 'net.fetch'],
             },
             packageDirectory: '/plugins/trusted-node',
@@ -140,7 +229,7 @@ describe('PluginActivationCoordinator', () => {
               name: 'Trusted',
               version: '1.0.0',
               engines: { serpent: '>=0.1.0', pluginApi: 1 },
-              runtime: { mode: 'trusted', entry: 'dist/main.js' },
+              runtime: { mode: 'unrestricted', entry: 'dist/main.js' },
               permissions: ['library.read', 'asset.read', 'net.fetch'],
             },
             packageDirectory: '/plugins/trusted-node',
@@ -194,7 +283,7 @@ describe('PluginActivationCoordinator', () => {
               version: '1.0.0',
               engines: { serpent: '>=0.1.0', pluginApi: 1 },
               runtime: {
-                mode: 'trusted',
+                mode: 'unrestricted',
                 entry: 'dist/main.js',
                 nativeModules: [{ platform: 'darwin', arch: 'arm64', nodeAbi: 120 }],
               },
@@ -214,7 +303,7 @@ describe('PluginActivationCoordinator', () => {
               version: '1.0.0',
               engines: { serpent: '>=0.1.0', pluginApi: 1 },
               runtime: {
-                mode: 'trusted',
+                mode: 'unrestricted',
                 entry: 'dist/main.js',
                 nativeModules: [{ platform: 'darwin', arch: 'arm64', nodeAbi: 120 }],
               },
@@ -270,7 +359,7 @@ describe('PluginActivationCoordinator', () => {
           package: {
             lock: { pluginId: 'com.example.trusted', version: '1.0.0', packageHash: 'b'.repeat(64) },
             manifest: {
-              runtime: { mode: 'standard', entry: 'dist/main.js' },
+              runtime: { mode: 'restricted', entry: 'dist/main.js' },
               permissions: ['library.read'],
             },
             packageDirectory: '/plugins/trusted',
@@ -282,7 +371,7 @@ describe('PluginActivationCoordinator', () => {
           package: {
             lock: { pluginId: 'com.example.trusted', version: '1.0.0', packageHash: 'b'.repeat(64) },
             manifest: {
-              runtime: { mode: 'standard', entry: 'dist/main.js' },
+              runtime: { mode: 'restricted', entry: 'dist/main.js' },
               permissions: ['library.read'],
             },
             packageDirectory: '/plugins/trusted',
@@ -328,7 +417,7 @@ describe('PluginActivationCoordinator', () => {
           package: {
             lock: { pluginId: 'com.example.contrib', version: '1.0.0', packageHash: 'f'.repeat(64) },
             manifest: {
-              runtime: { mode: 'standard', entry: 'dist/main.js' },
+              runtime: { mode: 'restricted', entry: 'dist/main.js' },
               permissions: ['library.read', 'asset.read'],
               contributes: {
                 commands: [{ id: 'do-thing', title: 'Do thing' }],
@@ -348,7 +437,7 @@ describe('PluginActivationCoordinator', () => {
           package: {
             lock: { pluginId: 'com.example.contrib', version: '1.0.0', packageHash: 'f'.repeat(64) },
             manifest: {
-              runtime: { mode: 'standard', entry: 'dist/main.js' },
+              runtime: { mode: 'restricted', entry: 'dist/main.js' },
               permissions: ['library.read', 'asset.read'],
               contributes: {
                 commands: [{ id: 'do-thing', title: 'Do thing' }],

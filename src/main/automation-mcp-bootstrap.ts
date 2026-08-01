@@ -3,6 +3,7 @@ import type { AutomationExecutionJournal } from './automation-execution-journal'
 import type { WorkerCommand } from '../shared/protocol/requests';
 import type { WorkerResult } from '../shared/protocol/responses';
 import type { LibraryChangedEvent } from '../shared/protocol/responses';
+import type { SerpentMcpPluginToolBridge } from '../mcp/call-tool';
 import {
   startAutomationMcpHost,
   type AutomationMcpHostHandle,
@@ -20,6 +21,7 @@ export type AutomationMcpBootstrapDeps = {
   onLibraryChanged?: (listener: (event: LibraryChangedEvent) => void) => () => void;
   logger: AutomationMcpBootstrapLogger;
   env?: NodeJS.ProcessEnv;
+  pluginTools?: SerpentMcpPluginToolBridge;
 };
 
 /**
@@ -40,6 +42,7 @@ export async function maybeStartAutomationMcpMode(
   const writeAccessGranted = env.SERPENT_MCP_WRITE_ACCESS === '1';
   deps.logger.info('automation.mcp', 'Starting headless MCP host.', {
     writeAccessGranted,
+    pluginTools: deps.pluginTools,
   });
 
   let libraryId: string | null = null;

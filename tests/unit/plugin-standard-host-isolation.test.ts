@@ -151,6 +151,7 @@ describe('standard plugin Host isolation (Serpent-upsn.3)', () => {
       packageHash: 'a'.repeat(64),
       entryJavaScript: 'async function activate() { await new Promise(() => {}); }',
       permissions: ['library.read'],
+      installScope: 'library',
     });
     expect(Date.now() - started).toBeLessThan(500);
     expect(child.posted).toContainEqual(expect.objectContaining({

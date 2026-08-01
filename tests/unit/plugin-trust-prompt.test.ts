@@ -18,7 +18,7 @@ function libraryPackage(
     version: '1.0.0',
     name: 'Demo Plugin',
     description: 'demo',
-    runtimeMode: 'standard',
+    runtimeMode: 'restricted',
     permissions: ['library.read'],
     source: { kind: 'local-directory' },
     scope: 'library',
@@ -84,7 +84,7 @@ describe('plugin trust prompt collection', () => {
         description: 'demo',
         version: '1.0.0',
         packageHash: 'a'.repeat(64),
-        runtimeMode: 'standard',
+        runtimeMode: 'restricted',
         permissions: ['library.read'],
       },
     ]);

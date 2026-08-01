@@ -4,6 +4,7 @@ import type { AutomationCommandGateway } from '../automation/command-gateway';
 import type { AutomationCapability } from '../automation/command-registry';
 import type { AutomationExecutionJournal } from './automation-execution-journal';
 import type { SerpentMcpToolExposure } from '../mcp/tool-catalog';
+import type { SerpentMcpPluginToolBridge } from '../mcp/call-tool';
 import type { LibraryChangedEvent } from '../shared/protocol/responses';
 import {
   connectSerpentMcpStdio,
@@ -43,6 +44,7 @@ export type AutomationMcpHostOptions = {
   onLibraryChanged?: (listener: (event: LibraryChangedEvent) => void) => () => void;
   writeAccessGranted?: boolean;
   declaredCapabilities?: readonly AutomationCapability[];
+  pluginTools?: SerpentMcpPluginToolBridge;
 };
 
 export type AutomationMcpHostHandle = {
@@ -103,6 +105,7 @@ export async function startAutomationMcpHost(
     gateway: options.gateway,
     getExecutionId: () => started.executionId,
     getExposure: () => exposure,
+    getPluginTools: () => options.pluginTools,
   });
   await connectSerpentMcpStdio(server);
   const unsubscribeLibraryChanged = options.onLibraryChanged?.((event) => {

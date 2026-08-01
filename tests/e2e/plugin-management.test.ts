@@ -77,7 +77,9 @@ test('installs a library plugin through the settings bridge, then trusts and Saf
 
     const safeModeRow = dialog.locator('.plugin-settings-safe-mode');
     await safeModeRow.click();
-    await expect(dialog.getByText('已被安全模式停用', { exact: true })).toBeVisible();
+    // Restricted (palette) plugins stay resolvable under Safe Mode; status remains enabled.
+    await expect(dialog.getByText('已启用', { exact: true })).toBeVisible();
+    await expect(dialog.getByText('已被安全模式停用（无限制模式）', { exact: true })).toHaveCount(0);
     await safeModeRow.click();
     await expect(dialog.getByText('已启用', { exact: true })).toBeVisible();
   } finally {

@@ -27,7 +27,7 @@ function writePlugin(
   directory: string,
   overrides: Partial<{
     version: string;
-    runtime: 'standard' | 'trusted';
+    runtime: 'restricted' | 'unrestricted';
     permissions: string[];
     repository: string;
   }> = {},
@@ -37,8 +37,8 @@ function writePlugin(
     version: overrides.version ?? manifestFixture.version,
     permissions: overrides.permissions ?? manifestFixture.permissions,
     ...(overrides.repository === undefined ? {} : { repository: overrides.repository }),
-    runtime: overrides.runtime === 'trusted'
-      ? { mode: 'trusted', entry: 'dist/main.js' }
+    runtime: overrides.runtime === 'unrestricted'
+      ? { mode: 'unrestricted', entry: 'dist/main.js' }
       : manifestFixture.runtime,
   };
   mkdirSync(path.join(directory, 'dist', 'ui'), { recursive: true });
@@ -388,27 +388,60 @@ describe('PluginPackageManager selection, updates and Safe Mode', () => {
     })).resolves.toMatchObject({ status: 'resolved', package: { lock: { version: '1.3.0' } } });
   });
 
-  it('uses Safe Mode to suppress all third-party resolution without deleting installed packages', async () => {
-    const source = temporaryRoot('serpent-plugin-source-');
+  it('uses Safe Mode to suppress unrestricted (trusted) resolution while leaving restricted packages resolvable', async () => {
+    const trustedSource = temporaryRoot('serpent-plugin-trusted-source-');
+    const restrictedSource = temporaryRoot('serpent-plugin-restricted-source-');
     const userData = temporaryRoot('serpent-plugin-user-');
-    writePlugin(source);
+    const library = temporaryRoot('serpent-plugin-library-');
+    writePlugin(trustedSource, { runtime: 'unrestricted', version: '1.0.0' });
     const manager = createManager(userData);
-    const installed = await manager.installFromDirectory({
-      directory: source,
+    const trusted = await manager.installFromDirectory({
+      directory: trustedSource,
       scope: 'user',
-      source: { kind: 'local-directory', fingerprint: 'local:palette-tools' },
+      source: { kind: 'local-directory', fingerprint: 'local:palette-tools-trusted' },
     });
     await manager.chooseResolution({
       libraryId: 'library-a',
-      pluginId: installed.package.lock.pluginId,
+      pluginId: trusted.package.lock.pluginId,
       selection: 'use-global',
-      packageHash: installed.package.lock.packageHash,
+      packageHash: trusted.package.lock.packageHash,
     });
     await manager.setSafeMode(true);
 
-    await expect(manager.resolve({ libraryId: 'library-a', libraryDirectory: temporaryRoot('serpent-plugin-library-'), pluginId: installed.package.lock.pluginId }))
-      .resolves.toMatchObject({ status: 'disabled', reason: 'safe-mode' });
+    await expect(manager.resolve({
+      libraryId: 'library-a',
+      libraryDirectory: library,
+      pluginId: trusted.package.lock.pluginId,
+    })).resolves.toMatchObject({ status: 'disabled', reason: 'safe-mode' });
     await expect(manager.listInstalled({ scope: 'user' })).resolves.toHaveLength(1);
+
+    await manager.setSafeMode(false);
+    writePlugin(restrictedSource);
+    const restrictedManifestPath = path.join(restrictedSource, 'serpent-plugin.json');
+    const restrictedManifest = JSON.parse(readFileSync(restrictedManifestPath, 'utf8')) as {
+      id: string;
+      version: string;
+      runtime: { mode: string; entry: string };
+    };
+    restrictedManifest.id = 'com.example.palette-tools-restricted';
+    writeFileSync(restrictedManifestPath, `${JSON.stringify(restrictedManifest, null, 2)}\n`);
+    const restricted = await manager.installFromDirectory({
+      directory: restrictedSource,
+      scope: 'user',
+      source: { kind: 'local-directory', fingerprint: 'local:palette-tools-restricted' },
+    });
+    await manager.chooseResolution({
+      libraryId: 'library-a',
+      pluginId: restricted.package.lock.pluginId,
+      selection: 'use-global',
+      packageHash: restricted.package.lock.packageHash,
+    });
+    await manager.setSafeMode(true);
+    await expect(manager.resolve({
+      libraryId: 'library-a',
+      libraryDirectory: library,
+      pluginId: restricted.package.lock.pluginId,
+    })).resolves.toMatchObject({ status: 'resolved', package: { lock: { pluginId: restricted.package.lock.pluginId } } });
   });
 
   it('quarantines three consecutive supervised crashes only for this library and lets the user explicitly re-enable it', async () => {

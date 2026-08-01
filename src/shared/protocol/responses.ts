@@ -1,8 +1,10 @@
 import { z } from 'zod';
 
 import { aiSearchPlanSchema, assetMetadataResultSchema, extractedMetadataResultSchema, assetSummarySchema, collectionSummarySchema, folderBrowseEntrySchema, linkedFolderRuleSchema, linkedFolderSummarySchema, managedFolderSummarySchema, portableRelativePathSchema, smartCollectionSummarySchema, tagCooccurrenceGraphSchema, tagSummarySchema, trashedFolderSummarySchema } from '../asset-types';
+import { pluginJobRecordSchema } from '../../plugins/plugin-jobs';
 import { recentLibraryListSchema } from '../recent-libraries';
 import { publicErrorReasonSchema, publicErrorSchema } from './errors';
+import { CONTENT_REPLACE_MAX_BASE64_LENGTH } from '../content-replace';
 import {
   WORKER_READY_MESSAGE_TYPE,
   WORKER_SHUTDOWN_ACK_MESSAGE_TYPE,
@@ -379,6 +381,51 @@ const assetOperationSuccessSchemas = [
   }),
   z.strictObject({
     ok: z.literal(true),
+    type: z.literal('plugin.jobs.enqueued'),
+    libraryId: nonBlankString,
+    job: pluginJobRecordSchema,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('plugin.jobs.listed'),
+    libraryId: nonBlankString,
+    jobs: z.array(pluginJobRecordSchema),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('plugin.jobs.claimed'),
+    libraryId: nonBlankString,
+    job: pluginJobRecordSchema.nullable(),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('plugin.jobs.completed'),
+    libraryId: nonBlankString,
+    job: pluginJobRecordSchema.nullable(),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('plugin.jobs.paused'),
+    libraryId: nonBlankString,
+    pausedCount: z.number().int().nonnegative(),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('plugin.derived-fields.materialized'),
+    libraryId: nonBlankString,
+    writtenCount: z.number().int().nonnegative(),
+    fieldKey: nonBlankString,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('plugin.derived-fields.queried'),
+    libraryId: nonBlankString,
+    assetIds: z.array(nonBlankString),
+    total: z.number().int().nonnegative(),
+    offset: z.number().int().nonnegative(),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
     type: z.literal('folder.created'),
     folder: managedFolderSummarySchema,
   }),
@@ -725,6 +772,23 @@ const assetOperationSuccessSchemas = [
   }),
   z.strictObject({
     ok: z.literal(true),
+    type: z.literal('asset.content.replaced'),
+    assetId: nonBlankString,
+    revisionId: nonBlankString,
+    byteSize: z.number().int().nonnegative(),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('asset.content.read'),
+    assetId: nonBlankString,
+    revisionId: nonBlankString,
+    byteSize: z.number().int().nonnegative(),
+    dataBase64: z.string().max(CONTENT_REPLACE_MAX_BASE64_LENGTH),
+    truncated: z.boolean(),
+    mimeType: z.string().nullable(),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
     type: z.literal('asset.restored'),
     restoredCount: z.number().int().nonnegative(),
     assets: z.array(assetSummarySchema),
@@ -813,7 +877,7 @@ const assetOperationSuccessSchemas = [
     ok: z.literal(true),
     type: z.literal('automation.file-operation-planned'),
     libraryId: nonBlankString,
-    operation: z.enum(['trash', 'move', 'rename-file', 'rename-files', 'restore-if-original-vacant']),
+    operation: z.enum(['trash', 'replace-content', 'move', 'rename-file', 'rename-files', 'restore-if-original-vacant']),
     changeSequence: z.number().int().nonnegative(),
     targetCount: z.number().int().positive(),
     executableCount: z.number().int().nonnegative(),

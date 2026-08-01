@@ -1,0 +1,118 @@
+{
+  "manifestVersion": 1,
+  "id": "com.serpent.menu-command-probe",
+  "version": "1.0.0",
+  "name": "Menu Command Probe",
+  "description": "Fixed test plugin that writes context ids from asset, folder, and collection menu commands.",
+  "author": "Serpent",
+  "license": "MIT",
+  "engines": {
+    "serpent": ">=0.1.0 <1.0.0",
+    "pluginApi": 1
+  },
+  "runtime": {
+    "mode": "restricted",
+    "entry": "entry/main.js"
+  },
+  "permissions": [
+    "library.read",
+    "storage.read",
+    "storage.write",
+    "input.shortcut"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "id": "probe.write-selection",
+        "title": "Write selection"
+      },
+      {
+        "id": "probe.write-folder",
+        "title": "Write folder"
+      },
+      {
+        "id": "probe.write-collection",
+        "title": "Write collection"
+      },
+      {
+        "id": "probe.write-toolbar",
+        "title": "Write toolbar"
+      },
+      {
+        "id": "probe.write-inspector",
+        "title": "Write inspector"
+      },
+      {
+        "id": "probe.write-viewer",
+        "title": "Write viewer"
+      },
+      {
+        "id": "probe.write-workspace",
+        "title": "Write workspace"
+      },
+      {
+        "id": "probe.write-shortcut",
+        "title": "Write shortcut"
+      }
+    ],
+    "menus": {
+      "asset": [
+        {
+          "command": "probe.write-selection"
+        }
+      ],
+      "folder": [
+        {
+          "command": "probe.write-folder"
+        }
+      ],
+      "collection": [
+        {
+          "command": "probe.write-collection"
+        }
+      ],
+      "workspace": [
+        {
+          "command": "probe.write-workspace"
+        }
+      ]
+    },
+    "toolbar": [
+      {
+        "id": "write-toolbar",
+        "command": "probe.write-toolbar"
+      }
+    ],
+    "inspector": [
+      {
+        "id": "write-inspector",
+        "title": "Probe inspector",
+        "command": "probe.write-inspector"
+      }
+    ],
+    "viewerActions": [
+      {
+        "id": "write-viewer",
+        "command": "probe.write-viewer"
+      }
+    ],
+    "shortcuts": [
+      {
+        "id": "write-shortcut",
+        "command": "probe.write-shortcut",
+        "accelerator": "F9"
+      }
+    ],
+    "views": [],
+    "settings": [
+      {
+        "id": "enabled-demo",
+        "title": "Enabled demo",
+        "type": "boolean"
+      }
+    ],
+    "hooks": [],
+    "jobs": [],
+    "providers": []
+  }
+}

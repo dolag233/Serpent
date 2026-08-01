@@ -542,7 +542,6 @@ export class PluginPackageManager {
     pluginId: string;
   }): Promise<PluginResolutionResult> {
     const state = await this.#readDeviceState();
-    if (state.safeMode) return { status: 'disabled', reason: 'safe-mode' };
 
     const [globalPackages, libraryPackages] = await Promise.all([
       this.#validPackages('user'),
@@ -708,6 +707,10 @@ export class PluginPackageManager {
       && record.quarantinedAt !== undefined);
     if (quarantine !== undefined) {
       return { status: 'disabled', reason: 'quarantined', package: pluginPackage, quarantine };
+    }
+    // Safe Mode only pauses unrestricted (trusted) runtimes; restricted (standard) may keep running.
+    if (state.safeMode && pluginPackage.manifest.runtime.mode === 'unrestricted') {
+      return { status: 'disabled', reason: 'safe-mode', package: pluginPackage };
     }
     if (selection === 'use-global') return { status: 'resolved', selection, package: pluginPackage };
     const trust = state.trustDecisions.find((decision) => decision.pluginId === pluginPackage.lock.pluginId

@@ -223,6 +223,12 @@ import { useAssetDragDropHandlers, type UndoableFileOp } from "./use-asset-drag-
 import { useDialogEscapeDismiss } from "./use-dialog-escape-dismiss";
 import { PluginTrustPromptDialog } from "./PluginTrustPromptDialog";
 import { usePluginTrustPrompt } from "./use-plugin-trust-prompt";
+import { PluginToolbarButtons } from "./plugin-toolbar-contributions";
+import { usePluginShortcutKeyboard } from "./plugin-shortcut-contributions";
+import { usePluginInputCaptureFanIn } from "./use-plugin-input-capture-fanin";
+import { usePluginInputCaptureModalSeam } from "./use-plugin-input-capture-modal-seam";
+import { PluginSidebarViewPanel, usePluginSidebarViews } from "./plugin-sidebar-views";
+import { PluginWorkspaceViews } from "./plugin-workspace-views";
 import { useExternalImportHandlers } from "./use-external-import-handlers";
 import { useFolderDragDropHandlers } from "./use-folder-drag-drop-handlers";
 import { WorkspaceNoticeBanner } from "./WorkspaceNoticeBanner";
@@ -298,6 +304,7 @@ import type {
   ImportValidatedResult,
   MediaJobStatus,
   AiJobStatus,
+  PluginJobStatus,
 } from "../shared/library-api";
 import type { SerpentShellApi } from "../shared/external-url";
 import type { SerpentAutomationScriptApi } from '../shared/automation-script-api';
@@ -877,6 +884,7 @@ function AppInner() {
     }
   }, [showTrash]);
   const [showTagManagement, setShowTagManagement] = useState(false);
+  const [activePluginSidebarViewId, setActivePluginSidebarViewId] = useState<string | null>(null);
   const [trashedAssets, setTrashedAssets] = useState<AssetSummary[]>([]);
 
   const {
@@ -975,6 +983,23 @@ function AppInner() {
     libraryId: library?.libraryId,
     suppressWhileSettingsOpen: appSettingsOpen && appSettingsCategory === "plugins",
   });
+  const pluginSidebarRefreshKey = appSettingsOpen ? "settings" : "browse";
+  const pluginSidebarViews = usePluginSidebarViews(
+    (window as RendererWindow).serpent?.plugins,
+    library?.libraryId,
+    Boolean(library) && !busy,
+    pluginSidebarRefreshKey,
+  );
+  const activePluginSidebarView = useMemo(
+    () => pluginSidebarViews.find((view) => view.id === activePluginSidebarViewId),
+    [activePluginSidebarViewId, pluginSidebarViews],
+  );
+  const showPluginSidebarView = activePluginSidebarView !== undefined;
+  useEffect(() => {
+    if (activePluginSidebarViewId !== null && activePluginSidebarView === undefined) {
+      setActivePluginSidebarViewId(null);
+    }
+  }, [activePluginSidebarView, activePluginSidebarViewId]);
   const [smartCollectionSettings, setSmartCollectionSettings] =
     useState<SmartCollectionSettingsTarget | null>(null);
   const [appLogOpen, setAppLogOpen] = useState(false);
@@ -1381,6 +1406,7 @@ function AppInner() {
   const [mediaJobsOpen, setMediaJobsOpen] = useState(false);
   const [mediaJobs, setMediaJobs] = useState<MediaJobStatus | null>(null);
   const [aiJobs, setAiJobs] = useState<AiJobStatus | null>(null);
+  const [pluginJobs, setPluginJobs] = useState<PluginJobStatus | null>(null);
   const [mediaJobsLoading, setMediaJobsLoading] = useState(false);
   const backgroundJobsActive = useMemo(() => {
     if (aiAnalyzing) return true;
@@ -1740,6 +1766,7 @@ function AppInner() {
     return showTrash ? trashedAssets.length : visibleAssets.length;
   }, [
     showTagManagement,
+    showPluginSidebarView,
     tags.length,
     searchTotal,
     showTrash,
@@ -3238,6 +3265,7 @@ function AppInner() {
     workspaceCanvasRef.current?.scrollTo({ top: 0, left: 0 });
     setShowTrash(false);
     setShowTagManagement(false);
+    setActivePluginSidebarViewId(null);
     setAssetScope(scope);
     if (scope !== "all" && scope !== "root") {
       const enabled = isFolderRecursiveEnabled(
@@ -3303,6 +3331,7 @@ function AppInner() {
     setShowTrash(true);
     setTrashBrowseTombstoneId(tombstoneId);
     setShowTagManagement(false);
+    setActivePluginSidebarViewId(null);
     setActiveTagId(null);
     setActiveCollectionId(null);
     setActiveSmartCollectionId(null);
@@ -3329,6 +3358,7 @@ function AppInner() {
     closeContextMenu();
     workspaceCanvasRef.current?.scrollTo({ top: 0, left: 0 });
     setShowTagManagement(true);
+    setActivePluginSidebarViewId(null);
     setShowTrash(false);
     setActiveTagId(null);
     setActiveCollectionId(null);
@@ -3350,6 +3380,25 @@ function AppInner() {
     } finally {
       setUiState("ready");
     }
+  }
+
+  async function enterPluginSidebarView(viewId: string) {
+    if (!library) return;
+    await closeAssetPreview(false);
+    closeContextMenu();
+    workspaceCanvasRef.current?.scrollTo({ top: 0, left: 0 });
+    setShowTrash(false);
+    setShowTagManagement(false);
+    setActivePluginSidebarViewId(viewId);
+    setAssetScope("all");
+    clearAssetSelection();
+    setActiveTagId(null);
+    setActiveCollectionId(null);
+    setActiveSmartCollectionId(null);
+    clearDiscoveryControls();
+    setSearchTotal(null);
+    setSearchSnippets(new Map());
+    api?.setActiveContext(library.libraryId);
   }
 
   async function handleCreateTagInManagement(name: string): Promise<boolean> {
@@ -3459,6 +3508,7 @@ function AppInner() {
     workspaceCanvasRef.current?.scrollTo({ top: 0, left: 0 });
     setShowTrash(false);
     setShowTagManagement(false);
+    setActivePluginSidebarViewId(null);
     setActiveTagId(null);
     setActiveCollectionId(null);
     setActiveSmartCollectionId(null);
@@ -3499,6 +3549,7 @@ function AppInner() {
     workspaceCanvasRef.current?.scrollTo({ top: 0, left: 0 });
     setShowTrash(false);
     setShowTagManagement(false);
+    setActivePluginSidebarViewId(null);
     setActiveTagId(tagId);
     setActiveCollectionId(null);
     setActiveSmartCollectionId(null);
@@ -3915,6 +3966,7 @@ function AppInner() {
     workspaceCanvasRef.current?.scrollTo({ top: 0, left: 0 });
     setShowTrash(false);
     setShowTagManagement(false);
+    setActivePluginSidebarViewId(null);
     setActiveCollectionId(collectionId);
     setActiveTagId(null);
     setActiveSmartCollectionId(null);
@@ -4424,6 +4476,7 @@ function AppInner() {
     libraryOpen: Boolean(library),
     showTrash,
     showTagManagement,
+    showPluginSidebarView,
     assetScope,
     selectedFolderId,
   });
@@ -4617,6 +4670,7 @@ function AppInner() {
     if (requestGeneration !== searchRequestGenerationRef.current) return;
     setShowTrash(false);
     setShowTagManagement(false);
+    setActivePluginSidebarViewId(null);
     if (!tagFilter.trim()) setActiveTagId(null);
     setActiveSmartCollectionId(null);
     if (!pendingRevealRef.current) {
@@ -4681,6 +4735,7 @@ function AppInner() {
       // management page — its response handler closes the page and dumps the
       // user back on 所有资产. Explicit submit (runSearch) still exits.
       showTagManagement ||
+      showPluginSidebarView ||
       (!hasDiscoveryInput && !shouldClearPreviousResults)
     )
       return;
@@ -4695,6 +4750,7 @@ function AppInner() {
     library,
     showTrash,
     showTagManagement,
+    showPluginSidebarView,
     searchValue,
     colorFilter,
     excludeColorFilter,
@@ -4732,6 +4788,7 @@ function AppInner() {
       if (!result.ok) throw new LibraryOperationError(result.error);
       setShowTrash(false);
       setShowTagManagement(false);
+    setActivePluginSidebarViewId(null);
       setActiveTagId(null);
       setActiveCollectionId(null);
       setActiveSmartCollectionId(collectionId);
@@ -5199,6 +5256,7 @@ function AppInner() {
     setAssetScope("all");
     setShowTrash(false);
     setShowTagManagement(false);
+    setActivePluginSidebarViewId(null);
     setTrashedAssets([]);
     setTags([]);
     setCollections([]);
@@ -6050,6 +6108,7 @@ function AppInner() {
       setLibrary(summary);
       setShowTrash(false);
       setShowTagManagement(false);
+    setActivePluginSidebarViewId(null);
       setTrashedAssets([]);
       setAssetScope("all");
       setActiveTagId(null);
@@ -6408,7 +6467,7 @@ function AppInner() {
   }, [dialogFocusTrapActive]);
 
   useBrowseCommandKeyboard({
-    enabled: Boolean(library) && !showTagManagement,
+    enabled: Boolean(library) && !showTagManagement && !showPluginSidebarView,
     platform: SHORTCUT_PLATFORM,
     previewOpen: Boolean(previewAsset),
     showTrash,
@@ -6444,6 +6503,26 @@ function AppInner() {
     onRefreshDisk: () => {
       void refreshAssets();
     },
+  });
+
+  usePluginShortcutKeyboard({
+    enabled: Boolean(library) && !showTagManagement && !showPluginSidebarView,
+    platform: SHORTCUT_PLATFORM,
+    pluginApi: (window as RendererWindow).serpent?.plugins,
+    libraryId: library?.libraryId,
+    refreshKey: pluginSidebarRefreshKey,
+    previewOpen: Boolean(previewAsset),
+    selectedAssetIds,
+  });
+
+  usePluginInputCaptureFanIn({
+    shell: shellApi,
+    enabled: Boolean(library),
+    previewOpen: Boolean(previewAsset),
+  });
+  usePluginInputCaptureModalSeam({
+    shell: shellApi,
+    snapshot: dialogEscapeSnapshot,
   });
 
   useWorkspaceMouseNavigation({
@@ -6699,6 +6778,7 @@ function AppInner() {
   function workspaceTitle() {
     if (!library) return t("scope.workspace");
     if (showTagManagement) return t("scope.tagManagement");
+    if (showPluginSidebarView) return activePluginSidebarView?.title ?? t("scope.workspace");
     if (showTrash) return t("scope.trash");
     if (activeTagId) {
       const tag = tags.find((x) => x.tagId === activeTagId);
@@ -7312,12 +7392,14 @@ function AppInner() {
     let active = true;
     const poll = async () => {
       try {
-        const [mediaResult, aiResult] = await Promise.all([
+        const [mediaResult, aiResult, pluginResult] = await Promise.all([
           api.listMediaJobs({ libraryId: library.libraryId }),
           api.getAiJobStatus({ libraryId: library.libraryId }),
+          api.listPluginJobs({ libraryId: library.libraryId }),
         ]);
         if (active && mediaResult.ok) setMediaJobs(mediaResult.value);
         if (active && aiResult.ok) setAiJobs(aiResult.value);
+        if (active && pluginResult.ok) setPluginJobs(pluginResult.value);
       } catch {
         // Keep the last known task state during a transient Worker restart.
       } finally {
@@ -7341,12 +7423,14 @@ function AppInner() {
     let active = true;
     const poll = async () => {
       try {
-        const [mediaResult, aiResult] = await Promise.all([
+        const [mediaResult, aiResult, pluginResult] = await Promise.all([
           api.listMediaJobs({ libraryId: library.libraryId }),
           api.getAiJobStatus({ libraryId: library.libraryId }),
+          api.listPluginJobs({ libraryId: library.libraryId }),
         ]);
         if (active && mediaResult.ok) setMediaJobs(mediaResult.value);
         if (active && aiResult.ok) setAiJobs(aiResult.value);
+        if (active && pluginResult.ok) setPluginJobs(pluginResult.value);
       } catch {
         // Keep the last known task state during a transient Worker restart.
       }
@@ -7617,6 +7701,8 @@ function AppInner() {
         assetScope={assetScope}
         showTrash={showTrash}
         showTagManagement={showTagManagement}
+        activePluginSidebarViewId={activePluginSidebarViewId}
+        pluginSidebarViews={pluginSidebarViews}
         activeTagId={activeTagId}
         activeCollectionId={activeCollectionId}
         activeSmartCollectionId={activeSmartCollectionId}
@@ -7643,6 +7729,7 @@ function AppInner() {
           );
         }}
         onEnterTagManagement={() => void enterTagManagement()}
+        onChoosePluginSidebarView={(viewId) => void enterPluginSidebarView(viewId)}
         onChooseFolder={(folderId) => void chooseFolder(folderId)}
         onChooseCollection={(collectionId, recursive) =>
           void chooseCollection(collectionId, recursive)
@@ -7720,6 +7807,7 @@ function AppInner() {
             {library &&
               !showTrash &&
               !showTagManagement &&
+              !showPluginSidebarView &&
               !activeTagId &&
               !activeCollectionId &&
               !activeSmartCollectionId &&
@@ -7795,6 +7883,7 @@ function AppInner() {
               library &&
               !showTrash &&
               !showTagManagement &&
+              !showPluginSidebarView &&
               visibleAssets.some(
                 (a) => a.availability === "missing" && !a.deletedAt,
               ) && (
@@ -7844,6 +7933,13 @@ function AppInner() {
               onCardSizeChange={resizeAssetCards}
               platform={SHORTCUT_PLATFORM}
             />
+            <PluginToolbarButtons
+              disabled={busy || library === null || showTagManagement || showPluginSidebarView}
+              libraryId={library?.libraryId}
+              pluginApi={(window as RendererWindow).serpent?.plugins}
+              refreshKey={appSettingsOpen ? "settings" : "browse"}
+              selectedAssetIds={selectedAssetIds}
+            />
             <WorkspaceToolsOverflow
               items={[
                 {
@@ -7862,7 +7958,13 @@ function AppInner() {
             />
           </div>
         </div>
-        {!showTagManagement && (
+        <PluginWorkspaceViews
+          disabled={busy || library === null || showTagManagement || showPluginSidebarView}
+          libraryId={library?.libraryId}
+          pluginApi={(window as RendererWindow).serpent?.plugins}
+          refreshKey={appSettingsOpen ? "settings" : "browse"}
+        />
+        {!showTagManagement && !showPluginSidebarView && (
         <div
           className={`workspace-discovery${previewAsset ? " is-viewing" : ""}`}
         >
@@ -8112,6 +8214,28 @@ function AppInner() {
           onDragOverCapture={handleExternalDragOver}
           onDrop={handleExternalDrop}
           onMouseDown={handleCanvasMouseDown}
+          onContextMenu={(event) => {
+            const target = event.target;
+            if (!(target instanceof Element)) return;
+            if (
+              target.closest(
+                ".asset-card, .folder-card, button, [role='button'], [role='menuitem'], a, input, textarea, select",
+              )
+            ) {
+              return;
+            }
+            if (!library || previewAsset || showTagManagement || showPluginSidebarView) return;
+            event.preventDefault();
+            openContextMenu(
+              {
+                type: "workspace",
+                ...(selectedAssetIds.length > 0
+                  ? { assetIds: [...selectedAssetIds] }
+                  : {}),
+              },
+              { x: event.clientX, y: event.clientY },
+            );
+          }}
           ref={workspaceCanvasRef}
         >
           {externalDropActive && (
@@ -8136,7 +8260,13 @@ function AppInner() {
               }}
             />
           )}
-          {library && showTagManagement ? (
+          {library && showPluginSidebarView ? (
+            <PluginSidebarViewPanel
+              activeView={activePluginSidebarView}
+              libraryId={library.libraryId}
+              pluginApi={(window as RendererWindow).serpent?.plugins}
+            />
+          ) : library && showTagManagement ? (
             <TagManagementWorkspace
               busy={busy}
               onCreate={handleCreateTagInManagement}
@@ -8842,6 +8972,8 @@ function AppInner() {
                 ? () => navigateAssetPreview(visibleAssets[previewIndex - 1]!)
                 : undefined
             }
+            pluginApi={(window as RendererWindow).serpent?.plugins}
+            pluginContributionRefreshKey={appSettingsOpen ? "settings" : "browse"}
           />
         )}
       </section>
@@ -8889,6 +9021,9 @@ function AppInner() {
         selectedAssets={selectedAssets}
         multiEdit={multiEdit}
         versionConflict={versionConflict}
+        pluginApi={(window as RendererWindow).serpent?.plugins}
+        libraryId={library?.libraryId}
+        pluginContributionRefreshKey={appSettingsOpen ? "settings" : "browse"}
       />
       <ImageSequenceDialog
         count={
@@ -9393,6 +9528,7 @@ function AppInner() {
         mediaJobs={mediaJobs}
         mediaJobsLoading={mediaJobsLoading}
         aiJobs={aiJobs}
+        pluginJobs={pluginJobs}
         onClose={() => setMediaJobsOpen(false)}
         onControlMediaJobs={(action, jobIds) => void controlMediaJobs(action, jobIds)}
         onControlAiJobs={(action, jobIds) => void controlAiJobs(action, jobIds)}
@@ -9410,6 +9546,8 @@ function AppInner() {
       />
       {/* Unified context menu */}
       <AssetContextMenu
+        libraryId={library?.libraryId}
+        pluginApi={(window as RendererWindow).serpent?.plugins}
         tags={tags}
         collections={collections}
         linkedFolders={linkedFolders}

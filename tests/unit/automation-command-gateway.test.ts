@@ -129,7 +129,7 @@ class RecordingWorker implements AutomationWorkerClient {
 
 describe('Automation Command Registry', () => {
   it('contains complete read/write descriptors and exports JSON/TypeScript contracts', () => {
-    expect(automationCommandRegistry).toHaveLength(36);
+    expect(automationCommandRegistry).toHaveLength(38);
     expect(new Set(automationCommandRegistry.map((command) => command.commandId)).size)
       .toBe(automationCommandRegistry.length);
     const registryIds = new Set(automationCommandRegistry.map((command) => command.commandId));
@@ -160,6 +160,7 @@ describe('Automation Command Registry', () => {
         expect(command.mcp.public).toBe(false);
       } else if ([
         'asset.trash',
+        'asset.content.replace',
         'asset.move',
         'asset.rename-file',
         'asset.rename-files',
@@ -176,6 +177,20 @@ describe('Automation Command Registry', () => {
       }
       if (command.commandId === 'asset.trash' || command.commandId === 'asset.move') {
         expect(command.supportsUndo).toBe(true);
+      }
+      if (command.commandId === 'asset.content.replace') {
+        expect(command.requiredCapabilities).toEqual(['library.read', 'asset.read', 'content.write']);
+        expect(command.allowedSources).toEqual(['desktop-console', 'script', 'mcp', 'test', 'plugin']);
+        expect(command.approvalPolicy).toBe('plan');
+        expect(command.supportsUndo).toBe(false);
+        expect(command.atomicity).toBe('recoverable-file-operation');
+      }
+      if (command.commandId === 'asset.content.read') {
+        expect(command.requiredCapabilities).toEqual(['library.read', 'asset.read', 'content.read']);
+        expect(command.allowedSources).toEqual(['desktop-console', 'script', 'mcp', 'test', 'plugin']);
+        expect(command.approvalPolicy).toBe('none');
+        expect(command.mcp.public).toBe(false);
+        expect(command.supportsUndo).toBe(false);
       }
       if (command.commandId === 'file.import') {
         // Import recovery refs are not wired; do not advertise undo yet.

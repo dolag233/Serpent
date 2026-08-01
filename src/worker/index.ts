@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { parseWorkerRequest, type WorkerRequest } from '../shared/protocol/requests';
 import {
   parseWorkerControlMessage,
@@ -46,6 +47,11 @@ import {
   boundedWriteLibraryId,
   executeBoundedWriteWorkerCommand,
 } from './bounded-write-command';
+import {
+  parsePluginMediaProviderResponse,
+  type PluginMediaProviderRequest,
+  type PluginMediaProviderResult,
+} from '../shared/plugin-media-protocol';
 
 const parentPort: ParentPort | undefined = process.parentPort;
 const aiJobAbortRegistry = new AiJobAbortRegistry();
@@ -61,6 +67,10 @@ const analysisControls = new Map<string, {
 }>();
 const activeThumbnailQueues = new Set<string>();
 const rescheduledThumbnailQueues = new Set<string>();
+const pendingPluginMediaProviderRequests = new Map<string, {
+  resolve: (result: PluginMediaProviderResult) => void;
+  timer: ReturnType<typeof setTimeout>;
+}>();
 
 if (!parentPort) {
   throw new Error('Library Worker must be started by the Electron main process.');
@@ -88,6 +98,56 @@ const libraryService = new LibraryService({
 // event-loop ref. Development builds happen to have other active handles; a
 // packaged utility process can otherwise exit cleanly immediately after ready.
 const processLifetime = setInterval(() => {}, 60 * 60_000);
+
+function requestPluginMediaProvider(input: Omit<PluginMediaProviderRequest, 'type' | 'requestId'>): Promise<PluginMediaProviderResult> {
+  const requestId = randomUUID();
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      pendingPluginMediaProviderRequests.delete(requestId);
+      resolve({
+        status: 'native-fallback',
+        assetId: input.assetId,
+        kind: input.kind,
+        errorCode: 'PLUGIN_PROVIDER_TIMEOUT',
+      });
+    }, 35_000);
+    timer.unref?.();
+    pendingPluginMediaProviderRequests.set(requestId, { resolve, timer });
+    parentPort?.postMessage({
+      type: 'plugin-media-provider.request',
+      requestId,
+      ...input,
+    });
+  });
+}
+
+async function writePluginMediaArtifact(input: {
+  libraryId: string;
+  assetId: string;
+  kind: 'preview' | 'thumbnail';
+  asset?: PluginMediaProviderRequest['asset'];
+}): Promise<{ artifactId: string } | null> {
+  const result = await requestPluginMediaProvider(input);
+  if (result.status !== 'provided' || result.assetId !== input.assetId || !result.media) {
+    return null;
+  }
+  try {
+    return libraryService.writePluginMediaArtifact({
+      libraryId: input.libraryId,
+      assetId: input.assetId,
+      mimeType: result.media.mimeType,
+      bytesBase64: result.media.bytesBase64,
+      ...(result.providerId === undefined ? {} : { providerId: result.providerId }),
+    });
+  } catch (error) {
+    libraryService.reportDiagnostic('plugin-media-artifact.write', error, {
+      libraryId: input.libraryId,
+      assetId: input.assetId,
+      kind: input.kind,
+    });
+    return null;
+  }
+}
 
 function scheduleThumbnailQueue(
   libraryId: string,
@@ -146,6 +206,15 @@ function scheduleThumbnailQueue(
         libraryService.processThumbnailQueue(libraryId, {
           maxJobs: 2,
           onResult,
+          pluginMediaProvider: async ({ assetId, signal, asset }) => {
+            if (signal?.aborted) return null;
+            return (await writePluginMediaArtifact({
+              libraryId,
+              assetId,
+              kind: 'thumbnail',
+              ...(asset === undefined ? {} : { asset }),
+            }))?.artifactId ?? null;
+          },
         })))).reduce((total, count) => total + count, 0);
       continueImmediately = processed === 4;
     } catch (error) {
@@ -762,6 +831,22 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       const { trashedCount, operationId } = libraryService.trashAssets(request.command);
       return { ok: true, type: 'asset.trashed', trashedCount, operationId };
     }
+    case 'asset.content.replace': {
+      if (request.command.automationPlan) {
+        libraryService.validateAutomationFileOperationPlan({
+          libraryId: request.command.libraryId,
+          expectedChangeSequence: request.command.automationPlan.expectedChangeSequence,
+          assetStates: request.command.automationPlan.assetStates,
+        });
+      }
+      const result = libraryService.replaceManagedAssetContent(request.command);
+      scheduleThumbnailScene(request.command.libraryId, 'mutation', [result.assetId]);
+      return { ok: true, type: 'asset.content.replaced', ...result };
+    }
+    case 'asset.content.read': {
+      const result = libraryService.readManagedAssetContent(request.command);
+      return { ok: true, type: 'asset.content.read', ...result };
+    }
     case 'asset.restore': {
       const { restoredCount, assets } = libraryService.restoreAssets(request.command);
       scheduleThumbnailScene(request.command.libraryId, 'restore', assets.map((asset) => asset.assetId));
@@ -1329,7 +1414,13 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       };
     }
     case 'media.generate-thumbnail': {
-      const { artifactId } = await libraryService.generateThumbnail(request.command);
+      const pluginArtifact = await writePluginMediaArtifact({
+        libraryId: request.command.libraryId,
+        assetId: request.command.assetId,
+        kind: 'thumbnail',
+      });
+      const { artifactId } = pluginArtifact
+        ?? await libraryService.generateThumbnail(request.command);
       // Publish the thumbnail-ready event to the renderer
       if (parentPort) {
         parentPort.postMessage({
@@ -1392,12 +1483,21 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       };
     }
     case 'media.get-preview-artifact': {
+      const pluginArtifact = await writePluginMediaArtifact({
+        libraryId: request.command.libraryId,
+        assetId: request.command.assetId,
+        kind: 'preview',
+      });
       // Opening a preview is also an idempotent, high-priority generation hint.
-      scheduleThumbnailScene(
-        request.command.libraryId,
-        'mutation',
-        [request.command.assetId],
-      );
+      // A provided plugin artifact already satisfies the request, so avoid
+      // enqueueing a native job that could overwrite it.
+      if (!pluginArtifact) {
+        scheduleThumbnailScene(
+          request.command.libraryId,
+          'mutation',
+          [request.command.assetId],
+        );
+      }
       const preview = await libraryService.resolvePreviewArtifact(
         request.command.libraryId,
         request.command.assetId,
@@ -1496,6 +1596,94 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
         type: 'media.jobs.retried',
         libraryId: request.command.libraryId,
         ...result,
+      };
+    }
+    case 'plugin.jobs.enqueue': {
+      const job = libraryService.enqueuePluginJob({
+        libraryId: request.command.libraryId,
+        ownerPluginId: request.command.ownerPluginId,
+        ownerPackageHash: request.command.ownerPackageHash,
+        pluginHandlerId: request.command.pluginHandlerId,
+        payload: request.command.payload,
+        recoveryStrategy: request.command.recoveryStrategy,
+        priority: request.command.priority,
+      });
+      return {
+        ok: true,
+        type: 'plugin.jobs.enqueued',
+        libraryId: request.command.libraryId,
+        job,
+      };
+    }
+    case 'plugin.jobs.list': {
+      const jobs = libraryService.listPluginJobs(request.command.libraryId);
+      return {
+        ok: true,
+        type: 'plugin.jobs.listed',
+        libraryId: request.command.libraryId,
+        jobs,
+      };
+    }
+    case 'plugin.jobs.claim-next': {
+      const job = libraryService.claimNextPluginJob({
+        libraryId: request.command.libraryId,
+        ownerPluginId: request.command.ownerPluginId,
+        ownerPackageHash: request.command.ownerPackageHash,
+      });
+      return {
+        ok: true,
+        type: 'plugin.jobs.claimed',
+        libraryId: request.command.libraryId,
+        job,
+      };
+    }
+    case 'plugin.jobs.complete': {
+      const job = libraryService.completePluginJob({
+        libraryId: request.command.libraryId,
+        jobId: request.command.jobId,
+        status: request.command.status,
+        errorCode: request.command.errorCode,
+        errorDetail: request.command.errorDetail,
+        progress: request.command.progress,
+      });
+      return {
+        ok: true,
+        type: 'plugin.jobs.completed',
+        libraryId: request.command.libraryId,
+        job,
+      };
+    }
+    case 'plugin.jobs.pause-owners': {
+      const pausedCount = libraryService.pausePluginJobsForOwners({
+        libraryId: request.command.libraryId,
+        owners: request.command.owners,
+        errorCode: request.command.errorCode,
+        errorDetail: request.command.errorDetail,
+      });
+      return {
+        ok: true,
+        type: 'plugin.jobs.paused',
+        libraryId: request.command.libraryId,
+        pausedCount,
+      };
+    }
+    case 'plugin.derived-fields.materialize': {
+      const result = libraryService.materializePluginDerivedFields(request.command);
+      return {
+        ok: true,
+        type: 'plugin.derived-fields.materialized',
+        libraryId: request.command.libraryId,
+        ...result,
+      };
+    }
+    case 'plugin.derived-fields.query': {
+      const result = libraryService.queryPluginDerivedFields(request.command);
+      return {
+        ok: true,
+        type: 'plugin.derived-fields.queried',
+        libraryId: request.command.libraryId,
+        ...result,
+        offset: request.command.offset ?? 0,
       };
     }
     case 'ai.configure': {
@@ -1837,6 +2025,19 @@ function requestIdFrom(input: unknown): string | undefined {
 
 parentPort.on('message', async (event) => {
   const input: unknown = event.data;
+
+  try {
+    const providerResponse = parsePluginMediaProviderResponse(input);
+    const pending = pendingPluginMediaProviderRequests.get(providerResponse.requestId);
+    if (pending) {
+      clearTimeout(pending.timer);
+      pendingPluginMediaProviderRequests.delete(providerResponse.requestId);
+      pending.resolve(providerResponse.result);
+    }
+    return;
+  } catch {
+    // A normal Worker request or control message; validate it below.
+  }
 
   try {
     const control = parseWorkerControlMessage(input);

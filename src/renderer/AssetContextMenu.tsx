@@ -41,8 +41,35 @@ import {
   buildMultiAssetMenuSkipReport,
   formatMultiAssetMenuSkipFooter,
 } from "./menu-skip-report";
+import type { SerpentPluginManagerApi } from "../shared/plugin-manager-api";
+import {
+  runPluginMenuCommand,
+  usePluginMenuContributions,
+  type PluginMenuDescriptor,
+} from "./plugin-menu-contributions";
 
 const isMac = isMacPlatform(navigator.userAgent);
+
+function PluginMenuCommandsSection(props: {
+  items: readonly PluginMenuDescriptor[];
+  onRun: (item: PluginMenuDescriptor) => void;
+  label: string;
+}) {
+  if (props.items.length === 0) return null;
+  return (
+    <ContextMenuSection label={props.label}>
+      {props.items.map((item) => (
+        <ContextMenuItem
+          key={item.id}
+          icon={<Icon name="box" size={14} />}
+          label={item.label}
+          onAction={() => props.onRun(item)}
+        />
+      ))}
+    </ContextMenuSection>
+  );
+}
+
 
 // 0015-B: 单资产右键菜单的静态项由统一命令注册表驱动（REQ-COMMAND-001）；
 // 注册表是纯数据，模块级构建一次即可。0015-C: 多资产分支同样接入。
@@ -78,10 +105,14 @@ function descriptorKey(descriptor: ContextMenuDescriptor): string {
       return "trash";
     case "trashed-folder":
       return `trashed-folder:${descriptor.tombstoneId}`;
+    case "workspace":
+      return `workspace:${(descriptor.assetIds ?? []).join(",")}`;
   }
 }
 
 interface AssetContextMenuProps {
+  libraryId?: string;
+  pluginApi?: SerpentPluginManagerApi;
   tags: TagSummary[];
   collections: CollectionSummary[];
   linkedFolders: LinkedFolderSummary[];
@@ -273,6 +304,47 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
     };
   }, [activeDescriptorKey, activeContextMenu, onLoadCollectionMemberships]);
 
+  const pluginAssetMenuItems = usePluginMenuContributions(
+    props.pluginApi,
+    props.libraryId,
+    "menus.asset",
+    activeContextMenu?.descriptor.type === "asset",
+    activeDescriptorKey,
+  );
+  const pluginFolderMenuItems = usePluginMenuContributions(
+    props.pluginApi,
+    props.libraryId,
+    "menus.folder",
+    activeContextMenu?.descriptor.type === "folder",
+    activeDescriptorKey,
+  );
+  const pluginCollectionMenuItems = usePluginMenuContributions(
+    props.pluginApi,
+    props.libraryId,
+    "menus.collection",
+    activeContextMenu?.descriptor.type === "organization",
+    activeDescriptorKey,
+  );
+  const pluginWorkspaceMenuItems = usePluginMenuContributions(
+    props.pluginApi,
+    props.libraryId,
+    "menus.workspace",
+    activeContextMenu?.descriptor.type === "workspace",
+    activeDescriptorKey,
+  );
+
+  const runPluginCommand = (
+    item: PluginMenuDescriptor,
+    context: {
+      assetIds?: string[];
+      folderIds?: string[];
+      collectionIds?: string[];
+    },
+  ) => {
+    if (!props.pluginApi || !props.libraryId) return;
+    void runPluginMenuCommand(props.pluginApi, props.libraryId, item, context);
+  };
+
   if (!activeContextMenu) return null;
 
   const ariaLabel =
@@ -292,6 +364,8 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
             ? t("menu.folderOps", {
                 name: activeContextMenu.descriptor.name,
               })
+            : activeContextMenu.descriptor.type === "workspace"
+              ? t("scope.workspace")
             : activeContextMenu.descriptor.type === "trash"
               ? t("scope.trash")
               : activeContextMenu.descriptor.type === "trashed-folder"
@@ -350,6 +424,23 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
           />
         ) : (
           <>
+        {activeContextMenu.descriptor.type === "workspace" && (() => {
+          const desc = activeContextMenu.descriptor;
+          if (desc.type !== "workspace") return null;
+          const assetIds = desc.assetIds;
+          return (
+            <PluginMenuCommandsSection
+              items={pluginWorkspaceMenuItems}
+              label={t("contextMenu.pluginCommands")}
+              onRun={(item) => runPluginCommand(
+                item,
+                assetIds === undefined || assetIds.length === 0
+                  ? {}
+                  : { assetIds: [...assetIds] },
+              )}
+            />
+          );
+        })()}
         {activeContextMenu.descriptor.type === "trash" && (
           <ContextMenuSection label={t("command.group.delete")}>
             <ContextMenuItem
@@ -556,6 +647,11 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                   onAction={() => runSidebarCommand("collection.delete")}
                 />
               )}
+              <PluginMenuCommandsSection
+                items={pluginCollectionMenuItems}
+                label={t("contextMenu.pluginCommands")}
+                onRun={(item) => runPluginCommand(item, { collectionIds: [desc.id] })}
+              />
             </>
           );
         })()}
@@ -762,6 +858,11 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                   )}
                 </ContextMenuSection>
               )}
+              <PluginMenuCommandsSection
+                items={pluginFolderMenuItems}
+                label={t("contextMenu.pluginCommands")}
+                onRun={(item) => runPluginCommand(item, { folderIds: [desc.folderId] })}
+              />
             </>
           );
         })()}
@@ -1264,6 +1365,13 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                     />
                   )}
                 </ContextMenuSection>
+                {pluginAssetMenuItems.length > 0 && (
+                  <PluginMenuCommandsSection
+                    items={pluginAssetMenuItems}
+                    label={t("contextMenu.pluginCommands")}
+                    onRun={(item) => runPluginCommand(item, { assetIds: [assetId] })}
+                  />
+                )}
                 <ContextMenuSection label={t("command.group.organize")}>
                   {singleAsset?.sequence ? (
                     <ContextMenuItem

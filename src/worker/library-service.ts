@@ -50,6 +50,18 @@ import {
 } from './palette-extractor';
 import { pathIsWithin } from './path-utils';
 import {
+  claimNextPluginJobRecord,
+  completePluginJobRecord,
+  enqueuePluginJobRecord,
+  listPluginJobRecords,
+  pausePluginJobsForOwners as pausePluginJobRowsForOwners,
+  recoverInterruptedPluginJobs,
+} from './plugin-job-repository';
+import {
+  materializePluginDerivedFields as materializePluginDerivedFieldRows,
+  queryPluginDerivedFields as queryPluginDerivedFieldRows,
+} from './plugin-derived-field-repository';
+import {
   LibraryWriteCoordinator,
   LibraryWriteCoordinatorError,
   isSQLiteWriteContention,
@@ -61,6 +73,7 @@ import {
 } from './library-write-coordinator';
 
 import { sanitizeAiDescription } from '../shared/ai-analysis-settings';
+import { CONTENT_REPLACE_MAX_BYTES } from '../shared/content-replace';
 import { smartCollectionQueryDefinitionSchema, extractedVideoMetadataSchema, type AssetMetadataResult, type ExtractedMetadataResult, type ExtractedVideoMetadata, type AssetSummary, type CollectionSummary, type FilterClause, type FolderBrowseEntry, type LinkedFolderRule, type LinkedFolderSummary, type ManagedFolderSummary, type SearchScope, type SmartCollectionQueryDefinition, type SmartCollectionSummary, type TagCooccurrenceGraph, type TagSummary, type TrashedFolderSummary } from '../shared/asset-types';
 import { BROWSE_SCOPE_MAX_ASSETS } from '../shared/browse-scope';
 import { hasMeaningfulSmartCollectionCondition } from '../shared/smart-collection-query';
@@ -1752,6 +1765,93 @@ const THUMBNAIL_QUEUE_INDEX_SCHEMA_CHECKSUM = createHash('sha256')
   .update(THUMBNAIL_QUEUE_INDEX_SCHEMA_SQL)
   .digest('hex');
 
+/**
+ * Migration v27: plugin background jobs reuse the shared jobs table with a
+ * dedicated kind plus owner/version/handler/payload columns for §9.4.
+ */
+const PLUGIN_BACKGROUND_JOBS_SCHEMA_SQL = `
+  CREATE TABLE jobs_v27 (
+    job_id TEXT PRIMARY KEY,
+    library_id TEXT NOT NULL,
+    asset_id TEXT REFERENCES assets(asset_id) ON DELETE CASCADE,
+    revision_id TEXT REFERENCES revisions(revision_id) ON DELETE SET NULL,
+    kind TEXT NOT NULL CHECK (
+      kind IN ('generate_thumbnail', 'generate_video_poster',
+               'generate_contact_sheet', 'generate_webm_proxy', 'generate_audio_proxy',
+               'extract_metadata', 'extract_palette',
+               'ai.image.analysis', 'ai.video.analysis',
+               'plugin.background')
+    ),
+    status TEXT NOT NULL CHECK (
+      status IN ('queued', 'running', 'paused', 'succeeded', 'failed', 'cancelled')
+    ),
+    priority INTEGER NOT NULL DEFAULT 0,
+    progress REAL DEFAULT 0.0,
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    error_code TEXT,
+    error_detail TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    owner_plugin_id TEXT,
+    owner_package_hash TEXT,
+    plugin_handler_id TEXT,
+    payload_json TEXT,
+    recovery_strategy TEXT CHECK (
+      recovery_strategy IS NULL
+      OR recovery_strategy IN ('idempotent', 'checkpoint')
+    )
+  );
+  INSERT INTO jobs_v27 (
+    job_id, library_id, asset_id, revision_id, kind, status, priority, progress,
+    attempt_count, error_code, error_detail, created_at, updated_at,
+    owner_plugin_id, owner_package_hash, plugin_handler_id, payload_json, recovery_strategy
+  )
+  SELECT
+    job_id, library_id, asset_id, revision_id, kind, status, priority, progress,
+    attempt_count, error_code, error_detail, created_at, updated_at,
+    NULL, NULL, NULL, NULL, NULL
+  FROM jobs;
+  DROP TABLE jobs;
+  ALTER TABLE jobs_v27 RENAME TO jobs;
+  CREATE INDEX jobs_library_status_priority
+    ON jobs(library_id, status, priority DESC, created_at);
+  CREATE INDEX IF NOT EXISTS jobs_asset_kind_status
+    ON jobs(asset_id, kind, status);
+  CREATE INDEX IF NOT EXISTS jobs_plugin_owner_status
+    ON jobs(library_id, owner_plugin_id, owner_package_hash, status)
+    WHERE kind = 'plugin.background';
+`;
+const PLUGIN_BACKGROUND_JOBS_SCHEMA_CHECKSUM = createHash('sha256')
+  .update(PLUGIN_BACKGROUND_JOBS_SCHEMA_SQL)
+  .digest('hex');
+
+/**
+ * Migration v28: namespaced, package-versioned materialized Provider fields.
+ * Queries only select the active package hash supplied by Main, so upgrading
+ * or deactivating a plugin cannot expose stale values.
+ */
+const PLUGIN_DERIVED_FIELDS_SCHEMA_SQL = `
+  CREATE TABLE plugin_derived_fields (
+    library_id TEXT NOT NULL,
+    asset_id TEXT NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE,
+    plugin_id TEXT NOT NULL,
+    package_hash TEXT NOT NULL,
+    field_id TEXT NOT NULL,
+    field_type TEXT NOT NULL CHECK (field_type IN ('string', 'number', 'boolean', 'date', 'json')),
+    value_text TEXT,
+    value_number REAL,
+    value_boolean INTEGER CHECK (value_boolean IS NULL OR value_boolean IN (0, 1)),
+    value_json TEXT,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (library_id, asset_id, plugin_id, package_hash, field_id)
+  );
+  CREATE INDEX plugin_derived_fields_lookup
+    ON plugin_derived_fields(library_id, plugin_id, package_hash, field_id, asset_id);
+`;
+const PLUGIN_DERIVED_FIELDS_SCHEMA_CHECKSUM = createHash('sha256')
+  .update(PLUGIN_DERIVED_FIELDS_SCHEMA_SQL)
+  .digest('hex');
+
 const MIGRATIONS = [
   { version: 1, sql: INITIAL_SCHEMA_SQL, checksum: INITIAL_SCHEMA_CHECKSUM },
   { version: 2, sql: ASSET_SCHEMA_SQL, checksum: ASSET_SCHEMA_CHECKSUM },
@@ -1806,6 +1906,16 @@ const MIGRATIONS = [
     version: 26,
     sql: THUMBNAIL_QUEUE_INDEX_SCHEMA_SQL,
     checksum: THUMBNAIL_QUEUE_INDEX_SCHEMA_CHECKSUM,
+  },
+  {
+    version: 27,
+    sql: PLUGIN_BACKGROUND_JOBS_SCHEMA_SQL,
+    checksum: PLUGIN_BACKGROUND_JOBS_SCHEMA_CHECKSUM,
+  },
+  {
+    version: 28,
+    sql: PLUGIN_DERIVED_FIELDS_SCHEMA_SQL,
+    checksum: PLUGIN_DERIVED_FIELDS_SCHEMA_CHECKSUM,
   },
 ] as const;
 const SUPPORTED_SCHEMA_VERSION = MIGRATIONS.at(-1)!.version;
@@ -2355,7 +2465,7 @@ export interface AssetsChangedEvent {
   changedCount: number;
   libraryId: string;
   missingCount: number;
-  source?: 'watcher' | 'text-save' | 'client';
+  source?: 'watcher' | 'text-save' | 'content-replace' | 'client';
   type: 'asset.changed';
 }
 
@@ -4720,13 +4830,13 @@ export class LibraryService {
    */
   previewAutomationFileOperation(input: {
     libraryId: string;
-    operation: 'trash' | 'move' | 'rename-file' | 'rename-files' | 'restore-if-original-vacant';
+    operation: 'trash' | 'replace-content' | 'move' | 'rename-file' | 'rename-files' | 'restore-if-original-vacant';
     assetIds: string[];
     newBaseName?: string;
     targetFolderId?: string | null;
   }): {
     libraryId: string;
-    operation: 'trash' | 'move' | 'rename-file' | 'rename-files' | 'restore-if-original-vacant';
+    operation: 'trash' | 'replace-content' | 'move' | 'rename-file' | 'rename-files' | 'restore-if-original-vacant';
     changeSequence: number;
     targetCount: number;
     executableCount: number;
@@ -4778,6 +4888,10 @@ export class LibraryService {
       });
       const executable = input.operation === 'trash'
         ? row.location_kind === 'managed' && row.deleted_at === null
+        : input.operation === 'replace-content'
+          ? row.location_kind === 'managed'
+            && row.deleted_at === null
+            && row.availability === 'available'
         : input.operation === 'move'
           ? row.location_kind === 'managed'
             && row.deleted_at === null
@@ -10364,6 +10478,105 @@ export class LibraryService {
 
   // ── Media Job Queue Management ────────────────────────────────────
 
+  enqueuePluginJob(input: {
+    libraryId: string;
+    ownerPluginId: string;
+    ownerPackageHash: string;
+    pluginHandlerId: string;
+    payload?: Record<string, unknown>;
+    recoveryStrategy: import('../plugins/plugin-jobs').PluginJobRecoveryStrategy;
+    priority?: number;
+  }): import('../plugins/plugin-jobs').PluginJobRecord {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    return enqueuePluginJobRecord(openLibrary.connection, {
+      libraryId: openLibrary.summary.libraryId,
+      ownerPluginId: input.ownerPluginId,
+      ownerPackageHash: input.ownerPackageHash,
+      pluginHandlerId: input.pluginHandlerId,
+      payload: input.payload,
+      recoveryStrategy: input.recoveryStrategy,
+      priority: input.priority,
+    });
+  }
+
+  listPluginJobs(libraryId: string): import('../plugins/plugin-jobs').PluginJobRecord[] {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    return listPluginJobRecords(openLibrary.connection, openLibrary.summary.libraryId);
+  }
+
+  claimNextPluginJob(input: {
+    libraryId: string;
+    ownerPluginId: string;
+    ownerPackageHash: string;
+  }): import('../plugins/plugin-jobs').PluginJobRecord | null {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    return claimNextPluginJobRecord(openLibrary.connection, {
+      libraryId: openLibrary.summary.libraryId,
+      ownerPluginId: input.ownerPluginId,
+      ownerPackageHash: input.ownerPackageHash,
+    });
+  }
+
+  completePluginJob(input: {
+    libraryId: string;
+    jobId: string;
+    status: 'succeeded' | 'failed' | 'cancelled';
+    errorCode?: string;
+    errorDetail?: string;
+    progress?: number;
+  }): import('../plugins/plugin-jobs').PluginJobRecord | null {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    return completePluginJobRecord(openLibrary.connection, input);
+  }
+
+  pausePluginJobsForOwners(input: {
+    libraryId: string;
+    owners: ReadonlyArray<{ pluginId: string; packageHash?: string }>;
+    errorCode?: string;
+    errorDetail?: string;
+  }): number {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    return pausePluginJobRowsForOwners(openLibrary.connection, {
+      libraryId: openLibrary.summary.libraryId,
+      owners: input.owners,
+      errorCode: input.errorCode ?? 'PLUGIN_UNAVAILABLE',
+      errorDetail: input.errorDetail
+        ?? 'The owning plugin is missing, disabled, or incompatible on this device.',
+    });
+  }
+
+  materializePluginDerivedFields(input: {
+    libraryId: string;
+    pluginId: string;
+    packageHash: string;
+    fieldId: string;
+    fieldType: import('../plugins/plugin-providers').PluginProviderFieldType;
+    values: ReadonlyArray<{ assetId: string; value: string | number | boolean | null }>;
+  }): { writtenCount: number; fieldKey: string } {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    return materializePluginDerivedFieldRows(openLibrary.connection, {
+      ...input,
+      libraryId: openLibrary.summary.libraryId,
+    });
+  }
+
+  queryPluginDerivedFields(input: {
+    libraryId: string;
+    pluginId: string;
+    packageHash: string;
+    fieldId: string;
+    operator: 'equals' | 'contains' | 'gt' | 'gte' | 'lt' | 'lte';
+    value: string | number | boolean | null;
+    limit?: number;
+    offset?: number;
+  }): { assetIds: string[]; total: number } {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    return queryPluginDerivedFieldRows(openLibrary.connection, {
+      ...input,
+      libraryId: openLibrary.summary.libraryId,
+    });
+  }
+
   listMediaJobs(libraryId: string): {
     queued: number;
     running: number;
@@ -12044,6 +12257,64 @@ export class LibraryService {
       : null;
   }
 
+  /** Persist bounded Main-brokered plugin media as the normal thumbnail artifact. */
+  writePluginMediaArtifact(input: {
+    libraryId: string;
+    assetId: string;
+    mimeType: string;
+    bytesBase64: string;
+    providerId?: string;
+  }): { artifactId: string } {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    const asset = openLibrary.connection
+      .prepare('SELECT current_revision_id FROM assets WHERE asset_id = ? AND deleted_at IS NULL')
+      .get(input.assetId) as { current_revision_id: string | null } | undefined;
+    if (!asset?.current_revision_id) throw new LibraryServiceError('ASSET_NOT_FOUND');
+
+    const bytes = Buffer.from(input.bytesBase64, 'base64');
+    if (bytes.length === 0 || bytes.length > 256 * 1024) {
+      throw new LibraryServiceError('INTERNAL_ERROR');
+    }
+
+    const artifactId = randomUUID();
+    const artifactRelPath = `${artifactId}.plugin`;
+    const artifactAbsPath = path.join(this.artifactsDir(openLibrary), artifactRelPath);
+    mkdirSync(this.artifactsDir(openLibrary), { recursive: true });
+    try {
+      writeFileSync(artifactAbsPath, bytes, { flag: 'wx' });
+      const now = new Date().toISOString();
+      openLibrary.connection.transaction(() => {
+        openLibrary.connection
+          .prepare(
+            `UPDATE revision_artifacts
+                SET invalidated_at = ?
+              WHERE revision_id = ? AND kind = 'thumbnail' AND invalidated_at IS NULL`,
+          )
+          .run(now, asset.current_revision_id);
+        openLibrary.connection
+          .prepare(
+            `INSERT INTO revision_artifacts
+               (artifact_id, revision_id, kind, mime_type, byte_size, file_path,
+                generator_version, status, generated_at)
+             VALUES (?, ?, 'thumbnail', ?, ?, ?, ?, 'ready', ?)`,
+          )
+          .run(
+            artifactId,
+            asset.current_revision_id,
+            input.mimeType,
+            bytes.length,
+            artifactRelPath,
+            `plugin:${input.providerId ?? 'media-provider'}`,
+            now,
+          );
+      })();
+      return { artifactId };
+    } catch (error) {
+      rmSync(artifactAbsPath, { force: true });
+      throw error;
+    }
+  }
+
   /**
    * Return the current (invalidated_at IS NULL) artifact of a given kind
    * for an asset's current revision. Returns null if none exists.
@@ -12054,7 +12325,14 @@ export class LibraryService {
     libraryId: string,
     assetId: string,
     kind: string,
-  ): { artifactId: string; filePath: string; mimeType: string; status: string; errorCode: string | null } | null {
+  ): {
+    artifactId: string;
+    filePath: string;
+    mimeType: string;
+    generatorVersion: string;
+    status: string;
+    errorCode: string | null;
+  } | null {
     const openLibrary = this.requireOpenLibrary(libraryId);
     const assetRow = openLibrary.connection
       .prepare('SELECT current_revision_id FROM assets WHERE asset_id = ?')
@@ -12063,7 +12341,7 @@ export class LibraryService {
 
     const row = openLibrary.connection
       .prepare(
-        `SELECT artifact_id, file_path, mime_type, status, error_code
+        `SELECT artifact_id, file_path, mime_type, generator_version, status, error_code
            FROM revision_artifacts
           WHERE revision_id = ?
             AND kind = ?
@@ -12074,6 +12352,7 @@ export class LibraryService {
         artifact_id: string;
         file_path: string;
         mime_type: string;
+        generator_version: string;
         status: string;
         error_code: string | null;
       } | undefined;
@@ -12083,6 +12362,7 @@ export class LibraryService {
           artifactId: row.artifact_id,
           filePath: row.file_path,
           mimeType: row.mime_type,
+          generatorVersion: row.generator_version,
           status: row.status,
           errorCode: row.error_code,
         }
@@ -12332,7 +12612,17 @@ export class LibraryService {
         : mediaType === 'text'
           ? 'text/plain'
         : 'image/webp';
+    const artifact = this.getCurrentArtifact(libraryId, assetId, kind);
     if (mediaType === 'other') {
+      if (artifact?.status === 'ready' && artifact.generatorVersion.startsWith('plugin:')) {
+        return {
+          mediaType: 'image',
+          status: 'ready',
+          kind: 'thumbnail',
+          artifactId: artifact.artifactId,
+          mimeType: artifact.mimeType,
+        };
+      }
       return {
         mediaType,
         status: 'missing',
@@ -12383,7 +12673,6 @@ export class LibraryService {
           ?? this.getCurrentArtifact(libraryId, assetId, 'thumbnail'))
       : null;
     const posterArtifactId = poster?.status === 'ready' ? poster.artifactId : undefined;
-    const artifact = this.getCurrentArtifact(libraryId, assetId, kind);
     if (mediaType === 'video' || mediaType === 'audio') {
       const status = artifact?.status === 'generating' ? 'pending' : artifact?.status;
       if (status === 'ready' && artifact) {
@@ -12453,7 +12742,7 @@ export class LibraryService {
       // (REQ-VIEW-002: uncompressed source in the viewer).
       if (
         status === 'ready' &&
-        !(mediaType === 'image' && nativeMimeType)
+        !(mediaType === 'image' && nativeMimeType && !artifact.generatorVersion.startsWith('plugin:'))
       ) {
         return {
           mediaType,
@@ -13358,6 +13647,16 @@ export class LibraryService {
         artifactId?: string;
         errorCode?: string;
       }) => void;
+      pluginMediaProvider?: (input: {
+        assetId: string;
+        signal: AbortSignal;
+        asset?: {
+          assetId: string;
+          displayName: string;
+          relativeFilePath: string;
+          currentRevisionId: string;
+        };
+      }) => Promise<string | null>;
     } = {},
   ): Promise<number> {
     const openLibrary = this.requireOpenLibrary(libraryId);
@@ -13408,13 +13707,32 @@ export class LibraryService {
       const controller = new AbortController();
       this.activeMediaJobs.set(job.job_id, { controller, libraryId });
       const previousArtifacts = this.mediaArtifactSnapshot(openLibrary, job.revision_id);
+      const providerAssetRow = openLibrary.connection
+        .prepare('SELECT relative_file_path FROM assets WHERE asset_id = ?')
+        .get(job.asset_id) as { relative_file_path: string } | undefined;
 
       try {
         if (job.kind === 'generate_thumbnail' || job.kind === 'generate_video_poster') {
-          const generated = await this.generateThumbnail(
-            { libraryId, assetId: job.asset_id },
-            { signal: controller.signal },
-          );
+          const pluginArtifactId = options.pluginMediaProvider
+            ? await options.pluginMediaProvider({
+              assetId: job.asset_id,
+              signal: controller.signal,
+              ...(providerAssetRow === undefined ? {} : {
+                asset: {
+                  assetId: job.asset_id,
+                  displayName: path.basename(providerAssetRow.relative_file_path),
+                  relativeFilePath: providerAssetRow.relative_file_path,
+                  currentRevisionId: job.revision_id,
+                },
+              }),
+            })
+            : null;
+          const generated = pluginArtifactId
+            ? { artifactId: pluginArtifactId }
+            : await this.generateThumbnail(
+              { libraryId, assetId: job.asset_id },
+              { signal: controller.signal },
+            );
           if (controller.signal.aborted || this.mediaJobState(libraryId, job.job_id) !== 'running') {
             this.discardLateMediaArtifacts(openLibrary, job.revision_id, previousArtifacts, {
               libraryId,
@@ -16095,6 +16413,240 @@ export class LibraryService {
       byteSize: storedByteSize,
       lineCount: countTextLines(input.content),
     };
+  }
+
+  /**
+   * Replace the bytes of an available managed asset without changing its
+   * asset identity or filename. The previous revision remains only as a
+   * database record; its derived artifacts are invalidated and the new
+   * revision is always marked as a client replacement.
+   */
+  replaceManagedAssetContent(input: {
+    libraryId: string;
+    assetId: string;
+    dataBase64: string;
+    expectedRevisionId?: string;
+  }): {
+    assetId: string;
+    revisionId: string;
+    byteSize: number;
+  } {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    if (
+      input.dataBase64.length === 0
+      || input.dataBase64.length % 4 !== 0
+      || !/^[A-Za-z0-9+/]*={0,2}$/u.test(input.dataBase64)
+    ) {
+      throw new LibraryServiceError('INVALID_ASSET_METADATA');
+    }
+
+    const payload = Buffer.from(input.dataBase64, 'base64');
+    if (payload.length > CONTENT_REPLACE_MAX_BYTES) {
+      throw new LibraryServiceError('INVALID_ASSET_METADATA');
+    }
+
+    const row = openLibrary.connection
+      .prepare(
+        `SELECT asset_id, location_kind, relative_file_path, current_revision_id,
+                availability, deleted_at
+           FROM assets WHERE asset_id = ?`,
+      )
+      .get(input.assetId) as {
+        asset_id: string;
+        location_kind: 'managed' | 'linked';
+        relative_file_path: string;
+        current_revision_id: string | null;
+        availability: 'available' | 'missing';
+        deleted_at: string | null;
+      } | undefined;
+    if (!row) throw new LibraryServiceError('ASSET_NOT_FOUND');
+    if (row.location_kind !== 'managed') {
+      throw new LibraryServiceError('LIBRARY_NOT_WRITABLE');
+    }
+    if (row.deleted_at !== null || row.availability !== 'available' || !row.current_revision_id) {
+      throw new LibraryServiceError('ASSET_NOT_FOUND', { reason: 'SOURCE_NOT_FOUND' });
+    }
+    if (
+      input.expectedRevisionId !== undefined
+      && input.expectedRevisionId !== row.current_revision_id
+    ) {
+      throw new LibraryServiceError('VERSION_CONFLICT');
+    }
+
+    const absolutePath = this.resolveAssetPath(input.libraryId, input.assetId);
+    const dir = path.dirname(absolutePath);
+    const tmpPath = path.join(dir, `.serpent-content-replace-${randomUUID()}.tmp`);
+    this.noteClientFilesystemMutation();
+    try {
+      writeFileSync(tmpPath, payload);
+      const fd = openSync(tmpPath, 'r+');
+      try {
+        fsyncSync(fd);
+      } finally {
+        closeSync(fd);
+      }
+      renameSync(tmpPath, absolutePath);
+    } catch (error) {
+      try {
+        rmSync(tmpPath, { force: true });
+      } catch {
+        // Best-effort cleanup.
+      }
+      throw new LibraryServiceError('LIBRARY_NOT_WRITABLE', { cause: error });
+    }
+
+    let fileStat: Stats | BigIntStats;
+    try {
+      fileStat = this.options.assetLstat
+        ? this.options.assetLstat(absolutePath)
+        : lstatSync(absolutePath, { bigint: true });
+    } catch (error) {
+      throw new LibraryServiceError('LIBRARY_NOT_WRITABLE', { cause: error });
+    }
+    const storedByteSize = Number(fileStat.size);
+    if (!Number.isSafeInteger(storedByteSize)) {
+      throw new LibraryServiceError('LIBRARY_NOT_WRITABLE');
+    }
+    const modifiedAt = new Date(Number(fileStat.mtimeMs)).toISOString();
+    const now = new Date().toISOString();
+    const revisionId = randomUUID();
+    openLibrary.connection.transaction(() => {
+      openLibrary.connection
+        .prepare(
+          `INSERT INTO revisions
+             (revision_id, asset_id, parent_revision_id, byte_size, modified_at,
+              original_filename, origin, accepted_at)
+           VALUES (?, ?, ?, ?, ?, ?, 'replace', ?)`,
+        )
+        .run(
+          revisionId,
+          input.assetId,
+          row.current_revision_id,
+          storedByteSize,
+          modifiedAt,
+          path.posix.basename(row.relative_file_path),
+          now,
+        );
+      openLibrary.connection
+        .prepare(
+          `UPDATE assets
+              SET current_revision_id = ?, updated_at = ?
+            WHERE asset_id = ?`,
+        )
+        .run(revisionId, now, input.assetId);
+      openLibrary.connection
+        .prepare(
+          `UPDATE revision_artifacts
+              SET invalidated_at = ?
+            WHERE revision_id = ?
+              AND invalidated_at IS NULL`,
+        )
+        .run(now, row.current_revision_id);
+      this.syncAssetSearchContent(openLibrary.connection, input.assetId);
+    })();
+
+    if (LibraryService.supportsThumbnail(row.relative_file_path)) {
+      this.enqueueThumbnailJobs(input.libraryId, {
+        assetIds: [input.assetId],
+        priority: 300,
+        repairFailed: true,
+      });
+    }
+    this.options.onAssetsChanged?.({
+      type: 'asset.changed',
+      libraryId: input.libraryId,
+      changedCount: 1,
+      missingCount: 0,
+      source: 'content-replace',
+    });
+    return {
+      assetId: input.assetId,
+      revisionId,
+      byteSize: storedByteSize,
+    };
+  }
+
+  /**
+   * Read a bounded prefix of an available managed asset. The absolute source
+   * path remains inside the Worker and only opaque revision/content metadata
+   * crosses the automation boundary.
+   */
+  readManagedAssetContent(input: {
+    libraryId: string;
+    assetId: string;
+    maxBytes?: number;
+  }): {
+    assetId: string;
+    revisionId: string;
+    byteSize: number;
+    dataBase64: string;
+    truncated: boolean;
+    mimeType: string | null;
+  } {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    const row = openLibrary.connection
+      .prepare(
+        `SELECT asset_id, location_kind, relative_file_path, current_revision_id,
+                availability, deleted_at
+           FROM assets WHERE asset_id = ?`,
+      )
+      .get(input.assetId) as {
+        asset_id: string;
+        location_kind: 'managed' | 'linked';
+        relative_file_path: string;
+        current_revision_id: string | null;
+        availability: 'available' | 'missing';
+        deleted_at: string | null;
+      } | undefined;
+    if (!row) throw new LibraryServiceError('ASSET_NOT_FOUND');
+    if (row.deleted_at !== null || row.availability !== 'available' || !row.current_revision_id) {
+      throw new LibraryServiceError('ASSET_NOT_FOUND', { reason: 'SOURCE_NOT_FOUND' });
+    }
+    const maxBytes = Math.min(
+      Math.max(1, input.maxBytes ?? CONTENT_REPLACE_MAX_BYTES),
+      CONTENT_REPLACE_MAX_BYTES,
+    );
+    if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0) {
+      throw new LibraryServiceError('INVALID_ASSET_METADATA');
+    }
+
+    const absolutePath = this.resolveAssetPath(input.libraryId, input.assetId);
+    const extension = path.extname(row.relative_file_path).toLowerCase();
+    const mimeType = directImageMimeForExtension(extension)
+      ?? videoMimeForExtension(extension)
+      ?? audioMimeForExtension(extension)
+      ?? textMimeForExtension(extension);
+    let descriptor: number | undefined;
+    try {
+      descriptor = openSync(absolutePath, 'r');
+      const stats = fstatSync(descriptor);
+      const byteSize = Number(stats.size);
+      if (!Number.isSafeInteger(byteSize)) {
+        throw new LibraryServiceError('LIBRARY_NOT_WRITABLE');
+      }
+      const bytesToRead = Math.min(byteSize, maxBytes);
+      const buffer = Buffer.allocUnsafe(bytesToRead);
+      let offset = 0;
+      while (offset < bytesToRead) {
+        const count = readSync(descriptor, buffer, offset, bytesToRead - offset, offset);
+        if (count === 0) break;
+        offset += count;
+      }
+      const payload = offset === buffer.length ? buffer : buffer.subarray(0, offset);
+      return {
+        assetId: row.asset_id,
+        revisionId: row.current_revision_id,
+        byteSize,
+        dataBase64: payload.toString('base64'),
+        truncated: byteSize > payload.length,
+        mimeType,
+      };
+    } catch (error) {
+      if (error instanceof LibraryServiceError) throw error;
+      throw new LibraryServiceError('ASSET_NOT_FOUND', { reason: 'SOURCE_NOT_FOUND', cause: error });
+    } finally {
+      if (descriptor !== undefined) closeSync(descriptor);
+    }
   }
 
   /**
@@ -20591,6 +21143,7 @@ export class LibraryService {
       this.recoverFileOperations(openLibrary);
       this.recoverInterruptedAiJobs(openLibrary);
       this.recoverInterruptedThumbnailJobs(openLibrary);
+      recoverInterruptedPluginJobs(openLibrary.connection, openLibrary.summary.libraryId);
       this.reconcileDefaultIgnoredAssets(openLibrary);
       // Serpent-pxd: exports that omitted `.serpent/artifacts` (or partial copies)
       // leave ready rows pointing at missing files → broken <img>. Invalidate so

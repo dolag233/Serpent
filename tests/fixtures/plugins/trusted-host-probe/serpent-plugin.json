@@ -11,7 +11,7 @@
     "pluginApi": 1
   },
   "runtime": {
-    "mode": "trusted",
+    "mode": "unrestricted",
     "entry": "entry/main.js"
   },
   "permissions": [

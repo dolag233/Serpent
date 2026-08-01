@@ -9,6 +9,10 @@ import type {
 } from './window-controls';
 import type { AppLogAutomationCorrelationId, ReadAppLogResult } from './app-log';
 import type { DesktopControlSelectionEvent } from './desktop-control';
+import type {
+  PluginInputCapturePublishPayload,
+  PluginInputCaptureRendererSession,
+} from './plugin-input-capture-renderer';
 
 /**
  * 「在系统浏览器中打开外部链接」的共享规则与类型。
@@ -160,4 +164,12 @@ export interface SerpentShellApi {
   onViewerVideoShortcut(
     listener: (action: ViewerVideoShortcutAction) => void,
   ): () => void;
+  /** Main → Renderer: active plugin input capture sessions for fan-in gating. */
+  onInputCaptureSessions(
+    listener: (sessions: PluginInputCaptureRendererSession[]) => void,
+  ): () => void;
+  /** Renderer → Main: DOM input capture fan-in. */
+  publishInputCaptureEvent(payload: PluginInputCapturePublishPayload): void;
+  /** Renderer → Main: pause capture while Host modals are open. */
+  setInputCaptureSystemModalActive(active: boolean): void;
 }

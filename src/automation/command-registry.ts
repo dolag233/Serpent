@@ -17,6 +17,10 @@ import {
 import type { WorkerCommand, WorkerRequest } from '../shared/protocol/requests';
 import { assetAuthorSchema, nameConflictDecisionSchema, sourcePageUrlSchema } from '../shared/protocol/requests';
 import {
+  CONTENT_REPLACE_MAX_BYTES,
+  CONTENT_REPLACE_MAX_BASE64_LENGTH,
+} from '../shared/content-replace';
+import {
   aiJobSchema,
   importCompletionSchema,
   importConflictPlanSchema,
@@ -109,6 +113,8 @@ export const automationCapabilitySchema = z.enum([
   'folder.read',
   'folder.write',
   'asset.read',
+  'content.read',
+  'content.write',
   'metadata.read',
   'tag.read',
   'collection.read',
@@ -194,6 +200,16 @@ export const automationCommandInputSchemas = {
   }),
   'asset.trash': z.strictObject({
     assetIds: z.array(nonBlankString).min(1).max(10_000),
+  }),
+  'asset.content.replace': z.strictObject({
+    assetId: nonBlankString,
+    dataBase64: z.string().min(1).max(CONTENT_REPLACE_MAX_BASE64_LENGTH),
+    expectedRevisionId: nonBlankString.optional(),
+    mimeHint: z.string().max(128).optional(),
+  }),
+  'asset.content.read': z.strictObject({
+    assetId: nonBlankString,
+    maxBytes: z.number().int().positive().max(CONTENT_REPLACE_MAX_BYTES).default(CONTENT_REPLACE_MAX_BYTES),
   }),
   'asset.move': z.strictObject({
     assetIds: z.array(nonBlankString).min(1).max(10_000),
@@ -401,6 +417,24 @@ const assetTrashWorkerResultSchema = z.strictObject({
   type: z.literal('asset.trashed'),
   trashedCount: z.number().int().nonnegative(),
   operationId: nonBlankString,
+});
+
+const assetContentReplaceWorkerResultSchema = z.strictObject({
+  ok: z.literal(true),
+  type: z.literal('asset.content.replaced'),
+  assetId: nonBlankString,
+  revisionId: nonBlankString,
+  byteSize: z.number().int().nonnegative(),
+});
+const assetContentReadWorkerResultSchema = z.strictObject({
+  ok: z.literal(true),
+  type: z.literal('asset.content.read'),
+  assetId: nonBlankString,
+  revisionId: nonBlankString,
+  byteSize: z.number().int().nonnegative(),
+  dataBase64: z.string().max(CONTENT_REPLACE_MAX_BASE64_LENGTH),
+  truncated: z.boolean(),
+  mimeType: z.string().nullable(),
 });
 
 const assetMoveWorkerResultSchema = z.strictObject({
@@ -646,6 +680,19 @@ export const automationCommandResultSchemas = {
   'asset.trash': z.strictObject({
     trashedCount: z.number().int().nonnegative(),
     operationId: nonBlankString,
+  }),
+  'asset.content.replace': z.strictObject({
+    assetId: nonBlankString,
+    revisionId: nonBlankString,
+    byteSize: z.number().int().nonnegative(),
+  }),
+  'asset.content.read': z.strictObject({
+    assetId: nonBlankString,
+    revisionId: nonBlankString,
+    byteSize: z.number().int().nonnegative(),
+    dataBase64: z.string().max(CONTENT_REPLACE_MAX_BASE64_LENGTH),
+    truncated: z.boolean(),
+    mimeType: z.string().nullable(),
   }),
   'asset.move': z.strictObject({
     movedCount: z.number().int().nonnegative(),
@@ -1024,6 +1071,77 @@ export const automationCommandRegistry = [
         : undefined;
     },
   },
+  {
+    commandId: 'asset.content.replace',
+    apiVersion: AUTOMATION_API_VERSION,
+    summary: '原地替换托管资产的文件内容；需本机计划确认。',
+    deprecated: false,
+    inputSchema: automationCommandInputSchemas['asset.content.replace'],
+    resultSchema: automationCommandResultSchemas['asset.content.replace'],
+    workerResultSchema: assetContentReplaceWorkerResultSchema,
+    requiredCapabilities: ['library.read', 'asset.read', 'content.write'],
+    allowedSources: allInteractiveSources,
+    impact: 'file-write',
+    targetScope: 'asset',
+    supportsBatch: false,
+    supportsDryRun: false,
+    supportsIdempotencyKey: false,
+    supportsCancellation: false,
+    supportsDetach: false,
+    supportsUndo: false,
+    atomicity: 'recoverable-file-operation',
+    approvalPolicy: 'plan',
+    mcp: { public: false, toolName: 'serpent_asset_content_replace', outputLimit: 1 },
+    toWorkerCommand: (libraryId, input: AutomationCommandInput<'asset.content.replace'>, plan) => ({
+      type: 'asset.content.replace',
+      libraryId,
+      assetId: input.assetId,
+      dataBase64: input.dataBase64,
+      ...(input.expectedRevisionId === undefined ? {} : { expectedRevisionId: input.expectedRevisionId }),
+      ...(plan === undefined ? {} : { automationPlan: plan }),
+    }),
+    projectResult: (result) => {
+      const parsed = assetContentReplaceWorkerResultSchema.safeParse(result);
+      return parsed.success
+        ? {
+            assetId: parsed.data.assetId,
+            revisionId: parsed.data.revisionId,
+            byteSize: parsed.data.byteSize,
+          }
+        : undefined;
+    },
+  },
+  readDescriptor({
+    commandId: 'asset.content.read',
+    summary: '读取托管资产的有界文件内容，不返回文件路径。',
+    inputSchema: automationCommandInputSchemas['asset.content.read'],
+    resultSchema: automationCommandResultSchemas['asset.content.read'],
+    workerResultSchema: assetContentReadWorkerResultSchema,
+    requiredCapabilities: ['library.read', 'asset.read', 'content.read'],
+    allowedSources: allReadSources,
+    targetScope: 'asset',
+    supportsBatch: false,
+    mcp: { public: false, toolName: 'serpent_asset_content_read', outputLimit: 1 },
+    toWorkerCommand: (libraryId, input) => ({
+      type: 'asset.content.read',
+      libraryId,
+      assetId: input.assetId,
+      maxBytes: input.maxBytes,
+    }),
+    projectResult: (result) => {
+      const parsed = assetContentReadWorkerResultSchema.safeParse(result);
+      return parsed.success
+        ? {
+          assetId: parsed.data.assetId,
+          revisionId: parsed.data.revisionId,
+          byteSize: parsed.data.byteSize,
+          dataBase64: parsed.data.dataBase64,
+          truncated: parsed.data.truncated,
+          mimeType: parsed.data.mimeType,
+        }
+        : undefined;
+    },
+  }),
   {
     commandId: 'asset.move',
     apiVersion: AUTOMATION_API_VERSION,
@@ -2068,6 +2186,8 @@ export function generateAutomationTypeDeclaration(
     '      setRating(assetIds: readonly string[], rating: 0 | 1 | 2 | 3 | 4 | 5): Promise<SerpentRatingUpdateResult>;',
     '      copyFilePaths(assetIds: readonly string[]): Promise<{ readonly copiedCount: number }>;',
     '      moveToTrash(assetIds: readonly string[]): Promise<{ readonly trashedCount: number; readonly operationId: string }>;',
+    '      readContent(assetId: string, options?: { readonly maxBytes?: number }): Promise<{ readonly assetId: string; readonly revisionId: string; readonly byteSize: number; readonly dataBase64: string; readonly truncated: boolean; readonly mimeType: string | null }>;',
+    '      replaceContent(assetId: string, dataBase64: string, options?: { readonly expectedRevisionId?: string; readonly mimeHint?: string }): Promise<{ readonly assetId: string; readonly revisionId: string; readonly byteSize: number }>;',
     "      moveToFolder(assetIds: readonly string[], targetFolderId: string | null, options?: { readonly conflictStrategy?: 'keep-both' | 'replace' | 'skip' }): Promise<{ readonly movedCount: number; readonly skippedCount: number; readonly operationId: string | null }>;",
     '      renameFile(assetId: string, newBaseName: string): Promise<{ readonly assetId: string; readonly name: string }>;',
     "      renameFiles(items: readonly { readonly assetId: string; readonly newBaseName: string }[]): Promise<{ readonly renamedCount: number; readonly skipped: readonly { readonly assetId: string; readonly reason: 'asset_not_found' | 'asset_unavailable' | 'name_conflict' | 'invalid_name' }[] }>;",

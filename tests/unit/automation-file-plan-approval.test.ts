@@ -93,6 +93,48 @@ describe('Desktop automation file-plan approval', () => {
     }]);
   });
 
+  it('maps content replacement to a single-asset replace-content plan', async () => {
+    const worker = new RecordingWorker({
+      ...plannedResult,
+      operation: 'replace-content',
+      undoSupported: false,
+    });
+    const summaries: DesktopAutomationFilePlanSummary[] = [];
+    const handler = createDesktopAutomationFilePlanApprovalHandler({
+      workerClient: worker,
+      confirm: async (summary) => {
+        summaries.push(summary);
+        return true;
+      },
+    });
+
+    await expect(handler.prepareAndApprove({
+      commandId: 'asset.content.replace',
+      executionId: 'execution-1',
+      libraryId: 'library-1',
+      commandInput: {
+        assetId: 'asset-1',
+        dataBase64: 'AQID',
+      },
+    })).resolves.toMatchObject({
+      expectedChangeSequence: 17,
+      assetStates: [{ assetId: 'asset-1', stateToken: 'a'.repeat(64) }],
+    });
+    expect(worker.commands).toEqual([{
+      type: 'automation.file-operation-plan',
+      libraryId: 'library-1',
+      operation: 'replace-content',
+      assetIds: ['asset-1'],
+    }]);
+    expect(summaries).toEqual([{
+      operation: 'replace-content',
+      targetCount: 1,
+      executableCount: 1,
+      blockedCount: 0,
+      undoSupported: false,
+    }]);
+  });
+
   it('runs onWill hooks after the readonly plan and before confirmation', async () => {
     const worker = new RecordingWorker({ ...plannedResult, operation: 'trash', undoSupported: true });
     const order: string[] = [];

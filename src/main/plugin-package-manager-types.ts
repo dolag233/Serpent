@@ -101,7 +101,8 @@ export type PluginInstalledPackageStatus =
   };
 
 export type PluginResolutionResult =
-  | { status: 'disabled'; reason: 'safe-mode' | 'user-disabled' }
+  | { status: 'disabled'; reason: 'safe-mode'; package?: InstalledPluginPackage }
+  | { status: 'disabled'; reason: 'user-disabled' }
   | { status: 'disabled'; reason: 'quarantined'; package: InstalledPluginPackage; quarantine: PluginQuarantineRecord }
   | { status: 'not-installed' }
   | {

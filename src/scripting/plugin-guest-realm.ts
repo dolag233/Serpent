@@ -6,6 +6,8 @@ import {
 import type { AutomationScriptCommandId } from '../shared/automation-script-api';
 import type { PluginDomainEvent } from '../plugins/plugin-domain-events';
 import type { PluginHookDecision, PluginHookInvoke } from '../plugins/plugin-hooks';
+import type { PluginJobComplete, PluginJobRecord } from '../plugins/plugin-jobs';
+import type { PluginCommandComplete, PluginCommandInvoke } from '../plugins/plugin-commands';
 
 /**
  * Standard plugin entries may use ESM `export` forms or plain function
@@ -72,6 +74,230 @@ export function buildPluginActivateSource(entryJavaScript: string): string {
     '    }',
     '  })();',
     '}',
+    'if (serpent.jobs && typeof serpent.jobs.__nextJob === "function") {',
+    '  const __jobHandlers = Object.create(null);',
+    '  serpent.jobs.registerHandler = function(id, handler) {',
+    '    __jobHandlers[String(id)] = handler;',
+    '  };',
+    '  serpent.jobs.enqueue = function(input) {',
+    '    const request = input && typeof input === "object" ? input : {};',
+    '    return serpent.jobs.__enqueue({',
+    '      handlerId: String(request.handlerId ?? ""),',
+    '      payload: request.payload ?? {},',
+    '      recoveryStrategy: request.recoveryStrategy,',
+    '    });',
+    '  };',
+    '  void (async function() {',
+    '    for (;;) {',
+    '      const job = await serpent.jobs.__nextJob();',
+    '      if (job === null) return;',
+    '      const handler = __jobHandlers[job.pluginHandlerId];',
+    '      let status = "succeeded";',
+    '      let errorCode;',
+    '      let errorDetail;',
+    '      if (typeof handler !== "function") {',
+    '        status = "failed";',
+    '        errorCode = "PLUGIN_JOB_HANDLER_MISSING";',
+    '        errorDetail = "No handler registered for this job.";',
+    '      } else {',
+    '        try {',
+    '          await handler(job.payload, job);',
+    '        } catch (error) {',
+    '          status = "failed";',
+    '          errorCode = "PLUGIN_JOB_HANDLER_FAILED";',
+    '          errorDetail = error && error.message ? String(error.message).slice(0, 4096) : "Job handler failed.";',
+    '        }',
+    '      }',
+    '      await serpent.jobs.__respond(job.jobId, {',
+    '        status,',
+    '        ...(errorCode ? { errorCode } : {}),',
+    '        ...(errorDetail ? { errorDetail } : {}),',
+    '      });',
+    '    }',
+    '  })();',
+    '}',
+    'if (serpent.providers && typeof serpent.providers.__nextInvoke === "function") {',
+    '  const __providerHandlers = Object.create(null);',
+    '  serpent.providers.register = function(kind, provider) {',
+    '    if (!provider || typeof provider.compute !== "function") throw new Error("Provider requires compute(batch).");',
+    '    __providerHandlers[String(provider.id)] = { kind: String(kind), compute: provider.compute };',
+    '  };',
+    '  void (async function() {',
+    '    for (;;) {',
+    '      const invoke = await serpent.providers.__nextInvoke();',
+    '      if (invoke === null) return;',
+    '      const registered = __providerHandlers[String(invoke.providerId)];',
+    '      let result = { invokeId: invoke.invokeId, status: "succeeded", values: [] };',
+    '      if (!registered || registered.kind !== invoke.kind) {',
+    '        result = { invokeId: invoke.invokeId, status: "failed", values: [], errorCode: "PROVIDER_HANDLER_MISSING", errorDetail: "No provider handler is registered." };',
+    '      } else if (Date.now() >= invoke.deadlineAt) {',
+    '        result = { invokeId: invoke.invokeId, status: "cancelled", values: [], errorCode: "PROVIDER_DEADLINE_EXCEEDED", errorDetail: "The provider deadline elapsed before invocation." };',
+    '      } else {',
+    '        try {',
+    '          const values = await registered.compute(invoke.batch, { deadlineAt: invoke.deadlineAt, maxResults: invoke.maxResults });',
+    '          result.values = Array.isArray(values) ? values.slice(0, invoke.maxResults) : [];',
+    '        } catch (error) {',
+    '          result = { invokeId: invoke.invokeId, status: "failed", values: [], errorCode: "PROVIDER_HANDLER_FAILED", errorDetail: error && error.message ? String(error.message).slice(0, 4096) : "Provider handler failed." };',
+    '        }',
+    '      }',
+    '      await serpent.providers.__respond(invoke.invokeId, result);',
+    '    }',
+    '  })();',
+    '}',
+    'if (serpent.providers && typeof serpent.providers.__nextSearchEvent === "function") {',
+    '  const __searchHandlers = Object.create(null);',
+    '  const __searchSignals = Object.create(null);',
+    '  serpent.providers.registerSearch = function(provider) {',
+    '    if (!provider || typeof provider.search !== "function") throw new Error("Search provider requires search(request, signal).");',
+    '    __searchHandlers[String(provider.id)] = provider.search;',
+    '  };',
+    '  const __searchChunk = async function(invokeId, items) {',
+    '    const values = Array.isArray(items) ? items : [items];',
+    '    for (let offset = 0; offset < values.length; offset += 64) {',
+    '      await serpent.providers.__respondSearchChunk({',
+    '        invokeId,',
+    '        items: values.slice(offset, offset + 64),',
+    '      });',
+    '    }',
+    '  };',
+    '  const __searchSignal = function(invokeId) {',
+    '    let aborted = false;',
+    '    const listeners = [];',
+    '    return {',
+    '      get aborted() { return aborted; },',
+    '      addEventListener: function(type, listener) {',
+    '        if (type === "abort" && typeof listener === "function") listeners.push(listener);',
+    '      },',
+    '      removeEventListener: function(type, listener) {',
+    '        if (type !== "abort") return;',
+    '        const index = listeners.indexOf(listener);',
+    '        if (index >= 0) listeners.splice(index, 1);',
+    '      },',
+    '      __abort: function() {',
+    '        if (aborted) return;',
+    '        aborted = true;',
+    '        listeners.slice().forEach(function(listener) { try { listener(); } catch (_error) {} });',
+    '      },',
+    '      __invokeId: invokeId,',
+    '    };',
+    '  };',
+    '  const __runSearch = async function(request) {',
+    '    const search = __searchHandlers[String(request.providerId)];',
+    '    const signal = __searchSignal(request.invokeId);',
+    '    __searchSignals[String(request.invokeId)] = signal;',
+    '    let status = "succeeded";',
+    '    let errorCode;',
+    '    let errorDetail;',
+    '    let sent = 0;',
+    '    try {',
+    '      if (typeof search !== "function") {',
+    '        status = "failed";',
+    '        errorCode = "PROVIDER_HANDLER_MISSING";',
+    '        errorDetail = "No search provider handler is registered.";',
+    '      } else if (Date.now() >= request.deadlineAt) {',
+    '        status = "cancelled";',
+    '        errorCode = "PROVIDER_DEADLINE_EXCEEDED";',
+    '        errorDetail = "The provider deadline elapsed before invocation.";',
+    '      } else {',
+    '        const output = await search(request, signal);',
+    '        const emit = async function(value) {',
+    '          if (signal.aborted || Date.now() >= request.deadlineAt) { status = "cancelled"; errorCode = "PROVIDER_DEADLINE_EXCEEDED"; return; }',
+    '          const values = Array.isArray(value) ? value : [value];',
+    '          const bounded = values.slice(0, Math.max(0, request.maxResults - sent));',
+    '          if (bounded.length === 0) return;',
+    '          await __searchChunk(request.invokeId, bounded);',
+    '          sent += bounded.length;',
+    '        };',
+    '        if (output && typeof output.next === "function") {',
+    '          for (;;) {',
+    '            if (signal.aborted || sent >= request.maxResults) break;',
+    '            const step = await output.next();',
+    '            if (!step || step.done) break;',
+    '            await emit(step.value);',
+    '          }',
+    '        } else {',
+    '          await emit(output);',
+    '        }',
+    '        if (signal.aborted && status === "succeeded") { status = "cancelled"; errorCode = "PROVIDER_CANCELLED"; }',
+    '      }',
+    '    } catch (error) {',
+    '      status = signal.aborted ? "cancelled" : "failed";',
+    '      errorCode = signal.aborted ? "PROVIDER_CANCELLED" : "PROVIDER_HANDLER_FAILED";',
+    '      errorDetail = error && error.message ? String(error.message).slice(0, 4096) : "Search provider failed.";',
+    '    } finally {',
+    '      delete __searchSignals[String(request.invokeId)];',
+    '      await serpent.providers.__respondSearchComplete({',
+    '        invokeId: request.invokeId,',
+    '        status,',
+    '        nextOffset: request.offset + sent,',
+    '        ...(errorCode ? { errorCode } : {}),',
+    '        ...(errorDetail ? { errorDetail } : {}),',
+    '      });',
+    '    }',
+    '  };',
+    '  void (async function() {',
+    '    for (;;) {',
+    '      const event = await serpent.providers.__nextSearchEvent();',
+    '      if (event === null) return;',
+    '      if (event.type === "cancel") {',
+    '        __searchSignals[String(event.cancel.invokeId)]?.__abort();',
+    '      } else {',
+    '        void __runSearch(event.request);',
+    '      }',
+    '    }',
+    '  })();',
+    '}',
+    'if (serpent.commands && typeof serpent.commands.__nextCommand === "function") {',
+    '  const __commandHandlers = Object.create(null);',
+    '  serpent.commands.register = function(id, handler) {',
+    '    __commandHandlers[String(id)] = handler;',
+    '  };',
+    '  void (async function() {',
+    '    for (;;) {',
+    '      const invoke = await serpent.commands.__nextCommand();',
+    '      if (invoke === null) return;',
+    '      const handler = __commandHandlers[invoke.commandId];',
+    '      let status = "succeeded";',
+    '      let errorCode;',
+    '      let errorDetail;',
+    '      if (typeof handler !== "function") {',
+    '        status = "failed";',
+    '        errorCode = "PLUGIN_COMMAND_HANDLER_MISSING";',
+    '        errorDetail = "No handler registered for this command.";',
+    '      } else {',
+    '        try {',
+    '          await handler(invoke.context);',
+    '        } catch (error) {',
+    '          status = "failed";',
+    '          errorCode = "PLUGIN_COMMAND_HANDLER_FAILED";',
+    '          errorDetail = error && error.message ? String(error.message).slice(0, 4096) : "Command handler failed.";',
+    '        }',
+    '      }',
+    '      await serpent.commands.__respond(invoke.invokeId, {',
+    '        status,',
+    '        ...(errorCode ? { errorCode } : {}),',
+    '        ...(errorDetail ? { errorDetail } : {}),',
+    '      });',
+    '    }',
+    '  })();',
+    '}',
+    'if (serpent.input && typeof serpent.input.__start === "function") {',
+    '  serpent.input.capture = function(options) {',
+    '    return serpent.input.__start(options || {}).then(function(session) {',
+    '      const events = {',
+    '        next: function() { return serpent.input.__nextEvent(session.sessionId); },',
+    '      };',
+    '      if (typeof Symbol === "function" && Symbol.asyncIterator) {',
+    '        events[Symbol.asyncIterator] = function() { return events; };',
+    '      }',
+    '      return {',
+    '        sessionId: session.sessionId,',
+    '        events: events,',
+    '        release: function() { return serpent.input.__release(session.sessionId); },',
+    '      };',
+    '    });',
+    '  };',
+    '}',
     'await activate(serpent);',
     'if (typeof serpent.__waitUntilDeactivate === "function") {',
     '  await serpent.__waitUntilDeactivate();',
@@ -108,6 +334,30 @@ export async function runPluginGuestActivate(input: {
   waitForDomainEvent?: () => Promise<PluginDomainEvent | null>;
   waitForHookInvoke?: () => Promise<PluginHookInvoke | null>;
   respondHookDecision?: (invokeId: string, decision: PluginHookDecision) => Promise<void>;
+  waitForJobInvoke?: () => Promise<PluginJobRecord | null>;
+  respondJobComplete?: (jobId: string, complete: PluginJobComplete) => Promise<void>;
+  waitForProviderInvoke?: () => Promise<import('../plugins/plugin-providers').PluginProviderInvoke | null>;
+  respondProviderComplete?: (
+    invokeId: string,
+    result: import('../plugins/plugin-providers').PluginProviderBatchResult,
+  ) => Promise<void>;
+  waitForSearchEvent?: () => Promise<import('../plugins/plugin-search').PluginSearchEvent | null>;
+  respondSearchChunk?: (chunk: import('../plugins/plugin-search').PluginSearchChunk) => Promise<void>;
+  respondSearchComplete?: (complete: import('../plugins/plugin-search').PluginSearchComplete) => Promise<void>;
+  waitForCommandInvoke?: () => Promise<PluginCommandInvoke | null>;
+  respondCommandComplete?: (invokeId: string, complete: PluginCommandComplete) => Promise<void>;
+  requestInputCapture?: (
+    input: import('../shared/plugin-input-capture').PluginInputCaptureOptions,
+  ) => Promise<{ sessionId: string }>;
+  releaseInputCapture?: (sessionId: string) => void;
+  waitForInputCaptureEvent?: (
+    sessionId: string,
+  ) => Promise<import('../shared/plugin-input-capture').PluginInputCaptureEvent | null>;
+  enqueuePluginJob?: (input: {
+    handlerId: string;
+    payload: Record<string, unknown>;
+    recoveryStrategy?: 'idempotent' | 'checkpoint';
+  }) => Promise<unknown>;
   setActiveCauseChain?: (causeChain: readonly string[]) => void;
   signal?: AbortSignal;
   wallTimeoutMs?: number;
@@ -146,6 +396,45 @@ export async function runPluginGuestActivate(input: {
     ...(input.respondHookDecision === undefined
       ? {}
       : { respondHookDecision: input.respondHookDecision }),
+    ...(input.waitForJobInvoke === undefined
+      ? {}
+      : { waitForJobInvoke: input.waitForJobInvoke }),
+    ...(input.respondJobComplete === undefined
+      ? {}
+      : { respondJobComplete: input.respondJobComplete }),
+    ...(input.waitForProviderInvoke === undefined
+      ? {}
+      : { waitForProviderInvoke: input.waitForProviderInvoke }),
+    ...(input.respondProviderComplete === undefined
+      ? {}
+      : { respondProviderComplete: input.respondProviderComplete }),
+    ...(input.waitForSearchEvent === undefined
+      ? {}
+      : { waitForSearchEvent: input.waitForSearchEvent }),
+    ...(input.respondSearchChunk === undefined
+      ? {}
+      : { respondSearchChunk: input.respondSearchChunk }),
+    ...(input.respondSearchComplete === undefined
+      ? {}
+      : { respondSearchComplete: input.respondSearchComplete }),
+    ...(input.enqueuePluginJob === undefined
+      ? {}
+      : { enqueuePluginJob: input.enqueuePluginJob }),
+    ...(input.waitForCommandInvoke === undefined
+      ? {}
+      : { waitForCommandInvoke: input.waitForCommandInvoke }),
+    ...(input.respondCommandComplete === undefined
+      ? {}
+      : { respondCommandComplete: input.respondCommandComplete }),
+    ...(input.requestInputCapture === undefined
+      ? {}
+      : { requestInputCapture: input.requestInputCapture }),
+    ...(input.releaseInputCapture === undefined
+      ? {}
+      : { releaseInputCapture: input.releaseInputCapture }),
+    ...(input.waitForInputCaptureEvent === undefined
+      ? {}
+      : { waitForInputCaptureEvent: input.waitForInputCaptureEvent }),
     ...(input.setActiveCauseChain === undefined
       ? {}
       : { setActiveCauseChain: input.setActiveCauseChain }),

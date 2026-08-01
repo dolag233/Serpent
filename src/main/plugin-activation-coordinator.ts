@@ -8,9 +8,30 @@ import {
   type PluginPermission,
 } from '../plugins/plugin-manifest';
 import {
+  listCommandContributions,
+  listMcpCommandContributions,
+  listMenuContributions,
+  listInspectorSectionContributions,
+  listInspectorViewContributions,
+  listSettingsContributions,
+  listSettingsPageContributions,
+  listSidebarViewContributions,
+  listToolbarContributions,
+  listViewerActionContributions,
+  listShortcutContributions,
+  listViewerOverlayContributions,
+  listWorkspaceViewContributions,
   registerManifestContributions,
   type PluginContributionRegistry,
 } from '../plugins/plugin-contributions';
+import { getPluginMcpExportedCommandIds } from '../plugins/plugin-manifest';
+import { extractPluginThemePackage, type PluginThemePackage } from '../plugins/plugin-themes';
+import type { PluginHostContributionTarget } from '../shared/plugin-manager-api';
+import {
+  PLUGIN_COMMAND_DEFAULT_TIMEOUT_MS,
+  type PluginCommandContext,
+  type PluginCommandComplete,
+} from '../plugins/plugin-commands';
 import {
   PLUGIN_HOOK_DEFAULT_TIMEOUT_MS,
   PluginHookBlockedError,
@@ -26,6 +47,8 @@ import type { PluginRuntimeSupervisor } from './plugin-runtime-supervisor';
 import type { PluginTrustedRuntimeSupervisor } from './plugin-trusted-runtime-supervisor';
 import type { InstalledPluginPackage } from './plugin-package-manager-types';
 import type { PluginRuntimeDeactivateReason } from '../shared/plugin-runtime-utility-protocol';
+import { resolvePluginUiAssetPath } from './plugin-ui-assets';
+import type { PluginProviderRegistry } from '../plugins/plugin-providers';
 
 export interface PluginActivationCoordinatorLogger {
   info(scope: string, message: string, context?: Record<string, unknown>): void;
@@ -38,11 +61,19 @@ export interface PluginActivationCoordinatorOptions {
   trustedSupervisor?: PluginTrustedRuntimeSupervisor;
   /** Descriptor-only Contribution store; revoked whenever a Host instance ends. */
   contributions?: PluginContributionRegistry;
+  /** Runtime Provider registrations; revoked whenever a Host instance ends. */
+  providers?: PluginProviderRegistry;
   /** Re-check engines / native OS·arch·ABI at activate time (Electron ABI may change after install). */
   compatibility?: PluginCompatibilityTarget;
   readEntryFile?: (absolutePath: string) => Promise<string>;
   logger?: PluginActivationCoordinatorLogger;
   hookTimeoutMs?: number;
+  pausePluginJobs?: (input: {
+    libraryId: string;
+    owners: Array<{ pluginId: string; packageHash?: string }>;
+  }) => Promise<void>;
+  onInstanceActivated?: (input: { libraryId: string }) => void;
+  onContributionsRegistered?: (input: { libraryId: string }) => void;
 }
 
 type ActiveHookContribution = {
@@ -51,12 +82,21 @@ type ActiveHookContribution = {
   localId: string;
 };
 
+type ActiveJobContribution = {
+  localId: string;
+  recovery: 'idempotent' | 'checkpoint';
+};
+
 type ActiveRecord = {
   instanceId: string;
-  mode: 'standard' | 'trusted';
+  mode: 'restricted' | 'unrestricted';
   pluginId: string;
+  packageHash: string;
+  packageDirectory: string;
   permissions: readonly PluginPermission[];
   hooks: readonly ActiveHookContribution[];
+  jobs: readonly ActiveJobContribution[];
+  themePackage?: PluginThemePackage;
 };
 
 /**
@@ -75,11 +115,6 @@ export class PluginActivationCoordinator {
     libraryDirectory: string;
   }): Promise<void> {
     const safeMode = await this.options.packageManager.getSafeMode();
-    if (safeMode) {
-      this.#deactivateLibraryHosts(input.libraryId, 'safe-mode');
-      this.#activeByLibrary.delete(input.libraryId);
-      return;
-    }
 
     const [userInstalled, libraryInstalled] = await Promise.all([
       this.options.packageManager.listInstalled({ scope: 'user' }),
@@ -95,7 +130,7 @@ export class PluginActivationCoordinator {
 
     const desired = new Map<string, {
       pluginPackage: InstalledPluginPackage;
-      mode: 'standard' | 'trusted';
+      mode: 'restricted' | 'unrestricted';
       entryJavaScript?: string;
     }>();
     for (const pluginId of pluginIds) {
@@ -106,8 +141,10 @@ export class PluginActivationCoordinator {
       });
       if (resolution.status !== 'resolved') continue;
       const mode = resolution.package.manifest.runtime.mode;
-      if (mode !== 'standard' && mode !== 'trusted') continue;
-      if (mode === 'trusted' && this.options.trustedSupervisor === undefined) continue;
+      if (mode !== 'restricted' && mode !== 'unrestricted') continue;
+      // Belt-and-suspenders: Safe Mode never activates unrestricted (trusted) hosts.
+      if (safeMode && mode === 'unrestricted') continue;
+      if (mode === 'unrestricted' && this.options.trustedSupervisor === undefined) continue;
 
       if (this.options.compatibility !== undefined) {
         const compatibility = validatePluginManifestCompatibility(
@@ -136,7 +173,7 @@ export class PluginActivationCoordinator {
         continue;
       }
 
-      if (mode === 'standard') {
+      if (mode === 'restricted') {
         try {
           const readEntry = this.options.readEntryFile ?? ((absolutePath: string) => readFile(absolutePath, 'utf8'));
           const entryJavaScript = await readEntry(entryAbsolute);
@@ -147,14 +184,17 @@ export class PluginActivationCoordinator {
         continue;
       }
 
-      desired.set(pluginId, { pluginPackage: resolution.package, mode: 'trusted' });
+      desired.set(pluginId, { pluginPackage: resolution.package, mode: 'unrestricted' });
     }
 
     const previous = this.#activeByLibrary.get(input.libraryId) ?? new Map<string, ActiveRecord>();
     for (const [pluginId, record] of previous) {
       const next = desired.get(pluginId);
       if (next === undefined || next.mode !== record.mode) {
-        this.#deactivateInstance(record, 'resolution-changed');
+        const reason = safeMode && record.mode === 'unrestricted' && next === undefined
+          ? 'safe-mode'
+          : 'resolution-changed';
+        this.#deactivateInstance(record, reason);
         previous.delete(pluginId);
       }
     }
@@ -166,15 +206,25 @@ export class PluginActivationCoordinator {
         instanceId,
         mode: candidate.mode,
         pluginId,
+        packageHash: candidate.pluginPackage.lock.packageHash,
+        packageDirectory: candidate.pluginPackage.packageDirectory,
         permissions: candidate.pluginPackage.manifest.permissions,
         hooks: (candidate.pluginPackage.manifest.contributes?.hooks ?? []).map((hook) => ({
           event: hook.event,
           blocking: hook.blocking,
           localId: hook.id,
         })),
+        jobs: (candidate.pluginPackage.manifest.contributes?.jobs ?? []).map((job) => ({
+          localId: job.id,
+          recovery: job.recovery,
+        })),
+        ...((): { themePackage?: PluginThemePackage } => {
+          const themePackage = extractPluginThemePackage(candidate.pluginPackage.manifest);
+          return themePackage === undefined ? {} : { themePackage };
+        })(),
       });
       try {
-        if (candidate.mode === 'standard') {
+        if (candidate.mode === 'restricted') {
           await this.options.supervisor.activate({
             instanceId,
             libraryId: input.libraryId,
@@ -184,6 +234,7 @@ export class PluginActivationCoordinator {
             packageHash: candidate.pluginPackage.lock.packageHash,
             entryJavaScript: candidate.entryJavaScript ?? '',
             permissions: candidate.pluginPackage.manifest.permissions,
+            installScope: candidate.pluginPackage.scope,
           });
         } else {
           await this.options.trustedSupervisor!.activate({
@@ -196,12 +247,13 @@ export class PluginActivationCoordinator {
             packageDirectory: candidate.pluginPackage.packageDirectory,
             entryRelativePath: candidate.pluginPackage.manifest.runtime.entry,
             permissions: candidate.pluginPackage.manifest.permissions,
+            installScope: candidate.pluginPackage.scope,
           });
         }
-        this.#registerContributions(instanceId, pluginId, candidate.pluginPackage);
+        this.#registerContributions(input.libraryId, instanceId, pluginId, candidate.pluginPackage);
       } catch (error) {
         this.#revokeContributions(instanceId);
-        if (candidate.mode === 'standard') {
+        if (candidate.mode === 'restricted') {
           this.options.supervisor.deactivate(instanceId, 'resolution-changed');
         } else {
           this.options.trustedSupervisor?.deactivate(instanceId, 'resolution-changed');
@@ -286,7 +338,7 @@ export class PluginActivationCoordinator {
       const declared = record.hooks.find((hook) => hook.event === parsedEvent.data);
       if (declared === undefined) continue;
       const invokeId = randomUUID();
-      const invoked = record.mode === 'standard'
+      const invoked = record.mode === 'restricted'
         ? await this.options.supervisor.invokeHook({
           instanceId: record.instanceId,
           invoke: { invokeId, event: parsedEvent.data, context },
@@ -323,19 +375,407 @@ export class PluginActivationCoordinator {
     return aggregated;
   }
 
+  listActiveInstances(libraryId: string): Array<{
+    instanceId: string;
+    mode: 'restricted' | 'unrestricted';
+    pluginId: string;
+    packageHash: string;
+  }> {
+    const active = this.#activeByLibrary.get(libraryId);
+    if (active === undefined) return [];
+    return [...active.values()].map((record) => ({
+      instanceId: record.instanceId,
+      mode: record.mode,
+      pluginId: record.pluginId,
+      packageHash: record.packageHash,
+    }));
+  }
+
+  listActiveProviders(libraryId: string): readonly import('../plugins/plugin-providers').PluginProviderRegistration[] {
+    return (this.options.providers?.list() ?? []).filter((provider) => provider.libraryId === libraryId);
+  }
+
+  findActiveInstance(instanceId: string): ActiveRecord | undefined {
+    for (const active of this.#activeByLibrary.values()) {
+      for (const record of active.values()) {
+        if (record.instanceId === instanceId) return record;
+      }
+    }
+    return undefined;
+  }
+
+  #themePackageForInstance(
+    pluginInstanceId: string,
+    libraryId?: string,
+  ): PluginThemePackage | undefined {
+    for (const [activeLibraryId, active] of this.#activeByLibrary) {
+      if (libraryId !== undefined && activeLibraryId !== libraryId) continue;
+      for (const record of active.values()) {
+        if (record.instanceId === pluginInstanceId) return record.themePackage;
+      }
+    }
+    return undefined;
+  }
+
+  #viewContributionAttachment(
+    contribution: { pluginInstanceId: string; entryPath?: string },
+    libraryId?: string,
+  ) {
+    const themePackage = this.#themePackageForInstance(contribution.pluginInstanceId, libraryId);
+    return {
+      ...(contribution.entryPath === undefined ? {} : { entryPath: contribution.entryPath }),
+      ...(themePackage === undefined ? {} : { themePackage }),
+    };
+  }
+
+  resolvePluginUiAsset(input: {
+    libraryId: string;
+    pluginId: string;
+    instanceId: string;
+    contributionId: string;
+    relativePath: string;
+  }): { absolutePath: string; pluginId: string } | undefined {
+    const active = this.#activeByLibrary.get(input.libraryId);
+    const record = [...(active?.values() ?? [])].find((candidate) =>
+      candidate.instanceId === input.instanceId && candidate.pluginId === input.pluginId);
+    if (record === undefined || this.options.contributions === undefined) return undefined;
+    const contribution = listWorkspaceViewContributions(this.options.contributions)
+      .find((candidate) => candidate.id === input.contributionId
+        && candidate.pluginInstanceId === input.instanceId
+        && candidate.pluginId === input.pluginId);
+    if (contribution?.entryPath === undefined) return undefined;
+    const uiRoot = path.posix.dirname(contribution.entryPath);
+    if (input.relativePath !== contribution.entryPath
+      && !input.relativePath.startsWith(`${uiRoot}/`)) {
+      return undefined;
+    }
+    const absolutePath = resolvePluginUiAssetPath(record.packageDirectory, input.relativePath);
+    if (absolutePath === undefined) return undefined;
+    return { absolutePath, pluginId: record.pluginId };
+  }
+
+  pluginUiStoragePermissions(input: {
+    libraryId: string;
+    pluginId: string;
+    pluginInstanceId: string;
+  }): readonly PluginPermission[] | undefined {
+    const record = [...(this.#activeByLibrary.get(input.libraryId)?.values() ?? [])]
+      .find((candidate) => candidate.instanceId === input.pluginInstanceId
+        && candidate.pluginId === input.pluginId);
+    return record?.permissions;
+  }
+
+  listContributions(input: {
+    libraryId?: string;
+    target?: PluginHostContributionTarget;
+  } = {}) {
+    if (this.options.contributions === undefined) return [];
+    const activeInstanceIds = new Set(
+      [...this.#activeByLibrary.entries()]
+        .filter(([libraryId]) => input.libraryId === undefined || libraryId === input.libraryId)
+        .flatMap(([, records]) => [...records.keys()]),
+    );
+    if (input.target === 'commands') {
+      return listCommandContributions(this.options.contributions)
+        .filter((contribution) => activeInstanceIds.has(contribution.pluginInstanceId))
+        .map((contribution) => ({
+          kind: 'command' as const,
+          id: contribution.id,
+          pluginId: contribution.pluginId,
+          pluginInstanceId: contribution.pluginInstanceId,
+          commandId: contribution.commandId,
+          title: contribution.title,
+          target: 'commands' as const,
+          ...(contribution.mcpExported === true ? { mcpExported: true as const } : {}),
+        }));
+    }
+    if (input.target === 'settings.sections') {
+      return listSettingsContributions(this.options.contributions)
+        .filter((contribution) => activeInstanceIds.has(contribution.pluginInstanceId))
+        .map((contribution) => ({
+          kind: 'settings-section' as const,
+          id: contribution.id,
+          pluginId: contribution.pluginId,
+          pluginInstanceId: contribution.pluginInstanceId,
+          settingId: contribution.settingId,
+          title: contribution.title,
+          type: contribution.type,
+          target: 'settings.sections' as const,
+        }));
+    }
+    if (input.target === 'toolbar') {
+      return listToolbarContributions(this.options.contributions)
+        .filter((contribution) => activeInstanceIds.has(contribution.pluginInstanceId))
+        .map((contribution) => ({
+          kind: 'toolbar' as const,
+          id: contribution.id,
+          pluginId: contribution.pluginId,
+          pluginInstanceId: contribution.pluginInstanceId,
+          commandId: contribution.commandId,
+          title: contribution.title,
+          target: 'toolbar' as const,
+        }));
+    }
+    if (input.target === 'inspector.sections') {
+      return listInspectorSectionContributions(this.options.contributions)
+        .filter((contribution) => activeInstanceIds.has(contribution.pluginInstanceId))
+        .map((contribution) => ({
+          kind: 'inspector-section' as const,
+          id: contribution.id,
+          pluginId: contribution.pluginId,
+          pluginInstanceId: contribution.pluginInstanceId,
+          commandId: contribution.commandId,
+          title: contribution.title,
+          commandTitle: contribution.commandTitle,
+          target: 'inspector.sections' as const,
+        }));
+    }
+    if (input.target === 'viewer.actions') {
+      return listViewerActionContributions(this.options.contributions)
+        .filter((contribution) => activeInstanceIds.has(contribution.pluginInstanceId))
+        .map((contribution) => ({
+          kind: 'viewer-action' as const,
+          id: contribution.id,
+          pluginId: contribution.pluginId,
+          pluginInstanceId: contribution.pluginInstanceId,
+          commandId: contribution.commandId,
+          title: contribution.title,
+          target: 'viewer.actions' as const,
+        }));
+    }
+    if (input.target === 'shortcuts') {
+      return listShortcutContributions(this.options.contributions)
+        .filter((contribution) => activeInstanceIds.has(contribution.pluginInstanceId))
+        .map((contribution) => ({
+          kind: 'shortcut' as const,
+          id: contribution.id,
+          pluginId: contribution.pluginId,
+          pluginInstanceId: contribution.pluginInstanceId,
+          commandId: contribution.commandId,
+          title: contribution.title,
+          accelerator: contribution.accelerator,
+          target: 'shortcuts' as const,
+        }));
+    }
+    if (input.target === 'sidebar.entries') {
+      return listSidebarViewContributions(this.options.contributions)
+        .filter((contribution) => activeInstanceIds.has(contribution.pluginInstanceId))
+        .map((contribution) => ({
+          kind: 'view' as const,
+          id: contribution.id,
+          pluginId: contribution.pluginId,
+          pluginInstanceId: contribution.pluginInstanceId,
+          title: contribution.title,
+          target: 'sidebar.entries' as const,
+          ...this.#viewContributionAttachment(contribution, input.libraryId),
+        }));
+    }
+    if (input.target === 'workspace.views') {
+      return listWorkspaceViewContributions(this.options.contributions)
+        .filter((contribution) => activeInstanceIds.has(contribution.pluginInstanceId))
+        .map((contribution) => ({
+          kind: 'view' as const,
+          id: contribution.id,
+          pluginId: contribution.pluginId,
+          pluginInstanceId: contribution.pluginInstanceId,
+          title: contribution.title,
+          target: 'workspace.views' as const,
+          ...this.#viewContributionAttachment(contribution, input.libraryId),
+        }));
+    }
+    if (input.target === 'inspector.views') {
+      return listInspectorViewContributions(this.options.contributions)
+        .filter((contribution) => activeInstanceIds.has(contribution.pluginInstanceId))
+        .map((contribution) => ({
+          kind: 'view' as const,
+          id: contribution.id,
+          pluginId: contribution.pluginId,
+          pluginInstanceId: contribution.pluginInstanceId,
+          title: contribution.title,
+          target: 'inspector.views' as const,
+          ...this.#viewContributionAttachment(contribution, input.libraryId),
+        }));
+    }
+    if (input.target === 'viewer.overlays') {
+      return listViewerOverlayContributions(this.options.contributions)
+        .filter((contribution) => activeInstanceIds.has(contribution.pluginInstanceId))
+        .map((contribution) => ({
+          kind: 'view' as const,
+          id: contribution.id,
+          pluginId: contribution.pluginId,
+          pluginInstanceId: contribution.pluginInstanceId,
+          title: contribution.title,
+          target: 'viewer.overlays' as const,
+          ...this.#viewContributionAttachment(contribution, input.libraryId),
+        }));
+    }
+    if (input.target === 'settings.pages') {
+      return listSettingsPageContributions(this.options.contributions)
+        .filter((contribution) => activeInstanceIds.has(contribution.pluginInstanceId))
+        .map((contribution) => ({
+          kind: 'view' as const,
+          id: contribution.id,
+          pluginId: contribution.pluginId,
+          pluginInstanceId: contribution.pluginInstanceId,
+          title: contribution.title,
+          target: 'settings.pages' as const,
+          ...this.#viewContributionAttachment(contribution, input.libraryId),
+        }));
+    }
+    const targets = input.target === undefined
+      ? (['menus.asset', 'menus.folder', 'menus.collection', 'menus.workspace'] as const)
+      : [input.target];
+    return targets.flatMap((target) => listMenuContributions(this.options.contributions!, target))
+      .filter((contribution) => activeInstanceIds.has(contribution.pluginInstanceId))
+      .map((contribution) => ({
+        kind: 'menu' as const,
+        id: contribution.id,
+        pluginId: contribution.pluginId,
+        pluginInstanceId: contribution.pluginInstanceId,
+        commandId: contribution.commandId,
+        title: contribution.title,
+        target: contribution.target,
+      }));
+  }
+
+  listMcpCommandContributions(input: { libraryId?: string } = {}) {
+    if (this.options.contributions === undefined) return [];
+    const activeInstanceIds = new Set(
+      [...this.#activeByLibrary.entries()]
+        .filter(([libraryId]) => input.libraryId === undefined || libraryId === input.libraryId)
+        .flatMap(([, records]) => [...records.keys()]),
+    );
+    return listMcpCommandContributions(this.options.contributions)
+      .filter((contribution) => activeInstanceIds.has(contribution.pluginInstanceId));
+  }
+
+  async runCommand(input: {
+    libraryId: string;
+    contributionId?: string;
+    pluginId?: string;
+    commandId?: string;
+    assetIds?: readonly string[];
+    folderIds?: readonly string[];
+    collectionIds?: readonly string[];
+    timeoutMs?: number;
+  }): Promise<{ complete: PluginCommandComplete; timedOut: boolean }> {
+    const candidates = [
+      ...this.listContributions({ libraryId: input.libraryId }),
+      ...this.listContributions({ libraryId: input.libraryId, target: 'commands' }),
+      ...this.listContributions({ libraryId: input.libraryId, target: 'toolbar' }),
+      ...this.listContributions({ libraryId: input.libraryId, target: 'inspector.sections' }),
+      ...this.listContributions({ libraryId: input.libraryId, target: 'viewer.actions' }),
+      ...this.listContributions({ libraryId: input.libraryId, target: 'shortcuts' }),
+    ]
+      .filter((item): item is Extract<
+        ReturnType<PluginActivationCoordinator['listContributions']>[number],
+        { kind: 'command' } | { kind: 'menu' } | { kind: 'toolbar' } | { kind: 'inspector-section' } | { kind: 'viewer-action' } | { kind: 'shortcut' }
+      > => item.kind === 'menu'
+        || item.kind === 'command'
+        || item.kind === 'toolbar'
+        || item.kind === 'inspector-section'
+        || item.kind === 'viewer-action'
+        || item.kind === 'shortcut');
+    const contribution = input.contributionId === undefined
+      ? candidates.find((item) => item.pluginId === input.pluginId && item.commandId === input.commandId)
+      : candidates.find((item) => item.id === input.contributionId);
+    if (contribution === undefined) {
+      throw new Error('The plugin command contribution is not active.');
+    }
+    const activeRecord = [...(this.#activeByLibrary.get(input.libraryId)?.values() ?? [])]
+      .find((item) => item.instanceId === contribution.pluginInstanceId);
+    if (activeRecord === undefined) throw new Error('The plugin instance is not active.');
+    const context: PluginCommandContext = {
+      ...(input.assetIds === undefined ? {} : { assetIds: [...input.assetIds] }),
+      ...(input.folderIds === undefined ? {} : { folderIds: [...input.folderIds] }),
+      ...(input.collectionIds === undefined ? {} : { collectionIds: [...input.collectionIds] }),
+    };
+    return activeRecord.mode === 'restricted'
+      ? this.options.supervisor.invokeCommand({
+        instanceId: activeRecord.instanceId,
+        commandId: contribution.commandId,
+        context,
+        timeoutMs: input.timeoutMs ?? PLUGIN_COMMAND_DEFAULT_TIMEOUT_MS,
+      })
+      : this.options.trustedSupervisor!.invokeCommand({
+        instanceId: activeRecord.instanceId,
+        commandId: contribution.commandId,
+        context,
+        timeoutMs: input.timeoutMs ?? PLUGIN_COMMAND_DEFAULT_TIMEOUT_MS,
+      });
+  }
+
+  validateJobEnqueue(input: {
+    instanceId: string;
+    handlerId: string;
+    recoveryStrategy?: 'idempotent' | 'checkpoint';
+  }):
+    | { ok: true; recoveryStrategy: 'idempotent' | 'checkpoint' }
+    | { ok: false; code: string; message: string } {
+    const record = this.findActiveInstance(input.instanceId);
+    if (record === undefined) {
+      return { ok: false, code: 'INSTANCE_GONE', message: 'The plugin instance is no longer active.' };
+    }
+    const declared = record.jobs.find((job) => job.localId === input.handlerId);
+    if (declared === undefined) {
+      return {
+        ok: false,
+        code: 'JOB_HANDLER_UNDECLARED',
+        message: 'This job handler is not declared in the plugin manifest.',
+      };
+    }
+    return {
+      ok: true,
+      recoveryStrategy: input.recoveryStrategy ?? declared.recovery,
+    };
+  }
+
+  onPluginInstanceActivated(libraryId: string): void {
+    this.options.onInstanceActivated?.({ libraryId });
+  }
+
+  async pauseLibraryPluginJobs(libraryId: string): Promise<void> {
+    const active = this.#activeByLibrary.get(libraryId);
+    if (active === undefined || active.size === 0 || this.options.pausePluginJobs === undefined) return;
+    const owners = [...active.values()].map((record) => ({
+      pluginId: record.pluginId,
+      packageHash: record.packageHash,
+    }));
+    await this.options.pausePluginJobs({ libraryId, owners });
+  }
+
   #registerContributions(
+    libraryId: string,
     instanceId: string,
     pluginId: string,
     pluginPackage: InstalledPluginPackage,
   ): void {
     const registry = this.options.contributions;
-    if (registry === undefined) return;
     try {
-      registerManifestContributions(registry, {
-        pluginInstanceId: instanceId,
-        pluginId,
-        contributes: pluginPackage.manifest.contributes,
-      });
+      if (registry !== undefined) {
+        registerManifestContributions(registry, {
+          pluginInstanceId: instanceId,
+          pluginId,
+          contributes: pluginPackage.manifest.contributes,
+          mcpExportedCommandIds: getPluginMcpExportedCommandIds(pluginPackage.manifest),
+          uiEntryPath: pluginPackage.manifest.ui?.entry,
+        });
+      }
+      for (const provider of pluginPackage.manifest.contributes?.providers ?? []) {
+        this.options.providers?.register({
+          pluginInstanceId: instanceId,
+          libraryId,
+          pluginId,
+          packageHash: pluginPackage.lock.packageHash,
+          providerId: provider.id,
+          kind: provider.kind,
+          ...(provider.extensions === undefined ? {} : { extensions: provider.extensions }),
+          ...(provider.mimeTypes === undefined ? {} : { mimeTypes: provider.mimeTypes }),
+          ...(provider.fieldId === undefined ? {} : { fieldId: provider.fieldId }),
+          ...(provider.fieldType === undefined ? {} : { fieldType: provider.fieldType }),
+        });
+      }
+      this.options.onContributionsRegistered?.({ libraryId });
     } catch (error) {
       this.options.logger?.error('plugin.activation.contributions', error, { pluginId, instanceId });
       this.#revokeContributions(instanceId);
@@ -345,11 +785,12 @@ export class PluginActivationCoordinator {
 
   #revokeContributions(instanceId: string): void {
     this.options.contributions?.revokePluginInstance(instanceId);
+    this.options.providers?.revokePluginInstance(instanceId);
   }
 
   #deactivateInstance(record: ActiveRecord, reason: PluginRuntimeDeactivateReason): void {
     this.#revokeContributions(record.instanceId);
-    if (record.mode === 'standard') {
+    if (record.mode === 'restricted') {
       this.options.supervisor.deactivate(record.instanceId, reason);
       return;
     }
@@ -362,6 +803,9 @@ export class PluginActivationCoordinator {
       for (const record of active.values()) {
         this.#revokeContributions(record.instanceId);
       }
+      void this.pauseLibraryPluginJobs(libraryId).catch((error) => {
+        this.options.logger?.error('plugin.jobs.pause-owners', error, { libraryId, reason });
+      });
     }
     this.options.supervisor.deactivateLibrary(libraryId, reason);
     this.options.trustedSupervisor?.deactivateLibrary(libraryId, reason);

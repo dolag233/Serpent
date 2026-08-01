@@ -8,6 +8,8 @@ import {
 import type { AutomationCommandGateway } from '../automation/command-gateway';
 import { AUTOMATION_API_VERSION } from '../automation/command-registry';
 import { callSerpentMcpTool } from './call-tool';
+import type { SerpentMcpPluginToolBridge } from './call-tool';
+import type { PluginMcpToolDefinition } from './plugin-tool-catalog';
 import { listSerpentMcpTools, type SerpentMcpToolExposure } from './tool-catalog';
 
 export type SerpentMcpServerOptions = {
@@ -18,6 +20,7 @@ export type SerpentMcpServerOptions = {
    */
   getExecutionId: () => string | undefined;
   getExposure?: () => SerpentMcpToolExposure;
+  getPluginTools?: () => SerpentMcpPluginToolBridge | undefined;
   serverName?: string;
   serverVersion?: string;
 };
@@ -61,13 +64,31 @@ export function createSerpentMcpServer(options: SerpentMcpServerOptions): Server
 
   server.setRequestHandler(ListToolsRequestSchema, async () => {
     const listed = listSerpentMcpTools(exposure());
+    const pluginTools: readonly PluginMcpToolDefinition[] = options.getPluginTools?.()?.list() ?? [];
+    const names = new Set(listed.tools.map((tool) => tool.name));
+    for (const tool of pluginTools) {
+      if (names.has(tool.name)) throw new Error(`Duplicate MCP tool name: ${tool.name}`);
+      names.add(tool.name);
+    }
     return {
-      tools: listed.tools.map((tool) => ({
+      tools: [
+        ...listed.tools.map((tool) => ({
+          name: tool.name,
+          description: tool.description,
+          inputSchema: tool.inputSchema,
+          annotations: tool.annotations,
+        })),
+        ...pluginTools.map((tool) => ({
         name: tool.name,
         description: tool.description,
         inputSchema: tool.inputSchema,
-        annotations: tool.annotations,
-      })),
+          annotations: {
+            readOnlyHint: true,
+            destructiveHint: false,
+            openWorldHint: false,
+          },
+        })),
+      ],
     };
   });
 
@@ -78,6 +99,7 @@ export function createSerpentMcpServer(options: SerpentMcpServerOptions): Server
       executionId: options.getExecutionId(),
       exposure: exposure(),
       gateway: options.gateway,
+      pluginTools: options.getPluginTools?.(),
     });
 
     if (!result.ok) {
@@ -97,6 +119,7 @@ export function createSerpentMcpServer(options: SerpentMcpServerOptions): Server
       ok: true,
       toolName: result.toolName,
       commandId: result.commandId,
+      ...(result.plugin === undefined ? {} : { plugin: result.plugin }),
       result: result.result,
       ...(result.undoGroupId === undefined ? {} : { undoGroupId: result.undoGroupId }),
       truncated: result.truncated,

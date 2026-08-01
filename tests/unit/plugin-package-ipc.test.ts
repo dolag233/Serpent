@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { createPluginPackageRequestHandler } from '../../src/main/plugin-package-ipc';
 import { PluginPackageManager } from '../../src/main/plugin-package-manager';
+import { pluginManagerRequestSchema } from '../../src/shared/plugin-manager-api';
 import manifestFixture from '../fixtures/plugin-manifests/palette-tools.serpent-plugin.json';
 
 const roots: string[] = [];
@@ -50,6 +51,270 @@ afterEach(() => {
 });
 
 describe('Plugin package IPC bridge', () => {
+  it('parses contribution listing and command invocation requests', () => {
+    expect(pluginManagerRequestSchema.parse({
+      type: 'plugin-manager.list-contributions',
+      libraryId: 'library-a',
+      target: 'menus.asset',
+    })).toMatchObject({
+      type: 'plugin-manager.list-contributions',
+      target: 'menus.asset',
+    });
+    expect(pluginManagerRequestSchema.parse({
+      type: 'plugin-manager.list-contributions',
+      libraryId: 'library-a',
+      target: 'menus.folder',
+    })).toMatchObject({
+      type: 'plugin-manager.list-contributions',
+      target: 'menus.folder',
+    });
+    expect(pluginManagerRequestSchema.parse({
+      type: 'plugin-manager.list-contributions',
+      libraryId: 'library-a',
+      target: 'menus.collection',
+    })).toMatchObject({
+      type: 'plugin-manager.list-contributions',
+      target: 'menus.collection',
+    });
+    expect(pluginManagerRequestSchema.parse({
+      type: 'plugin-manager.list-contributions',
+      libraryId: 'library-a',
+      target: 'menus.workspace',
+    })).toMatchObject({
+      type: 'plugin-manager.list-contributions',
+      target: 'menus.workspace',
+    });
+    expect(pluginManagerRequestSchema.parse({
+      type: 'plugin-manager.list-contributions',
+      libraryId: 'library-a',
+      target: 'toolbar',
+    })).toMatchObject({
+      type: 'plugin-manager.list-contributions',
+      target: 'toolbar',
+    });
+    expect(pluginManagerRequestSchema.parse({
+      type: 'plugin-manager.list-contributions',
+      libraryId: 'library-a',
+      target: 'inspector.sections',
+    })).toMatchObject({
+      type: 'plugin-manager.list-contributions',
+      target: 'inspector.sections',
+    });
+    expect(pluginManagerRequestSchema.parse({
+      type: 'plugin-manager.list-contributions',
+      libraryId: 'library-a',
+      target: 'viewer.actions',
+    })).toMatchObject({
+      type: 'plugin-manager.list-contributions',
+      target: 'viewer.actions',
+    });
+    expect(pluginManagerRequestSchema.parse({
+      type: 'plugin-manager.list-contributions',
+      libraryId: 'library-a',
+      target: 'shortcuts',
+    })).toMatchObject({
+      type: 'plugin-manager.list-contributions',
+      target: 'shortcuts',
+    });
+    expect(pluginManagerRequestSchema.parse({
+      type: 'plugin-manager.run-command',
+      libraryId: 'library-a',
+      pluginId: 'com.example.menu',
+      commandId: 'probe.write-selection',
+      assetIds: ['asset-1'],
+    })).toMatchObject({
+      type: 'plugin-manager.run-command',
+      pluginId: 'com.example.menu',
+      commandId: 'probe.write-selection',
+    });
+    expect(pluginManagerRequestSchema.parse({
+      type: 'plugin-manager.run-command',
+      libraryId: 'library-a',
+      pluginId: 'com.example.menu',
+      commandId: 'probe.write-folder',
+      folderIds: ['folder-1'],
+    })).toMatchObject({
+      type: 'plugin-manager.run-command',
+      commandId: 'probe.write-folder',
+      folderIds: ['folder-1'],
+    });
+    expect(pluginManagerRequestSchema.parse({
+      type: 'plugin-manager.run-command',
+      libraryId: 'library-a',
+      pluginId: 'com.example.menu',
+      commandId: 'probe.write-collection',
+      collectionIds: ['collection-1'],
+    })).toMatchObject({
+      type: 'plugin-manager.run-command',
+      commandId: 'probe.write-collection',
+      collectionIds: ['collection-1'],
+    });
+    expect(() => pluginManagerRequestSchema.parse({
+      type: 'plugin-manager.run-command',
+      libraryId: 'library-a',
+      assetIds: ['asset-1'],
+    })).toThrow();
+  });
+
+  it('routes preview and thumbnail provider broker requests without exposing paths', async () => {
+    const userData = temporaryRoot('serpent-plugin-ipc-media-user-');
+    const calls: Array<{ kind: string; assetId: string }> = [];
+    const handler = createPluginPackageRequestHandler({
+      manager: createManager(userData),
+      resolveLibraryDirectory: async () => userData,
+      chooseLocalPackage: async () => undefined,
+      mediaProvider: async (input) => {
+        calls.push({ kind: input.kind, assetId: input.assetId });
+        return {
+          status: 'provided',
+          assetId: input.assetId,
+          kind: input.kind,
+          providerId: 'probe-provider',
+          media: { mimeType: 'image/png', bytesBase64: 'AAAA' },
+        };
+      },
+    });
+
+    await expect(handler({
+      type: 'plugin-manager.thumbnail-provider',
+      libraryId: 'library-a',
+      assetId: 'asset-1',
+      deadlineMs: 100,
+    })).resolves.toMatchObject({
+      ok: true,
+      media: {
+        status: 'provided',
+        assetId: 'asset-1',
+        kind: 'thumbnail',
+        media: { mimeType: 'image/png', bytesBase64: 'AAAA' },
+      },
+    });
+    await expect(handler({
+      type: 'plugin-manager.preview-provider',
+      libraryId: 'library-a',
+      assetId: 'asset-2',
+    })).resolves.toMatchObject({ ok: true, media: { kind: 'preview' } });
+    expect(calls).toEqual([
+      { kind: 'thumbnail', assetId: 'asset-1' },
+      { kind: 'preview', assetId: 'asset-2' },
+    ]);
+    expect(JSON.stringify(calls)).not.toContain(userData);
+  });
+
+  it('forwards metadata-provider requests through the Main broker seam', async () => {
+    const userData = temporaryRoot('serpent-plugin-ipc-metadata-user-');
+    const calls: Array<{ assetId: string }> = [];
+    const handler = createPluginPackageRequestHandler({
+      manager: createManager(userData),
+      resolveLibraryDirectory: async () => userData,
+      chooseLocalPackage: async () => undefined,
+      metadataProvider: async (input) => {
+        calls.push({ assetId: input.assetId });
+        return {
+          status: 'provided',
+          assetId: input.assetId,
+          providerId: 'probe-metadata',
+          metadata: {
+            probeKind: 'metadata-extractor',
+            extensionUpper: 'PROBE',
+          },
+        };
+      },
+    });
+
+    await expect(handler({
+      type: 'plugin-manager.metadata-provider',
+      libraryId: 'library-a',
+      assetId: 'asset-1',
+      deadlineMs: 100,
+    })).resolves.toMatchObject({
+      ok: true,
+      metadata: {
+        status: 'provided',
+        assetId: 'asset-1',
+        providerId: 'probe-metadata',
+        metadata: {
+          probeKind: 'metadata-extractor',
+          extensionUpper: 'PROBE',
+        },
+      },
+    });
+    expect(calls).toEqual([{ assetId: 'asset-1' }]);
+    expect(JSON.stringify(calls)).not.toContain(userData);
+  });
+
+  it('forwards import/export/ai provider requests through the Main broker seam', async () => {
+    const userData = temporaryRoot('serpent-plugin-ipc-broker-user-');
+    const importCalls: Array<{ fileName: string }> = [];
+    const exportCalls: Array<{ assetId: string }> = [];
+    const aiCalls: Array<{ assetId: string }> = [];
+    const handler = createPluginPackageRequestHandler({
+      manager: createManager(userData),
+      resolveLibraryDirectory: async () => userData,
+      chooseLocalPackage: async () => undefined,
+      importProvider: async (input) => {
+        importCalls.push({ fileName: input.fileName });
+        return {
+          status: 'provided',
+          providerId: 'probe-import',
+          importPlan: { accepted: true, note: 'probe-import-accepted' },
+        };
+      },
+      exportProvider: async (input) => {
+        exportCalls.push({ assetId: input.assetId });
+        return {
+          status: 'provided',
+          assetId: input.assetId,
+          providerId: 'probe-export',
+          exportDescriptor: { fileName: 'out.probe', mimeType: 'application/octet-stream' },
+        };
+      },
+      aiProvider: async (input) => {
+        aiCalls.push({ assetId: input.assetId });
+        return {
+          status: 'provided',
+          assetId: input.assetId,
+          providerId: 'probe-ai',
+          analysis: { description: 'Probe', tags: ['probe'], rating: 4 },
+        };
+      },
+    });
+
+    await expect(handler({
+      type: 'plugin-manager.import-provider',
+      libraryId: 'library-a',
+      fileName: 'sample.probe',
+      deadlineMs: 100,
+    })).resolves.toMatchObject({
+      ok: true,
+      import: {
+        status: 'provided',
+        providerId: 'probe-import',
+        importPlan: { accepted: true },
+      },
+    });
+    await expect(handler({
+      type: 'plugin-manager.export-provider',
+      libraryId: 'library-a',
+      assetId: 'asset-1',
+    })).resolves.toMatchObject({
+      ok: true,
+      export: { status: 'provided', assetId: 'asset-1' },
+    });
+    await expect(handler({
+      type: 'plugin-manager.ai-provider',
+      libraryId: 'library-a',
+      assetId: 'asset-2',
+    })).resolves.toMatchObject({
+      ok: true,
+      ai: { status: 'provided', assetId: 'asset-2', analysis: { tags: ['probe'] } },
+    });
+    expect(importCalls).toEqual([{ fileName: 'sample.probe' }]);
+    expect(exportCalls).toEqual([{ assetId: 'asset-1' }]);
+    expect(aiCalls).toEqual([{ assetId: 'asset-2' }]);
+    expect(JSON.stringify([...importCalls, ...exportCalls, ...aiCalls])).not.toContain(userData);
+  });
+
   it('rejects malformed Renderer input before selecting a path or touching package storage', async () => {
     const userData = temporaryRoot('serpent-plugin-ipc-user-');
     let selectorCalled = false;
@@ -81,7 +346,7 @@ describe('Plugin package IPC bridge', () => {
     const installed = await handler({ type: 'plugin-manager.install-local', scope: 'user' });
     expect(installed.ok).toBe(true);
     expect(JSON.stringify(installed)).not.toContain(source);
-    if (installed.ok) {
+    if (installed.ok && 'packages' in installed) {
       expect(installed.packages).toMatchObject([{
         pluginId: 'com.example.palette-tools',
         scope: 'user',
@@ -119,7 +384,7 @@ describe('Plugin package IPC bridge', () => {
 
     const listed = await handler({ type: 'plugin-manager.list', libraryId: 'library-a' });
     expect(listed.ok).toBe(true);
-    if (!listed.ok) throw new Error('Expected a package listing.');
+    if (!listed.ok || !('packages' in listed)) throw new Error('Expected a package listing.');
     const conflict = listed.resolutions.find((item) => item.status === 'conflict');
     expect(conflict).toMatchObject({
       pluginId: 'com.example.palette-tools',
@@ -186,7 +451,7 @@ describe('Plugin package IPC bridge', () => {
       libraryId: 'library-a',
     });
     expect(installed).toMatchObject({ ok: true });
-    if (!installed.ok) throw new Error('expected install');
+    if (!installed.ok || !('packages' in installed)) throw new Error('expected install');
     const packageHash = installed.packages[0]?.packageHash;
     expect(packageHash).toBeTypeOf('string');
 
@@ -222,7 +487,7 @@ describe('Plugin package IPC bridge', () => {
 
     const firstInstall = await handler({ type: 'plugin-manager.install-local', scope: 'user' });
     expect(firstInstall).toMatchObject({ ok: true, packages: [{ version: '1.2.0' }] });
-    if (!firstInstall.ok) throw new Error('Expected the first plugin install to succeed.');
+    if (!firstInstall.ok || !('packages' in firstInstall)) throw new Error('Expected the first plugin install to succeed.');
     const firstPackage = firstInstall.packages[0];
     if (firstPackage === undefined) throw new Error('Expected an installed package.');
     await expect(handler({

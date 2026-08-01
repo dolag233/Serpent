@@ -11,10 +11,15 @@ import type {
   PluginManagerRequest,
   PluginManagerResolutionCandidate,
   PluginManagerResolutionSummary,
+  PluginManagerCommandContribution,
+  PluginManagerMcpExposureEntry,
   SerpentPluginManagerApi,
 } from '../shared/plugin-manager-api';
 import { Icon } from './Icons';
 import { useT } from './i18n';
+import { pluginRequiresTrustedCssDisclosure } from '../plugins/plugin-themes';
+import { PluginHostSettingsFields } from './plugin-host-settings-fields';
+import { PluginSettingsPages } from './plugin-settings-pages';
 
 type PluginSettingsPageProps = {
   readonly api: SerpentPluginManagerApi | undefined;
@@ -23,7 +28,7 @@ type PluginSettingsPageProps = {
 
 type PluginSnapshot = Extract<
   Awaited<ReturnType<SerpentPluginManagerApi['request']>>,
-  { ok: true }
+  { ok: true; packages: unknown }
 >;
 
 type InstallScope = 'user' | 'library';
@@ -91,6 +96,8 @@ export function PluginSettingsPage({ api, libraryId }: PluginSettingsPageProps):
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [installError, setInstallError] = useState<string | undefined>();
+  const [mcpCommands, setMcpCommands] = useState<PluginManagerCommandContribution[]>([]);
+  const [mcpExposure, setMcpExposure] = useState<PluginManagerMcpExposureEntry[]>([]);
 
   const load = useCallback(async () => {
     if (api === undefined) {
@@ -99,15 +106,32 @@ export function PluginSettingsPage({ api, libraryId }: PluginSettingsPageProps):
     }
     setLoading(true);
     try {
-      const response = await api.request({
-        type: 'plugin-manager.list',
-        ...(libraryId === undefined ? {} : { libraryId }),
-      });
+      const [response, contributionsResponse, exposureResponse] = await Promise.all([
+        api.request({
+          type: 'plugin-manager.list',
+          ...(libraryId === undefined ? {} : { libraryId }),
+        }),
+        api.request({
+          type: 'plugin-manager.list-contributions',
+          ...(libraryId === undefined ? {} : { libraryId }),
+          target: 'commands',
+        }),
+        api.request({ type: 'plugin-manager.list-mcp-exposure' }),
+      ]);
       if (!response.ok) {
         setError(t('settings.pluginOperationFailed', { code: response.code }));
         return;
       }
+      if (!('packages' in response)) {
+        setError(t('settings.pluginOperationFailed', { code: 'unexpected-response' }));
+        return;
+      }
       setSnapshot(response);
+      setMcpCommands(contributionsResponse.ok && 'contributions' in contributionsResponse
+        ? contributionsResponse.contributions.filter((item): item is PluginManagerCommandContribution =>
+          item.kind === 'command' && item.mcpExported === true)
+        : []);
+      setMcpExposure(exposureResponse.ok && 'mcpExposure' in exposureResponse ? exposureResponse.mcpExposure : []);
       setError(undefined);
     } catch {
       setError(t('settings.pluginOperationFailed', { code: 'bridge-unavailable' }));
@@ -170,6 +194,22 @@ export function PluginSettingsPage({ api, libraryId }: PluginSettingsPageProps):
   }, [snapshot]);
 
   const canUseLibraryScope = libraryId !== undefined;
+  const mcpExposureKeys = useMemo(
+    () => new Set(mcpExposure.map((entry) => `${entry.pluginId}\u0000${entry.commandId}`)),
+    [mcpExposure],
+  );
+
+  const setMcpCommandEnabled = useCallback(async (
+    command: PluginManagerCommandContribution,
+    enabled: boolean,
+  ): Promise<void> => {
+    await execute({
+      type: 'plugin-manager.set-mcp-exposure',
+      pluginId: command.pluginId,
+      commandId: command.commandId,
+      enabled,
+    });
+  }, [execute]);
 
   const setEnabledForPackage = useCallback(async (
     pluginPackage: PluginManagerPackageSummary,
@@ -309,23 +349,27 @@ export function PluginSettingsPage({ api, libraryId }: PluginSettingsPageProps):
                   <div className="plugin-settings-package-meta">
                     <strong>{pluginPackage.version}</strong>
                     <span>{sourceLabel(pluginPackage, t)}</span>
-                    <span>
-                      {pluginPackage.runtimeMode === 'trusted'
+                    <span className={pluginPackage.runtimeMode === 'unrestricted' ? 'plugin-runtime-mode-unrestricted' : undefined}>
+                      {pluginPackage.runtimeMode === 'unrestricted'
                         ? t('settings.pluginRuntimeTrusted')
                         : t('settings.pluginRuntimeStandard')}
                       {' · '}
                       {pluginPackage.permissions.join(', ') || t('settings.pluginNoPermissions')}
                     </span>
-                    <span className="app-settings-hint">
-                      {pluginPackage.runtimeMode === 'trusted'
+                    <span className={pluginPackage.runtimeMode === 'unrestricted' ? 'app-settings-hint plugin-runtime-mode-unrestricted-hint' : 'app-settings-hint'}>
+                      {pluginPackage.runtimeMode === 'unrestricted'
                         ? t('settings.pluginRuntimeTrustedHint')
                         : t('settings.pluginRuntimeStandardHint')}
                     </span>
                     {pluginPackage.scope === 'library'
                       && pluginPackage.status === 'valid'
                       && pluginPackage.trust !== 'trusted'
-                      && pluginPackage.runtimeMode === 'trusted'
-                      ? <span className="app-settings-hint">{t('settings.pluginTrustTrustedConfirmHint')}</span>
+                      && pluginPackage.runtimeMode === 'unrestricted'
+                      ? <span className="app-settings-hint plugin-runtime-mode-unrestricted-hint">{t('settings.pluginTrustTrustedConfirmHint')}</span>
+                      : null}
+                    {pluginPackage.status === 'valid'
+                      && pluginRequiresTrustedCssDisclosure(pluginPackage.permissions)
+                      ? <span className="app-settings-hint">{t('settings.pluginThemeTrustedCssHint')}</span>
                       : null}
                     {pluginPackage.status === 'invalid'
                       ? <span>{t('settings.pluginInvalid', { code: pluginPackage.errorCode ?? 'unknown' })}</span>
@@ -493,6 +537,16 @@ export function PluginSettingsPage({ api, libraryId }: PluginSettingsPageProps):
                   </button>
                 </div>
               ) : null}
+
+              {newest.status === 'valid' ? (
+                <PluginHostSettingsFields
+                  api={api}
+                  disabled={busy}
+                  libraryId={libraryId}
+                  pluginId={pluginId}
+                  scope={scope}
+                />
+              ) : null}
             </div>
           );
         })}
@@ -501,6 +555,13 @@ export function PluginSettingsPage({ api, libraryId }: PluginSettingsPageProps):
   };
 
   const libraryInstallDisabled = installScope === 'library' && !canUseLibraryScope;
+  const pluginContributionRefreshKey = useMemo(() => {
+    if (snapshot === undefined) return null;
+    return [
+      snapshot.safeMode ? 'safe' : 'live',
+      ...snapshot.resolutions.map((resolution) => `${resolution.pluginId}:${resolution.status}`),
+    ].join('|');
+  }, [snapshot]);
 
   return (
     <div className="plugin-settings-page">
@@ -541,6 +602,41 @@ export function PluginSettingsPage({ api, libraryId }: PluginSettingsPageProps):
 
       {error === undefined ? null : <p className="plugin-settings-error" role="status">{error}</p>}
       {loading ? <p className="app-settings-hint">{t('settings.pluginLoading')}</p> : null}
+
+      <PluginSettingsPages
+        libraryId={libraryId}
+        pluginApi={api}
+        refreshKey={pluginContributionRefreshKey}
+      />
+
+      <section className="app-settings-card plugin-settings-mcp-exposure">
+        <div className="app-settings-row-copy">
+          <strong>{t('settings.pluginMcpExposureTitle')}</strong>
+          <span>{t('settings.pluginMcpExposureHint')}</span>
+        </div>
+        {mcpCommands.length === 0 ? (
+          <p className="app-settings-hint">{t('settings.pluginMcpExposureEmpty')}</p>
+        ) : mcpCommands.map((command) => {
+          const key = `${command.pluginId}\u0000${command.commandId}`;
+          return (
+            <label className="app-settings-toggle-row" key={command.id}>
+              <span className="app-settings-row-copy">
+                <strong>{command.title}</strong>
+                <span>{command.pluginId}.{command.commandId}</span>
+              </span>
+              <span className="app-settings-toggle-control">
+                <input
+                  checked={mcpExposureKeys.has(key)}
+                  disabled={busy || api === undefined}
+                  onChange={(event) => void setMcpCommandEnabled(command, event.target.checked)}
+                  type="checkbox"
+                />
+                <span aria-hidden="true" className="app-settings-toggle-track" />
+              </span>
+            </label>
+          );
+        })}
+      </section>
 
       {renderInstallCard('user')}
       {renderInstallCard('library')}

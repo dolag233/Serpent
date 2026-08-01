@@ -39,6 +39,7 @@ import type {
 import type { RecentLibraryEntry } from './recent-libraries';
 import type { AiApiFormat } from './ai-endpoints';
 import type { AiReliabilitySettings } from './ai-reliability';
+import type { PluginJobRecord } from '../plugins/plugin-jobs';
 
 export type LibraryApiResult<T> =
   | { ok: true; value: T }
@@ -138,6 +139,17 @@ export interface AiJobStatus {
   paused: number;
   cancelled: number;
   jobs: AiJob[];
+}
+
+/** Plugin-owned background jobs from the shared `jobs` table (PLUGIN-008). */
+export interface PluginJobStatus {
+  queued: number;
+  running: number;
+  succeeded: number;
+  failed: number;
+  paused: number;
+  cancelled: number;
+  jobs: PluginJobRecord[];
 }
 
 export interface SerpentLibraryApi {
@@ -524,6 +536,7 @@ export interface SerpentLibraryApi {
   resumeMediaJobs(input: { libraryId: string; jobIds?: string[] }): Promise<LibraryApiResult<{ resumedCount: number }>>;
   cancelMediaJobs(input: { libraryId: string; jobIds?: string[] }): Promise<LibraryApiResult<{ cancelledCount: number }>>;
   retryMediaJobs(input: { libraryId: string; jobIds: string[] }): Promise<LibraryApiResult<{ retriedCount: number }>>;
+  listPluginJobs(input: { libraryId: string }): Promise<LibraryApiResult<PluginJobStatus>>;
   onThumbnailEvent(listener: (event: { type: 'asset.thumbnail.ready' | 'asset.thumbnail.failed'; libraryId: string; assetId: string; artifactId?: string; errorCode?: string; reason?: string }) => void): () => void;
   // AI extended
   testAiConnection(input: {

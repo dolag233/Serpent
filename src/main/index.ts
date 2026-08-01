@@ -1,6 +1,7 @@
 import path from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import {
   readFileSync,
   writeFileSync,
@@ -82,6 +83,9 @@ import {
   DESKTOP_AUTOMATION_BROWSE_RESULT_CHANNEL,
   NATIVE_EDIT_COPY_CHANNEL,
   PLUGIN_MANAGER_CHANNEL,
+  PLUGIN_INPUT_CAPTURE_EVENT_CHANNEL,
+  PLUGIN_INPUT_CAPTURE_SESSIONS_CHANNEL,
+  PLUGIN_INPUT_CAPTURE_SYSTEM_MODAL_CHANNEL,
   VIEWER_VIDEO_SHORTCUTS_ACTIVE_CHANNEL,
 } from "../shared/protocol/channels";
 import {
@@ -122,13 +126,25 @@ import {
   type DesktopBrowseControl,
 } from './desktop-browse-control';
 import { ScriptRuntimeSupervisor } from './script-runtime-supervisor';
-import { PluginRuntimeSupervisor, type PluginRuntimeHostCommandHandler, type PluginRuntimeStorageHandler } from './plugin-runtime-supervisor';
+import { PluginRuntimeSupervisor, type PluginRuntimeHostCommandHandler, type PluginRuntimeInputCaptureStartHandler, type PluginRuntimeJobEnqueueHandler, type PluginRuntimeStorageHandler } from './plugin-runtime-supervisor';
 import { normalizeAutomationAssetSearchInput } from './normalize-automation-asset-search-input';
 import { PluginTrustedRuntimeSupervisor } from './plugin-trusted-runtime-supervisor';
+import { PluginInputCaptureBroker } from '../shared/plugin-input-capture';
+import {
+  parsePluginInputCapturePublishPayload,
+  parsePluginInputCaptureSystemModalPayload,
+  type PluginInputCaptureSessionsPayload,
+} from '../shared/plugin-input-capture-renderer';
 import { PluginActivationCoordinator } from './plugin-activation-coordinator';
+import { PluginJobScheduler } from './plugin-job-scheduler';
+import { PluginProviderScheduler } from './plugin-provider-scheduler';
 import { PluginStorageStore, PluginStorageStoreError } from './plugin-storage-store';
+import { PluginSettingsStore } from './plugin-settings-store';
+import { PluginMcpExposureStore } from './plugin-mcp-exposure-store';
+import { PluginMcpToolProvider } from './plugin-mcp-tool-provider';
 import { automationCapabilitiesFromPluginPermissions } from '../plugins/plugin-permission-capabilities';
 import { createContributionRegistry } from '../plugins/plugin-contributions';
+import { createPluginProviderRegistry } from '../plugins/plugin-providers';
 import { loadOrCreatePluginDeviceId } from './plugin-device-identity';
 import { createPluginPackageRequestHandler } from './plugin-package-ipc';
 import { PluginPackageManager } from './plugin-package-manager';
@@ -246,6 +262,10 @@ import {
   createWebImportCommand,
 } from "./web-ingestion";
 import { serpentProtocolSchemes } from "./serpent-protocol-privileges";
+import {
+  parsePluginUiAssetRequest,
+  pluginUiMimeType,
+} from "./plugin-ui-assets";
 
 if (process.env.SERPENT_E2E === "1") {
   const explicitUserDataPath = process.env.SERPENT_E2E_USER_DATA_PATH;
@@ -311,12 +331,46 @@ let automationCommandGateway: AutomationCommandGateway | undefined;
 let scriptRuntimeSupervisor: ScriptRuntimeSupervisor | undefined;
 let pluginRuntimeSupervisor: PluginRuntimeSupervisor | undefined;
 let pluginTrustedRuntimeSupervisor: PluginTrustedRuntimeSupervisor | undefined;
+let pluginInputCaptureBroker: PluginInputCaptureBroker | undefined;
+let pluginInputCaptureFlushTimer: NodeJS.Timeout | undefined;
 let pluginActivationCoordinator: PluginActivationCoordinator | undefined;
+let pluginJobScheduler: PluginJobScheduler | undefined;
+let pluginProviderScheduler: PluginProviderScheduler | undefined;
 let automationScriptFiles: AutomationScriptFileService | undefined;
 let automationRecentScripts: AutomationRecentScriptsStore | undefined;
 let pluginPackageManager: PluginPackageManager | undefined;
+let pluginMcpToolProvider: PluginMcpToolProvider | undefined;
 const pluginAutomationContexts = new Map<string, AutomationExecutionContext>();
 const desktopAutomationSelections = new Map<string, string[]>();
+
+function buildPluginInputCaptureSessionsPayload(): PluginInputCaptureSessionsPayload {
+  const sessions = pluginInputCaptureBroker?.activeSessions() ?? [];
+  return {
+    sessions: sessions.map((session) => ({
+      sessionId: session.sessionId,
+      scope: session.scope,
+      ...(session.ownerViewId === undefined ? {} : { ownerViewId: session.ownerViewId }),
+      keyboard: session.keyboard,
+      pointer: session.pointer,
+    })),
+  };
+}
+
+function publishPluginInputCaptureSessionsToRenderer(): void {
+  if (!mainWindow) return;
+  mainWindow.webContents.send(
+    PLUGIN_INPUT_CAPTURE_SESSIONS_CHANNEL,
+    buildPluginInputCaptureSessionsPayload(),
+  );
+}
+
+function schedulePluginInputCaptureFlush(): void {
+  if (pluginInputCaptureFlushTimer !== undefined) return;
+  pluginInputCaptureFlushTimer = setTimeout(() => {
+    pluginInputCaptureFlushTimer = undefined;
+    pluginInputCaptureBroker?.flush();
+  }, 0);
+}
 
 function recentLibraryPath(): string {
   return path.join(app.getPath("userData"), "recent-library.json");
@@ -785,9 +839,33 @@ async function createMainWindow(): Promise<void> {
   });
   window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   window.webContents.on("will-navigate", (event) => event.preventDefault());
+  window.webContents.session.on("will-download", (event, item) => {
+    if (item.getURL().startsWith("serpent-plugin:")) event.preventDefault();
+  });
   // VIEWER-018: letter keys under CJK IME — Menu accelerators + IMM32 suspend
   // are primary on Windows; before-input remains a cross-platform fallback.
   window.webContents.on("before-input-event", (event, input) => {
+    if (input.type !== 'keyDown' && input.type !== 'keyUp') return;
+    const captureType = input.type === 'keyUp' ? 'keyup' : 'keydown';
+    const captureResult = pluginInputCaptureBroker?.publish({
+      target: { scope: 'application' },
+      event: {
+        type: captureType,
+        timestamp: Date.now(),
+        key: input.key,
+        code: input.code,
+        repeat: input.isAutoRepeat,
+        altKey: input.alt,
+        ctrlKey: input.control,
+        metaKey: input.meta,
+        shiftKey: input.shift,
+        isComposing: input.isComposing,
+      },
+    });
+    if (captureResult === 'delivered' || captureResult === 'queued') {
+      event.preventDefault();
+      return;
+    }
     if (!isViewerVideoShortcutContentsActive(window.webContents.id)) {
       return;
     }
@@ -827,8 +905,14 @@ async function createMainWindow(): Promise<void> {
     });
   };
   window.on("focus", publishWindowFocus);
-  window.on("blur", publishWindowFocus);
+  window.on("blur", () => {
+    pluginInputCaptureBroker?.releaseForWindowBlur();
+    publishWindowFocus();
+  });
   window.once("ready-to-show", publishWindowFocus);
+  window.webContents.once("did-finish-load", () => {
+    publishPluginInputCaptureSessionsToRenderer();
+  });
 
   if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
     attachRendererDevDiagnostics(window);
@@ -2160,6 +2244,8 @@ async function commandFor(
       };
     case "media.list-jobs.request":
       return { type: "media.list-jobs", libraryId: request.libraryId };
+    case "plugin.list-jobs.request":
+      return { type: "plugin.jobs.list", libraryId: request.libraryId };
     case "media.pause-jobs.request":
       return {
         type: "media.pause-jobs",
@@ -3841,6 +3927,8 @@ async function confirmDesktopAutomationFilePlan(plan: DesktopAutomationFilePlanS
   }
   const action = plan.operation === 'trash'
     ? '移入回收站'
+    : plan.operation === 'replace-content'
+      ? '原地替换文件内容'
     : plan.operation === 'move'
       ? '移动到文件夹'
       : plan.operation === 'rename-file' || plan.operation === 'rename-files'
@@ -3861,6 +3949,8 @@ async function confirmDesktopAutomationFilePlan(plan: DesktopAutomationFilePlanS
       `本次选中 ${plan.targetCount} 项；${plan.blockedCount} 项因当前状态或冲突不会处理。`,
       plan.undoSupported
         ? '移入回收站后可在回收站中恢复。'
+        : plan.operation === 'replace-content'
+          ? '原文件字节将被覆盖，且无法通过回收站撤销。'
         : '执行前会再次确认这些资产没有变化。',
       ...(plan.hookWarnings !== undefined && plan.hookWarnings.length > 0
         ? [`插件提示：${plan.hookWarnings.join('；')}`]
@@ -4125,12 +4215,14 @@ async function startApplication(): Promise<void> {
     return result.result;
   };
   const recordPluginRuntimeCrash = (crash: {
+    instanceId: string;
     libraryId: string;
     libraryDirectory: string;
     pluginId: string;
     packageHash: string;
     failureCode: string;
   }): void => {
+    pluginInputCaptureBroker?.releaseForInstance(crash.instanceId, 'plugin-crashed');
     void pluginPackageManager?.recordRuntimeCrash({
       libraryId: crash.libraryId,
       libraryDirectory: crash.libraryDirectory,
@@ -4142,11 +4234,14 @@ async function startApplication(): Promise<void> {
     });
   };
   const pluginStorageStore = new PluginStorageStore(app.getPath('userData'));
+  const pluginSettingsStore = new PluginSettingsStore(app.getPath('userData'));
+  const pluginMcpExposureStore = new PluginMcpExposureStore(app.getPath('userData'));
+  await pluginMcpExposureStore.load();
   const executePluginStorage: PluginRuntimeStorageHandler = async (input) => {
     try {
       return await pluginStorageStore.execute({
         operation: input.operation,
-        scope: input.scope,
+        scope: input.scope ?? 'library',
         pluginId: input.context.pluginId,
         libraryId: input.context.libraryId,
         libraryDirectory: input.context.libraryDirectory,
@@ -4159,6 +4254,75 @@ async function startApplication(): Promise<void> {
       throw error;
     }
   };
+  const handlePluginJobEnqueue: PluginRuntimeJobEnqueueHandler = async (input) => {
+    const coordinator = pluginActivationCoordinator;
+    const client = workerClient;
+    if (coordinator === undefined || client === undefined) {
+      throw Object.assign(new Error('Plugin jobs are unavailable in this session.'), { code: 'JOBS_UNAVAILABLE' });
+    }
+    const validated = coordinator.validateJobEnqueue({
+      instanceId: input.instanceId,
+      handlerId: input.handlerId,
+      ...(input.recoveryStrategy === undefined ? {} : { recoveryStrategy: input.recoveryStrategy }),
+    });
+    if (!validated.ok) {
+      throw Object.assign(new Error(validated.message), { code: validated.code });
+    }
+    const record = coordinator.findActiveInstance(input.instanceId);
+    if (record === undefined) {
+      throw Object.assign(new Error('The plugin instance is no longer active.'), { code: 'INSTANCE_GONE' });
+    }
+    const result = await client.request({
+      type: 'plugin.jobs.enqueue',
+      libraryId: input.context.libraryId,
+      ownerPluginId: input.context.pluginId,
+      ownerPackageHash: input.context.packageHash,
+      pluginHandlerId: input.handlerId,
+      payload: input.payload,
+      recoveryStrategy: validated.recoveryStrategy,
+    });
+    if (!result.ok || result.type !== 'plugin.jobs.enqueued') {
+      throw Object.assign(
+        new Error(result.ok ? 'Plugin job enqueue returned an unexpected result.' : result.error.reason),
+        { code: result.ok ? 'JOB_ENQUEUE_FAILED' : result.error.code },
+      );
+    }
+    pluginJobScheduler?.tick(input.context.libraryId);
+    return { jobId: result.job.jobId };
+  };
+  const onPluginInstanceActivated = (input: { libraryId: string }): void => {
+    pluginJobScheduler?.tick(input.libraryId);
+  };
+  const handlePluginInputCaptureStart: PluginRuntimeInputCaptureStartHandler = (input) => {
+    if (pluginInputCaptureBroker === undefined) {
+      return {
+        ok: false,
+        code: 'CAPTURE_UNAVAILABLE',
+        message: 'Input capture is unavailable in this session.',
+      };
+    }
+    return pluginInputCaptureBroker.start({
+      ...input.options,
+      instanceId: input.instanceId,
+      pluginId: input.pluginId,
+      libraryId: input.libraryId,
+      permissions: input.permissions,
+    });
+  };
+  pluginInputCaptureBroker = new PluginInputCaptureBroker({
+    onStart: () => {
+      publishPluginInputCaptureSessionsToRenderer();
+    },
+    onEvent: (session, event) => {
+      pluginRuntimeSupervisor?.deliverInputCaptureEvent(session.instanceId, session.sessionId, event);
+      pluginTrustedRuntimeSupervisor?.deliverInputCaptureEvent(session.instanceId, session.sessionId, event);
+    },
+    onEnd: (session, reason) => {
+      pluginRuntimeSupervisor?.endInputCapture(session.instanceId, session.sessionId, reason);
+      pluginTrustedRuntimeSupervisor?.endInputCapture(session.instanceId, session.sessionId, reason);
+      publishPluginInputCaptureSessionsToRenderer();
+    },
+  });
   pluginRuntimeSupervisor = new PluginRuntimeSupervisor({
     modulePath: path.join(__dirname, 'plugin_standard_host.js'),
     fork: (modulePath) => utilityProcess.fork(modulePath, [], {
@@ -4167,7 +4331,16 @@ async function startApplication(): Promise<void> {
     }),
     executeHostCommand: executePluginHostCommand,
     executeStorage: executePluginStorage,
+    handleJobEnqueue: handlePluginJobEnqueue,
+    handleInputCaptureStart: handlePluginInputCaptureStart,
+    handleInputCaptureRelease: (instanceId, sessionId) => {
+      pluginInputCaptureBroker?.release(sessionId);
+    },
+    onInstanceDeactivated: (instanceId) => {
+      pluginInputCaptureBroker?.releaseForInstance(instanceId, 'plugin-deactivated');
+    },
     onCrash: recordPluginRuntimeCrash,
+    onInstanceActivated: onPluginInstanceActivated,
     logger,
   });
   pluginTrustedRuntimeSupervisor = new PluginTrustedRuntimeSupervisor({
@@ -4178,6 +4351,15 @@ async function startApplication(): Promise<void> {
     }),
     executeHostCommand: executePluginHostCommand,
     executeStorage: executePluginStorage,
+    handleJobEnqueue: handlePluginJobEnqueue,
+    handleInputCaptureStart: handlePluginInputCaptureStart,
+    handleInputCaptureRelease: (instanceId, sessionId) => {
+      pluginInputCaptureBroker?.release(sessionId);
+    },
+    onInstanceDeactivated: (instanceId) => {
+      pluginInputCaptureBroker?.releaseForInstance(instanceId, 'plugin-deactivated');
+    },
+    onInstanceActivated: onPluginInstanceActivated,
     onCrash: recordPluginRuntimeCrash,
     logger,
   });
@@ -4204,13 +4386,144 @@ async function startApplication(): Promise<void> {
       supervisor: pluginRuntimeSupervisor,
       trustedSupervisor: pluginTrustedRuntimeSupervisor,
       contributions: createContributionRegistry(),
+      providers: createPluginProviderRegistry(),
       compatibility: {
         serpentVersion: app.getVersion(),
         pluginApiVersion: PLUGIN_API_VERSION,
         ...pluginCompatibility,
         nodeAbi,
       },
+      pausePluginJobs: async ({ libraryId, owners }) => {
+        const client = workerClient;
+        if (client === undefined) return;
+        const result = await client.request({
+          type: 'plugin.jobs.pause-owners',
+          libraryId,
+          owners,
+          errorCode: 'PLUGIN_INSTANCE_INACTIVE',
+          errorDetail: 'The plugin instance is no longer active.',
+        });
+        if (!result.ok) {
+          throw new Error(result.error.reason);
+        }
+      },
+      onInstanceActivated: ({ libraryId }) => {
+        pluginJobScheduler?.tick(libraryId);
+      },
+      onContributionsRegistered: ({ libraryId }) => {
+        void pluginProviderScheduler?.materializeLibrary(libraryId).catch((error) => {
+          logger?.error('plugin.providers.materialize', error, { libraryId });
+        });
+      },
       logger,
+    });
+    pluginMcpToolProvider = new PluginMcpToolProvider({
+      activationCoordinator: pluginActivationCoordinator,
+      exposureStore: pluginMcpExposureStore,
+      getLibraryId: () => {
+        const executionId = automationMcpHost?.executionId;
+        const mcpLibraryId = executionId === undefined
+          ? null
+          : automationExecutionJournal?.get(executionId)?.libraryId ?? null;
+        if (mcpLibraryId !== null) return mcpLibraryId;
+        return mainWindow === undefined
+          ? null
+          : focusedContexts.get(mainWindow.id)?.libraryId ?? null;
+      },
+    });
+    pluginJobScheduler = new PluginJobScheduler({
+      supervisor: pluginRuntimeSupervisor,
+      trustedSupervisor: pluginTrustedRuntimeSupervisor,
+      requestWorker: async (command) => {
+        const client = workerClient;
+        if (client === undefined) return { ok: false };
+        const result = await client.request(command);
+        if (!result.ok) return { ok: false };
+        if (result.type === 'plugin.jobs.claimed') {
+          return { ok: true, type: result.type, job: result.job };
+        }
+        if (result.type === 'plugin.jobs.completed') {
+          return { ok: true, type: result.type };
+        }
+        return { ok: false };
+      },
+      resolveInstances: (libraryId) => {
+        const coordinator = pluginActivationCoordinator;
+        if (coordinator === undefined) return [];
+        const bindings = coordinator.listActiveInstances(libraryId);
+        const standard = pluginRuntimeSupervisor?.listActiveInstances(libraryId) ?? [];
+        const trusted = pluginTrustedRuntimeSupervisor?.listActiveInstances(libraryId) ?? [];
+        return bindings.map((binding) => {
+          const source = binding.mode === 'restricted'
+            ? standard.find((item) => item.instanceId === binding.instanceId)
+            : trusted.find((item) => item.instanceId === binding.instanceId);
+          return {
+            ...binding,
+            activated: source?.activated ?? false,
+          };
+        });
+      },
+      logger,
+    });
+    pluginProviderScheduler = new PluginProviderScheduler({
+      coordinator: pluginActivationCoordinator,
+      supervisor: pluginRuntimeSupervisor,
+      trustedSupervisor: pluginTrustedRuntimeSupervisor,
+      requestWorker: async (command) => {
+        const client = workerClient;
+        if (client === undefined) return { ok: false };
+        const result = await client.request(command);
+        if (!result.ok) return { ok: false };
+        if (result.type === 'asset.list') {
+          return { ok: true, type: result.type, assets: result.assets };
+        }
+        if (result.type === 'plugin.derived-fields.materialized') {
+          return {
+            ok: true,
+            type: result.type,
+            writtenCount: result.writtenCount,
+            fieldKey: result.fieldKey,
+          };
+        }
+        if (result.type === 'asset.search.result') {
+          return {
+            ok: true,
+            type: result.type,
+            items: result.items,
+            total: result.total,
+            offset: result.offset,
+            snippets: result.snippets,
+          };
+        }
+        return { ok: false };
+      },
+      logger,
+    });
+    workerClient.onPluginMediaProviderRequest(async (input) => {
+      const scheduler = pluginProviderScheduler;
+      if (scheduler === undefined) {
+        return {
+          status: 'native-fallback',
+          assetId: input.assetId,
+          kind: input.kind,
+          errorCode: 'PLUGIN_PROVIDER_UNAVAILABLE',
+        };
+      }
+      try {
+        return await scheduler.resolveMediaProvider(input);
+      } catch (error) {
+        logger?.error('plugin.media-provider.request', error, {
+          libraryId: input.libraryId,
+          assetId: input.assetId,
+          kind: input.kind,
+        });
+        return {
+          status: 'native-fallback',
+          assetId: input.assetId,
+          kind: input.kind,
+          errorCode: 'PLUGIN_PROVIDER_FAILED',
+        };
+      }
     });
   }
   workerClient.onAssetsChanged(publishAssetChange);
@@ -4410,6 +4723,53 @@ async function startApplication(): Promise<void> {
     }
   });
 
+  protocol.handle("serpent-plugin", async (request) => {
+    const parsed = parsePluginUiAssetRequest(request.url);
+    if (parsed === undefined) {
+      return new Response("Invalid plugin UI URL", { status: 400 });
+    }
+    const resolved = pluginActivationCoordinator?.resolvePluginUiAsset(parsed);
+    if (resolved === undefined) {
+      logger?.info("plugin-ui.protocol-rejected", "Rejected an inactive or unallowlisted plugin UI asset.", {
+        pluginId: parsed.pluginId,
+        instanceId: parsed.instanceId,
+        contributionId: parsed.contributionId,
+      });
+      return new Response("Plugin UI asset not found", { status: 404 });
+    }
+    try {
+      const body = await readFile(resolved.absolutePath);
+      const pluginOrigin = `serpent-plugin://${parsed.pluginId}`;
+      return new Response(body, {
+        headers: {
+          "cache-control": "no-store",
+          "content-security-policy": [
+            "default-src 'none'",
+            `script-src 'self' ${pluginOrigin}`,
+            `style-src 'self' ${pluginOrigin} 'unsafe-inline'`,
+            `img-src 'self' ${pluginOrigin} data:`,
+            `font-src 'self' ${pluginOrigin}`,
+            `media-src 'self' ${pluginOrigin} data:`,
+            "connect-src 'none'",
+            "object-src 'none'",
+            "base-uri 'none'",
+            "form-action 'none'",
+            "frame-src 'none'",
+          ].join("; "),
+          "content-type": pluginUiMimeType(parsed.relativePath),
+          "x-content-type-options": "nosniff",
+        },
+      });
+    } catch (error) {
+      logger?.error("plugin-ui.protocol-read", error, {
+        pluginId: parsed.pluginId,
+        contributionId: parsed.contributionId,
+        relativePath: parsed.relativePath,
+      });
+      return new Response("Plugin UI asset unavailable", { status: 404 });
+    }
+  });
+
   ipcMain.handle(LIBRARY_REQUEST_CHANNEL, (event, input: unknown) => {
     if (!mainWindow || event.sender !== mainWindow.webContents) {
       return {
@@ -4471,6 +4831,46 @@ async function startApplication(): Promise<void> {
     ? undefined
     : createPluginPackageRequestHandler({
       manager: pluginPackageManager,
+      activationCoordinator: pluginActivationCoordinator,
+      settingsStore: pluginSettingsStore,
+      storageStore: pluginStorageStore,
+      mcpExposureStore: pluginMcpExposureStore,
+      searchProviders: async (input) => {
+        if (pluginProviderScheduler === undefined) {
+          throw new Error('Plugin search providers are unavailable.');
+        }
+        return pluginProviderScheduler.searchAssets(input);
+      },
+      mediaProvider: async (input) => {
+        if (pluginProviderScheduler === undefined) {
+          throw new Error('Plugin media providers are unavailable.');
+        }
+        return pluginProviderScheduler.resolveMediaProvider(input);
+      },
+      metadataProvider: async (input) => {
+        if (pluginProviderScheduler === undefined) {
+          throw new Error('Plugin metadata providers are unavailable.');
+        }
+        return pluginProviderScheduler.resolveMetadataProvider(input);
+      },
+      importProvider: async (input) => {
+        if (pluginProviderScheduler === undefined) {
+          throw new Error('Plugin import providers are unavailable.');
+        }
+        return pluginProviderScheduler.resolveImportProvider(input);
+      },
+      exportProvider: async (input) => {
+        if (pluginProviderScheduler === undefined) {
+          throw new Error('Plugin export providers are unavailable.');
+        }
+        return pluginProviderScheduler.resolveExportProvider(input);
+      },
+      aiProvider: async (input) => {
+        if (pluginProviderScheduler === undefined) {
+          throw new Error('Plugin AI providers are unavailable.');
+        }
+        return pluginProviderScheduler.resolveAiProvider(input);
+      },
       resolveLibraryDirectory: async (libraryId) => {
         const client = workerClient;
         if (client === undefined) return undefined;
@@ -4707,6 +5107,32 @@ async function startApplication(): Promise<void> {
     setViewerVideoShortcutCaptureActive(event.sender, active);
   });
 
+  ipcMain.on(PLUGIN_INPUT_CAPTURE_EVENT_CHANNEL, (event, payload: unknown) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents) {
+      logger?.info('ipc.plugin-input-capture', 'Rejected input capture event.', {
+        code: 'unauthorized_sender',
+      });
+      return;
+    }
+    const parsed = parsePluginInputCapturePublishPayload(payload);
+    if (parsed === null) return;
+    const result = pluginInputCaptureBroker?.publish(parsed);
+    if (result === 'queued') schedulePluginInputCaptureFlush();
+    if (result === 'released') publishPluginInputCaptureSessionsToRenderer();
+  });
+
+  ipcMain.on(PLUGIN_INPUT_CAPTURE_SYSTEM_MODAL_CHANNEL, (event, payload: unknown) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents) {
+      logger?.info('ipc.plugin-input-capture', 'Rejected system modal seam.', {
+        code: 'unauthorized_sender',
+      });
+      return;
+    }
+    const parsed = parsePluginInputCaptureSystemModalPayload(payload);
+    if (parsed === null) return;
+    pluginInputCaptureBroker?.setSystemModalActive(parsed.active);
+  });
+
   // Install before the first window so macOS does not keep Electron's default
   // View→Zoom accelerators that steal Cmd+=/-/0 (Serpent-46i9).
   // Windows: hides menu bar for frameless shell (Serpent-znex).
@@ -4728,6 +5154,7 @@ async function startApplication(): Promise<void> {
       request: (command) => workerClient!.request(command),
       onLibraryChanged: (listener) => workerClient!.onLibraryChanged(listener),
       logger,
+      pluginTools: pluginMcpToolProvider,
     });
     if (startedMcpHost === null) {
       throw new Error('SERPENT_MCP=1 but MCP host did not start.');

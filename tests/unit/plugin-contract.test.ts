@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import validManifestFixture from '../fixtures/plugin-manifests/palette-tools.serpent-plugin.json';
+import previewThumbnailManifestFixture from '../fixtures/plugins/preview-thumbnail-probe/serpent-plugin.json';
 
 import {
   PLUGIN_API_VERSION,
@@ -46,12 +47,23 @@ function validSnapshot() {
 }
 
 describe('Plugin v1 manifest contract', () => {
-  it('exports a JSON schema and accepts the documented standard-plugin manifest', () => {
+  it('exports a JSON schema and accepts the documented restricted-plugin manifest', () => {
     const parsed = pluginManifestSchema.parse(validManifest);
 
     expect(parsed.id).toBe('com.example.palette-tools');
-    expect(parsed.runtime.mode).toBe('standard');
+    expect(parsed.runtime.mode).toBe('restricted');
     expect(pluginManifestSchema.toJSONSchema()).toMatchObject({ type: 'object' });
+  });
+
+  it('maps legacy standard/trusted runtime aliases to restricted/unrestricted', () => {
+    expect(pluginManifestSchema.parse({
+      ...validManifestFixture,
+      runtime: { mode: 'standard', entry: 'dist/main.js' },
+    }).runtime.mode).toBe('restricted');
+    expect(pluginManifestSchema.parse({
+      ...validManifestFixture,
+      runtime: { mode: 'trusted', entry: 'dist/main.js' },
+    }).runtime.mode).toBe('unrestricted');
   });
 
   it.each([
@@ -88,7 +100,7 @@ describe('Plugin v1 manifest contract', () => {
     const manifest = pluginManifestSchema.parse({
       ...validManifest,
       runtime: {
-        mode: 'trusted',
+        mode: 'unrestricted',
         entry: 'dist/main.js',
         nativeModules: [{ platform: 'darwin', arch: 'arm64', nodeAbi: 140 }],
       },
@@ -115,6 +127,29 @@ describe('Plugin v1 manifest contract', () => {
       arch: 'arm64',
       nodeAbi: 140,
     })).toMatchObject({ ok: false, code: 'PLUGIN_SERPENT_VERSION_UNSUPPORTED' });
+  });
+
+  it('requires declared extensions for preview, thumbnail, and metadata providers', () => {
+    const parsed = pluginManifestSchema.parse(previewThumbnailManifestFixture);
+    expect(parsed.contributes.providers).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'preview', extensions: ['.probe'] }),
+      expect.objectContaining({ kind: 'thumbnail', extensions: ['.probe'] }),
+      expect.objectContaining({ kind: 'metadata', extensions: ['.probe'] }),
+    ]));
+    expect(pluginManifestSchema.safeParse({
+      ...parsed,
+      contributes: {
+        ...parsed.contributes,
+        providers: [{ id: 'missing-extensions', kind: 'preview' }],
+      },
+    }).success).toBe(false);
+    expect(pluginManifestSchema.safeParse({
+      ...parsed,
+      contributes: {
+        ...parsed.contributes,
+        providers: [{ id: 'missing-extensions', kind: 'metadata' }],
+      },
+    }).success).toBe(false);
   });
 });
 
@@ -209,7 +244,7 @@ describe('Plugin package, installation, trust and resolution contracts', () => {
       pluginId: validManifest.id,
       packageHash: digest('a'),
       sourceFingerprint: 'github:example/serpent-palette-tools@v1.2.0',
-      runtimeMode: 'standard',
+      runtimeMode: 'restricted',
       permissions: validManifest.permissions,
       decision: 'trusted',
       decidedAt: '2026-07-29T00:00:00.000Z',

@@ -12,7 +12,7 @@
     "pluginApi": 1
   },
   "runtime": {
-    "mode": "standard",
+    "mode": "restricted",
     "entry": "dist/main.js"
   },
   "ui": {

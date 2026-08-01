@@ -50,7 +50,7 @@ describe('fixed trusted Host probe fixture', () => {
       source: { kind: 'local-directory', fingerprint: 'fixture:trusted-host-probe' },
     });
     expect(installed.package.manifest.id).toBe('com.serpent.trusted-host-probe');
-    expect(installed.package.manifest.runtime.mode).toBe('trusted');
+    expect(installed.package.manifest.runtime.mode).toBe('unrestricted');
     expect(existsSync(path.join(installed.package.packageDirectory, 'entry/main.js'))).toBe(true);
 
     const storage = new PluginStorageStore(userData);
@@ -75,7 +75,7 @@ describe('fixed trusted Host probe fixture', () => {
           queueMicrotask(() => {
             void storage.execute({
               operation: message.operation,
-              scope: message.scope,
+              scope: message.scope ?? 'library',
               pluginId: 'com.serpent.trusted-host-probe',
               libraryId: 'library-trusted-probe',
               libraryDirectory: library,

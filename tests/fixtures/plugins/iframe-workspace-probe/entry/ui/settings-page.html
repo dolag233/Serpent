@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Settings page probe</title>
+    <style>
+      :root { color-scheme: dark; font: 14px system-ui, sans-serif; }
+      body { background: var(--serpent-canvas, #252729); color: var(--serpent-text, #f1f2ef); margin: 0; padding: 24px; }
+      button { background: var(--serpent-accent, #3b82f6); border: 0; border-radius: 6px; color: white; cursor: pointer; margin-right: 8px; padding: 8px 12px; }
+      #status { color: var(--serpent-secondary, #a9ada9); margin-top: 16px; }
+    </style>
+  </head>
+  <body>
+    <h1>Sandboxed settings page</h1>
+    <button id="command" type="button">Run command</button>
+    <button id="storage" type="button">Write storage</button>
+    <div id="status">Waiting for theme…</div>
+    <script src="./settings-page-ui.js"></script>
+  </body>
+</html>

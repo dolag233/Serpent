@@ -63,6 +63,12 @@ export type ContextMenuDescriptor =
       count: number;
     }
   | {
+      /** Workspace canvas empty-area context menu (PLUGIN-015). */
+      type: "workspace";
+      /** Current asset selection when the menu opens; omitted when empty. */
+      assetIds?: string[];
+    }
+  | {
       /** Sidebar trash row context menu (Serpent-gaoi). */
       type: "trash";
     }

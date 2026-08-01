@@ -1,0 +1,145 @@
+import {
+  PLUGIN_JOB_DEFAULT_TIMEOUT_MS,
+  type PluginJobComplete,
+  type PluginJobRecord,
+} from '../plugins/plugin-jobs';
+import type { PluginRuntimeSupervisor } from './plugin-runtime-supervisor';
+import type { PluginTrustedRuntimeSupervisor } from './plugin-trusted-runtime-supervisor';
+
+export interface PluginJobSchedulerLogger {
+  info(scope: string, message: string, context?: Record<string, unknown>): void;
+  error(scope: string, error: unknown, context?: Record<string, unknown>): void;
+}
+
+export type PluginJobWorkerRequester = (command: {
+  type: 'plugin.jobs.claim-next';
+  libraryId: string;
+  ownerPluginId: string;
+  ownerPackageHash: string;
+} | {
+  type: 'plugin.jobs.complete';
+  libraryId: string;
+  jobId: string;
+  status: 'succeeded' | 'failed' | 'cancelled';
+  errorCode?: string;
+  errorDetail?: string;
+  progress?: number;
+}) => Promise<{
+  ok: boolean;
+  type?: string;
+  job?: PluginJobRecord | null;
+}>;
+
+export type PluginJobSchedulerInstanceBinding = {
+  instanceId: string;
+  mode: 'restricted' | 'unrestricted';
+  pluginId: string;
+  packageHash: string;
+  activated: boolean;
+};
+
+/**
+ * Main-owned scheduler that claims persisted plugin jobs from the Worker and
+ * invokes handlers in the active Standard/Trusted Hosts.
+ */
+export class PluginJobScheduler {
+  #inFlight = new Set<string>();
+
+  constructor(private readonly options: {
+    supervisor: PluginRuntimeSupervisor;
+    trustedSupervisor?: PluginTrustedRuntimeSupervisor;
+    requestWorker: PluginJobWorkerRequester;
+    resolveInstances: (libraryId: string) => readonly PluginJobSchedulerInstanceBinding[];
+    jobTimeoutMs?: number;
+    logger?: PluginJobSchedulerLogger;
+  }) {}
+
+  tick(libraryId: string): void {
+    void this.#drainLibrary(libraryId);
+  }
+
+  async #drainLibrary(libraryId: string): Promise<void> {
+    const instances = this.options.resolveInstances(libraryId)
+      .filter((instance) => instance.activated);
+    for (const instance of instances) {
+      await this.#drainInstance(libraryId, instance);
+    }
+  }
+
+  async #drainInstance(
+    libraryId: string,
+    instance: PluginJobSchedulerInstanceBinding,
+  ): Promise<void> {
+    for (;;) {
+      const claimed = await this.options.requestWorker({
+        type: 'plugin.jobs.claim-next',
+        libraryId,
+        ownerPluginId: instance.pluginId,
+        ownerPackageHash: instance.packageHash,
+      });
+      if (!claimed.ok || claimed.type !== 'plugin.jobs.claimed' || claimed.job === null || claimed.job === undefined) {
+        return;
+      }
+      if (this.#inFlight.has(claimed.job.jobId)) return;
+      this.#inFlight.add(claimed.job.jobId);
+      try {
+        await this.#runClaimedJob(libraryId, instance, claimed.job);
+      } finally {
+        this.#inFlight.delete(claimed.job.jobId);
+      }
+    }
+  }
+
+  async #runClaimedJob(
+    libraryId: string,
+    instance: PluginJobSchedulerInstanceBinding,
+    job: PluginJobRecord,
+  ): Promise<void> {
+    const timeoutMs = this.options.jobTimeoutMs ?? PLUGIN_JOB_DEFAULT_TIMEOUT_MS;
+    const invoked = instance.mode === 'restricted'
+      ? await this.options.supervisor.invokeJob({
+        instanceId: instance.instanceId,
+        job,
+        timeoutMs,
+      })
+      : await this.options.trustedSupervisor!.invokeJob({
+        instanceId: instance.instanceId,
+        job,
+        timeoutMs,
+      });
+    if (invoked.timedOut) {
+      this.options.logger?.info('plugin.job.timeout', 'Plugin job handler timed out.', {
+        libraryId,
+        pluginId: instance.pluginId,
+        jobId: job.jobId,
+      });
+    }
+    await this.#completeJob(libraryId, invoked.complete);
+  }
+
+  async completeJobFromHost(
+    libraryId: string,
+    complete: PluginJobComplete,
+  ): Promise<void> {
+    await this.#completeJob(libraryId, complete);
+  }
+
+  async #completeJob(libraryId: string, complete: PluginJobComplete): Promise<void> {
+    const result = await this.options.requestWorker({
+      type: 'plugin.jobs.complete',
+      libraryId,
+      jobId: complete.jobId,
+      status: complete.status,
+      ...(complete.errorCode === undefined ? {} : { errorCode: complete.errorCode }),
+      ...(complete.errorDetail === undefined ? {} : { errorDetail: complete.errorDetail }),
+      ...(complete.progress === undefined ? {} : { progress: complete.progress }),
+    });
+    if (!result.ok) {
+      this.options.logger?.error(
+        'plugin.job.complete-failed',
+        new Error('Worker could not complete plugin job.'),
+        { libraryId, jobId: complete.jobId },
+      );
+    }
+  }
+}

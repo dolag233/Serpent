@@ -11,12 +11,14 @@ describe('plugin permission → automation capability mapping', () => {
     expect(automationCapabilitiesFromPluginPermissions([
       'library.read',
       'asset.read',
+      'content.write',
       'tag.write',
       'folder.write',
       'net.fetch',
       'ui.workspace',
     ])).toEqual([
       'asset.read',
+      'content.write',
       'folder.write',
       'library.read',
       'tag.write',

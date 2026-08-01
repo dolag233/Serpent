@@ -5,6 +5,10 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { createPluginTrustedHostHandler } from '../../src/scripting/plugin-trusted-host';
+import {
+  SERPENT_GUEST_ASSET_METHODS,
+  SERPENT_GUEST_LIBRARY_METHODS,
+} from '../../src/scripting/serpent-guest-api';
 import type { PluginTrustedChildMessage } from '../../src/shared/plugin-trusted-runtime-protocol';
 import { pluginTrustedParentMessageSchema } from '../../src/shared/plugin-trusted-runtime-protocol';
 
@@ -36,6 +40,58 @@ describe('plugin-trusted runtime protocol', () => {
 });
 
 describe('Plugin Trusted Host handler', () => {
+  it('exposes the shared Guest API asset and library method sets', async () => {
+    const packageDirectory = mkdtempSync(path.join(tmpdir(), 'serpent-trusted-guest-api-'));
+    roots.push(packageDirectory);
+    mkdirSync(path.join(packageDirectory, 'dist'), { recursive: true });
+    writeFileSync(path.join(packageDirectory, 'dist', 'main.js'), `
+      exports.activate = async function activate(serpent) {
+        serpent.console.log(JSON.stringify({
+          assets: Object.keys(serpent.assets).sort(),
+          library: Object.keys(serpent.library).sort()
+        }));
+      };
+      exports.deactivate = async function deactivate() {};
+    `);
+
+    const posted: PluginTrustedChildMessage[] = [];
+    const handler = createPluginTrustedHostHandler({
+      postMessage: (message) => posted.push(message),
+      heartbeatIntervalMs: 60_000,
+    });
+    const instanceId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    handler.handle({
+      type: 'plugin-trusted.activate',
+      instanceId,
+      libraryId: 'library-1',
+      pluginId: 'com.example.guest-api',
+      version: '1.0.0',
+      packageHash: 'c'.repeat(64),
+      packageDirectory,
+      entryRelativePath: 'dist/main.js',
+      permissions: [],
+      activateDeadlineMs: 15_000,
+    });
+
+    for (let attempt = 0; attempt < 200 && !posted.some((message) => message.type === 'plugin-trusted.activated'); attempt += 1) {
+      await flush(10);
+    }
+    const consoleMessage = posted.find((message) => message.type === 'plugin-trusted.console');
+    expect(consoleMessage?.type).toBe('plugin-trusted.console');
+    if (consoleMessage?.type !== 'plugin-trusted.console') throw new Error('missing Guest API probe output');
+    expect(JSON.parse(consoleMessage.message)).toEqual({
+      assets: [...SERPENT_GUEST_ASSET_METHODS].sort(),
+      library: [...SERPENT_GUEST_LIBRARY_METHODS].sort(),
+    });
+
+    handler.handle({
+      type: 'plugin-trusted.deactivate',
+      instanceId,
+      reason: 'library-closed',
+    });
+    handler.dispose();
+  }, 20_000);
+
   it('loads a CommonJS entry from a package directory and parks until deactivate', async () => {
     const packageDirectory = mkdtempSync(path.join(tmpdir(), 'serpent-trusted-plugin-'));
     roots.push(packageDirectory);
@@ -102,6 +158,99 @@ describe('Plugin Trusted Host handler', () => {
     expect(posted.some((message) => (
       message.type === 'plugin-trusted.deactivated' && message.reason === 'library-closed'
     ))).toBe(true);
+    handler.dispose();
+  }, 20_000);
+
+  it('exposes bounded content read and replacement through the Gateway bridge', async () => {
+    const packageDirectory = mkdtempSync(path.join(tmpdir(), 'serpent-trusted-content-plugin-'));
+    roots.push(packageDirectory);
+    mkdirSync(path.join(packageDirectory, 'dist'), { recursive: true });
+    writeFileSync(path.join(packageDirectory, 'dist', 'main.js'), `
+      exports.activate = async function activate(serpent) {
+        await serpent.assets.readContent('asset-1', { maxBytes: 4 });
+        await serpent.assets.replaceContent('asset-1', 'AQID', { expectedRevisionId: 'revision-1' });
+      };
+      exports.deactivate = async function deactivate() {};
+    `);
+
+    const posted: PluginTrustedChildMessage[] = [];
+    const handler = createPluginTrustedHostHandler({
+      postMessage: (message) => {
+        posted.push(message);
+      },
+      heartbeatIntervalMs: 60_000,
+    });
+    const instanceId = '77777777-7777-4777-8777-777777777777';
+    handler.handle({
+      type: 'plugin-trusted.activate',
+      instanceId,
+      libraryId: 'library-1',
+      pluginId: 'com.example.content',
+      version: '1.0.0',
+      packageHash: 'b'.repeat(64),
+      packageDirectory,
+      entryRelativePath: 'dist/main.js',
+      permissions: ['library.read', 'asset.read', 'content.read', 'content.write'],
+    });
+
+    for (let attempt = 0; attempt < 200 && !posted.some((message) => (
+      message.type === 'plugin-trusted.host-command' && message.commandId === 'asset.content.read'
+    )); attempt += 1) {
+      await flush(10);
+    }
+    const readCommand = posted.find((message) => (
+      message.type === 'plugin-trusted.host-command' && message.commandId === 'asset.content.read'
+    ));
+    expect(readCommand).toMatchObject({
+      commandId: 'asset.content.read',
+      input: { assetId: 'asset-1', maxBytes: 4 },
+    });
+    if (readCommand?.type !== 'plugin-trusted.host-command') throw new Error('missing content read');
+    handler.handle({
+      type: 'plugin-trusted.host-result',
+      instanceId,
+      requestId: readCommand.requestId,
+      ok: true,
+      result: {
+        assetId: 'asset-1',
+        revisionId: 'revision-1',
+        byteSize: 8,
+        dataBase64: 'AQIDBA==',
+        truncated: true,
+        mimeType: 'image/png',
+      },
+    });
+
+    for (let attempt = 0; attempt < 200 && !posted.some((message) => (
+      message.type === 'plugin-trusted.host-command' && message.commandId === 'asset.content.replace'
+    )); attempt += 1) {
+      await flush(10);
+    }
+    const replaceCommand = posted.find((message) => (
+      message.type === 'plugin-trusted.host-command' && message.commandId === 'asset.content.replace'
+    ));
+    expect(replaceCommand).toMatchObject({
+      commandId: 'asset.content.replace',
+      input: { assetId: 'asset-1', dataBase64: 'AQID', expectedRevisionId: 'revision-1' },
+    });
+    if (replaceCommand?.type !== 'plugin-trusted.host-command') throw new Error('missing content replace');
+    handler.handle({
+      type: 'plugin-trusted.host-result',
+      instanceId,
+      requestId: replaceCommand.requestId,
+      ok: true,
+      result: { assetId: 'asset-1', revisionId: 'revision-2', byteSize: 3 },
+    });
+
+    for (let attempt = 0; attempt < 200 && !posted.some((message) => message.type === 'plugin-trusted.activated'); attempt += 1) {
+      await flush(10);
+    }
+    expect(posted.some((message) => message.type === 'plugin-trusted.activated')).toBe(true);
+    handler.handle({
+      type: 'plugin-trusted.deactivate',
+      instanceId,
+      reason: 'library-closed',
+    });
     handler.dispose();
   }, 20_000);
 });

@@ -4,6 +4,7 @@ import path from 'node:path';
 
 import {
   type PluginManagerPackageSummary,
+  type PluginManagerPluginSettingSection,
   type PluginManagerResolutionCandidate,
   type PluginManagerResolutionSummary,
   type PluginManagerResponse,
@@ -18,9 +19,37 @@ import {
   PluginPackageManagerError,
 } from './plugin-package-manager';
 import type { PluginPackageManager } from './plugin-package-manager';
+import type { PluginActivationCoordinator } from './plugin-activation-coordinator';
+import type { PluginManifest } from '../plugins/plugin-manifest';
+import {
+  PluginSettingsStore,
+  PluginSettingsStoreError,
+  type PluginSettingValue,
+} from './plugin-settings-store';
+import type { PluginStorageStore } from './plugin-storage-store';
+import type { PluginMcpExposureStore } from './plugin-mcp-exposure-store';
+import { createPluginUiUrl } from './plugin-ui-assets';
+import type {
+  PluginMediaProviderInput,
+  PluginMediaProviderResult,
+  PluginMetadataProviderInput,
+  PluginMetadataProviderResult,
+  PluginImportProviderInput,
+  PluginImportProviderResult,
+  PluginExportProviderInput,
+  PluginExportProviderResult,
+  PluginAiProviderInput,
+  PluginAiProviderResult,
+  PluginSearchSchedulerInput,
+  PluginSearchSchedulerResult,
+} from './plugin-provider-scheduler';
 
 export interface PluginPackageIpcOptions {
   manager: PluginPackageManager;
+  activationCoordinator?: PluginActivationCoordinator;
+  settingsStore?: PluginSettingsStore;
+  storageStore?: PluginStorageStore;
+  mcpExposureStore?: PluginMcpExposureStore;
   resolveLibraryDirectory(libraryId: string): Promise<string | undefined>;
   /** Main-owned native picker. It must never return a value to Renderer. */
   chooseLocalPackage(): Promise<string | undefined>;
@@ -34,6 +63,12 @@ export interface PluginPackageIpcOptions {
     libraryId?: string;
     libraryDirectory?: string;
   }) => Promise<void>;
+  searchProviders?: (input: PluginSearchSchedulerInput) => Promise<PluginSearchSchedulerResult>;
+  mediaProvider?: (input: PluginMediaProviderInput) => Promise<PluginMediaProviderResult>;
+  metadataProvider?: (input: PluginMetadataProviderInput) => Promise<PluginMetadataProviderResult>;
+  importProvider?: (input: PluginImportProviderInput) => Promise<PluginImportProviderResult>;
+  exportProvider?: (input: PluginExportProviderInput) => Promise<PluginExportProviderResult>;
+  aiProvider?: (input: PluginAiProviderInput) => Promise<PluginAiProviderResult>;
   logger?: { error(scope: string, error: unknown, context?: Record<string, unknown>): void };
 }
 
@@ -66,7 +101,7 @@ function summary(entry: PluginInstalledPackageStatus): PluginManagerPackageSumma
       name: entry.package.pluginId,
       description: 'Package verification failed.',
       packageHash: entry.package.packageHash,
-      runtimeMode: 'standard',
+      runtimeMode: 'restricted',
       permissions: [],
       source: sourceSummary(entry.package.source),
       scope: entry.scope,
@@ -172,7 +207,7 @@ function resolutionSummary(
 }
 
 async function libraryDirectoryFor(
-  request: { scope?: 'user' | 'library'; libraryId?: string },
+  request: { scope?: unknown; libraryId?: string },
   options: PluginPackageIpcOptions,
 ): Promise<string | undefined> {
   if (request.scope === 'user') return undefined;
@@ -192,6 +227,141 @@ async function packageForTrust(
     && entry.package.lock.pluginId === pluginId
     && entry.package.lock.packageHash === packageHash);
   return match?.status === 'valid' ? match.package : undefined;
+}
+
+async function resolvedManifestForSettings(
+  request: {
+    pluginId: string;
+    scope: 'user' | 'library';
+    libraryId?: string;
+  },
+  libraryDirectory: string | undefined,
+  options: PluginPackageIpcOptions,
+): Promise<{ manifest: PluginManifest; libraryId: string; libraryDirectory: string } | undefined> {
+  if (request.scope === 'library') {
+    if (request.libraryId === undefined || libraryDirectory === undefined) return undefined;
+    const resolution = await options.manager.resolve({
+      libraryId: request.libraryId,
+      libraryDirectory,
+      pluginId: request.pluginId,
+    });
+    if (resolution.status === 'resolved' || resolution.status === 'awaiting-trust') {
+      return {
+        manifest: resolution.package.manifest,
+        libraryId: request.libraryId,
+        libraryDirectory,
+      };
+    }
+    const installed = await options.manager.listInstalled({ scope: 'library', libraryDirectory });
+    const valid = installed
+      .filter((entry): entry is PluginInstalledPackageStatus & { status: 'valid' } => entry.status === 'valid')
+      .filter((entry) => entry.package.lock.pluginId === request.pluginId)
+      .sort((left, right) => right.package.lock.version.localeCompare(left.package.lock.version));
+    const newest = valid[0]?.package;
+    if (newest === undefined) return undefined;
+    return {
+      manifest: newest.manifest,
+      libraryId: request.libraryId,
+      libraryDirectory,
+    };
+  }
+  const installed = await options.manager.listInstalled({ scope: 'user' });
+  const valid = installed
+    .filter((entry): entry is PluginInstalledPackageStatus & { status: 'valid' } => entry.status === 'valid')
+    .filter((entry) => entry.package.lock.pluginId === request.pluginId)
+    .sort((left, right) => right.package.lock.version.localeCompare(left.package.lock.version));
+  const newest = valid[0]?.package;
+  if (newest === undefined) return undefined;
+  return {
+    manifest: newest.manifest,
+    libraryId: 'user-default',
+    libraryDirectory: '',
+  };
+}
+
+function settingsLayerForScope(scope: 'user' | 'library'): 'user-default' | 'library' {
+  return scope === 'user' ? 'user-default' : 'library';
+}
+
+async function mirrorSettingToPluginStorage(input: {
+  options: PluginPackageIpcOptions;
+  scope: 'user' | 'library';
+  pluginId: string;
+  libraryId: string;
+  libraryDirectory: string;
+  settingId: string;
+  value: PluginSettingValue;
+}): Promise<void> {
+  const storage = input.options.storageStore;
+  if (storage === undefined) return;
+  const storageScope = input.scope === 'user' ? 'user' as const : 'library' as const;
+  if (storageScope === 'library' && input.libraryDirectory === '') return;
+  await storage.set({
+    scope: storageScope,
+    pluginId: input.pluginId,
+    libraryId: input.libraryId,
+    libraryDirectory: input.libraryDirectory,
+    key: `settings.${input.settingId}`,
+    value: input.value,
+  });
+}
+
+async function getPluginSettingsSections(
+  request: Extract<PluginManagerRequest, { type: 'plugin-manager.get-plugin-settings' }>,
+  libraryDirectory: string | undefined,
+  options: PluginPackageIpcOptions,
+): Promise<PluginManagerPluginSettingSection[] | undefined> {
+  const resolved = await resolvedManifestForSettings(request, libraryDirectory, options);
+  const store = options.settingsStore;
+  if (resolved === undefined || store === undefined) return undefined;
+  const snapshot = await store.getEffective({
+    libraryId: resolved.libraryId,
+    libraryDirectory: resolved.libraryDirectory,
+    manifest: resolved.manifest,
+  });
+  return resolved.manifest.contributes.settings.map((setting) => ({
+    id: setting.id,
+    title: setting.title,
+    type: setting.type,
+    value: snapshot.values[setting.id] ?? null,
+  }));
+}
+
+async function setPluginSettingValue(
+  request: Extract<PluginManagerRequest, { type: 'plugin-manager.set-plugin-setting' }>,
+  libraryDirectory: string | undefined,
+  options: PluginPackageIpcOptions,
+): Promise<boolean> {
+  const resolved = await resolvedManifestForSettings(request, libraryDirectory, options);
+  const store = options.settingsStore;
+  if (resolved === undefined || store === undefined) return false;
+  const layer = settingsLayerForScope(request.scope);
+  await store.set({
+    layer,
+    libraryId: resolved.libraryId,
+    libraryDirectory: resolved.libraryDirectory,
+    manifest: resolved.manifest,
+    settingId: request.settingId,
+    value: request.value,
+  });
+  try {
+    await mirrorSettingToPluginStorage({
+      options,
+      scope: request.scope,
+      pluginId: request.pluginId,
+      libraryId: resolved.libraryId,
+      libraryDirectory: resolved.libraryDirectory,
+      settingId: request.settingId,
+      value: request.value,
+    });
+  } catch (error) {
+    if (error instanceof PluginSettingsStoreError) throw error;
+    options.logger?.error('plugin.settings.storage-mirror', error, {
+      pluginId: request.pluginId,
+      settingId: request.settingId,
+    });
+  }
+  return true;
 }
 
 /** Returns false for a deliberately cancelled native picker. */
@@ -247,11 +417,185 @@ export function createPluginPackageRequestHandler(options: PluginPackageIpcOptio
         || request.type === 'plugin-manager.rollback'
         || request.type === 'plugin-manager.clear-quarantine')
         || ('scope' in request && request.scope === 'library')
-        || (request.type === 'plugin-manager.list' && libraryId !== undefined);
+        || (request.type === 'plugin-manager.list' && libraryId !== undefined)
+        || request.type === 'plugin-manager.run-command'
+        || request.type === 'plugin-manager.search-providers'
+        || request.type === 'plugin-manager.preview-provider'
+        || request.type === 'plugin-manager.thumbnail-provider'
+        || request.type === 'plugin-manager.metadata-provider'
+        || request.type === 'plugin-manager.import-provider'
+        || request.type === 'plugin-manager.export-provider'
+        || request.type === 'plugin-manager.ai-provider'
+        || (request.type === 'plugin-manager.get-plugin-settings' && request.scope === 'library')
+        || (request.type === 'plugin-manager.set-plugin-setting' && request.scope === 'library')
+        || request.type === 'plugin-manager.ui-storage-get'
+        || request.type === 'plugin-manager.ui-storage-set';
       const libraryDirectory = requiresLibrary
         ? await libraryDirectoryFor(request, options)
         : undefined;
       if (requiresLibrary && libraryDirectory === undefined) return { ok: false, code: 'library-not-open' };
+
+      if (request.type === 'plugin-manager.ui-storage-get'
+        || request.type === 'plugin-manager.ui-storage-set') {
+        const storage = options.storageStore;
+        const permissions = options.activationCoordinator?.pluginUiStoragePermissions({
+          libraryId: request.libraryId,
+          pluginId: request.pluginId,
+          pluginInstanceId: request.pluginInstanceId,
+        });
+        if (storage === undefined || permissions === undefined || libraryDirectory === undefined) {
+          return { ok: false, code: 'operation-failed' };
+        }
+        const result = await storage.execute({
+          operation: request.type === 'plugin-manager.ui-storage-get' ? 'get' : 'set',
+          scope: 'library',
+          pluginId: request.pluginId,
+          libraryId: request.libraryId,
+          libraryDirectory,
+          key: request.key,
+          ...(request.type === 'plugin-manager.ui-storage-set' ? { value: request.value } : {}),
+          permissions,
+        });
+        if (request.type === 'plugin-manager.ui-storage-get') {
+          return { ok: true, value: (result as { value?: unknown }).value ?? null };
+        }
+        return { ok: true, saved: true };
+      }
+
+      if (request.type === 'plugin-manager.list-contributions') {
+        const contributions = options.activationCoordinator?.listContributions({
+          ...(request.libraryId === undefined ? {} : { libraryId: request.libraryId }),
+          ...(request.target === undefined ? {} : { target: request.target }),
+        }) ?? [];
+        return {
+          ok: true,
+          contributions: contributions.map((contribution) => {
+            if (contribution.kind !== 'view' || contribution.entryPath === undefined || request.libraryId === undefined) {
+              return contribution;
+            }
+            return {
+              ...contribution,
+              url: createPluginUiUrl({
+                pluginId: contribution.pluginId,
+                instanceId: contribution.pluginInstanceId,
+                contributionId: contribution.id,
+                libraryId: request.libraryId,
+                entryPath: contribution.entryPath,
+              }),
+            };
+          }),
+        };
+      }
+      if (request.type === 'plugin-manager.list-mcp-exposure') {
+        return {
+          ok: true,
+          mcpExposure: options.mcpExposureStore?.listEnabled() ?? [],
+        };
+      }
+      if (request.type === 'plugin-manager.set-mcp-exposure') {
+        const declared = options.activationCoordinator?.listMcpCommandContributions()
+          .some((command) => command.pluginId === request.pluginId && command.commandId === request.commandId);
+        if (!declared || options.mcpExposureStore === undefined) {
+          return { ok: false, code: 'operation-failed' };
+        }
+        await options.mcpExposureStore.setEnabled({
+          pluginId: request.pluginId,
+          commandId: request.commandId,
+          enabled: request.enabled,
+        });
+        return { ok: true, saved: true };
+      }
+      if (request.type === 'plugin-manager.get-plugin-settings') {
+        const sections = await getPluginSettingsSections(request, libraryDirectory, options);
+        if (sections === undefined) return { ok: false, code: 'operation-failed' };
+        return { ok: true, sections };
+      }
+      if (request.type === 'plugin-manager.set-plugin-setting') {
+        const saved = await setPluginSettingValue(request, libraryDirectory, options);
+        if (!saved) return { ok: false, code: 'operation-failed' };
+        return { ok: true, saved: true };
+      }
+      if (request.type === 'plugin-manager.run-command') {
+        if (options.activationCoordinator === undefined) return { ok: false, code: 'operation-failed' };
+        const result = await options.activationCoordinator.runCommand({
+          libraryId: request.libraryId,
+          ...(request.contributionId === undefined ? {} : { contributionId: request.contributionId }),
+          ...(request.pluginId === undefined ? {} : { pluginId: request.pluginId }),
+          ...(request.commandId === undefined ? {} : { commandId: request.commandId }),
+          ...(request.assetIds === undefined ? {} : { assetIds: request.assetIds }),
+          ...(request.folderIds === undefined ? {} : { folderIds: request.folderIds }),
+          ...(request.collectionIds === undefined ? {} : { collectionIds: request.collectionIds }),
+        });
+        if (result.complete.status !== 'succeeded') return { ok: false, code: 'operation-failed' };
+        return { ok: true, executed: true };
+      }
+      if (request.type === 'plugin-manager.search-providers') {
+        if (options.searchProviders === undefined) return { ok: false, code: 'operation-failed' };
+        const result = await options.searchProviders({
+          libraryId: request.libraryId,
+          query: request.query,
+          ...(request.filters === undefined ? {} : { filters: request.filters }),
+          ...(request.scope === undefined ? {} : { scope: request.scope }),
+          ...(request.sort === undefined ? {} : { sort: request.sort }),
+          ...(request.scopeMode === undefined ? {} : { scopeMode: request.scopeMode }),
+          ...(request.limit === undefined ? {} : { limit: request.limit }),
+          ...(request.offset === undefined ? {} : { offset: request.offset }),
+          ...(request.deadlineMs === undefined
+            ? {}
+            : { deadlineAt: Date.now() + request.deadlineMs }),
+        });
+        return { ok: true, search: result };
+      }
+      if (request.type === 'plugin-manager.preview-provider'
+        || request.type === 'plugin-manager.thumbnail-provider') {
+        if (options.mediaProvider === undefined) return { ok: false, code: 'operation-failed' };
+        const result = await options.mediaProvider({
+          libraryId: request.libraryId,
+          assetId: request.assetId,
+          kind: request.type === 'plugin-manager.preview-provider' ? 'preview' : 'thumbnail',
+          ...(request.deadlineMs === undefined ? {} : { deadlineAt: Date.now() + request.deadlineMs }),
+        });
+        return { ok: true, media: result };
+      }
+      if (request.type === 'plugin-manager.metadata-provider') {
+        if (options.metadataProvider === undefined) return { ok: false, code: 'operation-failed' };
+        const result = await options.metadataProvider({
+          libraryId: request.libraryId,
+          assetId: request.assetId,
+          ...(request.deadlineMs === undefined ? {} : { deadlineAt: Date.now() + request.deadlineMs }),
+        });
+        return { ok: true, metadata: result };
+      }
+      if (request.type === 'plugin-manager.import-provider') {
+        if (options.importProvider === undefined) return { ok: false, code: 'operation-failed' };
+        const result = await options.importProvider({
+          libraryId: request.libraryId,
+          fileName: request.fileName,
+          ...(request.extension === undefined ? {} : { extension: request.extension }),
+          ...(request.mimeType === undefined ? {} : { mimeType: request.mimeType }),
+          ...(request.sizeBytes === undefined ? {} : { sizeBytes: request.sizeBytes }),
+          ...(request.deadlineMs === undefined ? {} : { deadlineAt: Date.now() + request.deadlineMs }),
+        });
+        return { ok: true, import: result };
+      }
+      if (request.type === 'plugin-manager.export-provider') {
+        if (options.exportProvider === undefined) return { ok: false, code: 'operation-failed' };
+        const result = await options.exportProvider({
+          libraryId: request.libraryId,
+          assetId: request.assetId,
+          ...(request.deadlineMs === undefined ? {} : { deadlineAt: Date.now() + request.deadlineMs }),
+        });
+        return { ok: true, export: result };
+      }
+      if (request.type === 'plugin-manager.ai-provider') {
+        if (options.aiProvider === undefined) return { ok: false, code: 'operation-failed' };
+        const result = await options.aiProvider({
+          libraryId: request.libraryId,
+          assetId: request.assetId,
+          ...(request.deadlineMs === undefined ? {} : { deadlineAt: Date.now() + request.deadlineMs }),
+        });
+        return { ok: true, ai: result };
+      }
 
       if (request.type === 'plugin-manager.install-local') {
         if (!await installLocal(request, libraryDirectory, options)) {
@@ -336,6 +680,10 @@ export function createPluginPackageRequestHandler(options: PluginPackageIpcOptio
         safeMode: await options.manager.getSafeMode(),
       };
     } catch (error) {
+      if (error instanceof PluginSettingsStoreError) {
+        options.logger?.error('plugin.settings', error, { requestType: request.type });
+        return { ok: false, code: 'operation-failed' };
+      }
       options.logger?.error('plugin.ipc', error, { requestType: request.type });
       return { ok: false, code: 'operation-failed' };
     }

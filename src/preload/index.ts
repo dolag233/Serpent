@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 
-import type { AiJobStatus, LibraryApiResult, LinkedAssetDeleteResult, MediaJobStatus, PreviewResolution, RelinkAssetResult, SerpentLibraryApi } from '../shared/library-api';
+import type { AiJobStatus, LibraryApiResult, LinkedAssetDeleteResult, MediaJobStatus, PluginJobStatus, PreviewResolution, RelinkAssetResult, SerpentLibraryApi } from '../shared/library-api';
+import { summarizePluginJobs } from '../shared/plugin-job-status';
 import type { RecentLibraryEntry } from '../shared/recent-libraries';
 import type { AiApiFormat } from '../shared/ai-endpoints';
 import type { AiReliabilitySettings } from '../shared/ai-reliability';
@@ -48,7 +49,16 @@ import {
   AUTOMATION_SCRIPT_RECENT_LIST_CHANNEL,
   AUTOMATION_SCRIPT_RECENT_OPEN_CHANNEL,
   PLUGIN_MANAGER_CHANNEL,
+  PLUGIN_INPUT_CAPTURE_EVENT_CHANNEL,
+  PLUGIN_INPUT_CAPTURE_SESSIONS_CHANNEL,
+  PLUGIN_INPUT_CAPTURE_SYSTEM_MODAL_CHANNEL,
 } from '../shared/protocol/channels';
+import {
+  parsePluginInputCapturePublishPayload,
+  parsePluginInputCaptureSessionsPayload,
+  type PluginInputCapturePublishPayload,
+  type PluginInputCaptureRendererSession,
+} from '../shared/plugin-input-capture-renderer';
 import {
   automationScriptFileResultSchema,
   automationScriptSaveInputSchema,
@@ -74,6 +84,8 @@ import {
 } from '../shared/automation-script-api';
 import {
   parsePluginManagerResponse,
+  type PluginHostContributionTarget,
+  type PluginHostMenuTarget,
   type PluginManagerRequest,
   type PluginManagerResponse,
   type SerpentPluginManagerApi,
@@ -1497,6 +1509,13 @@ const library: SerpentLibraryApi = Object.freeze({
     return { ok: true, value: { queued, running, succeeded, failed, paused, cancelled, jobs } };
   },
 
+  async listPluginJobs({ libraryId }: { libraryId: string }): Promise<LibraryApiResult<PluginJobStatus>> {
+    const result = await request({ type: 'plugin.list-jobs.request', libraryId });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'plugin.jobs.listed') throw new Error('Unexpected plugin list-jobs response.');
+    return { ok: true, value: summarizePluginJobs(result.jobs) };
+  },
+
   async pauseMediaJobs({ libraryId, jobIds }: { libraryId: string; jobIds?: string[] }): Promise<LibraryApiResult<{ pausedCount: number }>> {
     const result = await request({ type: 'media.pause-jobs.request', libraryId, jobIds });
     if (!result.ok) return failure(result);
@@ -1935,6 +1954,28 @@ const shell: SerpentShellApi = Object.freeze({
       ipcRenderer.removeListener(VIEWER_VIDEO_SHORTCUT_CHANNEL, handler);
     };
   },
+  onInputCaptureSessions(listener: (sessions: PluginInputCaptureRendererSession[]) => void) {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      payload: unknown,
+    ) => {
+      const parsed = parsePluginInputCaptureSessionsPayload(payload);
+      if (parsed === null) return;
+      listener(parsed.sessions);
+    };
+    ipcRenderer.on(PLUGIN_INPUT_CAPTURE_SESSIONS_CHANNEL, handler);
+    return () => {
+      ipcRenderer.removeListener(PLUGIN_INPUT_CAPTURE_SESSIONS_CHANNEL, handler);
+    };
+  },
+  publishInputCaptureEvent(payload: PluginInputCapturePublishPayload) {
+    const parsed = parsePluginInputCapturePublishPayload(payload);
+    if (parsed === null) return;
+    ipcRenderer.send(PLUGIN_INPUT_CAPTURE_EVENT_CHANNEL, parsed);
+  },
+  setInputCaptureSystemModalActive(active: boolean) {
+    ipcRenderer.send(PLUGIN_INPUT_CAPTURE_SYSTEM_MODAL_CHANNEL, { active: Boolean(active) });
+  },
 });
 
 const automation: SerpentAutomationScriptApi = Object.freeze({
@@ -2011,6 +2052,67 @@ const plugins: SerpentPluginManagerApi = Object.freeze({
       console.error('plugin-manager.response-invalid', error, raw);
       return { ok: false, code: 'operation-failed' };
     }
+  },
+  async listPluginContributions(input: {
+    libraryId?: string;
+    target?: PluginHostContributionTarget;
+  }) {
+    const response = await this.request({
+      type: 'plugin-manager.list-contributions',
+      ...(input.libraryId === undefined ? {} : { libraryId: input.libraryId }),
+      ...(input.target === undefined ? {} : { target: input.target }),
+    });
+    return 'contributions' in response || response.ok === false
+      ? response as Awaited<ReturnType<SerpentPluginManagerApi['listPluginContributions']>>
+      : { ok: false as const, code: 'operation-failed' as const };
+  },
+  async runPluginCommand(input: Extract<PluginManagerRequest, { type: 'plugin-manager.run-command' }>) {
+    const response = await this.request(input);
+    return 'executed' in response || response.ok === false
+      ? response as Awaited<ReturnType<SerpentPluginManagerApi['runPluginCommand']>>
+      : { ok: false as const, code: 'operation-failed' as const };
+  },
+  async searchProviders(input: Extract<PluginManagerRequest, { type: 'plugin-manager.search-providers' }>) {
+    const response = await this.request(input);
+    return 'search' in response || response.ok === false
+      ? response as Awaited<ReturnType<SerpentPluginManagerApi['searchProviders']>>
+      : { ok: false as const, code: 'operation-failed' as const };
+  },
+  async previewProvider(input: Extract<PluginManagerRequest, { type: 'plugin-manager.preview-provider' }>) {
+    const response = await this.request(input);
+    return 'media' in response || response.ok === false
+      ? response as Awaited<ReturnType<SerpentPluginManagerApi['previewProvider']>>
+      : { ok: false as const, code: 'operation-failed' as const };
+  },
+  async thumbnailProvider(input: Extract<PluginManagerRequest, { type: 'plugin-manager.thumbnail-provider' }>) {
+    const response = await this.request(input);
+    return 'media' in response || response.ok === false
+      ? response as Awaited<ReturnType<SerpentPluginManagerApi['thumbnailProvider']>>
+      : { ok: false as const, code: 'operation-failed' as const };
+  },
+  async metadataProvider(input: Extract<PluginManagerRequest, { type: 'plugin-manager.metadata-provider' }>) {
+    const response = await this.request(input);
+    return 'metadata' in response || response.ok === false
+      ? response as Awaited<ReturnType<SerpentPluginManagerApi['metadataProvider']>>
+      : { ok: false as const, code: 'operation-failed' as const };
+  },
+  async importProvider(input: Extract<PluginManagerRequest, { type: 'plugin-manager.import-provider' }>) {
+    const response = await this.request(input);
+    return 'import' in response || response.ok === false
+      ? response as Awaited<ReturnType<SerpentPluginManagerApi['importProvider']>>
+      : { ok: false as const, code: 'operation-failed' as const };
+  },
+  async exportProvider(input: Extract<PluginManagerRequest, { type: 'plugin-manager.export-provider' }>) {
+    const response = await this.request(input);
+    return 'export' in response || response.ok === false
+      ? response as Awaited<ReturnType<SerpentPluginManagerApi['exportProvider']>>
+      : { ok: false as const, code: 'operation-failed' as const };
+  },
+  async aiProvider(input: Extract<PluginManagerRequest, { type: 'plugin-manager.ai-provider' }>) {
+    const response = await this.request(input);
+    return 'ai' in response || response.ok === false
+      ? response as Awaited<ReturnType<SerpentPluginManagerApi['aiProvider']>>
+      : { ok: false as const, code: 'operation-failed' as const };
   },
 });
 

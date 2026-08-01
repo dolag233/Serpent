@@ -53,7 +53,7 @@ export function usePluginTrustPrompt(options: {
         libraryId,
       });
       if (generation !== requestGeneration.current) return;
-      if (!response.ok) {
+      if (!response.ok || !('packages' in response)) {
         setPending(null);
         return;
       }

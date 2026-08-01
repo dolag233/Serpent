@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { findReservedAcceleratorConflict } from '../shared/plugin-accelerator';
 import { pluginIdSchema, pluginLocalIdSchema, type PluginManifest } from './plugin-manifest';
 
 export const pluginContributionKindSchema = z.enum([
@@ -12,6 +13,7 @@ export const pluginContributionKindSchema = z.enum([
   'view',
   'shortcut',
   'hook',
+  'job',
   'provider',
 ]);
 export type PluginContributionKind = z.infer<typeof pluginContributionKindSchema>;
@@ -33,9 +35,12 @@ export const pluginContributionTargetSchema = z.enum([
   'settings.pages',
   'shortcuts',
   'hooks',
+  'jobs',
   'providers',
 ]);
 export type PluginContributionTarget = z.infer<typeof pluginContributionTargetSchema>;
+
+const pluginSettingTypeSchema = z.enum(['boolean', 'number', 'string', 'select']);
 
 const pluginContributionRegistrationSchema = z.strictObject({
   pluginInstanceId: z.string().min(1).max(255),
@@ -44,6 +49,12 @@ const pluginContributionRegistrationSchema = z.strictObject({
   kind: pluginContributionKindSchema,
   target: pluginContributionTargetSchema,
   title: z.string().min(1).max(160),
+  mcpExported: z.boolean().optional(),
+  commandId: pluginLocalIdSchema.optional(),
+  commandTitle: z.string().min(1).max(160).optional(),
+  settingType: pluginSettingTypeSchema.optional(),
+  uiEntryPath: z.string().min(1).max(1_024).optional(),
+  accelerator: z.string().min(1).max(64).optional(),
 });
 export type PluginContributionRegistration = z.infer<typeof pluginContributionRegistrationSchema>;
 
@@ -60,6 +71,28 @@ export interface PluginContributionRegistry {
   list(): readonly RegisteredPluginContribution[];
   revokePluginInstance(pluginInstanceId: string): number;
 }
+
+export const pluginHostMenuTargetSchema = z.enum([
+  'menus.asset',
+  'menus.folder',
+  'menus.collection',
+  'menus.workspace',
+]);
+export type PluginHostMenuTarget = z.infer<typeof pluginHostMenuTargetSchema>;
+
+export type PluginMenuContribution = {
+  id: string;
+  pluginId: string;
+  pluginInstanceId: string;
+  commandId: string;
+  title: string;
+  target: PluginHostMenuTarget;
+};
+
+/** @deprecated Use {@link PluginMenuContribution} */
+export type PluginAssetMenuContribution = PluginMenuContribution & {
+  target: 'menus.asset';
+};
 
 const MENU_TARGET_BY_NAME: Record<string, PluginContributionTarget> = {
   asset: 'menus.asset',
@@ -87,15 +120,23 @@ export function registerManifestContributions(
     pluginInstanceId: string;
     pluginId: string;
     contributes: PluginManifest['contributes'] | undefined;
+    mcpExportedCommandIds?: ReadonlySet<string>;
+    uiEntryPath?: string;
   },
 ): number {
   const contributes = input.contributes ?? {
     commands: [],
     menus: {},
+    toolbar: [],
+    inspector: [],
+    viewerActions: [],
+    shortcuts: [],
     views: [],
     settings: [],
     hooks: [],
+    jobs: [],
     providers: [],
+    themes: [],
   };
   let registered = 0;
   for (const command of contributes.commands) {
@@ -106,6 +147,7 @@ export function registerManifestContributions(
       kind: 'command',
       target: 'commands',
       title: command.title,
+      ...(input.mcpExportedCommandIds?.has(command.id) === true ? { mcpExported: true } : {}),
     });
     registered += 1;
   }
@@ -119,10 +161,71 @@ export function registerManifestContributions(
         localId: `menu.${menuName}.${item.command}`,
         kind: 'menu',
         target,
-        title: item.command,
+        title: contributes.commands.find((command) => command.id === item.command)?.title ?? item.command,
+        commandId: item.command,
       });
       registered += 1;
     }
+  }
+  for (const item of contributes.toolbar ?? []) {
+    registry.register({
+      pluginInstanceId: input.pluginInstanceId,
+      pluginId: input.pluginId,
+      localId: `toolbar.${item.id}`,
+      kind: 'toolbar',
+      target: 'toolbar',
+      title: item.title
+        ?? contributes.commands.find((command) => command.id === item.command)?.title
+        ?? item.command,
+      commandId: item.command,
+    });
+    registered += 1;
+  }
+  for (const item of contributes.inspector ?? []) {
+    const commandTitle = contributes.commands.find((command) => command.id === item.command)?.title
+      ?? item.command;
+    registry.register({
+      pluginInstanceId: input.pluginInstanceId,
+      pluginId: input.pluginId,
+      localId: `inspector.${item.id}`,
+      kind: 'inspector-section',
+      target: 'inspector.sections',
+      title: item.title ?? commandTitle,
+      commandId: item.command,
+      commandTitle,
+    });
+    registered += 1;
+  }
+  for (const item of contributes.viewerActions ?? []) {
+    registry.register({
+      pluginInstanceId: input.pluginInstanceId,
+      pluginId: input.pluginId,
+      localId: `viewer-action.${item.id}`,
+      kind: 'viewer-action',
+      target: 'viewer.actions',
+      title: item.title
+        ?? contributes.commands.find((command) => command.id === item.command)?.title
+        ?? item.command,
+      commandId: item.command,
+    });
+    registered += 1;
+  }
+  for (const item of contributes.shortcuts ?? []) {
+    const conflict = findReservedAcceleratorConflict(item.accelerator);
+    if (conflict !== null) {
+      continue;
+    }
+    registry.register({
+      pluginInstanceId: input.pluginInstanceId,
+      pluginId: input.pluginId,
+      localId: `shortcut.${item.id}`,
+      kind: 'shortcut',
+      target: 'shortcuts',
+      title: contributes.commands.find((command) => command.id === item.command)?.title ?? item.command,
+      commandId: item.command,
+      accelerator: item.accelerator,
+    });
+    registered += 1;
   }
   for (const view of contributes.views) {
     const target = VIEW_TARGET_BY_LOCATION[view.location];
@@ -134,6 +237,9 @@ export function registerManifestContributions(
       kind: 'view',
       target,
       title: view.title,
+      ...(view.entry ?? input.uiEntryPath
+        ? { uiEntryPath: view.entry ?? input.uiEntryPath }
+        : {}),
     });
     registered += 1;
   }
@@ -145,6 +251,7 @@ export function registerManifestContributions(
       kind: 'settings-section',
       target: 'settings.sections',
       title: setting.title,
+      settingType: setting.type,
     });
     registered += 1;
   }
@@ -156,6 +263,17 @@ export function registerManifestContributions(
       kind: 'hook',
       target: 'hooks',
       title: hook.event,
+    });
+    registered += 1;
+  }
+  for (const job of contributes.jobs ?? []) {
+    registry.register({
+      pluginInstanceId: input.pluginInstanceId,
+      pluginId: input.pluginId,
+      localId: job.id,
+      kind: 'job',
+      target: 'jobs',
+      title: job.title,
     });
     registered += 1;
   }
@@ -205,4 +323,296 @@ export function createContributionRegistry(): PluginContributionRegistry {
       return revokedCount;
     },
   };
+}
+
+export type PluginToolbarContribution = {
+  id: string;
+  pluginId: string;
+  pluginInstanceId: string;
+  commandId: string;
+  title: string;
+};
+
+export function listToolbarContributions(
+  registry: PluginContributionRegistry,
+): PluginToolbarContribution[] {
+  return registry.list()
+    .filter((contribution): contribution is RegisteredPluginContribution & {
+      commandId: string;
+      target: 'toolbar';
+    } => contribution.target === 'toolbar' && contribution.commandId !== undefined)
+    .map((contribution) => ({
+      id: contribution.id,
+      pluginId: contribution.pluginId,
+      pluginInstanceId: contribution.pluginInstanceId,
+      commandId: contribution.commandId,
+      title: contribution.title,
+    }))
+    .sort((left, right) => left.id.localeCompare(right.id));
+}
+
+export type PluginCommandContribution = {
+  id: string;
+  pluginId: string;
+  pluginInstanceId: string;
+  commandId: string;
+  title: string;
+  mcpExported?: true;
+};
+
+export function listCommandContributions(
+  registry: PluginContributionRegistry,
+): PluginCommandContribution[] {
+  return registry.list()
+    .filter((contribution) => contribution.target === 'commands' && contribution.kind === 'command')
+    .map((contribution) => ({
+      id: contribution.id,
+      pluginId: contribution.pluginId,
+      pluginInstanceId: contribution.pluginInstanceId,
+      commandId: contribution.localId,
+      title: contribution.title,
+      ...(contribution.mcpExported === true ? { mcpExported: true as const } : {}),
+    }))
+    .sort((left, right) => left.id.localeCompare(right.id));
+}
+
+export function listMcpCommandContributions(
+  registry: PluginContributionRegistry,
+): Array<PluginCommandContribution & { mcpExported: true }> {
+  return registry.list()
+    .filter((contribution): contribution is RegisteredPluginContribution & {
+      kind: 'command';
+      target: 'commands';
+      mcpExported: true;
+    } => contribution.target === 'commands'
+      && contribution.kind === 'command'
+      && contribution.mcpExported === true)
+    .map((contribution) => ({
+      id: contribution.id,
+      pluginId: contribution.pluginId,
+      pluginInstanceId: contribution.pluginInstanceId,
+      commandId: contribution.localId,
+      title: contribution.title,
+      mcpExported: true as const,
+    }))
+    .sort((left, right) => left.id.localeCompare(right.id));
+}
+
+export type PluginInspectorSectionContribution = {
+  id: string;
+  pluginId: string;
+  pluginInstanceId: string;
+  commandId: string;
+  title: string;
+  commandTitle: string;
+};
+
+export function listInspectorSectionContributions(
+  registry: PluginContributionRegistry,
+): PluginInspectorSectionContribution[] {
+  return registry.list()
+    .filter((contribution): contribution is RegisteredPluginContribution & {
+      commandId: string;
+      commandTitle: string;
+      target: 'inspector.sections';
+    } => contribution.target === 'inspector.sections'
+      && contribution.commandId !== undefined
+      && contribution.commandTitle !== undefined)
+    .map((contribution) => ({
+      id: contribution.id,
+      pluginId: contribution.pluginId,
+      pluginInstanceId: contribution.pluginInstanceId,
+      commandId: contribution.commandId,
+      title: contribution.title,
+      commandTitle: contribution.commandTitle,
+    }))
+    .sort((left, right) => left.id.localeCompare(right.id));
+}
+
+export type PluginViewerActionContribution = {
+  id: string;
+  pluginId: string;
+  pluginInstanceId: string;
+  commandId: string;
+  title: string;
+};
+
+export function listViewerActionContributions(
+  registry: PluginContributionRegistry,
+): PluginViewerActionContribution[] {
+  return registry.list()
+    .filter((contribution): contribution is RegisteredPluginContribution & {
+      commandId: string;
+      target: 'viewer.actions';
+    } => contribution.target === 'viewer.actions' && contribution.commandId !== undefined)
+    .map((contribution) => ({
+      id: contribution.id,
+      pluginId: contribution.pluginId,
+      pluginInstanceId: contribution.pluginInstanceId,
+      commandId: contribution.commandId,
+      title: contribution.title,
+    }))
+    .sort((left, right) => left.id.localeCompare(right.id));
+}
+
+export type PluginShortcutContribution = {
+  id: string;
+  pluginId: string;
+  pluginInstanceId: string;
+  commandId: string;
+  title: string;
+  accelerator: string;
+};
+
+export function listShortcutContributions(
+  registry: PluginContributionRegistry,
+): PluginShortcutContribution[] {
+  return registry.list()
+    .filter((contribution): contribution is RegisteredPluginContribution & {
+      commandId: string;
+      accelerator: string;
+      target: 'shortcuts';
+    } => contribution.target === 'shortcuts'
+      && contribution.commandId !== undefined
+      && contribution.accelerator !== undefined)
+    .map((contribution) => ({
+      id: contribution.id,
+      pluginId: contribution.pluginId,
+      pluginInstanceId: contribution.pluginInstanceId,
+      commandId: contribution.commandId,
+      title: contribution.title,
+      accelerator: contribution.accelerator,
+    }))
+    .sort((left, right) => left.id.localeCompare(right.id));
+}
+
+export function listMenuContributions(
+  registry: PluginContributionRegistry,
+  target: PluginHostMenuTarget,
+): PluginMenuContribution[] {
+  return registry.list()
+    .filter((contribution): contribution is RegisteredPluginContribution & {
+      commandId: string;
+      target: PluginHostMenuTarget;
+    } => contribution.target === target && contribution.commandId !== undefined)
+    .map((contribution) => ({
+      id: contribution.id,
+      pluginId: contribution.pluginId,
+      pluginInstanceId: contribution.pluginInstanceId,
+      commandId: contribution.commandId,
+      title: contribution.title,
+      target: contribution.target,
+    }))
+    .sort((left, right) => left.id.localeCompare(right.id));
+}
+
+export function listAssetMenuContributions(
+  registry: PluginContributionRegistry,
+): PluginMenuContribution[] {
+  return listMenuContributions(registry, 'menus.asset');
+}
+
+export type PluginSettingsContribution = {
+  id: string;
+  pluginId: string;
+  pluginInstanceId: string;
+  settingId: string;
+  title: string;
+  type: z.infer<typeof pluginSettingTypeSchema>;
+};
+
+export function listSettingsContributions(
+  registry: PluginContributionRegistry,
+): PluginSettingsContribution[] {
+  return registry.list()
+    .filter((contribution): contribution is RegisteredPluginContribution & {
+      settingType: z.infer<typeof pluginSettingTypeSchema>;
+    } => contribution.target === 'settings.sections' && contribution.settingType !== undefined)
+    .map((contribution) => ({
+      id: contribution.id,
+      pluginId: contribution.pluginId,
+      pluginInstanceId: contribution.pluginInstanceId,
+      settingId: contribution.localId,
+      title: contribution.title,
+      type: contribution.settingType,
+    }))
+    .sort((left, right) => left.id.localeCompare(right.id));
+}
+
+export type PluginViewContribution = {
+  id: string;
+  pluginId: string;
+  pluginInstanceId: string;
+  title: string;
+  entryPath?: string;
+};
+
+/** @deprecated Use {@link PluginViewContribution} */
+export type PluginWorkspaceViewContribution = PluginViewContribution;
+
+/** @deprecated Use {@link PluginViewContribution} */
+export type PluginSidebarViewContribution = PluginViewContribution;
+
+/** @deprecated Use {@link PluginViewContribution} */
+export type PluginInspectorViewContribution = PluginViewContribution;
+
+/** @deprecated Use {@link PluginViewContribution} */
+export type PluginViewerOverlayContribution = PluginViewContribution;
+
+/** @deprecated Use {@link PluginViewContribution} */
+export type PluginSettingsPageContribution = PluginViewContribution;
+
+type PluginViewContributionTarget =
+  | 'workspace.views'
+  | 'sidebar.entries'
+  | 'inspector.views'
+  | 'viewer.overlays'
+  | 'settings.pages';
+
+function listViewContributions(
+  registry: PluginContributionRegistry,
+  target: PluginViewContributionTarget,
+): PluginViewContribution[] {
+  return registry.list()
+    .filter((contribution): contribution is RegisteredPluginContribution & {
+      target: typeof target;
+    } => contribution.target === target)
+    .map((contribution) => ({
+      id: contribution.id,
+      pluginId: contribution.pluginId,
+      pluginInstanceId: contribution.pluginInstanceId,
+      title: contribution.title,
+      ...(contribution.uiEntryPath === undefined ? {} : { entryPath: contribution.uiEntryPath }),
+    }))
+    .sort((left, right) => left.id.localeCompare(right.id));
+}
+
+export function listWorkspaceViewContributions(
+  registry: PluginContributionRegistry,
+): PluginViewContribution[] {
+  return listViewContributions(registry, 'workspace.views');
+}
+
+export function listSidebarViewContributions(
+  registry: PluginContributionRegistry,
+): PluginViewContribution[] {
+  return listViewContributions(registry, 'sidebar.entries');
+}
+
+export function listInspectorViewContributions(
+  registry: PluginContributionRegistry,
+): PluginViewContribution[] {
+  return listViewContributions(registry, 'inspector.views');
+}
+
+export function listViewerOverlayContributions(
+  registry: PluginContributionRegistry,
+): PluginViewContribution[] {
+  return listViewContributions(registry, 'viewer.overlays');
+}
+
+export function listSettingsPageContributions(
+  registry: PluginContributionRegistry,
+): PluginViewContribution[] {
+  return listViewContributions(registry, 'settings.pages');
 }

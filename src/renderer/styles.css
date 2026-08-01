@@ -4052,6 +4052,180 @@ body.serpent-modal-open .app-shell {
   background: var(--hover);
   color: var(--text);
 }
+.plugin-inspector-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.plugin-inspector-section-action {
+  flex-shrink: 0;
+  padding: 4px 10px;
+  border: 1px solid var(--divider);
+  border-radius: 6px;
+  background: var(--raised);
+  color: var(--text);
+  font-size: 11px;
+  cursor: pointer;
+}
+.plugin-inspector-section-action:hover,
+.plugin-inspector-section-action:focus-visible {
+  background: var(--hover);
+}
+.plugin-workspace-views {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0 12px 10px;
+  min-height: 180px;
+}
+.plugin-workspace-view-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.plugin-workspace-view-frame {
+  width: 100%;
+  min-height: 280px;
+  flex: 1 1 280px;
+  border: 1px solid var(--divider);
+  border-radius: 8px;
+  background: var(--canvas);
+}
+.plugin-sidebar-view-panel {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  padding: 12px;
+}
+.plugin-sidebar-view-frame {
+  width: 100%;
+  min-height: 0;
+  flex: 1 1 auto;
+  border: 1px solid var(--divider);
+  border-radius: 8px;
+  background: var(--canvas);
+}
+.plugin-inspector-views {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+.plugin-inspector-view-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.plugin-inspector-view-frame {
+  width: 100%;
+  min-height: 200px;
+  border: 1px solid var(--divider);
+  border-radius: 8px;
+  background: var(--canvas);
+}
+.plugin-viewer-overlay-host {
+  position: absolute;
+  z-index: 4;
+  right: 12px;
+  bottom: 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  max-width: min(420px, calc(100% - 24px));
+  pointer-events: none;
+}
+.plugin-viewer-overlay-toggle,
+.plugin-viewer-overlay-panel {
+  pointer-events: auto;
+}
+.plugin-viewer-overlay-toggle {
+  padding: 6px 10px;
+  border: 1px solid var(--divider);
+  border-radius: 8px;
+  background: var(--viewer-chrome-bg);
+  color: var(--text);
+  font-size: 11px;
+  cursor: pointer;
+  box-shadow: 0 1px 6px rgb(0 0 0 / 10%);
+  backdrop-filter: blur(10px);
+}
+.plugin-viewer-overlay-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(400px, calc(100vw - 48px));
+  padding: 8px;
+  border: 1px solid var(--divider);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--pane) 92%, transparent);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 18%);
+  backdrop-filter: blur(12px);
+}
+.plugin-viewer-overlay-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.plugin-viewer-overlay-frame {
+  width: 100%;
+  min-height: 180px;
+  border: 1px solid var(--divider);
+  border-radius: 8px;
+  background: var(--canvas);
+}
+.plugin-settings-pages-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.plugin-settings-pages {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.plugin-settings-page-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.plugin-settings-page-frame {
+  width: 100%;
+  min-height: 280px;
+  border: 1px solid var(--divider);
+  border-radius: 8px;
+  background: var(--canvas);
+}
+.preview-plugin-actions {
+  position: absolute;
+  z-index: 3;
+  top: 10px;
+  left: 10px;
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--divider);
+  border-radius: 8px;
+  background: var(--viewer-chrome-bg);
+  box-shadow: 0 1px 6px rgb(0 0 0 / 10%);
+  backdrop-filter: blur(10px);
+}
+.preview-plugin-actions button {
+  padding: 4px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font-size: 11px;
+  cursor: pointer;
+}
+.preview-plugin-actions button:hover,
+.preview-plugin-actions button:focus-visible {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
 .preview-transform-controls {
   position: absolute;
   z-index: 3;
@@ -5467,6 +5641,14 @@ select.ai-config-input.ai-config-languages {
   border-top: 1px solid var(--divider);
 }
 
+.plugin-runtime-mode-unrestricted {
+  color: var(--warning-fg);
+}
+
+.plugin-runtime-mode-unrestricted-hint {
+  color: var(--warning-fg);
+}
+
 .plugin-settings-install-local,
 .plugin-settings-install-github {
   display: flex;
@@ -5595,6 +5777,26 @@ select.ai-config-input.ai-config-languages {
   color: var(--secondary);
   font-size: 11px;
   line-height: 1.4;
+}
+
+.plugin-host-settings-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.plugin-host-settings-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.plugin-host-settings-field.app-settings-toggle-row {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
 }
 
 .app-settings-toggle-row {

@@ -75,6 +75,7 @@ describe('PluginRuntimeSupervisor', () => {
       packageHash: 'a'.repeat(64),
       entryJavaScript: 'async function activate() {}',
       permissions: ['library.read', 'asset.read'],
+      installScope: 'library',
     });
 
     expect(child.posted).toContainEqual(expect.objectContaining({
@@ -134,6 +135,7 @@ describe('PluginRuntimeSupervisor', () => {
         version: '1.0.0',
         packageHash: 'a'.repeat(64),
         entryJavaScript: 'async function activate() {}',
+        installScope: 'library',
         permissions: ['library.read'],
       });
 

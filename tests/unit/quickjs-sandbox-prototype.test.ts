@@ -182,6 +182,8 @@ describe('QuickJS/WASM sandbox engine prototype', () => {
         const copied = await serpent.assets.copyFilePaths(assets.items.map((asset) => asset.id));
         const renamed = await serpent.assets.renameFile(assets.items[0].id, 'first-tagged');
         const batchRenamed = await serpent.assets.renameFiles([{ assetId: assets.items[0].id, newBaseName: 'first-concept' }]);
+        const read = await serpent.assets.readContent(assets.items[0].id, { maxBytes: 2 });
+        const replaced = await serpent.assets.replaceContent(assets.items[0].id, 'AQID', { mimeHint: 'image/png' });
         const trashed = await serpent.assets.moveToTrash(assets.items.map((asset) => asset.id));
         const trash = await serpent.trash.list();
         const restored = await serpent.trash.restoreIfOriginalVacant(trash.items.map((asset) => asset.id));
@@ -196,6 +198,8 @@ describe('QuickJS/WASM sandbox engine prototype', () => {
           copied: copied.copiedCount,
           renamed: renamed.name,
           batchRenamed: batchRenamed.renamedCount,
+          read: read.dataBase64,
+          replaced: replaced.byteSize,
           trashed: trashed.trashedCount,
           restored: restored.restoredCount,
           color: palette.colors[0].hex,
@@ -253,6 +257,17 @@ describe('QuickJS/WASM sandbox engine prototype', () => {
               return { assetId: 'asset-a', name: 'first-tagged.png' };
             case 'asset.rename-files':
               return { renamedCount: 1, skipped: [] };
+            case 'asset.content.replace':
+              return { assetId: 'asset-a', revisionId: 'revision-b', byteSize: 3 };
+            case 'asset.content.read':
+              return {
+                assetId: 'asset-a',
+                revisionId: 'revision-a',
+                byteSize: 4,
+                dataBase64: 'AQI=',
+                truncated: true,
+                mimeType: 'image/png',
+              };
             case 'asset.trash':
               return { trashedCount: 1 };
             case 'asset.restore-if-original-vacant':
@@ -283,6 +298,8 @@ describe('QuickJS/WASM sandbox engine prototype', () => {
       copied: 1,
       renamed: 'first-tagged.png',
       batchRenamed: 1,
+      read: 'AQI=',
+      replaced: 3,
       trashed: 1,
       restored: 1,
       color: '#112233',
@@ -295,6 +312,14 @@ describe('QuickJS/WASM sandbox engine prototype', () => {
       { commandId: 'asset.paths.copy', input: { assetIds: ['asset-a'] } },
       { commandId: 'asset.rename-file', input: { assetId: 'asset-a', newBaseName: 'first-tagged' } },
       { commandId: 'asset.rename-files', input: { items: [{ assetId: 'asset-a', newBaseName: 'first-concept' }] } },
+      {
+        commandId: 'asset.content.read',
+        input: { assetId: 'asset-a', maxBytes: 2 },
+      },
+      {
+        commandId: 'asset.content.replace',
+        input: { assetId: 'asset-a', dataBase64: 'AQID', mimeHint: 'image/png' },
+      },
       { commandId: 'asset.trash', input: { assetIds: ['asset-a'] } },
       { commandId: 'asset.list-trash', input: {} },
       { commandId: 'asset.restore-if-original-vacant', input: { assetIds: ['asset-a'] } },

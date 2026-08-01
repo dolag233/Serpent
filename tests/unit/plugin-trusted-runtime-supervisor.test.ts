@@ -71,6 +71,7 @@ describe('PluginTrustedRuntimeSupervisor', () => {
       packageHash: 'a'.repeat(64),
       packageDirectory: '/plugins/trusted',
       entryRelativePath: 'dist/main.js',
+      installScope: 'library',
       permissions: ['library.read', 'asset.read'],
     });
     child.emit('message', { type: 'plugin-trusted.ready' } as never);
@@ -124,7 +125,8 @@ describe('PluginTrustedRuntimeSupervisor', () => {
         packageHash: 'a'.repeat(64),
         packageDirectory: '/plugins/trusted',
         entryRelativePath: 'dist/main.js',
-        permissions: ['library.read'],
+        installScope: 'library',
+      permissions: ['library.read'],
       });
       child.emit('message', { type: 'plugin-trusted.ready' } as never);
       await activation;

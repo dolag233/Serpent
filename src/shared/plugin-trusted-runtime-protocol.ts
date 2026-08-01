@@ -11,11 +11,36 @@ import {
   pluginHookInvokeSchema,
 } from '../plugins/plugin-hooks';
 import {
+  pluginJobCompleteSchema,
+  pluginJobRecordSchema,
+  pluginJobRecoveryStrategySchema,
+} from '../plugins/plugin-jobs';
+import {
   pluginRuntimeActivationFailureCodeSchema,
   pluginRuntimeDeactivateReasonSchema,
   pluginStorageOperationSchema,
   pluginStorageScopeSchema,
 } from './plugin-runtime-utility-protocol';
+import {
+  pluginCommandCompleteSchema,
+  pluginCommandInvokeSchema,
+} from '../plugins/plugin-commands';
+import {
+  pluginProviderBatchResultSchema,
+  pluginProviderInvokeSchema,
+} from '../plugins/plugin-providers';
+import {
+  pluginSearchCancelSchema,
+  pluginSearchChunkSchema,
+  pluginSearchCompleteSchema,
+  pluginSearchRequestSchema,
+} from '../plugins/plugin-search';
+import {
+  pluginInputCaptureEndReasonSchema,
+  pluginInputCaptureEventSchema,
+  pluginInputCaptureOptionsSchema,
+} from './plugin-input-capture';
+import { pluginInputCaptureErrorCodeSchema } from './plugin-input-capture-protocol';
 
 const instanceIdSchema = z.string().uuid();
 const requestIdSchema = z.string().uuid();
@@ -38,6 +63,7 @@ export const pluginTrustedParentMessageSchema = z.discriminatedUnion('type', [
     packageDirectory: z.string().min(1).max(4_096),
     entryRelativePath: z.string().min(1).max(512),
     permissions: z.array(pluginPermissionSchema).max(64),
+    installScope: z.enum(['user', 'library']).default('library'),
     activateDeadlineMs: z.number().int().positive().max(120_000).default(15_000),
   }),
   z.strictObject({
@@ -94,6 +120,76 @@ export const pluginTrustedParentMessageSchema = z.discriminatedUnion('type', [
     instanceId: instanceIdSchema,
     invoke: pluginHookInvokeSchema,
   }),
+  z.strictObject({
+    type: z.literal('plugin-trusted.job-invoke'),
+    instanceId: instanceIdSchema,
+    job: pluginJobRecordSchema,
+  }),
+  z.strictObject({
+    type: z.literal('plugin-trusted.provider-invoke'),
+    instanceId: instanceIdSchema,
+    invoke: pluginProviderInvokeSchema,
+  }),
+  z.strictObject({
+    type: z.literal('plugin-trusted.search-request'),
+    instanceId: instanceIdSchema,
+    request: pluginSearchRequestSchema,
+  }),
+  z.strictObject({
+    type: z.literal('plugin-trusted.search-cancel'),
+    instanceId: instanceIdSchema,
+    cancel: pluginSearchCancelSchema,
+  }),
+  z.strictObject({
+    type: z.literal('plugin-trusted.command-invoke'),
+    instanceId: instanceIdSchema,
+    invoke: pluginCommandInvokeSchema,
+  }),
+  z.strictObject({
+    type: z.literal('plugin-trusted.job-enqueue-result'),
+    instanceId: instanceIdSchema,
+    requestId: requestIdSchema,
+    ok: z.boolean(),
+    result: z.strictObject({
+      jobId: z.string().uuid(),
+    }).optional(),
+    error: z.strictObject({
+      code: z.string().min(1).max(128),
+      message: z.string().min(1).max(1_024),
+    }).optional(),
+  }).superRefine((value, context) => {
+    if (value.ok && value.error !== undefined) {
+      context.addIssue({ code: 'custom', path: ['error'], message: 'Successful job enqueue results cannot contain an error.' });
+    }
+    if (!value.ok && value.error === undefined) {
+      context.addIssue({ code: 'custom', path: ['error'], message: 'Failed job enqueue results need an error.' });
+    }
+  }),
+  z.strictObject({
+    type: z.literal('plugin-trusted.input-capture.started'),
+    instanceId: instanceIdSchema,
+    requestId: requestIdSchema,
+    sessionId: requestIdSchema,
+  }),
+  z.strictObject({
+    type: z.literal('plugin-trusted.input-capture.event'),
+    instanceId: instanceIdSchema,
+    sessionId: requestIdSchema,
+    event: pluginInputCaptureEventSchema,
+  }),
+  z.strictObject({
+    type: z.literal('plugin-trusted.input-capture.end'),
+    instanceId: instanceIdSchema,
+    sessionId: requestIdSchema,
+    reason: pluginInputCaptureEndReasonSchema,
+  }),
+  z.strictObject({
+    type: z.literal('plugin-trusted.input-capture.error'),
+    instanceId: instanceIdSchema,
+    requestId: requestIdSchema,
+    code: pluginInputCaptureErrorCodeSchema,
+    message: z.string().min(1).max(1_024),
+  }),
 ]);
 export type PluginTrustedParentMessage = z.infer<typeof pluginTrustedParentMessageSchema>;
 
@@ -130,7 +226,7 @@ export const pluginTrustedChildMessageSchema = z.discriminatedUnion('type', [
     instanceId: instanceIdSchema,
     requestId: requestIdSchema,
     operation: pluginStorageOperationSchema,
-    scope: pluginStorageScopeSchema.default('library'),
+    scope: pluginStorageScopeSchema.optional(),
     key: z.string().min(1).max(128).optional(),
     value: z.unknown().optional(),
   }),
@@ -145,6 +241,54 @@ export const pluginTrustedChildMessageSchema = z.discriminatedUnion('type', [
     instanceId: instanceIdSchema,
     invokeId: requestIdSchema,
     decision: pluginHookDecisionSchema,
+  }),
+  z.strictObject({
+    type: z.literal('plugin-trusted.job-enqueue'),
+    instanceId: instanceIdSchema,
+    requestId: requestIdSchema,
+    handlerId: z.string().min(1).max(128),
+    payload: z.record(z.string(), z.unknown()).default({}),
+    recoveryStrategy: pluginJobRecoveryStrategySchema.optional(),
+  }),
+  z.strictObject({
+    type: z.literal('plugin-trusted.job-complete'),
+    instanceId: instanceIdSchema,
+    jobId: z.string().uuid(),
+    status: pluginJobCompleteSchema.shape.status,
+    errorCode: z.string().min(1).max(128).optional(),
+    errorDetail: z.string().max(4_096).optional(),
+    progress: z.number().min(0).max(1).optional(),
+  }),
+  z.strictObject({
+    type: z.literal('plugin-trusted.provider-complete'),
+    instanceId: instanceIdSchema,
+    ...pluginProviderBatchResultSchema.shape,
+  }),
+  z.strictObject({
+    type: z.literal('plugin-trusted.search-chunk'),
+    instanceId: instanceIdSchema,
+    ...pluginSearchChunkSchema.shape,
+  }),
+  z.strictObject({
+    type: z.literal('plugin-trusted.search-complete'),
+    instanceId: instanceIdSchema,
+    ...pluginSearchCompleteSchema.shape,
+  }),
+  z.strictObject({
+    type: z.literal('plugin-trusted.command-complete'),
+    instanceId: instanceIdSchema,
+    ...pluginCommandCompleteSchema.shape,
+  }),
+  z.strictObject({
+    type: z.literal('plugin-trusted.input-capture.start'),
+    instanceId: instanceIdSchema,
+    requestId: requestIdSchema,
+    options: pluginInputCaptureOptionsSchema,
+  }),
+  z.strictObject({
+    type: z.literal('plugin-trusted.input-capture.release'),
+    instanceId: instanceIdSchema,
+    sessionId: requestIdSchema,
   }),
 ]);
 export type PluginTrustedChildMessage = z.infer<typeof pluginTrustedChildMessageSchema>;

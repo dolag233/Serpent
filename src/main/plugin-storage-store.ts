@@ -12,6 +12,7 @@ import { z } from 'zod';
 
 import { pluginIdSchema } from '../plugins/plugin-manifest';
 import { PLUGIN_LIBRARY_DATA_DIRECTORY } from '../plugins/plugin-package';
+import { resolvePluginDataDirectory } from '../plugins/plugin-data-directory';
 
 const STORAGE_FILE_VERSION = 1 as const;
 const MAX_STORAGE_FILE_BYTES = 64 * 1024;
@@ -36,6 +37,7 @@ const storageDocumentSchema = z.strictObject({
 });
 
 export type PluginStorageScope = 'library' | 'user';
+export type PluginDataDirectory = { path: string; scope: PluginStorageScope };
 export type PluginStorageValue = z.infer<typeof storageValueSchema>;
 export type PluginStorageDocument = z.infer<typeof storageDocumentSchema>;
 
@@ -114,8 +116,8 @@ export class PluginStorageStore {
   }
 
   async execute(input: {
-    operation: 'get' | 'set' | 'delete' | 'list';
-    scope: PluginStorageScope;
+    operation: 'get' | 'set' | 'delete' | 'list' | 'get-directory';
+    scope?: PluginStorageScope;
     pluginId: string;
     libraryId: string;
     libraryDirectory: string;
@@ -123,6 +125,19 @@ export class PluginStorageStore {
     value?: unknown;
     permissions: readonly string[];
   }): Promise<unknown> {
+    if (input.operation === 'get-directory') {
+      if (!input.permissions.includes('data.files')) {
+        throw new PluginStorageStoreError(
+          'PLUGIN_STORAGE_PERMISSION',
+          'This plugin did not declare the data.files permission.',
+        );
+      }
+      return await this.getDirectory({
+        scope: input.scope ?? 'library',
+        pluginId: input.pluginId,
+        libraryDirectory: input.libraryDirectory,
+      });
+    }
     const needsWrite = input.operation === 'set' || input.operation === 'delete';
     const required = needsWrite ? 'storage.write' : 'storage.read';
     if (!input.permissions.includes(required)) {
@@ -132,19 +147,34 @@ export class PluginStorageStore {
       );
     }
     if (input.operation === 'list') {
-      return { keys: await this.listKeys(input) };
+      return { keys: await this.listKeys({ ...input, scope: input.scope ?? 'library' }) };
     }
     if (input.key === undefined) {
       throw new PluginStorageStoreError('PLUGIN_STORAGE_KEY_INVALID', 'This storage operation requires a key.');
     }
     if (input.operation === 'get') {
-      return { value: await this.get({ ...input, key: input.key }) };
+      return { value: await this.get({ ...input, scope: input.scope ?? 'library', key: input.key }) };
     }
     if (input.operation === 'delete') {
-      return { deleted: await this.delete({ ...input, key: input.key }) };
+      return { deleted: await this.delete({ ...input, scope: input.scope ?? 'library', key: input.key }) };
     }
-    await this.set({ ...input, key: input.key, value: input.value });
+    await this.set({ ...input, scope: input.scope ?? 'library', key: input.key, value: input.value });
     return { ok: true };
+  }
+
+  async getDirectory(input: {
+    scope: PluginStorageScope;
+    pluginId: string;
+    libraryDirectory: string;
+  }): Promise<PluginDataDirectory> {
+    const pluginId = pluginIdSchema.parse(input.pluginId);
+    const directory = resolvePluginDataDirectory({
+      scope: input.scope,
+      pluginId,
+      userDataDirectory: this.userDataDirectory,
+      libraryDirectory: input.scope === 'library' ? input.libraryDirectory : null,
+    });
+    return { path: directory, scope: input.scope };
   }
 
   #parseKey(key: string): string {

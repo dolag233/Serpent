@@ -8,6 +8,10 @@ import {
   searchScopeSchema,
   sortDefinitionSchema,
 } from '../asset-types';
+import {
+  CONTENT_REPLACE_MAX_BYTES,
+  CONTENT_REPLACE_MAX_BASE64_LENGTH,
+} from '../content-replace';
 
 const nonBlankString = z.string().min(1).refine((value) => value.trim().length > 0, {
   message: 'Value must not be blank.',
@@ -65,6 +69,7 @@ export const nameConflictDecisionSchema = z.enum(['keep-both', 'replace', 'skip'
 
 const automationFileOperationSchema = z.enum([
   'trash',
+  'replace-content',
   'move',
   'rename-file',
   'rename-files',
@@ -852,6 +857,10 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     libraryId: identifierSchema,
   }),
   z.strictObject({
+    type: z.literal('plugin.list-jobs.request'),
+    libraryId: identifierSchema,
+  }),
+  z.strictObject({
     type: z.literal('media.pause-jobs.request'),
     libraryId: identifierSchema,
     jobIds: z.array(identifierSchema).min(1).optional(),
@@ -1323,6 +1332,20 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     automationPlan: automationFilePlanProofSchema.optional(),
   }),
   z.strictObject({
+    type: z.literal('asset.content.replace'),
+    libraryId: identifierSchema,
+    assetId: identifierSchema,
+    dataBase64: z.string().min(1).max(CONTENT_REPLACE_MAX_BASE64_LENGTH),
+    expectedRevisionId: identifierSchema.optional(),
+    automationPlan: automationFilePlanProofSchema.optional(),
+  }),
+  z.strictObject({
+    type: z.literal('asset.content.read'),
+    libraryId: identifierSchema,
+    assetId: identifierSchema,
+    maxBytes: z.number().int().positive().max(CONTENT_REPLACE_MAX_BYTES),
+  }),
+  z.strictObject({
     type: z.literal('asset.restore'),
     libraryId: identifierSchema,
     assetIds: z.array(identifierSchema).min(1),
@@ -1614,6 +1637,68 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     type: z.literal('media.retry-jobs'),
     libraryId: identifierSchema,
     jobIds: z.array(identifierSchema).min(1),
+  }),
+  z.strictObject({
+    type: z.literal('plugin.jobs.enqueue'),
+    libraryId: identifierSchema,
+    ownerPluginId: z.string().min(1).max(255),
+    ownerPackageHash: z.string().regex(/^[a-f0-9]{64}$/u),
+    pluginHandlerId: z.string().min(1).max(128),
+    payload: z.record(z.string(), z.unknown()).default({}),
+    recoveryStrategy: z.enum(['idempotent', 'checkpoint']).default('idempotent'),
+    priority: z.number().int().min(-1000).max(1000).optional(),
+  }),
+  z.strictObject({
+    type: z.literal('plugin.jobs.list'),
+    libraryId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('plugin.jobs.claim-next'),
+    libraryId: identifierSchema,
+    ownerPluginId: z.string().min(1).max(255),
+    ownerPackageHash: z.string().regex(/^[a-f0-9]{64}$/u),
+  }),
+  z.strictObject({
+    type: z.literal('plugin.jobs.complete'),
+    libraryId: identifierSchema,
+    jobId: z.string().uuid(),
+    status: z.enum(['succeeded', 'failed', 'cancelled']),
+    errorCode: z.string().min(1).max(128).optional(),
+    errorDetail: z.string().max(4_096).optional(),
+    progress: z.number().min(0).max(1).optional(),
+  }),
+  z.strictObject({
+    type: z.literal('plugin.jobs.pause-owners'),
+    libraryId: identifierSchema,
+    owners: z.array(z.strictObject({
+      pluginId: z.string().min(1).max(255),
+      packageHash: z.string().regex(/^[a-f0-9]{64}$/u).optional(),
+    })).min(1).max(256),
+    errorCode: z.string().min(1).max(128).optional(),
+    errorDetail: z.string().max(4_096).optional(),
+  }),
+  z.strictObject({
+    type: z.literal('plugin.derived-fields.materialize'),
+    libraryId: identifierSchema,
+    pluginId: identifierSchema,
+    packageHash: z.string().regex(/^[a-f0-9]{64}$/u),
+    fieldId: z.string().min(1).max(128),
+    fieldType: z.enum(['string', 'number', 'boolean', 'date', 'json']),
+    values: z.array(z.strictObject({
+      assetId: identifierSchema,
+      value: z.union([z.string().max(16_384), z.number().finite(), z.boolean(), z.null()]),
+    })).max(256),
+  }),
+  z.strictObject({
+    type: z.literal('plugin.derived-fields.query'),
+    libraryId: identifierSchema,
+    pluginId: identifierSchema,
+    packageHash: z.string().regex(/^[a-f0-9]{64}$/u),
+    fieldId: z.string().min(1).max(128),
+    operator: z.enum(['equals', 'contains', 'gt', 'gte', 'lt', 'lte']),
+    value: z.union([z.string().max(16_384), z.number().finite(), z.boolean(), z.null()]),
+    limit: z.number().int().positive().max(256).optional(),
+    offset: z.number().int().nonnegative().optional(),
   }),
   z.strictObject({
     type: z.literal('media.get-asset-path'),

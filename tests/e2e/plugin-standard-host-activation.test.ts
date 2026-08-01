@@ -40,9 +40,12 @@ test('activates the fixed standard Host probe and writes library storage', async
     await window.getByRole('button', { name: '设置' }).click();
     const dialog = window.getByRole('dialog', { name: '通用设置' });
     await dialog.getByRole('tab', { name: '插件' }).click();
-    await dialog.getByRole('radio', { name: '此资源库' }).click();
-    await expect(dialog.getByText('暂未安装插件。', { exact: true })).toBeVisible();
-    await dialog.getByRole('button', { name: '选择本地插件…' }).click();
+    await expect(dialog.getByText('暂未安装插件。', { exact: true }).first()).toBeVisible();
+    await dialog.getByRole('button', { name: '安装插件' }).click();
+    const installDialog = window.getByRole('dialog', { name: '安装插件' });
+    await expect(installDialog).toBeVisible();
+    await installDialog.getByLabel('安装范围').selectOption('library');
+    await installDialog.getByRole('button', { name: '安装本地插件' }).click();
     await expect(dialog.getByText('Standard Host Probe', { exact: true })).toBeVisible({ timeout: 30_000 });
     await dialog.getByRole('button', { name: '信任', exact: true }).click();
     await expect(dialog.getByText('已启用', { exact: true })).toBeVisible();

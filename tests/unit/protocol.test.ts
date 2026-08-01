@@ -963,6 +963,10 @@ describe('renderer request protocol', () => {
       libraryId: 'library-01',
     })).toMatchObject({ type: 'media.list-jobs.request' });
     expect(parseRendererRequest({
+      type: 'plugin.list-jobs.request',
+      libraryId: 'library-01',
+    })).toMatchObject({ type: 'plugin.list-jobs.request' });
+    expect(parseRendererRequest({
       type: 'media.cancel-jobs.request',
       libraryId: 'library-01',
       jobIds: ['job-01'],

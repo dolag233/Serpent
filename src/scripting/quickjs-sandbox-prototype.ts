@@ -8,6 +8,10 @@ import {
 import ts from 'typescript';
 import { utf8ByteLength } from '../shared/script-sandbox-limits';
 import type { AutomationScriptCommandId } from '../shared/automation-script-api';
+import {
+  SERPENT_GUEST_COMMANDS,
+  projectSerpentGuestAssetPageResult,
+} from './serpent-guest-api';
 
 /**
  * This is an engine-selection prototype, not the public Script Runtime API.
@@ -34,7 +38,7 @@ export interface QuickJsSandboxPrototypeHost {
    * Plugin Host namespaced KV storage. Not available to Desktop Scripts.
    */
   executeStorageOperation?(input: {
-    operation: 'get' | 'set' | 'delete' | 'list';
+    operation: 'get' | 'set' | 'delete' | 'list' | 'get-directory';
     scope?: 'library' | 'user';
     key?: string;
     value?: unknown;
@@ -61,10 +65,44 @@ export interface QuickJsSandboxPrototypeHost {
     invokeId: string,
     decision: import('../plugins/plugin-hooks').PluginHookDecision,
   ): Promise<void>;
+  waitForJobInvoke?(): Promise<import('../plugins/plugin-jobs').PluginJobRecord | null>;
+  respondJobComplete?(
+    jobId: string,
+    complete: import('../plugins/plugin-jobs').PluginJobComplete,
+  ): Promise<void>;
+  waitForProviderInvoke?(): Promise<import('../plugins/plugin-providers').PluginProviderInvoke | null>;
+  respondProviderComplete?(
+    invokeId: string,
+    result: import('../plugins/plugin-providers').PluginProviderBatchResult,
+  ): Promise<void>;
+  waitForSearchEvent?(): Promise<import('../plugins/plugin-search').PluginSearchEvent | null>;
+  respondSearchChunk?(
+    chunk: import('../plugins/plugin-search').PluginSearchChunk,
+  ): Promise<void>;
+  respondSearchComplete?(
+    complete: import('../plugins/plugin-search').PluginSearchComplete,
+  ): Promise<void>;
+  enqueuePluginJob?(input: {
+    handlerId: string;
+    payload: Record<string, unknown>;
+    recoveryStrategy?: 'idempotent' | 'checkpoint';
+  }): Promise<unknown>;
+  waitForCommandInvoke?(): Promise<import('../plugins/plugin-commands').PluginCommandInvoke | null>;
+  respondCommandComplete?(
+    invokeId: string,
+    complete: import('../plugins/plugin-commands').PluginCommandComplete,
+  ): Promise<void>;
   /**
    * Sets the cause chain inherited by subsequent host commands until cleared.
    */
   setActiveCauseChain?(causeChain: readonly string[]): void;
+  requestInputCapture?(input: import('../shared/plugin-input-capture').PluginInputCaptureOptions): Promise<{
+    sessionId: string;
+  }>;
+  releaseInputCapture?(sessionId: string): void;
+  waitForInputCaptureEvent?(
+    sessionId: string,
+  ): Promise<import('../shared/plugin-input-capture').PluginInputCaptureEvent | null>;
 }
 
 export interface QuickJsSandboxPrototypeLimits {
@@ -579,45 +617,6 @@ function newQuickJsJsonValue(context: QuickJSContext, value: unknown): QuickJSHa
   }
 }
 
-/**
- * Project desktop asset summaries to the deliberately small Script API shape.
- * Paths, revision IDs, trash origins and thumbnail artifacts remain on the
- * trusted side of the bridge, while a script receives only the stable identity
- * and fields it needs for selection and automation.
- */
-function scriptAssetPageResult(value: unknown): unknown {
-  if (!value || typeof value !== 'object' || !Array.isArray((value as { items?: unknown }).items)) {
-    return value;
-  }
-  const page = value as {
-    items: unknown[];
-    total?: unknown;
-    offset?: unknown;
-    limit?: unknown;
-    hasMore?: unknown;
-  };
-  return {
-    items: page.items.map((item) => {
-    if (!item || typeof item !== 'object' || typeof (item as { assetId?: unknown }).assetId !== 'string') {
-      return item;
-    }
-    const asset = item as Record<string, unknown> & { assetId: string };
-    return {
-      id: asset.assetId,
-      name: typeof asset.displayName === 'string' ? asset.displayName : asset.assetId,
-      rating: typeof asset.rating === 'number' ? asset.rating : 0,
-      favorite: asset.favorite === true,
-      locationKind: asset.locationKind === 'linked' ? 'linked' : 'managed',
-      folderId: typeof asset.managedFolderId === 'string' ? asset.managedFolderId : null,
-    };
-    }),
-    total: typeof page.total === 'number' ? page.total : page.items.length,
-    offset: typeof page.offset === 'number' ? page.offset : 0,
-    limit: typeof page.limit === 'number' ? page.limit : page.items.length,
-    hasMore: page.hasMore === true,
-  };
-}
-
 /** Folder paths are intentionally reduced to id/name relationships for scripts. */
 function scriptFolderPageResult(value: unknown): unknown {
   if (!value || typeof value !== 'object' || !Array.isArray((value as { items?: unknown }).items)) {
@@ -646,17 +645,6 @@ function scriptFolderPageResult(value: unknown): unknown {
     offset: typeof page.offset === 'number' ? page.offset : 0,
     limit: typeof page.limit === 'number' ? page.limit : page.items.length,
     hasMore: page.hasMore === true,
-  };
-}
-
-/** Library inspect must never expose absolute libraryPath to the guest. */
-function scriptLibraryInspectResult(value: unknown): unknown {
-  if (!value || typeof value !== 'object') return value;
-  const library = value as Record<string, unknown>;
-  if (typeof library.libraryId !== 'string') return value;
-  return {
-    id: library.libraryId,
-    displayName: typeof library.displayName === 'string' ? library.displayName : library.libraryId,
   };
 }
 
@@ -1151,6 +1139,118 @@ export async function runQuickJsSandboxPrototype(
       context.setProp(serpent, 'hooks', hooks);
       hooks.dispose();
     }
+    if (
+      host.waitForJobInvoke !== undefined
+      && host.respondJobComplete !== undefined
+      && host.enqueuePluginJob !== undefined
+    ) {
+      const jobs = context.newObject();
+      const nextJob = context.newFunction('__nextJob', () => createDeferredHostCall(
+        host.waitForJobInvoke!(),
+        (value) => (value === null ? context.null : newQuickJsJsonValue(context, value)),
+      ));
+      context.setProp(jobs, '__nextJob', nextJob);
+      nextJob.dispose();
+      const respondJob = context.newFunction('__respond', (jobIdHandle, completeHandle) => createDeferredHostCall(
+        host.respondJobComplete!(
+          String(context.dump(jobIdHandle)),
+          context.dump(completeHandle) as import('../plugins/plugin-jobs').PluginJobComplete,
+        ),
+        () => context.undefined,
+      ));
+      context.setProp(jobs, '__respond', respondJob);
+      respondJob.dispose();
+      const enqueueJob = context.newFunction('__enqueue', (inputHandle) => {
+        const input = context.dump(inputHandle) as {
+          handlerId?: string;
+          payload?: Record<string, unknown>;
+          recoveryStrategy?: 'idempotent' | 'checkpoint';
+        };
+        return createDeferredHostCall(
+          host.enqueuePluginJob!({
+            handlerId: String(input.handlerId ?? ''),
+            payload: input.payload ?? {},
+            ...(input.recoveryStrategy === undefined ? {} : { recoveryStrategy: input.recoveryStrategy }),
+          }),
+          (value) => newQuickJsJsonValue(context, value),
+        );
+      });
+      context.setProp(jobs, '__enqueue', enqueueJob);
+      enqueueJob.dispose();
+      context.setProp(serpent, 'jobs', jobs);
+      jobs.dispose();
+    }
+    if (host.waitForProviderInvoke !== undefined && host.respondProviderComplete !== undefined) {
+      const providers = context.newObject();
+      const nextProvider = context.newFunction('__nextInvoke', () => createDeferredHostCall(
+        host.waitForProviderInvoke!(),
+        (value) => (value === null ? context.null : newQuickJsJsonValue(context, value)),
+      ));
+      context.setProp(providers, '__nextInvoke', nextProvider);
+      nextProvider.dispose();
+      const respondProvider = context.newFunction('__respond', (invokeIdHandle, resultHandle) => createDeferredHostCall(
+        host.respondProviderComplete!(
+          String(context.dump(invokeIdHandle)),
+          context.dump(resultHandle) as import('../plugins/plugin-providers').PluginProviderBatchResult,
+        ),
+        () => context.undefined,
+      ));
+      context.setProp(providers, '__respond', respondProvider);
+      respondProvider.dispose();
+      context.setProp(serpent, 'providers', providers);
+      providers.dispose();
+    }
+    if (host.waitForSearchEvent !== undefined
+      && host.respondSearchChunk !== undefined
+      && host.respondSearchComplete !== undefined) {
+      const providers = context.getProp(serpent, 'providers');
+      try {
+        const nextSearchEvent = context.newFunction('__nextSearchEvent', () => createDeferredHostCall(
+          host.waitForSearchEvent!(),
+          (value) => (value === null ? context.null : newQuickJsJsonValue(context, value)),
+        ));
+        context.setProp(providers, '__nextSearchEvent', nextSearchEvent);
+        nextSearchEvent.dispose();
+        const respondSearchChunk = context.newFunction('__respondSearchChunk', (chunkHandle) => createDeferredHostCall(
+          host.respondSearchChunk!(
+            context.dump(chunkHandle) as import('../plugins/plugin-search').PluginSearchChunk,
+          ),
+          () => context.undefined,
+        ));
+        context.setProp(providers, '__respondSearchChunk', respondSearchChunk);
+        respondSearchChunk.dispose();
+        const respondSearchComplete = context.newFunction('__respondSearchComplete', (completeHandle) => createDeferredHostCall(
+          host.respondSearchComplete!(
+            context.dump(completeHandle) as import('../plugins/plugin-search').PluginSearchComplete,
+          ),
+          () => context.undefined,
+        ));
+        context.setProp(providers, '__respondSearchComplete', respondSearchComplete);
+        respondSearchComplete.dispose();
+      } finally {
+        providers.dispose();
+      }
+    }
+    if (host.waitForCommandInvoke !== undefined && host.respondCommandComplete !== undefined) {
+      const commands = context.newObject();
+      const nextCommand = context.newFunction('__nextCommand', () => createDeferredHostCall(
+        host.waitForCommandInvoke!(),
+        (value) => (value === null ? context.null : newQuickJsJsonValue(context, value)),
+      ));
+      context.setProp(commands, '__nextCommand', nextCommand);
+      nextCommand.dispose();
+      const respondCommand = context.newFunction('__respond', (invokeIdHandle, completeHandle) => createDeferredHostCall(
+        host.respondCommandComplete!(
+          String(context.dump(invokeIdHandle)),
+          context.dump(completeHandle) as import('../plugins/plugin-commands').PluginCommandComplete,
+        ),
+        () => context.undefined,
+      ));
+      context.setProp(commands, '__respond', respondCommand);
+      respondCommand.dispose();
+      context.setProp(serpent, 'commands', commands);
+      commands.dispose();
+    }
     if (host.executeStorageOperation !== undefined) {
       const storage = context.newObject();
       const get = context.newFunction('get', (keyHandle, optionsHandle) => {
@@ -1207,6 +1307,50 @@ export async function runQuickJsSandboxPrototype(
       deleteKey.dispose();
       listKeys.dispose();
       storage.dispose();
+      const data = context.newObject();
+      const getDirectory = context.newFunction('getDirectory', (optionsHandle) => {
+        const options = optionsHandle === undefined
+          ? undefined
+          : context.dump(optionsHandle) as { scope?: 'library' | 'user' };
+        return createDeferredHostCall(
+          host.executeStorageOperation!({
+            operation: 'get-directory',
+            ...(options?.scope === undefined ? {} : { scope: options.scope }),
+          }),
+          (value) => newQuickJsJsonValue(context, value),
+        );
+      });
+      context.setProp(data, 'getDirectory', getDirectory);
+      context.setProp(serpent, 'data', data);
+      getDirectory.dispose();
+      data.dispose();
+    }
+    if (
+      host.requestInputCapture !== undefined
+      && host.releaseInputCapture !== undefined
+      && host.waitForInputCaptureEvent !== undefined
+    ) {
+      const input = context.newObject();
+      const start = context.newFunction('__start', (optionsHandle) => createDeferredHostCall(
+        host.requestInputCapture!(context.dump(optionsHandle) as import('../shared/plugin-input-capture').PluginInputCaptureOptions),
+        (value) => newQuickJsJsonValue(context, value),
+      ));
+      const release = context.newFunction('__release', (sessionIdHandle) => {
+        host.releaseInputCapture!(String(context.dump(sessionIdHandle)));
+        return context.undefined;
+      });
+      const nextEvent = context.newFunction('__nextEvent', (sessionIdHandle) => createDeferredHostCall(
+        host.waitForInputCaptureEvent!(String(context.dump(sessionIdHandle))),
+        (value) => (value === null ? context.null : newQuickJsJsonValue(context, value)),
+      ));
+      context.setProp(input, '__start', start);
+      context.setProp(input, '__release', release);
+      context.setProp(input, '__nextEvent', nextEvent);
+      start.dispose();
+      release.dispose();
+      nextEvent.dispose();
+      context.setProp(serpent, 'input', input);
+      input.dispose();
     }
     if (host.executeAutomationCommand !== undefined) {
       const assets = context.newObject();
@@ -1235,18 +1379,6 @@ export async function runQuickJsSandboxPrototype(
             : { parentFolderId: context.dump(parentFolderIdHandle) }),
         }),
         (value) => newQuickJsJsonValue(context, scriptFolderSummary(value)),
-      ));
-      const inspectLibrary = context.newFunction('inspect', () => createDeferredHostCall(
-        host.executeAutomationCommand!('library.inspect', {}),
-        (value) => newQuickJsJsonValue(context, scriptLibraryInspectResult(value)),
-      ));
-      const changeSequence = context.newFunction('changeSequence', () => createDeferredHostCall(
-        host.executeAutomationCommand!('library.change-sequence', {}),
-        newQuickJsJsonValue.bind(undefined, context),
-      ));
-      const createLibrary = context.newFunction('create', (inputHandle) => createDeferredHostCall(
-        host.executeAutomationCommand!('library.create', context.dump(inputHandle)),
-        newQuickJsJsonValue.bind(undefined, context),
       ));
       const importFiles = context.newFunction('import', (inputHandle) => createDeferredHostCall(
         host.executeAutomationCommand!('file.import', context.dump(inputHandle)),
@@ -1350,87 +1482,10 @@ export async function runQuickJsSandboxPrototype(
         ),
         newQuickJsJsonValue.bind(undefined, context),
       ));
-      const search = context.newFunction('search', (inputHandle) => createDeferredHostCall(
-        host.executeAutomationCommand!('asset.search', context.dump(inputHandle)),
-        (value) => newQuickJsJsonValue(context, scriptAssetPageResult(value)),
-      ));
-      const list = context.newFunction('list', (inputHandle) => createDeferredHostCall(
-        host.executeAutomationCommand!('asset.list', inputHandle === undefined ? {} : context.dump(inputHandle)),
-        (value) => newQuickJsJsonValue(context, scriptAssetPageResult(value)),
-      ));
-      const getMetadata = context.newFunction('getMetadata', (assetIdHandle) => createDeferredHostCall(
-        host.executeAutomationCommand!('asset.metadata.get', {
-          assetId: context.dump(assetIdHandle),
-        }),
-        newQuickJsJsonValue.bind(undefined, context),
-      ));
-      const getAiContent = context.newFunction('getAiContent', (assetIdHandle) => createDeferredHostCall(
-        host.executeAutomationCommand!('asset.ai-content.get', {
-          assetId: context.dump(assetIdHandle),
-        }),
-        newQuickJsJsonValue.bind(undefined, context),
-      ));
-      const setMetadata = context.newFunction('setMetadata', (inputHandle) => createDeferredHostCall(
-        host.executeAutomationCommand!('asset.metadata.set', context.dump(inputHandle)),
-        newQuickJsJsonValue.bind(undefined, context),
-      ));
-      const getExtractedMetadata = context.newFunction('getExtractedMetadata', (assetIdHandle) => createDeferredHostCall(
-        host.executeAutomationCommand!('asset.extracted-metadata.get', {
-          assetId: context.dump(assetIdHandle),
-        }),
-        (value) => newQuickJsJsonValue(context, scriptExtractedMetadataResult(value)),
-      ));
-      const setRating = context.newFunction('setRating', (assetIdsHandle, ratingHandle) => createDeferredHostCall(
-        host.executeAutomationCommand!('asset.rating.set', {
-          assetIds: context.dump(assetIdsHandle),
-          rating: context.dump(ratingHandle),
-        }),
-        newQuickJsJsonValue.bind(undefined, context),
-      ));
-      const copyFilePaths = context.newFunction('copyFilePaths', (assetIdsHandle) => createDeferredHostCall(
-        host.executeAutomationCommand!('asset.paths.copy', {
-          assetIds: context.dump(assetIdsHandle),
-        }),
-        newQuickJsJsonValue.bind(undefined, context),
-      ));
-      const moveToTrash = context.newFunction('moveToTrash', (assetIdsHandle) => createDeferredHostCall(
-        host.executeAutomationCommand!('asset.trash', {
-          assetIds: context.dump(assetIdsHandle),
-        }),
-        newQuickJsJsonValue.bind(undefined, context),
-      ));
-      const moveToFolder = context.newFunction('moveToFolder', (assetIdsHandle, targetFolderIdHandle, optionsHandle) => {
-        const options = optionsHandle === undefined ? {} : context.dump(optionsHandle) as {
-          conflictStrategy?: 'keep-both' | 'replace' | 'skip';
-        };
-        return createDeferredHostCall(
-          host.executeAutomationCommand!('asset.move', {
-            assetIds: context.dump(assetIdsHandle),
-            targetFolderId: context.dump(targetFolderIdHandle),
-            ...(options.conflictStrategy === undefined
-              ? {}
-              : { conflictStrategy: options.conflictStrategy }),
-          }),
-          newQuickJsJsonValue.bind(undefined, context),
-        );
-      });
-      const renameFile = context.newFunction('renameFile', (assetIdHandle, newBaseNameHandle) => createDeferredHostCall(
-        host.executeAutomationCommand!('asset.rename-file', {
-          assetId: context.dump(assetIdHandle),
-          newBaseName: context.dump(newBaseNameHandle),
-        }),
-        newQuickJsJsonValue.bind(undefined, context),
-      ));
-      const renameFiles = context.newFunction('renameFiles', (itemsHandle) => createDeferredHostCall(
-        host.executeAutomationCommand!('asset.rename-files', {
-          items: context.dump(itemsHandle),
-        }),
-        newQuickJsJsonValue.bind(undefined, context),
-      ));
       const trash = context.newObject();
       const listTrash = context.newFunction('list', () => createDeferredHostCall(
         host.executeAutomationCommand!('asset.list-trash', {}),
-        (value) => newQuickJsJsonValue(context, scriptAssetPageResult(value)),
+        (value) => newQuickJsJsonValue(context, projectSerpentGuestAssetPageResult(value)),
       ));
       const restoreIfOriginalVacant = context.newFunction('restoreIfOriginalVacant', (assetIdsHandle) => createDeferredHostCall(
         host.executeAutomationCommand!('asset.restore-if-original-vacant', {
@@ -1446,26 +1501,33 @@ export async function runQuickJsSandboxPrototype(
         ),
         newQuickJsJsonValue.bind(undefined, context),
       ));
-      context.setProp(assets, 'search', search);
-      context.setProp(assets, 'list', list);
-      context.setProp(assets, 'getMetadata', getMetadata);
-      context.setProp(assets, 'getAiContent', getAiContent);
-      context.setProp(assets, 'setMetadata', setMetadata);
-      context.setProp(assets, 'getExtractedMetadata', getExtractedMetadata);
-      context.setProp(assets, 'setRating', setRating);
-      context.setProp(assets, 'copyFilePaths', copyFilePaths);
-      context.setProp(assets, 'moveToTrash', moveToTrash);
-      context.setProp(assets, 'moveToFolder', moveToFolder);
-      context.setProp(assets, 'renameFile', renameFile);
-      context.setProp(assets, 'renameFiles', renameFiles);
+      const sharedGuestFunctions = SERPENT_GUEST_COMMANDS.map((definition) => {
+        const [namespace, method] = definition.path.split('.');
+        if (namespace === undefined || method === undefined) {
+          throw new Error(`Invalid Guest API command path: ${definition.path}`);
+        }
+        const target = namespace === 'assets' ? assets : library;
+        const guestFunction = context.newFunction(method, (...argumentHandles: QuickJSHandle[]) => {
+          const argumentsForHost = argumentHandles.map((argumentHandle) => context.dump(argumentHandle));
+          return createDeferredHostCall(
+            host.executeAutomationCommand!(
+              definition.commandId,
+              definition.buildInput(...argumentsForHost),
+            ),
+            (value) => newQuickJsJsonValue(
+              context,
+              definition.projectResult?.(value) ?? value,
+            ),
+          );
+        });
+        context.setProp(target, method, guestFunction);
+        return guestFunction;
+      });
       context.setProp(trash, 'list', listTrash);
       context.setProp(trash, 'restoreIfOriginalVacant', restoreIfOriginalVacant);
       context.setProp(palettes, 'mostFrequent', mostFrequent);
       context.setProp(folders, 'list', listFolders);
       context.setProp(folders, 'create', createFolder);
-      context.setProp(library, 'inspect', inspectLibrary);
-      context.setProp(library, 'changeSequence', changeSequence);
-      context.setProp(library, 'create', createLibrary);
       context.setProp(files, 'import', importFiles);
       context.setProp(linkedFolders, 'list', listLinkedFolders);
       context.setProp(tags, 'list', listTags);
@@ -1491,7 +1553,9 @@ export async function runQuickJsSandboxPrototype(
       context.setProp(serpent, 'tags', tags);
       context.setProp(serpent, 'collections', collections);
       context.setProp(serpent, 'smartCollections', smartCollections);
-      context.setProp(serpent, 'jobs', jobs);
+      if (host.enqueuePluginJob === undefined) {
+        context.setProp(serpent, 'jobs', jobs);
+      }
       context.setProp(serpent, 'trash', trash);
       context.setProp(serpent, 'palettes', palettes);
       assets.dispose();
@@ -1507,26 +1571,12 @@ export async function runQuickJsSandboxPrototype(
       aiJobs.dispose();
       trash.dispose();
       palettes.dispose();
-      search.dispose();
-      list.dispose();
-      getMetadata.dispose();
-      getAiContent.dispose();
-      setMetadata.dispose();
-      getExtractedMetadata.dispose();
-      setRating.dispose();
-      copyFilePaths.dispose();
-      moveToTrash.dispose();
-      moveToFolder.dispose();
-      renameFile.dispose();
-      renameFiles.dispose();
+      for (const guestFunction of sharedGuestFunctions) guestFunction.dispose();
       listTrash.dispose();
       restoreIfOriginalVacant.dispose();
       mostFrequent.dispose();
       listFolders.dispose();
       createFolder.dispose();
-      inspectLibrary.dispose();
-      changeSequence.dispose();
-      createLibrary.dispose();
       importFiles.dispose();
       listLinkedFolders.dispose();
       listTags.dispose();

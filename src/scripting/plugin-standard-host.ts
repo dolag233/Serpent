@@ -8,6 +8,24 @@ import {
   type PluginHookDecision,
 } from '../plugins/plugin-hooks';
 import {
+  createPluginJobInvokeQueue,
+  type PluginJobComplete,
+} from '../plugins/plugin-jobs';
+import {
+  createPluginProviderInvokeQueue,
+  type PluginProviderBatchResult,
+} from '../plugins/plugin-providers';
+import {
+  createPluginSearchEventQueue,
+  type PluginSearchChunk,
+  type PluginSearchComplete,
+  type PluginSearchEvent,
+} from '../plugins/plugin-search';
+import {
+  createPluginCommandInvokeQueue,
+  type PluginCommandComplete,
+} from '../plugins/plugin-commands';
+import {
   pluginRuntimeParentMessageSchema,
   type PluginRuntimeActivationFailureCode,
   type PluginRuntimeChildMessage,
@@ -15,11 +33,49 @@ import {
   type PluginRuntimeParentMessage,
 } from '../shared/plugin-runtime-utility-protocol';
 import type { AutomationScriptCommandId } from '../shared/automation-script-api';
+import type {
+  PluginInputCaptureEvent,
+  PluginInputCaptureOptions,
+} from '../shared/plugin-input-capture';
 
 type PendingHostRequest = {
   resolve(value: unknown): void;
   reject(error: Error): void;
 };
+
+type InputCaptureQueue = {
+  values: PluginInputCaptureEvent[];
+  waiters: Array<(value: PluginInputCaptureEvent | null) => void>;
+  closed: boolean;
+  push(value: PluginInputCaptureEvent): void;
+  end(): void;
+  next(): Promise<PluginInputCaptureEvent | null>;
+};
+
+function createInputCaptureQueue(): InputCaptureQueue {
+  const queue: InputCaptureQueue = {
+    values: [],
+    waiters: [],
+    closed: false,
+    push(value) {
+      const waiter = queue.waiters.shift();
+      if (waiter !== undefined) waiter(value);
+      else if (!queue.closed) queue.values.push(value);
+    },
+    end() {
+      if (queue.closed) return;
+      queue.closed = true;
+      for (const waiter of queue.waiters.splice(0)) waiter(null);
+    },
+    next() {
+      const value = queue.values.shift();
+      if (value !== undefined) return Promise.resolve(value);
+      if (queue.closed) return Promise.resolve(null);
+      return new Promise((resolve) => queue.waiters.push(resolve));
+    },
+  };
+  return queue;
+}
 
 type ActiveInstance = {
   instanceId: string;
@@ -36,6 +92,11 @@ type ActiveInstance = {
   activated: boolean;
   eventQueue: ReturnType<typeof createPluginDomainEventQueue>;
   hookQueue: ReturnType<typeof createPluginHookInvokeQueue>;
+  jobQueue: ReturnType<typeof createPluginJobInvokeQueue>;
+  providerQueue: ReturnType<typeof createPluginProviderInvokeQueue>;
+  searchQueue: ReturnType<typeof createPluginSearchEventQueue>;
+  commandQueue: ReturnType<typeof createPluginCommandInvokeQueue>;
+  inputCaptureQueues: Map<string, InputCaptureQueue>;
   activeCauseChain: string[];
 };
 
@@ -83,6 +144,14 @@ export function createPluginStandardHostHandler(options: {
     instances.delete(instanceId);
     current.eventQueue.close();
     current.hookQueue.close();
+    current.jobQueue.close();
+    current.providerQueue.close();
+    current.searchQueue.close();
+    for (const queue of current.inputCaptureQueues.values()) queue.end();
+    current.commandQueue.close();
+    for (const queue of current.inputCaptureQueues.values()) queue.end();
+    current.inputCaptureQueues.clear();
+    current.commandQueue.close();
     for (const pending of current.pendingHostRequests.values()) {
       pending.reject(new Error('The plugin instance ended.'));
     }
@@ -121,6 +190,11 @@ export function createPluginStandardHostHandler(options: {
       activated: false,
       eventQueue: createPluginDomainEventQueue(),
       hookQueue: createPluginHookInvokeQueue(),
+      jobQueue: createPluginJobInvokeQueue(),
+      providerQueue: createPluginProviderInvokeQueue(),
+      searchQueue: createPluginSearchEventQueue(),
+      commandQueue: createPluginCommandInvokeQueue(),
+      inputCaptureQueues: new Map(),
       activeCauseChain: [],
     };
     instances.set(request.instanceId, active);
@@ -151,7 +225,7 @@ export function createPluginStandardHostHandler(options: {
     );
 
     const callStorage = (input: {
-      operation: 'get' | 'set' | 'delete' | 'list';
+      operation: 'get' | 'set' | 'delete' | 'list' | 'get-directory';
       scope?: 'library' | 'user';
       key?: string;
       value?: unknown;
@@ -186,6 +260,124 @@ export function createPluginStandardHostHandler(options: {
       return Promise.resolve();
     };
 
+    const respondJobComplete = (jobId: string, complete: PluginJobComplete): Promise<void> => {
+      options.postMessage({
+        type: 'plugin-runtime.job-complete',
+        instanceId: request.instanceId,
+        jobId,
+        status: complete.status,
+        ...(complete.errorCode === undefined ? {} : { errorCode: complete.errorCode }),
+        ...(complete.errorDetail === undefined ? {} : { errorDetail: complete.errorDetail }),
+        ...(complete.progress === undefined ? {} : { progress: complete.progress }),
+      });
+      return Promise.resolve();
+    };
+
+    const respondProviderComplete = (
+      invokeId: string,
+      result: PluginProviderBatchResult,
+    ): Promise<void> => {
+      options.postMessage({
+        type: 'plugin-runtime.provider-complete',
+        instanceId: request.instanceId,
+        invokeId,
+        status: result.status,
+        values: result.values,
+        ...(result.errorCode === undefined ? {} : { errorCode: result.errorCode }),
+        ...(result.errorDetail === undefined ? {} : { errorDetail: result.errorDetail }),
+      });
+      return Promise.resolve();
+    };
+
+    const respondSearchChunk = (chunk: PluginSearchChunk): Promise<void> => {
+      options.postMessage({
+        type: 'plugin-runtime.search-chunk',
+        instanceId: request.instanceId,
+        invokeId: chunk.invokeId,
+        items: chunk.items,
+      });
+      return Promise.resolve();
+    };
+
+    const respondSearchComplete = (complete: PluginSearchComplete): Promise<void> => {
+      options.postMessage({
+        type: 'plugin-runtime.search-complete',
+        instanceId: request.instanceId,
+        invokeId: complete.invokeId,
+        status: complete.status,
+        ...(complete.nextOffset === undefined ? {} : { nextOffset: complete.nextOffset }),
+        ...(complete.errorCode === undefined ? {} : { errorCode: complete.errorCode }),
+        ...(complete.errorDetail === undefined ? {} : { errorDetail: complete.errorDetail }),
+      });
+      return Promise.resolve();
+    };
+
+    const respondCommandComplete = (
+      invokeId: string,
+      complete: PluginCommandComplete,
+    ): Promise<void> => {
+      options.postMessage({
+        type: 'plugin-runtime.command-complete',
+        instanceId: request.instanceId,
+        invokeId,
+        status: complete.status,
+        ...(complete.errorCode === undefined ? {} : { errorCode: complete.errorCode }),
+        ...(complete.errorDetail === undefined ? {} : { errorDetail: complete.errorDetail }),
+      });
+      return Promise.resolve();
+    };
+
+    const enqueuePluginJob = (input: {
+      handlerId: string;
+      payload: Record<string, unknown>;
+      recoveryStrategy?: 'idempotent' | 'checkpoint';
+    }): Promise<unknown> => (
+      new Promise((resolve, reject) => {
+        const current = instances.get(request.instanceId);
+        if (current === undefined || current.abortController.signal.aborted) {
+          reject(new Error('The plugin instance was deactivated.'));
+          return;
+        }
+        const requestId = globalThis.crypto.randomUUID();
+        current.pendingHostRequests.set(requestId, { resolve, reject });
+        options.postMessage({
+          type: 'plugin-runtime.job-enqueue',
+          instanceId: request.instanceId,
+          requestId,
+          handlerId: input.handlerId,
+          payload: input.payload,
+          ...(input.recoveryStrategy === undefined ? {} : { recoveryStrategy: input.recoveryStrategy }),
+        });
+      })
+    );
+
+    const requestInputCapture = (input: PluginInputCaptureOptions): Promise<{ sessionId: string }> => (
+      new Promise((resolve, reject) => {
+        const current = instances.get(request.instanceId);
+        if (current === undefined || current.abortController.signal.aborted) {
+          reject(new Error('The plugin instance was deactivated.'));
+          return;
+        }
+        const requestId = globalThis.crypto.randomUUID();
+        current.pendingHostRequests.set(requestId, { resolve, reject });
+        options.postMessage({
+          type: 'plugin-runtime.input-capture.start',
+          instanceId: request.instanceId,
+          requestId,
+          options: input,
+        });
+      })
+    );
+
+    const releaseInputCapture = (sessionId: string): void => {
+      if (!instances.has(request.instanceId)) return;
+      options.postMessage({
+        type: 'plugin-runtime.input-capture.release',
+        instanceId: request.instanceId,
+        sessionId,
+      });
+    };
+
     const result = await runPluginGuestActivate({
       entryJavaScript: request.entryJavaScript,
       executeAutomationCommand: callHost,
@@ -194,6 +386,23 @@ export function createPluginStandardHostHandler(options: {
       waitForDomainEvent: () => active.eventQueue.next(),
       waitForHookInvoke: () => active.hookQueue.next(),
       respondHookDecision,
+      waitForJobInvoke: () => active.jobQueue.next(),
+      respondJobComplete,
+      waitForProviderInvoke: () => active.providerQueue.next(),
+      respondProviderComplete,
+      waitForSearchEvent: (): Promise<PluginSearchEvent | null> => active.searchQueue.next(),
+      respondSearchChunk,
+      respondSearchComplete,
+      enqueuePluginJob,
+      waitForCommandInvoke: () => active.commandQueue.next(),
+      respondCommandComplete,
+      requestInputCapture,
+      releaseInputCapture,
+      waitForInputCaptureEvent: (sessionId) => {
+        const queue = active.inputCaptureQueues.get(sessionId) ?? createInputCaptureQueue();
+        active.inputCaptureQueues.set(sessionId, queue);
+        return queue.next();
+      },
       setActiveCauseChain: (causeChain) => {
         active.activeCauseChain = [...causeChain];
       },
@@ -245,6 +454,9 @@ export function createPluginStandardHostHandler(options: {
     current.abortController.abort();
     current.eventQueue.close();
     current.hookQueue.close();
+    current.jobQueue.close();
+    current.providerQueue.close();
+    current.searchQueue.close();
     for (const pending of current.pendingHostRequests.values()) {
       pending.reject(new Error('The plugin instance was deactivated.'));
     }
@@ -287,7 +499,72 @@ export function createPluginStandardHostHandler(options: {
         current.hookQueue.push(message.invoke);
         return;
       }
-      if (message.type === 'plugin-runtime.host-result' || message.type === 'plugin-runtime.storage-result') {
+      if (message.type === 'plugin-runtime.job-invoke') {
+        const current = instances.get(message.instanceId);
+        if (current === undefined) return;
+        current.jobQueue.push(message.job);
+        return;
+      }
+      if (message.type === 'plugin-runtime.provider-invoke') {
+        const current = instances.get(message.instanceId);
+        if (current === undefined) return;
+        current.providerQueue.push(message.invoke);
+        return;
+      }
+      if (message.type === 'plugin-runtime.search-request') {
+        const current = instances.get(message.instanceId);
+        if (current === undefined) return;
+        current.searchQueue.push({ type: 'request', request: message.request });
+        return;
+      }
+      if (message.type === 'plugin-runtime.search-cancel') {
+        const current = instances.get(message.instanceId);
+        if (current === undefined) return;
+        current.searchQueue.push({ type: 'cancel', cancel: message.cancel });
+        return;
+      }
+      if (message.type === 'plugin-runtime.command-invoke') {
+        const current = instances.get(message.instanceId);
+        if (current === undefined) return;
+        current.commandQueue.push(message.invoke);
+        return;
+      }
+      if (message.type === 'plugin-runtime.input-capture.started') {
+        const current = instances.get(message.instanceId);
+        if (current === undefined) return;
+        const pending = current.pendingHostRequests.get(message.requestId);
+        if (pending === undefined) return;
+        current.pendingHostRequests.delete(message.requestId);
+        current.inputCaptureQueues.set(message.sessionId, createInputCaptureQueue());
+        pending.resolve({ sessionId: message.sessionId });
+        return;
+      }
+      if (message.type === 'plugin-runtime.input-capture.event') {
+        const current = instances.get(message.instanceId);
+        if (current === undefined) return;
+        const queue = current.inputCaptureQueues.get(message.sessionId) ?? createInputCaptureQueue();
+        current.inputCaptureQueues.set(message.sessionId, queue);
+        queue.push(message.event);
+        return;
+      }
+      if (message.type === 'plugin-runtime.input-capture.end') {
+        const current = instances.get(message.instanceId);
+        if (current === undefined) return;
+        current.inputCaptureQueues.get(message.sessionId)?.end();
+        return;
+      }
+      if (message.type === 'plugin-runtime.input-capture.error') {
+        const current = instances.get(message.instanceId);
+        if (current === undefined) return;
+        const pending = current.pendingHostRequests.get(message.requestId);
+        if (pending === undefined) return;
+        current.pendingHostRequests.delete(message.requestId);
+        pending.reject(new Error(`${message.code}: ${message.message}`));
+        return;
+      }
+      if (message.type === 'plugin-runtime.host-result'
+        || message.type === 'plugin-runtime.storage-result'
+        || message.type === 'plugin-runtime.job-enqueue-result') {
         const current = instances.get(message.instanceId);
         if (current === undefined) return;
         const pending = current.pendingHostRequests.get(message.requestId);

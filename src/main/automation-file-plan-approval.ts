@@ -12,7 +12,7 @@ import {
 import type { WorkerCommand } from '../shared/protocol/requests';
 import type { WorkerResult } from '../shared/protocol/responses';
 
-type FileOperation = 'create' | 'import' | 'trash' | 'move' | 'rename-file' | 'rename-files' | 'restore-if-original-vacant';
+type FileOperation = 'create' | 'import' | 'trash' | 'replace-content' | 'move' | 'rename-file' | 'rename-files' | 'restore-if-original-vacant';
 
 export interface DesktopAutomationFilePlanSummary {
   operation: FileOperation;
@@ -52,6 +52,15 @@ function planCommandFor(
         libraryId,
         operation: 'trash',
         assetIds: input.assetIds,
+      };
+    }
+    case 'asset.content.replace': {
+      const input = automationCommandInputSchemas['asset.content.replace'].parse(commandInput);
+      return {
+        type: 'automation.file-operation-plan',
+        libraryId,
+        operation: 'replace-content',
+        assetIds: [input.assetId],
       };
     }
     case 'asset.move': {

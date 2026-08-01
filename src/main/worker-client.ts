@@ -25,6 +25,11 @@ import {
   type AiAnalysisCompletedEvent,
   type AiContentClearedEvent,
 } from '../shared/protocol/responses';
+import {
+  parsePluginMediaProviderRequest,
+  type PluginMediaProviderRequest,
+  type PluginMediaProviderResult,
+} from '../shared/plugin-media-protocol';
 
 interface PendingRequest {
   resolve(result: WorkerResult): void;
@@ -95,6 +100,8 @@ export class LibraryWorkerClient {
   #aiProgressListeners = new Set<(event: AiProgressEvent) => void>();
   #aiCompletedListeners = new Set<(event: AiAnalysisCompletedEvent) => void>();
   #aiClearedListeners = new Set<(event: AiContentClearedEvent) => void>();
+  #pluginMediaProviderListener:
+    ((request: PluginMediaProviderRequest) => Promise<PluginMediaProviderResult>) | undefined;
 
   constructor(modulePath: string, private readonly logger: AppLogger) {
     this.#modulePath = modulePath;
@@ -226,6 +233,17 @@ export class LibraryWorkerClient {
     return () => this.#aiClearedListeners.delete(listener);
   }
 
+  onPluginMediaProviderRequest(
+    listener: (request: PluginMediaProviderRequest) => Promise<PluginMediaProviderResult>,
+  ): () => void {
+    this.#pluginMediaProviderListener = listener;
+    return () => {
+      if (this.#pluginMediaProviderListener === listener) {
+        this.#pluginMediaProviderListener = undefined;
+      }
+    };
+  }
+
   async shutdown(): Promise<void> {
     const child = this.#child;
     if (!child) return;
@@ -249,6 +267,36 @@ export class LibraryWorkerClient {
   }
 
   readonly #onMessage = (message: unknown) => {
+    try {
+      const providerRequest = parsePluginMediaProviderRequest(message);
+      const child = this.#child;
+      if (!child) return;
+      void (this.#pluginMediaProviderListener
+        ? this.#pluginMediaProviderListener(providerRequest)
+        : Promise.resolve({
+          status: 'native-fallback' as const,
+          assetId: providerRequest.assetId,
+          kind: providerRequest.kind,
+          errorCode: 'PLUGIN_PROVIDER_UNAVAILABLE',
+        }))
+        .catch(() => ({
+          status: 'native-fallback' as const,
+          assetId: providerRequest.assetId,
+          kind: providerRequest.kind,
+          errorCode: 'PLUGIN_PROVIDER_FAILED',
+        }))
+        .then((result) => {
+          child.postMessage({
+            type: 'plugin-media-provider.response',
+            requestId: providerRequest.requestId,
+            result,
+          });
+        });
+      return;
+    } catch {
+      // Not a plugin media provider request; continue with normal Worker events.
+    }
+
     // Progress events take priority over asset-change events.
     try {
       const progress = parseProgressEvent(message);
