@@ -5915,35 +5915,16 @@ select.ai-config-input.ai-config-languages {
 }
 
 .workspace-notice.is-error .workspace-notice-icon,
+.workspace-notice.is-error .workspace-notice-undo,
 .workspace-notice.is-error .workspace-notice-dismiss,
 .workspace-notice.is-warning .workspace-notice-icon,
+.workspace-notice.is-warning .workspace-notice-undo,
 .workspace-notice.is-warning .workspace-notice-dismiss {
   color: var(--warning-fg);
 }
 
-.workspace-notice .secondary-button {
-  height: 26px;
-  padding: 0 10px;
-  border-color: var(--divider);
-  border-radius: 6px;
-  background: var(--pane);
-  color: var(--text);
-  font-size: 11px;
-  font-weight: 520;
-  white-space: nowrap;
-}
-
-.workspace-notice .secondary-button:hover:not(:disabled) {
-  border-color: var(--divider);
-  background: var(--hover);
-}
-
-.workspace-notice .secondary-button:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 2px var(--accent-ring);
-}
-
 /* Serpent-2wu4 / fvto: dismiss is a glyph, vertically centered with text. */
+.workspace-notice-undo,
 .workspace-notice-dismiss {
   display: inline-flex;
   align-items: center;
@@ -5961,6 +5942,8 @@ select.ai-config-input.ai-config-languages {
   line-height: 0;
 }
 
+.workspace-notice-undo:hover,
+.workspace-notice-undo:focus-visible,
 .workspace-notice-dismiss:hover,
 .workspace-notice-dismiss:focus-visible {
   color: var(--text);
@@ -5968,6 +5951,7 @@ select.ai-config-input.ai-config-languages {
   outline: none;
 }
 
+.workspace-notice-undo:focus-visible,
 .workspace-notice-dismiss:focus-visible {
   box-shadow: 0 0 0 2px var(--accent-ring);
 }

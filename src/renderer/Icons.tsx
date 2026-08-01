@@ -38,6 +38,7 @@ export type IconName =
   | "menu"
   | "plus"
   | "refresh"
+  | "undo"
   | "rotate-cw"
   | "flip-horizontal"
   | "flip-vertical"
@@ -275,6 +276,12 @@ const iconPaths: Record<IconName, ReactNode> = {
     <>
       <path d="M20 7v5h-5" />
       <path d="M18.4 16a8 8 0 1 1 1.3-8.5L20 12" />
+    </>
+  ),
+  undo: (
+    <>
+      <path d="M9 7 4 12l5 5" />
+      <path d="M4 12h9a7 7 0 0 1 7 7" />
     </>
   ),
   "rotate-cw": (
