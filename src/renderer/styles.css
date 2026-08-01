@@ -1984,7 +1984,7 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
 }
 
 /* Serpent-bnah: Windows replaces the hidden native menu bar with a compact
-   hover-first in-app menu. The trigger stays toolbar-sized; the two-column
+   click-to-open in-app menu. The trigger stays toolbar-sized; the two-column
    surface keeps categories and their actions visible without stretching the
    browse toolbar. */
 .main-menu {

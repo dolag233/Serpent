@@ -73,7 +73,6 @@ export function MainMenu({
   const triggerRef = useRef<HTMLButtonElement>(null);
   const surfaceRef = useRef<HTMLDivElement>(null);
   const closeTimerRef = useRef<number | null>(null);
-  const suppressFocusOpenRef = useRef(false);
   const menuId = useId();
 
   const cancelClose = useCallback(() => {
@@ -89,7 +88,6 @@ export function MainMenu({
       setOpen(false);
       setActiveSectionId(null);
       if (restoreFocus) {
-        suppressFocusOpenRef.current = true;
         requestAnimationFrame(() => triggerRef.current?.focus());
       }
     },
@@ -222,7 +220,6 @@ export function MainMenu({
   return (
     <div
       className="main-menu"
-      onMouseEnter={() => openMenu()}
       onMouseLeave={scheduleClose}
       ref={rootRef}
     >
@@ -233,13 +230,6 @@ export function MainMenu({
         className="main-menu-trigger"
         disabled={disabled}
         onClick={() => (open ? closeMenu(true) : openMenu())}
-        onFocus={() => {
-          if (suppressFocusOpenRef.current) {
-            suppressFocusOpenRef.current = false;
-            return;
-          }
-          openMenu();
-        }}
         ref={triggerRef}
         type="button"
         {...iconActionAttrs(t("shell.mainMenu"))}

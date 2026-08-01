@@ -5,7 +5,7 @@
 
 ## 范围
 
-Windows frameless shell 不显示原生顶部 menu bar，因此原工具栏设置按钮替换为 hover 优先的「主菜单」。macOS 继续使用原生 menu bar 与原设置入口。
+Windows frameless shell 不显示原生顶部 menu bar，因此原工具栏设置按钮替换为点击打开的「主菜单」。macOS 继续使用原生 menu bar 与原设置入口。
 
 ## 信息架构
 
@@ -40,5 +40,6 @@ Windows 真机视觉与 macOS 对照仍需产品负责人验收；本记录不�
 - 新增壳层 E2E 断言覆盖上述位置对齐和互斥行为。
 - 设置项移动到顶层菜单末尾；关于界面移除底部操作按钮和分割线，改为版本下方居中的 GitHub 图标入口。
 - 二级菜单宽度改为按内容自适应，保留 180px 最小宽度与视口边界，避免短菜单出现大片空白。
+- 主菜单入口改为点击打开；入口 hover 不再自动展开，打开后仍可通过 hover 或键盘切换二级菜单。
 
 验证：`npm run typecheck`、`npm run lint`、`npx vitest run tests/unit/main-menu-items.test.ts`（3 个测试通过），以及后台 `node scripts/run-e2e.mjs tests/e2e/shell-navigation.test.ts --workers=1`（1 个测试通过）。

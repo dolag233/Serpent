@@ -69,11 +69,13 @@ test("library switcher, breadcrumbs, and workspace history", async () => {
     await expect(settingsButton).toBeVisible();
     if (process.platform === "win32") {
       await settingsButton.hover();
+      await expect(window.getByRole("menu", { name: "主菜单" })).toHaveCount(0);
+      await settingsButton.click();
       await expect(
         window.getByRole("menu", { name: "主菜单" }),
       ).toBeVisible();
       await expect(window.locator(".main-menu-submenu")).toHaveCount(0);
-      for (const label of ["文件", "编辑", "资源库", "窗口", "设置", "关于"]) {
+      for (const label of ["文件", "编辑", "资源库", "窗口", "关于", "设置"]) {
         await expect(
           window.getByRole("menuitem", { name: label, exact: true }),
         ).toBeVisible();
@@ -102,7 +104,7 @@ test("library switcher, breadcrumbs, and workspace history", async () => {
       await window.keyboard.press("Escape");
       await expect(window.getByRole("dialog")).toHaveCount(0);
 
-      await settingsButton.hover();
+      await settingsButton.click();
       await window.getByRole("menuitem", { name: "关于", exact: true }).hover();
       await expect(window.locator(".main-menu-submenu")).toBeVisible();
       await window
@@ -113,7 +115,7 @@ test("library switcher, breadcrumbs, and workspace history", async () => {
       ).toBeVisible();
       await window.keyboard.press("Escape");
 
-      await settingsButton.hover();
+      await settingsButton.click();
       await window.getByRole("menuitem", { name: "关于", exact: true }).hover();
       await window.getByRole("menuitem", { name: "关于 Serpent", exact: true }).click();
       await expect(window.getByRole("dialog", { name: "Serpent" })).toBeVisible();

@@ -20,7 +20,7 @@
 - **2026-07-25 快捷键与 Inspector**：筛选后快捷键收口 epic（`Serpent-x78x` / REQ-COMMAND-004）；视频 D/F 逐帧 + X/C 倍速档（`Serpent-soii`）；**全局音量 P1**（`Serpent-8w6x` / REQ-VIEW-017）；Windows 文案「在文件浏览器中显示」（`Serpent-a74i`）；AI 描述 textarea（`Serpent-vo24`）。原则文档 [`docs/ui/0003-keyboard-shortcut-ux-principles.md`](ui/0003-keyboard-shortcut-ux-principles.md)。均未实现。
 - **2026-08-01 最新验收反馈**：合集创建输入焦点偶发失效为 P0（`Serpent-to9y`）；合集 F2/Delete 与非空删除确认（`Serpent-b7uy`）；硬盘删除确认/Shift+Delete 回归（`Serpent-wuma`）；瀑布流 Tab 单选与 Shift 连续选择（`Serpent-xzmz`）；文件夹卡片圆角（`Serpent-kttg`）、标签 hover 二级定位（`Serpent-hn9u`）和通知按钮视觉（`Serpent-agyz`）已完成代码收口。合集资产跳转来源文件夹（`Serpent-udj5`）按用户要求暂记后续；本轮硬盘删除、媒体句柄释放与瀑布流恢复已获用户验收，通知撤销入口继续收口为无边框回撤图标。
 - **2026-08-01 复验结果**：合集创建焦点、合集删除语义、合集 inline 重命名、文件夹卡片圆角、标签 hover 基础行为、合集递归、submenu 生命周期、Windows 硬盘删除与删除前释放媒体句柄、瀑布流原布局恢复、删除通知无边框回撤图标与恢复后刷新均已通过用户验收。
-- **2026-08-01 Windows 主菜单**：Windows 隐藏原生 menu bar 后，原设置入口已替换为 hover 主菜单；菜单项拆分为文件、编辑、资源库、窗口、设置、关于。二级菜单默认不展开并以浮动面板呈现，设置直接打开原设置中心，窗口承载后台任务/诊断日志；关于拆分为独立的「关于 Serpent」产品信息对话框与「开源组件与许可」依赖说明对话框，前者提供 GitHub、版本信息。macOS 原生 menu bar 与齿轮入口保持不变。定向单测、typecheck、lint 与壳层 E2E 已通过，Windows 真机与 macOS 对照待人类验收（`Serpent-bnah`）。
+- **2026-08-01 Windows 主菜单**：Windows 隐藏原生 menu bar 后，原设置入口已替换为点击打开的主菜单；菜单项拆分为文件、编辑、资源库、窗口、关于、设置。二级菜单默认不展开并以浮动面板呈现，设置直接打开原设置中心，窗口承载后台任务/诊断日志；关于拆分为独立的「关于 Serpent」产品信息对话框与「开源组件与许可」依赖说明对话框，前者提供 GitHub、版本信息。macOS 原生 menu bar 与齿轮入口保持不变。定向单测、typecheck、lint 与壳层 E2E 已通过，Windows 真机与 macOS 对照待人类验收（`Serpent-bnah`）。
 
 ## 2026-07-18 MVP 循环前沿
 
