@@ -1017,10 +1017,10 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
   -webkit-app-region: no-drag;
 }
 
-/* REQ-SHELL-013: portal hover tip — quiet, delayed, same tier as context menus. */
+/* REQ-SHELL-013: portal hover tip — quiet, delayed; above dialogs/backdrops. */
 .hover-tip {
   position: fixed;
-  z-index: 41;
+  z-index: 130;
   max-width: min(280px, calc(100vw - 24px));
   padding: 3px 7px;
   border: 1px solid var(--divider-soft);
@@ -1031,7 +1031,8 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
   font-weight: 450;
   line-height: 1.35;
   letter-spacing: 0;
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
   pointer-events: none;
   box-shadow: 0 1px 2px rgb(0 0 0 / 12%);
 }
@@ -5467,6 +5468,9 @@ select.ai-config-input.ai-config-languages {
 
 .app-settings-nav {
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
   padding: 18px 10px;
   border-right: 1px solid var(--divider);
   background:
@@ -5482,6 +5486,39 @@ select.ai-config-input.ai-config-languages {
   flex-direction: column;
   gap: 3px;
   margin-top: 0;
+}
+
+.app-settings-nav-plugin-settings {
+  display: grid;
+  gap: 2px;
+  margin-top: 2px;
+}
+
+.app-settings-nav-chevron {
+  display: inline-flex;
+  flex: 0 0 auto;
+  transition: transform 120ms ease;
+}
+
+.app-settings-nav-chevron.is-expanded {
+  transform: rotate(90deg);
+}
+
+.app-settings-nav-plugin-settings-list {
+  display: grid;
+  gap: 2px;
+  padding-left: 10px;
+}
+
+.app-settings-nav-plugin-settings-empty {
+  margin: 0;
+  padding: 6px 10px;
+  color: var(--secondary);
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .app-settings-nav-item {
@@ -5503,6 +5540,24 @@ select.ai-config-input.ai-config-languages {
     background-color 120ms ease,
     border-color 120ms ease,
     color 120ms ease;
+}
+
+.app-settings-nav-item.app-settings-nav-plugin-settings-toggle {
+  grid-template-columns: 18px minmax(0, 1fr) 14px;
+}
+
+.app-settings-nav-item.app-settings-nav-plugin-settings-item {
+  grid-template-columns: minmax(0, 1fr);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.app-settings-nav-plugin-settings-toggle > span:not(.app-settings-nav-chevron),
+.app-settings-nav-plugin-settings-item > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .app-settings-nav-item:hover {
@@ -5621,7 +5676,130 @@ select.ai-config-input.ai-config-languages {
 .plugin-settings-install-panel,
 .plugin-settings-package {
   display: grid;
-  gap: 14px;
+  gap: 10px;
+}
+
+.plugin-settings-package.has-divider {
+  padding-top: 14px;
+  border-top: 1px solid var(--divider);
+}
+
+.plugin-settings-package-title-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.plugin-settings-package-header {
+  display: grid;
+  gap: 8px;
+}
+
+.plugin-settings-package-title {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.plugin-settings-package-source-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex: 0 0 auto;
+}
+
+.plugin-settings-package-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.35;
+}
+
+.plugin-settings-package-version-inline {
+  font-weight: 400;
+  color: var(--secondary);
+}
+
+.plugin-settings-package-description {
+  margin: 0;
+  color: var(--secondary);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.plugin-settings-unrestricted-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 5px;
+  margin: 0;
+  color: var(--warning-fg);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.plugin-settings-unrestricted-warning .icon {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  color: var(--warning-fg);
+}
+
+.plugin-settings-permissions-info {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 28px;
+  color: var(--secondary);
+  cursor: default;
+}
+
+.plugin-settings-permissions-info .icon {
+  color: inherit;
+}
+
+.plugin-settings-package-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex: 0 0 auto;
+}
+
+.plugin-settings-icon-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--secondary);
+  cursor: pointer;
+}
+
+.plugin-settings-icon-action:hover:not(:disabled) {
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+}
+
+.plugin-settings-icon-action:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.plugin-settings-update-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.plugin-settings-detail-page {
+  display: grid;
+  gap: 12px;
 }
 
 .plugin-settings-scope-header,
@@ -5701,77 +5879,15 @@ select.ai-config-input.ai-config-languages {
   line-height: 1.45;
 }
 
-.plugin-settings-package {
-  padding-top: 12px;
-  border-top: 1px solid var(--divider);
-}
-
-.plugin-settings-package-header,
-.plugin-settings-package-version,
-.plugin-settings-package-actions,
-.plugin-settings-package-controls,
-.plugin-settings-resolution {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.plugin-settings-package-header {
-  justify-content: space-between;
-}
-
-.plugin-settings-package-controls {
-  flex: 0 0 auto;
-}
-
 .plugin-settings-enable-toggle {
   margin: 0;
 }
 
-.plugin-settings-status {
-  flex: 0 0 auto;
-  padding: 3px 7px;
-  border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--divider));
-  border-radius: 999px;
-  color: var(--secondary);
-  font-size: 10px;
-  line-height: 1.2;
-}
-
-.plugin-settings-package-version {
-  align-items: flex-start;
-  justify-content: space-between;
-  padding-top: 12px;
-  border-top: 1px solid color-mix(in srgb, var(--divider) 70%, transparent);
-}
-
-.plugin-settings-package-meta {
-  display: grid;
-  min-width: 0;
-  gap: 3px;
-}
-
-.plugin-settings-package-meta strong {
-  color: var(--text);
-  font-size: 12px;
-  font-weight: 590;
-}
-
-.plugin-settings-package-meta span {
-  overflow-wrap: anywhere;
-  color: var(--secondary);
-  font-size: 11px;
-  line-height: 1.4;
-}
-
-.plugin-settings-package-actions,
 .plugin-settings-resolution {
-  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
   flex-wrap: wrap;
-  justify-content: flex-end;
-}
-
-.plugin-settings-resolution {
+  gap: 10px;
   justify-content: flex-start;
   padding-top: 2px;
   color: var(--secondary);
@@ -5907,18 +6023,13 @@ select.ai-config-input.ai-config-languages {
   .plugin-settings-scope-header,
   .plugin-settings-install-panel-header,
   .plugin-settings-install-local,
-  .plugin-settings-install-github,
-  .plugin-settings-package-version {
+  .plugin-settings-install-github {
     align-items: stretch;
     flex-direction: column;
   }
 
   .plugin-settings-github-button {
     width: 100%;
-  }
-
-  .plugin-settings-package-actions {
-    justify-content: flex-start;
   }
 }
 

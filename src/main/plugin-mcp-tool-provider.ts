@@ -1,5 +1,4 @@
 import type { PluginActivationCoordinator } from './plugin-activation-coordinator';
-import type { PluginMcpExposureStore } from './plugin-mcp-exposure-store';
 import {
   listPluginMcpTools,
   pluginMcpCommandContextSchema,
@@ -11,14 +10,13 @@ import type { SerpentMcpPluginToolBridge } from '../mcp/call-tool';
 
 /**
  * Main-owned bridge between MCP and active plugin command contributions.
- * Manifest declarations are supplied by the activation coordinator; local
- * consent is supplied by the device-only exposure store.
+ * Commands declared with `mcp.export` are listed and callable whenever the
+ * owning plugin is active for the bound library — no separate device toggle.
  */
 export class PluginMcpToolProvider implements SerpentMcpPluginToolBridge {
   constructor(
     private readonly options: {
       activationCoordinator: PluginActivationCoordinator;
-      exposureStore: PluginMcpExposureStore;
       getLibraryId: () => string | null;
     },
   ) {}
@@ -27,8 +25,7 @@ export class PluginMcpToolProvider implements SerpentMcpPluginToolBridge {
     const libraryId = this.options.getLibraryId();
     if (libraryId === null) return [];
     const commands = this.options.activationCoordinator.listMcpCommandContributions({ libraryId });
-    return listPluginMcpTools(commands, (command) =>
-      this.options.exposureStore.isEnabled(command.pluginId, command.commandId));
+    return listPluginMcpTools(commands);
   }
 
   isKnown(toolName: string): boolean {
@@ -50,8 +47,8 @@ export class PluginMcpToolProvider implements SerpentMcpPluginToolBridge {
     const command = this.options.activationCoordinator
       .listMcpCommandContributions({ libraryId })
       .find((candidate) => candidate.pluginId === input.pluginId && candidate.commandId === input.commandId);
-    if (command === undefined || !this.options.exposureStore.isEnabled(input.pluginId, input.commandId)) {
-      throw new Error('The plugin MCP command is not enabled on this device.');
+    if (command === undefined || !command.mcpExported) {
+      throw new Error('The plugin MCP command is not declared for export.');
     }
     const context: PluginMcpCommandContext = pluginMcpCommandContextSchema.parse(input.context);
     const result = await this.options.activationCoordinator.runCommand({

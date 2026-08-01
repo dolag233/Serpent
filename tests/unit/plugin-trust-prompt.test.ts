@@ -21,9 +21,11 @@ function libraryPackage(
     runtimeMode: 'restricted',
     permissions: ['library.read'],
     source: { kind: 'local-directory' },
+    sourceFingerprint: 'local:demo',
     scope: 'library',
     status: 'valid',
     trust: 'untrusted',
+    hasSettingsUi: false,
     ...overrides,
   };
 }

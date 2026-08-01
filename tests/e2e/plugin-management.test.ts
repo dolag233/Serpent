@@ -59,29 +59,28 @@ test('installs a library plugin through the settings bridge, then trusts and Saf
 
     const libraryCard = dialog.locator('.plugin-settings-scope-card').filter({ hasText: '资源库插件' });
 
-    await expect(dialog.getByText('Palette Tools', { exact: true })).toBeVisible({ timeout: 30_000 });
+    await expect(dialog.getByText(/Palette Tools\s*-\s*v/)).toBeVisible({ timeout: 30_000 });
     await expect(dialog.getByText('等待在此设备上信任', { exact: true })).toBeVisible();
-    await expect(dialog.getByText('本地文件夹', { exact: true })).toBeVisible();
+    await expect(libraryCard.getByRole('button', { name: '打开插件目录' })).toBeVisible();
     await dialog.getByRole('button', { name: '信任', exact: true }).click();
-    await expect(dialog.getByText('已启用', { exact: true })).toBeVisible();
 
     const enableToggle = libraryCard.getByRole('checkbox', { name: '启用插件' });
     await expect(enableToggle).toBeChecked();
     await expect(enableToggle).toBeEnabled();
     await libraryCard.locator('.plugin-settings-enable-toggle').click();
     await expect(enableToggle).not.toBeChecked();
-    await expect(dialog.getByText('已停用', { exact: true })).toBeVisible();
     await libraryCard.locator('.plugin-settings-enable-toggle').click();
     await expect(enableToggle).toBeChecked();
-    await expect(dialog.getByText('已启用', { exact: true })).toBeVisible();
 
     const safeModeRow = dialog.locator('.plugin-settings-safe-mode');
     await safeModeRow.click();
-    // Restricted (palette) plugins stay resolvable under Safe Mode; status remains enabled.
-    await expect(dialog.getByText('已启用', { exact: true })).toBeVisible();
+    // Restricted (palette) plugins stay resolvable under Safe Mode; toggle stays on.
+    await expect(enableToggle).toBeChecked();
     await expect(dialog.getByText('已被安全模式停用（无限制模式）', { exact: true })).toHaveCount(0);
     await safeModeRow.click();
-    await expect(dialog.getByText('已启用', { exact: true })).toBeVisible();
+    await expect(enableToggle).toBeChecked();
+    await expect(libraryCard.getByRole('button', { name: '重新加载插件' })).toBeVisible();
+    await expect(libraryCard.getByRole('button', { name: '卸载' })).toBeVisible();
   } finally {
     await application.close();
     rmSync(temporaryRoot, { recursive: true, force: true });

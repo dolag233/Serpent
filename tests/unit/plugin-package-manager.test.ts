@@ -189,6 +189,15 @@ describe('PluginPackageManager installation and integrity', () => {
         async defaultBranch() {
           return { name: 'main', commitSha: 'c'.repeat(40) };
         },
+        async listReleases() {
+          return [];
+        },
+        async downloadReleaseAsset() {
+          throw new Error('release asset unused in zipball fallback');
+        },
+        async commitShaForRef(_repository, ref) {
+          return ref === 'v1.3.0' ? 'b'.repeat(40) : 'a'.repeat(40);
+        },
       },
     });
 
@@ -204,6 +213,142 @@ describe('PluginPackageManager installation and integrity', () => {
     });
   });
 
+  it('prefers a platform-matched GitHub Release asset over zipball fallback', async () => {
+    const source = temporaryRoot('serpent-plugin-release-source-');
+    const userData = temporaryRoot('serpent-plugin-release-user-');
+    writePlugin(source, { version: '2.0.0' });
+    const archive = new AdmZip();
+    archive.addLocalFolder(source, 'palette-tools-2.0.0');
+    const manager = createManager(userData);
+    const assetName = 'com.example.palette-tools-2.0.0-darwin-arm64.zip';
+    let downloadedAsset: string | undefined;
+    let zipballCalled = false;
+
+    const installed = await manager.installFromGitHub({
+      repository: 'https://github.com/example/serpent-palette-tools',
+      scope: 'user',
+      platformToken: 'darwin-arm64',
+      client: {
+        async listTags() { return []; },
+        async defaultBranch() { return { name: 'main', commitSha: 'd'.repeat(40) }; },
+        async downloadArchive() {
+          zipballCalled = true;
+          throw new Error('zipball should not run when Release asset matches');
+        },
+        async listReleases() {
+          return [{
+            tagName: 'v2.0.0',
+            draft: false,
+            prerelease: false,
+            assets: [{
+              name: assetName,
+              browserDownloadUrl: `https://github.com/example/serpent-palette-tools/releases/download/v2.0.0/${assetName}`,
+              size: archive.toBuffer().byteLength,
+            }],
+          }];
+        },
+        async downloadReleaseAsset(url) {
+          downloadedAsset = url;
+          return archive.toBuffer();
+        },
+        async commitShaForRef() {
+          return 'e'.repeat(40);
+        },
+      },
+    });
+
+    expect(zipballCalled).toBe(false);
+    expect(downloadedAsset).toContain(assetName);
+    expect(installed.package.lock.version).toBe('2.0.0');
+    expect(installed.package.lock.source).toMatchObject({
+      kind: 'github',
+      ref: 'v2.0.0',
+      commitSha: 'e'.repeat(40),
+    });
+  });
+
+  it('reports available GitHub updates and honors auto-update preferences', async () => {
+    const oldSource = temporaryRoot('serpent-plugin-update-old-');
+    const newSource = temporaryRoot('serpent-plugin-update-new-');
+    const userData = temporaryRoot('serpent-plugin-update-user-');
+    writePlugin(oldSource, { version: '1.0.0' });
+    writePlugin(newSource, { version: '1.1.0' });
+    const oldArchive = new AdmZip();
+    oldArchive.addLocalFolder(oldSource, 'palette-tools-1.0.0');
+    const newArchive = new AdmZip();
+    newArchive.addLocalFolder(newSource, 'palette-tools-1.1.0');
+    const manager = createManager(userData);
+    const repository = 'https://github.com/example/serpent-palette-tools';
+    const asset = (version: string) => ({
+      name: `com.example.palette-tools-${version}-any.zip`,
+      browserDownloadUrl: `https://example.invalid/${version}.zip`,
+      size: 10,
+    });
+    const client = {
+      async listTags() { return []; },
+      async defaultBranch() { return { name: 'main', commitSha: 'a'.repeat(40) }; },
+      async downloadArchive() { throw new Error('unused'); },
+      async listReleases() {
+        return [
+          {
+            tagName: 'v1.1.0',
+            draft: false,
+            prerelease: false,
+            assets: [asset('1.1.0')],
+          },
+          {
+            tagName: 'v1.0.0',
+            draft: false,
+            prerelease: false,
+            assets: [asset('1.0.0')],
+          },
+        ];
+      },
+      async downloadReleaseAsset(url: string) {
+        return url.includes('1.1.0') ? newArchive.toBuffer() : oldArchive.toBuffer();
+      },
+      async commitShaForRef(_repository: string, ref: string) {
+        return ref.includes('1.1') ? 'b'.repeat(40) : 'a'.repeat(40);
+      },
+    };
+
+    const first = await manager.installFromGitHub({
+      repository,
+      scope: 'user',
+      platformToken: 'darwin-arm64',
+      client: {
+        ...client,
+        async listReleases() {
+          return [{
+            tagName: 'v1.0.0',
+            draft: false,
+            prerelease: false,
+            assets: [asset('1.0.0')],
+          }];
+        },
+      },
+    });
+    const available = await manager.findGitHubAvailableUpdate({
+      package: first.package,
+      client,
+      platformToken: 'darwin-arm64',
+    });
+    expect(available).toMatchObject({ version: '1.1.0', tag: 'v1.1.0' });
+
+    await manager.setAutoUpdatePreference({
+      pluginId: first.package.lock.pluginId,
+      sourceFingerprint: first.package.lock.sourceFingerprint,
+      autoUpdate: true,
+    });
+    const applied = await manager.applyEligibleGitHubAutoUpdates({
+      scope: 'user',
+      client,
+      platformToken: 'darwin-arm64',
+    });
+    expect(applied).toHaveLength(1);
+    expect(applied[0]?.package.lock.version).toBe('1.1.0');
+  });
+
   it('treats a newer immutable commit from the same GitHub repository as an ordinary source-stable upgrade', async () => {
     const oldSource = temporaryRoot('serpent-plugin-github-old-');
     const newSource = temporaryRoot('serpent-plugin-github-new-');
@@ -217,6 +362,13 @@ describe('PluginPackageManager installation and integrity', () => {
     newArchive.addLocalFolder(newSource, 'palette-tools-1.3.0');
     const manager = createManager(userData);
     const repository = 'https://github.com/example/serpent-palette-tools';
+    const emptyReleaseClient = {
+      async listReleases() { return []; },
+      async downloadReleaseAsset() { throw new Error('unused'); },
+      async commitShaForRef(_repository: string, ref: string) {
+        return ref.includes('1.3') ? 'b'.repeat(40) : 'a'.repeat(40);
+      },
+    };
 
     const first = await manager.installFromGitHub({
       repository,
@@ -225,6 +377,7 @@ describe('PluginPackageManager installation and integrity', () => {
         async listTags() { return [{ name: 'v1.2.0', commitSha: 'a'.repeat(40) }]; },
         async defaultBranch() { return { name: 'main', commitSha: 'a'.repeat(40) }; },
         async downloadArchive() { return { archive: oldArchive.toBuffer(), commitSha: 'a'.repeat(40) }; },
+        ...emptyReleaseClient,
       },
     });
     await manager.chooseResolution({
@@ -240,6 +393,7 @@ describe('PluginPackageManager installation and integrity', () => {
         async listTags() { return [{ name: 'v1.3.0', commitSha: 'b'.repeat(40) }]; },
         async defaultBranch() { return { name: 'main', commitSha: 'b'.repeat(40) }; },
         async downloadArchive() { return { archive: newArchive.toBuffer(), commitSha: 'b'.repeat(40) }; },
+        ...emptyReleaseClient,
       },
     });
 
@@ -386,6 +540,37 @@ describe('PluginPackageManager selection, updates and Safe Mode', () => {
       libraryDirectory: library,
       pluginId: first.package.lock.pluginId,
     })).resolves.toMatchObject({ status: 'resolved', package: { lock: { version: '1.3.0' } } });
+  });
+
+  it('keeps unrestricted packages disabled until the user explicitly enables them', async () => {
+    const source = temporaryRoot('serpent-plugin-unrestricted-default-');
+    const userData = temporaryRoot('serpent-plugin-unrestricted-default-user-');
+    const library = temporaryRoot('serpent-plugin-unrestricted-default-library-');
+    writePlugin(source, { runtime: 'unrestricted', version: '1.0.0' });
+    const manager = createManager(userData);
+    const installed = await manager.installFromDirectory({
+      directory: source,
+      scope: 'user',
+      source: { kind: 'local-directory', fingerprint: 'local:unrestricted-default' },
+    });
+
+    await expect(manager.resolve({
+      libraryId: 'library-a',
+      libraryDirectory: library,
+      pluginId: installed.package.lock.pluginId,
+    })).resolves.toMatchObject({ status: 'disabled', reason: 'user-disabled' });
+
+    await manager.chooseResolution({
+      libraryId: 'library-a',
+      pluginId: installed.package.lock.pluginId,
+      selection: 'use-global',
+      packageHash: installed.package.lock.packageHash,
+    });
+    await expect(manager.resolve({
+      libraryId: 'library-a',
+      libraryDirectory: library,
+      pluginId: installed.package.lock.pluginId,
+    })).resolves.toMatchObject({ status: 'resolved', selection: 'use-global' });
   });
 
   it('uses Safe Mode to suppress unrestricted (trusted) resolution while leaving restricted packages resolvable', async () => {

@@ -11,6 +11,7 @@ import {
 import { pluginProviderMediaSchema, pluginProviderMetadataSchema, pluginProviderAiAnalysisSchema, pluginProviderExportDescriptorSchema, pluginProviderImportPlanSchema } from '../plugins/plugin-providers';
 import { pluginThemePackageSchema } from '../plugins/plugin-themes';
 import { pluginRuntimeModeSchema } from '../plugins/plugin-runtime-mode';
+import { isGitHubPluginInstallUrl } from '../shared/plugin-github-url';
 
 const pluginIdSchema = z.string().min(3).max(64).regex(/^[a-z0-9][a-z0-9._-]{1,62}[a-z0-9]$/u);
 const versionSchema = z.string().min(1).max(128);
@@ -21,10 +22,7 @@ const runtimeModeSchema = pluginRuntimeModeSchema;
 const trustSchema = z.enum(['trusted', 'denied', 'untrusted']);
 const pluginLocalIdSchema = z.string().min(1).max(64).regex(/^[a-z0-9][a-z0-9._-]{0,63}$/u);
 
-const githubRepositorySchema = z.url().refine((value) => {
-  const url = new URL(value);
-  return url.protocol === 'https:' && url.hostname === 'github.com' && url.pathname.split('/').filter(Boolean).length === 2;
-}, 'Expected an HTTPS GitHub owner/repository URL.');
+const githubRepositorySchema = z.url().refine((value) => isGitHubPluginInstallUrl(value), 'Expected an HTTPS GitHub owner/repository or Release URL.');
 
 const scopedRequestFields = {
   scope: scopeSchema,
@@ -167,6 +165,28 @@ export const pluginManagerRequestSchema = z.discriminatedUnion('type', [
   }),
   z.strictObject({ type: z.literal('plugin-manager.install-local'), ...scopedRequestFields }),
   z.strictObject({ type: z.literal('plugin-manager.install-github'), ...scopedRequestFields, repository: githubRepositorySchema }),
+  z.strictObject({
+    type: z.literal('plugin-manager.update-github'),
+    ...scopedRequestFields,
+    pluginId: pluginIdSchema,
+    packageHash: packageHashSchema,
+  }),
+  z.strictObject({
+    type: z.literal('plugin-manager.set-auto-update'),
+    pluginId: pluginIdSchema,
+    sourceFingerprint: z.string().min(1).max(1_024),
+    enabled: z.boolean(),
+  }),
+  z.strictObject({
+    type: z.literal('plugin-manager.reveal-package'),
+    ...scopedRequestFields,
+    pluginId: pluginIdSchema,
+    version: versionSchema,
+  }),
+  z.strictObject({
+    type: z.literal('plugin-manager.reload'),
+    libraryId: libraryIdSchema.optional(),
+  }),
   z.strictObject({
     type: z.literal('plugin-manager.trust'),
     ...scopedRequestFields,
@@ -461,10 +481,20 @@ export const pluginManagerPackageSummarySchema = z.strictObject({
   runtimeMode: runtimeModeSchema,
   permissions: z.array(z.string().min(1).max(128)).max(64),
   source: pluginManagerSourceSummarySchema,
+  sourceFingerprint: z.string().min(1).max(1_024),
   scope: scopeSchema,
   status: z.enum(['valid', 'invalid']),
   trust: trustSchema,
   errorCode: z.string().min(1).max(128).optional(),
+  /** Host-rendered settings.sections or sandboxed settings.pages may be available. */
+  hasSettingsUi: z.boolean().default(false),
+  availableUpdate: z.strictObject({
+    version: versionSchema,
+    tag: z.string().min(1).max(255),
+    assetName: z.string().min(1).max(512),
+  }).optional(),
+  autoUpdate: z.boolean().optional(),
+  updatePolicy: z.enum(['follow-latest', 'pinned']).optional(),
 });
 export type PluginManagerPackageSummary = z.infer<typeof pluginManagerPackageSummarySchema>;
 
@@ -542,6 +572,10 @@ export type PluginManagerResolutionSummary = z.infer<typeof pluginManagerResolut
 const pluginManagerErrorResponseSchema = z.strictObject({
   ok: z.literal(false),
   code: z.enum(['invalid-request', 'library-not-open', 'selection-cancelled', 'operation-failed']),
+  /** Stable installer / host failure code when available (e.g. PLUGIN_SOURCE_SYMLINK_FORBIDDEN). */
+  failureCode: z.string().min(1).max(128).optional(),
+  /** Short explanation safe for Renderer display. Must not include absolute filesystem paths. */
+  message: z.string().min(1).max(2_000).optional(),
 });
 export type PluginManagerErrorResponse = z.infer<typeof pluginManagerErrorResponseSchema>;
 

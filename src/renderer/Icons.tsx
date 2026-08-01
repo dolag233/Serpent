@@ -33,6 +33,7 @@ export type IconName =
   | "github"
   | "heart"
   | "info"
+  | "alert-circle"
   | "link"
   | "link-off"
   | "loader"
@@ -250,6 +251,12 @@ const iconPaths: Record<IconName, ReactNode> = {
     <>
       <circle cx="12" cy="12" r="9" />
       <path d="M12 11v6M12 7h.01" />
+    </>
+  ),
+  "alert-circle": (
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 8v5m0 3h.01" />
     </>
   ),
   link: (

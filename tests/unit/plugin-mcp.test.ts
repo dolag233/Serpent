@@ -47,7 +47,7 @@ describe('PLUGIN-031 manifest and MCP exposure contract', () => {
     expect(getPluginMcpExportedCommandIds(manifest)).toEqual(new Set(['declared', 'legacy']));
   });
 
-  it('hides plugin commands by default and exposes only enabled declarations', () => {
+  it('exposes declared MCP commands by default and hides undeclared ones', () => {
     const commands = [
       {
         pluginId: 'com.example.mcp-probe',
@@ -62,9 +62,7 @@ describe('PLUGIN-031 manifest and MCP exposure contract', () => {
         mcpExported: false,
       },
     ];
-    expect(listPluginMcpTools(commands, () => false)).toEqual([]);
-
-    const listed = listPluginMcpTools(commands, (command) => command.commandId === 'declared');
+    const listed = listPluginMcpTools(commands);
     expect(listed).toHaveLength(1);
     expect(listed[0]).toMatchObject({
       name: pluginMcpToolName('com.example.mcp-probe', 'declared'),
@@ -75,7 +73,7 @@ describe('PLUGIN-031 manifest and MCP exposure contract', () => {
     expect(listed[0]?.inputSchema).not.toHaveProperty('secret');
   });
 
-  it('persists explicit enables without storing paths or secrets', async () => {
+  it('persists optional device exposure records without paths or secrets', async () => {
     const userData = mkdtempSync(path.join(tmpdir(), 'serpent-plugin-mcp-'));
     roots.push(userData);
     const store = new PluginMcpExposureStore(userData);
@@ -103,7 +101,7 @@ describe('PLUGIN-031 manifest and MCP exposure contract', () => {
 });
 
 describe('PLUGIN-031 MCP call gate', () => {
-  it('refuses a declared-but-disabled plugin command before invoking the Host', async () => {
+  it('refuses a plugin command that is not currently listed', async () => {
     const result = await callSerpentMcpTool({
       toolName: pluginMcpToolName('com.example.mcp-probe', 'declared'),
       arguments: { assetIds: ['asset-1'] },
@@ -125,7 +123,7 @@ describe('PLUGIN-031 MCP call gate', () => {
     });
   });
 
-  it('routes an enabled plugin command with only bounded context IDs', async () => {
+  it('routes a declared plugin command with only bounded context IDs', async () => {
     const calls: unknown[] = [];
     const toolName = pluginMcpToolName('com.example.mcp-probe', 'declared');
     const result = await callSerpentMcpTool({
@@ -140,7 +138,7 @@ describe('PLUGIN-031 MCP call gate', () => {
           commandId: 'declared',
           title: 'Declared',
           mcpExported: true,
-        }], () => true),
+        }]),
         isKnown: () => true,
         call: async (input) => {
           calls.push(input);

@@ -10,7 +10,6 @@ import { utf8ByteLength } from '../shared/script-sandbox-limits';
 import type { AutomationScriptCommandId } from '../shared/automation-script-api';
 import {
   SERPENT_GUEST_COMMANDS,
-  projectSerpentGuestAssetPageResult,
 } from './serpent-guest-api';
 
 /**
@@ -617,189 +616,6 @@ function newQuickJsJsonValue(context: QuickJSContext, value: unknown): QuickJSHa
   }
 }
 
-/** Folder paths are intentionally reduced to id/name relationships for scripts. */
-function scriptFolderPageResult(value: unknown): unknown {
-  if (!value || typeof value !== 'object' || !Array.isArray((value as { items?: unknown }).items)) {
-    return value;
-  }
-  const page = value as {
-    items: unknown[];
-    total?: unknown;
-    offset?: unknown;
-    limit?: unknown;
-    hasMore?: unknown;
-  };
-  return {
-    items: page.items.map((item) => {
-      if (!item || typeof item !== 'object' || typeof (item as { folderId?: unknown }).folderId !== 'string') {
-        return item;
-      }
-      const folder = item as Record<string, unknown> & { folderId: string };
-      return {
-        id: folder.folderId,
-        parentId: typeof folder.parentFolderId === 'string' ? folder.parentFolderId : null,
-        name: typeof folder.name === 'string' ? folder.name : folder.folderId,
-      };
-    }),
-    total: typeof page.total === 'number' ? page.total : page.items.length,
-    offset: typeof page.offset === 'number' ? page.offset : 0,
-    limit: typeof page.limit === 'number' ? page.limit : page.items.length,
-    hasMore: page.hasMore === true,
-  };
-}
-
-function scriptFolderSummary(value: unknown): unknown {
-  if (!value || typeof value !== 'object') return value;
-  const folder = value as Record<string, unknown>;
-  if (typeof folder.id === 'string') {
-    return {
-      id: folder.id,
-      parentId: typeof folder.parentId === 'string' ? folder.parentId : null,
-      name: typeof folder.name === 'string' ? folder.name : folder.id,
-    };
-  }
-  if (typeof folder.folderId !== 'string') return value;
-  return {
-    id: folder.folderId,
-    parentId: typeof folder.parentFolderId === 'string' ? folder.parentFolderId : null,
-    name: typeof folder.name === 'string' ? folder.name : folder.folderId,
-  };
-}
-
-function scriptTagPageResult(value: unknown): unknown {
-  if (!value || typeof value !== 'object' || !Array.isArray((value as { items?: unknown }).items)) {
-    return value;
-  }
-  const page = value as {
-    items: unknown[];
-    total?: unknown;
-    offset?: unknown;
-    limit?: unknown;
-    hasMore?: unknown;
-  };
-  return {
-    items: page.items.map((item) => {
-      if (!item || typeof item !== 'object') return item;
-      const tag = item as Record<string, unknown>;
-      if (typeof tag.id === 'string') {
-        return {
-          id: tag.id,
-          name: typeof tag.name === 'string' ? tag.name : tag.id,
-          assetCount: typeof tag.assetCount === 'number' ? tag.assetCount : 0,
-        };
-      }
-      if (typeof tag.tagId !== 'string') return item;
-      return {
-        id: tag.tagId,
-        name: typeof tag.name === 'string' ? tag.name : tag.tagId,
-        assetCount: typeof tag.assetCount === 'number' ? tag.assetCount : 0,
-      };
-    }),
-    total: typeof page.total === 'number' ? page.total : page.items.length,
-    offset: typeof page.offset === 'number' ? page.offset : 0,
-    limit: typeof page.limit === 'number' ? page.limit : page.items.length,
-    hasMore: page.hasMore === true,
-  };
-}
-
-function scriptCollectionPageResult(value: unknown): unknown {
-  if (!value || typeof value !== 'object' || !Array.isArray((value as { items?: unknown }).items)) {
-    return value;
-  }
-  const page = value as {
-    items: unknown[];
-    total?: unknown;
-    offset?: unknown;
-    limit?: unknown;
-    hasMore?: unknown;
-  };
-  return {
-    items: page.items.map((item) => {
-      if (!item || typeof item !== 'object' || typeof (item as { collectionId?: unknown }).collectionId !== 'string') {
-        return item;
-      }
-      const collection = item as Record<string, unknown> & { collectionId: string };
-      return {
-        id: collection.collectionId,
-        parentId: typeof collection.parentId === 'string' ? collection.parentId : null,
-        name: typeof collection.name === 'string' ? collection.name : collection.collectionId,
-        description: typeof collection.description === 'string' ? collection.description : null,
-        assetCount: typeof collection.assetCount === 'number' ? collection.assetCount : 0,
-        childCollectionCount: typeof collection.childCollectionCount === 'number'
-          ? collection.childCollectionCount
-          : 0,
-      };
-    }),
-    total: typeof page.total === 'number' ? page.total : page.items.length,
-    offset: typeof page.offset === 'number' ? page.offset : 0,
-    limit: typeof page.limit === 'number' ? page.limit : page.items.length,
-    hasMore: page.hasMore === true,
-  };
-}
-
-function scriptSmartCollectionPageResult(value: unknown): unknown {
-  if (!value || typeof value !== 'object' || !Array.isArray((value as { items?: unknown }).items)) {
-    return value;
-  }
-  const page = value as {
-    items: unknown[];
-    total?: unknown;
-    offset?: unknown;
-    limit?: unknown;
-    hasMore?: unknown;
-  };
-  return {
-    items: page.items.map((item) => {
-      if (!item || typeof item !== 'object' || typeof (item as { collectionId?: unknown }).collectionId !== 'string') {
-        return item;
-      }
-      const collection = item as Record<string, unknown> & { collectionId: string };
-      return {
-        id: collection.collectionId,
-        name: typeof collection.name === 'string' ? collection.name : collection.collectionId,
-        queryDefinition: typeof collection.queryDefinition === 'string' ? collection.queryDefinition : '',
-        assetCount: typeof collection.assetCount === 'number' ? collection.assetCount : 0,
-      };
-    }),
-    total: typeof page.total === 'number' ? page.total : page.items.length,
-    offset: typeof page.offset === 'number' ? page.offset : 0,
-    limit: typeof page.limit === 'number' ? page.limit : page.items.length,
-    hasMore: page.hasMore === true,
-  };
-}
-
-/** Linked folder absoluteRootPath must never reach the guest. */
-function scriptLinkedFolderPageResult(value: unknown): unknown {
-  if (!value || typeof value !== 'object' || !Array.isArray((value as { items?: unknown }).items)) {
-    return value;
-  }
-  const page = value as {
-    items: unknown[];
-    total?: unknown;
-    offset?: unknown;
-    limit?: unknown;
-    hasMore?: unknown;
-  };
-  return {
-    items: page.items.map((item) => {
-      if (!item || typeof item !== 'object' || typeof (item as { folderId?: unknown }).folderId !== 'string') {
-        return item;
-      }
-      const folder = item as Record<string, unknown> & { folderId: string };
-      return {
-        id: folder.folderId,
-        name: typeof folder.displayName === 'string' ? folder.displayName : folder.folderId,
-        status: folder.status === 'offline' ? 'offline' : 'available',
-        assetCount: typeof folder.assetCount === 'number' ? folder.assetCount : 0,
-      };
-    }),
-    total: typeof page.total === 'number' ? page.total : page.items.length,
-    offset: typeof page.offset === 'number' ? page.offset : 0,
-    limit: typeof page.limit === 'number' ? page.limit : page.items.length,
-    hasMore: page.hasMore === true,
-  };
-}
-
 function scriptExtractedMetadataResult(value: unknown): unknown {
   if (!value || typeof value !== 'object') return value;
   const wrapper = value as Record<string, unknown>;
@@ -1361,106 +1177,12 @@ export async function runQuickJsSandboxPrototype(
       const tags = context.newObject();
       const collections = context.newObject();
       const smartCollections = context.newObject();
+      const trash = context.newObject();
+      const palettes = context.newObject();
       const jobs = context.newObject();
       const mediaJobs = context.newObject();
       const aiJobs = context.newObject();
-      const listFolders = context.newFunction('list', (inputHandle) => createDeferredHostCall(
-        host.executeAutomationCommand!(
-          'folder.list',
-          inputHandle === undefined ? {} : context.dump(inputHandle),
-        ),
-        (value) => newQuickJsJsonValue(context, scriptFolderPageResult(value)),
-      ));
-      const createFolder = context.newFunction('create', (nameHandle, parentFolderIdHandle) => createDeferredHostCall(
-        host.executeAutomationCommand!('folder.create', {
-          name: context.dump(nameHandle),
-          ...(parentFolderIdHandle === undefined
-            ? {}
-            : { parentFolderId: context.dump(parentFolderIdHandle) }),
-        }),
-        (value) => newQuickJsJsonValue(context, scriptFolderSummary(value)),
-      ));
-      const importFiles = context.newFunction('import', (inputHandle) => createDeferredHostCall(
-        host.executeAutomationCommand!('file.import', context.dump(inputHandle)),
-        newQuickJsJsonValue.bind(undefined, context),
-      ));
-      const listLinkedFolders = context.newFunction('list', (inputHandle) => createDeferredHostCall(
-        host.executeAutomationCommand!(
-          'linked-folder.list',
-          inputHandle === undefined ? {} : context.dump(inputHandle),
-        ),
-        (value) => newQuickJsJsonValue(context, scriptLinkedFolderPageResult(value)),
-      ));
-      const listTags = context.newFunction('list', (inputHandle) => createDeferredHostCall(
-        host.executeAutomationCommand!(
-          'tag.list',
-          inputHandle === undefined ? {} : context.dump(inputHandle),
-        ),
-        (value) => newQuickJsJsonValue(context, scriptTagPageResult(value)),
-      ));
-      const createTag = context.newFunction('create', (nameHandle) => createDeferredHostCall(
-        host.executeAutomationCommand!('tag.create', { name: context.dump(nameHandle) }),
-        newQuickJsJsonValue.bind(undefined, context),
-      ));
-      const assignTags = context.newFunction('assign', (assetIdsHandle, tagIdsHandle) => createDeferredHostCall(
-        host.executeAutomationCommand!('tag.assign', {
-          assetIds: context.dump(assetIdsHandle),
-          tagIds: context.dump(tagIdsHandle),
-        }),
-        newQuickJsJsonValue.bind(undefined, context),
-      ));
-      const removeTags = context.newFunction('remove', (assetIdsHandle, tagIdsHandle) => createDeferredHostCall(
-        host.executeAutomationCommand!('tag.remove', {
-          assetIds: context.dump(assetIdsHandle),
-          tagIds: context.dump(tagIdsHandle),
-        }),
-        newQuickJsJsonValue.bind(undefined, context),
-      ));
-      const listCollections = context.newFunction('list', (inputHandle) => createDeferredHostCall(
-        host.executeAutomationCommand!(
-          'collection.list',
-          inputHandle === undefined ? {} : context.dump(inputHandle),
-        ),
-        (value) => newQuickJsJsonValue(context, scriptCollectionPageResult(value)),
-      ));
-      const getCollectionMemberships = context.newFunction('getMemberships', (assetIdsHandle, inputHandle) => {
-        const pagination = inputHandle === undefined ? {} : context.dump(inputHandle);
-        return createDeferredHostCall(
-          host.executeAutomationCommand!('collection.assets.memberships', {
-            assetIds: context.dump(assetIdsHandle),
-            ...(pagination && typeof pagination === 'object' ? pagination as Record<string, unknown> : {}),
-          }),
-          newQuickJsJsonValue.bind(undefined, context),
-        );
-      });
-      const createCollection = context.newFunction('create', (nameHandle, parentIdHandle) => createDeferredHostCall(
-        host.executeAutomationCommand!('collection.create', {
-          name: context.dump(nameHandle),
-          ...(parentIdHandle === undefined ? {} : { parentId: context.dump(parentIdHandle) }),
-        }),
-        newQuickJsJsonValue.bind(undefined, context),
-      ));
-      const addCollectionAssets = context.newFunction('addAssets', (collectionIdHandle, assetIdsHandle) => createDeferredHostCall(
-        host.executeAutomationCommand!('collection.assets.add', {
-          collectionId: context.dump(collectionIdHandle),
-          assetIds: context.dump(assetIdsHandle),
-        }),
-        newQuickJsJsonValue.bind(undefined, context),
-      ));
-      const removeCollectionAssets = context.newFunction('removeAssets', (collectionIdHandle, assetIdsHandle) => createDeferredHostCall(
-        host.executeAutomationCommand!('collection.assets.remove', {
-          collectionId: context.dump(collectionIdHandle),
-          assetIds: context.dump(assetIdsHandle),
-        }),
-        newQuickJsJsonValue.bind(undefined, context),
-      ));
-      const listSmartCollections = context.newFunction('list', (inputHandle) => createDeferredHostCall(
-        host.executeAutomationCommand!(
-          'smart-collection.list',
-          inputHandle === undefined ? {} : context.dump(inputHandle),
-        ),
-        (value) => newQuickJsJsonValue(context, scriptSmartCollectionPageResult(value)),
-      ));
+      // Script-only nested automation jobs stay Host-local: plugin jobs.* must not collide.
       const listMediaJobs = context.newFunction('list', (inputHandle) => createDeferredHostCall(
         host.executeAutomationCommand!(
           'media.jobs.list',
@@ -1482,31 +1204,27 @@ export async function runQuickJsSandboxPrototype(
         ),
         newQuickJsJsonValue.bind(undefined, context),
       ));
-      const trash = context.newObject();
-      const listTrash = context.newFunction('list', () => createDeferredHostCall(
-        host.executeAutomationCommand!('asset.list-trash', {}),
-        (value) => newQuickJsJsonValue(context, projectSerpentGuestAssetPageResult(value)),
-      ));
-      const restoreIfOriginalVacant = context.newFunction('restoreIfOriginalVacant', (assetIdsHandle) => createDeferredHostCall(
-        host.executeAutomationCommand!('asset.restore-if-original-vacant', {
-          assetIds: context.dump(assetIdsHandle),
-        }),
-        newQuickJsJsonValue.bind(undefined, context),
-      ));
-      const palettes = context.newObject();
-      const mostFrequent = context.newFunction('mostFrequent', (inputHandle) => createDeferredHostCall(
-        host.executeAutomationCommand!(
-          'asset.palette.aggregate-recent',
-          inputHandle === undefined ? {} : context.dump(inputHandle),
-        ),
-        newQuickJsJsonValue.bind(undefined, context),
-      ));
+      const sharedGuestTargets: Record<string, QuickJSHandle> = {
+        assets,
+        library,
+        folders,
+        tags,
+        collections,
+        smartCollections,
+        linkedFolders,
+        files,
+        trash,
+        palettes,
+      };
       const sharedGuestFunctions = SERPENT_GUEST_COMMANDS.map((definition) => {
         const [namespace, method] = definition.path.split('.');
         if (namespace === undefined || method === undefined) {
           throw new Error(`Invalid Guest API command path: ${definition.path}`);
         }
-        const target = namespace === 'assets' ? assets : library;
+        const target = sharedGuestTargets[namespace];
+        if (target === undefined) {
+          throw new Error(`Unsupported Guest API namespace for QuickJS binding: ${namespace}`);
+        }
         const guestFunction = context.newFunction(method, (...argumentHandles: QuickJSHandle[]) => {
           const argumentsForHost = argumentHandles.map((argumentHandle) => context.dump(argumentHandle));
           return createDeferredHostCall(
@@ -1523,23 +1241,6 @@ export async function runQuickJsSandboxPrototype(
         context.setProp(target, method, guestFunction);
         return guestFunction;
       });
-      context.setProp(trash, 'list', listTrash);
-      context.setProp(trash, 'restoreIfOriginalVacant', restoreIfOriginalVacant);
-      context.setProp(palettes, 'mostFrequent', mostFrequent);
-      context.setProp(folders, 'list', listFolders);
-      context.setProp(folders, 'create', createFolder);
-      context.setProp(files, 'import', importFiles);
-      context.setProp(linkedFolders, 'list', listLinkedFolders);
-      context.setProp(tags, 'list', listTags);
-      context.setProp(tags, 'create', createTag);
-      context.setProp(tags, 'assign', assignTags);
-      context.setProp(tags, 'remove', removeTags);
-      context.setProp(collections, 'list', listCollections);
-      context.setProp(collections, 'getMemberships', getCollectionMemberships);
-      context.setProp(collections, 'create', createCollection);
-      context.setProp(collections, 'addAssets', addCollectionAssets);
-      context.setProp(collections, 'removeAssets', removeCollectionAssets);
-      context.setProp(smartCollections, 'list', listSmartCollections);
       context.setProp(mediaJobs, 'list', listMediaJobs);
       context.setProp(aiJobs, 'status', getAiJobStatus);
       context.setProp(aiJobs, 'enqueue', enqueueAi);
@@ -1572,23 +1273,6 @@ export async function runQuickJsSandboxPrototype(
       trash.dispose();
       palettes.dispose();
       for (const guestFunction of sharedGuestFunctions) guestFunction.dispose();
-      listTrash.dispose();
-      restoreIfOriginalVacant.dispose();
-      mostFrequent.dispose();
-      listFolders.dispose();
-      createFolder.dispose();
-      importFiles.dispose();
-      listLinkedFolders.dispose();
-      listTags.dispose();
-      createTag.dispose();
-      assignTags.dispose();
-      removeTags.dispose();
-      listCollections.dispose();
-      getCollectionMemberships.dispose();
-      createCollection.dispose();
-      addCollectionAssets.dispose();
-      removeCollectionAssets.dispose();
-      listSmartCollections.dispose();
       listMediaJobs.dispose();
       getAiJobStatus.dispose();
       enqueueAi.dispose();

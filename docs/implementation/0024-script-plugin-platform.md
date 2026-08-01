@@ -24,7 +24,7 @@ Serpent 需要一个足够强的 TypeScript/JavaScript 插件系统，使第三�
 - 通过和自动化脚本相同的领域 API 读取、组织和修改资产，不复制数据库或文件操作实现。
 - 以用户级方式安装，也可以把插件代码放入资源库，使多台设备同步同一工作环境。
 
-系统不建设插件社区和人工审核流程。第一阶段只提供本地包、本地目录和符合规范的 GitHub 仓库安装。
+系统不建设插件社区和人工审核流程。第一阶段只提供本地 ZIP、本地文件夹和符合规范的 GitHub 安装（优先 Release 平台 asset）。
 
 ## 2. 已确认的产品决定
 
@@ -36,8 +36,9 @@ Serpent 需要一个足够强的 TypeScript/JavaScript 插件系统，使第三�
 6. 同一插件同时存在用户级和资源库级版本时，不自动决定优先级。用户必须选择本机在该资源库中使用哪个版本，也可以暂时禁用。
 7. 选择结果在本机记忆。普通同源升级沿用选择；权限增加、运行模式改变或来源改变时重新询问。
 8. 只考虑个人多设备同步，不设计管理员、成员、审批或协作权限。本地用户可以任意修改资源库插件及其同步配置。
-9. GitHub 安装只要求仓库 URL 和规范化仓库内容，不要求 GitHub Release。
+9. GitHub 安装优先使用 Release 平台 asset ZIP（命名与平台 token 见 [`plugin-distribution-and-updates.md`](../plugin-distribution-and-updates.md)）；无规范 asset 时过渡期可回退成品 zipball。
 10. 标准插件不执行远程仓库中的构建、`npm install`、`postinstall` 或任意 Shell。
+11. GitHub 来源可显示可用更新；自动更新默认关闭，勾选前须风险说明；权限增加或运行模式变更不得静默启用。
 
 ## 3. 脚本、插件和 MCP 的关系
 
@@ -73,7 +74,7 @@ await serpent.plugins.call('com.example.palette.extract', {
 });
 ```
 
-插件命令默认不暴露给 MCP。插件清单必须声明 `mcp.expose`，用户还要在本机明确启用，MCP 才能以 `plugin.<pluginId>.<commandId>` 暴露经过 Schema 校验的命令。插件不能向 MCP 暴露任意 `eval`、秘密或未声明的 Node 接口。
+插件清单须声明 `mcp.expose` / `commands[].mcp.export` 才会进入 MCP tools 面；激活后的声明命令默认对 MCP 可见可调用（无设置页二次开关）。MCP 仅接受有界 asset/folder/collection ID Schema，插件不能向 MCP 暴露任意 `eval`、秘密或未声明的 Node 接口。
 
 ## 4. 核心领域对象
 
@@ -198,17 +199,17 @@ Package、lock 和资源库级非秘密设置随资源库整体复制或第三�
 4. 用户查看来源、版本、运行模式、权限和变更后决定信任。
 5. 只有信任和版本 Resolution 都完成后才能激活。
 
-### 6.3 GitHub 仓库安装
+### 6.3 GitHub 安装
 
-用户粘贴 GitHub 仓库 URL 后，安装器：
+用户粘贴 GitHub 仓库 / Release URL 后，安装器：
 
-1. 读取仓库标签，优先选择最新兼容 SemVer tag。
-2. 下载该 tag 的源码归档；不要求 GitHub Release。
-3. 只接受仓库中已经存在的规范清单和 `dist` 成品。
-4. 不运行依赖安装、构建、生命周期脚本或 Shell。
-5. 记录仓库 URL、tag、commit SHA、包摘要和安装时间。
+1. 解析 owner/repo；若未指定 tag，取最新稳定 Release。
+2. **优先**按 [`plugin-distribution-and-updates.md`](../plugin-distribution-and-updates.md) 匹配当前平台（或 `any`）的 Release asset ZIP。
+3. 过渡期：若无规范 asset，可回退到 tag/默认分支 zipball 中的成品包，并提示作者迁移到 Release asset。
+4. 只接受已含规范清单与已编译 `runtime.entry` 的成品；不运行依赖安装、构建、生命周期脚本或 Shell。
+5. 记录仓库 URL、Release/tag、commit（若可得）、asset 名、包摘要和安装时间。
 
-允许从默认分支安装，但必须提示“分支内容可变”，并锁定本次 commit SHA。更新仍生成新的不可变 Package，不在原目录上覆盖。
+允许从默认分支安装成品树，但必须提示“分支内容可变”，并锁定本次 commit SHA（若可得）。更新仍生成新的不可变 Package，不在原目录上覆盖。GitHub 来源的更新显示与可选自动更新见分发规范 §5。
 
 ### 6.4 原子更新与回滚
 

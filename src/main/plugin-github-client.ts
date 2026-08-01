@@ -1,27 +1,12 @@
 import {
   type PluginFetch,
   type PluginGitHubClient,
+  type PluginGitHubRelease,
   PluginPackageManagerError,
 } from './plugin-package-manager-types';
+import { parseGitHubRepositoryUrl } from '../shared/plugin-github-url';
 
-export function parseGitHubRepositoryUrl(value: string): { repository: string; owner: string; name: string } {
-  let url: URL;
-  try {
-    url = new URL(value);
-  } catch {
-    throw new PluginPackageManagerError('PLUGIN_ARCHIVE_INVALID', 'Plugin installation requires a valid GitHub repository URL.');
-  }
-  const segments = url.pathname.split('/').filter(Boolean);
-  if (url.protocol !== 'https:' || url.hostname !== 'github.com' || segments.length !== 2) {
-    throw new PluginPackageManagerError('PLUGIN_ARCHIVE_INVALID', 'Plugin installation requires an HTTPS GitHub owner/repository URL.');
-  }
-  const owner = segments[0];
-  const name = segments[1]?.replace(/\.git$/u, '');
-  if (owner === undefined || name === undefined || name.length === 0) {
-    throw new PluginPackageManagerError('PLUGIN_ARCHIVE_INVALID', 'Plugin installation requires an HTTPS GitHub owner/repository URL.');
-  }
-  return { repository: `https://github.com/${owner}/${name}`, owner, name };
-}
+export { parseGitHubRepositoryUrl, isGitHubPluginInstallUrl } from '../shared/plugin-github-url';
 
 async function githubJson(fetchImpl: PluginFetch, url: string): Promise<unknown> {
   const response = await fetchImpl(url, {
@@ -34,8 +19,8 @@ async function githubJson(fetchImpl: PluginFetch, url: string): Promise<unknown>
 }
 
 /**
- * Downloads already-built GitHub source archives only. It has no package
- * manager, shell, build or lifecycle-script capability.
+ * Downloads Release platform assets (preferred) or already-built source archives.
+ * It has no package manager, shell, build or lifecycle-script capability.
  */
 export function createGitHubPluginClient(fetchImpl: PluginFetch = fetch): PluginGitHubClient {
   const githubApiRoot = 'https://api.github.com/repos';
@@ -70,6 +55,55 @@ export function createGitHubPluginClient(fetchImpl: PluginFetch = fetch): Plugin
       }
       return { name: branch, commitSha: await commitForRef(repository, branch) };
     },
+    async listReleases(repository: string): Promise<PluginGitHubRelease[]> {
+      const { owner, name } = parseGitHubRepositoryUrl(repository);
+      const body = await githubJson(
+        fetchImpl,
+        `${githubApiRoot}/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/releases?per_page=30`,
+      );
+      if (!Array.isArray(body)) {
+        throw new PluginPackageManagerError('PLUGIN_ARCHIVE_INVALID', 'GitHub returned an invalid release list.');
+      }
+      return body.flatMap((release) => {
+        const tagName = (release as { tag_name?: unknown }).tag_name;
+        const draft = (release as { draft?: unknown }).draft === true;
+        const prerelease = (release as { prerelease?: unknown }).prerelease === true;
+        const assetsRaw = (release as { assets?: unknown }).assets;
+        if (typeof tagName !== 'string' || tagName.length === 0 || !Array.isArray(assetsRaw)) return [];
+        const assets = assetsRaw.flatMap((asset) => {
+          const assetName = (asset as { name?: unknown }).name;
+          const browserDownloadUrl = (asset as { browser_download_url?: unknown }).browser_download_url;
+          const size = (asset as { size?: unknown }).size;
+          return typeof assetName === 'string'
+            && typeof browserDownloadUrl === 'string'
+            && typeof size === 'number'
+            && Number.isFinite(size)
+            && size >= 0
+            ? [{ name: assetName, browserDownloadUrl, size }]
+            : [];
+        });
+        return [{ tagName, draft, prerelease, assets }];
+      });
+    },
+    async downloadReleaseAsset(browserDownloadUrl: string): Promise<Uint8Array> {
+      let url: URL;
+      try {
+        url = new URL(browserDownloadUrl);
+      } catch {
+        throw new PluginPackageManagerError('PLUGIN_ARCHIVE_INVALID', 'GitHub release asset URL is invalid.');
+      }
+      if (url.protocol !== 'https:') {
+        throw new PluginPackageManagerError('PLUGIN_ARCHIVE_INVALID', 'GitHub release asset URL must be HTTPS.');
+      }
+      const response = await fetchImpl(browserDownloadUrl, {
+        headers: { Accept: 'application/octet-stream' },
+        redirect: 'follow',
+      });
+      if (!response.ok) {
+        throw new PluginPackageManagerError('PLUGIN_ARCHIVE_INVALID', `GitHub release asset download failed with HTTP ${response.status}.`);
+      }
+      return new Uint8Array(await response.arrayBuffer());
+    },
     async downloadArchive(repository: string, ref: string): Promise<{ archive: Uint8Array; commitSha: string }> {
       const { owner, name } = parseGitHubRepositoryUrl(repository);
       const [commitSha, response] = await Promise.all([
@@ -82,6 +116,9 @@ export function createGitHubPluginClient(fetchImpl: PluginFetch = fetch): Plugin
         throw new PluginPackageManagerError('PLUGIN_ARCHIVE_INVALID', `GitHub archive download failed with HTTP ${response.status}.`);
       }
       return { archive: new Uint8Array(await response.arrayBuffer()), commitSha };
+    },
+    async commitShaForRef(repository: string, ref: string): Promise<string> {
+      return commitForRef(repository, ref);
     },
   };
 }

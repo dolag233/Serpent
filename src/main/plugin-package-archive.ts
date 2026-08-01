@@ -66,8 +66,16 @@ export async function inspectPluginDirectory(
       const relativePath = relativeDirectory === '' ? entry.name : `${relativeDirectory}/${entry.name}`;
       const absolutePath = safeContainedPath(directory, relativePath);
       const stats = await lstat(absolutePath);
+      // npm always writes shim symlinks under node_modules/.bin; they are not
+      // needed for Node module resolution and must not block local installs.
+      if (relativePath === 'node_modules/.bin' || relativePath.startsWith('node_modules/.bin/')) {
+        continue;
+      }
       if (stats.isSymbolicLink()) {
-        throw new PluginPackageManagerError('PLUGIN_SOURCE_SYMLINK_FORBIDDEN', 'Plugin packages must not contain symbolic links.');
+        throw new PluginPackageManagerError(
+          'PLUGIN_SOURCE_SYMLINK_FORBIDDEN',
+          `Plugin packages must not contain symbolic links (found: ${relativePath}).`,
+        );
       }
       if (stats.isDirectory()) {
         await visit(relativePath);

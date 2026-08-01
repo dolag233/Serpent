@@ -46,7 +46,7 @@ export function pluginMcpToolName(pluginId: string, commandId: string): string {
 
 export function listPluginMcpTools(
   commands: readonly PluginMcpCommandSource[],
-  isEnabled: (command: PluginMcpCommandSource) => boolean,
+  isEnabled: (command: PluginMcpCommandSource) => boolean = () => true,
 ): PluginMcpToolDefinition[] {
   return commands
     .filter((command) => command.mcpExported && isEnabled(command))

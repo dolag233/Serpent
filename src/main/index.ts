@@ -4419,7 +4419,6 @@ async function startApplication(): Promise<void> {
     });
     pluginMcpToolProvider = new PluginMcpToolProvider({
       activationCoordinator: pluginActivationCoordinator,
-      exposureStore: pluginMcpExposureStore,
       getLibraryId: () => {
         const executionId = automationMcpHost?.executionId;
         const mcpLibraryId = executionId === undefined
@@ -4879,6 +4878,9 @@ async function startApplication(): Promise<void> {
         return result.libraries.find((library) => library.libraryId === libraryId)?.libraryPath;
       },
       chooseLocalPackage: selectPluginPackage,
+      revealPackageDirectory: (absoluteDirectory) => {
+        shell.showItemInFolder(absoluteDirectory);
+      },
       afterMutation: async ({ requestType, libraryId, libraryDirectory }) => {
         const coordinator = pluginActivationCoordinator;
         if (coordinator === undefined) return;
@@ -4892,7 +4894,8 @@ async function startApplication(): Promise<void> {
             || requestType === 'plugin-manager.install-local'
             || requestType === 'plugin-manager.install-github'
             || requestType === 'plugin-manager.uninstall'
-            || requestType === 'plugin-manager.trust') {
+            || requestType === 'plugin-manager.trust'
+            || requestType === 'plugin-manager.reload') {
             await coordinator.refreshOpenLibraries();
           }
         } catch (error) {

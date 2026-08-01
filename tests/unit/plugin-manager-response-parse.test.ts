@@ -24,9 +24,11 @@ describe('plugin manager response parse', () => {
         runtimeMode: 'restricted',
         permissions: ['asset.read'],
         source: { kind: 'local-directory' },
+        sourceFingerprint: 'local:palette-tools',
         scope: 'library',
         status: 'valid',
         trust: 'untrusted',
+        hasSettingsUi: false,
       }],
       resolutions: [{
         status: 'awaiting-trust',

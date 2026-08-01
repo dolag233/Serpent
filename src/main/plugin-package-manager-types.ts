@@ -16,6 +16,7 @@ export type PluginPackageManagerErrorCode =
   | 'PLUGIN_SOURCE_READ_FAILED'
   | 'PLUGIN_SOURCE_INVALID_JSON'
   | 'PLUGIN_ARCHIVE_INVALID'
+  | 'PLUGIN_PLATFORM_ASSET_MISSING'
   | 'PLUGIN_PACKAGE_INCOMPATIBLE'
   | 'PLUGIN_PACKAGE_ALREADY_EXISTS'
   | 'PLUGIN_LOCK_INVALID'
@@ -58,10 +59,34 @@ export interface PluginInstallFromArchiveInput {
   source: PluginPackageSource;
 }
 
+export type PluginGitHubReleaseAsset = {
+  name: string;
+  browserDownloadUrl: string;
+  size: number;
+};
+
+export type PluginGitHubRelease = {
+  tagName: string;
+  draft: boolean;
+  prerelease: boolean;
+  assets: PluginGitHubReleaseAsset[];
+};
+
+export type PluginGitHubAvailableUpdate = {
+  version: string;
+  tag: string;
+  assetName: string;
+  browserDownloadUrl: string;
+  commitSha: string;
+};
+
 export interface PluginGitHubClient {
   listTags(repository: string): Promise<Array<{ name: string; commitSha: string }>>;
   defaultBranch(repository: string): Promise<{ name: string; commitSha: string }>;
+  listReleases(repository: string): Promise<PluginGitHubRelease[]>;
+  downloadReleaseAsset(browserDownloadUrl: string): Promise<Uint8Array>;
   downloadArchive(repository: string, ref: string): Promise<{ archive: Uint8Array; commitSha: string }>;
+  commitShaForRef(repository: string, ref: string): Promise<string>;
 }
 
 export type PluginFetch = (input: string, init?: RequestInit) => Promise<Response>;
@@ -71,6 +96,14 @@ export interface PluginInstallFromGitHubInput {
   scope: PluginInstallationScope;
   libraryDirectory?: string;
   client: PluginGitHubClient;
+  /** Prefer Release assets for this host; defaults to process.platform/arch. */
+  platformToken?: string;
+}
+
+export interface PluginGitHubUpdatePreference {
+  pluginId: string;
+  sourceFingerprint: string;
+  autoUpdate: boolean;
 }
 
 export interface InstalledPluginPackage {

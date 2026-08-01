@@ -1,38 +1,41 @@
 # 插件 Guest API 统一开发日志
 
 > 日期：2026-08-01  
-> 工单：`Serpent-029r`（已认领，未关闭）  
-> 状态：开发态部分实现，待并行内容读取轨道合流
+> 工单：`Serpent-029r`  
+> 状态：Gateway 命令面已同源；运行时适配器仍分 Host
 
-## 目标与范围
+## 目标
 
-将 Standard QuickJS 与 Trusted Node Host 的 `serpent.assets.*`、`serpent.library.*` 方法定义收敛到 `src/scripting/serpent-guest-api.ts`。共享模块同时负责命令输入构造和资产列表、资源库摘要的 Guest 投影；storage、events、hooks、jobs、providers、commands、input 和 console 保留为各 Host 的运行时适配器。
+Standard QuickJS 与 Trusted Node 的 `serpent.*` **Gateway 命令面**只允许一份定义（表驱动）。差异仅限如何把调用送进 Gateway / storage 等适配器。
 
-本增量未加入 `assets.readContent`：`asset.content.read` 仍由并行工单实现，避免与其同时修改命令协议和 QuickJS 接缝。
+## 共享表覆盖（`src/scripting/serpent-guest-api.ts`）
 
-## 实现入口
+| Namespace | Methods |
+| --- | --- |
+| `assets` | search/list/metadata/AI/rating/paths/trash/content read·replace/move/rename… |
+| `library` | inspect/changeSequence/create |
+| `folders` | list/create |
+| `tags` | list/create/assign/remove |
+| `collections` | list/create/getMemberships/addAssets/removeAssets |
+| `smartCollections` | list |
+| `linkedFolders` | list（脱敏，无绝对路径） |
+| `files` | import |
+| `trash` | list/restoreIfOriginalVacant |
+| `palettes` | mostFrequent |
 
-- `src/scripting/serpent-guest-api.ts`：共享命令表、`createSerpentGuestApi`、资产/资源库方法集合。
-- `src/scripting/plugin-trusted-host.ts`：移除 Trusted 的 assets/library 手工列表，改用共享 Guest API。
-- `src/scripting/quickjs-sandbox-prototype.ts`：通过共享命令表生成 QuickJS assets/library 函数；其他插件专属表面仍按现有 Host 接缝生成。
-- `tests/unit/plugin-trusted-host.test.ts`：校验 Trusted Host 暴露的资产和资源库方法键与共享集合一致。
+Trusted：`createSerpentGuestApi` 一次获得全部命名空间。  
+QuickJS：按 namespace 绑定同一 `SERPENT_GUEST_COMMANDS`；仅 **`jobs.media` / `jobs.ai`** 仍为脚本侧本地挂载（避免与插件 `jobs.registerHandler` 冲突）。
 
-## 验证与剩余范围
+## 刻意未并入同一实现的表面
 
-本回合执行：
+storage / data / events / hooks / plugin jobs / providers / commands / input / console：两端签名对齐，但 QuickJS 需 pull-bridge（guest-realm），Trusted 用原生回调——继续分 Host 适配。
+
+## 验证
 
 ```bash
-npx vitest run tests/unit/plugin-trusted-host.test.ts -t "shared Guest API|loads a CommonJS"
-npx vitest run tests/unit/quickjs-sandbox-prototype.test.ts -t "fixed asset|organize automation|library.changeSequence|headless library|does not expose process"
-npx tsc --noEmit --pretty false
+npx tsc --noEmit
+npx vitest run tests/unit/plugin-trusted-host.test.ts tests/unit/quickjs-sandbox-prototype.test.ts
+# Test Files  2 passed · Tests  23 passed
 ```
 
-结果：Trusted 定向测试 2/2 通过；QuickJS 共享命令定向测试 5/5 通过。类型检查已排除本增量引入的错误，但当前共享工作树仍被并行轨道的 `src/worker/library-service.ts` 未定义变量和缺失 `src/plugins/plugin-data-directory.ts` 模块阻断。完整 Trusted/QuickJS 文件测试中的 `assets.readContent` 用例继续等待并行 content.read 实现。
-
-未执行完整测试、Electron E2E 或 `verify:mainline`。
-
-已知剩余：
-
-- `assets.readContent` 等 `content.read` 接缝待并行轨道合流后纳入共享命令表。
-- storage、events、hooks、jobs、providers、commands、input、console 仍允许由 Standard/Trusted 分别提供运行时适配器。
-- Trusted/Standard 的完整真实插件旅程、packaged、Windows 和 Computer Use 未验证。
+未执行 Electron E2E / packaged / Windows / Computer Use。

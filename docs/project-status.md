@@ -3,6 +3,15 @@
 > 更新时间：2026-08-01
 > 事实来源：`docs/implementation/mvp-roadmap.md` 与各切片开发/审查/QA 文档
 
+## 2026-08-01 插件设置 IA 与列表样式
+
+- 设置侧栏分类列表最后为可展开「插件设置」；有设置贡献的插件点选进详情。管理页卡片：标题含版本、来源图标、权限 info hover、非受限警告色与默认不启用、刷新/设置/垃圾桶操作；空列表仅「暂未安装」。MCP 声明命令默认暴露（无设置开关）。见 [开发日志](development/2026-08-01-plugin-settings-ui-ia-development-log.md)；`PLUGIN-001` / `PLUGIN-031` 已更新。
+
+## 2026-08-01 插件分发与更新规范
+
+- 安装通道定为 GitHub / ZIP / 文件夹；GitHub 以 **Release 平台 asset** 为主（非源码 zipball + npm）。规范见 [`plugin-distribution-and-updates.md`](plugin-distribution-and-updates.md)。
+- 实现：`Serpent-u3nx`（Release + 平台匹配）与 `Serpent-8r91`（更新提示与自动更新风险说明）一并落地；`Serpent-x9ci`（源码目录 npm）已关闭不做。`upsn.9` 仍排最后。
+
 ## 2026-08-01 插件/脚本自动化验收与 Agent Playbook
 
 - 产品决定：`PLUGIN-*` / `AUT-*` **以自动化测试为准**，测试档位绿即「自动化验收通过」，不要求人类逐步点验。规则见 [`qa/human-acceptance-checklist.md`](qa/human-acceptance-checklist.md)；Agent 流程见 [`agent-plugin-playbook.md`](agent-plugin-playbook.md)。人读 API 仍见 [`plugin-development-guide.md`](plugin-development-guide.md) / [`plugin-api-reference.md`](plugin-api-reference.md)。
@@ -11,7 +20,8 @@
 ## 2026-08-01 插件开发者文档与平台接缝
 
 - `Serpent-n34b` / `Serpent-s0gf`：对用户改称受限/无限制；Safe Mode 只停用无限制；Wire 枚举已迁到 `restricted`/`unrestricted`（旧 `standard`/`trusted` 读入映射）。`PLUGIN-036` 定向自动化通过。
-- 已认领未关：`pn7k` / `2nxg` / `029r`（Guest 全表面表驱动仍开放）；外部插件仓 `8csl`。
+- 已关闭：`029r`（Guest Gateway 命令面同源）、`pn7k`（content replace/read）、`2nxg`（plugin-files 数据目录）。
+- 仍开放：`upsn.9` 打包/最终 QA（排到插件平台收口最后做）。外部 Template / Upscaler 插件仓由外部 agent 跟进，本仓不再挂 `8csl`。
 
 ## 2026-07-30 脚本优先于插件
 
@@ -28,11 +38,11 @@
 - 2026-08-01：同一 `Serpent-upsn.8` 增加 `metadata.extractor` broker seam（`PLUGIN-026` 待人类验收）：Manifest 要求 opt-in 扩展名，Main Scheduler 单资产、单 provider、deadline 调用并以 ≤16 KiB 扁平 JSON 成功返回（禁 path/secret 键与路径样字符串），未声明扩展、失败和超时均 native fallback；扩展 `preview-thumbnail-probe` 为 `.probe` 注册 metadata provider，新增 `plugin-manager.metadata-provider` IPC/Preload 调用面。定向 Provider/Scheduler/IPC 单测通过；完整元数据管线接入、import/export/ai provider、真实 Electron、完整重启、Trusted Host、packaged/Windows/Computer Use、背压/crash recovery 和 100k soak 未验证。见 [Provider 开发日志](development/2026-08-01-plugin-providers-development-log.md)。
 - 2026-08-01：同一 `Serpent-upsn.8` 增加 `import.provider` / `export.provider` / `ai.provider` broker seam（`PLUGIN-027`–`029` 待人类验收）：Manifest 要求 import 声明扩展名和/或 MIME、export/ai 声明扩展名；Main Scheduler 对导入候选或单资产执行 deadline 调用，成功分别返回有界 import plan（≤8 KiB）、export descriptor（≤256 KiB base64）或 analysis stub（description/tags/rating），未匹配、失败和超时均 native fallback；扩展 `preview-thumbnail-probe` 并新增 `plugin-manager.import-provider` / `export-provider` / `ai-provider` IPC/Preload 调用面。定向 Provider/Scheduler/IPC 单测通过；完整导入/导出/AI 管线接入、真实 Electron、完整重启、Trusted Host、packaged/Windows/Computer Use、背压/crash recovery 和 100k soak 未验证。见 [Provider 开发日志](development/2026-08-01-plugin-providers-development-log.md)。
 - 2026-08-01：同一 `Serpent-upsn.8` 完成 `PLUGIN-030` 媒体 Provider 接入：Worker media queue、`media.generate-thumbnail` 与 `media.get-preview-artifact` 通过内部 Worker→Main callback 先调用匹配的 preview/thumbnail broker；provided MIME/base64 bytes 写入现有 thumbnail artifact store 并继续通过 `serpent://preview` 服务，native-fallback/超时/异常保持原生路径。视频/音频 proxy、真实 Electron 媒体解码、完整重启、Trusted Host、packaged/Windows/Computer Use、背压/crash recovery 和 100k soak 未验证；待 `PLUGIN-030` 人类验收。见 [Provider 开发日志](development/2026-08-01-plugin-providers-development-log.md)。
-- 2026-08-01：`Serpent-upsn.9` 的 `PLUGIN-031` 首个 MCP 插件命令垂直切片已实现，待人类验收：Manifest 支持命令级 `mcp.export`（并兼容顶层声明），本机 Main-owned exposure store 默认关闭，设置页按命令显式开关；MCP tools/list 仅列出激活、声明且启用的插件命令，tools/call 通过 library-bound Activation Coordinator `runCommand` 执行，输入仅允许有界 asset/folder/collection ID。`plugin-mcp`/contract/IPC 定向单测 3 files / 32 tests、MCP adapter/contributions 2 files / 20 tests 通过，`npx tsc --noEmit` exit 0。真实 Electron/MCP stdio、完整重启、packaged/Windows/Computer Use 尚未执行；插件模板与 `upsn.9` 打包/最终 QA 仍未完成。见 [MCP 插件开发日志](development/2026-08-01-plugin-mcp-export-development-log.md)。
-- 2026-08-01：同一 `Serpent-upsn.9` 完成 `PLUGIN-032` 主题 token 包垂直切片（待人类验收）：Manifest `contributes.themes` bounded light/dark token 覆盖、`plugin-ui.theme` 合并 Host CSS variables 与插件覆盖下发 iframe、`theme.trusted-css` 信任/设置披露、扩展 `iframe-workspace-probe`。定向单测 `plugin-themes` + `plugin-ui` 通过，`npx tsc --noEmit` exit 0。真实 Electron 亮暗切换、完整重启、packaged/Windows/Computer Use 未执行；插件模板（`Serpent-8csl`）与 `upsn.9` 打包/最终 QA 仍开放。见 [主题 token 开发日志](development/2026-08-01-plugin-theme-tokens-development-log.md)。
+- 2026-08-01：`Serpent-upsn.9` 的 `PLUGIN-031`：Manifest 支持命令级 `mcp.export`（并兼容顶层声明）；激活后声明命令默认对 MCP 暴露（无设置页开关）；tools/call 经 library-bound Activation Coordinator `runCommand`；输入仅允许有界 asset/folder/collection ID。见 [MCP 插件开发日志](development/2026-08-01-plugin-mcp-export-development-log.md) / [设置 IA 日志](development/2026-08-01-plugin-settings-ui-ia-development-log.md)。
+- 2026-08-01：同一 `Serpent-upsn.9` 完成 `PLUGIN-032` 主题 token 包垂直切片（待人类验收）：Manifest `contributes.themes` bounded light/dark token 覆盖、`plugin-ui.theme` 合并 Host CSS variables 与插件覆盖下发 iframe、`theme.trusted-css` 信任/设置披露、扩展 `iframe-workspace-probe`。定向单测 `plugin-themes` + `plugin-ui` 通过，`npx tsc --noEmit` exit 0。真实 Electron 亮暗切换、完整重启、packaged/Windows/Computer Use 未执行；`upsn.9` 打包/最终 QA 仍开放（排后）。见 [主题 token 开发日志](development/2026-08-01-plugin-theme-tokens-development-log.md)。
 - 2026-08-01：`Serpent-pn7k` 增加 `PLUGIN-033` 开发态垂直切片：Gateway `asset.content.replace` 要求 `content.write`、执行计划确认，Worker 按 assetId 原子替换托管文件并创建 `origin: replace` 修订、失效旧衍生物、重新入队缩略图；Guest SDK 暴露 `serpent.assets.replaceContent`。MCP 保持 `public: false`，大文件流式 staging、`content.read`、真实 Electron/完整重启、packaged/Windows/Computer Use 未验证。见 [内容替换开发日志](development/2026-08-01-plugin-asset-content-replace-development-log.md)。
-- 2026-08-01：`Serpent-029r` 将 `serpent.assets.*` 与 `serpent.library.*` 的命令输入构造和 Guest 投影收敛到共享 `src/scripting/serpent-guest-api.ts`，Trusted Host 删除对应手工方法表，QuickJS 改为消费共享命令表；`content.read` 待并行轨道合流，storage/events/hooks 等仍由 Host 运行时适配。
-- 独立插件仓（Template / ImageUpscaler）等平台完成后再开：`Serpent-8csl`（blocked by `upsn.9`）。
+- 2026-08-01：`Serpent-029r` 将 Gateway 命令面（assets/library/folders/tags/collections/smartCollections/linkedFolders/files/trash/palettes）收敛到共享 `serpent-guest-api.ts`；Trusted/QuickJS 同源；storage/events/hooks 等仍分 Host 适配。脚本专用 `jobs.media`/`jobs.ai` 仍仅 QuickJS 挂载。
+- 独立插件仓（Template / ImageUpscaler）交由外部 agent；主仓不再跟踪 `Serpent-8csl`。
 - 2026-08-01：被动发现未信任库插件时提示信任（`Serpent-c2rm` / `PLUGIN-007`）——开库与窗口 focus 均可发现磁盘复制进 `.serpent/plugins` 的包。
 - Attached MCP 浏览增量 `Serpent-lq5y.2.1/.2/.3/.4/.5` 已加入 `serpent_desktop_get_state`、`serpent_desktop_open_folder`、`serpent_desktop_set_discovery`、`serpent_desktop_reveal_asset`、`serpent_desktop_open_viewer` 与 `serpent_desktop_close_viewer`；`Serpent-990x` / `Serpent-ap4u` 继续补齐 `serpent_desktop_navigate_viewer`（Viewer 前后切换）与完整 Discovery 过滤字段（format/tag/rating/favorite/sourceUrl/availability 与宽高/长边/宽高比/时长范围）。AUT-023–AUT-028 待人类验收；跨文件夹 reveal E2E 与 Computer Use 已通过；跨分页 fixture、packaged、Windows 仍未验证。
 - 2026-07-31 天气图片 Agent 反馈已吸收：即时修 `run-mcp.mjs` 语法、MCP 搜索字符串归一、`library.inspect` 去路径；产品缺口 epic `Serpent-b2qv`（`file.move`=`Serpent-7v2i` 已关闭、序列显式=`Serpent-rvw3` 延后至主线、MCP 超时/幂等=`Serpent-3d32` 进行中）。详见 [`2026-07-31-weather-agent-automation-feedback.md`](development/2026-07-31-weather-agent-automation-feedback.md)。

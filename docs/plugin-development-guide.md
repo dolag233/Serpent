@@ -61,18 +61,22 @@ Finder 默认隐藏 `~/Library`：菜单「前往」时按住 ⌥ 可见「资�
 
 清单字段：`runtime.mode`
 
-| 模式（清单值） | 对用户展示（规划改名） | 运行时 | 能力边界 |
+| 模式（清单值） | 对用户展示 | 运行时 | 能力边界 |
 | --- | --- | --- | --- |
-| `restricted` | 受限模式 | 独立 QuickJS（无 Node） | 只能通过 `serpent.*`；无 `require('fs')` |
-| `unrestricted` | 无限制模式 | 独立 Node UtilityProcess | 完整 Node；`serpent.*` 仍走 Gateway。权限**不能**拦截任意 `fs`/子进程 |
+| `restricted` | （设置页不单独标注） | 独立 QuickJS（无 Node） | 只能通过 `serpent.*`；无 `require('fs')` |
+| `unrestricted` | 警告色说明：非受限模式 / 完整 Node.js | 独立 Node UtilityProcess | 完整 Node；`serpent.*` 仍走 Gateway。权限**不能**拦截任意 `fs`/子进程 |
 
 读入时仍接受旧别名：`standard` → `restricted`，`trusted` → `unrestricted`。
 
 产品要求：**两端共用同一套 Guest API（`serpent.*`）接线**，不得 Restricted / Unrestricted 各写一份互相漂移的方法表。
 
+**非受限插件安装后默认不启用**；用户须在 **设置 → 插件** 中手动打开开关。受限插件在用户域安装后仍可按既有 Resolution 默认启用。
+
 需要 ONNX 原生模块、外部 CLI、任意本机目录扫描时，使用 `unrestricted`，并在设置/信任 UI 中按高风险披露。
 
 ## 4. 最小插件包
+
+安装通道只有三种：**本地文件夹**、**本地 ZIP**、**GitHub**。GitHub 应以 **Release 平台 ZIP** 为主，命名与更新策略见 [`plugin-distribution-and-updates.md`](plugin-distribution-and-updates.md)。
 
 ```text
 my-plugin/
@@ -131,7 +135,7 @@ exports.activate = async function activate(serpent) {
 exports.deactivate = async function deactivate() {};
 ```
 
-无限制模式把 `runtime.mode` 设为 `"unrestricted"`（对用户显示「无限制模式」），入口可用完整 Node（仍应优先用 `serpent.*` 改库内资产）。
+无限制模式把 `runtime.mode` 设为 `"unrestricted"`（对用户显示「非受限模式」），入口可用完整 Node（仍应优先用 `serpent.*` 改库内资产）。
 
 ## 5. 本地联调
 
@@ -147,6 +151,8 @@ exports.deactivate = async function deactivate() {};
 
 不在 NAS/SMB 上开发或运行 Electron；插件仓建议与 Serpent 同级 sibling 克隆。
 
+给最终用户发版时，不要依赖对方本机 `npm install`/`build`：按平台打 ZIP，上传到 GitHub Release，文件名与平台 token 见 [`plugin-distribution-and-updates.md`](plugin-distribution-and-updates.md)。
+
 ## 6. 权限与高风险写
 
 - 清单 `permissions` 声明能力；未声明则 Gateway / Host 拒绝。  
@@ -155,11 +161,19 @@ exports.deactivate = async function deactivate() {};
 - **原地替换资产内容**（`content.write` / `assets.replaceContent`）会走 **Execution Plan 确认**，文案含覆盖警告；取消则不写盘。  
 - 不要用绝对路径 `fs.writeFile` 覆盖库内 `Assets/`；应使用内容 API，否则元数据/缩略图可能不一致，且无计划确认。
 
-## 7. Contribution 概要
+## 7. Contribution 与设置页
 
 Host 渲染（声明式）：`commands`、`menus.*`、`toolbar`、`inspector`、`viewerActions`、`settings.sections`、`shortcuts`。  
 
 Sandboxed iframe：`workspace.views`、`sidebar.entries`、`inspector.views`、`viewer.overlays`、`settings.pages`。  
+
+### 7.1 插件设置入口（产品 UI）
+
+- **设置 → 插件**：安装、启用开关、信任、卸载、来源图标（本地文件夹 / GitHub）、刷新。  
+- **设置 → 插件设置**（侧栏分类列表最后一项，可展开）：仅列出提供了 `settings.sections` 或 `settings.pages` 的插件；点选后进入该插件设置面。  
+- 插件卡片上的「设置」图标跳转到上述「插件设置」中对应项。  
+- Host 字段（`settings.sections`）与沙箱页（`views` + `location: "settings"` → `settings.pages`）都在该详情面展示。  
+- 命令若声明 `mcp.export`（或顶层 `mcp.expose`），插件激活后即对 MCP 默认暴露，无需设置页开关。
 
 详细字段与 Provider / Hook / Job / Input Capture 见 API 参考与规格 0024。
 
@@ -174,7 +188,7 @@ Sandboxed iframe：`workspace.views`、`sidebar.entries`、`inspector.views`、`
 
 ## 9. 安全模式
 
-产品规划：安全模式用于急救，**停用无限制（unrestricted）插件**；受限插件可继续运行（与早期「停用全部第三方插件」不同，以当前产品决定为准）。
+产品规划：安全模式用于急救，**停用非受限（unrestricted）插件**；受限插件可继续运行（与早期「停用全部第三方插件」不同，以当前产品决定为准）。
 
 ## 10. 建议工作流（图像处理类插件）
 

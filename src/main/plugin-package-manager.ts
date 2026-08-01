@@ -11,7 +11,14 @@ import path from 'node:path';
 
 import { z } from 'zod';
 
-import { type PluginManifest, parseSemver, validatePluginManifestCompatibility } from '../plugins/plugin-manifest';
+import { type PluginManifest, parseSemver, pluginIdSchema, validatePluginManifestCompatibility } from '../plugins/plugin-manifest';
+import {
+  currentPluginPlatformToken,
+  isPluginPlatformToken,
+  selectPluginReleaseAsset,
+  stripSemverTagPrefix,
+  type PluginPlatformToken,
+} from '../plugins/plugin-release-asset';
 import {
   PLUGIN_LIBRARY_LOCK_FILE,
   PLUGIN_LOCK_VERSION,
@@ -34,9 +41,11 @@ import {
   extractPluginArchive,
   inspectPluginDirectory,
 } from './plugin-package-archive';
-import { parseGitHubRepositoryUrl } from './plugin-github-client';
+import { parseGitHubRepositoryUrl } from '../shared/plugin-github-url';
 import {
   type InstalledPluginPackage,
+  type PluginGitHubAvailableUpdate,
+  type PluginGitHubClient,
   type PluginInstallFromArchiveInput,
   type PluginInstallFromDirectoryInput,
   type PluginInstallFromGitHubInput,
@@ -53,9 +62,15 @@ export {
   createGitHubPluginClient,
 } from './plugin-github-client';
 export {
+  parseGitHubRepositoryUrl,
+  isGitHubPluginInstallUrl,
+} from '../shared/plugin-github-url';
+export {
   type InstalledPluginPackage,
   type PluginFetch,
+  type PluginGitHubAvailableUpdate,
   type PluginGitHubClient,
+  type PluginGitHubRelease,
   type PluginInstallFromArchiveInput,
   type PluginInstallFromDirectoryInput,
   type PluginInstallFromGitHubInput,
@@ -67,6 +82,13 @@ export {
   type PluginPackageManagerOptions,
   type PluginResolutionResult,
 } from './plugin-package-manager-types';
+export {
+  currentPluginPlatformToken,
+  parsePluginReleaseAssetFileName,
+  selectPluginReleaseAsset,
+  type PluginPlatformToken,
+} from '../plugins/plugin-release-asset';
+
 
 const DEVICE_STATE_FILE_NAME = 'plugin-device-state.json';
 const USER_PLUGIN_LOCK_FILE_NAME = 'plugin-lock.json';
@@ -80,6 +102,11 @@ const deviceStateSchema = z.strictObject({
   trustDecisions: z.array(pluginTrustDecisionSchema).max(20_000),
   resolutions: z.array(pluginResolutionSchema).max(20_000),
   quarantines: z.array(pluginQuarantineRecordSchema).max(20_000).default([]),
+  updatePreferences: z.array(z.strictObject({
+    pluginId: pluginIdSchema,
+    sourceFingerprint: z.string().min(1).max(1_024),
+    autoUpdate: z.boolean(),
+  })).max(20_000).default([]),
 });
 type PluginDeviceState = z.infer<typeof deviceStateSchema>;
 
@@ -90,6 +117,7 @@ function emptyDeviceState(): PluginDeviceState {
     trustDecisions: [],
     resolutions: [],
     quarantines: [],
+    updatePreferences: [],
   };
 }
 
@@ -225,21 +253,301 @@ export class PluginPackageManager {
   }
 
   async installFromGitHub(input: PluginInstallFromGitHubInput): Promise<PluginInstallResult> {
-    const repository = this.#parseGitHubRepository(input.repository);
-    const tags = await input.client.listTags(repository);
+    let parsed;
+    try {
+      parsed = parseGitHubRepositoryUrl(input.repository);
+    } catch (error) {
+      throw new PluginPackageManagerError(
+        'PLUGIN_ARCHIVE_INVALID',
+        error instanceof Error ? error.message : 'Plugin installation requires a valid GitHub repository URL.',
+      );
+    }
+    const repository = parsed.repository;
+    const platformToken = this.#resolvePlatformToken(input.platformToken);
+    const releaseInstall = await this.#tryInstallFromGitHubRelease({
+      repository,
+      preferredTag: parsed.preferredTag,
+      scope: input.scope,
+      libraryDirectory: input.libraryDirectory,
+      client: input.client,
+      platformToken,
+    });
+    if (releaseInstall !== undefined) return releaseInstall;
+
+    this.#logger?.info('plugin.install.github', 'No matching Release asset; falling back to source archive for already-built packages.', {
+      repository,
+      platformToken,
+    });
+    return this.#installFromGitHubZipballFallback({
+      repository,
+      preferredTag: parsed.preferredTag,
+      scope: input.scope,
+      libraryDirectory: input.libraryDirectory,
+      client: input.client,
+    });
+  }
+
+  /**
+   * Looks for a newer stable Release with a matching platform (or `any`) asset.
+   */
+  async findGitHubAvailableUpdate(input: {
+    package: InstalledPluginPackage;
+    client: PluginGitHubClient;
+    platformToken?: string;
+  }): Promise<PluginGitHubAvailableUpdate | undefined> {
+    const source = input.package.lock.source;
+    if (source.kind !== 'github') return undefined;
+    const platformToken = this.#resolvePlatformToken(input.platformToken);
+    const currentVersion = parseSemver(input.package.lock.version);
+    if (currentVersion === undefined) return undefined;
+    const releases = await input.client.listReleases(source.repository);
+    const candidates = this.#stableSemverReleases(releases)
+      .filter((entry) => compareSemver(entry.version, currentVersion) > 0);
+    for (const candidate of candidates) {
+      const asset = selectPluginReleaseAsset(candidate.release.assets, platformToken, {
+        pluginId: input.package.lock.pluginId,
+        version: stripSemverTagPrefix(candidate.release.tagName),
+      }) ?? selectPluginReleaseAsset(candidate.release.assets, platformToken, {
+        pluginId: input.package.lock.pluginId,
+      });
+      if (asset === undefined) continue;
+      const commitSha = await input.client.commitShaForRef(source.repository, candidate.release.tagName);
+      return {
+        version: stripSemverTagPrefix(candidate.release.tagName),
+        tag: candidate.release.tagName,
+        assetName: asset.name,
+        browserDownloadUrl: asset.browserDownloadUrl,
+        commitSha,
+      };
+    }
+    return undefined;
+  }
+
+  async applyGitHubUpdateForLock(input: {
+    scope: PluginInstallationScope;
+    libraryDirectory?: string;
+    pluginId: string;
+    packageHash: string;
+    client: PluginGitHubClient;
+    platformToken?: string;
+  }): Promise<PluginInstallResult> {
+    const installed = await this.listInstalled({
+      scope: input.scope,
+      libraryDirectory: input.libraryDirectory,
+    });
+    const match = installed.find((entry) => entry.status === 'valid'
+      && entry.package.lock.pluginId === input.pluginId
+      && entry.package.lock.packageHash === input.packageHash);
+    if (match === undefined || match.status !== 'valid') {
+      throw new PluginPackageManagerError('PLUGIN_RESOLUTION_INVALID', 'Cannot update a package that is not installed and verified.');
+    }
+    const source = match.package.lock.source;
+    if (source.kind !== 'github') {
+      throw new PluginPackageManagerError('PLUGIN_ARCHIVE_INVALID', 'Only GitHub-installed plugins can check for updates.');
+    }
+    const available = await this.findGitHubAvailableUpdate({
+      package: match.package,
+      client: input.client,
+      platformToken: input.platformToken,
+    });
+    if (available === undefined) {
+      throw new PluginPackageManagerError('PLUGIN_ARCHIVE_INVALID', 'No newer compatible GitHub Release asset is available.');
+    }
+    const archive = await input.client.downloadReleaseAsset(available.browserDownloadUrl);
+    return this.installFromArchive({
+      archive,
+      scope: input.scope,
+      libraryDirectory: input.libraryDirectory,
+      source: {
+        kind: 'github',
+        repository: source.repository,
+        ref: available.tag,
+        commitSha: available.commitSha,
+        fingerprint: source.fingerprint,
+      },
+    });
+  }
+
+  async getAutoUpdatePreference(input: {
+    pluginId: string;
+    sourceFingerprint: string;
+  }): Promise<boolean> {
+    const state = await this.#readDeviceState();
+    return state.updatePreferences.find((entry) => entry.pluginId === input.pluginId
+      && entry.sourceFingerprint === input.sourceFingerprint)?.autoUpdate ?? false;
+  }
+
+  async setAutoUpdatePreference(input: {
+    pluginId: string;
+    sourceFingerprint: string;
+    autoUpdate: boolean;
+  }): Promise<void> {
+    const state = await this.#readDeviceState();
+    state.updatePreferences = state.updatePreferences.filter((entry) => !(entry.pluginId === input.pluginId
+      && entry.sourceFingerprint === input.sourceFingerprint));
+    if (input.autoUpdate) {
+      state.updatePreferences.push({
+        pluginId: input.pluginId,
+        sourceFingerprint: input.sourceFingerprint,
+        autoUpdate: true,
+      });
+    }
+    await this.#writeDeviceState(state);
+  }
+
+  /**
+   * Downloads and installs eligible GitHub updates when auto-update is on and
+   * the resolution is not pinned. Permission / runtime-mode / source changes
+   * still surface through resolve() as requires-confirmation.
+   */
+  async applyEligibleGitHubAutoUpdates(input: {
+    scope: PluginInstallationScope;
+    libraryDirectory?: string;
+    libraryId?: string;
+    client: PluginGitHubClient;
+    platformToken?: string;
+  }): Promise<PluginInstallResult[]> {
+    const installed = await this.listInstalled({
+      scope: input.scope,
+      libraryDirectory: input.libraryDirectory,
+    });
+    const state = await this.#readDeviceState();
+    const applied: PluginInstallResult[] = [];
+    for (const entry of installed) {
+      if (entry.status !== 'valid' || entry.package.lock.source.kind !== 'github') continue;
+      const preference = state.updatePreferences.find((item) => item.pluginId === entry.package.lock.pluginId
+        && item.sourceFingerprint === entry.package.lock.sourceFingerprint);
+      if (preference?.autoUpdate !== true) continue;
+      if (input.libraryId !== undefined) {
+        const resolution = state.resolutions.find((item) => item.libraryId === input.libraryId
+          && item.pluginId === entry.package.lock.pluginId);
+        if (resolution?.updatePolicy === 'pinned') continue;
+      }
+      const available = await this.findGitHubAvailableUpdate({
+        package: entry.package,
+        client: input.client,
+        platformToken: input.platformToken,
+      });
+      if (available === undefined) continue;
+      const result = await this.applyGitHubUpdateForLock({
+        scope: input.scope,
+        libraryDirectory: input.libraryDirectory,
+        pluginId: entry.package.lock.pluginId,
+        packageHash: entry.package.lock.packageHash,
+        client: input.client,
+        platformToken: input.platformToken,
+      });
+      applied.push(result);
+    }
+    return applied;
+  }
+
+  async #tryInstallFromGitHubRelease(input: {
+    repository: string;
+    preferredTag?: string;
+    scope: PluginInstallationScope;
+    libraryDirectory?: string;
+    client: PluginGitHubClient;
+    platformToken: PluginPlatformToken;
+  }): Promise<PluginInstallResult | undefined> {
+    let releases: Awaited<ReturnType<PluginGitHubClient['listReleases']>>;
+    try {
+      releases = await input.client.listReleases(input.repository);
+    } catch (error) {
+      if (error instanceof PluginPackageManagerError && error.code === 'PLUGIN_ARCHIVE_INVALID') {
+        return undefined;
+      }
+      throw error;
+    }
+    const ordered = this.#orderedReleaseCandidates(releases, input.preferredTag);
+    if (ordered.length === 0) return undefined;
+
+    let sawAnyNormativeAsset = false;
+    let lastCompatibilityFailure: unknown;
+    let missingPlatform = false;
+    for (const candidate of ordered) {
+      const version = stripSemverTagPrefix(candidate.tagName);
+      const asset = selectPluginReleaseAsset(candidate.assets, input.platformToken, { version })
+        ?? selectPluginReleaseAsset(candidate.assets, input.platformToken);
+      if (asset === undefined) {
+        if (candidate.assets.some((item) => selectPluginReleaseAsset([item], 'any') !== undefined
+          || selectPluginReleaseAsset([item], input.platformToken) !== undefined
+          || /-[a-z0-9][a-z0-9-]*\.zip$/u.test(item.name))) {
+          // Has other platform zips but not ours.
+          if (candidate.assets.some((item) => /\.zip$/iu.test(item.name))) missingPlatform = true;
+        }
+        continue;
+      }
+      sawAnyNormativeAsset = true;
+      const [archive, commitSha] = await Promise.all([
+        input.client.downloadReleaseAsset(asset.browserDownloadUrl),
+        input.client.commitShaForRef(input.repository, candidate.tagName),
+      ]);
+      try {
+        return await this.installFromArchive({
+          archive,
+          scope: input.scope,
+          libraryDirectory: input.libraryDirectory,
+          source: {
+            kind: 'github',
+            repository: input.repository,
+            ref: candidate.tagName,
+            commitSha,
+            fingerprint: `github:${input.repository}`,
+          },
+        });
+      } catch (error) {
+        if (error instanceof PluginPackageManagerError && error.code === 'PLUGIN_PACKAGE_INCOMPATIBLE') {
+          lastCompatibilityFailure = error;
+          continue;
+        }
+        throw error;
+      }
+    }
+
+    if (sawAnyNormativeAsset && lastCompatibilityFailure instanceof Error) {
+      throw lastCompatibilityFailure;
+    }
+    if (missingPlatform && ordered.every((release) => selectPluginReleaseAsset(release.assets, input.platformToken) === undefined
+      && selectPluginReleaseAsset(release.assets, 'any') === undefined)) {
+      throw new PluginPackageManagerError(
+        'PLUGIN_PLATFORM_ASSET_MISSING',
+        `No plugin Release ZIP matches this platform (${input.platformToken}). Authors must publish {pluginId}-{version}-{platform}.zip or -any.zip.`,
+      );
+    }
+    return undefined;
+  }
+
+  async #installFromGitHubZipballFallback(input: {
+    repository: string;
+    preferredTag?: string;
+    scope: PluginInstallationScope;
+    libraryDirectory?: string;
+    client: PluginGitHubClient;
+  }): Promise<PluginInstallResult> {
+    const tags = await input.client.listTags(input.repository);
     const compatibleTags = tags
       .flatMap((tag) => {
-        const version = parseSemver(tag.name.startsWith('v') ? tag.name.slice(1) : tag.name);
+        const version = parseSemver(stripSemverTagPrefix(tag.name));
         return version === undefined ? [] : [{ ...tag, version }];
       })
       .sort((left, right) => compareSemver(right.version, left.version));
-    const candidates = compatibleTags.length > 0
-      ? compatibleTags.map((tag) => ({ ref: tag.name, expectedCommit: tag.commitSha }))
-      : [await input.client.defaultBranch(repository).then((branch) => ({ ref: branch.name, expectedCommit: branch.commitSha }))];
+    const preferred = input.preferredTag === undefined
+      ? undefined
+      : compatibleTags.find((tag) => tag.name === input.preferredTag
+        || stripSemverTagPrefix(tag.name) === stripSemverTagPrefix(input.preferredTag!));
+    const candidates = preferred !== undefined
+      ? [{ ref: preferred.name, expectedCommit: preferred.commitSha }]
+      : compatibleTags.length > 0
+        ? compatibleTags.map((tag) => ({ ref: tag.name, expectedCommit: tag.commitSha }))
+        : [await input.client.defaultBranch(input.repository).then((branch) => ({
+          ref: branch.name,
+          expectedCommit: branch.commitSha,
+        }))];
 
     let lastCompatibilityFailure: unknown;
     for (const candidate of candidates) {
-      const downloaded = await input.client.downloadArchive(repository, candidate.ref);
+      const downloaded = await input.client.downloadArchive(input.repository, candidate.ref);
       if (!/^[a-f0-9]{40,64}$/u.test(downloaded.commitSha)) {
         throw new PluginPackageManagerError('PLUGIN_ARCHIVE_INVALID', 'GitHub returned an invalid commit SHA for the plugin archive.');
       }
@@ -250,14 +558,10 @@ export class PluginPackageManager {
           libraryDirectory: input.libraryDirectory,
           source: {
             kind: 'github',
-            repository,
+            repository: input.repository,
             ref: candidate.ref,
             commitSha: downloaded.commitSha,
-            // A commit identifies this immutable archive, but the repository
-            // is the upgrade source. Keeping those concepts distinct lets an
-            // ordinary same-repository update preserve its selected scope
-            // while a different repository still requires confirmation.
-            fingerprint: `github:${repository}`,
+            fingerprint: `github:${input.repository}`,
           },
         });
       } catch (error) {
@@ -271,6 +575,41 @@ export class PluginPackageManager {
     throw lastCompatibilityFailure instanceof Error
       ? lastCompatibilityFailure
       : new PluginPackageManagerError('PLUGIN_PACKAGE_INCOMPATIBLE', 'No compatible plugin tag is available.');
+  }
+
+  #resolvePlatformToken(explicit: string | undefined): PluginPlatformToken {
+    if (explicit !== undefined) {
+      if (!isPluginPlatformToken(explicit)) {
+        throw new PluginPackageManagerError('PLUGIN_ARCHIVE_INVALID', `Unsupported plugin platform token: ${explicit}`);
+      }
+      return explicit;
+    }
+    const fromOptions = `${this.options.platform}-${this.options.arch}`;
+    if (isPluginPlatformToken(fromOptions)) return fromOptions;
+    return currentPluginPlatformToken();
+  }
+
+  #stableSemverReleases(releases: Awaited<ReturnType<PluginGitHubClient['listReleases']>>) {
+    return releases
+      .filter((release) => !release.draft && !release.prerelease)
+      .flatMap((release) => {
+        const version = parseSemver(stripSemverTagPrefix(release.tagName));
+        return version === undefined ? [] : [{ release, version }];
+      })
+      .sort((left, right) => compareSemver(right.version, left.version));
+  }
+
+  #orderedReleaseCandidates(
+    releases: Awaited<ReturnType<PluginGitHubClient['listReleases']>>,
+    preferredTag: string | undefined,
+  ) {
+    const stable = this.#stableSemverReleases(releases).map((entry) => entry.release);
+    if (preferredTag === undefined) return stable;
+    const preferred = releases.find((release) => !release.draft
+      && (release.tagName === preferredTag
+        || stripSemverTagPrefix(release.tagName) === stripSemverTagPrefix(preferredTag)));
+    if (preferred === undefined) return stable;
+    return [preferred, ...stable.filter((release) => release.tagName !== preferred.tagName)];
   }
 
   async listInstalled(input: {
@@ -571,6 +910,11 @@ export class PluginPackageManager {
       return { status: 'requires-confirmation', reason: 'selected-package-unavailable', current };
     }
 
+    // Unrestricted packages stay off until the user explicitly enables them.
+    if (saved === undefined && latest.manifest.runtime.mode === 'unrestricted') {
+      return { status: 'disabled', reason: 'user-disabled' };
+    }
+
     const current = saved?.packageHash === undefined
       ? latest
       : candidates.find((candidate) => candidate.lock.packageHash === saved.packageHash);
@@ -737,10 +1081,6 @@ export class PluginPackageManager {
       nodeAbi: this.options.nodeAbi,
     });
     if (!compatibility.ok) throw new PluginPackageManagerError('PLUGIN_PACKAGE_INCOMPATIBLE', compatibility.message);
-  }
-
-  #parseGitHubRepository(value: string): string {
-    return parseGitHubRepositoryUrl(value).repository;
   }
 
   async #readInstalledAt(

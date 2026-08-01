@@ -7,7 +7,15 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { createPluginTrustedHostHandler } from '../../src/scripting/plugin-trusted-host';
 import {
   SERPENT_GUEST_ASSET_METHODS,
+  SERPENT_GUEST_COLLECTION_METHODS,
+  SERPENT_GUEST_FILE_METHODS,
+  SERPENT_GUEST_FOLDER_METHODS,
   SERPENT_GUEST_LIBRARY_METHODS,
+  SERPENT_GUEST_LINKED_FOLDER_METHODS,
+  SERPENT_GUEST_PALETTE_METHODS,
+  SERPENT_GUEST_SMART_COLLECTION_METHODS,
+  SERPENT_GUEST_TAG_METHODS,
+  SERPENT_GUEST_TRASH_METHODS,
 } from '../../src/scripting/serpent-guest-api';
 import type { PluginTrustedChildMessage } from '../../src/shared/plugin-trusted-runtime-protocol';
 import { pluginTrustedParentMessageSchema } from '../../src/shared/plugin-trusted-runtime-protocol';
@@ -40,7 +48,7 @@ describe('plugin-trusted runtime protocol', () => {
 });
 
 describe('Plugin Trusted Host handler', () => {
-  it('exposes the shared Guest API asset and library method sets', async () => {
+  it('exposes the shared Guest API Gateway method sets', async () => {
     const packageDirectory = mkdtempSync(path.join(tmpdir(), 'serpent-trusted-guest-api-'));
     roots.push(packageDirectory);
     mkdirSync(path.join(packageDirectory, 'dist'), { recursive: true });
@@ -48,7 +56,15 @@ describe('Plugin Trusted Host handler', () => {
       exports.activate = async function activate(serpent) {
         serpent.console.log(JSON.stringify({
           assets: Object.keys(serpent.assets).sort(),
-          library: Object.keys(serpent.library).sort()
+          library: Object.keys(serpent.library).sort(),
+          folders: Object.keys(serpent.folders).sort(),
+          tags: Object.keys(serpent.tags).sort(),
+          collections: Object.keys(serpent.collections).sort(),
+          smartCollections: Object.keys(serpent.smartCollections).sort(),
+          linkedFolders: Object.keys(serpent.linkedFolders).sort(),
+          files: Object.keys(serpent.files).sort(),
+          trash: Object.keys(serpent.trash).sort(),
+          palettes: Object.keys(serpent.palettes).sort()
         }));
       };
       exports.deactivate = async function deactivate() {};
@@ -82,6 +98,14 @@ describe('Plugin Trusted Host handler', () => {
     expect(JSON.parse(consoleMessage.message)).toEqual({
       assets: [...SERPENT_GUEST_ASSET_METHODS].sort(),
       library: [...SERPENT_GUEST_LIBRARY_METHODS].sort(),
+      folders: [...SERPENT_GUEST_FOLDER_METHODS].sort(),
+      tags: [...SERPENT_GUEST_TAG_METHODS].sort(),
+      collections: [...SERPENT_GUEST_COLLECTION_METHODS].sort(),
+      smartCollections: [...SERPENT_GUEST_SMART_COLLECTION_METHODS].sort(),
+      linkedFolders: [...SERPENT_GUEST_LINKED_FOLDER_METHODS].sort(),
+      files: [...SERPENT_GUEST_FILE_METHODS].sort(),
+      trash: [...SERPENT_GUEST_TRASH_METHODS].sort(),
+      palettes: [...SERPENT_GUEST_PALETTE_METHODS].sort(),
     });
 
     handler.handle({

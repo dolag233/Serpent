@@ -11,19 +11,17 @@ import type {
   PluginManagerRequest,
   PluginManagerResolutionCandidate,
   PluginManagerResolutionSummary,
-  PluginManagerCommandContribution,
-  PluginManagerMcpExposureEntry,
   SerpentPluginManagerApi,
 } from '../shared/plugin-manager-api';
 import { Icon } from './Icons';
+import { iconActionAttrs } from './icon-action-attrs';
 import { useT } from './i18n';
 import { pluginRequiresTrustedCssDisclosure } from '../plugins/plugin-themes';
-import { PluginHostSettingsFields } from './plugin-host-settings-fields';
-import { PluginSettingsPages } from './plugin-settings-pages';
 
 type PluginSettingsPageProps = {
   readonly api: SerpentPluginManagerApi | undefined;
   readonly libraryId: string | undefined;
+  readonly onOpenPluginSettings?: (pluginId: string) => void;
 };
 
 type PluginSnapshot = Extract<
@@ -33,30 +31,21 @@ type PluginSnapshot = Extract<
 
 type InstallScope = 'user' | 'library';
 
-function sourceLabel(pluginPackage: Pick<PluginManagerPackageSummary, 'source'>, t: ReturnType<typeof useT>): string {
-  if (pluginPackage.source.kind === 'github') {
-    return `${pluginPackage.source.repository} · ${pluginPackage.source.ref} · ${pluginPackage.source.commitSha.slice(0, 12)}`;
-  }
-  return pluginPackage.source.kind === 'local-package'
-    ? t('settings.pluginSourceLocalPackage')
-    : t('settings.pluginSourceLocalDirectory');
-}
+type RendererShellApi = {
+  openExternalUrl(url: string): Promise<{ ok: boolean }>;
+};
 
-function resolutionLabel(resolution: PluginManagerResolutionSummary | undefined, t: ReturnType<typeof useT>): string {
-  if (resolution === undefined) return t('settings.pluginStatusNoLibrary');
-  switch (resolution.status) {
-    case 'resolved': return t('settings.pluginStatusActive');
-    case 'awaiting-trust': return resolution.reason === 'denied'
-      ? t('settings.pluginStatusDenied')
-      : t('settings.pluginStatusAwaitingTrust');
-    case 'conflict': return t('settings.pluginStatusChooseVersion');
-    case 'requires-confirmation': return t('settings.pluginStatusConfirmUpdate');
-    case 'disabled':
-      if (resolution.reason === 'safe-mode') return t('settings.pluginStatusSafeMode');
-      if (resolution.reason === 'quarantined') return t('settings.pluginStatusQuarantined');
-      return t('settings.pluginStatusDisabled');
-    case 'not-installed': return t('settings.pluginStatusNotInstalled');
+function formatPluginManagerFailure(
+  response: Extract<Awaited<ReturnType<SerpentPluginManagerApi['request']>>, { ok: false }>,
+  t: ReturnType<typeof useT>,
+): string {
+  if (response.message !== undefined && response.message.trim() !== '') {
+    return t('settings.pluginOperationFailedDetail', {
+      code: response.failureCode ?? response.code,
+      message: response.message,
+    });
   }
+  return t('settings.pluginOperationFailed', { code: response.failureCode ?? response.code });
 }
 
 function candidateLabel(candidate: PluginManagerResolutionCandidate, t: ReturnType<typeof useT>): string {
@@ -86,7 +75,15 @@ function canTogglePluginEnabled(
   return false;
 }
 
-export function PluginSettingsPage({ api, libraryId }: PluginSettingsPageProps): ReactNode {
+function shellApi(): RendererShellApi | undefined {
+  return (window as unknown as { serpent?: { shell?: RendererShellApi } }).serpent?.shell;
+}
+
+export function PluginSettingsPage({
+  api,
+  libraryId,
+  onOpenPluginSettings,
+}: PluginSettingsPageProps): ReactNode {
   const t = useT();
   const [snapshot, setSnapshot] = useState<PluginSnapshot | undefined>();
   const [installOpen, setInstallOpen] = useState(false);
@@ -96,8 +93,6 @@ export function PluginSettingsPage({ api, libraryId }: PluginSettingsPageProps):
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [installError, setInstallError] = useState<string | undefined>();
-  const [mcpCommands, setMcpCommands] = useState<PluginManagerCommandContribution[]>([]);
-  const [mcpExposure, setMcpExposure] = useState<PluginManagerMcpExposureEntry[]>([]);
 
   const load = useCallback(async () => {
     if (api === undefined) {
@@ -106,20 +101,12 @@ export function PluginSettingsPage({ api, libraryId }: PluginSettingsPageProps):
     }
     setLoading(true);
     try {
-      const [response, contributionsResponse, exposureResponse] = await Promise.all([
-        api.request({
-          type: 'plugin-manager.list',
-          ...(libraryId === undefined ? {} : { libraryId }),
-        }),
-        api.request({
-          type: 'plugin-manager.list-contributions',
-          ...(libraryId === undefined ? {} : { libraryId }),
-          target: 'commands',
-        }),
-        api.request({ type: 'plugin-manager.list-mcp-exposure' }),
-      ]);
+      const response = await api.request({
+        type: 'plugin-manager.list',
+        ...(libraryId === undefined ? {} : { libraryId }),
+      });
       if (!response.ok) {
-        setError(t('settings.pluginOperationFailed', { code: response.code }));
+        setError(formatPluginManagerFailure(response, t));
         return;
       }
       if (!('packages' in response)) {
@@ -127,11 +114,6 @@ export function PluginSettingsPage({ api, libraryId }: PluginSettingsPageProps):
         return;
       }
       setSnapshot(response);
-      setMcpCommands(contributionsResponse.ok && 'contributions' in contributionsResponse
-        ? contributionsResponse.contributions.filter((item): item is PluginManagerCommandContribution =>
-          item.kind === 'command' && item.mcpExported === true)
-        : []);
-      setMcpExposure(exposureResponse.ok && 'mcpExposure' in exposureResponse ? exposureResponse.mcpExposure : []);
       setError(undefined);
     } catch {
       setError(t('settings.pluginOperationFailed', { code: 'bridge-unavailable' }));
@@ -155,7 +137,7 @@ export function PluginSettingsPage({ api, libraryId }: PluginSettingsPageProps):
       const response = await api.request(request);
       if (!response.ok) {
         if (response.code !== 'selection-cancelled') {
-          setError(t('settings.pluginOperationFailed', { code: response.code }));
+          setError(formatPluginManagerFailure(response, t));
         }
         return false;
       }
@@ -194,22 +176,6 @@ export function PluginSettingsPage({ api, libraryId }: PluginSettingsPageProps):
   }, [snapshot]);
 
   const canUseLibraryScope = libraryId !== undefined;
-  const mcpExposureKeys = useMemo(
-    () => new Set(mcpExposure.map((entry) => `${entry.pluginId}\u0000${entry.commandId}`)),
-    [mcpExposure],
-  );
-
-  const setMcpCommandEnabled = useCallback(async (
-    command: PluginManagerCommandContribution,
-    enabled: boolean,
-  ): Promise<void> => {
-    await execute({
-      type: 'plugin-manager.set-mcp-exposure',
-      pluginId: command.pluginId,
-      commandId: command.commandId,
-      enabled,
-    });
-  }, [execute]);
 
   const setEnabledForPackage = useCallback(async (
     pluginPackage: PluginManagerPackageSummary,
@@ -259,7 +225,7 @@ export function PluginSettingsPage({ api, libraryId }: PluginSettingsPageProps):
       const response = await api.request(request);
       if (!response.ok) {
         if (response.code !== 'selection-cancelled') {
-          setInstallError(t('settings.pluginOperationFailed', { code: response.code }));
+          setInstallError(formatPluginManagerFailure(response, t));
         }
         return;
       }
@@ -295,7 +261,7 @@ export function PluginSettingsPage({ api, libraryId }: PluginSettingsPageProps):
       <section className="app-settings-card plugin-settings-scope-card" key={scope}>
         <div className="app-settings-row-copy">
           <strong>{scope === 'user' ? t('settings.pluginScopeUser') : t('settings.pluginScopeLibrary')}</strong>
-          {scope === 'library' ? (
+          {scope === 'library' && grouped.length > 0 ? (
             <span>{t('settings.pluginScopeLibraryHint')}</span>
           ) : null}
         </div>
@@ -305,7 +271,7 @@ export function PluginSettingsPage({ api, libraryId }: PluginSettingsPageProps):
           <p className="app-settings-hint">{t('settings.pluginEmpty')}</p>
         ) : null}
 
-        {grouped.map(([pluginId, pluginPackages]) => {
+        {grouped.map(([pluginId, pluginPackages], groupIndex) => {
           const resolution = resolutionByPluginId.get(pluginId);
           const newest = pluginPackages[0];
           if (newest === undefined) return null;
@@ -315,127 +281,242 @@ export function PluginSettingsPage({ api, libraryId }: PluginSettingsPageProps):
           const canRollback = enabled
             && libraryId !== undefined
             && pluginPackages.length > 1;
+          const showSettingsAction = newest.status === 'valid'
+            && newest.hasSettingsUi
+            && onOpenPluginSettings !== undefined;
+          const githubRepository = newest.source.kind === 'github' ? newest.source.repository : undefined;
+          const permissionsTip = newest.permissions.length > 0
+            ? t('settings.pluginPermissionsTip', {
+              permissions: newest.permissions.join(', '),
+            })
+            : undefined;
 
           return (
-            <div className="plugin-settings-package" key={`${scope}:${pluginId}`}>
+            <div
+              className={`plugin-settings-package${groupIndex > 0 ? ' has-divider' : ''}`}
+              key={`${scope}:${pluginId}`}
+            >
               <div className="plugin-settings-package-header">
-                <div className="app-settings-row-copy">
-                  <strong>{newest.name}</strong>
-                  <span>{newest.description ?? pluginId}</span>
+                <div className="plugin-settings-package-title-row">
+                  <div className="plugin-settings-package-title">
+                    <span className="plugin-settings-package-name">
+                      {newest.name}
+                      <span className="plugin-settings-package-version-inline">{` - v${newest.version}`}</span>
+                    </span>
+                    <div className="plugin-settings-package-source-actions">
+                      {githubRepository !== undefined ? (
+                        <button
+                          className="plugin-settings-icon-action"
+                          disabled={busy}
+                          onClick={() => { void shellApi()?.openExternalUrl(githubRepository); }}
+                          type="button"
+                          {...iconActionAttrs(t('settings.pluginOpenGitHubSource'))}
+                        >
+                          <Icon name="github" size={14} />
+                        </button>
+                      ) : (
+                        <button
+                          className="plugin-settings-icon-action"
+                          disabled={busy || (newest.scope === 'library' && libraryId === undefined)}
+                          onClick={() => void execute({
+                            type: 'plugin-manager.reveal-package',
+                            scope: newest.scope,
+                            ...(newest.scope === 'library' && libraryId !== undefined ? { libraryId } : {}),
+                            pluginId,
+                            version: newest.version,
+                          })}
+                          type="button"
+                          {...iconActionAttrs(t('settings.pluginRevealPackage'))}
+                        >
+                          <Icon name="folder" size={14} />
+                        </button>
+                      )}
+                      {permissionsTip !== undefined ? (
+                        <span
+                          aria-label={permissionsTip}
+                          className="plugin-settings-permissions-info"
+                          data-hover-tip={permissionsTip}
+                          role="img"
+                        >
+                          <Icon name="alert-circle" size={14} />
+                        </span>
+                      ) : null}
+                    </div>
+                  </div>
+                  <div className="plugin-settings-package-controls">
+                    <button
+                      className="plugin-settings-icon-action"
+                      disabled={busy || api === undefined}
+                      onClick={() => void execute({
+                        type: 'plugin-manager.reload',
+                        ...(libraryId === undefined ? {} : { libraryId }),
+                      })}
+                      type="button"
+                      {...iconActionAttrs(t('settings.pluginReload'))}
+                    >
+                      <Icon name="refresh" size={14} />
+                    </button>
+                    {showSettingsAction ? (
+                      <button
+                        className="plugin-settings-icon-action"
+                        disabled={busy}
+                        onClick={() => onOpenPluginSettings(pluginId)}
+                        type="button"
+                        {...iconActionAttrs(t('settings.pluginOpenSettings'))}
+                      >
+                        <Icon name="settings" size={14} />
+                      </button>
+                    ) : null}
+                    <button
+                      className="plugin-settings-icon-action"
+                      disabled={busy || (newest.scope === 'library' && libraryId === undefined)}
+                      onClick={() => void execute({
+                        type: 'plugin-manager.uninstall',
+                        scope: newest.scope,
+                        ...(newest.scope === 'library' && libraryId !== undefined ? { libraryId } : {}),
+                        pluginId,
+                        version: newest.version,
+                      })}
+                      type="button"
+                      {...iconActionAttrs(t('settings.pluginUninstall'))}
+                    >
+                      <Icon name="trash" size={14} />
+                    </button>
+                    <label
+                      className="app-settings-toggle-row plugin-settings-enable-toggle"
+                    >
+                      <span className="visually-hidden">{t('settings.pluginEnable')}</span>
+                      <span className="app-settings-toggle-control">
+                        <input
+                          aria-label={t('settings.pluginEnable')}
+                          checked={enabled}
+                          disabled={busy || !toggleEnabled}
+                          onChange={(event) => void setEnabledForPackage(newest, event.target.checked)}
+                          type="checkbox"
+                        />
+                        <span aria-hidden="true" className="app-settings-toggle-track" />
+                      </span>
+                    </label>
+                  </div>
                 </div>
-                <div className="plugin-settings-package-controls">
-                  <span className="plugin-settings-status">{resolutionLabel(resolution, t)}</span>
-                  <label
-                    className="app-settings-toggle-row plugin-settings-enable-toggle"
-                    title={t('settings.pluginEnable')}
-                  >
-                    <span className="visually-hidden">{t('settings.pluginEnable')}</span>
+                <p className="plugin-settings-package-description">{newest.description ?? pluginId}</p>
+                {newest.source.kind === 'github' && newest.availableUpdate !== undefined ? (
+                  <div className="plugin-settings-update-row">
+                    <span className="plugin-settings-update-available">
+                      {t('settings.pluginUpdateAvailable', { version: newest.availableUpdate.version })}
+                    </span>
+                    <button
+                      className="secondary-button"
+                      disabled={busy || (newest.scope === 'library' && libraryId === undefined)}
+                      onClick={() => void execute({
+                        type: 'plugin-manager.update-github',
+                        scope: newest.scope,
+                        ...(newest.scope === 'library' && libraryId !== undefined ? { libraryId } : {}),
+                        pluginId,
+                        packageHash: newest.packageHash,
+                      })}
+                      type="button"
+                    >
+                      {t('settings.pluginUpdateNow')}
+                    </button>
+                  </div>
+                ) : null}
+                {newest.source.kind === 'github' && newest.status === 'valid' ? (
+                  <label className="app-settings-toggle-row plugin-settings-auto-update">
+                    <span className="app-settings-row-copy">
+                      <strong>{t('settings.pluginAutoUpdate')}</strong>
+                      <span>{t('settings.pluginAutoUpdateHint')}</span>
+                    </span>
                     <span className="app-settings-toggle-control">
                       <input
-                        aria-label={t('settings.pluginEnable')}
-                        checked={enabled}
-                        disabled={busy || !toggleEnabled}
-                        onChange={(event) => void setEnabledForPackage(newest, event.target.checked)}
+                        checked={newest.autoUpdate === true}
+                        disabled={busy}
+                        onChange={(event) => {
+                          if (event.target.checked) {
+                            const confirmed = globalThis.confirm(t('settings.pluginAutoUpdateRisk'));
+                            if (!confirmed) return;
+                          }
+                          void execute({
+                            type: 'plugin-manager.set-auto-update',
+                            pluginId,
+                            sourceFingerprint: newest.sourceFingerprint,
+                            enabled: event.target.checked,
+                          });
+                        }}
                         type="checkbox"
                       />
                       <span aria-hidden="true" className="app-settings-toggle-track" />
                     </span>
                   </label>
-                </div>
+                ) : null}
+                {newest.scope === 'library'
+                  && newest.status === 'valid'
+                  && newest.trust !== 'trusted'
+                  && newest.runtimeMode === 'unrestricted'
+                  ? (
+                    <p className="plugin-settings-unrestricted-warning">
+                      <Icon name="warning" size={14} />
+                      <span>{t('settings.pluginTrustTrustedConfirmHint')}</span>
+                    </p>
+                  )
+                  : null}
+                {newest.status === 'valid'
+                  && pluginRequiresTrustedCssDisclosure(newest.permissions)
+                  ? <p className="app-settings-hint">{t('settings.pluginThemeTrustedCssHint')}</p>
+                  : null}
+                {newest.runtimeMode === 'unrestricted' ? (
+                  <p className="plugin-settings-unrestricted-warning">
+                    <Icon name="warning" size={14} />
+                    <span>{t('settings.pluginRuntimeTrustedHint')}</span>
+                  </p>
+                ) : null}
+                {newest.status === 'invalid'
+                  ? <p className="plugin-settings-error">{t('settings.pluginInvalid', { code: newest.errorCode ?? 'unknown' })}</p>
+                  : null}
+                {newest.scope === 'library'
+                  && newest.status === 'valid'
+                  && newest.trust !== 'trusted' ? (
+                    <div className="plugin-settings-resolution">
+                      <button
+                        className="secondary-button"
+                        disabled={busy || libraryId === undefined}
+                        onClick={() => void execute({
+                          type: 'plugin-manager.trust',
+                          scope: 'library',
+                          libraryId: libraryId!,
+                          pluginId,
+                          packageHash: newest.packageHash,
+                          decision: 'trusted',
+                        })}
+                        type="button"
+                      >
+                        {t('settings.pluginTrust')}
+                      </button>
+                      <button
+                        className="secondary-button"
+                        disabled={busy || libraryId === undefined}
+                        onClick={() => void execute({
+                          type: 'plugin-manager.trust',
+                          scope: 'library',
+                          libraryId: libraryId!,
+                          pluginId,
+                          packageHash: newest.packageHash,
+                          decision: 'denied',
+                        })}
+                        type="button"
+                      >
+                        {t('settings.pluginDeny')}
+                      </button>
+                    </div>
+                  ) : null}
               </div>
-
-              {pluginPackages.map((pluginPackage) => (
-                <div className="plugin-settings-package-version" key={`${pluginPackage.scope}:${pluginPackage.packageHash}`}>
-                  <div className="plugin-settings-package-meta">
-                    <strong>{pluginPackage.version}</strong>
-                    <span>{sourceLabel(pluginPackage, t)}</span>
-                    <span className={pluginPackage.runtimeMode === 'unrestricted' ? 'plugin-runtime-mode-unrestricted' : undefined}>
-                      {pluginPackage.runtimeMode === 'unrestricted'
-                        ? t('settings.pluginRuntimeTrusted')
-                        : t('settings.pluginRuntimeStandard')}
-                      {' · '}
-                      {pluginPackage.permissions.join(', ') || t('settings.pluginNoPermissions')}
-                    </span>
-                    <span className={pluginPackage.runtimeMode === 'unrestricted' ? 'app-settings-hint plugin-runtime-mode-unrestricted-hint' : 'app-settings-hint'}>
-                      {pluginPackage.runtimeMode === 'unrestricted'
-                        ? t('settings.pluginRuntimeTrustedHint')
-                        : t('settings.pluginRuntimeStandardHint')}
-                    </span>
-                    {pluginPackage.scope === 'library'
-                      && pluginPackage.status === 'valid'
-                      && pluginPackage.trust !== 'trusted'
-                      && pluginPackage.runtimeMode === 'unrestricted'
-                      ? <span className="app-settings-hint plugin-runtime-mode-unrestricted-hint">{t('settings.pluginTrustTrustedConfirmHint')}</span>
-                      : null}
-                    {pluginPackage.status === 'valid'
-                      && pluginRequiresTrustedCssDisclosure(pluginPackage.permissions)
-                      ? <span className="app-settings-hint">{t('settings.pluginThemeTrustedCssHint')}</span>
-                      : null}
-                    {pluginPackage.status === 'invalid'
-                      ? <span>{t('settings.pluginInvalid', { code: pluginPackage.errorCode ?? 'unknown' })}</span>
-                      : null}
-                  </div>
-                  <div className="plugin-settings-package-actions">
-                    {pluginPackage.scope === 'library'
-                      && pluginPackage.status === 'valid'
-                      && pluginPackage.trust !== 'trusted' ? (
-                      <>
-                        <button
-                          className="secondary-button"
-                          disabled={busy || libraryId === undefined}
-                          onClick={() => void execute({
-                            type: 'plugin-manager.trust',
-                            scope: 'library',
-                            libraryId: libraryId!,
-                            pluginId,
-                            packageHash: pluginPackage.packageHash,
-                            decision: 'trusted',
-                          })}
-                          type="button"
-                        >
-                          {t('settings.pluginTrust')}
-                        </button>
-                        <button
-                          className="secondary-button"
-                          disabled={busy || libraryId === undefined}
-                          onClick={() => void execute({
-                            type: 'plugin-manager.trust',
-                            scope: 'library',
-                            libraryId: libraryId!,
-                            pluginId,
-                            packageHash: pluginPackage.packageHash,
-                            decision: 'denied',
-                          })}
-                          type="button"
-                        >
-                          {t('settings.pluginDeny')}
-                        </button>
-                      </>
-                    ) : null}
-                    <button
-                      className="secondary-button"
-                      disabled={busy || (pluginPackage.scope === 'library' && libraryId === undefined)}
-                      onClick={() => void execute({
-                        type: 'plugin-manager.uninstall',
-                        scope: pluginPackage.scope,
-                        ...(pluginPackage.scope === 'library' && libraryId !== undefined ? { libraryId } : {}),
-                        pluginId,
-                        version: pluginPackage.version,
-                      })}
-                      type="button"
-                    >
-                      {t('settings.pluginUninstall')}
-                    </button>
-                  </div>
-                </div>
-              ))}
 
               {canRollback ? (
                 <div className="plugin-settings-resolution">
                   <span>{t('settings.pluginRollbackHint')}</span>
                   <button
                     className="secondary-button"
-                    disabled={busy}
+                    disabled={busy || libraryId === undefined}
                     onClick={() => void execute({
                       type: 'plugin-manager.rollback',
                       libraryId: libraryId!,
@@ -538,14 +619,16 @@ export function PluginSettingsPage({ api, libraryId }: PluginSettingsPageProps):
                 </div>
               ) : null}
 
-              {newest.status === 'valid' ? (
-                <PluginHostSettingsFields
-                  api={api}
-                  disabled={busy}
-                  libraryId={libraryId}
-                  pluginId={pluginId}
-                  scope={scope}
-                />
+              {resolution?.status === 'awaiting-trust' ? (
+                <p className="app-settings-hint">
+                  {resolution.reason === 'denied'
+                    ? t('settings.pluginStatusDenied')
+                    : t('settings.pluginStatusAwaitingTrust')}
+                </p>
+              ) : null}
+
+              {resolution?.status === 'disabled' && resolution.reason === 'safe-mode' ? (
+                <p className="app-settings-hint">{t('settings.pluginStatusSafeMode')}</p>
               ) : null}
             </div>
           );
@@ -555,13 +638,6 @@ export function PluginSettingsPage({ api, libraryId }: PluginSettingsPageProps):
   };
 
   const libraryInstallDisabled = installScope === 'library' && !canUseLibraryScope;
-  const pluginContributionRefreshKey = useMemo(() => {
-    if (snapshot === undefined) return null;
-    return [
-      snapshot.safeMode ? 'safe' : 'live',
-      ...snapshot.resolutions.map((resolution) => `${resolution.pluginId}:${resolution.status}`),
-    ].join('|');
-  }, [snapshot]);
 
   return (
     <div className="plugin-settings-page">
@@ -602,41 +678,6 @@ export function PluginSettingsPage({ api, libraryId }: PluginSettingsPageProps):
 
       {error === undefined ? null : <p className="plugin-settings-error" role="status">{error}</p>}
       {loading ? <p className="app-settings-hint">{t('settings.pluginLoading')}</p> : null}
-
-      <PluginSettingsPages
-        libraryId={libraryId}
-        pluginApi={api}
-        refreshKey={pluginContributionRefreshKey}
-      />
-
-      <section className="app-settings-card plugin-settings-mcp-exposure">
-        <div className="app-settings-row-copy">
-          <strong>{t('settings.pluginMcpExposureTitle')}</strong>
-          <span>{t('settings.pluginMcpExposureHint')}</span>
-        </div>
-        {mcpCommands.length === 0 ? (
-          <p className="app-settings-hint">{t('settings.pluginMcpExposureEmpty')}</p>
-        ) : mcpCommands.map((command) => {
-          const key = `${command.pluginId}\u0000${command.commandId}`;
-          return (
-            <label className="app-settings-toggle-row" key={command.id}>
-              <span className="app-settings-row-copy">
-                <strong>{command.title}</strong>
-                <span>{command.pluginId}.{command.commandId}</span>
-              </span>
-              <span className="app-settings-toggle-control">
-                <input
-                  checked={mcpExposureKeys.has(key)}
-                  disabled={busy || api === undefined}
-                  onChange={(event) => void setMcpCommandEnabled(command, event.target.checked)}
-                  type="checkbox"
-                />
-                <span aria-hidden="true" className="app-settings-toggle-track" />
-              </span>
-            </label>
-          );
-        })}
-      </section>
 
       {renderInstallCard('user')}
       {renderInstallCard('library')}
@@ -746,7 +787,6 @@ export function PluginSettingsPage({ api, libraryId }: PluginSettingsPageProps):
                   ...(installScope === 'library' && libraryId !== undefined ? { libraryId } : {}),
                   repository: githubRepository.trim(),
                 })}
-                title={t('settings.pluginInstallGitHub')}
                 type="button"
               >
                 <Icon name="github" size={16} />

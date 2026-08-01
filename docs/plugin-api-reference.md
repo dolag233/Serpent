@@ -147,7 +147,7 @@ await serpent.jobs.enqueue({ handlerId, payload?, recoveryStrategy? })
 serpent.commands.register(commandId, async (context) => { ... })
 ```
 
-与清单 `contributes.commands` / 菜单 / 工具栏绑定。可选 `mcp.export`（默认不暴露给 MCP，且需用户本机启用）。
+与清单 `contributes.commands` / 菜单 / 工具栏绑定。可选 `mcp.export`：声明后，插件激活即可被 MCP `tools/list` / `tools/call`（无需设置页开关）。
 
 ---
 

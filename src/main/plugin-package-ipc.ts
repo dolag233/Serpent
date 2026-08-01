@@ -44,6 +44,26 @@ import type {
   PluginSearchSchedulerResult,
 } from './plugin-provider-scheduler';
 
+function pluginFailureResponse(error: unknown): Extract<PluginManagerResponse, { ok: false }> {
+  if (error instanceof PluginPackageManagerError) {
+    return {
+      ok: false,
+      code: 'operation-failed',
+      failureCode: error.code,
+      message: error.message,
+    };
+  }
+  if (error instanceof PluginSettingsStoreError) {
+    return {
+      ok: false,
+      code: 'operation-failed',
+      failureCode: error.code,
+      message: error.message,
+    };
+  }
+  return { ok: false, code: 'operation-failed' };
+}
+
 export interface PluginPackageIpcOptions {
   manager: PluginPackageManager;
   activationCoordinator?: PluginActivationCoordinator;
@@ -53,6 +73,8 @@ export interface PluginPackageIpcOptions {
   resolveLibraryDirectory(libraryId: string): Promise<string | undefined>;
   /** Main-owned native picker. It must never return a value to Renderer. */
   chooseLocalPackage(): Promise<string | undefined>;
+  /** Reveal an installed package directory in the OS file manager. Path stays in Main. */
+  revealPackageDirectory?(absoluteDirectory: string): void;
   /**
    * Called after a successful mutation that can change which packages should
    * be active. Main uses this to refresh the Standard Plugin Host without
@@ -104,12 +126,16 @@ function summary(entry: PluginInstalledPackageStatus): PluginManagerPackageSumma
       runtimeMode: 'restricted',
       permissions: [],
       source: sourceSummary(entry.package.source),
+      sourceFingerprint: entry.package.sourceFingerprint,
       scope: entry.scope,
       status: 'invalid',
       trust: 'untrusted',
+      hasSettingsUi: false,
       errorCode: entry.errorCode,
     };
   }
+  const settingsCount = entry.package.manifest.contributes.settings.length
+    + entry.package.manifest.contributes.views.filter((view) => view.location === 'settings').length;
   return {
     pluginId: entry.package.lock.pluginId,
     version: entry.package.lock.version,
@@ -119,9 +145,11 @@ function summary(entry: PluginInstalledPackageStatus): PluginManagerPackageSumma
     runtimeMode: entry.package.manifest.runtime.mode,
     permissions: [...entry.package.manifest.permissions],
     source: sourceSummary(entry.package.lock.source),
+    sourceFingerprint: entry.package.lock.sourceFingerprint,
     scope: entry.package.scope,
     status: 'valid',
     trust: packageTrust(entry),
+    hasSettingsUi: settingsCount > 0,
   };
 }
 
@@ -402,7 +430,8 @@ async function installLocal(
 
 function libraryIdFor(request: PluginManagerRequest): string | undefined {
   return request.type === 'plugin-manager.resolve'
-    ? request.libraryId
+    || request.type === 'plugin-manager.reload'
+    ? ('libraryId' in request ? request.libraryId : undefined)
     : 'libraryId' in request ? request.libraryId : undefined;
 }
 
@@ -418,6 +447,7 @@ export function createPluginPackageRequestHandler(options: PluginPackageIpcOptio
         || request.type === 'plugin-manager.clear-quarantine')
         || ('scope' in request && request.scope === 'library')
         || (request.type === 'plugin-manager.list' && libraryId !== undefined)
+        || (request.type === 'plugin-manager.reload' && libraryId !== undefined)
         || request.type === 'plugin-manager.run-command'
         || request.type === 'plugin-manager.search-providers'
         || request.type === 'plugin-manager.preview-provider'
@@ -608,6 +638,40 @@ export function createPluginPackageRequestHandler(options: PluginPackageIpcOptio
           libraryDirectory,
           client: createGitHubPluginClient(),
         });
+      } else if (request.type === 'plugin-manager.update-github') {
+        await options.manager.applyGitHubUpdateForLock({
+          scope: request.scope,
+          libraryDirectory,
+          pluginId: request.pluginId,
+          packageHash: request.packageHash,
+          client: createGitHubPluginClient(),
+        });
+      } else if (request.type === 'plugin-manager.set-auto-update') {
+        await options.manager.setAutoUpdatePreference({
+          pluginId: request.pluginId,
+          sourceFingerprint: request.sourceFingerprint,
+          autoUpdate: request.enabled,
+        });
+      } else if (request.type === 'plugin-manager.reveal-package') {
+        const installed = await options.manager.listInstalled({
+          scope: request.scope,
+          libraryDirectory,
+        });
+        const match = installed.find((entry) => entry.status === 'valid'
+          && entry.package.lock.pluginId === request.pluginId
+          && entry.package.lock.version === request.version);
+        if (match === undefined || match.status !== 'valid' || options.revealPackageDirectory === undefined) {
+          return { ok: false, code: 'operation-failed' };
+        }
+        options.revealPackageDirectory(match.package.packageDirectory);
+      } else if (request.type === 'plugin-manager.reload') {
+        if (options.afterMutation !== undefined) {
+          await options.afterMutation({
+            requestType: request.type,
+            ...(libraryId === undefined ? {} : { libraryId }),
+            ...(libraryDirectory === undefined ? {} : { libraryDirectory }),
+          });
+        }
       } else if (request.type === 'plugin-manager.trust') {
         const pluginPackage = await packageForTrust(
           request.pluginId,
@@ -650,12 +714,47 @@ export function createPluginPackageRequestHandler(options: PluginPackageIpcOptio
       }
 
       if (options.afterMutation !== undefined
-        && request.type !== 'plugin-manager.list') {
+        && request.type !== 'plugin-manager.list'
+        && request.type !== 'plugin-manager.reload'
+        && request.type !== 'plugin-manager.reveal-package') {
         await options.afterMutation({
           requestType: request.type,
           ...(libraryId === undefined ? {} : { libraryId }),
           ...(libraryDirectory === undefined ? {} : { libraryDirectory }),
         });
+      }
+
+      // Settings list also drives update discovery and optional auto-update apply.
+      if (request.type === 'plugin-manager.list'
+        || request.type === 'plugin-manager.install-github'
+        || request.type === 'plugin-manager.update-github'
+        || request.type === 'plugin-manager.set-auto-update') {
+        const githubClient = createGitHubPluginClient();
+        try {
+          const appliedUser = await options.manager.applyEligibleGitHubAutoUpdates({
+            scope: 'user',
+            client: githubClient,
+            ...(libraryId === undefined ? {} : { libraryId }),
+          });
+          const appliedLibrary = libraryDirectory === undefined
+            ? []
+            : await options.manager.applyEligibleGitHubAutoUpdates({
+              scope: 'library',
+              libraryDirectory,
+              ...(libraryId === undefined ? {} : { libraryId }),
+              client: githubClient,
+            });
+          if (options.afterMutation !== undefined
+            && (appliedUser.length > 0 || appliedLibrary.length > 0)) {
+            await options.afterMutation({
+              requestType: 'plugin-manager.update-github',
+              ...(libraryId === undefined ? {} : { libraryId }),
+              ...(libraryDirectory === undefined ? {} : { libraryDirectory }),
+            });
+          }
+        } catch (error) {
+          options.logger?.error('plugin.auto-update', error, { requestType: request.type });
+        }
       }
 
       const [user, library] = await Promise.all([
@@ -664,7 +763,40 @@ export function createPluginPackageRequestHandler(options: PluginPackageIpcOptio
           ? Promise.resolve([])
           : options.manager.listInstalled({ scope: 'library', libraryDirectory }),
       ]);
-      const packages = [...user, ...library].map(summary);
+      const githubClient = createGitHubPluginClient();
+      const packages = await Promise.all([...user, ...library].map(async (entry) => {
+        const base = summary(entry);
+        if (entry.status !== 'valid' || entry.package.lock.source.kind !== 'github') {
+          return base;
+        }
+        const autoUpdate = await options.manager.getAutoUpdatePreference({
+          pluginId: entry.package.lock.pluginId,
+          sourceFingerprint: entry.package.lock.sourceFingerprint,
+        });
+        let availableUpdate: PluginManagerPackageSummary['availableUpdate'];
+        try {
+          const found = await options.manager.findGitHubAvailableUpdate({
+            package: entry.package,
+            client: githubClient,
+          });
+          if (found !== undefined) {
+            availableUpdate = {
+              version: found.version,
+              tag: found.tag,
+              assetName: found.assetName,
+            };
+          }
+        } catch (error) {
+          options.logger?.error('plugin.check-update', error, {
+            pluginId: entry.package.lock.pluginId,
+          });
+        }
+        return {
+          ...base,
+          autoUpdate,
+          ...(availableUpdate === undefined ? {} : { availableUpdate }),
+        };
+      }));
       const pluginIds = [...new Set(packages.map((entry) => entry.pluginId))];
       const resolutions = libraryId === undefined || libraryDirectory === undefined
         ? []
@@ -682,10 +814,10 @@ export function createPluginPackageRequestHandler(options: PluginPackageIpcOptio
     } catch (error) {
       if (error instanceof PluginSettingsStoreError) {
         options.logger?.error('plugin.settings', error, { requestType: request.type });
-        return { ok: false, code: 'operation-failed' };
+      } else {
+        options.logger?.error('plugin.ipc', error, { requestType: request.type });
       }
-      options.logger?.error('plugin.ipc', error, { requestType: request.type });
-      return { ok: false, code: 'operation-failed' };
+      return pluginFailureResponse(error);
     }
   };
 }
