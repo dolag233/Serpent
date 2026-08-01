@@ -244,6 +244,13 @@ function InlineCollectionEditRow({
 }) {
   const t = useT();
   const inputRef = useRef<HTMLInputElement>(null);
+  const committingRef = useRef(false);
+
+  const commitOnce = () => {
+    if (committingRef.current) return;
+    committingRef.current = true;
+    onCommit();
+  };
 
   useEffect(() => {
     const input = inputRef.current;
@@ -261,12 +268,12 @@ function InlineCollectionEditRow({
           aria-label={t("nav.newCollection")}
           className="text-field"
           maxLength={255}
-          onBlur={onCommit}
+          onBlur={commitOnce}
           onChange={(event) => onChange(event.target.value)}
           onKeyDown={(event) => {
             if (event.key === "Enter") {
               event.preventDefault();
-              onCommit();
+              commitOnce();
             } else if (event.key === "Escape") {
               event.preventDefault();
               event.stopPropagation();

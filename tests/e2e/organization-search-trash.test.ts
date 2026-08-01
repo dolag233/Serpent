@@ -379,7 +379,27 @@ test('multi-select performs batch organization, trash, restore, and permanent de
     });
     expect(memberOrder).toEqual(['second.txt', 'first.txt']);
 
+    // Delete in a collection scope removes membership, not the underlying
+    // asset. This exercises the keyboard path, not only the context menu.
+    await firstMember.click();
+    await window.keyboard.press('Delete');
+    await expect(window.locator('.workspace-notice')).toContainText('资产已从合集移除');
+    await expect(window.getByRole('button', { name: /first\.txt/i })).toHaveCount(0);
     await window.getByRole('button', { name: /所有资产/ }).click();
+    await expect(window.getByRole('button', { name: /first\.txt/i })).toBeVisible();
+    const postDeleteCollectionCount = await window.evaluate(async () => {
+      const api = (globalThis as typeof globalThis & { serpent: { library: {
+        listOpen(): Promise<{ ok: boolean; value?: Array<{ libraryId: string }> }>;
+        listCollections(input: { libraryId: string }): Promise<{ ok: boolean; value?: Array<{ name: string; assetCount: number }> }>;
+      } } }).serpent.library;
+      const open = await api.listOpen();
+      const libraryId = open.value?.[0]?.libraryId;
+      if (!libraryId) throw new Error('No open library');
+      const collections = await api.listCollections({ libraryId });
+      return collections.value?.find((collection) => collection.name === '批量合集')?.assetCount;
+    });
+    expect(postDeleteCollectionCount).toBe(1);
+
     await window.getByRole('button', { name: /first\.txt/i }).click();
     await window.getByRole('button', { name: /second\.txt/i }).click({ modifiers: ['Shift'] });
     // Right-click to open multi-asset context menu

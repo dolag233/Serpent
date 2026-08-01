@@ -3265,13 +3265,20 @@ function AppInner() {
   // --- Collection CRUD ---
 
   async function createCollection() {
-    if (!api || !library || !collectionInputValue.trim()) return;
+    if (!api || !library) return;
+    const name = collectionInputValue.trim();
+    if (!name) {
+      setShowCollectionInput(false);
+      setCollectionInputValue("");
+      setNewCollectionParentId(null);
+      return;
+    }
     setUiState("loading");
     try {
       const result = await api.createCollection({
         libraryId: library.libraryId,
         parentId: newCollectionParentId ?? undefined,
-        name: collectionInputValue.trim(),
+        name,
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
       setShowCollectionInput(false);
@@ -3805,6 +3812,12 @@ function AppInner() {
     });
   }
 
+  async function refreshCollectionSummaries() {
+    if (!api || !library) return;
+    const result = await api.listCollections({ libraryId: library.libraryId });
+    if (result.ok) setCollections(result.value);
+  }
+
   async function createSelectedImageSequence() {
     if (!api || !library || !imageSequenceDialog) return;
     setImageSequenceDialog((current) =>
@@ -3920,6 +3933,7 @@ function AppInner() {
     reloadCurrentContent,
     onDeletedCurrentScope: () => {
       void chooseFolder("root");
+      void refreshCollectionSummaries();
     },
   });
 
@@ -4823,6 +4837,7 @@ function AppInner() {
           t("common.sentenceEnd"),
       );
       clearAssetSelection();
+      await refreshCollectionSummaries();
       await loadContent(library, "all", { trashMode: true });
     } catch (caught) {
       setError(toMessage(caught, t("toast.restoreFailed"), locale));
@@ -4852,6 +4867,7 @@ function AppInner() {
         }) + t("common.sentenceEnd"),
       );
       clearAssetSelection();
+      await refreshCollectionSummaries();
       await loadContent(library, "all", { trashMode: true });
     } catch (caught) {
       setError(toMessage(caught, t("toast.restoreTrashedFolderFailed"), locale));
@@ -4939,11 +4955,17 @@ function AppInner() {
         conflictStrategy,
       });
       if (!result.ok) {
-        if (
-          result.error.code === "ASSET_MOVE_CONFLICT" &&
-          conflictStrategy === "error"
-        ) {
-          setUndoMoveDialog({ operationId, conflictStrategy: "keep-both" });
+        if (result.error.code === "ASSET_MOVE_CONFLICT") {
+          // Keep the conflict decision available when the filesystem changed
+          // again between the initial prompt and the retry. Previously the
+          // dialog was closed first and the retry degraded into a generic
+          // “move failed” toast, leaving the operation neither undone nor
+          // actionable.
+          setUndoMoveDialog({
+            operationId,
+            conflictStrategy:
+              conflictStrategy === "error" ? "keep-both" : conflictStrategy,
+          });
         }
         throw new LibraryOperationError(result.error);
       }
@@ -5271,6 +5293,9 @@ function AppInner() {
         );
       }
       if (result.value.deletedCount > 0) clearAssetSelection();
+      if (result.value.deletedCount > 0) {
+        await refreshCollectionSummaries();
+      }
       try {
         await reloadCurrentContent();
       } catch (refreshError) {

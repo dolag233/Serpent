@@ -15,6 +15,7 @@ const TestDatabase = require('better-sqlite3') as new (filename: string) => {
   close(): void;
   prepare(source: string): {
     get(...parameters: unknown[]): unknown;
+    run(...parameters: unknown[]): unknown;
   };
 };
 
@@ -156,6 +157,47 @@ describe('managed asset move and one-shot undo', () => {
     expect(undone.assets[0]!.relativeFilePath).toBe('Source/asset (2).png');
     expect(existsSync(path.join(library.libraryPath, 'Assets', 'Source', 'asset.png'))).toBe(true);
     service.closeAll();
+  });
+
+  it('resolves an undo conflict when the occupying DB row has a missing file', () => {
+    const temp = root();
+    const service = new LibraryService();
+    const library = service.createLibrary({ displayName: 'Stale undo conflict', selectedParentPath: temp });
+    const sourceFolder = service.createManagedFolder({ libraryId: library.libraryId, name: 'Source' });
+    const targetFolder = service.createManagedFolder({ libraryId: library.libraryId, name: 'Target' });
+    const source = path.join(temp, 'asset.png');
+    writeFileSync(source, 'asset');
+    const asset = importFile(service, library.libraryId, source, sourceFolder.folderId).assets[0]!;
+    const moved = service.moveAssets({
+      libraryId: library.libraryId,
+      assetIds: [asset.assetId],
+      targetFolderId: targetFolder.folderId,
+    });
+
+    // Recreate the original path as an active-but-missing DB row. This is the
+    // race that previously made the conflict dialog retry fail immediately.
+    const staleSource = path.join(temp, 'stale.png');
+    writeFileSync(staleSource, 'stale');
+    const stale = importFile(service, library.libraryId, staleSource, sourceFolder.folderId).assets[0]!;
+    service.closeAll();
+    const database = new TestDatabase(path.join(library.libraryPath, '.serpent', 'library.db'));
+    database
+      .prepare('UPDATE assets SET relative_file_path = ?, path_identity = ?, availability = ? WHERE asset_id = ?')
+      .run('Source/asset.png', 'source/asset.png', 'missing', stale.assetId);
+    database.close();
+    rmSync(path.join(library.libraryPath, 'Assets', 'Source', 'stale.png'), { force: true });
+
+    const recovered = new LibraryService();
+    recovered.openLibrary(library.libraryPath);
+    const undone = recovered.undoMoveAssets({
+      libraryId: library.libraryId,
+      operationId: moved.operationId!,
+      conflictStrategy: 'keep-both',
+    });
+    expect(undone).toMatchObject({ undoneCount: 1, skippedCount: 0 });
+    expect(undone.assets[0]!.relativeFilePath).toBe('Source/asset (2).png');
+    expect(existsSync(path.join(library.libraryPath, 'Assets', 'Source', 'asset (2).png'))).toBe(true);
+    recovered.closeAll();
   });
 
   it('rolls an interrupted undo back on reopen and leaves the one-shot undo available', () => {

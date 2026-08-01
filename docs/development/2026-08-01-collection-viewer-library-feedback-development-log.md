@@ -46,3 +46,20 @@
 浏览区文件夹卡片现在复用侧栏的托管资产拖放协议：普通拖放调用移动路径，Alt 拖放调用复制路径；外部文件导入和文件夹重排仍沿用原有分支，避免改变已有 dropEffect 与冲突策略。
 
 资产移入回收站或从硬盘删除后，批量操作路径和 App 的混合资产/文件夹路径都会重新读取 `listCollections`，因此合集侧栏的递归去重计数与当前成员状态不再滞后；浏览内容仍沿用原有 `reloadCurrentContent` 刷新。
+
+## 反馈收口与独立代码审查
+
+- 合集内 Delete 的键盘路径已加入 Electron E2E：验证只移除直接成员，资产仍存在于“所有资产”，递归计数同步扣减。
+- 浏览区文件夹卡片拖放已加入 Electron E2E：普通拖放移动资产并验证目标磁盘路径；Alt 复制沿用同一处理器的复制分支。
+- 修正合集创建输入行：空白失焦会取消编辑，Enter 与 blur 只提交一次，行为与文件夹内联创建一致。
+- 修正删除/恢复后的合集刷新：托管文件夹删除、链接资产删除及资产/文件夹恢复路径都会重新读取合集摘要。
+- 深审发现并修复撤回冲突根因：当冲突路径仍有活动数据库行但源文件已丢失时，冲突现在标记为 metadata-only；keep-both/skip 可继续，replace 会安全地将陈旧行移入回收站而不执行失败的文件重命名。撤回对话框在重试仍遇冲突时保持可操作，不再退化为一次性通用错误。
+
+## 当次验证
+
+- `npm run typecheck`：通过。
+- `npm run lint -- --quiet`：通过。
+- `node scripts/run-vitest-with-electron.mjs run --config vitest.config.ts tests/worker/managed-move.test.ts`：9/9 通过（含新增陈旧数据库行冲突回归）。
+- `node scripts/run-vitest-with-electron.mjs run --config vitest.config.ts tests/worker/trash-relink.test.ts`：77 通过、2 跳过。
+- 后台 Electron：`folder-recursive-scope.test.ts` 2/2 通过；`organization-search-trash.test.ts` 新增合集 Delete/计数路径所在测试通过，但同文件另有两个既有流程失败（恢复选择器标签与标签视图刷新），未将全文件记为通过。
+- 代码审查基线 `ca751c0`：Standards/Spec 双轴审查发现的关键 P1 已逐项处理；本记录不替代用户人工验收，相关清单保持“待人类验收”。

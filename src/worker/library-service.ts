@@ -1695,6 +1695,8 @@ interface ManagedMoveConflict {
   managedFolderId: string | null;
   operationId: string;
   relativePath: string;
+  /** False when the DB row remains but its source file disappeared. */
+  sourceExists?: boolean;
   trashFilename: string | null;
 }
 
@@ -3665,6 +3667,7 @@ export class LibraryService {
             path.posix.basename(entry.trashFilename) === entry.trashFilename &&
             path.win32.basename(entry.trashFilename) === entry.trashFilename
           )) &&
+          (entry.sourceExists === undefined || typeof entry.sourceExists === 'boolean') &&
           (entry.kind !== 'managed' || (entry.assetId !== null && entry.trashFilename !== null));
       };
       for (const file of candidate.files) {
@@ -3724,6 +3727,7 @@ export class LibraryService {
             path.posix.basename(entry.trashFilename) === entry.trashFilename &&
             path.win32.basename(entry.trashFilename) === entry.trashFilename
           )) &&
+          (entry.sourceExists === undefined || typeof entry.sourceExists === 'boolean') &&
           (entry.kind !== 'managed' || (entry.assetId !== null && entry.trashFilename !== null));
       };
       for (const file of candidate.files) {
@@ -4009,7 +4013,7 @@ export class LibraryService {
         renameSync(destinationPath, sourcePath);
       }
 
-      if (file.destinationConflict) {
+      if (file.destinationConflict && file.destinationConflict.sourceExists !== false) {
         const holdingPath = this.moveConflictHoldingPath(openLibrary, file.destinationConflict);
         if (realFileExists(holdingPath)) {
           if (realFileExists(destinationPath)) throw new LibraryServiceError('LIBRARY_CORRUPT');
@@ -4052,7 +4056,7 @@ export class LibraryService {
       if (realFileExists(destinationPath)) {
         rmSync(destinationPath, { force: true });
       }
-      if (file.destinationConflict) {
+      if (file.destinationConflict && file.destinationConflict.sourceExists !== false) {
         const holdingPath = this.moveConflictHoldingPath(openLibrary, file.destinationConflict);
         if (realFileExists(holdingPath) && !realFileExists(destinationPath)) {
           mkdirSync(path.dirname(destinationPath), { recursive: true });
@@ -14362,7 +14366,7 @@ export class LibraryService {
       if (applying.changes !== 1) throw new LibraryServiceError('LIBRARY_CORRUPT');
 
       for (const file of manifest.files) {
-        if (!file.destinationConflict) continue;
+        if (!file.destinationConflict || file.destinationConflict.sourceExists === false) continue;
         const destinationPath = this.folderPath(openLibrary, file.destinationConflict.relativePath);
         const holdingPath = this.moveConflictHoldingPath(openLibrary, file.destinationConflict);
         mkdirSync(path.dirname(holdingPath), { recursive: true });
@@ -14377,7 +14381,7 @@ export class LibraryService {
         renameSync(sourcePath, destinationPath);
       }
       for (const file of manifest.files) {
-        if (!file.restoreConflict) continue;
+        if (!file.restoreConflict || file.restoreConflict.sourceExists === false) continue;
         const holdingPath = this.moveConflictHoldingPath(openLibrary, file.restoreConflict);
         const restorePath = this.folderPath(openLibrary, file.sourceRelativePath);
         mkdirSync(path.dirname(restorePath), { recursive: true });
@@ -14480,7 +14484,21 @@ export class LibraryService {
     } | undefined;
     const disk = this.portableDiskDestination(openLibrary, relativePath);
     if (!active && !disk) return null;
-    if (active && !disk) throw new LibraryServiceError('ASSET_MOVE_CONFLICT', { reason: 'SOURCE_NOT_FOUND' });
+    // Keep a metadata-only conflict when the DB row remains but its file has
+    // disappeared. This lets keep-both/skip proceed and lets replace tombstone
+    // the stale row without attempting an impossible filesystem rename.
+    if (active && !disk) {
+      return {
+        assetId: active.asset_id,
+        backupName,
+        kind: 'managed',
+        managedFolderId: active.managed_folder_id,
+        operationId,
+        relativePath,
+        sourceExists: false,
+        trashFilename: path.posix.basename(active.relative_file_path),
+      };
+    }
     if (disk && disk.size < 0) throw new LibraryServiceError('ASSET_MOVE_CONFLICT', { reason: 'UNSUPPORTED_FILE_ENTRY' });
     if (active) {
       return {
@@ -14649,7 +14667,7 @@ export class LibraryService {
         !realFileExists(this.folderPath(openLibrary, current.relative_file_path))) {
         throw new LibraryServiceError('ASSET_MOVE_CONFLICT', { reason: 'SOURCE_CHANGED' });
       }
-      if (originalFile.destinationConflict &&
+      if (originalFile.destinationConflict && originalFile.destinationConflict.sourceExists !== false &&
         !realFileExists(this.moveConflictHoldingPath(openLibrary, originalFile.destinationConflict))) {
         throw new LibraryServiceError('ASSET_MOVE_CONFLICT', { reason: 'SOURCE_CHANGED' });
       }
@@ -14899,7 +14917,7 @@ export class LibraryService {
       if (applying.changes !== 1) throw new LibraryServiceError('LIBRARY_CORRUPT');
 
       for (const file of manifest.files) {
-        if (!file.destinationConflict) continue;
+        if (!file.destinationConflict || file.destinationConflict.sourceExists === false) continue;
         const destinationPath = this.folderPath(openLibrary, file.destinationConflict.relativePath);
         const holdingPath = this.moveConflictHoldingPath(openLibrary, file.destinationConflict);
         mkdirSync(path.dirname(holdingPath), { recursive: true });
@@ -15033,7 +15051,7 @@ export class LibraryService {
         rmSync(this.folderPath(openLibrary, relativePath), { force: true });
       }
       for (const file of manifest.files) {
-        if (!file.destinationConflict) continue;
+        if (!file.destinationConflict || file.destinationConflict.sourceExists === false) continue;
         const holdingPath = this.moveConflictHoldingPath(openLibrary, file.destinationConflict);
         const restorePath = this.folderPath(openLibrary, file.destinationConflict.relativePath);
         if (existsSync(holdingPath) && !existsSync(restorePath)) {
@@ -15786,10 +15804,15 @@ export class LibraryService {
     conflictStrategy?: 'keep-both' | 'replace' | 'skip';
   }): { restoredCount: number; assets: AssetSummary[] } {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
-    const logicalCount = this.countLogicalAssetUnits(
-      openLibrary,
-      input.assetIds,
-    );
+    // Validate caller identity before expanding sequence members. Expansion
+    // intentionally deduplicates frames, so checking afterward would allow a
+    // duplicate request to create a second restore journal entry.
+    if (
+      input.assetIds.length === 0 ||
+      new Set(input.assetIds).size !== input.assetIds.length
+    ) {
+      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+    }
     const assetIds = this.expandAssetIdsToSequenceMembers(
       openLibrary,
       input.assetIds,
@@ -16125,7 +16148,13 @@ export class LibraryService {
       );
 
       return {
-        restoredCount: logicalCount,
+        // A skip plan deliberately has no filesystem/DB mutation. Report the
+        // logical units that actually made it into the restore plan rather
+        // than the logical units requested by the caller.
+        restoredCount: this.countLogicalAssetUnits(
+          openLibrary,
+          plans.map((plan) => plan.assetId),
+        ),
         assets: this.withImageSequenceSummaries(openLibrary, restoredAssets),
       };
     } catch (error) {
