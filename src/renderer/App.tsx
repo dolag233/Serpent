@@ -5894,6 +5894,7 @@ function AppInner() {
     platform: SHORTCUT_PLATFORM,
     previewOpen: Boolean(previewAsset),
     showTrash,
+    activeCollectionId,
     libraryOpen: Boolean(library),
     busy,
     selectedAsset,
@@ -5922,6 +5923,11 @@ function AppInner() {
     },
     onPermanentDelete: (assetIds) => {
       setPermanentDeleteDialog([...assetIds]);
+    },
+    onRemoveFromCurrentCollection: (assetIds) => {
+      if (activeCollectionId) {
+        void batchRemoveSelectionFromCollection(activeCollectionId, [...assetIds]);
+      }
     },
     onRefreshDisk: () => {
       void refreshAssets();
