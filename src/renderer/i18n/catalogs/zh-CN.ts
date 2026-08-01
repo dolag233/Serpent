@@ -131,8 +131,9 @@ export const zhCN = {
     newFolderName: "新文件夹名称",
     newSmartCollectionName: "新智能合集名称",
     folderRename: "文件夹重命名",
-    collectionNamePlaceholder: "输入合集名称，回车创建",
-    subcollectionNamePlaceholder: "输入子合集名称，回车创建",
+    newCollection: "新建合集",
+    collectionNamePlaceholder: "新建合集",
+    subcollectionNamePlaceholder: "新建合集",
     linkedFolder: "链接文件夹",
     linkedFolderOffline: "链接文件夹离线，点击重新指定",
     linkedFolderPath: "原路径",
@@ -378,6 +379,7 @@ export const zhCN = {
       removeFromLibraryConfirm: "从资源库移除链接文件夹「{name}」？\n外部源目录不会被删除。"
     },
     collection: {
+      newSubcollection: "新建子合集",
       rename: "重命名合集",
       editDetails: "编辑合集详情",
       delete: "删除合集",

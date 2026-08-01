@@ -91,6 +91,7 @@ interface AssetContextMenuProps {
   onUpdateSmartCollection: (id: string) => void;
   onDeleteSmartCollection: (id: string, name: string) => void;
   onRenameOrganization: (id: string, name: string) => void;
+  onCreateSubcollection: (collectionId: string) => void;
   onEditCollectionDetails: (collectionId: string) => void;
   onDeleteOrganization: (id: string, name: string) => void;
   onCreateSubfolder: (folderId: string) => void;
@@ -180,6 +181,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
     onUpdateSmartCollection,
     onDeleteSmartCollection,
     onRenameOrganization,
+    onCreateSubcollection,
     onEditCollectionDetails,
     onDeleteOrganization,
     onCreateSubfolder,
@@ -424,6 +426,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
               removeLinkedFolder: onRemoveLinkedFolder,
               trashLinkedFolderSubtree: onTrashLinkedFolderSubtree,
               renameOrganization: onRenameOrganization,
+              createSubcollection: onCreateSubcollection,
               editCollectionDetails: onEditCollectionDetails,
               deleteOrganization: onDeleteOrganization,
               renameSmartCollection: onRenameSmartCollection,
@@ -512,6 +515,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
               removeLinkedFolder: onRemoveLinkedFolder,
               trashLinkedFolderSubtree: onTrashLinkedFolderSubtree,
               renameOrganization: onRenameOrganization,
+              createSubcollection: onCreateSubcollection,
               editCollectionDetails: onEditCollectionDetails,
               deleteOrganization: onDeleteOrganization,
               renameSmartCollection: onRenameSmartCollection,
@@ -530,10 +534,23 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
             void sidebarCommandRegistry.get(id)?.run(commandContext);
           };
           const renameItem = resolvedById.get("collection.rename");
+          const createSubcollectionItem = resolvedById.get(
+            "collection.create-subcollection",
+          );
           const editDetailsItem = resolvedById.get("collection.edit-details");
           const deleteItem = resolvedById.get("collection.delete");
           return (
             <>
+              {createSubcollectionItem && (
+                <ContextMenuItem
+                  icon={<Icon name="collection" size={14} />}
+                  label={createSubcollectionItem.label}
+                  shortcut={createSubcollectionItem.shortcutLabel ?? undefined}
+                  onAction={() =>
+                    runSidebarCommand("collection.create-subcollection")
+                  }
+                />
+              )}
               {renameItem && (
                 <ContextMenuItem
                   icon={<Icon name="collection" size={14} />}
@@ -612,6 +629,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
               removeLinkedFolder: onRemoveLinkedFolder,
               trashLinkedFolderSubtree: onTrashLinkedFolderSubtree,
               renameOrganization: onRenameOrganization,
+              createSubcollection: onCreateSubcollection,
               editCollectionDetails: onEditCollectionDetails,
               deleteOrganization: onDeleteOrganization,
               renameSmartCollection: onRenameSmartCollection,

@@ -140,8 +140,9 @@ export const en = {
     newFolderName: "New folder name",
     newSmartCollectionName: "New smart collection name",
     folderRename: "Rename folder",
-    collectionNamePlaceholder: "Enter collection name, press Enter to create",
-    subcollectionNamePlaceholder: "Enter subcollection name, press Enter to create",
+    newCollection: "New collection",
+    collectionNamePlaceholder: "New collection",
+    subcollectionNamePlaceholder: "New collection",
     linkedFolder: "Linked folder",
     linkedFolderOffline: "Linked folder offline — click to relink",
     linkedFolderPath: "Original path",
@@ -388,6 +389,7 @@ export const en = {
       removeFromLibraryConfirm: "Remove linked folder \"{name}\" from the library?\nThe external source folder will not be deleted."
     },
     collection: {
+      newSubcollection: "New subcollection",
       rename: "Rename collection",
       editDetails: "Edit collection details",
       delete: "Delete collection",

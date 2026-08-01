@@ -29,3 +29,10 @@
 ## 使用约定
 
 直接使用 `npm start`、`npm run test`、`npm run test:worker`、`npm run test:e2e`；不要直接用裸 `npx vitest` 运行 Worker 测试。`npm run package` / `npm run make` 后重新启动或测试时，lifecycle 会自动把 `better-sqlite3` 对齐到 Electron。
+
+## 新反馈：合集递归计数与创建层级
+
+- `listCollections` 与 `updateCollection` 现在按当前合集及所有后代合集构造资产集合，并使用 `COUNT(DISTINCT asset_id)` 去重；已删除资产不计入显示数量。Worker 测试覆盖父子合集重复成员、子合集独有成员以及删除后的计数刷新。
+- 合集创建输入行改为在合集树中按父节点插入，根合集和子合集均使用与文件夹创建一致的 Enter/Escape/失焦提交行为，提示文案统一为「新建合集」。合集右键菜单新增「新建子合集」命令。
+
+证据：`npm run typecheck` 通过；`tests/worker/organization.test.ts` 64/64；`tests/unit/sidebar-commands.test.ts` 44/44。当前仅记录为待人类验收，未将自动化结果写成用户验收结论。

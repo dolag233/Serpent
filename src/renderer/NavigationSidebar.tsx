@@ -228,6 +228,60 @@ function InlineFolderEditRow({
   );
 }
 
+/** The collection equivalent of the folder in-tree create row. */
+function InlineCollectionEditRow({
+  depth,
+  value,
+  onChange,
+  onCommit,
+  onCancel,
+}: {
+  depth: number;
+  value: string;
+  onChange: (value: string) => void;
+  onCommit: () => void;
+  onCancel: () => void;
+}) {
+  const t = useT();
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const input = inputRef.current;
+    if (!input) return;
+    input.focus();
+    input.select();
+  }, []);
+
+  return (
+    <div className="nav-tree-row">
+      <span className="nav-disclosure-spacer" aria-hidden="true" />
+      <div className="nav-inline-edit" style={{ paddingLeft: 7 + depth * 14 }}>
+        <Icon name="collection" size={15} />
+        <input
+          aria-label={t("nav.newCollection")}
+          className="text-field"
+          maxLength={255}
+          onBlur={onCommit}
+          onChange={(event) => onChange(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              onCommit();
+            } else if (event.key === "Escape") {
+              event.preventDefault();
+              event.stopPropagation();
+              onCancel();
+            }
+          }}
+          placeholder={t("nav.newCollection")}
+          ref={inputRef}
+          value={value}
+        />
+      </div>
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // InlineSmartCollectionEditRow — SMART-007 sidebar create row
 // ---------------------------------------------------------------------------
@@ -429,6 +483,7 @@ export interface NavigationSidebarProps {
   onSetShowCollectionInput: (show: boolean) => void;
   onSetCollectionInputValue: (value: string) => void;
   onSetNewCollectionParentId: (id: string | null) => void;
+  onCollectionInputCommit: () => void;
   onCollectionInputKeyDown: (
     e: React.KeyboardEvent<HTMLInputElement>,
   ) => void;
@@ -521,6 +576,7 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
     onSetShowCollectionInput,
     onSetCollectionInputValue,
     onSetNewCollectionParentId,
+    onCollectionInputCommit,
     onCollectionInputKeyDown,
     onAddFolder,
     onAddSmartCollection,
@@ -886,7 +942,24 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
     depth: number,
   ): ReactNode {
     const children = collectionTree.get(parentId) ?? [];
-    return children.map((c) => (
+    const rows: ReactNode[] = [];
+    if (showCollectionInput && newCollectionParentId === parentId) {
+      rows.push(
+        <InlineCollectionEditRow
+          depth={depth}
+          key={`inline-collection-create-${parentId ?? "root"}`}
+          onCancel={() => {
+            onSetShowCollectionInput(false);
+            onSetCollectionInputValue("");
+            onSetNewCollectionParentId(null);
+          }}
+          onChange={onSetCollectionInputValue}
+          onCommit={onCollectionInputCommit}
+          value={collectionInputValue}
+        />,
+      );
+    }
+    rows.push(...children.map((c) => (
       <div
         className="collection-drop-target"
         draggable
@@ -989,7 +1062,8 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
         />
         {renderCollectionNodes(c.collectionId, depth + 1)}
       </div>
-    ));
+    )));
+    return rows;
   }
 
   return (
@@ -1087,41 +1161,14 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
         >
           {library ? (
             <>
-              {showCollectionInput && (
-                <div className="nav-tree-row">
-                  <span className="nav-disclosure-spacer" aria-hidden="true" />
-                  <div
-                    className="nav-inline-edit"
-                    style={{
-                      paddingLeft: 7 + (newCollectionParentId ? 14 : 0),
-                    }}
-                  >
-                    <Icon name="collection" size={15} />
-                    <input
-                      autoFocus
-                      className="text-field"
-                      maxLength={255}
-                      onBlur={() => {
-                        onSetShowCollectionInput(false);
-                        onSetCollectionInputValue("");
-                        onSetNewCollectionParentId(null);
-                      }}
-                      onChange={(e) => onSetCollectionInputValue(e.target.value)}
-                      onKeyDown={onCollectionInputKeyDown}
-                      placeholder={
-                        newCollectionParentId
-                          ? t("nav.subcollectionNamePlaceholder")
-                          : t("nav.collectionNamePlaceholder")
-                      }
-                      value={collectionInputValue}
-                    />
-                  </div>
-                </div>
-              )}
               {collections.length ? (
                 renderCollectionNodes(null, 0)
               ) : (
-                <p className="nav-empty">{t("nav.emptyCollections")}</p>
+                showCollectionInput && newCollectionParentId === null ? (
+                  renderCollectionNodes(null, 0)
+                ) : (
+                  <p className="nav-empty">{t("nav.emptyCollections")}</p>
+                )
               )}
             </>
           ) : (

@@ -50,6 +50,7 @@ function makeActions(calls: RecordedCall[]): SidebarCommandActions {
     removeLinkedFolder: record('removeLinkedFolder'),
     trashLinkedFolderSubtree: record('trashLinkedFolderSubtree'),
     renameOrganization: record('renameOrganization'),
+    createSubcollection: record('createSubcollection'),
     editCollectionDetails: record('editCollectionDetails'),
     deleteOrganization: record('deleteOrganization'),
     renameSmartCollection: record('renameSmartCollection'),
@@ -301,11 +302,13 @@ describe('合集 / 智能合集分支：三项恒可见且恒启用', () => {
     });
     const menu = registry.resolveMenu(ctx);
     expect(menu.map((item) => item.id)).toEqual([
+      'collection.create-subcollection',
       'collection.rename',
       'collection.edit-details',
       'collection.delete',
     ]);
     expect(menu.map((item) => item.label)).toEqual([
+      '新建子合集',
       '重命名合集',
       '编辑合集详情',
       '删除合集',
@@ -528,7 +531,7 @@ describe('删除确认：window.confirm 保留在 run 内', () => {
 });
 
 describe('注册表完整性', () => {
-  it('18 条定义全部注册且 id 唯一（createCommandRegistry 未抛错）', () => {
+  it('19 条定义全部注册且 id 唯一（createCommandRegistry 未抛错）', () => {
     expect(registry.list().map((def) => def.id)).toEqual([
       'folder.open-in-file-manager',
       'folder.create-subfolder',
@@ -542,6 +545,7 @@ describe('注册表完整性', () => {
       'folder.move-to-trash',
       'folder.delete-from-disk',
       'folder.remove-from-library',
+      'collection.create-subcollection',
       'collection.rename',
       'collection.edit-details',
       'collection.delete',

@@ -7159,6 +7159,7 @@ function AppInner() {
         onSetShowCollectionInput={setShowCollectionInput}
         onSetCollectionInputValue={setCollectionInputValue}
         onSetNewCollectionParentId={setNewCollectionParentId}
+        onCollectionInputCommit={() => void createCollection()}
         onCollectionInputKeyDown={handleCollectionInputKeyDown}
         onAddFolder={() => {
           cancelInlineSmartCollectionEdit();
@@ -8873,6 +8874,12 @@ function AppInner() {
         onUpdateSmartCollection={(id) => { void updateSmartCollectionQuery(id); }}
         onDeleteSmartCollection={(id) => { void deleteSmartCollection(id); }}
         onRenameOrganization={(id, name) => setRenameTarget({ kind: "collection", id, name })}
+        onCreateSubcollection={(parentId) => {
+          cancelInlineSmartCollectionEdit();
+          setShowCollectionInput(true);
+          setCollectionInputValue("");
+          setNewCollectionParentId(parentId);
+        }}
         onEditCollectionDetails={(collectionId) => {
           const collection = collections.find((c) => c.collectionId === collectionId);
           if (collection)

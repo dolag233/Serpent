@@ -33,6 +33,7 @@ export interface SidebarCommandActions {
     name: string,
   ) => void;
   readonly renameOrganization: (id: string, name: string) => void;
+  readonly createSubcollection: (collectionId: string) => void;
   readonly editCollectionDetails: (collectionId: string) => void;
   readonly deleteOrganization: (id: string, name: string) => void;
   readonly renameSmartCollection: (id: string, name: string) => void;
@@ -225,6 +226,18 @@ export const sidebarCommandDefinitions: readonly SidebarCommandDefinition[] = [
       ctx.isLinkedRoot !== false,
     run: (ctx) =>
       ctx.actions.removeLinkedFolder(ctx.subjectId, ctx.subjectName),
+  },
+  {
+    id: 'collection.create-subcollection',
+    title: (ctx) =>
+      translateForLocale(ctx.locale, 'command.collection.newSubcollection'),
+    group: 'organize',
+    shortcut: {
+      mac: { label: '⌘⇧N', key: 'n', metaKey: true, shiftKey: true },
+      windows: { label: 'Ctrl+Shift+N', key: 'n', ctrlKey: true, shiftKey: true },
+    },
+    visible: (ctx) => ctx.menuKind === 'organization',
+    run: (ctx) => ctx.actions.createSubcollection(ctx.subjectId),
   },
   {
     id: 'collection.rename',
