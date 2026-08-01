@@ -4031,6 +4031,8 @@ function AppInner() {
     },
     setImageSequenceImportOffer,
     onFoldersDroppedOnFolder: handleFoldersDroppedOnFolder,
+    onAssetsDroppedOnFolder: (folderId, assetIds, mode) =>
+      handleAssetsDroppedOnFolder(folderId, assetIds, mode),
   });
 
   const {

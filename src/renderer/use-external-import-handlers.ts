@@ -27,6 +27,13 @@ import {
   parseManagedFolderDrag,
   supportsManagedFolderDrag,
 } from "./folder-drag-drop";
+import {
+  parseManagedAssetDrag,
+  resolveDragDropMode,
+  resolveManagedDropEffect,
+  supportsManagedAssetDrag,
+  type DragDropMode,
+} from "./asset-drag-drop";
 import { useLocale, useT } from "./i18n";
 import { importSummaryMessage } from "./import-summary";
 
@@ -51,6 +58,11 @@ export type UseExternalImportHandlersParams = {
     targetFolderId: string,
     folderIds: readonly string[],
   ) => void;
+  onAssetsDroppedOnFolder?: (
+    targetFolderId: string,
+    assetIds: string[],
+    mode: DragDropMode,
+  ) => void;
 };
 
 /**
@@ -73,6 +85,7 @@ export function useExternalImportHandlers({
   setConflicts,
   setImageSequenceImportOffer,
   onFoldersDroppedOnFolder,
+  onAssetsDroppedOnFolder,
 }: UseExternalImportHandlersParams) {
   const t = useT();
   const { locale } = useLocale();
@@ -338,7 +351,8 @@ export function useExternalImportHandlers({
       onDragEnter: (event: DragEvent<HTMLButtonElement>) => {
         if (
           supportsExternalImportTransfer(event.dataTransfer) ||
-          supportsManagedFolderDrag(event.dataTransfer)
+          supportsManagedFolderDrag(event.dataTransfer) ||
+          supportsManagedAssetDrag(event.dataTransfer)
         ) {
           setFolderCardDropTarget(folderId);
         }
@@ -363,12 +377,31 @@ export function useExternalImportHandlers({
           setFolderCardDropTarget(folderId);
           return;
         }
+        if (supportsManagedAssetDrag(event.dataTransfer)) {
+          event.preventDefault();
+          event.dataTransfer.dropEffect = resolveManagedDropEffect(
+            resolveDragDropMode({ altKey: event.altKey }),
+          );
+          setFolderCardDropTarget(folderId);
+          return;
+        }
         if (supportsExternalImportTransfer(event.dataTransfer)) {
           setFolderCardDropTarget(folderId);
         }
         handleTargetExternalDragOver(event);
       },
       onDrop: (event: DragEvent<HTMLButtonElement>) => {
+        const assetIds = parseManagedAssetDrag(event.dataTransfer);
+        if (assetIds && assetIds.length > 0) {
+          event.preventDefault();
+          setFolderCardDropTarget(null);
+          onAssetsDroppedOnFolder?.(
+            folderId,
+            assetIds,
+            resolveDragDropMode({ altKey: event.altKey }),
+          );
+          return;
+        }
         const draggedFolderIds = parseManagedFolderDrag(event.dataTransfer);
         if (draggedFolderIds && draggedFolderIds.length > 0) {
           event.preventDefault();
@@ -384,6 +417,7 @@ export function useExternalImportHandlers({
       handleTargetExternalDragOver,
       handleTargetExternalDrop,
       onFoldersDroppedOnFolder,
+      onAssetsDroppedOnFolder,
     ],
   );
 
