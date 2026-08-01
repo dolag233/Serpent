@@ -533,6 +533,7 @@
 | A11Y-001 | 查看页 nav/close 键盘焦点可见 | 人类验收通过 | 打开查看页；Tab 到上一张/下一张/关闭；可先等 chrome 渐隐再 Tab | 焦点控件有 accent 描边；idle 渐隐时聚焦仍可见 | [开发日志](../development/2026-07-19-keyboard-focus-model-development-log.md) / Serpent-vvn | 2026-07-19 用户确认通过（主观觉得非必须，保留）。 |
 | A11Y-002 | 资源库菜单与排序 listbox 键盘导航 | 人类验收通过 | 打开左上角资源库菜单与排序字段弹出层；用 ↑↓ Home/End、Esc | 箭头移动焦点；Esc 关闭并回到触发按钮 | 同上 / `roving-list-keyboard.test.ts` | 2026-07-19 用户确认通过。 |
 | A11Y-003 | 标签选择器单一焦点 + 对话框焦点陷阱 | 人类验收通过 | 右键→分配标签；箭头高亮选项且输入框保持焦点；打开设置/导出等对话框按 Tab | 选项不可 Tab 抢走焦点；对话框 Tab 不逃到背后 UI | 同上 | 2026-07-19 用户确认通过。 |
+| A11Y-004 | 确认对话框默认操作焦点 | 待人类验收 | 打开永久删除、从硬盘删除、移动/恢复等确认窗口；观察初始焦点后按 Enter；再按 Esc 取消 | 可用的主操作按钮初始获得焦点，Enter 执行该操作；Esc 仍取消/关闭；输入型对话框继续优先聚焦输入框 | [对话框焦点开发记录](../development/2026-08-01-dialog-focus-development-log.md) / [组织与回收站 E2E](../../tests/e2e/organization-search-trash.test.ts) / 工单 `Serpent-sxk3` | 2026-08-01 实现默认按钮聚焦，等待用户验收。 |
 | AUDIO-001 | 音频波形封面与查看页播放 | 人类验收通过 | 导入音频；双击查看；播放/暂停/变速（若有）；观察播放头与拖尾 | 播放头竖向顶满波形区、颜色为星黄（`--rating-star`）；拖尾为滞留淡出采样（暂停消散、快播更长、慢播更短），非静态渐变块 | [trail 单测](../../tests/unit/audio-playhead-trail.test.ts) / `Serpent-r8a` / [证据](evidence/2026-07-19-acceptance/audio-playhead-trail-fail.png) | 2026-07-19 用户确认通过（星黄满高播放头 + 粒子式拖尾）。 |
 | TEXT-001 | 文本预览/行号查看与托管保存 | 待人类验收 | ① 浏览画布文本卡片显示开头文字预览（非文件图标）。② Inspector 右侧预览为横向 4:3，不溢出。③ 编辑保存/退出落版本；toast「文件已保存」无磁盘同步 | 画布与 Inspector 均有 4:3 文本预览；连续保存与退出版本正常 | `TextAssetPreviewTile` | 2026-07-25 画布预览 + Inspector 4:3 修正。 |
 | 2026-07-19 | FILTER-023/024 / DND-006 | 人类验收通过 | Shift 提示、色块描边、内部拖放不显导入。 | — |

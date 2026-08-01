@@ -431,9 +431,59 @@ test('multi-select performs batch organization, trash, restore, and permanent de
     await window.locator('.asset-card').first().click({ button: 'right' });
     await window.getByRole('menuitem', { name: /永久删除（2 项）/ }).click();
     await expect(window.getByRole('dialog')).toContainText('所选 2 项资产');
-    await window.getByRole('dialog').getByRole('button', { name: '永久删除 2 项' }).click();
+    const permanentDeleteDialog = window.getByRole('dialog');
+    const permanentDeleteButton = permanentDeleteDialog.getByRole('button', {
+      name: '永久删除 2 项',
+    });
+    await expect(permanentDeleteButton).toBeFocused();
+    await permanentDeleteButton.click();
     await expect(window.locator('.workspace-notice')).toContainText('已永久删除 2 项');
     await expect(window.locator('.asset-card')).toHaveCount(0);
+  } finally {
+    await application.close();
+    rmSync(temporaryRoot, { force: true, recursive: true });
+  }
+});
+
+test('confirmation dialogs focus their primary action', async () => {
+  const temporaryRoot = mkdtempSync(path.join(tmpdir(), 'serpent-dialog-focus-e2e-'));
+  const sourcePath = path.join(temporaryRoot, 'focus.txt');
+  writeFileSync(sourcePath, 'focus target');
+
+  const applicationDirectory = process.env.SERPENT_E2E_APP_DIRECTORY ?? process.cwd();
+  const application = await electron.launch({
+    args: [applicationDirectory],
+    cwd: applicationDirectory,
+    executablePath: resolveElectronExecutablePath(),
+    env: {
+      ...process.env,
+      SERPENT_E2E: '1',
+      SERPENT_E2E_USER_DATA_PATH: path.join(temporaryRoot, 'user-data'),
+      SERPENT_E2E_CREATE_PARENT_PATH: temporaryRoot,
+      SERPENT_E2E_IMPORT_FILES: sourcePath,
+    },
+  });
+
+  try {
+    const window = await application.firstWindow();
+    await window.getByRole('button', { name: '创建资源库' }).click();
+    await window.getByRole('textbox', { name: '名称' }).fill('对话框焦点验收');
+    await window.getByRole('button', { name: '创建', exact: true }).click();
+    await window.getByRole('button', { name: '导入文件', exact: true }).first().click();
+    const asset = window.getByRole('button', { name: /focus\.txt/i });
+    await expect(asset).toBeVisible();
+
+    await asset.click({ button: 'right' });
+    await window.getByRole('menuitem', { name: '移入回收站' }).click();
+    await window.getByRole('button', { name: '回收站', exact: true }).click();
+    const trashedAsset = window.getByRole('button', { name: /focus\.txt/i });
+    await expect(trashedAsset).toBeVisible();
+    await trashedAsset.click({ button: 'right' });
+    await window.getByRole('menuitem', { name: '永久删除' }).click();
+    const dialog = window.getByRole('dialog');
+    await expect(dialog.getByRole('button', { name: '永久删除' })).toBeFocused();
+    await window.keyboard.press('Escape');
+    await expect(dialog).toBeHidden();
   } finally {
     await application.close();
     rmSync(temporaryRoot, { force: true, recursive: true });
