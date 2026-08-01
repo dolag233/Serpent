@@ -28,7 +28,7 @@ Windows frameless shell 不显示原生顶部 menu bar，因此原工具栏设�
 
 - `npm run typecheck`
 - `npm run lint`
-- `npx vitest run tests/unit/main-menu-items.test.ts tests/unit/dialog-escape-stack.test.ts tests/unit/application-menu.test.ts`
-- 后台运行 `node scripts/run-e2e.mjs tests/e2e/shell-navigation.test.ts --workers=1`，覆盖入口、顶层分组、默认不展开二级菜单、文件分组 hover 展开和 Escape 关闭。
+- `npx vitest run tests/unit/main-menu-items.test.ts tests/unit/dialog-escape-stack.test.ts`（2 个文件、12 个测试通过）
+- 后台运行 `node scripts/run-e2e.mjs tests/e2e/shell-navigation.test.ts --workers=1`（1 个测试通过），覆盖入口、顶层分组、默认不展开二级菜单、文件/关于分组 hover 展开、两个独立对话框和 Escape 关闭。
 
 Windows 真机视觉与 macOS 对照仍需产品负责人验收；本记录不把自动化结果写成人类验收通过。
