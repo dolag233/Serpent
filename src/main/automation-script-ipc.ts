@@ -241,6 +241,7 @@ export function registerAutomationScriptIpc(options: AutomationScriptIpcOptions)
         'clipboard.write',
         'library.create',
         'file.import',
+        'ui.notify',
       ] as const;
       const created = journal.create({
         source,

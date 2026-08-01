@@ -116,11 +116,14 @@ export class PluginActivationCoordinator {
   }): Promise<void> {
     const safeMode = await this.options.packageManager.getSafeMode();
 
+    // Activation refresh only needs package identity + manifest; full hash verify
+    // blocks open/reload for large packages (e.g. Image Upscaler ~56MB).
     const [userInstalled, libraryInstalled] = await Promise.all([
-      this.options.packageManager.listInstalled({ scope: 'user' }),
+      this.options.packageManager.listInstalled({ scope: 'user', integrity: 'metadata' }),
       this.options.packageManager.listInstalled({
         scope: 'library',
         libraryDirectory: input.libraryDirectory,
+        integrity: 'metadata',
       }),
     ]);
     const pluginIds = new Set<string>();
@@ -251,6 +254,12 @@ export class PluginActivationCoordinator {
           });
         }
         this.#registerContributions(input.libraryId, instanceId, pluginId, candidate.pluginPackage);
+        this.options.logger?.info('plugin.activation.activate-ok', 'Plugin host activated and contributions registered.', {
+          pluginId,
+          libraryId: input.libraryId,
+          mode: candidate.mode,
+          instanceId,
+        });
       } catch (error) {
         this.#revokeContributions(instanceId);
         if (candidate.mode === 'restricted') {
@@ -264,6 +273,28 @@ export class PluginActivationCoordinator {
           libraryId: input.libraryId,
           mode: candidate.mode,
         });
+        try {
+          const { appendFileSync } = await import('node:fs');
+          const { join } = await import('node:path');
+          appendFileSync(
+            join(
+              process.env.SERPENT_E2E_USER_DATA_PATH
+                ?? join(process.env.HOME ?? '/tmp', 'Library/Application Support/Serpent'),
+              'plugin-activation-failures.jsonl',
+            ),
+            `${JSON.stringify({
+              at: new Date().toISOString(),
+              pluginId,
+              libraryId: input.libraryId,
+              mode: candidate.mode,
+              error: error instanceof Error ? error.message : String(error),
+              stack: error instanceof Error ? error.stack : undefined,
+            })}\n`,
+            'utf8',
+          );
+        } catch {
+          // diagnostic only
+        }
       }
     }
 
@@ -277,6 +308,11 @@ export class PluginActivationCoordinator {
   }): Promise<void> {
     this.#openLibraries.set(input.libraryId, input.libraryDirectory);
     await this.refreshLibrary(input);
+  }
+
+  /** Libraries that have received onLibraryOpened (startup restore must call it too). */
+  trackedOpenLibraryIds(): string[] {
+    return [...this.#openLibraries.keys()];
   }
 
   onLibraryClosed(libraryId: string): void {
@@ -439,10 +475,16 @@ export class PluginActivationCoordinator {
     const record = [...(active?.values() ?? [])].find((candidate) =>
       candidate.instanceId === input.instanceId && candidate.pluginId === input.pluginId);
     if (record === undefined || this.options.contributions === undefined) return undefined;
-    const contribution = listWorkspaceViewContributions(this.options.contributions)
-      .find((candidate) => candidate.id === input.contributionId
-        && candidate.pluginInstanceId === input.instanceId
-        && candidate.pluginId === input.pluginId);
+    // Settings / sidebar / inspector / viewer iframes share serpent-plugin:// with workspace views.
+    const contribution = [
+      ...listWorkspaceViewContributions(this.options.contributions),
+      ...listSidebarViewContributions(this.options.contributions),
+      ...listInspectorViewContributions(this.options.contributions),
+      ...listViewerOverlayContributions(this.options.contributions),
+      ...listSettingsPageContributions(this.options.contributions),
+    ].find((candidate) => candidate.id === input.contributionId
+      && candidate.pluginInstanceId === input.instanceId
+      && candidate.pluginId === input.pluginId);
     if (contribution?.entryPath === undefined) return undefined;
     const uiRoot = path.posix.dirname(contribution.entryPath);
     if (input.relativePath !== contribution.entryPath
@@ -473,7 +515,7 @@ export class PluginActivationCoordinator {
     const activeInstanceIds = new Set(
       [...this.#activeByLibrary.entries()]
         .filter(([libraryId]) => input.libraryId === undefined || libraryId === input.libraryId)
-        .flatMap(([, records]) => [...records.keys()]),
+        .flatMap(([, records]) => [...records.values()].map((record) => record.instanceId)),
     );
     if (input.target === 'commands') {
       return listCommandContributions(this.options.contributions)
@@ -643,7 +685,7 @@ export class PluginActivationCoordinator {
     const activeInstanceIds = new Set(
       [...this.#activeByLibrary.entries()]
         .filter(([libraryId]) => input.libraryId === undefined || libraryId === input.libraryId)
-        .flatMap(([, records]) => [...records.keys()]),
+        .flatMap(([, records]) => [...records.values()].map((record) => record.instanceId)),
     );
     return listMcpCommandContributions(this.options.contributions)
       .filter((contribution) => activeInstanceIds.has(contribution.pluginInstanceId));

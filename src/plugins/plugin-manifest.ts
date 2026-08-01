@@ -183,6 +183,7 @@ export const pluginPermissionSchema = z.enum([
   'ui.inspector',
   'ui.viewer',
   'ui.settings',
+  'ui.notify',
   'input.shortcut',
   'input.capture.viewer',
   'input.capture.application',

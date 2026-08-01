@@ -714,4 +714,76 @@ describe('PluginPackageManager selection, updates and Safe Mode', () => {
 
     await expect(manager.listInstalled({ scope: 'user' })).resolves.toEqual([]);
   });
+
+  it('lists installed package metadata without re-hashing package bytes', async () => {
+    const source = temporaryRoot('serpent-plugin-metadata-source-');
+    const userData = temporaryRoot('serpent-plugin-metadata-user-');
+    writePlugin(source, { version: '1.0.0' });
+    const manager = createManager(userData);
+    const installed = await manager.installFromDirectory({
+      directory: source,
+      scope: 'user',
+      source: { kind: 'local-directory', fingerprint: 'local:metadata' },
+    });
+    // Corrupt a non-entry file after install. Full verify would fail; metadata list
+    // still trusts the lock and reads the manifest for the settings UI hot path.
+    writeFileSync(path.join(installed.packageDirectory, 'README.md'), 'tampered after install\n');
+
+    await expect(manager.listInstalled({ scope: 'user', integrity: 'metadata' })).resolves.toMatchObject([
+      { status: 'valid', package: { lock: { pluginId: 'com.example.palette-tools', version: '1.0.0' } } },
+    ]);
+    await expect(manager.listInstalled({ scope: 'user', integrity: 'verify' })).resolves.toMatchObject([
+      { status: 'invalid', errorCode: 'PLUGIN_PACKAGE_INTEGRITY_MISMATCH' },
+    ]);
+  });
+
+  it('clears stale resolutions after uninstall so reinstall can enable without a false update prompt', async () => {
+    const sourceV1 = temporaryRoot('serpent-plugin-reinstall-v1-');
+    const sourceV2 = temporaryRoot('serpent-plugin-reinstall-v2-');
+    const userData = temporaryRoot('serpent-plugin-reinstall-user-');
+    const library = temporaryRoot('serpent-plugin-reinstall-library-');
+    writePlugin(sourceV1, { runtime: 'unrestricted', version: '1.0.0' });
+    writePlugin(sourceV2, { runtime: 'unrestricted', version: '2.0.0' });
+    const manager = createManager(userData);
+    const first = await manager.installFromDirectory({
+      directory: sourceV1,
+      scope: 'user',
+      source: { kind: 'local-directory', fingerprint: 'local:reinstall-v1' },
+    });
+    await manager.chooseResolution({
+      libraryId: 'library-a',
+      pluginId: first.package.lock.pluginId,
+      selection: 'use-global',
+      packageHash: first.package.lock.packageHash,
+    });
+
+    await manager.uninstall({
+      scope: 'user',
+      pluginId: first.package.lock.pluginId,
+      version: first.package.lock.version,
+    });
+    const second = await manager.installFromDirectory({
+      directory: sourceV2,
+      scope: 'user',
+      source: { kind: 'local-directory', fingerprint: 'local:reinstall-v2' },
+    });
+
+    await expect(manager.resolve({
+      libraryId: 'library-a',
+      libraryDirectory: library,
+      pluginId: second.package.lock.pluginId,
+    })).resolves.toMatchObject({ status: 'disabled', reason: 'user-disabled' });
+
+    await manager.chooseResolution({
+      libraryId: 'library-a',
+      pluginId: second.package.lock.pluginId,
+      selection: 'use-global',
+      packageHash: second.package.lock.packageHash,
+    });
+    await expect(manager.resolve({
+      libraryId: 'library-a',
+      libraryDirectory: library,
+      pluginId: second.package.lock.pluginId,
+    })).resolves.toMatchObject({ status: 'resolved', selection: 'use-global' });
+  });
 });

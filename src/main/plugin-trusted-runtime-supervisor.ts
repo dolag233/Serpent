@@ -89,6 +89,7 @@ type TrackedInstance = {
   instanceId: string;
   child: RuntimeChild;
   ready: boolean;
+  activated: boolean;
   libraryId: string;
   libraryDirectory: string;
   pluginId: string;
@@ -96,7 +97,9 @@ type TrackedInstance = {
   permissions: readonly PluginPermission[];
   installScope: 'user' | 'library';
   readyWaiters: Array<{ resolve(): void; reject(error: Error): void }>;
+  activateWaiters: Array<{ resolve(): void; reject(error: Error): void }>;
   readyTimer: ReturnType<typeof setTimeout> | undefined;
+  activateTimer: ReturnType<typeof setTimeout> | undefined;
   lastHeartbeatAt: number;
   heartbeatWatch: ReturnType<typeof setInterval> | undefined;
 };
@@ -169,6 +172,7 @@ export class PluginTrustedRuntimeSupervisor {
       instanceId: input.instanceId,
       child,
       ready: false,
+      activated: false,
       libraryId: input.libraryId,
       libraryDirectory: input.libraryDirectory,
       pluginId: input.pluginId,
@@ -176,7 +180,9 @@ export class PluginTrustedRuntimeSupervisor {
       permissions: input.permissions,
       installScope: input.installScope ?? 'library',
       readyWaiters: [],
+      activateWaiters: [],
       readyTimer: undefined,
+      activateTimer: undefined,
       lastHeartbeatAt: 0,
       heartbeatWatch: undefined,
     };
@@ -203,6 +209,11 @@ export class PluginTrustedRuntimeSupervisor {
     }, READY_TIMEOUT_MS);
 
     await this.#waitReady(tracked);
+    const activateDeadlineMs = input.activateDeadlineMs ?? 15_000;
+    tracked.activateTimer = setTimeout(() => {
+      this.#failActivate(tracked, new Error('Trusted plugin activate() timed out.'));
+      this.deactivate(input.instanceId, 'supervisor-shutdown');
+    }, activateDeadlineMs);
     this.#post(tracked, {
       type: 'plugin-trusted.activate',
       instanceId: input.instanceId,
@@ -214,8 +225,9 @@ export class PluginTrustedRuntimeSupervisor {
       entryRelativePath: input.entryRelativePath,
       permissions: [...input.permissions],
       installScope: input.installScope ?? 'library',
-      activateDeadlineMs: input.activateDeadlineMs ?? 15_000,
+      activateDeadlineMs,
     });
+    await this.#waitActivated(tracked);
   }
 
   deactivate(instanceId: string, reason: PluginRuntimeDeactivateReason): void {
@@ -632,9 +644,23 @@ export class PluginTrustedRuntimeSupervisor {
     });
   }
 
+  #waitActivated(tracked: TrackedInstance): Promise<void> {
+    if (tracked.activated) return Promise.resolve();
+    return new Promise((resolve, reject) => {
+      tracked.activateWaiters.push({ resolve, reject });
+    });
+  }
+
   #failReady(tracked: TrackedInstance, error: Error): void {
     if (tracked.readyTimer !== undefined) clearTimeout(tracked.readyTimer);
     const waiters = tracked.readyWaiters.splice(0);
+    for (const waiter of waiters) waiter.reject(error);
+    this.#failActivate(tracked, error);
+  }
+
+  #failActivate(tracked: TrackedInstance, error: Error): void {
+    if (tracked.activateTimer !== undefined) clearTimeout(tracked.activateTimer);
+    const waiters = tracked.activateWaiters.splice(0);
     for (const waiter of waiters) waiter.reject(error);
   }
 
@@ -646,6 +672,13 @@ export class PluginTrustedRuntimeSupervisor {
     this.#startHeartbeatWatch(tracked);
   }
 
+  #markActivated(tracked: TrackedInstance): void {
+    tracked.activated = true;
+    if (tracked.activateTimer !== undefined) clearTimeout(tracked.activateTimer);
+    const waiters = tracked.activateWaiters.splice(0);
+    for (const waiter of waiters) waiter.resolve();
+  }
+
   #post(tracked: TrackedInstance, message: PluginTrustedParentMessage): void {
     tracked.child.postMessage(message);
   }
@@ -655,6 +688,8 @@ export class PluginTrustedRuntimeSupervisor {
     if (tracked === undefined) return;
     this.#stopHeartbeatWatch(tracked);
     if (tracked.readyTimer !== undefined) clearTimeout(tracked.readyTimer);
+    if (tracked.activateTimer !== undefined) clearTimeout(tracked.activateTimer);
+    this.#failActivate(tracked, new Error('Trusted plugin host ended before activate completed.'));
     this.#instances.delete(instanceId);
   }
 
@@ -719,6 +754,7 @@ export class PluginTrustedRuntimeSupervisor {
       return;
     }
     if (message.type === 'plugin-trusted.activated') {
+      this.#markActivated(tracked);
       this.options.onInstanceActivated?.({
         instanceId: message.instanceId,
         libraryId: tracked.libraryId,
@@ -727,6 +763,7 @@ export class PluginTrustedRuntimeSupervisor {
       return;
     }
     if (message.type === 'plugin-trusted.activation-failed') {
+      this.#failActivate(tracked, new Error(message.message || message.code));
       this.options.onCrash?.({
         instanceId: tracked.instanceId,
         libraryId: tracked.libraryId,

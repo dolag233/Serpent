@@ -204,6 +204,15 @@ return { selected: selected.length, ...result };
 
 路径已写入系统剪贴板，但返回值只包含 `copiedCount`，不会在脚本输出或日志中暴露路径。
 
+### 用户提示
+
+```js
+await serpent.ui.notify({ severity: 'info', message: '已完成扫描' });
+await serpent.ui.notify({ severity: 'warning', message: '部分模型缺失', mode: 'dialog' });
+```
+
+`severity` 为 `info` / `warning` / `error`；默认 `mode: 'toast'` 走顶部提示条，`dialog` 为需确认的阻塞窗。MCP 工具名为 `serpent_ui_notify`。不要求已打开资源库。
+
 ### 3. 给指定文件夹的文件名追加第一个 tag
 
 ```ts

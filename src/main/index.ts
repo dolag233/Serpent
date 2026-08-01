@@ -77,6 +77,7 @@ import {
   REVEAL_APP_LOG_CHANNEL,
   READ_APP_LOG_CHANNEL,
   SHOW_EDIT_CONTEXT_MENU_CHANNEL,
+  SHELL_NOTIFY_CHANNEL,
   SHELL_SWIPE_CHANNEL,
   WINDOW_FOCUS_CHANNEL,
   DESKTOP_AUTOMATION_SELECTION_CHANNEL,
@@ -92,6 +93,7 @@ import {
   createAutomationCommandGateway,
   type AutomationCommandGateway,
 } from '../automation/command-gateway';
+import { sanitizeShellNotifyTitle } from '../shared/shell-notify';
 import { AutomationLibraryWorkerAdapter } from './automation-worker-adapter';
 import {
   createDesktopAutomationFilePlanApprovalHandler,
@@ -1298,6 +1300,24 @@ async function processAiQueue(libraryId: string): Promise<void> {
   const config = loadAiConfig();
   aiQueueScheduler.setRetryPolicy(config.reliabilitySettings);
   await aiQueueScheduler.trigger(libraryId);
+}
+
+/** Shared post-open hook for dialog opens and startup recent-library restore. */
+async function notifyLibraryOpenedSideEffects(input: {
+  libraryId: string;
+  libraryDirectory: string;
+}): Promise<void> {
+  void processAiQueue(input.libraryId);
+  try {
+    await pluginActivationCoordinator?.onLibraryOpened({
+      libraryId: input.libraryId,
+      libraryDirectory: input.libraryDirectory,
+    });
+  } catch (error) {
+    logger?.error("plugin.activation.library-opened", error, {
+      libraryId: input.libraryId,
+    });
+  }
 }
 
 async function processAiQueueBatch(
@@ -3323,12 +3343,11 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
         workerResult.type === "library.opened"
           ? workerResult.library.libraryPath
           : workerResult.libraryPath;
-      void processAiQueue(openedLibraryId);
-      void pluginActivationCoordinator?.onLibraryOpened({
+      notifyLibraryOpenedSideEffects({
         libraryId: openedLibraryId,
         libraryDirectory: openedLibraryPath,
       }).catch((error) => {
-        logger?.error('plugin.activation.library-opened', error, {
+        logger?.error("plugin.activation.library-opened", error, {
           libraryId: openedLibraryId,
         });
       });
@@ -4090,6 +4109,22 @@ async function startApplication(): Promise<void> {
           clipboard.writeText(workerResult.absolutePaths.join('\n'));
         },
       },
+      uiNotifyHandler: {
+        notify: (input) => {
+          if (!mainWindow || mainWindow.isDestroyed()) {
+            throw new Error('The Serpent window is not available to show a notification.');
+          }
+          const payload = {
+            severity: input.severity,
+            mode: input.mode,
+            message: input.message.trim().slice(0, 500),
+            ...(input.mode === 'dialog'
+              ? { title: sanitizeShellNotifyTitle(input.title, input.severity) }
+              : {}),
+          };
+          mainWindow.webContents.send(SHELL_NOTIFY_CHANNEL, payload);
+        },
+      },
       filePlanApprovalHandler: createDesktopAutomationFilePlanApprovalHandler({
         workerClient: automationWorkerAdapter,
         confirm: confirmDesktopAutomationFilePlan,
@@ -4547,6 +4582,20 @@ async function startApplication(): Promise<void> {
         {
           code: restored.ok ? "UNEXPECTED_RESULT" : restored.error.code,
           reason: restored.ok ? undefined : restored.error.reason,
+        },
+      );
+    } else {
+      // Startup restore bypasses handleLibraryRequest; still must activate plugins.
+      // Await so contributions exist before the renderer shell lists menus/settings.
+      await notifyLibraryOpenedSideEffects({
+        libraryId: restored.library.libraryId,
+        libraryDirectory: restored.library.libraryPath,
+      });
+      logger.info(
+        "recent-library.restored",
+        "Reopened the recent library and completed plugin activation request.",
+        {
+          libraryId: restored.library.libraryId,
         },
       );
     }

@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { writeFileSync } from 'node:fs';
 import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -497,6 +498,38 @@ export function createPluginPackageRequestHandler(options: PluginPackageIpcOptio
           ...(request.libraryId === undefined ? {} : { libraryId: request.libraryId }),
           ...(request.target === undefined ? {} : { target: request.target }),
         }) ?? [];
+        try {
+          const active = request.libraryId === undefined
+            ? []
+            : (options.activationCoordinator?.listActiveInstances(request.libraryId) ?? []);
+          writeFileSync(
+            path.join(
+              process.env.SERPENT_E2E_USER_DATA_PATH
+                ?? path.join(process.env.HOME ?? '/tmp', 'Library/Application Support/Serpent'),
+              'plugin-contrib-diag.json',
+            ),
+            `${JSON.stringify({
+              at: new Date().toISOString(),
+              libraryId: request.libraryId ?? null,
+              target: request.target ?? null,
+              trackedOpenLibraries:
+                options.activationCoordinator?.trackedOpenLibraryIds() ?? [],
+              active,
+              contributionCount: contributions.length,
+              contributions: contributions.map((item) => ({
+                kind: item.kind,
+                id: item.id,
+                pluginId: item.pluginId,
+                pluginInstanceId: item.pluginInstanceId,
+                target: item.target,
+                entryPath: 'entryPath' in item ? item.entryPath : undefined,
+              })),
+            }, null, 2)}\n`,
+            'utf8',
+          );
+        } catch {
+          // diagnostic only
+        }
         return {
           ok: true,
           contributions: contributions.map((contribution) => {
@@ -724,8 +757,10 @@ export function createPluginPackageRequestHandler(options: PluginPackageIpcOptio
         });
       }
 
-      // Settings list also drives update discovery and optional auto-update apply.
-      if (request.type === 'plugin-manager.list'
+      // GitHub auto-update apply + remote update discovery are intentionally not
+      // on the hot settings-list path (large packages + network). Run them on
+      // reload / install / explicit update actions instead.
+      if (request.type === 'plugin-manager.reload'
         || request.type === 'plugin-manager.install-github'
         || request.type === 'plugin-manager.update-github'
         || request.type === 'plugin-manager.set-auto-update') {
@@ -757,13 +792,22 @@ export function createPluginPackageRequestHandler(options: PluginPackageIpcOptio
         }
       }
 
+      const listIntegrity = request.type === 'plugin-manager.reload' ? 'verify' as const : 'metadata' as const;
       const [user, library] = await Promise.all([
-        options.manager.listInstalled({ scope: 'user' }),
+        options.manager.listInstalled({ scope: 'user', integrity: listIntegrity }),
         libraryDirectory === undefined
           ? Promise.resolve([])
-          : options.manager.listInstalled({ scope: 'library', libraryDirectory }),
+          : options.manager.listInstalled({
+            scope: 'library',
+            libraryDirectory,
+            integrity: listIntegrity,
+          }),
       ]);
-      const githubClient = createGitHubPluginClient();
+      const checkRemoteUpdates = request.type === 'plugin-manager.reload'
+        || request.type === 'plugin-manager.install-github'
+        || request.type === 'plugin-manager.update-github'
+        || request.type === 'plugin-manager.set-auto-update';
+      const githubClient = checkRemoteUpdates ? createGitHubPluginClient() : undefined;
       const packages = await Promise.all([...user, ...library].map(async (entry) => {
         const base = summary(entry);
         if (entry.status !== 'valid' || entry.package.lock.source.kind !== 'github') {
@@ -774,22 +818,24 @@ export function createPluginPackageRequestHandler(options: PluginPackageIpcOptio
           sourceFingerprint: entry.package.lock.sourceFingerprint,
         });
         let availableUpdate: PluginManagerPackageSummary['availableUpdate'];
-        try {
-          const found = await options.manager.findGitHubAvailableUpdate({
-            package: entry.package,
-            client: githubClient,
-          });
-          if (found !== undefined) {
-            availableUpdate = {
-              version: found.version,
-              tag: found.tag,
-              assetName: found.assetName,
-            };
+        if (checkRemoteUpdates && githubClient !== undefined) {
+          try {
+            const found = await options.manager.findGitHubAvailableUpdate({
+              package: entry.package,
+              client: githubClient,
+            });
+            if (found !== undefined) {
+              availableUpdate = {
+                version: found.version,
+                tag: found.tag,
+                assetName: found.assetName,
+              };
+            }
+          } catch (error) {
+            options.logger?.error('plugin.check-update', error, {
+              pluginId: entry.package.lock.pluginId,
+            });
           }
-        } catch (error) {
-          options.logger?.error('plugin.check-update', error, {
-            pluginId: entry.package.lock.pluginId,
-          });
         }
         return {
           ...base,

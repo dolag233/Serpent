@@ -11,7 +11,7 @@ import path from 'node:path';
 
 import { z } from 'zod';
 
-import { type PluginManifest, parseSemver, pluginIdSchema, validatePluginManifestCompatibility } from '../plugins/plugin-manifest';
+import { type PluginManifest, parseSemver, pluginIdSchema, pluginManifestSchema, PLUGIN_MANIFEST_FILE_NAME, validatePluginManifestCompatibility } from '../plugins/plugin-manifest';
 import {
   currentPluginPlatformToken,
   isPluginPlatformToken,
@@ -615,14 +615,22 @@ export class PluginPackageManager {
   async listInstalled(input: {
     scope: PluginInstallationScope;
     libraryDirectory?: string;
+    /**
+     * `metadata` — lock + manifest + entry presence (settings UI / resolve).
+     * `verify` — full content hash (install / reload integrity).
+     */
+    integrity?: 'verify' | 'metadata';
   }): Promise<PluginInstalledPackageStatus[]> {
     const locks = await this.#readPackageLocks(input.scope, input.libraryDirectory);
     const root = this.#packageStoreRoot(input.scope, input.libraryDirectory);
     const deviceState = await this.#readDeviceState();
+    const integrity = input.integrity ?? 'verify';
     const installed: PluginInstalledPackageStatus[] = [];
     for (const lock of locks) {
       const packageDirectory = directoryPathForPackage(root, lock);
-      const verified = await this.#readInstalledAt(packageDirectory, input.scope, lock);
+      const verified = integrity === 'metadata'
+        ? await this.#readInstalledMetadata(packageDirectory, input.scope, lock)
+        : await this.#readInstalledAt(packageDirectory, input.scope, lock);
       if (verified === undefined) {
         installed.push({
           status: 'invalid',
@@ -860,18 +868,21 @@ export class PluginPackageManager {
     });
     const state = await this.#readDeviceState();
     state.trustDecisions = state.trustDecisions.filter((decision) => decision.packageHash !== removed.packageHash);
-    if (input.libraryId !== undefined) {
-      state.resolutions = state.resolutions.map((resolution) => resolution.libraryId === input.libraryId
-        && resolution.pluginId === input.pluginId
-        && resolution.packageHash === removed.packageHash
-        ? {
-          ...resolution,
-          selection: 'disabled' as const,
-          packageHash: undefined,
-          updatePolicy: 'follow-latest' as const,
-        }
-        : resolution);
-    }
+    const remainingSamePlugin = locks.filter((lock) => lock !== removed && lock.pluginId === input.pluginId);
+    // Drop resolutions pinned to the removed bytes. Always do this — user-scoped
+    // uninstalls often omit libraryId, and leaving a stale packageHash blocks
+    // reinstall enable toggles behind a dead requires-confirmation state.
+    state.resolutions = state.resolutions.filter((resolution) => {
+      if (resolution.pluginId !== input.pluginId) return true;
+      if (resolution.packageHash === removed.packageHash) return false;
+      if (remainingSamePlugin.length === 0) {
+        if (input.libraryId !== undefined) return resolution.libraryId !== input.libraryId;
+        // Last copy of this plugin id in this scope is gone: clear every library's
+        // resolution so the next install starts from default (unrestricted off).
+        return false;
+      }
+      return true;
+    });
     await this.#writeDeviceState(state);
   }
 
@@ -919,7 +930,28 @@ export class PluginPackageManager {
       ? latest
       : candidates.find((candidate) => candidate.lock.packageHash === saved.packageHash);
     if (current === undefined) {
-      return { status: 'requires-confirmation', reason: 'selected-package-unavailable', current: latest };
+      // Selected bytes are gone (typical after uninstall + reinstall). Do not
+      // surface a false "update confirmation"; re-apply defaults for the latest.
+      if (latest.manifest.runtime.mode === 'unrestricted') {
+        await this.chooseResolution({
+          libraryId: input.libraryId,
+          pluginId: input.pluginId,
+          selection: 'disabled',
+        });
+        return { status: 'disabled', reason: 'user-disabled' };
+      }
+      await this.chooseResolution({
+        libraryId: input.libraryId,
+        pluginId: input.pluginId,
+        selection,
+        packageHash: latest.lock.packageHash,
+      });
+      return this.#resolvedOrAwaitingTrust(
+        await this.#readDeviceState(),
+        input.libraryId,
+        selection,
+        latest,
+      );
     }
     if (current.lock.packageHash !== latest.lock.packageHash) {
       if (saved?.updatePolicy === 'pinned') {
@@ -1031,7 +1063,7 @@ export class PluginPackageManager {
   }
 
   async #validPackages(scope: PluginInstallationScope, libraryDirectory?: string): Promise<InstalledPluginPackage[]> {
-    const installed = await this.listInstalled({ scope, libraryDirectory });
+    const installed = await this.listInstalled({ scope, libraryDirectory, integrity: 'metadata' });
     return installed.flatMap((entry) => entry.status === 'valid' ? [entry.package] : []);
   }
 
@@ -1081,6 +1113,43 @@ export class PluginPackageManager {
       nodeAbi: this.options.nodeAbi,
     });
     if (!compatibility.ok) throw new PluginPackageManagerError('PLUGIN_PACKAGE_INCOMPATIBLE', compatibility.message);
+  }
+
+  async #readInstalledMetadata(
+    packageDirectory: string,
+    scope: PluginInstallationScope,
+    lock: PluginPackageLock,
+  ): Promise<PluginInstalledPackageStatus | undefined> {
+    try {
+      await lstat(packageDirectory);
+      const manifestRaw = await readFile(path.join(packageDirectory, PLUGIN_MANIFEST_FILE_NAME), 'utf8');
+      const manifest = pluginManifestSchema.parse(JSON.parse(manifestRaw));
+      if (manifest.id !== lock.pluginId || manifest.version !== lock.version) {
+        return {
+          status: 'invalid',
+          package: lock,
+          scope,
+          errorCode: 'PLUGIN_PACKAGE_INTEGRITY_MISMATCH',
+          message: 'The installed plugin manifest no longer matches its lock metadata.',
+        };
+      }
+      const entryAbsolute = path.join(packageDirectory, ...manifest.runtime.entry.split('/'));
+      await lstat(entryAbsolute);
+      return {
+        status: 'valid',
+        package: { lock, manifest, scope, packageDirectory },
+        trust: undefined,
+      };
+    } catch (error: unknown) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+      return {
+        status: 'invalid',
+        package: lock,
+        scope,
+        errorCode: 'PLUGIN_PACKAGE_INTEGRITY_MISMATCH',
+        message: error instanceof Error ? error.message : 'The installed plugin package metadata could not be read.',
+      };
+    }
   }
 
   async #readInstalledAt(

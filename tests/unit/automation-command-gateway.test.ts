@@ -129,7 +129,7 @@ class RecordingWorker implements AutomationWorkerClient {
 
 describe('Automation Command Registry', () => {
   it('contains complete read/write descriptors and exports JSON/TypeScript contracts', () => {
-    expect(automationCommandRegistry).toHaveLength(38);
+    expect(automationCommandRegistry).toHaveLength(39);
     expect(new Set(automationCommandRegistry.map((command) => command.commandId)).size)
       .toBe(automationCommandRegistry.length);
     const registryIds = new Set(automationCommandRegistry.map((command) => command.commandId));
@@ -1405,6 +1405,59 @@ describe('Automation Command Gateway', () => {
       },
     });
     expect(worker.commands).toHaveLength(0);
+  });
+
+  it('delivers ui.notify via Main handler without Worker and without a bound library', async () => {
+    const worker = new RecordingWorker({ ok: true, type: 'tag.list', tags: [] });
+    const notified: unknown[] = [];
+    const commandGateway = createAutomationCommandGateway(
+      worker,
+      resolver({
+        libraryId: null,
+        grantedCapabilities: ['ui.notify'],
+      }),
+      {
+        uiNotifyHandler: {
+          notify: (input) => {
+            notified.push(input);
+          },
+        },
+      },
+    );
+
+    await expect(commandGateway.execute(request('ui.notify', {
+      severity: 'warning',
+      message: 'Model download finished.',
+      mode: 'toast',
+    }))).resolves.toMatchObject({
+      ok: true,
+      commandId: 'ui.notify',
+      result: { shown: true, mode: 'toast', severity: 'warning' },
+    });
+    expect(notified).toEqual([{
+      severity: 'warning',
+      message: 'Model download finished.',
+      mode: 'toast',
+    }]);
+    expect(worker.commands).toHaveLength(0);
+  });
+
+  it('rejects ui.notify without the ui.notify capability', async () => {
+    const worker = new RecordingWorker({ ok: true, type: 'tag.list', tags: [] });
+    const commandGateway = createAutomationCommandGateway(
+      worker,
+      resolver({ grantedCapabilities: [...allReadCapabilities] }),
+      {
+        uiNotifyHandler: { notify: () => undefined },
+      },
+    );
+    await expect(commandGateway.execute(request('ui.notify', {
+      severity: 'info',
+      message: 'hello',
+    }))).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'AUTOMATION_CAPABILITY_DENIED' },
+    });
   });
 
   it('rejects cross-session execution.status peek', async () => {

@@ -25,6 +25,7 @@ import {
   REVEAL_APP_LOG_CHANNEL,
   READ_APP_LOG_CHANNEL,
   SHOW_EDIT_CONTEXT_MENU_CHANNEL,
+  SHELL_NOTIFY_CHANNEL,
   SHELL_SWIPE_CHANNEL,
   WINDOW_FOCUS_CHANNEL,
   DESKTOP_AUTOMATION_SELECTION_CHANNEL,
@@ -96,6 +97,7 @@ import {
   type SerpentShellApi,
   type ShellSwipeDirection,
 } from '../shared/external-url';
+import { shellNotifyPayloadSchema } from '../shared/shell-notify';
 import {
   desktopControlSelectionEventSchema,
   desktopBrowseActionSchema,
@@ -1917,6 +1919,17 @@ const shell: SerpentShellApi = Object.freeze({
     ipcRenderer.on(INVERT_SELECTION_CHANNEL, handler);
     return () => {
       ipcRenderer.removeListener(INVERT_SELECTION_CHANNEL, handler);
+    };
+  },
+  onShellNotify(listener) {
+    const handler = (_event: Electron.IpcRendererEvent, input: unknown) => {
+      const parsed = shellNotifyPayloadSchema.safeParse(input);
+      if (!parsed.success) return;
+      listener(parsed.data);
+    };
+    ipcRenderer.on(SHELL_NOTIFY_CHANNEL, handler);
+    return () => {
+      ipcRenderer.removeListener(SHELL_NOTIFY_CHANNEL, handler);
     };
   },
   onCopySelection(listener: () => void): () => void {

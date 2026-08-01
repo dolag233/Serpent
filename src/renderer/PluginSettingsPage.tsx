@@ -72,7 +72,32 @@ function canTogglePluginEnabled(
   if (resolution === undefined) return false;
   if (resolution.status === 'resolved') return true;
   if (resolution.status === 'disabled' && resolution.reason === 'user-disabled') return true;
+  if (resolution.status === 'requires-confirmation') return true;
   return false;
+}
+
+function confirmationPackage(
+  resolution: Extract<PluginManagerResolutionSummary, { status: 'requires-confirmation' }>,
+): PluginManagerResolutionCandidate {
+  return resolution.candidate ?? resolution.current;
+}
+
+function confirmationHintKey(
+  reason: Extract<PluginManagerResolutionSummary, { status: 'requires-confirmation' }>['reason'],
+): 'settings.pluginUpdateNeedsConfirmation'
+  | 'settings.pluginConfirmPermissionsIncreased'
+  | 'settings.pluginConfirmRuntimeChanged'
+  | 'settings.pluginConfirmSourceChanged' {
+  switch (reason) {
+    case 'permissions-increased':
+      return 'settings.pluginConfirmPermissionsIncreased';
+    case 'runtime-mode-changed':
+      return 'settings.pluginConfirmRuntimeChanged';
+    case 'source-changed':
+      return 'settings.pluginConfirmSourceChanged';
+    case 'selected-package-unavailable':
+      return 'settings.pluginUpdateNeedsConfirmation';
+  }
 }
 
 function shellApi(): RendererShellApi | undefined {
@@ -373,7 +398,7 @@ export function PluginSettingsPage({
                       onClick={() => void execute({
                         type: 'plugin-manager.uninstall',
                         scope: newest.scope,
-                        ...(newest.scope === 'library' && libraryId !== undefined ? { libraryId } : {}),
+                        ...(libraryId === undefined ? {} : { libraryId }),
                         pluginId,
                         version: newest.version,
                       })}
@@ -586,23 +611,24 @@ export function PluginSettingsPage({
 
               {resolution?.status === 'requires-confirmation' ? (
                 <div className="plugin-settings-resolution">
-                  <span>{t('settings.pluginUpdateNeedsConfirmation')}</span>
-                  {resolution.candidate === undefined ? null : (
-                    <button
-                      className="secondary-button"
-                      disabled={busy || libraryId === undefined}
-                      onClick={() => void execute({
+                  <span>{t(confirmationHintKey(resolution.reason))}</span>
+                  <button
+                    className="secondary-button"
+                    disabled={busy || libraryId === undefined}
+                    onClick={() => {
+                      const target = confirmationPackage(resolution);
+                      void execute({
                         type: 'plugin-manager.resolve',
                         libraryId: libraryId!,
                         pluginId,
-                        selection: resolution.candidate!.scope === 'user' ? 'use-global' : 'use-library',
-                        packageHash: resolution.candidate!.packageHash,
-                      })}
-                      type="button"
-                    >
-                      {candidateLabel(resolution.candidate, t)}
-                    </button>
-                  )}
+                        selection: target.scope === 'user' ? 'use-global' : 'use-library',
+                        packageHash: target.packageHash,
+                      });
+                    }}
+                    type="button"
+                  >
+                    {candidateLabel(confirmationPackage(resolution), t)}
+                  </button>
                   <button
                     className="secondary-button"
                     disabled={busy || libraryId === undefined}

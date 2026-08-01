@@ -446,6 +446,11 @@ const guestCommandDefinitions: readonly SerpentGuestCommandDefinition[] = [
     commandId: 'asset.palette.aggregate-recent',
     buildInput: (input = {}) => input,
   },
+  {
+    path: 'ui.notify',
+    commandId: 'ui.notify',
+    buildInput: (input = {}) => input,
+  },
 ];
 
 export const SERPENT_GUEST_COMMANDS = guestCommandDefinitions;
@@ -478,6 +483,7 @@ export const SERPENT_GUEST_NAMESPACES = [
   'files',
   'trash',
   'palettes',
+  'ui',
 ] as const;
 
 function setNestedMethod(

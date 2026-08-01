@@ -6,7 +6,10 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { createPluginPackageRequestHandler } from '../../src/main/plugin-package-ipc';
 import { PluginPackageManager } from '../../src/main/plugin-package-manager';
-import { pluginManagerRequestSchema } from '../../src/shared/plugin-manager-api';
+import {
+  parsePluginManagerResponse,
+  pluginManagerRequestSchema,
+} from '../../src/shared/plugin-manager-api';
 import manifestFixture from '../fixtures/plugin-manifests/palette-tools.serpent-plugin.json';
 
 const roots: string[] = [];
@@ -559,5 +562,63 @@ describe('Plugin package IPC bridge', () => {
       pluginId: installed.package.lock.pluginId,
       packageHash: installed.package.lock.packageHash,
     })).resolves.toMatchObject({ ok: true, resolutions: [{ status: 'resolved' }] });
+  });
+
+  it('enriches settings.pages with serpent-plugin:// url and survives Preload parse', async () => {
+    const userData = temporaryRoot('serpent-plugin-ipc-contrib-user-');
+    const instanceId = '59847245-d394-4012-ad75-35f837393a8f';
+    const handler = createPluginPackageRequestHandler({
+      manager: createManager(userData),
+      resolveLibraryDirectory: async () => userData,
+      chooseLocalPackage: async () => undefined,
+      activationCoordinator: {
+        listContributions: ({ libraryId, target }: { libraryId?: string; target?: string }) => {
+          expect(libraryId).toBe('library-a');
+          expect(target).toBe('settings.pages');
+          return [{
+            kind: 'view' as const,
+            id: 'com.example.probe.settings-page',
+            pluginId: 'com.example.probe',
+            pluginInstanceId: instanceId,
+            title: 'Probe settings',
+            target: 'settings.pages' as const,
+            entryPath: 'entry/ui/settings.html',
+          }];
+        },
+        listActiveInstances: () => [{
+          pluginId: 'com.example.probe',
+          instanceId,
+          packageHash: 'a'.repeat(64),
+        }],
+        trackedOpenLibraryIds: () => ['library-a'],
+      } as never,
+    });
+
+    const raw = await handler({
+      type: 'plugin-manager.list-contributions',
+      libraryId: 'library-a',
+      target: 'settings.pages',
+    });
+    expect(raw).toMatchObject({
+      ok: true,
+      contributions: [{
+        kind: 'view',
+        target: 'settings.pages',
+        entryPath: 'entry/ui/settings.html',
+        url: expect.stringMatching(
+          /^serpent-plugin:\/\/com\.example\.probe\/59847245-d394-4012-ad75-35f837393a8f\/entry\/ui\/settings\.html/u,
+        ),
+      }],
+    });
+
+    const parsed = parsePluginManagerResponse(raw);
+    expect(parsed.ok).toBe(true);
+    if (!('contributions' in parsed)) throw new Error('expected contributions');
+    expect(parsed.contributions).toHaveLength(1);
+    expect(parsed.contributions[0]).toMatchObject({
+      kind: 'view',
+      target: 'settings.pages',
+      url: expect.stringMatching(/^serpent-plugin:\/\//u),
+    });
   });
 });

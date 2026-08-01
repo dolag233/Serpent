@@ -710,6 +710,9 @@ export const en = {
       importContinueFailed: "Couldn't continue import",
       importValidateFailed: "Couldn't validate import",
       libraryImportFailed: "Couldn't import library",
+      automationNotice: "Notice",
+      automationWarning: "Warning",
+      automationError: "Couldn't complete the action",
       confirm: "OK"
     },
     deleteLinked: {
@@ -979,7 +982,10 @@ export const en = {
     pluginUseUserVersion: "Use global version {version}",
     pluginUseLibraryVersion: "Use library version {version}",
     pluginDisable: "Disable",
-    pluginUpdateNeedsConfirmation: "This update changed its source, runtime, permissions, or selected version. Choose deliberately before it can run.",
+    pluginUpdateNeedsConfirmation: "Confirm before continuing with the available plugin package.",
+    pluginConfirmPermissionsIncreased: "This update requests additional permissions. Confirm before enabling.",
+    pluginConfirmRuntimeChanged: "This update changed the runtime mode. Confirm before enabling.",
+    pluginConfirmSourceChanged: "This update came from a different source. Confirm before enabling.",
     pluginHostSettingsTitle: "Plugin settings",
     pluginHostSettingsHint: "Host-rendered settings from the plugin manifest. Values persist across library reopen; active plugins can read mirrored values via serpent.storage.get('settings.<id>').",
     pluginSettingsLoading: "Loading plugin settings…",

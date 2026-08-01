@@ -1179,6 +1179,7 @@ export async function runQuickJsSandboxPrototype(
       const smartCollections = context.newObject();
       const trash = context.newObject();
       const palettes = context.newObject();
+      const ui = context.newObject();
       const jobs = context.newObject();
       const mediaJobs = context.newObject();
       const aiJobs = context.newObject();
@@ -1215,6 +1216,7 @@ export async function runQuickJsSandboxPrototype(
         files,
         trash,
         palettes,
+        ui,
       };
       const sharedGuestFunctions = SERPENT_GUEST_COMMANDS.map((definition) => {
         const [namespace, method] = definition.path.split('.');
@@ -1259,6 +1261,7 @@ export async function runQuickJsSandboxPrototype(
       }
       context.setProp(serpent, 'trash', trash);
       context.setProp(serpent, 'palettes', palettes);
+      context.setProp(serpent, 'ui', ui);
       assets.dispose();
       folders.dispose();
       library.dispose();
@@ -1272,6 +1275,7 @@ export async function runQuickJsSandboxPrototype(
       aiJobs.dispose();
       trash.dispose();
       palettes.dispose();
+      ui.dispose();
       for (const guestFunction of sharedGuestFunctions) guestFunction.dispose();
       listMediaJobs.dispose();
       getAiJobStatus.dispose();

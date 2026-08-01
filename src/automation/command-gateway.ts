@@ -179,6 +179,11 @@ export interface AutomationExecutionStatusHandler {
   } | undefined;
 }
 
+/** Main-owned desktop toast / dialog for `ui.notify`. */
+export interface AutomationUiNotifyHandler {
+  notify(input: AutomationCommandInput<'ui.notify'>): void | Promise<void>;
+}
+
 export interface AutomationUndoGroupHandler {
   create(input: { executionId: string; libraryId: string }): { undoGroupId: string };
   append(input: {
@@ -199,6 +204,7 @@ export interface AutomationCommandGatewayOptions {
   filePlanApprovalHandler?: AutomationFilePlanApprovalHandler;
   libraryBindingHandler?: AutomationLibraryBindingHandler;
   executionStatusHandler?: AutomationExecutionStatusHandler;
+  uiNotifyHandler?: AutomationUiNotifyHandler;
   undoGroupHandler?: AutomationUndoGroupHandler;
 }
 
@@ -273,6 +279,7 @@ export function createAutomationCommandGateway(
     filePlanApprovalHandler,
     libraryBindingHandler,
     executionStatusHandler,
+    uiNotifyHandler,
     undoGroupHandler,
   } = options;
   const inFlightCommandCounts = new Map<string, number>();
@@ -404,7 +411,9 @@ export function createAutomationCommandGateway(
       const idempotencyEntryKey = idempotencyKey === undefined
         ? undefined
         : `${executionId}\u0000${descriptor.commandId}\u0000${idempotencyKey}`;
-      if (context.libraryId === null && descriptor.commandId !== 'library.create') {
+      if (context.libraryId === null
+        && descriptor.commandId !== 'library.create'
+        && descriptor.commandId !== 'ui.notify') {
         return recordOutcome(gatewayFailure('AUTOMATION_LIBRARY_NOT_BOUND'));
       }
       if (descriptor.commandId === 'library.create' && libraryBindingHandler === undefined) {
@@ -449,6 +458,34 @@ export function createAutomationCommandGateway(
         return completed;
       };
       const boundLibraryId = context.libraryId;
+
+      if (descriptor.commandId === 'ui.notify') {
+        if (!uiNotifyHandler) {
+          return recordOutcome({ ok: false, error: createPublicError('INTERNAL_ERROR') });
+        }
+        const notifyInput = parsedInput.data as AutomationCommandInput<'ui.notify'>;
+        try {
+          await uiNotifyHandler.notify(notifyInput);
+        } catch (error) {
+          auditLogger?.error('automation.ui-notify.failed', error, { executionId });
+          return recordOutcome({ ok: false, error: toPublicError(error) });
+        }
+        const result = {
+          shown: true as const,
+          mode: notifyInput.mode,
+          severity: notifyInput.severity,
+        };
+        if (!descriptor.resultSchema.safeParse(result).success) {
+          return recordOutcome(gatewayFailure('AUTOMATION_RESULT_INVALID'));
+        }
+        return recordOutcome({
+          ok: true,
+          apiVersion: AUTOMATION_API_VERSION,
+          commandId: 'ui.notify',
+          executionId,
+          result,
+        });
+      }
 
       let approvedPlan: AutomationFileOperationPlanProof | undefined;
       if (descriptor.approvalPolicy === 'plan') {

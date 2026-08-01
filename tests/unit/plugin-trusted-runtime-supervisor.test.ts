@@ -75,6 +75,13 @@ describe('PluginTrustedRuntimeSupervisor', () => {
       permissions: ['library.read', 'asset.read'],
     });
     child.emit('message', { type: 'plugin-trusted.ready' } as never);
+    await flush();
+    child.emit('message', {
+      type: 'plugin-trusted.activated',
+      instanceId: '11111111-1111-4111-8111-111111111111',
+      pluginId: 'com.example.trusted',
+      packageHash: 'a'.repeat(64),
+    } as never);
     await activation;
 
     expect(child.posted).toContainEqual(expect.objectContaining({
@@ -126,9 +133,16 @@ describe('PluginTrustedRuntimeSupervisor', () => {
         packageDirectory: '/plugins/trusted',
         entryRelativePath: 'dist/main.js',
         installScope: 'library',
-      permissions: ['library.read'],
+        permissions: ['library.read'],
       });
       child.emit('message', { type: 'plugin-trusted.ready' } as never);
+      await Promise.resolve();
+      child.emit('message', {
+        type: 'plugin-trusted.activated',
+        instanceId: '11111111-1111-4111-8111-111111111111',
+        pluginId: 'com.example.trusted',
+        packageHash: 'a'.repeat(64),
+      } as never);
       await activation;
 
       now = 1_200;

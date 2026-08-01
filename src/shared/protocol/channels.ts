@@ -14,6 +14,8 @@ export const ACTIVE_CONTEXT_CHANNEL = 'serpent:active-context' as const;
 /** Renderer → Main: effective UI locale for native dialogs (Serpent-bwb). */
 export const APP_LOCALE_CHANNEL = 'serpent:app-locale' as const;
 export const OPEN_EXTERNAL_URL_CHANNEL = 'serpent:shell:open-external-url' as const;
+/** Main → Renderer: script/MCP/plugin user-visible toast or blocking dialog. */
+export const SHELL_NOTIFY_CHANNEL = 'serpent:shell:notify' as const;
 export const REVEAL_APP_LOG_CHANNEL = 'serpent:shell:reveal-app-log' as const;
 export const READ_APP_LOG_CHANNEL = 'serpent:shell:read-app-log' as const;
 export const SHOW_EDIT_CONTEXT_MENU_CHANNEL =

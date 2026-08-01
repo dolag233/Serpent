@@ -189,6 +189,7 @@ describe('PluginActivationCoordinator', () => {
     });
     expect(trustedActivate).toHaveBeenCalledTimes(1);
     expect(standardActivate).toHaveBeenCalledTimes(1);
+    expect(coordinator.trackedOpenLibraryIds()).toEqual(['library-1']);
 
     safeMode = true;
     await coordinator.refreshLibrary({
@@ -471,8 +472,32 @@ describe('PluginActivationCoordinator', () => {
       'com.example.contrib.menu.asset.do-thing',
     ]);
 
+    // listContributions must match by instanceId (active map is keyed by pluginId).
+    const listedMenus = coordinator.listContributions({
+      libraryId: 'library-1',
+      target: 'menus.asset',
+    });
+    expect(listedMenus).toEqual([expect.objectContaining({
+      kind: 'menu',
+      id: 'com.example.contrib.menu.asset.do-thing',
+      pluginId: 'com.example.contrib',
+      commandId: 'do-thing',
+      target: 'menus.asset',
+    })]);
+    expect(listedMenus[0]?.pluginInstanceId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+    );
+    expect(coordinator.listContributions({
+      libraryId: 'library-1',
+      target: 'workspace.views',
+    })).toEqual([expect.objectContaining({
+      id: 'com.example.contrib.board',
+      pluginId: 'com.example.contrib',
+    })]);
+
     coordinator.onLibraryClosed('library-1');
     expect(contributions.list()).toEqual([]);
+    expect(coordinator.listContributions({ libraryId: 'library-1' })).toEqual([]);
     expect(deactivateLibrary).toHaveBeenCalledWith('library-1', 'library-closed');
   });
 });

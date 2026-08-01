@@ -129,6 +129,7 @@ export const automationCapabilitySchema = z.enum([
   'file.rename',
   'trash.write',
   'clipboard.write',
+  'ui.notify',
 ]);
 export type AutomationCapability = z.infer<typeof automationCapabilitySchema>;
 
@@ -166,6 +167,12 @@ export const automationCommandInputSchemas = {
   'library.change-sequence': noInputSchema,
   'execution.status': z.strictObject({
     executionId: nonBlankString.optional(),
+  }),
+  'ui.notify': z.strictObject({
+    severity: z.enum(['info', 'warning', 'error']),
+    message: z.string().min(1).max(500),
+    mode: z.enum(['toast', 'dialog']).default('toast'),
+    title: z.string().min(1).max(120).optional(),
   }),
   'folder.list': paginatedInputSchema({}),
   'linked-folder.list': paginatedInputSchema({}),
@@ -664,6 +671,11 @@ export const automationCommandResultSchemas = {
       jobs: z.number().int().nonnegative().optional(),
     }).nullable(),
   }),
+  'ui.notify': z.strictObject({
+    shown: z.literal(true),
+    mode: z.enum(['toast', 'dialog']),
+    severity: z.enum(['info', 'warning', 'error']),
+  }),
   'folder.list': paginatedResultSchema(managedFolderSummarySchema),
   'linked-folder.list': paginatedResultSchema(linkedFolderSummarySchema),
   'asset.list': paginatedResultSchema(automationAssetSummarySchema),
@@ -971,6 +983,22 @@ export const automationCommandRegistry = [
     mcp: { public: true, toolName: 'serpent_execution_status', outputLimit: 1 },
     toWorkerCommand: () => {
       throw new Error('execution.status is resolved by Main and does not dispatch to the Worker.');
+    },
+    projectResult: () => undefined,
+  }),
+  readDescriptor({
+    commandId: 'ui.notify',
+    summary: '向桌面用户显示 info/warning/error 提示条，或阻塞确认弹窗（冷静文案，不含绝对路径）。',
+    inputSchema: automationCommandInputSchemas['ui.notify'],
+    resultSchema: automationCommandResultSchemas['ui.notify'],
+    workerResultSchema: z.never(),
+    requiredCapabilities: ['ui.notify'],
+    allowedSources: allInteractiveSources,
+    targetScope: 'library',
+    supportsBatch: false,
+    mcp: { public: true, toolName: 'serpent_ui_notify', outputLimit: 1 },
+    toWorkerCommand: () => {
+      throw new Error('ui.notify is resolved by Main and does not dispatch to the Worker.');
     },
     projectResult: () => undefined,
   }),
@@ -2198,6 +2226,9 @@ export function generateAutomationTypeDeclaration(
     '    };',
     '    readonly palettes: {',
     '      mostFrequent(input?: { days?: number; limit?: number }): Promise<SerpentRecentPalette>;',
+    '    };',
+    '    readonly ui: {',
+    "      notify(input: { severity: 'info' | 'warning' | 'error'; message: string; mode?: 'toast' | 'dialog'; title?: string }): Promise<{ readonly shown: true; readonly mode: 'toast' | 'dialog'; readonly severity: 'info' | 'warning' | 'error' }>;",
     '    };',
     '  }',
     '',

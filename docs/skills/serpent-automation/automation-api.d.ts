@@ -195,6 +195,18 @@ declare global {
     readonly palettes: {
       mostFrequent(input?: { readonly days?: number; readonly limit?: number }): Promise<unknown>;
     };
+    readonly ui: {
+      notify(input: {
+        readonly severity: 'info' | 'warning' | 'error';
+        readonly message: string;
+        readonly mode?: 'toast' | 'dialog';
+        readonly title?: string;
+      }): Promise<{
+        readonly shown: true;
+        readonly mode: 'toast' | 'dialog';
+        readonly severity: 'info' | 'warning' | 'error';
+      }>;
+    };
   }
 
   const serpent: SerpentAutomationApi;

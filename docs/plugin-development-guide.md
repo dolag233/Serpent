@@ -156,7 +156,9 @@ exports.deactivate = async function deactivate() {};
 ## 6. 权限与高风险写
 
 - 清单 `permissions` 声明能力；未声明则 Gateway / Host 拒绝。  
-- 与 Automation 同名的权限会映射为 Gateway capability（如 `asset.read`、`content.write`）。  
+- 与 Automation 同名的权限会映射为 Gateway capability（如 `asset.read`、`content.write`、`ui.notify`）。
+- `ui.notify`：向桌面用户显示 info/warning/error toast，或冷静标题的阻塞弹窗（`mode: 'dialog'`）。示例：`await serpent.ui.notify({ severity: 'info', message: '…' })`。
+- UI Contribution 权限（`ui.workspace` 等）仍只覆盖 iframe 面，不授予 toast。  
 - `storage.*`、`data.files`、`ui.*`、`net.fetch` 等由 Host 表面单独执行。  
 - **原地替换资产内容**（`content.write` / `assets.replaceContent`）会走 **Execution Plan 确认**，文案含覆盖警告；取消则不写盘。  
 - 不要用绝对路径 `fs.writeFile` 覆盖库内 `Assets/`；应使用内容 API，否则元数据/缩略图可能不一致，且无计划确认。

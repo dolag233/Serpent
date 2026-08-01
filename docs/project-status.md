@@ -1,11 +1,21 @@
 # Serpent 项目状态
 
-> 更新时间：2026-08-01
+> 更新时间：2026-08-02
 > 事实来源：`docs/implementation/mvp-roadmap.md` 与各切片开发/审查/QA 文档
+
+## 2026-08-02 脚本/MCP/插件 ui.notify
+
+- 新增 Gateway `ui.notify` / Guest `serpent.ui.notify` / MCP `serpent_ui_notify`：info/warning/error toast 与可选阻塞弹窗；权限/能力 `ui.notify`；无库可调用。见 [开发日志](development/2026-08-02-ui-notify-development-log.md)；`AUT-021`。工单 `Serpent-99zs`。
+- **`Serpent-l2tj` 已关闭**：settings.pages/menus 贡献解析与启动激活回归测试落地——全 view target + 混合数组单测、IPC `serpent-plugin://` 经 Preload 解析保留、E2E（含 `SERPENT_E2E_RESTORE_RECENT` 完整重启）。见 [贡献回归开发日志](development/2026-08-02-plugin-contribution-regression-tests-development-log.md)。仍开放：`Serpent-2qsq`（全局 user-scope 插件激活不应依赖打开资源库）。
 
 ## 2026-08-01 插件设置 IA 与列表样式
 
 - 设置侧栏分类列表最后为可展开「插件设置」；有设置贡献的插件点选进详情。管理页卡片：标题含版本、来源图标、权限 info hover、非受限警告色与默认不启用、刷新/设置/垃圾桶操作；空列表仅「暂未安装」。MCP 声明命令默认暴露（无设置开关）。见 [开发日志](development/2026-08-01-plugin-settings-ui-ia-development-log.md)；`PLUGIN-001` / `PLUGIN-031` 已更新。
+- 跟进：`Serpent-oupm` 安装目录去掉 `<version>` 子路径（open）。`Serpent-0mj2` 已修：卸载清 resolution / 重装后可启用、不再误报更新确认。
+- 设置页 `plugin-manager.list` 改为元信息快路径（不重哈希整包、不联网查 GitHub 更新）；完整校验与远程更新检查保留在 Reload / 安装 / 更新动作。菜单与 `settings.pages` 仍依赖插件已启用并激活。
+- **贡献列表过滤修复**：`listContributions` / `listMcpCommandContributions` 曾用 `#activeByLibrary` 的 **pluginId 键** 去匹配贡献上的 **pluginInstanceId**，导致已激活插件的菜单、设置页、工具栏等 UI 贡献一律被滤空（Image Upscaler 已启用仍无右键/设置页即此根因）。现改为按 `record.instanceId` 过滤；激活刷新 `listInstalled` 同步改用 `integrity: 'metadata'`。定向单测 `plugin-activation-coordinator` 6 passed。
+- **启动恢复库未激活插件**：Main 启动时用 Worker 直连 `library.open` 恢复最近库，**绕过** `handleLibraryRequest`，因而从未调用 `onLibraryOpened`；`plugin-contrib-diag` 显示正确 `libraryId` 但 `active: []`、无 `plugin.activation.*` 日志。现与对话框开库共用 `notifyLibraryOpenedSideEffects`，启动路径 `await` 激活后再继续起窗。
+- **Renderer 解析 view 贡献失败**：激活与 Main `list-contributions` 已正常（含全局 `user` 包），但 Preload `parsePluginManagerResponse` 因 Zod 4 `discriminatedUnion('kind')` 对五个 `kind: "view"` 分支报 `Duplicate discriminator value "view"`，整表贡献被丢弃，设置 iframe / 自定义页恒空。现合并为单一 `pluginManagerViewContributionSchema`（按 `target` 区分）。定向单测见 `plugin-manager-response-parse`。
 
 ## 2026-08-01 插件分发与更新规范
 

@@ -295,7 +295,11 @@ export const pluginManagerCommandContributionSchema = z.strictObject({
 });
 export type PluginManagerCommandContribution = z.infer<typeof pluginManagerCommandContributionSchema>;
 
-const pluginManagerViewContributionBaseSchema = {
+/**
+ * Zod 4 discriminatedUnion forbids duplicate discriminator literals. All iframe
+ * surfaces share kind "view" and are distinguished by `target` inside one object.
+ */
+export const pluginManagerViewContributionSchema = z.strictObject({
   kind: z.literal('view'),
   id: z.string().min(1).max(255),
   pluginId: pluginIdSchema,
@@ -304,37 +308,47 @@ const pluginManagerViewContributionBaseSchema = {
   entryPath: z.string().min(1).max(1_024).optional(),
   url: z.url().optional(),
   themePackage: pluginThemePackageSchema.optional(),
-} as const;
-
-export const pluginManagerSidebarViewContributionSchema = z.strictObject({
-  ...pluginManagerViewContributionBaseSchema,
-  target: z.literal('sidebar.entries'),
+  target: z.enum([
+    'sidebar.entries',
+    'workspace.views',
+    'inspector.views',
+    'viewer.overlays',
+    'settings.pages',
+  ]),
 });
-export type PluginManagerSidebarViewContribution = z.infer<typeof pluginManagerSidebarViewContributionSchema>;
+export type PluginManagerViewContribution = z.infer<typeof pluginManagerViewContributionSchema>;
 
-export const pluginManagerWorkspaceViewContributionSchema = z.strictObject({
-  ...pluginManagerViewContributionBaseSchema,
-  target: z.literal('workspace.views'),
-});
-export type PluginManagerWorkspaceViewContribution = z.infer<typeof pluginManagerWorkspaceViewContributionSchema>;
+export type PluginManagerSidebarViewContribution = Extract<
+  PluginManagerViewContribution,
+  { target: 'sidebar.entries' }
+>;
+export type PluginManagerWorkspaceViewContribution = Extract<
+  PluginManagerViewContribution,
+  { target: 'workspace.views' }
+>;
+export type PluginManagerInspectorViewContribution = Extract<
+  PluginManagerViewContribution,
+  { target: 'inspector.views' }
+>;
+export type PluginManagerViewerOverlayContribution = Extract<
+  PluginManagerViewContribution,
+  { target: 'viewer.overlays' }
+>;
+export type PluginManagerSettingsPageContribution = Extract<
+  PluginManagerViewContribution,
+  { target: 'settings.pages' }
+>;
 
-export const pluginManagerInspectorViewContributionSchema = z.strictObject({
-  ...pluginManagerViewContributionBaseSchema,
-  target: z.literal('inspector.views'),
-});
-export type PluginManagerInspectorViewContribution = z.infer<typeof pluginManagerInspectorViewContributionSchema>;
-
-export const pluginManagerViewerOverlayContributionSchema = z.strictObject({
-  ...pluginManagerViewContributionBaseSchema,
-  target: z.literal('viewer.overlays'),
-});
-export type PluginManagerViewerOverlayContribution = z.infer<typeof pluginManagerViewerOverlayContributionSchema>;
-
-export const pluginManagerSettingsPageContributionSchema = z.strictObject({
-  ...pluginManagerViewContributionBaseSchema,
-  target: z.literal('settings.pages'),
-});
-export type PluginManagerSettingsPageContribution = z.infer<typeof pluginManagerSettingsPageContributionSchema>;
+/** @deprecated Prefer {@link pluginManagerViewContributionSchema}; kept for call-site imports. */
+export const pluginManagerSidebarViewContributionSchema = pluginManagerViewContributionSchema;
+/** @deprecated Prefer {@link pluginManagerViewContributionSchema} */
+export const pluginManagerWorkspaceViewContributionSchema = pluginManagerViewContributionSchema;
+/** @deprecated Prefer {@link pluginManagerViewContributionSchema} */
+export const pluginManagerInspectorViewContributionSchema = pluginManagerViewContributionSchema;
+/** @deprecated Prefer {@link pluginManagerViewContributionSchema} */
+export const pluginManagerViewerOverlayContributionSchema = pluginManagerViewContributionSchema;
+/** @deprecated Prefer {@link pluginManagerViewContributionSchema} */
+export const pluginManagerSettingsPageContributionSchema = pluginManagerViewContributionSchema;
 
 export const pluginManagerSettingsContributionSchema = z.strictObject({
   kind: z.literal('settings-section'),
@@ -402,11 +416,7 @@ export const pluginManagerContributionSchema = z.discriminatedUnion('kind', [
   pluginManagerViewerActionContributionSchema,
   pluginManagerShortcutContributionSchema,
   pluginManagerSettingsContributionSchema,
-  pluginManagerSidebarViewContributionSchema,
-  pluginManagerWorkspaceViewContributionSchema,
-  pluginManagerInspectorViewContributionSchema,
-  pluginManagerViewerOverlayContributionSchema,
-  pluginManagerSettingsPageContributionSchema,
+  pluginManagerViewContributionSchema,
 ]);
 export type PluginManagerContribution = z.infer<typeof pluginManagerContributionSchema>;
 

@@ -699,6 +699,9 @@ export const zhCN = {
       importContinueFailed: "无法继续导入",
       importValidateFailed: "无法校验导入",
       libraryImportFailed: "无法导入资源库",
+      automationNotice: "提示",
+      automationWarning: "注意",
+      automationError: "无法完成操作",
       confirm: "知道了"
     },
     deleteLinked: {
@@ -965,7 +968,10 @@ export const zhCN = {
     pluginUseUserVersion: "使用全局版本 {version}",
     pluginUseLibraryVersion: "使用资源库版本 {version}",
     pluginDisable: "停用",
-    pluginUpdateNeedsConfirmation: "此更新改变了来源、运行时、权限或原先选择的版本。请明确选择后再运行。",
+    pluginUpdateNeedsConfirmation: "请确认后继续使用当前可用的插件包。",
+    pluginConfirmPermissionsIncreased: "新版本申请了更多权限，请确认后再启用。",
+    pluginConfirmRuntimeChanged: "新版本改变了运行时模式，请确认后再启用。",
+    pluginConfirmSourceChanged: "新版本来源已变化，请确认后再启用。",
     pluginHostSettingsTitle: "插件设置",
     pluginHostSettingsHint: "由宿主根据插件清单渲染的设置项。值在重新打开资源库后仍保留；已激活插件可通过 serpent.storage.get('settings.<id>') 读取镜像值。",
     pluginSettingsLoading: "正在加载插件设置…",

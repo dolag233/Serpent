@@ -29,6 +29,7 @@ const DEFAULT_READ_CAPABILITIES = [
   'tag.read',
   'collection.read',
   'job.read',
+  'ui.notify',
 ] as const satisfies readonly AutomationCapability[];
 
 const DEFAULT_WRITE_CAPABILITIES = [

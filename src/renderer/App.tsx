@@ -629,6 +629,7 @@ function AppInner() {
     closing: toastClosing,
     fatal: fatalAlertMessage,
     setError,
+    setWarning,
     setNotice,
     setFatal,
     dismissVisible,
@@ -2144,6 +2145,25 @@ function AppInner() {
     selectionAnchorRef,
     setAssetSelectionAnchor,
   ]);
+
+  useEffect(() => {
+    if (!shellApi) return;
+    return shellApi.onShellNotify((payload) => {
+      if (payload.mode === 'dialog') {
+        const title = payload.title?.trim()
+          || (payload.severity === 'warning'
+            ? t('dialog.blockingError.automationWarning')
+            : payload.severity === 'info'
+              ? t('dialog.blockingError.automationNotice')
+              : t('dialog.blockingError.automationError'));
+        showBlockingError(title, payload.message);
+        return;
+      }
+      if (payload.severity === 'error') setError(payload.message);
+      else if (payload.severity === 'warning') setWarning(payload.message);
+      else setNotice(payload.message);
+    });
+  }, [shellApi, setError, setWarning, setNotice, showBlockingError, t]);
 
   // REQ-FOLDER-001/002/003/010: load direct child folder cards whenever the
   // browse parent is a managed folder or the managed root; cleared for

@@ -51,6 +51,7 @@ export const automationScriptCommandIdSchema = z.enum([
   'media.jobs.list',
   'ai.jobs.status',
   'ai.enqueue',
+  'ui.notify',
 ]);
 export type AutomationScriptCommandId = z.infer<typeof automationScriptCommandIdSchema>;
 
