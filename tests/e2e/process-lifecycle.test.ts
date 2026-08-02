@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { once } from 'node:events';
@@ -103,5 +104,42 @@ test('closing the last macOS window keeps the application process alive', async 
       await once(childProcess, 'exit');
     }
     rmSync(temporaryRoot, { force: true, recursive: true });
+  }
+});
+
+test('Windows custom close hides the window and keeps the tray process alive', async () => {
+  test.skip(process.platform !== 'win32', 'This lifecycle rule is Windows-specific.');
+  const executablePath = resolveElectronExecutablePath();
+  const applicationDirectory = process.env.SERPENT_E2E_APP_DIRECTORY ?? process.cwd();
+  const { temporaryRoot, profilePath } = createIsolatedProfile();
+  const env = { ...environment(), SERPENT_E2E: '1', SERPENT_E2E_USER_DATA_PATH: profilePath };
+  const application = await electron.launch({
+    executablePath,
+    args: [applicationDirectory],
+    cwd: applicationDirectory,
+    env,
+  });
+  const childProcess = application.process();
+
+  try {
+    const window = await application.firstWindow();
+    // Dispatch the renderer handler directly. A fresh profile can show a
+    // startup dialog whose backdrop covers the caption button's hit target;
+    // the real Windows caption button remains available when no modal is open.
+    await window.locator('.windows-caption-button-close').dispatchEvent('click');
+    await expect
+      .poll(() =>
+        application.evaluate(
+          ({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.isVisible() ?? false,
+        ),
+      )
+      .toBe(false);
+    expect(childProcess.exitCode).toBeNull();
+  } finally {
+    if (childProcess.exitCode === null) {
+      await application.evaluate(({ app }) => app.quit());
+      await once(childProcess, 'exit');
+    }
+    await rm(temporaryRoot, { force: true, recursive: true, maxRetries: 20, retryDelay: 250 });
   }
 });

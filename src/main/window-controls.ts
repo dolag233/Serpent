@@ -6,6 +6,7 @@ import {
 } from "../shared/protocol/channels";
 import {
   parseWindowControlRequest,
+  shouldHideWindowOnClose,
   shouldUseFramelessTitleBar,
   type WindowControlResult,
   type WindowMaximizedStateEvent,
@@ -41,7 +42,11 @@ function applyWindowControl(
       break;
     case "close":
       // Do not read isMaximized() after close — the window may already be destroyed.
-      window.close();
+      // On Windows the renderer owns the caption buttons. Closing the visible
+      // window hides it and leaves the process alive behind the notification-area
+      // tray icon; the tray menu owns the explicit quit action.
+      if (shouldHideWindowOnClose(process.platform)) window.hide();
+      else window.close();
       return { ok: true, maximized: false };
     case "get-state":
       break;

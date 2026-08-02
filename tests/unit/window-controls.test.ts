@@ -5,6 +5,7 @@ import {
   parseWindowControlResult,
   parseWindowMaximizedStateEvent,
   shouldHideApplicationMenuBar,
+  shouldHideWindowOnClose,
   shouldUseFramelessTitleBar,
 } from "../../src/shared/window-controls";
 
@@ -57,5 +58,11 @@ describe("window-controls protocol (Serpent-znex)", () => {
     expect(shouldHideApplicationMenuBar("darwin")).toBe(false);
     expect(shouldUseFramelessTitleBar("linux")).toBe(false);
     expect(shouldHideApplicationMenuBar("linux")).toBe(false);
+  });
+
+  it("hides the Windows window for the tray instead of quitting", () => {
+    expect(shouldHideWindowOnClose("win32")).toBe(true);
+    expect(shouldHideWindowOnClose("darwin")).toBe(false);
+    expect(shouldHideWindowOnClose("linux")).toBe(false);
   });
 });

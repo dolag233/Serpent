@@ -58,6 +58,10 @@ import {
   registerWindowControls,
 } from "./window-controls";
 import {
+  createWindowsTray,
+  type WindowsTrayController,
+} from "./windows-tray";
+import {
   ASSET_CHANGE_CHANNEL,
   EXTENSION_SAVE_COMPLETED_CHANNEL,
   THUMBNAIL_CHANNEL,
@@ -224,6 +228,7 @@ let quitAfterShutdown = false;
 let startupComplete = false;
 let logger: AppLogger | undefined;
 let appLogPath: string | undefined;
+let windowsTray: WindowsTrayController | undefined;
 
 function recentLibraryPath(): string {
   return path.join(app.getPath("userData"), "recent-library.json");
@@ -4001,6 +4006,7 @@ async function startApplication(): Promise<void> {
     }
     appLocale = parsed.locale;
     installApplicationMenu({ locale: appLocale });
+    windowsTray?.updateLocale(appLocale);
   });
 
   ipcMain.on(ACTIVE_CONTEXT_CHANNEL, (event, input: unknown) => {
@@ -4058,6 +4064,11 @@ async function startApplication(): Promise<void> {
   });
 
   await createMainWindow();
+  windowsTray = createWindowsTray({
+    getMainWindow: () => mainWindow,
+    onQuit: () => app.quit(),
+    locale: appLocale,
+  });
 
   extensionBrowseFoldersStorePath = path.join(
     app.getPath("userData"),
@@ -4113,6 +4124,11 @@ if (!hasSingleInstanceLock) {
     if (process.platform !== "darwin") app.quit();
   });
 
+  app.on("will-quit", () => {
+    windowsTray?.destroy();
+    windowsTray = undefined;
+  });
+
   app.on("before-quit", (event) => {
     aiQueueScheduler.clearAll();
     if (quitAfterShutdown || !workerClient) return;
@@ -4128,7 +4144,12 @@ if (!hasSingleInstanceLock) {
 
     void workerClient.shutdown().finally(() => {
       quitAfterShutdown = true;
-      app.quit();
+      // The first app.quit() is intentionally intercepted above while the
+      // worker drains. Once the worker is shut down there is nothing left to
+      // close asynchronously; app.exit() completes the already-authorized
+      // application shutdown instead of re-entering the quit lifecycle and
+      // leaving a hidden Electron process behind on Windows.
+      app.exit(0);
     });
   });
 }
