@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { pluginLocalIdSchema } from './plugin-manifest';
 
 export const PLUGIN_COMMAND_DEFAULT_TIMEOUT_MS = 5_000;
+const NUL = String.fromCharCode(0);
 
 /** Library ids are opaque identifiers, never filesystem paths. */
 export const pluginTargetLibraryIdSchema = z.string()
@@ -10,7 +11,7 @@ export const pluginTargetLibraryIdSchema = z.string()
   .max(255)
   .refine((value) => value.trim() === value, 'Library id must not have surrounding whitespace.')
   .refine((value) => value !== '.' && value !== '..', 'Library id must not be a path segment.')
-  .refine((value) => !/[\\/\u0000]/u.test(value), 'Library id must not contain path separators.');
+  .refine((value) => !value.includes(NUL) && !/[\\/]/u.test(value), 'Library id must not contain path separators.');
 export type PluginTargetLibraryId = z.infer<typeof pluginTargetLibraryIdSchema>;
 
 export const pluginCommandContextSchema = z.strictObject({
