@@ -1619,7 +1619,7 @@ const EXTENSION_IGNORES_SCHEMA_CHECKSUM = createHash('sha256')
   .update(EXTENSION_IGNORES_SCHEMA_SQL)
   .digest('hex');
 
-// Migration v26: the editable library-level .gitignore is materialized into
+// Migration v26: the editable library-level .serpentignore is materialized into
 // the database so every browse/search/count query can apply the same rules
 // without making SQLite call back into the filesystem. The text file remains
 // the source of truth; this table is rebuilt whenever its contents change.
@@ -1702,7 +1702,7 @@ interface OpenLibrary {
   readOnly: boolean;
   /** Managed path identities whose on-disk file must not be auto-reconciled after relink recovery preserved them. */
   preservedRelinkPathIdentities: Set<string>;
-  /** Last .gitignore contents materialized into gitignore_ignored_paths. */
+  /** Last .serpentignore contents materialized into gitignore_ignored_paths. */
   gitignoreText: string;
 }
 
@@ -2630,15 +2630,34 @@ function databasePath(libraryPath: string): string {
 }
 
 function gitignorePath(libraryPath: string): string {
+  return path.join(libraryPath, '.serpentignore');
+}
+
+function legacyGitignorePath(libraryPath: string): string {
   return path.join(libraryPath, '.gitignore');
 }
 
+function existingIgnoreConfigPath(libraryPath: string): string | null {
+  const currentPath = gitignorePath(libraryPath);
+  if (realFileExists(currentPath)) return currentPath;
+  const legacyPath = legacyGitignorePath(libraryPath);
+  return realFileExists(legacyPath) ? legacyPath : null;
+}
+
 function readGitignoreText(libraryPath: string): string {
+  const currentPath = gitignorePath(libraryPath);
   try {
-    return readFileSync(gitignorePath(libraryPath), 'utf8');
+    return readFileSync(currentPath, 'utf8');
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return '';
-    throw new LibraryServiceError('LIBRARY_NOT_WRITABLE', { cause: error });
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+      throw new LibraryServiceError('LIBRARY_NOT_WRITABLE', { cause: error });
+    }
+    try {
+      return readFileSync(legacyGitignorePath(libraryPath), 'utf8');
+    } catch (legacyError) {
+      if ((legacyError as NodeJS.ErrnoException).code === 'ENOENT') return '';
+      throw new LibraryServiceError('LIBRARY_NOT_WRITABLE', { cause: legacyError });
+    }
   }
 }
 
@@ -21328,10 +21347,10 @@ export class LibraryService {
       await walkDir(path.join(libPath, 'Assets'), 'Assets');
 
       // Keep the library-scoped ignore source of truth with folder exports.
-      const gitignoreFile = gitignorePath(libPath);
-      if (realFileExists(gitignoreFile)) {
+      const gitignoreFile = existingIgnoreConfigPath(libPath);
+      if (gitignoreFile) {
         const ignoreStat = statSync(gitignoreFile);
-        entries.push({ sourcePath: gitignoreFile, relativePath: '.gitignore', byteSize: ignoreStat.size });
+        entries.push({ sourcePath: gitignoreFile, relativePath: path.basename(gitignoreFile), byteSize: ignoreStat.size });
       }
 
       // Walk .serpent/revisions/.
@@ -21815,10 +21834,10 @@ export class LibraryService {
       // Walk Assets/.
       await walkDir(path.join(libPath, 'Assets'), 'Assets');
 
-      const gitignoreFile = gitignorePath(libPath);
-      if (realFileExists(gitignoreFile)) {
+      const gitignoreFile = existingIgnoreConfigPath(libPath);
+      if (gitignoreFile) {
         const ignoreStat = statSync(gitignoreFile);
-        entries.push({ sourcePath: gitignoreFile, relativePath: '.gitignore', byteSize: ignoreStat.size });
+        entries.push({ sourcePath: gitignoreFile, relativePath: path.basename(gitignoreFile), byteSize: ignoreStat.size });
       }
 
       // Walk .serpent/revisions/.

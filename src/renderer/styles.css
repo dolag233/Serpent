@@ -5321,6 +5321,9 @@ select.ai-config-input.ai-config-languages {
 }
 
 .app-settings-content {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
   min-width: 0;
   padding: 28px 32px 34px;
   overflow-x: hidden;
@@ -5329,7 +5332,14 @@ select.ai-config-input.ai-config-languages {
 }
 
 .app-settings-page-heading {
-  margin-bottom: 16px;
+  margin: 0;
+}
+
+.app-settings-page-heading p {
+  margin: 6px 0 0;
+  color: var(--tertiary);
+  font-size: 11px;
+  line-height: 1.45;
 }
 
 .app-settings-page-heading h3 {
@@ -6200,9 +6210,10 @@ select.ai-config-input.ai-config-languages {
   padding: 9px 11px;
   border-radius: 8px;
   background: var(--hover);
-  color: var(--text-secondary);
-  font-size: 12px;
+  color: var(--tertiary);
+  font-size: 11px;
   line-height: 1.5;
+  white-space: pre-line;
 }
 
 .library-settings-gitignore-editor {
@@ -6228,10 +6239,6 @@ select.ai-config-input.ai-config-languages {
 .library-settings-gitignore-actions {
   color: var(--text-tertiary);
   font-size: 12px;
-}
-
-.library-settings-ignored-heading {
-  margin-bottom: 12px;
 }
 
 .about-dialog {

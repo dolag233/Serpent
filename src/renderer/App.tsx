@@ -152,7 +152,6 @@ import {
   type AiAnalysisSettingsWire,
 } from "../shared/ai-analysis-settings";
 import { AppSettingsDialog } from "./AppSettingsDialog";
-import { IgnoredPathsDialog } from "./IgnoredPathsDialog";
 import { LibrarySettingsDialog } from "./LibrarySettingsDialog";
 import { AppLogDialog } from "./AppLogDialog";
 import { AboutDialog } from "./AboutDialog";
@@ -271,7 +270,6 @@ import type {
   CollectionSummary,
   FilterClause,
   FolderBrowseEntry,
-  IgnoredPath,
   LinkedFolderRule,
   LinkedFolderSummary,
   ManagedFolderSummary,
@@ -965,9 +963,7 @@ function AppInner() {
   const [appLogOpen, setAppLogOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
   const [openSourceLicensesOpen, setOpenSourceLicensesOpen] = useState(false);
-  const [ignoredPathsOpen, setIgnoredPathsOpen] = useState(false);
   const [librarySettingsOpen, setLibrarySettingsOpen] = useState(false);
-  const [ignoredPaths, setIgnoredPaths] = useState<IgnoredPath[]>([]);
   const [gitignoreContent, setGitignoreContent] = useState("");
   const [showIgnoredItems, setShowIgnoredItems] = useState(false);
   const [appLogEntries, setAppLogEntries] = useState<AppLogEntry[]>([]);
@@ -6693,19 +6689,8 @@ function AppInner() {
   }, [appSettingsOpen, appSettingsCategory]);
 
   useEffect(() => {
-    if (!ignoredPathsOpen || !api || !library) return;
-    void api.listIgnoredPaths({ libraryId: library.libraryId }).then((result) => {
-      if (result.ok) setIgnoredPaths(result.value);
-    });
-  }, [ignoredPathsOpen, api, library]);
-
-  useEffect(() => {
     if (!librarySettingsOpen || !api || !library) return;
-    void Promise.all([
-      api.listIgnoredPaths({ libraryId: library.libraryId }),
-      api.getGitignore({ libraryId: library.libraryId }),
-    ]).then(([pathsResult, gitignoreResult]) => {
-      if (pathsResult.ok) setIgnoredPaths(pathsResult.value);
+    void api.getGitignore({ libraryId: library.libraryId }).then((gitignoreResult) => {
       if (gitignoreResult.ok) setGitignoreContent(gitignoreResult.value.content);
     });
   }, [librarySettingsOpen, api, library]);
@@ -7215,11 +7200,6 @@ function AppInner() {
       openLibrarySettings: () => {
         setAppSettingsOpen(false);
         setLibrarySettingsOpen(true);
-        if (library && api) {
-          void api.listIgnoredPaths({ libraryId: library.libraryId }).then((result) => {
-            if (result.ok) setIgnoredPaths(result.value);
-          });
-        }
       },
       undo: () => void undoLastFileOp(),
       copySelection: () => {
@@ -7307,11 +7287,6 @@ function AppInner() {
               onOpenLibrarySettings={() => {
                 setAppSettingsOpen(false);
                 setLibrarySettingsOpen(true);
-                if (library && api) {
-                  void api.listIgnoredPaths({ libraryId: library.libraryId }).then((result) => {
-                    if (result.ok) setIgnoredPaths(result.value);
-                  });
-                }
               }}
               onCreateLibrary={() => {
                 setDialogValue(t("shell.myLibrary"));
@@ -8994,42 +8969,12 @@ function AppInner() {
           setAiUiPrefs((p) => ({ ...p, showAiBadges: !p.showAiBadges }));
         }}
         onOpenAppLog={openAppLog}
-        onOpenIgnoredPaths={() => {
-          setAppSettingsOpen(false);
-          setLibrarySettingsOpen(true);
-          if (api && library) {
-            void api.listIgnoredPaths({ libraryId: library.libraryId }).then((result) => {
-              if (result.ok) setIgnoredPaths(result.value);
-            });
-          }
-        }}
         open={appSettingsOpen}
-      />
-      <IgnoredPathsDialog
-        open={ignoredPathsOpen}
-        paths={ignoredPaths}
-        onClose={() => setIgnoredPathsOpen(false)}
-        onUnignore={(path) => {
-          void setIgnoreState({
-            locationKind: path.locationKind,
-            linkedFolderId: path.linkedFolderId,
-            relativePath: path.relativePath,
-            pathKind: path.pathKind,
-            ignored: false,
-            name: path.displayName,
-          }).then(() => {
-            if (!api || !library) return;
-            void api.listIgnoredPaths({ libraryId: library.libraryId }).then((result) => {
-              if (result.ok) setIgnoredPaths(result.value);
-            });
-          });
-        }}
       />
       <LibrarySettingsDialog
         key={`${library?.libraryId ?? "none"}:${librarySettingsOpen ? "open" : "closed"}:${gitignoreContent}`}
         library={library}
         open={librarySettingsOpen}
-        paths={ignoredPaths}
         gitignoreContent={gitignoreContent}
         onClose={() => setLibrarySettingsOpen(false)}
         onSaveName={async (name) => {
@@ -9052,21 +8997,6 @@ function AppInner() {
           setGitignoreContent(result.value.content);
           setNotice(t("toast.librarySettingsSaved"));
           await reloadCurrentContent();
-        }}
-        onUnignore={(path) => {
-          void setIgnoreState({
-            locationKind: path.locationKind,
-            linkedFolderId: path.linkedFolderId,
-            relativePath: path.relativePath,
-            pathKind: path.pathKind,
-            ignored: false,
-            name: path.displayName,
-          }).then(() => {
-            if (!api || !library) return;
-            void api.listIgnoredPaths({ libraryId: library.libraryId }).then((result) => {
-              if (result.ok) setIgnoredPaths(result.value);
-            });
-          });
         }}
       />
       <AppLogDialog
