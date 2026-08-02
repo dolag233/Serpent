@@ -157,6 +157,13 @@ const library: SerpentLibraryApi = Object.freeze({
     return { ok: true as const, value: { libraryId: result.libraryId } };
   },
 
+  async rename({ libraryId, displayName }: { libraryId: string; displayName: string }): Promise<LibraryApiResult<RendererLibrarySummary>> {
+    const result = await request({ type: 'library.rename.request', libraryId, displayName });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'library.renamed') throw new Error('Unexpected rename-library response.');
+    return { ok: true as const, value: result.library };
+  },
+
   async deleteLibraryFromDisk({
     libraryId,
   }: {
@@ -277,8 +284,8 @@ const library: SerpentLibraryApi = Object.freeze({
     };
   },
 
-  async listFolders({ libraryId }: { libraryId: string }): Promise<LibraryApiResult<ManagedFolderSummary[]>> {
-    const result = await request({ type: 'folder.list.request', libraryId });
+  async listFolders({ libraryId, showIgnored }: { libraryId: string; showIgnored?: boolean }): Promise<LibraryApiResult<ManagedFolderSummary[]>> {
+    const result = await request({ type: 'folder.list.request', libraryId, showIgnored });
     if (!result.ok) return failure(result);
     if (result.type !== 'folder.list') throw new Error('Unexpected list-folders response.');
     return { ok: true, value: result.folders };
@@ -287,11 +294,13 @@ const library: SerpentLibraryApi = Object.freeze({
   async listFolderBrowseEntries(input: {
     libraryId: string;
     parentFolderId: string | null;
+    showIgnored?: boolean;
   }): Promise<LibraryApiResult<FolderBrowseEntry[]>> {
     const result = await request({
       type: 'folder.browse-entries.request',
       libraryId: input.libraryId,
       parentFolderId: input.parentFolderId,
+      showIgnored: input.showIgnored,
     });
     if (!result.ok) return failure(result);
     if (result.type !== 'folder.browse-entries') {
@@ -383,6 +392,7 @@ const library: SerpentLibraryApi = Object.freeze({
     libraryId: string;
     folderId?: string;
     recursive: boolean;
+    showIgnored?: boolean;
   }): Promise<LibraryApiResult<AssetSummary[]>> {
     const result = await request({ type: 'asset.list.request', ...input });
     if (!result.ok) return failure(result);
@@ -618,7 +628,7 @@ const library: SerpentLibraryApi = Object.freeze({
     locationKind: 'managed' | 'linked';
     linkedFolderId?: string | null;
     relativePath: string;
-    pathKind: 'asset' | 'folder';
+    pathKind: 'asset' | 'folder' | 'extension';
     ignored: boolean;
   }) {
     const result = await request({ type: 'ignore.set.request', libraryId, locationKind, linkedFolderId: linkedFolderId ?? undefined, relativePath, pathKind, ignored });
@@ -851,12 +861,12 @@ const library: SerpentLibraryApi = Object.freeze({
     return { ok: true, value: { items: result.items, total: result.total, offset: result.offset } };
   },
 
-  async searchAssets({ libraryId, query, filters, scope, sort, scopeMode, limit, offset }: { libraryId: string; query?: SearchQuery | null; filters?: FilterClause[]; scope?: SearchScope; sort?: { field: 'name' | 'modified_at' | 'created_at' | 'byte_size' | 'long_edge' | 'duration' | 'rating' | 'color' | 'author'; order: 'asc' | 'desc' }; scopeMode?: boolean; limit?: number; offset?: number }): Promise<LibraryApiResult<{ items: AssetSummary[]; total: number; offset: number; snippets?: { assetId: string; text: string }[] }>> {
+  async searchAssets({ libraryId, query, filters, scope, sort, scopeMode, limit, offset, showIgnored }: { libraryId: string; query?: SearchQuery | null; filters?: FilterClause[]; scope?: SearchScope; sort?: { field: 'name' | 'modified_at' | 'created_at' | 'byte_size' | 'long_edge' | 'duration' | 'rating' | 'color' | 'author'; order: 'asc' | 'desc' }; scopeMode?: boolean; limit?: number; offset?: number; showIgnored?: boolean }): Promise<LibraryApiResult<{ items: AssetSummary[]; total: number; offset: number; snippets?: { assetId: string; text: string }[] }>> {
     const parsedQuery = searchQuerySchema.safeParse(query ?? null);
     if (!parsedQuery.success) {
       return { ok: false, error: createPublicError('INVALID_SEARCH_QUERY') };
     }
-    const result = await request({ type: 'asset.search.request', libraryId, query: parsedQuery.data, filters, scope, sort, scopeMode, limit, offset });
+    const result = await request({ type: 'asset.search.request', libraryId, query: parsedQuery.data, filters, scope, sort, scopeMode, limit, offset, showIgnored });
     if (!result.ok) return failure(result);
     if (result.type !== 'asset.search.result') throw new Error('Unexpected search-assets response.');
     return { ok: true, value: { items: result.items, total: result.total, offset: result.offset, snippets: result.snippets } };

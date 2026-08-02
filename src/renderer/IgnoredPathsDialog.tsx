@@ -35,7 +35,7 @@ export function IgnoredPathsDialog({
               <div className="ignored-path-row" key={`${path.locationKind}:${path.linkedFolderId ?? ""}:${path.pathKind}:${path.relativePath}`}>
                 <div>
                   <strong>{path.displayName}</strong>
-                  <span>{path.pathKind === "folder" ? t("settings.ignoredFolder") : t("settings.ignoredAsset")}</span>
+                  <span>{path.pathKind === "folder" ? t("settings.ignoredFolder") : path.pathKind === "extension" ? t("settings.ignoredExtension") : t("settings.ignoredAsset")}</span>
                 </div>
                 <button className="secondary-button" onClick={() => onUnignore(path)} type="button">
                   {t("menu.unignore")}

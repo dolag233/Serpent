@@ -98,7 +98,7 @@ export const ignoredPathSchema = z.strictObject({
   locationKind: z.enum(['managed', 'linked']),
   linkedFolderId: nonBlankString.nullable(),
   relativePath: z.string().max(4096),
-  pathKind: z.enum(['asset', 'folder']),
+  pathKind: z.enum(['asset', 'folder', 'extension']),
   displayName: nonBlankString,
   ignoredAt: nonBlankString,
 });

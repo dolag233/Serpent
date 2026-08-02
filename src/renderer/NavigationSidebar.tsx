@@ -411,6 +411,9 @@ function Section({
   title,
   action,
   actionLabel,
+  toggleAction,
+  toggleActive,
+  toggleLabel,
   secondaryAction,
   secondaryLabel,
   children,
@@ -419,6 +422,9 @@ function Section({
   action?: () => void;
   /** Explicit primary tooltip; defaults to nav.addSection. */
   actionLabel?: string;
+  toggleAction?: () => void;
+  toggleActive?: boolean;
+  toggleLabel?: string;
   secondaryAction?: () => void;
   secondaryLabel?: string;
   children: ReactNode;
@@ -430,8 +436,15 @@ function Section({
     <section className="nav-section">
       <div className="nav-section-heading">
         <span>{title}</span>
-        {(action || secondaryAction) && (
+        {(action || secondaryAction || toggleAction) && (
           <span className="nav-section-actions">
+            {toggleAction && (
+              <IconActionButton
+                icon={toggleActive ? "eye" : "eye-off"}
+                label={toggleLabel ?? t("nav.showIgnored")}
+                onClick={toggleAction}
+              />
+            )}
             {action && (
               <IconActionButton
                 icon="plus"
@@ -469,6 +482,8 @@ export interface NavigationSidebarProps {
   activeTagId: string | null;
   activeCollectionId: string | null;
   activeSmartCollectionId: string | null;
+  showIgnoredItems: boolean;
+  onToggleShowIgnoredItems: () => void;
 
   // --- Data ---
   allAssetCount: number;
@@ -602,6 +617,8 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
     activeTagId,
     activeCollectionId,
     activeSmartCollectionId,
+    showIgnoredItems,
+    onToggleShowIgnoredItems,
     allAssetCount,
     trashedAssetCount,
     folders,
@@ -1211,6 +1228,9 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
           title={t("nav.folders")}
           action={library ? onAddFolder : undefined}
           actionLabel={t("nav.addFolder")}
+          toggleAction={library ? onToggleShowIgnoredItems : undefined}
+          toggleActive={showIgnoredItems}
+          toggleLabel={t("nav.showIgnored")}
           secondaryAction={library ? onImportFolderAsLinked : undefined}
           secondaryLabel={t("nav.importLinkedFolder")}
         >

@@ -47,6 +47,7 @@ export type MainMenuActions = {
   readonly importLinkedFolder: () => void;
   readonly importLibrary: () => void;
   readonly exportLibrary: () => void;
+  readonly openLibrarySettings?: () => void;
   readonly undo: () => void;
   readonly copySelection: () => void;
   readonly paste: () => void;
@@ -226,6 +227,12 @@ export function buildMainMenuSections({
           label: label(locale, "toolbar.exportLibrary"),
           disabled: libraryDisabled,
           onSelect: actions.exportLibrary,
+        },
+        {
+          id: "library.settings",
+          label: label(locale, "settings.librarySettings"),
+          disabled: libraryDisabled,
+          onSelect: actions.openLibrarySettings ?? (() => undefined),
         },
       ],
     },

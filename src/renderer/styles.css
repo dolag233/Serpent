@@ -6131,6 +6131,35 @@ select.ai-config-input.ai-config-languages {
   font-size: 12px;
 }
 
+.library-settings-dialog {
+  width: min(720px, calc(100vw - 48px));
+}
+
+.library-settings-frame {
+  min-height: 0;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.library-settings-name-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.library-settings-name-row .text-field {
+  flex: 1;
+  min-width: 0;
+}
+
+.library-settings-path {
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.library-settings-section-heading {
+  margin-top: 22px;
+}
+
 .about-dialog {
   position: relative;
   display: flex;

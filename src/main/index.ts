@@ -1149,6 +1149,17 @@ function toRendererResult(
       },
     });
   }
+  if (result.type === "library.renamed") {
+    return parseRendererResult({
+      ok: true,
+      type: result.type,
+      library: {
+        libraryId: result.library.libraryId,
+        displayName: result.library.displayName,
+        displayPath: result.library.libraryPath,
+      },
+    });
+  }
   if (result.type === "library.list") {
     return parseRendererResult({
       ok: true,
@@ -1235,6 +1246,8 @@ async function commandFor(
     }
     case "library.close.request":
       return { type: "library.close", libraryId: request.libraryId };
+    case "library.rename.request":
+      return { type: "library.rename", libraryId: request.libraryId, displayName: request.displayName };
     case "library.delete-from-disk.request":
       return { type: "library.delete-from-disk", libraryId: request.libraryId };
     case "library.list.request":
@@ -1262,12 +1275,13 @@ async function commandFor(
         newName: request.newName,
       };
     case "folder.list.request":
-      return { type: "folder.list", libraryId: request.libraryId };
+      return { type: "folder.list", libraryId: request.libraryId, showIgnored: request.showIgnored };
     case "folder.browse-entries.request":
       return {
         type: "folder.browse-entries",
         libraryId: request.libraryId,
         parentFolderId: request.parentFolderId,
+        showIgnored: request.showIgnored,
       };
     case "folder.trash.request":
       return {
@@ -1346,6 +1360,7 @@ async function commandFor(
         libraryId: request.libraryId,
         folderId: request.folderId,
         recursive: request.recursive,
+        showIgnored: request.showIgnored,
       };
     case "asset.import-files.request": {
       const sourcePaths = await selectImportSources("files");
@@ -1650,6 +1665,7 @@ async function commandFor(
         scopeMode: request.scopeMode,
         limit: request.limit,
         offset: request.offset,
+        showIgnored: request.showIgnored,
       };
     case "ai.search-plan.request":
       // Planned directly in Main so provider credentials never enter the
@@ -2999,6 +3015,11 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
     }
 
     if (workerResult.ok && workerResult.type === "library.opened") {
+      rememberOpenedLibrary(
+        workerResult.library.libraryPath,
+        workerResult.library.displayName,
+      );
+    } else if (workerResult.ok && workerResult.type === "library.renamed") {
       rememberOpenedLibrary(
         workerResult.library.libraryPath,
         workerResult.library.displayName,

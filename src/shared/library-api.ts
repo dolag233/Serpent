@@ -148,6 +148,7 @@ export interface SerpentLibraryApi {
   /** Remove a path from the recent list without deleting disk (Serpent-ucx). */
   forgetRecent(input: { path: string }): Promise<LibraryApiResult<{ path: string }>>;
   close(input: { libraryId: string }): Promise<LibraryApiResult<{ libraryId: string }>>;
+  rename(input: { libraryId: string; displayName: string }): Promise<LibraryApiResult<RendererLibrarySummary>>;
   /** Close then permanently delete the library root on disk (Serpent-9i8). */
   deleteLibraryFromDisk(input: {
     libraryId: string;
@@ -197,10 +198,11 @@ export interface SerpentLibraryApi {
       folders: ManagedFolderSummary[];
     }>
   >;
-  listFolders(input: { libraryId: string }): Promise<LibraryApiResult<ManagedFolderSummary[]>>;
+  listFolders(input: { libraryId: string; showIgnored?: boolean }): Promise<LibraryApiResult<ManagedFolderSummary[]>>;
   listFolderBrowseEntries(input: {
     libraryId: string;
     parentFolderId: string | null;
+    showIgnored?: boolean;
   }): Promise<LibraryApiResult<FolderBrowseEntry[]>>;
   trashFolder(input: {
     libraryId: string;
@@ -243,6 +245,7 @@ export interface SerpentLibraryApi {
     libraryId: string;
     folderId?: string;
     recursive: boolean;
+    showIgnored?: boolean;
   }): Promise<LibraryApiResult<AssetSummary[]>>;
   createImageSequence(input: {
     libraryId: string;
@@ -313,7 +316,7 @@ export interface SerpentLibraryApi {
   getLinkedFolderRules(input: { libraryId: string; folderId: string }): Promise<LibraryApiResult<LinkedFolderRule[]>>;
   setLinkedFolderRules(input: { libraryId: string; folderId: string; rules: LinkedFolderRule[] }): Promise<LibraryApiResult<{ rules: LinkedFolderRule[]; hiddenCount: number; restoredCount: number }>>;
   listIgnoredPaths(input: { libraryId: string }): Promise<LibraryApiResult<IgnoredPath[]>>;
-  setIgnore(input: { libraryId: string; locationKind: 'managed' | 'linked'; linkedFolderId?: string | null; relativePath: string; pathKind: 'asset' | 'folder'; ignored: boolean }): Promise<LibraryApiResult<{ ignored: boolean; path: IgnoredPath }>>;
+  setIgnore(input: { libraryId: string; locationKind: 'managed' | 'linked'; linkedFolderId?: string | null; relativePath: string; pathKind: 'asset' | 'folder' | 'extension'; ignored: boolean }): Promise<LibraryApiResult<{ ignored: boolean; path: IgnoredPath }>>;
   copyAssetsToLinkedFolder(input: { libraryId: string; folderId: string; assetIds: string[]; conflictStrategy: 'keep-both' | 'replace' | 'skip' }): Promise<LibraryApiResult<{ copiedCount: number; skippedCount: number; assets: AssetSummary[] }>>;
   convertLinkedFolderToManaged(input: { libraryId: string; folderId: string; targetFolderId?: string }): Promise<LibraryApiResult<{ managedFolderId: string; convertedCount: number; assets: AssetSummary[] }>>;
   onLifecycle(listener: (event: RendererLifecycleEvent) => void): () => void;
@@ -356,7 +359,7 @@ export interface SerpentLibraryApi {
   deleteSmartCollection(input: { libraryId: string; collectionId: string }): Promise<LibraryApiResult<{ collectionId: string }>>;
   executeSmartCollection(input: { libraryId: string; collectionId: string; scopeMode?: boolean; limit?: number; offset?: number }): Promise<LibraryApiResult<{ items: AssetSummary[]; total: number; offset: number }>>;
   // Search
-  searchAssets(input: { libraryId: string; query?: SearchQuery | null; filters?: FilterClause[]; scope?: SearchScope; sort?: { field: 'name' | 'modified_at' | 'created_at' | 'byte_size' | 'long_edge' | 'duration' | 'rating' | 'color' | 'author'; order: 'asc' | 'desc' }; scopeMode?: boolean; limit?: number; offset?: number }): Promise<LibraryApiResult<{ items: AssetSummary[]; total: number; offset: number; snippets?: { assetId: string; text: string }[] }>>;
+  searchAssets(input: { libraryId: string; query?: SearchQuery | null; filters?: FilterClause[]; scope?: SearchScope; sort?: { field: 'name' | 'modified_at' | 'created_at' | 'byte_size' | 'long_edge' | 'duration' | 'rating' | 'color' | 'author'; order: 'asc' | 'desc' }; scopeMode?: boolean; limit?: number; offset?: number; showIgnored?: boolean }): Promise<LibraryApiResult<{ items: AssetSummary[]; total: number; offset: number; snippets?: { assetId: string; text: string }[] }>>;
   planAiSearch(input: { naturalQuery: string }): Promise<LibraryApiResult<{ plan: AiSearchPlan; apiFormat: AiApiFormat; model: string }>>;
   // Trash / Delete
   trashAssets(input: { libraryId: string; assetIds: string[] }): Promise<LibraryApiResult<{ trashedCount: number }>>;

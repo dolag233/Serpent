@@ -102,7 +102,7 @@ interface AssetContextMenuProps {
     locationKind: "managed" | "linked";
     linkedFolderId?: string | null;
     relativePath: string;
-    pathKind: "asset" | "folder";
+    pathKind: "asset" | "folder" | "extension";
     ignored: boolean;
     name: string;
   }) => void;
@@ -745,7 +745,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                 )}
                 <ContextMenuItem
                   icon={<Icon name="close" size={14} />}
-                  label={t("menu.ignore")}
+                  label={t("menu.ignoreFolder")}
                   onAction={() => {
                     const managed = desc.locationKind === "managed"
                       ? managedFolders.find((folder) => folder.folderId === desc.folderId)
@@ -1511,6 +1511,26 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                       });
                     }}
                   />
+                  {singleAsset?.relativeFilePath?.includes(".") && (
+                    <ContextMenuItem
+                      icon={<Icon name="close" size={14} />}
+                      label={t("menu.ignoreExtension", {
+                        extension: singleAsset.relativeFilePath.split(".").pop()?.toLowerCase() ?? "",
+                      })}
+                      onAction={() => {
+                        const extension = singleAsset.relativeFilePath.split(".").pop()?.toLowerCase();
+                        if (!extension) return;
+                        onSetIgnore({
+                          locationKind,
+                          linkedFolderId: singleAsset.locationKind === "linked" ? singleAsset.linkedFolderId : null,
+                          relativePath: extension,
+                          pathKind: "extension",
+                          ignored: true,
+                          name: extension,
+                        });
+                      }}
+                    />
+                  )}
                   {linkedFolders
                     .filter((f) => f.status === "available")
                     .map((folder) => (

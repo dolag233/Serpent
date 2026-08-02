@@ -1035,6 +1035,11 @@ const workerSuccessResultSchema = z.discriminatedUnion('type', [
   }),
   z.strictObject({
     ok: z.literal(true),
+    type: z.literal('library.renamed'),
+    library: internalLibrarySummarySchema,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
     type: z.literal('library.deleted'),
     libraryId: nonBlankString,
     displayName: nonBlankString,
@@ -1273,6 +1278,11 @@ const rendererSuccessResultSchema = z.discriminatedUnion('type', [
     ok: z.literal(true),
     type: z.literal('library.closed'),
     libraryId: nonBlankString,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('library.renamed'),
+    library: rendererLibrarySummarySchema,
   }),
   z.strictObject({
     ok: z.literal(true),

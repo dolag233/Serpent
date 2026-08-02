@@ -305,6 +305,10 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
       aiJobAbortRegistry.abort(request.command.libraryId);
       libraryService.closeLibrary(request.command.libraryId);
       return { ok: true, type: 'library.closed', libraryId: request.command.libraryId };
+    case 'library.rename': {
+      const renamed = libraryService.renameLibrary(request.command);
+      return { ok: true, type: 'library.renamed', library: renamed };
+    }
     case 'library.delete-from-disk': {
       libraryService.cancelJobs(request.command.libraryId);
       publishAiProgress(request.command.libraryId);
@@ -358,7 +362,7 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
       return {
         ok: true,
         type: 'folder.list',
-        folders: libraryService.listManagedFolders(request.command.libraryId),
+        folders: libraryService.listManagedFolders(request.command.libraryId, request.command.showIgnored === true),
       };
     case 'folder.browse-entries':
       return {
@@ -367,6 +371,7 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
         entries: libraryService.listFolderBrowseEntries({
           libraryId: request.command.libraryId,
           parentFolderId: request.command.parentFolderId,
+          showIgnored: request.command.showIgnored === true,
         }),
       };
     case 'folder.list-trashed': {
@@ -699,6 +704,7 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
         scope: request.command.scope ?? null,
         sort: request.command.sort ?? null,
         scopeMode: request.command.scopeMode ?? false,
+        showIgnored: request.command.showIgnored === true,
         limit: request.command.scopeMode ? null : (request.command.limit ?? 50),
         offset: request.command.scopeMode ? 0 : (request.command.offset ?? 0),
       });

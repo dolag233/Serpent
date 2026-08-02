@@ -1507,6 +1507,33 @@ const EXPLICIT_IGNORES_SCHEMA_CHECKSUM = createHash('sha256')
   .update(EXPLICIT_IGNORES_SCHEMA_SQL)
   .digest('hex');
 
+// Migration v25: extension ignores are library-scoped rules that hide every
+// asset whose filename ends in the selected extension.  The v24 CHECK
+// constraint only allowed asset/folder rows, so rebuild the small table while
+// preserving existing entries.
+const EXTENSION_IGNORES_SCHEMA_SQL = `
+  CREATE TABLE explicit_ignored_paths_v25 (
+    location_kind TEXT NOT NULL CHECK (location_kind IN ('managed', 'linked')),
+    linked_folder_id TEXT NOT NULL DEFAULT '',
+    relative_path TEXT NOT NULL,
+    path_kind TEXT NOT NULL CHECK (path_kind IN ('asset', 'folder', 'extension')),
+    ignored_at TEXT NOT NULL,
+    PRIMARY KEY(location_kind, linked_folder_id, relative_path, path_kind),
+    CHECK (location_kind = 'linked' OR linked_folder_id = '')
+  );
+  INSERT INTO explicit_ignored_paths_v25
+    (location_kind, linked_folder_id, relative_path, path_kind, ignored_at)
+  SELECT location_kind, linked_folder_id, relative_path, path_kind, ignored_at
+    FROM explicit_ignored_paths;
+  DROP TABLE explicit_ignored_paths;
+  ALTER TABLE explicit_ignored_paths_v25 RENAME TO explicit_ignored_paths;
+  CREATE INDEX explicit_ignored_paths_lookup
+    ON explicit_ignored_paths(location_kind, linked_folder_id, relative_path, path_kind);
+`;
+const EXTENSION_IGNORES_SCHEMA_CHECKSUM = createHash('sha256')
+  .update(EXTENSION_IGNORES_SCHEMA_SQL)
+  .digest('hex');
+
 const MIGRATIONS = [
   { version: 1, sql: INITIAL_SCHEMA_SQL, checksum: INITIAL_SCHEMA_CHECKSUM },
   { version: 2, sql: ASSET_SCHEMA_SQL, checksum: ASSET_SCHEMA_CHECKSUM },
@@ -1552,6 +1579,7 @@ const MIGRATIONS = [
   { version: 22, sql: COLOR_SPACE_OVERRIDE_SCHEMA_SQL, checksum: COLOR_SPACE_OVERRIDE_SCHEMA_CHECKSUM },
   { version: 23, sql: IMAGE_SEQUENCE_SCHEMA_SQL, checksum: IMAGE_SEQUENCE_SCHEMA_CHECKSUM },
   { version: 24, sql: EXPLICIT_IGNORES_SCHEMA_SQL, checksum: EXPLICIT_IGNORES_SCHEMA_CHECKSUM },
+  { version: 25, sql: EXTENSION_IGNORES_SCHEMA_SQL, checksum: EXTENSION_IGNORES_SCHEMA_CHECKSUM },
 ] as const;
 const SUPPORTED_SCHEMA_VERSION = MIGRATIONS.at(-1)!.version;
 
@@ -5597,6 +5625,7 @@ export class LibraryService {
       const result = this.trashAssets({
         libraryId: input.libraryId,
         assetIds,
+        allowExplicitlyIgnored: true,
       });
       trashedAssetCount = result.trashedCount;
     }
@@ -6112,19 +6141,19 @@ export class LibraryService {
   }
 
 
-  listManagedFolders(libraryId: string): ManagedFolderSummary[] {
+  listManagedFolders(libraryId: string, showIgnored = false): ManagedFolderSummary[] {
     const openLibrary = this.requireOpenLibrary(libraryId);
     const rows = (openLibrary.connection
       .prepare(
         'SELECT folder_id, parent_folder_id, name, relative_path, path_identity FROM managed_folders ORDER BY relative_path',
       )
       .all() as ManagedFolderRow[]).filter((row) =>
-        !this.explicitFolderIgnored(openLibrary, 'managed', null, row.relative_path),
-      );
-    const counts = this.managedFolderCountMaps(openLibrary);
+      showIgnored || !this.explicitFolderIgnored(openLibrary, 'managed', null, row.relative_path),
+    );
+    const counts = this.managedFolderCountMaps(openLibrary, undefined, showIgnored);
     // Serpent-toh: ManagedFolderSummary.directAssetCount is the displayed
     // badge count = all descendants (schema field name kept for compat).
-    const recursive = this.managedFolderRecursiveAssetCounts(openLibrary, rows);
+    const recursive = this.managedFolderRecursiveAssetCounts(openLibrary, rows, showIgnored);
     return rows.map((row) => {
       const summary = this.summarizeManagedFolderRow(openLibrary, row, counts);
       return {
@@ -6141,6 +6170,7 @@ export class LibraryService {
   listFolderBrowseEntries(input: {
     libraryId: string;
     parentFolderId: string | null;
+    showIgnored?: boolean;
   }): FolderBrowseEntry[] {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     if (input.parentFolderId !== null) {
@@ -6170,18 +6200,20 @@ export class LibraryService {
             .all(input.parentFolderId)
     ) as ManagedFolderRow[];
     const visibleChildren = children.filter((row) =>
-      !this.explicitFolderIgnored(openLibrary, 'managed', null, row.relative_path),
+      input.showIgnored === true || !this.explicitFolderIgnored(openLibrary, 'managed', null, row.relative_path),
     );
     if (visibleChildren.length === 0) return [];
 
-    const counts = this.managedFolderCountMaps(openLibrary, visibleChildren.map((row) => row.folder_id));
+    const counts = this.managedFolderCountMaps(openLibrary, visibleChildren.map((row) => row.folder_id), input.showIgnored === true);
     const recursiveCounts = this.managedFolderRecursiveAssetCounts(
       openLibrary,
       visibleChildren,
+      input.showIgnored === true,
     );
     const coverMap = this.folderCoverArtifactMap(
       openLibrary,
       visibleChildren.map((row) => row.folder_id),
+      input.showIgnored === true,
     );
 
     return visibleChildren.map((row) => {
@@ -6209,6 +6241,7 @@ export class LibraryService {
   private managedFolderRecursiveAssetCounts(
     openLibrary: OpenLibrary,
     folders: Array<{ folder_id: string; relative_path: string }>,
+    showIgnored = false,
   ): Map<string, number> {
     const result = new Map<string, number>();
     if (folders.length === 0) return result;
@@ -6218,9 +6251,9 @@ export class LibraryService {
         'SELECT folder_id, relative_path FROM managed_folders',
       )
       .all() as Array<{ folder_id: string; relative_path: string }>).filter((folder) =>
-        !this.explicitFolderIgnored(openLibrary, 'managed', null, folder.relative_path),
-      );
-    const { directAssetCounts } = this.managedFolderCountMaps(openLibrary);
+      showIgnored || !this.explicitFolderIgnored(openLibrary, 'managed', null, folder.relative_path),
+    );
+    const { directAssetCounts } = this.managedFolderCountMaps(openLibrary, undefined, showIgnored);
 
     for (const folder of folders) {
       const prefix = folder.relative_path;
@@ -6242,6 +6275,7 @@ export class LibraryService {
   private managedFolderCountMaps(
     openLibrary: OpenLibrary,
     folderIds?: string[],
+    showIgnored = false,
   ): {
     directAssetCounts: Map<string, number>;
     childFolderCounts: Map<string, number>;
@@ -6264,7 +6298,7 @@ export class LibraryService {
               AND NOT EXISTS (
                 SELECT 1 FROM linked_ignored_assets ignored WHERE ignored.asset_id = assets.asset_id
               )
-              AND ${this.explicitIgnoreSql('assets')}
+              AND ${this.explicitIgnoreSql('assets', showIgnored)}
               AND NOT EXISTS (
                 SELECT 1
                   FROM asset_sequence_frames hidden_sequence_frame
@@ -6281,14 +6315,14 @@ export class LibraryService {
           `SELECT parent_folder_id AS folder_id, COUNT(*) AS count
              FROM managed_folders mf
             WHERE parent_folder_id IN (${placeholders})
-              AND NOT EXISTS (
+              AND ${showIgnored ? '1 = 1' : `NOT EXISTS (
                 SELECT 1 FROM explicit_ignored_paths ignored_folder
                  WHERE ignored_folder.location_kind = 'managed'
                    AND ignored_folder.linked_folder_id = ''
                    AND ignored_folder.path_kind = 'folder'
                    AND (mf.relative_path = ignored_folder.relative_path
                      OR mf.relative_path LIKE ignored_folder.relative_path || '/%')
-              )
+              )`}
             GROUP BY parent_folder_id`,
         )
         .all(...folderIds) as Array<{ folder_id: string; count: number }>;
@@ -6305,7 +6339,7 @@ export class LibraryService {
             AND NOT EXISTS (
               SELECT 1 FROM linked_ignored_assets ignored WHERE ignored.asset_id = assets.asset_id
             )
-            AND ${this.explicitIgnoreSql('assets')}
+            AND ${this.explicitIgnoreSql('assets', showIgnored)}
             AND NOT EXISTS (
               SELECT 1
                 FROM asset_sequence_frames hidden_sequence_frame
@@ -6322,14 +6356,14 @@ export class LibraryService {
         `SELECT parent_folder_id AS folder_id, COUNT(*) AS count
            FROM managed_folders mf
           WHERE parent_folder_id IS NOT NULL
-            AND NOT EXISTS (
+            AND ${showIgnored ? '1 = 1' : `NOT EXISTS (
               SELECT 1 FROM explicit_ignored_paths ignored_folder
                WHERE ignored_folder.location_kind = 'managed'
                  AND ignored_folder.linked_folder_id = ''
                  AND ignored_folder.path_kind = 'folder'
                  AND (mf.relative_path = ignored_folder.relative_path
                    OR mf.relative_path LIKE ignored_folder.relative_path || '/%')
-            )
+            )`}
           GROUP BY parent_folder_id`,
       )
       .all() as Array<{ folder_id: string; count: number }>;
@@ -6340,6 +6374,7 @@ export class LibraryService {
   private folderCoverArtifactMap(
     openLibrary: OpenLibrary,
     folderIds: string[],
+    showIgnored = false,
   ): Map<string, string[]> {
     const covers = new Map<string, string[]>();
     if (folderIds.length === 0) return covers;
@@ -6368,7 +6403,7 @@ export class LibraryService {
             AND NOT EXISTS (
               SELECT 1 FROM linked_ignored_assets ignored WHERE ignored.asset_id = a.asset_id
             )
-            AND ${this.explicitIgnoreSql('a')}
+            AND ${this.explicitIgnoreSql('a', showIgnored)}
           ORDER BY a.managed_folder_id, a.relative_file_path`,
       )
       .all(...folderIds) as Array<{ folder_id: string; artifact_id: string }>;
@@ -7079,6 +7114,7 @@ export class LibraryService {
     libraryId: string;
     folderId?: string;
     recursive: boolean;
+    showIgnored?: boolean;
   }): AssetSummary[] {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     const managedFolder = input.folderId
@@ -7130,7 +7166,7 @@ export class LibraryService {
             AND video_meta.status = 'ready'
             AND video_meta.invalidated_at IS NULL
           WHERE NOT EXISTS (SELECT 1 FROM linked_ignored_assets ignored WHERE ignored.asset_id = a.asset_id)
-            AND ${this.explicitIgnoreSql('a')}
+            AND ${this.explicitIgnoreSql('a', input.showIgnored === true)}
           ORDER BY a.relative_file_path`,
       )
       .all() as Array<AssetSummaryRow & {
@@ -13474,6 +13510,7 @@ export class LibraryService {
     offset?: number | null;
     /** Serpent-6w7n: fetch entire browse scope (lightweight rows, capped). */
     scopeMode?: boolean | null;
+    showIgnored?: boolean;
   }): {
     items: AssetSummary[];
     total: number;
@@ -13667,7 +13704,7 @@ export class LibraryService {
       ? 'a.deleted_at IS NOT NULL'
       : 'a.deleted_at IS NULL');
     whereParts.push('NOT EXISTS (SELECT 1 FROM linked_ignored_assets ignored WHERE ignored.asset_id = a.asset_id)');
-    whereParts.push(this.explicitIgnoreSql('a'));
+    whereParts.push(this.explicitIgnoreSql('a', input.showIgnored === true));
     whereParts.push(`NOT EXISTS (
       SELECT 1
         FROM asset_sequence_frames hidden_sequence_frame
@@ -15909,9 +15946,13 @@ export class LibraryService {
   trashAssets(input: {
     libraryId: string;
     assetIds: string[];
+    /** Folder deletion intentionally includes assets hidden by ignore rules. */
+    allowExplicitlyIgnored?: boolean;
   }): { trashedCount: number } {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
-    this.assertAssetsNotExplicitlyIgnored(openLibrary, input.assetIds);
+    if (!input.allowExplicitlyIgnored) {
+      this.assertAssetsNotExplicitlyIgnored(openLibrary, input.assetIds);
+    }
     const logicalCount = this.countLogicalAssetUnits(
       openLibrary,
       input.assetIds,
@@ -17995,7 +18036,8 @@ export class LibraryService {
     }
   }
 
-  private explicitIgnoreSql(alias = 'a'): string {
+  private explicitIgnoreSql(alias = 'a', showIgnored = false): string {
+    if (showIgnored) return '1 = 1';
     return `NOT EXISTS (
       SELECT 1
         FROM explicit_ignored_paths ignored_path
@@ -18008,6 +18050,8 @@ export class LibraryService {
              OR ${alias}.relative_file_path = ignored_path.relative_path
              OR ${alias}.relative_file_path LIKE ignored_path.relative_path || '/%'
            ))
+           OR (ignored_path.path_kind = 'extension' AND
+             LOWER(${alias}.relative_file_path) LIKE '%.' || LOWER(ignored_path.relative_path))
          )
     )`;
   }
@@ -18041,9 +18085,12 @@ export class LibraryService {
     relativePath: string,
     pathKind: 'asset' | 'folder',
   ): boolean {
+    if (pathKind === 'folder') {
+      return this.explicitFolderIgnored(openLibrary, locationKind, linkedFolderId, relativePath);
+    }
     const normalized = this.normalizeExplicitIgnorePath(
       relativePath,
-      locationKind === 'linked' && pathKind === 'folder',
+      false,
     );
     const row = openLibrary.connection.prepare(
       `SELECT 1 FROM explicit_ignored_paths
@@ -18061,6 +18108,12 @@ export class LibraryService {
           AND linked_folder_id = ?
           AND path_kind = 'asset'
           AND relative_path = ?
+        UNION ALL
+       SELECT 1 FROM explicit_ignored_paths
+        WHERE location_kind = ?
+          AND linked_folder_id = ?
+          AND path_kind = 'extension'
+          AND LOWER(?) LIKE '%.' || LOWER(relative_path)
         LIMIT 1`,
     ).get(
       locationKind,
@@ -18070,9 +18123,11 @@ export class LibraryService {
       locationKind,
       linkedFolderId ?? '',
       normalized,
+      locationKind,
+      linkedFolderId ?? '',
+      normalized,
     );
     if (!row) return false;
-    if (pathKind === 'folder') return true;
     return true;
   }
 
@@ -18115,7 +18170,7 @@ export class LibraryService {
       location_kind: 'managed' | 'linked';
       linked_folder_id: string | null;
       relative_path: string;
-      path_kind: 'asset' | 'folder';
+      path_kind: 'asset' | 'folder' | 'extension';
       ignored_at: string;
       display_name: string;
     }>;
@@ -18134,15 +18189,20 @@ export class LibraryService {
     locationKind: 'managed' | 'linked';
     linkedFolderId?: string | null;
     relativePath: string;
-    pathKind: 'asset' | 'folder';
+    pathKind: 'asset' | 'folder' | 'extension';
     ignored: boolean;
   }): { ignored: boolean; path: IgnoredPath } {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     const linkedFolderId = input.locationKind === 'linked' ? input.linkedFolderId ?? null : null;
-    const relativePath = this.normalizeExplicitIgnorePath(
-      input.relativePath,
-      input.locationKind === 'linked' && input.pathKind === 'folder',
-    );
+    const relativePath = input.pathKind === 'extension'
+      ? input.relativePath.trim().replace(/^\.+/u, '').toLowerCase()
+      : this.normalizeExplicitIgnorePath(
+        input.relativePath,
+        input.locationKind === 'linked' && input.pathKind === 'folder',
+      );
+    if (input.pathKind === 'extension' && (relativePath.length === 0 || relativePath.includes('/') || relativePath.includes('\\'))) {
+      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+    }
     if (input.locationKind === 'linked' && !linkedFolderId) {
       throw new LibraryServiceError('FOLDER_NOT_FOUND');
     }
@@ -18155,6 +18215,10 @@ export class LibraryService {
             AND deleted_at IS NULL`,
       ).get(input.locationKind, linkedFolderId, relativePath);
       if (!row) throw new LibraryServiceError('ASSET_NOT_FOUND');
+    } else if (input.pathKind === 'extension') {
+      if (input.locationKind === 'linked' && !linkedFolderId) {
+        throw new LibraryServiceError('FOLDER_NOT_FOUND');
+      }
     } else if (input.locationKind === 'managed') {
       const row = openLibrary.connection.prepare(
         'SELECT folder_id FROM managed_folders WHERE relative_path = ?',
@@ -18192,7 +18256,7 @@ export class LibraryService {
           AND e.relative_path = ? AND e.path_kind = ?`,
     ).get(input.locationKind, sourceFolderId, relativePath, input.pathKind) as {
       location_kind: 'managed' | 'linked'; linked_folder_id: string | null;
-      relative_path: string; path_kind: 'asset' | 'folder'; ignored_at: string; display_name: string;
+      relative_path: string; path_kind: 'asset' | 'folder' | 'extension'; ignored_at: string; display_name: string;
     } | undefined;
     return {
       ignored: input.ignored,
@@ -20074,6 +20138,18 @@ export class LibraryService {
       if (error instanceof LibraryServiceError) throw error;
       throw error;
     }
+  }
+
+  renameLibrary(input: { libraryId: string; displayName: string }): InternalLibrarySummary {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    const displayName = input.displayName.trim().normalize('NFC');
+    if (!displayName || displayName.length > 255 || displayName.includes('/') || displayName.includes('\\')) {
+      throw new LibraryServiceError('INVALID_LIBRARY_PATH');
+    }
+    openLibrary.connection.prepare('UPDATE library SET display_name = ? WHERE library_id = ?')
+      .run(displayName, input.libraryId);
+    openLibrary.summary = { ...openLibrary.summary, displayName };
+    return { ...openLibrary.summary };
   }
 
   private async resolvePublicDownloadTarget(url: URL): Promise<ResolvedAddress> {

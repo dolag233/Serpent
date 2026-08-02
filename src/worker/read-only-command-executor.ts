@@ -54,7 +54,7 @@ export async function executeReadOnlyWorkerCommand(
       return {
         ok: true,
         type: 'folder.list',
-        folders: libraryService.listManagedFolders(command.libraryId),
+        folders: libraryService.listManagedFolders(command.libraryId, command.showIgnored === true),
       };
     case 'linked-folder.list':
       return {
@@ -100,6 +100,7 @@ export async function executeReadOnlyWorkerCommand(
         scopeMode: command.scopeMode ?? false,
         limit: command.scopeMode ? null : (command.limit ?? 50),
         offset: command.scopeMode ? 0 : (command.offset ?? 0),
+        showIgnored: command.showIgnored === true,
       });
       hooks.onAssetsListed?.(
         command.libraryId,

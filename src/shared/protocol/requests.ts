@@ -110,6 +110,11 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     type: z.literal('library.close.request'),
     libraryId: identifierSchema,
   }),
+  z.strictObject({
+    type: z.literal('library.rename.request'),
+    libraryId: identifierSchema,
+    displayName: displayNameSchema,
+  }),
   // Irreversible: close then delete the library root on disk (Serpent-9i8).
   z.strictObject({
     type: z.literal('library.delete-from-disk.request'),
@@ -192,11 +197,13 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
   z.strictObject({
     type: z.literal('folder.list.request'),
     libraryId: identifierSchema,
+    showIgnored: z.boolean().optional(),
   }),
   z.strictObject({
     type: z.literal('folder.browse-entries.request'),
     libraryId: identifierSchema,
     parentFolderId: identifierSchema.nullable(),
+    showIgnored: z.boolean().optional(),
   }),
   // Clarification #7 / Serpent-ekj: managed folder trash / permanent disk delete.
   z.strictObject({
@@ -226,6 +233,7 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     libraryId: identifierSchema,
     folderId: optionalIdentifierSchema,
     recursive: z.boolean(),
+    showIgnored: z.boolean().optional(),
   }),
   z.strictObject({
     type: z.literal('asset.sequence.create.request'),
@@ -355,7 +363,7 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     locationKind: z.enum(['managed', 'linked']),
     linkedFolderId: optionalIdentifierSchema,
     relativePath: z.string().max(4096),
-    pathKind: z.enum(['asset', 'folder']),
+    pathKind: z.enum(['asset', 'folder', 'extension']),
     ignored: z.boolean(),
   }),
   z.strictObject({
@@ -532,6 +540,7 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     scopeMode: z.boolean().optional(),
     limit: z.number().int().positive().max(200).optional(),
     offset: z.number().int().nonnegative().optional(),
+    showIgnored: z.boolean().optional(),
   }),
   z.strictObject({
     type: z.literal('ai.search-plan.request'),
@@ -941,6 +950,11 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     libraryId: identifierSchema,
   }),
   z.strictObject({
+    type: z.literal('library.rename'),
+    libraryId: identifierSchema,
+    displayName: displayNameSchema,
+  }),
+  z.strictObject({
     type: z.literal('library.delete-from-disk'),
     libraryId: identifierSchema,
   }),
@@ -981,11 +995,13 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
   z.strictObject({
     type: z.literal('folder.list'),
     libraryId: identifierSchema,
+    showIgnored: z.boolean().optional(),
   }),
   z.strictObject({
     type: z.literal('folder.browse-entries'),
     libraryId: identifierSchema,
     parentFolderId: identifierSchema.nullable(),
+    showIgnored: z.boolean().optional(),
   }),
   z.strictObject({
     type: z.literal('folder.list-trashed'),
@@ -1023,6 +1039,7 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     libraryId: identifierSchema,
     folderId: optionalIdentifierSchema,
     recursive: z.boolean(),
+    showIgnored: z.boolean().optional(),
   }),
   z.strictObject({
     type: z.literal('asset.sequence.create'),
@@ -1109,7 +1126,7 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     locationKind: z.enum(['managed', 'linked']),
     linkedFolderId: optionalIdentifierSchema,
     relativePath: z.string().max(4096),
-    pathKind: z.enum(['asset', 'folder']),
+    pathKind: z.enum(['asset', 'folder', 'extension']),
     ignored: z.boolean(),
   }),
   z.strictObject({
@@ -1284,6 +1301,7 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     scopeMode: z.boolean().optional(),
     limit: z.number().int().positive().max(200).optional(),
     offset: z.number().int().nonnegative().optional(),
+    showIgnored: z.boolean().optional(),
   }),
   z.strictObject({
     type: z.literal('smart-collection.list'),

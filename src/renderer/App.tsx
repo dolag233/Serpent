@@ -153,6 +153,7 @@ import {
 } from "../shared/ai-analysis-settings";
 import { AppSettingsDialog } from "./AppSettingsDialog";
 import { IgnoredPathsDialog } from "./IgnoredPathsDialog";
+import { LibrarySettingsDialog } from "./LibrarySettingsDialog";
 import { AppLogDialog } from "./AppLogDialog";
 import { AboutDialog } from "./AboutDialog";
 import { OpenSourceLicensesDialog } from "./OpenSourceLicensesDialog";
@@ -965,7 +966,9 @@ function AppInner() {
   const [aboutOpen, setAboutOpen] = useState(false);
   const [openSourceLicensesOpen, setOpenSourceLicensesOpen] = useState(false);
   const [ignoredPathsOpen, setIgnoredPathsOpen] = useState(false);
+  const [librarySettingsOpen, setLibrarySettingsOpen] = useState(false);
   const [ignoredPaths, setIgnoredPaths] = useState<IgnoredPath[]>([]);
+  const [showIgnoredItems, setShowIgnoredItems] = useState(false);
   const [appLogEntries, setAppLogEntries] = useState<AppLogEntry[]>([]);
   const [appLogLoading, setAppLogLoading] = useState(false);
   const [appLogErrorCode, setAppLogErrorCode] = useState<
@@ -1788,6 +1791,7 @@ function AppInner() {
       const result = await api.listFolderBrowseEntries({
         libraryId: library.libraryId,
         parentFolderId,
+        showIgnored: showIgnoredItems,
       });
       if (!cancelled && result.ok) setFolderBrowseEntries(result.value);
     }
@@ -1805,6 +1809,7 @@ function AppInner() {
     activeSmartCollectionId,
     folders,
     searchValue,
+    showIgnoredItems,
   ]);
 
   const previewIndex = previewAsset
@@ -2212,10 +2217,12 @@ function AppInner() {
         trashMode?: boolean;
         discovery?: SearchDefinition;
         searchScope?: SearchScope;
+        showIgnored?: boolean;
       },
     ) => {
       if (!api) return;
       const trashMode = opts?.trashMode ?? false;
+      const includeIgnored = opts?.showIgnored ?? showIgnoredItems;
       const browseScope: SearchScope | undefined =
         opts?.searchScope ??
         (trashMode
@@ -2232,7 +2239,7 @@ function AppInner() {
         smartResult,
         trashedFoldersResult,
       ] = await Promise.all([
-        api.listFolders(libId),
+        api.listFolders({ ...libId, showIgnored: includeIgnored }),
         api.searchAssets({
           ...libId,
           query: opts?.discovery?.search ?? null,
@@ -2240,9 +2247,10 @@ function AppInner() {
           scope: browseScope,
           sort: opts?.discovery?.sort,
           ...BROWSE_SCOPE_SEARCH,
+          showIgnored: includeIgnored,
         }),
         trashMode || scope !== "all"
-          ? api.searchAssets({ ...libId, query: null, limit: 1, offset: 0 })
+          ? api.searchAssets({ ...libId, query: null, limit: 1, offset: 0, showIgnored: includeIgnored })
           : Promise.resolve(undefined),
         api.listLinkedFolders(libId),
         api.listTags(libId),
@@ -2297,7 +2305,7 @@ function AppInner() {
       setSmartCollections(smartResult.value);
       return assetResult.value.items;
     },
-    [api],
+    [api, showIgnoredItems],
   );
 
   useBrowserSessionRestore({
@@ -3085,6 +3093,7 @@ function AppInner() {
         filters: definition.filters,
         sort: definition.sort,
         ...BROWSE_SCOPE_SEARCH,
+        showIgnored: showIgnoredItems,
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
       applySearchResult(result.value);
@@ -3122,6 +3131,7 @@ function AppInner() {
         filters: definition.filters,
         sort: definition.sort,
         ...BROWSE_SCOPE_SEARCH,
+        showIgnored: showIgnoredItems,
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
       applySearchResult(result.value);
@@ -3545,6 +3555,7 @@ function AppInner() {
           recursive,
         },
         ...BROWSE_SCOPE_SEARCH,
+        showIgnored: showIgnoredItems,
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
       applySearchResult(result.value);
@@ -4256,6 +4267,7 @@ function AppInner() {
       scope: currentSearchScope(),
       sort: definition.sort,
       ...BROWSE_SCOPE_SEARCH,
+      showIgnored: showIgnoredItems,
     });
     if (!result.ok) throw new LibraryOperationError(result.error);
     if (requestGeneration !== searchRequestGenerationRef.current) return;
@@ -5199,7 +5211,7 @@ function AppInner() {
     locationKind: "managed" | "linked";
     linkedFolderId?: string | null;
     relativePath: string;
-    pathKind: "asset" | "folder";
+    pathKind: "asset" | "folder" | "extension";
     ignored: boolean;
     name: string;
   }) {
@@ -5216,7 +5228,13 @@ function AppInner() {
       if (!result.ok) throw new LibraryOperationError(result.error);
       await reloadCurrentContent();
       setNotice(t("toast.ignoreUpdated", {
-        action: input.ignored ? t("menu.ignore") : t("menu.unignore"),
+        action: input.ignored
+          ? input.pathKind === "folder"
+            ? t("menu.ignoreFolder")
+            : input.pathKind === "extension"
+              ? t("menu.ignoreExtension", { extension: input.relativePath })
+              : t("menu.ignore")
+          : t("menu.unignore"),
         name: input.name,
       }));
     } catch (caught) {
@@ -7180,6 +7198,15 @@ function AppInner() {
       importLinkedFolder: () => void importFolderAsLinked(),
       importLibrary: () => setImportLibraryChooserOpen(true),
       exportLibrary: () => setExportDialogOpen(true),
+      openLibrarySettings: () => {
+        setAppSettingsOpen(false);
+        setLibrarySettingsOpen(true);
+        if (library && api) {
+          void api.listIgnoredPaths({ libraryId: library.libraryId }).then((result) => {
+            if (result.ok) setIgnoredPaths(result.value);
+          });
+        }
+      },
       undo: () => void undoLastFileOp(),
       copySelection: () => {
         const copyIds = selectedAssets
@@ -7385,6 +7412,18 @@ function AppInner() {
         activeTagId={activeTagId}
         activeCollectionId={activeCollectionId}
         activeSmartCollectionId={activeSmartCollectionId}
+        showIgnoredItems={showIgnoredItems}
+        onToggleShowIgnoredItems={() => {
+          const next = !showIgnoredItems;
+          setShowIgnoredItems(next);
+          if (library) {
+            void loadContent(library, assetScope, {
+              trashMode: showTrash,
+              discovery: currentQueryDefinition(),
+              showIgnored: next,
+            });
+          }
+        }}
         allAssetCount={allAssetCount}
         trashedAssetCount={searchTotal ?? trashedAssets.length}
         folders={folders}
@@ -8932,13 +8971,53 @@ function AppInner() {
           setAiUiPrefs((p) => ({ ...p, showAiBadges: !p.showAiBadges }));
         }}
         onOpenAppLog={openAppLog}
-        onOpenIgnoredPaths={() => setIgnoredPathsOpen(true)}
+        onOpenIgnoredPaths={() => {
+          setAppSettingsOpen(false);
+          setLibrarySettingsOpen(true);
+          if (api && library) {
+            void api.listIgnoredPaths({ libraryId: library.libraryId }).then((result) => {
+              if (result.ok) setIgnoredPaths(result.value);
+            });
+          }
+        }}
         open={appSettingsOpen}
       />
       <IgnoredPathsDialog
         open={ignoredPathsOpen}
         paths={ignoredPaths}
         onClose={() => setIgnoredPathsOpen(false)}
+        onUnignore={(path) => {
+          void setIgnoreState({
+            locationKind: path.locationKind,
+            linkedFolderId: path.linkedFolderId,
+            relativePath: path.relativePath,
+            pathKind: path.pathKind,
+            ignored: false,
+            name: path.displayName,
+          }).then(() => {
+            if (!api || !library) return;
+            void api.listIgnoredPaths({ libraryId: library.libraryId }).then((result) => {
+              if (result.ok) setIgnoredPaths(result.value);
+            });
+          });
+        }}
+      />
+      <LibrarySettingsDialog
+        key={`${library?.libraryId ?? "none"}:${librarySettingsOpen ? "open" : "closed"}`}
+        library={library}
+        open={librarySettingsOpen}
+        paths={ignoredPaths}
+        onClose={() => setLibrarySettingsOpen(false)}
+        onSaveName={async (name) => {
+          if (!api || !library) return;
+          const result = await api.rename({ libraryId: library.libraryId, displayName: name });
+          if (!result.ok) {
+            setError(toMessage(result.error, t("toast.librarySettingsSaveFailed"), locale));
+            return;
+          }
+          setLibrary(result.value);
+          setNotice(t("toast.librarySettingsSaved"));
+        }}
         onUnignore={(path) => {
           void setIgnoreState({
             locationKind: path.locationKind,

@@ -5,19 +5,21 @@
 
 ## 范围
 
-- 为托管库和链接文件夹增加持久化的显式 ignore 条目；文件和文件夹均支持。
+- 为托管库和链接文件夹增加持久化的显式 ignore 条目；文件、文件夹和文件后缀均支持。
 - 文件夹 ignore 按相对路径前缀生效，不删除现有索引行，便于恢复显示。
 - 扫描、浏览、搜索、文件夹计数、链接文件夹计数和封面均排除被忽略路径。
 - 对媒体路径解析、复制、移动、重命名、标签/元数据编辑、回收站和硬盘删除增加防护，避免对隐藏项目继续执行操作。
-- 右键菜单提供“忽略”；设置 → 常规 → 已忽略项目提供恢复入口。
+- 右键菜单提供“忽略此文件”及单选文件的“忽略{后缀}文件”；文件夹区域提供显示隐藏项目切换。
+- 资源库菜单新增“资源库设置”，复用全局设置面板样式，提供资源库名称、位置和忽略条目管理。
+- 文件夹级删除允许包含被显式忽略的资产，避免复用普通资产删除校验导致“找不到所选资产”。反馈单：`Serpent-nplj`。
 
 ## 实现位置
 
-- `src/worker/library-service.ts`：迁移 v24、扫描过滤、查询谓词、ignore API 和操作防护。
+- `src/worker/library-service.ts`：迁移 v24/v25、扫描过滤、查询谓词、ignore API 和操作防护。
 - `src/shared/asset-types.ts`、`src/shared/library-api.ts`：忽略条目模型和 API 合约。
 - `src/shared/protocol/requests.ts`、`responses.ts`、`src/main/index.ts`、`src/preload/index.ts`、`src/worker/index.ts`：IPC 请求/响应链路。
 - `src/renderer/AssetContextMenu.tsx`：文件/文件夹/批量忽略入口。
-- `src/renderer/AppSettingsDialog.tsx`、`AppSettingsPages.tsx`、`IgnoredPathsDialog.tsx`：恢复显示入口。
+- `src/renderer/AppSettingsDialog.tsx`、`AppSettingsPages.tsx`、`IgnoredPathsDialog.tsx`、`LibrarySettingsDialog.tsx`：恢复显示与资源库设置入口。
 
 ## 验证
 
