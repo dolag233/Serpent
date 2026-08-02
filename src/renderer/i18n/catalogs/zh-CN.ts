@@ -1011,6 +1011,7 @@ export const zhCN = {
     rotateClockwise: "顺时针旋转 90°",
     flipHorizontal: "水平镜像",
     flipVertical: "垂直镜像",
+    viewerMenu: "查看器操作",
     sequencePlay: "播放序列",
     sequencePause: "暂停序列",
     sequenceFrame: "序列帧",

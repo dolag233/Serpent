@@ -1197,6 +1197,11 @@ function AppInner() {
 
   // Thumbnail / Preview state
   const [previewAsset, setPreviewAsset] = useState<AssetSummary | null>(null);
+  // Keep the browse surface visually hidden while the viewer close path
+  // restores its scroll anchor. Revealing the grid before the two-frame
+  // restoration causes a one-frame flash and can make Chromium paint at the
+  // top of the canvas during a rapid open/close.
+  const [previewRestoring, setPreviewRestoring] = useState(false);
   const previewModalRef = useRef<AssetPreviewModalHandle>(null);
   // REQ-CANVAS-019: read synchronously inside the canvas ResizeObserver
   // callback (which is created once and does not close over fresh state)
@@ -1394,6 +1399,10 @@ function AppInner() {
   // inspector panel toggled and changed the grid's available width).
   const previewScrollSnapshotRef = useRef<BrowseViewSnapshot | null>(null);
   const closingPreviewRef = useRef<string | null>(null);
+  // Incremented whenever a viewer open/close supersedes a pending close. This
+  // prevents a stale rAF/API completion from clearing the restoring state or
+  // focusing the previous card after a rapid reopen of the same asset.
+  const previewCloseGenerationRef = useRef(0);
   const previewRestoreFrameRef = useRef<number | null>(null);
   useEffect(
     () => () => {
@@ -1947,8 +1956,8 @@ function AppInner() {
   // to by reflowing (different column/row placement). Left unhandled, that
   // reflow leaves the raw scroll offset pointing at a different area of the
   // grid. Watch the canvas's own box size (not the preview toggle, which
-  // also changes it via `.is-viewing { display: none }`) and re-anchor scroll
-  // the same way the card-size slider does.
+  // moves the host to a full-size overlay while preserving the canvas
+  // viewport) and re-anchor scroll the same way the card-size slider does.
   useEffect(() => {
     const canvas = workspaceCanvasRef.current;
     if (!canvas) return;
@@ -1959,10 +1968,9 @@ function AppInner() {
       // Read the canvas's current width instead of trusting observer entry
       // ordering when both elements resize in the same notification.
       const width = canvas.clientWidth;
-      // `display:none` while viewing reports width 0; ignore both that
-      // transition and the transition back (view-restore.ts owns scroll
-      // restoration for the viewer close path) by requiring a genuine
-      // non-zero-to-non-zero change.
+      // The viewer overlay preserves the canvas width. View-restore.ts owns
+      // scroll restoration for the viewer close path, so a preview transition
+      // must never be interpreted as a reflow.
       if (width <= 0) {
         lastWidth = null;
         return;
@@ -2124,6 +2132,9 @@ function AppInner() {
       window.cancelAnimationFrame(previewRestoreFrameRef.current);
       previewRestoreFrameRef.current = null;
     }
+    previewCloseGenerationRef.current += 1;
+    closingPreviewRef.current = null;
+    setPreviewRestoring(false);
     previewFocusReturnRef.current = asset.assetId;
     const canvas = workspaceCanvasRef.current;
     if (canvas) {
@@ -2179,7 +2190,9 @@ function AppInner() {
     const closingAsset = previewAsset;
     if (!closingAsset) return;
     if (closingPreviewRef.current === closingAsset.assetId) return;
+    const closeGeneration = ++previewCloseGenerationRef.current;
     closingPreviewRef.current = closingAsset.assetId;
+    setPreviewRestoring(restoreBrowsePosition);
     setPreviewAsset(null);
     const assetId = previewFocusReturnRef.current;
     const scrollSnapshot = previewScrollSnapshotRef.current;
@@ -2190,10 +2203,12 @@ function AppInner() {
       previewRestoreFrameRef.current = null;
     }
     if (restoreBrowsePosition) previewRestoreFrameRef.current = window.requestAnimationFrame(() => {
-      // React must first commit removal of `.is-viewing` (display:none). A
-      // second frame restores scroll against the visible canvas; restoring in
-      // the first frame is discarded by layout and jumps back to the top.
+      if (closeGeneration !== previewCloseGenerationRef.current) return;
+      // React must first commit the collapsed viewer host. A second frame
+      // restores scroll against the visible canvas; restoring in the first
+      // frame can be discarded by layout and jump back to the top.
       previewRestoreFrameRef.current = window.requestAnimationFrame(() => {
+        if (closeGeneration !== previewCloseGenerationRef.current) return;
         const canvas = workspaceCanvasRef.current;
         if (canvas && scrollSnapshot) {
           // REQ-VIEW-008: the grid may have reflowed while the viewer was
@@ -2222,9 +2237,13 @@ function AppInner() {
         canvas
           ?.querySelector<HTMLElement>(`[data-asset-id="${assetId ?? ""}"]`)
           ?.focus({ preventScroll: true });
+        if (closeGeneration === previewCloseGenerationRef.current) {
+          setPreviewRestoring(false);
+        }
         previewRestoreFrameRef.current = null;
       });
     });
+    if (!restoreBrowsePosition) setPreviewRestoring(false);
     try {
       if (api && library) {
         await api.closePreview({
@@ -2235,7 +2254,10 @@ function AppInner() {
     } catch {
       // Closing the local viewer must still work while Main is shutting down.
     } finally {
-      if (closingPreviewRef.current === closingAsset.assetId) {
+      if (
+        closingPreviewRef.current === closingAsset.assetId &&
+        closeGeneration === previewCloseGenerationRef.current
+      ) {
         closingPreviewRef.current = null;
       }
     }
@@ -6151,6 +6173,7 @@ function AppInner() {
       exportDialogOpen ||
       importLibraryChooserOpen ||
       appSettingsOpen ||
+      librarySettingsOpen ||
       appLogOpen ||
       aboutOpen ||
       openSourceLicensesOpen ||
@@ -7572,7 +7595,7 @@ function AppInner() {
       />
       <section className="workspace">
         <div
-          className={`workspace-bar${previewAsset ? " is-viewing" : ""}`}
+          className={`workspace-bar${previewAsset ? " is-viewing" : previewRestoring ? " is-restoring" : ""}`}
         >
           <div className="workspace-title">
             {library &&
@@ -7732,7 +7755,7 @@ function AppInner() {
         </div>
         {!showTagManagement && (
         <div
-          className={`workspace-discovery${previewAsset ? " is-viewing" : ""}`}
+          className={`workspace-discovery${previewAsset ? " is-viewing" : previewRestoring ? " is-restoring" : ""}`}
         >
           <DimensionFilterBar
             availabilityFilter={availabilityFilter}
@@ -7885,7 +7908,7 @@ function AppInner() {
             );
           })()}
         <div
-          className={`workspace-canvas-host${previewAsset ? " is-viewing" : ""}`}
+          className={`workspace-canvas-host${previewAsset ? " is-viewing" : previewRestoring ? " is-restoring" : ""}`}
         >
           {renderedToast && (
             <WorkspaceNoticeBanner
@@ -7975,7 +7998,7 @@ function AppInner() {
               </div>
             )}
         <div
-          className={`workspace-canvas${previewAsset ? " is-viewing" : ""}${externalDropActive ? " is-external-drop" : ""}`}
+          className={`workspace-canvas${previewAsset ? " is-viewing" : previewRestoring ? " is-restoring" : ""}${externalDropActive ? " is-external-drop" : ""}`}
           onDragEnter={handleExternalDragEnter}
           onDragLeave={handleExternalDragLeave}
           onDragOver={handleExternalDragOver}

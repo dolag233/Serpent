@@ -2180,6 +2180,16 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
   display: none;
 }
 
+/* Keep the shell's geometry while the browse canvas restores its pre-view
+   scroll anchor. Visibility (rather than display:none) lets the restore code
+   measure the real grid before the next paint, avoiding a one-frame flash. */
+.workspace-bar.is-restoring,
+.workspace-discovery.is-restoring,
+.workspace-canvas-host.is-restoring {
+  visibility: hidden;
+  pointer-events: none;
+}
+
 .workspace {
   position: relative;
   z-index: 0; /* contain viewer z-index inside this column (REQ-VIEW-004) */
@@ -3235,6 +3245,13 @@ body.serpent-modal-open .app-shell {
   padding: 5px;
 }
 
+/* Viewer-local context menus keep the asset menu geometry, with only a subtle
+   acrylic veil over the media behind them. */
+.viewer-context-menu {
+  background: color-mix(in srgb, var(--menu-surface-background) 92%, transparent);
+  backdrop-filter: blur(14px) saturate(120%);
+}
+
 .context-menu-item {
   display: flex;
   align-items: center;
@@ -4222,24 +4239,6 @@ body.serpent-modal-open .app-shell {
   background: var(--hover);
   color: var(--text);
 }
-.preview-transform-controls {
-  position: absolute;
-  z-index: 3;
-  /* The workspace notice also occupies top-center. Keep viewer transforms on
-     their own row so an import/status notice can never cover the controls. */
-  top: 52px;
-  left: 50%;
-  display: flex;
-  gap: 4px;
-  padding: 4px;
-  border: 1px solid var(--divider);
-  border-radius: 8px;
-  background: var(--viewer-chrome-bg);
-  box-shadow: 0 1px 6px rgb(0 0 0 / 10%);
-  backdrop-filter: blur(10px);
-  transform: translateX(-50%);
-}
-.preview-transform-controls button,
 .preview-sequence-controls button {
   display: grid;
   width: 28px;
@@ -4252,14 +4251,12 @@ body.serpent-modal-open .app-shell {
   color: var(--text);
   cursor: pointer;
 }
-.preview-transform-controls button:hover,
-.preview-transform-controls button:focus-visible,
-.preview-transform-controls button.is-active,
 .preview-sequence-controls button:hover,
 .preview-sequence-controls button:focus-visible {
   background: color-mix(in srgb, var(--accent) 18%, transparent);
 }
-.preview-transform-controls button.is-active {
+
+.viewer-context-menu .context-menu-item.is-active {
   color: var(--accent);
 }
 .preview-sequence-stage {
@@ -4435,9 +4432,13 @@ body.serpent-modal-open .app-shell {
   box-shadow: 0 0 0 2px var(--accent);
 }
 
-/* REQ-VIEW-004: keep canvas mounted (scroll restore) but out of layout while viewing. */
+/* REQ-VIEW-004: keep the scroll container mounted while viewing. Toggling
+   `display:none` here resets Chromium's scrollTop during a rapid open/close;
+   the collapsed host already removes it from flex layout, so visibility is
+   sufficient and preserves the native scroll state for restoration. */
 .workspace-canvas.is-viewing {
-  display: none;
+  visibility: hidden;
+  pointer-events: none;
 }
 
 .preview-state {
@@ -5985,6 +5986,11 @@ select.ai-config-input.ai-config-languages {
   user-select: none;
 }
 
+.workspace-canvas.is-restoring {
+  visibility: hidden;
+  pointer-events: none;
+}
+
 /* Serpent-yl67: host owns flex growth; activity strips overlay the scrollport
    instead of living inside the scrolling canvas content. */
 .workspace-canvas-host {
@@ -6000,19 +6006,24 @@ select.ai-config-input.ai-config-languages {
    left the host at flex:1 and split the workspace 50/50 with `.workspace-viewer`
    (empty top half, close chip mid-stage) — VIEWER-019 / 2026-07-21 regression.
    Do not use display:none on the host: WorkspaceNoticeBanner / activity-strip
-   live here and must stay visible while preview is open (SHELL-027). Collapse
-   the host box instead and raise its stacking context above the viewer. */
+   live here and must stay visible while preview is open (SHELL-027). Keep the
+   host as an absolute, full-size overlay instead of collapsing it to height 0:
+   Chromium otherwise clamps the canvas scrollTop while the viewer is mounted,
+   which makes rapid open/close land at the top before the anchor restore runs. */
 .workspace-canvas-host.is-viewing {
-  flex: 0 0 0;
-  height: 0;
-  min-height: 0;
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  flex: none;
   overflow: visible;
   z-index: 25;
   pointer-events: none;
 }
 
 .workspace-canvas-host.is-viewing > .workspace-canvas {
-  display: none;
+  visibility: hidden;
+  pointer-events: none;
 }
 
 .workspace-canvas-host.is-viewing > .workspace-notice,

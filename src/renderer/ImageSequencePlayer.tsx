@@ -16,6 +16,8 @@ export interface ImageSequencePlayerProps {
   isFullscreen: boolean;
   libraryId: string;
   onFullscreen(): void;
+  onRotate?(): void;
+  fitRequestToken?: number;
   onSwipeNext?: () => void;
   onSwipePrevious?: () => void;
   sequence: ImageSequenceSummary;
@@ -32,6 +34,8 @@ export function ImageSequencePlayer({
   isFullscreen,
   libraryId,
   onFullscreen,
+  onRotate,
+  fitRequestToken,
   onSwipeNext,
   onSwipePrevious,
   sequence,
@@ -138,9 +142,11 @@ export function ImageSequencePlayer({
         <ZoomableImage
           alt={currentFrame.displayName}
           displayTransform={displayTransform}
+          fitRequestToken={fitRequestToken}
           fitKeybinds="f-only"
           isFullscreen={isFullscreen}
           onFullscreen={onFullscreen}
+          onRotate={onRotate}
           onSwipeNext={onSwipeNext}
           onSwipePrevious={onSwipePrevious}
           placeholderSrc={thumbnailUrls[frameIndex] ?? undefined}
@@ -174,6 +180,15 @@ export function ImageSequencePlayer({
         <span>
           {frameIndex + 1} / {sequence.frames.length} · {sequence.fps} FPS
         </span>
+        {onRotate ? (
+          <button
+            onClick={onRotate}
+            type="button"
+            {...iconActionAttrs(t("preview.rotateClockwise"))}
+          >
+            <Icon name="rotate-cw" size={14} />
+          </button>
+        ) : null}
         <button
           onClick={onFullscreen}
           type="button"

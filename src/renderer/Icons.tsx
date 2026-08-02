@@ -43,6 +43,8 @@ export type IconName =
   | "rotate-cw"
   | "flip-horizontal"
   | "flip-vertical"
+  | "flip-horizontal-2"
+  | "flip-vertical-2"
   | "search"
   | "settings"
   | "sliders"
@@ -296,7 +298,6 @@ const iconPaths: Record<IconName, ReactNode> = {
     <>
       <path d="M20 7v5h-5" />
       <path d="M18.4 16a8 8 0 1 1 1.3-8.5L20 12" />
-      <path d="M12 8v8M8 12h8" opacity="0.45" />
     </>
   ),
   "flip-horizontal": (
@@ -309,6 +310,28 @@ const iconPaths: Record<IconName, ReactNode> = {
     <>
       <path d="M3 12h18" strokeDasharray="2 2" />
       <path d="m6 10 6-6 6 6H6ZM6 14l6 6 6-6H6Z" />
+    </>
+  ),
+  // Lucide `flip-horizontal-2` (https://lucide.dev/icons/flip-horizontal-2).
+  "flip-horizontal-2": (
+    <>
+      <path d="m3 7 5 5-5 5V7" />
+      <path d="m21 7-5 5 5 5V7" />
+      <path d="M12 20v2" />
+      <path d="M12 14v2" />
+      <path d="M12 8v2" />
+      <path d="M12 2v2" />
+    </>
+  ),
+  // Lucide `flip-vertical-2` (https://lucide.dev/icons/flip-vertical-2).
+  "flip-vertical-2": (
+    <>
+      <path d="m17 3-5 5-5-5h10" />
+      <path d="m17 21-5-5-5 5h10" />
+      <path d="M4 12H2" />
+      <path d="M10 12H8" />
+      <path d="M16 12h-2" />
+      <path d="M22 12h-2" />
     </>
   ),
   search: (

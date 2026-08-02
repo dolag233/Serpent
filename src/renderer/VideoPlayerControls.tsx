@@ -33,6 +33,7 @@ import {
   viewerDisplayTransformCss,
   type ViewerDisplayTransform,
 } from "./viewer-display-transform";
+import { isViewerFitShortcut } from "./viewer-fit-shortcut";
 
 type RendererWindow = Window & {
   serpent?: { shell?: SerpentShellApi };
@@ -45,10 +46,12 @@ export interface VideoPlayerControlsProps {
   muted: boolean;
   onError(event: SyntheticEvent<HTMLVideoElement>): void;
   onFullscreen(): void;
+  onRotate?(): void;
   onMutedChange(muted: boolean): void;
   onReady?(): void;
   onSwipeNext?: () => void;
   onSwipePrevious?: () => void;
+  fitRequestToken?: number;
   /** Wake viewer chrome (e.g. Main-forwarded IME letter shortcuts). */
   onUserActivity?: () => void;
   onVolumeChange(volume: number): void;
@@ -101,13 +104,15 @@ export function VideoPlayerControls({
   posterUrl,
   src,
   volume,
+  onRotate,
+  fitRequestToken,
   displayTransform = IDENTITY_VIEWER_DISPLAY_TRANSFORM,
 }: VideoPlayerControlsProps) {
   const t = useT();
   const videoRef = useRef<HTMLVideoElement>(null);
   const trackRef = useRef<HTMLDivElement>(null);
-  // Zoom/pan/fit mirrors the image viewer (Serpent-190). No F/Space fit
-  // keybind here: Space toggles playback; D/F step frames; Ctrl+arrows skip.
+  // Zoom/pan/fit mirrors the image viewer. Space remains playback; F remains
+  // the existing next-frame shortcut. Numpad . fits the viewer.
   const {
     fitToWindow,
     measureAndFit,
@@ -213,6 +218,20 @@ export function VideoPlayerControls({
       if (document.querySelector('[role="dialog"][aria-modal="true"]')) {
         return;
       }
+      const numpadDecimal = isViewerFitShortcut(event);
+      if (
+        !isTypingKeyboardTarget(event.target) &&
+        !event.ctrlKey &&
+        !event.metaKey &&
+        !event.altKey &&
+        !event.shiftKey &&
+        numpadDecimal
+      ) {
+        event.preventDefault();
+        event.stopPropagation();
+        fitToWindow();
+        return;
+      }
       if (shouldHandleVideoSpaceKey(event)) {
         event.preventDefault();
         event.stopPropagation();
@@ -248,7 +267,7 @@ export function VideoPlayerControls({
     };
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [applyPlaybackRate, stepFrame, togglePlayback]);
+  }, [applyPlaybackRate, fitToWindow, stepFrame, togglePlayback]);
 
   // Main path: Windows Menu accelerators + IMM32 IME suspend while armed;
   // before-input remains a fallback. Ctrl+Arrow still arrives via the listener above.
@@ -303,7 +322,7 @@ export function VideoPlayerControls({
       window.removeEventListener("keyup", syncArmed, true);
       unsubscribe();
     };
-  }, [applyPlaybackRate, onUserActivity, stepFrame]);
+  }, [applyPlaybackRate, fitToWindow, onUserActivity, stepFrame]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -354,6 +373,11 @@ export function VideoPlayerControls({
     );
     measureAndFit("reset", { w: size.width, h: size.height });
   }, [displayTransform.quarterTurns, measureAndFit]);
+
+  useEffect(() => {
+    if (fitRequestToken === undefined) return;
+    fitToWindow();
+  }, [fitRequestToken, fitToWindow]);
 
   // The video keeps its source dimensions; rotation itself swaps the visual
   // bounding box. The rotated dimensions are used only by the fit calculation.
@@ -546,6 +570,15 @@ export function VideoPlayerControls({
           onVolumeChange={onVolumeChange}
           volume={volume}
         />
+        <button
+          className="preview-video-fit"
+          onClick={onRotate}
+          tabIndex={VIEWER_CHROME_TAB_INDEX}
+          type="button"
+          {...iconActionAttrs(t("preview.rotateClockwise"))}
+        >
+          <Icon name="rotate-cw" size={14} />
+        </button>
         <button
           className="preview-video-fit"
           onClick={fitToWindow}

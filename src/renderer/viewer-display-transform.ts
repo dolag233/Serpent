@@ -10,6 +10,28 @@ export const IDENTITY_VIEWER_DISPLAY_TRANSFORM: ViewerDisplayTransform = {
   quarterTurns: 0,
 };
 
+export type ViewerDisplayTransformAction =
+  | "flip-horizontal"
+  | "flip-vertical"
+  | "reset"
+  | "rotate-clockwise";
+
+export function applyViewerDisplayTransformAction(
+  transform: ViewerDisplayTransform,
+  action: ViewerDisplayTransformAction,
+): ViewerDisplayTransform {
+  if (action === "rotate-clockwise") {
+    return { ...transform, quarterTurns: transform.quarterTurns + 1 };
+  }
+  if (action === "flip-horizontal") {
+    return { ...transform, flipHorizontal: !transform.flipHorizontal };
+  }
+  if (action === "flip-vertical") {
+    return { ...transform, flipVertical: !transform.flipVertical };
+  }
+  return IDENTITY_VIEWER_DISPLAY_TRANSFORM;
+}
+
 export function normalizeQuarterTurns(value: number): number {
   return ((Math.trunc(value) % 4) + 4) % 4;
 }

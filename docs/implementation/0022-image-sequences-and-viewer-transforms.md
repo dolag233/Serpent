@@ -27,7 +27,7 @@
 - 用户多选至少三张符合规则的图片后，可从右键菜单选择“创建序列图…”，在对话框设置 FPS。
 - Inspector 单选序列时以居中的三层堆叠显示第一帧、中间帧和末帧。
 - 双击序列进入查看页，提供播放/暂停、帧进度和 FPS 信息；播放按 FPS 循环。
-- 图片或视频查看页提供“顺时针旋转 90°”“水平镜像”“垂直镜像”。每次切换资产时重置，且不产生文件或数据库写入。
+- 图片或视频查看页提供“顺时针旋转 90°”“水平镜像”“垂直镜像”。旋转入口位于底部 toolbar；图片、视频和序列查看页支持与资产菜单同款的右键操作菜单（旋转、镜像、适应窗口、全屏），小键盘 `.` 适应窗口，视频 `F` 逐帧。每次切换资产时重置，且不产生文件或数据库写入。
 
 ## 验收
 
@@ -36,7 +36,7 @@
 | 单文件、文件夹与链接目录连续段识别 | [`image-sequence.ts`](../../src/shared/image-sequence.ts)、[`library-service.ts`](../../src/worker/library-service.ts) | [`image-sequence.test.ts`](../../tests/unit/image-sequence.test.ts)、[`Worker 集成`](../../tests/worker/image-sequence.test.ts) | macOS Electron E2E：单选中间帧后自动导入并折叠为 3 帧序列 |
 | 手动创建、解散与 FPS | [`ImageSequenceDialog.tsx`](../../src/renderer/ImageSequenceDialog.tsx)、[`AssetContextMenu.tsx`](../../src/renderer/AssetContextMenu.tsx)、Worker API/SQLite v23 | [`Worker 集成`](../../tests/worker/image-sequence.test.ts)、[`真实 Electron E2E`](../../tests/e2e/image-sequence-viewer.test.ts) | E2E 解散自动序列后多选三帧，以 13 FPS 重建；完整退出重启后仍为 13 FPS |
 | 序列卡片、Inspector 堆叠和播放 | [`AssetCardMedia.tsx`](../../src/renderer/AssetCardMedia.tsx)、[`InspectorPanel.tsx`](../../src/renderer/InspectorPanel.tsx)、[`ImageSequencePlayer.tsx`](../../src/renderer/ImageSequencePlayer.tsx) | [`真实 Electron E2E`](../../tests/e2e/image-sequence-viewer.test.ts) | macOS 开发态截图检查：卡片帧数角标、三帧居中堆叠、帧滑块与播放状态正常 |
-| 图片/视频旋转与镜像仅影响预览 | [`AssetPreviewModal.tsx`](../../src/renderer/AssetPreviewModal.tsx)、[`zoomable-preview-image.tsx`](../../src/renderer/zoomable-preview-image.tsx)、[`VideoPlayerControls.tsx`](../../src/renderer/VideoPlayerControls.tsx) | [`显示变换单测`](../../tests/unit/viewer-display-transform.test.ts)、[`真实 Electron E2E`](../../tests/e2e/image-sequence-viewer.test.ts) | macOS 开发态截图检查：90° 后画面保持原比例并转为竖向；双镜像可见启用态；未产生源文件写入 |
+| 图片/视频旋转与镜像仅影响预览 | [`AssetPreviewModal.tsx`](../../src/renderer/AssetPreviewModal.tsx)、[`ViewerContextMenu.tsx`](../../src/renderer/ViewerContextMenu.tsx)、[`zoomable-preview-image.tsx`](../../src/renderer/zoomable-preview-image.tsx)、[`VideoPlayerControls.tsx`](../../src/renderer/VideoPlayerControls.tsx) | [`显示变换单测`](../../tests/unit/viewer-display-transform.test.ts)、[`变换动作单测`](../../tests/unit/viewer-display-transform-actions.test.ts)、[`真实 Electron E2E`](../../tests/e2e/image-sequence-viewer.test.ts) | macOS 开发态截图检查：90° 后画面保持原比例并转为竖向；双镜像可见启用态；旋转在底部 toolbar；右键菜单提供同款操作；未产生源文件写入（Windows/packaged 待验） |
 
 ## 不在本次范围
 

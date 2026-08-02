@@ -84,6 +84,10 @@ export function useDialogEscapeDismiss({
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       event.preventDefault();
+      // Dialogs are the topmost interaction layer. Handle Escape during the
+      // capture phase so a viewer/workspace listener cannot close a surface
+      // underneath the dialog first.
+      event.stopPropagation();
       const action = resolveDialogEscapeAction(snapshot);
       switch (action.kind) {
         case "none":
@@ -174,8 +178,8 @@ export function useDialogEscapeDismiss({
       }
     };
 
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
+    document.addEventListener("keydown", onKeyDown, true);
+    return () => document.removeEventListener("keydown", onKeyDown, true);
   }, [
     api,
     snapshot,

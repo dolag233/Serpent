@@ -1028,6 +1028,7 @@ export const en = {
     rotateClockwise: "Rotate 90° clockwise",
     flipHorizontal: "Mirror horizontally",
     flipVertical: "Mirror vertically",
+    viewerMenu: "Viewer actions",
     sequencePlay: "Play sequence",
     sequencePause: "Pause sequence",
     sequenceFrame: "Sequence frame",
