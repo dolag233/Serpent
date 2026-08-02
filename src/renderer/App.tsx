@@ -160,9 +160,14 @@ import {
   type SmartCollectionSettingsTarget,
 } from "./SmartCollectionSettingsDialog";
 import { MediaJobsDialog } from "./MediaJobsDialog";
+import { PluginJobActivityBanner } from "./PluginJobActivityBanner";
 import { AiConnectionFailureDialog } from "./AiConnectionFailureDialog";
 import { FatalAlertDialog } from "./FatalAlertDialog";
 import { useAiConnectionFailure } from "./use-ai-connection-failure";
+import {
+  hasActivePluginJobs,
+  selectPluginJobActivity,
+} from "./plugin-job-activity";
 import { useScrollbarActivity } from "./use-scrollbar-activity";
 
 import {
@@ -1424,13 +1429,16 @@ function AppInner() {
   const [aiJobs, setAiJobs] = useState<AiJobStatus | null>(null);
   const [pluginJobs, setPluginJobs] = useState<PluginJobStatus | null>(null);
   const [mediaJobsLoading, setMediaJobsLoading] = useState(false);
+  const pluginJobsActive = hasActivePluginJobs(pluginJobs);
+  const pluginJobActivity = selectPluginJobActivity(pluginJobs);
   const backgroundJobsActive = useMemo(() => {
     if (aiAnalyzing) return true;
     const mediaActive =
       (mediaJobs?.queued ?? 0) + (mediaJobs?.running ?? 0) > 0;
     const aiActive = (aiJobs?.queued ?? 0) + (aiJobs?.running ?? 0) > 0;
-    return mediaActive || aiActive;
-  }, [aiAnalyzing, aiJobs, mediaJobs]);
+    return mediaActive || aiActive || pluginJobsActive;
+  }, [aiAnalyzing, aiJobs, mediaJobs, pluginJobsActive]);
+  const openMediaJobs = useCallback(() => setMediaJobsOpen(true), []);
   const controlAiJobsRef = useRef<
     (action: "pause" | "resume" | "cancel" | "retry", jobIds?: string[]) => Promise<void>
   >(async () => undefined);
@@ -2904,6 +2912,7 @@ function AppInner() {
         try {
           await closeAssetPreview(false);
           setLibrary(event.library);
+          setPluginJobs(null);
           setAssetScope("all");
           setActiveTagId(null);
           setActiveCollectionId(null);
@@ -3239,6 +3248,7 @@ function AppInner() {
       await closeAssetPreview(false);
       opened = true;
       setLibrary(result.value);
+      setPluginJobs(null);
       setAssetScope("all");
       setActiveTagId(null);
       setActiveCollectionId(null);
@@ -5346,6 +5356,7 @@ function AppInner() {
 
   function applyClosedLibraryUi() {
     setLibrary(null);
+    setPluginJobs(null);
     setFolders([]);
     setLinkedFolders([]);
     setAssets([]);
@@ -6203,6 +6214,7 @@ function AppInner() {
       }
       await closeAssetPreview(false);
       setLibrary(summary);
+      setPluginJobs(null);
       setShowTrash(false);
       setShowTagManagement(false);
     setActivePluginSidebarViewId(null);
@@ -8044,7 +8056,7 @@ function AppInner() {
                   disabled: library === null,
                   id: "background-jobs",
                   label: t("toolbar.backgroundJobs"),
-                  onSelect: () => setMediaJobsOpen(true),
+                  onSelect: openMediaJobs,
                 },
                 {
                   id: "script-sandbox-preview",
@@ -8215,6 +8227,12 @@ function AppInner() {
               </div>
             );
           })()}
+        {pluginJobActivity !== null && (
+          <PluginJobActivityBanner
+            job={pluginJobActivity}
+            onOpenJobs={openMediaJobs}
+          />
+        )}
         <div
           className={`workspace-canvas-host${previewAsset ? " is-viewing" : ""}`}
         >

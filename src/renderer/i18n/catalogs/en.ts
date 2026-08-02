@@ -794,6 +794,7 @@ export const en = {
       retryAiFailed: "Retry failed AI jobs",
       pluginSection: "Plugin jobs",
       pluginEmpty: "No plugin jobs right now.",
+      openPluginJobs: "View plugin jobs",
       revealLog: "Reveal app log",
       viewLog: "View diagnostics"
     },

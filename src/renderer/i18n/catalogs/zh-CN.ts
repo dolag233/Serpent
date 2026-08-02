@@ -783,6 +783,7 @@ export const zhCN = {
       retryAiFailed: "重试 AI 失败项",
       pluginSection: "插件任务",
       pluginEmpty: "当前没有插件任务。",
+      openPluginJobs: "查看插件任务",
       revealLog: "查看应用日志",
       viewLog: "查看诊断日志"
     },

@@ -41,3 +41,12 @@
 - `tests/unit/protocol.test.ts`（`plugin.list-jobs.request`）
 
 命令摘要：`node scripts/run-vitest-with-electron.mjs run --config vitest.config.ts tests/unit/plugin-job-status.test.ts tests/unit/plugin-standard-host.test.ts tests/worker/plugin-jobs.test.ts tests/unit/protocol.test.ts` → 4 files / 71 tests passed。
+
+## 2026-08-02 P1 可发现性跟进
+
+补齐插件 Job 已有进度协议与主界面的连接：
+
+- `App.tsx` 将 queued/running Plugin Job 纳入 `backgroundJobsActive`；资源库切换时清空旧库 Job 摘要，避免工具栏沿用旧状态。
+- 工作区画布上方复用统一后台任务活动条，显示插件/handler、`phase`、`message`、`completed/total`、百分比和失败/取消原因，并提供直达完整任务面板的按钮。
+- `WorkspaceToolsOverflow` 的后台任务入口在存在插件 Job 时显示活动标记；完成、失败、取消或暂停结果在活动条中保留短暂时间，任务面板仍保留完整历史。
+- 新增 `plugin-job-activity` 选择逻辑测试；本次没有执行完整 Electron E2E、packaged 或 Windows 验收。

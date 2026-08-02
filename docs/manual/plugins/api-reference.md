@@ -277,6 +277,8 @@ await serpent.jobs.retry({ jobId, retryInput: { onlyFailed: true } });
 Job handler 必须在 Manifest `contributes.jobs` 中存在。`recoveryStrategy` 为 `idempotent` 或 `checkpoint`；只有 checkpoint handler 可暂停/恢复。
 进度 payload 有界。`completed/total` 是数量进度的权威来源；当 `total` 为 0 时才使用可选的 `progress`（0 到 1）作为比例。后台 UI 的插件任务区会显示 `completed/total`、百分比、`phase` 和 `message`；失败时优先显示错误详情。逐项结果和重试输入由 Job 状态保留，后续任务面板可据此展开或定向重试。
 
+Job 运行或排队时，Host 主界面会显示一个非阻塞的插件任务活动条，工具栏的「后台任务」入口同步显示活动标记；点击活动条可打开完整任务面板。任务完成、失败或取消后，活动条会短暂保留结果，任务面板中的历史状态仍可查看。
+
 ### `serpent.commands`、`providers`、`input` 与日志
 
 ```ts
