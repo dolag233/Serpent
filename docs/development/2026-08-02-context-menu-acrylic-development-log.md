@@ -38,3 +38,9 @@ Windows 开发态 Computer Use 快速检查：设置 → 外观可见「右键�
 资源库切换菜单、Windows 主菜单及工作区“更多”菜单也接入同一 `data-menu-acrylic` 强度档位，保持菜单间的透明度、背景模糊和饱和度一致；设置面板和普通卡片不受影响。
 
 验证：`npx playwright test tests/e2e/shell-navigation.test.ts --reporter=line`（1 test passed，覆盖资源库菜单和主菜单默认低档的模糊效果）。
+
+## 主菜单二级浮层合成修复
+
+主菜单二级项原先嵌套在一级亚克力面板内，子面板的 `backdrop-filter` 只能采样已经合成过的一级面板，因此视觉上像不透明平块。现将二级浮层调整为主菜单根节点下的同级元素，保留原有位置和键盘导航；它可以直接采样后方资源界面，真正产生模糊效果。
+
+验证：`npm run typecheck`、`npm run lint`、`npx playwright test tests/e2e/shell-navigation.test.ts --reporter=line`（1 test passed，覆盖主菜单一级面板和二级面板的 blur 样式及原有定位）。

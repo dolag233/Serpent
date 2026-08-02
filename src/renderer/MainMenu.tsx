@@ -164,17 +164,20 @@ export function MainMenu({
   useLayoutEffect(() => {
     if (!open || !activeSection?.items?.length) return;
     const surface = surfaceRef.current;
+    const root = rootRef.current;
     const trigger = surface?.querySelector<HTMLElement>(
       `[data-main-menu-section-id="${activeSection.id}"]`,
     );
-    if (!surface || !trigger) return;
-    const surfaceRect = surface.getBoundingClientRect();
+    if (!surface || !root || !trigger) return;
+    const rootRect = root.getBoundingClientRect();
     const triggerRect = trigger.getBoundingClientRect();
-    const originLeft = surfaceRect.left + surface.clientLeft;
-    const originTop = surfaceRect.top + surface.clientTop;
     setSubmenuPosition({
-      left: triggerRect.right - originLeft,
-      top: triggerRect.top - originTop,
+      // Keep the secondary surface as a sibling of the acrylic primary
+      // surface. If it is nested inside that surface, its backdrop-filter
+      // only sees the already-composited primary panel and cannot blur the
+      // asset view behind it.
+      left: triggerRect.right - rootRect.left,
+      top: triggerRect.top - rootRect.top,
     });
   }, [activeSection, activeSectionId, open]);
 
@@ -193,7 +196,7 @@ export function MainMenu({
   function onSurfaceKeyDown(event: KeyboardEvent<HTMLDivElement>) {
     if (event.key === "ArrowRight") {
       const section = sections.find((candidate) => candidate.id === activeSectionId);
-      const firstItem = surfaceRef.current?.querySelector<HTMLElement>(
+      const firstItem = rootRef.current?.querySelector<HTMLElement>(
         `[data-main-menu-submenu="${section?.id ?? ""}"] ${MENU_ITEM_SELECTOR}`,
       );
       if (section && section.items && firstItem) {
@@ -220,6 +223,7 @@ export function MainMenu({
   return (
     <div
       className="main-menu"
+      onKeyDown={onSurfaceKeyDown}
       onMouseLeave={scheduleClose}
       ref={rootRef}
     >
@@ -241,7 +245,6 @@ export function MainMenu({
           aria-label={t("shell.mainMenu")}
           className="main-menu-surface"
           id={menuId}
-          onKeyDown={onSurfaceKeyDown}
           onMouseEnter={cancelClose}
           ref={surfaceRef}
           role="menu"
@@ -285,19 +288,19 @@ export function MainMenu({
               );
             })}
           </div>
-          {activeSection?.items ? (
-            <div
-              aria-label={activeSection.label}
-              className="main-menu-submenu"
-              data-main-menu-submenu={activeSection.id}
-              role="menu"
-              style={submenuPosition}
-            >
-              {activeSection.items.map((item) => (
-                <MenuItemButton item={item} key={item.id} onSelect={() => runItem(item)} />
-              ))}
-            </div>
-          ) : null}
+        </div>
+      ) : null}
+      {open && activeSection?.items ? (
+        <div
+          aria-label={activeSection.label}
+          className="main-menu-submenu"
+          data-main-menu-submenu={activeSection.id}
+          role="menu"
+          style={submenuPosition}
+        >
+          {activeSection.items.map((item) => (
+            <MenuItemButton item={item} key={item.id} onSelect={() => runItem(item)} />
+          ))}
         </div>
       ) : null}
     </div>

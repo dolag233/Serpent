@@ -102,6 +102,11 @@ test("library switcher, breadcrumbs, and workspace history", async () => {
       await window.getByRole("menuitem", { name: "文件", exact: true }).hover();
       const mainSubmenu = window.locator(".main-menu-submenu");
       await expect(mainSubmenu).toBeVisible();
+      await expect
+        .poll(() =>
+          mainSubmenu.evaluate((element) => getComputedStyle(element).backdropFilter),
+        )
+        .toContain("blur");
       await expect(
         window.getByRole("menuitem", { name: "导入文件", exact: true }),
       ).toBeVisible();
