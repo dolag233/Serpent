@@ -3,7 +3,7 @@ import type { PluginJobRecord } from "../plugins/plugin-jobs";
 type PluginJobDisplayRecord = Pick<
   PluginJobRecord,
   "completed" | "total" | "progress" | "phase" | "message"
->;
+> & Pick<PluginJobRecord, "status">;
 
 export function formatPluginJobProgressSummary(
   job: PluginJobDisplayRecord,
@@ -21,6 +21,7 @@ export function formatPluginJobProgressSummary(
 export function formatPluginJobProgressMessage(
   job: PluginJobDisplayRecord,
 ): string {
+  if (job.status === "queued") return "";
   return [job.phase, job.message]
     .map((value) => value?.trim())
     .filter((value): value is string => Boolean(value))

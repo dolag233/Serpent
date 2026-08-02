@@ -12,6 +12,7 @@ describe("plugin job display", () => {
         completed: 3,
         total: 10,
         progress: 0.3,
+        status: "running",
         phase: "infer",
         message: "",
       }),
@@ -24,6 +25,7 @@ describe("plugin job display", () => {
         completed: 1,
         total: 2,
         progress: 0.5,
+        status: "running",
         phase: "  Processing  ",
         message: "  image 02  ",
       }),
@@ -33,8 +35,22 @@ describe("plugin job display", () => {
         completed: 1,
         total: 2,
         progress: 0.5,
+        status: "running",
         phase: "",
         message: "   ",
+      }),
+    ).toBe("");
+  });
+
+  it("does not show stale running text for a queued job", () => {
+    expect(
+      formatPluginJobProgressMessage({
+        completed: 0,
+        total: 1,
+        progress: 0,
+        status: "queued",
+        phase: "reading",
+        message: "读取资产 image.png",
       }),
     ).toBe("");
   });

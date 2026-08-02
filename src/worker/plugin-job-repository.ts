@@ -149,6 +149,20 @@ function stateFromRecord(job: PluginJobRecord): PersistedPluginJobState {
   };
 }
 
+function resetIdempotentRecoveryState(state: PersistedPluginJobState): PersistedPluginJobState {
+  return {
+    ...(state.ownerPluginInstanceId === undefined ? {} : { ownerPluginInstanceId: state.ownerPluginInstanceId }),
+    ...(state.ownerScope === undefined ? {} : { ownerScope: state.ownerScope }),
+    ...(state.ownerLibraryId === undefined ? {} : { ownerLibraryId: state.ownerLibraryId }),
+    executionAvailability: 'ready',
+    completed: 0,
+    phase: 'queued',
+    message: '',
+    ...(state.retryInput === undefined ? {} : { retryInput: state.retryInput }),
+    cancellation: { requested: false },
+  };
+}
+
 export function enqueuePluginJobRecord(
   connection: SqlConnection,
   input: {
@@ -593,25 +607,47 @@ export function recoverInterruptedPluginJobs(
   connection: SqlConnection,
   libraryId: string,
 ): number {
-  const now = new Date().toISOString();
-  const result = connection.prepare(
-    `UPDATE jobs
-        SET status = CASE
-              WHEN recovery_strategy = 'idempotent' THEN 'queued'
-              ELSE 'paused'
-            END,
-            error_code = CASE
-              WHEN recovery_strategy = 'idempotent' THEN NULL
-              ELSE 'PLUGIN_JOB_INTERRUPTED'
-            END,
-            error_detail = CASE
-              WHEN recovery_strategy = 'idempotent' THEN NULL
-              ELSE 'The plugin job was interrupted and needs an explicit retry.'
-            END,
-            updated_at = ?
+  const interrupted = connection.prepare(
+    `${SELECT_PLUGIN_JOB}
       WHERE library_id = ?
         AND kind = ?
         AND status = 'running'`,
-  ).run(now, libraryId, PLUGIN_BACKGROUND_JOB_KIND);
-  return result.changes;
+  ).all(libraryId, PLUGIN_BACKGROUND_JOB_KIND) as JobRow[];
+  if (interrupted.length === 0) return 0;
+
+  const now = new Date().toISOString();
+  const update = connection.prepare(
+    `UPDATE jobs
+        SET status = ?,
+            error_code = ?,
+            error_detail = ?,
+            progress = ?,
+            updated_at = ?,
+            payload_json = ?
+      WHERE job_id = ?
+        AND library_id = ?
+        AND kind = ?
+        AND status = 'running'`,
+  );
+  let recovered = 0;
+  for (const row of interrupted) {
+    const stored = parseStoredJobPayload(row.payload_json);
+    const idempotent = row.recovery_strategy === 'idempotent';
+    const result = update.run(
+      idempotent ? 'queued' : 'paused',
+      idempotent ? null : 'PLUGIN_JOB_INTERRUPTED',
+      idempotent ? null : 'The plugin job was interrupted and needs an explicit retry.',
+      idempotent ? 0 : row.progress,
+      now,
+      idempotent
+        ? serializeStoredJobPayload(stored.payload, resetIdempotentRecoveryState(stored.state))
+        : row.payload_json,
+      row.job_id,
+      libraryId,
+      PLUGIN_BACKGROUND_JOB_KIND,
+    );
+    recovered += result.changes;
+  }
+
+  return recovered;
 }

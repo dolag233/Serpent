@@ -1320,6 +1320,10 @@ async function notifyLibraryOpenedSideEffects(input: {
       libraryId: input.libraryId,
     });
   }
+  // Global plugin activation uses an internal pseudo-library. Once the real
+  // library is open, drain its persisted jobs against the concrete library so
+  // recovered global and library-scoped jobs can actually resume.
+  pluginJobScheduler?.tick(input.libraryId);
 }
 
 async function processAiQueueBatch(

@@ -240,4 +240,103 @@ describe('plugin job repository via LibraryService', () => {
       .toEqual({ retry: 2 });
     service.closeLibrary(library.libraryId);
   });
+
+  it('resets stale progress when an idempotent job is recovered after a crash', () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'serpent-plugin-job-recovery-'));
+    roots.push(root);
+    const crashed = new LibraryService();
+    const library = crashed.createLibrary({ displayName: 'Plugin Job Recovery', selectedParentPath: root });
+    const packageHash = 'c'.repeat(64);
+    const owner = {
+      ownerPluginId: 'com.serpent.job-recovery',
+      ownerPackageHash: packageHash,
+      ownerPluginInstanceId: 'instance-recovery',
+      ownerScope: 'library' as const,
+      ownerLibraryId: library.libraryId,
+    };
+    const job = crashed.enqueuePluginJob({
+      libraryId: library.libraryId,
+      ...owner,
+      pluginHandlerId: 'recover',
+      payload: { assetId: 'asset-1' },
+      recoveryStrategy: 'idempotent',
+    });
+    const checkpointOwner = {
+      ...owner,
+      ownerPluginInstanceId: 'checkpoint-instance',
+    };
+    const checkpoint = {
+      version: 'v1',
+      cursor: 'asset-2',
+      data: { assetId: 'asset-2' },
+      savedAt: '2026-08-02T00:00:00.000Z',
+    };
+    const checkpointJob = crashed.enqueuePluginJob({
+      libraryId: library.libraryId,
+      ...checkpointOwner,
+      pluginHandlerId: 'recover-checkpoint',
+      recoveryStrategy: 'checkpoint',
+    });
+    crashed.claimNextPluginJob({ libraryId: library.libraryId, ...owner });
+    crashed.reportPluginJobProgress({
+      libraryId: library.libraryId,
+      jobId: job.jobId,
+      ...owner,
+      completed: 0,
+      total: 1,
+      phase: 'reading',
+      message: '读取资产 asset-1',
+    });
+    crashed.claimNextPluginJob({ libraryId: library.libraryId, ...checkpointOwner });
+    crashed.reportPluginJobProgress({
+      libraryId: library.libraryId,
+      jobId: checkpointJob.jobId,
+      ...checkpointOwner,
+      completed: 1,
+      total: 3,
+      phase: 'processing',
+      message: '处理 asset-2',
+    });
+    expect(crashed.controlPluginJob({
+      libraryId: library.libraryId,
+      jobId: checkpointJob.jobId,
+      action: 'pause',
+      ...checkpointOwner,
+      capabilities: { handlerId: 'recover-checkpoint', resumable: true, checkpointVersion: 'v1' },
+      checkpoint,
+    })?.status).toBe('paused');
+    expect(crashed.controlPluginJob({
+      libraryId: library.libraryId,
+      jobId: checkpointJob.jobId,
+      action: 'resume',
+      ...checkpointOwner,
+      capabilities: { handlerId: 'recover-checkpoint', resumable: true, checkpointVersion: 'v1' },
+    })?.status).toBe('queued');
+    crashed.claimNextPluginJob({ libraryId: library.libraryId, ...checkpointOwner });
+
+    const recovered = new LibraryService();
+    recovered.openLibrary(library.libraryPath);
+    const restored = recovered.listPluginJobs(library.libraryId).find((item) => item.jobId === job.jobId);
+    expect(restored).toMatchObject({
+      status: 'queued',
+      progress: 0,
+      completed: 0,
+      phase: 'queued',
+      message: '',
+      cancellation: { requested: false },
+    });
+    expect(restored?.total).toBeUndefined();
+    expect(recovered.listPluginJobs(library.libraryId).find((item) => item.jobId === checkpointJob.jobId))
+      .toMatchObject({
+        status: 'paused',
+        progress: 0.3333333333333333,
+        phase: 'running',
+        message: '处理 asset-2',
+        checkpoint,
+        errorCode: 'PLUGIN_JOB_INTERRUPTED',
+      });
+
+    recovered.closeLibrary(library.libraryId);
+    crashed.closeLibrary(library.libraryId);
+  });
 });
