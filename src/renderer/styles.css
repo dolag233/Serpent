@@ -7375,10 +7375,35 @@ select.ai-config-input.ai-config-languages {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.asset-caption strong.asset-caption-filename {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  overflow: visible;
+  text-overflow: clip;
+}
+.asset-filename-prefix {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.asset-filename-tail,
+.asset-filename-extension {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
 .asset-caption span {
   color: var(--tertiary);
   font-family: "IBM Plex Mono", monospace;
   font-size: 9px;
+}
+.asset-caption strong.asset-caption-filename span {
+  color: inherit;
+  font-family: inherit;
+  font-size: inherit;
+  font-weight: inherit;
 }
 .asset-caption .search-snippet {
   display: block;

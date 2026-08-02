@@ -396,6 +396,50 @@ type OrganizationRenameTarget = {
   id: string;
   name: string;
 };
+type FilenameDisplayParts = {
+  prefix: string;
+  tail: string;
+  extension: string;
+};
+
+function splitFilenameForDisplay(name: string): FilenameDisplayParts {
+  const extensionStart = name.lastIndexOf(".");
+  const hasExtension = extensionStart > 0 && extensionStart < name.length - 1;
+  const extension = hasExtension ? name.slice(extensionStart) : "";
+  const stem = hasExtension ? name.slice(0, extensionStart) : name;
+  if (stem.length <= 3) return { prefix: stem, tail: "", extension };
+  return { prefix: stem.slice(0, -3), tail: stem.slice(-3), extension };
+}
+
+function renderFilenameHighlights(value: string, searchValue: string, keyPrefix: string): ReactNode {
+  return splitSearchHighlights(value, searchValue, "filename").map((segment, index) =>
+    segment.matched ? (
+      <mark className="search-text-highlight" key={`${keyPrefix}-match-${index}`}>
+        {segment.text}
+      </mark>
+    ) : (
+      <span key={`${keyPrefix}-text-${index}`}>{segment.text}</span>
+    ),
+  );
+}
+
+function renderMiddleEllipsisFilename(name: string, searchValue: string): ReactNode {
+  const parts = splitFilenameForDisplay(name);
+  return (
+    <>
+      <span className="asset-filename-prefix">
+        {renderFilenameHighlights(parts.prefix, searchValue, "filename-prefix")}
+      </span>
+      {parts.tail ? <span className="asset-filename-tail">{parts.tail}</span> : null}
+      {parts.extension ? (
+        <span className="asset-filename-extension">
+          {renderFilenameHighlights(parts.extension, searchValue, "filename-extension")}
+        </span>
+      ) : null}
+    </>
+  );
+}
+
 type SearchDefinition = {
   search?: SearchQuery;
   filters?: FilterClause[];
@@ -8549,23 +8593,8 @@ function AppInner() {
                                   ) : null}
                                 </span>
                               ) : (
-                                <strong title={asset.displayName}>
-                                  {splitSearchHighlights(
-                                    asset.displayName,
-                                    searchValue,
-                                    "filename",
-                                  ).map((segment, index) =>
-                                    segment.matched ? (
-                                      <mark
-                                        className="search-text-highlight"
-                                        key={index}
-                                      >
-                                        {segment.text}
-                                      </mark>
-                                    ) : (
-                                      <span key={index}>{segment.text}</span>
-                                    ),
-                                  )}
+                                <strong className="asset-caption-filename" title={asset.displayName}>
+                                  {renderMiddleEllipsisFilename(asset.displayName, searchValue)}
                                 </strong>
                               )}
                             </>
