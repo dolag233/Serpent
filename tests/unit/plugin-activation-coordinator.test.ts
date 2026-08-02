@@ -729,4 +729,120 @@ describe('PluginActivationCoordinator', () => {
     expect(coordinator.listActiveInstances('library-1')).toEqual([]);
     expect(contributions.list()).toEqual([]);
   });
+
+  it('freezes the actual target library on a global command invocation', async () => {
+    const { createContributionRegistry } = await import('../../src/plugins/plugin-contributions');
+    const contributions = createContributionRegistry();
+    const invokeCommand = vi.fn(async (input: { context: Record<string, unknown> }) => ({
+      complete: { invokeId: 'invoke-1', status: 'succeeded' as const },
+      timedOut: false,
+      observedContext: input.context,
+    }));
+    const globalPackage = {
+      scope: 'user' as const,
+      lock: { pluginId: 'com.example.global-command', version: '1.0.0', packageHash: 'd'.repeat(64) },
+      manifest: {
+        runtime: { mode: 'restricted' as const, entry: 'dist/main.js', instanceScope: 'global' as const },
+        permissions: ['library.read' as const],
+        contributes: {
+          commands: [{ id: 'inspect-target', title: 'Inspect target' }],
+          menus: {}, toolbar: [], inspector: [], viewerActions: [], shortcuts: [], views: [],
+          settings: [], hooks: [], jobs: [], providers: [], themes: [],
+        },
+      },
+      packageDirectory: '/plugins/global-command',
+    };
+    const coordinator = new PluginActivationCoordinator({
+      packageManager: {
+        getSafeMode: async () => false,
+        listGlobalActivationCandidates: async () => [globalPackage],
+        listInstalled: async ({ scope }: { scope: string }) => scope === 'user'
+          ? [{ status: 'valid', package: globalPackage }]
+          : [],
+        resolve: async () => ({
+          status: 'resolved',
+          selection: 'use-global',
+          package: globalPackage,
+        }),
+      } as never,
+      supervisor: {
+        activate: vi.fn(async () => undefined),
+        deactivate: vi.fn(),
+        deactivateLibrary: vi.fn(),
+        invokeCommand,
+      } as never,
+      contributions,
+      readEntryFile: async () => 'async function setup() {}',
+    });
+
+    await coordinator.onLibraryOpened({ libraryId: 'library-1', libraryDirectory: '/libraries/one' });
+    await coordinator.onLibraryOpened({ libraryId: 'library-2', libraryDirectory: '/libraries/two' });
+    const command = coordinator.listContributions({ libraryId: 'library-2', target: 'commands' })[0];
+    expect(command).toBeDefined();
+    const result = await coordinator.runCommand({
+      libraryId: 'library-2',
+      contributionId: command!.id,
+    });
+
+    expect(result.complete.status).toBe('succeeded');
+    expect(invokeCommand).toHaveBeenCalledWith(expect.objectContaining({
+      context: { targetLibraryId: 'library-2' },
+    }));
+    const context = invokeCommand.mock.calls[0]?.[0].context;
+    expect(Object.isFrozen(context)).toBe(true);
+  });
+
+  it('rejects a library-scoped contribution when invoked against another library', async () => {
+    const { createContributionRegistry } = await import('../../src/plugins/plugin-contributions');
+    const contributions = createContributionRegistry();
+    const libraryPackage = {
+      scope: 'library' as const,
+      lock: { pluginId: 'com.example.library-command', version: '1.0.0', packageHash: 'e'.repeat(64) },
+      manifest: {
+        runtime: { mode: 'restricted' as const, entry: 'dist/main.js' },
+        permissions: ['library.read' as const],
+        contributes: {
+          commands: [{ id: 'library-only', title: 'Library only' }],
+          menus: {}, toolbar: [], inspector: [], viewerActions: [], shortcuts: [], views: [],
+          settings: [], hooks: [], jobs: [], providers: [], themes: [],
+        },
+      },
+      packageDirectory: '/plugins/library-command',
+    };
+    const coordinator = new PluginActivationCoordinator({
+      packageManager: {
+        getSafeMode: async () => false,
+        listInstalled: async ({ scope }: { scope: string }) => scope === 'library'
+          ? [{ status: 'valid', package: libraryPackage }]
+          : [],
+        resolve: async ({ libraryId }: { libraryId: string }) => ({
+          status: 'resolved',
+          selection: 'use-library',
+          package: { ...libraryPackage, lock: { ...libraryPackage.lock } },
+          libraryId,
+        }),
+      } as never,
+      supervisor: {
+        activate: vi.fn(async () => undefined),
+        deactivate: vi.fn(),
+        deactivateLibrary: vi.fn(),
+        invokeCommand: vi.fn(async () => ({
+          complete: { invokeId: 'invoke-2', status: 'succeeded' as const },
+          timedOut: false,
+        })),
+      } as never,
+      contributions,
+      readEntryFile: async () => 'async function setup() {}',
+    });
+
+    await coordinator.onLibraryOpened({ libraryId: 'library-1', libraryDirectory: '/libraries/one' });
+    const command = coordinator.listContributions({ libraryId: 'library-1', target: 'commands' })[0];
+    expect(command).toBeDefined();
+    await coordinator.onLibraryOpened({ libraryId: 'library-2', libraryDirectory: '/libraries/two' });
+
+    await expect(coordinator.runCommand({
+      libraryId: 'library-2',
+      contributionId: command!.id,
+    })).rejects.toThrow('The plugin command contribution is not active.');
+  });
 });

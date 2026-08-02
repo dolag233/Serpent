@@ -29,6 +29,8 @@ import { extractPluginThemePackage, type PluginThemePackage } from '../plugins/p
 import type { PluginHostContributionTarget } from '../shared/plugin-manager-api';
 import {
   PLUGIN_COMMAND_DEFAULT_TIMEOUT_MS,
+  freezePluginCommandContext,
+  pluginTargetLibraryIdSchema,
   type PluginCommandContext,
   type PluginCommandComplete,
 } from '../plugins/plugin-commands';
@@ -1091,13 +1093,20 @@ export class PluginActivationCoordinator {
     collectionIds?: readonly string[];
     timeoutMs?: number;
   }): Promise<{ complete: PluginCommandComplete; timedOut: boolean }> {
+    const targetLibrary = pluginTargetLibraryIdSchema.safeParse(input.libraryId);
+    if (!targetLibrary.success || targetLibrary.data === DEFAULT_GLOBAL_RUNTIME_CONTEXT.libraryId) {
+      throw new Error('The plugin command target library is invalid.');
+    }
+    if (!this.#openLibraries.has(targetLibrary.data)) {
+      throw new Error('The plugin command target library is not open.');
+    }
     const candidates = [
-      ...this.listContributions({ libraryId: input.libraryId }),
-      ...this.listContributions({ libraryId: input.libraryId, target: 'commands' }),
-      ...this.listContributions({ libraryId: input.libraryId, target: 'toolbar' }),
-      ...this.listContributions({ libraryId: input.libraryId, target: 'inspector.sections' }),
-      ...this.listContributions({ libraryId: input.libraryId, target: 'viewer.actions' }),
-      ...this.listContributions({ libraryId: input.libraryId, target: 'shortcuts' }),
+      ...this.listContributions({ libraryId: targetLibrary.data }),
+      ...this.listContributions({ libraryId: targetLibrary.data, target: 'commands' }),
+      ...this.listContributions({ libraryId: targetLibrary.data, target: 'toolbar' }),
+      ...this.listContributions({ libraryId: targetLibrary.data, target: 'inspector.sections' }),
+      ...this.listContributions({ libraryId: targetLibrary.data, target: 'viewer.actions' }),
+      ...this.listContributions({ libraryId: targetLibrary.data, target: 'shortcuts' }),
     ]
       .filter((item): item is Extract<
         ReturnType<PluginActivationCoordinator['listContributions']>[number],
@@ -1116,15 +1125,19 @@ export class PluginActivationCoordinator {
     }
     const activeRecord = [
       ...this.#activeGlobal.values(),
-      ...(this.#activeByLibrary.get(input.libraryId)?.values() ?? []),
+      ...(this.#activeByLibrary.get(targetLibrary.data)?.values() ?? []),
     ]
       .find((item) => item.instanceId === contribution.pluginInstanceId);
     if (activeRecord === undefined) throw new Error('The plugin instance is not active.');
-    const context: PluginCommandContext = {
+    if (activeRecord.instanceScope === 'library' && activeRecord.activationLibraryId !== targetLibrary.data) {
+      throw new Error('A library-scoped plugin instance cannot serve another library.');
+    }
+    const context = freezePluginCommandContext({
+      targetLibraryId: targetLibrary.data,
       ...(input.assetIds === undefined ? {} : { assetIds: [...input.assetIds] }),
       ...(input.folderIds === undefined ? {} : { folderIds: [...input.folderIds] }),
       ...(input.collectionIds === undefined ? {} : { collectionIds: [...input.collectionIds] }),
-    };
+    });
     return activeRecord.mode === 'restricted'
       ? this.options.supervisor.invokeCommand({
         instanceId: activeRecord.instanceId,

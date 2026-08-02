@@ -202,12 +202,21 @@ export function createPluginStandardHostHandler(options: {
     const callHost = (
       commandId: AutomationScriptCommandId,
       input: unknown,
-      commandOptions?: { causeChain?: readonly string[] },
+      commandOptions?: {
+        causeChain?: readonly string[];
+        targetLibraryId?: string;
+      },
     ): Promise<unknown> => (
       new Promise((resolve, reject) => {
         const current = instances.get(request.instanceId);
         if (current === undefined || current.abortController.signal.aborted) {
           reject(new Error('The plugin instance was deactivated.'));
+          return;
+        }
+        if (commandOptions?.targetLibraryId !== undefined) {
+          reject(new Error(
+            'Targeted plugin commands require the target-library host protocol extension.',
+          ));
           return;
         }
         const requestId = globalThis.crypto.randomUUID();

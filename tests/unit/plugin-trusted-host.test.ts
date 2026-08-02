@@ -125,7 +125,7 @@ describe('Plugin Trusted Host handler', () => {
         await serpent.assets.search({ query: null, limit: 1 });
       };
         exports.dispose = async function dispose(reason) {
-          serpent.console.log(`disposed:${reason}`);
+          serpent.console.log('disposed:' + reason);
         };
     `);
 

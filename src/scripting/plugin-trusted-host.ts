@@ -161,8 +161,21 @@ function createSerpentBridge(
   instance: ActiveInstance,
   postMessage: (message: PluginTrustedChildMessage) => void,
 ): Record<string, unknown> {
-  const callHost = (commandId: AutomationScriptCommandId, input: unknown): Promise<unknown> => (
+  const callHost = (
+    commandId: AutomationScriptCommandId,
+    input: unknown,
+    commandOptions?: {
+      causeChain?: readonly string[];
+      targetLibraryId?: string;
+    },
+  ): Promise<unknown> => (
     new Promise((resolve, reject) => {
+      if (commandOptions?.targetLibraryId !== undefined) {
+        reject(new Error(
+          'Targeted plugin commands require the target-library host protocol extension.',
+        ));
+        return;
+      }
       const requestId = globalThis.crypto.randomUUID();
       instance.pendingHostRequests.set(requestId, { resolve, reject });
       const causeChain = instance.activeCauseChain;

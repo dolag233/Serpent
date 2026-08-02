@@ -32,7 +32,7 @@ describe('Plugin Standard Host handler', () => {
           console.log(page.total);
         }
         export async function dispose(reason) {
-          console.log(`disposed:${reason}`);
+          console.log('disposed:' + reason);
         }
       `,
       activateDeadlineMs: 15_000,
@@ -567,7 +567,7 @@ describe('Plugin Standard Host handler', () => {
       invoke: {
         invokeId,
         commandId: 'probe.write-selection',
-        context: { assetIds: ['asset-1'] },
+        context: { targetLibraryId: 'library-1', assetIds: ['asset-1'] },
       },
     });
     for (let attempt = 0; attempt < 200 && !posted.some((message) => message.type === 'plugin-runtime.storage-request'); attempt += 1) {

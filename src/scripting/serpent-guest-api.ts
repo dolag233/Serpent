@@ -1,6 +1,7 @@
 import type {
   AutomationScriptCommandId,
 } from '../shared/automation-script-api';
+import { pluginTargetLibraryIdSchema } from '../plugins/plugin-commands';
 
 export type SerpentGuestCommandDefinition = {
   readonly path: `${string}.${string}`;
@@ -13,11 +14,20 @@ export type SerpentGuestApiAdapters = {
   executeCommand: (
     commandId: AutomationScriptCommandId,
     input: unknown,
-    options?: { causeChain?: readonly string[] },
+    options?: {
+      causeChain?: readonly string[];
+      /** Scope hint consumed by the Host adapter; not part of command input. */
+      targetLibraryId?: string;
+    },
   ) => Promise<unknown>;
 };
 
-export type SerpentGuestApi = Record<string, Record<string, (...args: unknown[]) => Promise<unknown>>>;
+export type SerpentGuestCommandNamespace = Record<string, (...args: unknown[]) => Promise<unknown>>;
+export type SerpentGuestCommandApi = Record<string, SerpentGuestCommandNamespace>;
+export type SerpentGuestApi = SerpentGuestCommandApi & {
+  /** Create an immutable command API scoped to one already-open library. */
+  forLibrary(libraryId: string): SerpentGuestCommandApi;
+};
 
 export function projectSerpentGuestAssetPageResult(value: unknown): unknown {
   if (!value || typeof value !== 'object' || !Array.isArray((value as { items?: unknown }).items)) {
@@ -303,6 +313,20 @@ const guestCommandDefinitions: readonly SerpentGuestCommandDefinition[] = [
     }),
   },
   {
+    path: 'assets.stageContent',
+    commandId: 'asset.content.stage',
+    buildInput: (assetId, dataBase64, options = {}) => ({
+      assetId,
+      dataBase64,
+      ...((options && typeof options === 'object') ? options : {}),
+    }),
+  },
+  {
+    path: 'assets.replaceContentBatch',
+    commandId: 'asset.content.replace-batch',
+    buildInput: (items) => ({ items }),
+  },
+  {
     path: 'assets.readContent',
     commandId: 'asset.content.read',
     buildInput: (assetId, options = {}) => ({
@@ -487,7 +511,7 @@ export const SERPENT_GUEST_NAMESPACES = [
 ] as const;
 
 function setNestedMethod(
-  root: SerpentGuestApi,
+  root: SerpentGuestCommandApi,
   namespace: string,
   method: string,
   value: (...args: unknown[]) => Promise<unknown>,
@@ -497,8 +521,16 @@ function setNestedMethod(
   root[namespace] = target;
 }
 
-export function createSerpentGuestApi(adapters: SerpentGuestApiAdapters): SerpentGuestApi {
-  const api: SerpentGuestApi = {};
+export function createSerpentGuestApi(adapters: SerpentGuestApiAdapters): SerpentGuestApi;
+export function createSerpentGuestApi(
+  adapters: SerpentGuestApiAdapters,
+  targetLibraryId: string,
+): SerpentGuestCommandApi;
+export function createSerpentGuestApi(
+  adapters: SerpentGuestApiAdapters,
+  targetLibraryId?: string,
+): SerpentGuestApi | SerpentGuestCommandApi {
+  const api: SerpentGuestCommandApi = {};
   for (const definition of guestCommandDefinitions) {
     const [namespace, method] = definition.path.split('.');
     if (namespace === undefined || method === undefined) {
@@ -508,9 +540,18 @@ export function createSerpentGuestApi(adapters: SerpentGuestApiAdapters): Serpen
       const result = await adapters.executeCommand(
         definition.commandId,
         definition.buildInput(...args),
+        targetLibraryId === undefined ? undefined : { targetLibraryId },
       );
       return definition.projectResult?.(result) ?? result;
     });
   }
-  return api;
+  if (targetLibraryId !== undefined) return api;
+  return Object.assign(api, {
+    forLibrary(libraryId: string): SerpentGuestCommandApi {
+      const parsed = pluginTargetLibraryIdSchema.safeParse(libraryId);
+      if (!parsed.success) throw new Error('Invalid target library id.');
+      // A fresh API closes over the target; no ambient API object is mutated.
+      return createSerpentGuestApi(adapters, parsed.data);
+    },
+  });
 }

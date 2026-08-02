@@ -4,12 +4,34 @@ import { pluginLocalIdSchema } from './plugin-manifest';
 
 export const PLUGIN_COMMAND_DEFAULT_TIMEOUT_MS = 5_000;
 
+/** Library ids are opaque identifiers, never filesystem paths. */
+export const pluginTargetLibraryIdSchema = z.string()
+  .min(1)
+  .max(255)
+  .refine((value) => value.trim() === value, 'Library id must not have surrounding whitespace.')
+  .refine((value) => value !== '.' && value !== '..', 'Library id must not be a path segment.')
+  .refine((value) => !/[\\/\u0000]/u.test(value), 'Library id must not contain path separators.');
+export type PluginTargetLibraryId = z.infer<typeof pluginTargetLibraryIdSchema>;
+
 export const pluginCommandContextSchema = z.strictObject({
+  targetLibraryId: pluginTargetLibraryIdSchema,
   assetIds: z.array(z.string().min(1).max(255)).max(10_000).optional(),
   folderIds: z.array(z.string().min(1).max(255)).max(10_000).optional(),
   collectionIds: z.array(z.string().min(1).max(255)).max(10_000).optional(),
 });
 export type PluginCommandContext = z.infer<typeof pluginCommandContextSchema>;
+
+/**
+ * Command context is a snapshot. Freeze both the target and all collection
+ * fields so a handler cannot observe a different target after an await.
+ */
+export function freezePluginCommandContext(context: PluginCommandContext): PluginCommandContext {
+  for (const key of ['assetIds', 'folderIds', 'collectionIds'] as const) {
+    const values = context[key];
+    if (values !== undefined) Object.freeze(values);
+  }
+  return Object.freeze(context);
+}
 
 export const pluginCommandInvokeSchema = z.strictObject({
   invokeId: z.string().uuid(),
