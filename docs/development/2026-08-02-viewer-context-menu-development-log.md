@@ -12,6 +12,7 @@
 - 图片查看器的快捷键捕获不再把缩放滑块或色彩空间下拉框误判为文本输入；即使焦点仍在这些控件上，小键盘 `.` 也能执行适应窗口。
 - `viewer-fit-shortcut` 单测覆盖 `NumpadDecimal`、Windows `Decimal` 兼容值和普通句点不误触发。
 - 新增 `ViewerContextMenu`，使用 `context-menu` / `context-menu-item` 公共 class，菜单外点击、滚动、窗口尺寸变化和 Esc 均关闭；镜像启用态在菜单内保持高亮。
+- 查看器右键菜单的操作文案已经足够明确，不再附加重复的 hover tooltip；菜单外同时监听 pointer/mouse down，点击或触控菜单外区域会立即关闭。通用资产、标签、合集右键菜单沿用同样的无 tooltip 规则。
 - `viewer-display-transform.ts` 新增纯动作 reducer，统一 toolbar 与菜单对旋转/镜像的状态更新并保持非破坏性。
 
 ## 验证

@@ -7,7 +7,6 @@ import {
 } from "react";
 
 import { Icon } from "./Icons";
-import { iconActionAttrs } from "./icon-action-attrs";
 import { useT } from "./i18n";
 import { VIEWER_CHROME_TAB_INDEX } from "./viewer-focus-policy";
 
@@ -89,6 +88,9 @@ export function ViewerContextMenu({
     const onMouseDown = (event: MouseEvent) => {
       if (!menuRef.current?.contains(event.target as Node)) onClose();
     };
+    const onPointerDown = (event: PointerEvent) => {
+      if (!menuRef.current?.contains(event.target as Node)) onClose();
+    };
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
@@ -96,11 +98,13 @@ export function ViewerContextMenu({
       }
     };
     window.addEventListener("mousedown", onMouseDown, true);
+    window.addEventListener("pointerdown", onPointerDown, true);
     window.addEventListener("resize", onClose);
     window.addEventListener("scroll", onClose, true);
     document.addEventListener("keydown", onKeyDown, true);
     return () => {
       window.removeEventListener("mousedown", onMouseDown, true);
+      window.removeEventListener("pointerdown", onPointerDown, true);
       window.removeEventListener("resize", onClose);
       window.removeEventListener("scroll", onClose, true);
       document.removeEventListener("keydown", onKeyDown, true);
@@ -139,7 +143,6 @@ export function ViewerContextMenu({
           onClick={action(onRotate)}
           tabIndex={VIEWER_CHROME_TAB_INDEX}
           type="button"
-          {...iconActionAttrs(t("preview.rotateClockwise"))}
         >
           <span className="context-menu-item-icon">
             <Icon name="rotate-cw" size={14} />
@@ -153,7 +156,6 @@ export function ViewerContextMenu({
           onClick={action(onFlipHorizontal)}
           tabIndex={VIEWER_CHROME_TAB_INDEX}
           type="button"
-          {...iconActionAttrs(t("preview.flipHorizontal"))}
         >
           <span className="context-menu-item-icon">
             <Icon name="flip-horizontal-2" size={14} />
@@ -167,7 +169,6 @@ export function ViewerContextMenu({
           onClick={action(onFlipVertical)}
           tabIndex={VIEWER_CHROME_TAB_INDEX}
           type="button"
-          {...iconActionAttrs(t("preview.flipVertical"))}
         >
           <span className="context-menu-item-icon">
             <Icon name="flip-vertical-2" size={14} />
@@ -183,7 +184,6 @@ export function ViewerContextMenu({
           onClick={action(onFit)}
           tabIndex={VIEWER_CHROME_TAB_INDEX}
           type="button"
-          {...iconActionAttrs(t("preview.fitWindow"))}
         >
           <span className="context-menu-item-icon">
             <Icon name="fit-window" size={14} />
@@ -200,9 +200,6 @@ export function ViewerContextMenu({
           onClick={action(onFullscreen)}
           tabIndex={VIEWER_CHROME_TAB_INDEX}
           type="button"
-          {...iconActionAttrs(
-            isFullscreen ? t("preview.exitFullscreen") : t("preview.fullscreen"),
-          )}
         >
           <span className="context-menu-item-icon">
             <Icon
