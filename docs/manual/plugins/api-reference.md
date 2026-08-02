@@ -215,6 +215,12 @@ serpent.assets.replaceContentBatch(items): Promise<{ operationId: string; items:
 `readContent` 有字节上限并可能返回 `truncated`；`replaceContent` 只接受 managed 且可用资产，须 `content.write`，并经过计划确认。
 批量替换使用 staging 和 `expectedRevisionId` 做统一预检，不能假定多文件系统原子性。
 
+通过 Automation Gateway 暴露的公共分页列表 API（包括 `folder.list`、`asset.list` 和资产搜索）的 `limit` 都是正整数，默认值由 API
+决定，最大值为 **200**（包含 200）；传入 201 或更大值会得到 `AUTOMATION_INVALID_REQUEST`。插件应按页读取结果，不要把 256 当作合法页大小。
+
+权限是独立的门槛：例如读取 extracted metadata 需要 `metadata.read`，不能因为已经拥有 `asset.read` 或 `content.read` 就假定
+`asset.extracted-metadata.get` 一定可用。权限不足应作为结构化失败处理；插件可以在有权限时读取 metadata，否则用已声明的 content 能力自行解析。
+
 其他领域面与 Automation Gateway 对齐，包括 folders、tags、collections、metadata、library、files、clipboard、secrets、net、ai。
 使用哪个命令必须同时满足对应 permission；当前实现不向插件提供任意 SQL 或库绝对路径读写。
 
@@ -243,6 +249,16 @@ const { path, scope } = await serpent.data.getDirectory({ scope: 'user' | 'libra
 storage 是小型命名空间 KV，需要 `storage.read`/`storage.write`。data 需要 `data.files`，返回的路径是插件专属目录：
 `{userData}/plugin-files/<pluginId>/` 或 `<library>/.serpent/plugin-files/<pluginId>/`。库级目录要求库已打开；restricted 没有 Node fs，
 unrestricted 才能用 Node 读写该目录。
+
+storage 的公开返回值是裸值，不带 IPC 包装层：
+
+- `get` 返回保存的值；键不存在时返回 `null`，不是 `{ value: null }`。
+- `set` 成功时只解析为 `void`。
+- `delete` 返回布尔值，表示是否删除了已有键。
+- `listKeys` 返回排序后的 `string[]`。
+
+只有 `data.getDirectory` 保留 `{ path, scope }` 结构。不要读取 `{ value }`、`{ ok }`、`{ deleted }` 或 `{ keys }`；这些是 Host
+内部传输结果，不属于插件 API 契约。
 
 ### `serpent.events` 与 `serpent.hooks`
 

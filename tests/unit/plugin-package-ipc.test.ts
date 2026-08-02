@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createPluginPackageRequestHandler } from '../../src/main/plugin-package-ipc';
 import { PluginPackageManager } from '../../src/main/plugin-package-manager';
@@ -361,6 +361,37 @@ describe('Plugin package IPC bridge', () => {
     selected = undefined;
     await expect(handler({ type: 'plugin-manager.install-local', scope: 'user' }))
       .resolves.toEqual({ ok: false, code: 'selection-cancelled' });
+  });
+
+  it('returns plugin command failure diagnostics through the management bridge', async () => {
+    const userData = temporaryRoot('serpent-plugin-ipc-command-error-user-');
+    const handler = createPluginPackageRequestHandler({
+      manager: createManager(userData),
+      resolveLibraryDirectory: async () => userData,
+      chooseLocalPackage: async () => undefined,
+      activationCoordinator: {
+        runCommand: vi.fn(async () => ({
+          complete: {
+            invokeId: '59847245-d394-4012-ad75-35f837393a8f',
+            status: 'failed' as const,
+            errorCode: 'PLUGIN_COMMAND_HANDLER_FAILED',
+            errorDetail: 'The compression plan could not be confirmed.',
+          },
+          timedOut: false,
+        })),
+      } as never,
+    });
+
+    await expect(handler({
+      type: 'plugin-manager.run-command',
+      libraryId: 'library-a',
+      contributionId: 'com.example.probe.command',
+    })).resolves.toEqual({
+      ok: false,
+      code: 'operation-failed',
+      failureCode: 'PLUGIN_COMMAND_HANDLER_FAILED',
+      message: 'The compression plan could not be confirmed.',
+    });
   });
 
   it('returns both exact conflict candidates, then requires library trust before it resolves', async () => {

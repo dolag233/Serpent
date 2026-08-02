@@ -459,6 +459,9 @@ describe('Plugin contribution registry and generated SDK', () => {
     expect(declaration).toContain('onWill');
     expect(declaration).toContain('forLibrary');
     expect(declaration).toContain('SerpentPluginScopedApi');
+    expect(declaration).toContain('get(key: string, options?: { readonly scope?: \'library\' | \'user\' }): Promise<unknown | null>;');
+    expect(declaration).toContain('delete(key: string, options?: { readonly scope?: \'library\' | \'user\' }): Promise<boolean>;');
+    expect(declaration).toContain('listKeys(options?: { readonly scope?: \'library\' | \'user\' }): Promise<readonly string[]>;');
     expect(declaration).toContain("Pick<SerpentPluginApi['jobs'], 'enqueue' | 'reportProgress' | 'cancel' | 'pause' | 'resume' | 'retry'>");
     expect(declaration).toContain('reportProgress');
     expect(declaration).not.toContain('zod');

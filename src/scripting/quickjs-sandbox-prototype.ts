@@ -12,6 +12,7 @@ import { pluginTargetLibraryIdSchema } from '../plugins/plugin-commands';
 import {
   SERPENT_GUEST_COMMANDS,
 } from './serpent-guest-api';
+import { projectPluginStorageResult } from './plugin-storage-result';
 
 /**
  * This is an engine-selection prototype, not the public Script Runtime API.
@@ -1212,46 +1213,50 @@ export async function runQuickJsSandboxPrototype(
       const storage = context.newObject();
       const get = context.newFunction('get', (keyHandle, optionsHandle) => {
         const options = optionsHandle === undefined ? undefined : context.dump(optionsHandle) as { scope?: 'library' | 'user' };
+        const operation = 'get' as const;
         return createDeferredHostCall(
           host.executeStorageOperation!({
-            operation: 'get',
+            operation,
             key: String(context.dump(keyHandle)),
             scope: options?.scope ?? 'library',
           }),
-          (value) => newQuickJsJsonValue(context, value),
+          (value) => newQuickJsJsonValue(context, projectPluginStorageResult(operation, value)),
         );
       });
       const set = context.newFunction('set', (keyHandle, valueHandle, optionsHandle) => {
         const options = optionsHandle === undefined ? undefined : context.dump(optionsHandle) as { scope?: 'library' | 'user' };
+        const operation = 'set' as const;
         return createDeferredHostCall(
           host.executeStorageOperation!({
-            operation: 'set',
+            operation,
             key: String(context.dump(keyHandle)),
             value: context.dump(valueHandle),
             scope: options?.scope ?? 'library',
           }),
-          (value) => newQuickJsJsonValue(context, value),
+          (value) => newQuickJsJsonValue(context, projectPluginStorageResult(operation, value)),
         );
       });
       const deleteKey = context.newFunction('delete', (keyHandle, optionsHandle) => {
         const options = optionsHandle === undefined ? undefined : context.dump(optionsHandle) as { scope?: 'library' | 'user' };
+        const operation = 'delete' as const;
         return createDeferredHostCall(
           host.executeStorageOperation!({
-            operation: 'delete',
+            operation,
             key: String(context.dump(keyHandle)),
             scope: options?.scope ?? 'library',
           }),
-          (value) => newQuickJsJsonValue(context, value),
+          (value) => newQuickJsJsonValue(context, projectPluginStorageResult(operation, value)),
         );
       });
       const listKeys = context.newFunction('listKeys', (optionsHandle) => {
         const options = optionsHandle === undefined ? undefined : context.dump(optionsHandle) as { scope?: 'library' | 'user' };
+        const operation = 'list' as const;
         return createDeferredHostCall(
           host.executeStorageOperation!({
-            operation: 'list',
+            operation,
             scope: options?.scope ?? 'library',
           }),
-          (value) => newQuickJsJsonValue(context, value),
+          (value) => newQuickJsJsonValue(context, projectPluginStorageResult(operation, value)),
         );
       });
       context.setProp(storage, 'get', get);

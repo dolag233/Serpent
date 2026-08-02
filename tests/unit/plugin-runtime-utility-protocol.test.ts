@@ -6,7 +6,10 @@ import {
   pluginRuntimeChildMessageSchema,
   pluginRuntimeParentMessageSchema,
 } from '../../src/shared/plugin-runtime-utility-protocol';
-import { pluginTrustedChildMessageSchema } from '../../src/shared/plugin-trusted-runtime-protocol';
+import {
+  pluginTrustedChildMessageSchema,
+  pluginTrustedParentMessageSchema,
+} from '../../src/shared/plugin-trusted-runtime-protocol';
 
 describe('plugin permission → automation capability mapping', () => {
   it('keeps overlapping Gateway capabilities and drops plugin-only permissions', () => {
@@ -91,6 +94,21 @@ describe('plugin-runtime utility protocol', () => {
       instanceId: '11111111-1111-4111-8111-111111111111',
       requestId: '22222222-2222-4222-8222-222222222222',
       ok: false,
+    }).success).toBe(false);
+  });
+
+  it('requires an input-capture session id on both runtime transports', () => {
+    const common = {
+      instanceId: '11111111-1111-4111-8111-111111111111',
+      requestId: '22222222-2222-4222-8222-222222222222',
+    };
+    expect(pluginRuntimeParentMessageSchema.safeParse({
+      type: 'plugin-runtime.input-capture.started',
+      ...common,
+    }).success).toBe(false);
+    expect(pluginTrustedParentMessageSchema.safeParse({
+      type: 'plugin-trusted.input-capture.started',
+      ...common,
     }).success).toBe(false);
   });
 

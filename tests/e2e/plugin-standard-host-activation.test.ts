@@ -69,6 +69,7 @@ test('activates the fixed standard Host probe and writes library storage', async
     expect(document.values['host-probe']).toEqual({
       activated: true,
       source: 'standard-host-probe',
+      previous: null,
     });
 
     await closeLibraryViaSwitcher(window, libraryName);

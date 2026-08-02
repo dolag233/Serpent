@@ -33,6 +33,7 @@ import type { PluginRuntimeDeactivateReason } from '../shared/plugin-runtime-uti
 import {
   createSerpentGuestApi,
 } from './serpent-guest-api';
+import { projectPluginStorageResult } from './plugin-storage-result';
 import type { AutomationScriptCommandId } from '../shared/automation-script-api';
 import { pluginTargetLibraryIdSchema } from '../plugins/plugin-commands';
 import type {
@@ -223,8 +224,7 @@ function createSerpentBridge(
     scope?: 'library' | 'user';
     key?: string;
     value?: unknown;
-  }): Promise<unknown> => (
-    new Promise((resolve, reject) => {
+  }): Promise<unknown> => new Promise((resolve, reject) => {
       const requestId = globalThis.crypto.randomUUID();
       instance.pendingHostRequests.set(requestId, { resolve, reject });
       postMessage({
@@ -236,8 +236,7 @@ function createSerpentBridge(
         ...(input.key === undefined ? {} : { key: input.key }),
         ...(input.value === undefined ? {} : { value: input.value }),
       });
-    })
-  );
+    }).then((result) => projectPluginStorageResult(input.operation, result));
 
   const events = {
     next: (): Promise<PluginDomainEvent | null> => instance.eventQueue.next(),

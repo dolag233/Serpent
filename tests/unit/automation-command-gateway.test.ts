@@ -1364,6 +1364,14 @@ describe('Automation Command Gateway', () => {
       libraryId: 'library-1',
       recursive: true,
     }]);
+    await expect(commandGateway.execute(request('asset.list', {
+      recursive: true,
+      limit: AUTOMATION_MAX_PAGE_SIZE,
+      offset: 0,
+    }))).resolves.toMatchObject({
+      ok: true,
+      result: { limit: AUTOMATION_MAX_PAGE_SIZE, offset: 0 },
+    });
     const projected = await commandGateway.execute(request('asset.list', {
       recursive: true,
       limit: 1,
@@ -1377,6 +1385,28 @@ describe('Automation Command Gateway', () => {
     expect(JSON.stringify(projected)).not.toContain('"frames"');
     await expect(commandGateway.execute(request('asset.list', {
       recursive: true,
+      limit: AUTOMATION_MAX_PAGE_SIZE + 1,
+    }))).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'AUTOMATION_INVALID_REQUEST' },
+    });
+  });
+
+  it('accepts the 200-item folder page boundary but rejects 201', async () => {
+    const commandGateway = gateway(new RecordingWorker({
+      ok: true,
+      type: 'folder.list',
+      folders: [],
+    }));
+
+    await expect(commandGateway.execute(request('folder.list', {
+      limit: AUTOMATION_MAX_PAGE_SIZE,
+      offset: 0,
+    }))).resolves.toMatchObject({
+      ok: true,
+      result: { items: [], total: 0, limit: AUTOMATION_MAX_PAGE_SIZE, offset: 0, hasMore: false },
+    });
+    await expect(commandGateway.execute(request('folder.list', {
       limit: AUTOMATION_MAX_PAGE_SIZE + 1,
     }))).resolves.toMatchObject({
       ok: false,

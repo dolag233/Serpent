@@ -77,6 +77,7 @@ describe('fixed standard Host probe fixture', () => {
     expect(document.values['host-probe']).toEqual({
       activated: true,
       source: 'standard-host-probe',
+      previous: null,
     });
   });
 });

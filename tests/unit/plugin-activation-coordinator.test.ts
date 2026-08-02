@@ -854,6 +854,18 @@ describe('PluginActivationCoordinator', () => {
     }));
     const context = invokeCommand.mock.calls[0]?.[0].context;
     expect(Object.isFrozen(context)).toBe(true);
+
+    await coordinator.runCommand({
+      libraryId: 'library-2',
+      contributionId: command!.id,
+      assetIds: ['asset-1'],
+      folderIds: [],
+      collectionIds: [],
+    });
+    expect(invokeCommand.mock.calls[1]?.[0].context).toEqual({
+      targetLibraryId: 'library-2',
+      assetIds: ['asset-1'],
+    });
   });
 
   it('rejects a library-scoped contribution when invoked against another library', async () => {

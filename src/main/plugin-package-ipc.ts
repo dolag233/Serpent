@@ -68,6 +68,14 @@ function pluginFailureResponse(error: unknown): Extract<PluginManagerResponse, {
   return { ok: false, code: 'operation-failed' };
 }
 
+function pluginCommandFailureMessage(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  const redacted = value.trim()
+    .replace(/(?:\/private)?\/(?:Users|var|tmp|home|Volumes)\/\S+/gu, '[PATH_REDACTED]')
+    .replace(/[A-Za-z]:\\\S+/gu, '[PATH_REDACTED]');
+  return redacted.length === 0 ? undefined : redacted.slice(0, 2_000);
+}
+
 export interface PluginPackageIpcOptions {
   manager: PluginPackageManager;
   activationCoordinator?: PluginActivationCoordinator;
@@ -600,7 +608,15 @@ export function createPluginPackageRequestHandler(options: PluginPackageIpcOptio
           ...(request.folderIds === undefined ? {} : { folderIds: request.folderIds }),
           ...(request.collectionIds === undefined ? {} : { collectionIds: request.collectionIds }),
         });
-        if (result.complete.status !== 'succeeded') return { ok: false, code: 'operation-failed' };
+        if (result.complete.status !== 'succeeded') {
+          const message = pluginCommandFailureMessage(result.complete.errorDetail);
+          return {
+            ok: false,
+            code: 'operation-failed',
+            ...(result.complete.errorCode === undefined ? {} : { failureCode: result.complete.errorCode }),
+            ...(message === undefined ? {} : { message }),
+          };
+        }
         return { ok: true, executed: true };
       }
       if (request.type === 'plugin-manager.search-providers') {

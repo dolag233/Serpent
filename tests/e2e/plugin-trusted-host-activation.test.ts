@@ -74,6 +74,7 @@ test('activates the fixed trusted Host probe and writes library storage', async 
     expect(document.values['host-probe']).toEqual({
       activated: true,
       source: 'trusted-host-probe',
+      previous: null,
     });
 
     await closeLibraryViaSwitcher(window, libraryName);

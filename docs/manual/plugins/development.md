@@ -275,6 +275,14 @@ Job 先在 Manifest 声明：
 `<库根>/.serpent/plugin-files/<pluginId>/`。库未打开时不能取得库级目录。受限模式没有 Node fs；unrestricted 才能在该目录下用 fs，
 也不要把返回路径当作可写入库 Assets 的通道。
 
+storage API 返回插件可直接使用的值：`get` 返回保存值或不存在时的 `null`，`set` 返回 `void`，`delete` 返回是否实际删除的
+布尔值，`listKeys` 返回排序后的键数组。Host 的 `{ value }`、`{ ok }`、`{ deleted }`、`{ keys }` 是内部 IPC envelope，插件不得依赖。
+`data.getDirectory` 是例外，仍返回 `{ path, scope }`。
+
+Automation Gateway 的公共分页列表 API 的 `limit` 最大为 200（含 200）；`folder.list`、`asset.list` 和资产搜索请求传入 201 会被
+拒绝。分页和权限错误都要按失败处理：例如 `asset.extracted-metadata.get` 需要 `metadata.read`，缺少该权限时不能假定 Host 会返回空
+metadata。
+
 ## 10. Domain API、forLibrary 与 MCP
 
 插件使用与脚本共享的 Gateway 领域面，包括 library、assets、folders、tags、collections、metadata、content、jobs、storage、data、

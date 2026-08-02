@@ -134,6 +134,7 @@ describe('fixed trusted Host probe fixture', () => {
     expect(document.values['host-probe']).toEqual({
       activated: true,
       source: 'trusted-host-probe',
+      previous: null,
     });
 
     handler.handle({

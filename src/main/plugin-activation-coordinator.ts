@@ -1154,11 +1154,17 @@ export class PluginActivationCoordinator {
     if (activeRecord.instanceScope === 'library' && activeRecord.activationLibraryId !== targetLibrary.data) {
       throw new Error('A library-scoped plugin instance cannot serve another library.');
     }
+    const cloneNonEmptyIds = (values: readonly string[] | undefined): string[] | undefined => (
+      values === undefined || values.length === 0 ? undefined : [...values]
+    );
+    const assetIds = cloneNonEmptyIds(input.assetIds);
+    const folderIds = cloneNonEmptyIds(input.folderIds);
+    const collectionIds = cloneNonEmptyIds(input.collectionIds);
     const context = freezePluginCommandContext({
       targetLibraryId: targetLibrary.data,
-      ...(input.assetIds === undefined ? {} : { assetIds: [...input.assetIds] }),
-      ...(input.folderIds === undefined ? {} : { folderIds: [...input.folderIds] }),
-      ...(input.collectionIds === undefined ? {} : { collectionIds: [...input.collectionIds] }),
+      ...(assetIds === undefined ? {} : { assetIds }),
+      ...(folderIds === undefined ? {} : { folderIds }),
+      ...(collectionIds === undefined ? {} : { collectionIds }),
     });
     return activeRecord.mode === 'restricted'
       ? this.options.supervisor.invokeCommand({
