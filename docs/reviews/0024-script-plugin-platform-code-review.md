@@ -4,6 +4,7 @@
 
 - 规格：[`docs/implementation/0024-script-plugin-platform.md`](../implementation/0024-script-plugin-platform.md)
 - 基线：`a857671`
+- 实现提交：`02ead45`
 - 审查对象：基线到当前插件平台实现工作树的全部变更
 - 审查日期：2026-08-02
 - 审查方式：两名独立 Luna agent 分别执行 Standards / Spec 双轴审查；实现者随后处理阻断项

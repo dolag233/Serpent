@@ -4,6 +4,7 @@
 
 - 分支：`codex/plugin-runtime-management`
 - 基线：`a857671`
+- 实现提交：`02ead45`
 - 日期：2026-08-02
 - 环境：macOS arm64，Node 24，开发态 Electron；Worker 测试使用 Electron ABI 重建后的 `better-sqlite3`
 - E2E userData：每次使用 `SERPENT_E2E_USER_DATA_PATH` 隔离临时目录
