@@ -366,6 +366,8 @@ export const zhCN = {
       removeTags: "移除标签…",
       addTag: "添加标签",
       removeTag: "移除标签"
+      ,ignore: "忽略"
+      ,unignore: "取消忽略"
     },
     assets: {
       restore: "恢复所选（{count} 项）",
@@ -422,6 +424,7 @@ export const zhCN = {
       linkedOffline: "链接文件夹当前离线",
       noMovableManaged: "所选资产中没有可移动的托管资产",
       noManaged: "所选资产中没有托管资产",
+      ignored: "项目已被忽略",
       noCopyableManaged: "所选资产中没有可复制的托管资产",
       cannotCopyExternal: "资产不可复制到外部目录",
       noLibrary: "请先打开资源库",
@@ -468,6 +471,8 @@ export const zhCN = {
     skipReasonJoin: "、",
     skipReportAssetOnlyFolders: "标签/合集/AI：跳过 {count}（文件夹）",
     copyToExternal: "复制到外部目录：{name}",
+    ignore: "忽略此项目",
+    unignore: "取消忽略",
     colorSpace: "设置色彩空间",
     colorSpaceAuto: "使用检测到的色彩空间",
     colorSpaceBack: "返回",
@@ -902,6 +907,12 @@ export const zhCN = {
     browserExtensionNote:
       "正式发布前会改为商店或安装包说明（见工单 Serpent-999o）。代码更新后需重新构建并在扩展管理页点击重新加载。",
     diagnosticsTitle: "诊断日志",
+    ignoredPathsTitle: "已忽略项目",
+    ignoredPathsHint: "被忽略的文件和文件夹不会出现在浏览、搜索或扫描结果中。",
+    manageIgnoredPaths: "管理忽略项目",
+    ignoredPathsEmpty: "当前没有已忽略项目。",
+    ignoredFolder: "文件夹",
+    ignoredAsset: "文件",
     diagnosticsHint: "查看应用、后台任务和 AI 分析的近期失败原因；敏感信息会自动隐藏。",
     viewDiagnostics: "查看诊断日志",
     viewMode: "浏览视图",
@@ -1189,6 +1200,8 @@ export const zhCN = {
     readLinkedRulesFailed: "无法读取链接文件夹过滤规则。",
     linkedRulesSaved: "过滤规则已保存：隐藏 {hidden} 项，恢复 {restored} 项。",
     saveLinkedRulesFailed: "保存过滤规则失败。",
+    ignoreUpdated: "已{action}「{name}」。",
+    ignoreFailed: "更新忽略状态失败。",
     folderTrashed: "已将文件夹「{name}」移入回收站（{count} 项资产）。",
     folderTrashFailed: "文件夹移入回收站失败。",
     folderDeletedFromDisk: "已从硬盘删除文件夹「{name}」（{count} 项资产）。",

@@ -1450,6 +1450,18 @@ async function commandFor(
         folderId: request.folderId,
         rules: request.rules,
       };
+    case "ignore.list.request":
+      return { type: "ignore.list", libraryId: request.libraryId };
+    case "ignore.set.request":
+      return {
+        type: "ignore.set",
+        libraryId: request.libraryId,
+        locationKind: request.locationKind,
+        linkedFolderId: request.linkedFolderId,
+        relativePath: request.relativePath,
+        pathKind: request.pathKind,
+        ignored: request.ignored,
+      };
     case "linked-folder.assets.copy.request":
       return {
         type: "linked-folder.assets.copy",

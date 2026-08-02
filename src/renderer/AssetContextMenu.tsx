@@ -4,6 +4,7 @@ import type {
   CollectionSummary,
   LinkedFolderSummary,
   AssetSummary,
+  ManagedFolderSummary,
 } from "../shared/asset-types";
 import {
   ContextMenu,
@@ -86,6 +87,7 @@ interface AssetContextMenuProps {
   tags: TagSummary[];
   collections: CollectionSummary[];
   linkedFolders: LinkedFolderSummary[];
+  managedFolders: ManagedFolderSummary[];
   activeCollectionId: string | null;
   assets: AssetSummary[];
   onRenameSmartCollection: (id: string, name: string) => void;
@@ -96,6 +98,14 @@ interface AssetContextMenuProps {
   onEditCollectionDetails: (collectionId: string) => void;
   onDeleteOrganization: (id: string, name: string) => void;
   onCreateSubfolder: (folderId: string) => void;
+  onSetIgnore: (args: {
+    locationKind: "managed" | "linked";
+    linkedFolderId?: string | null;
+    relativePath: string;
+    pathKind: "asset" | "folder";
+    ignored: boolean;
+    name: string;
+  }) => void;
   onRenameFolder: (folderId: string, currentName: string) => void;
   onOpenFolderInFileManager: (folderId: string) => void;
   onCopyFolderPath: (folderId: string) => void;
@@ -176,6 +186,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
     tags,
     collections,
     linkedFolders,
+    managedFolders,
     activeCollectionId,
     assets,
     onRenameSmartCollection,
@@ -186,6 +197,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
     onEditCollectionDetails,
     onDeleteOrganization,
     onCreateSubfolder,
+    onSetIgnore,
     onRenameFolder,
     onOpenFolderInFileManager,
     onCopyFolderPath,
@@ -731,6 +743,25 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                     onAction={() => runSidebarCommand("folder.copy-path")}
                   />
                 )}
+                <ContextMenuItem
+                  icon={<Icon name="close" size={14} />}
+                  label={t("menu.ignore")}
+                  onAction={() => {
+                    const managed = desc.locationKind === "managed"
+                      ? managedFolders.find((folder) => folder.folderId === desc.folderId)
+                      : undefined;
+                    onSetIgnore({
+                      locationKind: desc.locationKind,
+                      linkedFolderId: desc.locationKind === "linked" ? desc.folderId : null,
+                      relativePath: desc.locationKind === "linked"
+                        ? desc.linkedRelativePath ?? ""
+                        : managed?.relativePath ?? desc.name,
+                      pathKind: "folder",
+                      ignored: true,
+                      name: desc.name,
+                    });
+                  }}
+                />
               </ContextMenuSection>
               {(trashItem || deleteFromDiskItem || removeFromLibraryItem) && (
                 <ContextMenuSection label={t("command.group.delete")}>
@@ -1081,6 +1112,31 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                   onAction={() => runMultiCommand("assets.move-to-folder")}
                 />
               )}
+              <ContextMenuItem
+                icon={<Icon name="close" size={14} />}
+                label={t("menu.ignore")}
+                onAction={() => {
+                  targetAssets.forEach((asset) => onSetIgnore({
+                    locationKind: asset.locationKind,
+                    linkedFolderId: asset.linkedFolderId ?? null,
+                    relativePath: asset.relativeFilePath,
+                    pathKind: "asset",
+                    ignored: true,
+                    name: asset.displayName,
+                  }));
+                  targetFolderIds.forEach((folderId) => {
+                    const folder = managedFolders.find((item) => item.folderId === folderId);
+                    if (folder) onSetIgnore({
+                      locationKind: "managed",
+                      linkedFolderId: null,
+                      relativePath: folder.relativePath,
+                      pathKind: "folder",
+                      ignored: true,
+                      name: folder.name,
+                    });
+                  });
+                }}
+              />
                   {copyItem && (
                     <ContextMenuItem
                       icon={<Icon name="clipboard" size={14} />}
@@ -1437,6 +1493,24 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                       onAction={() => runAssetCommand("asset.rename")}
                     />
                   )}
+                  <ContextMenuItem
+                    icon={<Icon name="close" size={14} />}
+                    label={t("menu.ignore")}
+                    onAction={() => {
+                      const relativePath = singleAsset?.relativeFilePath;
+                      if (!relativePath) return;
+                      onSetIgnore({
+                        locationKind,
+                        linkedFolderId: singleAsset?.locationKind === "linked"
+                          ? singleAsset.linkedFolderId
+                          : null,
+                        relativePath,
+                        pathKind: "asset",
+                        ignored: true,
+                        name: displayName,
+                      });
+                    }}
+                  />
                   {linkedFolders
                     .filter((f) => f.status === "available")
                     .map((folder) => (

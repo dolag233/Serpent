@@ -546,6 +546,17 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
       scheduleThumbnailScene(request.command.libraryId, 'linked');
       return { ok: true, type: 'linked-folder.rules.updated', ...result };
     }
+    case 'ignore.list':
+      return {
+        ok: true,
+        type: 'ignore.list',
+        paths: libraryService.listIgnoredPaths(request.command.libraryId),
+      };
+    case 'ignore.set': {
+      const result = libraryService.setIgnore(request.command);
+      scheduleThumbnailScene(request.command.libraryId, 'refresh');
+      return { ok: true, type: 'ignore.updated', ...result };
+    }
     case 'linked-folder.assets.copy': {
       const result = libraryService.copyAssetsToLinkedFolder(request.command);
       scheduleThumbnailScene(request.command.libraryId, 'linked', result.assets.map((asset) => asset.assetId));

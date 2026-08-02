@@ -376,6 +376,8 @@ export const en = {
       removeTags: "Remove tags…",
       addTag: "Add tag",
       removeTag: "Remove tag"
+      ,ignore: "Ignore"
+      ,unignore: "Unignore"
     },
     assets: {
       restore: "Restore selected ({count})",
@@ -432,6 +434,7 @@ export const en = {
       linkedOffline: "Linked folder is currently offline",
       noMovableManaged: "No movable managed assets in the selection",
       noManaged: "No managed assets in the selection",
+      ignored: "Item is ignored",
       noCopyableManaged: "No copyable managed assets in the selection",
       cannotCopyExternal: "Asset cannot be copied to an external folder",
       noLibrary: "Open a library first",
@@ -478,6 +481,8 @@ export const en = {
     skipReasonJoin: ", ",
     skipReportAssetOnlyFolders: "Tags/collections/AI: skip {count} (folder)",
     copyToExternal: "Copy to external folder: {name}",
+    ignore: "Ignore this item",
+    unignore: "Unignore",
     colorSpace: "Set color space",
     colorSpaceAuto: "Use detected color space",
     colorSpaceBack: "Back",
@@ -917,6 +922,12 @@ export const en = {
     browserExtensionNote:
       "Install copy will be formalized before release (see Serpent-999o). After code changes, rebuild and reload the extension.",
     diagnosticsTitle: "Diagnostics",
+    ignoredPathsTitle: "Ignored items",
+    ignoredPathsHint: "Ignored files and folders stay out of browsing, search, and scans.",
+    manageIgnoredPaths: "Manage ignored items",
+    ignoredPathsEmpty: "No ignored items.",
+    ignoredFolder: "Folder",
+    ignoredAsset: "File",
     diagnosticsHint: "See recent failures from the app, background jobs, and AI analysis. Sensitive values are redacted.",
     viewDiagnostics: "View diagnostics",
     viewMode: "Browse view",
@@ -1207,6 +1218,8 @@ export const en = {
     readLinkedRulesFailed: "Could not read linked folder filter rules.",
     linkedRulesSaved: "Filter rules saved: hid {hidden}, restored {restored}.",
     saveLinkedRulesFailed: "Failed to save filter rules.",
+    ignoreUpdated: "{action} \"{name}\".",
+    ignoreFailed: "Failed to update ignore state.",
     folderTrashed: "Moved folder \"{name}\" to Trash ({count} assets).",
     folderTrashFailed: "Failed to move folder to Trash.",
     folderDeletedFromDisk: "Deleted folder \"{name}\" from disk ({count} assets).",

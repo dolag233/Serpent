@@ -152,6 +152,7 @@ import {
   type AiAnalysisSettingsWire,
 } from "../shared/ai-analysis-settings";
 import { AppSettingsDialog } from "./AppSettingsDialog";
+import { IgnoredPathsDialog } from "./IgnoredPathsDialog";
 import { AppLogDialog } from "./AppLogDialog";
 import { AboutDialog } from "./AboutDialog";
 import { OpenSourceLicensesDialog } from "./OpenSourceLicensesDialog";
@@ -269,6 +270,7 @@ import type {
   CollectionSummary,
   FilterClause,
   FolderBrowseEntry,
+  IgnoredPath,
   LinkedFolderRule,
   LinkedFolderSummary,
   ManagedFolderSummary,
@@ -962,6 +964,8 @@ function AppInner() {
   const [appLogOpen, setAppLogOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
   const [openSourceLicensesOpen, setOpenSourceLicensesOpen] = useState(false);
+  const [ignoredPathsOpen, setIgnoredPathsOpen] = useState(false);
+  const [ignoredPaths, setIgnoredPaths] = useState<IgnoredPath[]>([]);
   const [appLogEntries, setAppLogEntries] = useState<AppLogEntry[]>([]);
   const [appLogLoading, setAppLogLoading] = useState(false);
   const [appLogErrorCode, setAppLogErrorCode] = useState<
@@ -5191,6 +5195,35 @@ function AppInner() {
     setAssetDiskDeleteIds(assetIds);
   }
 
+  async function setIgnoreState(input: {
+    locationKind: "managed" | "linked";
+    linkedFolderId?: string | null;
+    relativePath: string;
+    pathKind: "asset" | "folder";
+    ignored: boolean;
+    name: string;
+  }) {
+    if (!api || !library) return;
+    try {
+      const result = await api.setIgnore({
+        libraryId: library.libraryId,
+        locationKind: input.locationKind,
+        linkedFolderId: input.linkedFolderId,
+        relativePath: input.relativePath,
+        pathKind: input.pathKind,
+        ignored: input.ignored,
+      });
+      if (!result.ok) throw new LibraryOperationError(result.error);
+      await reloadCurrentContent();
+      setNotice(t("toast.ignoreUpdated", {
+        action: input.ignored ? t("menu.ignore") : t("menu.unignore"),
+        name: input.name,
+      }));
+    } catch (caught) {
+      setError(toMessage(caught, t("toast.ignoreFailed"), locale));
+    }
+  }
+
   async function deleteManagedAssetsFromDiskAfterClosingPreview(
     assetIds: string[],
   ) {
@@ -6637,6 +6670,13 @@ function AppInner() {
     void loadAiConfig();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- reload when AI settings surface opens
   }, [appSettingsOpen, appSettingsCategory]);
+
+  useEffect(() => {
+    if (!ignoredPathsOpen || !api || !library) return;
+    void api.listIgnoredPaths({ libraryId: library.libraryId }).then((result) => {
+      if (result.ok) setIgnoredPaths(result.value);
+    });
+  }, [ignoredPathsOpen, api, library]);
 
   const probeStoredAiConnection = useCallback(async () => {
     if (!api) return;
@@ -8892,7 +8932,28 @@ function AppInner() {
           setAiUiPrefs((p) => ({ ...p, showAiBadges: !p.showAiBadges }));
         }}
         onOpenAppLog={openAppLog}
+        onOpenIgnoredPaths={() => setIgnoredPathsOpen(true)}
         open={appSettingsOpen}
+      />
+      <IgnoredPathsDialog
+        open={ignoredPathsOpen}
+        paths={ignoredPaths}
+        onClose={() => setIgnoredPathsOpen(false)}
+        onUnignore={(path) => {
+          void setIgnoreState({
+            locationKind: path.locationKind,
+            linkedFolderId: path.linkedFolderId,
+            relativePath: path.relativePath,
+            pathKind: path.pathKind,
+            ignored: false,
+            name: path.displayName,
+          }).then(() => {
+            if (!api || !library) return;
+            void api.listIgnoredPaths({ libraryId: library.libraryId }).then((result) => {
+              if (result.ok) setIgnoredPaths(result.value);
+            });
+          });
+        }}
       />
       <AppLogDialog
         entries={appLogEntries}
@@ -9155,6 +9216,7 @@ function AppInner() {
         tags={tags}
         collections={collections}
         linkedFolders={linkedFolders}
+        managedFolders={folders}
         activeCollectionId={activeCollectionId}
         assets={visibleAssets}
         onRenameSmartCollection={(id, name) => setRenameTarget({ kind: "smart", id, name })}
@@ -9185,6 +9247,9 @@ function AppInner() {
         onCreateSubfolder={(folderId) => {
           cancelInlineSmartCollectionEdit();
           openInlineFolderCreate(folderId);
+        }}
+        onSetIgnore={({ locationKind, linkedFolderId, relativePath, pathKind, ignored, name }) => {
+          void setIgnoreState({ locationKind, linkedFolderId, relativePath, pathKind, ignored, name });
         }}
         onRenameFolder={(folderId, currentName) => {
           cancelInlineSmartCollectionEdit();

@@ -6098,6 +6098,39 @@ select.ai-config-input.ai-config-languages {
   color: var(--warning-fg);
 }
 
+.ignored-paths-dialog {
+  width: min(560px, calc(100vw - 32px));
+}
+
+.ignored-paths-list {
+  display: grid;
+  gap: 8px;
+  max-height: 360px;
+  overflow: auto;
+  margin: 12px 0;
+}
+
+.ignored-path-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+}
+
+.ignored-path-row > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.ignored-path-row span {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
 .about-dialog {
   position: relative;
   display: flex;

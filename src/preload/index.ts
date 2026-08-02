@@ -606,6 +606,27 @@ const library: SerpentLibraryApi = Object.freeze({
     return { ok: true as const, value: { rules: result.rules, hiddenCount: result.hiddenCount, restoredCount: result.restoredCount } };
   },
 
+  async listIgnoredPaths({ libraryId }: { libraryId: string }) {
+    const result = await request({ type: 'ignore.list.request', libraryId });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'ignore.list') throw new Error('Unexpected ignored-paths response.');
+    return { ok: true as const, value: result.paths };
+  },
+
+  async setIgnore({ libraryId, locationKind, linkedFolderId, relativePath, pathKind, ignored }: {
+    libraryId: string;
+    locationKind: 'managed' | 'linked';
+    linkedFolderId?: string | null;
+    relativePath: string;
+    pathKind: 'asset' | 'folder';
+    ignored: boolean;
+  }) {
+    const result = await request({ type: 'ignore.set.request', libraryId, locationKind, linkedFolderId: linkedFolderId ?? undefined, relativePath, pathKind, ignored });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'ignore.updated') throw new Error('Unexpected ignore-updated response.');
+    return { ok: true as const, value: { ignored: result.ignored, path: result.path } };
+  },
+
   async copyAssetsToLinkedFolder({ libraryId, folderId, assetIds, conflictStrategy }: { libraryId: string; folderId: string; assetIds: string[]; conflictStrategy: 'keep-both' | 'replace' | 'skip' }) {
     const result = await request({ type: 'linked-folder.assets.copy.request', libraryId, folderId, assetIds, conflictStrategy });
     if (!result.ok) return failure(result);

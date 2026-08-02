@@ -94,6 +94,17 @@ export const linkedFolderRuleSchema = z.strictObject({
 
 export type LinkedFolderRule = z.infer<typeof linkedFolderRuleSchema>;
 
+export const ignoredPathSchema = z.strictObject({
+  locationKind: z.enum(['managed', 'linked']),
+  linkedFolderId: nonBlankString.nullable(),
+  relativePath: z.string().max(4096),
+  pathKind: z.enum(['asset', 'folder']),
+  displayName: nonBlankString,
+  ignoredAt: nonBlankString,
+});
+
+export type IgnoredPath = z.infer<typeof ignoredPathSchema>;
+
 export const imageSequenceFrameSummarySchema = z.strictObject({
   assetId: nonBlankString,
   displayName: nonBlankString,
@@ -116,6 +127,7 @@ export const assetSummarySchema = z.strictObject({
   assetId: nonBlankString,
   locationKind: z.enum(['managed', 'linked']),
   managedFolderId: nonBlankString.nullable(),
+  linkedFolderId: nonBlankString.nullable().optional(),
   relativeFilePath: portableRelativePathSchema,
   displayName: nonBlankString,
   currentRevisionId: nonBlankString,

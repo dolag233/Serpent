@@ -346,6 +346,19 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     rules: z.array(linkedFolderRuleSchema).max(200),
   }),
   z.strictObject({
+    type: z.literal('ignore.list.request'),
+    libraryId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('ignore.set.request'),
+    libraryId: identifierSchema,
+    locationKind: z.enum(['managed', 'linked']),
+    linkedFolderId: optionalIdentifierSchema,
+    relativePath: z.string().max(4096),
+    pathKind: z.enum(['asset', 'folder']),
+    ignored: z.boolean(),
+  }),
+  z.strictObject({
     type: z.literal('linked-folder.assets.copy.request'),
     libraryId: identifierSchema,
     folderId: identifierSchema,
@@ -1085,6 +1098,19 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     libraryId: identifierSchema,
     folderId: identifierSchema,
     rules: z.array(linkedFolderRuleSchema).max(200),
+  }),
+  z.strictObject({
+    type: z.literal('ignore.list'),
+    libraryId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('ignore.set'),
+    libraryId: identifierSchema,
+    locationKind: z.enum(['managed', 'linked']),
+    linkedFolderId: optionalIdentifierSchema,
+    relativePath: z.string().max(4096),
+    pathKind: z.enum(['asset', 'folder']),
+    ignored: z.boolean(),
   }),
   z.strictObject({
     type: z.literal('linked-folder.assets.copy'),

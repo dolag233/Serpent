@@ -66,7 +66,7 @@ function SettingsToggleRow({
   );
 }
 
-export function GeneralSettingsPage({ onOpenAppLog }: { onOpenAppLog?: () => void } = {}): ReactNode {
+export function GeneralSettingsPage({ onOpenAppLog, onOpenIgnoredPaths }: { onOpenAppLog?: () => void; onOpenIgnoredPaths?: () => void } = {}): ReactNode {
   const { t, preference: localePreference, setLocale } = useLocale();
   return (
     <>
@@ -105,6 +105,19 @@ export function GeneralSettingsPage({ onOpenAppLog }: { onOpenAppLog?: () => voi
             </div>
             <button className="secondary-button" onClick={onOpenAppLog} type="button">
               {t("settings.viewDiagnostics")}
+            </button>
+          </div>
+        </SettingsCard>
+      ) : null}
+      {onOpenIgnoredPaths ? (
+        <SettingsCard>
+          <div className="app-settings-action-row">
+            <div className="app-settings-row-copy">
+              <strong>{t("settings.ignoredPathsTitle")}</strong>
+              <span>{t("settings.ignoredPathsHint")}</span>
+            </div>
+            <button className="secondary-button" onClick={onOpenIgnoredPaths} type="button">
+              {t("settings.manageIgnoredPaths")}
             </button>
           </div>
         </SettingsCard>
