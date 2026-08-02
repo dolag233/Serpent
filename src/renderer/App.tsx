@@ -430,7 +430,11 @@ function renderMiddleEllipsisFilename(name: string, searchValue: string): ReactN
       <span className="asset-filename-prefix">
         {renderFilenameHighlights(parts.prefix, searchValue, "filename-prefix")}
       </span>
-      {parts.tail ? <span className="asset-filename-tail">{parts.tail}</span> : null}
+      {parts.tail ? (
+        <span className="asset-filename-tail">
+          {renderFilenameHighlights(parts.tail, searchValue, "filename-tail")}
+        </span>
+      ) : null}
       {parts.extension ? (
         <span className="asset-filename-extension">
           {renderFilenameHighlights(parts.extension, searchValue, "filename-extension")}
