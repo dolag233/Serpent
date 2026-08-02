@@ -7869,6 +7869,31 @@ select.ai-config-input.ai-config-languages {
   padding-block: 0.1em 0.2em;
 }
 
+/* Keep a single asset's extension visible in the Inspector while the stem
+   prefix absorbs the available width and receives the middle ellipsis. */
+.inspector-hero-compact:not(.is-multi) .inspector-hero-title {
+  display: flex;
+  overflow: visible;
+  text-overflow: clip;
+}
+
+.inspector-hero-compact:not(.is-multi) .inspector-hero-title .asset-filename-prefix {
+  min-width: 0;
+  /* Do not stretch short prefixes across the whole title row. Let the
+     extension stay adjacent when the full name fits, and only shrink this
+     segment when the title actually overflows. */
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inspector-hero-compact:not(.is-multi) .inspector-hero-title .asset-filename-tail,
+.inspector-hero-compact:not(.is-multi) .inspector-hero-title .asset-filename-extension {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
 .inspector-hero-stack {
   position: relative;
   z-index: 0;

@@ -172,6 +172,7 @@ import { AiConnectionFailureDialog } from "./AiConnectionFailureDialog";
 import { FatalAlertDialog } from "./FatalAlertDialog";
 import { useAiConnectionFailure } from "./use-ai-connection-failure";
 import { useScrollbarActivity } from "./use-scrollbar-activity";
+import { splitFilenameForDisplay } from "./filename-display";
 
 import {
   ContextMenuProvider,
@@ -396,21 +397,6 @@ type OrganizationRenameTarget = {
   id: string;
   name: string;
 };
-type FilenameDisplayParts = {
-  prefix: string;
-  tail: string;
-  extension: string;
-};
-
-function splitFilenameForDisplay(name: string): FilenameDisplayParts {
-  const extensionStart = name.lastIndexOf(".");
-  const hasExtension = extensionStart > 0 && extensionStart < name.length - 1;
-  const extension = hasExtension ? name.slice(extensionStart) : "";
-  const stem = hasExtension ? name.slice(0, extensionStart) : name;
-  if (stem.length <= 3) return { prefix: stem, tail: "", extension };
-  return { prefix: stem.slice(0, -3), tail: stem.slice(-3), extension };
-}
-
 function renderFilenameHighlights(value: string, searchValue: string, keyPrefix: string): ReactNode {
   return splitSearchHighlights(value, searchValue, "filename").map((segment, index) =>
     segment.matched ? (
