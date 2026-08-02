@@ -329,6 +329,35 @@ describe('plugin menu contribution descriptors', () => {
     });
   });
 
+  it('does not promote children when their parent is hidden by when', () => {
+    const descriptors = buildPluginMenuDescriptors([
+      {
+        kind: 'menu',
+        id: 'hidden-parent',
+        pluginId: 'com.example.menu',
+        title: 'Hidden parent',
+        when: "selection.extensions intersects ['gif']",
+      },
+      {
+        kind: 'menu',
+        id: 'hidden-child',
+        pluginId: 'com.example.menu',
+        title: 'Hidden child',
+        parentId: 'hidden-parent',
+        commandId: 'hidden-child',
+      },
+      {
+        kind: 'menu',
+        id: 'visible-root',
+        pluginId: 'com.example.menu',
+        title: 'Visible root',
+        commandId: 'visible-root',
+      },
+    ] as never, createContext());
+
+    expect(descriptors.map((item) => item.id)).toEqual(['visible-root']);
+  });
+
   it('keeps conditional descriptors unchanged when no context snapshot is supplied', () => {
     const [descriptor] = buildPluginMenuDescriptors([{
       kind: 'menu',

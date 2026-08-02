@@ -152,10 +152,40 @@ export function buildPluginMenuDescriptors(
   }[],
   context?: PluginContributionContext,
 ): PluginMenuDescriptor[] {
-  const visibleContributions = contributions.filter((contribution) =>
-    context === undefined
+  const contributionById = new Map(
+    contributions.map((contribution) => [contribution.id, contribution]),
+  );
+  const visibilityById = new Map<string, boolean>();
+  const visiting = new Set<string>();
+  const isVisible = (contribution: (typeof contributions)[number]): boolean => {
+    const cached = visibilityById.get(contribution.id);
+    if (cached !== undefined) return cached;
+
+    const ownVisibility = context === undefined
       || contribution.when === undefined
-      || evaluatePluginContextExpression(contribution.when, context));
+      || evaluatePluginContextExpression(contribution.when, context);
+    if (!ownVisibility) {
+      visibilityById.set(contribution.id, false);
+      return false;
+    }
+
+    const parentId = contribution.parentId;
+    const parent = parentId === undefined ? undefined : contributionById.get(parentId);
+    if (parentId === undefined || parent === undefined || parent === contribution) {
+      visibilityById.set(contribution.id, true);
+      return true;
+    }
+
+    // A placement cycle is handled by the existing tree builder. Do not let
+    // the visibility walk recurse forever while preserving its old behavior.
+    if (visiting.has(contribution.id)) return true;
+    visiting.add(contribution.id);
+    const visible = isVisible(parent);
+    visiting.delete(contribution.id);
+    visibilityById.set(contribution.id, visible);
+    return visible;
+  };
+  const visibleContributions = contributions.filter(isVisible);
   const descriptors: PluginMenuDescriptor[] = visibleContributions.map((contribution) => {
     const condition = contribution.when === undefined
       && contribution.enablement === undefined
