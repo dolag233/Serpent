@@ -1467,6 +1467,14 @@ async function commandFor(
       };
     case "ignore.list.request":
       return { type: "ignore.list", libraryId: request.libraryId };
+    case "ignore.gitignore.get.request":
+      return { type: "ignore.gitignore.get", libraryId: request.libraryId };
+    case "ignore.gitignore.set.request":
+      return {
+        type: "ignore.gitignore.set",
+        libraryId: request.libraryId,
+        content: request.content,
+      };
     case "ignore.set.request":
       return {
         type: "ignore.set",

@@ -6132,12 +6132,12 @@ select.ai-config-input.ai-config-languages {
 }
 
 .library-settings-dialog {
-  width: min(720px, calc(100vw - 48px));
+  width: min(860px, calc(100vw - 48px));
+  height: min(680px, calc(100vh - 48px));
 }
 
 .library-settings-frame {
   min-height: 0;
-  grid-template-columns: minmax(0, 1fr);
 }
 
 .library-settings-name-row {
@@ -6158,6 +6158,80 @@ select.ai-config-input.ai-config-languages {
 
 .library-settings-section-heading {
   margin-top: 22px;
+}
+
+.library-settings-gitignore-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.library-settings-gitignore-heading,
+.library-settings-gitignore-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.library-settings-help-button {
+  display: grid;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid var(--divider);
+  border-radius: 50%;
+  background: var(--raised);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.library-settings-help-button:hover,
+.library-settings-help-button:focus-visible {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.library-settings-gitignore-help {
+  margin: 0;
+  padding: 9px 11px;
+  border-radius: 8px;
+  background: var(--hover);
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.library-settings-gitignore-editor {
+  min-height: 210px;
+  width: 100%;
+  resize: vertical;
+  padding: 12px;
+  border: 1px solid var(--divider);
+  border-radius: 8px;
+  background: var(--canvas);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.library-settings-gitignore-editor:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.library-settings-gitignore-actions {
+  color: var(--text-tertiary);
+  font-size: 12px;
+}
+
+.library-settings-ignored-heading {
+  margin-bottom: 12px;
 }
 
 .about-dialog {

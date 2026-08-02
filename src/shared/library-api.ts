@@ -316,6 +316,8 @@ export interface SerpentLibraryApi {
   getLinkedFolderRules(input: { libraryId: string; folderId: string }): Promise<LibraryApiResult<LinkedFolderRule[]>>;
   setLinkedFolderRules(input: { libraryId: string; folderId: string; rules: LinkedFolderRule[] }): Promise<LibraryApiResult<{ rules: LinkedFolderRule[]; hiddenCount: number; restoredCount: number }>>;
   listIgnoredPaths(input: { libraryId: string }): Promise<LibraryApiResult<IgnoredPath[]>>;
+  getGitignore(input: { libraryId: string }): Promise<LibraryApiResult<{ content: string }>>;
+  setGitignore(input: { libraryId: string; content: string }): Promise<LibraryApiResult<{ content: string }>>;
   setIgnore(input: { libraryId: string; locationKind: 'managed' | 'linked'; linkedFolderId?: string | null; relativePath: string; pathKind: 'asset' | 'folder' | 'extension'; ignored: boolean }): Promise<LibraryApiResult<{ ignored: boolean; path: IgnoredPath }>>;
   copyAssetsToLinkedFolder(input: { libraryId: string; folderId: string; assetIds: string[]; conflictStrategy: 'keep-both' | 'replace' | 'skip' }): Promise<LibraryApiResult<{ copiedCount: number; skippedCount: number; assets: AssetSummary[] }>>;
   convertLinkedFolderToManaged(input: { libraryId: string; folderId: string; targetFolderId?: string }): Promise<LibraryApiResult<{ managedFolderId: string; convertedCount: number; assets: AssetSummary[] }>>;

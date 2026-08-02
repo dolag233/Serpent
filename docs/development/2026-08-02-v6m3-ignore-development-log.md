@@ -11,15 +11,17 @@
 - 对媒体路径解析、复制、移动、重命名、标签/元数据编辑、回收站和硬盘删除增加防护，避免对隐藏项目继续执行操作。
 - 右键菜单提供“忽略此文件”及单选文件的“忽略{后缀}文件”；文件夹区域提供显示隐藏项目切换。
 - 资源库菜单新增“资源库设置”，复用全局设置面板样式，提供资源库名称、位置和忽略条目管理。
+- 忽略规则迁移为资源库根目录 `.gitignore`：支持常用 Git 忽略语法、设置面板内编辑/语法帮助/失焦自动保存，并在资源库菜单和顶部资源库菜单均可进入。
+- 单选扩展名文案统一为“忽略所有 .{extension} 文件”，忽略提示也按“已忽略所有 .{extension} 文件”表达。
 - 文件夹级删除允许包含被显式忽略的资产，避免复用普通资产删除校验导致“找不到所选资产”。反馈单：`Serpent-nplj`。
 
 ## 实现位置
 
-- `src/worker/library-service.ts`：迁移 v24/v25、扫描过滤、查询谓词、ignore API 和操作防护。
+- `src/worker/library-service.ts`：迁移 v24-v26、`.gitignore` 规则物化、扫描过滤、查询谓词、ignore API 和操作防护。
 - `src/shared/asset-types.ts`、`src/shared/library-api.ts`：忽略条目模型和 API 合约。
 - `src/shared/protocol/requests.ts`、`responses.ts`、`src/main/index.ts`、`src/preload/index.ts`、`src/worker/index.ts`：IPC 请求/响应链路。
 - `src/renderer/AssetContextMenu.tsx`：文件/文件夹/批量忽略入口。
-- `src/renderer/AppSettingsDialog.tsx`、`AppSettingsPages.tsx`、`IgnoredPathsDialog.tsx`、`LibrarySettingsDialog.tsx`：恢复显示与资源库设置入口。
+- `src/renderer/AppSettingsDialog.tsx`、`AppSettingsPages.tsx`、`IgnoredPathsDialog.tsx`、`LibrarySettingsDialog.tsx`、`LibrarySwitcher.tsx`：恢复显示与资源库设置入口；资源库设置采用左侧分类、右侧内容布局。
 
 ## 验证
 

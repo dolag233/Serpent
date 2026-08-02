@@ -623,6 +623,20 @@ const library: SerpentLibraryApi = Object.freeze({
     return { ok: true as const, value: result.paths };
   },
 
+  async getGitignore({ libraryId }: { libraryId: string }) {
+    const result = await request({ type: 'ignore.gitignore.get.request', libraryId });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'ignore.gitignore') throw new Error('Unexpected gitignore response.');
+    return { ok: true as const, value: { content: result.content } };
+  },
+
+  async setGitignore({ libraryId, content }: { libraryId: string; content: string }) {
+    const result = await request({ type: 'ignore.gitignore.set.request', libraryId, content });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'ignore.gitignore.updated') throw new Error('Unexpected gitignore-updated response.');
+    return { ok: true as const, value: { content: result.content } };
+  },
+
   async setIgnore({ libraryId, locationKind, linkedFolderId, relativePath, pathKind, ignored }: {
     libraryId: string;
     locationKind: 'managed' | 'linked';

@@ -50,6 +50,7 @@ export type LibrarySwitcherProps = {
   onRemoveLibrary?: () => void;
   /** Irreversible delete of the currently open library root (Serpent-9i8). */
   onDeleteLibraryFromDisk?: () => void;
+  onOpenLibrarySettings?: () => void;
   /** Recent libraries excluding the open one; the section hides when empty. */
   recentLibraries?: RecentLibraryMenuEntry[];
   onOpenRecent?: (path: string) => void;
@@ -81,6 +82,7 @@ export function LibrarySwitcher({
   onCloseLibrary,
   onRemoveLibrary,
   onDeleteLibraryFromDisk,
+  onOpenLibrarySettings,
   recentLibraries = [],
   onOpenRecent,
   onForgetRecent,
@@ -262,6 +264,18 @@ export function LibrarySwitcher({
               type="button"
             >
               {t("shell.deleteLibraryFromDisk")}
+            </button>
+          )}
+          {onOpenLibrarySettings != null && (
+            <button
+              className="library-switcher-item"
+              disabled={!libraryName || busy}
+              onClick={() => runMenuAction(onOpenLibrarySettings)}
+              role="menuitem"
+              tabIndex={-1}
+              type="button"
+            >
+              {t("settings.librarySettings")}
             </button>
           )}
           {showTransferSection && (

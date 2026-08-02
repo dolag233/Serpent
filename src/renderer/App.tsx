@@ -968,6 +968,7 @@ function AppInner() {
   const [ignoredPathsOpen, setIgnoredPathsOpen] = useState(false);
   const [librarySettingsOpen, setLibrarySettingsOpen] = useState(false);
   const [ignoredPaths, setIgnoredPaths] = useState<IgnoredPath[]>([]);
+  const [gitignoreContent, setGitignoreContent] = useState("");
   const [showIgnoredItems, setShowIgnoredItems] = useState(false);
   const [appLogEntries, setAppLogEntries] = useState<AppLogEntry[]>([]);
   const [appLogLoading, setAppLogLoading] = useState(false);
@@ -5227,14 +5228,16 @@ function AppInner() {
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
       await reloadCurrentContent();
+      if (input.ignored && input.pathKind === "extension") {
+        setNotice(t("toast.ignoreExtensionUpdated", { extension: input.relativePath }));
+        return;
+      }
       setNotice(t("toast.ignoreUpdated", {
         action: input.ignored
           ? input.pathKind === "folder"
             ? t("menu.ignoreFolder")
-            : input.pathKind === "extension"
-              ? t("menu.ignoreExtension", { extension: input.relativePath })
-              : t("menu.ignore")
-          : t("menu.unignore"),
+            : t("menu.ignore")
+          : t("menu.unignore")),
         name: input.name,
       }));
     } catch (caught) {
@@ -6696,6 +6699,17 @@ function AppInner() {
     });
   }, [ignoredPathsOpen, api, library]);
 
+  useEffect(() => {
+    if (!librarySettingsOpen || !api || !library) return;
+    void Promise.all([
+      api.listIgnoredPaths({ libraryId: library.libraryId }),
+      api.getGitignore({ libraryId: library.libraryId }),
+    ]).then(([pathsResult, gitignoreResult]) => {
+      if (pathsResult.ok) setIgnoredPaths(pathsResult.value);
+      if (gitignoreResult.ok) setGitignoreContent(gitignoreResult.value.content);
+    });
+  }, [librarySettingsOpen, api, library]);
+
   const probeStoredAiConnection = useCallback(async () => {
     if (!api) return;
     if (!shouldRunAiConnectionHeartbeat(aiHasKey)) {
@@ -7290,6 +7304,15 @@ function AppInner() {
               onCloseLibrary={() => void closeLibrary()}
               onRemoveLibrary={() => void removeLibrary()}
               onDeleteLibraryFromDisk={() => requestDeleteLibraryFromDisk()}
+              onOpenLibrarySettings={() => {
+                setAppSettingsOpen(false);
+                setLibrarySettingsOpen(true);
+                if (library && api) {
+                  void api.listIgnoredPaths({ libraryId: library.libraryId }).then((result) => {
+                    if (result.ok) setIgnoredPaths(result.value);
+                  });
+                }
+              }}
               onCreateLibrary={() => {
                 setDialogValue(t("shell.myLibrary"));
                 setCreateLibraryPhase("start");
@@ -9003,10 +9026,11 @@ function AppInner() {
         }}
       />
       <LibrarySettingsDialog
-        key={`${library?.libraryId ?? "none"}:${librarySettingsOpen ? "open" : "closed"}`}
+        key={`${library?.libraryId ?? "none"}:${librarySettingsOpen ? "open" : "closed"}:${gitignoreContent}`}
         library={library}
         open={librarySettingsOpen}
         paths={ignoredPaths}
+        gitignoreContent={gitignoreContent}
         onClose={() => setLibrarySettingsOpen(false)}
         onSaveName={async (name) => {
           if (!api || !library) return;
@@ -9017,6 +9041,17 @@ function AppInner() {
           }
           setLibrary(result.value);
           setNotice(t("toast.librarySettingsSaved"));
+        }}
+        onSaveGitignore={async (content) => {
+          if (!api || !library) return;
+          const result = await api.setGitignore({ libraryId: library.libraryId, content });
+          if (!result.ok) {
+            setError(toMessage(result.error, t("toast.librarySettingsSaveFailed"), locale));
+            return;
+          }
+          setGitignoreContent(result.value.content);
+          setNotice(t("toast.librarySettingsSaved"));
+          await reloadCurrentContent();
         }}
         onUnignore={(path) => {
           void setIgnoreState({

@@ -358,6 +358,15 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     libraryId: identifierSchema,
   }),
   z.strictObject({
+    type: z.literal('ignore.gitignore.get.request'),
+    libraryId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('ignore.gitignore.set.request'),
+    libraryId: identifierSchema,
+    content: z.string().max(1_000_000),
+  }),
+  z.strictObject({
     type: z.literal('ignore.set.request'),
     libraryId: identifierSchema,
     locationKind: z.enum(['managed', 'linked']),
@@ -1119,6 +1128,15 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
   z.strictObject({
     type: z.literal('ignore.list'),
     libraryId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('ignore.gitignore.get'),
+    libraryId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('ignore.gitignore.set'),
+    libraryId: identifierSchema,
+    content: z.string().max(1_000_000),
   }),
   z.strictObject({
     type: z.literal('ignore.set'),

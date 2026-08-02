@@ -502,6 +502,16 @@ const assetOperationSuccessSchemas = [
   }),
   z.strictObject({
     ok: z.literal(true),
+    type: z.literal('ignore.gitignore'),
+    content: z.string(),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('ignore.gitignore.updated'),
+    content: z.string(),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
     type: z.literal('ignore.updated'),
     ignored: z.boolean(),
     path: ignoredPathSchema,

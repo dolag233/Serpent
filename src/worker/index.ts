@@ -557,6 +557,17 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
         type: 'ignore.list',
         paths: libraryService.listIgnoredPaths(request.command.libraryId),
       };
+    case 'ignore.gitignore.get':
+      return {
+        ok: true,
+        type: 'ignore.gitignore',
+        content: libraryService.getGitignore(request.command.libraryId).content,
+      };
+    case 'ignore.gitignore.set': {
+      const result = libraryService.setGitignore(request.command);
+      scheduleThumbnailScene(request.command.libraryId, 'refresh');
+      return { ok: true, type: 'ignore.gitignore.updated', content: result.content };
+    }
     case 'ignore.set': {
       const result = libraryService.setIgnore(request.command);
       scheduleThumbnailScene(request.command.libraryId, 'refresh');

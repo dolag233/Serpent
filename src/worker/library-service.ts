@@ -399,6 +399,91 @@ function cleanFilename(name: string): string {
     .trim() || 'download';
 }
 
+type GitIgnoreRule = {
+  negated: boolean;
+  regex: RegExp;
+};
+
+/** Dependency-free gitignore matching for library-scoped asset rules. */
+function gitIgnorePatternToRegex(rawPattern: string): RegExp | null {
+  let pattern = rawPattern;
+  let directoryOnly = false;
+  let anchored = false;
+  if (pattern.endsWith('/')) {
+    directoryOnly = true;
+    pattern = pattern.slice(0, -1);
+  }
+  if (pattern.startsWith('/')) {
+    anchored = true;
+    pattern = pattern.slice(1);
+  }
+  if (pattern.length === 0) return null;
+
+  let glob = '';
+  for (let index = 0; index < pattern.length; index += 1) {
+    const character = pattern[index]!;
+    if (character === '*') {
+      if (pattern[index + 1] === '*') {
+        while (pattern[index + 1] === '*') index += 1;
+        glob += '.*';
+      } else {
+        glob += '[^/]*';
+      }
+    } else if (character === '?') {
+      glob += '[^/]';
+    } else if (character === '[') {
+      const end = pattern.indexOf(']', index + 1);
+      if (end >= 0) {
+        const contents = pattern.slice(index + 1, end);
+        glob += contents.startsWith('!')
+          ? `[^${contents.slice(1)}]`
+          : `[${contents}]`;
+        index = end;
+      } else {
+        glob += '\\[';
+      }
+    } else {
+      glob += character.replace(/[\\^$.*+?()[\]{}|]/gu, '\\$&');
+    }
+  }
+
+  const hasSlash = pattern.includes('/');
+  const prefix = anchored || hasSlash ? '^' : '^(?:.*/)?';
+  const suffix = directoryOnly || !hasSlash ? '(?:/.*)?$' : '$';
+  try {
+    return new RegExp(`${prefix}${glob}${suffix}`, 'iu');
+  } catch {
+    return null;
+  }
+}
+
+function parseGitignore(text: string): GitIgnoreRule[] {
+  const rules: GitIgnoreRule[] = [];
+  for (const sourceLine of text.split(/\r?\n/u)) {
+    let line = sourceLine.trimEnd();
+    if (line.length === 0) continue;
+    if (line.startsWith('\\#') || line.startsWith('\\!')) line = line.slice(1);
+    else if (line.startsWith('#')) continue;
+    const negated = line.startsWith('!');
+    if (negated) line = line.slice(1);
+    const regex = gitIgnorePatternToRegex(line);
+    if (regex) rules.push({ negated, regex });
+  }
+  return rules;
+}
+
+function gitignoreMatchesPath(rules: GitIgnoreRule[], relativePath: string): boolean {
+  const normalized = relativePath.replaceAll('\\', '/').replace(/^\/+|\/+$/gu, '');
+  if (!normalized) return false;
+  const candidates = [normalized, `Assets/${normalized}`];
+  let ignored = false;
+  for (const rule of rules) {
+    if (!candidates.some((candidate) => rule.regex.test(candidate))) continue;
+    ignored = !rule.negated;
+  }
+  return ignored;
+}
+
 function prohibitedIpv4(address: string): boolean {
   const parts = address.split('.').map(Number);
   if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return true;
@@ -1534,6 +1619,23 @@ const EXTENSION_IGNORES_SCHEMA_CHECKSUM = createHash('sha256')
   .update(EXTENSION_IGNORES_SCHEMA_SQL)
   .digest('hex');
 
+// Migration v26: the editable library-level .gitignore is materialized into
+// the database so every browse/search/count query can apply the same rules
+// without making SQLite call back into the filesystem. The text file remains
+// the source of truth; this table is rebuilt whenever its contents change.
+const GITIGNORE_SCHEMA_SQL = `
+  CREATE TABLE IF NOT EXISTS gitignore_ignored_paths (
+    relative_path TEXT NOT NULL,
+    path_kind TEXT NOT NULL CHECK (path_kind IN ('asset', 'folder')),
+    PRIMARY KEY(relative_path, path_kind)
+  );
+  CREATE INDEX IF NOT EXISTS gitignore_ignored_paths_lookup
+    ON gitignore_ignored_paths(relative_path, path_kind);
+`;
+const GITIGNORE_SCHEMA_CHECKSUM = createHash('sha256')
+  .update(GITIGNORE_SCHEMA_SQL)
+  .digest('hex');
+
 const MIGRATIONS = [
   { version: 1, sql: INITIAL_SCHEMA_SQL, checksum: INITIAL_SCHEMA_CHECKSUM },
   { version: 2, sql: ASSET_SCHEMA_SQL, checksum: ASSET_SCHEMA_CHECKSUM },
@@ -1580,6 +1682,7 @@ const MIGRATIONS = [
   { version: 23, sql: IMAGE_SEQUENCE_SCHEMA_SQL, checksum: IMAGE_SEQUENCE_SCHEMA_CHECKSUM },
   { version: 24, sql: EXPLICIT_IGNORES_SCHEMA_SQL, checksum: EXPLICIT_IGNORES_SCHEMA_CHECKSUM },
   { version: 25, sql: EXTENSION_IGNORES_SCHEMA_SQL, checksum: EXTENSION_IGNORES_SCHEMA_CHECKSUM },
+  { version: 26, sql: GITIGNORE_SCHEMA_SQL, checksum: GITIGNORE_SCHEMA_CHECKSUM },
 ] as const;
 const SUPPORTED_SCHEMA_VERSION = MIGRATIONS.at(-1)!.version;
 
@@ -1599,6 +1702,8 @@ interface OpenLibrary {
   readOnly: boolean;
   /** Managed path identities whose on-disk file must not be auto-reconciled after relink recovery preserved them. */
   preservedRelinkPathIdentities: Set<string>;
+  /** Last .gitignore contents materialized into gitignore_ignored_paths. */
+  gitignoreText: string;
 }
 
 interface ManagedFolderRow {
@@ -2522,6 +2627,19 @@ function unsupportedSourceEntry(reason: PublicErrorReason, cause?: unknown): Lib
 
 function databasePath(libraryPath: string): string {
   return path.join(libraryPath, '.serpent', 'library.db');
+}
+
+function gitignorePath(libraryPath: string): string {
+  return path.join(libraryPath, '.gitignore');
+}
+
+function readGitignoreText(libraryPath: string): string {
+  try {
+    return readFileSync(gitignorePath(libraryPath), 'utf8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return '';
+    throw new LibraryServiceError('LIBRARY_NOT_WRITABLE', { cause: error });
+  }
 }
 
 export function openConfiguredDatabase(filename: string): DatabaseConnection {
@@ -4335,9 +4453,39 @@ export class LibraryService {
     }
   }
 
+  private syncGitignore(openLibrary: OpenLibrary, text = readGitignoreText(openLibrary.summary.libraryPath)): void {
+    if (openLibrary.readOnly || text === openLibrary.gitignoreText) return;
+    const rules = parseGitignore(text);
+    const transaction = openLibrary.connection.transaction(() => {
+      openLibrary.connection.prepare('DELETE FROM gitignore_ignored_paths').run();
+      const insert = openLibrary.connection.prepare(
+        'INSERT OR IGNORE INTO gitignore_ignored_paths(relative_path, path_kind) VALUES (?, ?)',
+      );
+      const folders = openLibrary.connection
+        .prepare('SELECT relative_path FROM managed_folders')
+        .all() as Array<{ relative_path: string }>;
+      const assets = openLibrary.connection
+        .prepare("SELECT relative_file_path FROM assets WHERE location_kind = 'managed' AND deleted_at IS NULL")
+        .all() as Array<{ relative_file_path: string }>;
+      for (const folder of folders) {
+        if (gitignoreMatchesPath(rules, folder.relative_path)) {
+          insert.run(folder.relative_path, 'folder');
+        }
+      }
+      for (const asset of assets) {
+        if (gitignoreMatchesPath(rules, asset.relative_file_path)) {
+          insert.run(asset.relative_file_path, 'asset');
+        }
+      }
+    });
+    transaction();
+    openLibrary.gitignoreText = text;
+  }
+
   private requireOpenLibrary(libraryId: string): OpenLibrary {
     const openLibrary = this.openById.get(libraryId);
     if (!openLibrary) throw new LibraryServiceError('LIBRARY_NOT_OPEN');
+    this.syncGitignore(openLibrary);
     return openLibrary;
   }
 
@@ -6322,6 +6470,12 @@ export class LibraryService {
                    AND ignored_folder.path_kind = 'folder'
                    AND (mf.relative_path = ignored_folder.relative_path
                      OR mf.relative_path LIKE ignored_folder.relative_path || '/%')
+              )
+              AND NOT EXISTS (
+                SELECT 1 FROM gitignore_ignored_paths ignored_git
+                 WHERE ignored_git.path_kind = 'folder'
+                   AND (mf.relative_path = ignored_git.relative_path
+                     OR mf.relative_path LIKE ignored_git.relative_path || '/%')
               )`}
             GROUP BY parent_folder_id`,
         )
@@ -6361,8 +6515,14 @@ export class LibraryService {
                WHERE ignored_folder.location_kind = 'managed'
                  AND ignored_folder.linked_folder_id = ''
                  AND ignored_folder.path_kind = 'folder'
-                 AND (mf.relative_path = ignored_folder.relative_path
-                   OR mf.relative_path LIKE ignored_folder.relative_path || '/%')
+                   AND (mf.relative_path = ignored_folder.relative_path
+                     OR mf.relative_path LIKE ignored_folder.relative_path || '/%')
+            )
+            AND NOT EXISTS (
+              SELECT 1 FROM gitignore_ignored_paths ignored_git
+               WHERE ignored_git.path_kind = 'folder'
+                 AND (mf.relative_path = ignored_git.relative_path
+                   OR mf.relative_path LIKE ignored_git.relative_path || '/%')
             )`}
           GROUP BY parent_folder_id`,
       )
@@ -18052,6 +18212,10 @@ export class LibraryService {
            ))
            OR (ignored_path.path_kind = 'extension' AND
              LOWER(${alias}.relative_file_path) LIKE '%.' || LOWER(ignored_path.relative_path))
+           OR (${alias}.location_kind = 'managed' AND
+             EXISTS (SELECT 1 FROM gitignore_ignored_paths gitignore_path
+                      WHERE gitignore_path.path_kind = 'asset'
+                        AND gitignore_path.relative_path = ${alias}.relative_file_path))
          )
     )`;
   }
@@ -18073,8 +18237,16 @@ export class LibraryService {
             OR ? = relative_path
             OR ? LIKE relative_path || '/%'
           )
+       UNION ALL
+       SELECT 1 FROM gitignore_ignored_paths
+        WHERE ? = 'managed'
+          AND path_kind = 'folder'
+          AND (
+            relative_path = ?
+            OR ? LIKE relative_path || '/%'
+          )
         LIMIT 1`,
-    ).get(locationKind, linkedFolderId ?? '', normalized, normalized);
+    ).get(locationKind, linkedFolderId ?? '', normalized, normalized, locationKind, normalized, normalized);
     return row !== undefined;
   }
 
@@ -18114,6 +18286,11 @@ export class LibraryService {
           AND linked_folder_id = ?
           AND path_kind = 'extension'
           AND LOWER(?) LIKE '%.' || LOWER(relative_path)
+       UNION ALL
+       SELECT 1 FROM gitignore_ignored_paths
+        WHERE ? = 'managed'
+          AND path_kind = 'asset'
+          AND relative_path = ?
         LIMIT 1`,
     ).get(
       locationKind,
@@ -18125,6 +18302,8 @@ export class LibraryService {
       normalized,
       locationKind,
       linkedFolderId ?? '',
+      normalized,
+      locationKind,
       normalized,
     );
     if (!row) return false;
@@ -18152,6 +18331,54 @@ export class LibraryService {
         throw new LibraryServiceError('ASSET_NOT_FOUND');
       }
     }
+  }
+
+  getGitignore(libraryId: string): { content: string } {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    return { content: openLibrary.gitignoreText };
+  }
+
+  setGitignore(input: { libraryId: string; content: string }): { content: string } {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    if (openLibrary.readOnly || input.content.length > 1_000_000 || input.content.includes('\0')) {
+      throw new LibraryServiceError('LIBRARY_NOT_WRITABLE');
+    }
+    try {
+      writeFileSync(gitignorePath(openLibrary.summary.libraryPath), input.content, 'utf8');
+    } catch (error) {
+      throw new LibraryServiceError('LIBRARY_NOT_WRITABLE', { cause: error });
+    }
+    this.noteClientFilesystemMutation();
+    this.syncGitignore(openLibrary, input.content);
+    return { content: input.content };
+  }
+
+  private updateManagedGitignoreRule(
+    openLibrary: OpenLibrary,
+    relativePath: string,
+    pathKind: 'asset' | 'folder' | 'extension',
+    ignored: boolean,
+  ): void {
+    const normalized = pathKind === 'extension'
+      ? relativePath.trim().replace(/^\.+/u, '').toLowerCase()
+      : this.normalizeExplicitIgnorePath(relativePath, false);
+    if (!normalized) return;
+    const positive = pathKind === 'extension'
+      ? `*.${normalized}`
+      : `Assets/${normalized}${pathKind === 'folder' ? '/' : ''}`;
+    const negative = `!${positive}`;
+    const lines = openLibrary.gitignoreText.split(/\r?\n/u).filter((line) => line.length > 0);
+    const filtered = lines.filter((line) => line !== positive && line !== negative);
+    filtered.push(ignored ? positive : negative);
+    const next = `${filtered.join('\n')}\n`;
+    if (next === openLibrary.gitignoreText) return;
+    try {
+      writeFileSync(gitignorePath(openLibrary.summary.libraryPath), next, 'utf8');
+    } catch (error) {
+      throw new LibraryServiceError('LIBRARY_NOT_WRITABLE', { cause: error });
+    }
+    this.noteClientFilesystemMutation();
+    this.syncGitignore(openLibrary, next);
   }
 
   listIgnoredPaths(libraryId: string): IgnoredPath[] {
@@ -18229,6 +18456,9 @@ export class LibraryService {
         'SELECT folder_id FROM linked_folders WHERE folder_id = ? AND library_id = ?',
       ).get(linkedFolderId, input.libraryId);
       if (!row) throw new LibraryServiceError('FOLDER_NOT_FOUND');
+    }
+    if (input.locationKind === 'managed') {
+      this.updateManagedGitignoreRule(openLibrary, relativePath, input.pathKind, input.ignored);
     }
     const sourceFolderId = linkedFolderId ?? '';
     const write = openLibrary.connection.prepare(
@@ -20034,6 +20264,7 @@ export class LibraryService {
         summary,
         readOnly: false,
         preservedRelinkPathIdentities: new Set(),
+        gitignoreText: '\u0000',
       };
       this.openById.set(summary.libraryId, openLibrary);
       this.openIdByPath.set(canonicalPath, summary.libraryId);
@@ -20130,6 +20361,7 @@ export class LibraryService {
         summary,
         readOnly: true,
         preservedRelinkPathIdentities: new Set(),
+        gitignoreText: '',
       });
       this.openIdByPath.set(canonicalPath, summary.libraryId);
       return summary;
@@ -21095,6 +21327,13 @@ export class LibraryService {
       // Walk Assets/.
       await walkDir(path.join(libPath, 'Assets'), 'Assets');
 
+      // Keep the library-scoped ignore source of truth with folder exports.
+      const gitignoreFile = gitignorePath(libPath);
+      if (realFileExists(gitignoreFile)) {
+        const ignoreStat = statSync(gitignoreFile);
+        entries.push({ sourcePath: gitignoreFile, relativePath: '.gitignore', byteSize: ignoreStat.size });
+      }
+
       // Walk .serpent/revisions/.
       const revisionsDir = path.join(libPath, '.serpent', 'revisions');
       if (directoryExists(revisionsDir)) {
@@ -21575,6 +21814,12 @@ export class LibraryService {
 
       // Walk Assets/.
       await walkDir(path.join(libPath, 'Assets'), 'Assets');
+
+      const gitignoreFile = gitignorePath(libPath);
+      if (realFileExists(gitignoreFile)) {
+        const ignoreStat = statSync(gitignoreFile);
+        entries.push({ sourcePath: gitignoreFile, relativePath: '.gitignore', byteSize: ignoreStat.size });
+      }
 
       // Walk .serpent/revisions/.
       const revisionsDir = path.join(libPath, '.serpent', 'revisions');

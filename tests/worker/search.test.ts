@@ -181,7 +181,7 @@ describe('schema v5->v6 migration', () => {
 
     const db = new TestDatabase(path.join(libraryPath, '.serpent', 'library.db'));
     try {
-      expect(db.pragma('user_version')).toEqual([{ user_version: 25 }]);
+      expect(db.pragma('user_version')).toEqual([{ user_version: 26 }]);
 
       // Verify FTS tables exist.
       const searchIndex = db.prepare(
